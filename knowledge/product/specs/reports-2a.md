@@ -141,7 +141,7 @@ Per-DC reports run as a visible background job (§6.5) and never block the page.
 | 3 | Adjusts a preset chip, period or one column filter | The grid refreshes in place. The URL holds the state, so the view can be shared (the data is still trimmed per viewer) | Filter bar, column chooser |
 | 4 | Clicks **Export**, then a format | The file is prepared as a job. A toast links the stored artefact. Row count and format appear in the run's history | Menu, toast |
 | 5 | Clicks **Schedule** | A side sheet opens with the report, filters and columns as they are on screen, and presets (Daily 08:00, Weekly Monday 08:00, **Monthly 1st 08:00**) | Side sheet |
-| 6 | Picks the preset, types a recipient, clicks Save | The schedule appears under Schedules with next run, owner, recipients and state | Sheet, then list |
+| 6 | Picks the preset, types a recipient, clicks Save | Save runs the `reports.schedule.create` Action inline (ADR-0005 rule 10): the preview diff, including any external-recipient confirmation (§8.4), is the sheet's last step. The schedule then appears under Schedules with next run, owner, recipients and state | Sheet, then list |
 
 ### Unhappy paths
 
@@ -284,6 +284,14 @@ hold a stale value: the row shows "as of <time> from <DC>".
 The effective maximum age is the PSO's `msDS-MaximumPasswordAge` if a PSO applies, else the domain's
 `maxPwdAge`. The codec treats stored 0 and the minimum signed 64-bit value as "never".
 
+**Evaluated in the query, not after it.** `locked_out`, `password_state`, `password_expires_at` and
+`account_expired` are **dataset columns of `inventory.users`, evaluated inside the compiled query**,
+with `now` and the resolved policy values bound as arguments. They are never a post-filter or a
+loop in application code. This is what makes filter, sort, total count and paging (FR-12) and the
+post-trim counts (LF-39) correct: a "Locked-out Users: 37" count is the count of rows the
+predicate selects. The registered-column contract is `solution-architect`'s, tracked in T-0182,
+and the build tickets cite it.
+
 **Missing inputs.** If an input was not read, a PSO could not be resolved or read was denied, the
 state is **Unknown (input missing)** with the reason on hover. A report never infers "not locked" or
 "not expired", and never silently falls back to the domain policy when the PSO is unresolvable.
@@ -321,15 +329,19 @@ definition `[UNVERIFIED as a Microsoft definition]`. The report states its cavea
 
 ### 6.5 Per-DC reports: USR-04 and PWD-03
 
-`lastLogon`, `logonCount`, `badPwdCount` and `badPasswordTime` are not replicated. They are read
-from **every DC of the object's domain** through the connector's `ReadPerDC`
-([connector-contract §5.5](../../development/architecture/connector-contract.md)). The inventory
+`lastLogon`, `logonCount`, `badPwdCount` and `badPasswordTime` are not replicated. Their truth is
+per DC, and the connector's contract is `ReadPerDC{ObjectRef, attrs}`, one object per call
+([blueprint §7.1](../../development/architecture/blueprint.md),
+[connector-contract §5.5](../../development/architecture/connector-contract.md)). The inventory
 holds only the replicated values, so these two reports have two stages:
 
 1. **Candidates.** Compile the preset's filters over `inventory.users`, trimmed to the runner's
-   scope. This gives a GUID set and an estimate of reads (candidates × DCs in scope).
-2. **Read.** `ReadPerDC` for that set. The result stores one value per DC, the maximum, the DC it
-   came from, and `PerDcSummary{dcs_in_scope, dcs_answered, coverage}`.
+   scope. This gives the candidate objects and an estimate of reads (candidates × DCs in scope).
+2. **Read.** Obtain every in-scope DC's value for each candidate. **How** (a live read per object,
+   a batched read, or a stored per-DC dataset refreshed by a sweep) is not decided here: it is
+   the ADR in T-0181. What the report requires is the result: one value per DC, the maximum, the
+   DC it came from, and `PerDcSummary{dcs_in_scope, dcs_answered, coverage}`, with the freshness
+   label of §8.2.
 
 Rules:
 - **Coverage is always shown** ("Read from 5 of 6 DCs · 1 unreachable: <DC>: <error>"). `COMPLETE`
@@ -337,7 +349,7 @@ Rules:
 - With `PARTIAL` coverage, the maximum is a **lower bound**. The column becomes "Last logon (at
   least)", and a user with no logon on the answered DCs shows "Not confirmed", never "never".
 - **Read cap.** Before any read, the run estimates candidates × DCs. Above the cap (`[PROPOSED]`
-  250,000 reads per run) it refuses and says "This run would read 41,200 accounts from 6 DCs.
+  250,000 per-object-per-DC reads per run; T-0181 sets the unit if the mechanism changes it) it refuses and says "This run would read 41,200 accounts from 6 DCs.
   Narrow the scope or filters", naming the cap (TM-TB3-T8 and TM-TB15-T8 bound DC load).
 - Read-only DCs are included by default (`PER_DC_SCOPE_ALL`). A switch excludes them
   (`WRITABLE`).
@@ -422,6 +434,14 @@ row marked **new** is not yet in their scope and is sent to them as a note.
 - **2a scope kinds.** Only `naming_context`, `ou_subtree` and `ou_one_level` exist (T-0094). A
   role whose scope uses `group_members` or an Entra kind grants **nothing** in 2a reports, and the
   empty state names the reason. Reports fail closed on any scope kind they do not understand.
+- **What a run is.** A run is one execution of a report over one frozen set of inputs. Changing the
+  preset, a filter, the period, the scope or the column set **creates a new run**. Paging and
+  sorting read **the same run's stored result** and never re-execute against newer data. The
+  header's `as_of`, freshness label, row count and digest belong to the run on screen. Export and
+  scheduled delivery **serialise that run's stored result**, so the exported rows, the About block
+  and the digest equal what the admin saw for that run. A scheduled fire creates its own run, and
+  its files serialise that run. Exporting a run whose result has expired (§8.1 retention) re-runs
+  it first and says so, and the file carries the new run's `as_of`.
 - **Run record (DM-72).** Every run stores the definition version (X7), parameters, runner,
   `scope_applied` (a human-readable summary, shown in the header), `as_of`, row count, state and
   result. States: `queued → running → succeeded | failed | cancelled`, then `succeeded → expired`.
@@ -452,12 +472,23 @@ the time it was computed.
 | Content | The columns on screen at export time, the filters applied, and the full result, not just the visible page |
 | Encoding | Only the P7 output encoders ([safe-primitives §12](../../development/architecture/safe-primitives.md)). CSV is TAB-in-quotes formula neutralisation, XLSX uses typed string cells and `quotePrefix`. No raw writer (TM-TB15-T1) |
 | "About" block | XLSX: a first sheet. PDF and HTML: a header. Both carry report and preset, scope applied, filters, freshness, DC coverage, generated by and at, row count and the result digest. **CSV carries none**, so it stays a clean table. The same facts are in the run record and the audit event |
-| Digest | SHA-256 over the canonical result rows (not the file, which cannot contain its own hash). Shown on the run record and in the About block |
+| Digest | SHA-256 over the canonical form below, taken from the run's stored result (not the file, which cannot contain its own hash). Shown on the run record, the audit event and the About block |
 | File name | `<report>-<preset>-<yyyymmdd-hhmm>Z.<ext>`, built by the download-header encoder |
 | Time | CSV: ISO 8601 UTC. XLSX: typed date cells. PDF and HTML: the owner's or runner's time zone with the zone label |
 | Evidence pack (E3) | On GRP-02 effective views the About block adds the effective-membership summary (direct n, effective m, cycles found) and every row carries Via |
 | Storage | A tenant-prefixed blob that expires (DM-72.I3), downloaded only through an authenticated request. An expired file returns **410 Gone**. The owner can delete one early |
 | Secrets | A column that names a secret attribute cannot exist (D8) |
+
+**Canonical form for the digest.** One definition, implemented once in `platform/export` (T-0101)
+and used by every format and by the run record. Input: the run's rows in **run order** (the run's
+sort, with the row key, the object GUID or edge key, as the final tie-break), restricted to the
+**exported columns in their exported order**. Encoding: first the ordered list of column IDs, then
+every row; every value is `type tag (1 byte) ‖ length (4 bytes, big-endian) ‖ bytes`, so no
+concatenation is ambiguous. Typed text forms: string = UTF-8 as stored; integer = base-10; boolean
+= `true` or `false`; time = RFC 3339 in UTC with `Z` and whole seconds; enum = its stable ID, not its
+label; absent value = its own tag with length 0 (distinct from the empty string). The digest is
+over typed values, so it does not change with CSV or XLSX formatting or the viewer's time zone.
+Anyone can recompute it from the run's rows through the API.
 
 **Row caps (TM-TB15-T8)**, `[PROPOSED]` defaults for `reporting-engineer` to confirm on the scale
 tier. A tenant can lower a cap and never raise it above the hard value:
@@ -490,8 +521,14 @@ A schedule is a recurring run plus delivery (DM-73). It uses the shared Schedule
   pinned to the definition version (X7).
 - **Delivery.** E-mail through `notify`. Per recipient, the schedule picks formats and either
   **attachment** (one file, or a ZIP when there are several files) or **link**. A link points at
-  the stored artefact and works only for an activeDIQ account whose scope and permission allow it,
-  so a link is not offered for an external address. Attachments larger than the configured limit
+  the stored artefact and is not offered for an external address. **Link rule (one rule):** a link
+  is downloadable **only by the named recipient account, signed in, and holding `reports.export`**.
+  It serves the **same owner-scope artefact an attachment would**, byte for byte (the digest
+  matches), not a re-run under the recipient's scope. A recipient whose own scope is narrower
+  therefore receives the owner's wider data: that is the accepted TM-TB15-T2 residual, and it is
+  why the sheet states "recipients receive what the owner can see". Any other account, including one
+  holding `reports.export`, and any signed-out request is refused. Every download is audited
+  (§8.6). A link expires with the artefact (410). Attachments larger than the configured limit
   (default 10 MB, `[PROPOSED]`) go as a link to account recipients and fail the delivery for
   external ones, with the reason shown.
 - **Notify only if data.** An option. When on, a run with zero rows records the run and sends
@@ -502,11 +539,22 @@ A schedule is a recurring run plus delivery (DM-73). It uses the shared Schedule
   the `reports.deliver.external` permission (DM-73.I2) and a visible confirmation "Data leaves your
   organisation: <address>". The scheduled report's data is what the **owner** could see, which the
   sheet states beside the recipient list (TM-TB15-T2, TM-TB18-T9).
-- **Owner authority at run time (DM-73.I1).** At every fire the report compiles with the owner's
-  scope and permissions **as they are at that moment**. If the owner's scope shrank, the run uses
-  the smaller scope and its record shows the scope applied. If the owner is disabled or deleted, or
-  has lost `reports.run`, the schedule pauses with the reason shown and tenant owners are notified.
-  No run uses a cached scope.
+- **Owner authority at run time (DM-73.I1).** DM-73.I1 covers every permission, not only
+  `reports.run`. At every fire the report compiles with the owner's scope and permissions **as they
+  are at that moment**, and the fire checks, in this order:
+  1. *Owner state.* If the owner is disabled or deleted, or no longer holds `reports.run`,
+     `reports.export` or `reports.schedule`, the schedule **pauses** with the reason shown, tenant
+     owners are notified, and nothing is sent.
+  2. *Scope.* If the owner's scope shrank, the run uses the smaller scope and its record shows the
+     scope applied. No run uses a cached scope.
+  3. *Each recipient.* Whether an address is external is **re-evaluated against the current allowed
+     recipient domains list**, not the list as saved. For each address that is external now, the
+     owner must hold `reports.deliver.external` now. Where the owner does not, **that recipient's
+     delivery fails with the reason** "owner lacks external delivery permission" (or "address is no
+     longer in an allowed domain"), is shown on the schedule and notifies the owner. **The schedule
+     does not pause** and every other recipient is delivered. An address that became internal needs
+     no check and is delivered. An account recipient is checked for holding `reports.export` when a
+     link is used.
 - **Reassigning the owner** needs `reports.schedule.manage_all`. The schedule pauses until the new
   owner resumes it after seeing the recipient list, so a reassignment cannot widen what recipients
   receive without the new owner's act.
@@ -514,8 +562,16 @@ A schedule is a recurring run plus delivery (DM-73). It uses the shared Schedule
   retries, given up. The schedule page shows the last runs and per-recipient state. A failed
   delivery notifies the owner after retries are exhausted.
 - **Per-DC reports** (USR-04, PWD-03): not more often than daily.
-- **Configuration writes.** Creating, changing, pausing, resuming, reassigning and deleting a
-  schedule are audited configuration writes and follow the T-0047 EP-3 ruling (m2-plan decision 7).
+- **Configuration writes are Actions (ADR-0005 rule 10).** Creating, changing, pausing, resuming,
+  reassigning and deleting a schedule are EP-3 Actions with `Target: Store`, named
+  `reports.schedule.create | update | pause | resume | reassign | delete`. Each has an inline
+  preview diff against the current version, the gate, step-up where the policy requires it, audit
+  and **undo, which restores the previous version**. The Action runs inline in the request. The
+  **external-recipient confirmation** ("Data leaves your organisation: <address>") is part of the
+  Action preview, so the confirmation and the diff are one step and the confirmed addresses are in
+  the audit event. **Not Actions** (system bookkeeping, ADR-0005 rule 10): report runs, exports
+  and deliveries (DM-72, DM-84), and a pause the system itself makes under the owner-authority
+  rule, which is audited as an event with its reason.
 
 ### 8.5 Permissions
 
@@ -536,9 +592,12 @@ or does not.
 ### 8.6 Audit trail (our own; TM-TB15-T6)
 
 One event per item, recording actor, report and version, scope summary, filters hash, row count and
-digest, never values: report run; export created; export downloaded; export expired or deleted;
-schedule created, changed, paused, resumed, reassigned, deleted; run of a schedule (with owner scope
-applied); delivery sent or failed, per recipient; external-recipient confirmation.
+digest, never values: report run; export created; export downloaded (including each delivery-link
+download, with the downloading account); export expired or deleted; schedule created, changed,
+paused, resumed, reassigned, deleted (written by the `reports.schedule.*` Actions, with the
+confirmed external addresses); a system pause with its reason; run of a schedule (with owner scope
+applied); delivery sent or failed, per recipient, including the run-time external-permission
+failure.
 
 ## 9. Security and audit considerations
 
@@ -621,7 +680,7 @@ agents are `n/a` for every FR: reports have no behaviour on them at 2a.
 3. **No mail-body delivery at 2a.** It needs a body encoder over attacker-controlled cells and has
    a size ceiling. It goes after the encoders ship.
 4. **PDF and HTML after the 2a demo.** The demo uses CSV and XLSX. Both ship before M2 exit.
-5. **The sharing link carries no data.** Opening it re-runs under the opener's scope.
+5. **The in-app share link carries no data.** The URL of a report view re-runs under the opener's scope. This is distinct from a delivery link in a schedule (§8.4), which serves a stored artefact to one named recipient.
 6. **Probable service accounts are hidden by default** (E2). ME shows everything.
 7. **Inactive Users default to enabled accounts and 90 days**, unlike ME's 30 days with disabled
    accounts included.
@@ -631,10 +690,10 @@ agents are `n/a` for every FR: reports have no behaviour on them at 2a.
 | # | Question | Owner | Blocks |
 | --- | --- | --- | --- |
 | Q1 | `[DISCOVERY]` Partner discovery has not returned. The 16-report slice, the 90-day default and the delivery set come from research. Re-weight on arrival | product-manager | Nothing now |
-| Q2 | **Per-DC mechanism.** This spec assumes a two-stage live read (§6.5). The alternative is a stored per-DC logon dataset refreshed by a sweep. Which one, and its p95 | solution-architect with directory-engineer, T-0065 | USR-04 and PWD-03 in T-0099/T-0100. The other 14 reports do not wait |
+| Q2 | **Per-DC mechanism.** §6.5 states the required result, not the mechanism. Live read versus a stored per-DC dataset refreshed by a sweep, the unit of the read cap and the p95 are decided in the ADR T-0181 | solution-architect, T-0181 | USR-04 and PWD-03 in T-0099/T-0100. The other 14 reports do not wait |
 | Q3 | **Where the allowed recipient domains list lives**, and the attachment size limit (T-0095 SMTP settings or the schedule) | backend-engineer | T-0104 |
 | Q4 | Row cap and concurrency numbers (§8.3) calibrated on the scale tier | reporting-engineer, T-0116 | None, defaults apply |
-| Q5 | T-0047 ruling on configuration writes as Actions | solution-architect | T-0104 (m2-plan decision 7) |
+| Q5 | *Withdrawn: ADR-0005 rule 10 rules that schedule writes are Actions (§8.4). The number is kept so other notes' references to Q6 stay valid* | n/a | n/a |
 | Q6 | The staleness threshold and the per-NC "last successful sync pass" watermark (D6) | directory-engineer in T-0065 | FR-08 freshness labels |
 
 No question here is directional: nothing needs the CEO.
@@ -648,6 +707,8 @@ Follow-ups filed from this spec (`backlog`, not scope creep): T-0172 (research),
 4. build · `reporting-engineer` — ADM-100 and ADM-101 remainders: CSVDE, password-protected export,
    logo and serial number, mail-body delivery.
 5. spec · `product-manager` — Entra object reports for the hybrid slice (ADM-094 basics).
+
+Follow-ups filed by the architect review: T-0181 (per-DC read mechanism ADR) and T-0182 (derived dataset columns on EP-8).
 
 Notes also go on T-0065, T-0091 (D6, D7), T-0100/T-0101/T-0102 (`security-sensitive`) and T-0095
 (Q3).
@@ -673,9 +734,9 @@ Each FR names a parity ID or `enhancement`. Others cite them as `reports-2a#FR-n
 | FR-06 | The run MUST support scope by domain (multi-select, default all permitted), OU include/exclude, period presets and custom range, typed per-column filters and adding or removing registered columns | ADM-099 |
 | FR-07 | Every run MUST apply the runner's scope inside the query. Counts and pages MUST be computed after trimming. A scope kind the 2a evaluator does not support MUST grant nothing | ADM-099, DM-71.I1 |
 | FR-08 | Every run MUST store and show `as_of` and a freshness label per §8.2, and MUST NOT say "live" except for per-DC reads | enhancement (E1), DM-72.I1 |
-| FR-09 | Locked-out, password-expired, password-expires-at and account-expired states MUST be computed at run time by the rules of §6.4 and MUST show "Unknown (input missing)" rather than infer | ADM-084, ADM-085 |
+| FR-09 | Locked-out, password-expired, password-expires-at and account-expired states MUST be computed at run time by the rules of §6.4, **as columns evaluated inside the compiled query (now and resolved policy bound as arguments), never a post-filter in application code** (T-0182), and MUST show "Unknown (input missing)" rather than infer | ADM-084, ADM-085 |
 | FR-10 | USR-04 and PWD-03 MUST follow §6.5: per-DC coverage shown, partial coverage labelled a lower bound with no "never", a read cap that refuses before reading | ADM-084, ADM-085 |
-| FR-11 | A run MUST be a job with the states of §8.1, visible progress and cancel, a typed failure reason and retry | DM-72 |
+| FR-11 | A run MUST be a job with the states of §8.1, visible progress and cancel, a typed failure reason and retry. A change of preset, filter, period, scope or columns MUST create a new run. Paging and sorting MUST read the same run | DM-72 |
 | FR-12 | Paging, sorting and filtering MUST be server-side and total counts MUST not load every row | ADM-099 |
 | FR-13 | The grid MUST offer sort, per-column filter, column chooser and row count. It MUST NOT offer a selection-based action at 2a | ADM-099 |
 | FR-14 | USR-03 and PWD-01 MUST hide probable service accounts by default, show the count and reason, and never delete them from the data (§6.7) | enhancement (E2) |
@@ -686,7 +747,7 @@ Each FR names a parity ID or `enhancement`. Others cite them as `reports-2a#FR-n
 | ID | Requirement | Parity |
 | --- | --- | --- |
 | FR-16 | Export MUST offer CSV and XLSX at the 2a demo, and PDF and HTML before M2 exit. It MUST offer only formats that exist | ADM-100 |
-| FR-17 | An export MUST contain the on-screen columns, apply the filters, include all rows up to the cap, and carry the About block of §8.3 (not in CSV) with the digest | ADM-100, enhancement (E3) |
+| FR-17 | An export MUST serialise the stored result of the run on screen: the on-screen columns, the filters applied, all rows up to the cap, and carry the About block of §8.3 (not in CSV) with the digest defined by the canonical form of §8.3 and the run's `as_of` | ADM-100, enhancement (E3) |
 | FR-18 | Caps of §8.3 MUST refuse and explain. They MUST NEVER truncate silently | TM-TB15-T8 |
 | FR-19 | All export bytes MUST come from the P7 encoders. A raw writer MUST fail CI | TM-TB15-T1 |
 | FR-20 | Exports MUST run as asynchronous jobs, be stored tenant-prefixed with expiry, download only through authenticated requests, return 410 when expired and be deletable early | DM-72.I3 |
@@ -698,12 +759,12 @@ Each FR names a parity ID or `enhancement`. Others cite them as `reports-2a#FR-n
 | ID | Requirement | Parity |
 | --- | --- | --- |
 | FR-23 | A schedule MUST be creatable from the open report with presets, a recurrence per §8.4 (1-hour floor), an IANA time zone and DST rules | ADM-101 |
-| FR-24 | Delivery MUST support attachment, ZIP and (for accounts) link, formats per recipient, and notify-only-if-data | ADM-101 |
-| FR-25 | Each run MUST use the owner's scope and permissions at that moment. A disabled owner or one who lost `reports.run` MUST pause the schedule with the reason | DM-73.I1 |
-| FR-26 | An external recipient MUST need `reports.deliver.external` and a confirmation. The sheet MUST state that recipients receive what the owner can see | DM-73.I2, TM-TB15-T2 |
+| FR-24 | Delivery MUST support attachment, ZIP and (for accounts) link, formats per recipient, and notify-only-if-data. A link MUST be downloadable only by the named recipient account holding `reports.export`, MUST serve the owner-scope artefact exactly as an attachment would, and every download MUST be audited | ADM-101 |
+| FR-25 | Each run MUST use the owner's scope and permissions at that moment. A disabled or deleted owner, or one who lost `reports.run`, `reports.export` or `reports.schedule`, MUST pause the schedule with the reason. At each fire every external recipient MUST be re-evaluated against the current allowed domains and the owner's current `reports.deliver.external`, and a failing recipient MUST fail alone with the reason | DM-73.I1 |
+| FR-26 | An external recipient MUST need `reports.deliver.external` and a confirmation that is part of the Action preview. The sheet MUST state that recipients receive what the owner can see | DM-73.I2, TM-TB15-T2 |
 | FR-27 | Each recipient MUST have its own delivery state shown on the schedule, and failures MUST notify the owner after retries | enhancement (E4) |
 | FR-28 | Per-DC reports MUST NOT run more often than daily. Missed runs after downtime MUST run once | DM-44.I2 |
-| FR-29 | Every schedule configuration change, including reassignment (which pauses it), MUST be audited | DM-73, T-0047 |
+| FR-29 | Schedule create, update, pause, resume, reassign and delete MUST be EP-3 Actions `reports.schedule.*` with preview diff, gate, step-up, audit and undo that restores the previous version (ADR-0005 rule 10). Reassignment MUST pause the schedule. Runs and deliveries MUST NOT be Actions | DM-73, ADR-0005 rule 10 |
 
 **Permissions, API, states**
 
@@ -889,7 +950,7 @@ Evidence: P7 corpus test (FF-SP11 oracle)
 AC-27 (E3)
 Given a nested-membership view exported to XLSX
 When the file is opened
-Then the first sheet states the report, scope, filters, freshness, generated by and at, row count and digest, every row has Via, and the digest equals the SHA-256 of the canonical rows
+Then the first sheet states the report, scope, filters, freshness, generated by and at, row count and digest, every row has Via, and the digest equals the SHA-256 of the §8.3 canonical form recomputed from the run's rows (AC-50)
 Evidence: test recomputing the digest
 
 AC-28
@@ -925,7 +986,9 @@ Evidence: test
 AC-33 (DM-73.I2)
 Given a recipient address outside the allowed domains and an owner without reports.deliver.external
 When the owner saves the schedule
-Then it is refused; with the permission it needs the confirmation, and an empty allowed-domains list makes every address external
+Then the reports.schedule.create Action is refused at preview; with the permission, the preview shows
+  the confirmation "Data leaves your organisation: <address>" in the same diff, and an empty
+  allowed-domains list makes every address external
 Evidence: API and UI tests
 
 AC-34
@@ -994,6 +1057,59 @@ Given each screen of Flow A
 When it is shown empty, loading, stale, failed and at 100,000 rows
 Then each state is real and every control does something
 Evidence: qa-verifier click-through with screenshots
+
+AC-45 (ADR-0005 rule 10)
+Given a schedule is created, changed, paused, resumed, reassigned and deleted
+When each is performed
+Then each is a reports.schedule.* Action with a preview diff against the current version, an audit
+  event and an undo that restores the previous version; and a report run or a delivery appears as
+  bookkeeping, not as an Action
+Evidence: operation-kernel test per Action; fitness O3 output
+
+AC-46 (DM-73.I1)
+Given a schedule with an external recipient, saved when the owner held reports.deliver.external and
+  the address was external
+When the owner loses reports.deliver.external, and separately when an admin adds the address's
+  domain to the allowed list
+Then at the next fire the first case fails that recipient alone with the reason while the other
+  recipients are delivered and the schedule stays active; in the second case the address is
+  delivered with no external check. Separately, an owner who loses reports.export pauses the schedule
+Evidence: mail-catcher test with permission and allowed-domain changes between fires
+
+AC-47 (TM-TB15-T2 residual)
+Given a schedule owned by an account scoped to two OUs, a link recipient account scoped to one OU
+  holding reports.export, a second account without reports.export, and a third account that is not
+  a recipient
+When each opens the delivery link
+Then the named recipient downloads the owner-scope artefact, whose digest equals the one in the run
+  record; the other two are refused; a signed-out request is refused; each attempt is audited
+Evidence: API tests with digest comparison; audit query
+
+AC-48 (FR-11, FR-17)
+Given a report on screen with a run R
+When the admin pages and sorts, then exports, then changes a filter, then exports again
+Then paging and sorting return rows of R with unchanged as_of, the first export's rows and digest
+  equal R's stored result, and the filter change creates a new run R2 whose as_of, count and
+  export are its own
+Evidence: API test comparing run ids, as_of, row sets and digests
+
+AC-49 (FR-09, T-0182)
+Given a lab with 40 users of whom 37 are currently locked out by the §6.4 rule and more than one page
+  of other users
+When Locked-out Users is filtered, sorted by "Lockout ends" and paged
+Then the total is 37, pages contain only locked-out users in the sorted order, and the compiled
+  query contains the lockout predicate with now and the policy bound as arguments, with no
+  application-side filtering
+Evidence: API test; query-plan or compiled-SQL assertion; table-driven cases
+
+AC-50 (§8.3 canonical form)
+Given a run and its exported CSV, XLSX and (once shipped) PDF and HTML files, and a test that
+  recomputes the digest from the run's rows through the API using the canonical form
+When the digests are compared
+Then they are equal for every format, they change when any value, the column order or the row order
+  changes, and a null differs from an empty string
+Evidence: platform/export canonical-form test vectors (T-0101)
+
 ```
 
 ### Traceability: which FR each build ticket consumes
@@ -1001,11 +1117,12 @@ Evidence: qa-verifier click-through with screenshots
 | Ticket | FRs |
 | --- | --- |
 | T-0075 | FR-05, FR-07, FR-12 |
-| T-0099 | FR-04, FR-06–FR-14 (USR reports first) |
+| T-0182 | FR-09 (derived columns evaluated in the query), AC-49 |
+| T-0099 | FR-04, FR-06–FR-14 (USR reports first), AC-48, AC-49 |
 | T-0100 | FR-01, FR-02, FR-09, FR-10, FR-14, FR-15 (remaining reports) |
-| T-0101, T-0102 | FR-16, FR-17, FR-19, FR-21 |
+| T-0101, T-0102 | FR-16, FR-17, FR-19, FR-21, canonical form and AC-50 |
 | T-0103 | FR-17, FR-18, FR-20–FR-22 |
-| T-0104 | FR-23–FR-29 |
+| T-0104 | FR-23–FR-29 (AC-30–AC-38, AC-45–AC-47) |
 | T-0106, T-0114, T-0115 | §5, FR-01–FR-04, FR-32 |
 | T-0116 | AC-21, AC-22, AC-23, AC-39 |
 
@@ -1021,3 +1138,4 @@ cited in §6.4–§6.6 and §10. Items the consult could not source carry `[UNVE
 ## Changelog
 
 - 2026-10-02 · created (T-0067)
+- 2026-10-02 · revised after the solution-architect review: schedule writes are `reports.schedule.*` Actions (ADR-0005 rule 10, §8.4, FR-29, Q5 dropped); run-time checks of every permission and external recipient (FR-25); one delivery-link rule (FR-24); run and snapshot semantics (§8.1, FR-11, FR-17); derived states evaluated in the query (§6.4, FR-09, T-0182); canonical digest form (§8.3); per-DC wording mechanism-neutral (§6.5, Q2 to T-0181). Added AC-45 to AC-50
