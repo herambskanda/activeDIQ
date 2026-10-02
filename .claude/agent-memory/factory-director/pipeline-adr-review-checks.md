@@ -21,5 +21,8 @@ rule 7's live re-check covered only AD ancestry, while D-0001 puts Entra in v1. 
   administrative_unit, include_correlated across two connections), not just "ancestry".
 - For a CI-compared transitions block, test the edges: all-skipped plan, a verify_failed step under undo,
   re-plan changing a hash that approvals bind to (DC pin), bootstrap windows such as the 30-day sock-puppet rule.
+- On the re-review, grep the contradiction you flagged as a phrase (e.g. 'same writable DC') across domain-model and
+  blueprint. Rework 1 fixed DM-42.I3, but its twin in the DomainController invariants and blueprint §4.2/§8 survived.
+  Route those to the architecture-map ticket and ratify anyway. Round 2 ratified in one pass (D-0015).
 
 Related: [[generator-adr-review-checks]], [[adr-review-allowlist-and-ownership]], [[domain-model-review-checks]]
