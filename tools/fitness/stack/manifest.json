@@ -273,7 +273,9 @@
       "reason": "third-party OpenAPI generator: tools/gen/api is the one generator (ADR-0004)"
     }
   ],
-  "denylistExtends": [],
+  "denylistExtends": [
+    "tools/fitness/profiles/uem-denylist.json"
+  ],
   "exceptions": {
     "platformAdapters": [],
     "sidecars": [],

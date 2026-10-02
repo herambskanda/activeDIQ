@@ -55,6 +55,26 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
     package path in backticks in the Project cell. A transitive copyleft hit means picking another
     library, or an ADR plus a `licenceExceptions` entry.
   - F5: set the ADR's status through the `adr` skill first.
+- **`fitness-profiles`** (P1, P7, U1, U2 and the activation table, ADR-0002): `make fitness-profiles`
+  re-runs it alone and prints the activation table first. `-checks P1,U2` runs a subset.
+  - P1 domain code: take the compose import, environment read or profile-named identifier out of
+    domain code; pass a value in from the composition root instead, or name the *capability*
+    (`directory.ad`), never the profile. Profile logic belongs in `internal/compose/**`.
+  - P1 capability asymmetry: both self-hosted manifests get the capability, or the solution-architect
+    adds an ADR-cited `Exceptions` entry to the manifest first.
+  - P7: delete the branch (`git branch -D <name>`, and the remote copy); only `main` and
+    `factory/T-NNNN` exist.
+  - U1: remove the module. Ported UEM or PatchIQ code is copied with its source named in the commit
+    and placed under `internal/platform/`; it is never imported or `replace`d.
+  - U2: the platform root imports nothing from the directory domain, connector, modules or compose.
+  - Activation (`activation table P2: ... not implemented`): a subject has landed (an installer
+    directory, the first connector package, the updater, the agent protos) and its check does not
+    exist yet. Implement the check and register its `command` in
+    `tools/fitness/profiles/manifest.json`; never delete the row. A new subject path is a change to
+    the row's `paths` and is reviewed like a rule change.
+  - Lab runs the table cannot do yet (P2 on a `windows-2025` runner, P3 against the Samba lab, P6
+    with egress denied) are the registered commands' job; the lab and runner must be documented
+    in a runbook by the ticket that registers them.
 - **`fitness-modules`**: the message names the file, line and blueprint rule. Fix the import. Do not
   edit the rule to pass; a rule changes only by amending the blueprint/ADR.
 - **`fitness-safeprim`** (FF-SP1 to FF-SP3, safe-primitives §8): each finding reads

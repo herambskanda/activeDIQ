@@ -523,5 +523,91 @@ must_pass "FF-SP6 ldapfilter oracle on an escaped injection" "$orbin" ldapfilter
 printf '%s\n' '{"id":"LF-01","primitive":"ldapfilter","call":"Eq","args":{"attr":"cn","value":{"utf8":"*)(uid=*"}},"expect":{"render":"(cn=*)(uid=*)"},"hostile":true,"verified":"doc"}' >"$orc/testdata/safe-primitives/ldapfilter.jsonl"
 must_fail_with "FF-SP6 ldapfilter oracle on an unescaped injection" 'LF-01: .*go-ldap rejects the rendered filter' "$orbin" ldapfilter -root "$orc"
 
+# --- fitness-profiles (ADR-0002 P1, P7, U1, U2, activation table), the real CLI on throw-away trees
+pf="$tmp/pf"
+fresh_pf_tree() {
+  rm -rf "$pf"; mkdir -p "$pf/internal/platform/capability" "$pf/internal/platform/tenant" "$pf/internal/directory/dn" \
+    "$pf/internal/compose/profile" "$pf/internal/compose/config" "$pf/tools/fitness/profiles" "$pf/tools/fitness/stack" \
+    "$pf/knowledge/development/decisions"
+  printf 'module pf.test\n\ngo 1.27.0\n' >"$pf/go.mod"
+  printf -- '---\nstatus: ratified\n---\n' >"$pf/knowledge/development/decisions/0002-deployment-model.md"
+  cp tools/fitness/profiles/manifest.json tools/fitness/profiles/uem-denylist.json "$pf/tools/fitness/profiles/"
+  printf '{"denylistExtends": ["tools/fitness/profiles/uem-denylist.json"]}\n' >"$pf/tools/fitness/stack/manifest.json"
+  printf 'package capability\n\ntype ID string\n\nconst (\n\tDirectoryAD ID = "directory.ad"\n\tDirectoryEntra ID = "directory.entra"\n)\n' >"$pf/internal/platform/capability/c.go"
+  printf 'package tenant\n' >"$pf/internal/platform/tenant/t.go"
+  printf 'package dn\n' >"$pf/internal/directory/dn/d.go"
+  printf 'package config\n' >"$pf/internal/compose/config/c.go"
+  cat >"$pf/internal/compose/profile/p.go" <<'GO'
+package profile
+
+import "pf.test/internal/platform/capability"
+
+type Process struct {
+	Binary    string
+	Roles     []string
+	Providers []string
+}
+type Manifest struct {
+	Name         string
+	Processes    []Process
+	Capabilities []capability.ID
+}
+
+func Windows() Manifest {
+	return Manifest{Name: "windows", Processes: []Process{{Binary: "server", Roles: []string{"server", "connector"}, Providers: []string{"ad", "entra"}}}, Capabilities: []capability.ID{capability.DirectoryAD, capability.DirectoryEntra}}
+}
+func LinuxOCI() Manifest {
+	return Manifest{Name: "linux-oci", Processes: []Process{{Binary: "server", Roles: []string{"server", "connector"}, Providers: []string{"ad", "entra"}}}, Capabilities: []capability.ID{capability.DirectoryAD, capability.DirectoryEntra}}
+}
+func SaaS() Manifest {
+	return Manifest{Name: "saas", Processes: []Process{{Binary: "server", Roles: []string{"server", "connector"}, Providers: []string{"entra"}}}, Capabilities: []capability.ID{capability.DirectoryEntra}}
+}
+GO
+  git -C "$pf" init -q -b main && git -C "$pf" -c user.name=proof -c user.email=proof@example.test commit -q --allow-empty -m proof
+}
+profiles() { go run ./tools/fitness/profiles -root "$pf" "$@"; }
+fresh_pf_tree
+must_pass "fitness-profiles on a clean composition" profiles
+fresh_pf_tree; printf 'package dn\n\nimport _ "pf.test/internal/compose/profile"\n' >"$pf/internal/directory/dn/d.go"
+must_fail_with "fitness-profiles P1 on domain code importing the compose package" 'internal/directory/dn/d.go:3: P1 .*imports internal/compose/profile' profiles -checks P1
+fresh_pf_tree; printf 'package dn\n\nimport "os"\n\nvar v = os.Getenv("ACTIVEDIQ_PROFILE")\n' >"$pf/internal/directory/dn/d.go"
+must_fail_with "fitness-profiles P1 on domain code reading the profile variable" 'internal/directory/dn/d.go:5: P1 .*profile-selecting environment variable' profiles -checks P1
+fresh_pf_tree; printf 'package dn\n\nvar isSaaS = true\n' >"$pf/internal/directory/dn/d.go"
+must_fail_with "fitness-profiles P1 on an identifier named isSaaS" 'internal/directory/dn/d.go:3: P1 .*"isSaaS" names a deployment profile' profiles -checks P1
+fresh_pf_tree; python3 - "$pf/internal/compose/profile/p.go" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+s = s.replace("capability.DirectoryAD, capability.DirectoryEntra}}", "capability.DirectoryEntra}}", 1)  # windows loses directory.ad
+open(p, "w").write(s)
+PY
+must_fail_with "fitness-profiles P1 on self-hosted manifests that differ in a capability" 'P1 .*differ in capability "directory.ad"' profiles -checks P1
+fresh_pf_tree; python3 - "$pf/internal/compose/profile/p.go" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+s = s.replace('Providers: []string{"entra"}}}', 'Providers: []string{"ad", "entra"}}}', 1)  # the saas cell gets an AD provider
+open(p, "w").write(s)
+PY
+must_fail_with "fitness-profiles P1 on an AD provider in the saas cell" 'P1 .*carries the "ad" directory provider' profiles -checks P1
+fresh_pf_tree; git -C "$pf" branch release/customer-a
+must_fail_with "fitness-profiles P7 on a variant branch" 'P7 .*branch "release/customer-a" is not main or factory/T-NNNN' profiles -checks P7
+git -C "$pf" branch -D release/customer-a >/dev/null; git -C "$pf" branch factory/T-0038
+must_pass "fitness-profiles P7 on main and factory/T-NNNN" profiles -checks P7
+fresh_pf_tree; printf 'module pf.test\n\ngo 1.27.0\n\nrequire github.com/herambskanda/patchiq v0.0.0\n' >"$pf/go.mod"
+must_fail_with "fitness-profiles U1 on a PatchIQ module in go.mod" 'go.mod:5: U1 .*requires github.com/herambskanda/patchiq' profiles -checks U1
+fresh_pf_tree; printf 'module pf.test\n\ngo 1.27.0\n\nreplace github.com/jackc/pgx/v5 => ../pgx\n' >"$pf/go.mod"
+must_fail_with "fitness-profiles U1 on a replace outside the repository" 'go.mod:5: U1 .*points outside the repository' profiles -checks U1
+fresh_pf_tree; printf '{"denylistExtends": []}\n' >"$pf/tools/fitness/stack/manifest.json"
+must_fail_with "fitness-profiles U1 on a stack manifest that does not extend the UEM denylist" 'U1 .*denylistExtends' profiles -checks U1
+fresh_pf_tree; printf 'package tenant\n\nimport _ "pf.test/internal/directory/dn"\n' >"$pf/internal/platform/tenant/t.go"
+must_fail_with "fitness-profiles U2 on a platform package importing the directory domain" 'internal/platform/tenant/t.go:3: U2 ' profiles -checks U2
+fresh_pf_tree; mkdir -p "$pf/packaging/windows"; : >"$pf/packaging/windows/product.wxs"
+must_fail_with "fitness-profiles activation: an installer without its P2 check" 'ACT .*packaging/windows exists, which activates P2.*not implemented' profiles -checks ACT
+fresh_pf_tree; mkdir -p "$pf/internal/connector/ldap"
+must_fail_with "fitness-profiles activation: a connector without its P3 check" 'ACT .*internal/connector/ldap exists, which activates P3.*not implemented' profiles -checks ACT
+fresh_pf_tree
+must_pass "fitness-profiles prints the pending table" bash -c "go run ./tools/fitness/profiles -root '$pf' -checks ACT | grep -q 'P2 .*pending'"
+
 if [ "$fails" -ne 0 ]; then echo "ci-proof: $fails proof(s) failed" >&2; exit 1; fi
 echo "ci-proof: every gate rejects its violation and accepts clean input"
