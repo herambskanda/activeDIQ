@@ -1,6 +1,9 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
+import "../ds/tokens.css";
+import "../ds/base.css";
+import "../ds/brand.css";
 import { Shell } from "./shell";
 
 const root = document.getElementById("root");

@@ -8,7 +8,7 @@ budget: 120 lines
 
 Newest first. One dated line per material change; link the source.
 
-- 2026-10-02 · **Brand and UI direction chosen: A · Ledger** (D-0012). It is light and dense, with cobalt, IBM Plex and a labelled left rail. Next, T-0043 turns `tokens-a.css` into activeDIQ's own tokens and brand guidelines, adds a Ledger dark theme, and rebases the design skills and agents. Wireframes stay greyscale until T-0043 lands. (factory/demos/previews/brand-ui/a.html)
+- 2026-10-02 · **Brand and UI direction chosen: A · Ledger** (D-0012). It is light and dense, with cobalt, IBM Plex and a labelled left rail. activeDIQ's own tokens (`web/src/ds/tokens.css`, `--diq-*`, light and dark, AA-tested), brand guidelines and the rebased design skills and agents landed with T-0043. Design and UI work now uses them. (factory/demos/evidence/T-0043/)
 
 - 2026-10-02 · **Write pipeline and audit trail ratified** (ADR-0005, notice D-0015). Every change, configuration included, is previewed, gated, applied with a step token, verified and undoable. Our audit trail is a per-tenant hash chain with signed, anchored checkpoints and an offline verifier. It becomes `accepted` when fitness-operation and fitness-audit run in CI (T-0154). Next: T-0153 (platform/operation), ahead of the M2 checkpoint 2a config writes T-0093/0095/0096/0104; T-0155 (blueprint). (knowledge/development/decisions/0005-operation-pipeline-and-audit-trail.md)
 

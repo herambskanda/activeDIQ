@@ -71,7 +71,7 @@ addEventListener('DOMContentLoaded', () => {
   Object.assign(dot.style, {
     position: 'fixed', zIndex: 2147483647, pointerEvents: 'none',
     width: '22px', height: '22px', margin: '-11px 0 0 -11px', borderRadius: '50%',
-    background: 'rgba(110, 91, 255, 0.28)', border: '2px solid #6E5BFF',   /* --sk-accent-2; raw value OK: recording tool, not product UI */
+    background: 'rgba(10, 92, 176, 0.28)', border: '2px solid #0A5CB0',   /* --diq-signal; raw value OK: recording tool, not product UI */
     transition: 'transform 120ms cubic-bezier(.2,.7,.2,1)', left: '-50px', top: '-50px'
   });
   document.body.appendChild(dot);
@@ -83,28 +83,24 @@ addEventListener('DOMContentLoaded', () => {
 
 ## Title card template (`cards/<clip>-<nn>.html`)
 
+Cards are activeDIQ's own brand (Ledger, D-0005 and D-0012): `web/src/ds/tokens.css` plus
+`brand.css`, light warm paper by default, the wordmark and the ledger rule.
+
 ```html
 <!doctype html>
-<html data-theme="dark"><head>
-<link rel="stylesheet" href="../../../../../../design-system/tokens.css"><!-- adjust depth -->
+<html><head>
+<link rel="stylesheet" href="../../../../../web/src/ds/tokens.css"><!-- adjust depth: factory/demos/<M>/video/cards/ is 5 levels below the repo root -->
+<link rel="stylesheet" href="../../../../../web/src/ds/brand.css">
 <style>
-  html,body{margin:0;width:1920px;height:1080px;background:var(--sk-ink);color:var(--sk-text-color);font-family:var(--sk-font-sans)}
-  .wrap{position:absolute;left:var(--sk-space-9);bottom:var(--sk-space-9);right:var(--sk-space-9)}
-  .eyebrow{font:500 22px/1 var(--sk-font-mono);letter-spacing:var(--sk-tracking-label);text-transform:uppercase;color:var(--sk-muted)}
-  h1{font-weight:600;font-size:92px;letter-spacing:var(--sk-tracking-tight);margin:var(--sk-space-5) 0 0;max-width:22ch}
-  .mark{position:absolute;right:var(--sk-space-9);top:var(--sk-space-8);font:600 34px var(--sk-font-sans);letter-spacing:var(--sk-tracking-tight)}
-  .cursor{display:inline-block;width:.36em;height:.92em;background:var(--sk-accent);vertical-align:-.12em;margin-left:.06em;border-radius:1px}
+  html,body{margin:0;width:1920px;height:1080px;background:var(--diq-bg);color:var(--diq-text);font-family:var(--diq-font-sans)}
+  .bar{position:absolute;left:0;right:0;top:0;height:96px;background:var(--diq-surface);border-bottom:1px solid var(--diq-line-strong)}
+  .wrap{position:absolute;left:var(--diq-space-9);bottom:var(--diq-space-9);right:var(--diq-space-9)}
+  .eyebrow{font:500 22px/1 var(--diq-font-mono);letter-spacing:var(--diq-tracking-label);text-transform:uppercase;color:var(--diq-text-3)}
+  h1{font-weight:600;font-size:92px;letter-spacing:var(--diq-tracking-title);margin:var(--diq-space-5) 0 0;max-width:22ch}
+  .mark{position:absolute;left:var(--diq-space-9);top:32px;font-size:34px}
 </style></head><body>
-  <div class="mark">activeDIQ<span class="cursor"></span></div>
+  <div class="bar diq-ruler"></div>
+  <div class="mark"><span class="diq-wordmark"><span class="diq-wordmark-a">active</span><span class="diq-wordmark-b">DIQ</span></span></div>
   <div class="wrap"><div class="eyebrow">[ M1 · USER LIFECYCLE ]</div><h1>Unlock and reset in one step</h1></div>
 </body></html>
-```
-
-Card sizes are 2× the token scale because the frame is 1920 px viewed small; keep the ratios
-(eyebrow : heading ≈ 1 : 4). Render:
-
-```bash
-npx --no-install playwright screenshot --viewport-size=1920,1080 \
-  "file://$PWD/factory/demos/<M>/video/cards/<clip>-00.html" \
-  factory/demos/<M>/video/raw/<clip>/card-00.png
 ```

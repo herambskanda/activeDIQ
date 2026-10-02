@@ -38,9 +38,10 @@ longer lose.
 
 - `knowledge/memory/ceo-preferences.md` — every taste decision the CEO has already made. Never
   re-ask one.
-- `../design-system/tokens.css`, `../design-system/brand-guidelines.html`,
-  `../design-system/README.md` and `knowledge/product/design-system/` — the skenzeriq system is the
-  starting point, not a suggestion.
+- `web/src/ds/tokens.css`, `knowledge/product/design-system/brand-guidelines.md` and the rest of
+  `knowledge/product/design-system/` — activeDIQ's own Ledger system (D-0005, D-0012) is the
+  starting point, not a suggestion. skenzeriq's `../design-system/` is a craft reference only and
+  the brand of the Factory Board and company documents, never of the product.
 - The spec in `knowledge/product/specs/` and the ManageEngine research in
   `knowledge/business/market-research/` (documented flows, customer complaints about the UI).
 - Ask `Explore` for "which specs touch delegation and what flows do they describe?" — do not read

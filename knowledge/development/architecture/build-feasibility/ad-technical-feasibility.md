@@ -48,7 +48,7 @@ sources_last_checked: 2026-10-02
 - On new WS2025 deployments, DCs require LDAP signing (sealing) after a SASL bind. Confidential attributes can only be read or written over encrypted connections. KDCs no longer issue RC4 TGTs ([WS2025 what's new](https://learn.microsoft.com/en-us/windows-server/get-started/whats-new-windows-server-2025)).
 - NTLM is deprecated, and NTLMv1 has been removed ([deprecated features](https://learn.microsoft.com/en-us/windows/whats-new/deprecated-features)).
 - go-ldap's Kerberos bind does **not** negotiate SASL signing or sealing, and supports channel binding **only** through Windows SSPI ([go-ldap PR #565](https://github.com/go-ldap/ldap/pull/565)).
-- gokrb5 v8 has been dormant since 2023. Its maintained successor, [go-krb5/krb5](https://github.com/go-krb5/krb5), adds channel bindings, RFC 3244 set-password and S4U. We therefore own a small GSSAPI adapter and run LDAP over TLS (LDAPS or StartTLS).
+- gokrb5 v8 has been dormant since 2023. Its maintained successor, [go-krb5/krb5](https://github.com/go-krb5/krb5), has RFC 3244 set-password and S4U. Its channel bindings exist **only on `main`**, not in the v0.1.0 tag ([#117](https://github.com/go-krb5/krb5/pull/117); T-0023 findings, `t-0023-ldap-gssapi-cbt-spike.md`). We therefore own a small GSSAPI adapter, pin go-krb5/krb5 to a `main` commit, and run LDAP over TLS (LDAPS or StartTLS).
 
 **Long poles.**
 1. The password filter, plus **Microsoft's file-signing service for LSA plug-ins** (mandatory under LSA protection).
@@ -290,7 +290,7 @@ activeDIQ must work end to end with NTLM blocked: Kerberos for LDAP, SMB, RPC an
 - A DC that enforces signing rejects SASL binds that don't request signing, and rejects simple binds over clear text.
 - On new WS2025 deployments signing is **required by default** and channel binding defaults to "When supported" ([LDAP signing](https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/ldap-signing)).
 - Channel binding can be set to "Always" (`LdapEnforceChannelBinding = 2`; [KB4520412](https://support.microsoft.com/topic/2020-2023-and-2024-ldap-channel-binding-and-ldap-signing-requirements-for-windows-kb4520412-ef185fb8-00f7-167d-744c-f299a66fc00a)). Therefore **every SASL bind over TLS must carry a `tls-server-end-point` CBT**.
-- go-ldap's own GSSAPI client cannot send one (only its Windows SSPI client can), so we provide a `GSSAPIClient` implementation backed by go-krb5/krb5's channel-binding support `[LAB]`.
+- go-ldap's own GSSAPI client cannot send one (only its Windows SSPI client can), so we provide a `GSSAPIClient` implementation backed by go-krb5/krb5's channel-binding support. That support is on `main` only, not in v0.1.0. On Samba 4.22 with strong auth the adapter binds over LDAPS and StartTLS, and unbound binds are rejected (T-0023, `t-0023-ldap-gssapi-cbt-spike.md`). Windows is still unproven (T-0133).
 - The Phase-0 acceptance test: binds succeed against a DC with signing enforced and channel binding "Always", and produce no events 2887, 3039 or 3074/3075.
 
 ### 2.5 Secrets and credential handling
@@ -342,7 +342,7 @@ The previous product failed because security-relevant strings were built with `f
 | Need | Go | .NET 10 | Notes |
 |---|---|---|---|
 | LDAP + AD controls | [go-ldap/ldap v3.4.14](https://github.com/go-ldap/ldap) (MIT, 2026-07). Has Paging, DirSync, SD flags, Show Deleted, Notification, server-side sort, tree delete, RFC 4533, `EscapeFilter` / `EscapeDN`, and a generic `Extended`. VLV and Extended DN are OID constants only. **No SASL sign/seal**; **CBT only through Windows SSPI** ([PR #565](https://github.com/go-ldap/ldap/pull/565)). | `System.DirectoryServices.Protocols`, cross-platform since .NET 5. On Linux/macOS it calls OpenLDAP `libldap`, and CBT, sign/seal and some controls behave differently there. `System.DirectoryServices` and `AccountManagement` are **Windows-only** ([API docs](https://learn.microsoft.com/en-us/dotnet/api/system.directoryservices.protocols)). | Go needs our own GSSAPI adapter; .NET on Linux inherits libldap's quirks. |
-| Kerberos | gokrb5 v8 is **dormant since 2023** (change-password only, no CBT, no S4U). Its successor [go-krb5/krb5](https://github.com/go-krb5/krb5) (v0.1.0, Feb 2026) adds `SetPasswd`, S4U2Self/Proxy, tls-server-end-point / tls-exporter CBT and SASL security layers. | Platform GSSAPI on Linux; SSPI on Windows; [Kerberos.NET](https://www.nuget.org/packages/Kerberos.NET) (managed, active) | go-krb5/krb5 is young, so budget to fork it if needed. |
+| Kerberos | gokrb5 v8 is **dormant since 2023** (change-password only, no CBT, no S4U). Its successor [go-krb5/krb5](https://github.com/go-krb5/krb5) has `SetPasswd` and S4U2Self/Proxy. Its only tag, **v0.1.0 (Feb 2026), has no channel binding and no SASL layers**. Those landed on `main` in Aug 2026: [#117](https://github.com/go-krb5/krb5/pull/117) channel binding (`8b6f497`), [#120](https://github.com/go-krb5/krb5/pull/120) KILE CBT advertisement and [#114](https://github.com/go-krb5/krb5/pull/114) GSSAPI SASL. T-0023 bound with `tls-server-end-point` at `main` `f89757a` with no patches (`t-0023-ldap-gssapi-cbt-spike.md`). | Platform GSSAPI on Linux; SSPI on Windows; [Kerberos.NET](https://www.nuget.org/packages/Kerberos.NET) (managed, active) | Pin a `main` commit until a tag carries #117/#120/#114, never v0.1.0. Fork only on trigger (ADR-0001 erratum E1): upstream stops merging, T-0133 finds a WS2025 wire defect, or no tag exists at GA. |
 | MS-RPC (SAMR, LSAD, DRSR, EVEN6, SRVS, DNSP, NRPC, WMI) | [oiweiwei/go-msrpc v1.6.4](https://github.com/oiweiwei/go-msrpc) (MIT, 2026-09). Generated stubs for 100+ protocols; NTLM, Kerberos and Netlogon auth; named pipes and TCP. | P/Invoke Win32 on Windows; little managed MS-RPC on Linux | Go is *ahead* for cross-platform RPC. |
 | SMB2/3 (SYSVOL, ACLs) | go-smb2 **revived in Sep 2026** (`/v2`, untagged: Kerberos, SMB3 encryption, security-descriptor get/set); [cloudsoda fork](https://github.com/cloudsoda/go-smb2); [jfjallid/go-smb](https://github.com/jfjallid/go-smb) | Windows: native UNC. Linux: limited | Pin commits; contribute upstream. |
 | WinRM / PSRP | [masterzen/winrm](https://github.com/masterzen/winrm): message encryption is **NTLM-only**, so Kerberos needs HTTPS. **No mature Go PSRP with a structured AddCommand.** [go-psrp](https://github.com/smnsjas/go-psrp) is new and script-text only. | Full PowerShell SDK; PS 7.6 LTS (.NET 10, supported to 2028-11-14) ([lifecycle](https://learn.microsoft.com/en-us/powershell/scripting/install/powershell-support-lifecycle)) | Use .NET for PowerShell-heavy work, Python [pypsrp](https://github.com/jborean93/pypsrp) for lab tooling. |
@@ -384,7 +384,7 @@ Why Rust over C++ by default: these DLLs run as SYSTEM or inside LSASS, where a 
 ### 3.5 Recommendation
 
 **Go** for the server, the connector and the Windows agent (as platform-agent modules).
-- We own four thin adapters: a GSSAPI client with CBT on go-krb5/krb5; a RADIUS server; a SAML IdP on goxmldsig; a typed PowerShell bridge.
+- We own four thin adapters: a GSSAPI client with CBT on go-krb5/krb5 at a pinned `main` commit (no fork unless a trigger in §3.1 fires; ADR-0001 erratum E1); a RADIUS server; a SAML IdP on goxmldsig; a typed PowerShell bridge.
 
 **Rust (C++ fallback)** for the password-filter and credential-provider DLLs. **Swift** for macOS. **C** for PAM.
 
@@ -404,7 +404,7 @@ House consistency wins wherever it isn't blocked: Go is blocked only inside LSAS
 | **Directory connector** | Embedded in the server (on-prem) or a standalone process near the DCs (SaaS/MSP) | Go | LDAP/Kerberos/SMB/MS-RPC to DCs; DC locator; snapshots and DirSync; executes typed write operations; dials out to the control plane |
 | **RADIUS service** | On-prem, near the VPN | Go | RADIUS with mandatory Message-Authenticator; RADIUS/TLS |
 | **SSPR edge** (optional) | DMZ | Go (+ static React) | Stateless proxy for the public SSPR flows; no secrets; the server tunnels out to it |
-| **Platform agent: `ad-dc` module** | Every DC (optional but required for full auditing and password policy) | Go | Security-log subscription, password-filter IPC, local policy cache, health |
+| **Platform agent: `addc` module** | Every DC (optional but required for full auditing and password policy) | Go | Security-log subscription, password-filter IPC, local policy cache, health |
 | **Password filter DLL** | LSASS on every writable DC | Rust/C++ | Policy checks; change notifications → agent |
 | **Platform agent: `fileserver` module** | Windows file servers | Go | File auditing, ACL operations, effective access |
 | **Windows management helper** (optional) | One member server | Go agent + .NET 10 helper | `Get-GPOReport`, `Backup-GPO`, RSoP; WS-only PowerShell |
@@ -431,8 +431,8 @@ House consistency wins wherever it isn't blocked: Go is blocked only inside LSAS
 |         v                        v                            |                                            |
 |  +------------------------------------------+     +-----------+-----------+   +------------------------+   |
 |  | Domain controllers (AD DS, DNS, SYSVOL)  |     | platform agent        |   | platform agent         |   |
-|  |   LSASS + pwd-filter DLL --named pipe--> | --> | 'ad-dc' module (DC)   |   | 'fileserver' / 'mgmt-  |   |
-|  |   Security log --EvtSubscribe----------> |     | buffer · policy cache |   |  helper' modules       |   |
+|  |   LSASS + pwd-filter DLL --named pipe--> | --> | 'addc' module (DC)    |   | 'fileserver' /         |   |
+|  |   Security log --EvtSubscribe----------> |     | buffer · policy cache |   | 'mgmthelper' modules  |   |
 |  +------------------------------------------+     +-----------------------+   +------------------------+   |
 |                                                                                                            |
 |  Endpoints: Windows credential provider (Rust/C++) · macOS PSSO ext / auth plug-in · Linux PAM             |
@@ -458,7 +458,7 @@ House consistency wins wherever it isn't blocked: Go is blocked only inside LSAS
 3. **Change and audit.** DirSync deltas (what/when) + agent events (who: 5136/4738/…) → correlator (GUID + originating DC + time) → change timeline, alerts, SIEM export.
 4. **SSPR (web).** User → edge → server (enrollment check, MFA) → connector password reset with `…2239` → result. If the password filter is installed, the DC's filter enforces our policy first.
 5. **SSPR at logon.** Credential-provider tile → pinned-TLS SSPR API (direct or through the edge) → same as flow 4 → the provider submits the new credential to LogonUI → the platform agent refreshes cached credentials after reconnect.
-6. **Password sync.** Filter `PasswordChangeNotify` → DPAPI-encrypted queue → `ad-dc` module → server → Graph/Google targets (retries, idempotent).
+6. **Password sync.** Filter `PasswordChangeNotify` → DPAPI-encrypted queue → `addc` module → server → Graph/Google targets (retries, idempotent).
 7. **MFA/SSO/RADIUS.** Browser ↔ server IdP (OIDC/SAML/WebAuthn); VPN → RADIUS service → server MFA (push/TOTP) → Access-Accept/Reject with Message-Authenticator.
 
 ### 4.5 Where multi-tenancy lives
@@ -616,7 +616,7 @@ Deallocated VMs incur no compute charges, but disks and networking still bill ([
 | **Auditing at scale** | DC event volume; ≈ 3k eps per collector; no gap signal on log wrap; storage and retention costs | Agent `EvtSubscribe` throughput test at 5k eps synthetic; WEF → own MS-WSMV receiver prototype (HTTPS with client certs first, Kerberos-encrypted second); measure Postgres partitioned ingest. |
 | **Effective permissions (AD + NTFS)** | Must match Windows access-check semantics exactly | Implement the AD access check over the typed SD model; compare with Windows "Effective Access" on 1,000 generated cases (golden tests on the Windows runner). |
 | **macOS Platform SSO** | Requires activeDIQ to be an IdP plus a Swift extension, with Apple entitlements and notarization | Defer to Phase 3; spike only the authorization-plug-in fallback earlier if sales need it. |
-| **LDAP hardening interop** | go-ldap has no CBT/sign-seal on Linux; go-krb5/krb5 is young | The Phase-0 gate in §2.4: bind under signing + CBT "Always" on WS2025 and Samba 4.21+, with no 2887/3039/3074 events. |
+| **LDAP hardening interop** | go-ldap has no CBT/sign-seal on Linux; go-krb5/krb5 is young and its CBT is untagged (`main` only) | The Phase-0 gate in §2.4: bind under signing + CBT "Always" on WS2025 and Samba 4.21+, with no 2887/3039/3074 events. |
 
 ### 6.3 Phased technical roadmap `[EST]`
 

@@ -24,7 +24,7 @@ design | **accepted YYYY-MM-DD** — fitness function `<job>` runs in CI | super
 **Kind:** technical (factory-director ratifies, notice to the CEO) | strategic fork (the CEO decides)
 **Deciders:** <agents / heramb> · **Ticket:** T-NNNN · **Parity / scope refs:** ADM-…, ADSS-… (if any)
 
-> Amendments (ratified ADRs only; accepted ADRs are immutable): `YYYY-MM-DD — what changed and why`.
+> Amendments (ratified ADRs only; accepted ADRs take errata only, `adr` skill §5): `YYYY-MM-DD — what changed and why`.
 
 ## Context
 

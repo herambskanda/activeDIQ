@@ -75,7 +75,7 @@ design for: 100k+ users, 10k-member groups, forests with several domains.
   ≤ 20 characters and its forbidden characters, uniqueness (UPN, `sAMAccountName`, mail), the
   effective password policy (FGPP or domain policy) for that user. Show the rule that applies,
   e.g. "Must be 14+ characters (policy: Tier1-Admins)".
-- Error text sits under the field, `--sk-crit` with an icon, and is linked via
+- Error text sits under the field, `--diq-crit` with an icon, and is linked via
   `aria-describedby`. A summary at the top on submit links to each invalid field.
 
 ## Impact preview + confirmation
@@ -125,11 +125,25 @@ password resets for more than one user; anything touching a Tier-0 object; GPO c
 
 ## Permission-aware UI
 
+The visibility rule is IA §8.2 ([`information-architecture.md`](../../../knowledge/product/design-system/information-architecture.md)).
+It supersedes the earlier "hide or disable" wording.
+
 - The server is the only enforcement point; the UI reflects it.
-- **Hide** what the role can never do in this scope. **Disable with a reason** (tooltip, and
-  in the accessible name) what is temporarily unavailable ("Account is Tier-0: requires
-  Tier-0 operator role").
 - **No dead buttons**: never render a control that will fail with 403. A 403 that reaches the
   UI anyway is a bug, and the error state says which permission was missing.
+
+| Situation | UI |
+| --- | --- |
+| The account holds the capability in **no** assignment | **Hidden**: the section, the action, the palette entry, even the checkbox column |
+| Held, but **not over this object** (readable through another assignment) | **Disabled with the reason and who can help** (up to two group subjects that hold it, else "activeDIQ administrators"). The reason is in a tooltip and in the accessible name |
+| Held in **request** mode | Shown as **Request…**; it creates a Request bound to the exact plan |
+| The target is **Tier 0** | **Disabled with the Tier-0 reason**: "Domain Admins is Tier 0. activeDIQ never changes Tier-0 objects." Never a role-based reason: v1 has no role that can change Tier 0 |
+| Blocked by a **condition** (constraint, batch too large, DC unreachable, restricted-management AU) | **Disabled with that reason**; the plan returns `blocked` with a reason, it never fails at apply |
+| Needs **step-up** MFA | **Enabled**; the inline step-up prompt appears at the point of action |
+| The state makes it meaningless (Unlock on an unlocked account) | **Hidden** (state, not permission) |
+| The object is **not readable** through any assignment | **Not shown anywhere**: not in lists, search or counts. Empty states name the scope instead |
+
 - Delegated scope is visible: "Scope: OU=Sales,DC=lab,DC=activediq,DC=test" in the header for scoped
   roles.
+- Tier 0 uses the `Tier 0` chip: a text-colour outline and the label, no status colour, so it
+  survives colour removal.

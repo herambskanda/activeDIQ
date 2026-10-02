@@ -70,8 +70,8 @@ on the answer.
 | `index.md` | The three side by side, plus what changes between them |
 
 Each HTML file shows the same 25 sample users and the same columns: name, sAMAccountName, OU,
-last logon, enabled, locked. It links `/tokens.css`, keeps all other CSS and SVG inline, and
-has "Preview — sample data" in the corner.
+last logon, enabled, locked. It inlines activeDIQ's `--diq-*` tokens (`web/src/ds/tokens.css`), keeps all other CSS and SVG
+inline, and has "Preview — sample data" in the corner.
 
 **Context file** (`/tmp/D-ctx.md`):
 

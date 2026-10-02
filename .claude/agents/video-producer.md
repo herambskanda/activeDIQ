@@ -52,7 +52,8 @@ today".
    Re-recordable from scratch by one command.
 4. **Narrate** — from the script; the voice/TTS the CEO chose; levels normalised.
 5. **Edit** — ffmpeg: trim dead time, keep real response times honest (speed-ups are labelled),
-   title and end cards from the design system's brand assets.
+   title and end cards from activeDIQ's own brand assets: `web/src/ds/tokens.css`, `brand.css` and
+   `knowledge/product/design-system/brand-guidelines.md` (Ledger; never skenzeriq's brand, D-0005).
 6. **Captions** — SRT/VTT generated from the script and checked against the audio.
 7. **Package** — under `factory/demos/<milestone>/`: script, video, captions, scene-to-goal map,
    known limitations; large media follows the repo's gitignore rules.

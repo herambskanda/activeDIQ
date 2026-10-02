@@ -18,7 +18,7 @@ Lab procedures (start, seed, reset, Windows and Entra labs): `reference/ad-lab.m
 | --- | --- | --- | --- | --- |
 | **Unit** | Pure logic: codecs, filter/DN builders, RBAC evaluation, filter compiler, job state machine | Nothing external; injected clock | whole suite < 1 min | every commit |
 | **Integration** | Connector ↔ directory; store ↔ PostgreSQL; handlers ↔ store + lab | Samba AD lab (`small` tier), real PostgreSQL | < 10 min | every commit |
-| **Contract** | Responses vs `api/openapi.yaml`; breaking-change diff; generated clients compile; PowerShell module vs API | Running server + lab | < 5 min | every commit touching API |
+| **Contract** | Responses vs the bundled `api/openapi/` contract (ADR-0004); breaking-change diff; generated clients compile; PowerShell module vs API | Running server + lab | < 5 min | every commit touching API |
 | **E2E** | A few critical admin journeys through the real UI | Full stack + lab, Playwright | < 15 min | every commit touching UI; nightly full |
 | **Performance** | Budgets from `engineering-standards` §7 | `scale` tier (50k users) | nightly | before milestone demo |
 | **Windows-only** | Event logs, GPO, password filter, credential provider, real error strings | Windows lab (CEO-approved) | manual or scheduled | per feature, per release |
@@ -78,14 +78,14 @@ Never test against a customer, partner or production tenant.
 - Edge cases are first-class fixtures: commas, `#`, `+`, quotes, leading/trailing spaces, non-BMP
   Unicode, 64-char CNs, 20-char `sAMAccountName`s, disabled, expired, locked, must-change,
   never-expires, nested and cyclic groups, empty OUs, huge groups.
-- Fixtures live only in `testdata/`, `lab/seed/`, `e2e/fixtures/` and Storybook stories. The
+- Fixtures live only in `testdata/`, `lab/seed/`, `web/e2e/fixtures/` and Storybook stories. The
   **demo seed** (`lab/seed/demo`) feeds the running product for demos through the real API and
   directory — it is never imported by product code. A fixture under `web/src` or `internal/` is a
   review blocker (no fake data in the UI).
 
 ## 5. E2E with Playwright — evidence for QA
 
-- Suites in `e2e/`, run against the full stack on the lab. Locate by role and label, not CSS.
+- Suites in `web/e2e/` (TypeScript lives only under `web/`, ADR-0001 rule 1), run against the full stack on the lab. Locate by role and label, not CSS.
 - Screenshots at each AC state: `factory/demos/evidence/<ticket>/<ac#>-<state>.png`
   (e.g. `ac2-empty.png`, `ac3-error-dc-unreachable.png`). Projects for light and dark mode and
   for 1280 and 1920 widths. Trace on failure.
@@ -106,9 +106,9 @@ Before `advance`, the owner runs the relevant layers and writes evidence mapped 
 
 ```
 Evidence (T-0042)
-AC1 ranged retrieval: $ go test ./internal/directory/ldap -run TestMemberRange -count=1
-    ok   activediq/internal/directory/ldap  2.31s
-AC2 3,000-member group (Samba small tier): $ make lab-up TIER=small && go test -tags=lab ./internal/directory/ldap -run TestHugeGroup
+AC1 ranged retrieval: $ go test ./internal/connector/ldap -run TestMemberRange -count=1
+    ok   github.com/skenzeriq/activediq/internal/connector/ldap  2.31s
+AC2 3,000-member group (Samba small tier): $ make lab-up TIER=small && go test -tags=lab ./internal/connector/ldap -run TestHugeGroup
     --- PASS: TestHugeGroup (1.84s)   members=3000
 AC3 UI empty state: factory/demos/evidence/T-0042/ac3-empty.png
 Not verified: Windows-only diagnostic text (needs Windows lab — D-00xx pending)

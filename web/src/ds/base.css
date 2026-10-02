@@ -1,0 +1,58 @@
+/*
+ * activeDIQ base layer (T-0043): the few global rules every surface needs, written on tokens.css.
+ * Components add their own CSS; they never repeat these. Import order: tokens.css, base.css, brand.css.
+ */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--diq-bg);
+  color: var(--diq-text);
+  font: var(--diq-weight-regular) var(--diq-text-ui) / var(--diq-leading-ui) var(--diq-font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Focus is never removed: a 2 px cobalt ring on every focusable element (WCAG 2.4.7, 2.4.11, 1.4.11). */
+:focus-visible {
+  outline: var(--diq-focus-width) solid var(--diq-focus);
+  outline-offset: var(--diq-focus-offset);
+}
+
+/* Directory data (DNs, sAMAccountName, UPNs, SIDs, GUIDs, timestamps, counts) is set in mono, with tabular figures. */
+.diq-mono {
+  font-family: var(--diq-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.92em;
+}
+
+/*
+ * Sortable column headers. Chrome's user-agent stylesheet sets `text-transform: none` and its own
+ * letter-spacing on <button>, so a header button renders mixed-case beside uppercase siblings.
+ * Header buttons inherit everything from the <th> (T-0042 review carry-over).
+ */
+th > button {
+  font: inherit;
+  color: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+/* Reduced motion: the duration tokens already collapse to 0 ms; this stops anything that bypasses them. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}

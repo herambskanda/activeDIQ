@@ -6,8 +6,9 @@ enforced in CI where a tool can enforce it.
 ## Go (backend, connectors, CLI)
 
 - `gofmt`/`goimports`; `golangci-lint` with at least `govet staticcheck errcheck gosec revive
-  errorlint bodyclose sqlclosecheck` and a `depguard` rule: only `internal/directory/ldap` may
-  import the raw LDAP library; only `internal/platform/db` may import the SQL driver.
+  errorlint bodyclose sqlclosecheck` and a `depguard` rule: only the connector root
+  `internal/connector/` may import the raw LDAP and Graph libraries; only `internal/platform/store`
+  (plus sqlc-generated `sqlcdb/` packages) may import the SQL driver (blueprint §2, FF-SP1).
 - `context.Context` is the first parameter of anything that does I/O; honour cancellation.
 - Errors: `fmt.Errorf("reset password for %s: %w", guid, err)` for **messages only** — never to
   build LDAP, SQL, shell, PowerShell or SDDL values. Sentinel or typed errors for anything a caller
@@ -29,7 +30,7 @@ enforced in CI where a tool can enforce it.
   `fetch` to undocumented endpoints; no data constants in `src/` — fixtures live in tests,
   Storybook stories and the demo seed only.
 - Components from the design system (`design-system` skill); tokens from
-  `../design-system/tokens.css`, never raw colours or pixel values.
+  `web/src/ds/tokens.css` (`--diq-*`, activeDIQ's own; never skenzeriq's), never raw colours or pixel values.
 - Every data view handles loading, empty, error and partial (some DCs unreachable) states.
 - Tables over large directories are virtualised and server-paged; never load 50k rows.
 - No `dangerouslySetInnerHTML`; user and directory strings are text, always.
