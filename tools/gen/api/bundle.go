@@ -170,8 +170,7 @@ func BuildBundle(root string) (*Bundle, error) {
 			if !pathRe.MatchString(p) {
 				el.addf("%s is not a kebab-case path with no trailing slash", where)
 			}
-			if prev, dup := paths[p]; dup {
-				_ = prev
+			if _, dup := paths[p]; dup {
 				el.addf("path %s is declared in more than one file (second: %s)", p, f.rel)
 				continue
 			}

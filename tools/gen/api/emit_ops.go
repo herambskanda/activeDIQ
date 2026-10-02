@@ -46,9 +46,6 @@ func (u *unit) emitHandlers() ([]byte, error) {
 	}
 	f.p(",\n\t)\n}\n")
 	u.emitPatterns(f)
-	if len(ops) == 0 {
-		// Still emit the (empty) interface and Bind so the tag package has the EP-2 shape.
-	}
 	b, err := f.bytes()
 	return b, err
 }
@@ -132,19 +129,19 @@ func (u *unit) emitOperation(f *gofile, op *Operation) {
 		case pf.List:
 			if u.needsChecks(sc) {
 				f.p("\t{\n")
-				u.emitValueChecks(f, expr, sc, at, pf.P.In, 2, pf.P.Name)
+				u.emitValueChecks(f, expr, sc, at, pf.P.In, 2)
 				f.p("\t}\n")
 			}
 		case !pf.P.Required:
 			if u.needsChecks(sc) {
 				f.p("\tif %s != nil {\n", expr)
-				u.emitValueChecks(f, "(*"+expr+")", sc, at, pf.P.In, 2, pf.P.Name)
+				u.emitValueChecks(f, "(*"+expr+")", sc, at, pf.P.In, 2)
 				f.p("\t}\n")
 			}
 		default:
 			if u.needsChecks(sc) {
 				f.p("\t{\n")
-				u.emitValueChecks(f, expr, sc, at, pf.P.In, 2, pf.P.Name)
+				u.emitValueChecks(f, expr, sc, at, pf.P.In, 2)
 				f.p("\t}\n")
 			}
 		}

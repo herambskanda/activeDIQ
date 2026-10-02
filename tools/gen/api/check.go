@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"sort"
 )
 
@@ -102,9 +101,6 @@ func (m *Model) check(p *parser) {
 			}
 		}
 	}
-	for _, pr := range m.Problems {
-		_ = pr
-	}
 	respRoots = append(respRoots, m.problemRoots...)
 	m.closure(reqRoots, m.Req)
 	m.closure(respRoots, m.Resp)
@@ -192,9 +188,6 @@ func (m *Model) check(p *parser) {
 			p.fail(op.Method+" "+op.Path, "a secret operation has no binary body")
 		}
 	}
-	for _, pr := range m.Problems {
-		_ = pr
-	}
 }
 
 // checkSchema runs the checks that need reachability.
@@ -252,12 +245,8 @@ func (m *Model) checkSchema(p *parser, s *Schema) {
 	if s.Nullable {
 		p.fail(s.Where, "a component schema is not nullable; nullability belongs to a required member")
 	}
-	for _, name := range sortedKeys(s.Props) {
-		if n := len(s.Props); n > 64 {
-			p.fail(s.Where, "more than 64 members (%d)", n)
-			break
-		}
-		_ = name
+	if n := len(s.Props); n > 64 {
+		p.fail(s.Where, "more than 64 members (%d)", n)
 	}
 }
 
@@ -269,5 +258,3 @@ func sortedKeys[V any](m map[string]V) []string {
 	sort.Strings(out)
 	return out
 }
-
-var _ = fmt.Sprintf

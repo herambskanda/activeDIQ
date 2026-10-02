@@ -88,7 +88,7 @@ func (u *unit) fields(f *gofile, s *Schema) []field {
 }
 
 func (u *unit) emitSchema(f *gofile, s *Schema) {
-	doc := func(what string) {
+	doc := func() {
 		desc := strings.TrimSpace(s.Description)
 		if desc == "" {
 			f.p("// %s is the %s schema.\n", s.Name, s.Name)
@@ -104,22 +104,22 @@ func (u *unit) emitSchema(f *gofile, s *Schema) {
 	}
 	switch {
 	case s.isUnion():
-		doc("union")
+		doc()
 		u.emitUnion(f, s)
 	case s.isObject():
-		doc("object")
+		doc()
 		u.emitObject(f, s)
 	case s.isMap():
-		doc("map")
+		doc()
 		u.emitMap(f, s)
 	case s.Type == "array":
-		doc("array")
+		doc()
 		u.emitArray(f, s)
 	case s.isEnum():
-		doc("enum")
+		doc()
 		u.emitEnum(f, s)
 	default:
-		doc("scalar")
+		doc()
 		switch {
 		case s.Format == "uuid" || s.Format == "date" || s.Format == "date-time":
 			f.p("type %s = %s\n\n", s.Name, f.goType(&Schema{Type: "string", Format: s.Format}))
@@ -159,7 +159,7 @@ func (u *unit) emitEnum(f *gofile, s *Schema) {
 	f.p("%s:\n\t\treturn true\n\t}\n\treturn false\n}\n\n", strings.Join(cs, ", "))
 	if !s.EnumOpen {
 		f.p("// Validate records a violation when v is not in the set.\nfunc (v %s) Validate(at %s.Pointer, errs *%s) {\n\tif !v.Valid() {\n\t\terrs.AddBody(at, %s, %q)\n\t}\n}\n\n",
-			s.Name, f.use(pJSONTxt)[:len(f.use(pJSONTxt))-1], strings.TrimSuffix(f.apit("Errors"), ""), f.apit("CodeEnum"), "value is not one of the allowed values")
+			s.Name, strings.TrimSuffix(f.use(pJSONTxt), "."), f.apit("Errors"), f.apit("CodeEnum"), "value is not one of the allowed values")
 	}
 }
 
@@ -175,9 +175,6 @@ func (u *unit) emitObject(f *gofile, s *Schema) {
 		}
 		if d := strings.TrimSpace(fd.Prop.Description); d != "" {
 			f.p("\t// %s\n", strings.ReplaceAll(d, "\n", " "))
-		}
-		if fd.Prop.Ref == "" && fd.Prop.Deprecated() {
-			f.p("\t// Deprecated: see the contract.\n")
 		}
 		u.claimField(s, fd)
 		f.p("\t%s %s `json:%q`\n", fd.Go, fd.Typ, tag)
@@ -244,17 +241,12 @@ func (u *unit) emitObject(f *gofile, s *Schema) {
 	}
 }
 
-func (s *Schema) Deprecated() bool { return false }
-
 func (u *unit) claimField(s *Schema, fd field) {
 	// Field names are scoped to their struct; a collision is two members mapping to one Go name.
 	for _, o := range sortedKeys(s.Props) {
 		if o != fd.JSON && goIdent(o) == fd.Go && o < fd.JSON {
 			u.errs.addf("%s: members %q and %q give the same Go field name %s", s.Where, o, fd.JSON, fd.Go)
 		}
-	}
-	if fd.Go == "P" || fd.Go == "p" {
-		_ = fd
 	}
 }
 
@@ -331,7 +323,7 @@ func (u *unit) emitFieldValidation(f *gofile, s *Schema, fd field) {
 		expr = "(*p)"
 	}
 	f.p("\tif %s {\n", guard)
-	u.emitValueChecks(f, expr, fd.Prop, ptr, apiBody, 2, fd.JSON)
+	u.emitValueChecks(f, expr, fd.Prop, ptr, apiBody, 2)
 	f.p("\t}\n")
 }
 
@@ -373,7 +365,7 @@ func (u *unit) scalarChecks(s *Schema) bool {
 
 // emitValueChecks writes the checks of one value of schema s held in expr. at is a Go expression
 // for its location: a JSON pointer in the body, a parameter name elsewhere.
-func (u *unit) emitValueChecks(f *gofile, expr string, s *Schema, at, in string, depth int, name string) {
+func (u *unit) emitValueChecks(f *gofile, expr string, s *Schema, at, in string, depth int) {
 	ind := strings.Repeat("\t", depth)
 	inConst := f.apit("InBody")
 	switch in {
@@ -407,14 +399,14 @@ func (u *unit) emitValueChecks(f *gofile, expr string, s *Schema, at, in string,
 		f.p("%s%s(errs, %s, %s, len(%s), %s, %s, %s)\n", ind, f.apit("CheckCount"), inConst, loc, expr, intOr(r.MinItems, 0), intOr(r.MaxItems, -1), f.apit("CodeMaxItems"))
 		if u.needsChecks(r.Items) {
 			f.p("%sfor i := range %s {\n", ind, expr)
-			u.emitValueChecks(f, expr+"[i]", r.Items, f.apit("Index")+"("+loc+", i)", in, depth+1, name)
+			u.emitValueChecks(f, expr+"[i]", r.Items, f.apit("Index")+"("+loc+", i)", in, depth+1)
 			f.p("%s}\n", ind)
 		}
 	case r.isMap():
 		f.p("%s%s(errs, %s, %s, len(%s), 0, %s, %s)\n", ind, f.apit("CheckCount"), inConst, loc, expr, intOr(r.MaxProps, -1), f.apit("CodeMaxProperties"))
 		if u.needsChecks(r.AddlProps) {
 			f.p("%sfor k := range %s {\n%s\te := %s[k]\n", ind, expr, ind, expr)
-			u.emitValueChecks(f, "e", r.AddlProps, loc+".AppendToken(k)", in, depth+1, name)
+			u.emitValueChecks(f, "e", r.AddlProps, loc+".AppendToken(k)", in, depth+1)
 			f.p("%s\t_ = e\n%s}\n", ind, ind)
 		}
 	case r.isEnum():
@@ -437,7 +429,6 @@ func (u *unit) emitValueChecks(f *gofile, expr string, s *Schema, at, in string,
 	if s.HasConst {
 		f.p("%sif %s != %q {\n%s\terrs.Add(%s, %s, %s, %q)\n%s}\n", ind, expr, s.Const, ind, inConst, loc, f.apit("CodeConst"), "wrong value", ind)
 	}
-	_ = name
 }
 
 func intOr(p *int, def int) string {
@@ -481,7 +472,7 @@ func (u *unit) emitMap(f *gofile, s *Schema) {
 	f.p("func (m *%s) UnmarshalJSONFrom(d *%s.Decoder) error {\n\tvar x map[string]%s\n\tif err := %s(d, &x); err != nil {\n\t\treturn err\n\t}\n\t*m = x\n\treturn nil\n}\n\n",
 		s.Name, jt, f.goType(s.AddlProps), f.apit("DecodeMap"))
 	f.p("// Validate checks the property count and every value.\nfunc (m %s) Validate(at %s.Pointer, errs *%s) {\n", s.Name, jt, f.apit("Errors"))
-	u.emitValueChecks(f, "m", &Schema{Type: "object", AddlProps: s.AddlProps, MaxProps: s.MaxProps, Where: s.Where}, "at", apiBody, 1, s.Name)
+	u.emitValueChecks(f, "m", &Schema{Type: "object", AddlProps: s.AddlProps, MaxProps: s.MaxProps, Where: s.Where}, "at", apiBody, 1)
 	f.p("}\n\n")
 	if u.m.SecretTy[s.Name] {
 		f.p("// DestroySecrets destroys every secret in the map.\nfunc (m %s) DestroySecrets() {\n", s.Name)
@@ -496,7 +487,7 @@ func (u *unit) emitArray(f *gofile, s *Schema) {
 	f.p("func (a *%s) UnmarshalJSONFrom(d *%s.Decoder) error {\n\tvar x []%s\n\tif err := %s(d, &x); err != nil {\n\t\treturn err\n\t}\n\t*a = x\n\treturn nil\n}\n\n",
 		s.Name, jt, f.goType(s.Items), f.apit("DecodeArray"))
 	f.p("// Validate checks the item count and every item.\nfunc (a %s) Validate(at %s.Pointer, errs *%s) {\n", s.Name, jt, f.apit("Errors"))
-	u.emitValueChecks(f, "a", &Schema{Type: "array", Items: s.Items, MinItems: s.MinItems, MaxItems: s.MaxItems, Where: s.Where}, "at", apiBody, 1, s.Name)
+	u.emitValueChecks(f, "a", &Schema{Type: "array", Items: s.Items, MinItems: s.MinItems, MaxItems: s.MaxItems, Where: s.Where}, "at", apiBody, 1)
 	f.p("}\n\n")
 	if u.m.SecretTy[s.Name] {
 		f.p("// DestroySecrets destroys every secret in the array.\nfunc (a %s) DestroySecrets() {\n", s.Name)
@@ -546,11 +537,6 @@ func (u *unit) emitUnion(f *gofile, s *Schema) {
 	f.p("\tdefault:\n\t\terrs.AddBody(at.AppendToken(\"kind\"), %s, \"unknown kind\")\n\t}\n}\n\n", f.apit("CodeKind"))
 	if u.m.SecretTy[s.Name] {
 		f.p("// DestroySecrets destroys the secrets of the variant that is set.\nfunc (u *%s) DestroySecrets() {\n", s.Name)
-		for _, v := range vs {
-			if u.m.SecretTy[strings.TrimPrefix(v.Type, f.use(u.ownerImport(u.m.Schemas[s.OneOf[0]])))] || true {
-				// every variant is checked at runtime by its own method when it has one
-			}
-		}
 		for _, v := range s.OneOf {
 			if u.m.SecretTy[v] {
 				f.p("\tif u.%s != nil {\n\t\tu.%s.DestroySecrets()\n\t}\n", goIdent(u.m.Schemas[v].Props["kind"].Const), goIdent(u.m.Schemas[v].Props["kind"].Const))
