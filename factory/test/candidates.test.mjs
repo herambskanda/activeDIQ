@@ -6,7 +6,10 @@ import { REAL_FACTORY } from './helpers.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 
+// The real config, with the dispatcher tuning these tests are written against pinned, so raising
+// slots or the grooming floor in production does not break the selection-mechanism tests.
 const config = JSON.parse(fs.readFileSync(path.join(REAL_FACTORY, 'config.json'), 'utf8'));
+Object.assign(config.dispatcher, { max_parallel: 2, grooming_min_ready: 3 });
 const NOW = new Date(2026, 9, 2, 10, 0, 0); // local 10:00: before the digest hour
 const EVENING = new Date(2026, 9, 2, 19, 0, 0);
 

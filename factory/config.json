@@ -9,7 +9,7 @@
   },
   "dispatcher": {
     "tick_seconds": 20,
-    "max_parallel": 2,
+    "max_parallel": 4,
     "daily_run_cap": 300,
     "run_timeout_minutes": 90,
     "max_retries": 2,
@@ -18,7 +18,7 @@
     "main_branch": "main",
     "permission_mode": "auto",
     "rate_limit_backoff_minutes": 15,
-    "grooming_min_ready": 3,
+    "grooming_min_ready": 6,
     "grooming_cooldown_minutes": 60,
     "triage_cooldown_minutes": 10,
     "digest_hour_local": 18,

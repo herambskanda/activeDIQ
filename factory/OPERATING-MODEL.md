@@ -180,7 +180,7 @@ carries a two-line summary of what changed and why.
 
 ### 4.5 Limits
 
-- WIP: `dispatcher.max_parallel` worker sessions (default 2).
+- WIP: `dispatcher.max_parallel` worker sessions (4 since 2026-10-02, at the CEO's request; `grooming_min_ready` 6 keeps the slots fed).
 - Daily cap on worker sessions (`dispatcher.daily_run_cap`) as a runaway guard.
 - Rate-limit aware: on usage-limit errors the dispatcher backs off instead of retrying.
 
