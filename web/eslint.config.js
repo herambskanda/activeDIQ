@@ -1,5 +1,6 @@
 import js from "@eslint/js";
 import tseslint from "typescript-eslint";
+import safePrimitives from "./eslint/safe-primitives.js";
 
 // Tier W implements no security primitive (blueprint §6): React escapes by default and the console
 // never sets raw HTML.
@@ -108,5 +109,22 @@ export default tseslint.config(
     // Build-time Node scripts (the API type generator).
     files: ["scripts/**/*.mjs"],
     languageOptions: { globals: { process: "readonly", console: "readonly" } },
+  },
+  {
+    // FF-SP3 for tier W (safe-primitives §2.1, §6.2, §12.3, §12.5): the console builds no filter, DN,
+    // PowerShell, SQL or export text, and sets no raw HTML sink. Messages start with "FF-SP3".
+    // Test files may carry hostile strings on purpose.
+    files: ["src/**/*.{ts,tsx}", "proof/**/*.ts"],
+    ignores: ["**/*.test.{ts,tsx}"],
+    plugins: { "safe-primitives": safePrimitives },
+    rules: {
+      "safe-primitives/no-hand-built-security-string": "error",
+      "safe-primitives/no-quote-doubling": "error",
+      "safe-primitives/no-dn-string-ops": "error",
+      "safe-primitives/no-export-media-types": "error",
+      "safe-primitives/no-unsafe-dom-sinks": "error",
+      "safe-primitives/safe-url-attributes": "error",
+      "no-script-url": "error",
+    },
   },
 );

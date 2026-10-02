@@ -282,7 +282,7 @@ Count: the vendor's authenticator page lists **20 distinct methods** ([supported
 | ADSS-063 | Endpoint MFA | Local / workgroup user MFA | MFA for non-domain local accounts (logon, unlock, UAC, RDP) | Build 6516; EMFA `[UNVERIFIED edition]` | [WN](https://www.manageengine.com/products/self-service-password/whats-new.html); [RN](https://www.manageengine.com/products/self-service-password/release-notes.html) |
 | ADSS-064 | Endpoint MFA | FIDO2 passkeys at OS logon | Passkeys as a factor on Windows, macOS and Linux logons | Build 6517 | [RN](https://www.manageengine.com/products/self-service-password/release-notes.html) |
 | ADSS-065 | Endpoint MFA | Entra-joined / hybrid-joined Windows MFA | Endpoint MFA for Entra identities | Build 7000 | [Entra MFA page](https://www.manageengine.com/products/self-service-password/entra-id-mfa.html) |
-| ADSS-066 | Endpoint MFA | Conditional access on endpoint/RDP logons | **Conflicting sources.** The CA marketing page lists endpoint logins and RDP as protected; the public roadmap lists "Conditional access support for RDP and endpoint logins" as *in pipeline* | `[UNVERIFIED]` | [CA page](https://www.manageengine.com/products/self-service-password/conditional-access-policy.html); [WN](https://www.manageengine.com/products/self-service-password/whats-new.html) |
+| ADSS-066 | Endpoint MFA | Conditional access on endpoint/RDP logons | **Not documented for machine logons; a narrow RDP case is.** The machine-based MFA help says only: "To protect these connections, configure a conditional access rule with IP restrictions" and that sentence concerns RD Gateway connections over public IPs. The conditional-access page describes rules for self-service policies, not endpoint logons, and lists four conditions (IP, device, business hours, geolocation). The public roadmap lists "Conditional access support for RDP and endpoint logins" as *in pipeline*. The marketing claim of endpoint coverage is therefore **not supported by the docs as of 2026-10-02** (not proof of absence in the product) | `[UNVERIFIED]` (Pro per ADSS-087) | [machine-based MFA help](https://www.manageengine.com/products/self-service-password/help/admin-guide/Configuration/Admin-Tools/GINA/machine-based-mfa.html); [CA page](https://www.manageengine.com/products/self-service-password/conditional-access-policy.html); [WN](https://www.manageengine.com/products/self-service-password/whats-new.html) (checked 2026-10-02) |
 | ADSS-067 | Endpoint MFA | Passwordless OS logon; MFA for non-GUI consoles; agentless MFA | **Roadmap "in pipeline"**, not shipped | — | [WN](https://www.manageengine.com/products/self-service-password/whats-new.html) |
 
 ### 3.5 VPN / RADIUS and OWA / IIS MFA
@@ -383,21 +383,21 @@ Count: the vendor's authenticator page lists **20 distinct methods** ([supported
 | ADSS-126 | Admin security | Admin-portal controls | MFA for ADSSP logins, admin login hidden or IP-restricted, session timeout, deny concurrent logins | `[UNVERIFIED]` | [BP](https://download.manageengine.com/products/self-service-password/adselfservice-plus-deployment-best-practices.pdf) |
 | ADSS-127 | Admin security | Security Hardening console | 12 checks: HTTPS, TLS 1.2, ciphers, keystore encryption, default-password change, LDAPS, hide search/org chart from login page, mail TLS, mobile SSL pinning, backup password, agent SSL enforcement, security-update registration | All editions `[UNVERIFIED]` | [hardening](https://www.manageengine.com/products/self-service-password/help/admin-guide/Configuration/Admin-Tools/Security-Center/security-hardening.html) |
 | ADSS-128 | Platform | HA failover / load balancing / reverse proxy | See §2.4 | $395 add-on | [HA PDF](https://download.manageengine.com/products/self-service-password/adselfservice-plus-high-availability-configuration-guide.pdf) |
-| ADSS-129 | Platform | Backup, server and DB migration | Scheduled DB backups; server-migration utility; DB migration (GUI tool since 6527); MS SQL clustering support | All editions `[UNVERIFIED]` | [BP](https://download.manageengine.com/products/self-service-password/adselfservice-plus-deployment-best-practices.pdf); [scalability PDF](https://download.manageengine.com/products/self-service-password/self-service-password-reset-tool-with-scalability.pdf); [RN](https://www.manageengine.com/products/self-service-password/release-notes.html) |
+| ADSS-129 | Platform | Backup, server and DB migration | Scheduled DB backups; server-migration utility; DB migration (GUI tool since 6527); MS SQL clustering support. The migration KB: `backupDB.bat` writes a compressed `OfflineBackup_<timestamp>.ezip`; copy the whole `\conf` folder (it holds the DB encryption password); restore needs the **exact same version and build**; the backup password is the reversed filename or an admin-set one (Admin > Product Settings > Security and Privacy). **The KB does not mention exporting enrollment data (TOTP seeds, security answers).** | All editions `[UNVERIFIED]` | [BP](https://download.manageengine.com/products/self-service-password/adselfservice-plus-deployment-best-practices.pdf); [scalability PDF](https://download.manageengine.com/products/self-service-password/self-service-password-reset-tool-with-scalability.pdf); [RN](https://www.manageengine.com/products/self-service-password/release-notes.html); [migration KB](https://www.manageengine.com/self-service-password/kb/adself-service-installation-server-migration.html) (checked 2026-10-02) |
 | ADSS-130 | Platform | Dashboard and schedulers | Dashboard refreshed by schedulers (AD sync, locked-out, soon-to-expire, expired) | All editions `[UNVERIFIED]` | [EG](https://download.manageengine.com/products/self-service-password/adselfservice-plus-evaluator-guide.pdf) |
 | ADSS-131 | Platform | Product-health alerts | License-expiry, downtime and update alerts (email/SMS); SSL-expiry alerts since 6527 | All editions `[UNVERIFIED]` | [BP](https://download.manageengine.com/products/self-service-password/adselfservice-plus-deployment-best-practices.pdf); [RN](https://www.manageengine.com/products/self-service-password/release-notes.html) |
 | ADSS-132 | Agents | Login-agent deployment and customization | Push from the console, GPO, SCCM, Endpoint Central or manual. GINA/Mac/Linux customization, e.g., restricting the agent when the SSL certificate is invalid | Pro (logon-screen features) | [ARCH](https://download.manageengine.com/products/self-service-password/adselfservice-plus-solution-architecture.pdf); [EG](https://download.manageengine.com/products/self-service-password/adselfservice-plus-evaluator-guide.pdf) |
 | ADSS-133 | Branding | Portal rebranding | Theme color, logo (200×50), browser title and icon, login background, text and order of the login buttons | `[UNVERIFIED]`. Paraphrasing one reviewer: branding and advanced MFA methods need higher-tier licensing ([SourceForge](https://sourceforge.net/software/product/ADSelfService-Plus/)) | [EG](https://download.manageengine.com/products/self-service-password/adselfservice-plus-evaluator-guide.pdf) |
-| ADSS-134 | Localization | Languages | Admin guide is published in English, Arabic, French, German and Brazilian Portuguese. **End-user portal language list not verified** `[TODO]` | — | [IV page language links](https://www.manageengine.com/products/self-service-password/help/admin-guide/Configuration/Self-Service/Identity-Verification-Steps.html) |
+| ADSS-134 | Localization | Languages | **19 display languages** per the vendor's list: Finnish, Polish, Italian, Canadian French, German, Japanese, Brazilian Portuguese, Swedish, Russian, Danish, Chinese, French, Norwegian, British English, Arabic, Spanish, Turkish, Dutch, Hebrew. Set under Admin > Customize > Personalize. The page does not say separately whether this covers the end-user portal, mobile app and agent UI `[UNVERIFIED]` | — | [supported languages](https://www.manageengine.com/products/self-service-password/supported-languages.html) (checked 2026-10-02) |
 | ADSS-135 | Integrations | Integration tiles | ADManager Plus (workflow), ServiceDesk Plus / SDP Cloud, Splunk, Syslog, HIBP. Mail via Microsoft/Google APIs (6522) | — | [EG](https://download.manageengine.com/products/self-service-password/adselfservice-plus-evaluator-guide.pdf); [RN](https://www.manageengine.com/products/self-service-password/release-notes.html) |
 | ADSS-136 | API | REST API | Internal REST APIs exist; they are the subject of CVE-2021-40539 and CVE-2026-75791. **"REST API support" is on the public roadmap as in pipeline**, implying no supported, documented customer API today `[UNVERIFIED]` | — | [WN](https://www.manageengine.com/products/self-service-password/whats-new.html); [CVE-2026-75791](https://www.manageengine.com/products/self-service-password/advisory/CVE-2026-75791.html) |
 
-**Inventory gaps:**
-- `[TODO]` end-user UI languages.
-- `[TODO]` SMS gateway providers supported for BYO gateways (needed for US customers).
-- `[TODO]` exact list of the 100+ catalog apps.
-- `[TODO]` exact list of the 10+ JIT/SCIM apps.
-- `[TODO]` per-feature Free-edition limits.
+**Inventory gaps** (updated in T-0001, 2026-10-02):
+- Resolved: **SMS gateways.** The vendor's gateway page names three methods, GSM modem, Clickatell (built-in) and a custom gateway over HTTP or SMTP, and lists "40+" compatible providers such as Avea, Yakoon, ValueFirst, SMSGlobal, MessageMedia, RouteSMS, Zain and SMSCountry ([SMS gateway integration](https://www.manageengine.com/products/self-service-password/adselfserviceplus-sms-gateway-integration.html)). A vendor forum post documents HTTP gateways such as Twilio via the "Custom" provider ([community post, snippet only](https://pitstop.manageengine.com/portal/en/community/topic/did-you-know-how-to-configure-custom-sms-provider-in-adselfservice-plus)). So a US customer can bring Twilio-style HTTP gateways; no named Twilio built-in.
+- Resolved: **languages** (ADSS-134): 19 display languages.
+- `[TODO]` exact list of the 100+ catalog apps. The vendor's SSO page gives no count and says only "a wide range of commonly used enterprise applications"; it names SAML, OAuth and OIDC ([SSO page](https://www.manageengine.com/products/self-service-password/enterprise-sso-solution.html), 2026-10-02). The "100+" figure comes from search-engine text, not that page. Needs the in-product catalogue.
+- `[TODO]` exact list of the 10+ JIT/SCIM apps: same page gives no count.
+- `[TODO]` per-feature Free-edition limits. The Free edition is 50 users (§1 table). The pricing page says it has "limitations" without listing them ([pricing](https://www.manageengine.com/products/self-service-password/pricing-details.html), 2026-10-02).
 
 ## 4. Security track record (ADSSP-specific summary; full ManageEngine CVE history is covered elsewhere)
 
@@ -442,8 +442,8 @@ Count: the vendor's authenticator page lists **20 distinct methods** ([supported
 | Site | Rating | # ratings | Notes / source |
 |---|---|---|---|
 | Capterra | 4.6/5; ease of use 4.6; support 4.5 | 63 | Verified. Reviews cluster in 2018 and Jun–Sep 2026, possibly vendor review campaigns (inference) ([Capterra](https://www.capterra.com/p/172556/ADSelfService-Plus/reviews/)) |
-| Gartner Peer Insights | 4.5 | 34 | Page returned 403; figures from search snippet `[UNVERIFIED]` ([Gartner](https://www.gartner.com/reviews/product/manageengine-adselfservice-plus)) |
-| G2 | 4.4 | 18 | Page returned 403; snippet only `[UNVERIFIED]` ([G2](https://www.g2.com/products/manageengine-adselfservice-plus/reviews)) |
+| Gartner Peer Insights | 4.5 | 34 | Page returns 403 to our fetcher; re-confirmed on 2026-10-02 from a search snippet that also shows 50% five-star, 38% four-star, 12% three-star (and a comparison table that rounds to 4.4) `[UNVERIFIED: snippet]` ([Gartner](https://www.gartner.com/reviews/product/manageengine-adselfservice-plus)) |
+| G2 | 4.5 | 32 | Wayback snapshot 2026-08-03 per the customer-voice file §1; the earlier snippet (4.4 from 18) is superseded ([WB](https://web.archive.org/web/20260803114027/https://www.g2.com/products/manageengine-adselfservice-plus/reviews)) |
 | PeerSpot | 4.2; 90% recommend | 9 | ([PeerSpot](https://www.peerspot.com/products/manageengine-adselfservice-plus-reviews)) |
 | **iOS App Store (US)** | **2.1/5** | 75 | Verified; v1.7.6 (Jun 17) ([App Store](https://apps.apple.com/us/app/manageengine-adselfserviceplus/id731391592)) |
 | Google Play | 3.0/5 | ~1.5K | Snippet only `[UNVERIFIED]` |
@@ -673,15 +673,28 @@ Priority key: **P0** = must exist at cutover for the pilot accounts; **P1** = ne
 | L15 | **Hybrid AD + Entra parity from day one** (unlock, notifications and self-service also for Entra/hybrid users) | W19 | ADSSP's Entra support is three months old and many features are "AD only" |
 
 ## 9. Open gaps & next steps
+
+### Resolved in T-0001 (2026-10-02)
+
+- **Server migration and backup (migration playbook).** The vendor KB backs up with `backupDB.bat` into a compressed `OfflineBackup_<timestamp>.ezip`, requires copying the whole `\conf` folder ("contains all your configuration settings, including the database encryption password"), and requires "the exact same version and build number" on the new server. The restore password is the reversed filename or an admin-set password. The KB **does not mention exporting enrollment data** such as TOTP seeds or security answers ([KB](https://www.manageengine.com/self-service-password/kb/adself-service-installation-server-migration.html)). Consequence: there is no vendor-documented route to move enrollment out of ADSSP. The lab inspection below remains the only way to settle TOTP-seed and FIDO-key exportability.
+- **Conditional access on endpoint/RDP logons** (ADSS-066): not documented for machine logons, see the row. The conflict is narrowed, not closed.
+- **SMS gateways, languages:** see "Inventory gaps".
+- **Certifications:** ADSSP is **not named** in ManageEngine's compliance centre. ISO 27001 and SOC 2 are stated as covering "all cloud services and on-premise products of ManageEngine", and the SOC 2 + HIPAA Type 2 scope names only ADManager Plus among the AD products ([compliance centre](https://www.manageengine.com/compliance.html), 2026-10-02). A search-index summary on a third-party security-profile site says ADSSP is "FedRamp compliant"; that is **not supported by ManageEngine's compliance centre or ADManager Plus's certification page, which list no FedRAMP authorisation**, so do not repeat it `[UNVERIFIED, likely wrong]`. The compliance centre lists TX-RAMP for ServiceDesk Plus Cloud, Endpoint Central Cloud and Site24x7 only.
+- **Free tier and default admin credential:** the Free edition is 50 users and never expires (§1 table), and the default admin login is admin/admin (§2 table; CVE-2022-28810 write-up) — already sourced in this file.
+
+### Still open
+
 - `[TODO]` **Lab install of build 7001 (Free or Evaluation)**:
   - inspect the bundled PostgreSQL schema to confirm TOTP-seed and FIDO-credential storage/exportability;
   - confirm the security-answer hash format (salt, normalization) for a hash-compatible Q&A import;
   - capture screenshots of the admin and end-user UI for the design team.
-- `[TODO]` End-user portal UI languages. Only the five admin/user-guide languages are confirmed: EN, AR, FR, DE, PT-BR.
-- `[TODO]` SMS providers supported for bring-your-own gateways, which matters for US customers.
-- `[TODO]` Full list of the 100+ SSO catalog apps and the 10+ SCIM/JIT apps.
-- `[TODO]` Perpetual license prices; Free-edition per-feature limits; edition gating for rows marked `[UNVERIFIED]` in §3.
-- `[TODO]` ManageEngine Identity360 (cloud IAM) overlap and its roadmap relationship to ADSSP.
-- `[UNVERIFIED]` Gartner Peer Insights, G2 and Google Play ratings came from search snippets because the pages returned 403. Reddit and Spiceworks were not reachable, so customer accounts of migrating off ADSSP are still missing.
-- `[UNVERIFIED]` Conflict on conditional access for endpoint/RDP logons: the marketing page says it is supported, the roadmap says "in pipeline". Resolve in the lab.
-- The web-search budget for this session ran out partway through. Later lookups used direct fetches of vendor pages and PDFs only.
+- `[TODO]` Full list of the 100+ SSO catalogue apps and the 10+ SCIM/JIT apps (see Inventory gaps).
+- `[TODO]` Perpetual licence prices (ADSSP is subscription-only per the AD360 file §6.4, so likely moot); per-feature Free-edition limits; edition gating for rows marked `[UNVERIFIED]` in §3.
+- `[TODO]` Identity360 (cloud IAM) overlap and its roadmap relationship to ADSSP. The AD360 file covers Identity360 pricing.
+- `[UNVERIFIED]` G2 and Google Play ratings (snippets or Wayback only) and the Gartner figure (snippet only).
+- `[UNVERIFIED]` Customer accounts of migrating off ADSSP: Reddit and Spiceworks were not reachable.
+- `[UNVERIFIED]` Whether the end-user portal, mobile app and agent all use the 19 display languages.
+
+## Changelog
+
+- **2026-10-02 (T-0001):** Closed migration/backup, SMS gateway, language and certification gaps; narrowed the ADSS-066 conflict; re-tagged the rest in §9.

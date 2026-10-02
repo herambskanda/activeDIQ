@@ -1,0 +1,9 @@
+<Project>
+  <!-- Tier X (safe-primitives §2): every sidecar project gets the banned-API list. The package pin is
+       checked when the first sidecar builds (a follow-up of T-0033); until then
+       `make fitness-safeprim` enforces the same list with a source scan. -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" Version="3.3.4" PrivateAssets="all" />
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" />
+  </ItemGroup>
+</Project>

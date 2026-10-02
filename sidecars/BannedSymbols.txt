@@ -1,0 +1,16 @@
+# Roslyn BannedApiAnalyzers (RS0030) list for tier X sidecars: knowledge/development/architecture/safe-primitives.md
+# §3.5, §5.6, §6.1 and §6.3 (FF-SP1/FF-SP2). Loaded by sidecars/Directory.Build.props for every sidecar project.
+# `make fitness-safeprim` enforces the same patterns today with a source scan (tools/fitness/safeprim);
+# this list adds the compiler-checked version once the first sidecar project builds.
+M:System.Management.Automation.PowerShell.AddScript(System.String);script text is code: use AddCommand and AddParameter (safe-primitives §6)
+M:System.Management.Automation.PowerShell.AddScript(System.String,System.Boolean);script text is code: use AddCommand and AddParameter (safe-primitives §6)
+M:System.Management.Automation.ScriptBlock.Create(System.String);builds code from text (safe-primitives §6)
+M:System.Management.Automation.CommandInvocationIntrinsics.ExpandString(System.String);builds code from text (safe-primitives §6)
+M:System.Management.Automation.CommandInvocationIntrinsics.InvokeScript(System.String);builds code from text (safe-primitives §6)
+P:System.Diagnostics.ProcessStartInfo.Arguments;argv is not a data channel: process creation belongs to the Go proc package (safe-primitives §6.3)
+M:System.Diagnostics.Process.Start(System.String,System.String);process creation belongs to the Go proc package (safe-primitives §6.3)
+T:System.DirectoryServices.DirectorySearcher;the filter arrives rendered by ldapfilter; sidecars never search (safe-primitives §3.5)
+M:System.DirectoryServices.Protocols.SearchRequest.#ctor(System.String,System.String,System.DirectoryServices.Protocols.SearchScope,System.String[]);string search request (safe-primitives §3.5)
+P:System.Net.Http.HttpClientHandler.ServerCertificateCustomValidationCallback;certificate validation callbacks accept anything (safe-primitives §5.6)
+P:System.Net.Security.SslClientAuthenticationOptions.RemoteCertificateValidationCallback;certificate validation callbacks accept anything (safe-primitives §5.6)
+P:System.DirectoryServices.Protocols.LdapSessionOptions.VerifyServerCertificate;certificate validation callbacks accept anything (safe-primitives §5.6)

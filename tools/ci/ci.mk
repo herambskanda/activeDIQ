@@ -2,10 +2,16 @@
 # Standard: knowledge/development/standards/ci-gates.md · Runbook: knowledge/development/runbooks/ci-and-build.md
 # Every gate below has a failing run proving it catches a violation: `make ci-proof` (part of `make ci`).
 
-.PHONY: ci lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-proto build build-web web-install ci-proof
+.PHONY: ci gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-proto fitness-safeprim build build-web web-install ci-proof
 
-ci: lint gen-api-check lint-api test fitness build secrets-scan lab-test-unit ci-proof ## Everything a merge needs: lint, generated-contract staleness, API lint, tests, fitness functions (incl. the ADR-0001 build matrix), web build, secret scan, gate proofs
+ci: lint gen-check gen-api-check lint-api test fitness build secrets-scan lab-test-unit ci-proof ## Everything a merge needs: lint, generated-code freshness (connector proto and the API contract), API lint, tests, fitness functions (incl. the ADR-0001 build matrix), web build, secret scan, gate proofs
 	@echo "make ci: passed"
+
+gen-proto: ## T-0157: regenerate the connector contract's Go code (internal/proto) from proto/ with the pinned pure-Go toolchain (no protoc, no buf)
+	go run ./tools/gen/proto
+
+gen-check: ## T-0157: fail if the generated Go code under internal/proto is stale, hand-edited or orphaned (regenerates in memory and compares)
+	go run ./tools/gen/proto -check
 
 web-install: ## Install the pinned web dependencies from the lockfile (npm ci)
 	npm ci --prefix web
@@ -35,7 +41,7 @@ test-go:
 test-web: web-install
 	npm --prefix web run --silent test
 
-fitness: fitness-stack fitness-tenancy fitness-proto ## Architecture fitness functions: fitness-modules (blueprint §2 import rules), fitness-stack (ADR-0001 F1-F5), fitness-tenancy (ADR-0002 T1-T5) and fitness-proto (connector contract compiles and keeps its rules)
+fitness: fitness-stack fitness-tenancy fitness-proto fitness-safeprim ## Architecture fitness functions: fitness-modules (blueprint §2 import rules), fitness-stack (ADR-0001 F1-F5), fitness-tenancy (ADR-0002 T1-T5), fitness-proto (connector contract compiles and keeps its rules) and fitness-safeprim (safe-primitives FF-SP1-3)
 	go run ./tools/fitness/modules
 
 fitness-stack: ## ADR-0001: language zones, cgo-free cross-build, one stateful service, licence register, exceptions cite an ADR
@@ -46,6 +52,9 @@ fitness-tenancy: ## ADR-0002 T1-T5 (and safe-primitives FF-SP7): migration 1, ca
 
 fitness-proto: ## T-0064: every proto/ file compiles (pure Go, no protoc) and the connector contract keeps its structural rules P1-P7
 	go run ./tools/fitness/proto proto
+
+fitness-safeprim: ## T-0033: safe-primitives FF-SP1 import boundaries, FF-SP2 banned APIs and analyzers (dnstring, sqlconst, secretjson, tmplconst), FF-SP3 literal shapes; the web/ half of FF-SP3 runs in lint-web
+	go run ./tools/fitness/safeprim
 
 build: build-web ## Build the web assets; the CGO_ENABLED=0 Go cross-build of the ADR-0001 matrix runs in fitness-stack (F2)
 

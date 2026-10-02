@@ -1,0 +1,16 @@
+# Install as native/clippy.toml with the first Rust crate (T-0024); kept here because native/ must not exist
+# without rust-toolchain.toml (ADR-0001 F2).
+# Tier N (in-process DLLs in LSASS and LogonUI): process creation is banned outright
+# (knowledge/development/architecture/safe-primitives.md §6.3, FF-SP1). clippy reads this file for every
+# crate under native/. `make fitness-safeprim` enforces the same ban today with a source scan
+# (tools/fitness/safeprim); clippy adds the type-aware check once the first crate lands (T-0024).
+disallowed-types = [
+  { path = "std::process::Command", reason = "tier N never starts a process (safe-primitives §6.3, FF-SP1)" },
+  { path = "std::process::Child", reason = "tier N never starts a process (safe-primitives §6.3, FF-SP1)" },
+]
+disallowed-methods = [
+  { path = "std::process::Command::new", reason = "tier N never starts a process (safe-primitives §6.3, FF-SP1)" },
+  { path = "std::process::Command::spawn", reason = "tier N never starts a process (safe-primitives §6.3, FF-SP1)" },
+  { path = "std::process::Command::output", reason = "tier N never starts a process (safe-primitives §6.3, FF-SP1)" },
+  { path = "std::process::Command::status", reason = "tier N never starts a process (safe-primitives §6.3, FF-SP1)" },
+]

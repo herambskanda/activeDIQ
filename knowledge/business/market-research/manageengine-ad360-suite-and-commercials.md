@@ -127,7 +127,7 @@ Evidence table. QSG = quick start guide PDF; Arch = solution architecture PDF.
 | SPMP Pro, 1 farm/tenant | $1,195 | $1,195 |
 
 - Store JSON sources: AD360 (https://store.manageengine.com/api/public/json/productdetails/990c23d46bb61f80ccca0e76faf358aa.js) vs the standalone product JSONs listed in §6.2.
-- **Promotions.** The only promotion seen is conditional: the ERP store advertises "Save up to 50%*" when bought with ADAudit Plus (https://store.manageengine.com/exchange-reports/). Negotiated enterprise discounts are not public `[UNVERIFIED]`.
+- **Promotions.** The only promotion seen is conditional: the ERP store advertises "Save up to 50%*" when bought with ADAudit Plus (https://store.manageengine.com/exchange-reports/). Negotiated enterprise discounts are not public. The only quantified source found (2026-10-02) is **Vendr**, a buyer-side procurement platform that publishes aggregates from its own transaction data: for **ManageEngine as a whole, not AD products**, it reports a median annual spend of $9,648 (range $2,391 to $28,810) over 50 anonymised purchases (page last updated February 2026), "15–30% off list pricing" for 2–3 year commitments and "10–25% lower per-unit pricing" for volume deployments of 500+ devices or 50+ technicians; it names ADManager Plus only as "$1,000–$2,000 annually for small environments" ([Vendr buyer guide](https://www.vendr.com/buyer-guides/zoho-manageengine), third-party, peer-data rank). Representativeness is low: the sample is small, mixes ManageEngine's endpoint, ITSM and monitoring lines, and the discount bands are Vendr's summary, not deal quotes. Use it as a hypothesis for the CEO's warm-account discovery, not as a fact in a battlecard. `[UNVERIFIED]` for AD products specifically.
 - **Subscription only.** The store catalogue has an "AD360 Subscription" category but **no AD360 perpetual category**. ADMP, ADAP, RMP, ERP, M365MP and SPMP each have perpetual categories (https://store.manageengine.com/js/indc-newstorecatglist.js).
 - **Minimums conflict across ME's own collateral.**
   - AD360 get-quote page: ADSSP minimum **500** users; ADAP 2 DCs / 2 file servers / **5** Windows servers / 100 workstations; RMP base packs of 250 AD users, 100 mailboxes, 25 SPO sites, 100 OneDrive sites, 100 Google users, 10 Zoho users (https://www.manageengine.com/active-directory-360/get-quote.html).
@@ -179,7 +179,7 @@ Evidence table. QSG = quick start guide PDF; Arch = solution architecture PDF.
 - Sources: https://www.manageengine.com/identity-360/pricing-details.html (Last-Modified 2026-08-27, verified by direct fetch); https://www.manageengine.com/identity-360/access-management/pricing-details.html
 - **Enterprise-only features:** MFA for RDP, offline MFA, device authentication, and desktop passwordless (Windows/macOS/Linux). The homepage also lists "Risk-based authentication" as Enterprise-only, which conflicts with the comparison table `[UNVERIFIED]`.
 - **SMS credits** are perpetual: 2,000 for $595, 100,000 for $20,395.
-- **Trial:** 30 days. Whether the free tier still exists is `[UNVERIFIED]` (the old free-edition link returns 404).
+- **Trial:** 30 days. Whether the free tier still exists is `[UNVERIFIED]`: the live pricing page, re-read 2026-10-02, contains no mention of a free tier or trial ([pricing](https://www.manageengine.com/identity-360/pricing-details.html)), while a search-engine summary attributed to ManageEngine pages says the product is "free for 10 users only" after the trial; we could not find the page that says so, so we do not rely on it.
 
 **Aug 2026 repricing.** Archived pricing pages from 2024-12-07 and 2025-12-05 show module pricing (https://web.archive.org/web/20251205093347/https://www.manageengine.com/identity-360/pricing-details.html):
 - 1,000 users: Life Cycle Management $1,995, MFA+SSO $1,195, All-inclusive $2,795.
@@ -653,7 +653,8 @@ Training and onboarding SKUs (store JSON):
 
 - Source: https://www.manageengine.com/support.html
 - **Only acknowledgement targets are published.** No severity-based response or resolution SLAs were found.
-- **Premium price is not public** `[UNVERIFIED]`. No TAM offering was found `[TODO]`.
+- **Premium price is not public.** Re-checked 2026-10-02: the central support page lists no prices and says to email sales ([support](https://www.manageengine.com/support.html)); the ADManager Plus support page mentions a "Premium support" option without terms ([support](https://www.manageengine.com/products/ad-manager/support.html)); the ADSelfService Plus help says "Classic Support is available 24/5 ... For prioritized, 24/7 help, purchase the Premium Support package" and gives only a sales address ([help](https://www.manageengine.com/products/self-service-password/help/admin-guide/Admin/Support.html)). The store pricing pages for ADMP carry no support SKU ([pricing](https://www.manageengine.com/products/ad-manager/pricing-details.html)). So it is **quote-only**; price and whether it is a percentage of licence value are `[UNVERIFIED]`.
+- **TAM offering:** the only Technical Account Manager programme found is "Enterprise Business Solutions" for **Endpoint Central** (aimed at 2,000+ computers, no price stated) ([EBS](https://www.manageengine.com/products/desktop-central/ebs.html)). Not found for the AD products as of 2026-10-02.
 - **Phone conflict:** product pages list toll-free numbers (e.g., ADMP/AD360 US +1 844 245 1108), but the table above makes phone Premium-only `[UNVERIFIED in practice]` (https://www.manageengine.com/products/ad-manager/support.html).
 - **EULA:**
   - Perpetual licences exclude "technical support, including… product updates, upgrades, service packs, email and phone support", so AMS is required for updates.
@@ -677,6 +678,27 @@ Training and onboarding SKUs (store JSON):
 - **Docs:** multilingual help with no "last updated" dates. Several system-requirement pages are stale (e.g., RMP lists Windows Server 2008–2022 hosts).
 
 ---
+
+### 5.7 Certifications and attestations (T-0001, checked 2026-10-02)
+
+Source kind: vendor compliance centre ([compliance](https://www.manageengine.com/compliance.html)). Scope wording is the vendor's.
+
+| Attestation | Stated scope | Valid to / type |
+|---|---|---|
+| ISO/IEC 27001 | "All cloud services and on-premise products of ManageEngine" | to 21-Aug-2028 |
+| ISO/IEC 27701 | All business units, cloud services and on-premise products of ManageEngine and Site24x7 | to 21-Aug-2028 |
+| ISO/IEC 27017, 27018 | All cloud services of ManageEngine | to 21-Aug-2028 |
+| ISO 9001:2015 | All cloud services and on-premise products | to 02-Feb-2029 |
+| ISO 22301 | Cloud services and on-premise products, plus support/NOC/DC functions | to 20-Nov-2026 |
+| SOC 2 | "All cloud services and on-premise products of ManageEngine" | Type II |
+| SOC 2 + HIPAA | ServiceDesk Plus, ServiceDesk Plus Cloud, Endpoint Central, **ADManager Plus**, Endpoint Central MSP | Type 2, audit 01-Dec-2023 to 30-Sep-2024 |
+| TX-RAMP | ServiceDesk Plus Cloud (Level 1); Endpoint Central Cloud and Site24x7 (Level 2) | to 20-Jun-2027 |
+| CSA STAR | All cloud services | Self-assessment |
+| ENS (Spain), Saudi NCA CST (Class B), Cyber Essentials Plus | as stated on the page | various |
+
+- **FedRAMP: not listed.** No FedRAMP authorisation appears on the compliance centre or on ADManager Plus's certification page ([ADMP help](https://www.manageengine.com/products/ad-manager/help/compliance/standards-and-certifications.html)). This is "not found as of 2026-10-02", not proof that no product has one; a third-party summary claiming ADSelfService Plus is "FedRamp compliant" is unsupported by those pages. For a US-federal customer, ask the vendor.
+- **Among the AD products only ADManager Plus is named in a product-level attestation.** ADAudit Plus, ADSelfService Plus, AD360, RecoveryManager Plus and M365 Manager Plus are covered only by the company-wide "all on-premise products" wording. In a battlecard say exactly that; do not say "ADAudit Plus is SOC 2 certified".
+- **Implication:** activeDIQ will need its own ISO 27001 and SOC 2 Type II to match the "Tier-0 vendor" bar (customer-voice file §6.2). That is a roadmap and cost item for the CEO, not a research finding.
 
 ## 6. Commercial-model analysis
 
@@ -969,12 +991,24 @@ Status: **[S]** shipped (release notes) · **[A]** announced · **[M]** marketin
 
 ---
 
-## Appendix A: Open gaps
+## Appendix A: Gaps (resolved and remaining)
 
-- `[TODO]` Premium Support price, any TAM offering; Gartner Peer Insights ratings for AD360/ADSSP; partner discount levels; real-world enterprise discount ranges (needs customer quotes; the CEO's warm accounts are the best source).
-- `[TODO]` Config and audit export formats from ADMP/ADAP/ADSSP/M365MP databases (importer feasibility); credential-provider coexistence (ADSSP vs activeDIQ endpoint agent).
-- `[UNVERIFIED]` Identity360 grandfathering for pre-Aug-2026 customers; Identity360 free tier; AD write-back from Identity360; whether "Unified Log360" is a template for AD360; PMP end-of-sale; M365MP multi-tenant counting; RMP "user vs shared mailbox" counting; the AD360 $5/$10 "additional technician" SKUs.
-- `[TODO]` FedRAMP or other certifications for ME identity products in 2025–2026 (web-search budget exhausted during research; not a confirmed absence).
+### Resolved in T-0001 (2026-10-02)
+
+- **Premium Support price / TAM:** confirmed not public, quote-only; TAM exists only for Endpoint Central (§5.5).
+- **Discount levels:** one third-party aggregate for ManageEngine overall (§1.4); PACE partner terms are not public beyond the 15% affiliate commission and $100 minimum (re-read 2026-10-02: [PACE](https://www.manageengine.com/pace/) lists no Alliance or OEM discount levels).
+- **Config and audit export formats (importer feasibility):** none of ADMP, ADAP or ADSSP documents an export of configuration to an open format. All three use a proprietary password-protected `.ezip` database backup restored with `restoreDB.bat`; ADAP and ADSSP require the same build on restore; ADSSP's KB does not mention exporting enrollment data. Details: ADMP file (ADM-158 and "Resolved gaps"), ADAP file §7a option 6, ADSSP file §9. M365 Manager Plus was **not** checked in this pass `[TODO]`.
+- **Credential-provider coexistence (ADSSP agent):** the vendor's Sept 2025 guide says the ADSSP login agent is "an extension of the standard credential provider from Microsoft", warns that "some of these extensions may not be compatible with others", and supports six named third-party providers (ZENworks Endpoint Security Agent, Parallels Client, Toshiba Logon Provider, Cisco NAC Agent, OneX Credential Provider, RSA SecurID) by passing the other provider's GUID to the MSI at install time or editing registry settings ([guide](https://download.manageengine.com/products/self-service-password/integration-with-third-party-winlogon-extensions.pdf)). It also states prerequisites: Endpoint MFA is required for MFA on Windows logons, and the Professional edition for password reset on the logon screen. The guide also says "by editing the Windows Registry settings, more third-party credential providers can be made compatible with the ADSelfService Plus login agent" (a `WrappingProvider` registry value plus the other provider's GUID), which is the route an activeDIQ credential provider would take. So coexistence with a third-party CP is **supported by procedure, per ManageEngine**, but nothing says it has been tested with an activeDIQ provider. A lab test is needed before we promise OU-by-OU coexistence `[TODO: lab]`.
+- **Certifications / FedRAMP:** §5.7.
+- **Peer-review ratings:** Gartner Peer Insights for AD360 shows 4.6 from 281 ratings in a 2026-10-02 search snippet (the earlier Wayback figure was 275); the page itself still returns 403 `[UNVERIFIED: snippet]`. Capterra shows 4.6 from 35 reviews, fetched live 2026-10-02 ([Capterra](https://www.capterra.com/p/268487/ManageEngine-AD360/)).
+
+### Remaining gaps
+
+- `[TODO]` Real-world enterprise discount ranges for AD products and partner (PACE Alliance/OEM) margins. Needs customer quotes or a partner conversation; the CEO's warm accounts are the best source, and any vendor or partner contact needs CEO approval.
+- `[TODO]` Premium Support price. Quote-only; requires contacting sales.
+- `[UNVERIFIED]` Identity360 grandfathering for pre-Aug-2026 customers, Identity360 free tier (conflict described in §1.4), AD write-back from Identity360, whether "Unified Log360" is a template for AD360, PMP end-of-sale, M365MP multi-tenant counting, RMP "user vs shared mailbox" counting, the AD360 $5/$10 "additional technician" SKUs. None can be settled from public pages; each needs a quote or vendor answer.
+- `[TODO]` M365 Manager Plus config and audit export formats; credential-provider lab test (above).
+- `[TODO]` Gartner Peer Insights for RMP: no source reachable.
 
 ## Appendix B: Method notes
 
@@ -982,3 +1016,7 @@ Status: **[S]** shipped (release notes) · **[A]** announced · **[M]** marketin
 - **Price history:** Wayback snapshots of the ADAP pricing page (2021–2025) and Identity360 pricing (2024–2025).
 - **PDFs:** text was extracted locally from the AD360 QSG and solution-architecture PDFs. Page references (QSG pp.) use the PDF's own page numbering.
 - **Research split:** work was done across parallel research threads. Every claim carries a primary URL. Release-note claims for AD360, RMP (6330/6321/6313), M365MP (4817), ADAP (9000/8710/8600) and Identity360 pricing were re-verified by direct fetch on 2026-10-02.
+
+## Changelog
+
+- **2026-10-02 (T-0001):** Added §5.7 certifications; closed support, discount, export-format, credential-provider and rating gaps where public sources allow; re-tagged the rest in Appendix A.

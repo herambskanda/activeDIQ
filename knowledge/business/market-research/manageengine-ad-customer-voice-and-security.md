@@ -74,22 +74,22 @@ Ratings in §1 marked "sub-agent" were collected by a parallel research pass usi
 | ADManager Plus | TrustRadius | 9/10 | 84 reviews & ratings | WB 2026‑07‑22 | [WB](https://web.archive.org/web/20260722164719/https://www.trustradius.com/products/manageengine-admanager-plus/reviews) | Category: Identity Governance & Administration. Sub-agent saw 9.3/10 with 63 ratings at WB 2025‑11‑08 |
 | ADManager Plus | PeerSpot | 4.0/5 | 16 | 2026‑10‑02 live | [peerspot.com](https://www.peerspot.com/products/manageengine-admanager-plus-reviews) | 94% willing to recommend; #4 in AD Management; mindshare 8.6%, down from 14.7% a year earlier |
 | ADAudit Plus | G2 | 4.6/5 | 59 (48×5★, 10×4★, 1×3★) | WB 2026‑07‑25 | [WB](https://web.archive.org/web/20260725211953/https://www.g2.com/products/manageengine-adaudit-plus/reviews) | G2 categories: SIEM, Log Analysis, UEBA |
-| ADAudit Plus | Gartner PI | `[TODO]` | — | blocked | gartner.com (IT Infrastructure Monitoring Tools market, per sub-agent) | No usable 2026 snapshot |
+| ADAudit Plus | Gartner PI | 4.5/5 `[UNVERIFIED: snippet]` | 294 (62% 5★, 37% 4★) | search snippet 2026-10-02 | [gartner.com](https://www.gartner.com/reviews/product/manageengine-adaudit-plus) | Live page 403; figure from the search-engine snippet only. Market shown as SIEM |
 | ADAudit Plus | Capterra | 4.5/5 | 104 | 2026‑10‑02 live | [capterra.com](https://www.capterra.com/p/210774/ADAudit-Plus/) | — |
 | ADAudit Plus | TrustRadius | 9.0/10 | 132 | WB 2026‑03‑07 | [WB](https://web.archive.org/web/20260307180844/https://www.trustradius.com/products/manageengine-adaudit-plus/reviews) | Category: System Monitoring |
 | ADAudit Plus | PeerSpot | 4.4/5 | 15 | 2026‑10‑02 live | [peerspot.com](https://www.peerspot.com/products/manageengine-adaudit-plus-reviews) | 100% willing to recommend; #5 in AD Management; mindshare 7.1%, down from 11.1% |
 | ADSelfService Plus | G2 | 4.5/5 | 32 (23/7/2/0/0) | WB 2026‑08‑03 | [WB](https://web.archive.org/web/20260803114027/https://www.g2.com/products/manageengine-adselfservice-plus/reviews) | G2 AI summary says "support could be improved" |
-| ADSelfService Plus | Gartner PI | `[TODO]` | — | blocked | gartner.com (Password Management Tools market, per sub-agent) | No usable snapshot |
+| ADSelfService Plus | Gartner PI | 4.5/5 `[UNVERIFIED: snippet]` | 34 (50% 5★, 38% 4★, 12% 3★) | search snippet 2026-10-02 | [gartner.com](https://www.gartner.com/reviews/product/manageengine-adselfservice-plus) | Live page 403; snippet shows both 4.5 and 4.4. Password Management Tools market |
 | ADSelfService Plus | Capterra | 4.6/5 | 63 | 2026‑10‑02 live | [capterra.com](https://www.capterra.com/p/172556/ADSelfService-Plus/) | — |
 | ADSelfService Plus | TrustRadius | 9.2/10 | 18 | WB 2025‑11‑10 | [WB](https://web.archive.org/web/20251110022945/https://www.trustradius.com/products/manageengine-adselfservice-plus/reviews) | Category: Password Management |
 | ADSelfService Plus | PeerSpot | 4.2/5 | 9 | 2026‑10‑02 live | [peerspot.com](https://www.peerspot.com/products/manageengine-adselfservice-plus-reviews) | 90% willing to recommend; #23 in Enterprise Password Managers; mindshare 1.1% |
 | AD360 | G2 | 4.3/5 | 4 | WB 2026‑04‑18 (sub-agent) | [WB](https://web.archive.org/web/20260418000737/https://www.g2.com/products/manageengine-ad360/reviews) | Category: IAM |
-| AD360 | Gartner PI | 4.6/5 | 275 | WB 2026‑04‑14 (sub-agent) | [gartner.com](https://www.gartner.com/reviews/product/manageengine-ad360) | IGA market. 165×5★, 96×4★, 14×3★ (sub-agent) |
+| AD360 | Gartner PI | 4.6/5 | 275 (WB 2026-04-14); 281 in a 2026-10-02 search snippet `[UNVERIFIED: snippet]` | WB 2026‑04‑14 (sub-agent) | [gartner.com](https://www.gartner.com/reviews/product/manageengine-ad360) | IGA market. 165×5★, 96×4★, 14×3★ (sub-agent) |
 | AD360 | Capterra | 4.6/5 | 35 | 2026‑10‑02 live | [capterra.com](https://www.capterra.com/p/268487/ManageEngine-AD360/reviews/) | — |
 | AD360 | TrustRadius | 9.2/10 | 8 | WB 2026‑04‑15 (sub-agent) | trustradius.com/products/manageengine-ad360/reviews | — |
 | AD360 | PeerSpot | no rated reviews | 0 | 2026‑10‑02 live | [peerspot.com](https://www.peerspot.com/products/manageengine-ad360-reviews) | — |
 | RecoveryManager Plus | G2 | 4.8/5 | 4 | WB 2026‑04‑16 (sub-agent) | g2.com/products/manageengine-recoverymanager-plus/reviews | Category: SaaS Backup |
-| RecoveryManager Plus | Gartner PI | `[UNVERIFIED]` | — | blocked | — | No archived page found |
+| RecoveryManager Plus | Gartner PI | `[UNVERIFIED]` | — | not found 2026-10-02 (search returned no RMP page) | — | No page or archive reachable |
 | RecoveryManager Plus | Capterra | no rating | 0 | 2026‑10‑02 live (sub-agent) | [capterra.com](https://www.capterra.com/p/187322/RecoveryManager-Plus/) | Listing exists with no reviews |
 | RecoveryManager Plus | TrustRadius | `[TODO]` | — | blocked, no archive | — | — |
 | RecoveryManager Plus | PeerSpot | no rated reviews | 0 | 2026‑10‑02 live | [peerspot.com](https://www.peerspot.com/products/manageengine-recoverymanager-plus-reviews) | — |
@@ -469,13 +469,35 @@ How to read the table:
 
 ## Open gaps / TODO
 
-- `[TODO]` Gartner Peer Insights review text and ratings for ADAP, ADSSP and RMP. Live pages return 403 and snapshots are blocked; try an authenticated browser session or the Gartner API.
-- `[TODO]` Live (non-archived) G2 and TrustRadius numbers. ADMP's G2 own-page review text exists only in a 2024 snapshot.
-- `[TODO]` Customer voice on RMP and AD360. Very few reviews anywhere; consider direct customer interviews through the CEO's warm accounts.
-- `[TODO]` Specops, Semperis and Quest Recovery Manager mentions in community threads. Not found in this sample; Reddit search was blocked.
-- `[UNVERIFIED]` Exploitation status of the 2025–2026 CVEs beyond KEV (no web search available). Re-check vendor threat intel (Rapid7, Horizon3, watchTowr, Shadowserver) once search is restored.
-- `[UNVERIFIED]` Whether ADSSP can export enrollment or TOTP data; current free-tier thresholds; current ADSSP default admin credential behavior.
-- `[TODO]` Cross-link to the sibling product benchmarks (`manageengine-{admanager-plus,adaudit-plus,adselfservice-plus}.md`, `manageengine-ad360-suite-and-commercials.md`) and map pain themes to feature IDs (`ADM-`/`ADA-`/`ADSS-`) once those inventories exist.
+### Resolved or narrowed in T-0001 (2026-10-02)
+
+- **Gartner Peer Insights figures** for ADAP (4.5, 294 ratings), ADSSP (4.5, 34) and AD360 (4.6, 281) now appear in the §1 table, **as search-snippet values only**: the live pages return 403 to our fetcher and the Wayback Machine is not reachable from this environment. Treat them as `[UNVERIFIED: snippet]` until someone reads the pages in a browser. RMP: no page found.
+- **Exploitation status beyond KEV.**
+  - CISA KEV, re-read directly from the catalogue JSON (version 2026.10.01, released 2026-10-01): ManageEngine entries are CVE-2019-8394, CVE-2020-10189, CVE-2021-37415, CVE-2021-40539, CVE-2021-44077, CVE-2021-44515, CVE-2022-28810, CVE-2022-35405 and CVE-2022-47966. **No 2025 or 2026 ManageEngine CVE is listed**, which matches §4.1 ([KEV JSON](https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json)).
+  - CVE-2025-11250 (ADSSP auth bypass): Horizon3 states the root cause is "improper filter handling that allows spoofed requests to bypass authentication controls", builds 6518 and earlier, fixed in 6519, and reports **no confirmed exploitation** and no public PoC in its page ([Horizon3](https://horizon3.ai/attack-research/vulnerabilities/cve-2025-11250/)). This fills the technical-detail gap noted in §4.2 only partly; the vendor advisory still carries none.
+  - CVE-2026-75791 (ADSSP REST API auth bypass, before 7001, CVSS 8.6, published 2026-09-22/23): Rapid7's page gives no exploitation or exploit-availability data and an EPSS of 2% (77th percentile) ([Rapid7](https://www.rapid7.com/db/vulnerabilities/cve-2026-75791/)).
+  - CVE-2026-1367 (ADSSP authenticated SQL injection, builds 6522 and below, CVSS 8.3, published 2026-02-23): Rapid7 shows EPSS 0% and no KEV listing ([Rapid7](https://www.rapid7.com/db/vulnerabilities/zoho-manageengine-adselfservice-plus-cve-2026-1367/)).
+  - **Wording for a battlecard:** "not in CISA KEV as of 2026-10-01; no public exploitation reports found in Horizon3 or Rapid7 pages we read". Not "not exploited". Watchtowr, Shadowserver and other feeds were not checked individually `[UNVERIFIED]`.
+- **ADSSP enrollment export:** the vendor's server-migration KB does not mention exporting enrollment data, see the ADSSP file §9. Free tier is 50 users and never expires; the default admin login is admin/admin per the ADSSP file §1–§2 (already sourced there).
+- **Cross-links to the sibling inventories:** [ADMP](manageengine-admanager-plus.md), [ADAP](manageengine-adaudit-plus.md), [ADSSP](manageengine-adselfservice-plus.md), [AD360 and commercials](manageengine-ad360-suite-and-commercials.md). Pain-theme to feature-ID crosswalk, taken from the evidence column of `../competitive-analysis/feature-parity-matrix.csv` (rows that cite the theme):
+
+| Theme | Feature IDs that answer it |
+|---|---|
+| X1 UI and navigation | ADM-001, ADA-098 |
+| X2 Report customization | ADM-097, ADA-101, ADA-104 |
+| X3 Upgrades and patches | ADM-209 |
+| X5 Hybrid/cloud coverage | ADM-169, ADA-047, M365-001 |
+| X6 ADSSP endpoint and enrollment friction | ADSS-132 |
+| X11 Alert volume, storage growth | ADA-092 |
+| X4 learning curve, X7 support, X8 licensing cost, X9 performance, X10 AD-facing defects | **No feature row.** These are experience, service, pricing and engineering-quality themes. They belong in the pricing options, the SLA/service documents and the non-functional requirements, not the parity matrix |
+
+### Remaining gaps
+
+- `[TODO]` Live (non-archived) G2 and TrustRadius numbers, Gartner page text. Blocked from this environment; needs a browser session.
+- `[TODO]` Customer voice on RMP and AD360. Very few reviews anywhere; consider customer interviews through the CEO's warm accounts (outside contact, so CEO approval).
+- `[TODO]` Specops, Semperis and Quest Recovery Manager mentions in community threads. Searched again 2026-10-02: results were review sites (Capterra, Software Advice) and vendor documentation, and **no Reddit r/sysadmin threads surfaced**; Reddit search itself is not available to us. For Specops uReset, Capterra shows 4.6 from 12 reviews and one reviewer notes it is not a registered Azure AD application, so it cannot be governed by Conditional Access ([Capterra](https://www.capterra.com/p/92176/Specops-uReset/)); a single reviewer comment is an anecdote.
+- `[UNVERIFIED]` Exploitation of the 2025-2026 CVEs in feeds other than KEV, Horizon3 and Rapid7 (watchTowr, Shadowserver, vendor threat intel).
+- `[UNVERIFIED]` Whether ADSSP can export TOTP data (needs a lab install, ADSSP file §9).
 
 ## Changelog
 
@@ -484,3 +506,4 @@ How to read the table:
   - **Reviews:** PeerSpot and Capterra live; G2, TrustRadius and Gartner via Wayback snapshots dated as shown.
   - **Community:** Spiceworks live; Reddit via Wayback snapshots.
   - **Limits:** the WebSearch budget ran out during the session, so there are no `[snippet]` claims, and some gaps remain (see above).
+- **2026-10-02 (T-0001):** Added Gartner snippet figures, direct KEV re-check, Horizon3/Rapid7 exploitation status, theme-to-ID crosswalk; re-tagged the remaining gaps.

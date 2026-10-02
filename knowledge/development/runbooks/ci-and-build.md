@@ -57,6 +57,27 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
   - F5: set the ADR's status through the `adr` skill first.
 - **`fitness-modules`**: the message names the file, line and blueprint rule. Fix the import. Do not
   edit the rule to pass; a rule changes only by amending the blueprint/ADR.
+- **`fitness-safeprim`** (FF-SP1 to FF-SP3, safe-primitives §8): each finding reads
+  `file:line: FF-SPn [rule] message`. `make fitness-safeprim` re-runs it alone;
+  `go run ./tools/fitness/safeprim -checks FF-SP1,FF-SP3 -no-analyzers` runs a subset without the
+  type-aware passes. The same passes run as `go vet -vettool=$(go build -o /tmp/safeprim-vet ./tools/vettool && echo /tmp/safeprim-vet) ./...`.
+  The web half is `eslint` (rule names `no-hand-built-security-string`, `no-quote-doubling`,
+  `no-dn-string-ops`, `no-export-media-types`, `no-unsafe-dom-sinks`, `safe-url-attributes`).
+  - The fix is to call the primitive (filter builder, DN builder, `proc`, `psx`, data-access
+    package), not to move the string or silence the rule. Test files and tier L (`tools/`, `lab/`)
+    are exempt from FF-SP2 and FF-SP3 literal rules only; FF-SP1 still applies to tests.
+  - Where each primitive lives is one table: `tools/analyzers/policy/policy.go`. A new home (for
+    example when T-0004 fixes the export package roots) is a change to that table plus a case in
+    `tools/fitness/safeprim/scan/scan_test.go`. Rule lists are in `scan/rules.go`.
+  - What is skipped: `.git`, `node_modules`, `testdata` at any depth; `knowledge`, `factory`, `garage`,
+    `vendor`, `third_party` at the repo root; `bin`/`obj` only beside a `.csproj`, `target` only beside
+    `Cargo.toml`, `dist` only beside `package.json`. Never skip by a bare directory name: a package
+    called `target` is product code.
+  - Limits: the syntactic scan ignores build tags on purpose; the type-aware passes see only the
+    host OS files (run them with `GOOS=windows` once `_windows.go` files exist, follow-up ticket);
+    C# and Rust are scanned as text until their toolchains land. `sidecars/BannedSymbols.txt` and
+    `tools/fitness/safeprim/configs/native-clippy.toml` are dormant configs for the first sidecar
+    and the first crate.
 - **`npm ci` fails with a lockfile error**: `web/package.json` and the lockfile disagree; run
   `npm --prefix web install` once and commit both.
 - **Go toolchain download fails**: check network/proxy (`go env GOPROXY`).

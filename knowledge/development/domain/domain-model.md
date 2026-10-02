@@ -5,8 +5,8 @@ updated: 2026-10-02
 status: review
 owner: heramb
 author: solution-architect
-ticket: T-0006 (amended by T-0061)
-binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), blueprint v0 (review), safe-primitives.md (review), threat-model.md v0.2 (review; its TM-D decisions bind, TM §0)
+ticket: T-0006 (amended by T-0061, T-0145, T-0155, T-0168)
+binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), ADR-0003 (ratified), blueprint v0 (review), safe-primitives.md (review), threat-model.md v0.2 (review; its TM-D decisions bind, TM §0)
 reviewed_by: ad-expert (AD/Entra semantics, see §12)
 ---
 
@@ -24,7 +24,10 @@ installation operator. `T` tenant scope: `tenant_id` plus forced RLS, set only t
 API. `D` directory-observed: tenant scope, written only by `sync` or by an Action's verified
 outcome, and read-only to everything else. `R` registry: declared in code through the
 `Registrar` (blueprint §4.1). It is not a table, but persisted data references it by ID.
-**Owner** is the package that owns the entity's tables (blueprint §2 rule 6).
+**Owner** is the package that owns the entity's tables (blueprint §2 rule 6). Its owner key is the
+top-level package under `internal/platform`, `internal/directory`, `internal/connector` or
+`internal/modules` that the migration filename names ([ADR-0003](../decisions/0003-module-system-extension-points-only-on-ramp.md) rule 6).
+ADR-0003 rule 9 checked every owner line below against those rules.
 **`[LAB: Windows]`** marks AD behaviour that Microsoft documents (cited inline) but that we have
 not yet reproduced against a Windows DC. Code must not rely on such a claim until a lab test has
 confirmed it (T-0051, §11 Q8).
@@ -49,7 +52,8 @@ confirmed it (T-0051, §11 Q8).
   being set) is stored sealed only while that step needs it, and is deleted at the step's terminal
   state or within 72 hours (ADR-0005 rule 9). No `Secret` is ever serialised into an
   entity, an audit detail, a notification or an export.
-- **X5 Append-only records** (ChangeRecord, AuditEvent, ApprovalDecision, ChainCheckpoint) are
+- **X5 Append-only records** (ChangeRecord, AuditEvent, ApprovalDecision, ChainCheckpoint,
+  ConnectionVerification, SyncCycle) are
   never updated. Only retention deletes them, and only as an explicit, audited path. Their
   lifecycle states are **derived and never stored**: these tables have no state column, so no
   state change can ever be an UPDATE (fitness check T-0050). Each entity says what its states
@@ -84,9 +88,9 @@ confirmed it (T-0051, §11 Q8).
   deleted. Mutable records (Operation input, Request, Account) are erased in place.
 
 **Lifecycle notation.** `a → b` is a transition. `a ⇄ b` is reversible. A *state* is persisted,
-except on the append-only entities (X5: DM-18, DM-66, DM-80, DM-81), whose states are derived
-from other records and never stored. *Health* (reachable, degraded, lagging) is observed, shown,
-and never a lifecycle state.
+except on the append-only entities (X5: DM-18, DM-24, DM-26, DM-66, DM-80, DM-81) and the
+insert-only Tier0Override (DM-25), whose states are derived from other records and never stored.
+*Health* (reachable, degraded, lagging) is observed, shown, and never a lifecycle state.
 
 ```
  PLATFORM  Tenant(1) Node Release HostnameBinding Lease(platform)
@@ -94,6 +98,7 @@ and never a lifecycle state.
  TENANT ------+--------------------------------------------------------------------------------
  Directories: Connection --< NamingContext --< DomainController      Connection --< ConnectorBinding >-- Component
               Connection --< DirectoryCredential   Connection --< SyncCursor   HybridLink(AD conn, Entra conn)
+              Connection --< ConnectionVerification --< Finding;  Connection --< Tier0Override;  Connection --< SyncCycle --< DcObservation
               DirectoryObject(conn, guid) --< Link >-- DirectoryObject;  --< ChangeRecord;  Correlation(AD obj, Entra obj)
               DirectoryObject(SOM) --< GpLink(position) >-- DirectoryObject(groupPolicyContainer)
  Access:      Account --< Session, ApiToken, AuthenticatorEnrollment;  RoleAssignment(subject, Role, DelegationScope)
@@ -175,7 +180,7 @@ example, a SyncCursor write is refused if the token is stale.
 
 ## 2. Directories
 
-### DM-10 Connection · T · owner `modules/connections` (model in `directory/model`)
+### DM-10 Connection · T · owner `directory/connection` (model in `directory/model`; written by the `connections` module through `connection`'s Go API, ADR-0003 F1)
 **Definition.** One directory activeDIQ manages: an **AD forest** or an **Entra tenant**. Each
 connection has its own credential, bindings and sync. **Replaces (ME):** the "domain" in Domain
 Settings (ADM-212; per-domain settings move to DM-14) and the M365 tenant configuration (ADM-159).
@@ -185,14 +190,20 @@ as an extended DN, with the forest root domain SID as a second check; Entra: the
 `forest_dns_name` and `forest_netbios_name` (snapshots: a domain rename keeps the GUID,
 [domain rename](https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-server-2008-R2-and-2008/cc816795(v=ws.10))) ·
 forest-wide deletion settings (AD only): `recycle_bin_enabled`, `tombstone_lifetime_days`,
-`deleted_object_lifetime_days` · `verified_at` · `transport_security` (LDAPS or StartTLS) ·
+`deleted_object_lifetime_days` · `last_verification_id` and `verified_at` (I8) · `last_stamp_at`
+(the ordering stamp, I13) · `retired_at` (set once on entering `decommissioning` or `discarded`,
+I13) · `transport_security` (LDAPS or StartTLS) ·
 `dc_affinity` (site priority, per-OU preferred DCs, ADM-133) · `sync_attribute_set` (additions to
 the default set) · `credential_id` · `state` · takeover attestation (Entra only, I7):
 `attested_by`, `attested_at`, `attested_values`, `attestation_max_age`, `first_attested_at`
 (set once, I7(f)); `takeover_protection` is derived from these and never stored.
 **Invariants.** I1 `directory_identity` is fixed at first verification. A connection cannot be
 re-pointed at another forest or tenant, because that would mix two directories' GUID spaces.
-I2 `(kind, directory_identity)` is unique per tenant. I3 An `active` connection has at least one
+I2 `(kind, directory_identity)` is unique per tenant among connections that are not `discarded` or
+`removed`, so a removed forest can be connected again. `directory_identity` is empty until a
+verification's V5 identity check (T-0068 spec §7) sets it. A verification of a second connection
+that finds an identity already held fails V5 with `duplicate_identity` (spec L10), and the
+unique index is what makes that check race-free. I3 An `active` connection has at least one
 binding (DM-13). I4 The security floor is not configurable downward: TLS, signing, sealing and
 channel binding are always on (ADR-0002 rule 8). I5 Removal never deletes audit events (X10).
 Inventory is purged by retention. I6 The deletion settings are read from the directory and never
@@ -250,30 +261,183 @@ flags itself. They are an **attested tenant fact**:
   makes the state `attested`, and never changes afterwards. It splits the tenant's correlations for
   DM-20.I4(g): before it, the tenant is still being set up; after it, any state other than
   `attested` is a lapse.
-**Lifecycle.** `draft → verifying → active ⇄ suspended → decommissioning → removed`. Verifying
-checks reachability, identity and the delegated-rights limit (T-0007, ENH-08). Suspended stops
-sync and writes. `takeover_protection` (Entra only, derived, I7) moves `unattested → open |
-attested`, `open → attested`, and `attested → open | stale`; the common first path is `unattested
-→ open → attested`, because both flags default to `false` (I7(e)). It leaves `open` or `stale`
+
+I8 to I12 were decided in the T-0068 review (spec OQ-1, OQ-2, OQ-5) and recorded by T-0168. I13
+was added by the security-architect review of T-0168, so that DM-25 can be derived from
+stored, ordered times. The
+checks a verification runs depend on the kind: an AD forest runs V1–V9 of the
+[forest connection spec](../../product/specs/ad-forest-connection.md) §7, and the Entra tenant
+check list arrives with the Entra connection spec (E2.7). The rules below hold for both kinds.
+
+I8 **Verification pointer.** `last_verification_id` names the newest completed
+ConnectionVerification (DM-24) of the connection's current `credential_id`. `verified_at` is that
+row's `completed_at` when its verdict is `pass`, and is empty otherwise. Both are written in the
+transaction that inserts the DM-24 row, so they always agree with it. A run that does not pass
+therefore clears `verified_at`: after a pass followed by a refusal, nothing is left to activate on.
+A `credential_change` run that does not pass leaves both unchanged, because the old credential
+stays in use (spec FR-21). A passing one swaps `credential_id` and sets both in the same
+transaction, which also replaces the old DM-11 row (DM-11.I5). Editing the credential, transport or
+DC choices of a `draft` clears both, because the earlier run no longer describes the connection. A
+credential edit binds a new DM-11 row and replaces the old one, as a swap does (DM-11.I5).
+
+I9 **Activation gate.** `draft → active` needs a `last_verification_id` row completed no more than
+15 minutes earlier (spec FR-17), whose result **qualifies**: either (a) its verdict is `pass`, or
+(b) its verdict is `refused`, V7 (over-privilege) is the only check with outcome `fail`, no check is
+`could_not_verify`, and every V7 finding fingerprint is in the acknowledged set of the Tier0Override
+in force for the current credential (DM-25). An override never covers a V8 failure, `could_not_verify`
+or `failed` (TM-D1, spec FR-13). Without a qualifying fresh result, Activate starts a run of kind
+`activation` (`draft → verifying`). That run ends `verifying → active` if its own result qualifies,
+and `verifying → draft` otherwise. The transaction that makes the connection `active` also creates
+its binding (I3). The `connection.activated` event names the account that pressed Activate and
+the verification ID.
+
+I10 **A verification moves the state only through its intent.** Only a run started from `draft`
+passes through `verifying`. A run of kind `onboarding` ends `verifying → draft`, and an
+`activation` run ends as I9 says. A run on an `active` or `suspended` connection (kinds `resume`,
+`credential_change`, `scheduled` and `manual`) is a job and does not change the lifecycle state
+(spec L11). Resume is the one intent that does: a `resume` run whose result qualifies (I9 (a) or
+(b)) moves `suspended → active` in the transaction that records it, and any other result leaves
+the connection `suspended` with its findings (spec FR-19). `verifying` is never left stranded.
+Every run that starts records exactly one DM-24 row. If a run's job is lost or interrupted, the
+job's terminal path or the sweeper records it as `failed` with code `run_interrupted`. What
+happens next depends on the state the run started from, never on the kind alone:
+- a run started from `draft` (the connection is `verifying`) returns it `verifying → draft`;
+- a run on an `active` or `suspended` connection leaves the state unchanged. The `failed` row
+  becomes `last_verification_id` under I8, unless it was a `credential_change` run, so it closes
+  the write gate (I11, V7 `not_run`) until a later run answers. On an `active` connection the
+  automatic re-run of I11 retries it. An interrupted `resume` or `credential_change` run is retried
+  by the operator, who sees the `run_interrupted` finding.
+
+A restart during a scheduled run therefore never demotes an `active` connection to `draft`.
+
+I11 **Write gate** (TM-D1, spec FR-35, H10). The gate is **open** only when the
+`last_verification_id` row has V7 outcome `pass`, or V7 outcome `fail` with every V7 fingerprint
+acknowledged by the Tier0Override in force (I9 (b)). A V7 outcome of `could_not_verify` or
+`not_run` closes the gate, because an unanswered rights question fails closed, as it does at
+onboarding (spec §7 ◆). There is no grace period. The security-architect review of T-0168
+confirmed this (§11 Q13, closed). The gate is evaluated with ADR-0005's authorisation checks, and
+uses only the edges of ADR-0005 rule 3:
+- **At Plan** (ADR-0005 rule 7, "At Plan"). Every directory write on a closed connection is
+  refused. The item goes `pending → blocked` with reason `connection_rights_unverified` and a
+  denial event.
+- **At Apply, on every claimed step** (ADR-0005 rules 2 and 7). The gate is a live fact. Every
+  directory write's `Step.FactsQuery()` includes it, and `client.Write` reads it through
+  `connection`'s Go API (`client` already imports `connection`, blueprint §5.1) together with the
+  scope facts, immediately before `Step.Recheck`. A closed gate makes `Recheck` refuse. The step
+  takes the existing edge `applying → failed` ("denied at the re-check") with reason
+  `connection_rights_unverified`. Its outcome and denial event are recorded in the fresh
+  transaction of ADR-0005 rule 6. The item goes `running → failed` and its later steps
+  `planned → not_run` ("an earlier step did not succeed"). The Operation ends
+  `partially_succeeded` or `failed` (DM-41.I2). A step that already passed its re-check before
+  the gate closed completes, is verified and is audited normally. There is no `planned → failed`
+  and no new edge.
+- **Per chunk, as an early exit only.** An `operation.apply` chunk job (ADR-0005 rule 6) reads the
+  gate once when it starts. If it is closed, each step the chunk claims (`planned → applying`, as
+  usual) is refused at its re-check before any read on the DC or any connector call, along the
+  same edges. This saves directory round trips. It is not an authority: an open result at chunk
+  start never skips the per-step check. A long or bulk Action therefore stops at its next claimed
+  step when a scheduled run finds rights drift.
+
+  Evaluating the gate reads the connection row, the `last_verification_id` row with its V7
+  outcome and V7 fingerprints, and the newest Tier0Override of the connection and current
+  credential (DM-25.I3). It also makes one indexed lookup for a run of that credential with V7
+  `pass` completed after the override's `acknowledged_at`, the clearance of DM-25. All four are
+  indexed point or range reads, bounded by the per-run V7 finding count, and need no directory
+  access.
+
+Reads and sync continue while the gate is closed. When the latest current-credential run of an
+`active` connection leaves V7 `could_not_verify` or `not_run` (verdict `could_not_verify` or
+`failed`, including `run_interrupted`), `directory/connection` schedules an automatic re-run of kind
+`scheduled`. Backoff starts at about 15 minutes and doubles up to the daily cadence (spec §8.2),
+until a run answers V7. A V7 `fail` (real over-privilege) gets no extra re-run: the operator must
+act. `directory/connection` evaluates the gate and exposes it through its Go API, which
+modules reach through `directory.Services`. Because a lower layer reads DM-24 and DM-25,
+`directory/connection` owns them, not the `connections` module (ADR-0003 F1). The TM-D2 guard on
+`tier0` targets still applies, at Plan and in the connector, to every write the gate lets through.
+
+I12 **Discard.** `discarded` is terminal and is entered only from `draft`, never from
+`verifying`. The row and its DM-24 and DM-25 rows are kept but hidden from every list, search
+and picker, so audit references keep resolving (X10). The connection is never reactivated, and it
+no longer holds its `directory_identity` under I2. A draft never synced, so there is no inventory
+to purge. The row is deleted only when the audit retention path deletes the last audit event that
+references it.
+
+I13 **Ordering stamp.** The DM-25 derivations and the gates compare times across records, so those
+times are taken in one order per connection. Four stamps are taken this way: a DM-24 row's
+`completed_at`, a DM-25 row's `acknowledged_at`, a DM-11 row's `replaced_at` (DM-11.I5), and this
+row's `retired_at`. The transaction that writes any of them first locks this row
+(`SELECT … FOR UPDATE`). It then stamps `greatest(clock_timestamp(), last_stamp_at + 1 µs)` and
+writes the result back to `last_stamp_at`. Stamps of one connection are therefore strictly
+increasing in commit order, even if the database clock steps back, and "after" in DM-25 means
+"committed later". The stamp never uses `now()`, which is the transaction's start time: a
+transaction can start before another one that commits first. A serialisation failure on the lock
+retries the whole transaction. The transactions this covers already write this row (I8, the
+lifecycle), so the lock adds no new writer.
+
+**Lifecycle.** Each row maps to the forest connection spec's §6 rows (L1–L11):
+
+```
+(created) → draft                                   L1   create (step-up)
+draft → verifying                                   L2   Verify, or the first half of L4 (I9)
+verifying → draft                                   L3   every onboarding run ends here; a pass sets verified_at (I8)
+draft → active                                      L4   Activate with a qualifying result ≤ 15 min old (I9)
+verifying → active                                  L4   Activate's inline run, on a qualifying result (I9)
+active → suspended                                  L5   Suspend
+suspended → active                                  L6   Resume, after a qualifying resume run (I10)
+active → decommissioning, suspended → decommissioning   L7   Remove (both direct); sets retired_at (I13)
+decommissioning → removed                           L8   the purge and reference clean-up complete
+draft → discarded                                   L9   Discard draft; terminal (I12); sets retired_at (I13)
+```
+
+Spec L10 (a second connection to an identity that is already held) is a refusal and not a
+transition: the run fails V5 with `duplicate_identity` and ends `verifying → draft` (I2). Spec
+L11 (re-verifying an `active` or `suspended` connection) is a job that does not change the state
+(I10). Suspended stops sync and writes. Health is observed (DM-26), and the one-word status on
+the connection list (spec §8.1 rule 4) is derived, never a lifecycle state.
+
+`takeover_protection` (Entra only, derived, I7) moves `unattested → open | attested`,
+`open → attested`, and `attested → open | stale`; the common first path is `unattested →
+open → attested`, because both flags default to `false` (I7(e)). It leaves `open` or `stale`
 only through a new attestation, which yields `attested` or `open`. The first move to `attested`
 sets `first_attested_at` (I7(f)).
 
-### DM-11 DirectoryCredential · T · owner `connector/credential` (metadata row owned by `modules/connections`)
+### DM-11 DirectoryCredential · T · owner `connector/credential` (SQL only in `credential/sealed`; written through `directory/connection`'s credential port, ADR-0003 rule 6)
 **Definition.** The identity a connection uses against its directory. **Replaces (ME):** the
 domain service-account and M365 app credentials, stored with AES-256 in ADMP
 ([data-security PDF](https://download.manageengine.com/products/ad-manager/encryption-and-data-storage-in-admanager-plus-database.pdf)).
 **Key attributes:** `kind` (`gmsa`, `keytab_ref`, `ad_password`, `entra_certificate`,
 `connector_local`) · public metadata (account or principal name, SID, Entra app/client ID, cert
 thumbprint, `not_after`) · `sealed_secret` (only for `ad_password` and the Entra private key) ·
-`key_version` · `state`.
+`key_version` · `state` · `connection_id` (the one connection it is bound to, I5) · `replaced_at`
+(I5).
 **Invariants.** I1 Only code under `internal/connector/` unseals or uses it. API responses carry
 metadata only (ADR-0002 rule 3, P3). I2 `gmsa` and `keytab_ref` hold no secret in the database.
 `connector_local` means the secret lives on a remote connector's host. A SaaS AD connection is
 always `connector_local`. I3 activeDIQ generates the Entra private key; the admin uploads only the
 public certificate. I4 Rights are delegated only, with no Tier-0 or Entra privileged-role rights
 (ADR-0002 rule 9).
+I5 **Replacement is one-way.** Decided by the security-architect review of T-0168; DM-25.I3 and
+I6 depend on it.
+- A credential's identity never changes in place. That covers the kind, the account or principal,
+  the SID, the app ID, the certificate and the sealed secret, and changing any of them creates a
+  new row. Re-wrapping the sealed secret under a new data key (`key_version`, DM-02) does not
+  change the identity.
+- A row is bound to one connection for its life. `connection_id` is set when the row is first
+  bound and never changes.
+- A row stops being its connection's credential exactly once, in the transaction that replaces it.
+  That is either the DM-24 insert of a passing `credential_change` run (DM-10.I8, spec FR-21) or
+  the edit of a `draft`'s credential (DM-10.I8).
+- That transaction moves the row to `rotated`, unless it is already `revoked`. It sets
+  `replaced_at` from the connection's ordering stamp (DM-10.I13); for a swap, that equals the
+  run's `completed_at`. `replaced_at` is written once and never changes.
+- `rotated` and `revoked` are terminal.
+- A connection binds only a row whose `connection_id` is its own or empty and which has no
+  `replaced_at`. Its `credential_id` therefore never returns to an earlier value.
+- The replacing transaction erases a `rotated` row's sealed secret. The metadata row stays while
+  any DM-24 or DM-25 row references it (composite FK, X1), so evidence keeps resolving.
 **Lifecycle.** `pending` (key generated, awaiting consent or rights) `→ active → expiring`
-(`not_after` within the reminder window) `→ rotated` (superseded) `| revoked`.
+(`not_after` within the reminder window) `→ rotated` (replaced, I5) `| revoked`. `rotated` and
+`revoked` are terminal.
 
 ### DM-12 Component · T · owner `platform/fleet`
 **Definition.** An enrolled remote process with its own mTLS identity. In v1 that is a remote
@@ -289,7 +453,7 @@ account holding the enrollment permission. I3 Certificate rotation keeps the Com
 **Lifecycle.** `pending` (token issued) `→ enrolled → active → revoked → removed`. Reachability is
 health.
 
-### DM-13 ConnectorBinding · T · owner `modules/connections`
+### DM-13 ConnectorBinding · T · owner `directory/connection` (ADR-0003 F1)
 **Definition.** It routes a connection to the connector(s) that serve it. The binding is data, not
 configuration (ADR-0002 rule 3). **Replaces (ME):** none (ADMP has no distributed connectors).
 **Key attributes:** `connection_id` · `target` (`embedded` or a `component_id`) · `priority` · `state`.
@@ -320,8 +484,10 @@ flag are forest-wide and live on the Connection (DM-10.I6), never per NC.
 `dns_hostname` · `site` · `is_gc` · `is_rodc` · `os_version` · admin flags (`excluded`,
 `priority`) · `last_seen`.
 **Invariants.** I1 Per-DC values (e.g. `lastLogon`, ADM-084) are keyed by `dsa_guid`.
-I2 An RODC is never a write target. I3 An operation item's apply and verify use the same writable
-DC. I4 Demoting and re-promoting a server creates a new NTDS Settings object, so it is a **new**
+I2 An RODC is never a write target. I3 An operation pins one writable DC per naming context it
+reads or writes; Plan, the Apply re-check, the write and Verify go to that pin. If the pin stays
+unavailable past the verify window, Verify reads back from another DC, recorded by name
+(DM-42.I3, ADR-0005 rule 5). I4 Demoting and re-promoting a server creates a new NTDS Settings object, so it is a **new**
 DC row with a new `dsa_guid`, even under the same hostname. I5 Any USN-based position is keyed by
 `(dsa_guid, invocation_id)`. A changed `invocation_id` invalidates it.
 **Lifecycle.** `discovered → in_use | excluded → retired`.
@@ -630,7 +796,7 @@ correlation returns only through I1, and only to `candidate`, never straight to 
 its I4(g) markers. A correlation re-formed later for the same AD and Entra objects inherits them
 too. `→ removed`.
 
-### DM-21 HybridLink · T · owner `modules/connections`
+### DM-21 HybridLink · T · owner `directory/connection` (ADR-0003 F1)
 **Definition.** It declares which AD domain syncs into which Entra tenant. The relation is
 many-to-many. **Replaces (ME):** the domain↔tenant links (ADM-159).
 **Key attributes:** `ad_connection_id` + `nc_guid` · `entra_connection_id` · `origin` (declared,
@@ -737,6 +903,251 @@ stale-state check) and `block_inheritance` (`gPOptions`; domains and OUs only).
 the SOM is deleted). Enabled and enforced are attributes, not states. Every change is a
 ChangeRecord on the SOM's `gPLink` attribute, holding the old and new values.
 
+### DM-24 ConnectionVerification · T · append-only · owner `directory/connection` (written by the `connections` module's Actions and jobs through `connection`'s Go API, ADR-0003 F1)
+**Definition.** One run of a connection's verification checks, with its findings. It is the
+evidence behind activation, the Tier-0 override, the write gate and the rights rows of the
+Health tab (DM-10.I8–I11). Decided in the T-0068 review (spec OQ-2) and recorded by T-0168.
+**Replaces (ME):** none documented. Our research found no ME verdict on the service account's own
+rights `[UNVERIFIED]` ([forest connection spec](../../product/specs/ad-forest-connection.md) §3,
+MIG-12 row).
+**Key attributes:** `connection_id` · `credential_id` (the credential the run verified; for
+`credential_change` it is the new one) · `kind` (`onboarding`, `activation`, `resume`,
+`credential_change`, `scheduled`, `manual`) · `requested_by` (Account; empty for `scheduled`) ·
+`started_at` · `completed_at` · `observed_identity` (what V5 read, if the run got that far) ·
+`check_list_version` (the check list is code; the run pins it, as X7 does for definitions) ·
+`outcomes` (one per check of the kind's list: `pass`, `warn`, `fail`, `could_not_verify` or
+`not_run`) · `verdict` (`pass`, `refused`, `could_not_verify` or `failed`) · `digest_salt` (128
+random bits drawn when the row is inserted, I5) · `findings_digest` (I5). Sub-entity
+**Finding**: `check` (AD: `V1`…`V9`) · `code` (a registered string, X6) · `severity` (`block`,
+`warn` or `info`) · `object_guid` (the object the finding is about: the Tier-0 group, the `tier0`
+object carrying the right, the identity itself for its delegation settings, or a DC's `nTDSDSA`;
+empty when no object applies, such as a failed DNS lookup) · `object_domain_sid` (the domain of
+that object) · `qualifier` (the right's GUID, a `schemaIDGUID` or control-access `rightsGuid`, or
+the GUID of the group through which a membership or ACE applies; a SID when the edge is a foreign
+security principal with no object in this forest) · `fingerprint`.
+**Invariants.**
+- I1 Append-only (X5). The row and all its Findings are inserted once, in one transaction, when
+  the run completes. Nothing is inserted when the run starts: until then the run is its job
+  (DM-43) and, on a `draft`, the `verifying` state. Every run that starts ends in exactly one row
+  (DM-10.I10). The table has no state column and is never updated.
+- I2 The verdict summarises the outcomes in this order: `failed` if a locate, clock, transport,
+  authentication, identity or topology check failed (AD: V1–V6) or the run was interrupted; else
+  `could_not_verify` if a check marked ◆ could not be answered; else `refused` if a blocking
+  rights check failed (AD: V7 over-privilege, V8 read sufficiency); else `pass`. `warn` never
+  changes the verdict. The gates in DM-10.I9–I11 read the outcome of each check, not only the
+  verdict.
+- I3 **Identifiers only.** A Finding holds GUIDs, SIDs and registered codes. It never holds a DN,
+  name, UPN or other display value, so X11 needs no `PersonalRef` here. Names are resolved when
+  the finding is read: from inventory (DM-16) once the connection has synced, and before that
+  through a by-GUID read over the connection's connector, built with the DN primitive
+  (safe-primitives). If neither resolves (a removed connection or a deleted object), the view
+  shows the GUID or SID. No Finding carries a secret or a secret attribute's value (X4).
+- I4 **Fingerprint** = SHA-256 over the canonical encoding (`audit/canon`, ADR-0005 rule 11) of
+  `("adq-finding/1", check, code, object_guid, qualifier)`. The same exposure gets the same
+  fingerprint in every run, and a different right, group path or code gets a different one.
+  `(tenant_id, verification_id, fingerprint)` is unique. The fingerprint does not name the
+  credential, so an override is bound to a credential (DM-25.I3).
+- I5 **Access** (spec FR-16). Findings enumerate Tier-0 exposure, so only an account that holds the
+  permission to start a verification on the connection can read them, and `digest_salt` is held to
+  the same rule. Other readers of the connection see the verdict, the outcome of each check and the
+  number of findings. **No audit event carries a per-finding identifier.** Audit events are
+  hash-chained and cannot be redacted (DM-80.I2), every audit reader sees them, and SIEM sinks
+  receive them, so an identifier in an event would leak the Tier-0 map that FR-16 restricts. The
+  `connection.verification.completed` event carries `verification_id`, the verdict, each check's
+  outcome, the finding count and `findings_digest` = SHA-256 over the canonical encoding
+  (`audit/canon`, ADR-0005 rule 11) of `("adq-findings-digest/1", digest_salt, the run's
+  fingerprints sorted bytewise)`. The salt matters because the inputs are enumerable: the forest's
+  Tier-0 GUIDs and the registered rights GUIDs would let anyone brute-force an unkeyed digest. With
+  it, the event commits to the findings for tamper evidence, and only a reader who may see the
+  findings can recompute it. The same rule binds `connection.tier0_override.acknowledged` and
+  `.cleared` (DM-25.I7) and `connection.rights.verdict_changed`. They carry record IDs, verdicts,
+  outcomes and counts, and never an object GUID, SID, qualifier or fingerprint of a finding. Each
+  digest has its own domain tag and a named salt:
+  - the override digest is tagged `adq-override-digest/1` and salted with the evidence run's
+    `digest_salt` (DM-25.I7);
+  - `.rights.verdict_changed` carries its own run's `findings_digest`, salted with that run's
+    `digest_salt`.
+
+  Two digests of different meaning therefore never compare equal by construction. Decided by the security-architect review of
+  T-0168 (§11 Q12, closed).
+- I6 **Retention** is a tenant record class, `connection_verification` (X10, ADM-206). Its default
+  is the tenant's audit retention, and that is also its **floor**: the class can never be set
+  below the tenant's audit retention, and raising audit retention raises the class with it.
+  Deletion is the explicit, audited retention path (X5). Rows go in
+  age order, and a row is **pinned**, so not deleted, while any of these references it:
+  - (a) a Connection's `last_verification_id` (composite FK, X1), so the newest run of every
+    connection is always kept;
+  - (b) a retained Tier0Override's evidence `verification_id` (composite FK);
+  - (c) a retained Tier0Override that this run **clears**, that is, the run is that override's
+    derived `cleared_by_verification_id` (DM-25.I6);
+  - (d) a retained audit event (DM-80) that names it, such as `connection.verification.completed`,
+    `connection.activated` (by verification ID) and `connection.tier0_override.*`. This mirrors
+    DM-10.I12: the row goes only after the audit retention path has purged the last event naming
+    it. Audit purge drops whole partitions below a checkpoint (DM-80.I2), so the test is whether the
+    newest naming event falls below the purge horizon.
+
+  The pin is checked inside the transaction that deletes the row. A crash between the DM-25 and
+  DM-24 deletes can therefore only leave rows behind, never remove one that a derivation still
+  reads.
+- I7 Volume is bounded by runs, not by directory size. There is at least one scheduled run per
+  connection per day (spec §8.2). Findings per run are bounded by the Tier-0 set and the managed
+  OU count (spec §11 "Scale").
+
+**Lifecycle.** None is stored (X5). A row is *current* while its connection's
+`last_verification_id` names it, and *superseded* after that.
+
+### DM-25 Tier0Override · T · insert-only · owner `directory/connection` (written by the `connections` module's Action through `connection`'s Go API, ADR-0003 F1)
+**Definition.** The installation operator's acknowledgement that activeDIQ may run as Tier 0 in
+this forest despite specific V7 findings (TM-D1, spec FR-13 and FR-14). It is an entity of its
+own and not a column on DM-10, because it has a history and a set of fingerprints. Decided in the
+T-0068 review (spec OQ-1) and recorded by T-0168. **Replaces (ME):** none.
+**Key attributes:** `connection_id` · `credential_id` · `verification_id` (the DM-24 run whose
+findings were shown) · `acknowledged_by` (Account) · `acknowledged_at` · `acknowledged_fingerprints`
+(a set). `acknowledged_at` is the connection's ordering stamp (DM-10.I13). These are **derived
+and never stored**, from the pinned inputs of I6:
+- `cleared_by_verification_id` and `cleared_at`: the first DM-24 run with the same
+  `connection_id` and `credential_id`, V7 outcome `pass` and `completed_at` after
+  `acknowledged_at`, and that run's `completed_at`;
+- `superseded_by` and `superseded_at`: the next newer Tier0Override of the same connection and
+  credential, and its `acknowledged_at`;
+- `ended_at`: the earlier of the override credential's DM-11 `replaced_at` and the connection's
+  `retired_at`.
+
+Each is reported only when it is the event that ended the override (I3).
+**Invariants.**
+- I1 It is created only by the configuration Action `connections.tier0_override.acknowledge`
+  (ADR-0005 rule 10), with step-up, the platform-scope Tier-0-override permission and the typed
+  acknowledgement (TM-D1, spec FR-13). The Action checks the typed text, and the audit event
+  `connection.tier0_override.acknowledged` records it. It is accepted only when the referenced run
+  is the connection's `last_verification_id`, completed no more than 15 minutes earlier, and
+  meets every DM-10.I9 (b) condition except the set. `acknowledged_fingerprints` is the run's
+  **whole** set of V7 fingerprints: an operator acknowledges everything shown, never a subset.
+  The set is restricted like the findings it copies (DM-24.I5).
+- I2 Insert-only: it is never updated. Its states are derived, as on the X5 entities. A job
+  therefore never writes this configuration table: a clearance is something a later run shows,
+  not something written here.
+- I3 **Derived state: the first event wins.** An override is `in_force` until the earliest of
+  `cleared_at`, `superseded_at` and `ended_at`. That earliest event names its state: `cleared`,
+  `superseded` or `ended`. All three times are ordering stamps of the same connection
+  (DM-10.I13), so they are strictly ordered and never tie, and all are read from pinned rows
+  (I6).
+  - **The result is stable.** Every input is written once: `completed_at` (DM-24.I1),
+    `acknowledged_at` (I2), `replaced_at` (DM-11.I5) and `retired_at` (DM-10.I13). A connection
+    never re-binds an earlier credential (DM-11.I5).
+  - **A late run cannot revive an ended override.** A run of the old credential can start before
+    a swap and complete after it. Its `completed_at` is later than the swap's `replaced_at`, so it
+    never turns an ended override into a cleared one.
+  - **At most one override is in force per connection.** A newer override of the same credential
+    supersedes the older one. An override of an earlier credential has ended. So only the newest
+    override of the current credential can be in force.
+
+  A **new finding** is a V7
+  fingerprint of the current run that is not in the acknowledged set (a set difference). It
+  closes the write gate (DM-10.I11) and blocks activation (DM-10.I9) until a new acknowledgement,
+  which supersedes the old one, covers it.
+- I4 **Clearing is final.** Once a run of the override's credential with V7 `pass` has completed
+  after `acknowledged_at`, the override never comes back into force, and later V7 findings need a new acknowledgement. The
+  "activeDIQ is Tier 0 in this forest" banner (spec FR-14) shows exactly while an override is in
+  force. A credential change swaps only on a passing run (DM-10.I8, spec FR-21). From the swap,
+  the old override no longer matches the connection's credential, so it is `ended` (I3), and
+  the new credential's V7 is `pass`. The banner and the credential therefore never disagree.
+- I5 The Action is irreversible: an acknowledgement is evidence, so there is no undo. To stop
+  running as Tier 0, the operator removes the rights (the next run clears the override), suspends
+  the connection or removes it.
+- I6 **Retention** uses DM-24's record class (`connection_verification`), with its floor. Every
+  derived state of an override reads other records, and each of them is pinned while the
+  override is kept:
+  - `cleared` reads the clearing run. The evidence run and the clearing run are pinned by DM-24.I6
+    (b) and (c).
+  - `superseded` reads the newer override. The superseding override is pinned while any older
+    override of the same connection and credential remains, so overrides go oldest first and an
+    older one can never become the newest.
+  - `ended` reads the override credential's DM-11 row (`replaced_at`) and the connection row
+    (`retired_at`). The DM-11 row is pinned by the composite FK on `credential_id`, and DM-11.I5
+    keeps its metadata. The connection row is pinned by the composite FK (X1), and DM-10.I12 keeps
+    it.
+
+  An override is deleted only when it is not in force, has passed the class's age, and is not
+  named by a retained audit event (DM-24.I6 (d)). Its pins are released in the same transaction or
+  a later one, never an earlier one. **Property** (tested by T-0119, and listed for the T-0050
+  fitness check): *no retention pass, and no crash at any point inside one, changes the derived
+  state (`in_force`, `cleared`, `superseded`, `ended`), `cleared_by_verification_id`,
+  `superseded_by` or `ended_at` of any override still kept, or the result of DM-10.I9 or I11.*
+  The test generates random histories of:
+  - runs of every kind, including a run of the old credential that completes after a swap;
+  - acknowledgements;
+  - credential swaps and `draft` credential edits;
+  - Remove and Discard.
+
+  It then cuts retention passes at every delete boundary and compares the derivations before
+  and after.
+- I7 **Events.**
+  - **`.acknowledged`.** The Action's transaction emits `connection.tier0_override.acknowledged`.
+    It carries the override ID, `verification_id`, the typed acknowledgement (I1), the number of
+    acknowledged fingerprints and `override_digest`. That is SHA-256 over the canonical encoding
+    of `("adq-override-digest/1", the evidence run's digest_salt, acknowledged_fingerprints
+    sorted bytewise)` (DM-24.I5).
+  - **`.cleared`.** Clearance is derived, so `connection.tier0_override.cleared` is emitted by
+    the transaction that inserts the **clearing run's** DM-24 row. It uses exactly the
+    derivation's predicate: the insert emits `.cleared` for override O if, and only if, after the
+    insert O's derived `cleared_by_verification_id` is this run (I3). That requires all of these:
+    - the run's `connection_id` and `credential_id` equal O's;
+    - V7 is `pass`;
+    - `completed_at` is after O's `acknowledged_at`;
+    - no earlier run qualified;
+    - neither `superseded_at` nor `ended_at` of O is earlier.
+
+    A passing `credential_change` run carries the new credential, so it ends the old credential's
+    override (DM-11.I5) and never emits `.cleared` for it. The event names the override and the
+    run.
+  - **Serialisation.** The DM-24 insert transaction and the acknowledge Action both take the
+    DM-10 row lock first and stamp under it (DM-10.I13). `completed_at` and `acknowledged_at`
+    therefore order exactly as their transactions commit, and the predicate is evaluated against
+    every earlier commit. Two concurrent passing runs serialise on the lock: the second sees the
+    first as `cleared_by` and emits nothing. A clearance and its event commit together or not at
+    all, and no job writes DM-25.
+  - **Tests (T-0119).** A passing `credential_change` emits no `.cleared` and derives `ended`.
+    Two concurrent passing runs emit exactly one `.cleared`, which names the derived
+    `cleared_by_verification_id`. A run of the old credential that completes after a swap emits
+    nothing.
+
+**Lifecycle (derived, never stored).** `in_force → cleared | superseded | ended`, whichever
+stamped event comes first (I3). It is `ended` when its credential is replaced (DM-11
+`replaced_at`), or when the connection enters `decommissioning` or `discarded` (DM-10
+`retired_at`).
+
+### DM-26 SyncCycle · T · append-only · owner `directory/sync`
+**Definition.** One sync cycle of one partition (DM-19), plus the per-DC observations made during
+the cycle. It feeds the freshness labels, the Health tab and its 30-day timeline
+([forest connection spec](../../product/specs/ad-forest-connection.md) §8). Decided in the T-0068
+review (spec OQ-2) and recorded by T-0168. **Replaces (ME):** none documented.
+**Key attributes:** `connection_id` · `partition` (as DM-19) · `kind` (`initial`, `incremental`,
+`full`) · `started_at` · `completed_at` · `data_as_of` · `last_change_at` · `objects_read` ·
+`objects_changed` · `dc_dsa_guid` (AD: the DC used) · `result` (`complete`, `partial` with the
+domain that failed, or `failed`) · `cause` (a registered code, spec §8.3 H1–H14). Sub-entity
+**DcObservation**, written once per cycle and keyed by `(connection_id, dsa_guid, observed_at)`:
+`reachable` · `clock_skew_ms` · `invocation_id_changed` · `error_code`. An Entra connection has no
+DcObservation.
+**Invariants.**
+- I1 A complete cycle's row is inserted in the transaction that commits its inventory rows and
+  cursor (DM-19.I1), so `data_as_of` is exactly that commit. A failed cycle is recorded in a
+  transaction of its own, with its cause. Rows are never updated, and the table has no state
+  column (X5 shape).
+- I2 A `partial` or `failed` cycle never advances `data_as_of` for a partition that failed (spec
+  §8.4). Freshness reads the newest `complete` row of each partition.
+- I3 Identifiers, counts and codes only. It holds no personal data, so X11 does not apply.
+- I4 **Retention** is a 30-day rolling window (spec FR-31), deleted by a `sync`-owned retention
+  job. It is not a tenant record class, because this is operational telemetry, not evidence.
+  What matters as evidence is in the audit events (`connection.rights.verdict_changed`,
+  `.resync.requested`) and in DM-24, which keep their own retention. The newest `complete` row of
+  each partition is kept regardless of age, so a connection suspended for longer than the window
+  still knows its `data_as_of`.
+- I5 The one-word status, the freshness label and the greyed "not checked since" rows (spec §8.1
+  rules 3–5) are computed when read, from DM-26, DM-24 and DM-19, and are never stored.
+  Rights rows come from DM-24. DM-26 holds only the per-cycle checks (connectivity, clock, DCs).
+
+**Lifecycle.** None is stored (X5).
+
 ## 3. Identity and access
 
 ### DM-30 Account · T · owner `platform/authn`
@@ -771,8 +1182,9 @@ account reaches AD-side group grants only through a `matched` correlation of tha
 `matched` correlation to the AD object the SID resolves to. Both are re-checked at every sign-in
 and at Plan (DM-20.I5). A bound `sso` account receives group-subject grants (DM-36.I2) and
 falls under I2 exactly like a `directory` account. An unbound one receives only grants made to the
-account itself. I6 **Authority factor** (threat model TM-D19 rules 1–3). A bound `sso` account
-signs in through Entra. It uses correlation-derived grants (DM-36.I2), meaning the AD-side group
+account itself. `authn` reads anchors and correlations only through its port
+`authn.DirectoryAnchors`, which `directory/inventory` implements (ADR-0003 F6, blueprint §7.5).
+I6 **Authority factor** (threat model TM-D19 rules 1–3). A bound `sso` account signs in through Entra. It uses correlation-derived grants (DM-36.I2), meaning the AD-side group
 grants that reach it through an `oid` or `onprem_sid` binding, only in a session that has verified
 one of its authority factors (DM-37.I3). The factor is checked at first use in the session and again
 at every step-up (threat model §7.4), and the session records it (DM-31.I3). Where the PRD offers
@@ -936,8 +1348,9 @@ correlation is `matched` (DM-20.I4), re-checked live at sign-in and at Plan (DM-
 an AD anchor on a cloud-only user gains no AD-side authority through activeDIQ. An FSP member
 grants only if its SID resolves to an object in a connected forest that is bound to an Account.
 `sIDHistory` is not followed. Members lose rights when they leave the group or are disabled, within
-sync freshness (ADM-128). **Correlation-derived grants.** A group grant is correlation-derived
-when the group lives in the other directory from the account's sign-in identity. That means an AD
+sync freshness (ADM-128). `authz` resolves membership only through its port `authz.Membership`,
+which `directory/inventory` implements (ADR-0003 F6, blueprint §7.5). **Correlation-derived
+grants.** A group grant is correlation-derived when the group lives in the other directory from the account's sign-in identity. That means an AD
 group for an `sso` account, which signs in through Entra, and an Entra group for a `directory`
 account. Such a grant obeys two extra rules:
 - It never carries `tenant-owner` or a `control_plane` permission (DM-20.I7). No group grant
@@ -1054,7 +1467,9 @@ a report run, a sync pass or a delivery. **Replaces (ME):** the scheduler's inte
 `unique_key` · `attempt` · `scheduled_at`.
 **Invariants.** I1 A job is never the system of record. The OperationItem, ReportRun or
 SyncCursor holds the truth, and a lost job is re-derived from it. I2 Args carry `tenant_id`, and
-the wrapper opens `WithTenantTx` first. Platform jobs are registered. I3 Only `platform/jobs`
+the wrapper establishes the tenant first: it runs the body in one `WithTenantTx`, or, for a
+`ManagedTx` kind such as the operation kinds, hands it a tenant-bound transaction runner (ADR-0002
+Jobs row as amended by ADR-0005 rule 6). Platform jobs are registered. I3 Only `platform/jobs`
 imports River (ADR-0002 T5).
 **Lifecycle.** River's states: `scheduled | pending | available → running → completed`, or
 `running → retryable → … → discarded`, or `→ cancelled`
@@ -1387,7 +1802,8 @@ ME concepts with **no v1 entity**, by design:
 - Report from CSV (ADM-096): an uploaded object list is a ReportRun parameter, not a definition.
 - Security hardening score (ADM-208): computed at read time from platform settings and each
   Connection's security state. Nothing is stored.
-- Diagnostics and upgrades (ADM-213): connection checks are DM-10 `verifying` and observed health.
+- Diagnostics and upgrades (ADM-213): connection checks are ConnectionVerification runs (DM-24)
+  and per-cycle observations (DM-26).
   Upgrades are Release (DM-05).
 
 ## 10. Platform matrix
@@ -1456,10 +1872,18 @@ hybrid reach without it.
 | Q9 | ~~How personal values in append-only records are made erasable~~ Closed 2026-10-02 by ADR-0005 rule 12 (proposed): salted commitments plus the `platform/personal` side store; unknown attributes count as personal; three triggers and a legal hold. The ADM-207 default and hold UX go to the audit and compliance PRD | — | — |
 | Q10 | GPO permission writes (ADM-077): add a SYSVOL path that keeps the GPT folder DACL consistent with the GPC's, or ship v1 GPO delegation read-only | product-manager (GPO spec, via T-0031) + solution-architect | DM-23.I7 |
 | Q11 | The Entra directory-audit activity (name, category, `targetResources` shape) recorded when a tenant's sync features change, so it can demote an attestation. Also: whether a Hybrid Identity Administrator, and not only a Global Administrator, can change those features (the DM-20.I6 residual) | test-engineer, T-0051 (Entra lab tenant) | DM-10.I7(d) |
+| Q12 | ~~DM-24's access restriction and retention (spec OQ-2)~~ Closed 2026-10-02 by the security-architect review of T-0168. (a) Findings and `digest_salt` are readable only with the verify permission. No audit event carries a per-finding GUID, SID, qualifier or fingerprint, only IDs, verdicts, outcomes, counts and a digest salted per run (DM-24.I5, DM-25.I7). (b) Record class `connection_verification` defaults to audit retention, which is also its floor. Rows named by a retained audit event, and runs that evidence or clear a retained override, are pinned (DM-24.I6, DM-25.I6). Spec-side wording: T-0189 | — | — |
+| Q13 | ~~V7 `could_not_verify` on an active connection~~ Closed 2026-10-02 by the security-architect review of T-0168: the write gate fails closed with no grace, is re-evaluated at every Apply chunk, and a `could_not_verify` or `failed` V7 schedules an automatic re-run with backoff from about 15 minutes (DM-10.I11). Spec FR-35 and H10 wording is aligned by product-manager through T-0189 | — | — |
+| Q14 | A credential change to an over-privileged identity is refused (FR-21 swaps only on a pass). Should the Tier-0 override (DM-25) also be offered for a `credential_change` run? Today it is offered in any connection state on a run that is the connection's `last_verification_id` and meets DM-25.I1. That covers a `draft` (onboarding, activation), re-acknowledging a new finding on an `active` connection (scheduled, manual) and a `suspended` one (resume). A `credential_change` run that does not pass never becomes `last_verification_id` (DM-10.I8), so it cannot be acknowledged | product-manager | none for 2a |
 
 Follow-ups filed with this version: T-0050 (CI fitness check for X3, X4 and X5), T-0051 (Windows
 lab proof of the `[LAB: Windows]` claims) and T-0052 (the `gPLink` and `gPOptions` codecs in
 safe-primitives P3).
+
+Follow-ups of T-0168: T-0188 classifies the writes that DM-24, DM-26 and the verification and
+purge jobs make on DM-10 under ADR-0005 rule 10 (O3), and adds the blueprint §5.2 rows. T-0050
+(the X5 fitness check) gains DM-24, DM-26 and the insert-only DM-25, plus the DM-25.I6 retention
+property. T-0119 builds the tables and the property test.
 
 Follow-up of T-0061: the TM-F-HYBRID proof (T-0054) covers DM-16.I9, DM-20.I4(g) and I7,
 DM-30.I6 and I7, DM-33.I3 and DM-37.I3–I4, with the cases listed in threat model §6.8 and §6.9.
@@ -1558,3 +1982,24 @@ AC2 was re-checked by script: every ADM ID in scope lock §3.3 (123 IDs) appears
 - 2026-10-02 · T-0061 alignment with threat model v0.2 (TM-D17, TM-D18, TM-D19). DM-20.I4(g) adds "eligibility only goes down": `eligible_since`, `eligibility_class`, re-confirmation by `tenant-owner`, and reason `reconfirm_required`. The install-time population becomes `matched` on the first attestation. DM-16.I9 adds `cloud_seen_at` on Entra objects. DM-10 gains `first_attested_at` (I7(f)), step-up to start an attestation, and a corrected `takeover_protection` lifecycle (`unattested → open → attested`). DM-20.I6 is rewritten as residuals closed by the threat model. DM-20.I7 ("authority that never crosses") is new, and it uses DM-33.I3 `control_plane`. DM-30.I6 adds the authority factor and DM-30.I7 console-backing objects; DM-31.I3, DM-37.I3–I4, DM-36.I1–I2 (correlation-derived grants, TM-D18) and DM-35.I5–I6 follow. §10 states the customer-visible consequences. The 90-day maximum, the optional `AuditLog.Read.All` monitor and the `tenant_takeover_open` vocabulary are unchanged and match TM-D17.
 - 2026-10-02 · T-0061 round 2 (director review M1, M2). Rule (h) follows the binding TM-D17 rule 5 text: new DM-36.I4 "control-plane authority is personal". `tenant-owner` and `control_plane` permissions reach an account only through an assignment to that account, and an assignment that gives them to a group or automation-policy subject is refused at creation. DM-20.I7, DM-36.I2, DM-30.I4 and §10 follow. DM-33.I3: the backstop covers every non-`read` permission in the `authn`, `authz`, `delegation` and `connections` namespaces, and runs in EP-6 catalogue validation at `Boot` rather than in the Registrar.
 - 2026-10-02 · ADR-0005 rework 1 (T-0047): DM-41 gains the terminal `no_change` outcome; DM-42.I3 follows ADR-0005 rule 5 (read-back from another DC after the verify window); a `verify_failed` step can be undone.
+- 2026-10-02 · ADR-0003 restatement (T-0145): owner lines follow ADR-0003 rule 9. DM-10 Connection, DM-13 ConnectorBinding and DM-21 HybridLink move from `modules/connections` to `directory/connection` (F1). DM-11 DirectoryCredential is owned by `connector/credential` alone; its metadata-row clause is dropped and writes go through the credential port. DM-30.I5 and DM-36.I2 name the kernel read ports that `directory/inventory` implements (F6).
+- 2026-10-02 · ADR-0005 restatement (T-0155): DM-15.I3 follows ADR-0005 rule 5 and DM-42.I3 (one writable DC pinned per naming context; read-back from another DC, recorded by name, after the verify window). DM-43.I2 follows the amended ADR-0002 Jobs row (`ManagedTx`).
+- 2026-10-02 · T-0168, from the T-0068 review (spec OQ-1, OQ-2, OQ-5). DM-10 adds I8 (verification pointer: `last_verification_id`, and `verified_at` set only by a pass), I9 (activation gate: a qualifying run no more than 15 minutes old, otherwise an inline `draft → verifying → active`), I10 (a verification moves the state only through its intent; re-verifying an `active` or `suspended` connection is a job, and Resume's qualifying run moves `suspended → active`), I11 (write gate on V7, failing closed) and I12 (`draft → discarded` is terminal and hidden). I2 now excludes `discarded` and `removed` from the uniqueness rule. The lifecycle is a transition table mapped to spec rows L1–L11. New DM-24 ConnectionVerification (append-only, with Finding rows that hold identifiers only, a fingerprint, record class `connection_verification`), DM-25 Tier0Override (insert-only, clearance derived, bound to the credential) and DM-26 SyncCycle (per-cycle health, 30-day rolling). DM-24 and DM-25 are owned by `directory/connection`, not `modules/connections`, because the write gate reads them (ADR-0003 F1). X5, the overview diagram, §9 and §11 (Q12–Q14) follow.
+- 2026-10-02 · T-0168 round 3, from the director's review and the security-architect review.
+  - DM-10.I11: the write gate sits inside ADR-0005's Apply-time re-check. It is a live fact in
+    every directory step's `FactsQuery`, read by `client.Write` before `Step.Recheck`. A closed
+    gate is `applying → failed` (reason `connection_rights_unverified`, denial recorded under rule
+    6). The item goes `running → failed`, its later steps `not_run`. The per-chunk read is only an
+    early exit along those edges, and there is no `planned → failed`. At Plan a closed gate makes
+    an item `blocked`. The cost note now counts the indexed lookup for a clearing run.
+  - New DM-10.I13: per-connection ordering stamps under the DM-10 row lock, strictly increasing
+    in commit order. DM-10 gains `last_stamp_at` and `retired_at`.
+  - New DM-11.I5: identity never changes in place, a row is bound to one connection once, and
+    replacement is write-once (`rotated`, `replaced_at`). `rotated` and `revoked` are terminal,
+    there is no re-binding, and the rotated secret is erased.
+  - DM-25: `cleared`, `superseded` and `ended` are decided by the first event among pinned,
+    stamped inputs (I3, I6). `.cleared` is emitted only under the derivation's own predicate, so
+    it requires the same credential, under the connection lock (I7). The T-0119 tests are listed.
+  - Nits: the override digest is tagged `adq-override-digest/1`, `.rights.verdict_changed` uses
+    its own run's salt, and Q14 is reworded.
+- 2026-10-02 · T-0168 round 2, from the security-architect review. DM-25.I6: every record that a derived override state reads is pinned while the override is kept: the clearing run (new DM-24.I6 (c)), the superseding override (oldest first) and the connection. A property states that no retention pass or crash changes any derivation (tested by T-0119, listed for T-0050). DM-24.I5: no audit event carries a per-finding identifier. Events carry IDs, verdicts, outcomes, counts and `findings_digest`, salted with the new per-run `digest_salt`, and DM-25.I7 does the same for the override events. DM-24.I6: the `connection_verification` retention floor is the audit retention, and rows named by a retained audit event are pinned. DM-25.I7: `.tier0_override.cleared` is emitted in the clearing run's insert transaction. DM-10.I10: an interrupted run returns to `draft` only from `verifying`. DM-10.I11: the gate is re-checked at every Apply chunk, and a V7 `could_not_verify` or `failed` triggers an automatic re-run with backoff. §11 Q12 and Q13 are closed.
