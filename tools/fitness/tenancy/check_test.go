@@ -263,23 +263,52 @@ func TestRuntimeOwnsTable(t *testing.T) {
 	want(t, vs, "T3", "runtime-owns-object", "public.items")
 }
 
-// T3 role attributes, injected through the bootstrap (the role changes are cluster-wide, so undone after).
+// T3 role attributes and memberships, injected through the bootstrap (role changes are cluster-wide, so
+// undone after). Every case runs on PG16 and PG18; the membership cases use WITH INHERIT FALSE, the way
+// logical decoding through SET ROLE was reproduced (T-0197).
 func TestRoleAttributes(t *testing.T) {
-	cases := []struct {
-		name, boot, undo, rule, named string
-	}{
-		{"runtime_bypassrls", `ALTER ROLE %2$I BYPASSRLS`, `ALTER ROLE %2$I NOBYPASSRLS`, "role-bypassrls", "activediq_app"},
-		{"owner_superuser", `ALTER ROLE %1$I SUPERUSER`, `ALTER ROLE %1$I NOSUPERUSER`, "role-superuser", "activediq_owner"},
-		{"owner_bypassrls", `ALTER ROLE %1$I BYPASSRLS`, `ALTER ROLE %1$I NOBYPASSRLS`, "role-bypassrls", "activediq_owner"},
-		{"runtime_superuser", `ALTER ROLE %2$I SUPERUSER`, `ALTER ROLE %2$I NOSUPERUSER`, "role-superuser", "activediq_app"},
-		{"runtime_member_of_owner", `GRANT %1$I TO %2$I`, `REVOKE %1$I FROM %2$I`, "role-membership", "activediq_app"},
+	// The bootstrap runs once per database the check creates, and roles are cluster-wide: create only once.
+	mk := func(name, attr string) string {
+		return `DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '` + name + `') THEN CREATE ROLE ` + name + ` ` + attr + ` NOLOGIN; END IF; END $$`
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			f := fixture{migrations: pair(t, "good/0002_app_items.sql"), checks: "T1,T2,T3", bootstrap: []string{c.boot}, reset: []string{c.undo}}
-			vs, _ := f.run(t, "18")
-			want(t, vs, "T3", c.rule, c.named)
-		})
+	var (
+		mkRepl   = mk("diq_repl", "REPLICATION")
+		mkSuper  = mk("diq_su", "SUPERUSER")
+		mkBypass = mk("diq_byp", "BYPASSRLS")
+		mkMid    = mk("diq_mid", "")
+	)
+	cases := []struct {
+		name        string
+		boot, undo  []string
+		rule, named string
+	}{
+		{"runtime_bypassrls", []string{`ALTER ROLE %2$I BYPASSRLS`}, []string{`ALTER ROLE %2$I NOBYPASSRLS`}, "role-bypassrls", "activediq_app"},
+		{"owner_superuser", []string{`ALTER ROLE %1$I SUPERUSER`}, []string{`ALTER ROLE %1$I NOSUPERUSER`}, "role-superuser", "activediq_owner"},
+		{"owner_bypassrls", []string{`ALTER ROLE %1$I BYPASSRLS`}, []string{`ALTER ROLE %1$I NOBYPASSRLS`}, "role-bypassrls", "activediq_owner"},
+		{"runtime_superuser", []string{`ALTER ROLE %2$I SUPERUSER`}, []string{`ALTER ROLE %2$I NOSUPERUSER`}, "role-superuser", "activediq_app"},
+		{"runtime_replication", []string{`ALTER ROLE %2$I REPLICATION`}, []string{`ALTER ROLE %2$I NOREPLICATION`}, "role-replication", "activediq_app"},
+		{"owner_replication", []string{`ALTER ROLE %1$I REPLICATION`}, []string{`ALTER ROLE %1$I NOREPLICATION`}, "role-replication", "activediq_owner"},
+		{"runtime_member_of_owner", []string{`GRANT %1$I TO %2$I`}, []string{`REVOKE %1$I FROM %2$I`}, "role-membership", "activediq_app"},
+		{"runtime_member_of_owner_noinherit", []string{`GRANT %1$I TO %2$I WITH INHERIT FALSE`}, []string{`REVOKE %1$I FROM %2$I`}, "role-membership", "activediq_owner"},
+		{"runtime_member_of_replication_role", []string{mkRepl, `GRANT diq_repl TO %2$I`}, []string{`DROP ROLE diq_repl`}, "role-membership", "diq_repl"},
+		{"runtime_member_of_replication_role_noinherit", []string{mkRepl, `GRANT diq_repl TO %2$I WITH INHERIT FALSE`}, []string{`DROP ROLE diq_repl`}, "role-membership", "diq_repl"},
+		{"runtime_indirect_member_of_replication_role", []string{mkRepl, mkMid, `GRANT diq_repl TO diq_mid WITH INHERIT FALSE`, `GRANT diq_mid TO %2$I WITH INHERIT FALSE`}, []string{`DROP ROLE diq_mid`, `DROP ROLE diq_repl`}, "role-membership", "diq_repl"},
+		{"runtime_member_of_superuser_role_noinherit", []string{mkSuper, `GRANT diq_su TO %2$I WITH INHERIT FALSE`}, []string{`DROP ROLE diq_su`}, "role-membership", "diq_su"},
+		{"runtime_member_of_bypassrls_role_noinherit", []string{mkBypass, `GRANT diq_byp TO %2$I WITH INHERIT FALSE`}, []string{`DROP ROLE diq_byp`}, "role-membership", "diq_byp"},
+		{"owner_member_of_superuser_role_noinherit", []string{mkSuper, `GRANT diq_su TO %1$I WITH INHERIT FALSE`}, []string{`DROP ROLE diq_su`}, "role-membership", "diq_su"},
+		{"owner_member_of_superuser_role", []string{mkSuper, `GRANT diq_su TO %1$I`}, []string{`DROP ROLE diq_su`}, "role-membership", "diq_su"},
+		{"owner_member_of_bypassrls_role_noinherit", []string{mkBypass, `GRANT diq_byp TO %1$I WITH INHERIT FALSE`}, []string{`DROP ROLE diq_byp`}, "role-membership", "diq_byp"},
+		{"owner_member_of_replication_role_noinherit", []string{mkRepl, `GRANT diq_repl TO %1$I WITH INHERIT FALSE`}, []string{`DROP ROLE diq_repl`}, "role-membership", "diq_repl"},
+		{"owner_indirect_member_of_superuser_role", []string{mkSuper, mkMid, `GRANT diq_su TO diq_mid WITH INHERIT FALSE`, `GRANT diq_mid TO %1$I WITH INHERIT FALSE`}, []string{`DROP ROLE diq_mid`, `DROP ROLE diq_su`}, "role-membership", "diq_su"},
+	}
+	for _, ver := range []string{"16", "18"} {
+		for _, c := range cases {
+			t.Run("pg"+ver+"/"+c.name, func(t *testing.T) {
+				f := fixture{migrations: pair(t, "good/0002_app_items.sql"), checks: "T1,T2,T3", bootstrap: c.boot, reset: c.undo}
+				vs, _ := f.run(t, ver)
+				want(t, vs, "T3", c.rule, c.named)
+			})
+		}
 	}
 }
 
