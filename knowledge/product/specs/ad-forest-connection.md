@@ -90,9 +90,9 @@ Patterns come from the design system once T-0043 lands; names here are the inten
 | 1 | Chooses **Add forest**, completes step-up MFA (TM-D16: connection and credential changes need fresh MFA) | Empty state on the Connections page offers exactly one action: Add forest | Page empty state → wizard |
 | 2 | Types the forest DNS name or one DC name | Locator result: forest root resolved, DCs found per site, **forest root GUID and SID** shown as the identity (FR-02). If the name was a child domain: "This is a child domain of `<forest>`. activeDIQ connects whole forests. Continue with `<forest>`?" | Wizard step, inline resolution |
 | 3 | Picks the credential. **Windows profile:** the server's gMSA (default). **linux-oci:** the keytab reference | A short "prepare the service account" panel with copy-ready commands for this profile, the account name filled in, and no password in any command (FR-07). The page never accepts a pasted secret | Wizard step |
-| 4 | Presses **Verify** | Live checklist (§7), one row per check with Pass / Warn / Fail / Could not verify, running in order, each with elapsed time | Progress checklist |
+| 4 | Presses **Verify** | Progress checklist (§7), one row per check with Pass / Warn / Fail / Could not verify, running in order, each with elapsed time | Progress checklist |
 | 5 | Reads the result. Pass: a summary of forest, domains (all domain NCs preselected as managed), DCs, rights verdict, capabilities | Primary button **Activate and start first sync**; secondary **Edit**. On refusal: Flow B | Summary card |
-| 6 | Presses **Activate** | Connection becomes `active`; the first sync starts and the page shows objects synced so far and elapsed time (FR-26). Search works on what has synced, labelled incomplete (FR-29) | Connection page |
+| 6 | Presses **Activate** | The connection becomes `active` (if the verification is older than 15 min it re-verifies inline first, FR-17); the first sync starts and the page shows objects synced so far and elapsed time (FR-26). Search works on what has synced, labelled incomplete (FR-29) | Connection page |
 
 ### Flow B — A refused connection (over- or under-privileged)
 
@@ -125,15 +125,18 @@ States are persisted lifecycle states of DM-10. Health (reachable, degraded, beh
 | # | Transition | Trigger | What the admin sees | What is recorded | AC |
 | --- | --- | --- | --- | --- | --- |
 | L1 | — → `draft` | Add forest, first save of name and credential reference | Connection listed as **Draft — not verified**, no data, no sync | Audit `connection.created` (step-up) | AC-01 |
-| L2 | `draft → verifying` | **Verify** | Live checklist (§7). Edit and Remove disabled while it runs | Audit `connection.verification.started` | AC-02 |
-| L3 | `verifying → draft` (refused or failed) | A blocking check fails, or Could-not-verify | Banner and findings (§7). Inputs kept. No sync started, no inventory written | Audit `connection.verification.completed` with a findings digest and per-finding object GUIDs | AC-03, AC-14…AC-20 |
-| L4 | `verifying → active` | All blocking checks pass (or a Tier-0 override, FR-13) and the admin presses **Activate** | Summary then Connections list shows **Active — initial sync running** | Audit `connection.activated`: who, verification result, binding, managed domains | AC-04, AC-05 |
+| L2 | `draft → verifying` | **Verify** | Progress checklist (§7). Edit and Remove disabled while it runs | Audit `connection.verification.started` | AC-02 |
+| L3 | `verifying → draft` (every verification ends here) | The run ends. A pass sets `verified_at` and the connection shows **Verified — ready to activate** (still `draft`). A blocking check that fails, or Could-not-verify, shows the refusal | Banner and findings (§7). Inputs kept. No sync started, no inventory written | Audit `connection.verification.completed` with verdict, a findings digest and per-finding object GUIDs; a `ConnectionVerification` record (§11) | AC-03, AC-14…AC-20 |
+| L4 | `draft → active` | Admin presses **Activate** with a passing verification at most 15 min old (FR-17), or with a Tier-0 override (FR-13). If the verification is older, or there is none, activation runs `draft → verifying → active` inline and proceeds only on a pass | Connections list shows **Active — initial sync running** | Audit `connection.activated`: who, verification id and result, binding, managed domains | AC-04, AC-05 |
 | L5 | `active → suspended` | **Suspend** | Banner as Flow C; Search and reports still show data labelled "as of `<last cycle>` — connection suspended"; change actions disabled with reason "Connection suspended". Sync cursor state shows `paused` | Audit `connection.suspended` with reason | AC-06 |
-| L6 | `suspended → active` | **Resume** | Re-verification runs; on pass, sync resumes. On failure it **stays suspended** with the findings | Audit `connection.resumed` | AC-07, AC-08 |
-| L7 | `active → decommissioning`, `suspended → decommissioning` | **Remove forest** after typed confirmation | Impact summary; data hidden from search and reports immediately; status **Removing** | Audit `connection.removal.started` with the impact counts | AC-09 |
+| L6 | `suspended → active` | **Resume** | A re-verification **job** runs while the connection stays `suspended` and shows "Resuming — verifying". On pass, the state becomes `active` and sync resumes. On failure it **stays suspended** with the findings | Audit `connection.resumed` | AC-07, AC-08 |
+| L7 | `suspended → decommissioning`, `active → decommissioning` (both direct) | **Remove forest** after typed confirmation | Impact summary; data hidden from search and reports immediately; status **Removing** | Audit `connection.removal.started` with the impact counts | AC-09 |
 | L8 | `decommissioning → removed` | Inventory purge and reference clean-up complete | Entry under **Removed forests** with removal time and a link to the audit events. A purge that fails stays `decommissioning` with the error and a **Retry** | Audit `connection.removed`; earlier audit events are retained (X10, DM-10.I5) | AC-10, AC-11 |
-| L9 | `draft →` discarded | **Discard draft** | Gone from the list; nothing was synced | Audit `connection.draft.discarded` | AC-12 (see OQ-5: not in DM-10) |
-| L10 | `verifying → active`, blocked | A second connection with the same forest identity (DM-10.I2) | "This forest is already connected as `<name>`" with a link; no second draft | none beyond the refusal | AC-13 |
+| L9 | `draft → discarded` (terminal) | **Discard draft** | Gone from the list and from search. The row is kept but hidden, so audit references still resolve | Audit `connection.draft.discarded` | AC-12 |
+| L10 | `draft → active`, blocked | A second connection with the same forest identity (DM-10.I2) is verified or activated | "This forest is already connected as `<name>`" with a link; no second draft | none beyond the refusal | AC-13 |
+| L11 | Re-verification of an `active` or `suspended` connection (scheduled, **Check now**, credential change, resume) | Scheduled run, button, or Flow E | A job. The lifecycle state **does not change**; the result moves the derived status (§8.1) and the Health tab | Audit `connection.verification.completed` with the kind | AC-45 |
+
+Lifecycle decisions in this section were taken in the T-0068 review and are recorded in the domain model by T-0168 (OQ-5).
 
 Companion states that users see:
 
@@ -158,7 +161,7 @@ Checks run in this order. Each ends **Pass**, **Warn** (shown, does not block), 
 | V4 | **Authenticate.** Kerberos only, signed and sealed or TLS with a channel-binding token, never NTLM (TM-D10, DM-10.I4) | Fail | The failure names the DC and the LDAP result (§7.2). It does not weaken the bind to find out why |
 | V5 | **Identity.** Forest root domain NC GUID from the root crossRef `nCName` (extended DN), cross-checked with the root domain SID (DM-10 key attributes) | Fail on mismatch or duplicate (L10) | Identity comes from the GUIDs, never from the typed name |
 | V6 | **Topology.** Domains (crossRefs with `systemFlags` bits 0x1 and 0x2, `Enabled` not FALSE), DCs (`nTDSDSA`: GC, RODC, site, `dsa_guid`, `invocation_id`), forest deletion settings read, never assumed (DM-10.I6; [crossRef](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/8877f323-90ec-4460-9ae9-c3dfb6be2e61)) | Fail if the configuration NC is unreadable | A DC in the configuration NC that does not answer is listed with its error, never dropped (connector contract §4) |
-| V7 | **Over-privilege ◆** TM §6.5 steps 1–3 and 5: membership of the Tier-0 set (C1, C13 and designated groups), write or control rights on any `tier0` object, delegation configuration of the identity itself | Fail (overridable, FR-13) | Group membership is evaluated at check time from `member` and the primary group, never from a cached Kerberos ticket, which can miss a recent change ([ad-expert consult](#sources)) |
+| V7 | **Over-privilege ◆** TM §6.5 steps 1–3 and 5: membership of the Tier-0 set (C1, C13 and designated groups), write or control rights on any `tier0` object, delegation configuration of the identity itself | Fail (overridable, FR-13) | **Forest-wide:** membership and rights are evaluated across every domain of the forest, including universal and enterprise Tier-0 groups (Enterprise Admins, Schema Admins) held in another domain, and foreign-security-principal edges. If a domain or global catalog needed for the answer cannot be reached, the result is Could not verify, never a pass. Evaluated from the directory at check time (TM §6.5), never from the process's own Kerberos ticket or token, which can miss a recent change ([ad-expert consult](#sources)). The technique belongs to T-0053 |
 | V8 | **Read sufficiency.** The identity can read what v1 features need: R1 and R2 of TM §6.3 on every domain NC it will manage, and a change-feed prime succeeds | Fail (not overridable) | Under-privilege |
 | V9 | **Excess in managed OUs.** TM §6.5 step 4: GenericAll, GenericWrite, WRITE_DAC, WRITE_OWNER, Delete-Tree, never-delegate list | Warn, with fix | Blocks only when it lands on a `tier0` object, which V7 already catches |
 
@@ -181,7 +184,7 @@ Messages are specified so that QA can assert the text pattern. `<…>` is data. 
 | M-NOVERIFY | V7 ◆ cannot be decided | **Not activated: activeDIQ could not verify `<n>` objects.** Without proof the identity is not over-privileged we do not activate. | Per object: not readable, domain unreachable, or ACL not returned, and what grants the read |
 | M-BIND-SIGN | DC rejects the bind: signing required (LDAP result 8, [signing](https://learn.microsoft.com/en-us/troubleshoot/windows-server/active-directory/enable-ldap-signing-in-windows-server)) | **`<DC>` rejected the connection: strong authentication required.** | The DC; "We always sign. If this persists, check the account and the Kerberos setup." We cannot read which DC setting is in force (it is a DC registry value) and do not retry weaker |
 | M-BIND-CBT | DC rejects: channel binding (result 49, data `80090346`, secondary sources) | **`<DC>` rejected the channel-binding token.** | The DC and the likely causes (certificate or load balancer terminating TLS) |
-| M-AUTH | KDC refuses (`KDC_ERR_PREAUTH_FAILED` 0x18) | **The domain controller rejected the identity.** The keytab does not match the account's current password, or the account is disabled, locked or expired. | Check the account state first, then regenerate the keytab. The KDC gives the same error for these cases ([event 4771](https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/auditing/event-4771)) |
+| M-AUTH | KDC refuses the identity (`KDC_ERR_PREAUTH_FAILED` 0x18, or no password available for the gMSA) | **The domain controller rejected the identity.** Profile-specific cause line: **keytab (linux-oci, or another forest):** the keytab does not match the account's current password, or the account is disabled, locked or expired. **gMSA (windows):** the account is disabled, this host is not in the account's `PrincipalsAllowedToRetrieveManagedPassword`, or the forest has no KDS root key. | **keytab:** check the account state first, then regenerate the keytab. **gMSA:** check the account is enabled, add this host to the allowed principals, confirm a KDS root key exists. The KDC gives the same error for the keytab cases ([event 4771](https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/auditing/event-4771)); the gMSA causes are `[UNVERIFIED — lab]` until T-0123/T-0124 |
 | M-TLS | V3 chain untrusted or name mismatch | **Certificate from `<DC>` is not trusted.** | Chain shown with issuer; "Add the issuing CA to the activeDIQ trust store" (FR-05) |
 | M-SKEW | V2 | **Clock differs from `<DC>` by `<n>` minutes.** Kerberos fails above 5 minutes by default. | Fix time sync on the activeDIQ host |
 | M-NODC | V1 | **No domain controller answered for `<name>`.** | Per name tried: DNS result, port, error, last attempt time |
@@ -204,7 +207,7 @@ Messages are specified so that QA can assert the text pattern. `<…>` is data. 
 
    *I* and these multipliers are product defaults pending the T-0065 latency budget (OQ-6).
 4. **Connection status** (one word per forest on the list): **Healthy** (all checks pass, all domains Current), **Degraded** (some DC down, or Behind, or Warn findings), **Needs attention** (Stale, a failed check, over-privilege, authentication rejected), **Unavailable** (no DC reachable), **Suspended**, **Draft**, **Removing**. The status is a derived label, not a lifecycle state, and it lists the worst cause beside it.
-5. Each check and each DC row shows when it was last checked. A health value older than 3 intervals is greyed with "not checked since `<time>`", never shown as still passing.
+5. Each check and each DC row shows when it was last checked. A health value is greyed with "not checked since `<time>`", never shown as still passing, when it is older than **2× its own schedule**: connectivity, clock and per-DC rows 2× the sync interval *I*; rights checks (V7–V9) 2× 24 h (or 2× the tenant's shorter setting). A rights row from 3 hours ago is therefore not greyed.
 
 ### 8.2 The Health tab
 - **Connection checks:** V1–V5 and V7–V8 results from the latest run, with next scheduled run. Rights checks (V7, V8, V9) run at least every 24 h, after every credential change and on **Check now**; the 24 h is a ceiling a tenant can shorten, never lengthen. Connectivity and clock checks run every cycle.
@@ -250,17 +253,17 @@ Each cause has: what the admin reads, what activeDIQ does by itself, what the ad
 | FR-07 | The credential step MUST offer: on `windows`, the server's gMSA; on `linux-oci`, an AES-only keytab by file reference. It MUST NOT accept a secret value through the console or API (DM-11.I1, I2). It SHOULD show copy-ready commands to prepare the account for the chosen profile, with no secret in them and tested on the lab. | ADM-212, ENH-08 |
 | FR-08 | The credential record MUST show kind, principal, state and last successful use. It MUST NOT show or return any secret, key bytes or keytab content. | DM-11.I1 |
 | FR-09 | **Verify** MUST run V1–V9 in order and show progress per check. A failed run MUST leave the inputs, write no inventory and start no sync, and a re-run MUST keep inputs. | ADM-212 |
-| FR-10 | V7 MUST refuse activation if the identity is, transitively, a member of any Tier-0 group, holds a write or control right on any `tier0` object, or has delegation configured (TM-D1, TM-F-RIGHTS). Membership MUST be evaluated at check time, including groups with more than 1,500 members. | enhancement (ENH-08) |
+| FR-10 | V7 MUST refuse activation if the identity is, transitively, a member of any Tier-0 group, holds a write or control right on any `tier0` object, or has delegation configured (TM-D1, TM-F-RIGHTS). Membership MUST be evaluated at check time and forest-wide, including universal and enterprise Tier-0 groups held in another domain, foreign-security-principal edges, and groups with more than 1,500 members. If a domain or global catalog needed to decide cannot be reached, the result MUST be Could not verify (FR-11), never a pass. | enhancement (ENH-08) |
 | FR-11 | V7 MUST distinguish "no rights" from "could not compute". An absent or empty answer MUST be accepted as "no rights" only when a control in the same session proves that the directory computes that answer; otherwise the result is Could not verify, which blocks activation. | enhancement |
 | FR-12 | V8 MUST refuse activation if the identity cannot read the R1 and R2 set (TM §6.3) on a domain the admin intends to manage, and MUST NOT allow an override for it. | ADM-212 |
-| FR-13 | An admin with the platform-scope Tier-0-override permission MAY activate despite V7 findings after step-up and a typed acknowledgement. The override covers only the findings shown; any new finding needs a new acknowledgement. It MUST NOT apply to V8, to Could not verify, or to a failed bind. | TM-D1 |
+| FR-13 | An admin with the platform-scope Tier-0-override permission MAY activate despite V7 findings after step-up and a typed acknowledgement. The override records the fingerprints of the findings shown (§11); a *new* finding is any fingerprint not in that set, and needs a new acknowledgement. It MUST NOT apply to V8, to Could not verify, or to a failed bind. | TM-D1 |
 | FR-14 | While an override is in force the console MUST show on every page of that connection "activeDIQ is Tier 0 in this forest", and Health MUST show the same. The banner MUST clear only when a verification passes with no V7 findings. | TM-D1 |
 | FR-15 | Every refusal and failure MUST use a message from §7.2 with its findings, each naming the object, the right or group and the fix. A message MUST NOT contain a secret and MUST NOT read only "insufficient permissions". | enhancement (E1) |
 | FR-16 | Detailed findings (they enumerate Tier-0 exposure) MUST need the verify permission to view. Other viewers see the verdict and the count only. | security |
-| FR-17 | Activation MUST require a verification result at most 15 minutes old; otherwise it MUST re-verify inline before proceeding. | DM-10 |
+| FR-17 | Activation MUST require a passing verification at most 15 minutes old; otherwise it MUST run `draft → verifying → active` inline and proceed only on a pass. Every verification MUST end in `draft` (a pass records `verified_at`). Re-verification of an `active` or `suspended` connection MUST be a job and MUST NOT change the lifecycle state (L11). | DM-10 |
 | FR-18 | `suspended` MUST stop sync and changes immediately for unclaimed work, let claimed steps finish or fail per ADR-0005, and show Suspending until they drain. | DM-10 |
-| FR-19 | **Resume** MUST re-verify and MUST stay suspended with findings if any blocking check fails. | DM-10 |
-| FR-20 | **Remove** MUST show an impact summary, require the typed forest name and step-up, hide the connection's data from search and reports at once, and end in `removed` only after purge. It MUST NOT delete audit events (DM-10.I5). A failed purge MUST stay visible with **Retry**. | DM-10 |
+| FR-19 | **Resume** MUST re-verify as a job while the connection stays `suspended`, and MUST stay suspended with findings if any blocking check fails. | DM-10 |
+| FR-20 | **Remove** (from `active` or `suspended`) MUST show an impact summary, require the typed forest name and step-up, hide the connection's data from search and reports at once, and end in `removed` only after purge. It MUST NOT delete audit events (DM-10.I5). A failed purge MUST stay visible with **Retry**. | DM-10 |
 | FR-21 | **Change credential** MUST verify the new identity against the same forest identity and swap atomically only on pass; a failure MUST keep the old credential and say so. | DM-11 |
 | FR-22 | The connection MUST be editable only through audited settings changes: display name, managed domains, DC choices, sync interval, extra attributes, trust store. Each is an audit event with before and after. | ADM-212 |
 | FR-23 | The system SHOULD let an admin add attributes to the synced set from a schema-aware picker, MUST refuse attributes the schema marks secret (`SECRET_ATTRIBUTE`, connector contract §4) with the reason, and MUST state the effect on sync volume. | ADM-212 (custom LDAP attributes) |
@@ -276,6 +279,7 @@ Each cause has: what the admin reads, what activeDIQ does by itself, what the ad
 | FR-33 | After 5 consecutive authentication failures the system MUST stop retrying until the next scheduled check or **Check now**, so it cannot lock the identity's account. | security |
 | FR-34 | When the cookie's issuing DC is lost, the system MUST wait for the grace period (default 15 minutes) before switching and, when a resync is forced, MUST show the cause, scheduled time and duration estimate beforehand. | E3 |
 | FR-35 | The system MUST block change operations while V7 fails on an active connection and MUST keep reading and syncing. | TM-D1, TM-D2 |
+| FR-36 | **Discard draft** MUST end the connection in the terminal state `discarded`: hidden from every list and search, never reactivated, with its row kept so audit references resolve. It MUST be offered only from `draft`. | DM-10 |
 
 ## 10. Platform matrix
 
@@ -295,7 +299,7 @@ Legend for recurring cells: **S** = `✗ not shipped in v1 (ADR-0002); AD creden
 | FR-07 | ✓ gMSA for the host's forest. ◐ other forests need keytab (OQ-3) | ✓ keytab. ✗ gMSA retrieval `[LAB]` → OQ-4 | S | ✓ | ✓ | ✓ keytab | E | H | ✓ | ✓ | P |
 | FR-08 | ✓ | ✓ | S | n/a | n/a | n/a | E | H | ✓ | ✓ | P |
 | FR-09 | ✓ | ✓ | S | ✓ | ✓ | ◐ see FR-10, 11 | E | H | ✓ | ✓ | P |
-| FR-10 | ✓ | ✓ | S | W | W | ◐ constructed attributes behave the same in source, runtime `[LAB]` | E | H | ✓ | ✓ | P |
+| FR-10 | ✓ | ✓ | S | W (child-domain case: no lab has one, `[LAB-GAP]` → AC-47) | W (same) | ◐ constructed attributes behave the same in source, runtime `[LAB]`; single domain, cross-domain membership untestable | E | H | ✓ | ✓ | P |
 | FR-11 | ✓ | ✓ | S | W | W | W | E | H | ✓ | ✓ | P |
 | FR-12 | ✓ | ✓ | S | ✓ | ✓ | ✓ | E | H | ✓ | ✓ | P |
 | FR-13 | ✓ | ✓ | S | ✓ | ✓ | ✓ | E | H | ✓ | ✓ | P |
@@ -321,13 +325,19 @@ Legend for recurring cells: **S** = `✗ not shipped in v1 (ADR-0002); AD creden
 | FR-33 | ✓ | ✓ | S | ✓ | ✓ | ✓ | E | H | n/a | n/a | P |
 | FR-34 | ✓ | ✓ | S | W: restore and USN-rollback causes (H4, H5) need Windows DCs | W | ◐ H3, H6 only | E | H | ✓ | ✓ | P |
 | FR-35 | ✓ | ✓ | S | ✓ | ✓ | ✓ | E | H | ✓ | ✓ | P |
+| FR-36 | ✓ | ✓ | S | n/a | n/a | n/a | E | H | ✓ | ✓ | P |
 
 Windows-profile gaps (gMSA source T-0124, SSPI adapter T-0123, service host T-0126) close before M2 exit, not at checkpoint 2a (m2-plan decision 9). Until then the 2a demo runs on `linux-oci`, and every `windows` ✓ above is "specified, not yet demonstrable".
 
 ## 11. Data and API impact
 
 - **Directory read:** rootDSE (`rootDomainNamingContext`, `configurationNamingContext`, `dsServiceName`, `currentTime`, `forestFunctionality`, `highestCommittedUSN`, `isGlobalCatalogReady`); `CN=Partitions` crossRefs (`nCName` as extended DN, `systemFlags`, `Enabled`); `nTDSDSA` and server objects; for V7 `tokenGroups` or `member` + `primaryGroupID`, `allowedAttributesEffective`, `allowedChildClassesEffective`, `sDRightsEffective`, `nTSecurityDescriptor` (DACL, SD-flags control, never SACL); on the identity `msDS-AllowedToDelegateTo`, `userAccountControl` delegation bits and DC RBCD attributes. **Constructed attributes are requested explicitly and from a DC of the object's domain on 389/636, never the Global Catalog** ([allowedAttributesEffective](https://learn.microsoft.com/en-us/windows/win32/adschema/a-allowedattributeseffective)). **Nothing is written to the directory.**
-- **Persisted (existing):** DM-10 Connection, DM-11 credential metadata, DM-13 binding, DM-14, DM-15, DM-19. **New or changed, for solution-architect (OQ-1, OQ-2):** the Tier-0 override record on the connection, a verification result record (findings with object GUIDs, verdict, time), a health observation history (30 days), a tenant trust store for CA certificates, and the health fields per cycle (§8.4).
+- **Persisted (existing):** DM-10 Connection (lifecycle amended: every verification ends in `draft`; `draft → discarded` terminal and hidden; `active → decommissioning` direct), DM-11 credential metadata, DM-13 binding, DM-14, DM-15, DM-19.
+- **Persisted (new, decided in the T-0068 review, recorded by T-0168):**
+  - **`ConnectionVerification`**, append-only: one row per run with kind (onboarding, resume, credential_change, scheduled, manual), start and end, verdict (pass, refused, could_not_verify, failed), and **Finding** rows `{check V1…V9, object GUID, right or group GUID, code, severity, fingerprint}`. It stores GUIDs, SIDs and codes only; display names are resolved at read time, so X11 needs nothing extra. Retention is a tenant record class defaulting to audit retention; `security-architect` confirms the access restriction and retention in its review.
+  - **`Tier0Override`** `{acknowledged_by, at, acknowledged finding fingerprints, cleared_at, cleared_by_verification}`. A *new finding* is the set difference of fingerprints. It is not a column on DM-10.
+  - **Health and cycle history:** a 30-day rolling window (FR-31).
+  - A tenant **trust store** for CA certificates, and the health fields per cycle (§8.4).
 - **Audit events (DM-80):** `connection.created`, `.verification.started`, `.verification.completed` (verdict, findings digest), `.activated`, `.suspended`, `.resumed`, `.credential.changed`, `.settings.changed`, `.tier0_override.acknowledged`, `.tier0_override.cleared`, `.rights.verdict_changed`, `.resync.requested`, `.removal.started`, `.removed`, `.draft.discarded`, `trust_store.changed`. Personal display values follow X11.
 - **API (for T-0069):** create/edit/discard draft; verify (job, polled); activate; suspend; resume; credential change; remove; sync now; full resync; list and get connections with status and `data_as_of`; health (checks, DCs, per-domain sync, timeline); findings (restricted); DC exclude and priority; trust store. Verification and resync are jobs, not requests.
 - **Scale:** verification cost is bounded by the Tier-0 set and the managed OU count, not directory size. A forest of 100k objects and a Domain Admins group of more than 1,500 members are both in the acceptance set.
@@ -374,8 +384,8 @@ Evidence: API get-connection; audit event; screenshot (S)
 AC-05  (L4, FR-17)
 Given a verification that passed 20 minutes ago
 When Activate is pressed
-Then verification re-runs inline first and activation proceeds only if it passes again
-Evidence: audit shows two verification.completed events before activated (S)
+Then the state goes draft → verifying → active, verification re-runs inline first, and activation proceeds only if it passes again; if it fails the state is draft with the findings
+Evidence: audit shows two verification.completed events before activated; state sequence in the API (S)
 
 AC-06  (L5, DM-19 paused)
 Given an active connection with a running sync
@@ -415,8 +425,8 @@ Evidence: fault injection on the purge job; screenshots (S)
 AC-12  (L9)
 Given a draft
 When Discard draft is pressed
-Then it disappears from the list, and an audit event records the discard
-Evidence: list and audit (S)
+Then its state is discarded, it disappears from the list and from search, the row is still resolvable from an audit event reference, and an audit event records the discard; Discard is not offered on an active connection
+Evidence: list, API get by id, audit (S)
 
 AC-13  (L10, FR-02)
 Given a connected forest
@@ -529,7 +539,7 @@ Evidence: screenshot; audit (S)
 AC-31  (FR-13)
 Given an override in force
 When a new finding appears (the identity gains another Tier-0 right)
-Then health shows Needs attention, changes remain blocked, and the new finding needs its own acknowledgement
+Then health shows Needs attention, changes remain blocked, the new finding (a fingerprint not in the acknowledged set) needs its own acknowledgement, and the already-acknowledged findings do not ask again
 Evidence: screenshots (S)
 
 AC-32  (H10, FR-35)
@@ -542,13 +552,19 @@ AC-33  (DM-19 initial_sync → incremental, FR-26)
 Given a forest of 100,000 objects
 When the first sync runs
 Then the page shows objects synced so far and elapsed time updating, no percentage, Initial sync as the label, and Current once a cycle completes
-Evidence: 250k-scale tier screenshots at three moments (scale tier)
+Evidence: screenshots at three moments on the 100k-object scale tier (the 250k tier is a stretch run, not the criterion)
 
 AC-34  (H3, FR-34)
-Given a two-DC forest where the cookie's issuing DC is stopped for 20 minutes
+Given a two-DC forest where the cookie's issuing DC is stopped
 When 15 minutes pass
-Then health shows the cause, the scheduled resync time and a duration estimate before the resync starts; and if the DC returns within 10 minutes no resync runs
+Then health shows the cause, the scheduled resync time and a duration estimate before the resync starts
 Evidence: 2dc lab; timeline entries (2dc)
+
+AC-34b  (H1, FR-34)
+Given the same forest and the issuing DC stopped for 10 minutes only
+When the DC returns
+Then no resync runs, the DC row clears, and the timeline shows the outage
+Evidence: 2dc lab; no resync job, timeline entry (2dc)
 
 AC-35  (H3, H6, DM-19.I3)
 Given a user deleted while the cookie was stale
@@ -609,6 +625,36 @@ Given a 2-DC forest
 When one DC is excluded and the priority order is changed
 Then no cycle or write pin uses the excluded DC, the order is honoured when both are healthy, and both changes are audited
 Evidence: connector log of DC used; audit (2dc)
+
+AC-45  (L11, FR-17)
+Given an active connection and a suspended one
+When a scheduled rights check, Check now, or a credential change runs verification on each
+Then the lifecycle state of each is unchanged while it runs and after it ends, the Health tab shows the run, and a refused result moves the derived status to Needs attention, not the lifecycle state
+Evidence: API state read before, during and after; screenshots (S)
+
+AC-46  (§8.1 rule 5)
+Given a sync interval of 5 minutes, a rights check last run 3 hours ago (schedule 24 h) and a connectivity check last run 14 minutes ago
+When the Health tab is opened, then again with the rights check 49 hours old and the connectivity check 9 minutes old
+Then at first the rights row is not greyed and the connectivity row is greyed "not checked since <time>"; at second the rights row is greyed and the connectivity row is not
+Evidence: clock-controlled test; screenshots (S)
+
+AC-47  (V7 forest-wide, FR-10)
+Given a forest with a child domain and an identity from the child domain that is a member of Enterprise Admins in the root domain
+When Verify runs
+Then it is refused with M-OVER-1 naming Enterprise Admins and the path; and if the root domain's DCs are unreachable the result is Could not verify, never a pass
+Evidence: Windows lab with a child domain (W, [LAB-GAP]: no Samba or MF tier has a child domain; lab ticket T-0169); until then verified by connector unit tests on recorded directory responses
+
+AC-48  (M-AUTH, gMSA)
+Given the windows profile and a gMSA whose host is not in PrincipalsAllowedToRetrieveManagedPassword
+When Verify runs
+Then the message is M-AUTH with the gMSA cause line (account disabled, host not allowed, no KDS root key) and the gMSA fix, and not the keytab wording
+Evidence: screenshot of the message (W)
+
+AC-49  (FR-36)
+Given a draft and an active connection
+When the admin opens each
+Then Discard draft is offered on the draft only, and a discarded id never appears in a list or search but still resolves from the audit event
+Evidence: DOM check; API (S)
 ```
 
 ## 14. Out of scope
@@ -626,17 +672,19 @@ Evidence: connector log of DC used; audit (2dc)
 
 | # | Question | Owner | Blocks | Decision |
 | --- | --- | --- | --- | --- |
-| OQ-1 | DM-10 has no attribute for the Tier-0 override acknowledgement. Proposal: `tier0_override {by, at, findings_digest}` on the connection, cleared by a clean verification. | solution-architect | T-0119 | open |
-| OQ-2 | Where findings, verification results and the health history live, their retention, and whether findings count as personal data (X11). Findings enumerate Tier-0 exposure. | solution-architect, security-architect | T-0093, T-0119 | open |
+| OQ-1 | Tier-0 override acknowledgement storage. | solution-architect | T-0119 | **Decided (T-0068 review):** new entity `Tier0Override` with finding fingerprints (§11); recorded in T-0168 |
+| OQ-2 | Where findings, verification results and health history live, retention, X11. | solution-architect, security-architect | T-0093, T-0119 | **Decided (review):** append-only `ConnectionVerification` with Finding rows (GUIDs, SIDs, codes only), retention a tenant record class defaulting to audit retention, health history 30 days (§11). `security-architect` confirms the restriction and retention |
 | OQ-3 | `windows` profile and a forest the host is not joined to or does not trust: a gMSA cannot span forests. Is a keytab credential allowed on `windows`? Spec assumes yes (DM-11 allows `keytab_ref` on any profile). | directory-engineer, security-architect | T-0124, multi-forest on windows | open; PM default: keytab |
 | OQ-4 | gMSA retrieval on Linux is `[LAB]`; if it proves out, the linux-oci credential step gains a second option. | directory-engineer | none (keytab ships) | open |
-| OQ-5 | DM-10 lifecycle has no `draft → discarded`. Spec L9 deletes a draft. Amend DM-10 or define the discard in the model. | solution-architect | T-0119 | open |
+| OQ-5 | DM-10 has no `draft → discarded`; where does re-verification sit? | solution-architect | T-0119 | **Decided (review):** §6 L3, L4, L7, L9, L11; recorded in T-0168 |
 | OQ-6 | Defaults *I* = 5 min, grace = 15 min, 12·*I* stale line, and the effect on DCs at 100k objects. | directory-engineer (T-0065, T-0092) | AC-34, AC-38 | open; PM default stands until T-0065 gives a budget |
 | OQ-7 | Should an `ad_password` fallback exist at all? PM recommendation: not in 2a; revisit at M2 exit with evidence from migrating customers. Customer-visible packaging, so the director decides whether it needs the CEO. | factory-director | none for 2a | open |
 | OQ-8 | May the change feed use an RODC? Not found in the consult. | ad-expert, directory-engineer | H1 priority rules | open |
 | OQ-9 | Whether the configuration NC is readable by an unprivileged identity by default is not stated in the consulted sources; a refusal at V6 would make onboarding impossible. | ad-expert (T-0051) | V6 | open, `[UNVERIFIED]` |
 | OQ-10 | Whether `sDRightsEffective` returns 0 or is absent for a non-administrator. FR-11 is written to be safe either way. | ad-expert (T-0051) | T-0053 | open, `[UNVERIFIED]` |
 | OQ-11 | Whether an *unprivileged* identity gets an unhidden entry for every Tier-0 object. M-NOVERIFY fails closed. If it proves common, the spec needs a documented way to grant list rights, not an override. | security-architect, T-0053 | AC-19 | open |
+
+Added in revision 2 (review fixes): OQ-12 — **a lab with a child domain** is needed to prove forest-wide V7 (AC-47); owner devops-engineer, ticket T-0169, backlog; until then AC-47 is covered by recorded-response unit tests and is marked `[LAB-GAP]`.
 
 Tickets filed from this spec (backlog): T-0164 `research` ME onboarding baseline (market-analyst), T-0165 `design` onboarding and health flows with the task-time budget (product-designer), T-0166 `spec` least-privilege delegation-plan wizard, T-0167 `spec` remote-connector variant.
 
@@ -650,4 +698,5 @@ Consult facts tagged `[UNVERIFIED]` here: that an Authenticated User can read th
 
 ## Changelog
 
+- 2026-10-02 · revision 2 after solution-architect review (T-0068): staleness per check cadence (§8.1 rule 5, AC-46); V7 forest-wide with Could-not-verify on unreachable domains (V7, FR-10, AC-47); V7 method wording per TM §6.5; M-AUTH gMSA wording (AC-48); "Live checklist" renamed "Progress checklist"; lifecycle amended per OQ-5 (L3, L4, L7, L9, new L11, FR-17, FR-19, FR-36, AC-45, AC-49); `Tier0Override` and `ConnectionVerification` folded in (§11, OQ-1, OQ-2); AC-33 and AC-34 nits fixed.
 - 2026-10-02 · created (T-0068). Covers DM-10 L1–L10, DM-11, DM-13, DM-19 transitions, TM-D1 refusal messages, and sync freshness without "live".
