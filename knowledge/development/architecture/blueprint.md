@@ -753,6 +753,7 @@ The root package `internal/platform` declares `platform.Deps` (§4.1). Only serv
 | `authority` | backend-engineer; security-architect reviews `Facts` | **Leaf types for authorisation** (ADR-0005 rule 13): `Principal`, `Chain` (the initiator chain: requester, automation policy, API token), `TargetRef`, `NamingContextID`, `Pins`, `FactsQuery`, `Facts` (existence and kind, GUID ancestry, membership per asked group and AU as `member`, `not_member` or `unknown`, `isManagementRestricted`, correlation state and the correlated AD object's ancestry, the Tier-0 flag). No behaviour; imports only `tenant`. The step token and the `operation.LiveFacts` port expose these types, and `authz` evaluates them | — |
 | `store` (+`exempt`, `owners`, `sqlcdb` conventions) | backend-engineer | `WithTenantTx(ctx, tenant.ID, fn)`, `WithPlatform(ctx, reason, fn)`, `LikePattern`, per-transaction `statement_timeout`; the raw pool is unexported. Two neutral mechanisms for the audit chain (ADR-0005 rule 11), with no audit code and no SQL naming an audit table: a **per-transaction slot** (`store.NewSlot[T]()`, keyed by a value only its creator holds) and **one `BeforeCommit` hook**, set once by `compose/server` when it opens the store (a second set panics). `WithTenantTx` runs the body, then the hook, then `COMMIT`; it refuses nested calls and transaction-control SQL (`COMMIT`, `ROLLBACK`, `SAVEPOINT`) inside a body. `store/owners` is the generated, data-only table → owner key + write class map (`owners.gen.go`, §2 rule 6) that `module.Boot` and the fitness jobs read; it imports nothing | — |
 | `store/reportsql` | reporting-engineer (security-architect reviews every change, P5 rule 3) | `Compile(ast, dataset, scope) (sql, args)`, the only dynamic SQL | consumes EP-8 |
+| `corpus` (+`corpustest`) | devops-engineer | The safe-primitives corpus loader and report types; test kit `corpus/corpustest` (`Run`, `Seed`, `ConstantArgv`) that every primitive's tests call (FF-SP4/5/8, safe-primitives §8). Stdlib only | — |
 | `module` | backend-engineer | `Module`, the concrete `Registrar`, `Boot`, `Entry`, `Contributions`, `ErrClosed` (§4.1); test kit `module/moduletest` (`Register(m)`) | hosts EP-1 |
 | `capability` | backend-engineer (IDs: solution-architect) | `capability.ID` constants and `Set.Enabled(id)`. It is a leaf package with no behaviour. Manifests list IDs (`compose/profile`), modules return them from `Requires()` (§4.1), and role packages filter modules by them | supports EP-1 |
 | `apihost` | api-engineer | HTTP server, auth middleware, strict JSON, problem types, rate limits, static UI mount | hosts EP-2 |
@@ -987,7 +988,7 @@ fallback on a remote host) is `[OPEN → T-0007]`.
 | Tier N subset | `native/shared` | `passfilt`, `credprov` | — (it runs the same corpus) |
 
 The corpus lives at `testdata/safe-primitives/<unit>.jsonl`. Every implementation in every tier runs
-the records for the units it implements (FF-SP4).
+the records for the units it implements (FF-SP4); `testdata/safe-primitives/implementations.json` declares them.
 
 ### 7.5 Ports: how a lower layer reads data it does not own
 
