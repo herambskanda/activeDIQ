@@ -1214,7 +1214,7 @@ T-0034 (FF-SP4–6, 8) and T-0036 (FF-SP7, implemented inside ADR-0002's `fitnes
 - T-0139 — SIEM and log output encoders (CEF, syslog, JSON lines), left out of §12.
 - T-0033 / T-0034 — fitness implementation (static rules FF-SP1–3, 9; corpus, fuzz and oracles FF-SP4–6, 8).
 - T-0036 — FF-SP7, inside ADR-0002's `fitness-tenancy` job (checks T2–T4); §8's FF-SP7 row is its coverage list.
-- T-0037 — tenancy foundation (`WithTenantTx`/`WithPlatform`, exemption registry `store/exempt`); builds §7 rule 11 as ADR-0002 specifies.
+- T-0037 — tenancy foundation (done): `WithTenant`/`WithPlatform` as methods on `store.DB`, exemption registry `store/exempt`, rule 11's per-transaction `statement_timeout` and rule 12's pool refusal; see [tenancy-fitness.md](tenancy-fitness.md).
 - T-0035 — security-sensitive spec tickets get security-architect as second reviewer.
 - T-0007 — Kerberos-only outbound policy (§6.3) and the secret-memory policy, including the
   `runtime/secret` evaluation (§5.6).
