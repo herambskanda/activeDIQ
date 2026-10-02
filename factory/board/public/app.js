@@ -7,6 +7,8 @@
    focus + caret are carried across replacements.
    ============================================================ */
 
+import { createAgentsView, AG_WINDOWS, AG_DEFAULT_WINDOW } from './agents.js';
+
 /* ---------- constants ---------- */
 const POLL_MS = 4000;
 const BUDGET_TOKENS = 300000;
@@ -15,7 +17,7 @@ const FIXTURE = (() => {
   const v = new URLSearchParams(location.search).get('fixture');
   return v !== null && v !== '0' && v !== 'false';
 })();
-const TABS = ['overview', 'board', 'decisions', 'library', 'demos'];
+const TABS = ['overview', 'agents', 'board', 'decisions', 'library', 'demos'];
 const STATUSES = [
   ['backlog', 'Backlog'], ['ready', 'Ready'], ['in_progress', 'In progress'],
   ['review', 'Review'], ['qa', 'QA'], ['blocked', 'Blocked'], ['done', 'Done'],
@@ -102,6 +104,7 @@ const ui = {
   drawer: null,               // { id, detail, err, tailRun, tailPinned, tailText, tailFetched }
   drawerPushed: false,
   fb: null,                   // { target, label }
+  agWindow: AG_DEFAULT_WINDOW,
   route: { tab: 'overview', arg: '', t: '' },
   routed: false,
 };
@@ -744,7 +747,10 @@ function buildHash(tab, arg = '', t = '') {
   return `${tab}${arg ? `/${encodeURI(arg).replace(/[?#]/g, enc)}` : ''}${t ? `?t=${enc(t)}` : ''}`;
 }
 const tkHref = (id) => `#${buildHash(ui.tab, ui.tab === 'library' ? ui.libPath : '', id)}`;
-function tabHash(tab) { return buildHash(tab, tab === 'library' ? ui.libPath : ''); }
+function tabHash(tab) {
+  if (tab === 'agents') return buildHash(tab, ui.agWindow === AG_DEFAULT_WINDOW ? '' : ui.agWindow);
+  return buildHash(tab, tab === 'library' ? ui.libPath : '');
+}
 
 function route() {
   const r = parseHash();
@@ -758,13 +764,29 @@ function route() {
   }
   if (r.t && !ui.route.t) ui.drawerPushed = ui.routed; // opened by a click (history entry) vs deep link
   if (!r.t) ui.drawerPushed = false;
+  if (r.tab === 'agents' && AG_WINDOWS.some(([k]) => k === r.arg)) ui.agWindow = r.arg;
   ui.route = r;
   ui.routed = true;
   applyTabs();
+  syncAgents();
   if (r.t) openDrawer(r.t); else closeDrawerUI();
   renderActive();
   if (r.tab !== prevTab) requestAnimationFrame(() => window.scrollTo(0, ui.scroll[r.tab] || 0));
   else if (r.tab === 'library') window.scrollTo(0, 0);
+}
+
+/* ============================================================
+   Agents tab: the view polls /api/graph itself, only while visible
+   ============================================================ */
+let agents = null;
+function syncAgents() {
+  agents ??= safe(() => {
+    const v = createAgentsView({ fixture: FIXTURE });
+    v.onWindow = (w) => { location.hash = buildHash('agents', w === AG_DEFAULT_WINDOW ? '' : w); };
+    return v;
+  }, 'agents view');
+  if (!agents) return;
+  if (ui.tab === 'agents') { agents.setWindow(ui.agWindow); agents.activate(); } else agents.deactivate();
 }
 
 /* ============================================================
@@ -778,7 +800,7 @@ function renderAll() {
 }
 function renderActive() {
   if (!S.data) return;
-  const fn = { overview: renderOverview, board: renderBoard, decisions: renderDecisions, library: renderLibrary, demos: renderDemos }[ui.tab];
+  const fn = { overview: renderOverview, agents: () => {}, board: renderBoard, decisions: renderDecisions, library: renderLibrary, demos: renderDemos }[ui.tab];
   safe(fn, `render ${ui.tab}`);
 }
 

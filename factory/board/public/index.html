@@ -38,6 +38,7 @@
   <div class="wrap">
     <nav class="tabs" id="tabs" role="tablist" aria-label="Sections">
       <button class="tab" role="tab" type="button" id="tab-overview" data-act="tab" data-tab="overview" aria-controls="panel-overview">Overview</button>
+      <button class="tab" role="tab" type="button" id="tab-agents" data-act="tab" data-tab="agents" aria-controls="panel-agents">Agents</button>
       <button class="tab" role="tab" type="button" id="tab-board" data-act="tab" data-tab="board" aria-controls="panel-board">Board</button>
       <button class="tab" role="tab" type="button" id="tab-decisions" data-act="tab" data-tab="decisions" aria-controls="panel-decisions">Decisions<span class="tab-count mono" id="count-decisions" hidden></span></button>
       <button class="tab" role="tab" type="button" id="tab-library" data-act="tab" data-tab="library" aria-controls="panel-library">Library</button>
@@ -90,6 +91,50 @@
           <header class="sec-h"><h2 id="h-activity">Activity</h2></header>
           <ol id="activity-list" class="activity"></ol>
         </section>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ Agents ============ -->
+  <section id="panel-agents" class="panel" role="tabpanel" aria-labelledby="tab-agents" tabindex="-1" hidden>
+    <h1 class="sr-only">Agents</h1>
+    <div class="ag" id="ag">
+      <header class="ag-head">
+        <div class="ag-totals" id="ag-totals" aria-live="off"></div>
+        <div class="ag-ctl">
+          <div class="ag-win" id="ag-win" role="group" aria-label="Time window">
+            <button class="btn sm" type="button" data-ag-win="live" aria-pressed="false">Live</button>
+            <button class="btn sm" type="button" data-ag-win="1h" aria-pressed="true">1h</button>
+            <button class="btn sm" type="button" data-ag-win="6h" aria-pressed="false">6h</button>
+            <button class="btn sm" type="button" data-ag-win="today" aria-pressed="false">Today</button>
+          </div>
+          <span class="ag-updated mono" id="ag-updated" role="status"></span>
+        </div>
+      </header>
+      <div class="ag-legend" id="ag-legend"></div>
+      <p class="ag-err" id="ag-err" role="alert" hidden></p>
+      <div class="ag-stage">
+        <div class="ag-viewport" id="ag-viewport">
+          <div class="ag-scale" id="ag-scale">
+            <div class="ag-cols" id="ag-cols"></div>
+            <svg class="ag-edges" id="ag-edges" aria-hidden="true" focusable="false">
+              <defs>
+                <marker id="ag-arrow-launch" class="mk e-launch" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0.5 L7 4 L0 7.5z"/></marker>
+                <marker id="ag-arrow-spawn" class="mk e-spawn" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0.5 L7 4 L0 7.5z"/></marker>
+                <marker id="ag-arrow-handoff" class="mk e-handoff" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0.5 L7 4 L0 7.5z"/></marker>
+                <marker id="ag-arrow-reject" class="mk e-reject" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0.5 L7 4 L0 7.5z"/></marker>
+                <marker id="ag-arrow-note" class="mk e-note" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0.5 L7 4 L0 7.5z"/></marker>
+                <marker id="ag-arrow-ask" class="mk e-ask" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0.5 L7 4 L0 7.5z"/></marker>
+                <marker id="ag-arrow-answer" class="mk e-answer" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0.5 L7 4 L0 7.5z"/></marker>
+              </defs>
+              <g id="ag-edge-layer"></g>
+            </svg>
+            <div class="ag-nodes" id="ag-nodes"></div>
+          </div>
+          <p class="ag-empty" id="ag-empty" hidden></p>
+        </div>
+        <aside class="ag-side" id="ag-side" aria-label="Agent details" hidden></aside>
+        <div class="ag-tip" id="ag-tip" role="tooltip" hidden></div>
       </div>
     </div>
   </section>

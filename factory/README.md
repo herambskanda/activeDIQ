@@ -32,7 +32,7 @@ factory/
   config.json            runtime configuration (tracked)
   bin/factory            executable entrypoint (#!/usr/bin/env node)
   lib/                   runtime modules (store, ids, locks, flows, dispatcher, launcher, notify…)
-  board/                 Factory Board: server.mjs + public/ (index.html, app.js, styles.css)
+  board/                 Factory Board: server.mjs + public/ (index.html, app.js, agents.js, styles.css)
   templates/             handoff.md, worker-prompt.md, digest.md, demo-script.md, decision.md
   reports/               daily digests and weekly reviews (tracked)
   demos/                 milestone demo packages (tracked; large media gitignored)
@@ -320,6 +320,7 @@ header `X-Factory-Board: 1` (blocks cross-site form posts).
 | GET | `/` `/app.js` `/styles.css` `/tokens.css` | the app |
 | GET | `/api/state` | everything the UI needs in one payload (below) |
 | GET | `/api/ticket/:id` | full ticket incl. notes, history, runs, handoffs list |
+| GET | `/api/graph?window=live\|1h\|6h\|today` | the Agents graph: `{generated, window, nodes[], edges[], totals}` (default `1h`; any other window → 400) |
 | GET | `/api/run/:id/tail?lines=80` | readable tail of a run log (assistant text + tool calls) |
 | GET | `/api/doc?path=…` | raw markdown of a file under `knowledge/`, `factory/reports/`, `factory/demos/`, `docs/` (no traversal) |
 | GET | `/api/file?path=…` | serve preview assets (images, html, video) under the same roots |
@@ -334,8 +335,32 @@ header `X-Factory-Board: 1` (blocks cross-site form posts).
 The UI is a single page, vanilla JS, no build step, using `tokens.css` (the skenzeriq design
 system). Tabs: **Overview** (needs you · running now · milestone progress · today's digest ·
 activity), **Board** (kanban by status, filter by epic/owner), **Decisions** (pending, answered,
-factory notices), **Library** (knowledge base reader), **Demos**. It polls `/api/state` every
+factory notices), **Library** (knowledge base reader), **Demos**, and **Agents** (below). It polls `/api/state` every
 `board.poll_ms` and never clobbers a form the CEO is typing in.
+
+### Agents tab (`/api/graph`, `lib/graph.mjs`, `public/agents.js`)
+
+A live graph of who is working and who talks to whom, laid out left → right: CEO → directors →
+dispatcher → workers (columns by stage: in progress / review / QA) → subagents. Window selector
+Live / 1h / 6h / Today (`#agents/<window>`); polls every 4 s while the tab is visible.
+
+- **Nodes.** Worker: role, exact model id (from the log's `init` line), effort — the *effective* one
+  from the session file, with `≠` when it differs from the run's configured effort, `⚠` for a
+  policy-violating model/effort — context `tokens / budget` with a bar coloured by the 60 / 72 / 80 %
+  thresholds, peak, ticket + stage, current tool, elapsed, turns, cost (a running run's cost is
+  shown as "—" until it ends; nothing is estimated), worktree vs main checkout, continuation and
+  hand-off-pending flags. Subagent (an `Agent` tool call): type, description, model and effort from its
+  agent file (or "built-in"), its own context, running / finished. Directors are live interactive
+  sessions. Faded cards finished inside the window; finished workers' subagents sit behind
+  "+ show N subagents".
+- **Edges.** launch (dispatcher → worker), spawn (worker → subagent), hand-off / reject / note
+  between roles (aggregated per pair from ticket events, with counts and the latest ticket), and
+  ask / answer between the agents and the CEO. Active edges animate; click a node for the side
+  panel (details, recent activity, ticket events, run-log tail via `/api/run/:id/tail`).
+- **Data sources.** `state/runs/*.json` and `*.log` (stream-json, read incrementally — the server
+  keeps a byte offset and parsed state per log and reads only new bytes; a 48 MB scan budget per
+  request spreads a cold start, `log_scanned:false` marks nodes not yet fully read), `state/sessions/`,
+  `state/events/`, tickets, agent definitions, and `config.json` `context`. Read-only.
 
 ## Hooks (`.claude/hooks/`, registered in `.claude/settings.json`)
 

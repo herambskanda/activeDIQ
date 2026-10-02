@@ -16,6 +16,7 @@ import { dispatcherInfo, latestDigest } from '../lib/status.mjs';
 import { listHandoffs } from '../lib/handoffs.mjs';
 import { FILE_TYPES, createLibraryLister, resolveLibraryPath } from '../lib/library.mjs';
 import { readableLines } from '../lib/runlog.mjs';
+import { WINDOWS, buildGraph } from '../lib/graph.mjs';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -120,6 +121,12 @@ function runTail(ctx, id, linesParam) {
   return { id, status: run.status, lines: readableLines(readTail(path.join(ctx.dir('runs'), `${id}.log`), 512 * 1024), lines) };
 }
 
+function graphPayload(ctx, windowParam) {
+  const window = windowParam ?? '1h';
+  if (!WINDOWS.includes(window)) throw new FactoryError(`window must be one of ${WINDOWS.join(', ')}`);
+  return buildGraph(ctx, { window });
+}
+
 function decode(text) {
   try {
     return decodeURIComponent(text);
@@ -208,6 +215,7 @@ export function createBoardServer(ctx) {
 
       let m;
       if (pathname === '/api/state') return sendJson(res, 200, buildState(ctx, listLibrary));
+      if (pathname === '/api/graph') return sendJson(res, 200, graphPayload(ctx, url.searchParams.get('window')));
       if ((m = /^\/api\/ticket\/([^/]+)$/.exec(pathname))) return sendJson(res, 200, ticketDetail(ctx, decode(m[1])));
       if ((m = /^\/api\/run\/([^/]+)\/tail$/.exec(pathname))) return sendJson(res, 200, runTail(ctx, decode(m[1]), url.searchParams.get('lines')));
       if (pathname === '/api/doc') return serveLibraryFile(req, res, ctx, url.searchParams.get('path'), { markdownOnly: true });

@@ -69,5 +69,6 @@ so the same kind of question gets rarer.
 | --- | --- |
 | What we are up against | `knowledge/business/strategy/executive-summary.md` (also in the board's Library) |
 | How the factory works | `factory/OPERATING-MODEL.md` |
+| Which agents are working right now, on which model, effort and context, and who is handing off to whom | the board's **Agents** tab (`http://127.0.0.1:4747/#agents`) |
 | What we decided and why | `knowledge/memory/decisions-log.md` and the board's Decisions tab |
 | What the factory knows about your taste | `knowledge/memory/ceo-preferences.md` |

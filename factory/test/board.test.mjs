@@ -214,6 +214,29 @@ test('GET /api/run/:id/tail converts stream-json into readable lines', async () 
   });
 });
 
+test('GET /api/graph returns the agent graph for each window; a bad window is a 400', async () => {
+  await withBoard(async ({ f, call }) => {
+    putEntity(f.ctx, 'runs', {
+      id: 'R-20261002-100000-aaaa', ticket: null, stage: 'in_progress', role: 'backend-engineer', model: 'sonnet', effort: 'high',
+      status: 'running', started: new Date(f.clock.ms - 60_000).toISOString(), context_tokens: 3000,
+    });
+    for (const window of [undefined, 'live', '1h', '6h', 'today']) {
+      const res = await call(`/api/graph${window ? `?window=${window}` : ''}`);
+      assert.equal(res.status, 200, String(window));
+      assert.equal(res.headers.get('cache-control'), 'no-store');
+      const g = await res.json();
+      assert.equal(g.window.name, window ?? '1h');
+      assert.deepEqual(g.nodes.map((n) => n.kind).sort(), ['ceo', 'dispatcher', 'worker']);
+      assert.equal(g.edges[0].kind, 'launch');
+      assert.equal(g.totals.active_workers, 1);
+      assert.ok(Array.isArray(g.edges));
+    }
+    const bad = await call('/api/graph?window=forever');
+    assert.equal(bad.status, 400);
+    assert.match((await bad.json()).error, /window must be one of/);
+  });
+});
+
 test('every POST needs the X-Factory-Board header', async () => {
   await withBoard(async ({ f, post }) => {
     createDecision(f.ctx, { kind: 'directional', title: 'q', question: 'q?', options: OPTIONS });
