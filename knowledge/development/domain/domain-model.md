@@ -5,7 +5,7 @@ updated: 2026-10-02
 status: review
 owner: heramb
 author: solution-architect
-ticket: T-0006 (amended by T-0061, T-0145)
+ticket: T-0006 (amended by T-0061, T-0145, T-0155)
 binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), ADR-0003 (ratified), blueprint v0 (review), safe-primitives.md (review), threat-model.md v0.2 (review; its TM-D decisions bind, TM §0)
 reviewed_by: ad-expert (AD/Entra semantics, see §12)
 ---
@@ -323,8 +323,10 @@ flag are forest-wide and live on the Connection (DM-10.I6), never per NC.
 `dns_hostname` · `site` · `is_gc` · `is_rodc` · `os_version` · admin flags (`excluded`,
 `priority`) · `last_seen`.
 **Invariants.** I1 Per-DC values (e.g. `lastLogon`, ADM-084) are keyed by `dsa_guid`.
-I2 An RODC is never a write target. I3 An operation item's apply and verify use the same writable
-DC. I4 Demoting and re-promoting a server creates a new NTDS Settings object, so it is a **new**
+I2 An RODC is never a write target. I3 An operation pins one writable DC per naming context it
+reads or writes; Plan, the Apply re-check, the write and Verify go to that pin. If the pin stays
+unavailable past the verify window, Verify reads back from another DC, recorded by name
+(DM-42.I3, ADR-0005 rule 5). I4 Demoting and re-promoting a server creates a new NTDS Settings object, so it is a **new**
 DC row with a new `dsa_guid`, even under the same hostname. I5 Any USN-based position is keyed by
 `(dsa_guid, invocation_id)`. A changed `invocation_id` invalidates it.
 **Lifecycle.** `discovered → in_use | excluded → retired`.
@@ -1059,7 +1061,9 @@ a report run, a sync pass or a delivery. **Replaces (ME):** the scheduler's inte
 `unique_key` · `attempt` · `scheduled_at`.
 **Invariants.** I1 A job is never the system of record. The OperationItem, ReportRun or
 SyncCursor holds the truth, and a lost job is re-derived from it. I2 Args carry `tenant_id`, and
-the wrapper opens `WithTenantTx` first. Platform jobs are registered. I3 Only `platform/jobs`
+the wrapper establishes the tenant first: it runs the body in one `WithTenantTx`, or, for a
+`ManagedTx` kind such as the operation kinds, hands it a tenant-bound transaction runner (ADR-0002
+Jobs row as amended by ADR-0005 rule 6). Platform jobs are registered. I3 Only `platform/jobs`
 imports River (ADR-0002 T5).
 **Lifecycle.** River's states: `scheduled | pending | available → running → completed`, or
 `running → retryable → … → discarded`, or `→ cancelled`
@@ -1564,3 +1568,4 @@ AC2 was re-checked by script: every ADM ID in scope lock §3.3 (123 IDs) appears
 - 2026-10-02 · T-0061 round 2 (director review M1, M2). Rule (h) follows the binding TM-D17 rule 5 text: new DM-36.I4 "control-plane authority is personal". `tenant-owner` and `control_plane` permissions reach an account only through an assignment to that account, and an assignment that gives them to a group or automation-policy subject is refused at creation. DM-20.I7, DM-36.I2, DM-30.I4 and §10 follow. DM-33.I3: the backstop covers every non-`read` permission in the `authn`, `authz`, `delegation` and `connections` namespaces, and runs in EP-6 catalogue validation at `Boot` rather than in the Registrar.
 - 2026-10-02 · ADR-0005 rework 1 (T-0047): DM-41 gains the terminal `no_change` outcome; DM-42.I3 follows ADR-0005 rule 5 (read-back from another DC after the verify window); a `verify_failed` step can be undone.
 - 2026-10-02 · ADR-0003 restatement (T-0145): owner lines follow ADR-0003 rule 9. DM-10 Connection, DM-13 ConnectorBinding and DM-21 HybridLink move from `modules/connections` to `directory/connection` (F1). DM-11 DirectoryCredential is owned by `connector/credential` alone; its metadata-row clause is dropped and writes go through the credential port. DM-30.I5 and DM-36.I2 name the kernel read ports that `directory/inventory` implements (F6).
+- 2026-10-02 · ADR-0005 restatement (T-0155): DM-15.I3 follows ADR-0005 rule 5 and DM-42.I3 (one writable DC pinned per naming context; read-back from another DC, recorded by name, after the verify window). DM-43.I2 follows the amended ADR-0002 Jobs row (`ManagedTx`).
