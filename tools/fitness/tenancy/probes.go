@@ -98,6 +98,13 @@ func checkT4(ctx context.Context, d *Database, m *catalogModel, reg *registry.Re
 			}
 			if err := seed(sp, p.models[r.oid], t); err != nil {
 				_ = sp.Rollback(ctx)
+				var pe *pgconn.PgError
+				if errors.As(err, &pe) && (pe.Code == "23505" || pe.Code == "23P01") {
+					// The rows differ only in tenant_id, so a collision means the key ignores the tenant.
+					add("unique-global", r.qname(), fmt.Sprintf("tenant B cannot insert a row that tenant A already has: key %q is global, not per tenant", pe.ConstraintName))
+					seedFailed = true
+					break
+				}
 				add("probe-seed", r.qname(), "cannot seed a probe row for the isolation probes: "+pgMessage(err)+" (add a probeValues entry to the exemption registry if a CHECK constraint or domain needs a specific value)")
 				seedFailed = true
 				break
@@ -332,7 +339,7 @@ func checkT4(ctx context.Context, d *Database, m *catalogModel, reg *registry.Re
 		// Foreign keys: A's row must not be able to reference B's parent row.
 		for _, f := range tm.fks {
 			parent := p.models[f.parent]
-			if parent == nil {
+			if parent == nil || parent.rel.global != nil {
 				continue // references a global table such as tenants
 			}
 			if parent == tm {
@@ -391,6 +398,10 @@ func adminProbe(ctx context.Context, c *pgx.Conn, fn func(tx pgx.Tx) error) erro
 	return fn(tx)
 }
 
+// leakIsLocal is the is_local argument of the set_config call the session-leak probe makes. It is true
+// (transaction-scoped, what the product does); a test flips it to prove the probe notices a leak.
+var leakIsLocal = true
+
 // probeSessionLeak is SQL-14: after a transaction that set app.tenant_id with set_config(..., true)
 // commits (and after one that rolls back), the same connection shows no tenant.
 func probeSessionLeak(ctx context.Context, d *Database) ([]Violation, error) {
@@ -406,7 +417,7 @@ func probeSessionLeak(ctx context.Context, d *Database) ([]Violation, error) {
 			return nil, err
 		}
 		var in string
-		if err := tx.QueryRow(ctx, `SELECT set_config('app.tenant_id', $1, true)`, tenantA).Scan(&in); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT set_config('app.tenant_id', $1, $2)`, tenantA, leakIsLocal).Scan(&in); err != nil {
 			_ = tx.Rollback(ctx)
 			return nil, err
 		}

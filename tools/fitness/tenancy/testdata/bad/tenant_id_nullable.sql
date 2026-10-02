@@ -3,7 +3,7 @@ CREATE TABLE items (
   tenant_id uuid REFERENCES tenants (id),
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   name text NOT NULL,
-  PRIMARY KEY (tenant_id, id),
+  UNIQUE (tenant_id, id),
   UNIQUE (tenant_id, name)
 );
 ALTER TABLE items ENABLE ROW LEVEL SECURITY;

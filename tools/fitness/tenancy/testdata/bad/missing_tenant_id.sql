@@ -13,8 +13,7 @@ CREATE TABLE item_notes (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   item_id uuid NOT NULL,
   body text NOT NULL,
-  PRIMARY KEY (tenant_id, id),
-  FOREIGN KEY (tenant_id, item_id) REFERENCES items (tenant_id, id)
+  PRIMARY KEY (tenant_id, id)
 );
 ALTER TABLE item_notes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE item_notes FORCE ROW LEVEL SECURITY;
@@ -23,7 +22,7 @@ CREATE POLICY tenant_isolation ON item_notes
   WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
 
 
-CREATE VIEW item_names WITH (security_invoker = true) AS SELECT tenant_id, id, name FROM items;
+CREATE VIEW item_names WITH (security_invoker = true) AS SELECT id, name FROM items;
 
 CREATE TABLE events (
   tenant_id uuid NOT NULL REFERENCES tenants (id),
