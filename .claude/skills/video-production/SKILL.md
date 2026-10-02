@@ -31,16 +31,15 @@ design-system type; narration says what the admin is doing and why it matters, n
 ffmpeg -version | head -1                                         # installed (Homebrew)
 ffmpeg -hide_banner -filters | grep -wE 'loudnorm|xfade|overlay'  # present
 ffmpeg -hide_banner -filters | grep -wE 'drawtext|subtitles'      # ABSENT on this machine (no freetype/libass)
-npx --no-install playwright --version                             # resolves today via the npx cache
+npm --prefix tools/playwright ls @playwright/test                  # pinned (T-0011); set up: make playwright-install
 say -v Samantha "check"                                           # draft narration
 ```
 
 - No `drawtext`/`subtitles` → title cards are rendered as HTML and screenshotted (§5), and
   captions ship as a soft track + `.srt` (§6). Burn-in only if a devops ticket installs an
   ffmpeg with libass (then `subtitles` appears in the filter list).
-- Playwright is not yet a pinned project dependency: a `devops-engineer` ticket adds it (and its
-  Chromium) to the repo. If `npx --no-install` fails, block on that ticket — do not install
-  ad hoc.
+- Playwright is pinned in `tools/playwright/` (runbook `knowledge/development/runbooks/playwright-tooling.md`).
+  If `make playwright-test` fails, fix the setup per the runbook — do not install ad hoc.
 - Fonts: Geist / Geist Mono are not installed locally; cards fall back to the `tokens.css`
   stack (Helvetica Neue / SF Mono) — fine for drafts. Vendoring Geist (SIL OFL) needs a licence
   register entry (`knowledge/business/licensing/`) and a devops ticket.

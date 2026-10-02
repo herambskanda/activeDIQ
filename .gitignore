@@ -34,3 +34,11 @@ lab/.lab.env
 lab/.lab-ca.pem
 lab/.snapshots/
 __pycache__/
+
+# Playwright tooling (T-0011): browsers live in the per-user cache (~/Library/Caches/ms-playwright,
+# ~/.cache/ms-playwright) or PLAYWRIGHT_BROWSERS_PATH, never in the repo; run output is local
+ms-playwright/
+test-results/
+playwright-report/
+blob-report/
+tools/playwright/.record-tmp/

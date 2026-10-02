@@ -1,8 +1,14 @@
 # Recording with Playwright
 
-Provisional paths until the devops ticket pins Playwright in the repo; adapt the import to the
-project's test setup. Run with `npx playwright test factory/demos/<M>/video/record/<clip>.spec.ts`
-(headless is fine — the cursor is injected, not the OS cursor).
+Playwright is pinned in `tools/playwright/` (T-0011). Two ways to record; headless is fine — the
+cursor is injected, not the OS cursor:
+
+- **Plain spec** (default): an `.mjs` module with a default `async ({ page, baseURL })` function and
+  optional `options` (viewport, colorScheme) — `node tools/playwright/record.mjs <spec.mjs> <out.webm> --base-url <url>`.
+  See `tools/playwright/README.md`; the beat/cursor helpers below work unchanged inside it.
+- **Playwright test runner**: the skeleton below, run with
+  `npx --prefix tools/playwright playwright test -c tools/playwright/playwright.config.mjs <spec>`
+  (set `testDir` for your clip); the video lands in `test-results/`.
 
 ## Recording script skeleton
 
