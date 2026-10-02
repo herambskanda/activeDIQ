@@ -28,12 +28,14 @@ with stable code `X`; nothing is sent to a DC, interpreter or database.
 | P3 | `attr`: codecs for GUID, SID, FILETIME/Interval, Generalized Time, flag integers (UAC, computed UAC, groupType), `unicodePwd` + `Secret` | ad-hoc byte/int parsing, bit maths in feature code, raw attribute access | S, A; `Secret` and any codec it parses also in N | directory-engineer | 5 |
 | P4 | `psx` typed PowerShell operations · `pslit` display quoting · `proc` native process runner | script text with data, `-Command`, `-EncodedCommand`, shells, `.bat`/`.cmd` | S, A, X | backend-engineer (`psx`, `proc`), windows-engineer (sidecar host) | 6 |
 | P5 | SQL access: generated queries, tenant context, report compiler, LIKE patterns | `Sprintf`/concatenated SQL, session-level `SET` | S | backend-engineer | 7 |
+| P6 | `sd`: binary MS-DTYP security descriptors, SD_FLAGS, diff-based DACL edits, SDDL display-only | hand-sliced `nTSecurityDescriptor` bytes; SDDL on write paths; whole-SD writes | S, A | directory-engineer | sibling doc: `safe-primitives-security-descriptor.md` (T-0028) |
 
 Tier W (web console) implements **no** primitive and tier L (lab and tools) is exempt from the
 literal-shape ban but never imported by product code — both rules are in §2.1.
 
 Every ticket that implements or changes a primitive is tagged `security-sensitive`
-(`.claude/skills/security-baseline/SKILL.md` §1). Out of scope here: security descriptors (T-0028),
+(`.claude/skills/security-baseline/SKILL.md` §1). Security descriptors are P6, specified in the sibling
+`safe-primitives-security-descriptor.md` (T-0028; it follows R1–R9 below). Out of scope here:
 output encoders for CSV/XLSX/HTML (T-0029), XML/SAML, JWT and randomness (feasibility §2.7 rows; T-0007).
 
 ## 1. Rules that apply to every primitive
@@ -1057,7 +1059,8 @@ and is updated by the lab tests, not by hand.
 - `attr.guid`, `attr.sid`, `attr.filetime`, `attr.gentime`, `attr.flags`;
 - `attr.unicodepwd` (incl. `Secret`, `SecureConn`);
 - `psx`, `pslit`, `proc`;
-- `sql`.
+- `sql`;
+- `sd.read`, `sd.write` (P6, defined in `safe-primitives-security-descriptor.md` §5; its rules FF-SD1–5 are implemented in the T-0033/T-0034 tooling alongside FF-SP1–6).
 
 A **record is one input**. A table row listing several inputs separated by `·`, `/` or commas
 expands to one record each, with suffixed IDs, paired in order with the expected values. Separators
@@ -1161,7 +1164,7 @@ T-0034 (FF-SP4–6, 8) and T-0036 (FF-SP7, implemented inside ADR-0002's `fitnes
 
 ## 11. Follow-ups
 
-- T-0028 — typed security-descriptor primitive (CLAUDE.md rule 5 names it; not in this ticket's scope).
+- T-0028 — typed security-descriptor primitive: done as `safe-primitives-security-descriptor.md`; build in T-0118 (read half) and a later write-half ticket.
 - T-0029 — output encoders (CSV/XLSX formula neutralisation, HTML, email/PDF).
 - T-0033 / T-0034 — fitness implementation (static rules FF-SP1–3, 9; corpus, fuzz and oracles FF-SP4–6, 8).
 - T-0036 — FF-SP7, inside ADR-0002's `fitness-tenancy` job (checks T2–T4); §8's FF-SP7 row is its coverage list.
