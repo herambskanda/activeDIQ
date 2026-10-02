@@ -51,7 +51,7 @@ export function stageInstructions({ config, ticket, stage, role, isolated }) {
 
   if (stage === 'in_progress') {
     if (!code) {
-      return 'Stage: produce the deliverable. The ticket body and links.spec give the path it goes to. Follow the knowledge-base conventions in knowledge/README.md (frontmatter, status ladder, inline source URLs, [UNVERIFIED] tags). If earlier notes record a rejection, address it first. When the deliverable is complete, advance with a note naming every file you produced.';
+      return 'Stage: produce the deliverable. The ticket body and links.spec give the path it goes to. Follow the knowledge-base conventions in knowledge/README.md (frontmatter, status ladder, inline source URLs, [UNVERIFIED] tags). If earlier notes record a rejection, address it first. When the deliverable is complete, commit only the files you produced, by explicit path (`git add <path>…`, never `git add -A` or `git add .` — other workers share this checkout), then advance with a note naming every file you produced.';
     }
     const where = isolated
       ? `Implement on branch \`${branch}\` in this worktree (your working directory).`
