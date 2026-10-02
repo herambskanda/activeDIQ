@@ -4,7 +4,7 @@
 
 .PHONY: ci lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-proto build build-web web-install ci-proof
 
-ci: lint test fitness build secrets-scan lab-test-unit ci-proof ## Everything a merge needs: lint, tests, fitness functions (incl. the ADR-0001 build matrix), web build, secret scan, gate proofs
+ci: lint gen-api-check lint-api test fitness build secrets-scan lab-test-unit ci-proof ## Everything a merge needs: lint, generated-contract staleness, API lint, tests, fitness functions (incl. the ADR-0001 build matrix), web build, secret scan, gate proofs
 	@echo "make ci: passed"
 
 web-install: ## Install the pinned web dependencies from the lockfile (npm ci)

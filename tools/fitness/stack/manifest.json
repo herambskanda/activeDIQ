@@ -251,6 +251,26 @@
     {
       "prefix": "github.com/huandu/go-sqlbuilder",
       "reason": "raw-string query builder: all database access is pgx and sqlc"
+    },
+    {
+      "prefix": "github.com/daveshanley",
+      "reason": "OpenAPI linter and parser: a build-time tool (tools/apitools), never linked into a shipped binary"
+    },
+    {
+      "prefix": "github.com/oasdiff",
+      "reason": "OpenAPI diff tool: build-time only (tools/apitools)"
+    },
+    {
+      "prefix": "github.com/getkin/kin-openapi",
+      "reason": "runtime OpenAPI loading/validation: the contract is compiled to Go by tools/gen/api (ADR-0004), not interpreted at run time"
+    },
+    {
+      "prefix": "github.com/pb33f",
+      "reason": "OpenAPI tooling: build-time only (tools/apitools)"
+    },
+    {
+      "prefix": "github.com/oapi-codegen",
+      "reason": "third-party OpenAPI generator: tools/gen/api is the one generator (ADR-0004)"
     }
   ],
   "denylistExtends": [],
@@ -258,7 +278,13 @@
     "platformAdapters": [],
     "sidecars": [],
     "cppFallbacks": [],
-    "extraGoModules": [],
+    "extraGoModules": [
+      {
+        "path": "tools/apitools",
+        "adr": "0004-public-api-contract-openapi-first.md",
+        "reason": "vacuum and oasdiff tool directives for make lint-api and the breaking-change diff; never linked into a shipped binary"
+      }
+    ],
     "thirdParty": [],
     "buildScripts": [
       {

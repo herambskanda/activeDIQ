@@ -208,5 +208,26 @@ must_fail_with "tsc on a type error" "TS2322" in_web tsc --noEmit --ignoreConfig
 must_fail_with "vitest on a failing test" "expected 1 to be 2" in_web vitest run --config vitest.proof.config.ts
 must_pass "eslint on the real sources" npm --prefix web run --silent lint
 
+# --- api contract: generated files are current, bundle collisions, rule 12 (T-0147, ADR-0004) -
+# `-skip-ts` leaves the TypeScript types to the web gate; `-check` regenerates in memory and diffs.
+genapi="$tmp/genapi"; go build -o "$genapi" ./tools/gen/api
+ar="$tmp/apirepo"; mkdir -p "$ar/internal/platform"
+cp -R api "$ar/api"; cp -R internal/platform/apihost "$ar/internal/platform/apihost"
+must_pass "gen-api -check on the committed tree" "$genapi" -skip-ts -check -repo "$ar"
+printf '\n' >>"$ar/internal/platform/apihost/spec/openapi.gen.json"
+must_fail_with "gen-api -check on a hand-edited generated file" 'stale' "$genapi" -skip-ts -check -repo "$ar"
+cp internal/platform/apihost/spec/openapi.gen.json "$ar/internal/platform/apihost/spec/openapi.gen.json"
+rm "$ar/internal/platform/apihost/spec/openapi.gen.json"
+must_fail_with "gen-api -check on a missing generated file" 'missing' "$genapi" -skip-ts -check -repo "$ar"
+cp internal/platform/apihost/spec/openapi.gen.json "$ar/internal/platform/apihost/spec/openapi.gen.json"
+cp "$ar/api/openapi/shared/guid.yaml" "$ar/api/openapi/shared/guid_again.yaml"
+must_fail_with "gen-api on one component declared in two files" 'component .*GUID.* is declared in both' "$genapi" -skip-ts -repo "$ar"
+rm "$ar/api/openapi/shared/guid_again.yaml"
+
+# Rule 12: no HTTP client, fetch, XMLHttpRequest or /api string outside web/src/api. One fixture, every selector.
+for rule in no-restricted-globals no-restricted-imports no-restricted-syntax; do
+  must_fail_with "eslint rule $rule on a hand-written API call" "$rule" in_web eslint --no-ignore proof/api-client-violation.ts
+done
+
 if [ "$fails" -ne 0 ]; then echo "ci-proof: $fails proof(s) failed" >&2; exit 1; fi
 echo "ci-proof: every gate rejects its violation and accepts clean input"
