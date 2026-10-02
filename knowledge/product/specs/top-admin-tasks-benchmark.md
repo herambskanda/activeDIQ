@@ -30,6 +30,7 @@ T-0009 (information architecture) must give every task a path within its budget.
   - `LAND` = `knowledge/business/competitive-analysis/ad-management-market-landscape.md`
   - `ENH` = `knowledge/business/strategy/enhancement-catalog.md`
   - `TM` = `knowledge/development/architecture/threat-model.md`
+  - `SP` = `knowledge/development/architecture/safe-primitives.md`
 - **Product abbreviations:** ADMP = ADManager Plus, ADAP = ADAudit Plus, ADSSP = ADSelfService Plus.
 
 ## Key takeaways
@@ -74,13 +75,13 @@ T-0009 (information architecture) must give every task a path within its budget.
 
    | | ME | activeDIQ target |
    |---|---|---|
-   | Interactions | 278 | 138 (−50%) |
+   | Interactions | 274 | 138 (−50%) |
    | Typed fields | 25 | 36 |
-   | Screens | 77 | 56 (−27%) |
-   | Modelled time, wait-free | ≈513 s | ≈323 s (−37%) |
+   | Screens | 76 | 56 (−26%) |
+   | Modelled time, wait-free | ≈506 s | ≈323 s (−36%) |
    | activeDIQ with its wait budget (≤ 1 s per screen) | — | ≈379 s |
 
-   ME's own waits come on top of its ≈513 s. On the demo, a single page load took 14.5–22.6 s (§1.5).
+   ME's own waits come on top of its ≈506 s. On the demo, a single page load took 14.5–22.6 s (§1.5).
 
 ## 1. Method
 
@@ -224,7 +225,7 @@ Primary frequency data from pilot customers is `[TODO]`. Ticket telemetry from w
 | Create Single User | Full page reload, **16.1 s**. "Select Template" drop-down defaults to "System Template". 3 required fields on the General tab; "Select Container" defaults to `CN=Users` with a "+" picker | [me-07](top-admin-tasks-benchmark-evidence/me-07-create-single-user.png) |
 | Create Single User › Contact tab | Title and Department are drop-downs. **Manager** is a read-only field with a "+" picker | [me-11](top-admin-tasks-benchmark-evidence/me-11-create-user-contact-tab.png) |
 | Create Bulk Users | Full page reload, **22.6 s**. A 3-step wizard: "Add user details" → "Choose Container" → "Creation and Status". On-page hint, verbatim: "Specify memberOf, manager in DN format or Sam Account Name and ouName in DN format enclosed by double quotes." | [me-08](top-admin-tasks-benchmark-evidence/me-08-create-bulk-users.png) |
-| Group Attributes (bulk) | "Add to group" and "Remove from group", each with a "+" pop-up. Domain preselected. "Find the users": "Enter name(s) to search" (preselected) or "CSV Import". Hint: "Leave this field blank to see all" | [me-12](top-admin-tasks-benchmark-evidence/me-12-group-attributes.png) |
+| Group Attributes (bulk) | "Add to group" and "Remove from group", each with a "+" pop-up. Domain preselected. "Find the users": "Enter name(s) to search" (preselected) or "CSV Import". Hint, verbatim: "Enter multiple names separated by a comma (e.g. David,John) Leave this field blank to see all" | [me-12](top-admin-tasks-benchmark-evidence/me-12-group-attributes.png) |
 | Group picker pop-up | Opened, but did **not finish loading within 40 s** in our single attempt. The time is not used anywhere; its contents are `[inferred]` | — |
 | Inactive Computers report | Default period **"Last 30 days"**. Results served from a cached run ("Generated on 2026-09-24"). Last Logon Time shows a raw `0`. Toolbar: Delete, Disable, Move, "…", Create Request | [me-09](top-admin-tasks-benchmark-evidence/me-09-inactive-computers-report.png) |
 | BitLocker Recovery Keys | A domain-wide **report** that must be generated. The domain checkbox is pre-ticked. There is no single-computer or key-ID lookup field | [me-10](top-admin-tasks-benchmark-evidence/me-10-bitlocker-recovery-keys.png) |
@@ -261,7 +262,7 @@ How to read the table:
 | T08 | Bulk-create 200 users from CSV | AD | Seasonal / event-driven (E) | ADMP Create Bulk Users · Std+Pro | 12/0/4 + CSV rework | 21.0 s | 22.6 s | 6/0/3 | 11.9 + 3 | **≤ 17 s** of interaction; 200 rows validated ≤ 10 s, created ≤ 120 s |
 | T09 | Offboard a leaver | AD | ≈33 / 1,000 staff / month (A, B) | ADMP Enable/Disable Users + policy + M365 Mailbox Conversion · Std+Pro | 17/2/4 (+12 I setup) | 31.3 s | M365 tab ≈26 s | 5/1/3 | 12.5 + 3 | **≤ 17 s** |
 | T10 | Process a mover (title, department, manager, groups, OU) | AD, HD | Unknown (E; B) | ADMP Modify Single User + Move Users · Std+Pro | 36/5/10 | 69.8 s | n/m | 11/5/3 | 27.9 + 3 | **≤ 34 s** |
-| T11 | Add 50 users to one group | AD | Unknown (E; C) | ADMP Group Attributes + CSV · Std+Pro `[UNVERIFIED Std]` | 15/1/4 + CSV | 26.8 s | n/m | 8/1/3 | 16.4 + 3 | **≤ 22 s** |
+| T11 | Add 50 users to one group | AD | Unknown (E; C) | ADMP Group Attributes, comma-separated names · Std+Pro `[UNVERIFIED Std]` | 11/1/3 | 20.2 s | n/m | 8/1/3 | 16.4 + 3 | **≤ 22 s** |
 | T12 | Change one attribute on 300 users | AD | Unknown (E; C) | ADMP Organization Attributes · Std+Pro | 11/1/3 | 20.2 s | n/m | 9/3/2 | 20.1 + 2 | **≤ 25 s** |
 | T13 | Set or extend a contractor's expiry | HD, AD | Unknown (B, C) | ADMP Modify Single User › Account · Std+Pro | 13/1/5 | 25.6 s | n/m | 6/2/2 | 14.3 + 2 | **≤ 18 s** |
 | T14 | Assign an M365 licence | AD | Tracks T07/T09 (C; E) | ADMP M365 tab › Assign/Remove Licenses · Std+Pro | 12/1/3 | 21.6 s | ≈26 s tab | 6/1/3 | 13.8 + 3 | **≤ 19 s** |
@@ -271,7 +272,7 @@ How to read the table:
 | T18 | Clean up inactive users, excluding service accounts | AD, CMP | Every 45–90 days (B) | ADMP Inactive Users report, 2 visits · Std+Pro | 34/0/8 | 55.0 s | report run | 13/2/5 | 27.5 + 5 | **≤ 36 s** |
 | T19 | Export Domain Admins membership, nested, for an auditor | CMP, SEC | Every 6 months (PCI) to quarterly (B) | ADMP Detailed Group Members report · Std+Pro | 11/1/3 | 20.2 s | report run | 6/1/2 | 12.4 + 2 | **≤ 16 s** |
 | T20 | Schedule a monthly compliance report by e-mail | CMP | Set up rarely, runs monthly; included for stakes (B, C) | ADMP Schedule Reports · **Pro** | 14/2/3 | 26.1 s | n/m | 7/2/3 | 17.0 + 3 | **≤ 22 s** |
-| | **Total** | | | | **278 / 25 / 77** | **≈513 s wait-free** | | **138 / 36 / 56** | **≈323 s wait-free; ≈379 s with wait budget** | |
+| | **Total** | | | | **274 / 25 / 76** | **≈506 s wait-free** | | **138 / 36 / 56** | **≈323 s wait-free; ≈379 s with wait budget** | |
 
 *n/m = not measured on the demo.* The totals count T01 with verification and T04/T05 outside the step-up window.
 
@@ -492,7 +493,7 @@ Search results can show status only after adding columns, which only the built-i
 The key appears in 6-digit groups with copy. The reveal is audited and rate-limited per technician (TM §7.4).
 
 **Target: ≤ 21 s (model 15.7 s + 3 s wait budget = 18.7 s). Inside the step-up window: ≤ 15 s (11.1 s + 2 s = 13.1 s).**
-- **Justification.** We are 2 s slower than ME in the model, on purpose. A recovery key unlocks a whole disk, so the reason and the step-up are required by our threat model (TM §7.4).
+- **Justification.** We are 2 s slower than ME in the model, on purpose. A recovery key unlocks a whole disk. The reason is required because every `ReadSecret` call is audited with "actor, target GUID, attribute, reason and outcome" (SP §3.7). The step-up is required by TM §7.4 (TM-D16).
 - We win back time outside the model:
   - the key-ID lookup removes the "what is your computer called?" exchange;
   - there is no domain-wide report to generate.
@@ -500,7 +501,7 @@ The key appears in 6-digit groups with copy. The reveal is audited and rate-limi
   - several keys for one computer (one per volume, and older protectors), with the newest first and dated;
   - no key escrowed, which says so plainly and links to the escrow policy;
   - the key stored in Entra only (hybrid devices) is shown from Graph with its source labelled;
-  - **incident mode**: a bulk lookup that pastes 200 key IDs and exports a list, with one step-up for the batch. This is the CrowdStrike case, and it pairs with P4.
+  - **incident mode (the CrowdStrike case) is an open question for the security-architect (§6), not a designed state.** The need is real: hundreds of keys in a day. But a batch lookup that exports a list would break three rules. `ReadSecret` is a base-scope read of one object, returned only by the owning reveal endpoint, never in a general response or a file (SP §3.7). Reveals are rate-limited per technician, and bursts alert `tenant-owner` (TM §7.4). Secrets are never stored, and an exported file is a stored secret (TM-A7). Any design must stay within those rules: per-object reveals in-session, under a rate-limit raise approved by `tenant-owner`, and no export file.
 
 ### T05 · Retrieve a LAPS password (HD, AD)
 
@@ -875,26 +876,26 @@ The diff states clearly that matching access **replaces**, it does not append, a
 - Unknown `[UNVERIFIED]`.
 - ME ships the task as a bulk modification ("change group") ([help](https://www.manageengine.com/products/ad-manager/help/csv-import-management/active-directory-bulk-users-modification.html)).
 
-**ME flow: Group Attributes with CSV import** (bulk mod help; [me-12](top-admin-tasks-benchmark-evidence/me-12-group-attributes.png)). The admin also has to prepare the CSV, which is not counted.
+**ME flow: Group Attributes with names pasted into the search field** (bulk mod help; [me-12](top-admin-tasks-benchmark-evidence/me-12-group-attributes.png)). "Find the users" defaults to "Enter name(s) to search". Its on-page hint, verbatim: "Enter multiple names separated by a comma (e.g. David,John) Leave this field blank to see all". No CSV file is needed. The "CSV Import" radio beside it is a longer path, so it is not counted. Rejoining the admin's list into one comma-separated line happens outside ME and is not counted, in the same way as preparing a CSV.
 
 | # | Step | I | F | S | Source |
 |---|---|---|---|---|---|
 | 1 | Management tab | 1 | | 1 | demo |
 | 2 | "Group Attributes" | 1 | | 1 | demo (me-12) |
 | 3 | Object picker beside "Add to group" | 5 | 1 | 1 | demo ("+"); inside inferred |
-| 4 | "CSV Import" radio | 1 | | | demo (me-12) |
-| 5 | OS file picker: open, choose the CSV | 2 | | 1 | inferred |
-| 6 | Match-attribute drop-down | 2 | | | inferred |
-| 7 | Search | 1 | | | demo (button) |
-| 8 | Select all | 1 | | | inferred |
-| 9 | Apply | 1 | | | doc |
-| | **Total** | **15** | **1** | **4** | **T = 26.8 s** |
+| 4 | "Enter name(s) to search": preselected | 0 | | | demo (me-12) |
+| 5 | Paste the 50 names, comma-separated, into the field | 1 | | | demo (me-12 hint) |
+| 6 | Search | 1 | | | demo (button) |
+| 7 | Select all | 1 | | | inferred |
+| 8 | Apply | 1 | | | doc |
+| | **Total** | **11** | **1** | **3** | **T = 20.2 s** |
 
 Group management is Professional-only ([pricing](https://www.manageengine.com/products/ad-manager/pricing-details.html)). Whether this user-side path works in Standard is `[UNVERIFIED]`.
 
 **Pain points**
-- The list has to become a CSV file first.
-- Unmatched or ambiguous rows are not shown before Apply `[UNVERIFIED]`.
+- A list of lines (from a ticket, an e-mail or a spreadsheet column) has to be rejoined with commas into one field first.
+- How ME matches each name (exact or partial, and on which attribute), and what it does with an ambiguous name such as "J. Smith", is not documented `[UNVERIFIED]`.
+- Unmatched or ambiguous names are not shown before Apply `[UNVERIFIED]`.
 
 **activeDIQ flow**
 
@@ -911,7 +912,7 @@ Group management is Professional-only ([pricing](https://www.manageengine.com/pr
 | | **Total** | **8** | **1** | **3** |
 
 **Target: ≤ 22 s (model 16.4 s + 3 s wait budget = 19.4 s).**
-- **Justification.** Pasting replaces building a file. Resolution shows its work, so nobody adds the wrong "J. Smith".
+- **Justification.** The paste takes the list as it comes, one name per line and in mixed identifiers, so nobody has to rejoin it with commas. Resolution shows its work before anything is written, so nobody adds the wrong "J. Smith". The interaction win is small (8 vs 11); the gain is in correctness.
 - **States to design:**
   - 3,000-member group: the members list is virtualised, with search inside it;
   - not-found entries are listed with copy, so the admin can chase them;
@@ -1163,15 +1164,24 @@ ADAudit Plus build 9000 renamed its tabs ([RN](https://www.manageengine.com/prod
 | 2 | Type "domain admins" | 1 | 1 | |
 | 3 | Enter | 1 | | 1 |
 | 4 | History tab (in-page) | 1 | | |
-| 5 | Type the member's name in the filter. The row reads: "**Removed** Priya Raman · by `CORP\j.ops` from `ADM-WS-07` · 1 Oct 22:14 · via ADUC (DC event 4729)" | 1 | 1 | |
+| 5 | Type the member's name in the filter. The row reads: "**Removed** Priya Raman · by `CORP\j.ops` · 1 Oct 22:14 · logged on `DC02` (event 4729)" | 1 | 1 | |
 | | **Total** | **5** | **2** | **2** |
 
-Event 4729 is "A member was removed from a security-enabled global group" ([MS Learn](https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/auditing/audit-security-group-management)). From the row, the admin can **revert** (re-add, with the P6 confirmation).
+Event 4729 is "A member was removed from a security-enabled global group" ([MS Learn](https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/auditing/audit-security-group-management)). It has the same fields as 4733 ([MS Learn, event 4733](https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/auditing/event-4733)):
+- Subject: SID, account name, domain and Logon ID;
+- Member and Group;
+- Privileges.
+
+The DC that logged it is the event's `Computer`. **It records no workstation and no tool**, so the row above shows neither:
+- **The tool** ("via activeDIQ") is shown only for changes made through activeDIQ.
+- **The source machine** could be added only by correlating the Subject's Logon ID with a 4624 logon event on the same DC. MS Learn suggests this ("can help you correlate this event with recent events that might contain the same Logon ID, for example, 4624"). The correlation is part of the DC event-collection dependency below, and it is not a field T-0009 may assume `[confirm with ad-expert]`.
+
+From the row, the admin can **revert** (re-add, with the P6 confirmation).
 
 **Target: ≤ 17 s (model 13.0 s + 2 s wait budget = 15.0 s).**
 - **Justification.** One console answers it, from the group's own page.
 - **Dependency, and the stale-data state.**
-  - "Who" needs DC security-event collection (Phase 2), and ADAudit-parity reporting is a later milestone (D-0001).
+  - "Who" needs DC security-event collection (Phase 2), and ADAudit-parity reporting is a later milestone (D-0001). The optional source machine also needs 4624 logon events from the same DC, correlated by Logon ID.
   - Changes made through activeDIQ are always attributed.
   - Before event collection exists, the row shows **when, and on which DC**, from linked-value replication metadata ([MS Learn, msDS-ReplValueMetaData](https://learn.microsoft.com/en-us/windows/win32/adschema/a-msds-replvaluemetadata)), and says "who: needs DC event collection".
   - The ad-expert should confirm the LVR detail in T-0009 review.
@@ -1255,7 +1265,7 @@ Undo covers disable and move (P5). With "Repeat monthly" on, each later month is
   - **12,000-row result** at 1,284 selected;
   - the exclusion list (OU, name pattern, OS = server, "do not touch" tag);
   - a computer that becomes active during quarantine is auto-restored and reported;
-  - a BitLocker key on a computer about to be deleted. The key objects are children of the computer and are deleted with it, so the sheet warns, and activeDIQ keeps an escrowed copy;
+  - BitLocker recovery keys on computers about to be deleted. The keys are `msFVE-RecoveryInformation` child objects of the computer and are deleted with it. The delete sheet warns: "N recovery keys will be deleted with these computers. They can be recovered only by an AD Recycle Bin restore within the deleted-object lifetime" `[confirm with ad-expert]`. activeDIQ never stores a copy: keys are never stored (TM-A7), and `ReadSecret` output is never cached or written to the sync store or snapshots (SP §3.7). An optional filter, "exclude computers with escrowed keys", uses a `SecretPresenceGrant` (SP §3.7), which tests whether a key exists and never reads its value;
   - a cluster or virtual computer object (CNO/VCO) is excluded by default.
 
 ### T18 · Clean up inactive users, excluding service accounts (AD, CMP)
@@ -1442,7 +1452,7 @@ These patterns are inputs to T-0009 (IA) and the design system (T-0043). If a pa
 | **P1** | **One search, every identifier.** `/` or Ctrl+K from anywhere opens the search overlay. It matches sAMAccountName, UPN, display name, e-mail, employee ID, computer name, BitLocker key ID, group name and report name, and it includes deleted objects. Results carry **status chips**, so many questions are answered without opening anything. Enter opens a deep-linkable object page. | All except T07, T08, T12, T17, T18 |
 | **P2** | **The object page is the workspace.** Status, memberships (direct and effective), devices, licences and the History tab ("who/what/when", P5) live on one page. Contextual primary action: a locked account offers "Reset & unlock" first. Each action has a single-key shortcut. **No modal stacks:** at most one side sheet. | T01–T06, T09, T10, T13–T16, T19 |
 | **P3** | **Preview before write.** Every change sheet shows exactly what will change: counts, named objects, and side effects such as nesting and licences. Bulk previews summarise first ("300 changes · 12 unchanged"), then list. | T06–T12, T15, T17, T18 |
-| **P4** | **Bulk equals single.** Every single action also accepts a selection (filter + Ctrl+A meaning *all matching*, stated in words), a pasted list, or a file. Lists resolve visibly: matched, ambiguous, not found. | T04, T08, T11–T13, T17, T18 |
+| **P4** | **Bulk equals single.** Every single action also accepts a selection (filter + Ctrl+A meaning *all matching*, stated in words), a pasted list, or a file. Lists resolve visibly: matched, ambiguous, not found. **Secret reveals are excluded**: they stay one object per reveal (SP §3.7); bulk BitLocker lookup (T04 incident mode) is open with the security-architect (§6). | T08, T11–T13, T17, T18 |
 | **P5** | **Undo and an audit line after every change** (ENH-04). A toast with Undo, for a period set by policy where the operation is reversible. Every change lands in the object's History and in Recent changes as who, what, when and how. Irreversible operations (password, delete past quarantine) say so in the sheet. | All writes |
 | **P6** | **Privileged, destructive and secret friction scales with impact.** These need **typed confirmation** (the count, or the object name), plus an approver where policy demands: protected and Tier-0 groups, admin accounts, more than 100 objects, and delete. Secret reveals (LAPS, BitLocker) need a reason plus step-up MFA (TM-D16). Ordinary edits get one Confirm. | T01, T04–T06, T09, T10, T17, T18 |
 | **P7** | **Long work runs in the background with honest progress.** Bulk creates, cleanups and big reports never block the console. Partial failure is a designed state: "N of M done, K failed, here is why", with Retry failed, Export failures and Undo batch. | T08, T11, T12, T17, T18 |
@@ -1475,14 +1485,16 @@ These patterns are inputs to T-0009 (IA) and the design system (T-0043). If a pa
   - **T09:** whether the Disable Policy runs when users are disabled from Enable/Disable Users;
   - **T10, T13:** the Modify Single User form's tabs and controls;
   - **T10:** whether "Copy User Attributes" copies `memberOf`, and whether it appends or replaces;
-  - **T11:** Group Attributes in Standard, and the CSV match-attribute step;
+  - **T11:** Group Attributes in Standard; how comma-separated names are matched (exact or partial, on which attribute) and how an ambiguous name is handled;
   - **T12, T17, T18:** whether select-all spans grid pages, and whether the selection survives an action;
   - **T16:** ADAudit Plus 9000 labels;
   - **T17, T18:** confirmation dialogs on Disable, Move and Delete.
 - **AD semantics to confirm with the ad-expert in T-0009 review:**
   - T13: what ADUC's "End of <date>" writes to `accountExpires`;
   - T15: password and membership behaviour on tombstone reanimation;
-  - T16: the LVR "when and which DC" claim.
+  - T16: the LVR "when and which DC" claim, and whether the source machine can be recovered by correlating 4729's Subject Logon ID with a 4624 event on the same DC;
+  - T17: that a computer's `msFVE-RecoveryInformation` children are deleted with it and can be recovered only by an AD Recycle Bin restore within the deleted-object lifetime.
+- **Open question for the security-architect: BitLocker incident mode (T04).** In an incident like CrowdStrike's, the help desk needs hundreds of recovery keys in a day. SP §3.7 allows only per-object `ReadSecret` through the owning reveal endpoint. TM §7.4 rate-limits reveals per technician and alerts `tenant-owner` on bursts. TM-A7 forbids storing secrets, so an export file is out. Is a time-boxed, `tenant-owner`-approved rate-limit raise for per-object reveals in-session acceptable? What are its limits and its audit trail? Until it is answered, T04 has no bulk state, and P4 excludes secret reveals.
 - `[UNVERIFIED]` Frequency for T02, T05, T08, T10–T12 and T15. These are replaced by pilot ticket data when it exists.
 - `[UNVERIFIED original]` Gartner's "20–50%" and Forrester's "$70 per reset" are quoted second-hand (TechTarget 2011; The Hacker News 2021). Do not use them in external material without the originals.
 - `[TODO]` Self-service (end-user) benchmark, when ADSSP parity is scheduled.
@@ -1513,3 +1525,9 @@ These patterns are inputs to T-0009 (IA) and the design system (T-0043). If a pa
   - **T08 / Key takeaway 3:** ME's format page accepts DN, sAMAccountName, display name or e-mail for `memberOf` and `manager`. The pain point is now the disagreement with the in-product hint, quoted in full. The earlier quote of the hint had dropped "or Sam Account Name".
   - **AD semantics:** T03 says lastLogonTimestamp only lags ("up to 14 days later"). T13 treats `accountExpires` as a UTC instant. T15 says the Recycle Bin restores the password, and a forced reset applies only to tombstone reanimation or as our policy toggle.
   - **Nits:** Key takeaway 1 now gives per-task figures. LAND, TM and ADSS are defined. T15 and T20 are marked as included for stakes.
+- 2026-10-02 · product-designer (T-0008, review round 2) · Four fixes:
+  - **T11:** recounted on ME's shorter path, which our own me-12 shows: comma-separated names pasted into "Enter name(s) to search", with no CSV file. ME goes from 15/1/4 to 11/1/3 (26.8 s to 20.2 s). The pain point is now rejoining a list with commas, plus undocumented name matching. T11 stays a win (16.4 s vs 20.2 s).
+  - **T17:** the BitLocker state no longer claims activeDIQ keeps an escrowed copy, which contradicted TM-A7 and SP §3.7. The sheet warns that N recovery keys are deleted with the computers and can be recovered only by a Recycle Bin restore. There is an optional `SecretPresenceGrant` filter.
+  - **T04 / P4:** the incident-mode batch export is withdrawn, because it broke SP §3.7, TM §7.4 and TM-A7. It is now an open question for the security-architect (§6). P4 no longer lists T04 and excludes secret reveals. The T04 justification now cites SP §3.7 for the reason and TM §7.4 for the step-up.
+  - **T16:** the example row drops the workstation and "via ADUC", because event 4729 records neither. The tool is shown only for changes made through activeDIQ. The source machine needs Logon-ID correlation with 4624, which is listed under the dependency.
+  - **Totals:** ME is now 274 I / 25 F / 76 S, ≈506 s (was 278 / 25 / 77, ≈513 s). activeDIQ is unchanged at 138 / 36 / 56, ≈323 s. The cuts are now interactions −50%, screens −26% and time −36%, all wait-free.
