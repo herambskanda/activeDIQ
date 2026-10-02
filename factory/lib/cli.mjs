@@ -14,7 +14,7 @@ import {
   acknowledgeNotice, answerDecision, createDecision, markApplied, parseDuration, parseOptionSpec, vetoNotice, withdrawDecision,
 } from './decisions.mjs';
 import {
-  completeAction, createAction, createEpic, createFeedback, createMilestone, listItems, setMilestone, sortById, triageFeedback,
+  completeAction, createAction, createEpic, createFeedback, createMilestone, listItems, setEpic, setMilestone, sortById, triageFeedback,
 } from './items.mjs';
 import { createHandoff, latestHandoff } from './handoffs.mjs';
 import { Dispatcher, planDryRun } from './dispatcher.mjs';
@@ -50,6 +50,7 @@ const USAGE = `usage: factory <command>
   action new --title T --detail D --why W | list | done ID [--note N]
   feedback new --target X --text T [--sentiment love|ok|change] | list | triage ID --note N [--tickets T-1] [--done]
   epic new --title T [--goal G] [--milestone M] [--parity A,B] | list | show ID
+  epic set ID field=value …         title goal milestone parity_refs=A,B | parity_refs+=C | parity_refs-=A
   milestone new --name N [--goal G] [--target D] | list | show ID | set ID status=…
   handoff new ID --by ROLE | latest ID
   event --actor A --kind K [--ticket T] "text"
@@ -252,6 +253,10 @@ const COMMANDS = {
     c.print(list, () => (list.length ? table(list.map((e) => [e.id, e.status, e.milestone ?? '-', e.title])) : 'no epics'));
   } },
   'epic show': { options: {}, run: (c) => c.print(requireEntity(c.ctx, 'epics', c.pos[0], 'epic'), (e) => JSON.stringify(e, null, 2)) },
+  'epic set': { options: { by: str }, run: (c) => {
+    const e = setEpic(c.ctx, c.pos[0], assignments(c.pos.slice(1)), c.values.by ?? c.env.FACTORY_ROLE ?? 'cli');
+    c.print(e, () => `updated ${e.id}`);
+  } },
 
   'milestone new': { options: { name: str, goal: str, target: str, by: str }, run: (c) => {
     need(c.values, 'name');
@@ -299,7 +304,7 @@ function transitionCommand(c, fn, past) {
 
 const SUBCOMMAND_GROUPS = new Set(['ticket', 'decision', 'action', 'feedback', 'epic', 'milestone', 'handoff']);
 /** Commands whose first positional argument is an entity id. */
-const NEEDS_ID = /^(ticket (show|ready|note|advance|reject|block|unblock|cancel|set)|decision (show|answer|applied|withdraw|ack|veto)|action done|feedback triage|epic show|milestone (show|set)|handoff (new|latest))$/;
+const NEEDS_ID = /^(ticket (show|ready|note|advance|reject|block|unblock|cancel|set)|decision (show|answer|applied|withdraw|ack|veto)|action done|feedback triage|epic (show|set)|milestone (show|set)|handoff (new|latest))$/;
 
 function lookup(argv) {
   if (!argv.length || argv[0] === 'help' || argv[0] === '--help' || argv[0] === '-h') return { help: true };
