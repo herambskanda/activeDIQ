@@ -196,7 +196,7 @@ reveals whether an out-of-scope DN exists (LF-36).
 | LF-02 | `Eq(cn, "*")` | `(cn=\2a)` | a literal star is not presence |
 | LF-03 | `Eq(cn, ")(\|(objectClass=*)")` | `(cn=\29\28\|\28objectClass=\2a\29)` | close-and-reopen attempt |
 | LF-04 | `Eq(cn, "\")` | `(cn=\5c)` | lone backslash |
-| LF-05 | `Eq(cn, "\2a")` (backslash, `2`, `a`) | `(cn=\5c2a)` | pre-escaped text is data (R2) |
+| LF-05 | `Eq(cn, "\2a")` (the three characters backslash 2 a) | `(cn=\5c2a)` | pre-escaped text is data (R2) |
 | LF-06 | `Eq(cn, String("a\x00b"))` | error `NulInString` | R3; binary NUL goes via `Value.Bytes` |
 | LF-07 | `Eq(objectGUID, GUID 04030201-0605-0807-090a-0b0c0d0e0f10)` | `(objectGUID=\01\02\03\04\05\06\07\08\09\0a\0b\0c\0d\0e\0f\10)` | every byte escaped, stored byte order |
 | LF-08 | `Eq(objectGUID, String("04030201-0605-…"))` | error `ValueKindMismatch` | would match nothing |
@@ -231,7 +231,7 @@ reveals whether an out-of-scope DN exists (LF-36).
 | LF-37 | `ScopedSearch(attrs: [unicodePwd])` · `[msDS-ManagedPassword]` | error `SecretInGeneralSearch` | secrets only via `ReadSecret` |
 | LF-38 | lab, schema-driven: for **every** `attributeSchema` with `searchFlags` & (0x80 \| 0x200 \| 0x1000), including a seeded custom attribute flagged 0x200 only | `ParseAdminFilter("(<attr>=*)")` → `ForbiddenAttribute`; `ScopedSearch` attrs → `SecretInGeneralSearch`; sort → `ForbiddenSortKey` | schema-driven set (§3.7) |
 | LF-39 | paged `ScopedSearch`: DC returns 1 000 entries, 3 fail per-object authorisation | page holds 997; the reported count is the post-authorisation count; no DC estimate surfaces | counts after authorisation |
-| LF-40 | saved search requests show-deleted `…417` or show-recycled `…2064` | error `ControlNotAllowed`; only the named operation `RecycleBinBrowse` sets them | deleted objects live outside every OU |
+| LF-40 | saved search requests show-deleted `…417` · show-recycled `…2064` | error `ControlNotAllowed`; only the named operation `RecycleBinBrowse` sets them | deleted objects live outside every OU |
 
 ### 3.5 Lint / fitness rule (bans the unsafe alternative)
 
@@ -471,7 +471,7 @@ dashed; Data1/2/3 little-endian in the octet string, [MS-DTYP 2.3.4][dtyp-guid])
 | GUID-07 | full-width digits `０４０３…` | error `BadFormat` | ASCII only |
 | GUID-08 | `00000000-0000-0000-0000-000000000000` | error `NilGUID` | never an object identity |
 | GUID-09 | `04030201-0605-0807-090a-0b0c0d0e0f10>,CN=x` | error `BadFormat` | ObjectRef injection |
-| GUID-10 | valid text + `\x00` or trailing space | error `BadFormat` | |
+| GUID-10 | valid text + `\x00` · valid text + trailing space | error `BadFormat` | |
 | GUID-11 | `ObjectRef` of GUID-01 | `<GUID=0102030405060708090a0b0c0d0e0f10>` | hex form all DCs accept ([adts-altdn]) |
 | GUID-12 | `04030201‐0605‐0807‐090a‐0b0c0d0e0f10` (U+2010 hyphens) · same with U+FF0D | error `BadFormat` | look-alike dashes from pasted documents |
 | GUID-13 | `{04030201-0605-0807-090a-0b0c0d0e0f10` · `04030201-0605-0807-090a-0b0c0d0e0f10}` | error `BadFormat` | unbalanced braces |
@@ -543,7 +543,7 @@ Lockout and password-expired *state* is never computed from these by feature cod
 | FT-13 | `+1`, ` 1`, `1 `, `0x10`, `1e5`, empty | error `BadInteger` | RFC 4517 grammar |
 | FT-14 | `-0`, `0123` | error `BadInteger` | |
 | FT-15 | `9223372036854775808`, `-9223372036854775809` | error `Overflow` | |
-| FT-16 | `١٢٣` (Arabic-Indic), `１２３` (full-width) | error `BadInteger` | ASCII digits only |
+| FT-16 | `١٢٣` (Arabic-Indic) · `１２３` (full-width) | error `BadInteger` | ASCII digits only |
 | FT-17 | lastLogon: `9007199254740993` → API | `"raw":"9007199254740993"` as a JSON string | 2^53 + 1 would round as a number |
 
 ### 5.4 Generalized Time (syntax 2.5.5.11, oMSyntax 24)
@@ -565,7 +565,7 @@ or ±hh[mm]) → UTC instant. Encode: always `YYYYMMDDHHMMSS.0Z` in UTC, AD's ob
 | GT-08 | `20261002101160.0Z` | error `LeapSecondUnsupported` | legal in RFC 4517; refused rather than shifted |
 | GT-09 | `20261002101112.0+2400` | error `BadOffset` | |
 | GT-10 | `20261002101112.Z` | error `BadFraction` | empty fraction |
-| GT-11 | full-width digits; trailing space or NUL | error `BadFormat` | |
+| GT-11 | full-width digits · trailing space · trailing NUL | error `BadFormat` | |
 | GT-12 | `16010101000000.0Z` | 1601-01-01T00:00:00Z | appears in `dSCorePropagationData`; not a real event time `[UNVERIFIED]`; UI must not show "1601" |
 | GT-13 | 65-char input | error `TooLong` | R5 |
 | GT-14 | `261002101112Z` to the Generalized Time decoder | error `BadFormat` | UTC-Time is decoded separately |
@@ -690,14 +690,14 @@ Re-deriving it re-reads the TLS state: version, verified chains and server name.
 | PW-08 | empty | error `EmptySecret` | no PASSWD_NOTREQD workaround; empty-bind trap (gotcha 31) |
 | PW-09 | 257 UTF-16 code units | error `TooLong` (cap provisional 256 `[UNVERIFIED vs Windows maximum]`) | R5 |
 | PW-10 | `Replace(s, plain 389 connection)` | error `EncryptionRequired`; nothing sent | MS-ADTS requirement |
-| PW-11 | format/log/wrap a `Secret` in an error | `[REDACTED]`; JSON/protobuf → error `Unserializable` | R7 |
+| PW-11 | a `Secret` formatted · logged · wrapped in an error · JSON-encoded · protobuf-encoded | `[REDACTED]` · `[REDACTED]` · `[REDACTED]` · error `Unserializable` · error `Unserializable` | R7 |
 | PW-12 | LDAP packet-debug logging on while the modify is built | impossible in production builds (lint); test asserts off | debug dumps carry the value |
 | PW-13 | DC answers 19/53 with `0000052D` | error `PolicyViolation` with DC diagnostic; request bytes never logged | gotcha 34 |
 | PW-14 | `"abc"` (quotes at both ends) | `22 00 22 00 61 00 62 00 63 00 22 00 22 00`; nothing stripped | inner quotes are data; DC result `[UNVERIFIED — lab]` as PW-04 |
 | PW-15 | JSON body `{"password":"a\u0000b"}` | error `NulInSecret` from `Secret.UnmarshalJSON` | the escape is decoded by us, then checked |
 | PW-16 | JSON body `{"password":"\ud800x"}` | error `InvalidUTF16` | `encoding/json` v1 would yield U+FFFD and set a password nobody typed (R3) |
 | PW-17 | connection drops and reconnects between `SecureConn` acquisition and the modify | error `SecureConnStale`; nothing sent until re-verified | re-checked on every send |
-| PW-18 | LDAPS to a DC whose certificate does not name its FQDN, or chains to no trust anchor | error `TLSVerificationFailed`; no retry on 389 plain or unverified StartTLS | no downgrade |
+| PW-18 | LDAPS to a DC whose certificate does not name its FQDN · LDAPS to a DC whose certificate chains to no trust anchor | error `TLSVerificationFailed`; no retry on 389 plain or unverified StartTLS | no downgrade |
 
 **Lint.** The literal `"unicodePwd"`, UTF-16 encoders on secret material, and the LDAP library's
 debug switch (go-ldap `Conn.Debug`) are banned outside `attr`/connector; `Secret` has no
@@ -968,16 +968,28 @@ ORMs and raw-string query builders are prohibited. Rules:
    - **No `SECURITY DEFINER` functions over tenant tables**, which "can be used to access data not
      available to the calling user" ([RLS][pg-rls]).
 
-   The app role is not the owner and has neither `SUPERUSER` nor `BYPASSRLS`. The migration role
-   owns the tables and is neither superuser nor `BYPASSRLS`, and `FORCE` binds it too.
+   The app role is not the owner and has neither `SUPERUSER` nor `BYPASSRLS`. The owner role, which
+   only migrations use (ADR-0002 rule 4), owns the tables. It is neither superuser nor `BYPASSRLS`,
+   and `FORCE` binds it too.
 10. **Policies fail closed.** The only policy shape is `tenant_id = nullif(current_setting('app.tenant_id',
     true), '')::uuid`. When the setting is unset or empty, the expression is NULL, so no row is
     visible: "rows for which the expression does not return `true` will not be processed"
     ([RLS][pg-rls]). Never `coalesce`, never an `OR` branch, never `true`.
-11. **Transactions are tenant-scoped by API.** `store` exposes `WithTenantTx(ctx, tenantID, fn)`,
-    which sets `app.tenant_id` and `statement_timeout` with `set_config(…, true)` before `fn` runs.
-    It exposes no other way to get a connection. Cross-tenant maintenance (migrations, tenant
-    provisioning) uses named entry points under the migration role, listed in the manifest.
+11. **Transactions are tenant-scoped by API.** ADR-0002 owns the tenancy API: see "Where tenancy
+    lives" (Transaction row) and rules 4–5 in
+    [`0002-deployment-model.md`](../decisions/0002-deployment-model.md). This section adds only the
+    SQL-construction rules. The data-access package (ADR-0002; path per T-0004) exposes exactly two
+    entry points:
+    - `WithTenant(ctx, tenant.ID, fn)`. Its first statement sets `app.tenant_id` with
+      `set_config(…, true)` (rule 2).
+    - `WithPlatform(ctx, reason, fn)`, callable only from call sites listed in ADR-0002's exemption
+      registry. It runs as the same runtime role with no tenant set, so RLS still hides every tenant
+      row. Tenant provisioning and first-run bootstrap go through it.
+
+    The raw pool is unexported, so there is no other way to get a connection. **Both entry points
+    also set a per-transaction `statement_timeout`** with `set_config('statement_timeout', $1, true)`
+    before `fn` runs (rule 13, SQL-22). Migrations alone run under the owner role. No application
+    code path holds the owner role's credentials.
 12. **The pool refuses client-side interpolation.** At construction it asserts that
     `DefaultQueryExecMode` is not `QueryExecModeSimpleProtocol`. This covers a connection string from
     an admin's config that sets `default_query_exec_mode=simple_protocol` ([pgx ParseConfig][pgx-parse]),
@@ -1005,14 +1017,15 @@ ORMs and raw-string query builders are prohibited. Rules:
 | SQL-15 | `ANY($1)` with 100 001 elements | error `TooManyValues` | R5 |
 | SQL-16 | report filter on JSON key `a'->>'b` | key bound as `->> $n` | JSON path |
 | SQL-17 | migration adds `CREATE VIEW v AS SELECT … FROM <tenant table>` without `security_invoker` | FF-SP7 fails | view-owner RLS bypass |
-| SQL-18 | migration adds a materialized view or a `SECURITY DEFINER` function reading a tenant table | FF-SP7 fails | RLS bypass |
-| SQL-19 | query outside `WithTenantTx` (fresh connection, `app.tenant_id` never set) | zero rows, never all tenants | fail-closed policy |
+| SQL-18 | migration adds a materialized view reading a tenant table · a `SECURITY DEFINER` function reading a tenant table | FF-SP7 fails | RLS bypass |
+| SQL-19 | query outside `WithTenant` (fresh connection, `app.tenant_id` never set) | zero rows, never all tenants | fail-closed policy |
 | SQL-20 | config DSN contains `default_query_exec_mode=simple_protocol` | pool construction fails `SimpleProtocolForbidden` | rule 12 |
 | SQL-21 | report AST with function `pg_sleep` · aggregate `string_agg` · unit `'day'; --` | error `UnknownFunction` / `UnknownAggregate` / `BadUnit` | closed vocabulary |
 | SQL-22 | report query exceeding the bound `statement_timeout` | cancelled with `QueryTimeout`; the next transaction on the connection has the default timeout | per-transaction timeout |
 
 **Lint.** gosec G201/G202 ([gosec][gosec]). forbidigo bans the names `QueryExecModeSimpleProtocol`,
-`set_config(…, false)` and `SET app.` literals. The SQL driver may be imported only by `store` (FF-SP1).
+`set_config(…, false)` and `SET app.` literals. The SQL driver may be imported only by the
+data-access package (FF-SP1; ADR-0002 check T5 enforces the same boundary for pgx types).
 forbidigo matches names and cannot check argument kinds, so "SQL argument is not a constant or
 sqlc-generated" is a **go/analysis pass**, `sqlconst`, in the fitness tool (T-0033). For every call to
 pgx/sqlc `DBTX` `Exec`, `Query`, `QueryRow`, `CopyFrom` and `Batch.Queue`, the SQL argument must be:
@@ -1020,7 +1033,9 @@ pgx/sqlc `DBTX` `Exec`, `Query`, `QueryRow`, `CopyFrom` and `Batch.Queue`, the S
 - a constant declared in a sqlc-generated file; or
 - the `CompiledSQL` type, which only the report compiler can produce.
 
-FF-SP7 checks rules 2 and 9–12 against the migrated schema (§8) and runs SQL-13, -14, -17 to -20.
+FF-SP7 checks rules 2 and 9–12 against the migrated schema and runs SQL-13, -14, -17 to -20. There
+is one implementation. It lives inside ADR-0002's `fitness-tenancy` job (T-0036, checks T2–T4),
+not in a separate job and not in T-0034. The FF-SP7 row in §8 is the list of checks T-0036 must cover.
 
 ## 8. Corpus and fitness functions
 
@@ -1045,22 +1060,54 @@ and is updated by the lab tests, not by hand.
 - `sql`.
 
 A **record is one input**. A table row listing several inputs separated by `·`, `/` or commas
-expands to one record each, with suffixed IDs. For example, FT-13 becomes `FT-13#1` … `FT-13#6`;
-FL-12 and GT-07 expand the same way. Every record carries an explicit `"hostile": true|false`; it
-is never inferred. Static vectors (LF-30, PROC-10, SQL-17/18, PSX-18) are records with
-`"kind":"static"`, checked by FF-SP1–3, FF-SP7 or FF-SP9 instead of a runtime call. Today every unit
-has at least 10 hostile records. The tightest is `attr.guid`: GUID-03 to -10 and GUID-12 to -16
-expand to 19.
+expands to one record each, with suffixed IDs, paired in order with the expected values. Separators
+count only between inputs, never inside a code span. For example, FT-13 becomes `FT-13#1` …
+`FT-13#6`; FL-12 and GT-07 expand the same way. Every record carries an explicit
+`"hostile": true|false`; it is never inferred. Static vectors (LF-30, PROC-10, SQL-17/18, PSX-18)
+are records with `"kind":"static"`. FF-SP1–3, FF-SP7 (inside T-0036) or FF-SP9 check them instead
+of a runtime call.
+
+**Hostile** means a correct implementation must reject, neutralise or refuse the input. That covers:
+- injection metacharacters and look-alike characters;
+- malformed or non-canonical encodings;
+- out-of-range or oversized values;
+- an attempt to escalate privilege or widen scope;
+- a path by which a secret could leak.
+
+These are `"hostile": false`: well-formed values, documented sentinels (FT-01, FT-02), round-trip
+and conversion anchors (SID-11, FT-07, DN-P09), equality cases (DN-P02, DN-P19) and negative
+controls (PSQ-14). Applying this conservatively to the tables in §3–§7, after expansion, gives these
+counts:
+
+| Unit | Records | Hostile | Records marked `false` |
+| --- | --- | --- | --- |
+| `ldapfilter` | 47 | 41 | LF-07, -09, -16, -17, -18, -39 |
+| `dn` | 42 | 30 (builder 19, parser 11) | DN-B06#2 (`a#b`), DN-B15; DN-P02, -P03, -P09 to -P12, -P14 to -P16, -P19 |
+| `attr.guid` | 22 | 19 | GUID-01, -02, -11 |
+| `attr.sid` | 18 | 14 | SID-01 to -03, -11 |
+| `attr.filetime` | 27 | 15 | FT-01 to -04, -06, -07#1–2, -09, -10, -12#1–2, -17 |
+| `attr.gentime` | 18 | 12 | GT-01 to -05, -12 |
+| `attr.flags` | 22 | 12 | FL-01 to -06, FL-09#1–4 |
+| `attr.unicodepwd` | 23 | 19 | PW-01 to -03, -13 |
+| `psx` | 21 | 21 | none |
+| `pslit` | 19 | 16 | PSQ-14#1–2, -16 |
+| `proc` | 35 | 35 | none |
+| `sql` | 29 | 28 | SQL-14 |
+
+The margins are smallest for `attr.gentime` and `attr.flags`, at 12 each. A change that removes or
+reclassifies a hostile record in either unit adds a replacement in the same change, or FF-SP4
+fails. The table is a count of this document. Once the corpus files exist, the corpus is
+authoritative and FF-SP4 recomputes the counts.
 
 | FF | Check | Fails when |
 | --- | --- | --- |
-| FF-SP1 | Import boundaries | any of these outside its home: the LDAP library and raw search/controls (only `scope` and the connector); the SQL driver (only `store`); process APIs (only `proc`); the PowerShell SDK (only the sidecar host). Also: any product package importing `lab/…` or `tools/…` (tier L). Enforced with depguard, BannedApiAnalyzers and clippy |
+| FF-SP1 | Import boundaries | any of these outside its home: the LDAP library and raw search/controls (only `scope` and the connector); the SQL driver (only the data-access package of ADR-0002, path per T-0004); process APIs (only `proc`); the PowerShell SDK (only the sidecar host). Also: any product package importing `lab/…` or `tools/…` (tier L). Enforced with depguard, BannedApiAnalyzers and clippy |
 | FF-SP2 | Banned APIs and custom analyzers | any symbol in the per-primitive lists in §3.5, §4.6, §5, §6, §7. Includes TLS-verification bypasses (§5.6), `net/http/pprof` and `runtime/pprof` outside tests and tier L, and `GOTRACEBACK=crash` in service definitions. The go/analysis passes `dnstring`, `sqlconst` and `secretjson` run here (`go vet -vettool`, T-0033) |
 | FF-SP3 | Literal-shape scanner | filter-, DN-, PowerShell- or SQL-shaped literals combined with concatenation or formatting outside primitive packages and tests. **`web/` is covered too**: TS/TSX template literals or concatenations containing `CN=`, `OU=`, `DC=`, `(&(`, `(\|(` or `(objectClass=`; quote doubling (`replace(/'/g, "''")`, `replaceAll("'", "''")`); `.split(',')`, `.endsWith(` or `.includes(` on a value named `dn`/`distinguishedName`. Tier L is exempt (§2.1). Tool: Semgrep or ast-grep, chosen by devops-engineer via the licence register |
 | FF-SP4 | Corpus gate | a **unit** (§8 list) has < 10 records with `"hostile": true`; an implementation skips records of a unit it implements; a record disappears without a superseding one |
 | FF-SP5 | Fuzz | each parser/encoder lacks a corpus-seeded fuzz target; nightly ≥ 10 min each; properties `parse(render(x)) == x` and "render never emits an unescaped special" |
 | FF-SP6 | Oracles | PowerShell parser oracle (`pslit`); LDAP library round-trip (P1); Samba lab integration (P1–P3); Windows lab nightly for the rows in §9 marked Windows. **SID/GUID oracle, Windows runner:** SID text → bytes via `ConvertStringSidToSidW` and bytes → text via `ConvertSidToStringSidW`; GUID text → bytes via .NET `Guid.Parse` + `ToByteArray()` and bytes → text via `StringFromGUID2`. The relation is: **every input we accept, Windows accepts, and on every accepted input the bytes (and the rendered text) are equal**. We may reject more. Intentional strictness: SID-09 (leading zeros), SID-10 (hex authority below 2^32), GUID-05 (undashed, accepted only inside `ObjectRef`), GUID-08 (nil), GUID-10 (whitespace; `Guid.Parse` trims). If Windows rejects an input we accept (candidate: SID-03's lower-case `s-`), we tighten ours; the relation wins over our reading of the ABNF |
-| FF-SP7 | Tenancy | against the migrated schema: a tenant table lacks RLS + FORCE; a view lacks `security_invoker=true` (`pg_class.reloptions`); a materialized view or `SECURITY DEFINER` function (`pg_proc.prosecdef`) depends on a tenant table; the app or migration role has `rolsuper` or `rolbypassrls`; the app role owns a table; a policy's `qual` differs from the rule-10 shape (no `coalesce`, `OR` or `true`); SQL-13, -14, -17 to -20 fail |
+| FF-SP7 | Tenancy | **Implemented once, inside ADR-0002's `fitness-tenancy` job (T-0036, checks T2–T4). This row is the list T-0036 must cover.** Against the migrated schema it fails when: a tenant table lacks RLS + FORCE; a view lacks `security_invoker=true` (`pg_class.reloptions`); a materialized view or `SECURITY DEFINER` function (`pg_proc.prosecdef`) depends on a tenant table; the app (runtime) or owner (migration) role has `rolsuper` or `rolbypassrls`; the app role owns a table; a policy's `qual` differs from the rule-10 shape (no `coalesce`, `OR` or `true`); SQL-13, -14, -17 to -20 fail |
 | FF-SP8 | Constant argv | for random requests, `psx`/`proc` argv differs from the manifest's constant argv |
 | FF-SP9 | `psx` manifest | built against the real module metadata (the `CommandInfo.Parameters` of each pinned module) in the sidecar build. Fails when: an op's `Identity` parameter is not bound from a `Guid`; `LDAPFilter` is bound from anything but P1 `FilterString`; a `Filter`, `RecipientFilter`, `FilterScript`, `ScriptBlock` or other OPATH/script parameter is bound at all; a parameter carrying a secret is not `SecureString`/`PSCredential` (PSX-18); an op names a command not exported by its pinned module (PSX-16) |
 
@@ -1100,7 +1147,7 @@ except the PowerShell quoting rules, which are confirmed in PowerShell's source 
 | Codecs | sentinels, grammars, vectors | Go `attr`; Rust tier N implements `Secret` and any codec it parses, running the same corpus | each tier that decodes AD values runs the corpus |
 | PowerShell | invariant, PSX/PSQ vectors | route A: tier-X sidecar with `AddCommand`/`AddParameter`; route B needs an ADR amendment (F1 bans shipped `.ps1`) | .NET server: in-process SMA under the same rules |
 | Processes | `proc` contract, PROC vectors | Go `proc` + `x/sys/windows`; `ArgumentList` inside the sidecar | — |
-| SQL | rules 1–13, SQL vectors | pgx v5 + sqlc + RLS; simple protocol banned | SQL Server would need its own section (RLS semantics differ) |
+| SQL | rules 1–13, SQL vectors | pgx v5 + sqlc + RLS; simple protocol banned; the tenancy API (`WithTenant`/`WithPlatform`, exemption registry, role split) is owned by ADR-0002 | SQL Server would need its own section (RLS semantics differ) |
 | Lint tools | rule meaning, FF-SP1–9 | golangci-lint (forbidigo, depguard, gosec), go/analysis passes `dnstring`/`sqlconst`/`secretjson`, BannedApiAnalyzers, clippy, PSScriptAnalyzer for `lab/`/`tools/`, Semgrep or ast-grep for FF-SP3 incl. `web/` | equivalents per language |
 | Web console | tier W implements no primitive (§2.1); API carries server-built values | TypeScript + React under `web/`; FF-SP3 scans it | if a second UI technology were allowed, it inherits §2.1 unchanged |
 | Paths | provisional names above | T-0004 sets the roots; `ad-engineering` skill paths updated with them | — |
@@ -1109,13 +1156,16 @@ ADR-0001 was ratified on 2026-10-02 (D-0006) with no substantive change from the
 so the binding column applies as written and this document is in `review`. The owner of the first
 primitives build ticket replaces the provisional package names once T-0004 fixes the roots. The
 document is the reference for the build tickets the project-manager cuts from it (T-0031: primitive
-builds go before features), and for T-0033 (FF-SP1–3, 9) and T-0034 (FF-SP4–8).
+builds go before features). It is also the reference for the fitness tickets: T-0033 (FF-SP1–3, 9),
+T-0034 (FF-SP4–6, 8) and T-0036 (FF-SP7, implemented inside ADR-0002's `fitness-tenancy` job).
 
 ## 11. Follow-ups
 
 - T-0028 — typed security-descriptor primitive (CLAUDE.md rule 5 names it; not in this ticket's scope).
 - T-0029 — output encoders (CSV/XLSX formula neutralisation, HTML, email/PDF).
-- T-0033 / T-0034 — fitness implementation (static rules; corpus, fuzz and oracles).
+- T-0033 / T-0034 — fitness implementation (static rules FF-SP1–3, 9; corpus, fuzz and oracles FF-SP4–6, 8).
+- T-0036 — FF-SP7, inside ADR-0002's `fitness-tenancy` job (checks T2–T4); §8's FF-SP7 row is its coverage list.
+- T-0037 — tenancy foundation (`WithTenant`/`WithPlatform`, exemption registry); builds §7 rule 11 as ADR-0002 specifies.
 - T-0035 — security-sensitive spec tickets get security-architect as second reviewer.
 - T-0007 — Kerberos-only outbound policy (§6.3) and the secret-memory policy, including the
   `runtime/secret` evaluation (§5.6).
@@ -1188,4 +1238,5 @@ builds go before features), and for T-0033 (FF-SP1–3, 9) and T-0034 (FF-SP4–
 
 Reference-style links above render inline wherever cited. Internal sources: `ad-technical-feasibility.md`
 §2.2, §2.5, §2.7; `.claude/skills/ad-engineering/` (gotchas, `reference/attributes.md`,
-`reference/uac-flags.md`); ADR-0001 (ratified, D-0006); PatchIQ postmortem §11.
+`reference/uac-flags.md`); ADR-0001 (ratified, D-0006); ADR-0002 (tenancy API, "Where tenancy
+lives", `fitness-tenancy`); PatchIQ postmortem §11.
