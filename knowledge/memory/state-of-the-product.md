@@ -8,6 +8,7 @@ budget: 120 lines
 
 Newest first. One dated line per material change; link the source.
 
+- 2026-10-02 · **Deployment model ratified** (ADR-0002): Windows installer + Linux/OCI in v1, SaaS composed in CI but not shipped; multi-tenant from migration 1; standalone from UEM with a shared agent-host contract. Stack and deployment ADRs are both ratified, so product code may start; first up are the tenancy foundation (T-0037) and the fitness checks T-0036/T-0038. (knowledge/development/decisions/0002-deployment-model.md)
 - 2026-10-02 · **Stack ratified** (ADR-0001): Go server/agents, Rust in-process DLLs, PostgreSQL only. Product code still waits for ADR-0002 (T-0003). Main risk under test first: go-krb5 channel-binding spike T-0023. (knowledge/development/decisions/0001-technology-stack.md)
 - 2026-10-02 · **Direction set by the CEO** (D-0001…D-0004): v1 = ADManager Plus replacement + Entra/M365 provisioning, self-hosted first and SaaS-ready, standalone from UEM, signature set of 5. Scope lock and roadmap in progress (knowledge/business/scoping/).
 - 2026-10-02 · Strategy drafted: executive summary, product strategy (positioning, 6 USPs, pricing options), enhancement catalog (28 ranked), feature-parity matrix (578 ME features; 220 must). Migration playbook, partner questionnaire and pilot outline drafted. (knowledge/business/strategy/, competitive-analysis/, service/, partnerships/)

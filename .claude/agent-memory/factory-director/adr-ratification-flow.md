@@ -14,5 +14,6 @@ When a technical ADR passes review, ratify it in the same session. Send residual
 - Order: file the notice first (`decision new --kind notice`, ≤150 words, plain language, framed by the CEO's own D-ids), then set frontmatter `status: ratified`, `decision: D-…`, `ratified_on`, `ratified_by`, and the Status line.
 - Do **not** set `fitness` or `accepted_on` at this point. Those belong to the `accepted` rung.
 - Log the ratification in `decisions-log.md` and `state-of-the-product.md`, commit by explicit path, then advance.
+- A strategic-fork ADR whose CEO answers already exist (ADR-0002 implements D-0002 and D-0003) needs no new directional decision. Ratify it by applying those answers. The notice covers only the calls the factory made inside them, and `decision:` lists the answer D-ids plus the notice.
 
 Related: [[review-check-ceo-answers-vs-draft-time]]

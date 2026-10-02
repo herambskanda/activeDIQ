@@ -2,16 +2,18 @@
 title: "ADR-0002: Two self-hosted profiles from one codebase, multi-tenant from migration 1, SaaS by composition, standalone from UEM with a shared agent-host contract"
 date: 2026-10-02
 updated: 2026-10-02
-status: proposed
+status: ratified
 owner: heramb
 kind: strategic-fork
 ticket: T-0003
-decision: D-0002, D-0003
+decision: D-0002, D-0003, D-0007
+ratified_on: 2026-10-02
+ratified_by: factory-director
 ---
 
 # ADR-0002: Two self-hosted profiles from one codebase, multi-tenant from migration 1, SaaS by composition, standalone from UEM with a shared agent-host contract
 
-**Status:** proposed. The CEO set the direction in **D-0002** (self-hosted first, SaaS-ready) and **D-0003** (standalone from UEM, converge later), and both are answered. This ADR turns those answers into rules. The factory-director ratifies it at review of T-0003 by checking that it stays inside those answers. The decisions the factory takes *inside* the answers are listed in "Decisions taken inside the CEO's answers" below. They go to the CEO as one notice, which the CEO can veto. The ADR becomes `accepted` when `fitness-tenancy` and `fitness-profiles` run green in `make ci` on `main` (see "Fitness function").
+**Status:** **ratified 2026-10-02** by factory-director at review of T-0003, applying the CEO's answers **D-0002** (self-hosted first, SaaS-ready) and **D-0003** (standalone from UEM, converge later). Binding on design. The decisions the factory took *inside* those answers, listed in "Decisions taken inside the CEO's answers" below, went to the CEO as notice **D-0007**, which the CEO can veto. The ADR becomes `accepted` when `fitness-tenancy` and `fitness-profiles` run green in `make ci` on `main` (see "Fitness function").
 **Kind:** strategic fork. The direction is the CEO's; the detail is the factory's.
 **Deciders:** heramb (D-0002, D-0003); solution-architect (author); factory-director (ratifier). **Ticket:** T-0003. **Parity / scope refs:** ADM-158, ADM-209, ADM-210, ADM-213, RMP-046 (platform hygiene, updates, HA).
 
@@ -205,7 +207,7 @@ These go beyond the literal text of D-0002 and D-0003. The factory takes them, a
 4. HA covers the application tier: several active servers and redundant connectors. Database HA uses the customer's own PostgreSQL HA. Whether we bundle a database standby is left to the platform PRD.
 5. Self-hosted installs have one tenant in v1. Self-hosted multi-tenant and MSP wait for the E5.6 decision.
 6. activeDIQ builds the shared agent host, and UEM's owners review its contract.
-7. The server cannot be installed on a domain controller. Its AD service account gets delegated rights only, never rights over protected admin accounts or DCs.
+7. The server cannot be installed on a domain controller. Its AD service account gets delegated rights only, never rights over protected admin accounts or DCs. Its Entra app gets no permission over Entra admin roles, so removing M365 admin roles (ADM-168, a `could`) is out of v1.
 8. Entra ID connects through **the customer's own app registration**, with certificate authentication. activeDIQ generates the private key and keeps it encrypted in its database. In a future SaaS offering, our cloud would hold that key and make the Graph calls. AD credentials would still never leave the customer's site.
 
 ## Alternatives considered
@@ -370,7 +372,7 @@ The job therefore holds an **activation table**: each check lists the path that 
 - **The remote transport left untested** because on-prem uses embedded. P3 runs both, every merge.
 - **Copying UEM or PatchIQ code instead of importing it.** U1 cannot see this. Ported salvage must name its source in the commit and live under the platform root. Code review enforces it, and that part is manual.
 
-**Status path.** The director ratifies this ADR at review of T-0003 and files the notice. It becomes `accepted` when two conditions hold:
+**Status path.** Ratified at review of T-0003 (notice D-0007). It becomes `accepted` when two conditions hold:
 - `fitness-tenancy` (T1–T5) and `fitness-profiles` (P1, P7, U1, U2 and the activation table) run green in `make ci` on `main`;
 - the activation table holds an entry for every remaining check: P2–P6, U3 and U4.
 
