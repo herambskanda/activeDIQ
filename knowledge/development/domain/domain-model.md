@@ -48,7 +48,10 @@ confirmed it (T-0051, §11 Q8).
   which are stored *sealed* under the tenant data key. No `Secret` is ever serialised into an
   entity, an audit detail, a notification or an export.
 - **X5 Append-only records** (ChangeRecord, AuditEvent, ApprovalDecision, ChainCheckpoint) are
-  never updated. Only retention deletes them, and only as an explicit, audited path.
+  never updated. Only retention deletes them, and only as an explicit, audited path. Their
+  lifecycle states are **derived and never stored**: these tables have no state column, so no
+  state change can ever be an UPDATE (fitness check T-0050). Each entity says what its states
+  are derived from.
 - **X6 Registry IDs are stable strings, never reused.** A persisted reference to a registry entry
   (Permission, Action, Dataset, audit kind, job kind) blocks that entry's removal until a
   migration rewrites the reference.
@@ -62,9 +65,24 @@ confirmed it (T-0051, §11 Q8).
   all *produce* Operations.
 - **X10 Our records outlive the directory's.** Deleting an object, connection or account never
   deletes our audit trail. Retention is a tenant setting per record class (ADM-206).
+- **X11 Personal data is erasable without touching the evidence.** Personal display values inside
+  append-only records (name, DN and UPN snapshots, mail, phone, the old and new values of personal
+  attributes, free-text comments) must be erasable **without updating or deleting the record and
+  without breaking chain verification** (X5, DM-80.I1). Two mechanisms meet this. In the first, the
+  record holds only a pseudonymous form (the GUID, plus a keyed MAC of the value for search), and
+  the clear value lives in a per-subject side record that erasure deletes. In the second, the
+  value is sealed under a per-subject key that erasure destroys (crypto-shredding), and the hash
+  covers the sealed form. T-0047 chooses one (§11 Q9). Either way, it must be in place **before
+  the first audit event is written**: a chain whose hash covers clear names cannot be made
+  erasable later. After erasure, the event, its GUIDs and its hash remain, and the UI shows
+  `[erased]`. The erasure is itself audited, without the erased values. This is the mechanism
+  behind ME's "anonymize data on deletion" (ADM-207). X10 still holds, because no event is
+  deleted. Mutable records (Operation input, Request, Account) are erased in place.
 
-**Lifecycle notation.** `a → b` is a transition. `a ⇄ b` is reversible. A *state* is persisted;
-*health* (reachable, degraded, lagging) is observed, shown, and never a lifecycle state.
+**Lifecycle notation.** `a → b` is a transition. `a ⇄ b` is reversible. A *state* is persisted,
+except on the append-only entities (X5: DM-18, DM-66, DM-80, DM-81), whose states are derived
+from other records and never stored. *Health* (reachable, degraded, lagging) is observed, shown,
+and never a lifecycle state.
 
 ```
  PLATFORM  Tenant(1) Node Release HostnameBinding Lease(platform)
@@ -73,6 +91,7 @@ confirmed it (T-0051, §11 Q8).
  Directories: Connection --< NamingContext --< DomainController      Connection --< ConnectorBinding >-- Component
               Connection --< DirectoryCredential   Connection --< SyncCursor   HybridLink(AD conn, Entra conn)
               DirectoryObject(conn, guid) --< Link >-- DirectoryObject;  --< ChangeRecord;  Correlation(AD obj, Entra obj)
+              DirectoryObject(SOM) --< GpLink(position) >-- DirectoryObject(groupPolicyContainer)
  Access:      Account --< Session, ApiToken, AuthenticatorEnrollment;  RoleAssignment(subject, Role, DelegationScope)
  Definitions: Template -> NamingFormat, PasswordGenerationPolicy, AttributeList;  WorkflowDefinition;  ReportDefinition
  Change:      Operation --< OperationItem(steps) ; Request(1:1 Operation) --< ApprovalDecision ; Job (execution only)
@@ -223,7 +242,8 @@ redundancy (ADM-210). Each operation item keeps one DC and one connector (read-y
 
 ### DM-14 NamingContext · D · owner `directory/inventory`
 **Definition.** A partition of an AD forest. **Domain** NCs hold managed objects. The
-configuration and schema NCs are read for topology and the schema cache only. The equivalent for
+configuration and schema NCs are read for topology and the schema cache only. The configuration
+NC's site objects are also read as Group Policy SOMs (DM-23.I4). The equivalent for
 an Entra connection is the tenant itself, so it has no NamingContext rows. **Replaces (ME):** a
 managed "domain" (ADM-212, ADM §2.9).
 **Key attributes:** `nc_guid` (NC head objectGUID) · `kind` (domain, configuration, schema,
@@ -316,7 +336,8 @@ maps to `purged` ([delta query](https://learn.microsoft.com/en-us/graph/delta-qu
 
 ### DM-17 Link · D · owner `directory/inventory`
 **Definition.** One value of a linked attribute (`member`, `manager`, …), stored as a directed edge
-between GUIDs. **Replaces (ME):** membership management (ADM-050) and the manager field (ADM-033).
+between GUIDs. For Entra it is one value of a directory relationship: the `members` of a group or
+of an administrative unit, or `manager`. **Replaces (ME):** membership management (ADM-050) and the manager field (ADM-033).
 **Key attributes:** `source_guid` · `link_attr` · `target_guid`, or `target_unresolved` (a SID for a
 foreign security principal not yet resolved, or a DN outside every managed NC, as a snapshot) ·
 `state` · `observed_at`.
@@ -353,8 +374,11 @@ linked-value replication was enabled (legacy values carry no value metadata)
 never presented as our observation time. I3 v1 never attributes a native (non-activeDIQ) change to a
 person. That arrives with DC events (M3). I4 Secret attributes are never recorded. I5 It is
 indexed for three questions: everything about object X, every change to attribute A in a period,
-and everything operation O did.
-**Lifecycle.** `recorded → archived → purged` (retention).
+and everything operation O did. I6 Values of personal attributes are erasable under X11 without
+updating the row.
+**Lifecycle.** `recorded → archived → purged`, all derived (X5). `archived` means the row's time
+partition has been exported to the archive. `purged` means the retention role dropped that
+partition. No row ever changes state in place.
 
 ### DM-19 SyncCursor · T · owner `directory/sync`
 **Definition.** The change-feed position for one partition: an AD domain NC (DirSync) or one Graph
@@ -425,6 +449,84 @@ scheduled) · `object_count` · `blob_ref` (tenant-prefixed) · `checksum` · `s
 snapshot is an Operation (X9).
 **Lifecycle.** `capturing → complete | failed`, then `complete → expired → deleted`.
 
+### DM-23 GpLink · D · owner `directory/inventory`
+**Definition.** One link from a scope of management (SOM: a domain, an OU or a site) to a Group
+Policy Object. It is derived at sync from the SOM's `gPLink` value. `gPLink` is a single-valued
+Unicode string with no Link-Id, not a linked attribute
+([gPLink](https://learn.microsoft.com/en-us/windows/win32/adschema/a-gplink)), so DM-17 does not
+cover it. Its value is `[<GPO DN>;<options>][<GPO DN>;<options>]…`. The order of the entries is
+the link order. Option `0x1` means the link is ignored (disabled), and `0x2` means enforced, which
+has no effect when `0x1` is set. `gPOptions = 1` on a domain or OU blocks inheritance of
+non-enforced links from above
+([MS-GPOL Domain SOM Search](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-gpol/08090b22-bc16-49f4-8e10-f27a8fb16d18)).
+The **GPO** itself is a DirectoryObject (DM-16) of class `groupPolicyContainer`. Its synced
+attributes include `displayName`, `flags` (user or computer settings disabled), `versionNumber`,
+`gPCFileSysPath`, the extension-name lists and `gPCWQLFilter`. **Replaces (ME):** GPO link
+management (ADM-073), "where is this GPO linked" (ADM-077) and unlinked GPOs (ADM-148).
+**Key attributes:** `som_guid` · `position` (index of the entry in the SOM's `gPLink` value) ·
+`gpo_guid` (objectGUID of the `groupPolicyContainer`) or `gpo_unresolved` (the DN snapshot, for a
+GPO that does not exist or lies outside every NC we read) · `gpo_dn` (snapshot) · `enabled`
+(`0x1` clear) · `enforced` (`0x2` set and `0x1` clear) · `observed_at` · `state`. The SOM's own
+DirectoryObject row carries `gp_link_raw` (the whole observed `gPLink` value, used for the
+stale-state check) and `block_inheritance` (`gPOptions`; domains and OUs only).
+**Invariants.**
+- I1 The value is parsed by a codec built on the P2 DN parser (safe-primitives §4), never by
+  string matching or formatting. Each GPO DN is resolved to the GPC's objectGUID, and the edge
+  stores that GUID (X3). The DN names the GPO by its `cn` (`{GPO ID}`), which is **not** its
+  objectGUID, so the two are never compared. Each entry starts with an `LDAP://` prefix, which is
+  stripped (case-insensitively) before the DN is parsed. A DN that resolves to nothing, including
+  a GPO in another forest, is kept as `gpo_unresolved` and shown as a broken link, never dropped.
+- I2 Position is data. The same GPO may be linked more than once to one SOM, with independent
+  options, so the edge key is `(som_guid, position)`, never `(som_guid, gpo_guid)`. GPMC's link
+  order is derived from `position`. Link order 1 (highest precedence) is the **last** entry in the
+  string, and link order n is the first. MS-GPOL states only that the order is the link order;
+  the direction comes from an SSSD fix checked against GPMC
+  ([SSSD commit](https://github.com/SSSD/sssd/commit/dce025b882db7247571b135e928afb47f069a60f))
+  `[UNVERIFIED]` `[LAB: Windows]`. The reorder Action does not ship until the lab confirms it (T-0051).
+- I3 Every link write (link, unlink, enable, disable, enforce, reorder) rewrites the whole value,
+  and so does block inheritance on `gPOptions`. The Action plans against `gp_link_raw` and applies
+  as **one** LDAP modify that deletes the exact planned value and adds the new one. If anyone
+  changed the value since the plan, the modify fails and the item fails `stale_state` (DM-42.I2),
+  instead of silently dropping someone else's link. LDAP modify is atomic, and deleting a value
+  that is not present fails with `noSuchAttribute`
+  ([RFC 4511 §4.6](https://www.rfc-editor.org/rfc/rfc4511#section-4.6)). The same holds for the
+  integer `gPOptions`. These writes never send the permissive-modify control
+  (`1.2.840.113556.1.4.1413`), because it turns the failed delete into a success and breaks the
+  compare. When the value was absent at plan, the write is an add-only modify, which fails if a
+  value appeared in the meantime (the exact error code is `[UNVERIFIED]`). An absent `gPOptions`
+  means 0 `[LAB: Windows]`. A read-modify-write without this compare is forbidden.
+- I4 Site SOMs live in the configuration NC (`CN=Sites,CN=Configuration,…`). The configuration NC
+  is not managed (DM-14.I1), but its site objects are read as SOMs. A site link applies to every
+  computer in the site, in every domain. `gPOptions` matters only on domains and OUs. The site is
+  added last to the SOM list, so there is nothing above it to block, but block inheritance on a
+  domain does block site links
+  ([MS-GPOL SOM list](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-gpol/bf1f9c51-6674-4b74-b0d7-635f1121aeec)).
+- I5 A link write changes policy for everything the SOM reaches, so it is in write scope only if
+  the SOM is in scope (DM-35) **and** nothing it reaches is `tier0`. Reach is the SOM's whole
+  subtree; for a domain head that includes non-OU containers such as `CN=Users`. Reach ignores
+  block inheritance, because enforced links pass through it. It includes `tier0` accounts, since
+  user settings apply when they log on, and computers that use loopback processing
+  ([MS-GPOL loopback](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-gpol/595ec4ac-95eb-4d56-bec6-aed0e47fb202)).
+  A link on the domain head, on an OU that holds a DC, or on a site that holds a DC (a DC's server
+  object sits under that site) applies to DCs. Such a link write is a Tier-0 write, outside every
+  v1 write scope (DM-16.I8, Q1).
+- I6 "Unlinked" (ADM-148) means no edge from any SOM in any domain or site of the forest, because
+  a GPO can be linked from another domain. Links in unmanaged domains are invisible to us, so the
+  result names the NCs it covered and never claims more.
+- I7 GPO permissions (ADM-077 "GPO delegation") are two ACLs: the GPC's `nTSecurityDescriptor`
+  in AD and the GPT folder's DACL in SYSVOL. GPMC keeps them consistent. v1 has no SYSVOL path,
+  so v1 reads GPO delegation (from the GPC, through the typed security-descriptor primitive) but
+  has no permission-write Action until Q10 is decided. Security filtering checks only the
+  Apply Group Policy right on the GPC
+  ([MS-GPOL security filtering](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-gpol/5ead679e-5ec1-4f43-b927-1a339da316c7)).
+  But a client opens `gpt.ini` for every GPO it finds and stops processing on any error, so a
+  change to the GPC alone can break policy for that target. v1 cannot see drift between the GPC
+  and the GPT, and the UI says so.
+
+**Lifecycle.** `active ⇄ broken` (the GPO DN stops or starts resolving) `→ removed` (unlinked, or
+the SOM is deleted). Enabled and enforced are attributes, not states. Every change is a
+ChangeRecord on the SOM's `gPLink` attribute, holding the old and new values.
+
 ## 3. Identity and access
 
 ### DM-30 Account · T · owner `platform/authn`
@@ -432,7 +534,8 @@ snapshot is an Operation (X9).
 workflow requester. **Replaces (ME):** the technician (ADM-126) and workflow requester accounts
 (ADM-117).
 **Key attributes:** `kind` (`local`, `sso` with issuer+subject, `directory` with
-connection+GUID) · `display_name` · `email` · `mfa_required` · `state` · `created_by`.
+connection+GUID) · `directory_ref` (connection+GUID: required for `directory`, optional for `sso`,
+null for `local`) · `display_name` · `email` · `mfa_required` · `state` · `created_by`.
 **Invariants.** I1 Local accounts always require MFA (ADM-142). I2 A `directory` account is
 disabled, and its sessions revoked, when sync observes the AD user disabled or deleted, or out of
 every scope the account was admitted through. Sign-in also refuses it when `accountExpires` is in
@@ -440,8 +543,21 @@ the past, checked at every sign-in, because expiry involves no directory write
 ([accountExpires](https://learn.microsoft.com/en-us/windows/win32/adschema/a-accountexpires)). I3 There
 are no default credentials: the first account is created with a one-time bootstrap secret at
 install (ADM-145). I4 A tenant always has at least one active account holding `tenant-owner`, so
-the last one cannot be removed.
-**Lifecycle.** `invited → active ⇄ disabled → deleted`. Audit keeps the ID and a name snapshot.
+the last one cannot be removed. I5 **SSO accounts and the directory.** An `sso` account gets a
+`directory_ref` only from an anchor claim that the tenant's SSO configuration names: the Entra
+object ID `oid`, with `tid` matching an Entra connection, or the on-premises SID (Entra's
+`onprem_sid` optional claim, present only for synced users,
+[optional claims](https://learn.microsoft.com/en-us/entra/identity-platform/optional-claims-reference)).
+A SID changes on a cross-domain move, so it is resolved once when the account is bound, and the
+GUID is stored (X3). A UPN, email or name claim never binds, because they are reassignable. The
+immutable ID does not bind either: there is no standard claim for it `[UNVERIFIED]`, and it can be
+written for cloud users ([user](https://learn.microsoft.com/en-us/graph/api/resources/user)). A later sign-in whose anchor
+resolves to a different object is refused and audited. It never rebinds silently; rebinding is an
+audited administrative action. A bound `sso` account receives group-subject grants (DM-36.I2) and
+falls under I2 exactly like a `directory` account. An unbound one receives only grants made to the
+account itself.
+**Lifecycle.** `invited → active ⇄ disabled → deleted`. Audit keeps the ID and a name snapshot,
+which is erasable under X11.
 
 ### DM-31 Session · T · owner `platform/authn`
 **Definition.** An authenticated console session, kept in PostgreSQL so any node serves it.
@@ -486,18 +602,44 @@ Operation that revokes them.
 
 ### DM-35 DelegationScope · T · owner `modules/delegation`
 **Definition.** The set of directory objects a grant reaches. **Replaces (ME):** OU-based
-(ADM-127), include/exclude group (ADM-129) and cross-domain (ADM-130) delegation.
-**Key attributes:** `entries[]`: connection, `root_kind` (`naming_context`, `ou_subtree`,
-`ou_one_level`, `group_members`), `root_guid`, include or exclude, `entry_state` (`active`,
-`root_deleted`) · target filters (object kinds,
-`groups_include`, `groups_exclude`).
+(ADM-127), include/exclude group (ADM-129), cross-domain (ADM-130) and M365 (ADM-131) delegation,
+and the "filter cloud users by AD OU" part of hybrid handling (ADM-169).
+**Key attributes:** `entries[]`: connection, `root_kind`, `root_guid`, include or exclude,
+`include_correlated` (AD entries only, default false), `entry_state` (`active`, `root_deleted`) ·
+target filters (object kinds, `groups_include`, `groups_exclude`).
+
+| `root_kind` | Provider | `root_guid` | Reaches | Evaluated against |
+| --- | --- | --- | --- | --- |
+| `naming_context` | AD | NC head GUID | every object in the domain NC | inventory ancestry |
+| `ou_subtree` / `ou_one_level` | AD | OU GUID | the OU's subtree, or its direct children | inventory ancestry |
+| `group_members` | AD or Entra | group GUID / object `id` | the group's transitive members (DM-17 edges) | inventory links |
+| `entra_tenant` | Entra | tenant ID (DM-10 `directory_identity`) | every object of the Entra connection | the connection |
+| `administrative_unit` | Entra | AU object `id` | the AU's direct members (users, groups, devices) | inventory AU-membership edges |
+
 **Invariants.** I1 Roots are GUIDs. A moved root keeps its scope. A deleted root grants nothing and
-never widens to the domain (safe-primitives LF-31). A root restored from the Recycle Bin keeps its
-GUID, so its scope would silently return. Instead the entry stays inactive until an audited
-Operation reactivates it. I2 It is evaluated against inventory ancestry,
-and re-checked against the live parent chain at Plan (blueprint §11). I3 Exclusion beats
-inclusion. I4 Counts and pages are computed after scope trimming (LF-39). I5 `tier0` objects are
-outside every write scope in v1 (ADR-0002 rule 9; FD-11).
+never widens to the domain or the tenant (safe-primitives LF-31). A root restored from the Recycle
+Bin (or from Entra deleted items) keeps its GUID, so its scope would silently return. Instead the
+entry stays inactive until an audited Operation reactivates it. I2 AD entries are evaluated
+against inventory ancestry and re-checked against the live parent chain at Plan (blueprint §11).
+Entra has no ancestry and no NamingContext (DM-14). Its entries are evaluated against inventory
+membership edges and re-checked live through Graph at Plan. AU membership is not transitive: a
+group in an AU does not put its members in the AU
+([administrative units](https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/administrative-units)).
+I3 Exclusion beats inclusion. I4 Counts and pages are computed after scope trimming (LF-39).
+I5 `tier0` objects are outside every write scope in v1, in every root kind (ADR-0002 rule 9;
+FD-11). For Entra, `tier0` covers holders of privileged directory roles and role-assignable groups
+(definition: T-0007, Q1). I6 **AD scope to Entra objects.** An AD entry with
+`include_correlated` also reaches the Entra objects that are `matched` (DM-20) to an AD object it
+reaches, but only for Entra-provider Actions such as licences (DM-20.I3). It is re-evaluated at
+Plan from the live AD ancestry and the current correlation, and a `broken` correlation grants
+nothing. It is off by default, so an OU grant never reaches the cloud silently. Writes to
+AD-mastered attributes of a synced object go to AD and need the AD scope anyway. I7 Objects in a
+restricted-management AU (detected by `isManagementRestricted`) ignore tenant-wide application
+permissions unless the application holds an Entra role scoped to that AU
+([restricted management AUs](https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/admin-units-restricted-management#programmability)).
+Plan decides per Action. Property changes, delete, password reset and member or owner changes are
+planned as `blocked` with a reason, never failing at apply. Licences, usage location and adding
+the object to other groups remain allowed, which matters for I6.
 **Lifecycle.** `active → archived` (only when unassigned).
 
 ### DM-36 RoleAssignment · T · owner `platform/authz`
@@ -505,7 +647,11 @@ outside every write scope in v1 (ADR-0002 rule 9; FD-11).
 technician↔role↔domain/OU mapping (ADM-125…130) and group-based delegation (ADM-128).
 **Key attributes:** `subject` (account, directory group as connection+GUID, or automation policy) ·
 `role_id` · `scope_id` (null for roles with no directory reach) · `valid_from` / `valid_until` ·
-`granted_by` · `state`.
+`granted_by` · `state`. `scope_id` (a DelegationScope, owned by `modules/delegation`) and an
+automation-policy `subject` (owned by `modules/lifecycle`) are **opaque typed references**
+`(kind, id)` from a platform table into module-owned rows. They are resolved through the EP-6
+evaluator interface, with no foreign key across the layer (blueprint §2: core never imports
+modules). A reference that no longer resolves grants nothing.
 **Invariants.** I1 **No escalation.** The grantor must hold every privilege of the role over the
 whole scope, or be `tenant-owner`. This is the class of CVE-2024-24409
 ([advisory](https://www.manageengine.com/products/ad-manager/admanager-kb/cve-2024-24409.html)).
@@ -513,8 +659,16 @@ I2 A group subject's membership is **directory** membership, resolved transitive
 including primary-group edges. It is not token membership: it is broader than `tokenGroups`, which
 leaves out other domains' domain-local groups
 ([tokenGroups](https://learn.microsoft.com/en-us/windows/win32/adschema/a-tokengroups)).
-Deactivated links never count. Subject groups must be security groups; a distribution group grants
-nothing. An FSP member grants only if its SID resolves to an Account in a connected forest.
+Deactivated links never count. Subject groups must be security groups (AD) or groups with
+`securityEnabled = true` (Entra). That test also admits Microsoft 365 groups with
+`securityEnabled = true` and mail-enabled security groups
+([groups overview](https://learn.microsoft.com/en-us/graph/api/resources/groups-overview)). A
+distribution group grants nothing. An Entra group with `visibility = Public` grants nothing either,
+because anyone can join it without approval and so give themselves an activeDIQ role
+([group](https://learn.microsoft.com/en-us/graph/api/resources/group)). The AD analogue, a group
+whose DACL lets broad principals add themselves, is a T-0007 check (Q1). A member grants only through its Account's
+`directory_ref` (DM-30.I5), or through that object's `matched` correlation (DM-20). An FSP member
+grants only if its SID resolves to an object in a connected forest that is bound to an Account.
 `sIDHistory` is not followed. Members lose rights when they leave the group or are disabled, within
 sync freshness (ADM-128). I3 Effective authority is the union of assignments, and each privilege applies only
 within its own assignment's scope. Role A's permission is never combined with scope B.
@@ -534,9 +688,11 @@ webauthn, email_otp, sms_otp) · `sealed_secret` or `public_credential` · `labe
 reset or unlock. **Replaces (ME):** none. It extends the reset console (ADM-136); caller
 verification is ENH-09 (scope lock §3.5).
 **Key attributes:** `technician_account_id` · `target` (connection+GUID) · `factor` ·
-`destination_masked` · `code_hash` · `expires_at` · `attempts` · `operation_id` · `state`.
+`destination_masked` · `code_mac` · `expires_at` · `attempts` · `operation_id` · `state`.
 **Invariants.** I1 The destination comes only from data held before the call (AD or HR), never
-from what the technician types. I2 The code is never stored in clear or logged. I3 A verified
+from what the technician types. I2 The code is never stored in clear or logged. `code_mac` is a
+keyed MAC under a key derived from the tenant data key (DM-02), never a plain hash, because a
+plain hash of a six-digit code is enumerated in milliseconds. I3 A verified
 challenge authorises Actions only on its target, once, within its window. I4 The factor is
 recorded in the same audit event as the reset.
 **Lifecycle.** `issued → verified | failed | expired | cancelled`.
@@ -741,8 +897,9 @@ I2 Resending failed items (ADM-120) creates a new linked Operation.
 **Key attributes:** `request_id` · `stage` · `decider` · `decision` (approve, reject, reassign) ·
 `plan_hash` · `comment` · `at`.
 **Invariants.** I1 Immutable (X5). I2 It counts toward quorum only if the decider was an assignee
-at that time and is not the requester.
-**Lifecycle.** `recorded` (terminal).
+at that time and is not the requester. I3 Its `comment` is free text about people, so it is
+erasable under X11.
+**Lifecycle.** `recorded` (terminal, and derived: the row exists).
 
 ## 7. Reporting
 
@@ -800,16 +957,21 @@ the schedule pauses. I2 Delivery to an external address requires its own permiss
 **Invariants.** I1 One chain per tenant. Events are appended serially and `seq` has no gaps.
 I2 Immutable (X5). Retention deletes only below a checkpoint (DM-81). I3 Every operation step,
 sign-in, RBAC change, settings change, secret read, presence grant, enrollment and credential
-change emits an event. I4 Details never carry a `Secret`. Targets keep the DN as it was at the
-time, because DNs change.
-**Lifecycle.** `appended → checkpointed → archived` (exported and still verifiable) `→ purged`.
+change emits an event. I4 Details never carry a `Secret`. Targets keep a display snapshot of the
+DN and name as they were at the time, because DNs change. That snapshot is personal data and is
+erasable under X11, subject to §11 Q9.
+**Lifecycle.** `appended → checkpointed → archived → purged`, all derived (X5), never a column.
+`checkpointed` means `seq` ≤ the `seq` of the tenant's latest ChainCheckpoint (DM-81).
+`archived` means the event's partition has been exported, and it stays verifiable from the export
+and the checkpoints. `purged` means the retention role dropped the partition, which it may do
+only below a checkpoint (I2).
 
 ### DM-81 ChainCheckpoint · T · append-only · owner `platform/audit`
 **Definition.** A signed statement of the chain head at a given `seq`.
 **Key attributes:** `seq` · `hash` · `signed_at` · `signature` · `key_id`.
 **Invariants.** I1 Checkpoints are kept for the tenant's life, so verification starts from any
 retained checkpoint after events are purged.
-**Lifecycle.** `recorded` (terminal).
+**Lifecycle.** `recorded` (terminal, and derived: the row exists).
 
 ### DM-82 NotificationChannel · T · owner `platform/notify` (EP-9)
 **Definition.** A configured way out: SMTP or a mail API, an SMS gateway, or a SIEM (syslog, CEF,
@@ -858,15 +1020,19 @@ These are the concepts used by the v1 rows (P1 and the M2 pulls,
 | Domain (Domain Settings), DC priority | ADM-212, ADM-133 | Connection (forest) + NamingContext + DomainController | A connection is per forest, identified by the forest root NC's GUID, so cross-domain moves and domain renames keep identity; ME's site-based delegation becomes DC affinity, not scope |
 | M365 tenant, domain↔tenant links | ADM-159 | Connection (`entra_tenant`) + DirectoryCredential + HybridLink | The customer's own app registration with an activeDIQ-generated key (ADR-0002 rule 3) |
 | AD objects, AD Explorer, History tab | ADM-004, 005, 008…062 | DirectoryObject, Link, ChangeRecord | Keyed by GUID; history includes changes made outside activeDIQ |
+| M365 users (bulk create and modify, guests), licences, account actions (block, delete, hard delete, restore, UPN, manager, revoke tokens), groups | ADM-160, 161, 162, 164 | DirectoryObject (Entra) + Link + Correlation, changed by `m365.*` Actions in Operations | Source-of-authority aware (DM-20.I3). Delete and restore follow the DM-16 Entra lifecycle. A UPN in a CSV is resolved to the object `id` at Plan and is never stored as a key (X3) |
 | Technician | ADM-126 | Account + RoleAssignment | A licensing unit in ME; for us an account with an assignment |
 | Help-desk role, task/attribute privileges, deny bulk/CSV | ADM-125 | Role (privileges with constraints) + Permission | Mode `execute`/`request` merges ME's help-desk and workflow-requester roles |
 | Super Admin, built-in roles | ADM-126 | Built-in Role `tenant-owner` and shipped roles | Read-only, cloneable |
-| OU-based / group-based / include-exclude / cross-domain delegation | ADM-127…130 | DelegationScope + RoleAssignment (group subject) | GUID roots, live re-check at Plan, no escalation (DM-36.I1) |
+| OU-based / group-based / include-exclude / cross-domain delegation | ADM-127…130 | DelegationScope + RoleAssignment (group subject) | GUID roots, live re-check at Plan, no escalation (DM-36.I1); SSO technicians receive group grants through an anchor-bound `directory_ref` (DM-30.I5) |
+| M365 delegation; "filter cloud users by AD OU" | ADM-131, ADM-169 | DelegationScope with the Entra root kinds (`entra_tenant`, `administrative_unit`, `group_members`) + `include_correlated` on AD entries (DM-35.I6) | One RBAC model for both directories. An AD OU grant reaches Entra objects only when the entry says so, and only through an anchor correlation (DM-20) |
 | Technician-specific templates; report restrictions | ADM-132, ADM-102 | Role privilege constraints | — |
 | Impersonate as Admin | ADM-134 | none; Operation initiator chain + AuditEvent actor | Every write runs as the connector identity, and the technician is always recorded. AD-side attribution `[OPEN → T-0007]` |
 | Help Desk Reset Password Console | ADM-136 | Actions `helpdesk.*` + CallerVerification | ENH-09 verification in the same audit event |
 | LAPS / BitLocker reads | ADM-060 | Permission `secret.read:*` + named connector ops | Never stored; every read audited |
 | User / group / computer / contact / OU templates, creation rules, modification templates | ADM-012…015, 049, 055, 058, 061, 062 | Template (versioned) | Rules are ASTs; no scripts |
+| Exchange at creation, remote mailbox (hybrid) | ADM-026, ADM-070 | Template `post_steps` (Exchange and M365 Actions) + HybridLink | Offered only when the connection reports the Exchange or hybrid capability; each step is an audited Action |
+| GPO, link management (link, unlink, enable, enforce, order, block inheritance), "where linked", unlinked GPOs | ADM-073, ADM-077, ADM-148 (GPO part) | DirectoryObject (`groupPolicyContainer`) + GpLink (DM-23) | Links keyed by SOM GUID and position, never by the DN inside `gPLink`; compare-and-swap writes; links that reach DCs are Tier-0. GPO permission writes wait on Q10 |
 | Naming formats, conditional naming | ADM-017, 018 | NamingFormat | Output passes the safe primitives |
 | Random password policy, password options | ADM-021, 022 | PasswordGenerationPolicy | Passwords never stored (ME keeps them in audit data, ADM §2.10) |
 | Organization attribute lists | ADM-037 | AttributeList | — |
@@ -880,7 +1046,7 @@ These are the concepts used by the v1 rows (P1 and the M2 pulls,
 | Business workflow, workflow agents, assigning rules, SLA, managers as approvers | ADM-116…119, 121 | WorkflowDefinition | SoD enforced; dynamic approvers resolved at submission |
 | Workflow request / Requests tab | ADM-116, 120 | Request + ApprovalDecision (wrapping one Operation) | Approval binds to the plan shown |
 | Prebuilt, custom and compliance reports; filters | ADM-083…093, 097, 099 | Dataset + ReportDefinition | Runner's scope always applied |
-| Report export, act on results | ADM-098, 100 | ReportRun + Operation (origin `report_results`) | — |
+| Report export, act on results; clean up from reports; stale objects (empty groups and OUs, lingering objects) | ADM-098, 100, 146, 148 | ReportRun + Operation (origin `report_results`) | Every clean-up is a planned Operation with preview and undo |
 | Scheduled reports | ADM-101 | ReportSchedule + Schedule + Delivery | Owner's live scope at each run |
 | Help-desk audit, admin audit, technician logons | ADM-137…139 | AuditEvent (+ ChainCheckpoint) | Per-tenant hash chain, offline verification |
 | Authtokens | ADM-141 | ApiToken | Mandatory expiry; never exceeds the owner |
@@ -888,14 +1054,31 @@ These are the concepts used by the v1 rows (P1 and the M2 pulls,
 | Notification profiles / templates, mail-SMS-proxy, SIEM | ADM-204, 205, 198 | NotificationChannel + NotificationTemplate + Delivery | — |
 | ServiceNow / ServiceDesk Plus | ADM-191, 192 | ItsmConnection → Request | Never a direct write |
 | Retention | ADM-206 | Retention setting per record class (X10) | — |
+| Privacy controls: anonymize on deletion, protected exports, hidden passwords, usage-statistics opt-out | ADM-207 | X11 erasure (Q9) for anonymization; ReportRun exports (T-0029) for protected exports; X4 for passwords; a platform setting for the opt-out | Erasure never breaks the audit chain. There is no password to hide, because none is stored |
 | HA nodes, automatic hotfixes | ADM-209, 210 | Node, Release, Lease | No same-subnet limit; one verifier |
 | ADMP product DB backup | ADM-158 | Platform operation, not a domain entity `[OPEN → E2.12 PRD]` | — |
 | AD backup baseline (v1 slice) | MIG-18 | Snapshot | Full backup product is M3 (FD-06) |
 
-ME concepts with **no v1 entity**, by design: custom scripts and functions (ADM-019, ADM-032,
-ADM-112), environment variables (ADM-113), orchestration templates beyond typed blocks (ADM-109),
-dynamic and time-bound groups (ADM-052, ADM-053, P2), and native AD security roles (ADM-135), which
-the `hardening` module covers as generated ACLs (ENH-08), not as an entity.
+ME concepts with **no v1 entity**, by design:
+- Custom scripts and functions (ADM-019, ADM-032, ADM-112) and environment variables (ADM-113):
+  no equivalent (DM-40.I4).
+- Orchestration templates beyond typed blocks (ADM-109).
+- Dynamic and time-bound groups (ADM-052, ADM-053): P2.
+- Native AD security roles (ADM-135): the `hardening` module covers them as generated ACLs
+  (ENH-08), not as an entity.
+- The tabbed console, global object search and localization (ADM-001, ADM-003, ADM-007): UI over
+  these entities. Search is a scoped query over DirectoryObject, trimmed after authorization
+  (DM-35.I4). Locale is data on NotificationTemplate (DM-83) and in the UI strings.
+- Dashboards and custom-report widgets (ADM-002, ADM-103): a widget renders a ReportDefinition
+  from its latest ReportRun. The layout is an account's UI preference, not a domain entity.
+- REST API v1/v2 and quotas (ADM-188…190): the API is the surface over these entities, and
+  ApiToken (DM-32) authenticates it. Rate limits are `platform/apihost` configuration. There is no
+  quota or per-call billing entity.
+- Report from CSV (ADM-096): an uploaded object list is a ReportRun parameter, not a definition.
+- Security hardening score (ADM-208): computed at read time from platform settings and each
+  Connection's security state. Nothing is stored.
+- Diagnostics and upgrades (ADM-213): connection checks are DM-10 `verifying` and observed health.
+  Upgrades are Release (DM-05).
 
 ## 10. Platform matrix
 
@@ -926,10 +1109,13 @@ Every other entity is ✓ in all three profiles, with the same states and invari
 | Q5 | How admin LDAP filters (ADM-097) map onto inventory datasets versus live scoped search | reporting-engineer, report builder spec | DM-71 |
 | Q6 | Operation state names and transition guarantees | solution-architect, T-0047 | DM-41, DM-42 (this file follows T-0047) |
 | Q7 | History row shape, partitioning and index cost at scale | backend-engineer, T-0026 | DM-18 |
-| Q8 | Lab confirmation of every `[LAB: Windows]` claim | test-engineer, T-0051 | DM-16, DM-17, DM-18 |
+| Q8 | Lab confirmation of every `[LAB: Windows]` claim | test-engineer, T-0051 | DM-16, DM-17, DM-18, DM-23 |
+| Q9 | How personal values in append-only records are made erasable (per-subject side record or per-subject crypto-shredding), which attributes count as personal, and what triggers erasure (object purge, an explicit request, the ADM-207 tenant setting). It must be settled before the first audit event is written | solution-architect + security-architect, T-0047 | X11, DM-18.I6, DM-66.I3, DM-80.I4 |
+| Q10 | GPO permission writes (ADM-077): add a SYSVOL path that keeps the GPT folder DACL consistent with the GPC's, or ship v1 GPO delegation read-only | product-manager (GPO spec, via T-0031) + solution-architect | DM-23.I7 |
 
-Follow-ups filed with this version: T-0050 (CI fitness check for X3, X4 and X5) and T-0051 (Windows
-lab proof of the `[LAB: Windows]` claims).
+Follow-ups filed with this version: T-0050 (CI fitness check for X3, X4 and X5), T-0051 (Windows
+lab proof of the `[LAB: Windows]` claims) and T-0052 (the `gPLink` and `gPOptions` codecs in
+safe-primitives P3).
 
 ## 12. Review log
 
@@ -955,6 +1141,39 @@ lab proof of the `[LAB: Windows]` claims).
 | FB | A directory account must also be refused when it is out of scope or `accountExpires` has passed, checked at every sign-in | Applied: DM-30.I2 |
 | FC | A deleted OU root restored from the Recycle Bin keeps its GUID, so its scope silently returns | Applied: DM-35.I1 plus the `entry_state` attribute; only an audited Operation reactivates the entry |
 
+- 2026-10-02 · factory-director · spec review, rejected with 4 must-fixes, 1 should and nits. All
+  were applied in this rework.
+
+| # | Finding | Disposition |
+| --- | --- | --- |
+| R1 | X5 (never updated) contradicted the stored lifecycle states of ChangeRecord and AuditEvent | Applied: X5 and the lifecycle notation now say append-only states are derived, with no state column. DM-18, DM-66, DM-80 and DM-81 say what each state is derived from. Fitness check added on T-0050 |
+| R2 | GPO links were unmapped (ADM-073, 077, 148). `gPLink` is a single-valued string, not a linked attribute | Applied: new DM-23 GpLink, with a GPO as a `groupPolicyContainer` DirectoryObject, `gPOptions` on the SOM, compare-and-swap writes (DM-42.I2), site SOMs in the configuration NC and links that reach DCs treated as Tier-0. New §9 row, Q10, codec spec T-0052. ad-expert confirmation below |
+| R3 | Entra delegation (ADM-131) could not be expressed | Applied: DM-35 root kinds `entra_tenant`, `administrative_unit` and `group_members` (AD or Entra), with how each one evaluates. `include_correlated` lets an AD entry reach correlated Entra objects; it is off by default (ADM-169). §9 row added |
+| R4 | ADM-207 "anonymize on deletion" conflicted with X5 and DM-80.I4 | Applied: new X11 (erasable without updating evidence; two candidate mechanisms), DM-80.I4 softened, DM-18.I6, DM-66.I3, §9 row, §11 Q9 → T-0047 (noted) |
+| R5 | Group delegation never reached SSO technicians | Applied: DM-30 `directory_ref` and I5, bound only from `oid`+`tid` or `onprem_sid` (never a UPN, email or immutable ID), with no silent rebind. DM-36.I2 resolves membership through it |
+| N1 | §9 "no entity by design" lines | Applied for ADM-001/003/007, 002/103, 188…190, 096, 208 and 213. ADM-146/148 and ADM-026/070 got table rows, as did ADM-160…164, which the coverage script found unmapped |
+| N2 | Platform-table references into module rows | Applied: DM-36 says `scope_id` and policy subjects are opaque typed references resolved through EP-6, with no cross-layer FK |
+| N3 | `code_hash` can be enumerated | Applied: DM-38 `code_mac`, a keyed MAC under a key derived from the tenant data key |
+
+AC2 was re-checked by script: every ADM ID in scope lock §3.3 (123 IDs) appears in §9.
+
+- 2026-10-02 · ad-expert · confirmation of the rework's AD and Entra semantics: DM-23, DM-35
+  (Entra root kinds, I6, I7), DM-30.I5 and DM-36.I2. Documentation only, no lab run. There were 9
+  findings, and **all 9 were applied**.
+
+| # | Finding | Disposition |
+| --- | --- | --- |
+| G1 | Link order 1 is the **last** `gPLink` entry. MS-GPOL gives no direction; the source is an SSSD fix checked against GPMC. Strip the `LDAP://` prefix before parsing | Applied: DM-23.I1 and I2, tagged `[UNVERIFIED]` `[LAB: Windows]`; reorder waits for the lab (T-0051) |
+| G2 | OK on the compare-and-swap: modify is atomic, and deleting an absent value fails with noSuchAttribute. Never send permissive-modify. Use add-only when the value was absent. An absent `gPOptions` means 0 | Applied: DM-23.I3 |
+| G3 | OK: `gPOptions` applies on domains and OUs only; domain block inheritance blocks site links | Applied: DM-23.I4 |
+| G4 | Reach was incomplete: whole subtree incl. `CN=Users`, enforced links pass block inheritance, `tier0` users, loopback; "site holds a DC" defined | Applied: DM-23.I5 |
+| G5 | OK: cross-domain links exist, so "unlinked" is forest-wide. Cross-forest links are `[UNVERIFIED]` and become `gpo_unresolved` | Applied: DM-23.I1 |
+| G6 | OK: security filtering reads only the GPC ACL, but a broken GPT stops processing. v1 cannot see GPC/GPT drift | Applied: DM-23.I7 |
+| G7 | OK on AU semantics. Restricted-management AUs ignore tenant-wide app permissions, per Action; detect with `isManagementRestricted` | Applied: DM-35.I7, `[UNVERIFIED]` removed |
+| G8 | Anchor on `oid`+`tid`; `onprem_sid` is synced-only and changes on a move; immutable ID is not a reliable anchor | Applied: DM-30.I5 |
+| G9 | `securityEnabled = true` is the right test but admits some M365 and mail-enabled groups. Public groups must grant nothing | Applied: DM-36.I2, plus the AD self-membership analogue referred to T-0007 |
+
 ## Changelog
 
 - 2026-10-02 · v0 drafted (T-0006). The ad-expert review was applied (§12, 13 findings), Q3 was closed, and the status moved to `review`.
+- 2026-10-02 · v0 rework after the director's review (§12 R1–R5, N1–N3): DM-23 GpLink, Entra delegation scopes, X11 erasure, derived append-only states, SSO `directory_ref`. Q9 and Q10 were added.
