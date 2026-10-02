@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "agent": "factory-director",
+  "autoCompactWindow": 300000,
+  "env": {
+    "FACTORY_CONTEXT_BUDGET": "300000"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(factory/bin/factory *)",
+      "Bash(node *)",
+      "Bash(npm *)",
+      "Bash(npx *)",
+      "Bash(pnpm *)",
+      "Bash(go *)",
+      "Bash(make *)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git show*)",
+      "Bash(git branch*)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git switch *)",
+      "Bash(git checkout *)",
+      "Bash(git worktree *)",
+      "Bash(git merge *)",
+      "Bash(git rev-parse *)",
+      "Bash(git stash *)",
+      "Bash(docker *)",
+      "Bash(python3 *)",
+      "Bash(jq *)",
+      "Bash(ffmpeg *)",
+      "Bash(ffprobe *)",
+      "Bash(say *)",
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(wc *)",
+      "Bash(grep *)",
+      "Bash(rg *)",
+      "Bash(find *)",
+      "Bash(mkdir *)",
+      "Bash(cp *)",
+      "Bash(mv *)",
+      "Bash(touch *)",
+      "Bash(chmod +x *)"
+    ],
+    "deny": [
+      "Bash(git push --force*)",
+      "Bash(git push -f*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.mjs\"", "timeout": 10 } ] }
+    ],
+    "PreToolUse": [
+      { "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit", "hooks": [ { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.mjs\"", "timeout": 10 } ] }
+    ],
+    "PostToolUse": [
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/post-tool.mjs\"", "timeout": 10 } ] }
+    ],
+    "PreCompact": [
+      { "hooks": [ { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/pre-compact.mjs\"", "timeout": 20 } ] }
+    ],
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/stop-guard.mjs\"", "timeout": 10 } ] }
+    ],
+    "SessionEnd": [
+      { "hooks": [ { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/events.mjs\"", "timeout": 5 } ] }
+    ],
+    "StopFailure": [
+      { "hooks": [ { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/events.mjs\"", "timeout": 5 } ] }
+    ]
+  }
+}

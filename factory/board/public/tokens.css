@@ -1,0 +1,87 @@
+/* ============================================================
+   skenzeriq · design tokens — single source of truth
+   Import once; web, docs, and HTML decks inherit the system.
+   Direction: Technical & Precise · monochrome + one signal.
+   ============================================================ */
+
+:root {
+  /* ---- Typography ---------------------------------------- */
+  /* Production faces (license/self-host): Geist + Geist Mono,
+     or Neue Haas Grotesk + Berkeley Mono. Stacks fall back cleanly. */
+  --sk-font-sans: "Geist", "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
+  --sk-font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, "Cascadia Code", Consolas, monospace;
+
+  /* ---- Type scale ---------------------------------------- */
+  --sk-text-micro: 11px;  --sk-text-caption: 12px; --sk-text-sm: 13px;
+  --sk-text-body: 15px;   --sk-text-lead: 18px;    --sk-text-h4: 20px;
+  --sk-text-h3: 25px;     --sk-text-h2: 33px;      --sk-text-h1: 46px;
+  --sk-text-display: clamp(40px, 7vw, 74px);
+  --sk-tracking-tight: -0.03em;
+  --sk-tracking-label: 0.14em;
+
+  /* ---- Spatial grid (4px base) --------------------------- */
+  --sk-space-1: 4px;  --sk-space-2: 8px;  --sk-space-3: 12px; --sk-space-4: 16px;
+  --sk-space-5: 24px; --sk-space-6: 32px; --sk-space-7: 48px; --sk-space-8: 64px;
+  --sk-space-9: 96px; --sk-space-10: 128px;
+
+  /* ---- Radius (sharp, technical) ------------------------- */
+  --sk-radius-0: 0px; --sk-radius-1: 2px; --sk-radius-2: 4px; --sk-radius-3: 6px;
+
+  /* ---- Motion -------------------------------------------- */
+  --sk-ease: cubic-bezier(.2,.7,.2,1);
+  --sk-dur-fast: 150ms; --sk-dur: 220ms;
+
+  /* ---- Color · LIGHT (paper) is the base ----------------- */
+  --sk-ink: #FFFFFF;
+  --sk-surface-1: #FAFAFA;
+  --sk-surface-2: #F3F3F5;
+  --sk-line: #E6E6EC;
+  --sk-line-strong: #D2D2DC;
+  --sk-text-color: #0B0B0E;
+  --sk-text-2: #3C3C48;
+  --sk-muted: #74748A;
+  --sk-accent: #5A46F0;         /* tuned for AA on paper */
+  --sk-accent-2: #6E5BFF;
+  --sk-accent-soft: rgba(110, 91, 255, 0.10);
+  --sk-on-accent: #FFFFFF;
+  --sk-ok: #1E9E6A;
+  --sk-warn: #B87914;
+  --sk-crit: #D33A3F;
+}
+
+/* ---- Color · DARK (ink) — follows OS preference ---------- */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --sk-ink: #0A0A0C;
+    --sk-surface-1: #101014;
+    --sk-surface-2: #16161C;
+    --sk-line: #24242C;
+    --sk-line-strong: #34343E;
+    --sk-text-color: #F4F4F6;
+    --sk-text-2: #B7B7C4;
+    --sk-muted: #76768A;
+    --sk-accent: #6E5BFF;
+    --sk-accent-2: #9C8CFF;
+    --sk-accent-soft: rgba(110, 91, 255, 0.16);
+    --sk-on-accent: #FFFFFF;
+    --sk-ok: #35C08A;
+    --sk-warn: #E0A73B;
+    --sk-crit: #E5484D;
+  }
+}
+
+/* ---- Explicit overrides (win over the media query both ways) ---- */
+:root[data-theme="dark"] {
+  --sk-ink: #0A0A0C; --sk-surface-1: #101014; --sk-surface-2: #16161C;
+  --sk-line: #24242C; --sk-line-strong: #34343E; --sk-text-color: #F4F4F6;
+  --sk-text-2: #B7B7C4; --sk-muted: #76768A; --sk-accent: #6E5BFF;
+  --sk-accent-2: #9C8CFF; --sk-accent-soft: rgba(110,91,255,0.16);
+  --sk-on-accent: #FFFFFF; --sk-ok: #35C08A; --sk-warn: #E0A73B; --sk-crit: #E5484D;
+}
+:root[data-theme="light"] {
+  --sk-ink: #FFFFFF; --sk-surface-1: #FAFAFA; --sk-surface-2: #F3F3F5;
+  --sk-line: #E6E6EC; --sk-line-strong: #D2D2DC; --sk-text-color: #0B0B0E;
+  --sk-text-2: #3C3C48; --sk-muted: #74748A; --sk-accent: #5A46F0;
+  --sk-accent-2: #6E5BFF; --sk-accent-soft: rgba(110,91,255,0.10);
+  --sk-on-accent: #FFFFFF; --sk-ok: #1E9E6A; --sk-warn: #B87914; --sk-crit: #D33A3F;
+}

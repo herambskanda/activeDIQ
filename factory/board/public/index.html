@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>activeDIQ factory</title>
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='5' y='2' width='6' height='12' rx='1' fill='%235A46F0'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="styles.css">
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="chrome">
+  <div class="wrap chrome-row">
+    <a class="brand" href="#overview" aria-label="activeDIQ factory, go to Overview">
+      <span class="brand-name">activeDIQ</span><span class="brand-sub">factory</span><span class="cursor blink" aria-hidden="true"></span>
+    </a>
+    <div class="status">
+      <span id="pill" class="pill" role="status" data-state="connecting"><span class="pill-dot" aria-hidden="true"></span><span id="pill-label">Connecting</span></span>
+      <span id="updated" class="updated mono"></span>
+      <span id="fixture-chip" class="chip fixture" hidden>fixture data</span>
+    </div>
+    <div class="chrome-actions">
+      <button id="btn-pause" class="btn" type="button" data-act="pause" disabled>
+        <svg class="ic" aria-hidden="true"><use href="#i-pause"/></svg><span>Pause</span>
+      </button>
+      <button id="btn-theme" class="btn icon" type="button" data-act="theme" aria-label="Switch theme">
+        <svg class="ic" aria-hidden="true"><use href="#i-moon"/></svg>
+      </button>
+    </div>
+  </div>
+  <div class="wrap">
+    <nav class="tabs" id="tabs" role="tablist" aria-label="Sections">
+      <button class="tab" role="tab" type="button" id="tab-overview" data-act="tab" data-tab="overview" aria-controls="panel-overview">Overview</button>
+      <button class="tab" role="tab" type="button" id="tab-board" data-act="tab" data-tab="board" aria-controls="panel-board">Board</button>
+      <button class="tab" role="tab" type="button" id="tab-decisions" data-act="tab" data-tab="decisions" aria-controls="panel-decisions">Decisions<span class="tab-count mono" id="count-decisions" hidden></span></button>
+      <button class="tab" role="tab" type="button" id="tab-library" data-act="tab" data-tab="library" aria-controls="panel-library">Library</button>
+      <button class="tab" role="tab" type="button" id="tab-demos" data-act="tab" data-tab="demos" aria-controls="panel-demos">Demos</button>
+    </nav>
+  </div>
+</header>
+
+<div id="banner" class="banner" hidden>
+  <div class="wrap banner-in">
+    <svg class="ic" aria-hidden="true"><use href="#i-alert"/></svg>
+    <span id="banner-text"></span>
+    <button class="linkbtn" type="button" data-act="retry">Retry now</button>
+  </div>
+</div>
+
+<main id="main" class="wrap main">
+  <p id="boot" class="boot mono">Connecting to the board…</p>
+
+  <!-- ============ Overview ============ -->
+  <section id="panel-overview" class="panel" role="tabpanel" aria-labelledby="tab-overview" tabindex="-1" hidden>
+    <h1 class="sr-only">Overview</h1>
+    <div id="glance" class="glance"></div>
+    <div class="ov">
+      <div class="col col-a">
+        <section class="sec sec-needs" aria-labelledby="h-needs">
+          <header class="sec-h"><h2 id="h-needs">Needs you</h2><span class="count mono" id="needs-count"></span></header>
+          <div id="needs-list" class="stack"></div>
+        </section>
+        <section class="sec sec-running" aria-labelledby="h-running">
+          <header class="sec-h"><h2 id="h-running">Running now</h2><span class="count mono" id="running-count"></span></header>
+          <div id="running-note" class="note-line"></div>
+          <div id="running-list" class="stack"></div>
+          <div id="session-wrap" hidden>
+            <h3 class="sub">Interactive sessions</h3>
+            <ul id="session-list" class="sess-list"></ul>
+          </div>
+        </section>
+        <section class="sec sec-digest" aria-labelledby="h-digest">
+          <header class="sec-h"><h2 id="h-digest">Today’s digest</h2><span class="count mono" id="digest-date"></span></header>
+          <div id="digest-body" class="card digest md"></div>
+        </section>
+      </div>
+      <div class="col col-b">
+        <section class="sec sec-miles" aria-labelledby="h-miles">
+          <header class="sec-h"><h2 id="h-miles">Milestones</h2></header>
+          <div id="milestone-list" class="stack"></div>
+        </section>
+        <section class="sec sec-activity" aria-labelledby="h-activity">
+          <header class="sec-h"><h2 id="h-activity">Activity</h2></header>
+          <ol id="activity-list" class="activity"></ol>
+        </section>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ Board ============ -->
+  <section id="panel-board" class="panel" role="tabpanel" aria-labelledby="tab-board" tabindex="-1" hidden>
+    <h1 class="sr-only">Board</h1>
+    <form class="filters" id="filters" role="search" aria-label="Filter tickets" onsubmit="return false">
+      <div class="field"><label for="f-milestone">Milestone</label><select id="f-milestone" data-filter="milestone"></select></div>
+      <div class="field"><label for="f-epic">Epic</label><select id="f-epic" data-filter="epic"></select></div>
+      <div class="field"><label for="f-owner">Owner</label><select id="f-owner" data-filter="owner"></select></div>
+      <div class="field grow"><label for="f-q">Search</label><input id="f-q" type="search" data-filter="q" placeholder="Title, id, tag…" autocomplete="off"></div>
+      <div class="filters-end"><span id="f-count" class="mono muted"></span><button type="button" class="linkbtn" data-act="filters-clear" id="f-clear" hidden>Clear</button></div>
+    </form>
+    <div id="board-cols" class="board-cols" tabindex="-1"></div>
+  </section>
+
+  <!-- ============ Decisions ============ -->
+  <section id="panel-decisions" class="panel" role="tabpanel" aria-labelledby="tab-decisions" tabindex="-1" hidden>
+    <h1 class="sr-only">Decisions</h1>
+    <div id="dec-list" class="stack dec-list"></div>
+  </section>
+
+  <!-- ============ Library ============ -->
+  <section id="panel-library" class="panel" role="tabpanel" aria-labelledby="tab-library" tabindex="-1" hidden>
+    <h1 class="sr-only">Library</h1>
+    <div class="lib" id="lib" data-view="list">
+      <aside class="lib-side" aria-label="Documents">
+        <div class="field">
+          <label for="lib-q" class="sr-only">Search documents</label>
+          <div class="search"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg><input id="lib-q" type="search" placeholder="Search library" autocomplete="off"></div>
+        </div>
+        <div id="lib-list" class="lib-list"></div>
+        <p id="lib-empty" class="muted pad" hidden>No documents match.</p>
+      </aside>
+      <article class="lib-reader" id="lib-reader" aria-live="off"></article>
+    </div>
+  </section>
+
+  <!-- ============ Demos ============ -->
+  <section id="panel-demos" class="panel" role="tabpanel" aria-labelledby="tab-demos" tabindex="-1" hidden>
+    <h1 class="sr-only">Demos</h1>
+    <div id="demo-list" class="stack demo-list"></div>
+  </section>
+</main>
+
+<footer class="wrap foot">
+  <span class="mono muted">activeDIQ factory board</span>
+  <button class="linkbtn" type="button" data-act="feedback" data-target="general" data-label="the factory">Send general feedback</button>
+</footer>
+
+<!-- ============ Ticket drawer ============ -->
+<dialog id="drawer" class="drawer" aria-labelledby="dr-title">
+  <div class="dr-in">
+    <header class="dr-head">
+      <div class="dr-ids" id="dr-ids"></div>
+      <button class="btn icon" type="button" data-act="close-drawer" aria-label="Close ticket">
+        <svg class="ic" aria-hidden="true"><use href="#i-x"/></svg>
+      </button>
+    </header>
+    <div class="dr-scroll" id="dr-scroll">
+      <h2 id="dr-title" class="dr-title"></h2>
+      <div id="dr-live"></div>
+      <div id="dr-body"></div>
+    </div>
+    <footer class="dr-foot" id="dr-foot"></footer>
+  </div>
+</dialog>
+
+<!-- ============ Feedback dialog ============ -->
+<dialog id="fb-dialog" class="modal" aria-labelledby="fb-title">
+  <form id="fb-form" class="modal-in" autocomplete="off">
+    <header class="modal-head">
+      <h2 id="fb-title">Give feedback</h2>
+      <button class="btn icon" type="button" data-act="close-fb" aria-label="Close">
+        <svg class="ic" aria-hidden="true"><use href="#i-x"/></svg>
+      </button>
+    </header>
+    <p class="mono muted" id="fb-target"></p>
+    <fieldset class="seg-radio" id="fb-sent">
+      <legend>How does it land? <span class="muted">optional</span></legend>
+      <label><input type="radio" name="fb-sent" value="love" data-sent="x"><span>Love it</span></label>
+      <label><input type="radio" name="fb-sent" value="ok" data-sent="x"><span>OK</span></label>
+      <label><input type="radio" name="fb-sent" value="change" data-sent="x"><span>Change it</span></label>
+    </fieldset>
+    <div class="field">
+      <label for="fb-text">What should the factory know?</label>
+      <textarea id="fb-text" rows="5" data-fk="fb-text" placeholder="Plain words are fine. The factory triages this into tickets."></textarea>
+    </div>
+    <p class="form-err" id="fb-err" role="alert" hidden></p>
+    <footer class="modal-foot">
+      <button class="btn" type="button" data-act="close-fb">Cancel</button>
+      <button class="btn primary" type="submit">Send feedback</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- ============ Toasts (popover = top layer, so toasts stay above open dialogs) ============ -->
+<div id="toasts" class="toasts" popover="manual" role="status" aria-live="polite" aria-atomic="false"></div>
+
+<!-- ============ Icons ============ -->
+<svg class="sprite" width="0" height="0" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="i-lock" viewBox="0 0 16 16"><rect x="3" y="7" width="10" height="7" rx="1"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/></symbol>
+    <symbol id="i-check" viewBox="0 0 16 16"><path d="M3 8.5l3.2 3L13 4.5"/></symbol>
+    <symbol id="i-x" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></symbol>
+    <symbol id="i-minus" viewBox="0 0 16 16"><path d="M3.5 8h9"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 16 16"><path d="M6 4l4 4-4 4"/></symbol>
+    <symbol id="i-external" viewBox="0 0 16 16"><path d="M9 3h4v4M13 3L7.5 8.5M12 9.5V13H3V4h3.5"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.8"/><path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 16 16"><path d="M13 9.5A5.5 5.5 0 0 1 6.5 3 5.5 5.5 0 1 0 13 9.5z"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 16 16"><path d="M5.5 3.5v9M10.5 3.5v9"/></symbol>
+    <symbol id="i-play" viewBox="0 0 16 16"><path d="M5 3.5l7 4.5-7 4.5z"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 16 16"><path d="M8 1.8l5 1.8v4c0 3-2.2 5-5 6.4C5.2 12.6 3 10.6 3 7.6v-4z"/></symbol>
+    <symbol id="i-doc" viewBox="0 0 16 16"><path d="M4 1.8h5l3 3V14.2H4z"/><path d="M9 1.8v3h3"/></symbol>
+    <symbol id="i-msg" viewBox="0 0 16 16"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 16 16"><path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/></symbol>
+    <symbol id="i-video" viewBox="0 0 16 16"><rect x="1.8" y="3.5" width="12.4" height="9" rx="1"/><path d="M6.5 6l3.5 2-3.5 2z"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 16 16"><path d="M8 2l6.5 11.5h-13z"/><path d="M8 6.5v3M8 11.6v.01"/></symbol>
+    <symbol id="i-arrow-left" viewBox="0 0 16 16"><path d="M13 8H3M7 4L3 8l4 4"/></symbol>
+    <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4"/><path d="M10 10l3.5 3.5"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.3 1.5"/></symbol>
+    <symbol id="i-bolt" viewBox="0 0 16 16"><path d="M9 1.5L3.5 9H8l-1 5.5L12.5 7H8z"/></symbol>
+    <symbol id="i-flag" viewBox="0 0 16 16"><path d="M4 14V2.5M4 3h8l-1.6 2.8L12 8.5H4"/></symbol>
+  </defs>
+</svg>
+</body>
+</html>

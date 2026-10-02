@@ -1,0 +1,4514 @@
+{
+ "generated": "2026-10-02T14:30:00.000Z",
+ "product": "activeDIQ",
+ "control": {
+  "paused": false,
+  "reason": null,
+  "by": null,
+  "ts": "2026-09-29T14:30:00.000Z"
+ },
+ "dispatcher": {
+  "alive": true,
+  "heartbeat": "2026-10-02T14:29:54.000Z",
+  "active": [
+   "R-20261002-140800-9e37",
+   "R-20261002-134900-3c6e"
+  ],
+  "backoff_until": null,
+  "runs_today": {
+   "date": "2026-10-02",
+   "count": 11
+  },
+  "last_action": "launched R-20261002-134900-3c6e"
+ },
+ "milestones": [
+  {
+   "id": "M1",
+   "name": "Connect, read, report",
+   "goal": "Connect to a lab domain, browse users, groups and OUs in the browser, run three parity reports, and see every change in an audit trail.",
+   "status": "active",
+   "target": "2026-11-13T00:00:00Z",
+   "demo": {
+    "script": "factory/demos/M1/script.md",
+    "video": null,
+    "url": "https://demo.activediq.example/"
+   },
+   "created": "2026-09-20T14:30:00.000Z",
+   "updated": "2026-10-02T13:00:00.000Z"
+  },
+  {
+   "id": "M2",
+   "name": "Bulk management and delegation",
+   "goal": "Create and modify users in bulk from CSV with templates and an impact preview, with delegated help-desk roles and approval workflows.",
+   "status": "planned",
+   "target": "2026-12-18T00:00:00Z",
+   "demo": {
+    "script": null,
+    "video": null,
+    "url": null
+   },
+   "created": "2026-09-20T14:30:00.000Z",
+   "updated": "2026-09-29T14:30:00.000Z"
+  }
+ ],
+ "epics": [
+  {
+   "id": "E-001",
+   "title": "Foundations: research, ADRs, tooling",
+   "goal": "Everything the build stands on.",
+   "milestone": "M1",
+   "status": "active",
+   "parity_refs": [],
+   "created": "2026-09-20T14:30:00.000Z",
+   "updated": "2026-09-30T14:30:00.000Z"
+  },
+  {
+   "id": "E-002",
+   "title": "Directory connectors",
+   "goal": "Read and change-track AD safely.",
+   "milestone": "M1",
+   "status": "active",
+   "parity_refs": [],
+   "created": "2026-09-20T14:30:00.000Z",
+   "updated": "2026-09-30T14:30:00.000Z"
+  },
+  {
+   "id": "E-003",
+   "title": "Reports engine",
+   "goal": "Query model, exports, three parity reports.",
+   "milestone": "M1",
+   "status": "active",
+   "parity_refs": [],
+   "created": "2026-09-20T14:30:00.000Z",
+   "updated": "2026-09-30T14:30:00.000Z"
+  },
+  {
+   "id": "E-004",
+   "title": "Web console shell",
+   "goal": "Navigation, theming, object browser, audit viewer.",
+   "milestone": "M1",
+   "status": "active",
+   "parity_refs": [],
+   "created": "2026-09-20T14:30:00.000Z",
+   "updated": "2026-09-30T14:30:00.000Z"
+  },
+  {
+   "id": "E-005",
+   "title": "Bulk management",
+   "goal": "CSV import, templates, impact preview.",
+   "milestone": "M2",
+   "status": "planned",
+   "parity_refs": [],
+   "created": "2026-09-20T14:30:00.000Z",
+   "updated": "2026-09-30T14:30:00.000Z"
+  },
+  {
+   "id": "E-006",
+   "title": "Delegation and workflows",
+   "goal": "Help-desk roles, approvals.",
+   "milestone": "M2",
+   "status": "planned",
+   "parity_refs": [],
+   "created": "2026-09-20T14:30:00.000Z",
+   "updated": "2026-09-30T14:30:00.000Z"
+  }
+ ],
+ "tickets": [
+  {
+   "id": "T-0001",
+   "title": "ADR-0001 draft: stack options and fitness functions",
+   "type": "spec",
+   "status": "done",
+   "priority": "P1",
+   "owner": "solution-architect",
+   "epic": "E-001",
+   "milestone": "M1",
+   "depends_on": [],
+   "decisions": [],
+   "tags": [],
+   "parity_refs": [],
+   "summary": "Lays out the stack options with the fitness function each would need to run in CI before the ADR can be accepted.",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-09-26T14:30:00.000Z"
+  },
+  {
+   "id": "T-0002",
+   "title": "Feature inventory: ManageEngine ADManager Plus",
+   "type": "research",
+   "status": "done",
+   "priority": "P1",
+   "owner": "market-analyst",
+   "epic": "E-001",
+   "milestone": "M1",
+   "depends_on": [],
+   "decisions": [],
+   "tags": [
+    "research"
+   ],
+   "parity_refs": [],
+   "summary": "Sourced inventory of the ADManager Plus feature surface, every claim cited or tagged [UNVERIFIED].",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-09-27T14:30:00.000Z"
+  },
+  {
+   "id": "T-0003",
+   "title": "AD object domain model and glossary",
+   "type": "docs",
+   "status": "done",
+   "priority": "P2",
+   "owner": "ad-expert",
+   "epic": "E-001",
+   "milestone": "M1",
+   "depends_on": [],
+   "decisions": [],
+   "tags": [],
+   "parity_refs": [],
+   "summary": "Users, groups, OUs, GPOs, trusts and the attributes we touch, with the semantics that bite (userAccountControl, pwdLastSet, tombstones).",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-09-27T14:30:00.000Z"
+  },
+  {
+   "id": "T-0004",
+   "title": "Safe LDAP filter and DN builder",
+   "type": "build",
+   "status": "done",
+   "priority": "P0",
+   "owner": "directory-engineer",
+   "epic": "E-002",
+   "milestone": "M1",
+   "depends_on": [],
+   "decisions": [],
+   "tags": [
+    "security-sensitive"
+   ],
+   "parity_refs": [],
+   "summary": "The only way the product builds LDAP filters and DNs: typed, escaped, tested against injection corpora.",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-09-29T14:30:00.000Z"
+  },
+  {
+   "id": "T-0005",
+   "title": "Design tokens wired into web component baseline",
+   "type": "design",
+   "status": "done",
+   "priority": "P2",
+   "owner": "component-designer",
+   "epic": "E-004",
+   "milestone": "M1",
+   "depends_on": [],
+   "decisions": [],
+   "tags": [],
+   "parity_refs": [],
+   "summary": "Button, input, table, drawer and toast primitives on the skenzeriq tokens, light and dark.",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-09-29T14:30:00.000Z"
+  },
+  {
+   "id": "T-0006",
+   "title": "Dispatcher smoke test and lab bootstrap",
+   "type": "ops",
+   "status": "done",
+   "priority": "P2",
+   "owner": "devops-engineer",
+   "epic": "E-001",
+   "milestone": "M1",
+   "depends_on": [],
+   "decisions": [],
+   "tags": [],
+   "parity_refs": [],
+   "summary": "A reproducible lab: one command brings up the factory runtime and a throwaway directory.",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-09-28T14:30:00.000Z"
+  },
+  {
+   "id": "T-0007",
+   "title": "ADR-0002: audit event schema",
+   "type": "spec",
+   "status": "done",
+   "priority": "P1",
+   "owner": "solution-architect",
+   "epic": "E-001",
+   "milestone": "M1",
+   "depends_on": [],
+   "decisions": [],
+   "tags": [],
+   "parity_refs": [],
+   "summary": "The shape of an audit event: actor, target DN, change set, source DC, correlation id.",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-09-30T14:30:00.000Z"
+  },
+  {
+   "id": "T-0029",
+   "title": "Seed knowledge-base structure and templates",
+   "type": "chore",
+   "status": "done",
+   "priority": "P3",
+   "owner": "project-manager",
+   "epic": "E-001",
+   "milestone": "M1",
+   "depends_on": [],
+   "decisions": [],
+   "tags": [],
+   "parity_refs": [],
+   "summary": "Folders, frontmatter and status ladder in place.",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-09-25T14:30:00.000Z"
+  },
+  {
+   "id": "T-0030",
+   "title": "Licence register: initial dependency review",
+   "type": "research",
+   "status": "done",
+   "priority": "P2",
+   "owner": "market-analyst",
+   "epic": "E-001",
+   "milestone": "M1",
+   "depends_on": [],
+   "decisions": [],
+   "tags": [],
+   "parity_refs": [],
+   "summary": "Copyleft exposure reviewed for the first dependency candidates.",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-09-26T12:30:00.000Z"
+  },
+  {
+   "id": "T-0031",
+   "title": "Brand token sync script",
+   "type": "chore",
+   "status": "done",
+   "priority": "P3",
+   "owner": "component-designer",
+   "epic": "E-004",
+   "milestone": "M1",
+   "depends_on": [],
+   "decisions": [],
+   "tags": [],
+   "parity_refs": [],
+   "summary": "tokens.css is copied from the design system, never edited in place.",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-09-26T09:30:00.000Z"
+  },
+  {
+   "id": "T-0032",
+   "title": "PRD: directory management v1",
+   "type": "spec",
+   "status": "done",
+   "priority": "P1",
+   "owner": "product-manager",
+   "epic": "E-001",
+   "milestone": "M1",
+   "depends_on": [],
+   "decisions": [],
+   "tags": [],
+   "parity_refs": [],
+   "summary": "Personas, jobs to be done and the v1 requirement set.",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-09-27T11:10:00.000Z"
+  },
+  {
+   "id": "T-0033",
+   "title": "Parity matrix skeleton",
+   "type": "docs",
+   "status": "done",
+   "priority": "P2",
+   "owner": "market-analyst",
+   "epic": "E-001",
+   "milestone": "M1",
+   "depends_on": [
+    "T-0002"
+   ],
+   "decisions": [],
+   "tags": [],
+   "parity_refs": [],
+   "summary": "Rows for every ADManager Plus capability group with status columns.",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-09-28T13:00:00.000Z"
+  },
+  {
+   "id": "T-0034",
+   "title": "Naming conventions for tickets, branches and events",
+   "type": "docs",
+   "status": "done",
+   "priority": "P3",
+   "owner": "project-manager",
+   "epic": "E-001",
+   "milestone": "M1",
+   "depends_on": [],
+   "decisions": [],
+   "tags": [],
+   "parity_refs": [],
+   "summary": "One page standards doc.",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-09-28T07:50:00.000Z"
+  },
+  {
+   "id": "T-0035",
+   "title": "Threat model: connector service account scope",
+   "type": "spec",
+   "status": "done",
+   "priority": "P1",
+   "owner": "security-architect",
+   "epic": "E-002",
+   "milestone": "M1",
+   "depends_on": [
+    "T-0003"
+   ],
+   "decisions": [],
+   "tags": [
+    "security-sensitive"
+   ],
+   "parity_refs": [],
+   "summary": "Least-privilege model for the account the connectors run as.",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-09-29T13:30:00.000Z"
+  },
+  {
+   "id": "T-0036",
+   "title": "Table pattern: server-side paging contract",
+   "type": "spec",
+   "status": "done",
+   "priority": "P2",
+   "owner": "solution-architect",
+   "epic": "E-004",
+   "milestone": "M1",
+   "depends_on": [],
+   "decisions": [],
+   "tags": [],
+   "parity_refs": [],
+   "summary": "Cursor paging contract shared by every list endpoint.",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-09-30T09:30:00.000Z"
+  },
+  {
+   "id": "T-0037",
+   "title": "Lab: single-DC forest image",
+   "type": "ops",
+   "status": "done",
+   "priority": "P2",
+   "owner": "devops-engineer",
+   "epic": "E-002",
+   "milestone": "M1",
+   "depends_on": [
+    "T-0006"
+   ],
+   "decisions": [],
+   "tags": [],
+   "parity_refs": [],
+   "summary": "A disposable single-domain-controller forest for connector tests.",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-09-30T14:00:00.000Z"
+  },
+  {
+   "id": "T-0038",
+   "title": "Interview guide: help-desk admin workflow",
+   "type": "research",
+   "status": "done",
+   "priority": "P3",
+   "owner": "product-manager",
+   "epic": "E-005",
+   "milestone": "M2",
+   "depends_on": [],
+   "decisions": [],
+   "tags": [],
+   "parity_refs": [],
+   "summary": "Questions for validating the bulk and delegation flows.",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-10-01T06:10:00.000Z"
+  },
+  {
+   "id": "T-0039",
+   "title": "Digest template and first manual digest",
+   "type": "meta",
+   "status": "done",
+   "priority": "P3",
+   "owner": "project-manager",
+   "epic": "E-001",
+   "milestone": "M1",
+   "depends_on": [],
+   "decisions": [],
+   "tags": [],
+   "parity_refs": [],
+   "summary": "Five-line daily digest.",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-10-01T12:30:00.000Z"
+  },
+  {
+   "id": "T-0008",
+   "title": "LDAP connection pool with TLS channel binding",
+   "type": "build",
+   "status": "qa",
+   "priority": "P0",
+   "owner": "directory-engineer",
+   "epic": "E-002",
+   "milestone": "M1",
+   "depends_on": [
+    "T-0004"
+   ],
+   "decisions": [],
+   "tags": [
+    "security-sensitive"
+   ],
+   "parity_refs": [],
+   "summary": "Pooled, health-checked LDAPS connections with channel binding and bounded retries.",
+   "stage_role": "qa-verifier",
+   "effort_override": null,
+   "attempts": 1,
+   "handoff": {
+    "pending": true,
+    "latest": "factory/handoffs/T-0008/20261001-091200.md"
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-10-02T12:55:00.000Z"
+  },
+  {
+   "id": "T-0009",
+   "title": "Users list API (read-only, paged)",
+   "type": "build",
+   "status": "review",
+   "priority": "P1",
+   "owner": "api-engineer",
+   "epic": "E-002",
+   "milestone": "M1",
+   "depends_on": [
+    "T-0004",
+    "T-0036"
+   ],
+   "decisions": [],
+   "tags": [],
+   "parity_refs": [
+    "ADM-014"
+   ],
+   "summary": "GET /users with cursor paging, attribute selection and server-side filter.",
+   "stage_role": "code-reviewer",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-10-02T13:50:00.000Z"
+  },
+  {
+   "id": "T-0010",
+   "title": "Console shell: navigation, theming, auth gate",
+   "type": "build",
+   "status": "review",
+   "priority": "P1",
+   "owner": "frontend-engineer",
+   "epic": "E-004",
+   "milestone": "M1",
+   "depends_on": [
+    "T-0005"
+   ],
+   "decisions": [],
+   "tags": [
+    "security-sensitive"
+   ],
+   "parity_refs": [],
+   "summary": "The app frame: nav, theme toggle, session handling and a sign-in gate.",
+   "stage_role": "security-architect",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-10-02T14:08:00.000Z"
+  },
+  {
+   "id": "T-0011",
+   "title": "Report engine: query model and CSV export",
+   "type": "build",
+   "status": "in_progress",
+   "priority": "P1",
+   "owner": "reporting-engineer",
+   "epic": "E-003",
+   "milestone": "M1",
+   "depends_on": [
+    "T-0009"
+   ],
+   "decisions": [],
+   "tags": [],
+   "parity_refs": [],
+   "summary": "A declarative report definition that compiles to a paged directory query, with CSV export.",
+   "stage_role": "reporting-engineer",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-10-02T14:22:00.000Z"
+  },
+  {
+   "id": "T-0012",
+   "title": "Change-tracking collector (USN-based)",
+   "type": "build",
+   "status": "in_progress",
+   "priority": "P0",
+   "owner": "directory-engineer",
+   "epic": "E-002",
+   "milestone": "M1",
+   "depends_on": [
+    "T-0008"
+   ],
+   "decisions": [],
+   "tags": [
+    "security-sensitive"
+   ],
+   "parity_refs": [],
+   "summary": "Follow uSNChanged per DC, tolerate gaps and replays, emit audit events per ADR-0002.",
+   "stage_role": "directory-engineer",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-10-02T14:27:00.000Z"
+  },
+  {
+   "id": "T-0013",
+   "title": "Threat model: Tier-0 credential handling",
+   "type": "spec",
+   "status": "in_progress",
+   "priority": "P1",
+   "owner": "security-architect",
+   "epic": "E-001",
+   "milestone": "M1",
+   "depends_on": [],
+   "decisions": [],
+   "tags": [
+    "security-sensitive"
+   ],
+   "parity_refs": [],
+   "summary": "Where secrets live, how they move, and what a compromised web tier can reach.",
+   "stage_role": "security-architect",
+   "effort_override": null,
+   "attempts": 1,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-10-02T13:35:00.000Z"
+  },
+  {
+   "id": "T-0014",
+   "title": "Report: inactive users",
+   "type": "build",
+   "status": "ready",
+   "priority": "P2",
+   "owner": "reporting-engineer",
+   "epic": "E-003",
+   "milestone": "M1",
+   "depends_on": [
+    "T-0011"
+   ],
+   "decisions": [],
+   "tags": [],
+   "parity_refs": [
+    "ADM-031"
+   ],
+   "summary": "Users with no logon within a policy window, using the replicated lastLogonTimestamp semantics.",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-10-02T11:30:00.000Z"
+  },
+  {
+   "id": "T-0015",
+   "title": "Report: password expiry",
+   "type": "build",
+   "status": "ready",
+   "priority": "P2",
+   "owner": "reporting-engineer",
+   "epic": "E-003",
+   "milestone": "M1",
+   "depends_on": [
+    "T-0011"
+   ],
+   "decisions": [],
+   "tags": [],
+   "parity_refs": [
+    "ADM-032"
+   ],
+   "summary": "Who is about to expire, per domain and fine-grained password policy.",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-10-02T11:10:00.000Z"
+  },
+  {
+   "id": "T-0016",
+   "title": "OU tree browser component",
+   "type": "build",
+   "status": "ready",
+   "priority": "P2",
+   "owner": "frontend-engineer",
+   "epic": "E-004",
+   "milestone": "M1",
+   "depends_on": [
+    "T-0010"
+   ],
+   "decisions": [],
+   "tags": [],
+   "parity_refs": [],
+   "summary": "Keyboard-navigable lazy tree for OUs and containers.",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-10-02T10:30:00.000Z"
+  },
+  {
+   "id": "T-0017",
+   "title": "AD test lab: two-DC forest fixtures",
+   "type": "test",
+   "status": "ready",
+   "priority": "P1",
+   "owner": "test-engineer",
+   "epic": "E-002",
+   "milestone": "M1",
+   "depends_on": [
+    "T-0037"
+   ],
+   "decisions": [],
+   "tags": [],
+   "parity_refs": [],
+   "summary": "Seeded multi-DC lab for replication-lag and tombstone tests.",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-10-02T09:30:00.000Z"
+  },
+  {
+   "id": "T-0022",
+   "title": "Console density and table row heights",
+   "type": "design",
+   "status": "ready",
+   "priority": "P2",
+   "owner": "product-designer",
+   "epic": "E-004",
+   "milestone": "M1",
+   "depends_on": [],
+   "decisions": [
+    "D-0002"
+   ],
+   "tags": [],
+   "parity_refs": [],
+   "summary": "Settle comfortable versus compact as the table default, with previews.",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-10-02T09:10:00.000Z"
+  },
+  {
+   "id": "T-0018",
+   "title": "Report scheduler and email delivery",
+   "type": "build",
+   "status": "backlog",
+   "priority": "P3",
+   "owner": "reporting-engineer",
+   "epic": "E-003",
+   "milestone": "M1",
+   "depends_on": [
+    "T-0011"
+   ],
+   "decisions": [],
+   "tags": [],
+   "parity_refs": [
+    "ADM-040"
+   ],
+   "summary": "Run a saved report on a schedule and mail it.",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-10-01T14:30:00.000Z"
+  },
+  {
+   "id": "T-0019",
+   "title": "Audit trail viewer (read-only)",
+   "type": "build",
+   "status": "backlog",
+   "priority": "P2",
+   "owner": "frontend-engineer",
+   "epic": "E-004",
+   "milestone": "M1",
+   "depends_on": [
+    "T-0007",
+    "T-0012"
+   ],
+   "decisions": [],
+   "tags": [],
+   "parity_refs": [],
+   "summary": "Filterable audit feed on every object and a global view.",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-10-01T14:30:00.000Z"
+  },
+  {
+   "id": "T-0020",
+   "title": "Deployment packaging: installer vs container",
+   "type": "ops",
+   "status": "blocked",
+   "priority": "P1",
+   "owner": "devops-engineer",
+   "epic": "E-001",
+   "milestone": "M1",
+   "depends_on": [
+    "T-0006"
+   ],
+   "decisions": [
+    "D-0001"
+   ],
+   "tags": [],
+   "parity_refs": [],
+   "summary": "Package the product for the chosen v1 deployment model. Waiting on the deployment decision.",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-10-02T09:30:00.000Z"
+  },
+  {
+   "id": "T-0021",
+   "title": "Entra ID connector spike",
+   "type": "spike",
+   "status": "blocked",
+   "priority": "P2",
+   "owner": "directory-engineer",
+   "epic": "E-002",
+   "milestone": "M1",
+   "depends_on": [],
+   "decisions": [],
+   "tags": [],
+   "parity_refs": [],
+   "summary": "Feasibility of reading Entra users and groups via Graph. Needs a test tenant.",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-10-01T10:30:00.000Z"
+  },
+  {
+   "id": "T-0023",
+   "title": "Spec: bulk user creation from CSV with templates",
+   "type": "spec",
+   "status": "backlog",
+   "priority": "P1",
+   "owner": "product-manager",
+   "epic": "E-005",
+   "milestone": "M2",
+   "depends_on": [],
+   "decisions": [],
+   "tags": [],
+   "parity_refs": [
+    "ADM-050"
+   ],
+   "summary": "Templates, field mapping, validation and the review step.",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-09-30T14:30:00.000Z"
+  },
+  {
+   "id": "T-0024",
+   "title": "Spec: delegated help-desk roles",
+   "type": "spec",
+   "status": "backlog",
+   "priority": "P2",
+   "owner": "product-manager",
+   "epic": "E-006",
+   "milestone": "M2",
+   "depends_on": [],
+   "decisions": [],
+   "tags": [
+    "security-sensitive"
+   ],
+   "parity_refs": [],
+   "summary": "Role model, scopes by OU and what a help-desk admin may never do.",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-09-30T14:30:00.000Z"
+  },
+  {
+   "id": "T-0025",
+   "title": "Approval workflow engine: design",
+   "type": "spec",
+   "status": "backlog",
+   "priority": "P2",
+   "owner": "solution-architect",
+   "epic": "E-006",
+   "milestone": "M2",
+   "depends_on": [],
+   "decisions": [],
+   "tags": [],
+   "parity_refs": [],
+   "summary": "Request, approve, execute, audit.",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-09-30T14:30:00.000Z"
+  },
+  {
+   "id": "T-0026",
+   "title": "CSV import wizard UX flow",
+   "type": "design",
+   "status": "backlog",
+   "priority": "P2",
+   "owner": "product-designer",
+   "epic": "E-005",
+   "milestone": "M2",
+   "depends_on": [
+    "T-0023"
+   ],
+   "decisions": [],
+   "tags": [],
+   "parity_refs": [],
+   "summary": "Wizard with a review step and an impact preview.",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-10-01T02:30:00.000Z"
+  },
+  {
+   "id": "T-0027",
+   "title": "Impact preview pattern for bulk changes",
+   "type": "design",
+   "status": "backlog",
+   "priority": "P1",
+   "owner": "product-designer",
+   "epic": "E-005",
+   "milestone": "M2",
+   "depends_on": [],
+   "decisions": [],
+   "tags": [],
+   "parity_refs": [],
+   "summary": "Dry run first: what changes, for whom, reversible or not.",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-10-01T02:30:00.000Z"
+  },
+  {
+   "id": "T-0028",
+   "title": "Evaluate legacy LDAP client library",
+   "type": "spike",
+   "status": "cancelled",
+   "priority": "P3",
+   "owner": "directory-engineer",
+   "epic": "E-002",
+   "milestone": "M1",
+   "depends_on": [],
+   "decisions": [],
+   "tags": [],
+   "parity_refs": [],
+   "summary": "Cancelled: licence terms rule it out.",
+   "effort_override": null,
+   "attempts": 0,
+   "handoff": {
+    "pending": false,
+    "latest": null
+   },
+   "created": "2026-09-24T14:30:00.000Z",
+   "updated": "2026-09-28T14:30:00.000Z"
+  }
+ ],
+ "decisions": [
+  {
+   "id": "D-0001",
+   "kind": "directional",
+   "title": "Deployment model for v1",
+   "question": "Where should activeDIQ v1 run for the customers we want to win from ManageEngine?",
+   "context": "Most ManageEngine AD customers run on-premises on Windows Server and expect an installer. We can start there, ship a container for Linux-first shops, or host it ourselves.\n\n- This is expensive to reverse: it shapes packaging, upgrades, support and the security story.\n- Read the [deployment options brief](knowledge/development/architecture/deployment-options.md) for the cost of each path.\n\n**Blocked until you answer:** packaging and the installer work.",
+   "options": [
+    {
+     "id": "a",
+     "label": "On-prem installer first",
+     "summary": "Windows service plus web console, installed next to the domain. Container follows in M3.",
+     "pros": [
+      "Matches how ManageEngine customers deploy today",
+      "Domain-joined, so no inbound firewall holes to AD"
+     ],
+     "cons": [
+      "Windows-only support burden",
+      "Slower upgrade cadence"
+     ],
+     "preview": "knowledge/development/architecture/previews/deploy-onprem.html"
+    },
+    {
+     "id": "b",
+     "label": "Self-hosted container",
+     "summary": "A container image plus a small on-prem connector agent.",
+     "pros": [
+      "One artifact for all environments",
+      "Fast upgrades"
+     ],
+     "cons": [
+      "Many AD admins are not container-ready",
+      "Agent adds a moving part"
+     ],
+     "preview": "knowledge/development/architecture/previews/deploy-container.html"
+    },
+    {
+     "id": "c",
+     "label": "Hosted SaaS with on-prem connector",
+     "summary": "We run the console; a connector in the customer network talks to AD.",
+     "pros": [
+      "Best upgrade story and telemetry"
+     ],
+     "cons": [
+      "Tier-0 data leaves the building: a hard sell and a heavy compliance load",
+      "Needs multi-tenancy in the first migration"
+     ],
+     "preview": "knowledge/development/architecture/previews/deploy-saas.html"
+    }
+   ],
+   "multi": false,
+   "recommendation": "a",
+   "rationale": "It is the shortest path to a credible demo for the buyers we are targeting, and it keeps Tier-0 data inside their network.",
+   "default_option": null,
+   "default_at": null,
+   "blocks": [
+    "T-0020"
+   ],
+   "status": "pending",
+   "answer": null,
+   "applied": false,
+   "created_by": "factory-director",
+   "created": "2026-10-01T18:30:00.000Z",
+   "updated": "2026-10-01T18:30:00.000Z"
+  },
+  {
+   "id": "D-0002",
+   "kind": "advisory",
+   "title": "Default table density for the console",
+   "question": "Should lists and audit tables default to comfortable (40 px rows) or compact (32 px)?",
+   "context": "Admins scan thousands of rows. The factory default is **comfortable with a compact toggle**, but this is a taste call. Both previews use the same seeded users.",
+   "options": [
+    {
+     "id": "a",
+     "label": "Comfortable",
+     "summary": "40 px rows. Calmer, easier to scan, fewer rows per screen.",
+     "pros": [
+      "Better for occasional users",
+      "Larger touch targets"
+     ],
+     "cons": [
+      "Fewer rows without scrolling"
+     ],
+     "preview": "knowledge/product/design/previews/density-comfortable.html"
+    },
+    {
+     "id": "b",
+     "label": "Compact",
+     "summary": "32 px rows. More data per screen, closer to what power admins expect.",
+     "pros": [
+      "Power-admin friendly",
+      "Less scrolling in audit views"
+     ],
+     "cons": [
+      "Denser, harder on small targets"
+     ],
+     "preview": "knowledge/product/design/previews/density-compact.html"
+    }
+   ],
+   "multi": false,
+   "recommendation": "b",
+   "rationale": "Our buyers are admins who live in these tables all day. The toggle covers everyone else.",
+   "default_option": "b",
+   "default_at": "2026-10-04T18:30:00.000Z",
+   "blocks": [
+    "T-0022"
+   ],
+   "status": "pending",
+   "answer": null,
+   "applied": false,
+   "created_by": "product-designer",
+   "created": "2026-10-01T17:50:00.000Z",
+   "updated": "2026-10-01T17:50:00.000Z"
+  },
+  {
+   "id": "D-0003",
+   "kind": "notice",
+   "title": "Audit log is hash-chained from the first release",
+   "question": "The factory chose a tamper-evident audit log for v1. You can veto.",
+   "context": "Audit events are appended with a hash of the previous event, so edits or deletions are detectable. It costs little now and is painful to retrofit.",
+   "options": [
+    {
+     "id": "a",
+     "label": "Hash-chained append-only log",
+     "summary": "Each event carries the hash of its predecessor; a verifier job flags breaks.",
+     "pros": [],
+     "cons": [],
+     "preview": null
+    },
+    {
+     "id": "b",
+     "label": "Plain table, add integrity later",
+     "summary": "Simpler now, a migration later.",
+     "pros": [],
+     "cons": [],
+     "preview": null
+    }
+   ],
+   "multi": false,
+   "recommendation": "a",
+   "rationale": "Audit credibility is part of how we displace incumbents. Retrofitting integrity onto existing rows is not honest.",
+   "default_option": null,
+   "default_at": null,
+   "blocks": [],
+   "status": "pending",
+   "answer": null,
+   "applied": false,
+   "created_by": "solution-architect",
+   "created": "2026-10-02T09:30:00.000Z",
+   "updated": "2026-10-02T09:30:00.000Z"
+  },
+  {
+   "id": "D-0004",
+   "kind": "directional",
+   "title": "Module scope for v1",
+   "question": "Which modules ship in v1?",
+   "context": "Directory management, reports and audit are the core. Self-service password reset and MFA are separate products in the incumbent suite.",
+   "options": [
+    {
+     "id": "a",
+     "label": "Directory management, reports, audit",
+     "summary": "Core only.",
+     "pros": [],
+     "cons": [],
+     "preview": null
+    },
+    {
+     "id": "b",
+     "label": "Core plus self-service password reset",
+     "summary": "Adds an end-user surface.",
+     "pros": [],
+     "cons": [],
+     "preview": null
+    },
+    {
+     "id": "c",
+     "label": "Core, SSPR and MFA",
+     "summary": "The full suite.",
+     "pros": [],
+     "cons": [],
+     "preview": null
+    }
+   ],
+   "multi": false,
+   "recommendation": "a",
+   "rationale": "Focus.",
+   "default_option": null,
+   "default_at": null,
+   "blocks": [],
+   "status": "answered",
+   "answer": {
+    "options": [
+     "a"
+    ],
+    "note": "Core only. Revisit SSPR after the first partner demo.",
+    "ts": "2026-09-26T14:30:00.000Z",
+    "via": "board"
+   },
+   "applied": true,
+   "created_by": "factory-director",
+   "created": "2026-09-25T14:30:00.000Z",
+   "updated": "2026-09-27T14:30:00.000Z"
+  },
+  {
+   "id": "D-0005",
+   "kind": "advisory",
+   "title": "Navigation label: \"Directory\" or \"Objects\"",
+   "question": "What should the primary nav call the user, group and OU browser?",
+   "context": "Short copy question.",
+   "options": [
+    {
+     "id": "a",
+     "label": "Directory",
+     "summary": "Familiar to AD admins.",
+     "pros": [],
+     "cons": [],
+     "preview": null
+    },
+    {
+     "id": "b",
+     "label": "Objects",
+     "summary": "Matches the schema vocabulary.",
+     "pros": [],
+     "cons": [],
+     "preview": null
+    }
+   ],
+   "multi": false,
+   "recommendation": "a",
+   "rationale": "",
+   "default_option": "a",
+   "default_at": "2026-09-30T14:30:00.000Z",
+   "blocks": [],
+   "status": "defaulted",
+   "answer": {
+    "options": [
+     "a"
+    ],
+    "note": "Defaulted after 72h.",
+    "ts": "2026-09-30T14:30:00.000Z",
+    "via": "cli"
+   },
+   "applied": false,
+   "created_by": "product-designer",
+   "created": "2026-09-27T14:30:00.000Z",
+   "updated": "2026-09-30T14:30:00.000Z"
+  },
+  {
+   "id": "D-0006",
+   "kind": "directional",
+   "title": "Preferred report export formats",
+   "question": "Which export formats first?",
+   "context": "",
+   "options": [
+    {
+     "id": "a",
+     "label": "CSV only",
+     "summary": "",
+     "pros": [],
+     "cons": [],
+     "preview": null
+    },
+    {
+     "id": "b",
+     "label": "CSV, XLSX, PDF",
+     "summary": "",
+     "pros": [],
+     "cons": [],
+     "preview": null
+    }
+   ],
+   "multi": true,
+   "recommendation": "b",
+   "rationale": "Withdrawn: the reporting spec already settled this from the research corpus (CSV, XLSX and PDF).",
+   "default_option": null,
+   "default_at": null,
+   "blocks": [],
+   "status": "withdrawn",
+   "answer": null,
+   "applied": false,
+   "created_by": "factory-director",
+   "created": "2026-09-28T14:30:00.000Z",
+   "updated": "2026-09-28T16:30:00.000Z"
+  },
+  {
+   "id": "D-0007",
+   "kind": "notice",
+   "title": "Branches and commits follow ticket ids",
+   "question": "",
+   "context": "Branches are named `factory/T-0000`; commit subjects start with the ticket id.",
+   "options": [
+    {
+     "id": "a",
+     "label": "Ticket-id branches and commit prefixes",
+     "summary": "Traceability from commit to ticket.",
+     "pros": [],
+     "cons": [],
+     "preview": null
+    }
+   ],
+   "multi": false,
+   "recommendation": "a",
+   "rationale": "",
+   "default_option": null,
+   "default_at": null,
+   "blocks": [],
+   "status": "acknowledged",
+   "answer": {
+    "options": [
+     "a"
+    ],
+    "note": "",
+    "ts": "2026-09-29T14:30:00.000Z",
+    "via": "board"
+   },
+   "applied": true,
+   "created_by": "project-manager",
+   "created": "2026-09-28T14:30:00.000Z",
+   "updated": "2026-09-29T14:30:00.000Z"
+  },
+  {
+   "id": "D-0008",
+   "kind": "notice",
+   "title": "Audit views show times in UTC by default",
+   "question": "",
+   "context": "Audit and detail views show absolute UTC time.",
+   "options": [
+    {
+     "id": "a",
+     "label": "UTC by default",
+     "summary": "",
+     "pros": [],
+     "cons": [],
+     "preview": null
+    }
+   ],
+   "multi": false,
+   "recommendation": "a",
+   "rationale": "",
+   "default_option": null,
+   "default_at": null,
+   "blocks": [],
+   "status": "vetoed",
+   "answer": {
+    "options": [],
+    "note": "Use the admin’s local zone and always show the zone label.",
+    "ts": "2026-09-30T11:10:00.000Z",
+    "via": "board"
+   },
+   "applied": true,
+   "created_by": "product-designer",
+   "created": "2026-09-29T14:30:00.000Z",
+   "updated": "2026-09-30T11:10:00.000Z"
+  }
+ ],
+ "actions": [
+  {
+   "id": "A-0001",
+   "title": "Provide a Windows Server 2022 evaluation licence for the AD test lab",
+   "detail": "The lab in **T-0017** needs two domain controllers. The factory cannot create Microsoft accounts or accept licence terms.\n\n1. Download the evaluation ISO.\n2. Put the media path in `factory/lab/README.md`.",
+   "why": "Accepting licence terms is a legal act only you can perform.",
+   "status": "open",
+   "created_by": "devops-engineer",
+   "created": "2026-10-02T05:30:00.000Z",
+   "updated": "2026-10-02T05:30:00.000Z",
+   "done_note": null
+  },
+  {
+   "id": "A-0002",
+   "title": "Create a test Entra ID tenant for the connector spike",
+   "detail": "A free developer tenant is enough. Share the tenant id only; **never** paste secrets in the board.",
+   "why": "Blocks **T-0021**. External account creation is outside what the factory may do.",
+   "status": "open",
+   "created_by": "directory-engineer",
+   "created": "2026-10-01T10:30:00.000Z",
+   "updated": "2026-10-01T10:30:00.000Z",
+   "done_note": null
+  },
+  {
+   "id": "A-0003",
+   "title": "Install Node 26 on the demo Mac",
+   "detail": "For the demo recording environment.",
+   "why": "Machine access.",
+   "status": "done",
+   "created_by": "devops-engineer",
+   "created": "2026-09-28T14:30:00.000Z",
+   "updated": "2026-09-29T12:50:00.000Z",
+   "done_note": "Installed via the official pkg."
+  }
+ ],
+ "feedback": [
+  {
+   "id": "F-0001",
+   "target": "demo:M1",
+   "text": "The report list is useful but I want to filter by OU before I can judge it.",
+   "sentiment": "ok",
+   "status": "triaged",
+   "triage_note": "Filter-by-OU added to the report engine scope.",
+   "tickets": [
+    "T-0011"
+   ],
+   "created": "2026-09-30T14:30:00.000Z",
+   "updated": "2026-09-30T15:30:00.000Z"
+  },
+  {
+   "id": "F-0002",
+   "target": "demo:M1",
+   "text": "Love the audit idea. Show me the chain verifier.",
+   "sentiment": "love",
+   "status": "new",
+   "triage_note": null,
+   "tickets": [],
+   "created": "2026-10-02T11:30:00.000Z",
+   "updated": "2026-10-02T11:30:00.000Z"
+  },
+  {
+   "id": "F-0003",
+   "target": "doc:knowledge/business/competitive/admanager-plus.md",
+   "text": "Cite the pricing page for every price claim.",
+   "sentiment": "change",
+   "status": "done",
+   "triage_note": "Added source URLs; unverifiable rows tagged.",
+   "tickets": [
+    "T-0002"
+   ],
+   "created": "2026-09-28T14:30:00.000Z",
+   "updated": "2026-09-29T14:30:00.000Z"
+  },
+  {
+   "id": "F-0004",
+   "target": "general",
+   "text": "The digest is the right length.",
+   "sentiment": "love",
+   "status": "done",
+   "triage_note": "Noted in CEO preferences.",
+   "tickets": [],
+   "created": "2026-10-01T14:30:00.000Z",
+   "updated": "2026-10-01T18:30:00.000Z"
+  }
+ ],
+ "runs": {
+  "active": [
+   {
+    "id": "R-20261002-140800-9e37",
+    "ticket": "T-0011",
+    "stage": "in_progress",
+    "role": "reporting-engineer",
+    "model": "sonnet",
+    "effort": "high",
+    "pid": 40001,
+    "session_id": "s-1",
+    "worktree": "../.activeDIQ-worktrees/T-0011",
+    "status": "running",
+    "started": "2026-10-02T14:08:00.000Z",
+    "ended": null,
+    "exit_code": null,
+    "context_tokens": 118400,
+    "peak_context_tokens": 118400,
+    "cost_usd": 0,
+    "num_turns": 28,
+    "result_line": null,
+    "last_activity": "Edit reports/query_model: add cursor paging to the compiled query",
+    "log": "state/runs/x.log"
+   },
+   {
+    "id": "R-20261002-134900-3c6e",
+    "ticket": "T-0012",
+    "stage": "in_progress",
+    "role": "directory-engineer",
+    "model": "sonnet",
+    "effort": "xhigh",
+    "pid": 40002,
+    "session_id": "s-2",
+    "worktree": "../.activeDIQ-worktrees/T-0012",
+    "status": "running",
+    "started": "2026-10-02T13:49:00.000Z",
+    "ended": null,
+    "exit_code": null,
+    "context_tokens": 238900,
+    "peak_context_tokens": 238900,
+    "cost_usd": 0,
+    "num_turns": 57,
+    "result_line": null,
+    "last_activity": "Bash: run collector replay-gap tests (2 failing)",
+    "log": "state/runs/x.log"
+   }
+  ],
+  "recent": [
+   {
+    "id": "R-20261002-115000-daa6",
+    "ticket": "T-0008",
+    "stage": "review",
+    "role": "code-reviewer",
+    "model": "sonnet",
+    "effort": "xhigh",
+    "pid": 40003,
+    "session_id": "s-3",
+    "worktree": "../.activeDIQ-worktrees/T-0008",
+    "status": "done",
+    "started": "2026-10-02T11:50:00.000Z",
+    "ended": "2026-10-02T12:12:00.000Z",
+    "exit_code": 0,
+    "context_tokens": 96000,
+    "peak_context_tokens": 96000,
+    "cost_usd": 1.84,
+    "num_turns": 23,
+    "result_line": "RESULT: T-0008 review complete",
+    "last_activity": null,
+    "log": "state/runs/x.log"
+   },
+   {
+    "id": "R-20261002-073000-78dd",
+    "ticket": "T-0008",
+    "stage": "in_progress",
+    "role": "directory-engineer",
+    "model": "sonnet",
+    "effort": "xhigh",
+    "pid": 40004,
+    "session_id": "s-4",
+    "worktree": "../.activeDIQ-worktrees/T-0008",
+    "status": "handoff",
+    "started": "2026-10-02T07:30:00.000Z",
+    "ended": "2026-10-02T09:29:00.000Z",
+    "exit_code": 0,
+    "context_tokens": 281000,
+    "peak_context_tokens": 281000,
+    "cost_usd": 6.2,
+    "num_turns": 67,
+    "result_line": null,
+    "last_activity": null,
+    "log": "state/runs/x.log"
+   },
+   {
+    "id": "R-20261002-101000-1715",
+    "ticket": "T-0009",
+    "stage": "in_progress",
+    "role": "api-engineer",
+    "model": "sonnet",
+    "effort": "high",
+    "pid": 40005,
+    "session_id": "s-5",
+    "worktree": "../.activeDIQ-worktrees/T-0009",
+    "status": "done",
+    "started": "2026-10-02T10:10:00.000Z",
+    "ended": "2026-10-02T11:14:00.000Z",
+    "exit_code": 0,
+    "context_tokens": 142000,
+    "peak_context_tokens": 142000,
+    "cost_usd": 3.1,
+    "num_turns": 34,
+    "result_line": "RESULT: T-0009 in_progress complete",
+    "last_activity": null,
+    "log": "state/runs/x.log"
+   },
+   {
+    "id": "R-20261002-090000-b54c",
+    "ticket": "T-0010",
+    "stage": "in_progress",
+    "role": "frontend-engineer",
+    "model": "sonnet",
+    "effort": "high",
+    "pid": 40006,
+    "session_id": "s-6",
+    "worktree": "../.activeDIQ-worktrees/T-0010",
+    "status": "done",
+    "started": "2026-10-02T09:00:00.000Z",
+    "ended": "2026-10-02T10:30:00.000Z",
+    "exit_code": 0,
+    "context_tokens": 171000,
+    "peak_context_tokens": 171000,
+    "cost_usd": 3.9,
+    "num_turns": 41,
+    "result_line": "RESULT: T-0010 in_progress complete",
+    "last_activity": null,
+    "log": "state/runs/x.log"
+   },
+   {
+    "id": "R-20261002-133000-5384",
+    "ticket": "T-0010",
+    "stage": "review",
+    "role": "code-reviewer",
+    "model": "sonnet",
+    "effort": "xhigh",
+    "pid": 40007,
+    "session_id": "s-7",
+    "worktree": "../.activeDIQ-worktrees/T-0010",
+    "status": "done",
+    "started": "2026-10-02T13:30:00.000Z",
+    "ended": "2026-10-02T13:46:00.000Z",
+    "exit_code": 0,
+    "context_tokens": 88000,
+    "peak_context_tokens": 88000,
+    "cost_usd": 1.2,
+    "num_turns": 21,
+    "result_line": "RESULT: T-0010 review complete",
+    "last_activity": null,
+    "log": "state/runs/x.log"
+   },
+   {
+    "id": "R-20261002-120000-f1bb",
+    "ticket": "T-0013",
+    "stage": "in_progress",
+    "role": "security-architect",
+    "model": "opus",
+    "effort": "high",
+    "pid": 40008,
+    "session_id": "s-8",
+    "worktree": "../.activeDIQ-worktrees/T-0013",
+    "status": "failed",
+    "started": "2026-10-02T12:00:00.000Z",
+    "ended": "2026-10-02T12:32:00.000Z",
+    "exit_code": 1,
+    "context_tokens": 64000,
+    "peak_context_tokens": 64000,
+    "cost_usd": 0.9,
+    "num_turns": 15,
+    "result_line": null,
+    "last_activity": null,
+    "log": "state/runs/x.log"
+   },
+   {
+    "id": "R-20261002-132000-8ff3",
+    "ticket": "T-0009",
+    "stage": "review",
+    "role": "code-reviewer",
+    "model": "sonnet",
+    "effort": "xhigh",
+    "pid": 40009,
+    "session_id": "s-9",
+    "worktree": "../.activeDIQ-worktrees/T-0009",
+    "status": "done",
+    "started": "2026-10-02T13:20:00.000Z",
+    "ended": "2026-10-02T13:32:00.000Z",
+    "exit_code": 0,
+    "context_tokens": 71000,
+    "peak_context_tokens": 71000,
+    "cost_usd": 0.95,
+    "num_turns": 17,
+    "result_line": "RESULT: T-0009 review complete",
+    "last_activity": null,
+    "log": "state/runs/x.log"
+   }
+  ]
+ },
+ "sessions": [
+  {
+   "session_id": "7f3a91c2-5d1e-4b77-9a10-2c6e0f8d1b42",
+   "name": "factory-director · CEO session",
+   "role": "factory-director",
+   "context_tokens": 71200,
+   "updated": "2026-10-02T14:29:00.000Z",
+   "started": "2026-10-02T13:42:00.000Z"
+  },
+  {
+   "session_id": "c19b44aa-0e55-4d2f-8bd3-7a3f2e9c5a10",
+   "name": "scout · retrieval",
+   "role": "scout",
+   "context_tokens": 18400,
+   "updated": "2026-10-02T14:24:00.000Z",
+   "started": "2026-10-02T14:23:00.000Z"
+  }
+ ],
+ "events": [
+  {
+   "ts": "2026-10-02T14:29:00.000Z",
+   "actor": "dispatcher",
+   "kind": "dispatcher",
+   "ticket": null,
+   "run": null,
+   "text": "Tick: 2 running, 4 ready, nothing to launch (parallel limit reached)."
+  },
+  {
+   "ts": "2026-10-02T14:27:00.000Z",
+   "actor": "directory-engineer",
+   "kind": "ticket",
+   "ticket": "T-0012",
+   "run": null,
+   "text": "Note added on T-0012: tombstone ordering fix in progress."
+  },
+  {
+   "ts": "2026-10-02T14:22:00.000Z",
+   "actor": "reporting-engineer",
+   "kind": "tool",
+   "ticket": "T-0011",
+   "run": null,
+   "text": "Edited reports/query_model (cursor paging)."
+  },
+  {
+   "ts": "2026-10-02T14:18:00.000Z",
+   "actor": "dispatcher",
+   "kind": "run",
+   "ticket": "T-0011",
+   "run": null,
+   "text": "Launched reporting-engineer on T-0011 (in_progress)."
+  },
+  {
+   "ts": "2026-10-02T14:08:00.000Z",
+   "actor": "security-architect",
+   "kind": "ticket",
+   "ticket": "T-0010",
+   "run": null,
+   "text": "T-0010 moved review → review (security pass)."
+  },
+  {
+   "ts": "2026-10-02T14:05:00.000Z",
+   "actor": "code-reviewer",
+   "kind": "ticket",
+   "ticket": "T-0010",
+   "run": null,
+   "text": "Code review passed for T-0010; security review next."
+  },
+  {
+   "ts": "2026-10-02T13:49:00.000Z",
+   "actor": "dispatcher",
+   "kind": "run",
+   "ticket": "T-0012",
+   "run": null,
+   "text": "Launched directory-engineer on T-0012 (continuation after handoff)."
+  },
+  {
+   "ts": "2026-10-02T13:46:00.000Z",
+   "actor": "code-reviewer",
+   "kind": "run",
+   "ticket": "T-0010",
+   "run": null,
+   "text": "Run finished: review of T-0010."
+  },
+  {
+   "ts": "2026-10-02T13:32:00.000Z",
+   "actor": "code-reviewer",
+   "kind": "ticket",
+   "ticket": "T-0009",
+   "run": null,
+   "text": "T-0009 sent to review."
+  },
+  {
+   "ts": "2026-10-02T12:55:00.000Z",
+   "actor": "qa-verifier",
+   "kind": "ticket",
+   "ticket": "T-0008",
+   "run": null,
+   "text": "T-0008 moved to QA."
+  },
+  {
+   "ts": "2026-10-02T12:32:00.000Z",
+   "actor": "security-architect",
+   "kind": "run",
+   "ticket": "T-0013",
+   "run": null,
+   "text": "Run failed: T-0013 (tool budget). Will retry with a narrower scope."
+  },
+  {
+   "ts": "2026-10-02T12:12:00.000Z",
+   "actor": "code-reviewer",
+   "kind": "run",
+   "ticket": "T-0008",
+   "run": null,
+   "text": "Run finished: code review of T-0008."
+  },
+  {
+   "ts": "2026-10-02T11:30:00.000Z",
+   "actor": "project-manager",
+   "kind": "ticket",
+   "ticket": "T-0014",
+   "run": null,
+   "text": "T-0014 is ready."
+  },
+  {
+   "ts": "2026-10-02T11:10:00.000Z",
+   "actor": "project-manager",
+   "kind": "ticket",
+   "ticket": "T-0015",
+   "run": null,
+   "text": "T-0015 is ready."
+  },
+  {
+   "ts": "2026-10-02T09:30:00.000Z",
+   "actor": "factory-director",
+   "kind": "decision",
+   "ticket": "T-0020",
+   "run": null,
+   "text": "T-0020 blocked on D-0001 (deployment model)."
+  },
+  {
+   "ts": "2026-10-02T09:30:00.000Z",
+   "actor": "factory-director",
+   "kind": "ticket",
+   "ticket": "T-0020",
+   "run": null,
+   "text": "Blocked T-0020: waiting on D-0001."
+  },
+  {
+   "ts": "2026-10-02T09:30:00.000Z",
+   "actor": "solution-architect",
+   "kind": "decision",
+   "ticket": null,
+   "run": null,
+   "text": "Factory decided D-0003: hash-chained audit log. You can veto."
+  },
+  {
+   "ts": "2026-10-02T05:30:00.000Z",
+   "actor": "devops-engineer",
+   "kind": "action",
+   "ticket": null,
+   "run": null,
+   "text": "Action A-0001 opened: provide a Windows Server 2022 evaluation licence."
+  },
+  {
+   "ts": "2026-10-01T18:30:00.000Z",
+   "actor": "factory-director",
+   "kind": "decision",
+   "ticket": null,
+   "run": null,
+   "text": "Decision D-0001 requested: deployment model for v1."
+  },
+  {
+   "ts": "2026-10-01T17:50:00.000Z",
+   "actor": "product-designer",
+   "kind": "decision",
+   "ticket": null,
+   "run": null,
+   "text": "Advisory D-0002 requested: default table density (defaults to Compact in 52h)."
+  },
+  {
+   "ts": "2026-10-01T14:30:00.000Z",
+   "actor": "project-manager",
+   "kind": "system",
+   "ticket": null,
+   "run": null,
+   "text": "Daily digest written for 2026-10-01."
+  },
+  {
+   "ts": "2026-10-01T12:50:00.000Z",
+   "actor": "ceo",
+   "kind": "ceo",
+   "ticket": null,
+   "run": null,
+   "text": "You gave feedback on the general digest: “right length”."
+  },
+  {
+   "ts": "2026-09-30T14:30:00.000Z",
+   "actor": "dispatcher",
+   "kind": "decision",
+   "ticket": null,
+   "run": null,
+   "text": "D-0005 defaulted to Directory after 72h."
+  },
+  {
+   "ts": "2026-09-30T11:10:00.000Z",
+   "actor": "ceo",
+   "kind": "ceo",
+   "ticket": null,
+   "run": null,
+   "text": "You vetoed D-0008 (UTC audit times)."
+  },
+  {
+   "ts": "2026-09-29T14:30:00.000Z",
+   "actor": "directory-engineer",
+   "kind": "ticket",
+   "ticket": "T-0004",
+   "run": null,
+   "text": "T-0004 merged to main."
+  },
+  {
+   "ts": "2026-09-29T12:50:00.000Z",
+   "actor": "ceo",
+   "kind": "action",
+   "ticket": null,
+   "run": null,
+   "text": "You marked A-0003 done."
+  },
+  {
+   "ts": "2026-09-28T14:30:00.000Z",
+   "actor": "market-analyst",
+   "kind": "ticket",
+   "ticket": "T-0002",
+   "run": null,
+   "text": "T-0002 done: ADManager Plus feature inventory."
+  },
+  {
+   "ts": "2026-09-27T14:30:00.000Z",
+   "actor": "ad-expert",
+   "kind": "ticket",
+   "ticket": "T-0003",
+   "run": null,
+   "text": "T-0003 done: AD domain model."
+  },
+  {
+   "ts": "2026-09-26T14:30:00.000Z",
+   "actor": "ceo",
+   "kind": "decision",
+   "ticket": null,
+   "run": null,
+   "text": "You answered D-0004: core modules only."
+  },
+  {
+   "ts": "2026-09-26T14:25:00.000Z",
+   "actor": "factory-director",
+   "kind": "memory",
+   "ticket": null,
+   "run": null,
+   "text": "CEO preference recorded: scope discipline over breadth."
+  },
+  {
+   "ts": "2026-09-25T14:30:00.000Z",
+   "actor": "factory-director",
+   "kind": "system",
+   "ticket": null,
+   "run": null,
+   "text": "Factory started."
+  }
+ ],
+ "library": [
+  {
+   "path": "knowledge/business/market/landscape.md",
+   "title": "Market landscape: AD management suites",
+   "group": "Strategy",
+   "updated": "2026-09-30T11:30:00.000Z"
+  },
+  {
+   "path": "knowledge/business/pricing/pricing-research.md",
+   "title": "Pricing research (draft)",
+   "group": "Strategy",
+   "updated": "2026-09-28T12:30:00.000Z"
+  },
+  {
+   "path": "knowledge/business/competitive/admanager-plus.md",
+   "title": "ManageEngine ADManager Plus: feature inventory",
+   "group": "Competitive",
+   "updated": "2026-09-29T10:30:00.000Z"
+  },
+  {
+   "path": "knowledge/business/competitive/parity-matrix.md",
+   "title": "Parity matrix",
+   "group": "Competitive",
+   "updated": "2026-10-01T11:30:00.000Z"
+  },
+  {
+   "path": "knowledge/business/licensing/register.md",
+   "title": "Licence register",
+   "group": "Licensing",
+   "updated": "2026-09-26T09:30:00.000Z"
+  },
+  {
+   "path": "knowledge/product/prd/directory-management.md",
+   "title": "PRD: directory management v1",
+   "group": "Product",
+   "updated": "2026-09-29T13:30:00.000Z"
+  },
+  {
+   "path": "knowledge/product/specs/bulk-user-create.md",
+   "title": "Spec: bulk user creation from CSV",
+   "group": "Product",
+   "updated": "2026-10-01T06:30:00.000Z"
+  },
+  {
+   "path": "knowledge/development/architecture/deployment-options.md",
+   "title": "Deployment options brief",
+   "group": "Architecture",
+   "updated": "2026-10-01T11:30:00.000Z"
+  },
+  {
+   "path": "knowledge/development/architecture/map.md",
+   "title": "Architecture map",
+   "group": "Architecture",
+   "updated": "2026-09-30T08:30:00.000Z"
+  },
+  {
+   "path": "knowledge/development/decisions/0001-stack-and-deployment.md",
+   "title": "ADR-0001: stack and deployment (draft)",
+   "group": "Architecture",
+   "updated": "2026-09-30T07:30:00.000Z"
+  },
+  {
+   "path": "knowledge/development/decisions/0002-audit-event-schema.md",
+   "title": "ADR-0002: audit event schema",
+   "group": "Architecture",
+   "updated": "2026-09-30T09:30:00.000Z"
+  },
+  {
+   "path": "knowledge/development/domain/ad-objects.md",
+   "title": "Domain model: AD objects",
+   "group": "Domain",
+   "updated": "2026-09-27T07:30:00.000Z"
+  },
+  {
+   "path": "knowledge/development/standards/safe-primitives.md",
+   "title": "Standard: safe primitives",
+   "group": "Standards",
+   "updated": "2026-09-29T08:30:00.000Z"
+  },
+  {
+   "path": "factory/reports/digest-2026-10-02.md",
+   "title": "Daily digest, 2 Oct 2026",
+   "group": "Reports",
+   "updated": "2026-10-02T13:30:00.000Z"
+  },
+  {
+   "path": "factory/reports/weekly-2026-09-28.md",
+   "title": "Weekly review, week of 28 Sep",
+   "group": "Reports",
+   "updated": "2026-09-28T13:30:00.000Z"
+  },
+  {
+   "path": "factory/demos/M1/script.md",
+   "title": "M1 demo script",
+   "group": "Demos",
+   "updated": "2026-10-01T05:30:00.000Z"
+  }
+ ],
+ "digest": {
+  "date": "2026-10-02",
+  "path": "factory/reports/digest-2026-10-02.md"
+ },
+ "_fixture": {
+  "tickets": {
+   "T-0001": {
+    "body": "## Context\n\nLays out the stack options with the fitness function each would need to run in CI before the ADR can be accepted.\n\nThis ticket belongs to **E-001** (M1). It is an internal enabler with no direct parity row.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: solution-architect\nflow : in_progress → review → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when stack options and fitness functions is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     },
+     {
+      "ts": "2026-09-26T14:30:00.000Z",
+      "by": "solution-architect",
+      "text": "Done. Merged and summarised in the ticket result."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     },
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "from": "backlog",
+      "to": "ready",
+      "note": "Definition of Ready checked"
+     },
+     {
+      "ts": "2026-09-26T12:30:00.000Z",
+      "by": "dispatcher",
+      "from": "ready",
+      "to": "in_progress",
+      "note": "claimed"
+     },
+     {
+      "ts": "2026-09-26T13:30:00.000Z",
+      "by": "solution-architect",
+      "from": "in_progress",
+      "to": "review",
+      "note": "advanced"
+     },
+     {
+      "ts": "2026-09-26T14:30:00.000Z",
+      "by": "solution-architect",
+      "from": "review",
+      "to": "done",
+      "note": "advanced"
+     }
+    ],
+    "runs": [],
+    "handoffs": [],
+    "links": {
+     "spec": "knowledge/development/decisions/0001-stack-and-deployment.md",
+     "branch": null,
+     "worktree": null
+    },
+    "result": "Done: Lays out the stack options with the fitness function each would need to run in CI before the ADR can be accepted. Reviewed and merged."
+   },
+   "T-0002": {
+    "body": "## Context\n\nSourced inventory of the ADManager Plus feature surface, every claim cited or tagged [UNVERIFIED].\n\nThis ticket belongs to **E-001** (M1). It is an internal enabler with no direct parity row.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: market-analyst\nflow : in_progress → review → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when feature inventory: manageengine admanager plus is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     },
+     {
+      "ts": "2026-09-27T14:30:00.000Z",
+      "by": "market-analyst",
+      "text": "Done. Merged and summarised in the ticket result."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     },
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "from": "backlog",
+      "to": "ready",
+      "note": "Definition of Ready checked"
+     },
+     {
+      "ts": "2026-09-27T12:30:00.000Z",
+      "by": "dispatcher",
+      "from": "ready",
+      "to": "in_progress",
+      "note": "claimed"
+     },
+     {
+      "ts": "2026-09-27T13:30:00.000Z",
+      "by": "factory-director",
+      "from": "in_progress",
+      "to": "review",
+      "note": "advanced"
+     },
+     {
+      "ts": "2026-09-27T14:30:00.000Z",
+      "by": "market-analyst",
+      "from": "review",
+      "to": "done",
+      "note": "advanced"
+     }
+    ],
+    "runs": [],
+    "handoffs": [],
+    "links": {
+     "spec": null,
+     "branch": null,
+     "worktree": null
+    },
+    "result": "Done: Sourced inventory of the ADManager Plus feature surface, every claim cited or tagged [UNVERIFIED]. Reviewed and merged."
+   },
+   "T-0003": {
+    "body": "## Context\n\nUsers, groups, OUs, GPOs, trusts and the attributes we touch, with the semantics that bite (userAccountControl, pwdLastSet, tombstones).\n\nThis ticket belongs to **E-001** (M1). It is an internal enabler with no direct parity row.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: ad-expert\nflow : in_progress → review → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when ad object domain model and glossary is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     },
+     {
+      "ts": "2026-09-27T14:30:00.000Z",
+      "by": "ad-expert",
+      "text": "Done. Merged and summarised in the ticket result."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     },
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "from": "backlog",
+      "to": "ready",
+      "note": "Definition of Ready checked"
+     },
+     {
+      "ts": "2026-09-27T12:30:00.000Z",
+      "by": "dispatcher",
+      "from": "ready",
+      "to": "in_progress",
+      "note": "claimed"
+     },
+     {
+      "ts": "2026-09-27T13:30:00.000Z",
+      "by": "ad-expert",
+      "from": "in_progress",
+      "to": "review",
+      "note": "advanced"
+     },
+     {
+      "ts": "2026-09-27T14:30:00.000Z",
+      "by": "ad-expert",
+      "from": "review",
+      "to": "done",
+      "note": "advanced"
+     }
+    ],
+    "runs": [],
+    "handoffs": [],
+    "links": {
+     "spec": "knowledge/development/domain/ad-objects.md",
+     "branch": null,
+     "worktree": null
+    },
+    "result": "Done: Users, groups, OUs, GPOs, trusts and the attributes we touch, with the semantics that bite (userAccountControl, pwdLastSet, tombstones). Reviewed and merged."
+   },
+   "T-0004": {
+    "body": "## Context\n\nThe only way the product builds LDAP filters and DNs: typed, escaped, tested against injection corpora.\n\nThis ticket belongs to **E-002** (M1). It is an internal enabler with no direct parity row.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: directory-engineer\nflow : in_progress → review → qa → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when safe ldap filter and dn builder is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     },
+     {
+      "ts": "2026-09-29T14:30:00.000Z",
+      "by": "directory-engineer",
+      "text": "Done. Merged and summarised in the ticket result."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     },
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "from": "backlog",
+      "to": "ready",
+      "note": "Definition of Ready checked"
+     },
+     {
+      "ts": "2026-09-29T11:30:00.000Z",
+      "by": "dispatcher",
+      "from": "ready",
+      "to": "in_progress",
+      "note": "claimed"
+     },
+     {
+      "ts": "2026-09-29T12:30:00.000Z",
+      "by": "code-reviewer",
+      "from": "in_progress",
+      "to": "review",
+      "note": "advanced"
+     },
+     {
+      "ts": "2026-09-29T13:30:00.000Z",
+      "by": "qa-verifier",
+      "from": "review",
+      "to": "qa",
+      "note": "advanced"
+     },
+     {
+      "ts": "2026-09-29T14:30:00.000Z",
+      "by": "directory-engineer",
+      "from": "qa",
+      "to": "done",
+      "note": "advanced"
+     }
+    ],
+    "runs": [],
+    "handoffs": [],
+    "links": {
+     "spec": "knowledge/development/standards/safe-primitives.md",
+     "branch": "factory/T-0004",
+     "worktree": null
+    },
+    "result": "Done: The only way the product builds LDAP filters and DNs: typed, escaped, tested against injection corpora. Reviewed and merged."
+   },
+   "T-0005": {
+    "body": "## Context\n\nButton, input, table, drawer and toast primitives on the skenzeriq tokens, light and dark.\n\nThis ticket belongs to **E-004** (M1). It is an internal enabler with no direct parity row.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: component-designer\nflow : in_progress → review → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when design tokens wired into web component baseline is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     },
+     {
+      "ts": "2026-09-29T14:30:00.000Z",
+      "by": "component-designer",
+      "text": "Done. Merged and summarised in the ticket result."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     },
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "from": "backlog",
+      "to": "ready",
+      "note": "Definition of Ready checked"
+     },
+     {
+      "ts": "2026-09-29T12:30:00.000Z",
+      "by": "dispatcher",
+      "from": "ready",
+      "to": "in_progress",
+      "note": "claimed"
+     },
+     {
+      "ts": "2026-09-29T13:30:00.000Z",
+      "by": "product-manager",
+      "from": "in_progress",
+      "to": "review",
+      "note": "advanced"
+     },
+     {
+      "ts": "2026-09-29T14:30:00.000Z",
+      "by": "component-designer",
+      "from": "review",
+      "to": "done",
+      "note": "advanced"
+     }
+    ],
+    "runs": [],
+    "handoffs": [],
+    "links": {
+     "spec": null,
+     "branch": null,
+     "worktree": null
+    },
+    "result": "Done: Button, input, table, drawer and toast primitives on the skenzeriq tokens, light and dark. Reviewed and merged."
+   },
+   "T-0006": {
+    "body": "## Context\n\nA reproducible lab: one command brings up the factory runtime and a throwaway directory.\n\nThis ticket belongs to **E-001** (M1). It is an internal enabler with no direct parity row.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: devops-engineer\nflow : in_progress → review → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when dispatcher smoke test and lab bootstrap is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     },
+     {
+      "ts": "2026-09-28T14:30:00.000Z",
+      "by": "devops-engineer",
+      "text": "Done. Merged and summarised in the ticket result."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     },
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "from": "backlog",
+      "to": "ready",
+      "note": "Definition of Ready checked"
+     },
+     {
+      "ts": "2026-09-28T12:30:00.000Z",
+      "by": "dispatcher",
+      "from": "ready",
+      "to": "in_progress",
+      "note": "claimed"
+     },
+     {
+      "ts": "2026-09-28T13:30:00.000Z",
+      "by": "devops-engineer",
+      "from": "in_progress",
+      "to": "review",
+      "note": "advanced"
+     },
+     {
+      "ts": "2026-09-28T14:30:00.000Z",
+      "by": "devops-engineer",
+      "from": "review",
+      "to": "done",
+      "note": "advanced"
+     }
+    ],
+    "runs": [],
+    "handoffs": [],
+    "links": {
+     "spec": null,
+     "branch": "factory/T-0006",
+     "worktree": null
+    },
+    "result": "Done: A reproducible lab: one command brings up the factory runtime and a throwaway directory. Reviewed and merged."
+   },
+   "T-0007": {
+    "body": "## Context\n\nThe shape of an audit event: actor, target DN, change set, source DC, correlation id.\n\nThis ticket belongs to **E-001** (M1). It is an internal enabler with no direct parity row.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: solution-architect\nflow : in_progress → review → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when audit event schema is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     },
+     {
+      "ts": "2026-09-30T14:30:00.000Z",
+      "by": "solution-architect",
+      "text": "Done. Merged and summarised in the ticket result."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     },
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "from": "backlog",
+      "to": "ready",
+      "note": "Definition of Ready checked"
+     },
+     {
+      "ts": "2026-09-30T12:30:00.000Z",
+      "by": "dispatcher",
+      "from": "ready",
+      "to": "in_progress",
+      "note": "claimed"
+     },
+     {
+      "ts": "2026-09-30T13:30:00.000Z",
+      "by": "solution-architect",
+      "from": "in_progress",
+      "to": "review",
+      "note": "advanced"
+     },
+     {
+      "ts": "2026-09-30T14:30:00.000Z",
+      "by": "solution-architect",
+      "from": "review",
+      "to": "done",
+      "note": "advanced"
+     }
+    ],
+    "runs": [],
+    "handoffs": [],
+    "links": {
+     "spec": "knowledge/development/decisions/0002-audit-event-schema.md",
+     "branch": null,
+     "worktree": null
+    },
+    "result": "Done: The shape of an audit event: actor, target DN, change set, source DC, correlation id. Reviewed and merged."
+   },
+   "T-0029": {
+    "body": "## Context\n\nFolders, frontmatter and status ladder in place.\n\nThis ticket belongs to **E-001** (M1). It is an internal enabler with no direct parity row.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: project-manager\nflow : in_progress → review → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when seed knowledge-base structure and templates is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     },
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Done. Merged and summarised in the ticket result."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     },
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "from": "backlog",
+      "to": "ready",
+      "note": "Definition of Ready checked"
+     },
+     {
+      "ts": "2026-09-25T12:30:00.000Z",
+      "by": "dispatcher",
+      "from": "ready",
+      "to": "in_progress",
+      "note": "claimed"
+     },
+     {
+      "ts": "2026-09-25T13:30:00.000Z",
+      "by": "project-manager",
+      "from": "in_progress",
+      "to": "review",
+      "note": "advanced"
+     },
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "from": "review",
+      "to": "done",
+      "note": "advanced"
+     }
+    ],
+    "runs": [],
+    "handoffs": [],
+    "links": {
+     "spec": null,
+     "branch": "factory/T-0029",
+     "worktree": null
+    },
+    "result": "Done: Folders, frontmatter and status ladder in place. Reviewed and merged."
+   },
+   "T-0030": {
+    "body": "## Context\n\nCopyleft exposure reviewed for the first dependency candidates.\n\nThis ticket belongs to **E-001** (M1). It is an internal enabler with no direct parity row.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: market-analyst\nflow : in_progress → review → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when licence register: initial dependency review is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     },
+     {
+      "ts": "2026-09-26T12:30:00.000Z",
+      "by": "market-analyst",
+      "text": "Done. Merged and summarised in the ticket result."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     },
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "from": "backlog",
+      "to": "ready",
+      "note": "Definition of Ready checked"
+     },
+     {
+      "ts": "2026-09-26T10:30:00.000Z",
+      "by": "dispatcher",
+      "from": "ready",
+      "to": "in_progress",
+      "note": "claimed"
+     },
+     {
+      "ts": "2026-09-26T11:30:00.000Z",
+      "by": "factory-director",
+      "from": "in_progress",
+      "to": "review",
+      "note": "advanced"
+     },
+     {
+      "ts": "2026-09-26T12:30:00.000Z",
+      "by": "market-analyst",
+      "from": "review",
+      "to": "done",
+      "note": "advanced"
+     }
+    ],
+    "runs": [],
+    "handoffs": [],
+    "links": {
+     "spec": null,
+     "branch": null,
+     "worktree": null
+    },
+    "result": "Done: Copyleft exposure reviewed for the first dependency candidates. Reviewed and merged."
+   },
+   "T-0031": {
+    "body": "## Context\n\ntokens.css is copied from the design system, never edited in place.\n\nThis ticket belongs to **E-004** (M1). It is an internal enabler with no direct parity row.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: component-designer\nflow : in_progress → review → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when brand token sync script is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     },
+     {
+      "ts": "2026-09-26T09:30:00.000Z",
+      "by": "component-designer",
+      "text": "Done. Merged and summarised in the ticket result."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     },
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "from": "backlog",
+      "to": "ready",
+      "note": "Definition of Ready checked"
+     },
+     {
+      "ts": "2026-09-26T07:30:00.000Z",
+      "by": "dispatcher",
+      "from": "ready",
+      "to": "in_progress",
+      "note": "claimed"
+     },
+     {
+      "ts": "2026-09-26T08:30:00.000Z",
+      "by": "component-designer",
+      "from": "in_progress",
+      "to": "review",
+      "note": "advanced"
+     },
+     {
+      "ts": "2026-09-26T09:30:00.000Z",
+      "by": "component-designer",
+      "from": "review",
+      "to": "done",
+      "note": "advanced"
+     }
+    ],
+    "runs": [],
+    "handoffs": [],
+    "links": {
+     "spec": null,
+     "branch": "factory/T-0031",
+     "worktree": null
+    },
+    "result": "Done: tokens.css is copied from the design system, never edited in place. Reviewed and merged."
+   },
+   "T-0032": {
+    "body": "## Context\n\nPersonas, jobs to be done and the v1 requirement set.\n\nThis ticket belongs to **E-001** (M1). It is an internal enabler with no direct parity row.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: product-manager\nflow : in_progress → review → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when prd: directory management v1 is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     },
+     {
+      "ts": "2026-09-27T11:10:00.000Z",
+      "by": "product-manager",
+      "text": "Done. Merged and summarised in the ticket result."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     },
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "from": "backlog",
+      "to": "ready",
+      "note": "Definition of Ready checked"
+     },
+     {
+      "ts": "2026-09-27T09:10:00.000Z",
+      "by": "dispatcher",
+      "from": "ready",
+      "to": "in_progress",
+      "note": "claimed"
+     },
+     {
+      "ts": "2026-09-27T10:10:00.000Z",
+      "by": "solution-architect",
+      "from": "in_progress",
+      "to": "review",
+      "note": "advanced"
+     },
+     {
+      "ts": "2026-09-27T11:10:00.000Z",
+      "by": "product-manager",
+      "from": "review",
+      "to": "done",
+      "note": "advanced"
+     }
+    ],
+    "runs": [],
+    "handoffs": [],
+    "links": {
+     "spec": null,
+     "branch": null,
+     "worktree": null
+    },
+    "result": "Done: Personas, jobs to be done and the v1 requirement set. Reviewed and merged."
+   },
+   "T-0033": {
+    "body": "## Context\n\nRows for every ADManager Plus capability group with status columns.\n\nThis ticket belongs to **E-001** (M1). It is an internal enabler with no direct parity row.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: market-analyst\nflow : in_progress → review → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when parity matrix skeleton is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     },
+     {
+      "ts": "2026-09-28T13:00:00.000Z",
+      "by": "market-analyst",
+      "text": "Done. Merged and summarised in the ticket result."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     },
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "from": "backlog",
+      "to": "ready",
+      "note": "Definition of Ready checked"
+     },
+     {
+      "ts": "2026-09-28T11:00:00.000Z",
+      "by": "dispatcher",
+      "from": "ready",
+      "to": "in_progress",
+      "note": "claimed"
+     },
+     {
+      "ts": "2026-09-28T12:00:00.000Z",
+      "by": "market-analyst",
+      "from": "in_progress",
+      "to": "review",
+      "note": "advanced"
+     },
+     {
+      "ts": "2026-09-28T13:00:00.000Z",
+      "by": "market-analyst",
+      "from": "review",
+      "to": "done",
+      "note": "advanced"
+     }
+    ],
+    "runs": [],
+    "handoffs": [],
+    "links": {
+     "spec": null,
+     "branch": null,
+     "worktree": null
+    },
+    "result": "Done: Rows for every ADManager Plus capability group with status columns. Reviewed and merged."
+   },
+   "T-0034": {
+    "body": "## Context\n\nOne page standards doc.\n\nThis ticket belongs to **E-001** (M1). It is an internal enabler with no direct parity row.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: project-manager\nflow : in_progress → review → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when naming conventions for tickets, branches and events is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     },
+     {
+      "ts": "2026-09-28T07:50:00.000Z",
+      "by": "project-manager",
+      "text": "Done. Merged and summarised in the ticket result."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     },
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "from": "backlog",
+      "to": "ready",
+      "note": "Definition of Ready checked"
+     },
+     {
+      "ts": "2026-09-28T05:50:00.000Z",
+      "by": "dispatcher",
+      "from": "ready",
+      "to": "in_progress",
+      "note": "claimed"
+     },
+     {
+      "ts": "2026-09-28T06:50:00.000Z",
+      "by": "project-manager",
+      "from": "in_progress",
+      "to": "review",
+      "note": "advanced"
+     },
+     {
+      "ts": "2026-09-28T07:50:00.000Z",
+      "by": "project-manager",
+      "from": "review",
+      "to": "done",
+      "note": "advanced"
+     }
+    ],
+    "runs": [],
+    "handoffs": [],
+    "links": {
+     "spec": null,
+     "branch": null,
+     "worktree": null
+    },
+    "result": "Done: One page standards doc. Reviewed and merged."
+   },
+   "T-0035": {
+    "body": "## Context\n\nLeast-privilege model for the account the connectors run as.\n\nThis ticket belongs to **E-002** (M1). It is an internal enabler with no direct parity row.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: security-architect\nflow : in_progress → review → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when threat model: connector service account scope is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     },
+     {
+      "ts": "2026-09-29T13:30:00.000Z",
+      "by": "security-architect",
+      "text": "Done. Merged and summarised in the ticket result."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     },
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "from": "backlog",
+      "to": "ready",
+      "note": "Definition of Ready checked"
+     },
+     {
+      "ts": "2026-09-29T11:30:00.000Z",
+      "by": "dispatcher",
+      "from": "ready",
+      "to": "in_progress",
+      "note": "claimed"
+     },
+     {
+      "ts": "2026-09-29T12:30:00.000Z",
+      "by": "solution-architect",
+      "from": "in_progress",
+      "to": "review",
+      "note": "advanced"
+     },
+     {
+      "ts": "2026-09-29T13:30:00.000Z",
+      "by": "security-architect",
+      "from": "review",
+      "to": "done",
+      "note": "advanced"
+     }
+    ],
+    "runs": [],
+    "handoffs": [],
+    "links": {
+     "spec": null,
+     "branch": null,
+     "worktree": null
+    },
+    "result": "Done: Least-privilege model for the account the connectors run as. Reviewed and merged."
+   },
+   "T-0036": {
+    "body": "## Context\n\nCursor paging contract shared by every list endpoint.\n\nThis ticket belongs to **E-004** (M1). It is an internal enabler with no direct parity row.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: solution-architect\nflow : in_progress → review → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when table pattern: server-side paging contract is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     },
+     {
+      "ts": "2026-09-30T09:30:00.000Z",
+      "by": "solution-architect",
+      "text": "Done. Merged and summarised in the ticket result."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     },
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "from": "backlog",
+      "to": "ready",
+      "note": "Definition of Ready checked"
+     },
+     {
+      "ts": "2026-09-30T07:30:00.000Z",
+      "by": "dispatcher",
+      "from": "ready",
+      "to": "in_progress",
+      "note": "claimed"
+     },
+     {
+      "ts": "2026-09-30T08:30:00.000Z",
+      "by": "solution-architect",
+      "from": "in_progress",
+      "to": "review",
+      "note": "advanced"
+     },
+     {
+      "ts": "2026-09-30T09:30:00.000Z",
+      "by": "solution-architect",
+      "from": "review",
+      "to": "done",
+      "note": "advanced"
+     }
+    ],
+    "runs": [],
+    "handoffs": [],
+    "links": {
+     "spec": null,
+     "branch": null,
+     "worktree": null
+    },
+    "result": "Done: Cursor paging contract shared by every list endpoint. Reviewed and merged."
+   },
+   "T-0037": {
+    "body": "## Context\n\nA disposable single-domain-controller forest for connector tests.\n\nThis ticket belongs to **E-002** (M1). It is an internal enabler with no direct parity row.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: devops-engineer\nflow : in_progress → review → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when lab: single-dc forest image is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     },
+     {
+      "ts": "2026-09-30T14:00:00.000Z",
+      "by": "devops-engineer",
+      "text": "Done. Merged and summarised in the ticket result."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     },
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "from": "backlog",
+      "to": "ready",
+      "note": "Definition of Ready checked"
+     },
+     {
+      "ts": "2026-09-30T12:00:00.000Z",
+      "by": "dispatcher",
+      "from": "ready",
+      "to": "in_progress",
+      "note": "claimed"
+     },
+     {
+      "ts": "2026-09-30T13:00:00.000Z",
+      "by": "devops-engineer",
+      "from": "in_progress",
+      "to": "review",
+      "note": "advanced"
+     },
+     {
+      "ts": "2026-09-30T14:00:00.000Z",
+      "by": "devops-engineer",
+      "from": "review",
+      "to": "done",
+      "note": "advanced"
+     }
+    ],
+    "runs": [],
+    "handoffs": [],
+    "links": {
+     "spec": null,
+     "branch": "factory/T-0037",
+     "worktree": null
+    },
+    "result": "Done: A disposable single-domain-controller forest for connector tests. Reviewed and merged."
+   },
+   "T-0038": {
+    "body": "## Context\n\nQuestions for validating the bulk and delegation flows.\n\nThis ticket belongs to **E-005** (M2). It is an internal enabler with no direct parity row.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: product-manager\nflow : in_progress → review → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when interview guide: help-desk admin workflow is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     },
+     {
+      "ts": "2026-10-01T06:10:00.000Z",
+      "by": "product-manager",
+      "text": "Done. Merged and summarised in the ticket result."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     },
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "from": "backlog",
+      "to": "ready",
+      "note": "Definition of Ready checked"
+     },
+     {
+      "ts": "2026-10-01T04:10:00.000Z",
+      "by": "dispatcher",
+      "from": "ready",
+      "to": "in_progress",
+      "note": "claimed"
+     },
+     {
+      "ts": "2026-10-01T05:10:00.000Z",
+      "by": "factory-director",
+      "from": "in_progress",
+      "to": "review",
+      "note": "advanced"
+     },
+     {
+      "ts": "2026-10-01T06:10:00.000Z",
+      "by": "product-manager",
+      "from": "review",
+      "to": "done",
+      "note": "advanced"
+     }
+    ],
+    "runs": [],
+    "handoffs": [],
+    "links": {
+     "spec": null,
+     "branch": null,
+     "worktree": null
+    },
+    "result": "Done: Questions for validating the bulk and delegation flows. Reviewed and merged."
+   },
+   "T-0039": {
+    "body": "## Context\n\nFive-line daily digest.\n\nThis ticket belongs to **E-001** (M1). It is an internal enabler with no direct parity row.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: project-manager\nflow : in_progress → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when digest template and first manual digest is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     },
+     {
+      "ts": "2026-10-01T12:30:00.000Z",
+      "by": "project-manager",
+      "text": "Done. Merged and summarised in the ticket result."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     },
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "from": "backlog",
+      "to": "ready",
+      "note": "Definition of Ready checked"
+     },
+     {
+      "ts": "2026-10-01T11:30:00.000Z",
+      "by": "dispatcher",
+      "from": "ready",
+      "to": "in_progress",
+      "note": "claimed"
+     },
+     {
+      "ts": "2026-10-01T12:30:00.000Z",
+      "by": "project-manager",
+      "from": "in_progress",
+      "to": "done",
+      "note": "advanced"
+     }
+    ],
+    "runs": [],
+    "handoffs": [],
+    "links": {
+     "spec": null,
+     "branch": null,
+     "worktree": null
+    },
+    "result": "Done: Five-line daily digest. Reviewed and merged."
+   },
+   "T-0008": {
+    "body": "## Context\n\nPooled, health-checked LDAPS connections with channel binding and bounded retries.\n\nThis ticket belongs to **E-002** (M1). It is an internal enabler with no direct parity row.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: directory-engineer\nflow : in_progress → review → qa → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when ldap connection pool with tls channel binding is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     },
+     {
+      "ts": "2026-10-02T12:55:00.000Z",
+      "by": "directory-engineer",
+      "text": "Picked up. Working in small steps; will hand off if context passes 70%."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     },
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "from": "backlog",
+      "to": "ready",
+      "note": "Definition of Ready checked"
+     },
+     {
+      "ts": "2026-10-02T10:55:00.000Z",
+      "by": "dispatcher",
+      "from": "ready",
+      "to": "in_progress",
+      "note": "claimed"
+     },
+     {
+      "ts": "2026-10-02T11:55:00.000Z",
+      "by": "code-reviewer",
+      "from": "in_progress",
+      "to": "review",
+      "note": "advanced"
+     },
+     {
+      "ts": "2026-10-02T12:55:00.000Z",
+      "by": "qa-verifier",
+      "from": "review",
+      "to": "qa",
+      "note": "advanced"
+     }
+    ],
+    "runs": [
+     {
+      "id": "R-20261002-115000-daa6",
+      "ticket": "T-0008",
+      "stage": "review",
+      "role": "code-reviewer",
+      "model": "sonnet",
+      "effort": "xhigh",
+      "pid": 40003,
+      "session_id": "s-3",
+      "worktree": "../.activeDIQ-worktrees/T-0008",
+      "status": "done",
+      "started": "2026-10-02T11:50:00.000Z",
+      "ended": "2026-10-02T12:12:00.000Z",
+      "exit_code": 0,
+      "context_tokens": 96000,
+      "peak_context_tokens": 96000,
+      "cost_usd": 1.84,
+      "num_turns": 23,
+      "result_line": "RESULT: T-0008 review complete",
+      "last_activity": null,
+      "log": "state/runs/x.log"
+     },
+     {
+      "id": "R-20261002-073000-78dd",
+      "ticket": "T-0008",
+      "stage": "in_progress",
+      "role": "directory-engineer",
+      "model": "sonnet",
+      "effort": "xhigh",
+      "pid": 40004,
+      "session_id": "s-4",
+      "worktree": "../.activeDIQ-worktrees/T-0008",
+      "status": "handoff",
+      "started": "2026-10-02T07:30:00.000Z",
+      "ended": "2026-10-02T09:29:00.000Z",
+      "exit_code": 0,
+      "context_tokens": 281000,
+      "peak_context_tokens": 281000,
+      "cost_usd": 6.2,
+      "num_turns": 67,
+      "result_line": null,
+      "last_activity": null,
+      "log": "state/runs/x.log"
+     }
+    ],
+    "handoffs": [
+     "factory/handoffs/T-0008/20261001-091200.md",
+     "factory/handoffs/T-0008/20261001-145500.md"
+    ],
+    "links": {
+     "spec": null,
+     "branch": "factory/T-0008",
+     "worktree": null
+    },
+    "result": null
+   },
+   "T-0009": {
+    "body": "## Context\n\nGET /users with cursor paging, attribute selection and server-side filter.\n\nThis ticket belongs to **E-002** (M1). It maps to parity ADM-014.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: api-engineer\nflow : in_progress → review → qa → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when users list api (read-only, paged) is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     },
+     {
+      "ts": "2026-10-02T13:50:00.000Z",
+      "by": "api-engineer",
+      "text": "Picked up. Working in small steps; will hand off if context passes 70%."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     },
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "from": "backlog",
+      "to": "ready",
+      "note": "Definition of Ready checked"
+     },
+     {
+      "ts": "2026-10-02T12:50:00.000Z",
+      "by": "dispatcher",
+      "from": "ready",
+      "to": "in_progress",
+      "note": "claimed"
+     },
+     {
+      "ts": "2026-10-02T13:50:00.000Z",
+      "by": "code-reviewer",
+      "from": "in_progress",
+      "to": "review",
+      "note": "advanced"
+     }
+    ],
+    "runs": [
+     {
+      "id": "R-20261002-101000-1715",
+      "ticket": "T-0009",
+      "stage": "in_progress",
+      "role": "api-engineer",
+      "model": "sonnet",
+      "effort": "high",
+      "pid": 40005,
+      "session_id": "s-5",
+      "worktree": "../.activeDIQ-worktrees/T-0009",
+      "status": "done",
+      "started": "2026-10-02T10:10:00.000Z",
+      "ended": "2026-10-02T11:14:00.000Z",
+      "exit_code": 0,
+      "context_tokens": 142000,
+      "peak_context_tokens": 142000,
+      "cost_usd": 3.1,
+      "num_turns": 34,
+      "result_line": "RESULT: T-0009 in_progress complete",
+      "last_activity": null,
+      "log": "state/runs/x.log"
+     },
+     {
+      "id": "R-20261002-132000-8ff3",
+      "ticket": "T-0009",
+      "stage": "review",
+      "role": "code-reviewer",
+      "model": "sonnet",
+      "effort": "xhigh",
+      "pid": 40009,
+      "session_id": "s-9",
+      "worktree": "../.activeDIQ-worktrees/T-0009",
+      "status": "done",
+      "started": "2026-10-02T13:20:00.000Z",
+      "ended": "2026-10-02T13:32:00.000Z",
+      "exit_code": 0,
+      "context_tokens": 71000,
+      "peak_context_tokens": 71000,
+      "cost_usd": 0.95,
+      "num_turns": 17,
+      "result_line": "RESULT: T-0009 review complete",
+      "last_activity": null,
+      "log": "state/runs/x.log"
+     }
+    ],
+    "handoffs": [],
+    "links": {
+     "spec": null,
+     "branch": "factory/T-0009",
+     "worktree": null
+    },
+    "result": null
+   },
+   "T-0010": {
+    "body": "## Context\n\nThe app frame: nav, theme toggle, session handling and a sign-in gate.\n\nThis ticket belongs to **E-004** (M1). It is an internal enabler with no direct parity row.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: frontend-engineer\nflow : in_progress → review → qa → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when console shell: navigation, theming, auth gate is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     },
+     {
+      "ts": "2026-10-02T14:08:00.000Z",
+      "by": "frontend-engineer",
+      "text": "Picked up. Working in small steps; will hand off if context passes 70%."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     },
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "from": "backlog",
+      "to": "ready",
+      "note": "Definition of Ready checked"
+     },
+     {
+      "ts": "2026-10-02T13:08:00.000Z",
+      "by": "dispatcher",
+      "from": "ready",
+      "to": "in_progress",
+      "note": "claimed"
+     },
+     {
+      "ts": "2026-10-02T14:08:00.000Z",
+      "by": "code-reviewer",
+      "from": "in_progress",
+      "to": "review",
+      "note": "advanced"
+     }
+    ],
+    "runs": [
+     {
+      "id": "R-20261002-090000-b54c",
+      "ticket": "T-0010",
+      "stage": "in_progress",
+      "role": "frontend-engineer",
+      "model": "sonnet",
+      "effort": "high",
+      "pid": 40006,
+      "session_id": "s-6",
+      "worktree": "../.activeDIQ-worktrees/T-0010",
+      "status": "done",
+      "started": "2026-10-02T09:00:00.000Z",
+      "ended": "2026-10-02T10:30:00.000Z",
+      "exit_code": 0,
+      "context_tokens": 171000,
+      "peak_context_tokens": 171000,
+      "cost_usd": 3.9,
+      "num_turns": 41,
+      "result_line": "RESULT: T-0010 in_progress complete",
+      "last_activity": null,
+      "log": "state/runs/x.log"
+     },
+     {
+      "id": "R-20261002-133000-5384",
+      "ticket": "T-0010",
+      "stage": "review",
+      "role": "code-reviewer",
+      "model": "sonnet",
+      "effort": "xhigh",
+      "pid": 40007,
+      "session_id": "s-7",
+      "worktree": "../.activeDIQ-worktrees/T-0010",
+      "status": "done",
+      "started": "2026-10-02T13:30:00.000Z",
+      "ended": "2026-10-02T13:46:00.000Z",
+      "exit_code": 0,
+      "context_tokens": 88000,
+      "peak_context_tokens": 88000,
+      "cost_usd": 1.2,
+      "num_turns": 21,
+      "result_line": "RESULT: T-0010 review complete",
+      "last_activity": null,
+      "log": "state/runs/x.log"
+     }
+    ],
+    "handoffs": [],
+    "links": {
+     "spec": null,
+     "branch": "factory/T-0010",
+     "worktree": null
+    },
+    "result": null
+   },
+   "T-0011": {
+    "body": "## Context\n\nA declarative report definition that compiles to a paged directory query, with CSV export.\n\nThis ticket belongs to **E-003** (M1). It is an internal enabler with no direct parity row.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: reporting-engineer\nflow : in_progress → review → qa → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when report engine: query model and csv export is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     },
+     {
+      "ts": "2026-10-02T14:22:00.000Z",
+      "by": "reporting-engineer",
+      "text": "Picked up. Working in small steps; will hand off if context passes 70%."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     },
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "from": "backlog",
+      "to": "ready",
+      "note": "Definition of Ready checked"
+     },
+     {
+      "ts": "2026-10-02T14:22:00.000Z",
+      "by": "dispatcher",
+      "from": "ready",
+      "to": "in_progress",
+      "note": "claimed"
+     }
+    ],
+    "runs": [
+     {
+      "id": "R-20261002-140800-9e37",
+      "ticket": "T-0011",
+      "stage": "in_progress",
+      "role": "reporting-engineer",
+      "model": "sonnet",
+      "effort": "high",
+      "pid": 40001,
+      "session_id": "s-1",
+      "worktree": "../.activeDIQ-worktrees/T-0011",
+      "status": "running",
+      "started": "2026-10-02T14:08:00.000Z",
+      "ended": null,
+      "exit_code": null,
+      "context_tokens": 118400,
+      "peak_context_tokens": 118400,
+      "cost_usd": 0,
+      "num_turns": 28,
+      "result_line": null,
+      "last_activity": "Edit reports/query_model: add cursor paging to the compiled query",
+      "log": "state/runs/x.log"
+     }
+    ],
+    "handoffs": [],
+    "links": {
+     "spec": null,
+     "branch": "factory/T-0011",
+     "worktree": "../.activeDIQ-worktrees/T-0011"
+    },
+    "result": null
+   },
+   "T-0012": {
+    "body": "## Context\n\nFollow uSNChanged per DC, tolerate gaps and replays, emit audit events per ADR-0002.\n\nThis ticket belongs to **E-002** (M1). It is an internal enabler with no direct parity row.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: directory-engineer\nflow : in_progress → review → qa → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when change-tracking collector (usn-based) is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     },
+     {
+      "ts": "2026-10-02T14:27:00.000Z",
+      "by": "directory-engineer",
+      "text": "Picked up. Working in small steps; will hand off if context passes 70%."
+     },
+     {
+      "ts": "2026-10-02T13:55:00.000Z",
+      "by": "directory-engineer",
+      "text": "Replay after a DC restart drops one usn range. Writing a failing test first, then fixing the gap handling."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     },
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "from": "backlog",
+      "to": "ready",
+      "note": "Definition of Ready checked"
+     },
+     {
+      "ts": "2026-10-02T14:27:00.000Z",
+      "by": "dispatcher",
+      "from": "ready",
+      "to": "in_progress",
+      "note": "claimed"
+     }
+    ],
+    "runs": [
+     {
+      "id": "R-20261002-134900-3c6e",
+      "ticket": "T-0012",
+      "stage": "in_progress",
+      "role": "directory-engineer",
+      "model": "sonnet",
+      "effort": "xhigh",
+      "pid": 40002,
+      "session_id": "s-2",
+      "worktree": "../.activeDIQ-worktrees/T-0012",
+      "status": "running",
+      "started": "2026-10-02T13:49:00.000Z",
+      "ended": null,
+      "exit_code": null,
+      "context_tokens": 238900,
+      "peak_context_tokens": 238900,
+      "cost_usd": 0,
+      "num_turns": 57,
+      "result_line": null,
+      "last_activity": "Bash: run collector replay-gap tests (2 failing)",
+      "log": "state/runs/x.log"
+     }
+    ],
+    "handoffs": [],
+    "links": {
+     "spec": null,
+     "branch": "factory/T-0012",
+     "worktree": "../.activeDIQ-worktrees/T-0012"
+    },
+    "result": null
+   },
+   "T-0013": {
+    "body": "## Context\n\nWhere secrets live, how they move, and what a compromised web tier can reach.\n\nThis ticket belongs to **E-001** (M1). It is an internal enabler with no direct parity row.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: security-architect\nflow : in_progress → review → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when threat model: tier-0 credential handling is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     },
+     {
+      "ts": "2026-10-02T13:35:00.000Z",
+      "by": "security-architect",
+      "text": "Picked up. Working in small steps; will hand off if context passes 70%."
+     },
+     {
+      "ts": "2026-10-02T12:32:00.000Z",
+      "by": "security-architect",
+      "text": "First attempt ran out of tool budget on the data-flow diagram. Retrying with a narrower scope: secrets at rest and in transit only."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     },
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "from": "backlog",
+      "to": "ready",
+      "note": "Definition of Ready checked"
+     },
+     {
+      "ts": "2026-10-02T13:35:00.000Z",
+      "by": "dispatcher",
+      "from": "ready",
+      "to": "in_progress",
+      "note": "claimed"
+     }
+    ],
+    "runs": [
+     {
+      "id": "R-20261002-120000-f1bb",
+      "ticket": "T-0013",
+      "stage": "in_progress",
+      "role": "security-architect",
+      "model": "opus",
+      "effort": "high",
+      "pid": 40008,
+      "session_id": "s-8",
+      "worktree": "../.activeDIQ-worktrees/T-0013",
+      "status": "failed",
+      "started": "2026-10-02T12:00:00.000Z",
+      "ended": "2026-10-02T12:32:00.000Z",
+      "exit_code": 1,
+      "context_tokens": 64000,
+      "peak_context_tokens": 64000,
+      "cost_usd": 0.9,
+      "num_turns": 15,
+      "result_line": null,
+      "last_activity": null,
+      "log": "state/runs/x.log"
+     }
+    ],
+    "handoffs": [],
+    "links": {
+     "spec": null,
+     "branch": null,
+     "worktree": "../.activeDIQ-worktrees/T-0013"
+    },
+    "result": null
+   },
+   "T-0014": {
+    "body": "## Context\n\nUsers with no logon within a policy window, using the replicated lastLogonTimestamp semantics.\n\nThis ticket belongs to **E-003** (M1). It maps to parity ADM-031.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: reporting-engineer\nflow : in_progress → review → qa → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when report: inactive users is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     },
+     {
+      "ts": "2026-10-02T11:30:00.000Z",
+      "by": "reporting-engineer",
+      "text": "Picked up. Working in small steps; will hand off if context passes 70%."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     },
+     {
+      "ts": "2026-10-02T11:30:00.000Z",
+      "by": "project-manager",
+      "from": "backlog",
+      "to": "ready",
+      "note": "Definition of Ready checked"
+     }
+    ],
+    "runs": [],
+    "handoffs": [],
+    "links": {
+     "spec": null,
+     "branch": null,
+     "worktree": null
+    },
+    "result": null
+   },
+   "T-0015": {
+    "body": "## Context\n\nWho is about to expire, per domain and fine-grained password policy.\n\nThis ticket belongs to **E-003** (M1). It maps to parity ADM-032.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: reporting-engineer\nflow : in_progress → review → qa → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when report: password expiry is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     },
+     {
+      "ts": "2026-10-02T11:10:00.000Z",
+      "by": "reporting-engineer",
+      "text": "Picked up. Working in small steps; will hand off if context passes 70%."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     },
+     {
+      "ts": "2026-10-02T11:10:00.000Z",
+      "by": "project-manager",
+      "from": "backlog",
+      "to": "ready",
+      "note": "Definition of Ready checked"
+     }
+    ],
+    "runs": [],
+    "handoffs": [],
+    "links": {
+     "spec": null,
+     "branch": null,
+     "worktree": null
+    },
+    "result": null
+   },
+   "T-0016": {
+    "body": "## Context\n\nKeyboard-navigable lazy tree for OUs and containers.\n\nThis ticket belongs to **E-004** (M1). It is an internal enabler with no direct parity row.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: frontend-engineer\nflow : in_progress → review → qa → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when ou tree browser component is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     },
+     {
+      "ts": "2026-10-02T10:30:00.000Z",
+      "by": "frontend-engineer",
+      "text": "Picked up. Working in small steps; will hand off if context passes 70%."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     },
+     {
+      "ts": "2026-10-02T10:30:00.000Z",
+      "by": "project-manager",
+      "from": "backlog",
+      "to": "ready",
+      "note": "Definition of Ready checked"
+     }
+    ],
+    "runs": [],
+    "handoffs": [],
+    "links": {
+     "spec": null,
+     "branch": null,
+     "worktree": null
+    },
+    "result": null
+   },
+   "T-0017": {
+    "body": "## Context\n\nSeeded multi-DC lab for replication-lag and tombstone tests.\n\nThis ticket belongs to **E-002** (M1). It is an internal enabler with no direct parity row.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: test-engineer\nflow : in_progress → review → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when ad test lab: two-dc forest fixtures is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     },
+     {
+      "ts": "2026-10-02T09:30:00.000Z",
+      "by": "test-engineer",
+      "text": "Picked up. Working in small steps; will hand off if context passes 70%."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     },
+     {
+      "ts": "2026-10-02T09:30:00.000Z",
+      "by": "project-manager",
+      "from": "backlog",
+      "to": "ready",
+      "note": "Definition of Ready checked"
+     }
+    ],
+    "runs": [],
+    "handoffs": [],
+    "links": {
+     "spec": null,
+     "branch": null,
+     "worktree": null
+    },
+    "result": null
+   },
+   "T-0022": {
+    "body": "## Context\n\nSettle comfortable versus compact as the table default, with previews.\n\nThis ticket belongs to **E-004** (M1). It is an internal enabler with no direct parity row.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: product-designer\nflow : in_progress → review → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when console density and table row heights is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     },
+     {
+      "ts": "2026-10-02T09:10:00.000Z",
+      "by": "product-designer",
+      "text": "Picked up. Working in small steps; will hand off if context passes 70%."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     },
+     {
+      "ts": "2026-10-02T09:10:00.000Z",
+      "by": "project-manager",
+      "from": "backlog",
+      "to": "ready",
+      "note": "Definition of Ready checked"
+     }
+    ],
+    "runs": [],
+    "handoffs": [],
+    "links": {
+     "spec": null,
+     "branch": null,
+     "worktree": null
+    },
+    "result": null
+   },
+   "T-0018": {
+    "body": "## Context\n\nRun a saved report on a schedule and mail it.\n\nThis ticket belongs to **E-003** (M1). It maps to parity ADM-040.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: reporting-engineer\nflow : in_progress → review → qa → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when report scheduler and email delivery is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     }
+    ],
+    "runs": [],
+    "handoffs": [],
+    "links": {
+     "spec": null,
+     "branch": null,
+     "worktree": null
+    },
+    "result": null
+   },
+   "T-0019": {
+    "body": "## Context\n\nFilterable audit feed on every object and a global view.\n\nThis ticket belongs to **E-004** (M1). It is an internal enabler with no direct parity row.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: frontend-engineer\nflow : in_progress → review → qa → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when audit trail viewer (read-only) is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     }
+    ],
+    "runs": [],
+    "handoffs": [],
+    "links": {
+     "spec": null,
+     "branch": null,
+     "worktree": null
+    },
+    "result": null
+   },
+   "T-0020": {
+    "body": "## Context\n\nPackage the product for the chosen v1 deployment model. Waiting on the deployment decision.\n\nThis ticket belongs to **E-001** (M1). It is an internal enabler with no direct parity row.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: devops-engineer\nflow : in_progress → review → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when deployment packaging: installer vs container is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     },
+     {
+      "ts": "2026-10-02T09:30:00.000Z",
+      "by": "devops-engineer",
+      "text": "Picked up. Working in small steps; will hand off if context passes 70%."
+     },
+     {
+      "ts": "2026-10-02T09:30:00.000Z",
+      "by": "factory-director",
+      "text": "Blocked on **D-0001**. Both packaging paths are scoped so work starts the moment you choose."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     },
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "from": "backlog",
+      "to": "ready",
+      "note": "Definition of Ready checked"
+     },
+     {
+      "ts": "2026-10-02T09:30:00.000Z",
+      "by": "dispatcher",
+      "from": "ready",
+      "to": "in_progress",
+      "note": "claimed"
+     },
+     {
+      "ts": "2026-10-02T09:30:00.000Z",
+      "by": "factory-director",
+      "from": "in_progress",
+      "to": "blocked",
+      "note": "Waiting on D-0001 (deployment model)"
+     }
+    ],
+    "runs": [],
+    "handoffs": [],
+    "links": {
+     "spec": null,
+     "branch": "factory/T-0020",
+     "worktree": null
+    },
+    "result": null
+   },
+   "T-0021": {
+    "body": "## Context\n\nFeasibility of reading Entra users and groups via Graph. Needs a test tenant.\n\nThis ticket belongs to **E-002** (M1). It is an internal enabler with no direct parity row.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: directory-engineer\nflow : in_progress → review → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when entra id connector spike is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     },
+     {
+      "ts": "2026-10-01T10:30:00.000Z",
+      "by": "directory-engineer",
+      "text": "Picked up. Working in small steps; will hand off if context passes 70%."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     },
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "from": "backlog",
+      "to": "ready",
+      "note": "Definition of Ready checked"
+     },
+     {
+      "ts": "2026-10-01T10:30:00.000Z",
+      "by": "dispatcher",
+      "from": "ready",
+      "to": "in_progress",
+      "note": "claimed"
+     },
+     {
+      "ts": "2026-10-01T10:30:00.000Z",
+      "by": "factory-director",
+      "from": "in_progress",
+      "to": "blocked",
+      "note": "Needs a test tenant (A-0002)"
+     }
+    ],
+    "runs": [],
+    "handoffs": [],
+    "links": {
+     "spec": null,
+     "branch": null,
+     "worktree": null
+    },
+    "result": null
+   },
+   "T-0023": {
+    "body": "## Context\n\nTemplates, field mapping, validation and the review step.\n\nThis ticket belongs to **E-005** (M2). It maps to parity ADM-050.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: product-manager\nflow : in_progress → review → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when bulk user creation from csv with templates is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     }
+    ],
+    "runs": [],
+    "handoffs": [],
+    "links": {
+     "spec": "knowledge/product/specs/bulk-user-create.md",
+     "branch": null,
+     "worktree": null
+    },
+    "result": null
+   },
+   "T-0024": {
+    "body": "## Context\n\nRole model, scopes by OU and what a help-desk admin may never do.\n\nThis ticket belongs to **E-006** (M2). It is an internal enabler with no direct parity row.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: product-manager\nflow : in_progress → review → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when delegated help-desk roles is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     }
+    ],
+    "runs": [],
+    "handoffs": [],
+    "links": {
+     "spec": null,
+     "branch": null,
+     "worktree": null
+    },
+    "result": null
+   },
+   "T-0025": {
+    "body": "## Context\n\nRequest, approve, execute, audit.\n\nThis ticket belongs to **E-006** (M2). It is an internal enabler with no direct parity row.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: solution-architect\nflow : in_progress → review → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when approval workflow engine: design is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     }
+    ],
+    "runs": [],
+    "handoffs": [],
+    "links": {
+     "spec": null,
+     "branch": null,
+     "worktree": null
+    },
+    "result": null
+   },
+   "T-0026": {
+    "body": "## Context\n\nWizard with a review step and an impact preview.\n\nThis ticket belongs to **E-005** (M2). It is an internal enabler with no direct parity row.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: product-designer\nflow : in_progress → review → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when csv import wizard ux flow is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     }
+    ],
+    "runs": [],
+    "handoffs": [],
+    "links": {
+     "spec": null,
+     "branch": null,
+     "worktree": null
+    },
+    "result": null
+   },
+   "T-0027": {
+    "body": "## Context\n\nDry run first: what changes, for whom, reversible or not.\n\nThis ticket belongs to **E-005** (M2). It is an internal enabler with no direct parity row.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: product-designer\nflow : in_progress → review → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when impact preview pattern for bulk changes is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     }
+    ],
+    "runs": [],
+    "handoffs": [],
+    "links": {
+     "spec": null,
+     "branch": null,
+     "worktree": null
+    },
+    "result": null
+   },
+   "T-0028": {
+    "body": "## Context\n\nCancelled: licence terms rule it out.\n\nThis ticket belongs to **E-002** (M1). It is an internal enabler with no direct parity row.\n\n## Approach\n\n- Follow the safe-primitives standard: no string-built filters, DNs or security descriptors.\n- Keep the change small enough for one session; hand off on a context warning.\n\n```text\nowner: directory-engineer\nflow : in_progress → review → done\n```",
+    "acceptance": [
+     "Given a lab domain with seeded objects, when evaluate legacy ldap client library is exercised end to end, then the result matches the documented behaviour.",
+     "Given malformed or hostile input, when it is processed, then it is rejected with a clear error and nothing is written.",
+     "Tests cover the happy path and the failure paths, and pass in CI."
+    ],
+    "notes": [
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "text": "Created from the epic breakdown."
+     },
+     {
+      "ts": "2026-09-28T14:30:00.000Z",
+      "by": "directory-engineer",
+      "text": "Picked up. Working in small steps; will hand off if context passes 70%."
+     }
+    ],
+    "history": [
+     {
+      "ts": "2026-09-24T14:30:00.000Z",
+      "by": "project-manager",
+      "from": null,
+      "to": "backlog",
+      "note": "created"
+     },
+     {
+      "ts": "2026-09-25T14:30:00.000Z",
+      "by": "project-manager",
+      "from": "backlog",
+      "to": "ready",
+      "note": "Definition of Ready checked"
+     }
+    ],
+    "runs": [],
+    "handoffs": [],
+    "links": {
+     "spec": null,
+     "branch": null,
+     "worktree": null
+    },
+    "result": null
+   }
+  },
+  "tails": {
+   "R-20261002-140800-9e37": [
+    "▸ Read knowledge/product/prd/directory-management.md",
+    "The report definition needs a stable cursor so exports and the UI page the same way. I will model the cursor as the sort key plus the object GUID.",
+    "▸ Read reports/query_model",
+    "▸ Edit reports/query_model — add `Cursor` type and `compile()` paging clause",
+    "Compiled queries now carry an opaque cursor; next step is the CSV exporter that streams pages.",
+    "▸ Bash: run unit tests for reports/query_model",
+    "   12 passed, 0 failed",
+    "▸ Edit reports/export_csv — stream pages, quote per RFC 4180",
+    "▸ Bash: run unit tests for reports/export_csv",
+    "   9 passed, 1 failed (embedded newline in a display name)",
+    "Fixing the quoting of embedded newlines, then I will add a test with a 10k-row paged export."
+   ],
+   "R-20261002-134900-3c6e": [
+    "▸ Read ADR-0002 audit event schema",
+    "▸ Read collector/usn_follower",
+    "Replay after a DC restart can skip a usn range if the high-water mark is persisted before the batch is emitted. The mark must be committed after the events are durable.",
+    "▸ Edit collector/usn_follower — persist the mark after the batch commit",
+    "▸ Bash: run collector replay-gap tests",
+    "   14 passed, 2 failed",
+    "Both failures are the tombstone path: deleted objects arrive without a whenChanged. Checking how the lab DC reports them.",
+    "▸ Bash: query the lab DC for deleted objects (read-only)",
+    "Confirmed: tombstones carry isDeleted and a usn but the changed-time must come from the usn ordering. Adjusting.",
+    "▸ Edit collector/tombstones — order by usn, not by time",
+    "▸ Bash: run collector replay-gap tests"
+   ],
+   "R-20261002-115000-daa6": [
+    "▸ (fixture) log excerpt for R-20261002-115000-daa6",
+    "code-reviewer finished stage review with status done."
+   ],
+   "R-20261002-073000-78dd": [
+    "▸ (fixture) log excerpt for R-20261002-073000-78dd",
+    "directory-engineer finished stage in_progress with status handoff."
+   ],
+   "R-20261002-101000-1715": [
+    "▸ (fixture) log excerpt for R-20261002-101000-1715",
+    "api-engineer finished stage in_progress with status done."
+   ],
+   "R-20261002-090000-b54c": [
+    "▸ (fixture) log excerpt for R-20261002-090000-b54c",
+    "frontend-engineer finished stage in_progress with status done."
+   ],
+   "R-20261002-133000-5384": [
+    "▸ (fixture) log excerpt for R-20261002-133000-5384",
+    "code-reviewer finished stage review with status done."
+   ],
+   "R-20261002-120000-f1bb": [
+    "▸ (fixture) log excerpt for R-20261002-120000-f1bb",
+    "security-architect finished stage in_progress with status failed."
+   ],
+   "R-20261002-132000-8ff3": [
+    "▸ (fixture) log excerpt for R-20261002-132000-8ff3",
+    "code-reviewer finished stage review with status done."
+   ]
+  },
+  "docs": {
+   "knowledge/business/competitive/admanager-plus.md": "---\ntitle: ManageEngine ADManager Plus: feature inventory\nstatus: draft\nowner: market-analyst\nupdated: 2026-09-29\n---\n\n# ManageEngine ADManager Plus: feature inventory\n\n> **Fixture data.** This page exists only to preview the board. It is not real research or a real decision.\n\n## How to read this\n\nEvery row carries a source URL or the tag **[UNVERIFIED]**. We never guess competitor features; unknowns stay unknown until researched.\n\n## Capability groups\n\n| Group | Capability | Status | Source |\n| --- | --- | :-: | --- |\n| User management | Bulk user creation from CSV | researched | [vendor docs](https://www.manageengine.com/products/ad-manager/) |\n| User management | Templates for user creation | researched | [vendor docs](https://www.manageengine.com/products/ad-manager/) |\n| Reports | Inactive users | researched | [vendor docs](https://www.manageengine.com/products/ad-manager/) |\n| Reports | Password expiry | [UNVERIFIED] | pending |\n| Delegation | Help-desk delegation | [UNVERIFIED] | pending |\n\n## Open questions\n\n1. Which editions include approval workflows?\n2. How does the product track changes: replication metadata or event logs?\n\n> Treat the matrix as the source of truth for parity IDs, and update it in the same ticket as any new claim.\n\nSee also the [parity matrix](parity-matrix.md) and the [market landscape](../market/landscape.md).\n",
+   "knowledge/development/decisions/0002-audit-event-schema.md": "---\ntitle: ADR-0002: audit event schema\nstatus: proposed\nowner: solution-architect\nupdated: 2026-09-30\n---\n\n# ADR-0002: audit event schema\n\n> **Fixture data.** This page exists only to preview the board. It is not real research or a real decision.\n\n## Status\n\nproposed. It becomes **accepted** when the schema fitness function runs in CI.\n\n## Decision\n\nAn audit event is immutable and self-describing:\n\n```json\n{\n  \"id\": \"01J9Z6...\",\n  \"ts\": \"2026-10-02T14:30:00Z\",\n  \"actor\": { \"type\": \"user\", \"sid\": \"S-1-5-21-...\" },\n  \"target\": { \"dn\": \"CN=Jo Doe,OU=Staff,DC=corp,DC=example\", \"guid\": \"...\" },\n  \"change\": [{ \"attr\": \"mail\", \"old\": \"a@x\", \"new\": \"b@x\" }],\n  \"source_dc\": \"dc01.corp.example\",\n  \"correlation_id\": \"...\"\n}\n```\n\n## Consequences\n\n- Events are **append-only**; each carries the hash of its predecessor (see the factory notice on hash chaining).\n- Reads are paged by cursor; see [the paging contract](../architecture/map.md).\n- Sensitive attribute values are redacted by policy, never silently dropped.\n\n## Alternatives considered\n\n- Plain rows with a trigger: simpler, but integrity cannot be proven.\n- Store the raw directory event: couples us to the log format.\n",
+   "factory/reports/digest-2026-10-02.md": "---\ntitle: Daily digest: 2026-10-02\nstatus: review\nowner: project-manager\nupdated: 2026-10-02\n---\n\n# Daily digest: 2026-10-02\n\n- **Shipped:** the safe LDAP filter and DN builder is merged; ADR-0002 (audit event schema) is proposed.\n- **In progress:** report engine query model (**T-0011**) and the USN change-tracking collector (**T-0012**).\n- **At risk:** deployment packaging (**T-0020**) is blocked until you choose the v1 deployment model (**D-0001**).\n- **Needs you:** 1 directional decision, 1 advisory (defaults to *Compact* in about two days), 1 notice, 2 action items.\n- **Next:** M1 is 53% done; demo target 13 November.\n",
+   "factory/demos/M1/script.md": "---\ntitle: M1 demo script\nstatus: draft\nowner: factory-director\nupdated: 2026-10-01\n---\n\n# M1 demo script: connect, read, report\n\n> **Fixture data.** This page exists only to preview the board. It is not real research or a real decision.\n\n| # | Scene | Shows | Maps to goal |\n| --- | --- | --- | --- |\n| 1 | Connect | Add the lab domain over LDAPS | Connect |\n| 2 | Browse | OU tree, users, groups | Read |\n| 3 | Report | Inactive users, CSV export | Report |\n| 4 | Audit | A change appears with a verified chain | Audit |\n\n## Known limitations\n\n- Entra ID is out of scope for M1.\n- Bulk operations arrive in M2.\n",
+   "knowledge/development/architecture/deployment-options.md": "---\ntitle: Deployment options brief\nstatus: review\nowner: solution-architect\nupdated: 2026-10-01\n---\n\n# Deployment options brief\n\n> **Fixture data.** This page exists only to preview the board. It is not real research or a real decision.\n\nThree paths for v1, and what each costs.\n\n## Summary\n\n| Option | Packaging | Upgrade path | Tier-0 exposure |\n| --- | --- | --- | --- |\n| On-prem installer | MSI + Windows service | Customer-run installer | Stays inside the network |\n| Container | Image + connector agent | Pull a new tag | Stays inside the network |\n| Hosted SaaS | None (we run it) | Continuous | Leaves the building |\n\nReturn to [the decision](#) in the Decisions tab.\n",
+   "knowledge/business/market/landscape.md": "---\ntitle: Market landscape: AD management suites\nstatus: draft\nowner: factory\nupdated: 2026-10-01\n---\n\n# Market landscape: AD management suites\n\n> **Fixture data.** This page exists only to preview the board. It is not real research or a real decision.\n\n## Overview\n\nPlaceholder content for the fixture. The real document would live at `knowledge/business/market/landscape.md`.\n\n## Notes\n\n- Second bullet with **bold** and *italic* text.\n- A link to the [parity matrix](../competitive/parity-matrix.md).\n",
+   "knowledge/business/pricing/pricing-research.md": "---\ntitle: Pricing research (draft)\nstatus: draft\nowner: factory\nupdated: 2026-10-01\n---\n\n# Pricing research (draft)\n\n> **Fixture data.** This page exists only to preview the board. It is not real research or a real decision.\n\n## Overview\n\nPlaceholder content for the fixture. The real document would live at `knowledge/business/pricing/pricing-research.md`.\n\n## Notes\n\n- Second bullet with **bold** and *italic* text.\n- A link to the [parity matrix](../competitive/parity-matrix.md).\n",
+   "knowledge/business/competitive/parity-matrix.md": "---\ntitle: Parity matrix\nstatus: draft\nowner: factory\nupdated: 2026-10-01\n---\n\n# Parity matrix\n\n> **Fixture data.** This page exists only to preview the board. It is not real research or a real decision.\n\n## Overview\n\nPlaceholder content for the fixture. The real document would live at `knowledge/business/competitive/parity-matrix.md`.\n\n## Notes\n\n- Second bullet with **bold** and *italic* text.\n- A link to the [parity matrix](../competitive/parity-matrix.md).\n",
+   "knowledge/business/licensing/register.md": "---\ntitle: Licence register\nstatus: draft\nowner: factory\nupdated: 2026-10-01\n---\n\n# Licence register\n\n> **Fixture data.** This page exists only to preview the board. It is not real research or a real decision.\n\n## Overview\n\nPlaceholder content for the fixture. The real document would live at `knowledge/business/licensing/register.md`.\n\n## Notes\n\n- Second bullet with **bold** and *italic* text.\n- A link to the [parity matrix](../competitive/parity-matrix.md).\n",
+   "knowledge/product/prd/directory-management.md": "---\ntitle: PRD: directory management v1\nstatus: draft\nowner: factory\nupdated: 2026-10-01\n---\n\n# PRD: directory management v1\n\n> **Fixture data.** This page exists only to preview the board. It is not real research or a real decision.\n\n## Overview\n\nPlaceholder content for the fixture. The real document would live at `knowledge/product/prd/directory-management.md`.\n\n## Notes\n\n- Second bullet with **bold** and *italic* text.\n- A link to the [parity matrix](../competitive/parity-matrix.md).\n",
+   "knowledge/product/specs/bulk-user-create.md": "---\ntitle: Spec: bulk user creation from CSV\nstatus: draft\nowner: factory\nupdated: 2026-10-01\n---\n\n# Spec: bulk user creation from CSV\n\n> **Fixture data.** This page exists only to preview the board. It is not real research or a real decision.\n\n## Overview\n\nPlaceholder content for the fixture. The real document would live at `knowledge/product/specs/bulk-user-create.md`.\n\n## Notes\n\n- Second bullet with **bold** and *italic* text.\n- A link to the [parity matrix](../competitive/parity-matrix.md).\n",
+   "knowledge/development/architecture/map.md": "---\ntitle: Architecture map\nstatus: draft\nowner: factory\nupdated: 2026-10-01\n---\n\n# Architecture map\n\n> **Fixture data.** This page exists only to preview the board. It is not real research or a real decision.\n\n## Overview\n\nPlaceholder content for the fixture. The real document would live at `knowledge/development/architecture/map.md`.\n\n## Notes\n\n- Second bullet with **bold** and *italic* text.\n- A link to the [parity matrix](../competitive/parity-matrix.md).\n",
+   "knowledge/development/decisions/0001-stack-and-deployment.md": "---\ntitle: ADR-0001: stack and deployment (draft)\nstatus: draft\nowner: factory\nupdated: 2026-10-01\n---\n\n# ADR-0001: stack and deployment (draft)\n\n> **Fixture data.** This page exists only to preview the board. It is not real research or a real decision.\n\n## Overview\n\nPlaceholder content for the fixture. The real document would live at `knowledge/development/decisions/0001-stack-and-deployment.md`.\n\n## Notes\n\n- Second bullet with **bold** and *italic* text.\n- A link to the [parity matrix](../competitive/parity-matrix.md).\n",
+   "knowledge/development/domain/ad-objects.md": "---\ntitle: Domain model: AD objects\nstatus: draft\nowner: factory\nupdated: 2026-10-01\n---\n\n# Domain model: AD objects\n\n> **Fixture data.** This page exists only to preview the board. It is not real research or a real decision.\n\n## Overview\n\nPlaceholder content for the fixture. The real document would live at `knowledge/development/domain/ad-objects.md`.\n\n## Notes\n\n- Second bullet with **bold** and *italic* text.\n- A link to the [parity matrix](../competitive/parity-matrix.md).\n",
+   "knowledge/development/standards/safe-primitives.md": "---\ntitle: Standard: safe primitives\nstatus: draft\nowner: factory\nupdated: 2026-10-01\n---\n\n# Standard: safe primitives\n\n> **Fixture data.** This page exists only to preview the board. It is not real research or a real decision.\n\n## Overview\n\nPlaceholder content for the fixture. The real document would live at `knowledge/development/standards/safe-primitives.md`.\n\n## Notes\n\n- Second bullet with **bold** and *italic* text.\n- A link to the [parity matrix](../competitive/parity-matrix.md).\n",
+   "factory/reports/weekly-2026-09-28.md": "---\ntitle: Weekly review, week of 28 Sep\nstatus: draft\nowner: factory\nupdated: 2026-10-01\n---\n\n# Weekly review, week of 28 Sep\n\n> **Fixture data.** This page exists only to preview the board. It is not real research or a real decision.\n\n## Overview\n\nPlaceholder content for the fixture. The real document would live at `factory/reports/weekly-2026-09-28.md`.\n\n## Notes\n\n- Second bullet with **bold** and *italic* text.\n- A link to the [parity matrix](../competitive/parity-matrix.md).\n"
+  },
+  "files": {
+   "knowledge/development/architecture/previews/deploy-onprem.html": "<!doctype html><meta charset=\"utf-8\"><title>On-prem installer</title><body style=\"font:14px system-ui;margin:0;padding:20px;color:#111;background:#fff\"><h3 style=\"margin:0 0 12px\">On-prem installer</h3><div style=\"border:1px solid #ccc;border-radius:4px;padding:12px;margin:8px 0\"><b>Customer network</b><br><span style=\"color:#555\">Domain controllers ← LDAPS ← <b>activeDIQ service</b> (Windows) ← browser</span></div><p>Nothing leaves the network.</p></body>",
+   "knowledge/development/architecture/previews/deploy-container.html": "<!doctype html><meta charset=\"utf-8\"><title>Self-hosted container</title><body style=\"font:14px system-ui;margin:0;padding:20px;color:#111;background:#fff\"><h3 style=\"margin:0 0 12px\">Self-hosted container</h3><div style=\"border:1px solid #ccc;border-radius:4px;padding:12px;margin:8px 0\"><b>Customer network</b><br><span style=\"color:#555\">DCs ← connector agent ← <b>activeDIQ container</b> ← browser</span></div></body>",
+   "knowledge/development/architecture/previews/deploy-saas.html": "<!doctype html><meta charset=\"utf-8\"><title>Hosted SaaS</title><body style=\"font:14px system-ui;margin:0;padding:20px;color:#111;background:#fff\"><h3 style=\"margin:0 0 12px\">Hosted SaaS</h3><div style=\"border:1px solid #ccc;border-radius:4px;padding:12px;margin:8px 0\"><b>Customer network</b><br><span style=\"color:#555\">DCs ← connector agent ⇢ (outbound TLS)</span></div><div style=\"border:1px solid #ccc;border-radius:4px;padding:12px;margin:8px 0\"><b>skenzeriq cloud</b><br><span style=\"color:#555\"><b>activeDIQ console</b> ← browser</span></div></body>",
+   "knowledge/product/design/previews/density-comfortable.html": "<!doctype html><meta charset=\"utf-8\"><title>Comfortable (40 px rows)</title><body style=\"font:14px system-ui;margin:0;padding:20px;color:#111;background:#fff\"><h3 style=\"margin:0 0 12px\">Comfortable (40 px rows)</h3><table style=\"border-collapse:collapse;width:100%\"><tr style=\"height:40px;border-bottom:1px solid #e5e5e5\"><td style=\"padding:0 12px\">Jo Doe</td><td style=\"padding:0 12px;font-family:monospace\">jo.doe@corp.example</td><td style=\"padding:0 12px\">Staff</td></tr><tr style=\"height:40px;border-bottom:1px solid #e5e5e5\"><td style=\"padding:0 12px\">Priya Nair</td><td style=\"padding:0 12px;font-family:monospace\">priya.nair@corp.example</td><td style=\"padding:0 12px\">Staff</td></tr><tr style=\"height:40px;border-bottom:1px solid #e5e5e5\"><td style=\"padding:0 12px\">Lee Chen</td><td style=\"padding:0 12px;font-family:monospace\">lee.chen@corp.example</td><td style=\"padding:0 12px\">Staff</td></tr><tr style=\"height:40px;border-bottom:1px solid #e5e5e5\"><td style=\"padding:0 12px\">A. Okafor</td><td style=\"padding:0 12px;font-family:monospace\">a.okafor@corp.example</td><td style=\"padding:0 12px\">Staff</td></tr><tr style=\"height:40px;border-bottom:1px solid #e5e5e5\"><td style=\"padding:0 12px\">M. Rossi</td><td style=\"padding:0 12px;font-family:monospace\">m.rossi@corp.example</td><td style=\"padding:0 12px\">Staff</td></tr><tr style=\"height:40px;border-bottom:1px solid #e5e5e5\"><td style=\"padding:0 12px\">S. Lindqvist</td><td style=\"padding:0 12px;font-family:monospace\">s.lindqvist@corp.example</td><td style=\"padding:0 12px\">Staff</td></tr></table></body>",
+   "knowledge/product/design/previews/density-compact.html": "<!doctype html><meta charset=\"utf-8\"><title>Compact (32 px rows)</title><body style=\"font:14px system-ui;margin:0;padding:20px;color:#111;background:#fff\"><h3 style=\"margin:0 0 12px\">Compact (32 px rows)</h3><table style=\"border-collapse:collapse;width:100%\"><tr style=\"height:32px;border-bottom:1px solid #e5e5e5\"><td style=\"padding:0 12px\">Jo Doe</td><td style=\"padding:0 12px;font-family:monospace\">jo.doe@corp.example</td><td style=\"padding:0 12px\">Staff</td></tr><tr style=\"height:32px;border-bottom:1px solid #e5e5e5\"><td style=\"padding:0 12px\">Priya Nair</td><td style=\"padding:0 12px;font-family:monospace\">priya.nair@corp.example</td><td style=\"padding:0 12px\">Staff</td></tr><tr style=\"height:32px;border-bottom:1px solid #e5e5e5\"><td style=\"padding:0 12px\">Lee Chen</td><td style=\"padding:0 12px;font-family:monospace\">lee.chen@corp.example</td><td style=\"padding:0 12px\">Staff</td></tr><tr style=\"height:32px;border-bottom:1px solid #e5e5e5\"><td style=\"padding:0 12px\">A. Okafor</td><td style=\"padding:0 12px;font-family:monospace\">a.okafor@corp.example</td><td style=\"padding:0 12px\">Staff</td></tr><tr style=\"height:32px;border-bottom:1px solid #e5e5e5\"><td style=\"padding:0 12px\">M. Rossi</td><td style=\"padding:0 12px;font-family:monospace\">m.rossi@corp.example</td><td style=\"padding:0 12px\">Staff</td></tr><tr style=\"height:32px;border-bottom:1px solid #e5e5e5\"><td style=\"padding:0 12px\">S. Lindqvist</td><td style=\"padding:0 12px;font-family:monospace\">s.lindqvist@corp.example</td><td style=\"padding:0 12px\">Staff</td></tr></table></body>"
+  }
+ }
+}

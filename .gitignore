@@ -1,0 +1,30 @@
+# OS / editors
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Factory runtime (state is a local database; handoffs are operational)
+factory/state/
+factory/handoffs/
+factory/demos/**/*.mp4
+factory/demos/**/*.mov
+factory/demos/**/raw/
+
+# Claude Code local-only files
+.claude/settings.local.json
+.claude/agent-memory-local/
+
+# Build / deps
+node_modules/
+dist/
+build/
+coverage/
+*.log

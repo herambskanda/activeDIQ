@@ -1,0 +1,9 @@
+{"type":"system","subtype":"hook_started","hook_name":"SessionStart","hook_event":"SessionStart","session_id":"s-1"}
+{"type":"system","subtype":"init","model":"claude-sonnet-5-5","session_id":"s-1","tools":["Bash","Read"]}
+{"type":"assistant","message":{"model":"claude-sonnet-5-5","content":[{"type":"text","text":"I'll start by reading the ticket."},{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"factory/bin/factory ticket show T-0004"}}],"usage":{"input_tokens":2,"cache_creation_input_tokens":2167,"cache_read_input_tokens":5982,"output_tokens":526}},"session_id":"s-1"}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"T-0004 …"}]}}
+{"type":"assistant","message":{"model":"claude-sonnet-5-5","content":[{"type":"tool_use","id":"t2","name":"Read","input":{"file_path":"/repo/knowledge/product/specs/ldap.md"}}],"usage":{"input_tokens":3,"cache_creation_input_tokens":400,"cache_read_input_tokens":8149,"output_tokens":90}},"session_id":"s-1"}
+{"type":"assistant","message":{"model":"claude-haiku-4-5","content":[{"type":"text","text":"subagent chatter"}],"usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":99000,"output_tokens":5}},"parent_tool_use_id":"t2","session_id":"s-1"}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t2","content":"# LDAP spec"}]}}
+{"type":"assistant","message":{"model":"claude-sonnet-5-5","content":[{"type":"text","text":"All acceptance criteria are met and the tests pass.\nDone."}],"usage":{"input_tokens":2,"cache_creation_input_tokens":100,"cache_read_input_tokens":8549,"output_tokens":40}},"session_id":"s-1"}
+{"type":"result","subtype":"success","is_error":false,"num_turns":3,"total_cost_usd":0.07,"result":"Implemented the builder.\nRESULT: advanced — filter builder done, 14 tests","session_id":"s-1","usage":{},"modelUsage":{"claude-sonnet-5-5":{"contextWindow":1000000}}}

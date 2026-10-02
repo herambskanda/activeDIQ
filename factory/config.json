@@ -1,0 +1,90 @@
+{
+  "product": "activeDIQ",
+  "company": "skenzeriq",
+  "ceo_name": "heramb",
+  "board": {
+    "host": "127.0.0.1",
+    "port": 4747,
+    "poll_ms": 4000
+  },
+  "dispatcher": {
+    "tick_seconds": 20,
+    "max_parallel": 2,
+    "daily_run_cap": 60,
+    "run_timeout_minutes": 90,
+    "max_retries": 2,
+    "isolation": "worktree",
+    "worktree_root": "../.activeDIQ-worktrees",
+    "main_branch": "main",
+    "permission_mode": "auto",
+    "rate_limit_backoff_minutes": 15,
+    "grooming_min_ready": 3,
+    "grooming_cooldown_minutes": 60,
+    "triage_cooldown_minutes": 10,
+    "digest_hour_local": 18,
+    "code_types": ["build", "bug", "test", "chore", "ops"]
+  },
+  "context": {
+    "budget_tokens": 300000,
+    "warn_pct": 70,
+    "checkpoint_pct": 85,
+    "critical_pct": 95
+  },
+  "models": {
+    "allowed": {
+      "opus": ["medium", "high", "xhigh", "max"],
+      "sonnet": ["high", "xhigh"]
+    },
+    "escalation_only": {
+      "opus": ["xhigh", "max"]
+    },
+    "escalation_roles": ["principal-engineer"],
+    "effort_ladder": {
+      "sonnet": ["high", "xhigh"],
+      "opus": ["medium", "high", "xhigh"]
+    }
+  },
+  "ceo": {
+    "max_open_decisions": 3,
+    "advisory_default_hours": 72,
+    "notify": {
+      "macos": true
+    }
+  },
+  "memory": {
+    "dir": "knowledge/memory",
+    "max_lines_per_file": 120
+  },
+  "flows": {
+    "build": [["in_progress", "$owner"], ["review", "code-reviewer", "+security-architect:security-sensitive"], ["qa", "qa-verifier"], ["done", null]],
+    "bug": "build",
+    "test": [["in_progress", "$owner"], ["review", "code-reviewer"], ["done", null]],
+    "chore": "test",
+    "ops": "test",
+    "spec": [["in_progress", "$owner"], ["review", "solution-architect"], ["done", null]],
+    "design": [["in_progress", "$owner"], ["review", "product-manager"], ["done", null]],
+    "docs": "design",
+    "video": "design",
+    "research": [["in_progress", "$owner"], ["review", "factory-director"], ["done", null]],
+    "proposal": "research",
+    "decision-prep": "research",
+    "spike": "research",
+    "meta": [["in_progress", "$owner"], ["done", null]]
+  },
+  "library": {
+    "roots": ["knowledge", "factory/reports", "factory/demos", "docs"],
+    "groups": {
+      "knowledge/business/strategy": "Strategy",
+      "knowledge/business/market-research": "Market research",
+      "knowledge/business/competitive-analysis": "Competitive analysis",
+      "knowledge/business/scoping": "Scope",
+      "knowledge/business/service": "Service",
+      "knowledge/product": "Product",
+      "knowledge/development": "Engineering",
+      "knowledge/memory": "Memory",
+      "factory/reports": "Reports",
+      "factory/demos": "Demos",
+      "docs": "Product docs"
+    }
+  }
+}
