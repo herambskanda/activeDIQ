@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"go/format"
+	"os"
 	"path"
 	"sort"
 	"strings"
@@ -41,16 +42,17 @@ type Config struct {
 
 // unit is one generated Go package: shared/ or one tag.
 type unit struct {
-	cfg    *Config
-	m      *Model
-	tag    string // empty for shared
-	pkg    string
-	imp    string // import path
-	dir    string // relative to cfg.Out
-	names  map[string]string
-	pats   map[string]string
-	patSeq []string
-	errs   *errList
+	cfg     *Config
+	m       *Model
+	tag     string // empty for shared
+	pkg     string
+	imp     string // import path
+	dir     string // relative to cfg.Out
+	names   map[string]string
+	pats    map[string]string
+	patSeq  []string
+	patDone int // how many of patSeq earlier files of the package already declared
+	errs    *errList
 }
 
 type gofile struct {
@@ -116,7 +118,12 @@ func (f *gofile) bytes() ([]byte, error) {
 	out.Write(f.buf.Bytes())
 	src, err := format.Source(out.Bytes())
 	if err != nil {
-		return nil, fmt.Errorf("%s: generated code does not parse: %w\n%s", f.u.dir, err, numbered(out.String()))
+		// The numbered listing is for the generator's developer: GENAPI_DUMP=1 prints it.
+		listing := ""
+		if os.Getenv("GENAPI_DUMP") != "" {
+			listing = "\n" + numbered(out.String())
+		}
+		return nil, fmt.Errorf("%s: generated code does not parse: %w%s", f.u.dir, err, listing)
 	}
 	return src, nil
 }

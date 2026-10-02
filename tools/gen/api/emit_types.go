@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -291,57 +290,48 @@ func (u *unit) emitDestroy(f *gofile, expr string, s *Schema, depth int) {
 	}
 }
 
+// emitFieldValidation writes the validator block of one member. What each kind of member checks:
+//
+//	plain    required, not nullable (T)       missing, null
+//	nullptr  required, nullable (*T)          missing
+//	optptr   optional (*T) and optslice       null (absent and null both leave nil, so the presence bits tell them apart)
+//	opt      merge-patch (Opt[T])             null, unless the member declares it
+//
+// and then the value checks, guarded so that they run only on a value the client sent.
 func (u *unit) emitFieldValidation(f *gofile, s *Schema, fd field) {
 	at := "at"
+	idx := strconv.Itoa(fd.Idx)
 	f.p("\t// %s\n", fd.JSON)
-	checksNeeded := u.needsChecks(fd.Prop) || fd.Prop.HasConst
-	if fd.Req || fd.Kind != "opt" {
-		f.p("\tif v.p.Decoded() {\n")
-		if fd.Req {
-			f.p("\t\tif !v.p.Has(%d) {\n\t\t\terrs.Required(at, %q)\n\t\t}\n", fd.Idx, fd.JSON)
+	var guard string // when to run the value checks
+	switch fd.Kind {
+	case "plain":
+		f.p("\tif v.p.Decoded() {\n\t\tif !v.p.Has(%s) {\n\t\t\terrs.Required(at, %q)\n\t\t}\n\t\tif v.p.IsNull(%s) {\n\t\t\terrs.NullNotAllowed(at, %q)\n\t\t}\n\t}\n", idx, fd.JSON, idx, fd.JSON)
+		guard = "!v.p.Decoded() || (v.p.Has(" + idx + ") && !v.p.IsNull(" + idx + "))"
+	case "nullptr":
+		f.p("\tif v.p.Decoded() && !v.p.Has(%s) {\n\t\terrs.Required(at, %q)\n\t}\n", idx, fd.JSON)
+		guard = "v." + fd.Go + " != nil"
+	case "optptr", "optslice":
+		f.p("\tif v.p.Decoded() && v.p.IsNull(%s) {\n\t\terrs.NullNotAllowed(at, %q)\n\t}\n", idx, fd.JSON)
+		guard = "v." + fd.Go + " != nil"
+	case "opt":
+		if !fd.Prop.Nullable {
+			f.p("\tif v.%s.IsNull() {\n\t\terrs.NullNotAllowed(at, %q)\n\t}\n", fd.Go, fd.JSON)
 		}
-		if fd.Kind == "plain" || fd.Kind == "optptr" || fd.Kind == "optslice" {
-			f.p("\t\tif v.p.IsNull(%d) {\n\t\t\terrs.NullNotAllowed(at, %q)\n\t\t}\n", fd.Idx, fd.JSON)
-		}
-		f.p("\t}\n")
-	} else if fd.Kind == "opt" && !fd.Prop.Nullable {
-		f.p("\tif v.p.Decoded() && v.p.IsNull(%d) {\n\t\terrs.NullNotAllowed(at, %q)\n\t}\n", fd.Idx, fd.JSON)
 	}
-	if !checksNeeded {
+	if !u.needsChecks(fd.Prop) && !fd.Prop.HasConst {
 		return
 	}
-	guard := ""
-	switch fd.Kind {
-	case "plain":
-		guard = fmt.Sprintf("!v.p.Decoded() || (v.p.Has(%d) && !v.p.IsNull(%d))", fd.Idx, fd.Idx)
-	case "optptr", "optslice":
-		guard = fmt.Sprintf("!v.p.Decoded() || (v.p.Has(%d) && !v.p.IsNull(%d))", fd.Idx, fd.Idx)
-	}
 	ptr := at + ".AppendToken(" + strconv.Quote(fd.JSON) + ")"
-	open := func(cond string) {
-		if cond != "" {
-			f.p("\tif %s {\n", cond)
-		} else {
-			f.p("\t{\n")
-		}
-	}
+	expr := "v." + fd.Go
 	switch fd.Kind {
-	case "plain":
-		open(guard)
-		u.emitValueChecks(f, "v."+fd.Go, fd.Prop, ptr, apiBody, 2, fd.JSON)
-	case "nullptr":
-		open("v.p.Decoded() && v.p.Has(" + strconv.Itoa(fd.Idx) + ") && v." + fd.Go + " != nil || !v.p.Decoded() && v." + fd.Go + " != nil")
-		u.emitValueChecks(f, "(*v."+fd.Go+")", fd.Prop, ptr, apiBody, 2, fd.JSON)
-	case "optptr":
-		open("v." + fd.Go + " != nil")
-		u.emitValueChecks(f, "(*v."+fd.Go+")", fd.Prop, ptr, apiBody, 2, fd.JSON)
-	case "optslice":
-		open(guard)
-		u.emitValueChecks(f, "v."+fd.Go, fd.Prop, ptr, apiBody, 2, fd.JSON)
+	case "nullptr", "optptr":
+		expr = "(*v." + fd.Go + ")"
 	case "opt":
-		f.p("\tif p := v.%s.Ptr(); p != nil {\n", fd.Go)
-		u.emitValueChecks(f, "(*p)", fd.Prop, ptr, apiBody, 2, fd.JSON)
+		guard = "p := v." + fd.Go + ".Ptr(); p != nil"
+		expr = "(*p)"
 	}
+	f.p("\tif %s {\n", guard)
+	u.emitValueChecks(f, expr, fd.Prop, ptr, apiBody, 2, fd.JSON)
 	f.p("\t}\n")
 }
 
@@ -469,14 +459,17 @@ func (u *unit) pattern(f *gofile, pat string) string {
 	return n
 }
 
-// emitPatterns appends the regexp variables a file used.
+// emitPatterns appends the regexp variables used since the previous call. A package's files share
+// one set of pattern variables, each declared once, in the file that first needed it.
 func (u *unit) emitPatterns(f *gofile) {
-	if len(u.patSeq) == 0 {
+	fresh := u.patSeq[u.patDone:]
+	if len(fresh) == 0 {
 		return
 	}
+	u.patDone = len(u.patSeq)
 	f.use("regexp")
 	f.p("var (\n")
-	for _, pat := range u.patSeq {
+	for _, pat := range fresh {
 		f.p("\t%s = regexp.MustCompile(%q)\n", u.pats[pat], pat)
 	}
 	f.p(")\n\n")

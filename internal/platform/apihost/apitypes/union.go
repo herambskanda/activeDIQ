@@ -62,6 +62,9 @@ func ViolationOf(err error) (Violation, bool) {
 	}
 	var se *json.SemanticError
 	if errors.As(err, &se) {
+		if errors.Is(se.Err, json.ErrUnknownName) {
+			return Violation{In: InBody, Pointer: se.JSONPointer, Code: CodeUnknownMember, Detail: "unknown member"}, true
+		}
 		return Violation{In: InBody, Pointer: se.JSONPointer, Code: CodeType, Detail: "value has the wrong type"}, true
 	}
 	return Violation{}, false

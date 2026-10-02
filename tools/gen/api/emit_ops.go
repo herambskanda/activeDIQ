@@ -41,10 +41,10 @@ func (u *unit) emitHandlers() ([]byte, error) {
 		}
 		f.p(",\n\t\t%s.NewRoute(%s.RouteMeta{\n\t\t\tOperationID: %q, Tag: %q, Method: %q, Path: %q,\n\t\t\tPermission: %q, Anonymous: %q, Scope: %q, Stability: %q, Deprecated: %v, Sunset: %q,\n\t\t\tClass: %q, MaxBody: %d, Body: %s.%s, MediaType: %q, Secret: %v,\n\t\t},\n",
 			ah, ah, op.ID, op.Tag, op.Method, op.Path, op.Permission, op.Anonymous, op.Scope, op.Stability, op.Deprecated, op.Sunset, op.Class, op.MaxBody, ah, body, media, op.Secret)
-		f.p("\t\t\tfunc() %s.Input { return new(%sInput) },\n\t\t\tfunc(ctx %s.Context, in %s.Input) (%s.Response, error) {\n\t\t\t\tout, err := h.%s(ctx, *in.(*%sInput))\n\t\t\t\tif err != nil {\n\t\t\t\t\treturn nil, err\n\t\t\t\t}\n\t\t\t\tif out == nil {\n\t\t\t\t\treturn nil, %s.Errorf(\"%s returned no output and no error\")\n\t\t\t\t}\n\t\t\t\treturn out, nil\n\t\t\t}),",
+		f.p("\t\t\tfunc() %s.Input { return new(%sInput) },\n\t\t\tfunc(ctx %s.Context, in %s.Input) (%s.Response, error) {\n\t\t\t\tout, err := h.%s(ctx, *in.(*%sInput))\n\t\t\t\tif err != nil {\n\t\t\t\t\treturn nil, err\n\t\t\t\t}\n\t\t\t\tif out == nil {\n\t\t\t\t\treturn nil, %s.Errorf(\"%s returned no output and no error\")\n\t\t\t\t}\n\t\t\t\treturn out, nil\n\t\t\t})",
 			ah, n, ctx, ah, ah, n, n, strings.TrimSuffix(f.use("fmt"), "."), n)
 	}
-	f.p("\n\t)\n}\n")
+	f.p(",\n\t)\n}\n")
 	u.emitPatterns(f)
 	if len(ops) == 0 {
 		// Still emit the (empty) interface and Bind so the tag package has the EP-2 shape.
