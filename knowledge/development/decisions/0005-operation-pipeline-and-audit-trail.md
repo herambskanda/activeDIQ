@@ -11,7 +11,7 @@ fitness: fitness-operation, fitness-audit
 
 # ADR-0005: Every write is an Action run by one operation pipeline; a step token is the only key to a write; our audit trail is a per-tenant hash chain with signed, anchored checkpoints and erasable personal values
 
-**Status:** proposed. factory-director ratifies it at review of T-0047 and files a `notice`. It becomes `accepted` when `fitness-operation` (O1–O8) and `fitness-audit` (A1–A8) run green in `make ci` on `main`.
+**Status:** proposed (rework 1 after the director's review of 2026-10-02; dispositions in § Review rework). factory-director ratifies it at review of T-0047 and files a `notice`. It becomes `accepted` when `fitness-operation` (O1–O9) and `fitness-audit` (A1–A9) run green in `make ci` on `main`.
 **Kind:** technical. The customer-visible results (preview before every change, undo from the audit record, a tamper-evident audit trail, "anonymize on deletion") were decided by the CEO in D-0004 (ENH-04) and by the scope lock. This ADR decides how they are built.
 **Deciders:** solution-architect (author). Consulted on 2026-10-02, both concurring with conditions that this text applies (§ Consultation): security-architect on the audit guarantees, erasure, transient secrets and separation of duties; backend-engineer on the job wrapper, chunking, recovery and the commit-time chain. factory-director ratifies. **Ticket:** T-0047. **Parity / scope refs:** ADM-005, ADM-033, ADM-034, ADM-098, ADM-137, ADM-138, ADM-207; ENH-04.
 
@@ -23,7 +23,7 @@ fitness: fitness-operation, fitness-audit
 - the Action contract and its reversibility classes;
 - the operation and item state machines (domain model DM-41/42 carry provisional names and say "this file follows T-0047", §11 Q6);
 - idempotency, DC affinity, chunking, checkpoint and resume;
-- re-checking authorisation against live ancestry;
+- re-checking authorisation against the live directory (ancestry, membership and correlation, per scope root kind);
 - the approval-gate extension point (EP-4);
 - the mechanics behind the threat model's audit guarantees AG-1…AG-9 ([threat model §11](../architecture/threat-model.md));
 - how personal values in append-only records become erasable (domain model X11, §11 Q9);
@@ -47,21 +47,21 @@ fitness: fitness-operation, fitness-audit
 
 ## Decision
 
-We will route **every write a principal makes** (to a directory or to activeDIQ's own configuration) through **one operation pipeline: Plan → gate → Apply → Verify → audit, with Undo as a new operation**. A **step token**, minted only by the pipeline, is the only key that opens a write. Our audit trail is **one hash chain per tenant, chained at commit**, with **signed checkpoints anchored outside the host**, and **personal values held outside the hashed form** so they can be erased. Twelve rules follow. On ratification it amends ADR-0002's Jobs row (rule 6), and it has amended threat-model AG-1, AG-8 and TM-D8 (§ Consultation).
+We will route **every write a principal makes** (to a directory or to activeDIQ's own configuration) through **one operation pipeline: Plan → gate → Apply → Verify → audit, with Undo as a new operation**. A **step token**, minted only by the pipeline, is the only key that opens a write. Our audit trail is **one hash chain per tenant, chained at commit**, with **signed checkpoints anchored outside the host**, and **personal values held outside the hashed form** so they can be erased. Thirteen rules follow; rule 13 places every type in a package so the write APIs compile without import cycles. On ratification it amends ADR-0002's Jobs row (rule 6), and it has amended threat-model AG-1, AG-8 and TM-D8 (§ Consultation).
 
 ### Rule 1: The Action contract (EP-3)
 
 ```go
-// internal/platform/operation (replaces the scaffold's Action in operation.go)
+// internal/platform/operation (replaces the scaffold's Action in operation.go). Package placement: rule 13.
 type Action interface {
     Describe() Descriptor
     // Plan is the dry run: live reads through PlanContext, the diff, preconditions, reversibility.
     // It cannot write: PlanContext has no write method and its database transaction is READ ONLY.
     Plan(ctx context.Context, pc PlanContext, in Input) ([]StepPlan, error)
-    // Apply performs one planned step. The Step is the only key to a write (rule 2).
-    Apply(ctx context.Context, s Step, p StepPlan) (Outcome, error)
+    // Apply performs one planned step. The step.Step is the only key to a write (rule 2).
+    Apply(ctx context.Context, s step.Step, p StepPlan) (Outcome, error)
     // Verify compares the read-back with the plan's after-state.
-    Verify(ctx context.Context, s Step, p StepPlan, o Outcome) (Verdict, error)
+    Verify(ctx context.Context, s step.Step, p StepPlan, o Outcome) (Verdict, error)
     // Inverse returns the input that undoes this step, or ErrIrreversible with a reason.
     Inverse(p StepPlan, o Outcome) (Input, error)
 }
@@ -87,29 +87,35 @@ type Descriptor struct {
   - `Irreversible`: no inverse. Examples: setting a password, an Entra hard delete, sending a message.
   The Descriptor states the worst case; Plan states the class per step. **The preview, the gate and the API response show `Lossy` and `Irreversible` steps before anything runs** (ENH-04 risk). An Action whose Descriptor says `Reversible` and whose Plan returns `Irreversible` fails its contract test.
 - **Target kinds.** `Directory` Actions call `directory/client` with the Step. `Store` Actions call the owning package's write API with the Step, and Apply, Verify, the state change and the audit event run in **one database transaction** (rule 6).
-- **How Actions are registered.** Modules call `Registrar.Action(a)`. Kernel and directory packages export theirs (`notify.Actions()`, `authn.Actions()`, `authz.Actions()`), and `compose/server` hands them to the operation host, as ADR-0003 rule 5 already allows for datasets. `Boot` refuses an Action whose ID is not namespaced by its owner, whose `AuditKind` is not registered by the same owner, or whose `Permission` is not in the EP-6 catalogue.
+- **How Actions are registered.** Modules call `Registrar.Action(a)`. A kernel package never exports its own Actions, because `operation` imports it (rule 13). Its Actions live in a subpackage above both, `internal/platform/<pkg>/actions` (`authz/actions.All()`, `authn/actions.All()`, `notify/actions.All()`, `audit/actions.All()`, `personal/actions.All()`), and `compose/server` hands them to the operation host, as ADR-0003 rule 5 already allows for datasets. Directory packages export theirs the same way. `Boot` refuses an Action whose ID is not namespaced by its owner, whose `AuditKind` is not registered by the same owner, or whose `Permission` is not in the EP-6 catalogue.
 - **The read-only catalogue.** `operation.Catalogue()` lists registered Descriptors for `search` and the command palette (ADR-0003 F4).
 
 ### Rule 2: A step token is the only key to a write, and it opens only the planned write
 
 ```go
+// internal/platform/operation/step: a leaf below every write API (rule 13).
 // Step is minted only by the operation runner, for one claimed step, and dies when Apply or Verify returns.
-type Step struct{ s *stepState }    // unexported field; the zero value is refused everywhere
+type Step struct{ s *state }        // unexported field; the zero value is refused everywhere
 
-func (s Step) Key() IdempotencyKey  // (operation, item, step)
-func (s Step) Attempt() int         // the fencing number (rule 6)
+func (s Step) Key() Key                          // (operation, item, step)
+func (s Step) Attempt() int                      // the fencing number (rule 6)
 func (s Step) Operation() OperationID
-func (s Step) Actor() authz.Principal   // the initiator chain, never the approver's authority (rule 7)
-func (s Step) DC(nc NamingContextID) DCRef  // the pin (rule 5)
-func (s Step) Tx() store.Tx              // Store Actions only: the recording transaction
+func (s Step) Actor() authority.Chain            // the initiator chain, never the approver's authority (rule 7)
+func (s Step) DC(nc authority.NamingContextID) DCRef // the pin (rule 5); none for Entra
+func (s Step) Tx() store.Tx                      // Store Actions only: the recording transaction
+func (s Step) FactsQuery() authority.FactsQuery  // what the Apply-time re-check must read live (rule 7)
+// Recheck runs the runner's authorisation check, installed at mint, on facts read live
+// immediately before the write. It returns the only value that lets a write be sent.
+func (s Step) Recheck(ctx context.Context, f authority.Facts) (Clearance, error)
 ```
 
-- **Directory writes.** Every write method of `directory/client` takes a `Step`: `client.Write(ctx, step, op)`. The connector contract's `Apply` RPC carries the step's idempotency key, attempt, operation ID, acting principal, DC pin and **plan digest**. The connector logs all of them (TM-TB6-T5). Named secret reads (LAPS, BitLocker) are reads with their own audit kind (safe-primitives §3.7) and take no Step. A LAPS *reset* is a write, so it is an Action.
+- **Minting.** `step` has one minter. `step.TakeMinter()` returns it to the first caller only, and `operation`'s runner takes it during package initialisation. `compose/server`'s boot asserts that `operation` holds it, so a second taker fails start-up, and O1 refuses any reference to `TakeMinter` outside `platform/operation`.
+- **Directory writes.** Every write method of `directory/client` takes a `step.Step`: `client.Write(ctx, s, op)`. It reads the facts `s.FactsQuery()` names on the pinned DC, calls `s.Recheck`, and sends only with the returned `Clearance`. The connector contract's `Apply` RPC carries the step's idempotency key, attempt, operation ID, acting principal, DC pin and **plan digest**. The connector logs all of them (TM-TB6-T5). Named secret reads (LAPS, BitLocker) are reads with their own audit kind (safe-primitives §3.7) and take no Step. A LAPS *reset* is a write, so it is an Action.
 - **A Step authorises this write, not just any write.** `stepState` carries a digest of the step's planned target and operation (target GUID, operation kind, attributes and values; secret values are excluded, but the presence of a secret is included).
   - `client.Write` recomputes the digest of the operation it is handed and refuses a mismatch. The connector checks it again.
   - An Action cannot use its Step to write to a different object or attribute than the one that was previewed, approved and hashed.
-- **The checks live in the pipeline, not in Action code.** `client.Write` (Directory) and the runner (Store) perform the Apply-time authorisation re-check (rule 7) before the write. An Action's Apply cannot skip it.
-- **Configuration writes.** The exported write functions of a table classed `config` (rule 10) take a `Step` and use `Step.Tx()`.
+- **The checks live in the pipeline, not in Action code.** `client.Write` (Directory) and the runner (Store) perform the Apply-time authorisation re-check (rule 7) before the write. An Action's Apply cannot skip it, and `client.Write` cannot either: the connector-contract write RPC is reachable only through a function that takes a `step.Clearance` (O2).
+- **Configuration writes.** The exported write functions of a table classed `config` (rule 10) take a `step.Step` and use `Step.Tx()`. Because `step` is a leaf, `authz`, `authn`, `notify`, `audit` and `personal` can take it without importing `operation` (rule 13).
 - **A Step cannot escape.**
   - It is never stored in a struct field, global, map, slice or channel.
   - It is never captured by a closure.
@@ -125,8 +131,9 @@ These tables are the source. Code declares the same transitions in `internal/pla
 # Operation (DM-41)
 draft             -> planning           input complete; Plan starts (inline for one item, chunked job for bulk)
 draft             -> cancelled          abandoned or withdrawn
-planning          -> planned            plan recorded with plan_hash; at least one applicable item
-planning          -> plan_failed        input invalid, capability missing, Action permission refused, or no applicable item
+planning          -> planned            plan recorded with plan_hash; at least one item planned
+planning          -> no_change          every item skipped (empty diff); nothing blocked, nothing to apply
+planning          -> plan_failed        input invalid, capability missing, Action permission refused, or no item planned and at least one blocked
 planning          -> cancelled          cancelled while planning
 planned           -> approved           gate: allow
 planned           -> awaiting_approval  gate: hold (workflow Request or kernel single approval)
@@ -157,7 +164,7 @@ running           -> succeeded          every step verified
 running           -> failed             a step failed or verify_failed; later steps not_run
 running           -> cancelled          operation cancelling; the current step finished, later steps not_run
 succeeded         -> undone             an undo operation verified the inverse of every step
-failed            -> undone             an undo operation verified the inverse of every applied step
+failed            -> undone             an undo operation verified the inverse of every verified or verify_failed step
 # Step (DM-42 steps[])
 planned           -> applying           claimed: key bound, attempt recorded, DC pinned; committed before the write
 planned           -> not_run            an earlier step did not succeed, or the operation was cancelled
@@ -167,10 +174,13 @@ applying          -> not_run            reconciler only: the operation is cancel
 applied           -> verified           read-back matches the plan's after-state
 applied           -> verify_failed      read-back differs, scope changed, or the verify window elapsed
 verified          -> undone             the undo operation's inverse step verified
+verify_failed     -> undone             the undo operation's inverse step verified, planned against the live state
 ```
 
-- **Terminal states.** Operation: `plan_failed`, `rejected`, `succeeded`, `partially_succeeded`, `failed`, `cancelled`. Item: `skipped`, `blocked`, `succeeded`, `failed`, `cancelled`, `undone`. Step: `not_run`, `failed`, `verify_failed`, `verified`, `undone`. Nothing leaves a terminal state except the explicit `→ undone` rows, which an Undo operation drives.
+- **Terminal states.** Operation: `no_change`, `plan_failed`, `rejected`, `succeeded`, `partially_succeeded`, `failed`, `cancelled`. Item: `skipped`, `blocked`, `succeeded`, `failed`, `cancelled`, `undone`. Step: `not_run`, `failed`, `verify_failed`, `verified`, `undone`. Nothing leaves a terminal state except the explicit `→ undone` rows, which an Undo operation drives.
 - **Partial success is never success** (DM-41.I2). A blocked item makes the result at best `partially_succeeded`. `cancelled` reports counts of applied, verified and not-run steps.
+- **Nothing to change is a success, not a failure.** Re-running a CSV, or a daily automation that finds every target already in its desired state, plans only `skipped` items. The operation goes `planning → no_change`: it passes no gate, claims nothing, raises no failure event and no alert, and writes one `operation.completed` event with result `no_change` and its counts (rule 11). If any item is `blocked` and none is `planned`, the outcome is `plan_failed`, because a refusal must be seen.
+- **What undo inverts.** A `failed` step never changed its target, with one exception. `denied` and `stale_state` are decided before the write. A permanent LDAP error means the atomic modify did not happen (RFC 4511 §4.6). `retries_exhausted` is recorded only after a read on the pin shows the before-state (rule 6); a step whose state cannot be read stays `applying` for the reconciler. The exception is `outcome_unknown`, which only a password step can reach, and a password step is `Irreversible`. An undo therefore inverts the `verified` and `verify_failed` steps. Because Undo is a new operation planned against the live state, an inverse whose before-state is already back in place plans as `skipped`.
 - **The DM-41 and DM-42 review points are answered.** (a) `planning → plan_failed` exists. (b) The stale check moves *into* `applying`: the authorisation re-check and the precondition are the first things the claimed step does, and a refusal is `applying → failed` with reason `denied` or `stale_state`. There is no `planned → failed`. `expired` is no longer a state: an expired plan is re-planned (`→ planning`), and an abandoned one is `cancelled` by the sweeper with reason `abandoned`.
 - **Only the transition function writes a state.** Every state change goes through one function in `operation` that checks the table and writes the audit event in the same transaction (rule 6). No other SQL updates a state column (O4).
 
@@ -189,7 +199,8 @@ verified          -> undone             the undo operation's inverse step verifi
 
 ### Rule 5: DC affinity per operation
 
-- **Plan pins one writable DC per naming context** for the whole operation. It prefers the connector's site and a healthy DC, and records the pin in the plan, so the pin is covered by `plan_hash`. Plan reads, the Apply re-check, the write and Verify all go to the pinned DC, which gives read-your-writes (FEAS §1.1).
+- **Plan pins one writable DC per AD naming context the operation reads or writes** for the whole operation. That includes a naming context read only for authorisation, such as the correlated AD object's domain for an Entra Action authorised through `include_correlated`, or an AD `group_members` root in another domain (rule 7). It prefers the connector's site and a healthy DC, and records the pins in the plan. Plan reads, the Apply re-check, the write and Verify all go to the pinned DC, which gives read-your-writes (FEAS §1.1).
+- **Pins are not part of `plan_hash`** (rule 9). An approver approves what changes, not which DC carries it. A re-plan keeps each previous pin while that DC is healthy, and only otherwise picks a new one. Either way the before-state is re-read on the pin, so a re-plan on a different DC that reads the same before-state yields the same hash and keeps its approvals. A different before-state changes the diff, and so the hash, and goes back to the approver as it should.
 - **If the pinned DC is lost mid-operation:**
   - Steps not yet claimed are re-pinned to another DC only after their preconditions are re-read there. Items whose before-state differs on the new DC fail `stale_state`.
   - Steps that are `applied` but not verified keep retrying Verify on the pinned DC within the verify window. After that, they read back from another DC and are recorded `verified` with that DC named, or `verify_failed` with reason `dc_unavailable`.
@@ -222,9 +233,9 @@ verified          -> undone             the undo operation's inverse step verifi
   - Plan-chunk results are predicated on `plan_revision`, so they cannot land after a re-plan or cancel.
 - **The life of a directory step:**
   1. **Claim** (transaction 1). The `operation.started` event was written at `queued → running`. The claim commits before the write. **These commits are the write-ahead record.**
-  2. **Re-check, then write** (no recording transaction is open). `client.Write` re-checks authorisation against live ancestry on the pinned DC (rule 7), verifies the plan digest (rule 2), and sends the conditional write. The embedded connector unseals its credential inside its own short `WithTenantTx`, as ADR-0002 requires. A remote connector uses its local credential (TM-D8).
+  2. **Re-check, then write** (no recording transaction is open). `client.Write` verifies the plan digest (rule 2), reads the scope facts the step names live on the pins (rule 7), calls `Step.Recheck`, and sends the conditional write with the returned clearance. The embedded connector unseals its credential inside its own short `WithTenantTx`, as ADR-0002 requires. A remote connector uses its local credential (TM-D8).
   3. **Record** (transaction 2). The step moves `applying → applied → verified | verify_failed`, or `applying → failed`. Its audit events are written **in the same transaction**. Several steps of one chunk may be recorded together, which amortises the chain lock (rule 11). When Verify needs more time, `applied` commits with its event, and `operation.verify` commits `verified` later with its own event.
-- **Transient errors** (connector unreachable, DC busy, `429`) keep the step in `applying` and retry with the **same key** and a new attempt number. Retries back off and honour `Retry-After`. After the attempt limit, the step fails with reason `retries_exhausted`.
+- **Transient errors** (connector unreachable, DC busy, `429`) keep the step in `applying` and retry with the **same key** and a new attempt number. Retries back off and honour `Retry-After`. After the attempt limit, the runner reads the target on the pin, as the reconciler would: the after-state in place is `applied`, the before-state in place is `failed` with reason `retries_exhausted`, and a target it cannot read leaves the step `applying` for the reconciler. So a `failed` step never hides a write (rule 3).
 - **Crash recovery.** A step still `applying` after `claimed_until` is reconciled. The reconciler reads the live state on the pinned DC:
   - the after-state is in place → `applied`, with `recovered: true` on the event;
   - the before-state is still in place → re-apply with the same key, or `not_run` if the operation is `cancelling`;
@@ -241,21 +252,46 @@ verified          -> undone             the undo operation's inverse step verifi
     3. re-checks authorisation;
     4. runs Apply and Verify, with the state changes and the audit event.
   - **If anything fails, the outcome is still recorded.** When that transaction rolls back (Apply or Verify error, or a refusal at the re-check), the runner records the outcome and its event in **a fresh transaction**: `failed`, or `denied` for a refusal. A failure or denial is never lost with the rollback (AG-2).
+  - **If the fresh transaction cannot take the chain lock either.** It runs with a longer `lock_timeout` than the business path (the head lock is held only for inserts and commit, so contention clears in milliseconds). On `lock_timeout`, serialisation or connection failure it retries with jittered backoff, up to 5 attempts within 30 seconds, under the same event ID, so an ambiguous commit is not recorded twice. If every attempt fails, the database is in effect unavailable: nothing was written, because the business transaction rolled back. The API answers `503` with the correlation ID, the runner writes a structured `audit.record_failed` log line (event kind, operation ID, body hash; no personal values, threat model §9.7) and raises the `audit_record_failed` metric, which alerts. The residual is stated in § Consequences: during a database outage, the record of an attempt that changed nothing can be lost. The record of a change cannot, because the change and its event share one transaction.
   - **A held `Store` operation** keeps its persisted plan. After approval, it runs as one `operation.apply` job, in one transaction.
 - **What AG-1 means here.**
   - For `Store` Actions, AG-1 holds literally.
   - For `Directory` Actions it holds as **write-ahead plus same-transaction outcome**. The started event and the claim commit before the write. The outcome event commits with the outcome state, and a crash between the two is closed by reconciliation.
   - **The honest residual.** Between the directory write and the recording commit, the change exists in the directory without its outcome event. That lasts until the commit or until reconciliation, and inventory history (DM-18) shows the change meanwhile. The threat model's AG-1 wording is amended to say this (§ Consultation).
 
-### Rule 7: Authorisation at Plan and again at Apply, against live ancestry (TOCTOU)
+### Rule 7: Authorisation at Plan and again at Apply, against live facts for every scope root kind (TOCTOU)
 
-- **The pipeline performs both checks, never Action code.**
-  - **At Plan.** After the Action's Plan returns its steps, the runner authorises every target through a kernel port, `operation.LiveAncestry`. `directory/client` implements the port and `compose/server` wires it (the ADR-0003 F6 kernel→directory port pattern). The check is role ∩ delegation scope ∩ token scope (threat model §7.7), for the initiator, against the target's **GUID ancestry read live from the pinned DC**, never from inventory. Time-dependent state is read live too (DM-16.I5a).
-  - A refused item is `blocked`, with a denial event per item (AG-2). A missing Action permission fails the whole plan (`plan_failed`), with a denial event.
-- **At Apply.** `client.Write` re-reads the ancestry on the pinned DC and authorises again, **immediately before the conditional write**. A move or rename checks both the source and the destination parent. Role assignments are read as they are now, so a technician who lost a role between Plan and Apply is refused (`failed`, reason `denied`, with a denial event).
+- **The pipeline performs both checks, never Action code.** Each check is role ∩ delegation scope ∩ token scope (threat model §7.7) for the **initiator chain**, evaluated by `authz` and the delegation module's EP-6 scope evaluator over **live facts** about the target, never over inventory. Time-dependent state is read live too (DM-16.I5a).
+- **One port for every root kind.** The kernel declares the port; `directory/client` implements it and `compose/server` wires it (the ADR-0003 F6 kernel→directory port pattern). It is not ancestry-only:
+
+  ```go
+  // internal/platform/operation: the port. The types live in the leaf internal/platform/authority (rule 13).
+  type LiveFacts interface {
+      // Facts reads, live and on the pins, exactly what q asks about one target.
+      Facts(ctx context.Context, pins authority.Pins, t authority.TargetRef, q authority.FactsQuery) (authority.Facts, error)
+  }
+  ```
+
+  `authz.FactsQuery(chain, permission, connection)` builds the query from the initiator's assignments. It names every root of every include **and** exclude entry that could decide the target, plus the Tier-0 facts (T-0007 Q1), so the read is bounded by the initiator's scopes, not by the target's whole membership. `authority.Facts` carries, for what was asked: the target's existence and kind, its GUID ancestry, its membership in each asked group, its membership in each asked AU, `isManagementRestricted` (DM-35.I7), the correlation state and the correlated AD object's ancestry, and the Tier-0 flag.
+- **What is read live, per DM-35 root kind.** The Plan check and the Apply check read the same facts; Apply reads them **immediately before the write**.
+
+  | `root_kind` | Live fact | Where it is read | Apply residual (no write is conditional on it) |
+  | --- | --- | --- | --- |
+  | `naming_context`, `ou_subtree`, `ou_one_level` (AD) | The target's parent chain by `objectGUID`. A move or rename checks the source **and** the destination parent | The pinned DC of the target's naming context | LDAP cannot make a write conditional on the parent |
+  | `group_members` (AD) | Transitive membership of the target in each asked root group, with an in-chain filter built by `ldapfilter` (`LDAP_MATCHING_RULE_IN_CHAIN`, [search filter syntax](https://learn.microsoft.com/en-us/windows/win32/adsi/search-filter-syntax)). Deactivated links never count (DM-36.I2) | The pinned DC of the **group's** naming context. Whether a root group in another domain needs a global catalog or that domain's DC is `[LAB: Windows]` (connector spec, T-0051) | A membership removed between the read and the write |
+  | `group_members` (Entra) | Transitive membership through Graph `checkMemberGroups`, at most 20 group IDs per request ([checkMemberGroups](https://learn.microsoft.com/en-us/graph/api/directoryobject-checkmembergroups?view=graph-rest-1.0)) | The Entra connection | Read, then write; Graph read-after-change consistency is `[UNVERIFIED]` (T-0051) |
+  | `administrative_unit` (Entra) | **Direct** membership of the target in each asked AU (`GET /directory/administrativeUnits/{id}/members/{id}`, [get a member](https://learn.microsoft.com/en-us/graph/api/administrativeunit-get-members?view=graph-rest-1.0)), because AU membership is not transitive (DM-35.I2), plus `isManagementRestricted` (DM-35.I7) | The Entra connection | As above |
+  | `entra_tenant` | The target exists, is not deleted, and belongs to that connection's tenant | The Entra connection | As above |
+  | AD entry with `include_correlated`, Entra target (DM-35.I6) | Three facts, all live: the Entra target; the correlation gate re-checked (DM-20.I5), so only `matched` authorises; and the parent chain (or group membership) of the **correlated AD object** | The Entra connection **and** the pinned DC of the correlated AD object's naming context (rule 5 pins it although nothing is written there) | Spans two directories. Neither write is conditional on the other directory |
+
+  **Facts fail closed.** Each asked root comes back `member`, `not_member` or `unknown`, and `unknown` refuses the target whether the root is an include or an exclude. This matters for exclusions. `checkMemberGroups` returns only the groups the target belongs to, and it silently omits hidden-membership groups the caller may not evaluate ([checkMemberGroups](https://learn.microsoft.com/en-us/graph/api/directoryobject-checkmembergroups?view=graph-rest-1.0)), so an omitted ID cannot tell "not a member" from "not evaluable". The connector therefore reports a hidden-membership root as `unknown` unless the connection holds `Member.Read.Hidden`, and an exclusion can never fail open. How the connector knows which roots are hidden-membership is the connector spec's.
+
+  The connector reads authorisation facts with default Graph queries. It never uses advanced queries (`ConsistencyLevel: eventual`), which Graph serves from a separate index store ([advanced queries](https://learn.microsoft.com/en-us/graph/aad-advanced-queries)).
+- **At Plan.** After the Action's Plan returns its steps, the runner reads the facts and authorises every target. A refused item is `blocked`, with a denial event per item (AG-2). A missing Action permission fails the whole plan (`plan_failed`), with a denial event.
+- **At Apply.** `client.Write` reads the facts `Step.FactsQuery()` names and calls `Step.Recheck` immediately before the conditional write (rule 2). Role assignments are read as they are now, so a technician who lost a role between Plan and Apply is refused (`failed`, reason `denied`, with a denial event). For `Store` Actions the runner re-checks inside the transaction (rule 6).
 - **Whose authority.** Authorisation always evaluates the **initiator chain**: the requester, the automation policy as its own subject (DM-60.I2), and the API token's scope. An approval **never widens** it. A request whose requester lost the right while it waited fails `denied` at Apply.
-- **Residual.** LDAP cannot make a write conditional on the object's parent. If someone else moves an object out of scope in the milliseconds between the re-check and the write, the write still happens. Verify then reads the ancestry again, records `verify_failed` with reason `scope_changed`, and alerts. TM-F-AUTHZ's "moved between Plan and Apply" test covers the window that matters, which lasts from minutes to days.
-- **No role touches `tier0`** (TM-D2, DM-35.I5). It is checked at both points, and no gate can lift it.
+- **Residual, every root kind.** No directory makes a write conditional on ancestry, membership or correlation. If someone else takes the target out of scope in the moments between the re-check and the write, the write still happens. For Entra the window also includes Graph's read consistency `[UNVERIFIED]`. In every case Verify reads the same facts again, records `verify_failed` with reason `scope_changed`, and alerts. TM-F-AUTHZ's "moved or removed from scope between Plan and Apply" tests cover the window that matters, which lasts from minutes to days, for an AD move, an Entra AU or group removal, and a broken correlation (O8).
+- **No role touches `tier0`** (TM-D2, DM-35.I5), in any root kind. It is checked at both points, and no gate can lift it.
 
 ### Rule 8: The approval gate (EP-4), kernel holds and separation of duties
 
@@ -287,14 +323,16 @@ type Approvals interface {
   - any principal in the initiator chain (DM-64.I1);
   - anything but an **interactive human session** (API tokens and automation policies never approve);
   - an approval of an `Irreversible` or `StepUp` operation without a fresh step-up (TM-D16);
-  - **a sock-puppet approver:** an account that was created, or granted `operation.approve`, by a principal in the initiator chain within the last 30 days. Such an attempt also alerts `tenant-owner` accounts. This closes the second-account bypass by a compromised tenant-owner (X5).
+  - **a sock-puppet approver.** Within the last 30 days, a principal in the initiator chain, through activeDIQ: (a) created the approving account (`created_by`, DM-30); (b) granted `operation.approve` to that account directly; (c) bound or rebound its `directory_ref` (DM-30.I5); or (d) added its directory object to the group through which it holds `operation.approve`. **The rule runs both ways:** it also refuses an approver who did (a)–(d) to any principal in the initiator chain, so a compromised tenant-owner cannot start an operation from a fresh second account and approve it as themselves. Such an attempt also alerts `tenant-owner` accounts. This closes the second-account bypass by a compromised tenant-owner (X5).
 
   A buggy or hostile gate therefore cannot get an operation self-approved.
+- **What does not make a sock-puppet.** A `directory` or `sso` account created by sign-in through an admission rule or a group-subject grant (DM-30, DM-36.I2) is created by the system, not by a principal. Creating the admission rule, or granting the group a role, does not by itself taint the group's members: their identities exist in the directory independently of the initiator. An approval by an account whose granting-group membership is younger than 30 days in inventory history (DM-18), and was not made through activeDIQ, is allowed but alerts `tenant-owner` accounts, because the initiator may also hold rights in AD outside activeDIQ.
+- **How a pilot gets a legitimate approver.** On a new install the tenant-owner creates every local account, so for 30 days no local account can approve a held operation the tenant-owner starts. A pilot gets an approver on day one by admitting its administrators from the directory: an `sso` or `directory` account admitted through a group the administrators already belong to. Accounts admitted that way can approve each other's and the tenant-owner's held operations. A local-only pilot waits out the window, because every local account is tied to the tenant-owner in one direction or the other. This is customer-visible and goes in the ratification notice (§ Consequences).
 - Every gate outcome writes an audit event: held, approved (with the approver), rejected, or request expired.
 
 ### Rule 9: Inputs, secrets and plan validity
 
-- **The plan hash** is SHA-256 over the canonical encoding (rule 11) of: the Action IDs and versions, every item's target, diff, preconditions, phase and reversibility, the DC pins, and a flag for each secret input. It never covers a secret value.
+- **The plan hash** is SHA-256 over the canonical encoding (rule 11) of: the Action IDs and versions, every item's target, diff, preconditions, phase and reversibility, and a flag for each secret input. It never covers a secret value. It does not cover the DC pins or `plan_valid_until`, which say how and when the change runs, not what it is (rule 5).
 - **Transient secrets** (security-architect concurs, with the conditions below, § Consultation). Some Action inputs carry a `secret.Secret`, such as a password typed in the console or a CSV password column. Such a secret is stored only in `operation_secret`. The rules for it:
   - **Sealing.** It is sealed with the TM-D7 seal primitive. Its associated data is `(tenant, table, row, column, key version)` plus the step key. There is no separate binding scheme.
   - **Its own TTL.** The TTL is the request's expiry, capped at **72 hours**. It is independent of `plan_valid_until`. An expired secret fails its step closed, with reason `secret_expired`. A secret is never regenerated, and never replaced after submission: a new secret means a new operation.
@@ -308,11 +346,11 @@ type Approvals interface {
 
 **Ruling on m2-plan decision 7.** Every write **a principal makes to activeDIQ's own configuration** is an EP-3 Action with `Target: Store`. It gets the same preview (a diff against the current version), gate, step-up, audit and undo as a directory write. Each runs inline in the request when the gate allows, so the user waits for one transaction, not a queue. Examples:
 - connections and credentials (T-0093): `connections.*`;
-- notification channels and SMTP settings (T-0095): `notify.channel.*`, exported by `platform/notify`;
-- accounts created, disabled or reset by an administrator (T-0096): `authn.account.*`;
-- roles, assignments and delegation scopes: `authz.*`, `delegation.*`;
+- notification channels and SMTP settings (T-0095): `notify.channel.*`, exported by `platform/notify/actions`;
+- accounts created, disabled or reset by an administrator (T-0096): `authn.account.*`, exported by `platform/authn/actions`;
+- roles and assignments: `authz.*`, exported by `platform/authz/actions`; delegation scopes: `delegation.*`;
 - templates, naming formats, attribute lists, workflow definitions, automation policies, report definitions and schedules (T-0104: `reports.schedule.*`), data sources;
-- audit retention, SIEM sinks, tenant settings, erasure requests (rule 12).
+- audit retention and SIEM sinks (`audit/actions`), tenant settings, erasure requests (`personal/actions`, rule 12).
 
 **System bookkeeping is not an Action.** It is written by its owning package and audited where the threat model says so (DM-80.I3). The complete list, kept in the fitness configuration, follows. Adding to it is an amendment to this ADR.
 - sign-in, sessions and the signing-in user's **own** factor enrolment at first sign-in (DM-31, DM-37 self-service);
@@ -324,7 +362,7 @@ type Approvals interface {
 - audit events, checkpoints and the personal-value store (DM-80, DM-81, rule 12);
 - data-key rotation (TM-D15).
 
-**Tables carry a write class.** The ownership map (ADR-0003 rule 6) gains a column, `config` or `system`, declared beside the migration. O3 checks that every write to a `config` table is made by a function that takes an `operation.Step`.
+**Tables carry a write class.** The ownership map (ADR-0003 rule 6) gains a column, `config` or `system`, declared beside the migration. O3 checks that every write to a `config` table is made by a function that takes a `step.Step`.
 
 **Undo for configuration** restores the previous version. Definitions are versioned (X7), and other configuration rows keep their before-image in the step outcome.
 
@@ -351,7 +389,7 @@ type Approvals interface {
   - the gate events;
   - `operation.started`;
   - the step outcome events (`applied`, `verified`, `verify_failed`, `failed`, `denied`);
-  - `operation.completed` or `operation.cancelled`, with counts.
+  - `operation.completed` (result `succeeded`, `partially_succeeded`, `failed` or `no_change`) or `operation.cancelled`, with counts. A `no_change` operation writes only this event, with outcome `success` (rule 3).
 - `not_run` and `skipped` are counted, not evented.
 
 **Canonical form `adq-canon/1`.** This is a deterministic, length-prefixed, tagged binary encoding:
@@ -374,13 +412,19 @@ A decoder rejects any non-canonical input. The format needs only the standard li
 The tenant ID and `seq` are inside every link. An event therefore cannot be spliced into another tenant's chain, or moved within its own chain. The genesis value is public, so **the chain alone proves nothing to someone who holds the whole export**. Trust comes from checkpoints anchored outside the host. That is why the verifier needs a trust root (below).
 
 **Per-tenant serialisation: chained at commit.**
-- **Append buffers; the store chains.** `audit.Append(tx, kind, event)` buffers the event on the transaction. `store.WithTenantTx` runs the body, then the chain statements, then `COMMIT`. The chain statements are:
+- **Append buffers; audit's commit hook chains; `store` knows nothing about audit.** `store` offers two neutral mechanisms and imports no audit code:
+  - a **per-transaction slot**, keyed by a value only its creator holds (`store.NewSlot[T]()`), so a package can attach data to a transaction without `store` knowing its type;
+  - **one `BeforeCommit` hook**, set once when `compose/server` opens the store. `WithTenantTx` runs the body, then the hook, then `COMMIT`. Satellite binaries open no store (ADR-0003 rule 7), so the hook exists only in `cmd/server`.
+
+  `audit.Append(tx, kind, event)` puts the event in audit's slot. It refuses a transaction whose store was opened without audit's hook, so a mis-wired process fails closed, never silently unchained. `compose/server` installs `audit.Chainer.BeforeCommit` as the hook. When the slot holds events, the hook runs the chain statements:
   1. a check that the transaction is `READ COMMITTED`, refusing it otherwise;
-  2. `SELECT seq, hash, at FROM audit_head WHERE tenant_id = $1 FOR UPDATE`;
+  2. `SELECT seq, hash, at FROM audit_head WHERE tenant_id = $1 FOR UPDATE`. No row means the tenant was never initialised, and the transaction fails closed;
   3. for each buffered event: `at = greatest(clock_timestamp(), head.at)`, then hash, then `INSERT` into `audit_event`;
   4. an `UPDATE` of `audit_head`.
+- **Who owns the chain tables.** `audit_head`, `audit_event` and `audit_checkpoint` are owned by `platform/audit` (migrations `NNNN_audit_*.sql`, ADR-0003 rule 6). The chain SQL lives in `platform/audit`, and `store` executes only the hook function it was handed. No SQL in `store` names an audit table.
+- **The genesis row.** The tenant-provisioning platform path (the first-run bootstrap in self-hosted profiles; tenant provisioning in `saas`; T-0037) commits the `tenants` row under `WithPlatform`. It then runs, in the new tenant's first `WithTenantTx`, the kernel tenant initialisers that `compose/server` hands it. `audit.InitTenant` is one of them. It inserts the head row `(seq 0, hash_0)`, creates the first checkpoint key, and appends `audit.checkpoint_key.created` and `audit.tenant.initialised`. This runs as the runtime role, the only role on that path (ADR-0002). So the runtime role holds `INSERT` on `audit_head`, fenced three ways: the primary key `(tenant_id)` allows one head per tenant; there is no `DELETE`, so a head cannot be recreated; and an audit-owned `BEFORE INSERT` trigger, which is not `SECURITY DEFINER`, refuses any row except `seq = 0` with the recomputed `hash_0` (PostgreSQL's built-in `sha256()`, [binary string functions](https://www.postgresql.org/docs/current/functions-binarystring.html)). Provisioning is idempotent: a crash between the two transactions leaves a tenant with no head, which cannot append (step 2), and re-running the path completes it.
 - **Why a head row.** The row lock serialises the tenant's appenders. Under `READ COMMITTED`, a `SELECT … FOR UPDATE` that waited re-reads the row's committed version, so it sees the predecessor's head ([row-level locks](https://www.postgresql.org/docs/current/explicit-locking.html#LOCKING-ROWS), [EvalPlanQual behaviour](https://www.postgresql.org/docs/current/transaction-iso.html#XACT-READ-COMMITTED)).
-- **What the head row costs.** It is the only audit table on which the runtime role holds `UPDATE`. A tampered head breaks the next link, so the verifier catches it.
+- **What the head row costs.** It is the only audit table on which the runtime role holds `UPDATE` (and the fenced genesis `INSERT` above). A tampered head breaks the next link, so the verifier catches it.
 - **Backstop and lock order.** The unique index `(tenant_id, seq)` is the backstop: a stale head fails the transaction rather than forking the chain. The head lock is the last lock a transaction takes, under a `lock_timeout`. Nested `WithTenantTx` calls are refused.
 - **Gapless by construction.** `seq` order is commit order, so `seq` has no gaps: a rolled-back transaction consumed nothing. `at` is monotonic per tenant, so time partitions are `seq` ranges.
 - **An ambiguous `COMMIT`** (the connection drops during commit) is resolved by the caller's idempotent retry (rule 4).
@@ -431,6 +475,7 @@ The tenant ID and `seq` are inside every link. An event therefore cannot be spli
 - **The purge unit** is a time partition whose last `seq` is a checkpoint's `seq`; the partition-boundary checkpoint guarantees that.
 - **A purge needs an archive.** It requires a recorded archive export covering the range, unless the tenant's `purge_without_archive` setting is on. Changing that setting needs step-up and is audited.
 - **Every purge is evidence.** It appends `audit.retention.purged`, carrying the range, the boundary checkpoint and the archive digest.
+- **A purge takes the purged events' personal values with it.** Each `value_id` belongs to exactly one record (rule 12), so the purge deletes, in the same maintenance transaction and through `personal`'s Go API, the `personal_value` rows that only the purged events reference. It then deletes the `personal_subject` row (the salt) of any subject left with no values and no `hold`. Keeping them would retain personal data for records the customer chose to discard, against the retention setting. The archive export carries the values unless the tenant archives pseudonymously, so nothing the customer chose to keep is lost. Inventory history (DM-18) purges its values the same way (T-0065).
 - **Checkpoints are never purged** (DM-81.I1), and verification of the retained chain starts at the boundary checkpoint.
 
 **SIEM forwarding (ADM-198, AG-6).**
@@ -449,7 +494,9 @@ The length-prefixed canonical form removes any ambiguity at field boundaries. Th
 - `personal_subject(tenant_id, subject_ref, salt[32], hold)`;
 - `personal_value(tenant_id, value_id, subject_ref, record_kind, field, value)`.
 
-The runtime role cannot `UPDATE` either table. Only erasure deletes from them.
+The runtime role cannot `UPDATE` either table. Only erasure and the retention purge (rule 11) delete from them.
+
+**Where the code sits** (rule 13). `personal` is below `audit`: `audit` imports it to carry `PersonalRef`s, to export side files and to purge, and `personal` imports no audit code. The pieces that need both live above them. The Action `personal.subject.erase` is in `personal/actions`. The job that runs triggers 1 and 3 below is in `personal/erasure`. Each deletes the values and appends `personal.subject.erased` in one transaction.
 
 | Property | How it holds |
 | --- | --- |
@@ -478,6 +525,53 @@ The runtime role cannot `UPDATE` either table. Only erasure deletes from them.
 - **One shape for every append-only record.** DM-18 ChangeRecord old and new values (owner `directory/inventory`, applied by T-0065), DM-66 comments (`workflow`) and DM-80 events all store `PersonalRef`s. They write values through `personal`'s Go API, so one erasure path covers them all.
 - **Mutable records** (Operation input, Request, Account) are erased in place, as X11 already says.
 
+### Rule 13: Package placement: the kernel import DAG
+
+The write APIs of `authz`, `authn`, `notify`, `audit` and `personal` take a step token, and `operation` calls all of them. That is a Go import cycle unless the types are placed with care. This rule places them. The `dag` block below is the source. O9 compares the imports among the packages it lists with it, and fails on any edge it does not allow. Imports of the standard library, and of kernel infrastructure the block does not list (`keys`, `blob`, `telemetry`, `secret`, `capability`), stay governed by ADR-0003.
+
+```dag
+# package          -> kernel packages it may import (among those listed in this block)
+audit/canon        -> (none)
+audit/chain        -> audit/canon
+tenant             -> (none)
+authority          -> tenant
+store              -> tenant
+operation/step     -> authority, store, tenant
+jobs               -> store, tenant
+personal           -> audit/canon, authority, operation/step, store, tenant
+notify             -> authority, jobs, operation/step, store, tenant
+audit              -> audit/canon, audit/chain, authority, jobs, notify, operation/step, personal, store, tenant
+authz              -> audit, authority, operation/step, store, tenant
+authn              -> audit, authority, notify, operation/step, store, tenant
+operation          -> audit, audit/canon, authn, authority, authz, jobs, notify, operation/step, personal, store, tenant
+module             -> authz, operation
+authz/actions      -> authz, operation, (anything operation may import)
+authn/actions      -> authn, operation, (anything operation may import)
+notify/actions     -> notify, operation, (anything operation may import)
+audit/actions      -> audit, operation, (anything operation may import)
+personal/actions   -> personal, operation, (anything operation may import)
+personal/erasure   -> personal, operation, (anything operation may import)
+```
+
+**What each package holds, and why it sits where it does.**
+
+| Package | Holds (for this ADR) | Why here |
+| --- | --- | --- |
+| `audit/canon`, `audit/chain` | `adq-canon/1`; chain and checkpoint verification | Standard library only. `operation` (plan hash), `personal` (commitments), `audit` and `cmd/auditverify` all need them, and the verifier links nothing else |
+| `authority` (**new**, leaf) | `Principal`, `Chain`, `TargetRef`, `NamingContextID`, `Pins`, `FactsQuery`, `Facts` | The step token and the `LiveFacts` port expose them, and both sit below `authz`, which evaluates them. `authz.Permission` stays in `authz`: no package below `authz` needs it (`operation.Descriptor` and `module.Registrar` are above it) |
+| `operation/step` (leaf for every write API) | `Step`, `Key`, `OperationID`, `Clearance`, `DCRef`, the plan-digest function, the single minter (rule 2) | Every write API takes a `Step`, so it must sit below all of them. It is a subpackage of `operation` (owner key `operation`, ADR-0003 rule 6), and importing it does not import `operation` |
+| `store` | `WithTenantTx`, the per-transaction slot, the one `BeforeCommit` hook | Imports no audit code. The chain runs as audit's hook (rule 11) |
+| `personal` | `PersonalRef`, the side store, `Put`, `Resolve`, `Erase`, `PurgeValues`, the erasure register | Below `audit`, which carries its refs, exports its values and purges them (rules 11, 12) |
+| `notify` | delivery, EP-9 sinks, alerts | Below `audit`, which forwards to sinks and raises alerts. `notify` appends no audit events itself: changes to its configuration are Actions, which the runner audits |
+| `audit` | `Kind`, the envelope, `Append`, `Chainer`, `InitTenant`, checkpoints, export, forwarding, retention | Below everything that appends an event: `authz`, `authn` and `operation` |
+| `authz`, `authn` | evaluation (`Authorize`, `FactsQuery`); accounts and sessions; their `config` write functions, which take a `step.Step` | Neither imports the other. The identity facts both need are in `authority` |
+| `operation` | `Action`, `Descriptor`, `StepPlan`, `PlanContext`, `Outcome`, `Verdict`, `Define`, `Catalogue`, `Gate`, `Approvals`, the `LiveFacts` port, the runner, the transitions | On top: it orchestrates all of the above. Inside the kernel only `module` and the `actions` subpackages import it |
+| `<pkg>/actions`, `personal/erasure` | the kernel's own Actions (rule 10), and jobs that must call both their package and `audit` or `operation` | Above both their package and `operation`. `compose/server` hands their `All()` to the operation host (rule 1) |
+
+**Outside the kernel.** `directory/client` imports `operation/step` and `authority`. It implements `operation.LiveFacts` structurally and does not need to import `operation`. Modules import `operation` and whatever they write through. The import of a kernel type by `directory/client` is a directory → kernel import, which ADR-0003 rule 1 allows.
+
+**Catalogue rows.** `authority` and `personal` are new top-level kernel packages, so ADR-0003 rule 5 needs a blueprint §5.1 row for each. The subpackages are listed in their parents' rows. T-0155 adds them.
+
 ## Alternatives considered
 
 | Alternative | What it would buy us | Why not (for now) |
@@ -505,7 +599,8 @@ The runtime role cannot `UPDATE` either table. Only erasure deletes from them.
 
 **Negative.**
 - Every write module carries the Plan/Verify/Inverse discipline. A simple settings form is an Action with a contract test.
-- `directory/client`'s write API depends on a kernel type (`operation.Step`). That is a directory → kernel import, which ADR-0003 allows.
+- `directory/client`'s write API depends on a kernel type (`step.Step`). That is a directory → kernel import, which ADR-0003 allows.
+- The kernel grows two top-level packages (`authority`, `personal`) and six thin subpackages (`operation/step`, the five `<pkg>/actions`, `personal/erasure`) so that the write APIs compile without cycles (rule 13). The `dag` block fixes their directions, and O9 holds them there.
 - Per-tenant serialisation caps one tenant's audited commits at the rule 11 budget: roughly 200–1,000 per second, or about 100 with a synchronous standby. That is ample for a self-hosted tenant. It is the first thing to measure for a large SaaS tenant (revisit below).
 - The runtime role holds `UPDATE` on one audit table, `audit_head`. That is a deliberate exception to "INSERT only": tampering with it breaks the next link and is detected.
 - The verifier says `UNANCHORED` for an install with no SIEM sink whose exports nobody pinned. That is honest, but auditors will ask, so the docs explain how to pin the fingerprint.
@@ -513,11 +608,15 @@ The runtime role cannot `UPDATE` either table. Only erasure deletes from them.
 - The transient secret table narrows X4. It is a new sealed-at-rest secret class that backups contain while a step is in flight.
 - Erasure cannot recall SIEM copies or earlier exports. That is stated in the product, not hidden.
 - Approvals bind to the requester's authority, so a long-pending request can fail `denied` at Apply if the requester's role changed. That is correct, but it will surprise people. The UI explains it.
+- **Customer-visible, for the ratification notice: the 30-day separation-of-duties window (rule 8).** For 30 days, an account cannot approve an operation started by an account it created, granted or bound, or by the account that created, granted or bound it. On a new install with only local accounts, the tenant-owner is tied to every account, so nobody can approve a held operation for the first 30 days. A held operation is one that needs approval: an undo of an approved operation, an irreversible change when the tenant turns on "approval for irreversible changes", a step-up Action started by a token, or an automation over its blast radius. A pilot avoids the wait by admitting its administrators from the directory (an `sso` or `directory` account through a group), because the system, not the tenant-owner, creates those accounts.
+- **Entra re-checks are read, then write** (rule 7). Graph makes no write conditional on group or AU membership, and its read-after-change consistency is `[UNVERIFIED]`. A target removed from scope seconds before the write can still be written; Verify catches it as `scope_changed` and alerts.
+- **During a database outage, the record of an attempt that changed nothing can be lost** (rule 6). It is logged and alerted. The record of a change cannot be lost, because the change and its event share one transaction.
 
 **Follow-on work** (filed with this ADR; IDs on the T-0047 ticket note):
-- **operation kernel** (build, backend-engineer): `platform/operation`, meaning EP-3, the Step token, the state machine, the job kinds, reconciliation, the inline Store path, the kernel holds, the default EP-4 gate with single approval, Undo, `operationtest`, and the `Registrar.Action`/`ApprovalGate` methods. It replaces the scaffold's `Action` in `internal/platform/operation/operation.go` in the same change. It goes into checkpoint 2a ahead of T-0093, T-0095, T-0096 and T-0104.
-- **fitness-operation and fitness-audit** (chore, devops-engineer): O1–O8 and A1–A8 in `make ci`, each with a failing case in `tools/ci/proof.sh`.
-- **architecture map** (spec, solution-architect): blueprint §4.2, §8, §9, §16 and §17; a §5.1 row for `platform/personal`; the ADR-0002 Jobs-row amendment line; the ADR-0003 amendment adding `cmd/auditverify` as a class row and a rule 7 binary row (it links only `platform/audit/chain` and the standard library); and the `config | system` column of the ownership map.
+- **operation kernel** (T-0153, build, backend-engineer): `platform/operation`, meaning EP-3, the state machine, the job kinds, reconciliation, the inline Store path, the kernel holds, the default EP-4 gate with single approval, Undo, `operationtest`, and the `Registrar.Action`/`ApprovalGate` methods; plus the rule 13 leaves it needs first: `platform/authority` and `platform/operation/step` (the token, the minter, the clearance), and the `LiveFacts` port. It replaces the scaffold's `Action` in `internal/platform/operation/operation.go` in the same change. It goes into checkpoint 2a ahead of T-0093, T-0095, T-0096 and T-0104.
+- **fitness-operation and fitness-audit** (T-0154, chore, devops-engineer): O1–O9 and A1–A9 in `make ci`, each with a failing case in `tools/ci/proof.sh`.
+- **architecture map** (T-0155, chore, solution-architect): blueprint §4.2, §8, §9, §16 and §17; §5.1 rows for `platform/authority` and `platform/personal`, with the subpackages of rule 13 in their parents' rows (`operation/step`, `audit/canon`, `audit/chain`, the `<pkg>/actions`, `personal/erasure`); the `store` row gains the slot and the `BeforeCommit` hook; the `audit` row owns `audit_head`, `audit_event` and `audit_checkpoint`; the ADR-0002 Jobs-row amendment line; the ADR-0003 amendment adding `cmd/auditverify` as a class row and a rule 7 binary row (it links only `platform/audit/chain`, `platform/audit/canon` and the standard library); and the `config | system` column of the ownership map.
+- **T-0037** (existing) runs the kernel tenant initialisers on the provisioning path, including `audit.InitTenant` (rule 11; note filed).
 - **T-0088** (existing) builds the chain, the head row, checkpoints and key windows, export, the verifier, `platform/personal` with its erasure register, and the byte-level format document under this ADR (note filed). The SIEM stream stays with E2.10.
 - **T-0084** (existing) adds the `ManagedTx` job mode and the transactional insert (note filed).
 - **The restore runbook** replays the erasure register (rule 12). It is part of the E2.12 backup work (note on the architecture-map ticket).
@@ -552,27 +651,29 @@ Two jobs run in `make ci`, owned by devops-engineer (follow-on ticket). Each che
 
 | # | Fails when |
 | --- | --- |
-| O1 | **Step escape** (`go/analysis`): a value of type `operation.Step` is stored in a field, global, map, slice or channel; is captured by a closure; or is passed to a function with no `operation.Step` parameter. Or an `operation.Step` is constructed outside `platform/operation`'s runner |
-| O2 | **Write surface**: a `directory/client` exported method that issues a connector-contract write RPC lacks an `operation.Step` parameter; the generated connector-contract write client is referenced outside `directory/client`; a directory protocol or Graph client is imported outside the connector root (shared with `fitness-profiles` P3) |
-| O3 | **Configuration writes**: SQL that writes a `config`-class table runs in a function with no `operation.Step` parameter, outside the rule 10 system-writer list; a table has no write class |
-| O4 | **State machine**: the transition table in `transitions.go` differs from this ADR's `transitions` block; SQL that updates a state column of `operation`'s tables appears outside the transition function; a property test driving random event sequences reaches an undeclared transition |
+| O1 | **Step escape** (`go/analysis`): a value of type `step.Step` is stored in a field, global, map, slice or channel; is captured by a closure; or is passed to a function with no `step.Step` parameter. Or a `step.Step` or `step.Clearance` is constructed outside `operation/step`, or `step.TakeMinter` is referenced outside `platform/operation`. The `compose/server` boot test fails if `operation` does not hold the minter |
+| O2 | **Write surface**: a `directory/client` exported method that issues a connector-contract write RPC lacks a `step.Step` parameter; the connector-contract write RPC is called from a function with no `step.Clearance` parameter; the generated connector-contract write client is referenced outside `directory/client`; a directory protocol or Graph client is imported outside the connector root (shared with `fitness-profiles` P3) |
+| O3 | **Configuration writes**: SQL that writes a `config`-class table runs in a function with no `step.Step` parameter, outside the rule 10 system-writer list; a table has no write class |
+| O4 | **State machine**: the transition table in `transitions.go` differs from this ADR's `transitions` block; SQL that updates a state column of `operation`'s tables appears outside the transition function; a property test driving random event sequences reaches an undeclared transition, or an all-skipped plan ends anywhere but `no_change` |
 | O5 | **Registry completeness** (the `compose/server` boot test over every module and every kernel-exported Action) fails when an Action: lacks a Descriptor field; has an `AuditKind` that is unregistered or owned by someone else; declares `Reversible` or `Lossy` while `Inverse` returns `ErrIrreversible` for a contract fixture |
 | O6 | **Contract coverage**: a registered `ActionID` has no `operationtest.Contract` run in `go test ./...`. The harness writes coverage, and the check compares it with the registry |
 | O7 | **Contract behaviour** (inside `operationtest.Contract`, against the fake provider and a rolled-back store) fails when: Plan writes anything (its store transaction is `READ ONLY`, and the fake directory counts writes); Apply run twice with one key changes state twice; Verify passes after the fake directory drops the write; apply → inverse → apply does not restore the before-state of a `Reversible` step; a `Lossy` step loses an undeclared field; the success, failure **and** denial events are not all emitted with their AG-3 fields (TM-F-AUDIT coverage) |
-| O8 | **Pipeline behaviour** (integration, Postgres + Samba lab) fails when any of these is not as stated: a step killed after its claim is reconciled to `applied`, re-applied, `not_run` (operation cancelling) or `stale_state`, never left `applying`; a password step is never re-applied by reconciliation; a superseded attempt's late result changes nothing; a lost chunk job is re-driven by the sweeper; a target changed between Plan and Apply fails `stale_state` and is not overwritten; an object moved out of scope between Plan and Apply is refused (TM-F-AUTHZ); `client.Write` refuses an operation whose digest differs from the step's plan; an approval with a stale `plan_hash`, by the initiator, by an API token, without step-up for an `Irreversible` operation, or by a sock-puppet account, is refused; a `StepUp` Action initiated by a token is held or refused; an automation run over `max_objects` is held; a gate error leaves the operation unapproved; an expired transient secret fails its step `secret_expired`; a `Store` Action whose Apply fails or is denied still has its outcome event |
+| O8 | **Pipeline behaviour** (integration, Postgres + Samba lab for AD; the connector's Graph fake for Entra) fails when any of these is not as stated: a step killed after its claim is reconciled to `applied`, re-applied, `not_run` (operation cancelling) or `stale_state`, never left `applying`; a password step is never re-applied by reconciliation; a superseded attempt's late result changes nothing; a step whose retries are exhausted while the after-state is in place is not recorded `failed`; a lost chunk job is re-driven by the sweeper; a target changed between Plan and Apply fails `stale_state` and is not overwritten; **removed from scope between Plan and Apply is refused** (TM-F-AUTHZ) in each of: an AD object moved out of an OU root, an AD object removed from a `group_members` root, an Entra object removed from an `administrative_unit` root, an Entra object removed from an Entra `group_members` root, and an Entra target of an `include_correlated` entry whose correlated AD object moved out of scope or whose correlation dropped to `candidate`; a target whose include or exclude root comes back `unknown` (for example a hidden-membership Entra group) is refused; `client.Write` refuses an operation whose digest differs from the step's plan; an approval with a stale `plan_hash`, by the initiator, by an API token, without step-up for an `Irreversible` operation, or by a sock-puppet account in either direction, is refused; an approval by a directory-admitted account not tied to the initiator is accepted; a held operation re-planned on a different DC with the same before-state keeps its approvals; a `StepUp` Action initiated by a token is held or refused; an automation run over `max_objects` is held; a gate error leaves the operation unapproved; an expired transient secret fails its step `secret_expired`; a `Store` Action whose Apply fails or is denied still has its outcome event, including when its first recording attempt hits `lock_timeout`; an undo of a `failed` item restores the before-state of its `verify_failed` steps |
+| O9 | **Kernel DAG**: an import among the packages listed in rule 13's `dag` block is not allowed by that block. The checker parses the block from this file, as O4 does for `transitions` |
 
 **`fitness-audit`** (`tools/fitness/audit/`; it implements TM-F-AUDIT)
 
 | # | Fails when |
 | --- | --- |
-| A1 | **Catalog**: the runtime role holds `UPDATE`, `DELETE` or `TRUNCATE` on `audit_event` or `audit_checkpoint`; `UPDATE` on `personal_subject`, `personal_value` or `operation_secret`; or any privilege on `audit_head` beyond `SELECT` and `UPDATE` (this extends `fitness-tenancy` T3) |
-| A2 | **AG-1 and AG-2**: an event appended in a rolled-back transaction exists; a `Store` Action's state change commits without its event; a `Store` Action that fails or is denied leaves no outcome event; the chain hook accepts a non-`READ COMMITTED` transaction |
+| A1 | **Catalog**: the runtime role holds `UPDATE`, `DELETE` or `TRUNCATE` on `audit_event` or `audit_checkpoint`; `UPDATE` on `personal_subject`, `personal_value` or `operation_secret`; or any privilege on `audit_head` beyond `SELECT`, `INSERT` and `UPDATE`; or `audit_head` lacks its genesis-only `BEFORE INSERT` trigger, or that trigger accepts a row other than `seq = 0` with the tenant's `hash_0` (this extends `fitness-tenancy` T3) |
+| A2 | **AG-1 and AG-2**: an event appended in a rolled-back transaction exists; a `Store` Action's state change commits without its event; a `Store` Action that fails or is denied leaves no outcome event; the chain hook accepts a non-`READ COMMITTED` transaction; `audit.Append` accepts a transaction whose store has no audit hook; an append for a tenant with no head row commits |
 | A3 | **Concurrency**: 32 concurrent appenders in one tenant leave a `seq` gap or a broken link; two tenants appending concurrently interleave in one chain |
 | A4 | **Seeded-tenant verification**: after the lab seed (operations, sign-ins, setting changes, a key rotation, an erasure and a purge) is exported, `adq-audit-verify` with the pinned fingerprint does not return `OK` |
 | A5 | **Tamper corpus**: the verifier does not fail at the right `seq` with the right reason after any of these: an event edited, deleted, reordered or inserted; an event spliced from another tenant; a personal side value altered; side values deleted with no erasure event, or with a forged erasure event that references no erase step or trigger; a checkpoint signed by a retired key; **the whole chain rebuilt and re-signed under a fresh key**. That last case, run with no trust root, must return `UNANCHORED`, and with the pinned fingerprint it must fail |
 | A6 | **Anchoring**: a checkpoint or key event is missing from the fake SIEM sink's stream or from the export; a history rewritten before an anchored checkpoint verifies against the anchors; seven days with no anchor raises no alert |
 | A7 | **Classification**: an audit detail type has a string field tagged neither `personal` nor `public`; a detail type contains a `secret.Secret` (AG-9); a `personal`-tagged field reaches the canonical form as anything but a `PersonalRef` |
 | A8 | **AG-8 coverage**: an audit read, export, retention change or SIEM-sink change emits no event; an export, retention change or sink change succeeds without step-up |
+| A9 | **Retention**: after a purge, a `personal_value` row referenced only by purged events remains, or a `personal_subject` row with no values and no `hold` remains; a purge runs without a covering archive while `purge_without_archive` is off |
 
 **What CI cannot check, and who checks it.**
 - Whether an Action's Plan reads *enough* to make its diff honest. code-reviewer checks this against the Action's spec, and the lab conformance suite exercises it.
@@ -606,3 +707,20 @@ Two jobs run in `make ci`, owned by devops-engineer (follow-on ticket). Each che
 | B5 | Lost or discarded jobs stall operations; cancel during reconciliation; deferred verify has no driver; terminal detection | Rule 6: the sweeper re-drives; `applying → not_run`; `operation.verify`; last-item terminal transition |
 | B6 | `Store` Plan I/O inside the transaction; event volume on the inline path; held `Store` steps | Rule 6: I/O before the transaction, with a version and hash re-check inside it; rule 11 emits one event inline; held steps run as one `operation.apply` |
 
+
+## Review rework
+
+factory-director reviewed the draft at commit `5df89a8` on 2026-10-02 and rejected it with nine items. Rework 1 disposes of each one:
+
+| # | Finding | Disposition |
+| --- | --- | --- |
+| 1 | Import cycles: `operation` ↔ `authz`, `audit`, `personal` (Actions exported by kernel packages, write APIs taking a Step); `store` running SQL on audit-owned tables | **New rule 13**: the kernel `dag` block (O9), with leaves `authority` (Principal, Chain, facts types) and `operation/step` (Step, Clearance, minter); `authz.Permission` stays in `authz`; `Descriptor` stays in `operation`, which no write API needs. Kernel Actions move to `<pkg>/actions` subpackages (rules 1, 10). Rule 11: `store` offers a per-transaction slot and one `BeforeCommit` hook that `compose/server` installs; `audit` owns `audit_head`, `audit_event` and `audit_checkpoint` and their SQL; `personal` sits below `audit`, and erasure code that needs both lives in `personal/actions` and `personal/erasure` (rule 12). Notes on T-0153 and T-0155 restate their scope |
+| 2 | Rule 7 covered only AD ancestry | Rule 7 rewritten: the `LiveFacts` port and `authority.FactsQuery`, with a table of the live Plan and Apply facts for every DM-35 root kind (OU and NC, AD and Entra `group_members`, `administrative_unit`, `entra_tenant`, `include_correlated` across two connections) and the Apply residual of each. Rule 5 pins the correlated AD object's naming context. O8 gains the AU, Entra group and `include_correlated` cases |
+| 3a | An all-skipped plan landed in `plan_failed` | `planning → no_change`, terminal, no gate, no failure event, no alert; one `operation.completed` event with result `no_change` (rules 3, 11; O4) |
+| 3b | Item `failed → undone` needed a `verify_failed` step to be undoable | `verify_failed → undone` added. Rule 3 states what an undo inverts and why a `failed` step never hides a write; rule 6 records `retries_exhausted` only after reading the before-state (O8) |
+| 4 | DC pin inside `plan_hash` made a re-plan on another DC lapse approvals | Pins are excluded from `plan_hash`, and a re-plan keeps a healthy previous pin (rules 5, 9; O8) |
+| 5 | 30-day sock-puppet window in a pilot | Rule 8 defines (a)–(d), applies them in both directions, says directory-admitted accounts are created by the system, and says how a pilot gets an approver. § Consequences carries the customer-visible text for the ratification notice |
+| 6 | DM-42.I3 contradicted rule 5's read-back from another DC | DM-42.I3 now follows rule 5 |
+| 7 | Who creates the `audit_head` genesis row | Rule 11: `audit.InitTenant`, run by the provisioning platform path (T-0037) as the runtime role, fenced by the primary key, no `DELETE` and a genesis-only trigger (A1, A2) |
+| 8 | A purge left personal values and salts behind | Rule 11: the purge deletes the values only purged events reference, and salts of subjects left with no values and no hold (A9) |
+| 9 | The fresh failure transaction could also time out on the chain lock | Rule 6: a longer `lock_timeout`, five jittered retries within 30 s under one event ID, then `503`, a structured log line and an alerting metric; the residual is in § Consequences (O8) |

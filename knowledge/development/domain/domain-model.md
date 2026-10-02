@@ -874,7 +874,7 @@ success. I3 Undo is a new Operation, with `undo_of` set, through the same gate. 
 than `plan_valid_until` must be re-planned before it is approved or applied.
 **Lifecycle** (source: [ADR-0005](../decisions/0005-operation-pipeline-and-audit-trail.md) rule 3,
 whose `transitions` block CI compares with the code).
-`draft → planning → planned | plan_failed`; `planned → approved | awaiting_approval | rejected`
+`draft → planning → planned | no_change | plan_failed` (`no_change`: every item skipped, a success with no failure event); `planned → approved | awaiting_approval | rejected`
 (gate); `awaiting_approval → approved | rejected`; `approved → queued → running →
 succeeded | partially_succeeded | failed`; `running → cancelling → cancelled`. A re-plan returns
 `planned`, `awaiting_approval` or `approved` to `planning`; approvals bound to an unchanged
@@ -889,13 +889,13 @@ one Action applied to that target.
 `state`, `outcome`, `read_back`, `inverse_input`, `reversibility`) · `state`.
 **Invariants.** I1 The idempotency key is `(operation, item, step)`; each claim carries an
 `attempt` fence (ADR-0005 rule 6). I2 The before-state captured at plan is re-checked at apply,
-inside `applying`. If it changed, the step fails `stale_state` and is never overwritten. I3 Verify reads back from the DC that applied. I4 Inverse inputs contain no secrets,
+inside `applying`. If it changed, the step fails `stale_state` and is never overwritten. I3 Verify reads back from the pinned DC that applied. If that DC stays unavailable past the verify window, it reads back from another DC, which the step records by name, or the step is `verify_failed` with reason `dc_unavailable` (ADR-0005 rule 5). I4 Inverse inputs contain no secrets,
 and irreversible steps are flagged at plan.
 **Lifecycle** (ADR-0005 rule 3). Item: `pending → planned | skipped | blocked`; `planned →
-running → succeeded | failed | cancelled`; `planned → cancelled`; `succeeded | failed → undone`.
+running → succeeded | failed | cancelled`; `planned → cancelled`; `succeeded | failed → undone` (an undo inverts the `verified` and `verify_failed` steps).
 Step: `planned → applying → applied → verified | verify_failed`; `applying → failed` (denied,
 stale_state, outcome_unknown, error, retries exhausted); `applying → not_run` (reconciler, operation
-cancelling, no write happened); `planned → not_run`; `verified → undone`.
+cancelling, no write happened); `planned → not_run`; `verified | verify_failed → undone`.
 
 ### DM-43 Job · execution record in River (global, registered) · owner `platform/jobs`
 **Definition.** A unit of background execution that advances a domain record: an operation chunk,
@@ -1388,3 +1388,4 @@ AC2 was re-checked by script: every ADM ID in scope lock §3.3 (123 IDs) appears
 - 2026-10-02 · v0 rework after the director's review (§12 R1–R5, N1–N3): DM-23 GpLink, Entra delegation scopes, X11 erasure, derived append-only states, SSO `directory_ref`. Q9 and Q10 were added.
 - 2026-10-02 · v0 round-2 rework (§12 S1, S2, H1–H4): DM-20 authorizing gate (`candidate` vs `matched`, I4–I6), DM-21.I2, and only `matched` correlations count in DM-30.I5, DM-35.I6 and DM-36.I2. DM-23.I2 now says what edge identity means across a reorder.
 - 2026-10-02 · v0 round-3 rework (§12 T1–T3): the takeover flags became a Global Administrator attestation (DM-10.I7), DM-20.I4(f) reads it, and I5 is split into live checks (a)–(e) and the attested check (f). I6 adds the authentication-plane and history residuals, and DM-21.I2 names the confirming privilege. §10 states the hybrid prerequisite. Q11 was added.
+- 2026-10-02 · ADR-0005 rework 1 (T-0047): DM-41 gains the terminal `no_change` outcome; DM-42.I3 follows ADR-0005 rule 5 (read-back from another DC after the verify window); a `verify_failed` step can be undone.
