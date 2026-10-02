@@ -823,7 +823,7 @@ There are 83 rows with `phase = P1` and `importance = must` in
 | Trust boundaries per profile; Graph permissions; delegated-rights verification; ADM-134 attribution; edge surface; remote-connector credentials beyond gMSA/keytab (§7.3) | T-0007 |
 | Security-descriptor primitive (ADM-023, ENH-08, `fileserver`) | T-0028 |
 | Output encoders | T-0029 |
-| CBT bind on go-krb5; LAPS from Linux | T-0023; E1.4(d) |
+| CBT bind on go-krb5 (Samba proven by T-0023; go-krb5 pinned to a `main` commit per ADR-0001 erratum E1); WS2025 proof; LAPS from Linux | T-0133; E1.4(d) |
 | Repository scaffold implementing §1 | T-0014 |
 | Update protocol and rings; OCI apply mechanism | ENH-07 spec (M2 plan, T-0031) |
 | Bundled DB standby and DB backup on `linux-oci` | E2.12 PRD (T-0031) |

@@ -74,7 +74,7 @@ Consequences / Fitness function) on a three-rung ladder:
 | --- | --- |
 | `proposed` | Drafted. Not binding. |
 | `ratified` | Signed off (CEO for strategic forks; factory-director for technical decisions, with a notice to the CEO). **Binding on design.** Amendments allowed; reversal needs a superseding ADR. |
-| `accepted` | Ratified **and** its fitness function runs in CI. Immutable — supersede, never edit. |
+| `accepted` | Ratified **and** its fitness function runs in CI. Immutable — supersede, never edit. The one exception is a dated **erratum** that fixes a false factual statement, quotes the original wording, and changes no rule or fitness check (`adr` skill §5). |
 | `withdrawn` | A proposal that was never adopted. Kept for the trail; never binding. |
 
 **Feature IDs.** ManageEngine features carry stable IDs from the research documents:
