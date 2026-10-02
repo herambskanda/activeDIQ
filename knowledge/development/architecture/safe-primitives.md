@@ -1060,7 +1060,7 @@ and is updated by the lab tests, not by hand.
 - `attr.unicodepwd` (incl. `Secret`, `SecureConn`);
 - `psx`, `pslit`, `proc`;
 - `sql`;
-- `sd.read`, `sd.write` (P6, defined in `safe-primitives-security-descriptor.md` §5; its rules FF-SD1–5 are implemented in the T-0033/T-0034 tooling alongside FF-SP1–6).
+- `sd.read`, `sd.write` (P6, defined in `safe-primitives-security-descriptor.md` §5; its rules FF-SD1–5 each have a named owner in that document §6: T-0118 for FF-SD1/2 and the `sd.read` half of FF-SD5, T-0138 for FF-SD3/4, T-0135 for the `sd.write` half; the T-0033/T-0034 harness hosts them).
 
 A **record is one input**. A table row listing several inputs separated by `·`, `/` or commas
 expands to one record each, with suffixed IDs, paired in order with the expected values. Separators
@@ -1164,7 +1164,7 @@ T-0034 (FF-SP4–6, 8) and T-0036 (FF-SP7, implemented inside ADR-0002's `fitnes
 
 ## 11. Follow-ups
 
-- T-0028 — typed security-descriptor primitive: done as `safe-primitives-security-descriptor.md`; build in T-0118 (read half) and a later write-half ticket.
+- T-0028 — typed security-descriptor primitive: done as `safe-primitives-security-descriptor.md`; build in T-0118 (read half), T-0135 (write half), T-0137 (SDDL display), T-0138 (FF-SD3/4 analyzers).
 - T-0029 — output encoders (CSV/XLSX formula neutralisation, HTML, email/PDF).
 - T-0033 / T-0034 — fitness implementation (static rules FF-SP1–3, 9; corpus, fuzz and oracles FF-SP4–6, 8).
 - T-0036 — FF-SP7, inside ADR-0002's `fitness-tenancy` job (checks T2–T4); §8's FF-SP7 row is its coverage list.

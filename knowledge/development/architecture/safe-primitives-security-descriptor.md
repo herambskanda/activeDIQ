@@ -24,7 +24,7 @@ corruption" row). The unsafe call is made unrepresentable.
 
 | # | Primitive | Bans | Tiers | Implementer |
 | --- | --- | --- | --- | --- |
-| P6 | `sd`: SD/ACL/ACE decoder and encoder, `SDFlags` control encoder, effective-rights helper, `DACLWrite` builder (write half), `SDDLDisplay` renderer | slicing `nTSecurityDescriptor` bytes; SDDL parsing or building; whole-SD writes; ACE edits by position | S, A (same package; tier A for NTFS/share SDs later). N, X, W: none. W shows the server's ACE rows (as in `safe-primitives.md` §2.1) | directory-engineer |
+| P6 | `sd`: SD/ACL/ACE decoder, `SDFlags` control encoder, effective-rights helper (T-0118); `DACLWrite` builder (write half, T-0135); `SDDLDisplay` renderer (T-0137) | slicing `nTSecurityDescriptor` bytes; SDDL parsing or building; whole-SD writes; ACE edits by position | S, A (same package; tier A for NTFS/share SDs later). N, X, W: none. W shows the server's ACE rows (as in `safe-primitives.md` §2.1) | directory-engineer |
 
 **Verification vocabulary** (ticket AC 2). Every behaviour below carries a tag: **doc** = stated in
 Microsoft documentation, never run; **Samba** / **Windows** = observed in the lab (none yet); **doc+blog** = only a secondary source; `[UNVERIFIED]` = nobody has confirmed it. As of
@@ -111,9 +111,26 @@ A server-returned DACL therefore never contains generic bits, and a client that 
 (parent's first, then grandparent's; deny before allow at each level, per the
 [Win32 order page](https://learn.microsoft.com/en-us/windows/win32/secauthz/order-of-aces-in-a-dacl)). "On the object" = an ACE with no `ObjectType`;
 "on a child or property" = an object ACE with `ObjectType`. The DC evaluates **in stored order** until it finds a decision
-([MS-ADTS 5.1.3.1](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/2f146d9e-393d-4c90-a9c7-780b73884a60), doc), so a non-canonical DACL
-changes who has access; "canonicalising" it is a semantic edit, never a tidy-up.
+([MS-ADTS 5.1.3.1](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/2f146d9e-393d-4c90-a9c7-780b73884a60), doc), so some orderings
+change who has access; "canonicalising" such a DACL is a semantic edit, never a tidy-up.
 Whether the DC rejects or reorders a non-canonical DACL on an LDAP modify is `[UNVERIFIED]` (Windows and Samba).
+
+**The five rules are not equal: two change outcomes, two are cosmetic, one cannot be checked.** Microsoft's own User-class
+`defaultSecurityDescriptor` ([c-user](https://learn.microsoft.com/en-us/windows/win32/adschema/c-user), doc, fetched 2026-10-02) lists
+`(A;;RC;;;AU)`, an allow ACE with no `ObjectType`, *after* a run of `(OA;;…)` allow ACEs with an `ObjectType`. That breaks rule 4 (allow on the
+object before allow on a property), so a gate on all five rules would label every default user "non-canonical", whether or not anything is wrong. SDDL conversion keeps the string's order
+and DCs merge it into new objects, so default objects very probably store that order (`[UNVERIFIED]`, §9). The primitive therefore splits them:
+
+| Rule | Class | Why | Decoder/planner behaviour |
+| --- | --- | --- | --- |
+| 1 explicit before inherited | **outcome-changing** | an inherited deny placed after an explicit allow, or the reverse, flips the result for a bit both ACEs cover | gating anomaly `acl.order_outcome` (not editable without `Normalize`) |
+| 2 deny before allow within the explicit run | **outcome-changing** | an allow before a deny for the same bit and trustee set grants what the deny would have refused | gating anomaly `acl.order_outcome` |
+| 3 deny-on-object before deny-on-property, 4 the same for allow | **cosmetic** | evaluation is first-match per bit; reordering ACEs of the *same* type (allow among allow, deny among deny) cannot change the result, because every allow in a run adds bits, every deny in a run removes them, and a run contains no ACE of the other type | info note `acl.order_cosmetic` (rule, index); never gates a read, a `Grants` answer or an edit |
+| 5 inherited ACEs ordered by ancestor level | **not decidable from bytes** | the ACE does not record which ancestor it came from; a parent allow before a grandparent deny is canonical, so "deny before allow" cannot be required inside the inherited run | never reported; the inherited run is passed through untouched |
+
+The argument for 3 and 4 follows from the AccessCheck pseudocode ([MS-DTYP 2.5.3.2](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-dtyp/4f1bbcbb-814a-4c70-a11e-2a5b8779a6f9), doc, fetched 2026-10-02): an allow ACE only *removes* bits from `RemainingAccess` (and from each object-tree node's `Remaining`); a deny ACE fails the request if any *still remaining* bit is in its mask. Inside a run of allows nothing is ever denied, and the union removed is order-independent; inside a run of denies `Remaining` does not change, so each deny tests the same set. Order matters only where a deny and an allow meet — rules 1 and 2. The pseudocode also shows the one other order-free fact we rely on: INHERIT_ONLY ACEs are skipped. It holds for the ACE types we evaluate (callback ACEs are `Unknown` anyway, SD-H06). The pseudocode is the algorithm *specification*; that a DC implements it in this respect is doc-level, not lab-verified (§9). Property-test it (FF-SD5, SD-27): for any DACL whose only violations are cosmetic, `Grants` equals `Grants` on its rule-3/4-sorted copy. Whether the Windows ACL editor warns on cosmetic orderings is `[UNVERIFIED]`; it is not our gate.
+
+Two more facts from that page bear on `Grants` (SD-R11): the owner always gets READ_CONTROL and WRITE_DAC *unless the DACL contains an ACE for the owner's SID* (not only OWNER RIGHTS), and a deny ACE with a zero mask is skipped.
 
 **SD_FLAGS control** `1.2.840.113556.1.4.801` — [MS-ADTS 3.1.1.3.4.1.11](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/3888c2b7-35b9-45b7-afeb-b772aa932dd0)
 and [6.1.3.2](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/932a7a8d-8c93-4448-8093-c79b7d9ba499) (doc):
@@ -123,7 +140,7 @@ value = BER `SEQUENCE { Flags INTEGER }`; OWNER 0x1, GROUP 0x2, DACL 0x4, SACL 0
 - Modify: "the server only updates the fields that are identified by the SD control. The remaining fields are ignored", even if the client supplied them. On Add the control "will be ignored".
 - The control adds no response control.
 - Read of the SACL needs `SeSecurityPrivilege`; for a modify that writes the SACL the spec states it as a requirement ([6.1.3.5](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/7afacb02-548b-4e74-bf96-04b0bf0c71b6), doc). What a *search* returns to a caller who lacks the privilege and asked for flags 15 or 8 is `[UNVERIFIED]` for AD: the Win32 API family returns only the DACL ([doc, secondary: general Win32 behaviour](https://learn.microsoft.com/en-us/windows/win32/api/ntsecapi/nf-ntsecapi-auditqueryglobalsacla)), but nothing I found documents the LDAP result. The primitive never relies on either outcome (SD-R3).
-- `sDRightsEffective` (constructed, `1.2.840.113556.1.4.1304`): bits OWNER (1, covers owner **and** group), DACL (4), SACL (8) say which parts the caller can write (doc+secondary: [Win32 AD schema](https://dotnet.territoriali.olinfo.it/sv-se/windows/win32/ADSchema/a-sdrightseffective) mirror; the MS-ADA3 page was not fetched in this pass). It is the preflight for a write.
+- `sDRightsEffective` (constructed, `1.2.840.113556.1.4.1304`): bits OWNER (1, covers owner **and** group), DACL (4), SACL (8) say which parts the caller can write ([Win32 AD schema, SD-Rights-Effective](https://learn.microsoft.com/en-us/windows/win32/adschema/a-sdrightseffective), doc, fetched 2026-10-02: "up to three bits … If a bit is set, then the user has write access to the corresponding part of the security descriptor. Owner means both owner and group"). It is the preflight for a write.
 
 **Write authorization** — MS-ADTS 6.1.3.5 (doc). DACL write: explicit WRITE_DAC, **or** the new SD's OWNER is in the requester's token
 (implicit owner rights). Owner/group write: WRITE_OWNER, or SeTakeOwnershipPrivilege, or the DS-Set-Owner control right on the NC root; the new
@@ -150,7 +167,8 @@ type SD struct {                                 // immutable value
     DACL, SACL   ACLState                        // Absent | Null | List{Revision, ACEs}
     Control      Control                         // raw 16 bits + named accessors (Protected(), AutoInherited() ...)
     RMBits       uint8
-    Anomalies    []Anomaly                       // non-fatal oddities, see §4; non-empty ⇒ not editable
+    Anomalies    []Anomaly                       // non-fatal oddities that gate editing, see §4; non-empty ⇒ not editable
+    Notes        []Note                          // informational only (e.g. acl.order_cosmetic); never gate a read, Grants or an edit
 }
 type ACE struct {                                // sum type; one of:
     Basic{Type, Flags, Mask, Trustee SID}
@@ -158,7 +176,7 @@ type ACE struct {                                // sum type; one of:
     Callback{...}                                // decoded, not evaluated
     Opaque{Type, Flags, Bytes}                   // unknown/reserved/misplaced type: preserved byte-for-byte, never interpreted
 }
-func (a ACL) IsCanonical() CanonicalReport       // which of the five rules fails, and at which index
+func (a ACL) Order() OrderReport                 // {Outcome []Violation (rules 1,2), Cosmetic []Violation (rules 3,4)}; rule 5 is never reported (§1)
 func (s SD) ACEs() []ACEView                     // each with Index, Inherited bool, EffectiveOnObject bool (=!INHERIT_ONLY)
 
 func ReadControl(p Parts, c ...SACLCap) (Control, error)   // BER 30 03 02 01 <p>; error on p==0, unknown bits, SACL without cap
@@ -167,7 +185,7 @@ func Grants(p Principal, right Right, o ObjectCtx, s SD) Decision
 type Principal struct{ SIDs SIDSet; SelfSID *SID }   // user SID + tokenGroups (incl. primary group); built by the caller from the DC, never from names
 type Right struct{ Mask Mask; Object *GUID; Kind RightKind }   // Kind: Class | Attribute | PropertySet | ControlAccess | ValidatedWrite | Whole
 
-// --- display only ------------------------------------------------------------
+// --- display only (separate build ticket T-0137, §8) --------------------------
 func (s SD) DisplaySDDL() SDDLDisplay            // output only; there is no inverse function anywhere
 
 // --- write half (later ticket, §11) -----------------------------------------
@@ -189,10 +207,10 @@ Rules the sketch encodes:
 - **SD-R5 Edits are diffs.** Callers state ACEs to add and ACEs to remove (identified by index **and** a digest of the ACE bytes, so a stale index cannot remove a different ACE). They never submit a whole DACL, and never submit a DACL built from another object's SD. The plan includes a before/after of the changed effective rights so the UI and audit can show what the edit does.
 - **SD-R6 Inherited ACEs are read-only.** An ACE with INHERITED (0x10) cannot be removed or modified: the DC recomputes inheritance from the parent, so the edit is either overwritten or leaves an explicit duplicate. Change the grant on the parent, or use `PlanInheritance`. New ACEs must not carry INHERITED.
 - **SD-R7 Inheritance flags are not editable by diff.** `PD` (protected) and `DI` (auto-inherited) are copied from the base SD unchanged. `PlanInheritance` is the only way to flip `PD`; it is a separate operation class for approvals, and "break inheritance, keep copies" and "break inheritance, remove inherited" are different, explicit options. Whether the DC keeps INHERITED markers when a client writes a DACL without `DI` is `[UNVERIFIED]` (Samba is known to strip `ACE_INHERITED` when `SEC_DESC_DACL_AUTO_INHERITED` is absent, per [this Samba/ixsystems note](https://jira.ixsystems.com/browse/NAS-109277), doc+blog; Windows unknown), hence "copy, don't compute".
-- **SD-R8 Canonical order on output, never silent reorder of input.** `PlanDACL` inserts new ACEs at the canonical position (key: inherited?, deny before allow, whole-object before object-scoped; stable within a class) and leaves the existing ACE order untouched. If the *base* DACL is non-canonical it returns `sd.base_non_canonical`; the caller may pass `Normalize` explicitly, which reports the effective-rights change the reorder causes, and is audited as its own action.
-- **SD-R9 Anomalies make a DACL viewable, not editable.** See §4.
+- **SD-R8 Canonical position on insert, never silent reorder of existing ACEs.** `PlanDACL` inserts a new ACE at its canonical position and leaves every existing ACE where it is. Position: explicit run before the inherited run; within the explicit run, denies before allows (a new deny goes after the last explicit deny, a new allow after the last explicit allow); within that run a whole-object ACE goes before the first object-scoped ACE of the same type if one exists, else at the end of the run. The base DACL need **not** satisfy rules 3-4 (§1: cosmetic; Microsoft's own User default does not). If the base violates an **outcome-changing** rule (1 or 2) it returns `sd.base_non_canonical`; the caller may pass `Normalize` explicitly, which reports the effective-rights change the reorder causes, and is audited as its own action. `Normalize` fixes rules 1-2 only and never touches 3-4.
+- **SD-R9 Gating anomalies make a DACL viewable, not editable.** See §4. `acl.order_cosmetic` is a Note, not an anomaly, and does not gate.
 - **SD-R10 Verify after write.** After the modify the connector re-reads the DACL and compares with the plan, tolerating only the documented server transformations. Mismatch ⇒ audit the actual state, raise `sd.write_diverged`, no automatic retry. There is no compare-and-swap on a single-valued attribute known to us: a concurrent writer between read and write is lost (last writer wins), so the base-digest check (`sd.stale_base`) immediately before the write narrows the window but does not close it. A delete-old-value/add-new-value modify as an atomic compare is **`[UNVERIFIED]`**: test on Windows before relying on it.
-- **SD-R11 Effective-rights helper is three-valued and conservative.** Inputs are SID sets from the DC (`tokenGroups` + user SID; `tokenGroups` includes the primary group), never names. Evaluation is in **stored ACE order**, skipping INHERIT_ONLY ACEs for the object itself, object ACEs whose `ObjectType` does not match the asked right, and ACEs whose trustee is not in the set; first match decides per bit. `InheritedObjectType` is ignored at evaluation (it only gates propagation; whether an inherited copy keeps the GUID is `[UNVERIFIED]`). `Unknown` for: callback ACEs, `SELF` (S-1-5-10) without a `SelfSID`, owner-implicit rights when an OWNER RIGHTS ACE or the block-implicit-rights heuristic may apply, mandatory-label/claims. **Consumers that guard (T-0053) treat `Unknown` as `Yes`.** NULL DACL ⇒ Yes for every bit; empty DACL ⇒ No (plus implicit owner READ_CONTROL/WRITE_DAC ⇒ Unknown/Yes for those two). The DC's own answers (`allowedAttributesEffective`, `allowedChildClassesEffective`, `sDRightsEffective`, a bind as the identity) remain authoritative for *the connector's own* rights; the helper exists for third parties and for "who can do what" reports, and reports must show the source ACE so an admin can disprove it in ADUC's Effective Access in thirty seconds (feasibility row: "Must match Windows 'Effective Access'").
+- **SD-R11 Effective-rights helper is three-valued and conservative.** Inputs are SID sets from the DC (`tokenGroups` + user SID; `tokenGroups` includes the primary group), never names. Evaluation is in **stored ACE order**, skipping INHERIT_ONLY ACEs for the object itself, object ACEs whose `ObjectType` does not match the asked right, and ACEs whose trustee is not in the set; first match decides per bit. `InheritedObjectType` is ignored at evaluation (it only gates propagation; whether an inherited copy keeps the GUID is `[UNVERIFIED]`). `Unknown` for: callback ACEs, `SELF` (S-1-5-10) without a `SelfSID`, owner-implicit rights when the DACL holds an ACE for the owner SID (MS-DTYP 2.5.3.2 grants the implicit READ_CONTROL/WRITE_DAC only if it does not), an OWNER RIGHTS ACE exists, or the block-implicit-rights heuristic may apply, mandatory-label/claims. **Consumers that guard (T-0053) treat `Unknown` as `Yes`.** NULL DACL ⇒ Yes for every bit; empty DACL ⇒ No (plus implicit owner READ_CONTROL/WRITE_DAC ⇒ Unknown/Yes for those two). The DC's own answers (`allowedAttributesEffective`, `allowedChildClassesEffective`, `sDRightsEffective`, a bind as the identity) remain authoritative for *the connector's own* rights; the helper exists for third parties and for "who can do what" reports, and reports must show the source ACE so an admin can disprove it in ADUC's Effective Access in thirty seconds (feasibility row: "Must match Windows 'Effective Access'").
 
 ### Constants (provisional until load tests; R5)
 
@@ -213,16 +231,19 @@ Rules the sketch encodes:
 
 ## 4. Decode: errors versus anomalies
 
-`Decode` returns an error (stable code, R6) for anything that makes the structure ambiguous or unsafe to walk. It returns an `SD` with `Anomalies` for oddities that are legal or that the DC may emit; an SD with anomalies is **viewable and not editable**, and the helper flags results derived from it.
+`Decode` returns an error (stable code, R6) for anything that makes the structure ambiguous or unsafe to walk. It returns an `SD` with `Anomalies` for oddities that are legal or that the DC may emit; an SD with anomalies is **viewable and not editable**, and the helper flags results derived from it. Order violations of rules 3-4 are not anomalies: they come back as `Notes` (`acl.order_cosmetic`, rule and index) so that every default user object stays editable and reports carry no anomaly noise (§1).
 
 | Errors (no SD returned) | Anomalies (SD returned, not editable) |
 | --- | --- |
 | `sd.truncated_header`, `sd.truncated`, `sd.too_large` | `acl.zero_slack` (all-zero bytes between the last ACE and `AclSize`) |
 | `sd.bad_revision` (≠1), `sd.not_self_relative` (`SR` clear) | `ace.opaque` (unknown/reserved type, kept byte-for-byte) |
 | `sd.offset_out_of_range`, `sd.components_overlap`, `sd.dacl_offset_without_flag`, `sd.sacl_offset_without_flag` | `ace.misplaced_type` (SACL-only type in DACL or the reverse) |
-| `acl.bad_revision` (not 2/4), `acl.revision_type_mismatch` (object ACE in rev 2), `acl.size_out_of_range`, `acl.count_mismatch`, `acl.trailing_bytes` (**non-zero** bytes after `AceCount` ACEs: a parser iterating to `AclSize` would see more ACEs than one that counts, the classic differential) | `acl.non_canonical` (with the failing rule and index) |
+| `acl.bad_revision` (not 2/4), `acl.revision_type_mismatch` (object ACE **or callback ACE 0x09-0x0F** in rev 2), `acl.size_out_of_range`, `acl.count_mismatch`, `acl.trailing_bytes` (**non-zero** bytes after `AceCount` ACEs: a parser iterating to `AclSize` would see more ACEs than one that counts, the classic differential) | `acl.order_outcome` (rule 1 or 2 fails, with rule and index; §1) |
+| | `ace.callback_present` (type 0x09-0x0F in a rev 4 ACL: decoded as `Callback`, bytes preserved, never evaluated; see below) |
 | `ace.size_unaligned`, `ace.size_too_small`, `ace.size_overrun`, `ace.object_overrun`, `ace.object_flags_unknown` (bits other than 0x1/0x2) | `ace.unknown_flags` (undefined `AceFlags` bits) |
 | `sid.bad_revision`, `sid.bad_subauth_count` (>15), `sid.overrun` | `sd.rm_bits_set`, `sd.null_dacl` (the NULL state, so a guard can look for it) |
+
+**Callback ACEs and the ACL revision.** MS-DTYP 2.4.5 ([ACL](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-dtyp/20233ed8-a6c6-4097-aafa-dd545ed24428), doc, re-read 2026-10-02) lists the types allowed in revision 2 (0x00-0x03, 0x11-0x13) and revision 4 (0x05-0x08, 0x11) and names the callback types 0x09-0x0F under *neither*. Read literally, revision 4 would not even allow the simple 0x00/0x01 ACEs that every AD DACL contains, so the table is not a complete allow-list and revision 4 must be read as a superset of 2. Our rule, deliberately strict: a callback type in a **rev 2** ACL is `acl.revision_type_mismatch` (nothing in the spec supports it), in a **rev 4** ACL it decodes as `Callback` with the gating anomaly `ace.callback_present` (we cannot evaluate its condition, so we do not edit around it; SD-28, SD-29). Whether a real DC emits callback ACEs at all in v1-scope objects is `[UNVERIFIED]` (§9).
 
 The overlap rule is our strictness, not Microsoft's: the spec allows components in any order but does not say overlap is legal; no AD-produced SD overlaps `[UNVERIFIED]`. We "may reject more" (R3/FF-SP6 stance). If a real DC ever emits one, the corpus gets a new `hostile:false` record and the rule is narrowed; we do not repair.
 
@@ -240,7 +261,7 @@ off 36: 01 01 00 00 00 00 00 05 12 00 00 00                                  SID
 off 48: 01 01 00 00 00 00 00 05 12 00 00 00                                  SID S-1-5-18 (owner)
 ```
 
-"Mutation" vectors give the byte changes from V01. Two corpus units (the FF-SP4 gate counts per unit, `safe-primitives.md` §8): **`sd.read`** (decoder, control encoder, helper, display) and **`sd.write`** (planner). `sd.write` is gated only when its build ticket lands (§11); until then it has no implementation to skip. Each unit needs ≥ 10 hostile records after expansion (FF-SP4); expanding the `/` rows, the tables give about 32 for `sd.read` (static records SD-S01…S09 counted in it, so more) and 17 for `sd.write`.
+"Mutation" vectors give the byte changes from V01. Two corpus units (the FF-SP4 gate counts per unit, `safe-primitives.md` §8): **`sd.read`** (decoder, control encoder, helper, display) and **`sd.write`** (planner). `sd.write` is gated only when its build ticket lands (§11); until then it has no implementation to skip. Each unit needs ≥ 10 hostile records after expansion (FF-SP4); expanding the `/` rows, the tables give about 36 for `sd.read` (static records SD-S01…S10 counted in it, so more) and 17 for `sd.write` (SD-E17 is a positive record).
 
 ### 5.1 `sd.read` — decode
 
@@ -266,11 +287,15 @@ off 48: 01 01 00 00 00 00 00 05 12 00 00 00                                  SID
 | SD-18 | object ACE, `Flags` = 2 (only InheritedObjectType) | decodes; trustee correct; ObjectType nil, InheritedObjectType set | no | a fixed-offset parser reads the wrong SID here |
 | SD-19 | DACL type 0x7F (valid size) | decodes; `Opaque` ACE; anomaly `ace.opaque`; edit refused; helper `Unknown` for rights it could affect | yes | unknown type neutralised |
 | SD-20 | DACL containing audit type 0x02 | anomaly `ace.misplaced_type`; not editable | yes | MS-DTYP "unspecified behavior" |
-| SD-21 | DACL: allow ACE then deny ACE for the same trustee/right | decodes; anomaly `acl.non_canonical` (rule 2, index 1); **helper evaluates in stored order ⇒ Yes** | yes | no silent re-sort in the read path |
-| SD-22 | DACL: INHERITED ACE (flags 0x10) before an explicit ACE | anomaly `acl.non_canonical` (rule 1) | yes | |
+| SD-21 | DACL: allow ACE then deny ACE for the same trustee/right, both explicit | decodes; anomaly `acl.order_outcome` (rule 2, index 1); not editable; **helper evaluates in stored order ⇒ Yes** | yes | outcome-changing order; no silent re-sort in the read path |
+| SD-22 | DACL: INHERITED ACE (flags 0x10) before an explicit ACE | anomaly `acl.order_outcome` (rule 1) | yes | |
 | SD-23 | owner offset 24 (inside the DACL) | `sd.components_overlap` | yes | our strictness, §4 |
 | SD-24 | `AclSize` = `ff ff`; `AceCount` = `ff ff` (two records) | `acl.size_out_of_range`; `acl.count_mismatch` **before any allocation** | yes | memory exhaustion |
 | SD-25 | 1 MiB input | `sd.too_large` | yes | R5 |
+| SD-26 | **User-default order**: DACL, rev 4, ACEs in the order of the User class `defaultSecurityDescriptor` ([c-user](https://learn.microsoft.com/en-us/windows/win32/adschema/c-user): `(A;;…;;;DA)(A;;…;;;SY)(A;;…;;;AO)(A;;RPLCLORC;;;PS)` then `(OA;;CR;…;;PS)`×3, `(OA;;RPWP;…;;PS)`×3, `(OA;;RP;…;;RS)`×3, **`(A;;RC;;;AU)`**, `(OA;;RP;…;;AU)`×4, `(OA;;CR;ab721a53-…;;WD)`, `(OA;;RP;5f202010-…;;RS)`, `(OA;;RPWP;bf967a7f-…;;CA)`), all explicit. Built by the Tier-L fixture generator from that string, with a fixed fake domain SID | decodes; **no anomaly**; one `Note` `acl.order_cosmetic` (rule 4, at the `(A;;RC;;;AU)` index); editable; `PlanDACL` can add an ACE | **no** | the spec's own default object must not look broken |
+| SD-27 | property test: random DACLs whose only order violations are rules 3-4, versus the same DACL stable-sorted by rules 3-4 | `Grants` answers are identical for every (principal, right) pair | no | proves the cosmetic argument (§1) in code |
+| SD-28 | ACL rev 2 holding a well-formed callback ACE (type 0x09) | `acl.revision_type_mismatch` | yes | callback types are in neither revision's table |
+| SD-29 | ACL rev 4 holding a well-formed type 0x09 ACE with trailing application data | decodes as `Callback`; anomaly `ace.callback_present`; not editable; helper `Unknown` for rights it could affect | yes | |
 
 ### 5.2 `sd.read` — control encoder, helper, connector contract
 
@@ -291,6 +316,7 @@ off 48: 01 01 00 00 00 00 00 05 12 00 00 00                                  SID
 | SD-H06 | callback ACE type 0x09 matching the principal | **Unknown** | yes | conditions not evaluated |
 | SD-H07 | empty DACL | helper: No for every right except implicit owner READ_CONTROL/WRITE_DAC (Unknown) | no | empty ≠ NULL |
 | SD-H08 | principal built from the user's SID only (no `tokenGroups`) when the grant is to a group | **No**, plus `Principal.Incomplete=true` in the result (the type cannot prove completeness, so the constructor from a DC response sets it; hand-built principals carry `Incomplete`) | yes | membership comes from the DC, not guessed |
+| SD-H09 | `Grants` on the SD-26 DACL for a principal holding only `S-1-5-11` (Authenticated Users) and the READ_CONTROL right | **Yes**, source = the `(A;;RC;;;AU)` ACE; for a property the `AU` ACEs do not name: **No** | no | evaluation does not depend on cosmetic order |
 
 ### 5.3 `sd.write` (write half)
 
@@ -303,7 +329,8 @@ off 48: 01 01 00 00 00 00 00 05 12 00 00 00                                  SID
 | SD-E05 | `Add` object ACE, ObjectType GUID not in the catalog | `sd.unknown_object_type` | yes | |
 | SD-E06 | `Add` WP with ObjectType = control-access GUID | `sd.object_type_mismatch` | yes | inert ACE |
 | SD-E07 | `Add` with INHERIT_ONLY but neither OBJECT_ nor CONTAINER_INHERIT | `sd.inert_ace` | yes | an ACE that applies nowhere |
-| SD-E08 | base DACL non-canonical, `Add` without `Normalize` | `sd.base_non_canonical`; with `Normalize` a plan listing the effective-rights change | yes | reorder changes access |
+| SD-E08 | base DACL with an **outcome-changing** order violation (rule 1 or 2), `Add` without `Normalize` | `sd.base_non_canonical`; with `Normalize` a plan listing the effective-rights change | yes | reorder changes access |
+| SD-E17 | base = SD-26 DACL (cosmetic violation only), `Add` of an allow ACE and of a deny ACE | both plans succeed without `Normalize`; the new deny sits after the last explicit deny, the new allow after the last explicit allow; no existing ACE moved (byte-compare of the untouched ACEs) | **no** | default objects are editable; SD-R8 |
 | SD-E09 | result would exceed 65 535 bytes or 4 095 ACEs | `sd.acl_too_large` | yes | 16-bit AclSize |
 | SD-E10 | `Remove` index valid, digest of another ACE | `sd.ace_digest_mismatch` | yes | stale index removes the wrong ACE |
 | SD-E10b | DACL changed on the DC between read and write (base digest differs) | `sd.stale_base`, no write | yes | lost update |
@@ -326,7 +353,8 @@ off 48: 01 01 00 00 00 00 00 05 12 00 00 00                                  SID
 | SD-S06 | a modify request naming `ntsecuritydescriptor` (any case) built outside `sd` | FF-SD3 fails |
 | SD-S07 | a function in `sd` with signature `func(string) SD`, or a name matching `Parse*SDDL|FromSDDL|*SDDL*` that returns anything but `SDDLDisplay` | FF-SD4 fails |
 | SD-S08 | `SDDLDisplay` passed to any function outside the response-mapping package | FF-SD4 fails |
-| SD-S09 | TS/TSX template literal containing SDDL shape under `web/` | FF-SP3 (extended) fails |
+| SD-S09 | TS/TSX template literal containing SDDL shape under `web/` | FF-SD2 fails (T-0033's FF-SP3 scanner is the harness) |
+| SD-S10 | string literal `"G:BAD:(A;;GA;;;BA)"` (no owner part, and no word boundary between `BA` and `D:`) | FF-SD2 fails |
 
 ---
 
@@ -346,15 +374,15 @@ There is no parser: **no function in the product turns SDDL text into an SD, ACE
 is a separate feature that would need its own validated front end and an ADR; it is not smuggled in through a helper.
 Tier L (lab and tools) may use SDDL to author fixtures.
 
-**Fitness rules** (implemented in the T-0033 static check; T-0118 AC 4 adds the first planted-violation test):
+**Fitness rules and who builds each** (T-0033 delivers the static-check harness and FF-SP1–3 only; it does not mention FF-SD. Each FF-SD rule has a named owner below, per the T-0028 review; a rule with no ticket is a defect in this spec):
 
-| FF | Check | Fails when |
-| --- | --- | --- |
-| FF-SD1 | Banned APIs (forbidigo, BannedApiAnalyzers) | any of these outside `sd`: Go `golang.org/x/sys/windows` `SecurityDescriptorFromString`, `(*SECURITY_DESCRIPTOR).String`, `SetEntriesInAcl`/`ACLFromEntries`, `SetNamedSecurityInfo`/`SetSecurityInfo`/`GetNamedSecurityInfo`; Win32 `ConvertStringSecurityDescriptorTo…`, `ConvertSecurityDescriptorToString…`; .NET `RawSecurityDescriptor(string)`, `CommonSecurityDescriptor` SDDL members, `SetSecurityDescriptorSddlForm`/`GetSddlForm`, `ActiveDirectorySecurity`/`ObjectSecurity` SDDL members; PowerShell `Set-Acl`, `ConvertFrom-SddlString` (also absent from every `psx` manifest, FF-SP9). A third-party ACL library (feasibility names [winacl](https://github.com/TheManticoreProject/winacl), MIT, `[UNVERIFIED]` here) may be imported **only inside `sd`**, only after the licence register check (rule 9), and its SDDL functions stay banned inside `sd` too |
-| FF-SD2 | SDDL literal-shape scanner (Semgrep or ast-grep, case-insensitive; `web/` included, tier L and `testdata/` exempt) | a string literal matching `\b[DS]:(?:P\|AI\|AR\|NO_ACCESS_CONTROL)*\((?:A\|D\|OA\|OD\|AU\|AL\|OU\|OL\|ML\|XA\|XD\|ZA\|XU\|RA\|SP\|TL)?;` or `\bO:(?:[A-Z]{2}\|S-1-)[^;]*G:`, **or** concatenation/`Sprintf` producing those prefixes, outside `sd`'s renderer. Exemptions are listed in a reviewed allow-file with a reason each |
-| FF-SD3 | Raw-bytes boundary (go/analysis pass `sdraw`; `forbidigo` for names) | `sd.Raw` converted to `[]byte`, indexed or sliced outside `sd` and the connector; any modify request whose attribute equals `nTSecurityDescriptor` (case-insensitive) constructed outside `sd`; a search that selects the attribute without `ReadControl` (SD-C06) |
-| FF-SD4 | API shape (go/analysis pass `sdapi`) | an exported `sd` function accepts a `string`/`[]byte` and returns `SD`, `ACE`, `ACL`, `DACLWrite` or `Raw` (only `Decode(Raw)` and the P3 SID/GUID constructors exist); a name matching `(?i)sddl` returning anything but `SDDLDisplay`; `SDDLDisplay` used outside the response-mapping package; `DACLWrite` constructed other than through `Plan*` |
-| FF-SD5 | Corpus and fuzz | unit `sd.read` or `sd.write` below 10 hostile records; no corpus-seeded fuzz target for `Decode` (properties: no panic, bounded allocation, `Decode(x)` ok ⇒ every ACE's bytes lie inside the ACL; for editable SDs `Decode(Plan(...).Value())` round-trips) |
+| FF | Check | Fails when | Implemented by |
+| --- | --- | --- | --- |
+| FF-SD1 | Banned APIs (forbidigo, BannedApiAnalyzers) | any of these outside `sd`: Go `golang.org/x/sys/windows` `SecurityDescriptorFromString`, `(*SECURITY_DESCRIPTOR).String`, `SetEntriesInAcl`/`ACLFromEntries`, `SetNamedSecurityInfo`/`SetSecurityInfo`/`GetNamedSecurityInfo`; Win32 `ConvertStringSecurityDescriptorTo…`, `ConvertSecurityDescriptorToString…`; .NET `RawSecurityDescriptor(string)`, `CommonSecurityDescriptor` SDDL members, `SetSecurityDescriptorSddlForm`/`GetSddlForm`, `ActiveDirectorySecurity`/`ObjectSecurity` SDDL members; PowerShell `Set-Acl`, `ConvertFrom-SddlString` (also absent from every `psx` manifest, FF-SP9). A third-party ACL library (feasibility names [winacl](https://github.com/TheManticoreProject/winacl), MIT, `[UNVERIFIED]` here) may be imported **only inside `sd`**, only after the licence register check (rule 9), and its SDDL functions stay banned inside `sd` too | **T-0118 AC 4** (adds the banned-API list to the T-0033 harness; planted violations SD-S01, SD-S04) |
+| FF-SD2 | SDDL literal-shape scanner (Semgrep or ast-grep, case-insensitive; `web/` included, tier L and `testdata/` exempt) | a string literal matching `[DS]:(?:P\|AI\|AR\|NO_ACCESS_CONTROL)*\((?:A\|D\|OA\|OD\|AU\|AL\|OU\|OL\|ML\|XA\|XD\|ZA\|XU\|RA\|SP\|TL)?;` (**no `\b`**: in `G:SYD:(…` there is no boundary between `Y` and `D`), or `O:(?:[A-Z]{2}\|S-1-)[^;]*G:`, or `G:(?:[A-Z]{2}\|S-1-)`, so a literal with a group part but no owner part (SD-S10) still matches, **or** concatenation/`Sprintf` producing those prefixes, outside `sd`'s renderer. Exemptions are listed in a reviewed allow-file with a reason each | **T-0118 AC 4** (adds the literal-shape scanner incl. `web/`; planted violations SD-S02, SD-S03, SD-S09, SD-S10). Note on T-0118: AC 4 must be read as covering both FF-SD1 and FF-SD2 |
+| FF-SD3 | Raw-bytes boundary (go/analysis pass `sdraw`; `forbidigo` for names) | `sd.Raw` converted to `[]byte`, indexed or sliced outside `sd` and the connector; any modify request whose attribute equals `nTSecurityDescriptor` (case-insensitive) constructed outside `sd`; a search that selects the attribute without `ReadControl` (SD-C06) | **T-0138** (analyzer `sdraw`; SD-S05, SD-S06, SD-C06 static half). Runtime half of SD-C06 and SD-C07 (connector refuses an unflagged SD search; `sd.not_returned`): **T-0053**, which wires the control into the connector Read |
+| FF-SD4 | API shape (go/analysis pass `sdapi`) | an exported `sd` function accepts a `string`/`[]byte` and returns `SD`, `ACE`, `ACL`, `DACLWrite` or `Raw` (only `Decode(Raw)` and the P3 SID/GUID constructors exist); a name matching `(?i)sddl` returning anything but `SDDLDisplay`; `SDDLDisplay` used outside the response-mapping package; `DACLWrite` constructed other than through `Plan*` | **T-0138** (analyzer `sdapi`; SD-S07, SD-S08). The `DACLWrite`-only-through-`Plan*` clause becomes checkable when **T-0135** lands, and T-0135 AC 1 must run it. `DisplaySDDL` and `SDDLDisplay` appear with **T-0137** |
+| FF-SD5 | Corpus and fuzz | unit `sd.read` or `sd.write` below 10 hostile records; no corpus-seeded fuzz target for `Decode` (properties: no panic, bounded allocation, `Decode(x)` ok ⇒ every ACE's bytes lie inside the ACL; for editable SDs `Decode(Plan(...).Value())` round-trips; SD-27: a DACL with only cosmetic order violations gives the same `Grants` as its sorted copy) | **T-0118 AC 1** (`sd.read` ≥ 10 hostile + fuzz target); **T-0135 AC 1** (`sd.write`; SD-E01–E17) |
 
 ---
 
@@ -372,7 +400,11 @@ Tier L (lab and tools) may use SDDL to author fixtures.
 
 ## 8. What T-0118 builds and what is deferred
 
-T-0118 (read half): `Decode`, anomalies, `IsCanonical`, `ReadControl`, `Grants`, `DisplaySDDL`, units `sd.read` records SD-01…SD-25, SD-C01…C07, SD-H01…H08, and FF-SD1–FF-SD4 as static checks (the write API not existing yet, FF-SD4 passes trivially for it). T-0053 consumes `Grants` and the connector's control wiring. Deferred (§11): `PlanDACL`/`PlanInheritance`/`DACLWrite`, `sd.write` records, SACL read capability issuance, SD-valued attributes other than `nTSecurityDescriptor`.
+**T-0118 (read half):** `Decode`, anomalies and notes, `Order`, `ReadControl`, `Grants`; corpus unit `sd.read` records SD-01…SD-29, SD-C01…C07, SD-H01…H09; FF-SD1 and FF-SD2 as static checks (AC 4), FF-SD5 for `sd.read` (AC 1). T-0053 consumes `Grants` and wires the control into the connector Read (including the runtime half of SD-C06/C07).
+
+**Not in T-0118 (decision, T-0028 rework):** `DisplaySDDL`. The earlier draft put it here, which conflicted with T-0118's own "Out of scope: SDDL output … (T-0028)". It is now its own ticket, **T-0137**, depending on T-0118 and on the Windows lab (T-0051), because its only acceptable oracle, `ConvertSecurityDescriptorToStringSecurityDescriptor`, exists only on Windows (§6). Nothing on the M2 critical path (T-0053) needs SDDL: the guard works on `Grants` and ACE views, and the UI shows ACE rows (`safe-primitives.md` §2.1).
+
+**Other follow-ups:** `PlanDACL`/`PlanInheritance`/`DACLWrite`, `sd.write` records SD-E01…E17 → T-0135; FF-SD3 and FF-SD4 analyzers → T-0138; lab verification of the §9 rows → T-0136; SACL read-capability issuance and SD-valued attributes other than `nTSecurityDescriptor` → later (§11).
 
 ## 9. Verification status and Samba false-pass risks
 
@@ -380,9 +412,13 @@ Nothing is lab-verified (the Samba lab, T-0012, exists but no SD test has been r
 
 | Behaviour | Status | Verify on | Samba false-pass risk |
 | --- | --- | --- | --- |
-| SD, ACL, ACE and object-ACE byte layouts; rev 2/4 rules | doc (MS-DTYP) | Samba + Windows | low: wire format is shared, but both lab runs only exercise what *their* DC emits |
-| Canonical ordering rules (five rules) | doc | Windows | — (pure computation; test is a unit test) |
-| DC evaluates in stored order | doc (MS-ADTS 5.1.3.1) | Windows | medium |
+| SD, ACL, ACE and object-ACE byte layouts; rev 2/4 rules (rev 4 read as a superset of rev 2) | doc (MS-DTYP) | Samba + Windows | low: wire format is shared, but both lab runs only exercise what *their* DC emits |
+| Canonical ordering rules: which are outcome-changing (1, 2), cosmetic (3, 4), undecidable (5) | doc-derived reasoning (§1) | unit test (SD-27) | — (pure computation) |
+| DC evaluates in stored order; allow ACEs only remove bits from the remaining mask, deny ACEs test the remaining mask (basis of the rule-3/4 cosmetic argument) | doc (MS-ADTS 5.1.3.1; MS-DTYP 2.5.3.2 pseudocode) | Windows | medium |
+| Order in which the DC **stores** default and merged DACLs (rules 3-4): the User default puts `(A;;RC;;;AU)` after `(OA;…)` ACEs | doc for the SDDL string (c-user); the stored order `[UNVERIFIED]` | Windows | **high**: Samba builds default descriptors from its own schema and its SDDL conversion may re-sort; a Samba pass proves nothing about Windows |
+| `Grants()` answers equal ADUC *Effective Access* / `dsacls` for SD-H01…H09 on the same object and principal | `[UNVERIFIED]` | **Windows only** | **high**: Samba has no Effective Access oracle, and a Samba DC evaluating its own SD proves the decoder against Samba's evaluator, not the product against what admins see |
+| SDDL alias resolution (`DA`, `EA`, `DU`, `DD`, … resolve against the caller's own domain; the exact rule per alias) | `[UNVERIFIED]` (doc says domain-relative aliases exist; the per-alias rule was not confirmed) | Windows, two domains | medium; moot for the product as long as no SDDL is parsed, relevant only to T-0137's oracle comparison |
+| Callback ACE types 0x09-0x0F: in neither revision's table (MS-DTYP 2.4.5); our rule is rev 2 ⇒ error, rev 4 ⇒ decode + gating anomaly; do real DCs emit them on v1-scope objects | doc (table gap); DC behaviour `[UNVERIFIED]` | Windows (with claims/DAC configured) | high: Samba does not implement conditional ACE evaluation `[UNVERIFIED]` |
 | DC accepts/rejects/reorders a non-canonical DACL on modify | `[UNVERIFIED]` | Windows **and** Samba, compared | **high**: Samba may re-sort or reject; a Samba pass is no evidence for Windows |
 | SD_FLAGS encoding; flags 0 ⇒ 15; no control ⇒ 15; SD returned only if named/`*` with control | doc | Samba + Windows | **medium**: if Samba treats an absent control as 7, SD-C06 would pass falsely |
 | Search with SACL bit and no `SeSecurityPrivilege`: omitted vs error | `[UNVERIFIED]` | Windows | **high**; privilege handling differs on Samba |
@@ -393,21 +429,23 @@ Nothing is lab-verified (the Samba lab, T-0012, exists but no SD test has been r
 | `InheritedObjectType` kept on inherited copies | `[UNVERIFIED]` | Windows | high |
 | NULL DACL representation on the AD wire | `[UNVERIFIED]` | Windows | medium |
 | SDProp rewrite (≈60 min, PDC emulator) and DACL-protected on protected objects | doc+blog | **Windows only** | **high**: Samba's AdminSDHolder behaviour `[UNVERIFIED]`; any Samba test of SD-E11 is meaningless |
-| `sDRightsEffective` bits (owner covers group) | doc+secondary | Samba + Windows | medium: Samba support `[UNVERIFIED]` |
+| `sDRightsEffective` bits (owner covers group) | doc ([a-sdrightseffective](https://learn.microsoft.com/en-us/windows/win32/adschema/a-sdrightseffective)) | Samba + Windows | medium: Samba support `[UNVERIFIED]` |
 | Inheritance fan-out events/uSN | `[UNVERIFIED]` | Windows | medium |
 | Atomic compare via delete-old/add-new on the SD | `[UNVERIFIED]` | Windows | high |
-| SDDL renderer equals `ConvertSecurityDescriptorToStringSecurityDescriptor` | doc | **Windows** | **high**: Samba's encoder differs; oracle must be Windows |
+| SDDL renderer equals `ConvertSecurityDescriptorToStringSecurityDescriptor` (T-0137) | doc | **Windows** | **high**: Samba's encoder differs; oracle must be Windows |
 | Rights catalog GUIDs (class, attribute, property set, control access) from the schema | doc | Windows (full schema) | **high**: Samba's schema and `controlAccessRight` set differ (vacuous pass if a GUID is missing, as with LF-38 in `safe-primitives.md` §9) |
 
 ## 10. Open items for the lab and for decisions
 
 1. Lab runs (test-engineer, T-0136): the rows marked `[UNVERIFIED]` above, each recorded as a `verified` update to the corpus record.
 2. Whether to adopt winacl or write `sd` ourselves: decided by directory-engineer in T-0118 against §6 FF-SD1 (licence register first).
+   Rows added in the T-0028 rework are lab items for T-0136: stored order of default DACLs, Effective Access agreement, callback ACEs, SDDL alias rule.
 3. Importing admin-supplied SDDL (a "paste an SDDL" feature) is not specified and not planned.
 
 ## 11. Follow-ups
 
-- Build ticket for the write half (`PlanDACL`, `PlanInheritance`, `DACLWrite`, `sd.write` records, SD-E01…E16), depends on T-0118 and the lab verification of the write-path rows in §9 (T-0135).
+- **T-0137** SDDL display renderer (display-only; Windows oracle). **T-0138** FF-SD3/FF-SD4 analyzers.
+- Build ticket for the write half (`PlanDACL`, `PlanInheritance`, `DACLWrite`, `sd.write` records, SD-E01…E17), depends on T-0118 and the lab verification of the write-path rows in §9 (T-0135).
 - Lab verification ticket for the `[UNVERIFIED]` rows in §9 (T-0136).
 - Spec for SD-valued attributes other than `nTSecurityDescriptor` (RBCD, gMSA membership) when T-0053 or a delegation report needs to write them.
 - `safe-primitives.md` §8 gains the units `sd.read` and `sd.write` and the FF-SD rows by reference (done in this change).
