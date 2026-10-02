@@ -64,29 +64,64 @@ We will make **modules registered through a typed Registrar the only way a featu
 
 ### Rule 1: The import graph
 
-Packages are grouped into layers. An import that is not allowed in the matrix fails CI. "Kernel" means `internal/platform/**`. "Directory primitives" means `internal/directory/{ldapfilter,dn,attr/**,model}`. "Directory services" means every other package under `internal/directory/` (`inventory`, `sync`, `client`, …).
+Every Go package in the repository belongs to exactly one **class** below. The matrix is an allowlist: an import between our own packages that the matrix does not allow fails CI. **A package that matches no class also fails** (M1), so a new directory cannot slip in unclassified. Imports of the standard library are always allowed. Imports of third-party modules are governed by the stack manifest and `fitness-stack`, not by this matrix.
 
-| Importer ↓ may import → | kernel | dir. primitives | dir. services | `connector/**` | `modules/<other>` | `agentmodules/<other>` | `compose/**` | `proto/skenzeriq` | `proto/activediq` |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `internal/platform/**` | ✓ | — | — | — | — | — | — | ✓ | — |
-| directory primitives | ✓ | ✓ | — | — | — | — | — | ✓ | ✓ |
-| directory services | ✓ | ✓ | ✓ | — | — | — | — | ✓ | ✓ |
-| `internal/connector/**` | ✓ | ✓ | — | ✓ | — | — | — | ✓ | ✓ |
-| `internal/modules/<id>/**` | ✓ | ✓ | ✓ | — | — (own `<id>` only) | — | — | ✓ | ✓ |
-| `internal/agentmodules/<id>/**` | ✓ ¹ | ✓ | — | — | — | — (own `<id>` only) | — | ✓ | ✓ |
-| `internal/compose/<role>` | ✓ | ✓ | ✓ | `server`, `connector`, `t0connector` only | generated list only (rule 3) | generated list only | `profile`, `config` only | ✓ | ✓ |
-| `internal/compose/profile` | `platform/capability` only | — | — | — | — | — | — | — | — |
-| `cmd/<role>` | — | — | — | — | — | — | own `compose/<role>` and `compose/config` only | — | — |
+**The classes.** The first matching line wins.
 
-¹ The binary rows of rule 7 limit this further. For example, an agent module can import no kernel package that reaches `store`.
+| Class | Packages |
+| --- | --- |
+| **kernel root** | `internal/platform` itself. It declares `platform.Deps` (rule 4) and aggregates kernel services |
+| **kernel** | every package under `internal/platform/` |
+| **directory root** | `internal/directory` itself. It declares `directory.Services` (rule 4), which holds `inventory`, `connection` and `client`. It is therefore a **directory service** for every rule that names that class, so agent modules and the connector can never import it |
+| **directory primitives** | `internal/directory/{ldapfilter,dn,model}` and everything under `internal/directory/attr/` |
+| **directory services** | every other package under `internal/directory/` (`inventory`, `sync`, `client`, `connection`, …) |
+| **connector** | `internal/connector` and everything under it |
+| **server module** | `internal/modules/<id>` and everything under it. The doc-only root `internal/modules` imports nothing and is imported by nothing |
+| **agent module** | `internal/agentmodules/<id>` and everything under it. The doc-only root `internal/agentmodules` imports nothing and is imported by nothing |
+| **role package** | `internal/compose/<role>` (`server`, `connector`, `edge`, `agent`; later `radius`, `fpolicy`, `t0connector`) |
+| **`compose/config`**, **`compose/profile`** | the config loader and the manifest data |
+| **`webui`** | `internal/webui` (the `go:embed` package for the built console) |
+| **`migrations`** | the repository-root `migrations` package (`embed.go`, rule 6) |
+| **proto: skenzeriq** / **proto: activediq** | generated code under `internal/proto/skenzeriq/` and `internal/proto/activediq/` |
+| **`cmd/<role>`** | each `main` package |
+| **tools: inspect** | `tools/fitness/**` and `tools/gen/**` |
+| **tools: other**, **lab** | every other package under `tools/`, and every package under `lab/` |
+| **garage** | every package under `garage/` |
+
+**The matrix.** ✓ means allowed. — means it fails.
+
+| Importer ↓ may import → | kernel root | kernel | dir. primitives | dir. root + services | connector | server module | agent module | role pkg | `config` | `profile` | `webui` | `migrations` | proto: skenzeriq | proto: activediq |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| kernel root | — | ✓ | — | — | — | — | — | — | — | — | — | — | ✓ | — |
+| kernel | — | ✓ | — | — | — | — | — | — | — | — | — | — | ✓ | — |
+| directory primitives | — | ✓ ¹ | ✓ | — | — | — | — | — | — | — | — | — | ✓ | ✓ |
+| directory root + services | — | ✓ | ✓ | ✓ | — | — | — | — | — | — | — | — | ✓ | ✓ |
+| connector | — | ✓ ¹ | ✓ | — | ✓ | — | — | — | — | — | — | — | ✓ | ✓ |
+| server module `<id>` | ✓ | ✓ | ✓ | ✓ | — | own `<id>` only | — | — | — | — | — | — | ✓ | ✓ |
+| agent module `<id>` | — | ✓ ¹ | ✓ | — | — | — | own `<id>` only | — | — | — | — | — | ✓ | ✓ |
+| role package | `server` only | ✓ ¹ | ✓ | ✓ ¹ | `server`, `connector`, `t0connector` only | `server`'s generated file only (rule 3) | `agent`'s generated file only | — | ✓ | ✓ | `server` only | `server` only | ✓ | ✓ |
+| `compose/config` | — | `platform/capability` only | — | — | — | — | — | — | — | ✓ | — | — | — | — |
+| `compose/profile` | — | `platform/capability` only | — | — | — | — | — | — | — | — | — | — | — | — |
+| `webui`, `migrations` | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
+| proto: skenzeriq | — | — | — | — | — | — | — | — | — | — | — | — | ✓ | — |
+| proto: activediq | — | — | — | — | — | — | — | — | — | — | — | — | ✓ | ✓ |
+| `cmd/<role>` | — | — | — | — | — | — | — | own `<role>` only | ✓ | — | — | — | — | — |
+| tools: inspect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| tools: other, lab | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
+| garage | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+
+¹ Rule 7 narrows this per binary. For example, an agent module or the connector may import no kernel package that reaches `store`, and `compose/connector`, `compose/edge` and `compose/agent` may link no directory service.
 
 Further rules on the graph:
-- **Agent modules are like the connector.** They import directory primitives and the model, never directory services (`inventory`, `sync` and `client` reach `store`). This closes director note (1) on T-0004.
-- **Nothing imports `garage/`, `tools/`, `lab/` or `third_party/` except as stated here.**
+- **Only two places import the aggregating roots.** `internal/platform` and `internal/directory` are imported only by server modules and `compose/server`. No kernel, directory or connector package imports either root (Go's cycle rule already forbids most of these cases; M1 states it for all of them).
+- **Agent modules are like the connector.** They import directory primitives and kernel packages, never the directory root or directory services (`inventory`, `sync`, `client` and `connection` reach `store`). This closes director note (1) on T-0004.
+- **Nothing outside them imports `garage/`, `tools/`, `lab/` or `third_party/`.** The `garage` and `tools: inspect` rows only let those packages import others. No row lets a product package import them. Inside a zone, packages may import each other: `tools/**` imports `tools/**` (for example `tools/fitness/tenancy` → `tools/fitness/tenancy/registry`, `tools/vettool` → `tools/analyzers`), `lab/**` imports `lab/**`, and a garage prototype imports its own packages. Code under `third_party/<name>/` is imported only as its register row in the stack manifest allows (ADR-0001 rule 5).
+- **`webui` and `migrations` are leaves.** They embed files and import only the standard library. Only `compose/server` imports them: it mounts the console through `apihost` and injects the migration step into `update` (blueprint §5.1).
 - **Exceptions, the complete list:**
   - **Tests.** A `_test.go` file obeys its package's row, including external `_test` packages. There is no test exception for the graph. A test that needs another module means the contract is missing something. Cross-module behaviour is tested in `internal/compose/server` tests, which boot modules through the generated list. Test doubles for kernel contracts live in kernel test kits (`internal/platform/<pkg>/<pkg>test`), which are kernel packages and obey the kernel row.
-  - **`tools/fitness/**` and `tools/gen/**`** may import any package in order to inspect it. Rule 7 then requires that no `cmd/` binary links anything under `tools/`.
-  - **No other exception exists.** The import graph has no exemption registry. Changing it takes a superseding ADR.
+  - **`tools: inspect`** may import any package in order to inspect it. Rule 7 then requires that no `cmd/` binary links anything under `tools/`.
+  - **`garage`** may import anything, because nothing imports it and no binary links it (rule 7). Its owner and expiry are enforced by the garage rules, not here.
+  - **No other exception exists.** The import graph has no exemption registry (M11 refuses entries for M1). A new class, row or column, such as a later `cmd/radius` row, is an **amendment to this ADR** recorded on its Amendments line by solution-architect. Removing a rule takes a superseding ADR.
 
 ### Rule 2: Modules are islands
 
@@ -168,13 +203,14 @@ A substitutable interface would let a test double, or a module's own wrapper, sk
 - **No duplicates.** A duplicate ID fails. At most one `ScopeEvaluator` per scope kind and one non-default `ApprovalGate`. The gate's interplay with Actions is T-0047's to decide.
 - **Closed after boot.** `Register` is called once. A Registrar used after `Boot` returns gives `ErrClosed`, so a module that stashes `r` gains nothing.
 - **Capabilities.** A module whose `Requires()` is not satisfied is not constructed into the contributions. No other code asks which profile it is running in (ADR-0002 P1).
-- **Dataset tables.** A `Dataset` may name only tables its module owns (rule 6). The ownership map is generated (rule 6), so this check runs in the boot test.
+- **Dataset tables.** A `Dataset` may name only tables its module owns, according to the generated ownership map (rule 6). `Boot` checks this, so a violation **fails start-up**. CI sees the failure first, because the `compose/server` boot test runs `Boot` over every module in the generated list. The same function checks the datasets that kernel and directory packages export (for example `inventory.Datasets()`), with the exporting package's owner key, when `compose/server` hands them to `report`. The map lives in the data-only leaf package `internal/platform/store/owners`, so `platform/module` does not link `store`.
 
-**Modules have no lifecycle methods.** There is no `Init`, `Start` or `Stop`, and a module owns no goroutines, listeners or timers.
+**Modules have no lifecycle methods.** There is no `Init`, `Start` or `Stop`. A server module owns no goroutines, listeners or timers, which means no goroutine or timer it starts outlives the call that started it.
 - Background, periodic and long-running work is a registered `Job` kind or schedule. It runs on `platform/jobs`, which carries the tenant and the leases.
 - Request handling goes through `API`.
 - This is stricter than PatchIQ's server contract (`Init/Start/Stop`, postmortem §6). It keeps every running piece of work tenant-carrying and visible to the job engine.
 - If a module needs something this cannot express, the Registrar gains a method through the EP ticket that needs it. It never gains a side channel.
+- **What CI checks (M4), and what it cannot.** Non-test code under `internal/modules/**` contains no `go` statement anywhere, not only in `Register`. It also makes no reference to `time.AfterFunc`, `time.NewTicker`, `time.NewTimer` or `time.Tick`. Request-scoped concurrency that joins before it returns uses a kernel helper. The first ticket that needs one adds it to the kernel; modules never write a raw `go`. A goroutine started *inside a library function* that a module calls cannot be seen by a syntax check, so it is listed under "Not automatable".
 
 **How dependencies reach a module.** This is UEM ADR-0002 rule 3. Each server module package exports exactly one constructor:
 
@@ -183,7 +219,7 @@ func New(deps platform.Deps, dir directory.Services) module.Module
 ```
 
 - **`platform.Deps`** lives in package `internal/platform`, the one kernel package that aggregates the others. It is a fixed struct of kernel services: operation, audit, authz, jobs, report, notify, keys, blob, telemetry, …
-- **`directory.Services`** lives in package `internal/directory`. It is a fixed struct holding `inventory`'s read API and the `client`.
+- **`directory.Services`** lives in package `internal/directory`. It is a fixed struct holding `inventory`'s read API, the `client`, and the `connection` registry with its credential port (rule 6, F1).
 - **Both grow per kernel service, never per module.** A field's type must be declared in a kernel or directory package listed in the blueprint catalogue (rule 8). A field typed by an interface declared in the aggregating package itself is how a "service for one module" sneaks in, so it fails.
 - **The generated list is the only caller.** It calls `New` for each module and passes the same two values to every module.
 - **The boxed bypass is closed by construction.** A struct, slice or map of concrete module types cannot appear anywhere: rule 3 means no package but the generated list can *name* a module type. The bounded parameter list (≤ 8, M5) catches a growing constructor anywhere else in `internal/`.
@@ -209,23 +245,29 @@ The on-ramp is the only on-ramp only if a feature cannot be filed anywhere else:
 | `cmd/<role>` | It imports only its own `compose/<role>`, `compose/config` and the standard library (about 20 lines, blueprint §1). |
 | `internal/compose/**` | It declares no type that satisfies an extension-point interface. It does not reference `net/http`'s `ServeMux`, `Handle` or `HandleFunc` (`apihost` owns the mux). It hands the kernel hosts only two kinds of contribution: values from `module.Boot`'s result, and values that kernel or directory packages export for their own extension points (for example `inventory.Datasets()`). It builds none itself. |
 | `internal/platform/**`, `internal/directory/**`, `internal/connector/**` | **The catalogue is closed.** Every top-level package under these roots must have a row in blueprint §5.1, §5.2 or §5.3. A new kernel, directory or connector package therefore needs a blueprint change, reviewed by solution-architect. That review asks whether it is really core. |
-| Kernel host packages | **They expose no back door.** An exported function or method in `internal/platform/**` that takes an extension-point type (`operation.Action`, `jobs.Kind`, `report.Dataset`, …, the list kept in the fitness configuration) may be called only from `internal/platform/**` and `internal/compose/**`. A module therefore cannot hand itself to a host directly. It goes through the Registrar. |
-| Inside a module | No `func init()` in `internal/modules/**` or `internal/agentmodules/**`, so there is no self-registration side channel. No `net.Listen`, `http.ListenAndServe`, `http.Handle`, `http.HandleFunc` or `http.DefaultServeMux`. No `go` statement in a module's `Register` method. |
+| Kernel host packages | **They expose no back door.** An exported function or method in `internal/platform/**` that takes an extension-point type may be called only from `internal/platform/**` and `internal/compose/**`. The types are `module.Module` (EP-1) and `operation.Action`, `jobs.Kind`, `report.Dataset` and the others; the list is kept in the fitness configuration. A module therefore cannot hand itself to a host directly. It goes through the Registrar. **The one sanctioned exception is the test kit:** `moduletest.Register(m)` takes a `module.Module` and may be called from `_test.go` files anywhere. It builds a real, private `Registrar`, runs the `Boot` validations for that one module and returns the contributions to the test. It touches no host, so nothing it does reaches a running process. No other kernel function is exempt. |
+| Inside a module | No `func init()` in `internal/modules/**` or `internal/agentmodules/**`, so there is no self-registration side channel. No `net.Listen`, `http.ListenAndServe`, `http.Handle`, `http.HandleFunc` or `http.DefaultServeMux`. No `go` statement and no timer constructor in server-module non-test code (rule 4). Agent modules run inside the agent host, whose contract (T-0040) decides what long-running work they may do. |
 
 ### Rule 6: One owner per table
 
-- **The migration filename names the owner.** `migrations/NNNN_<owner>_<what>.sql`. The `<owner>` segment is an **owner key**, and it must resolve to exactly one package:
-  - `internal/platform/<key>`, `internal/directory/<key>` or `internal/modules/<key>`;
-  - the key is the leaf name, with no separators.
+- **The migration filename names the owner.** `migrations/NNNN_<owner>_<what>.sql`. The `<owner>` segment is an **owner key**. It must resolve to exactly one **top-level package** under one of the four **owner roots**:
+  - `internal/platform/<key>`;
+  - `internal/directory/<key>`;
+  - `internal/connector/<key>`;
+  - `internal/modules/<key>`.
 
-  It fails if no package resolves, or if two would. A module ID may therefore not equal a kernel or directory package name. The first migration becomes **`0001_tenant_tenants.sql`**: `tenants` is owned by `internal/platform/tenant`, and `platform` is not a package. No product migration exists yet, so the rename is free. It touches only a `fitness-tenancy` fixture and `tenancy-fitness.md` (follow-on ticket).
+  The key is that package's directory name (`[a-z][a-z0-9]*`, no separators). Subpackages never own on their own: `credential/sealed`, `store/reportsql` and `fleet/dial` belong to the key of their top-level package. The check fails if no package resolves, or if two would. **Top-level names are therefore unique across the four roots**, which M3 checks for every package whether or not it owns a table yet. For example, a module may not be called `client`. The first migration becomes **`0001_tenant_tenants.sql`**: `tenants` is owned by `internal/platform/tenant`, and `platform` is not a package. No product migration exists yet, so the rename is free. It touches only a `fitness-tenancy` fixture and `tenancy-fitness.md` (T-0144).
+- **The owner of code is its top-level package.** All code under `internal/<root>/<key>/**` has owner key `<key>`, for each of the four roots. Code anywhere else (`compose`, `cmd`, the aggregating roots, agent modules) owns no table and may contain no SQL that names one.
+- **Where an owner's SQL may run is rule 7's business, not rule 6's.** An owner whose top-level package is linked by a satellite binary keeps its SQL in a server-only subpackage under the same key, and `compose/server` wires that subpackage in. This applies to `update` (DM-03 Node, DM-05 Release), `fleet` (DM-12 Component) and `credential` (DM-11, SQL only in `credential/sealed`). The rule 7 rows then prove that `cmd/connector` and `cmd/agent` never link it.
 - **A migration owns what it creates and touches only that.** It owns the tables, partitions, views, types, sequences and functions it creates. It may alter, index, grant on, add policies to or write rows into only objects its owner owns.
-  - It **may** `REFERENCES` another owner's table, because foreign keys (every tenant table references `tenants`) are a dependency, not ownership.
+  - It **may** `REFERENCES` another owner's table, because foreign keys (every tenant table references `tenants`) are a dependency, not ownership. **The reference must not point upward, though.** A kernel-owned table references only kernel-owned tables, which keeps the platform extractable (ADR-0002, "The boundary with UEM"). No table outside a module references a module-owned table. A link that does point upward is an **opaque typed reference** with no foreign key, resolved through the owning module's registered extension point. DM-36's `scope_id`, which `authz` resolves through `delegation`'s `ScopeEvaluator`, is the model case. M8b checks this from the catalog.
   - A partition belongs to its parent's owner.
   - A view may select only its owner's tables. Cross-owner reads are datasets, not views.
-- **Query SQL references only the owner's tables.** This covers sqlc query files, the SQL constants handed to `store`, and generated `sqlcdb/` code. The owner of code under `internal/<layer>/<key>/**` is `<key>`. Other packages read through the owner's Go API or a registered report dataset.
+- **Query SQL references only the owner's tables.** This covers sqlc query files, the SQL constants handed to `store`, and generated `sqlcdb/` code. Other packages read through the owner's Go API or a registered report dataset.
   - The report compiler `internal/platform/store/reportsql` is the one place that emits SQL spanning owners. It does so only from registered datasets, whose tables are checked against their registering package (rule 4, `Boot`). Which joins between datasets it may compile is the report engine's design (reporting-engineer, T-0026 / E2.6).
-- **An ownership map is generated.** `tools/gen/modules` also writes `internal/platform/store/owners.gen.go` (table → owner key). The dataset check at boot and the static check both read it.
+- **A module never owns a table that a lower layer reads.** The kernel, the directory domain and the connector cannot import a module (rule 1), so they could reach such a table only through SQL or an upward reference, and both fail. Data the layers below need is therefore owned below and written by the module through that owner's Go API, inside the module's Actions. Rule 9 applies this to every entity in the domain model.
+- **Writes of secret material go in through a port, and only metadata comes out.** DM-11's table is owned by `connector/credential`, but `connections` must create, rotate and revoke credentials, and modules cannot import the connector (rule 1). So `directory/connection` declares a credential **port**: an interface that accepts secret material only as `secret.Secret`, returns only public metadata (a `directory/model` type), and has no method that returns secret material. `credential/sealed` implements it. `compose/server` hands it to `directory/connection` as a value, exactly as it hands the embedded transport to `directory/client` (blueprint §2 rule 3), and modules reach it through `directory.Services`. Unsealing stays under `internal/connector/` (DM-11.I1). The method set belongs to the `connections` build ticket, and security-architect reviews it there (T-0007 owns custody).
+- **An ownership map is generated.** `tools/gen/modules` also writes `internal/platform/store/owners/owners.gen.go` (table → owner key), a data-only package that imports nothing. The dataset check in `Boot` and the static check both read it.
 - **Exemptions are registered.** A cross-owner data migration, for example a backfill, needs an entry in `tools/fitness/modules/exempt.json`. The entry carries a reason, the ticket and an expiry date. Entries that lack a reason or ticket, are expired, or are stale fail (M11).
 
 This generalises ADR-0002 T5's global-table rule. T5 stays as it is.
@@ -243,6 +285,7 @@ This generalises ADR-0002 T5's global-table rule. T5 stays as it is.
 | `cmd/agent` | `internal/modules`, `internal/connector`, directory services, `platform/apihost`, `platform/store`, `platform/keys`, `internal/webui` | it runs on a DC (Tier 0): no server code, no credential code |
 | `cmd/t0-connector` [post-v1] | `internal/modules`, directory services, `platform/apihost`, `internal/webui`, `platform/store` | control plane, alone on its host |
 
+- **The class names mean what rule 1 says.** "Directory services" includes the directory root `internal/directory`. The kernel root `internal/platform` links `store` and `keys`, so the `store` and `keys` entries already keep it out of every satellite. `migrations` and `webui` can reach a binary only through `compose/server` (rule 1).
 - **New binaries add their rows.** `cmd/radius` and `cmd/fpolicy` add rows in the tickets that build them, and a `cmd/<role>` with no row fails.
 - **The protocol libraries are named in one place.** They are the stack manifest's list (`tools/fitness/stack/manifest.json`), which ADR-0002 P3 also uses.
 - **Satellite-linked kernel packages import no `store`.** These are `agent`, `fleet/dial`, `update`, `telemetry`, `secret`, `proc` and `capability`. The `cmd/agent` and `cmd/connector` rows enforce this with no separate rule. The server-only steps are injected by `compose/server`.
@@ -264,7 +307,7 @@ UEM ADR-0002 rule 5 warns against fitting a contract to two instances of one sha
 
 | Module (blueprint §5.4) | Shape | Carried by | Finding |
 | --- | --- | --- | --- |
-| `connections` | onboarding, enrollment, bindings | `API`, `Action`, `Permission`, `AuditKind` | **F1.** `directory/client` resolves binding → transport "from data", so the connection, naming-context, binding and sync-cookie tables are read by the directory layer. They are **owned by a directory package** (`directory/client` and `directory/sync`; exact split in T-0006). The `connections` module writes them through that package's Go API inside its Actions. A module may not own a table the layer below it reads. |
+| `connections` | onboarding, enrollment, bindings | `API`, `Action`, `Permission`, `AuditKind` | **F1.** Every table `connections` manages is read by a lower layer, so `connections` **owns no table**. It writes them all inside its Actions, through the owners' Go APIs reached via `directory.Services`. The owners: DM-10 Connection, DM-13 ConnectorBinding and DM-21 HybridLink go to a **new directory service, `directory/connection`**, the connection registry. `client` reads it to resolve binding → transport, `sync` reads the attribute set and suspension, and `inventory` reads the deletion settings, takeover attestation (DM-20.I4(f)) and confirmed links (DM-20.I4). DM-11 DirectoryCredential goes to `connector/credential`, with SQL only in `credential/sealed`, written through the credential port (rule 6). DM-14 NamingContext stays with `inventory` and DM-19 SyncCursor with `sync`. A separate registry package keeps tenant configuration out of the transport client, and lets `inventory` read it without depending on `client`. The import order is `sync` → `inventory` → `connection`, and `client` → `connection`. |
 | `objects`, `helpdesk`, `m365`, `hardening` | Actions per class × verb | `Action` (+ `API`, `Permission`, `AuditKind`) | Fits. Class definitions are data inside `objects`. |
 | `reports` | pure consumer: others' datasets, schedules, delivery | `Job` (schedules), `API`; consumes `report` and `notify` via `Deps`; act-on-results calls Actions by ID | Fits with **no writes of its own**. The dataset registry is a kernel read API, not a module import. |
 | `workflow` | long-running requests, SLAs, approvals | `ApprovalGate`, `Job` (SLA timers) | Fits. A module *implementing* a kernel extension point the kernel consumes is the inversion the Registrar exists for. |
@@ -272,7 +315,43 @@ UEM ADR-0002 rule 5 warns against fitting a contract to two instances of one sha
 | `lifecycle` | scheduled and triggered composition of others' Actions | `Job` (schedules), Actions by ID | **F3.** Attribute-change-triggered automation needs a change feed. Until an EP ticket adds a Registrar method for it, it is a job that reads the inventory change history (EP-8) by watermark. It never subscribes by importing `sync`. |
 | `history` | reads inventory history and our audit; undo | datasets (EP-8), `operation.Undo` via `Deps` | Fits through datasets. No cross-owner view. |
 | `search` | reads the Action catalogue and inventory | `API`; `operation.Catalogue()` and the inventory read API via `Deps` | **F4.** `operation` must expose a read-only catalogue of registered Actions. That is a kernel service, never a module import. The search index technique stays open (blueprint §16). |
-| `migration`, `itsm` | importers and adapters, one shape each | `Job`, Actions by ID | Fits. Variants are parameters (blueprint §4). |
+| `migration`, `itsm` | importers and adapters, one shape each | `Job`, Actions by ID | Fits. Variants are parameters (blueprint §4). `migration` takes its MIG-18 baseline by calling `history`'s snapshot Action by ID, never by reading DM-22. |
+| `helpdesk` × `objects` | generated passwords | Actions by ID | **F5.** DM-52 PasswordGenerationPolicy is owned by `helpdesk`, but `objects` also needs a generated password when it creates a user (ADM-021). `objects` must not read `helpdesk`'s table. Its create flow composes `helpdesk`'s password-set Action by ID, which generates the password inside `helpdesk` and returns no secret to `objects`. The user-lifecycle spec (DM §11 Q4) may choose the step order. It may not choose a cross-module read. |
+
+**Every domain-model owner line, run through rule 6.** This covers [domain model v0](../domain/domain-model.md) (T-0006). Each owner line was tested against three conditions:
+- **(a)** it resolves to exactly one owner key under the four roots;
+- **(b)** no lower layer reads a module-owned table, and no foreign key points upward;
+- **(c)** it has no split owner.
+
+`R` entities (DM-33 Permission, DM-40 Action, DM-70 Dataset) are registries, not tables, so they are out of scope.
+
+| Entities | Owner key (root) | (a) | (b) | (c) | Note |
+| --- | --- | --- | --- | --- | --- |
+| DM-01 Tenant | `tenant` (platform) | ✓ | ✓ | ✓ | Every tenant table references it, which is a downward reference. |
+| DM-02 TenantKey | `keys` (platform) | ✓ | ✓ | ✓ | Sealing callers use `keys`' Go API. |
+| DM-03 Node, DM-05 Release | `update` (platform) | ✓ | ✓ | ✓ | `update` is satellite-linked, so its SQL sits in a server-only subpackage under key `update` that `compose/server` wires (rule 6, rule 7). |
+| DM-04 HostnameBinding | `apihost` (platform) | ✓ | ✓ | ✓ | |
+| DM-06 Lease, DM-43 Job, DM-44 Schedule | `jobs` (platform) | ✓ | ✓ | ✓ | `sync` holds leases through `jobs`' API. DM-44 `owner_ref` is an opaque typed reference. River's tables are owned by `jobs`, the only importer of River (ADR-0002 T5). |
+| DM-10 Connection, DM-13 ConnectorBinding, DM-21 HybridLink | `connection` (directory) | ✓ | ✓ | ✓ | **Changed from `modules/connections`** (F1). DM-10 `credential_id` references DM-11, which is a directory → connector reference. That is not upward in the rule 6 sense (neither kernel nor module). |
+| DM-11 DirectoryCredential | `credential` (connector) | ✓ | ✓ | ✓ | **The split owner is removed.** The metadata row is no longer owned by `modules/connections`. One table, one owner; SQL only in `credential/sealed`; writes go through the credential port (rule 6). |
+| DM-12 Component | `fleet` (platform) | ✓ | ✓ | ✓ | Enrollment SQL is server-side only (blueprint §2 rule 7). `fleet/dial` has none. |
+| DM-14 NamingContext, DM-15 DomainController, DM-16 DirectoryObject, DM-17 Link, DM-18 ChangeRecord, DM-20 Correlation, DM-23 GpLink | `inventory` (directory) | ✓ | ✓ | ✓ | DM-21 is read through `connection`'s API (F1). |
+| DM-19 SyncCursor | `sync` (directory) | ✓ | ✓ | ✓ | Its `lease_fencing_token` comes through `jobs`' API. |
+| DM-22 Snapshot | `history` (module) | ✓ | ✓ | ✓ | Only `history`'s own Actions read it. Restoring is an Operation (X9) that runs `history`'s Action. |
+| DM-30 Account, DM-31 Session, DM-32 ApiToken, DM-37 AuthenticatorEnrollment | `authn` (platform) | ✓ | ✓ | ✓ | |
+| DM-34 Role, DM-36 RoleAssignment | `authz` (platform) | ✓ | ✓ | ✓ | F2. `scope_id` (DM-35) and the automation-policy `subject` (DM-60) are opaque typed references with no foreign key, as rule 6 requires. |
+| DM-35 DelegationScope | `delegation` (module) | ✓ | ✓ | ✓ | `authz` never reads it. It calls `delegation`'s registered `ScopeEvaluator`. |
+| DM-38 CallerVerification, DM-52 PasswordGenerationPolicy | `helpdesk` (module) | ✓ | ✓ | ✓ | Only `helpdesk`'s Actions read them. For `objects`, see F5. |
+| DM-41 Operation, DM-42 OperationItem | `operation` (platform) | ✓ | ✓ | ✓ | |
+| DM-50 Template, DM-51 NamingFormat, DM-53 AttributeList | `objects` (module) | ✓ | ✓ | ✓ | `lifecycle` and `migration` use them by passing IDs to `objects`' Actions. |
+| DM-60 AutomationPolicy, DM-61 PolicyProgress, DM-62 AutomationRun, DM-63 DataSource | `lifecycle` (module) | ✓ | ✓ | ✓ | DM-63's sealed credentials are unsealed through `keys` by `lifecycle`'s own runner. |
+| DM-64 WorkflowDefinition, DM-65 Request, DM-66 ApprovalDecision | `workflow` (module) | ✓ | ✓ | ✓ | `operation` reaches them only through the registered `ApprovalGate`. |
+| DM-71 ReportDefinition, DM-72 ReportRun, DM-73 ReportSchedule | `reports` (module) | ✓ | ✓ | ✓ | `report` (kernel) holds the dataset registry and AST types, and no tables of `reports`. |
+| DM-80 AuditEvent, DM-81 ChainCheckpoint | `audit` (platform) | ✓ | ✓ | ✓ | |
+| DM-82 NotificationChannel, DM-83 NotificationTemplate, DM-84 Delivery | `notify` (platform) | ✓ | ✓ | ✓ | |
+| DM-85 ItsmConnection | `itsm` (module) | ✓ | ✓ | ✓ | |
+
+**Result.** After F1 and F5, every entity passes. Four owner lines in the domain model change: DM-10, DM-13 and DM-21 move to `directory/connection`, and DM-11 drops its split-owner clause. T-0145 amends the domain model and adds the `directory/connection` row to blueprint §5.2, which M7 requires before the package can exist.
 
 The agent tier's paper check belongs to T-0040 (U4 contract-freeze gate in ADR-0002). The web tier's belongs to the first web-module ticket.
 
@@ -303,7 +382,7 @@ The agent tier's paper check belongs to T-0040 (U4 contract-freeze gate in ADR-0
 - **Modules cannot share code with each other.** Shared logic either moves into the kernel, which needs a catalogue row and solution-architect review, or is duplicated. Some duplication is the accepted price. Kernel growth pressure is the risk to watch, because "make it kernel" becomes the new escape hatch. The closed catalogue makes every such move a reviewed decision.
 - **No module lifecycle hooks.** Work that "just needs a goroutine" must be modelled as a job. Some things, such as in-memory caches, become jobs plus kernel caches, or wait for a Registrar method.
 - **Cross-owner reads cost more.** No convenient join across owners in a module's SQL. It goes through a Go API or a dataset, which is slower to write and sometimes slower to run.
-- **The first migration's name changes** to `0001_tenant_tenants.sql`. Module IDs may not collide with kernel or directory package names.
+- **The first migration's name changes** to `0001_tenant_tenants.sql`. Top-level package names must be unique across `internal/{platform,directory,connector,modules}`, so a module ID may not reuse a kernel, directory or connector package name.
 - **The scaffold migrates.** The `Registrar` interface becomes a concrete struct with `Boot`. This is small (one method today).
 - **Static SQL ownership checks have limits.** A table named only in a runtime-assembled string escapes them. That is mitigated because dynamic SQL outside `reportsql` is already banned (safe-primitives P5, FF-SP rules).
 
@@ -316,13 +395,15 @@ The agent tier's paper check belongs to T-0040 (U4 contract-freeze gate in ADR-0
 - **T-0145** (solution-architect): update the architecture map so it restates this ADR:
   - blueprint §2 (the rule 1 matrix, agent modules → primitives only, rule 7 rows) and §4.1 (`Boot`, no lifecycle);
   - §16 and §17 rows;
-  - findings F1–F4 into §5;
+  - findings F1–F5 into §5, including the new §5.2 row for `directory/connection` (the connection registry and credential port), which M7 requires before the package can exist;
+  - §7.3: the credential port, and the fact that `connector/credential` owns DM-11;
+  - **the domain model's owner lines** (widened by the director's T-0045 review): DM-10, DM-13 and DM-21 → `directory/connection`; DM-11 → `connector/credential` alone, dropping the metadata-row clause;
   - create `architecture/modules/README.md`.
 - **Decisions this leaves open:**
   - the agent module contract (T-0040);
   - the `API` registration shape (T-0046);
   - gates and the Action catalogue API (T-0047);
-  - the split of connection tables between `directory/client` and `directory/sync` (T-0006);
+  - the credential port's method set (the `connections` build ticket, with security-architect review; custody: T-0007);
   - the change-feed Registrar method (F3), added by the first ticket that needs triggered automation.
 
 **Revisit when**
@@ -339,15 +420,15 @@ Every check has a failing fixture in `check_test.go`, so a check that silently m
 
 | Check | Fails when | Bypass it closes |
 | --- | --- | --- |
-| **M1** Import graph | Any import outside the rule 1 matrix, test files included. Anything imports `garage/`, `lab/` or `third_party/` outside the stated uses. A package outside `tools/fitness`/`tools/gen` imports `tools/`. | A feature reaching sideways or upward (PatchIQ: 94 handlers importing the store). |
+| **M1** Import graph | A Go package matches no rule 1 class. Any import between our packages outside the rule 1 matrix, test files included. Anything outside its own zone imports `garage/`, `lab/` or `tools/`, or imports `third_party/` other than as the stack manifest allows. A package other than a server module or `compose/server` imports `internal/platform` or `internal/directory` (the aggregating roots). | A feature reaching sideways or upward (PatchIQ: 94 handlers importing the store). |
 | **M2** Module islands | A server or agent module imports another module, or the other module kind, `compose` or `cmd`. | Modules coupling directly instead of by ID. |
-| **M3** Generated lists | A module package is imported anywhere except the generated file of `compose/server` or `compose/agent`. A `.gen.go`/`.gen.ts` lacks the generated header. Regenerating any of the three lists or `owners.gen.go` gives different bytes. A module ID breaks the pattern. A web module has no server module. A module has no architecture page, or a page has no module. | Hand-wired module lists, and the map lagging the tree. |
-| **M4** Registrar only | A module package has a `func init()`, or exports anything named `New` other than the fixed signature `func New(platform.Deps, directory.Services) module.Module` (agent: T-0040's signature). Its `Register` contains a `go` statement. It references `net.Listen`, `http.ListenAndServe`, `http.Handle`, `http.HandleFunc` or `http.DefaultServeMux`. A function in the configured extension-point-type list is called from outside `internal/platform/**` and `internal/compose/**`. A type declared in `internal/compose/**` implements an extension-point interface. `compose/**` references `http.ServeMux`, `http.Handle` or `http.HandleFunc`. `module.Boot` is called outside `compose/server`. `module.Registrar` gains exported fields or an exported constructor. | Self-registration, direct host registration, features hidden in compose. |
+| **M3** Generated lists | A module package is imported anywhere except the generated file of `compose/server` or `compose/agent`. A `.gen.go`/`.gen.ts` lacks the generated header. Regenerating any of the three lists or `store/owners/owners.gen.go` gives different bytes. A module ID breaks the pattern. Two top-level packages under `internal/{platform,directory,connector,modules}` share a name. A web module has no server module. A module has no architecture page, or a page has no module. | Hand-wired module lists, and the map lagging the tree. |
+| **M4** Registrar only | Any package under `internal/modules/**` or `internal/agentmodules/**` has a `func init()`. A server **module root package** (`internal/modules/<id>`) exports a function named `New` whose signature is not exactly `func New(platform.Deps, directory.Services) module.Module`, or exports none, or exports any other function returning `module.Module`. No **subpackage** under `internal/modules/<id>/` exports a function returning `module.Module`; subpackages may otherwise export what they like, since only their own module can import them (rule 2). The agent equivalents use T-0040's signature. Non-test code under `internal/modules/**` contains a `go` statement or references `time.AfterFunc`, `time.NewTicker`, `time.NewTimer` or `time.Tick`. Module code references `net.Listen`, `http.ListenAndServe`, `http.Handle`, `http.HandleFunc` or `http.DefaultServeMux`. A function in the configured extension-point-type list (`module.Module` included) is called from outside `internal/platform/**` and `internal/compose/**`, except `moduletest.Register` called from a `_test.go` file. A type declared in `internal/compose/**` implements an extension-point interface. `compose/**` references `http.ServeMux`, `http.Handle` or `http.HandleFunc`. `module.Boot` is called outside `compose/server`. `module.Registrar` gains exported fields or an exported constructor. | Self-registration, direct host registration, features hidden in compose. |
 | **M5** No growing constructor | An exported function or method in `internal/**` (non-generated, non-test) has more than 8 parameters. A field of `platform.Deps` or `directory.Services` is typed by an interface declared in the aggregating package itself, or by a package that is not in the catalogue. | `NewRouter`-style growth. The boxed form (a struct of modules) is closed by M3, because no package can name a module type. |
 | **M6** Composition root | A package outside `cmd/`, `internal/compose/**` or `tools/` imports `internal/compose/**`. Role packages import each other. `profile` imports anything but `platform/capability`. `cmd/<role>` imports anything but its own `compose/<role>`, `compose/config` and the standard library. | Wiring leaking out of the root; the profile becoming code. |
 | **M7** Closed catalogue | A top-level package directory under `internal/platform/`, `internal/directory/` or `internal/connector/` has no row in blueprint §5.1, §5.2 or §5.3 (matched by the backticked package name in the table's first column). | Filing a feature as "core". |
-| **M8a** Table ownership, static | A migration filename's owner key resolves to zero or more than one package. A sqlc query file, a SQL string constant or generated `sqlcdb` code under owner *K* names a table that `owners.gen.go` assigns to another owner, by token scan of `FROM`/`JOIN`/`INTO`/`UPDATE`/`TABLE`/`ON` positions. This reuses the scanner of ADR-0002 T5's `global-table-sql`. | Cross-owner SQL. |
-| **M8b** Table ownership, catalog | With migrations applied one by one into PostgreSQL, a `ddl_command_end` event trigger records each migration's objects through [`pg_event_trigger_ddl_commands()`](https://www.postgresql.org/docs/16/functions-event-triggers.html). A migration then alters, indexes, adds a policy to or grants on another owner's object, creates a partition of it, or creates a view over it. Each query file is planned with [`EXPLAIN (GENERIC_PLAN, FORMAT JSON)`](https://www.postgresql.org/docs/16/sql-explain.html) (PG16+, our floor), and its plan touches another owner's relation, including through views. `owners.gen.go` disagrees with the recorded ownership. | What a token scan misses: views, quoting, schema-qualified names. |
+| **M8a** Table ownership, static | A migration filename's owner key resolves to zero or more than one top-level package under the four owner roots. A sqlc query file, a SQL string constant or generated `sqlcdb` code under owner *K* names a table that `owners.gen.go` assigns to another owner, or SQL appears in a package that owns nothing (rule 6), by token scan of `FROM`/`JOIN`/`INTO`/`UPDATE`/`TABLE`/`ON` positions. This reuses the scanner of ADR-0002 T5's `global-table-sql`. | Cross-owner SQL. |
+| **M8b** Table ownership, catalog | With migrations applied one by one into PostgreSQL, a `ddl_command_end` event trigger records each migration's objects through [`pg_event_trigger_ddl_commands()`](https://www.postgresql.org/docs/16/functions-event-triggers.html). A migration then alters, indexes, adds a policy to or grants on another owner's object, creates a partition of it, or creates a view over it. A foreign key points upward: from a kernel-owned table to a non-kernel table, or from a non-module table to a module-owned one (read from `pg_constraint`). Each query file is planned with [`EXPLAIN (GENERIC_PLAN, FORMAT JSON)`](https://www.postgresql.org/docs/16/sql-explain.html) (PG16+, our floor), and its plan touches another owner's relation, including through views. `owners.gen.go` disagrees with the recorded ownership. | What a token scan misses: views, quoting, schema-qualified names. |
 | **M9** Binary hygiene | (a) The conservative import walk (build constraints ignored, so a superset) finds a rule 7 forbidden package in a binary's graph. (b) `go list -deps` for `GOOS=windows` and `GOOS=linux` finds a forbidden package or protocol library. A `cmd/<role>` has no row. | Credential, store or connector code linked into the edge or DC agent through a transitive import. |
 | **M10** Web mirror | `web/src/app` or `web/src/ds` imports `web/src/modules/*`, other than `app` importing `modules.gen.ts`. A web module imports another web module. A web module imports something outside `web/src/app`, `web/src/ds`, `web/src/api` or its own directory and registered packages. | Shell code naming screens. |
 | **M11** Exemptions | An entry in `tools/fitness/modules/exempt.json` has no reason, no ticket, an expired date, or names a subject that no longer violates anything. An entry targets M1, M2, M3, M6 or M9, which admit no exemptions. | Exemptions becoming permanent. |
@@ -357,4 +438,4 @@ Every check has a failing fixture in `check_test.go`, so a check that silently m
 - M1's kernel row asserts the same thing as ADR-0002 U2 (`fitness-profiles`). Both may fail on the same import; that is harmless.
 - M9's protocol-library rows complement P3, which checks the same libraries at package level rather than binary level.
 
-**Not automatable, and who checks it.** The sequencing half of rule 8 ("the extension point merged before the first feature") is a ticket-dependency fact, not a code fact. The project-manager keeps the dependency edges. The code-reviewer of the first `connections` and `objects` build tickets confirms that the only kernel change in each was a Registrar method. Everything else in this ADR is checked by M1–M12.
+**Not automatable, and who checks it.** The sequencing half of rule 8 ("the extension point merged before the first feature") is a ticket-dependency fact, not a code fact. The project-manager keeps the dependency edges. The code-reviewer of the first `connections` and `objects` build tickets confirms that the only kernel change in each was a Registrar method. The second gap is a goroutine or timer started *inside a library function* that a server module calls (rule 4). M4 sees only `go` statements and timer constructors in module code. The code-reviewer checks every new third-party call in module code for this, and the module's architecture page lists any library that starts background work. Everything else in this ADR is checked by M1–M12.
