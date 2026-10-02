@@ -22,6 +22,9 @@ of truth; this file records the reasoning.
   ownership, the multiforest lab, and AC amendments.
 - New tickets: T-0118–T-0127.
 
+**Revision 3 (2026-10-02).** T-0127 landed, so E-015 now carries ADM-045 on the board. The
+risk row for that patch is closed. The AC-amendment risk now points to T-0129.
+
 ## 1. M2 epics on the board
 
 | Roadmap | Board | Title | Parity refs (matrix IDs) | First checkpoint |
@@ -34,7 +37,7 @@ of truth; this file records the reasoning.
 | E2.6 | E-012 | Reports | ADM-083–087, 089, 092, 093, 096–103 | 2a |
 | E2.7 | E-013 | Hybrid via Graph | ADM-009, 027, 131, 159–162, 164, 169; M365-005, 007; I360-003 | 2c |
 | E2.8 | E-014 | Workflow and approvals | ADM-116–121 | 2d |
-| E2.9 | E-015 | Automation and JML | ADM-039–045, 047, 104–107, 114, 146–148; ADSS-091. ADM-045 ships its licence, group, OU and mailbox blocks in M2; its NTFS block is M3 (FD-04). Board patch pending: T-0127 | 2d |
+| E2.9 | E-015 | Automation and JML | ADM-039–045, 047, 104–107, 114, 146–148; ADSS-091. ADM-045 ships its licence, group, OU and mailbox blocks in M2; its NTFS block is M3 (FD-04). On the board since T-0127 | 2d |
 | E2.10 | E-016 | Integrations and API | ADM-188–192, 198, 204, 205; RMP-043; I360-022 | 2a (API contract, SMTP) |
 | E2.11 | E-017 | Migration kit (ADMP) | none: MIG-01–06, 10, 14, 16 are playbook IDs, listed in the epic goal | 2c |
 | E2.12 | E-018 | Platform and updates | ADM-158, 206, 207, 209, 210, 212, 213; RMP-046; I360-002; ADSS-129, 131 | 2a (connection, sync) |
@@ -55,8 +58,8 @@ placed as follows:
 - ADM-045 → E-015. Its licence, group, OU and mailbox blocks ship in M2. Its NTFS block ships in
   M3 with the file-server agent (roadmap E3.6).
 
-E-015 was created without ADM-045, and the CLI cannot edit an epic. T-0127 (factory-director)
-adds it to the board.
+E-015 was created without ADM-045. T-0127 (factory-director) added `factory epic set` and
+appended ADM-045 to E-015 (16 → 17 refs). `factory epic show E-015` confirms it.
 
 ADM-144 (could, P4) is left out of E-019 (v1-scope §3.6). ADM-168 is out of v1 (ADR-0002 rule 9, D-0007).
 
@@ -226,8 +229,7 @@ Every primitive waits for both.
 | The UI lane waits on the CEO's brand pick (T-0042). Screens cannot start before T-0043 | Medium × high | Backend and specs proceed. Greyscale designs (T-0105–T-0107) do not wait |
 | **No Windows lab and no CEO decision on lab spend (v1-scope §8 Q5).** This affects M1 demo criterion 2 (WS2025 with CBT), T-0051, T-0023's Windows leg and the FEAS Phase-1 exit. It also affects the four Windows-profile adapters T-0123–T-0126, without which the `windows` profile cannot reach GA at M2 exit (decision 9), and the multi-domain single-forest proof (decision 11) | High × high | **Director:** file decision-prep for Azure lab spend and counsel review (T-0027 covers signing only). T-0123–T-0126 stay in backlog until it is answered |
 | T-0047 may rule that configuration writes are EP-3 Actions. A `platform/operation` build ticket would then join 2a ahead of T-0093, T-0095, T-0096 and T-0104 (decision 7) | Medium × medium | solution-architect files it with the T-0047 fitness ticket (note on T-0047). Project-manager slots it at the next grooming |
-| AC changes on existing tickets live in notes, because the CLI cannot amend ACs (decision 12). QA could verify against the original list only | Medium × medium | Every amendment note starts "AC AMENDMENT (binding…)". **Director:** consider a `ticket amend --ac` command alongside T-0127 |
-| E-015 is missing ADM-045 on the board until T-0127 lands | Certain × low | T-0127 (factory-director). T-0031 waits on it |
+| AC changes on existing tickets live in notes, because the CLI cannot amend ACs (decision 12). QA could verify against the original list only | Low × medium | Every amendment note starts "AC AMENDMENT (binding…)". The director ruled these notes are the AC of record for reviewers and QA (T-0031 note, 2026-10-02 05:56). T-0129 (`ticket amend`, factory-director, P2) folds them into the AC lists |
 | M1 demo criterion 2 (the walking skeleton through the real UI) needs M2-labelled tickets T-0097, T-0110 and T-0112 | Certain × medium | **Director:** accept a connector-level skeleton for M1 exit, or count those tickets toward M1 |
 | T-0053–T-0059 sit under E-006 "Productization foundations" (docs and video style), which looks misfiled | — | **Director:** re-epic them (suggested: E-004 / E-019) |
 | River's licence check is still open (licence register) | Low × medium | Before GA. T-0084 notes it. The fallback is a SKIP LOCKED table |
@@ -310,5 +312,6 @@ of Ready, but they stay in backlog until the Windows lab decision (Q5) exists.
 | WA3 | T-0125 | Build the DPAPI-NG or TPM KEK adapter for the Windows server profile | build · backend-engineer | P2 | E-018 · M2 | T-0087 |
 | WA4 | T-0126 | Build the Windows service host for the server role | build · windows-engineer | P2 | E-018 · M2 | T-0038,T-0084,T-0085 |
 
-**Board housekeeping:** T-0127 (chore · factory-director · P1) adds ADM-045 to E-015 through a
-supported epic-update path (§1).
+**Board housekeeping:** T-0127 (chore · factory-director) added `factory epic set` and patched
+ADM-045 onto E-015 (§1). It is done. T-0129 (`ticket amend`, P2) folds the AC AMENDMENT notes
+into the AC lists (decision 12).
