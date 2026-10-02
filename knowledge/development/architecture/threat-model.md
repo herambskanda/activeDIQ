@@ -1355,8 +1355,10 @@ source; re-sealing alone does not help if the plaintext was read.
 - A remote connector's Entra key is generated **on its own host**: non-exportable in CNG or the TPM
   where available, otherwise a 0600 file. The administrator uploads only the public certificate.
 - An AD password fallback on a remote host is sealed by that host's key provider.
-- **Nothing secret is ever pushed over fleet.** Rotation is a host-side CLI action at installation
-  operator scope.
+- **No standing credential is ever pushed over fleet.** Rotation is a host-side CLI action at
+  installation operator scope. A per-operation secret input (a new password being set) travels only
+  inside that step's Apply RPC over the mTLS tunnel, and the connector never persists it
+  (ADR-0005 rule 9).
 - The server keeps public metadata only (DM-11 `connector_local`).
 
 ### 9.5 Secret memory policy (SP §5.6 hand-off)
@@ -1457,14 +1459,14 @@ checkpoint cadence, signer).
 
 | # | Guarantee |
 | --- | --- |
-| AG-1 | Written **in the same transaction** as the action it records. No action commits without its event |
+| AG-1 | Written **in the same transaction** as the action it records. No action commits without its event. For writes to our own database this holds literally. For directory writes, which cannot join a PostgreSQL transaction, it holds as **write-ahead plus same-transaction outcome**: the claim and the started event commit before the write; the outcome event commits with the outcome state; reconciliation closes a crash in between (ADR-0005 rule 6) |
 | AG-2 | Success, failure **and denial** are recorded (SB §7) |
 | AG-3 | Each event carries actor, on-behalf-of chain (token, automation policy, approvals), verification factor, source (client IP, component), target GUID + DN at the time, before/after with secrets redacted, outcome, correlation and operation IDs (DM-80) |
 | AG-4 | The runtime role has **INSERT only** on audit tables: no UPDATE, DELETE or TRUNCATE. Retention purges run as a separate maintenance path under the owner role and delete only below a checkpoint (DM-80.I2) |
 | AG-5 | **One hash chain per tenant**, gapless `seq` (DM-80.I1) |
 | AG-6 | **Periodic signed checkpoints** (DM-81) whose hashes are **also streamed to the SIEM sink and included in every export** — external anchoring |
 | AG-7 | An **offline verifier** checks an export without access to the installation |
-| AG-8 | Audit reads, exports, retention changes and SIEM-sink changes are themselves audited (and need step-up, §7.4) |
+| AG-8 | Audit reads, exports, retention changes and SIEM-sink changes are themselves audited. Exports, retention changes and SIEM-sink changes also need step-up (§7.4); reads do not (ADR-0005 rule 11) |
 | AG-9 | Events never carry a `Secret` (DM-80.I4) |
 
 **Honest limit.** An attacker with root on the host (X6) can stop recording, forge **new** records,

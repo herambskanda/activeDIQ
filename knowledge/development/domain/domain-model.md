@@ -44,8 +44,10 @@ confirmed it (T-0051, §11 Q8).
   [sIDHistory](https://learn.microsoft.com/en-us/windows/win32/adschema/a-sidhistory)). Every
   reference column holds a GUID. Display strings (DN, name) are stored as *snapshots* beside it.
 - **X4 Secrets never persist in clear.** Passwords, OTP codes, LAPS/BitLocker values and
-  `SecretAttrs` (safe-primitives §3.7) are never stored. The exceptions are credentials and seeds,
-  which are stored *sealed* under the tenant data key. No `Secret` is ever serialised into an
+  `SecretAttrs` (safe-primitives §3.7) are never stored in clear. Credentials and seeds are stored
+  *sealed* under the tenant data key. A secret input of an in-flight operation step (a password
+  being set) is stored sealed only while that step needs it, and is deleted at the step's terminal
+  state or within 72 hours (ADR-0005 rule 9). No `Secret` is ever serialised into an
   entity, an audit detail, a notification or an export.
 - **X5 Append-only records** (ChangeRecord, AuditEvent, ApprovalDecision, ChainCheckpoint) are
   never updated. Only retention deletes them, and only as an explicit, audited path. Their
@@ -72,7 +74,9 @@ confirmed it (T-0051, §11 Q8).
   record holds only a pseudonymous form (the GUID, plus a keyed MAC of the value for search), and
   the clear value lives in a per-subject side record that erasure deletes. In the second, the
   value is sealed under a per-subject key that erasure destroys (crypto-shredding), and the hash
-  covers the sealed form. T-0047 chooses one (§11 Q9). Either way, it must be in place **before
+  covers the sealed form. **ADR-0005 rule 12 chose the first**, with a salted commitment
+  (`PersonalRef`) in the record and the clear value in `platform/personal`; erasure deletes the
+  subject's salt and values (§11 Q9, closed). Either way, it must be in place **before
   the first audit event is written**: a chain whose hash covers clear names cannot be made
   erasable later. After erasure, the event, its GUIDs and its hash remain, and the UI shows
   `[erased]`. The erasure is itself audited, without the erased values. This is the mechanism
@@ -868,11 +872,14 @@ approvals needed) · `plan_valid_until` · `undo_of` · `request_id` · `state`.
 re-checked per item at apply, against live ancestry. I2 Partial success is never reported as
 success. I3 Undo is a new Operation, with `undo_of` set, through the same gate. I4 A plan older
 than `plan_valid_until` must be re-planned before it is approved or applied.
-**Lifecycle.**
-`draft → planning → planned → awaiting_approval → approved | rejected`, then
-`approved → queued → running → succeeded | partially_succeeded | failed | cancelled`.
-`planned` can also go to `expired`. Without a gate, `planned → queued`. T-0047 ratifies the
-transitions and may rename them, and this file then follows in the same change.
+**Lifecycle** (source: [ADR-0005](../decisions/0005-operation-pipeline-and-audit-trail.md) rule 3,
+whose `transitions` block CI compares with the code).
+`draft → planning → planned | plan_failed`; `planned → approved | awaiting_approval | rejected`
+(gate); `awaiting_approval → approved | rejected`; `approved → queued → running →
+succeeded | partially_succeeded | failed`; `running → cancelling → cancelled`. A re-plan returns
+`planned`, `awaiting_approval` or `approved` to `planning`; approvals bound to an unchanged
+`plan_hash` survive it. There is no `expired` state: an expired plan is re-planned and an abandoned
+one is `cancelled`. Every pre-running state may go to `cancelled`.
 
 ### DM-42 OperationItem · T · owner `platform/operation`
 **Definition.** One target, or one CSV row, of an Operation, with its ordered steps. Each step is
@@ -880,12 +887,15 @@ one Action applied to that target.
 **Key attributes:** `item_no` · `target` (GUID, or "to be created" with a planned display DN) ·
 `input_row` · `planned_diff` (attribute: before → after) · `steps[]` (`action_id`, `dc`,
 `state`, `outcome`, `read_back`, `inverse_input`, `reversibility`) · `state`.
-**Invariants.** I1 The idempotency key is `(operation, item, step)`. I2 The before-state captured
-at plan is re-checked at apply. If it changed, the item fails `stale_state` and is never
-overwritten. I3 Verify reads back from the DC that applied. I4 Inverse inputs contain no secrets,
+**Invariants.** I1 The idempotency key is `(operation, item, step)`; each claim carries an
+`attempt` fence (ADR-0005 rule 6). I2 The before-state captured at plan is re-checked at apply,
+inside `applying`. If it changed, the step fails `stale_state` and is never overwritten. I3 Verify reads back from the DC that applied. I4 Inverse inputs contain no secrets,
 and irreversible steps are flagged at plan.
-**Lifecycle.** `pending → planned | skipped | blocked`, then `planned → applying → applied →
-verified | verify_failed`, or `applying → failed`. `verified → undone` once an undo is verified.
+**Lifecycle** (ADR-0005 rule 3). Item: `pending → planned | skipped | blocked`; `planned →
+running → succeeded | failed | cancelled`; `planned → cancelled`; `succeeded | failed → undone`.
+Step: `planned → applying → applied → verified | verify_failed`; `applying → failed` (denied,
+stale_state, outcome_unknown, error, retries exhausted); `applying → not_run` (reconciler, operation
+cancelling, no write happened); `planned → not_run`; `verified → undone`.
 
 ### DM-43 Job · execution record in River (global, registered) · owner `platform/jobs`
 **Definition.** A unit of background execution that advances a domain record: an operation chunk,
@@ -977,7 +987,10 @@ after the previous step) · options (`controlled`, `skip_changed_by_last_run`, `
 **Invariants.** I1 Every run produces Operations (X9). Automation is never a side door. I2 It acts
 as itself: the policy is a RoleAssignment subject (DM-36), so its reach is explicit, and DM-36.I1
 stops it from exceeding its grantor's reach. I3 If a run plans more than `max_objects` items, it
-holds for approval instead of applying (blast-radius guard). I4 While in `shadow`, it plans and
+holds for approval instead of applying (blast-radius guard). The approval is a Request on the
+workflow whose definition matches the hold, or else the kernel's single approval by an account
+holding `operation.approve` over every item's scope that is neither the policy owner nor in the
+initiator chain (ADR-0005 rule 8). I4 While in `shadow`, it plans and
 compares but never applies.
 **Lifecycle.** `draft → shadow → active ⇄ paused → archived` (`shadow` is optional). It is flagged
 `orphaned` when its owner is no longer active. It keeps running, and tenant owners are notified.
@@ -1097,7 +1110,9 @@ the schedule pauses. I2 Delivery to an external address requires its own permiss
 (principal, plus the API token, automation policy and approvals it acted through) · `targets`
 (connection+GUID with a display snapshot) · `operation`/`item`/`request` refs · `outcome` ·
 `details` (typed per kind) · `verification_factor` (ENH-09) · `client_ip` · `prev_hash` · `hash`.
-**Invariants.** I1 One chain per tenant. Events are appended serially and `seq` has no gaps.
+**Invariants.** I1 One chain per tenant. Events are chained at commit under the tenant's
+`audit_head` row lock, so `seq` is commit order and has no gaps (ADR-0005 rule 11). Personal
+values are `PersonalRef`s, never clear text (rule 12).
 I2 Immutable (X5). Retention deletes only below a checkpoint (DM-81). I3 Every operation step,
 sign-in, RBAC change, settings change, secret read, presence grant, enrollment and credential
 change emits an event. I4 Details never carry a `Secret`. Targets keep a display snapshot of the
@@ -1113,7 +1128,9 @@ only below a checkpoint (I2).
 **Definition.** A signed statement of the chain head at a given `seq`.
 **Key attributes:** `seq` · `hash` · `signed_at` · `signature` · `key_id`.
 **Invariants.** I1 Checkpoints are kept for the tenant's life, so verification starts from any
-retained checkpoint after events are purged.
+retained checkpoint after events are purged. I2 Signed by the tenant's Ed25519 checkpoint key
+valid at that `seq` (chained key windows), sent to every SIEM sink and included in every export
+(ADR-0005 rule 11).
 **Lifecycle.** `recorded` (terminal, and derived: the row exists).
 
 ### DM-82 NotificationChannel · T · owner `platform/notify` (EP-9)
@@ -1269,10 +1286,10 @@ hybrid reach without it.
 | Q3 | ~~Which Entra group types are restorable from deleted items~~ Closed 2026-10-02 by the ad-expert review (§12 F4); answered in DM-16 | — | — |
 | Q4 | Whether a generated password may ever be delivered to someone other than the acting technician (e.g. to a manager), and whether ADM-022's "same as logon name" and "blank" modes are offered | product-manager + security-architect, user-lifecycle spec | DM-52, DM-83 |
 | Q5 | How admin LDAP filters (ADM-097) map onto inventory datasets versus live scoped search | reporting-engineer, report builder spec | DM-71 |
-| Q6 | Operation state names and transition guarantees | solution-architect, T-0047 | DM-41, DM-42 (this file follows T-0047) |
+| Q6 | ~~Operation state names and transition guarantees~~ Closed 2026-10-02 by ADR-0005 rule 3 (proposed) | — | — |
 | Q7 | History row shape, partitioning and index cost at scale | backend-engineer, T-0026 | DM-18 |
 | Q8 | Lab confirmation of every `[LAB: Windows]` claim, plus whether Cloud Sync populates a user's `onPremisesSecurityIdentifier` | test-engineer, T-0051 | DM-16, DM-17, DM-18, DM-20.I4(c), DM-23 |
-| Q9 | How personal values in append-only records are made erasable (per-subject side record or per-subject crypto-shredding), which attributes count as personal, and what triggers erasure (object purge, an explicit request, the ADM-207 tenant setting). It must be settled before the first audit event is written | solution-architect + security-architect, T-0047 | X11, DM-18.I6, DM-66.I3, DM-80.I4 |
+| Q9 | ~~How personal values in append-only records are made erasable~~ Closed 2026-10-02 by ADR-0005 rule 12 (proposed): salted commitments plus the `platform/personal` side store; unknown attributes count as personal; three triggers and a legal hold. The ADM-207 default and hold UX go to the audit and compliance PRD | — | — |
 | Q10 | GPO permission writes (ADM-077): add a SYSVOL path that keeps the GPT folder DACL consistent with the GPC's, or ship v1 GPO delegation read-only | product-manager (GPO spec, via T-0031) + solution-architect | DM-23.I7 |
 | Q11 | The Entra directory-audit activity (name, category, `targetResources` shape) recorded when a tenant's sync features change, so it can demote an attestation. Also: whether a Hybrid Identity Administrator, and not only a Global Administrator, can change those features (the DM-20.I6 residual) | test-engineer, T-0051 (Entra lab tenant) | DM-10.I7(d) |
 
