@@ -1,0 +1,11 @@
+# Our vacuum ruleset (ADR-0004 rule 13): OpenAPI 3.1 validity plus the house rules that a linter can
+# see. The dialect itself (rule 2) is enforced, before any code is emitted, by tools/gen/api.
+extends: [[vacuum:oas, recommended]]
+rules:
+  # We write no descriptions for every response and parameter; the ADR requires none.
+  operation-description: off
+  operation-tag-defined: error
+  operation-operationId: error
+  operation-operationId-unique: error
+  no-$ref-siblings: off
+  oas3-unused-component: off

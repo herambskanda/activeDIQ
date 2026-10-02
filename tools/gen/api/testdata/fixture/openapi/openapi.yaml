@@ -1,0 +1,19 @@
+# The generator's own fixture contract (ADR-0004 AC2): one tag, widgets, containing every construct
+# of the rule 4 table. tools/gen/api generates it into tools/gen/api/internal/fixture, which `go test`
+# compiles and exercises. It is not the product contract.
+openapi: 3.1.0
+info:
+  title: Fixture API
+  version: 0.0.0
+servers:
+  - url: /api/v1
+security:
+  - bearer: []
+tags:
+  - name: widgets
+    description: The fixture tag.
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer

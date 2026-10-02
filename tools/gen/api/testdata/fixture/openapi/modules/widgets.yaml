@@ -1,0 +1,492 @@
+paths:
+  /widgets:
+    get:
+      tags: [widgets]
+      operationId: listWidgets
+      summary: List widgets (paths, query and header parameters, shared parameters, a response header)
+      x-permission: widgets.read
+      x-activediq-stability: stable
+      parameters:
+        - $ref: shared/paging.yaml#/components/parameters/PageCursor
+        - $ref: shared/paging.yaml#/components/parameters/PageLimit
+        - name: sort
+          in: query
+          required: false
+          schema:
+            $ref: modules/widgets.yaml#/components/schemas/WidgetSortKey
+        - name: owner
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: modifiedSince
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: createdOn
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: active
+          in: query
+          required: false
+          schema:
+            type: boolean
+        - name: id
+          in: query
+          required: false
+          schema:
+            type: array
+            maxItems: 10
+            items:
+              type: string
+              format: uuid
+        - name: X-Request-Source
+          in: header
+          required: false
+          schema:
+            type: string
+            minLength: 3
+            maxLength: 32
+      responses:
+        "200":
+          description: A page of widgets
+          headers:
+            X-Total-Hint:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: modules/widgets.yaml#/components/schemas/WidgetPage
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+    post:
+      tags: [widgets]
+      operationId: createWidget
+      summary: Create a widget (an object body with every scalar kind, an idempotency key)
+      x-permission: widgets.write
+      x-activediq-stability: stable
+      parameters:
+        - $ref: shared/scalars.yaml#/components/parameters/IdempotencyKey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: modules/widgets.yaml#/components/schemas/WidgetCreate
+      responses:
+        "201":
+          description: Created
+          headers:
+            Location:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: modules/widgets.yaml#/components/schemas/Widget
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+  /widgets/{widgetId}:
+    get:
+      tags: [widgets]
+      operationId: getWidget
+      x-permission: widgets.read
+      x-activediq-stability: stable
+      parameters:
+        - name: widgetId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: expand
+          in: query
+          required: false
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: The widget
+          content:
+            application/json:
+              schema:
+                $ref: modules/widgets.yaml#/components/schemas/Widget
+        "404":
+          $ref: shared/problems.yaml#/components/responses/NotFound
+    patch:
+      tags: [widgets]
+      operationId: updateWidget
+      summary: "Change a widget (merge-patch: absent, null and value)"
+      x-permission: widgets.write
+      x-activediq-stability: stable
+      parameters:
+        - name: widgetId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: shared/scalars.yaml#/components/parameters/IfMatch
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: modules/widgets.yaml#/components/schemas/WidgetPatch
+      responses:
+        "200":
+          description: The changed widget
+          content:
+            application/json:
+              schema:
+                $ref: modules/widgets.yaml#/components/schemas/Widget
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+    delete:
+      tags: [widgets]
+      operationId: deleteWidget
+      x-permission: widgets.write
+      x-activediq-stability: preview
+      parameters:
+        - name: widgetId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          $ref: shared/problems.yaml#/components/responses/NotFound
+  /widgets/{widgetId}/credential:
+    put:
+      tags: [widgets]
+      operationId: setWidgetCredential
+      summary: Set a credential (SecretInput, directly, optionally, in an array and through a map)
+      x-permission: widgets.credential
+      x-activediq-stability: stable
+      x-activediq-limits:
+        maxBodyBytes: 4096
+      parameters:
+        - name: widgetId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: modules/widgets.yaml#/components/schemas/WidgetCredential
+      responses:
+        "204":
+          description: Set
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+  /widgets/search:
+    post:
+      tags: [widgets]
+      operationId: searchWidgets
+      summary: Search widgets (a bound safe-primitive wire form and a recursive discriminated union)
+      x-permission: widgets.read
+      x-activediq-stability: stable
+      x-activediq-limits:
+        class: read
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: modules/widgets.yaml#/components/schemas/WidgetSearch
+      responses:
+        "200":
+          description: Matching widgets
+          content:
+            application/json:
+              schema:
+                $ref: modules/widgets.yaml#/components/schemas/WidgetPage
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+  /widgets/import:
+    post:
+      tags: [widgets]
+      operationId: importWidgets
+      summary: Import widgets from CSV (a binary request body)
+      x-permission: widgets.write
+      x-activediq-stability: stable
+      requestBody:
+        required: true
+        content:
+          text/csv:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: The import result
+          content:
+            application/json:
+              schema:
+                $ref: modules/widgets.yaml#/components/schemas/ImportResult
+        "400":
+          $ref: shared/problems.yaml#/components/responses/MalformedRequest
+  /widgets/export:
+    get:
+      tags: [widgets]
+      operationId: exportWidgets
+      summary: Export widgets as CSV (a binary response body)
+      x-permission: widgets.read
+      x-activediq-stability: stable
+      responses:
+        "200":
+          description: The export
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+components:
+  schemas:
+    WidgetSortKey:
+      description: How a list is ordered. A request enum is closed.
+      type: string
+      enum: [name, created, modified]
+    WidgetSize:
+      description: A closed request enum used as a body member.
+      type: string
+      enum: [small, large, extra-large]
+    WidgetStatus:
+      description: A response enum is open; clients accept values they do not know.
+      type: string
+      x-activediq-enum: open
+      enum: [draft, live, retired]
+    Labels:
+      description: A map with a value schema, a property cap and no properties.
+      type: object
+      maxProperties: 4
+      additionalProperties:
+        type: string
+        maxLength: 16
+    Tags:
+      description: A named array.
+      type: array
+      minItems: 0
+      maxItems: 8
+      items:
+        type: string
+        minLength: 1
+        maxLength: 16
+        pattern: ^[a-z][a-z0-9-]*$
+    WidgetCreate:
+      description: A request object, every optional and required form.
+      type: object
+      required: [name, size, owner, notes, quota]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 32
+        size:
+          $ref: modules/widgets.yaml#/components/schemas/WidgetSize
+        owner:
+          type: string
+          format: uuid
+        contact:
+          type: string
+          format: email
+        notes:
+          type: [string, "null"]
+          maxLength: 64
+        quota:
+          $ref: shared/scalars.yaml#/components/schemas/Int64String
+        count:
+          type: integer
+          minimum: 0
+          maximum: 100
+        enabled:
+          type: boolean
+        expires:
+          type: string
+          format: date
+        starts:
+          type: string
+          format: date-time
+        labels:
+          $ref: modules/widgets.yaml#/components/schemas/Labels
+        tags:
+          $ref: modules/widgets.yaml#/components/schemas/Tags
+        parts:
+          type: array
+          maxItems: 3
+          items:
+            $ref: modules/widgets.yaml#/components/schemas/WidgetPart
+    WidgetPart:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          maxLength: 16
+    Widget:
+      description: A widget as the server shows it.
+      type: object
+      required: [id, name, status, quota, notes, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 32
+        status:
+          $ref: modules/widgets.yaml#/components/schemas/WidgetStatus
+        quota:
+          $ref: shared/scalars.yaml#/components/schemas/Int64String
+        notes:
+          type: [string, "null"]
+          maxLength: 64
+        labels:
+          $ref: modules/widgets.yaml#/components/schemas/Labels
+        createdAt:
+          type: string
+          format: date-time
+        expires:
+          type: string
+          format: date
+    WidgetPage:
+      type: object
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: modules/widgets.yaml#/components/schemas/Widget
+        page:
+          $ref: shared/paging.yaml#/components/schemas/PageInfo
+    WidgetPatch:
+      description: A merge-patch body, every member optional; a nullable member may be removed with null.
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 32
+        notes:
+          type: [string, "null"]
+          maxLength: 64
+        count:
+          type: integer
+          minimum: 0
+          maximum: 100
+        labels:
+          $ref: modules/widgets.yaml#/components/schemas/Labels
+    WidgetCredential:
+      description: A request that carries secrets.
+      type: object
+      required: [secret]
+      additionalProperties: false
+      properties:
+        secret:
+          $ref: shared/secret.yaml#/components/schemas/SecretInput
+        backup:
+          $ref: shared/secret.yaml#/components/schemas/SecretInput
+        extra:
+          type: array
+          maxItems: 4
+          items:
+            $ref: shared/secret.yaml#/components/schemas/SecretInput
+        hint:
+          type: string
+          maxLength: 32
+    WidgetSearch:
+      type: object
+      required: [filter]
+      additionalProperties: false
+      properties:
+        filter:
+          $ref: shared/filter.yaml#/components/schemas/FilterAst
+        rule:
+          $ref: modules/widgets.yaml#/components/schemas/Rule
+    Rule:
+      description: A recursive discriminated union on kind.
+      oneOf:
+        - $ref: modules/widgets.yaml#/components/schemas/RuleAnd
+        - $ref: modules/widgets.yaml#/components/schemas/RuleOr
+        - $ref: modules/widgets.yaml#/components/schemas/RuleNot
+        - $ref: modules/widgets.yaml#/components/schemas/RuleEquals
+      discriminator:
+        propertyName: kind
+    RuleAnd:
+      type: object
+      required: [kind, rules]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          const: and
+        rules:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items:
+            $ref: modules/widgets.yaml#/components/schemas/Rule
+    RuleOr:
+      type: object
+      required: [kind, rules]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          const: or
+        rules:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items:
+            $ref: modules/widgets.yaml#/components/schemas/Rule
+    RuleNot:
+      type: object
+      required: [kind, rule]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          const: not
+        rule:
+          $ref: modules/widgets.yaml#/components/schemas/Rule
+    RuleEquals:
+      type: object
+      required: [kind, field, value]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          const: equals
+        field:
+          type: string
+          maxLength: 32
+        value:
+          type: string
+          maxLength: 64
+    ImportResult:
+      type: object
+      required: [imported]
+      properties:
+        imported:
+          type: integer
+          minimum: 0
+          maximum: 1000000

@@ -1,0 +1,11 @@
+components:
+  schemas:
+    FilterAst:
+      description: A stand-in for a safe-primitive wire form. The binding table maps it to the primitive's own type.
+      type: object
+      required: [op]
+      additionalProperties: false
+      properties:
+        op:
+          type: string
+          maxLength: 32
