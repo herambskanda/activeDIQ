@@ -256,7 +256,9 @@ Deterministic loop; never calls a model itself. Every `dispatcher.tick_seconds` 
    - ticket moved forward / blocked / done → fine;
    - ticket `handoff.pending` → leave it for a continuation;
    - nothing changed → `attempts += 1`; at `max_retries` (2) apply the escalation ladder
-     (`effort_override` one step up → reassign to `principal-engineer`) → then `blocked`.
+     (`effort_override` one step up the configured ladder, if there is one → reassign to
+     `principal-engineer`) → then `blocked`. With the current policy every ladder tops out at `high`,
+     so a stuck Sonnet stage goes straight to `principal-engineer`.
    - a usage-limit or rate-limit error → set `backoff_until` (15 min), do not count an attempt.
 3. **Defaults**: advisory decisions past `default_at` → `status: defaulted`, answer = default.
 4. If `control.paused`, `backoff_until` in the future, or `runs_today ≥ daily_run_cap` → stop here.

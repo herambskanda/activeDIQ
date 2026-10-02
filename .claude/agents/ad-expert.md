@@ -1,7 +1,7 @@
 ---
 name: ad-expert
 description: "Use for Active Directory, Entra ID, Kerberos, GPO and Windows security semantics — answering 'how does AD actually behave when…', reviewing specs and designs for domain correctness, writing the domain model and glossary, and advising engineers as a consult subagent. Owns the truth about the directory. Not for writing connector or sync code (use directory-engineer), Windows-native components such as DC agents, password filters or installers (use windows-engineer), or security threat models (use security-architect)."
-model: opus
+model: sonnet
 effort: high
 tools: Read, Grep, Glob, Bash, Edit, Write, WebSearch, WebFetch, Agent
 skills:

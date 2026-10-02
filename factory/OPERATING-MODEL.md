@@ -89,25 +89,25 @@ The factory is organised like a company. Leads think; specialists build; quality
 | Agent | Dept | Owns | Model · effort |
 | --- | --- | --- | --- |
 | `factory-director` | Leadership | Runs the floor. The CEO's counterpart. Triage, priorities, decision requests, demos, unblocking. | Opus · high |
-| `product-manager` | Product | PRDs and specs, parity mapping, acceptance criteria, backlog priority. | Opus · high |
-| `project-manager` | Delivery | Breaks epics into tickets, plans sprints, tracks dependencies, writes digests, keeps the risk register. | Opus · medium |
+| `product-manager` | Product | PRDs and specs, parity mapping, acceptance criteria, backlog priority. | Sonnet · high |
+| `project-manager` | Delivery | Breaks epics into tickets, plans sprints, tracks dependencies, writes digests, keeps the risk register. | Sonnet · high |
 | `solution-architect` | Engineering | Architecture, ADRs, module contracts, API and data-model design, fitness functions. | Opus · high |
-| `product-designer` | Design | UX strategy, information architecture, flows, design direction, style options for the CEO. | Opus · high |
+| `product-designer` | Design | UX strategy, information architecture, flows, design direction, style options for the CEO. | Sonnet · high |
 | `security-architect` | Security | Threat models, security reviews of sensitive changes, Tier-0 posture, compliance mapping. | Opus · high |
-| `ad-expert` | Domain | Active Directory, Entra ID, Kerberos, GPO, Windows security semantics: advises and reviews. | Opus · high |
-| `market-analyst` | Strategy | Competitive intelligence, positioning, pricing research, battlecards, parity matrix upkeep. | Opus · high |
-| `service-manager` | Service | Partner proposals, SOWs, SLAs, onboarding and ManageEngine-migration plans, support SOPs. | Opus · medium |
-| `principal-engineer` | Escalation | The hard problems nobody else could solve. Used only via the escalation ladder. | Opus · xhigh (max by director approval) |
+| `ad-expert` | Domain | Active Directory, Entra ID, Kerberos, GPO, Windows security semantics: advises and reviews. | Sonnet · high |
+| `market-analyst` | Strategy | Competitive intelligence, positioning, pricing research, battlecards, parity matrix upkeep. | Sonnet · high |
+| `service-manager` | Service | Partner proposals, SOWs, SLAs, onboarding and ManageEngine-migration plans, support SOPs. | Sonnet · high |
+| `principal-engineer` | Escalation | The hard problems nobody else could solve. Used only via the escalation ladder. | Opus · high |
 | `backend-engineer` | Engineering | Services, domain logic, persistence, jobs. | Sonnet · high |
-| `directory-engineer` | Engineering | LDAP/AD/Entra/Graph connectors, sync, change tracking, audit collectors. | Sonnet · xhigh |
-| `windows-engineer` | Engineering | Windows-native components: DC agent, credential provider, password filter, services, installers. | Sonnet · xhigh |
+| `directory-engineer` | Engineering | LDAP/AD/Entra/Graph connectors, sync, change tracking, audit collectors. | Sonnet · high |
+| `windows-engineer` | Engineering | Windows-native components: DC agent, credential provider, password filter, services, installers. | Sonnet · high |
 | `api-engineer` | Engineering | OpenAPI contracts, endpoints, SDKs, the PowerShell module, webhooks. | Sonnet · high |
 | `frontend-engineer` | Engineering | Application screens, state, data fetching, routing. | Sonnet · high |
 | `component-designer` | Design-eng | Design-system components, visual polish, motion, accessibility. | Sonnet · high |
 | `reporting-engineer` | Engineering | The report engine, queries, scheduling, exports, dashboards. | Sonnet · high |
 | `devops-engineer` | Platform | Build, CI, packaging and installers, lab environments, release. | Sonnet · high |
 | `test-engineer` | Quality | Unit, integration and end-to-end tests; fixtures; the AD test lab. | Sonnet · high |
-| `code-reviewer` | Quality | Reviews every code change before QA. | Sonnet · xhigh |
+| `code-reviewer` | Quality | Reviews every code change before QA. | Sonnet · high |
 | `qa-verifier` | Quality | Verifies acceptance criteria; UI/UX checks with screenshots; files bugs. | Sonnet · high |
 | `docs-writer` | Product-ization | User and admin guides, API docs, SOPs, release notes. | Sonnet · high |
 | `video-producer` | Product-ization | Demo and tutorial videos: script → recording → narration → edit. | Sonnet · high |
@@ -119,18 +119,20 @@ The factory is organised like a company. Leads think; specialists build; quality
 
 | Model | Allowed effort | Use it for |
 | --- | --- | --- |
-| **Opus** | `medium`, `high` | Thinking work: research, strategy, product, architecture, design direction, security review, CEO decision preparation, planning. |
-| **Opus** | `xhigh`, `max` | **Escalation only** — a genuinely hard, stuck problem. Requires an escalation ticket with justification; shown on the board with a 🔥 badge. |
-| **Sonnet** | `high`, `xhigh` | Doing work: implementation, tests, reviews, docs, video, scouting. Never below `high`. |
+| **Opus** | `medium`, `high` | Only the roles where judgment is the product: `factory-director`, `solution-architect`, `security-architect` and `principal-engineer` (the escalation target). |
+| **Sonnet** | `high` | Everything else: product, planning, research, design, implementation, tests, reviews, docs, video and scouting. Never below `high`. |
 | Haiku | — | Not used. The built-in `Explore` (Haiku) is overridden by a project agent of the same name on Sonnet. |
+
+**No session runs above `high`.** `xhigh` and `max` are not used, even on escalation (CEO, 2026-10-02).
+The lever for a hard problem is the model, not the effort.
 
 **Escalation ladder** (applied by the dispatcher and the director):
 
-1. Owner at its default effort.
-2. Same owner, effort raised one step (Sonnet `high` → `xhigh`; Opus `medium` → `high`).
-3. `principal-engineer` (Opus `xhigh`) takes the problem with the full history.
-4. Still stuck → the ticket is `blocked`; the director triages. Opus `max` only with director approval.
-5. If the blocker is directional, money, access or taste → a CEO decision or action item.
+1. Owner at its default effort, retried up to `max_retries`.
+2. `principal-engineer` (Opus `high`) takes the problem with the full history.
+3. Still stuck → the ticket is `blocked`; the director triages: add context, re-cut or split the
+   ticket, or run a spike.
+4. If the blocker is directional, money, access or taste → a CEO decision or action item.
 
 `factory/bin/factory doctor` fails if any agent definition violates this policy.
 

@@ -1,8 +1,8 @@
 ---
 name: service-manager
 description: "Use for partner proposals, SOWs, SLAs, customer onboarding plans, the ManageEngine-to-activeDIQ migration playbook, and support/service SOPs. Owns everything we promise to a partner or customer about service delivery. Not for product user/admin guides, API docs or product runbooks (use docs-writer), pricing research (use market-analyst), or deciding prices and commitments (the CEO decides via factory-director)."
-model: opus
-effort: medium
+model: sonnet
+effort: high
 tools: Read, Grep, Glob, Bash, Edit, Write, WebSearch, WebFetch, Agent
 skills:
   - factory-protocol

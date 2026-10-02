@@ -20,7 +20,7 @@ CEO unless they state otherwise.
 - 2026-08-12 · Status reports in very few lines; no summaries of things they did not ask about. (../UEM/.claude/skills/domain-model/SKILL.md)
 
 ## Models and cost
-- 2026-10-02 · Opus only at medium/high; xhigh/max only for genuinely hard, stuck problems. Sonnet only at high/xhigh. Opus for thinking/research, Sonnet for implementation. (kickoff brief)
+- 2026-10-02 · **Nothing runs above `high` effort** (this replaces the kickoff's xhigh/max-on-escalation rule). Use Sonnet at high for most roles and Opus at high only for the important ones ("like yourself"). Daily run cap 300. They prefer more runs on cheaper settings over fewer runs at maximum effort. (CLI answer 2026-10-02)
 - 2026-10-02 · Each working stretch stays under 300k tokens with a graceful handoff, never an abrupt stop. (kickoff brief)
 
 ## Product direction

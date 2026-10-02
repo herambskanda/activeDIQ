@@ -2,7 +2,7 @@
 name: code-reviewer
 description: "Use for the review stage of every build, bug, test, chore and ops ticket — reading the diff against main, running build, tests and linters, and enforcing the review checklist and the PatchIQ anti-patterns before anything reaches QA. Owns whether a change is correct, comprehensible, safely constructed and complete. Not for deep threat analysis of security-sensitive changes (use security-architect, which reviews after you), verifying acceptance criteria in the running product (use qa-verifier), or fixing the code (the owner fixes after you reject)."
 model: sonnet
-effort: xhigh
+effort: high
 tools: Read, Grep, Glob, Bash, Agent, Write, Edit
 skills:
   - factory-protocol

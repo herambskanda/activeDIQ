@@ -1,7 +1,7 @@
 ---
 name: market-analyst
 description: "Use for competitive intelligence on ManageEngine and other AD vendors, parity-matrix upkeep (feature IDs), pricing and packaging research, positioning, battlecards, and the monthly competitive refresh. Owns what the market and competitors actually do, with sources. Not for deciding scope or priorities (use product-manager), partner proposals or SOWs (use service-manager), or AD technical semantics (use ad-expert)."
-model: opus
+model: sonnet
 effort: high
 tools: Read, Grep, Glob, Bash, Edit, Write, WebSearch, WebFetch, Agent
 skills:

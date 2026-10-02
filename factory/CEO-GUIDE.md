@@ -56,8 +56,9 @@ so the same kind of question gets rarer.
 
 ## Safety rails you can rely on
 
-- Opus thinks (medium/high), Sonnet builds (high/extra-high); the hardest problems escalate to
-  Opus extra-high/max only through a logged ladder. No session exceeds a 300k-token working
+- Sonnet does most of the work at high effort; Opus at high is kept for the director, the
+  architects and the principal engineer, who takes the hardest problems through a logged ladder.
+  Nothing runs above high. No session exceeds a 300k-token working
   context — it hands off cleanly instead.
 - Workers never push code anywhere, never commit secrets, never force anything; every code change
   is reviewed and QA'd before it is merged — locally.

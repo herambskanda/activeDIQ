@@ -2,7 +2,7 @@
 name: windows-engineer
 description: "Use for Windows-native components that run on customer hosts — the DC agent, password filter DLL, credential provider (self-service at the logon screen), Windows services, event forwarding on the DC, and the MSI installers for them. Owns code whose crash can take down a domain controller or a logon screen. Not for LDAP/Graph connectors or sync running on our server (use directory-engineer), AD semantics questions (use ad-expert), or the CI/release pipeline and signing infrastructure (use devops-engineer)."
 model: sonnet
-effort: xhigh
+effort: high
 skills:
   - factory-protocol
   - handoff

@@ -10,7 +10,7 @@
   "dispatcher": {
     "tick_seconds": 20,
     "max_parallel": 2,
-    "daily_run_cap": 60,
+    "daily_run_cap": 300,
     "run_timeout_minutes": 90,
     "max_retries": 2,
     "isolation": "worktree",
@@ -40,33 +40,23 @@
     "allowed": {
       "opus": [
         "medium",
-        "high",
-        "xhigh",
-        "max"
+        "high"
       ],
       "sonnet": [
-        "high",
-        "xhigh"
+        "high"
       ]
     },
-    "escalation_only": {
-      "opus": [
-        "xhigh",
-        "max"
-      ]
-    },
+    "escalation_only": {},
     "escalation_roles": [
       "principal-engineer"
     ],
     "effort_ladder": {
       "sonnet": [
-        "high",
-        "xhigh"
+        "high"
       ],
       "opus": [
         "medium",
-        "high",
-        "xhigh"
+        "high"
       ]
     }
   },

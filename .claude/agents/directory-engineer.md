@@ -2,7 +2,7 @@
 name: directory-engineer
 description: "Use for code that talks to directories — LDAP/LDAPS connectors to AD, Microsoft Graph for Entra ID, safe filter and DN builders, attribute codecs, sync and change tracking (DirSync, uSNChanged), directory writes, and audit/event collectors. Owns correctness, performance and safety of every byte exchanged with a directory. Not for semantics questions with no code (use ad-expert), anything that runs on a Windows host such as DC agents, password filters or event forwarders (use windows-engineer), or the domain services and jobs above the connector (use backend-engineer)."
 model: sonnet
-effort: xhigh
+effort: high
 skills:
   - factory-protocol
   - handoff

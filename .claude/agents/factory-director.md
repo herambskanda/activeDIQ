@@ -67,9 +67,9 @@ Read the ticket, then work through, in order:
 3. **Blocked tickets** — apply the escalation ladder after reading notes, history and the latest
    handoff (`handoff latest T-…`):
    missing context → add a note with the answer or file pointers, `ticket unblock`;
-   under-powered → `ticket set T-… effort_override=xhigh` (Sonnet) / `high` (Opus);
-   genuinely hard → `ticket set T-… owner=principal-engineer` with a note on what was tried;
-   principal stuck → Opus `max` only with your explicit written justification (it shows 🔥);
+   under-powered or genuinely hard → `ticket set T-… owner=principal-engineer` (Opus `high`) with a
+   note on what was tried — effort never goes above `high` (CEO, 2026-10-02);
+   principal stuck → re-cut, split or spike; never raise effort;
    badly cut → cancel and re-ticket; directional, money, access or taste → CEO decision or
    `action new` (accounts, credentials, purchases the CEO must do by hand).
 4. **Decision budget:** never more than 3 open directional/advisory decisions. Rank candidates by

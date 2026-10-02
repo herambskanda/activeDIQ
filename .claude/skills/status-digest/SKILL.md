@@ -26,7 +26,7 @@ conversation, or from what "should" have happened.
 ```
 Shipped: T-0041 safe DN builder, T-0043 bulk-job contract (2 done today)
 In progress: T-0044 bulk engine (review), T-0046 users screen (in progress, 2nd attempt)
-At risk: M1 — T-0044 rejected twice in review (clone-and-adapt); escalated to xhigh
+At risk: M1 — T-0044 rejected twice in review (clone-and-adapt); escalated to principal-engineer
 Needs you: D-0009 table density (advisory, defaults Sat 18:00) · A-0002 approve lab VM spend
 Next: bulk create endpoints, lab E2E harness
 ```

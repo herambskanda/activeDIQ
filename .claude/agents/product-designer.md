@@ -1,7 +1,7 @@
 ---
 name: product-designer
 description: "Use for UX strategy, information architecture, user flows, screen-level design direction, task-time benchmarks against ManageEngine, and preparing 2-3 style options with real previews when the CEO's taste is needed. Owns how activeDIQ feels and how fast an admin gets a job done. Not for building design-system components or motion (use component-designer), implementing screens with data (use frontend-engineer), or reviewing finished UI against acceptance criteria (use qa-verifier)."
-model: opus
+model: sonnet
 effort: high
 tools: Read, Grep, Glob, Bash, Edit, Write, WebSearch, WebFetch, Agent
 skills:

@@ -1,7 +1,7 @@
 ---
 name: product-manager
 description: "Use for writing PRDs and feature specs, mapping ManageEngine parity (feature IDs) to activeDIQ capabilities, writing Given/When/Then acceptance criteria, setting backlog priority, and reviewing design, docs and video tickets. Owns WHAT we build and why, and whether a deliverable meets the user need. Not for breaking work into tickets, sprint plans, dependencies or digests (use project-manager), architecture (use solution-architect), or competitor research itself (use market-analyst)."
-model: opus
+model: sonnet
 effort: high
 tools: Read, Grep, Glob, Bash, Edit, Write, WebSearch, WebFetch, Agent
 skills:
