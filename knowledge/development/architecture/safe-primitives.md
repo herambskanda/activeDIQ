@@ -1153,6 +1153,22 @@ only beside `Cargo.toml`, `knowledge`/`factory`/`garage` only at the root), so a
 the `fmt` print family, `strings.Join`/`Replace`, builders, slice literals, through a const or
 variable), or when it carries a printf verb at all.
 
+**Implementation (T-0034).** FF-SP4, FF-SP5 (declarations in `make ci`, the long run nightly), FF-SP6
+(Linux half) and FF-SP8 run as `fitness-corpus` and `fitness-oracles` (`tools/fitness/corpus`,
+`tools/fitness/oracles`; runbook `knowledge/development/runbooks/safe-primitives-fitness.md`). The test
+kit is `internal/platform/corpus` (loader, report types) and `corpustest` (`Run`, `Seed`,
+`ConstantArgv`), because product tests may not import `tools/`. Implementations are declared in
+`testdata/safe-primitives/implementations.json`; the gate runs each declared test itself and compares the
+report with the corpus (a report carries the corpus file's SHA-256). Record IDs are ratcheted in
+`records.lock.json`; reclassifying a hostile record means adding a replacement and retiring the old ID.
+With no implementation yet, the gate stays non-vacuous through the `pslit` corpus (19 records, 16 hostile,
+confirmed by PowerShell 7.4) and the home guard (`UnitHomes` in `tools/analyzers/policy/policy.go`: Go
+code in a primitive's home must be declared). The PowerShell parser oracle compares with `-ceq` and
+ordinal, since `-ceq` alone is culture-aware. go-ldap is pinned at v3.4.13 for the filter oracle. Not
+yet executed anywhere: the Windows PowerShell 5.1, SID/GUID and Samba-lab rows (written, Windows scripts
+parse-checked only) and the nightly fuzz log; they need a Windows runner and a scheduler. FF-SP7 is in
+T-0036; FF-SP9 to FF-SP11 are not implemented.
+
 ## 9. Verification status and Samba false-pass risks
 
 Nothing in this document is lab-verified yet (lab: T-0012). Status today: **documentation only**,

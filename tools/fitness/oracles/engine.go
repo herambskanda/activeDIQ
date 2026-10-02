@@ -24,7 +24,7 @@ type Engine struct {
 func (e Engine) command(script string) (*exec.Cmd, error) {
 	switch e.Name {
 	case "docker":
-		return exec.Command("docker", "run", "--rm", "-i", PwshImage, "pwsh", "-NoProfile", "-NonInteractive", "-Command", script), nil
+		return exec.Command("docker", "run", "--rm", "-i", "--network", "none", PwshImage, "pwsh", "-NoProfile", "-NonInteractive", "-Command", script), nil
 	case "pwsh":
 		return exec.Command("pwsh", "-NoProfile", "-NonInteractive", "-Command", script), nil
 	case "powershell":
