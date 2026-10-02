@@ -6,7 +6,7 @@ status: review
 owner: heramb
 author: solution-architect
 ticket: T-0006
-binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), blueprint v0 (review), safe-primitives.md (review)
+binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), ADR-0003 (ratified), blueprint v0 (review), safe-primitives.md (review)
 reviewed_by: ad-expert (AD/Entra semantics, see §12)
 ---
 
@@ -24,7 +24,10 @@ installation operator. `T` tenant scope: `tenant_id` plus forced RLS, set only t
 API. `D` directory-observed: tenant scope, written only by `sync` or by an Action's verified
 outcome, and read-only to everything else. `R` registry: declared in code through the
 `Registrar` (blueprint §4.1). It is not a table, but persisted data references it by ID.
-**Owner** is the package that owns the entity's tables (blueprint §2 rule 6).
+**Owner** is the package that owns the entity's tables (blueprint §2 rule 6). Its owner key is the
+top-level package under `internal/platform`, `internal/directory`, `internal/connector` or
+`internal/modules` that the migration filename names ([ADR-0003](../decisions/0003-module-system-extension-points-only-on-ramp.md) rule 6).
+ADR-0003 rule 9 checked every owner line below against those rules.
 **`[LAB: Windows]`** marks AD behaviour that Microsoft documents (cited inline) but that we have
 not yet reproduced against a Windows DC. Code must not rely on such a claim until a lab test has
 confirmed it (T-0051, §11 Q8).
@@ -175,7 +178,7 @@ example, a SyncCursor write is refused if the token is stale.
 
 ## 2. Directories
 
-### DM-10 Connection · T · owner `modules/connections` (model in `directory/model`)
+### DM-10 Connection · T · owner `directory/connection` (model in `directory/model`; written by the `connections` module through `connection`'s Go API, ADR-0003 F1)
 **Definition.** One directory activeDIQ manages: an **AD forest** or an **Entra tenant**. Each
 connection has its own credential, bindings and sync. **Replaces (ME):** the "domain" in Domain
 Settings (ADM-212; per-domain settings move to DM-14) and the M365 tenant configuration (ADM-159).
@@ -246,7 +249,7 @@ sync and writes. `takeover_protection` (Entra only, derived, I7) moves `unattest
 and `attested → open | stale`. It returns from `open` or `stale` to `attested` only through a new
 attestation.
 
-### DM-11 DirectoryCredential · T · owner `connector/credential` (metadata row owned by `modules/connections`)
+### DM-11 DirectoryCredential · T · owner `connector/credential` (SQL only in `credential/sealed`; written through `directory/connection`'s credential port, ADR-0003 rule 6)
 **Definition.** The identity a connection uses against its directory. **Replaces (ME):** the
 domain service-account and M365 app credentials, stored with AES-256 in ADMP
 ([data-security PDF](https://download.manageengine.com/products/ad-manager/encryption-and-data-storage-in-admanager-plus-database.pdf)).
@@ -277,7 +280,7 @@ account holding the enrollment permission. I3 Certificate rotation keeps the Com
 **Lifecycle.** `pending` (token issued) `→ enrolled → active → revoked → removed`. Reachability is
 health.
 
-### DM-13 ConnectorBinding · T · owner `modules/connections`
+### DM-13 ConnectorBinding · T · owner `directory/connection` (ADR-0003 F1)
 **Definition.** It routes a connection to the connector(s) that serve it. The binding is data, not
 configuration (ADR-0002 rule 3). **Replaces (ME):** none (ADMP has no distributed connectors).
 **Key attributes:** `connection_id` · `target` (`embedded` or a `component_id`) · `priority` · `state`.
@@ -558,7 +561,7 @@ as `candidate`. Either state goes `→ broken` when one side is purged or the an
 longer matches. A `broken` correlation returns only through I1, and only to `candidate`, never
 straight to `matched`. `→ removed`.
 
-### DM-21 HybridLink · T · owner `modules/connections`
+### DM-21 HybridLink · T · owner `directory/connection` (ADR-0003 F1)
 **Definition.** It declares which AD domain syncs into which Entra tenant. The relation is
 many-to-many. **Replaces (ME):** the domain↔tenant links (ADM-159).
 **Key attributes:** `ad_connection_id` + `nc_guid` · `entra_connection_id` · `origin` (declared,
@@ -696,7 +699,9 @@ account reaches AD-side group grants only through a `matched` correlation of tha
 (DM-20.I4). Bound by `onprem_sid`, the binding holds only while the signing-in Entra object has a
 `matched` correlation to the AD object the SID resolves to. Both are re-checked at every sign-in
 and at Plan (DM-20.I5). A bound `sso` account receives group-subject grants (DM-36.I2) and
-falls under I2 exactly like a `directory` account. An unbound one receives only grants made to the
+falls under I2 exactly like a `directory` account. `authn` reads anchors and correlations only
+through its port `authn.DirectoryAnchors`, which `directory/inventory` implements (ADR-0003 F6,
+blueprint §7.5). An unbound one receives only grants made to the
 account itself.
 **Lifecycle.** `invited → active ⇄ disabled → deleted`. Audit keeps the ID and a name snapshot,
 which is erasable under X11.
@@ -817,7 +822,8 @@ correlation is `matched` (DM-20.I4), re-checked live at sign-in and at Plan (DM-
 an AD anchor on a cloud-only user gains no AD-side authority through activeDIQ. An FSP member
 grants only if its SID resolves to an object in a connected forest that is bound to an Account.
 `sIDHistory` is not followed. Members lose rights when they leave the group or are disabled, within
-sync freshness (ADM-128). I3 Effective authority is the union of assignments, and each privilege applies only
+sync freshness (ADM-128). `authz` resolves membership only through its port `authz.Membership`,
+which `directory/inventory` implements (ADR-0003 F6, blueprint §7.5). I3 Effective authority is the union of assignments, and each privilege applies only
 within its own assignment's scope. Role A's permission is never combined with scope B.
 **Lifecycle.** `scheduled → active → expired | revoked`.
 
@@ -1389,3 +1395,4 @@ AC2 was re-checked by script: every ADM ID in scope lock §3.3 (123 IDs) appears
 - 2026-10-02 · v0 round-2 rework (§12 S1, S2, H1–H4): DM-20 authorizing gate (`candidate` vs `matched`, I4–I6), DM-21.I2, and only `matched` correlations count in DM-30.I5, DM-35.I6 and DM-36.I2. DM-23.I2 now says what edge identity means across a reorder.
 - 2026-10-02 · v0 round-3 rework (§12 T1–T3): the takeover flags became a Global Administrator attestation (DM-10.I7), DM-20.I4(f) reads it, and I5 is split into live checks (a)–(e) and the attested check (f). I6 adds the authentication-plane and history residuals, and DM-21.I2 names the confirming privilege. §10 states the hybrid prerequisite. Q11 was added.
 - 2026-10-02 · ADR-0005 rework 1 (T-0047): DM-41 gains the terminal `no_change` outcome; DM-42.I3 follows ADR-0005 rule 5 (read-back from another DC after the verify window); a `verify_failed` step can be undone.
+- 2026-10-02 · ADR-0003 restatement (T-0145): owner lines follow ADR-0003 rule 9. DM-10 Connection, DM-13 ConnectorBinding and DM-21 HybridLink move from `modules/connections` to `directory/connection` (F1). DM-11 DirectoryCredential is owned by `connector/credential` alone; its metadata-row clause is dropped and writes go through the credential port. DM-30.I5 and DM-36.I2 name the kernel read ports that `directory/inventory` implements (F6).
