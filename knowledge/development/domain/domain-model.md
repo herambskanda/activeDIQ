@@ -183,7 +183,9 @@ as an extended DN, with the forest root domain SID as a second check; Entra: the
 forest-wide deletion settings (AD only): `recycle_bin_enabled`, `tombstone_lifetime_days`,
 `deleted_object_lifetime_days` · `verified_at` · `transport_security` (LDAPS or StartTLS) ·
 `dc_affinity` (site priority, per-OU preferred DCs, ADM-133) · `sync_attribute_set` (additions to
-the default set) · `credential_id` · `state`.
+the default set) · `credential_id` · `state` · takeover attestation (Entra only, I7):
+`attested_by`, `attested_at`, `attested_values`, `attestation_max_age`; `takeover_protection` is
+derived from these and never stored.
 **Invariants.** I1 `directory_identity` is fixed at first verification. A connection cannot be
 re-pointed at another forest or tenant, because that would mix two directories' GUID spaces.
 I2 `(kind, directory_identity)` is unique per tenant. I3 An `active` connection has at least one
@@ -195,9 +197,50 @@ assumed. They are forest-wide, so they live here and not on NamingContext. An ab
 or later ([tombstoneLifetime](https://learn.microsoft.com/en-us/windows/win32/adschema/a-tombstonelifetime)).
 An absent `msDS-deletedObjectLifetime` means it equals the effective tombstone lifetime
 ([ADAC L200](https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/get-started/adac/advanced-ad-ds-management-using-active-directory-administrative-center--level-200-)).
+I7 **Takeover-protection attestation (Entra only).** DM-20.I4(f) depends on two tenant sync
+features: `blockCloudObjectTakeoverThroughHardMatchEnabled` and `blockSoftMatchEnabled`. Graph
+lets only a signed-in Global Administrator read them, through a delegated permission. Neither
+v1.0 nor beta offers an application permission
+([get onPremisesDirectorySynchronization](https://learn.microsoft.com/en-us/graph/api/onpremisesdirectorysynchronization-get?view=graph-rest-1.0)).
+The connector is app-only and holds no admin role (ADR-0002 rule 7), so activeDIQ never reads the
+flags itself. They are an **attested tenant fact**:
+- (a) **Attest.** An account holding `connections.takeover.attest` over this connection's
+  `entra_tenant` scope starts the attestation. A Global Administrator of the same tenant then signs
+  in through a delegated, read-only flow (`OnPremDirectorySynchronization.Read.All`, no
+  `offline_access`). The server performs the one read itself and rejects a token whose `tid` is
+  not `directory_identity`. It records the result and discards the token. No token is stored, and
+  the values are read from Graph, never typed in.
+- (b) **Record.** Each attestation is an audit event (DM-80). It records who started it, which
+  Global Administrator signed in (object ID, with the display snapshot handled under X11), when,
+  and both values. The connection keeps the latest attestation in `attested_by`, `attested_at` and
+  `attested_values`.
+- (c) **State.** `takeover_protection` is computed from the stored inputs at every evaluation, so
+  ageing out needs no job. It is `attested` only while all three hold:
+  - both values were `true`;
+  - `attested_at` is younger than `attestation_max_age` (default 90 days; a tenant can shorten
+    it but never lengthen it);
+  - no demotion signal (d) has arrived since.
+
+  Otherwise it is `unattested` (never attested), `open` (a value was `false`) or `stale` (aged out
+  or demoted). Any state except `attested` makes every correlation in the tenant `candidate`
+  (`tenant_takeover_open`). Connection health shows the state and the fix, and warns 14 days
+  before an attestation ages out.
+- (d) **Demotion signal.** A change to the tenant's sync features, recorded in the Entra directory
+  audit log after `attested_at`, makes the state `stale` until a new attestation is made. The log
+  is read app-only with `AuditLog.Read.All`
+  ([directoryAudits](https://learn.microsoft.com/en-us/graph/api/directoryaudit-list?view=graph-rest-1.0)).
+  The audit activity name is `[UNVERIFIED]` (T-0051, §11 Q11). Until the lab confirms it, or
+  while the connection lacks `AuditLog.Read.All`, age is the only trigger, and connection health
+  says change monitoring is off.
+- (e) Microsoft documents no default for either flag; the reference sample shows both `false`
+  ([sync features](https://learn.microsoft.com/en-us/graph/api/resources/onpremisesdirectorysynchronizationfeature?view=graph-rest-1.0)).
+  A new Entra connection therefore starts `unattested`. The customer-visible prerequisite is
+  stated in §10.
 **Lifecycle.** `draft → verifying → active ⇄ suspended → decommissioning → removed`. Verifying
 checks reachability, identity and the delegated-rights limit (T-0007, ENH-08). Suspended stops
-sync and writes.
+sync and writes. `takeover_protection` (Entra only, derived, I7) moves `unattested → attested`
+and `attested → open | stale`. It returns from `open` or `stale` to `attested` only through a new
+attestation.
 
 ### DM-11 DirectoryCredential · T · owner `connector/credential` (metadata row owned by `modules/connections`)
 **Definition.** The identity a connection uses against its directory. **Replaces (ME):** the
@@ -462,27 +505,50 @@ scope.
   - (e) The anchor resolves to exactly one AD object (I1a lookup). If an anchor matches two, for
     example because a second forest stamped a copied GUID into its own `ms-DS-ConsistencyGuid`,
     every correlation on it is `candidate` (`ambiguous_anchor`).
-  - (f) The tenant blocks cloud-object takeover: `blockCloudObjectTakeoverThroughHardMatchEnabled`
-    and `blockSoftMatchEnabled` are both `true`
-    ([sync features](https://learn.microsoft.com/en-us/graph/api/resources/onpremisesdirectorysynchronizationfeature?view=graph-rest-1.0)).
-    Otherwise an Entra admin can pre-create a cloud user that carries a target's anchor (hard
-    match) or UPN (soft match). When the target enters sync scope, the sync client takes the
-    cloud object over, (a)–(e) then pass, and the sign-in methods the attacker registered stay on
-    the object. If either flag is off, the connection's health says why and every correlation in
-    that tenant is `candidate` (`tenant_takeover_open`). Microsoft recommends keeping soft-match
-    blocking on except while soft matching is needed (same source).
-- I5 **Re-check.** Sync evaluates the gate whenever either side changes, and it is also re-read
-  live through Graph at sign-in (DM-30.I5) and at Plan, for every Operation whose scope or grant
-  passes through the correlation. A failed live check refuses that sign-in grant or plans the item
-  as `blocked`; it is audited and requests a targeted re-sync of both objects. The stored state
-  changes only through sync (kind `D`). A Request whose plan depended on the correlation fails
-  `stale_state` at apply (DM-42.I2) if the gate fails by then. After a cross-domain move, (c)
-  fails closed until a sync cycle carries the new SID.
+  - (f) The tenant blocks cloud-object takeover:
+    `blockCloudObjectTakeoverThroughHardMatchEnabled` and `blockSoftMatchEnabled` are both `true`
+    ([sync features](https://learn.microsoft.com/en-us/graph/api/resources/onpremisesdirectorysynchronizationfeature?view=graph-rest-1.0)),
+    **as attested**: the Entra connection's `takeover_protection` is `attested` (DM-10.I7).
+    activeDIQ cannot read the flags live, because Graph lets only a signed-in Global
+    Administrator read them. Without (f), an Entra admin can pre-create a cloud user that carries
+    a target's anchor (hard match) or UPN (soft match). When the target enters sync scope, the sync
+    client takes the cloud object over. (a)–(e) then pass, and the sign-in methods the attacker
+    registered stay on the object. While the tenant is not `attested`, the connection's health
+    says why and every correlation in that tenant is `candidate` (`tenant_takeover_open`).
+    Microsoft recommends keeping soft-match blocking on except while soft matching is needed
+    (same source).
+- I5 **Re-check.** Sync evaluates the gate whenever either side changes. It is evaluated again at
+  sign-in (DM-30.I5), and at Plan for every Operation whose scope or grant passes through the
+  correlation. At those two points the sources differ by check:
+  - (a)–(e) are re-read live: the Entra object through Graph, the AD side through LDAP.
+  - (f) is taken from the connection's current `takeover_protection` (DM-10.I7), which is computed
+    from the latest attestation and is never read live.
+
+  A failed check refuses that sign-in grant or plans the item as `blocked`. The failure is audited
+  and requests a targeted re-sync of both objects. The stored state changes only through sync
+  (kind `D`). A Request whose plan depended on the correlation fails `stale_state` at apply
+  (DM-42.I2) if the gate fails by then. After a cross-domain move, (c) fails closed until a sync
+  cycle carries the new SID.
 - I6 **Residual risk.** Anyone who controls the sync client (the Entra Connect server, a Cloud
   Sync agent, the Directory Synchronization Accounts role) can make (a)–(e) pass. So can anyone
   who can change the tenant's sync features (f), or transfer SOA, which is the Hybrid
-  Administrator role. activeDIQ treats all of these as Tier 0 `[UNVERIFIED]`. They belong to the
-  T-0007 threat model; this gate does not defend against them.
+  Administrator role. activeDIQ treats all of these as Tier 0 `[UNVERIFIED]`.
+  - **Authentication plane.** An `sso` account bound by `oid` (DM-30.I5) holds AD-side group
+    grants through a legitimately `matched` correlation. So anyone who can sign in as that synced
+    user inherits those grants.
+    - A Privileged Authentication Administrator can issue a Temporary Access Pass to any user, or
+      reset their methods. An Authentication Administrator can do the same for non-admin users,
+      and activeDIQ technicians are often non-admins in Entra. The Authentication Policy
+      Administrator decides who may sign in with a pass
+      ([TAP](https://learn.microsoft.com/en-us/entra/identity/authentication/howto-authentication-temporary-access-pass)).
+    - A Hybrid Identity Administrator manages federation settings
+      ([roles](https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/permissions-reference)),
+      and the identity provider of a federated domain signs in that domain's users.
+  - **History.** An attestation (DM-10.I7) speaks only for the present. An object taken over while
+    the flags were off keeps the methods registered on it.
+
+  All of these belong to the T-0007 threat model, which decides the mitigations. This gate does
+  not defend against them.
 **Lifecycle.** `candidate ⇄ matched` (the I4 gate, evaluated per I5). Every new correlation starts
 as `candidate`. Either state goes `→ broken` when one side is purged or the anchor or group SID no
 longer matches. A `broken` correlation returns only through I1, and only to `candidate`, never
@@ -494,9 +560,13 @@ many-to-many. **Replaces (ME):** the domain↔tenant links (ADM-159).
 **Key attributes:** `ad_connection_id` + `nc_guid` · `entra_connection_id` · `origin` (declared,
 or discovered from correlations) · `state`.
 **Invariants.** I1 It decides which Entra tenant receives the M365 steps of a user create
-(ADM-027). I2 A link discovered from correlations stays `proposed` until an administrator confirms
-it in an audited Operation. Only a `confirmed` link lets correlations between that domain and
-that tenant authorize (DM-20.I4), so discovery can never bootstrap its own trust.
+(ADM-027). I2 A link discovered from correlations stays `proposed` until it is confirmed in an
+audited Operation. Only a `confirmed` link lets correlations between that domain and that tenant
+authorize (DM-20.I4), so discovery can never bootstrap its own trust. Confirming a link switches
+on cross-directory authority. So confirming, or declaring a link (which creates it `confirmed`),
+requires `connections.hybrid_link.confirm` held over **both** sides: an assignment scope that covers
+the domain's `naming_context`, and one that covers the tenant's `entra_tenant` root (DM-35).
+`tenant-owner` also qualifies. No narrower scope is enough.
 **Lifecycle.** `proposed → confirmed → removed`.
 
 ### DM-22 Snapshot · T · owner `modules/history`
@@ -1098,7 +1168,7 @@ These are the concepts used by the v1 rows (P1 and the M2 pulls,
 | Help-desk role, task/attribute privileges, deny bulk/CSV | ADM-125 | Role (privileges with constraints) + Permission | Mode `execute`/`request` merges ME's help-desk and workflow-requester roles |
 | Super Admin, built-in roles | ADM-126 | Built-in Role `tenant-owner` and shipped roles | Read-only, cloneable |
 | OU-based / group-based / include-exclude / cross-domain delegation | ADM-127…130 | DelegationScope + RoleAssignment (group subject) | GUID roots, live re-check at Plan, no escalation (DM-36.I1); SSO technicians receive group grants through an anchor-bound `directory_ref` (DM-30.I5) |
-| M365 delegation; "filter cloud users by AD OU" | ADM-131, ADM-169 | DelegationScope with the Entra root kinds (`entra_tenant`, `administrative_unit`, `group_members`) + `include_correlated` on AD entries (DM-35.I6) | One RBAC model for both directories. An AD OU grant reaches Entra objects only when the entry says so, and only through a `matched` correlation (DM-20.I4: synced from that AD object, not cloud-managed); a `candidate` grants nothing |
+| M365 delegation; "filter cloud users by AD OU" | ADM-131, ADM-169 | DelegationScope with the Entra root kinds (`entra_tenant`, `administrative_unit`, `group_members`) + `include_correlated` on AD entries (DM-35.I6) | One RBAC model for both directories. An AD OU grant reaches Entra objects only when the entry says so, and only through a `matched` correlation (DM-20.I4: synced from that AD object, not cloud-managed, tenant takeover-protection attested per DM-10.I7); a `candidate` grants nothing. Customer prerequisite in §10 |
 | Technician-specific templates; report restrictions | ADM-132, ADM-102 | Role privilege constraints | — |
 | Impersonate as Admin | ADM-134 | none; Operation initiator chain + AuditEvent actor | Every write runs as the connector identity, and the technician is always recorded. AD-side attribution `[OPEN → T-0007]` |
 | Help Desk Reset Password Console | ADM-136 | Actions `helpdesk.*` + CallerVerification | ENH-09 verification in the same audit event |
@@ -1171,6 +1241,25 @@ The schema is identical in every profile (ADR-0002 rule 1: no per-profile schema
 
 Every other entity is ✓ in all three profiles, with the same states and invariants.
 
+**Customer-visible prerequisite: hybrid AD↔Entra authority.** This is the same in every profile.
+Three capabilities cross from one directory to the other:
+- an AD scope reaching the correlated Entra objects (`include_correlated`, DM-35.I6);
+- AD group grants for SSO technicians (DM-30.I5, DM-36.I2);
+- routing a synced object's AD-mastered attributes to AD (DM-20.I3).
+
+Each needs `matched` correlations (DM-20.I4), so each Entra tenant must have:
+1. `blockCloudObjectTakeoverThroughHardMatchEnabled` and `blockSoftMatchEnabled` both on;
+2. a current Global Administrator attestation of those two flags (DM-10.I7), renewed at least
+   every 90 days or after a sync-feature change;
+3. a confirmed HybridLink for each domain (DM-21.I2).
+
+Without these, every correlation stays `candidate`. Entra objects are still fully manageable,
+but only through Entra-root scopes (`entra_tenant`, `administrative_unit`, Entra
+`group_members`; DM-35). AD objects are managed through AD scopes as usual. SSO technicians keep
+their Entra group grants and grants made to the account itself, but get no AD group grants. The
+connection health page and the setup guide state this; docs and onboarding must not promise
+hybrid reach without it.
+
 ## 11. Open questions and follow-ups
 
 | # | Question | Owner | Blocks |
@@ -1185,6 +1274,7 @@ Every other entity is ✓ in all three profiles, with the same states and invari
 | Q8 | Lab confirmation of every `[LAB: Windows]` claim, plus whether Cloud Sync populates a user's `onPremisesSecurityIdentifier` | test-engineer, T-0051 | DM-16, DM-17, DM-18, DM-20.I4(c), DM-23 |
 | Q9 | How personal values in append-only records are made erasable (per-subject side record or per-subject crypto-shredding), which attributes count as personal, and what triggers erasure (object purge, an explicit request, the ADM-207 tenant setting). It must be settled before the first audit event is written | solution-architect + security-architect, T-0047 | X11, DM-18.I6, DM-66.I3, DM-80.I4 |
 | Q10 | GPO permission writes (ADM-077): add a SYSVOL path that keeps the GPT folder DACL consistent with the GPC's, or ship v1 GPO delegation read-only | product-manager (GPO spec, via T-0031) + solution-architect | DM-23.I7 |
+| Q11 | The Entra directory-audit activity (name, category, `targetResources` shape) recorded when a tenant's sync features change, so it can demote an attestation. Also: whether a Hybrid Identity Administrator, and not only a Global Administrator, can change those features (the DM-20.I6 residual) | test-engineer, T-0051 (Entra lab tenant) | DM-10.I7(d) |
 
 Follow-ups filed with this version: T-0050 (CI fitness check for X3, X4 and X5), T-0051 (Windows
 lab proof of the `[LAB: Windows]` claims) and T-0052 (the `gPLink` and `gPOptions` codecs in
@@ -1265,8 +1355,19 @@ AC2 was re-checked by script: every ADM ID in scope lock §3.3 (123 IDs) appears
 | H3 | OK on SID corroboration, with conditions: it fails closed until the next sync after a cross-domain move; look up the anchor by both `objectGUID` and `ms-DS-ConsistencyGuid`; in account-and-resource-forest topologies, resolve the anchor in the forest that holds the enabled account; an anchor that matches two AD objects must make the correlation `candidate`. Cloud Sync populating the SID is `[UNVERIFIED]` | Applied: DM-20.I1a lookup, I4(c), I4(e), I5. The Cloud Sync SID claim goes to T-0051 |
 | H4 | Hard-match takeover: a pre-created cloud user becomes synced when the target enters sync scope, every check then passes, and the attacker's sign-in methods stay. Require `blockCloudObjectTakeoverThroughHardMatchEnabled`. A confirmed HybridLink binds only the tenant, so also match `onPremisesDomainName`. Treat Hybrid Administrator as Tier 0 `[UNVERIFIED]` | Applied: DM-20.I4(d) and (f), I6. The architect extended (f) to `blockSoftMatchEnabled` as well, because soft match (UPN) gives the same takeover and Microsoft recommends keeping it blocked. Hybrid delegation therefore needs both tenant flags on; the connection health check names the fix. Noted on T-0007 so security-architect can tighten or relax it |
 
+- 2026-10-02 · factory-director · round-3 spec review, rejected with 1 must-fix, 1 should and 1
+  nit. All three were applied. ad-expert was not needed: the round-3 change relies on no new AD
+  or Entra semantics as verified. The one unverified signal is tagged and goes to T-0051.
+
+| # | Finding | Disposition |
+| --- | --- | --- |
+| T1 | DM-20.I4(f) could not be evaluated. `GET /directory/onPremisesSynchronization` has no application permission in v1.0 or beta, and the delegated read needs a signed-in Global Administrator. Our app is app-only. Failing closed drops all hybrid authority, and failing open reopens H4 | Applied. I verified the permission table on both versions ([v1.0](https://learn.microsoft.com/en-us/graph/api/onpremisesdirectorysynchronization-get?view=graph-rest-1.0), [beta](https://learn.microsoft.com/en-us/graph/api/onpremisesdirectorysynchronization-get?view=graph-rest-beta)). New DM-10.I7 makes (f) an **attested tenant fact**: a Global Administrator signs in once, delegated and read-only, with no stored token and a `tid` check. The audited record holds who, when and both values. The derived `takeover_protection` is `unattested`, `attested`, `open` or `stale`. Demotion comes from age (default 90 days, which a tenant can only shorten) and from a sync-feature change in the Entra directory audit log, read with `AuditLog.Read.All`. That activity name is `[UNVERIFIED]` and goes to §11 Q11 / T-0051; until the lab confirms it, age is the only trigger. DM-20.I4(f) reads the attestation. I5 is split: (a)–(e) are read live, (f) comes from the attestation. The customer-visible prerequisite is in §10. The director's mechanism was kept, with three additions: the read happens server-side with a `tid` check, the state is derived (so no expiry job), and the tenant starts `unattested` because Microsoft documents no default |
+| T2 | DM-20.I6 named the sync-plane residuals but not the authentication plane | Applied as an I6 sub-item, with one correction to the finding. The Authentication Policy Administrator does not issue a Temporary Access Pass; it decides who may use one. Privileged Authentication Administrators (any user) and Authentication Administrators (non-admin users, often the case for technicians) issue passes and reset methods ([TAP](https://learn.microsoft.com/en-us/entra/identity/authentication/howto-authentication-temporary-access-pass)). Hybrid Identity Administrator manages federation settings ([roles](https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/permissions-reference)). I also added the history residual: an attestation speaks only for the present. Referred to T-0007 |
+| T3 | DM-21.I2 did not name the privilege that confirms a HybridLink | Applied: `connections.hybrid_link.confirm`, held over both the domain's `naming_context` and the tenant's `entra_tenant` scope, or `tenant-owner`. Declaring a link needs the same privilege. `connections.takeover.attest` (DM-10.I7) is scoped to `entra_tenant` |
+
 ## Changelog
 
 - 2026-10-02 · v0 drafted (T-0006). The ad-expert review was applied (§12, 13 findings), Q3 was closed, and the status moved to `review`.
 - 2026-10-02 · v0 rework after the director's review (§12 R1–R5, N1–N3): DM-23 GpLink, Entra delegation scopes, X11 erasure, derived append-only states, SSO `directory_ref`. Q9 and Q10 were added.
 - 2026-10-02 · v0 round-2 rework (§12 S1, S2, H1–H4): DM-20 authorizing gate (`candidate` vs `matched`, I4–I6), DM-21.I2, and only `matched` correlations count in DM-30.I5, DM-35.I6 and DM-36.I2. DM-23.I2 now says what edge identity means across a reorder.
+- 2026-10-02 · v0 round-3 rework (§12 T1–T3): the takeover flags became a Global Administrator attestation (DM-10.I7), DM-20.I4(f) reads it, and I5 is split into live checks (a)–(e) and the attested check (f). I6 adds the authentication-plane and history residuals, and DM-21.I2 names the confirming privilege. §10 states the hybrid prerequisite. Q11 was added.
