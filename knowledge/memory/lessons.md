@@ -20,6 +20,8 @@ Gotchas that cost time. Newest first. `date · lesson · source`.
 - 2026-10-02 · `claude -p --agent <name>` applies the agent's model, tools, skills and prompt; `--effort` overrides the frontmatter effort.
 
 ## Domain and security
+- 2026-10-02 · MinIO server is AGPL-3.0 and its repo was archived on 2026-04-25 → never bundle an object-store server; blobs go to the filesystem or a customer-supplied S3-API store (ADR-0001 rule 3). Source: https://github.com/minio/minio
+- 2026-10-02 · go-msrpc does Kerberos through its own gokrb5 fork → a connector using go-ldap + go-krb5/krb5 *and* go-msrpc carries two Kerberos stacks; unify behind one `GSSAPIClient` when MS-RPC is adopted. Source: https://github.com/oiweiwei/go-msrpc, ADR-0001 Consequences
 - 2026-10-02 · PowerShell treats curly quotes U+2018–U+201B as single quotes: an escaper that only doubles ASCII `'` lets a crafted name break out of the string (found in PatchIQ's `escapePSPath`). Our PowerShell primitive must escape all of them, with a test. Source: feasibility doc §risks.
 - 2026-10-02 · go-ldap's Kerberos bind can't sign/seal or channel-bind on Linux, and gokrb5 has been dormant since 2023 — plan an adapter on go-krb5/krb5 and use LDAPS. Source: `knowledge/development/architecture/build-feasibility/ad-technical-feasibility.md`.
 

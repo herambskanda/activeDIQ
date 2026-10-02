@@ -16,3 +16,4 @@ budget: 120 lines
 - QA evidence: factory/demos/evidence/<ticket>/.
 - Prototypes: garage/<name>/ with a README stating owner and expiry date.
 - People whose pronouns are unknown are referred to as they/them.
+- Licence-register rows put the exact package path(s) in backticks in the Project cell; CI (ADR-0001 `fitness-stack` F4) matches direct dependencies against them. Status `Rejected` = considered, not adopted, kept for the trail. (2026-10-02, T-0002)

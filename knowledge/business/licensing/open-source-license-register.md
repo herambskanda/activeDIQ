@@ -54,16 +54,36 @@ actual code inside our product.
 
 Status key: **Clear** = no action needed. **Talk** = worth a conversation. **Check** = needs legal
 review or more research. **Candidate** = under consideration, not adopted (adoption needs the ADR
-that chooses the stack).
+that chooses the stack). **Rejected** = considered and not adopted, kept for the trail (the reason
+is in the Use column).
+
+**Machine matching.** A row's Project cell carries the exact package path(s) in backticks. The
+`fitness-stack` job of [ADR-0001](../../development/decisions/0001-technology-stack.md) (check F4)
+fails CI when a direct dependency has no matching row, or when its row is **Rejected**.
 
 | Project | Licence | Use | Mode | Ships to customers? | Status |
 | --- | --- | --- | --- | --- | --- |
-| Node.js (factory runtime) | MIT | Internal tooling only | Separate process | No | **Clear** |
-| go-ldap/ldap | MIT | LDAP client (if Go is chosen) | Embedded | Yes | **Candidate** |
-| jcmturner/gokrb5 | Apache-2.0 | Kerberos client (if Go is chosen) | Embedded | Yes | **Candidate** |
-| microsoftgraph/msgraph-sdk-go | MIT | Entra ID / M365 (if Go is chosen) | Embedded | Yes | **Candidate** |
-| React | MIT | Web UI (if chosen) | Embedded | Yes | **Candidate** |
-| PostgreSQL | PostgreSQL Licence | Product database (if chosen) | Separate process | Yes | **Candidate** |
+| Node.js (factory runtime) | MIT | Internal tooling only. Builds the web UI at compile time (ADR-0001); never shipped | Separate process | No | **Clear** |
+| Go toolchain, standard library, `golang.org/x/sys` | BSD-3-Clause ([licence](https://go.dev/LICENSE)) | Language of the server, connector and agents (ADR-0001). The standard library is statically linked. Other `golang.org/x/*` modules get their own row when adopted | Embedded | Yes | **Candidate** |
+| go-ldap/ldap (`github.com/go-ldap/ldap/v3`) | MIT ([repo](https://github.com/go-ldap/ldap)) | LDAP client of the directory connector (ADR-0001) | Embedded | Yes | **Candidate** |
+| go-krb5/krb5 (`github.com/go-krb5/krb5`) | Apache-2.0 ([repo](https://github.com/go-krb5/krb5)) | Kerberos client: GSSAPI bind with channel binding, kpasswd change/set (ADR-0001). At v0.1.0 it is young, so we budget to fork it | Embedded | Yes | **Candidate** |
+| jcmturner/gokrb5 (`github.com/jcmturner/gokrb5/v8`) | Apache-2.0 | Not adopted for direct use: dormant since 2023 and superseded by go-krb5/krb5 (ADR-0001). A fork may still arrive transitively through go-msrpc, which the transitive licence scan covers | Embedded | — | **Rejected** (direct use) |
+| microsoftgraph/msgraph-sdk-go (`github.com/microsoftgraph/msgraph-sdk-go`) | MIT | Entra ID / M365. The first Graph ticket decides between this SDK and a thin generated client (ADR-0001) | Embedded | Yes | **Candidate** |
+| jackc/pgx (`github.com/jackc/pgx/v5`) | MIT ([repo](https://github.com/jackc/pgx)) | The only PostgreSQL driver, pure Go (ADR-0001) | Embedded | Yes | **Candidate** |
+| sqlc (`github.com/sqlc-dev/sqlc`) | MIT ([repo](https://github.com/sqlc-dev/sqlc)) | Generates Go code from SQL. The generated code is ours (ADR-0001) | Dev tooling | No | **Candidate** |
+| River (`github.com/riverqueue/river`, `github.com/riverqueue/river/riverdriver/riverpgxv5`) | MPL-2.0 ([repo](https://github.com/riverqueue/river)) | Job queue inside PostgreSQL (ADR-0001). MPL-2.0 copyleft applies per file: using it unmodified in a proprietary binary is compatible, but recipients must be told where the MPL-covered source is ([MPL-2.0 §3.2](https://www.mozilla.org/en-US/MPL/2.0/)). Fallback: our own `SKIP LOCKED` job table | Embedded | Yes | **Check**: legal must confirm before GA |
+| gRPC-Go (`google.golang.org/grpc`) | Apache-2.0 ([repo](https://github.com/grpc/grpc-go)) | Agent and connector channels over mTLS (ADR-0001) | Embedded | Yes | **Candidate** |
+| protobuf-go (`google.golang.org/protobuf`) | BSD-3-Clause ([repo](https://github.com/protocolbuffers/protobuf-go)) | Typed messages on the agent and connector channels (ADR-0001) | Embedded | Yes | **Candidate** |
+| React (`react`, `react-dom`) | MIT ([repo](https://github.com/facebook/react)) | Web UI (ADR-0001) | Embedded | Yes | **Candidate** |
+| TypeScript (`typescript`) | Apache-2.0 ([repo](https://github.com/microsoft/TypeScript)) | Language of the web UI. The compiler does not ship; the compiled output is ours (ADR-0001) | Dev tooling | No | **Candidate** |
+| Vite (`vite`) | MIT ([repo](https://github.com/vitejs/vite)) | Web build tool. Its bundles are embedded in the server binary (ADR-0001) | Dev tooling | No | **Candidate** |
+| PostgreSQL | PostgreSQL Licence ([licence](https://www.postgresql.org/about/licence/)) | The only datastore of the server tier. We bundle major 18; customer-supplied servers must be 16 or later (ADR-0001) | Separate process | Yes (bundled) | **Candidate** |
+| Rust toolchain and standard library (`rustc`, `std`) | MIT OR Apache-2.0 ([repo](https://github.com/rust-lang/rust)) | In-process native tier: the password-filter and credential-provider DLLs (ADR-0001). `core`/`std` are statically linked | Embedded | Yes | **Candidate** |
+| windows-rs (`windows`, `windows-core`, `windows-implement`) | MIT OR Apache-2.0 ([repo](https://github.com/microsoft/windows-rs)) | Win32/COM bindings and COM authoring for the native tier (ADR-0001) | Embedded | Yes | **Candidate** |
+| .NET 10 runtime (`Microsoft.NETCore.App`) | MIT ([repo](https://github.com/dotnet/runtime)) | Sidecar tier only, published self-contained. Built only when a sidecar is declared (ADR-0001) | Separate process | Yes, when a sidecar ships | **Candidate** |
+| PowerShell 7.6 SDK (`Microsoft.PowerShell.SDK`) | MIT ([repo](https://github.com/PowerShell/PowerShell)) | Hosted in the sidecar and called only with `AddCommand`/`AddParameter` (ADR-0001). Also used for lab scripts | Embedded (in the sidecar) | Yes, when a sidecar ships | **Candidate** |
+| Python (CPython) | PSF-2.0 ([licence](https://docs.python.org/3/license.html)) | Lab and test tooling only, under `lab/` and `tools/` (ADR-0001). Its libraries get rows when adopted | Dev tooling | No | **Clear** for lab use |
+| MinIO server (`github.com/minio/minio`) | AGPL-3.0 ([repo](https://github.com/minio/minio)) | Not adopted: we do not redistribute an object-store server (ADR-0001 rule 3). The repository was archived on 2026-04-25 | Separate process | No | **Rejected** |
 | Samba 4 (AD DC) | GPL-3.0 | Test lab only (Docker) — never shipped | Separate process | No | **Clear** for testing; **Check** before any shipping use |
 | Playwright | Apache-2.0 | E2E tests, QA screenshots, demo recording | Dev tooling | No | **Candidate** |
 | FFmpeg | LGPL-2.1+ (GPL with some options) | Demo/tutorial video editing | Dev tooling | No | **Clear** for internal use |
