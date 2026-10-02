@@ -25,6 +25,22 @@ import { setting } from './settings.mjs';
 
 export { selectCandidates, launchGate } from './candidates.mjs';
 
+/**
+ * Free bytes available to an unprivileged user on the volume holding `dir`, or null if unknown.
+ * Workers fill the disk (build caches, swap); the launch gate stops new runs below
+ * `dispatcher.min_free_disk_gb` instead of letting the dispatcher die on ENOSPC.
+ * @param {string} dir
+ * @returns {number|null}
+ */
+export function diskFreeBytes(dir) {
+  try {
+    const st = fs.statfsSync(dir);
+    return st.bavail * st.bsize;
+  } catch {
+    return null;
+  }
+}
+
 const READ_CHUNK = 4 * 1024 * 1024;
 const NO_PID_GRACE_MS = 30_000;
 
@@ -340,7 +356,7 @@ export class Dispatcher {
     const { ctx } = this;
     const skip = new Set();
     for (let round = 0; round < 10 && !this.stopping; round++) {
-      const state = { ...loadState(ctx), sharedCheckout: this.shared, skip };
+      const state = { ...loadState(ctx), sharedCheckout: this.shared, skip, disk_free_bytes: diskFreeBytes(ctx.root) };
       const now = ctx.now();
       const gate = launchGate(state, now, ctx.config);
       if (gate) return this.#lastAction(`idle: ${gate}`);
@@ -540,7 +556,7 @@ export class Dispatcher {
 export async function planDryRun(ctx) {
   const repo = await repoState(ctx);
   const shared = usesSharedCheckout(ctx, repo);
-  const state = { ...loadState(ctx), sharedCheckout: shared };
+  const state = { ...loadState(ctx), sharedCheckout: shared, disk_free_bytes: diskFreeBytes(ctx.root) };
   const now = ctx.now();
   const gate = launchGate(state, now, ctx.config);
   const agents = loadAgents(ctx);

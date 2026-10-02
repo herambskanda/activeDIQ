@@ -16,7 +16,7 @@ const byPriority = (a, b) => (RANK[a.priority] ?? 9) - (RANK[b.priority] ?? 9)
 
 /**
  * Why the dispatcher must not launch anything now, or null.
- * @param {{control?: {paused?: boolean}, dispatcher?: {backoff_until?: string|null, runs_today?: {date: string|null, count: number}}}} state
+ * @param {{control?: {paused?: boolean}, dispatcher?: {backoff_until?: string|null, runs_today?: {date: string|null, count: number}}, disk_free_bytes?: number|null}} state
  * @param {Date} now
  * @param {object} config
  * @returns {string|null}
@@ -28,6 +28,11 @@ export function launchGate(state, now, config) {
   const today = state.dispatcher?.runs_today;
   const count = today?.date === localDate(now) ? today.count : 0;
   if (count >= config.dispatcher.daily_run_cap) return `daily run cap reached (${count}/${config.dispatcher.daily_run_cap})`;
+  const minGb = config.dispatcher.min_free_disk_gb;
+  const free = state.disk_free_bytes;
+  if (minGb && typeof free === 'number' && free < minGb * 2 ** 30) {
+    return `low disk space (${(free / 2 ** 30).toFixed(1)} GB free, launches need ${minGb} GB)`;
+  }
   return null;
 }
 

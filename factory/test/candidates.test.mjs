@@ -123,6 +123,16 @@ test('the launch gate: paused, backing off, daily cap', () => {
   for (const s of [{ control: { paused: true } }, { dispatcher: { backoff_until: later } }]) assert.deepEqual(pick(state({ tickets: t, ...s })), []);
 });
 
+test('the launch gate holds launches below the free-disk floor, and ignores an unknown reading', () => {
+  const cfg = { ...config, dispatcher: { ...config.dispatcher, min_free_disk_gb: 10 } };
+  const GB = 2 ** 30;
+  assert.match(launchGate({ ...state(), disk_free_bytes: 5.6 * GB }, NOW, cfg), /low disk space \(5\.6 GB free, launches need 10 GB\)/);
+  assert.equal(launchGate({ ...state(), disk_free_bytes: 10 * GB }, NOW, cfg), null);
+  assert.equal(launchGate({ ...state(), disk_free_bytes: null }, NOW, cfg), null, 'no reading: do not block');
+  assert.equal(launchGate({ ...state(), disk_free_bytes: 1 * GB }, NOW, { ...cfg, dispatcher: { ...cfg.dispatcher, min_free_disk_gb: 0 } }), null, '0 disables the floor');
+  assert.deepEqual(selectCandidates({ ...state({ tickets: [ticket(), ...filler()] }), disk_free_bytes: GB }, NOW, cfg), []);
+});
+
 test('the skip set removes candidates for this round', () => {
   const t = [ticket({ id: 'T-0001', priority: 'P0' }), ticket({ id: 'T-0002', priority: 'P1' }), ...filler()];
   assert.deepEqual(ids(pick(state({ tickets: t, skip: new Set(['T-0001']) }))), ['T-0002', 'T-9001']);

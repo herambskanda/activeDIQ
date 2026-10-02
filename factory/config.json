@@ -10,6 +10,7 @@
   "dispatcher": {
     "tick_seconds": 20,
     "max_parallel": 6,
+    "min_free_disk_gb": 10,
     "daily_run_cap": 300,
     "run_timeout_minutes": 90,
     "max_retries": 2,

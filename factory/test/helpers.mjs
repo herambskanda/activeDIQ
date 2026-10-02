@@ -61,6 +61,7 @@ export function makeFactory({ config, agents = AGENTS } = {}) {
   cfg.models = structuredClone(TEST_MODELS);
   cfg.ceo.notify.macos = false;
   cfg.dispatcher.worktree_root = '.worktrees';
+  cfg.dispatcher.min_free_disk_gb = 0; // the host's free disk must not gate fixture launches
   config?.(cfg);
   fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify(cfg, null, 2));
   for (const [name, [model, effort]] of Object.entries(agents)) writeAgent(path.join(root, '.claude', 'agents'), name, model, effort);
