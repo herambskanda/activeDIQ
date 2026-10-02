@@ -3,3 +3,4 @@
 - [Blueprint review: link graph](blueprint-review-link-graph.md) — import rules must be satisfiable by the package layout; per-role compose; script AC traces
 - [Taste questions need previews](taste-questions-need-previews.md) — brand Qs as text get overridden (D-0005); apply no-note overrides literally + one notice, never ask back
 - [Domain-model review checks](domain-model-review-checks.md) — script ME map vs scope lock; derived append-only states; gPLink DN refs; Entra scopes; authz join keys; Graph perm table for gates
+- [Benchmark review checks](benchmark-review-checks.md) — recompute model times from the stated formula, sum step lists vs totals, fetch competitor pages behind headline pains
