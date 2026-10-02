@@ -2,7 +2,7 @@
 - [ADR ratification flow](adr-ratification-flow.md) — ratify in one pass after must-fixes close; nits go to the fitness ticket; fitness/accepted_on wait for accepted
 - [Blueprint review: link graph](blueprint-review-link-graph.md) — import rules must be satisfiable by the package layout; per-role compose; script AC traces
 - [Taste questions need previews](taste-questions-need-previews.md) — option `preview` field set (not just context links); D-0005 override; apply literally + notice
-- [Domain-model review checks](domain-model-review-checks.md) — script ME map vs scope lock; derived append-only states; gPLink DN refs; Entra scopes; authz join keys; Graph perm table for gates
+- [Domain-model review checks](domain-model-review-checks.md) — ME map vs scope lock; derived states; gPLink; Entra scopes; authz join keys; Graph perms; "only X" vs "X or Y"; backstop predicates
 - [Benchmark review checks](benchmark-review-checks.md) — script step tables vs totals, recompute model times, read screenshot hints for shorter paths, secrets vs TM/SP
 - [AD research review checks](ad-research-review-checks.md) — fetch cited pages for verbatim quotes; grep for stale copies; uncited details = nits
 - [Blocked on another ticket](triage-blocked-on-another-ticket.md) — don't unblock (skips dep gating); set depends_on, raise blocker's priority, note both
