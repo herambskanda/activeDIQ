@@ -116,9 +116,10 @@ must be **unrepresentable**: the connector API accepts typed values only.
 | **DirSync** control `1.2.840.113556.1.4.841` | Incremental sync of a naming context | Needs *Replicating Directory Changes* on the NC head (or the object-security flag, which returns only readable objects). Returns changed attributes only; use incremental-values for `member`. Cookie is per DC. https://learn.microsoft.com/en-us/windows/win32/ad/polling-for-changes-using-the-dirsync-control |
 | **uSNChanged** polling | Sync with no special rights | USNs are per DC. Store `(DC, invocationId, highestCommittedUSN)`; a new invocationId (DC restore) or DC switch → full resync. https://learn.microsoft.com/en-us/windows/win32/ad/polling-for-changes-using-usnchanged |
 | **Replication metadata** `msDS-ReplAttributeMetaData` / `msDS-ReplValueMetaData` | When and on which DC an attribute or link value last changed | It tells you *when* and *where*, never *who*. "Who" requires Security event logs (Windows-only, `windows-engineer`). https://learn.microsoft.com/en-us/windows/win32/adschema/a-msds-replattributemetadata |
-| Change notification `1.2.840.113556.1.4.528` | Near-real-time hints | Few per connection; no deletes without show-deleted; treat as a hint, reconcile with DirSync/USN. |
+| Change notification `1.2.840.113556.1.4.528` | Near-real-time hints | Filter `(objectclass=*)` only; base or one-level scope (no subtree). Default 5 per connection (`MaxNotificationPerConn`). **Deletes do notify, with no show-deleted needed** (`isDeleted=TRUE`, new DN under Deleted Objects), but reading the object afterwards does need it. Parent move or rename is silent. Not replayed after a disconnect. **Samba likely does not notify deletes** `[LAB]`. Hint only; reconcile with DirSync/USN. https://learn.microsoft.com/en-us/windows/win32/ad/change-notifications-in-active-directory-domain-services · https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/f14f3610-ee22-4d07-8a24-1bf1466cba5f · full note: `knowledge/development/domain/ad-change-notifications.md` |
 
-Deleted objects: show-deleted `1.2.840.113556.1.4.417` and read rights on `CN=Deleted Objects`.
+Deleted objects: show-deleted `1.2.840.113556.1.4.417` and read rights on `CN=Deleted Objects`
+(needed to *search* for them, not to be notified of a delete).
 With Recycle Bin on, deleted objects keep their attributes until `isRecycled`.
 
 ## 5. Microsoft Graph (Entra ID)
