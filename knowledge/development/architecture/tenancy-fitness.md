@@ -62,7 +62,9 @@ unchanged there:
   superuser-level access", https://www.postgresql.org/docs/16/predefined-roles.html), with or without
   `INHERIT`, since `SET ROLE` escapes RLS either way; the runtime role or a role it is a member of owning the
   database, a schema or any object, or able to `CREATE` in a schema, or holding `TEMPORARY` on the database). `store.Open` repeats the same refusal
-  at startup (`roleRisk`). Roles are cluster-level and the owner has no
+  at startup (`roleRisk`), walking the memberships of the *login* (`session_user`), and also refuses a session
+  that logged in as one role and runs as another (a `-c role=` startup option or `ALTER ROLE ... SET role`),
+  because the login can `SET ROLE` back. Roles are cluster-level and the owner has no
   `CREATEROLE`, so the installer creates them; no migration does.
 - The migration bookkeeping table is **not** created by any migration, so the job never sees it, and the
   registry does not list it (a registry entry for a table the job's database lacks fails `registry-stale`).
@@ -104,7 +106,7 @@ column whose CHECK or domain the generated value cannot satisfy.
 | --- | --- |
 | `tenant.ID`: unexported 16-byte value, `New()` and `Parse()` (canonical UUID text only, nil UUID rejected), `String`, `MarshalText`; no Unmarshal/Scan/Set method; no default-tenant constant | `internal/platform/tenant` |
 | `store.DB` with `WithTenant(ctx, tenant.ID, fn)` and `WithPlatform(ctx, reason, fn)` (methods on the handle, so there is no package-level pool). Both open one transaction whose first statement is `set_config('app.tenant_id', $1, true), set_config('statement_timeout', $2, true)`; `WithPlatform` sets the tenant to empty. The pool is unexported; `fn` gets a `store.Tx` (the sqlc `DBTX` shape: `Exec`, `Query`, `QueryRow`) that cannot commit or reach the connection | `internal/platform/store` |
-| `store.Open` refuses `default_query_exec_mode=simple_protocol` (`TestPoolRefusesSimpleProtocol`, SQL-20), a DSN that presets `app.tenant_id`, and a role that is a superuser, has `BYPASSRLS` or owns objects | `internal/platform/store` |
+| `store.Open` refuses `default_query_exec_mode=simple_protocol` (`TestPoolRefusesSimpleProtocol`, SQL-20), a DSN that presets `app.tenant_id`, and a role that is a superuser, has `BYPASSRLS` or owns objects, and a login that runs as another role | `internal/platform/store` |
 | The exemption registry, embedded (`exempt.JSON`) from the one file the job reads. Seeded with what exists today: `public.tenants` (owner `internal/platform/tenant`) and the bootstrap site. The ADR's other starting entries (migration bookkeeping, River, platform settings, hostname bindings, release metadata) are added by the ticket that creates each table, because an entry for a missing object is `registry-stale` | `internal/platform/store/exempt/registry.json` |
 | First-run bootstrap `provision.FirstRun(ctx, db, name, initialisers...)`: under `WithPlatform` and an advisory lock it creates one tenant with `tenant.New()` if none exists; more than one is `ErrNotSingleTenant`. The row commits first; then the idempotent initialisers (`audit.InitTenant` is one, ADR-0005 rule 11) run in the tenant's own `WithTenant` transaction, on every call, so a tenant left half-initialised is completed | `internal/platform/tenant/provision` |
 | Migration 0001, `0001_tenant_tenants.sql`: the role-split guard, default privileges, `tenants`; nothing else | `migrations/` (embedded by `migrations.FS`) |

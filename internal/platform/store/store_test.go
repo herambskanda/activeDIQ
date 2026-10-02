@@ -350,6 +350,43 @@ func TestOpenRefusesRoleThatCanEscapeRLS(t *testing.T) {
 	}
 }
 
+// Open checks the LOGIN, not only the role the session runs as: a privileged login that starts the
+// session as the runtime role (a startup option or ALTER ROLE ... SET role) can SET ROLE back.
+func TestOpenRefusesPrivilegedLoginRunningAsRuntimeRole(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		d := s.NewDatabase(t)
+		d.Migrate(t)
+		t.Run("superuser login with options role", func(t *testing.T) {
+			db, err := Open(context.Background(), Config{DSN: d.AdminDSN() + " options='-c role=activediq_app'"})
+			if err == nil {
+				db.Close()
+			}
+			if !errors.Is(err, ErrPrivilegedRole) {
+				t.Fatalf("Open = %v; want ErrPrivilegedRole", err)
+			}
+		})
+		t.Run("login with ALTER ROLE SET role", func(t *testing.T) {
+			b := storetest.Breach{
+				Setup: []string{
+					`CREATE ROLE adq_breach_login LOGIN PASSWORD 'adq-breach-pw'`,
+					`GRANT activediq_app TO adq_breach_login WITH INHERIT FALSE`,
+					`GRANT activediq_owner TO adq_breach_login WITH INHERIT FALSE`,
+					`ALTER ROLE adq_breach_login SET role = activediq_app`,
+				},
+				Teardown: []string{`DROP OWNED BY adq_breach_login`, `DROP ROLE adq_breach_login`},
+			}
+			d.Break(t, b)
+			db, err := Open(context.Background(), Config{DSN: d.LoginDSN("adq_breach_login", "adq-breach-pw")})
+			if err == nil {
+				db.Close()
+			}
+			if !errors.Is(err, ErrPrivilegedRole) {
+				t.Fatalf("Open = %v; want ErrPrivilegedRole", err)
+			}
+		})
+	})
+}
+
 // A temporary table is pooled-session state: pg_temp is searched first, so one tenant's CREATE TEMP
 // TABLE would capture the next tenant's unqualified writes on a reused connection. Migration 0001
 // revokes TEMPORARY from PUBLIC, so the runtime role cannot create one.

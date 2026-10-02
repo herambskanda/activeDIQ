@@ -56,7 +56,7 @@ var (
 	// ErrPrivilegedRole is returned by Open when the runtime role could bypass row-level security: it is
 	// a superuser, has BYPASSRLS, owns objects or the database, can create in a schema, or is a member of a
 	// role that does (ADR-0002 rule 4).
-	ErrPrivilegedRole = errors.New("store: the runtime role must not be, or be a member of, a role that is a superuser, has BYPASSRLS, owns objects, can create in a schema or create temporary tables: connect as the runtime role, never the migration role")
+	ErrPrivilegedRole = errors.New("store: the runtime role must not be, or be a member of, a role that is a superuser, has BYPASSRLS, owns objects, can create in a schema or create temporary tables, and must log in as itself rather than SET ROLE to itself: connect as the runtime role, never the migration role")
 	// ErrClosed is returned by an entry point on a nil or closed DB.
 	ErrClosed = errors.New("store: closed")
 )
@@ -122,9 +122,10 @@ func checkConnConfig(cc *pgx.ConnConfig) error {
 }
 
 // roleRisk is the one query that decides whether the connected role could get out of row-level
-// security. It looks at every role the runtime role is a MEMBER of (itself included; direct or
+// security. It looks at every role the LOGIN (session_user) is a MEMBER of (itself included; direct or
 // indirect, whatever its INHERIT and SET options, because a member that does not inherit can still
-// SET ROLE to it) and returns the first reason found, or no row. A role is a risk when it is a
+// SET ROLE to it; current_user is among them, and a privileged login that merely started the session
+// as the runtime role through a role setting is caught here) and returns the first reason found, or no row. A role is a risk when it is a
 // superuser, has BYPASSRLS, owns the current database, owns any object visible to this database
 // (pg_shdepend, which also covers schemas, functions and other roles' objects), owns a product
 // schema, can CREATE in one (which lets it plant objects that shadow ours), holds TEMPORARY on the
@@ -144,8 +145,12 @@ const roleRisk = `SELECT x.rolname, CASE
 		WHEN has_database_privilege(x.oid, current_database(), 'TEMPORARY') THEN 'has TEMPORARY on the database'
 	END AS risk
 	FROM pg_roles x
-	WHERE pg_has_role(current_user, x.oid, 'MEMBER')
-	ORDER BY (x.rolname = current_user) DESC, x.rolname`
+	WHERE pg_has_role(session_user, x.oid, 'MEMBER')
+	ORDER BY (x.rolname = session_user) DESC, x.rolname`
+
+// roleSwitched is true when the session runs as another role than it logged in as: the DSN's options
+// parameter (-c role=...) or ALTER ROLE ... SET role. The runtime DSN must log in as the runtime role.
+const roleSwitched = `SELECT session_user::text, current_user::text, session_user <> current_user`
 
 const productSchema = `n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg_toast%' AND n.nspname NOT LIKE 'pg_temp%'`
 
@@ -153,6 +158,14 @@ const productSchema = `n.nspname NOT IN ('pg_catalog', 'information_schema') AND
 // fitness job proves the same properties of the provisioned roles (T3); this is the runtime's own
 // refusal to start otherwise.
 func (d *DB) checkRole(ctx context.Context) error {
+	var login, running string
+	var switched bool
+	if err := d.pool.QueryRow(ctx, roleSwitched).Scan(&login, &running, &switched); err != nil {
+		return fmt.Errorf("store: check the runtime role: %w", err)
+	}
+	if switched {
+		return fmt.Errorf("%w (the session logged in as %s and was switched to %s; log in as the runtime role)", ErrPrivilegedRole, login, running)
+	}
 	rows, err := d.pool.Query(ctx, roleRisk)
 	if err != nil {
 		return fmt.Errorf("store: check the runtime role: %w", err)

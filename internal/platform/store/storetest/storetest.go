@@ -268,6 +268,9 @@ func (d *Database) AppDSN() string   { return d.s.dsn(RuntimeRole, d.s.appPass, 
 func (d *Database) OwnerDSN() string { return d.s.dsn(OwnerRole, d.s.ownerPass, d.Name) }
 func (d *Database) AdminDSN() string { return d.s.dsn("postgres", d.s.adminPass, d.Name) }
 
+// LoginDSN connects as an arbitrary login role of the test cluster, for tests that create one.
+func (d *Database) LoginDSN(user, pass string) string { return d.s.dsn(user, pass, d.Name) }
+
 // Owner, App and Admin open a single connection as that role. The caller closes it.
 func (d *Database) Owner(ctx context.Context) (*pgx.Conn, error) {
 	return d.s.connect(ctx, OwnerRole, d.s.ownerPass, d.Name)
