@@ -8,6 +8,8 @@ budget: 120 lines
 
 Newest first. One dated line per material change; link the source.
 
+- 2026-10-02 · **Public API contract ratified** (ADR-0004, notice D-0014). Every route is an operation in one OpenAPI document or a reviewed `policy.yaml` entry. Our own generator emits the strict server types and handlers. The console uses only the generated client. There is one unmetered `/api/v1` that only grows. It becomes `accepted` when `fitness-api` A1–A14 runs in CI (T-0148, T-0149). Next: T-0147 (generator + skeleton), then T-0086 (apihost). (knowledge/development/decisions/0004-public-api-contract-openapi-first.md)
+
 - 2026-10-02 · **Module system ratified** (ADR-0003, notice D-0013). Features plug in only as modules through the Registrar. Every table has one owning package. CI checks what each binary may link. It becomes `accepted` when `fitness-modules` runs in CI (T-0141). Next: T-0144 migrates the scaffold's Registrar; T-0145 brings the blueprint and the domain-model owner lines in line with it. (knowledge/development/decisions/0003-module-system-extension-points-only-on-ramp.md)
 
 - 2026-10-02 · **Domain model v0 passed director review** (T-0006, after 4 rounds). It defines 55 entities (DM-01…DM-85), each with invariants and a lifecycle, and maps all 123 v1 ManageEngine concepts. Directory references are keyed by GUID, and append-only records have derived states. Hybrid AD↔Entra authority goes through a `matched` correlation gate. Hybrid shortcuts need two Entra takeover-blocking settings plus a Global Administrator attestation every 90 days (notice D-0009). The doc stays `review` until a human reads it. Follow-ups: T-0050 (CI invariants), T-0051 (lab claims), T-0052 (gPLink codec). (knowledge/development/domain/domain-model.md)

@@ -2,15 +2,18 @@
 title: "ADR-0004: The public API is one OpenAPI 3.1 contract, one file per tag, generated in-house into strict json/v2 types and per-tag handlers on net/http.ServeMux, one permission per operation, and one /api/v1 that only grows"
 date: 2026-10-02
 updated: 2026-10-02
-status: proposed
+status: ratified
 owner: heramb
 kind: technical
 ticket: T-0046
+decision: D-0014
+ratified_on: 2026-10-02
+ratified_by: factory-director
 ---
 
 # ADR-0004: The public API is one OpenAPI 3.1 contract, one file per tag, generated in-house into strict `encoding/json/v2` types and per-tag handlers on `net/http.ServeMux`, one permission per operation, and one `/api/v1` that only grows
 
-**Status:** proposed (rework 1, after the director's review of 2026-10-02). The factory-director ratifies it when reviewing T-0046, then files a `notice`. It becomes `accepted` when `fitness-api` (A1–A14 below) runs green in `make ci` on `main`.
+**Status:** ratified 2026-10-02 by factory-director at the T-0046 review (rework 1), notice D-0014. It becomes `accepted` when `fitness-api` (A1–A14 below) runs green in `make ci` on `main`.
 **Kind:** technical. No customer, partner or brand sees the generator or the router. Customers see the result: one documented, stable, unmetered API. That result follows from decisions the CEO already made: the house stack (D-0003) and the API-first, unmetered positioning (parity matrix enhancement 18).
 **Deciders:** solution-architect (author). api-engineer was consulted twice on 2026-10-02, both recorded on T-0046. The first consult covered the generator, router, client and tooling evaluation and a local test of `encoding/json/v2` defaults. The second, in the rework, covered in-house type emission, the size estimate and gaps in the construct table. factory-director ratifies. **Ticket:** T-0046. **Parity / scope refs:** ADM-188, ADM-189 (ADM-190 indirectly, through rate classes).
 
@@ -325,7 +328,7 @@ v2's own error text names Go types, so `apihost` maps it to the `malformed-reque
 3. **Decode through `secretjson.Decode`, for every operation.** `secretjson.Decode(buf, &in.Body)` is the single decode entry point for API bodies, so the analyzer and this ADR agree:
    - It is `json.Unmarshal(buf, v, json.RejectUnknownMembers(true))` and nothing more. Names match case-sensitively, which is the v2 default.
    - The strict options reach every nested value through the rule 4 decoders and the type-closure rule.
-   - The `secretjson` analyzer (FF-SP2) already allows a decode into a `Secret`-bearing type only through `secretjson.Decode`. `apihost` is its one caller for request bodies, because handlers have no body to decode (rule 5).
+   - The `secretjson` analyzer (FF-SP2) allows a top-level decode into a `Secret`-bearing type only through `secretjson.Decode`. `apihost` is its one caller for request bodies, because handlers have no body to decode (rule 5). The nested `UnmarshalDecode`/`Unmarshal(…, d.Options())` calls inside generated rule 4 decoders inherit its options and are the analyzer's one exemption, recognised by the `tools/gen/api` header (T-0033, T-0150).
 4. **Validate the decoded value** with the generated `validate`.
 5. **Errors.** Malformed input (steps 1–2) → `400 /problems/malformed-request`. A schema violation (steps 3–4) → `400 /problems/validation`, with an `errors[]` entry per violation carrying its JSON pointer. The violations are:
    - an unknown member or a wrong-case member;
@@ -542,4 +545,4 @@ Every check has a failing fixture in `check_test.go`, so a check that silently m
 - Whether an operation belongs in `policy.authenticated` at all. security-architect checks it, through the `policy.yaml` review.
 - Who reviews `policy.yaml` and binding-table changes. security-architect does, by ticket tag, until CODEOWNERS can enforce it.
 
-**Status path.** Ratified when the director signs it off at review of T-0046. Accepted when `fitness-api` A1–A14 (A9 delegated to T5) all run **active** and green in `make ci` on `main`.
+**Status path.** Ratified 2026-10-02 (D-0014). Accepted when `fitness-api` A1–A14 (A9 delegated to T5) all run **active** and green in `make ci` on `main`.

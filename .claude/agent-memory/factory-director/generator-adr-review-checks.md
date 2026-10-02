@@ -24,5 +24,11 @@ union members. The filter AST would have been the hole. The ADR was rejected onc
   each other.
 - Check the `Build`/composition signature for import cycles: a kernel package that serves API imports its
   generated `api` package, which imports the host. The host then needs ports, not imports.
+- On the re-review, check the *fix* against the analyzers too. ADR-0004's rework routed every body
+  through `secretjson.Decode`, but its generated nested decoders still call `UnmarshalDecode` into
+  Secret-bearing types, which FF-SP2 as written reports. That was closed with a one-line ADR clarification
+  plus a note on the analyzer ticket, not a second reject.
+- For a "no copy of the secret" claim, ask how the decoder is constructed. `jsontext.NewDecoder` parses
+  in place only over a `*bytes.Buffer`; any other reader copies internally.
 
 Related: [[spike-review-checks]], [[adr-review-allowlist-and-ownership]], [[adr-ratification-flow]]
