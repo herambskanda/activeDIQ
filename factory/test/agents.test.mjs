@@ -5,9 +5,10 @@ import path from 'node:path';
 import { parseFrontmatter } from '../lib/frontmatter.mjs';
 import { loadAgents, parseAgentFile } from '../lib/agents.mjs';
 import { checkAgentPolicy, checkLaunchPolicy, modelFamily, nextEffort } from '../lib/policy.mjs';
-import { makeFactory, writeAgent, REAL_FACTORY } from './helpers.mjs';
+import { makeFactory, writeAgent, TEST_MODELS } from './helpers.mjs';
 
-const config = JSON.parse(fs.readFileSync(path.join(REAL_FACTORY, 'config.json'), 'utf8'));
+// Mechanism tests run against the multi-rung fixture policy, not the live one (see policy.test.mjs).
+const config = { models: TEST_MODELS };
 
 test('frontmatter: plain, quoted and block scalars; body is returned', () => {
   const { data, body } = parseFrontmatter('---\nname: x\ntitle: "Quoted: yes"\ndescription: >\n  one\n  two\nnotes: |\n  a\n  b\nempty:\n---\n\n# Heading\n');

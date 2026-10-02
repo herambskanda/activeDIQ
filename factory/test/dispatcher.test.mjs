@@ -95,7 +95,7 @@ test('a worker that advances its ticket: run recorded, ticket moves, daily count
     await d.tick();
     const [run] = runs(f);
     assert.equal(runs(f).length, 1);
-    assert.deepEqual([run.status, run.role, run.stage, run.model, run.effort], ['done', 'project-manager', 'in_progress', 'opus', 'medium']);
+    assert.deepEqual([run.status, run.role, run.stage, run.model, run.effort], ['done', 'project-manager', 'in_progress', 'opus', 'high']);
     assert.equal(run.exit_code, 0);
     assert.equal(run.result_line, 'RESULT: advanced — fake advance');
     assert.equal(run.cost_usd, 0.07);
@@ -105,7 +105,7 @@ test('a worker that advances its ticket: run recorded, ticket moves, daily count
     const [call] = readArgsLog(log);
     assert.equal(call.cwd, f.root, 'no repo: shared checkout');
     assert.ok(call.args.includes('--strict-mcp-config'));
-    assert.deepEqual(call.args.slice(call.args.indexOf('--effort'), call.args.indexOf('--effort') + 2), ['--effort', 'medium'], 'frontmatter effort always passed');
+    assert.deepEqual(call.args.slice(call.args.indexOf('--effort'), call.args.indexOf('--effort') + 2), ['--effort', 'high'], 'frontmatter effort always passed');
     assert.deepEqual(call.args.slice(call.args.indexOf('--agent'), call.args.indexOf('--agent') + 2), ['--agent', 'project-manager']);
     assert.match(call.args[1], /ticket \*\*T-0001/);
     assert.match(call.args[1], /Stage: meta work/);

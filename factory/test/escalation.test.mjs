@@ -7,7 +7,7 @@ import { makeFactory, ticketInput } from './helpers.mjs';
 
 const sonnet = { name: 'backend-engineer', model: 'sonnet', effort: 'high' };
 const opus = { name: 'factory-director', model: 'opus', effort: 'high' };
-const principal = { name: 'principal-engineer', model: 'opus', effort: 'xhigh' };
+const principal = { name: 'principal-engineer', model: 'opus', effort: 'high' };
 const base = { stage_role: 'backend-engineer', attempts: 0, escalations: 0, effort_override: null };
 let config;
 const setup = () => {

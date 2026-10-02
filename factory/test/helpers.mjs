@@ -12,17 +12,30 @@ export const FIXTURES = path.join(REAL_FACTORY, 'test', 'fixtures');
 export const FAKE_CLAUDE = path.join(FIXTURES, 'fake-claude');
 export const FACTORY_BIN = path.join(REAL_FACTORY, 'bin', 'factory');
 
-/** role → [model, effort] for the fixture agents. */
+/**
+ * The model/effort policy every fixture factory runs under: a deliberately multi-rung policy
+ * (escalation-only rungs above the everyday ones) so the ladder, the escalation-only rule and
+ * override semantics are exercised whatever the live `factory/config.json` allows. The live policy
+ * is pinned separately in policy.test.mjs.
+ */
+export const TEST_MODELS = Object.freeze({
+  allowed: { opus: ['medium', 'high', 'xhigh', 'max'], sonnet: ['high', 'xhigh'] },
+  escalation_only: { opus: ['xhigh', 'max'] },
+  escalation_roles: ['principal-engineer'],
+  effort_ladder: { sonnet: ['high', 'xhigh'], opus: ['medium', 'high', 'xhigh'] },
+});
+
+/** role → [model, effort] for the fixture agents; the defaults mirror the live roster (all high). */
 export const AGENTS = {
   'factory-director': ['opus', 'high'],
-  'project-manager': ['opus', 'medium'],
+  'project-manager': ['opus', 'high'],
   'product-manager': ['opus', 'high'],
   'solution-architect': ['opus', 'high'],
   'security-architect': ['opus', 'high'],
-  'principal-engineer': ['opus', 'xhigh'],
+  'principal-engineer': ['opus', 'high'],
   'backend-engineer': ['sonnet', 'high'],
-  'directory-engineer': ['sonnet', 'xhigh'],
-  'code-reviewer': ['sonnet', 'xhigh'],
+  'directory-engineer': ['sonnet', 'high'],
+  'code-reviewer': ['sonnet', 'high'],
   'qa-verifier': ['sonnet', 'high'],
   'docs-writer': ['sonnet', 'high'],
   'test-engineer': ['sonnet', 'high'],
@@ -35,7 +48,7 @@ export function writeAgent(agentsDir, name, model, effort, extra = '') {
 }
 
 /**
- * Build a temp factory: <root>/factory (FACTORY_HOME) with the real config and templates,
+ * Build a temp factory: <root>/factory (FACTORY_HOME) with the real config (with the TEST_MODELS policy swapped in) and templates,
  * fixture agents in <root>/.claude/agents, and a controllable clock.
  * @param {{config?: (c: object) => void, agents?: Record<string, [string, string]>}} [opts]
  */
@@ -45,6 +58,7 @@ export function makeFactory({ config, agents = AGENTS } = {}) {
   fs.mkdirSync(home, { recursive: true });
   fs.cpSync(path.join(REAL_FACTORY, 'templates'), path.join(home, 'templates'), { recursive: true });
   const cfg = JSON.parse(fs.readFileSync(path.join(REAL_FACTORY, 'config.json'), 'utf8'));
+  cfg.models = structuredClone(TEST_MODELS);
   cfg.ceo.notify.macos = false;
   cfg.dispatcher.worktree_root = '.worktrees';
   config?.(cfg);
