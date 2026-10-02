@@ -226,6 +226,8 @@ decision withdraw ID --by ROLE --note "…"
 action new --title T --detail D --why W [--by ROLE]  |  action list  |  action done ID [--note]
 feedback new --target X --text T [--sentiment s]      |  feedback list  |  feedback triage ID --note N [--tickets T-1]
 epic new|list|show  ·  milestone new|list|show|set ID status=…
+epic set ID field=value … [--by ROLE]  title, goal, milestone, parity_refs=A,B (replace),
+                                     parity_refs+=C (add), parity_refs-=A (remove)
 handoff new ID --by ROLE             create factory/handoffs/<ID>/<ts>.md from the template; print path; set handoff.pending
 handoff latest ID                    print the latest handoff path for a ticket (or session id)
 event --actor A --kind K [--ticket T] "text"
@@ -236,6 +238,9 @@ Rules the CLI enforces:
 - Only legal transitions per the flow; `advance` on the last stage sets `done`.
 - `ticket ready` refuses unless title, owner, acceptance (≥1) and summary are present.
 - A ticket listing an unanswered decision cannot be claimed.
+- `epic set` validates every assignment (parity refs look like `ADM-045`; milestones exist; `-=` only
+  removes refs the epic has) before writing anything, and its event names the actor and the change
+  (`+ADM-045`, old → new).
 - `decision new` refuses a 4th open `directional`/`advisory` decision (`ceo.max_open_decisions`)
   unless `--force`; it fires a macOS notification when `ceo.notify.macos` is true.
 - Answering a decision unblocks nothing directly: the next dispatcher tick sees

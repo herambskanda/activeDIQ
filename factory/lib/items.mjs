@@ -89,6 +89,22 @@ export function triageFeedback(ctx, id, { note, tickets = [], done = false, by =
 
 // --- epics -----------------------------------------------------------------------------------
 
+/** A parity-matrix feature ID: ADM-045, ADSS-091, I360-004, M365-018. */
+const PARITY_REF = /^[A-Z][A-Z0-9]*-\d+$/;
+
+/**
+ * Validate and de-duplicate parity refs, keeping first-seen order.
+ * @param {string[]} refs
+ * @returns {string[]}
+ */
+function parityRefs(refs) {
+  const bad = refs.filter((r) => !PARITY_REF.test(r));
+  if (bad.length) throw new FactoryError(`parity refs must look like ADM-045 (got ${bad.join(', ')})`);
+  return [...new Set(refs)];
+}
+
+const refList = (value) => (value === 'null' || value === '' ? [] : value.split(',').map((s) => s.trim()).filter(Boolean));
+
 /**
  * Create an epic.
  * @param {object} ctx
@@ -96,10 +112,74 @@ export function triageFeedback(ctx, id, { note, tickets = [], done = false, by =
  */
 export function createEpic(ctx, { title, goal = '', milestone = null, parity_refs = [], by = 'project-manager' }) {
   if (milestone) requireEntity(ctx, 'milestones', milestone, 'milestone');
+  const refs = parityRefs(parity_refs);
   const now = nowIso(ctx);
-  const epic = { id: nextId(ctx, 'E'), title: required(title, 'title'), goal, milestone, status: 'planned', parity_refs, created: now, updated: now };
+  const epic = { id: nextId(ctx, 'E'), title: required(title, 'title'), goal, milestone, status: 'planned', parity_refs: refs, created: now, updated: now };
   putEntity(ctx, 'epics', epic);
   appendEvent(ctx, { actor: by, kind: 'ticket', text: `epic ${epic.id} created: ${epic.title}` });
+  return epic;
+}
+
+/**
+ * Edit epic fields: title, goal, milestone, and parity_refs — replaced with `parity_refs=A,B`,
+ * extended with `parity_refs+=C` or trimmed with `parity_refs-=A` (so a one-ref change cannot
+ * drop the others). All assignments validate before anything is written; the event records the
+ * actor and what changed (added/removed refs, old → new values).
+ * @param {object} ctx
+ * @param {string} id
+ * @param {Record<string, string>} assignments
+ * @param {string} [by]
+ */
+export function setEpic(ctx, id, assignments, by = 'project-manager') {
+  const changes = [];
+  const epic = updateEntity(ctx, 'epics', id, (e) => {
+    for (const [key, raw] of Object.entries(assignments)) {
+      switch (key) {
+        case 'title': {
+          const title = required(raw, 'title');
+          if (title !== e.title) changes.push(`title "${e.title}" → "${title}"`);
+          e.title = title;
+          break;
+        }
+        case 'goal':
+          if (raw !== e.goal) changes.push(`goal "${e.goal ?? ''}" → "${raw}"`);
+          e.goal = raw;
+          break;
+        case 'milestone': {
+          const milestone = raw === 'null' || raw === '' ? null : raw;
+          if (milestone) requireEntity(ctx, 'milestones', milestone, 'milestone');
+          if (milestone !== e.milestone) changes.push(`milestone ${e.milestone ?? 'none'} → ${milestone ?? 'none'}`);
+          e.milestone = milestone;
+          break;
+        }
+        case 'parity_refs':
+        case 'parity_refs+':
+        case 'parity_refs-': {
+          const before = e.parity_refs ?? [];
+          const given = parityRefs(refList(raw));
+          if (key !== 'parity_refs' && !given.length) throw new FactoryError(`${key}= needs at least one ref`);
+          let after;
+          if (key === 'parity_refs') after = given;
+          else if (key === 'parity_refs+') after = [...before, ...given.filter((r) => !before.includes(r))];
+          else {
+            const missing = given.filter((r) => !before.includes(r));
+            if (missing.length) throw new FactoryError(`${id} has no parity ref ${missing.join(', ')}`);
+            after = before.filter((r) => !given.includes(r));
+          }
+          const added = after.filter((r) => !before.includes(r));
+          const removed = before.filter((r) => !after.includes(r));
+          if (added.length || removed.length) {
+            changes.push(`parity_refs ${[...added.map((r) => `+${r}`), ...removed.map((r) => `-${r}`)].join(' ')} (${before.length} → ${after.length})`);
+          }
+          e.parity_refs = after;
+          break;
+        }
+        default:
+          throw new FactoryError(`cannot set "${key}" on an epic (settable: title goal milestone parity_refs, parity_refs+=, parity_refs-=)`);
+      }
+    }
+  });
+  appendEvent(ctx, { actor: by, kind: 'ticket', text: `epic ${id} updated: ${changes.length ? changes.join('; ') : 'no change'}` });
   return epic;
 }
 

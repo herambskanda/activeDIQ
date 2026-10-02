@@ -158,6 +158,14 @@ test('actions, feedback, epics, milestones, events, handoffs', async () => {
     assert.equal((await s.json(['milestone', 'set', 'M1', 'status=active'])).status, 'active');
     assert.equal((await s.run(['milestone', 'set', 'M1', 'status=bogus'])).code, 1);
     assert.match((await s.run(['epic', 'list'])).out, /E-001\s+\S+\s+M1\s+Core/);
+    const patched = await s.json(['epic', 'set', 'E-001', 'parity_refs+=ADM-3', 'goal=Core v2', '--by', 'factory-director']);
+    assert.deepEqual([patched.parity_refs, patched.goal], [['ADM-1', 'ADM-2', 'ADM-3'], 'Core v2']);
+    assert.match((await s.run(['epic', 'show', 'E-001'])).out, /"ADM-3"/);
+    assert.equal((await s.run(['epic', 'set', 'E-001', 'parity_refs+=bogus', '--by', 'fd'])).code, 1, 'refs are validated');
+    assert.equal((await s.run(['epic', 'set', 'E-001', 'status=done', '--by', 'fd'])).code, 1, 'status is not settable');
+    assert.equal((await s.run(['epic', 'set', 'E-001'])).code, 2, 'nothing to set');
+    assert.equal((await s.run(['epic', 'set'])).code, 2, 'an ID is required');
+    assert.equal((await s.json(['epic', 'show', 'E-001'])).parity_refs.length, 3, 'failed sets wrote nothing');
 
     await s.run(NEW_TICKET);
     const fb = await s.json(['feedback', 'new', '--target', 'ticket:T-0001', '--text', 'Rename it', '--sentiment', 'change']);
