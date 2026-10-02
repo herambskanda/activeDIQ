@@ -1011,6 +1011,21 @@ ORMs and raw-string query builders are prohibited. Rules:
     `max`, `avg`), `date_trunc` units, operators and sort directions are enums. Row limits and the
     per-transaction `statement_timeout` are bound values.
 
+14. **The database transport is verified TLS, or it is local.** `store.Open` (and the migration step,
+    through `store.CheckTransport`, for the owner DSN) refuses, before any connection is attempted, a
+    DSN that reaches a TCP host other than loopback without TLS that verifies the server: only
+    `sslmode=verify-full`, or `sslmode=verify-ca` with `sslrootcert` pinning the CA, is accepted.
+    pgx defaults to `sslmode=prefer`, which encrypts opportunistically and never checks the
+    certificate, so a missing `sslmode`, `disable`, `allow`, `prefer` and `require` (without a root
+    certificate) are all refused with `ErrInsecureTransport` ([libpq SSL support][pg-ssl]). The check reads the
+    TLS configuration pgx derives, so `PGSSLMODE`, the keyword and URL forms and every host and
+    fallback of a multi-host DSN are covered. Exempt: unix sockets, literal loopback addresses and
+    the name `localhost` (the bundled PostgreSQL). The one relaxation is an explicit operator
+    override, `Config.AllowInsecureTransport`, set only from platform-scope configuration (T-0184
+    adds the key, for both DSNs). It is logged at start-up as a warning and shown on the health page
+    through `DB.Transport()`, with the hosts it let through. TLS validation is never disabled in shipped
+    code: the override permits a DSN, it does not change how pgx verifies.
+
 | ID | Input | Expected | Why |
 | --- | --- | --- | --- |
 | SQL-01 | value `' OR '1'='1` | bound; zero rows | tautology |
@@ -1035,6 +1050,8 @@ ORMs and raw-string query builders are prohibited. Rules:
 | SQL-20 | config DSN contains `default_query_exec_mode=simple_protocol` | pool construction fails `SimpleProtocolForbidden` | rule 12 |
 | SQL-21 | report AST with function `pg_sleep` · aggregate `string_agg` · unit `'day'; --` | error `UnknownFunction` / `UnknownAggregate` / `BadUnit` | closed vocabulary |
 | SQL-22 | report query exceeding the bound `statement_timeout` | cancelled with `QueryTimeout`; the next transaction on the connection has the default timeout | per-transaction timeout |
+| SQL-23 | DSN to a remote host with `sslmode` absent · `disable` · `allow` · `prefer` · `require` · `verify-ca` without `sslrootcert`; `PGSSLMODE=disable`; one unverified host in a multi-host DSN | `Open` fails `ErrInsecureTransport`, no connection attempted, no password in the message | rule 14 |
+| SQL-24 | DSN to a unix socket, loopback (`127.0.0.0/8`, `::1`, `localhost`), or a remote host with `verify-full` · `verify-ca` + `sslrootcert` | accepted; not reported as relaxed | rule 14 |
 
 **Lint.** gosec G201/G202 ([gosec][gosec]). forbidigo bans the names `QueryExecModeSimpleProtocol`,
 `set_config(…, false)` and `SET app.` literals. The SQL driver may be imported only by the
