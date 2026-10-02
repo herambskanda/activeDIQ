@@ -87,6 +87,20 @@ must_fail_with "fitness-proto on a file that does not compile" "\\[P1\\]" go run
 printf 'syntax = "proto3";\npackage t.v1;\nenum Operation { OPERATION_UNSPECIFIED = 0; OPERATION_GET = 1; OPERATION_APPLY = 100; OPERATION_READ_SECRET = 101; OPERATION_VERIFY_USER = 102; }\nmessage Guid { bytes value = 1; }\nmessage GetRequest { Guid guid = 1; }\nmessage GetResponse {}\nservice S { rpc Get(GetRequest) returns (GetResponse); }\n' >"$pr/t.proto"
 must_pass "fitness-proto" go run ./tools/fitness/proto "$pr"
 
+# --- gen-check (T-0157): generated connector code must match a fresh generation ------------------
+# Generate into a throw-away tree, then stale / orphan / delete a file and require the real
+# `-check` mode to refuse each; the untouched tree passes.
+gp="$tmp/genproto"
+go run ./tools/gen/proto -out "$gp" || fails=$((fails + 1))
+must_pass "gen-check on a fresh generation" go run ./tools/gen/proto -out "$gp" -check
+echo "// hand edit" >>"$gp/activediq/connector/v1/common.pb.go"
+must_fail_with "gen-check on a hand-edited generated file" "stale" go run ./tools/gen/proto -out "$gp" -check
+go run ./tools/gen/proto -out "$gp" || fails=$((fails + 1))
+touch "$gp/activediq/connector/v1/removed.pb.go"
+must_fail_with "gen-check on an orphaned generated file" "orphaned" go run ./tools/gen/proto -out "$gp" -check
+rm "$gp/activediq/connector/v1/removed.pb.go" "$gp/activediq/connector/v1/read.pb.go"
+must_fail_with "gen-check on a missing generated file" "missing" go run ./tools/gen/proto -out "$gp" -check
+
 # --- fitness-stack (ADR-0001 F1-F5), the real CLI on throw-away trees --------------------------
 # One violation per rule, each rejected with the rule's own message; the same tree passes when clean.
 # The banned build flag is assembled from parts so this file does not trip F2's text scan.
