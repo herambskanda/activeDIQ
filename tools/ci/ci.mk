@@ -2,7 +2,7 @@
 # Standard: knowledge/development/standards/ci-gates.md · Runbook: knowledge/development/runbooks/ci-and-build.md
 # Every gate below has a failing run proving it catches a violation: `make ci-proof` (part of `make ci`).
 
-.PHONY: ci gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-oracles-windows fitness-oracles-lab fitness-fuzz-nightly fitness-nightly build build-web web-install ci-proof
+.PHONY: ci gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-oracles-windows fitness-oracles-lab fitness-fuzz-nightly fitness-nightly build build-web web-install ci-proof
 
 ci: lint gen-check test fitness build secrets-scan lab-test-unit ci-proof ## Everything a merge needs: lint, generated-code freshness, tests, fitness functions (incl. the ADR-0001 build matrix), web build, secret scan, gate proofs
 	@echo "make ci: passed"
@@ -41,7 +41,7 @@ test-go:
 test-web: web-install
 	npm --prefix web run --silent test
 
-fitness: fitness-stack fitness-tenancy fitness-proto fitness-safeprim fitness-corpus fitness-oracles ## Architecture fitness functions: fitness-modules (blueprint §2 import rules), fitness-stack (ADR-0001 F1-F5), fitness-tenancy (ADR-0002 T1-T5), fitness-proto (connector contract compiles and keeps its rules) fitness-safeprim (safe-primitives FF-SP1-3), fitness-corpus (FF-SP4, FF-SP5 declarations, FF-SP8) and fitness-oracles (FF-SP6 on Linux)
+fitness: fitness-stack fitness-tenancy fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles ## Architecture fitness functions: fitness-modules (blueprint §2 import rules), fitness-stack (ADR-0001 F1-F5), fitness-tenancy (ADR-0002 T1-T5), fitness-profiles (ADR-0002 P1, P7, U1, U2 and the activation table), fitness-proto (connector contract compiles and keeps its rules) fitness-safeprim (safe-primitives FF-SP1-3), fitness-corpus (FF-SP4, FF-SP5 declarations, FF-SP8) and fitness-oracles (FF-SP6 on Linux)
 	go run ./tools/fitness/modules
 
 fitness-stack: ## ADR-0001: language zones, cgo-free cross-build, one stateful service, licence register, exceptions cite an ADR
@@ -49,6 +49,9 @@ fitness-stack: ## ADR-0001: language zones, cgo-free cross-build, one stateful s
 
 fitness-tenancy: ## ADR-0002 T1-T5 (and safe-primitives FF-SP7): migration 1, catalog, roles, isolation probes, static rules, against PostgreSQL 16 and 18 containers (needs Docker)
 	go run ./tools/fitness/tenancy
+
+fitness-profiles: ## T-0038, ADR-0002: P1 composition boundary, P7 branch policy, U1 UEM independence, U2 extractable platform root, and the activation table (P2-P6, U3, U4 become mandatory the moment their subject lands)
+	go run ./tools/fitness/profiles
 
 fitness-proto: ## T-0064: every proto/ file compiles (pure Go, no protoc) and the connector contract keeps its structural rules P1-P7
 	go run ./tools/fitness/proto proto

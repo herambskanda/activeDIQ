@@ -253,7 +253,9 @@
       "reason": "raw-string query builder: all database access is pgx and sqlc"
     }
   ],
-  "denylistExtends": [],
+  "denylistExtends": [
+    "tools/fitness/profiles/uem-denylist.json"
+  ],
   "exceptions": {
     "platformAdapters": [],
     "sidecars": [],

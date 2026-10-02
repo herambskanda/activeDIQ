@@ -1,0 +1,12 @@
+{
+  "denylist": [
+    {
+      "prefix": "github.com/herambskanda/patchiq",
+      "reason": "PatchIQ: the abandoned predecessor; activeDIQ is standalone from UEM and PatchIQ (ADR-0002 U1, D-0003); ported salvage is copied with its source named in the commit, never imported"
+    },
+    {
+      "prefix": "github.com/skenzeriq/uem",
+      "reason": "UEM, the sister product (provisional module path; replace with the real one when UEM's go.mod exists): activeDIQ links no UEM module (ADR-0002 U1, D-0003); the shared agent is a proto contract, not a Go import"
+    }
+  ]
+}
