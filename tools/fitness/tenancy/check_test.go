@@ -283,6 +283,57 @@ func TestRoleAttributes(t *testing.T) {
 	}
 }
 
+// A membership that cannot inherit still lets the runtime role SET ROLE (T-0186): T3 must treat any
+// membership, whatever its INHERIT or SET option, as a breach. WITH INHERIT FALSE needs PostgreSQL 16.
+func TestRoleMembershipWithoutInherit(t *testing.T) {
+	cases := []struct {
+		name  string
+		boot  []string
+		undo  []string
+		named string
+	}{
+		{"owner_role", []string{`GRANT %1$I TO %2$I WITH INHERIT FALSE`}, []string{`REVOKE %1$I FROM %2$I`}, "activediq_owner"},
+		{"superuser_role",
+			[]string{`DO $$ BEGIN CREATE ROLE t3_super SUPERUSER NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$`, `GRANT t3_super TO %2$I WITH INHERIT FALSE`},
+			[]string{`DROP ROLE t3_super`}, "t3_super"},
+		{"bypassrls_role",
+			[]string{`DO $$ BEGIN CREATE ROLE t3_bypass BYPASSRLS NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$`, `GRANT t3_bypass TO %2$I WITH INHERIT FALSE`},
+			[]string{`DROP ROLE t3_bypass`}, "t3_bypass"},
+		{"indirect_superuser_role", // app -> t3_mid (no inherit) -> t3_top (superuser)
+			[]string{`DO $$ BEGIN CREATE ROLE t3_top SUPERUSER NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$`, `DO $$ BEGIN CREATE ROLE t3_mid NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$`, `GRANT t3_top TO t3_mid`, `GRANT t3_mid TO %2$I WITH INHERIT FALSE`},
+			[]string{`DROP ROLE t3_mid`, `DROP ROLE t3_top`}, "t3_top"},
+		{"object_owning_role",
+			[]string{`DO $$ BEGIN CREATE ROLE t3_owns NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$`, `CREATE TYPE public.t3_owned AS ENUM ('a')`, `ALTER TYPE public.t3_owned OWNER TO t3_owns`, `GRANT t3_owns TO %2$I WITH INHERIT FALSE`},
+			[]string{`DROP ROLE t3_owns`}, "t3_owns"},
+		{"predefined_program", []string{`GRANT pg_execute_server_program TO %2$I WITH INHERIT FALSE`}, []string{`REVOKE pg_execute_server_program FROM %2$I`}, "pg_execute_server_program"},
+		{"predefined_read_files", []string{`GRANT pg_read_server_files TO %2$I`}, []string{`REVOKE pg_read_server_files FROM %2$I`}, "pg_read_server_files"},
+		{"predefined_write_files", []string{`GRANT pg_write_server_files TO %2$I`}, []string{`REVOKE pg_write_server_files FROM %2$I`}, "pg_write_server_files"},
+	}
+	for _, ver := range []string{"16", "18"} {
+		for _, c := range cases {
+			t.Run("pg"+ver+"/"+c.name, func(t *testing.T) {
+				f := fixture{migrations: pair(t, "good/0002_app_items.sql"), checks: "T1,T3", bootstrap: c.boot, reset: c.undo}
+				vs, _ := f.run(t, ver)
+				want(t, vs, "T3", "role-membership", c.named)
+			})
+		}
+	}
+}
+
+// TEMPORARY on the product database, granted directly, is a breach (the bootstrap withholds it from PUBLIC).
+func TestRuntimeTemporary(t *testing.T) {
+	for _, ver := range []string{"16", "18"} {
+		t.Run("pg"+ver, func(t *testing.T) {
+			f := fixture{
+				migrations: pair(t, "good/0002_app_items.sql"), checks: "T1,T3",
+				bootstrap: []string{`DO $$ BEGIN EXECUTE format('GRANT TEMPORARY ON DATABASE %%I TO %%I', current_database(), %2$L); END $$`},
+			}
+			vs, _ := f.run(t, ver)
+			want(t, vs, "T3", "runtime-temporary", "fit_")
+		})
+	}
+}
+
 // TestT1 covers the migration-1 rules.
 func TestT1(t *testing.T) {
 	cases := []struct{ dir, rule string }{
