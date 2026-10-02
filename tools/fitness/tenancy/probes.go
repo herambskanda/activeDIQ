@@ -135,12 +135,12 @@ func checkT4(ctx context.Context, d *Database, m *catalogModel, reg *registry.Re
 		}
 	}
 
-	app, err := d.app(ctx)
+	app, err := d.App(ctx)
 	if err != nil {
 		return nil, 0, err
 	}
 	defer app.Close(ctx)
-	fresh, err := d.app(ctx) // a connection that has never had a tenant set: SQL-19
+	fresh, err := d.App(ctx) // a connection that has never had a tenant set: SQL-19
 	if err != nil {
 		return nil, 0, err
 	}
@@ -405,7 +405,7 @@ var leakIsLocal = true
 // probeSessionLeak is SQL-14: after a transaction that set app.tenant_id with set_config(..., true)
 // commits (and after one that rolls back), the same connection shows no tenant.
 func probeSessionLeak(ctx context.Context, d *Database) ([]Violation, error) {
-	c, err := d.app(ctx)
+	c, err := d.App(ctx)
 	if err != nil {
 		return nil, err
 	}

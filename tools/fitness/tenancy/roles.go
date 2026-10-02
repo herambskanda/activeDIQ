@@ -26,7 +26,7 @@ const ownedHere = `(s.dbid = (SELECT oid FROM pg_database WHERE datname = curren
 func checkT3(ctx context.Context, d *Database, m *catalogModel) ([]Violation, error) {
 	var vs []Violation
 	add := func(rule, where, msg string) { vs = append(vs, Violation{"T3", rule, where, msg}) }
-	app, owner := d.s.appRole, d.s.ownerRole
+	app, owner := d.Server().AppRole(), d.Server().OwnerRole()
 	if app == owner {
 		add("roles-distinct", app, "migrations and the runtime use the same role")
 	}

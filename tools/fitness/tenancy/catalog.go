@@ -49,7 +49,7 @@ func (m *catalogModel) tenantTable(oid uint32) bool {
 // catalogConn opens a superuser connection with an empty search_path, so every name the catalog prints
 // is schema-qualified and matches what the registry holds.
 func catalogConn(ctx context.Context, d *Database) (*pgx.Conn, error) {
-	c, err := d.admin(ctx)
+	c, err := d.Admin(ctx)
 	if err != nil {
 		return nil, err
 	}

@@ -13,6 +13,9 @@ sources_last_checked: 2026-10-02
 The job that enforces [ADR-0002](../decisions/0002-deployment-model.md) (tenancy from migration 1) and
 safe-primitives FF-SP7 ([safe-primitives.md](safe-primitives.md) §8) in `make ci`. One implementation.
 Code: `tools/fitness/tenancy/` (checks T1–T4, the CLI) and `tools/fitness/tenancy/static/` (T5).
+The throw-away PostgreSQL harness (image pins, role bootstrap, migration runner) lives in
+`tools/fitness/pgharness/`, shared with [fitness-domain-keys](domain-keys-fitness.md) (T-0050); the
+bootstrap contract below is defined there.
 
 ```
 make fitness-tenancy                 # = go run ./tools/fitness/tenancy
