@@ -6,9 +6,11 @@ will switch for **feature parity + meaningful enhancements + a far better experi
 
 ## Current stage
 
-Pre-implementation. Market research is in `knowledge/business/` (draft). The operating model is in
-place. Waiting on CEO direction for v1 scope, deployment model and platform strategy — see the
-Factory Board. **Product code starts only after the stack/deployment ADR is ratified.**
+Pre-implementation (milestone M1 "Foundation & direction"). Research and strategy are in
+`knowledge/business/` (draft). The CEO has set direction: v1 replaces ADManager Plus (plus Entra/M365
+provisioning), self-hosted first and SaaS-ready, standalone from UEM, five signature enhancements —
+see `knowledge/memory/decisions-log.md`. **Product code starts only after ADR-0001 (stack) and
+ADR-0002 (deployment) are ratified.**
 
 ## You are inside a code factory
 
