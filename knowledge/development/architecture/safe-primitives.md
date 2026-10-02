@@ -2,7 +2,7 @@
 title: "Safe primitives: LDAP filters, DNs, attribute codecs, command invocation, SQL"
 date: 2026-10-02
 updated: 2026-10-02
-status: draft
+status: review
 owner: heramb
 ticket: T-0005
 sources_last_checked: 2026-10-02
@@ -21,13 +21,16 @@ command injection; `build-feasibility/ad-technical-feasibility.md` §2.2, §2.7)
 outputs backslashes are literal. In tables `\|` is a literal `|`. "Error `X`" means a typed error
 with stable code `X`; nothing is sent to a DC, interpreter or database.
 
-| # | Primitive (provisional name) | Bans | Tiers (ADR-0001 proposed) | Implementer | § |
+| # | Primitive (provisional name) | Bans | Tiers (ADR-0001, ratified; matrix in §2) | Implementer | § |
 | --- | --- | --- | --- | --- | --- |
 | P1 | `ldapfilter`: filter AST, canonical renderer, admin-filter parser | string-built filters; library filter compilation of user input | S, A | directory-engineer | 3 |
 | P2 | `dn`: DN parse/build/compare; `ObjectRef` (`<GUID=…>`, `<SID=…>`) | `"CN="+name+","+parent`; `HasSuffix(dn, ou)` scope checks | S, A | directory-engineer | 4 |
 | P3 | `attr`: codecs for GUID, SID, FILETIME/Interval, Generalized Time, flag integers (UAC, computed UAC, groupType), `unicodePwd` + `Secret` | ad-hoc byte/int parsing, bit maths in feature code, raw attribute access | S, A; `Secret` and any codec it parses also in N | directory-engineer | 5 |
 | P4 | `psx` typed PowerShell operations · `pslit` display quoting · `proc` native process runner | script text with data, `-Command`, `-EncodedCommand`, shells, `.bat`/`.cmd` | S, A, X | backend-engineer (`psx`, `proc`), windows-engineer (sidecar host) | 6 |
 | P5 | SQL access: generated queries, tenant context, report compiler, LIKE patterns | `Sprintf`/concatenated SQL, session-level `SET` | S | backend-engineer | 7 |
+
+Tier W (web console) implements **no** primitive and tier L (lab and tools) is exempt from the
+literal-shape ban but never imported by product code — both rules are in §2.1.
 
 Every ticket that implements or changes a primitive is tagged `security-sensitive`
 (`.claude/skills/security-baseline/SKILL.md` §1). Out of scope here: security descriptors (T-0028),
@@ -42,14 +45,22 @@ output encoders for CSV/XLSX/HTML (T-0029), XML/SAML, JWT and randomness (feasib
   no `Raw(…)` escape hatch outside test files.
 - **R3 Reject, never repair.** Invalid UTF-8, unpaired surrogates, NUL in strings, out-of-range numbers
   and non-canonical forms in strict mode are typed errors. Never substitute U+FFFD, trim, truncate or
-  clamp silently: a repaired password or name is a different value.
+  clamp silently: a repaired password or name is a different value. **This holds at the JSON boundary
+  too.** Go's `encoding/json` (v1) does *not* reject bad input: "invalid UTF-8 or invalid UTF-16
+  surrogate pairs … are replaced by the Unicode replacement character U+FFFD"
+  ([encoding/json][go-json]). A primitive would therefore never see the bad bytes. The API layer
+  decodes with a strict decoder: `encoding/json/v2` errors on invalid UTF-8 unless `AllowInvalidUTF8`
+  is set ([go-json]), or the raw body is validated first. `Secret` decodes its own JSON (§5.6). Vector:
+  PW-16.
 - **R4 No Unicode normalisation.** Primitives send exactly the scalar values they were given; AD
   stores what it receives.
 - **R5 Bounded.** Every parser caps input size, nesting depth and element count. Caps are named
   constants; values below are provisional until load tests.
 - **R6 Errors** carry a stable code and at most a 64-char, log-escaped excerpt of non-secret input.
-- **R7 Secrets** use the `Secret` type (§5.6): redacted formatting, no serialisation, zeroised after use,
-  never in errors, logs, audit details or telemetry.
+- **R7 Secrets** use the `Secret` type (§5.6). It formats as redacted and cannot be serialised. We
+  zero the buffers we own on a best-effort basis; §5.6 lists the copies we cannot zero. A secret never
+  appears in errors, logs, audit details, telemetry, URLs (path or query, and so access logs), crash
+  or core dumps, heap profiles, the sync store or any cache.
 - **R8 One corpus.** Every vector in this document is also a machine-readable record (§8). Every
   implementation of a primitive, in any tier, runs the records for it in CI.
 - **R9 The DC is the authority on AD semantics.** AD compares Unicode strings with sort keys built
@@ -59,11 +70,45 @@ output encoders for CSV/XLSX/HTML (T-0029), XML/SAML, JWT and randomness (feasib
 
 ## 2. Stack binding
 
-Decided here, whatever ADR-0001 says: the semantics, escaping rules, error codes, vectors, corpus
-format and the *meaning* of each lint rule. Bound by ADR-0001 (status `proposed` at time of writing):
-package paths, library choice, concrete lint tools and which tiers implement what. §10 lists exactly
-what changes when it is ratified. API sketches below use neutral pseudo-signatures; Go and C# names
-appear only as illustrations of the proposed stack.
+This document decides, independent of the stack, the semantics, escaping rules, error codes,
+vectors, corpus format and the *meaning* of each lint rule. ADR-0001 is **ratified**
+(D-0006, 2026-10-02; `knowledge/development/decisions/0001-technology-stack.md`) and binds the
+library choice, the concrete lint tools and which tiers implement what. Package paths stay
+provisional until T-0004 fixes the zone roots. API sketches use neutral pseudo-signatures; Go, C#
+and TypeScript names illustrate the ratified stack. §10 lists what changes if ADR-0001 is amended.
+
+| Tier (ADR-0001) | P1 filter | P2 DN / ObjectRef | P3 codecs, `Secret` | P4 command | P5 SQL |
+| --- | --- | --- | --- | --- | --- |
+| **S** server (Go) | implements | implements | implements | `psx` client, `pslit`, `proc` | implements |
+| **A** host agents (Go) | implements (same package) | implements | implements | `proc`; `psx` client only if a sidecar is declared | — |
+| **N** in-process DLLs (Rust) | — | — | `Secret` and only the codecs whose input it parses | none; process creation banned | — |
+| **X** sidecars (.NET + PowerShell) | consumes `FilterString` only | consumes GUIDs only | `SecureString` built from `Secret` bytes (§6.1) | `psx` host | — |
+| **W** web console (TypeScript) | **none**: shows the server's AST and rendered text | **none**: shows the server's `rdns` | **none**: shows server strings | **none**: shows `DisplayOnlyPowerShell` | none |
+| **L** lab and tools (Go, Python, PowerShell) | may hand-build hostile input | may hand-build hostile input | may hand-build hostile input | may hand-build hostile input | may hand-build hostile input |
+
+### 2.1 Tier W and tier L
+
+**Tier W never parses, builds or escapes filter, DN, PowerShell or SQL text.** The console is where a
+second copy would appear first: an OU picker splitting DNs on `,`, a TypeScript escaper for filter
+previews, a "PowerShell equivalent" panel quoted with `replace(/'/g, "''")`. That last one is
+PatchIQ's bug, pasted into a Domain Admin's elevated shell (PSQ-06). The API contract therefore
+carries only server-built values:
+
+| Kind | API returns (server → web) | API accepts (web → server) |
+| --- | --- | --- |
+| Object | `{guid, dn, rdns: [{type, value}]}`. `dn` is for display only. `rdns` are unescaped values rendered by P2 for breadcrumbs. | `guid` only (`GUIDRef`). Never a DN string. |
+| Filter | `{ast, text}`. The AST is JSON; `text` is the canonical P1 rendering, for display. | a filter AST (validated as P1 `Filter` input), or `{adminText}`, opaque text that goes to `ParseAdminFilter` |
+| PowerShell | `DisplayOnlyPowerShell` rendered by Go `pslit` (§6.2) | nothing. The web never sends script text. |
+| SQL | nothing; report definitions are ASTs (§7 rule 3) | a report AST |
+
+Web code renders these values as text through React's default escaping. HTML/CSV encoders are T-0029.
+FF-SP3 covers `web/` (§8).
+
+**Tier L** (`lab/`, `tools/`) may build hostile inputs by hand: that is how corpora, fuzz seeds and
+attack replays are made. It is exempt from FF-SP3. It is never imported by product code. ADR-0001 F1
+keeps its Python and PowerShell out of product zones, and FF-SP1 adds an import rule: no product Go
+package imports `lab/…` or `tools/…`, except that the fitness tool itself lives in `tools/`. Lab TLS
+uses a lab CA, so tier L needs no exemption from the TLS bans in FF-SP2.
 
 ## 3. P1 — LDAP filter builder and admin-filter parser
 
@@ -85,8 +130,13 @@ BitAnd(a, mask:uint32)  BitOr(a, mask:uint32)
 InChain(a: DN-syntax link attr, d: DN)   // marked Expensive; caller opts in
 Render(f) -> FilterString                // the only producer of FilterString
 ParseAdminFilter(s, caller, limits) -> Filter | Error
-connector.Search(base: ObjectRef, scope, filter: Filter, attrs: AttrName[])   // never a string
+ParseFilterAST(json, caller, limits) -> Filter | Error   // the tier-W wire form (§2.1); same rules
+scope.ScopedSearch(d: Delegation, f: Filter, attrs: AttrName[], page) -> AuthorisedPage   // the only search feature code can call (§3.6)
+scope.ReadSecret(ref: GUIDRef, a: SecretAttr, g: SecretReadGrant, c: SecureConn) -> Secret // §3.7
 ```
+
+There is no public `Search(base, …)`. The raw connector search is internal to the `scope` package
+(§3.6), so a feature cannot choose a base, a control or a port.
 
 ### 3.2 Canonical rendering
 
@@ -117,22 +167,26 @@ Per [RFC 4515 §3][rfc4515] and [Microsoft's filter syntax][ms-filter]:
 6. **Matching rules** limited to bit AND `…803`, bit OR `…804`, `LDAP_MATCHING_RULE_IN_CHAIN` `…1941`
    ([ms-filter]). `:dn:` and any other OID in admin filters → error. `InChain` is expensive on large
    estates (gotcha 9).
-7. **Confidential and secret attributes** — `searchFlags` bit 0x80 fCONFIDENTIAL ([searchFlags][searchflags])
-   plus our secret list (`ms-Mcs-AdmPwd`, `msLAPS-Password`, `msLAPS-EncryptedPassword`,
-   `msFVE-RecoveryPassword`, `unicodePwd`) — are refused in admin filters and allowed in code only as
-   `Present()` behind an explicit capability. Reason: AD enforces confidentiality against the *bound*
-   identity, which is our service account. A help-desk user's `(ms-Mcs-AdmPwd=a*)` would otherwise turn
-   result counts into a LAPS-password oracle.
-8. **Delegation scope composes on the AST:** `And(scope, userFilter)`. Search base and scope come from
-   the delegation, never from the filter. The filter only narrows; authorisation is still checked on
-   every target object (security-baseline §7).
+7. **Secret attributes** (the set `SecretAttrs`, defined in §3.7: schema-flagged and listed) are
+   refused in admin filters and in sort and VLV keys. They never appear in the `attrs` of a general
+   search. Code may use them only as `Present()` behind a `SecretPresenceGrant`, or read one value
+   through `ReadSecret`. Reason: AD enforces confidentiality against the *bound* identity, which is
+   our service account. A help-desk user's `(ms-Mcs-AdmPwd=a*)` would otherwise turn result counts into
+   a LAPS-password oracle, and a server-side sort on the attribute would turn result order into one.
+8. **Delegation scope is structural.** Feature code calls only `ScopedSearch(delegation, filter,
+   attrs)`. The base is the delegation root's `GUIDRef`; the scope, controls, port and referral
+   policy are fixed inside the `scope` package (§3.6). The filter composes as `And(scopeFilter,
+   userFilter)` and only narrows. Authorisation is still checked on every returned object, and
+   counts and pages are computed after that check (security-baseline §7).
 9. **Limits (provisional):** value ≤ 16 KiB; rendered filter ≤ 64 KiB; depth ≤ 32; ≤ 512 nodes; `Or`
    fan-out ≤ 256 (batch larger sets).
 
 **Admin-supplied filters** (custom reports, saved searches) are parsed strictly by the RFC 4515
 grammar, the whole input must be consumed, rules 1–9 apply, and the *canonical re-rendering* is what
 is sent — never the original text. Saved searches store the AST and are re-validated at run time
-(schema and the caller's rights may have changed).
+(schema and the caller's rights may have changed). A DN-valued assertion in an admin filter (e.g.
+`(memberOf=…)`, `InChain`) is resolved to an object the caller may read. Otherwise the result count
+reveals whether an out-of-scope DN exists (LF-36).
 
 ### 3.4 Hostile vectors
 
@@ -167,6 +221,17 @@ is sent — never the original text. Saved searches store the AST and are re-val
 | LF-27 | `And(Eq(sAMAccountType, 805306368), ParseAdminFilter("(\|(cn=*)(objectClass=*))"))` | `(&(sAMAccountType=805306368)(\|(cn=*)(objectClass=*)))` | scope only narrows |
 | LF-28 | `Eq(cn, 20 000-char string)` | error `ValueTooLong` | R5 |
 | LF-29 | `Or()` | error `EmptyComposite` | `(\|)` is RFC 4526 absolute-false; never emitted |
+| LF-30 | a feature package builds a search with control `1.2.840.113556.1.4.1504` (ASQ) | build error (FF-SP1/FF-SP2): the raw search is not importable; `ScopedSearch` has no control parameter | ASQ follows a DN attribute out of the base (§3.6) |
+| LF-31 | `ScopedSearch` whose delegation root GUID now resolves to a deleted object | error `DelegationRootGone`; no fallback to the domain root | a deleted OU must not widen scope |
+| LF-32 | DC answers a scoped search with a continuation reference | error `UnexpectedReferral`; not followed; no partial page returned as complete | referral chasing is off (§3.6) |
+| LF-33 | `ScopedSearch` on a connection to the GC (3268/3269) | error `GCNotAllowed` | the GC spans every domain |
+| LF-34 | `ParseAdminFilter("(msLAPS-EncryptedPasswordHistory=*)")` · `("(msTPM-OwnerInformation=*)")` | error `ForbiddenAttribute` | presence on a secret attribute is a grant, not a filter |
+| LF-35 | sort key `ms-Mcs-AdmPwd` · VLV target on `msFVE-RecoveryPassword` | error `ForbiddenSortKey` | ordering oracle |
+| LF-36 | admin filter `(memberOf=CN=Project X,OU=Restricted,DC=corp,DC=example)`; the caller cannot read that group | error `ReferencedObjectNotReadable`, not an empty result | existence oracle |
+| LF-37 | `ScopedSearch(attrs: [unicodePwd])` · `[msDS-ManagedPassword]` | error `SecretInGeneralSearch` | secrets only via `ReadSecret` |
+| LF-38 | lab, schema-driven: for **every** `attributeSchema` with `searchFlags` & (0x80 \| 0x200 \| 0x1000), including a seeded custom attribute flagged 0x200 only | `ParseAdminFilter("(<attr>=*)")` → `ForbiddenAttribute`; `ScopedSearch` attrs → `SecretInGeneralSearch`; sort → `ForbiddenSortKey` | schema-driven set (§3.7) |
+| LF-39 | paged `ScopedSearch`: DC returns 1 000 entries, 3 fail per-object authorisation | page holds 997; the reported count is the post-authorisation count; no DC estimate surfaces | counts after authorisation |
+| LF-40 | saved search requests show-deleted `…417` or show-recycled `…2064` | error `ControlNotAllowed`; only the named operation `RecycleBinBrowse` sets them | deleted objects live outside every OU |
 
 ### 3.5 Lint / fitness rule (bans the unsafe alternative)
 
@@ -177,6 +242,94 @@ is sent — never the original text. Saved searches store the AST and are re-val
   `SearchRequest` constructors of `System.DirectoryServices.Protocols` (BannedApiAnalyzers).
 - Literal-shape scanner (FF-SP3): string literals containing `(&(`, `(|(`, `(objectClass=`,
   `(sAMAccountName=` or `:1.2.840.113556.1.4.` outside `ldapfilter` and tests fail the build.
+- Raw search, control constructors and the GC port are confined to `scope` and the connector
+  (FF-SP1). In go-ldap that means `Conn.Search`, `SearchWithPaging`, `NewSearchRequest`, `NewControl*`
+  and the literals `3268`/`3269`. The OID literal `1.2.840.113556.1.4.1504` and the other §3.6
+  escape-control OIDs may appear only in the named-operation table inside `scope` (LF-30).
+
+### 3.6 Scoped search: base, controls, referrals, Global Catalog
+
+A filter can only narrow results, but the request around it can widen them. Several AD controls
+and the GC port return objects outside the search base. The `scope` package therefore owns
+everything except the filter and the attribute list.
+
+- **Base and scope.** The base is the `GUIDRef` of a delegation root. A delegation with several
+  roots runs one search per root, and results are merged and de-duplicated by `objectGUID`. The
+  search scope never reaches above the root. If the root is deleted, the result is an error
+  (LF-31). A moved root is fine, because the GUID follows the object.
+- **Controls are a closed set per operation**, attached inside the connector. A general `ScopedSearch`
+  uses only:
+  - paged results `…319`;
+  - domain scope `…1339`, which "instructs the DC not to generate LDAP continuation references";
+  - extended DN `…529`, response-only;
+  - SD flags `…801`, only when the T-0028 primitive reads `nTSecurityDescriptor`.
+
+  OIDs and descriptions are from [MS-ADTS LDAP extended controls][adts-controls].
+- **Escape controls exist only in named internal operations.** Each named operation has its own
+  capability, audit event and security-architect review:
+
+| Control | OID | How it escapes an OU base | Only in |
+| --- | --- | --- | --- |
+| ASQ | 1.2.840.113556.1.4.1504 | the search runs "against the set of objects named by a specified attribute … on the base object", e.g. every `member` of a group, wherever they live | `GroupMembersExpand`, with per-member authorisation |
+| Search options (phantom root) | 1.2.840.113556.1.4.1340 | searches "all NC replicas that are subordinate to the search base, even if the search base is not instantiated on the DC" | `ForestWideLookup` |
+| Show deleted | 1.2.840.113556.1.4.417 | tombstones and deleted objects become visible; they sit in `CN=Deleted Objects`, outside every OU | `RecycleBinBrowse`, `RestoreDeleted` |
+| Show recycled | 1.2.840.113556.1.4.2064 | adds recycled objects | same |
+| Show deactivated link | 1.2.840.113556.1.4.2065 | link values that point to deleted objects | `RestoreDeleted` |
+| DirSync / DirSync EX | 1.2.840.113556.1.4.841 / …2090 | returns changes across the whole NC, and changes how confidential attributes are returned ([search flags][adts-searchflags]) | `ChangeTracking` (sync engine), which strips `SecretAttrs` before storage |
+| Server-side sort / VLV | 1.2.840.113556.1.4.473 / 2.16.840.1.113730.3.4.9 | the order of results reveals the sort attribute; VLV `contentCount` is computed before our per-object authorisation | internal paging only; never with a `SecretAttrs` key (LF-35) |
+
+  Modify, delete and modify-DN follow the same rule. Tree delete `…805`, cross-domain move `…521`,
+  set owner `…2255`, lazy commit `…619` and bypass quota `…2256` are allowed only in named operations.
+- **Referrals are never chased.** A continuation reference or referral in a response is an error
+  (LF-32). It is never followed, and the page is never returned as complete, because a silently
+  partial result is a wrong number. Other domains are reached through connections the admin
+  configured per domain. Trusts are explicit inventory, never discovered by following referrals.
+- **The Global Catalog** holds a partial attribute set for every domain in the forest, so a search
+  there escapes every domain-level delegation. GC connections exist only for named forest-wide
+  operations: `ForestWideLookup` resolves a SID or UPN to its domain, or reads universal-group
+  membership. Before any display or authorisation decision, the result is re-read from a DC of the
+  owning domain.
+- **Counts and pages are computed after per-object authorisation** (LF-39). DC-side estimates are
+  never shown.
+
+### 3.7 Secret attributes: the set, presence grants, `ReadSecret`
+
+`SecretAttrs` is computed at connect and on every schema-cache refresh. It is the union of:
+
+- **Schema-flagged attributes:** every `attributeSchema` whose `searchFlags` has fCONFIDENTIAL
+  `0x80`, fRODCFilteredAttribute `0x200` (member of the RODC filtered attribute set) or
+  fPARTITIONSECRET `0x1000` ([MS-ADTS search flags][adts-searchflags]). The filtered attribute set
+  is where Microsoft and administrators put attributes that must not reach an RODC. For example,
+  `msFVE-KeyPackage` and `msTPM-OwnerInformation` ship with `searchFlags` `0x298`, which is
+  0x200 | 0x80 | 0x10 | 0x8 ([msFVE-KeyPackage][a-fvekp], [msTPM-OwnerInformation][a-tpmoi]).
+- **A static list**, for attributes an estate may not flag: `unicodePwd`, `dBCSPwd`, `ntPwdHistory`,
+  `lmPwdHistory`, `supplementalCredentials`, `userPassword`, `unixUserPassword`, `msDS-ManagedPassword`,
+  `ms-Mcs-AdmPwd`, `msLAPS-Password`, `msLAPS-EncryptedPassword`, `msLAPS-EncryptedPasswordHistory`,
+  `msLAPS-EncryptedDSRMPassword`, `msLAPS-EncryptedDSRMPasswordHistory` ([Windows LAPS schema][laps-schema]),
+  `msFVE-RecoveryPassword`, `msFVE-KeyPackage`, `msTPM-OwnerInformation`, `msPKIAccountCredentials`,
+  `msPKIDPAPIMasterKeys`. Display names not in a given forest's schema are ignored. The flags of
+  `userPassword` and `unixUserPassword` vary by estate `[UNVERIFIED — lab]`; they are listed regardless.
+- **Minus a reviewed exemption list**, which starts empty. An estate whose filtered attribute set
+  contains a non-secret attribute that a feature needs gets a per-attribute entry. The entry records
+  a reason and needs security-architect review.
+
+Uses:
+
+- **General searches never carry them**: filters (LF-22, LF-34), `attrs` (LF-37), sort and VLV keys
+  (LF-35). The lab check LF-38 enumerates the schema, so a newly flagged attribute is covered
+  without a code change.
+- **`Present(a)` requires a `SecretPresenceGrant`.** This is the "explicit capability". The
+  authorisation layer mints it for one request, for (actor, delegation, attribute, operation), when
+  the actor's role holds the activeDIQ permission `secret.presence:<attribute>`. Example: a report
+  answering "is a BitLocker recovery key escrowed?" or "is a LAPS password set?". The grant cannot
+  be serialised. Each use writes an activeDIQ audit event with the actor, attribute, delegation,
+  operation and the number of objects matched — never values.
+- **`ReadSecret(GUIDRef, SecretAttr, SecretReadGrant, SecureConn) -> Secret`** performs a base-scope
+  read of one object. The grant is minted for (actor, target GUID, attribute) after per-object
+  authorisation and any re-authentication the owning feature's spec demands. Every call is audited:
+  actor, target GUID, attribute, reason and outcome. The result is a `Secret` (§5.6). It is never
+  cached, never written to the sync store or snapshots, and never part of a general API response.
+  Only the owning feature's reveal endpoint returns it.
 
 ## 4. P2 — DN parser/builder and object references
 
@@ -279,8 +432,12 @@ Builder, parent `P` = `OU=Staff,DC=corp,DC=example`; outputs omit `,` + `P` for 
 ### 4.6 Lint / fitness rule
 
 Banned outside `dn`: the library's DN parser and escaper (go-ldap `ParseDN`, `EscapeDN`); string
-operations (`HasSuffix`, `HasPrefix`, `Contains`, `EqualFold`, `Split`) on `DNString` values (custom
-analyzer); `dn.Equal`/`IsDescendantOf` from authorisation packages (import rule). Literal-shape
+operations (`HasSuffix`, `HasPrefix`, `Contains`, `EqualFold`, `Split`) on `DNString` values;
+`dn.Equal`/`IsDescendantOf` from authorisation packages (import rule). forbidigo matches names and
+cannot see types, so the `DNString` rule is a **go/analysis pass**, `dnstring`, in the fitness tool
+(T-0033). It reports any conversion `string(x)` where `x` has type `dn.DNString` outside `dn` and the
+connector, and any `DNString` passed to a `strings` or `bytes` function. `DNString` offers
+`Display()` for UI text; the analyzer allows that call only in response-mapping code. Literal-shape
 scanner: `"CN="`, `",OU="`, `",DC="` in literals joined by `+` or `Sprintf`/`string.Format` outside
 `dn` and tests. Well-known containers are parsed constants inside `dn`.
 
@@ -316,6 +473,11 @@ dashed; Data1/2/3 little-endian in the octet string, [MS-DTYP 2.3.4][dtyp-guid])
 | GUID-09 | `04030201-0605-0807-090a-0b0c0d0e0f10>,CN=x` | error `BadFormat` | ObjectRef injection |
 | GUID-10 | valid text + `\x00` or trailing space | error `BadFormat` | |
 | GUID-11 | `ObjectRef` of GUID-01 | `<GUID=0102030405060708090a0b0c0d0e0f10>` | hex form all DCs accept ([adts-altdn]) |
+| GUID-12 | `04030201‐0605‐0807‐090a‐0b0c0d0e0f10` (U+2010 hyphens) · same with U+FF0D | error `BadFormat` | look-alike dashes from pasted documents |
+| GUID-13 | `{04030201-0605-0807-090a-0b0c0d0e0f10` · `04030201-0605-0807-090a-0b0c0d0e0f10}` | error `BadFormat` | unbalanced braces |
+| GUID-14 | `04030201-0605-0807-090a-0b0c0d0e0f1*` · `*` | error `BadFormat` | filter wildcard smuggled as an id |
+| GUID-15 | `urn:uuid:04030201-0605-0807-090a-0b0c0d0e0f10` · `<GUID=04030201…>` to `GUID.Parse` | error `BadFormat` | only the one text form; `ObjectRef.Parse` owns `<GUID=…>` |
+| GUID-16 | 1 MiB of hex digits and dashes | error `BadFormat` after reading at most 38 characters | R5; no allocation proportional to input |
 
 ### 5.2 SID (`objectSid`, `sIDHistory`, `tokenGroups`)
 
@@ -442,16 +604,79 @@ Types `UAC` (stored `userAccountControl`), `UACComputed` (`msDS-User-Account-Con
 
 ### 5.6 `unicodePwd` and the `Secret` type
 
-`Secret`: built from bytes (not a language string on GC runtimes, feasibility §2.5); formatting and
-logging print `[REDACTED]`; serialisation (JSON, protobuf) fails; zeroised after use; constant-time
-compare. Tier N (Rust) implements this type and nothing else of P3 unless it parses a codec's input.
+**`Secret`** is built from bytes, never from a language string on GC runtimes (feasibility §2.5).
+- Formatting and logging print `[REDACTED]`. JSON and protobuf marshalling fail. Comparison is
+  constant-time. No method returns a string. `Destroy()` zeroes the backing array.
+- `Secret.UnmarshalJSON(raw []byte)` decodes the JSON string token itself, escapes included, into a
+  fresh `[]byte`. It never goes through a Go `string` or through `encoding/json`'s string decoding,
+  which allocates an immutable string and substitutes U+FFFD (R3). It rejects NUL, invalid UTF-8
+  and unpaired `\uD800`-style escapes (PW-15, PW-16). A handler for a secret-bearing request reads
+  the body into a capped `[]byte` it owns, decodes it with `secretjson.Decode`, then zeroes it. It
+  never streams the body through `json.NewDecoder`.
 
-Encode only (AD never returns the attribute). Value = UTF-16LE of `"` + password + `"`; the quotes are
-not part of the password; admin reset = replace with one value; user change = delete old + add new in
-one modify; the DC requires 128-bit TLS or (WS2003+) 128-bit SASL encryption
-([MS-ADTS unicodePwd][adts-pwd]). `unicodePwd.Replace(s, conn: SecureConn)` and
-`unicodePwd.Change(old, new, conn: SecureConn)`; `SecureConn` is obtainable only from a TLS or sealed
-connection, so we fail before sending.
+**What "zeroised" can mean in Go.** We zero only buffers we own. These copies exist and we cannot
+zero them:
+1. `net/http`/`bufio` read buffers holding the request body, and `crypto/tls` record buffers on
+   receive and send.
+2. go-ldap / go-asn1-ber: the BER packet of the modify request (UTF-16LE value), then the TLS write
+   buffer.
+3. The Go runtime: stack growth copies goroutine stacks, `append` growth leaves old backing arrays,
+   and the GC frees memory without zeroing it promptly.
+4. The OS: swap or pagefile, the hibernation file, crash and core dumps.
+
+Mitigations:
+- One short call path: decode → encode → send → `Destroy`, with buffers pre-sized so `append`
+  never grows them.
+- Production builds have no `net/http/pprof` or `runtime/pprof` (FF-SP2).
+- `GOTRACEBACK` is never `crash`, which on Unix raises SIGABRT to produce a core dump
+  ([runtime env vars][go-runtime]).
+- On Linux the process sets `RLIMIT_CORE=0` and `PR_SET_DUMPABLE=0` at start ([prctl][prctl]).
+- On Windows the installer does not enable WER LocalDumps for our services. Whether other WER
+  settings still capture dumps is `[UNVERIFIED — Windows lab]`.
+
+**`runtime/secret`: evaluate it, never depend on it.** The package exists only when building with
+`GOEXPERIMENT=runtimesecret`; it is documented for go1.26 and go1.27. `secret.Do(f)` erases the
+registers and stack `f` used, and heap allocations once they become unreachable. Protection exists
+only on linux/amd64 and linux/arm64. Elsewhere, Windows included, `Do` simply runs `f`. The package
+is not covered by the Go 1 compatibility promise ([runtime/secret][go-secret]). It would protect only
+our Linux/Docker profile, and enabling it is a toolchain flag under ADR-0001's manifest. T-0007
+evaluates it.
+
+**Tier X never holds a secret in a `System.String`.** Secret bytes arrive in the stdin frame. The
+sidecar decodes them into a pinned `char[]`, builds `new SecureString(char*, int)`, calls
+`MakeReadOnly()`, then zeroes the `char[]` and the frame buffer. Microsoft recommends against
+`SecureString` for new development, and it is not encrypted on non-Windows platforms
+([SecureString][securestring]). We use it only because cmdlets take `SecureString`/`PSCredential`:
+it is a type boundary, not a protection.
+
+**Tier N** (Rust) implements `Secret`, plus a P3 codec only if it parses that codec's input.
+
+**`SecureConn`** is the proof that the connection carrying the bytes is encrypted and authenticated.
+It can be obtained only from:
+- **LDAPS** (636) with TLS 1.2 or later, the chain verified to the configured trust anchors, and the
+  hostname verified against the DC's FQDN from the inventory (`InventoryHost`, §6.3). No verify
+  callback that accepts. No fallback from LDAPS to StartTLS or to plain LDAP, ever.
+- **StartTLS** on 389, only if the StartTLS operation succeeds under the same verification. If it
+  fails, the connection fails.
+- **SASL GSSAPI with sealing** is accepted by the DC for `unicodePwd` ([adts-pwd]). Whether go-ldap
+  with go-krb5 negotiates the confidentiality layer is `[UNVERIFIED]` until spike T-0023 proves it.
+  Until then it is not a `SecureConn` source.
+
+A `SecureConn` is bound to one connection generation. After any reconnect it is stale (PW-17).
+Re-deriving it re-reads the TLS state: version, verified chains and server name. FF-SP2 bans:
+- Go: `InsecureSkipVerify: true`, and `VerifyPeerCertificate`/`VerifyConnection` outside the
+  TLS-config package;
+- .NET: `ServerCertificateCustomValidationCallback`, `RemoteCertificateValidationCallback` and
+  `LdapSessionOptions.VerifyServerCertificate`;
+- Rust: `danger_accept_invalid_certs` and `danger_accept_invalid_hostnames`.
+
+**`unicodePwd` is encode-only**, because AD never returns the attribute:
+- The value is the UTF-16LE of `"` + password + `"`; the quotes are not part of the password.
+- An admin reset replaces the attribute with one value. A user change deletes the old value and
+  adds the new one in one modify.
+- The DC requires 128-bit TLS or (WS2003+) 128-bit SASL encryption ([MS-ADTS unicodePwd][adts-pwd]).
+- API: `unicodePwd.Replace(s, conn: SecureConn)` and `unicodePwd.Change(old, new, conn: SecureConn)`.
+  Without a valid `SecureConn` we fail before sending.
 
 | ID | Input | Expected | Why |
 | --- | --- | --- | --- |
@@ -468,10 +693,17 @@ connection, so we fail before sending.
 | PW-11 | format/log/wrap a `Secret` in an error | `[REDACTED]`; JSON/protobuf → error `Unserializable` | R7 |
 | PW-12 | LDAP packet-debug logging on while the modify is built | impossible in production builds (lint); test asserts off | debug dumps carry the value |
 | PW-13 | DC answers 19/53 with `0000052D` | error `PolicyViolation` with DC diagnostic; request bytes never logged | gotcha 34 |
+| PW-14 | `"abc"` (quotes at both ends) | `22 00 22 00 61 00 62 00 63 00 22 00 22 00`; nothing stripped | inner quotes are data; DC result `[UNVERIFIED — lab]` as PW-04 |
+| PW-15 | JSON body `{"password":"a\u0000b"}` | error `NulInSecret` from `Secret.UnmarshalJSON` | the escape is decoded by us, then checked |
+| PW-16 | JSON body `{"password":"\ud800x"}` | error `InvalidUTF16` | `encoding/json` v1 would yield U+FFFD and set a password nobody typed (R3) |
+| PW-17 | connection drops and reconnects between `SecureConn` acquisition and the modify | error `SecureConnStale`; nothing sent until re-verified | re-checked on every send |
+| PW-18 | LDAPS to a DC whose certificate does not name its FQDN, or chains to no trust anchor | error `TLSVerificationFailed`; no retry on 389 plain or unverified StartTLS | no downgrade |
 
 **Lint.** The literal `"unicodePwd"`, UTF-16 encoders on secret material, and the LDAP library's
 debug switch (go-ldap `Conn.Debug`) are banned outside `attr`/connector; `Secret` has no
-string-conversion method to call.
+string-conversion method to call. A go/analysis pass, `secretjson`, reports any decode into a type
+containing `Secret` other than `secretjson.Decode`. FF-SP2 bans `net/http/pprof` and `runtime/pprof`
+outside `_test.go` and tier L, and bans the TLS-verification bypasses listed above.
 
 ## 6. P4 — Command invocation
 
@@ -516,16 +748,42 @@ Sidecar rules:
 3. **`-Identity` takes a `Guid`, never a user string.** AD cmdlets resolve an `-Identity` string as a
    DN, GUID, SID or sAMAccountName ([Get-ADUser][get-aduser]); an attacker-chosen string can resolve to
    a different object.
-4. Runspace from `InitialSessionState.CreateDefault2()` with only the op's modules, imported by full
-   path and pinned version. Run it in `NoLanguage` ("only native commands and cmdlets",
-   [language modes][ps-langmodes]) if the modules work there — `[UNVERIFIED]` for ExchangeOnlineManagement;
-   decide in the sidecar spike.
-5. Output is typed response fields, never formatted text. Secrets never reach output, errors or
-   logs; script block logging (4104) and transcription can be forced on by GPO ([about_Logging_Windows][ps-logging]).
+4. **Command resolution is pinned, never searched.** `AddCommand("Get-X")` resolves the name
+   through autoloading and `PSModulePath`, and `PSModulePath` may include directories that
+   non-admins can write. So:
+   - The runspace comes from `InitialSessionState.CreateDefault2()`.
+   - `$PSModuleAutoLoadingPreference = 'None'` is set as a session variable ("disables the automatic
+     importing of modules", [preference variables][ps-prefs]).
+   - The sidecar sets its own `PSModulePath` to the install directory's module folder (admin-only
+     ACL). It never inherits one (§6.3 environment rule).
+   - Each op's module is imported by full manifest path with a pinned version. The sidecar asserts
+     that the `PSModuleInfo` has the expected `Path` and `Version`.
+   - The op invokes the `CommandInfo` taken from that module's `ExportedCommands`, through the
+     `AddCommand(CommandInfo)` overload ([SMA AddCommand][sma]). It never passes a name string.
+   - `InitialSessionState.ExecutionPolicy = AllSigned`. Execution policy is "not a security boundary"
+     and is enforced only on Windows ([execution policies][ps-execpol]).
+   - The cross-platform control is a file-hash check: at start, every file under the module folder
+     is hashed against the signed install manifest, and a mismatch refuses to start.
+   - Vendoring a Microsoft module needs a licence-register row first (CLAUDE.md rule 9).
+5. **Language mode.** Run in `NoLanguage` ("only native commands and cmdlets",
+   [language modes][ps-langmodes]) if the modules work there. That is `[UNVERIFIED]` for
+   ExchangeOnlineManagement; the sidecar spike decides it.
+6. **Output and logging.** Output is typed response fields, never formatted text. Secrets never reach
+   output, errors or logs. GPO can force on, outside our control:
+   - script block logging (4104), which "records the content of all scriptblocks";
+   - module logging, which records "pipeline execution events for members of specified modules"
+     ([about_Logging_Windows][ps-logging]) and so the parameter bindings of our pipeline. Its event
+     ID 4103 is `[UNVERIFIED — Windows lab]`.
+   - transcription.
+   Our pipeline contains no script text, and secrets are bound only as `SecureString`. PSX-13
+   asserts both logs on the Windows lab.
+7. **Secrets are bound only as `SecureString` or `PSCredential`** (built as §5.6 describes). An op
+   whose cmdlet takes a secret in a plaintext `String` parameter is refused at manifest build
+   (FF-SP9). It is not worked around.
 
 **Route B (only by ADR):** a static, signed `.ps1` run with `pwsh -NoProfile -NonInteractive -File`
-and parameters as JSON on stdin (feasibility §2.7). ADR-0001 as proposed forbids shipped `.ps1` outside
-`lab/`/`tools/` (rule 1, F1), so route B needs an amendment; the PSX vectors apply to it unchanged.
+and parameters as JSON on stdin (feasibility §2.7). Ratified ADR-0001 forbids shipped `.ps1` outside
+`lab/`/`tools/` (rule 1, F1), so route B needs an ADR amendment; the PSX vectors apply to it unchanged.
 
 | ID | Value sent through the test-only `Echo` op | Expected | Why |
 | --- | --- | --- | --- |
@@ -541,8 +799,12 @@ and parameters as JSON on stdin (feasibility §2.7). ADR-0001 as proposed forbid
 | PSX-10 | unknown op or parameter forged at the sidecar | error `UnknownOp`; nothing runs | enum on the Go side |
 | PSX-11 | string for a `-Filter`/OPATH/script-block parameter | error `QueryParameterRequiresBuilder` | rule 2 |
 | PSX-12 | `-Identity` string `S-1-5-32-544` | error `IdentityRequiresGUID` | rule 3 |
-| PSX-13 | secret `P’ss"word$(x)` | arrives as `SecureString`; absent from argv/4688, stdout, stderr, logs and 4104 (Windows lab) | R7 |
+| PSX-13 | secret `P’ss"word$(x)` | arrives as `SecureString`; absent from argv/4688, stdout, stderr, our logs, 4104 and the module-logging event (4103 `[UNVERIFIED]`) with module and script-block logging forced on by GPO (Windows lab) | R7, rule 6 |
 | PSX-14 | sidecar prints a banner before the response | error `ResponseFramingError`, not partial success | strict framing |
+| PSX-15 | a module named like the op's module is planted in a user-writable directory listed in the parent's `PSModulePath` | the pinned module is loaded; the planted one is never imported; the asserted `PSModuleInfo.Path` matches | rule 4 hijack |
+| PSX-16 | an op's command exists only via autoload, not in the imported module | sidecar start fails with `CommandNotInPinnedModule` | autoload is off |
+| PSX-17 | one file under the module folder modified after install | sidecar refuses to start: `ModuleIntegrityFailed` (Linux and Windows) | file-hash check; AllSigned covers Windows only |
+| PSX-18 | manifest op maps a secret to a cmdlet parameter typed `String` | manifest build fails: `PlaintextSecretParameter` | rule 7, FF-SP9 |
 
 **Lint.** Tier X BannedApiAnalyzers ([RS0030][banned-api]): `PowerShell.AddScript(*)`,
 `ScriptBlock.Create`, `CommandInvocationIntrinsics.ExpandString`/`InvokeScript`,
@@ -555,7 +817,9 @@ custom rule against expandable strings fed to `-Command`/`Invoke-Expression`.
 
 Uses: the console's "PowerShell equivalent" panel (an admin copies a command to run themselves),
 generated documentation, `lab/` and `tools/`. The output type `DisplayOnlyPowerShell` has no path to
-any interpreter we run.
+any interpreter we run. The console's panel text is rendered **by Go `pslit` on the server**, and
+tier W only displays it (§2.1). A TypeScript quote-doubler is exactly the bug this section exists to
+prevent, and FF-SP3 fails it in `web/`.
 
 **Algorithm.** Reject NUL and invalid UTF-8/UTF-16. For each character: if it is U+0027, U+2018,
 U+2019, U+201A or U+201B, emit it **twice**; otherwise emit it. Wrap in ASCII `'…'`. Never use
@@ -603,16 +867,46 @@ runner (same lexical rules, language spec 3.0).
 ```
 proc.Run(ctx, bin: BinaryID, args: [Arg], opts) -> Result
 BinaryID  // manifest enum -> absolute path fixed at install; never PATH, never the working directory
-Arg       // Flag(constant) | Value(GUID | Hostname | Port | EnumToken | ManagedPath) — no free text
+Arg       // Flag(constant) | Value(GUID | InventoryHost | Port | EnumToken | ManagedPath)
+          //   | Joined(flag: constant, sep: constant, v: Value) — no free text
 opts      // stdin bytes (the data channel), env allowlist, private temp cwd, timeout, output cap
+InventoryHost  // constructed only from discovered DCs or admin-registered servers; never from a string
 ```
+
+**Hosts come from inventory, never from data.** A hostname argument, or a directory value used as a
+connection target, makes our service account authenticate (possibly with NTLM) to a host the
+attacker chose. Examples of such values: `homeDirectory`, `profilePath`, `scriptPath`, `dNSHostName`,
+`serviceDNSName`, and a GPO's `gPCFileSysPath`, which anyone with write access to the GPO container
+can change. `InventoryHost` therefore has two constructors only:
+- DCs discovered through DNS SRV records and confirmed by their `nTDSDSA` object;
+- servers an admin registered in our inventory, an audited action.
+
+`dNSHostName` may be *displayed*, never dialled. SYSVOL paths are built from an `InventoryHost`, the
+domain's DNS name and the GPO's GUID, never read from `gPCFileSysPath`. The global Kerberos-only
+outbound policy belongs to T-0007 (noted there).
+
+**Joining a flag and a value.** Some tools take `/s:host` or `-server=host` as one argv element.
+`Joined(flag, sep, v)` builds it from a constant flag and separator plus a typed value. The value
+part is still checked for option injection: it may not start with `-`, `/` or U+2013–U+2015, and it
+may not contain whitespace, the separator, or `"`. The joined element must equal flag + sep + value
+exactly (PROC-16).
 
 Argv arrays only, no shell. .NET uses `ProcessStartInfo.ArgumentList`, never `Arguments`
 ([ArgumentList][argumentlist]); Go resolves absolute paths, avoiding `exec.ErrDot`
 ([os/exec][go-exec]). Values starting with `-`, `/` or U+2013–U+2015 are rejected unless the tool
 honours `--` and the runner inserts it. UNC paths are rejected (NTLM coercion, feasibility §2.7). The
 32,767-character Windows command-line limit ([CreateProcessW][createprocess]) is checked before launch.
-The environment is an allowlist; secrets travel on stdin only.
+The environment is an allowlist; secrets travel on stdin only. Some variables are **never
+inherited**, whatever the allowlist says, because each one loads code into the child:
+- `DOTNET_STARTUP_HOOKS` runs assemblies "before the `Main` entry point" ([startup hooks][dotnet-hooks]);
+- `DOTNET_ENABLE_PROFILING`, `CORECLR_ENABLE_PROFILING`, `DOTNET_PROFILER*` and `CORECLR_PROFILER*`
+  load a profiler DLL ([profiling settings][dotnet-prof]), and `COR_ENABLE_PROFILING` /
+  `COR_PROFILER*` do the same on .NET Framework;
+- `PSModulePath` and `PSExecutionPolicyPreference` (§6.1 rule 4);
+- `LD_PRELOAD`, `LD_LIBRARY_PATH` and `DYLD_*`.
+
+The sidecar's own build also sets `StartupHookSupport=false` `[UNVERIFIED — confirm the switch in the
+sidecar spike]`.
 
 | ID | Input | Expected | Why |
 | --- | --- | --- | --- |
@@ -629,6 +923,10 @@ The environment is an allowlist; secrets travel on stdin only.
 | PROC-11 | `a\\"b` (backslashes before a quote) | probe binary echoes argv as JSON equal to the input | CommandLineToArgvW edge, runtime escaping verified |
 | PROC-12 | total command line > 32 767 chars | error `CommandLineTooLong` before launch | |
 | PROC-13 | parent env holds `DB_PASSWORD` | absent in the child | env allowlist |
+| PROC-14 | host `attacker.example` (not in inventory) · a computer's `dNSHostName` value · a user's `homeDirectory` `\\files.attacker.example\h` | no `InventoryHost` can be built: error `NotInventoryHost`; no connection attempted | NTLM coercion through data |
+| PROC-15 | parent env holds `DOTNET_STARTUP_HOOKS`, `CORECLR_ENABLE_PROFILING=1`, `CORECLR_PROFILER_PATH`, `COR_ENABLE_PROFILING=1`, `PSModulePath`, `LD_PRELOAD`, even if a config file adds them to the allowlist | all absent in the child; the allowlist loader rejects the config entry | never-inherit list |
+| PROC-16 | `Joined("/s", ":", host)` where host text is `dc01 /u:evil` · `dc01:x` · `/u:evil` | error `InvalidValue` / `OptionInjection`; never a second option | joined arguments |
+| PROC-17 | GPO report reads SYSVOL for a GPO whose `gPCFileSysPath` was changed to `\\attacker.example\p` | path is built from `InventoryHost` + domain + GPO GUID; the attribute value is ignored; mismatch reported as a finding | SYSVOL from inventory |
 
 **Lint.** Process APIs (`os/exec`, `Process.Start`, Rust `std::process::Command`) only in `proc`
 (FF-SP1); gosec G204; tier N bans process creation outright (clippy `disallowed_methods`,
@@ -636,8 +934,8 @@ The environment is an allowlist; secrets travel on stdin only.
 
 ## 7. P5 — SQL access
 
-Bound to ADR-0001 as proposed: PostgreSQL, pgx v5, sqlc; ORMs and raw-string query builders prohibited.
-Rules:
+Bound to ratified ADR-0001: PostgreSQL (bundled 18, customer-supplied 16 or later), pgx v5, sqlc.
+ORMs and raw-string query builders are prohibited. Rules:
 
 1. Static queries are sqlc-generated; every value is a bind parameter.
 2. Tenant context: `SELECT set_config('app.tenant_id', $1, true)` as the first statement of each
@@ -658,6 +956,35 @@ Rules:
    [character types][pg-char]); errors never carry SQL text or parameter values.
 8. PL/pgSQL `EXECUTE` only with `format('%I'/'%L', …)` or `USING` ([format][pg-format]); `||` into
    `EXECUTE` is banned.
+9. **Nothing bypasses RLS by construction.** "Superusers and roles with the `BYPASSRLS` attribute
+   always bypass the row security system", and table owners bypass it unless `FORCE` is set
+   ([RLS][pg-rls]). Three objects also escape it:
+   - **Views** use `security_invoker = true`. Without it, "the row-level security policies of the
+     view owner are applied" ([CREATE VIEW][pg-view]). Supported on every PostgreSQL version we
+     accept.
+   - **No materialized views over tenant tables.** `ALTER MATERIALIZED VIEW` has no row-security
+     forms ([ALTER MATERIALIZED VIEW][pg-matview]), so a materialized view holds the rows its
+     refresher saw, for every reader.
+   - **No `SECURITY DEFINER` functions over tenant tables**, which "can be used to access data not
+     available to the calling user" ([RLS][pg-rls]).
+
+   The app role is not the owner and has neither `SUPERUSER` nor `BYPASSRLS`. The migration role
+   owns the tables and is neither superuser nor `BYPASSRLS`, and `FORCE` binds it too.
+10. **Policies fail closed.** The only policy shape is `tenant_id = nullif(current_setting('app.tenant_id',
+    true), '')::uuid`. When the setting is unset or empty, the expression is NULL, so no row is
+    visible: "rows for which the expression does not return `true` will not be processed"
+    ([RLS][pg-rls]). Never `coalesce`, never an `OR` branch, never `true`.
+11. **Transactions are tenant-scoped by API.** `store` exposes `WithTenantTx(ctx, tenantID, fn)`,
+    which sets `app.tenant_id` and `statement_timeout` with `set_config(…, true)` before `fn` runs.
+    It exposes no other way to get a connection. Cross-tenant maintenance (migrations, tenant
+    provisioning) uses named entry points under the migration role, listed in the manifest.
+12. **The pool refuses client-side interpolation.** At construction it asserts that
+    `DefaultQueryExecMode` is not `QueryExecModeSimpleProtocol`. This covers a connection string from
+    an admin's config that sets `default_query_exec_mode=simple_protocol` ([pgx ParseConfig][pgx-parse]),
+    which fails start-up.
+13. **The report compiler's vocabulary is closed.** Functions, aggregates (`count`, `sum`, `min`,
+    `max`, `avg`), `date_trunc` units, operators and sort directions are enums. Row limits and the
+    per-transaction `statement_timeout` are bound values.
 
 | ID | Input | Expected | Why |
 | --- | --- | --- | --- |
@@ -677,11 +1004,23 @@ Rules:
 | SQL-14 | after commit, same pooled connection: `current_setting('app.tenant_id', true)` | empty | no session leak (NC2) |
 | SQL-15 | `ANY($1)` with 100 001 elements | error `TooManyValues` | R5 |
 | SQL-16 | report filter on JSON key `a'->>'b` | key bound as `->> $n` | JSON path |
+| SQL-17 | migration adds `CREATE VIEW v AS SELECT … FROM <tenant table>` without `security_invoker` | FF-SP7 fails | view-owner RLS bypass |
+| SQL-18 | migration adds a materialized view or a `SECURITY DEFINER` function reading a tenant table | FF-SP7 fails | RLS bypass |
+| SQL-19 | query outside `WithTenantTx` (fresh connection, `app.tenant_id` never set) | zero rows, never all tenants | fail-closed policy |
+| SQL-20 | config DSN contains `default_query_exec_mode=simple_protocol` | pool construction fails `SimpleProtocolForbidden` | rule 12 |
+| SQL-21 | report AST with function `pg_sleep` · aggregate `string_agg` · unit `'day'; --` | error `UnknownFunction` / `UnknownAggregate` / `BadUnit` | closed vocabulary |
+| SQL-22 | report query exceeding the bound `statement_timeout` | cancelled with `QueryTimeout`; the next transaction on the connection has the default timeout | per-transaction timeout |
 
-**Lint.** gosec G201/G202 ([gosec][gosec]); forbidigo: `Exec/Query/QueryRow` whose SQL argument is not
-a constant or sqlc-generated; `QueryExecModeSimpleProtocol`; `set_config(…, false)`; `SET app.`
-literals; the SQL driver imported only by `store` (FF-SP1). FF-SP7 checks RLS + FORCE on every tenant
-table and runs SQL-13/14.
+**Lint.** gosec G201/G202 ([gosec][gosec]). forbidigo bans the names `QueryExecModeSimpleProtocol`,
+`set_config(…, false)` and `SET app.` literals. The SQL driver may be imported only by `store` (FF-SP1).
+forbidigo matches names and cannot check argument kinds, so "SQL argument is not a constant or
+sqlc-generated" is a **go/analysis pass**, `sqlconst`, in the fitness tool (T-0033). For every call to
+pgx/sqlc `DBTX` `Exec`, `Query`, `QueryRow`, `CopyFrom` and `Batch.Queue`, the SQL argument must be:
+- a typed or untyped constant (`types.TypeAndValue.Value != nil`);
+- a constant declared in a sqlc-generated file; or
+- the `CompiledSQL` type, which only the report compiler can produce.
+
+FF-SP7 checks rules 2 and 9–12 against the migrated schema (§8) and runs SQL-13, -14, -17 to -20.
 
 ## 8. Corpus and fitness functions
 
@@ -697,16 +1036,33 @@ Inputs JSON cannot carry (invalid UTF-8, lone surrogates, NUL) use `{"hex":"…"
 `render`, `bytes_hex`, `value` or `error`. `verified` is `doc`, `samba`, `windows` or `samba+windows`
 and is updated by the lab tests, not by hand.
 
+**Gate unit and record.** The FF-SP4 gate counts per **unit**, and the units are:
+- `ldapfilter` (incl. `scope`);
+- `dn`;
+- `attr.guid`, `attr.sid`, `attr.filetime`, `attr.gentime`, `attr.flags`;
+- `attr.unicodepwd` (incl. `Secret`, `SecureConn`);
+- `psx`, `pslit`, `proc`;
+- `sql`.
+
+A **record is one input**. A table row listing several inputs separated by `·`, `/` or commas
+expands to one record each, with suffixed IDs. For example, FT-13 becomes `FT-13#1` … `FT-13#6`;
+FL-12 and GT-07 expand the same way. Every record carries an explicit `"hostile": true|false`; it
+is never inferred. Static vectors (LF-30, PROC-10, SQL-17/18, PSX-18) are records with
+`"kind":"static"`, checked by FF-SP1–3, FF-SP7 or FF-SP9 instead of a runtime call. Today every unit
+has at least 10 hostile records. The tightest is `attr.guid`: GUID-03 to -10 and GUID-12 to -16
+expand to 19.
+
 | FF | Check | Fails when |
 | --- | --- | --- |
-| FF-SP1 | Import boundaries | the LDAP library outside the connector; SQL driver outside `store`; process APIs outside `proc`; the PowerShell SDK outside the sidecar host (depguard / BannedApiAnalyzers / clippy) |
-| FF-SP2 | Banned APIs | any symbol in the per-primitive lists in §3.5, §4.6, §5, §6, §7 |
-| FF-SP3 | Literal-shape scanner | filter-, DN-, PowerShell- or SQL-shaped literals combined with concatenation or formatting outside primitive packages and tests (Semgrep or ast-grep; tool chosen by devops-engineer via the licence register) |
-| FF-SP4 | Corpus gate | a primitive has < 10 `hostile` records; an implementation skips records for a primitive it implements; a record disappears without a superseding one |
+| FF-SP1 | Import boundaries | any of these outside its home: the LDAP library and raw search/controls (only `scope` and the connector); the SQL driver (only `store`); process APIs (only `proc`); the PowerShell SDK (only the sidecar host). Also: any product package importing `lab/…` or `tools/…` (tier L). Enforced with depguard, BannedApiAnalyzers and clippy |
+| FF-SP2 | Banned APIs and custom analyzers | any symbol in the per-primitive lists in §3.5, §4.6, §5, §6, §7. Includes TLS-verification bypasses (§5.6), `net/http/pprof` and `runtime/pprof` outside tests and tier L, and `GOTRACEBACK=crash` in service definitions. The go/analysis passes `dnstring`, `sqlconst` and `secretjson` run here (`go vet -vettool`, T-0033) |
+| FF-SP3 | Literal-shape scanner | filter-, DN-, PowerShell- or SQL-shaped literals combined with concatenation or formatting outside primitive packages and tests. **`web/` is covered too**: TS/TSX template literals or concatenations containing `CN=`, `OU=`, `DC=`, `(&(`, `(\|(` or `(objectClass=`; quote doubling (`replace(/'/g, "''")`, `replaceAll("'", "''")`); `.split(',')`, `.endsWith(` or `.includes(` on a value named `dn`/`distinguishedName`. Tier L is exempt (§2.1). Tool: Semgrep or ast-grep, chosen by devops-engineer via the licence register |
+| FF-SP4 | Corpus gate | a **unit** (§8 list) has < 10 records with `"hostile": true`; an implementation skips records of a unit it implements; a record disappears without a superseding one |
 | FF-SP5 | Fuzz | each parser/encoder lacks a corpus-seeded fuzz target; nightly ≥ 10 min each; properties `parse(render(x)) == x` and "render never emits an unescaped special" |
-| FF-SP6 | Oracles | PowerShell parser oracle (`pslit`); LDAP library round-trip (P1); Windows `ConvertStringSidToSidW`/`StringFromGUID2` (SID, GUID) on the Windows runner; Samba lab integration (P1–P3); Windows lab nightly for the rows in §9 marked Windows |
-| FF-SP7 | Tenancy | a tenant table lacks RLS + FORCE; SQL-13 or SQL-14 fails |
+| FF-SP6 | Oracles | PowerShell parser oracle (`pslit`); LDAP library round-trip (P1); Samba lab integration (P1–P3); Windows lab nightly for the rows in §9 marked Windows. **SID/GUID oracle, Windows runner:** SID text → bytes via `ConvertStringSidToSidW` and bytes → text via `ConvertSidToStringSidW`; GUID text → bytes via .NET `Guid.Parse` + `ToByteArray()` and bytes → text via `StringFromGUID2`. The relation is: **every input we accept, Windows accepts, and on every accepted input the bytes (and the rendered text) are equal**. We may reject more. Intentional strictness: SID-09 (leading zeros), SID-10 (hex authority below 2^32), GUID-05 (undashed, accepted only inside `ObjectRef`), GUID-08 (nil), GUID-10 (whitespace; `Guid.Parse` trims). If Windows rejects an input we accept (candidate: SID-03's lower-case `s-`), we tighten ours; the relation wins over our reading of the ABNF |
+| FF-SP7 | Tenancy | against the migrated schema: a tenant table lacks RLS + FORCE; a view lacks `security_invoker=true` (`pg_class.reloptions`); a materialized view or `SECURITY DEFINER` function (`pg_proc.prosecdef`) depends on a tenant table; the app or migration role has `rolsuper` or `rolbypassrls`; the app role owns a table; a policy's `qual` differs from the rule-10 shape (no `coalesce`, `OR` or `true`); SQL-13, -14, -17 to -20 fail |
 | FF-SP8 | Constant argv | for random requests, `psx`/`proc` argv differs from the manifest's constant argv |
+| FF-SP9 | `psx` manifest | built against the real module metadata (the `CommandInfo.Parameters` of each pinned module) in the sidecar build. Fails when: an op's `Identity` parameter is not bound from a `Guid`; `LDAPFilter` is bound from anything but P1 `FilterString`; a `Filter`, `RecipientFilter`, `FilterScript`, `ScriptBlock` or other OPATH/script parameter is bound at all; a parameter carrying a secret is not `SecureString`/`PSCredential` (PSX-18); an op names a command not exported by its pinned module (PSX-16) |
 
 ## 9. Verification status and Samba false-pass risks
 
@@ -728,28 +1084,42 @@ except the PowerShell quoting rules, which are confirmed in PowerShell's source 
 | Generalized Time `.0Z` output | RFC 4517; observed | Samba + Windows | low |
 | 4688 and 4104 contain no operation data | Microsoft | **Windows only** | **high** — no Security log on Samba/Linux |
 | Sidecar `NoLanguage` with required modules | `[UNVERIFIED]` | Windows + Linux sidecar | n/a |
+| Escape controls (ASQ, phantom root, show-deleted/recycled) widen results beyond an OU base; domain-scope control suppresses continuation references | MS-ADTS | Samba + Windows | **medium** — Samba's control support differs `[UNVERIFIED]`; a control Samba ignores would make LF-30-style runtime tests pass falsely, so run them on Windows too |
+| Schema-driven `SecretAttrs` (LF-38): `searchFlags` 0x80/0x200/0x1000 on LAPS, BitLocker, TPM attributes | MS-ADTS, AD schema docs | **Windows** (with Windows LAPS schema) | **high** — Samba's shipped schema and flags differ; a missing attribute yields a vacuous pass |
+| `AllSigned` enforced; module-integrity check; module logging content and event ID | Microsoft (Windows-only enforcement) | **Windows** + Linux sidecar | n/a — Linux has no execution policy, which is why PSX-17 exists |
+| `runtime/secret` protection | Go docs: linux/amd64, linux/arm64 only | Linux | n/a — no effect on Windows |
+| SASL GSSAPI sealing as a `SecureConn` source | `[UNVERIFIED]` (T-0023) | Samba + Windows | medium |
+| PostgreSQL `security_invoker`, materialized-view and `SECURITY DEFINER` RLS behaviour | PostgreSQL docs | PostgreSQL 16 and 18 in CI | n/a |
 
-## 10. What changes when ADR-0001 is ratified
+## 10. Stack binding (ADR-0001 ratified) and what changes if it is amended
 
-| Topic | Fixed here (stack-agnostic) | If ratified as proposed (Go S/A, Rust N, .NET sidecar X, PostgreSQL) | If the ADR changes |
+| Topic | Fixed here (stack-agnostic) | Binding now: ratified ADR-0001 (Go S/A, Rust N, .NET sidecar X, TypeScript W, PostgreSQL) | If ADR-0001 is amended |
 | --- | --- | --- | --- |
 | Filters | AST, canonical renderer, parser rules, LF vectors | Go `ldapfilter`; renders a string because go-ldap's search request takes one; round-trip oracle via go-ldap's parser | .NET server: same renderer feeding S.DS.P; `DirectorySearcher` banned |
 | DNs | grammar, rendering, AD rules, DN vectors | Go `dn`; may wrap `ldap.ParseDN` for grammar, adds AD rules | same contract in the chosen language |
 | Codecs | sentinels, grammars, vectors | Go `attr`; Rust tier N implements `Secret` and any codec it parses, running the same corpus | each tier that decodes AD values runs the corpus |
 | PowerShell | invariant, PSX/PSQ vectors | route A: tier-X sidecar with `AddCommand`/`AddParameter`; route B needs an ADR amendment (F1 bans shipped `.ps1`) | .NET server: in-process SMA under the same rules |
 | Processes | `proc` contract, PROC vectors | Go `proc` + `x/sys/windows`; `ArgumentList` inside the sidecar | — |
-| SQL | rules 1–8, SQL vectors | pgx v5 + sqlc + RLS; simple protocol banned | SQL Server would need its own section (RLS semantics differ) |
-| Lint tools | rule meaning, FF-SP1–8 | golangci-lint (forbidigo, depguard, gosec), BannedApiAnalyzers, clippy, PSScriptAnalyzer for `lab/`/`tools/` | equivalents per language |
+| SQL | rules 1–13, SQL vectors | pgx v5 + sqlc + RLS; simple protocol banned | SQL Server would need its own section (RLS semantics differ) |
+| Lint tools | rule meaning, FF-SP1–9 | golangci-lint (forbidigo, depguard, gosec), go/analysis passes `dnstring`/`sqlconst`/`secretjson`, BannedApiAnalyzers, clippy, PSScriptAnalyzer for `lab/`/`tools/`, Semgrep or ast-grep for FF-SP3 incl. `web/` | equivalents per language |
+| Web console | tier W implements no primitive (§2.1); API carries server-built values | TypeScript + React under `web/`; FF-SP3 scans it | if a second UI technology were allowed, it inherits §2.1 unchanged |
 | Paths | provisional names above | T-0004 sets the roots; `ad-engineering` skill paths updated with them | — |
 
-On ratification, the owner of the first primitives build ticket replaces the provisional names, and
-this document moves `draft` → `review`. It becomes the reference for the build tickets the
-project-manager cuts from it.
+ADR-0001 was ratified on 2026-10-02 (D-0006) with no substantive change from the proposed text,
+so the binding column applies as written and this document is in `review`. The owner of the first
+primitives build ticket replaces the provisional package names once T-0004 fixes the roots. The
+document is the reference for the build tickets the project-manager cuts from it (T-0031: primitive
+builds go before features), and for T-0033 (FF-SP1–3, 9) and T-0034 (FF-SP4–8).
 
 ## 11. Follow-ups
 
 - T-0028 — typed security-descriptor primitive (CLAUDE.md rule 5 names it; not in this ticket's scope).
 - T-0029 — output encoders (CSV/XLSX formula neutralisation, HTML, email/PDF).
+- T-0033 / T-0034 — fitness implementation (static rules; corpus, fuzz and oracles).
+- T-0035 — security-sensitive spec tickets get security-architect as second reviewer.
+- T-0007 — Kerberos-only outbound policy (§6.3) and the secret-memory policy, including the
+  `runtime/secret` evaluation (§5.6).
+- T-0023 — whether GSSAPI sealing can be a `SecureConn` source (§5.6).
 - OPATH (Exchange) filter primitive: none planned. OPATH parameters stay banned for data (§6.1 rule 2)
   until the M365 parity scope needs one.
 
@@ -772,7 +1142,6 @@ project-manager cuts from it.
 [dtyp-sid-str]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-dtyp/c92a27b1-c772-4fa7-a432-15df5f1b66a1
 [a-acctexp]: https://learn.microsoft.com/en-us/windows/win32/adschema/a-accountexpires
 [a-cn]: https://learn.microsoft.com/en-us/windows/win32/adschema/a-cn
-[searchflags]: https://learn.microsoft.com/en-us/windows/win32/adschema/a-searchflags
 [systemflags]: https://learn.microsoft.com/en-us/windows/win32/adschema/a-systemflags
 [samba-10512]: https://bugzilla.samba.org/show_bug.cgi?id=10512
 [pwsh]: https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_pwsh
@@ -799,7 +1168,24 @@ project-manager cuts from it.
 [pg-char]: https://www.postgresql.org/docs/current/datatype-character.html
 [pgx-ident]: https://pkg.go.dev/github.com/jackc/pgx/v5#Identifier.Sanitize
 [pgx-cve]: https://github.com/advisories/GHSA-m7wr-2xf7-cm9p
+[pgx-parse]: https://pkg.go.dev/github.com/jackc/pgx/v5#ParseConfig
+[pg-view]: https://www.postgresql.org/docs/current/sql-createview.html
+[pg-matview]: https://www.postgresql.org/docs/current/sql-altermaterializedview.html
+[adts-controls]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/3c5e87db-4728-4f29-b164-01dd7d7391ea
+[adts-searchflags]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/7c1cdf82-1ecc-4834-827e-d26ff95fb207
+[a-fvekp]: https://learn.microsoft.com/en-us/windows/win32/adschema/a-msfve-keypackage
+[a-tpmoi]: https://learn.microsoft.com/en-us/windows/win32/adschema/a-mstpm-ownerinformation
+[laps-schema]: https://learn.microsoft.com/en-us/windows-server/identity/laps/laps-technical-reference
+[go-json]: https://pkg.go.dev/encoding/json#Unmarshal
+[go-secret]: https://pkg.go.dev/runtime/secret@go1.26.8
+[go-runtime]: https://pkg.go.dev/runtime#hdr-Environment_Variables
+[prctl]: https://man7.org/linux/man-pages/man2/prctl.2.html
+[securestring]: https://learn.microsoft.com/en-us/dotnet/api/system.security.securestring
+[ps-prefs]: https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_preference_variables
+[ps-execpol]: https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_execution_policies
+[dotnet-hooks]: https://github.com/dotnet/runtime/blob/main/docs/design/features/host-startup-hook.md
+[dotnet-prof]: https://learn.microsoft.com/en-us/dotnet/core/runtime-config/debugging-profiling
 
 Reference-style links above render inline wherever cited. Internal sources: `ad-technical-feasibility.md`
 §2.2, §2.5, §2.7; `.claude/skills/ad-engineering/` (gotchas, `reference/attributes.md`,
-`reference/uac-flags.md`); ADR-0001 (proposed); PatchIQ postmortem §11.
+`reference/uac-flags.md`); ADR-0001 (ratified, D-0006); PatchIQ postmortem §11.
