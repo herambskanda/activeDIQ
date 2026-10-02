@@ -394,7 +394,7 @@ Any external case study or datasheet is a CEO decision (CV §6.3).
 | Asset | Relation |
 |---|---|
 | **UEM** (sister product) | Shared conventions and thesis (UEM §1, §4–5).<br>Shared **platform agent**: one agent process per endpoint, with module contracts agreed with the UEM/PatchIQ owners (FEAS §6.1 #6, App. A #4).<br>House stack: Go / React / PostgreSQL (FEAS §0).<br>Possible later cross-sell, since both products sell to the same IT teams `[ASSUMPTION]`. Not in scope now |
-| **Design system** | **Separate brand** (D-0005, 2026-10-02): activeDIQ has its own palette and identity, independent of skenzeriq. The direction is chosen from clickable previews (T-0042). The skenzeriq design system (DS) is a craft reference only. USP-3 depends on executing it well |
+| **Design system** | **Separate brand** (D-0005, 2026-10-02): activeDIQ has its own palette and identity, independent of skenzeriq. The direction is A · Ledger (D-0012, chosen from the T-0042 previews). The skenzeriq design system (DS) is a craft reference only. USP-3 depends on executing it well |
 | **PatchIQ lessons** | Architecture before implementation; safe primitives; extension points as the only on-ramp; no single-customer topology in core; no fabricated UI data (PM §11; §7.2 above) |
 
 ## 12. Key risks
@@ -490,6 +490,8 @@ Store the profiles in `knowledge/business/partnerships/`.
 ### Q7: Brand and UI direction
 
 **Decided 2026-10-02 (D-0005): (c) a separate brand.** The CEO did not take the recommended (b). The palette, identity and UI style are chosen from three clickable previews (T-0042).
+
+**Direction chosen 2026-10-02 (D-0012): A · Ledger**, the recommended option. It is light and dense, with cobalt `#0A5CB0`, IBM Plex Sans/Mono, a labelled left rail and 32 px rows. T-0043 builds the design system from it.
 
 **Options**
 - **(a) The skenzeriq design system as is.**

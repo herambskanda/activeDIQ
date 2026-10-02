@@ -8,6 +8,8 @@ budget: 120 lines
 
 Newest first. One dated line per material change; link the source.
 
+- 2026-10-02 · **Brand and UI direction chosen: A · Ledger** (D-0012). It is light and dense, with cobalt, IBM Plex and a labelled left rail. Next, T-0043 turns `tokens-a.css` into activeDIQ's own tokens and brand guidelines, adds a Ledger dark theme, and rebases the design skills and agents. Wireframes stay greyscale until T-0043 lands. (factory/demos/previews/brand-ui/a.html)
+
 - 2026-10-02 · **Write pipeline and audit trail ratified** (ADR-0005, notice D-0015). Every change, configuration included, is previewed, gated, applied with a step token, verified and undoable. Our audit trail is a per-tenant hash chain with signed, anchored checkpoints and an offline verifier. It becomes `accepted` when fitness-operation and fitness-audit run in CI (T-0154). Next: T-0153 (platform/operation), ahead of the M2 checkpoint 2a config writes T-0093/0095/0096/0104; T-0155 (blueprint). (knowledge/development/decisions/0005-operation-pipeline-and-audit-trail.md)
 
 - 2026-10-02 · **Public API contract ratified** (ADR-0004, notice D-0014). Every route is an operation in one OpenAPI document or a reviewed `policy.yaml` entry. Our own generator emits the strict server types and handlers. The console uses only the generated client. There is one unmetered `/api/v1` that only grows. It becomes `accepted` when `fitness-api` A1–A14 runs in CI (T-0148, T-0149). Next: T-0147 (generator + skeleton), then T-0086 (apihost). (knowledge/development/decisions/0004-public-api-contract-openapi-first.md)

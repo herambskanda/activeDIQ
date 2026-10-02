@@ -10,6 +10,7 @@ Newest first within each section. Every entry: date · preference · source. Use
 CEO unless they state otherwise.
 
 ## Working style
+- 2026-10-02 · With three clickable previews and a recommendation, the CEO took the recommended taste option (A · Ledger) on the board about 90 minutes after filing, with no note and no mix. On D-0005, which was option text only, they overrode the recommendation. Previews plus a reasoned recommendation get fast taste answers, so keep that format for T-0016 (docs) and T-0017 (video). (D-0012)
 - 2026-10-02 · Took the recommended option on the four strategy questions (scope, deployment, platform, ambition) but **overrode it on brand**. They chose a separate brand over the recommended skenzeriq sub-brand, on the board, before the 72 h default ran out. Keep leading with a recommendation, but expect the CEO to override it on identity and taste. Those questions need real previews, not option text. (D-0001…D-0005)
 - 2026-10-02 · Asks only for directional input: number of features, UI style, video style, documentation style, brand guidelines, demo acceptance. Everything else the factory decides. (kickoff brief)
 - 2026-10-02 · Wants one simple contact surface showing what is happening and what needs them; near-real-time is enough. (kickoff brief)
@@ -27,7 +28,8 @@ CEO unless they state otherwise.
 - 2026-10-02 · activeDIQ stands on its own brand: "Own palette and identity, independent of skenzeriq" (the option they chose). Do not anchor activeDIQ's identity on consistency with skenzeriq. (D-0005)
 - 2026-10-02 · Replace ADManager Plus first; hybrid (Entra/M365) from v1; self-hosted first but SaaS-ready; standalone from UEM for now; 5 signature enhancements, not 3 or 8 — ambitious but pilot-date-aware. (D-0001…D-0004)
 
-## Taste (to be confirmed for activeDIQ)
+## Taste
+- 2026-10-02 · **activeDIQ looks like "Ledger"**: dense, light warm paper, cobalt `#0A5CB0`, IBM Plex Sans/Mono, labelled left rail, 32 px rows, flat hairlines and 2 px radii. Density and restraint win over distinctiveness; the impact preview and the Tier 0 states should be the loudest things on screen. Do not drift toward cards, soft shadows or loud accents (B and C were not chosen). (D-0012)
 - 2026-10-02 · activeDIQ does **not** use the skenzeriq look (Electric Indigo, Geist, ink/paper). Its palette, type, mark and UI style come from the previews in T-0042. skenzeriq's design system stays the craft reference (grid, accessibility, patterns) and the brand for company documents. (D-0005, notice D-0008)
 
 ## Research and claims

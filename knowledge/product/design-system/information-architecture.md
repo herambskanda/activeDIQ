@@ -128,7 +128,7 @@ The permission names in "Visible to" are **proposed**. The permission catalogue 
 - **Directory stays expanded.** Its seven children are one click from anywhere. T12 needs "Users" in one interaction (BM T12 step 1). The other sections expand only while active, which keeps the rail under 20 rows at 1440×900.
 - **Pinned views** come from saved views the user pins. They show a live count and open in one click (BM T13 bulk variant). The counts are API values, scope-trimmed (DM-35.I4).
 - The badge on Requests is "waiting for me". No other section carries a count, because a count that never reaches zero is noise.
-- **Navigation presentation is open to T-0042.** A labelled rail, an icon rail with flyouts, or a top bar with a sub-bar are all acceptable, as long as three things hold: Directory's children are one interaction away, Clean up is one interaction away, and pinned views are one interaction away. Those three are what the budgets depend on.
+- **Navigation presentation: a labelled left rail** (D-0012, direction A · Ledger). T-0042 had kept a labelled rail, an icon rail with flyouts and a top bar with a sub-bar open. Any presentation must keep three things true: Directory's children are one interaction away, Clean up is one interaction away, and pinned views are one interaction away. Those three are what the budgets depend on.
 
 ### 3.4 No global domain or tenant mode
 
