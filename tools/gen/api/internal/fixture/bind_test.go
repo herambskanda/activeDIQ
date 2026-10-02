@@ -253,7 +253,7 @@ func TestTypeClosureHasNoV1JSONMethods(t *testing.T) {
 			}
 		})
 	}
-	if !reflect.TypeFor[time.Time]().Implements(un) {
+	if !reflect.PointerTo(reflect.TypeFor[time.Time]()).Implements(un) {
 		t.Fatal("the check must be able to see a v1 method (time.Time has one)")
 	}
 	if n < 40 {
