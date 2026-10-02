@@ -1129,6 +1129,16 @@ authoritative and FF-SP4 recomputes the counts.
 | FF-SP10 | Output structure oracle (P7) | for any `csv`/`xlsx`/`html`/`mail`/`pdf` record, the artefact parsed by an independent parser violates its section's structure rules. CSV: field and row counts equal the model; no cell starts with a raw lead. XLSX: XL-16. HTML: no `script` element, no `on*` attribute, no non-`SystemURL` link, CSP meta first. Mail: header set as built, QP/base64 parts, no line over 998 octets, no bare CR/LF. PDF: §12.7 rule 3 names absent, extracted text equals input. Also: the `FormulaLeadTable` generator output differs from the committed table, or an embedded template breaks §12.5 rule 3 |
 | FF-SP11 | Spreadsheet application oracle (P7) | every push: headless LibreOffice (dev tooling only; devops-engineer checks the licence register) imports each `csv`/`xlsx` output with formula evaluation enabled and finds any formula cell, or a displayed value different from the expected text. Nightly on the Windows lab: Excel does the same, plus CSV-17 (save as CSV, reopen), CSV-18 (`;` list separator) and XL-18 (edit a `quotePrefix` cell) |
 
+**Implementation (T-0033).** FF-SP1 to FF-SP3 run in `make ci` as `fitness-safeprim`
+(`tools/fitness/safeprim`, in-house `go/parser` plus the `go/analysis` passes in `tools/analyzers`;
+the `web/` half is ESLint rules in `web/eslint/safe-primitives.js`). Deviations from the
+tools named above: depguard, forbidigo, Semgrep and ast-grep are not used (no type information,
+per-path homes need code, the check must run offline; see the licence register); BannedApiAnalyzers
+and clippy are configured but dormant until the first sidecar and the first crate exist. The
+home of each primitive is one table, `tools/analyzers/policy/policy.go`. Not yet enforced:
+`dnstring`'s rule that `Display()` is called only in response-mapping code (the packages are not
+named), and the P7 homes, which are suffix patterns until T-0004 fixes the roots.
+
 ## 9. Verification status and Samba false-pass risks
 
 Nothing in this document is lab-verified yet (lab: T-0012). Status today: **documentation only**,
