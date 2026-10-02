@@ -15,5 +15,7 @@ On architecture blueprints, check that the import rules can actually hold with t
 - Every interface home named in an extension-point table needs a catalogue row with an owner.
 - Grep for contradictions between catalogue rows and open items. On T-0004, a row said agent modules "host sidecars" while §13 left that open.
 - Check parity traceability with a short Python script over the CSV (`phase`/`importance` columns). Don't eyeball it.
+- For satellite binaries (agent, remote connector, edge), check that every arrow into a shared layer is restricted. Unrestricted `agentmodules → directory/*` reaches `store` through `inventory`. Check that "used only by X" claims appear in the must-not-link table.
+- Re-review (round 2 of T-0004 advanced in one pass): tick each must-fix against `git show <rework>`, re-run both AC scripts, grep the follow-up tickets for the renamed paths, and send leftover nits as notes to the ADR or chore that will enforce them.
 
 Related: [[review-check-ceo-answers-vs-draft-time]], [[adr-ratification-flow]]

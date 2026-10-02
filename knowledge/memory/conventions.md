@@ -17,3 +17,4 @@ budget: 120 lines
 - Prototypes: garage/<name>/ with a README stating owner and expiry date.
 - People whose pronouns are unknown are referred to as they/them.
 - Licence-register rows put the exact package path(s) in backticks in the Project cell; CI (ADR-0001 `fitness-stack` F4) matches direct dependencies against them. Status `Rejected` = considered, not adopted, kept for the trail. (2026-10-02, T-0002)
+- The repository layout and package roots come from the architecture blueprint §1/§1.1. Where a skill or older spec names a path, the blueprint wins until T-0048 aligns them. Each binary links only its own `internal/compose/<role>` package. (2026-10-02, T-0004)
