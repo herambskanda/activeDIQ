@@ -1,0 +1,25 @@
+{
+  "units": {
+    "pslit": {
+      "PSQ-01": true,
+      "PSQ-02": true,
+      "PSQ-03": true,
+      "PSQ-04": true,
+      "PSQ-05": true,
+      "PSQ-06": true,
+      "PSQ-07": true,
+      "PSQ-08": true,
+      "PSQ-09": true,
+      "PSQ-10": true,
+      "PSQ-11": true,
+      "PSQ-12": true,
+      "PSQ-13": true,
+      "PSQ-14#1": false,
+      "PSQ-14#2": false,
+      "PSQ-15": true,
+      "PSQ-16": false,
+      "PSQ-17#1": true,
+      "PSQ-17#2": true
+    }
+  }
+}

@@ -42,3 +42,4 @@ test-results/
 playwright-report/
 blob-report/
 tools/playwright/.record-tmp/
+.safeprim-reports/
