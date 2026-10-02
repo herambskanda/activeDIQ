@@ -43,3 +43,4 @@ budget: 120 lines
 - **Run** — one headless worker session on one ticket stage. **Dispatcher** — the deterministic loop that launches runs.
 - **Handoff / checkpoint** — the note a session leaves at a context checkpoint so a fresh session can continue.
 - **Fitness function** — an automated CI check that an architectural decision still holds.
+- **DM-nn / X1–X10** — domain-model entity IDs and cross-cutting invariants; cite as `DM-16.I2` ([domain model](../development/domain/domain-model.md)). **`[LAB: Windows]`** — documented AD behaviour not yet reproduced on a Windows DC (T-0051).
