@@ -2,11 +2,9 @@
 # Standard: knowledge/development/standards/ci-gates.md · Runbook: knowledge/development/runbooks/ci-and-build.md
 # Every gate below has a failing run proving it catches a violation: `make ci-proof` (part of `make ci`).
 
-GO_TARGETS := linux/amd64 linux/arm64 windows/amd64 windows/arm64 darwin/arm64
+.PHONY: ci lint lint-go lint-web fmt test test-go test-web fitness fitness-stack build build-web web-install ci-proof
 
-.PHONY: ci lint lint-go lint-web fmt test test-go test-web fitness build build-web web-install ci-proof
-
-ci: lint test fitness build secrets-scan lab-test-unit ci-proof ## Everything a merge needs: lint, tests, fitness functions, build matrix, secret scan, gate proofs
+ci: lint test fitness build secrets-scan lab-test-unit ci-proof ## Everything a merge needs: lint, tests, fitness functions (incl. the ADR-0001 build matrix), web build, secret scan, gate proofs
 	@echo "make ci: passed"
 
 web-install: ## Install the pinned web dependencies from the lockfile (npm ci)
@@ -37,14 +35,13 @@ test-go:
 test-web: web-install
 	npm --prefix web run --silent test
 
-fitness: ## Architecture fitness functions (fitness-modules: blueprint §2 import rules)
+fitness: fitness-stack ## Architecture fitness functions: fitness-modules (blueprint §2 import rules) and fitness-stack (ADR-0001 F1-F5)
 	go run ./tools/fitness/modules
 
-build: build-web ## Cross-compile every binary with CGO_ENABLED=0 for the ADR-0001 build matrix, and build the web assets
-	@set -e; for t in $(GO_TARGETS); do \
-	  echo "go build $$t"; \
-	  CGO_ENABLED=0 GOOS=$${t%/*} GOARCH=$${t#*/} go build -trimpath ./... ; \
-	done
+fitness-stack: ## ADR-0001: language zones, cgo-free cross-build, one stateful service, licence register, exceptions cite an ADR
+	go run ./tools/fitness/stack -v
+
+build: build-web ## Build the web assets; the CGO_ENABLED=0 Go cross-build of the ADR-0001 matrix runs in fitness-stack (F2)
 
 build-web: web-install
 	npm --prefix web run --silent build

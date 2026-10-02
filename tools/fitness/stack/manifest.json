@@ -1,0 +1,280 @@
+{
+  "decisionsDir": "knowledge/development/decisions",
+  "licenceRegister": "knowledge/business/licensing/open-source-license-register.md",
+  "exemptZones": [
+    "factory",
+    ".claude",
+    "knowledge",
+    "garage"
+  ],
+  "buildMatrix": [
+    "linux/amd64",
+    "linux/arm64",
+    "windows/amd64",
+    "windows/arm64",
+    "darwin/arm64"
+  ],
+  "testTags": [
+    "lab",
+    "windowslab"
+  ],
+  "toolchainTags": [
+    "race",
+    "msan",
+    "asan",
+    "purego"
+  ],
+  "languageZones": {
+    "go": {
+      "anywhere": true,
+      "deny": [
+        "web",
+        "native",
+        "sidecars"
+      ]
+    },
+    "rust": {
+      "allow": [
+        "native"
+      ]
+    },
+    "c": {
+      "allow": [
+        "native"
+      ]
+    },
+    "csharp": {
+      "allow": [
+        "sidecars"
+      ]
+    },
+    "python": {
+      "allow": [
+        "lab",
+        "tools"
+      ]
+    },
+    "powershell": {
+      "allow": [
+        "lab",
+        "tools"
+      ]
+    },
+    "shell": {
+      "allow": [
+        "lab",
+        "tools"
+      ]
+    },
+    "typescript": {
+      "allow": [
+        "web"
+      ]
+    },
+    "javascript": {
+      "allow": [
+        "web"
+      ]
+    }
+  },
+  "bannedLanguages": [
+    "java",
+    "kotlin",
+    "ruby",
+    "php",
+    "lua",
+    "batch",
+    "vbscript",
+    "swift",
+    "perl",
+    "objective-c"
+  ],
+  "binaries": [
+    {
+      "name": "server",
+      "tier": "S",
+      "package": "./cmd/server"
+    },
+    {
+      "name": "connector",
+      "tier": "S",
+      "package": "./cmd/connector"
+    },
+    {
+      "name": "edge",
+      "tier": "S",
+      "package": "./cmd/edge"
+    },
+    {
+      "name": "agent",
+      "tier": "A",
+      "package": "./cmd/agent"
+    }
+  ],
+  "denylist": [
+    {
+      "prefix": "github.com/redis/go-redis",
+      "reason": "Redis/Valkey client: a second stateful service"
+    },
+    {
+      "prefix": "github.com/go-redis/redis",
+      "reason": "Redis client: a second stateful service"
+    },
+    {
+      "prefix": "github.com/redis/rueidis",
+      "reason": "Redis/Valkey client: a second stateful service"
+    },
+    {
+      "prefix": "github.com/valkey-io/valkey-go",
+      "reason": "Valkey client: a second stateful service"
+    },
+    {
+      "prefix": "github.com/valkey-io/valkey-glide",
+      "reason": "Valkey client: a second stateful service"
+    },
+    {
+      "prefix": "github.com/gomodule/redigo",
+      "reason": "Redis client: a second stateful service"
+    },
+    {
+      "prefix": "github.com/bradfitz/gomemcache",
+      "reason": "Memcached client: a second stateful service"
+    },
+    {
+      "prefix": "github.com/segmentio/kafka-go",
+      "reason": "Kafka client: a broker is a second stateful service"
+    },
+    {
+      "prefix": "github.com/IBM/sarama",
+      "reason": "Kafka client: a broker is a second stateful service"
+    },
+    {
+      "prefix": "github.com/Shopify/sarama",
+      "reason": "Kafka client: a broker is a second stateful service"
+    },
+    {
+      "prefix": "github.com/twmb/franz-go",
+      "reason": "Kafka client: a broker is a second stateful service"
+    },
+    {
+      "prefix": "github.com/confluentinc/confluent-kafka-go",
+      "reason": "Kafka client (cgo): a broker is a second stateful service"
+    },
+    {
+      "prefix": "github.com/nats-io",
+      "reason": "NATS client: a broker is a second stateful service"
+    },
+    {
+      "prefix": "github.com/rabbitmq/amqp091-go",
+      "reason": "AMQP client: a broker is a second stateful service"
+    },
+    {
+      "prefix": "github.com/streadway/amqp",
+      "reason": "AMQP client: a broker is a second stateful service"
+    },
+    {
+      "prefix": "github.com/ThreeDotsLabs/watermill",
+      "reason": "message bus (PatchIQ ran a Watermill SQL bus beside PostgreSQL); River covers jobs inside PostgreSQL"
+    },
+    {
+      "prefix": "go.mongodb.org/mongo-driver",
+      "reason": "MongoDB client: a second stateful service"
+    },
+    {
+      "prefix": "github.com/elastic/go-elasticsearch",
+      "reason": "Elasticsearch client: a second stateful service"
+    },
+    {
+      "prefix": "github.com/olivere/elastic",
+      "reason": "Elasticsearch client: a second stateful service"
+    },
+    {
+      "prefix": "github.com/opensearch-project/opensearch-go",
+      "reason": "OpenSearch client: a second stateful service"
+    },
+    {
+      "prefix": "github.com/ClickHouse/clickhouse-go",
+      "reason": "ClickHouse client: a second stateful service (needs an ADR backed by the T-0026 ingest benchmark)"
+    },
+    {
+      "prefix": "github.com/microsoft/go-mssqldb",
+      "reason": "SQL Server driver: PostgreSQL is the only supported database"
+    },
+    {
+      "prefix": "github.com/denisenkom/go-mssqldb",
+      "reason": "SQL Server driver: PostgreSQL is the only supported database"
+    },
+    {
+      "prefix": "github.com/mattn/go-sqlite3",
+      "reason": "SQLite driver: cgo and a second SQL dialect"
+    },
+    {
+      "prefix": "modernc.org/sqlite",
+      "reason": "SQLite driver: a second SQL dialect"
+    },
+    {
+      "prefix": "github.com/lib/pq",
+      "reason": "alternative PostgreSQL driver: pgx v5 is the only database/sql driver"
+    },
+    {
+      "prefix": "github.com/go-sql-driver/mysql",
+      "reason": "MySQL driver: PostgreSQL is the only supported database"
+    },
+    {
+      "prefix": "github.com/godror/godror",
+      "reason": "Oracle driver (cgo): PostgreSQL is the only supported database"
+    },
+    {
+      "prefix": "gorm.io",
+      "reason": "ORM: all database access is pgx and sqlc"
+    },
+    {
+      "prefix": "entgo.io/ent",
+      "reason": "ORM: all database access is pgx and sqlc"
+    },
+    {
+      "prefix": "github.com/uptrace/bun",
+      "reason": "ORM/query builder: all database access is pgx and sqlc"
+    },
+    {
+      "prefix": "github.com/jmoiron/sqlx",
+      "reason": "raw-string query helper: all database access is pgx and sqlc"
+    },
+    {
+      "prefix": "github.com/Masterminds/squirrel",
+      "reason": "raw-string query builder: all database access is pgx and sqlc"
+    },
+    {
+      "prefix": "github.com/doug-martin/goqu",
+      "reason": "raw-string query builder: all database access is pgx and sqlc"
+    },
+    {
+      "prefix": "github.com/huandu/go-sqlbuilder",
+      "reason": "raw-string query builder: all database access is pgx and sqlc"
+    }
+  ],
+  "denylistExtends": [],
+  "exceptions": {
+    "platformAdapters": [],
+    "sidecars": [],
+    "cppFallbacks": [],
+    "extraGoModules": [],
+    "thirdParty": [],
+    "buildScripts": [
+      {
+        "path": ".githooks/pre-commit",
+        "adr": "0001-technology-stack.md",
+        "reason": "git hook that refuses a commit containing a secret (T-0013); a git hook must live at a fixed path outside lab/ and tools/"
+      }
+    ],
+    "devNodeTools": [
+      {
+        "path": "tools/playwright",
+        "adr": "0001-technology-stack.md",
+        "reason": "Playwright screenshot, record and E2E tooling (T-0011): Node, dev-time only, never shipped. ADR-0001 rule 1 does not name it; the solution-architect is asked to record it in the ADR"
+      }
+    ],
+    "nativeComponents": []
+  },
+  "licenceExceptions": []
+}

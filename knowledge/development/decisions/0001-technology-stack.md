@@ -2,18 +2,20 @@
 title: "ADR-0001: Go for the server and agents, Rust for code loaded into LSASS and LogonUI, PostgreSQL as the only datastore"
 date: 2026-10-02
 updated: 2026-10-02
-status: ratified
+status: accepted
 owner: heramb
 kind: technical
 ticket: T-0002
 decision: D-0006
 ratified_on: 2026-10-02
 ratified_by: factory-director
+accepted_on: 2026-10-02
+fitness: fitness-stack
 ---
 
 # ADR-0001: Go for the server and agents, Rust for code loaded into LSASS and LogonUI, PostgreSQL as the only datastore
 
-**Status:** **ratified 2026-10-02** by factory-director (notice D-0006). Binding on design. It becomes `accepted` when `fitness-stack` runs green in `make ci` on `main` (T-0022).
+**Status:** **accepted 2026-10-02**. Ratified 2026-10-02 by factory-director (notice D-0006). Its fitness function, `fitness-stack` (F1–F5), runs in `make ci` (T-0022).
 **Kind:** technical. The factory-director ratifies it when reviewing T-0002, then files a `notice` so the CEO can veto. Calling this technical is consistent with CEO direction: D-0003 set the house stack (Go + React/TypeScript + PostgreSQL) directionally, so the cost of supporting PostgreSQL only, which customers bear, falls inside a decision the CEO has already made.
 **Deciders:** solution-architect (author) and factory-director (ratifier). **Ticket:** T-0002. **Parity / scope refs:** none. This decision serves every capability family.
 
@@ -217,4 +219,4 @@ When either enters scope, a separate ADR decides its language and extends rule 1
 - **Copy-pasting third-party code to avoid a manifest entry.** It must sit in `third_party/<name>/` with its LICENSE file (F4/F5). Code review (`review-checklist`) treats unattributed copied code as a reject. That part stays manual and is named as such.
 - **A Go DLL built in another repository.** It is outside this check. It is also outside our release pipeline: signing is human-gated (feasibility §5.7), and the release checklist accepts tier-N binaries only from `native/`.
 
-**Status path.** This ADR becomes `ratified` when the director signs it off at review of T-0002. It becomes `accepted` when `fitness-stack` runs green in `make ci` on `main`, with F1–F5 implemented.
+**Status path.** Ratified when the director signed it off at review of T-0002. Accepted when `fitness-stack` ran green in `make ci` with F1–F5 implemented (T-0022; `tools/fitness/stack/`).
