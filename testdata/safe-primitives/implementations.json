@@ -1,0 +1,96 @@
+{
+  "implementations": [
+    {
+      "name": "go/attr-guid",
+      "language": "go",
+      "tier": "S",
+      "units": [
+        "attr.guid"
+      ],
+      "package": "internal/directory/attr/guid"
+    },
+    {
+      "name": "go/attr-sid",
+      "language": "go",
+      "tier": "S",
+      "units": [
+        "attr.sid"
+      ],
+      "package": "internal/directory/attr/sid"
+    },
+    {
+      "name": "go/attr-filetime",
+      "language": "go",
+      "tier": "S",
+      "units": [
+        "attr.filetime"
+      ],
+      "package": "internal/directory/attr/filetime"
+    },
+    {
+      "name": "go/attr-gentime",
+      "language": "go",
+      "tier": "S",
+      "units": [
+        "attr.gentime"
+      ],
+      "package": "internal/directory/attr/gentime"
+    },
+    {
+      "name": "go/attr-flags",
+      "language": "go",
+      "tier": "S",
+      "units": [
+        "attr.flags"
+      ],
+      "package": "internal/directory/attr/flags"
+    }
+  ],
+  "fuzz": [
+    {
+      "implementation": "go/attr-guid",
+      "unit": "attr.guid",
+      "target": "FuzzGUID",
+      "properties": [
+        "roundtrip",
+        "noUnescapedSpecial"
+      ]
+    },
+    {
+      "implementation": "go/attr-sid",
+      "unit": "attr.sid",
+      "target": "FuzzSID",
+      "properties": [
+        "roundtrip",
+        "noUnescapedSpecial"
+      ]
+    },
+    {
+      "implementation": "go/attr-filetime",
+      "unit": "attr.filetime",
+      "target": "FuzzFileTime",
+      "properties": [
+        "roundtrip",
+        "noUnescapedSpecial"
+      ]
+    },
+    {
+      "implementation": "go/attr-gentime",
+      "unit": "attr.gentime",
+      "target": "FuzzGeneralizedTime",
+      "properties": [
+        "roundtrip",
+        "noUnescapedSpecial"
+      ]
+    },
+    {
+      "implementation": "go/attr-flags",
+      "unit": "attr.flags",
+      "target": "FuzzFlags",
+      "properties": [
+        "roundtrip",
+        "noUnescapedSpecial"
+      ]
+    }
+  ]
+}
