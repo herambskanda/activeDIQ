@@ -70,15 +70,22 @@ type Config struct {
 	MaxConns int32
 	// StatementTimeout bounds each statement in every transaction; 0 means DefaultStatementTimeout.
 	StatementTimeout time.Duration
+	// AllowInsecureTransport is the operator override of the transport policy (safe-primitives §7 rule 14):
+	// it lets a remote host be reached without a verified TLS connection. It comes only from platform-scope
+	// configuration, is logged at start-up and shown on the health page (DB.Transport). Leave it false.
+	AllowInsecureTransport bool
 }
 
 // DB is the data-access handle. It holds the pool; nothing returns it.
 type DB struct {
-	pool    *pgxpool.Pool
-	timeout string // statement_timeout in milliseconds, as set_config wants it
+	pool      *pgxpool.Pool
+	timeout   string // statement_timeout in milliseconds, as set_config wants it
+	transport TransportStatus
 }
 
-// Open builds the pool, refuses an unsafe configuration and verifies the role it connects as.
+// Open builds the pool, refuses an unsafe configuration and verifies the role it connects as. It refuses,
+// before any connection is attempted, a DSN that would reach a remote host without verified TLS
+// (ErrInsecureTransport) unless Config.AllowInsecureTransport is set.
 func Open(ctx context.Context, cfg Config) (*DB, error) {
 	pc, err := pgxpool.ParseConfig(cfg.DSN)
 	if err != nil {
@@ -87,6 +94,14 @@ func Open(ctx context.Context, cfg Config) (*DB, error) {
 	}
 	if err := checkConnConfig(pc.ConnConfig); err != nil {
 		return nil, err
+	}
+	ts, err := checkTransport(pc.ConnConfig, cfg.AllowInsecureTransport)
+	if err != nil {
+		return nil, err
+	}
+	if ts.OverrideConfigured {
+		slog.WarnContext(ctx, "store: the insecure-transport override is set; TLS to the database is not verified for the hosts listed",
+			"relaxed_hosts", ts.RelaxedHosts)
 	}
 	if cfg.MaxConns > 0 {
 		pc.MaxConns = cfg.MaxConns
@@ -99,7 +114,7 @@ func Open(ctx context.Context, cfg Config) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("store: open pool: %w", err)
 	}
-	d := &DB{pool: pool, timeout: strconv.FormatInt(timeout.Milliseconds(), 10)}
+	d := &DB{pool: pool, timeout: strconv.FormatInt(timeout.Milliseconds(), 10), transport: ts}
 	if err := d.checkRole(ctx); err != nil {
 		pool.Close()
 		return nil, err
@@ -185,6 +200,15 @@ func (d *DB) checkRole(ctx context.Context) error {
 		return fmt.Errorf("store: check the runtime role: %w", err)
 	}
 	return nil
+}
+
+// Transport reports the transport policy outcome for the health page: whether the operator override is
+// set and which remote hosts it let through.
+func (d *DB) Transport() TransportStatus {
+	if d == nil {
+		return TransportStatus{}
+	}
+	return d.transport
 }
 
 // Close releases the pool. Entry points called afterwards fail.

@@ -312,6 +312,55 @@ func TestRoleAttributes(t *testing.T) {
 	}
 }
 
+// CREATE on the product database (T-0191) lets a role CREATE SCHEMA and ALTER ROLE itself SET search_path
+// to shadow product tables. T3 must find it granted to the runtime role, to PUBLIC, or to a role the
+// runtime role is a member of, with or without INHERIT (WITH INHERIT FALSE needs PostgreSQL 16).
+func TestRuntimeCreateOnDatabase(t *testing.T) {
+	// The bootstrap runs format() over each statement, so %% survives as %I for the inner format().
+	grantTo := func(role string) string {
+		return `DO $$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %%I TO ` + role + `', current_database()); END $$`
+	}
+	const mkHelper = `DO $$ BEGIN CREATE ROLE t3_creator NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$`
+	cases := []struct {
+		name  string
+		boot  []string
+		undo  []string
+		named string
+	}{
+		{"direct", []string{`DO $$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %%I TO %%I', current_database(), %2$L); END $$`}, nil, "runtime role itself"},
+		{"public", []string{grantTo("PUBLIC")}, nil, "PUBLIC"},
+		{"member_inherit", []string{mkHelper, grantTo("t3_creator"), `GRANT t3_creator TO %2$I WITH INHERIT TRUE`}, []string{`DROP ROLE t3_creator`}, "t3_creator"},
+		{"member_no_inherit", []string{mkHelper, grantTo("t3_creator"), `GRANT t3_creator TO %2$I WITH INHERIT FALSE`}, []string{`DROP ROLE t3_creator`}, "t3_creator"},
+		{"indirect_no_inherit", // app -> t3_mid (no inherit) -> t3_creator
+			[]string{mkHelper, `DO $$ BEGIN CREATE ROLE t3_mid NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$`, grantTo("t3_creator"), `GRANT t3_creator TO t3_mid`, `GRANT t3_mid TO %2$I WITH INHERIT FALSE`},
+			[]string{`DROP ROLE t3_mid`, `DROP ROLE t3_creator`}, "t3_creator"},
+	}
+	for _, ver := range []string{"16", "18"} {
+		for _, c := range cases {
+			t.Run("pg"+ver+"/"+c.name, func(t *testing.T) {
+				f := fixture{migrations: pair(t, "good/0002_app_items.sql"), checks: "T1,T3", bootstrap: c.boot, reset: c.undo}
+				vs, _ := f.run(t, ver)
+				want(t, vs, "T3", "runtime-create-database", c.named)
+			})
+		}
+	}
+}
+
+// A runtime role that owns the product database owns it as a shared dependency (dbid = 0), which a
+// per-database pg_shdepend filter misses (T-0191).
+func TestRuntimeOwnsDatabase(t *testing.T) {
+	for _, ver := range []string{"16", "18"} {
+		t.Run("pg"+ver, func(t *testing.T) {
+			f := fixture{
+				migrations: pair(t, "good/0002_app_items.sql"), checks: "T1,T3",
+				bootstrap: []string{`DO $$ BEGIN EXECUTE format('ALTER DATABASE %%I OWNER TO %%I', current_database(), %2$L); END $$`},
+			}
+			vs, _ := f.run(t, ver)
+			want(t, vs, "T3", "runtime-owns-object", "database fit_")
+		})
+	}
+}
+
 // TestT1 covers the migration-1 rules.
 func TestT1(t *testing.T) {
 	cases := []struct{ dir, rule string }{
