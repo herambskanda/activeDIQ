@@ -490,7 +490,7 @@ dashed; Data1/2/3 little-endian in the octet string, [MS-DTYP 2.3.4][dtyp-guid])
 | GUID-13 | `{04030201-0605-0807-090a-0b0c0d0e0f10` · `04030201-0605-0807-090a-0b0c0d0e0f10}` | error `BadFormat` | unbalanced braces |
 | GUID-14 | `04030201-0605-0807-090a-0b0c0d0e0f1*` · `*` | error `BadFormat` | filter wildcard smuggled as an id |
 | GUID-15 | `urn:uuid:04030201-0605-0807-090a-0b0c0d0e0f10` · `<GUID=04030201…>` to `GUID.Parse` | error `BadFormat` | only the one text form; `ObjectRef.Parse` owns `<GUID=…>` |
-| GUID-16 | 1 MiB of hex digits and dashes | error `BadFormat` after reading at most 38 characters | R5; no allocation proportional to input |
+| GUID-16 | 1 MiB of hex digits and dashes | error `BadFormat` after reading at most 38 characters | R5; no allocation proportional to input. The corpus record is 4 KiB; the 1 MiB allocation check is a unit test (`TestHostileLengthIsNotRead`) |
 
 ### 5.2 SID (`objectSid`, `sIDHistory`, `tokenGroups`)
 
@@ -581,7 +581,7 @@ or ±hh[mm]) → UTC instant. Encode: always `YYYYMMDDHHMMSS.0Z` in UTC, AD's ob
 | GT-11 | full-width digits · trailing space · trailing NUL | error `BadFormat` | |
 | GT-12 | `16010101000000.0Z` | 1601-01-01T00:00:00Z | appears in `dSCorePropagationData`; not a real event time `[UNVERIFIED]`; UI must not show "1601" |
 | GT-13 | 65-char input | error `TooLong` | R5 |
-| GT-14 | `261002101112Z` to the Generalized Time decoder | error `BadFormat` | UTC-Time is decoded separately |
+| GT-14 | `991231235959Z` to the Generalized Time decoder | error `BadMonth` | UTC-Time text is not Generalized Time. T-0070 changed the input: the original `261002101112Z` is lexically a valid Generalized Time (year 2610, 11:12), so no grammar-faithful decoder can refuse it. That overlap is GT-14B: the decoder is chosen by `oMSyntax` (`gentime.Decode`), never by sniffing the text |
 
 ### 5.5 Flag integers (Integer, syntax 2.5.5.9, signed 32-bit)
 
@@ -1185,6 +1185,19 @@ ordinal, since `-ceq` alone is culture-aware. go-ldap is pinned at v3.4.13 for t
 yet executed anywhere: the Windows PowerShell 5.1, SID/GUID and Samba-lab rows (written, Windows scripts
 parse-checked only) and the nightly fuzz log; they need a Windows runner and a scheduler. FF-SP7 is in
 T-0036; FF-SP9 to FF-SP11 are not implemented.
+
+**Implementation (T-0070, P3 minus `unicodePwd`).** `internal/directory/attr/{guid,sid,filetime,gentime,flags}`
+plus `attr/codec` (the typed `Error` with a stable `Code`, and the RFC 4517 integer grammar), one
+implementation, one `TestCorpus` and one `Fuzz*` target per unit (`go/attr-<name>` in
+`testdata/safe-primitives/implementations.json`). The corpus files `attr.*.jsonl` carry every §5 vector plus extras
+named `…F` (the reverse direction: the Windows SID/GUID oracle reads `text -> bytes_hex` and `hex -> render`
+records) and later numbers (`FT-18` to `FT-28`, `GT-14B` to `GT-23`, `FL-14` to `FL-22`, `GUID-08F`,
+`SID-02R`). Decisions the spec left open: a SID with zero sub-authorities in binary form is refused like in text (`NoSubAuthority`);
+`0x` in a SID authority is lower-case only (we may refuse more than Windows); `msDS-UserPasswordExpiryTimeComputed`
+`0` is `OutOfRange` and `maxPwdAge` `0` and `-2^63` on `minPwdAge`/`lockoutObservationWindow` are `UnverifiedValue`
+(refused, not guessed); UTC-Time uses the X.509 two-digit-year pivot `[UNVERIFIED]` for AD. The filter's binary-escaped
+SID/GUID form is not in `attr`: P1 escapes `Bytes()`. Not yet run: the Windows SID/GUID oracle and the Samba lab rows
+(no runner; follow-up ticket), so every record stays `"verified": "doc"`.
 
 ## 9. Verification status and Samba false-pass risks
 
