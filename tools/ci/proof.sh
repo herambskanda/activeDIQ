@@ -77,6 +77,16 @@ must_fail_with "fitness-modules on a platform package importing the directory do
 printf 'package kernel\n' >"$fit/internal/platform/kernel/k.go"
 must_pass "fitness-modules" go run ./tools/fitness/modules -root "$fit"
 
+# --- fitness-proto (the connector contract), the real CLI on throw-away trees ------------------
+pr="$tmp/proto"
+mkdir -p "$pr"
+printf 'syntax = "proto3";\npackage t.v1;\nenum Operation { OPERATION_UNSPECIFIED = 0; OPERATION_GET = 1; OPERATION_APPLY = 100; OPERATION_READ_SECRET = 101; OPERATION_VERIFY_USER = 102; }\nmessage GetRequest { string dn = 1; }\nmessage GetResponse {}\nservice S { rpc Get(GetRequest) returns (GetResponse); }\n' >"$pr/t.proto"
+must_fail_with "fitness-proto on a request carrying a DN string" "\\[P2\\]" go run ./tools/fitness/proto "$pr"
+printf 'syntax = "proto3";\npackage t.v1;\nmessage {\n' >"$pr/t.proto"
+must_fail_with "fitness-proto on a file that does not compile" "\\[P1\\]" go run ./tools/fitness/proto "$pr"
+printf 'syntax = "proto3";\npackage t.v1;\nenum Operation { OPERATION_UNSPECIFIED = 0; OPERATION_GET = 1; OPERATION_APPLY = 100; OPERATION_READ_SECRET = 101; OPERATION_VERIFY_USER = 102; }\nmessage Guid { bytes value = 1; }\nmessage GetRequest { Guid guid = 1; }\nmessage GetResponse {}\nservice S { rpc Get(GetRequest) returns (GetResponse); }\n' >"$pr/t.proto"
+must_pass "fitness-proto" go run ./tools/fitness/proto "$pr"
+
 # --- fitness-stack (ADR-0001 F1-F5), the real CLI on throw-away trees --------------------------
 # One violation per rule, each rejected with the rule's own message; the same tree passes when clean.
 # The banned build flag is assembled from parts so this file does not trip F2's text scan.

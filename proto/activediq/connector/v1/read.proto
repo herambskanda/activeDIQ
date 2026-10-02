@@ -1,0 +1,195 @@
+// activediq.connector.v1 — ScopedSearch, Read and ReadPerDC (the read group).
+//
+// There is no raw search, no base field, no control field, no sort and no VLV (safe-primitives
+// §3.6, LF-30, LF-35). The base is always a delegation root's Guid; the scope, controls, port and
+// referral policy are fixed inside the connector. Per-object authorisation and the counts shown to
+// users are the caller's (directory/client), applied to what this contract returns; the contract
+// carries no total or estimate, so a DC-side count cannot reach a screen (LF-39).
+syntax = "proto3";
+
+package activediq.connector.v1;
+
+import "activediq/connector/v1/common.proto";
+import "activediq/connector/v1/errors.proto";
+import "activediq/connector/v1/filter.proto";
+
+option go_package = "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1;connectorv1";
+
+// A delegation root. `nc_guid` names the domain NC that holds it, so the connector asks a DC of
+// that domain. A moved root is fine: the GUID follows the object. A deleted root fails the whole
+// call with ERROR_CODE_DELEGATION_ROOT_GONE (LF-31).
+message SearchRoot {
+  Guid guid = 1;
+  Guid nc_guid = 2;
+}
+
+enum SearchDepth {
+  SEARCH_DEPTH_UNSPECIFIED = 0;
+  // The root and everything below it.
+  SEARCH_DEPTH_SUBTREE = 1;
+  // The direct children of the root only (AD Explorer tree browsing, ADM-004).
+  SEARCH_DEPTH_ONE_LEVEL = 2;
+}
+
+message ScopedSearchRequest {
+  ConnectionRef connection = 1;
+  // One to 64 roots. A search runs per root; results are de-duplicated by object GUID.
+  repeated SearchRoot roots = 2;
+  SearchDepth depth = 3;
+  // Required. The connector composes it as And(scope, filter), so it only narrows.
+  Filter filter = 4;
+  // Explicit attribute names, one or more. `*` and `+` are rejected. Secret attributes are
+  // rejected (LF-37). Multi-valued attributes beyond one range come back with complete = false.
+  repeated string attributes = 5;
+  // Entries per DC page, 1..Limits.max_page_size. Unset means the DC maximum.
+  uint32 page_size = 6;
+  DcSelection dc = 7;
+  // No sort, no VLV, no controls. Numbers held so they cannot be reused for something else.
+  reserved 8 to 15;
+}
+
+message SearchBatch {
+  repeated DirectoryEntry entries = 1;
+  Observation observed = 2;
+}
+
+// All entries of one root have been delivered. A caller may checkpoint at this granularity; there
+// is no finer resume point, because an LDAP paging cookie belongs to its connection and DC.
+message RootCompleted {
+  Guid root = 1;
+}
+
+// The final message of a successful search. A stream that ends without it, or with an error, is an
+// incomplete result and must never be shown or counted as complete.
+message SearchCompleted {
+  Observation observed = 1;
+}
+
+message ScopedSearchResponse {
+  oneof event {
+    SearchBatch batch = 1;
+    RootCompleted root_completed = 2;
+    SearchCompleted completed = 3;
+  }
+}
+
+// Read: one object by identity, base scope. Constructed attributes (tokenGroups,
+// msDS-User-Account-Control-Computed, …) are readable here and only here.
+message ReadRequest {
+  ConnectionRef connection = 1;
+  Guid guid = 2;
+  Guid nc_guid = 3;
+  repeated string attributes = 4;
+  DcSelection dc = 5;
+  // Upper bound on values returned per multi-valued attribute across all ranges; 0 means the
+  // connector's cap. Exceeding it truncates the attribute and says so in ReadCompleted.
+  uint32 max_values_per_attribute = 6;
+  // nTSecurityDescriptor and the SD-flags control come with T-0118; held for them.
+  reserved 7 to 15;
+}
+
+// The object with every attribute that fit in one DC response. A ranged attribute carries its
+// first range here with complete = false, and the rest follows as ValueChunk messages.
+message ReadHeader {
+  DirectoryEntry entry = 1;
+  Observation observed = 2;
+}
+
+// A further range of one multi-valued attribute. Ranges arrive in order; `range.terminal` marks
+// the last. Values are as-of-read, not a snapshot: a membership change during the read may
+// duplicate or skip a value. Callers needing exactness reconcile against the change feed.
+message ValueChunk {
+  string attribute = 1;
+  repeated AttributeValue values = 2;
+  ValueRange range = 3;
+}
+
+message ReadCompleted {
+  // Attributes cut off by max_values_per_attribute.
+  repeated string truncated_attributes = 1;
+}
+
+message ReadResponse {
+  oneof event {
+    ReadHeader header = 1;
+    ValueChunk chunk = 2;
+    ReadCompleted completed = 3;
+  }
+}
+
+// ReadPerDC reads attributes that are not replicated, from every DC of the object's domain
+// (exact last logon, ADM-084). The attribute set is a closed enum so this is not a back door for
+// arbitrary reads.
+enum PerDcAttribute {
+  PER_DC_ATTRIBUTE_UNSPECIFIED = 0;
+  PER_DC_ATTRIBUTE_LAST_LOGON = 1;
+  PER_DC_ATTRIBUTE_LOGON_COUNT = 2;
+  PER_DC_ATTRIBUTE_BAD_PWD_COUNT = 3;
+  PER_DC_ATTRIBUTE_BAD_PASSWORD_TIME = 4;
+  // Replicated, but a lagging DC can disagree; the PDC emulator holds the authoritative value.
+  PER_DC_ATTRIBUTE_LOCKOUT_TIME = 5;
+}
+
+enum PerDcScope {
+  PER_DC_SCOPE_UNSPECIFIED = 0;
+  // Writable DCs only.
+  PER_DC_SCOPE_WRITABLE = 1;
+  // Every DC including RODCs. An RODC holds the logons it served (it is not a feed source).
+  PER_DC_SCOPE_ALL = 2;
+}
+
+message ReadPerDCRequest {
+  ConnectionRef connection = 1;
+  Guid guid = 2;
+  // The domain NC of the object: its DC list is the one asked.
+  Guid nc_guid = 3;
+  repeated PerDcAttribute attributes = 4;
+  PerDcScope scope = 5;
+  // Requested concurrency; the connector may lower it. Reads are paged-free single base reads.
+  uint32 max_concurrency = 6;
+}
+
+message PerDcValue {
+  PerDcAttribute attribute = 1;
+  oneof value {
+    TimeValue time = 2;
+    int64 integer = 3;
+  }
+}
+
+message PerDcResult {
+  DcIdentity dc = 1;
+  Observation observed = 2;
+  oneof outcome {
+    PerDcValues values = 3;
+    // The object is not on that DC yet (not replicated), the DC is unreachable, rights, …
+    ConnectorError error = 4;
+  }
+}
+
+message PerDcValues {
+  repeated PerDcValue values = 1;
+}
+
+enum Coverage {
+  COVERAGE_UNSPECIFIED = 0;
+  // Every DC in scope answered. Only then is a maximum an exact last logon.
+  COVERAGE_COMPLETE = 1;
+  // At least one DC did not answer. A maximum over the answered DCs is a lower bound: callers
+  // must not report "never logged on" or an exact time from it.
+  COVERAGE_PARTIAL = 2;
+}
+
+message PerDcSummary {
+  // DCs the connector found for the domain, including unreachable and stale ones.
+  uint32 dcs_in_scope = 1;
+  uint32 dcs_answered = 2;
+  Coverage coverage = 3;
+}
+
+message ReadPerDCResponse {
+  oneof event {
+    PerDcResult result = 1;
+    PerDcSummary summary = 2;
+  }
+}

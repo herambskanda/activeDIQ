@@ -1,0 +1,269 @@
+// activediq.connector.v1 — Describe and DescribeSchema (the discover group).
+//
+// Describe answers "what is this provider, what can it do right now, and what does the directory
+// look like". DM-13.I2 binds a connection to a connector only if Describe reports a provider for
+// the connection's kind, so Describe is also the binding check.
+syntax = "proto3";
+
+package activediq.connector.v1;
+
+import "activediq/connector/v1/common.proto";
+import "activediq/connector/v1/errors.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1;connectorv1";
+
+// Every operation of the contract, including the three whose NAMES are reserved by T-0064 and
+// whose messages are specified later. Reserved operations are listed in Describe with state
+// RESERVED and any call to them fails with ERROR_CODE_CAPABILITY_UNSUPPORTED. Adding a shape later
+// is additive: it never renumbers or changes anything here.
+enum Operation {
+  OPERATION_UNSPECIFIED = 0;
+  OPERATION_DESCRIBE = 1;
+  OPERATION_DESCRIBE_SCHEMA = 2;
+  OPERATION_SCOPED_SEARCH = 3;
+  OPERATION_READ = 4;
+  OPERATION_READ_PER_DC = 5;
+  OPERATION_CHANGE_FEED = 6;
+  // Reserved names (blueprint §7.1). No message shape in v1.
+  OPERATION_APPLY = 100;
+  OPERATION_READ_SECRET = 101;
+  OPERATION_VERIFY_USER = 102;
+}
+
+enum SupportState {
+  SUPPORT_STATE_UNSPECIFIED = 0;
+  SUPPORT_STATE_SUPPORTED = 1;
+  SUPPORT_STATE_UNSUPPORTED = 2;
+  // The provider declares the feature but it depends on a right or a DC behaviour that cannot be
+  // checked without a side effect (for example: does the bound identity see tombstones in a
+  // DirSync object-security feed). Callers must not rely on it alone: they run the reconcile pass.
+  SUPPORT_STATE_UNVERIFIED = 3;
+  // A name held for a later specification (Apply, ReadSecret, VerifyUser).
+  SUPPORT_STATE_RESERVED = 4;
+}
+
+// Where a support statement comes from.
+enum SupportSource {
+  SUPPORT_SOURCE_UNSPECIFIED = 0;
+  // The provider's own code (the operation exists).
+  SUPPORT_SOURCE_DECLARED = 1;
+  // Read from the directory (rootDSE supportedControl, schema, functional level).
+  SUPPORT_SOURCE_PROBED = 2;
+  // The directory does not expose the fact; the state is the provider's assumption.
+  SUPPORT_SOURCE_ASSUMED = 3;
+}
+
+message OperationSupport {
+  Operation operation = 1;
+  SupportState state = 2;
+  string reason = 3;
+}
+
+// Capability flags below the operation level. `directory/client` checks them before it plans.
+enum Feature {
+  FEATURE_UNSPECIFIED = 0;
+  FEATURE_PAGED_SEARCH = 1;
+  // Multi-valued attribute-range retrieval through Read.
+  FEATURE_RANGED_VALUES = 2;
+  FEATURE_EXTENDED_DN = 3;
+  // ChangeFeed can establish a cookie without returning object data (start = prime).
+  FEATURE_FEED_PRIME = 4;
+  // ChangeFeed can deliver the full current state as changes (start = full). Entra delta yes; AD
+  // no, AD initial state is a ScopedSearch.
+  FEATURE_FEED_FULL_START = 5;
+  // Deleted objects appear in the feed for the bound identity. UNVERIFIED on AD (see above).
+  FEATURE_FEED_DELETIONS = 6;
+  // Link-value changes arrive as added or removed values rather than whole sets.
+  FEATURE_FEED_INCREMENTAL_VALUES = 7;
+  FEATURE_PER_DC_READ = 8;
+  FEATURE_RECYCLE_BIN = 9;
+  FEATURE_ONE_LEVEL_SEARCH = 10;
+}
+
+message FeatureSupport {
+  Feature feature = 1;
+  SupportState state = 2;
+  SupportSource source = 3;
+  string detail = 4;
+}
+
+enum NamingContextKind {
+  NAMING_CONTEXT_KIND_UNSPECIFIED = 0;
+  NAMING_CONTEXT_KIND_DOMAIN = 1;
+  NAMING_CONTEXT_KIND_CONFIGURATION = 2;
+  NAMING_CONTEXT_KIND_SCHEMA = 3;
+  NAMING_CONTEXT_KIND_APPLICATION = 4;
+}
+
+// An AD partition (DM-14). Entra has none.
+message NamingContextInfo {
+  Guid nc_guid = 1;
+  NamingContextKind kind = 2;
+  string dns_name = 3;
+  string netbios_name = 4;
+  Sid domain_sid = 5;
+  optional uint32 functional_level = 6;
+  DnValue head = 7;
+}
+
+// Forest-wide deletion settings (DM-10.I6), read from CN=Directory Service and the Recycle Bin
+// optional feature. Unset means the attribute is absent in the directory; the caller applies the
+// documented default (tombstoneLifetime absent = 60 days). The connector never assumes it.
+message ForestSettings {
+  TriState recycle_bin_enabled = 1;
+  optional uint32 tombstone_lifetime_days = 2;
+  optional uint32 deleted_object_lifetime_days = 3;
+  optional uint32 forest_functional_level = 4;
+}
+
+// One DC, as facts read from it. Fields a DC does not expose are unset or UNKNOWN, never zero.
+message DomainControllerInfo {
+  DcIdentity identity = 1;
+  // The domain NC this DC serves.
+  Guid domain_nc_guid = 2;
+  TriState is_rodc = 3;
+  TriState is_global_catalog = 4;
+  // Holder of the PDC emulator role, cross-checked against the DC's own validFSMOs.
+  TriState is_pdc_emulator = 5;
+  optional uint32 domain_controller_functionality = 6;
+  // Features this DC can serve (supported controls, role). A feature absent here is unsupported
+  // on this DC even when the provider supports it elsewhere (an RODC is not a feed source).
+  repeated Feature features = 7;
+  Observation observed = 8;
+  // highestCommittedUSN sampled with `observed`. Per-DC, meaningful only with `identity`.
+  optional uint64 highest_committed_usn = 9;
+  // dc_time minus the connector's clock, milliseconds. Kerberos tolerates 5 minutes.
+  optional int64 clock_skew_ms = 10;
+  bool reachable = 11;
+  // Set when `reachable` is false or a probe failed.
+  optional ConnectorError error = 12;
+}
+
+message EntraTenantInfo {
+  string tenant_id = 1;
+}
+
+enum HealthState {
+  HEALTH_STATE_UNSPECIFIED = 0;
+  HEALTH_STATE_OK = 1;
+  HEALTH_STATE_DEGRADED = 2;
+  HEALTH_STATE_UNAVAILABLE = 3;
+}
+
+enum HealthCheckKind {
+  HEALTH_CHECK_KIND_UNSPECIFIED = 0;
+  HEALTH_CHECK_KIND_DC_LOCATOR = 1;
+  HEALTH_CHECK_KIND_TLS = 2;
+  HEALTH_CHECK_KIND_BIND = 3;
+  HEALTH_CHECK_KIND_ROOT_DSE = 4;
+  HEALTH_CHECK_KIND_CLOCK_SKEW = 5;
+  HEALTH_CHECK_KIND_SCHEMA = 6;
+  HEALTH_CHECK_KIND_GRAPH_TOKEN = 7;
+}
+
+message HealthCheck {
+  HealthCheckKind kind = 1;
+  HealthState state = 2;
+  optional ConnectorError error = 3;
+}
+
+// Connector limits the caller must stay under. The connector enforces them; they are listed so a
+// caller can size requests instead of discovering them from errors.
+message Limits {
+  // The DC's MaxPageSize (lDAPAdminLimits), at most 1000 by default.
+  uint32 max_page_size = 1;
+  // The DC's MaxValRange: values per attribute range (1500 by default).
+  uint32 max_value_range = 2;
+  // Largest response message the connector will send, bytes.
+  uint32 max_message_bytes = 3;
+  // Filter limits of safe-primitives §3.3 rule 9.
+  uint32 max_filter_nodes = 4;
+  uint32 max_filter_depth = 5;
+  // Concurrent operations the connector runs against one DC.
+  uint32 max_concurrent_ops_per_dc = 6;
+}
+
+message DescribeRequest {
+  ConnectionRef connection = 1;
+  // Re-probe the directory instead of answering from the connector's cache.
+  bool refresh = 2;
+}
+
+message DescribeResponse {
+  // "activediq.connector.v1" and the minor revision of the contract this connector implements.
+  string contract = 1;
+  uint32 contract_minor = 2;
+  ProviderKind provider_kind = 3;
+  string connector_build = 4;
+  DirectoryIdentity directory_identity = 5;
+  repeated OperationSupport operations = 6;
+  repeated FeatureSupport features = 7;
+  Limits limits = 8;
+  google.protobuf.Timestamp described_at = 9;
+  // AD only.
+  repeated NamingContextInfo naming_contexts = 10;
+  optional ForestSettings forest_settings = 11;
+  // AD only: every DC of every managed domain found in the configuration NC, including DCs that
+  // are unreachable or leftovers of incomplete metadata cleanup. Nothing is dropped silently.
+  repeated DomainControllerInfo domain_controllers = 12;
+  // Entra only.
+  optional EntraTenantInfo entra_tenant = 13;
+  HealthState health = 14;
+  repeated HealthCheck health_checks = 15;
+  // Changes when the schema changes. Callers re-fetch DescribeSchema when it differs from theirs.
+  string schema_fingerprint = 16;
+}
+
+// What a schema attribute's values decode to. Mirrors the AttributeValue arms.
+enum ValueKind {
+  VALUE_KIND_UNSPECIFIED = 0;
+  VALUE_KIND_TEXT = 1;
+  VALUE_KIND_OCTETS = 2;
+  VALUE_KIND_INT32 = 3;
+  VALUE_KIND_INT64 = 4;
+  VALUE_KIND_BOOLEAN = 5;
+  VALUE_KIND_FILETIME = 6;
+  VALUE_KIND_GENERALIZED_TIME = 7;
+  VALUE_KIND_GUID = 8;
+  VALUE_KIND_SID = 9;
+  VALUE_KIND_DN = 10;
+  // nTSecurityDescriptor. Its typed structure and the SD-flags read arrive with T-0028/T-0118;
+  // until then a request for it fails with ERROR_CODE_CAPABILITY_UNSUPPORTED.
+  VALUE_KIND_SECURITY_DESCRIPTOR = 11;
+}
+
+// One attributeSchema object, reduced to what callers need (safe-primitives §3.3, §3.7).
+message AttributeSchema {
+  string ldap_display_name = 1;
+  string attribute_syntax_oid = 2;
+  uint32 om_syntax = 3;
+  ValueKind kind = 4;
+  bool single_valued = 5;
+  // systemFlags FLAG_ATTR_IS_CONSTRUCTED: readable on a base read, never filterable (gotcha 12).
+  bool constructed = 6;
+  bool indexed = 7;
+  bool in_global_catalog = 8;
+  // Forward half of a link pair (member, manager, …): ranged and incremental-valued.
+  bool linked = 9;
+  optional uint32 link_id = 10;
+  // Member of SecretAttrs (searchFlags 0x80, 0x200 or 0x1000, or the static list, minus the
+  // reviewed exemption list). A true here means every request naming it fails.
+  bool secret = 11;
+  uint32 search_flags = 12;
+  uint32 system_flags = 13;
+}
+
+message DescribeSchemaRequest {
+  ConnectionRef connection = 1;
+  // When equal to the current fingerprint the stream is a single empty chunk with last = true.
+  string if_fingerprint_differs_from = 2;
+}
+
+// The schema streams in chunks of at most Limits.max_message_bytes. A reader has the whole schema
+// only after a chunk with `last` set; a stream that ends earlier is an error.
+message DescribeSchemaResponse {
+  repeated AttributeSchema attributes = 1;
+  string schema_fingerprint = 2;
+  bool last = 3;
+}

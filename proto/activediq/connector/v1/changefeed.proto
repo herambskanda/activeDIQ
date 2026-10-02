@@ -1,0 +1,151 @@
+// activediq.connector.v1 — ChangeFeed (named operation ChangeTracking).
+//
+// AD: DirSync with LDAP_DIRSYNC_OBJECT_SECURITY and incremental values, nothing else. There is no
+// flags field, so replication-rights mode (DS-Replication-Get-Changes) and DirSync EX are
+// unrepresentable (threat-model §6.3 R2: that mode reads confidential attributes and bypasses
+// ACLs, and Get-Changes-All is DCSync). Entra: Graph delta queries.
+//
+// Semantics are DM-19.I1..I6; the contract document §6 is the long form.
+syntax = "proto3";
+
+package activediq.connector.v1;
+
+import "activediq/connector/v1/common.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1;connectorv1";
+
+enum EntraResource {
+  ENTRA_RESOURCE_UNSPECIFIED = 0;
+  ENTRA_RESOURCE_USERS = 1;
+  ENTRA_RESOURCE_GROUPS = 2;
+}
+
+// One position-tracked stream: an AD domain NC, or one Graph resource (DM-19 `partition`).
+message FeedPartition {
+  oneof partition {
+    Guid ad_nc_guid = 1;
+    EntraResource entra_resource = 2;
+  }
+}
+
+// The resume position. Callers persist the whole message in the SyncCursor row, in the same
+// transaction as the inventory rows the batch covered (DM-19.I1), and never parse `provider_state`.
+message FeedCookie {
+  // AD: the DirSync cookie bytes. Entra: the delta link or token.
+  bytes provider_state = 1;
+  ProviderKind provider_kind = 2;
+  // Bumped when the layout of provider_state changes. An unknown version resyncs.
+  uint32 format_version = 3;
+  // AD: the DC that issued it and the replication state read from it BEFORE the search that
+  // produced this cookie. The cookie is valid only on this DC (DM-19.I4). Entra: unset.
+  DcIdentity issuer = 4;
+  optional uint64 highest_committed_usn_before = 5;
+  // When the cycle that produced this cookie completed, by the connector's clock. The age check
+  // against tombstone lifetime uses it.
+  google.protobuf.Timestamp issued_at = 6;
+}
+
+// Establish a cookie without receiving object data: the connector drains the first DirSync cycle
+// itself and returns only the cookie. A sync then does its initial state as a ScopedSearch of the
+// NC root, and every change between the two is delivered again by the feed (replays are harmless:
+// apply is idempotent upsert by GUID). The order is therefore prime, search, then resume.
+message FeedPrime {
+  DcSelection dc = 1;
+}
+
+// Deliver the full current state as changes (Entra delta without a token). Not offered for AD.
+message FeedFull {
+  DcSelection dc = 1;
+}
+
+// Continue from a cookie. There is no DC choice: the cookie names its DC, and a connector never
+// silently moves a cookie to another DC.
+message FeedResume {
+  FeedCookie cookie = 1;
+}
+
+message ChangeFeedRequest {
+  ConnectionRef connection = 1;
+  FeedPartition partition = 2;
+  oneof start {
+    FeedPrime prime = 3;
+    FeedFull full = 4;
+    FeedResume resume = 5;
+  }
+  // Explicit attribute names to return. The connector adds the mandatory set (contract §6.3) and
+  // strips SecretAttrs. `*` and `+` are rejected.
+  repeated string attributes = 6;
+  // No DirSync flags, no control choice, no extended mode. Numbers held.
+  reserved 7 to 15;
+}
+
+enum ObjectState {
+  OBJECT_STATE_UNSPECIFIED = 0;
+  // Live (isDeleted absent or false).
+  OBJECT_STATE_LIVE = 1;
+  // isDeleted = TRUE: a tombstone or a Recycle Bin deleted object. Restorable while the forest
+  // keeps it.
+  OBJECT_STATE_DELETED = 2;
+  // isRecycled = TRUE: past the deleted-object lifetime, no longer restorable, awaiting purge.
+  OBJECT_STATE_RECYCLED = 3;
+}
+
+enum ChangeOp {
+  CHANGE_OP_UNSPECIFIED = 0;
+  // `values` is the full current value set of the attribute.
+  CHANGE_OP_SET = 1;
+  // The attribute now has no values.
+  CHANGE_OP_CLEARED = 2;
+  // Link attributes with incremental values: these values were added, or removed. The connector
+  // normalises the provider's encoding (Windows `member;range=1-1` for add; Samba also
+  // `;range=0-0` for remove; Graph members@delta) into these two ops.
+  CHANGE_OP_VALUES_ADDED = 3;
+  CHANGE_OP_VALUES_REMOVED = 4;
+}
+
+message AttributeChange {
+  string name = 1;
+  ChangeOp op = 2;
+  repeated AttributeValue values = 3;
+}
+
+// The final state of one object since the cookie: a patch, not a snapshot. Several changes between
+// two polls collapse, and an add then a remove can vanish (DM-18.I2). No change carries an old
+// value; the old value is the caller's own previous observation.
+message ObjectChange {
+  Guid object_guid = 1;
+  ObjectState state = 2;
+  // Display only; for a tombstone it is the CN=…\0ADEL:<guid>,CN=Deleted Objects,… form.
+  DnValue dn = 3;
+  Guid parent_guid = 4;
+  // The changed attributes among those requested plus the mandatory set. Zero attributes is
+  // legal (the object changed only in attributes not requested): callers infer nothing from it.
+  repeated AttributeChange attributes = 5;
+}
+
+// One DirSync response (or Graph page). Delivery order across and within batches is NOT
+// parent-first and carries no meaning: apply must be order-independent.
+message ChangeBatch {
+  // 1, 2, 3, … within one call.
+  uint64 sequence = 1;
+  repeated ObjectChange changes = 2;
+  // The cookie that, resumed, yields everything after this batch. A caller commits this batch's
+  // rows and this cookie in one transaction. Valid on the issuer DC only.
+  FeedCookie cookie_after = 3;
+  Observation observed = 4;
+  // True on the last batch of a call: the connector is caught up (DirSync MoreResults = 0, Graph
+  // deltaLink reached). Every successful call ends with one, even when it carries no changes; a
+  // stream that ends without it, or with an error, was cut off and the caller keeps its last
+  // committed cookie.
+  bool cycle_complete = 5;
+  // Number of attribute values dropped because they were SecretAttrs. A diagnostic count; names
+  // and values never leave the connector.
+  uint32 secret_attributes_dropped = 6;
+}
+
+message ChangeFeedResponse {
+  oneof event {
+    ChangeBatch batch = 1;
+  }
+}

@@ -1,0 +1,37 @@
+// activediq.connector.v1 — the connector service (read side).
+//
+// One service, two transports, one conformance suite (blueprint §7.2). The same messages travel
+// in-process (embedded) and over the connector-initiated mTLS stream (remote).
+//
+// The contract has no free-form query verb and no script verb (ADR-0002 rule 3). The write group
+// (Apply), named secret reads (ReadSecret) and VerifyUser are not here: their names are reserved
+// in Operation (describe.proto) and their shapes are specified by later tickets, additively.
+syntax = "proto3";
+
+package activediq.connector.v1;
+
+import "activediq/connector/v1/changefeed.proto";
+import "activediq/connector/v1/describe.proto";
+import "activediq/connector/v1/read.proto";
+
+option go_package = "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1;connectorv1";
+
+service Connector {
+  // What the provider is, can do, and sees. Also the DM-13.I2 binding check.
+  rpc Describe(DescribeRequest) returns (DescribeResponse);
+
+  // The schema allowlist the server-side filter builder needs (safe-primitives §3.3 rule 1).
+  rpc DescribeSchema(DescribeSchemaRequest) returns (stream DescribeSchemaResponse);
+
+  // Paged, root-bounded, streamed. Valid only if the stream ends with SearchCompleted.
+  rpc ScopedSearch(ScopedSearchRequest) returns (stream ScopedSearchResponse);
+
+  // One object by GUID, with ranged multi-valued attributes streamed to the end.
+  rpc Read(ReadRequest) returns (stream ReadResponse);
+
+  // Non-replicated attributes from every DC of the object's domain, with coverage.
+  rpc ReadPerDC(ReadPerDCRequest) returns (stream ReadPerDCResponse);
+
+  // DirSync (AD, object-security mode only) or Graph delta (Entra). One call runs until caught up.
+  rpc ChangeFeed(ChangeFeedRequest) returns (stream ChangeFeedResponse);
+}

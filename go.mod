@@ -3,9 +3,11 @@ module github.com/skenzeriq/activediq
 go 1.27.0
 
 require (
+	github.com/bufbuild/protocompile v0.14.1
 	github.com/jackc/pgx/v5 v5.9.2
 	go.yaml.in/yaml/v3 v3.0.4
 	golang.org/x/tools v0.42.0
+	google.golang.org/protobuf v1.34.2
 )
 
 require (

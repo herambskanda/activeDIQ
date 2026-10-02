@@ -1,0 +1,172 @@
+// activediq.connector.v1 — shared value types.
+//
+// Contract document: knowledge/development/architecture/connector-contract.md (T-0064).
+// Rules that bind every file in this package:
+//   * No request message has a free-form query, script, filter-text or DN-text field. Objects are
+//     addressed by Guid; DNs travel only as the typed Dn (filter.proto). The tier-W rule of
+//     safe-primitives §2.1 holds on this contract too. `make fitness-proto` enforces it.
+//   * The tenant is never a field. A remote connector's tenant comes from its mTLS certificate;
+//     the embedded connector runs inside the caller's WithTenantTx (ADR-0002).
+//   * Response DNs are display-only (DnValue.display_dn). Never key on them (DM-16.I2).
+syntax = "proto3";
+
+package activediq.connector.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1;connectorv1";
+
+enum ProviderKind {
+  PROVIDER_KIND_UNSPECIFIED = 0;
+  PROVIDER_KIND_AD = 1;
+  PROVIDER_KIND_ENTRA = 2;
+}
+
+// Three-valued fact. A directory (Samba in particular) may not expose a fact at all; "absent" is
+// never reported as FALSE.
+enum TriState {
+  TRI_STATE_UNKNOWN = 0;
+  TRI_STATE_FALSE = 1;
+  TRI_STATE_TRUE = 2;
+}
+
+// A 128-bit object identity: AD objectGUID, or an Entra object id.
+// `value` is 16 bytes in RFC 4122 network order, the byte order of the canonical dashed string.
+// It is NOT the LDAP wire order of objectGUID (mixed-endian); the connector converts with the
+// attr/guid codec (safe-primitives §5.1), and no caller ever sees the wire order.
+message Guid {
+  bytes value = 1;
+}
+
+// A security identifier in the MS-DTYP binary form (revision, sub-authority count, 6-byte
+// identifier authority, sub-authorities little-endian). Text form `S-1-5-…` is a codec concern.
+message Sid {
+  bytes value = 1;
+}
+
+// What a connection must be pointed at. The connector refuses an operation whose identity differs
+// from the directory it is bound to (DM-10.I1): ERROR_CODE_DIRECTORY_IDENTITY_MISMATCH.
+message DirectoryIdentity {
+  oneof identity {
+    // AD: objectGUID of the forest root domain NC head, with the root domain SID as a second check.
+    AdForestIdentity ad_forest = 1;
+    // Entra: the tenant id.
+    string entra_tenant_id = 2;
+  }
+}
+
+message AdForestIdentity {
+  Guid forest_root_nc_guid = 1;
+  Sid forest_root_domain_sid = 2;
+}
+
+// Names the connection an operation runs against. `connection_id` is the DM-10 id inside the
+// calling tenant. Tenant isolation is the transport's job, never this message's.
+message ConnectionRef {
+  string connection_id = 1;
+  DirectoryIdentity directory_identity = 2;
+}
+
+// One domain controller. `dsa_guid` (objectGUID of its NTDS Settings object) is the stable
+// identity; `invocation_id` is the replication identity, which changes on restore and on a
+// VM-GenerationID change (DM-15). Hostnames are display and dialling hints, never identity.
+message DcIdentity {
+  Guid dsa_guid = 1;
+  Guid invocation_id = 2;
+  string dns_hostname = 3;
+  string site = 4;
+}
+
+// When and where a value was observed (DM-16.I5: values carry freshness and a source DC).
+message Observation {
+  DcIdentity dc = 1;
+  // The DC's own rootDSE `currentTime` at the time of the read. Clock skew against `received_at`
+  // is visible to the caller.
+  google.protobuf.Timestamp dc_time = 2;
+  // The connector's clock when it received the response.
+  google.protobuf.Timestamp received_at = 3;
+}
+
+// How a caller may pick a DC. Both fields unset means "the connector chooses by site and health".
+// A pinned DC that cannot serve is an error, never a silent switch (read-your-writes, DM-15.I3).
+message DcSelection {
+  optional Guid pinned_dsa_guid = 1;
+  optional string preferred_site = 2;
+}
+
+// FILETIME and Integer8 time values, decoded losslessly. The two "never" encodings of
+// accountExpires stay distinguishable so callers decide; pwdLastSet 0 is ZERO.
+enum TimeSentinel {
+  TIME_SENTINEL_UNSPECIFIED = 0;
+  // FILETIME 0 (also the "unset" form of lastLogon, pwdLastSet, lockoutTime).
+  TIME_SENTINEL_ZERO = 1;
+  // 0x7FFFFFFFFFFFFFFF.
+  TIME_SENTINEL_MAX = 2;
+}
+
+message TimeValue {
+  oneof kind {
+    google.protobuf.Timestamp at = 1;
+    TimeSentinel sentinel = 2;
+    // A FILETIME beyond google.protobuf.Timestamp's range (after 9999-12-31). The raw 100 ns
+    // ticks, so the codec round-trips every int64.
+    int64 filetime_ticks_out_of_range = 3;
+  }
+}
+
+// A DN returned by the directory. Display only. `guid` and `sid` come from the extended-DN
+// control and are the identity of the referenced object when the DC supplies them.
+message DnValue {
+  string display_dn = 1;
+  Guid guid = 2;
+  Sid sid = 3;
+}
+
+// A typed attribute value, decoded by the connector's codecs. Raw bytes appear only for syntaxes
+// with no codec (`octets`).
+message AttributeValue {
+  oneof value {
+    string text = 1;
+    bytes octets = 2;
+    // Integer (syntax 2.5.5.9): signed 32-bit, so groupType and userAccountControl keep their sign.
+    int32 int32_value = 3;
+    // Large Integer (2.5.5.16) that is not a time.
+    int64 int64_value = 4;
+    bool boolean = 5;
+    // FILETIME or Generalized Time attributes.
+    TimeValue time = 6;
+    Guid guid = 7;
+    Sid sid = 8;
+    DnValue dn = 9;
+  }
+}
+
+// Where a partial multi-valued attribute stands: values [start, end] of the attribute, with
+// `terminal` set when `end` is the `*` of the final range (attribute-range retrieval).
+message ValueRange {
+  uint32 start = 1;
+  uint32 end = 2;
+  bool terminal = 3;
+}
+
+// One attribute of one object.
+//   * An attribute the object does not have, or the bound identity cannot read, is OMITTED. The
+//     directory does not distinguish the two, so omission is not "empty" for any security decision.
+//   * `complete` defaults to false on purpose: only a value set the connector knows to be whole may
+//     say true. A `complete=false` multi-valued attribute carries the first range and `range`;
+//     ranged completion is `Read`'s job (contract §5.3).
+message Attribute {
+  string name = 1;
+  repeated AttributeValue values = 2;
+  bool complete = 3;
+  ValueRange range = 4;
+}
+
+// An object as read. `object_guid` is the identity (DM-16.I1). `parent_guid` is empty when the
+// source did not supply it.
+message DirectoryEntry {
+  Guid object_guid = 1;
+  DnValue dn = 2;
+  Guid parent_guid = 3;
+  repeated Attribute attributes = 4;
+}

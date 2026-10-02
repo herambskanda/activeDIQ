@@ -500,9 +500,9 @@ these for completeness and marks in bold the EPs that define the module's role.
 A versioned protobuf service of **typed** operations. It has no free-form query verb and no script
 verb (ADR-0002 rule 3).
 
-| Group | Operations (sketch; the contract is finalised by the connector spec) |
+| Group | Operations (read side finalised in [connector-contract.md](connector-contract.md); write, secret and auth rows remain a sketch) |
 | --- | --- |
-| Discover | `Describe` (provider kind, capabilities, naming contexts, DCs, health) |
+| Discover | `Describe` (provider kind, capabilities, naming contexts, DCs, health), `DescribeSchema` (attribute syntax and flags per class) |
 | Read | `ScopedSearch{connection, delegation roots: GUIDRef[], filter AST, attrs, page}`, `Read{ObjectRef, attrs}`, `ReadPerDC{ObjectRef, attrs}` (exact last logon, ADM-084) |
 | Write | `Apply{op: Create, Modify, Move, Rename, Delete, Restore, MemberAdd, MemberRemove, SetPassword(Secret), Unlock, AssignLicenses…; idempotency key; acting principal; DC hint}` returns read-back state |
 | Named secret ops | `ReadSecret{LAPS, BitLocker}`: each has its own capability and audit kind (safe-primitives §3.7) |

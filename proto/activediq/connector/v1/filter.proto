@@ -1,0 +1,99 @@
+// activediq.connector.v1 — the typed filter and DN wire forms (safe-primitives P1, P2).
+//
+// This is the "filter AST JSON" of safe-primitives §2.1 as protobuf. The connector does not trust
+// it: it re-validates every node with ParseFilterAST under its own limits and the schema allowlist
+// before rendering, because a compromised server is in the threat model (TM-TB6-T4). Rendering to
+// RFC 4515 text happens only inside internal/connector/ad/scope; nothing in this package is text.
+syntax = "proto3";
+
+package activediq.connector.v1;
+
+import "activediq/connector/v1/common.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1;connectorv1";
+
+// A DN as data: a list of RDNs, each with exactly one attribute-value assertion (P2). There is no
+// DN string in any request. The connector renders it with the RFC 4514 builder.
+message Dn {
+  repeated Rdn rdns = 1;
+}
+
+message Rdn {
+  // An attribute descriptor from the closed rDNAttID set (CN, OU, DC, O, L, …) or a numeric OID.
+  string type = 1;
+  oneof value {
+    string text = 2;
+    bytes octets = 3;
+  }
+}
+
+// A filter value of a kind. The kind must match the attribute's syntax (safe-primitives §3.3
+// rule 3): a GUID-syntax attribute takes `guid` only, a DN-syntax attribute takes `dn` only.
+message FilterValue {
+  oneof value {
+    string text = 1;
+    bytes octets = 2;
+    Guid guid = 3;
+    Sid sid = 4;
+    Dn dn = 5;
+    int32 int32_value = 6;
+    int64 int64_value = 7;
+    // A FILETIME assertion. Sub-100 ns precision is rejected.
+    google.protobuf.Timestamp file_time = 8;
+    google.protobuf.Timestamp generalized_time = 9;
+  }
+}
+
+// The filter AST. Builder sugar (Prefix, Contains) is a Substring node on the wire. `attribute`
+// strings are validated by ParseAttrName against the schema allowlist; options such as `;binary`
+// and secret attributes are refused (LF-19, LF-20, LF-22, LF-34).
+message Filter {
+  oneof node {
+    FilterList and = 1;
+    FilterList or = 2;
+    Filter not = 3;
+    Comparison equal = 4;
+    Comparison greater_or_equal = 5;
+    Comparison less_or_equal = 6;
+    Comparison approx = 7;
+    // Presence of the named attribute. A secret attribute needs a SecretPresenceGrant, which this
+    // contract has no field for in v1: presence on a secret attribute is refused.
+    string present = 8;
+    Substring substring = 9;
+    BitMatch bit_and = 10;
+    BitMatch bit_or = 11;
+    // LDAP_MATCHING_RULE_IN_CHAIN. Marked expensive; the connector may refuse it under load.
+    InChain in_chain = 12;
+  }
+}
+
+message FilterList {
+  // At least one child. An empty And or Or is rejected (LF-29).
+  repeated Filter children = 1;
+}
+
+message Comparison {
+  string attribute = 1;
+  FilterValue value = 2;
+}
+
+// At least one part must be set and non-empty (LF-13). Substring on a DN-syntax attribute is
+// rejected (LF-15).
+message Substring {
+  string attribute = 1;
+  optional string initial = 2;
+  repeated string any = 3;
+  optional string final = 4;
+}
+
+message BitMatch {
+  string attribute = 1;
+  // Rendered as an unsigned decimal (LF-17).
+  uint32 mask = 2;
+}
+
+message InChain {
+  string attribute = 1;
+  Dn dn = 2;
+}

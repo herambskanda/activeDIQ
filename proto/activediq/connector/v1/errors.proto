@@ -1,0 +1,189 @@
+// activediq.connector.v1 — the error model.
+//
+// Every failure of every operation is a ConnectorError. On the wire it is the single detail of a
+// gRPC status (the status code is only the coarse mapping in contract §7); on the embedded
+// transport it is the same message inside a Go error. Both transports must produce the same code
+// for the same cause (conformance case CC-ERR-01). Callers classify on `code`, never on `message`
+// and never on a directory's diagnostic text.
+//
+// `message` is safe to log: it never contains credentials, filter text, attribute values, cookies
+// or a raw LDAP response (anti-pattern in the directory-engineering standard).
+syntax = "proto3";
+
+package activediq.connector.v1;
+
+import "activediq/connector/v1/common.proto";
+import "google/protobuf/duration.proto";
+
+option go_package = "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1;connectorv1";
+
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+
+  // The request is malformed or outside the contract's closed sets (empty roots, `*` attribute,
+  // a resume cookie together with a DC choice, a page size of 0, …).
+  ERROR_CODE_INVALID_ARGUMENT = 1;
+  // The filter AST failed connector-side validation; details carry the P1 rule id (LF-xx name).
+  ERROR_CODE_FILTER_REJECTED = 2;
+  // An attribute is not in the schema allowlist (undefinedAttributeType) or not usable here
+  // (constructed attribute in a filter; tokenGroups outside a base read).
+  ERROR_CODE_ATTRIBUTE_NOT_ALLOWED = 3;
+  // A secret attribute (SecretAttrs) was named in a filter, an attribute list or a sort (LF-22,
+  // LF-34, LF-35, LF-37, LF-38). Secrets leave only through the reserved ReadSecret operation.
+  ERROR_CODE_SECRET_ATTRIBUTE = 4;
+  // The operation or feature is not supported by this provider, or its name is reserved with no
+  // shape yet. Describe says so up front.
+  ERROR_CODE_CAPABILITY_UNSUPPORTED = 5;
+  // The connection's directory identity differs from the directory the connector is bound to.
+  ERROR_CODE_DIRECTORY_IDENTITY_MISMATCH = 6;
+
+  // No DC (or the pinned/issuing DC) could be reached or served. Details list each attempt.
+  ERROR_CODE_UNREACHABLE_DC = 10;
+  // TLS or channel setup failed (certificate, hostname, signing, channel binding). Never
+  // downgraded, never retried with validation off.
+  ERROR_CODE_TRANSPORT_SECURITY = 11;
+  // The directory refused the connector's credential.
+  ERROR_CODE_BIND_FAILED = 12;
+  // The DC answered with a referral or continuation reference. Referrals are never chased
+  // (LF-32); a response that contained one is never returned as complete.
+  ERROR_CODE_UNEXPECTED_REFERRAL = 13;
+  // The search was bound to a Global Catalog port (LF-33).
+  ERROR_CODE_GLOBAL_CATALOG_NOT_ALLOWED = 14;
+  // Throttled: DC busy, adminLimitExceeded, Graph 429. `retry_after` when the source gave one.
+  ERROR_CODE_THROTTLED = 15;
+  // A connector limit was hit (value range cap, message size, filter size, outstanding operations).
+  ERROR_CODE_LIMIT_EXCEEDED = 16;
+
+  // The bound identity lacks the right (insufficientAccessRights, Graph 403). For a read of one
+  // object AD often answers noSuchObject instead, so callers must not tell the two apart for a
+  // user (LF-36 oracle).
+  ERROR_CODE_INSUFFICIENT_RIGHTS = 20;
+  ERROR_CODE_OBJECT_NOT_FOUND = 21;
+  // A delegation root GUID now resolves to nothing, e.g. its OU was deleted (LF-31). No fallback
+  // to a wider root, ever.
+  ERROR_CODE_DELEGATION_ROOT_GONE = 22;
+
+  // The change-feed cookie cannot be continued (DM-19.I3, I4, I6). Details carry the reason. The
+  // caller's SyncCursor becomes resync_required.
+  ERROR_CODE_STALE_COOKIE = 30;
+
+  // An unmapped provider failure. The LDAP result code or HTTP status is in the detail for
+  // diagnosis only; the connector logs the cause, the caller gets no directory text.
+  ERROR_CODE_PROVIDER_FAILURE = 40;
+}
+
+// What the caller should do next. Advice, not authority: callers own their retry budgets.
+enum RetryAdvice {
+  RETRY_ADVICE_UNSPECIFIED = 0;
+  RETRY_ADVICE_NEVER = 1;
+  RETRY_ADVICE_SAME_DC_AFTER_BACKOFF = 2;
+  // Another DC may serve it. Not valid for a resume of a change feed (the cookie names its DC).
+  RETRY_ADVICE_OTHER_DC = 3;
+  RETRY_ADVICE_AFTER_RESYNC = 4;
+  // A human or the connection's owner must fix something (certificate, credential, delegation).
+  RETRY_ADVICE_AFTER_OPERATOR_ACTION = 5;
+}
+
+enum DcFailure {
+  DC_FAILURE_UNSPECIFIED = 0;
+  DC_FAILURE_DNS = 1;
+  DC_FAILURE_TCP_CONNECT = 2;
+  DC_FAILURE_TIMEOUT = 3;
+  DC_FAILURE_TLS = 4;
+  DC_FAILURE_BIND = 5;
+  DC_FAILURE_BUSY = 6;
+  // The DC is an RODC and the operation needs a writable or DirSync-capable DC.
+  DC_FAILURE_NOT_SUITABLE = 7;
+}
+
+message DcAttempt {
+  string dns_hostname = 1;
+  DcFailure failure = 2;
+}
+
+// Why a change-feed cookie is unusable. Every value ends in resync_required (DM-19.I3).
+enum ResyncReason {
+  RESYNC_REASON_UNSPECIFIED = 0;
+  // The issuing DC's invocationId differs from the cookie's: restore, VM-GenerationID change.
+  // The server would silently start from USN zero, so only this client-side check finds it.
+  RESYNC_REASON_INVOCATION_ID_CHANGED = 1;
+  // The DC's highestCommittedUSN is lower than the one recorded when the cookie was issued:
+  // USN rollback.
+  RESYNC_REASON_USN_ROLLBACK = 2;
+  // The DC reached is not the DC that issued the cookie (hostname now points elsewhere, or a DC
+  // was demoted and re-promoted: new dsa_guid, DM-15.I4).
+  RESYNC_REASON_ISSUER_MISMATCH = 3;
+  // Cookie age is at or beyond the smaller of tombstoneLifetime and msDS-deletedObjectLifetime
+  // minus a safety margin: deletions may have been purged unseen.
+  RESYNC_REASON_COOKIE_TOO_OLD = 4;
+  // The DC rejected the cookie (0000203D, protocolError, unsupported critical extension).
+  RESYNC_REASON_SERVER_REJECTED = 5;
+  // The cookie's format version is not understood by this connector build.
+  RESYNC_REASON_COOKIE_FORMAT_UNKNOWN = 6;
+  // Entra: the delta token expired (syncStateNotFound, up to 7 days) or the service answered 410.
+  RESYNC_REASON_DELTA_TOKEN_EXPIRED = 7;
+}
+
+message UnreachableDetails {
+  repeated DcAttempt attempts = 1;
+}
+
+// Only a count: the connector never hands out referral URLs, so nothing is tempted to chase them.
+message ReferralDetails {
+  uint32 referral_count = 1;
+}
+
+message StaleCookieDetails {
+  ResyncReason reason = 1;
+  // The DC that issued the cookie, as recorded in it.
+  DcIdentity issuer = 2;
+  // The DC actually reached, when one was.
+  DcIdentity observed = 3;
+}
+
+message InsufficientRightsDetails {
+  // The contract operation that failed (Operation name, e.g. "CHANGE_FEED").
+  string operation = 1;
+  optional Guid object = 2;
+}
+
+// Why the connector refused an input. `rule_id` is the P1/P2 error name (for example
+// "ForbiddenAttribute", "ConstructedNotFilterable", "TooDeep"). `field` is the request field path,
+// never the offending value.
+message RejectedInputDetails {
+  string rule_id = 1;
+  string field = 2;
+}
+
+message ThrottledDetails {
+  google.protobuf.Duration retry_after = 1;
+}
+
+message RootGoneDetails {
+  Guid root = 1;
+}
+
+message LimitDetails {
+  string limit = 1;
+  uint64 value = 2;
+}
+
+message ConnectorError {
+  ErrorCode code = 1;
+  RetryAdvice retry = 2;
+  string message = 3;
+  // The DC that produced the failure, when known.
+  DcIdentity dc = 4;
+  // Diagnosis only: the LDAP resultCode or HTTP status behind the failure. Never classified on.
+  optional int32 provider_result_code = 5;
+  oneof details {
+    UnreachableDetails unreachable = 10;
+    ReferralDetails referral = 11;
+    StaleCookieDetails stale_cookie = 12;
+    InsufficientRightsDetails insufficient_rights = 13;
+    RejectedInputDetails rejected_input = 14;
+    ThrottledDetails throttled = 15;
+    RootGoneDetails root_gone = 16;
+    LimitDetails limit = 17;
+  }
+}
