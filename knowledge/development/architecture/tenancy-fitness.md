@@ -51,8 +51,14 @@ unchanged there:
 - `ALTER DEFAULT PRIVILEGES FOR ROLE activediq_owner IN SCHEMA public` grants the runtime role
   `SELECT, INSERT, UPDATE, DELETE` on tables (never `TRUNCATE`) and `USAGE, SELECT` on sequences.
 - Any other schema, and any non-default grant (a function, `EXECUTE`), is explicit SQL in a migration.
-- `tenants` lives in `public`. The migration bookkeeping table, if the migrator creates it outside the
-  migrations, is not visible to the job (T-0037 decides where it lives).
+- `tenants` lives in `public`. Migration 0001 itself re-states the default privileges and the schema
+  grant, so an installer that created only the two roles and a database the owner owns is enough: the
+  script fails loudly if the split is missing or broken (roles absent, either one a superuser or
+  `BYPASSRLS`, the runtime role inheriting the owner). Roles are cluster-level and the owner has no
+  `CREATEROLE`, so the installer creates them; no migration does.
+- The migration bookkeeping table is **not** created by any migration, so the job never sees it, and the
+  registry does not list it (a registry entry for a table the job's database lacks fails `registry-stale`).
+  The migrator (a follow-up ticket) creates and registers it. T-0037 ships no migrator.
 
 ## Migration naming
 
@@ -84,9 +90,17 @@ not exist (table, function, package, type) or that no longer needs the exemption
 an entry without a reason or owner fails as `registry`. `probeValues` gives T4 a bound text value for a
 column whose CHECK or domain the generated value cannot satisfy.
 
-## Contract with T-0037 (tenancy foundation)
+## Contract with T-0037 (tenancy foundation): built
 
-`tenant.ID` in `internal/platform/tenant` with no decoder methods; `WithTenantTx` and `WithPlatform` in
-`internal/platform/store`; job argument types expose `Kind() string`; `store` carries
-`TestPoolRefusesSimpleProtocol`; platform-scope OpenAPI operations carry `x-activediq-scope: platform`;
-the registry file lives at the path above.
+| Contract | Where |
+| --- | --- |
+| `tenant.ID`: unexported 16-byte value, `New()` and `Parse()` (canonical UUID text only, nil UUID rejected), `String`, `MarshalText`; no Unmarshal/Scan/Set method; no default-tenant constant | `internal/platform/tenant` |
+| `store.DB` with `WithTenant(ctx, tenant.ID, fn)` and `WithPlatform(ctx, reason, fn)` (methods on the handle, so there is no package-level pool). Both open one transaction whose first statement is `set_config('app.tenant_id', $1, true), set_config('statement_timeout', $2, true)`; `WithPlatform` sets the tenant to empty. The pool is unexported; `fn` gets a `store.Tx` (the sqlc `DBTX` shape: `Exec`, `Query`, `QueryRow`) that cannot commit or reach the connection | `internal/platform/store` |
+| `store.Open` refuses `default_query_exec_mode=simple_protocol` (`TestPoolRefusesSimpleProtocol`, SQL-20), a DSN that presets `app.tenant_id`, and a role that is a superuser, has `BYPASSRLS` or owns objects | `internal/platform/store` |
+| The exemption registry, embedded (`exempt.JSON`) from the one file the job reads. Seeded with what exists today: `public.tenants` (owner `internal/platform/tenant`) and the bootstrap site. The ADR's other starting entries (migration bookkeeping, River, platform settings, hostname bindings, release metadata) are added by the ticket that creates each table, because an entry for a missing object is `registry-stale` | `internal/platform/store/exempt/registry.json` |
+| First-run bootstrap `provision.FirstRun(ctx, db, name, initialisers...)`: under `WithPlatform` and an advisory lock it creates one tenant with `tenant.New()` if none exists; more than one is `ErrNotSingleTenant`. The row commits first; then the idempotent initialisers (`audit.InitTenant` is one, ADR-0005 rule 11) run in the tenant's own `WithTenant` transaction, on every call, so a tenant left half-initialised is completed | `internal/platform/tenant/provision` |
+| Migration 0001, `0001_tenant_tenants.sql`: the role-split guard, default privileges, `tenants`; nothing else | `migrations/` (embedded by `migrations.FS`) |
+| Test support: PostgreSQL 16 and 18 containers with the two roles (`storetest`, pins match `tools/fitness/tenancy/pgenv.go`: bump both); tenant seeding without naming the table (`tenanttest`) | `internal/platform/store/storetest`, `internal/platform/tenant/tenanttest` |
+
+Still to come from other tickets: job argument types expose `Kind() string` and the job wrapper (T-0084);
+platform-scope OpenAPI operations carry `x-activediq-scope: platform` (API tickets).
