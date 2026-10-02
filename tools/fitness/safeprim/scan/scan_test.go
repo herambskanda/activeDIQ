@@ -175,6 +175,28 @@ func TestFFSP3LiteralShapes(t *testing.T) {
 	want(t, "C# interpolated filter", map[string]string{"sidecars/exchange/A.cs": "var f = $\"(&(objectClass=user)(cn={n}))\";\n"}, "FF-SP3", "ldap-filter-shape", "sidecars/exchange/A.cs")
 	want(t, "Rust format! DN", map[string]string{"native/shared/src/a.rs": "let d = format!(\"CN={},OU=x\", n);\n"}, "FF-SP3", "dn-shape", "native/shared/src/a.rs")
 	want(t, "web package.json with a CSV library", map[string]string{"web/package.json": "{\n  \"dependencies\": {\n    \"papaparse\": \"5.0.0\"\n  }\n}\n"}, "FF-SP3", "web-banned-package", "web/package.json")
+	// Review rework: every ordinary spelling of the same violation.
+	flt := "(&(objectClass=user)(cn="
+	want(t, "const format template", feat("\t\"fmt\"\n", "const tpl = \"(&(objectClass=user)(cn=%s))\"\nfunc f(x string) string { return fmt.Sprintf(tpl, x) }"), "FF-SP3", "ldap-filter-shape", f)
+	want(t, "local var format template", feat("\t\"fmt\"\n", "func f(x string) string { tpl := \"(&(objectClass=user)(cn=%s))\"; return fmt.Sprintf(tpl, x) }"), "FF-SP3", "ldap-filter-shape", f)
+	want(t, "format template never used in a call", feat("", "var tpl = \"(&(objectClass=user)(cn=%s))\""), "FF-SP3", "ldap-filter-shape", f)
+	want(t, "+= append", feat("", "func f(x string) string { s := \""+flt+"\"; s += x; s += \"))\"; return s }"), "FF-SP3", "ldap-filter-shape", f)
+	want(t, "+= of a shape literal", feat("", "func f(x string) string { var s string; s += \""+flt+"\"; s += x; return s }"), "FF-SP3", "ldap-filter-shape", f)
+	want(t, "const prefix then concatenation", feat("", "const pre = \""+flt+"\"\nfunc f(x string) string { return pre + x + \"))\" }"), "FF-SP3", "ldap-filter-shape", f)
+	want(t, "var prefix then s = s + x", feat("", "func f(x string) string { s := \""+flt+"\"; s = s + x; return s }"), "FF-SP3", "ldap-filter-shape", f)
+	want(t, "fmt.Errorf", feat("\t\"fmt\"\n", "func f(x string) error { return fmt.Errorf(\"(&(objectClass=user)(cn=%s))\", x) }"), "FF-SP3", "ldap-filter-shape", f)
+	want(t, "fmt.Sprint", feat("\t\"fmt\"\n", "func f(x string) string { return fmt.Sprint(\""+flt+"\", x, \"))\") }"), "FF-SP3", "ldap-filter-shape", f)
+	want(t, "fmt.Sprintln", feat("\t\"fmt\"\n", "func f(x string) string { return fmt.Sprintln(\""+flt+"\", x) }"), "FF-SP3", "ldap-filter-shape", f)
+	want(t, "fmt.Fprint", feat("\t\"fmt\"\n\t\"io\"\n", "func f(w io.Writer, x string) { fmt.Fprint(w, \""+flt+"\", x) }"), "FF-SP3", "ldap-filter-shape", f)
+	want(t, "fmt.Printf", feat("\t\"fmt\"\n", "func f(x string) { fmt.Printf(\"(&(objectClass=user)(cn=%s))\", x) }"), "FF-SP3", "ldap-filter-shape", f)
+	want(t, "strings.Join of a slice literal", feat("\t\"strings\"\n", "func f(x string) string { return strings.Join([]string{\""+flt+"\", x, \"))\"}, \"\") }"), "FF-SP3", "ldap-filter-shape", f)
+	want(t, "strings.NewReplacer template", feat("\t\"strings\"\n", "func f(x string) string { return strings.NewReplacer(\"{n}\", x).Replace(\"(&(objectClass=user)(cn={n}))\") }"), "FF-SP3", "ldap-filter-shape", f)
+	want(t, "strings.ReplaceAll template", feat("\t\"strings\"\n", "func f(x string) string { return strings.ReplaceAll(\"(&(objectClass=user)(cn={n}))\", \"{n}\", x) }"), "FF-SP3", "ldap-filter-shape", f)
+	want(t, "bytes.Buffer", feat("\t\"bytes\"\n", "func f(b *bytes.Buffer, x string) { b.Write([]byte(\""+flt+"\")); b.WriteString(x) }"), "FF-SP3", "ldap-filter-shape", f)
+	want(t, "const format template for SQL", feat("\t\"fmt\"\n", "const q = \"SELECT id FROM users WHERE name = '%s'\"\nfunc f(x string) string { return fmt.Sprintf(q, x) }"), "FF-SP3", "sql-shape", f)
+	want(t, "const format template for a DN", feat("\t\"fmt\"\n", "const d = \"CN=%s,OU=Staff,DC=corp,DC=example\"\nfunc f(x string) string { return fmt.Sprintf(d, x) }"), "FF-SP3", "dn-shape", f)
+	want(t, "constant filter passed to a function is fine", feat("\t\"strings\"\n", "func f(x string) bool { return strings.Contains(x, \"(&(a=b)(c=d))\") }"), "", "", "")
+	want(t, "percent literal is not a verb", feat("", "const q = \"SELECT id FROM t WHERE a LIKE '100%%'\""), "", "", "")
 	want(t, "primitive packages", map[string]string{
 		"internal/directory/ldapfilter/f.go": gofile("\t\"fmt\"\n", "func f(x string) string { return fmt.Sprintf(\"(&(objectClass=user)(cn=%s))\", x) }"),
 		"internal/directory/dn/d.go":         gofile("", "func f(n string) string { return \"CN=\" + n }"),
@@ -197,4 +219,25 @@ func TestOutputNamesFFAndFile(t *testing.T) {
 	if s := fs[0].String(); !strings.Contains(s, "FF-SP1") || !strings.Contains(s, "internal/modules/m/m.go:") {
 		t.Fatalf("the report must name the check and the file: %s", s)
 	}
+}
+
+// Directory skipping is by location, never by bare name (review finding): a product package called
+// target, bin or obj is scanned; the real build-output directories are not.
+func TestSkipByLocationNotName(t *testing.T) {
+	bad := gofile("\t\"fmt\"\n", "func f(x string) string { return fmt.Sprintf(\"(&(objectClass=user)(cn=%s))\", x) }")
+	for _, d := range []string{"target", "bin", "obj", "dist", "vendor", "factory", "knowledge", "garage", "third_party"} {
+		file := "internal/modules/" + d + "/m.go"
+		want(t, "product package named "+d, map[string]string{file: bad}, "FF-SP3", "ldap-filter-shape", file)
+	}
+	goImp := gofile("\t_ \"github.com/go-ldap/ldap/v3\"\n", "")
+	want(t, "go-ldap import in internal/modules/target", map[string]string{"internal/modules/target/m.go": goImp}, "FF-SP1", "ldap-library", "internal/modules/target/m.go")
+	want(t, "cmd/bin", map[string]string{"cmd/bin/m.go": bad}, "FF-SP3", "ldap-filter-shape", "cmd/bin/m.go")
+	cs := "var f = $\"(&(objectClass=user)(cn={n}))\";\n"
+	want(t, "C# source in a sidecar folder named obj without a project beside it", map[string]string{"sidecars/exchange/obj/A.cs": cs}, "FF-SP3", "ldap-filter-shape", "sidecars/exchange/obj/A.cs")
+	want(t, "real C# bin/obj output beside a csproj", map[string]string{"sidecars/exchange/Exchange.csproj": "<Project/>\n", "sidecars/exchange/obj/A.cs": cs, "sidecars/exchange/bin/B.cs": cs}, "", "", "")
+	rs := "let d = format!(\"CN={},OU=x\", n);\n"
+	want(t, "real native/target beside Cargo.toml", map[string]string{"native/Cargo.toml": "[workspace]\n", "native/target/debug/a.rs": rs}, "", "", "")
+	want(t, "Rust source under a crate folder named target without Cargo.toml", map[string]string{"native/shared/src/target/a.rs": rs}, "FF-SP3", "dn-shape", "native/shared/src/target/a.rs")
+	want(t, "web/dist beside package.json", map[string]string{"web/package.json": "{}\n", "web/dist/a.go": bad}, "", "", "")
+	want(t, "root factory and knowledge", map[string]string{"factory/x.go": bad, "knowledge/y.go": bad}, "", "", "")
 }

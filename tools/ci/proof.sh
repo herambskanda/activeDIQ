@@ -308,6 +308,45 @@ import "strings"
 func f(s string) string { return strings.ReplaceAll(s, "'", "''") }
 GO
 must_fail_with "FF-SP3 on PowerShell quote doubling (the PatchIQ escapePSPath shape)" 'internal/modules/users/u.go:5: FF-SP3 \[quote-doubling\]' safeprim -no-analyzers
+# Ordinary spellings of the same violation, and a feature package named like a build-output directory.
+fresh_sp_tree; sp_put internal/modules/users/u.go <<'GO'
+package users
+
+import "fmt"
+
+const tpl = "(&(objectClass=user)(cn=%s))"
+
+func f(x string) string { return fmt.Sprintf(tpl, x) }
+GO
+must_fail_with "FF-SP3 on a filter template held in a const" 'internal/modules/users/u.go:5: FF-SP3 \[ldap-filter-shape\]' safeprim -no-analyzers
+fresh_sp_tree; sp_put internal/modules/users/u.go <<'GO'
+package users
+
+func f(x string) string {
+	s := "(&(objectClass=user)(cn="
+	s += x
+	return s + "))"
+}
+GO
+must_fail_with "FF-SP3 on a filter built with +=" 'internal/modules/users/u.go:4: FF-SP3 \[ldap-filter-shape\]' safeprim -no-analyzers
+fresh_sp_tree; sp_put internal/modules/users/u.go <<'GO'
+package users
+
+import "fmt"
+
+func f(x string) error { return fmt.Errorf("(&(objectClass=user)(cn=%s))", x) }
+GO
+must_fail_with "FF-SP3 on a filter built with fmt.Errorf" 'internal/modules/users/u.go:5: FF-SP3 \[ldap-filter-shape\]' safeprim -no-analyzers
+for d in target bin obj; do
+  fresh_sp_tree; sp_put "internal/modules/$d/m.go" <<'GO'
+package m
+
+import "fmt"
+
+func f(x string) string { return fmt.Sprintf("(&(objectClass=user)(cn=%s))", x) }
+GO
+  must_fail_with "FF-SP3 in a product package named $d (no skip by directory name)" "internal/modules/$d/m.go:5: FF-SP3" safeprim -no-analyzers
+done
 fresh_sp_tree
 sp_put internal/directory/ldapfilter/f.go <<'GO'
 package ldapfilter
@@ -358,6 +397,10 @@ must_fail_with "vitest on a failing test" "expected 1 to be 2" in_web vitest run
 # FF-SP3 for web/: one fixture, every safe-primitives rule has to report (the rules' own tests are web/eslint/*.test.js).
 for rule in no-hand-built-security-string no-quote-doubling no-dn-string-ops no-export-media-types no-unsafe-dom-sinks; do
   must_fail_with "FF-SP3 web rule $rule" "FF-SP3: .*safe-primitives/$rule" in_web eslint --no-ignore proof/safe-primitives-violation.ts
+done
+# Every ordinary spelling of the violation, one per line of the fixture (+=, concat, join, template, replace).
+for ln in 4 5 7 8 9 10; do
+  must_fail_with "FF-SP3 web spelling on fixture line $ln" "(^|[[:space:]])$ln:[0-9]+[[:space:]]+error[[:space:]]+FF-SP3" in_web eslint --no-ignore proof/safe-primitives-spellings.ts
 done
 must_pass "eslint on the real sources" npm --prefix web run --silent lint
 

@@ -26,6 +26,11 @@ run(
     "const a = '(&(objectClass=user))';", // a constant is not built
     "const a = 'CN=' + 'x';",
     "const t = `Select all ${n} rows`;", // prose, not SQL
+    "const base = '(&(a=b)'; const more = base + '(x=y)';", // constants only
+    "let s = 'hello '; s += name;", // not a shape
+    "const a = ['plain', x].join(',');",
+    "const p = 'progress %s of 10'.replace('%s', n);", // not a security shape
+    "const a = 'a'.concat(x);",
   ],
   [
     { code: "const f = `(&(objectClass=user)(cn=${x}))`;", errors: err() },
@@ -36,6 +41,18 @@ run(
     { code: "const c = `Get-ADUser -Identity '${u}'`;", errors: err() },
     { code: "const q = 'SELECT id FROM users WHERE name = ' + n;", errors: err() },
     { code: "const q = `DELETE FROM ${t} WHERE id = 1`;", errors: err() },
+    // Review rework: the other ordinary spellings.
+    { code: "let s = '(&(objectClass=user)(cn='; s += x; s += '))';", errors: err() },
+    { code: "let s = ''; s += '(&(objectClass=user)(cn='; s += x;", errors: err() },
+    { code: "const f = '(&(objectClass=user)(cn='.concat(x, '))');", errors: err() },
+    { code: "const f = ''.concat('(&(objectClass=user)(cn=', x, '))');", errors: err() },
+    { code: "const f = ['(&(objectClass=user)(cn=', x, '))'].join('');", errors: err() },
+    { code: "const tpl = '(&(objectClass=user)(cn=%s))'; use(tpl, x);", errors: err() },
+    { code: "const f = '(&(objectClass=user)(cn={name}))'.replace('{name}', x);", errors: err() },
+    { code: "const pre = '(&(objectClass=user)(cn='; const f = pre + x + '))';", errors: err() },
+    { code: "let s = 'CN='; s = s + name;", errors: err() },
+    { code: "let q = 'SELECT id FROM users WHERE name = '; q += n;", errors: err() },
+    { code: "const c = ['Get-ADUser -Identity', u].join(' ');", errors: err() },
   ],
 );
 

@@ -21,9 +21,10 @@ type goFile struct {
 	isTest    bool
 	isTool    bool // tier L: lab/ and tools/
 	sqlcGen   bool
-	imports   map[string]string // local name -> import path
-	importSet []string          // every import path
-	consts    map[string]bool   // names declared const anywhere in the file
+	imports   map[string]string          // local name -> import path
+	importSet []string                   // every import path
+	consts    map[string]bool            // names declared const anywhere in the file
+	strLits   map[string][]*ast.BasicLit // identifier -> string literals it is bound to (const, var, :=, =)
 	module    string
 	out       *[]Finding
 }
@@ -41,7 +42,7 @@ func scanGo(rel string, src []byte, module string, checks map[string]bool, out *
 		return err
 	}
 	g := &goFile{rel: rel, dir: policy.DirOf(rel), fset: fset, file: f, isTest: policy.IsTest(rel), isTool: policy.IsToolTier(rel),
-		imports: map[string]string{}, consts: map[string]bool{}, module: module, out: out,
+		imports: map[string]string{}, consts: map[string]bool{}, strLits: map[string][]*ast.BasicLit{}, module: module, out: out,
 		sqlcGen: bytes.HasPrefix(bytes.TrimSpace(src), []byte(policy.SQLCHeader))}
 	for _, is := range f.Imports {
 		p, err := strconv.Unquote(is.Path.Value)
@@ -56,11 +57,27 @@ func scanGo(rel string, src []byte, module string, checks map[string]bool, out *
 		g.imports[name] = p
 	}
 	ast.Inspect(f, func(n ast.Node) bool {
-		if gd, ok := n.(*ast.GenDecl); ok && gd.Tok == token.CONST {
-			for _, sp := range gd.Specs {
-				if v, ok := sp.(*ast.ValueSpec); ok {
-					for _, id := range v.Names {
+		switch v := n.(type) {
+		case *ast.GenDecl:
+			for _, sp := range v.Specs {
+				vs, ok := sp.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for i, id := range vs.Names {
+					if v.Tok == token.CONST {
 						g.consts[id.Name] = true
+					}
+					if i < len(vs.Values) {
+						g.bindLit(id.Name, vs.Values[i])
+					}
+				}
+			}
+		case *ast.AssignStmt:
+			if (v.Tok == token.DEFINE || v.Tok == token.ASSIGN) && len(v.Lhs) == len(v.Rhs) {
+				for i, l := range v.Lhs {
+					if id, ok := l.(*ast.Ident); ok {
+						g.bindLit(id.Name, v.Rhs[i])
 					}
 				}
 			}
@@ -420,7 +437,101 @@ const (
 	byBuilder combine = "a string builder"
 )
 
-var formatFuncs = map[string]int{"Sprintf": 0, "Fprintf": 1, "Appendf": 1}
+// formatFuncs are the fmt functions that format or join their arguments, with the index of the
+// format string (-1 when there is none: every literal argument is then a piece being joined).
+var formatFuncs = map[string]int{
+	"Sprintf": 0, "Fprintf": 1, "Appendf": 1, "Errorf": 0, "Printf": 0,
+	"Sprint": -1, "Sprintln": -1, "Fprint": -1, "Fprintln": -1, "Print": -1, "Println": -1, "Append": -1, "Appendln": -1,
+}
+
+// joinFuncs are the strings and bytes functions that assemble text out of pieces.
+var joinFuncs = map[string]bool{"Join": true, "Replace": true, "ReplaceAll": true, "NewReplacer": true, "Repeat": true}
+
+// rePrintfVerb matches a printf verb once literal percent signs are removed.
+var rePrintfVerb = regexp.MustCompile(`%[#+\- 0-9.*\[\]]*[vTtbcdoOqxXUeEfFgGsp]`)
+
+func hasPrintfVerb(v string) bool {
+	return rePrintfVerb.MatchString(strings.ReplaceAll(v, "%%", ""))
+}
+
+// bindLit remembers that name is bound to a string literal (possibly joined from several by +),
+// so a literal reached through a const or variable is judged where that name is combined with data.
+func (g *goFile) bindLit(name string, e ast.Expr) {
+	switch v := e.(type) {
+	case *ast.BasicLit:
+		if v.Kind == token.STRING {
+			g.strLits[name] = append(g.strLits[name], v)
+		}
+	case *ast.ParenExpr:
+		g.bindLit(name, v.X)
+	case *ast.BinaryExpr:
+		if v.Op == token.ADD {
+			g.bindLit(name, v.X)
+			g.bindLit(name, v.Y)
+		}
+	}
+}
+
+// markCombined records every string literal that e is, or names, as combined by how.
+func (g *goFile) markCombined(e ast.Expr, how combine, combined map[*ast.BasicLit]combine) {
+	switch v := e.(type) {
+	case *ast.BasicLit:
+		if v.Kind == token.STRING {
+			combined[v] = how
+		}
+	case *ast.ParenExpr:
+		g.markCombined(v.X, how, combined)
+	case *ast.Ident:
+		for _, l := range g.strLits[v.Name] {
+			combined[l] = how
+		}
+	case *ast.CallExpr: // []byte("…") and string(…) conversions
+		if len(v.Args) == 1 {
+			if _, isConv := v.Fun.(*ast.ArrayType); isConv {
+				g.markCombined(v.Args[0], how, combined)
+			} else if id, ok := v.Fun.(*ast.Ident); ok && id.Name == "string" {
+				g.markCombined(v.Args[0], how, combined)
+			}
+		}
+	case *ast.CompositeLit: // []string{"(&(cn=", x, "))"}
+		if !g.anyDynamic(v.Elts) {
+			return
+		}
+		for _, el := range v.Elts {
+			g.markCombined(el, how, combined)
+		}
+	case *ast.BinaryExpr:
+		if v.Op == token.ADD {
+			g.markCombined(v.X, how, combined)
+			g.markCombined(v.Y, how, combined)
+		}
+	}
+}
+
+// anyDynamicArg is anyDynamic for call arguments, where a slice literal is judged by its elements.
+func (g *goFile) anyDynamicArg(args []ast.Expr) bool {
+	for _, a := range args {
+		if cl, ok := a.(*ast.CompositeLit); ok {
+			if g.anyDynamic(cl.Elts) {
+				return true
+			}
+			continue
+		}
+		if !g.isStaticOperand(a) {
+			return true
+		}
+	}
+	return false
+}
+
+func (g *goFile) anyDynamic(es []ast.Expr) bool {
+	for _, e := range es {
+		if !g.isStaticOperand(e) {
+			return true
+		}
+	}
+	return false
+}
 
 func (g *goFile) isStaticOperand(e ast.Expr) bool {
 	switch v := e.(type) {
@@ -480,7 +591,15 @@ func (g *goFile) checkShapes() {
 			}
 			if dynamic {
 				for _, o := range ops {
-					if l, ok := o.(*ast.BasicLit); ok && l.Kind == token.STRING {
+					g.markCombined(o, byConcat, combined)
+				}
+			}
+		case *ast.AssignStmt:
+			// s += x, and s += "(cn=": appending is building, whatever the left side holds.
+			if v.Tok == token.ADD_ASSIGN && len(v.Rhs) == 1 {
+				g.markCombined(v.Rhs[0], byConcat, combined)
+				if id, ok := v.Lhs[0].(*ast.Ident); ok {
+					for _, l := range g.strLits[id.Name] {
 						combined[l] = byConcat
 					}
 				}
@@ -502,7 +621,8 @@ func (g *goFile) checkShapes() {
 		}
 		how, isCombined := combined[lit]
 		for _, s := range shapes {
-			if !g.shapeApplies(s) || !s.Re.MatchString(val) || !(isCombined || s.Always) {
+			verb := hasPrintfVerb(val)
+			if !g.shapeApplies(s) || !s.Re.MatchString(val) || !(isCombined || s.Always || verb) {
 				continue
 			}
 			k := s.Rule + ":" + strconv.Itoa(g.fset.Position(lit.Pos()).Line)
@@ -511,7 +631,9 @@ func (g *goFile) checkShapes() {
 			}
 			seen[k] = true
 			msg := "literal " + shorten(lit.Value) + " combined by " + string(how) + ": " + s.Msg
-			if s.Always && !isCombined {
+			if !isCombined && verb && !s.Always {
+				msg = "literal " + shorten(lit.Value) + " is a format template for text of this shape: " + s.Msg
+			} else if s.Always && !isCombined {
 				msg = "literal " + shorten(lit.Value) + ": " + s.Msg
 			}
 			g.add("FF-SP3", s.Rule, lit.Pos(), msg)
@@ -545,16 +667,33 @@ func (g *goFile) callShapes(call *ast.CallExpr, combined map[*ast.BasicLit]combi
 	}
 	name := sel.Sel.Name
 	if pkg == "fmt" {
-		if idx, ok := formatFuncs[name]; ok && len(call.Args) > idx+1 {
-			if l, ok := call.Args[idx].(*ast.BasicLit); ok && l.Kind == token.STRING {
-				combined[l] = byFormat
+		if idx, ok := formatFuncs[name]; ok {
+			dynamic := false
+			for i, a := range call.Args {
+				if i != idx && !g.isStaticOperand(a) {
+					dynamic = true
+				}
+			}
+			switch {
+			case idx >= 0 && idx < len(call.Args) && len(call.Args) > idx+1:
+				g.markCombined(call.Args[idx], byFormat, combined)
+			case idx < 0 && dynamic:
+				for _, a := range call.Args {
+					g.markCombined(a, byFormat, combined)
+				}
 			}
 		}
 	}
-	if name == "WriteString" && len(call.Args) == 1 {
-		if l, ok := call.Args[0].(*ast.BasicLit); ok && l.Kind == token.STRING {
-			combined[l] = byBuilder
+	if (pkg == "strings" || pkg == "bytes") && joinFuncs[name] && g.anyDynamicArg(call.Args) {
+		for _, a := range call.Args {
+			g.markCombined(a, byFormat, combined)
 		}
+	}
+	if pkg == "" && name == "Replace" && len(call.Args) == 1 { // strings.NewReplacer(…).Replace(template)
+		g.markCombined(call.Args[0], byFormat, combined)
+	}
+	if (name == "WriteString" || name == "Write") && len(call.Args) == 1 {
+		g.markCombined(call.Args[0], byBuilder, combined)
 	}
 	// Quote doubling: two adjacent string arguments, the second a doubling of the first.
 	for i := 0; i+1 < len(call.Args); i++ {

@@ -59,13 +59,26 @@ function flattenAdd(node, out) {
   return out;
 }
 
+// A format placeholder inside a literal: printf verbs and {name} / {0} template slots.
+const PLACEHOLDER = /%[sdiqxjoO]|\{[A-Za-z0-9_]*\}/;
+// Methods that assemble or substitute text.
+const JOIN_METHODS = new Set([
+  "concat",
+  "join",
+  "replace",
+  "replaceAll",
+  "padEnd",
+  "padStart",
+  "repeat",
+]);
+
 const noHandBuiltSecurityString = {
   meta: {
     type: "problem",
     schema: [],
     messages: {
       built:
-        "FF-SP3: {{what}} is built from a template literal or concatenation. Tier W builds none of these: {{instead}}.",
+        "FF-SP3: {{what}} is built from a template literal, concatenation, += append, concat/join or a format placeholder. Tier W builds none of these: {{instead}}.",
     },
   },
   create(context) {
@@ -75,12 +88,57 @@ const noHandBuiltSecurityString = {
       reported.add(node);
       context.report({ node, messageId: "built", data: shape });
     };
+    // name -> { lits: string-literal nodes bound to it, isConst } for `const s = "..."`, `s = "..."`.
+    const bound = new Map();
+    const bind = (name, init, isConst) => {
+      if (!init || stringValue(init) === null) return;
+      const entry = bound.get(name) ?? { lits: [], isConst };
+      entry.lits.push(init);
+      entry.isConst = entry.isConst && isConst;
+      bound.set(name, entry);
+    };
+    // The string literals a node is, or names: where a shape literal might sit.
+    const litsOf = (node) => {
+      if (stringValue(node) !== null) return [node];
+      if (node.type === "Identifier") return bound.get(node.name)?.lits ?? [];
+      return [];
+    };
+    const isStatic = (node) =>
+      stringValue(node) !== null ||
+      (node.type === "TemplateLiteral" && node.expressions.length === 0) ||
+      (node.type === "Identifier" && bound.get(node.name)?.isConst === true);
+    const reportShapes = (nodes) => {
+      for (const n of nodes)
+        for (const l of litsOf(n)) {
+          const shape = shapeOf(stringValue(l));
+          if (shape) report(l, shape);
+        }
+    };
     return {
+      VariableDeclarator(node) {
+        if (node.id.type === "Identifier")
+          bind(node.id.name, node.init, node.parent.kind === "const");
+      },
+      Literal(node) {
+        // A shape literal that is a format template is built text wherever it is used.
+        const v = stringValue(node);
+        if (v === null || !PLACEHOLDER.test(v)) return;
+        const shape = shapeOf(v);
+        if (shape) report(node, shape);
+      },
       TemplateLiteral(node) {
         if (node.expressions.length === 0) return;
         const text = node.quasis.map((q) => q.value.cooked ?? q.value.raw).join("\u0000");
         const shape = shapeOf(text);
         if (shape) report(node, shape);
+      },
+      AssignmentExpression(node) {
+        if (node.operator === "=" && node.left.type === "Identifier")
+          bind(node.left.name, node.right, false);
+        if (node.operator !== "+=") return;
+        // s += x and s += "(cn=": appending is building. Judge the added piece and what s holds.
+        reportShapes([node.right]);
+        if (node.left.type === "Identifier") reportShapes([node.left]);
       },
       BinaryExpression(node) {
         if (
@@ -89,13 +147,27 @@ const noHandBuiltSecurityString = {
         )
           return;
         const leaves = flattenAdd(node, []);
-        const dynamic = leaves.some((l) => stringValue(l) === null);
-        if (!dynamic) return;
-        for (const l of leaves) {
-          const s = stringValue(l);
-          const shape = s === null ? null : shapeOf(s);
-          if (shape) report(l, shape);
+        if (leaves.every(isStatic)) return;
+        reportShapes(leaves);
+      },
+      CallExpression(node) {
+        const callee = node.callee;
+        if (
+          callee.type !== "MemberExpression" ||
+          callee.computed ||
+          !JOIN_METHODS.has(callee.property.name)
+        )
+          return;
+        let pieces;
+        if (callee.property.name === "join" && callee.object.type === "ArrayExpression") {
+          pieces = callee.object.elements.filter(Boolean);
+        } else if (callee.property.name === "join") {
+          return;
+        } else {
+          pieces = [callee.object, ...node.arguments];
         }
+        if (pieces.every(isStatic)) return;
+        reportShapes(pieces);
       },
     };
   },

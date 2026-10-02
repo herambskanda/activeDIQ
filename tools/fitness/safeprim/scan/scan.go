@@ -43,11 +43,50 @@ type Checks map[string]bool
 // AllChecks is FF-SP1 to FF-SP3.
 func AllChecks() Checks { return Checks{"FF-SP1": true, "FF-SP2": true, "FF-SP3": true} }
 
-// skipDir names directories that hold no product code (the same set the other fitness jobs skip).
-func skipDir(name string) bool {
+// skipDir reports directories that hold no product code. Only names that can never be a product
+// package are skipped at any depth (.git, node_modules, the Go testdata convention). Every other
+// skip is tied to where that directory really is: repository-level working trees at the root, and
+// build output only beside the project file that produces it (bin and obj beside a .csproj, target
+// beside Cargo.toml, dist beside package.json). A product package that happens to be called target,
+// bin or obj, such as internal/modules/target, is therefore scanned.
+func skipDir(root, rel, name string) bool {
 	switch name {
-	case ".git", "node_modules", "testdata", "vendor", "factory", "knowledge", "garage", ".claude", "dist", "target", "bin", "obj", "third_party":
+	case ".git", "node_modules", "testdata":
 		return true
+	}
+	if !strings.Contains(rel, "/") {
+		switch name {
+		case "vendor", "factory", "knowledge", "garage", ".claude", "dist", "third_party":
+			return true
+		}
+	}
+	parent := filepath.Join(root, filepath.FromSlash(filepath.ToSlash(filepath.Dir(rel))))
+	switch name {
+	case "bin", "obj":
+		return dirHasSuffix(parent, ".csproj", ".fsproj", ".vbproj")
+	case "target":
+		return dirHasSuffix(parent, "Cargo.toml")
+	case "dist":
+		return dirHasSuffix(parent, "package.json")
+	}
+	return false
+}
+
+// dirHasSuffix reports whether dir directly contains a file whose name ends in one of suffixes.
+func dirHasSuffix(dir string, suffixes ...string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		for _, sfx := range suffixes {
+			if strings.HasSuffix(e.Name(), sfx) {
+				return true
+			}
+		}
 	}
 	return false
 }
@@ -67,7 +106,7 @@ func Scan(root string, checks Checks) ([]Finding, error) {
 		}
 		rel = filepath.ToSlash(rel)
 		if d.IsDir() {
-			if rel != "." && skipDir(d.Name()) {
+			if rel != "." && skipDir(root, rel, d.Name()) {
 				return fs.SkipDir
 			}
 			return nil

@@ -1137,7 +1137,12 @@ per-path homes need code, the check must run offline; see the licence register);
 and clippy are configured but dormant until the first sidecar and the first crate exist. The
 home of each primitive is one table, `tools/analyzers/policy/policy.go`. Not yet enforced:
 `dnstring`'s rule that `Display()` is called only in response-mapping code (the packages are not
-named), and the P7 homes, which are suffix patterns until T-0004 fixes the roots.
+named), and the P7 homes, which are suffix patterns until T-0004 fixes the roots. The scanner
+skips directories by location, never by bare name (`bin`/`obj` only beside a project file, `target`
+only beside `Cargo.toml`, `knowledge`/`factory`/`garage` only at the root), so a product package named
+`target` is scanned. A shape literal is flagged when it is joined with data by any means (`+`, `+=`,
+the `fmt` print family, `strings.Join`/`Replace`, builders, slice literals, through a const or
+variable), or when it carries a printf verb at all.
 
 ## 9. Verification status and Samba false-pass risks
 

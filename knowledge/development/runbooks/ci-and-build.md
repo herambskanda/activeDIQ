@@ -67,6 +67,10 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
   - Where each primitive lives is one table: `tools/analyzers/policy/policy.go`. A new home (for
     example when T-0004 fixes the export package roots) is a change to that table plus a case in
     `tools/fitness/safeprim/scan/scan_test.go`. Rule lists are in `scan/rules.go`.
+  - What is skipped: `.git`, `node_modules`, `testdata` at any depth; `knowledge`, `factory`, `garage`,
+    `vendor`, `third_party` at the repo root; `bin`/`obj` only beside a `.csproj`, `target` only beside
+    `Cargo.toml`, `dist` only beside `package.json`. Never skip by a bare directory name: a package
+    called `target` is product code.
   - Limits: the syntactic scan ignores build tags on purpose; the type-aware passes see only the
     host OS files (run them with `GOOS=windows` once `_windows.go` files exist, follow-up ticket);
     C# and Rust are scanned as text until their toolchains land. `sidecars/BannedSymbols.txt` and
