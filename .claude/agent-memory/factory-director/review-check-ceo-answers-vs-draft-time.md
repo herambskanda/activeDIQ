@@ -1,6 +1,6 @@
 ---
 name: review-check-ceo-answers-vs-draft-time
-description: When reviewing an ADR/spec, check whether CEO decisions were answered while it was being drafted — drafts often miss them and treat settled forks as open
+description: ADR/spec review checks — CEO answers landed mid-draft, consistency with every answered D-id, RLS bypasses in tenancy fitness checks, customer-visible calls missing from the notice
 metadata:
   type: feedback
 ---
@@ -13,5 +13,8 @@ When reviewing an ADR or spec, compare the claim/draft time on the ticket with `
 - On every ADR/spec review, grep the draft for "CEO fork", "ADR-0002" and "pre-empt", and check each against answered D-ids.
 - Also check the fitness-function wording against the testing-playbook conventions; `//go:build` tags collided.
 - Rewrite the ratification notice yourself; don't trust the author's draft notice framing.
+- Check against **every** answered D-id, not only the ones the ticket lists. On T-0003 (ADR-0002), the ticket listed D-0002/D-0003. But D-0001 puts Entra in v1, and the per-profile credential column covered AD only.
+- On tenancy ADRs, check that the RLS checks close these bypasses: unique *indexes* (they are not in pg_constraint), FKs (FK checks bypass RLS), matviews, and global tables read inside tenant transactions.
+- A support-matrix row that closes an open research question (e.g. the minimum DC OS) is customer-visible and belongs in the notice list.
 
 Related: [[adr-ratification-flow]]

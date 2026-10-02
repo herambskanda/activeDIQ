@@ -1,2 +1,2 @@
-- [Check CEO answers vs draft time on reviews](review-check-ceo-answers-vs-draft-time.md) — drafts started before a D- answer treat settled forks as open; also check fitness wording vs conventions
+- [Check CEO answers vs draft time on reviews](review-check-ceo-answers-vs-draft-time.md) — check vs every answered D-id (not just the ticket's), RLS bypasses, notice completeness
 - [ADR ratification flow](adr-ratification-flow.md) — ratify in one pass after must-fixes close; nits go to the fitness ticket; fitness/accepted_on wait for accepted
