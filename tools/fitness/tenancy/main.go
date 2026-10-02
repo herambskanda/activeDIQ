@@ -22,8 +22,8 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
-	"sync"
 
+	"github.com/skenzeriq/activediq/tools/fitness/pgharness"
 	"github.com/skenzeriq/activediq/tools/fitness/tenancy/registry"
 	"github.com/skenzeriq/activediq/tools/fitness/tenancy/static"
 )
@@ -152,43 +152,7 @@ func Run(ctx context.Context, o Options) ([]Violation, error) {
 }
 
 func startServers(ctx context.Context, o Options) (map[string]*Server, func(), error) {
-	servers := map[string]*Server{}
-	var started []*Server
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-	var firstErr error
-	for _, ver := range o.Versions {
-		if s := o.Servers[ver]; s != nil {
-			servers[ver] = s
-			continue
-		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			s, err := StartServer(ctx, ver, o.ExtraBootstrap)
-			mu.Lock()
-			defer mu.Unlock()
-			if err != nil {
-				if firstErr == nil {
-					firstErr = err
-				}
-				return
-			}
-			servers[ver] = s
-			started = append(started, s)
-		}()
-	}
-	wg.Wait()
-	release := func() {
-		for _, s := range started {
-			s.Stop()
-		}
-	}
-	if firstErr != nil {
-		release()
-		return nil, nil, firstErr
-	}
-	return servers, release, nil
+	return pgharness.StartServers(ctx, o.Versions, o.Servers, o.ExtraBootstrap)
 }
 
 // checkVersion runs T1–T4 on one server.

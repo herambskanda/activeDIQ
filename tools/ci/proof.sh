@@ -206,6 +206,38 @@ must_pass "fitness-tenancy" tenancy
 printf 'package m\n\nconst q = "SELECT set_config(%s, %s, false)"\n' "'app.tenant_id'" "'x'" >"$tn/internal/modules/m/m.go"
 must_fail_with "fitness-tenancy on set_config text outside the tenancy package" 'T5 internal/modules/m/m.go:3 \[set-config-text\]' tenancy -checks T5
 
+# --- fitness-domain-keys (domain-model X3, X4, X5), the real CLI on throw-away trees ---------------
+# The per-rule proofs are the tool's own tests (go test ./tools/fitness/domainkeys/...); this is the
+# end-to-end run: the CLI exits non-zero naming the table, the object and the rule, and zero on the
+# clean tree. The tree has the real tenants migration, one directory table, one append-only table.
+dkbin="$tmp/domainkeys"
+go build -o "$dkbin" ./tools/fitness/domainkeys
+dk="$tmp/dk"; mkdir -p "$dk/migrations" "$dk/internal/x"
+printf 'module dk.test\n\ngo 1.27.0\n' >"$dk/go.mod"
+cp tools/fitness/tenancy/testdata/base/0001_tenant_tenants.sql "$dk/migrations/"
+printf '{"globalTables": [{"table": "public.tenants", "reason": "the tenant directory", "owner": "internal/platform/tenant"}]}\n' >"$dk/registry.json"
+printf '### DM-01 Tenant · P · owner `platform/tenant`\n### DM-16 DirectoryObject · D · owner `directory/inventory`\n### DM-80 AuditEvent · T · append-only · owner `platform/audit`\n' >"$dk/model.md"
+dk_decls() {
+  printf 'package x\n\nimport "dk.test/internal/platform/tablekind"\n\n'
+  printf 'var _ = tablekind.Declare(tablekind.Table{Name: "public.tenants", Entity: "DM-01", Kind: tablekind.Platform})\n'
+  printf 'var _ = tablekind.Declare(tablekind.Table{Name: "public.directory_object", Entity: "DM-16", Kind: tablekind.Directory})\n'
+  printf 'var _ = tablekind.Declare(tablekind.Table{Name: "public.audit_event", Entity: "DM-80", Kind: tablekind.Tenant, AppendOnly: true%s})\n' "$1"
+}
+dk_sql() {
+  printf 'CREATE TABLE directory_object (tenant_id uuid NOT NULL, connection_id uuid NOT NULL, object_guid uuid NOT NULL, dn text NOT NULL, PRIMARY KEY (tenant_id, connection_id, object_guid));\n%s\n' "$1"
+  printf 'CREATE TABLE audit_event (tenant_id uuid NOT NULL, seq bigint NOT NULL, kind text NOT NULL%s, PRIMARY KEY (tenant_id, seq));\n%s\n' "$2" "$3"
+}
+domainkeys() { "$dkbin" -root "$dk" -registry registry.json -domain-model model.md -pg 18 "$@"; }
+dk_decls "" >"$dk/internal/x/tables.go"
+dk_sql "CREATE UNIQUE INDEX uq_dn ON directory_object (tenant_id, dn);" "" "REVOKE UPDATE, DELETE ON audit_event FROM activediq_app;" >"$dk/migrations/0002_app_items.sql"
+must_fail_with "fitness-domain-keys on a unique index on a directory table's dn" 'X3 public.directory_object \(unique index uq_dn\) \[key-identity-column\]' domainkeys
+dk_sql "" "" "" >"$dk/migrations/0002_app_items.sql"
+must_fail_with "fitness-domain-keys on an append-only table the runtime role can UPDATE" 'X5 public.audit_event \[runtime-update\]' domainkeys
+dk_sql "" ", unicode_pwd bytea" "REVOKE UPDATE, DELETE ON audit_event FROM activediq_app;" >"$dk/migrations/0002_app_items.sql"
+must_fail_with "fitness-domain-keys on a column named for a SecretAttrs attribute" 'X4 public.audit_event.unicode_pwd \[secret-attr-column\].*LF-38' domainkeys
+dk_sql "" "" "REVOKE UPDATE, DELETE ON audit_event FROM activediq_app;" >"$dk/migrations/0002_app_items.sql"
+must_pass "fitness-domain-keys" domainkeys
+
 # --- fitness-safeprim (safe-primitives FF-SP1 to FF-SP3), the real CLI on throw-away trees --------
 # One violation per case, each rejected with the check's own id and the file; the same shapes pass
 # in their primitive's home. The per-rule proofs are the tool's own tests (go test ./tools/...).

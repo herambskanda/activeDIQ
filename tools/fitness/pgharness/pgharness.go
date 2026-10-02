@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -344,3 +345,46 @@ func Apply(ctx context.Context, d *Database, ms []Migration) (failed, msg string
 // SetExtraBootstrap replaces the extra superuser SQL that NewDatabase runs in every new database
 // (owner role as %1$I, runtime role as %2$I). Tests use it to give a role a power a check must catch.
 func (s *Server) SetExtraBootstrap(sql []string) { s.extraBoot = sql }
+
+// StartServers starts one container per major version in parallel and returns them by version. A
+// version already present in supplied is used as it is (the tests share servers) and is not stopped by
+// the returned release function. Each new server gets extraBootstrap (see SetExtraBootstrap).
+func StartServers(ctx context.Context, versions []string, supplied map[string]*Server, extraBootstrap []string) (map[string]*Server, func(), error) {
+	servers := map[string]*Server{}
+	var started []*Server
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	var firstErr error
+	for _, ver := range versions {
+		if s := supplied[ver]; s != nil {
+			servers[ver] = s
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s, err := StartServer(ctx, ver, extraBootstrap)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				return
+			}
+			servers[ver] = s
+			started = append(started, s)
+		}()
+	}
+	wg.Wait()
+	release := func() {
+		for _, s := range started {
+			s.Stop()
+		}
+	}
+	if firstErr != nil {
+		release()
+		return nil, nil, firstErr
+	}
+	return servers, release, nil
+}
