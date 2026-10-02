@@ -1,1 +1,2 @@
 - [GSSAPI/CBT spike lessons](gssapi-cbt-lessons.md) — go-krb5 v0.1.0 lacks CBT, AD no SASL layer on TLS, Samba CBT modes, lab gotchas
+- [attr codec / corpus lessons](attr-codec-lessons.md) — oracle record shapes, unsatisfiable spec vectors, report-dir gotcha, no local Docker
