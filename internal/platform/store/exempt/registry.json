@@ -1,0 +1,21 @@
+{
+  "globalTables": [
+    {
+      "table": "public.tenants",
+      "reason": "The list of tenants is what a tenant context is chosen from and carries the MSP hierarchy, so it cannot hold a tenant_id or an RLS policy (ADR-0002). Any tenant transaction can read it, so only its owning package may name it in SQL.",
+      "owner": "internal/platform/tenant"
+    }
+  ],
+  "securityDefiner": [],
+  "platformPaths": [
+    {
+      "package": "internal/platform/tenant/provision",
+      "function": "FirstRun",
+      "reason": "First-run bootstrap creates the install's first tenant before any tenant exists, so it runs outside a tenant context under WithPlatform and mints the tenant ID (ADR-0002 rules 4 and 5).",
+      "withPlatform": true,
+      "mintsTenantID": true
+    }
+  ],
+  "platformJobs": [],
+  "probeValues": []
+}
