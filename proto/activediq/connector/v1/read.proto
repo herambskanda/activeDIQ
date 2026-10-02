@@ -41,7 +41,9 @@ message ScopedSearchRequest {
   // Explicit attribute names, one or more. `*` and `+` are rejected. Secret attributes are
   // rejected (LF-37). Multi-valued attributes beyond one range come back with complete = false.
   repeated string attributes = 5;
-  // Entries per DC page, 1..Limits.max_page_size. Unset means the DC maximum.
+  // Entries per DC page. 0 (unset) means Limits.max_page_size. A value above Limits.max_page_size
+  // is clamped to it, never rejected: the page size is a hint about batching, not a way to ask for
+  // more than the DC allows. There is no page-size INVALID_ARGUMENT.
   uint32 page_size = 6;
   DcSelection dc = 7;
   // No sort, no VLV, no controls. Numbers held so they cannot be reused for something else.

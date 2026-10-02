@@ -170,3 +170,21 @@ message DirectoryEntry {
   Guid parent_guid = 3;
   repeated Attribute attributes = 4;
 }
+
+// Every operation of the contract, including the three whose NAMES are reserved by T-0064 and
+// whose messages are specified later. Reserved operations are listed in Describe with state
+// RESERVED and any call to them fails with ERROR_CODE_CAPABILITY_UNSUPPORTED. Adding a shape later
+// is additive: it never renumbers or changes anything here.
+enum Operation {
+  OPERATION_UNSPECIFIED = 0;
+  OPERATION_DESCRIBE = 1;
+  OPERATION_DESCRIBE_SCHEMA = 2;
+  OPERATION_SCOPED_SEARCH = 3;
+  OPERATION_READ = 4;
+  OPERATION_READ_PER_DC = 5;
+  OPERATION_CHANGE_FEED = 6;
+  // Reserved names (blueprint §7.1). No message shape in v1.
+  OPERATION_APPLY = 100;
+  OPERATION_READ_SECRET = 101;
+  OPERATION_VERIFY_USER = 102;
+}

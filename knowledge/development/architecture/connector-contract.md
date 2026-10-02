@@ -52,10 +52,10 @@ limit under its own rules before touching a directory.
 
 | File | Holds |
 | --- | --- |
-| `common.proto` | `Guid`, `Sid`, `ConnectionRef`, `DirectoryIdentity`, `DcIdentity`, `Observation`, `DcSelection`, `TimeValue`, `AttributeValue`, `Attribute`, `DirectoryEntry`, `ValueRange` |
+| `common.proto` | `Operation`, `Guid`, `Sid`, `ConnectionRef`, `DirectoryIdentity`, `DcIdentity`, `Observation`, `DcSelection`, `TimeValue`, `AttributeValue`, `Attribute`, `DirectoryEntry`, `ValueRange` |
 | `filter.proto` | `Filter` AST, `FilterValue`, `Dn`, `Rdn` (the P1 and P2 wire forms) |
 | `errors.proto` | `ConnectorError`, `ErrorCode`, `RetryAdvice`, `ResyncReason`, per-code details |
-| `describe.proto` | `Operation`, `Feature`, `SupportState`, `DescribeRequest/Response`, `DescribeSchema*`, topology and health messages |
+| `describe.proto` | `Feature`, `SupportState`, `DescribeRequest/Response`, `DescribeSchema*`, topology and health messages |
 | `read.proto` | `ScopedSearch*`, `Read*`, `ReadPerDC*` |
 | `changefeed.proto` | `ChangeFeedRequest`, `FeedCookie`, `ChangeBatch`, `ObjectChange` |
 | `connector.proto` | the `Connector` service |
@@ -105,6 +105,8 @@ again. The fingerprint in `Describe` tells a caller when to re-fetch.
 ### 5.1 `ScopedSearch`
 
 `ScopedSearchRequest{connection, roots[], depth, filter, attributes[], page_size, dc}`.
+
+- **Page size**: `page_size` 0 (unset) means `Limits.max_page_size`; a value above it is clamped to it. Neither is an error (a page size is a batching hint, and a caller must not learn the DC limit by failing). The connector never relies on the DC's size limit to end a search.
 
 - **Base is the delegation root's `Guid`** (with the `nc_guid` of the domain that holds it). Scope
   is `SUBTREE` or `ONE_LEVEL` (the AD Explorer tree, ADM-004) and never reaches above the root.
@@ -219,7 +221,7 @@ error, with `Observation`), then a `PerDcSummary{dcs_in_scope, dcs_answered, cov
 Sequence for a new AD partition: **prime, then paged search, then resume.** Changes between the
 prime and the search are delivered again by the feed; replays are harmless because apply is an
 idempotent upsert by GUID (DM-16.I1). This is the reason for `prime`: it removes the race without
-streaming the domain twice.
+streaming the domain twice. The cost is that `prime` drains a full DirSync cycle on the DC, so an AD initial sync costs two DC-side enumerations (the prime's and the search's). T-0065 measures this at 200,000 objects (the CC-SRCH-15 scale) `[OPEN → T-0065]`.
 
 A call streams `ChangeBatch` messages and ends with the one that has `cycle_complete = true`
 (DirSync `MoreResults = 0`, Graph deltaLink reached). Every successful call ends with one, even
@@ -308,8 +310,11 @@ observation.
 - **No order.** Batches are not parent-first (the ancestors-first flag is not used and Samba does
   not enforce it either). A change may reference a parent not yet seen. Apply is order-independent
   (CC-FEED-16).
-- **Secrets never leave the connector.** `SecretAttrs` are stripped from every change, name
-  included, before the batch is built. The batch reports only `secret_attributes_dropped`, a count
+- **Secrets never leave the connector.** A `SecretAttrs` member **named in the request** fails the
+  call with `SECRET_ATTRIBUTE` before any DirSync or delta call (LF-37, the same rule as
+  `ScopedSearch` and `Read`). `SecretAttrs` that arrive unrequested (DirSync returns what the
+  object-security mode permits, and a schema flag can change between calls) are stripped from every
+  change, name included, before the batch is built. The batch reports only `secret_attributes_dropped`, a count
   for diagnosis (TM-TB3-T6, DM-16.I3, DM-18.I4).
 - A removed member whose target was deleted may not appear as `VALUES_REMOVED` on Samba (the entry is
   skipped when the target no longer resolves). Membership removal is derived by the caller from the
@@ -367,13 +372,13 @@ credentials, filter text, attribute values, cookies or a raw LDAP response (CC-E
 | `UNREACHABLE_DC` | No DC, or the pinned or issuing DC, could be reached or served | same DC after backoff, or other DC (not for a resume) | `UNAVAILABLE` | `unreachable` (each attempt and cause) |
 | `UNEXPECTED_REFERRAL` | A referral or continuation reference (LF-32) | never | `FAILED_PRECONDITION` | `referral` (count only) |
 | `STALE_COOKIE` | The feed cookie cannot continue (§6.3) | after resync | `FAILED_PRECONDITION` | `stale_cookie` (reason, issuer, observed) |
-| `INSUFFICIENT_RIGHTS` | `insufficientAccessRights`, Graph 403 | operator action | `PERMISSION_DENIED` | `insufficient_rights` (operation, object) |
+| `INSUFFICIENT_RIGHTS` | `insufficientAccessRights`, Graph 403 | operator action | `PERMISSION_DENIED` | `insufficient_rights` (`Operation`, object) |
 | `OBJECT_NOT_FOUND` | `noSuchObject`, deleted or unreadable object | never | `NOT_FOUND` | none |
 | `DELEGATION_ROOT_GONE` | A root GUID resolves to nothing (LF-31) | never | `NOT_FOUND` | `root_gone` |
 | `FILTER_REJECTED` | The AST failed P1 validation | never | `INVALID_ARGUMENT` | `rejected_input` (rule id, field) |
 | `ATTRIBUTE_NOT_ALLOWED` | Unknown, constructed-in-filter, or `tokenGroups` outside a base read | never | `INVALID_ARGUMENT` | `rejected_input` |
-| `SECRET_ATTRIBUTE` | A `SecretAttrs` member in a filter, list or sort (LF-22, 34, 35, 37, 38) | never | `PERMISSION_DENIED` | `rejected_input` |
-| `INVALID_ARGUMENT` | Malformed request: no roots, `*` attribute, page size 0, no filter | never | `INVALID_ARGUMENT` | `rejected_input` |
+| `SECRET_ATTRIBUTE` | A `SecretAttrs` member in a filter or an attribute list (LF-22, 34, 37, 38). Sort keys do not exist on this contract; LF-35 (`ForbiddenSortKey`) belongs to the server-side filter builder | never | `PERMISSION_DENIED` | `rejected_input` |
+| `INVALID_ARGUMENT` | Malformed request: no roots, `*` attribute, no filter, an unset connection | never | `INVALID_ARGUMENT` | `rejected_input` |
 | `CAPABILITY_UNSUPPORTED` | Operation or feature not `SUPPORTED`, or a reserved name | never | `UNIMPLEMENTED` | none |
 | `DIRECTORY_IDENTITY_MISMATCH` | The connection points at another directory (DM-10.I1) | operator action | `FAILED_PRECONDITION` | none |
 | `TRANSPORT_SECURITY` | TLS, signing or channel binding failed. Never downgraded, never retried with validation off | operator action | `FAILED_PRECONDITION` | none |
@@ -430,7 +435,7 @@ disabled, expired and locked accounts.
 | CC-DESC-08 | DC topology completeness | a DC known from the configuration NC but stopped appears with `reachable = false` and an error; nothing is dropped | 2dc |
 | CC-DESC-09 | RODC and `fSMORoleOwner` staleness | `is_rodc` from the nTDSDSA object; a stale role owner is not reported as PDC after the cross-check | W |
 | CC-SCH-01 | `DescribeSchema` | streams to `last = true`; `objectGUID` kind `GUID`, `member` linked with a link id, `msDS-User-Account-Control-Computed` constructed, `unicodePwd` secret; fingerprint equals `Describe`'s | S |
-| CC-SCH-02 | Schema-driven secrets (LF-38) | every `attributeSchema` with `searchFlags` & (`0x80` or `0x200` or `0x1000`) is `secret = true`, including a seeded custom attribute flagged `0x200` only; each is refused in filter, attribute list and sort with `SECRET_ATTRIBUTE` | S (needs seed addition, §10) |
+| CC-SCH-02 | Schema-driven secrets (LF-38) | every `attributeSchema` with `searchFlags` & (`0x80` or `0x200` or `0x1000`) is `secret = true`, including a seeded custom attribute flagged `0x200` only; each is refused in a filter and in an attribute list with `SECRET_ATTRIBUTE` | S (needs seed addition, §10) |
 | CC-SCH-03 | `if_fingerprint_differs_from` equal | a single empty chunk with `last = true` | S |
 
 ### 9.2 ScopedSearch
@@ -443,7 +448,7 @@ disabled, expired and locked accounts.
 | CC-SRCH-04 | Deleted root (delete an OU, then search it) | `DELEGATION_ROOT_GONE`, no entries, no fallback to a wider root (LF-31) | S |
 | CC-SRCH-05 | Moved root | the search still resolves it by GUID and returns its subtree | S |
 | CC-SRCH-06 | Hostile values as data: `Eq(cn, "*)(uid=*")`, a literal `*`, backslash, a comma-and-plus DN value, `"Zoë 😀"`, a GUID as `Guid` | each returns exactly the seeded object or nothing, never a widened set (LF-01 to LF-09, LF-16) | S |
-| CC-SRCH-07 | Rejected inputs | unknown attribute and constructed attribute in a filter: `ATTRIBUTE_NOT_ALLOWED`; secret in filter, list or key: `SECRET_ATTRIBUTE` (LF-22, 34, 37); `*` as attribute, no filter, no roots, page size 0: `INVALID_ARGUMENT`; empty `And`, a 10,000-deep `Not`, a 20,000-character value: `FILTER_REJECTED` (LF-25, 28, 29) with no crash | S |
+| CC-SRCH-07 | Rejected inputs | unknown attribute and constructed attribute in a filter: `ATTRIBUTE_NOT_ALLOWED`; secret in a filter or an attribute list: `SECRET_ATTRIBUTE` (LF-22, 34, 37); `*` as attribute, no filter, no roots: `INVALID_ARGUMENT`; empty `And`, a 10,000-deep `Not`, a 20,000-character value: `FILTER_REJECTED` (LF-25, 28, 29) with no crash | S |
 | CC-SRCH-08 | Filter widening attempts | `Substring` on a DN-syntax attribute, an `Eq` with an empty value, a bit match on a text attribute: `FILTER_REJECTED` with the rule id (LF-12, 15) | S |
 | CC-SRCH-09 | Ranged attribute in a search | `member` of `GG-Big` returns `complete = false`, the first range (1,500 values on Samba with the explicit range request), and the entry is not completed by following ranges | S (Samba returns all 3,000 on a plain read: assert the request, not only the result) |
 | CC-SRCH-10 | Referral | an injected continuation reference ends the stream with `UNEXPECTED_REFERRAL`, a count and no URL; no `SearchCompleted`; no page returned as complete (LF-32) | FI |
@@ -451,6 +456,7 @@ disabled, expired and locked accounts.
 | CC-SRCH-12 | Typed decoding | for the seeded accounts: `accountExpires` ZERO, `MAX` and a timestamp; `pwdLastSet` ZERO; `lastLogonTimestamp` and `whenCreated` timestamps; `groupType` negative for security groups; `userAccountControl` flags; `objectGUID` and `objectSid` equal the canonical text from `ldbsearch` (rule 9) | S |
 | CC-SRCH-13 | Pinned DC that does not exist | `UNREACHABLE_DC`, no silent switch to another DC | S |
 | CC-SRCH-14 | Cancel after the first batch | the connector releases the LDAP search and its pinned connection within 2 s; a second search succeeds; the open-operations gauge returns to 0 | S |
+| CC-SRCH-18 | Page-size normalisation | `page_size` 0 pages at `Limits.max_page_size`; `page_size` 1,000,000 is clamped to it; neither returns an error and both return every seeded user exactly once | S |
 | CC-SRCH-15 | Memory bound | reading 5,000 and 50,000 users with `objectGUID` only, peak heap growth does not depend on the result size (streaming, no buffering) | S, scale |
 | CC-SRCH-16 | DC dies mid-stream | `UNREACHABLE_DC`, no `SearchCompleted` | S |
 | CC-SRCH-17 | Unreadable root | a root under a deny ACE: `INSUFFICIENT_RIGHTS` or `OBJECT_NOT_FOUND`, and the harness's caller-side mapping treats both the same (LF-36) | S (needs seed addition); W for the exact DC behaviour |
@@ -464,7 +470,7 @@ disabled, expired and locked accounts.
 | CC-READ-01 | `member` of `GG-Big` | the header has `complete = false` and the first range (0 to 1,499); chunks follow in order; the last has `terminal`; 3,000 distinct values; the connector issued explicit range requests (assert on the request, not only the result) | S |
 | CC-READ-02 | `max_values_per_attribute = 2000` | 2,000 values, `member` in `truncated_attributes` | S |
 | CC-READ-03 | Nested and circular groups | `GG-Cycle-A` returns its direct members only; no recursion, no hang | S |
-| CC-READ-04 | Constructed attributes | `tokenGroups` and `msDS-User-Account-Control-Computed` read on a base read; the same names in a `ScopedSearch` attribute list: `ATTRIBUTE_NOT_ALLOWED`. The locked seeded account shows the lockout bit from the computed attribute, not from `userAccountControl` | S where Samba computes it; W otherwise |
+| CC-READ-04 | Constructed attributes | `tokenGroups`, `tokenGroupsGlobalAndUniversal` (granted to the R1 identity through Windows Authorization Access Group, TM §6.3 R1) and `msDS-User-Account-Control-Computed` read on a base read, with the R1 identity and not an administrator; the same names in a `ScopedSearch` attribute list: `ATTRIBUTE_NOT_ALLOWED`. The locked seeded account shows the lockout bit from the computed attribute, not from `userAccountControl` | S where Samba computes it; W otherwise |
 | CC-READ-05 | Not found | a random GUID and a deleted object's GUID: `OBJECT_NOT_FOUND` (no show-deleted) | S |
 | CC-READ-06 | DN specials | an object whose CN has a comma, `+` and Unicode: `display_dn` parses back with P2 to the same RDNs; `object_guid` is stable across a rename | S |
 | CC-READ-07 | Secrets and the SD | `unicodePwd`, `msDS-ManagedPassword`, `ms-Mcs-AdmPwd`: `SECRET_ATTRIBUTE`; `nTSecurityDescriptor`: `CAPABILITY_UNSUPPORTED` | S |
@@ -511,6 +517,7 @@ disabled, expired and locked accounts.
 | CC-FEED-22 | ACL change that hides, then re-exposes, an object; an inheritable-ACE change on a parent | the feed's behaviour is recorded; the reconcile finds the difference (§6.5) | W |
 | CC-FEED-23 | DirSync request on the wire | the control is sent critical with flags exactly `0x1 \| 0x80000000`, base is the NC root, show-deleted is attached, and no other control is (captured by the proxy) | FI |
 | CC-FEED-24 | Entra delta | `prime` and `full` work; `@removed` gives `DELETED`; `members@delta` gives added and removed; an expired token and `410` give `DELTA_TOKEN_EXPIRED`; a 429 gives `THROTTLED` with `retry_after` | E |
+| CC-FEED-25 | Secret named in a feed request | `unicodePwd`, the seeded `0x200`-only attribute and a LAPS attribute each fail the call with `SECRET_ATTRIBUTE` before any DirSync call (the harness's DC-side operation counter shows none); the same request without them succeeds | S (needs seed addition, §10) |
 
 ### 9.6 Cross-cutting
 

@@ -21,15 +21,17 @@ enum ErrorCode {
   ERROR_CODE_UNSPECIFIED = 0;
 
   // The request is malformed or outside the contract's closed sets (empty roots, `*` attribute,
-  // a resume cookie together with a DC choice, a page size of 0, …).
+  // or a filter-free search, …). Page size is never a cause: 0 and over-limit values are
+  // normalised (read.proto).
   ERROR_CODE_INVALID_ARGUMENT = 1;
   // The filter AST failed connector-side validation; details carry the P1 rule id (LF-xx name).
   ERROR_CODE_FILTER_REJECTED = 2;
   // An attribute is not in the schema allowlist (undefinedAttributeType) or not usable here
   // (constructed attribute in a filter; tokenGroups outside a base read).
   ERROR_CODE_ATTRIBUTE_NOT_ALLOWED = 3;
-  // A secret attribute (SecretAttrs) was named in a filter, an attribute list or a sort (LF-22,
-  // LF-34, LF-35, LF-37, LF-38). Secrets leave only through the reserved ReadSecret operation.
+  // A secret attribute (SecretAttrs) was named in a filter or in the attribute list of a
+  // ScopedSearch, Read, ReadPerDC or ChangeFeed request (LF-22, LF-34, LF-37, LF-38). There is no sort
+  // on this contract; LF-35 belongs to the server-side filter builder. Secrets leave only through the reserved ReadSecret operation.
   ERROR_CODE_SECRET_ATTRIBUTE = 4;
   // The operation or feature is not supported by this provider, or its name is reserved with no
   // shape yet. Describe says so up front.
@@ -142,8 +144,8 @@ message StaleCookieDetails {
 }
 
 message InsufficientRightsDetails {
-  // The contract operation that failed (Operation name, e.g. "CHANGE_FEED").
-  string operation = 1;
+  // The contract operation that failed.
+  Operation operation = 1;
   optional Guid object = 2;
 }
 

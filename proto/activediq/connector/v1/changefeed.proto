@@ -73,8 +73,11 @@ message ChangeFeedRequest {
     FeedFull full = 4;
     FeedResume resume = 5;
   }
-  // Explicit attribute names to return. The connector adds the mandatory set (contract §6.3) and
-  // strips SecretAttrs. `*` and `+` are rejected.
+  // Explicit attribute names to return. The connector adds the mandatory set (contract §6.4).
+  // `*` and `+` are rejected. A SecretAttrs member named here fails the call with
+  // ERROR_CODE_SECRET_ATTRIBUTE before any DirSync or delta call, as on ScopedSearch and Read
+  // (LF-37). Stripping applies only to values that come back unrequested (see
+  // ChangeBatch.secret_attributes_dropped).
   repeated string attributes = 6;
   // No DirSync flags, no control choice, no extended mode. Numbers held.
   reserved 7 to 15;
