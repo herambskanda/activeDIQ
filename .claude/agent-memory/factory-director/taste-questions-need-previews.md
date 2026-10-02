@@ -19,5 +19,10 @@ override that the factory then has to interpret.
 - When the CEO overrides with no note, apply the literal option text. Make the remaining
   interpretation calls yourself (scope of the brand, what stays on the company brand, sequencing),
   and send them as a single notice (D-0008 pattern). Do not ask back.
+- "Has a preview" means each option's `preview` field is set (`--option "id|Label|summary|path"`),
+  not only markdown links in the context. The board renders "Open preview" only from that field.
+  T-0042 filed D-0011 with links in the context only (preview:null on all options). There is no
+  `decision edit`, so the fix was to withdraw and refile (D-0012). Check `decision list --json` on
+  every taste review.
 - Bundle related taste choices (brand + UI style) into one preview-backed decision, so the CEO
   judges them together and answers once.
