@@ -212,11 +212,11 @@ Every working session — interactive, headless worker, or long-running agent �
 
 | Context used | What happens |
 | --- | --- |
-| < 70 % (210k) | Normal work. |
-| ≥ 70 % | Advisory: plan to wrap up at the next milestone in the task. |
-| ≥ 85 % (255k) | **Checkpoint now**: finish the current atomic step, write a handoff, update the ticket, end the turn with `RESULT: handoff`. |
-| ≥ 95 % (285k) | Critical: stop starting anything; write the handoff immediately. |
-| 300k | Native auto-compaction (window pinned to 300k) is the last-resort safety net; the compaction hooks snapshot state and re-inject the latest handoff afterwards. |
+| < 60 % (180k) | Normal work. |
+| ≥ 60 % (180k) | Advisory: plan to wrap up at the next milestone in the task. |
+| ≥ 72 % (216k) | **Checkpoint now**: finish the current atomic step, write a handoff, update the ticket, end the turn with `RESULT: handoff`. |
+| ≥ 80 % (240k) | Critical: stop starting anything; write the handoff immediately. |
+| ≈250k | Native auto-compaction (window pinned to 300k; it fires ≈50k early for its reserve) is the last-resort safety net; the compaction hooks snapshot state and re-inject the latest handoff afterwards. |
 
 A **handoff** is the minimum a fresh session needs to continue without re-deriving anything:
 goal, current state, what is done, what is next (ordered), decisions made and why, files touched,

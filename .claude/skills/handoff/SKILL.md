@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Write a handoff so a fresh session can continue without re-deriving anything — on a 70/85/95 % context warning, before /clear, or when stopping mid-work. Also covers resuming from one. /handoff writes one for the current work now.
+description: Write a handoff so a fresh session can continue without re-deriving anything — on a 60/72/80 % context warning, before /clear, or when stopping mid-work. Also covers resuming from one. /handoff writes one for the current work now.
 argument-hint: "[ticket-id]"
 ---
 
@@ -11,12 +11,12 @@ Every session stays under a **300k-token working context** and never stops abrup
 
 | Context used | Do |
 | --- | --- |
-| < 70 % (210k) | Normal work. |
-| ≥ 70 % (210k) | Plan the wrap-up. Pick the next natural stopping point, stop opening new files, and delegate searches to `Explore`. |
-| ≥ 85 % (255k) | **Checkpoint now.** Finish the current atomic step only: a test passing, a file complete, a commit made. Then write the handoff (below), add a ticket note, and end with `RESULT: handoff`. |
-| ≥ 95 % (285k) | **Critical.** Start nothing new. Write the handoff immediately, even mid-step, and record exactly where the half-done step stands. |
+| < 60 % (180k) | Normal work. |
+| ≥ 60 % (180k) | Plan the wrap-up. Pick the next natural stopping point, stop opening new files, and delegate searches to `Explore`. |
+| ≥ 72 % (216k) | **Checkpoint now.** Finish the current atomic step only: a test passing, a file complete, a commit made. Then write the handoff (below), add a ticket note, and end with `RESULT: handoff`. |
+| ≥ 80 % (240k) | **Critical.** Start nothing new. Write the handoff immediately, even mid-step, and record exactly where the half-done step stands. |
 
-At 300k, native auto-compaction runs as the last resort. The hooks snapshot state and re-inject
+At ≈250k (the 300k window minus Claude Code's reserve), native auto-compaction runs as the last resort. The hooks snapshot state and re-inject
 the latest handoff, but that snapshot is mechanical. A written handoff is always better.
 
 ## Write one

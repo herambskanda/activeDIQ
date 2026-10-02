@@ -9,6 +9,7 @@ budget: 120 lines
 Gotchas that cost time. Newest first. `date · lesson · source`.
 
 ## Tooling and Claude Code (verified on 2.1.287)
+- 2026-10-02 · `--autocompact 300000` compacts at ≈250k (it keeps an output/buffer reserve), so context warnings must fire below that: thresholds are 60/72/80 % (180k/216k/240k). At 85 % the worker was auto-compacted before it could write a graceful handoff. (T-0005 run, factory/config.json)
 - 2026-10-02 · WebSearch has a budget of 200 searches per session, shared by all its subagents. Parallel research inside one session starves; run each research stream as its own headless worker (own budget).
 - 2026-10-02 · macOS has no `timeout` binary — implement timeouts in Node, not the shell.
 - 2026-10-02 · The CEO's zsh defines an alias `g`; shell functions named `g` fail to parse. Use descriptive function names in scripts.

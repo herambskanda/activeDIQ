@@ -113,9 +113,9 @@ export function budget() {
   const tokens = Number(process.env.FACTORY_CONTEXT_BUDGET) || ctx.budget_tokens || 300000;
   return {
     tokens,
-    warn: (ctx.warn_pct ?? 70) / 100,
-    checkpoint: (ctx.checkpoint_pct ?? 85) / 100,
-    critical: (ctx.critical_pct ?? 95) / 100,
+    warn: (ctx.warn_pct ?? 60) / 100,
+    checkpoint: (ctx.checkpoint_pct ?? 72) / 100,
+    critical: (ctx.critical_pct ?? 80) / 100,
   };
 }
 

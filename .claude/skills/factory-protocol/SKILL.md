@@ -138,7 +138,7 @@ As owner you deliver the first, second, fifth and sixth before you advance.
 
 ## 11. Context and memory
 
-- Context warnings at 70 / 85 / 95 % follow the `handoff` skill. At 85 %: finish the atomic step,
+- Context warnings at 60 / 72 / 80 % follow the `handoff` skill. At 72 %: finish the atomic step,
   write the handoff, note the ticket, end with `RESULT: handoff`.
 - A lesson that would save a future session 15 minutes, or a new convention → `memory` skill.
   Do it before you advance; it is part of the work.

@@ -22,26 +22,52 @@
     "grooming_cooldown_minutes": 60,
     "triage_cooldown_minutes": 10,
     "digest_hour_local": 18,
-    "code_types": ["build", "bug", "test", "chore", "ops"]
+    "code_types": [
+      "build",
+      "bug",
+      "test",
+      "chore",
+      "ops"
+    ]
   },
   "context": {
     "budget_tokens": 300000,
-    "warn_pct": 70,
-    "checkpoint_pct": 85,
-    "critical_pct": 95
+    "warn_pct": 60,
+    "checkpoint_pct": 72,
+    "critical_pct": 80
   },
   "models": {
     "allowed": {
-      "opus": ["medium", "high", "xhigh", "max"],
-      "sonnet": ["high", "xhigh"]
+      "opus": [
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "sonnet": [
+        "high",
+        "xhigh"
+      ]
     },
     "escalation_only": {
-      "opus": ["xhigh", "max"]
+      "opus": [
+        "xhigh",
+        "max"
+      ]
     },
-    "escalation_roles": ["principal-engineer"],
+    "escalation_roles": [
+      "principal-engineer"
+    ],
     "effort_ladder": {
-      "sonnet": ["high", "xhigh"],
-      "opus": ["medium", "high", "xhigh"]
+      "sonnet": [
+        "high",
+        "xhigh"
+      ],
+      "opus": [
+        "medium",
+        "high",
+        "xhigh"
+      ]
     }
   },
   "ceo": {
@@ -56,23 +82,107 @@
     "max_lines_per_file": 120
   },
   "flows": {
-    "build": [["in_progress", "$owner"], ["review", "code-reviewer", "+security-architect:security-sensitive"], ["qa", "qa-verifier"], ["done", null]],
+    "build": [
+      [
+        "in_progress",
+        "$owner"
+      ],
+      [
+        "review",
+        "code-reviewer",
+        "+security-architect:security-sensitive"
+      ],
+      [
+        "qa",
+        "qa-verifier"
+      ],
+      [
+        "done",
+        null
+      ]
+    ],
     "bug": "build",
-    "test": [["in_progress", "$owner"], ["review", "code-reviewer"], ["done", null]],
+    "test": [
+      [
+        "in_progress",
+        "$owner"
+      ],
+      [
+        "review",
+        "code-reviewer"
+      ],
+      [
+        "done",
+        null
+      ]
+    ],
     "chore": "test",
     "ops": "test",
-    "spec": [["in_progress", "$owner"], ["review", "solution-architect"], ["done", null]],
-    "design": [["in_progress", "$owner"], ["review", "product-manager"], ["done", null]],
+    "spec": [
+      [
+        "in_progress",
+        "$owner"
+      ],
+      [
+        "review",
+        "solution-architect"
+      ],
+      [
+        "done",
+        null
+      ]
+    ],
+    "design": [
+      [
+        "in_progress",
+        "$owner"
+      ],
+      [
+        "review",
+        "product-manager"
+      ],
+      [
+        "done",
+        null
+      ]
+    ],
     "docs": "design",
     "video": "design",
-    "research": [["in_progress", "$owner"], ["review", "factory-director"], ["done", null]],
+    "research": [
+      [
+        "in_progress",
+        "$owner"
+      ],
+      [
+        "review",
+        "factory-director"
+      ],
+      [
+        "done",
+        null
+      ]
+    ],
     "proposal": "research",
     "decision-prep": "research",
     "spike": "research",
-    "meta": [["in_progress", "$owner"], ["done", null]]
+    "meta": [
+      [
+        "in_progress",
+        "$owner"
+      ],
+      [
+        "done",
+        null
+      ]
+    ]
   },
   "library": {
-    "roots": ["knowledge", "factory/reports", "factory/demos", "docs"],
+    "roots": [
+      "knowledge",
+      "factory/reports",
+      "factory/demos",
+      "docs"
+    ],
     "groups": {
       "knowledge/business/strategy": "Strategy",
       "knowledge/business/market-research": "Market research",
