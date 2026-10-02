@@ -12,7 +12,7 @@ sources_last_checked: 2026-10-02
 
 The job that makes the cross-cutting invariants of the [domain model](../domain/domain-model.md) §0 fail the
 build instead of relying on review. Code: `tools/fitness/domainkeys/`; the declarations it reads:
-`internal/platform/tablekind/`; the secret-attribute set: `internal/connector/secretattr/`.
+`internal/platform/tablekind/`; the secret-attribute set: `internal/directory/attr/secretattr/`.
 
 ```
 make fitness-domain-keys                      # = go run ./tools/fitness/domainkeys, part of make fitness

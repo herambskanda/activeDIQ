@@ -31,7 +31,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/skenzeriq/activediq/internal/connector/secretattr"
+	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
 	"github.com/skenzeriq/activediq/tools/fitness/pgharness"
 	"github.com/skenzeriq/activediq/tools/fitness/tenancy/registry"
 )
