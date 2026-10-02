@@ -1019,7 +1019,7 @@ ORMs and raw-string query builders are prohibited. Rules:
     certificate, so a missing `sslmode`, `disable`, `allow`, `prefer` and `require` (without a root
     certificate) are all refused with `ErrInsecureTransport` ([libpq SSL support][pg-ssl]). The check reads the
     TLS configuration pgx derives, so `PGSSLMODE`, the keyword and URL forms and every host and
-    fallback of a multi-host DSN are covered. Exempt: unix sockets, literal loopback addresses and
+    fallback of a multi-host DSN are covered. Exempt: hosts pgx dials as a unix socket (an absolute path, `/…` or `C:\…`; the decision is `pgconn.NetworkAddress`, so libpq's `@name` spelling is a TCP host and is refused), literal loopback addresses and
     the name `localhost` (the bundled PostgreSQL). The one relaxation is an explicit operator
     override, `Config.AllowInsecureTransport`, set only from platform-scope configuration (T-0184
     adds the key, for both DSNs). It is logged at start-up as a warning and shown on the health page
@@ -1050,7 +1050,7 @@ ORMs and raw-string query builders are prohibited. Rules:
 | SQL-20 | config DSN contains `default_query_exec_mode=simple_protocol` | pool construction fails `SimpleProtocolForbidden` | rule 12 |
 | SQL-21 | report AST with function `pg_sleep` · aggregate `string_agg` · unit `'day'; --` | error `UnknownFunction` / `UnknownAggregate` / `BadUnit` | closed vocabulary |
 | SQL-22 | report query exceeding the bound `statement_timeout` | cancelled with `QueryTimeout`; the next transaction on the connection has the default timeout | per-transaction timeout |
-| SQL-23 | DSN to a remote host with `sslmode` absent · `disable` · `allow` · `prefer` · `require` · `verify-ca` without `sslrootcert`; `PGSSLMODE=disable`; one unverified host in a multi-host DSN | `Open` fails `ErrInsecureTransport`, no connection attempted, no password in the message | rule 14 |
+| SQL-23 | DSN to a remote host with `sslmode` absent · `disable` · `allow` · `prefer` · `require` · `verify-ca` without `sslrootcert`; `host=@name` (TCP, not a socket); `PGSSLMODE=disable`; one unverified host in a multi-host DSN | `Open` fails `ErrInsecureTransport`, no connection attempted, no password in the message | rule 14 |
 | SQL-24 | DSN to a unix socket, loopback (`127.0.0.0/8`, `::1`, `localhost`), or a remote host with `verify-full` · `verify-ca` + `sslrootcert` | accepted; not reported as relaxed | rule 14 |
 
 **Lint.** gosec G201/G202 ([gosec][gosec]). forbidigo bans the names `QueryExecModeSimpleProtocol`,

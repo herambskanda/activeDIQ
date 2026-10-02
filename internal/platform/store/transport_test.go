@@ -84,6 +84,7 @@ func TestCheckTransportRefusals(t *testing.T) {
 		"ipv6 remote":                          "postgres://u@[2001:db8::1]/d?sslmode=disable",
 		"allow with sslrootcert, remote hosts": "postgres://u@a.example.com,b.example.com/d?sslmode=allow&sslrootcert=" + ca,
 		"host named like loopback":             "postgres://u@127.0.0.1.example.com/d?sslmode=disable",
+		"abstract-socket spelling is TCP":      "host=@db.example.com user=u dbname=d sslmode=disable",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := CheckTransport(dsn, false); !errors.Is(err, ErrInsecureTransport) {
@@ -112,6 +113,7 @@ func TestCheckTransportAccepts(t *testing.T) {
 	ca := writeCA(t)
 	for name, dsn := range map[string]string{
 		"unix socket":              "host=/var/run/postgresql user=u dbname=d sslmode=disable",
+		"windows socket path":      `host=C:\\pgsock user=u dbname=d sslmode=disable`,
 		"unix socket, no sslmode":  "postgres:///d?host=/var/run/postgresql&user=u",
 		"loopback v4":              "postgres://u@127.0.0.1:5432/d?sslmode=disable",
 		"loopback v4 other octets": "postgres://u@127.1.2.3/d",

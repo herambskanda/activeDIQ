@@ -72,7 +72,7 @@ func checkTransport(cc *pgx.ConnConfig, allowInsecure bool) (TransportStatus, er
 		targets = append(targets, *f)
 	}
 	for _, t := range targets {
-		if exemptHost(t.Host) {
+		if exemptHost(t.Host, t.Port) {
 			continue
 		}
 		problem := tlsProblem(t.TLSConfig)
@@ -91,11 +91,12 @@ func checkTransport(cc *pgx.ConnConfig, allowInsecure bool) (TransportStatus, er
 	return st, nil
 }
 
-// exemptHost: a unix socket (pgx treats an absolute path as one) or a loopback address. The name
-// "localhost" is accepted because it resolves through the hosts file; any other name is remote, since
-// DNS decides where it points.
-func exemptHost(host string) bool {
-	if host == "" || strings.HasPrefix(host, "/") || strings.HasPrefix(host, "@") {
+// exemptHost: a host pgx dials over a unix socket, or a loopback address. The socket decision is pgx's
+// own (pgconn.NetworkAddress: only an absolute path is a socket), so libpq's abstract-socket spelling
+// "@name" is a TCP host name here, exactly as it is when dialled. The name "localhost" is accepted because
+// it resolves through the hosts file; any other name is remote, since DNS decides where it points.
+func exemptHost(host string, port uint16) bool {
+	if network, _ := pgconn.NetworkAddress(host, port); network == "unix" {
 		return true
 	}
 	if strings.EqualFold(host, "localhost") {
