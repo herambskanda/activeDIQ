@@ -2,15 +2,18 @@
 title: "ADR-0001: Go for the server and agents, Rust for code loaded into LSASS and LogonUI, PostgreSQL as the only datastore"
 date: 2026-10-02
 updated: 2026-10-02
-status: proposed
+status: ratified
 owner: heramb
 kind: technical
 ticket: T-0002
+decision: D-0006
+ratified_on: 2026-10-02
+ratified_by: factory-director
 ---
 
 # ADR-0001: Go for the server and agents, Rust for code loaded into LSASS and LogonUI, PostgreSQL as the only datastore
 
-**Status:** proposed. Not binding until ratified.
+**Status:** **ratified 2026-10-02** by factory-director (notice D-0006). Binding on design. It becomes `accepted` when `fitness-stack` runs green in `make ci` on `main` (T-0022).
 **Kind:** technical. The factory-director ratifies it when reviewing T-0002, then files a `notice` so the CEO can veto. Calling this technical is consistent with CEO direction: D-0003 set the house stack (Go + React/TypeScript + PostgreSQL) directionally, so the cost of supporting PostgreSQL only, which customers bear, falls inside a decision the CEO has already made.
 **Deciders:** solution-architect (author) and factory-director (ratifier). **Ticket:** T-0002. **Parity / scope refs:** none. This decision serves every capability family.
 

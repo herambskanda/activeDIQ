@@ -10,6 +10,7 @@ Newest first. `date · who · decision · why/source`. CEO decisions also live o
 architecture decisions as ADRs in knowledge/development/decisions/. Roll entries older than the
 current milestone into archive/ when this file nears its budget.
 
+- 2026-10-02 · factory · **ADR-0001 ratified** (technical; notice D-0006, CEO may veto): Go (cgo-free) for server and agents; Rust + windows-rs for the LSASS/LogonUI DLLs, C++ only via the rule-4 spike gate; PostgreSQL the only stateful service (pgx/sqlc, River pending legal Check); .NET 10/PowerShell 7.6 sidecars by declaration only; macOS/PAM logon components out of scope. Enforced by `fitness-stack` (T-0022). (knowledge/development/decisions/0001-technology-stack.md)
 - 2026-10-02 · CEO · D-0004 Signature set of 5 beyond parity: ENH-01 task-first console, ENH-04 preview + undo, ENH-07 automatic updates, ENH-05 report builder, ENH-09 help-desk caller verification; plus switch enablers and Tier-0 proof. ENH-11 → ENH-22 → ENH-20 come next. (knowledge/business/strategy/enhancement-catalog.md §3)
 - 2026-10-02 · CEO · D-0003 Platform: standalone now on UEM principles, house stack and skenzeriq design system; shared endpoint agent via module contracts; converge on a common core later. (product-strategy.md §11)
 - 2026-10-02 · CEO · D-0002 Deployment: self-hosted first (Windows installer + Linux/Docker), SaaS-ready multi-tenant core from the first migration. (product-strategy.md §13 Q2)
