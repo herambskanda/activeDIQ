@@ -8,3 +8,4 @@
 - [Blocked on another ticket](triage-blocked-on-another-ticket.md) — don't unblock (skips dep gating); set depends_on, raise blocker's priority, note both
 - [Spike review checks](spike-review-checks.md) — gh-api upstream claims; amend disproved ADRs; histogram weighting; recs vs own data; grep ratified ADRs
 - [ADR review: allowlist + ownership](adr-review-allowlist-and-ownership.md) — allowlist matrix must cover every package incl. roots; run every DM owner through table rules
+- [Generator ADR checks](generator-adr-review-checks.md) — read codegen templates per allowed construct; nested strictness; secretjson/FF-SP2; host↔kernel cycles
