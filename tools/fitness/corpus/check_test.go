@@ -171,6 +171,28 @@ func TestCleanTree(t *testing.T) {
 	clean(t, gate(t, base(10).build(t), sim{}.runner("go/pslit", "pslit")))
 }
 
+// The Makefile passes a relative -report-dir, while each implementation's test runs with its package
+// directory as the working directory: the gate must hand the tests an absolute path.
+func TestReportDirReachesTheTestsAsAnAbsolutePath(t *testing.T) {
+	root := base(10).build(t)
+	var seen string
+	inner := sim{}.runner("go/pslit", "pslit")
+	run := func(r string, env []string, argv []string) (string, error) {
+		seen = strings.TrimPrefix(env[0], corpus.ReportDirEnv+"=")
+		return inner(r, env, argv)
+	}
+	cwd, err := os.Getwd()
+	must(t, err)
+	rel, err := filepath.Rel(cwd, filepath.Join(t.TempDir(), "reports"))
+	must(t, err)
+	fs, err := Check(Options{Root: root, Checks: all(), Run: run, ReportDir: rel})
+	must(t, err)
+	clean(t, fs)
+	if !filepath.IsAbs(seen) {
+		t.Fatalf("the implementation test got the relative report directory %q", seen)
+	}
+}
+
 func TestNineHostileRecordsFailNamingTheUnit(t *testing.T) {
 	fs := gate(t, base(9).build(t), sim{}.runner("go/pslit", "pslit"))
 	expect(t, fs, "min-hostile", `unit pslit has 9 records with "hostile": true, needs 10`)
