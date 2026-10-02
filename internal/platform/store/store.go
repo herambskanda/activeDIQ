@@ -54,8 +54,9 @@ var (
 	// ErrTenantInDSN is returned by Open when the connection settings try to preset app.tenant_id.
 	ErrTenantInDSN = errors.New("store: the connection settings must not preset app.tenant_id")
 	// ErrPrivilegedRole is returned by Open when the runtime role could bypass row-level security: it is
-	// a superuser, has BYPASSRLS or owns objects (ADR-0002 rule 4).
-	ErrPrivilegedRole = errors.New("store: the runtime role must not be a superuser, have BYPASSRLS or own objects: connect as the runtime role, never the migration role")
+	// a superuser, has BYPASSRLS, owns objects or the database, can create in a schema, or is a member of a
+	// role that does (ADR-0002 rule 4).
+	ErrPrivilegedRole = errors.New("store: the runtime role must not be, or be a member of, a role that is a superuser, has BYPASSRLS, owns objects or can create in a schema: connect as the runtime role, never the migration role")
 	// ErrClosed is returned by an entry point on a nil or closed DB.
 	ErrClosed = errors.New("store: closed")
 )
@@ -120,20 +121,50 @@ func checkConnConfig(cc *pgx.ConnConfig) error {
 	return nil
 }
 
-// checkRole refuses a role that could bypass row-level security. The fitness job proves the same
-// properties of the provisioned roles (T3); this is the runtime's own refusal to start otherwise.
+// roleRisk is the one query that decides whether the connected role could get out of row-level
+// security. It looks at every role the runtime role is a MEMBER of (itself included; direct or
+// indirect, whatever its INHERIT and SET options, because a member that does not inherit can still
+// SET ROLE to it) and returns the first reason found, or no row. A role is a risk when it is a
+// superuser, has BYPASSRLS, owns the current database, owns any object visible to this database
+// (pg_shdepend, which also covers schemas, functions and other roles' objects), owns a product
+// schema, or can CREATE in one (which lets it plant objects that shadow ours). migrations/0001 repeats
+// this logic in plpgsql for the role named activediq_app; keep the two in step.
+const roleRisk = `SELECT x.rolname, CASE
+		WHEN x.rolsuper THEN 'superuser'
+		WHEN x.rolbypassrls THEN 'BYPASSRLS'
+		WHEN EXISTS (SELECT 1 FROM pg_database WHERE datname = current_database() AND datdba = x.oid) THEN 'owner of the database'
+		WHEN EXISTS (SELECT 1 FROM pg_shdepend d WHERE d.refclassid = 'pg_authid'::regclass AND d.refobjid = x.oid AND d.deptype = 'o'
+			AND d.dbid IN (0, (SELECT oid FROM pg_database WHERE datname = current_database()))) THEN 'owner of objects'
+		WHEN EXISTS (SELECT 1 FROM pg_namespace n WHERE n.nspowner = x.oid AND ` + productSchema + `) THEN 'owner of a schema'
+		WHEN EXISTS (SELECT 1 FROM pg_namespace n WHERE ` + productSchema + ` AND has_schema_privilege(x.oid, n.oid, 'CREATE')) THEN 'can create in a schema'
+	END AS risk
+	FROM pg_roles x
+	WHERE pg_has_role(current_user, x.oid, 'MEMBER')
+	ORDER BY (x.rolname = current_user) DESC, x.rolname`
+
+const productSchema = `n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg_toast%' AND n.nspname NOT LIKE 'pg_temp%'`
+
+// checkRole refuses a role that could bypass row-level security, directly or through a membership. The
+// fitness job proves the same properties of the provisioned roles (T3); this is the runtime's own
+// refusal to start otherwise.
 func (d *DB) checkRole(ctx context.Context) error {
-	var bypass, owns bool
-	err := d.pool.QueryRow(ctx, `SELECT r.rolsuper OR r.rolbypassrls,
-		EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-			WHERE n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg_toast%'
-			AND pg_has_role(current_user, c.relowner, 'USAGE'))
-		FROM pg_roles r WHERE r.rolname = current_user`).Scan(&bypass, &owns)
+	rows, err := d.pool.Query(ctx, roleRisk)
 	if err != nil {
 		return fmt.Errorf("store: check the runtime role: %w", err)
 	}
-	if bypass || owns {
-		return ErrPrivilegedRole
+	defer rows.Close()
+	for rows.Next() {
+		var role string
+		var risk *string
+		if err := rows.Scan(&role, &risk); err != nil {
+			return fmt.Errorf("store: check the runtime role: %w", err)
+		}
+		if risk != nil {
+			return fmt.Errorf("%w (%s is a %s)", ErrPrivilegedRole, role, *risk)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("store: check the runtime role: %w", err)
 	}
 	return nil
 }

@@ -351,3 +351,60 @@ func (d *Database) OwnerStrings(ctx context.Context, sql string, args ...any) ([
 	}
 	return out, rows.Err()
 }
+
+// Breach is one way a customer's DBA or installer can break the runtime/migration role split, and a
+// fixture to reproduce it. Setup and Teardown are SQL fixture text run as the superuser, one statement
+// each; "{db}" stands for the test database's name. Want is what the refusal must say.
+type Breach struct {
+	Name     string
+	Setup    []string
+	Teardown []string
+	Want     string
+}
+
+// Breaches lists the ways the runtime role can reach privilege it must not have, including the ones that
+// only work through SET ROLE (a membership WITH INHERIT FALSE) or through ownership and CREATE rather
+// than the role's own attributes. Both the migration guard and store.Open must refuse every one.
+func Breaches() []Breach {
+	return []Breach{
+		{Name: "inherits the owner", Setup: []string{`GRANT activediq_owner TO activediq_app WITH INHERIT TRUE`},
+			Teardown: []string{`REVOKE activediq_owner FROM activediq_app`}, Want: "member"},
+		{Name: "member of the owner WITH INHERIT FALSE", Setup: []string{`GRANT activediq_owner TO activediq_app WITH INHERIT FALSE`},
+			Teardown: []string{`REVOKE activediq_owner FROM activediq_app`}, Want: "member"},
+		{Name: "member of a superuser WITH INHERIT FALSE", Setup: []string{`CREATE ROLE adq_breach_su NOLOGIN SUPERUSER`, `GRANT adq_breach_su TO activediq_app WITH INHERIT FALSE`},
+			Teardown: []string{`DROP ROLE adq_breach_su`}, Want: "superuser"},
+		{Name: "member of a BYPASSRLS role WITH INHERIT FALSE", Setup: []string{`CREATE ROLE adq_breach_rls NOLOGIN BYPASSRLS`, `GRANT adq_breach_rls TO activediq_app WITH INHERIT FALSE`},
+			Teardown: []string{`DROP ROLE adq_breach_rls`}, Want: "BYPASSRLS"},
+		{Name: "member of a role that can create in public", Setup: []string{`CREATE ROLE adq_breach_cr NOLOGIN`, `GRANT CREATE ON SCHEMA public TO adq_breach_cr`, `GRANT adq_breach_cr TO activediq_app WITH INHERIT FALSE`},
+			Teardown: []string{`REVOKE CREATE ON SCHEMA public FROM adq_breach_cr`, `DROP ROLE adq_breach_cr`}, Want: "CREATE"},
+		{Name: "owns the database", Setup: []string{`ALTER DATABASE {db} OWNER TO activediq_app`},
+			Teardown: []string{`ALTER DATABASE {db} OWNER TO activediq_owner`}, Want: "database"},
+		{Name: "has CREATE on public", Setup: []string{`GRANT CREATE ON SCHEMA public TO activediq_app`},
+			Teardown: []string{`REVOKE CREATE ON SCHEMA public FROM activediq_app`}, Want: "CREATE"},
+	}
+}
+
+// Break applies the breach as the superuser and registers its teardown for the end of the test, so the
+// cluster-level roles and grants it touches never leak into the next test.
+func (d *Database) Break(t testing.TB, b Breach) {
+	t.Helper()
+	ctx := context.Background()
+	run := func(stmts []string) error {
+		c, err := d.Admin(ctx)
+		if err != nil {
+			return err
+		}
+		defer c.Close(ctx)
+		for _, s := range stmts {
+			// Fixture text; the only substitution is the generated database name (t_ + hex).
+			if _, err := c.Exec(ctx, strings.ReplaceAll(s, "{db}", d.Name)); err != nil {
+				return fmt.Errorf("%s: %w", s, err)
+			}
+		}
+		return nil
+	}
+	t.Cleanup(func() { _ = run(b.Teardown) })
+	if err := run(b.Setup); err != nil {
+		t.Fatal(err)
+	}
+}

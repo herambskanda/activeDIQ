@@ -54,7 +54,10 @@ unchanged there:
 - `tenants` lives in `public`. Migration 0001 itself re-states the default privileges and the schema
   grant, so an installer that created only the two roles and a database the owner owns is enough: the
   script fails loudly if the split is missing or broken (roles absent, either one a superuser or
-  `BYPASSRLS`, the runtime role inheriting the owner). Roles are cluster-level and the owner has no
+  `BYPASSRLS`, the runtime role a *member* of the owner, a superuser or a `BYPASSRLS` role, with or without
+  `INHERIT`, since `SET ROLE` escapes RLS either way; the runtime role or a role it is a member of owning the
+  database, a schema or any object, or able to `CREATE` in a schema). `store.Open` repeats the same refusal
+  at startup (`roleRisk`). Roles are cluster-level and the owner has no
   `CREATEROLE`, so the installer creates them; no migration does.
 - The migration bookkeeping table is **not** created by any migration, so the job never sees it, and the
   registry does not list it (a registry entry for a table the job's database lacks fails `registry-stale`).

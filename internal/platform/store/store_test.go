@@ -328,6 +328,28 @@ func TestOpenRefusesPrivilegedRoles(t *testing.T) {
 	})
 }
 
+// Open refuses a runtime role that can reach privilege through a membership that does not inherit
+// (SET ROLE), through owning the database, or through CREATE on a schema, not only through its own
+// attributes.
+func TestOpenRefusesRoleThatCanEscapeRLS(t *testing.T) {
+	for _, b := range storetest.Breaches() {
+		t.Run(b.Name, func(t *testing.T) {
+			storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+				d := s.NewDatabase(t)
+				d.Migrate(t)
+				d.Break(t, b)
+				db, err := Open(context.Background(), Config{DSN: d.AppDSN()})
+				if err == nil {
+					db.Close()
+				}
+				if !errors.Is(err, ErrPrivilegedRole) {
+					t.Fatalf("Open under %q = %v; want ErrPrivilegedRole", b.Name, err)
+				}
+			})
+		})
+	}
+}
+
 // SQL-22: both entry points set a per-transaction statement_timeout that does not outlive the
 // transaction.
 func TestStatementTimeoutIsPerTransaction(t *testing.T) {

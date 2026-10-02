@@ -100,29 +100,30 @@ func TestMigration0001CreatesOnlyTenantsAndTheRoleSplit(t *testing.T) {
 	})
 }
 
-// The guard in the migration fails the run instead of creating tables under a broken role split.
+// The guard in the migration fails the run, and rolls it back, instead of creating tables under a broken
+// role split: every way the runtime role can reach privilege, including the ones that only work through
+// SET ROLE (a membership WITH INHERIT FALSE) or through ownership and CREATE.
 func TestMigration0001RefusesABrokenRoleSplit(t *testing.T) {
-	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
-		ctx := context.Background()
-		d := s.NewDatabase(t)
-		admin, err := d.Admin(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer admin.Close(ctx)
-		// The runtime role inherits the owner: the split is not a split.
-		if _, err := admin.Exec(ctx, `GRANT activediq_owner TO activediq_app`); err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() {
-			if c, err := d.Admin(ctx); err == nil {
-				_, _ = c.Exec(ctx, `REVOKE activediq_owner FROM activediq_app`)
-				_ = c.Close(ctx)
-			}
+	for _, b := range storetest.Breaches() {
+		t.Run(b.Name, func(t *testing.T) {
+			storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+				ctx := context.Background()
+				d := s.NewDatabase(t)
+				d.Break(t, b)
+				err := d.Apply(ctx, migrations.FS)
+				if err == nil || !strings.Contains(err.Error(), "ADR-0002 rule 4") || !strings.Contains(err.Error(), b.Want) {
+					t.Fatalf("migration under %q = %v; want the guard to fail it mentioning %q", b.Name, err, b.Want)
+				}
+				admin, err := d.Admin(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer admin.Close(ctx)
+				var exists bool
+				if err := admin.QueryRow(ctx, `SELECT to_regclass('public.tenants') IS NOT NULL`).Scan(&exists); err != nil || exists {
+					t.Fatalf("public.tenants exists after a refused migration (%v, %v); the run must roll back", exists, err)
+				}
+			})
 		})
-		err = d.Apply(ctx, migrations.FS)
-		if err == nil || !strings.Contains(err.Error(), "must not inherit the migration role") {
-			t.Fatalf("migration with activediq_app inheriting the owner = %v; want the guard to fail it", err)
-		}
-	})
+	}
 }
