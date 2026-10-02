@@ -19,6 +19,7 @@ ratified_by: factory-director
 
 > Amendments (ratified ADRs only):
 > - 2026-10-02 · factory-director · **D-0005** (CEO): activeDIQ is a **separate brand**. In "The boundary with UEM", the *skenzeriq design system* row changes from *Consumed, never forked* to *Not shared*: activeDIQ keeps its own tokens and brand guidelines in this repository (T-0043), and `../design-system/` is not a build dependency. No other rule changes. Where Context quotes D-0003's "design system", that is historical.
+> - 2026-10-02 · solution-architect · T-0048 (non-substantive clarification, from the T-0004 review): Go and protobuf package names cannot carry hyphens, so the agent modules first written `ad-dc` and `mgmt-helper` are spelled `addc` and `mgmthelper` everywhere, this text included (`internal/agentmodules/addc`, `activediq.addc.v1`), as in blueprint v0. `fileserver` is unchanged. No rule changes.
 
 ## Context
 
@@ -100,7 +101,7 @@ The same rows apply to every profile. A self-hosted install simply has one tenan
 | Principles, knowledge-base conventions, ADR ladder | **Adopted** | As written in UEM ADR-0001/0002 and `knowledge/README.md` |
 | House stack (Go, React/TypeScript, PostgreSQL) | **Adopted** | ADR-0001 |
 | skenzeriq design system | **Not shared** (amended 2026-10-02, D-0005) | <ul><li>activeDIQ is a separate brand. Its tokens and brand guidelines live in this repository (T-0043).</li><li>There is no build-time dependency on `../design-system/`. Its craft rules (grid, accessibility, admin patterns) may be followed by reference.</li></ul> |
-| **Agent host and module contract** | **Shared by contract** | <ul><li>Protobuf package `skenzeriq.agent.v1` covers the host: enrollment, identity, module lifecycle, update, health, outbox. It carries no AD-specific type.</li><li>activeDIQ modules (`ad-dc`, `fileserver`, `mgmt-helper`) use `activediq.<module>.v1`.</li><li>The host is built in our repository, under the extractable platform root.</li><li>UEM's owners review the contract before it is frozen (before M3). The draft starts from PatchIQ's `agent.Module` (postmortem §10) and UEM ADR-0002.</li><li>Whichever product ships first ships the host. The other plugs modules into it.</li></ul> |
+| **Agent host and module contract** | **Shared by contract** | <ul><li>Protobuf package `skenzeriq.agent.v1` covers the host: enrollment, identity, module lifecycle, update, health, outbox. It carries no AD-specific type.</li><li>activeDIQ modules (`addc`, `fileserver`, `mgmthelper`) use `activediq.<module>.v1`.</li><li>The host is built in our repository, under the extractable platform root.</li><li>UEM's owners review the contract before it is frozen (before M3). The draft starts from PatchIQ's `agent.Module` (postmortem §10) and UEM ADR-0002.</li><li>Whichever product ships first ships the host. The other plugs modules into it.</li></ul> |
 | Repository, Go module, build and release train, installer, database, tenancy store, authn/RBAC, licensing | **Not shared** | <ul><li>activeDIQ installs and runs with **no UEM component, service or repository present**.</li><li>It imports no UEM or PatchIQ Go module and makes no runtime call to a UEM service.</li></ul> |
 | Common core: tenancy, authn/RBAC core, our audit trail, job-engine wrapper, agent host, update client, key provider | **Converge later** (D-0003) | <ul><li>Lives under one platform root, provisionally `internal/platform/`; T-0004 fixes the path.</li><li>That root imports no directory-domain or module package, so it can be extracted.</li><li>Convergence is a superseding ADR.</li></ul> |
 | Cross-product features (one console, shared inventory) | **Out of scope** | If ever, through each product's public API |
@@ -127,7 +128,7 @@ The same rows apply to every profile. A self-hosted install simply has one tenan
    | `server`, `connector`, `radius`, `fpolicy` | Management; `radius` is user access, drawn inside the server process in FEAS §4.2 | Any combination of these four may share a process |
    | `edge` | User access. It holds no directory credential and is assumed compromised. | **Always alone** in its process, in the DMZ or in our cloud |
    | `t0-connector` | Control plane. **Not in v1** (FD-11). | **Always alone**, on its own host at the customer site, in every profile. Never in the SaaS cell. |
-   | `agent` | Control plane on a DC (`ad-dc` module); management plane elsewhere | A separate binary on the host it serves. Reached only through the agent contract (rule 10, T-0040). |
+   | `agent` | Control plane on a DC (`addc` module); management plane elsewhere | A separate binary on the host it serves. Reached only through the agent contract (rule 10, T-0040). |
 3. **One path to a directory, and credentials only in the connector.** Server-side code reaches LDAP, Kerberos, SMB, MS-RPC and Graph only through the **connector contract**. That contract is a versioned protobuf service of typed operations, with no free-form query or script verb. It has two transports:
    - **embedded**: in-process, used by default in self-hosted;
    - **remote**: the connector dials out to the server over mTLS gRPC. It is used by SaaS, and on-prem for additional forests, DMZ or branch sites, and redundant connectors (ADM-210).
@@ -186,7 +187,7 @@ The same rows apply to every profile. A self-hosted install simply has one tenan
 9. **The server is management plane, not Tier 0.** FEAS §2.1 defines Tier 0 as "any system that can write to Tier-0 objects or run code on DCs". The server stays out of Tier 0 only while four conditions hold:
    - **Delegated AD rights only.** The `connector` role's AD identity (gMSA or keytab) holds delegated rights only. It has no write or control right over AdminSDHolder-protected objects or over DCs. A customer who grants more makes activeDIQ Tier 0 by FEAS's own test. v1 makes no Tier-0 writes (FD-11). T-0007 defines exactly which objects count, including GPOs that apply to DCs, and how onboarding and health checks verify the rights.
    - **The same limit in Entra.** The Entra app holds no permission to manage Entra privileged roles. T-0007 scopes the Graph permissions.
-   - **Never on a DC.** The installer refuses to install the `server` role on a domain controller. A DC hosts only the agent (`ad-dc` module) and the password filter, which are control plane.
+   - **Never on a DC.** The installer refuses to install the `server` role on a domain controller. A DC hosts only the agent (`addc` module) and the password filter, which are control plane.
    - **The control plane stays apart.** `t0-connector` and DC-resident components never share a process with a management-plane role (rule 2). The server reaches them only by signed, typed, allowlisted messages (FEAS §2.1; agent contract T-0040).
 10. **UEM boundary.**
     - No UEM or PatchIQ Go module appears in any build graph.

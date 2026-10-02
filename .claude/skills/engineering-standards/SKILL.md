@@ -14,21 +14,37 @@ ratified, **no product code** — only `garage/` spikes.
 
 Language-level rules: `reference/style.md`. The anti-pattern rules: §9 below.
 
-## 1. Repository shape (provisional)
+## 1. Repository shape
+
+The map is fixed by [blueprint v0 §1](../../../knowledge/development/architecture/blueprint.md)
+(§1.1 lists the paths it made final). If this summary and the blueprint disagree, the blueprint wins.
 
 ```
-cmd/<binary>/            entrypoints only: parse config, compose modules, run
-internal/platform/       shared kernel: auth, rbac, audit, jobs, config, db, logging, httpx
-internal/directory/      connectors (ldap, graph), safe primitives (ldapfilter, dn, attr), sync
-internal/<module>/       one directory per product module (lifecycle, audit, selfservice, reporting, workflow)
-api/openapi.yaml         public contract — source of truth (api-design)
-migrations/              forward-only SQL migrations
-web/                     React app; web/src/api is generated from api/openapi.yaml
-windows/                 Windows-native components (DC agent, password filter, credential provider)
+cmd/<role>/              one main per process (server, connector, edge, agent, …): load config, call internal/compose/<role>, run
+internal/compose/        composition root: <role>/ wiring per binary (server, agent hold modules.gen.go), profile/ (manifest data), config/ (the only env reader)
+internal/platform/       extractable kernel: tenant, store (WithTenantTx; exempt, reportsql), module, authn, authz, audit, jobs, operation, keys, secret, proc, pslit, fleet, …
+internal/directory/      directory domain: safe primitives (ldapfilter, dn, attr/*), model, inventory, sync, client
+internal/connector/      connector root: the only importer of LDAP/Graph libraries and the only unsealer of directory credentials (service, provider/{ad,entra}, ldap, kerberos, credential, psx, ad/scope)
+internal/modules/<id>/   one directory per server feature module (connections, objects, helpdesk, delegation, lifecycle, workflow, reports, …)
+internal/agentmodules/<id>/  agent modules (addc, fileserver) [M3]
+internal/proto/          generated Go for proto/ — never hand-edited
+proto/                   protobuf sources (skenzeriq/agent/v1, activediq/connector/v1, activediq/<agent-module>/v1)
+api/openapi/             public contract — source of truth (api-design)
+migrations/              one forward-only SQL sequence, NNNN_<owner>_<what>.sql
+web/                     React + TypeScript console: src/app, src/modules/<id>, src/ds, src/api (generated); Playwright suites in web/e2e
+native/                  Rust workspace for in-process DLLs: passfilt, credprov, shared [M4]
+sidecars/<name>/         .NET + PowerShell typed adapters (pshost, exchange, gpmc)
+packaging/               windows/ (MSI) and oci/ (Dockerfiles, Compose)
+testdata/safe-primitives/  the primitive corpus, one <unit>.jsonl per unit
+tools/                   fitness/<job>/, analyzers/, vettool/, gen/, playwright/
 lab/                     AD lab: Samba compose, seed generator, reset scripts (testing-playbook)
-e2e/                     Playwright suites
+third_party/<name>/      copied third-party code with its LICENSE
 garage/<name>/           prototypes with OWNER and EXPIRES — never imported by product code
 ```
+
+TypeScript lives only under `web/` (ADR-0001 rule 1), so Playwright suites are `web/e2e/`.
+Windows-native code is split by tier: in-process DLLs in `native/` (tier N), DC and file-server
+agent modules in `internal/agentmodules/` (tier A).
 
 `knowledge/development/architecture/` holds the **architecture map**: one page per module
 (purpose, owned data, public interface, extension points it implements, dependencies). A ticket

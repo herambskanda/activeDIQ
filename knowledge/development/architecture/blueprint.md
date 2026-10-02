@@ -61,7 +61,7 @@ factory agents (`.claude/agents/`).
   | (never host the  |   (cmd/connector,   +-----------------+        |      |  service) + blob  |
   |  server)         |    other site/forest)----- dials out ----------+      |  store (fs / S3)  |
   |  LSASS: passfilt |                                                |      +-------------------+
-  |   --pipe--> agent [M3] (cmd/agent: skenzeriq host + ad-dc module) -+
+  |   --pipe--> agent [M3] (cmd/agent: skenzeriq host + addc module)  -+
   +------------------+   file servers: agent + fileserver module [M3] -+
                          GPMC host [M3]: OPEN, §13 -------------------+
 ```
@@ -109,7 +109,7 @@ therefore ours to enforce. The compiler does not do it for us.
 
 ### 1.1 Paths this blueprint fixes
 
-The earlier documents named these paths provisionally. They are now final, and T-0048 updates the
+The earlier documents named these paths provisionally. They are now final, and T-0048 updated the
 skills and the safe-primitives spec to match.
 
 | Provisional (where) | Final |

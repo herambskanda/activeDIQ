@@ -404,7 +404,7 @@ House consistency wins wherever it isn't blocked: Go is blocked only inside LSAS
 | **Directory connector** | Embedded in the server (on-prem) or a standalone process near the DCs (SaaS/MSP) | Go | LDAP/Kerberos/SMB/MS-RPC to DCs; DC locator; snapshots and DirSync; executes typed write operations; dials out to the control plane |
 | **RADIUS service** | On-prem, near the VPN | Go | RADIUS with mandatory Message-Authenticator; RADIUS/TLS |
 | **SSPR edge** (optional) | DMZ | Go (+ static React) | Stateless proxy for the public SSPR flows; no secrets; the server tunnels out to it |
-| **Platform agent: `ad-dc` module** | Every DC (optional but required for full auditing and password policy) | Go | Security-log subscription, password-filter IPC, local policy cache, health |
+| **Platform agent: `addc` module** | Every DC (optional but required for full auditing and password policy) | Go | Security-log subscription, password-filter IPC, local policy cache, health |
 | **Password filter DLL** | LSASS on every writable DC | Rust/C++ | Policy checks; change notifications → agent |
 | **Platform agent: `fileserver` module** | Windows file servers | Go | File auditing, ACL operations, effective access |
 | **Windows management helper** (optional) | One member server | Go agent + .NET 10 helper | `Get-GPOReport`, `Backup-GPO`, RSoP; WS-only PowerShell |
@@ -431,8 +431,8 @@ House consistency wins wherever it isn't blocked: Go is blocked only inside LSAS
 |         v                        v                            |                                            |
 |  +------------------------------------------+     +-----------+-----------+   +------------------------+   |
 |  | Domain controllers (AD DS, DNS, SYSVOL)  |     | platform agent        |   | platform agent         |   |
-|  |   LSASS + pwd-filter DLL --named pipe--> | --> | 'ad-dc' module (DC)   |   | 'fileserver' / 'mgmt-  |   |
-|  |   Security log --EvtSubscribe----------> |     | buffer · policy cache |   |  helper' modules       |   |
+|  |   LSASS + pwd-filter DLL --named pipe--> | --> | 'addc' module (DC)    |   | 'fileserver' /         |   |
+|  |   Security log --EvtSubscribe----------> |     | buffer · policy cache |   | 'mgmthelper' modules  |   |
 |  +------------------------------------------+     +-----------------------+   +------------------------+   |
 |                                                                                                            |
 |  Endpoints: Windows credential provider (Rust/C++) · macOS PSSO ext / auth plug-in · Linux PAM             |
@@ -458,7 +458,7 @@ House consistency wins wherever it isn't blocked: Go is blocked only inside LSAS
 3. **Change and audit.** DirSync deltas (what/when) + agent events (who: 5136/4738/…) → correlator (GUID + originating DC + time) → change timeline, alerts, SIEM export.
 4. **SSPR (web).** User → edge → server (enrollment check, MFA) → connector password reset with `…2239` → result. If the password filter is installed, the DC's filter enforces our policy first.
 5. **SSPR at logon.** Credential-provider tile → pinned-TLS SSPR API (direct or through the edge) → same as flow 4 → the provider submits the new credential to LogonUI → the platform agent refreshes cached credentials after reconnect.
-6. **Password sync.** Filter `PasswordChangeNotify` → DPAPI-encrypted queue → `ad-dc` module → server → Graph/Google targets (retries, idempotent).
+6. **Password sync.** Filter `PasswordChangeNotify` → DPAPI-encrypted queue → `addc` module → server → Graph/Google targets (retries, idempotent).
 7. **MFA/SSO/RADIUS.** Browser ↔ server IdP (OIDC/SAML/WebAuthn); VPN → RADIUS service → server MFA (push/TOTP) → Access-Accept/Reject with Message-Authenticator.
 
 ### 4.5 Where multi-tenancy lives

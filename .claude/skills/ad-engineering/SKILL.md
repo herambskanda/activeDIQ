@@ -25,16 +25,19 @@ concatenation. PatchIQ died partly of `Sprintf`-built security strings
 (`../UEM/knowledge/development/legacy/patchiq-postmortem.md` §11 #1, #10). Here the unsafe thing
 must be **unrepresentable**: the connector API accepts typed values only.
 
-| Primitive (provisional path) | Does | Rule |
+| Primitive (path: blueprint §1.1) | Does | Rule |
 | --- | --- | --- |
 | `internal/directory/ldapfilter` | AST builder: `And/Or/Not/Eq/Present/Prefix/BitAnd/BitOr/InChain`; renders with RFC 4515 escaping (`*`→`\2a`, `(`→`\28`, `)`→`\29`, `\`→`\5c`, NUL→`\00`; binary values byte-wise `\xx`). Also a **parser** for admin-supplied LDAP filters (custom reports) → AST, rejected if invalid. | `Search` takes `ldapfilter.Filter`, never `string`. Delegation scope is AND-composed on the AST. |
 | `internal/directory/dn` | Parse, build (`dn.Child(parent, "CN", value)`), escape RDN values per RFC 4514 (`, + " \ < > ;`, leading space or `#`, trailing space, NUL), normalise, compare. | Operations take `dn.DN`. Prefer `<GUID=…>` DNs to address existing objects. |
-| `internal/directory/attr` | Typed codecs: `GUID`, `SID`, `FileTime`, `GeneralizedTime`, `UAC`, `GroupType`, `LargeInt`, `UnicodePwd` (a `Secret`: never logged, never serialised). | Raw `[]byte`/`string` attribute access outside the codec package is a review blocker. |
+| `internal/directory/attr/{guid,sid,filetime,gentime,flags,unicodepwd}` | Typed codecs: `GUID`, `SID`, `FileTime`, `GeneralizedTime`, `UAC`, `GroupType`, `LargeInt`, `UnicodePwd` (a `Secret` from `internal/platform/secret`: never logged, never serialised). | Raw `[]byte`/`string` attribute access outside the codec package is a review blocker. |
 
 - RFC 4514: https://www.rfc-editor.org/rfc/rfc4514 §2.4 · RFC 4515: https://www.rfc-editor.org/rfc/rfc4515 §3
-- Only `internal/directory/ldap` may import the raw LDAP library — enforced by a lint/import rule
-  (fitness function). Every builder ships with fuzz tests over hostile input (`*)(uid=*`, `\`,
-  NUL, `,CN=x`, leading `#`, 64+ chars, non-BMP Unicode).
+- Only the connector root `internal/connector/` may import the raw LDAP library — enforced by a
+  lint/import rule (fitness function FF-SP1). Scoped search and controls live in
+  `internal/connector/ad/scope`, `SecureConn` in `internal/connector/ldap`; `dn` implements
+  RFC 4514 itself and does not wrap go-ldap's `ParseDN` (blueprint §7.4). Every builder ships
+  with fuzz tests over hostile input (`*)(uid=*`, `\`, NUL, `,CN=x`, leading `#`, 64+ chars,
+  non-BMP Unicode).
 - Missing a primitive? Stop and file a `security-sensitive` build ticket for it. Never inline one.
 
 ## 2. Reading
