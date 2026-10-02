@@ -25,6 +25,8 @@ Gotchas that cost time. Newest first. `date · lesson · source`.
 - 2026-10-02 · go-msrpc does Kerberos through its own gokrb5 fork → a connector using go-ldap + go-krb5/krb5 *and* go-msrpc carries two Kerberos stacks; unify behind one `GSSAPIClient` when MS-RPC is adopted. Source: https://github.com/oiweiwei/go-msrpc, ADR-0001 Consequences
 - 2026-10-02 · PowerShell treats curly quotes U+2018–U+201B as single quotes: an escaper that only doubles ASCII `'` lets a crafted name break out of the string (found in PatchIQ's `escapePSPath`). Our PowerShell primitive must escape all of them, with a test. Source: feasibility doc §risks.
 - 2026-10-02 · go-ldap's Kerberos bind can't sign/seal or channel-bind on Linux, and gokrb5 has been dormant since 2023 — plan an adapter on go-krb5/krb5 and use LDAPS. Source: `knowledge/development/architecture/build-feasibility/ad-technical-feasibility.md`.
+- 2026-10-02 · `AddCommand`/`AddParameter` does not make query-language parameters safe: AD-module `-Filter` and Exchange OPATH filters are parsed languages, and `-Identity` resolves strings as a DN, GUID, SID or sAMAccountName. Pass GUIDs to `-Identity` and only builder output to filters. Source: `knowledge/development/architecture/safe-primitives.md` §6.1
+- 2026-10-02 · AD compares names ignoring case, width, kana type and accents (MS-ADTS sort keys), so a Samba-only test can false-pass a uniqueness check (José vs Jose). Ask the DC and run uniqueness tests on Windows. Source: `safe-primitives.md` §4.4, §9
 
 ## From PatchIQ (see ../UEM/knowledge/development/legacy/patchiq-postmortem.md §11)
 - 2026-08-12 · Blind AI iteration destroys comprehension: document architecture before code; keep the architecture map current.
