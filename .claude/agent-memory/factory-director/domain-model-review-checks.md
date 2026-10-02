@@ -16,6 +16,9 @@ On a domain-model or concept-map review, script the AC2-style mapping check. Don
 - For every scope or evaluation rule built on AD ancestry, ask how it evaluates for Entra, which has no NCs and no ancestry.
 - Pairs of must rows can break each other: SSO accounts (ADM-143) + group delegation (ADM-128) needed a directory binding on Account.
 - On a rework, trace every **new authorization path** back to the attribute it joins on, and ask who can write that attribute. Round 2 of T-0006 added "grant through a matched correlation" (DM-36.I2). DM-20 matched on onPremisesImmutableId, which Entra admins can write on cloud-only users, so the path ran Entra admin → AD authority. DM-30.I5 had already refused that same attribute. The gate is a read-only property: onPremisesSyncEnabled.
+- For every gate that reads a Graph or tenant setting, open that API's permission table. If it lists no application permission, or needs a Global Administrator, the app-only connector (ADR-0002 rule 7) cannot evaluate it: it must be an attested fact, not a live read. On T-0006 round 3, gate (f) read `/directory/onPremisesSynchronization`, which supports delegated access only and only for a Global Administrator. Failing closed on it would have silently killed hybrid parity.
+- A gate that rests on a periodic human attestation creates an availability cliff: on expiry, every grant behind it drops at once. Route owner alerting to the plan ticket (T-0031 on T-0006 round 4), and file the customer-visible prerequisite as a notice when you advance (D-0009).
+- AC2 script: parse mixed ID lists like `ADM-116…119, 121`. A naive regex reported 23 false misses.
 - Put cheap fixes for sibling tickets (wrong paths, allow-lists, missing state transitions) straight into notes on those tickets, so the reject note stays about this deliverable.
 
 Related: [[review-check-ceo-answers-vs-draft-time]], [[blueprint-review-link-graph]]
