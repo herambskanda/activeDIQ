@@ -19,7 +19,8 @@ fitness: fitness-stack
 **Kind:** technical. The factory-director ratifies it when reviewing T-0002, then files a `notice` so the CEO can veto. Calling this technical is consistent with CEO direction: D-0003 set the house stack (Go + React/TypeScript + PostgreSQL) directionally, so the cost of supporting PostgreSQL only, which customers bear, falls inside a decision the CEO has already made.
 **Deciders:** solution-architect (author) and factory-director (ratifier). **Ticket:** T-0002. **Parity / scope refs:** none. This decision serves every capability family.
 
-> Amendments (ratified ADRs only): none.
+> Amendments (ratified ADRs only). Errata (accepted ADRs, factual corrections only; `adr` skill §5):
+> - 2026-10-02 · solution-architect (T-0134), ratified by factory-director, notice **D-0016** · **Erratum E1: go-krb5/krb5 version premise.** The T-0023 spike measured that the tagged release v0.1.0 has **no** channel binding and no SASL layers (`garage/ldap-cbt-spike/logs/probe-krb5-v0.1.0.log`). Both are only on `main`: [#114](https://github.com/go-krb5/krb5/pull/114) (SASL), [#117](https://github.com/go-krb5/krb5/pull/117) (channel binding, `8b6f497`, merged 2026-08-09) and [#120](https://github.com/go-krb5/krb5/pull/120) (KILE CBT advertisement). Changes: (1) Context originally read "adds channel bindings and RFC 3244 set-password (feasibility §3.1). It is young (v0.1.0, Feb 2026)"; (2) Consequences originally read "a GSSAPI client with channel binding on go-krb5/krb5, which is v0.1.0, so we budget to fork it"; (3) Revisit-when originally read "The CBT spike cannot make go-krb5/krb5 bind under "Always" within 4 weeks, including a fork". The library choice and rules 1–6 do not change, and neither do checks F1–F5. The pin policy below gets a CI check in T-0162.
 
 ## Context
 
@@ -40,7 +41,7 @@ activeDIQ has three kinds of code, and each kind has different hard constraints:
   - go-ldap's Kerberos bind negotiates neither SASL signing/sealing nor channel binding off Windows ([go-ldap PR #565](https://github.com/go-ldap/ldap/pull/565)).
   - gokrb5 has been dormant since 2023.
   - WS2025 DCs require signing by default and can enforce channel binding ([LDAP signing](https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/ldap-signing)).
-  - The maintained successor, [go-krb5/krb5](https://github.com/go-krb5/krb5) (Apache-2.0, stewarded with gokrb5's author's blessing), adds channel bindings and RFC 3244 set-password (feasibility §3.1). It is young (v0.1.0, Feb 2026).
+  - The maintained successor, [go-krb5/krb5](https://github.com/go-krb5/krb5) (Apache-2.0, stewarded with gokrb5's author's blessing), has RFC 3244 set-password (feasibility §3.1). Its channel binding and SASL layers exist **only on `main`**, not in its one tagged release, v0.1.0 (Feb 2026). They are [#117](https://github.com/go-krb5/krb5/pull/117) (channel binding, merged 2026-08-09 as `8b6f497`), [#120](https://github.com/go-krb5/krb5/pull/120) (KILE CBT advertisement) and [#114](https://github.com/go-krb5/krb5/pull/114) (GSSAPI SASL). The T-0023 spike measured this: the adapter does not build against v0.1.0, and binds unpatched with CBT at `main` `f89757a` (`knowledge/development/architecture/build-feasibility/t-0023-ldap-gssapi-cbt-spike.md`). The project is young, and `main` was 160 commits ahead of the tag on 2026-10-02.
 
   .NET's `System.DirectoryServices.Protocols` gets signing, sealing and channel binding from the OS when it runs on Windows. On Linux it inherits libldap's behaviour instead ([API docs](https://learn.microsoft.com/en-us/dotnet/api/system.directoryservices.protocols); feasibility §3.1). Under D-0002, Linux/Docker is one of the two profiles we ship, so whatever stack we choose needs its own hardened LDAP bind there.
 - **Structured PowerShell and COM (GPMC) are .NET-native.** Go has no mature PowerShell Remoting Protocol (PSRP) client with `AddCommand`. PatchIQ's Windows agent had to enable cgo for COM, so it cannot be cross-compiled without a C toolchain (`../patchiq/Makefile:230-234`).
@@ -161,7 +162,7 @@ When either enters scope, a separate ADR decides its language and extends rule 1
 
 **Negative.** This is what the decision costs.
 - **We own security-critical adapters** (feasibility §3.5):
-  - a GSSAPI client with channel binding on go-krb5/krb5, which is v0.1.0, so we budget to fork it;
+  - a GSSAPI client with channel binding on go-krb5/krb5 (about 190 lines in the T-0023 spike; go-krb5 ships no LDAP glue). **Pin policy:** go-krb5/krb5 is required at a pinned `main` commit (a pseudo-version in `go.mod`, first `f89757a`) until a tagged release carries [#117](https://github.com/go-krb5/krb5/pull/117), [#120](https://github.com/go-krb5/krb5/pull/120) and [#114](https://github.com/go-krb5/krb5/pull/114). From then on we use that tag or a later one, **never v0.1.0**. Each bump repeats the licence and provenance review, and the T-0023 bind matrix must stay green against the lab. **Fork on trigger, not by budget.** We fork only if (a) upstream stops merging, (b) the WS2025 proof (T-0133) exposes a wire defect we must fix, which we first offer upstream as a small patch, or (c) no tagged release with the feature exists at GA and release policy forbids pseudo-versions. No trigger has fired as of T-0023;
   - a RADIUS server;
   - a SAML IdP. Feasibility §3.5 suggests building it on goxmldsig. This ADR does not adopt goxmldsig; see "Left open on purpose" below.
   - the typed PowerShell bridge.
@@ -194,7 +195,7 @@ When either enters scope, a separate ADR decides its language and extends rule 1
 - Left open on purpose: HTTP router and OpenAPI generator (the API-contract ADR); migration runner and schema conventions (the data-model and tenancy ADRs); `msgraph-sdk-go` versus a thin generated client, go-msrpc, go-smb2, and the winlogbeat `wineventlog` wrappers. Also left open: the SAML signature library, either [goxmldsig](https://github.com/russellhaering/goxmldsig) with xml-roundtrip-validator or a hardened crewjam/saml (feasibility §1.6, §2.7). Each is adopted by its first ticket, and each needs a register row first. Until then F4 fails any import of them.
 
 **Revisit when** (a superseding ADR, except for rule 4, which is an amendment):
-- The CBT spike cannot make go-krb5/krb5 bind under "Always" within 4 weeks, including a fork.
+- The WS2025 proof (T-0133: signing required and `LdapEnforceChannelBinding = 2`, judged by T-0133's event-log acceptance criterion) cannot make the go-krb5/krb5 adapter bind within 4 weeks of T-0133 starting, including a fork. The Samba half passed in T-0023, and the clock starts with T-0133.
 - The ingest benchmark misses 3,000 events/s sustained per collector on reference hardware.
 - Two or more qualified deals are lost because of a SQL Server mandate, per sales notes.
 - D-0002 is reversed to a Windows-only server *and* the adapter cost has become dominant.

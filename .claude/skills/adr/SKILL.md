@@ -89,7 +89,14 @@ rejected options stay in Alternatives.
 
 ## 5. Immutability and superseding
 
-- Never edit an `accepted` ADR except to set `superseded_by`. Never delete an ADR.
+- Never edit an `accepted` ADR except to set `superseded_by` or to apply an **erratum**. Never delete an ADR.
+- **Erratum** (accepted ADRs): a correction of a factual statement that turned out false, such as a
+  library's version or feature set or a measured number. It must change **no rule in Decision and
+  no fitness check**. The author records it on the Amendments line as `E<n>`, with the date, the
+  ticket, the evidence and the **original wording quoted verbatim**, then corrects the text in
+  place. factory-director ratifies it and files a `notice`. A new binding constraint that needs
+  enforcement gets its fitness ticket first. If the correction would change what the decision
+  requires or forbids, it is not an erratum: supersede. First use: ADR-0001 E1 (T-0134).
 - To change a decision: a new ADR that cites the old one in Context (what changed in the world),
   sets `supersedes:`, and climbs the ladder itself. The old one becomes `superseded` only when the
   new one is ratified.
