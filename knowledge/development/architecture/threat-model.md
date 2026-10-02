@@ -158,7 +158,8 @@ the trust boundaries of §4.3.
 +--------------------- customer server host (never a DC) [TB16] ----+   +--- DMZ host -----------+
 |  cmd/server (Windows service under gMSA / non-root container)      |   | cmd/edge [M4] alone    |
 |   apihost: console/API listener   fleet gRPC listener [TB6/TB12]   |<==| [TB11] no creds, no DB |
-|   [M4] radius UDP listener [TB19] --- tunnel dialled OUT -------->|==>| L7 TLS, schema checks  |
+|   [M4] edge tunnel client [TB11]: dials OUT ---------------------->|==>| L7 TLS, schema checks  |
+|   [M4] radius UDP listener <-- customer NAS / VPN [TB19]           |
 |   modules -> platform kernel (authn, authz, audit, keys, jobs)     |   +------------------------+
 |   migration importer, scanner, comparator <-- ADMP source [TB18]   |
 |   embedded connector: provider/ad, provider/entra, custody         |
@@ -331,7 +332,7 @@ proof is direction, not a control; the proof table says which ticket builds each
 | TM-TB7-T6 | D | Graph throttling stalls jobs | Honour `Retry-After`, backoff, per-tenant concurrency | P3 conformance (fake Graph) | — |
 | TM-TB7-T7 | S | [SaaS] a job of tenant A authenticates with tenant B's certificate | Unseal only inside the tenant's own `WithTenantTx` | P4 | — |
 | TM-TB7-T8 | S/E | An Entra admin stamps an AD admin's `objectGUID` as `onPremisesImmutableId` on a cloud-only user, signs in by SSO and inherits that admin's AD-side grants (forged anchor) → A1 | Only `matched` correlations authorise; the gate needs `onPremisesSyncEnabled = true` (read-only in Graph) and the SID to equal `objectSid` (DM-20.I4 a–e; TM-D17) | TM-F-HYBRID | — |
-| TM-TB7-T9 | S/E | Takeover through hard or soft match: a pre-created cloud user is taken over when its target enters sync scope, and keeps the attacker's sign-in methods → A1 | (f): both tenant blocking flags, attested by a Global Administrator and watched in the directory audit; eligibility only goes down (g); `tenant-owner` and RBAC administration never cross a correlation (h) (TM-D17) | TM-F-HYBRID | Takeovers before install (TM-R11) |
+| TM-TB7-T9 | S/E | Takeover through hard or soft match: a pre-created cloud user is taken over when its target enters sync scope, and keeps the attacker's sign-in methods → A1 | (f): both tenant blocking flags, attested by a Global Administrator and watched in the directory audit; eligibility only goes down (g); `tenant-owner` and RBAC administration never cross a correlation (h) (TM-D17) | TM-F-HYBRID | Takeovers before install or in the install-time population (TM-R11) |
 | TM-TB7-T10 | T/E | After an SOA transfer (`isCloudManaged`) the on-premises attributes, the SID included, become admin-writable → a forged match | Gate (b) and (a); the object is once-cloud-managed, so it needs re-confirmation (g) | TM-F-HYBRID | — |
 | TM-TB7-T11 | E | A technician resets the AD password of a synced user who holds an Entra role, and password hash sync hands over that role | C16: an AD object correlated to an Entra `tier0` principal is `tier0`, whatever the correlation state; ENH-08 reports synced role holders | TM-F-T0GUARD, TM-F-HYBRID | — |
 | TM-TB7-T12 | E | Whoever controls the sync client, the tenant sync features or SOA transfer passes every check | Tier 0 by designation (§6.4, E4); activeDIQ holds no permission for any of them (§6.6 deny list) | TM-F-RIGHTS (deny list) | **Accepted** (TM-R11): outside what the gate can defend |
@@ -752,13 +753,18 @@ features, §6.8), `Synchronization.ReadWrite.All`; `User-Phone.ReadWrite.All`, `
 [overview](https://learn.microsoft.com/en-us/graph/permissions-overview)).
 
 **Graph's own protections, because the app holds no role.** With application permissions alone the
-app cannot change sensitive properties, delete, or restore users who hold an admin role, who own or
-are members of role-assignable groups, or who sit in a restricted management administrative unit
-(RMAU) ([user-update](https://learn.microsoft.com/en-us/graph/api/user-update?view=graph-rest-1.0),
+app cannot change sensitive properties of, delete, or restore users who hold an admin role, or who
+own or are members of role-assignable groups
+([user-update](https://learn.microsoft.com/en-us/graph/api/user-update?view=graph-rest-1.0),
 [users](https://learn.microsoft.com/en-us/graph/api/resources/users?view=graph-rest-1.0#who-can-perform-sensitive-actions)).
 Role-assignable group membership needs `RoleManagement.ReadWrite.Directory`; "`Group.ReadWrite.All`
 won't work" ([groups-concept](https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/groups-concept)).
-"Applications can't modify objects in RMAUs by default"
+Objects in a restricted management administrative unit (RMAU) are protected from **every**
+property write, not only sensitive ones: "Applications can't modify objects in restricted
+management administrative units by default", and "If you assign Microsoft Graph application
+permissions to the application, those permissions won't apply because it's restricted". Only an
+Entra role scoped to the RMAU lifts it. Microsoft lists as blocked: modifying any Entra property,
+deleting, updating a password, and changing an RMAU group's owners or members
 ([RMAU](https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/admin-units-restricted-management)).
 Our guard (TM-D2) still refuses all writes to role holders and role-assignable groups.
 
@@ -905,9 +911,20 @@ matching and hard-match takeover
 4. **(g) Eligibility only goes down.** A correlation whose Entra object our sync has *ever*
    observed as cloud-only (`onPremisesSyncEnabled` not `true`) or cloud-managed (`isCloudManaged`)
    cannot become `matched` again by itself. Neither can a correlation that first became eligible
-   while `takeover_protection` was not `attested`. Either becomes `matched` only when a `tenant-owner` re-confirms
-   it with step-up (§7.4), and that confirmation is audited. This catches a takeover our sync
-   observed, even if both flags are on again by the time anyone looks.
+   **after** the tenant's first `attested` state, while the state was `open` or `stale`. Either
+   becomes `matched` only when a `tenant-owner` re-confirms it with step-up (§7.4), and that
+   confirmation is audited. This catches a takeover our sync observed, even if both flags are on
+   again by the time anyone looks. It also catches one that slipped in while an attestation had
+   lapsed.
+   - **The install-time population.** Some correlations are already eligible when the tenant
+     first reaches `attested`. They formed while the tenant was `unattested`, or `open` because
+     the first read found a flag off; both flags default to `false`, so that path is common. These
+     correlations become `matched` on that first attestation, unless the first sentence of this
+     rule applies to them. Until then they are `candidate` like every other correlation (rule 2),
+     so none of them carries authority before it. A new hybrid tenant can hold thousands of them,
+     and a review one by one would become a rubber stamp. Takeovers among them that our sync never
+     observed are TM-R11. TM-D19 rule 2 still denies them AD-side authority without an AD-plane
+     proof.
 5. **(h) Some authority never crosses a correlation.** It never carries `tenant-owner` or any
    permission that administers RBAC, delegation scopes or connections. Those are assigned only to
    the console account itself (DM-30). It never reaches a `tier0` object on either side (TM-D2,
@@ -922,7 +939,9 @@ Connect server, a Cloud Sync agent host, or the Directory Synchronization Accoun
 Administrator). The gate cannot defend against these. They are in `tier0` (customer-designated
 hosts, E4), activeDIQ never holds a permission that does any of them (deny list, §6.6), and
 TM-R11 records the rest. Takeovers that happened **before** activeDIQ was installed are invisible to
-rule 4 (TM-R11); TM-D19 rule 2 still denies them AD-side authority without an AD-plane proof. The
+rule 4 (TM-R11). So are takeovers in the install-time population that our sync never saw
+cloud-only (rule 4, second bullet). TM-D19 rule 2 still denies both AD-side authority without an
+AD-plane proof. The
 authentication-plane part of DM-20.I6 is §6.9.
 
 **Synced administrators.** An AD account that holds an Entra role is in AD `tier0` through C16. A
@@ -937,6 +956,12 @@ The hardening report (ENH-08) lists every synced role holder as a finding.
 - `isCloudManaged` set, or the SID differs → `candidate`;
 - the attestation is missing, expired or voided by a monitored feature change → all `candidate`;
 - an object once seen cloud-only that is now synced → `candidate` until re-confirmed with step-up;
+- a correlation present before the tenant's first attestation, through `unattested` and then
+  `open` → `matched` when the first `attested` state lands, with no re-confirmation; if its Entra
+  object was once seen cloud-only → still `candidate`;
+- a correlation that first appears while the state is `stale` or `open` after an earlier
+  attestation → still `candidate` after the re-attestation, until a `tenant-owner` re-confirms it
+  with step-up;
 - an attestation flow that stores a token, or asks for any scope beyond the one listed → the test fails;
 - a role granted to an AD group never carries `tenant-owner` across a correlation;
 - the TM-D19 cases listed in §6.9.
@@ -1009,6 +1034,13 @@ authority through activeDIQ.
      administrators, Global Administrator included, from updating their passwords or properties.
      It needs Entra ID P1 for each AU administrator
      ([RMAU](https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/admin-units-restricted-management)).
+   - **Consequence, intended.** The same page, under Programmability: "If you assign Microsoft
+     Graph application permissions to the application, those permissions won't apply". So
+     activeDIQ cannot write those technicians' Entra accounts at all: no property, no password, no
+     deletion. That is intended. It fits rule 5, under which a console-backing object is already an
+     escalation object, and the only lever that would lift it is an Entra role scoped to the RMAU,
+     which TM-D5 never grants the app. The RMAU's scoped administrators manage those accounts in
+     Entra; activeDIQ shows them as protected (a health hint, not a failure).
 
 **Alternatives rejected.**
 - **An authentication strength, or an `acr` / authentication-context claim.** A TAP lets its holder
@@ -1197,6 +1229,11 @@ listener supports a source-CIDR allow-list (ADM-145). Internet-facing self-servi
 | L3 [M4] | RADIUS (UDP) | Customer NAS / VPN devices | Per-client shared secret; `Message-Authenticator` required in every request and response; bounded by §5.19 (TB19) and TM-D20 | Internal networks only |
 | — | Edge tunnel [M4] | — | Not a listener: the server dials **out** to edge | — |
 | — | Bundled PostgreSQL | The server | Loopback only by default; TLS + SCRAM and a host allow-list when nodes are added | Not exposed |
+
+L3 is UDP only. RADIUS over TLS (RadSec, TM-Q18) runs "over TCP", by default on "TCP/2083"
+([RFC 6614](https://www.rfc-editor.org/rfc/rfc6614)), so it would be a **second listener**. If the
+M4 RADIUS spec adopts it, it gets its own L-row through an RT-6 review (§14) before it ships, and
+TM-F-PORTS checks it like any other row.
 
 Through M4, no other listener exists: no debug or profiling port (FF-SP2 bans `pprof`), no
 sidecar port, no unauthenticated metrics. **Proof TM-F-PORTS:** on a booted install of each
@@ -1547,7 +1584,7 @@ Existing proofs this document relies on: FF-SP1–SP9 (T-0033, T-0034), `fitness
 | --- | --- | --- | --- | --- |
 | TM-F-RIGHTS | An over-privileged AD identity (Tier-0 group member, or any write/control right on a `tier0` object) or an Entra app with a denied permission is **refused activation**; a correctly delegated one passes; extras and missing rights are both reported (§6.5, §6.6) | Windows lab (oracle) + Samba where supported; fake Graph | T-0053 (directory-engineer) | TB3-T11, TB7-T3 |
 | TM-F-T0GUARD | The connector refuses `Apply` on a `tier0` target even when the server asks; Plan refuses too; Entra `tier0` (E1–E5) is refused, as are AD objects correlated to it (C16) (§6.2) | Lab, both transports | T-0053 (directory-engineer) | TB3-T10, TB6-T4, TB7-T4, TB7-T11, TB17-T4 |
-| TM-F-HYBRID | A forged, SOA-transferred, SID-mismatched, unattested or once-cloud-only correlation authorises anything; `tenant-owner` crosses a correlation; the attestation flow keeps a token (§6.8). TM-D19 (§6.9): an Entra-only session holds a correlation-derived AD grant; an authority factor enrols without AD-plane proof or owner approval; an Entra-side method reset touches the activeDIQ factor; a less-privileged technician resets a console-backing object | CI, fake Graph + fake IdP + Samba | T-0054 (directory-engineer, with `authz`) | TB7-T8 to T13, TB8-T8 |
+| TM-F-HYBRID | A forged, SOA-transferred, SID-mismatched, unattested or once-cloud-only correlation authorises anything; a correlation first eligible during a post-attestation `open`/`stale` lapse becomes `matched` without re-confirmation; an install-time correlation (present before the first attestation, not once cloud-only) fails to become `matched` on that attestation; `tenant-owner` crosses a correlation; the attestation flow keeps a token (§6.8). TM-D19 (§6.9): an Entra-only session holds a correlation-derived AD grant; an authority factor enrols without AD-plane proof or owner approval; an Entra-side method reset touches the activeDIQ factor; a less-privileged technician resets a console-backing object | CI, fake Graph + fake IdP + Samba | T-0054 (directory-engineer, with `authz`) | TB7-T8 to T13, TB8-T8 |
 | TM-F-ANON | Anonymous routes of the built router ≠ the reviewed allow-list (§7.6) | CI | T-0046 API fitness | TB2-T2, TB2-T10 |
 | TM-F-FLEET | Any RPC but `Enroll` succeeds without a client certificate; an enrollment token works twice or after expiry; a connector accepts an unpinned server; a revoked component keeps a stream; the fleet contract gains a secret-bearing message type outside operation payloads | CI (P3 harness) | T-0055 (backend-engineer) | TB6, TB12-T1/T2 |
 | TM-F-NTLM | Any outbound NTLM attempt from the activeDIQ host, with NTLM blocked domain-wide or a planted UNC `homeDirectory` (§9.6) | Windows lab | T-0054 (directory-engineer) | TB3-T2, TB9-T2 |
@@ -1591,7 +1628,7 @@ control.
 | TM-R8 | A stolen database or backup exposes inventory PII | Inventory is not encrypted per field | backend-engineer | E2.12 PRD (backup encryption) |
 | TM-R9 | Secret copies we cannot zero (runtime buffers, pagefile, hibernation) | Language runtimes and OS (§9.5) | security-architect | `runtime/secret` graduates; Go adds Windows support |
 | TM-R10 | A SaaS cell workload-identity compromise unwraps every tenant's DEK while it lasts | Shared cell by design (ADR-0002) | security-architect | SaaS launch revision (E5.6) |
-| TM-R11 | Hybrid: whoever controls the sync client, the tenant sync features or SOA transfer can make a correlation `matched`. Takeovers that happened before install go unseen. Between monitor polls a flag flip is undetected; without the optional monitor, it is undetected until the attestation ages out (≤ 90 days) | The correlation gate trusts the sync client by construction (DM-20.I6) | security-architect | Lab G8; if Graph adds app-only read of sync features |
+| TM-R11 | Hybrid: whoever controls the sync client, the tenant sync features or SOA transfer can make a correlation `matched`. Takeovers that happened before install go unseen, and so do takeovers in the install-time population (correlations eligible before the tenant's first `attested` state, including an `open` window before it) that our sync never saw cloud-only (TM-D17 rule 4); TM-D19 rule 2 still withholds AD-side authority from them. Between monitor polls a flag flip is undetected; without the optional monitor, it is undetected until the attestation ages out (≤ 90 days) | The correlation gate trusts the sync client by construction (DM-20.I6) | security-architect | Lab G8; if Graph adds app-only read of sync features |
 | TM-R12 | Someone who controls both planes at enrolment (the AD password or a `tenant-owner` approval, plus the Entra sign-in) can enrol a TM-D19 authority factor | Such an attacker is, in effect, the technician; the history residual reduces to this case (§6.9) | security-architect | ADM-143 spec (SPNEGO); lab G10 |
 | TM-R13 | RADIUS PAP over UDP for clients without RADIUS/TLS: a leaked or weak shared secret plus captured traffic reveals passwords | Many NAS devices support only UDP; activeDIQ-generated 32-byte secrets and internal-only exposure narrow it (TM-TB19-T4) | security-architect | M4 RADIUS spec (TM-Q18) |
 
@@ -1717,5 +1754,6 @@ External, in order of first use:
 
 ## Changelog
 
+- 2026-10-02 · v0.2 (T-0007 review round 2). TM-D17 rule 4 (g) corrected: only a correlation that first became eligible **after** the tenant's first `attested` state, while the state was `open` or `stale`, needs a `tenant-owner` re-confirmation. The install-time population (correlations eligible before the first attested state, through `unattested` or `open`) becomes `matched` on that attestation, under TM-R11 and with TM-D19 rule 2 as the AD-side control. Two TM-F-HYBRID cases added (§6.8, §15). The TB7-T9 residual and TM-R11 extended to match. §6.6: RMAU members are protected from every property write (verbatim quotes). §6.9 rule 6: the RMAU Programmability consequence is stated as intended. §4.1 diagram: `radius` is on its own line. §8.1: RadSec (TCP) would be a new L-row through RT-6.
 - 2026-10-02 · v0.1 (T-0007 rework after the solution-architect review). New boundaries TB18 (ManageEngine source ↔ migration importer, scanner, comparator; TM-D21) and TB19 (RADIUS; TM-D20, co-location bounded). `fileserver` agent rows TM-TB12-T10…T15 and TM-D13 extended to it; `fpolicy` and `t0-connector` out of scope with an RT-6 trigger. Authentication-plane residual closed by TM-D19 (activeDIQ-held authority factor anchored in the AD plane; TM-TB8-T8, TM-R12). TM-D17 aligned to DM-10.I7 and D-0009: 90 days, optional monitor, DM vocabulary and permissions, T-0061. §6.3 R9 Deleted Objects finding (TM-Q27). §6.4 C rows reordered. New proofs TM-F-MIGRATE and TM-F-RADIUS; RT-18; TM-R13; TM-Q25 (Exchange leg) to TM-Q28. §18 regenerated (65 URLs).
 - 2026-10-02 · v0 (T-0007). 17 trust boundaries with STRIDE tables; minimum AD rights R1–R13 and Graph allow and deny lists; the `tier0` set for AD (C1–C16) and Entra (E1–E5), answering DM Q1 and confirming DM-23.I5; the hybrid correlation gate (TM-D17), which confirms DM-20.I4 and tightens it, with (f) attested because Graph has no app-only read; role-granting groups as escalation objects (TM-D18, the DM-36.I2 referral); decisions TM-D1–D18; follow-up tickets T-0053–T-0060. Status `review`.
