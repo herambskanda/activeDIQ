@@ -40,6 +40,8 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
 
 - **`gofmt`**: run `make fmt`.
 - **`go mod tidy -diff`**: run `go mod tidy` and commit `go.mod`/`go.sum`.
+- **`gen-api-check`** (stale or missing generated file): run `make gen-api` and commit the result; never edit a `*.gen.*` file.
+  **`lint-api`**: vacuum findings on the bundled contract. Both: `runbooks/api-contract-workflow.md`.
 - **`fitness-stack`** (F1–F5, ADR-0001): the message names the file, the check and the ADR rule.
   `make fitness-stack` re-runs it alone; `go run ./tools/fitness/stack -checks F1,F5 -skip-build`
   runs a subset without the cross-build. The fix is in the code, not the manifest, unless a real

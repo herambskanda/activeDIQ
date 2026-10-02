@@ -95,7 +95,7 @@ therefore ours to enforce. The compiler does not do it for us.
 | `internal/proto/` | Generated Go code for `proto/`. Never hand-edited | S, A | api-engineer |
 | `internal/webui/` | `go:embed` package for the built web assets. Embed patterns cannot use `..` ([embed](https://pkg.go.dev/embed)), so the build copies `web/dist` here. Only `compose/server` imports it | S | frontend-engineer |
 | `proto/` | Protobuf sources: `skenzeriq/agent/v1` (shared host contract, T-0040), `activediq/connector/v1`, `activediq/<agent-module>/v1` | — | api-engineer; contracts: solution-architect |
-| `api/openapi/` | The public API contract. It is the source of truth, with one file per module tag, bundled at build time [OPEN → T-0046] | — | api-engineer |
+| `api/openapi/` | The public API contract. It is the source of truth, with one file per module tag, bundled and compiled to Go and TypeScript by `tools/gen/api` ([api-pipeline.md](api-pipeline.md), T-0147) | — | api-engineer |
 | `migrations/` | One forward-only SQL sequence, `NNNN_<owner>_<what>.sql`, plus `embed.go`. `0001` creates `tenants` (ADR-0002 rule 4). The owning package is in the filename (§2 rule 6) | S | backend-engineer |
 | `web/` | The React + TypeScript console: `src/app` (shell), `src/modules/<id>` (screens), `src/ds` (design system, T-0043), `src/api` (generated client), `e2e/` (Playwright) | W | frontend-engineer; `src/ds`: component-designer |
 | `native/` | A Rust workspace: `passfilt` (LSASS), `credprov` (LogonUI) and `shared` (`Secret`, policy evaluator, corpus runner) [M4] | N | windows-engineer |
