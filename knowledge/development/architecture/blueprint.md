@@ -78,7 +78,7 @@ Three things in this picture are the architecture:
 
 ## 1. Repository map
 
-One Go module sits at the repository root; its module path is set by T-0014. Go's `internal/`
+One Go module sits at the repository root; its module path is `github.com/skenzeriq/activediq` (set by T-0014, which also built the skeleton of this map; see [ci-gates](../standards/ci-gates.md)). Go's `internal/`
 rule allows any package in the module to import `internal/…`, and nothing outside it can
 ([Go 1.4 internal packages](https://go.dev/doc/go1.4#internalpackages)). The layering in §2 is
 therefore ours to enforce. The compiler does not do it for us.

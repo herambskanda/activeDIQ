@@ -18,3 +18,4 @@ budget: 120 lines
 - People whose pronouns are unknown are referred to as they/them.
 - Licence-register rows put the exact package path(s) in backticks in the Project cell; CI (ADR-0001 `fitness-stack` F4) matches direct dependencies against them. Status `Rejected` = considered, not adopted, kept for the trail. (2026-10-02, T-0002)
 - The repository layout and package roots come from the architecture blueprint §1/§1.1. Where a skill or older spec names a path, the blueprint wins until T-0048 aligns them. Each binary links only its own `internal/compose/<role>` package. (2026-10-02, T-0004)
+- Go module path `github.com/skenzeriq/activediq`, toolchain `go 1.27.0`; `make ci` is the merge gate and every gate has a failing case in `tools/ci/proof.sh` (standard: knowledge/development/standards/ci-gates.md). (2026-10-02, T-0014)
