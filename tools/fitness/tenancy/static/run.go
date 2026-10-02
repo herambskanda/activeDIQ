@@ -23,9 +23,20 @@ func Run(root string, cfg *Config) ([]Finding, error) {
 		Dir:   root,
 		Tests: true,
 	}
-	pkgs, err := packages.Load(pkgCfg, "./cmd/...", "./internal/...")
-	if err != nil {
-		return nil, err
+	// Load only the trees that exist: a pattern for a missing directory is an error, and the product
+	// has no cmd/ or internal/ until its first package lands.
+	var patterns []string
+	for _, top := range []string{"cmd", "internal"} {
+		if st, err := os.Stat(filepath.Join(root, top)); err == nil && st.IsDir() {
+			patterns = append(patterns, "./"+top+"/...")
+		}
+	}
+	var pkgs []*packages.Package
+	if len(patterns) > 0 {
+		var err error
+		if pkgs, err = packages.Load(pkgCfg, patterns...); err != nil {
+			return nil, err
+		}
 	}
 	var use []*packages.Package
 	for _, p := range pkgs {
