@@ -5,8 +5,8 @@ updated: 2026-10-02
 status: review
 owner: heramb
 author: solution-architect
-ticket: T-0006
-binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), ADR-0003 (ratified), blueprint v0 (review), safe-primitives.md (review)
+ticket: T-0006 (amended by T-0061, T-0145)
+binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), ADR-0003 (ratified), blueprint v0 (review), safe-primitives.md (review), threat-model.md v0.2 (review; its TM-D decisions bind, TM §0)
 reviewed_by: ad-expert (AD/Entra semantics, see §12)
 ---
 
@@ -191,8 +191,8 @@ forest-wide deletion settings (AD only): `recycle_bin_enabled`, `tombstone_lifet
 `deleted_object_lifetime_days` · `verified_at` · `transport_security` (LDAPS or StartTLS) ·
 `dc_affinity` (site priority, per-OU preferred DCs, ADM-133) · `sync_attribute_set` (additions to
 the default set) · `credential_id` · `state` · takeover attestation (Entra only, I7):
-`attested_by`, `attested_at`, `attested_values`, `attestation_max_age`; `takeover_protection` is
-derived from these and never stored.
+`attested_by`, `attested_at`, `attested_values`, `attestation_max_age`, `first_attested_at`
+(set once, I7(f)); `takeover_protection` is derived from these and never stored.
 **Invariants.** I1 `directory_identity` is fixed at first verification. A connection cannot be
 re-pointed at another forest or tenant, because that would mix two directories' GUID spaces.
 I2 `(kind, directory_identity)` is unique per tenant. I3 An `active` connection has at least one
@@ -212,7 +212,7 @@ v1.0 nor beta offers an application permission
 The connector is app-only and holds no admin role (ADR-0002 rule 7), so activeDIQ never reads the
 flags itself. They are an **attested tenant fact**:
 - (a) **Attest.** An account holding `connections.takeover.attest` over this connection's
-  `entra_tenant` scope starts the attestation. A Global Administrator of the same tenant then signs
+  `entra_tenant` scope starts the attestation, with step-up (threat model §7.4). A Global Administrator of the same tenant then signs
   in through a delegated, read-only flow (`OnPremDirectorySynchronization.Read.All`, no
   `offline_access`). The server performs the one read itself and rejects a token whose `tid` is
   not `directory_identity`. It records the result and discards the token. No token is stored, and
@@ -238,16 +238,28 @@ flags itself. They are an **attested tenant fact**:
   ([directoryAudits](https://learn.microsoft.com/en-us/graph/api/directoryaudit-list?view=graph-rest-1.0)).
   The audit activity name is `[UNVERIFIED]` (T-0051, §11 Q11). Until the lab confirms it, or
   while the connection lacks `AuditLog.Read.All`, age is the only trigger, and connection health
-  says change monitoring is off.
+  says change monitoring is off. The permission is optional and recommended (threat model TM-D17
+  rule 3, §6.6). With it, the same monitor also watches the bound Entra objects of technicians who
+  hold correlation-derived grants, and alerts every `tenant-owner` to a Temporary Access Pass
+  created, methods reset or registered by another actor, or the user's domain switching to
+  federated (TM-D19 rule 4, activity names `[UNVERIFIED]`). Those signals only alert; the control
+  is the authority factor (DM-30.I6).
 - (e) Microsoft documents no default for either flag; the reference sample shows both `false`
   ([sync features](https://learn.microsoft.com/en-us/graph/api/resources/onpremisesdirectorysynchronizationfeature?view=graph-rest-1.0)).
-  A new Entra connection therefore starts `unattested`. The customer-visible prerequisite is
+  A new Entra connection therefore starts `unattested`, and its first attestation commonly finds
+  a flag off (`open`) before the customer turns both on. The customer-visible prerequisite is
   stated in §10.
+- (f) **First attested state.** `first_attested_at` is set once, by the first attestation that
+  makes the state `attested`, and never changes afterwards. It splits the tenant's correlations for
+  DM-20.I4(g): before it, the tenant is still being set up; after it, any state other than
+  `attested` is a lapse.
 **Lifecycle.** `draft → verifying → active ⇄ suspended → decommissioning → removed`. Verifying
 checks reachability, identity and the delegated-rights limit (T-0007, ENH-08). Suspended stops
-sync and writes. `takeover_protection` (Entra only, derived, I7) moves `unattested → attested`
-and `attested → open | stale`. It returns from `open` or `stale` to `attested` only through a new
-attestation.
+sync and writes. `takeover_protection` (Entra only, derived, I7) moves `unattested → open |
+attested`, `open → attested`, and `attested → open | stale`; the common first path is `unattested
+→ open → attested`, because both flags default to `false` (I7(e)). It leaves `open` or `stale`
+only through a new attestation, which yields `attested` or `open`. The first move to `attested`
+sets `first_attested_at` (I7(f)).
 
 ### DM-11 DirectoryCredential · T · owner `connector/credential` (SQL only in `credential/sealed`; written through `directory/connection`'s credential port, ADR-0003 rule 6)
 **Definition.** The identity a connection uses against its directory. **Replaces (ME):** the
@@ -328,7 +340,8 @@ structural class) and `kind` · `parent_guid` · `ancestry` (GUID path to the NC
 `display_name` · `enabled` (from `userAccountControl`) · time-dependent state *inputs*:
 `lockout_time`, `pwd_last_set`, `account_expires`, and the effective password policy (domain
 policy or PSO) · `tier0` (definition: T-0007) · typed values of the synced attribute set ·
-`when_created` · `when_changed` · `observed_at` + `observed_dsa` · `state`.
+`when_created` · `when_changed` · `observed_at` + `observed_dsa` · `cloud_seen_at` (Entra users
+and groups only, I9) · `state`.
 **Invariants.**
 - I1 Identity is the GUID (X3). A rename, a move, or a cross-domain move within the forest changes
   `dn`, `parent_guid`, `ancestry`, `nc_guid` and, for a cross-domain move, `sid` (the old SID goes
@@ -354,6 +367,13 @@ policy or PSO) · `tier0` (definition: T-0007) · typed values of the synced att
 - I7 Uniqueness (sAMAccountName, UPN, CN in a container) is decided by the DC, not by this table
   (safe-primitives R9).
 - I8 `tier0` objects are outside every write scope in v1 (DM-35.I5).
+- I9 **Cloud observation (Entra only).** `cloud_seen_at` is the latest time sync observed the
+  Entra object as cloud-only (`onPremisesSyncEnabled` not `true`) or cloud-managed
+  (`onPremisesSyncBehavior.isCloudManaged` is `true`). It is set from the first sync onwards, also
+  for an object no correlation points at yet, and is never cleared while the object exists. A
+  takeover turns a cloud-only object into a synced one, so this observation usually predates the
+  correlation it later forms; that is why it lives on the object and not on the correlation. It
+  feeds DM-20.I4(g).
 
 **Lifecycle (AD).**
 
@@ -460,7 +480,9 @@ is suspended.
 or another attribute) · `anchor_value` · `match` (`anchor`, or `sid` via
 `onPremisesSecurityIdentifier`) · `state` · `candidate_reason` (`not_synced`, `cloud_managed`,
 `sid_mismatch`, `domain_mismatch`, `link_unconfirmed`, `ambiguous_anchor`,
-`tenant_takeover_open`) · `gate_checked_at`. `source_of_authority` is derived from the state and
+`tenant_takeover_open`, `reconfirm_required`) · `gate_checked_at` · `eligible_since` and
+`eligibility_class` (`install_time`, `attested`, `lapsed`; both set once, I4(g)) ·
+`reconfirmed_by` and `reconfirmed_at` (I4(g)). `source_of_authority` is derived from the state and
 is never stored. It is `ad` while `matched`. While `candidate`, nothing is routed to AD on the
 object's behalf, and the Entra object is planned as an Entra object alone, within its own Entra
 scope.
@@ -488,7 +510,9 @@ scope.
   Entra-only attributes (licences) go to Graph. A `candidate` routes nothing to AD.
 - I4 **Authorizing gate.** A correlation is `matched` only while **all** of the following hold.
   Otherwise it is `candidate`: shown in the UI as a possible match with its reason, and never used
-  by DM-30.I5, DM-35.I6, DM-36.I2 or I3. A correlation that rests on a value a privileged Entra
+  by DM-30.I5, DM-35.I6, DM-36.I2 or I3. `candidate_reason` names the first check that fails, in
+  the order listed. The threat model confirms (a)–(f) and adds (g) (TM-D17,
+  [threat model §6.8](../architecture/threat-model.md)). A correlation that rests on a value a privileged Entra
   admin can write is never evidence of authority.
   - (a) The Entra object's `onPremisesSyncEnabled` is `true`. It is read-only in Graph, whereas
     `onPremisesImmutableId` can be written by certain privileged admin roles
@@ -524,42 +548,90 @@ scope.
     says why and every correlation in that tenant is `candidate` (`tenant_takeover_open`).
     Microsoft recommends keeping soft-match blocking on except while soft matching is needed
     (same source).
+  - (g) **Eligibility only goes down** (TM-D17 rule 4). The correlation is *eligible* while
+    (a)–(e) hold. `eligible_since` is the time it first became eligible, and `eligibility_class`
+    records the Entra connection's situation at that moment (DM-10.I7): `install_time` if
+    `first_attested_at` was still unset, `attested` if `takeover_protection` was `attested`, and
+    `lapsed` otherwise (`open` or `stale` after the first attestation). A **re-confirmation** is
+    required while either holds:
+    - the Entra object's `cloud_seen_at` (DM-16.I9) is set and `reconfirmed_at` is unset or
+      earlier. Our sync once saw the object cloud-only or cloud-managed, so a takeover may have
+      happened, even if both tenant flags are on again by now;
+    - `eligibility_class` is `lapsed` and `reconfirmed_at` is unset. The correlation formed while
+      an attestation had lapsed.
+
+    While one is required, the correlation is `candidate` (`reconfirm_required`), even when
+    (a)–(f) pass. Only a `tenant-owner` re-confirms, with step-up (threat model §7.4), in an
+    audited Operation with one item per correlation that shows why it is needed. The Operation
+    sets `reconfirmed_by` and `reconfirmed_at`. A later cloud observation requires a new
+    re-confirmation. `eligible_since` and `eligibility_class` are set once. They and the latest
+    re-confirmation survive `broken` (Lifecycle), so leaving and re-entering the gate never resets
+    them.
+    **The install-time population** (`install_time`) is `candidate` (`tenant_takeover_open`)
+    until the tenant's first `attested` state. It then becomes `matched` with no re-confirmation,
+    unless the first bullet applies. A new hybrid tenant can hold thousands of these, and a review
+    one by one would become a rubber stamp. Takeovers among them that our sync never observed are
+    the threat model's residual TM-R11. AD-side authority still needs the AD-anchored authority
+    factor (DM-30.I6).
 - I5 **Re-check.** Sync evaluates the gate whenever either side changes. It is evaluated again at
   sign-in (DM-30.I5), and at Plan for every Operation whose scope or grant passes through the
   correlation. At those two points the sources differ by check:
   - (a)–(e) are re-read live: the Entra object through Graph, the AD side through LDAP.
   - (f) is taken from the connection's current `takeover_protection` (DM-10.I7), which is computed
     from the latest attestation and is never read live.
+  - (g) is taken from the stored `cloud_seen_at`, `eligibility_class` and `reconfirmed_at`. A live
+    read of (a) or (b) that sees the object cloud-only or cloud-managed also updates
+    `cloud_seen_at` through the targeted re-sync below.
 
   A failed check refuses that sign-in grant or plans the item as `blocked`. The failure is audited
   and requests a targeted re-sync of both objects. The stored state changes only through sync
   (kind `D`). A Request whose plan depended on the correlation fails `stale_state` at apply
   (DM-42.I2) if the gate fails by then. After a cross-domain move, (c) fails closed until a sync
   cycle carries the new SID.
-- I6 **Residual risk.** Anyone who controls the sync client (the Entra Connect server, a Cloud
-  Sync agent, the Directory Synchronization Accounts role) can make (a)–(e) pass. So can anyone
-  who can change the tenant's sync features (f), or transfer SOA, which is the Hybrid
-  Administrator role. activeDIQ treats all of these as Tier 0 `[UNVERIFIED]`.
-  - **Authentication plane.** An `sso` account bound by `oid` (DM-30.I5) holds AD-side group
-    grants through a legitimately `matched` correlation. So anyone who can sign in as that synced
-    user inherits those grants.
+- I6 **Residual risk, closed by the threat model.**
+  - **Sync plane.** Anyone who controls the sync client (the Entra Connect server, a Cloud Sync
+    agent host, the Directory Synchronization Accounts role) can make (a)–(e) pass. So can anyone
+    who can change the tenant's sync features (f), or transfer SOA (Hybrid Administrator). The gate
+    cannot defend against these. They are Tier 0: customer-designated hosts and Entra roles in
+    `tier0` (threat model §6.4, E4), activeDIQ never holds a permission that does any of them
+    (§6.6 deny list), and the rest is TM-R11. Takeovers that happened before installation, or in
+    the install-time population without a cloud observation (I4(g)), are TM-R11 too.
+  - **Authentication plane.** A `matched` correlation is legitimate, yet whoever can sign in to
+    Entra as the synced technician would inherit the AD-side group grants that reach the `sso`
+    account through it (DM-30.I5, DM-36.I2).
     - A Privileged Authentication Administrator can issue a Temporary Access Pass to any user, or
       reset their methods. An Authentication Administrator can do the same for non-admin users,
       and activeDIQ technicians are often non-admins in Entra. The Authentication Policy
       Administrator decides who may sign in with a pass
       ([TAP](https://learn.microsoft.com/en-us/entra/identity/authentication/howto-authentication-temporary-access-pass)).
+      A pass holder can register a passkey, so an authentication strength does not stop this.
     - A Hybrid Identity Administrator manages federation settings
       ([roles](https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/permissions-reference)),
       and the identity provider of a federated domain signs in that domain's users.
-  - **History.** An attestation (DM-10.I7) speaks only for the present. An object taken over while
-    the flags were off keeps the methods registered on it.
+    - **History.** An attestation speaks only for the present. An object taken over while the
+      flags were off keeps the methods registered on it.
 
-  All of these belong to the T-0007 threat model, which decides the mitigations. This gate does
-  not defend against them.
+    The threat model closes all three with TM-D19 (§6.9): correlation-derived AD-side grants need
+    an activeDIQ-held authority factor enrolled with AD-plane proof or `tenant-owner` approval
+    (DM-30.I6, DM-37.I3), and console-backing objects are escalation objects (DM-30.I7). Its
+    residual, one person controlling both planes at enrolment, is TM-R12.
+- I7 **Authority that never crosses** (TM-D17 rule 5). Whatever its state, a correlation never
+  carries `tenant-owner` or any `control_plane` permission (DM-33.I3). Those are assigned only to
+  the console account itself, through a RoleAssignment whose subject is that account. A group or
+  automation-policy subject can never hold them, in either directory, so no membership and no
+  correlation can confer them (DM-36.I4). A correlation never brings a
+  `tier0` object into reach on either side. An AD object with **any** correlation (`candidate`,
+  `matched` or `broken`) to an Entra `tier0` principal is itself `tier0`, and so is an Entra
+  object with any correlation to an AD `tier0` object (threat model §6.4 C16 and E5; DM-35.I5).
 **Lifecycle.** `candidate ⇄ matched` (the I4 gate, evaluated per I5). Every new correlation starts
-as `candidate`. Either state goes `→ broken` when one side is purged or the anchor or group SID no
-longer matches. A `broken` correlation returns only through I1, and only to `candidate`, never
-straight to `matched`. `→ removed`.
+as `candidate`. `candidate → matched` happens only when the whole gate (a)–(g) passes. For class
+`attested`, that is as soon as (a)–(f) pass. For `install_time`, it is when the tenant's first
+`attested` state arrives. For `lapsed`, or after a cloud observation, it needs a `tenant-owner`
+re-confirmation first. `matched → candidate` happens whenever any check fails. Either state goes
+`→ broken` when one side is purged or the anchor or group SID no longer matches. A `broken`
+correlation returns only through I1, and only to `candidate`, never straight to `matched`. It keeps
+its I4(g) markers. A correlation re-formed later for the same AD and Entra objects inherits them
+too. `→ removed`.
 
 ### DM-21 HybridLink · T · owner `directory/connection` (ADR-0003 F1)
 **Definition.** It declares which AD domain syncs into which Entra tenant. The relation is
@@ -684,7 +756,9 @@ the past, checked at every sign-in, because expiry involves no directory write
 ([accountExpires](https://learn.microsoft.com/en-us/windows/win32/adschema/a-accountexpires)). I3 There
 are no default credentials: the first account is created with a one-time bootstrap secret at
 install (ADM-145). I4 A tenant always has at least one active account holding `tenant-owner`, so
-the last one cannot be removed. I5 **SSO accounts and the directory.** An `sso` account gets a
+the last one cannot be removed. This is enforceable because `tenant-owner` is held only through an
+assignment to the account itself (DM-36.I4): no membership change made outside activeDIQ can
+remove an owner. I5 **SSO accounts and the directory.** An `sso` account gets a
 `directory_ref` only from an anchor claim that the tenant's SSO configuration names: the Entra
 object ID `oid`, with `tid` matching an Entra connection, or the on-premises SID (Entra's
 `onprem_sid` optional claim, present only for synced users,
@@ -699,19 +773,40 @@ account reaches AD-side group grants only through a `matched` correlation of tha
 (DM-20.I4). Bound by `onprem_sid`, the binding holds only while the signing-in Entra object has a
 `matched` correlation to the AD object the SID resolves to. Both are re-checked at every sign-in
 and at Plan (DM-20.I5). A bound `sso` account receives group-subject grants (DM-36.I2) and
-falls under I2 exactly like a `directory` account. `authn` reads anchors and correlations only
-through its port `authn.DirectoryAnchors`, which `directory/inventory` implements (ADR-0003 F6,
-blueprint §7.5). An unbound one receives only grants made to the
-account itself.
+falls under I2 exactly like a `directory` account. An unbound one receives only grants made to the
+account itself. `authn` reads anchors and correlations only through its port
+`authn.DirectoryAnchors`, which `directory/inventory` implements (ADR-0003 F6, blueprint §7.5).
+I6 **Authority factor** (threat model TM-D19 rules 1–3). A bound `sso` account signs in through Entra. It uses correlation-derived grants (DM-36.I2), meaning the AD-side group
+grants that reach it through an `oid` or `onprem_sid` binding, only in a session that has verified
+one of its authority factors (DM-37.I3). The factor is checked at first use in the session and again
+at every step-up (threat model §7.4), and the session records it (DM-31.I3). Where the PRD offers
+SPNEGO sign-in, a session that authenticated the correlated AD account by Kerberos counts instead
+`[OPEN → ADM-143 spec]`. Without either, the session keeps its Entra-side grants and the grants
+made to the account itself. This is the same degraded mode as an unattested tenant, so nothing
+breaks. Each refused use is audited with reason `authority_factor_missing`. A `directory` account
+already authenticates through the AD plane, so this rule adds nothing for it. I7 **Console-backing
+objects are escalation objects** (TM-D19 rule 5). The following objects back a console account:
+- the AD object of a `directory` account;
+- the object an `sso` account is bound to;
+- any object with a correlation (DM-20), in any state except `removed`, to either.
+
+Through activeDIQ, some changes to such an object need an actor who holds every privilege the
+backed account holds, over every scope it holds it (the DM-36.I1 test). Those changes are a
+password reset, an unlock, enabling the object, a change of its UPN or `sAMAccountName`, and a
+move. Without that, Plan refuses the item and the refusal is audited. The Entra app never writes
+authentication methods (threat model §6.6 deny list).
 **Lifecycle.** `invited → active ⇄ disabled → deleted`. Audit keeps the ID and a name snapshot,
 which is erasable under X11.
 
 ### DM-31 Session · T · owner `platform/authn`
 **Definition.** An authenticated console session, kept in PostgreSQL so any node serves it.
-**Key attributes:** `id_hash` · `account_id` · `methods` · `mfa_at` · `idle_expiry` ·
-`absolute_expiry` · `client_ip`.
+**Key attributes:** `id_hash` · `account_id` · `methods` · `mfa_at` · `authority_factor_at`
+(I3) · `idle_expiry` · `absolute_expiry` · `client_ip`.
 **Invariants.** I1 It respects the concurrent-session limit (ADM-145). I2 It is revoked when its
-account is disabled.
+account is disabled. I3 `authority_factor_at` is set when the session verifies an authority factor
+(DM-37.I3), or when it authenticated the correlated AD account by Kerberos (DM-30.I6).
+Correlation-derived grants count only while it is set. Every step-up of such a session verifies the
+factor again. A failed verification clears the field, and so does a revocation of the factor.
 **Lifecycle.** `active → expired | revoked`.
 
 ### DM-32 ApiToken · T · owner `platform/authn`
@@ -728,9 +823,23 @@ token's subset. A disabled owner makes the token dead. I2 The secret is shown on
 `objects.user.create`, `helpdesk.password.reset` or `secret.read:laps`. **Replaces (ME):**
 task-level privileges (ADM-125).
 **Key attributes:** `id` · `kind` (action, read, admin, secret) · `attribute_constrainable` ·
-`risk`.
+`risk` · `control_plane` (I3).
 **Invariants.** I1 Every OpenAPI operation declares exactly one (`x-permission`). I2 Secret
-values are reachable only through `secret.*` permissions (safe-primitives §3.7).
+values are reachable only through `secret.*` permissions (safe-primitives §3.7). I3 **Control
+plane.** A permission is `control_plane` when it administers access itself: accounts, sessions or
+API tokens of others, roles, role assignments, delegation scopes, connections and their credentials,
+bindings, HybridLinks and attestations. **Backstop:** every permission whose `kind` is not `read`
+and whose ID lies in the `authn`, `authz`, `delegation` or `connections` namespace must be
+flagged. That covers `action`-kind permissions that start Operations, such as
+`connections.takeover.attest` and `connections.hybrid_link.confirm`, and `secret`-kind ones such
+as connection credentials. The check runs in EP-6 catalogue validation inside `Boot`, over the
+whole catalogue, not in the Registrar. `platform/authn` and `platform/authz` are kernel packages
+that never call the Registrar (ADR-0003 rule 4), so only the catalogue sees kernel- and
+module-declared permissions alike. An unflagged permission fails start-up, so CI's
+`compose/server` boot test catches it first. A permission outside those namespaces may also be
+flagged. A `control_plane` permission is held only through an assignment to the account itself
+(DM-36.I4), so it never crosses a correlation (DM-20.I7). It is never imported from ManageEngine
+either (threat model TM-D21).
 **Lifecycle.** `active → deprecated → removed` (X6).
 
 ### DM-34 Role · T · owner `platform/authz`
@@ -775,13 +884,16 @@ group in an AU does not put its members in the AU
 I3 Exclusion beats inclusion. I4 Counts and pages are computed after scope trimming (LF-39).
 I5 `tier0` objects are outside every write scope in v1, in every root kind (ADR-0002 rule 9;
 FD-11). For Entra, `tier0` covers holders of privileged directory roles and role-assignable groups
-(definition: T-0007, Q1). I6 **AD scope to Entra objects.** An AD entry with
+(definition: T-0007, Q1). Correlations carry `tier0` across directories in any state
+(DM-20.I7). I6 **AD scope to Entra objects.** An AD entry with
 `include_correlated` also reaches the Entra objects whose correlation (DM-20) with an AD object it
 reaches is `matched`, but only for Entra-provider Actions such as licences (DM-20.I3). `matched` is
 the only authorizing state (DM-20.I4: the Entra object is synced from that AD object and not
 cloud-managed). A `candidate` or `broken` correlation grants nothing, so a cloud-only object
 stamped with an AD anchor is never reached. It is re-evaluated at Plan from the live AD ancestry
-and a live re-check of the correlation gate (DM-20.I5). It is off by default, so an OU grant never reaches the cloud silently. Writes to
+and a live re-check of the correlation gate (DM-20.I5). An Entra object correlated to an AD `tier0`
+object is itself `tier0` (DM-20.I7), so this never reaches it. It is off by default, so an OU
+grant never reaches the cloud silently. Writes to
 AD-mastered attributes of a synced object go to AD and need the AD scope anyway. I7 Objects in a
 restricted-management AU (detected by `isManagementRestricted`) ignore tenant-wide application
 permissions unless the application holds an Entra role scoped to that AU
@@ -804,6 +916,9 @@ modules). A reference that no longer resolves grants nothing.
 **Invariants.** I1 **No escalation.** The grantor must hold every privilege of the role over the
 whole scope, or be `tenant-owner`. This is the class of CVE-2024-24409
 ([advisory](https://www.manageengine.com/products/ad-manager/admanager-kb/cve-2024-24409.html)).
+The same test covers two indirect grants. Changing the membership of a group that is the subject of
+an assignment needs every privilege that group grants (threat model TM-D18). A sign-in-relevant
+change to a console-backing object needs every privilege the backed account holds (DM-30.I7).
 I2 A group subject's membership is **directory** membership, resolved transitively from inventory
 including primary-group edges. It is not token membership: it is broader than `tokenGroups`, which
 leaves out other domains' domain-local groups
@@ -814,8 +929,11 @@ Deactivated links never count. Subject groups must be security groups (AD) or gr
 ([groups overview](https://learn.microsoft.com/en-us/graph/api/resources/groups-overview)). A
 distribution group grants nothing. An Entra group with `visibility = Public` grants nothing either,
 because anyone can join it without approval and so give themselves an activeDIQ role
-([group](https://learn.microsoft.com/en-us/graph/api/resources/group)). The AD analogue, a group
-whose DACL lets broad principals add themselves, is a T-0007 check (Q1). A member grants only through its Account's
+([group](https://learn.microsoft.com/en-us/graph/api/resources/group)). The AD analogue
+is TM-D18 (threat model §7.7). An AD group grants nothing, and health flags it, while its DACL lets
+a broad principal change its membership: Everyone, Anonymous Logon, Authenticated Users, Domain
+Users, Domain Computers or Users. The rights that count are Self-Membership, WP `member`,
+GenericWrite, GenericAll, WRITE_DAC and WRITE_OWNER. A member grants only through its Account's
 `directory_ref` (DM-30.I5), or through a correlation of that object, and only while the
 correlation is `matched` (DM-20.I4), re-checked live at sign-in and at Plan (DM-20.I5). A
 `candidate` correlation never carries a group grant across directories: an Entra admin who stamps
@@ -823,17 +941,48 @@ an AD anchor on a cloud-only user gains no AD-side authority through activeDIQ. 
 grants only if its SID resolves to an object in a connected forest that is bound to an Account.
 `sIDHistory` is not followed. Members lose rights when they leave the group or are disabled, within
 sync freshness (ADM-128). `authz` resolves membership only through its port `authz.Membership`,
-which `directory/inventory` implements (ADR-0003 F6, blueprint §7.5). I3 Effective authority is the union of assignments, and each privilege applies only
+which `directory/inventory` implements (ADR-0003 F6, blueprint §7.5). **Correlation-derived
+grants.** A group grant is correlation-derived when the group lives in the other directory from the account's sign-in identity. That means an AD
+group for an `sso` account, which signs in through Entra, and an Entra group for a `directory`
+account. Such a grant obeys two extra rules:
+- It never carries `tenant-owner` or a `control_plane` permission (DM-20.I7). No group grant
+  carries them, in either directory (I4).
+- For an `sso` account, it counts only in a session that verified the authority factor (DM-30.I6).
+
+I3 Effective authority is the union of assignments, and each privilege applies only
 within its own assignment's scope. Role A's permission is never combined with scope B.
+I4 **Control-plane authority is personal** (threat model TM-D17 rule 5). `tenant-owner` and every
+`control_plane` permission (DM-33.I3) reach an account only through an assignment whose subject is
+that account. activeDIQ refuses, when it is created, any assignment that gives a group subject (AD
+or Entra) or an automation-policy subject a role holding either, so no such configuration ever
+exists to sit dead. A role edit that would add a `control_plane` permission to a role held by such
+a subject is refused the same way, and the role must be cloned instead. A permission that becomes
+`control_plane` on upgrade (X6) could still leave one behind. The evaluator never grants it
+through that subject, audits the drop, and health flags the assignment until it is narrowed or
+revoked. Group delegation (ADM-128) is unaffected for every other role.
 **Lifecycle.** `scheduled → active → expired | revoked`.
 
 ### DM-37 AuthenticatorEnrollment · T · owner `platform/authn` (EP-10)
 **Definition.** A factor enrolled by an account (console MFA) or by an end user (FD-05 TOTP).
 **Replaces (ME):** console 2FA enrollment (ADM-142). It is also the v1 slice of ADSSP enrollment.
 **Key attributes:** `subject` (account, or directory user as connection+GUID) · `method` (totp,
-webauthn, email_otp, sms_otp) · `sealed_secret` or `public_credential` · `label` · `last_used` · `state`.
+webauthn, email_otp, sms_otp) · `sealed_secret` or `public_credential` · `authority_anchor`
+(`ad_plane` or `owner_approval`, with the proof's audit reference; I3) · `label` · `last_used` ·
+`state`.
 **Invariants.** I1 Seeds are sealed and never returned after enrollment. I2 Zero-touch factors
-(email or mobile already in AD or HR) are read live and are not enrollments.
+(email or mobile already in AD or HR) are read live and are not enrollments. I3 **Authority
+factor** (threat model TM-D19 rule 2). An `active` `webauthn` enrollment of an `sso` account with
+an `authority_anchor` is an authority factor (DM-30.I6). The anchor is set at enrollment and never
+changes. It is one of two kinds:
+- `ad_plane`: the same ceremony proved the correlated AD account, through the connector's
+  `VerifyUser` or SPNEGO (blueprint §11);
+- `owner_approval`: a `tenant-owner` approved this enrollment beforehand, with step-up.
+
+Every authority-factor enrollment is audited and notifies the account and every `tenant-owner`.
+I4 Nothing on the Entra side can enrol, reset or remove an authority factor, and activeDIQ never
+derives one from Entra authentication methods. A reset is a `tenant-owner` action with step-up,
+and it is audited. The account itself may revoke its own factor only in a session that verified
+that factor.
 **Lifecycle.** `pending → active → revoked`.
 
 ### DM-38 CallerVerification · T · owner `modules/helpdesk` (ENH-09)
@@ -1276,10 +1425,24 @@ Each needs `matched` correlations (DM-20.I4), so each Entra tenant must have:
    every 90 days or after a sync-feature change;
 3. a confirmed HybridLink for each domain (DM-21.I2).
 
+Two more customer-visible consequences follow from the threat model (TM-D17, TM-D19):
+- A correlation that forms while an attestation has lapsed, or whose Entra object our sync once
+  saw cloud-only or cloud-managed, needs a `tenant-owner` re-confirmation before it is `matched`
+  (DM-20.I4(g)). Correlations that already exist at the first attestation do not.
+- A hybrid SSO technician enrols one activeDIQ passkey, once, proving their AD password or with a
+  `tenant-owner`'s approval. They use it once per session before AD group grants apply (DM-30.I6,
+  DM-37.I3). The threat model §6.9 assigns this notice to factory-director, like D-0009.
+- `tenant-owner`, and roles that administer RBAC, delegation scopes or connections, are assigned
+  to named accounts only, never to an AD or Entra group (DM-36.I4, TM-D17 rule 5). A customer who
+  delegates administration through a group in ManageEngine (ADM-128) keeps group delegation for
+  every other role. Migration never imports those administrative grants (TM-D21); a `tenant-owner`
+  assigns them to named accounts.
+
 Without these, every correlation stays `candidate`. Entra objects are still fully manageable,
 but only through Entra-root scopes (`entra_tenant`, `administrative_unit`, Entra
 `group_members`; DM-35). AD objects are managed through AD scopes as usual. SSO technicians keep
 their Entra group grants and grants made to the account itself, but get no AD group grants. The
+same degraded mode applies to a session without the authority factor. The
 connection health page and the setup guide state this; docs and onboarding must not promise
 hybrid reach without it.
 
@@ -1302,6 +1465,9 @@ hybrid reach without it.
 Follow-ups filed with this version: T-0050 (CI fitness check for X3, X4 and X5), T-0051 (Windows
 lab proof of the `[LAB: Windows]` claims) and T-0052 (the `gPLink` and `gPOptions` codecs in
 safe-primitives P3).
+
+Follow-up of T-0061: the TM-F-HYBRID proof (T-0054) covers DM-16.I9, DM-20.I4(g) and I7,
+DM-30.I6 and I7, DM-33.I3 and DM-37.I3–I4, with the cases listed in threat model §6.8 and §6.9.
 
 ## 12. Review log
 
@@ -1394,5 +1560,7 @@ AC2 was re-checked by script: every ADM ID in scope lock §3.3 (123 IDs) appears
 - 2026-10-02 · v0 rework after the director's review (§12 R1–R5, N1–N3): DM-23 GpLink, Entra delegation scopes, X11 erasure, derived append-only states, SSO `directory_ref`. Q9 and Q10 were added.
 - 2026-10-02 · v0 round-2 rework (§12 S1, S2, H1–H4): DM-20 authorizing gate (`candidate` vs `matched`, I4–I6), DM-21.I2, and only `matched` correlations count in DM-30.I5, DM-35.I6 and DM-36.I2. DM-23.I2 now says what edge identity means across a reorder.
 - 2026-10-02 · v0 round-3 rework (§12 T1–T3): the takeover flags became a Global Administrator attestation (DM-10.I7), DM-20.I4(f) reads it, and I5 is split into live checks (a)–(e) and the attested check (f). I6 adds the authentication-plane and history residuals, and DM-21.I2 names the confirming privilege. §10 states the hybrid prerequisite. Q11 was added.
+- 2026-10-02 · T-0061 alignment with threat model v0.2 (TM-D17, TM-D18, TM-D19). DM-20.I4(g) adds "eligibility only goes down": `eligible_since`, `eligibility_class`, re-confirmation by `tenant-owner`, and reason `reconfirm_required`. The install-time population becomes `matched` on the first attestation. DM-16.I9 adds `cloud_seen_at` on Entra objects. DM-10 gains `first_attested_at` (I7(f)), step-up to start an attestation, and a corrected `takeover_protection` lifecycle (`unattested → open → attested`). DM-20.I6 is rewritten as residuals closed by the threat model. DM-20.I7 ("authority that never crosses") is new, and it uses DM-33.I3 `control_plane`. DM-30.I6 adds the authority factor and DM-30.I7 console-backing objects; DM-31.I3, DM-37.I3–I4, DM-36.I1–I2 (correlation-derived grants, TM-D18) and DM-35.I5–I6 follow. §10 states the customer-visible consequences. The 90-day maximum, the optional `AuditLog.Read.All` monitor and the `tenant_takeover_open` vocabulary are unchanged and match TM-D17.
+- 2026-10-02 · T-0061 round 2 (director review M1, M2). Rule (h) follows the binding TM-D17 rule 5 text: new DM-36.I4 "control-plane authority is personal". `tenant-owner` and `control_plane` permissions reach an account only through an assignment to that account, and an assignment that gives them to a group or automation-policy subject is refused at creation. DM-20.I7, DM-36.I2, DM-30.I4 and §10 follow. DM-33.I3: the backstop covers every non-`read` permission in the `authn`, `authz`, `delegation` and `connections` namespaces, and runs in EP-6 catalogue validation at `Boot` rather than in the Registrar.
 - 2026-10-02 · ADR-0005 rework 1 (T-0047): DM-41 gains the terminal `no_change` outcome; DM-42.I3 follows ADR-0005 rule 5 (read-back from another DC after the verify window); a `verify_failed` step can be undone.
 - 2026-10-02 · ADR-0003 restatement (T-0145): owner lines follow ADR-0003 rule 9. DM-10 Connection, DM-13 ConnectorBinding and DM-21 HybridLink move from `modules/connections` to `directory/connection` (F1). DM-11 DirectoryCredential is owned by `connector/credential` alone; its metadata-row clause is dropped and writes go through the credential port. DM-30.I5 and DM-36.I2 name the kernel read ports that `directory/inventory` implements (F6).

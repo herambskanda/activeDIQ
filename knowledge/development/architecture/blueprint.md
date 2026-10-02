@@ -471,7 +471,8 @@ Inside a module, variants share one shape and differ only by parameters:
 ### 4.1 Module contract (server)
 
 This restates [ADR-0003](../decisions/0003-module-system-extension-points-only-on-ramp.md) rule 4
-(EP-1). The scaffold's one-method `Registrar` interface migrates to this shape in T-0144.
+(EP-1). `internal/platform/module` is built to this shape (T-0144): the concrete `Registrar`,
+`Boot`, `moduletest`, an empty `platform.Deps` and an empty `directory.Services`.
 
 ```go
 // internal/platform/module
@@ -851,17 +852,24 @@ directions in which data crosses a boundary:
 | `authn.DirectoryAnchors` | `platform/authn` | `directory/inventory` | DM-16, DM-20 for SSO bindings (DM-30.I5) | `authn` build ticket, security-architect |
 
 The kernel ports (ADR-0003 F6) name kernel types only, because the kernel may not import
-`directory/model`. `authn` declares `DirectoryRef{Connection, Object}`: a connection ID and an
-object ID (objectGUID for AD, Graph object ID for Entra), opaque to the kernel. `authz` reuses it.
+`directory/model`. `authn` declares `DirectoryRef{Connection, Plane, Object}`: a connection ID, the
+directory plane (`PlaneAD` or `PlaneEntra`) and an object ID (objectGUID for AD, Graph object ID for
+Entra), opaque to the kernel. `authz` reuses it. `Plane` is what lets `authz` tell a
+**correlation-derived** grant (DM-36.I2: the group lives in the other plane from the account's
+sign-in identity, so it never carries `tenant-owner` or `control_plane` and, for an `sso` account,
+counts only in a session that verified the authority factor, DM-30.I6) from a same-plane one
+without reading a connection table.
 The method sets the build tickets start from:
 
 ```go
 // internal/platform/authz
 type Membership interface {
-    // GroupsOf returns the groups through which member can hold a group-subject grant (DM-36.I2):
-    // transitive directory membership including primary-group edges, deactivated links excluded,
-    // security-enabled and non-public groups only, FSP members resolved to connected-forest objects,
-    // sIDHistory not followed.
+    // GroupsOf returns the groups, in member's own plane, through which member can hold a
+    // group-subject grant (DM-36.I2): transitive directory membership including primary-group edges,
+    // deactivated links excluded, security-enabled and non-public groups only, AD groups whose DACL
+    // lets a broad principal change membership excluded (TM-D18), FSP members resolved to
+    // connected-forest objects, sIDHistory not followed. authz reaches the other plane by calling
+    // GroupsOf on the objects Matched returns; every group it gets that way is correlation-derived.
     GroupsOf(ctx context.Context, t tenant.ID, member authn.DirectoryRef) ([]authn.DirectoryRef, error)
     // Matched returns the objects in other connections that obj has a `matched` correlation with
     // (DM-20.I4). A `candidate` correlation is never returned.
@@ -1124,7 +1132,7 @@ There are 83 rows with `phase = P1` and `importance = must` in
 | Item | Decided in |
 | --- | --- |
 | ~~Module system, import DAG, generated lists, table ownership, `fitness-modules`~~ | **Decided:** [ADR-0003](../decisions/0003-module-system-extension-points-only-on-ramp.md), ratified 2026-10-02 (T-0045); restated in §2, §4.1, §5, §7.3, §7.5 |
-| `platform/module` migration to the concrete `Registrar`, `Boot`, `moduletest`; empty `platform.Deps` and `directory.Services`; `0001_tenant_tenants.sql` | T-0144 |
+| ~~`platform/module` migration to the concrete `Registrar`, `Boot`, `moduletest`; empty `platform.Deps` and `directory.Services`; `0001_tenant_tenants.sql`~~ | **Done:** T-0144 |
 | Credential port method set (create, rotate, revoke, describe) | the `connections` build ticket, security-architect reviews (custody: T-0007) |
 | `authz.Membership` and `authn.DirectoryAnchors` semantics, and where the DM-20.I5 live re-check sits (§7.5) | the `authz` and `authn` build tickets, security-architect reviews (ADR-0003 F6) |
 | Change-feed Registrar method for attribute-triggered automation (ADR-0003 F3) | the first ticket that needs triggered automation (E2.9) |

@@ -19,6 +19,8 @@ On a domain-model or concept-map review, script the AC2-style mapping check. Don
 - For every gate that reads a Graph or tenant setting, open that API's permission table. If it lists no application permission, or needs a Global Administrator, the app-only connector (ADR-0002 rule 7) cannot evaluate it: it must be an attested fact, not a live read. On T-0006 round 3, gate (f) read `/directory/onPremisesSynchronization`, which supports delegated access only and only for a Global Administrator. Failing closed on it would have silently killed hybrid parity.
 - A gate that rests on a periodic human attestation creates an availability cliff: on expiry, every grant behind it drops at once. Route owner alerting to the plan ticket (T-0031 on T-0006 round 4), and file the customer-visible prerequisite as a notice when you advance (D-0009).
 - AC2 script: parse mixed ID lists like `ADM-116…119, 121`. A naive regex reported 23 false misses.
+- On an "align DM with TM" ticket, diff each "only X" sentence in the binding doc against "X or Y" in the aligned doc. On T-0061, TM rule 5 said "assigned only to the account itself", but DM-36.I2 added "or a group in its own directory".
+- For every enforcement backstop (registry or flag check), run the exact permissions it exists to catch through its predicate (kind, namespace, who registers it). On T-0061, an admin-kind-only check missed the action-kind `connections.*` permissions, and kernel packages never call the Registrar.
 - Put cheap fixes for sibling tickets (wrong paths, allow-lists, missing state transitions) straight into notes on those tickets, so the reject note stays about this deliverable.
 
 Related: [[review-check-ceo-answers-vs-draft-time]], [[blueprint-review-link-graph]]
