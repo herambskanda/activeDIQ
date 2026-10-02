@@ -2,16 +2,19 @@
 title: "ADR-0005: Every write is an Action run by one operation pipeline (plan, gate, apply, verify, undo); a step token is the only key to a write; our audit trail is a per-tenant hash chain, chained at commit, with signed and externally anchored checkpoints and erasable personal values"
 date: 2026-10-02
 updated: 2026-10-02
-status: proposed
+status: ratified
 owner: heramb
 kind: technical
 ticket: T-0047
 fitness: fitness-operation, fitness-audit
+decision: D-0015
+ratified_on: 2026-10-02
+ratified_by: factory-director
 ---
 
 # ADR-0005: Every write is an Action run by one operation pipeline; a step token is the only key to a write; our audit trail is a per-tenant hash chain with signed, anchored checkpoints and erasable personal values
 
-**Status:** proposed (rework 1 after the director's review of 2026-10-02; dispositions in § Review rework). factory-director ratifies it at review of T-0047 and files a `notice`. It becomes `accepted` when `fitness-operation` (O1–O9) and `fitness-audit` (A1–A9) run green in `make ci` on `main`.
+**Status:** ratified 2026-10-02 by factory-director at the T-0047 review (rework 1; dispositions in § Review rework), notice D-0015. It becomes `accepted` when `fitness-operation` (O1–O9) and `fitness-audit` (A1–A9) run green in `make ci` on `main`.
 **Kind:** technical. The customer-visible results (preview before every change, undo from the audit record, a tamper-evident audit trail, "anonymize on deletion") were decided by the CEO in D-0004 (ENH-04) and by the scope lock. This ADR decides how they are built.
 **Deciders:** solution-architect (author). Consulted on 2026-10-02, both concurring with conditions that this text applies (§ Consultation): security-architect on the audit guarantees, erasure, transient secrets and separation of duties; backend-engineer on the job wrapper, chunking, recovery and the commit-time chain. factory-director ratifies. **Ticket:** T-0047. **Parity / scope refs:** ADM-005, ADM-033, ADM-034, ADM-098, ADM-137, ADM-138, ADM-207; ENH-04.
 
