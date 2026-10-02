@@ -22,6 +22,7 @@ CEO unless they state otherwise.
 
 ## Models and cost
 - 2026-10-02 · **Nothing runs above `high` effort** (this replaces the kickoff's xhigh/max-on-escalation rule). Use Sonnet at high for most roles and Opus at high only for the important ones ("like yourself"). Daily run cap 300. They prefer more runs on cheaper settings over fewer runs at maximum effort. (CLI answer 2026-10-02)
+- 2026-10-02 · Wanted 6 parallel worker slots and corrected the factory's cautious choice of 4. On throughput they lean towards more capacity, within the 300/day cap. When they ask to change a capacity setting without giving a number, ask for the number in one line. Don't pick a conservative value for them. (CLI, 2026-10-02)
 - 2026-10-02 · Each working stretch stays under 300k tokens with a graceful handoff, never an abrupt stop. (kickoff brief)
 
 ## Product direction
