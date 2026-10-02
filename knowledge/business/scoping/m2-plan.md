@@ -232,7 +232,7 @@ Every primitive waits for both.
 | AC changes on existing tickets live in notes, because the CLI cannot amend ACs (decision 12). QA could verify against the original list only | Low × medium | Every amendment note starts "AC AMENDMENT (binding…)". The director ruled these notes are the AC of record for reviewers and QA (T-0031 note, 2026-10-02 05:56). T-0129 (`ticket amend`, factory-director, P2) folds them into the AC lists |
 | M1 demo criterion 2 (the walking skeleton through the real UI) needs M2-labelled tickets T-0097, T-0110 and T-0112 | Certain × medium | **Director:** accept a connector-level skeleton for M1 exit, or count those tickets toward M1 |
 | T-0053–T-0059 sit under E-006 "Productization foundations" (docs and video style), which looks misfiled | — | **Director:** re-epic them (suggested: E-004 / E-019) |
-| River's licence check is still open (licence register) | Low × medium | Before GA. T-0084 notes it. The fallback is a SKIP LOCKED table |
+| River's licence check is still open (licence register) | Closed | Closed 2026-10-02 by T-0209: River is not adopted (ADR-0001 E3). `platform/jobs` builds its own SKIP LOCKED table in T-0084 |
 | Discovery has not come back (§8 Q1). The 2a report slice is chosen from research | Medium × low | T-0067 marks the choice `[DISCOVERY]` for re-weighting |
 
 ## 5. Checkpoint 2a tickets

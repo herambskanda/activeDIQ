@@ -400,7 +400,7 @@ House consistency wins wherever it isn't blocked: Go is blocked only inside LSAS
 
 | Component | Runs where | Language | Purpose |
 |---|---|---|---|
-| **activeDIQ server** | Windows/Linux VM, Docker, Kubernetes, SaaS | Go | Public API (REST + gRPC, OpenAPI), React UI as one client, policy/RBAC/approvals, jobs (River on Postgres), event pipeline, detections, reports, snapshot/backup service, IdP (OIDC/SAML), MFA, Graph/EXO/Google connectors |
+| **activeDIQ server** | Windows/Linux VM, Docker, Kubernetes, SaaS | Go | Public API (REST + gRPC, OpenAPI), React UI as one client, policy/RBAC/approvals, jobs (River on Postgres; superseded: our own `SKIP LOCKED` table, ADR-0001 E3), event pipeline, detections, reports, snapshot/backup service, IdP (OIDC/SAML), MFA, Graph/EXO/Google connectors |
 | **Directory connector** | Embedded in the server (on-prem) or a standalone process near the DCs (SaaS/MSP) | Go | LDAP/Kerberos/SMB/MS-RPC to DCs; DC locator; snapshots and DirSync; executes typed write operations; dials out to the control plane |
 | **RADIUS service** | On-prem, near the VPN | Go | RADIUS with mandatory Message-Authenticator; RADIUS/TLS |
 | **SSPR edge** (optional) | DMZ | Go (+ static React) | Stateless proxy for the public SSPR flows; no secrets; the server tunnels out to it |
@@ -601,7 +601,7 @@ Deallocated VMs incur no compute charges, but disks and networking still bill ([
    - Paging, range and DirSync; schema cache; `<GUID=…>` addressing.
    - Typed operations with idempotency.
    - Operating modes: embedded and out-of-process (SaaS).
-4. **Job engine** (River) with dry-run/diff/approve/execute/verify phases.
+4. **Job engine** (River; superseded: our own `SKIP LOCKED` table, ADR-0001 E3) with dry-run/diff/approve/execute/verify phases.
 5. **Event pipeline skeleton.** Normalized schema, partitioned storage, agent ingestion over gRPC, back-pressure.
 6. **Platform-agent module contract.** Agreed with the PatchIQ/UEM owners, to honour "one agent process per endpoint".
 7. **Public API + OpenAPI codegen.** The UI is just one client.

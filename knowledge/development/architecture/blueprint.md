@@ -760,7 +760,7 @@ The root package `internal/platform` declares `platform.Deps` (§4.1). Only serv
 | `authn` (+`authn/actions`) | backend-engineer; security-architect reviews | sessions, API tokens (ADM-141), SAML/OIDC SP (library `[OPEN]`, ADR-0001), MFA (ADM-142), mTLS principals. Owns DM-30 Account, DM-31 Session, DM-32 ApiToken, DM-37 AuthenticatorEnrollment. Account changes an administrator makes are Actions (`authn.account.*` in `authn/actions`) through write functions that take a `step.Step`; sign-in, sessions and first-sign-in enrolment are bookkeeping (ADR-0005 rule 10). Declares the **read port `authn.DirectoryAnchors`** (`Resolve`, `Matched`; §7.5, ADR-0003 F6), implemented by `directory/inventory`, through which DM-30.I5 binds SSO accounts and checks `matched` correlations. Declares `authn.DirectoryRef`, which `authz` reuses | hosts EP-10 |
 | `authz` (+`authz/actions`) | backend-engineer; security-architect reviews the membership port | `Authorize(principal, permission, target) Decision`, evaluated for the **initiator chain** over live `authority.Facts` at Plan and again at Apply (ADR-0005 rule 7); `FactsQuery(chain, permission, connection)` names every include and exclude root that could decide a target, plus the Tier-0 facts; roles = sets of permissions; assignments = principal × role × scope. Role and assignment changes are Actions (`authz.*` in `authz/actions`) through write functions that take a `step.Step`. **Owns DM-34 Role and DM-36 RoleAssignment** (ADR-0003 F2); `delegation` changes them through `authz`'s Go API inside its Actions. `scope_id` and automation-policy subjects are opaque typed references, resolved through the registered `ScopeEvaluator`. Declares the **read port `authz.Membership`** (`GroupsOf`, `Matched`; §7.5, F6), implemented by `directory/inventory`, for DM-36.I2 group subjects | hosts EP-6 |
 | `operation` (+`operation/step`) | backend-engineer; security-architect reviews `operation/step` and the approval rules | The pipeline (ADR-0005, §4.2, §8): `Action`, `Descriptor`, `StepPlan`, `PlanContext`, `Outcome`, `Verdict`, `Define`, `Gate`, `Approvals`; `Plan`, `Submit`, `Approve`, `Undo`; the runner, the kernel holds and the single approval; the transition function (`transitions.go`, the only writer of a state column); the job kinds `operation.plan`, `.apply`, `.verify`, `.reconcile`, `.sweep`. **`Catalogue()`**: the read-only list of registered Descriptors, which `search` uses for the palette (ADR-0003 F4). Declares the **port `operation.LiveFacts`** (§7.5), implemented by `directory/client`. `operation/step` is the leaf every write API takes: `Step`, `Key`, `OperationID`, `Clearance`, `DCRef`, the plan-digest function and the single minter (§4.2). Owns DM-41 Operation, DM-42 OperationItem and `operation_secret`; test kit `operation/operationtest` (`Contract`) | hosts EP-3, EP-4 |
-| `jobs` | backend-engineer | tenant-carrying job wrapper, leases for singleton work, schedules, transactional insert (a job enqueued in the caller's transaction). A kind runs inside one wrapper transaction (the default) or declares **`ManagedTx`** and receives a tenant-bound `TenantTx` runner, opening its own short transactions (ADR-0002 Jobs row as amended by ADR-0005 rule 6; T-0084). **The only importer of River** (T5) | hosts EP-5 |
+| `jobs` | backend-engineer | tenant-carrying job wrapper, leases for singleton work, schedules, transactional insert (a job enqueued in the caller's transaction). A kind runs inside one wrapper transaction (the default) or declares **`ManagedTx`** and receives a tenant-bound `TenantTx` runner, opening its own short transactions (ADR-0002 Jobs row as amended by ADR-0005 rule 6; T-0084). **Owns the job table `jobs`**: our own `SKIP LOCKED` queue, global and registered, reached only through `store` (ADR-0002 Jobs row, amended 2026-10-02; §8 Job queue) | hosts EP-5 |
 | `audit` (+`audit/canon`, `audit/chain`, `audit/actions`) | backend-engineer; security-architect reviews | `Kind`, the event envelope, `Append(tx, kind, event)` (into audit's per-transaction slot), `Chainer.BeforeCommit` (the commit hook `compose/server` installs on `store`), `InitTenant` (the genesis head row and first checkpoint key, run by tenant provisioning), signed checkpoints, export, forwarding to EP-9 sinks, retention purges (§9; ADR-0005 rule 11). **Owns `audit_head`, `audit_event` and `audit_checkpoint`, and all the chain SQL.** `audit/canon` is `adq-canon/1` and `audit/chain` is chain and checkpoint verification, both standard-library only and linked by `cmd/auditverify`. Retention and SIEM-sink changes are Actions in `audit/actions` | hosts EP-7; implements EP-8 |
 | `report` | reporting-engineer | dataset registry, report-definition AST types, the run API | hosts EP-8 |
 | `notify` (+`notify/actions`) | backend-engineer | `Send(template, recipients)`, delivery records, alerts, egress-proxy setting (ADM-205). Appends no audit event itself: channel and SMTP changes are Actions (`notify.channel.*` in `notify/actions`), which the runner audits | hosts EP-9 |
@@ -1121,6 +1121,27 @@ read back from another DC, recorded `verified` with that DC named, or `verify_fa
 window and throttling honours `Retry-After`
 ([Graph throttling](https://learn.microsoft.com/en-us/graph/throttling)). Default limits: four
 concurrent writes per (connection, DC), four per Entra tenant, two chunk jobs per operation.
+
+**Job queue** (`platform/jobs`; ADR-0002 Jobs row as amended 2026-10-02 by T-0209; DM-43). The
+queue is our own table, `jobs`, and every access goes through `store`.
+- **Enqueue** is an `INSERT` in the caller's `store.Tx`. A `BEFORE INSERT OR UPDATE` trigger
+  refuses a `tenant_id` that differs from the transaction's tenant context, and any change to
+  `tenant_id`, `kind` or `args`.
+- **Claim** is one registered `WithPlatform` site: `UPDATE … WHERE id IN (SELECT … FOR UPDATE
+  SKIP LOCKED LIMIT n) RETURNING`. It sets `running`, bumps `attempt` and sets
+  `claimed_until = now() + kind timeout + grace`.
+- **The body** gets a tenant minted from the row: one `WithTenant` (the default) or a tenant-bound
+  runner (`ManagedTx`, which renews the claim while it runs).
+- **Recording** (completed, retry with backoff, discarded after the last attempt) is fenced on
+  `id`, `attempt`, `running` and the context tenant. A default-mode kind records in the body's own
+  transaction.
+- **Rescuer and cleaner** are two more registered `WithPlatform` sites, singleton under a platform
+  lease (DM-06). The rescuer re-queues a lapsed `running` job. The cleaner deletes finished jobs
+  after their retention period.
+- **Wake-up** is by polling (1 s by default). `LISTEN` would need a connection outside `store`.
+- **Arguments** are typed references only, at most 4 KiB (T5 `job-args-reference`, T-0213).
+  Per-tenant quota and claim fairness come before the `saas` profile hosts a second tenant
+  (T-0214).
 
 **Job kinds** (EP-5, all tenant-carrying, all `ManagedTx`). The OperationItem is the system of
 record; a job is only a driver.

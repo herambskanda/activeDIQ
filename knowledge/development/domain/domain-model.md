@@ -1460,20 +1460,26 @@ Step: `planned → applying → applied → verified | verify_failed`; `applying
 stale_state, outcome_unknown, error, retries exhausted); `applying → not_run` (reconciler, operation
 cancelling, no write happened); `planned → not_run`; `verified | verify_failed → undone`.
 
-### DM-43 Job · execution record in River (global, registered) · owner `platform/jobs`
+### DM-43 Job · execution record in the `jobs` table (global, registered) · owner `platform/jobs`
 **Definition.** A unit of background execution that advances a domain record: an operation chunk,
 a report run, a sync pass or a delivery. **Replaces (ME):** the scheduler's internal tasks.
-**Key attributes:** `kind` (EP-5) · `args` (`tenant_id` + a typed reference to the domain record) ·
-`unique_key` · `attempt` · `scheduled_at`.
+**Key attributes:** `kind` (EP-5) · `tenant_id` (null only for a registered platform kind) ·
+`args` (`tenant_id` + a typed reference to the domain record; typed references only, at most
+4 KiB) · `unique_key` · `attempt` · `run_at` · `claimed_until` · `error_code`.
 **Invariants.** I1 A job is never the system of record. The OperationItem, ReportRun or
 SyncCursor holds the truth, and a lost job is re-derived from it. I2 Args carry `tenant_id`, and
 the wrapper establishes the tenant first: it runs the body in one `WithTenantTx`, or, for a
 `ManagedTx` kind such as the operation kinds, hands it a tenant-bound transaction runner (ADR-0002
-Jobs row as amended by ADR-0005 rule 6). Platform jobs are registered. I3 Only `platform/jobs`
-imports River (ADR-0002 T5).
-**Lifecycle.** River's states: `scheduled | pending | available → running → completed`, or
-`running → retryable → … → discarded`, or `→ cancelled`
-([JobState](https://pkg.go.dev/github.com/riverqueue/river/rivertype#JobState)).
+Jobs row as amended by ADR-0005 rule 6). Platform jobs are registered. I3 A job is enqueued only
+in a transaction whose tenant context equals its `tenant_id`; the database refuses anything else,
+and `tenant_id`, `kind` and `args` never change after insert (ADR-0002 Jobs row, amended
+2026-10-02, T-0209). I4 Recording an outcome is fenced on `attempt`, so a superseded run changes
+nothing. I5 `unique_key` is unique per (`tenant_id`, `kind`) among `available` and `running` jobs.
+It de-duplicates and never decides correctness (ADR-0005 rule 6).
+**Lifecycle.** `available` (`run_at` may be in the future) `→ running → completed`;
+`running → available` (retry with backoff, or rescued after `claimed_until` lapses)
+`→ … → discarded` after the kind's last attempt; `available → cancelled`. The cleaner deletes
+`completed`, `cancelled` and `discarded` jobs after their retention period.
 
 ### DM-44 Schedule · T · owner `platform/jobs`
 **Definition.** A recurrence owned by one entity: an automation policy, a report schedule or a
