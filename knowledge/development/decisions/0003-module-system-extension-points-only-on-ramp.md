@@ -18,7 +18,8 @@ fitness: fitness-modules
 **Kind:** technical. It changes nothing a customer, partner or the brand would notice. It decides where code goes and what CI rejects.
 **Deciders:** solution-architect (author); factory-director (ratifier). **Ticket:** T-0045. **Parity / scope refs:** none directly. It serves every capability family in blueprint §15.
 
-> Amendments (ratified ADRs only): none.
+> Amendments (ratified ADRs only):
+> - 2026-10-02 · solution-architect · T-0145, from factory-director's T-0045 ratification review · **F6, directory-owned data the kernel needs.** Rule 9's pass condition (b) checked only for lower layers reading *module* tables. The kernel also needs data that `directory/inventory` owns: `platform/authz` resolves a group subject's membership transitively from inventory (DM-36.I2), and `platform/authn` gates SSO bindings on a `matched` correlation (DM-30.I5 → DM-20.I4). Rule 1 forbids kernel → directory imports and rule 6 forbids SQL on inventory's tables, so the only legal path is a **port**: the kernel package declares a read interface, `directory/inventory` implements it directly (no adapter type in `compose`, which M4 forbids), and `compose/server` wires it. This is the same shape as the credential port. The ports are `authz.Membership` and `authn.DirectoryAnchors` (blueprint §5.1, §7.5). Condition (b) is widened from "no lower layer reads a module-owned table" to "**no lower layer reads a higher layer's table**", and F6 is added to the rule 9 table. security-architect reviews the membership port's semantics in the `authz` build ticket, because it is the authorization path. No fitness check changes: M1 already fails the kernel → directory import and M8a the cross-owner SQL.
 
 ## Context
 
@@ -319,11 +320,12 @@ UEM ADR-0002 rule 5 warns against fitting a contract to two instances of one sha
 | `history` | reads inventory history and our audit; undo | datasets (EP-8), `operation.Undo` via `Deps` | Fits through datasets. No cross-owner view. |
 | `search` | reads the Action catalogue and inventory | `API`; `operation.Catalogue()` and the inventory read API via `Deps` | **F4.** `operation` must expose a read-only catalogue of registered Actions. That is a kernel service, never a module import. The search index technique stays open (blueprint §16). |
 | `migration`, `itsm` | importers and adapters, one shape each | `Job`, Actions by ID | Fits. Variants are parameters (blueprint §4). `migration` takes its MIG-18 baseline by calling `history`'s snapshot Action by ID, never by reading DM-22. |
+| `authz`, `authn` × `inventory` | the kernel needs directory-owned data | ports declared in the kernel, implemented by `directory/inventory`, wired by `compose/server` | **F6** (amendment). `authz` resolves group-subject membership transitively from inventory (DM-36.I2), and `authn` gates SSO bindings on a `matched` correlation (DM-30.I5 → DM-20.I4). The kernel cannot import `directory` (rule 1) or read inventory's tables (rule 6). So `platform/authz` declares the read port `authz.Membership` and `platform/authn` declares `authn.DirectoryAnchors`. `directory/inventory` implements both directly, and `compose/server` hands them to the kernel as values, like the credential port. security-architect reviews the membership port's semantics in the `authz` build ticket. |
 | `helpdesk` × `objects` | generated passwords | Actions by ID | **F5.** DM-52 PasswordGenerationPolicy is owned by `helpdesk`, but `objects` also needs a generated password when it creates a user (ADM-021). `objects` must not read `helpdesk`'s table. Its create flow composes `helpdesk`'s password-set Action by ID, which generates the password inside `helpdesk` and returns no secret to `objects`. The user-lifecycle spec (DM §11 Q4) may choose the step order. It may not choose a cross-module read. |
 
 **Every domain-model owner line, run through rule 6.** This covers [domain model v0](../domain/domain-model.md) (T-0006). Each owner line was tested against three conditions:
 - **(a)** it resolves to exactly one owner key under the four roots;
-- **(b)** no lower layer reads a module-owned table, and no foreign key points upward;
+- **(b)** no lower layer reads a higher layer's table, and no foreign key points upward (widened by F6; it first read "no lower layer reads a module-owned table");
 - **(c)** it has no split owner.
 
 `R` entities (DM-33 Permission, DM-40 Action, DM-70 Dataset) are registries, not tables, so they are out of scope.
@@ -338,11 +340,11 @@ UEM ADR-0002 rule 5 warns against fitting a contract to two instances of one sha
 | DM-10 Connection, DM-13 ConnectorBinding, DM-21 HybridLink | `connection` (directory) | ✓ | ✓ | ✓ | **Changed from `modules/connections`** (F1). DM-10 `credential_id` references DM-11, which is a directory → connector reference. That is not upward in the rule 6 sense (neither kernel nor module). |
 | DM-11 DirectoryCredential | `credential` (connector) | ✓ | ✓ | ✓ | **The split owner is removed.** The metadata row is no longer owned by `modules/connections`. One table, one owner; SQL only in `credential/sealed`; writes go through the credential port (rule 6). |
 | DM-12 Component | `fleet` (platform) | ✓ | ✓ | ✓ | Enrollment SQL is server-side only (blueprint §2 rule 7). `fleet/dial` has none. |
-| DM-14 NamingContext, DM-15 DomainController, DM-16 DirectoryObject, DM-17 Link, DM-18 ChangeRecord, DM-20 Correlation, DM-23 GpLink | `inventory` (directory) | ✓ | ✓ | ✓ | DM-21 is read through `connection`'s API (F1). |
+| DM-14 NamingContext, DM-15 DomainController, DM-16 DirectoryObject, DM-17 Link, DM-18 ChangeRecord, DM-20 Correlation, DM-23 GpLink | `inventory` (directory) | ✓ | ✓ | ✓ | DM-21 is read through `connection`'s API (F1). `authz` and `authn` read DM-16, DM-17 and DM-20 only through the ports that `inventory` implements (F6). |
 | DM-19 SyncCursor | `sync` (directory) | ✓ | ✓ | ✓ | Its `lease_fencing_token` comes through `jobs`' API. |
 | DM-22 Snapshot | `history` (module) | ✓ | ✓ | ✓ | Only `history`'s own Actions read it. Restoring is an Operation (X9) that runs `history`'s Action. |
-| DM-30 Account, DM-31 Session, DM-32 ApiToken, DM-37 AuthenticatorEnrollment | `authn` (platform) | ✓ | ✓ | ✓ | |
-| DM-34 Role, DM-36 RoleAssignment | `authz` (platform) | ✓ | ✓ | ✓ | F2. `scope_id` (DM-35) and the automation-policy `subject` (DM-60) are opaque typed references with no foreign key, as rule 6 requires. |
+| DM-30 Account, DM-31 Session, DM-32 ApiToken, DM-37 AuthenticatorEnrollment | `authn` (platform) | ✓ | ✓ | ✓ | DM-30.I5 reads anchors and correlations through `authn.DirectoryAnchors` (F6). |
+| DM-34 Role, DM-36 RoleAssignment | `authz` (platform) | ✓ | ✓ | ✓ | F2. Group membership (DM-36.I2) comes through `authz.Membership` (F6). `scope_id` (DM-35) and the automation-policy `subject` (DM-60) are opaque typed references with no foreign key, as rule 6 requires. |
 | DM-35 DelegationScope | `delegation` (module) | ✓ | ✓ | ✓ | `authz` never reads it. It calls `delegation`'s registered `ScopeEvaluator`. |
 | DM-38 CallerVerification, DM-52 PasswordGenerationPolicy | `helpdesk` (module) | ✓ | ✓ | ✓ | Only `helpdesk`'s Actions read them. For `objects`, see F5. |
 | DM-41 Operation, DM-42 OperationItem | `operation` (platform) | ✓ | ✓ | ✓ | |
@@ -354,7 +356,7 @@ UEM ADR-0002 rule 5 warns against fitting a contract to two instances of one sha
 | DM-82 NotificationChannel, DM-83 NotificationTemplate, DM-84 Delivery | `notify` (platform) | ✓ | ✓ | ✓ | |
 | DM-85 ItsmConnection | `itsm` (module) | ✓ | ✓ | ✓ | |
 
-**Result.** After F1 and F5, every entity passes. Four owner lines in the domain model change: DM-10, DM-13 and DM-21 move to `directory/connection`, and DM-11 drops its split-owner clause. T-0145 amends the domain model and adds the `directory/connection` row to blueprint §5.2, which M7 requires before the package can exist.
+**Result.** After F1 and F5, every entity passes. F6 (amendment) moves no owner line; it names the ports through which the kernel reads directory-owned data. Four owner lines in the domain model change: DM-10, DM-13 and DM-21 move to `directory/connection`, and DM-11 drops its split-owner clause. T-0145 amends the domain model and adds the `directory/connection` row to blueprint §5.2, which M7 requires before the package can exist.
 
 The agent tier's paper check belongs to T-0040 (U4 contract-freeze gate in ADR-0002). The web tier's belongs to the first web-module ticket.
 
