@@ -403,14 +403,17 @@ rather than `objectCategory`, and `isDeleted` requested) belongs to T-0018.
 is suspended.
 
 ### DM-20 Correlation · D · owner `directory/inventory`
-**Definition.** It asserts that an AD object and an Entra object are the same identity, and records
-which side is the source of authority. **Replaces (ME):** the hybrid handling behind ADM-169.
+**Definition.** It asserts that an AD object and an Entra object are the same identity. Only a
+`matched` correlation carries authority or write routing across the two directories (I4).
+**Replaces (ME):** the hybrid handling behind ADM-169.
 **Key attributes:** `ad_ref` · `entra_ref` · `anchor_attr` (`objectGUID`, `ms-DS-ConsistencyGuid`,
-or another attribute) · `anchor_value` · `source_of_authority` (`ad` when `onPremisesSyncEnabled`
-is true, unless `onPremisesSyncBehavior.isCloudManaged` is true, which makes Entra the master;
-that property is beta,
-[onPremisesSyncBehavior](https://learn.microsoft.com/en-us/graph/api/resources/onpremisessyncbehavior)) ·
-`match` (`anchor`, or `sid` via `onPremisesSecurityIdentifier`) · `state`.
+or another attribute) · `anchor_value` · `match` (`anchor`, or `sid` via
+`onPremisesSecurityIdentifier`) · `state` · `candidate_reason` (`not_synced`, `cloud_managed`,
+`sid_mismatch`, `domain_mismatch`, `link_unconfirmed`, `ambiguous_anchor`,
+`tenant_takeover_open`) · `gate_checked_at`. `source_of_authority` is derived from the state and
+is never stored. It is `ad` while `matched`. While `candidate`, nothing is routed to AD on the
+object's behalf, and the Entra object is planned as an Entra object alone, within its own Entra
+scope.
 **Invariants.**
 - I1 A correlation is made only from the source anchor or the SID, never from name or UPN
   heuristics ([sourceAnchor](https://learn.microsoft.com/en-us/entra/identity/hybrid/connect/plan-connect-design-concepts)).
@@ -421,15 +424,69 @@ that property is beta,
   option, Entra Connect uses ms-DS-ConsistencyGuid for users and objectGUID for other types. Cloud
   Sync uses ms-DS-ConsistencyGuid when present, else objectGUID, and that choice cannot be changed
   ([Cloud Sync topologies](https://learn.microsoft.com/en-us/entra/identity/hybrid/cloud-sync/plan-cloud-sync-topologies)).
+  The anchor is therefore looked up by both `objectGUID` and `ms-DS-ConsistencyGuid`, across every
+  AD connection that has a HybridLink (DM-21) to the tenant. In an account-and-resource-forest
+  topology, the sign-in attributes, including the source anchor, come from the forest that holds
+  the enabled account, so the correlation targets that forest's object
+  ([default sync configuration](https://learn.microsoft.com/en-us/entra/identity/hybrid/connect/concept-azure-ad-connect-sync-default-configuration)).
 - I1b Groups have no `onPremisesImmutableId`. They match on `onPremisesSecurityIdentifier` (the AD
   group's SID) ([group](https://learn.microsoft.com/en-us/graph/api/resources/group?view=graph-rest-1.0)).
   A cross-domain move changes the SID (DM-16.I1), so the correlation goes `broken` until
   `onPremisesSecurityIdentifier` carries the new SID. It is never re-matched by name.
 - I2 There is at most one Entra object per AD object per Entra tenant.
-- I3 Writes to attributes whose source of authority is AD go to AD; Entra-only attributes
-  (licences) go to Graph.
-**Lifecycle.** `matched ⇄ broken` (one side purged, or an anchor or SID mismatch; it returns to
-`matched` only through I1) `→ removed`.
+- I3 While `matched`, writes to attributes whose source of authority is AD go to AD, and
+  Entra-only attributes (licences) go to Graph. A `candidate` routes nothing to AD.
+- I4 **Authorizing gate.** A correlation is `matched` only while **all** of the following hold.
+  Otherwise it is `candidate`: shown in the UI as a possible match with its reason, and never used
+  by DM-30.I5, DM-35.I6, DM-36.I2 or I3. A correlation that rests on a value a privileged Entra
+  admin can write is never evidence of authority.
+  - (a) The Entra object's `onPremisesSyncEnabled` is `true`. It is read-only in Graph, whereas
+    `onPremisesImmutableId` can be written by certain privileged admin roles
+    ([user](https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0)).
+    `null` means never synced, source of authority (SOA) transferred to the cloud, or an SOA
+    rollback still waiting for the sync client. `false` means no longer synced.
+  - (b) `onPremisesSyncBehavior.isCloudManaged` is not `true`. After an SOA transfer of a user or
+    group it is `true`, `onPremisesSyncEnabled` is `null` and the sync client stops flowing
+    changes ([user SOA](https://learn.microsoft.com/en-us/entra/identity/hybrid/how-to-user-source-of-authority-configure)),
+    so (a) already fails; (b) is the second check. The property is beta
+    ([onPremisesSyncBehavior](https://learn.microsoft.com/en-us/graph/api/resources/onpremisessyncbehavior)).
+    When it cannot be read, (a) alone decides.
+  - (c) For users, `onPremisesSecurityIdentifier` equals the AD object's current `objectSid`. The
+    sync client writes it from the AD object, so it corroborates an anchor that an Entra admin, or
+    the admin of another forest synced into the same tenant, could copy. Admins can write it only
+    after an SOA transfer, which (a) excludes. For groups the SID is the match itself (I1b).
+    Whether Cloud Sync populates it for users is `[UNVERIFIED]`. Until the lab confirms it
+    (T-0051), a Cloud Sync user without it stays `candidate` (`sid_mismatch`).
+  - (d) `onPremisesDomainName`, where populated, equals the DNS name of the AD object's domain,
+    and the HybridLink between that domain and the tenant is `confirmed` (DM-21.I2).
+  - (e) The anchor resolves to exactly one AD object (I1a lookup). If an anchor matches two, for
+    example because a second forest stamped a copied GUID into its own `ms-DS-ConsistencyGuid`,
+    every correlation on it is `candidate` (`ambiguous_anchor`).
+  - (f) The tenant blocks cloud-object takeover: `blockCloudObjectTakeoverThroughHardMatchEnabled`
+    and `blockSoftMatchEnabled` are both `true`
+    ([sync features](https://learn.microsoft.com/en-us/graph/api/resources/onpremisesdirectorysynchronizationfeature?view=graph-rest-1.0)).
+    Otherwise an Entra admin can pre-create a cloud user that carries a target's anchor (hard
+    match) or UPN (soft match). When the target enters sync scope, the sync client takes the
+    cloud object over, (a)–(e) then pass, and the sign-in methods the attacker registered stay on
+    the object. If either flag is off, the connection's health says why and every correlation in
+    that tenant is `candidate` (`tenant_takeover_open`). Microsoft recommends keeping soft-match
+    blocking on except while soft matching is needed (same source).
+- I5 **Re-check.** Sync evaluates the gate whenever either side changes, and it is also re-read
+  live through Graph at sign-in (DM-30.I5) and at Plan, for every Operation whose scope or grant
+  passes through the correlation. A failed live check refuses that sign-in grant or plans the item
+  as `blocked`; it is audited and requests a targeted re-sync of both objects. The stored state
+  changes only through sync (kind `D`). A Request whose plan depended on the correlation fails
+  `stale_state` at apply (DM-42.I2) if the gate fails by then. After a cross-domain move, (c)
+  fails closed until a sync cycle carries the new SID.
+- I6 **Residual risk.** Anyone who controls the sync client (the Entra Connect server, a Cloud
+  Sync agent, the Directory Synchronization Accounts role) can make (a)–(e) pass. So can anyone
+  who can change the tenant's sync features (f), or transfer SOA, which is the Hybrid
+  Administrator role. activeDIQ treats all of these as Tier 0 `[UNVERIFIED]`. They belong to the
+  T-0007 threat model; this gate does not defend against them.
+**Lifecycle.** `candidate ⇄ matched` (the I4 gate, evaluated per I5). Every new correlation starts
+as `candidate`. Either state goes `→ broken` when one side is purged or the anchor or group SID no
+longer matches. A `broken` correlation returns only through I1, and only to `candidate`, never
+straight to `matched`. `→ removed`.
 
 ### DM-21 HybridLink · T · owner `modules/connections`
 **Definition.** It declares which AD domain syncs into which Entra tenant. The relation is
@@ -437,7 +494,9 @@ many-to-many. **Replaces (ME):** the domain↔tenant links (ADM-159).
 **Key attributes:** `ad_connection_id` + `nc_guid` · `entra_connection_id` · `origin` (declared,
 or discovered from correlations) · `state`.
 **Invariants.** I1 It decides which Entra tenant receives the M365 steps of a user create
-(ADM-027).
+(ADM-027). I2 A link discovered from correlations stays `proposed` until an administrator confirms
+it in an audited Operation. Only a `confirmed` link lets correlations between that domain and
+that tenant authorize (DM-20.I4), so discovery can never bootstrap its own trust.
 **Lifecycle.** `proposed → confirmed → removed`.
 
 ### DM-22 Snapshot · T · owner `modules/history`
@@ -483,6 +542,11 @@ stale-state check) and `block_inheritance` (`gPOptions`; domains and OUs only).
   the direction comes from an SSSD fix checked against GPMC
   ([SSSD commit](https://github.com/SSSD/sssd/commit/dce025b882db7247571b135e928afb47f069a60f))
   `[UNVERIFIED]` `[LAB: Windows]`. The reorder Action does not ship until the lab confirms it (T-0051).
+  An edge has no identity beyond its key. Edges are a projection of the SOM's current `gPLink`
+  value: every observed change replaces the SOM's whole edge set, so inserting a link at the front
+  re-creates every edge rather than renumbering it. Nothing references an edge by key. An
+  Operation item plans against the SOM GUID and `gp_link_raw` (I3), and the link history is the
+  ChangeRecord on the SOM's `gPLink` attribute (old and new values).
 - I3 Every link write (link, unlink, enable, disable, enforce, reorder) rewrites the whole value,
   and so does block inheritance on `gPOptions`. The Action plans against `gp_link_raw` and applies
   as **one** LDAP modify that deletes the exact planned value and adds the new one. If anyone
@@ -553,7 +617,11 @@ GUID is stored (X3). A UPN, email or name claim never binds, because they are re
 immutable ID does not bind either: there is no standard claim for it `[UNVERIFIED]`, and it can be
 written for cloud users ([user](https://learn.microsoft.com/en-us/graph/api/resources/user)). A later sign-in whose anchor
 resolves to a different object is refused and audited. It never rebinds silently; rebinding is an
-audited administrative action. A bound `sso` account receives group-subject grants (DM-36.I2) and
+audited administrative action. A binding never crosses directories on its own. Bound by `oid`, the
+account reaches AD-side group grants only through a `matched` correlation of that Entra object
+(DM-20.I4). Bound by `onprem_sid`, the binding holds only while the signing-in Entra object has a
+`matched` correlation to the AD object the SID resolves to. Both are re-checked at every sign-in
+and at Plan (DM-20.I5). A bound `sso` account receives group-subject grants (DM-36.I2) and
 falls under I2 exactly like a `directory` account. An unbound one receives only grants made to the
 account itself.
 **Lifecycle.** `invited → active ⇄ disabled → deleted`. Audit keeps the ID and a name snapshot,
@@ -629,10 +697,12 @@ I3 Exclusion beats inclusion. I4 Counts and pages are computed after scope trimm
 I5 `tier0` objects are outside every write scope in v1, in every root kind (ADR-0002 rule 9;
 FD-11). For Entra, `tier0` covers holders of privileged directory roles and role-assignable groups
 (definition: T-0007, Q1). I6 **AD scope to Entra objects.** An AD entry with
-`include_correlated` also reaches the Entra objects that are `matched` (DM-20) to an AD object it
-reaches, but only for Entra-provider Actions such as licences (DM-20.I3). It is re-evaluated at
-Plan from the live AD ancestry and the current correlation, and a `broken` correlation grants
-nothing. It is off by default, so an OU grant never reaches the cloud silently. Writes to
+`include_correlated` also reaches the Entra objects whose correlation (DM-20) with an AD object it
+reaches is `matched`, but only for Entra-provider Actions such as licences (DM-20.I3). `matched` is
+the only authorizing state (DM-20.I4: the Entra object is synced from that AD object and not
+cloud-managed). A `candidate` or `broken` correlation grants nothing, so a cloud-only object
+stamped with an AD anchor is never reached. It is re-evaluated at Plan from the live AD ancestry
+and a live re-check of the correlation gate (DM-20.I5). It is off by default, so an OU grant never reaches the cloud silently. Writes to
 AD-mastered attributes of a synced object go to AD and need the AD scope anyway. I7 Objects in a
 restricted-management AU (detected by `isManagementRestricted`) ignore tenant-wide application
 permissions unless the application holds an Entra role scoped to that AU
@@ -667,7 +737,10 @@ distribution group grants nothing. An Entra group with `visibility = Public` gra
 because anyone can join it without approval and so give themselves an activeDIQ role
 ([group](https://learn.microsoft.com/en-us/graph/api/resources/group)). The AD analogue, a group
 whose DACL lets broad principals add themselves, is a T-0007 check (Q1). A member grants only through its Account's
-`directory_ref` (DM-30.I5), or through that object's `matched` correlation (DM-20). An FSP member
+`directory_ref` (DM-30.I5), or through a correlation of that object, and only while the
+correlation is `matched` (DM-20.I4), re-checked live at sign-in and at Plan (DM-20.I5). A
+`candidate` correlation never carries a group grant across directories: an Entra admin who stamps
+an AD anchor on a cloud-only user gains no AD-side authority through activeDIQ. An FSP member
 grants only if its SID resolves to an object in a connected forest that is bound to an Account.
 `sIDHistory` is not followed. Members lose rights when they leave the group or are disabled, within
 sync freshness (ADM-128). I3 Effective authority is the union of assignments, and each privilege applies only
@@ -1025,7 +1098,7 @@ These are the concepts used by the v1 rows (P1 and the M2 pulls,
 | Help-desk role, task/attribute privileges, deny bulk/CSV | ADM-125 | Role (privileges with constraints) + Permission | Mode `execute`/`request` merges ME's help-desk and workflow-requester roles |
 | Super Admin, built-in roles | ADM-126 | Built-in Role `tenant-owner` and shipped roles | Read-only, cloneable |
 | OU-based / group-based / include-exclude / cross-domain delegation | ADM-127…130 | DelegationScope + RoleAssignment (group subject) | GUID roots, live re-check at Plan, no escalation (DM-36.I1); SSO technicians receive group grants through an anchor-bound `directory_ref` (DM-30.I5) |
-| M365 delegation; "filter cloud users by AD OU" | ADM-131, ADM-169 | DelegationScope with the Entra root kinds (`entra_tenant`, `administrative_unit`, `group_members`) + `include_correlated` on AD entries (DM-35.I6) | One RBAC model for both directories. An AD OU grant reaches Entra objects only when the entry says so, and only through an anchor correlation (DM-20) |
+| M365 delegation; "filter cloud users by AD OU" | ADM-131, ADM-169 | DelegationScope with the Entra root kinds (`entra_tenant`, `administrative_unit`, `group_members`) + `include_correlated` on AD entries (DM-35.I6) | One RBAC model for both directories. An AD OU grant reaches Entra objects only when the entry says so, and only through a `matched` correlation (DM-20.I4: synced from that AD object, not cloud-managed); a `candidate` grants nothing |
 | Technician-specific templates; report restrictions | ADM-132, ADM-102 | Role privilege constraints | — |
 | Impersonate as Admin | ADM-134 | none; Operation initiator chain + AuditEvent actor | Every write runs as the connector identity, and the technician is always recorded. AD-side attribution `[OPEN → T-0007]` |
 | Help Desk Reset Password Console | ADM-136 | Actions `helpdesk.*` + CallerVerification | ENH-09 verification in the same audit event |
@@ -1109,7 +1182,7 @@ Every other entity is ✓ in all three profiles, with the same states and invari
 | Q5 | How admin LDAP filters (ADM-097) map onto inventory datasets versus live scoped search | reporting-engineer, report builder spec | DM-71 |
 | Q6 | Operation state names and transition guarantees | solution-architect, T-0047 | DM-41, DM-42 (this file follows T-0047) |
 | Q7 | History row shape, partitioning and index cost at scale | backend-engineer, T-0026 | DM-18 |
-| Q8 | Lab confirmation of every `[LAB: Windows]` claim | test-engineer, T-0051 | DM-16, DM-17, DM-18, DM-23 |
+| Q8 | Lab confirmation of every `[LAB: Windows]` claim, plus whether Cloud Sync populates a user's `onPremisesSecurityIdentifier` | test-engineer, T-0051 | DM-16, DM-17, DM-18, DM-20.I4(c), DM-23 |
 | Q9 | How personal values in append-only records are made erasable (per-subject side record or per-subject crypto-shredding), which attributes count as personal, and what triggers erasure (object purge, an explicit request, the ADM-207 tenant setting). It must be settled before the first audit event is written | solution-architect + security-architect, T-0047 | X11, DM-18.I6, DM-66.I3, DM-80.I4 |
 | Q10 | GPO permission writes (ADM-077): add a SYSVOL path that keeps the GPT folder DACL consistent with the GPC's, or ship v1 GPO delegation read-only | product-manager (GPO spec, via T-0031) + solution-architect | DM-23.I7 |
 
@@ -1173,7 +1246,27 @@ AC2 was re-checked by script: every ADM ID in scope lock §3.3 (123 IDs) appears
 | G8 | Anchor on `oid`+`tid`; `onprem_sid` is synced-only and changes on a move; immutable ID is not a reliable anchor | Applied: DM-30.I5 |
 | G9 | `securityEnabled = true` is the right test but admits some M365 and mail-enabled groups. Public groups must grant nothing | Applied: DM-36.I2, plus the AD self-membership analogue referred to T-0007 |
 
+- 2026-10-02 · factory-director · round-2 spec review, rejected with 1 must-fix and 1 optional
+  item. Both were applied. The director noted the threat on T-0007.
+
+| # | Finding | Disposition |
+| --- | --- | --- |
+| S1 | A forged correlation grants AD-side authority. `onPremisesImmutableId` can be written on cloud-only users, and DM-20 matched on it without requiring the Entra object to be synced, so an Entra admin could stamp an unsynced AD admin's anchor on a cloud-only user, sign in by SSO and inherit that admin's AD group grants (DM-36.I2). In reverse, `include_correlated` reached stamped cloud-only users (DM-35.I6) | Applied: DM-20.I4 makes `matched` the only authorizing state. The gate checks (a) the object is synced, (b) it is not cloud-managed, (c) the SID corroborates the anchor, (d) the domain matches and the HybridLink is confirmed, (e) the anchor is unambiguous and (f) the tenant blocks cloud-object takeover. Anything else is `candidate`: shown, never authorizing. DM-20.I5 re-checks the gate live at sign-in and at Plan. DM-20.I6 names the residual risk (control of the sync client, the sync-feature settings or SOA transfer) for T-0007. DM-20 `source_of_authority` is now derived and the lifecycle follows the gate. DM-21.I2: a discovered HybridLink cannot authorize until an admin confirms it. DM-30.I5, DM-35.I6, DM-36.I2 and the §9 row count only `matched` correlations. ad-expert confirmation below |
+| S2 | Optional: does a GpLink edge keep its identity across a reorder? | Applied: DM-23.I2. Edges are a projection of the current `gPLink` value and are re-created on every change; nothing references an edge, and history is the `gPLink` ChangeRecord |
+
+- 2026-10-02 · ad-expert · confirmation of the S1 gate (DM-20.I4–I6) in the foreground.
+  Documentation only, no lab run. There were 4 findings: 3 fixes and 1 confirmation with
+  additions. **All 4 were applied.**
+
+| # | Finding | Disposition |
+| --- | --- | --- |
+| H1 | `onPremisesSyncEnabled` is the right gate, and it and `onPremisesSecurityIdentifier` are read-only in Graph, but `onPremisesImmutableId` can be written by privileged roles, so the attack holds. `null` also means SOA transferred or an SOA rollback pending, not only "never synced" | Applied: DM-20.I4(a) |
+| H2 | After an SOA transfer of a user or group, `isCloudManaged` is `true`, `onPremisesSyncEnabled` is `null` and sync stops flowing changes. The transfer needs Hybrid Administrator. Admins then maintain the on-premises properties, including the SID, through Graph, so the SID becomes admin-writable | Applied: DM-20.I4(b), with (a) as the primary check, and (c) states the SID is trusted only under (a). Hybrid Administrator is in the DM-20.I6 residual |
+| H3 | OK on SID corroboration, with conditions: it fails closed until the next sync after a cross-domain move; look up the anchor by both `objectGUID` and `ms-DS-ConsistencyGuid`; in account-and-resource-forest topologies, resolve the anchor in the forest that holds the enabled account; an anchor that matches two AD objects must make the correlation `candidate`. Cloud Sync populating the SID is `[UNVERIFIED]` | Applied: DM-20.I1a lookup, I4(c), I4(e), I5. The Cloud Sync SID claim goes to T-0051 |
+| H4 | Hard-match takeover: a pre-created cloud user becomes synced when the target enters sync scope, every check then passes, and the attacker's sign-in methods stay. Require `blockCloudObjectTakeoverThroughHardMatchEnabled`. A confirmed HybridLink binds only the tenant, so also match `onPremisesDomainName`. Treat Hybrid Administrator as Tier 0 `[UNVERIFIED]` | Applied: DM-20.I4(d) and (f), I6. The architect extended (f) to `blockSoftMatchEnabled` as well, because soft match (UPN) gives the same takeover and Microsoft recommends keeping it blocked. Hybrid delegation therefore needs both tenant flags on; the connection health check names the fix. Noted on T-0007 so security-architect can tighten or relax it |
+
 ## Changelog
 
 - 2026-10-02 · v0 drafted (T-0006). The ad-expert review was applied (§12, 13 findings), Q3 was closed, and the status moved to `review`.
 - 2026-10-02 · v0 rework after the director's review (§12 R1–R5, N1–N3): DM-23 GpLink, Entra delegation scopes, X11 erasure, derived append-only states, SSO `directory_ref`. Q9 and Q10 were added.
+- 2026-10-02 · v0 round-2 rework (§12 S1, S2, H1–H4): DM-20 authorizing gate (`candidate` vs `matched`, I4–I6), DM-21.I2, and only `matched` correlations count in DM-30.I5, DM-35.I6 and DM-36.I2. DM-23.I2 now says what edge identity means across a reorder.
