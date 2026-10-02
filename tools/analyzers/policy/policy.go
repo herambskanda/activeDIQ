@@ -42,6 +42,32 @@ const (
 	TLSConfig = "**/tlsconfig"
 )
 
+// UnitHomes maps each FF-SP4 corpus unit to the home package patterns of its implementation. The
+// corpus gate (tools/fitness/corpus) fails when Go code exists in a home but no implementation entry
+// in testdata/safe-primitives/implementations.json declares the unit, so an implementation cannot
+// exist without running the corpus. P6 (sd.read, sd.write) has no home here yet: its packages are
+// named by the build tickets T-0118 and T-0135.
+var UnitHomes = map[string][]string{
+	"ldapfilter":      {LDAPFilter},
+	"dn":              {DN},
+	"attr.guid":       {Attr},
+	"attr.sid":        {Attr},
+	"attr.filetime":   {Attr},
+	"attr.gentime":    {Attr},
+	"attr.flags":      {Attr},
+	"attr.unicodepwd": {Secret},
+	"psx":             {Psx},
+	"pslit":           {Pslit},
+	"proc":            {Proc},
+	"sql":             {Store},
+	"cellsafe":        {Cellsafe},
+	"csv":             {ExportCSV},
+	"xlsx":            {ExportXLS},
+	"html":            {Htmlx},
+	"mail":            {Mail},
+	"pdf":             {ExportPDF},
+}
+
 // SidecarHost is where the .NET PowerShell SDK may be referenced.
 const SidecarHost = "sidecars/pshost"
 

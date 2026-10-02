@@ -1,0 +1,19 @@
+{"id":"PSQ-01","primitive":"pslit","call":"Quote","args":{"value":{"utf8":"O'Brien"}},"expect":{"render":"'O''Brien'"},"hostile":true,"source":"safe-primitives §6.2 PSQ-01","verified":"doc"}
+{"id":"PSQ-02","primitive":"pslit","call":"Quote","args":{"value":{"utf8":"O‘Brien"}},"expect":{"render":"'O‘‘Brien'"},"hostile":true,"source":"safe-primitives §6.2 PSQ-02","verified":"doc"}
+{"id":"PSQ-03","primitive":"pslit","call":"Quote","args":{"value":{"utf8":"O’Brien"}},"expect":{"render":"'O’’Brien'"},"hostile":true,"source":"safe-primitives §6.2 PSQ-03","verified":"doc"}
+{"id":"PSQ-04","primitive":"pslit","call":"Quote","args":{"value":{"utf8":"O‚Brien"}},"expect":{"render":"'O‚‚Brien'"},"hostile":true,"source":"safe-primitives §6.2 PSQ-04","verified":"doc"}
+{"id":"PSQ-05","primitive":"pslit","call":"Quote","args":{"value":{"utf8":"O‛Brien"}},"expect":{"render":"'O‛‛Brien'"},"hostile":true,"source":"safe-primitives §6.2 PSQ-05","verified":"doc"}
+{"id":"PSQ-06","primitive":"pslit","call":"Quote","args":{"value":{"utf8":"a’; Start-Process calc; ’"}},"expect":{"render":"'a’’; Start-Process calc; ’’'"},"hostile":true,"source":"safe-primitives §6.2 PSQ-06","verified":"doc"}
+{"id":"PSQ-07","primitive":"pslit","call":"Quote","args":{"value":{"utf8":"abc’"}},"expect":{"render":"'abc’’'"},"hostile":true,"source":"safe-primitives §6.2 PSQ-07","verified":"doc"}
+{"id":"PSQ-08","primitive":"pslit","call":"Quote","args":{"value":{"utf8":"'’"}},"expect":{"render":"'''’’'"},"hostile":true,"source":"safe-primitives §6.2 PSQ-08","verified":"doc"}
+{"id":"PSQ-09","primitive":"pslit","call":"Quote","args":{"value":{"utf8":"‘’‚‛'"}},"expect":{"render":"'‘‘’’‚‚‛‛'''"},"hostile":true,"source":"safe-primitives §6.2 PSQ-09","verified":"doc"}
+{"id":"PSQ-10","primitive":"pslit","call":"Quote","args":{"value":{"utf8":"$(calc)"}},"expect":{"render":"'$(calc)'"},"hostile":true,"source":"safe-primitives §6.2 PSQ-10","verified":"doc"}
+{"id":"PSQ-11","primitive":"pslit","call":"Quote","args":{"value":{"utf8":"a`'b"}},"expect":{"render":"'a`''b'"},"hostile":true,"source":"safe-primitives §6.2 PSQ-11","verified":"doc"}
+{"id":"PSQ-12","primitive":"pslit","call":"Quote","args":{"value":{"utf8":"“x”"}},"expect":{"render":"'“x”'"},"hostile":true,"source":"safe-primitives §6.2 PSQ-12","verified":"doc"}
+{"id":"PSQ-13","primitive":"pslit","call":"Quote","args":{"value":{"utf8":"–Force"}},"expect":{"render":"'–Force'"},"hostile":true,"source":"safe-primitives §6.2 PSQ-13","verified":"doc"}
+{"id":"PSQ-14#1","primitive":"pslit","call":"Quote","args":{"value":{"utf8":"ʼ"}},"expect":{"render":"'ʼ'"},"hostile":false,"source":"safe-primitives §6.2 PSQ-14#1","verified":"doc"}
+{"id":"PSQ-14#2","primitive":"pslit","call":"Quote","args":{"value":{"utf8":"＇"}},"expect":{"render":"'＇'"},"hostile":false,"source":"safe-primitives §6.2 PSQ-14#2","verified":"doc"}
+{"id":"PSQ-15","primitive":"pslit","call":"Quote","args":{"value":{"utf8":"a\r\nb"}},"expect":{"render":"'a\r\nb'"},"hostile":true,"source":"safe-primitives §6.2 PSQ-15","verified":"doc"}
+{"id":"PSQ-16","primitive":"pslit","call":"Quote","args":{"value":{"utf8":""}},"expect":{"render":"''"},"hostile":false,"source":"safe-primitives §6.2 PSQ-16","verified":"doc"}
+{"id":"PSQ-17#1","primitive":"pslit","call":"Quote","args":{"value":{"hex":"610062"}},"expect":{"error":"NulInString"},"hostile":true,"source":"safe-primitives §6.2 PSQ-17#1","verified":"doc"}
+{"id":"PSQ-17#2","primitive":"pslit","call":"Quote","args":{"value":{"hex":"eda080"}},"expect":{"error":"InvalidUTF16"},"hostile":true,"source":"safe-primitives §6.2 PSQ-17#2","verified":"doc"}

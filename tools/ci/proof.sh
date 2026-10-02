@@ -418,5 +418,89 @@ for ln in 4 5 7 8 9 10; do
 done
 must_pass "eslint on the real sources" npm --prefix web run --silent lint
 
+# --- fitness-corpus (safe-primitives FF-SP4, FF-SP5, FF-SP8) and fitness-oracles (FF-SP6) -------
+# The real CLIs on throw-away trees. The corpus gate's own tests (go test ./tools/fitness/corpus) cover
+# every rule and a real Go implementation end to end; these are the command-line proofs.
+cpbin="$tmp/corpus"; orbin="$tmp/oracles"
+go build -o "$cpbin" ./tools/fitness/corpus
+go build -o "$orbin" ./tools/fitness/oracles
+cpt="$tmp/cp"
+# fresh_cp <unit> <hostile-count>: a repository with one corpus unit of that many hostile records and a lock.
+fresh_cp() {
+  rm -rf "$cpt"; mkdir -p "$cpt/testdata/safe-primitives"
+  printf 'module cp.test\n\ngo 1.27.0\n' >"$cpt/go.mod"
+  local i; : >"$cpt/testdata/safe-primitives/$1.jsonl"
+  for i in $(seq -w 1 "$2"); do
+    printf '{"id":"X-%s","primitive":"%s","call":"C","args":{"value":{"utf8":"v%s"}},"expect":{"render":"r%s"},"hostile":true,"source":"proof","verified":"doc"}\n' "$i" "$1" "$i" "$i" >>"$cpt/testdata/safe-primitives/$1.jsonl"
+  done
+  "$cpbin" -root "$cpt" -update-lock >/dev/null
+}
+# A non-Go implementation: impl.sh <unit> [skip-id] writes the run report the Go kit would write.
+write_impl() {
+  cat >"$cpt/impl.sh" <<'SH'
+#!/bin/sh
+unit=$1; skip=$2
+f=testdata/safe-primitives/$unit.jsonl
+sha=$(shasum -a 256 "$f" | cut -d' ' -f1)
+{
+  printf '{"impl":"sh-impl","unit":"%s","corpus_sha256":"%s","ran":[' "$unit" "$sha"
+  sep=""
+  for id in $(sed -E 's/.*"id":"([^"]+)".*/\1/' "$f"); do
+    [ "$id" = "$skip" ] && continue
+    printf '%s{"id":"%s","ok":true,"actual":{"render":"x"}}' "$sep" "$id"; sep=","
+  done
+  printf '],"skipped":['
+  [ -n "$skip" ] && printf '{"id":"%s","why":"not routed"}' "$skip"
+  printf ']}\n'
+} >"$SAFEPRIM_REPORT_DIR/corpus-sh-impl-$unit.json"
+SH
+  # write_impl <unit> <skip-id> [extra fields of the implementation] [extra top-level fields]
+  printf '{"implementations":[{"name":"sh-impl","language":"sh","tier":"S","units":["%s"],"command":["sh","impl.sh","%s","%s"]%s}]%s}\n' "$1" "$1" "$2" "${3:-}" "${4:-}" >"$cpt/testdata/safe-primitives/implementations.json"
+}
+corpus() { "$cpbin" -root "$cpt" "$@"; }
+
+fresh_cp dn 9
+must_fail_with "FF-SP4 on a unit with 9 hostile records" 'dn.jsonl: FF-SP4 \[min-hostile\]: unit dn has 9 records with "hostile": true, needs 10' corpus -checks FF-SP4 -no-run
+fresh_cp dn 10
+must_pass "FF-SP4 on a unit with 10 hostile records" corpus -checks FF-SP4 -no-run
+sed -i.bak '/"id":"X-01"/d' "$cpt/testdata/safe-primitives/dn.jsonl"; rm -f "$cpt/testdata/safe-primitives/dn.jsonl.bak"
+must_fail_with "FF-SP4 on a record that disappeared without a superseding one" 'FF-SP4 \[record-removed\]: record X-01 disappeared without a superseding record' corpus -checks FF-SP4 -no-run
+
+fresh_cp dn 10; write_impl dn X-03 ""
+must_fail_with "FF-SP4 on an implementation that skips a record of its unit" 'FF-SP4 \[skipped-record\]: implementation sh-impl skips record X-03 of unit dn' corpus -checks FF-SP4
+fresh_cp dn 10; write_impl dn "" ""
+must_pass "FF-SP4 on an implementation that runs every record" corpus -checks FF-SP4
+
+fresh_cp proc 10; mkdir -p "$cpt/internal/platform/proc"; printf 'package proc\n' >"$cpt/internal/platform/proc/proc.go"
+must_fail_with "FF-SP4 on Go code in a primitive's home that no implementation declares" 'FF-SP4 \[undeclared-implementation\].*declares proc' corpus -checks FF-SP4 -no-run
+
+fresh_cp dn 10; write_impl dn "" ""
+must_fail_with "FF-SP5 on an implemented unit with no fuzz target" 'FF-SP5 \[no-fuzz-target\]: unit dn of implementation sh-impl has no corpus-seeded fuzz target' corpus -checks FF-SP5 -no-run
+write_impl dn "" "" ',"fuzz":[{"implementation":"sh-impl","unit":"dn","target":"fuzz-dn","properties":["roundtrip","noUnescapedSpecial"],"command":["true"]}]'
+must_pass "FF-SP5 on an implemented unit with a declared fuzz target" corpus -checks FF-SP5 -no-run
+must_fail_with "FF-SP5 refuses a nightly fuzz run shorter than 10 minutes" 'at least 10m0s per target' corpus -fuzz -nightly -fuzztime 1m
+
+# FF-SP8: the constant-argv test of a proc implementation reports a request-dependent argv.
+fresh_cp proc 10
+cat >"$cpt/argv.sh" <<'SH'
+#!/bin/sh
+printf '{"impl":"sh-impl","requests":500,"mismatches":%s}\n' "$1" >"$SAFEPRIM_REPORT_DIR/argv-sh-impl-argv.json"
+SH
+write_impl proc "" ',"argvCommand":["sh","argv.sh","[\"request 7 (seed 1): argv has 3 elements, the manifest has 2\"]"]'
+must_fail_with "FF-SP8 on an argv that differs from the manifest's constant argv" 'FF-SP8 \[argv-differs\].*for 1 of 500 random requests' corpus -checks FF-SP4,FF-SP8
+write_impl proc "" ',"argvCommand":["sh","argv.sh","[]"]'
+must_pass "FF-SP8 on an argv equal to the manifest's constant argv" corpus -checks FF-SP4,FF-SP8
+
+# FF-SP6: the real PowerShell parser (pwsh, or the pinned container) and go-ldap's parser.
+orc="$tmp/orc"; rm -rf "$orc"; mkdir -p "$orc/testdata/safe-primitives"
+cp testdata/safe-primitives/pslit.jsonl "$orc/testdata/safe-primitives/"
+must_pass "FF-SP6 pslit oracle on the real pslit corpus (PowerShell Parser::ParseInput)" "$orbin" pslit -root "$orc"
+sed -i.bak "s/a’’; Start-Process calc; ’’'/a’; Start-Process calc; ’'/" "$orc/testdata/safe-primitives/pslit.jsonl"; rm -f "$orc/testdata/safe-primitives/pslit.jsonl.bak"
+must_fail_with "FF-SP6 pslit oracle on an ASCII-only escaper's PSQ-06" 'pslit: FF-SP6 \[pslit\] PSQ-06: output' "$orbin" pslit -root "$orc"
+printf '%s\n' '{"id":"LF-01","primitive":"ldapfilter","call":"Eq","args":{"attr":"cn","value":{"utf8":"*)(uid=*"}},"expect":{"render":"(cn=\\2a\\29\\28uid=\\2a)"},"hostile":true,"verified":"doc"}' >"$orc/testdata/safe-primitives/ldapfilter.jsonl"
+must_pass "FF-SP6 ldapfilter oracle on an escaped injection" "$orbin" ldapfilter -root "$orc"
+printf '%s\n' '{"id":"LF-01","primitive":"ldapfilter","call":"Eq","args":{"attr":"cn","value":{"utf8":"*)(uid=*"}},"expect":{"render":"(cn=*)(uid=*)"},"hostile":true,"verified":"doc"}' >"$orc/testdata/safe-primitives/ldapfilter.jsonl"
+must_fail_with "FF-SP6 ldapfilter oracle on an unescaped injection" 'LF-01: .*go-ldap rejects the rendered filter' "$orbin" ldapfilter -root "$orc"
+
 if [ "$fails" -ne 0 ]; then echo "ci-proof: $fails proof(s) failed" >&2; exit 1; fi
 echo "ci-proof: every gate rejects its violation and accepts clean input"
