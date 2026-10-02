@@ -718,7 +718,7 @@ All effort figures are **Estimates**, summed from the FEAS complexity bands.
   operator that the landscape finds no one shipping for on-prem AD. It is the most differentiated
   set and the least certain to land on time.
 
-### 3.3 Recommendation (for CEO decision, not decided)
+### 3.3 Recommendation (decided 2026-10-02: the set of 5, D-0004)
 
 **Choose the set of 5 as the signature for the pilot release.** Sequence the three set-of-8 additions
 as the next milestone, in this order:

@@ -394,7 +394,7 @@ Any external case study or datasheet is a CEO decision (CV §6.3).
 | Asset | Relation |
 |---|---|
 | **UEM** (sister product) | Shared conventions and thesis (UEM §1, §4–5).<br>Shared **platform agent**: one agent process per endpoint, with module contracts agreed with the UEM/PatchIQ owners (FEAS §6.1 #6, App. A #4).<br>House stack: Go / React / PostgreSQL (FEAS §0).<br>Possible later cross-sell, since both products sell to the same IT teams `[ASSUMPTION]`. Not in scope now |
-| **Design system** | Default brand: "Technical & Precise", monochrome ink/paper, one signal colour (Electric Indigo `#6E5BFF`), Geist + Geist Mono (DS). It applies until the CEO decides otherwise (§13 Q7). USP-3 depends on executing it well |
+| **Design system** | **Separate brand** (D-0005, 2026-10-02): activeDIQ has its own palette and identity, independent of skenzeriq. The direction is chosen from clickable previews (T-0042). The skenzeriq design system (DS) is a craft reference only. USP-3 depends on executing it well |
 | **PatchIQ lessons** | Architecture before implementation; safe primitives; extension points as the only on-ramp; no single-customer topology in core; no fabricated UI data (PM §11; §7.2 above) |
 
 ## 12. Key risks
@@ -415,9 +415,11 @@ Any external case study or datasheet is a CEO decision (CV §6.3).
 
 ## 13. Open strategic questions (CEO decisions)
 
-Each recommendation is the strategy team's and is **not decided**.
+Each recommendation is the strategy team's and is **not decided** unless the question carries a **Decided** line. On 2026-10-02 the CEO decided Q1, Q2, Q4 and Q7, and the platform question in §11.
 
 ### Q1: v1 scope. Which ManageEngine product do we displace first?
+
+**Decided 2026-10-02 (D-0001): (a)**, as recommended, with Entra/M365 provisioning in v1.
 
 **Options**
 - **(a) ADMP first.** Management, delegation, workflow, reports, plus web SSPR. Matches FEAS
@@ -433,6 +435,8 @@ Each recommendation is the strategy team's and is **not decided**.
   switches nothing off.
 
 ### Q2: Deployment. Which profile ships first?
+
+**Decided 2026-10-02 (D-0002): (a)**, self-hosted first and SaaS-ready (ADR-0002).
 
 **Options**
 - **(a) Self-hosted** (Windows MSI + Linux/Docker) first.
@@ -453,6 +457,8 @@ Each recommendation is the strategy team's and is **not decided**.
 - P-D answers the perpetual base and the repricing fear.
 
 ### Q4: Signature enhancement set
+
+**Decided 2026-10-02 (D-0004): the set of 5**, as recommended.
 
 **Options:** 3, 5 or 8 enhancements (enhancement catalog §3).
 
@@ -482,6 +488,8 @@ Each recommendation is the strategy team's and is **not decided**.
 Store the profiles in `knowledge/business/partnerships/`.
 
 ### Q7: Brand and UI direction
+
+**Decided 2026-10-02 (D-0005): (c) a separate brand.** The CEO did not take the recommended (b). The palette, identity and UI style are chosen from three clickable previews (T-0042).
 
 **Options**
 - **(a) The skenzeriq design system as is.**

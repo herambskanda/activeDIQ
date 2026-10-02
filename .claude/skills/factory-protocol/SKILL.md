@@ -50,7 +50,7 @@ Below, `<id>` is your ticket and `<role>` is your agent name.
 | `in_progress` · `test` | owner | Tests that fail for the right reason before the fix exists; fixtures only under test paths. |
 | `in_progress` · `chore` `ops` | owner | The change plus proof it works (CI run, command output). |
 | `in_progress` · `spec` | owner | Spec under `knowledge/product/specs/` or `knowledge/development/` with frontmatter, platform matrix, parity refs. `feature-spec` skill. |
-| `in_progress` · `design` | owner | Flows, mockups on `../design-system/tokens.css`, states incl. empty/error/loading. |
+| `in_progress` · `design` | owner | Flows, mockups on activeDIQ's own tokens (greyscale wireframes until T-0043; never the skenzeriq brand, per D-0005), states incl. empty/error/loading. |
 | `in_progress` · `docs` `video` | owner | Content from the **running product**; `docs-style` / `video-production` skill. |
 | `in_progress` · `research` `proposal` | owner | Every external claim with an inline URL; unverified ones tagged `[UNVERIFIED]`. |
 | `in_progress` · `decision-prep` | owner | A filed decision meeting the `ceo-decisions` bar; advance note names the D-id. |

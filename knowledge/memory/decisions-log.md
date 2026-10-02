@@ -10,6 +10,14 @@ Newest first. `date · who · decision · why/source`. CEO decisions also live o
 architecture decisions as ADRs in knowledge/development/decisions/. Roll entries older than the
 current milestone into archive/ when this file nears its budget.
 
+- 2026-10-02 · CEO · **D-0005 Brand: a separate brand**, "Own palette and identity, independent of skenzeriq". Answered on the board with no note. It overrides the recommendation, which was a sub-brand on skenzeriq tokens. The factory's calls inside the answer went out as notice D-0008, which the CEO may veto:
+  - Brand and UI style are picked together from three previews (T-0042, which replaces the cancelled T-0010).
+  - No skenzeriq Electric Indigo or Geist.
+  - skenzeriq appears only as publisher and legal entity.
+  - Company documents stay on the skenzeriq brand; product artefacts use activeDIQ's.
+  - The Factory Board stays on skenzeriq.
+  - A name screen comes first (T-0044).
+  ADR-0002 is amended: the design system is no longer shared. The design system is rebuilt in T-0043. (product-strategy.md §13 Q7; knowledge/development/decisions/0002-deployment-model.md)
 - 2026-10-02 · factory · **ADR-0002 ratified** (strategic fork applying D-0002/D-0003; notice D-0007 lists the 8 calls made inside them, CEO may veto): `windows` (MSI) and `linux-oci` ship in v1, `saas` composed and CI-tested but not shipped; profiles are manifests, never conditionals; `tenant_id` + forced RLS from migration 1, one tenant per self-hosted install; directories only through the connector contract (embedded + remote transports), credentials only in the connector; Entra via the customer's own app registration, cert sealed under the tenant key; server never on a DC, delegated AD rights only, no Entra admin-role rights (ADM-168 role removal out of v1); server on WS2019+ or Linux, managed DCs WS2016–2025; standalone from UEM except the `skenzeriq.agent.v1` host contract. Enforced by `fitness-tenancy` (T-0036) and `fitness-profiles` (T-0038). (knowledge/development/decisions/0002-deployment-model.md)
 - 2026-10-02 · factory · **ADR-0001 ratified** (technical; notice D-0006, CEO may veto): Go (cgo-free) for server and agents; Rust + windows-rs for the LSASS/LogonUI DLLs, C++ only via the rule-4 spike gate; PostgreSQL the only stateful service (pgx/sqlc, River pending legal Check); .NET 10/PowerShell 7.6 sidecars by declaration only; macOS/PAM logon components out of scope. Enforced by `fitness-stack` (T-0022). (knowledge/development/decisions/0001-technology-stack.md)
 - 2026-10-02 · CEO · D-0004 Signature set of 5 beyond parity: ENH-01 task-first console, ENH-04 preview + undo, ENH-07 automatic updates, ENH-05 report builder, ENH-09 help-desk caller verification; plus switch enablers and Tier-0 proof. ENH-11 → ENH-22 → ENH-20 come next. (knowledge/business/strategy/enhancement-catalog.md §3)

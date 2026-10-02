@@ -1,2 +1,3 @@
 - [Check CEO answers vs draft time on reviews](review-check-ceo-answers-vs-draft-time.md) — check vs every answered D-id (not just the ticket's), RLS bypasses, notice completeness
 - [ADR ratification flow](adr-ratification-flow.md) — ratify in one pass after must-fixes close; nits go to the fitness ticket; fitness/accepted_on wait for accepted
+- [Taste questions need previews](taste-questions-need-previews.md) — brand Qs as text get overridden (D-0005); apply no-note overrides literally + one notice, never ask back

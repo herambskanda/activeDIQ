@@ -8,6 +8,7 @@ budget: 120 lines
 
 Newest first. One dated line per material change; link the source.
 
+- 2026-10-02 · **Brand: activeDIQ is a separate brand** (D-0005), independent of skenzeriq. The UI look is not chosen yet. Next comes three brand-and-UI previews and a CEO pick (T-0042), then the activeDIQ design system (T-0043). Until then, wireframes stay greyscale. (knowledge/business/strategy/product-strategy.md §13 Q7)
 - 2026-10-02 · **Deployment model ratified** (ADR-0002): Windows installer + Linux/OCI in v1, SaaS composed in CI but not shipped; multi-tenant from migration 1; standalone from UEM with a shared agent-host contract. Stack and deployment ADRs are both ratified, so product code may start; first up are the tenancy foundation (T-0037) and the fitness checks T-0036/T-0038. (knowledge/development/decisions/0002-deployment-model.md)
 - 2026-10-02 · **Stack ratified** (ADR-0001): Go server/agents, Rust in-process DLLs, PostgreSQL only. Product code still waits for ADR-0002 (T-0003). Main risk under test first: go-krb5 channel-binding spike T-0023. (knowledge/development/decisions/0001-technology-stack.md)
 - 2026-10-02 · **Direction set by the CEO** (D-0001…D-0004): v1 = ADManager Plus replacement + Entra/M365 provisioning, self-hosted first and SaaS-ready, standalone from UEM, signature set of 5. Scope lock and roadmap in progress (knowledge/business/scoping/).

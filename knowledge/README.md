@@ -31,7 +31,7 @@ knowledge/
 ├── product/           WHAT we build, precisely
 │   ├── prd/                 one PRD per module/epic
 │   ├── specs/               functional + API + data-model specs, UX flows
-│   ├── design-system/       how activeDIQ applies the skenzeriq design system
+│   ├── design-system/       activeDIQ's own design system and brand (D-0005)
 │   └── datasheets/          customer-facing one-pagers, battlecards, RFP answers
 └── development/       HOW we build it — the agent working set
     ├── architecture/        system architecture, module contracts, deployment profiles, feasibility

@@ -6,7 +6,7 @@ status: ratified
 owner: heramb
 kind: strategic-fork
 ticket: T-0003
-decision: D-0002, D-0003, D-0007
+decision: D-0002, D-0003, D-0005, D-0007
 ratified_on: 2026-10-02
 ratified_by: factory-director
 ---
@@ -17,7 +17,8 @@ ratified_by: factory-director
 **Kind:** strategic fork. The direction is the CEO's; the detail is the factory's.
 **Deciders:** heramb (D-0002, D-0003); solution-architect (author); factory-director (ratifier). **Ticket:** T-0003. **Parity / scope refs:** ADM-158, ADM-209, ADM-210, ADM-213, RMP-046 (platform hygiene, updates, HA).
 
-> Amendments (ratified ADRs only): none.
+> Amendments (ratified ADRs only):
+> - 2026-10-02 · factory-director · **D-0005** (CEO): activeDIQ is a **separate brand**. In "The boundary with UEM", the *skenzeriq design system* row changes from *Consumed, never forked* to *Not shared*: activeDIQ keeps its own tokens and brand guidelines in this repository (T-0043), and `../design-system/` is not a build dependency. No other rule changes. Where Context quotes D-0003's "design system", that is historical.
 
 ## Context
 
@@ -98,7 +99,7 @@ The same rows apply to every profile. A self-hosted install simply has one tenan
 | --- | --- | --- |
 | Principles, knowledge-base conventions, ADR ladder | **Adopted** | As written in UEM ADR-0001/0002 and `knowledge/README.md` |
 | House stack (Go, React/TypeScript, PostgreSQL) | **Adopted** | ADR-0001 |
-| skenzeriq design system | **Consumed, never forked** | <ul><li>A pinned, build-time dependency on `../design-system/`.</li><li>Token changes go upstream.</li></ul> |
+| skenzeriq design system | **Not shared** (amended 2026-10-02, D-0005) | <ul><li>activeDIQ is a separate brand. Its tokens and brand guidelines live in this repository (T-0043).</li><li>There is no build-time dependency on `../design-system/`. Its craft rules (grid, accessibility, admin patterns) may be followed by reference.</li></ul> |
 | **Agent host and module contract** | **Shared by contract** | <ul><li>Protobuf package `skenzeriq.agent.v1` covers the host: enrollment, identity, module lifecycle, update, health, outbox. It carries no AD-specific type.</li><li>activeDIQ modules (`ad-dc`, `fileserver`, `mgmt-helper`) use `activediq.<module>.v1`.</li><li>The host is built in our repository, under the extractable platform root.</li><li>UEM's owners review the contract before it is frozen (before M3). The draft starts from PatchIQ's `agent.Module` (postmortem §10) and UEM ADR-0002.</li><li>Whichever product ships first ships the host. The other plugs modules into it.</li></ul> |
 | Repository, Go module, build and release train, installer, database, tenancy store, authn/RBAC, licensing | **Not shared** | <ul><li>activeDIQ installs and runs with **no UEM component, service or repository present**.</li><li>It imports no UEM or PatchIQ Go module and makes no runtime call to a UEM service.</li></ul> |
 | Common core: tenancy, authn/RBAC core, our audit trail, job-engine wrapper, agent host, update client, key provider | **Converge later** (D-0003) | <ul><li>Lives under one platform root, provisionally `internal/platform/`; T-0004 fixes the path.</li><li>That root imports no directory-domain or module package, so it can be extracted.</li><li>Convergence is a superseding ADR.</li></ul> |

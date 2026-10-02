@@ -72,7 +72,7 @@ Row counts per milestone (must / should / could), from the CSV:
 1. the binding architecture decisions;
 2. a **walking skeleton**: the real UI calls the real API, which reads a real lab DC under WS2025
    hardening with no Domain Admin;
-3. the activeDIQ design direction on the skenzeriq design system;
+3. the activeDIQ brand and design direction (a separate brand, D-0005);
 4. what the first partners actually run.
 
 **Epics**
@@ -85,7 +85,7 @@ Row counts per milestone (must / should / could), from the CSV:
 | E1.4 v1-gating spikes (**exit gates**, FD-10) | (a) LDAP bind under signing + CBT "Always" on WS2025 and Samba with no 2887/3039/3074 events. (b) Graph + EXO cert-auth smoke test from a Linux container. (c) Effective-permissions golden tests for ENH-08. (d) Windows LAPS decryption from Linux `[UNVERIFIED]` | FEAS §6.2, §6.3 Phase 0, §1.1 |
 | E1.5 Later long-pole spikes (**started, not gating M1**) | Password filter in audit mode; credential provider V2; event ingest at 5k eps synthetic; GPO parsing of 50 real GPOs. **Microsoft LSA plug-in signing enrolment in week 1** `[CEO-PENDING Q5]` | FEAS §6.2 |
 | E1.6 Foundation skeletons | Tenant + RBAC core, safe-primitive library, directory connector, job engine (dry-run/diff/approve/execute/verify), event-pipeline skeleton, public API + OpenAPI codegen | FEAS §6.1 #1–5, #7 |
-| E1.7 Design direction | activeDIQ on the skenzeriq tokens. A task-first console concept (ENH-01). Interaction budgets for the top-20 admin and help-desk tasks. The help-desk reset + caller-verification flow (ENH-09). A Storybook prototype; fixtures are allowed only in Storybook and tests (factory/OPERATING-MODEL.md quality rules) | STRAT §11, §13 Q7; `../design-system/README.md` |
+| E1.7 Design direction | activeDIQ's own brand and tokens (D-0005: a separate brand). Directions are previewed in T-0042 and the design system is built in T-0043. A task-first console concept (ENH-01). Interaction budgets for the top-20 admin and help-desk tasks. The help-desk reset + caller-verification flow (ENH-09). A Storybook prototype; fixtures are allowed only in Storybook and tests (factory/OPERATING-MODEL.md quality rules) | STRAT §11, §13 Q7; D-0005 |
 | E1.8 UX baseline | Time 10 common tasks on the lab ADMP 8043 install. This is the "before" for every later demo, and it re-measures ADM §4.2's indicative page weights `[TODO]` | CV §6.2; ADM §4.2 |
 | E1.9 Partner discovery | Send the [discovery questionnaire](../partnerships/partner-discovery-questionnaire.md) to the named accounts `[CEO-PENDING Q1]`. File profiles in `partnerships/`. Re-weight the v1 must rows from real usage | MATRIX research gap #1; STRAT §10.1 |
 | E1.10 Security programme start | Threat model v0, SBOM in CI, disclosure policy draft (ENH-10). Choose the pentest vendor `[CEO-PENDING Q4]` | CV §6.2; FEAS §6.3 |

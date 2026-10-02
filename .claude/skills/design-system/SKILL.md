@@ -1,9 +1,15 @@
 ---
 name: design-system
-description: Build or review activeDIQ UI on the skenzeriq design system — tokens only, type, 4 px grid, signal-colour discipline, the standard admin patterns (tables, drawers, wizards, impact preview), states, WCAG 2.2 AA, copy. Use for any UI design or code.
+description: Build or review activeDIQ UI — tokens only (activeDIQ is a separate brand, D-0005; its own tokens arrive with T-0043), type, 4 px grid, signal-colour discipline, the standard admin patterns (tables, drawers, wizards, impact preview), states, WCAG 2.2 AA, copy. Use for any UI design or code.
 ---
 
 # Design system — how activeDIQ applies skenzeriq
+
+> **D-0005 (CEO, 2026-10-02): activeDIQ is a separate brand**, with its own palette and identity,
+> independent of skenzeriq. T-0043 will rebase this skill on activeDIQ's own tokens and guidelines.
+> Until then, use it for **craft and patterns only**: the principles, grid, states, `patterns.md`,
+> accessibility and copy. Do **not** treat the `--sk-*` colours, Electric Indigo or Geist as activeDIQ's
+> brand. Wireframes stay greyscale. Brand candidates live in T-0042's previews.
 
 Source of truth: `../design-system/README.md`, `../design-system/tokens.css` (`--sk-*`), and
 `../design-system/brand-guidelines.html` (open it in a browser; §01 principles, §08 voice and
