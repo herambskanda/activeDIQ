@@ -40,6 +40,19 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
 
 - **`gofmt`**: run `make fmt`.
 - **`go mod tidy -diff`**: run `go mod tidy` and commit `go.mod`/`go.sum`.
+- **`fitness-stack`** (F1–F5, ADR-0001): the message names the file, the check and the ADR rule.
+  `make fitness-stack` re-runs it alone; `go run ./tools/fitness/stack -checks F1,F5 -skip-build`
+  runs a subset without the cross-build. The fix is in the code, not the manifest, unless a real
+  exception is needed: that takes a ratified ADR first, then a manifest entry
+  (`standards/ci-gates.md`, "fitness-stack in one page").
+  - F1 on a new file: move it into its zone, or rewrite it in the zone's language.
+  - F2 `build tag`: custom tags are for tests (`lab`, `windowslab`, in `_test.go` only). OS-specific
+    Go goes in a declared platform-adapter package.
+  - F3: remove the import. A second stateful service needs its own ADR.
+  - F4 `no licence-register row`: add the row to the register first (CLAUDE.md rule 9), exact
+    package path in backticks in the Project cell. A transitive copyleft hit means picking another
+    library, or an ADR plus a `licenceExceptions` entry.
+  - F5: set the ADR's status through the `adr` skill first.
 - **`fitness-modules`**: the message names the file, line and blueprint rule. Fix the import. Do not
   edit the rule to pass; a rule changes only by amending the blueprint/ADR.
 - **`npm ci` fails with a lockfile error**: `web/package.json` and the lockfile disagree; run

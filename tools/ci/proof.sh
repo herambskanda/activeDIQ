@@ -77,6 +77,93 @@ must_fail_with "fitness-modules on a platform package importing the directory do
 printf 'package kernel\n' >"$fit/internal/platform/kernel/k.go"
 must_pass "fitness-modules" go run ./tools/fitness/modules -root "$fit"
 
+# --- fitness-stack (ADR-0001 F1-F5), the real CLI on throw-away trees --------------------------
+# One violation per rule, each rejected with the rule's own message; the same tree passes when clean.
+# The banned build flag is assembled from parts so this file does not trip F2's text scan.
+stackbin="$tmp/stack"
+go build -o "$stackbin" ./tools/fitness/stack
+fs="$tmp/fs"
+fresh_stack_tree() {
+  rm -rf "$fs"
+  mkdir -p "$fs/cmd/server" "$fs/knowledge/development/decisions" "$fs/knowledge/business/licensing" "$fs/garage/redis" "$fs/garage/gpl"
+  printf 'module fs.test\n\ngo 1.27.0\n' >"$fs/go.mod"
+  printf 'package main\n\nfunc main() {}\n' >"$fs/cmd/server/main.go"
+  printf -- '---\nstatus: ratified\n---\n' >"$fs/knowledge/development/decisions/0001-stack.md"
+  printf -- '---\nstatus: proposed\n---\n' >"$fs/knowledge/development/decisions/0009-draft.md"
+  printf '| Project | Licence | Use | Mode | Ships | Status |\n| --- | --- | --- | --- | --- | --- |\n| Fine (`example.com/fine`) | MIT | t | Embedded | Yes | **Clear** |\n| Gpl (`example.com/gpl`) | GPL | t | Embedded | Yes | **Clear** |\n| Redis (`github.com/redis/go-redis/v9`) | BSD | t | Embedded | Yes | **Clear** |\n' >"$fs/knowledge/business/licensing/register.md"
+  printf 'module github.com/redis/go-redis/v9\n\ngo 1.27.0\n' >"$fs/garage/redis/go.mod"
+  printf 'package redis\n' >"$fs/garage/redis/r.go"
+  printf 'module example.com/gpl\n\ngo 1.27.0\n' >"$fs/garage/gpl/go.mod"
+  printf 'package gpl\n' >"$fs/garage/gpl/g.go"
+  printf '                    GNU GENERAL PUBLIC LICENSE\n                       Version 3, 29 June 2007\n' >"$fs/garage/gpl/LICENSE"
+  cat >"$fs/manifest.json" <<'JSON'
+{
+  "decisionsDir": "knowledge/development/decisions",
+  "licenceRegister": "knowledge/business/licensing/register.md",
+  "exemptZones": ["knowledge", "garage"],
+  "buildMatrix": ["linux/amd64"],
+  "testTags": ["lab"],
+  "toolchainTags": ["race"],
+  "languageZones": {
+    "go": {"anywhere": true, "deny": ["web", "native"]},
+    "rust": {"allow": ["native"]},
+    "python": {"allow": ["lab", "tools"]},
+    "typescript": {"allow": ["web"]},
+    "javascript": {"allow": ["web"]}
+  },
+  "bannedLanguages": ["java"],
+  "binaries": [{"name": "server", "tier": "S", "package": "./cmd/server"}],
+  "denylist": [{"prefix": "github.com/redis/go-redis", "reason": "Redis client: a second stateful service"}],
+  "exceptions": {"platformAdapters": []}
+}
+JSON
+}
+stack() { "$stackbin" -root "$fs" -manifest manifest.json "$@"; }
+
+fresh_stack_tree
+must_pass "fitness-stack (all of F1-F5, with the cross-build)" stack
+
+fresh_stack_tree; mkdir -p "$fs/svc"; : >"$fs/svc/lib.rs"
+must_fail_with "F1 on a .rs file outside native/" 'svc/lib.rs: F1 \(ADR-0001 rule 1\)' stack -checks F1
+fresh_stack_tree; mkdir -p "$fs/svc"; : >"$fs/svc/gen.py"
+must_fail_with "F1 on a .py file outside lab/ and tools/" 'svc/gen.py: F1 \(ADR-0001 rule 1\)' stack -checks F1
+fresh_stack_tree; mkdir -p "$fs/svc"; : >"$fs/svc/app.mjs"
+must_fail_with "F1 on a .mjs file outside web/" 'svc/app.mjs: F1 \(ADR-0001 rule 1\)' stack -checks F1
+
+fresh_stack_tree; mkdir -p "$fs/internal/x"
+printf '//go:build ignore\n\npackage x\n\nimport "C"\n' >"$fs/internal/x/x.go"
+must_fail_with "F2 on import \"C\" under //go:build ignore" 'internal/x/x.go: F2 \(ADR-0001 rule 2\)' stack -checks F2 -skip-build
+fresh_stack_tree; mkdir -p "$fs/tools"
+printf 'go build %s ./cmd/server\n' "-build""mode=c-shared" >"$fs/tools/dll.sh"
+must_fail_with "F2 on a c-shared build flag in a script" 'tools/dll.sh:1: F2 \(ADR-0001 rule 2\)' stack -checks F2 -skip-build
+fresh_stack_tree; mkdir -p "$fs/internal/x"
+printf 'package x\n' >"$fs/internal/x/x_windows.go"
+must_fail_with "F2 on a GOOS-suffixed file outside a platform adapter" 'x_windows.go: F2 \(ADR-0001 rule 2\)' stack -checks F2 -skip-build
+fresh_stack_tree; mkdir -p "$fs/internal/c"
+printf 'package c\n\n// int one(void) { return 1; }\nimport "C"\n\nfunc One() int { return int(C.one()) }\n' >"$fs/internal/c/c.go"
+printf 'package main\n\nimport _ "fs.test/internal/c"\n\nfunc main() {}\n' >"$fs/cmd/server/main.go"
+must_fail_with "F2 on a package that needs cgo (CGO_ENABLED=0 build)" 'CGO_ENABLED=0 go build \./\.\.\. fails for linux/amd64' stack -checks F2
+
+fresh_stack_tree
+printf 'module fs.test\n\ngo 1.27.0\n\nrequire github.com/redis/go-redis/v9 v9.0.0\n\nreplace github.com/redis/go-redis/v9 => ./garage/redis\n' >"$fs/go.mod"
+printf 'package main\n\nimport _ "github.com/redis/go-redis/v9"\n\nfunc main() {}\n' >"$fs/cmd/server/main.go"
+must_fail_with "F3 on a server linking a denylisted Redis client" 'cmd/server: F3 \(ADR-0001 rule 3\): binary "server" .* links github.com/redis/go-redis/v9' stack -checks F3
+
+fresh_stack_tree
+printf 'module fs.test\n\ngo 1.27.0\n\nrequire example.com/unregistered v1.0.0\n\nreplace example.com/unregistered => ./garage/redis\n' >"$fs/go.mod"
+must_fail_with "F4 on a direct dependency with no register row" 'go.mod: F4 \(ADR-0001 rule 6\): direct dependency example.com/unregistered' stack -checks F4
+fresh_stack_tree
+printf 'module fs.test\n\ngo 1.27.0\n\nrequire example.com/gpl v1.0.0\n\nreplace example.com/gpl => ./garage/gpl\n' >"$fs/go.mod"
+printf 'package main\n\nimport _ "example.com/gpl"\n\nfunc main() {}\n' >"$fs/cmd/server/main.go"
+must_fail_with "F4 on a GPL module in a shipped binary" 'F4 \(ADR-0001 rule 6\): shipped binary links example.com/gpl .* GPL' stack -checks F4
+
+fresh_stack_tree; mkdir -p "$fs/internal/winsvc"
+printf 'package winsvc\n' >"$fs/internal/winsvc/s.go"
+sed -i.bak 's#"platformAdapters": \[\]#"platformAdapters": [{"path": "internal/winsvc", "adr": "0009-draft.md"}]#' "$fs/manifest.json"
+must_fail_with "F5 on an exception that cites a proposed ADR" 'manifest.json: F5 \(ADR-0001 rule 5\).*status is "proposed"' stack -checks F5
+sed -i.bak 's#0009-draft.md#0001-stack.md#' "$fs/manifest.json"
+must_pass "F5 once the exception cites a ratified ADR" stack -checks F5
+
 # --- go mod tidy ------------------------------------------------------------------------------
 mkdir -p "$tmp/tidy"
 printf 'module tidy.test\n\ngo 1.27.0\n\nrequire example.invalid/unused v1.0.0\n' >"$tmp/tidy/go.mod"

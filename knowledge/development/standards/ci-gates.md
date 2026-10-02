@@ -27,7 +27,8 @@ against clean input.
 | Go tests | `go test -count=1 ./...` | a test fails | failing test |
 | Web tests | `vitest run` | a test fails | failing test |
 | Fitness: `fitness-modules` | `go run ./tools/fitness/modules` | an import breaks blueprint §2 rules 1–5, 7, 8 | CLI on a tree where `platform` imports `directory`; every rule also has a failing fixture in `tools/fitness/modules/check_test.go` |
-| Build matrix | `CGO_ENABLED=0 go build ./...` for linux/amd64, linux/arm64, windows/amd64, windows/arm64, darwin/arm64 (ADR-0001 rule 2); `vite build` | any target fails to build | — (a build failure is its own signal) |
+| Fitness: `fitness-stack` | `go run ./tools/fitness/stack` (manifest: `tools/fitness/stack/manifest.json`) | ADR-0001 F1 language zones, F2 cgo/plug-in/build-tag bans and the `CGO_ENABLED=0` cross-build of linux/amd64, linux/arm64, windows/amd64, windows/arm64, darwin/arm64, F3 denylisted stateful dependency in a shipped binary, F4 register row missing or Rejected and strong-copyleft licences in a shipped closure, F5 exception without a ratified or accepted ADR | the real CLI on throw-away trees, one violation per rule (`tools/ci/proof.sh`); every rule also has a fixture in `tools/fitness/stack/check_test.go` |
+| Web build | `vite build` | the build fails | — (a build failure is its own signal) |
 | Secret scan | `make secrets-scan` | gitleaks finds a secret in history or the working tree | `make secrets-test` (T-0013) |
 | Lab generator tests | `make lab-test-unit` | the seed generator's tests fail (no Docker needed) | — |
 
@@ -37,7 +38,7 @@ Each of these has an owner; none is faked.
 
 | Gate | Owner |
 | --- | --- |
-| `fitness-stack` F1–F5 (language zones, cgo and build-tag bans, denylisted stateful deps, licence-register match, exceptions cite an ADR); also the licence scanner and SBOM | T-0022 |
+| SBOM generation; NuGet transitive licence scan (fails closed once a sidecar is declared) | later `ops` tickets |
 | Hand-built security strings (`dnstring`, `sqlconst`, `secretjson` analyzers), safe-primitives corpus | T-0033, T-0034 |
 | Tenancy and profile fitness | T-0036, T-0038 |
 | `modules.gen.go` / `modules.gen.ts` staleness, which needs `tools/gen/modules` | the module-system ADR (T-0045) |
@@ -63,3 +64,20 @@ Each of these has an owner; none is faked.
 Go module path: `github.com/skenzeriq/activediq`. No remote is configured yet, so it is a name, not
 a fetch location; change it once, in `go.mod`, before the first external consumer if the hosting
 decision differs.
+
+## `fitness-stack` in one page (T-0022)
+
+Rules and rationale: ADR-0001 (`accepted`; its fitness function is this job). Every message reads
+`<file>: F<n> (ADR-0001 rule <r>): <what, and where the change belongs>`.
+
+| Check | Rule | What it reads | Notes |
+| --- | --- | --- | --- |
+| F1 | 1 | tracked and untracked-unignored files | An allowlist per zone (`languageZones` in the manifest). Extensionless scripts are classified by shebang. `.js/.mjs/.cjs` count as JavaScript and live only under `web/`. A `native/` crate must be a manifest-declared tier-N Windows component, which keeps PAM and macOS logon code out until their ADR exists |
+| F2 | 2 | `go/parser` (imports and comments, never string contents), `go/build/constraint`, a text scan of every non-prose file, `go build` per target | Files under `//go:build ignore` are still scanned. `unix` counts as a GOOS. Toolchain tags (`go1.N`, plus the manifest `toolchainTags`: `race`, `msan`, `asan`, `purego`) pass anywhere; test tags (`lab`, `windowslab`) pass only in `_test.go` |
+| F3 | 3 | `go list -deps` per binary per target | Binaries come from the manifest; an undeclared `package main` under `cmd/` fails. The denylist is extensible: another job's manifest (U1 in fitness-profiles) lists a file in `denylistExtends` |
+| F4 | 6 | `go mod edit -json`, `package.json`, `Cargo.toml`, `*.csproj`, `third_party/`, LICENSE files of linked Go modules, `package-lock.json` (production entries), `cargo metadata` | The register match uses the **Project cell** only, exact path in backticks. Transitive scan: GPL, AGPL, SSPL, Elastic, BUSL; LGPL and MPL pass. A text is flagged only when the licence title opens it. An SPDX `OR` with a permissive alternative passes |
+| F5 | 5 | the manifest and the ADR frontmatter `status` | Also fails on a stale entry (path gone) and on an undeclared `third_party/<name>/` |
+
+To declare an exception, add an entry under `exceptions` in the manifest with an `adr` file name from
+`knowledge/development/decisions/`. The ADR has to be `ratified` or `accepted` first; amend ADR-0001
+(or write the ADR) before the manifest entry, not after.
