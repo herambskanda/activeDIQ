@@ -305,6 +305,9 @@ func TestRoleMembershipWithoutInherit(t *testing.T) {
 		{"object_owning_role",
 			[]string{`DO $$ BEGIN CREATE ROLE t3_owns NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$`, `CREATE TYPE public.t3_owned AS ENUM ('a')`, `ALTER TYPE public.t3_owned OWNER TO t3_owns`, `GRANT t3_owns TO %2$I WITH INHERIT FALSE`},
 			[]string{`DROP ROLE t3_owns`}, "t3_owns"},
+		{"database_owner_role", // ownership of the database sits in pg_shdepend with dbid 0
+			[]string{`DO $$ BEGIN CREATE ROLE t3_dbo NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$`, `DO $$ BEGIN EXECUTE format('ALTER DATABASE %%I OWNER TO t3_dbo', current_database()); END $$`, `GRANT t3_dbo TO %2$I WITH INHERIT FALSE`},
+			[]string{`DROP OWNED BY t3_dbo`, `DROP ROLE t3_dbo`}, "t3_dbo"},
 		{"predefined_program", []string{`GRANT pg_execute_server_program TO %2$I WITH INHERIT FALSE`}, []string{`REVOKE pg_execute_server_program FROM %2$I`}, "pg_execute_server_program"},
 		{"predefined_read_files", []string{`GRANT pg_read_server_files TO %2$I`}, []string{`REVOKE pg_read_server_files FROM %2$I`}, "pg_read_server_files"},
 		{"predefined_write_files", []string{`GRANT pg_write_server_files TO %2$I`}, []string{`REVOKE pg_write_server_files FROM %2$I`}, "pg_write_server_files"},
@@ -320,17 +323,56 @@ func TestRoleMembershipWithoutInherit(t *testing.T) {
 	}
 }
 
-// TEMPORARY on the product database, granted directly, is a breach (the bootstrap withholds it from PUBLIC).
+// TEMPORARY on the product database, granted directly or through a role the runtime role is a member of
+// without INHERIT, is a breach (the bootstrap withholds it from PUBLIC).
 func TestRuntimeTemporary(t *testing.T) {
+	cases := []struct {
+		name  string
+		boot  []string
+		undo  []string
+		named string
+	}{
+		{"direct", []string{`DO $$ BEGIN EXECUTE format('GRANT TEMPORARY ON DATABASE %%I TO %%I', current_database(), %2$L); END $$`}, nil, "fit_"},
+		{"via_non_inherited_role", []string{
+			`DO $$ BEGIN CREATE ROLE t3_tmp NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$`,
+			`DO $$ BEGIN EXECUTE format('GRANT TEMPORARY ON DATABASE %%I TO t3_tmp', current_database()); END $$`,
+			`GRANT t3_tmp TO %2$I WITH INHERIT FALSE`}, []string{`DROP ROLE t3_tmp`}, "t3_tmp"},
+	}
 	for _, ver := range []string{"16", "18"} {
-		t.Run("pg"+ver, func(t *testing.T) {
-			f := fixture{
-				migrations: pair(t, "good/0002_app_items.sql"), checks: "T1,T3",
-				bootstrap: []string{`DO $$ BEGIN EXECUTE format('GRANT TEMPORARY ON DATABASE %%I TO %%I', current_database(), %2$L); END $$`},
-			}
-			vs, _ := f.run(t, ver)
-			want(t, vs, "T3", "runtime-temporary", "fit_")
-		})
+		for _, c := range cases {
+			t.Run("pg"+ver+"/"+c.name, func(t *testing.T) {
+				f := fixture{migrations: pair(t, "good/0002_app_items.sql"), checks: "T1,T3", bootstrap: c.boot, reset: c.undo}
+				vs, _ := f.run(t, ver)
+				want(t, vs, "T3", "runtime-temporary", c.named)
+			})
+		}
+	}
+}
+
+// TRUNCATE on a tenant table and CREATE on a product schema, held by a role the runtime role is a member
+// of WITH INHERIT FALSE: has_*_privilege(app, ...) is false, yet SET ROLE reaches them (T-0186).
+func TestPrivilegeViaNonInheritedRole(t *testing.T) {
+	mk := `DO $$ BEGIN CREATE ROLE t3_helper NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$`
+	cases := []struct {
+		name, rule, named string
+		boot              []string
+	}{
+		{"truncate", "runtime-truncate", "public.items", []string{mk,
+			`ALTER DEFAULT PRIVILEGES FOR ROLE %1$I IN SCHEMA public GRANT TRUNCATE ON TABLES TO t3_helper`}},
+		{"create_schema", "runtime-create-schema", "t3_helper", []string{mk, `GRANT CREATE ON SCHEMA public TO t3_helper`}},
+	}
+	for _, ver := range []string{"16", "18"} {
+		for _, c := range cases {
+			t.Run("pg"+ver+"/"+c.name, func(t *testing.T) {
+				f := fixture{
+					migrations: pair(t, "good/0002_app_items.sql"), checks: "T1,T2,T3",
+					bootstrap: append(c.boot, `GRANT t3_helper TO %2$I WITH INHERIT FALSE`),
+					reset:     []string{`DROP OWNED BY t3_helper`, `DROP ROLE t3_helper`},
+				}
+				vs, _ := f.run(t, ver)
+				want(t, vs, "T3", c.rule, c.named)
+			})
+		}
 	}
 }
 

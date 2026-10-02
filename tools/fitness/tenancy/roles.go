@@ -11,8 +11,8 @@ import (
 var superuserEquivalentRoles = []string{"pg_execute_server_program", "pg_read_server_files", "pg_write_server_files"}
 
 // checkT3 is the role check (ADR-0002 T3, safe-primitives FF-SP7): the runtime role owns nothing, is
-// not a superuser, has no BYPASSRLS, holds no TRUNCATE on a tenant table and no CREATE on a product
-// schema, and is not a member of any role that does; the migration (owner) role is neither superuser
+// not a superuser, has no BYPASSRLS, holds no TRUNCATE on a tenant table, no CREATE on a product schema and no TEMPORARY
+// on the database, directly or through any role it is a member of, INHERIT or not; the migration (owner) role is neither superuser
 // nor BYPASSRLS; the two are different roles.
 func checkT3(ctx context.Context, d *Database, m *catalogModel) ([]Violation, error) {
 	var vs []Violation
@@ -41,7 +41,8 @@ func checkT3(ctx context.Context, d *Database, m *catalogModel) ([]Violation, er
 	}
 
 	// Membership: the runtime role must not be a member of a superuser, a BYPASSRLS role, the migration
-	// role, a superuser-equivalent predefined role or a role that owns an object in this database. 'MEMBER'
+	// role, a superuser-equivalent predefined role or a role that owns an object in this database or the database itself (a database
+	// owner's ownership is recorded with dbid 0). 'MEMBER'
 	// counts every direct or indirect membership whatever its INHERIT or SET option: 'USAGE' is false for a
 	// membership granted WITH INHERIT FALSE (or to a NOINHERIT role), yet that role can still SET ROLE to
 	// the other and act with its rights, including ALTER TABLE ... NO FORCE ROW LEVEL SECURITY.
@@ -50,12 +51,14 @@ func checkT3(ctx context.Context, d *Database, m *catalogModel) ([]Violation, er
 			     WHEN r.rolbypassrls THEN 'a BYPASSRLS role'
 			     WHEN r.rolname = $2 THEN 'the migration role'
 			     WHEN r.rolname = ANY($3::name[]) THEN 'a predefined role equivalent to superuser (server-side program, file read or write)'
-			     ELSE 'a role that owns objects in this database' END
+			     ELSE 'a role that owns objects in this database or owns the database' END
 		FROM pg_roles r
 		WHERE r.rolname <> $1 AND pg_has_role($1::name, r.oid, 'MEMBER') AND (
 			r.rolsuper OR r.rolbypassrls OR r.rolname = $2 OR r.rolname = ANY($3::name[]) OR EXISTS (
 				SELECT 1 FROM pg_shdepend s WHERE s.refclassid = 'pg_authid'::regclass AND s.refobjid = r.oid
-				AND s.deptype = 'o' AND s.dbid = (SELECT oid FROM pg_database WHERE datname = current_database())))
+				AND s.deptype = 'o' AND (
+					s.dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
+					OR (s.dbid = 0 AND s.classid = 'pg_database'::regclass AND s.objid = (SELECT oid FROM pg_database WHERE datname = current_database())))))
 		ORDER BY 1`, app, owner, superuserEquivalentRoles)
 	if err != nil {
 		return nil, err
@@ -73,14 +76,27 @@ func checkT3(ctx context.Context, d *Database, m *catalogModel) ([]Violation, er
 		return nil, err
 	}
 
-	// TEMPORARY on the product database: the runtime role must not create temporary objects (they live in
-	// a schema that precedes the product schemas on the default search path and can shadow product objects).
-	var temp bool
-	if err := c.QueryRow(ctx, `SELECT has_database_privilege($1::name, current_database(), 'TEMPORARY')`, app).Scan(&temp); err != nil {
+	// TEMPORARY on the product database, held by the runtime role or by any role it is a member of (a
+	// non-inherited membership does not show in has_database_privilege(app, ...) yet SET ROLE reaches it).
+	// Temporary tables, views and types live in a schema that precedes the product schemas on the default
+	// search path and can shadow product relations and types (never functions or operators:
+	// https://www.postgresql.org/docs/16/runtime-config-client.html#GUC-SEARCH-PATH).
+	rows, err = c.Query(ctx, `SELECT r.rolname FROM pg_roles r
+		WHERE pg_has_role($1::name, r.oid, 'MEMBER') AND has_database_privilege(r.oid, current_database(), 'TEMPORARY') ORDER BY 1`, app)
+	if err != nil {
 		return nil, err
 	}
-	if temp {
-		add("runtime-temporary", d.Name, "runtime role holds TEMPORARY on the product database (directly or through PUBLIC): it could shadow product tables and functions with temporary objects")
+	for rows.Next() {
+		var via string
+		if err := rows.Scan(&via); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		add("runtime-temporary", d.Name, "runtime role holds TEMPORARY on the product database "+through(app, via)+": it could shadow product tables, views and types with temporary objects")
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	// Ownership: pg_shdepend records every object a role owns in this database.
@@ -104,29 +120,51 @@ func checkT3(ctx context.Context, d *Database, m *catalogModel) ([]Violation, er
 		return nil, err
 	}
 
-	// TRUNCATE on tenant tables (TRUNCATE is not subject to row security).
+	// TRUNCATE on tenant tables (TRUNCATE is not subject to row security), held by the runtime role or by
+	// any role it is a member of: has_table_privilege(app, ...) misses a role granted WITH INHERIT FALSE,
+	// which the runtime role reaches with SET ROLE.
 	for _, r := range m.tenants {
-		var trunc bool
-		if err := c.QueryRow(ctx, `SELECT has_table_privilege($1::name, $2::oid, 'TRUNCATE')`, app, r.oid).Scan(&trunc); err != nil {
+		rows, err = c.Query(ctx, `SELECT g.rolname FROM pg_roles g
+			WHERE pg_has_role($1::name, g.oid, 'MEMBER') AND has_table_privilege(g.oid, $2::oid, 'TRUNCATE') ORDER BY 1`, app, r.oid)
+		if err != nil {
 			return nil, err
 		}
-		if trunc {
-			add("runtime-truncate", r.qname(), "runtime role holds TRUNCATE on a tenant table (TRUNCATE ignores row-level security)")
+		for rows.Next() {
+			var via string
+			if err := rows.Scan(&via); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			add("runtime-truncate", r.qname(), "runtime role holds TRUNCATE on a tenant table "+through(app, via)+" (TRUNCATE ignores row-level security)")
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
 		}
 	}
-	// CREATE on product schemas.
-	rows, err = c.Query(ctx, `SELECT n.nspname FROM pg_namespace n WHERE `+productSchema+` AND has_schema_privilege($1::name, n.oid, 'CREATE') ORDER BY 1`, app)
+	// CREATE on product schemas, directly or through any role the runtime role is a member of.
+	rows, err = c.Query(ctx, `SELECT n.nspname, g.rolname FROM pg_namespace n, pg_roles g
+		WHERE `+productSchema+` AND pg_has_role($1::name, g.oid, 'MEMBER') AND has_schema_privilege(g.oid, n.oid, 'CREATE') ORDER BY 1, 2`, app)
 	if err != nil {
 		return nil, err
 	}
 	for rows.Next() {
-		var s string
-		if err := rows.Scan(&s); err != nil {
+		var s, via string
+		if err := rows.Scan(&s, &via); err != nil {
 			rows.Close()
 			return nil, err
 		}
-		add("runtime-create-schema", s, "runtime role holds CREATE on a product schema (it could create objects, such as a view or function, in the product's namespace)")
+		add("runtime-create-schema", s, "runtime role holds CREATE on a product schema "+through(app, via)+" (it could create objects, such as a view or function, in the product's namespace)")
 	}
 	rows.Close()
 	return vs, rows.Err()
+}
+
+// through words where a privilege comes from: the runtime role itself, or a role it is a member of
+// (reachable with SET ROLE whatever the INHERIT option of the grant).
+func through(app, via string) string {
+	if via == app {
+		return "(directly or through PUBLIC)"
+	}
+	return "through membership of role " + via + " (SET ROLE reaches it whatever the INHERIT option)"
 }
