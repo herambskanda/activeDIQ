@@ -1,0 +1,33 @@
+# gitleaks configuration (T-0013). Standard: knowledge/development/standards/secret-scanning.md
+# Start from the upstream default ruleset (all built-in detectors) and add only what is below.
+title = "activeDIQ gitleaks config"
+
+[extend]
+useDefault = true
+
+# --- activeDIQ-specific rules -------------------------------------------------------------------
+# Lab credentials are generated per run into lab/.lab.env (gitignored); if one is ever pasted into a
+# tracked file this rule fires. The pattern matches the variable names lab/bin/lab-env writes.
+[[rules]]
+id = "activediq-lab-credential"
+description = "Lab credential assignment with a literal value (lab credentials are generated per run, never committed)"
+regex = '''(?i)\bLAB_[A-Z_]*(?:PASSWORD|SECRET|TOKEN)\s*[=:]\s*['"]?([A-Za-z0-9+/_\-!@#$%^&*]{8,})['"]?'''
+keywords = ["lab_"]
+[[rules.allowlists]]
+description = "Reading the variable from the environment or a generator is not a literal"
+regexTarget = "match"
+regexes = ['''\$\{?[A-Za-z_]+''', '''\$\(''']
+
+# --- Allowlist ------------------------------------------------------------------------------------
+# RULE: allowlist ONLY provably fake values (vendor-published documentation examples). No path
+# allowlists: a path exemption would hide a real secret pasted into it. Never allowlist a rule
+# globally or a directory of real config. Every entry needs a comment saying why it is fake. Prefer building fake secrets at
+# test runtime (tools/secrets/test.sh does) over allowlisting.
+[allowlist]
+description = "Provably-fake values only"
+# Values published as documentation examples by their vendors (AKIAIOSFODNN7EXAMPLE etc. are also
+# ignored by gitleaks's own aws rule; listed so the intent is explicit).
+regexes = [
+  '''AKIAIOSFODNN7EXAMPLE''',
+  '''wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY''',
+]
