@@ -2,16 +2,19 @@
 title: "ADR-0003: Features enter only as modules through a typed Registrar; the core imports no module, every table has one owner, and CI enforces the import graph"
 date: 2026-10-02
 updated: 2026-10-02
-status: proposed
+status: ratified
 owner: heramb
 kind: technical
 ticket: T-0045
+decision: D-0013
+ratified_on: 2026-10-02
+ratified_by: factory-director
 fitness: fitness-modules
 ---
 
 # ADR-0003: Features enter only as modules through a typed Registrar; the core imports no module, every table has one owner, and CI enforces the import graph
 
-**Status:** proposed. The factory-director ratifies it when reviewing T-0045, then files a `notice`. It becomes `accepted` when `fitness-modules` (M1–M12 below) runs green in `make ci` on `main`.
+**Status:** **ratified 2026-10-02** by factory-director at review of T-0045. Notice **D-0013** went to the CEO, who can veto it. Binding on design. It becomes `accepted` when `fitness-modules` (M1–M12 below) runs green in `make ci` on `main` (T-0141).
 **Kind:** technical. It changes nothing a customer, partner or the brand would notice. It decides where code goes and what CI rejects.
 **Deciders:** solution-architect (author); factory-director (ratifier). **Ticket:** T-0045. **Parity / scope refs:** none directly. It serves every capability family in blueprint §15.
 
