@@ -1,12 +1,13 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+
+	"github.com/skenzeriq/activediq/tools/fitness/internal/adr"
 )
 
 // checkExceptions is F5 (ADR-0001 rule 5): every manifest exception names an ADR file in the
@@ -22,13 +23,13 @@ func (c *Ctx) checkExceptions() []Violation {
 		case e.adr != path.Base(e.adr) || !strings.HasSuffix(e.adr, ".md"):
 			add(fmt.Sprintf("%s cites %q, which is not an ADR file name inside %s", e.label, e.adr, c.M.DecisionsDir))
 		default:
-			status, err := adrStatus(filepath.Join(c.abs(c.M.DecisionsDir), e.adr))
+			status, err := adr.Status(filepath.Join(c.abs(c.M.DecisionsDir), e.adr))
 			switch {
 			case os.IsNotExist(err):
 				add(fmt.Sprintf("%s cites %s, which does not exist in %s", e.label, e.adr, c.M.DecisionsDir))
 			case err != nil:
 				add(fmt.Sprintf("%s cites %s, which cannot be read: %v", e.label, e.adr, err))
-			case status != "ratified" && status != "accepted":
+			case !adr.Grants(status):
 				add(fmt.Sprintf("%s cites %s, whose status is %q; only a ratified or accepted ADR can grant an exception", e.label, e.adr, status))
 			}
 		}
@@ -59,30 +60,4 @@ func (c *Ctx) checkExceptions() []Violation {
 		}
 	}
 	return vs
-}
-
-// adrStatus reads the status key from an ADR's YAML frontmatter.
-func adrStatus(file string) (string, error) {
-	fh, err := os.Open(file)
-	if err != nil {
-		return "", err
-	}
-	defer fh.Close()
-	sc := bufio.NewScanner(fh)
-	if !sc.Scan() || strings.TrimSpace(sc.Text()) != "---" {
-		return "", fmt.Errorf("no frontmatter")
-	}
-	for sc.Scan() {
-		line := sc.Text()
-		if strings.TrimSpace(line) == "---" {
-			break
-		}
-		if k, v, ok := strings.Cut(line, ":"); ok && strings.TrimSpace(k) == "status" {
-			if i := strings.Index(v, "#"); i >= 0 {
-				v = v[:i]
-			}
-			return strings.Trim(strings.TrimSpace(v), `"'`), nil
-		}
-	}
-	return "", fmt.Errorf("frontmatter has no status")
 }

@@ -1,0 +1,743 @@
+{
+  "components": {
+    "parameters": {
+      "IdempotencyKey": {
+        "description": "Makes a mutating bulk call safe to retry. The same key with a different body is refused.",
+        "in": "header",
+        "name": "Idempotency-Key",
+        "required": false,
+        "schema": {
+          "maxLength": 128,
+          "minLength": 8,
+          "pattern": "^[A-Za-z0-9._~-]+$",
+          "type": "string"
+        }
+      },
+      "IfMatch": {
+        "description": "The ETag of the version being changed; a stale value answers precondition-failed.",
+        "in": "header",
+        "name": "If-Match",
+        "required": false,
+        "schema": {
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "PageCursor": {
+        "description": "The nextCursor of the previous page.",
+        "in": "query",
+        "name": "cursor",
+        "required": false,
+        "schema": {
+          "$ref": "#/components/schemas/Cursor"
+        }
+      },
+      "PageLimit": {
+        "description": "The page size.",
+        "in": "query",
+        "name": "limit",
+        "required": false,
+        "schema": {
+          "maximum": 1000,
+          "minimum": 1,
+          "type": "integer"
+        }
+      }
+    },
+    "responses": {
+      "Conflict": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 409,
+              "title": "The object already exists or the request conflicts",
+              "type": "/problems/conflict"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The object already exists or the request conflicts"
+      },
+      "CsrfFailed": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 403,
+              "title": "The CSRF check failed",
+              "type": "/problems/csrf-failed"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The CSRF check failed"
+      },
+      "DirectoryAccessDenied": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 403,
+              "title": "The directory refused our service account",
+              "type": "/problems/directory-access-denied"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The directory refused our service account"
+      },
+      "DirectoryConstraint": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 422,
+              "title": "The directory rejected the change",
+              "type": "/problems/directory-constraint"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The directory rejected the change"
+      },
+      "DirectoryUnavailable": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 503,
+              "title": "The directory is unavailable",
+              "type": "/problems/directory-unavailable"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The directory is unavailable"
+      },
+      "Forbidden": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 403,
+              "title": "You are not allowed to do this",
+              "type": "/problems/forbidden"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "You are not allowed to do this"
+      },
+      "IdempotencyKeyReuse": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 422,
+              "title": "The idempotency key was used with a different request",
+              "type": "/problems/idempotency-key-reuse"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The idempotency key was used with a different request"
+      },
+      "Internal": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 500,
+              "title": "Internal error",
+              "type": "/problems/internal"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "Internal error"
+      },
+      "MalformedRequest": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 400,
+              "title": "The request is malformed",
+              "type": "/problems/malformed-request"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The request is malformed"
+      },
+      "MethodNotAllowed": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 405,
+              "title": "Method not allowed",
+              "type": "/problems/method-not-allowed"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "Method not allowed"
+      },
+      "NotFound": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 404,
+              "title": "Not found",
+              "type": "/problems/not-found"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "Not found"
+      },
+      "PasswordPolicyViolation": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 422,
+              "title": "The password does not meet the policy",
+              "type": "/problems/password-policy-violation"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The password does not meet the policy"
+      },
+      "PayloadTooLarge": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 413,
+              "title": "The request body is too large",
+              "type": "/problems/payload-too-large"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The request body is too large"
+      },
+      "PreconditionFailed": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 412,
+              "title": "The precondition failed",
+              "type": "/problems/precondition-failed"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The precondition failed"
+      },
+      "PreconditionRequired": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 428,
+              "title": "A precondition header is required",
+              "type": "/problems/precondition-required"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "A precondition header is required"
+      },
+      "RateLimited": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 429,
+              "title": "Too many requests",
+              "type": "/problems/rate-limited"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "Too many requests"
+      },
+      "StepUpRequired": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 401,
+              "title": "A fresh multi-factor check is required",
+              "type": "/problems/step-up-required"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "A fresh multi-factor check is required"
+      },
+      "Unauthenticated": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 401,
+              "title": "Authentication is required",
+              "type": "/problems/unauthenticated"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "Authentication is required"
+      },
+      "UnsupportedMediaType": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 415,
+              "title": "Unsupported media type",
+              "type": "/problems/unsupported-media-type"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "Unsupported media type"
+      },
+      "Validation": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 400,
+              "title": "The request is invalid",
+              "type": "/problems/validation"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The request is invalid"
+      }
+    },
+    "schemas": {
+      "Cursor": {
+        "description": "An opaque page cursor. Clients pass it back unchanged.",
+        "maxLength": 1024,
+        "minLength": 1,
+        "type": "string"
+      },
+      "GUIDRef": {
+        "additionalProperties": false,
+        "description": "A reference to a directory object by objectGUID. A DN is never a key.",
+        "properties": {
+          "guid": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "guid"
+        ],
+        "type": "object"
+      },
+      "Int64String": {
+        "description": "A 64-bit integer carried as a string, for values outside JavaScript's safe integer range.",
+        "examples": [
+          "9007199254740993"
+        ],
+        "maxLength": 20,
+        "pattern": "^-?[0-9]{1,19}$",
+        "type": "string"
+      },
+      "Job": {
+        "description": "A long operation (bulk change). It reports progress and per-item results, and is resumable after a restart.",
+        "properties": {
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "createdBy": {
+            "$ref": "#/components/schemas/JobActor"
+          },
+          "dryRun": {
+            "type": "boolean"
+          },
+          "finishedAt": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "maxLength": 64,
+            "type": "string"
+          },
+          "kind": {
+            "maxLength": 128,
+            "type": "string"
+          },
+          "links": {
+            "$ref": "#/components/schemas/JobLinks"
+          },
+          "progress": {
+            "$ref": "#/components/schemas/JobProgress"
+          },
+          "startedAt": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "status",
+          "dryRun",
+          "createdBy",
+          "progress",
+          "createdAt",
+          "startedAt",
+          "finishedAt",
+          "links"
+        ],
+        "type": "object"
+      },
+      "JobActor": {
+        "description": "Who started a job.",
+        "properties": {
+          "id": {
+            "maxLength": 128,
+            "type": "string"
+          },
+          "type": {
+            "maxLength": 32,
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "id"
+        ],
+        "type": "object"
+      },
+      "JobItemOutcome": {
+        "enum": [
+          "succeeded",
+          "failed",
+          "skipped"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open"
+      },
+      "JobLinks": {
+        "properties": {
+          "cancel": {
+            "maxLength": 512,
+            "type": "string"
+          },
+          "items": {
+            "maxLength": 512,
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "JobProgress": {
+        "properties": {
+          "failed": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "succeeded": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "succeeded",
+          "failed"
+        ],
+        "type": "object"
+      },
+      "JobStatus": {
+        "description": "Where a long-running operation is. Clients accept values they do not know.",
+        "enum": [
+          "queued",
+          "running",
+          "succeeded",
+          "failed",
+          "cancelled"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open"
+      },
+      "ObjectView": {
+        "description": "A directory object as the server shows it. dn is for display only.",
+        "properties": {
+          "dn": {
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "guid": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "rdns": {
+            "items": {
+              "$ref": "#/components/schemas/Rdn"
+            },
+            "maxItems": 128,
+            "type": "array"
+          }
+        },
+        "required": [
+          "guid",
+          "dn",
+          "rdns"
+        ],
+        "type": "object"
+      },
+      "PageInfo": {
+        "description": "Cursor paging of a directory collection. Order is stable; nextCursor is null on the last page.",
+        "properties": {
+          "nextCursor": {
+            "maxLength": 1024,
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "nextCursor"
+        ],
+        "type": "object"
+      },
+      "Problem": {
+        "description": "An RFC 9457 problem. type is a relative reference, /problems/<slug>, from a closed catalogue.",
+        "properties": {
+          "code": {
+            "maxLength": 100,
+            "type": "string"
+          },
+          "detail": {
+            "maxLength": 2048,
+            "type": "string"
+          },
+          "directory": {
+            "$ref": "#/components/schemas/ProblemDirectory"
+          },
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/ProblemError"
+            },
+            "maxItems": 1000,
+            "type": "array"
+          },
+          "instance": {
+            "maxLength": 2048,
+            "type": "string"
+          },
+          "status": {
+            "maximum": 599,
+            "minimum": 400,
+            "type": "integer"
+          },
+          "title": {
+            "maxLength": 200,
+            "type": "string"
+          },
+          "traceId": {
+            "maxLength": 64,
+            "type": "string"
+          },
+          "type": {
+            "maxLength": 100,
+            "pattern": "^/problems/[a-z][a-z0-9-]*$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "title",
+          "status"
+        ],
+        "type": "object"
+      },
+      "ProblemDirectory": {
+        "description": "The directory's own result, with secrets stripped. Never raw LDAP text with internals.",
+        "properties": {
+          "diagnostic": {
+            "maxLength": 512,
+            "type": "string"
+          },
+          "resultCode": {
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "resultCode",
+          "diagnostic"
+        ],
+        "type": "object"
+      },
+      "ProblemError": {
+        "description": "One violation. pointer is a JSON Pointer inside the body, or the parameter name.",
+        "properties": {
+          "code": {
+            "maxLength": 64,
+            "type": "string"
+          },
+          "detail": {
+            "maxLength": 512,
+            "type": "string"
+          },
+          "in": {
+            "$ref": "#/components/schemas/ProblemErrorIn"
+          },
+          "item": {
+            "description": "For a bulk request, the index of the item the violation belongs to.",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "pointer": {
+            "maxLength": 1024,
+            "type": "string"
+          }
+        },
+        "required": [
+          "in",
+          "pointer",
+          "code",
+          "detail"
+        ],
+        "type": "object"
+      },
+      "ProblemErrorIn": {
+        "description": "Where a violation was found.",
+        "enum": [
+          "body",
+          "path",
+          "query",
+          "header"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open"
+      },
+      "Rdn": {
+        "description": "One relative distinguished name component, unescaped, for breadcrumbs.",
+        "properties": {
+          "type": {
+            "maxLength": 32,
+            "type": "string"
+          },
+          "value": {
+            "maxLength": 1024,
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "value"
+        ],
+        "type": "object"
+      },
+      "SecretInput": {
+        "description": "A secret a client sends: a password, a token. It is write-only, never appears in a response, and is held in memory only as a secret.Secret that is destroyed after the request.",
+        "type": "string",
+        "writeOnly": true,
+        "x-activediq-secret": true
+      }
+    },
+    "securitySchemes": {
+      "bearer": {
+        "bearerFormat": "adq_ API token",
+        "description": "A scoped API token in the Authorization header. Credentials never travel in a query string.",
+        "scheme": "bearer",
+        "type": "http"
+      },
+      "csrfToken": {
+        "description": "Required with the session cookie on POST, PUT, PATCH and DELETE. Bearer-token requests are exempt.",
+        "in": "header",
+        "name": "X-CSRF-Token",
+        "type": "apiKey"
+      },
+      "sessionCookie": {
+        "description": "The console session cookie (HttpOnly, Secure, SameSite=Strict).",
+        "in": "cookie",
+        "name": "__Host-adiq_session",
+        "type": "apiKey"
+      }
+    }
+  },
+  "info": {
+    "description": "The one public API of activeDIQ. The console, scripts, ITSM integrations and the PowerShell module all call these operations. There is one version, /api/v1, and it only grows.",
+    "title": "activeDIQ API",
+    "version": "0.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {},
+  "security": [
+    {
+      "bearer": []
+    },
+    {
+      "csrfToken": [],
+      "sessionCookie": []
+    }
+  ],
+  "servers": [
+    {
+      "url": "/api/v1"
+    }
+  ],
+  "tags": []
+}

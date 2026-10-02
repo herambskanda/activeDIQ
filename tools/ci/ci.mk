@@ -2,9 +2,9 @@
 # Standard: knowledge/development/standards/ci-gates.md · Runbook: knowledge/development/runbooks/ci-and-build.md
 # Every gate below has a failing run proving it catches a violation: `make ci-proof` (part of `make ci`).
 
-.PHONY: ci gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-domain-keys fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-oracles-windows fitness-oracles-lab fitness-fuzz-nightly fitness-nightly build build-web web-install ci-proof
+.PHONY: ci gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-oracles-windows fitness-oracles-lab fitness-fuzz-nightly fitness-nightly build build-web web-install ci-proof
 
-ci: lint gen-check test fitness build secrets-scan lab-test-unit ci-proof ## Everything a merge needs: lint, generated-code freshness, tests, fitness functions (incl. the ADR-0001 build matrix), web build, secret scan, gate proofs
+ci: lint gen-check gen-api-check lint-api test fitness build secrets-scan lab-test-unit ci-proof ## Everything a merge needs: lint, generated-code freshness (connector proto and the API contract), API lint, tests, fitness functions (incl. the ADR-0001 build matrix), web build, secret scan, gate proofs
 	@echo "make ci: passed"
 
 gen-proto: ## T-0157: regenerate the connector contract's Go code (internal/proto) from proto/ with the pinned pure-Go toolchain (no protoc, no buf)
@@ -41,7 +41,7 @@ test-go:
 test-web: web-install
 	npm --prefix web run --silent test
 
-fitness: fitness-stack fitness-tenancy fitness-domain-keys fitness-proto fitness-safeprim fitness-corpus fitness-oracles ## Architecture fitness functions: fitness-modules (blueprint §2 import rules), fitness-stack (ADR-0001 F1-F5), fitness-tenancy (ADR-0002 T1-T5), fitness-domain-keys (domain-model X3-X5), fitness-proto (connector contract compiles and keeps its rules) fitness-safeprim (safe-primitives FF-SP1-3), fitness-corpus (FF-SP4, FF-SP5 declarations, FF-SP8) and fitness-oracles (FF-SP6 on Linux)
+fitness: fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles ## Architecture fitness functions: fitness-modules (blueprint §2 import rules), fitness-stack (ADR-0001 F1-F5), fitness-tenancy (ADR-0002 T1-T5), fitness-domain-keys (domain-model X3-X5), fitness-profiles (ADR-0002 P1, P7, U1, U2 and the activation table), fitness-proto (connector contract compiles and keeps its rules) fitness-safeprim (safe-primitives FF-SP1-3), fitness-corpus (FF-SP4, FF-SP5 declarations, FF-SP8) and fitness-oracles (FF-SP6 on Linux)
 	go run ./tools/fitness/modules
 
 fitness-stack: ## ADR-0001: language zones, cgo-free cross-build, one stateful service, licence register, exceptions cite an ADR
@@ -52,6 +52,9 @@ fitness-tenancy: ## ADR-0002 T1-T5 (and safe-primitives FF-SP7): migration 1, ca
 
 fitness-domain-keys: ## T-0050: domain-model X3 (no directory table keyed or joined on a DN, SID, name), X4 (no column for a SecretAttrs attribute outside the declared sealed columns), X5 (append-only tables: no UPDATE, DELETE only by the retention role, no state column; DM-25.I6 property test present), and every table declared through tablekind.Declare; against PostgreSQL 16 and 18 containers (needs Docker)
 	go run ./tools/fitness/domainkeys
+
+fitness-profiles: ## T-0038, ADR-0002: P1 composition boundary, P7 branch policy, U1 UEM independence, U2 extractable platform root, and the activation table (P2-P6, U3, U4 become mandatory the moment their subject lands)
+	go run ./tools/fitness/profiles
 
 fitness-proto: ## T-0064: every proto/ file compiles (pure Go, no protoc) and the connector contract keeps its structural rules P1-P7
 	go run ./tools/fitness/proto proto

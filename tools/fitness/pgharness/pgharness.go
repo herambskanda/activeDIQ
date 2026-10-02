@@ -192,7 +192,8 @@ type Database struct {
 
 // NewDatabase creates an empty database owned by the owner role and applies the bootstrap contract:
 // the owner owns schema public; the runtime role may use it, and gets DML (never TRUNCATE) on every
-// table and USAGE on every sequence the owner creates there.
+// table and USAGE on every sequence the owner creates there, and nobody but the owner may create
+// temporary objects.
 func (s *Server) NewDatabase(ctx context.Context) (*Database, error) {
 	name := "fit_" + randHex(6)
 	a, err := s.connect(ctx, "postgres", s.adminPass, "postgres")
@@ -215,6 +216,15 @@ func (s *Server) NewDatabase(ctx context.Context) (*Database, error) {
 		return nil, err
 	}
 	defer c.Close(ctx)
+	// TEMPORARY is granted to PUBLIC by default; the contract withholds it from the runtime role. The
+	// database name cannot be a bind parameter, so the statement is built with format(%I).
+	var revokeTemp string
+	if err := c.QueryRow(ctx, `SELECT format('REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC', $1::text)`, name).Scan(&revokeTemp); err != nil {
+		return nil, err
+	}
+	if _, err := c.Exec(ctx, revokeTemp); err != nil {
+		return nil, fmt.Errorf("revoke temporary: %w", err)
+	}
 	boot := []string{
 		`ALTER SCHEMA public OWNER TO %1$I`,
 		`REVOKE ALL ON SCHEMA public FROM PUBLIC`,

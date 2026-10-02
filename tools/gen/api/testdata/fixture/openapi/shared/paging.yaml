@@ -1,0 +1,27 @@
+components:
+  schemas:
+    PageInfo:
+      description: Cursor paging of a directory collection. Order is stable; nextCursor is null on the last page.
+      type: object
+      required: [nextCursor]
+      properties:
+        nextCursor:
+          type: [string, "null"]
+          maxLength: 1024
+  parameters:
+    PageCursor:
+      name: cursor
+      in: query
+      required: false
+      description: The nextCursor of the previous page.
+      schema:
+        $ref: shared/scalars.yaml#/components/schemas/Cursor
+    PageLimit:
+      name: limit
+      in: query
+      required: false
+      description: The page size.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 1000
