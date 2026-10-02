@@ -15,6 +15,7 @@ On a domain-model or concept-map review, script the AC2-style mapping check. Don
 - For every AD reference that is not a linked attribute (gPLink, and anything else a DN string carries), ask how it becomes a GUID edge. X3 forbids DN joins. Check the schema page for "Link-Id: -".
 - For every scope or evaluation rule built on AD ancestry, ask how it evaluates for Entra, which has no NCs and no ancestry.
 - Pairs of must rows can break each other: SSO accounts (ADM-143) + group delegation (ADM-128) needed a directory binding on Account.
+- On a rework, trace every **new authorization path** back to the attribute it joins on, and ask who can write that attribute. Round 2 of T-0006 added "grant through a matched correlation" (DM-36.I2). DM-20 matched on onPremisesImmutableId, which Entra admins can write on cloud-only users, so the path ran Entra admin → AD authority. DM-30.I5 had already refused that same attribute. The gate is a read-only property: onPremisesSyncEnabled.
 - Put cheap fixes for sibling tickets (wrong paths, allow-lists, missing state transitions) straight into notes on those tickets, so the reject note stays about this deliverable.
 
 Related: [[review-check-ceo-answers-vs-draft-time]], [[blueprint-review-link-graph]]

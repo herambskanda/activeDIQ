@@ -2,4 +2,4 @@
 - [ADR ratification flow](adr-ratification-flow.md) — ratify in one pass after must-fixes close; nits go to the fitness ticket; fitness/accepted_on wait for accepted
 - [Blueprint review: link graph](blueprint-review-link-graph.md) — import rules must be satisfiable by the package layout; per-role compose; script AC traces
 - [Taste questions need previews](taste-questions-need-previews.md) — brand Qs as text get overridden (D-0005); apply no-note overrides literally + one notice, never ask back
-- [Domain-model review checks](domain-model-review-checks.md) — script the ME map vs scope lock §3.3; append-only lifecycles derived; gPLink-style DN refs; Entra scopes
+- [Domain-model review checks](domain-model-review-checks.md) — script ME map vs scope lock; derived append-only states; gPLink DN refs; Entra scopes; who can write a new authz join key
