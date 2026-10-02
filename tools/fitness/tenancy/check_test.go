@@ -77,8 +77,8 @@ func readFixture(t *testing.T, rel string) string {
 // pair is migration 1 (tenants) plus the given file as migration 2.
 func pair(t *testing.T, rel string) map[string]string {
 	return map[string]string{
-		"0001_platform_tenants.sql": readFixture(t, "base/0001_platform_tenants.sql"),
-		"0002_app_items.sql":        readFixture(t, rel),
+		"0001_tenant_tenants.sql": readFixture(t, "base/0001_tenant_tenants.sql"),
+		"0002_app_items.sql":      readFixture(t, rel),
 	}
 }
 
@@ -337,8 +337,8 @@ func TestRegistry(t *testing.T) {
 	})
 	t.Run("non_definer_function_entry_is_stale", func(t *testing.T) {
 		mig := map[string]string{
-			"0001_platform_tenants.sql": good["0001_platform_tenants.sql"],
-			"0002_app_items.sql":        good["0002_app_items.sql"] + "\nCREATE FUNCTION plain_fn() RETURNS int LANGUAGE sql AS $$ SELECT 1 $$;\n",
+			"0001_tenant_tenants.sql": good["0001_tenant_tenants.sql"],
+			"0002_app_items.sql":      good["0002_app_items.sql"] + "\nCREATE FUNCTION plain_fn() RETURNS int LANGUAGE sql AS $$ SELECT 1 $$;\n",
 		}
 		reg := `{"globalTables": [{"table": "public.tenants", "reason": "the directory", "owner": "internal/platform/tenant"}],
 		  "securityDefiner": [{"function": "public.plain_fn()", "reason": "claims to be definer"}]}`
@@ -361,7 +361,7 @@ func TestRegistry(t *testing.T) {
 	})
 	t.Run("registered_global_with_fk_to_tenant_table", func(t *testing.T) {
 		mig := map[string]string{
-			"0001_platform_tenants.sql": good["0001_platform_tenants.sql"],
+			"0001_tenant_tenants.sql": good["0001_tenant_tenants.sql"],
 			"0002_app_items.sql": good["0002_app_items.sql"] + `
 CREATE TABLE catalog_entries (id uuid PRIMARY KEY, owner_tenant uuid NOT NULL, item_id uuid NOT NULL,
   FOREIGN KEY (owner_tenant, item_id) REFERENCES items (tenant_id, id));
