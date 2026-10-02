@@ -124,6 +124,14 @@ func (m *Model) check(p *parser) {
 		if m.Req[r] || m.Resp[r] {
 			p.fail(s.Where, "a merge-patch body schema is used only as a PATCH body; it is also reachable elsewhere")
 		}
+		// Opt[T] decodes through T's own decoder. An inline array or map would be decoded by v2's
+		// built-in slice and map support, which turns a null item into a zero value (D-0014), so the
+		// member names a schema, which has a generated decoder.
+		for _, name := range sortedKeys(s.Props) {
+			if ms := s.Props[name]; ms.Ref == "" && (ms.Type == "array" || ms.isMap()) {
+				p.fail(s.Where+".properties."+name, "a merge-patch member that is an array or a map is a named schema under components/schemas (its generated decoder refuses null items)")
+			}
+		}
 		// Members of the patch body are request-reachable ordinary types.
 		for _, name := range sortedKeys(s.Props) {
 			m.closure(refsOf(s.Props[name]), m.Req)
@@ -159,6 +167,14 @@ func (m *Model) check(p *parser) {
 					}
 				}
 			}
+		}
+	}
+	for _, name := range sortedKeys(m.Resp) {
+		if m.SecretTy[name] && name != "SecretInput" {
+			p.fail(m.Schemas[name].Where, "schema %s is reachable from a response and reaches SecretInput: a secret is write-only and never leaves the server (TM-F-SECRETOUT)", name)
+		}
+		if name == "SecretInput" && m.Resp[name] {
+			p.fail(m.Schemas[name].Where, "SecretInput is reachable from a response: a secret is write-only")
 		}
 	}
 	for _, op := range m.Ops {

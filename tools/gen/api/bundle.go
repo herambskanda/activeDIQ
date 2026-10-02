@@ -191,10 +191,10 @@ func BuildBundle(root string) (*Bundle, error) {
 					continue
 				}
 				tags, _ := od["tags"].([]any)
-				if len(tags) != 1 || tags[0] != f.tag {
-					el.addf("%s %s: an operation has exactly one tag and it must be %q, the tag of %s (found %v)", strings.ToUpper(m), where, f.tag, f.rel, tags)
-				}
 				id, _ := od["operationId"].(string)
+				if len(tags) != 1 || tags[0] != f.tag {
+					el.addf("%s %s (%s): an operation has exactly one tag and it must be %q, the tag of %s (found %v)", strings.ToUpper(m), where, id, f.tag, f.rel, tags)
+				}
 				if !operationRe.MatchString(id) {
 					el.addf("%s %s: operationId %q is not camelCase", strings.ToUpper(m), where, id)
 				} else if prev, dup := opIDs[id]; dup {

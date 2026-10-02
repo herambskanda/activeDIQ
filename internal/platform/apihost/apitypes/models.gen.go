@@ -246,10 +246,8 @@ func (v *Job) Validate(at jsontext.Pointer, errs *Errors) {
 		}
 	}
 	// finishedAt
-	if v.p.Decoded() {
-		if !v.p.Has(3) {
-			errs.Required(at, "finishedAt")
-		}
+	if v.p.Decoded() && !v.p.Has(3) {
+		errs.Required(at, "finishedAt")
 	}
 	// id
 	if v.p.Decoded() {
@@ -300,10 +298,8 @@ func (v *Job) Validate(at jsontext.Pointer, errs *Errors) {
 		v.Progress.Validate(at.AppendToken("progress"), errs)
 	}
 	// startedAt
-	if v.p.Decoded() {
-		if !v.p.Has(8) {
-			errs.Required(at, "startedAt")
-		}
+	if v.p.Decoded() && !v.p.Has(8) {
+		errs.Required(at, "startedAt")
 	}
 	// status
 	if v.p.Decoded() {
@@ -478,10 +474,8 @@ func (v *JobLinks) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 // null on a non-nullable member, bounds, patterns and closed enums.
 func (v *JobLinks) Validate(at jsontext.Pointer, errs *Errors) {
 	// cancel
-	if v.p.Decoded() {
-		if v.p.IsNull(0) {
-			errs.NullNotAllowed(at, "cancel")
-		}
+	if v.p.Decoded() && v.p.IsNull(0) {
+		errs.NullNotAllowed(at, "cancel")
 	}
 	if v.Cancel != nil {
 		CheckLen(errs, InBody, at.AppendToken("cancel"), string((*v.Cancel)), 0, 512)
@@ -778,12 +772,10 @@ func (v *PageInfo) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 // null on a non-nullable member, bounds, patterns and closed enums.
 func (v *PageInfo) Validate(at jsontext.Pointer, errs *Errors) {
 	// nextCursor
-	if v.p.Decoded() {
-		if !v.p.Has(0) {
-			errs.Required(at, "nextCursor")
-		}
+	if v.p.Decoded() && !v.p.Has(0) {
+		errs.Required(at, "nextCursor")
 	}
-	if v.p.Decoded() && v.p.Has(0) && v.NextCursor != nil || !v.p.Decoded() && v.NextCursor != nil {
+	if v.NextCursor != nil {
 		CheckLen(errs, InBody, at.AppendToken("nextCursor"), string((*v.NextCursor)), 0, 1024)
 	}
 }
@@ -938,49 +930,39 @@ func (v *Problem) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 // null on a non-nullable member, bounds, patterns and closed enums.
 func (v *Problem) Validate(at jsontext.Pointer, errs *Errors) {
 	// code
-	if v.p.Decoded() {
-		if v.p.IsNull(0) {
-			errs.NullNotAllowed(at, "code")
-		}
+	if v.p.Decoded() && v.p.IsNull(0) {
+		errs.NullNotAllowed(at, "code")
 	}
 	if v.Code != nil {
 		CheckLen(errs, InBody, at.AppendToken("code"), string((*v.Code)), 0, 100)
 	}
 	// detail
-	if v.p.Decoded() {
-		if v.p.IsNull(1) {
-			errs.NullNotAllowed(at, "detail")
-		}
+	if v.p.Decoded() && v.p.IsNull(1) {
+		errs.NullNotAllowed(at, "detail")
 	}
 	if v.Detail != nil {
 		CheckLen(errs, InBody, at.AppendToken("detail"), string((*v.Detail)), 0, 2048)
 	}
 	// directory
-	if v.p.Decoded() {
-		if v.p.IsNull(2) {
-			errs.NullNotAllowed(at, "directory")
-		}
+	if v.p.Decoded() && v.p.IsNull(2) {
+		errs.NullNotAllowed(at, "directory")
 	}
 	if v.Directory != nil {
 		(*v.Directory).Validate(at.AppendToken("directory"), errs)
 	}
 	// errors
-	if v.p.Decoded() {
-		if v.p.IsNull(3) {
-			errs.NullNotAllowed(at, "errors")
-		}
+	if v.p.Decoded() && v.p.IsNull(3) {
+		errs.NullNotAllowed(at, "errors")
 	}
-	if !v.p.Decoded() || (v.p.Has(3) && !v.p.IsNull(3)) {
+	if v.Errors != nil {
 		CheckCount(errs, InBody, at.AppendToken("errors"), len(v.Errors), 0, 1000, CodeMaxItems)
 		for i := range v.Errors {
 			v.Errors[i].Validate(Index(at.AppendToken("errors"), i), errs)
 		}
 	}
 	// instance
-	if v.p.Decoded() {
-		if v.p.IsNull(4) {
-			errs.NullNotAllowed(at, "instance")
-		}
+	if v.p.Decoded() && v.p.IsNull(4) {
+		errs.NullNotAllowed(at, "instance")
 	}
 	if v.Instance != nil {
 		CheckLen(errs, InBody, at.AppendToken("instance"), string((*v.Instance)), 0, 2048)
@@ -1010,10 +992,8 @@ func (v *Problem) Validate(at jsontext.Pointer, errs *Errors) {
 		CheckLen(errs, InBody, at.AppendToken("title"), string(v.Title), 0, 200)
 	}
 	// traceId
-	if v.p.Decoded() {
-		if v.p.IsNull(7) {
-			errs.NullNotAllowed(at, "traceId")
-		}
+	if v.p.Decoded() && v.p.IsNull(7) {
+		errs.NullNotAllowed(at, "traceId")
 	}
 	if v.TraceID != nil {
 		CheckLen(errs, InBody, at.AppendToken("traceId"), string((*v.TraceID)), 0, 64)
@@ -1251,10 +1231,8 @@ func (v *ProblemError) Validate(at jsontext.Pointer, errs *Errors) {
 		}
 	}
 	// item
-	if v.p.Decoded() {
-		if v.p.IsNull(3) {
-			errs.NullNotAllowed(at, "item")
-		}
+	if v.p.Decoded() && v.p.IsNull(3) {
+		errs.NullNotAllowed(at, "item")
 	}
 	if v.Item != nil {
 		CheckInt(errs, InBody, at.AppendToken("item"), int64((*v.Item)), 0, 9007199254740991)
