@@ -1,0 +1,14 @@
+# build of krb5gssapi against github.com/go-krb5/krb5 v0.1.0 (released 2026-02-15)
+# github.com/skenzeriq/activediq/garage/ldap-cbt-spike/krb5gssapi
+krb5gssapi/client.go:33:14: undefined: gssapi.ChannelBinding
+krb5gssapi/client.go:45:41: undefined: gssapi.ChannelBinding
+krb5gssapi/client.go:51:73: undefined: gssapi.ChannelBinding
+krb5gssapi/client.go:55:16: undefined: gssapi.NewChannelBindingTLSServerEndPointFromState
+krb5gssapi/client.go:59:59: undefined: gssapi.ChannelBinding
+krb5gssapi/client.go:60:16: undefined: gssapi.NewChannelBindingTLSServerEndPoint
+krb5gssapi/client.go:85:20: undefined: spnego.KRB5TokenOption
+krb5gssapi/client.go:87:30: undefined: spnego.ChannelBinding
+krb5gssapi/client.go:89:13: cannot use ... in call to non-variadic spnego.NewKRB5TokenAPREQ
+krb5gssapi/client.go:146:33: undefined: gssapi.FlagAcceptorSubkey
+krb5gssapi/client.go:146:33: too many errors
+# exit: build must FAIL above (undefined: gssapi.ChannelBinding ...)

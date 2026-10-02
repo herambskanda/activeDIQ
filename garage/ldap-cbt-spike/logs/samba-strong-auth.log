@@ -1,0 +1,62 @@
+# T-0023 spike run 2026-10-02T07:00:53Z
+# samba: Version 4.22.11-Debian-4.22.11+dfsg-0+deb13u1
+# smb.conf: ldap server require strong auth = yes
+# go: go version go1.27.0 darwin/arm64
+# go-krb5/krb5: v0.1.1-0.20260926041222-f89757a5d4ed  go-ldap: v3.4.14
+# keytab etypes (client side): kept 4 AES entries, dropped 0 non-AES
+
+?   	github.com/skenzeriq/activediq/garage/ldap-cbt-spike/cmd/aeskeytab	[no test files]
+=== RUN   TestKeytabIsAESOnly
+--- PASS: TestKeytabIsAESOnly (0.00s)
+=== RUN   TestBindMatrixAgainstStrongAuthLab
+=== RUN   TestBindMatrixAgainstStrongAuthLab/ldaps/cbt=server-end-point
+TLS 1.3 cipher=TLS_AES_128_GCM_SHA256 peer-cert-sig=SHA256-RSA cbt=server-end-point
+BIND OK mode=ldaps cbt=server-end-point spn=ldap/dc1.lab.activediq.test ticket-session-etype=18 whoami="u:LAB\\svc-cbt-spike"
+=== RUN   TestBindMatrixAgainstStrongAuthLab/starttls/cbt=server-end-point
+TLS 1.3 cipher=TLS_AES_128_GCM_SHA256 peer-cert-sig=SHA256-RSA cbt=server-end-point
+BIND OK mode=starttls cbt=server-end-point spn=ldap/dc1.lab.activediq.test ticket-session-etype=18 whoami="u:LAB\\svc-cbt-spike"
+=== RUN   TestBindMatrixAgainstStrongAuthLab/ldaps/cbt=none
+TLS 1.3 cipher=TLS_AES_128_GCM_SHA256 peer-cert-sig=SHA256-RSA cbt=none
+=== RUN   TestBindMatrixAgainstStrongAuthLab/starttls/cbt=none
+TLS 1.3 cipher=TLS_AES_128_GCM_SHA256 peer-cert-sig=SHA256-RSA cbt=none
+=== RUN   TestBindMatrixAgainstStrongAuthLab/ldaps/cbt=wrong
+TLS 1.3 cipher=TLS_AES_128_GCM_SHA256 peer-cert-sig=SHA256-RSA cbt=wrong
+=== RUN   TestBindMatrixAgainstStrongAuthLab/starttls/cbt=wrong
+TLS 1.3 cipher=TLS_AES_128_GCM_SHA256 peer-cert-sig=SHA256-RSA cbt=wrong
+--- PASS: TestBindMatrixAgainstStrongAuthLab (0.15s)
+    --- PASS: TestBindMatrixAgainstStrongAuthLab/ldaps/cbt=server-end-point (0.05s)
+    --- PASS: TestBindMatrixAgainstStrongAuthLab/starttls/cbt=server-end-point (0.02s)
+    --- PASS: TestBindMatrixAgainstStrongAuthLab/ldaps/cbt=none (0.02s)
+    --- PASS: TestBindMatrixAgainstStrongAuthLab/starttls/cbt=none (0.02s)
+    --- PASS: TestBindMatrixAgainstStrongAuthLab/ldaps/cbt=wrong (0.02s)
+    --- PASS: TestBindMatrixAgainstStrongAuthLab/starttls/cbt=wrong (0.02s)
+PASS
+ok  	github.com/skenzeriq/activediq/garage/ldap-cbt-spike/cmd/cbtbind	0.650s
+=== RUN   TestChannelBindingIsRFC5929
+--- PASS: TestChannelBindingIsRFC5929 (0.00s)
+=== RUN   TestNegotiateSelectsNoLayerOverTLS
+--- PASS: TestNegotiateSelectsNoLayerOverTLS (0.00s)
+=== RUN   TestNegotiateRefusesServerWithoutNoLayer
+--- PASS: TestNegotiateRefusesServerWithoutNoLayer (0.00s)
+=== RUN   TestNegotiateRefusesBeforeMutualAuth
+--- PASS: TestNegotiateRefusesBeforeMutualAuth (0.00s)
+=== RUN   TestNegotiateRejectsTamperedOffer
+--- PASS: TestNegotiateRejectsTamperedOffer (0.00s)
+=== RUN   TestDeleteSecContextWipesKeys
+--- PASS: TestDeleteSecContextWipesKeys (0.00s)
+PASS
+ok  	github.com/skenzeriq/activediq/garage/ldap-cbt-spike/krb5gssapi	0.647s
+
+# raw CLI runs
+TLS 1.3 cipher=TLS_AES_128_GCM_SHA256 peer-cert-sig=SHA256-RSA cbt=server-end-point
+BIND OK mode=ldaps cbt=server-end-point spn=ldap/dc1.lab.activediq.test ticket-session-etype=18 whoami="u:LAB\\svc-cbt-spike"
+TLS 1.3 cipher=TLS_AES_128_GCM_SHA256 peer-cert-sig=SHA256-RSA cbt=none
+BIND FAILED mode=ldaps cbt=none: LDAP Result Code 49 "Invalid Credentials": 80090346: LdapErr: DSID-0C090711, comment: AcceptSecurityContext error, data 35b, v1db1
+TLS 1.3 cipher=TLS_AES_128_GCM_SHA256 peer-cert-sig=SHA256-RSA cbt=wrong
+BIND FAILED mode=ldaps cbt=wrong: LDAP Result Code 49 "Invalid Credentials": 80090346: LdapErr: DSID-0C090711, comment: AcceptSecurityContext error, data 35b, v1db1
+TLS 1.3 cipher=TLS_AES_128_GCM_SHA256 peer-cert-sig=SHA256-RSA cbt=server-end-point
+BIND OK mode=starttls cbt=server-end-point spn=ldap/dc1.lab.activediq.test ticket-session-etype=18 whoami="u:LAB\\svc-cbt-spike"
+TLS 1.3 cipher=TLS_AES_128_GCM_SHA256 peer-cert-sig=SHA256-RSA cbt=none
+BIND FAILED mode=starttls cbt=none: LDAP Result Code 49 "Invalid Credentials": 80090346: LdapErr: DSID-0C090711, comment: AcceptSecurityContext error, data 35b, v1db1
+TLS 1.3 cipher=TLS_AES_128_GCM_SHA256 peer-cert-sig=SHA256-RSA cbt=wrong
+BIND FAILED mode=starttls cbt=wrong: LDAP Result Code 49 "Invalid Credentials": 80090346: LdapErr: DSID-0C090711, comment: AcceptSecurityContext error, data 35b, v1db1
