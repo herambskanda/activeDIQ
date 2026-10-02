@@ -1811,6 +1811,7 @@ both. Lab-dependent claims in this section are listed in §9.
 [pg-setconfig]: https://www.postgresql.org/docs/current/functions-admin.html#FUNCTIONS-ADMIN-SET
 [pg-rls]: https://www.postgresql.org/docs/current/ddl-rowsecurity.html
 [pg-like]: https://www.postgresql.org/docs/current/functions-matching.html#FUNCTIONS-LIKE
+[pg-ssl]: https://www.postgresql.org/docs/current/libpq-ssl.html
 [pg-format]: https://www.postgresql.org/docs/current/functions-string.html#FUNCTIONS-STRING-FORMAT
 [pg-char]: https://www.postgresql.org/docs/current/datatype-character.html
 [pgx-ident]: https://pkg.go.dev/github.com/jackc/pgx/v5#Identifier.Sanitize
