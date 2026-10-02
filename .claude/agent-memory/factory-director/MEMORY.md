@@ -10,3 +10,4 @@
 - [ADR review: allowlist + ownership](adr-review-allowlist-and-ownership.md) — allowlist matrix must cover every package incl. roots; run every DM owner through table rules
 - [Generator ADR checks](generator-adr-review-checks.md) — read codegen templates per allowed construct; nested strictness; secretjson/FF-SP2; host↔kernel cycles
 - [Pipeline/audit ADR checks](pipeline-adr-review-checks.md) — draw import DAG for token-typed write APIs; authz re-check per DM-35 root kind incl. Entra; transitions edges
+- [Capacity knobs: ask the number](capacity-knobs-ask-the-number.md) — CEO sets slots/run-cap numbers; ask in one line, lead with the higher value

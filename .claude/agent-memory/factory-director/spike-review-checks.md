@@ -20,5 +20,8 @@ metadata:
   size actually ran (flush timer vs cap); check the recommendation against the spike's own table (T-0026 picked the
   slower mode); grep ratified ADRs for the "discovery" (ADR-0002 already had COPY-vs-RLS); fetch the cited source behind
   the threshold (MS says 3,000/s "on average", not a ceiling).
+- Round 2: when a review changes a recommendation, re-read the follow-up tickets' title and AC, not just their notes.
+  A note saying "AC is stale" doesn't change the AC (T-0143 still said copy-stage). `ticket set` can't edit
+  title or AC, so cancel and re-ticket (T-0146).
 
 **Why:** T-0023 and T-0026 (2026-10-02). **How to apply:** every spike review.
