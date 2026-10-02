@@ -24,7 +24,7 @@ Needs Docker with Compose v2 (Docker Desktop, OrbStack or Linux Docker), `openss
 host. Nothing else.
 
 ```bash
-make lab-up        # first run: build image, provision, seed, snapshot, start (~2 min); later runs: seconds
+make lab-up        # first run: build image, provision, seed, snapshot, start (111 s measured, no image cache); later runs: seconds
 make lab-test      # unit tests of the seed generator + live checks + a reset round trip
 make lab-reset     # back to the exact seeded state (~7 s)
 make lab-down      # stop (state kept)      make lab-destroy   # delete everything incl. credentials
@@ -81,7 +81,7 @@ A snapshot ages like a real directory: after about a month the "expiring" users 
 `make lab-rebuild` to refresh, or write your own timestamps in tests. Set `LAB_SEED_NOW=<unix>` for a
 pinned, reproducible build.
 
-`LAB_TIER=small make lab-up` builds the 300-user tier (about 40 s) for fast CI loops. The `scale`
+`LAB_TIER=small make lab-up` builds the 300-user tier for faster CI loops (`lab-destroy` first when switching tier; the tier is part of the seed version). The `scale`
 tier (50k users) and a second DC (`2dc`) are not built yet — see §7.
 
 ## 3. How it works
@@ -93,8 +93,8 @@ tier (50k users) and a second DC (`2dc`) are not built yet — see §7.
   `activediq-lab_lab-snapshots` (`state.tar`).
 - **Init** (`entrypoint.sh init`, only when the volume is empty or the seed version changed):
   provision → generate our own CA and server cert with SANs → load the seed **offline** into the
-  stopped `sam.ldb` with `ldbadd`/`ldbmodify` (≈ 60 s for 5,000 users; far faster than
-  `samba-tool`) → start Samba → delegate `OU=Managed` and lock out the listed accounts through the
+  stopped `sam.ldb` with `ldbadd`/`ldbmodify` (about a minute for 5,000 users; far faster than
+  per-user `samba-tool`) → start Samba → delegate `OU=Managed` and lock out the listed accounts through the
   protocol → stop → tar the state as the snapshot.
 - **Reset** (`make lab-reset`): stop the DC, wipe the state, untar the snapshot, start. The
   directory is bit-for-bit what it was at the end of init (same GUIDs, SIDs, USNs, timestamps).
@@ -106,7 +106,7 @@ tier (50k users) and a second DC (`2dc`) are not built yet — see §7.
 - **Why faketime:** Samba accepts `pwdLastSet` only as 0 or -1 over LDAP/ldb, so password ages are
   produced by adding each user while the clock reads the password-set day (`loadplan.txt`, one
   `ldbadd` per age bucket). `lastLogon`, `lastLogonTimestamp`, `accountExpires` are written
-  directly. As a side effect `whenCreated` is the real build time, not the faked day.
+  directly. As a side effect `whenCreated` of a seeded user or computer is its password-set day; the service account and edge-case users carry the real build time.
 - **Lab audit log:** Samba's JSON auth/dsdb audit lines go to the container log
   (`make lab-logs`). It is not a Windows event log (§5).
 

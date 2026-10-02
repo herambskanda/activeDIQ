@@ -37,3 +37,6 @@ Gotchas that cost time. Newest first. `date · lesson · source`.
 - 2026-08-12 · An extension interface that is not the only on-ramp from day one becomes decoration.
 - 2026-08-12 · Security-relevant strings built with string formatting recur as a bug class — use shared safe primitives and lint against raw construction.
 - 2026-08-12 · Fabricated UI data and dead buttons slipped through — QA traces every number to the API and clicks every control.
+- 2026-10-02 · Samba rejects any `pwdLastSet` except 0/-1 (even via offline `ldbadd`), so seeded password ages need a set-back clock (libfaketime) while adding users; `lastLogon`, `lastLogonTimestamp`, `accountExpires` write directly. Source: T-0012, `knowledge/development/runbooks/ad-lab.md` §3
+- 2026-10-02 · Samba returns all values of a >1500-value attribute unranged on a plain read, where Windows ranges it, so a connector that forgets to page passes on the Samba lab and fails on Windows. Request `member;range=…` explicitly and loop. Source: T-0012 (measured), runbook §5
+- 2026-10-02 · A reset/restore proof needs its baseline digest taken before any check that binds: binds change `lastLogon`, `logonCount`, `badPwdCount`, and the reset rightly undoes them. Source: T-0012 `lab/tests/verify.sh`
