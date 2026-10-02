@@ -10,6 +10,7 @@ Newest first. `date · who · decision · why/source`. CEO decisions also live o
 architecture decisions as ADRs in knowledge/development/decisions/. Roll entries older than the
 current milestone into archive/ when this file nears its budget.
 
+- 2026-10-02 · factory · **M2 planned** (T-0031): 14 M2 epics E-007…E-020 cover all 142 unconditional v1 rows; checkpoint 2a has 53 tickets (T-0064…T-0116). Foundations (primitives, connector, kernel) sit in M1/E-004 per roadmap E1.6; primitive order attr → dn → ldapfilter; search and reports share one scope evaluator from day one; 2a sign-in is local + TOTP, SSO at 2b. (knowledge/business/scoping/m2-plan.md)
 - 2026-10-02 · CEO · **D-0005 Brand: a separate brand**, "Own palette and identity, independent of skenzeriq". Answered on the board with no note. It overrides the recommendation, which was a sub-brand on skenzeriq tokens. The factory's calls inside the answer went out as notice D-0008, which the CEO may veto:
   - Brand and UI style are picked together from three previews (T-0042, which replaces the cancelled T-0010).
   - No skenzeriq Electric Indigo or Geist.
