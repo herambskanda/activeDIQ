@@ -163,13 +163,15 @@ func Decode(f Field, raw string) (Value, error) {
 
 func validField(f Field) bool { return f >= AccountExpires && f <= PasswordExpiryComputed }
 
-// Encode returns the raw octets for v on field f. An instant is its tick count; Never is 0 on
-// accountExpires and 0x7FFFFFFFFFFFFFFF on the computed expiry; MustChange is 0 on pwdLastSet.
-// NoValue and OutOfRange have no raw form: absence is not written, and an unrepresentable value
-// is not invented.
+// Encode returns the raw octets for v on field f. An instant is encodable only on accountExpires:
+// pwdLastSet, lastLogon, lastLogonTimestamp, badPasswordTime and lockoutTime are written by the DC
+// (or by EncodePwdLastSet), and a forged value would hide an account from stale-account reports. A
+// filter value for any field is Value.Raw(), not Encode. Never is 0 on accountExpires and
+// 0x7FFFFFFFFFFFFFFF on the computed expiry; MustChange is 0 on pwdLastSet. NoValue and OutOfRange
+// have no raw form: absence is not written, and an unrepresentable value is not invented.
 func (f Field) Encode(v Value) (string, error) {
 	switch {
-	case v.Kind == KindInstant && v.Ticks > 0 && v.Ticks <= MaxInstantTicks && validField(f):
+	case v.Kind == KindInstant && f == AccountExpires && v.Ticks > 0 && v.Ticks <= MaxInstantTicks:
 		return strconv.FormatInt(v.Ticks, 10), nil
 	case v.Kind == KindNever && f == AccountExpires:
 		return "0", nil

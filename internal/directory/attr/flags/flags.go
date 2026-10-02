@@ -18,8 +18,8 @@ import (
 const (
 	BadInteger        = codec.BadInteger
 	Overflow          = codec.Overflow
-	NotSettable       = "NotSettable"       // LOCKOUT, PASSWD_CANT_CHANGE, PASSWORD_EXPIRED
-	PrivilegeRequired = "PrivilegeRequired" // setting a delegation flag without the capability
+	NotSettable       = "NotSettable"       // LOCKOUT, PASSWD_CANT_CHANGE, PASSWORD_EXPIRED, account-type bits
+	PrivilegeRequired = "PrivilegeRequired" // a delegation or security-weakening change without the capability
 	InvalidScope      = "InvalidScope"      // groupType without exactly one of GLOBAL, DOMAIN_LOCAL, UNIVERSAL
 	UnknownFlag       = "UnknownFlag"       // a change names something that is not one known flag
 	ConflictingChange = "ConflictingChange" // the same flag in set and clear
@@ -157,6 +157,11 @@ type Privileges struct {
 	// EnableDelegation allows setting TRUSTED_FOR_DELEGATION and TRUSTED_TO_AUTH_FOR_DELEGATION
 	// (SeEnableDelegationPrivilege on the DC; the caller's own authorisation here).
 	EnableDelegation bool
+	// WeakenAccountSecurity allows the changes that make an account easier to attack: setting
+	// PASSWD_NOTREQD, ENCRYPTED_TEXT_PWD_ALLOWED, USE_DES_KEY_ONLY or DONT_REQ_PREAUTH, and clearing
+	// NOT_DELEGATED or SMARTCARD_REQUIRED. The DC asks only for write access to userAccountControl,
+	// so this is the one place the capability is enforced before the write.
+	WeakenAccountSecurity bool
 }
 
 // Change is a set of flags to set and a set to clear.
@@ -166,14 +171,29 @@ type Change struct{ Set, Clear []UACFlag }
 // compare-and-swap (delete old, add new) modify.
 type Edit struct{ Old, New UAC }
 
-const notSettable = bitLockout | uint32(UACPasswdCantChange) | bitPasswordExpired
+// accountType is every bit that fixes what kind of object the account is. It is set by the create
+// path and never toggled: turning a computer into a DC (SERVER_TRUST), an RODC (PARTIAL_SECRETS) or a
+// trust account would hand its holder replication rights.
+const accountType = uint32(UACTempDuplicateAccount) | uint32(UACNormalAccount) | uint32(UACInterdomainTrustAccount) |
+	uint32(UACWorkstationTrustAccount) | uint32(UACServerTrustAccount) | uint32(UACPartialSecretsAccount)
+
+const notSettable = bitLockout | uint32(UACPasswdCantChange) | bitPasswordExpired | accountType
 
 const privileged = uint32(UACTrustedForDelegation) | uint32(UACTrustedToAuthForDelegation)
 
+// weakeningSet are bits whose setting weakens an account; weakeningClear are bits whose clearing does.
+const (
+	weakeningSet = uint32(UACPasswdNotReqd) | uint32(UACEncryptedTextPwdAllowed) | uint32(UACUseDesKeyOnly) | uint32(UACDontReqPreauth)
+
+	weakeningClear = uint32(UACNotDelegated) | uint32(UACSmartcardRequired)
+)
+
 // Apply applies c to the value read. LOCKOUT, PASSWD_CANT_CHANGE and PASSWORD_EXPIRED can be neither
-// set nor cleared (unlock is lockoutTime=0; the others are ACEs or computed). The delegation flags
-// can be set only with Privileges.EnableDelegation (clearing them is always allowed). Each flag in
-// the change must be exactly one known bit.
+// set nor cleared (unlock is lockoutTime=0; the others are ACEs or computed); nor can the account
+// type bits (NORMAL, TEMP_DUPLICATE, INTERDOMAIN_TRUST, WORKSTATION_TRUST, SERVER_TRUST,
+// PARTIAL_SECRETS). The delegation flags can be set only with Privileges.EnableDelegation (clearing
+// them is always allowed). The weakening changes (see Privileges.WeakenAccountSecurity) need that
+// capability; the hardening directions are free. Each flag in the change must be exactly one known bit.
 func (u UAC) Apply(c Change, p Privileges) (Edit, error) {
 	set, err := mask(c.Set)
 	if err != nil {
@@ -189,6 +209,8 @@ func (u UAC) Apply(c Change, p Privileges) (Edit, error) {
 	case set&clr != 0:
 		return Edit{}, codec.New(ConflictingChange)
 	case set&privileged != 0 && !p.EnableDelegation:
+		return Edit{}, codec.New(PrivilegeRequired)
+	case (set&weakeningSet != 0 || clr&weakeningClear != 0) && !p.WeakenAccountSecurity:
 		return Edit{}, codec.New(PrivilegeRequired)
 	}
 	return Edit{Old: u, New: UAC{(u.bits | set) &^ clr}}, nil

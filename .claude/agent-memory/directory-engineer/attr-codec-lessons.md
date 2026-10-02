@@ -15,3 +15,7 @@ metadata:
 - Go time: `Format(".9999999")` truncates to 100 ns; use 9 digits when testing nanosecond fractions.
 - Fuzz seeds come from `corpustest.Seed` as []byte: keep corpus inputs small (GUID-16 is 4 KiB, 1 MiB is a unit test).
 - No Docker on the dev Mac (OrbStack off): Samba/pwsh oracles cannot run locally; say so and file a lab ticket.
+- Codec write paths are escalation guards: security-architect rejected `flags.Apply` for gating only delegation. Account-type
+  bits (SERVER_TRUST, PARTIAL_SECRETS, ...) are never settable; weakening bits (DONT_REQ_PREAUTH, PASSWD_NOTREQD, ...) need
+  `WeakenAccountSecurity`. Only accountExpires takes an encoded instant. Ask "what can a WP-on-UAC caller forge?" per bit.
+- When scripting edits with python str.replace on Go files, tabs in the pattern can silently not match; assert the match.

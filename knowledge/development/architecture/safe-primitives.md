@@ -536,6 +536,11 @@ never as a year-30828 date. Unix seconds = ticks / 10^7 − 11644473600.
 | `lockoutDuration`, `msDS-LockoutDuration` | `0` and `−2^63` → `Forever` (locked until an administrator unlocks) | derived from the MS-ADTS lockout formula ([adts-uacc]) |
 | `lockoutObservationWindow`, `minPwdAge` | interval ≤ 0 | |
 
+**Writes.** `Field.Encode` encodes an instant for `accountExpires` only. `pwdLastSet`, `lastLogon`,
+`lastLogonTimestamp`, `badPasswordTime` and `lockoutTime` are written by the DC (`pwdLastSet` through
+`EncodePwdLastSet`); a forged `lastLogonTimestamp` would hide a dormant account from stale-account
+reports. A filter value for any field is `Value.Raw()`, not `Encode`.
+
 Lockout and password-expired *state* is never computed from these by feature code; it comes from
 `msDS-User-Account-Control-Computed` (§5.5).
 
@@ -558,6 +563,7 @@ Lockout and password-expired *state* is never computed from these by feature cod
 | FT-15 | `9223372036854775808`, `-9223372036854775809` | error `Overflow` | |
 | FT-16 | `١٢٣` (Arabic-Indic) · `１２３` (full-width) | error `BadInteger` | ASCII digits only |
 | FT-17 | lastLogon: `9007199254740993` → API | `"raw":"9007199254740993"` as a JSON string | 2^53 + 1 would round as a number |
+| FT-29 | `Encode` of an instant on pwdLastSet · lastLogon · lastLogonTimestamp · lockoutTime · badPasswordTime | error `NotEncodable` | only `accountExpires` takes an instant (security review, T-0070) |
 
 ### 5.4 Generalized Time (syntax 2.5.5.11, oMSyntax 24)
 
@@ -593,9 +599,17 @@ Types `UAC` (stored `userAccountControl`), `UACComputed` (`msDS-User-Account-Con
   (0x800000), the only bits MS-ADTS defines for it on AD DS ([adts-uacc]).
 - Unknown bits survive decode → encode. A write never drops bits we do not know.
 - Writes are `Change{set, clear}` applied to the value read, producing `(old, new)` for a
-  compare-and-swap delete+add (uac-flags.md). LOCKOUT, PASSWD_CANT_CHANGE and PASSWORD_EXPIRED are not
-  settable; TRUSTED_FOR_DELEGATION and TRUSTED_TO_AUTH_FOR_DELEGATION need an explicit privileged
-  capability.
+  compare-and-swap delete+add (uac-flags.md). `Apply` is the escalation guard for the write (the DC
+  asks only for write access to `userAccountControl`), so the unsafe call is unrepresentable (R1):
+  - **Not settable, set or clear, with any capability**: LOCKOUT, PASSWD_CANT_CHANGE, PASSWORD_EXPIRED
+    and the account-type bits TEMP_DUPLICATE_ACCOUNT 0x100, NORMAL_ACCOUNT 0x200,
+    INTERDOMAIN_TRUST_ACCOUNT 0x800, WORKSTATION_TRUST_ACCOUNT 0x1000, SERVER_TRUST_ACCOUNT 0x2000 and
+    PARTIAL_SECRETS_ACCOUNT 0x4000000. The type is fixed by the create path: toggling it makes a
+    computer a DC or RODC account (FL-23).
+  - **`Privileges.EnableDelegation`**: setting TRUSTED_FOR_DELEGATION or TRUSTED_TO_AUTH_FOR_DELEGATION.
+  - **`Privileges.WeakenAccountSecurity`**: setting PASSWD_NOTREQD, ENCRYPTED_TEXT_PWD_ALLOWED,
+    USE_DES_KEY_ONLY or DONT_REQ_PREAUTH, and clearing NOT_DELEGATED or SMARTCARD_REQUIRED (FL-24,
+    FL-25). The hardening directions are free (FL-26). DONT_EXPIRE_PASSWORD stays ungated (FL-27).
 - `GroupType.Scope()` requires exactly one of GLOBAL 0x2 / DOMAIN_LOCAL 0x4 / UNIVERSAL 0x8 (BUILTIN 0x1
   for builtin groups); SECURITY is 0x80000000. Filters render masks unsigned (§3.2).
 
@@ -614,6 +628,11 @@ Types `UAC` (stored `userAccountControl`), `UACComputed` (`msDS-User-Account-Con
 | FL-11 | groupType `-2147483638` (GLOBAL + UNIVERSAL) | decodes; `Scope()` → error `InvalidScope` | |
 | FL-12 | `512 `, `+512`, `0x200`, `0512`, empty, `-0` | error `BadInteger` | |
 | FL-13 | `4294967296` | error `Overflow` | |
+| FL-23 | `Change` that sets or clears any account-type bit (`4096` set SERVER_TRUST + clear WORKSTATION_TRUST; `4096` set PARTIAL_SECRETS; `512` clear NORMAL; `512` set INTERDOMAIN_TRUST or TEMP_DUPLICATE; each bit alone, set and clear) | error `NotSettable`, even with every capability | a computer must not become a DC or RODC account (security review, T-0070) |
+| FL-24 | `512` set PASSWD_NOTREQD · ENCRYPTED_TEXT_PWD_ALLOWED · USE_DES_KEY_ONLY · DONT_REQ_PREAUTH; clear NOT_DELEGATED · SMARTCARD_REQUIRED, without `WeakenAccountSecurity` | error `PrivilegeRequired` | AS-REP roasting of an account in the operator's OU |
+| FL-25 | the same six changes with `WeakenAccountSecurity` | applies; `512` + `0x20` is `544` | |
+| FL-26 | clear the four weakening set-bits; set NOT_DELEGATED or SMARTCARD_REQUIRED, no capability | applies | hardening is free |
+| FL-27 | `512` set DONT_EXPIRE_PASSWORD, no capability | `66048` | routine; a report finding |
 
 ### 5.6 `unicodePwd` and the `Secret` type
 
@@ -1191,7 +1210,7 @@ plus `attr/codec` (the typed `Error` with a stable `Code`, and the RFC 4517 inte
 implementation, one `TestCorpus` and one `Fuzz*` target per unit (`go/attr-<name>` in
 `testdata/safe-primitives/implementations.json`). The corpus files `attr.*.jsonl` carry every §5 vector plus extras
 named `…F` (the reverse direction: the Windows SID/GUID oracle reads `text -> bytes_hex` and `hex -> render`
-records) and later numbers (`FT-18` to `FT-28`, `GT-14B` to `GT-23`, `FL-14` to `FL-22`, `GUID-08F`,
+records) and later numbers (`FT-18` to `FT-29`, `GT-14B` to `GT-23`, `FL-14` to `FL-27`, `GUID-08F`,
 `SID-02R`). Decisions the spec left open: a SID with zero sub-authorities in binary form is refused like in text (`NoSubAuthority`);
 `0x` in a SID authority is lower-case only (we may refuse more than Windows); `msDS-UserPasswordExpiryTimeComputed`
 `0` is `OutOfRange` and `maxPwdAge` `0` and `-2^63` on `minPwdAge`/`lockoutObservationWindow` are `UnverifiedValue`

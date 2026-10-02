@@ -66,6 +66,7 @@ func TestCorpus(t *testing.T) {
 			}
 			var priv Privileges
 			_ = json.Unmarshal(r.Args["enableDelegation"], &priv.EnableDelegation)
+			_ = json.Unmarshal(r.Args["weakenSecurity"], &priv.WeakenAccountSecurity)
 			e, err := u.Apply(c, priv)
 			if err != nil {
 				return corpustest.Err(codec.Code(err)), nil
@@ -108,6 +109,44 @@ func TestApplyEditCarriesOldAndNewForCompareAndSwap(t *testing.T) {
 	}
 }
 
+// Each gated bit is individually load-bearing: with it removed from its mask a record in the corpus
+// or this table would pass an unprivileged write.
+func TestEveryGatedBitIsRefusedWithoutCapability(t *testing.T) {
+	typeBits := []UACFlag{UACTempDuplicateAccount, UACNormalAccount, UACInterdomainTrustAccount,
+		UACWorkstationTrustAccount, UACServerTrustAccount, UACPartialSecretsAccount}
+	u, _ := DecodeUAC("512")
+	for _, f := range typeBits {
+		for _, ch := range []Change{{Set: []UACFlag{f}}, {Clear: []UACFlag{f}}} {
+			// Even with every capability, the account type is never toggled.
+			if _, err := u.Apply(ch, Privileges{EnableDelegation: true, WeakenAccountSecurity: true}); codec.Code(err) != NotSettable {
+				t.Errorf("%#x %+v: want NotSettable, got %v", uint32(f), ch, err)
+			}
+		}
+	}
+	weakenSet := []UACFlag{UACPasswdNotReqd, UACEncryptedTextPwdAllowed, UACUseDesKeyOnly, UACDontReqPreauth}
+	weakenClear := []UACFlag{UACNotDelegated, UACSmartcardRequired}
+	for _, f := range weakenSet {
+		ch := Change{Set: []UACFlag{f}}
+		if _, err := u.Apply(ch, Privileges{EnableDelegation: true}); codec.Code(err) != PrivilegeRequired {
+			t.Errorf("set %#x without WeakenAccountSecurity: got %v", uint32(f), err)
+		}
+		if _, err := u.Apply(ch, Privileges{WeakenAccountSecurity: true}); err != nil {
+			t.Errorf("set %#x with the capability: %v", uint32(f), err)
+		}
+		if _, err := u.Apply(Change{Clear: []UACFlag{f}}, Privileges{}); err != nil {
+			t.Errorf("clearing %#x hardens and needs nothing: %v", uint32(f), err)
+		}
+	}
+	for _, f := range weakenClear {
+		if _, err := u.Apply(Change{Clear: []UACFlag{f}}, Privileges{EnableDelegation: true}); codec.Code(err) != PrivilegeRequired {
+			t.Errorf("clear %#x without WeakenAccountSecurity: got %v", uint32(f), err)
+		}
+		if _, err := u.Apply(Change{Set: []UACFlag{f}}, Privileges{}); err != nil {
+			t.Errorf("setting %#x hardens and needs nothing: %v", uint32(f), err)
+		}
+	}
+}
+
 func TestGroupTypeScopeNeedsExactlyOne(t *testing.T) {
 	for raw, want := range map[string]string{"-2147483646": "global", "-2147483644": "domainLocal", "-2147483640": "universal", "-2147483643": "domainLocal"} {
 		g, err := DecodeGroupType(raw)
@@ -142,13 +181,27 @@ func FuzzFlags(f *testing.F) {
 			}
 			// A change built from the value's own bits never loses a bit it did not clear, and never
 			// moves a bit that is not settable.
-			for _, f := range []UACFlag{UACAccountDisable, UACDontExpirePassword, UACNormalAccount} {
+			for _, f := range []UACFlag{UACAccountDisable, UACDontExpirePassword, UACHomedirRequired, UACScript} {
 				e, err := u.Apply(Change{Set: []UACFlag{f}}, Privileges{})
 				if err != nil {
 					t.Fatal(err)
 				}
 				if e.New.bits != u.bits|uint32(f) || e.New.Unknown() != u.Unknown() {
 					t.Fatalf("Apply set %v on %d gave %d", f, u.bits, e.New.bits)
+				}
+			}
+			// Escalation guard: without a capability, no change adds a gated bit, removes a protective
+			// bit or moves an account-type bit.
+			for _, tbl := range uacTable {
+				for _, ch := range []Change{{Set: []UACFlag{UACFlag(tbl.bit)}}, {Clear: []UACFlag{UACFlag(tbl.bit)}}} {
+					e, err := u.Apply(ch, Privileges{})
+					if err != nil {
+						continue
+					}
+					added, removed := e.New.bits&^u.bits, u.bits&^e.New.bits
+					if added&(privileged|weakeningSet|accountType) != 0 || removed&(weakeningClear|accountType) != 0 {
+						t.Fatalf("unprivileged %+v on %d gave %d", ch, u.bits, e.New.bits)
+					}
 				}
 			}
 			if e, err := u.Apply(Change{Clear: []UACFlag{UACAccountDisable}}, Privileges{}); err != nil || (e.New.bits^u.bits)&^uint32(UACAccountDisable) != 0 {

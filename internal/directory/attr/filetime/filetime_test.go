@@ -120,6 +120,11 @@ func TestEncodeRefusals(t *testing.T) {
 		{AccountExpires, Value{Kind: KindMustChange}},
 		{AccountExpires, Value{Kind: KindInstant, Ticks: 0}},
 		{AccountExpires, Value{Kind: KindInstant, Ticks: MaxInstantTicks + 1}},
+		// An instant is writable on accountExpires only (security review T-0070).
+		{PwdLastSet, Value{Kind: KindInstant, Ticks: 134379828000000000}},
+		{LastLogon, Value{Kind: KindInstant, Ticks: 134379828000000000}},
+		{LockoutTime, Value{Kind: KindInstant, Ticks: 134379828000000000}},
+		{PasswordExpiryComputed, Value{Kind: KindInstant, Ticks: 134379828000000000}},
 	} {
 		if _, err := c.f.Encode(c.v); codec.Code(err) != NotEncodable {
 			t.Errorf("Encode(%v, %+v) = %v, want NotEncodable", c.f, c.v, err)
