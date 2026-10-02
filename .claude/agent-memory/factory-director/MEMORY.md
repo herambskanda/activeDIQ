@@ -4,3 +4,4 @@
 - [Taste questions need previews](taste-questions-need-previews.md) — brand Qs as text get overridden (D-0005); apply no-note overrides literally + one notice, never ask back
 - [Domain-model review checks](domain-model-review-checks.md) — script ME map vs scope lock; derived append-only states; gPLink DN refs; Entra scopes; authz join keys; Graph perm table for gates
 - [Benchmark review checks](benchmark-review-checks.md) — script step tables vs totals, recompute model times, read screenshot hints for shorter paths, secrets vs TM/SP
+- [Blocked on another ticket](triage-blocked-on-another-ticket.md) — don't unblock (skips dep gating); set depends_on, raise blocker's priority, note both
