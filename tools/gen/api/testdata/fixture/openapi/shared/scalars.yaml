@@ -1,0 +1,34 @@
+components:
+  schemas:
+    Int64String:
+      description: >-
+        A 64-bit integer carried as a string, for values outside JavaScript's safe integer range.
+      type: string
+      pattern: ^-?[0-9]{1,19}$
+      maxLength: 20
+      examples: ["9007199254740993"]
+    Cursor:
+      description: An opaque page cursor. Clients pass it back unchanged.
+      type: string
+      minLength: 1
+      maxLength: 1024
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: Makes a mutating bulk call safe to retry. The same key with a different body is refused.
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+        pattern: ^[A-Za-z0-9._~-]+$
+    IfMatch:
+      name: If-Match
+      in: header
+      required: false
+      description: The ETag of the version being changed; a stale value answers precondition-failed.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 256

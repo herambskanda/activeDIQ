@@ -1,0 +1,84 @@
+{
+  "decisionsDir": "knowledge/development/decisions",
+  "compositionRoot": ["cmd", "internal/compose"],
+  "exemptRoots": ["tools", "lab"],
+  "configLoader": ["internal/compose/config", "cmd"],
+  "composePackage": "internal/compose",
+  "profilePackage": "internal/compose/profile",
+  "capabilityPackage": "internal/platform/capability",
+  "profileEnvRegexp": "(PROFILE|SAAS|SELF_?HOSTED|ON_?PREM|DEPLOY(MENT)?|EDITION|LINUX_?OCI|MULTI_?TENANT|CELL)",
+  "identifierDenylist": ["saas", "selfhosted", "onprem", "linuxoci", "windowsprofile", "ociprofile"],
+  "literalDenylist": ["saas", "linux-oci"],
+  "manifests": ["windows", "linux-oci", "saas"],
+  "selfHosted": ["windows", "linux-oci"],
+  "saasProfile": "saas",
+  "isolatedRoles": ["t0-connector", "edge"],
+  "adProvider": "ad",
+  "adCapability": "directory.ad",
+  "platformRoot": "internal/platform",
+  "platformForbidden": [
+    "internal/directory",
+    "internal/connector",
+    "internal/modules",
+    "internal/agentmodules",
+    "internal/compose",
+    "internal/webui",
+    "internal/proto/activediq",
+    "cmd"
+  ],
+  "uemDenylist": "tools/fitness/profiles/uem-denylist.json",
+  "stackManifest": "tools/fitness/stack/manifest.json",
+  "replaceExceptions": [],
+  "branchAllow": ["main", "factory/T-[0-9]{4,}"],
+  "activation": [
+    {
+      "check": "P2",
+      "subject": "MSI + multi-arch OCI build and install/boot smoke for every profile (with TM-F-HOST and TM-F-PORTS from threat-model §15)",
+      "paths": ["packaging/windows/", "packaging/oci/"],
+      "command": [],
+      "reason": "blueprint §1: packaging/ holds windows/ (MSI) and oci/ (Dockerfiles, Compose); the first of them is the first artefact a profile must build and boot"
+    },
+    {
+      "check": "P3",
+      "subject": "connector conformance under the embedded and the remote transport against the Samba lab; directory/Kerberos/Graph libraries and credential unsealing stay inside the connector root",
+      "paths": ["internal/connector/*/"],
+      "command": [],
+      "reason": "internal/connector/ is doc-only today; the first package under it is the connector implementation the conformance suite runs against"
+    },
+    {
+      "check": "P4",
+      "subject": "multi-tenant saas composition: tenant A's connector certificate and Entra certificate cannot touch tenant B",
+      "paths": ["internal/connector/*/"],
+      "command": [],
+      "reason": "ADR-0002 Fitness function: P3 and P4 need the connector; P4 additionally composes the saas manifest with two remote connectors, so it activates with the first connector package"
+    },
+    {
+      "check": "P5",
+      "subject": "offline bundle round trip in a --network none container through the same verifier as the online path; a tampered bundle is refused",
+      "paths": ["internal/platform/update/", "internal/platform/updater/", "internal/updater/", "cmd/updater/", "packaging/update/"],
+      "command": [],
+      "reason": "ADR-0002 Fitness function: P5 needs the updater; these are the locations the blueprint and ADR-0002 rule 7 allow for it"
+    },
+    {
+      "check": "P6",
+      "subject": "self-hosted boot smoke with outbound traffic denied (except lab DC and PostgreSQL): boot, sign-in, directory read",
+      "paths": ["packaging/windows/", "packaging/oci/"],
+      "command": [],
+      "reason": "P6 runs the boot smoke test of P2 with egress denied, so it activates with the first packaging directory"
+    },
+    {
+      "check": "U3",
+      "subject": "agent contract namespace: skenzeriq.agent.v1 references no activediq.* type; breaking-change check on both namespaces",
+      "paths": ["proto/skenzeriq/"],
+      "command": [],
+      "reason": "blueprint §1: proto/skenzeriq/agent/v1 is the shared host contract (T-0040)"
+    },
+    {
+      "check": "U4",
+      "subject": "contract-freeze gate: skenzeriq/agent/v1 is not frozen while agent-contract-review.md is absent or not accepted",
+      "paths": ["proto/skenzeriq/agent/"],
+      "command": [],
+      "reason": "U4 guards the same protos as U3: it activates with proto/skenzeriq/agent/"
+    }
+  ]
+}

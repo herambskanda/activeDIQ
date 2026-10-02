@@ -1,0 +1,8 @@
+# The security policy of the contract (ADR-0004 rule 9). Owner: security-architect, who seeds the
+# rows in its own ticket (T-0151). Every change here is tagged security-sensitive.
+anonymous: []
+authenticated: []
+nonApiRoutes: []
+secretResponses: []
+stepUp: []
+largeBodies: []

@@ -1,0 +1,1107 @@
+{
+  "components": {
+    "parameters": {
+      "IdempotencyKey": {
+        "description": "Makes a mutating bulk call safe to retry. The same key with a different body is refused.",
+        "in": "header",
+        "name": "Idempotency-Key",
+        "required": false,
+        "schema": {
+          "maxLength": 128,
+          "minLength": 8,
+          "pattern": "^[A-Za-z0-9._~-]+$",
+          "type": "string"
+        }
+      },
+      "IfMatch": {
+        "description": "The ETag of the version being changed; a stale value answers precondition-failed.",
+        "in": "header",
+        "name": "If-Match",
+        "required": false,
+        "schema": {
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "PageCursor": {
+        "description": "The nextCursor of the previous page.",
+        "in": "query",
+        "name": "cursor",
+        "required": false,
+        "schema": {
+          "$ref": "#/components/schemas/Cursor"
+        }
+      },
+      "PageLimit": {
+        "description": "The page size.",
+        "in": "query",
+        "name": "limit",
+        "required": false,
+        "schema": {
+          "maximum": 1000,
+          "minimum": 1,
+          "type": "integer"
+        }
+      }
+    },
+    "responses": {
+      "MalformedRequest": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 400,
+              "title": "The request is malformed",
+              "type": "/problems/malformed-request"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The request is malformed"
+      },
+      "NotFound": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 404,
+              "title": "Not found",
+              "type": "/problems/not-found"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "Not found"
+      },
+      "Validation": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 400,
+              "title": "The request is invalid",
+              "type": "/problems/validation"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The request is invalid"
+      }
+    },
+    "schemas": {
+      "Cursor": {
+        "description": "An opaque page cursor. Clients pass it back unchanged.",
+        "maxLength": 1024,
+        "minLength": 1,
+        "type": "string"
+      },
+      "FilterAst": {
+        "additionalProperties": false,
+        "description": "A stand-in for a safe-primitive wire form. The binding table maps it to the primitive's own type.",
+        "properties": {
+          "op": {
+            "maxLength": 32,
+            "type": "string"
+          }
+        },
+        "required": [
+          "op"
+        ],
+        "type": "object"
+      },
+      "ImportResult": {
+        "properties": {
+          "imported": {
+            "maximum": 1000000,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "imported"
+        ],
+        "type": "object",
+        "x-activediq-tag": "widgets"
+      },
+      "Int64String": {
+        "description": "A 64-bit integer carried as a string, for values outside JavaScript's safe integer range.",
+        "examples": [
+          "9007199254740993"
+        ],
+        "maxLength": 20,
+        "pattern": "^-?[0-9]{1,19}$",
+        "type": "string"
+      },
+      "Labels": {
+        "additionalProperties": {
+          "maxLength": 16,
+          "type": "string"
+        },
+        "description": "A map with a value schema, a property cap and no properties.",
+        "maxProperties": 4,
+        "type": "object",
+        "x-activediq-tag": "widgets"
+      },
+      "PageInfo": {
+        "description": "Cursor paging of a directory collection. Order is stable; nextCursor is null on the last page.",
+        "properties": {
+          "nextCursor": {
+            "maxLength": 1024,
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "nextCursor"
+        ],
+        "type": "object"
+      },
+      "Problem": {
+        "description": "An RFC 9457 problem. type is a relative reference, /problems/<slug>, from a closed catalogue.",
+        "properties": {
+          "code": {
+            "maxLength": 100,
+            "type": "string"
+          },
+          "detail": {
+            "maxLength": 2048,
+            "type": "string"
+          },
+          "directory": {
+            "$ref": "#/components/schemas/ProblemDirectory"
+          },
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/ProblemError"
+            },
+            "maxItems": 1000,
+            "type": "array"
+          },
+          "instance": {
+            "maxLength": 2048,
+            "type": "string"
+          },
+          "status": {
+            "maximum": 599,
+            "minimum": 400,
+            "type": "integer"
+          },
+          "title": {
+            "maxLength": 200,
+            "type": "string"
+          },
+          "traceId": {
+            "maxLength": 64,
+            "type": "string"
+          },
+          "type": {
+            "maxLength": 100,
+            "pattern": "^/problems/[a-z][a-z0-9-]*$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "title",
+          "status"
+        ],
+        "type": "object"
+      },
+      "ProblemDirectory": {
+        "description": "The directory's own result, with secrets stripped. Never raw LDAP text with internals.",
+        "properties": {
+          "diagnostic": {
+            "maxLength": 512,
+            "type": "string"
+          },
+          "resultCode": {
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "resultCode",
+          "diagnostic"
+        ],
+        "type": "object"
+      },
+      "ProblemError": {
+        "description": "One violation. pointer is a JSON Pointer inside the body, or the parameter name.",
+        "properties": {
+          "code": {
+            "maxLength": 64,
+            "type": "string"
+          },
+          "detail": {
+            "maxLength": 512,
+            "type": "string"
+          },
+          "in": {
+            "$ref": "#/components/schemas/ProblemErrorIn"
+          },
+          "item": {
+            "description": "For a bulk request, the index of the item the violation belongs to.",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "pointer": {
+            "maxLength": 1024,
+            "type": "string"
+          }
+        },
+        "required": [
+          "in",
+          "pointer",
+          "code",
+          "detail"
+        ],
+        "type": "object"
+      },
+      "ProblemErrorIn": {
+        "description": "Where a violation was found.",
+        "enum": [
+          "body",
+          "path",
+          "query",
+          "header"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open"
+      },
+      "Rule": {
+        "description": "A recursive discriminated union on kind.",
+        "discriminator": {
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/RuleAnd"
+          },
+          {
+            "$ref": "#/components/schemas/RuleOr"
+          },
+          {
+            "$ref": "#/components/schemas/RuleNot"
+          },
+          {
+            "$ref": "#/components/schemas/RuleEquals"
+          }
+        ],
+        "x-activediq-tag": "widgets"
+      },
+      "RuleAnd": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "and",
+            "type": "string"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/Rule"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "kind",
+          "rules"
+        ],
+        "type": "object",
+        "x-activediq-tag": "widgets"
+      },
+      "RuleEquals": {
+        "additionalProperties": false,
+        "properties": {
+          "field": {
+            "maxLength": 32,
+            "type": "string"
+          },
+          "kind": {
+            "const": "equals",
+            "type": "string"
+          },
+          "value": {
+            "maxLength": 64,
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "field",
+          "value"
+        ],
+        "type": "object",
+        "x-activediq-tag": "widgets"
+      },
+      "RuleNot": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "not",
+            "type": "string"
+          },
+          "rule": {
+            "$ref": "#/components/schemas/Rule"
+          }
+        },
+        "required": [
+          "kind",
+          "rule"
+        ],
+        "type": "object",
+        "x-activediq-tag": "widgets"
+      },
+      "RuleOr": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "or",
+            "type": "string"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/Rule"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "kind",
+          "rules"
+        ],
+        "type": "object",
+        "x-activediq-tag": "widgets"
+      },
+      "SecretInput": {
+        "description": "A secret a client sends: a password, a token. It is write-only, never appears in a response, and is held in memory only as a secret.Secret that is destroyed after the request.",
+        "type": "string",
+        "writeOnly": true,
+        "x-activediq-secret": true
+      },
+      "Tags": {
+        "description": "A named array.",
+        "items": {
+          "maxLength": 16,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9-]*$",
+          "type": "string"
+        },
+        "maxItems": 8,
+        "minItems": 0,
+        "type": "array",
+        "x-activediq-tag": "widgets"
+      },
+      "Widget": {
+        "description": "A widget as the server shows it.",
+        "properties": {
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "expires": {
+            "format": "date",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "labels": {
+            "$ref": "#/components/schemas/Labels"
+          },
+          "name": {
+            "maxLength": 32,
+            "type": "string"
+          },
+          "notes": {
+            "maxLength": 64,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "quota": {
+            "$ref": "#/components/schemas/Int64String"
+          },
+          "status": {
+            "$ref": "#/components/schemas/WidgetStatus"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "status",
+          "quota",
+          "notes",
+          "createdAt"
+        ],
+        "type": "object",
+        "x-activediq-tag": "widgets"
+      },
+      "WidgetCreate": {
+        "additionalProperties": false,
+        "description": "A request object, every optional and required form.",
+        "properties": {
+          "contact": {
+            "format": "email",
+            "type": "string"
+          },
+          "count": {
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "expires": {
+            "format": "date",
+            "type": "string"
+          },
+          "labels": {
+            "$ref": "#/components/schemas/Labels"
+          },
+          "name": {
+            "maxLength": 32,
+            "minLength": 1,
+            "type": "string"
+          },
+          "notes": {
+            "maxLength": 64,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "owner": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "parts": {
+            "items": {
+              "$ref": "#/components/schemas/WidgetPart"
+            },
+            "maxItems": 3,
+            "type": "array"
+          },
+          "quota": {
+            "$ref": "#/components/schemas/Int64String"
+          },
+          "size": {
+            "$ref": "#/components/schemas/WidgetSize"
+          },
+          "starts": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "tags": {
+            "$ref": "#/components/schemas/Tags"
+          }
+        },
+        "required": [
+          "name",
+          "size",
+          "owner",
+          "notes",
+          "quota"
+        ],
+        "type": "object",
+        "x-activediq-tag": "widgets"
+      },
+      "WidgetCredential": {
+        "additionalProperties": false,
+        "description": "A request that carries secrets.",
+        "properties": {
+          "backup": {
+            "$ref": "#/components/schemas/SecretInput"
+          },
+          "extra": {
+            "items": {
+              "$ref": "#/components/schemas/SecretInput"
+            },
+            "maxItems": 4,
+            "type": "array"
+          },
+          "hint": {
+            "maxLength": 32,
+            "type": "string"
+          },
+          "secret": {
+            "$ref": "#/components/schemas/SecretInput"
+          }
+        },
+        "required": [
+          "secret"
+        ],
+        "type": "object",
+        "x-activediq-tag": "widgets"
+      },
+      "WidgetPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Widget"
+            },
+            "maxItems": 1000,
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageInfo"
+          }
+        },
+        "required": [
+          "items",
+          "page"
+        ],
+        "type": "object",
+        "x-activediq-tag": "widgets"
+      },
+      "WidgetPart": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 16,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object",
+        "x-activediq-tag": "widgets"
+      },
+      "WidgetPatch": {
+        "additionalProperties": false,
+        "description": "A merge-patch body, every member optional; a nullable member may be removed with null.",
+        "properties": {
+          "count": {
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "labels": {
+            "$ref": "#/components/schemas/Labels"
+          },
+          "name": {
+            "maxLength": 32,
+            "minLength": 1,
+            "type": "string"
+          },
+          "notes": {
+            "maxLength": 64,
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object",
+        "x-activediq-tag": "widgets"
+      },
+      "WidgetSearch": {
+        "additionalProperties": false,
+        "properties": {
+          "filter": {
+            "$ref": "#/components/schemas/FilterAst"
+          },
+          "rule": {
+            "$ref": "#/components/schemas/Rule"
+          }
+        },
+        "required": [
+          "filter"
+        ],
+        "type": "object",
+        "x-activediq-tag": "widgets"
+      },
+      "WidgetSize": {
+        "description": "A closed request enum used as a body member.",
+        "enum": [
+          "small",
+          "large",
+          "extra-large"
+        ],
+        "type": "string",
+        "x-activediq-tag": "widgets"
+      },
+      "WidgetSortKey": {
+        "description": "How a list is ordered. A request enum is closed.",
+        "enum": [
+          "name",
+          "created",
+          "modified"
+        ],
+        "type": "string",
+        "x-activediq-tag": "widgets"
+      },
+      "WidgetStatus": {
+        "description": "A response enum is open; clients accept values they do not know.",
+        "enum": [
+          "draft",
+          "live",
+          "retired"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "widgets"
+      }
+    },
+    "securitySchemes": {
+      "bearer": {
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "title": "Fixture API",
+    "version": "0.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/widgets": {
+      "get": {
+        "operationId": "listWidgets",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageCursor"
+          },
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/WidgetSortKey"
+            }
+          },
+          {
+            "in": "query",
+            "name": "owner",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "modifiedSince",
+            "required": false,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "createdOn",
+            "required": false,
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "active",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "id",
+            "required": false,
+            "schema": {
+              "items": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "maxItems": 10,
+              "type": "array"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Request-Source",
+            "required": false,
+            "schema": {
+              "maxLength": 32,
+              "minLength": 3,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WidgetPage"
+                }
+              }
+            },
+            "description": "A page of widgets",
+            "headers": {
+              "X-Total-Hint": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          }
+        },
+        "summary": "List widgets (paths, query and header parameters, shared parameters, a response header)",
+        "tags": [
+          "widgets"
+        ],
+        "x-activediq-stability": "stable",
+        "x-permission": "widgets.read"
+      },
+      "post": {
+        "operationId": "createWidget",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WidgetCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Widget"
+                }
+              }
+            },
+            "description": "Created",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          }
+        },
+        "summary": "Create a widget (an object body with every scalar kind, an idempotency key)",
+        "tags": [
+          "widgets"
+        ],
+        "x-activediq-stability": "stable",
+        "x-permission": "widgets.write"
+      }
+    },
+    "/widgets/export": {
+      "get": {
+        "operationId": "exportWidgets",
+        "responses": {
+          "200": {
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The export"
+          }
+        },
+        "summary": "Export widgets as CSV (a binary response body)",
+        "tags": [
+          "widgets"
+        ],
+        "x-activediq-stability": "stable",
+        "x-permission": "widgets.read"
+      }
+    },
+    "/widgets/import": {
+      "post": {
+        "operationId": "importWidgets",
+        "requestBody": {
+          "content": {
+            "text/csv": {
+              "schema": {
+                "format": "binary",
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportResult"
+                }
+              }
+            },
+            "description": "The import result"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          }
+        },
+        "summary": "Import widgets from CSV (a binary request body)",
+        "tags": [
+          "widgets"
+        ],
+        "x-activediq-stability": "stable",
+        "x-permission": "widgets.write"
+      }
+    },
+    "/widgets/search": {
+      "post": {
+        "operationId": "searchWidgets",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WidgetSearch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WidgetPage"
+                }
+              }
+            },
+            "description": "Matching widgets"
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          }
+        },
+        "summary": "Search widgets (a bound safe-primitive wire form and a recursive discriminated union)",
+        "tags": [
+          "widgets"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-stability": "stable",
+        "x-permission": "widgets.read"
+      }
+    },
+    "/widgets/{widgetId}": {
+      "delete": {
+        "operationId": "deleteWidget",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "widgetId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "tags": [
+          "widgets"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "widgets.write"
+      },
+      "get": {
+        "operationId": "getWidget",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "widgetId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expand",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Widget"
+                }
+              }
+            },
+            "description": "The widget"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "tags": [
+          "widgets"
+        ],
+        "x-activediq-stability": "stable",
+        "x-permission": "widgets.read"
+      },
+      "patch": {
+        "operationId": "updateWidget",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "widgetId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/merge-patch+json": {
+              "schema": {
+                "$ref": "#/components/schemas/WidgetPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Widget"
+                }
+              }
+            },
+            "description": "The changed widget"
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          }
+        },
+        "summary": "Change a widget (merge-patch: absent, null and value)",
+        "tags": [
+          "widgets"
+        ],
+        "x-activediq-stability": "stable",
+        "x-permission": "widgets.write"
+      }
+    },
+    "/widgets/{widgetId}/credential": {
+      "put": {
+        "operationId": "setWidgetCredential",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "widgetId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WidgetCredential"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Set"
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          }
+        },
+        "summary": "Set a credential (SecretInput, directly, optionally, in an array and through a map)",
+        "tags": [
+          "widgets"
+        ],
+        "x-activediq-limits": {
+          "maxBodyBytes": 4096
+        },
+        "x-activediq-stability": "stable",
+        "x-permission": "widgets.credential"
+      }
+    }
+  },
+  "security": [
+    {
+      "bearer": []
+    }
+  ],
+  "servers": [
+    {
+      "url": "/api/v1"
+    }
+  ],
+  "tags": [
+    {
+      "description": "The fixture tag.",
+      "name": "widgets"
+    }
+  ]
+}

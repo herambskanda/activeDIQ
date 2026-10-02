@@ -1,0 +1,38 @@
+components:
+  schemas:
+    GUIDRef:
+      description: A reference to a directory object by objectGUID. A DN is never a key.
+      type: object
+      required: [guid]
+      additionalProperties: false
+      properties:
+        guid:
+          type: string
+          format: uuid
+    Rdn:
+      description: One relative distinguished name component, unescaped, for breadcrumbs.
+      type: object
+      required: [type, value]
+      properties:
+        type:
+          type: string
+          maxLength: 32
+        value:
+          type: string
+          maxLength: 1024
+    ObjectView:
+      description: A directory object as the server shows it. dn is for display only.
+      type: object
+      required: [guid, dn, rdns]
+      properties:
+        guid:
+          type: string
+          format: uuid
+        dn:
+          type: string
+          maxLength: 4096
+        rdns:
+          type: array
+          maxItems: 128
+          items:
+            $ref: shared/guid.yaml#/components/schemas/Rdn

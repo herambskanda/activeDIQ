@@ -53,6 +53,7 @@ func newFixture(t *testing.T) *fixture {
 	}
 	f.m.BuildMatrix = []string{"linux/amd64", "windows/arm64"}
 	f.m.Exceptions = Exceptions{}
+	f.m.Extends = nil // the extended denylist files live in the repository, not in the fixture
 	f.m.Binaries = []Binary{{Name: "server", Tier: "S", Package: "./cmd/server"}}
 	f.write("go.mod", "module fx.test\n\ngo 1.27.0\n")
 	f.write("cmd/server/main.go", "package main\n\nfunc main() {}\n")
@@ -328,6 +329,24 @@ func TestF2CrossBuildPassesOnPureGo(t *testing.T) {
 	f.m.Exceptions.PlatformAdapters = []Exception{{Path: "internal/a", ADR: "0001-technology-stack.md"}}
 	f.write("internal/a/a_other.go", "//go:build !windows\n\npackage a\n\nconst OS = \"o\"\n")
 	none(t, f.run("F2", false))
+}
+
+// ADR-0002 U1: fitness-profiles contributes the UEM/PatchIQ denylist through denylistExtends, so
+// F3 checks every shipped binary's closure against it.
+func TestShippedManifestExtendsTheUEMDenylist(t *testing.T) {
+	m, err := LoadManifest("../../..", "tools/fitness/stack/manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"github.com/herambskanda/patchiq", "github.com/skenzeriq/uem"} {
+		found := false
+		for _, e := range m.Denylist {
+			found = found || e.Prefix == want
+		}
+		if !found {
+			t.Errorf("F3 denylist lacks %s; tools/fitness/stack/manifest.json must list tools/fitness/profiles/uem-denylist.json in denylistExtends", want)
+		}
+	}
 }
 
 func TestShippedManifestListsTheADRMatrix(t *testing.T) {

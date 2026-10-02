@@ -1,0 +1,38 @@
+# The root of the activeDIQ public API contract (ADR-0004 rule 1). One OpenAPI 3.1 document, split
+# into one file per tag and bundled by tools/gen/api into
+# internal/platform/apihost/spec/openapi.gen.json. Edit this file for info, servers, security
+# schemes and the tag list; paths and components live in the tag files and in shared/.
+#
+# A tag's file is derived from its name: tag `objects` is modules/objects.yaml, tag
+# `platform.authn` is platform/authn.yaml. Add an entry below with the file.
+openapi: 3.1.0
+info:
+  title: activeDIQ API
+  version: 0.0.0
+  description: >-
+    The one public API of activeDIQ. The console, scripts, ITSM integrations and the PowerShell
+    module all call these operations. There is one version, /api/v1, and it only grows.
+servers:
+  - url: /api/v1
+security:
+  - bearer: []
+  - sessionCookie: []
+    csrfToken: []
+tags: []
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: adq_ API token
+      description: A scoped API token in the Authorization header. Credentials never travel in a query string.
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-adiq_session
+      description: The console session cookie (HttpOnly, Secure, SameSite=Strict).
+    csrfToken:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+      description: Required with the session cookie on POST, PUT, PATCH and DELETE. Bearer-token requests are exempt.
