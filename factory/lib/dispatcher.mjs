@@ -426,7 +426,7 @@ export class Dispatcher {
 
     let started;
     try {
-      started = this.spawnWorker(ctx, { runId, ticketId: ticket.id, role, prompt, cwd, effortOverride: override }, (exit) => {
+      started = this.spawnWorker(ctx, { runId, ticketId: ticket.id, role, prompt, cwd, effortOverride: override, agentEffort: agent.effort }, (exit) => {
         const entry = this.children.get(runId);
         if (entry) entry.exit = exit;
       });
@@ -563,7 +563,7 @@ export async function planDryRun(ctx) {
         kind: c.kind, ticket: c.ticket?.id ?? null, title: ticket.title, role: c.role, stage: c.stage,
         model: agent?.model ?? null, effort: override ?? agent?.effort ?? null, continuation: c.continuation,
         creates_meta: c.create ? c.create.kind : null, isolated, refused: problems,
-        command: ['claude', ...buildWorkerArgs({ config: ctx.config, role: c.role, prompt: `<prompt: ${prompt.length} chars>`, ticketId: ticket.id, effortOverride: override, root: ctx.root })],
+        command: ['claude', ...buildWorkerArgs({ config: ctx.config, role: c.role, prompt: `<prompt: ${prompt.length} chars>`, ticketId: ticket.id, effortOverride: override, agentEffort: agent?.effort ?? null, root: ctx.root })],
       };
     }),
   };

@@ -23,6 +23,7 @@ Gotchas that cost time. Newest first. `date · lesson · source`.
 - 2026-10-02 · Sonnet 5.5 has a 1M-token window in Claude Code; the 300k budget is self-imposed (`--autocompact 300000`, `autoCompactWindow`, plus the context-guard hook).
 - 2026-10-02 · Built-in `Explore` runs on Haiku; `.claude/agents/Explore.md` overrides it. A brand-new `.claude/agents/` directory is not watched until the session restarts.
 - 2026-10-02 · `claude -p --agent <name>` applies the agent's model, tools, skills and prompt; `--effort` overrides the frontmatter effort.
+- 2026-10-02 · User-level `modelSettings.<model>.effortLevel` overrides agent frontmatter `effort`; the dispatcher therefore always passes `--effort` (override, else frontmatter), and project settings pin `modelSettings` so subagents default to policy effort.
 
 ## Domain and security
 - 2026-10-02 · RLS does not cover integrity checks or whole-table ops: FK and unique checks "always bypass row security", `TRUNCATE` ignores it, a partition named directly uses only its own policies, and `COPY FROM` is refused on RLS tables → tenant_id leads every unique index, FKs are composite on tenant_id, every partition carries the policy, the runtime role has no TRUNCATE, bulk ingest uses batched INSERT (ADR-0002 T2–T4). Source: https://www.postgresql.org/docs/current/ddl-rowsecurity.html, https://www.postgresql.org/docs/current/sql-copy.html

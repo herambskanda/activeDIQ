@@ -41,21 +41,23 @@ async function withFactory(opts, env, body) {
   }
 }
 
-test('worker command line: policy-correct flags, conditional --effort and --mcp-config', () => {
+test('worker command line: policy-correct flags, always --effort, conditional --mcp-config', () => {
   const f = makeLiveFactory();
   try {
     const base = { config: f.ctx.config, role: 'backend-engineer', prompt: 'do it', ticketId: 'T-0001', root: '/repo' };
-    const plain = buildWorkerArgs(base);
+    const noEffort = buildWorkerArgs(base);
+    assert.ok(!noEffort.includes('--effort'), 'no effort known: nothing passed');
+    const plain = buildWorkerArgs({ ...base, agentEffort: 'medium' });
     assert.deepEqual(plain, [
-      '-p', 'do it', '--agent', 'backend-engineer', '--output-format', 'stream-json', '--verbose',
+      '-p', 'do it', '--agent', 'backend-engineer', '--effort', 'medium', '--output-format', 'stream-json', '--verbose',
       '--permission-mode', 'auto', '--permission-prompts', 'none', '--autocompact', '300000',
       '--strict-mcp-config', '--name', 'T-0001 · backend-engineer',
     ]);
-    assert.ok(!plain.includes('--effort') && !plain.includes('--mcp-config'));
-    const escalated = buildWorkerArgs({ ...base, effortOverride: 'xhigh' });
+    assert.ok(!plain.includes('--mcp-config'));
+    const escalated = buildWorkerArgs({ ...base, agentEffort: 'medium', effortOverride: 'xhigh' });
     assert.deepEqual(escalated.slice(escalated.indexOf('--effort'), escalated.indexOf('--effort') + 2), ['--effort', 'xhigh']);
     const cfg = { ...f.ctx.config, dispatcher: { ...f.ctx.config.dispatcher, mcp_configs: { 'qa-verifier': 'factory/mcp/qa.json' } } };
-    const qa = buildWorkerArgs({ ...base, config: cfg, role: 'qa-verifier' });
+    const qa = buildWorkerArgs({ ...base, config: cfg, role: 'qa-verifier', agentEffort: 'high' });
     assert.deepEqual(qa.slice(qa.indexOf('--mcp-config') - 1, qa.indexOf('--mcp-config') + 2), ['--strict-mcp-config', '--mcp-config', '/repo/factory/mcp/qa.json']);
     assert.ok(!buildWorkerArgs({ ...base, config: cfg }).includes('--mcp-config'), 'only roles with a configured file');
   } finally { f.cleanup(); }
@@ -102,7 +104,8 @@ test('a worker that advances its ticket: run recorded, ticket moves, daily count
     assert.ok(run.ended);
     const [call] = readArgsLog(log);
     assert.equal(call.cwd, f.root, 'no repo: shared checkout');
-    assert.ok(call.args.includes('--strict-mcp-config') && !call.args.includes('--effort'));
+    assert.ok(call.args.includes('--strict-mcp-config'));
+    assert.deepEqual(call.args.slice(call.args.indexOf('--effort'), call.args.indexOf('--effort') + 2), ['--effort', 'medium'], 'frontmatter effort always passed');
     assert.deepEqual(call.args.slice(call.args.indexOf('--agent'), call.args.indexOf('--agent') + 2), ['--agent', 'project-manager']);
     assert.match(call.args[1], /ticket \*\*T-0001/);
     assert.match(call.args[1], /Stage: meta work/);
@@ -145,7 +148,7 @@ test('a worker that does nothing is retried, then escalated: effort first, then 
     await waitFor(() => readArgsLog(log).length >= 4, { what: 'four worker starts' });
     const effort = (c) => (c.args.includes('--effort') ? c.args[c.args.indexOf('--effort') + 1] : null);
     assert.deepEqual(readArgsLog(log).slice(0, 4).map((c) => [c.role, effort(c)]), [
-      ['docs-writer', null], ['docs-writer', null], ['docs-writer', 'xhigh'], ['docs-writer', 'xhigh'],
+      ['docs-writer', 'high'], ['docs-writer', 'high'], ['docs-writer', 'xhigh'], ['docs-writer', 'xhigh'],
     ]);
     const after = tickets(f)[t.id];
     assert.deepEqual([after.reassigned_from, after.escalations, after.effort_override], ['docs-writer', 2, null]);

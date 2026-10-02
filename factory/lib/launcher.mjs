@@ -24,20 +24,23 @@ export function runFiles(ctx, runId) {
 
 /**
  * Argument vector for `claude`. Always `--strict-mcp-config`; `--mcp-config` only when the role has
- * one in `dispatcher.mcp_configs`; `--effort` only when escalated.
+ * one in `dispatcher.mcp_configs`; `--effort` always: the escalation
+ * override if any, else the agent's frontmatter effort (user-level modelSettings would otherwise win).
  * @param {object} p
  * @param {object} p.config
  * @param {string} p.role
  * @param {string} p.prompt
  * @param {string} p.ticketId
  * @param {string|null} [p.effortOverride]
+ * @param {string|null} [p.agentEffort] the agent's frontmatter effort
  * @param {string} [p.root] repo root, to resolve a relative mcp config path
  * @returns {string[]}
  */
-export function buildWorkerArgs({ config, role, prompt, ticketId, effortOverride = null, root = process.cwd() }) {
+export function buildWorkerArgs({ config, role, prompt, ticketId, effortOverride = null, agentEffort = null, root = process.cwd() }) {
   const d = config.dispatcher;
   const args = ['-p', prompt, '--agent', role];
-  if (effortOverride) args.push('--effort', effortOverride);
+  const effort = effortOverride ?? agentEffort;
+  if (effort) args.push('--effort', effort);
   args.push(
     '--output-format', 'stream-json', '--verbose',
     '--permission-mode', d.permission_mode, '--permission-prompts', 'none',
@@ -54,16 +57,16 @@ export function buildWorkerArgs({ config, role, prompt, ticketId, effortOverride
  * Start a worker. stdout goes to `state/runs/<id>.log`, stderr to `<id>.err`; the child is not
  * piped, so it survives a dispatcher restart and can be adopted by the next one.
  * @param {object} ctx
- * @param {object} spec runId, ticketId, role, prompt, cwd, effortOverride
+ * @param {object} spec runId, ticketId, role, prompt, cwd, effortOverride, agentEffort
  * @param {(exit: {code: number|null, signal: string|null, error?: string}) => void} onExit
  * @returns {{child: import('node:child_process').ChildProcess, pid: number}}
  */
-export function launchWorker(ctx, { runId, ticketId, role, prompt, cwd, effortOverride = null }, onExit) {
+export function launchWorker(ctx, { runId, ticketId, role, prompt, cwd, effortOverride = null, agentEffort = null }, onExit) {
   const files = runFiles(ctx, runId);
   fs.mkdirSync(path.dirname(files.log), { recursive: true });
   const out = fs.openSync(files.log, 'a');
   const err = fs.openSync(files.err, 'a');
-  const args = buildWorkerArgs({ config: ctx.config, role, prompt, ticketId, effortOverride, root: ctx.root });
+  const args = buildWorkerArgs({ config: ctx.config, role, prompt, ticketId, effortOverride, agentEffort, root: ctx.root });
   let child;
   try {
     child = spawn(claudeBinary(), args, {
