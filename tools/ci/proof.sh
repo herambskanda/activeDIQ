@@ -206,6 +206,194 @@ must_pass "fitness-tenancy" tenancy
 printf 'package m\n\nconst q = "SELECT set_config(%s, %s, false)"\n' "'app.tenant_id'" "'x'" >"$tn/internal/modules/m/m.go"
 must_fail_with "fitness-tenancy on set_config text outside the tenancy package" 'T5 internal/modules/m/m.go:3 \[set-config-text\]' tenancy -checks T5
 
+# --- fitness-safeprim (safe-primitives FF-SP1 to FF-SP3), the real CLI on throw-away trees --------
+# One violation per case, each rejected with the check's own id and the file; the same shapes pass
+# in their primitive's home. The per-rule proofs are the tool's own tests (go test ./tools/...).
+spbin="$tmp/safeprim"
+go build -o "$spbin" ./tools/fitness/safeprim
+sp="$tmp/sp"
+fresh_sp_tree() { rm -rf "$sp"; mkdir -p "$sp"; printf 'module sp.test\n\ngo 1.27.0\n' >"$sp/go.mod"; }
+sp_put() { mkdir -p "$sp/$(dirname "$1")"; cat >"$sp/$1"; }
+safeprim() { "$spbin" -root "$sp" "$@"; }
+
+fresh_sp_tree; sp_put internal/modules/users/u.go <<'GO'
+package users
+
+import _ "github.com/go-ldap/ldap/v3"
+GO
+must_fail_with "FF-SP1 on go-ldap imported outside the connector" 'internal/modules/users/u.go:3: FF-SP1 \[ldap-library\]' safeprim -no-analyzers
+fresh_sp_tree; sp_put internal/modules/users/u.go <<'GO'
+package users
+
+import _ "github.com/jackc/pgx/v5/pgxpool"
+GO
+must_fail_with "FF-SP1 on the SQL driver imported outside store" 'internal/modules/users/u.go:3: FF-SP1 \[sql-driver\]' safeprim -no-analyzers
+fresh_sp_tree; sp_put internal/modules/users/u.go <<'GO'
+package users
+
+import "os/exec"
+
+var _ = exec.Command
+GO
+must_fail_with "FF-SP1 on os/exec imported outside proc" 'internal/modules/users/u.go:3: FF-SP1 \[process-api\]' safeprim -no-analyzers
+fresh_sp_tree
+sp_put internal/connector/ldap/c.go <<'GO'
+package ldap
+
+import _ "github.com/go-ldap/ldap/v3"
+GO
+sp_put internal/platform/store/s.go <<'GO'
+package store
+
+import _ "github.com/jackc/pgx/v5/pgxpool"
+GO
+sp_put internal/platform/proc/p.go <<'GO'
+package proc
+
+import "os/exec"
+
+var _ = exec.Command
+GO
+must_pass "fitness-safeprim FF-SP1 with every import in its home" safeprim -no-analyzers
+
+fresh_sp_tree; sp_put internal/modules/users/u.go <<'GO'
+package users
+
+const q = "SELECT set_config('app.tenant_id', $1, " + "false)"
+const r = "SELECT set_config('app.tenant_id', $1, false)"
+GO
+must_fail_with "FF-SP2 on set_config with is_local = false" 'internal/modules/users/u.go:4: FF-SP2 \[set-config-session-scope\]' safeprim -no-analyzers
+fresh_sp_tree; sp_put internal/modules/users/u.go <<'GO'
+package users
+
+import "os/exec"
+
+func f() { exec.Command("x") }
+GO
+must_fail_with "FF-SP2 on exec.Command outside proc" 'FF-SP2 \[process-start\]' safeprim -no-analyzers
+fresh_sp_tree; sp_put internal/modules/users/u.go <<'GO'
+package users
+
+import "crypto/tls"
+
+var c = tls.Config{InsecureSkipVerify: true}
+GO
+must_fail_with "FF-SP2 on InsecureSkipVerify" 'FF-SP2 \[tls-skip-verify\]' safeprim -no-analyzers
+fresh_sp_tree
+sp_put internal/directory/dn/dn.go <<'GO'
+package dn
+
+type DNString string
+GO
+sp_put internal/modules/users/u.go <<'GO'
+package users
+
+import (
+	"strings"
+
+	"sp.test/internal/directory/dn"
+)
+
+func f(d dn.DNString, ou string) bool { return strings.HasSuffix(string(d), ou) }
+GO
+must_fail_with "FF-SP2 analyzer dnstring on a DNString conversion outside dn" 'internal/modules/users/u.go:9: FF-SP2 \[dnstring\]' safeprim -checks FF-SP2
+fresh_sp_tree; sp_put internal/modules/users/u.go <<'GO'
+package users
+
+import "html/template"
+
+func f(src string) { template.New("a").Parse(src) }
+GO
+must_fail_with "FF-SP2 analyzer tmplconst on a non-constant template" 'internal/modules/users/u.go:5: FF-SP2 \[tmplconst\]' safeprim -checks FF-SP2
+
+fresh_sp_tree; sp_put internal/modules/users/u.go <<'GO'
+package users
+
+import "fmt"
+
+func f(x string) string { return fmt.Sprintf("(&(objectClass=user)(cn=%s))", x) }
+GO
+must_fail_with "FF-SP3 on a Sprintf-built LDAP filter" 'internal/modules/users/u.go:5: FF-SP3 \[ldap-filter-shape\]' safeprim -no-analyzers
+fresh_sp_tree; sp_put internal/modules/users/u.go <<'GO'
+package users
+
+import "strings"
+
+func f(s string) string { return strings.ReplaceAll(s, "'", "''") }
+GO
+must_fail_with "FF-SP3 on PowerShell quote doubling (the PatchIQ escapePSPath shape)" 'internal/modules/users/u.go:5: FF-SP3 \[quote-doubling\]' safeprim -no-analyzers
+# Ordinary spellings of the same violation, and a feature package named like a build-output directory.
+fresh_sp_tree; sp_put internal/modules/users/u.go <<'GO'
+package users
+
+import "fmt"
+
+const tpl = "(&(objectClass=user)(cn=%s))"
+
+func f(x string) string { return fmt.Sprintf(tpl, x) }
+GO
+must_fail_with "FF-SP3 on a filter template held in a const" 'internal/modules/users/u.go:5: FF-SP3 \[ldap-filter-shape\]' safeprim -no-analyzers
+fresh_sp_tree; sp_put internal/modules/users/u.go <<'GO'
+package users
+
+func f(x string) string {
+	s := "(&(objectClass=user)(cn="
+	s += x
+	return s + "))"
+}
+GO
+must_fail_with "FF-SP3 on a filter built with +=" 'internal/modules/users/u.go:4: FF-SP3 \[ldap-filter-shape\]' safeprim -no-analyzers
+fresh_sp_tree; sp_put internal/modules/users/u.go <<'GO'
+package users
+
+import "fmt"
+
+func f(x string) error { return fmt.Errorf("(&(objectClass=user)(cn=%s))", x) }
+GO
+must_fail_with "FF-SP3 on a filter built with fmt.Errorf" 'internal/modules/users/u.go:5: FF-SP3 \[ldap-filter-shape\]' safeprim -no-analyzers
+for d in target bin obj; do
+  fresh_sp_tree; sp_put "internal/modules/$d/m.go" <<'GO'
+package m
+
+import "fmt"
+
+func f(x string) string { return fmt.Sprintf("(&(objectClass=user)(cn=%s))", x) }
+GO
+  must_fail_with "FF-SP3 in a product package named $d (no skip by directory name)" "internal/modules/$d/m.go:5: FF-SP3" safeprim -no-analyzers
+done
+fresh_sp_tree
+sp_put internal/directory/ldapfilter/f.go <<'GO'
+package ldapfilter
+
+import "fmt"
+
+func Eq(attr, v string) string { return fmt.Sprintf("(%s=%s)", attr, v) }
+func And(a, b string) string   { return "(&(" + a + ")(" + b + "))" }
+GO
+sp_put internal/platform/pslit/p.go <<'GO'
+package pslit
+
+import "strings"
+
+func Quote(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
+GO
+sp_put internal/modules/users/u_test.go <<'GO'
+package users
+
+import "fmt"
+
+func hostile(x string) string { return fmt.Sprintf("(&(objectClass=user)(cn=%s))", x) }
+GO
+sp_put internal/platform/store/s.go <<'GO'
+package store
+
+import "fmt"
+
+func q(t string) string { return fmt.Sprintf("SELECT 1 FROM %s WHERE a = $1", t) }
+GO
+must_pass "fitness-safeprim FF-SP2/3 on primitives and test files (no false positive)" safeprim
+must_pass "fitness-safeprim on the repository itself" "$spbin" -root "$root"
+
 # --- go mod tidy ------------------------------------------------------------------------------
 mkdir -p "$tmp/tidy"
 printf 'module tidy.test\n\ngo 1.27.0\n\nrequire example.invalid/unused v1.0.0\n' >"$tmp/tidy/go.mod"
@@ -220,6 +408,14 @@ done
 must_fail_with "prettier --check on unformatted source" "Code style issues" in_web prettier --check --ignore-path /dev/null proof/format-violation.ts
 must_fail_with "tsc on a type error" "TS2322" in_web tsc --noEmit --ignoreConfig --strict --skipLibCheck proof/type-violation.ts
 must_fail_with "vitest on a failing test" "expected 1 to be 2" in_web vitest run --config vitest.proof.config.ts
+# FF-SP3 for web/: one fixture, every safe-primitives rule has to report (the rules' own tests are web/eslint/*.test.js).
+for rule in no-hand-built-security-string no-quote-doubling no-dn-string-ops no-export-media-types no-unsafe-dom-sinks; do
+  must_fail_with "FF-SP3 web rule $rule" "FF-SP3: .*safe-primitives/$rule" in_web eslint --no-ignore proof/safe-primitives-violation.ts
+done
+# Every ordinary spelling of the violation, one per line of the fixture (+=, concat, join, template, replace).
+for ln in 4 5 7 8 9 10; do
+  must_fail_with "FF-SP3 web spelling on fixture line $ln" "(^|[[:space:]])$ln:[0-9]+[[:space:]]+error[[:space:]]+FF-SP3" in_web eslint --no-ignore proof/safe-primitives-spellings.ts
+done
 must_pass "eslint on the real sources" npm --prefix web run --silent lint
 
 if [ "$fails" -ne 0 ]; then echo "ci-proof: $fails proof(s) failed" >&2; exit 1; fi

@@ -105,7 +105,7 @@ therefore ours to enforce. The compiler does not do it for us.
 | `sidecars/<name>/` | .NET 10 + PowerShell 7.6 typed adapters. The names reserved are `pshost` (shared host), `exchange` and `gpmc`. Each is declared in the stack manifest when it is first built | X | windows-engineer (host); backend-engineer (`psx` client) |
 | `packaging/` | `windows/` (MSI, toolchain per T-0039) and `oci/` (Dockerfiles, Compose). No script custom actions in the MSI | — | devops-engineer |
 | `testdata/safe-primitives/` | The primitive corpus, one `<unit>.jsonl` per unit (safe-primitives §8). Read by the Go and Rust implementations | — | directory-engineer (corpus), test-engineer |
-| `tools/` | `fitness/<job>/` (CI jobs), `analyzers/` (go/analysis passes `dnstring`, `sqlconst`, `secretjson`), `vettool/`, `gen/` (code generators), `playwright/` (screenshot, record and E2E runner; Node, dev-time only, T-0011) | L | devops-engineer |
+| `tools/` | `fitness/<job>/` (CI jobs), `analyzers/` (go/analysis passes `dnstring`, `sqlconst`, `secretjson`, `tmplconst`, and `policy/`, the table of primitive homes; `fitness/safeprim/` runs them, T-0033), `vettool/`, `gen/` (code generators), `playwright/` (screenshot, record and E2E runner; Node, dev-time only, T-0011) | L | devops-engineer |
 | `lab/` | The Samba AD lab, seed data, Windows lab automation (T-0012) | L | devops-engineer, test-engineer |
 | `third_party/<name>/` | Copied third-party code, each with its LICENSE file (ADR-0001 rule 5) | — | devops-engineer |
 | `garage/<name>/` | Prototypes with an owner and an expiry date. Never imported | — | its owner |
