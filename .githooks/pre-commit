@@ -1,0 +1,9 @@
+#!/bin/sh
+# activeDIQ pre-commit: refuse the commit if the staged changes contain a secret.
+# Installed by `make secrets-install-hooks` (core.hooksPath = .githooks). Fail-closed: if gitleaks
+# is missing the commit is refused with the install command. Bypass with `git commit --no-verify`
+# is possible locally by design (hooks are advisory); the CI gate (history scan) is the backstop.
+set -eu
+root=$(git rev-parse --show-toplevel)
+exec "$root/tools/secrets/gitleaks.sh" git --staged --pre-commit --redact --verbose --no-banner \
+  --config "$root/.gitleaks.toml"
