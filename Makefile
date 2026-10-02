@@ -6,3 +6,13 @@ help:
 	@grep -hE '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | sed -E 's/:.*## /\t/' | sort
 
 include lab/lab.mk
+
+# Playwright tooling (T-0011). Runbook: knowledge/development/runbooks/playwright-tooling.md
+.PHONY: playwright-install playwright-test
+playwright-install: ## Install the pinned Playwright and its Chromium (not committed)
+	npm ci --prefix tools/playwright
+	npm --prefix tools/playwright run install-browsers
+
+playwright-test: ## Self-test of the screenshot/record scripts (needs `make playwright-install` once)
+	npm ci --prefix tools/playwright
+	npm --prefix tools/playwright test
