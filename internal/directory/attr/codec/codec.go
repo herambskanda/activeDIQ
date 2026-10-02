@@ -78,3 +78,16 @@ func ParseInteger(s string, bits int) (int64, error) {
 	}
 	return int64(n), nil
 }
+
+// HexVal returns the value of one ASCII hex digit (either case); ok is false for anything else.
+func HexVal(c byte) (v byte, ok bool) {
+	switch {
+	case c >= '0' && c <= '9':
+		return c - '0', true
+	case c >= 'a' && c <= 'f':
+		return c - 'a' + 10, true
+	case c >= 'A' && c <= 'F':
+		return c - 'A' + 10, true
+	}
+	return 0, false
+}

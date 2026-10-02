@@ -14,6 +14,7 @@
       "FT-09": false,
       "FT-10": false,
       "FT-11": true,
+      "FT-11B": true,
       "FT-12#1": false,
       "FT-12#2": false,
       "FT-13#1": true,
@@ -105,6 +106,8 @@
       "GT-18": false,
       "GT-19": true,
       "GT-20": false,
+      "GT-20B": false,
+      "GT-20C": false,
       "GT-21": true,
       "GT-22": true,
       "GT-23": true
@@ -134,7 +137,19 @@
       "GUID-14#2": true,
       "GUID-15#1": true,
       "GUID-15#2": true,
-      "GUID-16": true
+      "GUID-16": true,
+      "GUID-17#1a": true,
+      "GUID-17#1b": true,
+      "GUID-17#2a": true,
+      "GUID-17#2b": true,
+      "GUID-17#3a": true,
+      "GUID-17#3b": true,
+      "GUID-17#4a": true,
+      "GUID-17#4b": true,
+      "GUID-18#1": true,
+      "GUID-18#2": true,
+      "GUID-18#3": true,
+      "GUID-18#4": true
     },
     "attr.sid": {
       "SID-01": false,
@@ -159,7 +174,10 @@
       "SID-13#1": true,
       "SID-13#2": true,
       "SID-13#3": true,
-      "SID-14": true
+      "SID-14": true,
+      "SID-15#1": true,
+      "SID-15#2": true,
+      "SID-15#3": true
     },
     "pslit": {
       "PSQ-01": true,

@@ -204,7 +204,7 @@ func parseAuthority(s string) (uint64, error) {
 		}
 		var v uint64
 		for i := 0; i < len(h); i++ {
-			d, ok := hexDigit(h[i])
+			d, ok := codec.HexVal(h[i])
 			if !ok {
 				return 0, codec.New(BadFormat)
 			}
@@ -246,16 +246,4 @@ func parseSub(s string) (uint32, error) {
 		return 0, codec.New(SubAuthorityOverflow)
 	}
 	return uint32(v), nil
-}
-
-func hexDigit(c byte) (byte, bool) {
-	switch {
-	case c >= '0' && c <= '9':
-		return c - '0', true
-	case c >= 'a' && c <= 'f':
-		return c - 'a' + 10, true
-	case c >= 'A' && c <= 'F':
-		return c - 'A' + 10, true
-	}
-	return 0, false
 }

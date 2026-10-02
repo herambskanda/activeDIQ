@@ -101,8 +101,8 @@ func Parse(text string) (GUID, error) {
 			p++
 			continue
 		}
-		hi, ok1 := hexVal(text[p])
-		lo, ok2 := hexVal(text[p+1])
+		hi, ok1 := codec.HexVal(text[p])
+		lo, ok2 := codec.HexVal(text[p+1])
 		if !ok1 || !ok2 {
 			return GUID{}, codec.New(BadFormat)
 		}
@@ -114,16 +114,4 @@ func Parse(text string) (GUID, error) {
 		return GUID{}, codec.New(NilGUID)
 	}
 	return g, nil
-}
-
-func hexVal(c byte) (byte, bool) {
-	switch {
-	case c >= '0' && c <= '9':
-		return c - '0', true
-	case c >= 'a' && c <= 'f':
-		return c - 'a' + 10, true
-	case c >= 'A' && c <= 'F':
-		return c - 'A' + 10, true
-	}
-	return 0, false
 }
