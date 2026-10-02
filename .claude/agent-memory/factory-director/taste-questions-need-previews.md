@@ -24,5 +24,8 @@ override that the factory then has to interpret.
   T-0042 filed D-0011 with links in the context only (preview:null on all options). There is no
   `decision edit`, so the fix was to withdraw and refile (D-0012). Check `decision list --json` on
   every taste review.
+- Validated: D-0012 (3 clickable previews, side-by-side index, measured trade-off such as rows per
+  screen, and a recommendation) was answered with the recommended option in about 90 minutes, with
+  no note. Reuse that shape.
 - Bundle related taste choices (brand + UI style) into one preview-backed decision, so the CEO
   judges them together and answers once.
