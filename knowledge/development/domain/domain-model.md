@@ -613,8 +613,10 @@ scope.
     (DM-30.I6, DM-37.I3), and console-backing objects are escalation objects (DM-30.I7). Its
     residual, one person controlling both planes at enrolment, is TM-R12.
 - I7 **Authority that never crosses** (TM-D17 rule 5). Whatever its state, a correlation never
-  carries `tenant-owner` or any `control_plane` permission (DM-33.I3). Those reach an account only
-  through an assignment that does not pass a correlation (DM-36.I2). A correlation never brings a
+  carries `tenant-owner` or any `control_plane` permission (DM-33.I3). Those are assigned only to
+  the console account itself, through a RoleAssignment whose subject is that account. A group or
+  automation-policy subject can never hold them, in either directory, so no membership and no
+  correlation can confer them (DM-36.I4). A correlation never brings a
   `tier0` object into reach on either side. An AD object with **any** correlation (`candidate`,
   `matched` or `broken`) to an Entra `tier0` principal is itself `tier0`, and so is an Entra
   object with any correlation to an AD `tier0` object (threat model §6.4 C16 and E5; DM-35.I5).
@@ -622,10 +624,11 @@ scope.
 as `candidate`. `candidate → matched` happens only when the whole gate (a)–(g) passes. For class
 `attested`, that is as soon as (a)–(f) pass. For `install_time`, it is when the tenant's first
 `attested` state arrives. For `lapsed`, or after a cloud observation, it needs a `tenant-owner`
-re-confirmation first. `matched → candidate` happens whenever any check fails. Either state goes `→ broken` when one side
-is purged or the anchor or group SID no longer matches. A `broken` correlation returns only through
-I1, and only to `candidate`, never straight to `matched`. It keeps its I4(g) markers. A correlation
-re-formed later for the same AD and Entra objects inherits them too. `→ removed`.
+re-confirmation first. `matched → candidate` happens whenever any check fails. Either state goes
+`→ broken` when one side is purged or the anchor or group SID no longer matches. A `broken`
+correlation returns only through I1, and only to `candidate`, never straight to `matched`. It keeps
+its I4(g) markers. A correlation re-formed later for the same AD and Entra objects inherits them
+too. `→ removed`.
 
 ### DM-21 HybridLink · T · owner `modules/connections`
 **Definition.** It declares which AD domain syncs into which Entra tenant. The relation is
@@ -750,7 +753,9 @@ the past, checked at every sign-in, because expiry involves no directory write
 ([accountExpires](https://learn.microsoft.com/en-us/windows/win32/adschema/a-accountexpires)). I3 There
 are no default credentials: the first account is created with a one-time bootstrap secret at
 install (ADM-145). I4 A tenant always has at least one active account holding `tenant-owner`, so
-the last one cannot be removed. I5 **SSO accounts and the directory.** An `sso` account gets a
+the last one cannot be removed. This is enforceable because `tenant-owner` is held only through an
+assignment to the account itself (DM-36.I4): no membership change made outside activeDIQ can
+remove an owner. I5 **SSO accounts and the directory.** An `sso` account gets a
 `directory_ref` only from an anchor claim that the tenant's SSO configuration names: the Entra
 object ID `oid`, with `tid` matching an Entra connection, or the on-premises SID (Entra's
 `onprem_sid` optional claim, present only for synced users,
@@ -766,10 +771,10 @@ account reaches AD-side group grants only through a `matched` correlation of tha
 `matched` correlation to the AD object the SID resolves to. Both are re-checked at every sign-in
 and at Plan (DM-20.I5). A bound `sso` account receives group-subject grants (DM-36.I2) and
 falls under I2 exactly like a `directory` account. An unbound one receives only grants made to the
-account itself. I6 **Authority factor** (threat model TM-D19 rules 1–3). An `sso` account signs in
-through Entra. It uses correlation-derived grants (DM-36.I2), meaning the AD-side group grants
-that reach it through an `oid` or `onprem_sid` binding, only in a session that has verified one
-of its authority factors (DM-37.I3). The factor is checked at first use in the session and again
+account itself. I6 **Authority factor** (threat model TM-D19 rules 1–3). A bound `sso` account
+signs in through Entra. It uses correlation-derived grants (DM-36.I2), meaning the AD-side group
+grants that reach it through an `oid` or `onprem_sid` binding, only in a session that has verified
+one of its authority factors (DM-37.I3). The factor is checked at first use in the session and again
 at every step-up (threat model §7.4), and the session records it (DM-31.I3). Where the PRD offers
 SPNEGO sign-in, a session that authenticated the correlated AD account by Kerberos counts instead
 `[OPEN → ADM-143 spec]`. Without either, the session keeps its Entra-side grants and the grants
@@ -819,10 +824,18 @@ task-level privileges (ADM-125).
 values are reachable only through `secret.*` permissions (safe-primitives §3.7). I3 **Control
 plane.** A permission is `control_plane` when it administers access itself: accounts, sessions or
 API tokens of others, roles, role assignments, delegation scopes, connections and their credentials,
-bindings, HybridLinks and attestations. The Registrar rejects an `admin`-kind permission
-declared by `platform/authn`, `platform/authz`, `modules/delegation` or `modules/connections`
-that is not flagged. A `control_plane` permission never crosses a correlation (DM-20.I7). It is
-never imported from ManageEngine either (threat model TM-D21).
+bindings, HybridLinks and attestations. **Backstop:** every permission whose `kind` is not `read`
+and whose ID lies in the `authn`, `authz`, `delegation` or `connections` namespace must be
+flagged. That covers `action`-kind permissions that start Operations, such as
+`connections.takeover.attest` and `connections.hybrid_link.confirm`, and `secret`-kind ones such
+as connection credentials. The check runs in EP-6 catalogue validation inside `Boot`, over the
+whole catalogue, not in the Registrar. `platform/authn` and `platform/authz` are kernel packages
+that never call the Registrar (ADR-0003 rule 4), so only the catalogue sees kernel- and
+module-declared permissions alike. An unflagged permission fails start-up, so CI's
+`compose/server` boot test catches it first. A permission outside those namespaces may also be
+flagged. A `control_plane` permission is held only through an assignment to the account itself
+(DM-36.I4), so it never crosses a correlation (DM-20.I7). It is never imported from ManageEngine
+either (threat model TM-D21).
 **Lifecycle.** `active → deprecated → removed` (X6).
 
 ### DM-34 Role · T · owner `platform/authz`
@@ -867,7 +880,8 @@ group in an AU does not put its members in the AU
 I3 Exclusion beats inclusion. I4 Counts and pages are computed after scope trimming (LF-39).
 I5 `tier0` objects are outside every write scope in v1, in every root kind (ADR-0002 rule 9;
 FD-11). For Entra, `tier0` covers holders of privileged directory roles and role-assignable groups
-(definition: T-0007, Q1). Correlations carry `tier0` across directories in any state (DM-20.I7). I6 **AD scope to Entra objects.** An AD entry with
+(definition: T-0007, Q1). Correlations carry `tier0` across directories in any state
+(DM-20.I7). I6 **AD scope to Entra objects.** An AD entry with
 `include_correlated` also reaches the Entra objects whose correlation (DM-20) with an AD object it
 reaches is `matched`, but only for Entra-provider Actions such as licences (DM-20.I3). `matched` is
 the only authorizing state (DM-20.I4: the Entra object is synced from that AD object and not
@@ -926,14 +940,21 @@ sync freshness (ADM-128). **Correlation-derived grants.** A group grant is corre
 when the group lives in the other directory from the account's sign-in identity. That means an AD
 group for an `sso` account, which signs in through Entra, and an Entra group for a `directory`
 account. Such a grant obeys two extra rules:
-- It never carries `tenant-owner` or a `control_plane` permission (DM-20.I7, DM-33.I3). Those
-  privileges are dropped from the role for that member and are audited when dropped. They reach
-  an account only through an assignment to the account itself, or to a group in the account's own
-  sign-in directory.
+- It never carries `tenant-owner` or a `control_plane` permission (DM-20.I7). No group grant
+  carries them, in either directory (I4).
 - For an `sso` account, it counts only in a session that verified the authority factor (DM-30.I6).
 
 I3 Effective authority is the union of assignments, and each privilege applies only
 within its own assignment's scope. Role A's permission is never combined with scope B.
+I4 **Control-plane authority is personal** (threat model TM-D17 rule 5). `tenant-owner` and every
+`control_plane` permission (DM-33.I3) reach an account only through an assignment whose subject is
+that account. activeDIQ refuses, when it is created, any assignment that gives a group subject (AD
+or Entra) or an automation-policy subject a role holding either, so no such configuration ever
+exists to sit dead. A role edit that would add a `control_plane` permission to a role held by such
+a subject is refused the same way, and the role must be cloned instead. A permission that becomes
+`control_plane` on upgrade (X6) could still leave one behind. The evaluator never grants it
+through that subject, audits the drop, and health flags the assignment until it is narrowed or
+revoked. Group delegation (ADM-128) is unaffected for every other role.
 **Lifecycle.** `scheduled → active → expired | revoked`.
 
 ### DM-37 AuthenticatorEnrollment · T · owner `platform/authn` (EP-10)
@@ -1406,6 +1427,11 @@ Two more customer-visible consequences follow from the threat model (TM-D17, TM-
 - A hybrid SSO technician enrols one activeDIQ passkey, once, proving their AD password or with a
   `tenant-owner`'s approval. They use it once per session before AD group grants apply (DM-30.I6,
   DM-37.I3). The threat model §6.9 assigns this notice to factory-director, like D-0009.
+- `tenant-owner`, and roles that administer RBAC, delegation scopes or connections, are assigned
+  to named accounts only, never to an AD or Entra group (DM-36.I4, TM-D17 rule 5). A customer who
+  delegates administration through a group in ManageEngine (ADM-128) keeps group delegation for
+  every other role. Migration never imports those administrative grants (TM-D21); a `tenant-owner`
+  assigns them to named accounts.
 
 Without these, every correlation stays `candidate`. Entra objects are still fully manageable,
 but only through Entra-root scopes (`entra_tenant`, `administrative_unit`, Entra
@@ -1530,4 +1556,5 @@ AC2 was re-checked by script: every ADM ID in scope lock §3.3 (123 IDs) appears
 - 2026-10-02 · v0 round-2 rework (§12 S1, S2, H1–H4): DM-20 authorizing gate (`candidate` vs `matched`, I4–I6), DM-21.I2, and only `matched` correlations count in DM-30.I5, DM-35.I6 and DM-36.I2. DM-23.I2 now says what edge identity means across a reorder.
 - 2026-10-02 · v0 round-3 rework (§12 T1–T3): the takeover flags became a Global Administrator attestation (DM-10.I7), DM-20.I4(f) reads it, and I5 is split into live checks (a)–(e) and the attested check (f). I6 adds the authentication-plane and history residuals, and DM-21.I2 names the confirming privilege. §10 states the hybrid prerequisite. Q11 was added.
 - 2026-10-02 · T-0061 alignment with threat model v0.2 (TM-D17, TM-D18, TM-D19). DM-20.I4(g) adds "eligibility only goes down": `eligible_since`, `eligibility_class`, re-confirmation by `tenant-owner`, and reason `reconfirm_required`. The install-time population becomes `matched` on the first attestation. DM-16.I9 adds `cloud_seen_at` on Entra objects. DM-10 gains `first_attested_at` (I7(f)), step-up to start an attestation, and a corrected `takeover_protection` lifecycle (`unattested → open → attested`). DM-20.I6 is rewritten as residuals closed by the threat model. DM-20.I7 ("authority that never crosses") is new, and it uses DM-33.I3 `control_plane`. DM-30.I6 adds the authority factor and DM-30.I7 console-backing objects; DM-31.I3, DM-37.I3–I4, DM-36.I1–I2 (correlation-derived grants, TM-D18) and DM-35.I5–I6 follow. §10 states the customer-visible consequences. The 90-day maximum, the optional `AuditLog.Read.All` monitor and the `tenant_takeover_open` vocabulary are unchanged and match TM-D17.
+- 2026-10-02 · T-0061 round 2 (director review M1, M2). Rule (h) follows the binding TM-D17 rule 5 text: new DM-36.I4 "control-plane authority is personal". `tenant-owner` and `control_plane` permissions reach an account only through an assignment to that account, and an assignment that gives them to a group or automation-policy subject is refused at creation. DM-20.I7, DM-36.I2, DM-30.I4 and §10 follow. DM-33.I3: the backstop covers every non-`read` permission in the `authn`, `authz`, `delegation` and `connections` namespaces, and runs in EP-6 catalogue validation at `Boot` rather than in the Registrar.
 - 2026-10-02 · ADR-0005 rework 1 (T-0047): DM-41 gains the terminal `no_change` outcome; DM-42.I3 follows ADR-0005 rule 5 (read-back from another DC after the verify window); a `verify_failed` step can be undone.
