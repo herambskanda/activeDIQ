@@ -455,7 +455,7 @@ sha=$(shasum -a 256 "$f" | cut -d' ' -f1)
 } >"$SAFEPRIM_REPORT_DIR/corpus-sh-impl-$unit.json"
 SH
   # write_impl <unit> <skip-id> [extra fields of the implementation] [extra top-level fields]
-  printf '{"implementations":[{"name":"sh-impl","language":"sh","tier":"S","units":["%s"],"command":["sh","impl.sh","%s","%s"]%s}]%s}\n' "$1" "$1" "$2" "$3" "$4" >"$cpt/testdata/safe-primitives/implementations.json"
+  printf '{"implementations":[{"name":"sh-impl","language":"sh","tier":"S","units":["%s"],"command":["sh","impl.sh","%s","%s"]%s}]%s}\n' "$1" "$1" "$2" "${3:-}" "${4:-}" >"$cpt/testdata/safe-primitives/implementations.json"
 }
 corpus() { "$cpbin" -root "$cpt" "$@"; }
 

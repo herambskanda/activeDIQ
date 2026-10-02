@@ -345,13 +345,7 @@ func Write(path string, recs []Record) error {
 }
 
 func marshalLine(r Record) ([]byte, error) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(r); err != nil {
-		return nil, err
-	}
-	return bytes.TrimRight(buf.Bytes(), "\n"), nil
+	return json.Marshal(r)
 }
 
 // MergeVerified combines the platform a record was already verified on with a new one:
