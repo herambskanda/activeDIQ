@@ -14,5 +14,6 @@ When an ADR makes an import matrix an **allowlist** ("anything not allowed fails
 - Grep `^### DM-` in domain-model.md. Check that each owner resolves under the rule, that no lower layer reads a table a module owns, and that no entity has split owners.
 - Check the status of every ticket that "decides later". A done ticket can't hold an open decision.
 - Bundle the nits into the same reject, so the next pass can ratify.
+- "No lower layer reads a higher table" applies to **every** layer pair, not only module tables. On the T-0045 re-review, authz (kernel) needed inventory membership (DM-36.I2) and authn needed correlation state (DM-30.I5), and the only legal path was a port. Grep kernel entities' invariants for `inventory`/`DM-1x`/`DM-20`. When the rule is satisfiable by a port the ADR already uses, it is not a reject: ratify, and route it to the restatement ticket as an Amendments-line finding.
 
 Related: [[blueprint-review-link-graph]], [[adr-ratification-flow]], [[domain-model-review-checks]]
