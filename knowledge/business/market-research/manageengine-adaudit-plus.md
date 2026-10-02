@@ -522,7 +522,8 @@ About 4 releases a year add features (2024: 8000, 8100, 8110, 8120; 2025: 8500, 
 Customers will not throw away years of audit history. The bridging options below are ordered from cheapest to most effort.
 
 1. **Keep ADAudit Plus running as a read-only viewer.** The Free edition "never expires" and allows "Reports generation from event log data collected during evaluation / license period" ([licensing help](https://www.manageengine.com/products/active-directory-audit/help/quickstart/adaudit-plus-license-and-edition-details.html)). That should let a customer stop paying and still answer auditors.
-   - `[UNVERIFIED in practice]`: test that a lapsed subscription drops to Free with the history intact.
+   - **Now documented (vendor docs, checked 2026-10-02).** The licensing page says that when the trial ends or the licence expires ADAudit Plus reverts to the Free Edition: "No fresh data will be collected after 30 days (excludes Workstations)", a "Complimentary 25 Workstations audit" continues, and users keep "Reports generation from event log data collected during evaluation / license period" ([licensing page](https://www.manageengine.com/products/active-directory-audit/help/getting-started/licensing-ad-audit-plus.html)). A community answer says the same: data and setup stay, no fresh data is collected ([search-index snippet of the vendor forum, not fetched; peer/vendor-forum rank](https://pitstop.manageengine.com/portal/en/community/topic/drop-back-to-free-version)).
+   - `[UNVERIFIED in practice]`: that is the documented behaviour, not one we have watched happen on a lapsed paid subscription with years of history. Test it in a lab before promising it to a customer.
    - Downside: the server still has to be patched (W6).
 2. **Dual-run during the overlap.** Point ADAudit Plus's real-time SIEM forwarding (syslog/CEF/Splunk HEC; every category except printer and advanced GPO) at an **activeDIQ syslog/CEF receiver** ([SIEM help](https://www.manageengine.com/products/active-directory-audit/help/admin-settings/siem-integration.html)).
    - This gives continuous history plus side-by-side validation.
@@ -536,7 +537,7 @@ Customers will not throw away years of audit history. The bridging options below
 6. **Carry over configuration.** Alert profiles, scheduled reports, technician roles, exclusions, and the audit-policy and SACL GPOs ADAudit Plus created (e.g. "ADAudit Plus Permission GPO", Default Domain Controllers Policy edits) ([privileges](https://www.manageengine.com/products/active-directory-audit/help/quickstart/privileges-required-for-ad-windows-server-workstation-audit.html)).
    - activeDIQ should **detect and reuse the existing audit policy** rather than re-push it.
    - Ship a **report crosswalk from ADAudit Plus to activeDIQ**.
-   - Whether ADAudit Plus can export its configuration is `[UNVERIFIED]`.
+   - **Configuration export (resolved as "no open format documented").** The vendor's backup-and-restore KB produces a password-protected `OfflineBackup_<timestamp>.ezip` (database and event tables) plus copied folders, and requires "Both installations must be on the same build version"; the steps use `StartDB.bat`, `BackupDB.bat`, `RestoreDB.bat` and `RestoreEventTables.bat`. The KB names a **default backup password** when none is configured ([KB, 2025-11-24](https://pitstop.manageengine.com/portal/en/kb/articles/how-to-migrate-adaudit-plus-data-from-an-older-build-to-a-new-server-using-the-backup-and-restore-method-24-11-2025)). We did not find an export of alert profiles, schedules or roles to CSV/JSON/XML in the docs as of 2026-10-02 (not proof that none exists). The `.ezip` is a proprietary dump; plan to rebuild configuration, not import it.
 
 **Discovery checklist per warm lead:**
 - build number and edition
@@ -572,12 +573,25 @@ Customers will not throw away years of audit history. The bridging options below
 
 ---
 
-## Open gaps (next pass)
-- `[TODO]` G2, Gartner Peer Insights and TrustRadius ratings (all blocked with HTTP 403). Reddit (r/sysadmin) and Spiceworks sentiment.
-- `[TODO]` Hands-on look at the build 9000 UI, since the demo is still on 8703. Licensing for the 9000 modules (Attack Surface Analyzer cloud/SaaS, Access Analyzer, cloud file transfer).
-- `[TODO]` Default scheduled-collection interval. Events-per-second limits. Whether read-only DCs count toward the license.
-- `[TODO]` Confirm the Free-edition "read-only viewer" behavior after a subscription lapses. Whether config can be exported. Database schema accessibility.
-- `[TODO]` Whether the first year of AMS is bundled with a perpetual purchase or billed on top. The store lists them as separate line items.
+## Resolved gaps (T-0001, 2026-10-02)
+
+- **Free-edition behaviour after expiry:** documented by the vendor, see §7a option 1. History stays viewable, no new data (workstations: 25 free). Source kind: vendor docs.
+- **Configuration export:** no open export format documented; proprietary `.ezip` backup, same-build restore (§7a option 6).
+- **Read-only DC licensing:** the licensing page says ADAudit Plus "is licensed based on the number of Domain Controllers" and collects only from DCs "in an enabled state"; it does **not** say how read-only DCs are counted ([licensing page](https://www.manageengine.com/products/active-directory-audit/help/getting-started/licensing-ad-audit-plus.html), 2026-10-02). Not found in docs, so still unconfirmed.
+- **Certifications:** ADAudit Plus is **not named** in ManageEngine's compliance centre, which lists SOC 2 Type II and ISO 27001 as covering "all cloud services and on-premise products of ManageEngine" and names only ADManager Plus among the AD products in the SOC 2 + HIPAA Type 2 scope ([compliance centre](https://www.manageengine.com/compliance.html), 2026-10-02). Say "covered by the company-wide ISO 27001 and SOC 2 Type II scope statements", never "ADAudit Plus is SOC 2 certified".
+- **Peer-review rating, Gartner Peer Insights:** 4.5 of 5 from 294 ratings, 62% five-star and 37% four-star, in the SIEM market. Source: a search-engine snippet of [the Gartner page](https://www.gartner.com/reviews/product/manageengine-adaudit-plus) on 2026-10-02; the live page returns 403 to our fetcher, so treat as `[UNVERIFIED: snippet]` and re-check in a browser. Peer-review rank, and many 2026 reviews are vendor-solicited (customer-voice file §1.1).
+
+## Remaining gaps
+
+- `[TODO]` G2 and TrustRadius refreshes, Reddit r/sysadmin and Spiceworks sentiment: blocked or not reachable. The Gartner figure above is a snippet only.
+- `[TODO]` Hands-on look at the build 9000 UI (the public demo is still on 8703) and licensing of the 9000 modules (Attack Surface Analyzer cloud/SaaS, Access Analyzer, cloud file transfer): not listed on the pricing page or store as of 2026-10-02; needs a lab or a vendor answer.
+- `[TODO]` Default scheduled-collection interval and events-per-second limits: not found in the docs (only the 1,000-event agent request cap in build 7113).
+- `[TODO]` Read-only DC licence counting (above).
+- `[TODO]` Whether the first year of AMS is bundled with a perpetual purchase or billed on top. The store lists them as separate line items; needs a quote.
+- `[TODO]` Database schema accessibility for a direct-read migration, plus the EULA review (§7a option 5).
 
 Scratch evidence (demo report tree, store price extracts) was kept in the session scratchpad only and is not committed.
 
+## Changelog
+
+- **2026-10-02 (T-0001):** Closed the Free-edition, config-export and certification gaps; re-tagged the rest in "Remaining gaps".

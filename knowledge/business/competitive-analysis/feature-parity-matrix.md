@@ -4,6 +4,7 @@ date: 2026-10-02
 updated: 2026-10-02
 status: draft
 owner: heramb
+sources_last_checked: 2026-10-02
 ---
 
 # Feature-parity matrix — ManageEngine AD suite vs activeDIQ
@@ -528,6 +529,15 @@ plug-in, FEAS doc App A Q8) and Linux PAM (ADSS-008, 057).
 ## Research gaps that could change the matrix
 
 Items most likely to flip importance, stance or phase come first.
+
+**Status after T-0001 (2026-10-02).** Public-source research closed or narrowed these items; none flipped an importance, stance or edition, so the CSV changed only in notes, evidence and descriptions (8 rows: ADM-083, ADM-108, ADM-158, ADA-118, ADSS-066, ADSS-129, ADSS-132, ADSS-134):
+
+- **Item 4 (ADSSP database contents): still open.** The vendor's migration KB documents only a proprietary `.ezip` backup and does not mention exporting enrollment data. Only a lab install can show whether TOTP seeds and FIDO keys are readable.
+- **Item 5 (export formats): answered "no open format".** ADMP, ADAP and ADSSP each ship a proprietary password-protected `.ezip` backup (ADAP and ADSSP restore only onto the same build). Plan importers from reports, the REST API or customer-consented database reads, not from the backups. A lapsed ADAP subscription reverts to a Free edition that keeps reports on already-collected data, per the vendor's licensing page, but this is not tested in practice (ADA-118).
+- **Item 7 (ADMP behaviours): still open.** The orchestration help does not say whether changes made outside ADMP fire event triggers (ADM-108 stays an intent). Edition placement of `n/s` rows needs an evaluation install or a vendor answer.
+- **Item 8 (customer voice): partly narrowed.** Gartner Peer Insights figures for ADAP, ADSSP and AD360 are now in the customer-voice file as search-snippet values only.
+- **Item 9 (credential-provider coexistence): narrowed.** The vendor says the ADSSP agent coexists with six named third-party providers through a GUID/registry procedure (ADSS-132). Not tested with an activeDIQ provider; lab test still needed.
+- **Also resolved:** ADSSP conditional access on endpoint/RDP logons is not documented for machine logons (ADSS-066 reworded; absence in docs, not proof of absence).
 
 1. **What the warm accounts actually run** [TODO]: products, editions, add-ons, technician counts,
    NAS vendors, on-prem Exchange, Entra licence tier, enabled authenticators, SIEM targets. ADA doc
