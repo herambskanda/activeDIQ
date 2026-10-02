@@ -522,8 +522,8 @@ About 4 releases a year add features (2024: 8000, 8100, 8110, 8120; 2025: 8500, 
 Customers will not throw away years of audit history. The bridging options below are ordered from cheapest to most effort.
 
 1. **Keep ADAudit Plus running as a read-only viewer.** The Free edition "never expires" and allows "Reports generation from event log data collected during evaluation / license period" ([licensing help](https://www.manageengine.com/products/active-directory-audit/help/quickstart/adaudit-plus-license-and-edition-details.html)). That should let a customer stop paying and still answer auditors.
-   - **Now documented (vendor docs, checked 2026-10-02).** The licensing page says that when the trial ends or the licence expires ADAudit Plus reverts to the Free Edition: "No fresh data will be collected after 30 days (excludes Workstations)", a "Complimentary 25 Workstations audit" continues, and users keep "Reports generation from event log data collected during evaluation / license period" ([licensing page](https://www.manageengine.com/products/active-directory-audit/help/getting-started/licensing-ad-audit-plus.html)). A community answer says the same: data and setup stay, no fresh data is collected ([search-index snippet of the vendor forum, not fetched; peer/vendor-forum rank](https://pitstop.manageengine.com/portal/en/community/topic/drop-back-to-free-version)).
-   - `[UNVERIFIED in practice]`: that is the documented behaviour, not one we have watched happen on a lapsed paid subscription with years of history. Test it in a lab before promising it to a customer.
+   - **What the vendor documents (checked 2026-10-02).** The licensing page says only: "When you install the product, the Professional Edition is installed, and will work for 30 days. After 30 days, it will automatically revert to Free Edition, unless the Standard or Professional Edition license is purchased" ([licensing page](https://www.manageengine.com/products/active-directory-audit/help/getting-started/licensing-ad-audit-plus.html)). The edition-details page describes the Free edition: "Free edition never expires. Complimentary 25 Workstations audit", "No fresh data will be collected after 30 days (excludes Workstations)", and "Reports generation from event log data collected during evaluation / license period" ([edition details](https://www.manageengine.com/products/active-directory-audit/help/quickstart/adaudit-plus-license-and-edition-details.html)). Both are vendor docs.
+   - **That is trial-end behaviour.** Nothing we found says what happens when a **paid** Standard/Professional licence or subscription lapses. `[UNVERIFIED]` that a lapsed paid ADAudit Plus reverts to Free and keeps its history viewable. This needs a lab test or a vendor answer. The pitstop topic ["drop-back-to-free-version"](https://pitstop.manageengine.com/portal/en/community/topic/drop-back-to-free-version) shows the question, but no answer was visible when fetched on 2026-10-02. Do not promise this route to a customer until it is tested.
    - Downside: the server still has to be patched (W6).
 2. **Dual-run during the overlap.** Point ADAudit Plus's real-time SIEM forwarding (syslog/CEF/Splunk HEC; every category except printer and advanced GPO) at an **activeDIQ syslog/CEF receiver** ([SIEM help](https://www.manageengine.com/products/active-directory-audit/help/admin-settings/siem-integration.html)).
    - This gives continuous history plus side-by-side validation.
@@ -575,7 +575,6 @@ Customers will not throw away years of audit history. The bridging options below
 
 ## Resolved gaps (T-0001, 2026-10-02)
 
-- **Free-edition behaviour after expiry:** documented by the vendor, see §7a option 1. History stays viewable, no new data (workstations: 25 free). Source kind: vendor docs.
 - **Configuration export:** no open export format documented; proprietary `.ezip` backup, same-build restore (§7a option 6).
 - **Read-only DC licensing:** the licensing page says ADAudit Plus "is licensed based on the number of Domain Controllers" and collects only from DCs "in an enabled state"; it does **not** say how read-only DCs are counted ([licensing page](https://www.manageengine.com/products/active-directory-audit/help/getting-started/licensing-ad-audit-plus.html), 2026-10-02). Not found in docs, so still unconfirmed.
 - **Certifications:** ADAudit Plus is **not named** in ManageEngine's compliance centre, which lists SOC 2 Type II and ISO 27001 as covering "all cloud services and on-premise products of ManageEngine" and names only ADManager Plus among the AD products in the SOC 2 + HIPAA Type 2 scope ([compliance centre](https://www.manageengine.com/compliance.html), 2026-10-02). Say "covered by the company-wide ISO 27001 and SOC 2 Type II scope statements", never "ADAudit Plus is SOC 2 certified".
@@ -583,6 +582,7 @@ Customers will not throw away years of audit history. The bridging options below
 
 ## Remaining gaps
 
+- `[UNVERIFIED]` **Paid-licence lapse → Free edition:** the vendor documents only trial-end reversion to Free (§7a option 1). What a lapsed paid licence does, and whether history stays viewable, is not documented. Needs a lab test or a vendor answer (the latter needs CEO approval to contact the vendor).
 - `[TODO]` G2 and TrustRadius refreshes, Reddit r/sysadmin and Spiceworks sentiment: blocked or not reachable. The Gartner figure above is a snippet only.
 - `[TODO]` Hands-on look at the build 9000 UI (the public demo is still on 8703) and licensing of the 9000 modules (Attack Surface Analyzer cloud/SaaS, Access Analyzer, cloud file transfer): not listed on the pricing page or store as of 2026-10-02; needs a lab or a vendor answer.
 - `[TODO]` Default scheduled-collection interval and events-per-second limits: not found in the docs (only the 1,000-event agent request cap in build 7113).
@@ -594,4 +594,4 @@ Scratch evidence (demo report tree, store price extracts) was kept in the sessio
 
 ## Changelog
 
-- **2026-10-02 (T-0001):** Closed the Free-edition, config-export and certification gaps; re-tagged the rest in "Remaining gaps".
+- **2026-10-02 (T-0001):** Closed the config-export and certification gaps; Free-edition fallback documented for trial end only, paid-licence lapse left `[UNVERIFIED]`; re-tagged the rest in "Remaining gaps".
