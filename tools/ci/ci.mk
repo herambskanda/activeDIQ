@@ -2,10 +2,16 @@
 # Standard: knowledge/development/standards/ci-gates.md · Runbook: knowledge/development/runbooks/ci-and-build.md
 # Every gate below has a failing run proving it catches a violation: `make ci-proof` (part of `make ci`).
 
-.PHONY: ci lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-proto build build-web web-install ci-proof
+.PHONY: ci gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-proto build build-web web-install ci-proof
 
-ci: lint test fitness build secrets-scan lab-test-unit ci-proof ## Everything a merge needs: lint, tests, fitness functions (incl. the ADR-0001 build matrix), web build, secret scan, gate proofs
+ci: lint gen-check test fitness build secrets-scan lab-test-unit ci-proof ## Everything a merge needs: lint, generated-code freshness, tests, fitness functions (incl. the ADR-0001 build matrix), web build, secret scan, gate proofs
 	@echo "make ci: passed"
+
+gen-proto: ## T-0157: regenerate the connector contract's Go code (internal/proto) from proto/ with the pinned pure-Go toolchain (no protoc, no buf)
+	go run ./tools/gen/proto
+
+gen-check: ## T-0157: fail if the generated Go code under internal/proto is stale, hand-edited or orphaned (regenerates in memory and compares)
+	go run ./tools/gen/proto -check
 
 web-install: ## Install the pinned web dependencies from the lockfile (npm ci)
 	npm ci --prefix web

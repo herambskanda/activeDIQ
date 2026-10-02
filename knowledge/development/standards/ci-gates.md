@@ -28,6 +28,7 @@ against clean input.
 | Web tests | `vitest run` | a test fails | failing test |
 | Fitness: `fitness-modules` | `go run ./tools/fitness/modules` | an import breaks blueprint §2 rules 1–5, 7, 8 | CLI on a tree where `platform` imports `directory`; every rule also has a failing fixture in `tools/fitness/modules/check_test.go` |
 | Fitness: `fitness-stack` | `go run ./tools/fitness/stack` (manifest: `tools/fitness/stack/manifest.json`) | ADR-0001 F1 language zones, F2 cgo/plug-in/build-tag bans and the `CGO_ENABLED=0` cross-build of linux/amd64, linux/arm64, windows/amd64, windows/arm64, darwin/arm64, F3 denylisted stateful dependency in a shipped binary, F4 register row missing or Rejected and strong-copyleft licences in a shipped closure, F5 exception without a ratified or accepted ADR | the real CLI on throw-away trees, one violation per rule (`tools/ci/proof.sh`); every rule also has a fixture in `tools/fitness/stack/check_test.go` |
+| Generated code freshness: `gen-check` | `go run ./tools/gen/proto -check` | `internal/proto` is stale, hand-edited or holds an orphaned `*.pb.go` against a fresh generation from `proto/` | the real CLI on a throw-away tree: hand-edited, orphaned and missing file each refused (`tools/ci/proof.sh`) |
 | Web build | `vite build` | the build fails | — (a build failure is its own signal) |
 | Secret scan | `make secrets-scan` | gitleaks finds a secret in history or the working tree | `make secrets-test` (T-0013) |
 | Lab generator tests | `make lab-test-unit` | the seed generator's tests fail (no Docker needed) | — |
