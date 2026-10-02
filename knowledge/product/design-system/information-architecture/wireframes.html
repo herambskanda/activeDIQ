@@ -1,0 +1,415 @@
+<!doctype html>
+<!--
+title: activeDIQ IA wireframes (greyscale, brand-neutral)
+date: 2026-10-02
+updated: 2026-10-02
+status: draft
+owner: heramb
+ticket: T-0009
+note: Low-fidelity wireframes for information-architecture.md. All names, counts and identifiers are SAMPLE DATA.
+      Greyscale on purpose (D-0005 / factory-director note on T-0009): no brand colour, no skenzeriq tokens.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>activeDIQ IA wireframes — SAMPLE DATA</title>
+<style>
+  :root{--w0:#fff;--w1:#f5f5f5;--w2:#e8e8e8;--w3:#d0d0d0;--w4:#a3a3a3;--w5:#666;--w6:#3b3b3b;--w7:#141414;
+        --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  *{box-sizing:border-box}
+  body{margin:0;background:#bdbdbd;font:13px/1.4 var(--sans);color:var(--w7)}
+  .doc{padding:24px;max-width:1500px;margin:auto}
+  .doc>h1{font-size:18px;margin:0 0 4px} .doc>p{margin:0 0 16px;max-width:90ch}
+  .frame{position:relative;width:1440px;height:900px;background:var(--w0);margin:0 0 32px;overflow:hidden;
+         display:grid;grid-template-columns:216px 1fr;grid-template-rows:48px 1fr;border:1px solid var(--w5)}
+  .frame-title{font:600 14px var(--sans);margin:24px 0 6px}
+  .sample{position:absolute;right:8px;bottom:6px;font:600 10px var(--mono);letter-spacing:.08em;color:var(--w5);
+          background:var(--w1);border:1px dashed var(--w4);padding:2px 6px;z-index:50}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .muted{color:var(--w5)} .small{font-size:12px}
+  /* top bar */
+  .top{grid-column:1/3;display:flex;align-items:center;gap:12px;padding:0 12px;border-bottom:1px solid var(--w3);background:var(--w1)}
+  .brand{font-weight:700;width:192px} .brand small{font-weight:400;color:var(--w5)}
+  .gsearch{flex:0 1 560px;height:32px;border:1px solid var(--w4);border-radius:4px;background:var(--w0);display:flex;align-items:center;padding:0 10px;color:var(--w5)}
+  .gsearch .k{margin-left:auto}
+  .k{font:11px var(--mono);border:1px solid var(--w4);border-bottom-width:2px;border-radius:3px;padding:0 4px;background:var(--w0);color:var(--w6)}
+  .topr{margin-left:auto;display:flex;gap:10px;align-items:center}
+  .pill{border:1px solid var(--w4);border-radius:4px;padding:3px 8px;background:var(--w0);white-space:nowrap}
+  .scope{border:2px solid var(--w6);font-weight:600}
+  /* rail */
+  .rail{border-right:1px solid var(--w3);padding:8px 0;background:var(--w1);overflow:hidden}
+  .rail a{display:flex;justify-content:space-between;padding:5px 14px;color:var(--w7);text-decoration:none}
+  .rail a.sub{padding-left:30px;color:var(--w6)}
+  .rail a.on{background:var(--w2);font-weight:600;box-shadow:inset 3px 0 0 var(--w7)}
+  .rail .grp{font:600 10px var(--mono);letter-spacing:.1em;color:var(--w5);padding:12px 14px 4px;text-transform:uppercase}
+  .rail hr{border:0;border-top:1px solid var(--w3);margin:8px 0}
+  .badge{font:11px var(--mono);border:1px solid var(--w5);border-radius:8px;padding:0 6px}
+  /* main */
+  .main{position:relative;overflow:hidden;padding:20px 24px}
+  h2{font-size:22px;margin:0 0 2px;font-weight:600} h3{font-size:15px;margin:0 0 8px;font-weight:600}
+  .crumbs{color:var(--w5);margin-bottom:6px}
+  .row{display:flex;gap:16px} .col{flex:1;min-width:0}
+  .card{border:1px solid var(--w3);border-radius:4px;padding:12px;background:var(--w0)}
+  .card+.card{margin-top:12px}
+  .btn{display:inline-block;border:1px solid var(--w6);border-radius:4px;padding:5px 10px;background:var(--w0);font-weight:500;white-space:nowrap}
+  .btn.pri{background:var(--w7);color:var(--w0)} .btn.dis{border-color:var(--w3);color:var(--w5);background:var(--w1)}
+  .chip{display:inline-block;font-size:11px;border:1px solid var(--w5);border-radius:2px;padding:0 5px;margin:0 3px 2px 0;white-space:nowrap}
+  .chip.strong{background:var(--w7);color:var(--w0);border-color:var(--w7)}
+  .chip.dash{border-style:dashed}
+  table{border-collapse:collapse;width:100%} th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--w2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:320px}
+  th{font-size:11px;color:var(--w5);font-weight:600;background:var(--w1)}
+  tr.sel td{background:var(--w2)}
+  .banner{border:1px solid var(--w6);border-left-width:4px;padding:8px 12px;margin:10px 0;background:var(--w1)}
+  .tabs{display:flex;gap:2px;border-bottom:1px solid var(--w3);margin:12px 0}
+  .tabs span{padding:6px 12px} .tabs span.on{border-bottom:2px solid var(--w7);font-weight:600}
+  .kv{display:grid;grid-template-columns:150px 1fr;gap:4px 12px} .kv div:nth-child(odd){color:var(--w5)}
+  .sheet{position:absolute;top:0;right:0;bottom:0;width:560px;background:var(--w0);border-left:2px solid var(--w6);padding:18px 20px;z-index:20;box-shadow:-8px 0 0 rgba(0,0,0,.06)}
+  .drawer{width:500px}
+  .field{border:1px solid var(--w4);border-radius:4px;height:32px;padding:6px 10px;background:var(--w0)}
+  .toggle{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--w2)}
+  .sw{font:11px var(--mono);border:1px solid var(--w6);border-radius:2px;padding:0 6px}
+  .sw.on{background:var(--w7);color:var(--w0)}
+  .note{font-size:11px;color:var(--w5);border-top:1px dashed var(--w4);margin-top:8px;padding-top:6px}
+  .ann{position:absolute;font:600 11px var(--sans);background:#fff8c4;border:1px solid #8a7a00;color:#3d3500;padding:2px 6px;z-index:40;max-width:260px}
+  .overlay{position:absolute;inset:48px 0 0 0;background:rgba(20,20,20,.35);z-index:30}
+  .palette{position:absolute;left:250px;top:70px;width:940px;background:var(--w0);border:2px solid var(--w7);border-radius:6px;z-index:31;display:grid;grid-template-columns:1fr 280px}
+  .pinput{grid-column:1/3;border-bottom:1px solid var(--w3);padding:12px 14px;font-size:16px;display:flex;gap:10px;align-items:center}
+  .ptypes{grid-column:1/3;padding:6px 14px;border-bottom:1px solid var(--w2);display:flex;gap:6px}
+  .ptypes span{border:1px solid var(--w4);border-radius:3px;padding:1px 8px} .ptypes span.on{background:var(--w7);color:#fff}
+  .pres{padding:6px 0;max-height:560px;overflow:hidden} .pres .g{font:600 10px var(--mono);letter-spacing:.1em;color:var(--w5);padding:8px 14px 2px;text-transform:uppercase}
+  .r{padding:6px 14px;display:grid;grid-template-columns:22px 1fr;gap:2px 8px} .r.hl{background:var(--w2);box-shadow:inset 3px 0 0 var(--w7)}
+  .r .ic{font:11px var(--mono);color:var(--w5)} .r .dn{grid-column:2;font:11px var(--mono);color:var(--w5)}
+  .pact{border-left:1px solid var(--w3);padding:12px}
+  .pact div{display:flex;justify-content:space-between;padding:6px 4px;border-bottom:1px solid var(--w2)}
+  .pfoot{grid-column:1/3;border-top:1px solid var(--w3);padding:6px 14px;color:var(--w5);font-size:12px;display:flex;gap:14px}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  .steps{width:200px;border-right:1px solid var(--w3);padding-right:12px}
+  .steps div{padding:6px 0;border-bottom:1px solid var(--w2)} .steps .on{font-weight:700}
+  .bulkbar{display:flex;gap:8px;align-items:center;border:2px solid var(--w7);padding:6px 10px;border-radius:4px;margin:8px 0;background:var(--w1)}
+  .pop{position:absolute;top:44px;right:516px;width:560px;background:var(--w0);border:2px solid var(--w7);border-radius:6px;padding:12px;z-index:35}
+</style>
+</head>
+<body>
+<div class="doc">
+<h1>activeDIQ — information architecture wireframes (T-0009)</h1>
+<p><b>Greyscale, low-fidelity, brand-neutral.</b> These show structure, not style (style comes from T-0042/T-0043). <b>Every name, number and identifier is SAMPLE DATA</b> (domains use the reserved <span class="mono">example.com</span>). Yellow notes are designer annotations, not UI. Spec: <span class="mono">information-architecture.md</span>.</p>
+
+<!-- ============================================================ 1. HOME (admin) -->
+<div class="frame-title">1 · Home — AD admin (tenant-wide roles)</div>
+<section class="frame" id="home">
+  <div class="top"><div class="brand">activeDIQ <small>· corp</small></div>
+    <div class="gsearch">Search people, groups, computers, reports — name, logon name, e-mail, SID, key ID… <span class="k">/</span></div>
+    <div class="topr"><span class="pill">⟳ 2 jobs running</span><span class="pill">🔔 4</span><span class="pill">?</span><span class="pill">J. Ops ▾</span></div></div>
+  <nav class="rail">
+    <a class="on">Home</a>
+    <a>Directory</a><a class="sub">Users</a><a class="sub">Groups</a><a class="sub">Computers</a><a class="sub">Contacts</a><a class="sub">Service accounts</a><a class="sub">Explorer</a><a class="sub">Deleted objects</a>
+    <a>Clean up</a><a>Reports</a><a>Requests <span class="badge">3</span></a><a>Audit</a>
+    <hr><a>Automation</a><a>Settings</a>
+    <div class="grp">Pinned views</div><a class="sub">Locked out now <span class="mono">7</span></a><a class="sub">Contractors ≤ 30 d <span class="mono">20</span></a>
+  </nav>
+  <main class="main">
+    <h2>Home</h2>
+    <div class="field" style="height:44px;font-size:15px;margin:10px 0 16px;border:2px solid var(--w7)">▍Search or type a command…  <span class="muted small">(focused on load — `/` and Ctrl+K work anywhere)</span></div>
+    <div class="row">
+      <div class="col" style="flex:1.4">
+        <div class="card"><h3>Needs you</h3>
+          <table>
+            <tr><td>3 requests waiting for your approval</td><td class="muted">oldest 2 h · SLA 4 h</td><td><span class="btn">Review</span></td></tr>
+            <tr><td>Pending deletion: <b class="mono">1,284</b> computers (quarantined 3 Oct)</td><td class="muted">deletes 4 Nov unless approved</td><td><span class="btn">Review &amp; approve</span></td></tr>
+            <tr><td>Bulk create: <b>187 of 200 created — 13 failed</b></td><td class="muted">8 × manager not found · 5 × UPN suffix</td><td><span class="btn">Fix &amp; retry 13</span></td></tr>
+            <tr><td>⚠ <span class="mono">emea.corp.example.com</span>: DC03 unreachable since 09:12</td><td class="muted">reads served by DC04</td><td><span class="btn">Details</span></td></tr>
+          </table></div>
+        <div class="card"><h3>Recent</h3>
+          <table>
+            <tr><td>Priya Raman</td><td class="mono muted">praman</td><td class="muted">opened 4 min ago</td><td></td></tr>
+            <tr><td>Added 48 users to SG-Finance-Readers</td><td class="muted">your change · 2 min ago</td><td class="muted">Undo · 8 min left</td><td><span class="btn">Undo</span></td></tr>
+            <tr><td>LT-LON-0421</td><td class="mono muted">LT-LON-0421$</td><td class="muted">opened 11 min ago</td><td></td></tr>
+            <tr><td>Maximilian Alexander Featherstonehaugh-Ng</td><td class="mono muted">mfeatherston</td><td class="muted">opened yesterday</td><td></td></tr>
+          </table></div>
+      </div>
+      <div class="col">
+        <div class="card"><h3>Quick actions</h3>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <span class="btn">New user <span class="k">N</span></span><span class="btn">Import users from a file</span>
+            <span class="btn">Reset a password…</span><span class="btn">Clean up</span></div></div>
+        <div class="card"><h3>Pinned views</h3>
+          <table><tr><td>Locked out now</td><td class="mono">7</td></tr><tr><td>Contractors expiring ≤ 30 days</td><td class="mono">20</td></tr><tr><td>Inactive users &gt; 90 days</td><td class="mono">1,912</td></tr></table>
+          <div class="note">Counts are live API values, scope-trimmed (DM-35.I4).</div></div>
+        <div class="card"><h3>Directory health</h3>
+          <div class="small">✓ <span class="mono">corp.example.com</span> · synced 1 min ago<br>⚠ <span class="mono">emea.corp.example.com</span> · DC03 unreachable<br>✓ Entra tenant <span class="mono">corp.onmicrosoft.com</span> · synced 3 min ago</div></div>
+      </div>
+    </div>
+    <div class="ann" style="left:640px;top:58px">No vanity charts. Home = search + the work waiting for you.</div>
+  </main>
+  <div class="sample">SAMPLE DATA · WIREFRAME</div>
+</section>
+
+<!-- ============================================================ 2. SEARCH OVERLAY -->
+<div class="frame-title">2 · Search overlay (`/` or Ctrl+K) — "priya r"</div>
+<section class="frame" id="search">
+  <div class="top"><div class="brand">activeDIQ <small>· corp</small></div>
+    <div class="gsearch">Search people, groups, computers, reports… <span class="k">/</span></div>
+    <div class="topr"><span class="pill">⟳ 2 jobs running</span><span class="pill">🔔 4</span><span class="pill">?</span><span class="pill">J. Ops ▾</span></div></div>
+  <nav class="rail"><a class="on">Home</a><a>Directory</a><a class="sub">Users</a><a class="sub">Groups</a><a class="sub">Computers</a><a>Clean up</a><a>Reports</a><a>Requests</a><a>Audit</a><hr><a>Automation</a><a>Settings</a></nav>
+  <main class="main"><h2>Home</h2></main>
+  <div class="overlay"></div>
+  <div class="palette" role="dialog" aria-label="Search">
+    <div class="pinput">🔍 <b>priya r</b>▍ <span class="muted small" style="margin-left:auto">matches name, logon name, UPN, e-mail, employee ID, SID, GUID, DN, key ID</span></div>
+    <div class="ptypes"><span class="on">All</span><span>Users</span><span>Groups</span><span>Computers</span><span>Reports</span><span>Actions</span><span>Pages</span><span class="muted" style="border:0">Tab cycles · type <span class="mono">&gt;</span> for actions</span></div>
+    <div class="pres">
+      <div class="g">Users · 3 in your scope</div>
+      <div class="r hl"><span class="ic">USR</span><div><b>Priya Raman</b> <span class="mono muted">praman · priya.raman@corp.example.com</span><br>
+        <span class="chip strong">Locked 09:12</span><span class="chip">Password expires in 3 d</span><span class="chip">Enabled</span> <span class="muted">Sales Operations Lead · London</span></div>
+        <span class="dn">OU=London,OU=Sales,OU=EMEA,OU=Corp Users,DC=corp,DC=example,DC=com</span></div>
+      <div class="r"><span class="ic">USR</span><div><b>Priya Raman</b> <span class="mono muted">p.raman2 · priya.raman2@corp.example.com</span><br>
+        <span class="chip">Enabled</span><span class="chip">Last sign-in 28 Sep, or up to 14 days later</span> <span class="muted">Financial Controller · Pune</span></div>
+        <span class="dn">OU=Finance,OU=APAC,OU=Corp Users,DC=corp,DC=example,DC=com</span></div>
+      <div class="r"><span class="ic">USR</span><div><b>Priya Ramachandran-Iyer</b> <span class="mono muted">pramachandran</span><br>
+        <span class="chip dash">Deleted 1 Oct 16:42</span> <span class="muted">restorable · Recycle Bin on · who: not recorded before M3</span></div>
+        <span class="dn">last parent: OU=Contractors,OU=EMEA,OU=Corp Users,DC=corp,DC=example,DC=com</span></div>
+      <div class="g">Reports</div>
+      <div class="r"><span class="ic">RPT</span><div>Users locked out in the last 24 hours <span class="muted">· Help desk</span></div></div>
+      <div class="g">Actions</div>
+      <div class="r"><span class="ic">ACT</span><div>Reset password and unlock — Priya Raman (<span class="mono">praman</span>) <span class="k">R</span></div></div>
+      <div class="r"><span class="ic">ACT</span><div>Unlock — Priya Raman (<span class="mono">praman</span>) <span class="k">U</span></div></div>
+    </div>
+    <div class="pact"><b>Priya Raman</b> <span class="mono muted">praman</span>
+      <div><span>Open page</span><span class="k">Enter</span></div>
+      <div><span>Reset password and unlock</span><span class="k">R</span></div>
+      <div><span>Unlock</span><span class="k">U</span></div>
+      <div><span>Add to group</span><span class="k">A</span></div>
+      <div><span>Copy DN</span><span class="k">C</span></div>
+      <div><span>Open in new tab</span><span class="k">⇧ Enter</span></div>
+      <div class="note">Only actions this account may run on this object are listed (§8.2). Status chips: lock state computed at read time; the page re-reads from the PDC emulator.</div></div>
+    <div class="pfoot"><span>↑↓ move</span><span>Enter open</span><span>→ actions</span><span>Tab type</span><span>Esc close</span><span style="margin-left:auto">3 domains · index as of 1 min ago · <u>Show all results</u></span></div>
+  </div>
+  <div class="ann" style="left:1210px;top:610px">Two "Priya Raman"s are told apart by title, office and DN — never by guesswork.</div>
+  <div class="sample">SAMPLE DATA · WIREFRAME</div>
+</section>
+
+<!-- ============================================================ 3. USER PAGE + SHEET -->
+<div class="frame-title">3 · User page (locked) with the one side sheet: Reset password and unlock (T01)</div>
+<section class="frame" id="user">
+  <div class="top"><div class="brand">activeDIQ <small>· corp</small></div>
+    <div class="gsearch">Search… <span class="k">/</span></div>
+    <div class="topr"><span class="pill">⟳ 2</span><span class="pill">🔔</span><span class="pill">?</span><span class="pill">J. Ops ▾</span></div></div>
+  <nav class="rail"><a>Home</a><a>Directory</a><a class="sub on">Users</a><a class="sub">Groups</a><a class="sub">Computers</a><a>Clean up</a><a>Reports</a><a>Requests</a><a>Audit</a><hr><a>Automation</a><a>Settings</a></nav>
+  <main class="main">
+    <div class="crumbs">Directory › Users › <span class="mono">corp.example.com</span></div>
+    <h2>Priya Raman</h2>
+    <div><span class="muted">User ·</span> <span class="mono">praman</span> · <span class="mono">priya.raman@corp.example.com</span> · <span class="mono muted">CN=Priya Raman,OU=London,OU=Sales,OU=EMEA,OU=Corp…,DC=com</span> <span class="btn" style="padding:0 6px">Copy DN</span></div>
+    <div style="margin-top:6px"><span class="chip">Enabled</span><span class="chip strong">Locked since 09:12</span><span class="chip">Password expires in 3 days</span><span class="chip">Synced to Entra</span></div>
+    <div style="position:absolute;right:24px;top:56px"><span class="btn pri">Reset &amp; unlock <span class="k">R</span></span> <span class="btn">Unlock <span class="k">U</span></span> <span class="btn">Add to group <span class="k">A</span></span> <span class="btn">More ▾</span></div>
+    <div class="banner">Locked out since 09:12 — read from PDC emulator <span class="mono">DC01</span> just now. <b>Lockout source:</b> needs DC event collection (M3) · <u>What this needs</u></div>
+    <div class="tabs"><span class="on">Overview</span><span>Groups 14</span><span>Devices 2</span><span>Cloud</span><span>Attributes</span><span>History</span><span>Who can manage</span></div>
+    <div class="row" style="width:780px">
+      <div class="col"><div class="card"><h3>Sign-in &amp; password</h3><div class="kv">
+        <div>Last sign-in</div><div>3 Oct, or up to 14 days later <u class="small">exact (all DCs)</u></div>
+        <div>Password set</div><div class="mono">12 Jul 2026 08:14 Europe/London</div>
+        <div>Password expires</div><div>5 Oct 2026 (3 days) · policy: Default Domain Policy</div>
+        <div>Account expires</div><div>Never <u class="small">edit</u></div></div></div>
+        <div class="card"><h3>Licences</h3>Microsoft 365 E3 · via group <u>SG-Lic-E3</u> <span class="btn" style="float:right">Assign</span></div></div>
+      <div class="col"><div class="card"><h3>Organisation</h3><div class="kv">
+        <div>Title</div><div>Sales Operations Lead</div><div>Department</div><div>Sales</div>
+        <div>Manager</div><div><u>Daniel Okonkwo-Bassey</u></div><div>Office</div><div>London · Europe/London</div></div></div>
+        <div class="card"><h3>Recent changes</h3><div class="small">1 Oct · title changed · via activeDIQ by <span class="mono">CORP\j.ops</span><br>28 Sep · added to SG-Sales-EMEA · observed by sync, who: not recorded (M3)</div></div></div>
+    </div>
+  </main>
+  <aside class="sheet" aria-label="Reset password and unlock">
+    <div class="muted small">Side sheet · one at a time · Esc closes</div>
+    <h3 style="font-size:17px;margin-top:4px">Reset password and unlock</h3>
+    <div class="muted">Priya Raman · <span class="mono">praman</span></div>
+    <div class="card" style="margin-top:12px"><b>1 · Verify the caller</b> <span class="muted small">(ENH-09)</span><br>
+      <span class="btn" style="margin:8px 0">Send code to •••• 4821</span> <span class="muted small">mobile from HR record</span>
+      <div class="field">Code the caller reads back ▍</div></div>
+    <div class="card"><b>2 · New password</b><div class="field mono" style="margin:8px 0">maple-orbit-quartz-71  <span class="muted">↻</span></div>
+      <div class="small muted">Meets policy: 14+ characters (Default Domain Policy)</div>
+      <div class="toggle"><span>Must change at next sign-in</span><span class="sw on">ON</span></div>
+      <div class="toggle"><span>Unlock the account <span class="muted small">(shown because it is locked)</span></span><span class="sw on">ON</span></div></div>
+    <div class="card"><b>What will change</b><div class="small">Password reset — <b>not reversible</b> · lockout cleared · written to <span class="mono">DC01</span> (PDC emulator) · audit: who, when, verified by code</div></div>
+    <div style="position:absolute;bottom:18px;left:20px;right:20px;display:flex;gap:8px"><span class="btn pri">Reset password and unlock</span><span class="btn">Cancel</span><span class="muted small" style="margin-left:auto;align-self:center">Enter confirms</span></div>
+  </aside>
+  <div class="sample">SAMPLE DATA · WIREFRAME</div>
+</section>
+
+<!-- ============================================================ 4. TIER-0 GROUP -->
+<div class="frame-title">4 · Group page — Domain Admins (Tier 0, read-only), Members tab, effective view (T19)</div>
+<section class="frame" id="group-tier0">
+  <div class="top"><div class="brand">activeDIQ <small>· corp</small></div><div class="gsearch">Search… <span class="k">/</span></div>
+    <div class="topr"><span class="pill">⟳</span><span class="pill">🔔</span><span class="pill">?</span><span class="pill">J. Ops ▾</span></div></div>
+  <nav class="rail"><a>Home</a><a>Directory</a><a class="sub">Users</a><a class="sub on">Groups</a><a class="sub">Computers</a><a>Clean up</a><a>Reports</a><a>Requests</a><a>Audit</a><hr><a>Automation</a><a>Settings</a></nav>
+  <main class="main">
+    <div class="crumbs">Directory › Groups › <span class="mono">corp.example.com</span></div>
+    <h2>Domain Admins</h2>
+    <div><span class="muted">Group · Security · Global ·</span> <span class="mono">CN=Domain Admins,CN=Users,DC=corp,DC=example,DC=com</span></div>
+    <div style="margin-top:6px"><span class="chip strong">TIER 0</span><span class="chip">Protected group (AdminSDHolder)</span></div>
+    <div style="position:absolute;right:24px;top:56px"><span class="btn pri">Export evidence pack</span> <span class="btn dis" title="Tier 0: activeDIQ never changes Tier-0 objects">Add members — unavailable</span> <span class="btn">More ▾</span></div>
+    <div class="banner"><b>Tier 0.</b> activeDIQ never changes Tier-0 objects, whatever its rights (TM-D2). You can view, report on and export this group. Make changes through your Tier-0 admin process. <u>Why?</u></div>
+    <div class="tabs"><span class="on">Members</span><span>Member of</span><span>Attributes</span><span>History</span><span>Who can manage</span></div>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px"><span class="pill">Direct <b class="mono">4</b></span><span class="pill" style="background:var(--w7);color:#fff">Effective (nested) <b class="mono">11</b></span><span class="field" style="width:260px">Filter members…</span><span class="muted small" style="margin-left:auto">as of last sync 1 min ago · primary-group members included</span></div>
+    <table>
+      <tr><th>Member</th><th>Type</th><th>How they are a member</th><th>Status</th></tr>
+      <tr><td>Administrator</td><td>user</td><td>direct</td><td><span class="chip">Enabled</span></td></tr>
+      <tr><td>Jordan Ops-Admin</td><td>user</td><td>via <u>Tier0-Ops-Admins</u> → Domain Admins</td><td><span class="chip">Enabled</span></td></tr>
+      <tr><td>Mira Søndergaard-Lindqvist</td><td>user</td><td>via <u>Tier0-Ops-Admins</u> → Domain Admins</td><td><span class="chip">Disabled — still counts</span></td></tr>
+      <tr><td>svc-backup-agent</td><td>user</td><td>direct</td><td><span class="chip">Password never expires</span></td></tr>
+      <tr><td>Maximilian Alexander Featherstonehaugh-Ng</td><td>user</td><td>via <u>EMEA-Server-Admins</u> → <u>Tier0-Ops-Admins</u> → Domain Admins</td><td><span class="chip">Enabled</span></td></tr>
+      <tr><td class="mono">S-1-5-21-3623811015-3361044348-30300820-1105</td><td>foreign security principal</td><td>direct · <span class="mono">fabrikam.example</span> (trusted forest)</td><td><span class="chip">Resolved: FABRIKAM\ops-dr</span></td></tr>
+      <tr><td>Tier0-Ops-Admins</td><td>group</td><td>direct</td><td>nested group · 6 members</td></tr>
+      <tr><td colspan="4" class="muted">… 4 more · circular nesting: none detected</td></tr>
+    </table>
+    <div class="ann" style="left:900px;top:150px">Tier-0 write actions stay visible but disabled with the reason: admins learn the boundary instead of hunting for a missing button.</div>
+  </main>
+  <div class="sample">SAMPLE DATA · WIREFRAME</div>
+</section>
+
+<!-- ============================================================ 5. USERS LIST + BULK -->
+<div class="frame-title">5 · Directory › Users — filter, select all matching, bulk bar (T12)</div>
+<section class="frame" id="list">
+  <div class="top"><div class="brand">activeDIQ <small>· corp</small></div><div class="gsearch">Search… <span class="k">/</span></div>
+    <div class="topr"><span class="pill">⟳</span><span class="pill">🔔</span><span class="pill">?</span><span class="pill">J. Ops ▾</span></div></div>
+  <nav class="rail"><a>Home</a><a>Directory</a><a class="sub on">Users</a><a class="sub">Groups</a><a class="sub">Computers</a><a class="sub">Contacts</a><a class="sub">Service accounts</a><a class="sub">Explorer</a><a class="sub">Deleted objects</a><a>Clean up</a><a>Reports</a><a>Requests</a><a>Audit</a><hr><a>Automation</a><a>Settings</a></nav>
+  <main class="main">
+    <h2>Users</h2><div class="muted"><span class="mono">128,904</span> users · 3 domains · index as of 1 min ago</div>
+    <div class="tabs"><span>All</span><span>Locked out now <span class="mono">7</span></span><span>Disabled</span><span>Expiring ≤ 30 d</span><span>Inactive &gt; 90 d</span><span class="on">Retail Ops (unsaved)</span><span class="muted">+ Save view</span></div>
+    <div style="display:flex;gap:8px"><div class="field" style="flex:1">department: <b>Retail Ops</b>▍</div><span class="pill">Domain: all ▾</span><span class="pill">Status: any ▾</span><span class="pill">+ Filter</span><span class="pill">Columns</span><span class="pill">Export</span></div>
+    <div class="banner"><b>All 300 matching users are selected</b> — not just the 50 on this page. The action runs on the query, re-checked in the preview. <u>Select only this page</u> · <u>Clear</u></div>
+    <div class="bulkbar"><b>300 selected</b><span class="btn">Edit attribute</span><span class="btn">Add to group</span><span class="btn">Move</span><span class="btn">Disable</span><span class="btn">Extend expiry</span><span class="btn">More ▾</span><span class="muted small" style="margin-left:auto">Actions this account may run on all 300</span></div>
+    <table>
+      <tr><th>☑</th><th>Name</th><th>Logon name</th><th>Title</th><th>Status</th><th>Last sign-in</th><th>OU</th></tr>
+      <tr class="sel"><td>☑</td><td>Zoë Ångström-Łukasiewicz</td><td class="mono">zangstrom</td><td>Store Manager</td><td></td><td>2 Oct, or up to 14 d later</td><td class="mono">OU=Stores,OU=Retail,…,DC=com</td></tr>
+      <tr class="sel"><td>☑</td><td>Maximilian Alexander Featherstonehaugh-Ng</td><td class="mono">mfeatherston</td><td>Regional Retail Ops Analyst</td><td><span class="chip">Expires 31 Mar</span></td><td>30 Sep, or up to 14 d later</td><td class="mono">OU=Contractors,OU=Retail,…,DC=com</td></tr>
+      <tr class="sel"><td>☑</td><td>José Núñez Peña</td><td class="mono">jnunez</td><td>Shift Lead</td><td><span class="chip strong">Locked 08:51</span></td><td>2 Oct, or up to 14 d later</td><td class="mono">OU=Stores,OU=Retail,…,DC=com</td></tr>
+      <tr class="sel"><td>☑</td><td>Søren Kierkegård</td><td class="mono">skierkegard</td><td>Inventory Planner</td><td><span class="chip">Disabled</span></td><td>14 Jun, or up to 14 d later</td><td class="mono">OU=Leavers,…,DC=com</td></tr>
+      <tr class="sel"><td>☑</td><td>李 小龍 (Li Xiaolong)</td><td class="mono">xli</td><td>Retail Ops Engineer</td><td></td><td>1 Oct, or up to 14 d later</td><td class="mono">OU=Retail,OU=APAC,…,DC=com</td></tr>
+      <tr class="sel"><td>☑</td><td>Aoife Ní Bhriain</td><td class="mono">anibhriain</td><td>Store Manager</td><td><span class="chip">Password expired</span></td><td>19 Sep, or up to 14 d later</td><td class="mono">OU=Stores,OU=Retail,…,DC=com</td></tr>
+    </table>
+    <div class="muted" style="margin-top:6px">1–50 of <span class="mono">300</span> · ‹ › · row click = quick-view drawer · Enter = full page</div>
+  </main>
+  <div class="sample">SAMPLE DATA · WIREFRAME</div>
+</section>
+
+<!-- ============================================================ 6. SCOPED TECHNICIAN -->
+<div class="frame-title">6 · The same console for a scoped help-desk technician (role "Help desk · tier 1", working name)</div>
+<section class="frame" id="technician">
+  <div class="top"><div class="brand">activeDIQ <small>· corp</small></div><div class="gsearch">Search your scope… <span class="k">/</span></div>
+    <div class="topr"><span class="pill scope">Scope: London Help Desk ▾</span><span class="pill">🔔</span><span class="pill">?</span><span class="pill">A. Mensah ▾</span></div></div>
+  <nav class="rail"><a>Home</a><a>Directory</a><a class="sub on">Users</a><a class="sub">Computers</a><a>Reports</a><a>Requests</a>
+    <div class="grp">Pinned views</div><a class="sub">Locked out now <span class="mono">2</span></a>
+    <div class="note" style="margin:12px 14px">No Clean up, Audit, Automation or Settings: this role holds no permission there, so they are hidden (§8.2 rule 1).</div></nav>
+  <main class="main">
+    <h2>Users</h2><div class="muted"><b class="mono">4,212</b> users in your scope · counts are scope-trimmed</div>
+    <div style="display:flex;gap:8px;margin:12px 0"><div class="field" style="flex:1">Filter…</div><span class="pill">Status: any ▾</span></div>
+    <table style="width:720px">
+      <tr><th>Name</th><th>Logon name</th><th>Status</th><th>Last sign-in</th></tr>
+      <tr><td>Kwame Mensah-Adjei</td><td class="mono">kmensah</td><td><span class="chip strong">Locked 09:40</span></td><td>2 Oct, or up to 14 d later</td></tr>
+      <tr class="sel"><td>Mira Hoffmann-Esterházy</td><td class="mono">mhoffmann</td><td></td><td>1 Oct, or up to 14 d later</td></tr>
+      <tr><td>Jordan Ops-Admin</td><td class="mono">jopsadmin</td><td><span class="chip strong">TIER 0</span></td><td>2 Oct, or up to 14 d later</td></tr>
+      <tr><td>Ngozi Chukwuemeka-Lawson</td><td class="mono">nchukwuemeka</td><td><span class="chip">Password expired</span></td><td>20 Sep, or up to 14 d later</td></tr>
+    </table>
+    <div class="note" style="width:720px">No row checkboxes: the role's <span class="mono">max_batch</span> is 1, so bulk can never apply (hidden, not disabled).</div>
+  </main>
+  <div class="pop"><b>Your access</b>
+    <table><tr><th>Role</th><th>Over</th><th>Until</th></tr>
+      <tr><td>Help desk · tier 1</td><td class="mono" style="white-space:normal">OU=London Users,OU=EMEA,OU=Corp Users,DC=corp,DC=example,DC=com (subtree)<br><span class="muted">excluding OU=Service Accounts,OU=London Users,…</span></td><td>—</td></tr></table>
+    <div class="note">Granted through group <span class="mono">LON-Helpdesk</span>. Tier-0 objects are never in a write scope (TM-D2). Ask <u>activeDIQ administrators</u> to change this.</div></div>
+  <aside class="sheet drawer" style="top:48px"><div class="muted small">Quick-view drawer · list keeps its place</div>
+    <h3 style="font-size:17px;margin-top:4px">Mira Hoffmann-Esterházy</h3><div class="mono muted">mhoffmann · mira.hoffmann@corp.example.com</div>
+    <div style="margin:10px 0"><span class="chip">Enabled</span><span class="chip">Password expires in 12 d</span></div>
+    <div class="card"><b>Actions</b>
+      <div class="toggle"><span>Reset password</span><span class="btn">Reset <span class="k">R</span></span></div>
+      <div class="toggle"><span>Unlock</span><span class="muted small">not locked — hidden on the page</span></div>
+      <div class="toggle"><span>Add to group</span><span class="btn">Request… <span class="k">A</span></span></div>
+      <div class="small muted">"Request" = your role holds this in request mode; an approver signs off the exact change (DM-34.I2).</div></div>
+    <div class="card"><b>Jordan Ops-Admin (Tier 0) would show:</b><div class="small"><span class="btn dis">Reset — unavailable</span><br>"Jordan Ops-Admin is Tier 0 (member of Domain Admins via Tier0-Ops-Admins). activeDIQ never changes Tier-0 accounts. Use your Tier-0 admin process."</div></div>
+    <div style="position:absolute;bottom:18px;left:20px"><span class="btn">Open full page <span class="k">Enter</span></span></div>
+  </aside>
+  <div class="sample">SAMPLE DATA · WIREFRAME</div>
+</section>
+
+<!-- ============================================================ 7. CLEAN UP -->
+<div class="frame-title">7 · Clean up — entry for T17/T18</div>
+<section class="frame" id="cleanup">
+  <div class="top"><div class="brand">activeDIQ <small>· corp</small></div><div class="gsearch">Search… <span class="k">/</span></div>
+    <div class="topr"><span class="pill">⟳</span><span class="pill">🔔</span><span class="pill">?</span><span class="pill">J. Ops ▾</span></div></div>
+  <nav class="rail"><a>Home</a><a>Directory</a><a class="sub">Users</a><a class="sub">Groups</a><a class="sub">Computers</a><a class="on">Clean up</a><a>Reports</a><a>Requests</a><a>Audit</a><hr><a>Automation</a><a>Settings</a></nav>
+  <main class="main">
+    <h2>Clean up</h2><div class="muted">Findings from the last sync (1 min ago). Each card opens a list you can act on; nothing is changed until you confirm a plan.</div>
+    <div class="banner"><b>Pending deletion: <span class="mono">1,284</span> computers</b> quarantined 3 Oct in <span class="mono">OU=Quarantine,DC=corp,DC=example,DC=com</span> · 6 became active and were restored · deletes 4 Nov <span class="btn" style="float:right">Review &amp; approve</span></div>
+    <div class="grid3" style="margin-top:12px">
+      <div class="card"><h3>Stale computers</h3><div style="font-size:24px" class="mono">1,284</div><div class="muted">inactive &gt; 90 days · servers, cluster objects excluded</div><div class="note">Runs monthly · next 1 Nov · <u>policy</u></div></div>
+      <div class="card"><h3>Inactive users</h3><div style="font-size:24px" class="mono">1,912</div><div class="muted">&gt; 90 days · 7 probably service accounts excluded</div></div>
+      <div class="card"><h3>Disabled but still in groups</h3><div style="font-size:24px" class="mono">318</div><div class="muted">disabled &gt; 30 days</div></div>
+      <div class="card"><h3>Never signed in</h3><div style="font-size:24px" class="mono">77</div><div class="muted">created &gt; 30 days ago</div></div>
+      <div class="card"><h3>Empty groups</h3><div style="font-size:24px" class="mono">604</div><div class="muted">no members, not used in delegation</div></div>
+      <div class="card"><h3>Passwords that never expire</h3><div style="font-size:24px" class="mono">143</div><div class="muted">people, not service accounts</div></div>
+    </div>
+    <div class="ann" style="left:780px;top:28px">Top-level because the job is monthly and is the brief's own benchmark; 1 click from anywhere (T17 budget needs it).</div>
+  </main>
+  <div class="sample">SAMPLE DATA · WIREFRAME</div>
+</section>
+
+<!-- ============================================================ 8. DELEGATE WIZARD -->
+<div class="frame-title">8 · Settings › Delegation › Delegate — review step (D01)</div>
+<section class="frame" id="delegation">
+  <div class="top"><div class="brand">activeDIQ <small>· corp</small></div><div class="gsearch">Search… <span class="k">/</span></div>
+    <div class="topr"><span class="pill">⟳</span><span class="pill">🔔</span><span class="pill">?</span><span class="pill">J. Ops ▾</span></div></div>
+  <nav class="rail"><a>Home</a><a>Directory</a><a>Clean up</a><a>Reports</a><a>Requests</a><a>Audit</a><hr><a>Automation</a><a class="on">Settings</a>
+    <a class="sub on">Delegation</a><a class="sub">Directories</a><a class="sub">Security</a><a class="sub">Notifications</a><a class="sub">Integrations</a><a class="sub">Migration</a><a class="sub">System</a></nav>
+  <main class="main">
+    <div class="crumbs">Settings › Delegation</div><h2>Delegate</h2>
+    <div class="row" style="margin-top:12px">
+      <div class="steps"><div>✓ Who · <span class="mono">LON-Helpdesk</span></div><div>✓ Role · Help desk · tier 1</div><div>✓ Where · 1 scope entry</div><div>✓ When · from now, no end</div><div class="on">▸ Review</div></div>
+      <div class="col">
+        <div class="card"><b>LON-Helpdesk</b> <span class="muted">(security group · 9 members)</span> will get <b>Help desk · tier 1</b> over:<br>
+          <span class="mono">OU=London Users,OU=EMEA,OU=Corp Users,DC=corp,DC=example,DC=com</span> (subtree, follows the OU if it moves)<br>
+          <span class="muted">excluding</span> <span class="mono">OU=Service Accounts,OU=London Users,…</span></div>
+        <div class="card"><b>Reach</b> <span class="muted small">(computed now, scope-trimmed)</span>
+          <div class="row" style="margin-top:6px"><div><span class="mono" style="font-size:20px">4,212</span><br>users</div><div><span class="mono" style="font-size:20px">3,980</span><br>computers</div><div><span class="mono" style="font-size:20px">3</span><br>Tier-0 objects inside — <b>never writable</b> (TM-D2) <u>list</u></div></div></div>
+        <div class="card"><b>What they can do</b>
+          <table><tr><th>Privilege</th><th>Mode</th><th>Constraint</th></tr>
+            <tr><td>Reset password</td><td>Execute</td><td>caller verification required</td></tr>
+            <tr><td>Unlock</td><td>Execute</td><td>—</td></tr>
+            <tr><td>Show BitLocker recovery key</td><td>Execute</td><td>reason + step-up · rate-limited</td></tr>
+            <tr><td>Add to group</td><td>Request</td><td>approver: group owner</td></tr>
+            <tr><td>Bulk</td><td>—</td><td>max batch 1 · no CSV</td></tr></table></div>
+        <div class="toggle"><span>Also let them look up anyone in <span class="mono">corp.example.com</span> (read only)</span><span class="sw">OFF</span></div>
+        <div class="card"><b>Confirm with your authenticator</b> <span class="muted small">(step-up, TM-D16)</span><div class="field" style="width:200px;margin-top:6px">6-digit code ▍</div>
+          <div class="small muted" style="margin-top:6px">Members' sessions are re-evaluated when this is saved. Audited as an RBAC change.</div></div>
+        <div style="margin-top:10px"><span class="btn pri">Delegate to LON-Helpdesk</span> <span class="btn">Preview as LON-Helpdesk</span> <span class="btn">Back</span></div>
+      </div>
+    </div>
+  </main>
+  <div class="sample">SAMPLE DATA · WIREFRAME</div>
+</section>
+
+<!-- ============================================================ 9. STATES -->
+<div class="frame-title">9 · States the IA must render</div>
+<section class="frame" id="states" style="grid-template-columns:1fr;grid-template-rows:1fr">
+  <main class="main" style="padding:16px">
+    <div class="grid3">
+      <div class="card"><h3>Search · nothing in scope</h3><div class="field">kowalski</div>
+        <p>No objects match <b>kowalski</b> in your scope (<u>London Help Desk</u>).</p>
+        <div class="small">Try a logon name or e-mail · <u>Include deleted objects</u><br>If you expected a result, your scope may not cover it: ask <u>activeDIQ administrators</u>.</div>
+        <div class="note">Objects you cannot read never appear and are never counted (DM-35.I4). The empty state says where the limit is.</div></div>
+      <div class="card"><h3>Partial results · domain unreachable</h3>
+        <div class="banner">⚠ <span class="mono">emea.corp.example.com</span>: no DC reachable since 09:12. Showing results from the last sync (09:11) for that domain, live for the others. <u>Retry</u></div>
+        <table><tr><td>Priya Raman</td><td><span class="chip">as of 09:11</span></td></tr><tr><td>Priya Raman</td><td>live</td></tr></table></div>
+      <div class="card"><h3>Deep link to an object you cannot read</h3>
+        <p><b>You do not have access to this object.</b></p><div class="small">The link points to an object outside your scope, or one that no longer exists. activeDIQ does not say which.<br><u>Back to search</u> · <u>Your access</u></div>
+        <div class="note">Same message for "not in scope" and "not found", so URLs cannot be used to probe the directory.</div></div>
+      <div class="card"><h3>First run · Home</h3><ol class="small" style="padding-left:18px;margin:0">
+        <li>✓ Sign-in and authenticator set up</li><li>▸ <b>Connect a domain</b> <span class="btn">Connect</span></li><li>Mark your own Tier-0 additions (Entra Connect servers…)</li><li>Import from ManageEngine (templates, roles, workflows) — arrives as proposals</li><li>Delegate to your help desk</li></ol>
+        <div class="note">Replaces "Needs you" until the checklist is done. No sample data is ever shown.</div></div>
+      <div class="card"><h3>Picker · Tier-0 group</h3><div class="field">domain ad▍</div>
+        <table><tr><td>Domain Admins <span class="chip strong">TIER 0</span></td><td class="muted small">unavailable — activeDIQ never changes Tier-0 groups</td></tr><tr><td>Domain Admin Reviewers</td><td class="mono small">412 members</td></tr></table></div>
+      <div class="card"><h3>Job · partial failure</h3><div><b>187 of 200 users created — 13 failed</b></div>
+        <table class="small"><tr><td>8 × manager not found</td><td><u>show rows</u></td></tr><tr><td>5 × UPN suffix <span class="mono">@corp.example.co.uk</span> not allowed</td><td><u>show rows</u></td></tr></table>
+        <div style="margin-top:6px"><span class="btn pri">Fix &amp; retry 13</span> <span class="btn">Export failures</span> <span class="btn">Undo this batch (187)</span></div></div>
+    </div>
+  </main>
+  <div class="sample">SAMPLE DATA · WIREFRAME</div>
+</section>
+</div>
+</body>
+</html>
