@@ -28,3 +28,9 @@ dist/
 build/
 coverage/
 *.log
+
+# AD lab (T-0012): generated credentials, exported CA, local snapshots — never committed
+lab/.lab.env
+lab/.lab-ca.pem
+lab/.snapshots/
+__pycache__/

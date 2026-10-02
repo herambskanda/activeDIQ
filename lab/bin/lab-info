@@ -1,0 +1,19 @@
+#!/bin/sh
+# Print connection details for the running lab (no secrets — read them from lab/.lab.env).
+here=$(cd "$(dirname "$0")/.." && pwd)
+. "$here/.lab.env" 2>/dev/null || true
+ldaps=${LAB_LDAPS_PORT:-636}
+cat <<INFO
+
+activeDIQ AD lab (Samba 4, TEST ONLY)
+  domain        lab.activediq.test   (NetBIOS LAB)
+  base DN       DC=lab,DC=activediq,DC=test
+  managed OU    OU=Managed,DC=lab,DC=activediq,DC=test
+  LDAPS         ldaps://localhost:$ldaps   (cert SANs: dc1.lab.activediq.test, localhost, 127.0.0.1)
+  trust CA      $here/.lab-ca.pem          (never skip certificate verification)
+  product acct  svc-activediq@lab.activediq.test   password: LAB_SVC_PASSWORD in lab/.lab.env
+  seed users    <sam>@lab.activediq.test           password: LAB_USER_PASSWORD in lab/.lab.env
+  admin         Administrator                      password: LAB_ADMIN_PASSWORD in lab/.lab.env
+  example       LDAPTLS_CACERT=$here/.lab-ca.pem ldapsearch -H ldaps://localhost:$ldaps -x \\
+                  -D svc-activediq@lab.activediq.test -w "\$LAB_SVC_PASSWORD" -b OU=Managed,DC=lab,DC=activediq,DC=test -s one dn
+INFO

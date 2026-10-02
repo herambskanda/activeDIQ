@@ -1,0 +1,15 @@
+#!/bin/sh
+# Create the gitignored credentials file if missing. Credentials are random per lab, never committed,
+# and never printed. Usage: lab-env <path>
+set -eu
+f="$1"
+[ -f "$f" ] && exit 0
+umask 077
+pw() { printf 'Lab-%s-aA1!' "$(openssl rand -hex 14)"; }
+{
+  echo "LAB_ENV_ID=$(openssl rand -hex 6)"
+  echo "LAB_ADMIN_PASSWORD=$(pw)"
+  echo "LAB_USER_PASSWORD=$(pw)"
+  echo "LAB_SVC_PASSWORD=$(pw)"
+} > "$f"
+echo ">> generated $f (random lab credentials; gitignored)"

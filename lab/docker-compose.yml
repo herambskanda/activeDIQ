@@ -1,0 +1,29 @@
+# activeDIQ AD lab — Samba 4 AD DC (TEST INFRASTRUCTURE ONLY; Samba is GPL-3.0, never shipped).
+# Use through the Makefile (`make lab-up`), which generates credentials into lab/.lab.env.
+name: activediq-lab
+services:
+  dc:
+    build:
+      context: .
+      dockerfile: samba/Dockerfile
+    image: activediq-lab-dc:local
+    hostname: dc1.lab.activediq.test
+    domainname: lab.activediq.test
+    cap_add: [SYS_ADMIN]          # xattrs/ACLs on sysvol; escalate to privileged only if proven necessary
+    env_file: [.lab.env]
+    environment:
+      LAB_TIER: ${LAB_TIER:-standard}
+    ports:                          # loopback only
+      - "127.0.0.1:${LAB_LDAPS_PORT:-636}:636"
+      - "127.0.0.1:${LAB_GC_LDAPS_PORT:-3269}:3269"
+      - "127.0.0.1:${LAB_LDAP_PORT:-389}:389"
+      - "127.0.0.1:${LAB_KRB_PORT:-88}:88/tcp"
+      - "127.0.0.1:${LAB_KRB_PORT:-88}:88/udp"
+      - "127.0.0.1:${LAB_KPASSWD_PORT:-464}:464/tcp"
+    volumes:
+      - lab-state:/var/lib/samba      # named volume: Samba needs xattr/ACL support (not a macOS bind mount)
+      - lab-snapshots:/snapshots
+    restart: "no"
+volumes:
+  lab-state:
+  lab-snapshots:
