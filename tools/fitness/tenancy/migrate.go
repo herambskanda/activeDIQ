@@ -3,13 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/skenzeriq/activediq/tools/fitness/pgharness"
 )
 
 // Violation is one failed rule. Check is T1..T5; Rule names the rule inside the check; Where is the
@@ -33,67 +32,29 @@ func sortViolations(vs []Violation) {
 	})
 }
 
-// migrationName is the blueprint §1 naming: NNNN_<owner>_<what>.sql, one forward-only sequence.
-var migrationName = regexp.MustCompile(`^(\d{4})_[a-z0-9]+(_[a-z0-9]+)*\.sql$`)
+// Migration is one SQL file of the sequence (the shared harness's type).
+type Migration = pgharness.Migration
 
-// Migration is one SQL file of the sequence.
-type Migration struct {
-	Name string
-	Path string
-	SQL  string
-}
-
-// ListMigrations returns the *.sql files of dir in application order. A missing directory or one with
-// no SQL file is an empty list: the state before the first migration lands.
+// ListMigrations returns the *.sql files of dir in application order; a bad file name is a T1
+// violation. A missing directory or one with no SQL file is an empty list.
 func ListMigrations(dir string) ([]Migration, []Violation, error) {
-	ents, err := os.ReadDir(dir)
-	if os.IsNotExist(err) {
-		return nil, nil, nil
-	}
-	if err != nil {
-		return nil, nil, err
-	}
-	var ms []Migration
+	ms, ps, err := pgharness.ListMigrations(dir)
 	var vs []Violation
-	seen := map[string]string{}
-	for _, e := range ents {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
-			continue
-		}
-		m := migrationName.FindStringSubmatch(e.Name())
-		if m == nil {
-			vs = append(vs, Violation{"T1", "migration-name", e.Name(),
-				"migration file names are NNNN_<owner>_<what>.sql (lower case, digits and underscores)"})
-			continue
-		}
-		if prev, dup := seen[m[1]]; dup {
-			vs = append(vs, Violation{"T1", "migration-name", e.Name(), "number " + m[1] + " is also used by " + prev})
-		}
-		seen[m[1]] = e.Name()
-		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
-		if err != nil {
-			return nil, nil, err
-		}
-		ms = append(ms, Migration{Name: e.Name(), Path: filepath.Join(dir, e.Name()), SQL: string(b)})
+	for _, p := range ps {
+		vs = append(vs, Violation{"T1", "migration-name", p.File, p.Msg})
 	}
-	sort.Slice(ms, func(i, j int) bool { return ms[i].Name < ms[j].Name })
-	return ms, vs, nil
+	return ms, vs, err
 }
 
 // apply runs migrations under the owner role, in order. A migration that fails to apply is a T1
 // violation (the sequence must apply on an empty database), not a tool error.
 func apply(ctx context.Context, d *Database, ms []Migration) []Violation {
-	c, err := d.owner(ctx)
-	if err != nil {
-		return []Violation{{"T1", "migrations-apply", "owner role", "cannot connect as the migration role: " + err.Error()}}
-	}
-	defer c.Close(ctx)
-	for _, m := range ms {
-		// No arguments: pgx sends the whole file through the simple protocol, which allows many
-		// statements. There is nothing to bind, and the file is repository content, not input.
-		if _, err := c.Exec(ctx, m.SQL); err != nil {
-			return []Violation{{"T1", "migrations-apply", m.Name, "does not apply on an empty database as the migration role: " + pgMessage(err)}}
-		}
+	failed, msg, err := pgharness.Apply(ctx, d, ms)
+	switch {
+	case err != nil:
+		return []Violation{{"T1", "migrations-apply", "owner role", err.Error()}}
+	case failed != "":
+		return []Violation{{"T1", "migrations-apply", failed, "does not apply on an empty database as the migration role: " + msg}}
 	}
 	return nil
 }
@@ -127,7 +88,7 @@ func checkT1(ctx context.Context, s *Server, ms []Migration, nameVs []Violation)
 	if av := apply(ctx, d, ms[:1]); len(av) > 0 {
 		return append(vs, av...), nil
 	}
-	c, err := d.admin(ctx)
+	c, err := d.Admin(ctx)
 	if err != nil {
 		return nil, err
 	}

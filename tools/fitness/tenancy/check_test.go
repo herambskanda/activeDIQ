@@ -126,14 +126,14 @@ func (f fixture) run(t *testing.T, version string) ([]Violation, string) {
 	for _, c := range strings.Split(cs, ",") {
 		checks[c] = true
 	}
-	s.extraBoot = f.bootstrap
+	s.SetExtraBootstrap(f.bootstrap)
 	t.Cleanup(func() {
-		s.extraBoot = nil
+		s.SetExtraBootstrap(nil)
 		if len(f.reset) == 0 {
 			return
 		}
 		ctx := context.Background()
-		c, err := s.connect(ctx, "postgres", s.adminPass, "postgres")
+		c, err := s.ConnectAdmin(ctx)
 		if err != nil {
 			t.Errorf("reset roles: %v", err)
 			return
@@ -141,7 +141,7 @@ func (f fixture) run(t *testing.T, version string) ([]Violation, string) {
 		defer c.Close(ctx)
 		for _, r := range f.reset {
 			var stmt string
-			if err := c.QueryRow(ctx, `SELECT format($1::text, $2::text, $3::text)`, r, s.ownerRole, s.appRole).Scan(&stmt); err != nil {
+			if err := c.QueryRow(ctx, `SELECT format($1::text, $2::text, $3::text)`, r, s.OwnerRole(), s.AppRole()).Scan(&stmt); err != nil {
 				t.Errorf("reset roles: %v", err)
 				continue
 			}
