@@ -381,6 +381,14 @@ func Breaches() []Breach {
 			Teardown: []string{`ALTER DATABASE {db} OWNER TO activediq_owner`}, Want: "database"},
 		{Name: "has CREATE on public", Setup: []string{`GRANT CREATE ON SCHEMA public TO activediq_app`},
 			Teardown: []string{`REVOKE CREATE ON SCHEMA public FROM activediq_app`}, Want: "CREATE"},
+		{Name: "has TEMPORARY on the database", Setup: []string{`GRANT TEMPORARY ON DATABASE {db} TO activediq_app`},
+			Teardown: []string{`REVOKE TEMPORARY ON DATABASE {db} FROM activediq_app`}, Want: "TEMPORARY"},
+		{Name: "member of pg_execute_server_program WITH INHERIT FALSE", Setup: []string{`GRANT pg_execute_server_program TO activediq_app WITH INHERIT FALSE`},
+			Teardown: []string{`REVOKE pg_execute_server_program FROM activediq_app`}, Want: "predefined"},
+		{Name: "member of pg_read_server_files WITH INHERIT FALSE", Setup: []string{`GRANT pg_read_server_files TO activediq_app WITH INHERIT FALSE`},
+			Teardown: []string{`REVOKE pg_read_server_files FROM activediq_app`}, Want: "predefined"},
+		{Name: "member of pg_write_server_files WITH INHERIT FALSE", Setup: []string{`GRANT pg_write_server_files TO activediq_app WITH INHERIT FALSE`},
+			Teardown: []string{`REVOKE pg_write_server_files FROM activediq_app`}, Want: "predefined"},
 	}
 }
 

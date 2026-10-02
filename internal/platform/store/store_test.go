@@ -350,6 +350,23 @@ func TestOpenRefusesRoleThatCanEscapeRLS(t *testing.T) {
 	}
 }
 
+// A temporary table is pooled-session state: pg_temp is searched first, so one tenant's CREATE TEMP
+// TABLE would capture the next tenant's unqualified writes on a reused connection. Migration 0001
+// revokes TEMPORARY from PUBLIC, so the runtime role cannot create one.
+func TestTenantTransactionCannotCreateTempTable(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s, Config{MaxConns: 1})
+		err := e.db.WithTenant(context.Background(), e.a, func(ctx context.Context, tx Tx) error {
+			_, err := tx.Exec(ctx, `CREATE TEMP TABLE items (label text)`)
+			return err
+		})
+		var pe *pgconn.PgError
+		if !errors.As(err, &pe) || pe.Code != "42501" {
+			t.Fatalf("CREATE TEMP TABLE in a tenant transaction = %v; want SQLSTATE 42501 (insufficient_privilege)", err)
+		}
+	})
+}
+
 // SQL-22: both entry points set a per-transaction statement_timeout that does not outlive the
 // transaction.
 func TestStatementTimeoutIsPerTransaction(t *testing.T) {

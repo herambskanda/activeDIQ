@@ -48,15 +48,20 @@ unchanged there:
 - Two roles, both `LOGIN NOSUPERUSER NOBYPASSRLS`: **`activediq_owner`** (runs migrations, owns every
   object) and **`activediq_app`** (the runtime role; owns nothing).
 - The owner owns schema `public`; `PUBLIC` has no rights on it; the runtime role has `USAGE`.
+- No `TEMPORARY`: migration 0001 revokes it on the database from `PUBLIC` (`format('%I', current_database())`).
+  `pg_temp` is searched first, so a temp table planted by one tenant's transaction would capture another
+  tenant's unqualified writes on a reused pooled connection (the same class as SQL-14).
 - `ALTER DEFAULT PRIVILEGES FOR ROLE activediq_owner IN SCHEMA public` grants the runtime role
   `SELECT, INSERT, UPDATE, DELETE` on tables (never `TRUNCATE`) and `USAGE, SELECT` on sequences.
 - Any other schema, and any non-default grant (a function, `EXECUTE`), is explicit SQL in a migration.
 - `tenants` lives in `public`. Migration 0001 itself re-states the default privileges and the schema
   grant, so an installer that created only the two roles and a database the owner owns is enough: the
   script fails loudly if the split is missing or broken (roles absent, either one a superuser or
-  `BYPASSRLS`, the runtime role a *member* of the owner, a superuser or a `BYPASSRLS` role, with or without
+  `BYPASSRLS`, the runtime role a *member* of the owner, a superuser, a `BYPASSRLS` role or one of
+  `pg_execute_server_program`, `pg_read_server_files`, `pg_write_server_files` (each "could be used to gain
+  superuser-level access", https://www.postgresql.org/docs/16/predefined-roles.html), with or without
   `INHERIT`, since `SET ROLE` escapes RLS either way; the runtime role or a role it is a member of owning the
-  database, a schema or any object, or able to `CREATE` in a schema). `store.Open` repeats the same refusal
+  database, a schema or any object, or able to `CREATE` in a schema, or holding `TEMPORARY` on the database). `store.Open` repeats the same refusal
   at startup (`roleRisk`). Roles are cluster-level and the owner has no
   `CREATEROLE`, so the installer creates them; no migration does.
 - The migration bookkeeping table is **not** created by any migration, so the job never sees it, and the

@@ -56,7 +56,7 @@ var (
 	// ErrPrivilegedRole is returned by Open when the runtime role could bypass row-level security: it is
 	// a superuser, has BYPASSRLS, owns objects or the database, can create in a schema, or is a member of a
 	// role that does (ADR-0002 rule 4).
-	ErrPrivilegedRole = errors.New("store: the runtime role must not be, or be a member of, a role that is a superuser, has BYPASSRLS, owns objects or can create in a schema: connect as the runtime role, never the migration role")
+	ErrPrivilegedRole = errors.New("store: the runtime role must not be, or be a member of, a role that is a superuser, has BYPASSRLS, owns objects, can create in a schema or create temporary tables: connect as the runtime role, never the migration role")
 	// ErrClosed is returned by an entry point on a nil or closed DB.
 	ErrClosed = errors.New("store: closed")
 )
@@ -127,16 +127,21 @@ func checkConnConfig(cc *pgx.ConnConfig) error {
 // SET ROLE to it) and returns the first reason found, or no row. A role is a risk when it is a
 // superuser, has BYPASSRLS, owns the current database, owns any object visible to this database
 // (pg_shdepend, which also covers schemas, functions and other roles' objects), owns a product
-// schema, or can CREATE in one (which lets it plant objects that shadow ours). migrations/0001 repeats
+// schema, can CREATE in one (which lets it plant objects that shadow ours), holds TEMPORARY on the
+// database (pg_temp is searched first, so a planted temp table captures another tenant's unqualified
+// writes on a reused connection), or is one of the predefined roles the PostgreSQL docs say can be
+// used to gain superuser-level access. migrations/0001 repeats
 // this logic in plpgsql for the role named activediq_app; keep the two in step.
 const roleRisk = `SELECT x.rolname, CASE
 		WHEN x.rolsuper THEN 'superuser'
 		WHEN x.rolbypassrls THEN 'BYPASSRLS'
+		WHEN x.rolname IN ('pg_execute_server_program', 'pg_read_server_files', 'pg_write_server_files') THEN 'predefined role that is superuser-equivalent'
 		WHEN EXISTS (SELECT 1 FROM pg_database WHERE datname = current_database() AND datdba = x.oid) THEN 'owner of the database'
 		WHEN EXISTS (SELECT 1 FROM pg_shdepend d WHERE d.refclassid = 'pg_authid'::regclass AND d.refobjid = x.oid AND d.deptype = 'o'
 			AND d.dbid IN (0, (SELECT oid FROM pg_database WHERE datname = current_database()))) THEN 'owner of objects'
 		WHEN EXISTS (SELECT 1 FROM pg_namespace n WHERE n.nspowner = x.oid AND ` + productSchema + `) THEN 'owner of a schema'
 		WHEN EXISTS (SELECT 1 FROM pg_namespace n WHERE ` + productSchema + ` AND has_schema_privilege(x.oid, n.oid, 'CREATE')) THEN 'can create in a schema'
+		WHEN has_database_privilege(x.oid, current_database(), 'TEMPORARY') THEN 'has TEMPORARY on the database'
 	END AS risk
 	FROM pg_roles x
 	WHERE pg_has_role(current_user, x.oid, 'MEMBER')

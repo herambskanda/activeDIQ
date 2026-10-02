@@ -4,7 +4,7 @@
 -- that every later migration and every query relies on:
 --
 --   activediq_owner  runs migrations (this script) and owns every object. Not a superuser, no BYPASSRLS.
---   activediq_app    the runtime role. Owns nothing, no BYPASSRLS, no TRUNCATE, no CREATE.
+--   activediq_app    the runtime role. Owns nothing, no BYPASSRLS, no TRUNCATE, no CREATE, no TEMPORARY.
 --
 -- Both roles are created by the installer before the first run (a cluster-level act the owner cannot
 -- do: it has no CREATEROLE). The script fails here, loudly, if the split is not in place, rather than
@@ -16,7 +16,9 @@
 -- The guard looks at every role activediq_app is a MEMBER of (itself included, direct or indirect,
 -- whatever the INHERIT/SET options: a member that does not inherit can still SET ROLE to it) and
 -- refuses when any of them is a superuser, has BYPASSRLS, is the migration role, owns the database or
--- any object, owns a schema, or can CREATE in one. internal/platform/store.roleRisk repeats this for
+-- any object, owns a schema, can CREATE in one, or is one of the predefined roles that hand over the
+-- server's OS (pg_execute_server_program, pg_read_server_files, pg_write_server_files: the PostgreSQL
+-- docs say each "could be used to gain superuser-level access"). internal/platform/store.roleRisk repeats this for
 -- the runtime role at startup; keep the two in step.
 DO $guard$
 DECLARE
@@ -36,6 +38,7 @@ BEGIN
         WHEN x.rolname = current_user THEN 'the migration role: activediq_app must not be a member of it'
         WHEN x.rolsuper THEN 'a superuser'
         WHEN x.rolbypassrls THEN 'a BYPASSRLS role'
+        WHEN x.rolname IN ('pg_execute_server_program', 'pg_read_server_files', 'pg_write_server_files') THEN 'a predefined role that is superuser-equivalent'
         WHEN EXISTS (SELECT 1 FROM pg_database WHERE datname = current_database() AND datdba = x.oid) THEN 'the owner of the database'
         WHEN EXISTS (SELECT 1 FROM pg_shdepend d WHERE d.refclassid = 'pg_authid'::regclass AND d.refobjid = x.oid AND d.deptype = 'o'
           AND d.dbid IN (0, (SELECT oid FROM pg_database WHERE datname = current_database()))) THEN 'an owner of objects'
@@ -56,8 +59,18 @@ $guard$;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO activediq_app;
 
+-- Temporary tables live in pg_temp, which is searched before every other schema: one tenant's
+-- transaction could plant `items` there and capture the next tenant's unqualified INSERT on a reused
+-- pooled connection. PUBLIC has TEMPORARY on the database by default; take it away.
+DO $temp$
+BEGIN
+  EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC', current_database());
+END
+$temp$;
+
 -- With PUBLIC revoked, no role activediq_app is a member of may still create in a schema (a direct
--- grant, or the pre-15 default). Objects planted there could shadow ours.
+-- grant, or the pre-15 default), or create temporary objects (a direct grant, or a database the owner
+-- does not own so the REVOKE above did nothing). Objects planted there could shadow ours.
 DO $guard$
 DECLARE
   r record;
@@ -70,6 +83,12 @@ BEGIN
       AND has_schema_privilege(x.oid, n.oid, 'CREATE')
   LOOP
     RAISE EXCEPTION 'activediq_app (through role %) can CREATE in schema %: the runtime role must not create objects (ADR-0002 rule 4)', r.rolname, r.nspname;
+  END LOOP;
+  FOR r IN
+    SELECT x.rolname FROM pg_roles x
+    WHERE pg_has_role('activediq_app', x.oid, 'MEMBER') AND has_database_privilege(x.oid, current_database(), 'TEMPORARY')
+  LOOP
+    RAISE EXCEPTION 'activediq_app (through role %) has TEMPORARY on the database: the runtime role must not create temporary tables (ADR-0002 rule 4)', r.rolname;
   END LOOP;
 END
 $guard$;
