@@ -93,14 +93,14 @@ One numbered item per finding: **severity · `file:line` · what is wrong · why
 fix** (and the test that would catch it).
 
 ```
-1. [blocker] internal/directory/ldap/search.go:88 — filter built with fmt.Sprintf from the
+1. [blocker] internal/modules/objects/list.go:88 — filter built with fmt.Sprintf from the
    `department` query param; `*)(objectClass=*` widens the search past the delegation scope.
    Use ldapfilter.Eq("department", v) and And() it with the scope filter; add the payload to
    FuzzSearchFilter.
-2. [major] internal/lifecycle/bulk.go:142 — a failed chunk is logged and skipped, so the job
+2. [major] internal/modules/lifecycle/bulk.go:142 — a failed chunk is logged and skipped, so the job
    reports success with members missing. Bisect the chunk (ad-engineering §3) and record
    per-member outcomes; test: TestBulkAddReportsDuplicate.
-3. [minor] web/src/features/users/UserTable.tsx:31 — `data2` → `pagedUsers`.
+3. [minor] web/src/modules/objects/UserTable.tsx:31 — `data2` → `pagedUsers`.
 ```
 
 ## 6. Reviewing AI-written code — what to hunt

@@ -48,7 +48,7 @@ reviews it and the ADR stays `proposed`; the advance note asks the director to r
    would buy us. Test: would its strongest advocate sign your description? Include "do nothing /
    defer" when it is genuinely viable. Spikes in `garage/` are cited with their findings.
 5. **Decision** is checkable: required, prohibited, and where exceptions are declared (e.g. "an
-   exemption registry in `internal/platform/tenancy/exempt.go`, each entry with a reason").
+   exemption registry in `internal/platform/store/exempt`, each entry with a reason").
 6. **Consequences** name the negatives honestly, the follow-on tickets, and "revisit when".
 7. **Fitness function**: the CI job that fails when the decision is violated — import rules, lint,
    a contract diff, a migration check, a benchmark, a grep. Write what it checks and where it will

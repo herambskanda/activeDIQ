@@ -16,7 +16,7 @@ webhook signing, LDAP-to-HTTP error mapping). Read it when writing or reviewing 
 
 ## 1. Contract-first
 
-1. A `spec` ticket changes `api/openapi.yaml` (OpenAPI 3.1, the **source of truth**) before any
+1. A `spec` ticket changes `api/openapi/` (OpenAPI 3.1, one file per tag, ADR-0004; the **source of truth**) before any
    handler exists. Server stubs (Go) and the TypeScript client are **generated** from it and never
    edited by hand. The PowerShell module wraps the same contract.
 2. CI: lint the spec (Spectral or Redocly CLI), detect breaking changes against `main` (oasdiff),

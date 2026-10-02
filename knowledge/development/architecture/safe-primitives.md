@@ -4,7 +4,7 @@ date: 2026-10-02
 updated: 2026-10-02
 status: review
 owner: heramb
-ticket: T-0005, T-0029
+ticket: T-0005, T-0029, T-0048
 sources_last_checked: 2026-10-02
 ---
 
@@ -21,7 +21,7 @@ command injection; `build-feasibility/ad-technical-feasibility.md` §2.2, §2.7)
 outputs backslashes are literal. In tables `\|` is a literal `|`. "Error `X`" means a typed error
 with stable code `X`; nothing is sent to a DC, interpreter or database.
 
-| # | Primitive (provisional name) | Bans | Tiers (ADR-0001, ratified; matrix in §2) | Implementer | § |
+| # | Primitive (package: blueprint §1.1, §7.4) | Bans | Tiers (ADR-0001, ratified; matrix in §2) | Implementer | § |
 | --- | --- | --- | --- | --- | --- |
 | P1 | `ldapfilter`: filter AST, canonical renderer, admin-filter parser | string-built filters; library filter compilation of user input | S, A | directory-engineer | 3 |
 | P2 | `dn`: DN parse/build/compare; `ObjectRef` (`<GUID=…>`, `<SID=…>`) | `"CN="+name+","+parent`; `HasSuffix(dn, ou)` scope checks | S, A | directory-engineer | 4 |
@@ -77,8 +77,13 @@ Out of scope here: SIEM and log encoders (CEF, syslog; T-0139), XML/SAML, JWT an
 This document decides, independent of the stack, the semantics, escaping rules, error codes,
 vectors, corpus format and the *meaning* of each lint rule. ADR-0001 is **ratified**
 (D-0006, 2026-10-02; `knowledge/development/decisions/0001-technology-stack.md`) and binds the
-library choice, the concrete lint tools and which tiers implement what. Package paths stay
-provisional until T-0004 fixes the zone roots. API sketches use neutral pseudo-signatures; Go, C#
+library choice, the concrete lint tools and which tiers implement what. Package paths are fixed by
+[blueprint v0](blueprint.md) §1.1 and §7.4: `internal/directory/ldapfilter`, `internal/directory/dn`
+(with `ObjectRef`, `GUIDRef`), `internal/directory/attr/{guid,sid,filetime,gentime,flags,unicodepwd}`,
+`internal/platform/secret`, `internal/connector/ad/scope` and `internal/connector/ldap` (`SecureConn`),
+`internal/connector/psx`, `internal/platform/pslit`, `internal/platform/proc`, and
+`internal/platform/store` (with `store/exempt` and `store/reportsql`). Short names below (`scope`,
+`dn`, `store`) mean these packages. API sketches use neutral pseudo-signatures; Go, C#
 and TypeScript names illustrate the ratified stack. §10 lists what changes if ADR-0001 is amended.
 
 | Tier (ADR-0001) | P1 filter | P2 DN / ObjectRef | P3 codecs, `Secret` | P4 command | P5 SQL | P7 output |
@@ -240,15 +245,16 @@ reveals whether an out-of-scope DN exists (LF-36).
 
 ### 3.5 Lint / fitness rule (bans the unsafe alternative)
 
-- Only the connector package imports the LDAP library (import-boundary rule, FF-SP1).
-- Banned outside `ldapfilter`: the library's filter compiler and escaper (go-ldap `CompileFilter`,
-  `EscapeFilter`); constructing a search request with a filter string (go-ldap `NewSearchRequest`,
+- Only the connector root `internal/connector/` imports the LDAP library (import-boundary rule,
+  FF-SP1), so `ldapfilter` implements RFC 4515 itself.
+- Banned everywhere except the go-ldap round-trip oracle test under `internal/connector/ldap`: the
+  library's filter compiler and escaper (go-ldap `CompileFilter`, `EscapeFilter`); constructing a search request with a filter string (go-ldap `NewSearchRequest`,
   `SearchRequest{Filter:…}`) outside the connector; in tier X, `DirectorySearcher` and the string
   `SearchRequest` constructors of `System.DirectoryServices.Protocols` (BannedApiAnalyzers).
 - Literal-shape scanner (FF-SP3): string literals containing `(&(`, `(|(`, `(objectClass=`,
   `(sAMAccountName=` or `:1.2.840.113556.1.4.` outside `ldapfilter` and tests fail the build.
-- Raw search, control constructors and the GC port are confined to `scope` and the connector
-  (FF-SP1). In go-ldap that means `Conn.Search`, `SearchWithPaging`, `NewSearchRequest`, `NewControl*`
+- Raw search, control constructors and the GC port are confined to `internal/connector/ad/scope`
+  and `internal/connector/ldap` (FF-SP1). In go-ldap that means `Conn.Search`, `SearchWithPaging`, `NewSearchRequest`, `NewControl*`
   and the literals `3268`/`3269`. The OID literal `1.2.840.113556.1.4.1504` and the other §3.6
   escape-control OIDs may appear only in the named-operation table inside `scope` (LF-30).
 
@@ -436,7 +442,9 @@ Builder, parent `P` = `OU=Staff,DC=corp,DC=example`; outputs omit `,` + `P` for 
 
 ### 4.6 Lint / fitness rule
 
-Banned outside `dn`: the library's DN parser and escaper (go-ldap `ParseDN`, `EscapeDN`); string
+Banned everywhere except the go-ldap round-trip oracle test under `internal/connector/ldap`: the
+library's DN parser and escaper (go-ldap `ParseDN`, `EscapeDN`); `dn` implements RFC 4514 itself
+(blueprint §7.4). Banned outside `dn`: string
 operations (`HasSuffix`, `HasPrefix`, `Contains`, `EqualFold`, `Split`) on `DNString` values;
 `dn.Equal`/`IsDescendantOf` from authorisation packages (import rule). forbidigo matches names and
 cannot see types, so the `DNString` rule is a **go/analysis pass**, `dnstring`, in the fitness tool
@@ -983,12 +991,12 @@ ORMs and raw-string query builders are prohibited. Rules:
 11. **Transactions are tenant-scoped by API.** ADR-0002 owns the tenancy API: see "Where tenancy
     lives" (Transaction row) and rules 4–5 in
     [`0002-deployment-model.md`](../decisions/0002-deployment-model.md). This section adds only the
-    SQL-construction rules. The data-access package (ADR-0002; path per T-0004) exposes exactly two
-    entry points:
-    - `WithTenant(ctx, tenant.ID, fn)`. Its first statement sets `app.tenant_id` with
+    SQL-construction rules. The data-access package `internal/platform/store` (ADR-0002; blueprint
+    §1.1) exposes exactly two entry points:
+    - `WithTenantTx(ctx, tenant.ID, fn)`. Its first statement sets `app.tenant_id` with
       `set_config(…, true)` (rule 2).
     - `WithPlatform(ctx, reason, fn)`, callable only from call sites listed in ADR-0002's exemption
-      registry. It runs as the same runtime role with no tenant set, so RLS still hides every tenant
+      registry (`internal/platform/store/exempt`). It runs as the same runtime role with no tenant set, so RLS still hides every tenant
       row. Tenant provisioning and first-run bootstrap go through it.
 
     The raw pool is unexported, so there is no other way to get a connection. **Both entry points
@@ -1023,14 +1031,15 @@ ORMs and raw-string query builders are prohibited. Rules:
 | SQL-16 | report filter on JSON key `a'->>'b` | key bound as `->> $n` | JSON path |
 | SQL-17 | migration adds `CREATE VIEW v AS SELECT … FROM <tenant table>` without `security_invoker` | FF-SP7 fails | view-owner RLS bypass |
 | SQL-18 | migration adds a materialized view reading a tenant table · a `SECURITY DEFINER` function reading a tenant table | FF-SP7 fails | RLS bypass |
-| SQL-19 | query outside `WithTenant` (fresh connection, `app.tenant_id` never set) | zero rows, never all tenants | fail-closed policy |
+| SQL-19 | query outside `WithTenantTx` (fresh connection, `app.tenant_id` never set) | zero rows, never all tenants | fail-closed policy |
 | SQL-20 | config DSN contains `default_query_exec_mode=simple_protocol` | pool construction fails `SimpleProtocolForbidden` | rule 12 |
 | SQL-21 | report AST with function `pg_sleep` · aggregate `string_agg` · unit `'day'; --` | error `UnknownFunction` / `UnknownAggregate` / `BadUnit` | closed vocabulary |
 | SQL-22 | report query exceeding the bound `statement_timeout` | cancelled with `QueryTimeout`; the next transaction on the connection has the default timeout | per-transaction timeout |
 
 **Lint.** gosec G201/G202 ([gosec][gosec]). forbidigo bans the names `QueryExecModeSimpleProtocol`,
 `set_config(…, false)` and `SET app.` literals. The SQL driver may be imported only by the
-data-access package (FF-SP1; ADR-0002 check T5 enforces the same boundary for pgx types).
+data-access package `internal/platform/store` and sqlc-generated `sqlcdb/` packages (FF-SP1, as
+blueprint §2 defines it; ADR-0002 check T5 enforces the same boundary for pgx types).
 forbidigo matches names and cannot check argument kinds, so "SQL argument is not a constant or
 sqlc-generated" is a **go/analysis pass**, `sqlconst`, in the fitness tool (T-0033). For every call to
 pgx/sqlc `DBTX` `Exec`, `Query`, `QueryRow`, `CopyFrom` and `Batch.Queue`, the SQL argument must be:
@@ -1044,8 +1053,8 @@ not in a separate job and not in T-0034. The FF-SP7 row in §8 is the list of ch
 
 ## 8. Corpus and fitness functions
 
-**Corpus.** One JSON Lines file per primitive (provisional root `testdata/safe-primitives/`; T-0004
-fixes it):
+**Corpus.** One JSON Lines file per unit, at `testdata/safe-primitives/<unit>.jsonl` (root kept by
+blueprint §1.1):
 
 ```json
 {"id":"LF-01","primitive":"ldapfilter","call":"Eq","args":{"attr":"cn","value":{"utf8":"*)(uid=*"}},
@@ -1117,7 +1126,7 @@ authoritative and FF-SP4 recomputes the counts.
 
 | FF | Check | Fails when |
 | --- | --- | --- |
-| FF-SP1 | Import boundaries | any of these outside its home: the LDAP library and raw search/controls (only `scope` and the connector); the SQL driver (only the data-access package of ADR-0002, path per T-0004); process APIs (only `proc`); the PowerShell SDK (only the sidecar host). Also: any product package importing `lab/…` or `tools/…` (tier L). P7 adds: `encoding/csv` (only `export/csv`), the XLSX library (only `export/xlsx`), the PDF library (only `export/pdf`), `net/smtp`/`mime/multipart` (only `notify/mail`), any HTML-to-PDF or headless-browser module anywhere in product code (§12.3–§12.7). Enforced with depguard, BannedApiAnalyzers and clippy |
+| FF-SP1 | Import boundaries | any of these outside its home: the LDAP library and raw search/controls (only the connector root `internal/connector/`, with controls only in `internal/connector/ad/scope`); the SQL driver (only the data-access package `internal/platform/store`; generated `sqlcdb/` packages may import the other pgx packages, but not `pgxpool` or `pgx.Connect`/`ConnConfig`, blueprint §2); process APIs (only `internal/platform/proc`); the PowerShell SDK (only the sidecar host). Also: any product package importing `lab/…` or `tools/…` (tier L). P7 adds: `encoding/csv` (only `export/csv`), the XLSX library (only `export/xlsx`), the PDF library (only `export/pdf`), `net/smtp`/`mime/multipart` (only `notify/mail`), any HTML-to-PDF or headless-browser module anywhere in product code (§12.3–§12.7). Enforced with depguard, BannedApiAnalyzers and clippy |
 | FF-SP2 | Banned APIs and custom analyzers | any symbol in the per-primitive lists in §3.5, §4.6, §5, §6, §7. Includes TLS-verification bypasses (§5.6), `net/http/pprof` and `runtime/pprof` outside tests and tier L, and `GOTRACEBACK=crash` in service definitions. The go/analysis passes `dnstring`, `sqlconst` and `secretjson` run here (`go vet -vettool`, T-0033). P7 adds the §12.4–§12.7 lists (`text/template`, typed-string conversions outside `htmlx`, the `tmplconst` pass, `SetEscapeHTML(false)`, `Content-Disposition` outside `httpx`, XLSX formula/hyperlink/VBA setters, PDF link/JavaScript/attachment/page-import APIs) |
 | FF-SP3 | Literal-shape scanner | filter-, DN-, PowerShell- or SQL-shaped literals combined with concatenation or formatting outside primitive packages and tests. **`web/` is covered too**: TS/TSX template literals or concatenations containing `CN=`, `OU=`, `DC=`, `(&(`, `(\|(` or `(objectClass=`; quote doubling (`replace(/'/g, "''")`, `replaceAll("'", "''")`); `.split(',')`, `.endsWith(` or `.includes(` on a value named `dn`/`distinguishedName`; P7's §12.5 W1/W2 ESLint rules and CSV/XLSX `Blob`s. **P7 shapes in Go:** formula-lead `HasPrefix` checks outside `cellsafe`, joined CSV rows, `"text/csv"`/`".csv"` outside `export/csv`/`httpx`, HTML-shaped literals outside `htmlx`, mail-header literals outside `notify/mail` (§12.2–§12.6). Tier L is exempt (§2.1). Tool: Semgrep or ast-grep, chosen by devops-engineer via the licence register |
 | FF-SP4 | Corpus gate | a **unit** (§8 list) has < 10 records with `"hostile": true`; an implementation skips records of a unit it implements; a record disappears without a superseding one |
@@ -1166,19 +1175,19 @@ except the PowerShell quoting rules, which are confirmed in PowerShell's source 
 | Topic | Fixed here (stack-agnostic) | Binding now: ratified ADR-0001 (Go S/A, Rust N, .NET sidecar X, TypeScript W, PostgreSQL) | If ADR-0001 is amended |
 | --- | --- | --- | --- |
 | Filters | AST, canonical renderer, parser rules, LF vectors | Go `ldapfilter`; renders a string because go-ldap's search request takes one; round-trip oracle via go-ldap's parser | .NET server: same renderer feeding S.DS.P; `DirectorySearcher` banned |
-| DNs | grammar, rendering, AD rules, DN vectors | Go `dn`; may wrap `ldap.ParseDN` for grammar, adds AD rules | same contract in the chosen language |
+| DNs | grammar, rendering, AD rules, DN vectors | Go `internal/directory/dn`; implements RFC 4514 itself and does **not** wrap go-ldap's `ParseDN`, because ADR-0002 keeps protocol libraries in the connector root (blueprint §7.4). The go-ldap round-trip oracle runs from a test under `internal/connector/ldap` | same contract in the chosen language |
 | Codecs | sentinels, grammars, vectors | Go `attr`; Rust tier N implements `Secret` and any codec it parses, running the same corpus | each tier that decodes AD values runs the corpus |
 | PowerShell | invariant, PSX/PSQ vectors | route A: tier-X sidecar with `AddCommand`/`AddParameter`; route B needs an ADR amendment (F1 bans shipped `.ps1`) | .NET server: in-process SMA under the same rules |
 | Processes | `proc` contract, PROC vectors | Go `proc` + `x/sys/windows`; `ArgumentList` inside the sidecar | — |
-| SQL | rules 1–13, SQL vectors | pgx v5 + sqlc + RLS; simple protocol banned; the tenancy API (`WithTenant`/`WithPlatform`, exemption registry, role split) is owned by ADR-0002 | SQL Server would need its own section (RLS semantics differ) |
+| SQL | rules 1–13, SQL vectors | pgx v5 + sqlc + RLS; simple protocol banned; the tenancy API (`WithTenantTx`/`WithPlatform`, exemption registry `store/exempt`, role split) is owned by ADR-0002 | SQL Server would need its own section (RLS semantics differ) |
 | Lint tools | rule meaning, FF-SP1–9 | golangci-lint (forbidigo, depguard, gosec), go/analysis passes `dnstring`/`sqlconst`/`secretjson`, BannedApiAnalyzers, clippy, PSScriptAnalyzer for `lab/`/`tools/`, Semgrep or ast-grep for FF-SP3 incl. `web/` | equivalents per language |
 | Output encoders (P7) | classifier table, CSV neutraliser and reader inverse, XLSX/HTML/mail/PDF rules, CS/CSV/XL/HT/EM/PDF vectors | Go `export/…`, `htmlx`, `msgtpl`, `notify/mail`; `html/template`; XLSX and PDF libraries chosen by T-0101/T-0102 through the licence register; ESLint for tier W | a .NET or other server re-implements the same contract and runs the same corpus |
 | Web console | tier W implements no primitive (§2.1); API carries server-built values | TypeScript + React under `web/`; FF-SP3 scans it | if a second UI technology were allowed, it inherits §2.1 unchanged |
-| Paths | provisional names above | T-0004 sets the roots; `ad-engineering` skill paths updated with them | — |
+| Paths | package roles above | fixed by blueprint v0 §1.1 and §7.4 (T-0004); skills aligned by T-0048 | — |
 
 ADR-0001 was ratified on 2026-10-02 (D-0006) with no substantive change from the proposed text,
-so the binding column applies as written and this document is in `review`. The owner of the first
-primitives build ticket replaces the provisional package names once T-0004 fixes the roots. The
+so the binding column applies as written and this document is in `review`. Blueprint v0 (T-0004)
+fixed the package paths, and T-0048 applied them here (§2) and in the skills. The
 document is the reference for the build tickets the project-manager cuts from it (T-0031: primitive
 builds go before features). It is also the reference for the fitness tickets: T-0033 (FF-SP1–3, 9),
 T-0034 (FF-SP4–6, 8) and T-0036 (FF-SP7, implemented inside ADR-0002's `fitness-tenancy` job).
@@ -1190,7 +1199,7 @@ T-0034 (FF-SP4–6, 8) and T-0036 (FF-SP7, implemented inside ADR-0002's `fitnes
 - T-0139 — SIEM and log output encoders (CEF, syslog, JSON lines), left out of §12.
 - T-0033 / T-0034 — fitness implementation (static rules FF-SP1–3, 9; corpus, fuzz and oracles FF-SP4–6, 8).
 - T-0036 — FF-SP7, inside ADR-0002's `fitness-tenancy` job (checks T2–T4); §8's FF-SP7 row is its coverage list.
-- T-0037 — tenancy foundation (`WithTenant`/`WithPlatform`, exemption registry); builds §7 rule 11 as ADR-0002 specifies.
+- T-0037 — tenancy foundation (`WithTenantTx`/`WithPlatform`, exemption registry `store/exempt`); builds §7 rule 11 as ADR-0002 specifies.
 - T-0035 — security-sensitive spec tickets get security-architect as second reviewer.
 - T-0007 — Kerberos-only outbound policy (§6.3) and the secret-memory policy, including the
   `runtime/secret` evaluation (§5.6).
@@ -1222,7 +1231,7 @@ API sketch, a hostile-vector table, and a lint rule that bans the raw writer it 
 character in inputs **and** expected outputs, unlike §3–§7. The one exception, PDF-02, says so
 itself. `⟨U+XXXX⟩` is the visible token defined in O3.
 
-| Encoder | Package (provisional; T-0004 fixes roots) | Replaces (banned) | Tier | Build ticket | § |
+| Encoder | Package (under `internal/`; `export/…` means `platform/export/…`, blueprint §5.1, §10) | Replaces (banned) | Tier | Build ticket | § |
 | --- | --- | --- | --- | --- | --- |
 | Formula-lead classifier | `export/cellsafe` | ad-hoc `strings.HasPrefix(v, "=")` checks | S | T-0101 | 12.2 |
 | CSV writer and its inverse reader | `export/csv` | `encoding/csv`, `strings.Join(…, ",")`, `fmt.Fprintf` rows | S | T-0101 | 12.3 |

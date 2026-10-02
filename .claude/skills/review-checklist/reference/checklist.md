@@ -17,7 +17,7 @@ provisional until ADR-0001.
 - [ ] Bug ticket: a reproducing test that fails on `main` → run it against `main`. **[blocker]**
 - [ ] Each new test fails when the code is broken → mutate one line and run it. **[major]**
 - [ ] Fuzz test for any new parser, encoder or builder. **[major]**
-- [ ] Fixtures deterministic, synthetic, under `testdata/` `lab/seed/` `e2e/fixtures/` only. **[blocker if in product paths]**
+- [ ] Fixtures deterministic, synthetic, under `testdata/` `lab/seed/` `web/e2e/fixtures/` only. **[blocker if in product paths]**
 
 ## Safe primitives — `security-baseline` §2
 - [ ] Grep the added lines and justify every hit **[blocker]**:
@@ -60,7 +60,7 @@ provisional until ADR-0001.
 - [ ] Structured logs with trace ID; no secrets; GUIDs preferred over names. **[blocker if secret]**
 
 ## API — `api-design` §10
-- [ ] `api/openapi.yaml` changed; generated code regenerated, not hand-edited. **[blocker]**
+- [ ] `api/openapi/` changed; generated code regenerated, not hand-edited. **[blocker]**
 - [ ] oasdiff: no unversioned breaking change. **[blocker]**
 - [ ] Problem types, `x-permission`, Idempotency-Key, If-Match, cursor paging as required. **[major]**
 
