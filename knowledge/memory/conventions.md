@@ -12,7 +12,7 @@ budget: 120 lines
 - Ticket branches `factory/T-0001`; conventional commits (`feat:`, `fix:`, `docs:`, `test:`, `chore:`, `refactor:`); workers never commit to main and never push; the dispatcher merges after QA.
 - ManageEngine parity IDs: `ADM-` ADManager Plus · `ADA-` ADAudit Plus · `ADSS-` ADSelfService Plus · `RMP-` RecoveryManager Plus · `M365-` M365 Manager Plus · `ERP-` Exchange Reporter Plus · `AD360-` suite.
 - Handoffs: factory/handoffs/<ticket>/<timestamp>.md (template factory/templates/handoff.md); session handoffs under factory/handoffs/session-<id>/.
-- Previews for CEO decisions: factory/demos/previews/<decision-id>/ (product and brand mockups carry their own tokens file and never link ../design-system/tokens.css, since activeDIQ is a separate brand, D-0005, 2026-10-02).
+- Previews for CEO decisions: factory/demos/previews/<slug>/. Product and brand mockups inline activeDIQ's own tokens (web/src/ds/tokens.css, --diq-*, Ledger) with fonts as data URIs; only a Factory Board change previews on the board's skenzeriq /tokens.css (D-0005, D-0012, T-0043, 2026-10-02).
 - QA evidence: factory/demos/evidence/<ticket>/.
 - Prototypes: garage/<name>/ with a README stating owner and expiry date.
 - People whose pronouns are unknown are referred to as they/them.

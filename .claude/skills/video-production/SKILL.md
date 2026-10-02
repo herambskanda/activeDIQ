@@ -14,8 +14,8 @@ demos run under the `demo` skill, which calls this one for the recording.
 `b.mp4`, cut from the same scene, in `factory/demos/previews/<D-id>/`). The answer goes to
 `knowledge/memory/ceo-preferences.md`. Until then the default is **"precise, calm,
 product-first"**: the product fills the frame; cuts and 200 ms fades only; no music; no stock
-footage; no zoom except to make small UI legible (≤ 1.5×, held still); ink title cards in the
-design-system type; narration says what the admin is doing and why it matters, never hype.
+footage; no zoom except to make small UI legible (≤ 1.5×, held still); paper title cards in the
+activeDIQ brand type (Ledger); narration says what the admin is doing and why it matters, never hype.
 
 ## 1. Formats
 
@@ -40,9 +40,10 @@ say -v Samantha "check"                                           # draft narrat
   ffmpeg with libass (then `subtitles` appears in the filter list).
 - Playwright is pinned in `tools/playwright/` (runbook `knowledge/development/runbooks/playwright-tooling.md`).
   If `make playwright-test` fails, fix the setup per the runbook — do not install ad hoc.
-- Fonts: Geist / Geist Mono are not installed locally; cards fall back to the `tokens.css`
-  stack (Helvetica Neue / SF Mono) — fine for drafts. Vendoring Geist (SIL OFL) needs a licence
-  register entry (`knowledge/business/licensing/`) and a devops ticket.
+- Fonts: IBM Plex Sans and Mono are vendored in `web/src/ds/fonts/` (SIL OFL 1.1, licence register: Clear) and
+  load through `tokens.css`, so cards render in the brand type with no install. Do not add other typefaces.
+- **Brand scope:** product videos use activeDIQ's own brand (Ledger tokens and guidelines, D-0005). The
+  Factory Board and company documents stay on skenzeriq's.
 
 ## 3. Layout — `factory/demos/<M>/video/`
 
@@ -83,11 +84,12 @@ the text and scripts that reproduce the video. Never committed: media (`.gitigno
 
 ## 5. Title cards
 
-HTML on `../design-system/tokens.css`, dark ink ground (`--sk-ink`), rendered at 1920×1080 by
-Playwright `page.screenshot`. Contents: mono eyebrow (`--sk-text-micro`, uppercase, tracked,
-e.g. `[ M1 · USER LIFECYCLE ]`), one heading in the sans at 600 weight, the `activeDIQ▮` mark with
-the accent cursor block in a corner. Opening card ≤ 3 s; closing card ≤ 4 s. No other text on
-cards. Template in `recording.md`.
+HTML on `web/src/ds/tokens.css` and `brand.css` (activeDIQ's own tokens, Ledger), light warm paper
+ground (`--diq-bg`) with the ledger rule under a top bar, rendered at 1920×1080 by Playwright
+`page.screenshot`. Contents: mono eyebrow (`--diq-text-micro` scale, uppercase, `--diq-tracking-label`,
+e.g. `[ M1 · USER LIFECYCLE ]`), one heading in the sans at 600 weight, and the `activeDIQ` wordmark
+(`.diq-wordmark`) in a corner. Opening card ≤ 3 s; closing card ≤ 4 s. No other text on
+cards. Brand rules: `knowledge/product/design-system/brand-guidelines.md`. Template in `recording.md`.
 
 ## 6. Narration and captions
 

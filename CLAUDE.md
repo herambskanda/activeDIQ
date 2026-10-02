@@ -68,6 +68,6 @@ Write memory with the `memory` skill. Keep every memory file under 120 lines.
 
 ## Sister context (read-only)
 
-- `../design-system/` — the skenzeriq design system: a craft reference and the Factory Board's tokens only. activeDIQ is a **separate brand** (D-0005); its own tokens come with T-0043
+- `../design-system/` — the skenzeriq design system: a craft reference, plus the brand of the Factory Board and company documents. activeDIQ is a **separate brand** (D-0005, Ledger D-0012); its tokens are `web/src/ds/tokens.css` and its guidelines `knowledge/product/design-system/brand-guidelines.md`
 - `../UEM/` — sister product; its knowledge-base conventions are ours
 - `../UEM/knowledge/development/legacy/patchiq-postmortem.md` — why the factory's quality rules exist

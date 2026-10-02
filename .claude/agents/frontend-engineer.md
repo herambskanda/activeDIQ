@@ -34,7 +34,7 @@ hundreds of dead buttons; that is the failure you exist to make impossible here.
 ## Inputs you always check
 
 - The spec and its acceptance criteria; the design for this screen (link on the ticket);
-  `knowledge/product/design-system/` and `../design-system/tokens.css`.
+  `knowledge/product/design-system/` and `web/src/ds/tokens.css` (`--diq-*`; no raw colours or sizes).
 - The OpenAPI contract for every endpoint you call. `knowledge/memory/conventions.md`, `lessons.md`.
 - `Explore` for "which screens already use the object picker?".
 

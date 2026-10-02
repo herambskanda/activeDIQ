@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>activeDIQ design system: sample page (T-0043 evidence)</title>
+    <!-- Renders the real tokens, base and brand files from web/src/ds. Everything below is fixture data for this evidence page only. -->
+    <link rel="stylesheet" href="../../../../web/src/ds/tokens.css" />
+    <link rel="stylesheet" href="../../../../web/src/ds/base.css" />
+    <link rel="stylesheet" href="../../../../web/src/ds/brand.css" />
+    <style>
+      .app { display: grid; grid-template-columns: var(--diq-nav-w) minmax(0, 1fr); min-height: 100vh; }
+      .nav { background: var(--diq-surface); border-right: 1px solid var(--diq-line-strong); padding-bottom: var(--diq-space-4); }
+      .brand { height: var(--diq-topbar-h); display: flex; align-items: center; gap: var(--diq-space-2); padding: 0 var(--diq-space-4); border-bottom: 1px solid var(--diq-line); margin-bottom: var(--diq-space-2); font-size: var(--diq-text-section); }
+      .brand img { width: 24px; height: 24px; }
+      .nav a { display: flex; align-items: center; height: 32px; padding: 0 var(--diq-space-4); color: var(--diq-text-2); text-decoration: none; font-weight: var(--diq-weight-medium); position: relative; }
+      .nav a:hover { background: var(--diq-surface-2); color: var(--diq-text); }
+      .nav a.kid { padding-left: 40px; height: 28px; font-weight: var(--diq-weight-regular); }
+      .nav a.on { background: var(--diq-signal-soft); color: var(--diq-text); font-weight: var(--diq-weight-semibold); }
+      .nav a.on::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--diq-signal); }
+      .eyebrow { font: var(--diq-weight-medium) var(--diq-text-micro) / 1 var(--diq-font-mono); text-transform: uppercase; letter-spacing: var(--diq-tracking-label); color: var(--diq-text-3); }
+      .nav .eyebrow { padding: var(--diq-space-4) var(--diq-space-4) var(--diq-space-2); }
+      .topbar { height: var(--diq-topbar-h); display: flex; align-items: center; gap: var(--diq-space-3); padding: 0 var(--diq-space-5); background: var(--diq-surface); border-bottom: 1px solid var(--diq-line-strong); }
+      .main { padding: var(--diq-space-5); display: flex; flex-direction: column; gap: var(--diq-space-4); max-width: 1180px; }
+      h1 { margin: 0; font-size: var(--diq-text-title); line-height: var(--diq-leading-tight); letter-spacing: var(--diq-tracking-title); font-weight: var(--diq-weight-semibold); }
+      h2 { margin: 0 0 var(--diq-space-3); }
+      p { margin: 0; }
+      .sub { color: var(--diq-text-2); margin-top: var(--diq-space-1); }
+      .btn { height: var(--diq-control); padding: 0 var(--diq-space-3); border: 1px solid var(--diq-line-strong); background: var(--diq-surface); color: var(--diq-text); border-radius: var(--diq-radius-2); font: var(--diq-weight-medium) var(--diq-text-ui) var(--diq-font-sans); display: inline-flex; align-items: center; gap: var(--diq-space-2); cursor: pointer; transition: background var(--diq-dur-fast) var(--diq-ease); }
+      .btn:hover { background: var(--diq-surface-2); }
+      .btn.primary { background: var(--diq-signal); border-color: var(--diq-signal); color: var(--diq-signal-ink); }
+      .btn.primary:hover { background: var(--diq-signal-hover); border-color: var(--diq-signal-hover); }
+      .btn.primary:active { background: var(--diq-signal-active); border-color: var(--diq-signal-active); }
+      .btn[disabled] { color: var(--diq-text-3); border-color: var(--diq-line); background: var(--diq-surface-2); cursor: not-allowed; }
+      .btn.focus-demo { outline: var(--diq-focus-width) solid var(--diq-focus); outline-offset: var(--diq-focus-offset); }
+      .row { display: flex; gap: var(--diq-space-2); flex-wrap: wrap; align-items: center; }
+      .panel { background: var(--diq-surface); border: 1px solid var(--diq-line); border-radius: var(--diq-radius-3); padding: var(--diq-space-4); }
+      .cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--diq-space-4); }
+      .chip { display: inline-flex; align-items: center; gap: var(--diq-space-1); height: 20px; padding: 0 var(--diq-space-2) 0 6px; border-radius: var(--diq-radius-1); font-size: var(--diq-text-cap); font-weight: var(--diq-weight-medium); white-space: nowrap; }
+      .chip svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2; }
+      .chip-ok { background: var(--diq-ok-bg); color: var(--diq-ok); }
+      .chip-warn { background: var(--diq-warn-bg); color: var(--diq-warn); }
+      .chip-crit { background: var(--diq-crit-bg); color: var(--diq-crit); }
+      .chip-muted { background: var(--diq-muted-bg); color: var(--diq-muted); }
+      .chip-t0 { border: 1px solid var(--diq-text); color: var(--diq-text); font-weight: var(--diq-weight-semibold); }
+      table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+      th { background: var(--diq-surface-2); text-align: left; font: var(--diq-weight-medium) var(--diq-text-micro) / 1 var(--diq-font-mono); text-transform: uppercase; letter-spacing: var(--diq-tracking-label); color: var(--diq-text-2); height: var(--diq-row-compact); padding: 0 var(--diq-space-3); border-bottom: 1px solid var(--diq-line-strong); white-space: nowrap; }
+      td { height: var(--diq-row); padding: 0 var(--diq-space-3); border-bottom: 1px solid var(--diq-line); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--diq-text-table); }
+      th:first-child, td:first-child { padding: 0 0 0 var(--diq-space-3); }
+      tr.sel td { background: var(--diq-signal-soft); }
+      .tablewrap { background: var(--diq-surface); border: 1px solid var(--diq-line); border-radius: var(--diq-radius-2); overflow: hidden; }
+      .impact { border: 1px solid var(--diq-line-strong); border-left: 3px solid var(--diq-warn); background: var(--diq-warn-bg); border-radius: var(--diq-radius-2); padding: var(--diq-space-3) var(--diq-space-4); display: grid; gap: var(--diq-space-2); }
+      .impact dl { margin: 0; display: grid; grid-template-columns: 140px 1fr; gap: var(--diq-space-1) var(--diq-space-4); }
+      .impact dt { color: var(--diq-text-2); }
+      .impact dd { margin: 0; }
+      .sw { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: var(--diq-space-2); }
+      .sw div { height: 56px; border: 1px solid var(--diq-line); border-radius: var(--diq-radius-2); display: flex; align-items: flex-end; padding: var(--diq-space-1) var(--diq-space-2); font: var(--diq-weight-medium) var(--diq-text-micro) var(--diq-font-mono); }
+      .dim { color: var(--diq-text-3); }
+      .tag { border: 1px dashed var(--diq-line-strong); padding: var(--diq-space-1) var(--diq-space-2); border-radius: var(--diq-radius-1); color: var(--diq-text-2); margin-left: auto; }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <nav class="nav" aria-label="Primary">
+        <div class="brand">
+          <img src="../../../../web/src/ds/brand/icon.svg" alt="" />
+          <span class="diq-wordmark" role="img" aria-label="activeDIQ"><span class="diq-wordmark-a">active</span><span class="diq-wordmark-b">DIQ</span></span>
+        </div>
+        <a href="#">Home</a>
+        <a href="#">Directory</a>
+        <a class="kid on" href="#" aria-current="page">Users</a>
+        <a class="kid" href="#">Groups</a>
+        <a class="kid" href="#">Computers</a>
+        <div class="eyebrow">Pinned views</div>
+        <a class="kid" href="#">Locked out</a>
+        <a class="kid" href="#">Stale 90 days</a>
+        <a href="#">Reports</a>
+        <a href="#">Audit</a>
+      </nav>
+      <div>
+        <header class="topbar diq-ruler">
+          <span class="dim">corp.example.com</span>
+          <span class="tag eyebrow">Sample: fixture data, design-system evidence</span>
+        </header>
+        <main class="main" style="padding-top: var(--diq-space-6)">
+          <div class="row" style="justify-content: space-between; align-items: flex-end">
+            <div>
+              <h1>Users</h1>
+              <p class="sub">12,431 users in 3 domains</p>
+            </div>
+            <div class="row">
+              <button class="btn" type="button">Columns</button>
+              <button class="btn" type="button" disabled>Disable 0 users</button>
+              <button class="btn primary" type="button">Reset password</button>
+            </div>
+          </div>
+
+          <div class="tablewrap">
+            <table aria-label="Users">
+              <colgroup><col style="width: 40px" /><col style="width: 28%" /><col style="width: 15%" /><col style="width: 24%" /><col style="width: 150px" /><col style="width: 120px" /></colgroup>
+              <thead>
+                <tr>
+                  <th scope="col"><input type="checkbox" aria-label="Select all" style="accent-color: var(--diq-signal); margin: 0" /></th>
+                  <th scope="col" aria-sort="ascending"><button type="button">Display name ▲</button></th>
+                  <th scope="col"><button type="button">Logon name</button></th>
+                  <th scope="col">UPN</th>
+                  <th scope="col"><button type="button">Last logon</button></th>
+                  <th scope="col">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="sel"><td><input type="checkbox" checked aria-label="Select Priya Raghunathan" style="accent-color: var(--diq-signal); margin: 0" /></td><td>Priya Raghunathan</td><td class="diq-mono">praghunathan</td><td class="diq-mono">praghunathan@corp.example.com</td><td class="diq-mono">2026-10-01 08:12 UTC</td><td><span class="chip chip-warn"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1.5 11 10.5H1z M6 5v2.5 M6 9v.1" /></svg>Locked out</span></td></tr>
+                <tr><td><input type="checkbox" aria-label="Select Jonathan Alexander Montgomery-Featherstonehaugh III, Regional Operations" style="accent-color: var(--diq-signal); margin: 0" /></td><td>Jonathan Alexander Montgomery-Featherstonehaugh III, Regional Operations</td><td class="diq-mono">jmontgomery-featherstonehaugh</td><td class="diq-mono">jmontgomery-featherstonehaugh@emea.corp.example.com</td><td class="diq-mono">2026-09-30 17:40 UTC</td><td><span class="chip chip-ok"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5 5 9.5 10 3" /></svg>Enabled</span></td></tr>
+                <tr><td><input type="checkbox" aria-label="Select Мария Иванова" style="accent-color: var(--diq-signal); margin: 0" /></td><td>Мария Иванова · 田中 太郎</td><td class="diq-mono">mivanova</td><td class="diq-mono">mivanova@corp.example.com</td><td class="diq-mono">2026-09-12 11:03 UTC</td><td><span class="chip chip-muted"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6h8" /></svg>Disabled</span></td></tr>
+                <tr><td><input type="checkbox" aria-label="Select Misha Adeyemi (admin)" style="accent-color: var(--diq-signal); margin: 0" /></td><td>Misha Adeyemi (admin)</td><td class="diq-mono">adm_madeyemi</td><td class="diq-mono">adm_madeyemi@corp.example.com</td><td class="dim">Never</td><td><span class="chip chip-t0">Tier 0</span></td></tr>
+                <tr><td><input type="checkbox" aria-label="Select Sam Okafor" style="accent-color: var(--diq-signal); margin: 0" /></td><td>Sam Okafor</td><td class="diq-mono">sokafor</td><td class="diq-mono">sokafor@corp.example.com</td><td class="diq-mono">2026-08-02 09:30 UTC</td><td><span class="chip chip-crit"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 2.5 9.5 9.5 M9.5 2.5 2.5 9.5" /></svg>Sync failed</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="cols">
+            <section class="impact" aria-labelledby="imp">
+              <h2 id="imp" style="margin: 0; font-size: var(--diq-text-section)">Impact preview: Reset password for 1 user</h2>
+              <dl>
+                <dt>Changes</dt><dd>Password for <span class="diq-mono">praghunathan</span>; unlocks the account; user must change it at next logon.</dd>
+                <dt>Skipped</dt><dd>0 accounts.</dd>
+                <dt>Undo</dt><dd>A password reset cannot be undone.</dd>
+              </dl>
+              <div class="row"><button class="btn primary focus-demo" type="button">Reset password for praghunathan</button><button class="btn" type="button">Cancel</button></div>
+            </section>
+            <section class="panel">
+              <h2 style="font-size: var(--diq-text-section)">Palette</h2>
+              <div class="sw" aria-hidden="true">
+                <div style="background: var(--diq-bg)">bg</div>
+                <div style="background: var(--diq-surface)">surface</div>
+                <div style="background: var(--diq-surface-2)">surface-2</div>
+                <div style="background: var(--diq-signal); color: var(--diq-signal-ink)">signal</div>
+                <div style="background: var(--diq-signal-soft)">signal-soft</div>
+                <div style="background: var(--diq-text); color: var(--diq-bg)">text</div>
+                <div style="background: var(--diq-ok-bg); color: var(--diq-ok)">ok</div>
+                <div style="background: var(--diq-warn-bg); color: var(--diq-warn)">warn</div>
+                <div style="background: var(--diq-crit-bg); color: var(--diq-crit)">crit</div>
+                <div style="background: var(--diq-muted-bg); color: var(--diq-muted)">muted</div>
+                <div style="background: var(--diq-line)">line</div>
+                <div style="background: var(--diq-line-strong); color: var(--diq-bg)">line-strong</div>
+              </div>
+              <p class="dim" style="margin-top: var(--diq-space-3)">Plex Sans for the interface; <span class="diq-mono">Plex Mono</span> for directory data. <a href="#" style="color: var(--diq-signal-text)">A link is cobalt text</a>.</p>
+            </section>
+          </div>
+        </main>
+      </div>
+    </div>
+  </body>
+</html>

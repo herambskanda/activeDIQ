@@ -29,7 +29,7 @@ enforced in CI where a tool can enforce it.
   `fetch` to undocumented endpoints; no data constants in `src/` — fixtures live in tests,
   Storybook stories and the demo seed only.
 - Components from the design system (`design-system` skill); tokens from
-  `../design-system/tokens.css`, never raw colours or pixel values.
+  `web/src/ds/tokens.css` (`--diq-*`, activeDIQ's own; never skenzeriq's), never raw colours or pixel values.
 - Every data view handles loading, empty, error and partial (some DCs unreachable) states.
 - Tables over large directories are virtualised and server-paged; never load 50k rows.
 - No `dangerouslySetInnerHTML`; user and directory strings are text, always.

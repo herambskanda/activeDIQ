@@ -105,6 +105,10 @@ hypercare before it, with buffer.
 
 ## 6. Export
 
+**Brand scope.** Proposals, SOWs, SLAs and other company documents are issued by skenzeriq, so
+they stay on the **skenzeriq** brand and its tokens (`../design-system/tokens.css`). This is not
+activeDIQ product material and does not use the activeDIQ tokens (D-0005; T-0043 left this skill alone on purpose).
+
 No pandoc on this machine. Render the approved Markdown to HTML on `../design-system/tokens.css`
 (light theme — documents go to paper) and print with
 `npx --no-install playwright pdf file://<abs-path>.html <out>.pdf`. A Markdown→HTML converter

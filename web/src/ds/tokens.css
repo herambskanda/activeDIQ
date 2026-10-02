@@ -1,0 +1,284 @@
+/*
+ * activeDIQ design tokens — the source of truth for the admin console and every product-facing
+ * surface (T-0043, direction A "Ledger", D-0012). activeDIQ is a separate brand from skenzeriq (D-0005):
+ * nothing here comes from skenzeriq's design system, and the Factory Board keeps its own tokens.
+ *
+ * Rules (knowledge/product/design-system/brand-guidelines.md):
+ *   - Components use `var(--diq-…)` only. A literal colour, font size, spacing or duration is a review blocker.
+ *   - Two themes, both WCAG 2.2 AA (web/src/ds/tokens.test.ts checks every pair): light is the base;
+ *     dark follows the OS unless <html data-theme="light|dark"> says otherwise.
+ *   - One signal colour (cobalt), one job per view. Status colours never appear without a word and a glyph.
+ *   - Density: <html data-density="comfortable"> switches the row height from 32 px to 40 px.
+ *
+ * Fonts: IBM Plex Sans and IBM Plex Mono, SIL OFL 1.1, unmodified Latin and Latin Extended `.woff2`
+ * from Fontsource 5.3.0; licence texts and copyright lines are in ./fonts/ (and ship in the installer).
+ * Dark-theme values appear twice (data-theme and the OS media query); the test keeps them identical.
+ */
+@font-face {
+  font-family: "Plex Sans";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(./fonts/ibm-plex-sans-latin-400-normal.woff2) format("woff2");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Plex Sans";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(./fonts/ibm-plex-sans-latin-ext-400-normal.woff2) format("woff2");
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+    U+A720-A7FF;
+}
+@font-face {
+  font-family: "Plex Sans";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(./fonts/ibm-plex-sans-latin-500-normal.woff2) format("woff2");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Plex Sans";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(./fonts/ibm-plex-sans-latin-ext-500-normal.woff2) format("woff2");
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+    U+A720-A7FF;
+}
+@font-face {
+  font-family: "Plex Sans";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(./fonts/ibm-plex-sans-latin-600-normal.woff2) format("woff2");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Plex Sans";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(./fonts/ibm-plex-sans-latin-ext-600-normal.woff2) format("woff2");
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+    U+A720-A7FF;
+}
+@font-face {
+  font-family: "Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(./fonts/ibm-plex-mono-latin-400-normal.woff2) format("woff2");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(./fonts/ibm-plex-mono-latin-ext-400-normal.woff2) format("woff2");
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+    U+A720-A7FF;
+}
+@font-face {
+  font-family: "Plex Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(./fonts/ibm-plex-mono-latin-500-normal.woff2) format("woff2");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Plex Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(./fonts/ibm-plex-mono-latin-ext-500-normal.woff2) format("woff2");
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+    U+A720-A7FF;
+}
+
+:root {
+  /* ---- Typography ------------------------------------------------------ */
+  --diq-font-sans: "Plex Sans", system-ui, "Segoe UI", sans-serif;
+  --diq-font-mono: "Plex Mono", ui-monospace, Consolas, monospace;
+
+  /* Scale: table cells, controls and labels 13; body and form help 14; page title 22; mono eyebrows 11. */
+  --diq-text-micro: 11px;
+  --diq-text-cap: 12px;
+  --diq-text-ui: 13px;
+  --diq-text-table: 13px;
+  --diq-text-body: 14px;
+  --diq-text-section: 16px;
+  --diq-text-title: 22px;
+  --diq-weight-regular: 400;
+  --diq-weight-medium: 500;
+  --diq-weight-semibold: 600;
+  --diq-leading-tight: 1.2;
+  --diq-leading-ui: 1.45;
+  --diq-leading-body: 1.5;
+  --diq-tracking-title: -0.01em;
+  --diq-tracking-label: 0.08em;
+
+  /* ---- Space: 4 px grid ------------------------------------------------ */
+  --diq-space-1: 4px;
+  --diq-space-2: 8px;
+  --diq-space-3: 12px;
+  --diq-space-4: 16px;
+  --diq-space-5: 24px;
+  --diq-space-6: 32px;
+  --diq-space-7: 48px;
+  --diq-space-8: 64px;
+  --diq-space-9: 96px;
+  --diq-space-10: 128px;
+
+  /* ---- Shape: flat hairlines, 2 px radii, no shadows -------------------- */
+  --diq-radius-1: 2px; /* chips, checkboxes, key caps */
+  --diq-radius-2: 2px; /* buttons, inputs, menus, panels */
+  --diq-radius-3: 4px; /* sheets, popovers, dialogs */
+  --diq-radius-round: 50%; /* status dots and avatars only */
+  --diq-border: 1px;
+  --diq-shadow-1: none;
+  --diq-shadow-2: none;
+  --diq-focus-width: 2px;
+  --diq-focus-offset: 2px;
+
+  /* ---- Layout and density ---------------------------------------------- */
+  --diq-row-compact: 32px;
+  --diq-row-comfortable: 40px;
+  --diq-row: var(--diq-row-compact);
+  --diq-control: 28px;
+  --diq-topbar-h: 48px;
+  --diq-nav-w: 232px;
+  --diq-sheet-w: 520px;
+
+  /* ---- Motion: short, interruptible, off under reduced motion ---------- */
+  --diq-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --diq-dur-fast: 120ms; /* hover, press */
+  --diq-dur: 200ms; /* sheets, reveals */
+
+  /* ---- Colour: light, warm paper (base theme) -------------------------- */
+  color-scheme: light;
+  /* neutrals */
+  --diq-bg: #f5f4f0;
+  --diq-surface: #ffffff;
+  --diq-surface-2: #eceae4;
+  --diq-line: #dad7ce;
+  --diq-line-strong: #85817a;
+  --diq-text: #1b1a17;
+  --diq-text-2: #4f4c45;
+  --diq-text-3: #625f57;
+  /* signal — Ledger Cobalt (one job per view) */
+  --diq-signal: #0a5cb0;
+  --diq-signal-ink: #ffffff;
+  --diq-signal-text: #0a5cb0;
+  --diq-signal-soft: #e1ecf8;
+  --diq-signal-hover: #084b90;
+  --diq-signal-active: #063d77;
+  --diq-focus: #0a5cb0;
+  /* status — always paired with text + glyph */
+  --diq-ok: #17663a;
+  --diq-ok-bg: #e1f1e7;
+  --diq-warn: #7f4b00;
+  --diq-warn-bg: #faebcb;
+  --diq-crit: #ae241c;
+  --diq-crit-bg: #fbe3e0;
+  --diq-muted: #56534c;
+  --diq-muted-bg: #e7e5de;
+}
+
+/* ---- Colour: dark, warm ink -------------------------------------------- */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  /* neutrals — warm ink, the same hue family as the paper theme */
+  --diq-bg: #151411;
+  --diq-surface: #1e1d19;
+  --diq-surface-2: #292721;
+  --diq-line: #3a3832;
+  --diq-line-strong: #86837a;
+  --diq-text: #f1efe9;
+  --diq-text-2: #c9c6bd;
+  --diq-text-3: #a7a49a;
+  /* signal — Ledger Cobalt, lifted for dark grounds */
+  --diq-signal: #2a72cf;
+  --diq-signal-ink: #ffffff;
+  --diq-signal-text: #7db4f5;
+  --diq-signal-soft: #1b2b42;
+  --diq-signal-hover: #2468bf;
+  --diq-signal-active: #1d5aa8;
+  --diq-focus: #7db4f5;
+  /* status — always paired with text + glyph */
+  --diq-ok: #6ad598;
+  --diq-ok-bg: #123221;
+  --diq-warn: #f2b955;
+  --diq-warn-bg: #382a0b;
+  --diq-crit: #ff9088;
+  --diq-crit-bg: #421813;
+  --diq-muted: #b8b5ab;
+  --diq-muted-bg: #2d2b25;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    /* neutrals — warm ink, the same hue family as the paper theme */
+    --diq-bg: #151411;
+    --diq-surface: #1e1d19;
+    --diq-surface-2: #292721;
+    --diq-line: #3a3832;
+    --diq-line-strong: #86837a;
+    --diq-text: #f1efe9;
+    --diq-text-2: #c9c6bd;
+    --diq-text-3: #a7a49a;
+    /* signal — Ledger Cobalt, lifted for dark grounds */
+    --diq-signal: #2a72cf;
+    --diq-signal-ink: #ffffff;
+    --diq-signal-text: #7db4f5;
+    --diq-signal-soft: #1b2b42;
+    --diq-signal-hover: #2468bf;
+    --diq-signal-active: #1d5aa8;
+    --diq-focus: #7db4f5;
+    /* status — always paired with text + glyph */
+    --diq-ok: #6ad598;
+    --diq-ok-bg: #123221;
+    --diq-warn: #f2b955;
+    --diq-warn-bg: #382a0b;
+    --diq-crit: #ff9088;
+    --diq-crit-bg: #421813;
+    --diq-muted: #b8b5ab;
+    --diq-muted-bg: #2d2b25;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --diq-dur-fast: 0ms;
+    --diq-dur: 0ms;
+  }
+}
+
+:root[data-density="comfortable"] {
+  --diq-row: var(--diq-row-comfortable);
+}

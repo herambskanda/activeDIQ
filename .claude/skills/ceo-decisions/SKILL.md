@@ -65,10 +65,14 @@ option (`a.html`, `b.html`, …) plus `index.md` saying what each shows. Use a d
 not the decision ID — the ID is assigned only when the decision is filed. Each option's `preview`
 field in the decision points at its file.
 
-- **UI** — one self-contained HTML file per option, real layout, real token values:
-  `<link rel="stylesheet" href="/tokens.css">` (the board serves the design system's
-  `tokens.css`; open previews through the board). Inline everything else — CSS, SVG icons — the
-  board serves each file standalone, so relative asset links break. Show the same screen in
+- **UI** — one self-contained HTML file per option, real layout, real token values. For product
+  UI, start from activeDIQ's own tokens (`web/src/ds/tokens.css`, `--diq-*`; a separate brand,
+  D-0005) and inline them, with fonts as base64 data URIs, as T-0042's previews did
+  (`factory/demos/previews/brand-ui/_build/`). Never link skenzeriq's `/tokens.css`: the board
+  serves it for the Factory Board's own screens, so only a preview of a *Factory Board* change
+  links it. Inline everything else — CSS, SVG icons — the board serves each file standalone, so
+  relative asset links break. A decision that changes the tokens themselves (a new colour, type
+  or density) previews a candidate token file, not the shipped one. Show the same screen in
   every option; vary only what is being decided. Content is realistic sample directory data,
   labelled "Preview — sample data" in the corner (previews are not the product).
 - **Docs** — the same page written in each candidate style, as `a.md`, `b.md`.

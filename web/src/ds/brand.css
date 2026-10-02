@@ -1,0 +1,49 @@
+/*
+ * activeDIQ brand elements (T-0043): the wordmark and the ledger rule. Built on tokens.css so both
+ * work in either theme. The wordmark is live type for the app; final outlined art is a marketing job.
+ * See knowledge/product/design-system/brand-guidelines.md for clear space, minimum size and misuse.
+ */
+
+/* Wordmark: "active" in Plex Sans 600 over ink, "DIQ" in Plex Mono 500 in cobalt behind a 2 px rule. */
+.diq-wordmark {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 1px;
+  line-height: 1;
+  white-space: nowrap;
+  font-size: 1em;
+}
+.diq-wordmark-a {
+  font: var(--diq-weight-semibold) 1.15em var(--diq-font-sans);
+  letter-spacing: -0.02em;
+  color: var(--diq-text);
+}
+.diq-wordmark-b {
+  font: var(--diq-weight-medium) 1.15em var(--diq-font-mono);
+  letter-spacing: -0.04em;
+  color: var(--diq-signal-text);
+  margin-left: 2px;
+  padding-left: 4px;
+  border-left: 2px solid var(--diq-signal);
+}
+
+/* The ledger rule: a ticked ruler under the top bar. Decorative; one per screen, on the top bar only. */
+.diq-ruler {
+  position: relative;
+}
+.diq-ruler::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -7px;
+  height: 6px;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(90deg, var(--diq-line-strong) 0 1px, transparent 1px 40px),
+    repeating-linear-gradient(90deg, var(--diq-line-strong) 0 1px, transparent 1px 8px);
+  background-size:
+    100% 6px,
+    100% 3px;
+  background-repeat: no-repeat;
+}
