@@ -838,7 +838,7 @@ There are 83 rows with `phase = P1` and `importance = must` in
 | Rule | Check | Ticket |
 | --- | --- | --- |
 | Language zones, cgo-free Go, one stateful service, licence register, declared exceptions | `fitness-stack` F1–F5 (`tools/fitness/stack/`, in `make ci`) | T-0022 (done) |
-| Tenancy from migration 1, RLS, roles, isolation, static tenancy checks (incl. FF-SP7) | `fitness-tenancy` T1–T5 | T-0036 |
+| Tenancy from migration 1, RLS, roles, isolation, static tenancy checks (incl. FF-SP7) | `fitness-tenancy` T1–T5 (`tools/fitness/tenancy/`, in `make ci`; rules: [tenancy-fitness.md](tenancy-fitness.md)) | T-0036 (done) |
 | Profiles by composition, planes, both transports, UEM boundary, platform root extractable | `fitness-profiles` P1–P7, U1–U4 | T-0038 |
 | Import DAG, Registrar only, generated lists, table ownership, binary hygiene (§2) | `fitness-modules` | T-0045 → its fitness ticket |
 | Public API: routes ⊆ OpenAPI, `x-permission`, generated client | API fitness | T-0046 → its fitness ticket |

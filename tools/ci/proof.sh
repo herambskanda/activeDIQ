@@ -164,6 +164,24 @@ must_fail_with "F5 on an exception that cites a proposed ADR" 'manifest.json: F5
 sed -i.bak 's#0009-draft.md#0001-stack.md#' "$fs/manifest.json"
 must_pass "F5 once the exception cites a ratified ADR" stack -checks F5
 
+# --- fitness-tenancy (ADR-0002 T1-T5), the real CLI on throw-away trees ---------------------------
+# The per-rule proofs are the tool's own tests (go test ./tools/fitness/tenancy/...); this is the
+# end-to-end run: the CLI exits non-zero naming the table and the rule, and zero on the clean tree.
+tenbin="$tmp/tenancy"
+go build -o "$tenbin" ./tools/fitness/tenancy
+tn="$tmp/tn"; mkdir -p "$tn/migrations" "$tn/internal/modules/m"
+printf 'module tn.test\n\ngo 1.27.0\n' >"$tn/go.mod"
+cp tools/fitness/tenancy/testdata/base/0001_platform_tenants.sql "$tn/migrations/"
+printf '{"globalTables": [{"table": "public.tenants", "reason": "the tenant directory", "owner": "internal/platform/tenant"}]}\n' >"$tn/registry.json"
+mkdir -p "$tn/internal/platform/tenant"; printf 'package tenant\n' >"$tn/internal/platform/tenant/t.go"
+tenancy() { "$tenbin" -root "$tn" -registry registry.json -pg 18 "$@"; }
+cp tools/fitness/tenancy/testdata/bad/missing_force.sql "$tn/migrations/0002_app_items.sql"
+must_fail_with "fitness-tenancy on a tenant table without FORCE ROW LEVEL SECURITY" 'T2 public.items \[rls-force\]' tenancy
+cp tools/fitness/tenancy/testdata/good/0002_app_items.sql "$tn/migrations/0002_app_items.sql"
+must_pass "fitness-tenancy" tenancy
+printf 'package m\n\nconst q = "SELECT set_config(%s, %s, false)"\n' "'app.tenant_id'" "'x'" >"$tn/internal/modules/m/m.go"
+must_fail_with "fitness-tenancy on set_config text outside the tenancy package" 'T5 internal/modules/m/m.go:3 \[set-config-text\]' tenancy -checks T5
+
 # --- go mod tidy ------------------------------------------------------------------------------
 mkdir -p "$tmp/tidy"
 printf 'module tidy.test\n\ngo 1.27.0\n\nrequire example.invalid/unused v1.0.0\n' >"$tmp/tidy/go.mod"

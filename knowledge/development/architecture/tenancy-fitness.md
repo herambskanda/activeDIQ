@@ -1,0 +1,89 @@
+---
+title: "fitness-tenancy: what it checks, the bootstrap contract and the exemption registry"
+date: 2026-10-02
+updated: 2026-10-02
+status: draft
+owner: heramb
+ticket: T-0036
+sources_last_checked: 2026-10-02
+---
+
+# fitness-tenancy
+
+The job that enforces [ADR-0002](../decisions/0002-deployment-model.md) (tenancy from migration 1) and
+safe-primitives FF-SP7 ([safe-primitives.md](safe-primitives.md) §8) in `make ci`. One implementation.
+Code: `tools/fitness/tenancy/` (checks T1–T4, the CLI) and `tools/fitness/tenancy/static/` (T5).
+
+```
+make fitness-tenancy                 # = go run ./tools/fitness/tenancy
+go run ./tools/fitness/tenancy -pg 18 -checks T1,T2   # one version, some checks
+go test ./tools/fitness/tenancy/...  # a failing fixture per rule
+```
+
+It needs **Docker**: T1–T4 start throw-away PostgreSQL 16 and 18 containers (about 15 s for both).
+There is no silent skip: with no daemon the job exits 2; the tests skip locally but fail when `CI` is set.
+Images are pinned by digest in `pgenv.go`; `FITNESS_TENANCY_IMAGE_16` / `_18` override one (a mirror, an
+air-gapped runner). A violation names the table (or file:line) and the rule: `T2 public.items [rls-force]: …`.
+
+## The checks
+
+| Check | What fails the build | Rule names |
+| --- | --- | --- |
+| T1 | Migration 1 does not create `public.tenants` with uuid `id` and `parent_tenant_id`; an object has a lower OID than `tenants`; files are not `NNNN_<owner>_<what>.sql`; the sequence does not start at 0001; a migration does not apply | `migration-1`, `tenants-first`, `tenants-columns`, `migration-name`, `migrations-apply` |
+| T2 | A tenant table (partitions included) lacks `tenant_id uuid NOT NULL` with an FK to `tenants`; RLS not ENABLE and FORCE; policy not exactly `tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid` for USING and WITH CHECK (no coalesce, no OR, no `true`, no extra permissive policy); `tenant_id` not first in the PK, every unique index (`pg_index.indisunique`: partial and expression indexes too) and every exclusion constraint; an FK into a tenant table that does not pair `tenant_id`; a view without `security_invoker`; a materialized view over a tenant table; a SECURITY DEFINER function not in the registry; registry entries that are reasonless, ownerless or stale; a registered-global table with an FK to a tenant table | `tenant-id`, `tenant-fk`, `rls-enable`, `rls-force`, `policy-shape`, `policy-missing`, `key-leading-tenant-id`, `fk-pairs-tenant-id`, `view-security-invoker`, `matview-over-tenant-table`, `security-definer`, `global-references-tenant`, `registry`, `registry-stale` |
+| T3 | The runtime role is a superuser, has BYPASSRLS, owns an object, has TRUNCATE on a tenant table, has CREATE on a product schema or inherits a powerful role; the owner (migration) role is a superuser or has BYPASSRLS | `role-superuser`, `role-bypassrls`, `role-membership`, `runtime-owns-object`, `runtime-truncate`, `runtime-create-schema` |
+| T4 | Generated probes with tenants A and B and rows identical except `tenant_id`: cross-tenant read, insert, update and delete as the runtime role; no-context read and write on a fresh connection; B's value blocks A (a global unique key); a cross-tenant foreign key; `app.tenant_id` still set on the same connection after commit or rollback (SQL-14); the data-access package carries a passing `TestPoolRefusesSimpleProtocol` once it has Go files (SQL-20) | `read-cross-tenant`, `write-cross-tenant`, `write-no-context`, `unique-global`, `fk-cross-tenant`, `session-leak`, `sql-20`, `probe-seed`, `probe-error` |
+| T5 | pgx imported outside `internal/platform/store`; River outside `internal/platform/jobs`; `set_config`/`SET` text outside `store`; SQL naming a registered-global table outside its owning package (Go strings and `.sql` query files), or in the report compiler's identifier registry; a `tenant.ID` minted (literal, conversion, a function returning one, index, slice) outside `tenant`, `authn`, `jobs`, registered functions and tests; `WithPlatform` called from an unregistered function; a type with `Kind() string` and no `tenant.ID` field that is not a registered platform job; `tenant.ID` with an Unmarshal/Scan/Set method; a tenant-scope OpenAPI operation with a `tenant_id` or `X-Tenant-*` parameter or body field | `pgx-boundary`, `river-boundary`, `set-config-text`, `global-table-sql`, `tenant-id-minting`, `with-platform-site`, `job-carries-tenant`, `tenant-id-decoder`, `openapi-tenant-param`, `registry-stale` |
+
+Checks that depend on something absent activate when it appears: T1 with the first migration, the SQL-20
+test with the first Go file in `store`, the OpenAPI rule with `api/openapi/`. On an empty tree the job
+passes. Known limit: T4's foreign-key probe cannot run on a parent whose key is global (the seed already
+fails with `unique-global`, which is the finding); it runs on every correctly paired parent.
+
+## Bootstrap contract (what T-0037's installer must reproduce)
+
+The job provisions its databases exactly as production must, so a migration written under the job runs
+unchanged there:
+
+- Two roles, both `LOGIN NOSUPERUSER NOBYPASSRLS`: **`activediq_owner`** (runs migrations, owns every
+  object) and **`activediq_app`** (the runtime role; owns nothing).
+- The owner owns schema `public`; `PUBLIC` has no rights on it; the runtime role has `USAGE`.
+- `ALTER DEFAULT PRIVILEGES FOR ROLE activediq_owner IN SCHEMA public` grants the runtime role
+  `SELECT, INSERT, UPDATE, DELETE` on tables (never `TRUNCATE`) and `USAGE, SELECT` on sequences.
+- Any other schema, and any non-default grant (a function, `EXECUTE`), is explicit SQL in a migration.
+- `tenants` lives in `public`. The migration bookkeeping table, if the migrator creates it outside the
+  migrations, is not visible to the job (T-0037 decides where it lives).
+
+## Migration naming
+
+`migrations/NNNN_<owner>_<what>.sql`, four digits, one forward-only sequence starting at `0001`, lower
+case. `0001_platform_tenants.sql` creates `tenants` and nothing precedes it. Files are applied in order
+as the owner role, each as a multi-statement simple-protocol execution.
+
+## Exemption registry
+
+`internal/platform/store/exempt/registry.json` (path overridable with `-registry`). JSON, strict (an
+unknown key is an error). A missing file is an empty registry. Every entry has a `reason`.
+
+```json
+{
+  "globalTables":    [{"table": "public.tenants", "reason": "…", "owner": "internal/platform/tenant"}],
+  "securityDefiner": [{"function": "public.f(uuid)", "reason": "…"}],
+  "platformPaths":   [{"package": "internal/modules/enroll", "function": "Service.Enroll", "reason": "…",
+                       "withPlatform": true, "mintsTenantID": false}],
+  "platformJobs":    [{"type": "internal/modules/sweep.Sweep", "reason": "…"}],
+  "probeValues":     [{"column": "public.t.c", "value": "…", "reason": "…"}]
+}
+```
+
+A global table names the one package whose SQL may reference it. An entry that names something that does
+not exist (table, function, package, type) or that no longer needs the exemption fails as `registry-stale`;
+an entry without a reason or owner fails as `registry`. `probeValues` gives T4 a bound text value for a
+column whose CHECK or domain the generated value cannot satisfy.
+
+## Contract with T-0037 (tenancy foundation)
+
+`tenant.ID` in `internal/platform/tenant` with no decoder methods; `WithTenantTx` and `WithPlatform` in
+`internal/platform/store`; job argument types expose `Kind() string`; `store` carries
+`TestPoolRefusesSimpleProtocol`; platform-scope OpenAPI operations carry `x-activediq-scope: platform`;
+the registry file lives at the path above.

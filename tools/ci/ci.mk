@@ -2,7 +2,7 @@
 # Standard: knowledge/development/standards/ci-gates.md · Runbook: knowledge/development/runbooks/ci-and-build.md
 # Every gate below has a failing run proving it catches a violation: `make ci-proof` (part of `make ci`).
 
-.PHONY: ci lint lint-go lint-web fmt test test-go test-web fitness fitness-stack build build-web web-install ci-proof
+.PHONY: ci lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy build build-web web-install ci-proof
 
 ci: lint test fitness build secrets-scan lab-test-unit ci-proof ## Everything a merge needs: lint, tests, fitness functions (incl. the ADR-0001 build matrix), web build, secret scan, gate proofs
 	@echo "make ci: passed"
@@ -35,11 +35,14 @@ test-go:
 test-web: web-install
 	npm --prefix web run --silent test
 
-fitness: fitness-stack ## Architecture fitness functions: fitness-modules (blueprint §2 import rules) and fitness-stack (ADR-0001 F1-F5)
+fitness: fitness-stack fitness-tenancy ## Architecture fitness functions: fitness-modules (blueprint §2 import rules), fitness-stack (ADR-0001 F1-F5) and fitness-tenancy (ADR-0002 T1-T5)
 	go run ./tools/fitness/modules
 
 fitness-stack: ## ADR-0001: language zones, cgo-free cross-build, one stateful service, licence register, exceptions cite an ADR
 	go run ./tools/fitness/stack -v
+
+fitness-tenancy: ## ADR-0002 T1-T5 (and safe-primitives FF-SP7): migration 1, catalog, roles, isolation probes, static rules, against PostgreSQL 16 and 18 containers (needs Docker)
+	go run ./tools/fitness/tenancy
 
 build: build-web ## Build the web assets; the CGO_ENABLED=0 Go cross-build of the ADR-0001 matrix runs in fitness-stack (F2)
 
