@@ -1,0 +1,8 @@
+# T-0023 control run 2026-10-02T07:01:26Z: CBT enforcement relaxed
+# smb.conf: ldap server require strong auth = allow_sasl_without_tls_channel_bindings
+TLS 1.3 cipher=TLS_AES_128_GCM_SHA256 peer-cert-sig=SHA256-RSA cbt=none
+BIND OK mode=ldaps cbt=none spn=ldap/dc1.lab.activediq.test ticket-session-etype=18 whoami="u:LAB\\svc-cbt-spike"
+TLS 1.3 cipher=TLS_AES_128_GCM_SHA256 peer-cert-sig=SHA256-RSA cbt=wrong
+BIND FAILED mode=ldaps cbt=wrong: LDAP Result Code 49 "Invalid Credentials": 80090346: LdapErr: DSID-0C090711, comment: AcceptSecurityContext error, data 35b, v1db1
+TLS 1.3 cipher=TLS_AES_128_GCM_SHA256 peer-cert-sig=SHA256-RSA cbt=server-end-point
+BIND OK mode=ldaps cbt=server-end-point spn=ldap/dc1.lab.activediq.test ticket-session-etype=18 whoami="u:LAB\\svc-cbt-spike"
