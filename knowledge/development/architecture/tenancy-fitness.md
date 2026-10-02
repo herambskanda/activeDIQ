@@ -57,8 +57,11 @@ unchanged there:
 ## Migration naming
 
 `migrations/NNNN_<owner>_<what>.sql`, four digits, one forward-only sequence starting at `0001`, lower
-case. `0001_platform_tenants.sql` creates `tenants` and nothing precedes it. Files are applied in order
-as the owner role, each as a multi-statement simple-protocol execution.
+case. The `<owner>` segment is the **owner key**: the leaf name of the owning package under an owner
+root ([ADR-0003](../decisions/0003-module-system-extension-points-only-on-ramp.md) rule 6), so
+`0001_tenant_tenants.sql` is owned by `internal/platform/tenant`. It creates `tenants` and nothing
+precedes it. Files are applied in order as the owner role, each as a multi-statement simple-protocol
+execution.
 
 ## Exemption registry
 

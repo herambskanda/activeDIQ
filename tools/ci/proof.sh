@@ -181,7 +181,7 @@ tenbin="$tmp/tenancy"
 go build -o "$tenbin" ./tools/fitness/tenancy
 tn="$tmp/tn"; mkdir -p "$tn/migrations" "$tn/internal/modules/m"
 printf 'module tn.test\n\ngo 1.27.0\n' >"$tn/go.mod"
-cp tools/fitness/tenancy/testdata/base/0001_platform_tenants.sql "$tn/migrations/"
+cp tools/fitness/tenancy/testdata/base/0001_tenant_tenants.sql "$tn/migrations/"
 printf '{"globalTables": [{"table": "public.tenants", "reason": "the tenant directory", "owner": "internal/platform/tenant"}]}\n' >"$tn/registry.json"
 mkdir -p "$tn/internal/platform/tenant"; printf 'package tenant\n' >"$tn/internal/platform/tenant/t.go"
 tenancy() { "$tenbin" -root "$tn" -registry registry.json -pg 18 "$@"; }
