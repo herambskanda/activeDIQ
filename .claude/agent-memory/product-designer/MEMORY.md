@@ -1,2 +1,3 @@
 - [ME demo benchmarking](me-demo-benchmarking.md) — read-only Playwright on ME demo, conservative counting rules, honest ties
 - [IA task paths](feedback_ia-task-paths.md) — cost paths from a catalogue, parse budgets via ast; v1 never writes Tier 0
+- [Preview building](preview-building.md) — self-contained board previews: shared app + build script, hash states, contrast gate, gotchas

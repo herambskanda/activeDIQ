@@ -1,0 +1,33 @@
+/* Direction A "Ledger": labelled left rail, 32 px rows, flat hairlines, 2 px radii, no shadows. */
+.app{display:grid;grid-template-columns:var(--diq-nav-w) minmax(0,1fr)}
+.nav{background:var(--diq-surface);border-right:1px solid var(--diq-line-strong);display:flex;flex-direction:column;padding:0 0 16px;overflow-y:auto;min-height:0}
+.brand{height:48px;display:flex;align-items:center;padding:0 16px;border-bottom:1px solid var(--diq-line);margin-bottom:8px;font-size:16px}
+.brand-l{display:flex;gap:8px;align-items:center;text-decoration:none;color:var(--diq-text)}
+.nav-i,.nav-k,.nav-p{display:flex;align-items:center;gap:8px;height:32px;padding:0 16px;color:var(--diq-text-2);text-decoration:none;font-weight:500;position:relative}
+.nav-i:hover,.nav-k:hover,.nav-p:hover{background:var(--diq-surface-2);color:var(--diq-text)}
+.nav-i.on{color:var(--diq-text);font-weight:600}
+.nav-kids{display:flex;flex-direction:column;margin:0 0 4px}
+.nav-k{padding-left:40px;height:28px;font-weight:400}
+.nav-k.on{background:var(--diq-signal-soft);color:var(--diq-text);font-weight:600}
+.nav-k.on::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--diq-signal)}
+.nav-h{font:500 11px/1 var(--diq-font-mono);text-transform:uppercase;letter-spacing:.08em;color:var(--diq-text-3);padding:16px 16px 8px}
+.nav-p{height:28px;font-weight:400}.nav-p .ic{width:14px;height:14px;color:var(--diq-text-3)}
+.nav-c{margin-left:auto;color:var(--diq-text-3);font-size:11px}
+.topbar{position:relative;display:flex;align-items:center;gap:12px;height:48px;padding:0 24px;background:var(--diq-surface);border-bottom:1px solid var(--diq-line-strong)}
+/* signature motif: the ledger rule — a ticked ruler under the top bar */
+.topbar::after{content:'';position:absolute;left:0;right:0;bottom:-7px;height:6px;pointer-events:none;background:repeating-linear-gradient(90deg,var(--diq-line-strong) 0 1px,transparent 1px 40px),repeating-linear-gradient(90deg,var(--diq-line-strong) 0 1px,transparent 1px 8px);background-size:100% 6px,100% 3px;background-repeat:no-repeat}
+.main{padding:20px 24px 32px;display:flex;flex-direction:column;gap:12px}
+.page-h{padding-bottom:4px}
+.views{border-bottom:1px solid var(--diq-line)}
+.vt.on::after{content:'';}
+.bulk{position:sticky;top:0}
+.sheet{position:fixed;top:0;right:0;bottom:var(--pv);width:var(--diq-sheet-w);border-left:1px solid var(--diq-line-strong);box-shadow:none}
+.objh-t h1{font-size:22px}.avatar-l{width:40px;height:40px;font-size:14px}
+.grid{columns:2;column-gap:12px}
+.grid>.panel{break-inside:avoid;margin-bottom:12px}
+.tabbody{display:flex;flex-direction:column;gap:12px}
+.tabs{margin-top:4px}
+.panel h2{font-family:var(--diq-font-mono);font-weight:500}
+.kv-r{padding:6px 0}
+.act{grid-column:auto}
+.tbl th{font-family:var(--diq-font-mono);font-weight:500;text-transform:uppercase;letter-spacing:.05em;font-size:11px}
