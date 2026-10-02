@@ -6,7 +6,7 @@ import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import {
   appendEvent, listEntities, listRecentRuns, pidAlive, readControl, readJson, readRecentEvents, readTail,
-  requireEntity, setControl, writeJsonAtomic,
+  reloadConfig, requireEntity, setControl, writeJsonAtomic,
 } from '../lib/store.mjs';
 import { FactoryError, NotFoundError } from '../lib/errors.mjs';
 import { acknowledgeNotice, answerDecision, vetoNotice } from '../lib/decisions.mjs';
@@ -199,10 +199,31 @@ async function handlePost(ctx, pathname, body) {
  * @param {object} ctx
  * @returns {http.Server}
  */
+/**
+ * Re-read config.json when its mtime changes, so limits shown on the board (run cap, parallelism,
+ * model policy) follow edits without a restart — as the dispatcher does every tick. A bad file
+ * keeps the previous config.
+ * @param {object} ctx
+ * @returns {() => void}
+ */
+function configRefresher(ctx) {
+  const file = path.join(ctx.home, 'config.json');
+  let seen = null;
+  try { seen = fs.statSync(file).mtimeMs; } catch { /* keep null */ }
+  return () => {
+    let mtime;
+    try { mtime = fs.statSync(file).mtimeMs; } catch { return; }
+    if (mtime === seen) return;
+    try { reloadConfig(ctx); seen = mtime; } catch { /* unreadable mid-write: keep the previous config */ }
+  };
+}
+
 export function createBoardServer(ctx) {
   const listLibrary = createLibraryLister(ctx);
+  const refreshConfig = configRefresher(ctx);
   return http.createServer(async (req, res) => {
     try {
+      refreshConfig();
       if (!hostAllowed(req.headers.host, ctx.config.board.host)) throw new FactoryError('unexpected Host header', 403);
       const url = new URL(req.url, 'http://board.local');
       const { pathname } = url;
