@@ -25,6 +25,7 @@ Round 2 had clean arithmetic: a table-parsing script matched every step table, a
 - Read **every word of the hint text** in each competitor screenshot. Hints often document a shorter path that the doc didn't count ("shortest documented path" rule).
 - Check the "states to design" bullets against TM and SP, not just AD semantics. Any secret (LAPS, BitLocker, password) that is stored, exported, cached or revealed in bulk contradicts TM-A7, TM §7.4 and SP §3.7. Other AD claims to check: accountExpires is an absolute UTC FILETIME, and a Recycle Bin restore keeps all attributes.
 - When a mock row cites an event ID, check that event's field list supports every value the row shows. Workstation names need Logon-ID correlation with 4624, and the tool used is never in the event.
-- In round 2+, state that the listed must-fixes are the complete list, so the owner can close in one pass.
+- In round 2+, state that the listed must-fixes are the complete list, so the owner can close in one pass. On T-0008 this worked: round 3 closed in one pass, and the check was the fix commit's diff, the re-run parsers and a fetch of any newly quoted source.
+- An open question in the doc that is addressed to another role (e.g. §6 "for security-architect") needs its own ticket. Grep `ticket list` for one, and if none exists, file it before you advance. On T-0008, round 3 needed T-0117.
 
 Related: [[domain-model-review-checks]], [[review-check-ceo-answers-vs-draft-time]]
