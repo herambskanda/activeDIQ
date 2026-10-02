@@ -4,10 +4,11 @@
 - [Taste questions need previews](taste-questions-need-previews.md) — option `preview` field set (not just context links); D-0005 override; apply literally + notice
 - [Domain-model review checks](domain-model-review-checks.md) — ME map vs scope lock; derived states; gPLink; Entra scopes; authz join keys; Graph perms; "only X" vs "X or Y"; backstop predicates
 - [Benchmark review checks](benchmark-review-checks.md) — script step tables vs totals, recompute model times, read screenshot hints for shorter paths, secrets vs TM/SP
-- [AD research review checks](ad-research-review-checks.md) — fetch cited pages for verbatim quotes; grep for stale copies; uncited details = nits
+- [AD research review checks](ad-research-review-checks.md) — fetch cited pages for verbatim quotes; trial-vs-paid condition drift; grep stale copies
 - [Blocked on another ticket](triage-blocked-on-another-ticket.md) — don't unblock (skips dep gating); set depends_on, raise blocker's priority, note both
 - [Spike review checks](spike-review-checks.md) — gh-api upstream claims; amend disproved ADRs; histogram weighting; recs vs own data; grep ratified ADRs
 - [ADR review: allowlist + ownership](adr-review-allowlist-and-ownership.md) — allowlist matrix must cover every package incl. roots; run every DM owner through table rules
 - [Generator ADR checks](generator-adr-review-checks.md) — read codegen templates per allowed construct; nested strictness; secretjson/FF-SP2; host↔kernel cycles
 - [Pipeline/audit ADR checks](pipeline-adr-review-checks.md) — draw import DAG for token-typed write APIs; authz re-check per DM-35 root kind incl. Entra; transitions edges
 - [Capacity knobs: ask the number](capacity-knobs-ask-the-number.md) — CEO sets slots/run-cap numbers; ask in one line, lead with the higher value
+- [Derived state vs retention pins](derived-state-retention-pins.md) — pin every row a derivation reads; no restricted IDs in audit events; spec flow lacks a security stage
