@@ -86,6 +86,11 @@ func Check(o Options) ([]Finding, error) {
 			}
 			defer os.RemoveAll(reports)
 		}
+		// The implementations' tests run with their package directory as the working directory, so a
+		// relative report directory (the Makefile's) would be written under each package instead.
+		if reports, err = filepath.Abs(reports); err != nil {
+			return nil, err
+		}
 		if o.Checks["FF-SP4"] || o.Checks["FF-SP8"] {
 			fs = append(fs, runImplementations(o, files, man, reports)...)
 		}
