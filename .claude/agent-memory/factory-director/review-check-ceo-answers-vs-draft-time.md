@@ -15,6 +15,7 @@ When reviewing an ADR or spec, compare the claim/draft time on the ticket with `
 - Rewrite the ratification notice yourself; don't trust the author's draft notice framing.
 - Check against **every** answered D-id, not only the ones the ticket lists. On T-0003 (ADR-0002), the ticket listed D-0002/D-0003. But D-0001 puts Entra in v1, and the per-profile credential column covered AD only.
 - On tenancy ADRs, check that the RLS checks close these bypasses: unique *indexes* (they are not in pg_constraint), FKs (FK checks bypass RLS), matviews, and global tables read inside tenant transactions.
+- Registered-global (non-RLS) tables with tenant rows (e.g. `jobs`, T-0209): list every verb the spec gives tenant code (Cancel, dedup lookup, not just complete/retry) and check each is fenced on the context tenant.
 - A support-matrix row that closes an open research question (e.g. the minimum DC OS) is customer-visible and belongs in the notice list.
 - On a rework, check that the new rules cost no parity. On T-0003, the reworked rule 9 added 'no Entra admin-role rights'. That cut ADM-168, which showed up only after grepping the parity matrix for the family. Put the cut in the notice, and note it on the plan ticket.
 - On a rework, grep sibling docs still in flight for any identifier the rework renamed. ADR-0002's rework renamed WithTenant to WithTenantTx while safe-primitives was being aligned to the old name.
