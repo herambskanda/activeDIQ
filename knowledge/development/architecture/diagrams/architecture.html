@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>activeDIQ Architecture</title>
+<style>
+/* Standalone copy of the Factory Board theme (factory/board/public/tokens.css): monochrome ink and paper,
+   one indigo signal, sharp radii. Follows the OS light/dark setting. Credential-holding parts take the signal. */
+:root {
+  --sk-font-sans: "Geist", "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
+  --sk-font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, "Cascadia Code", Consolas, monospace;
+  --sk-ink: #FFFFFF; --sk-surface-1: #FAFAFA; --sk-surface-2: #F3F3F5;
+  --sk-line: #E6E6EC; --sk-line-strong: #D2D2DC;
+  --sk-text-color: #0B0B0E; --sk-text-2: #3C3C48; --sk-muted: #74748A;
+  --sk-accent: #5A46F0; --sk-accent-2: #6E5BFF; --sk-accent-soft: rgba(110, 91, 255, 0.10);
+  --sk-crit: #D33A3F;
+  --page: var(--sk-surface-1); --card: var(--sk-ink); --card-2: var(--sk-surface-2);
+  --line: var(--sk-line); --line-2: var(--sk-line-strong);
+  --fg: var(--sk-text-color); --fg-2: var(--sk-text-2);
+  --fg-3: color-mix(in srgb, var(--sk-muted) 70%, var(--sk-text-color));
+  --accent: var(--sk-accent); --accent-text: var(--sk-accent);
+  --crit-text: color-mix(in srgb, var(--sk-crit) 70%, var(--sk-text-color));
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --sk-ink: #0A0A0C; --sk-surface-1: #101014; --sk-surface-2: #16161C;
+    --sk-line: #24242C; --sk-line-strong: #34343E;
+    --sk-text-color: #F4F4F6; --sk-text-2: #B7B7C4; --sk-muted: #76768A;
+    --sk-accent: #6E5BFF; --sk-accent-2: #9C8CFF; --sk-accent-soft: rgba(110, 91, 255, 0.16); --sk-crit: #E5484D;
+    --page: var(--sk-ink); --card: var(--sk-surface-1); --accent-text: var(--sk-accent-2);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --sk-ink: #0A0A0C; --sk-surface-1: #101014; --sk-surface-2: #16161C;
+  --sk-line: #24242C; --sk-line-strong: #34343E;
+  --sk-text-color: #F4F4F6; --sk-text-2: #B7B7C4; --sk-muted: #76768A;
+  --sk-accent: #6E5BFF; --sk-accent-2: #9C8CFF; --sk-accent-soft: rgba(110, 91, 255, 0.16); --sk-crit: #E5484D;
+  --page: var(--sk-ink); --card: var(--sk-surface-1); --accent-text: var(--sk-accent-2);
+  color-scheme: dark;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--fg); font-family: var(--sk-font-sans); font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; padding-inline: 16px; padding-block: 28px 56px; }
+.wrap { max-width: 1040px; margin-inline: auto; display: flex; flex-direction: column; gap: 24px; }
+h1 { font-size: 33px; line-height: 1.1; font-weight: 600; margin: 0; letter-spacing: -0.03em; text-wrap: balance; }
+h2 { font-size: 18px; font-weight: 600; margin: 0; }
+p { margin: 0; max-width: 68ch; }
+code, .mono { font-family: var(--sk-font-mono); font-size: 0.9em; }
+.lede { color: var(--fg-3); }
+header { display: flex; flex-direction: column; gap: 10px; }
+.eyebrow { font-family: var(--sk-font-mono); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--fg-3); }
+
+.ideas { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.idea, .rule { background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.idea b, .rule b { font-weight: 600; }
+.idea span, .rule span { color: var(--fg-3); }
+
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--line); }
+.tab { font: inherit; font-weight: 500; color: var(--fg-3); background: none; border: 0; border-bottom: 2px solid transparent; padding: 10px 12px; cursor: pointer; margin-bottom: -1px; }
+.tab:hover { color: var(--fg); }
+.tab[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent); }
+.tab:focus-visible, .node:focus-visible { outline: 2px solid var(--accent-text); outline-offset: -2px; }
+.panel { display: flex; flex-direction: column; gap: 16px; }
+
+figure { margin: 0; display: flex; flex-direction: column; gap: 10px; }
+figcaption { color: var(--fg-3); max-width: 80ch; }
+.scroll { overflow-x: auto; background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 8px; }
+.scroll svg { display: block; min-width: 760px; width: 100%; height: auto; color: var(--fg); }
+svg text { font-family: var(--sk-font-sans); font-size: 12.5px; fill: currentColor; }
+svg .ttl { font-weight: 600; font-size: 13px; }
+svg .sub { fill: var(--fg-3); font-size: 11.5px; }
+svg .mono { font-family: var(--sk-font-mono); font-size: 11px; }
+svg .lbl { fill: var(--fg-3); font-size: 11px; }
+svg .bad-t { fill: var(--crit-text); font-size: 11.5px; font-weight: 500; }
+.edge { stroke: var(--fg-3); stroke-width: 1.4; fill: none; }
+.edge.block { stroke: var(--sk-crit); stroke-dasharray: 5 4; }
+.arrowhead { fill: var(--fg-3); }
+.arrowhead.block { fill: var(--sk-crit); }
+.container { fill: none; stroke: var(--line-2); stroke-width: 1.4; stroke-dasharray: 6 4; }
+.node, .layer { --c: var(--line-2); }
+.node.sec, .layer.sec { --c: var(--accent); }
+.node { cursor: pointer; }
+.node rect, .layer rect { fill: var(--card-2); stroke: var(--c); stroke-width: 1.4; }
+.node.sec rect, .layer.sec rect { fill: var(--sk-accent-soft); }
+.node:hover rect { stroke: var(--fg-3); }
+.node.sec:hover rect { stroke: var(--accent-text); }
+.node[aria-pressed="true"] rect { stroke: var(--accent-text); stroke-width: 3; }
+
+.detail { background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 16px 18px; display: grid; gap: 8px 24px; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); }
+.detail h3 { margin: 0; font-size: 17px; font-weight: 600; grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.chip { font-family: var(--sk-font-mono); font-size: 11px; font-weight: 500; padding: 1px 8px; border-radius: 2px; border: 1px solid var(--line-2); color: var(--fg-3); }
+.detail dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; align-content: start; min-width: 0; }
+.detail dt { color: var(--fg-3); }
+.detail dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 640px) { .detail { grid-template-columns: 1fr; } }
+
+.rules { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+
+ol.flow { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 4px; background: var(--card); counter-reset: s; }
+ol.flow li { counter-increment: s; display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 4px 12px; padding: 12px 16px; border-top: 1px solid var(--line); }
+ol.flow li:first-child { border-top: 0; }
+ol.flow li::before { content: counter(s); font-family: var(--sk-font-mono); font-weight: 500; color: var(--accent-text); grid-row: span 2; padding-top: 1px; }
+ol.flow b { font-weight: 600; }
+ol.flow span { color: var(--fg-3); }
+.tag { font-family: var(--sk-font-mono); font-size: 11px; padding: 1px 7px; border-radius: 2px; background: var(--card-2); color: var(--fg); border: 1px solid var(--line-2); white-space: nowrap; }
+.t-sec { background: var(--sk-accent-soft); border-color: var(--accent); }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 4px; }
+
+.profiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.profile { background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.profile h3 { margin: 0; font-size: 16px; font-weight: 600; display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.profile ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.profile .status { font-family: var(--sk-font-mono); font-size: 11px; color: var(--fg-3); font-weight: 400; }
+
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 4px; background: var(--card); }
+table { border-collapse: collapse; width: 100%; min-width: 640px; }
+th, td { text-align: left; padding: 9px 14px; border-top: 1px solid var(--line); vertical-align: top; }
+thead th { border-top: 0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--fg-3); font-weight: 500; }
+td:first-child { font-family: var(--sk-font-mono); font-size: 12px; white-space: nowrap; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Blueprint v0 · ratified ADR-0001, 0002, 0003, 0005</div>
+    <h1>How activeDIQ is put together</h1>
+    <p class="lede">A server that manages Active Directory and Entra ID through one narrow gate, the connector. Everything below is read from <code>knowledge/development/architecture/blueprint.md</code> and the ratified ADRs. Where they disagree, the ADR wins.</p>
+  </header>
+
+  <section class="ideas" aria-label="The three ideas the architecture rests on">
+    <div class="idea"><b>The public API is the product boundary</b><span>Every click and every script is an OpenAPI operation. The web console is one client and has no private endpoints.</span></div>
+    <div class="idea"><b>The connector is the only path to a directory</b><span>Directory credentials exist only inside it, and it reaches a directory only through typed operations.</span></div>
+    <div class="idea"><b>Modules plug into the kernel, never the reverse</b><span>The platform kernel imports nothing above it, so it can be extracted and shared with UEM later.</span></div>
+  </section>
+
+  <div class="tabs" role="tablist" aria-label="Architecture views">
+    <button class="tab" role="tab" id="tab-map" aria-controls="p-map" aria-selected="true">System map</button>
+    <button class="tab" role="tab" id="tab-rules" aria-controls="p-rules" aria-selected="false">Import rules</button>
+    <button class="tab" role="tab" id="tab-write" aria-controls="p-write" aria-selected="false">One write, step by step</button>
+    <button class="tab" role="tab" id="tab-deploy" aria-controls="p-deploy" aria-selected="false">Deployment</button>
+    <button class="tab" role="tab" id="tab-repo" aria-controls="p-repo" aria-selected="false">Repository map</button>
+  </div>
+
+  <!-- ============ SYSTEM MAP ============ -->
+  <section class="panel" id="p-map" role="tabpanel" aria-labelledby="tab-map">
+    <figure>
+      <div class="scroll">
+        <svg viewBox="0 0 960 600" role="img" aria-label="activeDIQ system map: browsers and integrations call the server's API; feature modules use the directory domain and platform kernel; the connector is the only component that talks to domain controllers and Entra ID; PostgreSQL is the only stateful service.">
+          <defs>
+            <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><polygon class="arrowhead" points="0,0 10,5 0,10"/></marker>
+          </defs>
+
+          <!-- server container -->
+          <rect class="container" x="20" y="84" width="700" height="396" rx="10"/>
+          <text class="lbl mono" x="708" y="99" text-anchor="end">server process · cmd/server</text>
+
+          <!-- edges -->
+          <path class="edge" d="M135 56 V110" marker-end="url(#ah)"/><text class="lbl" x="143" y="74">HTTPS</text>
+          <path class="edge" d="M395 56 V110" marker-end="url(#ah)"/><text class="lbl" x="403" y="74">HTTPS + API token</text>
+          <path class="edge" d="M855 56 V84" marker-end="url(#ah)"/><text class="lbl" x="863" y="74">HTTPS</text>
+          <path class="edge" d="M720 127 H770" marker-end="url(#ah)"/><text class="lbl" x="745" y="120" text-anchor="middle">tunnel</text>
+          <path class="edge" d="M197 244 V272" marker-end="url(#ah)"/><text class="lbl" x="205" y="262">directory services</text>
+          <path class="edge" d="M543 244 V272" marker-end="url(#ah)"/><text class="lbl" x="551" y="262">kernel services</text>
+          <path class="edge" d="M197 358 V388" marker-end="url(#ah)"/><text class="lbl" x="205" y="378">connector contract</text>
+          <path class="edge" d="M770 288 H720" marker-end="url(#ah)"/><text class="lbl" x="745" y="281" text-anchor="middle">mTLS</text>
+          <path class="edge" d="M770 388 H720" marker-end="url(#ah)"/><text class="lbl" x="745" y="381" text-anchor="middle">mTLS</text>
+          <path class="edge" d="M125 464 V520" marker-end="url(#ah)"/><text class="lbl" x="133" y="498">LDAPS / Kerberos + CBT</text>
+          <path class="edge" d="M345 464 V520" marker-end="url(#ah)"/><text class="lbl" x="353" y="498">HTTPS (Graph)</text>
+          <path class="edge" d="M600 480 V520" marker-end="url(#ah)"/><text class="lbl" x="608" y="504">SQL</text>
+
+          <!-- clients -->
+          <g class="node" data-id="admins" role="button" tabindex="0" aria-pressed="false"><rect x="20" y="10" width="230" height="46" rx="6"/><text class="ttl" x="32" y="30">Admins / help desk</text><text class="sub" x="32" y="46">browser console</text></g>
+          <g class="node" data-id="integrations" role="button" tabindex="0" aria-pressed="false"><rect x="280" y="10" width="230" height="46" rx="6"/><text class="ttl" x="292" y="30">Integrations</text><text class="sub" x="292" y="46">ServiceNow, ServiceDesk Plus, scripts</text></g>
+          <g class="node" data-id="endusers" role="button" tabindex="0" aria-pressed="false"><rect x="770" y="10" width="170" height="46" rx="6"/><text class="ttl" x="782" y="30">End users</text><text class="sub" x="782" y="46">self-service · M4</text></g>
+
+          <!-- edge -->
+          <g class="node" data-id="edge" role="button" tabindex="0" aria-pressed="false"><rect x="770" y="84" width="170" height="86" rx="6"/><text class="ttl" x="782" y="106">Edge · M4</text><text class="sub" x="782" y="124">stateless, no secrets</text><text class="sub" x="782" y="140">alone in its process</text><text class="sub mono" x="782" y="158">cmd/edge</text></g>
+
+          <!-- inside server -->
+          <g class="node" data-id="api" role="button" tabindex="0" aria-pressed="false"><rect x="36" y="110" width="668" height="36" rx="6"/><text class="ttl" x="48" y="132">apihost</text><text class="sub" x="118" y="132">HTTP · authn · strict JSON · embedded web UI · handlers generated from api/openapi/</text></g>
+          <g class="node" data-id="modules" role="button" tabindex="0" aria-pressed="false"><rect x="36" y="160" width="668" height="84" rx="6"/><text class="ttl" x="48" y="180">Feature modules <tspan class="sub mono">internal/modules/&lt;id&gt;/</tspan></text><text x="48" y="199">connections · objects · helpdesk · delegation · lifecycle · workflow</text><text x="48" y="216">reports · history · search · m365 · itsm · migration · hardening</text><text class="sub" x="48" y="234">register only through the Registrar · never import each other</text></g>
+          <g class="node" data-id="directory" role="button" tabindex="0" aria-pressed="false"><rect x="36" y="272" width="322" height="86" rx="6"/><text class="ttl" x="48" y="292">Directory domain</text><text x="48" y="312">safe filter + DN builders · attribute codecs</text><text x="48" y="329">object model · inventory (sync store)</text><text x="48" y="346">sync · connection registry · connector client</text></g>
+          <g class="node" data-id="platform" role="button" tabindex="0" aria-pressed="false"><rect x="382" y="272" width="322" height="86" rx="6"/><text class="ttl" x="394" y="292">Platform kernel <tspan class="sub">extractable</tspan></text><text x="394" y="312">tenant · authn · authz · audit · jobs</text><text x="394" y="329">operation · notify · report · keys · secret</text><text x="394" y="346">store · blob · fleet · update · module</text></g>
+          <g class="node sec" data-id="connector" role="button" tabindex="0" aria-pressed="false"><rect x="36" y="388" width="668" height="76" rx="6"/><text class="ttl" x="48" y="408">Connector <tspan class="sub mono">internal/connector/</tspan></text><text x="48" y="428">providers: ad (ldap, kerberos, scope) · entra (graph) · credential custody</text><text class="sub" x="48" y="447">only place that holds directory credentials · embedded here, or remote as cmd/connector</text></g>
+
+          <!-- right column -->
+          <g class="node sec" data-id="remote" role="button" tabindex="0" aria-pressed="false"><rect x="770" y="250" width="170" height="78" rx="6"/><text class="ttl" x="782" y="272">Remote connector</text><text class="sub" x="782" y="290">other forest, site or DMZ</text><text class="sub" x="782" y="306">dials out to the server</text><text class="sub mono" x="782" y="321">cmd/connector</text></g>
+          <g class="node sec" data-id="agent" role="button" tabindex="0" aria-pressed="false"><rect x="770" y="350" width="170" height="78" rx="6"/><text class="ttl" x="782" y="372">Host agent · M3</text><text class="sub" x="782" y="390">DCs and file servers</text><text class="sub" x="782" y="406">password filter feeds it</text><text class="sub mono" x="782" y="421">cmd/agent</text></g>
+
+          <!-- external -->
+          <g class="node" data-id="dcs" role="button" tabindex="0" aria-pressed="false"><rect x="20" y="520" width="210" height="62" rx="6"/><text class="ttl" x="32" y="542">Domain controllers</text><text class="sub" x="32" y="560">never host the server</text></g>
+          <g class="node" data-id="entra" role="button" tabindex="0" aria-pressed="false"><rect x="260" y="520" width="170" height="62" rx="6"/><text class="ttl" x="272" y="542">Microsoft Entra ID</text><text class="sub" x="272" y="560">Graph API</text></g>
+          <g class="node" data-id="pg" role="button" tabindex="0" aria-pressed="false"><rect x="480" y="520" width="240" height="62" rx="6"/><text class="ttl" x="492" y="542">PostgreSQL + blob store</text><text class="sub" x="492" y="560">the only stateful service</text></g>
+        </svg>
+      </div>
+      <figcaption>Click any box. Indigo marks everything that holds directory credentials; the rest is grey. The detail panel names each box's layer. Milestones: M2 server and connector, M3 agents, M4 edge and end-user access.</figcaption>
+    </figure>
+
+    <div class="detail" id="detail" aria-live="polite"></div>
+  </section>
+
+  <!-- ============ IMPORT RULES ============ -->
+  <section class="panel" id="p-rules" role="tabpanel" aria-labelledby="tab-rules" hidden>
+    <figure>
+      <div class="scroll">
+        <svg viewBox="0 0 900 540" role="img" aria-label="Import layers: cmd binaries import their own compose role package, which wires server modules, the connector and agent modules. Modules use directory services and primitives; the connector and agent modules use only primitives. Everything rests on the platform kernel, which imports nothing above it.">
+          <defs>
+            <marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><polygon class="arrowhead" points="0,0 10,5 0,10"/></marker>
+            <marker id="ah2b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><polygon class="arrowhead block" points="0,0 10,5 0,10"/></marker>
+          </defs>
+          <path class="edge" d="M450 50 V80" marker-end="url(#ah2)"/><text class="lbl" x="458" y="70">its own role only</text>
+          <path class="edge" d="M360 130 L165 170" marker-end="url(#ah2)"/>
+          <path class="edge" d="M450 130 V170" marker-end="url(#ah2)"/>
+          <path class="edge" d="M540 130 L735 170" marker-end="url(#ah2)"/>
+          <text class="lbl" x="590" y="152">generated module lists</text>
+          <path class="edge" d="M165 240 V282" marker-end="url(#ah2)"/><text class="lbl" x="173" y="266">directory services</text>
+          <path class="edge" d="M165 338 V374" marker-end="url(#ah2)"/>
+          <path class="edge" d="M450 240 V374" marker-end="url(#ah2)"/><text class="lbl" x="458" y="310">primitives only</text>
+          <path class="edge" d="M735 240 V374" marker-end="url(#ah2)"/><text class="lbl" x="743" y="310">primitives only</text>
+          <path class="edge" d="M450 420 V454" marker-end="url(#ah2)"/><text class="lbl" x="458" y="442">kernel</text>
+          <path class="edge block" d="M400 240 L350 310 H294" marker-end="url(#ah2b)"/><text class="bad-t" x="356" y="332">never</text>
+
+          <g class="layer"><rect x="330" y="10" width="240" height="40" rx="6"/><text class="ttl" x="344" y="35">cmd/&lt;role&gt;</text><text class="sub mono" x="430" y="35">main package</text></g>
+          <g class="layer"><rect x="280" y="80" width="340" height="50" rx="6"/><text class="ttl" x="294" y="101">compose/&lt;role&gt;</text><text class="sub" x="294" y="119">composition root · the only code that names modules</text></g>
+          <g class="layer"><rect x="40" y="170" width="250" height="70" rx="6"/><text class="ttl" x="54" y="193">Server modules</text><text class="bad-t" x="54" y="213">✗ never import each other</text><text class="sub" x="54" y="230">cooperate by ID: Action, audit kind, job</text></g>
+          <g class="layer sec"><rect x="325" y="170" width="250" height="70" rx="6"/><text class="ttl" x="339" y="193">Connector</text><text class="sub" x="339" y="213">only code importing LDAP and Graph libraries</text><text class="sub" x="339" y="230">only code that unseals credentials</text></g>
+          <g class="layer sec"><rect x="610" y="170" width="250" height="70" rx="6"/><text class="ttl" x="624" y="193">Agent modules <tspan class="sub">M3</tspan></text><text class="sub" x="624" y="213">run on customer hosts, link no store</text><text class="bad-t" x="624" y="230">✗ never import each other</text></g>
+          <g class="layer"><rect x="40" y="282" width="250" height="56" rx="6"/><text class="ttl" x="54" y="306">Directory services</text><text class="sub" x="54" y="324">inventory · sync · client · connection</text></g>
+          <g class="layer"><rect x="40" y="374" width="820" height="46" rx="6"/><text class="ttl" x="54" y="402">Directory primitives</text><text class="sub mono" x="214" y="402">ldapfilter · dn · model · attr/*</text></g>
+          <g class="layer"><rect x="40" y="454" width="820" height="56" rx="6"/><text class="ttl" x="54" y="478">Platform kernel</text><text class="sub" x="154" y="478">internal/platform/*</text><text class="bad-t" x="54" y="498">✗ imports nothing above it: no directory, connector, modules or compose</text></g>
+        </svg>
+      </div>
+      <figcaption>Imports run downward only. Every layer may also use the kernel. Solid arrows are allowed; the dashed red arrow is the one that matters most for security, and indigo marks the parts that hold credentials. CI holds the line with an allowlist matrix (ADR-0003 rule 1): an import the matrix does not allow fails the build, and so does a package that matches no class.</figcaption>
+    </figure>
+    <div class="rules">
+      <div class="rule"><b>Modules are islands</b><span>A server module never imports another. They cooperate through kernel registries, by ID. A leaver policy composes <code>objects.user.disable</code> and <code>m365.licence.remove</code> without importing either.</span></div>
+      <div class="rule"><b>Credentials hold by construction</b><span>Outside the connector, only <code>compose/server</code>, <code>compose/connector</code> and the future <code>compose/t0connector</code> may import it. The agent and connector never link a package that reaches the database.</span></div>
+      <div class="rule"><b>Only generated lists name a module</b><span><code>modules.gen.go</code> for server and agent, <code>modules.gen.ts</code> for the web. Adding a module is adding a directory, not editing core.</span></div>
+      <div class="rule"><b>Kernel asks through ports</b><span>When the kernel needs directory-owned data, it declares a port and a directory package implements it. The kernel never imports the directory.</span></div>
+    </div>
+  </section>
+
+  <!-- ============ WRITE FLOW ============ -->
+  <section class="panel" id="p-write" role="tabpanel" aria-labelledby="tab-write" hidden>
+    <p class="lede">Example: a bulk modify (ADM-034). Every write in the product takes this path. The order is the point: plan and authorise first, show a preview, then write each step with a live re-check, and audit in the same commit as the outcome.</p>
+    <ol class="flow">
+      <li><b>API receives the request</b><span>Carries an <code>Idempotency-Key</code>, so a retry never repeats the work.</span><div class="tags"><span class="tag">apihost</span></div></li>
+      <li><b>Plan</b><span>The Action's <code>Plan</code> reads live state on the pinned domain controller, computes the diff and marks each step reversible, lossy or irreversible.</span><div class="tags"><span class="tag">operation</span><span class="tag">client</span></div></li>
+      <li><b>Authorise every item</b><span>Checked over live facts, not cached ones, so delegation is evaluated against what is true now.</span><div class="tags"><span class="tag">authz</span></div></li>
+      <li><b>Preview to the admin</b><span>The UI shows what will change, with lossy and irreversible steps called out. Approvals bind to a hash of the plan.</span><div class="tags"><span class="tag">web console</span><span class="tag">gate</span></div></li>
+      <li><b>Enqueue chunk jobs</b><span>Work is split into chunks and queued on the Postgres-backed job queue.</span><div class="tags"><span class="tag">jobs</span></div></li>
+      <li><b>Per step: claim, then write</b><span>The claim is committed before the write. The write checks a digest and re-reads live state, then goes through the connector as a pinned, conditional write.</span><div class="tags"><span class="tag">client.Write</span><span class="tag t-sec">connector</span></div></li>
+      <li><b>Record outcome and audit together</b><span>The outcome and its audit event land in one database commit, so neither can exist without the other.</span><div class="tags"><span class="tag">audit</span><span class="tag">PostgreSQL</span></div></li>
+      <li><b>Verify, then notify</b><span>A read-back on the pinned controller confirms the change. The change also reaches the inventory through the change feed, linked to the operation ID.</span><div class="tags"><span class="tag">notify</span><span class="tag">inventory</span></div></li>
+    </ol>
+    <p class="lede">Other flows in blueprint §14: inventory sync, help-desk reset with one-time code, scheduled report, remote connector enrolment, and signed updates with automatic rollback.</p>
+  </section>
+
+  <!-- ============ DEPLOYMENT ============ -->
+  <section class="panel" id="p-deploy" role="tabpanel" aria-labelledby="tab-deploy" hidden>
+    <p class="lede">One codebase, three compositions, chosen at build time from a manifest. Adapters may differ between profiles. Capabilities may not: where something needs Windows, it runs on a customer Windows host that both profiles can reach.</p>
+    <div class="profiles">
+      <div class="profile">
+        <h3>windows <span class="status">MSI · v1</span></h3>
+        <ul>
+          <li>Windows service running <code>cmd/server</code> with the server and embedded connector roles</li>
+          <li>Providers: AD and Entra</li>
+          <li>Kerberos through SSPI with a gMSA</li>
+          <li>Keys sealed with DPAPI-NG or TPM</li>
+          <li>PostgreSQL 18 bundled, or the customer's PG 16+</li>
+        </ul>
+      </div>
+      <div class="profile">
+        <h3>linux-oci <span class="status">images · v1</span></h3>
+        <ul>
+          <li>Container running <code>cmd/server</code> with the server and embedded connector roles</li>
+          <li>Providers: AD and Entra</li>
+          <li>Kerberos through krb5 with an AES keytab</li>
+          <li>Keys from TPM2, KMS, Vault or a passphrase</li>
+          <li>Customer PG 16+, or the upstream PG 18 image pinned by digest</li>
+        </ul>
+      </div>
+      <div class="profile">
+        <h3>saas <span class="status">CI only, not shipped</span></h3>
+        <ul>
+          <li>Our cell per region: stateless <code>cmd/server</code> replicas, managed PostgreSQL, our own edge</li>
+          <li>Entra only in the cell</li>
+          <li>AD reached through a connector at the customer site, dialling out over mTLS, so AD credentials never leave the customer</li>
+          <li>Keys in KMS</li>
+        </ul>
+      </div>
+    </div>
+    <p>Optional on either self-hosted profile: a remote <code>cmd/connector</code> for another forest, DMZ or branch; <code>cmd/edge</code> for end-user access (M4); <code>cmd/agent</code> on domain controllers and file servers (M3). Self-hosted installs have exactly one tenant, created at install, and run the same row-level-security code path as SaaS.</p>
+  </section>
+
+  <!-- ============ REPO MAP ============ -->
+  <section class="panel" id="p-repo" role="tabpanel" aria-labelledby="tab-repo" hidden>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Path</th><th>What lives there</th><th>Owner</th></tr></thead>
+        <tbody>
+          <tr><td>cmd/&lt;role&gt;/</td><td>One tiny <code>main</code> per process kind: server, connector, edge, agent and later radius, fpolicy, t0-connector. Also <code>auditverify</code>, the offline audit verifier.</td><td>backend-engineer</td></tr>
+          <tr><td>internal/compose/</td><td>Composition root. Manifests as data (<code>profile</code>), config loader, one wiring package per binary.</td><td>backend-engineer</td></tr>
+          <tr><td>internal/platform/</td><td>The extractable kernel: tenant, authn, authz, audit, jobs, operation, keys, secret, store, blob and more.</td><td>backend-engineer</td></tr>
+          <tr><td>internal/directory/</td><td>Directory domain: safe primitives, object model, inventory, sync, connection registry, connector client.</td><td>directory-engineer</td></tr>
+          <tr><td>internal/connector/</td><td>Only code that talks LDAP, Kerberos or Graph and holds directory credentials.</td><td>directory-engineer</td></tr>
+          <tr><td>internal/modules/&lt;id&gt;/</td><td>Server feature modules, one directory each with a page under architecture/modules/.</td><td>per module</td></tr>
+          <tr><td>internal/agentmodules/</td><td>Agent modules for DCs and file servers (M3).</td><td>windows-engineer</td></tr>
+          <tr><td>api/openapi/</td><td>The public API contract, source of truth for generated Go and TypeScript.</td><td>api-engineer</td></tr>
+          <tr><td>proto/</td><td>Protobuf contracts: shared host, connector, agent modules.</td><td>api-engineer</td></tr>
+          <tr><td>migrations/</td><td>One forward-only SQL sequence; every file is owned by exactly one package.</td><td>backend-engineer</td></tr>
+          <tr><td>web/</td><td>React and TypeScript console, design system in <code>src/ds</code>, generated API client.</td><td>frontend-engineer</td></tr>
+          <tr><td>sidecars/</td><td>.NET and PowerShell adapters for Exchange and GPMC.</td><td>windows-engineer</td></tr>
+          <tr><td>tools/ · lab/ · testdata/</td><td>CI fitness functions, analyzers, generators, the Samba AD lab, test corpora.</td><td>devops-engineer</td></tr>
+          <tr><td>garage/</td><td>Prototypes and spikes with an owner and an expiry date. Never imported.</td><td>its owner</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="lede">Read next in the Library: <code>knowledge/development/architecture/blueprint.md</code>, the ADRs in <code>knowledge/development/decisions/</code>, the module pages in <code>architecture/modules/</code> and <code>threat-model.md</code>.</p>
+  </section>
+</div>
+
+<script>
+(function () {
+  var NODES = {
+    admins: { name: 'Admins and help desk', layer: 'Client', path: 'web/', owner: 'frontend-engineer', body: 'Use the React console in a browser over HTTPS. The console is one client of the public API and has no private endpoints, so anything it can do a script can do.' },
+    integrations: { name: 'Integrations', layer: 'Client', path: 'api/openapi/', owner: 'api-engineer', body: 'ServiceNow, ServiceDesk Plus, scripts and the PowerShell module call the same OpenAPI operations with an API token. Webhooks go the other way.' },
+    endusers: { name: 'End users', layer: 'Client', milestone: 'M4', path: 'cmd/edge', owner: 'backend-engineer', body: 'Self-service password reset, unlock and MFA arrive through the edge, not through the admin console.' },
+    edge: { name: 'Edge', layer: 'Process', milestone: 'M4', path: 'cmd/edge', owner: 'backend-engineer', body: 'A stateless process for end-user access. It holds no secrets and shares its process with nothing. The server tunnels out to it, so the internet-facing box never holds a path back in.' },
+    api: { name: 'apihost', layer: 'Server', path: 'internal/compose/server, api/openapi/', owner: 'api-engineer', body: 'Terminates HTTP, authenticates callers, enforces strict JSON and problem+json errors, and serves the embedded web UI. Handlers are generated from the OpenAPI contract, which is contract-first and versioned under /api/v1.' },
+    modules: { name: 'Feature modules', layer: 'Server', path: 'internal/modules/<id>/', owner: 'per module', body: 'Everything a customer sees as a feature lives here: connections, objects, helpdesk, delegation, lifecycle, workflow, reports, history, search, m365, itsm, migration, hardening. Each registers through the Registrar and never imports another module. They cooperate by ID: an Action, a report dataset, an audit kind, a notification sink or a job kind.' },
+    directory: { name: 'Directory domain', layer: 'Server', path: 'internal/directory/', owner: 'directory-engineer', body: 'The safe primitives (LDAP filter and DN builders, attribute codecs), the object model, the inventory kept by sync, the connection registry and the client that speaks the connector contract. It never imports the connector, modules or compose.' },
+    platform: { name: 'Platform kernel', layer: 'Server', path: 'internal/platform/', owner: 'backend-engineer', body: 'Tenancy, authentication, authorisation, the audit trail, the job queue, the operation pipeline, keys, secrets, notifications, reporting, blob storage, fleet gateway, updates and the module system. It imports nothing above it, so it can be extracted and shared with UEM (D-0003).' },
+    connector: { name: 'Connector', layer: 'Server or remote', path: 'internal/connector/', owner: 'directory-engineer', body: 'The only path to a directory. It is the only code that imports LDAP, Kerberos and Graph libraries and the only code that unseals directory credentials. Providers: ad (ldap, kerberos, scope) and entra (graph). It runs embedded in the server, or remote as cmd/connector.' },
+    remote: { name: 'Remote connector', layer: 'Customer site', path: 'cmd/connector', owner: 'directory-engineer', body: 'The same connector, run in another forest, site or DMZ, or for redundancy. An admin creates an enrolment token, the connector dials the server over gRPC with mTLS and receives a certificate. AD credentials never leave its host.' },
+    agent: { name: 'Host agent', layer: 'Customer host', milestone: 'M3', path: 'cmd/agent, internal/agentmodules/', owner: 'windows-engineer', body: 'Runs on domain controllers and file servers. The password filter in LSASS talks to it over a pipe. Agent modules (addc, fileserver) link kernel packages and directory primitives only, never anything that reaches the database.' },
+    dcs: { name: 'Domain controllers', layer: 'External', path: '', owner: '', body: 'Reached by the connector over LDAPS or Kerberos with channel binding, signed and sealed. The server is never installed on a domain controller.' },
+    entra: { name: 'Microsoft Entra ID', layer: 'External', path: '', owner: '', body: 'Reached by the connector through Microsoft Graph over HTTPS. The app certificate is sealed under the tenant data key.' },
+    pg: { name: 'PostgreSQL and blob store', layer: 'External', path: 'migrations/', owner: 'backend-engineer', body: 'PostgreSQL 16 to 18 is the only stateful service, with a file or S3 blob store beside it. Tenant isolation uses row-level security. A self-hosted install has exactly one tenant and runs the same code path as SaaS.' }
+  };
+  var detail = document.getElementById('detail');
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function show(id) {
+    var n = NODES[id]; if (!n) return;
+    var rows = '<dt>Layer</dt><dd>' + esc(n.layer) + '</dd>';
+    if (n.path) rows += '<dt>Code</dt><dd><code>' + esc(n.path) + '</code></dd>';
+    if (n.owner) rows += '<dt>Owner</dt><dd>' + esc(n.owner) + '</dd>';
+    detail.innerHTML = '<h3>' + esc(n.name) + (n.milestone ? '<span class="chip">' + esc(n.milestone) + '</span>' : '') + '</h3><p>' + esc(n.body) + '</p><dl>' + rows + '</dl>';
+    document.querySelectorAll('.node').forEach(function (g) { g.setAttribute('aria-pressed', g.getAttribute('data-id') === id ? 'true' : 'false'); });
+  }
+  document.querySelectorAll('.node').forEach(function (g) {
+    g.addEventListener('click', function () { show(g.getAttribute('data-id')); });
+    g.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); show(g.getAttribute('data-id')); } });
+  });
+  show('connector');
+
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('.tab'));
+  function select(name) {
+    tabs.forEach(function (t) {
+      var on = t.id === 'tab-' + name;
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+      document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
+    });
+    
+  }
+  tabs.forEach(function (t) { t.addEventListener('click', function () { select(t.id.replace('tab-', '')); }); });
+  var start = 'map';
+  try { start = (location.hash || '').replace('#', '') || 'map'; } catch (e) {}
+  if (!document.getElementById('tab-' + start)) start = 'map';
+  select(start);
+})();
+</script>
+</body>
+</html>
