@@ -1,6 +1,6 @@
 ---
 title: CEO preferences
-updated: 2026-10-02
+updated: 2026-10-09
 budget: 120 lines
 ---
 
@@ -10,6 +10,7 @@ Newest first within each section. Every entry: date · preference · source. Use
 CEO unless they state otherwise.
 
 ## Working style
+- 2026-10-09 · Prefers transparency and control over the conservative option on public release: chose source-available BSL, publishing all of business/ and a personal owner over the recommended Apache-2.0 / keep-business-private / org. For leaving-the-building questions, offer the options but do not assume the cautious one wins. (D-0018)
 - 2026-10-02 · With three clickable previews and a recommendation, the CEO took the recommended taste option (A · Ledger) on the board about 90 minutes after filing, with no note and no mix. On D-0005, which was option text only, they overrode the recommendation. Previews plus a reasoned recommendation get fast taste answers, so keep that format for T-0016 (docs) and T-0017 (video). (D-0012)
 - 2026-10-02 · Took the recommended option on the four strategy questions (scope, deployment, platform, ambition) but **overrode it on brand**. They chose a separate brand over the recommended skenzeriq sub-brand, on the board, before the 72 h default ran out. Keep leading with a recommendation, but expect the CEO to override it on identity and taste. Those questions need real previews, not option text. (D-0001…D-0005)
 - 2026-10-02 · Asks only for directional input: number of features, UI style, video style, documentation style, brand guidelines, demo acceptance. Everything else the factory decides. (kickoff brief)
