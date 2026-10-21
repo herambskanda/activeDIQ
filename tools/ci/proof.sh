@@ -77,6 +77,28 @@ must_fail_with "fitness-modules on a platform package importing the directory do
 printf 'package kernel\n' >"$fit/internal/platform/kernel/k.go"
 must_pass "fitness-modules" go run ./tools/fitness/modules -root "$fit"
 
+# --- fitness-operation (ADR-0005 O9, the kernel import DAG), the real CLI on throw-away trees ----
+# The throw-away tree carries a copy of the real ADR, so the proof reads the same dag block as CI.
+# The per-case proofs are the tool's own tests (go test ./tools/fitness/operation).
+opbin="$tmp/fitness-operation"; go build -o "$opbin" ./tools/fitness/operation
+opt="$tmp/op"; adr=knowledge/development/decisions/0005-operation-pipeline-and-audit-trail.md
+mkdir -p "$opt/internal/platform/tenant" "$opt/internal/platform/store" "$opt/internal/platform/audit" "$opt/internal/platform/authz/actions" "$opt/internal/platform/audit/chain" "$opt/$(dirname "$adr")"
+printf 'module op.test\n\ngo 1.27.0\n' >"$opt/go.mod"
+cp "$adr" "$opt/$adr"
+op_put() { printf 'package p\n\nimport _ "op.test/internal/platform/%s"\n' "$2" >"$opt/internal/platform/$1/p.go"; }
+printf 'package p\n' >"$opt/internal/platform/tenant/p.go"; printf 'package p\n' >"$opt/internal/platform/audit/p.go"; printf 'package p\n' >"$opt/internal/platform/audit/chain/p.go"
+op_put store audit
+must_fail_with "fitness-operation O9 on store importing audit" 'internal/platform/store/p.go:3: O9 \[rule 13\] store imports audit' "$opbin" -root "$opt"
+op_put store tenant; op_put tenant store
+must_fail_with "fitness-operation O9 on tenant importing store" 'internal/platform/tenant/p.go:3: O9 \[rule 13\] tenant imports store' "$opbin" -root "$opt"
+printf 'package p\n' >"$opt/internal/platform/tenant/p.go"; op_put authz/actions audit/chain
+must_fail_with "fitness-operation O9 on authz/actions importing a package operation does not import" 'authz/actions imports audit/chain' "$opbin" -root "$opt"
+op_put authz/actions audit
+must_pass "fitness-operation O9 (store -> tenant, authz/actions -> audit)" "$opbin" -root "$opt"
+sed -i.bak 's/^store  *-> tenant$/store -> (none)/' "$opt/$adr"; rm -f "$opt/$adr.bak"
+must_fail_with "fitness-operation O9 follows an edit of the ADR block (store -> (none))" 'store imports tenant' "$opbin" -root "$opt"
+must_pass "fitness-operation O9 on the repository itself" "$opbin" -root "$root"
+
 # --- fitness-proto (the connector contract), the real CLI on throw-away trees ------------------
 pr="$tmp/proto"
 mkdir -p "$pr"
