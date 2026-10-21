@@ -66,8 +66,9 @@ func CheckTransport(dsn string, allowInsecure bool) (TransportStatus, error) {
 var errInvalidDSN = errors.New("store: invalid DSN")
 
 // guardParse runs a pgx DSN parser and turns a parser panic (pgx v5.9.2 panics on input such as "='0\\")
-// into errInvalidDSN: configuration text must never crash the process. A normal parse error keeps pgx's
-// message, which redacts the password.
+// into errInvalidDSN: configuration text must never crash the process. A parse error is also reduced to
+// errInvalidDSN: pgx's messages only partly redact the password (query-string password, spaced or
+// upper-case keywords, URL-escape fragments leak), so none of its text is passed on.
 func guardParse[T any](parse func() (*T, error)) (cfg *T, err error) {
 	defer func() {
 		if recover() != nil {
@@ -76,7 +77,7 @@ func guardParse[T any](parse func() (*T, error)) (cfg *T, err error) {
 	}()
 	cfg, err = parse()
 	if err != nil {
-		return nil, fmt.Errorf("store: invalid DSN: %w", err)
+		return nil, errInvalidDSN
 	}
 	return cfg, nil
 }
