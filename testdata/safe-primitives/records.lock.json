@@ -220,6 +220,22 @@
       "SID-15#2": true,
       "SID-15#3": true
     },
+    "attr.unicodepwd": {
+      "PW-J01": false,
+      "PW-J02": false,
+      "PW-J03": true,
+      "PW-J04": true,
+      "PW-J05": true,
+      "PW-J06": true,
+      "PW-J07": true,
+      "PW-J08": true,
+      "PW-J09": true,
+      "PW-J10": true,
+      "PW-J11": true,
+      "PW-J12": true,
+      "PW-J13": true,
+      "PW-J14": true
+    },
     "pslit": {
       "PSQ-01": true,
       "PSQ-02": true,

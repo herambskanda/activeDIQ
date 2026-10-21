@@ -53,6 +53,15 @@
         "sql"
       ],
       "package": "internal/platform/store"
+    },
+    {
+      "name": "go/secretjson",
+      "language": "go",
+      "tier": "S",
+      "units": [
+        "attr.unicodepwd"
+      ],
+      "package": "internal/platform/secret/secretjson"
     }
   ],
   "fuzz": [
@@ -108,6 +117,15 @@
       "properties": [
         "roundtrip",
         "noRelaxedWithoutOverride"
+      ]
+    },
+    {
+      "implementation": "go/secretjson",
+      "unit": "attr.unicodepwd",
+      "target": "FuzzSecretJSON",
+      "properties": [
+        "roundtrip",
+        "noUnescapedSpecial"
       ]
     }
   ]
