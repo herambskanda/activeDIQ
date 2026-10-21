@@ -33,9 +33,9 @@ func TypesPkgDir(pass *analysis.Pass, pkg *types.Package) string {
 	return p
 }
 
-// IsTestFile reports a Go test file.
+// IsTestFile reports a Go test file, or a file of a test-support package (policy.TestSupport).
 func IsTestFile(pass *analysis.Pass, f *ast.File) bool {
-	return strings.HasSuffix(pass.Fset.Position(f.Pos()).Filename, "_test.go")
+	return strings.HasSuffix(pass.Fset.Position(f.Pos()).Filename, "_test.go") || policy.IsTestSupport(PkgDir(pass))
 }
 
 // HasHeader reports whether the file's first comment line starts with header.
