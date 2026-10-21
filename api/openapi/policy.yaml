@@ -7,10 +7,10 @@
 # (stepUp). Optional: `host`, `gate`; `schema` is required in secretResponses. An entry that names
 # something absent from the contract fails; `host` fails until the apihost binding table exists.
 #
-# Seeded by T-0032 with exactly the routes that exist today: the non-API routes of ADR-0004 rule 5
-# (AN-1 to AN-3). The contract has no operation yet, so an operation, permission or schema row
-# would be stale. These rows enter in the change that adds what they name. Its owner adds the row,
-# and security-architect reviews it:
+# Seeded by T-0032 with the non-API routes of ADR-0004 rule 5 (AN-1 to AN-3). T-0034 added the AN-1
+# operations getLiveness and getReadiness (TM §7.6 rules 8 and 9). Any other operation, permission
+# or schema row would be stale until what it names exists. These rows enter in the change that adds
+# what they name. Its owner adds the row, and security-architect reviews it:
 #
 #   anonymous        AN-4  first-run setup operation                    gate: one-time setup secret
 #                    AN-5  end-user TOTP enrolment operations           host: enrolment binding (T-0018 table first)
