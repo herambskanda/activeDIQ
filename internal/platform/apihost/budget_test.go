@@ -101,3 +101,18 @@ func TestBodyBudgetMustBePositive(t *testing.T) {
 		t.Fatal("Build accepted a zero budget")
 	}
 }
+
+func TestOversizedContentLengthIs413AndSpendsNoBudget(t *testing.T) {
+	const max = 1 << 10 // the route's MaxBody
+	s := budgetServer(t, 16)
+	req, _ := stalled(max + 1)
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, req)
+	problemOf(t, rec, 413, apitypes.ProblemTypePayloadTooLarge)
+	// Budget untouched: a small body still fits.
+	rec = httptest.NewRecorder()
+	s.ServeHTTP(rec, post("/widgets", "application/json", `{"name":"a"}`))
+	if rec.Code == 429 {
+		t.Fatalf("oversized declaration consumed the budget: %s", rec.Body)
+	}
+}

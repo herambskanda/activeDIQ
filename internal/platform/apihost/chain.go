@@ -168,6 +168,11 @@ func (s *Server) routeHandler(rt Route, boundHost string) http.Handler {
 		switch {
 		case hasBody:
 			var err error
+			// An oversized declaration is refused before it can touch the budget: nothing is allocated for it.
+			if r.ContentLength > meta.MaxBody {
+				fail(apitypes.PayloadTooLarge(""))
+				return
+			}
 			// Reserve the buffer's bytes before allocating it; refuse, never queue.
 			size := reserveSize(r.ContentLength, meta.MaxBody)
 			if !s.budget.tryAcquire(size) {
