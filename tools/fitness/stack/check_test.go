@@ -536,6 +536,39 @@ func TestF4TransitiveCopyleftInAShippedBinary(t *testing.T) {
 	})
 }
 
+func TestF4MainModuleIsNotADependency(t *testing.T) {
+	busl := "Business Source License 1.1\n\nLicensor: example\n"
+	gpl := "                    GNU GENERAL PUBLIC LICENSE\n                       Version 3, 29 June 2007\n"
+	t.Run("our own BUSL LICENSE passes", func(t *testing.T) {
+		f := newFixture(t)
+		f.write("LICENSE", busl)
+		f.write("cmd/server/main.go", "package main\n\nfunc main() {}\n")
+		none(t, f.run("F4", true))
+	})
+	t.Run("the main module is found from go.mod, not a fixed path", func(t *testing.T) {
+		f := newFixture(t)
+		f.write("go.mod", "module example.org/some/other/path\n\ngo 1.27.0\n")
+		f.write("LICENSE", busl)
+		f.write("cmd/server/main.go", "package main\n\nfunc main() {}\n")
+		none(t, f.run("F4", true))
+	})
+	t.Run("a strong-copyleft dependency in the same tree still fails", func(t *testing.T) {
+		f := newFixture(t)
+		f.write("LICENSE", busl)
+		f.write("go.mod", goModRequiring("example.com/dep"))
+		localModule(f, "example.com/dep", gpl)
+		f.write("cmd/server/main.go", "package main\n\nimport _ \"example.com/dep\"\n\nfunc main() {}\n")
+		vs := f.run("F4", true)
+		want(t, vs, "F4", "go.mod", "example.com/dep")
+		want(t, vs, "F4", "go.mod", "GPL")
+		for _, v := range vs {
+			if strings.Contains(v.Msg, "fx.test") {
+				t.Errorf("own module reported: %v", v)
+			}
+		}
+	})
+}
+
 func TestF4WebDependencies(t *testing.T) {
 	f := newFixture(t)
 	f.write("web/package.json", `{"dependencies":{"react":"1.0.0","left-pad":"1.0.0"},"devDependencies":{"@scope/pkg":"1.0.0","dev-only-unregistered":"1.0.0"}}`)
