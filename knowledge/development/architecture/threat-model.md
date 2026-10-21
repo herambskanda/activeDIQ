@@ -1151,7 +1151,7 @@ operation of the document (`x-permission: anonymous`, ADR-0004 rule 5) or a non-
 
 | # | Route group | Listener | Shape | Gate |
 | --- | --- | --- | --- | --- |
-| AN-1 | Health (liveness and readiness; status only, no version or configuration detail) | L1 console/API | Non-API: `GET /healthz`, `GET /readyz` | None |
+| AN-1 | Health (liveness and readiness; status only, no version, configuration or dependency detail) | L1 console/API | Non-API: `GET /healthz`, `GET /readyz` for load balancers and orchestrators. Operations `getLiveness` (`GET /api/v1/health/live`) and `getReadiness` (`GET /api/v1/health/ready`) for clients that reach only `/api/v1`: `x-activediq-scope: platform`, rate class `anonymous`, no request body (rules 8, 9) | None |
 | AN-2 | Static assets of the embedded web UI | L1 console/API | Non-API: `GET /`, `GET /assets/{path...}` and the client-side fallback | None |
 | AN-3 | SSO callbacks (OIDC redirect, SAML ACS) and SSO start | L1 console/API | Non-API: `/auth/sso/{idpId}/start`, `/auth/sso/{idpId}/callback` | Signed IdP response (§7.2) |
 | AN-4 | First-run setup | L1 console/API | Operation | One-time setup secret; gone after first use |
@@ -1162,7 +1162,7 @@ operation of the document (`x-permission: anonymous`, ADR-0004 rule 5) or a non-
 | AN-9 | AD-identity sign-in by SPNEGO (Kerberos), if the PRD offers it (BP §11; ADR-0002 rule 3) | L1 console/API; never on an AN-5/AN-7 hostname | Non-API: `GET /auth/negotiate` (HTTP Negotiate, [RFC 4559](https://www.rfc-editor.org/rfc/rfc4559), is a header exchange, not JSON), rate class `auth` | A Kerberos AP-REQ for our HTTP service principal, verified by the connector's SPNEGO acceptor. Success yields **only** a pending sign-in (AN-10), never a session |
 | AN-10 | Sign-in second factor (WebAuthn challenge and assertion, TOTP) for a pending sign-in from AN-3 (when the IdP is not MFA-asserting), AN-8 or AN-9 | L1 console/API | Operations, rate class `auth` | The pending-sign-in handle plus the account's enrolled factor |
 
-**Rules for AN-8 to AN-10** (RT-7 review by T-0032).
+**Rules for AN-8 to AN-10** (RT-7 review by T-0032). Rules 8 and 9 cover AN-1 (T-0044).
 
 1. **No session before MFA.** AN-8 and AN-9 end in a *pending sign-in*: a server-side record with a
    CSPRNG handle of at least 128 bits, stored hashed, bound to one account and to the first factor
@@ -1201,6 +1201,23 @@ operation of the document (`x-permission: anonymous`, ADR-0004 rule 5) or a non-
    WebAuthn assertions in AN-10 go through the vetted library chosen for §7.2 (RT-15).
 7. **SPNEGO grants exactly what AN-9 says.** A Kerberos sign-in satisfies TM-D19 rule 3 for the
    correlated account. It does not skip AN-10.
+8. **AN-1 says "up" or "not up", nothing else.** The health operations and the non-API probes
+   answer `200 {"status":"ok"}`, `503 /problems/not-ready` or `500 /problems/internal`. None of
+   them carries a `detail`, and no response names a dependency, host, port, version, configuration
+   value or error text. An anonymous caller on L1 would otherwise learn which database, DC or
+   connector is down, and what version runs, which is reconnaissance for TM-TB2-T2. The cause of a
+   not-ready state goes to the server log only. The operations are `platform` scope, because a
+   health answer is about the process, not a tenant; anonymous `tenant` scope is refused by the
+   generator (T-0034).
+9. **A body-less operation takes no body.** For an operation whose generated route has
+   `Body: BodyNone`, a request with `Content-Length` above 0 or any `Transfer-Encoding` is refused
+   at chain step 6 with `413 /problems/payload-too-large`, before authentication and before the
+   handler. Today the generator gives body-less operations the default cap of 1 MiB, so an
+   anonymous GET can carry up to 1 MiB, or a chunked body of any length, that is never read.
+   Content in a GET "has no generally defined semantics" and may be rejected for "its potential as
+   a request smuggling attack" ([RFC 9110 §9.3.1](https://www.rfc-editor.org/rfc/rfc9110#section-9.3.1)).
+   The rule applies to every `BodyNone` operation, not only AN-1. `Content-Length: 0` is allowed.
+   Enforcement and both tests are T-0050.
 
 Other AD-password sign-in (a username and password checked by connector `VerifyUser` on the console)
 is **not** on this list. If the ADM-143 spec wants it, it is a new row through RT-7, and TM-TB1-T9's
@@ -1209,13 +1226,21 @@ counter rule applies.
 **Proof TM-F-ANON.** The set of routes the built router serves without authentication equals a
 reviewed allow-list file kept in the API contract tree (`api/openapi/policy.yaml`, sections
 `anonymous` and `nonApiRoutes`), with `security-architect` as its CODEOWNER. Any difference fails
-CI. This is fitness-api A4 (T-0018), and A13 already fails stale or unreferenced entries. Adding a
+CI. This is fitness-api A4 (T-0018), and A13 already fails stale or unreferenced entries. For
+AN-1 it adds two tests (T-0050): `TestHealthProblemsCarryNoDetail` (`internal/platform/health`)
+drives readiness with a failing dependency whose error names a host and a version, and a handler
+internal error, and asserts the 503 and 500 problems have no `detail` member and neither string
+appears in the body, and that the 200 body is exactly `{"status":"ok"}` (rule 8).
+`TestBodyNoneRefusesBody` (`internal/platform/apihost`) sends a GET with a 1-byte body, with a
+1 MiB `Content-Length` and with a chunked body to a `BodyNone` operation, and asserts 413 with the
+handler never called, and that `Content-Length: 0` reaches the handler (rule 9). Adding a
 row to the table above is a §14 trigger (RT-7). TM-F-SESSION adds cases for rules 1 to 4, and
 TM-F-ABUSE for rules 2 and 3. Rows AN-8 to AN-10 were added under RT-7 by T-0032 (2026-10-21).
 
 **Which rows are in `policy.yaml` today.** An entry that names an operation absent from the
 contract is stale and fails A13, and an entry with a `host` fails until T-0018 lands the
-hostname-binding table. So the seed carries the non-API routes of AN-1 to AN-3 only. AN-4, AN-5,
+hostname-binding table. So the seed carries the non-API routes of AN-1 to AN-3, and the two AN-1
+operations entered with their contract (T-0034). AN-4, AN-5,
 AN-7, AN-8 and AN-10 enter with their operations. AN-5 and AN-7 also need their hostname binding
 from T-0018. AN-9 enters when the PRD offers SPNEGO. The file's header lists each pending row.
 
@@ -1275,8 +1300,8 @@ calls per technician per day, then charges per extra call (parity matrix row 18,
 
 | Class | Applies to | Key | Rate / min | Burst | Reasoning |
 | --- | --- | --- | --- | --- | --- |
-| *(all)* | Every request, chain step 3, before authentication | Source IP | 1200 | 300 | A floor against unauthenticated floods that still fits about 50 technicians behind one NAT or proxy at about 20 requests a minute each. Health probes and static assets (AN-1, AN-2) are limited only by this |
-| `anonymous` | AN-4, AN-5, AN-7 operations | Source IP | 60 | 20 | End users enrol from shared office IPs. The flow's own per-account gate (TM-TB1-T9 counter, TB11 rules) is the real control; this bounds cost |
+| *(all)* | Every request, chain step 3, before authentication | Source IP | 1200 | 300 | A floor against unauthenticated floods that still fits about 50 technicians behind one NAT or proxy at about 20 requests a minute each. The non-API health probes (`/healthz`, `/readyz`) and static assets (AN-1, AN-2) are limited only by this |
+| `anonymous` | AN-1 operations (`getLiveness`, `getReadiness`), AN-4, AN-5, AN-7 operations | Source IP | 60 | 20 | End users enrol from shared office IPs. The flow's own per-account gate (TM-TB1-T9 counter, TB11 rules) is the real control; this bounds cost. For AN-1 the class is the whole control. A monitor polling both operations every 10 seconds uses 12 a minute. Orchestrators probe `/healthz` and `/readyz`, which only the floor limits |
 | `auth` | AN-3, AN-8, AN-9, AN-10 | Source IP | 60 | 30 | A morning sign-in rush through one NAT takes 2 to 4 requests per person. Password guessing is stopped per account (§7.6 rule 3, TM-TB1-T9), not by this |
 | `auth` | AN-8, AN-10 | Target account or pending handle | 10 | 5 | Per-account guessing. AN-10 is further capped by 5 attempts per pending sign-in |
 | `read` | GET and HEAD by default | Principal (session or token) | 600 | 120 | A console page fans out to 10 to 20 calls. A script paging through 100,000 users at 1,000 per page needs 100 calls. Generous because reads are scope-trimmed and cheap |
@@ -1294,8 +1319,53 @@ calls per technician per day, then charges per extra call (parity matrix row 18,
   of an account.
 - **Behind a reverse proxy**, the source IP is taken from `X-Forwarded-For` only when the request
   came from a configured trusted-proxy CIDR. Otherwise it is the TCP peer.
+- **The per-IP key is a network prefix, not the full address (T-0051).** One IPv6 host controls a
+  whole /64. The interface identifier is the low 64 bits
+  ([RFC 4291 §2.5.1](https://www.rfc-editor.org/rfc/rfc4291#section-2.5.1)), and hosts rotate
+  random temporary addresses inside it ([RFC 8981](https://www.rfc-editor.org/rfc/rfc8981)). Keyed
+  by full address, the `anonymous` limit of 60 a minute becomes 2^64 times 60 for anyone with one
+  IPv6 subnet. The limiter adapter derives the key in this order. The rules apply to every row whose
+  key is "Source IP": the floor, `anonymous` and `auth`. They do not apply to per-account or
+  per-principal rows.
+  1. **Parse** the source address, which is the TCP peer or the trusted-proxy result above, with
+     [`net/netip`](https://pkg.go.dev/net/netip). Strip any zone (`%eth0`). Unmap an IPv4-mapped
+     IPv6 address (`::ffff:a.b.c.d`) to IPv4, so a dual-stack listener does not give one IPv4
+     client two buckets.
+  2. **NAT64 well-known prefix.** An address in `64:ff9b::/96`
+     ([RFC 6052 §2.1](https://www.rfc-editor.org/rfc/rfc6052#section-2.1)) is keyed by its embedded
+     IPv4 address under rule 3. Otherwise every IPv4 client behind one NAT64 gateway would share a
+     single /64 bucket.
+  3. **Mask.** IPv4 is keyed at **/32** by default. The operator can set it from /24 to /32. IPv6 is
+     keyed at **/64** by default. The operator can set it from /48 to /64. A length finer than /64
+     for IPv6, or outside either range, fails startup. These are host deployment settings in
+     `apihost` configuration, audited at startup. Tenants cannot change them, because per-IP limits
+     run before authentication and before any tenant is known. The key is the canonical masked
+     prefix (`netip.Prefix.Masked().String()`, for example `2001:db8:1:2::/64` or
+     `192.0.2.7/32`) with the class prepended.
+  4. **Unparseable source.** If the source cannot be parsed, every such request shares one constant
+     bucket per class. The raw string is never a key, so a malformed value cannot mint fresh
+     buckets.
+  5. **Bounded table.** Per-node bucket memory is capped. A bucket that has refilled to its burst
+     carries no state and is evicted. At the cap, requests with a new key share one overflow bucket
+     per class. That throttles them; it never admits them unlimited.
+- **Residual (per-IP keying).** IPv6 end sites are commonly assigned a /48 or a /56. RIPE-690
+  suggests "/48 for business customers and /56 for residential customers"
+  ([RIPE-690](https://www.ripe.net/publications/docs/ripe-690/)). An attacker with a /48 therefore
+  still holds 65,536 /64 buckets, and one with a /56 holds 256. The same holds for an IPv4 botnet
+  with many addresses. Per-IP limits bound cost; they were never the abuse control. Guessing and
+  enumeration on AN-4, AN-5, AN-7 and the `auth` routes are stopped by the per-account gates
+  (TM-TB1-T9, §7.6 rule 3, the per-account `auth` row above). Internet exposure goes only through
+  `edge` (TM-O8). An operator who sees abuse spread across a prefix can tighten IPv6 to /56 or /48,
+  at the cost of legitimate users in that site sharing a bucket. Clients behind 6to4, Teredo or a
+  non-well-known NAT64 prefix are keyed as plain IPv6 at /64 and may share a bucket. That over-limits
+  them; it never under-limits.
 - **Proof.** TM-F-SESSION adds a case per class: the bucket refuses at burst + 1 within a second,
-  with `Retry-After`. A12 (fitness-api) refuses an unknown class, an anonymous operation outside
+  with `Retry-After`. It adds per-IP keying cases. Burst + 1 requests spread across two addresses in
+  one /64 are refused. Two different /64s get separate buckets. `192.0.2.1` and `::ffff:192.0.2.1`
+  share a bucket, `fe80::1%eth0` and `fe80::1` share a bucket, and `64:ff9b::c000:201` shares a
+  bucket with `192.0.2.1`. An IPv6 setting of 65 or 47, or an IPv4 setting of 23, fails startup.
+  Unparseable sources all land in one bucket. At the table cap, a new key is throttled, not
+  admitted. A12 (fitness-api) refuses an unknown class, an anonymous operation outside
   `anonymous`/`auth`, a `secretResponses` operation outside `reveal`, and a `SecretInput` request
   outside `secret`.
 
@@ -1845,8 +1915,12 @@ External, in order of first use:
 63. https://learn.microsoft.com/windows/security/threat-protection/security-policy-settings/network-security-restrict-ntlm-outgoing-ntlm-traffic-to-remote-servers
 64. https://theupdateframework.github.io/specification/latest/
 65. https://learn.microsoft.com/en-us/powershell/exchange/app-only-auth-powershell-v2
+66. https://www.rfc-editor.org/rfc/rfc9110#section-9.3.1
 
 ## Changelog
+
+- 2026-10-21 · T-0051 (from the T-0043 security review). §7.8: the per-IP limiter key is a network prefix. IPv4 is keyed at /32 (configurable /24 to /32) and IPv6 at /64 (configurable /48 to /64, never finer). Before masking: zone stripped, IPv4-mapped unmapped, NAT64 `64:ff9b::/96` keyed by the embedded IPv4. Unparseable sources share one bucket, and the bucket table is bounded with a throttling overflow bucket. Residual stated (a /48 is 65,536 buckets; per-account gates and `edge` remain the control). Proof cases added to TM-F-SESSION. Adapter build ticket T-0054.
+- 2026-10-21 · v0.4 (T-0044). §7.6 AN-1 lists the operations `getLiveness` and `getReadiness` (T-0034, platform scope, class `anonymous`) next to the non-API probes. New rules 8 (health responses carry no `detail`, dependency, host, version or error text) and 9 (a request body on a `BodyNone` operation is refused with 413, RFC 9110 §9.3.1). TM-F-ANON names `TestHealthProblemsCarryNoDetail` and `TestBodyNoneRefusesBody` (T-0050). "Which rows are in `policy.yaml` today" adds the AN-1 operations. §7.8: the `anonymous` row names the AN-1 operations; the floor row names only the non-API probes.
 
 - 2026-10-21 · v0.3 (T-0032, RT-7). §7.6: AN-8 local break-glass sign-in, AN-9 SPNEGO sign-in, AN-10 sign-in second factor, with listener, shape and gate per row and rules 1–7 (no session before MFA, enumeration resistance, break-glass throttled never locked, Kerberos only). Which rows `policy.yaml` carries today. New §7.8 and TM-D22: default rate and burst per class (`anonymous`, `auth`, `read`, `write`, `bulk`, `reveal`, `secret`), answering TM-Q2's numbers and closing the T-0046 OPEN on TB1-T10 and TB2-T7.
 - 2026-10-02 · ADR-0005 rework 1 (T-0047, security-architect concurring): AG-2 states the failure-record residual during a database outage; AG-4 carves out `audit_head` (`UPDATE` plus a genesis-only `INSERT`).

@@ -62,6 +62,15 @@
         "attr.unicodepwd"
       ],
       "package": "internal/platform/secret/secretjson"
+    },
+    {
+      "name": "go/httpx",
+      "language": "go",
+      "tier": "S",
+      "units": [
+        "html"
+      ],
+      "package": "internal/platform/httpx"
     }
   ],
   "fuzz": [
@@ -126,6 +135,14 @@
       "properties": [
         "roundtrip",
         "noUnescapedSpecial"
+      ]
+    },
+    {
+      "implementation": "go/httpx",
+      "unit": "html",
+      "target": "FuzzAttachment",
+      "properties": [
+        "independentParse"
       ]
     }
   ]

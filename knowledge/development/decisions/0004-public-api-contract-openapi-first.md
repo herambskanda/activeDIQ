@@ -17,7 +17,8 @@ ratified_by: factory-director
 **Kind:** technical. No customer, partner or brand sees the generator or the router. Customers see the result: one documented, stable, unmetered API. That result follows from decisions the CEO already made: the house stack (D-0003) and the API-first, unmetered positioning (parity matrix enhancement 18).
 **Deciders:** solution-architect (author). api-engineer was consulted twice on 2026-10-02, both recorded on T-0046. The first consult covered the generator, router, client and tooling evaluation and a local test of `encoding/json/v2` defaults. The second, in the rework, covered in-house type emission, the size estimate and gaps in the construct table. factory-director ratifies. **Ticket:** T-0046. **Parity / scope refs:** ADM-188, ADM-189 (ADM-190 indirectly, through rate classes).
 
-> Amendments (ratified ADRs only): none.
+> Amendments (ratified ADRs only):
+> - 2026-10-21 · solution-architect · T-0044, from T-0034 and threat model §7.6 v0.4 · **Rule 5, AN-1 health operations.** T-0034 added `getLiveness` (`GET /api/v1/health/live`) and `getReadiness` (`GET /api/v1/health/ready`) to `api/openapi/platform/health.yaml`, for clients that reach only `/api/v1`. Being JSON on this listener, they are operations, so rule 5 lists them first among the anonymous operations in the contract, and its AN-1 row of non-API routes notes that the same answers under `/api/v1` are those operations. The rule 3 extension table's `x-activediq-anonymous` row lists every operation row in use (AN-1, AN-4, AN-5, AN-7, AN-8, AN-10). The non-API probes `/healthz` and `/readyz` stay. This is a clarification: no rule or fitness check changes, because A3, A4 and A12 already cover these operations.
 >
 > **Rework 1 (before ratification).** The first draft generated Go models with oapi-codegen, but its templates emit `encoding/json` v1 for unions and for objects with additional properties, and its format types come from a package we reject. That would have let v1 decoding into the request path through nested values, including the filter AST. This version emits every Go type in-house from the restricted dialect (rule 4) and fixes the secret-bearing decode path (rule 6). It also closes the director's nits: ports for `apihost`, `authenticated` operations, CSRF and pre-auth limits in the chain, hostname-bound anonymous operations, and the exact-or-suffix secret-name match.
 
@@ -161,7 +162,7 @@ We use OpenAPI **3.1** with the JSON Schema 2020-12 dialect ([OAS 3.1.1](https:/
 | `x-activediq-stability` | operation | **yes** | `preview` or `stable` (rule 7) |
 | `x-activediq-sunset` | operation | with `deprecated: true` | The first product release in which the operation may be removed (rule 7) |
 | `x-activediq-limits` | operation | no | `{class, maxBodyBytes}` (rule 10). It defaults by method. |
-| `x-activediq-anonymous` | operation | with `x-permission: anonymous` | The allow-list row it uses (`AN-4`, `AN-5`, `AN-7`) |
+| `x-activediq-anonymous` | operation | with `x-permission: anonymous` | The allow-list row it uses (`AN-1`, `AN-4`, `AN-5`, `AN-7`, `AN-8`, `AN-10`) |
 | `x-activediq-secret` | schema | on `SecretInput` only | The schema carries a secret, so it is write-only (rule 9) |
 | `x-activediq-enum` | schema | on every enum reachable from a response | `open` (rule 2) |
 | `x-activediq-parity` | operation | no | ManageEngine feature IDs, for traceability |
@@ -296,7 +297,7 @@ v2's own error text names Go types, so `apihost` maps it to the `malformed-reque
 
   | Route group | Why it is outside the contract | Allow-list row |
   | --- | --- | --- |
-  | `GET /healthz`, `GET /readyz`: status only | Load balancers and orchestrators, not clients | AN-1 |
+  | `GET /healthz`, `GET /readyz`: status only | Load balancers and orchestrators, not clients; the same answers under `/api/v1` are the AN-1 operations below | AN-1 |
   | `GET /` and `GET /assets/{path...}`, plus the console's client-side routes falling back to `index.html` | Static files. **The fallback never answers under `/api/` or `/auth/`.** An unknown `/api/…` path returns the `not-found` problem, never HTML | AN-2 |
   | `/auth/sso/{idpId}/start`, `/auth/sso/{idpId}/callback` (OIDC redirect, SAML ACS) | Browser redirects and form posts, signed by the IdP; not JSON | AN-3 |
 | `GET /auth/negotiate`, only if the PRD offers SPNEGO sign-in | HTTP Negotiate (RFC 4559) is a `WWW-Authenticate`/`Authorization` header exchange, not JSON. Success yields a pending sign-in, never a session | AN-9 |
@@ -305,6 +306,7 @@ v2's own error text names Go types, so `apihost` maps it to the `malformed-reque
 
   These routes are declared in `policy.yaml` under `nonApiRoutes`, and `apihost` mounts exactly that list.
 - **Anonymous operations that are in the contract.** These are JSON, on this listener, and therefore **operations** with `x-permission: anonymous`, each with its `policy.anonymous` row:
+  - platform health, `getLiveness` and `getReadiness` (AN-1, `platform` scope, class `anonymous`, no request body; responses carry no detail, TM §7.6 rules 8 and 9);
   - first-run setup (AN-4);
   - end-user TOTP enrolment (AN-5, bound by hostname);
   - [M4] SSPR served on the console/API listener (AN-7, bound by hostname);
