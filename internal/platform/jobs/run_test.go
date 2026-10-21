@@ -373,3 +373,84 @@ func TestRunnerIsClosedAfterTheBody(t *testing.T) {
 		}
 	})
 }
+
+// A body whose claim lapsed and was rescued gets ErrSuperseded from its very next Run, before any renewal
+// tick, and nothing it wrote commits.
+func TestManagedTxRunIsFencedOnTheLiveClaim(t *testing.T) {
+	each(t, func(t *testing.T, e *env) {
+		var runErr error
+		r := e.runner(t,
+			Kind{Name: "t.child", Timeout: time.Minute, Mode: ModeDefault, Run: noop},
+			Kind{Name: "t.fenced", Timeout: time.Minute, Mode: ModeManagedTx,
+				RunManaged: func(ctx context.Context, run TenantTx, c Claimed) error {
+					_ = e.d.ExecOwner(context.Background(), `UPDATE public.jobs SET claimed_until = now() - interval '1 minute' WHERE id = $1`, c.ID)
+					if _, err := Rescue(context.Background(), e.db, 10); err != nil {
+						return err
+					}
+					ran := false
+					runErr = run.Run(ctx, func(ctx context.Context, tx store.Tx) error {
+						ran = true
+						_, err := r0(t, e).Enqueue(ctx, tx, Job{Kind: "t.child", Tenant: e.a})
+						return err
+					})
+					if ran {
+						t.Error("fn ran although the claim was superseded")
+					}
+					return runErr
+				}})
+		// Renewal ticks every 30s: none happens before Run.
+		r.leaseFor = func(Kind) time.Duration { return time.Minute }
+		id := e.enqueueKindManaged(t, "t.fenced")
+		res, err := r.Execute(context.Background(), e.claimOne(t, "t.fenced", time.Minute))
+		if err != nil || res != Lost {
+			t.Fatalf("Execute = %v, %v; want Lost", res, err)
+		}
+		if !errors.Is(runErr, ErrSuperseded) {
+			t.Errorf("Run = %v, want ErrSuperseded", runErr)
+		}
+		if n := e.countJobs(t, "t.child"); n != "0" {
+			t.Errorf("child rows = %s, want 0", n)
+		}
+		if st, _ := e.state(t, id); st != "available" {
+			t.Errorf("job is %s, want available", st)
+		}
+	})
+}
+
+// A runner closed while fn is in flight rolls fn's transaction back instead of committing it.
+func TestManagedTxRunClosedMidFlightRollsBack(t *testing.T) {
+	each(t, func(t *testing.T, e *env) {
+		inFn, release, got := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+		r := e.runner(t,
+			Kind{Name: "t.child", Timeout: time.Minute, Mode: ModeDefault, Run: noop},
+			Kind{Name: "t.inflight", Timeout: time.Minute, Mode: ModeManagedTx,
+				RunManaged: func(ctx context.Context, run TenantTx, c Claimed) error {
+					go func() {
+						got <- run.Run(context.Background(), func(ctx context.Context, tx store.Tx) error {
+							if _, err := r0(t, e).Enqueue(ctx, tx, Job{Kind: "t.child", Tenant: e.a}); err != nil {
+								return err
+							}
+							close(inFn)
+							<-release
+							return nil
+						})
+					}()
+					<-inFn
+					return nil // the body returns: the runner closes while fn is in flight
+				}})
+		e.enqueueKindManaged(t, "t.inflight")
+		c := e.claimOne(t, "t.inflight", time.Minute)
+		done := make(chan struct{})
+		go func() { defer close(done); _, _ = r.Execute(context.Background(), c) }()
+		// Closing happens when the body returns; fn is still holding its share lock then.
+		time.Sleep(300 * time.Millisecond)
+		close(release)
+		if err := <-got; !errors.Is(err, ErrRunnerClosed) {
+			t.Errorf("Run = %v, want ErrRunnerClosed", err)
+		}
+		<-done
+		if n := e.countJobs(t, "t.child"); n != "0" {
+			t.Errorf("child rows = %s, want 0 (rolled back)", n)
+		}
+	})
+}

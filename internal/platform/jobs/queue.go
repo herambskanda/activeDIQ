@@ -106,6 +106,10 @@ func Claim(ctx context.Context, db *store.DB, kinds []KindLease, limit int) ([]C
 const fence = `WHERE id = $1 AND attempt = $2 AND state = 'running'
   AND tenant_id IS NOT DISTINCT FROM NULLIF(current_setting('app.tenant_id', true), '')::uuid`
 
+// lockClaim takes a shared row lock on the live claim: the fence plus claimed_until > now(). Rescue's
+// UPDATE of the row waits for the lock holder's commit, so a claim cannot be rescued mid-transaction.
+const lockClaim = `SELECT 1 FROM public.jobs ` + fence + ` AND claimed_until > now() FOR SHARE`
+
 const complete = `UPDATE public.jobs SET state = 'completed', claimed_until = NULL, error_code = NULL,
   finalized_at = now(), updated_at = now() ` + fence
 
@@ -119,6 +123,19 @@ const discard = `UPDATE public.jobs SET state = 'discarded', claimed_until = NUL
   finalized_at = now(), updated_at = now() ` + fence
 
 const renew = `UPDATE public.jobs SET claimed_until = now() + $3 * interval '1 millisecond', updated_at = now() ` + fence
+
+// LockClaim proves in tx that the claim r is live (running, this attempt, this tenant, not lapsed) and
+// holds it so Rescue cannot requeue the job until tx ends. ErrSuperseded when it is not.
+func LockClaim(ctx context.Context, tx store.Tx, r Ref) error {
+	var one int
+	if err := tx.QueryRow(ctx, lockClaim, r.ID, r.Attempt).Scan(&one); err != nil {
+		if store.IsNoRows(err) {
+			return ErrSuperseded
+		}
+		return mapErr("lock claim", err)
+	}
+	return nil
+}
 
 // Complete records success.
 func Complete(ctx context.Context, tx store.Tx, r Ref) error {
