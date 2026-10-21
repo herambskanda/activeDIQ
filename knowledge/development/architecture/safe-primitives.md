@@ -1185,7 +1185,7 @@ authoritative and FF-SP4 recomputes the counts.
 | FF | Check | Fails when |
 | --- | --- | --- |
 | FF-SP1 | Import boundaries | any of these outside its home: the LDAP library and raw search/controls (only the connector root `internal/connector/`, with controls only in `internal/connector/ad/scope`); the SQL driver (only the data-access package `internal/platform/store`; generated `sqlcdb/` packages may import the other pgx packages, but not `pgxpool` or `pgx.Connect`/`ConnConfig`, blueprint §2); process APIs (only `internal/platform/proc`); the PowerShell SDK (only the sidecar host). Also: any product package importing `lab/…` or `tools/…` (tier L). P7 adds: `encoding/csv` (only `export/csv`), the XLSX library (only `export/xlsx`), the PDF library (only `export/pdf`), `net/smtp`/`mime/multipart` (only `notify/mail`), any HTML-to-PDF or headless-browser module anywhere in product code (§12.3–§12.7). Enforced with depguard, BannedApiAnalyzers and clippy |
-| FF-SP2 | Banned APIs and custom analyzers | any symbol in the per-primitive lists in §3.5, §4.6, §5, §6, §7. Includes TLS-verification bypasses (§5.6), `net/http/pprof` and `runtime/pprof` outside tests and tier L, and `GOTRACEBACK=crash` in service definitions. The go/analysis passes `dnstring`, `sqlconst` and `secretjson` run here (`go vet -vettool`, T-0033). `secretjson` enforces the §5.6 secret path of ADR-0004 rule 6: a decode into a `Secret`-bearing type only through `secretjson.Decode` (nested calls in generated `UnmarshalJSONFrom` methods excepted, as they inherit its options); `secretjson.Decode` called only from `apihost`; no `ReadToken`/`Token.String` in a `Secret` decoder, which must use `ReadValue`. The v1 `encoding/json` import and v1 JSON methods on contract types are banned by `fitness-api` A7, not here; the clean-up (`destroySecrets`, `clear(buf)`) is asserted by A7's per-operation corpus. P7 adds the §12.4–§12.7 lists (`text/template`, typed-string conversions outside `htmlx`, the `tmplconst` pass, `SetEscapeHTML(false)`, `Content-Disposition` outside `httpx`, XLSX formula/hyperlink/VBA setters, PDF link/JavaScript/attachment/page-import APIs) |
+| FF-SP2 | Banned APIs and custom analyzers | any symbol in the per-primitive lists in §3.5, §4.6, §5, §6, §7. Includes TLS-verification bypasses (§5.6), `net/http/pprof` and `runtime/pprof` outside tests and tier L, and `GOTRACEBACK=crash` in service definitions. The go/analysis passes `dnstring`, `sqlconst` and `secretjson` run here (`go vet -vettool`, T-0033). `secretjson` enforces the §5.6 secret path of ADR-0004 rule 6: a decode into a `Secret`-bearing type only through `secretjson.Decode` (nested calls in generated `UnmarshalJSONFrom` methods excepted, as they inherit its options); `secretjson.Decode` called only from `apihost`; no `ReadToken`/`Token.String` in a `Secret` decoder, which must use `ReadValue`. The v1 `encoding/json` import and v1 JSON methods on contract types are banned by `fitness-api` A7, not here; the clean-up (`destroySecrets`, `clear(buf)`) is asserted by A7's per-operation corpus. P7 adds the §12.4–§12.7 lists (`text/template`, typed-string conversions outside `htmlx`, the `tmplconst` pass, `jsontext.EscapeForHTML(false)`/`EscapeForJS(false)` (§12.5 rule 7), `Content-Disposition` outside `httpx`, XLSX formula/hyperlink/VBA setters, PDF link/JavaScript/attachment/page-import APIs) |
 | FF-SP3 | Literal-shape scanner | filter-, DN-, PowerShell- or SQL-shaped literals combined with concatenation or formatting outside primitive packages and tests. **`web/` is covered too**: TS/TSX template literals or concatenations containing `CN=`, `OU=`, `DC=`, `(&(`, `(\|(` or `(objectClass=`; quote doubling (`replace(/'/g, "''")`, `replaceAll("'", "''")`); `.split(',')`, `.endsWith(` or `.includes(` on a value named `dn`/`distinguishedName`; P7's §12.5 W1/W2 ESLint rules and CSV/XLSX `Blob`s. **P7 shapes in Go:** formula-lead `HasPrefix` checks outside `cellsafe`, joined CSV rows, `"text/csv"`/`".csv"` outside `export/csv`/`httpx`, HTML-shaped literals outside `htmlx`, mail-header literals outside `notify/mail` (§12.2–§12.6). Tier L is exempt (§2.1). Tool: Semgrep or ast-grep, chosen by devops-engineer via the licence register |
 | FF-SP4 | Corpus gate | a **unit** (§8 list) has < 10 records with `"hostile": true`; an implementation skips records of a unit it implements; a record disappears without a superseding one |
 | FF-SP5 | Fuzz | each parser/encoder lacks a corpus-seeded fuzz target; nightly ≥ 10 min each; properties `parse(render(x)) == x` and "render never emits an unescaped special". P7: `csv.Read(csv.Write(v)) == v`; no CSV cell starts with an un-neutralised `FormulaLead`; every XLSX, HTML, MIME and PDF output parses with an independent parser (§12.3–§12.7) |
@@ -1656,8 +1656,26 @@ httpx.Attachment(w, base: string, f: Format, body: io.Reader)   // the only sett
    bold, and links whose target is a `Route` constant. A placeholder name must be in the module's
    registry, and secret attributes are never in a registry (§3.7). Every other `{{…}}` is error
    `UnknownPlaceholder`. Raw HTML in the text is text.
-7. **JSON responses keep `encoding/json`'s HTML escaping.** `Encoder.SetEscapeHTML(false)` is
-   banned in product code ([encoding/json][go-json-escape]), and API responses carry `nosniff`.
+7. **JSON responses are HTML- and JS-escaped by `apihost`, and served as `application/json` with
+   `nosniff`.** ADR-0004 rule 6 makes `encoding/json/v2` the only JSON encoder in product code.
+   Unlike v1, v2 does not escape by default: `jsontext.EscapeForHTML` (`<`, `>`, `&` →
+   `\u003c`, `\u003e`, `\u0026`) and `jsontext.EscapeForJS` (U+2028, U+2029) are both off unless
+   set ([jsontext][go-jsontext-escape]). `apihost` therefore holds one package-level options value,
+   `jsontext.EscapeForHTML(true)` plus `jsontext.EscapeForJS(true)`, and passes it to every
+   `json.Marshal` that writes a response body, problem documents included. Generated
+   `MarshalJSONTo` methods write through the caller's `jsontext.Encoder` and inherit the options.
+   v2 also re-escapes the output of `MarshalJSON` methods and of `jsontext.Value` fields under these
+   options (checked on Go 1.27.3, T-0040). Nobody may pass `EscapeForHTML(false)` or
+   `EscapeForJS(false)` anywhere in product code.
+   `nosniff` and the JSON content type alone are not enough. They stop a browser rendering *our*
+   response as HTML. They do nothing once the JSON leaves the response: a customer script or
+   portal that drops API output into a page or an inline `<script>`, an HTML error page from a
+   proxy that echoes the body, a log or SIEM viewer. Our data includes attacker-controlled
+   directory attributes (`displayName`, `description`, TM-TB1-T4), so `</script><img src=x
+   onerror=…>` in a display name should never cross the API as live markup. Escaping costs a
+   few bytes per affected character, and v1 escaped by default, which is the behaviour this rule
+   was first written for. The `Stream` body is not JSON and is out of scope: its downloads follow
+   rule 5.
 
 **Console rules (tier W).** Tier W implements no encoder (§2.1). It follows these rules:
 
@@ -1707,10 +1725,17 @@ httpx.Attachment(w, base: string, f: Format, body: io.Reader)   // the only sett
 | HT-22 | Playwright: the page evaluates `document.body.innerHTML = "<b>x</b>"` | throws `TypeError` (Trusted Types enforced) | W3 |
 | HT-23 | V = `Smith & Sons <Ltd>` | `Smith &amp; Sons &lt;Ltd&gt;` | control |
 | HT-24 | V = `José 😀` | unchanged UTF-8 | control |
+| HT-25 | integration through `apihost`: a JSON response and a problem document whose string field is `</script><img src=x onerror=alert(1)>&` | body contains `\u003c/script\u003e\u003cimg src=x onerror=alert(1)\u003e\u0026` and no raw `<`, `>`, `&` | rule 7 (EscapeForHTML) |
+| HT-26 | the same, field value `a\u2028b\u2029c` | body contains `\u2028` and `\u2029` escaped, not raw | rule 7 (EscapeForJS) |
+| HT-27 | the same, field held in a type with a `MarshalJSONTo` method and in a `jsontext.Value` | escaped as in HT-25 | rule 7: the options reach nested and raw values |
+| HT-28 | static: `jsontext.EscapeForHTML(false)` · `jsontext.EscapeForJS(false)` · either with a non-constant argument | build fails (FF-SP2) | rule 7 |
+| HT-29 | static: a `json.Marshal`, `json.MarshalWrite` or `json.MarshalEncode` in `apihost` that writes a response without the response options value | build fails (FF-SP2, or an `apihost` unit test that covers every encode site) | rule 7 |
 
 **Lint.**
 - Go (FF-SP2): `text/template` import, typed-string conversions outside `htmlx`, `tmplconst`,
-  `SetEscapeHTML(false)`, and `Header().Set("Content-Disposition", …)` outside `httpx`.
+  `jsontext.EscapeForHTML(false)` / `EscapeForJS(false)` or a non-constant argument to either
+  (HT-28), and `Header().Set("Content-Disposition", …)` outside `httpx`. The v1
+  `SetEscapeHTML(false)` check is superseded: the v1 import itself is banned by `fitness-api` A7.
 - Go (FF-SP3): HTML-shaped literals (`"<td"`, `"<a href="`, `"<script"`) combined with
   concatenation or formatting outside `htmlx`.
 - ESLint in `web/`: `react/no-danger`, `react/jsx-no-script-url`, `no-eval`, `no-implied-eval`,
@@ -1922,7 +1947,7 @@ both. Lab-dependent claims in this section are listed in §9.
 [excelize-lib]: https://github.com/qax-os/excelize/blob/master/lib.go
 [excelize-licence]: https://github.com/qax-os/excelize/blob/master/LICENSE
 [go-htmltemplate]: https://pkg.go.dev/html/template
-[go-json-escape]: https://pkg.go.dev/encoding/json#Encoder.SetEscapeHTML
+[go-jsontext-escape]: https://pkg.go.dev/encoding/json/jsontext#EscapeForHTML
 [react-sanitizeurl]: https://github.com/facebook/react/blob/main/packages/react-dom-bindings/src/shared/sanitizeURL.js
 [tt-support]: https://www.uriports.com/blog/csp-trusted-types/
 [tt-webdev]: https://web.dev/articles/trusted-types
