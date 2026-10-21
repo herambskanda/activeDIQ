@@ -44,6 +44,15 @@
         "attr.flags"
       ],
       "package": "internal/directory/attr/flags"
+    },
+    {
+      "name": "go/sql",
+      "language": "go",
+      "tier": "S",
+      "units": [
+        "sql"
+      ],
+      "package": "internal/platform/store"
     }
   ],
   "fuzz": [
@@ -90,6 +99,15 @@
       "properties": [
         "roundtrip",
         "noUnescapedSpecial"
+      ]
+    },
+    {
+      "implementation": "go/sql",
+      "unit": "sql",
+      "target": "FuzzSQL",
+      "properties": [
+        "roundtrip",
+        "noRelaxedWithoutOverride"
       ]
     }
   ]
