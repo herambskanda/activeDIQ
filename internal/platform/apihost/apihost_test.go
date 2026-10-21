@@ -1,6 +1,7 @@
 package apihost_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json/jsontext"
 	"errors"
@@ -170,7 +171,14 @@ func docJSON(ops ...[4]string) []byte { // id, method, path, permission
 			if o[3] != "" {
 				perm = fmt.Sprintf(`,"x-permission":%q`, o[3])
 			}
-			fmt.Fprintf(&sb, `%q:{"operationId":%q,"tags":["widgets"]%s}`, strings.ToLower(o[1]), o[0], perm)
+			class := "read"
+			switch {
+			case o[3] == "anonymous":
+				class = "anonymous"
+			case o[1] != "GET":
+				class = "write"
+			}
+			fmt.Fprintf(&sb, `%q:{"operationId":%q,"tags":["widgets"],"x-activediq-limits":{"class":%q}%s}`, strings.ToLower(o[1]), o[0], class, perm)
 		}
 		sb.WriteString("}")
 	}
@@ -184,7 +192,9 @@ var catalogue = apihost.Permissions{"widgets.read", "widgets.write"}
 func serve(t *testing.T, r *row, fp *fakePorts, policy apihost.Policy, req *http.Request) *httptest.ResponseRecorder {
 	t.Helper()
 	m := r.meta
-	doc, err := apihost.ParseDocument(docJSON([4]string{m.OperationID, m.Method, m.Path, m.Permission}))
+	raw := docJSON([4]string{m.OperationID, m.Method, m.Path, m.Permission})
+	raw = bytes.Replace(raw, []byte(`"class":"write"`), []byte(`"class":"`+m.Class+`"`), 1) // the document carries the row's class
+	doc, err := apihost.ParseDocument(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,6 +288,10 @@ func TestBuildRefusals(t *testing.T) {
 	badMethod.meta.Method = "POST"
 	badPerm := listRow()
 	badPerm.meta.Permission = "widgets.write"
+	badScope := listRow()
+	badScope.meta.Scope = "platform"
+	badClass := listRow()
+	badClass.meta.Class = "bulk"
 	ghost := &row{meta: meta("ghost", "GET", "/ghost", "widgets.read")}
 	clash := &row{meta: meta("a", "GET", "/widgets/{id}", "widgets.read")}
 	clash2 := &row{meta: meta("b", "GET", "/widgets/{name}", "widgets.read")}
@@ -298,6 +312,8 @@ func TestBuildRefusals(t *testing.T) {
 		{"wrong tag", docJSON(ok), []apihost.TagHandlers{otherTag}, apihost.Policy{}, "tag gadgets"},
 		{"method mismatch", docJSON(ok), []apihost.TagHandlers{tag(badMethod)}, apihost.Policy{}, "does not match the document"},
 		{"permission mismatch", docJSON(ok), []apihost.TagHandlers{tag(badPerm)}, apihost.Policy{}, "permission"},
+		{"scope mismatch", docJSON(ok), []apihost.TagHandlers{tag(badScope)}, apihost.Policy{}, "scope/class"},
+		{"class mismatch", docJSON(ok), []apihost.TagHandlers{tag(badClass)}, apihost.Policy{}, "scope/class"},
 		{"duplicate contribution", docJSON(ok), []apihost.TagHandlers{tag(listRow(), listRow())}, apihost.Policy{}, "contributed twice"},
 		{"pattern conflict", docJSON([4]string{"a", "GET", "/widgets/{id}", "widgets.read"}, [4]string{"b", "GET", "/widgets/{name}", "widgets.read"}),
 			[]apihost.TagHandlers{tag(clash, clash2)}, apihost.Policy{}, "conflicts"},
@@ -398,7 +414,8 @@ func TestHostBinding(t *testing.T) {
 }
 
 func TestQueryCredentialRefused(t *testing.T) {
-	for _, q := range []string{"?token=x", "?Password=x", "?api_key=1", "?limit=5&access_token=z"} {
+	for _, q := range []string{"?token=x", "?Password=x", "?api_key=1", "?limit=5&access_token=z",
+		"?password=hunter2;x", "?access_token=abc;", "?token=%zz"} {
 		rec := serve(t, &row{meta: meta("l", "GET", "/widgets", "widgets.read")}, newPorts(), apihost.Policy{}, get("/widgets"+q))
 		problemOf(t, rec, 400, apitypes.ProblemTypeMalformedRequest)
 	}
@@ -477,6 +494,35 @@ func TestCSRF(t *testing.T) {
 	fp.csrfErr = apihost.ErrCSRF
 	if rec := serve(t, jsonRow(), fp, apihost.Policy{}, post("/widgets", "application/json", `{"name":"a"}`)); rec.Code != 200 {
 		t.Fatalf("bearer POST: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestCSRFFailsClosed(t *testing.T) {
+	for name, p := range map[string]apihost.Principal{
+		"unknown kind": {ID: "p1", Kind: "weird"}, "empty kind": {ID: "p1"}, "zero principal": {}, "empty id": {Kind: apihost.KindToken},
+	} {
+		fp := newPorts()
+		fp.principal = p
+		fp.csrfErr = apihost.ErrCSRF
+		rec := serve(t, jsonRow(), fp, apihost.Policy{}, post("/widgets", "application/json", `{"name":"a"}`))
+		if rec.Code != 500 {
+			t.Errorf("%s: status %d, want 500", name, rec.Code)
+		}
+		problemOf(t, rec, 500, apitypes.ProblemTypeInternal)
+	}
+	fp := newPorts()
+	fp.principal.Kind = apihost.KindSession
+	fp.csrfErr = apihost.ErrCSRF
+	problemOf(t, serve(t, jsonRow(), fp, apihost.Policy{}, post("/widgets", "application/json", `{"name":"a"}`)), 403, apitypes.ProblemTypeCSRFFailed)
+}
+
+func TestNonCanonicalPathsAreProblems(t *testing.T) {
+	for _, p := range []string{"/widgets/", "//widgets", "/x/../widgets", "/./widgets"} {
+		rec := serve(t, &row{meta: meta("l", "GET", "/widgets", "widgets.read")}, newPorts(), apihost.Policy{}, httptest.NewRequest("GET", "/api/v1"+p, nil))
+		problemOf(t, rec, 404, apitypes.ProblemTypeNotFound)
+		if rec.Header().Get("Location") != "" {
+			t.Errorf("%s: redirect issued", p)
+		}
 	}
 }
 

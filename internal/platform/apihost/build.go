@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"path"
 	"slices"
 	"sort"
 	"strings"
@@ -125,6 +126,9 @@ func Build(doc Document, tags []TagHandlers, policy Policy, catalogue Permission
 			case m.Permission != op.Permission:
 				fail("%s: permission %q does not match the document's %q", m.OperationID, m.Permission, op.Permission)
 				continue
+			case m.Scope != op.Scope || m.Class != op.Class:
+				fail("%s: scope/class %q/%q do not match the document's %q/%q", m.OperationID, m.Scope, m.Class, op.Scope, op.Class)
+				continue
 			case handled[m.OperationID]:
 				fail("%s is contributed twice", m.OperationID)
 				continue
@@ -201,6 +205,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeProblem(w, r, apitypes.Internal(""), s.log)
 		}
 	}()
+	// A non-canonical path would get the mux's HTML redirect, outside the chain. Refuse it.
+	if p := r.URL.Path; p != "" && p != "/" && strings.HasPrefix(p, "/") {
+		c := path.Clean(p)
+		if strings.HasSuffix(p, "/") && c != "/" {
+			c += "/"
+		}
+		if c != p {
+			writeProblem(w, r, apitypes.NotFound(""), s.log)
+			return
+		}
+	}
 	h, pattern := s.mux.Handler(r)
 	if pattern != "" {
 		h.ServeHTTP(w, r)

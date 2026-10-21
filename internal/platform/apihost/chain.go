@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitypes"
@@ -62,8 +63,13 @@ func (s *Server) routeHandler(rt Route, boundHost string) http.Handler {
 			fail(apitypes.NotFound(""))
 			return
 		}
-		// 5. query-credential refusal.
-		if hasCredentialQuery(r) {
+		// 5. query parse (strict, nothing repaired) and credential refusal.
+		query, qerr := url.ParseQuery(r.URL.RawQuery)
+		if qerr != nil {
+			fail(apitypes.MalformedRequest("the query string is malformed"))
+			return
+		}
+		if hasCredentialQuery(query) {
 			fail(apitypes.MalformedRequest("credentials are never accepted in the query string"))
 			return
 		}
@@ -89,6 +95,12 @@ func (s *Server) routeHandler(rt Route, boundHost string) http.Handler {
 				} else {
 					fail(err)
 				}
+				return
+			}
+			// Fail closed: a principal must name who and how. Only a token is exempt from CSRF.
+			if p.ID == "" || (p.Kind != KindSession && p.Kind != KindToken) {
+				s.log.Error("authenticator returned an incomplete principal", "trace_id", TraceID(ctx))
+				fail(apitypes.Internal(""))
 				return
 			}
 			ctx = withPrincipal(ctx, p)
@@ -142,7 +154,7 @@ func (s *Server) routeHandler(rt Route, boundHost string) http.Handler {
 			in.DestroySecrets()
 			clear(buf)
 		}()
-		req := &Request{PathValue: r.PathValue, Query: r.URL.Query(), Header: r.Header}
+		req := &Request{PathValue: r.PathValue, Query: query, Header: r.Header}
 		var errs apitypes.Errors
 		if meta.Body == BodyBinary {
 			req.Upload = Upload{Reader: http.MaxBytesReader(w, r.Body, meta.MaxBody)}

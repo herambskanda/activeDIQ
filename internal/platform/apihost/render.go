@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -134,8 +135,8 @@ func retryAfter(d Decision) string {
 // credentialQueryKeys are query parameter names refused outright (rule 9, chain step 5).
 var credentialQueryKeys = []string{"password", "pwd", "secret", "token", "apikey", "api_key", "access_token", "accesstoken", "client_secret", "private_key", "authorization"}
 
-func hasCredentialQuery(r *http.Request) bool {
-	for k := range r.URL.Query() {
+func hasCredentialQuery(q url.Values) bool {
+	for k := range q {
 		lk := strings.ToLower(k)
 		for _, c := range credentialQueryKeys {
 			if lk == c {
