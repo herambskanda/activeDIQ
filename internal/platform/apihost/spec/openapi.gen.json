@@ -211,6 +211,21 @@
         },
         "description": "Not found"
       },
+      "NotReady": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 503,
+              "title": "The service is not ready",
+              "type": "/problems/not-ready"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The service is running but not ready to take traffic"
+      },
       "PasswordPolicyViolation": {
         "content": {
           "application/problem+json": {
@@ -367,6 +382,28 @@
           "guid"
         ],
         "type": "object"
+      },
+      "HealthState": {
+        "description": "ok is the only value; a probe that is not ok is a problem response, not a body.",
+        "enum": [
+          "ok"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "platform.health"
+      },
+      "HealthStatus": {
+        "description": "The only thing a health probe says.",
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/HealthState"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object",
+        "x-activediq-tag": "platform.health"
       },
       "Int64String": {
         "description": "A 64-bit integer carried as a string, for values outside JavaScript's safe integer range.",
@@ -724,7 +761,81 @@
     "version": "0.0.0"
   },
   "openapi": "3.1.0",
-  "paths": {},
+  "paths": {
+    "/health/live": {
+      "get": {
+        "description": "Answers 200 while the process can serve a request. Status only; it never reports a version, a configuration value or a dependency.",
+        "operationId": "getLiveness",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthStatus"
+                }
+              }
+            },
+            "description": "The process is alive"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "security": [],
+        "summary": "Is the process alive",
+        "tags": [
+          "platform.health"
+        ],
+        "x-activediq-anonymous": "AN-1",
+        "x-activediq-limits": {
+          "class": "anonymous"
+        },
+        "x-activediq-stability": "stable",
+        "x-permission": "anonymous"
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "description": "Answers 200 when the service can take traffic and the not-ready problem otherwise. Status only; it never names which dependency failed.",
+        "operationId": "getReadiness",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthStatus"
+                }
+              }
+            },
+            "description": "The service is ready"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/NotReady"
+          }
+        },
+        "security": [],
+        "summary": "Is the service ready to take traffic",
+        "tags": [
+          "platform.health"
+        ],
+        "x-activediq-anonymous": "AN-1",
+        "x-activediq-limits": {
+          "class": "anonymous"
+        },
+        "x-activediq-stability": "stable",
+        "x-permission": "anonymous"
+      }
+    }
+  },
   "security": [
     {
       "bearer": []
@@ -739,5 +850,10 @@
       "url": "/api/v1"
     }
   ],
-  "tags": []
+  "tags": [
+    {
+      "description": "Liveness and readiness of the service, for load balancers and orchestrators. Status only; no version or configuration detail.",
+      "name": "platform.health"
+    }
+  ]
 }

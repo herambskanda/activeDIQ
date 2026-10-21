@@ -36,6 +36,14 @@ anonymous:
     gate: none
     reason: Readiness for load balancers and orchestrators; status only, no version or configuration detail.
     ref: AN-1
+  - operation: getLiveness
+    gate: none
+    reason: Liveness over the API host for clients that can reach only /api/v1; status only, no version or configuration detail.
+    ref: AN-1
+  - operation: getReadiness
+    gate: none
+    reason: Readiness over the API host for clients that can reach only /api/v1; status only, no version or configuration detail.
+    ref: AN-1
   - method: GET
     path: /
     gate: none

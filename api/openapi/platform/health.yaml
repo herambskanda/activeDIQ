@@ -1,0 +1,63 @@
+paths:
+  /health/live:
+    get:
+      tags: [platform.health]
+      operationId: getLiveness
+      summary: Is the process alive
+      description: Answers 200 while the process can serve a request. Status only; it never reports a version, a configuration value or a dependency.
+      x-permission: anonymous
+      x-activediq-anonymous: AN-1
+      x-activediq-stability: stable
+      x-activediq-limits:
+        class: anonymous
+      security: []
+      responses:
+        "200":
+          description: The process is alive
+          content:
+            application/json:
+              schema:
+                $ref: platform/health.yaml#/components/schemas/HealthStatus
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+  /health/ready:
+    get:
+      tags: [platform.health]
+      operationId: getReadiness
+      summary: Is the service ready to take traffic
+      description: Answers 200 when the service can take traffic and the not-ready problem otherwise. Status only; it never names which dependency failed.
+      x-permission: anonymous
+      x-activediq-anonymous: AN-1
+      x-activediq-stability: stable
+      x-activediq-limits:
+        class: anonymous
+      security: []
+      responses:
+        "200":
+          description: The service is ready
+          content:
+            application/json:
+              schema:
+                $ref: platform/health.yaml#/components/schemas/HealthStatus
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+        "503":
+          $ref: shared/problems.yaml#/components/responses/NotReady
+components:
+  schemas:
+    HealthStatus:
+      description: The only thing a health probe says.
+      type: object
+      required: [status]
+      properties:
+        status:
+          $ref: platform/health.yaml#/components/schemas/HealthState
+    HealthState:
+      description: ok is the only value; a probe that is not ok is a problem response, not a body.
+      type: string
+      x-activediq-enum: open
+      enum: [ok]

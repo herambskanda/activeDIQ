@@ -18,7 +18,9 @@ security:
   - bearer: []
   - sessionCookie: []
     csrfToken: []
-tags: []
+tags:
+  - name: platform.health
+    description: Liveness and readiness of the service, for load balancers and orchestrators. Status only; no version or configuration detail.
 components:
   securitySchemes:
     bearer:
