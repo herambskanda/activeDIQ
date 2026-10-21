@@ -53,8 +53,8 @@ func stalled(n int) (*http.Request, *stalledBody) {
 }
 
 func TestBodyBudgetBoundsConcurrentHeldBuffers(t *testing.T) {
-	const declared = 1 << 10 // = the route's MaxBody
-	s := budgetServer(t, 3*declared)
+	const declared = 1 << 10         // = the route's MaxBody
+	s := budgetServer(t, 4*declared) // default anonymous slice is a quarter, leaving 3*declared
 
 	var wg sync.WaitGroup
 	var held []*stalledBody
@@ -198,10 +198,50 @@ func TestAnonymousBudgetMustFitTheTotal(t *testing.T) {
 	r := jsonRow()
 	m := r.meta
 	doc, _ := apihost.ParseDocument(docJSON([4]string{m.OperationID, m.Method, m.Path, m.Permission}))
-	for _, anon := range []int64{-1, 2048} {
+	for _, anon := range []int64{-1, 0, 1024, 2048} {
 		if _, err := apihost.Build(doc, []apihost.TagHandlers{apihost.NewTagHandlers("widgets", r.route())},
 			apihost.Policy{}, catalogue, newPorts().ports(), apihost.WithBodyBudget(1024), apihost.WithAnonymousBodyBudget(anon)); err == nil {
-			t.Errorf("Build accepted anonymous budget %d over a total of 1024", anon)
+			t.Errorf("Build accepted anonymous budget %d against a total of 1024", anon)
 		}
 	}
+}
+
+// With total T and anonymous slice A, stalled bodies hold A anonymous and T-A authenticated, and
+// the next of each kind is refused, so the sum held never exceeds T.
+func TestPoolsPartitionTheTotal(t *testing.T) {
+	const unit = 1 << 10 // each route's MaxBody
+	s := partitionServer(t, 3*unit, unit)
+	var wg sync.WaitGroup
+	var held []*stalledBody
+	hold := func(path, ip string) {
+		body := &stalledBody{reading: make(chan struct{}), release: make(chan struct{})}
+		req := httptest.NewRequest("POST", "/api/v1"+path, body)
+		req.RemoteAddr = ip + ":4000"
+		req.Header.Set("Content-Type", "application/json")
+		req.ContentLength = unit
+		held = append(held, body)
+		wg.Add(1)
+		go func() { defer wg.Done(); s.ServeHTTP(httptest.NewRecorder(), req) }()
+	}
+	hold("/enrol", "198.51.100.1")
+	hold("/widgets", "198.51.100.2")
+	hold("/widgets", "198.51.100.3")
+	for _, b := range held {
+		select {
+		case <-b.reading:
+		case <-time.After(5 * time.Second):
+			t.Fatal("holder never reached the body read")
+		}
+	}
+	for _, path := range []string{"/enrol", "/widgets"} {
+		req, _ := stalled(unit)
+		req.URL.Path = "/api/v1" + path
+		rec := httptest.NewRecorder()
+		s.ServeHTTP(rec, req)
+		problemOf(t, rec, 429, apitypes.ProblemTypeRateLimited)
+	}
+	for _, b := range held {
+		close(b.release)
+	}
+	wg.Wait()
 }

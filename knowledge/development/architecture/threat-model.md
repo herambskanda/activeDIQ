@@ -1290,7 +1290,8 @@ calls per technician per day, then charges per extra call (parity matrix row 18,
   senders. A byte semaphore (`WithBodyBudget`, default 64 MiB) is reserved before allocation and
   released after the buffer is cleared; when it is spent the request gets `429 /problems/rate-limited`
   with `Retry-After: 1`, never queued. The budget is partitioned: anonymous routes draw only from
-  their own pool (`WithAnonymousBodyBudget`, default a quarter of the total), so an unauthenticated
+  their own slice of the total (`WithAnonymousBodyBudget`, default a quarter; authenticated routes get
+  the remainder, so the total is the memory ceiling), so an unauthenticated
   flood cannot make an authenticated write return 429. Residual: anonymous flows (SSPR, enrolment)
   can still be starved by an anonymous flood; that is the accepted cost, bounded by the per-IP limiter
   (IPv6 keying: T-0051). A Content-Length over the route cap is `413` before it touches

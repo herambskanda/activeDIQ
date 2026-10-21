@@ -31,9 +31,10 @@ func WithBodyBudget(bytes int64) Option {
 }
 
 // WithAnonymousBodyBudget sets how much of the body budget anonymous routes may hold (default a
-// quarter of the total). Anonymous traffic draws only from this pool, so an unauthenticated flood
-// can starve other anonymous flows but never an authenticated request. It must be positive and no
-// more than the total.
+// quarter of the total) — a slice of the total, not an addition to it, so the total stays the
+// ceiling on body memory. Anonymous traffic draws only from this pool, so an unauthenticated flood
+// can starve other anonymous flows but never an authenticated request, which draws from the
+// remainder (total minus this). It must be positive and less than the total.
 func WithAnonymousBodyBudget(bytes int64) Option {
 	return func(s *Server) { s.anonBudgetTotal, s.anonSet = bytes, true }
 }
@@ -47,7 +48,7 @@ type Server struct {
 	policy     Policy
 	rows       []RouteInfo
 	unmounted  []string
-	budget     *bodyBudget // authenticated routes
+	budget     *bodyBudget // authenticated routes: total minus the anonymous slice
 	anonBudget *bodyBudget // anonymous routes only
 
 	budgetTotal, anonBudgetTotal int64
@@ -93,10 +94,10 @@ func Build(doc Document, tags []TagHandlers, policy Policy, catalogue Permission
 	if !s.anonSet {
 		s.anonBudgetTotal = max(s.budgetTotal/4, 1)
 	}
-	if s.budgetTotal <= 0 || s.anonBudgetTotal <= 0 || s.anonBudgetTotal > s.budgetTotal {
-		fail("the body budgets must be positive and the anonymous budget no more than the total")
+	if s.budgetTotal <= 0 || s.anonBudgetTotal <= 0 || s.anonBudgetTotal >= s.budgetTotal {
+		fail("the body budgets must be positive and the anonymous budget less than the total")
 	} else {
-		s.budget = newBodyBudget(s.budgetTotal)
+		s.budget = newBodyBudget(s.budgetTotal - s.anonBudgetTotal)
 		s.anonBudget = newBodyBudget(s.anonBudgetTotal)
 	}
 
