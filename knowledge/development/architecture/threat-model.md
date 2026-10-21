@@ -1319,8 +1319,53 @@ calls per technician per day, then charges per extra call (parity matrix row 18,
   of an account.
 - **Behind a reverse proxy**, the source IP is taken from `X-Forwarded-For` only when the request
   came from a configured trusted-proxy CIDR. Otherwise it is the TCP peer.
+- **The per-IP key is a network prefix, not the full address (T-0051).** One IPv6 host controls a
+  whole /64. The interface identifier is the low 64 bits
+  ([RFC 4291 §2.5.1](https://www.rfc-editor.org/rfc/rfc4291#section-2.5.1)), and hosts rotate
+  random temporary addresses inside it ([RFC 8981](https://www.rfc-editor.org/rfc/rfc8981)). Keyed
+  by full address, the `anonymous` limit of 60 a minute becomes 2^64 times 60 for anyone with one
+  IPv6 subnet. The limiter adapter derives the key in this order. The rules apply to every row whose
+  key is "Source IP": the floor, `anonymous` and `auth`. They do not apply to per-account or
+  per-principal rows.
+  1. **Parse** the source address, which is the TCP peer or the trusted-proxy result above, with
+     [`net/netip`](https://pkg.go.dev/net/netip). Strip any zone (`%eth0`). Unmap an IPv4-mapped
+     IPv6 address (`::ffff:a.b.c.d`) to IPv4, so a dual-stack listener does not give one IPv4
+     client two buckets.
+  2. **NAT64 well-known prefix.** An address in `64:ff9b::/96`
+     ([RFC 6052 §2.1](https://www.rfc-editor.org/rfc/rfc6052#section-2.1)) is keyed by its embedded
+     IPv4 address under rule 3. Otherwise every IPv4 client behind one NAT64 gateway would share a
+     single /64 bucket.
+  3. **Mask.** IPv4 is keyed at **/32** by default. The operator can set it from /24 to /32. IPv6 is
+     keyed at **/64** by default. The operator can set it from /48 to /64. A length finer than /64
+     for IPv6, or outside either range, fails startup. These are host deployment settings in
+     `apihost` configuration, audited at startup. Tenants cannot change them, because per-IP limits
+     run before authentication and before any tenant is known. The key is the canonical masked
+     prefix (`netip.Prefix.Masked().String()`, for example `2001:db8:1:2::/64` or
+     `192.0.2.7/32`) with the class prepended.
+  4. **Unparseable source.** If the source cannot be parsed, every such request shares one constant
+     bucket per class. The raw string is never a key, so a malformed value cannot mint fresh
+     buckets.
+  5. **Bounded table.** Per-node bucket memory is capped. A bucket that has refilled to its burst
+     carries no state and is evicted. At the cap, requests with a new key share one overflow bucket
+     per class. That throttles them; it never admits them unlimited.
+- **Residual (per-IP keying).** IPv6 end sites are commonly assigned a /48 or a /56. RIPE-690
+  suggests "/48 for business customers and /56 for residential customers"
+  ([RIPE-690](https://www.ripe.net/publications/docs/ripe-690/)). An attacker with a /48 therefore
+  still holds 65,536 /64 buckets, and one with a /56 holds 256. The same holds for an IPv4 botnet
+  with many addresses. Per-IP limits bound cost; they were never the abuse control. Guessing and
+  enumeration on AN-4, AN-5, AN-7 and the `auth` routes are stopped by the per-account gates
+  (TM-TB1-T9, §7.6 rule 3, the per-account `auth` row above). Internet exposure goes only through
+  `edge` (TM-O8). An operator who sees abuse spread across a prefix can tighten IPv6 to /56 or /48,
+  at the cost of legitimate users in that site sharing a bucket. Clients behind 6to4, Teredo or a
+  non-well-known NAT64 prefix are keyed as plain IPv6 at /64 and may share a bucket. That over-limits
+  them; it never under-limits.
 - **Proof.** TM-F-SESSION adds a case per class: the bucket refuses at burst + 1 within a second,
-  with `Retry-After`. A12 (fitness-api) refuses an unknown class, an anonymous operation outside
+  with `Retry-After`. It adds per-IP keying cases. Burst + 1 requests spread across two addresses in
+  one /64 are refused. Two different /64s get separate buckets. `192.0.2.1` and `::ffff:192.0.2.1`
+  share a bucket, `fe80::1%eth0` and `fe80::1` share a bucket, and `64:ff9b::c000:201` shares a
+  bucket with `192.0.2.1`. An IPv6 setting of 65 or 47, or an IPv4 setting of 23, fails startup.
+  Unparseable sources all land in one bucket. At the table cap, a new key is throttled, not
+  admitted. A12 (fitness-api) refuses an unknown class, an anonymous operation outside
   `anonymous`/`auth`, a `secretResponses` operation outside `reveal`, and a `SecretInput` request
   outside `secret`.
 
@@ -1874,6 +1919,7 @@ External, in order of first use:
 
 ## Changelog
 
+- 2026-10-21 · T-0051 (from the T-0043 security review). §7.8: the per-IP limiter key is a network prefix. IPv4 is keyed at /32 (configurable /24 to /32) and IPv6 at /64 (configurable /48 to /64, never finer). Before masking: zone stripped, IPv4-mapped unmapped, NAT64 `64:ff9b::/96` keyed by the embedded IPv4. Unparseable sources share one bucket, and the bucket table is bounded with a throttling overflow bucket. Residual stated (a /48 is 65,536 buckets; per-account gates and `edge` remain the control). Proof cases added to TM-F-SESSION. Adapter build ticket T-0054.
 - 2026-10-21 · v0.4 (T-0044). §7.6 AN-1 lists the operations `getLiveness` and `getReadiness` (T-0034, platform scope, class `anonymous`) next to the non-API probes. New rules 8 (health responses carry no `detail`, dependency, host, version or error text) and 9 (a request body on a `BodyNone` operation is refused with 413, RFC 9110 §9.3.1). TM-F-ANON names `TestHealthProblemsCarryNoDetail` and `TestBodyNoneRefusesBody` (T-0050). "Which rows are in `policy.yaml` today" adds the AN-1 operations. §7.8: the `anonymous` row names the AN-1 operations; the floor row names only the non-API probes.
 
 - 2026-10-21 · v0.3 (T-0032, RT-7). §7.6: AN-8 local break-glass sign-in, AN-9 SPNEGO sign-in, AN-10 sign-in second factor, with listener, shape and gate per row and rules 1–7 (no session before MFA, enumeration resistance, break-glass throttled never locked, Kerberos only). Which rows `policy.yaml` carries today. New §7.8 and TM-D22: default rate and burst per class (`anonymous`, `auth`, `read`, `write`, `bulk`, `reveal`, `secret`), answering TM-Q2's numbers and closing the T-0046 OPEN on TB1-T10 and TB2-T7.
