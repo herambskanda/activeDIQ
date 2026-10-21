@@ -1,5 +1,11 @@
 # The security policy of the contract (ADR-0004 rule 9). Owner: security-architect, who seeds the
 # rows in its own ticket (T-0151). Every change here is tagged security-sensitive.
+#
+# Entry shape (checked by fitness-api A13; scalar fields only). Every entry needs `reason` and `ref`
+# (an AN-n row or a TM- section). It names its subject by `operation` (an operationId), or `method`
+# + `path` for a route (anonymous may use either; nonApiRoutes uses method + path), or `permission`
+# (stepUp). Optional: `host`, `gate`; `schema` is required in secretResponses. An entry that names
+# something absent from the contract fails; `host` fails until the apihost binding table exists.
 anonymous: []
 authenticated: []
 nonApiRoutes: []
