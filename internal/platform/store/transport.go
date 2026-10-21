@@ -55,12 +55,31 @@ func (s TransportStatus) Insecure() bool { return len(s.RelaxedHosts) > 0 }
 // in the returned status. Open uses this for the runtime DSN; the migration step must call it for the
 // owner DSN as well, with the same override.
 func CheckTransport(dsn string, allowInsecure bool) (TransportStatus, error) {
-	pc, err := pgx.ParseConfig(dsn)
+	pc, err := guardParse(func() (*pgx.ConnConfig, error) { return pgx.ParseConfig(dsn) })
 	if err != nil {
-		// pgx redacts the password in this message.
-		return TransportStatus{}, fmt.Errorf("store: invalid DSN: %w", err)
+		return TransportStatus{}, err
 	}
 	return checkTransport(pc, allowInsecure)
+}
+
+// errInvalidDSN is the refusal for a DSN pgx cannot parse. It never contains DSN text, which can hold the password.
+var errInvalidDSN = errors.New("store: invalid DSN")
+
+// guardParse runs a pgx DSN parser and turns a parser panic (pgx v5.9.2 panics on input such as "='0\\")
+// into errInvalidDSN: configuration text must never crash the process. A parse error is also reduced to
+// errInvalidDSN: pgx's messages only partly redact the password (query-string password, spaced or
+// upper-case keywords, URL-escape fragments leak), so none of its text is passed on.
+func guardParse[T any](parse func() (*T, error)) (cfg *T, err error) {
+	defer func() {
+		if recover() != nil {
+			cfg, err = nil, errInvalidDSN
+		}
+	}()
+	cfg, err = parse()
+	if err != nil {
+		return nil, errInvalidDSN
+	}
+	return cfg, nil
 }
 
 func checkTransport(cc *pgx.ConnConfig, allowInsecure bool) (TransportStatus, error) {

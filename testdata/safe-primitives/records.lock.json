@@ -240,6 +240,25 @@
       "PSQ-16": false,
       "PSQ-17#1": true,
       "PSQ-17#2": true
+    },
+    "sql": {
+      "SQL-03": true,
+      "SQL-20": true,
+      "SQL-23#1": true,
+      "SQL-23#2": true,
+      "SQL-23#3": true,
+      "SQL-23#4": true,
+      "SQL-23#5": true,
+      "SQL-23#6": true,
+      "SQL-23#7": true,
+      "SQL-23#8": true,
+      "SQL-23#9": true,
+      "SQL-24#1": false,
+      "SQL-24#2": false,
+      "SQL-24#3": false,
+      "SQL-24#4": false,
+      "SQL-24#5": false,
+      "SQL-24#6": false
     }
   }
 }
