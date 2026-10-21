@@ -9,9 +9,9 @@ import (
 	"github.com/skenzeriq/activediq/internal/compose/server"
 )
 
-func TestRunReportsNotBuilt(t *testing.T) {
+func TestRunRefusesWithoutADatabase(t *testing.T) {
 	err := server.Run(context.Background(), config.Config{})
-	if !errors.Is(err, server.ErrNotBuilt) {
-		t.Fatalf("Run = %v, want ErrNotBuilt", err)
+	if !errors.Is(err, server.ErrNoDatabase) {
+		t.Fatalf("Run = %v, want ErrNoDatabase", err)
 	}
 }

@@ -22,3 +22,26 @@ func TestLoad(t *testing.T) {
 		t.Fatal("an invalid log level must be an error")
 	}
 }
+
+func TestLoadShutdownSettings(t *testing.T) {
+	c, err := config.Load(env(map[string]string{config.EnvDatabaseDSN: "postgres://x", config.EnvInstanceID: "host-1"}))
+	if err != nil || c.DatabaseDSN != "postgres://x" || c.InstanceID != "host-1" ||
+		c.ShutdownGrace != config.DefaultShutdownGrace || c.StopTimeout != config.DefaultStopTimeout {
+		t.Fatalf("defaults: %+v, %v", c, err)
+	}
+	c, err = config.Load(env(map[string]string{config.EnvShutdownGrace: "10s", config.EnvStopTimeout: "30s"}))
+	if err != nil || c.ShutdownGrace.Seconds() != 10 {
+		t.Fatalf("explicit: %+v, %v", c, err)
+	}
+	for name, m := range map[string]map[string]string{
+		"grace twice reaches the stop timeout": {config.EnvShutdownGrace: "45s"},
+		"default grace over a short timeout":   {config.EnvStopTimeout: "60s"},
+		"unparsable grace":                     {config.EnvShutdownGrace: "soon"},
+		"zero grace":                           {config.EnvShutdownGrace: "0s"},
+		"negative stop timeout":                {config.EnvStopTimeout: "-5s"},
+	} {
+		if _, err := config.Load(env(m)); err == nil {
+			t.Errorf("%s: want an error", name)
+		}
+	}
+}
