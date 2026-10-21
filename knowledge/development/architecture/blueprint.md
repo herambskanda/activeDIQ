@@ -4,7 +4,7 @@ date: 2026-10-02
 updated: 2026-10-21
 status: review
 owner: heramb
-ticket: T-0004, T-0035
+ticket: T-0035, T-0041
 binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), ADR-0003 (ratified), ADR-0004 (ratified), ADR-0005 (ratified), safe-primitives.md (review)
 ---
 
@@ -34,9 +34,10 @@ this blueprint and a ratified ADR disagree, the ADR wins and this file is the bu
 arrives in that milestone; it is drawn here so that v1 code does not block it. Owner names are
 factory agents (`.claude/agents/`).
 
-**Ticket IDs.** The board was re-cut on 2026-10-21 (T-0031). The API rows of §16 and §17 use the
-live board. Other `T-xxxx` references here predate the re-cut and name the earlier numbering;
-ADR-0004's old-to-new table maps the API ones.
+**Ticket IDs.** The board was re-cut on 2026-10-21 (T-0031). A bare `T-xxxx` names a live ticket
+(checked by T-0041: the jobs builds, `apihost`, the TM §7.6 amendment, the API fitness rows). An
+`old T-xxxx` is an earlier-board number that no longer names that work; do not look it up on the live
+board. Work an old ID delivered is marked delivered. ADR-0004's old-to-new table maps the API ones.
 
 ---
 
@@ -88,7 +89,7 @@ Three things in this picture are the architecture:
 
 ## 1. Repository map
 
-One Go module sits at the repository root; its module path is `github.com/skenzeriq/activediq` (set by T-0014, which also built the skeleton of this map; see [ci-gates](../standards/ci-gates.md)). Go's `internal/`
+One Go module sits at the repository root; its module path is `github.com/skenzeriq/activediq` (set by old T-0014, which also built the skeleton of this map; see [ci-gates](../standards/ci-gates.md)). Go's `internal/`
 rule allows any package in the module to import `internal/…`, and nothing outside it can
 ([Go 1.4 internal packages](https://go.dev/doc/go1.4#internalpackages)). The layering in §2 is
 therefore ours to enforce. The compiler does not do it for us.
@@ -105,28 +106,28 @@ therefore ours to enforce. The compiler does not do it for us.
 | `internal/proto/` | Generated Go code for `proto/`. Never hand-edited | S, A | api-engineer |
 | `internal/platform/apihost/` and the `api` packages | `apihost` (EP-2 host, router, middleware chain, the one body decode path) with `apihost/apitypes` (hand-written scalars and `Opt`, generated shared types and problem constructors) and `apihost/spec` (the bundle). Each tag's generated types, decoders, validators, `Handlers` interface and `Bind` live in its owner's `api` package: `internal/modules/<id>/api/`, `internal/platform/<pkg>/api/`. Files `*.gen.go`, never hand-edited ([ADR-0004](../decisions/0004-public-api-contract-openapi-first.md) rule 4) | S | api-engineer; each `api` package: its owner |
 | `internal/webui/` | `go:embed` package for the built web assets. Embed patterns cannot use `..` ([embed](https://pkg.go.dev/embed)), so the build copies `web/dist` here. Only `compose/server` imports it | S | frontend-engineer |
-| `proto/` | Protobuf sources: `skenzeriq/agent/v1` (shared host contract, T-0040), `activediq/connector/v1`, `activediq/<agent-module>/v1` | — | api-engineer; contracts: solution-architect |
+| `proto/` | Protobuf sources: `skenzeriq/agent/v1` (shared host contract, old T-0040), `activediq/connector/v1`, `activediq/<agent-module>/v1` | — | api-engineer; contracts: solution-architect |
 | `api/openapi/` | The public API contract and its only source of truth ([ADR-0004](../decisions/0004-public-api-contract-openapi-first.md) rule 1): `openapi.yaml` (root), `shared/*.yaml` (components used by more than one tag), `modules/<id>.yaml` (one per module that serves API, tag = module ID), `platform/<pkg>.yaml` (one per kernel package that serves API, tag `platform.<pkg>`), `policy.yaml` (the contract's security policy, rule 9) and `.vacuum.yaml`. `tools/gen/api` bundles it into `internal/platform/apihost/spec/openapi.gen.json` (committed, embedded, served as `getApiDocument`), the one input of every generator and check ([api-pipeline.md](api-pipeline.md)) | — | api-engineer; `modules/<id>.yaml` and `platform/<pkg>.yaml`: their owner; `policy.yaml`: security-architect |
 | `migrations/` | One forward-only SQL sequence, `NNNN_<owner>_<what>.sql`, plus `embed.go`. `<owner>` is an **owner key**: the directory name of exactly one top-level package under `internal/platform`, `internal/directory`, `internal/connector` or `internal/modules` (ADR-0003 rule 6, §2 rule 6). The first migration is **`0001_tenant_tenants.sql`**: it creates `tenants` (ADR-0002 rule 4), owned by `internal/platform/tenant` | S | backend-engineer |
-| `web/` | The React + TypeScript console: `src/app` (shell), `src/modules/<id>` (screens), `src/ds` (design system, T-0043), `src/api` (only `schema.gen.d.ts` from openapi-typescript and the hand-written `client.ts` over openapi-fetch; nothing else in `web/src` calls the network, ADR-0004 rule 12), `e2e/` (Playwright) | W | frontend-engineer; `src/ds`: component-designer |
+| `web/` | The React + TypeScript console: `src/app` (shell), `src/modules/<id>` (screens), `src/ds` (design system, old T-0043), `src/api` (only `schema.gen.d.ts` from openapi-typescript and the hand-written `client.ts` over openapi-fetch; nothing else in `web/src` calls the network, ADR-0004 rule 12), `e2e/` (Playwright) | W | frontend-engineer; `src/ds`: component-designer |
 | `native/` | A Rust workspace: `passfilt` (LSASS), `credprov` (LogonUI) and `shared` (`Secret`, policy evaluator, corpus runner) [M4] | N | windows-engineer |
 | `sidecars/<name>/` | .NET 10 + PowerShell 7.6 typed adapters. The names reserved are `pshost` (shared host), `exchange` and `gpmc`. Each is declared in the stack manifest when it is first built | X | windows-engineer (host); backend-engineer (`psx` client) |
-| `packaging/` | `windows/` (MSI, toolchain per T-0039) and `oci/` (Dockerfiles, Compose). No script custom actions in the MSI | — | devops-engineer |
+| `packaging/` | `windows/` (MSI, toolchain per old T-0039) and `oci/` (Dockerfiles, Compose). No script custom actions in the MSI | — | devops-engineer |
 | `testdata/safe-primitives/` | The primitive corpus, one `<unit>.jsonl` per unit (safe-primitives §8). Read by the Go and Rust implementations | — | directory-engineer (corpus), test-engineer |
-| `tools/` | `fitness/<job>/` (CI jobs), `analyzers/` (go/analysis passes `dnstring`, `sqlconst`, `secretjson`, `tmplconst`, and `policy/`, the table of primitive homes; `fitness/safeprim/` runs them, T-0033), `vettool/`, `gen/` (code generators; `gen/api` is the in-house OpenAPI generator, ADR-0004 rule 4), `apitools/` (its own `go.mod` pinning vacuum and oasdiff, kept out of the product module), `playwright/` (screenshot, record and E2E runner; Node, dev-time only, T-0011) | L | devops-engineer |
-| `lab/` | The Samba AD lab, seed data, Windows lab automation (T-0012) | L | devops-engineer, test-engineer |
+| `tools/` | `fitness/<job>/` (CI jobs), `analyzers/` (go/analysis passes `dnstring`, `sqlconst`, `secretjson`, `tmplconst`, and `policy/`, the table of primitive homes; `fitness/safeprim/` runs them, old T-0033), `vettool/`, `gen/` (code generators; `gen/api` is the in-house OpenAPI generator, ADR-0004 rule 4), `apitools/` (its own `go.mod` pinning vacuum and oasdiff, kept out of the product module), `playwright/` (screenshot, record and E2E runner; Node, dev-time only, old T-0011) | L | devops-engineer |
+| `lab/` | The Samba AD lab, seed data, Windows lab automation (old T-0012) | L | devops-engineer, test-engineer |
 | `third_party/<name>/` | Copied third-party code, each with its LICENSE file (ADR-0001 rule 5) | — | devops-engineer |
 | `garage/<name>/` | Prototypes with an owner and an expiry date. Never imported | — | its owner |
 
 ### 1.1 Paths this blueprint fixes
 
-The earlier documents named these paths provisionally. They are now final, and T-0048 updated the
+The earlier documents named these paths provisionally. They are now final, and old T-0048 updated the
 skills and the safe-primitives spec to match.
 
 | Provisional (where) | Final |
 | --- | --- |
 | Zone roots `web/ native/ sidecars/ lab/ tools/ third_party/` (ADR-0001 rule 1) | **Kept.** ADR-0001 allows TypeScript only under `web/`, so Playwright suites move to `web/e2e/`. The `windows/` root in the engineering-standards skill becomes `native/` (tier N) plus `internal/agentmodules/` (tier A) |
-| `tools/fitness/stack/` + `manifest.json` (ADR-0001) | **Kept.** Likewise `tools/fitness/tenancy/` and `tools/fitness/profiles/` (ADR-0002). Added: `tools/fitness/modules/` (ADR-0003, T-0141) |
+| `tools/fitness/stack/` + `manifest.json` (ADR-0001) | **Kept.** Likewise `tools/fitness/tenancy/` and `tools/fitness/profiles/` (ADR-0002). Added: `tools/fitness/modules/` (ADR-0003, old T-0141) |
 | Composition root "`cmd/<role>/` + a compose package" (ADR-0002 rule 1) | `cmd/<role>/` + `internal/compose/`, split by role: `internal/compose/<role>/` (one wiring package per binary; `server` and `agent` also hold `modules.gen.go`), `internal/compose/profile/{windows,linuxoci,saas}.go` (manifest data, no implementation imports) and `internal/compose/config/` (the loader) |
 | Platform root "`internal/platform/`" (ADR-0002) | **Kept**, with the package list in §5.1 |
 | Connector root (ADR-0002 rule 3) | `internal/connector/` |
@@ -145,8 +146,8 @@ skills and the safe-primitives spec to match.
 This section restates [ADR-0003](../decisions/0003-module-system-extension-points-only-on-ramp.md)
 (ratified 2026-10-02) and keeps the rule numbers other documents cite ("§2 rule 7"). The ADR
 numbers its own rules differently, so each rule below names its ADR rule. If the two disagree, the
-ADR wins and this section is the bug. `fitness-modules` M1–M12 enforce the rules (T-0141). Until
-it lands, the T-0014 job in `tools/fitness/modules/` enforces a subset, and code review the rest.
+ADR wins and this section is the bug. `fitness-modules` M1–M12 enforce the rules (old T-0141). Until
+it lands, the old T-0014 job in `tools/fitness/modules/` enforces a subset, and code review the rest.
 
 ```
  cmd/<role> --> compose/<role> (+ compose/config; profile is data)      every cmd/<role>: own role pkg only
@@ -363,7 +364,7 @@ on-ramp:
   `http.Handle`, `http.HandleFunc`, `http.DefaultServeMux`), and, in server modules, no `go`
   statement and no timer constructor (§4.1).
 
-**sqlc and the driver boundary (a precision for T-0033 and T-0036).** With `sql_package: "pgx/v5"`,
+**sqlc and the driver boundary (a precision for old T-0033 and old T-0036).** With `sql_package: "pgx/v5"`,
 sqlc's generated code imports pgx and uses pgx types directly
 ([sqlc: using Go and pgx](https://docs.sqlc.dev/en/latest/guides/using-go-and-pgx.html)). So the
 "SQL driver only in the data-access package" rule (FF-SP1) means two things.
@@ -495,7 +496,7 @@ capabilities may not (ADR-0002 rule 1).
 
 | Capability | `windows` | `linux-oci` | `saas` | Note |
 | --- | --- | --- | --- | --- |
-| AD read/write, sync | sspi adapter | krb5 adapter | on-site connector | Same contract. T-0023 (CBT) gates the krb5 path |
+| AD read/write, sync | sspi adapter | krb5 adapter | on-site connector | Same contract. old T-0023 (CBT) gates the krb5 path |
 | Entra / Graph | in-server connector | same | cell connector | Certificate sealed under the tenant data key |
 | Windows LAPS **decryption** (ADM-060) | DPAPI-NG native `[UNVERIFIED]` | **spike E1.4(d)** | on-site connector | If the Linux spike fails, decryption runs in a Windows-hosted remote `connector`. It never becomes a profile conditional |
 | Console SSO by SPNEGO | acceptor in connector (gMSA) | acceptor in connector (keytab) | on-site connector | Only if the PRD offers it (ADR-0002 rule 3) |
@@ -519,7 +520,7 @@ each tier ship through it (UEM ADR-0002 rules 1–2). These are the first two:
 | --- | --- | --- | --- | --- | --- |
 | EP-1 | **Module** (+ Registrar) | `platform/module` | every `internal/modules/*` | — | first server feature |
 | EP-2 | **API handlers** for one OpenAPI tag | `platform/apihost` | each module | — | first endpoint (ADR-0004 rule 5) |
-| EP-3 | **Action** (plan, apply, verify, inverse) for every write a principal makes, to a directory or to our configuration (§4.2) | `platform/operation` | `objects`, `helpdesk`, `m365`, `lifecycle`, `delegation`, `hardening`, `connections`, `workflow`, `reports`; kernel Actions from `authz`, `authn`, `notify`, `audit`, `personal` (`<pkg>/actions`) | GPO, file-server ACLs | first write (ADR-0005, T-0153) |
+| EP-3 | **Action** (plan, apply, verify, inverse) for every write a principal makes, to a directory or to our configuration (§4.2) | `platform/operation` | `objects`, `helpdesk`, `m365`, `lifecycle`, `delegation`, `hardening`, `connections`, `workflow`, `reports`; kernel Actions from `authz`, `authn`, `notify`, `audit`, `personal` (`<pkg>/actions`) | GPO, file-server ACLs | first write (ADR-0005, old T-0153) |
 | EP-4 | **Approval gate** (§8) | `platform/operation` | `platform` default (permission-only, plus the kernel single approval), `workflow` | ITSM-driven approval | first write (ADR-0005 rule 8) |
 | EP-5 | **Job kind** (tenant-carrying) | `platform/jobs` | operation runner, sync, notifications; module schedules and timers (`reports`, `lifecycle`, `workflow`, `itsm`, `migration`) | — | first job |
 | EP-6 | **Permission + scope evaluator** | `platform/authz` | every module declares permissions; `delegation` evaluates directory scopes | UEM device scopes | first endpoint |
@@ -529,7 +530,7 @@ each tier ship through it (UEM ADR-0002 rules 1–2). These are the first two:
 | EP-10 | **Authentication method** (enroll, verify) | `platform/authn` | password + TOTP, WebAuthn, email/SMS OTP (ENH-09), SAML/OIDC SP | push [M4], RADIUS | first sign-in |
 | EP-11 | **Directory provider** (typed ops + capabilities) | `connector/provider` | `ad`, `entra` | generic LDAP, Google | first directory call |
 | EP-12 | **Platform adapters** (key provider, secret source, blob, service host, update courier, Kerberos) | `platform/keys`, `platform/blob`, …; `connector/kerberos` | per manifest (§3.3) | HSM | M1 skeleton |
-| EP-13 | **Agent module** (`skenzeriq.agent.v1`) | `platform/agent` | `addc`, `fileserver` | `mgmthelper` (only if the M3 GPO spec chooses it, §13), UEM modules | first agent feature (T-0040) |
+| EP-13 | **Agent module** (`skenzeriq.agent.v1`) | `platform/agent` | `addc`, `fileserver` | `mgmthelper` (only if the M3 GPO spec chooses it, §13), UEM modules | first agent feature (old T-0040) |
 | EP-14 | **Event source** and **detection rule** | `platform/events` [M3] | `addc`, `fileserver` | WEF, FPolicy | first M3 audit feature |
 | EP-15 | **Web screen module** | `web/src/app` | `objects`, `helpdesk` | — | first screen |
 
@@ -542,7 +543,7 @@ Inside a module, variants share one shape and differ only by parameters:
 ### 4.1 Module contract (server)
 
 This restates [ADR-0003](../decisions/0003-module-system-extension-points-only-on-ramp.md) rule 4
-(EP-1). `internal/platform/module` is built to this shape (T-0144): the concrete `Registrar`,
+(EP-1). `internal/platform/module` is built to this shape (old T-0144): the concrete `Registrar`,
 `Boot`, `moduletest`, an empty `platform.Deps` and an empty `directory.Services`.
 
 ```go
@@ -631,7 +632,7 @@ func New(deps platform.Deps, dir directory.Services) module.Module
   modules cannot be written anywhere.
 
 **Agent and web tiers** follow the same rules with their own shapes. The agent module contract
-(EP-13, `skenzeriq.agent.v1`) and its dependency struct are T-0040's; ADR-0003 binds the generated
+(EP-13, `skenzeriq.agent.v1`) and its dependency struct are old T-0040's; ADR-0003 binds the generated
 list, one fixed constructor signature, no lifecycle outside the contract and no module-to-module
 imports. Web modules: §2 rule 8.
 
@@ -768,22 +769,22 @@ The root package `internal/platform` declares `platform.Deps` (§4.1). Only serv
 | `authn` (+`authn/actions`) | backend-engineer; security-architect reviews | sessions, API tokens (ADM-141), SAML/OIDC SP (library `[OPEN]`, ADR-0001), MFA (ADM-142), mTLS principals. Owns DM-30 Account, DM-31 Session, DM-32 ApiToken, DM-37 AuthenticatorEnrollment. Account changes an administrator makes are Actions (`authn.account.*` in `authn/actions`) through write functions that take a `step.Step`; sign-in, sessions and first-sign-in enrolment are bookkeeping (ADR-0005 rule 10). Declares the **read port `authn.DirectoryAnchors`** (`Resolve`, `Matched`; §7.5, ADR-0003 F6), implemented by `directory/inventory`, through which DM-30.I5 binds SSO accounts and checks `matched` correlations. Declares `authn.DirectoryRef`, which `authz` reuses | hosts EP-10 |
 | `authz` (+`authz/actions`) | backend-engineer; security-architect reviews the membership port | `Authorize(principal, permission, target) Decision`, evaluated for the **initiator chain** over live `authority.Facts` at Plan and again at Apply (ADR-0005 rule 7); `FactsQuery(chain, permission, connection)` names every include and exclude root that could decide a target, plus the Tier-0 facts; roles = sets of permissions; assignments = principal × role × scope. Role and assignment changes are Actions (`authz.*` in `authz/actions`) through write functions that take a `step.Step`. **Owns DM-34 Role and DM-36 RoleAssignment** (ADR-0003 F2); `delegation` changes them through `authz`'s Go API inside its Actions. `scope_id` and automation-policy subjects are opaque typed references, resolved through the registered `ScopeEvaluator`. Declares the **read port `authz.Membership`** (`GroupsOf`, `Matched`; §7.5, F6), implemented by `directory/inventory`, for DM-36.I2 group subjects | hosts EP-6 |
 | `operation` (+`operation/step`) | backend-engineer; security-architect reviews `operation/step` and the approval rules | The pipeline (ADR-0005, §4.2, §8): `Action`, `Descriptor`, `StepPlan`, `PlanContext`, `Outcome`, `Verdict`, `Define`, `Gate`, `Approvals`; `Plan`, `Submit`, `Approve`, `Undo`; the runner, the kernel holds and the single approval; the transition function (`transitions.go`, the only writer of a state column); the job kinds `operation.plan`, `.apply`, `.verify`, `.reconcile`, `.sweep`. **`Catalogue()`**: the read-only list of registered Descriptors, which `search` uses for the palette (ADR-0003 F4). Declares the **port `operation.LiveFacts`** (§7.5), implemented by `directory/client`. `operation/step` is the leaf every write API takes: `Step`, `Key`, `OperationID`, `Clearance`, `DCRef`, the plan-digest function and the single minter (§4.2). Owns DM-41 Operation, DM-42 OperationItem and `operation_secret`; test kit `operation/operationtest` (`Contract`) | hosts EP-3, EP-4 |
-| `jobs` | backend-engineer | tenant-carrying job wrapper, leases for singleton work, schedules, transactional insert (a job enqueued in the caller's transaction). A kind runs inside one wrapper transaction (the default) or declares **`ManagedTx`** and receives a tenant-bound `TenantTx` runner, opening its own short transactions (ADR-0002 Jobs row as amended by ADR-0005 rule 6; T-0084). **Owns the job table `jobs`**: our own `SKIP LOCKED` queue, global and registered, reached only through `store` (ADR-0002 Jobs row, amended 2026-10-02; §8 Job queue) | hosts EP-5 |
+| `jobs` | backend-engineer | tenant-carrying job wrapper, leases for singleton work, schedules, transactional insert (a job enqueued in the caller's transaction). A kind runs inside one wrapper transaction (the default) or declares **`ManagedTx`** and receives a tenant-bound `TenantTx` runner, opening its own short transactions (ADR-0002 Jobs row as amended by ADR-0005 rule 6; old T-0084). **Owns the job table `jobs`**: our own `SKIP LOCKED` queue, global and registered, reached only through `store` (ADR-0002 Jobs row, amended 2026-10-02; §8 Job queue) | hosts EP-5 |
 | `audit` (+`audit/canon`, `audit/chain`, `audit/actions`) | backend-engineer; security-architect reviews | `Kind`, the event envelope, `Append(tx, kind, event)` (into audit's per-transaction slot), `Chainer.BeforeCommit` (the commit hook `compose/server` installs on `store`), `InitTenant` (the genesis head row and first checkpoint key, run by tenant provisioning), signed checkpoints, export, forwarding to EP-9 sinks, retention purges (§9; ADR-0005 rule 11). **Owns `audit_head`, `audit_event` and `audit_checkpoint`, and all the chain SQL.** `audit/canon` is `adq-canon/1` and `audit/chain` is chain and checkpoint verification, both standard-library only and linked by `cmd/auditverify`. Retention and SIEM-sink changes are Actions in `audit/actions` | hosts EP-7; implements EP-8 |
 | `report` | reporting-engineer | dataset registry, report-definition AST types, the run API | hosts EP-8 |
 | `notify` (+`notify/actions`) | backend-engineer | `Send(template, recipients)`, delivery records, alerts, egress-proxy setting (ADM-205). Appends no audit event itself: channel and SMTP changes are Actions (`notify.channel.*` in `notify/actions`), which the runner audits | hosts EP-9 |
 | `personal` (+`personal/actions`, `personal/erasure`) | backend-engineer; security-architect reviews | **Erasable personal values** (ADR-0005 rule 12): `PersonalRef` (subject reference, `value_id`, field, salted HMAC-SHA-256 commitment), `Put`, `Resolve`, `Erase`, `PurgeValues`, and the **erasure register** outside the database (in `blob`), which the restore runbook replays. Owns `personal_subject` (the per-subject salt and `hold`) and `personal_value`. Every append-only record (DM-80 events, DM-18 change records, DM-66 comments) stores `PersonalRef`s through this API. `personal/actions` holds `personal.subject.erase`; `personal/erasure` runs the purge- and account-deletion triggers. Both sit above `audit` and `operation` (§2.3) | — |
 | `keys` | backend-engineer; security-architect reviews | KEK from the key-provider adapter, tenant data keys, `Seal`/`Unseal[T]`, key shredding on tenant delete | EP-12 |
 | `secret` | directory-engineer (P3) | the `Secret` type: redacted, not serialisable | — |
-| `blob` | backend-engineer | `Store`: `Put`/`Get`/`Delete`/`Sweep` (expiry); every call takes a `tenant.ID` and a tenant-relative, validated key, and the adapter derives the tenant prefix, so a caller never names a path. Adapters: `fs` (T-0090: `<root>/<tenant>/<hh>/<sha256(key)>.blob` through `os.Root`, one self-describing file per blob), `s3` (client library `[OPEN]`) | EP-12 |
+| `blob` | backend-engineer | `Store`: `Put`/`Get`/`Delete`/`Sweep` (expiry); every call takes a `tenant.ID` and a tenant-relative, validated key, and the adapter derives the tenant prefix, so a caller never names a path. Adapters: `fs` (old T-0090: `<root>/<tenant>/<hh>/<sha256(key)>.blob` through `os.Root`, one self-describing file per blob), `s3` (client library `[OPEN]`) | EP-12 |
 | `proc`, `pslit` | backend-engineer (P4) | constant-argv process runner; display-only PowerShell rendering | — |
 | `fleet` | backend-engineer | the gRPC mTLS gateway for connectors and agents (server side): enrollment (the first registered platform path), certificate SAN → tenant + component, endpoint lists. It is **contract-agnostic**. For each enrolled component it exposes a tunnel over the component-initiated connection, which implements [`grpc.ClientConnInterface`](https://pkg.go.dev/google.golang.org/grpc#ClientConnInterface) for server-initiated calls, and a [`grpc.ServiceRegistrar`](https://pkg.go.dev/google.golang.org/grpc#ServiceRegistrar) for calls the component makes. Product contracts bind to the tunnel from outside the platform root: `directory/client` binds the generated `activediq.connector.v1` client, and the server module that owns an agent module's contract binds `activediq.<module>.v1`. The platform root therefore never imports `internal/proto/activediq/…` (§2 rule 1, ADR-0002 U2) | hosts transport for EP-11 (remote) and EP-13 |
 | `fleet/dial` | backend-engineer | the component side, linked by `cmd/connector` and `cmd/agent`: enrollment client, mTLS dial-out, and serving the reverse tunnel. No `store` (§2 rule 7) | — |
-| `agent` | windows-engineer | the skenzeriq agent host inside `cmd/agent`: lifecycle, outbox, update, health (T-0040) | hosts EP-13 |
+| `agent` | windows-engineer | the skenzeriq agent host inside `cmd/agent`: lifecycle, outbox, update, health (old T-0040) | hosts EP-13 |
 | `update` | backend-engineer; devops-engineer owns the release pipeline | fetch → verify (one verifier) → stage → apply → health check → rollback; couriers `online`/`offline`. The server's migration step is injected by `compose/server`, so `update` imports no `store` and links into `cmd/connector` and `cmd/agent` (§2 rule 7) | EP-12 |
 | `telemetry` | backend-engineer | `slog` JSON with tenant ID, metrics; no mandatory egress (P6) | — |
-| `export` encoders | reporting-engineer | CSV/XLSX/PDF/HTML encoders with formula neutralisation (spec T-0029) | — |
-| `events` [M3] | backend-engineer (pipeline); directory-engineer (sources) | `Source` (decodes a batch from an agent module, and later from WEF or FPolicy, into normalised events), `Rule` (match → alert through `notify`), and writes to partitioned event tables if T-0026 passes ADR-0001 rule 3 | hosts EP-14; implements EP-8 (DC events) |
+| `export` encoders | reporting-engineer | CSV/XLSX/PDF/HTML encoders with formula neutralisation (spec old T-0029) | — |
+| `events` [M3] | backend-engineer (pipeline); directory-engineer (sources) | `Source` (decodes a batch from an agent module, and later from WEF or FPolicy, into normalised events), `Rule` (match → alert through `notify`), and writes to partitioned event tables if old T-0026 passes ADR-0001 rule 3 | hosts EP-14; implements EP-8 (DC events) |
 
 ### 5.2 Directory domain (`internal/directory/`)
 
@@ -795,8 +796,8 @@ API, the `client`, and the `connection` registry with its credential port. Only 
 | Package | Owner | Interface | EPs |
 | --- | --- | --- | --- |
 | `ldapfilter`, `dn`, `attr/*` | directory-engineer | the safe primitives P1–P3 (safe-primitives §3–§5) | — |
-| `model` | directory-engineer (semantics: ad-expert, T-0006) | `Connection` (AD forest, Entra tenant), `NamingContext`, `Object{GUID, class, parent GUID, DN-for-display}`, `ObjectRef`, link types | — |
-| `inventory` | directory-engineer | current state, link graph, GUID ancestry, per-DC values, AD↔Entra correlation, change history (§12). Read API for modules. Owns DM-14 NamingContext, DM-15 DomainController, DM-16 DirectoryObject, DM-17 Link, DM-18 ChangeRecord, DM-20 Correlation, DM-23 GpLink. Reads the connection's deletion settings, takeover attestation and confirmed HybridLinks through `connection`'s API. **Implements the kernel read ports** `authz.Membership` and `authn.DirectoryAnchors` directly (§7.5, F6). Exposes change history by watermark, which is how `lifecycle` sees attribute changes until a change-feed Registrar method exists (F3). DM-18 old and new values are stored as `PersonalRef`s through `platform/personal`, so erasure reaches them (ADR-0005 rule 12; T-0065) | implements EP-8 |
+| `model` | directory-engineer (semantics: ad-expert, old T-0006) | `Connection` (AD forest, Entra tenant), `NamingContext`, `Object{GUID, class, parent GUID, DN-for-display}`, `ObjectRef`, link types | — |
+| `inventory` | directory-engineer | current state, link graph, GUID ancestry, per-DC values, AD↔Entra correlation, change history (§12). Read API for modules. Owns DM-14 NamingContext, DM-15 DomainController, DM-16 DirectoryObject, DM-17 Link, DM-18 ChangeRecord, DM-20 Correlation, DM-23 GpLink. Reads the connection's deletion settings, takeover attestation and confirmed HybridLinks through `connection`'s API. **Implements the kernel read ports** `authz.Membership` and `authn.DirectoryAnchors` directly (§7.5, F6). Exposes change history by watermark, which is how `lifecycle` sees attribute changes until a change-feed Registrar method exists (F3). DM-18 old and new values are stored as `PersonalRef`s through `platform/personal`, so erasure reaches them (ADR-0005 rule 12; old T-0065) | implements EP-8 |
 | `sync` | directory-engineer | full sync, then DirSync / Graph delta per naming context or tenant, under a lease (ADR-0002 rule 6); the cookie is stored in our database, so the connector stays stateless. **Owns DM-19 SyncCursor** (the cookie table; its fencing token comes through `jobs`' API). Reads the attribute set and suspension from `connection` | EP-5 job |
 | `client` | directory-engineer; security-architect reviews the write path | `Directory` (the generated connector-contract client); binding → transport resolution, from data rather than configuration, reading DM-13 bindings through `connection`'s API; capability check before Plan. **The write path** (ADR-0005 rule 2): every write method takes a `step.Step` (`client.Write(ctx, s, op)`), recomputes the plan digest, reads the facts the step names on its pins, calls `Step.Recheck`, and sends the conditional write only with the returned `Clearance`; the generated write client is referenced nowhere else. **Implements the kernel port `operation.LiveFacts`** structurally (§7.5). Owns no table | consumes EP-11 |
 | `connection` | directory-engineer; security-architect reviews the credential port | **The connection registry** (ADR-0003 F1). **Owns DM-10 Connection, DM-13 ConnectorBinding and DM-21 HybridLink**: tenant configuration that `client`, `sync` and `inventory` read, kept out of the transport client so `inventory` need not depend on `client`. Its Go API is the only writer; the `connections` module calls it inside its Actions, through `directory.Services`. Declares the **credential port** (§7.3), implemented by `connector/credential/sealed` and handed in by `compose/server`. Importers: `client`, `sync`, `inventory`, and modules through `directory.Services` | — |
@@ -810,7 +811,7 @@ API, the `client`, and the `connection` registry with its credential port. Only 
 | `provider/ad` | directory-engineer | AD ops over `ldap`, `kerberos`, `ad/scope`; later SMB (`go-smb2`) and MS-RPC (`go-msrpc`), each with a register row first | implements EP-11 |
 | `provider/entra` | directory-engineer | Graph ops, including delta queries ([user: delta](https://learn.microsoft.com/en-us/graph/api/user-delta)). SDK or thin client `[OPEN]` (ADR-0001) | implements EP-11 |
 | `ldap` | directory-engineer | DC locator, LDAPS/StartTLS, `SecureConn`, paging, ranged reads, DC affinity | — |
-| `kerberos` | directory-engineer | `GSSAPIClient` with adapters `sspi` (GOOS=windows platform adapter) and `krb5` (go-krb5, T-0023) | EP-12 |
+| `kerberos` | directory-engineer | `GSSAPIClient` with adapters `sspi` (GOOS=windows platform adapter) and `krb5` (go-krb5, old T-0023) | EP-12 |
 | `credential` | directory-engineer; security-architect reviews | **Owns DM-11 DirectoryCredential** alone, with its SQL only in `credential/sealed` (§2 rule 6). The credential types and a `Source` interface. Its types are nameable only here (P3). Two sources: `credential/local` (gMSA through the process identity, keytab file, OS-protected certificate), used by both roles; and `credential/sealed` (Entra certificate and AD password fallback, unsealed with `keys` inside the caller's `WithTenantTx`), used **only** by the embedded connector, wired by `compose/server`. `credential/sealed` also implements `directory/connection`'s credential port (§7.3) | — |
 | `psx` | backend-engineer | typed sidecar client over `proc` (safe-primitives §6.1) | — |
 
@@ -830,7 +831,7 @@ API, the `client`, and the `connection` registry with its credential port. Only 
 | `m365` | directory-engineer | licences and other Entra-only actions; EXO mailboxes [M5] | EP-1, 2, **3** (licence and other Entra-only Actions on `provider/entra`), 6, 7 | E2.7 |
 | `itsm` | backend-engineer | ServiceNow and ServiceDesk Plus as one adapter shape | EP-1, 2, 5 (outbound status sync), 6, 7. Submits requests as EP-3 Actions by ID; ITSM-driven approval (EP-4) later | E2.10 |
 | `migration` | backend-engineer | ADMP importers, fidelity report, parallel-run comparator, job-ownership lock (ENH-02) | EP-1, 2, 5 (import and parallel-run jobs), 6, 7. Writes what it imports through the owning modules' Actions by ID (EP-3 caller); imported configuration is configuration, so it goes through those Actions too (ADR-0005 rule 10) | E2.11 |
-| `hardening` | directory-engineer; security-architect designs | least-privilege wizard (ENH-08, needs SD primitive T-0028), hardening score | EP-1, 2, **3** (applies and removes the delegated rights it generates), 6, 7 | E2.13 |
+| `hardening` | directory-engineer; security-architect designs | least-privilege wizard (ENH-08, needs SD primitive old T-0028), hardening score | EP-1, 2, **3** (applies and removes the delegated rights it generates), 6, 7 | E2.13 |
 
 Every module implements EP-1 (it is a module), EP-2 (its API tag), EP-6 (it declares
 permissions) and EP-7 (its audit kinds, including its own setting changes). The column lists
@@ -844,13 +845,13 @@ these for completeness and marks in bold the EPs that define the module's role.
 | `cmd/edge` [M4] | backend-engineer; security-architect reviews | serves the public SSPR flows; the server tunnels out to it. No credentials, no `store` (§2 rule 7) | — |
 | `cmd/radius` [M4], `cmd/fpolicy` [M5, E5.5], `cmd/t0-connector` [post-v1] | backend-engineer / directory-engineer | each has its own role package `internal/compose/<role>` and links only kernel packages plus its role's code | EP-10 / EP-14 / EP-11 |
 | `internal/agentmodules/addc` [M3] | windows-engineer | Security-log subscription, password-filter IPC, policy cache (`activediq.addc.v1`) | implements EP-13, EP-14 |
-| `internal/agentmodules/fileserver` [M3] | windows-engineer | ACL reads and writes through the security-descriptor primitive (T-0028), and file-access auditing. Like every agent module it calls `proc` only, never `psx` (§7.4) | implements EP-13, EP-14 |
+| `internal/agentmodules/fileserver` [M3] | windows-engineer | ACL reads and writes through the security-descriptor primitive (old T-0028), and file-access auditing. Like every agent module it calls `proc` only, never `psx` (§7.4) | implements EP-13, EP-14 |
 | `internal/agentmodules/mgmthelper` [M3, `OPEN`] | windows-engineer | Exists only if the M3 GPO spec chooses an agent module with its own constrained identity, rather than a Windows-hosted remote connector driving `sidecars/gpmc` (custody favours the connector, §13). If chosen, that spec also decides how it reaches `sidecars/gpmc`, because `psx` sits under the connector root, which agent modules may not import (§2 rule 3) | would implement EP-13 |
-| `native/passfilt` [M4], `native/credprov` [M4] | windows-engineer | LSASS / LogonUI DLLs (ADR-0001 tier N, spikes T-0024/T-0025) | — |
+| `native/passfilt` [M4], `native/credprov` [M4] | windows-engineer | LSASS / LogonUI DLLs (ADR-0001 tier N, spikes old T-0024/old T-0025) | — |
 | `sidecars/*` | windows-engineer | typed request/response over stdio, launched by `proc` with constant argv; never listens on a port | — |
 | `web/` | frontend-engineer; `src/ds` component-designer | console shell and module screens over the generated client | hosts EP-15 |
 | `packaging/` | devops-engineer | MSI and OCI artefacts in one signed release manifest (ADR-0002 rule 7) | — |
-| `tools/fitness/*` | devops-engineer (`tenancy`: backend-engineer, T-0036) | CI jobs, §17 | — |
+| `tools/fitness/*` | devops-engineer (`tenancy`: backend-engineer, old T-0036) | CI jobs, §17 | — |
 
 ### 5.6 Ownership findings (ADR-0003 rule 9)
 
@@ -1011,13 +1012,13 @@ connector (§2 rule 3, §2.1). So the write path is a **credential port**:
 ```
 
 - The port's method set (create, rotate, revoke, describe) is fixed by the `connections` build
-  ticket, and security-architect reviews it there; custody is T-0007's.
+  ticket, and security-architect reviews it there; custody is old T-0007's.
 - Unsealing stays under `internal/connector/` (DM-11.I1). `cmd/connector` never links
   `credential/sealed` or `keys` (§2 rule 7), so "sealed only in the server" is checked, not just
   stated.
 
 A remote connector that needs more than a local credential (an Entra certificate or a password
-fallback on a remote host) is `[OPEN → T-0007]`.
+fallback on a remote host) is `[OPEN → old T-0007]`.
 
 ### 7.4 Where each primitive lives and who uses it
 
@@ -1048,7 +1049,7 @@ directions in which data crosses a boundary:
 | credential port | `directory/connection` | `connector/credential/sealed` | DM-11 writes in (`secret.Secret`), metadata out (§7.3) | `connections` build ticket, security-architect |
 | `authz.Membership` | `platform/authz` | `directory/inventory` | DM-16, DM-17, DM-20 for group subjects (DM-36.I2) | **`authz` build ticket, security-architect** (it is the authorization path) |
 | `authn.DirectoryAnchors` | `platform/authn` | `directory/inventory` | DM-16, DM-20 for SSO bindings (DM-30.I5) | `authn` build ticket, security-architect |
-| `operation.LiveFacts` | `platform/operation` | `directory/client` | **live** `authority.Facts` about one target, read on the pins, for the Plan and Apply authorisation checks (ADR-0005 rule 7; §8). Unlike the two above, it never answers from inventory | T-0153 (port) and the connector spec (per-root-kind reads, T-0051), security-architect |
+| `operation.LiveFacts` | `platform/operation` | `directory/client` | **live** `authority.Facts` about one target, read on the pins, for the Plan and Apply authorisation checks (ADR-0005 rule 7; §8). Unlike the two above, it never answers from inventory | old T-0153 (port) and the connector spec (per-root-kind reads, old T-0051), security-architect |
 
 The kernel ports (ADR-0003 F6; ADR-0005 rule 7) name kernel types only, because the kernel may not import
 `directory/model`. `authn` declares `DirectoryRef{Connection, Plane, Object}`: a connection ID, the
@@ -1167,7 +1168,7 @@ window and throttling honours `Retry-After`
 ([Graph throttling](https://learn.microsoft.com/en-us/graph/throttling)). Default limits: four
 concurrent writes per (connection, DC), four per Entra tenant, two chunk jobs per operation.
 
-**Job queue** (`platform/jobs`; ADR-0002 Jobs row as amended 2026-10-02 by T-0209; DM-43). The
+**Job queue** (`platform/jobs`; ADR-0002 Jobs row as amended 2026-10-02 by old T-0209; DM-43). The
 queue is our own table, `jobs`, and every access goes through `store`.
 - **Enqueue** is an `INSERT` in the caller's `store.Tx`. A `BEFORE INSERT OR UPDATE` trigger
   refuses a `tenant_id` that differs from the transaction's tenant context, and any change to
@@ -1184,9 +1185,9 @@ queue is our own table, `jobs`, and every access goes through `store`.
   lease (DM-06). The rescuer re-queues a lapsed `running` job. The cleaner deletes finished jobs
   after their retention period.
 - **Wake-up** is by polling (1 s by default). `LISTEN` would need a connection outside `store`.
-- **Arguments** are typed references only, at most 4 KiB (T5 `job-args-reference`, T-0213).
+- **Arguments** are typed references only, at most 4 KiB (T5 `job-args-reference`, old T-0213).
   Per-tenant quota and claim fairness come before the `saas` profile hosts a second tenant
-  (T-0214).
+  (old T-0214).
 - **Built (T-0002).** Migration `0002_jobs_jobs.sql` (the table, its checks, the unique-key index and the
   `jobs_guard` trigger, enabled `ALWAYS`) and `internal/platform/jobs`: `Enqueue`, `Cancel`, `Claim`,
   `Complete`, `Fail`, `Discard`, `Renew`, `Rescue`, `Clean`. The guard raises SQLSTATE `AD403`, which the
@@ -1240,7 +1241,7 @@ record; a job is only a driver.
   state on the pin: after-state → `applied` (`recovered: true`); before-state → re-apply with the
   same key, or `not_run` if the operation is cancelling; anything else → `failed`
   (`stale_state`). **A password step is never re-applied:** it is `applied` if `pwdLastSet` is
-  later than the claim, else `failed` (`outcome_unknown`) `[LAB: Windows, T-0051]`. No step is
+  later than the claim, else `failed` (`outcome_unknown`) `[LAB: Windows, old T-0051]`. No step is
   ever left `applying` silently.
 - **Stalls and terminal detection.** The sweeper re-enqueues work for an operation that has
   unclaimed work but no progress within the stall window. The transaction that records an
@@ -1269,7 +1270,7 @@ who lost the right while waiting fails `denied`. No role touches `tier0`, at eit
 | `root_kind` | Live fact | Read on |
 | --- | --- | --- |
 | `naming_context`, `ou_subtree`, `ou_one_level` | the target's parent chain by `objectGUID` (source and destination parent for a move) | the pin of the target's naming context |
-| `group_members` (AD) | transitive membership in each asked root group, by an `ldapfilter` in-chain filter; deactivated links never count | the pin of the group's naming context (GC or that domain's DC: `[LAB: Windows]`, T-0051) |
+| `group_members` (AD) | transitive membership in each asked root group, by an `ldapfilter` in-chain filter; deactivated links never count | the pin of the group's naming context (GC or that domain's DC: `[LAB: Windows]`, old T-0051) |
 | `group_members` (Entra) | transitive membership via `checkMemberGroups`, at most 20 IDs per request | the Entra connection |
 | `administrative_unit` | **direct** AU membership, plus `isManagementRestricted` | the Entra connection |
 | `entra_tenant` | the target exists, is not deleted and belongs to the tenant | the Entra connection |
@@ -1315,14 +1316,14 @@ There are three streams. v1 ships the first two.
 | --- | --- | --- | --- | --- |
 | **Our audit trail** | every Action step and gate outcome, sign-in, permission change and setting change, audit reads and exports, with the acting principal and the on-behalf-of chain | `platform/audit` | append-only tenant tables; one hash chain per tenant, chained at commit; signed checkpoints anchored outside the host; export + offline verify; SIEM forwarding via EP-9 (ADM-198) | v1 (ADM-137, 138; ADA-112; RMP-043) |
 | **Directory change history** | what changed and when, including changes made outside activeDIQ, with originating DC and version, but not *who* | `directory/sync` (DirSync/Graph delta + replication metadata) | `inventory` history (§12) | v1 (ADM-005, without "who" for native changes, E2.4) |
-| **DC events** | *who* made a change (5136/4738/4728…), logons, lockouts | `addc` agent module → `fleet` → event pipeline (EP-14) | partitioned event tables, if T-0026 passes ADR-0001 rule 3 | M3 |
+| **DC events** | *who* made a change (5136/4738/4728…), logons, lockouts | `addc` agent module → `fleet` → event pipeline (EP-14) | partitioned event tables, if old T-0026 passes ADR-0001 rule 3 | M3 |
 
 The `history` module joins the streams on `objectGUID` and time. An activeDIQ change is linked by
 operation ID, and a native change by the correlated event from M3 on (FEAS §4.4 flow 3).
 
 **How our audit trail works.** This restates [ADR-0005](../decisions/0005-operation-pipeline-and-audit-trail.md)
 rules 11 and 12, which implement the threat model's audit guarantees AG-1…AG-9
-([threat model §11](threat-model.md)). T-0088 builds it and publishes the byte-level format
+([threat model §11](threat-model.md)). old T-0088 builds it and publishes the byte-level format
 document. If this section and the ADR disagree, the ADR wins.
 
 **The event.** Each event carries `tenant_id`, `seq`, `at`; `kind` and `kind_version`; the actor
@@ -1362,9 +1363,9 @@ class, display snapshots); the operation, item, step, request and correlation ID
   nothing; `at` is monotonic per tenant, so time partitions are `seq` ranges. The unique index
   `(tenant_id, seq)` is the backstop against a fork. Budget: roughly 200–1,000 audited commits
   per second per tenant on local storage, about 100 with a synchronous standby
-  `[UNVERIFIED: T-0088 load test]`.
+  `[UNVERIFIED: old T-0088 load test]`.
 - **The head row.** `audit.InitTenant` runs in a new tenant's first `WithTenantTx`, called by the
-  tenant-provisioning path (T-0037), and inserts `(seq 0, hash_0)`, the first checkpoint key and
+  tenant-provisioning path (old T-0037), and inserts `(seq 0, hash_0)`, the first checkpoint key and
   two events. The runtime role holds `INSERT` and `UPDATE` on `audit_head` only, fenced by the
   primary key, no `DELETE`, and a genesis-only `BEFORE INSERT` trigger that recomputes `hash_0`
   and sets `at` itself. On `audit_event` and `audit_checkpoint` it holds only `INSERT` and
@@ -1427,7 +1428,7 @@ class, display snapshots); the operation, item, step, request and correlation ID
   must reference a verified `personal.subject.erase` step or a recorded trigger. Triggers: the
   ADM-207 setting on a directory-object purge, an explicit `tenant-owner` request (step-up,
   `Irreversible`), and deletion of an activeDIQ account. A legal `hold` blocks all three.
-- **One shape for every append-only record.** DM-80 events, DM-18 change records (T-0065) and
+- **One shape for every append-only record.** DM-80 events, DM-18 change records (old T-0065) and
   DM-66 comments all store `PersonalRef`s through `personal`'s Go API. Mutable records are erased
   in place.
 - **What erasure cannot reach:** SIEM copies, earlier non-pseudonymous exports and database
@@ -1450,7 +1451,7 @@ class, display snapshots); the operation, item, step, request and correlation ID
 - **Freshness.** Inventory is kept current by the change feed. "Exact last logon" uses per-DC
   values (ADM-084). A report says how fresh its data is, never "live" when it is not.
 - **Scheduling** uses `jobs`, **delivery** uses `notify`, **exports** use `platform/export`
-  (T-0029), and **act-on-results** hands the selected GUIDs to an Action's `Plan` (ADM-098).
+  (old T-0029), and **act-on-results** hands the selected GUIDs to an Action's `Plan` (ADM-098).
 
 ---
 
@@ -1476,7 +1477,7 @@ class, display snapshots); the operation, item, step, request and correlation ID
 - **Per-technician attribution in AD's own logs** (ADM-134 leapfrog). Our audit trail always records
   the technician. How AD's own logs show the technician is still open. The options are Kerberos
   constrained delegation (S4U2Proxy) from the connector identity, and per-session technician
-  credentials held only in connector memory. `[OPEN → ADM-134 spec + T-0007]`
+  credentials held only in connector memory. `[OPEN → ADM-134 spec + old T-0007]`
 
 ---
 
@@ -1504,8 +1505,8 @@ class, display snapshots); the operation, item, step, request and correlation ID
     "everything operation O did".
   - Secret attributes are never stored (LF-38).
   - `old` and `new` are stored as `PersonalRef`s through `platform/personal`, so erasure reaches
-    history too (§9; ADR-0005 rule 12; T-0065).
-  - Exact shapes: T-0006 (domain model) and T-0026 (ingest benchmark).
+    history too (§9; ADR-0005 rule 12; old T-0065).
+  - Exact shapes: old T-0006 (domain model) and old T-0026 (ingest benchmark).
 - **Blobs** (baseline snapshots, exports, GPO backups [M3]) go through `platform/blob` with
   tenant-prefixed keys. Adapters are `fs` (default) and a customer-supplied S3-API store. We never
   ship an object-store server (lessons: MinIO).
@@ -1522,8 +1523,8 @@ class, display snapshots); the operation, item, step, request and correlation ID
 | --- | --- | --- | --- | --- | --- |
 | Server MSI | a Windows member server, WS2019+; **refuses a DC** (ADR-0002 rule 9) | — | installs `cmd/server` as a service under a gMSA, plus bundled PostgreSQL | release manifest | M2 |
 | Remote `cmd/connector` | any Windows or Linux host near the DCs | server `fleet` | dials out over gRPC mTLS; enrolls once; the certificate SAN names tenant + component | `activediq.connector.v1` | M2 |
-| `cmd/agent` + `addc` | every DC | server `fleet` | dials out over mTLS; no listening port (ADR-0001 tier A) | `skenzeriq.agent.v1` + `activediq.addc.v1` (T-0040) | M3 |
-| Password filter `native/passfilt` | LSASS on writable DCs | the `addc` module on the same DC | local named pipe ACL'd to the agent's service SID; no network I/O in the LSASS path; policy is a signed document cached by the agent | IPC format: T-0024 + T-0040 | M4 |
+| `cmd/agent` + `addc` | every DC | server `fleet` | dials out over mTLS; no listening port (ADR-0001 tier A) | `skenzeriq.agent.v1` + `activediq.addc.v1` (old T-0040) | M3 |
+| Password filter `native/passfilt` | LSASS on writable DCs | the `addc` module on the same DC | local named pipe ACL'd to the agent's service SID; no network I/O in the LSASS path; policy is a signed document cached by the agent | IPC format: old T-0024 + old T-0040 | M4 |
 | Credential provider `native/credprov` | LogonUI on endpoints | SSPR API (through `edge` or direct) | pinned TLS | SSPR API (OpenAPI) | M4 |
 | `fileserver` agent module (and `mgmthelper`, only if chosen below) | file servers (`mgmthelper`: one member server) | server `fleet` | as `addc` | `activediq.<module>.v1` | M3 |
 | Sidecars `gpmc`, `exchange` | the host that drives them | the Go process that launched them | stdio typed messages; `AddCommand`/`AddParameter` only; constant argv (FF-SP8/9) | `psx` op manifest | M3 / FD-04 |
@@ -1580,7 +1581,7 @@ There are 83 rows with `phase = P1` and `importance = must` in
 | ADM-008, 016, 024, 033, 048, 050, 055, 056 | `objects` (class definitions as data) | `operation`, `client` → `provider/ad` |
 | ADM-010, 011, 034 | `objects` (bulk and CSV planning) | `operation` chunking on `jobs`; ENH-04 preview and undo |
 | ADM-012, 013, 015, 017, 018, 020, I360-004 | `objects` (templates, rules, naming, duplicate check) | `ScopedSearch` for duplicate checks; the DC decides uniqueness (R9) |
-| ADM-023 | `objects` | `provider/ad` SMB + SD primitive (T-0028) for home and profile folders; `go-smb2` register row first |
+| ADM-023 | `objects` | `provider/ad` SMB + SD primitive (old T-0028) for home and profile folders; `go-smb2` register row first |
 | ADM-027 | `objects` (one flow for AD + Entra) | `provider/entra`, `m365` licence Action |
 | ADM-038 | `objects` (`RestoreDeleted`, a named op) | `connector/ad/scope` (show-deleted control only here) |
 | ADM-057 | `objects` (computer reset/restore) | `provider/ad` |
@@ -1591,13 +1592,13 @@ There are 83 rows with `phase = P1` and `importance = must` in
 | ADM-084 | `reports` | `ReadPerDC` + per-DC values in `inventory` |
 | ADM-097 | `reports` (builder) + `web/src/modules/reports` | `reportsql` |
 | ADM-098 | `reports` → `operation` (act on results) | EP-3 Actions of other modules, by ID |
-| ADM-100 | `reports` | `platform/export` (T-0029) |
+| ADM-100 | `reports` | `platform/export` (old T-0029) |
 | ADM-101 | `reports` | `jobs`, `notify` |
 | ADM-125, 126, 127, 128, 129, 130, I360-020, ERP-014, RMP-042 | `delegation` | `authz` (EP-6), `inventory` ancestry |
 | ADM-134 | `audit` + `delegation` | `connector` acting principal; AD-side attribution `[OPEN]` (§11) |
 | ADM-137, 138, ADA-112 | `platform/audit` | `reports` dataset |
 | RMP-043 | `platform/audit` | `notify` SIEM sink |
-| ADM-142, 143, 145, ADA-111, ADA-116, ADSS-126, RMP-044, M365-018, ERP-017 | `platform/authn` + `apihost` hardening | `connector` SPNEGO/`VerifyUser`; T-0007 |
+| ADM-142, 143, 145, ADA-111, ADA-116, ADSS-126, RMP-044, M365-018, ERP-017 | `platform/authn` + `apihost` hardening | `connector` SPNEGO/`VerifyUser`; old T-0007 |
 | ADM-146, 148 | `lifecycle` (cleanup) | `reports` → act on results; `objects` Actions |
 | ADM-159 | `connections` (Entra onboarding: customer app registration, certificate) | `keys`, `connector/credential` |
 | ADM-161, M365-005 | `m365` | `provider/entra` |
@@ -1608,9 +1609,9 @@ There are 83 rows with `phase = P1` and `importance = must` in
 | ADM-188, 189 | `api/openapi` + `apihost` | ADR-0004 (both map onto `/api/v1`, rule 7) |
 | ADM-204 | `platform/notify` | each module's templates |
 | ADM-205 | `platform/notify` (mail, SMS gateway, egress proxy) | — |
-| ADM-209, RMP-046 | `platform/update` + `packaging/` release train | ENH-07 spec, T-0027 signing |
+| ADM-209, RMP-046 | `platform/update` + `packaging/` release train | ENH-07 spec, old T-0027 signing |
 | ADM-210 | `compose/server` (stateless nodes) + `directory/client` (redundant connector bindings) | leases (`jobs`), PostgreSQL HA (customer) |
-| ADM-212 | `connections` + `connector/ldap` (LDAPS, signing, CBT, DC affinity) | T-0023 |
+| ADM-212 | `connections` + `connector/ldap` (LDAPS, signing, CBT, DC affinity) | old T-0023 |
 
 **v1 pulls (FD-02, ADMP must rows from P2):**
 - ADM-039, 041, 042, 043, 044, 104, 105, 107, 147 → `lifecycle`.
@@ -1638,34 +1639,34 @@ There are 83 rows with `phase = P1` and `importance = must` in
 
 | Item | Decided in |
 | --- | --- |
-| ~~Module system, import DAG, generated lists, table ownership, `fitness-modules`~~ | **Decided:** [ADR-0003](../decisions/0003-module-system-extension-points-only-on-ramp.md), ratified 2026-10-02 (T-0045); restated in §2, §4.1, §5, §7.3, §7.5 |
-| ~~`platform/module` migration to the concrete `Registrar`, `Boot`, `moduletest`; empty `platform.Deps` and `directory.Services`; `0001_tenant_tenants.sql`~~ | **Done:** T-0144 |
-| Credential port method set (create, rotate, revoke, describe) | the `connections` build ticket, security-architect reviews (custody: T-0007) |
+| ~~Module system, import DAG, generated lists, table ownership, `fitness-modules`~~ | **Decided:** [ADR-0003](../decisions/0003-module-system-extension-points-only-on-ramp.md), ratified 2026-10-02 (old T-0045); restated in §2, §4.1, §5, §7.3, §7.5 |
+| ~~`platform/module` migration to the concrete `Registrar`, `Boot`, `moduletest`; empty `platform.Deps` and `directory.Services`; `0001_tenant_tenants.sql`~~ | **Done:** old T-0144 |
+| Credential port method set (create, rotate, revoke, describe) | the `connections` build ticket, security-architect reviews (custody: old T-0007) |
 | `authz.Membership` and `authn.DirectoryAnchors` semantics, and where the DM-20.I5 live re-check sits (§7.5) | the `authz` and `authn` build tickets, security-architect reviews (ADR-0003 F6) |
 | Change-feed Registrar method for attribute-triggered automation (ADR-0003 F3) | the first ticket that needs triggered automation (E2.9) |
 | ~~Shape of `operation.Catalogue()` (ADR-0003 F4) and gate interplay with Actions~~ | **Decided:** ADR-0005 rules 1 and 8; restated in §4.2, §8 |
 | Freeze of `platform/module` (`// Frozen:` line), after the rule 9 paper check and the first two modules | solution-architect, once `connections` and `objects` have shipped through EP-1 (ADR-0003 rules 8–9) |
-| ~~OpenAPI layout, generators, router, versioning, strict JSON, `x-permission`; the Registrar's `API` registration shape (`apihost.TagHandlers`)~~ | **Decided:** [ADR-0004](../decisions/0004-public-api-contract-openapi-first.md), ratified 2026-10-02 (T-0046, D-0014); restated in §1, §4.1 EP-2, §6. Generator and skeleton delivered (old T-0147) |
+| ~~OpenAPI layout, generators, router, versioning, strict JSON, `x-permission`; the Registrar's `API` registration shape (`apihost.TagHandlers`)~~ | **Decided:** [ADR-0004](../decisions/0004-public-api-contract-openapi-first.md), ratified 2026-10-02 (old T-0046, D-0014); restated in §1, §4.1 EP-2, §6. Generator and skeleton delivered (old T-0147) |
 | `apihost` itself: `Build`, `Ports`, the middleware chain, the rule 6 decode and secret clean-up; the `secretjson` allowance for `apihost` | T-0033 |
 | TM §7.6 amendment for break-glass and SPNEGO sign-in routes; `policy.yaml` seeding (`anonymous`, `authenticated`, `secretResponses`, `stepUp`); default numbers per rate class (TM-Q2) | T-0032 (security-architect) |
 | Published deprecation and support window for `/api/v1` (ADR-0004 rule 7; leaves the building) | T-0036 (decision prep for the CEO, before GA) |
-| ~~Action contract, operation state machine, audit-trail guarantees; whether configuration writes (templates, roles, policies, `migration` imports) are Actions~~ | **Decided:** [ADR-0005](../decisions/0005-operation-pipeline-and-audit-trail.md), ratified 2026-10-02 (T-0047, D-0015): configuration writes are Actions; restated in §2.3, §4.2, §5.1, §7.5, §8, §9 |
-| Operation kernel: `platform/operation`, `operation/step`, `platform/authority`, the `LiveFacts` port, `operationtest` | T-0153 (security-architect reviews) |
-| Audit chain, head row, checkpoints and key windows, export, `adq-audit-verify`, `platform/personal` and its erasure register; byte-level format document for `adq-canon/1`, `adq-audit-export/1` | T-0088 |
-| `ManagedTx` job mode and transactional insert; kernel tenant initialisers (`audit.InitTenant`) on the provisioning path | T-0084; T-0037 |
-| Per-root-kind live reads (GC vs that domain's DC for cross-domain groups), hidden-membership detection, Graph ETags for conditional writes, Graph read-after-write lag, `pwdLastSet` on reset, AD result codes for single-valued modifies | connector spec and lab, T-0051 (ad-expert) |
+| ~~Action contract, operation state machine, audit-trail guarantees; whether configuration writes (templates, roles, policies, `migration` imports) are Actions~~ | **Decided:** [ADR-0005](../decisions/0005-operation-pipeline-and-audit-trail.md), ratified 2026-10-02 (old T-0047, D-0015): configuration writes are Actions; restated in §2.3, §4.2, §5.1, §7.5, §8, §9 |
+| Operation kernel: `platform/operation`, `operation/step`, `platform/authority`, the `LiveFacts` port, `operationtest` | old T-0153 (security-architect reviews) |
+| Audit chain, head row, checkpoints and key windows, export, `adq-audit-verify`, `platform/personal` and its erasure register; byte-level format document for `adq-canon/1`, `adq-audit-export/1` | old T-0088 |
+| `ManagedTx` job mode and transactional insert; kernel tenant initialisers (`audit.InitTenant`) on the provisioning path | old T-0084; old T-0037 |
+| Per-root-kind live reads (GC vs that domain's DC for cross-domain groups), hidden-membership detection, Graph ETags for conditional writes, Graph read-after-write lag, `pwdLastSet` on reset, AD result codes for single-valued modifies | connector spec and lab, old T-0051 (ad-expert) |
 | Default for ADM-207 erasure, legal-hold UX, minimum retention; customer wording of "pseudonymised" | audit and compliance PRD |
 | Restore runbook step: **replay the erasure register after every restore** (ADR-0005 rule 12) | E2.12 backup and restore runbook |
-| Paths in skills and safe-primitives.md | **T-0048** (chore) |
-| Agent host and module contract (EP-13, its constructor signature and dependency struct, and the agent tier's rule 9 paper check); password-filter IPC | T-0040 (+ T-0024) |
-| Entities, lifecycle states, inventory and history shapes | T-0006, T-0026 |
-| Trust boundaries per profile; Graph permissions; delegated-rights verification; ADM-134 attribution; edge surface; remote-connector credentials beyond gMSA/keytab (§7.3) | T-0007 |
-| Security-descriptor primitive (ADM-023, ENH-08, `fileserver`) | T-0028 |
-| Output encoders | T-0029 |
-| CBT bind on go-krb5 (Samba proven by T-0023; go-krb5 pinned to a `main` commit per ADR-0001 erratum E1); WS2025 proof; LAPS from Linux | T-0133; E1.4(d) |
-| Repository scaffold implementing §1 | T-0014 |
-| Update protocol and rings; OCI apply mechanism | ENH-07 spec (M2 plan, T-0031) |
-| Bundled DB standby and DB backup on `linux-oci` | E2.12 PRD (T-0031) |
+| Paths in skills and safe-primitives.md | **old T-0048** (chore) |
+| Agent host and module contract (EP-13, its constructor signature and dependency struct, and the agent tier's rule 9 paper check); password-filter IPC | old T-0040 (+ old T-0024) |
+| Entities, lifecycle states, inventory and history shapes | old T-0006, old T-0026 |
+| Trust boundaries per profile; Graph permissions; delegated-rights verification; ADM-134 attribution; edge surface; remote-connector credentials beyond gMSA/keytab (§7.3) | old T-0007 |
+| Security-descriptor primitive (ADM-023, ENH-08, `fileserver`) | old T-0028 |
+| Output encoders | old T-0029 |
+| CBT bind on go-krb5 (Samba proven by old T-0023; go-krb5 pinned to a `main` commit per ADR-0001 erratum E1); WS2025 proof; LAPS from Linux | old T-0133; E1.4(d) |
+| Repository scaffold implementing §1 | old T-0014 |
+| Update protocol and rings; OCI apply mechanism | ENH-07 spec (M2 plan, old T-0031) |
+| Bundled DB standby and DB backup on `linux-oci` | E2.12 PRD (old T-0031) |
 | SAML library; Graph SDK vs thin client; S3 client; go-smb2; go-msrpc | the first ticket that needs each one, with a licence-register row first (ADR-0001) |
 | `mgmthelper` identity vs connector-driven GPMC | M3 GPO spec |
 | Search index technique (no second store) | search spec (E2.1) |
@@ -1676,15 +1677,15 @@ There are 83 rows with `phase = P1` and `importance = must` in
 
 | Rule | Check | Ticket |
 | --- | --- | --- |
-| Language zones, cgo-free Go, one stateful service, licence register, declared exceptions | `fitness-stack` F1–F5 (`tools/fitness/stack/`, in `make ci`) | T-0022 (done) |
-| Tenancy from migration 1, RLS, roles, isolation, static tenancy checks (incl. FF-SP7) | `fitness-tenancy` T1–T5 (`tools/fitness/tenancy/`, in `make ci`; rules: [tenancy-fitness.md](tenancy-fitness.md)) | T-0036 (done) |
-| Domain-model keying and append-only (domain-model §0): directory tables keyed by GUID never DN/SID/name (X3), no secret-attribute columns outside sealed ones (X4), append-only tables never UPDATE-able, no state column (X5), table kinds declared in code | `fitness-domain-keys` X3–X5, REG (`tools/fitness/domainkeys/`, in `make ci`; rules: [domain-keys-fitness.md](domain-keys-fitness.md)) | T-0050 |
-| Profiles by composition, planes, both transports, UEM boundary, platform root extractable | `fitness-profiles` (`tools/fitness/profiles/`, in `make ci`): P1, P7, U1, U2 run today; P2–P6, U3 and U4 are in its activation table and become mandatory when their subject lands | T-0038 (done) |
-| Module system (ADR-0003): import graph, module islands, generated lists and module pages, Registrar only, constructor bound, composition root, closed catalogue, table ownership (static and catalog), binary hygiene, web mirror, exemptions, self-test (§2, §4.1, §5) | `fitness-modules` M1–M12 (`tools/fitness/modules/`, in `make ci`; the T-0014 subset of §2 rules 1–5, 7, 8 runs today) | T-0141 (ADR-0003 becomes `accepted` when it is green) |
+| Language zones, cgo-free Go, one stateful service, licence register, declared exceptions | `fitness-stack` F1–F5 (`tools/fitness/stack/`, in `make ci`) | old T-0022 (done) |
+| Tenancy from migration 1, RLS, roles, isolation, static tenancy checks (incl. FF-SP7) | `fitness-tenancy` T1–T5 (`tools/fitness/tenancy/`, in `make ci`; rules: [tenancy-fitness.md](tenancy-fitness.md)) | old T-0036 (done) |
+| Domain-model keying and append-only (domain-model §0): directory tables keyed by GUID never DN/SID/name (X3), no secret-attribute columns outside sealed ones (X4), append-only tables never UPDATE-able, no state column (X5), table kinds declared in code | `fitness-domain-keys` X3–X5, REG (`tools/fitness/domainkeys/`, in `make ci`; rules: [domain-keys-fitness.md](domain-keys-fitness.md)) | old T-0050 |
+| Profiles by composition, planes, both transports, UEM boundary, platform root extractable | `fitness-profiles` (`tools/fitness/profiles/`, in `make ci`): P1, P7, U1, U2 run today; P2–P6, U3 and U4 are in its activation table and become mandatory when their subject lands | old T-0038 (done) |
+| Module system (ADR-0003): import graph, module islands, generated lists and module pages, Registrar only, constructor bound, composition root, closed catalogue, table ownership (static and catalog), binary hygiene, web mirror, exemptions, self-test (§2, §4.1, §5) | `fitness-modules` M1–M12 (`tools/fitness/modules/`, in `make ci`; the old T-0014 subset of §2 rules 1–5, 7, 8 runs today) | old T-0141 (ADR-0003 becomes `accepted` when it is green) |
 | Public API (ADR-0004): layout and bundle, dialect, one permission per operation, route set per profile and hostname with an HTTP probe, generated client and server, strict JSON (static, type closure, corpus, ajv cross-check), secrets out, versioning, problems, limits, policy hygiene, responses conform (§1, §6) | `fitness-api` A1–A14 (`tools/fitness/api/`, in `make ci`; A9 is T5 in `fitness-tenancy`). A1 and A13 run today; every other check prints `inactive` until its input exists ([ci-gates](../standards/ci-gates.md)) | A1, A13: T-0011 (done); static half: T-0017; runtime half: T-0018 (ADR-0004 becomes `accepted` when none is inactive and all are green) |
-| Operation pipeline (ADR-0005): step escape, write surface, configuration writes and table write classes, state machine, registry and contract coverage, contract and pipeline behaviour, kernel DAG (§2.3, §4.2, §8) | `fitness-operation` O1–O9 (`tools/fitness/operation/`) | T-0154 (ADR-0005 becomes `accepted` when both rows are green) |
-| Audit trail (ADR-0005; threat-model TM-F-AUDIT): role grants and the genesis trigger, AG-1/AG-2 and hook wiring, concurrency, seeded-tenant verify, tamper corpus, anchoring, classification, AG-8 coverage, retention (§9) | `fitness-audit` A1–A9 (`tools/fitness/audit/`) | T-0154 |
-| Safe primitives: imports, banned APIs, literal shapes, corpus, fuzz, oracles, `psx` manifest; the one secret decode path (`secretjson`: decode only via `secretjson.Decode`, called only from `apihost`, no string tokens in a `Secret` decoder; safe-primitives §5.6, ADR-0004 rule 6) | FF-SP1–SP9 (`fitness-safeprim`, in `make ci`) | delivered under the earlier board numbering (old T-0033, T-0034) |
+| Operation pipeline (ADR-0005): step escape, write surface, configuration writes and table write classes, state machine, registry and contract coverage, contract and pipeline behaviour, kernel DAG (§2.3, §4.2, §8) | `fitness-operation` O1–O9 (`tools/fitness/operation/`) | old T-0154 (ADR-0005 becomes `accepted` when both rows are green) |
+| Audit trail (ADR-0005; threat-model TM-F-AUDIT): role grants and the genesis trigger, AG-1/AG-2 and hook wiring, concurrency, seeded-tenant verify, tamper corpus, anchoring, classification, AG-8 coverage, retention (§9) | `fitness-audit` A1–A9 (`tools/fitness/audit/`) | old T-0154 |
+| Safe primitives: imports, banned APIs, literal shapes, corpus, fuzz, oracles, `psx` manifest; the one secret decode path (`secretjson`: decode only via `secretjson.Decode`, called only from `apihost`, no string tokens in a `Secret` decoder; safe-primitives §5.6, ADR-0004 rule 6) | FF-SP1–SP9 (`fitness-safeprim`, in `make ci`) | delivered under the earlier board numbering (old T-0033, old T-0034) |
 
 Rows marked "done" run in `make ci` today; the others do not yet, or run only in part. This
 blueprint moves to `accepted` when a human has read it end to end. The rules it states become
