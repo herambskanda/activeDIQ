@@ -41,7 +41,7 @@ func scanGo(rel string, src []byte, module string, checks map[string]bool, out *
 	if err != nil {
 		return err
 	}
-	g := &goFile{rel: rel, dir: policy.DirOf(rel), fset: fset, file: f, isTest: policy.IsTest(rel), isTool: policy.IsToolTier(rel),
+	g := &goFile{rel: rel, dir: policy.DirOf(rel), fset: fset, file: f, isTest: policy.IsTest(rel) || policy.IsTestSupport(policy.DirOf(rel)), isTool: policy.IsToolTier(rel),
 		imports: map[string]string{}, consts: map[string]bool{}, strLits: map[string][]*ast.BasicLit{}, module: module, out: out,
 		sqlcGen: bytes.HasPrefix(bytes.TrimSpace(src), []byte(policy.SQLCHeader))}
 	for _, is := range f.Imports {
@@ -163,6 +163,9 @@ func (g *goFile) checkImports() {
 		}
 		if rel, ok := policy.ModuleRel(p, g.module); ok && g.module != "" && (policy.IsToolTier(rel)) {
 			g.add("FF-SP1", "tier-l-import", is.Pos(), "product code imports "+p+": lab/ and tools/ are never imported by product packages (§2.1)")
+		}
+		if rel, ok := policy.ModuleRel(p, g.module); ok && g.module != "" && policy.IsTestSupport(rel) && !g.isTest {
+			g.add("FF-SP1", "test-support-import", is.Pos(), "product code imports "+p+": test-support packages are imported only by tests")
 		}
 	}
 }

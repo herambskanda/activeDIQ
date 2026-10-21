@@ -8,6 +8,7 @@ package sqlconst
 
 import (
 	"go/ast"
+	"go/token"
 	"go/types"
 
 	"golang.org/x/tools/go/analysis"
@@ -73,38 +74,97 @@ func isCompiledSQL(pass *analysis.Pass, t types.Type) bool {
 	return policy.Match(util.TypesPkgDir(pass, n.Obj().Pkg()), policy.Store+"/reportsql")
 }
 
+// listedForwarder reports whether fd is a method of a wrapper named in policy.SQLForwarders. Only
+// those are exempt: a wrapper type outside the list is reported at its forwarding line, so a new
+// one is a reviewed change to the list and cannot launder built SQL past its callers.
+func listedForwarder(pass *analysis.Pass, fd *ast.FuncDecl) bool {
+	if len(fd.Recv.List) != 1 {
+		return false
+	}
+	rt := fd.Recv.List[0].Type
+	if st, ok := ast.Unparen(rt).(*ast.StarExpr); ok {
+		rt = st.X
+	}
+	id, ok := ast.Unparen(rt).(*ast.Ident)
+	return ok && policy.IsSQLForwarder(util.PkgDir(pass), id.Name)
+}
+
+// forwards reports whether arg is a parameter of the method fd that passes its SQL text on to the
+// method of the same name, and fd belongs to a wrapper listed in policy.SQLForwarders (the store's tx
+// hides a pgx.Tx this way). The wrapper adds nothing; the check applies at every caller of the
+// interface it implements, which is a driverish type, so the constant-or-CompiledSQL rule still
+// binds each query once.
+func forwards(pass *analysis.Pass, fd *ast.FuncDecl, fn *types.Func, arg ast.Expr) bool {
+	if fd == nil || fd.Recv == nil || fd.Name.Name != fn.Name() || fd.Type.Params == nil || !listedForwarder(pass, fd) {
+		return false
+	}
+	id, ok := ast.Unparen(arg).(*ast.Ident)
+	if !ok {
+		return false
+	}
+	obj := pass.TypesInfo.Uses[id]
+	if obj == nil {
+		return false
+	}
+	// Still the parameter, not a local that shadows or reassigns it: its declaration sits in the
+	// parameter list and nothing in the body assigns to it.
+	if obj.Pos() < fd.Type.Params.Pos() || obj.Pos() > fd.Type.Params.End() {
+		return false
+	}
+	assigned := false
+	ast.Inspect(fd.Body, func(n ast.Node) bool {
+		switch v := n.(type) {
+		case *ast.AssignStmt:
+			for _, l := range v.Lhs {
+				if li, ok := ast.Unparen(l).(*ast.Ident); ok && pass.TypesInfo.Uses[li] == obj {
+					assigned = true
+				}
+			}
+		case *ast.UnaryExpr:
+			if li, ok := ast.Unparen(v.X).(*ast.Ident); ok && v.Op == token.AND && pass.TypesInfo.Uses[li] == obj {
+				assigned = true
+			}
+		}
+		return !assigned
+	})
+	return !assigned
+}
+
 func run(pass *analysis.Pass) (any, error) {
 	for _, f := range pass.Files {
 		if util.SkipFile(pass, f) || util.HasHeader(f, policy.SQLCHeader) {
 			continue
 		}
-		ast.Inspect(f, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			fn := util.Callee(pass, call)
-			if fn == nil || !sqlMethods[fn.Name()] || !driverish(pass, fn) {
-				return true
-			}
-			sig := fn.Type().(*types.Signature)
-			// The SQL argument is the first string-typed parameter.
-			for i := 0; i < sig.Params().Len() && i < len(call.Args); i++ {
-				pt := sig.Params().At(i).Type()
-				if b, ok := pt.Underlying().(*types.Basic); !ok || b.Info()&types.IsString == 0 {
-					continue
+		for _, d := range f.Decls {
+			fd, _ := d.(*ast.FuncDecl)
+			ast.Inspect(d, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
 				}
-				arg := call.Args[i]
-				tv := pass.TypesInfo.Types[arg]
-				if tv.Value != nil || isCompiledSQL(pass, tv.Type) {
+				fn := util.Callee(pass, call)
+				if fn == nil || !sqlMethods[fn.Name()] || !driverish(pass, fn) {
+					return true
+				}
+				sig := fn.Type().(*types.Signature)
+				// The SQL argument is the first string-typed parameter.
+				for i := 0; i < sig.Params().Len() && i < len(call.Args); i++ {
+					pt := sig.Params().At(i).Type()
+					if b, ok := pt.Underlying().(*types.Basic); !ok || b.Info()&types.IsString == 0 {
+						continue
+					}
+					arg := call.Args[i]
+					tv := pass.TypesInfo.Types[arg]
+					if tv.Value != nil || isCompiledSQL(pass, tv.Type) || forwards(pass, fd, fn, arg) {
+						break
+					}
+					pass.Report(analysis.Diagnostic{Pos: arg.Pos(), Category: Name,
+						Message: "FF-SP2 [sqlconst]: the SQL argument of " + fn.Name() + " is not a constant or a reportsql.CompiledSQL: use sqlc queries and bind parameters (§7)"})
 					break
 				}
-				pass.Report(analysis.Diagnostic{Pos: arg.Pos(), Category: Name,
-					Message: "FF-SP2 [sqlconst]: the SQL argument of " + fn.Name() + " is not a constant or a reportsql.CompiledSQL: use sqlc queries and bind parameters (§7)"})
-				break
-			}
-			return true
-		})
+				return true
+			})
+		}
 	}
 	return nil, nil
 }

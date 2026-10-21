@@ -30,3 +30,32 @@ func TestToolTier(t *testing.T) {
 		}
 	}
 }
+
+func TestTestSupport(t *testing.T) {
+	for rel, want := range map[string]bool{
+		"internal/platform/store/storetest": true,
+		"internal/platform/store":           false,
+		"internal/platform/store/footest":   false,
+		"internal/modules/storetest":        false,
+	} {
+		if IsTestSupport(rel) != want {
+			t.Errorf("IsTestSupport(%q) != %v", rel, want)
+		}
+	}
+}
+
+func TestIsSQLForwarder(t *testing.T) {
+	for _, c := range []struct {
+		rel, recv string
+		want      bool
+	}{
+		{"internal/platform/store", "tx", true},
+		{"internal/platform/store", "other", false},
+		{"internal/platform/store/storetest", "tx", false},
+		{"internal/modules/m", "tx", false},
+	} {
+		if got := IsSQLForwarder(c.rel, c.recv); got != c.want {
+			t.Errorf("IsSQLForwarder(%q, %q) = %v, want %v", c.rel, c.recv, got, c.want)
+		}
+	}
+}
