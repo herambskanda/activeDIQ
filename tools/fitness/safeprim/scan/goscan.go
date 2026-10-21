@@ -24,6 +24,7 @@ type goFile struct {
 	imports   map[string]string          // local name -> import path
 	importSet []string                   // every import path
 	consts    map[string]bool            // names declared const anywhere in the file
+	constExpr map[string]ast.Expr        // const name -> value expression (file-local; folds string constants)
 	strLits   map[string][]*ast.BasicLit // identifier -> string literals it is bound to (const, var, :=, =)
 	module    string
 	out       *[]Finding
@@ -42,7 +43,7 @@ func scanGo(rel string, src []byte, module string, checks map[string]bool, out *
 		return err
 	}
 	g := &goFile{rel: rel, dir: policy.DirOf(rel), fset: fset, file: f, isTest: policy.IsTest(rel) || policy.IsTestSupport(policy.DirOf(rel)), isTool: policy.IsToolTier(rel),
-		imports: map[string]string{}, consts: map[string]bool{}, strLits: map[string][]*ast.BasicLit{}, module: module, out: out,
+		imports: map[string]string{}, consts: map[string]bool{}, constExpr: map[string]ast.Expr{}, strLits: map[string][]*ast.BasicLit{}, module: module, out: out,
 		sqlcGen: bytes.HasPrefix(bytes.TrimSpace(src), []byte(policy.SQLCHeader))}
 	for _, is := range f.Imports {
 		p, err := strconv.Unquote(is.Path.Value)
@@ -67,6 +68,9 @@ func scanGo(rel string, src []byte, module string, checks map[string]bool, out *
 				for i, id := range vs.Names {
 					if v.Tok == token.CONST {
 						g.consts[id.Name] = true
+						if i < len(vs.Values) {
+							g.constExpr[id.Name] = vs.Values[i]
+						}
 					}
 					if i < len(vs.Values) {
 						g.bindLit(id.Name, vs.Values[i])
@@ -309,31 +313,43 @@ func (g *goFile) literalApplies(r literalRule) bool {
 	return !policy.MatchAny(g.dir, r.Home)
 }
 
+// foldString evaluates a constant string expression built from literals, parentheses, "+" and
+// identifiers bound by a const declaration in this file. It returns false for anything else.
+func (g *goFile) foldString(e ast.Expr, depth int) (string, bool) {
+	if depth > 16 {
+		return "", false
+	}
+	switch v := e.(type) {
+	case *ast.BasicLit:
+		if v.Kind != token.STRING {
+			return "", false
+		}
+		s, err := strconv.Unquote(v.Value)
+		return s, err == nil
+	case *ast.ParenExpr:
+		return g.foldString(v.X, depth+1)
+	case *ast.Ident:
+		if x, ok := g.constExpr[v.Name]; ok {
+			return g.foldString(x, depth+1)
+		}
+	case *ast.BinaryExpr:
+		if v.Op != token.ADD {
+			return "", false
+		}
+		l, ok1 := g.foldString(v.X, depth+1)
+		r, ok2 := g.foldString(v.Y, depth+1)
+		return l + r, ok1 && ok2
+	}
+	return "", false
+}
+
 func (g *goFile) checkLiterals() {
 	inImport := map[*ast.BasicLit]bool{}
 	for _, is := range g.file.Imports {
 		inImport[is.Path] = true
 	}
 	seen := map[string]bool{}
-	ast.Inspect(g.file, func(n ast.Node) bool {
-		lit, ok := n.(*ast.BasicLit)
-		if !ok || inImport[lit] {
-			return true
-		}
-		var val string
-		isInt := lit.Kind == token.INT
-		switch lit.Kind {
-		case token.STRING:
-			v, err := strconv.Unquote(lit.Value)
-			if err != nil {
-				return true
-			}
-			val = v
-		case token.INT:
-			val = lit.Value
-		default:
-			return true
-		}
+	apply := func(pos token.Pos, val, shown string, isInt bool) {
 		for _, r := range literalRules {
 			if !g.literalApplies(r) {
 				continue
@@ -355,12 +371,35 @@ func (g *goFile) checkLiterals() {
 			if !hit {
 				continue
 			}
-			k := r.Rule + ":" + strconv.Itoa(g.fset.Position(lit.Pos()).Line)
+			k := r.Rule + ":" + strconv.Itoa(g.fset.Position(pos).Line)
 			if seen[k] {
 				continue
 			}
 			seen[k] = true
-			g.add("FF-SP2", r.Rule, lit.Pos(), "literal "+shorten(lit.Value)+": "+r.Msg)
+			g.add("FF-SP2", r.Rule, pos, "literal "+shorten(shown)+": "+r.Msg)
+		}
+	}
+	// Constant-folded concatenations ("Content-" + "Disposition") are judged as one value.
+	ast.Inspect(g.file, func(n ast.Node) bool {
+		switch v := n.(type) {
+		case *ast.BinaryExpr:
+			if v.Op == token.ADD {
+				if val, ok := g.foldString(v, 0); ok {
+					apply(v.Pos(), val, strconv.Quote(val), false)
+				}
+			}
+		case *ast.BasicLit:
+			if inImport[v] {
+				return true
+			}
+			switch v.Kind {
+			case token.STRING:
+				if val, err := strconv.Unquote(v.Value); err == nil {
+					apply(v.Pos(), val, v.Value, false)
+				}
+			case token.INT:
+				apply(v.Pos(), v.Value, v.Value, true)
+			}
 		}
 		return true
 	})

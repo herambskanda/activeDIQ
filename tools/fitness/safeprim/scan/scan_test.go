@@ -124,6 +124,9 @@ func TestFFSP2BannedAPIs(t *testing.T) {
 		{"template.HTML", "var a = template.HTML(\"<b>\")", "template-typed-string"},
 		{"SetEscapeHTML(false)", "func f(e *json.Encoder) { e.SetEscapeHTML(false) }", "json-escape-html-off"},
 		{"Content-Disposition", "var a = \"Content-Disposition\"", "content-disposition-literal"},
+		{"Content-Disposition folded concat", "var a = \"Content-\" + \"Disposition\"", "content-disposition-literal"},
+		{"Content-Disposition folded via const", "const p = \"Content-\"\nconst k = p + \"Disposition\"", "content-disposition-literal"},
+		{"Content-Disposition folded map key", "var h = map[string][]string{}\nvar _ = h[\"Content-\"+\"Disposition\"]", "content-disposition-literal"},
 		{"text/csv", "var a = \"text/csv\"", "csv-media-type"},
 		{"binary.LittleEndian in a feature package", "", "binary-little-endian"},
 	}
@@ -143,10 +146,12 @@ func TestFFSP2BannedAPIs(t *testing.T) {
 		"internal/platform/tlsconfig/t.go":   gofile("\t\"crypto/tls\"\n", "var c = tls.Config{VerifyPeerCertificate: nil}"),
 		"internal/platform/htmlx/h.go":       gofile("\t\"html/template\"\n", "var a = template.HTML(\"<b>\")"),
 		"internal/platform/httpx/h.go":       gofile("", "var a = \"Content-Disposition\""),
+		"internal/platform/httpx/h2.go":      gofile("", "var b = \"Content-\" + \"Disposition\""),
 	}, "", "", "")
 	gen := "gotraceback"
-	want(t, "crash-mode GOTRACEBACK in a unit file", map[string]string{"packaging/oci/app.service": "[Service]\nEnvironment=GOTRACEBACK=" + "crash\n"}, "FF-SP2", gen+"-crash", "packaging/oci/app.service")
-	want(t, "crash-mode GOTRACEBACK in compose", map[string]string{"packaging/oci/compose.yaml": "environment:\n  GOTRACEBACK: \"" + "crash\"\n"}, "FF-SP2", gen+"-crash", "packaging/oci/compose.yaml")
+	crashWord := strings.ToLower("CRASH")
+	want(t, "crash-mode GOTRACEBACK in a unit file", map[string]string{"packaging/oci/app.service": "[Service]\nEnvironment=GOTRACEBACK=" + crashWord + "\n"}, "FF-SP2", gen+"-crash", "packaging/oci/app.service")
+	want(t, "crash-mode GOTRACEBACK in compose", map[string]string{"packaging/oci/compose.yaml": "environment:\n  GOTRACEBACK: \"" + crashWord + "\"\n"}, "FF-SP2", gen+"-crash", "packaging/oci/compose.yaml")
 	want(t, "PL/pgSQL EXECUTE with ||", map[string]string{"migrations/0002_x.sql": "DO $$ BEGIN EXECUTE 'DROP TABLE ' || t; END $$;\n"}, "FF-SP2", "plpgsql-execute-concat", "migrations/0002_x.sql")
 	want(t, "Rust cert bypass", map[string]string{"native/shared/src/a.rs": "let c = reqwest::Client::builder().danger_accept_invalid_certs(true);\n"}, "FF-SP2", "tls-verify-bypass-rust", "native/shared/src/a.rs")
 	want(t, "C# AddScript", map[string]string{"sidecars/pshost/A.cs": "ps.AddScript(s);\n"}, "FF-SP2", "powershell-script-text", "sidecars/pshost/A.cs")
