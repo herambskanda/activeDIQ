@@ -1,7 +1,7 @@
 ---
 title: "Runbook: change the public API contract"
 date: 2026-10-02
-updated: 2026-10-02
+updated: 2026-10-21
 status: draft
 owner: api-engineer
 ticket: T-0147
@@ -23,6 +23,17 @@ Design: `architecture/api-pipeline.md`. Conventions: the `api-design` skill. ADR
 4. `go test ./tools/gen/api/... ./internal/platform/apihost/...` and, in `web/`, `npx vitest run`.
 5. Commit the contract and every regenerated file in the same change. CI runs `make gen-api-check`: a stale or missing generated file fails the build.
 6. Additive changes only within `/api/v1`. A rename, a removed member or a tightened type is a breaking change: it needs a new version and a migration note.
+
+## What CI asserts about the sources (`make fitness-api`)
+
+`make ci` runs `fitness-api` (T-0011, ADR-0004 A1 and A13) beside `gen-api-check`: the layout of
+`api/openapi/` (files only in the rule 1 places; `modules/<id>.yaml` only for a directory under
+`internal/modules`, `platform/<pkg>.yaml` only for an `internal/platform/<pkg>`; one tag per operation,
+equal to its file's; unique `operationId` and component names; no cross-module or upward `$ref`) and
+the hygiene of `policy.yaml` (reason, AN/TM reference, and every name it uses exists). It reads the
+sources itself, not the bundle, so it still catches what a generator change would let through. Run it
+before `make gen-api` to get the rule and the line. The status table it prints lists the checks still
+inactive; see `ci-and-build.md`.
 
 ## Changing the generator
 

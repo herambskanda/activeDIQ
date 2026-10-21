@@ -1,7 +1,7 @@
 ---
 title: "Runbook: CI, build and the repository scaffold"
 date: 2026-10-02
-updated: 2026-10-02
+updated: 2026-10-21
 status: draft
 owner: devops-engineer
 ticket: T-0014
@@ -55,6 +55,23 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
     package path in backticks in the Project cell. A transitive copyleft hit means picking another
     library, or an ADR plus a `licenceExceptions` entry.
   - F5: set the ADR's status through the `adr` skill first.
+- **`fitness-api`** (A1 layout, A13 policy hygiene, ADR-0004): `make fitness-api` re-runs it alone;
+  `-checks A1` runs one. It prints a line per check A1-A14, `active` or `inactive (<missing input>)`,
+  and exits 0 while checks are inactive: **a green run is not "the contract is fully checked"**, read
+  the table. ADR-0004 stays `ratified` until no line says inactive.
+  - A1: the message names the file, line and the rule 1 clause. Move the file to a rule 1 place
+    (`openapi.yaml`, `shared/`, `modules/<id>.yaml`, `platform/<pkg>.yaml`), or create the module or
+    kernel package it belongs to; give an operation its file's one tag; rename the duplicate; move a
+    shape two tags need to `shared/`. A stale bundle is `make gen-api` (that gate is `gen-api-check`).
+  - A13: every `policy.yaml` entry needs `reason` and `ref` (an `AN-n` row or a `TM-` section) and
+    must name something that exists (`operation`, `method`+`path`, `permission`, `schema`). Delete the
+    stale entry or fix the name. An entry with `host` fails until the apihost hostname-binding table
+    exists (A4's input): do not work around it, raise it on the A4 ticket. Entry fields: `api/openapi/policy.yaml` header.
+  - `[ADR-0004 self-test]`: the check read fewer operations or entries than a plain text count or
+    the committed bundle shows. Fix the reader (`tools/fitness/api/tree.go`), never the assertion.
+  - An inactive line ending `[INPUT NOW PRESENT: ... overdue]` means a subject landed (operations,
+    `apihost.Build`) and its check has not; it does not fail the job but the ADR cannot be accepted.
+    Implement the check, with a failing fixture, and remove its `needs` text in `inactive.go`.
 - **`fitness-profiles`** (P1, P7, U1, U2 and the activation table, ADR-0002): `make fitness-profiles`
   re-runs it alone and prints the activation table first. `-checks P1,U2` runs a subset.
   - P1 domain code: take the compose import, environment read or profile-named identifier out of
