@@ -8,9 +8,14 @@ import (
 
 type wrap struct{ p *pgxpool.Pool }
 
-// A method that hands its own SQL parameter to the same-named method adds nothing: it is not reported.
+// A wrapper outside policy.SQLForwarders is not exempt even when it forwards its parameter unchanged:
+// otherwise its callers would pass built SQL unjudged (the wrapper is not a driverish type).
 func (w wrap) Exec(ctx context.Context, sql string, args ...any) (any, error) {
-	return w.p.Exec(ctx, sql, args...)
+	return w.p.Exec(ctx, sql, args...) // want `not a constant`
+}
+
+func useWrap(ctx context.Context, w wrap, name string) {
+	w.Exec(ctx, "DELETE FROM t WHERE n='"+name+"'")
 }
 
 // A different name is a new query path, not an interface forwarder.

@@ -74,12 +74,28 @@ func isCompiledSQL(pass *analysis.Pass, t types.Type) bool {
 	return policy.Match(util.TypesPkgDir(pass, n.Obj().Pkg()), policy.Store+"/reportsql")
 }
 
+// listedForwarder reports whether fd is a method of a wrapper named in policy.SQLForwarders. Only
+// those are exempt: a wrapper type outside the list is reported at its forwarding line, so a new
+// one is a reviewed change to the list and cannot launder built SQL past its callers.
+func listedForwarder(pass *analysis.Pass, fd *ast.FuncDecl) bool {
+	if len(fd.Recv.List) != 1 {
+		return false
+	}
+	rt := fd.Recv.List[0].Type
+	if st, ok := ast.Unparen(rt).(*ast.StarExpr); ok {
+		rt = st.X
+	}
+	id, ok := ast.Unparen(rt).(*ast.Ident)
+	return ok && policy.IsSQLForwarder(util.PkgDir(pass), id.Name)
+}
+
 // forwards reports whether arg is a parameter of the method fd that passes its SQL text on to the
-// method of the same name: a wrapper that implements the access interface (the store's Tx hides a
-// pgx.Tx this way). The wrapper adds nothing; the check applies at every caller of the interface,
-// which is a driverish type, so the constant-or-CompiledSQL rule still binds each query once.
+// method of the same name, and fd belongs to a wrapper listed in policy.SQLForwarders (the store's tx
+// hides a pgx.Tx this way). The wrapper adds nothing; the check applies at every caller of the
+// interface it implements, which is a driverish type, so the constant-or-CompiledSQL rule still
+// binds each query once.
 func forwards(pass *analysis.Pass, fd *ast.FuncDecl, fn *types.Func, arg ast.Expr) bool {
-	if fd == nil || fd.Recv == nil || fd.Name.Name != fn.Name() || fd.Type.Params == nil {
+	if fd == nil || fd.Recv == nil || fd.Name.Name != fn.Name() || fd.Type.Params == nil || !listedForwarder(pass, fd) {
 		return false
 	}
 	id, ok := ast.Unparen(arg).(*ast.Ident)

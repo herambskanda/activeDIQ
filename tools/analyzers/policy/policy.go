@@ -108,6 +108,27 @@ var TestSupport = []string{
 	"internal/platform/store/storetest",
 }
 
+// SQLForwarder names one access wrapper whose Exec/Query/QueryRow pass their own SQL parameter to the
+// same-named method of the type they hide (FF-SP2 sqlconst). Pkg is the exact package directory, Recv
+// the receiver type name.
+type SQLForwarder struct{ Pkg, Recv string }
+
+// SQLForwarders is the explicit list of such wrappers. Each is named, so a new one is a reviewed change
+// to this list; the callers of the interface the wrapper implements are still judged.
+var SQLForwarders = []SQLForwarder{
+	{Pkg: Store, Recv: "tx"}, // store.Tx over pgx.Tx
+}
+
+// IsSQLForwarder reports whether the receiver type recv declared in package directory rel is listed.
+func IsSQLForwarder(rel, recv string) bool {
+	for _, f := range SQLForwarders {
+		if f.Pkg == path.Clean(rel) && f.Recv == recv {
+			return true
+		}
+	}
+	return false
+}
+
 // IsTestSupport reports whether the repository-relative directory rel is a test-support package.
 func IsTestSupport(rel string) bool { return MatchAny(rel, TestSupport) }
 

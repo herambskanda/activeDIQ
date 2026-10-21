@@ -1190,9 +1190,11 @@ the `fmt` print family, `strings.Join`/`Replace`, builders, slice literals, thro
 variable), or when it carries a printf verb at all.
 
 **Amendment (T-0003).** Two scanner rules that T-0033 left open. (1) `sqlconst` accepts a method that
-passes its own, unchanged SQL parameter to the same-named method (the store's `Tx` wrapper over `pgx.Tx`):
-the wrapper adds no query, and every caller of the `Tx` interface is still judged. A renamed method, a
-reassigned parameter or a plain function is reported. (2) `policy.TestSupport` names the packages that exist
+passes its own, unchanged SQL parameter to the same-named method only when its receiver type is named in
+`policy.SQLForwarders` (today `internal/platform/store`'s `tx` over `pgx.Tx`): the wrapper adds no query, and
+every caller of the `Tx` interface is still judged. A forwarder outside the list is reported at its forwarding
+line, so a new one is a reviewed change to the list; a renamed method, a reassigned parameter or a plain
+function is reported too. (2) `policy.TestSupport` names the packages that exist
 only for tests (`internal/platform/store/storetest`, which starts the Docker PostgreSQL and runs fixture
 DDL). They are judged like `_test.go` files, and FF-SP1 `test-support-import` fails when a non-test file
 imports one. The list is explicit, never a `…test` suffix match.
