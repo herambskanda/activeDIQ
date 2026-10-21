@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/store"
@@ -28,11 +29,19 @@ type TenantTx interface {
 }
 
 type tenantTx struct {
-	db *store.DB
-	c  Claimed
+	db     *store.DB
+	c      Claimed
+	closed atomic.Bool
 }
 
-func (t tenantTx) Run(ctx context.Context, fn func(ctx context.Context, tx store.Tx) error) error {
+// ErrRunnerClosed is returned by a TenantTx used after its body returned or its claim was superseded:
+// late work (a kept runner, a stray goroutine) must not write for a job another worker may now drive.
+var ErrRunnerClosed = errors.New("jobs: the job's runner is closed")
+
+func (t *tenantTx) Run(ctx context.Context, fn func(ctx context.Context, tx store.Tx) error) error {
+	if t.closed.Load() {
+		return ErrRunnerClosed
+	}
 	return t.db.WithTenant(ctx, t.c.Tenant, fn)
 }
 
@@ -108,6 +117,10 @@ func (r *Runner) Execute(ctx context.Context, c Claimed) (Result, error) {
 	var bodyErr error
 	if k.Mode == ModeDefault {
 		bodyErr = r.db.WithTenant(bodyCtx, c.Tenant, func(ctx context.Context, tx store.Tx) error {
+			// Prove the claim is live and belongs to c.Tenant before any body code runs.
+			if err := Renew(ctx, tx, c.Ref, r.leaseFor(k)); err != nil {
+				return err
+			}
 			if err := safely(func() error { return k.Run(ctx, tx, c) }); err != nil {
 				return err
 			}
@@ -136,6 +149,12 @@ func (r *Runner) Execute(ctx context.Context, c Claimed) (Result, error) {
 // finds the claim superseded cancels the body's context: its late work must stop.
 func (r *Runner) runManaged(ctx context.Context, k Kind, c Claimed) error {
 	lease := r.leaseFor(k)
+	// Prove in the database, before any body code runs, that this claim is live and belongs to c.Tenant:
+	// the claimed row is fenced by RLS, so a Claimed carrying another tenant finds nothing to renew.
+	if err := r.record(ctx, c, func(ctx context.Context, tx store.Tx) error { return Renew(ctx, tx, c.Ref, lease) }); err != nil {
+		return err
+	}
+	run := &tenantTx{db: r.db, c: c}
 	bctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	var wg sync.WaitGroup
@@ -152,6 +171,7 @@ func (r *Runner) runManaged(ctx context.Context, k Kind, c Claimed) error {
 				err := r.record(bctx, c, func(ctx context.Context, tx store.Tx) error { return Renew(ctx, tx, c.Ref, lease) })
 				switch {
 				case errors.Is(err, ErrSuperseded):
+					run.closed.Store(true)
 					cancel(ErrSuperseded)
 					return
 				case err != nil && bctx.Err() == nil:
@@ -161,7 +181,8 @@ func (r *Runner) runManaged(ctx context.Context, k Kind, c Claimed) error {
 			}
 		}
 	}()
-	err := safely(func() error { return k.RunManaged(bctx, tenantTx{r.db, c}, c) })
+	err := safely(func() error { return k.RunManaged(bctx, run, c) })
+	run.closed.Store(true)
 	cancel(nil)
 	wg.Wait()
 	if cause := context.Cause(bctx); errors.Is(cause, ErrSuperseded) {

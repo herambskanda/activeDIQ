@@ -292,3 +292,84 @@ func TestExecuteRefusesPlatformAndUnregisteredJobs(t *testing.T) {
 		}
 	})
 }
+
+// A Claimed whose tenant was swapped is refused by the database before any body code runs, in both modes.
+func TestSwappedTenantNeverRunsTheBody(t *testing.T) {
+	each(t, func(t *testing.T, e *env) {
+		var calls atomic.Int32
+		write := func(ctx context.Context, tx store.Tx, c Claimed) error {
+			calls.Add(1)
+			_, err := r0(t, e).Enqueue(ctx, tx, Job{Kind: "t.child", Tenant: c.Tenant})
+			return err
+		}
+		r := e.runner(t,
+			Kind{Name: "t.child", Timeout: time.Minute, Mode: ModeDefault, Run: noop},
+			Kind{Name: "t.swapd", Timeout: time.Minute, Mode: ModeDefault, Run: write},
+			Kind{Name: "t.swapm", Timeout: time.Minute, Mode: ModeManagedTx,
+				RunManaged: func(ctx context.Context, run TenantTx, c Claimed) error {
+					return run.Run(ctx, func(ctx context.Context, tx store.Tx) error { return write(ctx, tx, c) })
+				}})
+		e.enqueueKind(t, "t.swapd")
+		e.enqueueKindManaged(t, "t.swapm")
+		for _, kind := range []string{"t.swapd", "t.swapm"} {
+			c := e.claimOne(t, kind, time.Minute)
+			c.Tenant = e.b
+			res, err := r.Execute(context.Background(), c)
+			if err != nil || res != Lost {
+				t.Fatalf("%s: Execute = %v, %v; want Lost", kind, res, err)
+			}
+		}
+		if calls.Load() != 0 {
+			t.Errorf("body ran %d times, want 0", calls.Load())
+		}
+		if n := e.countJobs(t, "t.child"); n != "0" {
+			t.Errorf("child rows = %s, want 0", n)
+		}
+	})
+}
+
+// A runner kept past the body (completed, or superseded) refuses further work.
+func TestRunnerIsClosedAfterTheBody(t *testing.T) {
+	each(t, func(t *testing.T, e *env) {
+		var kept TenantTx
+		wrote := func(run TenantTx) error {
+			return run.Run(context.Background(), func(ctx context.Context, tx store.Tx) error {
+				_, err := r0(t, e).Enqueue(ctx, tx, Job{Kind: "t.child", Tenant: e.a})
+				return err
+			})
+		}
+		r := e.runner(t,
+			Kind{Name: "t.child", Timeout: time.Minute, Mode: ModeDefault, Run: noop},
+			Kind{Name: "t.keep", Timeout: time.Minute, Mode: ModeManagedTx,
+				RunManaged: func(ctx context.Context, run TenantTx, c Claimed) error { kept = run; return nil }},
+			Kind{Name: "t.keeplost", Timeout: 5 * time.Second, Mode: ModeManagedTx,
+				RunManaged: func(ctx context.Context, run TenantTx, c Claimed) error {
+					kept = run
+					_ = e.d.ExecOwner(context.Background(), `UPDATE public.jobs SET claimed_until = now() - interval '1 minute' WHERE id = $1`, c.ID)
+					if _, err := Rescue(context.Background(), e.db, 10); err != nil {
+						return err
+					}
+					<-ctx.Done()
+					return ctx.Err()
+				}})
+		r.leaseFor = func(k Kind) time.Duration {
+			if k.Name == "t.keeplost" {
+				return 400 * time.Millisecond
+			}
+			return time.Minute
+		}
+		for kind, want := range map[string]Result{"t.keep": Completed, "t.keeplost": Lost} {
+			e.enqueueKindManaged(t, kind)
+			res, err := r.Execute(context.Background(), e.claimOne(t, kind, 400*time.Millisecond))
+			if err != nil || res != want {
+				t.Fatalf("%s: Execute = %v, %v; want %v", kind, res, err, want)
+			}
+			if err := wrote(kept); !errors.Is(err, ErrRunnerClosed) {
+				t.Errorf("%s: late Run = %v, want ErrRunnerClosed", kind, err)
+			}
+		}
+		if n := e.countJobs(t, "t.child"); n != "0" {
+			t.Errorf("child rows = %s, want 0", n)
+		}
+	})
+}
