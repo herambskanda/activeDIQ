@@ -40,7 +40,7 @@ Open item: we have no sourced data on Okta, Stripe or similar identity vendors. 
 
 | | Window for a `stable` operation | Buys | Honestly costs |
 | --- | --- | --- | --- |
-| **a (recommended)** | **At least 12 months and at least two minor releases, whichever is longer** (the ADR-0004 default) | Beats ManageEngine, which publishes nothing. Long enough for a yearly script review cycle. Cheap to keep: we carry old operations next to new ones in one `/api/v1`. | Below Microsoft's 24 months. An Entra-heavy buyer may compare us to Graph. Release cadence is not set yet, so "two minors" could stretch past 12 months. |
+| **a (recommended)** | **At least 12 months and at least two minor releases, whichever is longer** (the ADR-0004 default) | Beats ManageEngine, which publishes nothing. Long enough for a yearly script review cycle. Cheap to keep: we carry old operations next to new ones in one `/api/v1`. | Below Microsoft's 24 months. An Entra-heavy buyer may compare us to Graph. The real window depends on a release cadence not yet set. |
 | **b** | **At least 24 months and at least two minor releases**, matching Microsoft Graph | Strongest trust signal for regulated and slow-change enterprises. Matches a vendor customers already know. | We maintain deprecated operations (and their tests and security fixes) twice as long. Hurts early on, when we will most want to fix API mistakes. A promise this long is hard to retract. |
 | **c** | **Publish no number at GA**; promise only a minimum notice (6 months) and the headers, then revisit after the first year | Keeps freedom while the API is young. Nothing to retract. | A non-answer next to Graph's 24 months. Weak against the "scripts break on upgrade" objection. The ADR-0004 release gate would still need a number to check against. |
 
@@ -57,7 +57,7 @@ Add these terms to the published policy under any option:
 
 ## Reversibility
 
-Before GA: free. After GA: lengthening is free, shortening breaches a published promise. So a shorter option than we can keep is the risky choice, and a longer one is the safe one.
+Before GA: free. After GA: lengthening is free, shortening breaches a published promise. So the risky choice is promising more than we can keep; starting at a window we are sure of and lengthening later is safe.
 
 ## Decision request (for the director to file)
 
