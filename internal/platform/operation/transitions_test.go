@@ -377,6 +377,9 @@ func TestPropertyRandomEvents(t *testing.T) {
 				for i := 0; i < 20000; i++ {
 					// Mostly valid-state events, sometimes junk, to exercise unknown inputs.
 					to := states[rng.Intn(len(states))]
+					if next := Next(k, cur); len(next) > 0 && rng.Intn(2) == 0 {
+						to = next[rng.Intn(len(next))] // steer toward declared edges so deep states are exercised
+					}
 					if rng.Intn(20) == 0 {
 						to = "junk-" + strconv.Itoa(rng.Intn(5))
 					}
