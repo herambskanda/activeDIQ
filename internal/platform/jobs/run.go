@@ -42,7 +42,20 @@ func (t *tenantTx) Run(ctx context.Context, fn func(ctx context.Context, tx stor
 	if t.closed.Load() {
 		return ErrRunnerClosed
 	}
-	return t.db.WithTenant(ctx, t.c.Tenant, fn)
+	return t.db.WithTenant(ctx, t.c.Tenant, func(ctx context.Context, tx store.Tx) error {
+		// Fence on the live claim in the database before fn runs; the lock is held to the commit.
+		if err := LockClaim(ctx, tx, t.c.Ref); err != nil {
+			t.closed.Store(true)
+			return err
+		}
+		if err := fn(ctx, tx); err != nil {
+			return err
+		}
+		if t.closed.Load() {
+			return ErrRunnerClosed
+		}
+		return nil
+	})
 }
 
 // Failure is an error a body returns to choose the stored code, and whether the job is discarded at once
