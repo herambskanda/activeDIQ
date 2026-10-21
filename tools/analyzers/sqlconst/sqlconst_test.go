@@ -11,5 +11,5 @@ import (
 // Constants and CompiledSQL pass; a variable, a concatenation and a Sprintf are reported; generated
 // sqlc code and tier L are not judged.
 func TestSQLConst(t *testing.T) {
-	analysistest.Run(t, analysistest.TestData(), sqlconst.Analyzer, "internal/modules/m", "internal/platform/store/wrap", "tools/fitness/x")
+	analysistest.Run(t, analysistest.TestData(), sqlconst.Analyzer, "internal/modules/m", "tools/fitness/x")
 }

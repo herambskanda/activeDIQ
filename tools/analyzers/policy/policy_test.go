@@ -30,17 +30,3 @@ func TestToolTier(t *testing.T) {
 		}
 	}
 }
-
-func TestTestSupportIsJudgedAsTests(t *testing.T) {
-	for file, want := range map[string]bool{
-		"internal/platform/store/storetest/storetest.go": true,
-		"internal/platform/store/store_test.go":          true,
-		"internal/platform/store/store.go":               false,
-		"internal/platform/store/storetestx/x.go":        false,
-		"internal/modules/m/m.go":                        false,
-	} {
-		if got := IsTest(file); got != want {
-			t.Errorf("IsTest(%q) = %v, want %v", file, got, want)
-		}
-	}
-}

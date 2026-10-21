@@ -73,68 +73,38 @@ func isCompiledSQL(pass *analysis.Pass, t types.Type) bool {
 	return policy.Match(util.TypesPkgDir(pass, n.Obj().Pkg()), policy.Store+"/reportsql")
 }
 
-// forwards reports whether arg is a parameter of the enclosing function that passes it, unchanged, to
-// the same-named method: the thin Exec/Query/QueryRow wrappers of the data-access package
-// (internal/platform/store) that hide the pgx transaction. The SQL is then judged where the wrapper is
-// called, because the wrapper's type (Tx) is itself an access type.
-func forwards(pass *analysis.Pass, fd *ast.FuncDecl, fn *types.Func, arg ast.Expr) bool {
-	id, ok := arg.(*ast.Ident)
-	if !ok || fd == nil || fd.Name.Name != fn.Name() || !policy.Match(util.PkgDir(pass), policy.Store) {
-		return false
-	}
-	used := pass.TypesInfo.Uses[id]
-	// Only the wrapper's own SQL parameter: its first string-typed one, as in checkCall.
-	for _, field := range fd.Type.Params.List {
-		if len(field.Names) == 0 {
-			continue
-		}
-		if b, ok := pass.TypesInfo.TypeOf(field.Type).Underlying().(*types.Basic); !ok || b.Info()&types.IsString == 0 {
-			continue
-		}
-		return used != nil && pass.TypesInfo.Defs[field.Names[0]] == used
-	}
-	return false
-}
-
 func run(pass *analysis.Pass) (any, error) {
 	for _, f := range pass.Files {
 		if util.SkipFile(pass, f) || util.HasHeader(f, policy.SQLCHeader) {
 			continue
 		}
-		for _, decl := range f.Decls {
-			fd, _ := decl.(*ast.FuncDecl)
-			ast.Inspect(decl, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				checkCall(pass, fd, call)
+		ast.Inspect(f, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
 				return true
-			})
-		}
+			}
+			fn := util.Callee(pass, call)
+			if fn == nil || !sqlMethods[fn.Name()] || !driverish(pass, fn) {
+				return true
+			}
+			sig := fn.Type().(*types.Signature)
+			// The SQL argument is the first string-typed parameter.
+			for i := 0; i < sig.Params().Len() && i < len(call.Args); i++ {
+				pt := sig.Params().At(i).Type()
+				if b, ok := pt.Underlying().(*types.Basic); !ok || b.Info()&types.IsString == 0 {
+					continue
+				}
+				arg := call.Args[i]
+				tv := pass.TypesInfo.Types[arg]
+				if tv.Value != nil || isCompiledSQL(pass, tv.Type) {
+					break
+				}
+				pass.Report(analysis.Diagnostic{Pos: arg.Pos(), Category: Name,
+					Message: "FF-SP2 [sqlconst]: the SQL argument of " + fn.Name() + " is not a constant or a reportsql.CompiledSQL: use sqlc queries and bind parameters (§7)"})
+				break
+			}
+			return true
+		})
 	}
 	return nil, nil
-}
-
-func checkCall(pass *analysis.Pass, fd *ast.FuncDecl, call *ast.CallExpr) {
-	fn := util.Callee(pass, call)
-	if fn == nil || !sqlMethods[fn.Name()] || !driverish(pass, fn) {
-		return
-	}
-	sig := fn.Type().(*types.Signature)
-	// The SQL argument is the first string-typed parameter.
-	for i := 0; i < sig.Params().Len() && i < len(call.Args); i++ {
-		pt := sig.Params().At(i).Type()
-		if b, ok := pt.Underlying().(*types.Basic); !ok || b.Info()&types.IsString == 0 {
-			continue
-		}
-		arg := call.Args[i]
-		tv := pass.TypesInfo.Types[arg]
-		if tv.Value != nil || isCompiledSQL(pass, tv.Type) || forwards(pass, fd, fn, arg) {
-			return
-		}
-		pass.Report(analysis.Diagnostic{Pos: arg.Pos(), Category: Name,
-			Message: "FF-SP2 [sqlconst]: the SQL argument of " + fn.Name() + " is not a constant or a reportsql.CompiledSQL: use sqlc queries and bind parameters (§7)"})
-		return
-	}
 }
