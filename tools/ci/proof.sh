@@ -121,6 +121,28 @@ must_fail_with "fitness-api A13 on an anonymous entry citing a missing AN row" '
 fresh_fa_tree; rm "$fa/api/openapi/modules/users.yaml" "$fa/api/openapi/modules/orders.yaml"; printf 'openapi: 3.1.0\ninfo: {title: t, version: 0.0.0}\nservers: [{url: /api/v1}]\ntags: []\n' >"$fa/api/openapi/openapi.yaml"; printf 'anonymous: []\nauthenticated: []\nnonApiRoutes: []\nsecretResponses: []\nstepUp: []\nlargeBodies: []\n' >"$fa/api/openapi/policy.yaml"
 must_fail_with "fitness-api self-test when the bundle has operations but the check found no operation" '\[ADR-0004 self-test\] .*holds 2 operation\(s\) but A1 found 0' fitapi
 
+# --- fitness-operation (ADR-0005 O9, the kernel import DAG), the real CLI on throw-away trees ----
+# The throw-away tree carries a copy of the real ADR, so the proof reads the same dag block as CI.
+# The per-case proofs are the tool's own tests (go test ./tools/fitness/operation).
+opbin="$tmp/fitness-operation"; go build -o "$opbin" ./tools/fitness/operation
+opt="$tmp/op"; adr=knowledge/development/decisions/0005-operation-pipeline-and-audit-trail.md
+mkdir -p "$opt/internal/platform/tenant" "$opt/internal/platform/store" "$opt/internal/platform/audit" "$opt/internal/platform/authz/actions" "$opt/internal/platform/audit/chain" "$opt/$(dirname "$adr")"
+printf 'module op.test\n\ngo 1.27.0\n' >"$opt/go.mod"
+cp "$adr" "$opt/$adr"
+op_put() { printf 'package p\n\nimport _ "op.test/internal/platform/%s"\n' "$2" >"$opt/internal/platform/$1/p.go"; }
+printf 'package p\n' >"$opt/internal/platform/tenant/p.go"; printf 'package p\n' >"$opt/internal/platform/audit/p.go"; printf 'package p\n' >"$opt/internal/platform/audit/chain/p.go"
+op_put store audit
+must_fail_with "fitness-operation O9 on store importing audit" 'internal/platform/store/p.go:3: O9 \[rule 13\] store imports audit' "$opbin" -root "$opt"
+op_put store tenant; op_put tenant store
+must_fail_with "fitness-operation O9 on tenant importing store" 'internal/platform/tenant/p.go:3: O9 \[rule 13\] tenant imports store' "$opbin" -root "$opt"
+printf 'package p\n' >"$opt/internal/platform/tenant/p.go"; op_put authz/actions audit/chain
+must_fail_with "fitness-operation O9 on authz/actions importing a package operation does not import" 'authz/actions imports audit/chain' "$opbin" -root "$opt"
+op_put authz/actions audit
+must_pass "fitness-operation O9 (store -> tenant, authz/actions -> audit)" "$opbin" -root "$opt"
+sed -i.bak 's/^store  *-> tenant$/store -> (none)/' "$opt/$adr"; rm -f "$opt/$adr.bak"
+must_fail_with "fitness-operation O9 follows an edit of the ADR block (store -> (none))" 'store imports tenant' "$opbin" -root "$opt"
+must_pass "fitness-operation O9 on the repository itself" "$opbin" -root "$root"
+
 # --- fitness-proto (the connector contract), the real CLI on throw-away trees ------------------
 pr="$tmp/proto"
 mkdir -p "$pr"
@@ -684,6 +706,28 @@ fresh_pf_tree; mkdir -p "$pf/internal/connector/ldap"
 must_fail_with "fitness-profiles activation: a connector without its P3 check" 'ACT .*internal/connector/ldap exists, which activates P3.*not implemented' profiles -checks ACT
 fresh_pf_tree
 must_pass "fitness-profiles prints the pending table" bash -c "go run ./tools/fitness/profiles -root '$pf' -checks ACT | grep -q 'P2 .*pending'"
+
+# --- vuln-scan (T-0010) -----------------------------------------------------------------------
+# A throw-away module that calls golang.org/x/text/language.ParseAcceptLanguage at v0.3.7
+# (GO-2022-1059, fixed in v0.3.8). Needs the vulnerability database and the module proxy, as the gate does.
+vt="$tmp/vuln"; mkdir -p "$vt/clean"
+printf 'module vt.test\n\ngo 1.27.0\n\nrequire golang.org/x/text v0.3.7\n' >"$vt/go.mod"
+printf 'package vt\n\nimport "golang.org/x/text/language"\n\nfunc F(s string) { _, _, _ = language.ParseAcceptLanguage(s) }\n' >"$vt/x.go"
+printf 'module clean.test\n\ngo 1.27.0\n' >"$vt/clean/go.mod"
+printf 'package clean\n\nfunc F() int { return 1 }\n' >"$vt/clean/x.go"
+printf '{"entries":[]}\n' >"$vt/none.json"
+printf '{"entries":[{"osv":"GO-2022-1059","reason":"proof: waiting for upstream","ticket":"T-0010","expires":"2026-12-01"}]}\n' >"$vt/allow.json"
+printf '{"entries":[{"osv":"GO-2022-1059","reason":"proof: waiting for upstream","ticket":"T-0010","expires":"2026-12-01"},{"osv":"GO-2099-0001","reason":"proof: fixed long ago","ticket":"T-0010","expires":"2026-12-01"}]}\n' >"$vt/stale.json"
+(cd "$vt" && GOFLAGS=-mod=mod go mod tidy >/dev/null 2>&1) || echo "PROOF SETUP: go mod tidy failed for the vuln-scan fixture (module proxy unreachable?)"
+vulnscan() { go run ./tools/vulnscan "$@"; }
+must_fail_with "vuln-scan on a called vulnerability" 'GO-2022-1059: called through golang.org/x/text/language\.ParseAcceptLanguage.*fixed in v0\.3\.8' vulnscan -root "$vt" -allow "$vt/none.json"
+must_pass "vuln-scan on the same vulnerability with an unexpired allow entry" vulnscan -root "$vt" -allow "$vt/allow.json" -today 2026-11-01
+must_fail_with "vuln-scan on an allow entry past its expiry" 'GO-2022-1059: allow entry expired on 2026-12-01 \(ticket T-0010\)' vulnscan -root "$vt" -allow "$vt/allow.json" -today 2026-12-02
+must_fail_with "vuln-scan on an allow entry that matches no finding" 'GO-2099-0001: allow entry .* matches no finding' vulnscan -root "$vt" -allow "$vt/stale.json" -today 2026-11-01
+printf '{"entries":[{"osv":"GO-2022-1059","reason":"","ticket":"T-0010","expires":"2026-12-01"}]}\n' >"$vt/noreason.json"
+must_fail_with "vuln-scan on an allow entry without a reason" 'reason is required' vulnscan -root "$vt" -allow "$vt/noreason.json"
+must_pass "vuln-scan on a module with no dependencies" vulnscan -root "$vt/clean" -allow "$vt/none.json"
+must_fail_with "vuln-scan when the vulnerability database is unreachable (never a silent skip)" 'cause: the vulnerability database .*point GOVULNDB at a mirror' env GOVULNDB="file://$vt/no-such-db" go run ./tools/vulnscan -root "$vt/clean" -allow "$vt/none.json"
 
 if [ "$fails" -ne 0 ]; then echo "ci-proof: $fails proof(s) failed" >&2; exit 1; fi
 echo "ci-proof: every gate rejects its violation and accepts clean input"

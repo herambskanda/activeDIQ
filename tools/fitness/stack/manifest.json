@@ -285,6 +285,11 @@
         "path": "tools/apitools",
         "adr": "0004-public-api-contract-openapi-first.md",
         "reason": "vacuum and oasdiff tool directives for make lint-api and the breaking-change diff; never linked into a shipped binary"
+      },
+      {
+        "path": "tools/vulntools",
+        "adr": "0001-technology-stack.md",
+        "reason": "govulncheck tool directive for make vuln-scan (T-0010); never linked into a shipped binary"
       }
     ],
     "thirdParty": [],

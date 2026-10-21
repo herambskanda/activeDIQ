@@ -42,6 +42,18 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
 - **`go mod tidy -diff`**: run `go mod tidy` and commit `go.mod`/`go.sum`.
 - **`gen-api-check`** (stale or missing generated file): run `make gen-api` and commit the result; never edit a `*.gen.*` file.
   **`lint-api`**: vacuum findings on the bundled contract. Both: `runbooks/api-contract-workflow.md`.
+- **`vuln-scan`** (T-0010; `go run ./tools/vulnscan`, govulncheck pinned in `tools/vulntools`): each line names an OSV
+  id, the vulnerable symbol your code reaches, the module and the fixed version.
+  - *Called vulnerability*: upgrade the module (`go get <module>@<fixed>`, `go mod tidy`) or, for a standard-library
+    id, the Go toolchain. If it cannot be fixed yet, add an entry to `tools/ci/vuln-allow.json`:
+    `{"osv": "GO-…", "reason": "…", "ticket": "T-NNNN", "expires": "YYYY-MM-DD"}`, with a ticket that owns the fix.
+    An entry covers its OSV id in every module that carries it. Imported-but-not-called findings are not gated.
+  - *Allow entry expired* or *matches no finding*: fix the finding and delete the entry, or renew it with a new reason and
+    date. A renewal is visible in review.
+  - *Database could not be read* (`cause: the vulnerability database …`): the scan is not skipped. Check the network or
+    proxy, or point `GOVULNDB` at a mirror: `GOVULNDB=https://mirror.example/vulndb make vuln-scan` or
+    `GOVULNDB=file:///srv/vulndb make vuln-scan` (a copy of the database in the
+    [Go vulndb layout](https://go.dev/security/vuln/database#api)). Air-gapped CI keeps such a mirror up to date.
 - **`fitness-stack`** (F1–F5, ADR-0001): the message names the file, the check and the ADR rule.
   `make fitness-stack` re-runs it alone; `go run ./tools/fitness/stack -checks F1,F5 -skip-build`
   runs a subset without the cross-build. The fix is in the code, not the manifest, unless a real
@@ -97,6 +109,17 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
     in a runbook by the ticket that registers them.
 - **`fitness-modules`**: the message names the file, line and blueprint rule. Fix the import. Do not
   edit the rule to pass; a rule changes only by amending the blueprint/ADR.
+- **`fitness-operation`** (O9 of ADR-0005, the kernel import DAG): `make fitness-operation` prints every
+  package of the `dag` block as `existing` or `pending`, then the violations as
+  `file:line: O9 [rule 13] <importer> imports <imported>; …` with what the importer may import.
+  - The source is the `dag` block in ADR-0005 rule 13, read on every run. To change a direction,
+    amend the ADR (the `adr` skill) and the check follows; never edit the tool to pass.
+  - A violation is fixed by moving the type or the call down to the package the block allows
+    (usually `authority` or `operation/step`), not by adding the edge. `(anything operation may
+    import)` means the row of `operation` itself.
+  - `pending` packages are not checked until they exist; a `self-test` finding means the
+    `internal/platform/<name>` mapping found none of the listed packages while the tree has them
+    elsewhere. O1–O8 are added by the tickets that land the code they inspect.
 - **`fitness-safeprim`** (FF-SP1 to FF-SP3, safe-primitives §8): each finding reads
   `file:line: FF-SPn [rule] message`. `make fitness-safeprim` re-runs it alone;
   `go run ./tools/fitness/safeprim -checks FF-SP1,FF-SP3 -no-analyzers` runs a subset without the
