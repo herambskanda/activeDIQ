@@ -27,19 +27,31 @@ func WithLogger(l *slog.Logger) Option { return func(s *Server) { s.log = l } }
 // all in-flight requests (default DefaultBodyBudget). A request whose buffer does not fit is
 // refused with 429 and Retry-After before anything is allocated. It must be positive.
 func WithBodyBudget(bytes int64) Option {
-	return func(s *Server) { s.budget = newBodyBudget(bytes) }
+	return func(s *Server) { s.budgetTotal, s.budgetSet = bytes, true }
+}
+
+// WithAnonymousBodyBudget sets how much of the body budget anonymous routes may hold (default a
+// quarter of the total). Anonymous traffic draws only from this pool, so an unauthenticated flood
+// can starve other anonymous flows but never an authenticated request. It must be positive and no
+// more than the total.
+func WithAnonymousBodyBudget(bytes int64) Option {
+	return func(s *Server) { s.anonBudgetTotal, s.anonSet = bytes, true }
 }
 
 // Server is the built API router. It is an http.Handler that answers every path with either a
 // route of the document or a problem.
 type Server struct {
-	mux       *http.ServeMux
-	log       *slog.Logger
-	ports     Ports
-	policy    Policy
-	rows      []RouteInfo
-	unmounted []string
-	budget    *bodyBudget
+	mux        *http.ServeMux
+	log        *slog.Logger
+	ports      Ports
+	policy     Policy
+	rows       []RouteInfo
+	unmounted  []string
+	budget     *bodyBudget // authenticated routes
+	anonBudget *bodyBudget // anonymous routes only
+
+	budgetTotal, anonBudgetTotal int64
+	budgetSet, anonSet           bool
 }
 
 // RouteInfo describes one mounted route, for the route-table probes of fitness-api (A4).
@@ -75,10 +87,17 @@ func Build(doc Document, tags []TagHandlers, policy Policy, catalogue Permission
 	}
 	var errs []error
 	fail := func(format string, a ...any) { errs = append(errs, fmt.Errorf("apihost: "+format, a...)) }
-	if s.budget == nil {
-		s.budget = newBodyBudget(DefaultBodyBudget)
-	} else if s.budget.total <= 0 {
-		fail("the body budget must be positive")
+	if !s.budgetSet {
+		s.budgetTotal = DefaultBodyBudget
+	}
+	if !s.anonSet {
+		s.anonBudgetTotal = max(s.budgetTotal/4, 1)
+	}
+	if s.budgetTotal <= 0 || s.anonBudgetTotal <= 0 || s.anonBudgetTotal > s.budgetTotal {
+		fail("the body budgets must be positive and the anonymous budget no more than the total")
+	} else {
+		s.budget = newBodyBudget(s.budgetTotal)
+		s.anonBudget = newBodyBudget(s.anonBudgetTotal)
 	}
 
 	if ports.Authn == nil || ports.Authz == nil || ports.Limits == nil || ports.StepUp == nil {

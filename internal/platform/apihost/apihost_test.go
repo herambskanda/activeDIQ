@@ -57,7 +57,9 @@ func (f *fakePorts) Allow(_ context.Context, _ apihost.Principal, perm, scope st
 }
 func (f *fakePorts) AllowIP(_ context.Context, class, _ string) (apihost.Decision, error) {
 	f.record("ip")
+	f.mu.Lock()
 	f.lastIPClass = class
+	f.mu.Unlock()
 	return apihost.Decision{Allowed: !f.ipDeny, RetryAfter: 1500 * time.Millisecond}, nil
 }
 func (f *fakePorts) AllowPrincipal(context.Context, string, apihost.Principal) (apihost.Decision, error) {

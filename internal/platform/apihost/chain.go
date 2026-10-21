@@ -151,11 +151,15 @@ func (s *Server) routeHandler(rt Route, boundHost string) http.Handler {
 		in := rt.NewInput()
 		var buf []byte
 		var reserved int64
+		pool := s.budget // anonymous routes draw from their own pool, so they cannot starve authenticated ones
+		if anonymous {
+			pool = s.anonBudget
+		}
 		defer func() { // 16. secret clean-up, on panic too
 			in.DestroySecrets()
 			clear(buf)
 			if reserved > 0 {
-				s.budget.release(reserved) // only after the buffer is cleared
+				pool.release(reserved) // only after the buffer is cleared
 			}
 		}()
 		req := &Request{PathValue: r.PathValue, Query: query, Header: r.Header}
@@ -168,14 +172,9 @@ func (s *Server) routeHandler(rt Route, boundHost string) http.Handler {
 		switch {
 		case hasBody:
 			var err error
-			// An oversized declaration is refused before it can touch the budget: nothing is allocated for it.
-			if r.ContentLength > meta.MaxBody {
-				fail(apitypes.PayloadTooLarge(""))
-				return
-			}
 			// Reserve the buffer's bytes before allocating it; refuse, never queue.
 			size := reserveSize(r.ContentLength, meta.MaxBody)
-			if !s.budget.tryAcquire(size) {
+			if !pool.tryAcquire(size) {
 				w.Header().Set("Retry-After", "1")
 				fail(apitypes.RateLimited("the server is holding too many request bodies; retry shortly"))
 				return

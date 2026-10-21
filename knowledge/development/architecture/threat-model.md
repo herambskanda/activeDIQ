@@ -1289,7 +1289,11 @@ calls per technician per day, then charges per extra call (parity matrix row 18,
   (ADR-0004 rule 6 step 1), so the per-IP limiter alone does not bound memory against stalled
   senders. A byte semaphore (`WithBodyBudget`, default 64 MiB) is reserved before allocation and
   released after the buffer is cleared; when it is spent the request gets `429 /problems/rate-limited`
-  with `Retry-After: 1`, never queued. A Content-Length over the route cap is `413` before it touches
+  with `Retry-After: 1`, never queued. The budget is partitioned: anonymous routes draw only from
+  their own pool (`WithAnonymousBodyBudget`, default a quarter of the total), so an unauthenticated
+  flood cannot make an authenticated write return 429. Residual: anonymous flows (SSPR, enrolment)
+  can still be starved by an anonymous flood; that is the accepted cost, bounded by the per-IP limiter
+  (IPv6 keying: T-0051). A Content-Length over the route cap is `413` before it touches
   the budget. The listener (`compose/server.newAPIServer`) sets ReadHeaderTimeout 10s, ReadTimeout
   60s, IdleTimeout 120s and MaxHeaderBytes 32 KiB; WriteTimeout is unset for streaming responses.
 
