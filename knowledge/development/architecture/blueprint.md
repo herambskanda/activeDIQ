@@ -1145,7 +1145,13 @@ queue is our own table, `jobs`, and every access goes through `store`.
 - **Built (T-0002).** Migration `0002_jobs_jobs.sql` (the table, its checks, the unique-key index and the
   `jobs_guard` trigger, enabled `ALWAYS`) and `internal/platform/jobs`: `Enqueue`, `Cancel`, `Claim`,
   `Complete`, `Fail`, `Discard`, `Renew`, `Rescue`, `Clean`. The guard raises SQLSTATE `AD403`, which the
-  package maps to `ErrCrossTenant`. Still to come: the kind registry and the wrapper (`WithTenant` or
+  package maps to `ErrCrossTenant`.
+- **Built (T-0025).** `Registry` (`registry.go`): `Register(Kind)` takes a name, a required timeout, a mode
+  (`ModeDefault` / `ModeManagedTx`), a `Platform` flag and an optional `ValidateArgs`; a duplicate, a zero
+  timeout or an unknown mode registers nothing. `Registry.Enqueue` replaced the package-level `Enqueue`: it
+  refuses an unregistered kind (`ErrKindUnknown`) or a tenant that does not fit the kind's scope
+  (`ErrKindScope`; a tenant-less job must be a platform kind) before any SQL. `Registry.Leases()` feeds `Claim`
+  (timeout + 30 s grace). Still to come: the wrapper (`WithTenant` or
   `ManagedTx`), the platform leases that make rescuer and cleaner singleton (DM-06), schedules (DM-44).
 
 **Job kinds** (EP-5, all tenant-carrying, all `ManagedTx`). The OperationItem is the system of

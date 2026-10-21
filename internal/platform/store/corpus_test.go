@@ -33,6 +33,26 @@ func TestCorpus(t *testing.T) {
 				return corpustest.Err("InvalidID"), nil
 			}
 			return corpustest.Err("Unexpected"), nil
+		case "LikePattern.Contains", "LikePattern.Prefix":
+			in, err := r.Arg("value")
+			if err != nil {
+				return corpus.Result{}, err
+			}
+			var p LikePattern
+			if r.Call == "LikePattern.Contains" {
+				p, err = LikePattern{}.Contains(in.Text())
+			} else {
+				p, err = LikePattern{}.Prefix(in.Text())
+			}
+			switch {
+			case err == nil:
+				return corpustest.Value(map[string]string{"pattern": p.pattern})
+			case errors.Is(err, ErrNulInText) && !strings.Contains(err.Error(), in.Text()):
+				return corpustest.Err("NulInText"), nil
+			case errors.Is(err, ErrInvalidUTF8) && !strings.Contains(err.Error(), in.Text()):
+				return corpustest.Err("InvalidUTF8"), nil
+			}
+			return corpustest.Err("Unexpected"), nil
 		case "Open":
 			dsn, err := r.Arg("dsn")
 			if err != nil {
@@ -87,7 +107,7 @@ func TestCorpus(t *testing.T) {
 	})
 }
 
-// FuzzSQL fuzzes the two parsers that take outside text: tenant.Parse (accepted text round-trips to the
+// FuzzSQL also checks the LikePattern property (fuzzLike). It fuzzes the two parsers that take outside text: tenant.Parse (accepted text round-trips to the
 // canonical form and nothing else is accepted) and the transport policy (without the operator override
 // an accepted DSN never reports a relaxed host). DSNs that make pgx read files are skipped: the target
 // must not open arbitrary paths.
@@ -95,6 +115,7 @@ func FuzzSQL(f *testing.F) {
 	corpustest.Seed(f, "sql")
 	f.Fuzz(func(t *testing.T, in []byte) {
 		s := string(in)
+		fuzzLike(t, s)
 		if id, err := tenant.Parse(s); err == nil {
 			canon := id.String()
 			id2, err := tenant.Parse(canon)

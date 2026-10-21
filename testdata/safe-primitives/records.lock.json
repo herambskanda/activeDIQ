@@ -243,6 +243,11 @@
     },
     "sql": {
       "SQL-03": true,
+      "SQL-07": true,
+      "SQL-08": true,
+      "SQL-09": true,
+      "SQL-10": true,
+      "SQL-11": true,
       "SQL-20": true,
       "SQL-23#1": true,
       "SQL-23#2": true,

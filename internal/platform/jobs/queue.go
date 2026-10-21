@@ -122,7 +122,8 @@ const renew = `UPDATE public.jobs SET claimed_until = now() + $3 * interval '1 m
 
 // Complete records success.
 func Complete(ctx context.Context, tx store.Tx, r Ref) error {
-	return one(ctx, tx, "complete", complete, r.ID, r.Attempt)
+	tag, err := tx.Exec(ctx, complete, r.ID, r.Attempt)
+	return one("complete", tag.RowsAffected, err)
 }
 
 // Discard records a permanent failure: the job will not run again. code is a short snake_case code,
@@ -131,7 +132,8 @@ func Discard(ctx context.Context, tx store.Tx, r Ref, code string) error {
 	if !codePattern.MatchString(code) {
 		return invalid("error code %q is not a snake_case code", code)
 	}
-	return one(ctx, tx, "discard", discard, r.ID, r.Attempt, code)
+	tag, err := tx.Exec(ctx, discard, r.ID, r.Attempt, code)
+	return one("discard", tag.RowsAffected, err)
 }
 
 // Renew extends the claim of a long-running body by lease, measured from now on the database clock.
@@ -139,15 +141,16 @@ func Renew(ctx context.Context, tx store.Tx, r Ref, lease time.Duration) error {
 	if lease <= 0 || lease > maxLease {
 		return invalid("lease must be positive and at most %s", maxLease)
 	}
-	return one(ctx, tx, "renew", renew, r.ID, r.Attempt, lease.Milliseconds())
+	tag, err := tx.Exec(ctx, renew, r.ID, r.Attempt, lease.Milliseconds())
+	return one("renew", tag.RowsAffected, err)
 }
 
-func one(ctx context.Context, tx store.Tx, op, sql string, args ...any) error {
-	tag, err := tx.Exec(ctx, sql, args...)
+// one maps the result of a fenced single-row recording: exactly one row must have been affected.
+func one(op string, rows func() int64, err error) error {
 	if err != nil {
 		return mapErr(op, err)
 	}
-	if tag.RowsAffected() != 1 {
+	if rows() != 1 {
 		return ErrSuperseded
 	}
 	return nil
