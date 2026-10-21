@@ -156,3 +156,16 @@ func clearPGEnv(t *testing.T) {
 		os.Unsetenv(k)
 	}
 }
+
+// TestMalformedDSNDoesNotPanic: pgx v5.9.2 panics in its keyword/value parser on this input; the store
+// turns that into a refusal without echoing the DSN.
+func TestMalformedDSNDoesNotPanic(t *testing.T) {
+	dsn := "='0\\"
+	if _, err := CheckTransport(dsn, false); err == nil || !strings.Contains(err.Error(), "invalid DSN") {
+		t.Fatalf("CheckTransport: %v", err)
+	}
+	_, err := Open(context.Background(), Config{DSN: dsn})
+	if err == nil || !strings.Contains(err.Error(), "invalid DSN") || strings.Contains(err.Error(), "'0") {
+		t.Fatalf("Open: %v", err)
+	}
+}
