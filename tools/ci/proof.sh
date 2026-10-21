@@ -641,5 +641,27 @@ must_fail_with "fitness-profiles activation: a connector without its P3 check" '
 fresh_pf_tree
 must_pass "fitness-profiles prints the pending table" bash -c "go run ./tools/fitness/profiles -root '$pf' -checks ACT | grep -q 'P2 .*pending'"
 
+# --- vuln-scan (T-0010) -----------------------------------------------------------------------
+# A throw-away module that calls golang.org/x/text/language.ParseAcceptLanguage at v0.3.7
+# (GO-2022-1059, fixed in v0.3.8). Needs the vulnerability database and the module proxy, as the gate does.
+vt="$tmp/vuln"; mkdir -p "$vt/clean"
+printf 'module vt.test\n\ngo 1.27.0\n\nrequire golang.org/x/text v0.3.7\n' >"$vt/go.mod"
+printf 'package vt\n\nimport "golang.org/x/text/language"\n\nfunc F(s string) { _, _, _ = language.ParseAcceptLanguage(s) }\n' >"$vt/x.go"
+printf 'module clean.test\n\ngo 1.27.0\n' >"$vt/clean/go.mod"
+printf 'package clean\n\nfunc F() int { return 1 }\n' >"$vt/clean/x.go"
+printf '{"entries":[]}\n' >"$vt/none.json"
+printf '{"entries":[{"osv":"GO-2022-1059","reason":"proof: waiting for upstream","ticket":"T-0010","expires":"2026-12-01"}]}\n' >"$vt/allow.json"
+printf '{"entries":[{"osv":"GO-2022-1059","reason":"proof: waiting for upstream","ticket":"T-0010","expires":"2026-12-01"},{"osv":"GO-2099-0001","reason":"proof: fixed long ago","ticket":"T-0010","expires":"2026-12-01"}]}\n' >"$vt/stale.json"
+(cd "$vt" && GOFLAGS=-mod=mod go mod tidy >/dev/null 2>&1) || echo "PROOF SETUP: go mod tidy failed for the vuln-scan fixture (module proxy unreachable?)"
+vulnscan() { go run ./tools/vulnscan "$@"; }
+must_fail_with "vuln-scan on a called vulnerability" 'GO-2022-1059: called through golang.org/x/text/language\.ParseAcceptLanguage.*fixed in v0\.3\.8' vulnscan -root "$vt" -allow "$vt/none.json"
+must_pass "vuln-scan on the same vulnerability with an unexpired allow entry" vulnscan -root "$vt" -allow "$vt/allow.json" -today 2026-11-01
+must_fail_with "vuln-scan on an allow entry past its expiry" 'GO-2022-1059: allow entry expired on 2026-12-01 \(ticket T-0010\)' vulnscan -root "$vt" -allow "$vt/allow.json" -today 2026-12-02
+must_fail_with "vuln-scan on an allow entry that matches no finding" 'GO-2099-0001: allow entry .* matches no finding' vulnscan -root "$vt" -allow "$vt/stale.json" -today 2026-11-01
+printf '{"entries":[{"osv":"GO-2022-1059","reason":"","ticket":"T-0010","expires":"2026-12-01"}]}\n' >"$vt/noreason.json"
+must_fail_with "vuln-scan on an allow entry without a reason" 'reason is required' vulnscan -root "$vt" -allow "$vt/noreason.json"
+must_pass "vuln-scan on a module with no dependencies" vulnscan -root "$vt/clean" -allow "$vt/none.json"
+must_fail_with "vuln-scan when the vulnerability database is unreachable (never a silent skip)" 'cause: the vulnerability database .*point GOVULNDB at a mirror' env GOVULNDB="file://$vt/no-such-db" go run ./tools/vulnscan -root "$vt/clean" -allow "$vt/none.json"
+
 if [ "$fails" -ne 0 ]; then echo "ci-proof: $fails proof(s) failed" >&2; exit 1; fi
 echo "ci-proof: every gate rejects its violation and accepts clean input"

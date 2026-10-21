@@ -33,6 +33,7 @@ against clean input.
 | Fitness: `fitness-corpus` | `go run ./tools/fitness/corpus` (manifest and ratchet: `testdata/safe-primitives/implementations.json`, `records.lock.json`) | safe-primitives FF-SP4 a unit with fewer than 10 `hostile` records, a record that vanished without a superseding one, an implementation that skips a record, runs another corpus copy or is not declared; FF-SP5 an implemented unit without a corpus-seeded fuzz target; FF-SP8 an argv that differs from the manifest's constant argv | the real CLI on throw-away trees: 9 hostile records, a removed record, a skipping implementation, Go code in a primitive's home nobody declares, no fuzz target, a nightly run shorter than 10 minutes, a differing argv (`tools/ci/proof.sh`); every rule also has a fixture in `tools/fitness/corpus/check_test.go`, and `e2e_test.go` runs a real Go implementation end to end |
 | Fitness: `fitness-oracles` | `go run ./tools/fitness/oracles pslit\|ldapfilter` (needs Docker or `pwsh`) | safe-primitives FF-SP6 a `pslit` output that PowerShell's own parser does not read as exactly one single-quoted string with the same value; a P1 filter that go-ldap does not compile or round-trip to a single assertion | the real CLI against an ASCII-only escaper's PSQ-06 and an unescaped injection (`tools/ci/proof.sh`), plus the oracle's own tests |
 | Generated code freshness: `gen-check` | `go run ./tools/gen/proto -check` | `internal/proto` is stale, hand-edited or holds an orphaned `*.pb.go` against a fresh generation from `proto/` | the real CLI on a throw-away tree: hand-edited, orphaned and missing file each refused (`tools/ci/proof.sh`) |
+| Dependency vulnerability scan: `vuln-scan` | `go run ./tools/vulnscan` (govulncheck v1.9.0 pinned in `tools/vulntools`; allow list `tools/ci/vuln-allow.json`) | govulncheck reports a vulnerability the code *calls* (symbol level, standard library included) that has no unexpired allow entry; an allow entry is past its expiry or matches no finding; an entry lacks an OSV id, a reason, a `T-NNNN` ticket or a `YYYY-MM-DD` expiry; or the vulnerability database cannot be read or govulncheck does not finish (exit non-zero, message names the cause and the `GOVULNDB` mirror override; never a skip) | a throw-away module calling `x/text` v0.3.7 `ParseAcceptLanguage` (GO-2022-1059): rejected, accepted with an unexpired entry, rejected once the entry has expired, rejected with a stale entry or one without a reason; a clean module accepted; `GOVULNDB` at a missing path rejected (`tools/ci/proof.sh`); the parser and verdict also have table tests in `tools/vulnscan/scan_test.go` |
 | Web build | `vite build` | the build fails | — (a build failure is its own signal) |
 | Secret scan | `make secrets-scan` | gitleaks finds a secret in history or the working tree | `make secrets-test` (T-0013) |
 | Lab generator tests | `make lab-test-unit` | the seed generator's tests fail (no Docker needed) | — |
@@ -48,7 +49,7 @@ Each of these has an owner; none is faked.
 | Safe-primitives FF-SP9 to FF-SP11 | the `psx` build, the P7 build tickets |
 | Activation-table checks P2 to P6, U3 and U4 (installer build and boot, connector transports, multi-tenant composition, offline round trip, no egress, agent contract): each is implemented by the ticket that lands its subject, and `fitness-profiles` fails until it is | the packaging, connector, updater and agent-proto tickets (T-0039, T-0040, M2) |
 | `modules.gen.go` / `modules.gen.ts` staleness, which needs `tools/gen/modules` | the module-system ADR (T-0045) |
-| Dependency vulnerability scan, duplication check, signing, release | later `ops` tickets; signing is a CEO matter (T-0027) |
+| Duplication check, signing, release; npm/web audit | later `ops` tickets; signing is a CEO matter (T-0027) |
 | Dispatcher runs `make ci` before merge | T-0015 |
 
 ## Rules for adding a gate
@@ -66,6 +67,7 @@ Each of these has an owner; none is faked.
 | Go | `go 1.27.0` in `go.mod` (the toolchain directive equals the go line, which `go mod tidy` collapses to one line); `GOTOOLCHAIN=auto` downloads it | `go.mod` |
 | Node packages | exact versions, lockfile, `npm ci` | `web/package.json`, `web/package-lock.json`, `web/.npmrc` |
 | gitleaks | 8.30.1, SHA-256 verified | `tools/secrets/` |
+| govulncheck | v1.9.0, `tool` directive and `go.sum` | `tools/vulntools/` |
 
 Go module path: `github.com/skenzeriq/activediq`. No remote is configured yet, so it is a name, not
 a fetch location; change it once, in `go.mod`, before the first external consumer if the hosting

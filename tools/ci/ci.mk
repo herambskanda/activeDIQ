@@ -4,7 +4,7 @@
 
 .PHONY: ci gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-oracles-windows fitness-oracles-lab fitness-fuzz-nightly fitness-nightly build build-web web-install ci-proof
 
-ci: lint gen-check gen-api-check lint-api test fitness build secrets-scan lab-test-unit ci-proof ## Everything a merge needs: lint, generated-code freshness (connector proto and the API contract), API lint, tests, fitness functions (incl. the ADR-0001 build matrix), web build, secret scan, gate proofs
+ci: lint gen-check gen-api-check lint-api test fitness build secrets-scan vuln-scan lab-test-unit ci-proof ## Everything a merge needs: lint, generated-code freshness (connector proto and the API contract), API lint, tests, fitness functions (incl. the ADR-0001 build matrix), web build, secret scan, dependency vulnerability scan, gate proofs
 	@echo "make ci: passed"
 
 gen-proto: ## T-0157: regenerate the connector contract's Go code (internal/proto) from proto/ with the pinned pure-Go toolchain (no protoc, no buf)
@@ -92,6 +92,10 @@ build: build-web ## Build the web assets; the CGO_ENABLED=0 Go cross-build of th
 
 build-web: web-install
 	npm --prefix web run --silent build
+
+.PHONY: vuln-scan
+vuln-scan: ## T-0010: govulncheck (pinned in tools/vulntools) over ./...; fails on a called vulnerability not in tools/ci/vuln-allow.json, on an expired or stale allow entry, and when the vulnerability database cannot be read (override: GOVULNDB=<mirror>)
+	go run ./tools/vulnscan
 
 ci-proof: web-install ## Prove each gate fails on a deliberate violation and passes on clean input
 	tools/ci/proof.sh

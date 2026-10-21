@@ -110,6 +110,7 @@ When either enters scope, a separate ADR decides its language and extends rule 1
    - copied third-party code under `third_party/<name>/`, each with its LICENSE file.
 
    Every entry must cite a ratified or accepted ADR.
+   - *Amendment 2026-10-21 (T-0010, for architect review):* a dev-tool Go module under `tools/` that holds only `tool` directives and is never linked into a shipped binary is declared in `extraGoModules` citing this ADR (`tools/vulntools`: govulncheck). A tool module needs its licence-register row first, and F3 and F4 still scan the product closure.
 6. **Every direct dependency is in the licence register before it is merged.** Register rows carry the exact package path in backticks, so CI can match them. Shipped artefacts carry no strong-copyleft licence: GPL, AGPL, SSPL, or the Elastic Licence/BUSL family.
 
 ### Build targets per tier (support is decided in ADR-0002 and in the PRDs)
