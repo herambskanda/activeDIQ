@@ -491,6 +491,21 @@ These were filed with the first draft and amended by notes on this rework:
 - **T-0152** decision-prep (product-manager): the published deprecation and support window (rule 7), for the CEO before GA.
 - **T-0033** (devops-engineer, existing): the `secretjson` analyzer must also report `ReadToken` inside `Secret`'s decoder, and must allow `apihost` as the request-body caller of `secretjson.Decode` (a note on the ticket).
 
+**Old-ID to new-ID mapping (T-0031, 2026-10-21).** The IDs above come from the earlier numbering. The board was re-cut and these are the live tickets:
+
+| Old ID | Work | Board now |
+| --- | --- | --- |
+| T-0147 | generator and skeleton | delivered (merged); no ticket needed |
+| T-0148 | `fitness-api` static half | T-0011 (A1, A13, done) and T-0017 (A3, A5, A7 static, A8, A10-A12) |
+| T-0149 | `fitness-api` runtime half | T-0018 |
+| T-0086 | apihost | T-0033 (also carries the old T-0033 `secretjson` allowance for `apihost` and `ReadToken`; the analyzer itself exists in `tools/analyzers/secretjson`) |
+| T-0151 | TM §7.6 amend, `policy.yaml` seeding, rate defaults | T-0032 |
+| T-0069 | first operations | T-0034 (narrowed to the AN-1 health operations; the 2a operation set stays with the M2 spec tickets) |
+| T-0150 | align blueprint, api-design, safe-primitives | T-0035 |
+| T-0152 | deprecation window decision prep | T-0036 |
+
+Order: T-0032, then T-0034, then T-0017; T-0033 then T-0018. Numbers in the new board's T-0033 do not mean the old T-0033.
+
 **Revisit when**
 
 - json/v2 changes a default we rely on (the A7 corpus fails).
