@@ -13,7 +13,7 @@ Standard: `knowledge/development/standards/ci-gates.md`. Layout: blueprint §1.
 
 ## Prerequisites
 
-`go` (any 1.21+; it downloads the pinned 1.27.0 toolchain on first use, so the machine needs
+`go` (any 1.21+; it downloads the pinned 1.27.3 toolchain on first use, so the machine needs
 network access once), `node` ≥ 22 with `npm`, `python3`, `make`, `bash`. Everything else is installed
 by the targets: web packages by `npm ci`, gitleaks by `make secrets-install`.
 
