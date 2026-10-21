@@ -42,6 +42,18 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
 - **`go mod tidy -diff`**: run `go mod tidy` and commit `go.mod`/`go.sum`.
 - **`gen-api-check`** (stale or missing generated file): run `make gen-api` and commit the result; never edit a `*.gen.*` file.
   **`lint-api`**: vacuum findings on the bundled contract. Both: `runbooks/api-contract-workflow.md`.
+- **`vuln-scan`** (T-0010; `go run ./tools/vulnscan`, govulncheck pinned in `tools/vulntools`): each line names an OSV
+  id, the vulnerable symbol your code reaches, the module and the fixed version.
+  - *Called vulnerability*: upgrade the module (`go get <module>@<fixed>`, `go mod tidy`) or, for a standard-library
+    id, the Go toolchain. If it cannot be fixed yet, add an entry to `tools/ci/vuln-allow.json`:
+    `{"osv": "GO-…", "reason": "…", "ticket": "T-NNNN", "expires": "YYYY-MM-DD"}`, with a ticket that owns the fix.
+    An entry covers its OSV id in every module that carries it. Imported-but-not-called findings are not gated.
+  - *Allow entry expired* or *matches no finding*: fix the finding and delete the entry, or renew it with a new reason and
+    date. A renewal is visible in review.
+  - *Database could not be read* (`cause: the vulnerability database …`): the scan is not skipped. Check the network or
+    proxy, or point `GOVULNDB` at a mirror: `GOVULNDB=https://mirror.example/vulndb make vuln-scan` or
+    `GOVULNDB=file:///srv/vulndb make vuln-scan` (a copy of the database in the
+    [Go vulndb layout](https://go.dev/security/vuln/database#api)). Air-gapped CI keeps such a mirror up to date.
 - **`fitness-stack`** (F1–F5, ADR-0001): the message names the file, the check and the ADR rule.
   `make fitness-stack` re-runs it alone; `go run ./tools/fitness/stack -checks F1,F5 -skip-build`
   runs a subset without the cross-build. The fix is in the code, not the manifest, unless a real
