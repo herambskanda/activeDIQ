@@ -4,7 +4,7 @@ date: 2026-10-02
 updated: 2026-10-21
 status: review
 owner: heramb
-ticket: T-0005, T-0029, T-0048, T-0035
+ticket: T-0035, T-0041
 sources_last_checked: 2026-10-02
 ---
 
@@ -28,17 +28,17 @@ with stable code `X`; nothing is sent to a DC, interpreter or database.
 | P3 | `attr`: codecs for GUID, SID, FILETIME/Interval, Generalized Time, flag integers (UAC, computed UAC, groupType), `unicodePwd` + `Secret` | ad-hoc byte/int parsing, bit maths in feature code, raw attribute access | S, A; `Secret` and any codec it parses also in N | directory-engineer | 5 |
 | P4 | `psx` typed PowerShell operations · `pslit` display quoting · `proc` native process runner | script text with data, `-Command`, `-EncodedCommand`, shells, `.bat`/`.cmd` | S, A, X | backend-engineer (`psx`, `proc`), windows-engineer (sidecar host) | 6 |
 | P5 | SQL access: generated queries, tenant context, report compiler, LIKE patterns | `Sprintf`/concatenated SQL, session-level `SET` | S | backend-engineer | 7 |
-| P6 | `sd`: binary MS-DTYP security descriptors, SD_FLAGS, diff-based DACL edits, SDDL display-only | hand-sliced `nTSecurityDescriptor` bytes; SDDL on write paths; whole-SD writes | S, A | directory-engineer | sibling doc: `safe-primitives-security-descriptor.md` (T-0028) |
-| P7 | output encoders: `cellsafe` formula-lead classifier, CSV writer/reader, XLSX writer, HTML (`htmlx`, `msgtpl`, `httpx.Attachment`), e-mail composer, PDF writer | `encoding/csv` and joined rows, raw XLSX/PDF library calls, `text/template`, typed-string conversions, hand-built mail headers, HTML-to-PDF engines; in `web/`, DOM HTML sinks | S (tier W follows §12.5 W1–W5) | reporting-engineer (exports), backend-engineer (`htmlx`, `msgtpl`, mail) | 12 (T-0029) |
+| P6 | `sd`: binary MS-DTYP security descriptors, SD_FLAGS, diff-based DACL edits, SDDL display-only | hand-sliced `nTSecurityDescriptor` bytes; SDDL on write paths; whole-SD writes | S, A | directory-engineer | sibling doc: `safe-primitives-security-descriptor.md` (old T-0028) |
+| P7 | output encoders: `cellsafe` formula-lead classifier, CSV writer/reader, XLSX writer, HTML (`htmlx`, `msgtpl`, `httpx.Attachment`), e-mail composer, PDF writer | `encoding/csv` and joined rows, raw XLSX/PDF library calls, `text/template`, typed-string conversions, hand-built mail headers, HTML-to-PDF engines; in `web/`, DOM HTML sinks | S (tier W follows §12.5 W1–W5) | reporting-engineer (exports), backend-engineer (`htmlx`, `msgtpl`, mail) | 12 (old T-0029) |
 
 Tier W (web console) implements **no** primitive and tier L (lab and tools) is exempt from the
 literal-shape ban but never imported by product code — both rules are in §2.1.
 
 Every ticket that implements or changes a primitive is tagged `security-sensitive`
 (`.claude/skills/security-baseline/SKILL.md` §1). Security descriptors are P6, specified in the sibling
-`safe-primitives-security-descriptor.md` (T-0028; it follows R1–R9 below). Output encoders are P7 (§12, T-0029).
-Out of scope here: SIEM and log encoders (CEF, syslog; T-0139), XML/SAML, JWT and randomness
-(feasibility §2.7 rows; T-0007).
+`safe-primitives-security-descriptor.md` (old T-0028; it follows R1–R9 below). Output encoders are P7 (§12, old T-0029).
+Out of scope here: SIEM and log encoders (CEF, syslog; old T-0139), XML/SAML, JWT and randomness
+(feasibility §2.7 rows; old T-0007).
 
 ## 1. Rules that apply to every primitive
 
@@ -274,7 +274,7 @@ everything except the filter and the attribute list.
   - paged results `…319`;
   - domain scope `…1339`, which "instructs the DC not to generate LDAP continuation references";
   - extended DN `…529`, response-only;
-  - SD flags `…801`, only when the T-0028 primitive reads `nTSecurityDescriptor`.
+  - SD flags `…801`, only when the old T-0028 primitive reads `nTSecurityDescriptor`.
 
   OIDs and descriptions are from [MS-ADTS LDAP extended controls][adts-controls].
 - **Escape controls exist only in named internal operations.** Each named operation has its own
@@ -449,7 +449,7 @@ library's DN parser and escaper (go-ldap `ParseDN`, `EscapeDN`); `dn` implements
 operations (`HasSuffix`, `HasPrefix`, `Contains`, `EqualFold`, `Split`) on `DNString` values;
 `dn.Equal`/`IsDescendantOf` from authorisation packages (import rule). forbidigo matches names and
 cannot see types, so the `DNString` rule is a **go/analysis pass**, `dnstring`, in the fitness tool
-(T-0033). It reports any conversion `string(x)` where `x` has type `dn.DNString` outside `dn` and the
+(old T-0033). It reports any conversion `string(x)` where `x` has type `dn.DNString` outside `dn` and the
 connector, and any `DNString` passed to a `strings` or `bytes` function. `DNString` offers
 `Display()` for UI text; the analyzer allows that call only in response-mapping code. Literal-shape
 scanner: `"CN="`, `",OU="`, `",DC="` in literals joined by `+` or `Sprintf`/`string.Format` outside
@@ -564,7 +564,7 @@ Lockout and password-expired *state* is never computed from these by feature cod
 | FT-15 | `9223372036854775808`, `-9223372036854775809` | error `Overflow` | |
 | FT-16 | `١٢٣` (Arabic-Indic) · `１２３` (full-width) | error `BadInteger` | ASCII digits only |
 | FT-17 | lastLogon: `9007199254740993` → API | `"raw":"9007199254740993"` as a JSON string | 2^53 + 1 would round as a number |
-| FT-29 | `Encode` of an instant on pwdLastSet · lastLogon · lastLogonTimestamp · lockoutTime · badPasswordTime | error `NotEncodable` | only `accountExpires` takes an instant (security review, T-0070) |
+| FT-29 | `Encode` of an instant on pwdLastSet · lastLogon · lastLogonTimestamp · lockoutTime · badPasswordTime | error `NotEncodable` | only `accountExpires` takes an instant (security review, old T-0070) |
 
 ### 5.4 Generalized Time (syntax 2.5.5.11, oMSyntax 24)
 
@@ -588,7 +588,7 @@ or ±hh[mm]) → UTC instant. Encode: always `YYYYMMDDHHMMSS.0Z` in UTC, AD's ob
 | GT-11 | full-width digits · trailing space · trailing NUL | error `BadFormat` | |
 | GT-12 | `16010101000000.0Z` | 1601-01-01T00:00:00Z | appears in `dSCorePropagationData`; not a real event time `[UNVERIFIED]`; UI must not show "1601" |
 | GT-13 | 65-char input | error `TooLong` | R5 |
-| GT-14 | `991231235959Z` to the Generalized Time decoder | error `BadMonth` | UTC-Time text is not Generalized Time. T-0070 changed the input: the original `261002101112Z` is lexically a valid Generalized Time (year 2610, 11:12), so no grammar-faithful decoder can refuse it. That overlap is GT-14B: the decoder is chosen by `oMSyntax` (`gentime.Decode`), never by sniffing the text |
+| GT-14 | `991231235959Z` to the Generalized Time decoder | error `BadMonth` | UTC-Time text is not Generalized Time. old T-0070 changed the input: the original `261002101112Z` is lexically a valid Generalized Time (year 2610, 11:12), so no grammar-faithful decoder can refuse it. That overlap is GT-14B: the decoder is chosen by `oMSyntax` (`gentime.Decode`), never by sniffing the text |
 
 ### 5.5 Flag integers (Integer, syntax 2.5.5.9, signed 32-bit)
 
@@ -629,7 +629,7 @@ Types `UAC` (stored `userAccountControl`), `UACComputed` (`msDS-User-Account-Con
 | FL-11 | groupType `-2147483638` (GLOBAL + UNIVERSAL) | decodes; `Scope()` → error `InvalidScope` | |
 | FL-12 | `512 `, `+512`, `0x200`, `0512`, empty, `-0` | error `BadInteger` | |
 | FL-13 | `4294967296` | error `Overflow` | |
-| FL-23 | `Change` that sets or clears any account-type bit (`4096` set SERVER_TRUST + clear WORKSTATION_TRUST; `4096` set PARTIAL_SECRETS; `512` clear NORMAL; `512` set INTERDOMAIN_TRUST or TEMP_DUPLICATE; each bit alone, set and clear) | error `NotSettable`, even with every capability | a computer must not become a DC or RODC account (security review, T-0070) |
+| FL-23 | `Change` that sets or clears any account-type bit (`4096` set SERVER_TRUST + clear WORKSTATION_TRUST; `4096` set PARTIAL_SECRETS; `512` clear NORMAL; `512` set INTERDOMAIN_TRUST or TEMP_DUPLICATE; each bit alone, set and clear) | error `NotSettable`, even with every capability | a computer must not become a DC or RODC account (security review, old T-0070) |
 | FL-24 | `512` set PASSWD_NOTREQD · ENCRYPTED_TEXT_PWD_ALLOWED · USE_DES_KEY_ONLY · DONT_REQ_PREAUTH; clear NOT_DELEGATED · SMARTCARD_REQUIRED, without `WeakenAccountSecurity` | error `PrivilegeRequired` | AS-REP roasting of an account in the operator's OU |
 | FL-25 | the same six changes with `WeakenAccountSecurity` | applies; `512` + `0x20` is `544` | |
 | FL-26 | clear the four weakening set-bits; set NOT_DELEGATED or SMARTCARD_REQUIRED, no capability | applies | hardening is free |
@@ -690,7 +690,7 @@ Mitigations:
 registers and stack `f` used, and heap allocations once they become unreachable. Protection exists
 only on linux/amd64 and linux/arm64. Elsewhere, Windows included, `Do` simply runs `f`. The package
 is not covered by the Go 1 compatibility promise ([runtime/secret][go-secret]). It would protect only
-our Linux/Docker profile, and enabling it is a toolchain flag under ADR-0001's manifest. T-0007
+our Linux/Docker profile, and enabling it is a toolchain flag under ADR-0001's manifest. old T-0007
 evaluates it.
 
 **Tier X never holds a secret in a `System.String`.** Secret bytes arrive in the stdin frame. The
@@ -710,7 +710,7 @@ It can be obtained only from:
 - **StartTLS** on 389, only if the StartTLS operation succeeds under the same verification. If it
   fails, the connection fails.
 - **SASL GSSAPI with sealing** is accepted by the DC for `unicodePwd` ([adts-pwd]). Whether go-ldap
-  with go-krb5 negotiates the confidentiality layer is `[UNVERIFIED]` until spike T-0023 proves it.
+  with go-krb5 negotiates the confidentiality layer is `[UNVERIFIED]` until spike old T-0023 proves it.
   Until then it is not a `SecureConn` source.
 
 A `SecureConn` is bound to one connection generation. After any reconnect it is stale (PW-17).
@@ -937,7 +937,7 @@ can change. `InventoryHost` therefore has two constructors only:
 
 `dNSHostName` may be *displayed*, never dialled. SYSVOL paths are built from an `InventoryHost`, the
 domain's DNS name and the GPO's GUID, never read from `gPCFileSysPath`. The global Kerberos-only
-outbound policy belongs to T-0007 (noted there).
+outbound policy belongs to old T-0007 (noted there).
 
 **Joining a flag and a value.** Some tools take `/s:host` or `-server=host` as one argv element.
 `Joined(flag, sep, v)` builds it from a constant flag and separator plus a typed value. The value
@@ -1062,7 +1062,7 @@ ORMs and raw-string query builders are prohibited. Rules:
     TLS configuration pgx derives, so `PGSSLMODE`, the keyword and URL forms and every host and
     fallback of a multi-host DSN are covered. Exempt: hosts pgx dials as a unix socket (an absolute path, `/…` or `C:\…`; the decision is `pgconn.NetworkAddress`, so libpq's `@name` spelling is a TCP host and is refused), literal loopback addresses and
     the name `localhost` (the bundled PostgreSQL). The one relaxation is an explicit operator
-    override, `Config.AllowInsecureTransport`, set only from platform-scope configuration (T-0184
+    override, `Config.AllowInsecureTransport`, set only from platform-scope configuration (old T-0184
     adds the key, for both DSNs). It is logged at start-up as a warning and shown on the health page
     through `DB.Transport()`, with the hosts it let through. TLS validation is never disabled in shipped
     code: the override permits a DSN, it does not change how pgx verifies.
@@ -1099,15 +1099,15 @@ ORMs and raw-string query builders are prohibited. Rules:
 data-access package `internal/platform/store` and sqlc-generated `sqlcdb/` packages (FF-SP1, as
 blueprint §2 defines it; ADR-0002 check T5 enforces the same boundary for pgx types).
 forbidigo matches names and cannot check argument kinds, so "SQL argument is not a constant or
-sqlc-generated" is a **go/analysis pass**, `sqlconst`, in the fitness tool (T-0033). For every call to
+sqlc-generated" is a **go/analysis pass**, `sqlconst`, in the fitness tool (old T-0033). For every call to
 pgx/sqlc `DBTX` `Exec`, `Query`, `QueryRow`, `CopyFrom` and `Batch.Queue`, the SQL argument must be:
 - a typed or untyped constant (`types.TypeAndValue.Value != nil`);
 - a constant declared in a sqlc-generated file; or
 - the `CompiledSQL` type, which only the report compiler can produce.
 
 FF-SP7 checks rules 2 and 9–12 against the migrated schema and runs SQL-13, -14, -17 to -20. There
-is one implementation. It lives inside ADR-0002's `fitness-tenancy` job (T-0036, checks T2–T4),
-not in a separate job and not in T-0034. The FF-SP7 row in §8 is the list of checks T-0036 must cover.
+is one implementation. It lives inside ADR-0002's `fitness-tenancy` job (old T-0036, checks T2–T4),
+not in a separate job and not in old T-0034. The FF-SP7 row in §8 is the list of checks old T-0036 must cover.
 
 ## 8. Corpus and fitness functions
 
@@ -1131,7 +1131,7 @@ and is updated by the lab tests, not by hand.
 - `psx`, `pslit`, `proc`;
 - `sql`;
 - `cellsafe`, `csv`, `xlsx`, `html`, `mail`, `pdf` (P7, §12);
-- `sd.read`, `sd.write` (P6, defined in `safe-primitives-security-descriptor.md` §5; its rules FF-SD1–5 each have a named owner in that document §6: T-0118 for FF-SD1/2 and the `sd.read` half of FF-SD5, T-0138 for FF-SD3/4, T-0135 for the `sd.write` half; the T-0033/T-0034 harness hosts them).
+- `sd.read`, `sd.write` (P6, defined in `safe-primitives-security-descriptor.md` §5; its rules FF-SD1–5 each have a named owner in that document §6: old T-0118 for FF-SD1/2 and the `sd.read` half of FF-SD5, old T-0138 for FF-SD3/4, old T-0135 for the `sd.write` half; the old T-0033/old T-0034 harness hosts them).
 
 A **record is one input**. A table row listing several inputs separated by `·`, `/` or commas
 expands to one record each, with suffixed IDs, paired in order with the expected values. Separators
@@ -1139,7 +1139,7 @@ count only between inputs, never inside a code span. For example, FT-13 becomes 
 `FT-13#6`; FL-12 and GT-07 expand the same way. Every record carries an explicit
 `"hostile": true|false`; it is never inferred. Static vectors (LF-30, PROC-10, SQL-17/18, PSX-18;
 in P7 XL-16, HT-05 to -08, HT-19, HT-20, EM-13 to -15, PDF-11, PDF-12) are records with
-`"kind":"static"`. FF-SP1–3, FF-SP7 (inside T-0036), FF-SP9 or FF-SP10 check them instead of a
+`"kind":"static"`. FF-SP1–3, FF-SP7 (inside old T-0036), FF-SP9 or FF-SP10 check them instead of a
 runtime call. P7 adds two kinds: `"kind":"lab"` (CSV-17, CSV-18, XL-18), which FF-SP11 runs
 in a spreadsheet application, and `"kind":"e2e"` (HT-18, HT-21, HT-22), which the server
 integration and Playwright suites run.
@@ -1185,18 +1185,18 @@ authoritative and FF-SP4 recomputes the counts.
 | FF | Check | Fails when |
 | --- | --- | --- |
 | FF-SP1 | Import boundaries | any of these outside its home: the LDAP library and raw search/controls (only the connector root `internal/connector/`, with controls only in `internal/connector/ad/scope`); the SQL driver (only the data-access package `internal/platform/store`; generated `sqlcdb/` packages may import the other pgx packages, but not `pgxpool` or `pgx.Connect`/`ConnConfig`, blueprint §2); process APIs (only `internal/platform/proc`); the PowerShell SDK (only the sidecar host). Also: any product package importing `lab/…` or `tools/…` (tier L). P7 adds: `encoding/csv` (only `export/csv`), the XLSX library (only `export/xlsx`), the PDF library (only `export/pdf`), `net/smtp`/`mime/multipart` (only `notify/mail`), any HTML-to-PDF or headless-browser module anywhere in product code (§12.3–§12.7). Enforced with depguard, BannedApiAnalyzers and clippy |
-| FF-SP2 | Banned APIs and custom analyzers | any symbol in the per-primitive lists in §3.5, §4.6, §5, §6, §7. Includes TLS-verification bypasses (§5.6), `net/http/pprof` and `runtime/pprof` outside tests and tier L, and `GOTRACEBACK=crash` in service definitions. The go/analysis passes `dnstring`, `sqlconst` and `secretjson` run here (`go vet -vettool`, T-0033). `secretjson` enforces the §5.6 secret path of ADR-0004 rule 6: a decode into a `Secret`-bearing type only through `secretjson.Decode` (nested calls in generated `UnmarshalJSONFrom` methods excepted, as they inherit its options); `secretjson.Decode` called only from `apihost`; no `ReadToken`/`Token.String` in a `Secret` decoder, which must use `ReadValue`. The v1 `encoding/json` import and v1 JSON methods on contract types are banned by `fitness-api` A7, not here; the clean-up (`destroySecrets`, `clear(buf)`) is asserted by A7's per-operation corpus. P7 adds the §12.4–§12.7 lists (`text/template`, typed-string conversions outside `htmlx`, the `tmplconst` pass, `SetEscapeHTML(false)`, `Content-Disposition` outside `httpx`, XLSX formula/hyperlink/VBA setters, PDF link/JavaScript/attachment/page-import APIs) |
+| FF-SP2 | Banned APIs and custom analyzers | any symbol in the per-primitive lists in §3.5, §4.6, §5, §6, §7. Includes TLS-verification bypasses (§5.6), `net/http/pprof` and `runtime/pprof` outside tests and tier L, and `GOTRACEBACK=crash` in service definitions. The go/analysis passes `dnstring`, `sqlconst` and `secretjson` run here (`go vet -vettool`, old T-0033). `secretjson` enforces the §5.6 secret path of ADR-0004 rule 6: a decode into a `Secret`-bearing type only through `secretjson.Decode` (nested calls in generated `UnmarshalJSONFrom` methods excepted, as they inherit its options); `secretjson.Decode` called only from `apihost`; no `ReadToken`/`Token.String` in a `Secret` decoder, which must use `ReadValue`. The v1 `encoding/json` import and v1 JSON methods on contract types are banned by `fitness-api` A7, not here; the clean-up (`destroySecrets`, `clear(buf)`) is asserted by A7's per-operation corpus. P7 adds the §12.4–§12.7 lists (`text/template`, typed-string conversions outside `htmlx`, the `tmplconst` pass, `SetEscapeHTML(false)`, `Content-Disposition` outside `httpx`, XLSX formula/hyperlink/VBA setters, PDF link/JavaScript/attachment/page-import APIs) |
 | FF-SP3 | Literal-shape scanner | filter-, DN-, PowerShell- or SQL-shaped literals combined with concatenation or formatting outside primitive packages and tests. **`web/` is covered too**: TS/TSX template literals or concatenations containing `CN=`, `OU=`, `DC=`, `(&(`, `(\|(` or `(objectClass=`; quote doubling (`replace(/'/g, "''")`, `replaceAll("'", "''")`); `.split(',')`, `.endsWith(` or `.includes(` on a value named `dn`/`distinguishedName`; P7's §12.5 W1/W2 ESLint rules and CSV/XLSX `Blob`s. **P7 shapes in Go:** formula-lead `HasPrefix` checks outside `cellsafe`, joined CSV rows, `"text/csv"`/`".csv"` outside `export/csv`/`httpx`, HTML-shaped literals outside `htmlx`, mail-header literals outside `notify/mail` (§12.2–§12.6). Tier L is exempt (§2.1). Tool: Semgrep or ast-grep, chosen by devops-engineer via the licence register |
 | FF-SP4 | Corpus gate | a **unit** (§8 list) has < 10 records with `"hostile": true`; an implementation skips records of a unit it implements; a record disappears without a superseding one |
 | FF-SP5 | Fuzz | each parser/encoder lacks a corpus-seeded fuzz target; nightly ≥ 10 min each; properties `parse(render(x)) == x` and "render never emits an unescaped special". P7: `csv.Read(csv.Write(v)) == v`; no CSV cell starts with an un-neutralised `FormulaLead`; every XLSX, HTML, MIME and PDF output parses with an independent parser (§12.3–§12.7) |
 | FF-SP6 | Oracles | PowerShell parser oracle (`pslit`); LDAP library round-trip (P1); Samba lab integration (P1–P3); Windows lab nightly for the rows in §9 marked Windows. **SID/GUID oracle, Windows runner:** SID text → bytes via `ConvertStringSidToSidW` and bytes → text via `ConvertSidToStringSidW`; GUID text → bytes via .NET `Guid.Parse` + `ToByteArray()` and bytes → text via `StringFromGUID2`. The relation is: **every input we accept, Windows accepts, and on every accepted input the bytes (and the rendered text) are equal**. We may reject more. Intentional strictness: SID-09 (leading zeros), SID-10 (hex authority below 2^32), GUID-05 (undashed, accepted only inside `ObjectRef`), GUID-08 (nil), GUID-10 (whitespace; `Guid.Parse` trims). If Windows rejects an input we accept (candidate: SID-03's lower-case `s-`), we tighten ours; the relation wins over our reading of the ABNF |
-| FF-SP7 | Tenancy | **Implemented once, inside ADR-0002's `fitness-tenancy` job (T-0036, checks T2–T4). This row is the list T-0036 must cover.** Against the migrated schema it fails when: a tenant table lacks RLS + FORCE; a view lacks `security_invoker=true` (`pg_class.reloptions`); a materialized view or `SECURITY DEFINER` function (`pg_proc.prosecdef`) depends on a tenant table; the app (runtime) or owner (migration) role has `rolsuper` or `rolbypassrls`; the app role owns a table; a policy's `qual` differs from the rule-10 shape (no `coalesce`, `OR` or `true`); SQL-13, -14, -17 to -20 fail |
+| FF-SP7 | Tenancy | **Implemented once, inside ADR-0002's `fitness-tenancy` job (old T-0036, checks T2–T4). This row is the list old T-0036 must cover.** Against the migrated schema it fails when: a tenant table lacks RLS + FORCE; a view lacks `security_invoker=true` (`pg_class.reloptions`); a materialized view or `SECURITY DEFINER` function (`pg_proc.prosecdef`) depends on a tenant table; the app (runtime) or owner (migration) role has `rolsuper` or `rolbypassrls`; the app role owns a table; a policy's `qual` differs from the rule-10 shape (no `coalesce`, `OR` or `true`); SQL-13, -14, -17 to -20 fail |
 | FF-SP8 | Constant argv | for random requests, `psx`/`proc` argv differs from the manifest's constant argv |
 | FF-SP9 | `psx` manifest | built against the real module metadata (the `CommandInfo.Parameters` of each pinned module) in the sidecar build. Fails when: an op's `Identity` parameter is not bound from a `Guid`; `LDAPFilter` is bound from anything but P1 `FilterString`; a `Filter`, `RecipientFilter`, `FilterScript`, `ScriptBlock` or other OPATH/script parameter is bound at all; a parameter carrying a secret is not `SecureString`/`PSCredential` (PSX-18); an op names a command not exported by its pinned module (PSX-16) |
 | FF-SP10 | Output structure oracle (P7) | for any `csv`/`xlsx`/`html`/`mail`/`pdf` record, the artefact parsed by an independent parser violates its section's structure rules. CSV: field and row counts equal the model; no cell starts with a raw lead. XLSX: XL-16. HTML: no `script` element, no `on*` attribute, no non-`SystemURL` link, CSP meta first. Mail: header set as built, QP/base64 parts, no line over 998 octets, no bare CR/LF. PDF: §12.7 rule 3 names absent, extracted text equals input. Also: the `FormulaLeadTable` generator output differs from the committed table, or an embedded template breaks §12.5 rule 3 |
 | FF-SP11 | Spreadsheet application oracle (P7) | every push: headless LibreOffice (dev tooling only; devops-engineer checks the licence register) imports each `csv`/`xlsx` output with formula evaluation enabled and finds any formula cell, or a displayed value different from the expected text. Nightly on the Windows lab: Excel does the same, plus CSV-17 (save as CSV, reopen), CSV-18 (`;` list separator) and XL-18 (edit a `quotePrefix` cell) |
 
-**Implementation (T-0033).** FF-SP1 to FF-SP3 run in `make ci` as `fitness-safeprim`
+**Implementation (old T-0033).** FF-SP1 to FF-SP3 run in `make ci` as `fitness-safeprim`
 (`tools/fitness/safeprim`, in-house `go/parser` plus the `go/analysis` passes in `tools/analyzers`;
 the `web/` half is ESLint rules in `web/eslint/safe-primitives.js`). Deviations from the
 tools named above: depguard, forbidigo, Semgrep and ast-grep are not used (no type information,
@@ -1204,14 +1204,14 @@ per-path homes need code, the check must run offline; see the licence register);
 and clippy are configured but dormant until the first sidecar and the first crate exist. The
 home of each primitive is one table, `tools/analyzers/policy/policy.go`. Not yet enforced:
 `dnstring`'s rule that `Display()` is called only in response-mapping code (the packages are not
-named), and the P7 homes, which are suffix patterns until T-0004 fixes the roots. The scanner
+named), and the P7 homes, which are suffix patterns until old T-0004 fixes the roots. The scanner
 skips directories by location, never by bare name (`bin`/`obj` only beside a project file, `target`
 only beside `Cargo.toml`, `knowledge`/`factory`/`garage` only at the root), so a product package named
 `target` is scanned. A shape literal is flagged when it is joined with data by any means (`+`, `+=`,
 the `fmt` print family, `strings.Join`/`Replace`, builders, slice literals, through a const or
 variable), or when it carries a printf verb at all.
 
-**Amendment (T-0003).** Two scanner rules that T-0033 left open. (1) `sqlconst` accepts a method that
+**Amendment (T-0003).** Two scanner rules that old T-0033 left open. (1) `sqlconst` accepts a method that
 passes its own, unchanged SQL parameter to the same-named method only when its receiver type is named in
 `policy.SQLForwarders` (today `internal/platform/store`'s `tx` over `pgx.Tx`): the wrapper adds no query, and
 every caller of the `Tx` interface is still judged. A forwarder outside the list is reported at its forwarding
@@ -1221,7 +1221,7 @@ only for tests (`internal/platform/store/storetest`, which starts the Docker Pos
 DDL). They are judged like `_test.go` files, and FF-SP1 `test-support-import` fails when a non-test file
 imports one. The list is explicit, never a `…test` suffix match.
 
-**Implementation (T-0034).** FF-SP4, FF-SP5 (declarations in `make ci`, the long run nightly), FF-SP6
+**Implementation (old T-0034).** FF-SP4, FF-SP5 (declarations in `make ci`, the long run nightly), FF-SP6
 (Linux half) and FF-SP8 run as `fitness-corpus` and `fitness-oracles` (`tools/fitness/corpus`,
 `tools/fitness/oracles`; runbook `knowledge/development/runbooks/safe-primitives-fitness.md`). The test
 kit is `internal/platform/corpus` (loader, report types) and `corpustest` (`Run`, `Seed`,
@@ -1235,9 +1235,9 @@ code in a primitive's home must be declared). The PowerShell parser oracle compa
 ordinal, since `-ceq` alone is culture-aware. go-ldap is pinned at v3.4.13 for the filter oracle. Not
 yet executed anywhere: the Windows PowerShell 5.1, SID/GUID and Samba-lab rows (written, Windows scripts
 parse-checked only) and the nightly fuzz log; they need a Windows runner and a scheduler. FF-SP7 is in
-T-0036; FF-SP9 to FF-SP11 are not implemented.
+old T-0036; FF-SP9 to FF-SP11 are not implemented.
 
-**Implementation (T-0070, P3 minus `unicodePwd`).** `internal/directory/attr/{guid,sid,filetime,gentime,flags}`
+**Implementation (old T-0070, P3 minus `unicodePwd`).** `internal/directory/attr/{guid,sid,filetime,gentime,flags}`
 plus `attr/codec` (the typed `Error` with a stable `Code`, and the RFC 4517 integer grammar), one
 implementation, one `TestCorpus` and one `Fuzz*` target per unit (`go/attr-<name>` in
 `testdata/safe-primitives/implementations.json`). The corpus files `attr.*.jsonl` carry every §5 vector plus extras
@@ -1252,7 +1252,7 @@ SID/GUID form is not in `attr`: P1 escapes `Bytes()`. Not yet run: the Windows S
 
 ## 9. Verification status and Samba false-pass risks
 
-Nothing in this document is lab-verified yet (lab: T-0012). Status today: **documentation only**,
+Nothing in this document is lab-verified yet (lab: old T-0012). Status today: **documentation only**,
 except the PowerShell quoting rules, which are confirmed in PowerShell's source code.
 
 | Behaviour | Source | Must be verified on | Samba false-pass risk |
@@ -1274,7 +1274,7 @@ except the PowerShell quoting rules, which are confirmed in PowerShell's source 
 | Schema-driven `SecretAttrs` (LF-38): `searchFlags` 0x80/0x200/0x1000 on LAPS, BitLocker, TPM attributes | MS-ADTS, AD schema docs | **Windows** (with Windows LAPS schema) | **high** — Samba's shipped schema and flags differ; a missing attribute yields a vacuous pass |
 | `AllSigned` enforced; module-integrity check; module logging content and event ID | Microsoft (Windows-only enforcement) | **Windows** + Linux sidecar | n/a — Linux has no execution policy, which is why PSX-17 exists |
 | `runtime/secret` protection | Go docs: linux/amd64, linux/arm64 only | Linux | n/a — no effect on Windows |
-| SASL GSSAPI sealing as a `SecureConn` source | `[UNVERIFIED]` (T-0023) | Samba + Windows | medium |
+| SASL GSSAPI sealing as a `SecureConn` source | `[UNVERIFIED]` (old T-0023) | Samba + Windows | medium |
 | PostgreSQL `security_invoker`, materialized-view and `SECURITY DEFINER` RLS behaviour | PostgreSQL docs | PostgreSQL 16 and 18 in CI | n/a |
 | P7: TAB-in-quotes keeps a lead cell as text in Excel, also after save-as-CSV and reopen (CSV-17) | [WSTG-INJT-21][wstg-csv] "observed behavior" | **Excel (Windows lab)** + LibreOffice | n/a: no spreadsheet on Samba; LibreOffice may differ from Excel, so both run |
 | P7: full-width and other look-alike leads, leading invisible characters, U+2212: does any spreadsheet evaluate them? (§12.2) | `[UNVERIFIED — lab]`; WSTG "depending on locale" | Excel (ja-JP and en-US locales) + LibreOffice | n/a: we neutralise regardless; the lab result only tells us if we over-neutralise |
@@ -1293,33 +1293,33 @@ except the PowerShell quoting rules, which are confirmed in PowerShell's source 
 | Processes | `proc` contract, PROC vectors | Go `proc` + `x/sys/windows`; `ArgumentList` inside the sidecar | — |
 | SQL | rules 1–13, SQL vectors | pgx v5 + sqlc + RLS; simple protocol banned; the tenancy API (`WithTenantTx`/`WithPlatform`, exemption registry `store/exempt`, role split) is owned by ADR-0002 | SQL Server would need its own section (RLS semantics differ) |
 | Lint tools | rule meaning, FF-SP1–9 | golangci-lint (forbidigo, depguard, gosec), go/analysis passes `dnstring`/`sqlconst`/`secretjson`, BannedApiAnalyzers, clippy, PSScriptAnalyzer for `lab/`/`tools/`, Semgrep or ast-grep for FF-SP3 incl. `web/` | equivalents per language |
-| Output encoders (P7) | classifier table, CSV neutraliser and reader inverse, XLSX/HTML/mail/PDF rules, CS/CSV/XL/HT/EM/PDF vectors | Go `export/…`, `htmlx`, `msgtpl`, `notify/mail`; `html/template`; XLSX and PDF libraries chosen by T-0101/T-0102 through the licence register; ESLint for tier W | a .NET or other server re-implements the same contract and runs the same corpus |
+| Output encoders (P7) | classifier table, CSV neutraliser and reader inverse, XLSX/HTML/mail/PDF rules, CS/CSV/XL/HT/EM/PDF vectors | Go `export/…`, `htmlx`, `msgtpl`, `notify/mail`; `html/template`; XLSX and PDF libraries chosen by old T-0101/old T-0102 through the licence register; ESLint for tier W | a .NET or other server re-implements the same contract and runs the same corpus |
 | Web console | tier W implements no primitive (§2.1); API carries server-built values | TypeScript + React under `web/`; FF-SP3 scans it | if a second UI technology were allowed, it inherits §2.1 unchanged |
-| Paths | package roles above | fixed by blueprint v0 §1.1 and §7.4 (T-0004); skills aligned by T-0048 | — |
+| Paths | package roles above | fixed by blueprint v0 §1.1 and §7.4 (old T-0004); skills aligned by old T-0048 | — |
 
 ADR-0001 was ratified on 2026-10-02 (D-0006) with no substantive change from the proposed text,
-so the binding column applies as written and this document is in `review`. Blueprint v0 (T-0004)
-fixed the package paths, and T-0048 applied them here (§2) and in the skills. The
-document is the reference for the build tickets the project-manager cuts from it (T-0031: primitive
-builds go before features). It is also the reference for the fitness tickets: T-0033 (FF-SP1–3, 9),
-T-0034 (FF-SP4–6, 8) and T-0036 (FF-SP7, implemented inside ADR-0002's `fitness-tenancy` job).
+so the binding column applies as written and this document is in `review`. Blueprint v0 (old T-0004)
+fixed the package paths, and old T-0048 applied them here (§2) and in the skills. The
+document is the reference for the build tickets the project-manager cuts from it (old T-0031: primitive
+builds go before features). It is also the reference for the fitness tickets: old T-0033 (FF-SP1–3, 9),
+old T-0034 (FF-SP4–6, 8) and old T-0036 (FF-SP7, implemented inside ADR-0002's `fitness-tenancy` job).
 
 ## 11. Follow-ups
 
-- T-0028 — typed security-descriptor primitive: done as `safe-primitives-security-descriptor.md`; build in T-0118 (read half), T-0135 (write half), T-0137 (SDDL display), T-0138 (FF-SD3/4 analyzers).
-- T-0029 — output encoders: done as §12 (P7). Builds: T-0101 (`cellsafe`, CSV, XLSX), T-0102 (PDF, HTML export), T-0095 (`msgtpl`, mail composer); FF-SP10 goes to T-0034 and FF-SP11 to T-0034 plus the Windows lab nightly; the P7 lint lists extend T-0033.
-- T-0139 — SIEM and log output encoders (CEF, syslog, JSON lines), left out of §12.
-- T-0033 / T-0034 — fitness implementation (static rules FF-SP1–3, 9; corpus, fuzz and oracles FF-SP4–6, 8).
-- T-0036 — FF-SP7, inside ADR-0002's `fitness-tenancy` job (checks T2–T4); §8's FF-SP7 row is its coverage list.
-- T-0037 — tenancy foundation (done): `WithTenant`/`WithPlatform` as methods on `store.DB`, exemption registry `store/exempt`, rule 11's per-transaction `statement_timeout` and rule 12's pool refusal; see [tenancy-fitness.md](tenancy-fitness.md).
-- T-0035 — security-sensitive spec tickets get security-architect as second reviewer.
-- T-0007 — Kerberos-only outbound policy (§6.3) and the secret-memory policy, including the
+- old T-0028 — typed security-descriptor primitive: done as `safe-primitives-security-descriptor.md`; build in old T-0118 (read half), old T-0135 (write half), old T-0137 (SDDL display), old T-0138 (FF-SD3/4 analyzers).
+- old T-0029 — output encoders: done as §12 (P7). Builds: old T-0101 (`cellsafe`, CSV, XLSX), old T-0102 (PDF, HTML export), old T-0095 (`msgtpl`, mail composer); FF-SP10 goes to old T-0034 and FF-SP11 to old T-0034 plus the Windows lab nightly; the P7 lint lists extend old T-0033.
+- old T-0139 — SIEM and log output encoders (CEF, syslog, JSON lines), left out of §12.
+- old T-0033 / old T-0034 — fitness implementation (static rules FF-SP1–3, 9; corpus, fuzz and oracles FF-SP4–6, 8).
+- old T-0036 — FF-SP7, inside ADR-0002's `fitness-tenancy` job (checks T2–T4); §8's FF-SP7 row is its coverage list.
+- old T-0037 — tenancy foundation (done): `WithTenant`/`WithPlatform` as methods on `store.DB`, exemption registry `store/exempt`, rule 11's per-transaction `statement_timeout` and rule 12's pool refusal; see [tenancy-fitness.md](tenancy-fitness.md).
+- old T-0035 — security-sensitive spec tickets get security-architect as second reviewer.
+- old T-0007 — Kerberos-only outbound policy (§6.3) and the secret-memory policy, including the
   `runtime/secret` evaluation (§5.6).
-- T-0023 — whether GSSAPI sealing can be a `SecureConn` source (§5.6).
+- old T-0023 — whether GSSAPI sealing can be a `SecureConn` source (§5.6).
 - OPATH (Exchange) filter primitive: none planned. OPATH parameters stay banned for data (§6.1 rule 2)
   until the M365 parity scope needs one.
 
-## 12. P7 — Output encoders (T-0029)
+## 12. P7 — Output encoders (old T-0029)
 
 **Threat.** AD attributes are attacker-controlled. A low-privilege user (TM-X3) can write some
 attributes on their own object, and a hostile migration source (TM-X13) controls whole files. Those
@@ -1345,12 +1345,12 @@ itself. `⟨U+XXXX⟩` is the visible token defined in O3.
 
 | Encoder | Package (under `internal/`; `export/…` means `platform/export/…`, blueprint §5.1, §10) | Replaces (banned) | Tier | Build ticket | § |
 | --- | --- | --- | --- | --- | --- |
-| Formula-lead classifier | `export/cellsafe` | ad-hoc `strings.HasPrefix(v, "=")` checks | S | T-0101 | 12.2 |
-| CSV writer and its inverse reader | `export/csv` | `encoding/csv`, `strings.Join(…, ",")`, `fmt.Fprintf` rows | S | T-0101 | 12.3 |
-| XLSX writer | `export/xlsx` | direct XLSX library use, formulas, hyperlinks | S | T-0101 | 12.4 |
-| HTML: server templates, HTML export, admin message templates, download headers; console rules | `platform/htmlx`, `platform/httpx`, `platform/msgtpl`; `web/` rules | `text/template`, typed-string conversions, hand-set `Content-Disposition`; `dangerouslySetInnerHTML` and DOM sinks | S (+ W rules) | T-0102 (export), T-0095 (templates), console tickets | 12.5 |
-| E-mail composer | `platform/notify/mail` | `net/smtp`, hand-written headers, `mime/multipart` | S | T-0095 | 12.6 |
-| PDF writer | `export/pdf` | direct PDF library use, any HTML-to-PDF engine | S | T-0102 | 12.7 |
+| Formula-lead classifier | `export/cellsafe` | ad-hoc `strings.HasPrefix(v, "=")` checks | S | old T-0101 | 12.2 |
+| CSV writer and its inverse reader | `export/csv` | `encoding/csv`, `strings.Join(…, ",")`, `fmt.Fprintf` rows | S | old T-0101 | 12.3 |
+| XLSX writer | `export/xlsx` | direct XLSX library use, formulas, hyperlinks | S | old T-0101 | 12.4 |
+| HTML: server templates, HTML export, admin message templates, download headers; console rules | `platform/htmlx`, `platform/httpx`, `platform/msgtpl`; `web/` rules | `text/template`, typed-string conversions, hand-set `Content-Disposition`; `dangerouslySetInnerHTML` and DOM sinks | S (+ W rules) | old T-0102 (export), old T-0095 (templates), console tickets | 12.5 |
+| E-mail composer | `platform/notify/mail` | `net/smtp`, hand-written headers, `mime/multipart` | S | old T-0095 | 12.6 |
+| PDF writer | `export/pdf` | direct PDF library use, any HTML-to-PDF engine | S | old T-0102 | 12.7 |
 
 ### 12.1 Rules that apply to every output encoder
 
@@ -1579,7 +1579,7 @@ connection or macro API.
 5. **Typed numbers must be finite.** NaN and ±Inf are error `NonFiniteNumber`; Excel cannot
    represent them.
 6. **Library.** A streaming writer such as excelize (BSD-3-Clause, [licence][excelize-licence]) is
-   a candidate. It is not yet in the licence register; the T-0101 owner adds it and records the
+   a candidate. It is not yet in the licence register; the old T-0101 owner adds it and records the
    verdict. Only `export/xlsx` imports it.
 
 | ID | Input | Expected | Why |
@@ -1674,7 +1674,7 @@ httpx.Attachment(w, base: string, f: Format, body: io.Reader)   // the only sett
   `require-trusted-types-for 'script'`. Trusted Types makes the W1 sinks throw on strings at run
   time. It has been Baseline across major browsers since Firefox shipped it in February 2026
   ([URIports][tt-support]; [web.dev][tt-webdev]) `[UNVERIFIED — check MDN compat at build]`. The
-  header itself belongs to the HTTP-server ticket. T-0029 states the requirement and HT-22 proves it.
+  header itself belongs to the HTTP-server ticket. old T-0029 states the requirement and HT-22 proves it.
 - **W4** Table cells, detail panes, toasts and dialog titles wrap data in `<bdi>` or `dir="auto"`
   (O6). These are component-designer primitives.
 - **W5** The console never assembles download content. "Export" and "copy rows" call the server,
@@ -1725,7 +1725,7 @@ mail.ParseRecipient(addr: string, displayName: string) -> Recipient | Error   //
 mail.Compose(m: Message{To: []Recipient, Subject: MessageTemplate, Body: MessageTemplate,
              Attachments: []Attachment{Base: string, Format, Content: io.Reader}},
              vals: Values, cfg: MailConfig) -> SealedMessage | Error
-notify.Send(m: SealedMessage)          // the SMTP channel accepts nothing else (T-0095)
+notify.Send(m: SealedMessage)          // the SMTP channel accepts nothing else (old T-0095)
 ```
 
 `From`, `Sender`, `Reply-To` and `Return-Path` come only from `MailConfig`. The API has no way to
@@ -1755,7 +1755,7 @@ set them from data.
    tracking pixels; the configured logo is an inline `cid:` part.
 5. **Attachments** are P7 artefacts (CSV, XLSX, PDF). Their names use the RFC 2231 `filename*`
    parameter with the §12.5 rule 5 mapping. Above the size cap, the mail carries a `SystemURL` to
-   the stored export, which needs sign-in (T-0103), instead of the file.
+   the stored export, which needs sign-in (old T-0103), instead of the file.
 
 | ID | Input | Expected | Why |
 | --- | --- | --- | --- |
@@ -1814,7 +1814,7 @@ There is no link, annotation, JavaScript, attachment, form, outline-action or pa
 6. **Library.** Candidates: `signintech/gopdf` (MIT, active) and `johnfercher/maroto` v2 (MIT,
    active; it depends on `phpdave11/gofpdf` and `pdfcpu`). `go-pdf/fpdf` is archived (checked
    through the GitHub API, 2026-10-02) and is out. The choice and the licence-register entry belong
-   to the T-0102 owner. Page import (`gofpdi`) is never called: we do not merge external PDFs.
+   to the old T-0102 owner. Page import (`gofpdi`) is never called: we do not merge external PDFs.
 
 | ID | Input | Expected | Why |
 | --- | --- | --- | --- |
