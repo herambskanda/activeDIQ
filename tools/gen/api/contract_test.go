@@ -221,3 +221,19 @@ func TestDialectRefusesNullInsideAPatchArray(t *testing.T) {
 	err := contract(t, edit{"modules/widgets.yaml", "        labels:\n          $ref: modules/widgets.yaml#/components/schemas/Labels\n    WidgetCredential:", "        labels:\n          $ref: modules/widgets.yaml#/components/schemas/Labels\n        parts:\n          type: array\n          maxItems: 2\n          items:\n            type: string\n            maxLength: 2\n    WidgetCredential:"})
 	mustFail(t, err, "WidgetPatch", "parts")
 }
+
+// TestRateClasses pins the ADR-0004 rule 10 class list: every class the threat model gives default
+// numbers for (TM-D22) is accepted, and anything else is refused with the list in the message.
+func TestRateClasses(t *testing.T) {
+	const at = "      x-activediq-limits:\n        maxBodyBytes: 4096\n"
+	for _, c := range []string{"read", "write", "bulk", "auth", "reveal", "secret", "anonymous"} {
+		t.Run(c, func(t *testing.T) {
+			if err := contract(t, edit{"modules/widgets.yaml", at, "      x-activediq-limits:\n        class: " + c + "\n        maxBodyBytes: 4096\n"}); err != nil {
+				t.Fatalf("rate class %q refused: %v", c, err)
+			}
+		})
+	}
+	t.Run("unknown", func(t *testing.T) {
+		mustFail(t, contract(t, edit{"modules/widgets.yaml", at, "      x-activediq-limits:\n        class: metered\n        maxBodyBytes: 4096\n"}), "metered", "secret")
+	})
+}
