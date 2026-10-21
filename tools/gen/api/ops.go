@@ -11,7 +11,7 @@ import (
 var (
 	permissionRe = regexp.MustCompile(`^[a-z][A-Za-z0-9_.:*-]*$`)
 	pathParamRe  = regexp.MustCompile(`\{([A-Za-z0-9]+)\}`)
-	classes      = []string{"read", "write", "bulk", "auth", "reveal", "anonymous"}
+	classes      = []string{"read", "write", "bulk", "auth", "reveal", "secret", "anonymous"} // ADR-0004 rule 10
 	mediaJSON    = "application/json"
 	mediaPatch   = "application/merge-patch+json"
 	mediaProblem = "application/problem+json"

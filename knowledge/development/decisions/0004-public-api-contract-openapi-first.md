@@ -1,7 +1,7 @@
 ---
 title: "ADR-0004: The public API is one OpenAPI 3.1 contract, one file per tag, generated in-house into strict json/v2 types and per-tag handlers on net/http.ServeMux, one permission per operation, and one /api/v1 that only grows"
 date: 2026-10-02
-updated: 2026-10-02
+updated: 2026-10-21
 status: ratified
 owner: heramb
 kind: technical
@@ -299,14 +299,17 @@ v2's own error text names Go types, so `apihost` maps it to the `malformed-reque
   | `GET /healthz`, `GET /readyz`: status only | Load balancers and orchestrators, not clients | AN-1 |
   | `GET /` and `GET /assets/{path...}`, plus the console's client-side routes falling back to `index.html` | Static files. **The fallback never answers under `/api/` or `/auth/`.** An unknown `/api/…` path returns the `not-found` problem, never HTML | AN-2 |
   | `/auth/sso/{idpId}/start`, `/auth/sso/{idpId}/callback` (OIDC redirect, SAML ACS) | Browser redirects and form posts, signed by the IdP; not JSON | AN-3 |
+| `GET /auth/negotiate`, only if the PRD offers SPNEGO sign-in | HTTP Negotiate (RFC 4559) is a `WWW-Authenticate`/`Authorization` header exchange, not JSON. Success yields a pending sign-in, never a session | AN-9 |
   | The fleet gRPC gateway (`platform/fleet`), including its `Enroll` RPC | A separate mTLS listener carrying protobuf contracts under `proto/` (TM-F-FLEET). It is not on this router at all | AN-6 |
   | [M4] the SSPR routes of the edge tunnel router | Its own process (blueprint §5.5), with its own contract | AN-7 (edge path) |
 
   These routes are declared in `policy.yaml` under `nonApiRoutes`, and `apihost` mounts exactly that list.
-- **Anonymous operations that are in the contract.** Three are JSON, on this listener, and therefore **operations** with `x-permission: anonymous`, each with its `policy.anonymous` row:
+- **Anonymous operations that are in the contract.** These are JSON, on this listener, and therefore **operations** with `x-permission: anonymous`, each with its `policy.anonymous` row:
   - first-run setup (AN-4);
   - end-user TOTP enrolment (AN-5, bound by hostname);
-  - [M4] SSPR served on the console/API listener (AN-7, bound by hostname).
+  - [M4] SSPR served on the console/API listener (AN-7, bound by hostname);
+  - local break-glass sign-in, the password step (AN-8, class `auth`);
+  - the sign-in second factor for a pending sign-in (AN-10, class `auth`).
 
   A hostname binding is part of the row, and step 4 of the chain enforces it.
 
@@ -397,15 +400,30 @@ v2's own error text names Go types, so `apihost` maps it to the `malformed-reque
   The only exceptions are the operations listed in `secretResponses`.
 - **Credentials.** Security schemes are only `bearer` (`adq_` API tokens, `Authorization` header) and the session cookie plus a CSRF header. There is no `apiKey` scheme `in: query` and no credential-named query parameter. At runtime, `apihost` refuses with 400 any `/api/` request whose query string carries a credential-named key (chain step 5).
 - **Who reviews `policy.yaml`.** Every change to it is tagged `security-sensitive`, so security-architect reviews it (review-checklist). When hosted CI exists, a CODEOWNERS entry adds a required review. Until then, that review is the manual half.
-- **Two anonymous routes are missing from the allow-list.** Local break-glass sign-in (ADM-142) and AD-identity sign-in via SPNEGO (blueprint §11) both need routes reachable before authentication, and neither is in AN-1 to AN-7 today. Amending §7.6 belongs to security-architect (T-0151). Until that lands, those routes cannot be added, because A4 would fail.
+- **Sign-in routes.** Local break-glass sign-in (ADM-142) is AN-8, AD-identity sign-in via SPNEGO (blueprint §11) is AN-9, and the second factor that both (and a non-MFA-asserting SSO) must pass before a session exists is AN-10. Threat model §7.6 sets their gates (T-0032). `policy.yaml` carries a row only for a route that exists, so the seed holds the non-API routes of AN-1 to AN-3; its header lists the rows that enter with their operations or hostname bindings.
 
 ### Rule 10: Limits are declared, not improvised (TM-Q2)
 
-- **Rate classes.** `x-activediq-limits.class` is one of `read`, `write`, `bulk`, `auth`, `reveal` or `anonymous`.
+- **Rate classes.** `x-activediq-limits.class` is one of `read`, `write`, `bulk`, `auth`, `reveal`, `secret` or `anonymous`.
   - The default is `read` for GET and HEAD, and `write` for everything else.
   - Anonymous operations must declare `anonymous` or `auth`.
   - Operations in `secretResponses` must declare `reveal`.
-- **How the limits work.** Limits apply per source IP (before authentication, chain step 3) and per principal (chain step 10). A limited request gets `429 /problems/rate-limited` with `Retry-After`. There is **no daily quota and no metering**, which keeps the ADM-190 lead. The numbers per class are `apihost` configuration, and their defaults are set by T-0151 with security-architect.
+  - Operations whose request reaches `SecretInput` (rule 6) must declare `secret`.
+- **How the limits work.** Limits apply per source IP (before authentication, chain step 3) and per principal (chain step 10). A limited request gets `429 /problems/rate-limited` with `Retry-After`. There is **no daily quota and no metering**, which keeps the ADM-190 lead. The numbers per class are `apihost` configuration. Their defaults are threat model TM-D22 (§7.8, T-0032), which also gives the reasoning per row:
+
+  | Class | Key | Rate / min | Burst |
+  | --- | --- | --- | --- |
+  | *(all requests, chain step 3)* | source IP | 1200 | 300 |
+  | `anonymous` | source IP | 60 | 20 |
+  | `auth` | source IP | 60 | 30 |
+  | `auth` (AN-8, AN-10) | target account or pending handle | 10 | 5 |
+  | `read` | principal | 600 | 120 |
+  | `write` | principal | 120 | 30 |
+  | `bulk` | principal | 10 | 3 |
+  | `reveal` | principal | 10 | 5 |
+  | `secret` | principal | 30 | 10 |
+
+  A token counts against its owner. A tenant may lower any number; raising one is host configuration, audited at startup.
 - **Body caps.**
   - `maxBodyBytes` defaults to 1 MiB for JSON bodies.
   - An operation with a binary or CSV upload must declare it.
@@ -532,7 +550,7 @@ Every check has a failing fixture in `check_test.go`, so a check that silently m
 | **A9** Tenancy | No separate check: T5 `openapi-tenant-param` runs in `fitness-tenancy`. A1 fails if a bundled file is one T5 cannot parse. | — |
 | **A10** Versioning | <ul><li>oasdiff reports a breaking change, against `main` and against the latest release tag, on a `stable` operation.</li><li>A `stable` → `preview` demotion.</li><li>An operation without `x-activediq-stability`.</li><li>`deprecated: true` without `x-activediq-sunset`.</li><li>A deprecated operation removed before its sunset release.</li></ul> | In-place breaking changes |
 | **A11** Problems | <ul><li>A 4xx or 5xx response that is not `application/problem+json` with the shared `Problem`.</li><li>A `type` outside the catalogue.</li><li>`http.Error` or `WriteHeader` in `internal/**` outside `apihost`.</li></ul> | Leaky, ad-hoc errors |
-| **A12** Limits | <ul><li>An unknown rate class.</li><li>An anonymous operation not in class `anonymous` or `auth`.</li><li>An upload operation without `maxBodyBytes`.</li><li>`maxBodyBytes` above 16 MiB without a `largeBodies` entry.</li><li>A `secret` operation above 64 KiB, of class `bulk`, or with a binary body.</li></ul> | TM-Q2; secret buffer size |
+| **A12** Limits | <ul><li>An unknown rate class.</li><li>An anonymous operation not in class `anonymous` or `auth`.</li><li>An upload operation without `maxBodyBytes`.</li><li>`maxBodyBytes` above 16 MiB without a `largeBodies` entry.</li><li>A `secret` operation above 64 KiB, of a class other than `secret`, or with a binary body.</li></ul> | TM-Q2; secret buffer size |
 | **A13** Policy hygiene | <ul><li>A `policy.yaml` entry that is stale: it names a missing route, operation, permission or hostname binding.</li><li>An entry with no reason, or with no AN/TM reference.</li></ul> | Exemptions becoming permanent |
 | **A14** Responses conform | In the runtime tests (A4 probe, A7 corpus, and every module's contract tests through the shared harness), each response body is validated against the operation's declared response schema with the generated validators before it is encoded. A violation fails the test. | Handlers drifting from the contract on output |
 

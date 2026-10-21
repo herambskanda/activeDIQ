@@ -1,14 +1,96 @@
-# The security policy of the contract (ADR-0004 rule 9). Owner: security-architect, who seeds the
-# rows in its own ticket (T-0151). Every change here is tagged security-sensitive.
+# The security policy of the contract (ADR-0004 rule 9). Owner: security-architect. Every change
+# here is tagged security-sensitive and reviewed against threat model §7.6 (the AN-n allow-list).
 #
 # Entry shape (checked by fitness-api A13; scalar fields only). Every entry needs `reason` and `ref`
 # (an AN-n row or a TM- section). It names its subject by `operation` (an operationId), or `method`
 # + `path` for a route (anonymous may use either; nonApiRoutes uses method + path), or `permission`
 # (stepUp). Optional: `host`, `gate`; `schema` is required in secretResponses. An entry that names
 # something absent from the contract fails; `host` fails until the apihost binding table exists.
-anonymous: []
+#
+# Seeded by T-0032 with exactly the routes that exist today: the non-API routes of ADR-0004 rule 5
+# (AN-1 to AN-3). The contract has no operation yet, so an operation, permission or schema row
+# would be stale. These rows enter in the change that adds what they name. Its owner adds the row,
+# and security-architect reviews it:
+#
+#   anonymous        AN-4  first-run setup operation                    gate: one-time setup secret
+#                    AN-5  end-user TOTP enrolment operations           host: enrolment binding (T-0018 table first)
+#                    AN-7  [M4] SSPR operations on the L1 listener      host: SSPR binding (T-0018 table first)
+#                    AN-8  local break-glass sign-in, password step     class auth; TM §7.6 rules 1-4
+#                    AN-9  GET /auth/negotiate (and a nonApiRoutes row) only once the PRD offers SPNEGO
+#                    AN-10 sign-in second-factor operations             gate: pending-sign-in handle
+#   authenticated    getApiDocument (ADR-0004 rule 5); sign-out; the caller's own profile, sessions
+#                    and MFA factors. Never anything that reads or writes another principal.
+#   secretResponses  LAPS reveal and BitLocker reveal (secret.* permissions, DM-33.I2); API-token
+#                    creation and connector-enrollment-token creation (shown once, TM §7.5). Class reveal.
+#   stepUp           one row per permission of the TM §7.4 table (TM-D16), named when its operation lands.
+#   largeBodies      none planned.
+
+anonymous:
+  - method: GET
+    path: /healthz
+    gate: none
+    reason: Liveness for load balancers and orchestrators; status only, no version or configuration detail.
+    ref: AN-1
+  - method: GET
+    path: /readyz
+    gate: none
+    reason: Readiness for load balancers and orchestrators; status only, no version or configuration detail.
+    ref: AN-1
+  - method: GET
+    path: /
+    gate: none
+    reason: The embedded console's index.html and its client-side route fallback; it never answers under /api/ or /auth/ (ADR-0004 rule 5).
+    ref: AN-2
+  - method: GET
+    path: /assets/{path...}
+    gate: none
+    reason: Static files of the embedded console; no data, no configuration.
+    ref: AN-2
+  - method: GET
+    path: /auth/sso/{idpId}/start
+    gate: none; redirects to the configured IdP with state, nonce and PKCE (TM-F-SSO)
+    reason: SSO start must be reachable before a session exists.
+    ref: AN-3
+  - method: GET
+    path: /auth/sso/{idpId}/callback
+    gate: signed IdP response (OIDC code with state, nonce and PKCE)
+    reason: OIDC redirect back from the IdP; yields a session, or a pending sign-in when the IdP is not MFA-asserting (AN-10).
+    ref: AN-3
+  - method: POST
+    path: /auth/sso/{idpId}/callback
+    gate: signed IdP response (SAML ACS, signed assertion, pinned algorithm)
+    reason: SAML assertion consumer service (HTTP-POST binding); same outcome as the OIDC callback.
+    ref: AN-3
 authenticated: []
-nonApiRoutes: []
+nonApiRoutes:
+  - method: GET
+    path: /healthz
+    reason: Health probe for load balancers and orchestrators, not a client API.
+    ref: AN-1
+  - method: GET
+    path: /readyz
+    reason: Readiness probe for load balancers and orchestrators, not a client API.
+    ref: AN-1
+  - method: GET
+    path: /
+    reason: Console index.html and client-side route fallback (never under /api/ or /auth/).
+    ref: AN-2
+  - method: GET
+    path: /assets/{path...}
+    reason: Static files of the embedded console.
+    ref: AN-2
+  - method: GET
+    path: /auth/sso/{idpId}/start
+    reason: Browser redirect to the IdP; not JSON.
+    ref: AN-3
+  - method: GET
+    path: /auth/sso/{idpId}/callback
+    reason: OIDC redirect from the IdP; not JSON.
+    ref: AN-3
+  - method: POST
+    path: /auth/sso/{idpId}/callback
+    reason: SAML ACS form post from the IdP; not JSON.
+    ref: AN-3
 secretResponses: []
 stepUp: []
 largeBodies: []
