@@ -51,6 +51,12 @@ type Kind struct {
 	// rules (a JSON object, at most MaxArgsBytes, tenant_id set from the job). It must accept only typed
 	// references and must not echo values in its error.
 	ValidateArgs func(args json.RawMessage) error
+	// Run is the body of a ModeDefault kind. It runs in the wrapper's one tenant transaction, which
+	// also records the outcome, so its writes and the job's completion commit together.
+	Run Body
+	// RunManaged is the body of a ModeManagedTx kind. It holds no transaction; it opens short ones
+	// through the runner it is given.
+	RunManaged ManagedBody
 }
 
 func (k Kind) validate() error {
@@ -63,6 +69,10 @@ func (k Kind) validate() error {
 		return invalid("kind %q timeout must be at most %s", k.Name, maxLease-ClaimGrace)
 	case !k.Mode.valid():
 		return invalid("kind %q has an unknown mode", k.Name)
+	case k.Mode == ModeDefault && (k.Run == nil || k.RunManaged != nil):
+		return invalid("kind %q is a default-mode kind and needs Run (and no RunManaged)", k.Name)
+	case k.Mode == ModeManagedTx && (k.RunManaged == nil || k.Run != nil):
+		return invalid("kind %q is a ManagedTx kind and needs RunManaged (and no Run)", k.Name)
 	}
 	return nil
 }

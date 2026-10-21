@@ -8,12 +8,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
 func TestRegisterAndLookup(t *testing.T) {
 	r := NewRegistry()
-	k := Kind{Name: "a.b", Timeout: time.Minute, Mode: ModeManagedTx}
+	k := Kind{Name: "a.b", Timeout: time.Minute, Mode: ModeManagedTx, RunManaged: noopManaged}
 	if err := r.Register(k); err != nil {
 		t.Fatal(err)
 	}
@@ -28,20 +29,20 @@ func TestRegisterAndLookup(t *testing.T) {
 
 func TestRegisterRefusals(t *testing.T) {
 	r := NewRegistry()
-	if err := r.Register(Kind{Name: "a.b", Timeout: time.Minute, Mode: ModeDefault}); err != nil {
+	if err := r.Register(Kind{Name: "a.b", Timeout: time.Minute, Mode: ModeDefault, Run: noop}); err != nil {
 		t.Fatal(err)
 	}
 	cases := map[string]struct {
 		k    Kind
 		want error
 	}{
-		"duplicate":    {Kind{Name: "a.b", Timeout: time.Hour, Mode: ModeDefault}, ErrKindRegistered},
-		"zero timeout": {Kind{Name: "a.c", Mode: ModeDefault}, ErrInvalid},
-		"neg timeout":  {Kind{Name: "a.c", Timeout: -1, Mode: ModeDefault}, ErrInvalid},
-		"huge timeout": {Kind{Name: "a.c", Timeout: 48 * time.Hour, Mode: ModeDefault}, ErrInvalid},
+		"duplicate":    {Kind{Name: "a.b", Timeout: time.Hour, Mode: ModeDefault, Run: noop}, ErrKindRegistered},
+		"zero timeout": {Kind{Name: "a.c", Mode: ModeDefault, Run: noop}, ErrInvalid},
+		"neg timeout":  {Kind{Name: "a.c", Timeout: -1, Mode: ModeDefault, Run: noop}, ErrInvalid},
+		"huge timeout": {Kind{Name: "a.c", Timeout: 48 * time.Hour, Mode: ModeDefault, Run: noop}, ErrInvalid},
 		"zero mode":    {Kind{Name: "a.c", Timeout: time.Minute}, ErrInvalid},
 		"unknown mode": {Kind{Name: "a.c", Timeout: time.Minute, Mode: 9}, ErrInvalid},
-		"bad name":     {Kind{Name: "A C", Timeout: time.Minute, Mode: ModeDefault}, ErrInvalid},
+		"bad name":     {Kind{Name: "A C", Timeout: time.Minute, Mode: ModeDefault, Run: noop}, ErrInvalid},
 	}
 	for name, c := range cases {
 		if err := r.Register(c.k); !errors.Is(err, c.want) {
@@ -62,8 +63,8 @@ func TestRegisterRefusals(t *testing.T) {
 // The refusals below happen before SQL: the transaction is nil, so any use of it would panic.
 func TestEnqueueRefusedBeforeSQL(t *testing.T) {
 	r := NewRegistry()
-	_ = r.Register(Kind{Name: "t.kind", Timeout: time.Minute, Mode: ModeDefault})
-	_ = r.Register(Kind{Name: "p.kind", Timeout: time.Minute, Mode: ModeDefault, Platform: true})
+	_ = r.Register(Kind{Name: "t.kind", Timeout: time.Minute, Mode: ModeDefault, Run: noop})
+	_ = r.Register(Kind{Name: "p.kind", Timeout: time.Minute, Mode: ModeDefault, Run: noop, Platform: true})
 	tid := tenant.New()
 	ctx := context.Background()
 
@@ -81,7 +82,7 @@ func TestEnqueueRefusedBeforeSQL(t *testing.T) {
 
 func TestEnqueueValidatesArgs(t *testing.T) {
 	r := NewRegistry()
-	_ = r.Register(Kind{Name: "v.kind", Timeout: time.Minute, Mode: ModeDefault,
+	_ = r.Register(Kind{Name: "v.kind", Timeout: time.Minute, Mode: ModeDefault, Run: noop,
 		ValidateArgs: func(a json.RawMessage) error {
 			var v struct {
 				ID int64 `json:"id"`
@@ -96,5 +97,22 @@ func TestEnqueueValidatesArgs(t *testing.T) {
 	_, err := r.Enqueue(context.Background(), nil, Job{Kind: "v.kind", Tenant: tenant.New(), Args: map[string]string{"name": "alice"}})
 	if !errors.Is(err, ErrInvalid) || strings.Contains(err.Error(), "alice") {
 		t.Errorf("untyped args: %v", err)
+	}
+}
+
+func noop(context.Context, store.Tx, Claimed) error        { return nil }
+func noopManaged(context.Context, TenantTx, Claimed) error { return nil }
+
+func TestRegisterRefusesBodyModeMismatch(t *testing.T) {
+	r := NewRegistry()
+	for name, k := range map[string]Kind{
+		"default without body": {Name: "m.a", Timeout: time.Minute, Mode: ModeDefault},
+		"default with managed": {Name: "m.b", Timeout: time.Minute, Mode: ModeDefault, Run: noop, RunManaged: noopManaged},
+		"managed without body": {Name: "m.c", Timeout: time.Minute, Mode: ModeManagedTx},
+		"managed with default": {Name: "m.d", Timeout: time.Minute, Mode: ModeManagedTx, RunManaged: noopManaged, Run: noop},
+	} {
+		if err := r.Register(k); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: err = %v, want ErrInvalid", name, err)
+		}
 	}
 }

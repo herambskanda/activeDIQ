@@ -94,9 +94,9 @@ func (e *env) state(t *testing.T, id int64) (state string, attempt int) {
 var testRegistry = func() *Registry {
 	r := NewRegistry()
 	for _, k := range []Kind{
-		{Name: "test.work", Timeout: time.Minute, Mode: ModeDefault},
-		{Name: "test.other", Timeout: time.Minute, Mode: ModeManagedTx},
-		{Name: "test.platform", Timeout: time.Minute, Mode: ModeDefault, Platform: true},
+		{Name: "test.work", Timeout: time.Minute, Mode: ModeDefault, Run: noop},
+		{Name: "test.other", Timeout: time.Minute, Mode: ModeManagedTx, RunManaged: noopManaged},
+		{Name: "test.platform", Timeout: time.Minute, Mode: ModeDefault, Run: noop, Platform: true},
 	} {
 		if err := r.Register(k); err != nil {
 			panic(err)

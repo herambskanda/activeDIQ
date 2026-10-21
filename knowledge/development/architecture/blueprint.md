@@ -1151,8 +1151,7 @@ queue is our own table, `jobs`, and every access goes through `store`.
   timeout or an unknown mode registers nothing. `Registry.Enqueue` replaced the package-level `Enqueue`: it
   refuses an unregistered kind (`ErrKindUnknown`) or a tenant that does not fit the kind's scope
   (`ErrKindScope`; a tenant-less job must be a platform kind) before any SQL. `Registry.Leases()` feeds `Claim`
-  (timeout + 30 s grace). Still to come: the wrapper (`WithTenant` or
-  `ManagedTx`), the platform leases that make rescuer and cleaner singleton (DM-06), schedules (DM-44).
+  (timeout + 30 s grace). The wrapper is `jobs.Runner.Execute` (T-0026): a default-mode body and `Complete` share one `WithTenant` transaction; a `ManagedTx` body gets a `TenantTx` runner (no tenant parameter) and the claim is renewed every half lease; failures store a code only. Platform jobs are not run by it yet. Still to come: the platform leases that make rescuer and cleaner singleton (DM-06), schedules (DM-44).
 
 **Job kinds** (EP-5, all tenant-carrying, all `ManagedTx`). The OperationItem is the system of
 record; a job is only a driver.

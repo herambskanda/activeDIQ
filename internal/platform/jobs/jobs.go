@@ -21,8 +21,11 @@
 // ManagedTx) and whether the kind is a platform kind. Enqueue is a Registry method and refuses an
 // unregistered kind, or a tenant that does not fit the kind's scope, before any SQL.
 //
-// Not here: the wrapper that turns a claimed job into a tenant transaction (WithTenant, or a ManagedTx
-// runner), the leases that make Rescue and Clean singleton (DM-06),
+// Runner.Execute is the wrapper: it mints the tenant from the claimed row, runs a default-mode body and
+// Complete in one WithTenant transaction, or hands a ManagedTx body a tenant-bound TenantTx runner while
+// renewing the claim every half lease. A failed or panicking body stores a code, never text.
+//
+// Not here: running platform jobs, the leases that make Rescue and Clean singleton (DM-06),
 // schedules (DM-44), and the per-tenant quota and claim fairness that must exist before the saas
 // profile hosts a second tenant (T-0214).
 package jobs
