@@ -89,6 +89,17 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
     in a runbook by the ticket that registers them.
 - **`fitness-modules`**: the message names the file, line and blueprint rule. Fix the import. Do not
   edit the rule to pass; a rule changes only by amending the blueprint/ADR.
+- **`fitness-operation`** (O9 of ADR-0005, the kernel import DAG): `make fitness-operation` prints every
+  package of the `dag` block as `existing` or `pending`, then the violations as
+  `file:line: O9 [rule 13] <importer> imports <imported>; …` with what the importer may import.
+  - The source is the `dag` block in ADR-0005 rule 13, read on every run. To change a direction,
+    amend the ADR (the `adr` skill) and the check follows; never edit the tool to pass.
+  - A violation is fixed by moving the type or the call down to the package the block allows
+    (usually `authority` or `operation/step`), not by adding the edge. `(anything operation may
+    import)` means the row of `operation` itself.
+  - `pending` packages are not checked until they exist; a `self-test` finding means the
+    `internal/platform/<name>` mapping found none of the listed packages while the tree has them
+    elsewhere. O1–O8 are added by the tickets that land the code they inspect.
 - **`fitness-safeprim`** (FF-SP1 to FF-SP3, safe-primitives §8): each finding reads
   `file:line: FF-SPn [rule] message`. `make fitness-safeprim` re-runs it alone;
   `go run ./tools/fitness/safeprim -checks FF-SP1,FF-SP3 -no-analyzers` runs a subset without the
