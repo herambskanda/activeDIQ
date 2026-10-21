@@ -1,7 +1,10 @@
 package config_test
 
 import (
+	"bytes"
+	"fmt"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/compose/config"
@@ -43,5 +46,26 @@ func TestLoadShutdownSettings(t *testing.T) {
 		if _, err := config.Load(env(m)); err == nil {
 			t.Errorf("%s: want an error", name)
 		}
+	}
+}
+
+func TestConfigNeverPrintsDSN(t *testing.T) {
+	const secret = "s3ntinel-pw"
+	c, err := config.Load(env(map[string]string{config.EnvDatabaseDSN: "postgres://u:" + secret + "@h/db"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	slog.New(slog.NewJSONHandler(&buf, nil)).Info("config", "cfg", c)
+	for name, out := range map[string]string{
+		"%v": fmt.Sprintf("%v", c), "%+v": fmt.Sprintf("%+v", c), "%#v": fmt.Sprintf("%#v", c),
+		"%v ptr": fmt.Sprintf("%v", &c), "slog": buf.String(),
+	} {
+		if strings.Contains(out, secret) {
+			t.Errorf("%s leaks the DSN: %s", name, out)
+		}
+	}
+	if !strings.Contains(buf.String(), "[redacted]") {
+		t.Errorf("slog output lacks redaction marker: %s", buf.String())
 	}
 }

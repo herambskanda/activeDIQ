@@ -87,3 +87,33 @@ func duration(getenv func(string) string, key string, def time.Duration) (time.D
 }
 
 var errNotPositive = errors.New("must be a positive duration")
+
+const redacted = "[redacted]"
+
+// redactedCopy hides the credential-bearing DSN; it is the only form of Config that is ever printed.
+func (c Config) redactedCopy() Config {
+	if c.DatabaseDSN != "" {
+		c.DatabaseDSN = redacted
+	}
+	return c
+}
+
+type plain Config // no methods, so formatting it cannot recurse into String
+
+// String implements fmt.Stringer so %v and %+v never print the DSN.
+func (c Config) String() string { return fmt.Sprintf("%+v", plain(c.redactedCopy())) }
+
+// GoString does the same for %#v.
+func (c Config) GoString() string { return c.String() }
+
+// LogValue implements slog.LogValuer so structured logging never prints the DSN.
+func (c Config) LogValue() slog.Value {
+	r := c.redactedCopy()
+	return slog.GroupValue(
+		slog.String("log_level", r.LogLevel.String()),
+		slog.String("database_dsn", r.DatabaseDSN),
+		slog.String("instance_id", r.InstanceID),
+		slog.Duration("shutdown_grace", r.ShutdownGrace),
+		slog.Duration("stop_timeout", r.StopTimeout),
+	)
+}
