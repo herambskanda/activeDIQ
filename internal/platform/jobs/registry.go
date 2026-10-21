@@ -122,6 +122,21 @@ func (r *Registry) Leases() []KindLease {
 }
 
 // check refuses a job whose kind is unregistered or whose tenant does not fit the kind's scope.
+// TenantLeases is Leases without the platform kinds: the tenant wrapper refuses a platform job, so the
+// worker must never claim one (it would burn an attempt per lapse until discarded).
+func (r *Registry) TenantLeases() []KindLease {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]KindLease, 0, len(r.kinds))
+	for _, k := range r.kinds {
+		if !k.Platform {
+			out = append(out, KindLease{Kind: k.Name, Lease: k.Timeout + ClaimGrace})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Kind < out[j].Kind })
+	return out
+}
+
 func (r *Registry) check(j Job) (Kind, error) {
 	k, ok := r.Lookup(j.Kind)
 	if !ok {

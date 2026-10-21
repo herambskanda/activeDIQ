@@ -71,6 +71,9 @@ const (
 	Discarded Result = "discarded"
 	// Lost: the claim was superseded (lapsed and rescued, or taken over); nothing was recorded.
 	Lost Result = "lost"
+	// Interrupted means the caller's context ended while the body ran (the worker is stopping): nothing
+	// was recorded and the claim is left to lapse, so Rescue requeues it (T-0028).
+	Interrupted Result = "interrupted"
 )
 
 // Failure codes the wrapper itself stores.
@@ -195,6 +198,9 @@ func (r *Runner) runManaged(ctx context.Context, k Kind, c Claimed) error {
 func (r *Runner) failed(ctx context.Context, c Claimed, bodyCtx context.Context, bodyErr error) (Result, error) {
 	if errors.Is(bodyErr, ErrSuperseded) {
 		return Lost, nil
+	}
+	if ctx.Err() != nil {
+		return Interrupted, nil
 	}
 	code, permanent := failureCode(bodyCtx, bodyErr)
 	var res Result
