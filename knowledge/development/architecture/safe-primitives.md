@@ -1,10 +1,10 @@
 ---
 title: "Safe primitives: LDAP filters, DNs, attribute codecs, command invocation, SQL, output encoders"
 date: 2026-10-02
-updated: 2026-10-02
+updated: 2026-10-21
 status: review
 owner: heramb
-ticket: T-0005, T-0029, T-0048
+ticket: T-0005, T-0029, T-0048, T-0035
 sources_last_checked: 2026-10-02
 ---
 
@@ -53,9 +53,10 @@ Out of scope here: SIEM and log encoders (CEF, syslog; T-0139), XML/SAML, JWT an
   too.** Go's `encoding/json` (v1) does *not* reject bad input: "invalid UTF-8 or invalid UTF-16
   surrogate pairs … are replaced by the Unicode replacement character U+FFFD"
   ([encoding/json][go-json]). A primitive would therefore never see the bad bytes. The API layer
-  decodes with a strict decoder: `encoding/json/v2` errors on invalid UTF-8 unless `AllowInvalidUTF8`
-  is set ([go-json]), or the raw body is validated first. `Secret` decodes its own JSON (§5.6). Vector:
-  PW-16.
+  does both: `apihost` validates the raw body with a default-options `jsontext.Decoder`, then decodes
+  with `encoding/json/v2`, which errors on invalid UTF-8 unless `AllowInvalidUTF8` is set; that
+  option and the v1 import are banned in product code ([ADR-0004](../decisions/0004-public-api-contract-openapi-first.md)
+  rule 6). `Secret` decodes its own JSON value (§5.6). Vector: PW-16.
 - **R4 No Unicode normalisation.** Primitives send exactly the scalar values they were given; AD
   stores what it receives.
 - **R5 Bounded.** Every parser caps input size, nesting depth and element count. Caps are named
@@ -639,12 +640,30 @@ Types `UAC` (stored `userAccountControl`), `UACComputed` (`msDS-User-Account-Con
 **`Secret`** is built from bytes, never from a language string on GC runtimes (feasibility §2.5).
 - Formatting and logging print `[REDACTED]`. JSON and protobuf marshalling fail. Comparison is
   constant-time. No method returns a string. `Destroy()` zeroes the backing array.
-- `Secret.UnmarshalJSON(raw []byte)` decodes the JSON string token itself, escapes included, into a
-  fresh `[]byte`. It never goes through a Go `string` or through `encoding/json`'s string decoding,
-  which allocates an immutable string and substitutes U+FFFD (R3). It rejects NUL, invalid UTF-8
-  and unpaired `\uD800`-style escapes (PW-15, PW-16). A handler for a secret-bearing request reads
-  the body into a capped `[]byte` it owns, decodes it with `secretjson.Decode`, then zeroes it. It
-  never streams the body through `json.NewDecoder`.
+- **JSON decoding is `encoding/json/v2` only** ([ADR-0004](../decisions/0004-public-api-contract-openapi-first.md)
+  rule 4, `SecretInput` row). `Secret` implements `UnmarshalJSONFrom(d *jsontext.Decoder)` and
+  nothing else: it has **no v1 `UnmarshalJSON`/`MarshalJSON` method**, and `MarshalJSONTo` returns
+  `Unserializable`. The decoder calls `d.ReadValue()`, which returns the raw string value as a slice
+  that aliases the caller's buffer. It unescapes that value into a fresh, pre-sized `[]byte`. It
+  never calls `ReadToken`, because a string `Token` allocates a Go string nobody can zero, and it
+  never goes through any library string decoding (v1 `encoding/json` also substitutes U+FFFD, R3).
+  It rejects NUL, invalid UTF-8 and unpaired `\uD800`-style escapes (PW-15, PW-16).
+- **A secret-bearing API request has one path, and `apihost` owns all of it** (ADR-0004 rule 6).
+  Handlers never see the body (rule 5), so no handler decodes a secret.
+  1. **Buffer.** `apihost` reads the body into one `[]byte` it owns, pre-sized from `Content-Length`
+     or the cap plus one byte, never grown with `append` and never pooled. A `secret` operation is
+     capped at 64 KiB, is never class `bulk` and never has a binary body (A12).
+  2. **Validate.** A default-options `jsontext.Decoder` walks the buffer: invalid UTF-8, escaped lone
+     surrogates, duplicate names, trailing data, depth over 32, too many values and any `\u0000`
+     escape are rejected. String values are scanned as raw bytes and never become Go strings.
+  3. **Decode through `secretjson.Decode(buf, &in.Body)`**, the single decode entry point for every
+     API body (`json.Unmarshal(buf, v, json.RejectUnknownMembers(true))`). Its options reach every
+     nested value through the generated `UnmarshalJSONFrom` decoders, down to `Secret`'s own.
+  4. **Destroy and zero.** After the handler returns, and on panic too, `apihost` calls the generated
+     `in.destroySecrets()`, which runs `Destroy()` on every `Secret` in the `Input`, then zeroes the
+     buffer with `clear(buf)`. A handler that hands a secret to asynchronous work takes its own copy
+     through the `secret` package. The body is never streamed through a `json.NewDecoder` or a
+     `jsontext.Decoder` over the network reader.
 
 **What "zeroised" can mean in Go.** We zero only buffers we own. These copies exist and we cannot
 zero them:
@@ -726,15 +745,18 @@ Re-deriving it re-reads the TLS state: version, verified chains and server name.
 | PW-12 | LDAP packet-debug logging on while the modify is built | impossible in production builds (lint); test asserts off | debug dumps carry the value |
 | PW-13 | DC answers 19/53 with `0000052D` | error `PolicyViolation` with DC diagnostic; request bytes never logged | gotcha 34 |
 | PW-14 | `"abc"` (quotes at both ends) | `22 00 22 00 61 00 62 00 63 00 22 00 22 00`; nothing stripped | inner quotes are data; DC result `[UNVERIFIED — lab]` as PW-04 |
-| PW-15 | JSON body `{"password":"a\u0000b"}` | error `NulInSecret` from `Secret.UnmarshalJSON` | the escape is decoded by us, then checked |
-| PW-16 | JSON body `{"password":"\ud800x"}` | error `InvalidUTF16` | `encoding/json` v1 would yield U+FFFD and set a password nobody typed (R3) |
+| PW-15 | JSON body `{"password":"a\u0000b"}` | error `NulInSecret` from `Secret.UnmarshalJSONFrom`. Through `apihost` the validate pass rejects the escape first: `400 /problems/malformed-request` (ADR-0004 rule 6 step 2) | the escape is decoded by us, then checked; two layers, neither relies on the other |
+| PW-16 | JSON body `{"password":"\ud800x"}` | error `InvalidUTF16` from `Secret.UnmarshalJSONFrom`; through `apihost`, `400 /problems/malformed-request` from the validate pass | `encoding/json` v1 would yield U+FFFD and set a password nobody typed (R3) |
 | PW-17 | connection drops and reconnects between `SecureConn` acquisition and the modify | error `SecureConnStale`; nothing sent until re-verified | re-checked on every send |
 | PW-18 | LDAPS to a DC whose certificate does not name its FQDN · LDAPS to a DC whose certificate chains to no trust anchor | error `TLSVerificationFailed`; no retry on 389 plain or unverified StartTLS | no downgrade |
 
 **Lint.** The literal `"unicodePwd"`, UTF-16 encoders on secret material, and the LDAP library's
 debug switch (go-ldap `Conn.Debug`) are banned outside `attr`/connector; `Secret` has no
-string-conversion method to call. A go/analysis pass, `secretjson`, reports any decode into a type
-containing `Secret` other than `secretjson.Decode`. FF-SP2 bans `net/http/pprof` and `runtime/pprof`
+string-conversion method to call. The go/analysis pass `secretjson` (FF-SP2) reports: a JSON
+decode into a type containing `Secret` other than through `secretjson.Decode`, the one exemption
+being the nested calls inside generated `UnmarshalJSONFrom` methods (files with the `tools/gen/api`
+header), which inherit its options; a call to `secretjson.Decode` from any package but `apihost`;
+and `ReadToken` or `Token.String` inside a decoder method of a `Secret`-bearing type. FF-SP2 bans `net/http/pprof` and `runtime/pprof`
 outside `_test.go` and tier L, and bans the TLS-verification bypasses listed above.
 
 ## 6. P4 — Command invocation
@@ -1163,7 +1185,7 @@ authoritative and FF-SP4 recomputes the counts.
 | FF | Check | Fails when |
 | --- | --- | --- |
 | FF-SP1 | Import boundaries | any of these outside its home: the LDAP library and raw search/controls (only the connector root `internal/connector/`, with controls only in `internal/connector/ad/scope`); the SQL driver (only the data-access package `internal/platform/store`; generated `sqlcdb/` packages may import the other pgx packages, but not `pgxpool` or `pgx.Connect`/`ConnConfig`, blueprint §2); process APIs (only `internal/platform/proc`); the PowerShell SDK (only the sidecar host). Also: any product package importing `lab/…` or `tools/…` (tier L). P7 adds: `encoding/csv` (only `export/csv`), the XLSX library (only `export/xlsx`), the PDF library (only `export/pdf`), `net/smtp`/`mime/multipart` (only `notify/mail`), any HTML-to-PDF or headless-browser module anywhere in product code (§12.3–§12.7). Enforced with depguard, BannedApiAnalyzers and clippy |
-| FF-SP2 | Banned APIs and custom analyzers | any symbol in the per-primitive lists in §3.5, §4.6, §5, §6, §7. Includes TLS-verification bypasses (§5.6), `net/http/pprof` and `runtime/pprof` outside tests and tier L, and `GOTRACEBACK=crash` in service definitions. The go/analysis passes `dnstring`, `sqlconst` and `secretjson` run here (`go vet -vettool`, T-0033). P7 adds the §12.4–§12.7 lists (`text/template`, typed-string conversions outside `htmlx`, the `tmplconst` pass, `SetEscapeHTML(false)`, `Content-Disposition` outside `httpx`, XLSX formula/hyperlink/VBA setters, PDF link/JavaScript/attachment/page-import APIs) |
+| FF-SP2 | Banned APIs and custom analyzers | any symbol in the per-primitive lists in §3.5, §4.6, §5, §6, §7. Includes TLS-verification bypasses (§5.6), `net/http/pprof` and `runtime/pprof` outside tests and tier L, and `GOTRACEBACK=crash` in service definitions. The go/analysis passes `dnstring`, `sqlconst` and `secretjson` run here (`go vet -vettool`, T-0033). `secretjson` enforces the §5.6 secret path of ADR-0004 rule 6: a decode into a `Secret`-bearing type only through `secretjson.Decode` (nested calls in generated `UnmarshalJSONFrom` methods excepted, as they inherit its options); `secretjson.Decode` called only from `apihost`; no `ReadToken`/`Token.String` in a `Secret` decoder, which must use `ReadValue`. The v1 `encoding/json` import and v1 JSON methods on contract types are banned by `fitness-api` A7, not here; the clean-up (`destroySecrets`, `clear(buf)`) is asserted by A7's per-operation corpus. P7 adds the §12.4–§12.7 lists (`text/template`, typed-string conversions outside `htmlx`, the `tmplconst` pass, `SetEscapeHTML(false)`, `Content-Disposition` outside `httpx`, XLSX formula/hyperlink/VBA setters, PDF link/JavaScript/attachment/page-import APIs) |
 | FF-SP3 | Literal-shape scanner | filter-, DN-, PowerShell- or SQL-shaped literals combined with concatenation or formatting outside primitive packages and tests. **`web/` is covered too**: TS/TSX template literals or concatenations containing `CN=`, `OU=`, `DC=`, `(&(`, `(\|(` or `(objectClass=`; quote doubling (`replace(/'/g, "''")`, `replaceAll("'", "''")`); `.split(',')`, `.endsWith(` or `.includes(` on a value named `dn`/`distinguishedName`; P7's §12.5 W1/W2 ESLint rules and CSV/XLSX `Blob`s. **P7 shapes in Go:** formula-lead `HasPrefix` checks outside `cellsafe`, joined CSV rows, `"text/csv"`/`".csv"` outside `export/csv`/`httpx`, HTML-shaped literals outside `htmlx`, mail-header literals outside `notify/mail` (§12.2–§12.6). Tier L is exempt (§2.1). Tool: Semgrep or ast-grep, chosen by devops-engineer via the licence register |
 | FF-SP4 | Corpus gate | a **unit** (§8 list) has < 10 records with `"hostile": true`; an implementation skips records of a unit it implements; a record disappears without a superseding one |
 | FF-SP5 | Fuzz | each parser/encoder lacks a corpus-seeded fuzz target; nightly ≥ 10 min each; properties `parse(render(x)) == x` and "render never emits an unescaped special". P7: `csv.Read(csv.Write(v)) == v`; no CSV cell starts with an un-neutralised `FormulaLead`; every XLSX, HTML, MIME and PDF output parses with an independent parser (§12.3–§12.7) |

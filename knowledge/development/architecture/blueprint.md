@@ -1,11 +1,11 @@
 ---
 title: "Architecture blueprint v0"
 date: 2026-10-02
-updated: 2026-10-02
+updated: 2026-10-21
 status: review
 owner: heramb
-ticket: T-0004
-binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), ADR-0003 (ratified), ADR-0005 (ratified), safe-primitives.md (review)
+ticket: T-0004, T-0035
+binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), ADR-0003 (ratified), ADR-0004 (ratified), ADR-0005 (ratified), safe-primitives.md (review)
 ---
 
 # activeDIQ architecture blueprint v0
@@ -14,22 +14,29 @@ This is the map every engineer works from. It shows where a change belongs, whic
 and who owns each part. Read it once end to end (an afternoon). After that, use §5 (component
 catalogue) and §15 (feature → component) as lookup tables.
 
-**What is binding.** The blueprint restates four ratified ADRs and cites them:
+**What is binding.** The blueprint restates five ratified ADRs and cites them:
 - [ADR-0001](../decisions/0001-technology-stack.md): stack and language zones;
 - [ADR-0002](../decisions/0002-deployment-model.md): profiles, roles, tenancy and the connector contract;
 - [ADR-0003](../decisions/0003-module-system-extension-points-only-on-ramp.md): the module system,
   import graph, table ownership and binary hygiene (§1 migrations row, §2, §4.1, §5, §7.3, §7.5);
+- [ADR-0004](../decisions/0004-public-api-contract-openapi-first.md): the public API contract: `api/openapi/` layout, the
+  in-house generator `tools/gen/api`, `apihost` on `net/http.ServeMux`, strict `encoding/json/v2`,
+  one `x-permission` per operation and one `/api/v1` that only grows (§1, §4.1 EP-2, §6, §16, §17);
 - [ADR-0005](../decisions/0005-operation-pipeline-and-audit-trail.md): the Action contract, the
   step token, the operation pipeline and the audit trail (§2.3, §4.2, §5.1, §7.5, §8, §9).
 
 It also applies the [safe-primitives spec](safe-primitives.md). Those documents delegated several
 **paths** to this blueprint, and it **fixes** them in §1.1. Everything else here is design direction.
-Where a direction needs its own ADR, the queued ticket is named (API contract: **T-0046**). If
+Where a direction needs its own ADR, the queued ticket is named. If
 this blueprint and a ratified ADR disagree, the ADR wins and this file is the bug.
 
 **Notation.** `[OPEN → T-xxxx]` means the item is decided in that ticket. `[M3]` means the item
 arrives in that milestone; it is drawn here so that v1 code does not block it. Owner names are
 factory agents (`.claude/agents/`).
+
+**Ticket IDs.** The board was re-cut on 2026-10-21 (T-0031). The API rows of §16 and §17 use the
+live board. Other `T-xxxx` references here predate the re-cut and name the earlier numbering;
+ADR-0004's old-to-new table maps the API ones.
 
 ---
 
@@ -96,16 +103,17 @@ therefore ours to enforce. The compiler does not do it for us.
 | `internal/modules/<id>/` | Server feature modules, one directory each (§5.4), each with a page `architecture/modules/<id>.md` ([template](modules/README.md)) | S | per module |
 | `internal/agentmodules/<id>/` | Agent modules `addc` and `fileserver` [M3]. `mgmthelper` exists only if the M3 GPO spec chooses it (§13) | A | windows-engineer |
 | `internal/proto/` | Generated Go code for `proto/`. Never hand-edited | S, A | api-engineer |
+| `internal/platform/apihost/` and the `api` packages | `apihost` (EP-2 host, router, middleware chain, the one body decode path) with `apihost/apitypes` (hand-written scalars and `Opt`, generated shared types and problem constructors) and `apihost/spec` (the bundle). Each tag's generated types, decoders, validators, `Handlers` interface and `Bind` live in its owner's `api` package: `internal/modules/<id>/api/`, `internal/platform/<pkg>/api/`. Files `*.gen.go`, never hand-edited ([ADR-0004](../decisions/0004-public-api-contract-openapi-first.md) rule 4) | S | api-engineer; each `api` package: its owner |
 | `internal/webui/` | `go:embed` package for the built web assets. Embed patterns cannot use `..` ([embed](https://pkg.go.dev/embed)), so the build copies `web/dist` here. Only `compose/server` imports it | S | frontend-engineer |
 | `proto/` | Protobuf sources: `skenzeriq/agent/v1` (shared host contract, T-0040), `activediq/connector/v1`, `activediq/<agent-module>/v1` | — | api-engineer; contracts: solution-architect |
-| `api/openapi/` | The public API contract. It is the source of truth, with one file per module tag, bundled and compiled to Go and TypeScript by `tools/gen/api` ([api-pipeline.md](api-pipeline.md), T-0147) | — | api-engineer |
+| `api/openapi/` | The public API contract and its only source of truth ([ADR-0004](../decisions/0004-public-api-contract-openapi-first.md) rule 1): `openapi.yaml` (root), `shared/*.yaml` (components used by more than one tag), `modules/<id>.yaml` (one per module that serves API, tag = module ID), `platform/<pkg>.yaml` (one per kernel package that serves API, tag `platform.<pkg>`), `policy.yaml` (the contract's security policy, rule 9) and `.vacuum.yaml`. `tools/gen/api` bundles it into `internal/platform/apihost/spec/openapi.gen.json` (committed, embedded, served as `getApiDocument`), the one input of every generator and check ([api-pipeline.md](api-pipeline.md)) | — | api-engineer; `modules/<id>.yaml` and `platform/<pkg>.yaml`: their owner; `policy.yaml`: security-architect |
 | `migrations/` | One forward-only SQL sequence, `NNNN_<owner>_<what>.sql`, plus `embed.go`. `<owner>` is an **owner key**: the directory name of exactly one top-level package under `internal/platform`, `internal/directory`, `internal/connector` or `internal/modules` (ADR-0003 rule 6, §2 rule 6). The first migration is **`0001_tenant_tenants.sql`**: it creates `tenants` (ADR-0002 rule 4), owned by `internal/platform/tenant` | S | backend-engineer |
-| `web/` | The React + TypeScript console: `src/app` (shell), `src/modules/<id>` (screens), `src/ds` (design system, T-0043), `src/api` (generated client), `e2e/` (Playwright) | W | frontend-engineer; `src/ds`: component-designer |
+| `web/` | The React + TypeScript console: `src/app` (shell), `src/modules/<id>` (screens), `src/ds` (design system, T-0043), `src/api` (only `schema.gen.d.ts` from openapi-typescript and the hand-written `client.ts` over openapi-fetch; nothing else in `web/src` calls the network, ADR-0004 rule 12), `e2e/` (Playwright) | W | frontend-engineer; `src/ds`: component-designer |
 | `native/` | A Rust workspace: `passfilt` (LSASS), `credprov` (LogonUI) and `shared` (`Secret`, policy evaluator, corpus runner) [M4] | N | windows-engineer |
 | `sidecars/<name>/` | .NET 10 + PowerShell 7.6 typed adapters. The names reserved are `pshost` (shared host), `exchange` and `gpmc`. Each is declared in the stack manifest when it is first built | X | windows-engineer (host); backend-engineer (`psx` client) |
 | `packaging/` | `windows/` (MSI, toolchain per T-0039) and `oci/` (Dockerfiles, Compose). No script custom actions in the MSI | — | devops-engineer |
 | `testdata/safe-primitives/` | The primitive corpus, one `<unit>.jsonl` per unit (safe-primitives §8). Read by the Go and Rust implementations | — | directory-engineer (corpus), test-engineer |
-| `tools/` | `fitness/<job>/` (CI jobs), `analyzers/` (go/analysis passes `dnstring`, `sqlconst`, `secretjson`, `tmplconst`, and `policy/`, the table of primitive homes; `fitness/safeprim/` runs them, T-0033), `vettool/`, `gen/` (code generators), `playwright/` (screenshot, record and E2E runner; Node, dev-time only, T-0011) | L | devops-engineer |
+| `tools/` | `fitness/<job>/` (CI jobs), `analyzers/` (go/analysis passes `dnstring`, `sqlconst`, `secretjson`, `tmplconst`, and `policy/`, the table of primitive homes; `fitness/safeprim/` runs them, T-0033), `vettool/`, `gen/` (code generators; `gen/api` is the in-house OpenAPI generator, ADR-0004 rule 4), `apitools/` (its own `go.mod` pinning vacuum and oasdiff, kept out of the product module), `playwright/` (screenshot, record and E2E runner; Node, dev-time only, T-0011) | L | devops-engineer |
 | `lab/` | The Samba AD lab, seed data, Windows lab automation (T-0012) | L | devops-engineer, test-engineer |
 | `third_party/<name>/` | Copied third-party code, each with its LICENSE file (ADR-0001 rule 5) | — | devops-engineer |
 | `garage/<name>/` | Prototypes with an owner and an expiry date. Never imported | — | its owner |
@@ -334,7 +342,7 @@ service.
    exports one `WebModule` built with `defineModule({ id, routes, palette, searchResults })` from
    `web/src/app`. `web/src/app` and `web/src/ds` never import `web/src/modules/*`, except that `app`
    imports the generated `modules.gen.ts`. Web modules never import each other, and get data only
-   through the generated client `web/src/api` (T-0046).
+   through the generated client `web/src/api` (ADR-0004 rule 12).
 
 **The other homes of a feature are closed** (ADR-0003 rule 5), so the Registrar stays the only
 on-ramp:
@@ -510,7 +518,7 @@ each tier ship through it (UEM ADR-0002 rules 1–2). These are the first two:
 | # | Extension point | Interface home | Implemented by (v1 first) | Later | Built before |
 | --- | --- | --- | --- | --- | --- |
 | EP-1 | **Module** (+ Registrar) | `platform/module` | every `internal/modules/*` | — | first server feature |
-| EP-2 | **API handlers** for one OpenAPI tag | `platform/apihost` | each module | — | first endpoint (T-0046) |
+| EP-2 | **API handlers** for one OpenAPI tag | `platform/apihost` | each module | — | first endpoint (ADR-0004 rule 5) |
 | EP-3 | **Action** (plan, apply, verify, inverse) for every write a principal makes, to a directory or to our configuration (§4.2) | `platform/operation` | `objects`, `helpdesk`, `m365`, `lifecycle`, `delegation`, `hardening`, `connections`, `workflow`, `reports`; kernel Actions from `authz`, `authn`, `notify`, `audit`, `personal` (`<pkg>/actions`) | GPO, file-server ACLs | first write (ADR-0005, T-0153) |
 | EP-4 | **Approval gate** (§8) | `platform/operation` | `platform` default (permission-only, plus the kernel single approval), `workflow` | ITSM-driven approval | first write (ADR-0005 rule 8) |
 | EP-5 | **Job kind** (tenant-carrying) | `platform/jobs` | operation runner, sync, notifications; module schedules and timers (`reports`, `lifecycle`, `workflow`, `itsm`, `migration`) | — | first job |
@@ -552,7 +560,7 @@ type Module interface {
 type Registrar struct{ /* owner ID, closed flag, collected contributions */ }
 
 func (r *Registrar) Action(a operation.Action) error        // EP-3
-func (r *Registrar) API(h apihost.TagHandlers) error        // EP-2 (shape: T-0046)
+func (r *Registrar) API(h apihost.TagHandlers) error        // EP-2 (shape: ADR-0004 rule 5; the argument is the module's own generated api.Bind(…))
 func (r *Registrar) Job(k jobs.Kind) error                  // EP-5, includes schedules
 func (r *Registrar) Permission(p authz.Permission) error    // EP-6
 func (r *Registrar) ScopeEvaluator(e authz.ScopeEvaluator) error
@@ -864,14 +872,51 @@ no entity has a split owner. These findings changed the map:
 
 ## 6. API boundary: the public API is the product boundary
 
-- **Every capability is an OpenAPI operation first.** The console, ITSM integrations, customer
-  scripts and later the PowerShell module and MCP (ENH-11, M3) all use the same operations. The
-  web client is generated, and the console has **no private endpoints**. The exceptions are not
-  product API: auth callbacks, health, static assets and the `fleet` gRPC gateway (T-0046).
-- **Tenant never travels in the API.** It comes from the authenticated principal (ADR-0002, Request
-  row). A `tenant_id` or `X-Tenant-*` field in the contract fails T5.
-- **Strict decoding at the edge.** Invalid UTF-8 and lone surrogates are rejected, never repaired
-  (safe-primitives R3; `lessons.md`, encoding/json v1).
+Binding: [ADR-0004](../decisions/0004-public-api-contract-openapi-first.md) (rules 1–13). This
+section summarises it; if the two disagree, the ADR wins. Build detail: [api-pipeline.md](api-pipeline.md).
+
+- **Every capability is an OpenAPI operation first** (rules 12, 13). The console, ITSM integrations,
+  customer scripts and later the PowerShell module and MCP (ENH-11, M3) all use the same operations
+  of one contract, `api/openapi/`, written before any handler exists. The console uses only the
+  client generated from the bundle and has **no private endpoints**.
+- **What is not product API is a closed list** (rule 5): `/healthz` and `/readyz` (AN-1), static
+  assets and the console fallback, which never answers under `/api/` or `/auth/` (AN-2), the SSO
+  redirect and callback routes (AN-3), the `fleet` gRPC gateway on its own mTLS listener (AN-6) and
+  [M4] the edge tunnel router's SSPR routes (AN-7). They are declared in `policy.yaml`
+  `nonApiRoutes`; anything else served is a document operation. The anonymous JSON operations
+  (first-run setup AN-4, TOTP enrolment AN-5, [M4] SSPR AN-7) are operations with
+  `x-permission: anonymous` and a `policy.anonymous` row.
+- **One generator, one router, one on-ramp** (rules 4, 5). `tools/gen/api` (in-house; no
+  oapi-codegen) emits every Go type, decoder, validator and per-tag `Handlers` interface plus `Bind`.
+  A module registers with `r.API(<id>api.Bind(m))` (EP-2); `apihost` serves on `net/http.ServeMux`
+  and refuses to start when a route and the embedded document disagree. A handler receives a typed
+  `Input` and returns a typed `Output`: it never sees `*http.Request`, `http.ResponseWriter` or the
+  raw body. `apihost` reaches `authn`/`authz`/limits/step-up through `Ports` injected by
+  `compose/server`, never by import.
+- **One fixed middleware chain** (rule 5): recover, trace ID, per-IP rate limit, host binding,
+  query-credential refusal, body cap, `Content-Type`, authentication, CSRF (cookie sessions, unsafe
+  methods), per-principal rate limit, step-up, the `x-permission` check, buffer/validate/decode,
+  handler, v2 encode, secret clean-up. An unauthenticated or unauthorised body is never parsed.
+- **Exactly one permission per operation** (rules 3, 9). `x-permission` is an EP-6 permission ID,
+  `authenticated` or `anonymous` (the last two only with their `policy.yaml` row). `authz` checks it
+  in the chain; object-level delegation scope is checked again inside the Action (§11).
+- **Tenant never travels in the API** (rule 11; ADR-0002 rule 5). It comes from the authenticated
+  principal. A `tenant_id` or `X-Tenant-*` field in the contract fails T5.
+- **Strict JSON at the edge, one decode path** (rule 6). `apihost` is the only code that touches a
+  body: it buffers it (capped, pre-sized), validates it with `jsontext` (invalid UTF-8, lone
+  surrogates, duplicate names, trailing data, depth > 32, `\u0000`), decodes it through
+  `secretjson.Decode` with `encoding/json/v2` and `RejectUnknownMembers`, then runs the generated
+  validator. Nothing is repaired (safe-primitives R3; `lessons.md`). `encoding/json` v1 is banned in
+  product code. For a secret-bearing operation it then destroys every `Secret` in the `Input` and
+  zeroes the buffer (safe-primitives §5.6).
+- **Errors are a closed problem catalogue** (rule 8): `application/problem+json` with
+  `type: /problems/<slug>` from `shared/problems.yaml`; only `apihost` writes status codes.
+- **One `/api/v1` that only grows** (rule 7). Additive changes are free; a breaking change to a
+  `stable` operation ships as a new operation beside the deprecated one (`Deprecation` and `Sunset`
+  headers, `x-activediq-sunset`). There is no per-resource `/api/v2`; a coordinated `/api/v2` needs
+  a superseding ADR. Every operation is `preview` or `stable`.
+- **Limits are declared** (rule 10): a rate class per operation, per source IP and per principal,
+  with no quota and no metering; body caps by default, 64 KiB for secret-bearing operations.
 - **Server-built values only (tier W implements no primitive, safe-primitives §2.1):**
 
 | Kind | API → web | web → API |
@@ -881,9 +926,9 @@ no entity has a split owner. These findings changed the map:
 | PowerShell | `DisplayOnlyPowerShell`, rendered by `pslit` | nothing |
 | SQL | nothing | a report-definition AST |
 
-  FF-SP3 scans `web/` for DN/filter-shaped literals, quote doubling and DN string splitting.
-- **Each operation declares its permission** (`x-permission`), which `authz` checks. Object-level
-  scope is checked again inside the Action (§11).
+  FF-SP3 scans `web/` for DN/filter-shaped literals, quote doubling and DN string splitting. In the
+  contract these wire forms are bound to the primitive's own Go type (`FilterAst`, `ReportAst`,
+  `GUIDRef`, `ObjectView`), never a generated copy (ADR-0004 rule 4 binding table).
 
 ---
 
@@ -1560,7 +1605,7 @@ There are 83 rows with `phase = P1` and `importance = must` in
 | ADM-169 | `inventory` correlation + `web/src/modules/objects` hybrid view | `sync` (Graph delta) |
 | I360-003 | `sync` (Graph delta) | `provider/entra` |
 | I360-002 | `sync` + remote connector (outbound-only, DirSync) | `fleet`, §7.2 |
-| ADM-188, 189 | `api/openapi` + `apihost` | T-0046 |
+| ADM-188, 189 | `api/openapi` + `apihost` | ADR-0004 (both map onto `/api/v1`, rule 7) |
 | ADM-204 | `platform/notify` | each module's templates |
 | ADM-205 | `platform/notify` (mail, SMS gateway, egress proxy) | — |
 | ADM-209, RMP-046 | `platform/update` + `packaging/` release train | ENH-07 spec, T-0027 signing |
@@ -1600,7 +1645,10 @@ There are 83 rows with `phase = P1` and `importance = must` in
 | Change-feed Registrar method for attribute-triggered automation (ADR-0003 F3) | the first ticket that needs triggered automation (E2.9) |
 | ~~Shape of `operation.Catalogue()` (ADR-0003 F4) and gate interplay with Actions~~ | **Decided:** ADR-0005 rules 1 and 8; restated in §4.2, §8 |
 | Freeze of `platform/module` (`// Frozen:` line), after the rule 9 paper check and the first two modules | solution-architect, once `connections` and `objects` have shipped through EP-1 (ADR-0003 rules 8–9) |
-| OpenAPI layout, generators, router, versioning, strict JSON, `x-permission`; the Registrar's `API` registration shape (`apihost.TagHandlers`) | **T-0046** (ADR) |
+| ~~OpenAPI layout, generators, router, versioning, strict JSON, `x-permission`; the Registrar's `API` registration shape (`apihost.TagHandlers`)~~ | **Decided:** [ADR-0004](../decisions/0004-public-api-contract-openapi-first.md), ratified 2026-10-02 (T-0046, D-0014); restated in §1, §4.1 EP-2, §6. Generator and skeleton delivered (old T-0147) |
+| `apihost` itself: `Build`, `Ports`, the middleware chain, the rule 6 decode and secret clean-up; the `secretjson` allowance for `apihost` | T-0033 |
+| TM §7.6 amendment for break-glass and SPNEGO sign-in routes; `policy.yaml` seeding (`anonymous`, `authenticated`, `secretResponses`, `stepUp`); default numbers per rate class (TM-Q2) | T-0032 (security-architect) |
+| Published deprecation and support window for `/api/v1` (ADR-0004 rule 7; leaves the building) | T-0036 (decision prep for the CEO, before GA) |
 | ~~Action contract, operation state machine, audit-trail guarantees; whether configuration writes (templates, roles, policies, `migration` imports) are Actions~~ | **Decided:** [ADR-0005](../decisions/0005-operation-pipeline-and-audit-trail.md), ratified 2026-10-02 (T-0047, D-0015): configuration writes are Actions; restated in §2.3, §4.2, §5.1, §7.5, §8, §9 |
 | Operation kernel: `platform/operation`, `operation/step`, `platform/authority`, the `LiveFacts` port, `operationtest` | T-0153 (security-architect reviews) |
 | Audit chain, head row, checkpoints and key windows, export, `adq-audit-verify`, `platform/personal` and its erasure register; byte-level format document for `adq-canon/1`, `adq-audit-export/1` | T-0088 |
@@ -1633,10 +1681,10 @@ There are 83 rows with `phase = P1` and `importance = must` in
 | Domain-model keying and append-only (domain-model §0): directory tables keyed by GUID never DN/SID/name (X3), no secret-attribute columns outside sealed ones (X4), append-only tables never UPDATE-able, no state column (X5), table kinds declared in code | `fitness-domain-keys` X3–X5, REG (`tools/fitness/domainkeys/`, in `make ci`; rules: [domain-keys-fitness.md](domain-keys-fitness.md)) | T-0050 |
 | Profiles by composition, planes, both transports, UEM boundary, platform root extractable | `fitness-profiles` (`tools/fitness/profiles/`, in `make ci`): P1, P7, U1, U2 run today; P2–P6, U3 and U4 are in its activation table and become mandatory when their subject lands | T-0038 (done) |
 | Module system (ADR-0003): import graph, module islands, generated lists and module pages, Registrar only, constructor bound, composition root, closed catalogue, table ownership (static and catalog), binary hygiene, web mirror, exemptions, self-test (§2, §4.1, §5) | `fitness-modules` M1–M12 (`tools/fitness/modules/`, in `make ci`; the T-0014 subset of §2 rules 1–5, 7, 8 runs today) | T-0141 (ADR-0003 becomes `accepted` when it is green) |
-| Public API: routes ⊆ OpenAPI, `x-permission`, generated client | API fitness | T-0046 → its fitness ticket |
+| Public API (ADR-0004): layout and bundle, dialect, one permission per operation, route set per profile and hostname with an HTTP probe, generated client and server, strict JSON (static, type closure, corpus, ajv cross-check), secrets out, versioning, problems, limits, policy hygiene, responses conform (§1, §6) | `fitness-api` A1–A14 (`tools/fitness/api/`, in `make ci`; A9 is T5 in `fitness-tenancy`). A1 and A13 run today; every other check prints `inactive` until its input exists ([ci-gates](../standards/ci-gates.md)) | A1, A13: T-0011 (done); static half: T-0017; runtime half: T-0018 (ADR-0004 becomes `accepted` when none is inactive and all are green) |
 | Operation pipeline (ADR-0005): step escape, write surface, configuration writes and table write classes, state machine, registry and contract coverage, contract and pipeline behaviour, kernel DAG (§2.3, §4.2, §8) | `fitness-operation` O1–O9 (`tools/fitness/operation/`) | T-0154 (ADR-0005 becomes `accepted` when both rows are green) |
 | Audit trail (ADR-0005; threat-model TM-F-AUDIT): role grants and the genesis trigger, AG-1/AG-2 and hook wiring, concurrency, seeded-tenant verify, tamper corpus, anchoring, classification, AG-8 coverage, retention (§9) | `fitness-audit` A1–A9 (`tools/fitness/audit/`) | T-0154 |
-| Safe primitives: imports, banned APIs, literal shapes, corpus, fuzz, oracles, `psx` manifest | FF-SP1–SP9 | T-0033, T-0034 |
+| Safe primitives: imports, banned APIs, literal shapes, corpus, fuzz, oracles, `psx` manifest; the one secret decode path (`secretjson`: decode only via `secretjson.Decode`, called only from `apihost`, no string tokens in a `Secret` decoder; safe-primitives §5.6, ADR-0004 rule 6) | FF-SP1–SP9 (`fitness-safeprim`, in `make ci`) | delivered under the earlier board numbering (old T-0033, T-0034) |
 
 Rows marked "done" run in `make ci` today; the others do not yet, or run only in part. This
 blueprint moves to `accepted` when a human has read it end to end. The rules it states become

@@ -8,23 +8,43 @@ description: activeDIQ REST conventions — OpenAPI 3.1 contract-first, /api/v1,
 **The public API is the product boundary.** The UI, the PowerShell module, the CLI and customer
 scripts all use the same documented `/api/v1`. The UI uses nothing private: if a screen needs
 data, the public API gets an endpoint. ManageEngine admins automate heavily; a complete,
-predictable API is a reason to switch. Paths, tools and libraries here are **provisional until
-ADR-0001**. Owner: `api-engineer`; contracts reviewed by `solution-architect`.
+predictable API is a reason to switch. **Binding: [ADR-0004](../../../knowledge/development/decisions/0004-public-api-contract-openapi-first.md)**
+(rules 1–13); this skill is the working summary, and where they differ the ADR wins. Build detail:
+`knowledge/development/architecture/api-pipeline.md`; workflow: `knowledge/development/runbooks/api-contract-workflow.md`.
+Owner: `api-engineer`; contracts reviewed by `solution-architect`.
 
 `reference/conventions.md` has the full rules and worked examples (problem types, job resource,
 webhook signing, LDAP-to-HTTP error mapping). Read it when writing or reviewing a contract.
 
 ## 1. Contract-first
 
-1. A `spec` ticket changes `api/openapi/` (OpenAPI 3.1, one file per tag, ADR-0004; the **source of truth**) before any
-   handler exists. Server stubs (Go) and the TypeScript client are **generated** from it and never
-   edited by hand. The PowerShell module wraps the same contract.
-2. CI: lint the spec (Spectral or Redocly CLI), detect breaking changes against `main` (oasdiff),
-   and validate every integration-test response against the schema. A handler returning a field
+1. A `spec` ticket changes `api/openapi/` before any handler exists (ADR-0004 rule 13). It is the
+   **source of truth**: OpenAPI 3.1 in the closed rule 2 dialect, one file per tag: `shared/*.yaml`,
+   `modules/<id>.yaml` (tag = module ID), `platform/<pkg>.yaml` (tag `platform.<pkg>`), plus the
+   root `openapi.yaml` and `policy.yaml` (security-architect). Every operation has exactly one tag,
+   equal to its file's (rule 1).
+2. `make gen-api` runs our own generator, `tools/gen/api` (no oapi-codegen): it bundles the files
+   into `internal/platform/apihost/spec/openapi.gen.json` and emits every Go type, decoder,
+   validator, the per-tag `Handlers` interface and `Bind` into the owner's `api` package; the
+   TypeScript types come from openapi-typescript over the same bundle, used through openapi-fetch
+   in `web/src/api/client.ts`. Generated files are never edited by hand, and CI fails when any is
+   stale. A module serves its tag only through `r.API(<id>api.Bind(m))`; handlers get a typed
+   `Input` and never see `*http.Request` or the body. The PowerShell module wraps the same contract.
+3. CI (`fitness-api` A1–A14): layout and bundle, the dialect (vacuum with
+   `api/openapi/.vacuum.yaml`, plus our own keyword check), one permission per operation, the route
+   set per profile, the generated client, strict JSON, secrets out of responses, oasdiff against
+   `main` and the latest release tag, the problem catalogue, limits, `policy.yaml` hygiene, and
+   every runtime-test response validated against its declared schema. A handler returning a field
    the spec lacks fails CI.
-3. Every operation has `operationId` (`listUsers`, `resetUserPassword`), a summary, the RBAC
-   permission it requires (`x-permission: users.password.reset`), its error responses, and an
-   example. No `additionalProperties: true` on response objects.
+4. Every operation has `operationId` (camelCase, unique: `listUsers`, `resetUserPassword`), a
+   summary, **exactly one** `x-permission` (an EP-6 permission such as `users.password.reset`, or
+   `authenticated`/`anonymous` with their `policy.yaml` row), `x-activediq-stability`
+   (`preview`/`stable`), its error responses, and an example. Request objects declare
+   `additionalProperties: false`; no response object declares `additionalProperties: true`. Only
+   the rule 3 `x-` extensions exist. Secret inputs are `$ref` `shared/secret.yaml` `SecretInput`
+   (Go `secret.Secret`), never a `string`.
+5. Bodies are decoded once, by `apihost`, strictly with `encoding/json/v2` (rule 6); `encoding/json`
+   v1 is banned in product code.
 
 ## 2. Resources and URLs
 
@@ -58,7 +78,7 @@ webhook signing, LDAP-to-HTTP error mapping). Read it when writing or reviewing 
 Every 4xx/5xx is `application/problem+json`
 (https://www.rfc-editor.org/rfc/rfc9457): `type` (`/problems/<slug>`, documented),
 `title`, `status`, `detail` (safe for the admin to read), `instance`, plus extensions `code`,
-`traceId`, `errors[]` (field-level: `{"field","code","message"}`) and, for directory failures,
+`traceId`, `errors[]` (one per violation, each with its JSON `pointer`; ADR-0004 rule 8) and, for directory failures,
 `directory: {"resultCode", "diagnostic"}` with secrets stripped. Distinguish **our** RBAC denial
 (`403 /problems/forbidden`) from **AD's** denial of our service account
 (`403 /problems/directory-access-denied` — "activeDIQ's service account lacks rights on this
@@ -92,7 +112,7 @@ OU"). Never leak stack traces, SQL, or internal hostnames.
 
 - **UI**: session cookie (`HttpOnly`, `Secure`, `SameSite=Strict`) after SSO/MFA login, plus a
   CSRF token on mutations. **Automation**: API tokens (personal or service), shown once, stored
-  hashed, prefixed (e.g. `adiq_`) so secret scanners catch leaks, with expiry and last-used.
+  hashed, prefixed `adq_` (ADR-0004 rule 9, TM-TB2-T1) so secret scanners catch leaks, with expiry and last-used.
 - **Effective permission = token scopes ∩ the owner's RBAC role ∩ the role's delegation scope**
   (domains/OUs). Check the *target object* against the scope, not only the endpoint. A help-desk
   token for `OU=Sales` cannot reset a password in `OU=Finance` even on the same endpoint.
@@ -114,17 +134,29 @@ OU"). Never leak stack traces, SQL, or internal hostnames.
 
 ## 9. Versioning and deprecation
 
-- Additive changes (new endpoint, optional field, new enum value documented as open) are
-  non-breaking. Removing or renaming anything, tightening validation, or changing a meaning is
-  breaking → `/api/v2` for that resource. Clients must ignore unknown fields.
-- Deprecate with `Deprecation` (RFC 9745) and `Sunset` (RFC 8594) headers, a changelog entry and
-  a `deprecated: true` flag in the spec. Proposed default: support for at least two minor
-  releases and 12 months, whichever is longer — on-prem customers upgrade slowly. Publishing that
-  promise leaves the building → CEO decision (`ceo-decisions`) before GA.
+ADR-0004 rule 7.
+- **One `/api/v1` for the whole API, and it only grows.** Product releases and ManageEngine's two
+  APIs (ADM-188, ADM-189) all map onto it; there is no ManageEngine-compatible URL facade.
+- Additive changes (new operation, optional request field, new response field, new value in an
+  open enum, `x-activediq-enum: open`) are non-breaking. Clients must ignore unknown members.
+- Removing or renaming anything, tightening validation, making an optional field required,
+  removing a request-enum value, changing a meaning or changing an operation's permission is
+  breaking, and **never happens in place on a `stable` operation**: it ships as a **new operation**
+  (new path or resource name, new `operationId`) beside the old one. There is **no per-resource
+  `/api/v2`**; a coordinated `/api/v2` for the whole API needs a superseding ADR.
+- Every operation is `x-activediq-stability: preview` (may change incompatibly; flagged in docs,
+  client and PowerShell) or `stable`. Promotion is reviewed; demotion is breaking. At GA every
+  operation the console uses is `stable`.
+- Deprecate with `deprecated: true` plus `x-activediq-sunset` (the first release that may remove
+  it) in the spec, `Deprecation` (RFC 9745) and `Sunset` (RFC 8594) headers on every response, and
+  a changelog entry. Removal only in or after the sunset release (oasdiff, A10). Proposed default
+  window: at least two minor releases and 12 months, whichever is longer — on-prem customers
+  upgrade slowly. Publishing that promise leaves the building → CEO decision (`ceo-decisions`,
+  T-0036) before GA.
 
 ## 10. Review checklist for a contract change
 
-- [ ] OpenAPI changed first; generated code regenerated, not hand-edited; oasdiff clean or `/v2`.
+- [ ] OpenAPI changed first; `make gen-api` output committed, not hand-edited; oasdiff clean, or the break ships as a new operation beside a deprecated one (never `/v2`).
 - [ ] GUID IDs; ISO timestamps; `observedAt`; camelCase; no DN in paths.
 - [ ] Lists paged by cursor with limits; filters compiled through the safe builder.
 - [ ] Problem types documented; LDAP/Graph errors mapped (`reference/conventions.md` §3).
