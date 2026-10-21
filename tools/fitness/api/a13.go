@@ -55,7 +55,7 @@ func checkA13(t *tree) []Violation {
 	if pf.doc == nil {
 		return nil // reported by A1 as a parse error; nothing more can be read
 	}
-	var vs []Violation
+	vs := append([]Violation(nil), t.policyDups...)
 
 	ops := map[string]operation{}
 	routes := map[string]bool{} // "method path"
@@ -121,6 +121,20 @@ func checkA13(t *tree) []Violation {
 			}
 			if !refTokenRe.MatchString(f["ref"]) {
 				vs = append(vs, Violation{"A13", where, fmt.Sprintf("%s %s: no AN/TM reference (ref must name an AN-n row or a TM- section; found %q) (ADR-0004 rule 9)", sec.name, label, f["ref"])})
+			}
+			// An AN-n must be a row of the threat model's anonymous allow-list; TM- tokens are
+			// shape-checked only until a follow-up resolves them against the threat model.
+			hasAN := false
+			for _, tok := range refTokenRe.FindAllString(f["ref"], -1) {
+				if strings.HasPrefix(tok, "AN-") {
+					hasAN = true
+					if len(t.anRows) > 0 && !t.anRows[tok] {
+						vs = append(vs, Violation{"A13", where, fmt.Sprintf("%s %s: reference %s is not a row of the threat model's anonymous allow-list (ADR-0004 rule 9)", sec.name, label, tok)})
+					}
+				}
+			}
+			if sec.name == "anonymous" && !hasAN {
+				vs = append(vs, Violation{"A13", where, fmt.Sprintf("%s %s: an anonymous route must cite the AN-n row that allows it (ref %q) (ADR-0004 rule 9)", sec.name, label, f["ref"])})
 			}
 
 			// Stale: it must name something that exists.

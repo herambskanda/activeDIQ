@@ -85,7 +85,9 @@ type tree struct {
 	bundleOps   int             // operations in the committed bundle, -1 when it is absent
 	misplaced   []Violation     // rule 1 placement violations found while walking
 	parseErrs   []Violation
-	badPathKeys []badKey // path item keys that are not methods
+	badPathKeys []badKey        // path item keys that are not methods
+	policyDups  []Violation     // duplicate mapping keys in policy.yaml (reported as A13)
+	anRows      map[string]bool // AN-n rows of the threat model's anonymous allow-list
 }
 
 type badKey struct{ pos, key string }
@@ -101,6 +103,7 @@ func load(root string) (*tree, error) {
 	}
 	t.modules = subdirs(filepath.Join(root, "internal", "modules"))
 	t.platformPkg = subdirs(filepath.Join(root, "internal", "platform"))
+	t.anRows = readANRows(filepath.Join(root, "knowledge", "development", "architecture", "threat-model.md"))
 
 	err := filepath.WalkDir(base, func(p string, d fs.DirEntry, werr error) error {
 		if werr != nil {
@@ -144,6 +147,16 @@ func load(root string) (*tree, error) {
 			t.parseErrs = append(t.parseErrs, Violation{"A1", f.pos, "cannot parse (and so cannot be bundled or checked by T5): " + err.Error()})
 		} else if len(n.Content) == 1 && deref(n.Content[0]).Kind == yaml.MappingNode {
 			f.doc = deref(n.Content[0])
+			// yaml.v3 accepts a repeated key when decoding into a Node and every reader then
+			// picks a different one (first, last), so a second 'anonymous:' or 'paths:' would
+			// hide content from this check. Refuse the file instead.
+			check, dst := "A1", &t.parseErrs
+			if f.kind == "policy" {
+				check, dst = "A13", &t.policyDups
+			}
+			dupKeys(f.doc, func(line int, key string) {
+				*dst = append(*dst, Violation{check, fmt.Sprintf("%s:%d", f.pos, line), fmt.Sprintf("duplicate mapping key %q: readers disagree on which value wins, so one of them is hidden from review and from the checks (ADR-0004 rule 1)", key)})
+			})
 		} else {
 			t.parseErrs = append(t.parseErrs, Violation{"A1", f.pos, "the file must hold a YAML object (ADR-0004 rule 1)"})
 		}
@@ -299,4 +312,43 @@ func scalar(n *yaml.Node) string {
 		return ""
 	}
 	return n.Value
+}
+
+// dupKeys reports every repeated key of every mapping node, at any depth. Aliases are not followed:
+// each anchor's body is walked where it is written.
+func dupKeys(n *yaml.Node, report func(line int, key string)) {
+	if n == nil {
+		return
+	}
+	if n.Kind == yaml.MappingNode {
+		seen := map[string]bool{}
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			k := n.Content[i]
+			if k.Kind == yaml.ScalarNode {
+				if seen[k.Value] {
+					report(k.Line, k.Value)
+				}
+				seen[k.Value] = true
+			}
+		}
+	}
+	for _, c := range n.Content {
+		dupKeys(c, report)
+	}
+}
+
+var anRowRe = regexp.MustCompile(`(?m)^\|\s*(AN-[0-9]+)\b`)
+
+// readANRows returns the AN-n rows of the threat model's anonymous allow-list table; empty when the
+// file is missing or holds no such row (the self-test turns that into a failure).
+func readANRows(p string) map[string]bool {
+	out := map[string]bool{}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return out
+	}
+	for _, m := range anRowRe.FindAllStringSubmatch(string(b), -1) {
+		out[m[1]] = true
+	}
+	return out
 }

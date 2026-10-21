@@ -90,6 +90,8 @@ fresh_fa_tree() {
   printf 'paths:\n  /orders:\n    get:\n      operationId: listOrders\n      tags: [orders]\ncomponents:\n  schemas:\n    Order:\n      type: string\n' >"$fa/api/openapi/modules/orders.yaml"
   printf 'anonymous: []\nauthenticated:\n  - operation: listUsers\n    ref: TM-D16\n    reason: Any signed-in principal lists users.\nnonApiRoutes: []\nsecretResponses: []\nstepUp: []\nlargeBodies: []\n' >"$fa/api/openapi/policy.yaml"
   printf '{"paths": {"/users": {"get": {}}, "/orders": {"get": {}}}}\n' >"$fa/internal/platform/apihost/spec/openapi.gen.json"
+  mkdir -p "$fa/knowledge/development/architecture"
+  printf '| AN-1 | Health | Console/API | None |\n' >"$fa/knowledge/development/architecture/threat-model.md"
 }
 fitapi() { go run ./tools/fitness/api -root "$fa" "$@"; }
 fresh_fa_tree
@@ -112,6 +114,10 @@ fresh_fa_tree; sed -i '/reason:/d' "$fa/api/openapi/policy.yaml"
 must_fail_with "fitness-api A13 on a policy entry with no reason" '\[ADR-0004 A13\] authenticated listUsers: no reason' fitapi
 fresh_fa_tree; sed -i '/ref:/d' "$fa/api/openapi/policy.yaml"
 must_fail_with "fitness-api A13 on a policy entry with no AN/TM reference" '\[ADR-0004 A13\] authenticated listUsers: no AN/TM reference' fitapi
+fresh_fa_tree; printf 'anonymous: [{operation: deleteAllUsers}]\n' >>"$fa/api/openapi/policy.yaml"
+must_fail_with "fitness-api A13 on a duplicate policy section hiding an entry" '\[ADR-0004 A13\] duplicate mapping key "anonymous"' fitapi
+fresh_fa_tree; sed -i 's/^anonymous: \[\]/anonymous:\n  - method: GET\n    path: \/healthz\n    ref: AN-99\n    reason: probe/' "$fa/api/openapi/policy.yaml"
+must_fail_with "fitness-api A13 on an anonymous entry citing a missing AN row" 'AN-99 is not a row of the threat model' fitapi
 fresh_fa_tree; rm "$fa/api/openapi/modules/users.yaml" "$fa/api/openapi/modules/orders.yaml"; printf 'openapi: 3.1.0\ninfo: {title: t, version: 0.0.0}\nservers: [{url: /api/v1}]\ntags: []\n' >"$fa/api/openapi/openapi.yaml"; printf 'anonymous: []\nauthenticated: []\nnonApiRoutes: []\nsecretResponses: []\nstepUp: []\nlargeBodies: []\n' >"$fa/api/openapi/policy.yaml"
 must_fail_with "fitness-api self-test when the bundle has operations but the check found no operation" '\[ADR-0004 self-test\] .*holds 2 operation\(s\) but A1 found 0' fitapi
 

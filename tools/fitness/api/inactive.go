@@ -58,7 +58,7 @@ var checks = []checkInfo{
 		needs: "no operation in api/openapi carrying a rate class or maxBodyBytes",
 		ready: func(_ string, t *tree) bool { return len(t.ops) > 0 }},
 	{ID: "A13", Title: "policy hygiene", run: checkA13,
-		note: "routes outside the document and hostname bindings cannot be verified until apihost serves routes (A4); an entry naming a host binding fails until then"},
+		note: "routes outside the document and hostname bindings cannot be verified until apihost serves routes (A4); an entry naming a host binding fails until then; TM- references are shape-checked only (AN-n rows are resolved)"},
 	{ID: "A14", Title: "responses conform",
 		needs: "no runtime contract-test harness (apihost.Build plus the shared response validator)",
 		ready: func(root string, _ *tree) bool { return apihostBuildExists(root) }},

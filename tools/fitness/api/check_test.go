@@ -55,8 +55,9 @@ components:
     Job:
       type: string
 `,
-		"api/openapi/policy.yaml":                         basePolicy,
-		"internal/platform/apihost/spec/openapi.gen.json": `{"paths": {"/users": {"get": {}}, "/users/{id}/reset": {"post": {}}, "/jobs": {"get": {}}}}`,
+		"api/openapi/policy.yaml":                            basePolicy,
+		"knowledge/development/architecture/threat-model.md": "| AN-1 | Health | x | None |\n| AN-2 | Static | x | None |\n",
+		"internal/platform/apihost/spec/openapi.gen.json":    `{"paths": {"/users": {"get": {}}, "/users/{id}/reset": {"post": {}}, "/jobs": {"get": {}}}}`,
 	}
 }
 
@@ -245,6 +246,25 @@ var fixtures = []fixture{
 	}, "api/openapi/policy.yaml", `section "stepUp" must be a list`},
 	{"policy.yaml missing", "A13", func(f map[string]string) { delete(f, "api/openapi/policy.yaml") },
 		"api/openapi/policy.yaml", "policy.yaml is missing"},
+
+	{"duplicate anonymous section in flow style", "A13", func(f map[string]string) {
+		f["api/openapi/policy.yaml"] += "anonymous: [{operation: deleteAllUsers}]\n"
+	}, "api/openapi/policy.yaml", `duplicate mapping key "anonymous"`},
+	{"duplicate field inside a policy entry", "A13", func(f map[string]string) {
+		repl(f, "api/openapi/policy.yaml", "  - operation: listJobs\n", "  - operation: listJobs\n    operation: other\n")
+	}, "api/openapi/policy.yaml", `duplicate mapping key "operation"`},
+	{"duplicate paths key in a module file", "A1", func(f map[string]string) {
+		f["api/openapi/modules/users.yaml"] += "paths:\n  /hidden:\n    get:\n      operationId: hidden\n      tags: [users]\n"
+	}, "api/openapi/modules/users.yaml", `duplicate mapping key "paths"`},
+	{"anonymous entry citing an AN row that does not exist", "A13", func(f map[string]string) {
+		repl(f, "api/openapi/policy.yaml", "    ref: AN-1\n    gate: none", "    ref: AN-99\n    gate: none")
+	}, "api/openapi/policy.yaml", "AN-99 is not a row"},
+	{"anonymous entry citing only a TM token", "A13", func(f map[string]string) {
+		repl(f, "api/openapi/policy.yaml", "    ref: AN-1\n    gate: none", "    ref: TM-D16\n    gate: none")
+	}, "api/openapi/policy.yaml", "must cite the AN-n row"},
+	{"threat model with no AN rows", "self-test", func(f map[string]string) {
+		f["knowledge/development/architecture/threat-model.md"] = "# nothing\n"
+	}, "threat-model.md", "no AN-n rows"},
 
 	// --- self-test (M12): a check that finds nothing where the tree has something fails --------
 	{"bundle has operations but no tag file was read", "self-test", func(f map[string]string) {

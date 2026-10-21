@@ -92,6 +92,9 @@ func selfTest(t *tree) []Violation {
 				entries += len(l.Content)
 			}
 		}
+		if len(t.anRows) == 0 {
+			fail("knowledge/development/architecture/threat-model.md", "A13 read no AN-n rows from the threat model's anonymous allow-list: it cannot check anonymous references (is the table missing or renamed?)")
+		}
 		raw := len(policyEntryRe.FindAllString(stripComments(pf.text), -1))
 		if entries != raw {
 			fail(pf.pos, "A13 read %d entr(ies) but a plain text count finds %d list item(s): an entry sits where the check does not look (a renamed section, or a section that is not a list)", entries, raw)

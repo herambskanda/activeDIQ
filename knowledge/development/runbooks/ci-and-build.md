@@ -66,7 +66,10 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
   - A13: every `policy.yaml` entry needs `reason` and `ref` (an `AN-n` row or a `TM-` section) and
     must name something that exists (`operation`, `method`+`path`, `permission`, `schema`). Delete the
     stale entry or fix the name. An entry with `host` fails until the apihost hostname-binding table
-    exists (A4's input): do not work around it, raise it on the A4 ticket. Entry fields: `api/openapi/policy.yaml` header.
+    exists (A4's input): do not work around it, raise it on the A4 ticket. An `AN-n` must be a row of the
+    threat model's anonymous allow-list, and every `anonymous` entry cites one (`TM-` tokens are
+    shape-checked only; resolving them is a follow-up). A repeated mapping key anywhere in a file under
+    `api/openapi` fails (A13 for `policy.yaml`, A1 for the rest): merge the two blocks. Entry fields: `api/openapi/policy.yaml` header.
   - `[ADR-0004 self-test]`: the check read fewer operations or entries than a plain text count or
     the committed bundle shows. Fix the reader (`tools/fitness/api/tree.go`), never the assertion.
   - An inactive line ending `[INPUT NOW PRESENT: ... overdue]` means a subject landed (operations,
