@@ -25,8 +25,12 @@
 // Complete in one WithTenant transaction, or hands a ManagedTx body a tenant-bound TenantTx runner while
 // renewing the claim every half lease. A failed or panicking body stores a code, never text.
 //
-// Not here: running platform jobs, the leases that make Rescue and Clean singleton (DM-06),
-// schedules (DM-44), and the per-tenant quota and claim fairness that must exist before the saas
+// Worker (worker.go) is the polling loop: it claims up to Concurrency tenant jobs, runs each through the
+// Runner, backs off with jitter when the queue is empty, and ticks Rescue and Clean under their platform
+// leases. On cancellation it stops claiming, lets running bodies finish for ShutdownGrace, then cancels
+// them; a cancelled body records nothing (Interrupted) so its claim lapses and Rescue requeues it.
+//
+// Not here: running platform jobs, schedules (DM-44), and the per-tenant quota and claim fairness that must exist before the saas
 // profile hosts a second tenant (T-0214).
 package jobs
 
