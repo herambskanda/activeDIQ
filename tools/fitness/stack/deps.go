@@ -22,6 +22,7 @@ type depCache struct {
 type moduleInfo struct {
 	Dir     string
 	Version string
+	Main    bool   // a main module of the build (go list): our own code, not a dependency
 	gomod   string // go.mod of the binary's module that pulled it in
 }
 
@@ -40,7 +41,7 @@ func (c *Ctx) listDeps() *depCache {
 		d.imports[b.Name] = map[string]string{}
 		for _, t := range c.M.BuildMatrix {
 			goos, goarch, _ := strings.Cut(t, "/")
-			cmd := exec.Command("go", "list", "-deps", "-f", "{{.ImportPath}}\t{{with .Module}}{{.Path}}\t{{.Version}}\t{{.Dir}}{{end}}", b.Package)
+			cmd := exec.Command("go", "list", "-deps", "-f", "{{.ImportPath}}\t{{with .Module}}{{.Path}}\t{{.Version}}\t{{.Dir}}\t{{.Main}}{{end}}", b.Package)
 			cmd.Dir = c.abs(dir)
 			cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS="+goos, "GOARCH="+goarch)
 			var stderr bytes.Buffer
@@ -60,7 +61,7 @@ func (c *Ctx) listDeps() *depCache {
 				}
 				if len(f) >= 4 && f[1] != "" {
 					if _, seen := d.modules[f[1]]; !seen {
-						d.modules[f[1]] = moduleInfo{Dir: f[3], Version: f[2], gomod: gomod}
+						d.modules[f[1]] = moduleInfo{Dir: f[3], Version: f[2], Main: len(f) >= 5 && f[4] == "true", gomod: gomod}
 					}
 				}
 			}

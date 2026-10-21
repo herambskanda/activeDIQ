@@ -86,6 +86,11 @@ func TestFFSP1ImportBoundaries(t *testing.T) {
 	want(t, "headless browser anywhere", map[string]string{"internal/platform/export/pdf/p.go": gofile("\t_ \"github.com/chromedp/chromedp\"\n", "")}, "FF-SP1", "html-to-pdf-engine", "internal/platform/export/pdf/p.go")
 	want(t, "headless browser in go.mod", map[string]string{"go.mod": "module fx.test\n\ngo 1.27.0\n\nrequire github.com/go-rod/rod v0.1.0\n"}, "FF-SP1", "html-to-pdf-engine", "go.mod")
 	want(t, "product imports tools/", map[string]string{"internal/modules/m/m.go": gofile("\t_ \"fx.test/tools/fitness/stack\"\n", "")}, "FF-SP1", "tier-l-import", "internal/modules/m/m.go")
+	tsup := "internal/platform/store/storetest"
+	want(t, "product imports a test-support package", map[string]string{"internal/modules/m/m.go": gofile("\t_ \"fx.test/"+tsup+"\"\n", "")}, "FF-SP1", "test-support-import", "internal/modules/m/m.go")
+	want(t, "a test imports a test-support package", map[string]string{"internal/modules/m/m_test.go": gofile("\t_ \"fx.test/"+tsup+"\"\n", "")}, "", "", "")
+	want(t, "test-support package starts a process", map[string]string{tsup + "/s.go": gofile("\t\"os/exec\"\n", "var _ = exec.Command")}, "", "", "")
+	want(t, "a product package next to it may not", map[string]string{"internal/platform/store/other/s.go": gofile("\t\"os/exec\"\n", "var _ = exec.Command")}, "FF-SP1", "process-api", "internal/platform/store/other/s.go")
 	want(t, "PowerShell SDK outside the sidecar host", map[string]string{"sidecars/exchange/A.cs": "using System.Management.Automation;\n"}, "FF-SP1", "powershell-sdk", "sidecars/exchange/A.cs")
 	want(t, "PowerShell SDK in the sidecar host", map[string]string{"sidecars/pshost/A.cs": "using System.Management.Automation;\n"}, "", "", "")
 	want(t, "Rust std::process in native/", map[string]string{"native/passfilt/src/lib.rs": "use std::process::Command;\n"}, "FF-SP1", "process-api-rust", "native/passfilt/src/lib.rs")

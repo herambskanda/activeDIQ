@@ -347,10 +347,11 @@ func (c *Ctx) scanTransitive() []Violation {
 		}
 		sort.Strings(mods)
 		for _, m := range mods {
-			if c.licenceExempt(m) {
+			info := d.modules[m]
+			// The build's own main module is not a dependency; go list says which it is.
+			if info.Main || c.licenceExempt(m) {
 				continue
 			}
-			info := d.modules[m]
 			for _, lf := range licenceFiles(info.Dir) {
 				b, err := os.ReadFile(lf)
 				if err != nil {

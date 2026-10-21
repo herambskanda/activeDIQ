@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
 	"github.com/skenzeriq/activediq/migrations"
@@ -41,8 +42,15 @@ func TestSequenceStartsAtTenantsAndIsNamedByOwner(t *testing.T) {
 func TestMigration0001CreatesOnlyTenantsAndTheRoleSplit(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		d := s.NewDatabase(t)
-		d.Migrate(t)
 		ctx := context.Background()
+		// Only migration 0001: later migrations add their own tables (0002 is the job queue's).
+		first, err := migrations.FS.ReadFile("0001_tenant_tenants.sql")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := d.Apply(ctx, fstest.MapFS{"0001_tenant_tenants.sql": {Data: first}}); err != nil {
+			t.Fatal(err)
+		}
 		c, err := d.Admin(ctx)
 		if err != nil {
 			t.Fatal(err)
