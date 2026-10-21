@@ -51,6 +51,15 @@ type Decision struct {
 // Limiter applies the rate class of the operation (rule 10): per source IP before authentication
 // (step 3) and per principal after it (step 10).
 type Limiter interface {
+	// AllowIP meters the request against the per-IP bucket of class. ip is the source host as
+	// apihost resolved it, unvalidated. The adapter must never key a bucket by the raw string.
+	// It derives the key as threat model §7.8 ("The per-IP key is a network prefix") requires:
+	// parse with net/netip, strip the zone, unmap IPv4-mapped IPv6, and key 64:ff9b::/96 by
+	// its embedded IPv4. It then masks IPv4 to /32 and IPv6 to /64 by default. The host
+	// configuration may set IPv4 to /24../32 and IPv6 to /48../64; anything else fails startup.
+	// Keying IPv6 by full address would hand one /64 2^64 buckets. Unparseable sources share one
+	// bucket per class. When the bucket table is full, new keys share one overflow bucket per
+	// class, which throttles them and never admits them unlimited.
 	AllowIP(ctx context.Context, class, ip string) (Decision, error)
 	AllowPrincipal(ctx context.Context, class string, p Principal) (Decision, error)
 }

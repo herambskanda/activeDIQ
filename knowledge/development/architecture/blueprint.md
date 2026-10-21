@@ -885,7 +885,8 @@ section summarises it; if the two disagree, the ADR wins. Build detail: [api-pip
   redirect and callback routes (AN-3), the `fleet` gRPC gateway on its own mTLS listener (AN-6) and
   [M4] the edge tunnel router's SSPR routes (AN-7). They are declared in `policy.yaml`
   `nonApiRoutes`; anything else served is a document operation. The anonymous JSON operations
-  (first-run setup AN-4, TOTP enrolment AN-5, [M4] SSPR AN-7) are operations with
+  (health `getLiveness` and `getReadiness` AN-1, first-run setup AN-4, TOTP enrolment AN-5,
+  [M4] SSPR AN-7, break-glass sign-in AN-8, the sign-in second factor AN-10) are operations with
   `x-permission: anonymous` and a `policy.anonymous` row.
 - **One generator, one router, one on-ramp** (rules 4, 5). `tools/gen/api` (in-house; no
   oapi-codegen) emits every Go type, decoder, validator and per-tag `Handlers` interface plus `Bind`.

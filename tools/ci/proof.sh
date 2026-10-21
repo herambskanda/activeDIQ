@@ -521,6 +521,8 @@ must_pass "eslint on the real sources" npm --prefix web run --silent lint
 genapi="$tmp/genapi"; go build -o "$genapi" ./tools/gen/api
 ar="$tmp/apirepo"; mkdir -p "$ar/internal/platform"
 cp -R api "$ar/api"; cp -R internal/platform/apihost "$ar/internal/platform/apihost"
+# generated per-tag server packages (internal/platform/<tag>/api, internal/modules/<tag>/api) are checked too
+for d in internal/platform/*/api internal/modules/*/api; do [ -d "$d" ] || continue; mkdir -p "$ar/$(dirname "$d")"; cp -R "$d" "$ar/$d"; done
 must_pass "gen-api -check on the committed tree" "$genapi" -skip-ts -check -repo "$ar"
 printf '\n' >>"$ar/internal/platform/apihost/spec/openapi.gen.json"
 must_fail_with "gen-api -check on a hand-edited generated file" 'stale' "$genapi" -skip-ts -check -repo "$ar"

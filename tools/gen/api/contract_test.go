@@ -237,3 +237,18 @@ func TestRateClasses(t *testing.T) {
 		mustFail(t, contract(t, edit{"modules/widgets.yaml", at, "      x-activediq-limits:\n        class: metered\n        maxBodyBytes: 4096\n"}), "metered", "secret")
 	})
 }
+
+// TestAnonymousOperationMustBePlatformScope pins ADR-0002: an anonymous operation has no principal,
+// so it cannot be tenant scope until a hostname binding exists.
+func TestAnonymousOperationMustBePlatformScope(t *testing.T) {
+	const at = "      x-permission: gadgets.read\n"
+	anon := "      x-permission: anonymous\n      x-activediq-anonymous: AN-1\n"
+	t.Run("platform", func(t *testing.T) {
+		if err := contract(t, append(addGadgets(""), edit{"modules/gadgets.yaml", at, anon + "      x-activediq-scope: platform\n"})...); err != nil {
+			t.Fatalf("platform-scope anonymous operation refused: %v", err)
+		}
+	})
+	t.Run("tenant", func(t *testing.T) {
+		mustFail(t, contract(t, append(addGadgets(""), edit{"modules/gadgets.yaml", at, anon})...), "anonymous operation has no tenant source", "x-activediq-scope: platform")
+	})
+}

@@ -55,7 +55,6 @@ func (u *unit) emitOperation(f *gofile, op *Operation) {
 	u.claim(n+"Input", "operation "+op.ID)
 	u.claim(n+"Output", "operation "+op.ID)
 	ah := strings.TrimSuffix(f.use(u.cfg.ApihostImport), ".")
-	jt := strings.TrimSuffix(f.use(pJSONTxt), ".")
 	type pfield struct {
 		Go   string
 		P    *Param
@@ -148,9 +147,9 @@ func (u *unit) emitOperation(f *gofile, op *Operation) {
 	}
 	if op.Body != nil && !op.Body.Binary {
 		if op.Body.Required {
-			f.p("\tin.Body.Validate(%s.Pointer(\"\"), errs)\n", jt)
+			f.p("\tin.Body.Validate(%s.Pointer(\"\"), errs)\n", strings.TrimSuffix(f.use(pJSONTxt), "."))
 		} else {
-			f.p("\tif in.Body != nil {\n\t\tin.Body.Validate(%s.Pointer(\"\"), errs)\n\t}\n", jt)
+			f.p("\tif in.Body != nil {\n\t\tin.Body.Validate(%s.Pointer(\"\"), errs)\n\t}\n", strings.TrimSuffix(f.use(pJSONTxt), "."))
 		}
 	}
 	f.p("}\n\n")
