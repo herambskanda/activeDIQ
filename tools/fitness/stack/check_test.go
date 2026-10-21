@@ -525,14 +525,6 @@ func TestF4TransitiveCopyleftInAShippedBinary(t *testing.T) {
 		f.write("knowledge/business/licensing/open-source-license-register.md", registerText+"| D (`example.com/deep`) | GPL | t | Embedded | No | **Clear** |\n")
 		none(t, f.run("F4", true))
 	})
-	t.Run("the shipped binary's own module licence is not a dependency's", func(t *testing.T) {
-		f := newFixture(t)
-		f.write("go.mod", goModRequiring("example.com/good"))
-		localModule(f, "example.com/good", "MIT License\n")
-		f.write("LICENSE", "Business Source License 1.1\n")
-		f.write("cmd/server/main.go", "package main\n\nimport _ \"example.com/good\"\n\nfunc main() {}\n")
-		none(t, f.run("F4", true))
-	})
 	t.Run("a declared licence exception is honoured", func(t *testing.T) {
 		f := newFixture(t)
 		f.write("go.mod", goModRequiring("example.com/good"))

@@ -351,9 +351,6 @@ func (c *Ctx) scanTransitive() []Violation {
 				continue
 			}
 			info := d.modules[m]
-			if info.Main {
-				continue // first-party: our own LICENSE (BUSL 1.1, D-0018) is not a dependency's
-			}
 			for _, lf := range licenceFiles(info.Dir) {
 				b, err := os.ReadFile(lf)
 				if err != nil {
