@@ -34,7 +34,9 @@ web/src/api/schema.gen.d.ts                              paths and components (o
 | `api/openapi/policy.yaml`, `.vacuum.yaml` | the generator's policy and the house vacuum ruleset (`make lint-api`) | hand |
 | `tools/gen/api/` | the generator (`go run ./tools/gen/api`; `-check`, `-skip-ts`, `-repo`) | hand |
 | `internal/platform/apihost/apitypes/` | hand-written runtime the generated code stands on: `Opt`, `Presence`, `Union`, `Problem`, `ViolationOf`, scalars | hand |
-| `internal/platform/apihost/route.go` | the minimal route types the generated route rows use (the router itself is a later ticket) | hand |
+| `internal/platform/apihost/route.go` | the route types the generated route rows use | hand |
+| `internal/platform/apihost/{build,chain,body,render,ports,document,policy}.go` | `Build` (checks routes against the embedded document and policy), the fixed middleware chain, capped body read and strict JSON pass, problem and response rendering, the ports `compose/server` injects, and the exported `HostBindings` table | hand |
+| `internal/platform/secret/secretjson/` | `Decode`, the one decode path for API bodies; only apihost calls it (FF-SP2) | hand |
 | `tools/apitools/` | its own Go module: `tool` directives for vacuum and oasdiff; never linked into a shipped binary (stack manifest exception, ADR-0004) | hand |
 | `web/src/api/client.ts` | the one hand-written client file (openapi-fetch over the generated `paths`); ESLint forbids any other API call (rule 12) | hand |
 
