@@ -6,6 +6,7 @@ paths:
       summary: Is the process alive
       description: Answers 200 while the process can serve a request. Status only; it never reports a version, a configuration value or a dependency.
       x-permission: anonymous
+      x-activediq-scope: platform
       x-activediq-anonymous: AN-1
       x-activediq-stability: stable
       x-activediq-limits:
@@ -29,6 +30,7 @@ paths:
       summary: Is the service ready to take traffic
       description: Answers 200 when the service can take traffic and the not-ready problem otherwise. Status only; it never names which dependency failed.
       x-permission: anonymous
+      x-activediq-scope: platform
       x-activediq-anonymous: AN-1
       x-activediq-stability: stable
       x-activediq-limits:

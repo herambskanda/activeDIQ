@@ -87,7 +87,7 @@ func Bind(h Handlers) apihost.TagHandlers {
 	return apihost.NewTagHandlers("platform.health",
 		apihost.NewRoute(apihost.RouteMeta{
 			OperationID: "getLiveness", Tag: "platform.health", Method: "GET", Path: "/health/live",
-			Permission: "anonymous", Anonymous: "AN-1", Scope: "tenant", Stability: "stable", Deprecated: false, Sunset: "",
+			Permission: "anonymous", Anonymous: "AN-1", Scope: "platform", Stability: "stable", Deprecated: false, Sunset: "",
 			Class: "anonymous", MaxBody: 1048576, Body: apihost.BodyNone, MediaType: "", Secret: false,
 		},
 			func() apihost.Input { return new(GetLivenessInput) },
@@ -103,7 +103,7 @@ func Bind(h Handlers) apihost.TagHandlers {
 			}),
 		apihost.NewRoute(apihost.RouteMeta{
 			OperationID: "getReadiness", Tag: "platform.health", Method: "GET", Path: "/health/ready",
-			Permission: "anonymous", Anonymous: "AN-1", Scope: "tenant", Stability: "stable", Deprecated: false, Sunset: "",
+			Permission: "anonymous", Anonymous: "AN-1", Scope: "platform", Stability: "stable", Deprecated: false, Sunset: "",
 			Class: "anonymous", MaxBody: 1048576, Body: apihost.BodyNone, MediaType: "", Secret: false,
 		},
 			func() apihost.Input { return new(GetReadinessInput) },

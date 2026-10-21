@@ -793,6 +793,7 @@
         "x-activediq-limits": {
           "class": "anonymous"
         },
+        "x-activediq-scope": "platform",
         "x-activediq-stability": "stable",
         "x-permission": "anonymous"
       }
@@ -831,6 +832,7 @@
         "x-activediq-limits": {
           "class": "anonymous"
         },
+        "x-activediq-scope": "platform",
         "x-activediq-stability": "stable",
         "x-permission": "anonymous"
       }
