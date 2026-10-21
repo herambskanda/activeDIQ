@@ -1,6 +1,6 @@
 ---
 title: Lessons learned
-updated: 2026-10-02
+updated: 2026-10-21
 budget: 120 lines
 ---
 
@@ -9,6 +9,8 @@ budget: 120 lines
 Gotchas that cost time. Newest first. `date · lesson · source`.
 
 ## Tooling and Claude Code (verified on 2.1.287)
+- 2026-10-21 · ADR follow-on lists cite ticket IDs from the old board numbering (ADR-0004: T-0069, T-0086, T-0151), and only some were carried over, so T-0017 blocked on a dependency that did not exist → when an ADR or note names a T-id, `ticket show` it first; if it is missing, the PM re-cuts the chain and maps old IDs to new ones. (T-0017, T-0031)
+- 2026-10-21 · The auto-mode classifier denies `git reset --hard` and `checkout main -- .`, so a worker whose branch commits main had already superseded blocked twice → drop superseded commits with `git revert --no-edit <shas>` then `git merge main` (non-destructive; check that `git diff main HEAD` is empty). (T-0001, T-0021)
 - 2026-10-02 · Ticket ACs, body, summary and parity cannot change after `ticket new`. `ticket set` changes only priority, owner, epic, milestone, effort_override, tags, depends_on and decisions → get the ACs right before creating. Afterwards, amend with a note that starts "AC AMENDMENT (binding…)", or split into a new ticket. (T-0031 rework)
 - 2026-10-02 · A grooming note said "do not touch store", but the dependency it named (River) needs the pgx pool and pgx.Tx that only store holds (ADR-0002 T5), so T-0084 blocked on its first run → before binding a "do not touch X" scope, check the library's entry points (constructor and transaction types) against the package boundaries. (T-0084 → T-0209)
 - 2026-10-02 · When a plan creates dozens of tickets, a hand check missed 4 whose dependency closure lacked ADR-0001/0002 → before advancing, script it over `ticket list --json`: every product-code ticket's transitive depends_on includes T-0002 and T-0003, with no cycles. (T-0031 review)
