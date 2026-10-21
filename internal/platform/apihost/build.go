@@ -23,6 +23,13 @@ type Option func(*Server)
 // it is slog.Default().
 func WithLogger(l *slog.Logger) Option { return func(s *Server) { s.log = l } }
 
+// WithBodyBudget sets the total bytes of request-body buffers the router may hold at once across
+// all in-flight requests (default DefaultBodyBudget). A request whose buffer does not fit is
+// refused with 429 and Retry-After before anything is allocated. It must be positive.
+func WithBodyBudget(bytes int64) Option {
+	return func(s *Server) { s.budget = newBodyBudget(bytes) }
+}
+
 // Server is the built API router. It is an http.Handler that answers every path with either a
 // route of the document or a problem.
 type Server struct {
@@ -32,6 +39,7 @@ type Server struct {
 	policy    Policy
 	rows      []RouteInfo
 	unmounted []string
+	budget    *bodyBudget
 }
 
 // RouteInfo describes one mounted route, for the route-table probes of fitness-api (A4).
@@ -67,6 +75,11 @@ func Build(doc Document, tags []TagHandlers, policy Policy, catalogue Permission
 	}
 	var errs []error
 	fail := func(format string, a ...any) { errs = append(errs, fmt.Errorf("apihost: "+format, a...)) }
+	if s.budget == nil {
+		s.budget = newBodyBudget(DefaultBodyBudget)
+	} else if s.budget.total <= 0 {
+		fail("the body budget must be positive")
+	}
 
 	if ports.Authn == nil || ports.Authz == nil || ports.Limits == nil || ports.StepUp == nil {
 		fail("every port (Authn, Authz, Limits, StepUp) must be set")

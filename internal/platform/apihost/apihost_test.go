@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,8 +25,15 @@ type fakePorts struct {
 	authnErr, csrfErr, authzErr      error
 	allow, stepFresh                 bool
 	ipDeny, principalDeny            bool
+	mu                               sync.Mutex
 	calls                            []string
 	lastPerm, lastScope, lastIPClass string
+}
+
+func (f *fakePorts) record(c string) {
+	f.mu.Lock()
+	f.calls = append(f.calls, c)
+	f.mu.Unlock()
 }
 
 func newPorts() *fakePorts {
@@ -33,29 +41,31 @@ func newPorts() *fakePorts {
 }
 
 func (f *fakePorts) Authenticate(*http.Request) (apihost.Principal, error) {
-	f.calls = append(f.calls, "authn")
+	f.record("authn")
 	return f.principal, f.authnErr
 }
 func (f *fakePorts) CheckCSRF(*http.Request, apihost.Principal) error {
-	f.calls = append(f.calls, "csrf")
+	f.record("csrf")
 	return f.csrfErr
 }
 func (f *fakePorts) Allow(_ context.Context, _ apihost.Principal, perm, scope string) (bool, error) {
-	f.calls = append(f.calls, "authz")
+	f.record("authz")
+	f.mu.Lock()
 	f.lastPerm, f.lastScope = perm, scope
+	f.mu.Unlock()
 	return f.allow, f.authzErr
 }
 func (f *fakePorts) AllowIP(_ context.Context, class, _ string) (apihost.Decision, error) {
-	f.calls = append(f.calls, "ip")
+	f.record("ip")
 	f.lastIPClass = class
 	return apihost.Decision{Allowed: !f.ipDeny, RetryAfter: 1500 * time.Millisecond}, nil
 }
 func (f *fakePorts) AllowPrincipal(context.Context, string, apihost.Principal) (apihost.Decision, error) {
-	f.calls = append(f.calls, "limit")
+	f.record("limit")
 	return apihost.Decision{Allowed: !f.principalDeny, RetryAfter: time.Second}, nil
 }
 func (f *fakePorts) Fresh(context.Context, apihost.Principal) (bool, error) {
-	f.calls = append(f.calls, "stepup")
+	f.record("stepup")
 	return f.stepFresh, nil
 }
 func (f *fakePorts) ports() apihost.Ports {
@@ -128,12 +138,16 @@ type row struct {
 	meta apihost.RouteMeta
 	call func(context.Context, apihost.Input) (apihost.Response, error)
 	in   *input
+	mu   sync.Mutex
 }
 
 func (r *row) route() apihost.Route {
 	return apihost.NewRoute(r.meta, func() apihost.Input {
-		r.in = &input{hasBody: r.meta.Body == apihost.BodyJSON || r.meta.Body == apihost.BodyMergePatch}
-		return r.in
+		in := &input{hasBody: r.meta.Body == apihost.BodyJSON || r.meta.Body == apihost.BodyMergePatch}
+		r.mu.Lock()
+		r.in = in
+		r.mu.Unlock()
+		return in
 	}, func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
 		if r.call == nil {
 			return resp{status: 200, body: map[string]string{"ok": "yes"}}, nil

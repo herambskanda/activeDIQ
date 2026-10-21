@@ -150,9 +150,13 @@ func (s *Server) routeHandler(rt Route, boundHost string) http.Handler {
 		// 13. buffer, validate and decode.
 		in := rt.NewInput()
 		var buf []byte
+		var reserved int64
 		defer func() { // 16. secret clean-up, on panic too
 			in.DestroySecrets()
 			clear(buf)
+			if reserved > 0 {
+				s.budget.release(reserved) // only after the buffer is cleared
+			}
 		}()
 		req := &Request{PathValue: r.PathValue, Query: query, Header: r.Header}
 		var errs apitypes.Errors
@@ -164,6 +168,14 @@ func (s *Server) routeHandler(rt Route, boundHost string) http.Handler {
 		switch {
 		case hasBody:
 			var err error
+			// Reserve the buffer's bytes before allocating it; refuse, never queue.
+			size := reserveSize(r.ContentLength, meta.MaxBody)
+			if !s.budget.tryAcquire(size) {
+				w.Header().Set("Retry-After", "1")
+				fail(apitypes.RateLimited("the server is holding too many request bodies; retry shortly"))
+				return
+			}
+			reserved = size
 			if buf, err = readBody(r, meta.MaxBody); err != nil {
 				if errors.Is(err, errTooLarge) {
 					fail(apitypes.PayloadTooLarge(""))
