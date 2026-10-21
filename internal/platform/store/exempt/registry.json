@@ -4,6 +4,11 @@
       "table": "public.tenants",
       "reason": "The list of tenants is what a tenant context is chosen from and carries the MSP hierarchy, so it cannot hold a tenant_id or an RLS policy (ADR-0002). Any tenant transaction can read it, so only its owning package may name it in SQL.",
       "owner": "internal/platform/tenant"
+    },
+    {
+      "table": "public.jobs",
+      "reason": "The job queue must be claimable across every tenant's work, so a job row cannot sit under a per-tenant RLS policy; tenant_id is null only for a registered platform kind. The jobs_guard trigger makes the database refuse a job enqueued for a tenant other than the transaction's context (ADR-0001 E3, ADR-0002 Jobs row, DM-43). Any tenant transaction can read it, so only its owning package may name it in SQL.",
+      "owner": "internal/platform/jobs"
     }
   ],
   "securityDefiner": [],
@@ -14,6 +19,34 @@
       "reason": "First-run bootstrap creates the install's first tenant before any tenant exists, so it runs outside a tenant context under WithPlatform and mints the tenant ID (ADR-0002 rules 4 and 5).",
       "withPlatform": true,
       "mintsTenantID": true
+    },
+    {
+      "package": "internal/platform/jobs",
+      "function": "Claim",
+      "reason": "Claim must see every tenant's runnable jobs, so it runs outside a tenant context under WithPlatform; the caller then runs each body in the job's own tenant (ADR-0002 Jobs row).",
+      "withPlatform": true,
+      "mintsTenantID": false
+    },
+    {
+      "package": "internal/platform/jobs",
+      "function": "Rescue",
+      "reason": "The rescuer re-queues running jobs of any tenant whose claim lapsed, so it runs under WithPlatform (ADR-0002 Jobs row).",
+      "withPlatform": true,
+      "mintsTenantID": false
+    },
+    {
+      "package": "internal/platform/jobs",
+      "function": "Clean",
+      "reason": "The cleaner deletes finished jobs of any tenant after their retention period, so it runs under WithPlatform (ADR-0002 Jobs row).",
+      "withPlatform": true,
+      "mintsTenantID": false
+    },
+    {
+      "package": "internal/platform/jobs",
+      "function": "env.platform",
+      "reason": "Test helper: opens a platform-scope transaction so the queue's tests can prove what a no-context transaction may and may not do (cross-tenant enqueue, fenced recording, SKIP LOCKED). It is in a _test.go file and ships in no binary.",
+      "withPlatform": true,
+      "mintsTenantID": false
     }
   ],
   "platformJobs": [],

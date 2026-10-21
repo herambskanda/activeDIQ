@@ -1142,6 +1142,11 @@ queue is our own table, `jobs`, and every access goes through `store`.
 - **Arguments** are typed references only, at most 4 KiB (T5 `job-args-reference`, T-0213).
   Per-tenant quota and claim fairness come before the `saas` profile hosts a second tenant
   (T-0214).
+- **Built (T-0002).** Migration `0002_jobs_jobs.sql` (the table, its checks, the unique-key index and the
+  `jobs_guard` trigger, enabled `ALWAYS`) and `internal/platform/jobs`: `Enqueue`, `Cancel`, `Claim`,
+  `Complete`, `Fail`, `Discard`, `Renew`, `Rescue`, `Clean`. The guard raises SQLSTATE `AD403`, which the
+  package maps to `ErrCrossTenant`. Still to come: the kind registry and the wrapper (`WithTenant` or
+  `ManagedTx`), the platform leases that make rescuer and cleaner singleton (DM-06), schedules (DM-44).
 
 **Job kinds** (EP-5, all tenant-carrying, all `ManagedTx`). The OperationItem is the system of
 record; a job is only a driver.
