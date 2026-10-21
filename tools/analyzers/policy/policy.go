@@ -55,7 +55,7 @@ var UnitHomes = map[string][]string{
 	"attr.filetime":   {Attr},
 	"attr.gentime":    {Attr},
 	"attr.flags":      {Attr},
-	"attr.unicodepwd": {Secret},
+	"attr.unicodepwd": {Secret, Attr + "/unicodepwd"}, // Secret and secretjson are part of the unit (safe-primitives §8: "incl. Secret, SecureConn"); the codec package joins them when built
 	"psx":             {Psx},
 	"pslit":           {Pslit},
 	"proc":            {Proc},
