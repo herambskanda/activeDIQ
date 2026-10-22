@@ -91,6 +91,7 @@ func scanGo(rel string, src []byte, module string, checks map[string]bool, out *
 		g.checkImportBans()
 		g.checkSymbols()
 		g.checkTLS()
+		g.checkJSONEscape()
 		g.checkLiterals()
 		g.checkFeaturePackages()
 	}
@@ -246,21 +247,35 @@ func (g *goFile) checkSymbols() {
 		}
 		return true
 	})
-	// Encoder.SetEscapeHTML(false): API responses keep encoding/json's HTML escaping (§12.5 rule 7).
-	if !g.isTool && !g.isTest {
-		ast.Inspect(g.file, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
+}
+
+// checkJSONEscape bans jsontext.EscapeForHTML / EscapeForJS with anything but the literal true: API
+// responses keep their HTML and JS escaping (§12.5 rule 7). A non-constant argument is banned too,
+// because it can be false at run time.
+func (g *goFile) checkJSONEscape() {
+	if g.isTool || g.isTest {
+		return
+	}
+	ast.Inspect(g.file, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || (sel.Sel.Name != "EscapeForHTML" && sel.Sel.Name != "EscapeForJS") {
+			return true
+		}
+		if id, ok := sel.X.(*ast.Ident); !ok || g.imports[id.Name] != "encoding/json/jsontext" {
+			return true
+		}
+		if len(call.Args) == 1 {
+			if id, ok := call.Args[0].(*ast.Ident); ok && id.Name == "true" {
 				return true
 			}
-			if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "SetEscapeHTML" && len(call.Args) == 1 {
-				if id, ok := call.Args[0].(*ast.Ident); ok && id.Name == "false" {
-					g.add("FF-SP2", "json-escape-html-off", call.Pos(), "SetEscapeHTML(false) is banned in product code: JSON responses keep their HTML escaping ("+refP7+".5 rule 7)")
-				}
-			}
-			return true
-		})
-	}
+		}
+		g.add("FF-SP2", "json-escape-off", call.Pos(), "jsontext."+sel.Sel.Name+" must be called with the literal true in product code: JSON responses keep their HTML and JS escaping ("+refP7+".5 rule 7)")
+		return true
+	})
 }
 
 // checkTLS bans verification bypasses everywhere: tests and tier L included (§2.1, §5.6).
