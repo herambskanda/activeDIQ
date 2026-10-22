@@ -69,3 +69,33 @@ func TestConfigNeverPrintsDSN(t *testing.T) {
 		t.Errorf("slog output lacks redaction marker: %s", buf.String())
 	}
 }
+
+func TestLoadAPISettings(t *testing.T) {
+	c, err := config.Load(env(nil))
+	if err != nil || c.APIAddr != config.DefaultAPIAddr || c.APIBodyBudget != 64<<20 {
+		t.Fatalf("defaults: %+v, %v", c, err)
+	}
+	c, err = config.Load(env(map[string]string{config.EnvAPIAddr: "127.0.0.1:9", config.EnvAPIBodyBudget: "1048576"}))
+	if err != nil || c.APIAddr != "127.0.0.1:9" || c.APIBodyBudget != 1<<20 {
+		t.Fatalf("explicit: %+v, %v", c, err)
+	}
+	for _, v := range []string{"0", "-5", "lots", "1.5"} {
+		if _, err := config.Load(env(map[string]string{config.EnvAPIBodyBudget: v})); err == nil {
+			t.Errorf("body budget %q must fail startup", v)
+		}
+	}
+}
+
+func TestAPIAddrLoopbackOnly(t *testing.T) {
+	for _, a := range []string{"127.0.0.1:0", "127.0.0.2:8080", "[::1]:8080", "localhost:8080"} {
+		if _, err := config.Load(env(map[string]string{config.EnvAPIAddr: a})); err != nil {
+			t.Errorf("%q must be accepted: %v", a, err)
+		}
+	}
+	for _, a := range []string{"0.0.0.0:9", ":8080", "[::]:8080", "10.0.0.5:8080", "example.com:8080", "8080"} {
+		_, err := config.Load(env(map[string]string{config.EnvAPIAddr: a}))
+		if err == nil || !strings.Contains(err.Error(), config.EnvAPIAddr) || !strings.Contains(err.Error(), "T-0065") {
+			t.Errorf("%q must be refused naming the variable and T-0065: %v", a, err)
+		}
+	}
+}
