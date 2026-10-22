@@ -72,7 +72,7 @@ func syntacticImports(root, module string, entered map[string]bool) error {
 			if !strings.HasSuffix(rel, ".go") || scanned[rel] {
 				return nil
 			}
-			if inRootSkipped(rel) && !underEntered(rel, entered) {
+			if isSkippedPath(rel) && !underEntered(rel, entered) {
 				return nil
 			}
 			scanned[rel] = true
@@ -128,14 +128,14 @@ func loadedDirs(root, goos string, entered map[string]bool) error {
 	var product []*packages.Package
 	for _, p := range pkgs {
 		if files := pkgFiles(p); len(files) > 0 {
-			if r, ok := rel(files[0]); ok && !inRootSkipped(r) {
+			if r, ok := rel(files[0]); ok && !isSkippedPath(r) {
 				product = append(product, p)
 			}
 		}
 	}
 	packages.Visit(product, nil, func(p *packages.Package) {
 		for _, f := range pkgFiles(p) {
-			if r, ok := rel(f); ok && inRootSkipped(r) {
+			if r, ok := rel(f); ok && isSkippedPath(r) {
 				entered[filepath.ToSlash(filepath.Dir(r))] = true
 			}
 		}
@@ -208,7 +208,7 @@ func newResolver(root, module string) (*resolver, error) {
 				return err
 			}
 			if d.IsDir() {
-				if n := d.Name(); n == ".git" || n == "node_modules" || n == "testdata" {
+				if n := d.Name(); n == ".git" || n == "node_modules" {
 					return fs.SkipDir
 				}
 				return nil
@@ -258,7 +258,7 @@ func (r *resolver) resolve(path string) (string, bool) {
 				rel = strings.TrimPrefix(rest, "/")
 			}
 		}
-		if inRootSkipped(rel + "/x") {
+		if isSkippedPath(rel + "/x") {
 			return rel, true
 		}
 		return "", false
