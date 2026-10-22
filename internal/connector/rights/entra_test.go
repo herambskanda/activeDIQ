@@ -46,7 +46,7 @@ func newRig(t *testing.T, perms ...string) *rig {
 		TenantID: tenantID, ClientID: clientID, SPID: spID, AppObjectID: appObj,
 		ServicePrincipals: map[string]graph.ServicePrincipal{spID: {ID: spID, AppID: clientID, DisplayName: "activeDIQ"}},
 		Assignments:       map[string][]graph.AppRoleAssignment{},
-		KeyCredentials:    []graph.KeyCredential{{KeyID: gid(900), CustomKeyIdentifier: sum[:], Type: "AsymmetricX509Cert", Usage: "Verify"}},
+		KeyCredentials:    []graph.KeyCredential{{KeyID: gid(900), CustomKeyIdentifier: sum[:], Key: cred.Cert.Raw, Type: "AsymmetricX509Cert", Usage: "Verify"}},
 		Owners:            map[string][]graph.DirectoryObject{},
 	}
 	srv := graphtest.New(t, tn, cred)
@@ -326,7 +326,7 @@ func TestExtraKeyCredentialsSecretsAndOwnersFlagged(t *testing.T) { // AC4
 	now := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	tn.KeyCredentials = append(tn.KeyCredentials, graph.KeyCredential{KeyID: gid(901), CustomKeyIdentifier: []byte("attacker-thumb"), Type: "AsymmetricX509Cert", StartDateTime: now, EndDateTime: now.Add(24 * time.Hour)})
 	sp := tn.ServicePrincipals[spID]
-	sp.KeyCredentials = []graph.KeyCredential{{KeyID: gid(902), CustomKeyIdentifier: r.thumb, Type: "AsymmetricX509Cert"}} // even the held thumbprint is extra here
+	sp.KeyCredentials = []graph.KeyCredential{{KeyID: gid(902), CustomKeyIdentifier: r.thumb, Key: r.srv.T.KeyCredentials[0].Key, Type: "AsymmetricX509Cert"}} // even the held thumbprint is extra here
 	sp.PasswordCredentials = []graph.PasswordCredential{{KeyID: gid(903), StartDateTime: now, EndDateTime: now.Add(time.Hour)}}
 	tn.ServicePrincipals[spID] = sp
 	tn.PasswordCredentials = []graph.PasswordCredential{{KeyID: gid(904)}}
@@ -455,4 +455,109 @@ func TestFindingsHoldIdentifiersOnly(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestSpoofedCustomKeyIdentifierIsExtra(t *testing.T) {
+	r := newRig(t, baseline...)
+	tn := r.srv.T
+	other := graphtest.NewCredential(t)
+	// (a) a different certificate labelled with our thumbprint
+	tn.KeyCredentials = append(tn.KeyCredentials, graph.KeyCredential{KeyID: gid(901), CustomKeyIdentifier: r.thumb, Key: other.Cert.Raw})
+	// (c) a key with our label and no certificate bytes
+	tn.KeyCredentials = append(tn.KeyCredentials, graph.KeyCredential{KeyID: gid(902), CustomKeyIdentifier: r.thumb})
+	res := r.verify()
+	got := map[string]bool{}
+	for _, f := range byKind(res, v1.FindingKind_FINDING_KIND_ENTRA_EXTRA_KEY_CREDENTIAL) {
+		got[f.Qualifier] = true
+	}
+	if len(got) != 2 || !got[gid(901)] || !got[gid(902)] {
+		t.Fatalf("extra keys = %v, findings %v", got, res.Findings)
+	}
+}
+
+func TestHeldCertificateWithoutLabelIsRecognisedOnce(t *testing.T) {
+	r := newRig(t, baseline...)
+	tn := r.srv.T
+	tn.KeyCredentials[0].CustomKeyIdentifier = nil // (b)
+	if res := r.verify(); len(res.Findings) != 0 {
+		t.Fatalf("findings = %v", res.Findings)
+	}
+	// The same certificate added a second time is extra: at most one key is exempt.
+	tn.KeyCredentials = append(tn.KeyCredentials, graph.KeyCredential{KeyID: gid(905), Key: tn.KeyCredentials[0].Key})
+	res := r.verify()
+	if n := len(byKind(res, v1.FindingKind_FINDING_KIND_ENTRA_EXTRA_KEY_CREDENTIAL)); n != 1 {
+		t.Fatalf("extra keys = %d", n)
+	}
+}
+
+func roleViaGroup(r *rig, eligible bool) string {
+	grp := gid(6000)
+	def := gid(6001)
+	tn := r.srv.T
+	tn.Memberships = map[string][]graph.Group{spID: {{ID: grp, IsAssignableToRole: true}, {ID: gid(6002)}}}
+	tn.Roles = []graph.RoleAssignment{{ID: gid(6003), PrincipalID: grp, RoleDefinitionID: def, DirectoryScopeID: "/", Eligible: eligible, Role: graph.RoleDefinition{ID: def}}}
+	return grp
+}
+
+func TestRoleHeldThroughRoleAssignableGroupRefuses(t *testing.T) {
+	for _, eligible := range []bool{false, true} {
+		t.Run(fmt.Sprintf("eligible=%v", eligible), func(t *testing.T) {
+			r := newRig(t, baseline...)
+			grp := roleViaGroup(r, eligible)
+			res := r.verify()
+			fs := byKind(res, v1.FindingKind_FINDING_KIND_ENTRA_DIRECTORY_ROLE)
+			if res.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_REFUSED || len(fs) != 1 || !strings.HasSuffix(fs[0].Qualifier, "@"+grp) {
+				t.Fatalf("verdict %v findings %v", res.Verdict, res.Findings)
+			}
+		})
+	}
+}
+
+func TestRoleOnNonAssignableGroupIsNotCounted(t *testing.T) {
+	r := newRig(t, baseline...)
+	roleViaGroup(r, false)
+	r.srv.T.Memberships[spID] = []graph.Group{{ID: gid(6000)}} // not role-assignable
+	if res := r.verify(); res.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_PASS {
+		t.Fatalf("verdict %v", res.Verdict)
+	}
+}
+
+type failingGroups struct{ *graph.Client }
+
+func (failingGroups) ServicePrincipalGroups(context.Context, string) ([]graph.Group, error) {
+	return nil, errors.New("403 forbidden")
+}
+
+func TestGroupMembershipReadFailureNeverPasses(t *testing.T) {
+	r := newRig(t, baseline...)
+	res, err := rights.VerifyEntra(context.Background(), failingGroups{r.c}, rights.EntraInput{HeldThumbprint: r.thumb})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_COULD_NOT_VERIFY || res.WriteGateOpenable ||
+		res.Checks[0].Outcome != v1.CheckOutcome_CHECK_OUTCOME_COULD_NOT_VERIFY || res.Checks[0].Error == nil {
+		t.Fatalf("verdict %v checks %v", res.Verdict, res.Checks)
+	}
+}
+
+func TestOwnerReadFailureIsReported(t *testing.T) {
+	r := newRig(t, baseline...)
+	r.srv.T.Owners[appObj] = nil
+	res, err := rights.VerifyEntra(context.Background(), failingOwners{r.c}, rights.EntraInput{HeldThumbprint: r.thumb})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev5 := res.Checks[2]
+	if ev5.Outcome != v1.CheckOutcome_CHECK_OUTCOME_WARN || ev5.Error == nil || ev5.Error.Code != v1.ErrorCode_ERROR_CODE_PROVIDER_FAILURE {
+		t.Fatalf("EV5 = %v", ev5)
+	}
+	if strings.Contains(ev5.Error.Message, "forbidden") {
+		t.Fatalf("error leaks the read's message: %q", ev5.Error.Message)
+	}
+}
+
+type failingOwners struct{ *graph.Client }
+
+func (failingOwners) ApplicationOwners(context.Context, string) ([]graph.DirectoryObject, error) {
+	return nil, errors.New("403 forbidden")
 }

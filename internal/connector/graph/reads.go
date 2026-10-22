@@ -40,12 +40,15 @@ type AppRoleAssignment struct {
 type KeyCredential struct {
 	KeyID string `json:"keyId"`
 	// CustomKeyIdentifier is the certificate thumbprint (SHA-1) for certificates; Graph sends base64.
-	CustomKeyIdentifier []byte    `json:"customKeyIdentifier,omitempty"`
-	DisplayName         string    `json:"displayName"`
-	Type                string    `json:"type"`
-	Usage               string    `json:"usage"`
-	StartDateTime       time.Time `json:"startDateTime"`
-	EndDateTime         time.Time `json:"endDateTime"`
+	CustomKeyIdentifier []byte `json:"customKeyIdentifier,omitempty"`
+	// Key is the public certificate (DER). It is public material; customKeyIdentifier is a label the
+	// caller chooses and must never decide whether a key is ours.
+	Key           []byte    `json:"key,omitempty"`
+	DisplayName   string    `json:"displayName"`
+	Type          string    `json:"type"`
+	Usage         string    `json:"usage"`
+	StartDateTime time.Time `json:"startDateTime"`
+	EndDateTime   time.Time `json:"endDateTime"`
 }
 
 // PasswordCredential is a client secret's metadata. secretText and hint are secret material and are
@@ -234,6 +237,15 @@ func (c *Client) OwnDirectoryRoles(ctx context.Context) ([]RoleAssignment, error
 		return nil, err
 	}
 	return c.DirectoryRoleAssignments(ctx, sp.ID)
+}
+
+// ServicePrincipalGroups lists the groups the service principal is a direct member of. Roles
+// assigned to a role-assignable group pass to its members, so the permission check reads them too.
+func (c *Client) ServicePrincipalGroups(ctx context.Context, spID string) ([]Group, error) {
+	if err := needGUID(spID); err != nil {
+		return nil, err
+	}
+	return list[Group](ctx, c, c.endpoint(c.paged("id,displayName,isAssignableToRole"), "servicePrincipals", spID, "memberOf", "microsoft.graph.group"))
 }
 
 // RoleAssignableGroups lists groups with isAssignableToRole = true.

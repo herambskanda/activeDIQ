@@ -655,10 +655,10 @@ has the same DM-24 shape and fingerprint. **The "refused flag"** is `verdict = R
 | TM-D1 / §6.3 | Missing rights: R1 and R2 on each managed domain NC (V8, block); missing rights of enabled write families (V9, warn) | V8 or V9, `MISSING_RIGHT` | the domain NC head or managed OU | `ad` with the expected right | `expected_by` the family | `family` |
 | FR-11 | An answer that could not be computed (unreadable object, unreachable domain or GC, ACL not returned) | V7, `COULD_NOT_VERIFY`, block | the object not decided | unset | unset | the check's outcome is `COULD_NOT_VERIFY`, never `PASS` |
 | TM §6.6 | Deny-list application permission | EV3, `ENTRA_DENY_LIST_PERMISSION`, block | the service principal | `entra.app_permission` (`app_role_id`, `value`, `resource_app_id`) | `entra_assignment` (the appRoleAssignment id) | |
-| TM §6.6 | Any directory role, active or PIM-eligible | EV3, `ENTRA_DIRECTORY_ROLE`, block | the service principal | `entra.directory_role` (`role_definition_id`, `ACTIVE` or `ELIGIBLE`, `directory_scope_id`) | `entra_assignment` | |
+| TM §6.6 | Any directory role, active or PIM-eligible, held directly or through a role-assignable group the service principal belongs to (membership read; `[UNVERIFIED — lab G6]` that an SP member receives the role, so the conservative reading refuses) | EV3, `ENTRA_DIRECTORY_ROLE`, block | the service principal | `entra.directory_role` (`role_definition_id`, `ACTIVE` or `ELIGIBLE`, `directory_scope_id`) | `entra_assignment` | |
 | TM §6.6 | Permission beyond the enabled rows | EV5, `EXCESSIVE_RIGHT`, warn | the service principal | `entra.app_permission` | `entra_assignment` | |
 | TM §6.6 | Permission an enabled row needs and the app lacks | EV4, `MISSING_RIGHT`; block for the read rows the connection needs (tenant, user and group read and delta, admin pre-flight), warn for write rows | the service principal | `entra.app_permission` | `expected_by` the family | `family` |
-| TM §6.6 | Extra key credential (not the certificate this connector holds) on the application **or** its service principal | EV5, `ENTRA_EXTRA_KEY_CREDENTIAL`, warn | the holder's object id | `entra.key_credential` (`key_id`, thumbprint, type, validity, `holder` = `APPLICATION` or `SERVICE_PRINCIPAL`; never key material) | unset | |
+| TM §6.6 | Extra key credential (not the certificate this connector holds; ours is recognised only by the SHA-1 of the public certificate in `key`, never by the caller-set `customKeyIdentifier`; `[UNVERIFIED — lab G7]` whether every read path returns `key`, and a key without it is extra) on the application **or** its service principal | EV5, `ENTRA_EXTRA_KEY_CREDENTIAL`, warn | the holder's object id | `entra.key_credential` (`key_id`, thumbprint, type, validity, `holder` = `APPLICATION` or `SERVICE_PRINCIPAL`; never key material) | unset | |
 | TM §6.6 | Password credential (client secret) on the application **or** its service principal. The connector authenticates with a certificate only, so every one is extra | EV5, `ENTRA_PASSWORD_CREDENTIAL`, warn `[severity to confirm → T-0108]` | the holder's object id | `entra.password_credential` (`key_id`, validity, `holder`; never `secretText`, `hint`, `displayName` or `customKeyIdentifier`) | unset | |
 | TM §6.6 | Owner on the application or service principal | EV5, `ENTRA_OWNER`, warn | the application or service principal | `entra.owner` (owner object id) | unset | |
 
@@ -668,7 +668,7 @@ has the same DM-24 shape and fingerprint. **The "refused flag"** is `verdict = R
 - AD rights: `right.ad.object_type`, else `source.ace.trustee_group`, else `source.ace.trustee`;
 - delegation: empty;
 - Entra permission: `app_role_id`;
-- role: `role_definition_id`;
+- role: `role_definition_id`, with `@<group id>` appended when held through a role-assignable group;
 - key or password credential: `key_id` (the holder is already `object`);
 - owner: the owner id;
 - could-not-verify: empty.

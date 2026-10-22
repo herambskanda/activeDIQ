@@ -47,6 +47,8 @@ type Tenant struct {
 	Roles               []graph.RoleAssignment
 	Groups              []graph.Group
 	Members             map[string][]graph.DirectoryObject // by group id
+	// Memberships are the groups a principal (by object id) is a direct member of.
+	Memberships map[string][]graph.Group
 }
 
 // Server is the fake. Fields are guarded by mu; use the helpers.
@@ -263,6 +265,8 @@ func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
 		s.one(w, sp)
 	case len(seg) == 3 && seg[0] == "servicePrincipals" && seg[2] == "appRoleAssignments":
 		s.paged(w, r, anySlice(t.Assignments[seg[1]]))
+	case len(seg) == 4 && seg[0] == "servicePrincipals" && seg[2] == "memberOf" && seg[3] == "microsoft.graph.group":
+		s.paged(w, r, anySlice(t.Memberships[seg[1]]))
 	case len(seg) == 3 && seg[2] == "owners":
 		s.paged(w, r, anySlice(t.Owners[seg[1]]))
 	case len(seg) == 3 && seg[0] == "groups" && seg[2] == "members":

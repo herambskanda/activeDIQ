@@ -7,6 +7,7 @@ package rights
 import (
 	"bytes"
 	"context"
+	"crypto/sha1" //nolint:gosec // a certificate thumbprint is SHA-1 by definition; it identifies, it does not authenticate
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -40,6 +41,7 @@ type EntraReader interface {
 	ServicePrincipalByID(ctx context.Context, id string) (graph.ServicePrincipal, error)
 	AppRoleAssignments(ctx context.Context, spID string) ([]graph.AppRoleAssignment, error)
 	DirectoryRoleAssignments(ctx context.Context, principalID string) ([]graph.RoleAssignment, error)
+	ServicePrincipalGroups(ctx context.Context, spID string) ([]graph.Group, error)
 	ApplicationOwners(ctx context.Context, objectID string) ([]graph.DirectoryObject, error)
 	ServicePrincipalOwners(ctx context.Context, objectID string) ([]graph.DirectoryObject, error)
 }
@@ -51,8 +53,10 @@ type EntraInput struct {
 	// EnabledFamilies are the Entra families the connection has enabled; the baseline families are
 	// always added.
 	EnabledFamilies []v1.RightsFamily
-	// HeldThumbprint is the SHA-1 thumbprint of the one certificate this connector holds. Every
-	// other key credential, on the application or its service principal, is extra.
+	// HeldThumbprint is the SHA-1 thumbprint of the one certificate this connector holds. A key
+	// credential is that certificate only when the SHA-1 of its public certificate (`key`) equals
+	// it: customKeyIdentifier is a caller-chosen label and is never trusted. Every other key
+	// credential, on the application or its service principal, is extra.
 	HeldThumbprint []byte
 }
 
@@ -307,25 +311,48 @@ func (b *builder) unverified(c v1.VerificationCheck) {
 }
 
 func (b *builder) roles() {
-	roles, err := b.rd.DirectoryRoleAssignments(b.ctx, b.spText)
+	// A role held through a role-assignable group passes to its members, so the service principal's
+	// own assignments are read together with those of every group it belongs to. Whether a service
+	// principal member actually receives the role is [UNVERIFIED — lab G6]: conservative reading.
+	holders := []struct{ id, group string }{{b.spText, ""}}
+	groups, err := b.rd.ServicePrincipalGroups(b.ctx, b.spText)
 	if err != nil {
+		// Continue with the direct read so a direct role is still named, but never pass.
 		b.fail(ev3, err)
 		b.unverified(ev3)
-		return
 	}
-	for _, r := range roles {
-		kind := v1.EntraRoleAssignmentKind_ENTRA_ROLE_ASSIGNMENT_KIND_ACTIVE
-		if r.Eligible {
-			kind = v1.EntraRoleAssignmentKind_ENTRA_ROLE_ASSIGNMENT_KIND_ELIGIBLE
+	for _, g := range groups {
+		if g.IsAssignableToRole {
+			holders = append(holders, struct{ id, group string }{g.ID, g.ID})
 		}
-		defID := r.RoleDefinitionID
-		if defID == "" {
-			defID = r.Role.ID
+	}
+	for _, h := range holders {
+		roles, err := b.rd.DirectoryRoleAssignments(b.ctx, h.id)
+		if err != nil {
+			b.fail(ev3, err)
+			b.unverified(ev3)
+			continue
 		}
-		right := &v1.EntraRight{Right: &v1.EntraRight_DirectoryRole{DirectoryRole: &v1.EntraDirectoryRole{
-			RoleDefinitionId: guidOrNil(defID), Assignment: kind, DirectoryScopeId: r.DirectoryScopeID}}}
-		b.add(ev3, v1.FindingKind_FINDING_KIND_ENTRA_DIRECTORY_ROLE, v1.FindingSeverity_FINDING_SEVERITY_BLOCK,
-			CodeRole, b.sp, right, assignment(r.ID), 0, strings.ToLower(defID))
+		for _, r := range roles {
+			kind := v1.EntraRoleAssignmentKind_ENTRA_ROLE_ASSIGNMENT_KIND_ACTIVE
+			if r.Eligible {
+				kind = v1.EntraRoleAssignmentKind_ENTRA_ROLE_ASSIGNMENT_KIND_ELIGIBLE
+			}
+			defID := r.RoleDefinitionID
+			if defID == "" {
+				defID = r.Role.ID
+			}
+			right := &v1.EntraRight{Right: &v1.EntraRight_DirectoryRole{DirectoryRole: &v1.EntraDirectoryRole{
+				RoleDefinitionId: guidOrNil(defID), Assignment: kind, DirectoryScopeId: r.DirectoryScopeID}}}
+			q := strings.ToLower(defID)
+			if h.group != "" {
+				// The group is part of the qualifier so the same role through two groups, or both
+				// directly and through a group, are distinct findings.
+				q += "@" + strings.ToLower(h.group)
+			}
+			b.add(ev3, v1.FindingKind_FINDING_KIND_ENTRA_DIRECTORY_ROLE, v1.FindingSeverity_FINDING_SEVERITY_BLOCK,
+				CodeRole, b.sp, right, assignment(r.ID), 0, q)
+		}
 	}
 }
 
@@ -339,15 +366,24 @@ func (b *builder) credentials(sp graph.ServicePrincipal, app graph.Application, 
 		{v1.EntraCredentialHolder_ENTRA_CREDENTIAL_HOLDER_APPLICATION, appObj, app.KeyCredentials, app.PasswordCredentials},
 		{v1.EntraCredentialHolder_ENTRA_CREDENTIAL_HOLDER_SERVICE_PRINCIPAL, spID, sp.KeyCredentials, sp.PasswordCredentials},
 	} {
+		exempted := false
 		for _, k := range h.keys {
-			// The held certificate is the one credential allowed, and only on the application. The
-			// same thumbprint on the service principal is still extra.
-			if h.holder == v1.EntraCredentialHolder_ENTRA_CREDENTIAL_HOLDER_APPLICATION &&
-				len(held) > 0 && len(k.CustomKeyIdentifier) > 0 && bytes.Equal(k.CustomKeyIdentifier, held) {
+			// The held certificate is the one credential allowed, once, and only on the
+			// application. The same certificate on the service principal is still extra. Identity is
+			// the hash of the public certificate itself: a key without certificate bytes, or whose
+			// customKeyIdentifier merely claims our thumbprint, is extra.
+			sum := sha1.Sum(k.Key) //nolint:gosec
+			thumb := k.CustomKeyIdentifier
+			if len(k.Key) > 0 {
+				thumb = sum[:]
+			}
+			if h.holder == v1.EntraCredentialHolder_ENTRA_CREDENTIAL_HOLDER_APPLICATION && !exempted &&
+				len(held) > 0 && len(k.Key) > 0 && bytes.Equal(sum[:], held) {
+				exempted = true
 				continue
 			}
 			right := &v1.EntraRight{Right: &v1.EntraRight_KeyCredential{KeyCredential: &v1.EntraKeyCredential{
-				KeyId: guidOrNil(k.KeyID), Thumbprint: k.CustomKeyIdentifier, KeyType: k.Type,
+				KeyId: guidOrNil(k.KeyID), Thumbprint: thumb, KeyType: k.Type,
 				Start: ts(k.StartDateTime), End: ts(k.EndDateTime), Holder: h.holder}}}
 			b.add(ev5, v1.FindingKind_FINDING_KIND_ENTRA_EXTRA_KEY_CREDENTIAL, v1.FindingSeverity_FINDING_SEVERITY_WARN,
 				CodeExtraKey, h.object, right, nil, 0, strings.ToLower(k.KeyID))
@@ -395,6 +431,9 @@ func (r *Result) finish(errs map[v1.VerificationCheck]error) {
 	cnv := false
 	for _, c := range []v1.VerificationCheck{ev3, ev4, ev5} {
 		cr := &v1.CheckResult{Check: c, Outcome: v1.CheckOutcome_CHECK_OUTCOME_PASS}
+		if e := errs[c]; e != nil {
+			cr.Error = connectorError(e)
+		}
 		switch {
 		case errs[c] != nil && c != ev5:
 			// EV3 and EV4 are the blocking checks: an unanswered question never passes.
@@ -447,4 +486,33 @@ func ts(t time.Time) *timestamppb.Timestamp {
 		return nil
 	}
 	return timestamppb.New(t)
+}
+
+// connectorError maps a failed read to the contract's error. Only the graph error code and the HTTP
+// status are carried; response bodies and messages from Graph never are.
+func connectorError(err error) *v1.ConnectorError {
+	ce := &v1.ConnectorError{Code: v1.ErrorCode_ERROR_CODE_PROVIDER_FAILURE, Retry: v1.RetryAdvice_RETRY_ADVICE_SAME_DC_AFTER_BACKOFF,
+		Message: "an Entra read for this check failed"}
+	var ge *graph.Error
+	if errors.As(err, &ge) {
+		switch ge.Code {
+		case graph.CodeInsufficient:
+			ce.Code, ce.Retry = v1.ErrorCode_ERROR_CODE_INSUFFICIENT_RIGHTS, v1.RetryAdvice_RETRY_ADVICE_AFTER_OPERATOR_ACTION
+		case graph.CodeNotFound:
+			ce.Code, ce.Retry = v1.ErrorCode_ERROR_CODE_OBJECT_NOT_FOUND, v1.RetryAdvice_RETRY_ADVICE_NEVER
+		case graph.CodeThrottled:
+			ce.Code = v1.ErrorCode_ERROR_CODE_THROTTLED
+		case graph.CodeUnreachable:
+			ce.Code = v1.ErrorCode_ERROR_CODE_UNREACHABLE_DC
+		case graph.CodeBindFailed:
+			ce.Code, ce.Retry = v1.ErrorCode_ERROR_CODE_BIND_FAILED, v1.RetryAdvice_RETRY_ADVICE_AFTER_OPERATOR_ACTION
+		case graph.CodeTransportSec:
+			ce.Code, ce.Retry = v1.ErrorCode_ERROR_CODE_TRANSPORT_SECURITY, v1.RetryAdvice_RETRY_ADVICE_AFTER_OPERATOR_ACTION
+		}
+		if ge.HTTPStatus != 0 {
+			st := int32(ge.HTTPStatus) //nolint:gosec // HTTP status fits in int32
+			ce.ProviderResultCode = &st
+		}
+	}
+	return ce
 }
