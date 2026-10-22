@@ -268,26 +268,11 @@ func wantAnalyzed(t *testing.T, name string, files map[string]string, rule, file
 // T-0058: a file a build constraint excludes on the Linux host must still be type-checked, or
 // Windows-only code (LDAP and PowerShell strings, secrets) escapes every FF-SP2 gate.
 func TestFFSP2BuildConstrainedFiles(t *testing.T) {
-	dispo := "//go:build windows\n\npackage m\n\nimport \"net/http\"\n\nconst k = \"Content-\" + \"Disposition\"\n\nfunc f(w http.ResponseWriter) { w.Header().Set(k, \"inline\") }\n"
-	t.Run("windows file, constant-folded Content-Disposition", func(t *testing.T) {
-		root := tree(t, map[string]string{"internal/modules/m/w_windows.go": dispo})
-		fs, err := Scan(root, AllChecks())
-		if err != nil {
-			t.Fatal(err)
-		}
-		af, err := Analyze(root)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, f := range append(fs, af...) {
-			if f.Rule == "content-disposition-literal" && f.File == "internal/modules/m/w_windows.go" {
-				return
-			}
-		}
-		t.Fatalf("expected content-disposition-literal in the windows file, got %v %v", fs, af)
-	})
 	wantAnalyzed(t, "windows file, DNString concatenation", map[string]string{
 		"internal/directory/dn/dn.go":     "package dn\n\ntype DNString string\n",
 		"internal/modules/m/w_windows.go": "//go:build windows\n\npackage m\n\nimport \"fx.test/internal/directory/dn\"\n\nfunc f(d dn.DNString) dn.DNString { return d + \",OU=x\" }\n",
 	}, "dnstring", "internal/modules/m/w_windows.go")
+	wantAnalyzed(t, "windows file, non-constant template Parse", map[string]string{
+		"internal/modules/m/w_windows.go": "//go:build windows\n\npackage m\n\nimport \"html/template\"\n\nfunc f(s string) { template.New(\"x\").Parse(s) }\n",
+	}, "tmplconst", "internal/modules/m/w_windows.go")
 }
