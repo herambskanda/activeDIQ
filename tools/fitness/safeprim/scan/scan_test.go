@@ -559,3 +559,121 @@ func TestFFSP2LocalReplaceModuleIsShippedCode(t *testing.T) {
 		})
 	}
 }
+
+// T-0082: a root-level directory that skipDir normally skips is scanned once product code imports a
+// package in it, because that package ships. One fixture per root name Go can import (.claude is
+// not an importable path element), each failing FF-SP1 process-api and FF-SP3 ldap-filter-shape.
+func TestRootSkippedDirsScannedWhenImported(t *testing.T) {
+	bad := gofile("\t\"fmt\"\n\t\"os/exec\"\n", "var _ = exec.Command\n\nfunc F(x string) string { return fmt.Sprintf(\"(&(objectClass=user)(cn=%s))\", x) }")
+	for _, d := range []string{"third_party", "vendor", "garage", "factory", "knowledge", "dist"} {
+		t.Run(d, func(t *testing.T) {
+			file := d + "/p/x.go"
+			root := tree(t, map[string]string{
+				file:                bad,
+				"internal/m/m.go":   "package m\n\nimport _ \"fx.test/" + d + "/p\"\n",
+				"internal/m/doc.go": "package m\n",
+			})
+			fs, err := Scan(root, AllChecks())
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := map[string]bool{}
+			for _, f := range fs {
+				if f.File == file {
+					got[f.FF+" "+f.Rule] = true
+				}
+			}
+			if !got["FF-SP1 process-api"] || !got["FF-SP3 ldap-filter-shape"] {
+				t.Fatalf("expected FF-SP1 process-api and FF-SP3 ldap-filter-shape in %s, got %v", file, fs)
+			}
+		})
+	}
+	// Not imported by anything: still skipped.
+	want(t, "unimported third_party stays skipped", map[string]string{"third_party/p/x.go": bad, "internal/m/m.go": "package m\n"}, "", "", "")
+}
+
+// Build tags, embeds and load failures must not hide shipped code in a root-skipped directory
+// (security-architect review of T-0082, bypasses A to D and the fail-closed rule).
+func TestRootSkippedDirsBuildTagsEmbedsAndLoadFailure(t *testing.T) {
+	bad := gofile("\t\"fmt\"\n\t\"os/exec\"\n", "var _ = exec.Command\n\nfunc F(x string) string { return fmt.Sprintf(\"(&(objectClass=user)(cn=%s))\", x) }")
+	importer := "package m\n\nimport _ \"fx.test/third_party/p\"\n"
+	hits := func(t *testing.T, files map[string]string, file string, rules ...string) {
+		t.Helper()
+		fs, err := Scan(tree(t, files), AllChecks())
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := map[string]bool{}
+		for _, f := range fs {
+			if f.File == file {
+				got[f.Rule] = true
+			}
+		}
+		for _, r := range rules {
+			if !got[r] {
+				t.Fatalf("expected %s in %s, got %v", r, file, fs)
+			}
+		}
+	}
+	t.Run("A sibling _windows.go file", func(t *testing.T) {
+		hits(t, map[string]string{
+			"third_party/p/ok.go":        "package x\n",
+			"third_party/p/x_windows.go": bad,
+			"internal/m/m.go":            importer,
+		}, "third_party/p/x_windows.go", "process-api", "ldap-filter-shape")
+	})
+	t.Run("B go:build tagged file", func(t *testing.T) {
+		hits(t, map[string]string{
+			"third_party/p/ok.go": "package x\n",
+			"third_party/p/x.go":  "//go:build windows\n\n" + bad,
+			"internal/m/m.go":     importer,
+		}, "third_party/p/x.go", "process-api", "ldap-filter-shape")
+	})
+	t.Run("C importer only built on windows", func(t *testing.T) {
+		hits(t, map[string]string{
+			"third_party/p/x.go":          bad,
+			"internal/agent/a_windows.go": importer,
+		}, "third_party/p/x.go", "process-api", "ldap-filter-shape")
+	})
+	t.Run("D embedded sql", func(t *testing.T) {
+		hits(t, map[string]string{
+			"third_party/p/x.go":  "package x\n\nimport _ \"embed\"\n\n//go:embed m.sql\nvar S string\n",
+			"third_party/p/m.sql": "CREATE FUNCTION f(t text) RETURNS void AS $$\nBEGIN\n  EXECUTE 'select ' || t;\nEND;\n$$ LANGUAGE plpgsql;\n",
+			"internal/m/m.go":     importer,
+		}, "third_party/p/m.sql", "plpgsql-execute-concat")
+	})
+	// Round 2: imports mapped into a root-skipped dir by replace, nested go.mod or vendor/, whose
+	// only importer the package loads cannot see (cgo, custom tag, other arch).
+	replaceMod := "module fx.test\n\ngo 1.27.0\n\nrequire fx.lib v0.0.0\n\nreplace fx.lib => ./third_party/lib\n"
+	libFiles := func(importerName, importerSrc string) map[string]string {
+		return map[string]string{
+			"go.mod":                         replaceMod,
+			"third_party/lib/go.mod":         "module fx.lib\n\ngo 1.27.0\n",
+			"third_party/lib/x.go":           bad,
+			"internal/agent/" + importerName: importerSrc,
+		}
+	}
+	libImport := "package agent\n\nimport _ \"fx.lib\"\n"
+	t.Run("E cgo importer via replace", func(t *testing.T) {
+		hits(t, libFiles("a.go", "package agent\n\n// #include <stdio.h>\nimport \"C\"\nimport _ \"fx.lib\"\n"),
+			"third_party/lib/x.go", "process-api", "ldap-filter-shape")
+	})
+	t.Run("E2 custom-tag importer via replace", func(t *testing.T) {
+		hits(t, libFiles("a.go", "//go:build dcagent\n\n"+libImport), "third_party/lib/x.go", "process-api", "ldap-filter-shape")
+	})
+	t.Run("G arm64-only importer via replace", func(t *testing.T) {
+		hits(t, libFiles("a_arm64.go", libImport), "third_party/lib/x.go", "process-api", "ldap-filter-shape")
+	})
+	t.Run("vendor/ import from custom-tag importer", func(t *testing.T) {
+		hits(t, map[string]string{
+			"vendor/example.com/v/x.go": bad,
+			"internal/agent/a.go":       "//go:build dcagent\n\npackage agent\n\nimport _ \"example.com/v\"\n",
+		}, "vendor/example.com/v/x.go", "process-api", "ldap-filter-shape")
+	})
+	t.Run("load failure fails closed", func(t *testing.T) {
+		root := tree(t, map[string]string{"go.mod": "module fx.test\n\nrequire (\n", "internal/m/m.go": "package m\n"})
+		if _, err := Scan(root, AllChecks()); err == nil {
+			t.Fatal("expected an error from a broken go.mod, got none")
+		}
+	})
+}
