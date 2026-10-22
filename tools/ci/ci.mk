@@ -59,7 +59,7 @@ fitness-profiles: ## T-0038, ADR-0002: P1 composition boundary, P7 branch policy
 fitness-proto: ## T-0064: every proto/ file compiles (pure Go, no protoc) and the connector contract keeps its structural rules P1-P7
 	go run ./tools/fitness/proto proto
 
-fitness-safeprim: ## T-0033: safe-primitives FF-SP1 import boundaries, FF-SP2 banned APIs and analyzers (dnstring, sqlconst, secretjson, tmplconst), FF-SP3 literal shapes; the web/ half of FF-SP3 runs in lint-web
+fitness-safeprim: ## T-0033: safe-primitives FF-SP1 import boundaries, FF-SP2 banned APIs and analyzers (dnstring, sqlconst, secretjson, tmplconst, constdisp), FF-SP3 literal shapes; the web/ half of FF-SP3 runs in lint-web
 	go run ./tools/fitness/safeprim
 
 SAFEPRIM_REPORTS ?= .safeprim-reports

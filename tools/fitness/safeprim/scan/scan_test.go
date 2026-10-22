@@ -259,3 +259,58 @@ func TestSkipByLocationNotName(t *testing.T) {
 	want(t, "web/dist beside package.json", map[string]string{"web/package.json": "{}\n", "web/dist/a.go": bad}, "", "", "")
 	want(t, "root factory and knowledge", map[string]string{"factory/x.go": bad, "knowledge/y.go": bad}, "", "", "")
 }
+
+// TestFFSP2ContentDispositionFolded: the type-aware pass folds constants across files and packages
+// (T-0052), so a split Content-Disposition name fails the gate; httpx stays exempt.
+func TestFFSP2ContentDispositionFolded(t *testing.T) {
+	const rule = "content-disposition-literal"
+	run := func(t *testing.T, files map[string]string) []Finding {
+		t.Helper()
+		fs, err := Analyze(tree(t, files))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fs
+	}
+	hdr := "\t\"net/http\"\n"
+	for _, c := range []struct {
+		name  string
+		files map[string]string
+	}{
+		{"same-file concat", map[string]string{"internal/modules/m/m.go": gofile(hdr, "func f(w http.ResponseWriter) { w.Header().Set(\"Content-\"+\"Disposition\", \"inline\") }")}},
+		{"const across files", map[string]string{
+			"internal/modules/m/a.go": "package x\n\nconst P = \"Content-\"\n",
+			"internal/modules/m/b.go": gofile(hdr, "const K = P + \"Disposition\"\n\nfunc f(w http.ResponseWriter) { w.Header().Set(K, \"inline\") }"),
+		}},
+		{"const across packages", map[string]string{
+			"internal/modules/pfx/p.go": "package pfx\n\nconst Prefix = \"Content-\"\n",
+			"internal/modules/m/m.go":   gofile(hdr+"\t\"fx.test/internal/modules/pfx\"\n", "const K = pfx.Prefix + \"Disposition\"\n\nfunc f(w http.ResponseWriter) { w.Header().Set(K, \"inline\") }"),
+		}},
+		{"typed const as header map key", map[string]string{
+			"internal/modules/m/m.go": gofile(hdr, "type n string\n\nconst K n = \"content-\" + \"disposition\"\n\nfunc f(w http.ResponseWriter) { _ = w.Header()[string(K)] }"),
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var hit int
+			for _, f := range run(t, c.files) {
+				if f.FF == "FF-SP2" && f.Rule == rule {
+					hit++
+				}
+			}
+			if hit == 0 {
+				t.Fatalf("expected FF-SP2 [%s]", rule)
+			}
+		})
+	}
+	t.Run("httpx is exempt", func(t *testing.T) {
+		fs := run(t, map[string]string{
+			"internal/platform/httpx/a.go": "package httpx\n\nconst p = \"Content-\"\n",
+			"internal/platform/httpx/b.go": "package httpx\n\nconst Disp = p + \"Disposition\"\n",
+		})
+		for _, f := range fs {
+			if f.Rule == rule {
+				t.Fatalf("httpx must be exempt, got %v", f)
+			}
+		}
+	})
+}

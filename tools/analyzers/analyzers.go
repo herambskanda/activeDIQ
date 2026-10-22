@@ -5,13 +5,14 @@ package analyzers
 import (
 	"golang.org/x/tools/go/analysis"
 
+	"github.com/skenzeriq/activediq/tools/analyzers/constdisp"
 	"github.com/skenzeriq/activediq/tools/analyzers/dnstring"
 	"github.com/skenzeriq/activediq/tools/analyzers/secretjson"
 	"github.com/skenzeriq/activediq/tools/analyzers/sqlconst"
 	"github.com/skenzeriq/activediq/tools/analyzers/tmplconst"
 )
 
-// All returns dnstring, sqlconst, secretjson and tmplconst.
+// All returns dnstring, sqlconst, secretjson, tmplconst and constdisp.
 func All() []*analysis.Analyzer {
-	return []*analysis.Analyzer{dnstring.Analyzer, sqlconst.Analyzer, secretjson.Analyzer, tmplconst.Analyzer}
+	return []*analysis.Analyzer{dnstring.Analyzer, sqlconst.Analyzer, secretjson.Analyzer, tmplconst.Analyzer, constdisp.Analyzer}
 }
