@@ -85,6 +85,21 @@
   "platformJobs": [],
   "probeValues": [
     {
+      "column": "public.correlations.match",
+      "value": "sid",
+      "reason": "CHECK: match is anchor or sid; the probe row has no anchor, so sid, which needs only ad_sid (DM-20.I1)."
+    },
+    {
+      "column": "public.correlations.state",
+      "value": "broken",
+      "reason": "CHECK: a candidate correlation names its candidate_reason; the probe row has none, so a state that needs none (DM-20)."
+    },
+    {
+      "column": "public.correlations.ad_sid",
+      "value": "\\x010100000000000515000000",
+      "reason": "CHECK: a sid-matched correlation carries the AD objectSid evidence (DM-20.I1b); a 12-byte binary SID."
+    },
+    {
       "column": "public.connections.directory_identity",
       "value": "",
       "reason": "A connection is born draft with no identity: the insert guard refuses anything else (DM-10 L1, I1)."
