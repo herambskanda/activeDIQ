@@ -32,6 +32,11 @@ var testSchema = NewSchema(
 	AttrInfo{Name: "msDS-User-Account-Control-Computed", Syntax: SynInt32, Constructed: true},
 	AttrInfo{Name: "unicodePwd", OID: "1.2.840.113556.1.4.90", Syntax: SynOctet},
 	AttrInfo{Name: "customSecret", OID: "1.2.3.4.5", Syntax: SynString, Secret: true},
+	// Case-variant duplicates: the flagged entry must survive the unflagged one (T-0121).
+	AttrInfo{Name: "dupSecret", Syntax: SynString, Secret: true},
+	AttrInfo{Name: "DUPSECRET", Syntax: SynString},
+	AttrInfo{Name: "dupComputed", Syntax: SynInt32, Constructed: true},
+	AttrInfo{Name: "DUPCOMPUTED", Syntax: SynInt32},
 )
 
 // textDN stands in for P2 (internal/directory/dn, T-0102): its text is already canonical.
@@ -359,4 +364,40 @@ func FuzzFilter(f *testing.F) {
 			t.Fatalf("substring has %d structural stars, want 2: %q", got, sub)
 		}
 	})
+}
+
+func TestDuplicateNameKeepsFlags(t *testing.T) {
+	cases := map[string][]AttrInfo{
+		SecretAttribute:          {{Name: "x", Secret: true}, {Name: "X"}},
+		ConstructedNotFilterable: {{Name: "x", Constructed: true}, {Name: "X"}},
+	}
+	cases[SecretAttribute] = append(cases[SecretAttribute], []AttrInfo{{Name: "X"}, {Name: "x", Secret: true}}...)
+	for code, in := range cases {
+		sc := NewSchema(in...)
+		for _, n := range []string{"x", "X"} {
+			a, err := ParseAttrName(n, sc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Render(Present(a), sc); Code(err) != code {
+				t.Errorf("%s %q: got %v", code, n, err)
+			}
+		}
+	}
+}
+
+func TestOIDCollisionFailsClosed(t *testing.T) {
+	sc := NewSchema(
+		AttrInfo{Name: "a", OID: "1.2.3", Syntax: SynString},
+		AttrInfo{Name: "b", OID: "1.2.3", Syntax: SynString, Secret: true},
+	)
+	for _, n := range []string{"a", "b", "1.2.3"} {
+		a, err := ParseAttrName(n, sc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Render(Present(a), sc); Code(err) != SecretAttribute {
+			t.Errorf("%s: got %v", n, err)
+		}
+	}
 }

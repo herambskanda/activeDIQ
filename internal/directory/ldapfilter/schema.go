@@ -54,11 +54,28 @@ func NewSchema(attrs ...AttrInfo) *Schema {
 			a.Secret = true
 		}
 		key := strings.ToLower(a.Name)
+		if prev, dup := s.byName[key]; dup {
+			// Same ldapDisplayName in another case: merge, never replace. Fail closed, so a later
+			// unflagged duplicate cannot downgrade a Secret or Constructed entry (T-0121).
+			a.Secret = a.Secret || prev.Secret
+			a.Constructed = a.Constructed || prev.Constructed
+			if a.OID == "" {
+				a.OID = prev.OID
+			}
+			a.Name = prev.Name
+		}
 		s.byName[key] = a
 		if a.OID != "" {
 			if o, err := parseAttrGrammar(a.OID); err == nil && a.OID[0] >= '0' && a.OID[0] <= '9' {
-				if _, dup := s.byOID[o.name]; !dup {
+				if first, dup := s.byOID[o.name]; !dup {
 					s.byOID[o.name] = key
+				} else if first != key {
+					// Two names claim one OID: the first keeps the alias, but each inherits the
+					// other's Secret/Constructed so neither spelling is the weaker way in.
+					f, cur := s.byName[first], s.byName[key]
+					f.Secret, cur.Secret = f.Secret || cur.Secret, f.Secret || cur.Secret
+					f.Constructed, cur.Constructed = f.Constructed || cur.Constructed, f.Constructed || cur.Constructed
+					s.byName[first], s.byName[key] = f, cur
 				}
 			}
 		}
