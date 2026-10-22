@@ -147,6 +147,13 @@ scope.ScopedSearch(d: Delegation, f: Filter, attrs: AttrName[], page) -> Authori
 scope.ReadSecret(ref: GUIDRef, a: SecretAttr, g: SecretReadGrant, c: SecureConn) -> Secret // §3.7
 ```
 
+**Implemented (T-0101, `internal/directory/ldapfilter`):** the AST, `Render(f, schema)`, the typed values,
+`ParseAttrName`, rules 1–3, 4, 5, 6 (closed set) and 9, secrets refused by name, and vectors LF-01–LF-21, LF-27
+(typed half) and LF-28–LF-29 plus extras LF-41–LF-54 in `testdata/safe-primitives/ldapfilter.jsonl`. Constructors
+never fail; every check runs in `Render`, which takes the `Schema` (so `Render(f, sc)`, not `Render(f)`).
+`Value.DN` takes the P2 interface `DN{CanonicalString()}` until T-0102 lands. Still to build: `ParseAdminFilter`
+/ `ParseFilterAST` (LF-22–26, LF-34, LF-36) and `scope` (LF-30–33, LF-35, LF-37–40).
+
 There is no public `Search(base, …)`. The raw connector search is internal to the `scope` package
 (§3.6), so a feature cannot choose a base, a control or a port.
 

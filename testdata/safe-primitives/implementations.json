@@ -1,6 +1,15 @@
 {
   "implementations": [
     {
+      "name": "go/ldapfilter",
+      "language": "go",
+      "tier": "S",
+      "units": [
+        "ldapfilter"
+      ],
+      "package": "internal/directory/ldapfilter"
+    },
+    {
       "name": "go/attr-guid",
       "language": "go",
       "tier": "S",
@@ -77,6 +86,15 @@
     }
   ],
   "fuzz": [
+    {
+      "implementation": "go/ldapfilter",
+      "unit": "ldapfilter",
+      "target": "FuzzFilter",
+      "properties": [
+        "roundtrip",
+        "noUnescapedSpecial"
+      ]
+    },
     {
       "implementation": "go/attr-guid",
       "unit": "attr.guid",
