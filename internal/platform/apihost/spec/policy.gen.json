@@ -1,0 +1,113 @@
+{
+  "anonymous": [
+    {
+      "gate": "none",
+      "method": "GET",
+      "path": "/healthz",
+      "reason": "Liveness for load balancers and orchestrators; status only, no version or configuration detail.",
+      "ref": "AN-1"
+    },
+    {
+      "gate": "none",
+      "method": "GET",
+      "path": "/readyz",
+      "reason": "Readiness for load balancers and orchestrators; status only, no version or configuration detail.",
+      "ref": "AN-1"
+    },
+    {
+      "gate": "none",
+      "operation": "getLiveness",
+      "reason": "Liveness over the API host for clients that can reach only /api/v1; status only, no version or configuration detail.",
+      "ref": "AN-1"
+    },
+    {
+      "gate": "none",
+      "operation": "getReadiness",
+      "reason": "Readiness over the API host for clients that can reach only /api/v1; status only, no version or configuration detail.",
+      "ref": "AN-1"
+    },
+    {
+      "gate": "none",
+      "method": "GET",
+      "path": "/",
+      "reason": "The embedded console's index.html and its client-side route fallback; it never answers under /api/ or /auth/ (ADR-0004 rule 5).",
+      "ref": "AN-2"
+    },
+    {
+      "gate": "none",
+      "method": "GET",
+      "path": "/assets/{path...}",
+      "reason": "Static files of the embedded console; no data, no configuration.",
+      "ref": "AN-2"
+    },
+    {
+      "gate": "none; redirects to the configured IdP with state, nonce and PKCE (TM-F-SSO)",
+      "method": "GET",
+      "path": "/auth/sso/{idpId}/start",
+      "reason": "SSO start must be reachable before a session exists.",
+      "ref": "AN-3"
+    },
+    {
+      "gate": "signed IdP response (OIDC code with state, nonce and PKCE)",
+      "method": "GET",
+      "path": "/auth/sso/{idpId}/callback",
+      "reason": "OIDC redirect back from the IdP; yields a session, or a pending sign-in when the IdP is not MFA-asserting (AN-10).",
+      "ref": "AN-3"
+    },
+    {
+      "gate": "signed IdP response (SAML ACS, signed assertion, pinned algorithm)",
+      "method": "POST",
+      "path": "/auth/sso/{idpId}/callback",
+      "reason": "SAML assertion consumer service (HTTP-POST binding); same outcome as the OIDC callback.",
+      "ref": "AN-3"
+    }
+  ],
+  "authenticated": [],
+  "largeBodies": [],
+  "nonApiRoutes": [
+    {
+      "method": "GET",
+      "path": "/healthz",
+      "reason": "Health probe for load balancers and orchestrators, not a client API.",
+      "ref": "AN-1"
+    },
+    {
+      "method": "GET",
+      "path": "/readyz",
+      "reason": "Readiness probe for load balancers and orchestrators, not a client API.",
+      "ref": "AN-1"
+    },
+    {
+      "method": "GET",
+      "path": "/",
+      "reason": "Console index.html and client-side route fallback (never under /api/ or /auth/).",
+      "ref": "AN-2"
+    },
+    {
+      "method": "GET",
+      "path": "/assets/{path...}",
+      "reason": "Static files of the embedded console.",
+      "ref": "AN-2"
+    },
+    {
+      "method": "GET",
+      "path": "/auth/sso/{idpId}/start",
+      "reason": "Browser redirect to the IdP; not JSON.",
+      "ref": "AN-3"
+    },
+    {
+      "method": "GET",
+      "path": "/auth/sso/{idpId}/callback",
+      "reason": "OIDC redirect from the IdP; not JSON.",
+      "ref": "AN-3"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/sso/{idpId}/callback",
+      "reason": "SAML ACS form post from the IdP; not JSON.",
+      "ref": "AN-3"
+    }
+  ],
+  "secretResponses": [],
+  "stepUp": []
+}
