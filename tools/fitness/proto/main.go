@@ -25,7 +25,7 @@
 //	    expressed without the per-object Tier-0 context the connector evaluates fail-closed
 //	    (contract §8.3 F1).
 //
-// The fleet gateway's contract (package *.fleet.v1, T-0152) is not an operation contract: it has
+// The fleet gateway's contract (package activediq.fleet.v1, T-0152) is not an operation contract: it has
 // no Operation enum, one bidirectional stream and no write group, so P4, P5, P6 and P8 do not
 // apply to it. It has its own rules instead (threat model TM-TB6-T3, T6, T8, TM-F-FLEET):
 //
@@ -38,6 +38,9 @@
 //	F4  EnrollResponse carries the CA bundle the component pins (`ca_bundle_pem`) and the signed
 //	    leaf, and no field that could hold a private key.
 //	F5  no message in the package uses google.protobuf.Any, and Enroll is not a stream.
+//	F6  fleet messages reference only messages of their own package and google.protobuf.Timestamp;
+//	    F2 and F3 walk every RPC input and output transitively, so imported types cannot smuggle
+//	    a tenant or a secret in. F4 is an exact field allowlist for EnrollResponse.
 package main
 
 import (
@@ -294,9 +297,9 @@ func main() {
 	os.Exit(1)
 }
 
-// isFleet reports whether pkg is a fleet gateway contract package (activediq.fleet.v1).
+// isFleet reports whether pkg is a fleet gateway contract package (exactly activediq.fleet.v1).
 func isFleet(pkg protoreflect.FullName) bool {
-	return strings.HasSuffix(string(pkg), ".fleet.v1") || string(pkg) == "fleet.v1"
+	return pkg == "activediq.fleet.v1"
 }
 
 // secretShaped are the name fragments F3 refuses in the fleet package.
@@ -304,6 +307,9 @@ var secretShaped = []string{"password", "passwd", "pwd", "secret", "credential",
 
 // fleetSecretAllow are the only secret-shaped fields: the single-use enrollment token.
 var fleetSecretAllow = map[string]bool{"EnrollRequest.enrollment_token": true}
+
+// enrollResponseAllow is the exact field set of EnrollResponse: public material only (F4).
+var enrollResponseAllow = map[string]bool{"leaf_certificate_der": true, "ca_bundle_pem": true, "endpoints": true, "leaf_not_after": true}
 
 // lintFleet applies F1 to F5 to every fleet package among files.
 func lintFleet(files linker.Files) []Violation {
@@ -351,36 +357,59 @@ func lintFleet(files linker.Files) []Violation {
 				vs = append(vs, Violation{"F1", string(m.FullName()), "Tunnel must be bidirectional streaming (component-initiated)"})
 			}
 		}
+		// Roots: every message the package declares, plus the input and output of every RPC,
+		// walked transitively so a field of an imported type is checked like a local one.
+		var roots []protoreflect.MessageDescriptor
+		for _, f := range files {
+			if f.Package() == pkg {
+				collectMessages(f.Messages(), &roots)
+			}
+		}
+		for _, svc := range services {
+			for j := 0; j < svc.Methods().Len(); j++ {
+				roots = append(roots, svc.Methods().Get(j).Input(), svc.Methods().Get(j).Output())
+			}
+		}
+		seen := map[protoreflect.FullName]bool{}
+		for _, m := range roots {
+			walk(m, string(m.FullName()), seen, func(_ string, fd protoreflect.FieldDescriptor) {
+				parent := fd.ContainingMessage()
+				pos := string(parent.FullName()) + "." + string(fd.Name())
+				lower := strings.ToLower(string(fd.Name()))
+				if strings.Contains(lower, "tenant") {
+					vs = append(vs, Violation{"F2", pos, "the tenant comes from the certificate SAN, never from a message (ADR-0002)"})
+				}
+				if fd.Message() != nil {
+					full := fd.Message().FullName()
+					if full == "google.protobuf.Any" {
+						vs = append(vs, Violation{"F5", pos, "google.protobuf.Any is not allowed in the fleet contract"})
+					} else if full != "google.protobuf.Timestamp" && fd.Message().ParentFile().Package() != pkg {
+						vs = append(vs, Violation{"F6", pos, "fleet messages may reference only messages of their own package and google.protobuf.Timestamp, not " + string(full)})
+					}
+				}
+				key := string(parent.Name()) + "." + string(fd.Name())
+				for _, frag := range secretShaped {
+					if strings.Contains(lower, frag) && !fleetSecretAllow[key] {
+						vs = append(vs, Violation{"F3", pos, "field name looks secret-bearing (`" + frag + "`); nothing secret is pushed over fleet (TM-TB6-T6). Only the single-use enrollment token is allowed"})
+						break
+					}
+				}
+			})
+		}
 		for _, f := range files {
 			if f.Package() != pkg {
 				continue
-			}
-			var all []protoreflect.MessageDescriptor
-			collectMessages(f.Messages(), &all)
-			for _, m := range all {
-				for i := 0; i < m.Fields().Len(); i++ {
-					fd := m.Fields().Get(i)
-					pos := string(m.FullName()) + "." + string(fd.Name())
-					lower := strings.ToLower(string(fd.Name()))
-					if strings.Contains(lower, "tenant") {
-						vs = append(vs, Violation{"F2", pos, "the tenant comes from the certificate SAN, never from a message (ADR-0002)"})
-					}
-					if fd.Message() != nil && fd.Message().FullName() == "google.protobuf.Any" {
-						vs = append(vs, Violation{"F5", pos, "google.protobuf.Any is not allowed in the fleet contract"})
-					}
-					key := string(m.Name()) + "." + string(fd.Name())
-					for _, frag := range secretShaped {
-						if strings.Contains(lower, frag) && !fleetSecretAllow[key] {
-							vs = append(vs, Violation{"F3", pos, "field name looks secret-bearing (`" + frag + "`); nothing secret is pushed over fleet (TM-TB6-T6). Only the single-use enrollment token is allowed"})
-							break
-						}
-					}
-				}
 			}
 			if resp := f.Messages().ByName("EnrollResponse"); resp != nil {
 				ca := resp.Fields().ByName("ca_bundle_pem")
 				if ca == nil || ca.Kind() != protoreflect.BytesKind {
 					vs = append(vs, Violation{"F4", string(resp.FullName()), "EnrollResponse must carry the CA bundle the component pins as bytes `ca_bundle_pem` (TM-TB6-T2)"})
+				}
+				for i := 0; i < resp.Fields().Len(); i++ {
+					fd := resp.Fields().Get(i)
+					if !enrollResponseAllow[string(fd.Name())] {
+						vs = append(vs, Violation{"F4", string(resp.FullName()) + "." + string(fd.Name()), "EnrollResponse is an exact allowlist (leaf_certificate_der, ca_bundle_pem, endpoints, leaf_not_after); any other field needs a security review and an edit of this rule"})
+					}
 				}
 				if resp.Fields().ByName("leaf_certificate_der") == nil {
 					vs = append(vs, Violation{"F4", string(resp.FullName()), "EnrollResponse must carry the signed leaf as `leaf_certificate_der`"})

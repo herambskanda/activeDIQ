@@ -23,7 +23,7 @@ Threat model: §5.6 (TB6), TM-F-FLEET. Blueprint: `fleet` row (§5.1), §7.2.
 
 The service has no other RPC (TM-TB6-T8). The server mounts it alone on the fleet listener.
 
-## Rules (enforced by `fitness-proto` F1 to F5)
+## Rules (enforced by `fitness-proto` F1 to F6)
 
 - **No tenant in any message** (TM-TB6-T3, ADR-0002). Tenant and component come from the leaf
   certificate SAN, which the server sets from the enrollment token, not from the CSR.
@@ -32,6 +32,20 @@ The service has no other RPC (TM-TB6-T8). The server mounts it alone on the flee
   this kind: the single-use `EnrollRequest.enrollment_token`, and the operation bytes in
   `CallData.payload`, which fleet never reads. The private key is generated on the host; the CSR
   carries only the public key, so `EnrollResponse` has no private-key field (AC 3).
+- **Imported types cannot smuggle fields** (F2, F3, F6). The check walks every Enroll and Tunnel
+  input and output transitively; fleet messages may reference only messages of
+  `activediq.fleet.v1` and `google.protobuf.Timestamp`. `EnrollResponse` is an exact field
+  allowlist (F4: `leaf_certificate_der`, `ca_bundle_pem`, `endpoints`, `leaf_not_after`); any
+  addition fails CI and needs security review. Only the exact package `activediq.fleet.v1` is
+  treated as fleet.
+- **Tunnel dispatch (TM-TB6-T8).** The gateway dispatches only methods of the contract bound to
+  the authenticated component, in the allowed direction; anything else closes the call
+  `PERMISSION_DENIED` and is never handed to a non-fleet server. A frame on a call id the sender
+  did not open, of the wrong parity, or reuse of an open id is a protocol error that closes the
+  tunnel. `CallClose.status_message` from a component is untrusted: length-bounded, never rendered
+  or logged raw. Enforcement tests: TM-F-FLEET (T-0069).
+- **Gateway notes.** Validate that `ca_bundle_pem` holds only CERTIFICATE blocks; never log
+  `enrollment_token` or the CSR; bound `component_version` length.
 - **The CA bundle** `ca_bundle_pem` is what the component pins to verify the server (TM-TB6-T2).
 - **Contract-agnostic.** `CallOpen.method` is the full gRPC method of the bound contract
   (for example `/activediq.connector.v1.Connector/Describe`); payloads are the bound contract's
@@ -40,7 +54,7 @@ The service has no other RPC (TM-TB6-T8). The server mounts it alone on the flee
   (`call_id` 0: on the whole tunnel). Numeric limits are the gateway's, in T-0069's ticket.
 - The connector contract's rule P4 (no bidirectional streams) does not apply to this package:
   `Tunnel` is the transport the connector contract rides on, not an operation of it.
-  P4, P5, P6 and P8 apply to operation contracts only; fleet has F1 to F5 instead.
+  P4, P5, P6 and P8 apply to operation contracts only; fleet has F1 to F6 instead.
 
 ## Placement (blueprint §2 rule 1)
 

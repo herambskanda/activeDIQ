@@ -75,6 +75,14 @@ message TunnelFrame {
 // Opens a call. `method` is the full gRPC method name of the bound contract
 // (for example "/activediq.connector.v1.Connector/Describe"); fleet routes on it and never parses
 // the messages.
+//
+// Contract rules (TM-TB6-T8; enforcement tests belong to TM-F-FLEET, T-0069):
+//   - The gateway dispatches only methods of the contract bound to the authenticated component,
+//     in the allowed direction. Any other method closes the call PERMISSION_DENIED and is never
+//     handed to a non-fleet server: a connector certificate must not reach console or API
+//     services through the tunnel.
+//   - A frame on a call_id the sender did not open, of the wrong parity, or an open that reuses
+//     an open id, is a protocol error and closes the tunnel.
 message CallOpen {
   string method = 1;
   // Call deadline relative to receipt, milliseconds; 0 means none.
@@ -93,7 +101,8 @@ message CallHalfClose {}
 message CallClose {
   // google.rpc.Code number.
   int32 status_code = 1;
-  // Safe, human text. Never an internal error string (api-design: no leaked internals).
+  // Safe, human text. Never an internal error string (api-design: no leaked internals). From a
+  // component it is untrusted: the receiver bounds its length and never renders or logs it raw.
   string status_message = 2;
 }
 

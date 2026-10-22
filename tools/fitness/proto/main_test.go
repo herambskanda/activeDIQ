@@ -117,9 +117,11 @@ func TestScreamingSnake(t *testing.T) {
 	}
 }
 
+var r = strings.Replace
+
 // fleetBase is a clean fleet contract.
 const fleetBase = `syntax = "proto3";
-package x.fleet.v1;
+package activediq.fleet.v1;
 message EnrollRequest { string enrollment_token = 1; bytes csr_der = 2; }
 message EnrollResponse { bytes leaf_certificate_der = 1; bytes ca_bundle_pem = 2; }
 message TunnelFrame { uint64 call_id = 1; bytes payload = 2; }
@@ -137,7 +139,6 @@ func TestFleetCleanPasses(t *testing.T) {
 }
 
 func TestFleetViolations(t *testing.T) {
-	r := strings.Replace
 	cases := []struct{ name, rule, src string }{
 		{"F1 extra rpc", "F1", r(fleetBase, "service Fleet {", "message PingRequest {}\nservice Fleet { rpc Ping(PingRequest) returns (EnrollResponse);", 1)},
 		{"F1 tunnel not bidirectional", "F1", r(fleetBase, "rpc Tunnel(stream TunnelFrame) returns (stream TunnelFrame)", "rpc Tunnel(TunnelFrame) returns (stream TunnelFrame)", 1)},
@@ -153,7 +154,7 @@ func TestFleetViolations(t *testing.T) {
 		{"F3 nested message", "F3", r(fleetBase, "message TunnelFrame {", "message Inner { string api_key = 1; }\nmessage TunnelFrame { Inner inner = 3;", 1)},
 		{"F4 no CA bundle", "F4", r(fleetBase, "bytes ca_bundle_pem = 2;", "bytes other = 2;", 1)},
 		{"F4 no leaf", "F4", r(fleetBase, "bytes leaf_certificate_der = 1;", "bytes cert = 1;", 1)},
-		{"F5 Any", "F5", r(r(fleetBase, "package x.fleet.v1;", "package x.fleet.v1;\nimport \"google/protobuf/any.proto\";", 1), "bytes payload = 2;", "google.protobuf.Any payload = 2;", 1)},
+		{"F5 Any", "F5", r(r(fleetBase, "package activediq.fleet.v1;", "package activediq.fleet.v1;\nimport \"google/protobuf/any.proto\";", 1), "bytes payload = 2;", "google.protobuf.Any payload = 2;", 1)},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -165,5 +166,70 @@ func TestFleetViolations(t *testing.T) {
 				t.Fatalf("want a %s violation, got %q", c.rule, rules(vs))
 			}
 		})
+	}
+}
+
+// lintMany compiles several files (name -> source) in one directory.
+func lintMany(t *testing.T, srcs map[string]string) []Violation {
+	t.Helper()
+	dir := t.TempDir()
+	for n, s := range srcs {
+		p := filepath.Join(dir, n)
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(s), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files, err := Compile(dir)
+	if err != nil {
+		t.Fatalf("fixture must compile: %v", err)
+	}
+	return Lint(files)
+}
+
+const foreignCtx = `syntax = "proto3";
+package x.common.v1;
+message Ctx { string tenant_id = 1; string session_token = 2; bytes private_key_der = 3; }
+message Plain { string note = 1; }
+`
+
+// TestFleetImportedTypes: a foreign message cannot smuggle a tenant or a secret into a fleet
+// message (security-architect review of T-0152).
+func TestFleetImportedTypes(t *testing.T) {
+	imp := strings.Replace(fleetBase, "package activediq.fleet.v1;", "package activediq.fleet.v1;\nimport \"x/common.proto\";", 1)
+	cases := []struct{ name, want, src string }{
+		{"imported tenant, token and key in a response", "F2,F3,F6", r(imp, "bytes ca_bundle_pem = 2;", "bytes ca_bundle_pem = 2; x.common.v1.Ctx ctx = 3;", 1)},
+		{"imported plain message", "F6", r(imp, "bytes ca_bundle_pem = 2;", "bytes ca_bundle_pem = 2; x.common.v1.Plain plain = 3;", 1)},
+		{"imported type nested in a frame", "F6", r(imp, "bytes payload = 2;", "bytes payload = 2; x.common.v1.Plain plain = 3;", 1)},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			vs := lintMany(t, map[string]string{"f.proto": c.src, "x/common.proto": foreignCtx})
+			got := rules(vs)
+			for _, w := range strings.Split(c.want, ",") {
+				if !strings.Contains(got, w) {
+					t.Fatalf("want %s, got %q", w, got)
+				}
+			}
+		})
+	}
+}
+
+func TestFleetEnrollResponseAllowlist(t *testing.T) {
+	vs, err := lint(t, r(fleetBase, "bytes ca_bundle_pem = 2;", "bytes ca_bundle_pem = 2; bytes leaf_pkcs12 = 3;", 1))
+	if err != nil || !strings.Contains(rules(vs), "F4") {
+		t.Fatalf("want F4, got %q (%v)", rules(vs), err)
+	}
+}
+
+// TestFleetExactPackage: only activediq.fleet.v1 gets the fleet rules; look-alikes are checked as
+// operation contracts (P4 refuses their bidirectional stream).
+func TestFleetExactPackage(t *testing.T) {
+	src := strings.Replace(fleetBase, "package activediq.fleet.v1;", "package activediq.connector.fleet.v1;", 1)
+	vs, err := lint(t, src)
+	if err != nil || !strings.Contains(rules(vs), "P4") || strings.Contains(rules(vs), "F") {
+		t.Fatalf("want P rules only, got %q (%v)", rules(vs), err)
 	}
 }
