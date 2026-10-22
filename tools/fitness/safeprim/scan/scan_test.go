@@ -270,8 +270,14 @@ func TestNodeModulesScannedWhereGoCanBuildIt(t *testing.T) {
 	files := map[string]string{f: bad, "cmd/srv/main.go": "package main\n\nimport _ \"fx.test/internal/node_modules/p\"\n\nfunc main() {}\n"}
 	want(t, "FF-SP3 in internal/node_modules/p", files, "FF-SP3", "ldap-filter-shape", f)
 	want(t, "FF-SP1 in internal/node_modules/p", files, "FF-SP1", "process-api", f)
-	want(t, "web/node_modules beside package.json is not scanned", map[string]string{"web/package.json": "{}\n", "web/node_modules/dep/x.go": bad}, "", "", "")
-	want(t, "nested node_modules inside web/node_modules", map[string]string{"web/package.json": "{}\n", "web/node_modules/a/node_modules/b/x.go": bad}, "", "", "")
+	// web/package.json exists in the real repository: node_modules beside it is still Go-buildable.
+	web := map[string]string{"web/package.json": "{}\n", "web/node_modules/dep/x.go": bad, "cmd/srv/main.go": "package main\n\nimport _ \"fx.test/web/node_modules/dep\"\n\nfunc main() {}\n"}
+	want(t, "FF-SP3 in web/node_modules/dep", web, "FF-SP3", "ldap-filter-shape", "web/node_modules/dep/x.go")
+	want(t, "FF-SP1 in web/node_modules/dep", web, "FF-SP1", "process-api", "web/node_modules/dep/x.go")
+	want(t, "nested node_modules inside web/node_modules", map[string]string{"web/package.json": "{}\n", "web/node_modules/a/node_modules/b/x.go": bad}, "FF-SP3", "ldap-filter-shape", "web/node_modules/a/node_modules/b/x.go")
+	want(t, "dep with its own go.mod is a separate module", map[string]string{"web/package.json": "{}\n", "web/node_modules/dep/go.mod": "module other\n", "web/node_modules/dep/x.go": bad}, "", "", "")
+	want(t, "non-Go content under web/node_modules is not scanned", map[string]string{"web/package.json": "{}\n", "web/node_modules/dep/x.cs": "using System.Diagnostics;\nclass C { void F() { Process.Start(\"x\"); } }\n", "web/node_modules/dep/x.sql": "SELECT 1;\n"}, "", "", "")
+	want(t, "foo.package.json is not a package.json", map[string]string{"web/foo.package.json": "{}\n", "web/dist/x.go": bad}, "FF-SP3", "ldap-filter-shape", "web/dist/x.go")
 }
 
 // wantAnalyzed asserts that Analyze (the type-aware passes, one run per Targets entry) reports rule in file.

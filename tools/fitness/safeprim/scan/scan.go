@@ -44,13 +44,14 @@ type Checks map[string]bool
 func AllChecks() Checks { return Checks{"FF-SP1": true, "FF-SP2": true, "FF-SP3": true} }
 
 // skipDir reports directories that hold no product code. Only names that can never be a product
-// package are skipped at any depth (.git and the Go testdata convention). node_modules is not one of them: Go does not ignore it, so
-// internal/node_modules/p is an importable product package (T-0083). It is skipped only beside a
-// package.json, where npm installed it. Every other
-// skip is tied to where that directory really is: repository-level working trees at the root, and
-// build output only beside the project file that produces it (bin and obj beside a .csproj, target
-// beside Cargo.toml, dist beside package.json). A product package that happens to be called target,
-// bin or obj, such as internal/modules/target, is therefore scanned.
+// package are skipped at any depth (.git and the Go testdata convention). node_modules is not one
+// of them: Go does not ignore it, so internal/node_modules/p, or web/node_modules/dep, is an
+// importable product package (T-0083). Beside a package.json it is handled by npmDir instead:
+// non-Go content is skipped, Go files of our module are still scanned. Every other skip is tied to
+// where that directory really is: repository-level working trees at the root, and build output
+// only beside the project file that produces it (bin and obj beside a .csproj, target beside
+// Cargo.toml, dist beside package.json). A product package that happens to be called target, bin
+// or obj, such as internal/modules/target, is therefore scanned.
 func skipDir(root, rel, name string) bool {
 	switch name {
 	case ".git", "testdata":
@@ -67,9 +68,53 @@ func skipDir(root, rel, name string) bool {
 	case "bin", "obj":
 		return dirHasSuffix(parent, ".csproj", ".fsproj", ".vbproj")
 	case "target":
-		return dirHasSuffix(parent, "Cargo.toml")
-	case "dist", "node_modules":
-		return dirHasSuffix(parent, "package.json")
+		return dirHasName(parent, "Cargo.toml")
+	case "dist":
+		return dirHasName(parent, "package.json")
+	}
+	return false
+}
+
+// npmDir reports a node_modules directory directly beside a package.json.
+func npmDir(root, rel, name string) bool {
+	if name != "node_modules" {
+		return false
+	}
+	return dirHasName(filepath.Join(root, filepath.FromSlash(filepath.Dir(rel))), "package.json")
+}
+
+// scanNPM walks an npm node_modules tree. npm's own content is not product code, but Go builds any
+// .go file there that belongs to our module, so those are scanned like any other (T-0083). A
+// directory with its own go.mod is a separate module that the build never compiles: skipped.
+func scanNPM(root, rel, module string, checks Checks, out *[]Finding) error {
+	return filepath.WalkDir(filepath.Join(root, filepath.FromSlash(rel)), func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		r, rerr := filepath.Rel(root, p)
+		if rerr != nil {
+			return rerr
+		}
+		r = filepath.ToSlash(r)
+		if d.IsDir() {
+			if d.Name() == ".git" || d.Name() == "testdata" || (r != rel && dirHasName(p, "go.mod")) {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if strings.EqualFold(filepath.Ext(r), ".go") {
+			return scanFile(root, r, module, checks, out)
+		}
+		return nil
+	})
+}
+
+// dirHasName reports whether dir directly contains a file called exactly one of names.
+func dirHasName(dir string, names ...string) bool {
+	for _, n := range names {
+		if st, err := os.Stat(filepath.Join(dir, n)); err == nil && !st.IsDir() {
+			return true
+		}
 	}
 	return false
 }
@@ -109,6 +154,12 @@ func Scan(root string, checks Checks) ([]Finding, error) {
 		rel = filepath.ToSlash(rel)
 		if d.IsDir() {
 			if rel != "." && skipDir(root, rel, d.Name()) {
+				return fs.SkipDir
+			}
+			if rel != "." && npmDir(root, rel, d.Name()) {
+				if err := scanNPM(root, rel, module, checks, &out); err != nil {
+					return err
+				}
 				return fs.SkipDir
 			}
 			return nil
