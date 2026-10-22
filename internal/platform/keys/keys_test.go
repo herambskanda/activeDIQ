@@ -223,3 +223,27 @@ func TestKEKRotationKeepsOldWrapsReadable(t *testing.T) {
 }
 
 func withCtx(c keys.Context, f func(*keys.Context)) keys.Context { f(&c); return c }
+
+func TestDEKFromBytesZeroesArgument(t *testing.T) {
+	ok := bytes.Repeat([]byte{7}, keys.DEKSize)
+	if _, err := keys.DEKFromBytes(1, ok); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(ok, make([]byte, keys.DEKSize)) {
+		t.Fatal("argument not zeroed on success")
+	}
+	short := bytes.Repeat([]byte{7}, keys.DEKSize-1)
+	if _, err := keys.DEKFromBytes(1, short); err == nil {
+		t.Fatal("expected error")
+	}
+	if !bytes.Equal(short, make([]byte, keys.DEKSize-1)) {
+		t.Fatal("argument not zeroed on wrong length")
+	}
+	v0 := bytes.Repeat([]byte{7}, keys.DEKSize)
+	if _, err := keys.DEKFromBytes(0, v0); err == nil {
+		t.Fatal("expected error")
+	}
+	if !bytes.Equal(v0, make([]byte, keys.DEKSize)) {
+		t.Fatal("argument not zeroed on version 0")
+	}
+}

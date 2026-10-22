@@ -86,6 +86,8 @@ func NewDEK(version uint32) (DEK, error) {
 		return DEK{}, newErr(InvalidKey)
 	}
 	b := make([]byte, DEKSize)
+	// secret.FromBytes copies b; clear our copy so the plaintext DEK does not linger in the heap.
+	defer clear(b)
 	if _, err := rand.Read(b); err != nil {
 		return DEK{}, &Error{Code: EntropyFailure, err: err}
 	}
@@ -98,7 +100,7 @@ func DEKFromBytes(version uint32, b []byte) (DEK, error) {
 	if version == 0 || len(b) != DEKSize {
 		return DEK{}, newErr(InvalidKey)
 	}
-	return DEK{Version: version, key: secret.FromBytes(append([]byte(nil), b...))}, nil
+	return DEK{Version: version, key: secret.FromBytes(b)}, nil
 }
 
 // Destroy zeroes the key material of every copy of d.
@@ -236,7 +238,8 @@ type WrapRequest struct {
 
 // Provider is the key-provider adapter (EP-12): the one place the KEK lives. KMS-style providers pass
 // Tenant as the provider's encryption context; local providers bind it into the AEAD associated data.
-// Implementations must fail closed with ProviderUnavailable and never fall back to plaintext.
+// Implementations must fail closed, return ProviderUnavailable for transport/outage errors (not
+// UnwrapFailed, which signals a bad blob or context), and never fall back to plaintext.
 type Provider interface {
 	// Ref identifies the KEK currently used for new wraps.
 	Ref() KEKRef
