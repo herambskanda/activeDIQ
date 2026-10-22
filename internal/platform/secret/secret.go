@@ -47,34 +47,58 @@ func Code(err error) string {
 	return ""
 }
 
-// Secret is secret bytes. The zero value is the empty secret. Copying a Secret copies the slice
-// header, not the bytes: Destroy zeroes the shared backing array.
-type Secret struct{ b []byte }
+// Secret is secret bytes. The zero value is the empty secret. The bytes are held only by a closure:
+// fmt does not call Format on a value it reaches through an unexported field, and it prints a slice
+// or a pointer to one with its contents (even the bad-verb path of %s on a pointer dumps &[...]),
+// but it prints a func as an address. Copying a Secret shares the closure: Destroy on any copy
+// zeroes the bytes for all of them.
+type Secret struct{ access func(destroy bool) []byte }
+
+func (s Secret) bytes() []byte {
+	if s.access == nil {
+		return nil
+	}
+	return s.access(false)
+}
 
 // FromBytes copies b into a new Secret. The caller still owns, and should zero, b.
 func FromBytes(b []byte) Secret {
 	if len(b) == 0 {
 		return Secret{}
 	}
-	return Secret{b: append(make([]byte, 0, len(b)), b...)}
+	return adopt(append(make([]byte, 0, len(b)), b...))
 }
 
 // adopt wraps a buffer the package allocated itself.
-func adopt(b []byte) Secret { return Secret{b: b} }
+func adopt(b []byte) Secret {
+	return Secret{access: func(destroy bool) []byte {
+		if destroy {
+			clear(b)
+			b = nil
+		}
+		return b
+	}}
+}
 
 // IsEmpty reports whether the Secret holds no bytes.
-func (s Secret) IsEmpty() bool { return len(s.b) == 0 }
+func (s Secret) IsEmpty() bool { return len(s.bytes()) == 0 }
 
 // Expose calls fn with the secret bytes. fn must not retain, copy into a string, or log them.
-func (s Secret) Expose(fn func(b []byte)) { fn(s.b) }
+func (s Secret) Expose(fn func(b []byte)) { fn(s.bytes()) }
 
-// Equal compares in constant time for equal lengths. Lengths are not secret here.
-func (s Secret) Equal(o Secret) bool { return subtle.ConstantTimeCompare(s.b, o.b) == 1 }
+// Equal compares in constant time for equal lengths. Lengths are not secret here. An empty Secret
+// equals nothing, itself included, so an unset stored value never authenticates an empty input.
+func (s Secret) Equal(o Secret) bool {
+	a, b := s.bytes(), o.bytes()
+	return len(a) > 0 && len(b) > 0 && subtle.ConstantTimeCompare(a, b) == 1
+}
 
 // Destroy zeroes the backing array and empties the Secret.
 func (s *Secret) Destroy() {
-	clear(s.b)
-	s.b = nil
+	if s.access != nil {
+		s.access(true)
+	}
+	s.access = nil
 }
 
 // Format prints [REDACTED] for every verb, %#v and %+v included.

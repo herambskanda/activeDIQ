@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
@@ -153,7 +154,7 @@ func TestCorpus(t *testing.T) {
 			m.Destroy()
 			return corpustest.Render("a modify was built"), nil
 		case "Redact":
-			return redact(r)
+			return redact(t, r)
 		case "MarshalJSON", "MarshalBinary":
 			s, err := testSecret(r)
 			if err != nil {
@@ -200,7 +201,7 @@ func TestCorpus(t *testing.T) {
 	})
 }
 
-func redact(r corpus.Record) (corpus.Result, error) {
+func redact(t testing.TB, r corpus.Record) (corpus.Result, error) {
 	s, err := testSecret(r)
 	if err != nil {
 		return corpus.Result{}, err
@@ -229,6 +230,8 @@ func redact(r corpus.Record) (corpus.Result, error) {
 	case "error":
 		out = fmt.Errorf("set failed: %w", errors.New(fmt.Sprint(s))).Error()
 		out = strings.TrimPrefix(out, "set failed: ")
+	case "nested-private", "pointer", "slog-json", "modify-replace", "modify-change":
+		return redactNested(t, how.Text(), s)
 	default:
 		return corpus.Result{}, errors.New("unknown how " + how.Text())
 	}
@@ -239,6 +242,57 @@ func redact(r corpus.Record) (corpus.Result, error) {
 		out = strings.TrimSuffix(strings.TrimPrefix(out, "{P:"), "}")
 	}
 	return corpustest.Render(out), nil
+}
+
+type holder struct {
+	User string
+	pw   secret.Secret
+}
+
+// redactNested renders the secret through the paths that bypass Format: an unexported field, a
+// pointer, the slog JSON handler and an encoded Modify. None of them may show the bytes, as text,
+// hex, or a decimal byte list.
+func redactNested(t testing.TB, how string, s secret.Secret) (corpus.Result, error) {
+	var subject any
+	switch how {
+	case "nested-private":
+		subject = holder{"bob", s}
+	case "pointer":
+		subject = &holder{"bob", s}
+	case "slog-json":
+		subject = holder{"bob", s}
+	default:
+		conn, err := Acquire(newLink(t, dcName, dcName), dcName)
+		if err != nil {
+			return corpus.Result{}, err
+		}
+		var m *Modify
+		if how == "modify-replace" {
+			m, err = Replace(s, conn)
+		} else {
+			m, err = Change(s, s, conn)
+		}
+		if err != nil {
+			return corpus.Result{}, err
+		}
+		defer m.Destroy()
+		subject = m
+	}
+	var outs []string
+	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%x", "%d"} {
+		outs = append(outs, fmt.Sprintf(verb, subject))
+	}
+	var buf bytes.Buffer
+	slog.New(slog.NewTextHandler(&buf, nil)).Info("m", "r", subject)
+	slog.New(slog.NewJSONHandler(&buf, nil)).Info("m", "r", subject)
+	outs = append(outs, buf.String())
+	pw := reveal(s)
+	for _, o := range outs {
+		if strings.Contains(o, pw) || strings.Contains(o, hex.EncodeToString([]byte(pw))) || strings.Contains(o, fmt.Sprint([]byte(pw))) {
+			return corpus.Result{}, errors.New("the secret leaked: " + how + " in " + o)
+		}
+	}
+	return corpustest.Render("no secret bytes in any rendering"), nil
 }
 
 // --- TLS fixtures for PW-17 and PW-18 -------------------------------------------------------
@@ -596,4 +650,32 @@ func FuzzUnicodePwd(f *testing.F) {
 			})
 		}
 	})
+}
+
+func TestEqualEmptyAuthenticatesNothing(t *testing.T) {
+	var a, b secret.Secret
+	if a.Equal(b) || a.Equal(secret.FromBytes([]byte("x"))) {
+		t.Fatal("an empty Secret must equal nothing")
+	}
+}
+
+// The Modify re-checks its connection at send time (PW-17).
+func TestModifyVerifiesAtSendTime(t *testing.T) {
+	link := newLink(t, dcName, dcName)
+	conn, err := Acquire(link, dcName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := Replace(secret.FromBytes([]byte("Pa55word!")), conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Destroy()
+	if err := m.Verify(); err != nil {
+		t.Fatalf("fresh Modify: %v", err)
+	}
+	link.gen.Add(1)
+	if got := code(m.Verify()); got != SecureConnStale {
+		t.Fatalf("after reconnect: %q", got)
+	}
 }

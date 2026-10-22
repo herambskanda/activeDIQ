@@ -11,6 +11,7 @@ package unicodepwd
 
 import (
 	"fmt"
+	"log/slog"
 	"unicode/utf8"
 
 	"github.com/skenzeriq/activediq/internal/directory/attr/codec"
@@ -104,8 +105,36 @@ type Modification struct {
 	Values [][]byte
 }
 
-// Modify is the modify request body the connector sends. Destroy it after sending.
-type Modify struct{ Mods []Modification }
+// Format prints the entry without its values: they are an encoded password.
+func (m Modification) Format(f fmt.State, _ rune) {
+	fmt.Fprintf(f, "{%s %s [%d value(s) redacted]}", m.Op, m.Attr, len(m.Values))
+}
+
+// LogValue keeps the values out of structured logs.
+func (m Modification) LogValue() slog.Value {
+	return slog.StringValue(fmt.Sprintf("%s %s [%d value(s) redacted]", m.Op, m.Attr, len(m.Values)))
+}
+
+// Modify is the modify request body the connector sends. Destroy it after sending. It remembers
+// the SecureConn it was built for: call Verify immediately before writing it (PW-17).
+type Modify struct {
+	Mods []Modification
+	conn SecureConn
+}
+
+// Verify re-checks the connection the Modify was built for. A reconnect since Replace or Change is
+// SecureConnStale. The connector must call it right before sending.
+func (m *Modify) Verify() error { return m.conn.Verify() }
+
+// Format prints the modify without its values.
+func (m *Modify) Format(f fmt.State, _ rune) {
+	fmt.Fprintf(f, "&unicodepwd.Modify{%d modification(s), values redacted}", len(m.Mods))
+}
+
+// LogValue keeps the values out of structured logs.
+func (m *Modify) LogValue() slog.Value {
+	return slog.StringValue(fmt.Sprintf("unicodepwd.Modify{%d modification(s), values redacted}", len(m.Mods)))
+}
 
 // Destroy zeroes every encoded value.
 func (m *Modify) Destroy() {
@@ -127,7 +156,7 @@ func Replace(s secret.Secret, conn SecureConn) (*Modify, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Modify{Mods: []Modification{{Op: OpReplace, Attr: Attribute, Values: [][]byte{v}}}}, nil
+	return &Modify{Mods: []Modification{{Op: OpReplace, Attr: Attribute, Values: [][]byte{v}}}, conn: conn}, nil
 }
 
 // Change is the user change: delete the old value and add the new one, in one modify.
@@ -147,7 +176,7 @@ func Change(oldPw, newPw secret.Secret, conn SecureConn) (*Modify, error) {
 	return &Modify{Mods: []Modification{
 		{Op: OpDelete, Attr: Attribute, Values: [][]byte{o}},
 		{Op: OpAdd, Attr: Attribute, Values: [][]byte{n}},
-	}}, nil
+	}, conn: conn}, nil
 }
 
 // LDAP result codes the DC uses for a password policy refusal.
