@@ -77,7 +77,7 @@ must_fail_with "fitness-modules on a platform package importing the directory do
 printf 'package kernel\n' >"$fit/internal/platform/kernel/k.go"
 must_pass "fitness-modules" go run ./tools/fitness/modules -root "$fit"
 
-# --- fitness-api (ADR-0004 A1 layout, A13 policy hygiene, self-test, inactive reporting), the real CLI
+# --- fitness-api (ADR-0004 A1, A3, A5, A7 static, A8, A10, A11, A12, A13, self-test, inactive reporting), the real CLI
 # The per-rule proofs are the tool's own tests (go test ./tools/fitness/api); this is the command line.
 fa="$tmp/fa"
 fresh_fa_tree() {
@@ -86,8 +86,14 @@ fresh_fa_tree() {
   printf 'package orders\n' >"$fa/internal/modules/orders/doc.go"
   printf 'openapi: 3.1.0\ninfo: {title: t, version: 0.0.0}\nservers: [{url: /api/v1}]\ntags:\n  - name: users\n  - name: orders\n' >"$fa/api/openapi/openapi.yaml"
   printf 'components:\n  schemas:\n    Cursor:\n      type: string\n' >"$fa/api/openapi/shared/paging.yaml"
-  printf 'paths:\n  /users:\n    get:\n      operationId: listUsers\n      tags: [users]\ncomponents:\n  schemas:\n    User:\n      type: string\n' >"$fa/api/openapi/modules/users.yaml"
-  printf 'paths:\n  /orders:\n    get:\n      operationId: listOrders\n      tags: [orders]\ncomponents:\n  schemas:\n    Order:\n      type: string\n' >"$fa/api/openapi/modules/orders.yaml"
+  printf 'paths:\n  /users:\n    get:\n      operationId: listUsers\n      tags: [users]\n      x-permission: authenticated\n      x-activediq-stability: stable\ncomponents:\n  schemas:\n    User:\n      type: string\n' >"$fa/api/openapi/modules/users.yaml"
+  printf 'paths:\n  /orders:\n    get:\n      operationId: listOrders\n      tags: [orders]\n      x-permission: orders.read\n      x-activediq-stability: stable\ncomponents:\n  schemas:\n    Order:\n      type: string\n' >"$fa/api/openapi/modules/orders.yaml"
+  printf 'components:\n  schemas:\n    Problem:\n      type: object\n  responses:\n    Validation:\n      description: invalid\n      content:\n        application/problem+json:\n          schema:\n            $ref: shared/problems.yaml#/components/schemas/Problem\n          example: {type: /problems/validation, title: invalid, status: 400}\n' >"$fa/api/openapi/shared/problems.yaml"
+  mkdir -p "$fa/web/src/api" "$fa/web/proof"
+  printf 'export interface operations {\n    listUsers: {\n    };\n    listOrders: {\n    };\n}\n' >"$fa/web/src/api/schema.gen.d.ts"
+  printf 'export {};\n' >"$fa/web/src/api/client.ts"
+  printf 'const g = ["fetch", "XMLHttpRequest", "EventSource"]; // axios, src/api exempt\nconst lit = "Literal[value=/^\\\\/api(\\\\/|$)/]";\n' >"$fa/web/eslint.config.js"
+  printf 'export const a = fetch("/x");\n' >"$fa/web/proof/api-client-violation.ts"
   printf 'anonymous: []\nauthenticated:\n  - operation: listUsers\n    ref: TM-D16\n    reason: Any signed-in principal lists users.\nnonApiRoutes: []\nsecretResponses: []\nstepUp: []\nlargeBodies: []\n' >"$fa/api/openapi/policy.yaml"
   printf '{"paths": {"/users": {"get": {}}, "/orders": {"get": {}}}}\n' >"$fa/internal/platform/apihost/spec/openapi.gen.json"
   mkdir -p "$fa/knowledge/development/architecture"
@@ -96,7 +102,7 @@ fresh_fa_tree() {
 fitapi() { go run ./tools/fitness/api -root "$fa" "$@"; }
 fresh_fa_tree
 must_pass "fitness-api on a clean contract tree" fitapi
-must_pass "fitness-api prints A1 and A13 as active and every other check as inactive (<missing input>)" bash -c "go run ./tools/fitness/api -root '$fa' | awk '/^fitness-api A(1|13) /{if (\$0 !~ / active/) bad=1} /^fitness-api A([2-9]|1[0124]) /{n++; if (\$0 !~ /inactive \(.+\)/) bad=1} END{exit (bad || n != 12)}'"
+must_pass "fitness-api prints A1, A3, A5, A7, A8, A10, A11, A12 and A13 as active and A2, A4, A6, A9, A14 as inactive (<missing input>)" bash -c "go run ./tools/fitness/api -root '$fa' | awk '/^fitness-api A(1|3|5|7|8|10|11|12|13) /{a++; if (\$0 !~ / active/) bad=1} /^fitness-api A(2|4|6|9|14) /{n++; if (\$0 !~ /inactive \(.+\)/) bad=1} END{exit (bad || n != 5 || a != 9)}'"
 must_pass "fitness-api on the repository itself lists all fourteen checks" bash -c "go run ./tools/fitness/api | grep -c '^fitness-api A' | grep -qx 14"
 fresh_fa_tree; mkdir -p "$fa/api/openapi/extra"; printf 'a: b\n' >"$fa/api/openapi/extra/stray.yaml"
 must_fail_with "fitness-api A1 on a file outside the rule 1 places" 'api/openapi/extra/stray.yaml: \[ADR-0004 A1\] outside the rule 1 places' fitapi
@@ -120,6 +126,38 @@ fresh_fa_tree; sed -i 's/^anonymous: \[\]/anonymous:\n  - method: GET\n    path:
 must_fail_with "fitness-api A13 on an anonymous entry citing a missing AN row" 'AN-99 is not a row of the threat model' fitapi
 fresh_fa_tree; rm "$fa/api/openapi/modules/users.yaml" "$fa/api/openapi/modules/orders.yaml"; printf 'openapi: 3.1.0\ninfo: {title: t, version: 0.0.0}\nservers: [{url: /api/v1}]\ntags: []\n' >"$fa/api/openapi/openapi.yaml"; printf 'anonymous: []\nauthenticated: []\nnonApiRoutes: []\nsecretResponses: []\nstepUp: []\nlargeBodies: []\n' >"$fa/api/openapi/policy.yaml"
 must_fail_with "fitness-api self-test when the bundle has operations but the check found no operation" '\[ADR-0004 self-test\] .*holds 2 operation\(s\) but A1 found 0' fitapi
+
+# One real-CLI case per check that went active with T-0017 (the fixtures are in check_static_test.go).
+fresh_fa_tree; sed -i '/x-permission/d' "$fa/api/openapi/modules/orders.yaml"
+must_fail_with "fitness-api A3 on an operation with no x-permission" '\[ADR-0004 A3\] GET /orders \(listOrders\) has no x-permission' fitapi
+fresh_fa_tree; printf 'export {};\n' >"$fa/web/src/api/fetcher.ts"
+must_fail_with "fitness-api A5 on a hand-written file in web/src/api" 'web/src/api/fetcher.ts: \[ADR-0004 A5\] only the generated files' fitapi
+fresh_fa_tree; sed -i 's/"XMLHttpRequest", //' "$fa/web/eslint.config.js"
+must_fail_with "fitness-api A5 on an ESLint config that stopped banning XMLHttpRequest" '\[ADR-0004 A5\] rule 12 no longer bans XMLHttpRequest' fitapi
+fresh_fa_tree; mkdir -p "$fa/internal/modules/users"; printf 'package users\n\nimport "encoding/json"\n\nvar _ = json.Marshal\n' >"$fa/internal/modules/users/j.go"
+must_fail_with "fitness-api A7 on an encoding/json v1 import in internal" 'internal/modules/users/j.go:3: \[ADR-0004 A7\] imports encoding/json \(v1\)' fitapi
+fresh_fa_tree; printf 'build:\n\tGOEXPERIMENT=no%sjsonv2 go build ./...\n' "" >"$fa/Makefile"
+must_fail_with "fitness-api A7 on GOEXPERIMENT containing the v1 decoder switch" 'Makefile:2: \[ADR-0004 A7\] GOEXPERIMENT contains' fitapi
+fresh_fa_tree; printf 'paths:\n  /users:\n    get:\n      operationId: listUsers\n      tags: [users]\n      x-permission: authenticated\n      x-activediq-stability: stable\n      responses:\n        "200":\n          description: ok\n          content:\n            application/json:\n              schema:\n                type: object\n                properties:\n                  adminPassword: {type: string}\n' >"$fa/api/openapi/modules/users.yaml"
+must_fail_with "fitness-api A8 on a secret-named property in a response" '\[ADR-0004 A8\] GET /users \(listUsers\) response 200 reaches property "adminPassword"' fitapi
+fresh_fa_tree; sed -i '/x-activediq-stability/d' "$fa/api/openapi/modules/orders.yaml"
+must_fail_with "fitness-api A10 on an operation with no stability" '\[ADR-0004 A10\] GET /orders \(listOrders\) has x-activediq-stability' fitapi
+fresh_fa_tree; printf 'package users\n\nimport "net/http"\n\nfunc H(w http.ResponseWriter) { http.Error(w, "x", 400) }\n' >"$fa/internal/modules/users/h.go"
+must_fail_with "fitness-api A11 on http.Error outside apihost" 'internal/modules/users/h.go:5: \[ADR-0004 A11\] http.Error in internal' fitapi
+fresh_fa_tree; sed -i 's/x-permission: orders.read/x-permission: orders.read\n      x-activediq-limits: {class: turbo}/' "$fa/api/openapi/modules/orders.yaml"
+must_fail_with "fitness-api A12 on an unknown rate class" '\[ADR-0004 A12\] GET /orders \(listOrders\) declares unknown rate class "turbo"' fitapi
+
+# A10 against main, in a throw-away git repository, with the pinned oasdiff of tools/apitools.
+fresh_fa_tree
+ln -s "$root/tools/apitools" "$fa/tools-apitools-link" && mkdir -p "$fa/tools" && mv "$fa/tools-apitools-link" "$fa/tools/apitools"
+b='{"openapi":"3.1.0","info":{"title":"t","version":"1.0.0"},"paths":{"/users":{"get":{"operationId":"listUsers","x-activediq-stability":"stable","responses":{"200":{"description":"ok"}}}},"/orders":{"get":{"operationId":"listOrders","x-activediq-stability":"stable","responses":{"200":{"description":"ok"}}}}}}'
+printf '%s\n' "$b" >"$fa/internal/platform/apihost/spec/openapi.gen.json"
+git -C "$fa" init -q -b main && git -C "$fa" add -A && git -C "$fa" -c user.name=proof -c user.email=proof@example.invalid commit -q -m base
+must_pass "fitness-api A10 on a bundle identical to main" fitapi
+b2='{"openapi":"3.1.0","info":{"title":"t","version":"1.0.0"},"paths":{"/users":{"get":{"operationId":"listUsers","x-activediq-stability":"stable","parameters":[{"name":"q","in":"query","required":true,"schema":{"type":"string"}}],"responses":{"200":{"description":"ok"}}}},"/orders":{"get":{"operationId":"listOrders","x-activediq-stability":"stable","responses":{"200":{"description":"ok"}}}}}}'
+printf '%s\n' "$b2" >"$fa/internal/platform/apihost/spec/openapi.gen.json"
+must_fail_with "fitness-api A10 on a required parameter added to a stable operation (oasdiff against main)" '\[ADR-0004 A10\] breaking change against main on a stable operation' fitapi
+rm -rf "$fa/.git"
 
 # --- fitness-operation (ADR-0005 O9, the kernel import DAG), the real CLI on throw-away trees ----
 # The throw-away tree carries a copy of the real ADR, so the proof reads the same dag block as CI.

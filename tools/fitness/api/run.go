@@ -12,16 +12,17 @@ type Report struct {
 	Lines      []string
 	Violations []Violation
 	active     int
+	partial    int // active checks that still have an inactive part
 	inactive   int
 }
 
 // Summary is the last stdout line. It names the inactive checks every time, so a green run cannot
 // be read as "the contract is fully checked".
 func (r *Report) Summary() string {
-	if r.inactive == 0 {
+	if r.inactive == 0 && r.partial == 0 {
 		return fmt.Sprintf("fitness-api: %d of 14 checks active, none inactive", r.active)
 	}
-	return fmt.Sprintf("fitness-api: %d of 14 checks active, %d INACTIVE: ADR-0004 stays ratified, not accepted, until none is", r.active, r.inactive)
+	return fmt.Sprintf("fitness-api: %d of 14 checks active (%d of them with an inactive part), %d INACTIVE: ADR-0004 stays ratified, not accepted, until none is", r.active, r.partial, r.inactive)
 }
 
 // Run loads the tree and runs the active checks named in sel (all when nil).
@@ -37,6 +38,9 @@ func Run(root string, sel map[string]bool) (*Report, error) {
 			rep.inactive++
 		} else {
 			rep.active++
+			if c.restText(root, t) != "" {
+				rep.partial++
+			}
 		}
 		rep.Lines = append(rep.Lines, c.statusLine(root, t, ran || c.run == nil))
 		if ran {

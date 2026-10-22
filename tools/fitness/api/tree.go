@@ -55,6 +55,7 @@ type operation struct {
 	tags   []string
 	perm   string
 	line   int
+	node   *yaml.Node // the operation object, for the checks that read its other members
 }
 
 type component struct {
@@ -248,7 +249,7 @@ func (t *tree) collect(f *srcFile) {
 						continue
 					}
 					od := deref(item.Content[j+1])
-					o := operation{file: f, method: method, path: p, line: item.Content[j].Line}
+					o := operation{file: f, method: method, path: p, line: item.Content[j].Line, node: od}
 					if od.Kind == yaml.MappingNode {
 						o.id = scalar(get(od, "operationId"))
 						o.perm = scalar(get(od, "x-permission"))
