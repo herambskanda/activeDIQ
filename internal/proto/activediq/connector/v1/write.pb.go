@@ -910,11 +910,14 @@ type ApplyResponse struct {
 	Tier0    *Tier0Evaluation `protobuf:"bytes,8,opt,name=tier0,proto3" json:"tier0,omitempty"`
 	// Contract v1.2 §8.1 step 9 (TM-D23 rule 11): after the write, the connector re-runs the step-7
 	// live classification on every touched object on the DC that took the write. Each object found
-	// tier0 is listed with its bases; empty when none is. A non-empty list is also written to the
-	// connector's local log (and the Windows event log on Windows hosts). The write is not undone by
-	// the connector; the pipeline's Verify records the step `verify_failed` with reason
-	// `tier0_after_write` and raises the security alert (ADR-0005 rule 7). Absent on
-	// ALREADY_APPLIED, where nothing was written.
+	// tier0 is listed with its bases; empty when none is. An object whose step-9 re-read or
+	// classification failed (DC unreachable, codec reject, SOM unreadable, any read error) counts as
+	// tier0, as at step 7, and is listed with an EMPTY `basis`: that is the "could not be classified
+	// after the write" marker. The server treats every entry, with or without a basis, the same way.
+	// A non-empty list is also written to the connector's local log and, on Windows hosts, the
+	// Windows event log. The write is not undone by the connector; the pipeline's Verify records the
+	// step `verify_failed` with reason `tier0_after_write` and raises the security alert (ADR-0005
+	// rule 7). Absent on ALREADY_APPLIED, where nothing was written.
 	Tier0AfterWrite []*Tier0Member `protobuf:"bytes,9,rep,name=tier0_after_write,json=tier0AfterWrite,proto3" json:"tier0_after_write,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache

@@ -94,8 +94,16 @@ const (
 	ErrorCode_ERROR_CODE_TIER0_REFUSED ErrorCode = 50
 	// Plan or Apply: the connector's own last VerifyConnection for this connection does not open its
 	// write gate (TM-D1, DM-10.I11): over-privileged with no covering override, could not verify,
-	// not run, failed, or too old. Nothing was written. Fixed by a passing VerifyConnection.
+	// not run, failed, too old, or a required local record could not be made durable (v1.2 §8.3a).
+	// Nothing was written. Fixed by a passing VerifyConnection.
 	ErrorCode_ERROR_CODE_ACTIVATION_REFUSED_OVERPRIVILEGED ErrorCode = 51
+	// Contract v1.2 §8.3a (TM-D23 rule 8): the connector could not make a required local record
+	// durable (the tier0_set_shrink record in the local log or, on Windows hosts, the Windows event
+	// log; or the persisted shrink baseline): disk full, permission, event-log error. Ends a
+	// VerifyConnection stream in place of `completed`: the run starts no epoch and the connector's
+	// write gate closes with WRITE_GATE_STATE_LOCAL_RECORD_FAILED. Never retried as is; fixed on the
+	// connector host, then a new VerifyConnection.
+	ErrorCode_ERROR_CODE_LOCAL_RECORD_FAILED ErrorCode = 52
 )
 
 // Enum value maps for ErrorCode.
@@ -123,6 +131,7 @@ var (
 		40: "ERROR_CODE_PROVIDER_FAILURE",
 		50: "ERROR_CODE_TIER0_REFUSED",
 		51: "ERROR_CODE_ACTIVATION_REFUSED_OVERPRIVILEGED",
+		52: "ERROR_CODE_LOCAL_RECORD_FAILED",
 	}
 	ErrorCode_value = map[string]int32{
 		"ERROR_CODE_UNSPECIFIED":                       0,
@@ -147,6 +156,7 @@ var (
 		"ERROR_CODE_PROVIDER_FAILURE":                  40,
 		"ERROR_CODE_TIER0_REFUSED":                     50,
 		"ERROR_CODE_ACTIVATION_REFUSED_OVERPRIVILEGED": 51,
+		"ERROR_CODE_LOCAL_RECORD_FAILED":               52,
 	}
 )
 
@@ -475,6 +485,9 @@ const (
 	WriteGateState_WRITE_GATE_STATE_STALE WriteGateState = 4
 	// V8 or EV4 refused: under-privilege is never overridable (FR-12).
 	WriteGateState_WRITE_GATE_STATE_INSUFFICIENT WriteGateState = 5
+	// Contract v1.2 §8.3a: a shrink record, the shrink baseline or a ratchet append to it could not be
+	// made durable. Closed until a VerifyConnection completes with every local record durable.
+	WriteGateState_WRITE_GATE_STATE_LOCAL_RECORD_FAILED WriteGateState = 6
 )
 
 // Enum value maps for WriteGateState.
@@ -486,14 +499,16 @@ var (
 		3: "WRITE_GATE_STATE_COULD_NOT_VERIFY",
 		4: "WRITE_GATE_STATE_STALE",
 		5: "WRITE_GATE_STATE_INSUFFICIENT",
+		6: "WRITE_GATE_STATE_LOCAL_RECORD_FAILED",
 	}
 	WriteGateState_value = map[string]int32{
-		"WRITE_GATE_STATE_UNSPECIFIED":      0,
-		"WRITE_GATE_STATE_OVERPRIVILEGED":   1,
-		"WRITE_GATE_STATE_NOT_VERIFIED":     2,
-		"WRITE_GATE_STATE_COULD_NOT_VERIFY": 3,
-		"WRITE_GATE_STATE_STALE":            4,
-		"WRITE_GATE_STATE_INSUFFICIENT":     5,
+		"WRITE_GATE_STATE_UNSPECIFIED":         0,
+		"WRITE_GATE_STATE_OVERPRIVILEGED":      1,
+		"WRITE_GATE_STATE_NOT_VERIFIED":        2,
+		"WRITE_GATE_STATE_COULD_NOT_VERIFY":    3,
+		"WRITE_GATE_STATE_STALE":               4,
+		"WRITE_GATE_STATE_INSUFFICIENT":        5,
+		"WRITE_GATE_STATE_LOCAL_RECORD_FAILED": 6,
 	}
 )
 
@@ -1471,7 +1486,7 @@ const file_activediq_connector_v1_errors_proto_rawDesc = "" +
 	"\x12activation_refused\x18\x13 \x01(\v20.activediq.connector.v1.ActivationRefusedDetailsH\x00R\x11activationRefused\x12U\n" +
 	"\x0etarget_changed\x18\x14 \x01(\v2,.activediq.connector.v1.TargetChangedDetailsH\x00R\rtargetChangedB\t\n" +
 	"\adetailsB\x17\n" +
-	"\x15_provider_result_code*\xff\x05\n" +
+	"\x15_provider_result_code*\xa3\x06\n" +
 	"\tErrorCode\x12\x1a\n" +
 	"\x16ERROR_CODE_UNSPECIFIED\x10\x00\x12\x1f\n" +
 	"\x1bERROR_CODE_INVALID_ARGUMENT\x10\x01\x12\x1e\n" +
@@ -1495,7 +1510,8 @@ const file_activediq_connector_v1_errors_proto_rawDesc = "" +
 	"\x17ERROR_CODE_STALE_COOKIE\x10\x1e\x12\x1f\n" +
 	"\x1bERROR_CODE_PROVIDER_FAILURE\x10(\x12\x1c\n" +
 	"\x18ERROR_CODE_TIER0_REFUSED\x102\x120\n" +
-	",ERROR_CODE_ACTIVATION_REFUSED_OVERPRIVILEGED\x103*\xec\x01\n" +
+	",ERROR_CODE_ACTIVATION_REFUSED_OVERPRIVILEGED\x103\x12\"\n" +
+	"\x1eERROR_CODE_LOCAL_RECORD_FAILED\x104*\xec\x01\n" +
 	"\vRetryAdvice\x12\x1c\n" +
 	"\x18RETRY_ADVICE_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12RETRY_ADVICE_NEVER\x10\x01\x12&\n" +
@@ -1529,14 +1545,15 @@ const file_activediq_connector_v1_errors_proto_rawDesc = "" +
 	"#TIER0_REFUSAL_STAGE_REQUEST_CONTEXT\x10\x03\x12%\n" +
 	"!TIER0_REFUSAL_STAGE_CONNECTOR_SET\x10\x04\x12#\n" +
 	"\x1fTIER0_REFUSAL_STAGE_LIVE_REREAD\x10\x05\x12,\n" +
-	"(TIER0_REFUSAL_STAGE_CONTEXT_CONTRADICTED\x10\x06*\xe0\x01\n" +
+	"(TIER0_REFUSAL_STAGE_CONTEXT_CONTRADICTED\x10\x06*\x8a\x02\n" +
 	"\x0eWriteGateState\x12 \n" +
 	"\x1cWRITE_GATE_STATE_UNSPECIFIED\x10\x00\x12#\n" +
 	"\x1fWRITE_GATE_STATE_OVERPRIVILEGED\x10\x01\x12!\n" +
 	"\x1dWRITE_GATE_STATE_NOT_VERIFIED\x10\x02\x12%\n" +
 	"!WRITE_GATE_STATE_COULD_NOT_VERIFY\x10\x03\x12\x1a\n" +
 	"\x16WRITE_GATE_STATE_STALE\x10\x04\x12!\n" +
-	"\x1dWRITE_GATE_STATE_INSUFFICIENT\x10\x05BRZPgithub.com/skenzeriq/activediq/internal/proto/activediq/connector/v1;connectorv1b\x06proto3"
+	"\x1dWRITE_GATE_STATE_INSUFFICIENT\x10\x05\x12(\n" +
+	"$WRITE_GATE_STATE_LOCAL_RECORD_FAILED\x10\x06BRZPgithub.com/skenzeriq/activediq/internal/proto/activediq/connector/v1;connectorv1b\x06proto3"
 
 var (
 	file_activediq_connector_v1_errors_proto_rawDescOnce sync.Once

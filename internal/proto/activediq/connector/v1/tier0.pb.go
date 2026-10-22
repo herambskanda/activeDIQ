@@ -662,7 +662,9 @@ func (x *Tier0Context) GetStatements() []*CorrelationStatement {
 
 // One object of a tier0 set and why it is there. Used for the connector's streamed set
 // (VerifyConnection `tier0_set`), the server's `correlated_tier0` input, and the objects found
-// tier0 after a write (ApplyResponse `tier0_after_write`).
+// tier0 after a write (ApplyResponse `tier0_after_write`). `basis` is non-empty everywhere except
+// in `tier0_after_write`, where an empty `basis` marks an object the step-9 re-read could not
+// classify (contract v1.2 §8.1 step 9); it still counts as tier0.
 type Tier0Member struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Object        *Guid                  `protobuf:"bytes,1,opt,name=object,proto3" json:"object,omitempty"`
