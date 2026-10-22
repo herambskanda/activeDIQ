@@ -124,6 +124,7 @@ export default tseslint.config(
       "safe-primitives/no-export-media-types": "error",
       "safe-primitives/no-unsafe-dom-sinks": "error",
       "safe-primitives/safe-url-attributes": "error",
+      "safe-primitives/web-odata": "error",
       "no-script-url": "error",
     },
   },

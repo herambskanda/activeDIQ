@@ -16,20 +16,22 @@ import (
 
 // Homes of the primitives (blueprint §1.1 and §7.4).
 const (
-	Connector  = "internal/connector"            // the only importer of directory protocol libraries
-	Scope      = "internal/connector/ad/scope"   // escape controls and the Global Catalog port
-	Psx        = "internal/connector/psx"        // typed PowerShell sidecar client
-	LDAPFilter = "internal/directory/ldapfilter" // P1
-	DN         = "internal/directory/dn"         // P2
-	OData      = "internal/directory/odata"      // P8
-	Attr       = "internal/directory/attr"       // P3
-	Secret     = "internal/platform/secret"      // Secret and secretjson
-	Store      = "internal/platform/store"       // data-access package: pgx, set_config, reportsql
-	Proc       = "internal/platform/proc"        // native process invocation
-	Pslit      = "internal/platform/pslit"       // PowerShell display literal
-	APIHost    = "internal/platform/apihost"     // the single caller of secretjson.Decode
-	Modules    = "internal/modules"              // server feature modules
-	AgentMods  = "internal/agentmodules"         // agent feature modules
+	Connector   = "internal/connector"                   // the only importer of directory protocol libraries
+	Scope       = "internal/connector/ad/scope"          // escape controls and the Global Catalog port
+	Psx         = "internal/connector/psx"               // typed PowerShell sidecar client
+	LDAPFilter  = "internal/directory/ldapfilter"        // P1
+	DN          = "internal/directory/dn"                // P2
+	OData       = "internal/directory/odata"             // P8
+	GraphSchema = "internal/directory/odata/graphschema" // P8 property declarations
+	Graph       = "internal/connector/graph"             // the Microsoft Graph connector
+	Attr        = "internal/directory/attr"              // P3
+	Secret      = "internal/platform/secret"             // Secret and secretjson
+	Store       = "internal/platform/store"              // data-access package: pgx, set_config, reportsql
+	Proc        = "internal/platform/proc"               // native process invocation
+	Pslit       = "internal/platform/pslit"              // PowerShell display literal
+	APIHost     = "internal/platform/apihost"            // the single caller of secretjson.Decode
+	Modules     = "internal/modules"                     // server feature modules
+	AgentMods   = "internal/agentmodules"                // agent feature modules
 
 	// Output encoders (P7). Provisional roots: matched anywhere in the tree.
 	Cellsafe  = "**/export/cellsafe"
@@ -68,6 +70,26 @@ var UnitHomes = map[string][]string{
 	"html":            {Htmlx},
 	"mail":            {Mail},
 	"pdf":             {ExportPDF},
+}
+
+// TokenURLSite names one function of the Graph connector that may use the URL and form encoders
+// because it talks to the OAuth token endpoint, which is not OData (FF-SP2 graph-url-assembly,
+// safe-primitives-odata §6). Pkg is the exact package directory, Func the function or method name.
+type TokenURLSite struct{ Pkg, Func string }
+
+// GraphTokenURL is the explicit list of token-endpoint sites. A new one is a reviewed change here.
+var GraphTokenURL = []TokenURLSite{
+	{Pkg: Graph, Func: "bearer"}, // client.go: the client-credentials POST, form body and tokenURL
+}
+
+// IsGraphTokenURL reports whether function fn of package directory rel is a listed token-endpoint site.
+func IsGraphTokenURL(rel, fn string) bool {
+	for _, s := range GraphTokenURL {
+		if s.Pkg == path.Clean(rel) && s.Func == fn {
+			return true
+		}
+	}
+	return false
 }
 
 // SidecarHost is where the .NET PowerShell SDK may be referenced.

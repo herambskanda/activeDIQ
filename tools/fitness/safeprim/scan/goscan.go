@@ -426,8 +426,18 @@ var (
 	rePSReplace   = regexp.MustCompile(`(?i)-i?c?replace\s+["']`)
 	reSQLShape    = regexp.MustCompile(`(?is)\b(?:select\b.+\bfrom|insert\s+into|update\s+[\w."]+\s+set|delete\s+from|alter\s+(?:table|role|user)|drop\s+(?:table|role|user)|create\s+(?:table|role|user|function)|truncate\s+table)\b|\bwhere\s+[\w."()]+\s*(?:=|<|>|like|ilike|in|is)\b|\border\s+by\s+[\w."]|\bset_config\s*\(`)
 	reHTMLShape   = regexp.MustCompile(`(?i)<\s*(?:td|th|tr|table|a\s|script|div|span|img|ul|li|style|iframe|svg|body|html|p>|b>)`)
-	reMailShape   = regexp.MustCompile(`(?i)(?:^|\r\n|\n)\s*(?:subject|bcc|cc|to|from|reply-to|content-type|mime-version|content-transfer-encoding):|\r\n`)
+	// OData (safe-primitives-odata §6). An option name with $ or %24 (any case) at the start of a
+	// literal or of a query segment, or the bare name followed by "=".
+	reODataOption = regexp.MustCompile(`(?i)(?:^|[?&\s])(?:\$|%24)(?:filter|search|orderby|select|expand|apply|compute|skiptoken|top)\b|(?:^|[?&])(?:filter|search|orderby|select|expand|apply|compute|skiptoken|top)=`)
+	reODataFilter = regexp.MustCompile(`(?i)\b(?:eq|ne|gt|ge|lt|le|has)\s+'|\bin\s*\(\s*'|\b(?:startswith|endswith|contains|any|all)\s*\(|'\s*\)?\s+(?:and|or)(?:\s*$|\s+\(?\s*[A-Za-z_][\w./]*\s+(?:eq|ne|gt|ge|lt|le|has|in)\b)`)
+	// An opening set(, set(' or set(prop=' piece, or a printf verb inside the key parentheses. The
+	// closing piece of a key is not matched on its own: "')" ends startswith(…) pieces too (FX-6), and
+	// every key built from text has an opening piece that is.
+	reODataKey  = regexp.MustCompile(`[A-Za-z_]\w*\(\s*(?:[A-Za-z_]\w*\s*=\s*)?'?\s*$|[A-Za-z_]\w*\(\s*(?:[A-Za-z_]\w*\s*=\s*)?'?%[-+# 0-9.]*[a-zA-Z]`)
+	reMailShape = regexp.MustCompile(`(?i)(?:^|\r\n|\n)\s*(?:subject|bcc|cc|to|from|reply-to|content-type|mime-version|content-transfer-encoding):|\r\n`)
 )
+
+var reODataBareName = regexp.MustCompile(`(?i)^\s*(?:filter|search|orderby|select|expand|apply|compute|skiptoken|top)\s*$`)
 
 var shapes = []shape{
 	{Rule: "ldap-filter-shape", Re: reFilterShape, Home: []string{policy.LDAPFilter},
@@ -442,6 +452,12 @@ var shapes = []shape{
 		Msg: "SQL text built from data; use sqlc queries and bind parameters (" + refP5 + ")"},
 	{Rule: "html-shape", Re: reHTMLShape, Home: []string{policy.Htmlx},
 		Msg: "HTML built from text; use html/template through htmlx (" + refP7 + ".5)"},
+	{Rule: "odata-option-literal", Re: reODataOption, Home: []string{policy.OData}, Always: true,
+		Msg: "a system query option name outside the odata primitive; build the request with odata.Query (safe-primitives-odata §6)"},
+	{Rule: "odata-filter-shape", Re: reODataFilter, Home: []string{policy.OData},
+		Msg: "an OData filter built from text; build an odata filter AST (safe-primitives-odata §6)"},
+	{Rule: "odata-key-shape", Re: reODataKey, Home: []string{policy.OData},
+		Msg: "an OData key segment built from text; use odata.Key, KeyStr or AltKey (safe-primitives-odata §6)"},
 	{Rule: "mail-header-shape", Re: reMailShape, Home: []string{policy.Mail},
 		Msg: "mail headers or CRLF built from text; use notify/mail (" + refP7 + ".6)"},
 }
@@ -712,6 +728,12 @@ func (g *goFile) callShapes(call *ast.CallExpr, combined map[*ast.BasicLit]combi
 	}
 	if (name == "WriteString" || name == "Write") && len(call.Args) == 1 {
 		g.markCombined(call.Args[0], byBuilder, combined)
+	}
+	// url.Values.Set/Add with a bare option name as the key: q.Add("filter", x).
+	if (name == "Set" || name == "Add") && len(call.Args) == 2 && !g.isTool && !g.isTest && !policy.Match(g.dir, policy.OData) {
+		if v, ok := g.strLit(call.Args[0]); ok && reODataBareName.MatchString(v) {
+			g.add("FF-SP3", "odata-option-literal", call.Pos(), "query key "+shorten(strconv.Quote(v))+" is a system query option name outside the odata primitive; build the request with odata.Query (safe-primitives-odata §6)")
+		}
 	}
 	// Quote doubling: two adjacent string arguments, the second a doubling of the first.
 	for i := 0; i+1 < len(call.Args); i++ {
