@@ -180,6 +180,15 @@ func (c *Classifier) Snapshot(ctx context.Context) (*Set, error) {
 			return nil, fmt.Errorf("tier0: owners of role-assignable group: %w", err)
 		}
 		for _, o := range append(mem, own...) {
+			// A member or owner of a role-assignable group holds (or controls) its roles. A service
+			// principal there is a privileged SP: its owners are E3.
+			switch o.Type() {
+			case "user":
+			case "servicePrincipal":
+				holdingSP[strings.ToLower(o.ID)] = true
+			default: // empty or unknown kind: cannot rule out an app, so refuse
+				return nil, fmt.Errorf("tier0: role-assignable group has a member or owner of unknown type %q", o.Type())
+			}
 			s.add(o.ID, E2)
 		}
 	}
@@ -198,9 +207,16 @@ func (c *Classifier) Snapshot(ctx context.Context) (*Set, error) {
 		return nil, fmt.Errorf("tier0: grants on Microsoft Graph: %w", err)
 	}
 	for _, a := range granted {
+		switch a.PrincipalType {
+		case "ServicePrincipal":
+		case "User", "Group":
+			continue
+		default: // unreported or unknown principal type: cannot rule out an app, so refuse
+			return nil, fmt.Errorf("tier0: grant on Microsoft Graph has principal of unknown type %q", a.PrincipalType)
+		}
 		name, known := roleName[strings.ToLower(a.AppRoleID)]
 		// An unresolvable permission id cannot be shown harmless: treat as deny-listed.
-		if a.PrincipalType != "ServicePrincipal" || (known && !denied(name)) {
+		if known && !denied(name) {
 			continue
 		}
 		holdingSP[strings.ToLower(a.PrincipalID)] = true
@@ -218,44 +234,68 @@ func (c *Classifier) Snapshot(ctx context.Context) (*Set, error) {
 	for id := range holdingSP {
 		syncSP[id] = true
 	}
-	ids := make([]string, 0, len(syncSP))
-	for id := range syncSP {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		if err := c.addAppOwners(ctx, s, id); err != nil {
-			return nil, err
-		}
-	}
-	return s, nil
+	return s, c.addOwnerClosure(ctx, s, syncSP)
 }
 
-func (c *Classifier) addAppOwners(ctx context.Context, s *Set, spID string) error {
+// addOwnerClosure marks the owners of every privileged SP E3 and walks to a fixpoint: an owner that
+// is itself a service principal can add a key to it and act as it, so it is privileged too and its
+// own owners are E3 (§6.4 is transitive). The visited set also ends ownership cycles.
+func (c *Classifier) addOwnerClosure(ctx context.Context, s *Set, start map[string]bool) error {
+	visited := map[string]bool{}
+	queue := make([]string, 0, len(start))
+	for id := range start {
+		queue = append(queue, id)
+	}
+	sort.Strings(queue)
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		if visited[id] {
+			continue
+		}
+		visited[id] = true
+		owners, err := c.ownersOf(ctx, id)
+		if err != nil {
+			return err
+		}
+		for _, o := range owners {
+			switch o.Type() {
+			case "user":
+			case "servicePrincipal":
+				if oid := strings.ToLower(o.ID); !visited[oid] {
+					queue = append(queue, oid)
+				}
+			default: // empty or unknown kind: cannot rule out an app, so refuse
+				return fmt.Errorf("tier0: privileged service principal has an owner of unknown type %q", o.Type())
+			}
+			s.add(o.ID, E3)
+		}
+	}
+	return nil
+}
+
+func (c *Classifier) ownersOf(ctx context.Context, spID string) ([]graph.DirectoryObject, error) {
 	sp, err := c.r.ServicePrincipalByID(ctx, spID)
 	if err != nil {
-		return fmt.Errorf("tier0: privileged service principal: %w", err)
+		return nil, fmt.Errorf("tier0: privileged service principal: %w", err)
 	}
 	owners, err := c.r.ServicePrincipalOwners(ctx, sp.ID)
 	if err != nil {
-		return fmt.Errorf("tier0: owners of privileged service principal: %w", err)
+		return nil, fmt.Errorf("tier0: owners of privileged service principal: %w", err)
 	}
 	if sp.AppID != "" {
 		// An app registered in another tenant has no application object here: not-found is fine.
 		if app, err := c.r.ApplicationByAppID(ctx, sp.AppID); err == nil {
 			ao, err := c.r.ApplicationOwners(ctx, app.ID)
 			if err != nil {
-				return fmt.Errorf("tier0: owners of privileged application: %w", err)
+				return nil, fmt.Errorf("tier0: owners of privileged application: %w", err)
 			}
 			owners = append(owners, ao...)
 		} else if graph.CodeOf(err) != graph.CodeNotFound {
-			return fmt.Errorf("tier0: privileged application: %w", err)
+			return nil, fmt.Errorf("tier0: privileged application: %w", err)
 		}
 	}
-	for _, o := range owners {
-		s.add(o.ID, E3)
-	}
-	return nil
+	return owners, nil
 }
 
 // State is a DM-20 correlation state. Every state counts for protection (TM §6.4).
@@ -320,7 +360,9 @@ func (s *Set) Classify(target string, in Input) (Result, error) {
 	}
 	ad := make(map[string]bool, len(in.ADTier0))
 	for k, v := range in.ADTier0 {
-		ad[strings.ToLower(k)] = v
+		if v { // a false entry in another case must not override a true one
+			ad[strings.ToLower(k)] = true
+		}
 	}
 	for _, p := range in.Peers {
 		// Any state, including unspecified (inconsistent => tier0, F5), counts when the peer is tier0.

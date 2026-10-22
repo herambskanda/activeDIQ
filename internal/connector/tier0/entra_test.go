@@ -285,3 +285,111 @@ func TestSyncClientAppIsE4(t *testing.T) {
 		t.Fatalf("%+v %v", r, err)
 	}
 }
+
+const (
+	spX   = "a1a1a1a1-0000-0000-0000-000000000001" // SP that holds a role through a group
+	spY   = "a1a1a1a1-0000-0000-0000-000000000002"
+	spZ   = "a1a1a1a1-0000-0000-0000-000000000003"
+	appY  = "b2b2b2b2-0000-0000-0000-000000000002"
+	appYO = "b2b2b2b2-0000-0000-0000-0000000000a2"
+)
+
+func spObj(id string) graph.DirectoryObject {
+	return graph.DirectoryObject{ID: id, ODataType: "#microsoft.graph.servicePrincipal"}
+}
+func userObj(id string) graph.DirectoryObject {
+	return graph.DirectoryObject{ID: id, ODataType: "#microsoft.graph.user"}
+}
+
+func classifyWith(t *testing.T, tn *graphtest.Tenant, target string, in tier0.Input) (tier0.Result, error) {
+	t.Helper()
+	cred := graphtest.NewCredential(t)
+	srv := graphtest.New(t, tn, cred)
+	cl, err := graph.New(srv.Config(cred))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tier0.New(cl).Classify(context.Background(), target, in)
+}
+
+func wantBases(t *testing.T, r tier0.Result, err error, want ...tier0.Basis) {
+	t.Helper()
+	if err != nil || !r.Tier0 || r.Unknown || fmt.Sprint(r.Bases) != fmt.Sprint(want) {
+		t.Fatalf("got %+v %v want %v", r, err, want)
+	}
+}
+
+func wantRefused(t *testing.T, r tier0.Result, err error) {
+	t.Helper()
+	if err == nil || !r.Tier0 || !r.Unknown {
+		t.Fatalf("must refuse: %+v %v", r, err)
+	}
+}
+
+// An SP that is a member or an owner of a role-assignable group holds its roles: its owners are E3.
+func TestOwnerOfSPInRoleAssignableGroupIsE3(t *testing.T) {
+	for _, as := range []string{"member", "owner"} {
+		t.Run(as, func(t *testing.T) {
+			tn := tenant()
+			tn.ServicePrincipals[spX] = graph.ServicePrincipal{ID: spX, AppID: "c3c3c3c3-0000-0000-0000-000000000001"}
+			tn.Owners[spX] = []graph.DirectoryObject{userObj(g(50))}
+			if as == "member" {
+				tn.Members[roleGroup] = append(tn.Members[roleGroup], spObj(spX))
+			} else {
+				tn.Owners[roleGroup] = append(tn.Owners[roleGroup], spObj(spX))
+			}
+			r, err := classifyWith(t, tn, g(50), known)
+			wantBases(t, r, err, tier0.E3)
+		})
+	}
+}
+
+// Ownership is transitive: user -> SP X -> privileged SP; also via an application object; cycles end.
+func TestOwnerChainsAreTransitive(t *testing.T) {
+	tn := tenant()
+	tn.ServicePrincipals[spY] = graph.ServicePrincipal{ID: spY, AppID: appY}
+	tn.ServicePrincipals[spZ] = graph.ServicePrincipal{ID: spZ, AppID: "c3c3c3c3-0000-0000-0000-000000000003"}
+	tn.Applications = append(tn.Applications, graph.Application{ID: appYO, AppID: appY})
+	// badSP <- spY (SP owner) <- user g(60) ; badSP <- spZ <- (app owner of Y's app object) ...
+	tn.Owners[badSP] = append(tn.Owners[badSP], spObj(spY))
+	tn.Owners[appYO] = []graph.DirectoryObject{spObj(spZ)}                 // owner of Y's application object is SP Z
+	tn.Owners[spZ] = []graph.DirectoryObject{userObj(g(61)), spObj(badSP)} // cycle back to badSP
+	tn.Owners[spY] = []graph.DirectoryObject{userObj(g(60))}
+	for _, id := range []string{g(60), g(61)} {
+		r, err := classifyWith(t, tn, id, known)
+		wantBases(t, r, err, tier0.E3)
+	}
+}
+
+func TestUnknownOwnerOrMemberTypeRefuses(t *testing.T) {
+	for _, typ := range []string{"", "#microsoft.graph.orgContact", "#microsoft.graph.device"} {
+		tn := tenant()
+		tn.Members[roleGroup] = append(tn.Members[roleGroup], graph.DirectoryObject{ID: g(70), ODataType: typ})
+		r, err := classifyWith(t, tn, plainUser, known)
+		wantRefused(t, r, err)
+
+		tn = tenant()
+		tn.Owners[badSP] = append(tn.Owners[badSP], graph.DirectoryObject{ID: g(71), ODataType: typ})
+		r, err = classifyWith(t, tn, plainUser, known)
+		wantRefused(t, r, err)
+	}
+}
+
+func TestGrantWithoutPrincipalTypeRefuses(t *testing.T) {
+	tn := tenant()
+	a := tn.Assignments[badSP][0]
+	a.PrincipalType = ""
+	tn.Assignments[badSP] = []graph.AppRoleAssignment{a}
+	r, err := classifyWith(t, tn, spOwner, known)
+	wantRefused(t, r, err)
+}
+
+func TestADTier0CaseFoldingKeepsTrue(t *testing.T) {
+	for i := 0; i < 50; i++ { // map order is random
+		in := tier0.Input{CorrelationKnown: true,
+			Peers:   []tier0.Peer{{ADObject: adPeer, State: tier0.StateMatched}},
+			ADTier0: map[string]bool{"AAAAAAAA-0000-0000-0000-000000000001": true, adPeer: false}}
+		r, err := classifyWith(t, tenant(), plainUser, in)
+		wantBases(t, r, err, tier0.E5)
+	}
+}
