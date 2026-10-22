@@ -1,4 +1,4 @@
-// activediq.connector.v1 — VerifyConnection (contract v1.1, T-0091).
+// activediq.connector.v1 — VerifyConnection (contract v1.1, T-0091; v1.2, T-0122).
 //
 // The connector's own rights check, run as the connector identity (TM §6.5 for AD, §6.6
 // "Verification" for Entra). It answers DM-24 (ConnectionVerification) and is the only source of
@@ -200,12 +200,13 @@ const (
 	// Entra, TM §6.6 "Verification".
 	VerificationCheck_VERIFICATION_CHECK_EV1_TOKEN           VerificationCheck = 21
 	VerificationCheck_VERIFICATION_CHECK_EV2_TENANT_IDENTITY VerificationCheck = 22
-	// Deny-list permissions and any directory role: blocks activation (TM-D5).
+	// Deny-list permissions, any directory role, and an unexpired password credential (client
+	// secret) on the application or its service principal: blocks activation (TM-D5, TM §6.2).
 	VerificationCheck_VERIFICATION_CHECK_EV3_OVER_PRIVILEGE VerificationCheck = 23
 	// Permissions the enabled features need and the app lacks.
 	VerificationCheck_VERIFICATION_CHECK_EV4_SUFFICIENCY VerificationCheck = 24
-	// Permissions beyond the enabled rows, extra key and password credentials (application or
-	// service principal), owners: warn.
+	// Permissions beyond the enabled rows, extra key credentials and expired password credentials
+	// (application or service principal), owners: warn.
 	VerificationCheck_VERIFICATION_CHECK_EV5_EXCESS VerificationCheck = 25
 )
 
@@ -472,6 +473,8 @@ const (
 	FindingKind_FINDING_KIND_COULD_NOT_VERIFY FindingKind = 9
 	// Entra: the application or its service principal has a password credential (client secret).
 	// The connector authenticates with a certificate only, so every password credential is extra.
+	// Unexpired (no `end`, or `end` after the connector's clock): EV3, block, acknowledgeable by a
+	// Tier0Override with step-up (DM-25). Expired: EV5, warn (contract v1.2 §8.4, TM §6.2).
 	FindingKind_FINDING_KIND_ENTRA_PASSWORD_CREDENTIAL FindingKind = 10
 )
 
@@ -2072,6 +2075,17 @@ type VerifyConnectionRequest struct {
 	// Customer-designated tier0 objects and groups (TM §6.4). Added to the computed set; step 1
 	// intersects the identity's groups with them.
 	DesignatedTier0 []*Guid `protobuf:"bytes,7,rep,name=designated_tier0,json=designatedTier0,proto3" json:"designated_tier0,omitempty"`
+	// Contract v1.2 §8.4 (TM-D23 rule 8): the server's cross-directory correlated tier0 set for the
+	// connection, C16 for AD or E5 for Entra, in every correlation state. Handled like
+	// `designated_tier0`: added to the computed set (and streamed back in `tier0_set`), intersected
+	// with the identity's groups in V7 step 1, and covered by V7 steps 2 and 3. Every entry's basis
+	// is exactly [TIER0_BASIS_C16_CORRELATED_TO_ENTRA_TIER0] on an AD connection or
+	// [TIER0_BASIS_E5_CORRELATED_TO_AD_TIER0] on an Entra connection; any other basis, an empty
+	// basis or an unset object is ERROR_CODE_INVALID_ARGUMENT before any directory call, and the
+	// connector's gate keeps its previous run. A completed run whose `designated_tier0` or
+	// `correlated_tier0` lacks an object the previous epoch had reported writes a tier0_set_shrink
+	// record on the connector host (contract §8.3a).
+	CorrelatedTier0 []*Tier0Member `protobuf:"bytes,8,rep,name=correlated_tier0,json=correlatedTier0,proto3" json:"correlated_tier0,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -2151,6 +2165,13 @@ func (x *VerifyConnectionRequest) GetManagedRoots() []*Guid {
 func (x *VerifyConnectionRequest) GetDesignatedTier0() []*Guid {
 	if x != nil {
 		return x.DesignatedTier0
+	}
+	return nil
+}
+
+func (x *VerifyConnectionRequest) GetCorrelatedTier0() []*Tier0Member {
+	if x != nil {
+		return x.CorrelatedTier0
 	}
 	return nil
 }
@@ -2509,58 +2530,6 @@ func (x *Tier0SetChunk) GetMembers() []*Tier0Member {
 	return nil
 }
 
-type Tier0Member struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Object        *Guid                  `protobuf:"bytes,1,opt,name=object,proto3" json:"object,omitempty"`
-	Basis         []Tier0Basis           `protobuf:"varint,2,rep,packed,name=basis,proto3,enum=activediq.connector.v1.Tier0Basis" json:"basis,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *Tier0Member) Reset() {
-	*x = Tier0Member{}
-	mi := &file_activediq_connector_v1_verify_proto_msgTypes[20]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *Tier0Member) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*Tier0Member) ProtoMessage() {}
-
-func (x *Tier0Member) ProtoReflect() protoreflect.Message {
-	mi := &file_activediq_connector_v1_verify_proto_msgTypes[20]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use Tier0Member.ProtoReflect.Descriptor instead.
-func (*Tier0Member) Descriptor() ([]byte, []int) {
-	return file_activediq_connector_v1_verify_proto_rawDescGZIP(), []int{20}
-}
-
-func (x *Tier0Member) GetObject() *Guid {
-	if x != nil {
-		return x.Object
-	}
-	return nil
-}
-
-func (x *Tier0Member) GetBasis() []Tier0Basis {
-	if x != nil {
-		return x.Basis
-	}
-	return nil
-}
-
 type CheckResult struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	Check   VerificationCheck      `protobuf:"varint,1,opt,name=check,proto3,enum=activediq.connector.v1.VerificationCheck" json:"check,omitempty"`
@@ -2573,7 +2542,7 @@ type CheckResult struct {
 
 func (x *CheckResult) Reset() {
 	*x = CheckResult{}
-	mi := &file_activediq_connector_v1_verify_proto_msgTypes[21]
+	mi := &file_activediq_connector_v1_verify_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2585,7 +2554,7 @@ func (x *CheckResult) String() string {
 func (*CheckResult) ProtoMessage() {}
 
 func (x *CheckResult) ProtoReflect() protoreflect.Message {
-	mi := &file_activediq_connector_v1_verify_proto_msgTypes[21]
+	mi := &file_activediq_connector_v1_verify_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2598,7 +2567,7 @@ func (x *CheckResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckResult.ProtoReflect.Descriptor instead.
 func (*CheckResult) Descriptor() ([]byte, []int) {
-	return file_activediq_connector_v1_verify_proto_rawDescGZIP(), []int{21}
+	return file_activediq_connector_v1_verify_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *CheckResult) GetCheck() VerificationCheck {
@@ -2633,13 +2602,19 @@ type VerificationCompleted struct {
 	// overridable findings only (the server's Tier0Override decides those, contract §8.2). False for
 	// COULD_NOT_VERIFY, NOT_RUN or a FAILED verdict.
 	WriteGateOpenable bool `protobuf:"varint,6,opt,name=write_gate_openable,json=writeGateOpenable,proto3" json:"write_gate_openable,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// Contract v1.2 §8.3a (TM-D23 rule 8): the number of entries of the tier0_set_shrink record this
+	// run wrote on the connector host (objects the previous epoch reported as designated or
+	// correlated tier0 and this run's inputs omit); 0 when it wrote none. A shrink never fails the
+	// run. The record itself stays on the connector host; this count lets an honest server raise a
+	// health finding.
+	Tier0InputsDropped uint32 `protobuf:"varint,7,opt,name=tier0_inputs_dropped,json=tier0InputsDropped,proto3" json:"tier0_inputs_dropped,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *VerificationCompleted) Reset() {
 	*x = VerificationCompleted{}
-	mi := &file_activediq_connector_v1_verify_proto_msgTypes[22]
+	mi := &file_activediq_connector_v1_verify_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2651,7 +2626,7 @@ func (x *VerificationCompleted) String() string {
 func (*VerificationCompleted) ProtoMessage() {}
 
 func (x *VerificationCompleted) ProtoReflect() protoreflect.Message {
-	mi := &file_activediq_connector_v1_verify_proto_msgTypes[22]
+	mi := &file_activediq_connector_v1_verify_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2664,7 +2639,7 @@ func (x *VerificationCompleted) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VerificationCompleted.ProtoReflect.Descriptor instead.
 func (*VerificationCompleted) Descriptor() ([]byte, []int) {
-	return file_activediq_connector_v1_verify_proto_rawDescGZIP(), []int{22}
+	return file_activediq_connector_v1_verify_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *VerificationCompleted) GetVerdict() VerificationVerdict {
@@ -2709,6 +2684,13 @@ func (x *VerificationCompleted) GetWriteGateOpenable() bool {
 	return false
 }
 
+func (x *VerificationCompleted) GetTier0InputsDropped() uint32 {
+	if x != nil {
+		return x.Tier0InputsDropped
+	}
+	return 0
+}
+
 type VerifyConnectionResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Event:
@@ -2724,7 +2706,7 @@ type VerifyConnectionResponse struct {
 
 func (x *VerifyConnectionResponse) Reset() {
 	*x = VerifyConnectionResponse{}
-	mi := &file_activediq_connector_v1_verify_proto_msgTypes[23]
+	mi := &file_activediq_connector_v1_verify_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2736,7 +2718,7 @@ func (x *VerifyConnectionResponse) String() string {
 func (*VerifyConnectionResponse) ProtoMessage() {}
 
 func (x *VerifyConnectionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_activediq_connector_v1_verify_proto_msgTypes[23]
+	mi := &file_activediq_connector_v1_verify_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2749,7 +2731,7 @@ func (x *VerifyConnectionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VerifyConnectionResponse.ProtoReflect.Descriptor instead.
 func (*VerifyConnectionResponse) Descriptor() ([]byte, []int) {
-	return file_activediq_connector_v1_verify_proto_rawDescGZIP(), []int{23}
+	return file_activediq_connector_v1_verify_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *VerifyConnectionResponse) GetEvent() isVerifyConnectionResponse_Event {
@@ -2914,7 +2896,7 @@ const file_activediq_connector_v1_verify_proto_rawDesc = "" +
 	"\x12object_tier0_basis\x18\t \x03(\x0e2\".activediq.connector.v1.Tier0BasisR\x10objectTier0Basis\x12<\n" +
 	"\x06family\x18\n" +
 	" \x01(\x0e2$.activediq.connector.v1.RightsFamilyR\x06family\x12 \n" +
-	"\vfingerprint\x18\v \x01(\fR\vfingerprint\"\x93\x04\n" +
+	"\vfingerprint\x18\v \x01(\fR\vfingerprint\"\xe3\x04\n" +
 	"\x17VerifyConnectionRequest\x12E\n" +
 	"\n" +
 	"connection\x18\x01 \x01(\v2%.activediq.connector.v1.ConnectionRefR\n" +
@@ -2924,7 +2906,8 @@ const file_activediq_connector_v1_verify_proto_rawDesc = "" +
 	"\x10enabled_families\x18\x04 \x03(\x0e2$.activediq.connector.v1.RightsFamilyR\x0fenabledFamilies\x12E\n" +
 	"\x0fmanaged_domains\x18\x05 \x03(\v2\x1c.activediq.connector.v1.GuidR\x0emanagedDomains\x12A\n" +
 	"\rmanaged_roots\x18\x06 \x03(\v2\x1c.activediq.connector.v1.GuidR\fmanagedRoots\x12G\n" +
-	"\x10designated_tier0\x18\a \x03(\v2\x1c.activediq.connector.v1.GuidR\x0fdesignatedTier0\"\xa3\x01\n" +
+	"\x10designated_tier0\x18\a \x03(\v2\x1c.activediq.connector.v1.GuidR\x0fdesignatedTier0\x12N\n" +
+	"\x10correlated_tier0\x18\b \x03(\v2#.activediq.connector.v1.Tier0MemberR\x0fcorrelatedTier0\"\xa3\x01\n" +
 	"\x10ObservedIdentity\x12<\n" +
 	"\x02ad\x18\x01 \x01(\v2*.activediq.connector.v1.AdObservedIdentityH\x00R\x02ad\x12E\n" +
 	"\x05entra\x18\x02 \x01(\v2-.activediq.connector.v1.EntraObservedIdentityH\x00R\x05entraB\n" +
@@ -2948,22 +2931,20 @@ const file_activediq_connector_v1_verify_proto_rawDesc = "" +
 	"\rFindingsChunk\x12A\n" +
 	"\bfindings\x18\x01 \x03(\v2%.activediq.connector.v1.RightsFindingR\bfindings\"N\n" +
 	"\rTier0SetChunk\x12=\n" +
-	"\amembers\x18\x01 \x03(\v2#.activediq.connector.v1.Tier0MemberR\amembers\"}\n" +
-	"\vTier0Member\x124\n" +
-	"\x06object\x18\x01 \x01(\v2\x1c.activediq.connector.v1.GuidR\x06object\x128\n" +
-	"\x05basis\x18\x02 \x03(\x0e2\".activediq.connector.v1.Tier0BasisR\x05basis\"\xdb\x01\n" +
+	"\amembers\x18\x01 \x03(\v2#.activediq.connector.v1.Tier0MemberR\amembers\"\xdb\x01\n" +
 	"\vCheckResult\x12?\n" +
 	"\x05check\x18\x01 \x01(\x0e2).activediq.connector.v1.VerificationCheckR\x05check\x12>\n" +
 	"\aoutcome\x18\x02 \x01(\x0e2$.activediq.connector.v1.CheckOutcomeR\aoutcome\x12A\n" +
 	"\x05error\x18\x03 \x01(\v2&.activediq.connector.v1.ConnectorErrorH\x00R\x05error\x88\x01\x01B\b\n" +
-	"\x06_error\"\xdd\x02\n" +
+	"\x06_error\"\x8f\x03\n" +
 	"\x15VerificationCompleted\x12E\n" +
 	"\averdict\x18\x01 \x01(\x0e2+.activediq.connector.v1.VerificationVerdictR\averdict\x12;\n" +
 	"\x06checks\x18\x02 \x03(\v2#.activediq.connector.v1.CheckResultR\x06checks\x12=\n" +
 	"\fcompleted_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\vcompletedAt\x12#\n" +
 	"\rfinding_count\x18\x04 \x01(\rR\ffindingCount\x12,\n" +
 	"\x12tier0_member_count\x18\x05 \x01(\rR\x10tier0MemberCount\x12.\n" +
-	"\x13write_gate_openable\x18\x06 \x01(\bR\x11writeGateOpenable\"\xc3\x02\n" +
+	"\x13write_gate_openable\x18\x06 \x01(\bR\x11writeGateOpenable\x120\n" +
+	"\x14tier0_inputs_dropped\x18\a \x01(\rR\x12tier0InputsDropped\"\xc3\x02\n" +
 	"\x18VerifyConnectionResponse\x12D\n" +
 	"\x06header\x18\x01 \x01(\v2*.activediq.connector.v1.VerificationHeaderH\x00R\x06header\x12C\n" +
 	"\bfindings\x18\x02 \x01(\v2%.activediq.connector.v1.FindingsChunkH\x00R\bfindings\x12D\n" +
@@ -3113,7 +3094,7 @@ func file_activediq_connector_v1_verify_proto_rawDescGZIP() []byte {
 }
 
 var file_activediq_connector_v1_verify_proto_enumTypes = make([]protoimpl.EnumInfo, 13)
-var file_activediq_connector_v1_verify_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
+var file_activediq_connector_v1_verify_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
 var file_activediq_connector_v1_verify_proto_goTypes = []any{
 	(RightsFamily)(0),                 // 0: activediq.connector.v1.RightsFamily
 	(VerificationCheck)(0),            // 1: activediq.connector.v1.VerificationCheck
@@ -3148,36 +3129,36 @@ var file_activediq_connector_v1_verify_proto_goTypes = []any{
 	(*VerificationHeader)(nil),        // 30: activediq.connector.v1.VerificationHeader
 	(*FindingsChunk)(nil),             // 31: activediq.connector.v1.FindingsChunk
 	(*Tier0SetChunk)(nil),             // 32: activediq.connector.v1.Tier0SetChunk
-	(*Tier0Member)(nil),               // 33: activediq.connector.v1.Tier0Member
-	(*CheckResult)(nil),               // 34: activediq.connector.v1.CheckResult
-	(*VerificationCompleted)(nil),     // 35: activediq.connector.v1.VerificationCompleted
-	(*VerifyConnectionResponse)(nil),  // 36: activediq.connector.v1.VerifyConnectionResponse
-	(*Guid)(nil),                      // 37: activediq.connector.v1.Guid
-	(*timestamppb.Timestamp)(nil),     // 38: google.protobuf.Timestamp
-	(*Sid)(nil),                       // 39: activediq.connector.v1.Sid
-	(Tier0Basis)(0),                   // 40: activediq.connector.v1.Tier0Basis
-	(*ConnectionRef)(nil),             // 41: activediq.connector.v1.ConnectionRef
+	(*CheckResult)(nil),               // 33: activediq.connector.v1.CheckResult
+	(*VerificationCompleted)(nil),     // 34: activediq.connector.v1.VerificationCompleted
+	(*VerifyConnectionResponse)(nil),  // 35: activediq.connector.v1.VerifyConnectionResponse
+	(*Guid)(nil),                      // 36: activediq.connector.v1.Guid
+	(*timestamppb.Timestamp)(nil),     // 37: google.protobuf.Timestamp
+	(*Sid)(nil),                       // 38: activediq.connector.v1.Sid
+	(Tier0Basis)(0),                   // 39: activediq.connector.v1.Tier0Basis
+	(*ConnectionRef)(nil),             // 40: activediq.connector.v1.ConnectionRef
+	(*Tier0Member)(nil),               // 41: activediq.connector.v1.Tier0Member
 	(*ConnectorError)(nil),            // 42: activediq.connector.v1.ConnectorError
 }
 var file_activediq_connector_v1_verify_proto_depIdxs = []int32{
 	6,  // 0: activediq.connector.v1.AdRight.kind:type_name -> activediq.connector.v1.AdRightKind
-	37, // 1: activediq.connector.v1.AdRight.object_type:type_name -> activediq.connector.v1.Guid
+	36, // 1: activediq.connector.v1.AdRight.object_type:type_name -> activediq.connector.v1.Guid
 	15, // 2: activediq.connector.v1.EntraRight.app_permission:type_name -> activediq.connector.v1.EntraAppPermission
 	16, // 3: activediq.connector.v1.EntraRight.directory_role:type_name -> activediq.connector.v1.EntraDirectoryRole
 	17, // 4: activediq.connector.v1.EntraRight.key_credential:type_name -> activediq.connector.v1.EntraKeyCredential
-	37, // 5: activediq.connector.v1.EntraRight.owner:type_name -> activediq.connector.v1.Guid
+	36, // 5: activediq.connector.v1.EntraRight.owner:type_name -> activediq.connector.v1.Guid
 	18, // 6: activediq.connector.v1.EntraRight.password_credential:type_name -> activediq.connector.v1.EntraPasswordCredential
-	37, // 7: activediq.connector.v1.EntraAppPermission.app_role_id:type_name -> activediq.connector.v1.Guid
-	37, // 8: activediq.connector.v1.EntraAppPermission.resource_app_id:type_name -> activediq.connector.v1.Guid
-	37, // 9: activediq.connector.v1.EntraDirectoryRole.role_definition_id:type_name -> activediq.connector.v1.Guid
+	36, // 7: activediq.connector.v1.EntraAppPermission.app_role_id:type_name -> activediq.connector.v1.Guid
+	36, // 8: activediq.connector.v1.EntraAppPermission.resource_app_id:type_name -> activediq.connector.v1.Guid
+	36, // 9: activediq.connector.v1.EntraDirectoryRole.role_definition_id:type_name -> activediq.connector.v1.Guid
 	8,  // 10: activediq.connector.v1.EntraDirectoryRole.assignment:type_name -> activediq.connector.v1.EntraRoleAssignmentKind
-	37, // 11: activediq.connector.v1.EntraKeyCredential.key_id:type_name -> activediq.connector.v1.Guid
-	38, // 12: activediq.connector.v1.EntraKeyCredential.start:type_name -> google.protobuf.Timestamp
-	38, // 13: activediq.connector.v1.EntraKeyCredential.end:type_name -> google.protobuf.Timestamp
+	36, // 11: activediq.connector.v1.EntraKeyCredential.key_id:type_name -> activediq.connector.v1.Guid
+	37, // 12: activediq.connector.v1.EntraKeyCredential.start:type_name -> google.protobuf.Timestamp
+	37, // 13: activediq.connector.v1.EntraKeyCredential.end:type_name -> google.protobuf.Timestamp
 	9,  // 14: activediq.connector.v1.EntraKeyCredential.holder:type_name -> activediq.connector.v1.EntraCredentialHolder
-	37, // 15: activediq.connector.v1.EntraPasswordCredential.key_id:type_name -> activediq.connector.v1.Guid
-	38, // 16: activediq.connector.v1.EntraPasswordCredential.start:type_name -> google.protobuf.Timestamp
-	38, // 17: activediq.connector.v1.EntraPasswordCredential.end:type_name -> google.protobuf.Timestamp
+	36, // 15: activediq.connector.v1.EntraPasswordCredential.key_id:type_name -> activediq.connector.v1.Guid
+	37, // 16: activediq.connector.v1.EntraPasswordCredential.start:type_name -> google.protobuf.Timestamp
+	37, // 17: activediq.connector.v1.EntraPasswordCredential.end:type_name -> google.protobuf.Timestamp
 	9,  // 18: activediq.connector.v1.EntraPasswordCredential.holder:type_name -> activediq.connector.v1.EntraCredentialHolder
 	13, // 19: activediq.connector.v1.RightRef.ad:type_name -> activediq.connector.v1.AdRight
 	7,  // 20: activediq.connector.v1.RightRef.delegation:type_name -> activediq.connector.v1.DelegationSetting
@@ -3186,61 +3167,60 @@ var file_activediq_connector_v1_verify_proto_depIdxs = []int32{
 	22, // 23: activediq.connector.v1.RightSource.effective_attribute:type_name -> activediq.connector.v1.EffectiveRightsAttribute
 	23, // 24: activediq.connector.v1.RightSource.membership:type_name -> activediq.connector.v1.MembershipPath
 	10, // 25: activediq.connector.v1.RightSource.identity_attribute:type_name -> activediq.connector.v1.IdentityAttribute
-	37, // 26: activediq.connector.v1.RightSource.entra_assignment:type_name -> activediq.connector.v1.Guid
+	36, // 26: activediq.connector.v1.RightSource.entra_assignment:type_name -> activediq.connector.v1.Guid
 	0,  // 27: activediq.connector.v1.RightSource.expected_by:type_name -> activediq.connector.v1.RightsFamily
-	37, // 28: activediq.connector.v1.AceSource.on_object:type_name -> activediq.connector.v1.Guid
-	37, // 29: activediq.connector.v1.AceSource.inherited_from:type_name -> activediq.connector.v1.Guid
-	39, // 30: activediq.connector.v1.AceSource.trustee:type_name -> activediq.connector.v1.Sid
-	37, // 31: activediq.connector.v1.AceSource.trustee_group:type_name -> activediq.connector.v1.Guid
+	36, // 28: activediq.connector.v1.AceSource.on_object:type_name -> activediq.connector.v1.Guid
+	36, // 29: activediq.connector.v1.AceSource.inherited_from:type_name -> activediq.connector.v1.Guid
+	38, // 30: activediq.connector.v1.AceSource.trustee:type_name -> activediq.connector.v1.Sid
+	36, // 31: activediq.connector.v1.AceSource.trustee_group:type_name -> activediq.connector.v1.Guid
 	11, // 32: activediq.connector.v1.EffectiveRightsAttribute.name:type_name -> activediq.connector.v1.EffectiveRightsAttributeName
 	24, // 33: activediq.connector.v1.MembershipPath.hops:type_name -> activediq.connector.v1.MembershipHop
-	37, // 34: activediq.connector.v1.MembershipHop.group:type_name -> activediq.connector.v1.Guid
-	39, // 35: activediq.connector.v1.MembershipHop.sid:type_name -> activediq.connector.v1.Sid
+	36, // 34: activediq.connector.v1.MembershipHop.group:type_name -> activediq.connector.v1.Guid
+	38, // 35: activediq.connector.v1.MembershipHop.sid:type_name -> activediq.connector.v1.Sid
 	1,  // 36: activediq.connector.v1.RightsFinding.check:type_name -> activediq.connector.v1.VerificationCheck
 	5,  // 37: activediq.connector.v1.RightsFinding.kind:type_name -> activediq.connector.v1.FindingKind
 	4,  // 38: activediq.connector.v1.RightsFinding.severity:type_name -> activediq.connector.v1.FindingSeverity
-	37, // 39: activediq.connector.v1.RightsFinding.object:type_name -> activediq.connector.v1.Guid
-	39, // 40: activediq.connector.v1.RightsFinding.object_domain_sid:type_name -> activediq.connector.v1.Sid
+	36, // 39: activediq.connector.v1.RightsFinding.object:type_name -> activediq.connector.v1.Guid
+	38, // 40: activediq.connector.v1.RightsFinding.object_domain_sid:type_name -> activediq.connector.v1.Sid
 	19, // 41: activediq.connector.v1.RightsFinding.right:type_name -> activediq.connector.v1.RightRef
 	20, // 42: activediq.connector.v1.RightsFinding.source:type_name -> activediq.connector.v1.RightSource
-	40, // 43: activediq.connector.v1.RightsFinding.object_tier0_basis:type_name -> activediq.connector.v1.Tier0Basis
+	39, // 43: activediq.connector.v1.RightsFinding.object_tier0_basis:type_name -> activediq.connector.v1.Tier0Basis
 	0,  // 44: activediq.connector.v1.RightsFinding.family:type_name -> activediq.connector.v1.RightsFamily
-	41, // 45: activediq.connector.v1.VerifyConnectionRequest.connection:type_name -> activediq.connector.v1.ConnectionRef
+	40, // 45: activediq.connector.v1.VerifyConnectionRequest.connection:type_name -> activediq.connector.v1.ConnectionRef
 	12, // 46: activediq.connector.v1.VerifyConnectionRequest.run_kind:type_name -> activediq.connector.v1.VerificationRunKind
-	37, // 47: activediq.connector.v1.VerifyConnectionRequest.verification_id:type_name -> activediq.connector.v1.Guid
+	36, // 47: activediq.connector.v1.VerifyConnectionRequest.verification_id:type_name -> activediq.connector.v1.Guid
 	0,  // 48: activediq.connector.v1.VerifyConnectionRequest.enabled_families:type_name -> activediq.connector.v1.RightsFamily
-	37, // 49: activediq.connector.v1.VerifyConnectionRequest.managed_domains:type_name -> activediq.connector.v1.Guid
-	37, // 50: activediq.connector.v1.VerifyConnectionRequest.managed_roots:type_name -> activediq.connector.v1.Guid
-	37, // 51: activediq.connector.v1.VerifyConnectionRequest.designated_tier0:type_name -> activediq.connector.v1.Guid
-	28, // 52: activediq.connector.v1.ObservedIdentity.ad:type_name -> activediq.connector.v1.AdObservedIdentity
-	29, // 53: activediq.connector.v1.ObservedIdentity.entra:type_name -> activediq.connector.v1.EntraObservedIdentity
-	37, // 54: activediq.connector.v1.AdObservedIdentity.object_guid:type_name -> activediq.connector.v1.Guid
-	39, // 55: activediq.connector.v1.AdObservedIdentity.object_sid:type_name -> activediq.connector.v1.Sid
-	37, // 56: activediq.connector.v1.EntraObservedIdentity.app_id:type_name -> activediq.connector.v1.Guid
-	37, // 57: activediq.connector.v1.EntraObservedIdentity.service_principal_id:type_name -> activediq.connector.v1.Guid
-	37, // 58: activediq.connector.v1.EntraObservedIdentity.application_object_id:type_name -> activediq.connector.v1.Guid
-	37, // 59: activediq.connector.v1.VerificationHeader.verification_id:type_name -> activediq.connector.v1.Guid
-	38, // 60: activediq.connector.v1.VerificationHeader.started_at:type_name -> google.protobuf.Timestamp
-	27, // 61: activediq.connector.v1.VerificationHeader.identity:type_name -> activediq.connector.v1.ObservedIdentity
-	25, // 62: activediq.connector.v1.FindingsChunk.findings:type_name -> activediq.connector.v1.RightsFinding
-	33, // 63: activediq.connector.v1.Tier0SetChunk.members:type_name -> activediq.connector.v1.Tier0Member
-	37, // 64: activediq.connector.v1.Tier0Member.object:type_name -> activediq.connector.v1.Guid
-	40, // 65: activediq.connector.v1.Tier0Member.basis:type_name -> activediq.connector.v1.Tier0Basis
-	1,  // 66: activediq.connector.v1.CheckResult.check:type_name -> activediq.connector.v1.VerificationCheck
-	2,  // 67: activediq.connector.v1.CheckResult.outcome:type_name -> activediq.connector.v1.CheckOutcome
-	42, // 68: activediq.connector.v1.CheckResult.error:type_name -> activediq.connector.v1.ConnectorError
-	3,  // 69: activediq.connector.v1.VerificationCompleted.verdict:type_name -> activediq.connector.v1.VerificationVerdict
-	34, // 70: activediq.connector.v1.VerificationCompleted.checks:type_name -> activediq.connector.v1.CheckResult
-	38, // 71: activediq.connector.v1.VerificationCompleted.completed_at:type_name -> google.protobuf.Timestamp
-	30, // 72: activediq.connector.v1.VerifyConnectionResponse.header:type_name -> activediq.connector.v1.VerificationHeader
-	31, // 73: activediq.connector.v1.VerifyConnectionResponse.findings:type_name -> activediq.connector.v1.FindingsChunk
-	32, // 74: activediq.connector.v1.VerifyConnectionResponse.tier0_set:type_name -> activediq.connector.v1.Tier0SetChunk
-	35, // 75: activediq.connector.v1.VerifyConnectionResponse.completed:type_name -> activediq.connector.v1.VerificationCompleted
-	76, // [76:76] is the sub-list for method output_type
-	76, // [76:76] is the sub-list for method input_type
-	76, // [76:76] is the sub-list for extension type_name
-	76, // [76:76] is the sub-list for extension extendee
-	0,  // [0:76] is the sub-list for field type_name
+	36, // 49: activediq.connector.v1.VerifyConnectionRequest.managed_domains:type_name -> activediq.connector.v1.Guid
+	36, // 50: activediq.connector.v1.VerifyConnectionRequest.managed_roots:type_name -> activediq.connector.v1.Guid
+	36, // 51: activediq.connector.v1.VerifyConnectionRequest.designated_tier0:type_name -> activediq.connector.v1.Guid
+	41, // 52: activediq.connector.v1.VerifyConnectionRequest.correlated_tier0:type_name -> activediq.connector.v1.Tier0Member
+	28, // 53: activediq.connector.v1.ObservedIdentity.ad:type_name -> activediq.connector.v1.AdObservedIdentity
+	29, // 54: activediq.connector.v1.ObservedIdentity.entra:type_name -> activediq.connector.v1.EntraObservedIdentity
+	36, // 55: activediq.connector.v1.AdObservedIdentity.object_guid:type_name -> activediq.connector.v1.Guid
+	38, // 56: activediq.connector.v1.AdObservedIdentity.object_sid:type_name -> activediq.connector.v1.Sid
+	36, // 57: activediq.connector.v1.EntraObservedIdentity.app_id:type_name -> activediq.connector.v1.Guid
+	36, // 58: activediq.connector.v1.EntraObservedIdentity.service_principal_id:type_name -> activediq.connector.v1.Guid
+	36, // 59: activediq.connector.v1.EntraObservedIdentity.application_object_id:type_name -> activediq.connector.v1.Guid
+	36, // 60: activediq.connector.v1.VerificationHeader.verification_id:type_name -> activediq.connector.v1.Guid
+	37, // 61: activediq.connector.v1.VerificationHeader.started_at:type_name -> google.protobuf.Timestamp
+	27, // 62: activediq.connector.v1.VerificationHeader.identity:type_name -> activediq.connector.v1.ObservedIdentity
+	25, // 63: activediq.connector.v1.FindingsChunk.findings:type_name -> activediq.connector.v1.RightsFinding
+	41, // 64: activediq.connector.v1.Tier0SetChunk.members:type_name -> activediq.connector.v1.Tier0Member
+	1,  // 65: activediq.connector.v1.CheckResult.check:type_name -> activediq.connector.v1.VerificationCheck
+	2,  // 66: activediq.connector.v1.CheckResult.outcome:type_name -> activediq.connector.v1.CheckOutcome
+	42, // 67: activediq.connector.v1.CheckResult.error:type_name -> activediq.connector.v1.ConnectorError
+	3,  // 68: activediq.connector.v1.VerificationCompleted.verdict:type_name -> activediq.connector.v1.VerificationVerdict
+	33, // 69: activediq.connector.v1.VerificationCompleted.checks:type_name -> activediq.connector.v1.CheckResult
+	37, // 70: activediq.connector.v1.VerificationCompleted.completed_at:type_name -> google.protobuf.Timestamp
+	30, // 71: activediq.connector.v1.VerifyConnectionResponse.header:type_name -> activediq.connector.v1.VerificationHeader
+	31, // 72: activediq.connector.v1.VerifyConnectionResponse.findings:type_name -> activediq.connector.v1.FindingsChunk
+	32, // 73: activediq.connector.v1.VerifyConnectionResponse.tier0_set:type_name -> activediq.connector.v1.Tier0SetChunk
+	34, // 74: activediq.connector.v1.VerifyConnectionResponse.completed:type_name -> activediq.connector.v1.VerificationCompleted
+	75, // [75:75] is the sub-list for method output_type
+	75, // [75:75] is the sub-list for method input_type
+	75, // [75:75] is the sub-list for extension type_name
+	75, // [75:75] is the sub-list for extension extendee
+	0,  // [0:75] is the sub-list for field type_name
 }
 
 func init() { file_activediq_connector_v1_verify_proto_init() }
@@ -3275,8 +3255,8 @@ func file_activediq_connector_v1_verify_proto_init() {
 		(*ObservedIdentity_Ad)(nil),
 		(*ObservedIdentity_Entra)(nil),
 	}
-	file_activediq_connector_v1_verify_proto_msgTypes[21].OneofWrappers = []any{}
-	file_activediq_connector_v1_verify_proto_msgTypes[23].OneofWrappers = []any{
+	file_activediq_connector_v1_verify_proto_msgTypes[20].OneofWrappers = []any{}
+	file_activediq_connector_v1_verify_proto_msgTypes[22].OneofWrappers = []any{
 		(*VerifyConnectionResponse_Header)(nil),
 		(*VerifyConnectionResponse_Findings)(nil),
 		(*VerifyConnectionResponse_Tier0Set)(nil),
@@ -3288,7 +3268,7 @@ func file_activediq_connector_v1_verify_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_activediq_connector_v1_verify_proto_rawDesc), len(file_activediq_connector_v1_verify_proto_rawDesc)),
 			NumEnums:      13,
-			NumMessages:   24,
+			NumMessages:   23,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

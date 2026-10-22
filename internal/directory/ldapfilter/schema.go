@@ -44,6 +44,7 @@ type Schema struct {
 func NewSchema(attrs ...AttrInfo) *Schema {
 	s := &Schema{byName: make(map[string]AttrInfo, len(attrs)), byOID: map[string]string{}}
 	static := secretattr.Static()
+	groups := map[string][]string{} // numericoid -> every lower-case name claiming it
 	for _, a := range attrs {
 		// An OID-shaped Name would be a second, unclassified entry for an attribute AD resolves by
 		// OID; fail closed by not admitting it. Register the OID in AttrInfo.OID instead.
@@ -54,11 +55,46 @@ func NewSchema(attrs ...AttrInfo) *Schema {
 			a.Secret = true
 		}
 		key := strings.ToLower(a.Name)
+		if prev, dup := s.byName[key]; dup {
+			// Same ldapDisplayName in another case: merge, never replace. Fail closed, so a later
+			// unflagged duplicate cannot downgrade a Secret or Constructed entry (T-0121).
+			a.Secret = a.Secret || prev.Secret
+			a.Constructed = a.Constructed || prev.Constructed
+			if a.OID == "" {
+				a.OID = prev.OID
+			}
+			a.Name = prev.Name
+			a.Syntax = prev.Syntax // first claim wins; only the flags merge upward
+		}
 		s.byName[key] = a
 		if a.OID != "" {
 			if o, err := parseAttrGrammar(a.OID); err == nil && a.OID[0] >= '0' && a.OID[0] <= '9' {
 				if _, dup := s.byOID[o.name]; !dup {
 					s.byOID[o.name] = key
+				}
+				if !slices.Contains(groups[o.name], key) {
+					groups[o.name] = append(groups[o.name], key)
+				}
+			}
+		}
+	}
+	// Every name sharing an OID inherits the OR of their Secret/Constructed. A name can sit in two
+	// groups (a case-variant duplicate that brought a different OID), so one pass in map order is
+	// not enough: repeat to the fixpoint. Flags only ever turn on, so the fixpoint is unique and
+	// the result is deterministic whatever the order. The first claimant keeps the alias.
+	for changed := true; changed; {
+		changed = false
+		for _, keys := range groups {
+			var sec, con bool
+			for _, k := range keys {
+				sec, con = sec || s.byName[k].Secret, con || s.byName[k].Constructed
+			}
+			for _, k := range keys {
+				e := s.byName[k]
+				if e.Secret != sec || e.Constructed != con {
+					e.Secret, e.Constructed = sec, con
+					s.byName[k] = e
+					changed = true
 				}
 			}
 		}

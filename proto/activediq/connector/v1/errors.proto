@@ -84,8 +84,16 @@ enum ErrorCode {
   ERROR_CODE_TIER0_REFUSED = 50;
   // Plan or Apply: the connector's own last VerifyConnection for this connection does not open its
   // write gate (TM-D1, DM-10.I11): over-privileged with no covering override, could not verify,
-  // not run, failed, or too old. Nothing was written. Fixed by a passing VerifyConnection.
+  // not run, failed, too old, or a required local record could not be made durable (v1.2 §8.3a).
+  // Nothing was written. Fixed by a passing VerifyConnection.
   ERROR_CODE_ACTIVATION_REFUSED_OVERPRIVILEGED = 51;
+  // Contract v1.2 §8.3a (TM-D23 rule 8): the connector could not make a required local record
+  // durable (the tier0_set_shrink record in the local log or, on Windows hosts, the Windows event
+  // log; or the persisted shrink baseline): disk full, permission, event-log error. Ends a
+  // VerifyConnection stream in place of `completed`: the run starts no epoch and the connector's
+  // write gate closes with WRITE_GATE_STATE_LOCAL_RECORD_FAILED. Never retried as is; fixed on the
+  // connector host, then a new VerifyConnection.
+  ERROR_CODE_LOCAL_RECORD_FAILED = 52;
 }
 
 // What the caller should do next. Advice, not authority: callers own their retry budgets.
@@ -199,10 +207,13 @@ enum Tier0RefusalStage {
   // The request's own context marks a touched object tier0: a designation or a correlated tier0
   // peer (F2), or an inconsistent peer that counts as tier0 (F5).
   TIER0_REFUSAL_STAGE_REQUEST_CONTEXT = 3;
-  // The object is in the connector's own computed set from its last VerifyConnection.
+  // The object is in the connector's set: the set its last completed VerifyConnection computed
+  // (with that run's designated_tier0 and correlated_tier0 inputs), plus every object an accepted
+  // Tier0Context has marked tier0 since that run (the ratchet, contract v1.2 §8.3a, TM-D23 rule 8).
   TIER0_REFUSAL_STAGE_CONNECTOR_SET = 4;
   // The live re-read found the object tier0 now (for example added to Domain Admins since the last
-  // set computation). Reads happened; no write did.
+  // set computation, or a groupPolicyContainer directly linked from the domain head, the Domain
+  // Controllers OU, a C6 OU or a C15 site, TM-D23 rule 10). Reads happened; no write did.
   TIER0_REFUSAL_STAGE_LIVE_REREAD = 5;
   // The live re-read contradicts a CorrelationStatement: a listed peer's evidence (anchor or SID)
   // does not match the touched object as read, so the statement was made for another object (F4);
@@ -229,6 +240,9 @@ enum WriteGateState {
   WRITE_GATE_STATE_STALE = 4;
   // V8 or EV4 refused: under-privilege is never overridable (FR-12).
   WRITE_GATE_STATE_INSUFFICIENT = 5;
+  // Contract v1.2 §8.3a: a shrink record, the shrink baseline or a ratchet append to it could not be
+  // made durable. Closed until a VerifyConnection completes with every local record durable.
+  WRITE_GATE_STATE_LOCAL_RECORD_FAILED = 6;
 }
 
 message ActivationRefusedDetails {

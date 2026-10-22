@@ -1,5 +1,5 @@
 // activediq.connector.v1 — the Tier-0 vocabulary shared by the write group and VerifyConnection
-// (contract v1.1, T-0091).
+// (contract v1.1, T-0091; v1.2, T-0122).
 //
 // `tier0` is threat-model §6.4 (TM-D4): a computed set (AD C1-C16, Entra E1-E5) plus
 // customer-designated additions. A connector computes C1-C15 for its own forest, or E1-E4 for its
@@ -105,9 +105,16 @@ message CorrelationStatement {
     // an empty list means the server holds none for this object.
     CorrelatedPeers peers = 3;
   }
-  // Mandatory. When the server computed the statement from its inventory. Unset is
-  // CONTEXT_MISSING (F1; the zero timestamp is never read as a time). Older than the connector's
-  // maximum statement age, or too far in its future, is CONTEXT_STALE (F3).
+  // Mandatory. The AS-OF time of the OLDEST fact the statement rests on, never the time the
+  // statement was assembled (contract v1.2 §8.3 F3, TM-D23 rule 7): the minimum of the
+  // correlation's last evaluation for this object and the inventory as-of (DM `data_as_of`) of
+  // each listed peer's tier0 status. Facts the server reads live while it assembles the statement
+  // (the HybridLink configuration behind `no_hybrid_link`, a live re-read of a peer) count at the
+  // time of that read. When its inventory is older than the connector's maximum statement age the
+  // server re-reads the facts live for the touched objects, or does not send the request.
+  // Unset is CONTEXT_MISSING (F1; the zero timestamp is never read as a time). Older than the
+  // connector's maximum statement age (15 minutes), or more than 5 minutes in its future, is
+  // CONTEXT_STALE (F3).
   google.protobuf.Timestamp computed_at = 4;
 }
 
@@ -136,4 +143,14 @@ message Tier0Context {
   // the connector's log), and two statements about one object are merged additively, except that
   // `no_hybrid_link` beside `peers` for the same connection is CONTEXT_CONTRADICTED.
   repeated CorrelationStatement statements = 4;
+}
+
+// One object of a tier0 set and why it is there. Used for the connector's streamed set
+// (VerifyConnection `tier0_set`), the server's `correlated_tier0` input, and the objects found
+// tier0 after a write (ApplyResponse `tier0_after_write`). `basis` is non-empty everywhere except
+// in `tier0_after_write`, where an empty `basis` marks an object the step-9 re-read could not
+// classify (contract v1.2 §8.1 step 9); it still counts as tier0.
+message Tier0Member {
+  Guid object = 1;
+  repeated Tier0Basis basis = 2;
 }

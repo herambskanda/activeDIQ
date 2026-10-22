@@ -24,6 +24,9 @@ type ServicePrincipal struct {
 	AppID       string    `json:"appId"`
 	DisplayName string    `json:"displayName"`
 	AppRoles    []AppRole `json:"appRoles,omitempty"`
+	// Credentials are read by OwnServicePrincipal only; a service principal can carry its own.
+	KeyCredentials      []KeyCredential      `json:"keyCredentials,omitempty"`
+	PasswordCredentials []PasswordCredential `json:"passwordCredentials,omitempty"`
 }
 
 // AppRoleAssignment is an application permission granted to a service principal on a resource
@@ -38,7 +41,12 @@ type AppRoleAssignment struct {
 }
 
 type KeyCredential struct {
-	KeyID         string    `json:"keyId"`
+	KeyID string `json:"keyId"`
+	// CustomKeyIdentifier is the certificate thumbprint (SHA-1) for certificates; Graph sends base64.
+	CustomKeyIdentifier []byte `json:"customKeyIdentifier,omitempty"`
+	// Key is the public certificate (DER). It is public material; customKeyIdentifier is a label the
+	// caller chooses and must never decide whether a key is ours.
+	Key           []byte    `json:"key,omitempty"`
 	DisplayName   string    `json:"displayName"`
 	Type          string    `json:"type"`
 	Usage         string    `json:"usage"`
@@ -46,11 +54,20 @@ type KeyCredential struct {
 	EndDateTime   time.Time `json:"endDateTime"`
 }
 
+// PasswordCredential is a client secret's metadata. secretText and hint are secret material and are
+// deliberately not fields: the decoder drops them, so they cannot reach a log or a finding.
+type PasswordCredential struct {
+	KeyID         string    `json:"keyId"`
+	StartDateTime time.Time `json:"startDateTime"`
+	EndDateTime   time.Time `json:"endDateTime"`
+}
+
 type Application struct {
-	ID             string          `json:"id"`
-	AppID          string          `json:"appId"`
-	DisplayName    string          `json:"displayName"`
-	KeyCredentials []KeyCredential `json:"keyCredentials"`
+	ID                  string               `json:"id"`
+	AppID               string               `json:"appId"`
+	DisplayName         string               `json:"displayName"`
+	KeyCredentials      []KeyCredential      `json:"keyCredentials"`
+	PasswordCredentials []PasswordCredential `json:"passwordCredentials,omitempty"`
 }
 
 // DirectoryObject is an owner or member. Type is the Graph type without namespace ("user", "group",
@@ -111,8 +128,8 @@ func (c *Client) paged(sel ...odata.AnyProp) odata.Query { return c.q(sel...).To
 
 // Selections: only what the permission check and the tier0 classifier read.
 var (
-	selSP     = []odata.AnyProp{gs.ID, gs.ServicePrincipalAppID, gs.DisplayName, gs.AppRoles}
-	selOwnApp = []odata.AnyProp{gs.ID, gs.ApplicationAppID, gs.DisplayName, gs.KeyCredentials}
+	selSP     = []odata.AnyProp{gs.ID, gs.ServicePrincipalAppID, gs.DisplayName, gs.AppRoles, gs.KeyCredentials, gs.PasswordCredentials}
+	selOwnApp = []odata.AnyProp{gs.ID, gs.ApplicationAppID, gs.DisplayName, gs.KeyCredentials, gs.PasswordCredentials}
 	selApp    = []odata.AnyProp{gs.ID, gs.ApplicationAppID, gs.DisplayName}
 	selObject = []odata.AnyProp{gs.ID, gs.DisplayName, gs.UserPrincipalName}
 )
@@ -218,6 +235,13 @@ func (c *Client) OwnDirectoryRoles(ctx context.Context) ([]RoleAssignment, error
 		return nil, newErr(CodeProviderFailure, 0, "Graph returned a service principal id that is not a GUID", nil)
 	}
 	return c.DirectoryRoleAssignments(ctx, id)
+}
+
+// ServicePrincipalGroups lists the groups the service principal is a direct member of. Roles
+// assigned to a role-assignable group pass to its members, so the permission check reads them too.
+func (c *Client) ServicePrincipalGroups(ctx context.Context, spID guid.GUID) ([]Group, error) {
+	return list[Group](ctx, c, odata.Get(odata.Seg(gs.SetServicePrincipals), odata.Key(odata.GUIDOf(spID)),
+		odata.Seg(gs.SegMemberOf), odata.Cast(gs.CastGroup)).With(c.paged(gs.ID, gs.DisplayName, gs.GroupIsAssignableToRole)))
 }
 
 // RoleAssignableGroups lists groups with isAssignableToRole = true.

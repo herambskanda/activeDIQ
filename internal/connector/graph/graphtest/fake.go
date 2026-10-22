@@ -48,6 +48,10 @@ type Tenant struct {
 	Members           map[string][]graph.DirectoryObject // by group id
 	Applications      []graph.Application                // other apps' registrations, found by appId
 	Users             []graph.DirectoryObject            // found by userPrincipalName or displayName; duplicates allowed
+	// PasswordCredentials are the application's client secrets (metadata only).
+	PasswordCredentials []graph.PasswordCredential
+	// Memberships are the groups a principal (by object id) is a direct member of.
+	Memberships map[string][]graph.Group
 }
 
 // Server is the fake. Fields are guarded by mu; use the helpers.
@@ -272,7 +276,7 @@ func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
 			}
 		case "applications":
 			if app == t.ClientID {
-				s.one(w, graph.Application{ID: t.AppObjectID, AppID: t.ClientID, DisplayName: "activeDIQ", KeyCredentials: t.KeyCredentials})
+				s.one(w, graph.Application{ID: t.AppObjectID, AppID: t.ClientID, DisplayName: "activeDIQ", KeyCredentials: t.KeyCredentials, PasswordCredentials: t.PasswordCredentials})
 				return
 			}
 			for _, a := range t.Applications {
@@ -288,7 +292,7 @@ func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
 	var seg []string
 	for _, sg := range req.Segments {
 		switch sg.Kind {
-		case odatatest.SegName:
+		case odatatest.SegName, odatatest.SegCast:
 			seg = append(seg, sg.Name)
 		case odatatest.SegKey:
 			seg = append(seg, sg.Val.Text)
@@ -319,6 +323,8 @@ func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
 		s.one(w, sp)
 	case len(seg) == 3 && seg[0] == "servicePrincipals" && seg[2] == "appRoleAssignments":
 		pg(anySlice(t.Assignments[seg[1]]))
+	case len(seg) == 4 && seg[0] == "servicePrincipals" && seg[2] == "memberOf" && seg[3] == "microsoft.graph.group":
+		pg(anySlice(t.Memberships[seg[1]]))
 	case len(seg) == 3 && seg[2] == "owners":
 		pg(anySlice(t.Owners[seg[1]]))
 	case len(seg) == 3 && seg[0] == "groups" && seg[2] == "members":

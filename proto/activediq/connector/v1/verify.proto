@@ -1,4 +1,4 @@
-// activediq.connector.v1 — VerifyConnection (contract v1.1, T-0091).
+// activediq.connector.v1 — VerifyConnection (contract v1.1, T-0091; v1.2, T-0122).
 //
 // The connector's own rights check, run as the connector identity (TM §6.5 for AD, §6.6
 // "Verification" for Entra). It answers DM-24 (ConnectionVerification) and is the only source of
@@ -83,12 +83,13 @@ enum VerificationCheck {
   // Entra, TM §6.6 "Verification".
   VERIFICATION_CHECK_EV1_TOKEN = 21;
   VERIFICATION_CHECK_EV2_TENANT_IDENTITY = 22;
-  // Deny-list permissions and any directory role: blocks activation (TM-D5).
+  // Deny-list permissions, any directory role, and an unexpired password credential (client
+  // secret) on the application or its service principal: blocks activation (TM-D5, TM §6.2).
   VERIFICATION_CHECK_EV3_OVER_PRIVILEGE = 23;
   // Permissions the enabled features need and the app lacks.
   VERIFICATION_CHECK_EV4_SUFFICIENCY = 24;
-  // Permissions beyond the enabled rows, extra key and password credentials (application or
-  // service principal), owners: warn.
+  // Permissions beyond the enabled rows, extra key credentials and expired password credentials
+  // (application or service principal), owners: warn.
   VERIFICATION_CHECK_EV5_EXCESS = 25;
 }
 
@@ -147,6 +148,8 @@ enum FindingKind {
   FINDING_KIND_COULD_NOT_VERIFY = 9;
   // Entra: the application or its service principal has a password credential (client secret).
   // The connector authenticates with a certificate only, so every password credential is extra.
+  // Unexpired (no `end`, or `end` after the connector's clock): EV3, block, acknowledgeable by a
+  // Tier0Override with step-up (DM-25). Expired: EV5, warn (contract v1.2 §8.4, TM §6.2).
   FINDING_KIND_ENTRA_PASSWORD_CREDENTIAL = 10;
 }
 
@@ -380,6 +383,17 @@ message VerifyConnectionRequest {
   // Customer-designated tier0 objects and groups (TM §6.4). Added to the computed set; step 1
   // intersects the identity's groups with them.
   repeated Guid designated_tier0 = 7;
+  // Contract v1.2 §8.4 (TM-D23 rule 8): the server's cross-directory correlated tier0 set for the
+  // connection, C16 for AD or E5 for Entra, in every correlation state. Handled like
+  // `designated_tier0`: added to the computed set (and streamed back in `tier0_set`), intersected
+  // with the identity's groups in V7 step 1, and covered by V7 steps 2 and 3. Every entry's basis
+  // is exactly [TIER0_BASIS_C16_CORRELATED_TO_ENTRA_TIER0] on an AD connection or
+  // [TIER0_BASIS_E5_CORRELATED_TO_AD_TIER0] on an Entra connection; any other basis, an empty
+  // basis or an unset object is ERROR_CODE_INVALID_ARGUMENT before any directory call, and the
+  // connector's gate keeps its previous run. A completed run whose `designated_tier0` or
+  // `correlated_tier0` lacks an object the previous epoch had reported writes a tier0_set_shrink
+  // record on the connector host (contract §8.3a).
+  repeated Tier0Member correlated_tier0 = 8;
 }
 
 enum VerificationRunKind {
@@ -429,11 +443,6 @@ message Tier0SetChunk {
   repeated Tier0Member members = 1;
 }
 
-message Tier0Member {
-  Guid object = 1;
-  repeated Tier0Basis basis = 2;
-}
-
 message CheckResult {
   VerificationCheck check = 1;
   CheckOutcome outcome = 2;
@@ -451,6 +460,12 @@ message VerificationCompleted {
   // overridable findings only (the server's Tier0Override decides those, contract §8.2). False for
   // COULD_NOT_VERIFY, NOT_RUN or a FAILED verdict.
   bool write_gate_openable = 6;
+  // Contract v1.2 §8.3a (TM-D23 rule 8): the number of entries of the tier0_set_shrink record this
+  // run wrote on the connector host (objects the previous epoch reported as designated or
+  // correlated tier0 and this run's inputs omit); 0 when it wrote none. A shrink never fails the
+  // run. The record itself stays on the connector host; this count lets an honest server raise a
+  // health finding.
+  uint32 tier0_inputs_dropped = 7;
 }
 
 message VerifyConnectionResponse {

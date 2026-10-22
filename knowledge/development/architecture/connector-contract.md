@@ -1,16 +1,16 @@
 ---
-title: "Connector contract v1.1: the read side (Describe, search, read, per-DC read, change feed), the write group (Plan, Apply) and VerifyConnection"
+title: "Connector contract v1.2: the read side (Describe, search, read, per-DC read, change feed), the write group (Plan, Apply) and VerifyConnection"
 date: 2026-10-02
 updated: 2026-10-22
 status: review
 owner: heramb
 author: directory-engineer
 ticket: T-0064
-amended_by: T-0091 (v1.1, author solution-architect)
-binding_sources: blueprint §7.1-7.2, safe-primitives §3.6-3.7, domain-model DM-10, DM-13..DM-20, DM-24, DM-25, threat-model §6.2-§6.6 (TM-D1, TM-D2, TM-D4, TM-D5), §6.3 R1/R2 and TM-TB3-*, ADR-0005 rules 2, 4, 5
+amended_by: T-0091 (v1.1, author solution-architect), T-0122 (v1.2, author solution-architect: TM-D23 rules 7-11)
+binding_sources: blueprint §7.1-7.2, safe-primitives §3.6-3.7, domain-model DM-10, DM-13..DM-20, DM-24, DM-25, threat-model §6.2-§6.6 (TM-D1, TM-D2, TM-D4, TM-D5, TM-D23), §16.1 TM-R14..R17, §6.3 R1/R2 and TM-TB3-*, ADR-0005 rules 2, 4, 5, 7
 ---
 
-# Connector contract v1.1: the read side, the write group and the rights check
+# Connector contract v1.2: the read side, the write group and the rights check
 
 The source is `proto/activediq/connector/v1/`. This document is its long form: why each shape is as
 it is, what every operation promises, how failures look, and which cases a provider must pass
@@ -20,7 +20,13 @@ the proto and enforces rules P1 to P8 (§2) on every merge.
 **In scope:** `Describe`, `DescribeSchema`, `ScopedSearch`, `Read`, `ReadPerDC`, `ChangeFeed`, the
 error and capability model, the provider conformance suite. **v1.1 (T-0091) adds** `VerifyConnection`,
 `Plan` and `Apply`, the errors `TIER0_REFUSED`, `ACTIVATION_REFUSED_OVERPRIVILEGED` and
-`TARGET_CHANGED`, and the fail-closed rule for cross-directory Tier-0 context (§8). **Reserved by
+`TARGET_CHANGED`, and the fail-closed rule for cross-directory Tier-0 context (§8). **v1.2 (T-0122)
+applies the threat model's TM-D23 rules 7 to 11** (TM §6.2, from T-0108): `computed_at` is an as-of
+time (§8.3 F3), the connector's set ratchets within a verification epoch and a shrinking
+verification leaves a `tier0_set_shrink` record (§8.3a), override admissions are logged (§8.1),
+direct C9 links are read live (§8.1), a `tier0` object found after a write is reported (§8.1 step
+9), and an unexpired client secret is an EV3 block (§8.4). §8.7 maps each rule to its stage and
+case. **Reserved by
 name only:** `ReadSecret`, `VerifyUser` (§8.6). **Out of scope:** concrete write kinds (one spec
 ticket each, §8.1), server-side activation logic (T-0100), the classifiers (T-0093, T-0095), named
 secret operations, the fleet stream limits (TM-Q8), inventory tables and sync passes (T-0065), the
@@ -413,6 +419,7 @@ credentials, filter text, attribute values, cookies or a raw LDAP response (CC-E
 | `PROVIDER_FAILURE` | Unmapped directory failure; result code in `provider_result_code` for diagnosis only | never | `INTERNAL` | none |
 | `TIER0_REFUSED` (v1.1) | `Plan` or `Apply`: an object the write touches is `tier0`, or the request's Tier-0 context is missing, stale or contradicted (§8.1, §8.3). Nothing was written | never | `PERMISSION_DENIED` | `tier0_refused` (object, bases, stage) |
 | `ACTIVATION_REFUSED_OVERPRIVILEGED` (v1.1) | `Plan` or `Apply`: the connector's own last `VerifyConnection` does not open its write gate (§8.2). Nothing was written | operator action | `FAILED_PRECONDITION` | `activation_refused` (gate state, verification id, unacknowledged count) |
+| `LOCAL_RECORD_FAILED` (v1.2) | `VerifyConnection`: the connector could not make the `tier0_set_shrink` record or the shrink baseline durable on its host (disk full, permission, Windows event-log error, §8.3a). Sent in place of `completed`; the run starts no epoch and the write gate closes with `LOCAL_RECORD_FAILED` | operator action | `INTERNAL` | none |
 | `TARGET_CHANGED` (v1.1) | `Apply`: the target no longer matches the `TargetPrecondition` from `Plan`. Nothing was written. The pipeline records the step `stale_state` (DM-42.I2) | after re-plan | `ABORTED` | `target_changed` (object) |
 
 Cancellation and deadline use the gRPC statuses `CANCELLED` and `DEADLINE_EXCEEDED` with no
@@ -420,12 +427,13 @@ Cancellation and deadline use the gRPC statuses `CANCELLED` and `DEADLINE_EXCEED
 `UNREACHABLE_DC`, `STALE_COOKIE`, `UNEXPECTED_REFERRAL` and `INSUFFICIENT_RIGHTS` are the four
 typed failures of the ticket's acceptance criterion; they are the ones every caller must handle.
 Write-group callers (`directory/client`) must also handle `TIER0_REFUSED`,
-`ACTIVATION_REFUSED_OVERPRIVILEGED` and `TARGET_CHANGED`; none of the three is ever retried as is.
+`ACTIVATION_REFUSED_OVERPRIVILEGED` and `TARGET_CHANGED`, and `VerifyConnection` callers
+`LOCAL_RECORD_FAILED` (v1.2); none of the four is ever retried as is.
 `RetryAdvice` gains `AFTER_REPLAN` (v1.1). `Tier0RefusedDetails` carries a `tier0` object GUID:
 the server may store it with the step's outcome, but never copies it into an audit event, under the
 same rule as DM-24.I5 (it maps the Tier-0 set).
 
-## 8. The write group and the rights check (v1.1)
+## 8. The write group and the rights check (v1.1, tightened in v1.2)
 
 v1.1 (T-0091) adds three RPCs. `VerifyConnection` is the connector's own rights check (TM §6.5,
 §6.6). `Plan` and `Apply` are the write group that the operation pipeline calls (ADR-0005). The
@@ -461,19 +469,30 @@ logs the step key, attempt, acting principal, plan digest, outcome and any refus
 every `Plan` and `Apply`, including refusals (TM-TB6-T5). It logs identifiers only, never values or
 the peer list of the Tier-0 context.
 
-**Order of evaluation.** `Plan` and `Apply` run the same steps. The first failing step ends the
-call, and nothing after it runs.
+**Override admissions are logged (v1.2, TM-D23 rule 9).** A call is *admitted by override* when the
+write gate (§8.2) passes only through its last condition's second branch: V7 or EV3 is `FAIL` and
+every blocking fingerprint is in `WriteGateOverride.acknowledged_fingerprints`. For every such
+`Plan` and `Apply`, refused later or not, the local log line above also carries `override_id`, the
+number of the run's blocking fingerprints the override acknowledged, and the number of fingerprints
+the override lists. Fingerprints themselves are not logged (they are FR-16 data). A call whose gate
+is open without the override carries no override fields, even when the request has one. This is
+the connector-side trace of TM-R15 (a forged override): the server cannot remove it from a remote
+connector's host.
+
+**Order of evaluation.** `Plan` and `Apply` run the same steps (step 9 is `Apply` only). The first
+failing step ends the call, and nothing after it runs.
 
 | # | Step | Failure | Directory calls before it |
 | --- | --- | --- | --- |
 | 1 | Request shape: connection and directory identity, `target.object` set; `Apply` also needs `precondition` and `plan_digest` | `DIRECTORY_IDENTITY_MISMATCH`, `INVALID_ARGUMENT` | none |
 | 2 | Write gate (§8.2) | `ACTIVATION_REFUSED_OVERPRIVILEGED` | none |
 | 3 | Tier-0 context present; a `CorrelationStatement` for `target` with `correlation` and `computed_at` set, fresh (§8.3 F1, F3) | `TIER0_REFUSED` `CONTEXT_MISSING`, `CONTEXT_STALE` | none |
-| 4 | **Target** against the request's designations and tier0 peers (F2) and the connector's own set from its last `VerifyConnection` | `TIER0_REFUSED` `REQUEST_CONTEXT`, `CONNECTOR_SET` | **none** |
+| 4 | **Target** against the request's designations and tier0 peers (F2) and the connector's set: its last `VerifyConnection`'s set plus the epoch's ratchet (§8.3a) | `TIER0_REFUSED` `REQUEST_CONTEXT`, `CONNECTOR_SET` | **none** |
 | 5 | Kind known and wired; `Apply`: plan digest recomputed from the typed fields with the `operation/step` function, rule id `PlanDigestMismatch` | `INVALID_ARGUMENT`, `CAPABILITY_UNSUPPORTED` | none |
 | 6 | The connector derives the touched set from the typed change. Every touched object other than the target needs its own present, fresh statement (F1, F3); then each is checked against the designations, its statement's peers (F2, F5) and the connector's set | `TIER0_REFUSED` `CONTEXT_MISSING`, `CONTEXT_STALE`, `REQUEST_CONTEXT`, `CONNECTOR_SET` | none |
 | 7 | Live re-read on the pinned DC (AD) or Graph (Entra) of every touched object and of the facts named **live** in the per-basis table below, plus the correlation evidence for F4. Then classification with the connector's classifier (T-0093, T-0095), using the live facts for the live bases and the connector's set for the rest. A read error or an unknown answer counts as `tier0` | `TIER0_REFUSED` `LIVE_REREAD`, `CONTEXT_CONTRADICTED` | reads only |
 | 8 | `Plan`: return `precondition`, `before`, `Tier0Evaluation`. `Apply`: compare with `precondition`; if the after-state is already in place return `ALREADY_APPLIED` with `read_back`; otherwise run the conditional write of ADR-0005 rule 4 and read back | `TARGET_CHANGED` | reads only, then the write |
+| 9 | `Apply` that wrote (v1.2, TM-D23 rule 11): repeat step 7's live reads and classification for every touched object on the DC that took the write; return each object found `tier0` in `tier0_after_write`, with its bases, and write the list to the connector's local log and, on Windows hosts, the Windows event log. **A failed re-read counts as `tier0`, as at step 7:** when the DC is unreachable, a read times out or errors, the codec rejects a value, or a SOM cannot be read, the object is listed in `tier0_after_write` with an **empty `basis`** (the "could not be classified after the write" marker, D30); if the whole step fails, every touched object is listed that way | none: the write has happened; the answer is still `APPLIED`, and the server's Verify records `verify_failed` `tier0_after_write` for every listed object, with or without a basis | reads after the write |
 
 **Live re-read per basis (step 7).** The connector's set is computed by its last `VerifyConnection`,
 which can be up to the maximum verification age old (26 hours, §8.2). Step 7 therefore re-reads,
@@ -487,7 +506,8 @@ the request's context only; it is the residual R-T0SET-1 below.
 | C3, C6 (container), C7, C8, C10 | X's parent chain by `objectGUID` up to the NC head, compared with AdminSDHolder, the NC heads, `CN=System`'s sensitive children and `CN=Public Key Services` | **live** |
 | C5 | X's `userAccountControl` (0x2000, 0x4000000) and `primaryGroupID` (516, 521) | **live** |
 | C6 (OU holding a DC) | When X is an OU or container: one subtree search under X for a computer with 0x2000 or 0x4000000 in `userAccountControl`, size limit 1 | **live** |
-| C9 | GPO reach over SOMs, enforcement, block inheritance and loopback (DM-23.I5). Too wide to recompute per write | **set**. A write to the *SOM's* `gPLink`/`gPOptions` on the domain head, a C6 OU or a C15 site is live through those bases |
+| C9, direct links (v1.2, TM-D23 rule 10) | When X is a `groupPolicyContainer`: X's own `cn` (the GPO ID, parsed as a GUID by the same codec; a `cn` that does not parse as a GUID makes X `tier0`, basis C9, with no further reads), then `gPLink` (base scope, that attribute only) on every domain head in the connector's set (C7), on each domain's Domain Controllers OU resolved live through the head's `wellKnownObjects` (`GUID_DOMAIN_CONTROLLERS_CONTAINER_W`, [WKGUID binding](https://learn.microsoft.com/en-us/windows/win32/ad/binding-to-well-known-objects-using-wkguid)), and on every C6 OU and C15 site in the connector's set. Each value is parsed by the DM-23.I1 `gPLink` codec on the P2 DN parser (safe-primitives §4), never matched as a string. An entry whose GPO ID (the first RDN of its DN, parsed as a GUID) equals X's `cn` makes X `tier0`, basis C9, **whatever the link's options**: a disabled (`0x1`) link counts, because enabling it is one write. A value or entry the codec rejects, or a SOM that cannot be read, counts as `tier0` | **live** |
+| C9, other reach | GPO reach through any other SOM, enforcement, block inheritance and loopback (DM-23.I5). Too wide to recompute per write | **set** (TM-R16, pinned by CC-WRITE-16). A write to the *SOM's* `gPLink`/`gPOptions` on the domain head, a C6 OU or a C15 site is live through those bases |
 | C11 | The domain head's DACL (SD-flags control, DACL only, through the typed security-descriptor primitive), evaluated against X's `objectSid` and `tokenGroups` for Get-Changes **and** Get-Changes-All, or an access mask that implies both (`GENERIC_ALL`, all extended rights), with the same evaluation as the classifier's C11 (T-0093) | **live** |
 | C12 | X's `userAccountControl` (TRUSTED_FOR_DELEGATION, TRUSTED_TO_AUTH_FOR_DELEGATION) and `msDS-AllowedToDelegateTo`, where a value whose host is in the set's DC list or does not resolve counts as a DC service; the `msDS-AllowedToActOnBehalfOfOtherIdentity` of the DCs in the set's DC list | **live**; the DC list is **set** |
 | C14 | X's `sAMAccountName` = `AZUREADSSOACC$` | **live** |
@@ -499,14 +519,16 @@ the request's context only; it is the residual R-T0SET-1 below.
 | E4 (sync clients) | X's `appId` against the registered sync-client list | **live** |
 | Designated | The request's `designated` list (§8.3 F2) | context |
 
-**Residual R-T0SET-1 (stale connector set).** An object that became `tier0` since the connector's
-last `VerifyConnection` through a **set** basis above (a GPO newly linked so that it reaches a DC; a
-C13 group that appeared with an Exchange install; a newly promoted DC that is not yet in the DC list
-for C12; an app that gained a role after X became its owner) is not found by step 7. The window is
-bounded by the maximum verification age (26 hours), and the server's own `tier0` guard, recomputed
-on every sync (TM §6.4), is checked first at Plan. Declared here and routed to T-0108 for the
-security-architect's confirmation or a tighter bound. A connector may always re-read more than this
-table requires, never less.
+**Residual R-T0SET-1 (stale connector set; TM-R16, accepted after narrowing).** An object that
+became `tier0` since the connector's last `VerifyConnection` through a **set** basis above (a GPO
+newly linked to an OU that holds a C1–C4 account but is not a C6 OU, or reaching a DC only through
+loopback; a C13 group that appeared with an Exchange install; a newly promoted DC that is not yet
+in the DC list for C12; an app that gained a role after X became its owner) is not found by step 7.
+The canonical case, a new GPO linked to the Domain Controllers OU, is no longer in it: v1.2 reads
+direct C9 links live (TM-D23 rule 10, CC-WRITE-20). The window is bounded by the maximum
+verification age (26 hours, confirmed by T-0108), and the server's own `tier0` guard, recomputed on
+every sync (TM §6.4), is checked first at Plan. A connector may always re-read more than this table
+requires, never less.
 
 **Residual R-T0RACE-1 (step 7 to step 8).** LDAP cannot make a write conditional on membership,
 ancestry or a DACL elsewhere. Adding X to Domain Admins changes the group's `member` attribute;
@@ -517,6 +539,18 @@ can therefore be written. This is the same window as ADR-0005 rule 7's residual 
 a write conditional on ancestry, membership or correlation"), lasts milliseconds to seconds, and is
 detected the same way: Verify reads the facts again after the write, and the next set computation
 reports the object as `tier0`. Entra has the same window plus Graph's read consistency `[UNVERIFIED]`.
+Accepted by T-0108 as TM-R17. **Detective control (v1.2, TM-D23 rule 11):** `Apply` step 9 re-reads
+and re-classifies every touched object right after the write and returns any `tier0` object in
+`ApplyResponse.tier0_after_write`, logged on the connector host (local log and, on Windows, the
+Windows event log). A step-9 re-read that fails lists the object with an empty basis, so blocking
+or faulting the reads after the write raises the alert instead of suppressing it. Independently, the pipeline's Verify
+re-runs the *server's* `tier0` guard on each touched object's live re-read (ADR-0005 rule 7). If
+either finds an object `tier0`, the step is recorded `verify_failed` with reason
+`tier0_after_write`, and a security alert is raised at a severity above the `scope_changed` alert.
+The connector never undoes the write itself: undo is a new, gated operation (ADR-0005 rule 3), and
+an undo of a write to a `tier0` object is refused like any other write to it, so recovery is an
+administrator's task the alert hands over. The `tier0_after_write` reason and its alert are added
+to ADR-0005 rule 7 and DM-42 by T-0129 (§10).
 
 **What AC 3 of T-0091 promises.** `Apply` on a `tier0` target returns `TIER0_REFUSED` before any
 directory write, except within the declared residuals R-T0CTX-1, R-T0SET-1 and R-T0RACE-1. When the
@@ -545,7 +579,8 @@ is ADR-0005 rule 4's declared residual.
 
 The connector holds, in memory, per connection and credential, the result of its latest completed
 `VerifyConnection`: the verdict, each check's outcome, the fingerprints of the blocking findings, its
-computed `tier0` set and `completed_at`. The result is not persisted. After a restart the gate is
+computed `tier0` set and `completed_at`, and, from v1.2, the epoch's ratchet (§8.3a). The result is
+not persisted; only the shrink baseline of §8.3a is. After a restart the gate is
 `NOT_VERIFIED` until the server runs a verification, and the server's write gate (DM-10.I11)
 re-runs one automatically. The gate is **open** only when all of these hold. Each failure names its
 `WriteGateState`:
@@ -553,10 +588,21 @@ re-runs one automatically. The gate is **open** only when all of these hold. Eac
 | Condition | Otherwise |
 | --- | --- |
 | A completed run exists for the connection and its current credential | `NOT_VERIFIED` |
-| The run is no older than the maximum verification age: provisionally 26 hours, which is the daily scheduled run (DM-24.I7) plus a margin `[OPEN → T-0098]` | `STALE` |
+| The run is no older than the maximum verification age: 26 hours, which is the daily scheduled run (DM-24.I7) plus a margin (confirmed by T-0108, TM §6.2; twice-daily runs revisited when T-0096 measures a V7 run). A build-time constant (below) | `STALE` |
+| No shrink record, shrink baseline or ratchet append has failed to become durable since the last run that completed with every local record durable (§8.3a) | `LOCAL_RECORD_FAILED` (v1.2) |
 | V8 (AD) or EV4 (Entra) is not `FAIL`. Under-privilege is never overridable (FR-12) | `INSUFFICIENT` |
 | The run's verdict is not `FAILED`, and V7 or EV3 is neither `COULD_NOT_VERIFY` nor `NOT_RUN` | `COULD_NOT_VERIFY` |
 | V7 or EV3 is `PASS`, or it is `FAIL` and every blocking V7 or EV3 fingerprint is in the request's `WriteGateOverride.acknowledged_fingerprints` | `OVERPRIVILEGED` (with the count of unacknowledged findings) |
+
+**The limits are build-time constants (v1.2).** The maximum verification age (26 hours), the
+maximum statement age (15 minutes, §8.3 F3) and the future-skew allowance (5 minutes, F3) are
+constants compiled into the connector. No configuration file, registry value, environment
+variable, command-line flag, `Describe` or request field, and no server-supplied value can set or
+raise them; a server that wants a looser limit has no way to ask. Lowering a limit is a code change
+that ships as a contract revision, like raising one, so v1.2 has no setting in either direction.
+CC-WRITE-22 asserts that no such setting exists. The constants live in one Go file of the
+connector (`internal/connector/tier0` or its successor, T-0098) and are the only source the gate
+and F3 read.
 
 This follows DM-10.I9 (b) and I11 for V7 and EV3, and adds conditions DM-10.I11 does not state:
 `INSUFFICIENT` (I11 reads the V7 outcome only, so a failed V8 or EV4 does not close it) and `STALE`
@@ -571,7 +617,8 @@ independent second check. `VerifyConnection` itself is never gated.
 compromised server could forge an override and make the connector write with an over-privileged
 identity. That is a residual (D11), and it is bounded: **an override bypasses TM-D1, never TM-D2.**
 The Tier-0 refusal of §8.1 does not read the override, so every `tier0` target is still refused
-(CC-WRITE-08).
+(CC-WRITE-08). T-0108 confirmed this as TM-R15. Every admission by override is logged on the
+connector host (§8.1, TM-D23 rule 9; CC-WRITE-19).
 
 ### 8.3 Tier-0 context from the server, and the fail-closed rule (decision D10)
 
@@ -590,10 +637,10 @@ rules:
 | --- | --- | --- |
 | F1 | **Mandatory, per touched object.** The `Tier0Context` is present and holds a `CorrelationStatement` whose `object` is each object of the touched set the connector derives from the typed change, the target included (an object the change creates has no GUID yet; its kind's touched-set rule names the existing objects that stand for it, such as the parent). Each such statement has `correlation` set (`no_hybrid_link` or `peers`) and `computed_at` set; an unset timestamp is never read as the epoch. Absence never means "no correlation". The target's statement is checked at step 3, the others' at step 6. Statements about objects outside the touched set are ignored and counted in the connector's log. Two statements about one object are merged additively; one saying `no_hybrid_link` and another listing `peers` are contradictory | `TIER0_REFUSED` `CONTEXT_MISSING`; the contradiction is `CONTEXT_CONTRADICTED` |
 | F2 | **Additive only.** A designated GUID marks that object `tier0` (`CUSTOMER_DESIGNATED`). `designated` covers the whole touched set: every touched object that is designated and every designated group any touched object is a member of. A peer with `peer_tier0` marks the object its statement is about `tier0` (C16 for AD, E5 for Entra) **in every correlation state**: `candidate`, `matched` or `broken`, as TM §6.4 requires ("protection is wider than authority"). No field of the context can remove an object from the connector's own set, and none exists that could | `TIER0_REFUSED` `REQUEST_CONTEXT` |
-| F3 | **Fresh.** Each statement's `computed_at` is no older than the maximum statement age (provisionally 15 minutes; Plan and Apply of one step are minutes apart, and a bulk chunk re-fetches) and no more than 5 minutes in the future of the connector's clock. **What freshness defends against:** an *honest but stale* server, for example one whose correlation job lags or that replays a cached context. It is no defence against a lying server, which simply stamps the current time; that case is F6 | `TIER0_REFUSED` `CONTEXT_STALE` |
+| F3 | **Fresh, measured on the facts (v1.2, TM-D23 rule 7).** Each statement's `computed_at` is no older than the maximum statement age (**15 minutes**, confirmed by T-0108; Plan and Apply of one step are minutes apart, and a bulk chunk re-fetches) and no more than 5 minutes in the future of the connector's clock. **`computed_at` is an as-of time, not a print time:** it is the as-of time of the *oldest* fact the statement rests on, that is the minimum of the correlation's last evaluation for the object and the inventory as-of (DM-26 `data_as_of`) of each listed peer's `tier0` status. A fact the server reads live while assembling (the HybridLink configuration behind `no_hybrid_link`, a live peer re-read) counts at the time of that read. A server that stamps assembly time makes this rule test its cache, not the facts. Sync intervals may be up to 60 minutes (forest-connection spec FR-25), so when the server's inventory is older than the limit, `directory/client` re-reads those facts live for the touched objects (as DM-20.I5 already does for the target at Plan) or does not send the call (T-0109). **The connector's limits are build-time constants (§8.2): no setting, flag or server-supplied value can raise them to suit a slow sync interval** (CC-WRITE-22). **What freshness defends against:** an *honest but stale* server, for example one whose correlation job lags or that replays a cached context. It is no defence against a lying server, which simply stamps the current time; that case is F6 | `TIER0_REFUSED` `CONTEXT_STALE` |
 | F4 | **Bound to its object.** Each listed peer's `evidence` matches the object its statement is about, as re-read in step 7. AD object: `source_anchor` equals its `objectGUID` or `ms-DS-ConsistencyGuid` bytes, or `security_identifier` equals its `objectSid`. Entra object: `source_anchor` equals the base64-decoded `onPremisesImmutableId`, or `security_identifier` equals `onPremisesSecurityIdentifier` (DM-20.I1, I1a, I1b). A statement made for another object cannot be replayed onto this one | `TIER0_REFUSED` `CONTEXT_CONTRADICTED` |
 | F5 | **Unknown is `tier0`.** A peer is inconsistent, and counts as `tier0`, when its `state` is `CORRELATION_STATE_UNSPECIFIED`; its `peer_kind` is `PROVIDER_KIND_UNSPECIFIED` or the connection's own kind; its `evidence` oneof is unset; or it has `peer_tier0` with an empty basis, or a basis without `peer_tier0`. Checked at step 4 for the target and step 6 for the others, before F4 | `TIER0_REFUSED` `REQUEST_CONTEXT` |
-| F6 | **Omission is the residual.** A server that leaves out a correlated `tier0` peer or a designation, for any touched object, cannot be detected by a single-directory connector. C16 and E5 are *defined* by DM-20 correlations, which only the server computes. That is why marker heuristics are not used (option d below). Detective control: the connector logs the context's `tier0_revision`, the statement count and the peer count with every `Plan` and `Apply`, so the customer's connector-side log shows what it was told. Accepted as residual R-T0CTX-1, pending the security-architect confirmation in follow-up T-0108 | none |
+| F6 | **Omission is the residual.** A server that leaves out a correlated `tier0` peer or a designation, for any touched object, cannot be detected by a single-directory connector. C16 and E5 are *defined* by DM-20 correlations, which only the server computes. That is why marker heuristics are not used (option d below). Detective control: the connector logs the context's `tier0_revision`, the statement count and the peer count with every `Plan` and `Apply`, so the customer's connector-side log shows what it was told. Accepted as residual R-T0CTX-1 by T-0108 (TM-R14), narrowed by F3's as-of rule and by the ratchet of §8.3a: an object the connector was already told about cannot be unprotected silently | none |
 
 **Options considered.**
 - **(a) Request-scoped server context, additive and fail-closed: chosen.** It is the only option
@@ -614,17 +661,109 @@ rules:
   deployment no correlation can exist, so C16 is empty by definition. This option would refuse
   ordinary writes on every hybrid customer's users with no gain over F6.
 
+### 8.3a The connector's set ratchets within a verification epoch (v1.2, TM-D23 rule 8)
+
+**Epoch.** A *verification epoch* of a connection and credential starts when a `VerifyConnection`
+run completes (its stream ends with `completed`, whatever the verdict; this is the run §8.2's gate
+rests on) and ends when the next one completes. An interrupted run neither ends an epoch nor
+writes a shrink record.
+
+**The ratchet.** During an epoch the connector's set, which step 4 and step 6 check as
+`CONNECTOR_SET`, is the union of:
+- the run's computed set (C1–C15 or E1–E4) and its `designated_tier0` and `correlated_tier0`
+  inputs (§8.4), each with its bases; and
+- every object that an **accepted** `Tier0Context` has marked `tier0` since the run: each GUID in
+  `designated` (basis `CUSTOMER_DESIGNATED`), and each object whose statement lists a peer with
+  `peer_tier0` set and a non-empty basis (basis C16 or E5). A statement is accepted when it passes
+  F1 and F3 (present and fresh, steps 3 and 6); `designated` is accepted when the context is
+  present. Marks from a missing or stale statement are not added, since that statement was refused
+  before it was read. Peers that count as `tier0` only through F5 (malformed data, not a fact) are
+  not added.
+
+The ratchet adds marks when steps 4 and 6 read them, whatever the call's outcome: a call refused
+`REQUEST_CONTEXT` because of a mark still adds it, and so does a statement that step 7 later finds
+contradicted (F4), because adding protection is always the fail-closed direction. Nothing removes an entry before the epoch ends. A later request whose context
+omits the object is therefore refused `CONNECTOR_SET` until the next completed run (CC-WRITE-18).
+The ratchet lives in memory with the gate state of §8.2. It may reset when the connector restarts,
+because the gate is then `NOT_VERIFIED` until a fresh run, so no write passes on a reset ratchet.
+Each entry the ratchet adds whose basis is `CUSTOMER_DESIGNATED`, C16 or E5 is appended to the
+persisted baseline (below) and made **durable (written and flushed to stable storage) before the
+call returns**, whatever its outcome.
+
+**The shrink record.** The connector keeps the **reported set** of the current epoch: every
+`(GUID, basis)` entry whose basis is `CUSTOMER_DESIGNATED`, C16 or E5, from the run's inputs and
+from the ratchet. When a run completes, the connector compares the new run's `designated_tier0` and
+`correlated_tier0` inputs with the reported set **as sets**, not as counts, so swapping one object
+for another is caught. Each reported entry missing from the new inputs is *dropped*. If any entry
+is dropped, the connector writes one `tier0_set_shrink` record before the new epoch starts:
+- connection, credential, the previous and the new `verification_id`, and the time;
+- each dropped entry: GUID, basis, and whether it came from a run input or from a request
+  context (with the `tier0_revision` of the first context that marked it);
+- the counts of dropped entries per basis.
+
+It is written to the connector's local log, and on Windows hosts also to the Windows event log
+(the connector's own event source, Application log). It holds identifiers only. A shrink never fails
+the run: de-designating an object and removing a correlation are legitimate. `completed` reports
+the number of dropped entries in `tier0_inputs_dropped`, so an honest server can raise a health
+finding (CC-VER-16). A compromised server can unprotect an object it has reported only by running a
+smaller verification, and that run leaves a record on the connector host that the server cannot
+erase. For the **embedded** transport the connector shares the server's host, so the record adds
+nothing against a compromised server there (TM §6.2 "Who this defends against").
+
+**The baseline survives a restart.** The reported set, as `(GUID, basis, source)` entries plus the
+`verification_id` of the epoch's run, is persisted on the connector host after each completed run
+and appended to when the ratchet adds an entry. It is not a secret and holds identifiers only; it
+is readable and writable by the connector's service identity only. After a restart, the first
+completed run compares against the persisted baseline, so a smaller verification issued right
+after a restart still leaves its record. A missing or unreadable baseline file is itself recorded
+(`tier0_baseline_missing`) in the local log and, on Windows hosts, the Windows event log. If the
+connector has **not** restarted since the epoch began, it still holds the reported set in memory
+and compares against that, so deleting the file does not skip the comparison. Only after a restart
+with no readable baseline is that run's comparison skipped (the record says so). The completed run
+then writes a fresh baseline. The persisted baseline never opens the gate and is never used as the
+connector's set: D12 (the gate is in memory only) stands.
+
+**When a local record cannot be written, the gate closes (fail closed).** The shrink record (in
+the local log and, on Windows hosts, also the Windows event log), the new baseline and every
+ratchet append are required writes. The connector writes the shrink record and the new baseline,
+durably, before it sends `completed`, in that order. If either fails (disk full, permission, an
+event-log error, a flush error):
+- the stream ends with `LOCAL_RECORD_FAILED` (§7) instead of `completed`, so the run starts **no
+  new epoch**; the server records the run `FAILED` like an interrupted one;
+- the connector's write gate closes with `WriteGateState` `LOCAL_RECORD_FAILED`, whatever the
+  previous epoch's state was (keeping the old epoch open would let a write pass on a gate whose
+  newer run found something). The ratchet and the in-memory reported set are kept, never shrunk;
+- the failure is recorded in whichever of the local log and the Windows event log still accepts
+  it, and on the stream as above.
+
+A ratchet append that cannot be made durable ends the call that added the mark with
+`ACTIVATION_REFUSED_OVERPRIVILEGED`, gate state `LOCAL_RECORD_FAILED`, before any directory call
+(the mark is read at step 4 or 6, which make none), and closes the gate the same way. The gate
+reopens only when a `VerifyConnection` completes with its shrink record (if any) and its baseline
+durable. A filled disk therefore stops writes (a denial of service the operator sees at once)
+instead of erasing the evidence the record exists to keep (CC-VER-16).
+
 ### 8.4 `VerifyConnection`
 
 `VerifyConnection(connection, run_kind, verification_id, enabled_families, managed_domains,
-managed_roots, designated_tier0)` runs the forest-connection spec's V1–V9 (AD) or EV1–EV5 (Entra)
+managed_roots, designated_tier0, correlated_tier0)` runs the forest-connection spec's V1–V9 (AD) or EV1–EV5 (Entra)
 as the connector identity and streams:
 - `header` (verification id, `check_list_version`, observed identity);
 - `findings` chunks;
-- `tier0_set` chunks (the connector's computed C1–C15 or E1–E4 set plus the designations, each with
-  its bases, so the server can compare it with its inventory-derived set; a difference is a server
-  health finding and never shrinks the connector's set);
-- exactly one `completed` (verdict, each check's outcome, counts, `write_gate_openable`).
+- `tier0_set` chunks (the connector's computed C1–C15 or E1–E4 set plus the designations and the
+  correlated entries, each with its bases, so the server can compare it with its inventory-derived
+  set; a difference is a server health finding and never shrinks the connector's set);
+- exactly one `completed` (verdict, each check's outcome, counts, `write_gate_openable`, and from
+  v1.2 `tier0_inputs_dropped`, §8.3a).
+
+**`correlated_tier0` (v1.2, TM-D23 rule 8).** The server's C16 set (AD connection) or E5 set (Entra
+connection) for the connection, in every correlation state, as `Tier0Member` entries. It is handled
+like `designated_tier0`: added to the computed set and streamed back in `tier0_set`, intersected
+with the identity's groups in V7 step 1, and covered by V7 steps 2 and 3, so rights on a
+correlated object are excessive like rights on any `tier0` object. Each entry's basis is exactly C16
+on an AD connection or E5 on an Entra connection. Another basis, an empty basis or an unset
+`object` is `INVALID_ARGUMENT` before any directory call; no run starts and the gate keeps its
+previous run. On an AD-only deployment the list is empty, which is correct (C16 needs a HybridLink).
 
 A stream without `completed` is an interrupted run: the verdict is `FAILED` with `run_interrupted`
 (DM-10.I10). The run is **read-only**. It never requests the SACL; step 3 uses the SD-flags control
@@ -633,9 +772,10 @@ It is never gated. Its findings hold identifiers only (DM-24.I3). They map the f
 exposure, so the server stores them under FR-16 and never copies one into an audit event (DM-24.I5).
 
 The server's inputs can only shape *what is compared*. A smaller `enabled_families` list yields more
-excessive findings. Smaller `managed_roots` hide V9 warnings, which do not block. Smaller
-`designated_tier0` is the F6 residual. V7 runs over the connector's computed set whatever the
-inputs.
+excessive findings. Smaller `managed_roots` hide V9 warnings, which do not block. A smaller
+`designated_tier0` or `correlated_tier0` than the epoch reported is the F6 residual, and from v1.2
+it leaves a `tier0_set_shrink` record on the connector host (§8.3a). V7 runs over the connector's
+computed set whatever the inputs.
 
 **The ticket's "excessive[] and missing[] with object, right and source"** are the
 `RightsFinding`s of kind `EXCESSIVE_RIGHT` and `MISSING_RIGHT`. Each has `object`, `right`
@@ -655,11 +795,12 @@ has the same DM-24 shape and fingerprint. **The "refused flag"** is `verdict = R
 | TM-D1 / §6.3 | Missing rights: R1 and R2 on each managed domain NC (V8, block); missing rights of enabled write families (V9, warn) | V8 or V9, `MISSING_RIGHT` | the domain NC head or managed OU | `ad` with the expected right | `expected_by` the family | `family` |
 | FR-11 | An answer that could not be computed (unreadable object, unreachable domain or GC, ACL not returned) | V7, `COULD_NOT_VERIFY`, block | the object not decided | unset | unset | the check's outcome is `COULD_NOT_VERIFY`, never `PASS` |
 | TM §6.6 | Deny-list application permission | EV3, `ENTRA_DENY_LIST_PERMISSION`, block | the service principal | `entra.app_permission` (`app_role_id`, `value`, `resource_app_id`) | `entra_assignment` (the appRoleAssignment id) | |
-| TM §6.6 | Any directory role, active or PIM-eligible | EV3, `ENTRA_DIRECTORY_ROLE`, block | the service principal | `entra.directory_role` (`role_definition_id`, `ACTIVE` or `ELIGIBLE`, `directory_scope_id`) | `entra_assignment` | |
+| TM §6.6 | Any directory role, active or PIM-eligible, held directly or through a role-assignable group the service principal belongs to (membership read; `[UNVERIFIED — lab G6]` that an SP member receives the role, so the conservative reading refuses) | EV3, `ENTRA_DIRECTORY_ROLE`, block | the service principal | `entra.directory_role` (`role_definition_id`, `ACTIVE` or `ELIGIBLE`, `directory_scope_id`) | `entra_assignment` | |
 | TM §6.6 | Permission beyond the enabled rows | EV5, `EXCESSIVE_RIGHT`, warn | the service principal | `entra.app_permission` | `entra_assignment` | |
 | TM §6.6 | Permission an enabled row needs and the app lacks | EV4, `MISSING_RIGHT`; block for the read rows the connection needs (tenant, user and group read and delta, admin pre-flight), warn for write rows | the service principal | `entra.app_permission` | `expected_by` the family | `family` |
-| TM §6.6 | Extra key credential (not the certificate this connector holds) on the application **or** its service principal | EV5, `ENTRA_EXTRA_KEY_CREDENTIAL`, warn | the holder's object id | `entra.key_credential` (`key_id`, thumbprint, type, validity, `holder` = `APPLICATION` or `SERVICE_PRINCIPAL`; never key material) | unset | |
-| TM §6.6 | Password credential (client secret) on the application **or** its service principal. The connector authenticates with a certificate only, so every one is extra | EV5, `ENTRA_PASSWORD_CREDENTIAL`, warn `[severity to confirm → T-0108]` | the holder's object id | `entra.password_credential` (`key_id`, validity, `holder`; never `secretText`, `hint`, `displayName` or `customKeyIdentifier`) | unset | |
+| TM §6.6 | Extra key credential (not the certificate this connector holds; ours is recognised only by the SHA-1 of the public certificate in `key`, never by the caller-set `customKeyIdentifier`; `[UNVERIFIED — lab G7]` whether every read path returns `key`, and a key without it is extra) on the application **or** its service principal | EV5, `ENTRA_EXTRA_KEY_CREDENTIAL`, warn | the holder's object id | `entra.key_credential` (`key_id`, thumbprint, type, validity, `holder` = `APPLICATION` or `SERVICE_PRINCIPAL`; never key material) | unset | |
+| TM §6.6, §6.2 (v1.2) | **Unexpired** password credential (client secret) on the application **or** its service principal: `end` unset or later than the connector's clock, whether or not `start` has passed. The connector authenticates with a certificate only, so every one is a spare bearer credential that carries every Graph permission of §6.6 from anywhere | **EV3**, `ENTRA_PASSWORD_CREDENTIAL`, **block**. Closes the write gate like any EV3 finding (`OVERPRIVILEGED`); acknowledgeable by a `Tier0Override` with step-up (DM-25) | the holder's object id | `entra.password_credential` (`key_id`, validity, `holder`; never `secretText`, `hint`, `displayName` or `customKeyIdentifier`) | unset | |
+| TM §6.6, §6.2 (v1.2) | **Expired** password credential (`end` at or before the connector's clock) on either holder | EV5, `ENTRA_PASSWORD_CREDENTIAL`, warn | the holder's object id | as above | unset | the fingerprint differs from the EV3 finding's, because `check` is part of the DM-24.I4 recipe: an override acknowledging the unexpired secret does not carry over, and none is needed for the warning |
 | TM §6.6 | Owner on the application or service principal | EV5, `ENTRA_OWNER`, warn | the application or service principal | `entra.owner` (owner object id) | unset | |
 
 **Mapping to a DM-24 Finding.** `check`, `code`, `severity`, `object` → `object_guid` and
@@ -668,7 +809,7 @@ has the same DM-24 shape and fingerprint. **The "refused flag"** is `verdict = R
 - AD rights: `right.ad.object_type`, else `source.ace.trustee_group`, else `source.ace.trustee`;
 - delegation: empty;
 - Entra permission: `app_role_id`;
-- role: `role_definition_id`;
+- role: `role_definition_id`, with `@<group id>` appended when held through a role-assignable group;
 - key or password credential: `key_id` (the holder is already `object`);
 - owner: the owner id;
 - could-not-verify: empty.
@@ -691,6 +832,20 @@ additive changes. The named operations that safe-primitives §3.6 reserves for e
 (`GroupMembersExpand`, `ForestWideLookup`, `RecycleBinBrowse`, `RestoreDeleted`) are not part of
 this version. Each gets an `Operation` value and a security-architect review when it is specified.
 `ChangeFeed` **is** the `ChangeTracking` named operation: DirSync's control exists only inside it.
+
+### 8.7 TM-D23 rules 7 to 11 in this contract (v1.2)
+
+T-0108 accepted TM-R14 to TM-R17 only with these tightenings (TM §6.2). They must be implemented
+before T-0098 is merged.
+
+| TM-D23 rule | Where in this contract | Stage or outcome | Proto | Conformance | Implemented by |
+| --- | --- | --- | --- | --- | --- |
+| 7 `computed_at` is an as-of time | §8.3 F3 | `TIER0_REFUSED` `CONTEXT_STALE` (connector, steps 3 and 6); the server re-reads live or does not send | `CorrelationStatement.computed_at` comment | CC-WRITE-17, CC-WRITE-22 (limits are constants) | T-0109 (server builds it), T-0098 (connector checks it) |
+| 8 Ratchet, `correlated_tier0`, `tier0_set_shrink` | §8.3a, §8.4 | `TIER0_REFUSED` `CONNECTOR_SET` (steps 4 and 6); the shrink record on the connector host; `completed.tier0_inputs_dropped`; `LOCAL_RECORD_FAILED` (stream and gate) when a record cannot be made durable | `VerifyConnectionRequest.correlated_tier0`, `VerificationCompleted.tier0_inputs_dropped`, `Tier0Member`, `ERROR_CODE_LOCAL_RECORD_FAILED`, `WRITE_GATE_STATE_LOCAL_RECORD_FAILED` | CC-WRITE-18, CC-VER-15, CC-VER-16 | T-0098 (ratchet), T-0096 and T-0097 (input, record, baseline), T-0109 (sends the sets) |
+| 9 Override admissions logged | §8.1 "Override admissions are logged" | none (log line with `override_id` and counts) | none | CC-WRITE-19 | T-0098 |
+| 10 C9 direct links live | §8.1 per-basis table, C9 rows | `TIER0_REFUSED` `LIVE_REREAD`, basis C9 (step 7) | `TIER0_REFUSAL_STAGE_LIVE_REREAD` comment | CC-WRITE-20; CC-WRITE-16 pins what remains | T-0098 with the T-0093 classifier's `gPLink` codec |
+| 11 `tier0` after a write | §8.1 step 9, R-T0RACE-1 | `APPLIED` with `tier0_after_write` (an empty basis marks a failed re-read); the pipeline records `verify_failed` `tier0_after_write` and alerts | `ApplyResponse.tier0_after_write`, `Tier0Member` comment | CC-WRITE-21 | T-0098 (step 9), T-0129 (ADR-0005 rule 7, DM-42), T-0109 (maps it) |
+| `ENTRA_PASSWORD_CREDENTIAL` severity | §8.4 | EV3 block (unexpired), EV5 warn (expired) | `FindingKind` and `VerificationCheck` comments | CC-VER-13 | T-0097 |
 
 ## 9. Provider conformance suite
 
@@ -835,12 +990,15 @@ disabled, expired and locked accounts.
 | Entra delta, throttling, token expiry | no | E (Entra test tenant) |
 | 50,000-user and 50,000-member scale | partial | scale tier (T-0049) |
 
-### 9.8 VerifyConnection and the write group (v1.1)
+### 9.8 VerifyConnection and the write group (v1.1, v1.2)
 
 `VerifyConnection` cases land with T-0096 (AD) and T-0097 (Entra). Cases marked **K0** run as soon as
 the `Plan`/`Apply` handlers exist (T-0098), with no `WriteKind`, because steps 1 to 4 of §8.1 come
 before the kind check. Cases marked **K1** need the first concrete kind and are written with it. All
-TM-F-RIGHTS and TM-F-T0GUARD proofs (T-0066) are drawn from this table.
+TM-F-RIGHTS and TM-F-T0GUARD proofs (T-0066) are drawn from this table. v1.2 adds CC-VER-15,
+CC-VER-16 and CC-WRITE-17 to -22 for TM-D23 rules 7 to 11 and the constant limits, and changes CC-VER-13 and CC-WRITE-16
+(the "Proof additions to TM-F-T0GUARD" of TM §6.2). **R** marks a case that restarts the
+connector process inside the test.
 
 | ID | Case | Expectation | Lab |
 | --- | --- | --- | --- |
@@ -856,8 +1014,10 @@ TM-F-RIGHTS and TM-F-T0GUARD proofs (T-0066) are drawn from this table.
 | CC-VER-10 | Fingerprints | two runs give identical fingerprints for the same exposures; a different right or group path gives a different one; each equals the DM-24.I4 recipe recomputed by the harness | S |
 | CC-VER-11 | Read-only run | the proxy sees no add, modify, delete or modDN during the run; the SD-flags control never asks for the SACL | FI |
 | CC-VER-12 | Stream cut before `completed` | the harness's caller records `FAILED` (`run_interrupted`); the connector's gate does not change | S |
-| CC-VER-13 | Entra: `Directory.ReadWrite.All` granted; a directory role active and one eligible; a second certificate on the app; a certificate on the service principal; a client secret on the app and one on the service principal; an owner on the app; `User.Read.All` missing; a permission beyond the rows | EV3 block for the permission and both roles; `ENTRA_EXTRA_KEY_CREDENTIAL` EV5 warn with `key_id`, once with `holder` `APPLICATION` and `object` = the application id, once with `SERVICE_PRINCIPAL` and `object` = the service principal id; `ENTRA_PASSWORD_CREDENTIAL` EV5 warn for each secret with `key_id`, validity and the right `holder`, and the fake's `secretText` and `hint` values appear in no message, log line or span; EV5 warn with the owner; EV4 `MISSING_RIGHT` block; EV5 `EXCESSIVE_RIGHT` warn | Graph fake in CI; E |
+| CC-VER-13 | Entra: `Directory.ReadWrite.All` granted; a directory role active and one eligible; a second certificate on the app; a certificate on the service principal; an **unexpired** client secret on the app and one on the service principal; a secret with no `end`; a secret whose `start` is in the future; an **expired** secret on the app; an owner on the app; `User.Read.All` missing; a permission beyond the rows. Then a second tenant fake with the unexpired secrets only | EV3 block for the permission and both roles; `ENTRA_EXTRA_KEY_CREDENTIAL` EV5 warn with `key_id`, once with `holder` `APPLICATION` and `object` = the application id, once with `SERVICE_PRINCIPAL` and `object` = the service principal id; `ENTRA_PASSWORD_CREDENTIAL` **EV3 block** for each unexpired secret (both holders, the no-`end` secret and the future-`start` secret) and **EV5 warn** for the expired one, each with `key_id`, validity and the right `holder`; the expired secret's fingerprint differs from the one the same `key_id` gives under EV3. Second fake: verdict `REFUSED`, EV3 `FAIL`, `write_gate_openable = true`; a `Plan` is refused `OVERPRIVILEGED` (count 2) until an override acknowledges both secret fingerprints. The fake's `secretText` and `hint` values appear in no message, log line or span; EV5 warn with the owner; EV4 `MISSING_RIGHT` block; EV5 `EXCESSIVE_RIGHT` warn | Graph fake in CI; E |
 | CC-VER-14 | `tier0_set` | includes the lab's C1 groups and their transitive members, `krbtgt`, the DC and its OU, AdminSDHolder and the NC heads, each with its bases; `designated_tier0` inputs appear as `CUSTOMER_DESIGNATED` | S |
+| CC-VER-15 | `correlated_tier0` (v1.2, rule 8): an AD run with a user and a group listed with basis C16, the identity being a member of that group; separately an entry with basis C1, one with no basis, one with no object; an Entra run with an E5 entry | the AD entries appear in `tier0_set` with basis C16; V7 `TIER0_GROUP_MEMBERSHIP` with `object` = the group and basis C16; each malformed entry is `INVALID_ARGUMENT` before any directory call and the gate keeps its previous run; the Entra entry appears with E5 | S; Graph fake |
+| CC-VER-16 | Shrink record (v1.2, rule 8): run 1 with `designated_tier0` {A, B} and `correlated_tier0` {C}; a `Plan` whose context designates D; run 2 with {A} and {}; run 3 with {A, E}; run 3' instead with {E} only; restart, then run 4 with {} | after run 2: one `tier0_set_shrink` record on the connector host listing B (`CUSTOMER_DESIGNATED`, run input), C (C16, run input) and D (`CUSTOMER_DESIGNATED`, request context, with its `tier0_revision`); `tier0_inputs_dropped = 3`; the run's verdict is unchanged. Run 3 writes none; run 3' lists A (a swap is compared as a set). Run 4 after the restart lists the previous epoch's entries from the persisted baseline. A baseline file deleted after a restart gives `tier0_baseline_missing` and no comparison; deleted **without** a restart, run 2 still writes its record from the in-memory set and `tier0_baseline_missing` is also recorded. On a Windows host the same records, `tier0_baseline_missing` included, are in the Windows event log. **Record failures (sub-cases):** (i) the baseline path made unwritable (or the volume full) before run 2: run 2's stream ends with `LOCAL_RECORD_FAILED`, no `completed`; the next `Plan` is `ACTIVATION_REFUSED_OVERPRIVILEGED` `LOCAL_RECORD_FAILED` even though run 1's gate was open; after the path is restored a new run completes and reopens the gate. (ii) On Windows, the event source made unwritable: the same outcome. (iii) The baseline made unwritable after run 1, then a `Plan` whose context designates F: the call is `ACTIVATION_REFUSED_OVERPRIVILEGED` `LOCAL_RECORD_FAILED` with no directory call, and the gate stays closed. (iv) Kill the process right after a call that designates G returns: after restart, a run omitting G lists G (the append was durable before the call returned). Identifiers only (CC-WRITE-13 canary) | S, R; W for the event log |
 | CC-WRITE-01 | TM-F-T0GUARD, server guard off: `Plan` and `Apply` on a Domain Admins member, Domain Admins, the DC computer, a GPO linked to the DC OU, AdminSDHolder | `TIER0_REFUSED` stage `CONNECTOR_SET`; the DC-side operation counter shows **no directory call** | S, K0 |
 | CC-WRITE-02 | A user added to Domain Admins after the last `VerifyConnection` | `TIER0_REFUSED` stage `LIVE_REREAD`; reads only, no write | S, K1 |
 | CC-WRITE-03 | `Tier0Context` absent; no statement for the target (only one for another object); `correlation` unset; `computed_at` unset; `computed_at` 16 minutes old or 6 minutes in the future; two statements for the target, one `no_hybrid_link` and one `peers` | `TIER0_REFUSED` `CONTEXT_MISSING` (absent, no statement, `correlation` unset, `computed_at` unset), `CONTEXT_STALE` (old, future) or `CONTEXT_CONTRADICTED` (the pair); no directory call | S, K0 |
@@ -870,10 +1030,16 @@ TM-F-RIGHTS and TM-F-T0GUARD proofs (T-0066) are drawn from this table.
 | CC-WRITE-10 | `WRITE_KIND_UNSPECIFIED` on a non-`tier0` target with an open gate | `INVALID_ARGUMENT`; `Describe` still reports `PLAN` and `APPLY` `UNSUPPORTED` | S, K0 |
 | CC-WRITE-11 | `Apply` without a precondition; with a wrong `plan_digest`; after the target changed; retried after a successful write | `INVALID_ARGUMENT`; `INVALID_ARGUMENT` `PlanDigestMismatch` with no directory call; `TARGET_CHANGED` with nothing written; `ALREADY_APPLIED` with `read_back` | S, K1 |
 | CC-WRITE-12 | Both transports, every refusal above | the same code, stage and gate state (extends CC-ERR-01); the remote connector's local log has the step key, attempt, acting principal and plan digest of each call, refusals included (TM-TB6-T5) | S |
-| CC-WRITE-13 | Canary scan of the write group and `VerifyConnection` | no credential, attribute value, key material or peer list appears in any `message`, log line or span (extends CC-ERR-02) | S |
+| CC-WRITE-13 | Canary scan of the write group and `VerifyConnection` | no credential, attribute value, key material or peer list appears in any `message`, log line, span, `tier0_set_shrink` record or persisted baseline (extends CC-ERR-02) | S |
 | CC-WRITE-14 | Touched set beyond the target (first kind with a second touched object, for example add-member: the user and the group): (a) the group's statement lists a `candidate` peer with `peer_tier0` (Entra E2 group); (b) the context has a statement for the user only; (c) the group is in `designated`; (d) the group's statement is 16 minutes old | (a) `TIER0_REFUSED` `REQUEST_CONTEXT`, basis C16, `object` = the group; (b) `CONTEXT_MISSING`, `object` = the group; (c) `REQUEST_CONTEXT`, `CUSTOMER_DESIGNATED`; (d) `CONTEXT_STALE`. All before any directory call (step 6) | S, K1 |
 | CC-WRITE-15 | A target that became `tier0` through a **live** basis after the last `VerifyConnection`: (a) granted Get-Changes and Get-Changes-All on the domain head (C11); (b) `TRUSTED_FOR_DELEGATION` set (C12); (c) an OU into which a DC computer was moved (C6) | `TIER0_REFUSED` `LIVE_REREAD` with basis C11, C12 or C6; reads only, no write | S, K1 |
-| CC-WRITE-16 | Residual R-T0SET-1 made visible: a GPO newly linked to the Domain Controllers OU after the last `VerifyConnection`, then written | the connector does **not** refuse (basis C9 is **set**), and the case asserts that; after the next `VerifyConnection` the same write is `TIER0_REFUSED` `CONNECTOR_SET`, basis C9. The test pins the residual so that narrowing it is a deliberate change | S, K1 (the first kind that can target a GPO) |
+| CC-WRITE-16 | Residual R-T0SET-1 (TM-R16) after v1.2: after the last `VerifyConnection`, (a) a GPO newly linked to an OU that holds a Domain Admins member's account and is not a C6 OU; (b) a GPO that reaches a DC only through loopback processing; then each GPO is written | the connector does **not** refuse either (C9 other reach is **set**), and the case asserts that; after the next `VerifyConnection` the same writes are `TIER0_REFUSED` `CONNECTOR_SET`, basis C9. The test pins the residual so that narrowing it is a deliberate change. The direct-link case moved to CC-WRITE-20 | S, K1 (the first kind that can target a GPO) |
+| CC-WRITE-17 | Rule 7, `computed_at` as-of, run through `directory/client` with the server's inventory frozen: the correlation was last evaluated 16 minutes ago and the statement is assembled now; then the same with the live re-read enabled | without the live re-read, `computed_at` is the evaluation time 16 minutes ago and the connector refuses `TIER0_REFUSED` `CONTEXT_STALE`; with it, `computed_at` is the re-read time and the call passes the Tier-0 steps. The harness asserts that `computed_at` is never later than the as-of of any fact the statement used | S (server and connector), K0 |
+| CC-WRITE-18 | Rule 8, ratchet: request 1's context marks target X `tier0` through a C16 peer (refused `REQUEST_CONTEXT`) and designates Y; request 2 on X with a statement saying `no_hybrid_link`, and on Y without the designation; then a `VerifyConnection` whose inputs omit X and Y; then request 3 on X. Separately, a request 1 whose statement for X is 16 minutes old | request 2 is `TIER0_REFUSED` `CONNECTOR_SET`, basis C16 for X and `CUSTOMER_DESIGNATED` for Y, before any directory call; the verification writes the `tier0_set_shrink` record listing X and Y as request-context entries; request 3 passes the Tier-0 steps. The stale request 1 is refused `CONTEXT_STALE` and adds no mark | S, K0 |
+| CC-WRITE-19 | Rule 9, override logging: V7 `FAIL` with two blocking findings; a `Plan` with a fully acknowledging override on a `tier0` target (admitted at step 2, refused at step 4); a `Plan` with the same override after a run whose V7 is `PASS` | the first call's local log line carries `override_id`, acknowledged count 2 and listed count 2, beside the step key, attempt, acting principal, plan digest and refusal stage, and no fingerprint value; the second carries no override fields. Both transports | S, K0 |
+| CC-WRITE-20 | Rule 10, direct C9 links live: after the last `VerifyConnection`, a new GPO linked (a) to the Domain Controllers OU; (b) there with the link disabled (`0x1`); (c) to the domain head; (d) to a C15 site; (e) to the Domain Controllers OU after that OU was renamed; (f) the fault proxy returns a malformed `gPLink` on the Domain Controllers OU; (g) the fault proxy returns the target GPO with a `cn` that does not parse as a GUID | each write on the GPO is `TIER0_REFUSED` `LIVE_REREAD`, basis C9, before the next verification; (e) is found through `wellKnownObjects`; (f) and (g) count as `tier0` ((g) with no `gPLink` read). The proxy log shows `gPLink` read with base scope on exactly the SOMs of §8.1. Codec unit tests cover GUID case, `LDAP://` prefix case, two links to one GPO and a `cn` that is not a GUID | S, FI, K1 (the first kind that can target a GPO) |
+| CC-WRITE-21 | Rule 11, `tier0` after the write: the fault-injection proxy holds the modify on user X after step 7; during the hold X is added to Domain Admins; then the modify is released | `Apply` returns `APPLIED` with `tier0_after_write` = X, basis C2; the connector's local log has the entry; the pipeline's Verify records the step `verify_failed` with reason `tier0_after_write` and raises the security alert above the `scope_changed` alert; with step 9 disabled in a test build, the server's own Verify still records it (T-0129). **Sub-case, step-9 read fails:** the same hold, with no membership change, and the fault proxy drops (then, separately, errors) every read after the released modify: `Apply` returns `APPLIED` with `tier0_after_write` = X with an **empty basis**; the local log (and the Windows event log on W) has the entry; the pipeline records `verify_failed` `tier0_after_write` and raises the same alert | S, FI, K1; W for the event log |
+| CC-WRITE-22 | The limits are build-time constants (§8.2): (a) the harness enumerates the connector's configuration schema, flags, environment variables read and (on Windows) registry values, and the request and `Describe` messages; (b) it starts the connector with every candidate name for the three limits set to large values (`max_statement_age`, `max_verification_age`, `clock_skew` and their spellings) and sends a statement 16 minutes old and runs a gate check on a 27-hour-old run; (c) a source check finds the three values defined once as constants and referenced by the gate and F3 only | (a) no setting, field or flag names any of the three limits; (b) the statement is `CONTEXT_STALE` and the gate `STALE` whatever is set; (c) passes. (c) runs in the connector's unit tests on every merge (T-0098) | S, K0 |
 
 ## 10. Decisions for review and follow-ups
 
@@ -921,8 +1087,10 @@ CC-SRCH-17).
 - **D15. `VerifyConnection` streams** (header, findings, Tier-0 set, completed), because findings are
   bounded by the Tier-0 set and the managed OU count, not by one message (DM-24.I7). It also returns
   the connector's own Tier-0 set, so the server can detect a divergence from its inventory-derived set.
-- **D16. Provisional limits:** a maximum statement age of 15 minutes and a maximum verification age
-  of 26 hours `[OPEN → T-0098, T-0108]`.
+- **D16. Limits:** a maximum statement age of 15 minutes and a maximum verification age of 26 hours,
+  both confirmed by T-0108 (TM §6.2 TM-D23); v1.2 makes the statement age measure the facts (D23)
+  and makes both limits, and the 5-minute skew, build-time constants with no setting in either
+  direction (§8.2, CC-WRITE-22).
 - **D17. fitness-proto gains P8** (write-group requests carry a `Tier0Context` holding repeated `CorrelationStatement`s), and P6 no longer
   reserves `Apply` but still requires `OPERATION_APPLY`.
 
@@ -943,7 +1111,7 @@ CC-SRCH-17).
 - **D21. Entra credentials cover both holders and both kinds.** `EntraKeyCredential` and the new
   `EntraPasswordCredential` (key id and validity only) carry an `EntraCredentialHolder`, and a new
   finding kind `ENTRA_PASSWORD_CREDENTIAL` reports client secrets (EV5 warn; severity to confirm in
-  T-0108). `RightSource.identity_attribute` is an `IdentityAttribute` enum (field 4 reserved).
+  T-0108; v1.2 makes an unexpired secret EV3 block, D29). `RightSource.identity_attribute` is an `IdentityAttribute` enum (field 4 reserved).
 - **D22. Unset fields fail closed.** An unset `computed_at` is `CONTEXT_MISSING`; an unset `evidence`
   or an unspecified or same-directory `peer_kind` makes a peer count as `tier0` (F1, F5; CC-WRITE-03,
   -06). F3 states it defends against an honest-but-stale server only.
@@ -957,6 +1125,56 @@ The existing build tickets implement the rest: T-0096 (AD `VerifyConnection`), T
 `VerifyConnection`), T-0098 (`Plan`/`Apply` handlers), T-0093 and T-0095 (classifiers), T-0100
 (activation gate), T-0066 (the TM proofs, drawn from §9.8).
 
+**v1.2 decisions (T-0122, TM-D23 rules 7 to 11 from T-0108), for the reviewers:**
+
+- **D23. `computed_at` is an as-of time** (§8.3 F3). The server, not the connector, is bound by the
+  definition; the connector cannot tell a print time from an as-of time, so CC-WRITE-17 runs through
+  `directory/client`. The 15-minute limit stays; a slow sync interval is answered with a live
+  re-read, never a longer limit.
+- **D24. The ratchet is in memory; the shrink baseline is persisted** (§8.3a). Persisting the
+  ratchet itself would add nothing, because a restart closes the gate until a fresh run (D12).
+  Persisting the baseline is what lets a smaller verification right after a restart still leave its
+  record (T-0108 review note). The comparison is a set difference, not the count comparison of the
+  TM wording, because a swap keeps the count. The baseline includes the epoch's request-context
+  marks, so an object the server ever reported in the epoch is covered, not only run inputs. Cost: a wrong mark from an honest
+  server blocks writes to that object until the next run (a manual run clears it at once); that is
+  the fail-closed direction.
+- **D25. `correlated_tier0` is `repeated Tier0Member`**, not `repeated Guid` like
+  `designated_tier0`, so the shrink record can name each dropped entry's basis (C16 or E5) and the
+  server cannot send another basis through this field (CC-VER-15). `Tier0Member` moved from
+  `verify.proto` to `tier0.proto`; the package and Go names are unchanged.
+- **D26. Override admissions log counts, never fingerprints** (§8.1). The fingerprints are FR-16
+  data; `override_id` and two counts are enough to correlate with DM-25 on the server.
+- **D27. Direct C9 links count whatever the link's options** (§8.1). A disabled link is one write
+  away from enabled; fail closed. Matching uses the GPO's `cn` against the GUID in the link's first
+  RDN, per DM-23.I1 (the DN names the GPO by `cn`, never by `objectGUID`), with the same codec as
+  the inventory, so there is one `gPLink` parser.
+- **D28. `Apply` step 9 re-classifies after the write** and returns `tier0_after_write`
+  (`ApplyResponse` field 9). This gives the detective control of rule 11 a connector-side record
+  that a compromised server cannot erase on a remote host. The server's own Verify check (T-0129)
+  stays independent of it.
+- **D29. An unexpired client secret is EV3 block; an expired one is EV5 warn** (§8.4). "Unexpired"
+  includes a secret with no `end` and one whose `start` is in the future. The EV3 finding is
+  overridable with step-up like every EV3 finding.
+- **D30. A failed step-9 re-read is reported, not swallowed** (§8.1 step 9). The object goes into
+  the same `tier0_after_write` list with an empty `basis`, rather than into a separate field: a
+  server that maps the list maps the failure too, so it cannot fail open by forgetting a second
+  field. An attacker who can block the reads after a write therefore triggers the alert.
+- **D31. A local record that cannot be made durable closes the gate** (§8.3a). The run that could
+  not write its shrink record or baseline ends with `LOCAL_RECORD_FAILED` and starts no epoch; the
+  previous epoch's gate is not kept, because the newer run may have found something. Ratchet
+  appends are durable before the call returns. New wire values: `ERROR_CODE_LOCAL_RECORD_FAILED`
+  (52) and `WRITE_GATE_STATE_LOCAL_RECORD_FAILED` (6), both additive. Cost: a full disk stops writes
+  on that connector until it is fixed; that is the fail-closed direction, and visible at once.
+
+v1.2 follow-ups: T-0129 (solution-architect: `tier0_after_write` as a `verify_failed` reason and its
+alert in ADR-0005 rule 7 and DM-42). The implementing tickets carry the rest, each noted with what
+changed: T-0098 (ratchet, override log line, C9 live links, step 9), T-0109 (`computed_at` as-of and
+live re-read, `correlated_tier0` sent with every run, `tier0_after_write` mapped), T-0096 and T-0097
+(`correlated_tier0` handling, shrink record and baseline; T-0097 also the password-credential
+severity), T-0093 (the `gPLink` codec shared with step 7), T-0066 (CC-VER-13, -15, -16 and
+CC-WRITE-16 to -22 in TM-F-T0GUARD and TM-F-RIGHTS).
+
 ## Sources
 
 - DirSync: [Polling for changes using the DirSync control](https://learn.microsoft.com/en-us/windows/win32/ad/polling-for-changes-using-the-dirsync-control) · [MS-ADTS DirSync](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/2213a7f2-0a36-483c-b2a4-8574d53aa1e3) · [MS-DRSR ProcessDirSyncSearchRequest](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-drsr/0e61ce24-eac7-40d1-a014-37854e932b43) · [MS-DRSR cycle start](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-drsr/eb6876c5-6997-4541-8165-3844e46b464d) · [MS-ADTS LDAP extended controls](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/3c5e87db-4728-4f29-b164-01dd7d7391ea)
@@ -965,4 +1183,5 @@ The existing build tickets implement the rest: T-0096 (AD `VerifyConnection`), T
 - Samba: [CVE-2023-4154](https://www.samba.org/samba/security/CVE-2023-4154.html) · [dirsync.c](https://github.com/samba-team/samba/blob/master/source4/dsdb/samdb/ldb_modules/dirsync.c)
 - Entra: [delta query](https://learn.microsoft.com/en-us/graph/delta-query-overview) · [throttling](https://learn.microsoft.com/en-us/graph/throttling)
 - v1.1, write group and rights check: [allowedAttributesEffective](https://learn.microsoft.com/en-us/windows/win32/adschema/a-allowedattributeseffective) · [sDRightsEffective](https://learn.microsoft.com/en-us/windows/win32/adschema/a-sdrightseffective) · [Entra Connect source anchor design](https://learn.microsoft.com/en-us/entra/identity/hybrid/connect/plan-connect-design-concepts) · [Graph user resource (onPremisesImmutableId, onPremisesSecurityIdentifier, onPremisesSyncEnabled)](https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0) · [application addKey](https://learn.microsoft.com/en-us/graph/api/application-addkey?view=graph-rest-1.0) · [passwordCredential resource (hint, secretText, keyId)](https://learn.microsoft.com/en-us/graph/api/resources/passwordcredential?view=graph-rest-1.0) · [servicePrincipal resource (keyCredentials, passwordCredentials)](https://learn.microsoft.com/en-us/graph/api/resources/serviceprincipal?view=graph-rest-1.0) · [tokenGroups](https://learn.microsoft.com/en-us/windows/win32/adschema/a-tokengroups) · [memberOf is a back-link](https://learn.microsoft.com/en-us/windows/win32/adschema/a-memberof) · [RFC 4511 §4.6 Modify](https://www.rfc-editor.org/rfc/rfc4511#section-4.6). Internal: threat-model §6.2 to §6.6 and §6.8, domain-model DM-10.I8 to I11, DM-20, DM-24, DM-25, ADR-0005 rules 2, 4, 5 and 7, forest-connection spec §7 (V1 to V9, FR-10 to FR-13, FR-35).
+- v1.2 (T-0122): [Binding to well-known objects using WKGUID (wellKnownObjects, Domain Controllers)](https://learn.microsoft.com/en-us/windows/win32/ad/binding-to-well-known-objects-using-wkguid) · [gPLink](https://learn.microsoft.com/en-us/windows/win32/adschema/a-gplink) · [MS-GPOL Domain SOM Search (gPLink format and options)](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-gpol/08090b22-bc16-49f4-8e10-f27a8fb16d18) · [passwordCredential (endDateTime, startDateTime)](https://learn.microsoft.com/en-us/graph/api/resources/passwordcredential?view=graph-rest-1.0). Internal: threat-model §6.2 TM-D23 rules 7 to 11 and the `ENTRA_PASSWORD_CREDENTIAL` severity, §6.4, §16.1 TM-R14 to TM-R17; domain-model DM-23.I1, DM-26; forest-connection spec FR-25.
 - Internal: `knowledge/development/domain/ad-change-notifications.md` (T-0018), `knowledge/development/runbooks/ad-lab.md` §5, and the ad-expert consult recorded in the T-0064 notes. The Samba statements in the consult (no `MoreResults`, `;range=0-0`, skipped removed links) come from a reading of the source, not a run, and are `[UNVERIFIED lab]` until CC-FEED-04 and CC-FEED-21 run.

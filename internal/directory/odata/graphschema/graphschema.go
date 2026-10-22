@@ -32,12 +32,13 @@ var (
 // Selectable properties. Edm.String unless noted; the type only matters when a property becomes
 // filterable.
 var (
-	ID             = odata.GUIDStringProp("id")
-	DisplayName    = odata.StringProp("displayName")    // Edm.String on user, group, application, servicePrincipal
-	AppRoles       = odata.StringProp("appRoles")       // collection of appRole
-	KeyCredentials = odata.StringProp("keyCredentials") // collection of keyCredential
-	TemplateID     = odata.StringProp("templateId")
-	Mail           = odata.StringProp("mail")
+	ID                  = odata.GUIDStringProp("id")
+	DisplayName         = odata.StringProp("displayName")         // Edm.String on user, group, application, servicePrincipal
+	AppRoles            = odata.StringProp("appRoles")            // collection of appRole
+	KeyCredentials      = odata.StringProp("keyCredentials")      // collection of keyCredential
+	PasswordCredentials = odata.StringProp("passwordCredentials") // collection of passwordCredential
+	TemplateID          = odata.StringProp("templateId")
+	Mail                = odata.StringProp("mail")
 )
 
 // Navigation properties for $expand.
@@ -60,4 +61,6 @@ const (
 	SegAppRoleAssignedTo odata.Name = "appRoleAssignedTo"
 	SegOwners            odata.Name = "owners"
 	SegMembers           odata.Name = "members"
+	SegMemberOf          odata.Name = "memberOf"
+	CastGroup            odata.Name = "microsoft.graph.group"
 )

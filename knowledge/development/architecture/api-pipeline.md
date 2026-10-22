@@ -19,6 +19,7 @@ api/openapi/openapi.yaml + shared/*.yaml + modules/<tag>.yaml + platform/<tag>.y
         │  tools/gen/api: bundle (rule 3) → dialect check (rule 2) → emit
         ▼
 internal/platform/apihost/spec/openapi.gen.json          the bundle: served, linted, diffed
+internal/platform/apihost/spec/policy.gen.json           policy.yaml as JSON (tools/gen/policyjson, so no YAML parser ships); apihost.ParsePolicy is the one parser (server + fitness A4)
 internal/platform/apihost/apitypes/{models,problems}.gen.go   shared schemas and the problem catalogue
 internal/modules/<tag>/api/{models,handlers}.gen.go      per tag: bodies, Handlers interface, Bind, route rows
 web/src/api/schema.gen.d.ts                              paths and components (openapi-typescript)

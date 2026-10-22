@@ -1,5 +1,5 @@
 // activediq.connector.v1 — the Tier-0 vocabulary shared by the write group and VerifyConnection
-// (contract v1.1, T-0091).
+// (contract v1.1, T-0091; v1.2, T-0122).
 //
 // `tier0` is threat-model §6.4 (TM-D4): a computed set (AD C1-C16, Entra E1-E5) plus
 // customer-designated additions. A connector computes C1-C15 for its own forest, or E1-E4 for its
@@ -404,9 +404,16 @@ type CorrelationStatement struct {
 	//	*CorrelationStatement_NoHybridLink
 	//	*CorrelationStatement_Peers
 	Correlation isCorrelationStatement_Correlation `protobuf_oneof:"correlation"`
-	// Mandatory. When the server computed the statement from its inventory. Unset is
-	// CONTEXT_MISSING (F1; the zero timestamp is never read as a time). Older than the connector's
-	// maximum statement age, or too far in its future, is CONTEXT_STALE (F3).
+	// Mandatory. The AS-OF time of the OLDEST fact the statement rests on, never the time the
+	// statement was assembled (contract v1.2 §8.3 F3, TM-D23 rule 7): the minimum of the
+	// correlation's last evaluation for this object and the inventory as-of (DM `data_as_of`) of
+	// each listed peer's tier0 status. Facts the server reads live while it assembles the statement
+	// (the HybridLink configuration behind `no_hybrid_link`, a live re-read of a peer) count at the
+	// time of that read. When its inventory is older than the connector's maximum statement age the
+	// server re-reads the facts live for the touched objects, or does not send the request.
+	// Unset is CONTEXT_MISSING (F1; the zero timestamp is never read as a time). Older than the
+	// connector's maximum statement age (15 minutes), or more than 5 minutes in its future, is
+	// CONTEXT_STALE (F3).
 	ComputedAt    *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=computed_at,json=computedAt,proto3" json:"computed_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -653,6 +660,63 @@ func (x *Tier0Context) GetStatements() []*CorrelationStatement {
 	return nil
 }
 
+// One object of a tier0 set and why it is there. Used for the connector's streamed set
+// (VerifyConnection `tier0_set`), the server's `correlated_tier0` input, and the objects found
+// tier0 after a write (ApplyResponse `tier0_after_write`). `basis` is non-empty everywhere except
+// in `tier0_after_write`, where an empty `basis` marks an object the step-9 re-read could not
+// classify (contract v1.2 §8.1 step 9); it still counts as tier0.
+type Tier0Member struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Object        *Guid                  `protobuf:"bytes,1,opt,name=object,proto3" json:"object,omitempty"`
+	Basis         []Tier0Basis           `protobuf:"varint,2,rep,packed,name=basis,proto3,enum=activediq.connector.v1.Tier0Basis" json:"basis,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Tier0Member) Reset() {
+	*x = Tier0Member{}
+	mi := &file_activediq_connector_v1_tier0_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Tier0Member) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Tier0Member) ProtoMessage() {}
+
+func (x *Tier0Member) ProtoReflect() protoreflect.Message {
+	mi := &file_activediq_connector_v1_tier0_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Tier0Member.ProtoReflect.Descriptor instead.
+func (*Tier0Member) Descriptor() ([]byte, []int) {
+	return file_activediq_connector_v1_tier0_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *Tier0Member) GetObject() *Guid {
+	if x != nil {
+		return x.Object
+	}
+	return nil
+}
+
+func (x *Tier0Member) GetBasis() []Tier0Basis {
+	if x != nil {
+		return x.Basis
+	}
+	return nil
+}
+
 var File_activediq_connector_v1_tier0_proto protoreflect.FileDescriptor
 
 const file_activediq_connector_v1_tier0_proto_rawDesc = "" +
@@ -690,7 +754,10 @@ const file_activediq_connector_v1_tier0_proto_rawDesc = "" +
 	"\x0etier0_revision\x18\x03 \x01(\x04R\rtier0Revision\x12L\n" +
 	"\n" +
 	"statements\x18\x04 \x03(\v2,.activediq.connector.v1.CorrelationStatementR\n" +
-	"statementsJ\x04\b\x01\x10\x02R\vcorrelation*\xf1\x06\n" +
+	"statementsJ\x04\b\x01\x10\x02R\vcorrelation\"}\n" +
+	"\vTier0Member\x124\n" +
+	"\x06object\x18\x01 \x01(\v2\x1c.activediq.connector.v1.GuidR\x06object\x128\n" +
+	"\x05basis\x18\x02 \x03(\x0e2\".activediq.connector.v1.Tier0BasisR\x05basis*\xf1\x06\n" +
 	"\n" +
 	"Tier0Basis\x12\x1b\n" +
 	"\x17TIER0_BASIS_UNSPECIFIED\x10\x00\x12\"\n" +
@@ -736,7 +803,7 @@ func file_activediq_connector_v1_tier0_proto_rawDescGZIP() []byte {
 }
 
 var file_activediq_connector_v1_tier0_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_activediq_connector_v1_tier0_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_activediq_connector_v1_tier0_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_activediq_connector_v1_tier0_proto_goTypes = []any{
 	(Tier0Basis)(0),               // 0: activediq.connector.v1.Tier0Basis
 	(CorrelationState)(0),         // 1: activediq.connector.v1.CorrelationState
@@ -746,32 +813,35 @@ var file_activediq_connector_v1_tier0_proto_goTypes = []any{
 	(*NoHybridLink)(nil),          // 5: activediq.connector.v1.NoHybridLink
 	(*CorrelatedPeers)(nil),       // 6: activediq.connector.v1.CorrelatedPeers
 	(*Tier0Context)(nil),          // 7: activediq.connector.v1.Tier0Context
-	(*Sid)(nil),                   // 8: activediq.connector.v1.Sid
-	(ProviderKind)(0),             // 9: activediq.connector.v1.ProviderKind
-	(*DirectoryIdentity)(nil),     // 10: activediq.connector.v1.DirectoryIdentity
-	(*Guid)(nil),                  // 11: activediq.connector.v1.Guid
-	(*timestamppb.Timestamp)(nil), // 12: google.protobuf.Timestamp
+	(*Tier0Member)(nil),           // 8: activediq.connector.v1.Tier0Member
+	(*Sid)(nil),                   // 9: activediq.connector.v1.Sid
+	(ProviderKind)(0),             // 10: activediq.connector.v1.ProviderKind
+	(*DirectoryIdentity)(nil),     // 11: activediq.connector.v1.DirectoryIdentity
+	(*Guid)(nil),                  // 12: activediq.connector.v1.Guid
+	(*timestamppb.Timestamp)(nil), // 13: google.protobuf.Timestamp
 }
 var file_activediq_connector_v1_tier0_proto_depIdxs = []int32{
-	8,  // 0: activediq.connector.v1.CorrelationEvidence.security_identifier:type_name -> activediq.connector.v1.Sid
-	9,  // 1: activediq.connector.v1.CorrelatedPeer.peer_kind:type_name -> activediq.connector.v1.ProviderKind
-	10, // 2: activediq.connector.v1.CorrelatedPeer.peer_directory:type_name -> activediq.connector.v1.DirectoryIdentity
-	11, // 3: activediq.connector.v1.CorrelatedPeer.peer_object:type_name -> activediq.connector.v1.Guid
+	9,  // 0: activediq.connector.v1.CorrelationEvidence.security_identifier:type_name -> activediq.connector.v1.Sid
+	10, // 1: activediq.connector.v1.CorrelatedPeer.peer_kind:type_name -> activediq.connector.v1.ProviderKind
+	11, // 2: activediq.connector.v1.CorrelatedPeer.peer_directory:type_name -> activediq.connector.v1.DirectoryIdentity
+	12, // 3: activediq.connector.v1.CorrelatedPeer.peer_object:type_name -> activediq.connector.v1.Guid
 	1,  // 4: activediq.connector.v1.CorrelatedPeer.state:type_name -> activediq.connector.v1.CorrelationState
 	0,  // 5: activediq.connector.v1.CorrelatedPeer.peer_tier0_basis:type_name -> activediq.connector.v1.Tier0Basis
 	2,  // 6: activediq.connector.v1.CorrelatedPeer.evidence:type_name -> activediq.connector.v1.CorrelationEvidence
-	11, // 7: activediq.connector.v1.CorrelationStatement.object:type_name -> activediq.connector.v1.Guid
+	12, // 7: activediq.connector.v1.CorrelationStatement.object:type_name -> activediq.connector.v1.Guid
 	5,  // 8: activediq.connector.v1.CorrelationStatement.no_hybrid_link:type_name -> activediq.connector.v1.NoHybridLink
 	6,  // 9: activediq.connector.v1.CorrelationStatement.peers:type_name -> activediq.connector.v1.CorrelatedPeers
-	12, // 10: activediq.connector.v1.CorrelationStatement.computed_at:type_name -> google.protobuf.Timestamp
+	13, // 10: activediq.connector.v1.CorrelationStatement.computed_at:type_name -> google.protobuf.Timestamp
 	3,  // 11: activediq.connector.v1.CorrelatedPeers.peers:type_name -> activediq.connector.v1.CorrelatedPeer
-	11, // 12: activediq.connector.v1.Tier0Context.designated:type_name -> activediq.connector.v1.Guid
+	12, // 12: activediq.connector.v1.Tier0Context.designated:type_name -> activediq.connector.v1.Guid
 	4,  // 13: activediq.connector.v1.Tier0Context.statements:type_name -> activediq.connector.v1.CorrelationStatement
-	14, // [14:14] is the sub-list for method output_type
-	14, // [14:14] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	12, // 14: activediq.connector.v1.Tier0Member.object:type_name -> activediq.connector.v1.Guid
+	0,  // 15: activediq.connector.v1.Tier0Member.basis:type_name -> activediq.connector.v1.Tier0Basis
+	16, // [16:16] is the sub-list for method output_type
+	16, // [16:16] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_activediq_connector_v1_tier0_proto_init() }
@@ -794,7 +864,7 @@ func file_activediq_connector_v1_tier0_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_activediq_connector_v1_tier0_proto_rawDesc), len(file_activediq_connector_v1_tier0_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   6,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
