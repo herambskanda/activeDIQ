@@ -22,6 +22,9 @@ type ServicePrincipal struct {
 	AppID       string    `json:"appId"`
 	DisplayName string    `json:"displayName"`
 	AppRoles    []AppRole `json:"appRoles,omitempty"`
+	// Credentials are read by OwnServicePrincipal only; a service principal can carry its own.
+	KeyCredentials      []KeyCredential      `json:"keyCredentials,omitempty"`
+	PasswordCredentials []PasswordCredential `json:"passwordCredentials,omitempty"`
 }
 
 // AppRoleAssignment is an application permission granted to a service principal on a resource
@@ -36,7 +39,12 @@ type AppRoleAssignment struct {
 }
 
 type KeyCredential struct {
-	KeyID         string    `json:"keyId"`
+	KeyID string `json:"keyId"`
+	// CustomKeyIdentifier is the certificate thumbprint (SHA-1) for certificates; Graph sends base64.
+	CustomKeyIdentifier []byte `json:"customKeyIdentifier,omitempty"`
+	// Key is the public certificate (DER). It is public material; customKeyIdentifier is a label the
+	// caller chooses and must never decide whether a key is ours.
+	Key           []byte    `json:"key,omitempty"`
 	DisplayName   string    `json:"displayName"`
 	Type          string    `json:"type"`
 	Usage         string    `json:"usage"`
@@ -44,11 +52,20 @@ type KeyCredential struct {
 	EndDateTime   time.Time `json:"endDateTime"`
 }
 
+// PasswordCredential is a client secret's metadata. secretText and hint are secret material and are
+// deliberately not fields: the decoder drops them, so they cannot reach a log or a finding.
+type PasswordCredential struct {
+	KeyID         string    `json:"keyId"`
+	StartDateTime time.Time `json:"startDateTime"`
+	EndDateTime   time.Time `json:"endDateTime"`
+}
+
 type Application struct {
-	ID             string          `json:"id"`
-	AppID          string          `json:"appId"`
-	DisplayName    string          `json:"displayName"`
-	KeyCredentials []KeyCredential `json:"keyCredentials"`
+	ID                  string               `json:"id"`
+	AppID               string               `json:"appId"`
+	DisplayName         string               `json:"displayName"`
+	KeyCredentials      []KeyCredential      `json:"keyCredentials"`
+	PasswordCredentials []PasswordCredential `json:"passwordCredentials,omitempty"`
 }
 
 // DirectoryObject is an owner or member. Type is the Graph type without namespace ("user", "group",
@@ -122,7 +139,7 @@ func needGUID(id string) error {
 // OwnServicePrincipal reads the service principal of this client's app registration, with appRoles.
 func (c *Client) OwnServicePrincipal(ctx context.Context) (ServicePrincipal, error) {
 	var sp ServicePrincipal
-	err := c.get(ctx, c.endpoint(c.q("id,appId,displayName,appRoles"), "servicePrincipals(appId='"+c.cfg.ClientID+"')"), &sp)
+	err := c.get(ctx, c.endpoint(c.q("id,appId,displayName,appRoles,keyCredentials,passwordCredentials"), "servicePrincipals(appId='"+c.cfg.ClientID+"')"), &sp)
 	return sp, err
 }
 
@@ -139,7 +156,7 @@ func (c *Client) ServicePrincipalByID(ctx context.Context, id string) (ServicePr
 // OwnApplication reads this client's application object with its key credentials.
 func (c *Client) OwnApplication(ctx context.Context) (Application, error) {
 	var app Application
-	err := c.get(ctx, c.endpoint(c.q("id,appId,displayName,keyCredentials"), "applications(appId='"+c.cfg.ClientID+"')"), &app)
+	err := c.get(ctx, c.endpoint(c.q("id,appId,displayName,keyCredentials,passwordCredentials"), "applications(appId='"+c.cfg.ClientID+"')"), &app)
 	if err == nil && app.KeyCredentials == nil {
 		app.KeyCredentials = []KeyCredential{}
 	}
@@ -223,6 +240,15 @@ func (c *Client) OwnDirectoryRoles(ctx context.Context) ([]RoleAssignment, error
 		return nil, err
 	}
 	return c.DirectoryRoleAssignments(ctx, sp.ID)
+}
+
+// ServicePrincipalGroups lists the groups the service principal is a direct member of. Roles
+// assigned to a role-assignable group pass to its members, so the permission check reads them too.
+func (c *Client) ServicePrincipalGroups(ctx context.Context, spID string) ([]Group, error) {
+	if err := needGUID(spID); err != nil {
+		return nil, err
+	}
+	return list[Group](ctx, c, c.endpoint(c.paged("id,displayName,isAssignableToRole"), "servicePrincipals", spID, "memberOf", "microsoft.graph.group"))
 }
 
 // RoleAssignableGroups lists groups with isAssignableToRole = true.

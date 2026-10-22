@@ -42,11 +42,15 @@ type Tenant struct {
 	ServicePrincipals map[string]graph.ServicePrincipal    // by object id (needs SPID entry)
 	Assignments       map[string][]graph.AppRoleAssignment // by principal id
 	KeyCredentials    []graph.KeyCredential
-	Owners            map[string][]graph.DirectoryObject // by application/SP/group object id
-	Roles             []graph.RoleAssignment
-	Groups            []graph.Group
-	Members           map[string][]graph.DirectoryObject // by group id
-	Applications      []graph.Application                // other apps' registrations, found by appId
+	// PasswordCredentials are the application's client secrets (metadata only).
+	PasswordCredentials []graph.PasswordCredential
+	Owners              map[string][]graph.DirectoryObject // by application/SP/group object id
+	Roles               []graph.RoleAssignment
+	Groups              []graph.Group
+	Members             map[string][]graph.DirectoryObject // by group id
+	// Memberships are the groups a principal (by object id) is a direct member of.
+	Memberships  map[string][]graph.Group
+	Applications []graph.Application // other apps' registrations, found by appId
 }
 
 // Server is the fake. Fields are guarded by mu; use the helpers.
@@ -282,7 +286,7 @@ func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
 		sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 		s.paged(w, r, anySlice(out))
 	case len(seg) == 1 && seg[0] == "applications(appId='"+t.ClientID+"')":
-		s.one(w, graph.Application{ID: t.AppObjectID, AppID: t.ClientID, DisplayName: "activeDIQ", KeyCredentials: t.KeyCredentials})
+		s.one(w, graph.Application{ID: t.AppObjectID, AppID: t.ClientID, DisplayName: "activeDIQ", KeyCredentials: t.KeyCredentials, PasswordCredentials: t.PasswordCredentials})
 	case len(seg) == 2 && seg[0] == "servicePrincipals":
 		sp, found := t.ServicePrincipals[seg[1]]
 		if !found {
@@ -292,6 +296,8 @@ func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
 		s.one(w, sp)
 	case len(seg) == 3 && seg[0] == "servicePrincipals" && seg[2] == "appRoleAssignments":
 		s.paged(w, r, anySlice(t.Assignments[seg[1]]))
+	case len(seg) == 4 && seg[0] == "servicePrincipals" && seg[2] == "memberOf" && seg[3] == "microsoft.graph.group":
+		s.paged(w, r, anySlice(t.Memberships[seg[1]]))
 	case len(seg) == 3 && seg[2] == "owners":
 		s.paged(w, r, anySlice(t.Owners[seg[1]]))
 	case len(seg) == 3 && seg[0] == "groups" && seg[2] == "members":
