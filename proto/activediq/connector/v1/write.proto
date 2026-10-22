@@ -1,4 +1,4 @@
-// activediq.connector.v1 — Plan and Apply (the write group, contract v1.1, T-0091).
+// activediq.connector.v1 — Plan and Apply (the write group, contract v1.1, T-0091; v1.2, T-0122).
 //
 // The operation pipeline (ADR-0005) calls Plan while it plans a step: the connector re-reads the
 // target live on the pinned DC, evaluates tier0 on its own (TM-D2 check 1 runs on this live read)
@@ -171,4 +171,12 @@ message ApplyResponse {
   // The touched attributes as read back after the write (ADR-0005 rule 4). No secret attribute.
   DirectoryEntry read_back = 7;
   Tier0Evaluation tier0 = 8;
+  // Contract v1.2 §8.1 step 9 (TM-D23 rule 11): after the write, the connector re-runs the step-7
+  // live classification on every touched object on the DC that took the write. Each object found
+  // tier0 is listed with its bases; empty when none is. A non-empty list is also written to the
+  // connector's local log (and the Windows event log on Windows hosts). The write is not undone by
+  // the connector; the pipeline's Verify records the step `verify_failed` with reason
+  // `tier0_after_write` and raises the security alert (ADR-0005 rule 7). Absent on
+  // ALREADY_APPLIED, where nothing was written.
+  repeated Tier0Member tier0_after_write = 9;
 }
