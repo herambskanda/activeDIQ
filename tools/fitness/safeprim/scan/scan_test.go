@@ -124,7 +124,6 @@ func TestFFSP2BannedAPIs(t *testing.T) {
 		{"GC port", "var a = 3268", "gc-port"},
 		{"escape control OID", "var a = \"1.2.840.113556.1.4.1504\"", "escape-control-oid"},
 		{"template.HTML", "var a = template.HTML(\"<b>\")", "template-typed-string"},
-		{"SetEscapeHTML(false)", "func f(e *json.Encoder) { e.SetEscapeHTML(false) }", "json-escape-html-off"},
 		{"Content-Disposition", "var a = \"Content-Disposition\"", "content-disposition-literal"},
 		{"text/csv", "var a = \"text/csv\"", "csv-media-type"},
 		{"binary.LittleEndian in a feature package", "", "binary-little-endian"},
@@ -133,6 +132,19 @@ func TestFFSP2BannedAPIs(t *testing.T) {
 		want(t, c.name, m(c.body), "FF-SP2", c.rule, "internal/modules/m/m.go")
 	}
 	want(t, "UAC constant in a feature package", map[string]string{"internal/modules/m/m.go": gofile("", "const UF_ACCOUNTDISABLE = 2")}, "FF-SP2", "flag-bit-constant", "internal/modules/m/m.go")
+	jx := func(body string) map[string]string {
+		return map[string]string{"internal/modules/m/m.go": gofile("\t\"encoding/json/jsontext\"\n", "var _ = jsontext.Options(nil)\n"+body)}
+	}
+	for _, c := range []struct{ name, body string }{
+		{"EscapeForHTML(false)", "var o = jsontext.EscapeForHTML(false)"},
+		{"EscapeForJS(false)", "var o = jsontext.EscapeForJS(false)"},
+		{"EscapeForHTML(variable)", "func f(b bool) jsontext.Options { return jsontext.EscapeForHTML(b) }"},
+		{"EscapeForJS(variable)", "func f(b bool) jsontext.Options { return jsontext.EscapeForJS(!b) }"},
+	} {
+		want(t, c.name, jx(c.body), "FF-SP2", "json-escape-off", "internal/modules/m/m.go")
+	}
+	want(t, "EscapeForHTML(true) is fine", jx("var o = jsontext.EscapeForHTML(true)\nvar p = jsontext.EscapeForJS(true)"), "", "", "")
+	want(t, "EscapeForHTML(false) in a test", map[string]string{"internal/modules/m/m_test.go": gofile("\t\"encoding/json/jsontext\"\n", "var o = jsontext.EscapeForHTML(false)")}, "", "", "")
 	want(t, "text/template", map[string]string{"internal/modules/m/m.go": gofile("\t_ \"text/template\"\n", "")}, "FF-SP2", "text-template", "internal/modules/m/m.go")
 	want(t, "TLS bypass in a test", map[string]string{"internal/modules/m/m_test.go": gofile("\t\"crypto/tls\"\n", "var c = tls.Config{InsecureSkipVerify: true}")}, "FF-SP2", "tls-skip-verify", "internal/modules/m/m_test.go")
 	want(t, "TLS bypass in tier L", map[string]string{"tools/x/x.go": gofile("\t\"crypto/tls\"\n", "var c = tls.Config{InsecureSkipVerify: true}")}, "FF-SP2", "tls-skip-verify", "tools/x/x.go")
@@ -352,4 +364,62 @@ func TestFFSP2LabTaggedTestFile(t *testing.T) {
 	if !wantFinding {
 		t.Error("test file under an unknown tag must be reported unanalysed")
 	}
+}
+
+// TestFFSP2ContentDispositionFolded: the type-aware pass folds constants across files and packages
+// (T-0052), so a split Content-Disposition name fails the gate; httpx stays exempt.
+func TestFFSP2ContentDispositionFolded(t *testing.T) {
+	const rule = "content-disposition-literal"
+	run := func(t *testing.T, files map[string]string) []Finding {
+		t.Helper()
+		fs, err := Analyze(tree(t, files))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fs
+	}
+	hdr := "\t\"net/http\"\n"
+	for _, c := range []struct {
+		name  string
+		files map[string]string
+	}{
+		{"same-file concat", map[string]string{"internal/modules/m/m.go": gofile(hdr, "func f(w http.ResponseWriter) { w.Header().Set(\"Content-\"+\"Disposition\", \"inline\") }")}},
+		{"const across files", map[string]string{
+			"internal/modules/m/a.go": "package x\n\nconst P = \"Content-\"\n",
+			"internal/modules/m/b.go": gofile(hdr, "const K = P + \"Disposition\"\n\nfunc f(w http.ResponseWriter) { w.Header().Set(K, \"inline\") }"),
+		}},
+		{"const across packages", map[string]string{
+			"internal/modules/pfx/p.go": "package pfx\n\nconst Prefix = \"Content-\"\n",
+			"internal/modules/m/m.go":   gofile(hdr+"\t\"fx.test/internal/modules/pfx\"\n", "const K = pfx.Prefix + \"Disposition\"\n\nfunc f(w http.ResponseWriter) { w.Header().Set(K, \"inline\") }"),
+		}},
+		{"windows-only file", map[string]string{
+			"internal/modules/m/w_windows.go": "//go:build windows\n\n" + gofile(hdr, "const k = \"Content-\" + \"Disposition\"\n\nfunc f(w http.ResponseWriter) { w.Header().Set(k, \"inline\") }"),
+		}},
+		{"typed const as header map key", map[string]string{
+			"internal/modules/m/m.go": gofile(hdr, "type n string\n\nconst K n = \"content-\" + \"disposition\"\n\nfunc f(w http.ResponseWriter) { _ = w.Header()[string(K)] }"),
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var hit int
+			for _, f := range run(t, c.files) {
+				if f.FF == "FF-SP2" && f.Rule == rule {
+					hit++
+				}
+			}
+			if hit == 0 {
+				t.Fatalf("expected FF-SP2 [%s]", rule)
+			}
+		})
+	}
+	t.Run("httpx is exempt", func(t *testing.T) {
+		fs := run(t, map[string]string{
+			"internal/platform/httpx/a.go": "package httpx\n\nconst p = \"Content-\"\n",
+			"internal/platform/httpx/b.go": "package httpx\n\nconst Disp = p + \"Disposition\"\n",
+		})
+		for _, f := range fs {
+			if f.Rule == rule {
+				t.Fatalf("httpx must be exempt, got %v", f)
+			}
+		}
+	})
 }

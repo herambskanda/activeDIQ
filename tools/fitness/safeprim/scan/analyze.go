@@ -13,7 +13,7 @@ import (
 	"github.com/skenzeriq/activediq/tools/analyzers"
 )
 
-// Analyze runs the type-aware FF-SP2 passes (dnstring, sqlconst, secretjson, tmplconst) over every
+// Analyze runs the type-aware FF-SP2 passes (dnstring, sqlconst, secretjson, tmplconst, constdisp) over every
 // package under root, tests included, and returns their diagnostics as findings. It needs the module
 // to type-check: `make ci` builds before it runs the fitness jobs. A tree with no Go packages has
 // nothing to analyse.

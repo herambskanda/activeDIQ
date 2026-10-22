@@ -3,6 +3,7 @@ package apihost
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"io"
@@ -20,6 +21,17 @@ import (
 // (ADR-0004 rule 8).
 
 const problemMedia = "application/problem+json"
+
+// responseOpts is the one set of encode options for every JSON document apihost writes
+// (safe-primitives §12.5 rule 7): encoding/json/v2 does not escape <, >, & or U+2028/2029 by
+// default, and directory attributes are attacker-influenced text. FF-SP2 bans turning either off,
+// and TestEveryEncodeSiteUsesResponseOptions keeps marshalResponse the only encode site.
+var responseOpts = json.JoinOptions(jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
+
+// marshalResponse is the only place apihost encodes a response body.
+func marshalResponse(v any) ([]byte, error) {
+	return json.Marshal(v, responseOpts)
+}
 
 func newTraceID() string {
 	var b [16]byte
@@ -43,7 +55,7 @@ func writeProblem(w http.ResponseWriter, r *http.Request, err error, log *slog.L
 	if t := TraceID(r.Context()); t != "" {
 		p.TraceID = &t
 	}
-	body, merr := json.Marshal(p)
+	body, merr := marshalResponse(p)
 	if merr != nil {
 		body = []byte(`{"type":"` + apitypes.ProblemTypeInternal + `","title":"Internal error","status":500}`)
 		p.Status = 500
@@ -73,7 +85,7 @@ func writeResponse(w http.ResponseWriter, r *http.Request, meta RouteMeta, resp 
 	if body != nil {
 		if _, ok := body.(Stream); !ok {
 			var err error
-			if enc, err = json.Marshal(body); err != nil {
+			if enc, err = marshalResponse(body); err != nil {
 				writeProblem(w, r, err, log) // never a half-written 200
 				return
 			}
