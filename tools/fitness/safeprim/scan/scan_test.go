@@ -314,3 +314,35 @@ func TestFFSP2ContentDispositionFolded(t *testing.T) {
 		}
 	})
 }
+
+// T-0082: a root-level directory that skipDir normally skips is scanned once product code imports a
+// package in it, because that package ships. One fixture per root name Go can import (.claude is
+// not an importable path element), each failing FF-SP1 process-api and FF-SP3 ldap-filter-shape.
+func TestRootSkippedDirsScannedWhenImported(t *testing.T) {
+	bad := gofile("\t\"fmt\"\n\t\"os/exec\"\n", "var _ = exec.Command\n\nfunc F(x string) string { return fmt.Sprintf(\"(&(objectClass=user)(cn=%s))\", x) }")
+	for _, d := range []string{"third_party", "vendor", "garage", "factory", "knowledge", "dist"} {
+		t.Run(d, func(t *testing.T) {
+			file := d + "/p/x.go"
+			root := tree(t, map[string]string{
+				file:                bad,
+				"internal/m/m.go":   "package m\n\nimport _ \"fx.test/" + d + "/p\"\n",
+				"internal/m/doc.go": "package m\n",
+			})
+			fs, err := Scan(root, AllChecks())
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := map[string]bool{}
+			for _, f := range fs {
+				if f.File == file {
+					got[f.FF+" "+f.Rule] = true
+				}
+			}
+			if !got["FF-SP1 process-api"] || !got["FF-SP3 ldap-filter-shape"] {
+				t.Fatalf("expected FF-SP1 process-api and FF-SP3 ldap-filter-shape in %s, got %v", file, fs)
+			}
+		})
+	}
+	// Not imported by anything: still skipped.
+	want(t, "unimported third_party stays skipped", map[string]string{"third_party/p/x.go": bad, "internal/m/m.go": "package m\n"}, "", "", "")
+}
