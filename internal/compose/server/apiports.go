@@ -8,14 +8,6 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 )
 
-// apiPolicy is api/openapi/policy.yaml as far as the embedded contract goes: the two AN-1 health
-// operations. Loading the file itself is a follow-up; until a module contributes a route no other
-// row can be named.
-var apiPolicy = apihost.Policy{Anonymous: []apihost.AnonymousRow{
-	{Operation: "getLiveness", Gate: "none"},
-	{Operation: "getReadiness", Gate: "none"},
-}}
-
 // apiCatalogue is the EP-6 permission set; it is empty until the permission catalogue lands, so any
 // operation with a real permission fails Build rather than being served unguarded.
 var apiCatalogue = apihost.Permissions{}

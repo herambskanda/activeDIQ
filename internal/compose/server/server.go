@@ -94,14 +94,23 @@ func Run(ctx context.Context, cfg config.Config) error {
 	return firstErr
 }
 
-// buildAPI makes the API handler: apihost.Build over the embedded contract with the body budget from
+// buildAPI makes the API handler: apihost.Build over the embedded contract and the embedded policy.yaml with the body budget from
 // configuration. No module contributes routes yet, so every tag is unmounted and answers a problem.
 func buildAPI(cfg config.Config) (http.Handler, error) {
+	policy, err := apihost.LoadPolicy()
+	if err != nil {
+		return nil, fmt.Errorf("server: api policy: %w", err)
+	}
+	return buildAPIWith(cfg, policy)
+}
+
+// buildAPIWith is buildAPI over a given policy; tests use it to prove the router follows policy.yaml.
+func buildAPIWith(cfg config.Config, policy apihost.Policy) (http.Handler, error) {
 	doc, err := apihost.LoadDocument()
 	if err != nil {
 		return nil, fmt.Errorf("server: api contract: %w", err)
 	}
-	s, err := apihost.Build(doc, nil, apiPolicy, apiCatalogue, failClosedPorts(), apihost.WithBodyBudget(cfg.APIBodyBudget))
+	s, err := apihost.Build(doc, nil, policy, apiCatalogue, failClosedPorts(), apihost.WithBodyBudget(cfg.APIBodyBudget))
 	if err != nil {
 		return nil, fmt.Errorf("server: build api: %w", err)
 	}

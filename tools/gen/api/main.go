@@ -24,6 +24,7 @@ func DefaultConfig(repo string) *Config {
 		ApihostImport:  mod + "/internal/platform/apihost",
 		SharedDir:      "internal/platform/apihost/apitypes",
 		BundlePath:     "internal/platform/apihost/spec/openapi.gen.json",
+		PolicyPath:     "internal/platform/apihost/spec/policy.gen.yaml",
 		TSOut:          "web/src/api/schema.gen.d.ts",
 		EmitProblems:   true,
 		Bindings: []Binding{
@@ -57,6 +58,14 @@ func Generate(cfg *Config) (*Result, error) {
 		return nil, err
 	}
 	res := &Result{Files: map[string][]byte{cfg.BundlePath: bundle.JSON}, Bundle: bundle}
+	if cfg.PolicyPath != "" {
+		// The server embeds policy.yaml through this copy (apihost.LoadPolicy): go:embed cannot reach api/openapi.
+		pol, err := os.ReadFile(filepath.Join(cfg.Root, "policy.yaml"))
+		if err != nil {
+			return nil, fmt.Errorf("policy.yaml: %w", err)
+		}
+		res.Files[cfg.PolicyPath] = pol
+	}
 	el := &errList{}
 	units := []*unit{newUnit(cfg, m, "", el)}
 	for _, tag := range m.Tags {

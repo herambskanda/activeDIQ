@@ -35,6 +35,7 @@ type Config struct {
 	ApihostImport  string
 	SharedDir      string // where shared/ is emitted, relative to Out
 	BundlePath     string // relative to Out
+	PolicyPath     string // relative to Out; a byte copy of Root/policy.yaml for the server to embed (empty: none)
 	TSOut          string // relative to Out; empty skips TypeScript
 	EmitProblems   bool   // emit the problem catalogue constructors (needs apitypes' hand-written glue)
 	Bindings       []Binding
