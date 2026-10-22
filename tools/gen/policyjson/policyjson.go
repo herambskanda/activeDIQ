@@ -7,17 +7,24 @@ package policyjson
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 
 	"go.yaml.in/yaml/v3"
 )
 
-// FromYAML converts policy.yaml to indented JSON with a trailing newline. Duplicate keys, aliases
-// and non-string keys fail rather than convert silently.
+// FromYAML converts policy.yaml to indented JSON with a trailing newline. Duplicate keys, a second
+// document and non-string keys fail rather than convert silently.
 func FromYAML(b []byte) ([]byte, error) {
 	var v any
-	if err := yaml.Unmarshal(b, &v); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(b))
+	if err := dec.Decode(&v); err != nil && !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("policy.yaml does not parse: %w", err)
+	}
+	var extra any
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("policy.yaml holds more than one YAML document; only the first would be read")
 	}
 	if v == nil {
 		v = map[string]any{}

@@ -19,4 +19,11 @@ func TestFromYAML(t *testing.T) {
 	if _, err := FromYAML([]byte("a:\n  1: x\n")); err == nil {
 		t.Error("non-string key must fail")
 	}
+	if _, err := FromYAML([]byte("anonymous: []\n---\nstepUp: []\n")); err == nil {
+		t.Error("a second document must fail")
+	}
+	out, err = FromYAML([]byte("anonymous:\n  - operation: a\n    host:\n"))
+	if err != nil || !strings.Contains(string(out), `"host": null`) {
+		t.Errorf("empty host must convert to null for ParsePolicy to reject: %v %s", err, out)
+	}
 }

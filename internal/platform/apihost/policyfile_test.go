@@ -40,6 +40,11 @@ func TestParsePolicy(t *testing.T) {
 		"auth no op":      `{"authenticated": [{"reason": "x"}]}`,
 		"stepup no perm":  `{"stepUp": [{"operation": "a"}]}`,
 		"not json":        `{"anonymous": [`,
+		"null host":       `{"anonymous": [{"operation": "a", "host": null}]}`,
+		"empty host":      `{"anonymous": [{"operation": "a", "host": ""}]}`,
+		"empty operation": `{"anonymous": [{"operation": ""}]}`,
+		"null gate":       `{"anonymous": [{"operation": "a", "gate": null}]}`,
+		"empty perm":      `{"stepUp": [{"permission": ""}]}`,
 	} {
 		if _, err := ParsePolicy([]byte(in)); err == nil {
 			t.Errorf("%s: want an error", name)

@@ -6,6 +6,24 @@ import (
 	"fmt"
 )
 
+// fieldString is a policy field that, when present, must be a non-empty string. A null or empty
+// value (YAML `host:` with nothing after it) would otherwise read as "not set" and silently unbind
+// a host-bound row, so it fails the parse instead.
+type fieldString string
+
+// UnmarshalJSON rejects null and the empty string.
+func (f *fieldString) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return fmt.Errorf("must be a non-empty string")
+	}
+	if s == "" {
+		return fmt.Errorf("must be a non-empty string")
+	}
+	*f = fieldString(s)
+	return nil
+}
+
 // embeddedPolicy is api/openapi/policy.yaml converted to JSON by `make gen-api` (and held current by
 // `make gen-api-check`), so the shipped binary links no YAML parser (ADR-0004 F3) and the router
 // the server builds cannot drift from the file fitness-api reads.
@@ -16,8 +34,9 @@ var embeddedPolicy []byte
 // LoadPolicy parses the embedded policy.yaml, the one the server enforces.
 func LoadPolicy() (Policy, error) { return ParsePolicy(embeddedPolicy) }
 
-// ParsePolicy parses policy.yaml, as the JSON tools/gen/policyjson makes of it, into the Policy apihost enforces. It is the single parser of that
-// file for the server and for fitness-api A4. Unknown top-level sections and unknown host binding
+// ParsePolicy parses policy.yaml, as the JSON tools/gen/policyjson makes of it, into the Policy
+// apihost enforces. It is the single parser of that file for the server and for fitness-api A4.
+// A field that is present but null or empty fails, naming nothing is not "unbound". Unknown top-level sections and unknown host binding
 // names fail, so a typo cannot silently widen what is anonymous or served on every hostname.
 // Entries that name a route by method and path (the non-API routes and the console's own) are not
 // operations of the document and are fitness-api's to check; an entry with neither an operation nor
@@ -38,7 +57,7 @@ func ParsePolicy(b []byte) (Policy, error) {
 	seen := map[string]bool{}
 	for i, e := range raw.Anonymous {
 		if e.Host != "" {
-			if _, ok := LookupHostBinding(e.Host); !ok {
+			if _, ok := LookupHostBinding(string(e.Host)); !ok {
 				return Policy{}, fmt.Errorf("apihost: policy anonymous[%d] names unknown host binding %q", i, e.Host)
 			}
 		}
@@ -48,23 +67,23 @@ func ParsePolicy(b []byte) (Policy, error) {
 			}
 			continue
 		}
-		if seen[e.Operation] {
+		if seen[string(e.Operation)] {
 			return Policy{}, fmt.Errorf("apihost: policy anonymous names operation %q twice", e.Operation)
 		}
-		seen[e.Operation] = true
-		p.Anonymous = append(p.Anonymous, AnonymousRow{Operation: e.Operation, Host: e.Host, Gate: e.Gate})
+		seen[string(e.Operation)] = true
+		p.Anonymous = append(p.Anonymous, AnonymousRow{Operation: string(e.Operation), Host: string(e.Host), Gate: string(e.Gate)})
 	}
 	for i, e := range raw.Authenticated {
 		if e.Operation == "" {
 			return Policy{}, fmt.Errorf("apihost: policy authenticated[%d] names no operation", i)
 		}
-		p.Authenticated = append(p.Authenticated, e.Operation)
+		p.Authenticated = append(p.Authenticated, string(e.Operation))
 	}
 	for i, e := range raw.StepUp {
 		if e.Permission == "" {
 			return Policy{}, fmt.Errorf("apihost: policy stepUp[%d] names no permission", i)
 		}
-		p.StepUp = append(p.StepUp, e.Permission)
+		p.StepUp = append(p.StepUp, string(e.Permission))
 	}
 	return p, nil
 }
@@ -72,13 +91,13 @@ func ParsePolicy(b []byte) (Policy, error) {
 // policyEntry is the union of the scalar fields a policy entry may carry (fitness-api A13 checks
 // which fields each section allows).
 type policyEntry struct {
-	Operation  string `json:"operation"`
-	Method     string `json:"method"`
-	Path       string `json:"path"`
-	Permission string `json:"permission"`
-	Schema     string `json:"schema"`
-	Host       string `json:"host"`
-	Gate       string `json:"gate"`
-	Reason     string `json:"reason"`
-	Ref        string `json:"ref"`
+	Operation  fieldString `json:"operation"`
+	Method     fieldString `json:"method"`
+	Path       fieldString `json:"path"`
+	Permission fieldString `json:"permission"`
+	Schema     fieldString `json:"schema"`
+	Host       fieldString `json:"host"`
+	Gate       fieldString `json:"gate"`
+	Reason     fieldString `json:"reason"`
+	Ref        fieldString `json:"ref"`
 }
