@@ -21,11 +21,67 @@ func Analyze(root string) ([]Finding, error) {
 	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
 		return nil, nil
 	}
+	var out []Finding
+	seen := map[string]bool{}
+	compiled := map[string]bool{}
+	nested := map[string]bool{} // directories of in-scope modules other than the root
+	for _, t := range runs() {
+		fs, err := analyzeTarget(root, t, compiled, nested)
+		if err != nil {
+			return nil, fmt.Errorf("%s/%s %v: %w", t.GOOS, t.GOARCH, t.Tags, err)
+		}
+		for _, f := range fs {
+			if k := f.String(); !seen[k] {
+				seen[k] = true
+				out = append(out, f)
+			}
+		}
+	}
+	// Fail closed: a Go file no run compiled was never type-checked, so no analyzer saw it.
+	absRoot, err := resolvedRoot(root)
+	if err != nil {
+		return nil, err
+	}
+	missed, err := unanalysed(absRoot, nested, compiled)
+	if err != nil {
+		return nil, err
+	}
+	return append(out, missed...), nil
+}
+
+// Target is one GOOS/GOARCH (and optional build tags) the type-aware passes run against.
+type Target struct {
+	GOOS, GOARCH string
+	Tags         []string
+}
+
+// Targets are the platforms activeDIQ ships Go for: it must equal buildMatrix in
+// tools/fitness/stack/manifest.json (TestTargetsMatchStackManifest). A file excluded by a build
+// constraint on one target is type-checked on another, so platform code gets the same gates.
+var Targets = []Target{
+	{"linux", "amd64", nil}, {"linux", "arm64", nil},
+	{"windows", "amd64", nil}, {"windows", "arm64", nil}, {"darwin", "arm64", nil},
+}
+
+// TestTags are the test-only build tags (testTags in the manifest). Files behind them are analysed
+// by one extra load per OS that hosts a lab.
+var TestTags = []string{"lab", "windowslab"}
+
+func runs() []Target {
+	out := append([]Target(nil), Targets...)
+	return append(out, Target{"linux", "amd64", TestTags}, Target{"windows", "amd64", TestTags})
+}
+
+func analyzeTarget(root string, t Target, compiled, nested map[string]bool) ([]Finding, error) {
 	cfg := &packages.Config{
+		Env: append(os.Environ(), "GOOS="+t.GOOS, "GOARCH="+t.GOARCH, "CGO_ENABLED=0"),
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles | packages.NeedImports | packages.NeedTypes |
 			packages.NeedTypesSizes | packages.NeedSyntax | packages.NeedTypesInfo | packages.NeedDeps | packages.NeedModule,
 		Dir:   root,
 		Tests: true,
+	}
+	if len(t.Tags) > 0 {
+		cfg.BuildFlags = []string{"-tags=" + strings.Join(t.Tags, ",")}
 	}
 	pkgs, err := packages.Load(cfg, "./...")
 	if err != nil {
@@ -43,8 +99,6 @@ func Analyze(root string) ([]Finding, error) {
 		return p.Module != nil && moduleDirInside(absRoot, p.Module)
 	}
 	var use []*packages.Package
-	nestedModules := map[string]bool{} // directories of in-scope modules other than the root
-	compiled := map[string]bool{}
 	seenPkg := map[string]bool{}
 	var firstErr error
 	packages.Visit(pkgs, inRepo, func(p *packages.Package) {
@@ -56,7 +110,7 @@ func Analyze(root string) ([]Finding, error) {
 			if r, err := filepath.EvalSymlinks(d); err == nil {
 				d = r
 			}
-			nestedModules[d] = true
+			nested[d] = true
 		}
 		for _, f := range p.CompiledGoFiles {
 			compiled[filepath.Clean(f)] = true
@@ -103,11 +157,7 @@ func Analyze(root string) ([]Finding, error) {
 			}
 		}
 	}
-	missed, err := unanalysed(absRoot, nestedModules, compiled)
-	if err != nil {
-		return nil, err
-	}
-	return append(out, missed...), nil
+	return out, nil
 }
 
 // unanalysed is the fail-closed half: every .go file under the module that no package load compiled
