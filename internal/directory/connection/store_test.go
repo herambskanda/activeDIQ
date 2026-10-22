@@ -330,6 +330,15 @@ func TestDatabaseEnforcesTheDM10Table(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		e := setup(t, s)
 		ids := 0
+		seedPath := map[connection.State][]connection.State{
+			connection.StateDraft:           nil,
+			connection.StateVerifying:       {connection.StateVerifying},
+			connection.StateActive:          {connection.StateActive},
+			connection.StateSuspended:       {connection.StateActive, connection.StateSuspended},
+			connection.StateDecommissioning: {connection.StateActive, connection.StateDecommissioning},
+			connection.StateRemoved:         {connection.StateActive, connection.StateDecommissioning, connection.StateRemoved},
+			connection.StateDiscarded:       {connection.StateDiscarded},
+		}
 		retiring := func(st connection.State) bool {
 			return st == connection.StateDecommissioning || st == connection.StateRemoved || st == connection.StateDiscarded
 		}
@@ -341,15 +350,21 @@ func TestDatabaseEnforcesTheDM10Table(t *testing.T) {
 				ids++
 				id := fmt.Sprintf("00000000-0000-4000-8000-%012d", ids)
 				ident := fmt.Sprintf("00000000-0000-4000-9000-%012d", ids)
-				if from == connection.StateDraft || from == connection.StateVerifying || from == connection.StateDiscarded {
-					ident = ""
+				// Rows are born draft (the database refuses anything else), then walked along declared edges.
+				if _, err := e.raw(e.a, `INSERT INTO public.connections (tenant_id, id, kind, display_name, credential_id, transport_security)
+					VALUES (current_setting('app.tenant_id')::uuid, $1::uuid, 'ad_forest', 'pair', $2::uuid, 'ldaps')`, id, cred); err != nil {
+					t.Fatalf("seed draft: %v", err)
 				}
-				_, err := e.raw(e.a, `INSERT INTO public.connections (tenant_id, id, kind, display_name, directory_identity, credential_id, state, retired_at, last_stamp_at, transport_security)
-					VALUES (current_setting('app.tenant_id')::uuid, $1::uuid, 'ad_forest', 'pair', $2, $3::uuid, $4,
-					        CASE WHEN $5::bool THEN now() END, CASE WHEN $5::bool THEN now() END, 'ldaps')`,
-					id, ident, cred, string(from), retiring(from))
-				if err != nil {
-					t.Fatalf("seed %s: %v", from, err)
+				prev := connection.StateDraft
+				for _, step := range seedPath[from] {
+					if _, err := e.raw(e.a, `UPDATE public.connections SET state = $2,
+						directory_identity = CASE WHEN directory_identity = '' AND $2 NOT IN ('draft','verifying','discarded') THEN $3 ELSE directory_identity END,
+						retired_at = CASE WHEN retired_at IS NULL AND $4::bool THEN now() ELSE retired_at END,
+						last_stamp_at = CASE WHEN last_stamp_at IS NULL AND $4::bool THEN now() ELSE last_stamp_at END
+						WHERE id = $1::uuid`, id, string(step), ident, retiring(step)); err != nil {
+						t.Fatalf("seed %s -> %s: %v", prev, step, err)
+					}
+					prev = step
 				}
 				// Supply what the CHECKs need for a legal target (identity, retirement stamp), so only the edge decides.
 				n, err := e.raw(e.a, `UPDATE public.connections SET state = $2,
@@ -373,4 +388,49 @@ func TestDatabaseEnforcesTheDM10Table(t *testing.T) {
 			t.Fatalf("DELETE as the runtime role: n=%d %v, want 42501", n, err)
 		}
 	})
+}
+
+// Creation is the only way into the lifecycle: the database refuses a row inserted anywhere but draft,
+// unverified and without an identity (security review of T-0099).
+func TestDatabaseEnforcesCreationAsDraft(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		const ident = "00000000-0000-4000-a000-000000000001"
+		ins := func(n int, state, identity string, extra string) error {
+			_, err := e.raw(e.a, `INSERT INTO public.connections (tenant_id, id, kind, display_name, directory_identity, credential_id, state, transport_security`+extra+`)
+				VALUES (current_setting('app.tenant_id')::uuid, $1::uuid, 'ad_forest', 'ins', $2, $3::uuid, $4, 'ldaps'`+valuesFor(extra)+`)`,
+				fmt.Sprintf("00000000-0000-4000-8000-%012d", n), identity, cred, state)
+			return err
+		}
+		for i, st := range connection.States() {
+			if st == connection.StateDraft {
+				continue
+			}
+			identity := ident
+			if st == connection.StateDiscarded {
+				identity = ""
+			}
+			if err := ins(i+1, string(st), identity, ""); store.SQLState(err) != "AD403" {
+				t.Errorf("insert as %s: want AD403, got %v", st, err)
+			}
+		}
+		if err := ins(20, "draft", ident, ""); store.SQLState(err) != "AD403" {
+			t.Errorf("draft with identity: want AD403, got %v", err)
+		}
+		for i, col := range []string{"verified_at", "retired_at", "last_stamp_at"} {
+			if err := ins(30+i, "draft", "", ", "+col); store.SQLState(err) != "AD403" {
+				t.Errorf("draft with %s: want AD403, got %v", col, err)
+			}
+		}
+		if err := ins(40, "draft", "", ""); err != nil {
+			t.Errorf("plain draft insert: %v", err)
+		}
+	})
+}
+
+func valuesFor(extra string) string {
+	if extra == "" {
+		return ""
+	}
+	return ", now()"
 }

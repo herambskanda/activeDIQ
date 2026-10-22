@@ -111,3 +111,23 @@ $fn$;
 CREATE TRIGGER connections_guard BEFORE UPDATE ON public.connections
   FOR EACH ROW EXECUTE FUNCTION public.connections_guard();
 ALTER TABLE public.connections ENABLE ALWAYS TRIGGER connections_guard;
+
+-- Creation is the only way into the lifecycle (DM-10 L1): a row is born draft, unverified, with no
+-- identity, so no writer can insert a connection past the V5 identity check or the activation gate.
+CREATE FUNCTION public.connections_guard_insert() RETURNS trigger
+  LANGUAGE plpgsql
+  SET search_path = pg_catalog
+AS $fn$
+BEGIN
+  IF NEW.state <> 'draft' OR NEW.directory_identity <> ''
+     OR NEW.last_verification_id IS NOT NULL OR NEW.verified_at IS NOT NULL
+     OR NEW.retired_at IS NOT NULL OR NEW.last_stamp_at IS NOT NULL THEN
+    RAISE EXCEPTION 'connections: a connection is created draft and unverified (DM-10 L1)' USING ERRCODE = 'AD403';
+  END IF;
+  RETURN NEW;
+END
+$fn$;
+
+CREATE TRIGGER connections_guard_insert BEFORE INSERT ON public.connections
+  FOR EACH ROW EXECUTE FUNCTION public.connections_guard_insert();
+ALTER TABLE public.connections ENABLE ALWAYS TRIGGER connections_guard_insert;
