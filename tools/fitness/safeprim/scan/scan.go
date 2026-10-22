@@ -45,7 +45,7 @@ func AllChecks() Checks { return Checks{"FF-SP1": true, "FF-SP2": true, "FF-SP3"
 
 // skipDir reports directories that hold no product code (a root-level one is still entered when a
 // package product code imports lives in it, T-0082). Only names that can never be a product
-// package are skipped at any depth (.git, node_modules, the Go testdata convention). Every other
+// package are skipped at any depth (.git, node_modules, and testdata fixtures under tools/). Every other
 // skip is tied to where that directory really is: repository-level working trees at the root, and
 // build output only beside the project file that produces it (bin and obj beside a .csproj, target
 // beside Cargo.toml, dist beside package.json). A product package that happens to be called target,
@@ -62,8 +62,12 @@ var rootSkipped = map[string]bool{"vendor": true, "factory": true, "knowledge": 
 // overlaps a directory in entered (see enteredDirs): it is one, holds one, or lies inside one.
 func skipDirUnless(root, rel, name string, entered map[string]bool) bool {
 	switch name {
-	case ".git", "node_modules", "testdata":
+	case ".git", "node_modules":
 		return true
+	case "testdata":
+		// Go lets product code import a testdata (or _x, .x) package, and it then ships. Only the
+		// analyzer fixtures under tools/ are exempt: they are deliberate violations.
+		return strings.HasPrefix(rel, "tools/")
 	}
 	if !strings.Contains(rel, "/") {
 		if rootSkipped[name] {

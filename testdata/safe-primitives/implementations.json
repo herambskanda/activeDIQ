@@ -55,13 +55,16 @@
       "package": "internal/platform/store"
     },
     {
-      "name": "go/secretjson",
+      "name": "go/attr-unicodepwd",
       "language": "go",
       "tier": "S",
       "units": [
         "attr.unicodepwd"
       ],
-      "package": "internal/platform/secret/secretjson"
+      "package": "internal/directory/attr/unicodepwd",
+      "covers": [
+        "internal/platform/secret"
+      ]
     },
     {
       "name": "go/httpx",
@@ -129,9 +132,9 @@
       ]
     },
     {
-      "implementation": "go/secretjson",
+      "implementation": "go/attr-unicodepwd",
       "unit": "attr.unicodepwd",
-      "target": "FuzzSecretJSON",
+      "target": "FuzzUnicodePwd",
       "properties": [
         "roundtrip",
         "noUnescapedSpecial"

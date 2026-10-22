@@ -1,8 +1,10 @@
 package scan
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -260,6 +262,110 @@ func TestSkipByLocationNotName(t *testing.T) {
 	want(t, "root factory and knowledge", map[string]string{"factory/x.go": bad, "knowledge/y.go": bad}, "", "", "")
 }
 
+// wantAnalyzed asserts that Analyze (the type-aware passes, one run per Targets entry) reports rule in file.
+func wantAnalyzed(t *testing.T, name string, files map[string]string, rule, file string) {
+	t.Helper()
+	t.Run(name, func(t *testing.T) {
+		fs, err := Analyze(tree(t, files))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range fs {
+			if f.Rule == rule && f.File == file {
+				return
+			}
+		}
+		t.Fatalf("expected %s in %s, got %v", rule, file, fs)
+	})
+}
+
+// T-0058: a file a build constraint excludes on the Linux host must still be type-checked, or
+// Windows-only code (LDAP and PowerShell strings, secrets) escapes every FF-SP2 gate.
+func TestFFSP2BuildConstrainedFiles(t *testing.T) {
+	wantAnalyzed(t, "windows file, DNString concatenation", map[string]string{
+		"internal/directory/dn/dn.go":     "package dn\n\ntype DNString string\n",
+		"internal/modules/m/w_windows.go": "//go:build windows\n\npackage m\n\nimport \"fx.test/internal/directory/dn\"\n\nfunc f(d dn.DNString) dn.DNString { return d + \",OU=x\" }\n",
+	}, "dnstring", "internal/modules/m/w_windows.go")
+	wantAnalyzed(t, "windows file, non-constant template Parse", map[string]string{
+		"internal/modules/m/w_windows.go": "//go:build windows\n\npackage m\n\nimport \"html/template\"\n\nfunc f(s string) { template.New(\"x\").Parse(s) }\n",
+	}, "tmplconst", "internal/modules/m/w_windows.go")
+}
+
+const tmplViolation = "package m\n\nimport \"html/template\"\n\nfunc f(s string) { template.New(\"x\").Parse(s) }\n"
+
+// T-0058 (security review): the gate fails closed. Every shipped platform is analysed, and a Go file
+// no scan run compiled is itself a finding rather than silence.
+func TestFFSP2OtherPlatformsAndTags(t *testing.T) {
+	for _, c := range []struct{ name, file, hdr string }{
+		{"darwin file", "w_darwin.go", ""},
+		{"arm64 file", "w_arm64.go", ""},
+		{"windows/arm64 file", "w_windows_arm64.go", ""},
+		{"windowslab-tagged file", "wl.go", "//go:build windowslab\n\n"},
+	} {
+		wantAnalyzed(t, c.name, map[string]string{"internal/modules/m/" + c.file: c.hdr + tmplViolation}, "tmplconst", "internal/modules/m/"+c.file)
+	}
+}
+
+func TestFFSP2UnanalysedFileIsFinding(t *testing.T) {
+	wantAnalyzed(t, "tag no run enables", map[string]string{
+		"internal/modules/m/m.go":      "package m\n",
+		"internal/modules/m/exotic.go": "//go:build exotic\n\n" + tmplViolation,
+	}, "build-constrained-unanalysed", "internal/modules/m/exotic.go")
+	wantAnalyzed(t, "platform outside the matrix", map[string]string{
+		"internal/modules/m/m.go":       "package m\n",
+		"internal/modules/m/w_plan9.go": tmplViolation,
+	}, "build-constrained-unanalysed", "internal/modules/m/w_plan9.go")
+}
+
+func TestTargetsMatchStackManifest(t *testing.T) {
+	b, err := os.ReadFile("../../stack/manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m struct {
+		BuildMatrix []string `json:"buildMatrix"`
+		TestTags    []string `json:"testTags"`
+	}
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, tg := range Targets {
+		got = append(got, tg.GOOS+"/"+tg.GOARCH)
+	}
+	if !reflect.DeepEqual(got, m.BuildMatrix) {
+		t.Errorf("scan.Targets %v != manifest buildMatrix %v", got, m.BuildMatrix)
+	}
+	if !reflect.DeepEqual(TestTags, m.TestTags) {
+		t.Errorf("scan.TestTags %v != manifest testTags %v", TestTags, m.TestTags)
+	}
+}
+
+// Test files are exempt from the analyzers by policy, but a lab-tagged one must still be compiled
+// by a run (not reported unanalysed), while the same file under an unknown tag is reported.
+func TestFFSP2LabTaggedTestFile(t *testing.T) {
+	run := func(tag string) []Finding {
+		fs, err := Analyze(tree(t, map[string]string{
+			"internal/modules/m/m.go":        "package m\n",
+			"internal/modules/m/lab_test.go": "//go:build " + tag + "\n\n" + tmplViolation,
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fs
+	}
+	if fs := run("lab"); len(fs) != 0 {
+		t.Errorf("lab-tagged test file should be compiled and policy-exempt, got %v", fs)
+	}
+	wantFinding := false
+	for _, f := range run("unknowntag") {
+		wantFinding = wantFinding || f.Rule == "build-constrained-unanalysed"
+	}
+	if !wantFinding {
+		t.Error("test file under an unknown tag must be reported unanalysed")
+	}
+}
+
 // TestFFSP2ContentDispositionFolded: the type-aware pass folds constants across files and packages
 // (T-0052), so a split Content-Disposition name fails the gate; httpx stays exempt.
 func TestFFSP2ContentDispositionFolded(t *testing.T) {
@@ -285,6 +391,9 @@ func TestFFSP2ContentDispositionFolded(t *testing.T) {
 		{"const across packages", map[string]string{
 			"internal/modules/pfx/p.go": "package pfx\n\nconst Prefix = \"Content-\"\n",
 			"internal/modules/m/m.go":   gofile(hdr+"\t\"fx.test/internal/modules/pfx\"\n", "const K = pfx.Prefix + \"Disposition\"\n\nfunc f(w http.ResponseWriter) { w.Header().Set(K, \"inline\") }"),
+		}},
+		{"windows-only file", map[string]string{
+			"internal/modules/m/w_windows.go": "//go:build windows\n\n" + gofile(hdr, "const k = \"Content-\" + \"Disposition\"\n\nfunc f(w http.ResponseWriter) { w.Header().Set(k, \"inline\") }"),
 		}},
 		{"typed const as header map key", map[string]string{
 			"internal/modules/m/m.go": gofile(hdr, "type n string\n\nconst K n = \"content-\" + \"disposition\"\n\nfunc f(w http.ResponseWriter) { _ = w.Header()[string(K)] }"),
@@ -314,6 +423,121 @@ func TestFFSP2ContentDispositionFolded(t *testing.T) {
 		}
 	})
 }
+
+// T-0081: ./... skips _x, .x and testdata directories, but product code can import them and they
+// ship. The type-aware passes must still analyse them, and a Go file no run compiled must fail closed.
+func TestFFSP2ImportedHiddenDirectories(t *testing.T) {
+	const bad = "package p\n\nimport \"html/template\"\n\nfunc F(s string) { _, _ = template.New(\"x\").Parse(s) }\n"
+	for _, dir := range []string{"_p", ".p", "testdata/p"} {
+		t.Run(dir, func(t *testing.T) {
+			file := "internal/x/" + dir + "/x.go"
+			fs, err := Analyze(tree(t, map[string]string{
+				file:                    bad,
+				"internal/x/use/use.go": "package use\n\nimport p \"fx.test/internal/x/" + dir + "\"\n\nvar _ = p.F\n",
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, f := range fs {
+				if f.FF == "FF-SP2" && f.File == file && f.Rule != "build-constrained-unanalysed" {
+					return
+				}
+			}
+			t.Fatalf("expected an FF-SP2 finding in %s, got %v", file, fs)
+		})
+	}
+}
+
+func TestFFSP2TextScanSeesProductTestdata(t *testing.T) {
+	bad := gofile("\t\"fmt\"\n", "func f(x string) string { return fmt.Sprintf(\"(&(objectClass=user)(cn=%s))\", x) }")
+	want(t, "product testdata is scanned", map[string]string{"internal/x/testdata/p/m.go": bad}, "FF-SP3", "ldap-filter-shape", "internal/x/testdata/p/m.go")
+	want(t, "tool fixtures stay exempt", map[string]string{"tools/analyzers/a/testdata/src/m.go": bad}, "", "", "")
+}
+
+func TestFFSP2UnanalysedFilesFailClosed(t *testing.T) {
+	unanalysed := func(t *testing.T, files map[string]string) map[string]bool {
+		t.Helper()
+		fs, err := Analyze(tree(t, files))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := map[string]bool{}
+		for _, f := range fs {
+			if f.Rule == "build-constrained-unanalysed" {
+				got[f.File] = true
+			}
+		}
+		return got
+	}
+	t.Run("every file excluded on all runs", func(t *testing.T) {
+		got := unanalysed(t, map[string]string{
+			"internal/x/ok/ok.go":       "package ok\n",
+			"internal/x/adapter/a.go":   "//go:build neverbuilt\n\npackage adapter\n",
+			"internal/x/adapter/b.go":   "//go:build neverbuilt\n\npackage adapter\n",
+			"internal/x/nodeps/dead.go": "package dead\n",
+		})
+		for _, f := range []string{"internal/x/adapter/a.go", "internal/x/adapter/b.go"} {
+			if !got[f] {
+				t.Fatalf("expected build-constrained-unanalysed for %s, got %v", f, got)
+			}
+		}
+		if got["internal/x/ok/ok.go"] {
+			t.Fatalf("compiled file flagged: %v", got)
+		}
+	})
+	t.Run("nested modules and tool fixtures are exempt", func(t *testing.T) {
+		got := unanalysed(t, map[string]string{
+			"internal/x/ok/ok.go":                   "package ok\n",
+			"garage/spike/go.mod":                   "module spike.test\n\ngo 1.27.0\n",
+			"garage/spike/s.go":                     "package spike\n",
+			"tools/analyzers/a/testdata/src/m/m.go": "package m\n",
+		})
+		if len(got) != 0 {
+			t.Fatalf("expected none, got %v", got)
+		}
+	})
+}
+
+func TestFFSP2LocalReplaceModuleIsShippedCode(t *testing.T) {
+	const bad = "package sub\n\nimport \"text/template\"\n\nfunc F(s string) { template.New(\"x\").Parse(s) }\n"
+	files := func(dir string) map[string]string {
+		return map[string]string{
+			"go.mod":          "module fx.test\n\ngo 1.27.0\n\nrequire sub.test v0.0.0\n\nreplace sub.test => ./" + dir + "\n",
+			dir + "/go.mod":   "module sub.test\n\ngo 1.27.0\n",
+			dir + "/x.go":     bad,
+			"cmd/srv/main.go": "package main\n\nimport \"sub.test\"\n\nfunc main() { sub.F(\"x\") }\n",
+		}
+	}
+	for _, dir := range []string{"internal/sub", "third_party/sub"} {
+		t.Run(dir+" violation reported", func(t *testing.T) {
+			fs, err := Analyze(tree(t, files(dir)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, f := range fs {
+				if f.Rule == "tmplconst" && f.File == dir+"/x.go" {
+					return
+				}
+			}
+			t.Fatalf("expected tmplconst in %s/x.go, got %v", dir, fs)
+		})
+		t.Run(dir+" uncompiled file reported", func(t *testing.T) {
+			f := files(dir)
+			f[dir+"/never.go"] = "//go:build neverbuilt\n\npackage sub\n"
+			fs, err := Analyze(tree(t, f))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, x := range fs {
+				if x.Rule == "build-constrained-unanalysed" && x.File == dir+"/never.go" {
+					return
+				}
+			}
+			t.Fatalf("expected build-constrained-unanalysed for %s/never.go, got %v", dir, fs)
+		})
+	}
+}
+
 
 // T-0082: a root-level directory that skipDir normally skips is scanned once product code imports a
 // package in it, because that package ships. One fixture per root name Go can import (.claude is
