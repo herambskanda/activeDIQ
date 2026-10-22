@@ -78,17 +78,25 @@ func NewSchema(attrs ...AttrInfo) *Schema {
 			}
 		}
 	}
-	// Every name sharing an OID inherits the OR of their Secret/Constructed, whatever the order, so
-	// no spelling is the weaker way in. The first claimant keeps the alias.
-	for _, keys := range groups {
-		var sec, con bool
-		for _, k := range keys {
-			sec, con = sec || s.byName[k].Secret, con || s.byName[k].Constructed
-		}
-		for _, k := range keys {
-			e := s.byName[k]
-			e.Secret, e.Constructed = sec, con
-			s.byName[k] = e
+	// Every name sharing an OID inherits the OR of their Secret/Constructed. A name can sit in two
+	// groups (a case-variant duplicate that brought a different OID), so one pass in map order is
+	// not enough: repeat to the fixpoint. Flags only ever turn on, so the fixpoint is unique and
+	// the result is deterministic whatever the order. The first claimant keeps the alias.
+	for changed := true; changed; {
+		changed = false
+		for _, keys := range groups {
+			var sec, con bool
+			for _, k := range keys {
+				sec, con = sec || s.byName[k].Secret, con || s.byName[k].Constructed
+			}
+			for _, k := range keys {
+				e := s.byName[k]
+				if e.Secret != sec || e.Constructed != con {
+					e.Secret, e.Constructed = sec, con
+					s.byName[k] = e
+					changed = true
+				}
+			}
 		}
 	}
 	return s

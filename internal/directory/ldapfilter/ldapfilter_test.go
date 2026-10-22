@@ -424,3 +424,57 @@ func TestOIDCollisionThreeClaimantsAnyOrder(t *testing.T) {
 		}
 	}
 }
+
+// A case-variant duplicate that brings a different OID joins two OID groups. Flags must propagate
+// across the whole chain deterministically, not depend on map iteration order (T-0121 review).
+func TestOIDChainViaCaseVariantFlagsPropagate(t *testing.T) {
+	for _, kind := range []string{"secret", "constructed"} {
+		set := func(a AttrInfo) AttrInfo {
+			if kind == "secret" {
+				a.Secret = true
+			} else {
+				a.Constructed = true
+			}
+			return a
+		}
+		// 4-entry chain, flag at the head; and a 3-OID chain through two case-variant keys, flag at the tail.
+		cases := []struct {
+			name  string
+			infos []AttrInfo
+			want  []string
+		}{
+			{"four", []AttrInfo{
+				set(AttrInfo{Name: "p", OID: "1.1", Syntax: SynString}),
+				{Name: "q", OID: "1.1", Syntax: SynString},
+				{Name: "Q", OID: "1.2", Syntax: SynString},
+				{Name: "r", OID: "1.2", Syntax: SynString},
+			}, []string{"p", "q", "Q", "r", "1.1", "1.2"}},
+			{"three-oids", []AttrInfo{
+				{Name: "a", OID: "1.1", Syntax: SynString},
+				{Name: "b", OID: "1.1", Syntax: SynString},
+				{Name: "B", OID: "1.2", Syntax: SynString},
+				{Name: "c", OID: "1.2", Syntax: SynString},
+				{Name: "C", OID: "1.3", Syntax: SynString},
+				set(AttrInfo{Name: "d", OID: "1.3", Syntax: SynString}),
+			}, []string{"a", "b", "B", "c", "C", "d", "1.1", "1.2", "1.3"}},
+		}
+		want := SecretAttribute
+		if kind == "constructed" {
+			want = ConstructedNotFilterable
+		}
+		for _, c := range cases {
+			for i := 0; i < 300; i++ {
+				sc := NewSchema(c.infos...)
+				for _, n := range c.want {
+					a, err := ParseAttrName(n, sc)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if _, err := Render(Present(a), sc); Code(err) != want {
+						t.Fatalf("%s/%s iter %d name %s: got %v", kind, c.name, i, n, err)
+					}
+				}
+			}
+		}
+	}
+}
