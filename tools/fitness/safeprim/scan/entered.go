@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"golang.org/x/mod/modfile"
 	"golang.org/x/tools/go/packages"
 )
 
@@ -46,6 +47,10 @@ func syntacticImports(root, module string, entered map[string]bool) error {
 	if module == "" {
 		return nil
 	}
+	res, err := newResolver(root, module)
+	if err != nil {
+		return err
+	}
 	scanned := map[string]bool{} // files already parsed
 	for {
 		before := len(entered)
@@ -80,10 +85,8 @@ func syntacticImports(root, module string, entered map[string]bool) error {
 				if uerr != nil {
 					continue
 				}
-				if rest, ok := strings.CutPrefix(path, module+"/"); ok {
-					if top, _, _ := strings.Cut(rest, "/"); rootSkipped[top] {
-						entered[rest] = true
-					}
+				if dir, ok := res.resolve(path); ok {
+					entered[dir] = true
 				}
 			}
 			return nil
@@ -167,4 +170,103 @@ func underEntered(rel string, entered map[string]bool) bool {
 		}
 	}
 	return false
+}
+
+// resolver maps an import path to a directory below a root-skipped one, without build tags:
+// the main module's own prefix, local-directory `replace` directives in go.mod, the module path of
+// every nested go.mod inside a root-skipped directory, and vendor/<path>.
+type resolver struct {
+	root string
+	mods map[string]string // module path -> repository-relative directory ("." for the main module)
+}
+
+func newResolver(root, module string) (*resolver, error) {
+	r := &resolver{root: root, mods: map[string]string{}}
+	if module != "" {
+		r.mods[module] = "."
+	}
+	if data, err := os.ReadFile(filepath.Join(root, "go.mod")); err == nil {
+		if mf, perr := modfile.ParseLax("go.mod", data, nil); perr == nil {
+			for _, rep := range mf.Replace {
+				if p := rep.New.Path; strings.HasPrefix(p, "./") || strings.HasPrefix(p, "../") {
+					if rel, ok := relInside(root, filepath.Join(root, filepath.FromSlash(p))); ok {
+						r.mods[rep.Old.Path] = rel
+					}
+				}
+			}
+		} else {
+			return nil, fmt.Errorf("safeprim scan: parsing go.mod: %w", perr)
+		}
+	}
+	for top := range rootSkipped {
+		base := filepath.Join(root, top)
+		if _, err := os.Stat(base); err != nil {
+			continue
+		}
+		err := filepath.WalkDir(base, func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				if n := d.Name(); n == ".git" || n == "node_modules" || n == "testdata" {
+					return fs.SkipDir
+				}
+				return nil
+			}
+			if d.Name() != "go.mod" {
+				return nil
+			}
+			data, rerr := os.ReadFile(p)
+			if rerr != nil {
+				return rerr
+			}
+			if mp := modfile.ModulePath(data); mp != "" {
+				if rel, ok := relInside(root, filepath.Dir(p)); ok {
+					r.mods[mp] = rel
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	return r, nil
+}
+
+func relInside(root, p string) (string, bool) {
+	rel, err := filepath.Rel(root, p)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, "../") {
+		return "", false
+	}
+	return filepath.ToSlash(rel), true
+}
+
+// resolve returns the directory (below a root-skipped one) that import path names, if any.
+func (r *resolver) resolve(path string) (string, bool) {
+	best, dir := "", ""
+	for mp, d := range r.mods {
+		if (path == mp || strings.HasPrefix(path, mp+"/")) && len(mp) > len(best) {
+			best, dir = mp, d
+		}
+	}
+	if best != "" {
+		rel := dir
+		if rest := strings.TrimPrefix(path, best); rest != "" {
+			rel = strings.TrimPrefix(dir+rest, "./")
+			if dir == "." {
+				rel = strings.TrimPrefix(rest, "/")
+			}
+		}
+		if inRootSkipped(rel + "/x") {
+			return rel, true
+		}
+		return "", false
+	}
+	// vendor/<path>: only when such a directory exists (standard library paths never do).
+	v := "vendor/" + path
+	if st, err := os.Stat(filepath.Join(r.root, filepath.FromSlash(v))); err == nil && st.IsDir() {
+		return v, true
+	}
+	return "", false
 }

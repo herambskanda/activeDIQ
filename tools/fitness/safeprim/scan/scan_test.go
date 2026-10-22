@@ -397,6 +397,34 @@ func TestRootSkippedDirsBuildTagsEmbedsAndLoadFailure(t *testing.T) {
 			"internal/m/m.go":     importer,
 		}, "third_party/p/m.sql", "plpgsql-execute-concat")
 	})
+	// Round 2: imports mapped into a root-skipped dir by replace, nested go.mod or vendor/, whose
+	// only importer the package loads cannot see (cgo, custom tag, other arch).
+	replaceMod := "module fx.test\n\ngo 1.27.0\n\nrequire fx.lib v0.0.0\n\nreplace fx.lib => ./third_party/lib\n"
+	libFiles := func(importerName, importerSrc string) map[string]string {
+		return map[string]string{
+			"go.mod":                         replaceMod,
+			"third_party/lib/go.mod":         "module fx.lib\n\ngo 1.27.0\n",
+			"third_party/lib/x.go":           bad,
+			"internal/agent/" + importerName: importerSrc,
+		}
+	}
+	libImport := "package agent\n\nimport _ \"fx.lib\"\n"
+	t.Run("E cgo importer via replace", func(t *testing.T) {
+		hits(t, libFiles("a.go", "package agent\n\n// #include <stdio.h>\nimport \"C\"\nimport _ \"fx.lib\"\n"),
+			"third_party/lib/x.go", "process-api", "ldap-filter-shape")
+	})
+	t.Run("E2 custom-tag importer via replace", func(t *testing.T) {
+		hits(t, libFiles("a.go", "//go:build dcagent\n\n"+libImport), "third_party/lib/x.go", "process-api", "ldap-filter-shape")
+	})
+	t.Run("G arm64-only importer via replace", func(t *testing.T) {
+		hits(t, libFiles("a_arm64.go", libImport), "third_party/lib/x.go", "process-api", "ldap-filter-shape")
+	})
+	t.Run("vendor/ import from custom-tag importer", func(t *testing.T) {
+		hits(t, map[string]string{
+			"vendor/example.com/v/x.go": bad,
+			"internal/agent/a.go":       "//go:build dcagent\n\npackage agent\n\nimport _ \"example.com/v\"\n",
+		}, "vendor/example.com/v/x.go", "process-api", "ldap-filter-shape")
+	})
 	t.Run("load failure fails closed", func(t *testing.T) {
 		root := tree(t, map[string]string{"go.mod": "module fx.test\n\nrequire (\n", "internal/m/m.go": "package m\n"})
 		if _, err := Scan(root, AllChecks()); err == nil {
