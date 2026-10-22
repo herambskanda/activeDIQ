@@ -98,6 +98,19 @@ func (f *HybridLinks) Confirmed(_ context.Context, tid tenant.ID, adConn connect
 	if tid.IsZero() {
 		return false, connection.ErrNoTenant
 	}
+	// Same input validation as the real store: bad input is an error, never "no link".
+	adConn, err := connection.ParseID(string(adConn))
+	if err != nil {
+		return false, err
+	}
+	nc, err = connection.ParseNCGUID(string(nc))
+	if err != nil {
+		return false, err
+	}
+	entraConn, err = connection.ParseID(string(entraConn))
+	if err != nil {
+		return false, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, l := range f.links[tid] {
@@ -115,6 +128,10 @@ func (f *HybridLinks) HasHybridLink(_ context.Context, tid tenant.ID, adConn con
 	}
 	if tid.IsZero() {
 		return false, connection.ErrNoTenant
+	}
+	adConn, err := connection.ParseID(string(adConn))
+	if err != nil {
+		return false, err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()

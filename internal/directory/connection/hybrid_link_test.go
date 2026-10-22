@@ -275,3 +275,29 @@ func TestFakeHybridLinks(t *testing.T) {
 		t.Fatal("a read error is an error, never false")
 	}
 }
+
+// Bad or non-canonical input fails closed in the fake exactly as in the store.
+func TestFakeHybridLinksInputValidation(t *testing.T) {
+	ctx := context.Background()
+	tid := tenant.New()
+	f := connectiontest.NewHybridLinks()
+	if _, err := f.Declare(tid, connection.NewHybridLink{ADConnectionID: idA, NCGUID: ncA, EntraConnectionID: idB}); err != nil {
+		t.Fatal(err)
+	}
+	if has, err := f.HasHybridLink(ctx, tid, "not-a-uuid"); !errors.Is(err, connection.ErrInvalid) || has {
+		t.Fatal(has, err)
+	}
+	if ok, err := f.Confirmed(ctx, tid, idA, "bad", idB); !errors.Is(err, connection.ErrInvalid) || ok {
+		t.Fatal(ok, err)
+	}
+	if ok, err := f.Confirmed(ctx, tid, idA, ncA, "bad"); !errors.Is(err, connection.ErrInvalid) || ok {
+		t.Fatal(ok, err)
+	}
+	up := func(s string) string { return strings.ToUpper(s) }
+	if has, err := f.HasHybridLink(ctx, tid, connection.ID(up(string(idA)))); err != nil || !has {
+		t.Fatal(has, err)
+	}
+	if ok, err := f.Confirmed(ctx, tid, connection.ID(up(string(idA))), connection.NCGUID(up(string(ncA))), connection.ID(up(string(idB)))); err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+}
