@@ -234,7 +234,10 @@ func (c *Classifier) Snapshot(ctx context.Context) (*Set, error) {
 	for id := range holdingSP {
 		syncSP[id] = true
 	}
-	return s, c.addOwnerClosure(ctx, s, syncSP)
+	if err := c.addOwnerClosure(ctx, s, syncSP); err != nil {
+		return nil, err // never hand back a partial set: a caller ignoring err would under-protect
+	}
+	return s, nil
 }
 
 // addOwnerClosure marks the owners of every privileged SP E3 and walks to a fixpoint: an owner that
