@@ -41,10 +41,12 @@ type Tenant struct {
 	ServicePrincipals map[string]graph.ServicePrincipal    // by object id (needs SPID entry)
 	Assignments       map[string][]graph.AppRoleAssignment // by principal id
 	KeyCredentials    []graph.KeyCredential
-	Owners            map[string][]graph.DirectoryObject // by application/SP/group object id
-	Roles             []graph.RoleAssignment
-	Groups            []graph.Group
-	Members           map[string][]graph.DirectoryObject // by group id
+	// PasswordCredentials are the application's client secrets (metadata only).
+	PasswordCredentials []graph.PasswordCredential
+	Owners              map[string][]graph.DirectoryObject // by application/SP/group object id
+	Roles               []graph.RoleAssignment
+	Groups              []graph.Group
+	Members             map[string][]graph.DirectoryObject // by group id
 }
 
 // Server is the fake. Fields are guarded by mu; use the helpers.
@@ -251,7 +253,7 @@ func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
 	case len(seg) == 1 && seg[0] == "servicePrincipals(appId='"+t.ClientID+"')":
 		s.one(w, t.ServicePrincipals[t.SPID])
 	case len(seg) == 1 && seg[0] == "applications(appId='"+t.ClientID+"')":
-		s.one(w, graph.Application{ID: t.AppObjectID, AppID: t.ClientID, DisplayName: "activeDIQ", KeyCredentials: t.KeyCredentials})
+		s.one(w, graph.Application{ID: t.AppObjectID, AppID: t.ClientID, DisplayName: "activeDIQ", KeyCredentials: t.KeyCredentials, PasswordCredentials: t.PasswordCredentials})
 	case len(seg) == 2 && seg[0] == "servicePrincipals":
 		sp, found := t.ServicePrincipals[seg[1]]
 		if !found {
