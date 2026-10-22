@@ -86,8 +86,8 @@
   "probeValues": [
     {
       "column": "public.connections.directory_identity",
-      "value": "00000000-0000-4000-8000-000000000001",
-      "reason": "CHECK: the identity is empty or a canonical lower-case UUID (DM-10 I1)."
+      "value": "",
+      "reason": "A connection is born draft with no identity: the insert guard refuses anything else (DM-10 L1, I1)."
     },
     {
       "column": "public.connections.kind",
