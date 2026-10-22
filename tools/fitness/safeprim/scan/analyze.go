@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"golang.org/x/tools/go/analysis/checker"
@@ -22,10 +23,12 @@ func Analyze(root string) ([]Finding, error) {
 	}
 	var out []Finding
 	seen := map[string]bool{}
-	for _, t := range Targets {
-		fs, err := analyzeTarget(root, t)
+	compiled := map[string]bool{}
+	ignored := map[string]bool{}
+	for _, t := range runs() {
+		fs, err := analyzeTarget(root, t, compiled, ignored)
 		if err != nil {
-			return nil, fmt.Errorf("%s/%s: %w", t.GOOS, t.GOARCH, err)
+			return nil, fmt.Errorf("%s/%s %v: %w", t.GOOS, t.GOARCH, t.Tags, err)
 		}
 		for _, f := range fs {
 			if k := f.String(); !seen[k] {
@@ -34,18 +37,49 @@ func Analyze(root string) ([]Finding, error) {
 			}
 		}
 	}
+	// Fail closed: a Go file no run compiled was never type-checked, so no analyzer saw it.
+	var skipped []string
+	for f := range ignored {
+		if !compiled[f] {
+			skipped = append(skipped, f)
+		}
+	}
+	sort.Strings(skipped)
+	for _, f := range skipped {
+		rel, err := filepath.Rel(root, f)
+		if err != nil {
+			rel = f
+		}
+		out = append(out, Finding{FF: "FF-SP2", Rule: "build-constrained-unanalysed", File: filepath.ToSlash(rel), Line: 1,
+			Msg: "build-constrained file is compiled by no scan target, so no FF-SP2 analyzer type-checked it: add its platform to scan.Targets (and buildMatrix in the stack manifest) or its tag to scan.TestTags"})
+	}
 	return out, nil
 }
 
-// Target is one GOOS/GOARCH the type-aware passes run against.
-type Target struct{ GOOS, GOARCH string }
+// Target is one GOOS/GOARCH (and optional build tags) the type-aware passes run against.
+type Target struct {
+	GOOS, GOARCH string
+	Tags         []string
+}
 
-// Targets are the platforms activeDIQ ships Go for: the Linux server and the Windows-hosted server
-// and DC-side components. A file excluded by a build constraint on one target is type-checked on
-// another, so //go:build windows code gets the same gates. Add a target here when a new one ships.
-var Targets = []Target{{"linux", "amd64"}, {"windows", "amd64"}}
+// Targets are the platforms activeDIQ ships Go for: it must equal buildMatrix in
+// tools/fitness/stack/manifest.json (TestTargetsMatchStackManifest). A file excluded by a build
+// constraint on one target is type-checked on another, so platform code gets the same gates.
+var Targets = []Target{
+	{"linux", "amd64", nil}, {"linux", "arm64", nil},
+	{"windows", "amd64", nil}, {"windows", "arm64", nil}, {"darwin", "arm64", nil},
+}
 
-func analyzeTarget(root string, t Target) ([]Finding, error) {
+// TestTags are the test-only build tags (testTags in the manifest). Files behind them are analysed
+// by one extra load per OS that hosts a lab.
+var TestTags = []string{"lab", "windowslab"}
+
+func runs() []Target {
+	out := append([]Target(nil), Targets...)
+	return append(out, Target{"linux", "amd64", TestTags}, Target{"windows", "amd64", TestTags})
+}
+
+func analyzeTarget(root string, t Target, compiled, ignored map[string]bool) ([]Finding, error) {
 	cfg := &packages.Config{
 		Env: append(os.Environ(), "GOOS="+t.GOOS, "GOARCH="+t.GOARCH, "CGO_ENABLED=0"),
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles | packages.NeedImports | packages.NeedTypes |
@@ -53,12 +87,23 @@ func analyzeTarget(root string, t Target) ([]Finding, error) {
 		Dir:   root,
 		Tests: true,
 	}
+	if len(t.Tags) > 0 {
+		cfg.BuildFlags = []string{"-tags=" + strings.Join(t.Tags, ",")}
+	}
 	pkgs, err := packages.Load(cfg, "./...")
 	if err != nil {
 		return nil, err
 	}
 	var use []*packages.Package
 	for _, p := range pkgs {
+		for _, f := range p.CompiledGoFiles {
+			compiled[f] = true
+		}
+		for _, f := range p.IgnoredFiles {
+			if strings.HasSuffix(f, ".go") {
+				ignored[f] = true
+			}
+		}
 		if strings.HasSuffix(p.ID, ".test") {
 			continue // the generated test main
 		}

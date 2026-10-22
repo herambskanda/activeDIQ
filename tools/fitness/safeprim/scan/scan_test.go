@@ -1,8 +1,10 @@
 package scan
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -275,4 +277,79 @@ func TestFFSP2BuildConstrainedFiles(t *testing.T) {
 	wantAnalyzed(t, "windows file, non-constant template Parse", map[string]string{
 		"internal/modules/m/w_windows.go": "//go:build windows\n\npackage m\n\nimport \"html/template\"\n\nfunc f(s string) { template.New(\"x\").Parse(s) }\n",
 	}, "tmplconst", "internal/modules/m/w_windows.go")
+}
+
+const tmplViolation = "package m\n\nimport \"html/template\"\n\nfunc f(s string) { template.New(\"x\").Parse(s) }\n"
+
+// T-0058 (security review): the gate fails closed. Every shipped platform is analysed, and a Go file
+// no scan run compiled is itself a finding rather than silence.
+func TestFFSP2OtherPlatformsAndTags(t *testing.T) {
+	for _, c := range []struct{ name, file, hdr string }{
+		{"darwin file", "w_darwin.go", ""},
+		{"arm64 file", "w_arm64.go", ""},
+		{"windows/arm64 file", "w_windows_arm64.go", ""},
+		{"windowslab-tagged file", "wl.go", "//go:build windowslab\n\n"},
+	} {
+		wantAnalyzed(t, c.name, map[string]string{"internal/modules/m/" + c.file: c.hdr + tmplViolation}, "tmplconst", "internal/modules/m/"+c.file)
+	}
+}
+
+func TestFFSP2UnanalysedFileIsFinding(t *testing.T) {
+	wantAnalyzed(t, "tag no run enables", map[string]string{
+		"internal/modules/m/m.go":      "package m\n",
+		"internal/modules/m/exotic.go": "//go:build exotic\n\n" + tmplViolation,
+	}, "build-constrained-unanalysed", "internal/modules/m/exotic.go")
+	wantAnalyzed(t, "platform outside the matrix", map[string]string{
+		"internal/modules/m/m.go":       "package m\n",
+		"internal/modules/m/w_plan9.go": tmplViolation,
+	}, "build-constrained-unanalysed", "internal/modules/m/w_plan9.go")
+}
+
+func TestTargetsMatchStackManifest(t *testing.T) {
+	b, err := os.ReadFile("../../stack/manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m struct {
+		BuildMatrix []string `json:"buildMatrix"`
+		TestTags    []string `json:"testTags"`
+	}
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, tg := range Targets {
+		got = append(got, tg.GOOS+"/"+tg.GOARCH)
+	}
+	if !reflect.DeepEqual(got, m.BuildMatrix) {
+		t.Errorf("scan.Targets %v != manifest buildMatrix %v", got, m.BuildMatrix)
+	}
+	if !reflect.DeepEqual(TestTags, m.TestTags) {
+		t.Errorf("scan.TestTags %v != manifest testTags %v", TestTags, m.TestTags)
+	}
+}
+
+// Test files are exempt from the analyzers by policy, but a lab-tagged one must still be compiled
+// by a run (not reported unanalysed), while the same file under an unknown tag is reported.
+func TestFFSP2LabTaggedTestFile(t *testing.T) {
+	run := func(tag string) []Finding {
+		fs, err := Analyze(tree(t, map[string]string{
+			"internal/modules/m/m.go":        "package m\n",
+			"internal/modules/m/lab_test.go": "//go:build " + tag + "\n\n" + tmplViolation,
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fs
+	}
+	if fs := run("lab"); len(fs) != 0 {
+		t.Errorf("lab-tagged test file should be compiled and policy-exempt, got %v", fs)
+	}
+	wantFinding := false
+	for _, f := range run("unknowntag") {
+		wantFinding = wantFinding || f.Rule == "build-constrained-unanalysed"
+	}
+	if !wantFinding {
+		t.Error("test file under an unknown tag must be reported unanalysed")
+	}
 }
