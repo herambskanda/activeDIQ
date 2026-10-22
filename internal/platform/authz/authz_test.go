@@ -349,7 +349,7 @@ func TestVariantExclusionStillExcludes(t *testing.T) {
 
 func TestZeroIDsRefused(t *testing.T) {
 	zero := ScopeRoot{Complete: true}
-	// zero exclusion root in a scope: nothing in the chain can equal it, and CheckGrant refuses it.
+	// zero exclusion root in a scope: Authorize and CheckGrant both fail closed.
 	g := tech([]Permission{pReset}, Scope{Include: []ScopeRoot{root("corp")}, Exclude: []ScopeRoot{zero}})
 	reset := Role{Permissions: []Permission{pReset}}
 	if err := ev().CheckGrant(g, nil, reset, Scope{Include: []ScopeRoot{root("hr", "corp")}, Exclude: []ScopeRoot{zero}}); !errors.Is(err, ErrInvalidGrant) {
@@ -363,5 +363,47 @@ func TestZeroIDsRefused(t *testing.T) {
 	}
 	if d := ev().Authorize(g, nil, pReset, Target{Ancestors: []ObjectID{oid("corp")}, Complete: true}); d.Allowed {
 		t.Errorf("zero target id: %+v", d)
+	}
+}
+
+func TestObjectIDCanonicalOrder(t *testing.T) {
+	text, err := ParseObjectID("01234567-89ab-cdef-0011-223344556677")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oct, err := ObjectIDFromOctets([]byte{0x67, 0x45, 0x23, 0x01, 0xab, 0x89, 0xef, 0xcd, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77})
+	if err != nil || text != oct {
+		t.Fatalf("text %x != octets %x (%v)", text, oct, err)
+	}
+	if _, err := ObjectIDFromOctets(make([]byte, 16)); !errors.Is(err, ErrInvalidObjectID) {
+		t.Errorf("zero octets: %v", err)
+	}
+	if _, err := ObjectIDFromOctets(oct[:15]); !errors.Is(err, ErrInvalidObjectID) {
+		t.Errorf("short octets: %v", err)
+	}
+	// exclusion built from text, chain built from octets: must deny.
+	corp := oid("corp")
+	p := &Principal{ID: "tech", Assignments: []Assignment{{
+		Role:  Role{Permissions: []Permission{pReset}},
+		Scope: Scope{Include: []ScopeRoot{{ID: corp, Complete: true}}, Exclude: []ScopeRoot{{ID: text, Complete: true}}},
+	}}}
+	tgt := Target{ID: oid("user"), Ancestors: []ObjectID{oct, corp}, Complete: true}
+	if d := ev().Authorize(p, nil, pReset, tgt); d.Allowed {
+		t.Errorf("text-built exclusion skipped for octet-built chain: %+v", d)
+	}
+}
+
+func TestZeroExcludeDeniesInAuthorize(t *testing.T) {
+	zero := ScopeRoot{Complete: true}
+	tgt := target("user", "admins", "corp")
+	p := tech([]Permission{pReset}, Scope{Include: []ScopeRoot{root("corp")}, Exclude: []ScopeRoot{zero}})
+	if d := ev().Authorize(p, nil, pReset, tgt); d.Allowed {
+		t.Errorf("zero exclude in assignment widened scope: %+v", d)
+	}
+	ok := tech([]Permission{pReset}, Scope{Include: []ScopeRoot{root("corp")}})
+	tok := tokenFor(pReset)
+	tok.Scope = &Scope{Include: []ScopeRoot{root("corp")}, Exclude: []ScopeRoot{zero}}
+	if d := ev().Authorize(ok, tok, pReset, tgt); d.Allowed {
+		t.Errorf("zero exclude in token scope widened scope: %+v", d)
 	}
 }

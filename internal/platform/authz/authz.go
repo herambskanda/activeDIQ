@@ -51,12 +51,31 @@ var (
 
 // ObjectID identifies a directory object by objectGUID (never by DN). It is an opaque comparable
 // value, not text, so two spellings of one GUID cannot compare unequal and silently skip an
-// exclusion. The zero value is invalid and never matches anything. The platform may not import
-// directory code, so integrators convert their GUID type with ParseObjectID or a byte copy.
+// exclusion. The zero value is invalid and never matches anything.
+//
+// Canonical byte order is the AD octet order of objectGUID (MS-DTYP 2.3.4: Data1-3 little-endian),
+// i.e. the bytes LDAP returns. Build values ONLY with ObjectIDFromOctets (raw objectGUID bytes) or
+// ParseObjectID (text form); both yield the same value for the same object. Converting from any
+// other type with ObjectID(x) is forbidden. The platform may not import directory code, so
+// integrators call these constructors.
 type ObjectID [16]byte
 
 // IsZero reports whether id is the invalid zero value.
 func (id ObjectID) IsZero() bool { return id == ObjectID{} }
+
+// ObjectIDFromOctets builds an ObjectID from the 16 raw objectGUID bytes in AD octet order.
+// Any other length or the all-zero GUID is an error: callers fail closed.
+func ObjectIDFromOctets(b []byte) (ObjectID, error) {
+	var id ObjectID
+	if len(b) != len(id) {
+		return id, ErrInvalidObjectID
+	}
+	copy(id[:], b)
+	if id.IsZero() {
+		return ObjectID{}, ErrInvalidObjectID
+	}
+	return id, nil
+}
 
 // ParseObjectID parses the dashed 8-4-4-4-12 hex form (either case). Anything else, including
 // braces, other lengths and the all-zero GUID, is an error: callers fail closed.
@@ -66,9 +85,15 @@ func ParseObjectID(s string) (ObjectID, error) {
 		return id, ErrInvalidObjectID
 	}
 	raw := s[0:8] + s[9:13] + s[14:18] + s[19:23] + s[24:]
-	if _, err := hex.Decode(id[:], []byte(raw)); err != nil || id.IsZero() {
+	var text [16]byte
+	if _, err := hex.Decode(text[:], []byte(raw)); err != nil || text == ([16]byte{}) {
 		return ObjectID{}, ErrInvalidObjectID
 	}
+	// Text is RFC order; convert to AD octet order (Data1, Data2, Data3 byte-swapped).
+	id = text
+	slices.Reverse(id[0:4])
+	slices.Reverse(id[4:6])
+	slices.Reverse(id[6:8])
 	return id, nil
 }
 
@@ -122,9 +147,17 @@ func (s Scope) roots() []ScopeRoot { return append(slices.Clone(s.Include), s.Ex
 
 // covers reports whether the scope contains the target: some chain element is an include root and
 // no chain element is an exclude root.
+//
+// A scope with any zero-ID root (include or exclude) covers nothing: an exclusion that could not
+// be resolved must narrow, never widen.
 func (s Scope) covers(t Target) bool {
 	if t.ID.IsZero() || !t.Complete {
 		return false
+	}
+	for _, r := range s.roots() {
+		if r.ID.IsZero() {
+			return false
+		}
 	}
 	chain := t.chain()
 	if slices.Contains(chain, ObjectID{}) {
