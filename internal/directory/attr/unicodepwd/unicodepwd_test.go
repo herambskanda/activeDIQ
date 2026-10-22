@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/json/jsontext"
@@ -230,7 +231,7 @@ func redact(t testing.TB, r corpus.Record) (corpus.Result, error) {
 	case "error":
 		out = fmt.Errorf("set failed: %w", errors.New(fmt.Sprint(s))).Error()
 		out = strings.TrimPrefix(out, "set failed: ")
-	case "nested-private", "pointer", "slog-json", "modify-replace", "modify-change":
+	case "nested-private", "pointer", "slog-json", "modify-replace", "modify-change", "modify-value", "modify-private", "modification-private", "modification-mods", "modify-exported":
 		return redactNested(t, how.Text(), s)
 	default:
 		return corpus.Result{}, errors.New("unknown how " + how.Text())
@@ -249,9 +250,24 @@ type holder struct {
 	pw   secret.Secret
 }
 
+type modHolder struct {
+	User string
+	m    Modify
+}
+
+type modEntryHolder struct {
+	User string
+	mod  Modification
+}
+
+type exportedModHolder struct {
+	User string
+	Req  Modify
+}
+
 // redactNested renders the secret through the paths that bypass Format: an unexported field, a
-// pointer, the slog JSON handler and an encoded Modify. None of them may show the bytes, as text,
-// hex, or a decimal byte list.
+// pointer, the slog JSON handler, JSON marshalling and an encoded Modify. None of them may show the
+// bytes of the password or of its UTF-16LE encoding, as text, hex, base64 or a decimal byte list.
 func redactNested(t testing.TB, how string, s secret.Secret) (corpus.Result, error) {
 	var subject any
 	switch how {
@@ -267,7 +283,7 @@ func redactNested(t testing.TB, how string, s secret.Secret) (corpus.Result, err
 			return corpus.Result{}, err
 		}
 		var m *Modify
-		if how == "modify-replace" {
+		if strings.HasSuffix(how, "replace") {
 			m, err = Replace(s, conn)
 		} else {
 			m, err = Change(s, s, conn)
@@ -276,7 +292,22 @@ func redactNested(t testing.TB, how string, s secret.Secret) (corpus.Result, err
 			return corpus.Result{}, err
 		}
 		defer m.Destroy()
-		subject = m
+		switch how {
+		case "modify-replace", "modify-change":
+			subject = m
+		case "modify-value":
+			subject = *m
+		case "modify-private":
+			subject = modHolder{"bob", *m}
+		case "modification-private":
+			subject = modEntryHolder{"bob", m.Mods[0]}
+		case "modification-mods":
+			subject = m.Mods
+		case "modify-exported":
+			subject = exportedModHolder{"bob", *m}
+		default:
+			return corpus.Result{}, errors.New("unknown how " + how)
+		}
 	}
 	var outs []string
 	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%x", "%d"} {
@@ -286,10 +317,25 @@ func redactNested(t testing.TB, how string, s secret.Secret) (corpus.Result, err
 	slog.New(slog.NewTextHandler(&buf, nil)).Info("m", "r", subject)
 	slog.New(slog.NewJSONHandler(&buf, nil)).Info("m", "r", subject)
 	outs = append(outs, buf.String())
+	// Serialisation either fails or carries nothing of the value.
+	if j, err := json.Marshal(subject); err == nil {
+		outs = append(outs, string(j))
+	}
+	if j, err := jsonv2.Marshal(subject); err == nil {
+		outs = append(outs, string(j))
+	}
 	pw := reveal(s)
+	enc, err := Encode(s)
+	if err != nil {
+		return corpus.Result{}, err
+	}
+	needles := []string{pw, hex.EncodeToString([]byte(pw)), fmt.Sprint([]byte(pw)),
+		hex.EncodeToString(enc), fmt.Sprint(enc), base64.StdEncoding.EncodeToString(enc), base64.RawStdEncoding.EncodeToString(enc)}
 	for _, o := range outs {
-		if strings.Contains(o, pw) || strings.Contains(o, hex.EncodeToString([]byte(pw))) || strings.Contains(o, fmt.Sprint([]byte(pw))) {
-			return corpus.Result{}, errors.New("the secret leaked: " + how + " in " + o)
+		for _, n := range needles {
+			if strings.Contains(o, n) {
+				return corpus.Result{}, errors.New("the secret leaked: " + how + " in " + o)
+			}
 		}
 	}
 	return corpustest.Render("no secret bytes in any rendering"), nil
@@ -478,10 +524,13 @@ func TestChangeIsOneModifyDeleteThenAdd(t *testing.T) {
 	if len(m.Mods) != 2 || m.Mods[0].Op != OpDelete || m.Mods[1].Op != OpAdd || m.Mods[0].Attr != Attribute {
 		t.Fatalf("mods = %+v", m.Mods)
 	}
-	if !bytes.Equal(m.Mods[1].Values[0], utf16le(`"new"`)) {
-		t.Fatalf("add value = %x", m.Mods[1].Values[0])
-	}
-	vals := m.Mods[0].Values[0]
+	m.Mods[1].Expose(func(v [][]byte) {
+		if len(v) != 1 || !bytes.Equal(v[0], utf16le(`"new"`)) {
+			t.Fatalf("add value = %x", v)
+		}
+	})
+	var vals []byte
+	m.Mods[0].Expose(func(v [][]byte) { vals = v[0] })
 	m.Destroy()
 	if !bytes.Equal(vals, make([]byte, len(vals))) {
 		t.Fatal("Destroy did not zero the value")

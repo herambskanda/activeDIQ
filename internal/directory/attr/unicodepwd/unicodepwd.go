@@ -10,6 +10,7 @@
 package unicodepwd
 
 import (
+	"encoding/json/jsontext"
 	"fmt"
 	"log/slog"
 	"unicode/utf8"
@@ -99,21 +100,49 @@ const (
 )
 
 // Modification is one entry of an LDAP modify: the attribute, the operation and the encoded values.
+// The values are an encoded password, so they are held as Secrets in an unexported field: they print
+// as nothing under any fmt verb or slog handler, never serialise, and leave only through Expose.
 type Modification struct {
-	Op     Op
-	Attr   string
-	Values [][]byte
+	Op   Op
+	Attr string
+	vals []secret.Secret
+}
+
+// Expose calls fn with the encoded values for the wire write. fn must not retain or log them.
+func (m Modification) Expose(fn func(values [][]byte)) {
+	out := make([][]byte, 0, len(m.vals))
+	var walk func(i int)
+	walk = func(i int) {
+		if i == len(m.vals) {
+			fn(out)
+			return
+		}
+		m.vals[i].Expose(func(b []byte) {
+			out = append(out, b)
+			walk(i + 1)
+		})
+	}
+	walk(0)
 }
 
 // Format prints the entry without its values: they are an encoded password.
 func (m Modification) Format(f fmt.State, _ rune) {
-	fmt.Fprintf(f, "{%s %s [%d value(s) redacted]}", m.Op, m.Attr, len(m.Values))
+	fmt.Fprintf(f, "{%s %s [%d value(s) redacted]}", m.Op, m.Attr, len(m.vals))
 }
 
 // LogValue keeps the values out of structured logs.
 func (m Modification) LogValue() slog.Value {
-	return slog.StringValue(fmt.Sprintf("%s %s [%d value(s) redacted]", m.Op, m.Attr, len(m.Values)))
+	return slog.StringValue(fmt.Sprintf("%s %s [%d value(s) redacted]", m.Op, m.Attr, len(m.vals)))
 }
+
+// MarshalJSONTo fails with Unserializable: a pending password write is never persisted (v2 JSON).
+func (Modification) MarshalJSONTo(*jsontext.Encoder) error { return secret.New(secret.Unserializable) }
+
+// MarshalText fails with Unserializable (v1 encoding/json, XML and YAML reach this).
+func (Modification) MarshalText() ([]byte, error) { return nil, secret.New(secret.Unserializable) }
+
+// MarshalBinary fails with Unserializable (gob and other binary encoders).
+func (Modification) MarshalBinary() ([]byte, error) { return nil, secret.New(secret.Unserializable) }
 
 // Modify is the modify request body the connector sends. Destroy it after sending. It remembers
 // the SecureConn it was built for: call Verify immediately before writing it (PW-17).
@@ -127,23 +156,43 @@ type Modify struct {
 func (m *Modify) Verify() error { return m.conn.Verify() }
 
 // Format prints the modify without its values.
-func (m *Modify) Format(f fmt.State, _ rune) {
-	fmt.Fprintf(f, "&unicodepwd.Modify{%d modification(s), values redacted}", len(m.Mods))
+func (m Modify) Format(f fmt.State, _ rune) {
+	fmt.Fprintf(f, "unicodepwd.Modify{%d modification(s), values redacted}", len(m.Mods))
 }
 
 // LogValue keeps the values out of structured logs.
-func (m *Modify) LogValue() slog.Value {
+func (m Modify) LogValue() slog.Value {
 	return slog.StringValue(fmt.Sprintf("unicodepwd.Modify{%d modification(s), values redacted}", len(m.Mods)))
 }
+
+// MarshalJSONTo fails with Unserializable (v2 JSON).
+func (Modify) MarshalJSONTo(*jsontext.Encoder) error { return secret.New(secret.Unserializable) }
+
+// MarshalText fails with Unserializable.
+func (Modify) MarshalText() ([]byte, error) { return nil, secret.New(secret.Unserializable) }
+
+// MarshalBinary fails with Unserializable.
+func (Modify) MarshalBinary() ([]byte, error) { return nil, secret.New(secret.Unserializable) }
 
 // Destroy zeroes every encoded value.
 func (m *Modify) Destroy() {
 	for _, mod := range m.Mods {
-		for _, v := range mod.Values {
-			clear(v)
+		for i := range mod.vals {
+			mod.vals[i].Destroy()
 		}
 	}
 	m.Mods = nil
+}
+
+// encodeSecret encodes s into a Secret and zeroes the intermediate buffer.
+func encodeSecret(s secret.Secret) (secret.Secret, error) {
+	b, err := Encode(s)
+	if err != nil {
+		return secret.Secret{}, err
+	}
+	v := secret.FromBytes(b)
+	clear(b)
+	return v, nil
 }
 
 // Replace is the admin reset: the attribute is replaced with one value. Without a valid SecureConn
@@ -152,11 +201,11 @@ func Replace(s secret.Secret, conn SecureConn) (*Modify, error) {
 	if err := conn.Verify(); err != nil {
 		return nil, err
 	}
-	v, err := Encode(s)
+	v, err := encodeSecret(s)
 	if err != nil {
 		return nil, err
 	}
-	return &Modify{Mods: []Modification{{Op: OpReplace, Attr: Attribute, Values: [][]byte{v}}}, conn: conn}, nil
+	return &Modify{Mods: []Modification{{Op: OpReplace, Attr: Attribute, vals: []secret.Secret{v}}}, conn: conn}, nil
 }
 
 // Change is the user change: delete the old value and add the new one, in one modify.
@@ -164,18 +213,18 @@ func Change(oldPw, newPw secret.Secret, conn SecureConn) (*Modify, error) {
 	if err := conn.Verify(); err != nil {
 		return nil, err
 	}
-	o, err := Encode(oldPw)
+	o, err := encodeSecret(oldPw)
 	if err != nil {
 		return nil, err
 	}
-	n, err := Encode(newPw)
+	n, err := encodeSecret(newPw)
 	if err != nil {
-		clear(o)
+		o.Destroy()
 		return nil, err
 	}
 	return &Modify{Mods: []Modification{
-		{Op: OpDelete, Attr: Attribute, Values: [][]byte{o}},
-		{Op: OpAdd, Attr: Attribute, Values: [][]byte{n}},
+		{Op: OpDelete, Attr: Attribute, vals: []secret.Secret{o}},
+		{Op: OpAdd, Attr: Attribute, vals: []secret.Secret{n}},
 	}, conn: conn}, nil
 }
 
