@@ -55,7 +55,7 @@ var UnitHomes = map[string][]string{
 	"attr.filetime":   {Attr},
 	"attr.gentime":    {Attr},
 	"attr.flags":      {Attr},
-	"attr.unicodepwd": {Secret},
+	"attr.unicodepwd": {Secret, Attr + "/unicodepwd"}, // Secret and secretjson are part of the unit (safe-primitives §8: "incl. Secret, SecureConn"); the codec package joins them when built
 	"psx":             {Psx},
 	"pslit":           {Pslit},
 	"proc":            {Proc},
@@ -106,6 +106,7 @@ func IsTest(file string) bool { return strings.HasSuffix(file, "_test.go") }
 // named, never matched by a "…test" suffix, so a new one is a reviewed change to this list.
 var TestSupport = []string{
 	"internal/platform/store/storetest",
+	"internal/platform/jobs/jobstest", // fleet-wide claim lapse: a product import could double-run jobs
 }
 
 // SQLForwarder names one access wrapper whose Exec/Query/QueryRow pass their own SQL parameter to the

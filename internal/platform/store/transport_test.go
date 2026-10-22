@@ -156,3 +156,39 @@ func clearPGEnv(t *testing.T) {
 		os.Unsetenv(k)
 	}
 }
+
+// TestMalformedDSNDoesNotPanic: pgx v5.9.2 panics in its keyword/value parser on this input; the store
+// turns that into a refusal without echoing the DSN.
+func TestMalformedDSNDoesNotPanic(t *testing.T) {
+	dsn := "='0\\"
+	if _, err := CheckTransport(dsn, false); err == nil || !strings.Contains(err.Error(), "invalid DSN") {
+		t.Fatalf("CheckTransport: %v", err)
+	}
+	_, err := Open(context.Background(), Config{DSN: dsn})
+	if err == nil || !strings.Contains(err.Error(), "invalid DSN") || strings.Contains(err.Error(), "'0") {
+		t.Fatalf("Open: %v", err)
+	}
+}
+
+func TestInvalidDSNErrorCarriesNoDSNText(t *testing.T) {
+	const pw = "s3cretMARKER"
+	dsns := []string{
+		"postgres://host/db?password=" + pw + "&port=abc",
+		"postgres://host/db?password=" + pw + "&sslmode=bogus",
+		"postgres://u:x@host/db?sslpassword=" + pw + "&sslmode=bogus",
+		"host=h password = " + pw + " port=abc",
+		"host=h PASSWORD=" + pw + " port=abc",
+		"postgres://u:" + pw + "@host:abc/db",
+		"postgres://u:" + pw + "@ho%s3st/db",
+		"postgres://u:%zz" + pw + "@host/db",
+	}
+	for _, dsn := range dsns {
+		if _, err := CheckTransport(dsn, false); err == nil || !errors.Is(err, errInvalidDSN) || strings.Contains(err.Error(), pw) {
+			t.Errorf("CheckTransport(%q): err = %v", dsn, err)
+		}
+		_, err := Open(context.Background(), Config{DSN: dsn})
+		if err == nil || !errors.Is(err, errInvalidDSN) || strings.Contains(err.Error(), pw) {
+			t.Errorf("Open(%q): err = %v", dsn, err)
+		}
+	}
+}

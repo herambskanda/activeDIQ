@@ -9,6 +9,11 @@
       "table": "public.jobs",
       "reason": "The job queue must be claimable across every tenant's work, so a job row cannot sit under a per-tenant RLS policy; tenant_id is null only for a registered platform kind. The jobs_guard trigger makes the database refuse a job enqueued for a tenant other than the transaction's context (ADR-0001 E3, ADR-0002 Jobs row, DM-43). Any tenant transaction can read it, so only its owning package may name it in SQL.",
       "owner": "internal/platform/jobs"
+    },
+    {
+      "table": "public.platform_leases",
+      "reason": "Platform leases give exclusive, expiring ownership of singleton work that runs over every tenant (the job rescuer and cleaner, later schedulers), so a lease row has no tenant_id and no RLS (ADR-0002 Jobs row, DM-06). Any tenant transaction can read it, so only its owning package may name it in SQL.",
+      "owner": "internal/platform/jobs"
     }
   ],
   "securityDefiner": [],
@@ -38,6 +43,27 @@
       "package": "internal/platform/jobs",
       "function": "Clean",
       "reason": "The cleaner deletes finished jobs of any tenant after their retention period, so it runs under WithPlatform (ADR-0002 Jobs row).",
+      "withPlatform": true,
+      "mintsTenantID": false
+    },
+    {
+      "package": "internal/platform/jobs",
+      "function": "AcquireLease",
+      "reason": "A platform lease guards work over every tenant, so its table is registered global and the statement runs under WithPlatform (ADR-0002 Jobs row, DM-06).",
+      "withPlatform": true,
+      "mintsTenantID": false
+    },
+    {
+      "package": "internal/platform/jobs",
+      "function": "RenewLease",
+      "reason": "A platform lease guards work over every tenant, so its table is registered global and the statement runs under WithPlatform (ADR-0002 Jobs row, DM-06).",
+      "withPlatform": true,
+      "mintsTenantID": false
+    },
+    {
+      "package": "internal/platform/jobs",
+      "function": "ReleaseLease",
+      "reason": "A platform lease guards work over every tenant, so its table is registered global and the statement runs under WithPlatform (ADR-0002 Jobs row, DM-06).",
       "withPlatform": true,
       "mintsTenantID": false
     },

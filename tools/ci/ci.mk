@@ -2,7 +2,7 @@
 # Standard: knowledge/development/standards/ci-gates.md · Runbook: knowledge/development/runbooks/ci-and-build.md
 # Every gate below has a failing run proving it catches a violation: `make ci-proof` (part of `make ci`).
 
-.PHONY: ci gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-operation fitness-oracles-windows fitness-oracles-lab fitness-fuzz-nightly fitness-nightly build build-web web-install ci-proof
+.PHONY: ci gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-oracles-windows fitness-oracles-lab fitness-fuzz-nightly fitness-nightly build build-web web-install ci-proof fitness-operation
 
 ci: lint gen-check gen-api-check lint-api test fitness build secrets-scan vuln-scan lab-test-unit ci-proof ## Everything a merge needs: lint, generated-code freshness (connector proto and the API contract), API lint, tests, fitness functions (incl. the ADR-0001 build matrix), web build, secret scan, dependency vulnerability scan, gate proofs
 	@echo "make ci: passed"
@@ -41,7 +41,7 @@ test-go:
 test-web: web-install
 	npm --prefix web run --silent test
 
-fitness: fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-operation ## Architecture fitness functions: fitness-modules (blueprint §2 import rules), fitness-stack (ADR-0001 F1-F5), fitness-tenancy (ADR-0002 T1-T5), fitness-domain-keys (domain-model X3-X5), fitness-profiles (ADR-0002 P1, P7, U1, U2 and the activation table), fitness-proto (connector contract compiles and keeps its rules) fitness-safeprim (safe-primitives FF-SP1-3), fitness-corpus (FF-SP4, FF-SP5 declarations, FF-SP8) and fitness-oracles (FF-SP6 on Linux), fitness-operation (ADR-0005 O9, the kernel import DAG)
+fitness: fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-operation ## Architecture fitness functions: fitness-modules (blueprint §2 import rules), fitness-stack (ADR-0001 F1-F5), fitness-tenancy (ADR-0002 T1-T5), fitness-domain-keys (domain-model X3-X5), fitness-profiles (ADR-0002 P1, P7, U1, U2 and the activation table), fitness-proto (connector contract compiles and keeps its rules) fitness-safeprim (safe-primitives FF-SP1-3), fitness-corpus (FF-SP4, FF-SP5 declarations, FF-SP8) fitness-oracles (FF-SP6 on Linux) and fitness-api (ADR-0004 A1, A13; prints every inactive check)
 	go run ./tools/fitness/modules
 
 fitness-stack: ## ADR-0001: language zones, cgo-free cross-build, one stateful service, licence register, exceptions cite an ADR
@@ -70,6 +70,9 @@ fitness-corpus: ## T-0034: safe-primitives FF-SP4 corpus gate (every unit >= 10 
 fitness-oracles: fitness-corpus ## T-0034: safe-primitives FF-SP6 on Linux: pslit output through PowerShell's own parser (pwsh, or the pinned container; needs Docker), P1 filters through go-ldap's parser. Checks an implementation's actual outputs once one has reported, the corpus's expected values before
 	go run ./tools/fitness/oracles pslit -source auto -reports $(SAFEPRIM_REPORTS) -if-present
 	go run ./tools/fitness/oracles ldapfilter -source auto -reports $(SAFEPRIM_REPORTS) -if-present
+
+fitness-api: ## T-0011, ADR-0004: A1 source layout and A13 policy hygiene, with a self-test that fails when a check finds nothing where the tree has something. Prints one line per check A1-A14 (active, or inactive (<missing input>)); exits 0 with inactive checks, and the ADR is not accepted while any is
+	go run ./tools/fitness/api
 
 fitness-operation: ## T-0013: ADR-0005 O9, the kernel import DAG of rule 13: parses the dag block of the ADR itself and fails on any import among the listed platform packages it does not allow; lists each package as existing or pending (O1-O8 land with the code they inspect)
 	go run ./tools/fitness/operation

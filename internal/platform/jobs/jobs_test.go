@@ -50,12 +50,12 @@ func (e *env) enqueue(t *testing.T, tid tenant.ID, j Job) Enqueued {
 	var err error
 	if tid.IsZero() {
 		err = e.platform(func(ctx context.Context, tx store.Tx) error {
-			res, err = Enqueue(ctx, tx, j)
+			res, err = testRegistry.Enqueue(ctx, tx, j)
 			return err
 		})
 	} else {
 		err = e.db.WithTenant(context.Background(), tid, func(ctx context.Context, tx store.Tx) error {
-			res, err = Enqueue(ctx, tx, j)
+			res, err = testRegistry.Enqueue(ctx, tx, j)
 			return err
 		})
 	}
@@ -90,7 +90,22 @@ func (e *env) state(t *testing.T, id int64) (state string, attempt int) {
 	return parts[0], n
 }
 
-var oneKind = []KindLease{{Kind: "test.work", Lease: time.Minute}}
+// testRegistry registers the kinds the tests enqueue.
+var testRegistry = func() *Registry {
+	r := NewRegistry()
+	for _, k := range []Kind{
+		{Name: "test.work", Timeout: time.Minute, Mode: ModeDefault, Run: noop},
+		{Name: "test.other", Timeout: time.Minute, Mode: ModeManagedTx, RunManaged: noopManaged},
+		{Name: "test.platform", Timeout: time.Minute, Mode: ModeDefault, Run: noop, Platform: true},
+	} {
+		if err := r.Register(k); err != nil {
+			panic(err)
+		}
+	}
+	return r
+}()
+
+var oneKind = []KindLease{{Kind: "test.work", Lease: time.Minute}, {Kind: "test.platform", Lease: time.Minute}}
 
 func each(t *testing.T, fn func(t *testing.T, e *env)) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) { fn(t, setup(t, s)) })
@@ -103,7 +118,7 @@ func TestEnqueueRefusesAnotherTenantsJob(t *testing.T) {
 		// Through the package: tenant A's transaction cannot enqueue for B. Args name B themselves, so the
 		// database trigger is what refuses (not the Go-side args check).
 		err := e.inTenant(t, e.a, func(ctx context.Context, tx store.Tx) error {
-			_, err := Enqueue(ctx, tx, Job{Kind: "test.work", Tenant: e.b, Args: ref{ID: "x"}})
+			_, err := testRegistry.Enqueue(ctx, tx, Job{Kind: "test.work", Tenant: e.b, Args: ref{ID: "x"}})
 			return err
 		})
 		if !errors.Is(err, ErrCrossTenant) {
@@ -112,14 +127,14 @@ func TestEnqueueRefusesAnotherTenantsJob(t *testing.T) {
 		// A tenant job in a platform (no-context) transaction is refused, and so is a platform job in a
 		// tenant transaction.
 		err = e.platform(func(ctx context.Context, tx store.Tx) error {
-			_, err := Enqueue(ctx, tx, Job{Kind: "test.work", Tenant: e.a})
+			_, err := testRegistry.Enqueue(ctx, tx, Job{Kind: "test.work", Tenant: e.a})
 			return err
 		})
 		if !errors.Is(err, ErrCrossTenant) {
 			t.Fatalf("tenant job without a tenant context = %v, want ErrCrossTenant", err)
 		}
 		err = e.inTenant(t, e.a, func(ctx context.Context, tx store.Tx) error {
-			_, err := Enqueue(ctx, tx, Job{Kind: "test.work"})
+			_, err := testRegistry.Enqueue(ctx, tx, Job{Kind: "test.platform"})
 			return err
 		})
 		if !errors.Is(err, ErrCrossTenant) {
@@ -159,7 +174,7 @@ func TestEnqueueRollsBackWithTheCallersTransaction(t *testing.T) {
 	each(t, func(t *testing.T, e *env) {
 		boom := errors.New("caller failed after enqueue")
 		err := e.inTenant(t, e.a, func(ctx context.Context, tx store.Tx) error {
-			if _, err := Enqueue(ctx, tx, Job{Kind: "test.work", Tenant: e.a}); err != nil {
+			if _, err := testRegistry.Enqueue(ctx, tx, Job{Kind: "test.work", Tenant: e.a}); err != nil {
 				return err
 			}
 			return boom
@@ -296,7 +311,7 @@ func TestClaimOrdersFiltersAndLeases(t *testing.T) {
 		hi := e.enqueue(t, e.b, Job{Kind: "test.work", Priority: -1}).ID
 		later := e.enqueue(t, e.a, Job{Kind: "test.work", RunAt: time.Now().Add(time.Hour)}).ID
 		other := e.enqueue(t, e.a, Job{Kind: "test.other"}).ID
-		plat := e.enqueue(t, tenant.ID{}, Job{Kind: "test.work", Priority: 9}).ID
+		plat := e.enqueue(t, tenant.ID{}, Job{Kind: "test.platform", Priority: 9}).ID
 
 		got := mustClaim(t, e, 2)
 		if len(got) != 2 {

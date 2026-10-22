@@ -278,3 +278,13 @@ components:
             type: /problems/directory-unavailable
             title: The directory is unavailable
             status: 503
+    NotReady:
+      description: The service is running but not ready to take traffic
+      content:
+        application/problem+json:
+          schema:
+            $ref: shared/problems.yaml#/components/schemas/Problem
+          example:
+            type: /problems/not-ready
+            title: The service is not ready
+            status: 503

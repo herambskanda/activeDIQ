@@ -106,6 +106,10 @@ func Claim(ctx context.Context, db *store.DB, kinds []KindLease, limit int) ([]C
 const fence = `WHERE id = $1 AND attempt = $2 AND state = 'running'
   AND tenant_id IS NOT DISTINCT FROM NULLIF(current_setting('app.tenant_id', true), '')::uuid`
 
+// lockClaim takes a shared row lock on the live claim: the fence plus claimed_until > now(). Rescue's
+// UPDATE of the row waits for the lock holder's commit, so a claim cannot be rescued mid-transaction.
+const lockClaim = `SELECT 1 FROM public.jobs ` + fence + ` AND claimed_until > now() FOR SHARE`
+
 const complete = `UPDATE public.jobs SET state = 'completed', claimed_until = NULL, error_code = NULL,
   finalized_at = now(), updated_at = now() ` + fence
 
@@ -120,9 +124,23 @@ const discard = `UPDATE public.jobs SET state = 'discarded', claimed_until = NUL
 
 const renew = `UPDATE public.jobs SET claimed_until = now() + $3 * interval '1 millisecond', updated_at = now() ` + fence
 
+// LockClaim proves in tx that the claim r is live (running, this attempt, this tenant, not lapsed) and
+// holds it so Rescue cannot requeue the job until tx ends. ErrSuperseded when it is not.
+func LockClaim(ctx context.Context, tx store.Tx, r Ref) error {
+	var one int
+	if err := tx.QueryRow(ctx, lockClaim, r.ID, r.Attempt).Scan(&one); err != nil {
+		if store.IsNoRows(err) {
+			return ErrSuperseded
+		}
+		return mapErr("lock claim", err)
+	}
+	return nil
+}
+
 // Complete records success.
 func Complete(ctx context.Context, tx store.Tx, r Ref) error {
-	return one(ctx, tx, "complete", complete, r.ID, r.Attempt)
+	tag, err := tx.Exec(ctx, complete, r.ID, r.Attempt)
+	return one("complete", tag.RowsAffected, err)
 }
 
 // Discard records a permanent failure: the job will not run again. code is a short snake_case code,
@@ -131,7 +149,8 @@ func Discard(ctx context.Context, tx store.Tx, r Ref, code string) error {
 	if !codePattern.MatchString(code) {
 		return invalid("error code %q is not a snake_case code", code)
 	}
-	return one(ctx, tx, "discard", discard, r.ID, r.Attempt, code)
+	tag, err := tx.Exec(ctx, discard, r.ID, r.Attempt, code)
+	return one("discard", tag.RowsAffected, err)
 }
 
 // Renew extends the claim of a long-running body by lease, measured from now on the database clock.
@@ -139,15 +158,16 @@ func Renew(ctx context.Context, tx store.Tx, r Ref, lease time.Duration) error {
 	if lease <= 0 || lease > maxLease {
 		return invalid("lease must be positive and at most %s", maxLease)
 	}
-	return one(ctx, tx, "renew", renew, r.ID, r.Attempt, lease.Milliseconds())
+	tag, err := tx.Exec(ctx, renew, r.ID, r.Attempt, lease.Milliseconds())
+	return one("renew", tag.RowsAffected, err)
 }
 
-func one(ctx context.Context, tx store.Tx, op, sql string, args ...any) error {
-	tag, err := tx.Exec(ctx, sql, args...)
+// one maps the result of a fenced single-row recording: exactly one row must have been affected.
+func one(op string, rows func() int64, err error) error {
 	if err != nil {
 		return mapErr(op, err)
 	}
-	if tag.RowsAffected() != 1 {
+	if rows() != 1 {
 		return ErrSuperseded
 	}
 	return nil

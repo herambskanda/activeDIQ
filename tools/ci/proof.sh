@@ -77,6 +77,50 @@ must_fail_with "fitness-modules on a platform package importing the directory do
 printf 'package kernel\n' >"$fit/internal/platform/kernel/k.go"
 must_pass "fitness-modules" go run ./tools/fitness/modules -root "$fit"
 
+# --- fitness-api (ADR-0004 A1 layout, A13 policy hygiene, self-test, inactive reporting), the real CLI
+# The per-rule proofs are the tool's own tests (go test ./tools/fitness/api); this is the command line.
+fa="$tmp/fa"
+fresh_fa_tree() {
+  rm -rf "$fa"; mkdir -p "$fa/internal/modules/users" "$fa/internal/modules/orders" "$fa/internal/platform/apihost/spec" "$fa/api/openapi/modules" "$fa/api/openapi/shared"
+  printf 'package users\n' >"$fa/internal/modules/users/doc.go"
+  printf 'package orders\n' >"$fa/internal/modules/orders/doc.go"
+  printf 'openapi: 3.1.0\ninfo: {title: t, version: 0.0.0}\nservers: [{url: /api/v1}]\ntags:\n  - name: users\n  - name: orders\n' >"$fa/api/openapi/openapi.yaml"
+  printf 'components:\n  schemas:\n    Cursor:\n      type: string\n' >"$fa/api/openapi/shared/paging.yaml"
+  printf 'paths:\n  /users:\n    get:\n      operationId: listUsers\n      tags: [users]\ncomponents:\n  schemas:\n    User:\n      type: string\n' >"$fa/api/openapi/modules/users.yaml"
+  printf 'paths:\n  /orders:\n    get:\n      operationId: listOrders\n      tags: [orders]\ncomponents:\n  schemas:\n    Order:\n      type: string\n' >"$fa/api/openapi/modules/orders.yaml"
+  printf 'anonymous: []\nauthenticated:\n  - operation: listUsers\n    ref: TM-D16\n    reason: Any signed-in principal lists users.\nnonApiRoutes: []\nsecretResponses: []\nstepUp: []\nlargeBodies: []\n' >"$fa/api/openapi/policy.yaml"
+  printf '{"paths": {"/users": {"get": {}}, "/orders": {"get": {}}}}\n' >"$fa/internal/platform/apihost/spec/openapi.gen.json"
+  mkdir -p "$fa/knowledge/development/architecture"
+  printf '| AN-1 | Health | Console/API | None |\n' >"$fa/knowledge/development/architecture/threat-model.md"
+}
+fitapi() { go run ./tools/fitness/api -root "$fa" "$@"; }
+fresh_fa_tree
+must_pass "fitness-api on a clean contract tree" fitapi
+must_pass "fitness-api prints A1 and A13 as active and every other check as inactive (<missing input>)" bash -c "go run ./tools/fitness/api -root '$fa' | awk '/^fitness-api A(1|13) /{if (\$0 !~ / active/) bad=1} /^fitness-api A([2-9]|1[0124]) /{n++; if (\$0 !~ /inactive \(.+\)/) bad=1} END{exit (bad || n != 12)}'"
+must_pass "fitness-api on the repository itself lists all fourteen checks" bash -c "go run ./tools/fitness/api | grep -c '^fitness-api A' | grep -qx 14"
+fresh_fa_tree; mkdir -p "$fa/api/openapi/extra"; printf 'a: b\n' >"$fa/api/openapi/extra/stray.yaml"
+must_fail_with "fitness-api A1 on a file outside the rule 1 places" 'api/openapi/extra/stray.yaml: \[ADR-0004 A1\] outside the rule 1 places' fitapi
+fresh_fa_tree; printf 'components:\n  schemas:\n    Ghost:\n      type: string\n' >"$fa/api/openapi/modules/ghost.yaml"
+must_fail_with "fitness-api A1 on a module file with an unknown module id" 'api/openapi/modules/ghost.yaml: \[ADR-0004 A1\] module "ghost" is not in the module list' fitapi
+fresh_fa_tree; sed -i 's/tags: \[users\]/tags: [users, orders]/' "$fa/api/openapi/modules/users.yaml"
+must_fail_with "fitness-api A1 on an operation with two tags" 'api/openapi/modules/users.yaml:3: \[ADR-0004 A1\] GET /users \(listUsers\) has 2 tags' fitapi
+fresh_fa_tree; sed -i 's/listOrders/listUsers/' "$fa/api/openapi/modules/orders.yaml"
+must_fail_with "fitness-api A1 on a duplicate operationId" '\[ADR-0004 A1\] duplicate operationId "listUsers"' fitapi
+fresh_fa_tree; printf 'paths:\n  /users:\n    get:\n      operationId: listUsers\n      tags: [users]\ncomponents:\n  schemas:\n    User:\n      $ref: modules/orders.yaml#/components/schemas/Order\n' >"$fa/api/openapi/modules/users.yaml"
+must_fail_with "fitness-api A1 on a cross-module \$ref" 'api/openapi/modules/users.yaml:9: \[ADR-0004 A1\] .*cross-module reference' fitapi
+fresh_fa_tree; sed -i 's/operation: listUsers/operation: listGhosts/' "$fa/api/openapi/policy.yaml"
+must_fail_with "fitness-api A13 on a policy entry naming a missing operation" '\[ADR-0004 A13\] authenticated listGhosts: stale: operation "listGhosts" is not in the contract' fitapi
+fresh_fa_tree; sed -i '/reason:/d' "$fa/api/openapi/policy.yaml"
+must_fail_with "fitness-api A13 on a policy entry with no reason" '\[ADR-0004 A13\] authenticated listUsers: no reason' fitapi
+fresh_fa_tree; sed -i '/ref:/d' "$fa/api/openapi/policy.yaml"
+must_fail_with "fitness-api A13 on a policy entry with no AN/TM reference" '\[ADR-0004 A13\] authenticated listUsers: no AN/TM reference' fitapi
+fresh_fa_tree; printf 'anonymous: [{operation: deleteAllUsers}]\n' >>"$fa/api/openapi/policy.yaml"
+must_fail_with "fitness-api A13 on a duplicate policy section hiding an entry" '\[ADR-0004 A13\] duplicate mapping key "anonymous"' fitapi
+fresh_fa_tree; sed -i 's/^anonymous: \[\]/anonymous:\n  - method: GET\n    path: \/healthz\n    ref: AN-99\n    reason: probe/' "$fa/api/openapi/policy.yaml"
+must_fail_with "fitness-api A13 on an anonymous entry citing a missing AN row" 'AN-99 is not a row of the threat model' fitapi
+fresh_fa_tree; rm "$fa/api/openapi/modules/users.yaml" "$fa/api/openapi/modules/orders.yaml"; printf 'openapi: 3.1.0\ninfo: {title: t, version: 0.0.0}\nservers: [{url: /api/v1}]\ntags: []\n' >"$fa/api/openapi/openapi.yaml"; printf 'anonymous: []\nauthenticated: []\nnonApiRoutes: []\nsecretResponses: []\nstepUp: []\nlargeBodies: []\n' >"$fa/api/openapi/policy.yaml"
+must_fail_with "fitness-api self-test when the bundle has operations but the check found no operation" '\[ADR-0004 self-test\] .*holds 2 operation\(s\) but A1 found 0' fitapi
+
 # --- fitness-operation (ADR-0005 O9, the kernel import DAG), the real CLI on throw-away trees ----
 # The throw-away tree carries a copy of the real ADR, so the proof reads the same dag block as CI.
 # The per-case proofs are the tool's own tests (go test ./tools/fitness/operation).
@@ -477,6 +521,8 @@ must_pass "eslint on the real sources" npm --prefix web run --silent lint
 genapi="$tmp/genapi"; go build -o "$genapi" ./tools/gen/api
 ar="$tmp/apirepo"; mkdir -p "$ar/internal/platform"
 cp -R api "$ar/api"; cp -R internal/platform/apihost "$ar/internal/platform/apihost"
+# generated per-tag server packages (internal/platform/<tag>/api, internal/modules/<tag>/api) are checked too
+for d in internal/platform/*/api internal/modules/*/api; do [ -d "$d" ] || continue; mkdir -p "$ar/$(dirname "$d")"; cp -R "$d" "$ar/$d"; done
 must_pass "gen-api -check on the committed tree" "$genapi" -skip-ts -check -repo "$ar"
 printf '\n' >>"$ar/internal/platform/apihost/spec/openapi.gen.json"
 must_fail_with "gen-api -check on a hand-edited generated file" 'stale' "$genapi" -skip-ts -check -repo "$ar"

@@ -44,6 +44,33 @@
         "attr.flags"
       ],
       "package": "internal/directory/attr/flags"
+    },
+    {
+      "name": "go/sql",
+      "language": "go",
+      "tier": "S",
+      "units": [
+        "sql"
+      ],
+      "package": "internal/platform/store"
+    },
+    {
+      "name": "go/secretjson",
+      "language": "go",
+      "tier": "S",
+      "units": [
+        "attr.unicodepwd"
+      ],
+      "package": "internal/platform/secret/secretjson"
+    },
+    {
+      "name": "go/httpx",
+      "language": "go",
+      "tier": "S",
+      "units": [
+        "html"
+      ],
+      "package": "internal/platform/httpx"
     }
   ],
   "fuzz": [
@@ -90,6 +117,32 @@
       "properties": [
         "roundtrip",
         "noUnescapedSpecial"
+      ]
+    },
+    {
+      "implementation": "go/sql",
+      "unit": "sql",
+      "target": "FuzzSQL",
+      "properties": [
+        "roundtrip",
+        "noRelaxedWithoutOverride"
+      ]
+    },
+    {
+      "implementation": "go/secretjson",
+      "unit": "attr.unicodepwd",
+      "target": "FuzzSecretJSON",
+      "properties": [
+        "roundtrip",
+        "noUnescapedSpecial"
+      ]
+    },
+    {
+      "implementation": "go/httpx",
+      "unit": "html",
+      "target": "FuzzAttachment",
+      "properties": [
+        "independentParse"
       ]
     }
   ]

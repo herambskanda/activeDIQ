@@ -87,10 +87,9 @@ type DB struct {
 // before any connection is attempted, a DSN that would reach a remote host without verified TLS
 // (ErrInsecureTransport) unless Config.AllowInsecureTransport is set.
 func Open(ctx context.Context, cfg Config) (*DB, error) {
-	pc, err := pgxpool.ParseConfig(cfg.DSN)
+	pc, err := guardParse(func() (*pgxpool.Config, error) { return pgxpool.ParseConfig(cfg.DSN) })
 	if err != nil {
-		// pgx redacts the password in this message.
-		return nil, fmt.Errorf("store: invalid DSN: %w", err)
+		return nil, err
 	}
 	if err := checkConnConfig(pc.ConnConfig); err != nil {
 		return nil, err

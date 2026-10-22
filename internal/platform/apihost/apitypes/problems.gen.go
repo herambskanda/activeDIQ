@@ -17,6 +17,7 @@ const (
 	ProblemTypeMalformedRequest        = "/problems/malformed-request"
 	ProblemTypeMethodNotAllowed        = "/problems/method-not-allowed"
 	ProblemTypeNotFound                = "/problems/not-found"
+	ProblemTypeNotReady                = "/problems/not-ready"
 	ProblemTypePasswordPolicyViolation = "/problems/password-policy-violation"
 	ProblemTypePayloadTooLarge         = "/problems/payload-too-large"
 	ProblemTypePreconditionFailed      = "/problems/precondition-failed"
@@ -81,6 +82,11 @@ func MethodNotAllowed(detail string) *Problem {
 // NotFound builds a 404 /problems/not-found problem.
 func NotFound(detail string) *Problem {
 	return newProblem(ProblemTypeNotFound, "Not found", 404, detail)
+}
+
+// NotReady builds a 503 /problems/not-ready problem.
+func NotReady(detail string) *Problem {
+	return newProblem(ProblemTypeNotReady, "The service is not ready", 503, detail)
 }
 
 // PasswordPolicyViolation builds a 422 /problems/password-policy-violation problem.

@@ -107,7 +107,7 @@ func e2eTree(t *testing.T, skip bool) string {
 	}
 	// The module path sits under the product module's path, so the fixture may import its internal
 	// packages (the kit) while living in a throw-away directory.
-	write("go.mod", "module github.com/skenzeriq/activediq/fixture\n\ngo 1.27.0\n\nrequire github.com/skenzeriq/activediq v0.0.0\n\nreplace github.com/skenzeriq/activediq => "+repo+"\n")
+	write("go.mod", "module github.com/skenzeriq/activediq/fixture\n\ngo 1.27.3\n\nrequire github.com/skenzeriq/activediq v0.0.0\n\nreplace github.com/skenzeriq/activediq => "+repo+"\n")
 	sum, _ := os.ReadFile(filepath.Join(repo, "go.sum"))
 	write("go.sum", string(sum))
 	real, err := os.ReadFile(filepath.Join(repo, filepath.FromSlash(corpus.Dir), "pslit.jsonl"))

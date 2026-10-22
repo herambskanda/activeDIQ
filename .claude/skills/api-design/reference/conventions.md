@@ -112,7 +112,7 @@ link back to the job ID.
 
 ## 5. Tokens and scopes
 
-- Format: `adiq_<kind>_<random>` (kind `pat` or `svc`); ≥ 256 bits of randomness; stored as a
+- Format: `adq_<kind>_<random>` (kind `pat` or `svc`); ≥ 256 bits of randomness; stored as a
   hash; displayed once. The prefix is registered with our own secret-scanning rules.
 - Scopes mirror permission families: `users:read`, `users:write`, `users.password:reset`,
   `groups:write`, `reports:read`, `audit:read`, `jobs:read`, `admin:*`. A token can never exceed

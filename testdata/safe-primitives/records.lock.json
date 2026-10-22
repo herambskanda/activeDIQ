@@ -220,6 +220,36 @@
       "SID-15#2": true,
       "SID-15#3": true
     },
+    "attr.unicodepwd": {
+      "PW-J01": false,
+      "PW-J02": false,
+      "PW-J03": true,
+      "PW-J04": true,
+      "PW-J05": true,
+      "PW-J06": true,
+      "PW-J07": true,
+      "PW-J08": true,
+      "PW-J09": true,
+      "PW-J10": true,
+      "PW-J11": true,
+      "PW-J12": true,
+      "PW-J13": true,
+      "PW-J14": true
+    },
+    "html": {
+      "HT-05": true,
+      "HT-06": true,
+      "HT-07": true,
+      "HT-08": true,
+      "HT-13": true,
+      "HT-14": true,
+      "HT-15": true,
+      "HT-16": true,
+      "HT-17": true,
+      "HT-18": true,
+      "HT-19": true,
+      "HT-20": true
+    },
     "pslit": {
       "PSQ-01": true,
       "PSQ-02": true,
@@ -240,6 +270,30 @@
       "PSQ-16": false,
       "PSQ-17#1": true,
       "PSQ-17#2": true
+    },
+    "sql": {
+      "SQL-03": true,
+      "SQL-07": true,
+      "SQL-08": true,
+      "SQL-09": true,
+      "SQL-10": true,
+      "SQL-11": true,
+      "SQL-20": true,
+      "SQL-23#1": true,
+      "SQL-23#2": true,
+      "SQL-23#3": true,
+      "SQL-23#4": true,
+      "SQL-23#5": true,
+      "SQL-23#6": true,
+      "SQL-23#7": true,
+      "SQL-23#8": true,
+      "SQL-23#9": true,
+      "SQL-24#1": false,
+      "SQL-24#2": false,
+      "SQL-24#3": false,
+      "SQL-24#4": false,
+      "SQL-24#5": false,
+      "SQL-24#6": false
     }
   }
 }

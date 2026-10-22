@@ -1,7 +1,7 @@
 ---
 title: "ADR-0004: The public API is one OpenAPI 3.1 contract, one file per tag, generated in-house into strict json/v2 types and per-tag handlers on net/http.ServeMux, one permission per operation, and one /api/v1 that only grows"
 date: 2026-10-02
-updated: 2026-10-02
+updated: 2026-10-21
 status: ratified
 owner: heramb
 kind: technical
@@ -17,7 +17,8 @@ ratified_by: factory-director
 **Kind:** technical. No customer, partner or brand sees the generator or the router. Customers see the result: one documented, stable, unmetered API. That result follows from decisions the CEO already made: the house stack (D-0003) and the API-first, unmetered positioning (parity matrix enhancement 18).
 **Deciders:** solution-architect (author). api-engineer was consulted twice on 2026-10-02, both recorded on T-0046. The first consult covered the generator, router, client and tooling evaluation and a local test of `encoding/json/v2` defaults. The second, in the rework, covered in-house type emission, the size estimate and gaps in the construct table. factory-director ratifies. **Ticket:** T-0046. **Parity / scope refs:** ADM-188, ADM-189 (ADM-190 indirectly, through rate classes).
 
-> Amendments (ratified ADRs only): none.
+> Amendments (ratified ADRs only):
+> - 2026-10-21 · solution-architect · T-0044, from T-0034 and threat model §7.6 v0.4 · **Rule 5, AN-1 health operations.** T-0034 added `getLiveness` (`GET /api/v1/health/live`) and `getReadiness` (`GET /api/v1/health/ready`) to `api/openapi/platform/health.yaml`, for clients that reach only `/api/v1`. Being JSON on this listener, they are operations, so rule 5 lists them first among the anonymous operations in the contract, and its AN-1 row of non-API routes notes that the same answers under `/api/v1` are those operations. The rule 3 extension table's `x-activediq-anonymous` row lists every operation row in use (AN-1, AN-4, AN-5, AN-7, AN-8, AN-10). The non-API probes `/healthz` and `/readyz` stay. This is a clarification: no rule or fitness check changes, because A3, A4 and A12 already cover these operations.
 >
 > **Rework 1 (before ratification).** The first draft generated Go models with oapi-codegen, but its templates emit `encoding/json` v1 for unions and for objects with additional properties, and its format types come from a package we reject. That would have let v1 decoding into the request path through nested values, including the filter AST. This version emits every Go type in-house from the restricted dialect (rule 4) and fixes the secret-bearing decode path (rule 6). It also closes the director's nits: ports for `apihost`, `authenticated` operations, CSRF and pre-auth limits in the chain, hostname-bound anonymous operations, and the exact-or-suffix secret-name match.
 
@@ -161,7 +162,7 @@ We use OpenAPI **3.1** with the JSON Schema 2020-12 dialect ([OAS 3.1.1](https:/
 | `x-activediq-stability` | operation | **yes** | `preview` or `stable` (rule 7) |
 | `x-activediq-sunset` | operation | with `deprecated: true` | The first product release in which the operation may be removed (rule 7) |
 | `x-activediq-limits` | operation | no | `{class, maxBodyBytes}` (rule 10). It defaults by method. |
-| `x-activediq-anonymous` | operation | with `x-permission: anonymous` | The allow-list row it uses (`AN-4`, `AN-5`, `AN-7`) |
+| `x-activediq-anonymous` | operation | with `x-permission: anonymous` | The allow-list row it uses (`AN-1`, `AN-4`, `AN-5`, `AN-7`, `AN-8`, `AN-10`) |
 | `x-activediq-secret` | schema | on `SecretInput` only | The schema carries a secret, so it is write-only (rule 9) |
 | `x-activediq-enum` | schema | on every enum reachable from a response | `open` (rule 2) |
 | `x-activediq-parity` | operation | no | ManageEngine feature IDs, for traceability |
@@ -296,17 +297,21 @@ v2's own error text names Go types, so `apihost` maps it to the `malformed-reque
 
   | Route group | Why it is outside the contract | Allow-list row |
   | --- | --- | --- |
-  | `GET /healthz`, `GET /readyz`: status only | Load balancers and orchestrators, not clients | AN-1 |
+  | `GET /healthz`, `GET /readyz`: status only | Load balancers and orchestrators, not clients; the same answers under `/api/v1` are the AN-1 operations below | AN-1 |
   | `GET /` and `GET /assets/{path...}`, plus the console's client-side routes falling back to `index.html` | Static files. **The fallback never answers under `/api/` or `/auth/`.** An unknown `/api/…` path returns the `not-found` problem, never HTML | AN-2 |
   | `/auth/sso/{idpId}/start`, `/auth/sso/{idpId}/callback` (OIDC redirect, SAML ACS) | Browser redirects and form posts, signed by the IdP; not JSON | AN-3 |
+| `GET /auth/negotiate`, only if the PRD offers SPNEGO sign-in | HTTP Negotiate (RFC 4559) is a `WWW-Authenticate`/`Authorization` header exchange, not JSON. Success yields a pending sign-in, never a session | AN-9 |
   | The fleet gRPC gateway (`platform/fleet`), including its `Enroll` RPC | A separate mTLS listener carrying protobuf contracts under `proto/` (TM-F-FLEET). It is not on this router at all | AN-6 |
   | [M4] the SSPR routes of the edge tunnel router | Its own process (blueprint §5.5), with its own contract | AN-7 (edge path) |
 
   These routes are declared in `policy.yaml` under `nonApiRoutes`, and `apihost` mounts exactly that list.
-- **Anonymous operations that are in the contract.** Three are JSON, on this listener, and therefore **operations** with `x-permission: anonymous`, each with its `policy.anonymous` row:
+- **Anonymous operations that are in the contract.** These are JSON, on this listener, and therefore **operations** with `x-permission: anonymous`, each with its `policy.anonymous` row:
+  - platform health, `getLiveness` and `getReadiness` (AN-1, `platform` scope, class `anonymous`, no request body; responses carry no detail, TM §7.6 rules 8 and 9);
   - first-run setup (AN-4);
   - end-user TOTP enrolment (AN-5, bound by hostname);
-  - [M4] SSPR served on the console/API listener (AN-7, bound by hostname).
+  - [M4] SSPR served on the console/API listener (AN-7, bound by hostname);
+  - local break-glass sign-in, the password step (AN-8, class `auth`);
+  - the sign-in second factor for a pending sign-in (AN-10, class `auth`).
 
   A hostname binding is part of the row, and step 4 of the chain enforces it.
 
@@ -397,15 +402,30 @@ v2's own error text names Go types, so `apihost` maps it to the `malformed-reque
   The only exceptions are the operations listed in `secretResponses`.
 - **Credentials.** Security schemes are only `bearer` (`adq_` API tokens, `Authorization` header) and the session cookie plus a CSRF header. There is no `apiKey` scheme `in: query` and no credential-named query parameter. At runtime, `apihost` refuses with 400 any `/api/` request whose query string carries a credential-named key (chain step 5).
 - **Who reviews `policy.yaml`.** Every change to it is tagged `security-sensitive`, so security-architect reviews it (review-checklist). When hosted CI exists, a CODEOWNERS entry adds a required review. Until then, that review is the manual half.
-- **Two anonymous routes are missing from the allow-list.** Local break-glass sign-in (ADM-142) and AD-identity sign-in via SPNEGO (blueprint §11) both need routes reachable before authentication, and neither is in AN-1 to AN-7 today. Amending §7.6 belongs to security-architect (T-0151). Until that lands, those routes cannot be added, because A4 would fail.
+- **Sign-in routes.** Local break-glass sign-in (ADM-142) is AN-8, AD-identity sign-in via SPNEGO (blueprint §11) is AN-9, and the second factor that both (and a non-MFA-asserting SSO) must pass before a session exists is AN-10. Threat model §7.6 sets their gates (T-0032). `policy.yaml` carries a row only for a route that exists, so the seed holds the non-API routes of AN-1 to AN-3; its header lists the rows that enter with their operations or hostname bindings.
 
 ### Rule 10: Limits are declared, not improvised (TM-Q2)
 
-- **Rate classes.** `x-activediq-limits.class` is one of `read`, `write`, `bulk`, `auth`, `reveal` or `anonymous`.
+- **Rate classes.** `x-activediq-limits.class` is one of `read`, `write`, `bulk`, `auth`, `reveal`, `secret` or `anonymous`.
   - The default is `read` for GET and HEAD, and `write` for everything else.
   - Anonymous operations must declare `anonymous` or `auth`.
   - Operations in `secretResponses` must declare `reveal`.
-- **How the limits work.** Limits apply per source IP (before authentication, chain step 3) and per principal (chain step 10). A limited request gets `429 /problems/rate-limited` with `Retry-After`. There is **no daily quota and no metering**, which keeps the ADM-190 lead. The numbers per class are `apihost` configuration, and their defaults are set by T-0151 with security-architect.
+  - Operations whose request reaches `SecretInput` (rule 6) must declare `secret`.
+- **How the limits work.** Limits apply per source IP (before authentication, chain step 3) and per principal (chain step 10). A limited request gets `429 /problems/rate-limited` with `Retry-After`. There is **no daily quota and no metering**, which keeps the ADM-190 lead. The numbers per class are `apihost` configuration. Their defaults are threat model TM-D22 (§7.8, T-0032), which also gives the reasoning per row:
+
+  | Class | Key | Rate / min | Burst |
+  | --- | --- | --- | --- |
+  | *(all requests, chain step 3)* | source IP | 1200 | 300 |
+  | `anonymous` | source IP | 60 | 20 |
+  | `auth` | source IP | 60 | 30 |
+  | `auth` (AN-8, AN-10) | target account or pending handle | 10 | 5 |
+  | `read` | principal | 600 | 120 |
+  | `write` | principal | 120 | 30 |
+  | `bulk` | principal | 10 | 3 |
+  | `reveal` | principal | 10 | 5 |
+  | `secret` | principal | 30 | 10 |
+
+  A token counts against its owner. A tenant may lower any number; raising one is host configuration, audited at startup.
 - **Body caps.**
   - `maxBodyBytes` defaults to 1 MiB for JSON bodies.
   - An operation with a binary or CSV upload must declare it.
@@ -491,6 +511,21 @@ These were filed with the first draft and amended by notes on this rework:
 - **T-0152** decision-prep (product-manager): the published deprecation and support window (rule 7), for the CEO before GA.
 - **T-0033** (devops-engineer, existing): the `secretjson` analyzer must also report `ReadToken` inside `Secret`'s decoder, and must allow `apihost` as the request-body caller of `secretjson.Decode` (a note on the ticket).
 
+**Old-ID to new-ID mapping (T-0031, 2026-10-21).** The IDs above come from the earlier numbering. The board was re-cut and these are the live tickets:
+
+| Old ID | Work | Board now |
+| --- | --- | --- |
+| T-0147 | generator and skeleton | delivered (merged); no ticket needed |
+| T-0148 | `fitness-api` static half | T-0011 (A1, A13, done) and T-0017 (A3, A5, A7 static, A8, A10-A12) |
+| T-0149 | `fitness-api` runtime half | T-0018 |
+| T-0086 | apihost | T-0033 (also carries the old T-0033 `secretjson` allowance for `apihost` and `ReadToken`; the analyzer itself exists in `tools/analyzers/secretjson`) |
+| T-0151 | TM §7.6 amend, `policy.yaml` seeding, rate defaults | T-0032 |
+| T-0069 | first operations | T-0034 (narrowed to the AN-1 health operations; the 2a operation set stays with the M2 spec tickets) |
+| T-0150 | align blueprint, api-design, safe-primitives | T-0035 |
+| T-0152 | deprecation window decision prep | T-0036 |
+
+Order: T-0032, then T-0034, then T-0017; T-0033 then T-0018. Numbers in the new board's T-0033 do not mean the old T-0033.
+
 **Revisit when**
 
 - json/v2 changes a default we rely on (the A7 corpus fails).
@@ -517,7 +552,7 @@ Every check has a failing fixture in `check_test.go`, so a check that silently m
 | **A9** Tenancy | No separate check: T5 `openapi-tenant-param` runs in `fitness-tenancy`. A1 fails if a bundled file is one T5 cannot parse. | — |
 | **A10** Versioning | <ul><li>oasdiff reports a breaking change, against `main` and against the latest release tag, on a `stable` operation.</li><li>A `stable` → `preview` demotion.</li><li>An operation without `x-activediq-stability`.</li><li>`deprecated: true` without `x-activediq-sunset`.</li><li>A deprecated operation removed before its sunset release.</li></ul> | In-place breaking changes |
 | **A11** Problems | <ul><li>A 4xx or 5xx response that is not `application/problem+json` with the shared `Problem`.</li><li>A `type` outside the catalogue.</li><li>`http.Error` or `WriteHeader` in `internal/**` outside `apihost`.</li></ul> | Leaky, ad-hoc errors |
-| **A12** Limits | <ul><li>An unknown rate class.</li><li>An anonymous operation not in class `anonymous` or `auth`.</li><li>An upload operation without `maxBodyBytes`.</li><li>`maxBodyBytes` above 16 MiB without a `largeBodies` entry.</li><li>A `secret` operation above 64 KiB, of class `bulk`, or with a binary body.</li></ul> | TM-Q2; secret buffer size |
+| **A12** Limits | <ul><li>An unknown rate class.</li><li>An anonymous operation not in class `anonymous` or `auth`.</li><li>An upload operation without `maxBodyBytes`.</li><li>`maxBodyBytes` above 16 MiB without a `largeBodies` entry.</li><li>A `secret` operation above 64 KiB, of a class other than `secret`, or with a binary body.</li></ul> | TM-Q2; secret buffer size |
 | **A13** Policy hygiene | <ul><li>A `policy.yaml` entry that is stale: it names a missing route, operation, permission or hostname binding.</li><li>An entry with no reason, or with no AN/TM reference.</li></ul> | Exemptions becoming permanent |
 | **A14** Responses conform | In the runtime tests (A4 probe, A7 corpus, and every module's contract tests through the shared harness), each response body is validated against the operation's declared response schema with the generated validators before it is encoded. A violation fails the test. | Handlers drifting from the contract on output |
 

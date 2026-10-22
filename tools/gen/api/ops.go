@@ -11,7 +11,7 @@ import (
 var (
 	permissionRe = regexp.MustCompile(`^[a-z][A-Za-z0-9_.:*-]*$`)
 	pathParamRe  = regexp.MustCompile(`\{([A-Za-z0-9]+)\}`)
-	classes      = []string{"read", "write", "bulk", "auth", "reveal", "anonymous"}
+	classes      = []string{"read", "write", "bulk", "auth", "reveal", "secret", "anonymous"} // ADR-0004 rule 10
 	mediaJSON    = "application/json"
 	mediaPatch   = "application/merge-patch+json"
 	mediaProblem = "application/problem+json"
@@ -91,6 +91,11 @@ func (m *Model) parseOp(p *parser, op *Operation, raw Doc, where string) {
 	}
 	if (perm == "anonymous") != (op.Anonymous != "") {
 		p.fail(where, "x-permission: anonymous and x-activediq-anonymous go together")
+	}
+	// ADR-0002: a tenant comes only from an authenticated principal or a registered hostname binding.
+	// The binding table does not exist yet, so an anonymous operation must be platform scope.
+	if perm == "anonymous" && op.Scope != "platform" {
+		p.fail(where, "an anonymous operation has no tenant source: declare x-activediq-scope: platform (a hostname-bound anonymous tenant operation waits for the apihost binding table)")
 	}
 	op.Class = "read"
 	if op.Method != "GET" && op.Method != "HEAD" {

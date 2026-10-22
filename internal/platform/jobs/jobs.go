@@ -5,7 +5,7 @@
 // The package is the queue primitive. Every access goes through the store package's two entry points, so
 // no pool or pgx transaction leaves store:
 //
-//	Enqueue / Cancel            in the caller's own store.Tx, whose tenant context the database compares
+//	Registry.Enqueue / Cancel in the caller's own store.Tx, whose tenant context the database compares
 //	                            with the job: the jobs_guard trigger (migration 0002) refuses a job for
 //	                            any other tenant, so a bug in a caller cannot enqueue across tenants.
 //	Claim / Rescue / Clean      each one registered store.WithPlatform site, the only cross-tenant reads.
@@ -17,9 +17,20 @@
 // it. Arguments are typed references, at most 4 KiB, never personal values, secrets or error text, and a
 // failure is stored as a code.
 //
-// Not here: the kind registry and the wrapper that turns a claimed job into a tenant transaction
-// (WithTenant, or a ManagedTx runner), the leases that make Rescue and Clean singleton (DM-06),
-// schedules (DM-44), and the per-tenant quota and claim fairness that must exist before the saas
+// Kinds are registered once in a Registry (EP-5): a name, a required timeout, a mode (default or
+// ManagedTx) and whether the kind is a platform kind. Enqueue is a Registry method and refuses an
+// unregistered kind, or a tenant that does not fit the kind's scope, before any SQL.
+//
+// Runner.Execute is the wrapper: it mints the tenant from the claimed row, runs a default-mode body and
+// Complete in one WithTenant transaction, or hands a ManagedTx body a tenant-bound TenantTx runner while
+// renewing the claim every half lease. A failed or panicking body stores a code, never text.
+//
+// Worker (worker.go) is the polling loop: it claims up to Concurrency tenant jobs, runs each through the
+// Runner, backs off with jitter when the queue is empty, and ticks Rescue and Clean under their platform
+// leases. On cancellation it stops claiming, lets running bodies finish for ShutdownGrace, then cancels
+// them; a cancelled body records nothing (Interrupted) so its claim lapses and Rescue requeues it.
+//
+// Not here: running platform jobs, schedules (DM-44), and the per-tenant quota and claim fairness that must exist before the saas
 // profile hosts a second tenant (T-0214).
 package jobs
 
@@ -106,13 +117,23 @@ VALUES ($1::uuid, $2, $3::jsonb, $4, $5, $6, COALESCE($7::timestamptz, now()))
 ON CONFLICT (tenant_id, kind, unique_key) WHERE unique_key IS NOT NULL AND state IN ('available', 'running') DO NOTHING
 RETURNING id`
 
-// Enqueue inserts the job in the caller's transaction, so it commits or rolls back with the caller's
+// Enqueue inserts the job, whose kind must be registered and whose tenant must fit the kind's scope
+// (no SQL runs otherwise), in the caller's transaction, so it commits or rolls back with the caller's
 // own writes. The database refuses (ErrCrossTenant) a job whose tenant is not the transaction's tenant
 // context.
-func Enqueue(ctx context.Context, tx store.Tx, j Job) (Enqueued, error) {
+func (r *Registry) Enqueue(ctx context.Context, tx store.Tx, j Job) (Enqueued, error) {
+	kind, err := r.check(j)
+	if err != nil {
+		return Enqueued{}, err
+	}
 	args, err := j.encodeArgs()
 	if err != nil {
 		return Enqueued{}, err
+	}
+	if kind.ValidateArgs != nil {
+		if err := kind.ValidateArgs(json.RawMessage(args)); err != nil {
+			return Enqueued{}, fmt.Errorf("%w: args of kind %q refused: %w", ErrInvalid, kind.Name, err)
+		}
 	}
 	var tenantArg, keyArg, runAtArg any
 	if !j.Tenant.IsZero() {
