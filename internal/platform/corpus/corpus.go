@@ -34,7 +34,7 @@ const (
 
 // Units is the FF-SP4 unit list of safe-primitives §8, in document order.
 var Units = []string{
-	"ldapfilter", "dn",
+	"ldapfilter", "dn", "odata",
 	"attr.guid", "attr.sid", "attr.filetime", "attr.gentime", "attr.flags", "attr.unicodepwd",
 	"psx", "pslit", "proc", "sql",
 	"cellsafe", "csv", "xlsx", "html", "mail", "pdf",

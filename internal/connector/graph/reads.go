@@ -2,10 +2,12 @@ package graph
 
 import (
 	"context"
-	"net/url"
-	"strconv"
 	"strings"
 	"time"
+
+	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
+	"github.com/skenzeriq/activediq/internal/directory/odata"
+	gs "github.com/skenzeriq/activediq/internal/directory/odata/graphschema"
 )
 
 // ---- models: only what the permission check and the Entra tier0 classifier need ----
@@ -96,50 +98,47 @@ type Group struct {
 	IsAssignableToRole bool   `json:"isAssignableToRole"`
 }
 
-func (c *Client) q(sel string) url.Values {
-	v := url.Values{}
-	if sel != "" {
-		v.Set("$select", sel)
+// q is a query selecting only sel; paged also asks for one page of the configured size.
+func (c *Client) q(sel ...odata.AnyProp) odata.Query {
+	q := odata.Query{}
+	if len(sel) > 0 {
+		q = q.Select(sel...)
 	}
-	return v
+	return q
 }
 
-func (c *Client) paged(sel string) url.Values {
-	v := c.q(sel)
-	v.Set("$top", strconv.Itoa(c.cfg.PageSize))
-	return v
-}
+func (c *Client) paged(sel ...odata.AnyProp) odata.Query { return c.q(sel...).Top(c.cfg.PageSize) }
 
-func needGUID(id string) error {
-	if !guidRE.MatchString(id) {
-		return newErr(CodeInvalidArgument, 0, "object id is not a GUID", nil)
-	}
-	return nil
-}
+// Selections: only what the permission check and the tier0 classifier read.
+var (
+	selSP     = []odata.AnyProp{gs.ID, gs.ServicePrincipalAppID, gs.DisplayName, gs.AppRoles}
+	selOwnApp = []odata.AnyProp{gs.ID, gs.ApplicationAppID, gs.DisplayName, gs.KeyCredentials}
+	selApp    = []odata.AnyProp{gs.ID, gs.ApplicationAppID, gs.DisplayName}
+	selObject = []odata.AnyProp{gs.ID, gs.DisplayName, gs.UserPrincipalName}
+)
 
 // ---- own app registration ----
 
 // OwnServicePrincipal reads the service principal of this client's app registration, with appRoles.
 func (c *Client) OwnServicePrincipal(ctx context.Context) (ServicePrincipal, error) {
-	var sp ServicePrincipal
-	err := c.get(ctx, c.endpoint(c.q("id,appId,displayName,appRoles"), "servicePrincipals(appId='"+c.cfg.ClientID+"')"), &sp)
-	return sp, err
+	return c.servicePrincipalByAppID(ctx, c.clientID)
 }
 
 // ServicePrincipalByID reads one service principal with its appRoles, to resolve AppRoleAssignment ids.
-func (c *Client) ServicePrincipalByID(ctx context.Context, id string) (ServicePrincipal, error) {
+func (c *Client) ServicePrincipalByID(ctx context.Context, id guid.GUID) (ServicePrincipal, error) {
 	var sp ServicePrincipal
-	if err := needGUID(id); err != nil {
-		return sp, err
-	}
-	err := c.get(ctx, c.endpoint(c.q("id,appId,displayName,appRoles"), "servicePrincipals", id), &sp)
+	err := c.read(ctx, odata.Get(odata.Seg(gs.SetServicePrincipals), odata.Key(odata.GUIDOf(id))).With(c.q(selSP...)), &sp)
 	return sp, err
 }
 
 // OwnApplication reads this client's application object with its key credentials.
 func (c *Client) OwnApplication(ctx context.Context) (Application, error) {
 	var app Application
-	err := c.get(ctx, c.endpoint(c.q("id,appId,displayName,keyCredentials"), "applications(appId='"+c.cfg.ClientID+"')"), &app)
+	seg, err := odata.AltKey(gs.SetApplications, gs.ApplicationAppID, odata.GUIDTextOf(c.clientID))
+	if err != nil {
+		return app, invalidArg(err)
+	}
+	err = c.read(ctx, odata.Get(seg).With(c.q(selOwnApp...)), &app)
 	if err == nil && app.KeyCredentials == nil {
 		app.KeyCredentials = []KeyCredential{}
 	}
@@ -147,63 +146,55 @@ func (c *Client) OwnApplication(ctx context.Context) (Application, error) {
 }
 
 // AppRoleAssignments lists the application permissions granted to the service principal spID.
-func (c *Client) AppRoleAssignments(ctx context.Context, spID string) ([]AppRoleAssignment, error) {
-	if err := needGUID(spID); err != nil {
-		return nil, err
-	}
-	return list[AppRoleAssignment](ctx, c, c.endpoint(c.paged(""), "servicePrincipals", spID, "appRoleAssignments"))
+func (c *Client) AppRoleAssignments(ctx context.Context, spID guid.GUID) ([]AppRoleAssignment, error) {
+	return list[AppRoleAssignment](ctx, c, odata.Get(odata.Seg(gs.SetServicePrincipals), odata.Key(odata.GUIDOf(spID)),
+		odata.Seg(gs.SegAppRoleAssignment)).With(c.paged()))
 }
 
 // ApplicationOwners lists the owners of the application object objectID.
-func (c *Client) ApplicationOwners(ctx context.Context, objectID string) ([]DirectoryObject, error) {
-	return c.owners(ctx, "applications", objectID)
+func (c *Client) ApplicationOwners(ctx context.Context, objectID guid.GUID) ([]DirectoryObject, error) {
+	return c.owners(ctx, gs.SetApplications, objectID)
 }
 
 // ServicePrincipalOwners lists the owners of the service principal objectID.
-func (c *Client) ServicePrincipalOwners(ctx context.Context, objectID string) ([]DirectoryObject, error) {
-	return c.owners(ctx, "servicePrincipals", objectID)
+func (c *Client) ServicePrincipalOwners(ctx context.Context, objectID guid.GUID) ([]DirectoryObject, error) {
+	return c.owners(ctx, gs.SetServicePrincipals, objectID)
 }
 
 // GroupOwners lists the owners of a group.
-func (c *Client) GroupOwners(ctx context.Context, groupID string) ([]DirectoryObject, error) {
-	return c.owners(ctx, "groups", groupID)
+func (c *Client) GroupOwners(ctx context.Context, groupID guid.GUID) ([]DirectoryObject, error) {
+	return c.owners(ctx, gs.SetGroups, groupID)
 }
 
 // GroupMembers lists direct members of a group (all pages).
-func (c *Client) GroupMembers(ctx context.Context, groupID string) ([]DirectoryObject, error) {
-	if err := needGUID(groupID); err != nil {
-		return nil, err
-	}
-	return list[DirectoryObject](ctx, c, c.endpoint(c.paged("id,displayName,userPrincipalName"), "groups", groupID, "members"))
+func (c *Client) GroupMembers(ctx context.Context, groupID guid.GUID) ([]DirectoryObject, error) {
+	return list[DirectoryObject](ctx, c, odata.Get(odata.Seg(gs.SetGroups), odata.Key(odata.GUIDOf(groupID)),
+		odata.Seg(gs.SegMembers)).With(c.paged(selObject...)))
 }
 
-func (c *Client) owners(ctx context.Context, coll, id string) ([]DirectoryObject, error) {
-	if err := needGUID(id); err != nil {
-		return nil, err
-	}
-	return list[DirectoryObject](ctx, c, c.endpoint(c.paged("id,displayName,userPrincipalName"), coll, id, "owners"))
+func (c *Client) owners(ctx context.Context, coll odata.Name, id guid.GUID) ([]DirectoryObject, error) {
+	return list[DirectoryObject](ctx, c, odata.Get(odata.Seg(coll), odata.Key(odata.GUIDOf(id)),
+		odata.Seg(gs.SegOwners)).With(c.paged(selObject...)))
 }
 
 // ---- directory roles and groups ----
 
 // DirectoryRoleAssignments returns active and PIM-eligible directory role assignments at any scope
-// (needs RoleManagement.Read.Directory). principalID "" lists every holder in the tenant.
-// Eligibility reads are `[UNVERIFIED — lab G6]`: a failure on either list fails the whole call.
-func (c *Client) DirectoryRoleAssignments(ctx context.Context, principalID string) ([]RoleAssignment, error) {
-	q := url.Values{}
-	if principalID != "" {
-		if err := needGUID(principalID); err != nil {
-			return nil, err
-		}
-		q.Set("$filter", "principalId eq '"+principalID+"'")
+// (needs RoleManagement.Read.Directory). The zero principalID (never a real object id) lists every
+// holder in the tenant. Eligibility reads are `[UNVERIFIED — lab G6]`: a failure on either list
+// fails the whole call.
+func (c *Client) DirectoryRoleAssignments(ctx context.Context, principalID guid.GUID) ([]RoleAssignment, error) {
+	q := odata.Query{}
+	if principalID != (guid.GUID{}) {
+		q = q.Filter(odata.Eq(gs.RoleAssignmentPrincipalID, odata.GUIDTextOf(principalID)))
 	}
-	q.Set("$expand", "roleDefinition($select=id,displayName,templateId),principal($select=id)")
+	q = q.Expand(gs.NavRoleDefinition, gs.ID, gs.DisplayName, gs.TemplateID).Expand(gs.NavPrincipal, gs.ID)
 	var out []RoleAssignment
 	for _, k := range []struct {
-		path     string
+		seg      odata.Name
 		eligible bool
-	}{{"roleAssignments", false}, {"roleEligibilitySchedules", true}} {
-		raw, err := list[rawRoleAssignment](ctx, c, c.endpoint(q, "roleManagement", "directory", k.path))
+	}{{gs.SegRoleAssignments, false}, {gs.SegRoleEligibility, true}} {
+		raw, err := list[rawRoleAssignment](ctx, c, odata.Get(odata.Seg(gs.SetRoleManagement), odata.Seg(gs.SegDirectory), odata.Seg(k.seg)).With(q))
 		if err != nil {
 			return nil, err
 		}
@@ -222,43 +213,50 @@ func (c *Client) OwnDirectoryRoles(ctx context.Context) ([]RoleAssignment, error
 	if err != nil {
 		return nil, err
 	}
-	return c.DirectoryRoleAssignments(ctx, sp.ID)
+	id, err := guid.Parse(sp.ID)
+	if err != nil {
+		return nil, newErr(CodeProviderFailure, 0, "Graph returned a service principal id that is not a GUID", nil)
+	}
+	return c.DirectoryRoleAssignments(ctx, id)
 }
 
 // RoleAssignableGroups lists groups with isAssignableToRole = true.
 func (c *Client) RoleAssignableGroups(ctx context.Context) ([]Group, error) {
-	q := c.paged("id,displayName,isAssignableToRole")
-	q.Set("$filter", "isAssignableToRole eq true")
-	q.Set("$count", "true")
-	return list[Group](ctx, c, c.endpoint(q, "groups"))
+	q := c.paged(gs.ID, gs.DisplayName, gs.GroupIsAssignableToRole).
+		Filter(odata.Eq(gs.GroupIsAssignableToRole, odata.BoolOf(true))).Count()
+	return list[Group](ctx, c, odata.Get(odata.Seg(gs.SetGroups)).With(q))
 }
 
-// ServicePrincipalByAppID reads the service principal of the application appID (a GUID), with appRoles.
-func (c *Client) ServicePrincipalByAppID(ctx context.Context, appID string) (ServicePrincipal, error) {
+// ServicePrincipalByAppID reads the service principal of the application appID, with appRoles.
+func (c *Client) ServicePrincipalByAppID(ctx context.Context, appID guid.GUID) (ServicePrincipal, error) {
+	return c.servicePrincipalByAppID(ctx, appID)
+}
+
+func (c *Client) servicePrincipalByAppID(ctx context.Context, appID guid.GUID) (ServicePrincipal, error) {
 	var sp ServicePrincipal
-	if err := needGUID(appID); err != nil {
-		return sp, err
+	seg, err := odata.AltKey(gs.SetServicePrincipals, gs.ServicePrincipalAppID, odata.GUIDTextOf(appID))
+	if err != nil {
+		return sp, invalidArg(err)
 	}
-	err := c.get(ctx, c.endpoint(c.q("id,appId,displayName,appRoles"), "servicePrincipals(appId='"+appID+"')"), &sp)
+	err = c.read(ctx, odata.Get(seg).With(c.q(selSP...)), &sp)
 	return sp, err
 }
 
 // ApplicationByAppID reads an application object by its appId. A service principal for an app
 // registered in another tenant has none: the error then has CodeNotFound.
-func (c *Client) ApplicationByAppID(ctx context.Context, appID string) (Application, error) {
+func (c *Client) ApplicationByAppID(ctx context.Context, appID guid.GUID) (Application, error) {
 	var app Application
-	if err := needGUID(appID); err != nil {
-		return app, err
+	seg, err := odata.AltKey(gs.SetApplications, gs.ApplicationAppID, odata.GUIDTextOf(appID))
+	if err != nil {
+		return app, invalidArg(err)
 	}
-	err := c.get(ctx, c.endpoint(c.q("id,appId,displayName"), "applications(appId='"+appID+"')"), &app)
+	err = c.read(ctx, odata.Get(seg).With(c.q(selApp...)), &app)
 	return app, err
 }
 
 // AppRoleAssignedTo lists every principal granted an application permission on the resource service
 // principal resourceID (for example Microsoft Graph).
-func (c *Client) AppRoleAssignedTo(ctx context.Context, resourceID string) ([]AppRoleAssignment, error) {
-	if err := needGUID(resourceID); err != nil {
-		return nil, err
-	}
-	return list[AppRoleAssignment](ctx, c, c.endpoint(c.paged(""), "servicePrincipals", resourceID, "appRoleAssignedTo"))
+func (c *Client) AppRoleAssignedTo(ctx context.Context, resourceID guid.GUID) ([]AppRoleAssignment, error) {
+	return list[AppRoleAssignment](ctx, c, odata.Get(odata.Seg(gs.SetServicePrincipals), odata.Key(odata.GUIDOf(resourceID)),
+		odata.Seg(gs.SegAppRoleAssignedTo)).With(c.paged()))
 }

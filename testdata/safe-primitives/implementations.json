@@ -10,6 +10,19 @@
       "package": "internal/directory/ldapfilter"
     },
     {
+      "name": "go/odata",
+      "language": "go",
+      "tier": "S",
+      "units": [
+        "odata"
+      ],
+      "package": "internal/directory/odata",
+      "covers": [
+        "internal/directory/odata/graphschema",
+        "internal/directory/odata/odatatest"
+      ]
+    },
+    {
       "name": "go/attr-guid",
       "language": "go",
       "tier": "S",
@@ -93,6 +106,17 @@
       "properties": [
         "roundtrip",
         "noUnescapedSpecial"
+      ]
+    },
+    {
+      "implementation": "go/odata",
+      "unit": "odata",
+      "target": "FuzzOData",
+      "properties": [
+        "roundtrip",
+        "noUnescapedSpecial",
+        "oneOptionPerName",
+        "segmentCount"
       ]
     },
     {

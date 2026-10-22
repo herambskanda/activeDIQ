@@ -15,6 +15,7 @@ const (
 	CodeBindFailed       Code = "BIND_FAILED"
 	CodeInsufficient     Code = "INSUFFICIENT_RIGHTS"
 	CodeNotFound         Code = "OBJECT_NOT_FOUND"
+	CodeNotUnique        Code = "OBJECT_NOT_UNIQUE"
 	CodeThrottled        Code = "THROTTLED"
 	CodeIdentityMismatch Code = "DIRECTORY_IDENTITY_MISMATCH"
 	CodeInvalidArgument  Code = "INVALID_ARGUMENT"
