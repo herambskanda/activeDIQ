@@ -44,8 +44,8 @@ type Checks map[string]bool
 func AllChecks() Checks { return Checks{"FF-SP1": true, "FF-SP2": true, "FF-SP3": true} }
 
 // skipDir reports directories that hold no product code. Only names that can never be a product
-// package are skipped at any depth (.git and the Go testdata convention). node_modules is not one
-// of them: Go does not ignore it, so internal/node_modules/p, or web/node_modules/dep, is an
+// package are skipped at any depth (.git, and testdata fixtures under tools/). node_modules is not
+// one of them: Go does not ignore it, so internal/node_modules/p, or web/node_modules/dep, is an
 // importable product package (T-0083). Beside a package.json it is handled by npmDir instead:
 // non-Go content is skipped, Go files of our module are still scanned. Every other skip is tied to
 // where that directory really is: repository-level working trees at the root, and build output
@@ -54,8 +54,12 @@ func AllChecks() Checks { return Checks{"FF-SP1": true, "FF-SP2": true, "FF-SP3"
 // or obj, such as internal/modules/target, is therefore scanned.
 func skipDir(root, rel, name string) bool {
 	switch name {
-	case ".git", "testdata":
+	case ".git":
 		return true
+	case "testdata":
+		// Go lets product code import a testdata (or _x, .x) package, and it then ships. Only the
+		// analyzer fixtures under tools/ are exempt: they are deliberate violations.
+		return strings.HasPrefix(rel, "tools/")
 	}
 	if !strings.Contains(rel, "/") {
 		switch name {
@@ -98,7 +102,7 @@ func scanNPM(root, rel, module string, checks Checks, out *[]Finding) error {
 		}
 		r = filepath.ToSlash(r)
 		if d.IsDir() {
-			if d.Name() == ".git" || d.Name() == "testdata" {
+			if d.Name() == ".git" || (d.Name() == "testdata" && strings.HasPrefix(r, "tools/")) {
 				return fs.SkipDir
 			}
 			return nil

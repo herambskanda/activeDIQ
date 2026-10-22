@@ -22,6 +22,7 @@ func base() map[string]string {
       operationId: listUsers
       tags: [users]
       x-permission: users.read
+      x-activediq-stability: stable
       responses:
         "200":
           description: ok
@@ -29,11 +30,16 @@ func base() map[string]string {
             application/json:
               schema:
                 $ref: shared/paging.yaml#/components/schemas/Cursor
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
   /users/{id}/reset:
     post:
       operationId: resetUser
       tags: [users]
-      x-permission: users.reset
+      x-permission: secret.reveal
+      x-activediq-stability: stable
+      x-activediq-limits:
+        class: reveal
 components:
   schemas:
     User:
@@ -43,6 +49,10 @@ components:
           $ref: '#/components/schemas/Name'
     Name:
       type: string
+    Mode:
+      type: string
+      x-activediq-enum: open
+      enum: [a, b]
 `,
 		"api/openapi/platform/jobs.yaml": `paths:
   /jobs:
@@ -50,16 +60,64 @@ components:
       operationId: listJobs
       tags: [platform.jobs]
       x-permission: authenticated
+      x-activediq-stability: stable
 components:
   schemas:
     Job:
       type: string
 `,
+		"api/openapi/shared/problems.yaml":                   baseProblems,
+		"web/src/api/schema.gen.d.ts":                        baseGenTS,
+		"web/src/api/client.ts":                              "export {};\n",
+		"web/src/api/client.test.ts":                         "import type { components } from \"./schema.gen\";\nexport const future: components[\"schemas\"][\"Mode\"] = \"from-the-future\";\n",
+		"web/eslint.config.js":                               baseESLint,
+		"web/proof/api-client-violation.ts":                  "export const a = fetch(\"/x\");\n",
 		"api/openapi/policy.yaml":                            basePolicy,
 		"knowledge/development/architecture/threat-model.md": "| AN-1 | Health | x | None |\n| AN-2 | Static | x | None |\n",
 		"internal/platform/apihost/spec/openapi.gen.json":    `{"paths": {"/users": {"get": {}}, "/users/{id}/reset": {"post": {}}, "/jobs": {"get": {}}}}`,
 	}
 }
+
+const baseProblems = `components:
+  schemas:
+    Problem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type: {type: string}
+        title: {type: string}
+        status: {type: integer, minimum: 400, maximum: 599}
+  responses:
+    Validation:
+      description: The request is invalid
+      content:
+        application/problem+json:
+          schema:
+            $ref: shared/problems.yaml#/components/schemas/Problem
+          example:
+            type: /problems/validation
+            title: The request is invalid
+            status: 400
+`
+
+const baseGenTS = `export interface components {
+    schemas: {
+        Mode: "a" | "b" | (string & {});
+    };
+}
+export interface operations {
+    listUsers: {
+    };
+    resetUser: {
+    };
+    listJobs: {
+    };
+}
+`
+
+const baseESLint = `const g = ["fetch", "XMLHttpRequest", "EventSource"]; // axios
+const lit = "Literal[value=/^\\\\/api(\\\\/|$)/]"; // files: src/api exempt
+`
 
 const basePolicy = `# the six rule 9 sections
 anonymous:
@@ -83,7 +141,7 @@ secretResponses:
     ref: TM-F-SECRETOUT
     reason: Shows the new password once.
 stepUp:
-  - permission: users.reset
+  - permission: secret.reveal
     ref: TM-D16
     reason: Resetting a password needs a fresh MFA.
 largeBodies:
@@ -218,7 +276,7 @@ var fixtures = []fixture{
 		repl(f, "api/openapi/policy.yaml", "ref: TM-D16\n    reason: Any signed-in", "ref: because\n    reason: Any signed-in")
 	}, "api/openapi/policy.yaml", "no AN/TM reference"},
 	{"stepUp permission no operation declares", "A13", func(f map[string]string) {
-		repl(f, "api/openapi/policy.yaml", "permission: users.reset", "permission: users.vaporise")
+		repl(f, "api/openapi/policy.yaml", "permission: secret.reveal", "permission: users.vaporise")
 	}, "api/openapi/policy.yaml", `no operation declares x-permission "users.vaporise"`},
 	{"policy entry naming a missing route", "A13", func(f map[string]string) {
 		repl(f, "api/openapi/policy.yaml", "  - method: GET\n    path: /healthz", "  - method: GET\n    path: /api/v1/ghosts")
@@ -353,10 +411,10 @@ func TestStatusTable(t *testing.T) {
 			t.Errorf("%s should print inactive (<missing input>): %q", id, l)
 		}
 	}
-	if !isActive("A1") || !isActive("A13") || len(activeIDs()) != 2 {
-		t.Errorf("A1 and A13 are the only active checks today, got %v", activeIDs())
+	if got := strings.Join(activeIDs(), ","); got != "A1,A3,A5,A7,A8,A10,A11,A12,A13" {
+		t.Errorf("the active checks are A1, A3, A5, A7, A8, A10, A11, A12, A13, got %v", activeIDs())
 	}
-	if !strings.Contains(rep.Summary(), "12 INACTIVE") {
+	if !strings.Contains(rep.Summary(), "5 INACTIVE") {
 		t.Errorf("the summary must name the inactive count: %s", rep.Summary())
 	}
 }
