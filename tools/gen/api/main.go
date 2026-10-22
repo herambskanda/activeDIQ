@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/skenzeriq/activediq/tools/gen/policyjson"
 )
 
 // DefaultConfig is the real tree's configuration, rooted at the repository.
@@ -24,7 +26,7 @@ func DefaultConfig(repo string) *Config {
 		ApihostImport:  mod + "/internal/platform/apihost",
 		SharedDir:      "internal/platform/apihost/apitypes",
 		BundlePath:     "internal/platform/apihost/spec/openapi.gen.json",
-		PolicyPath:     "internal/platform/apihost/spec/policy.gen.yaml",
+		PolicyPath:     "internal/platform/apihost/spec/policy.gen.json",
 		TSOut:          "web/src/api/schema.gen.d.ts",
 		EmitProblems:   true,
 		Bindings: []Binding{
@@ -59,12 +61,17 @@ func Generate(cfg *Config) (*Result, error) {
 	}
 	res := &Result{Files: map[string][]byte{cfg.BundlePath: bundle.JSON}, Bundle: bundle}
 	if cfg.PolicyPath != "" {
-		// The server embeds policy.yaml through this copy (apihost.LoadPolicy): go:embed cannot reach api/openapi.
+		// The server embeds policy.yaml through this JSON form (apihost.LoadPolicy): go:embed cannot
+		// reach api/openapi, and the shipped binary must not link a YAML parser.
 		pol, err := os.ReadFile(filepath.Join(cfg.Root, "policy.yaml"))
 		if err != nil {
 			return nil, fmt.Errorf("policy.yaml: %w", err)
 		}
-		res.Files[cfg.PolicyPath] = pol
+		pj, err := policyjson.FromYAML(pol)
+		if err != nil {
+			return nil, err
+		}
+		res.Files[cfg.PolicyPath] = pj
 	}
 	el := &errList{}
 	units := []*unit{newUnit(cfg, m, "", el)}

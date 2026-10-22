@@ -94,8 +94,8 @@ func Run(ctx context.Context, cfg config.Config) error {
 	return firstErr
 }
 
-// buildAPI makes the API handler: apihost.Build over the embedded contract and the embedded policy.yaml with the body budget from
-// configuration. No module contributes routes yet, so every tag is unmounted and answers a problem.
+// buildAPI makes the API handler: apihost.Build over the embedded contract and the embedded
+// policy.yaml, with the body budget from configuration. No module contributes routes yet, so every tag is unmounted and answers a problem.
 func buildAPI(cfg config.Config) (http.Handler, error) {
 	policy, err := apihost.LoadPolicy()
 	if err != nil {

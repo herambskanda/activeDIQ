@@ -1,19 +1,9 @@
 package apihost
 
-import (
-	"bytes"
-	"os"
-	"testing"
-)
+import "testing"
 
-func TestEmbeddedPolicyIsTheContractsFile(t *testing.T) {
-	src, err := os.ReadFile("../../../api/openapi/policy.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(src, embeddedPolicy) {
-		t.Fatal("spec/policy.gen.yaml is stale: run make gen-api")
-	}
+// That the embedded JSON is current with api/openapi/policy.yaml is `make gen-api-check`'s job.
+func TestEmbeddedPolicyLoads(t *testing.T) {
 	p, err := LoadPolicy()
 	if err != nil {
 		t.Fatal(err)
@@ -24,21 +14,15 @@ func TestEmbeddedPolicyIsTheContractsFile(t *testing.T) {
 }
 
 func TestParsePolicy(t *testing.T) {
-	p, err := ParsePolicy([]byte(`
-anonymous:
-  - method: GET
-    path: /healthz
-  - operation: enrol
-    host: totp-enrolment
-    gate: handle
-authenticated:
-  - operation: whoami
-stepUp:
-  - permission: user.reset
-nonApiRoutes:
-  - method: GET
-    path: /x
-`))
+	p, err := ParsePolicy([]byte(`{
+  "anonymous": [
+    {"method": "GET", "path": "/healthz"},
+    {"operation": "enrol", "host": "totp-enrolment", "gate": "handle"}
+  ],
+  "authenticated": [{"operation": "whoami"}],
+  "stepUp": [{"permission": "user.reset"}],
+  "nonApiRoutes": [{"method": "GET", "path": "/x"}]
+}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,13 +33,13 @@ nonApiRoutes:
 		t.Errorf("policy = %+v", p)
 	}
 	for name, in := range map[string]string{
-		"unknown host":    "anonymous:\n  - operation: a\n    host: nope\n",
-		"unknown section": "anonymus:\n  - operation: a\n",
-		"no subject":      "anonymous:\n  - gate: none\n",
-		"duplicate":       "anonymous:\n  - operation: a\n  - operation: a\n",
-		"auth no op":      "authenticated:\n  - reason: x\n",
-		"stepup no perm":  "stepUp:\n  - operation: a\n",
-		"not yaml":        "anonymous: [",
+		"unknown host":    `{"anonymous": [{"operation": "a", "host": "nope"}]}`,
+		"unknown section": `{"anonymus": [{"operation": "a"}]}`,
+		"no subject":      `{"anonymous": [{"gate": "none"}]}`,
+		"duplicate":       `{"anonymous": [{"operation": "a"}, {"operation": "a"}]}`,
+		"auth no op":      `{"authenticated": [{"reason": "x"}]}`,
+		"stepup no perm":  `{"stepUp": [{"operation": "a"}]}`,
+		"not json":        `{"anonymous": [`,
 	} {
 		if _, err := ParsePolicy([]byte(in)); err == nil {
 			t.Errorf("%s: want an error", name)
