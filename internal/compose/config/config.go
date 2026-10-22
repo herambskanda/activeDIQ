@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/netip"
 	"strconv"
 	"time"
 )
@@ -37,7 +39,7 @@ const (
 const (
 	DefaultShutdownGrace = 30 * time.Second
 	DefaultStopTimeout   = 90 * time.Second
-	// DefaultAPIAddr binds loopback only until TLS and a deployment profile decide otherwise.
+	// DefaultAPIAddr binds loopback only. Non-loopback binds are refused until the TLS listener (T-0065) exists.
 	DefaultAPIAddr = "127.0.0.1:8080"
 	// DefaultAPIBodyBudget is 64 MiB, the same default as apihost.DefaultBodyBudget.
 	DefaultAPIBodyBudget int64 = 64 << 20
@@ -80,6 +82,9 @@ func Load(getenv func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	if v := getenv(EnvAPIAddr); v != "" {
+		if err := requireLoopback(v); err != nil {
+			return Config{}, fmt.Errorf("%s: %w", EnvAPIAddr, err)
+		}
 		c.APIAddr = v
 	}
 	if v := getenv(EnvAPIBodyBudget); v != "" {
@@ -146,4 +151,22 @@ func (c Config) LogValue() slog.Value {
 		slog.String("api_addr", r.APIAddr),
 		slog.Int64("api_body_budget", r.APIBodyBudget),
 	)
+}
+
+// requireLoopback refuses any API bind address that is not loopback: the listener is plain HTTP
+// until T-0065 adds TLS, and the threat model forbids a plaintext listener on the network.
+// Accepted hosts: "localhost" or a literal loopback IP. Empty and unspecified hosts bind all interfaces.
+func requireLoopback(addr string) error {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("must be a loopback host:port (non-loopback needs TLS, T-0065): %w", err)
+	}
+	if host == "localhost" {
+		return nil
+	}
+	ip, err := netip.ParseAddr(host)
+	if err == nil && ip.IsLoopback() {
+		return nil
+	}
+	return errors.New("must bind a loopback address (127.0.0.0/8, ::1 or localhost); a non-loopback bind needs TLS (T-0065)")
 }
