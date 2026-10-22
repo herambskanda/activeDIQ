@@ -8,6 +8,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/connector/graph"
 	"github.com/skenzeriq/activediq/internal/connector/graph/graphtest"
 	"github.com/skenzeriq/activediq/internal/connector/tier0"
+	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 )
 
 func g(n int) string { return fmt.Sprintf("77777777-7777-7777-7777-%012d", n) }
@@ -179,7 +180,7 @@ func (f *failNth) hit() error {
 	}
 	return nil
 }
-func (f *failNth) DirectoryRoleAssignments(ctx context.Context, p string) ([]graph.RoleAssignment, error) {
+func (f *failNth) DirectoryRoleAssignments(ctx context.Context, p guid.GUID) ([]graph.RoleAssignment, error) {
 	if err := f.hit(); err != nil {
 		return nil, err
 	}
@@ -191,49 +192,49 @@ func (f *failNth) RoleAssignableGroups(ctx context.Context) ([]graph.Group, erro
 	}
 	return f.Reader.RoleAssignableGroups(ctx)
 }
-func (f *failNth) GroupMembers(ctx context.Context, id string) ([]graph.DirectoryObject, error) {
+func (f *failNth) GroupMembers(ctx context.Context, id guid.GUID) ([]graph.DirectoryObject, error) {
 	if err := f.hit(); err != nil {
 		return nil, err
 	}
 	return f.Reader.GroupMembers(ctx, id)
 }
-func (f *failNth) GroupOwners(ctx context.Context, id string) ([]graph.DirectoryObject, error) {
+func (f *failNth) GroupOwners(ctx context.Context, id guid.GUID) ([]graph.DirectoryObject, error) {
 	if err := f.hit(); err != nil {
 		return nil, err
 	}
 	return f.Reader.GroupOwners(ctx, id)
 }
-func (f *failNth) ServicePrincipalByAppID(ctx context.Context, id string) (graph.ServicePrincipal, error) {
+func (f *failNth) ServicePrincipalByAppID(ctx context.Context, id guid.GUID) (graph.ServicePrincipal, error) {
 	if err := f.hit(); err != nil {
 		return graph.ServicePrincipal{}, err
 	}
 	return f.Reader.ServicePrincipalByAppID(ctx, id)
 }
-func (f *failNth) ServicePrincipalByID(ctx context.Context, id string) (graph.ServicePrincipal, error) {
+func (f *failNth) ServicePrincipalByID(ctx context.Context, id guid.GUID) (graph.ServicePrincipal, error) {
 	if err := f.hit(); err != nil {
 		return graph.ServicePrincipal{}, err
 	}
 	return f.Reader.ServicePrincipalByID(ctx, id)
 }
-func (f *failNth) AppRoleAssignedTo(ctx context.Context, id string) ([]graph.AppRoleAssignment, error) {
+func (f *failNth) AppRoleAssignedTo(ctx context.Context, id guid.GUID) ([]graph.AppRoleAssignment, error) {
 	if err := f.hit(); err != nil {
 		return nil, err
 	}
 	return f.Reader.AppRoleAssignedTo(ctx, id)
 }
-func (f *failNth) ApplicationByAppID(ctx context.Context, id string) (graph.Application, error) {
+func (f *failNth) ApplicationByAppID(ctx context.Context, id guid.GUID) (graph.Application, error) {
 	if err := f.hit(); err != nil {
 		return graph.Application{}, err
 	}
 	return f.Reader.ApplicationByAppID(ctx, id)
 }
-func (f *failNth) ApplicationOwners(ctx context.Context, id string) ([]graph.DirectoryObject, error) {
+func (f *failNth) ApplicationOwners(ctx context.Context, id guid.GUID) ([]graph.DirectoryObject, error) {
 	if err := f.hit(); err != nil {
 		return nil, err
 	}
 	return f.Reader.ApplicationOwners(ctx, id)
 }
-func (f *failNth) ServicePrincipalOwners(ctx context.Context, id string) ([]graph.DirectoryObject, error) {
+func (f *failNth) ServicePrincipalOwners(ctx context.Context, id guid.GUID) ([]graph.DirectoryObject, error) {
 	if err := f.hit(); err != nil {
 		return nil, err
 	}

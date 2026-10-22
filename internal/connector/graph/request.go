@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/skenzeriq/activediq/internal/directory/odata"
 )
 
 func isTLSError(err error) bool {
@@ -34,7 +36,7 @@ func (c *Client) get(ctx context.Context, u *url.URL, out any) error {
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 		req.Header.Set("Authorization", "Bearer "+tok)
 		req.Header.Set("Accept", "application/json")
-		// Advanced queries ($filter on isAssignableToRole, $count) need eventual consistency.
+		// Advanced queries (filters on isAssignableToRole, counts) need eventual consistency.
 		req.Header.Set("ConsistencyLevel", "eventual")
 		resp, err := c.hc.Do(req)
 		if err != nil {
@@ -92,18 +94,27 @@ func (c *Client) get(ctx context.Context, u *url.URL, out any) error {
 	}
 }
 
-// endpoint builds a pinned URL from path segments (each path-escaped) and query parameters.
-func (c *Client) endpoint(q url.Values, segs ...string) *url.URL {
-	u := *c.graphBase
-	esc := strings.TrimRight(c.graphBase.EscapedPath(), "/")
-	raw := strings.TrimRight(c.graphBase.Path, "/")
-	for _, s := range segs {
-		esc += "/" + url.PathEscape(s)
-		raw += "/" + s
+// resolve renders req against the pinned Graph base; the odata primitive writes the whole URL.
+func (c *Client) resolve(req odata.Request) (*url.URL, error) {
+	u, err := req.URL(c.graphBase)
+	if err != nil {
+		return nil, invalidArg(err)
 	}
-	u.Path, u.RawPath = raw, esc
-	u.RawQuery = strings.ReplaceAll(q.Encode(), "+", "%20")
-	return &u
+	return u, nil
+}
+
+// invalidArg maps a primitive refusal to INVALID_ARGUMENT; the cause is the odata kind, never the value.
+func invalidArg(err error) error {
+	return newErr(CodeInvalidArgument, 0, "request refused by the OData builder", err)
+}
+
+// read performs one GET of req into out.
+func (c *Client) read(ctx context.Context, req odata.Request, out any) error {
+	u, err := c.resolve(req)
+	if err != nil {
+		return err
+	}
+	return c.get(ctx, u, out)
 }
 
 type page[T any] struct {
@@ -112,9 +123,12 @@ type page[T any] struct {
 }
 
 // list follows @odata.nextLink to the end. A broken page is an error, never a short success.
-func list[T any](ctx context.Context, c *Client, first *url.URL) ([]T, error) {
+func list[T any](ctx context.Context, c *Client, first odata.Request) ([]T, error) {
 	var all []T
-	u := first
+	u, err := c.resolve(first)
+	if err != nil {
+		return nil, err
+	}
 	for n := 0; ; n++ {
 		if n >= maxPages {
 			return nil, newErr(CodeLimitExceeded, 0, "too many pages", nil)

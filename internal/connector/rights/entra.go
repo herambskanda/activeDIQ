@@ -18,6 +18,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/skenzeriq/activediq/internal/connector/graph"
+	dguid "github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	v1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
@@ -38,12 +39,12 @@ const (
 type EntraReader interface {
 	OwnServicePrincipal(ctx context.Context) (graph.ServicePrincipal, error)
 	OwnApplication(ctx context.Context) (graph.Application, error)
-	ServicePrincipalByID(ctx context.Context, id string) (graph.ServicePrincipal, error)
-	AppRoleAssignments(ctx context.Context, spID string) ([]graph.AppRoleAssignment, error)
-	DirectoryRoleAssignments(ctx context.Context, principalID string) ([]graph.RoleAssignment, error)
-	ServicePrincipalGroups(ctx context.Context, spID string) ([]graph.Group, error)
-	ApplicationOwners(ctx context.Context, objectID string) ([]graph.DirectoryObject, error)
-	ServicePrincipalOwners(ctx context.Context, objectID string) ([]graph.DirectoryObject, error)
+	ServicePrincipalByID(ctx context.Context, id dguid.GUID) (graph.ServicePrincipal, error)
+	AppRoleAssignments(ctx context.Context, spID dguid.GUID) ([]graph.AppRoleAssignment, error)
+	DirectoryRoleAssignments(ctx context.Context, principalID dguid.GUID) ([]graph.RoleAssignment, error)
+	ServicePrincipalGroups(ctx context.Context, spID dguid.GUID) ([]graph.Group, error)
+	ApplicationOwners(ctx context.Context, objectID dguid.GUID) ([]graph.DirectoryObject, error)
+	ServicePrincipalOwners(ctx context.Context, objectID dguid.GUID) ([]graph.DirectoryObject, error)
 }
 
 var _ EntraReader = (*graph.Client)(nil)
@@ -122,7 +123,15 @@ func VerifyEntra(ctx context.Context, rd EntraReader, in EntraInput) (*Result, e
 		return nil, fmt.Errorf("app id: %w", err)
 	}
 
-	b := &builder{sp: spID, spText: sp.ID, ctx: ctx, rd: rd, errs: map[v1.VerificationCheck]error{}}
+	spG, err := dguid.Parse(sp.ID)
+	if err != nil {
+		return nil, fmt.Errorf("service principal id: %w", err)
+	}
+	appG, err := dguid.Parse(app.ID)
+	if err != nil {
+		return nil, fmt.Errorf("application id: %w", err)
+	}
+	b := &builder{sp: spID, spG: spG, ctx: ctx, rd: rd, errs: map[v1.VerificationCheck]error{}}
 	res := &Result{Identity: &v1.EntraObservedIdentity{
 		AppId: guid(appID), ServicePrincipalId: guid(spID), ApplicationObjectId: guid(appObj)}}
 
@@ -133,7 +142,7 @@ func VerifyEntra(ctx context.Context, rd EntraReader, in EntraInput) (*Result, e
 		now = in.Now
 	}
 	b.credentials(sp, app, spID, appObj, in.HeldThumbprint, now())
-	b.owners(app.ID, appObj, sp.ID, spID)
+	b.owners(appG, appObj, spG, spID)
 
 	res.Findings = b.out
 	sort.SliceStable(res.Findings, func(i, j int) bool {
@@ -151,12 +160,12 @@ func VerifyEntra(ctx context.Context, rd EntraReader, in EntraInput) (*Result, e
 }
 
 type builder struct {
-	ctx    context.Context
-	rd     EntraReader
-	sp     []byte
-	spText string
-	out    []Finding
-	errs   map[v1.VerificationCheck]error
+	ctx  context.Context
+	rd   EntraReader
+	sp   []byte
+	spG  dguid.GUID
+	out  []Finding
+	errs map[v1.VerificationCheck]error
 }
 
 const (
@@ -197,7 +206,7 @@ type heldPerm struct {
 }
 
 func (b *builder) permissions(in EntraInput) {
-	assigns, err := b.rd.AppRoleAssignments(b.ctx, b.spText)
+	assigns, err := b.rd.AppRoleAssignments(b.ctx, b.spG)
 	if err != nil {
 		b.fail(ev3, err)
 		b.fail(ev4, err)
@@ -213,7 +222,11 @@ func (b *builder) permissions(in EntraInput) {
 	for _, a := range assigns {
 		res, ok := resources[a.ResourceID]
 		if !ok {
-			r, err := b.rd.ServicePrincipalByID(b.ctx, a.ResourceID)
+			rid, err := dguid.Parse(a.ResourceID)
+			var r graph.ServicePrincipal
+			if err == nil {
+				r, err = b.rd.ServicePrincipalByID(b.ctx, rid)
+			}
 			if err != nil {
 				b.fail(ev3, err)
 				res = nil
@@ -321,8 +334,11 @@ func (b *builder) roles() {
 	// A role held through a role-assignable group passes to its members, so the service principal's
 	// own assignments are read together with those of every group it belongs to. Whether a service
 	// principal member actually receives the role is [UNVERIFIED — lab G6]: conservative reading.
-	holders := []struct{ id, group string }{{b.spText, ""}}
-	groups, err := b.rd.ServicePrincipalGroups(b.ctx, b.spText)
+	holders := []struct {
+		id    dguid.GUID
+		group string
+	}{{b.spG, ""}}
+	groups, err := b.rd.ServicePrincipalGroups(b.ctx, b.spG)
 	if err != nil {
 		// Continue with the direct read so a direct role is still named, but never pass.
 		b.fail(ev3, err)
@@ -330,7 +346,16 @@ func (b *builder) roles() {
 	}
 	for _, g := range groups {
 		if g.IsAssignableToRole {
-			holders = append(holders, struct{ id, group string }{g.ID, g.ID})
+			gid, perr := dguid.Parse(g.ID)
+			if perr != nil { // a group that cannot be named cannot be read: never pass
+				b.fail(ev3, perr)
+				b.unverified(ev3)
+				continue
+			}
+			holders = append(holders, struct {
+				id    dguid.GUID
+				group string
+			}{gid, g.ID})
 		}
 	}
 	for _, h := range holders {
@@ -412,12 +437,12 @@ func (b *builder) credentials(sp graph.ServicePrincipal, app graph.Application, 
 	}
 }
 
-func (b *builder) owners(appText string, appObj []byte, spText string, spID []byte) {
+func (b *builder) owners(appG dguid.GUID, appObj []byte, spG dguid.GUID, spID []byte) {
 	for _, o := range []struct {
 		object []byte
-		list   func(context.Context, string) ([]graph.DirectoryObject, error)
-		id     string
-	}{{appObj, b.rd.ApplicationOwners, appText}, {spID, b.rd.ServicePrincipalOwners, spText}} {
+		list   func(context.Context, dguid.GUID) ([]graph.DirectoryObject, error)
+		id     dguid.GUID
+	}{{appObj, b.rd.ApplicationOwners, appG}, {spID, b.rd.ServicePrincipalOwners, spG}} {
 		owners, err := o.list(b.ctx, o.id)
 		if err != nil {
 			b.fail(ev5, err)

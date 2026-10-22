@@ -14,21 +14,22 @@ import (
 	"strings"
 
 	"github.com/skenzeriq/activediq/internal/connector/graph"
+	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
 // Reader is the part of *graph.Client the classifier reads through.
 type Reader interface {
-	DirectoryRoleAssignments(ctx context.Context, principalID string) ([]graph.RoleAssignment, error)
+	DirectoryRoleAssignments(ctx context.Context, principalID guid.GUID) ([]graph.RoleAssignment, error)
 	RoleAssignableGroups(ctx context.Context) ([]graph.Group, error)
-	GroupMembers(ctx context.Context, groupID string) ([]graph.DirectoryObject, error)
-	GroupOwners(ctx context.Context, groupID string) ([]graph.DirectoryObject, error)
-	ServicePrincipalByAppID(ctx context.Context, appID string) (graph.ServicePrincipal, error)
-	ServicePrincipalByID(ctx context.Context, id string) (graph.ServicePrincipal, error)
-	AppRoleAssignedTo(ctx context.Context, resourceID string) ([]graph.AppRoleAssignment, error)
-	ApplicationByAppID(ctx context.Context, appID string) (graph.Application, error)
-	ApplicationOwners(ctx context.Context, objectID string) ([]graph.DirectoryObject, error)
-	ServicePrincipalOwners(ctx context.Context, objectID string) ([]graph.DirectoryObject, error)
+	GroupMembers(ctx context.Context, groupID guid.GUID) ([]graph.DirectoryObject, error)
+	GroupOwners(ctx context.Context, groupID guid.GUID) ([]graph.DirectoryObject, error)
+	ServicePrincipalByAppID(ctx context.Context, appID guid.GUID) (graph.ServicePrincipal, error)
+	ServicePrincipalByID(ctx context.Context, id guid.GUID) (graph.ServicePrincipal, error)
+	AppRoleAssignedTo(ctx context.Context, resourceID guid.GUID) ([]graph.AppRoleAssignment, error)
+	ApplicationByAppID(ctx context.Context, appID guid.GUID) (graph.Application, error)
+	ApplicationOwners(ctx context.Context, objectID guid.GUID) ([]graph.DirectoryObject, error)
+	ServicePrincipalOwners(ctx context.Context, objectID guid.GUID) ([]graph.DirectoryObject, error)
 }
 
 var _ Reader = (*graph.Client)(nil)
@@ -141,7 +142,7 @@ func (c *Classifier) Snapshot(ctx context.Context) (*Set, error) {
 
 	// E1 (+E4 labelling): every active and PIM-eligible holder at any scope. The reader fails the
 	// whole call when eligibility is unreadable, so partial answers never get here.
-	roles, err := c.r.DirectoryRoleAssignments(ctx, "")
+	roles, err := c.r.DirectoryRoleAssignments(ctx, guid.GUID{})
 	if err != nil {
 		return nil, fmt.Errorf("tier0: directory role assignments: %w", err)
 	}
@@ -171,11 +172,15 @@ func (c *Classifier) Snapshot(ctx context.Context) (*Set, error) {
 	}
 	for _, g := range groups {
 		s.add(g.ID, E2)
-		mem, err := c.r.GroupMembers(ctx, g.ID)
+		gid, err := objectID(g.ID)
+		if err != nil {
+			return nil, fmt.Errorf("tier0: role-assignable group: %w", err)
+		}
+		mem, err := c.r.GroupMembers(ctx, gid)
 		if err != nil {
 			return nil, fmt.Errorf("tier0: members of role-assignable group: %w", err)
 		}
-		own, err := c.r.GroupOwners(ctx, g.ID)
+		own, err := c.r.GroupOwners(ctx, gid)
 		if err != nil {
 			return nil, fmt.Errorf("tier0: owners of role-assignable group: %w", err)
 		}
@@ -194,7 +199,11 @@ func (c *Classifier) Snapshot(ctx context.Context) (*Set, error) {
 	}
 
 	// E3: owners of apps and SPs that hold a directory role or a deny-listed Graph permission.
-	gsp, err := c.r.ServicePrincipalByAppID(ctx, graphAppID)
+	graphApp, err := objectID(graphAppID)
+	if err != nil {
+		return nil, fmt.Errorf("tier0: Microsoft Graph app id: %w", err)
+	}
+	gsp, err := c.r.ServicePrincipalByAppID(ctx, graphApp)
 	if err != nil {
 		return nil, fmt.Errorf("tier0: Microsoft Graph service principal: %w", err)
 	}
@@ -202,7 +211,11 @@ func (c *Classifier) Snapshot(ctx context.Context) (*Set, error) {
 	for _, ar := range gsp.AppRoles {
 		roleName[strings.ToLower(ar.ID)] = ar.Value
 	}
-	granted, err := c.r.AppRoleAssignedTo(ctx, gsp.ID)
+	gspID, err := objectID(gsp.ID)
+	if err != nil {
+		return nil, fmt.Errorf("tier0: Microsoft Graph service principal: %w", err)
+	}
+	granted, err := c.r.AppRoleAssignedTo(ctx, gspID)
 	if err != nil {
 		return nil, fmt.Errorf("tier0: grants on Microsoft Graph: %w", err)
 	}
@@ -224,7 +237,11 @@ func (c *Classifier) Snapshot(ctx context.Context) (*Set, error) {
 	// Sync clients: E4 on the SP itself and E3-style owner reach.
 	syncSP := map[string]bool{}
 	for _, appID := range c.syncClientAppIDs {
-		sp, err := c.r.ServicePrincipalByAppID(ctx, appID)
+		aid, err := objectID(appID)
+		if err != nil {
+			return nil, fmt.Errorf("tier0: sync client app id: %w", err)
+		}
+		sp, err := c.r.ServicePrincipalByAppID(ctx, aid)
 		if err != nil {
 			return nil, fmt.Errorf("tier0: sync client service principal: %w", err)
 		}
@@ -278,18 +295,34 @@ func (c *Classifier) addOwnerClosure(ctx context.Context, s *Set, start map[stri
 }
 
 func (c *Classifier) ownersOf(ctx context.Context, spID string) ([]graph.DirectoryObject, error) {
-	sp, err := c.r.ServicePrincipalByID(ctx, spID)
+	id, err := objectID(spID)
 	if err != nil {
 		return nil, fmt.Errorf("tier0: privileged service principal: %w", err)
 	}
-	owners, err := c.r.ServicePrincipalOwners(ctx, sp.ID)
+	sp, err := c.r.ServicePrincipalByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("tier0: privileged service principal: %w", err)
+	}
+	spObj, err := objectID(sp.ID)
+	if err != nil {
+		return nil, fmt.Errorf("tier0: privileged service principal: %w", err)
+	}
+	owners, err := c.r.ServicePrincipalOwners(ctx, spObj)
 	if err != nil {
 		return nil, fmt.Errorf("tier0: owners of privileged service principal: %w", err)
 	}
 	if sp.AppID != "" {
 		// An app registered in another tenant has no application object here: not-found is fine.
-		if app, err := c.r.ApplicationByAppID(ctx, sp.AppID); err == nil {
-			ao, err := c.r.ApplicationOwners(ctx, app.ID)
+		appID, err := objectID(sp.AppID)
+		if err != nil {
+			return nil, fmt.Errorf("tier0: privileged application: %w", err)
+		}
+		if app, err := c.r.ApplicationByAppID(ctx, appID); err == nil {
+			appObj, err := objectID(app.ID)
+			if err != nil {
+				return nil, fmt.Errorf("tier0: privileged application: %w", err)
+			}
+			ao, err := c.r.ApplicationOwners(ctx, appObj)
 			if err != nil {
 				return nil, fmt.Errorf("tier0: owners of privileged application: %w", err)
 			}
@@ -379,4 +412,14 @@ func (s *Set) Classify(target string, in Input) (Result, error) {
 		}
 	}
 	return Result{Tier0: len(b) > 0, Bases: sortedBases(b)}, nil
+}
+
+// objectID parses an id Graph (or configuration) gave us once, at the boundary (R1). Anything that
+// is not a GUID is refused, so the snapshot fails closed.
+func objectID(s string) (guid.GUID, error) {
+	g, err := guid.Parse(s)
+	if err != nil {
+		return guid.GUID{}, errors.New("id is not a GUID")
+	}
+	return g, nil
 }

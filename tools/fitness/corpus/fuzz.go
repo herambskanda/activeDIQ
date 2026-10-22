@@ -26,6 +26,7 @@ const MinNightlyFuzz = 10 * time.Minute
 var requiredProps = map[string][]string{
 	"ldapfilter":      {"roundtrip", "noUnescapedSpecial"},
 	"dn":              {"roundtrip", "noUnescapedSpecial"},
+	"odata":           {"roundtrip", "noUnescapedSpecial"},
 	"attr.guid":       {"roundtrip", "noUnescapedSpecial"},
 	"attr.sid":        {"roundtrip", "noUnescapedSpecial"},
 	"attr.filetime":   {"roundtrip", "noUnescapedSpecial"},

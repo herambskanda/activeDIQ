@@ -13,11 +13,12 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 )
 
 const (
@@ -26,10 +27,6 @@ const (
 	graphScope       = "https://graph.microsoft.com/.default"
 	maxBody          = 16 << 20
 	maxPages         = 10000
-)
-
-var (
-	guidRE = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 )
 
 // Config configures a Client. TenantID pins every endpoint and is checked against the token's tid.
@@ -43,7 +40,7 @@ type Config struct {
 	Logger     *slog.Logger  // optional; receives method, path template and status only
 	MaxRetries int           // throttle/transient retries per request, default 5
 	MaxWait    time.Duration // longest single Retry-After honoured, default 5 min
-	PageSize   int           // $top, default 100
+	PageSize   int           // objects per page, default 100
 	Now        func() time.Time
 	Sleep      func(context.Context, time.Duration) error // tests inject; default honours ctx
 }
@@ -51,6 +48,7 @@ type Config struct {
 // Client reads from Graph. Safe for concurrent use.
 type Client struct {
 	cfg       Config
+	clientID  guid.GUID // parsed once from Config.ClientID (R1)
 	tokenURL  string
 	graphBase *url.URL
 	hc        *http.Client
@@ -65,12 +63,15 @@ type Client struct {
 func New(cfg Config) (*Client, error) {
 	// A domain name is DNS-controlled and can move between tenants, so only the tenant GUID is
 	// accepted; onboarding resolves a domain once and stores the GUID.
-	if !guidRE.MatchString(cfg.TenantID) {
+	tenant, err := guid.Parse(cfg.TenantID)
+	if err != nil {
 		return nil, newErr(CodeInvalidArgument, 0, "tenant id is not a GUID", nil)
 	}
-	if !guidRE.MatchString(cfg.ClientID) {
+	clientID, err := guid.Parse(cfg.ClientID)
+	if err != nil {
 		return nil, newErr(CodeInvalidArgument, 0, "client id is not a GUID", nil)
 	}
+	cfg.TenantID, cfg.ClientID = tenant.String(), clientID.String() // canonical form on the wire
 	if cfg.Authority == "" {
 		cfg.Authority = DefaultAuthority
 	}
@@ -111,8 +112,8 @@ func New(cfg Config) (*Client, error) {
 	if log == nil {
 		log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	tokenURL := strings.TrimRight(cfg.Authority, "/") + "/" + url.PathEscape(cfg.TenantID) + "/oauth2/v2.0/token"
-	return &Client{cfg: cfg, tokenURL: tokenURL, graphBase: gb, hc: hc, log: log}, nil
+	tokenURL := strings.TrimRight(cfg.Authority, "/") + "/" + tenant.String() + "/oauth2/v2.0/token"
+	return &Client{cfg: cfg, clientID: clientID, tokenURL: tokenURL, graphBase: gb, hc: hc, log: log}, nil
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) error {

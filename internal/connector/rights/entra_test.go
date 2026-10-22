@@ -12,6 +12,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/connector/graph"
 	"github.com/skenzeriq/activediq/internal/connector/graph/graphtest"
 	"github.com/skenzeriq/activediq/internal/connector/rights"
+	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	v1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
@@ -425,7 +426,7 @@ func TestUnresolvableGrantNeverPasses(t *testing.T) { // FR-11
 
 type failingRoles struct{ *graph.Client }
 
-func (failingRoles) DirectoryRoleAssignments(context.Context, string) ([]graph.RoleAssignment, error) {
+func (failingRoles) DirectoryRoleAssignments(context.Context, guid.GUID) ([]graph.RoleAssignment, error) {
 	return nil, errors.New("403 forbidden")
 }
 
@@ -540,7 +541,7 @@ func TestRoleOnNonAssignableGroupIsNotCounted(t *testing.T) {
 
 type failingGroups struct{ *graph.Client }
 
-func (failingGroups) ServicePrincipalGroups(context.Context, string) ([]graph.Group, error) {
+func (failingGroups) ServicePrincipalGroups(context.Context, guid.GUID) ([]graph.Group, error) {
 	return nil, errors.New("403 forbidden")
 }
 
@@ -574,6 +575,6 @@ func TestOwnerReadFailureIsReported(t *testing.T) {
 
 type failingOwners struct{ *graph.Client }
 
-func (failingOwners) ApplicationOwners(context.Context, string) ([]graph.DirectoryObject, error) {
+func (failingOwners) ApplicationOwners(context.Context, guid.GUID) ([]graph.DirectoryObject, error) {
 	return nil, errors.New("403 forbidden")
 }

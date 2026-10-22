@@ -134,6 +134,7 @@ skills and the safe-primitives spec to match.
 | Connector root (ADR-0002 rule 3) | `internal/connector/` |
 | Data-access package `store` (ADR-0002; safe-primitives P5) | `internal/platform/store`. Its entry points are **`WithTenantTx`** (the ADR-0002 name; the safe-primitives spec's `WithTenant` is renamed) and `WithPlatform`. Exemption registry: `internal/platform/store/exempt`. Report compiler: `internal/platform/store/reportsql` |
 | `ldapfilter`, `dn`, `attr` (safe-primitives P1–P3) | `internal/directory/ldapfilter`, `internal/directory/dn` (incl. `ObjectRef`, `GUIDRef`), and `internal/directory/attr/{guid,sid,filetime,gentime,flags,unicodepwd}` |
+| `odata` (safe-primitives P8, [safe-primitives-odata.md](safe-primitives-odata.md)) | `internal/directory/odata`, with `graphschema` (Graph property declarations) and `odatatest` (strict parser: round-trip oracle and the fake Graph's request parser) beneath it |
 | `Secret` (P3 §5.6) | `internal/platform/secret`. The platform needs it for key material and MFA seeds; the corpus unit stays `attr.unicodepwd` |
 | `scope` and `SecureConn` (P1 §3.6, P3 §5.6) | `internal/connector/ad/scope` and `internal/connector/ldap`. Both attach controls or touch the LDAP library, so they sit under the connector root |
 | `psx` / `pslit` / `proc` (P4) | `psx` client: `internal/connector/psx` (the connector drives sidecars, ADR-0002 rule 3). `pslit`: `internal/platform/pslit`. `proc`: `internal/platform/proc` |
@@ -165,7 +166,7 @@ it lands, the old T-0014 job in `tools/fitness/modules/` enforces a subset, and 
   services: inventory sync client connection                            |
   kernel, primitives, services, protos |                                |
           |                            v                                v
-          +------> directory primitives: ldapfilter dn model attr/*  (kernel ¹, primitives, protos)
+          +------> directory primitives: ldapfilter dn odata model attr/*  (kernel ¹, primitives, protos)
           |                            |
           v                            v
  internal/platform (root: Deps) and kernel packages --> internal/proto/skenzeriq/*
@@ -187,7 +188,7 @@ stack manifest and `fitness-stack`, not by this matrix.
 | **kernel root** | `internal/platform` itself. It declares `platform.Deps` (§4.1) and aggregates kernel services |
 | **kernel** | every package under `internal/platform/` |
 | **directory root** | `internal/directory` itself. It declares `directory.Services` (§4.1), which holds `inventory`, `connection` and `client`. It counts as a **directory service** wherever a rule names that class, so agent modules and the connector can never import it |
-| **directory primitives** | `internal/directory/{ldapfilter,dn,model}` and everything under `internal/directory/attr/` |
+| **directory primitives** | `internal/directory/{ldapfilter,dn,odata,model}` and everything under `internal/directory/attr/` |
 | **directory services** | every other package under `internal/directory/` (`inventory`, `sync`, `client`, `connection`, …) |
 | **connector** | `internal/connector` and everything under it |
 | **server module** | `internal/modules/<id>` and everything under it. The doc-only root `internal/modules` imports nothing and is imported by nothing |
@@ -797,6 +798,7 @@ API, the `client`, and the `connection` registry with its credential port. Only 
 | Package | Owner | Interface | EPs |
 | --- | --- | --- | --- |
 | `ldapfilter`, `dn`, `attr/*` | directory-engineer | the safe primitives P1–P3 (safe-primitives §3–§5) | — |
+| `odata` (+ `graphschema`, `odatatest`) | directory-engineer | safe primitive P8: filter AST, query options, key/path renderer (safe-primitives-odata §2–§3) | — |
 | `model` | directory-engineer (semantics: ad-expert, old T-0006) | `Connection` (AD forest, Entra tenant), `NamingContext`, `Object{GUID, class, parent GUID, DN-for-display}`, `ObjectRef`, link types | — |
 | `inventory` | directory-engineer | current state, link graph, GUID ancestry, per-DC values, AD↔Entra correlation, change history (§12). Read API for modules. Owns DM-14 NamingContext, DM-15 DomainController, DM-16 DirectoryObject, DM-17 Link, DM-18 ChangeRecord, DM-20 Correlation, DM-23 GpLink. Reads the connection's deletion settings, takeover attestation and confirmed HybridLinks through `connection`'s API. **Implements the kernel read ports** `authz.Membership` and `authn.DirectoryAnchors` directly (§7.5, F6). Exposes change history by watermark, which is how `lifecycle` sees attribute changes until a change-feed Registrar method exists (F3). DM-18 old and new values are stored as `PersonalRef`s through `platform/personal`, so erasure reaches them (ADR-0005 rule 12; old T-0065) | implements EP-8 |
 | `sync` | directory-engineer | full sync, then DirSync / Graph delta per naming context or tenant, under a lease (ADR-0002 rule 6); the cookie is stored in our database, so the connector stays stateless. **Owns DM-19 SyncCursor** (the cookie table; its fencing token comes through `jobs`' API). Reads the attribute set and suspension from `connection` | EP-5 job |

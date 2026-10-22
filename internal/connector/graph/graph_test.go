@@ -22,6 +22,7 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/connector/graph"
 	"github.com/skenzeriq/activediq/internal/connector/graph/graphtest"
+	gid "github.com/skenzeriq/activediq/internal/directory/attr/guid"
 )
 
 const (
@@ -32,6 +33,15 @@ const (
 	graphSP  = "55555555-5555-5555-5555-555555555555"
 	roleID   = "66666666-6666-6666-6666-666666666666"
 )
+
+// G parses a test GUID.
+func G(s string) gid.GUID {
+	g, err := gid.Parse(s)
+	if err != nil {
+		panic(err)
+	}
+	return g
+}
 
 func guid(n int) string {
 	return strings.Replace("77777777-7777-7777-7777-000000000000", "000000000000", pad(n), 1)
@@ -172,11 +182,11 @@ func TestReadsReturnExactly(t *testing.T) {
 	if err != nil || sp.ID != spID || sp.AppID != clientID {
 		t.Fatalf("sp = %+v, %v", sp, err)
 	}
-	asg, err := r.c.AppRoleAssignments(ctx, sp.ID)
+	asg, err := r.c.AppRoleAssignments(ctx, G(sp.ID))
 	if err != nil || !reflect.DeepEqual(asg, tn.Assignments[spID]) {
 		t.Fatalf("assignments = %+v, %v", asg, err)
 	}
-	res, err := r.c.ServicePrincipalByID(ctx, graphSP)
+	res, err := r.c.ServicePrincipalByID(ctx, G(graphSP))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,15 +205,15 @@ func TestReadsReturnExactly(t *testing.T) {
 	if err != nil || len(roles) != 2 || roles[0].Eligible || !roles[1].Eligible || roles[0].Role.DisplayName != "Directory Readers" {
 		t.Fatalf("roles = %+v, %v", roles, err)
 	}
-	all, err := r.c.DirectoryRoleAssignments(ctx, "")
+	all, err := r.c.DirectoryRoleAssignments(ctx, gid.GUID{})
 	if err != nil || len(all) != 3 {
 		t.Fatalf("all roles = %d, %v", len(all), err)
 	}
-	owners, err := r.c.ApplicationOwners(ctx, app.ID)
+	owners, err := r.c.ApplicationOwners(ctx, G(app.ID))
 	if err != nil || !reflect.DeepEqual(owners, tn.Owners[appObj]) || owners[2].Type() != "servicePrincipal" {
 		t.Fatalf("owners = %+v, %v", owners, err)
 	}
-	spOwn, err := r.c.ServicePrincipalOwners(ctx, spID)
+	spOwn, err := r.c.ServicePrincipalOwners(ctx, G(spID))
 	if err != nil || len(spOwn) != 1 {
 		t.Fatalf("sp owners = %+v, %v", spOwn, err)
 	}
@@ -211,11 +221,11 @@ func TestReadsReturnExactly(t *testing.T) {
 	if err != nil || len(groups) != 3 {
 		t.Fatalf("groups = %+v, %v", groups, err)
 	}
-	m, err := r.c.GroupMembers(ctx, guid(10))
+	m, err := r.c.GroupMembers(ctx, G(guid(10)))
 	if err != nil || !reflect.DeepEqual(m, tn.Members[guid(10)]) {
 		t.Fatalf("members = %d, %v", len(m), err)
 	}
-	if g, err := r.c.GroupOwners(ctx, guid(10)); err != nil || len(g) != 0 {
+	if g, err := r.c.GroupOwners(ctx, G(guid(10))); err != nil || len(g) != 0 {
 		t.Fatalf("group owners = %v, %v", g, err)
 	}
 }
@@ -233,7 +243,7 @@ func TestAppWithNoExtraKeysReturnsEmptyNotNil(t *testing.T) {
 func TestThrottleRetryAfterAndPaging(t *testing.T) {
 	r := newRig(t)
 	r.srv.FailGraph(graphtest.Failure{Status: 429, RetryAfter: "7"}, graphtest.Failure{Status: 429, RetryAfter: "3"})
-	m, err := r.c.GroupMembers(context.Background(), guid(10))
+	m, err := r.c.GroupMembers(context.Background(), G(guid(10)))
 	if err != nil || len(m) != 7 {
 		t.Fatalf("members = %d, %v", len(m), err)
 	}
@@ -245,7 +255,7 @@ func TestThrottleRetryAfterAndPaging(t *testing.T) {
 	r.srv.FailGraph(graphtest.Failure{Status: 429, RetryAfter: "1"})
 	r.srv.PageSize = 3
 	// consume: the failure applies to the first call; still must return all pages.
-	m, err = r.c.GroupMembers(context.Background(), guid(10))
+	m, err = r.c.GroupMembers(context.Background(), G(guid(10)))
 	if err != nil || len(m) != 7 || len(r.slept) != 1 {
 		t.Fatalf("members = %d slept=%v err=%v", len(m), r.slept, err)
 	}
@@ -256,7 +266,7 @@ func TestThrottleExhaustedIsTypedWithRetryAfter(t *testing.T) {
 	r.cfg.MaxRetries = 1
 	r.build(t)
 	r.srv.FailGraph(graphtest.Failure{Status: 429, RetryAfter: "2"}, graphtest.Failure{Status: 429, RetryAfter: "2"})
-	_, err := r.c.GroupMembers(context.Background(), guid(10))
+	_, err := r.c.GroupMembers(context.Background(), G(guid(10)))
 	var ge *graph.Error
 	if !asErr(err, &ge) || ge.Code != graph.CodeThrottled || ge.RetryAfter != 2*time.Second {
 		t.Fatalf("err = %v", err)
@@ -286,13 +296,16 @@ func TestErrorsAreTypedNeverEmptySuccess(t *testing.T) {
 		{"redirect", graphtest.Failure{Status: 302}, graph.CodeProviderFailure},
 	}
 	reads := map[string]func(*graph.Client) error{
-		"sp":      func(c *graph.Client) error { _, e := c.OwnServicePrincipal(context.Background()); return e },
-		"app":     func(c *graph.Client) error { _, e := c.OwnApplication(context.Background()); return e },
-		"assign":  func(c *graph.Client) error { _, e := c.AppRoleAssignments(context.Background(), spID); return e },
-		"roles":   func(c *graph.Client) error { _, e := c.DirectoryRoleAssignments(context.Background(), ""); return e },
-		"owners":  func(c *graph.Client) error { _, e := c.ApplicationOwners(context.Background(), appObj); return e },
+		"sp":     func(c *graph.Client) error { _, e := c.OwnServicePrincipal(context.Background()); return e },
+		"app":    func(c *graph.Client) error { _, e := c.OwnApplication(context.Background()); return e },
+		"assign": func(c *graph.Client) error { _, e := c.AppRoleAssignments(context.Background(), G(spID)); return e },
+		"roles": func(c *graph.Client) error {
+			_, e := c.DirectoryRoleAssignments(context.Background(), gid.GUID{})
+			return e
+		},
+		"owners":  func(c *graph.Client) error { _, e := c.ApplicationOwners(context.Background(), G(appObj)); return e },
 		"groups":  func(c *graph.Client) error { _, e := c.RoleAssignableGroups(context.Background()); return e },
-		"members": func(c *graph.Client) error { _, e := c.GroupMembers(context.Background(), guid(10)); return e },
+		"members": func(c *graph.Client) error { _, e := c.GroupMembers(context.Background(), G(guid(10))); return e },
 	}
 	for _, tc := range cases {
 		for rn, read := range reads {
@@ -313,7 +326,7 @@ func TestErrorsAreTypedNeverEmptySuccess(t *testing.T) {
 
 func TestErrorInLaterPageFailsWholeRead(t *testing.T) {
 	r := newRig(t)
-	m, err := r.c.GroupMembers(context.Background(), guid(10))
+	m, err := r.c.GroupMembers(context.Background(), G(guid(10)))
 	if err != nil || len(m) != 7 {
 		t.Fatal(err)
 	}
@@ -325,7 +338,7 @@ func TestErrorInLaterPageFailsWholeRead(t *testing.T) {
 	// Inject after the first graph call by wrapping the sleep? Simpler: fail calls 1..N via two failures where
 	// the first is retryable and the second fatal, proving a mid-read error is returned, not a partial list.
 	r2.srv.FailGraph(graphtest.Failure{Status: 503, RetryAfter: "0"}, graphtest.Failure{Status: 500})
-	got, err := r2.c.GroupMembers(ctx, guid(10))
+	got, err := r2.c.GroupMembers(ctx, G(guid(10)))
 	if err == nil || got != nil {
 		t.Fatalf("got %d items, err %v; want nil+error", len(got), err)
 	}
@@ -393,7 +406,7 @@ func TestNextLinkOffOriginRefusedAndNoTokenSent(t *testing.T) {
 	}))
 	defer evil.Close()
 	r.srv.FailGraph(graphtest.Failure{Status: 200, Body: `{"value":[],"@odata.nextLink":"` + evil.URL + `/v1.0/x"}`})
-	_, err := r.c.GroupMembers(context.Background(), guid(10))
+	_, err := r.c.GroupMembers(context.Background(), G(guid(10)))
 	if graph.CodeOf(err) != graph.CodeIdentityMismatch {
 		t.Fatalf("err = %v", err)
 	}
@@ -401,13 +414,10 @@ func TestNextLinkOffOriginRefusedAndNoTokenSent(t *testing.T) {
 
 func TestInvalidInputsRejectedBeforeAnyRequest(t *testing.T) {
 	r := newRig(t)
-	for _, id := range []string{"", "x", "1' or '1'='1", "../../me", appObj + "/owners"} {
-		if _, err := r.c.GroupMembers(context.Background(), id); graph.CodeOf(err) != graph.CodeInvalidArgument {
-			t.Fatalf("id %q: err = %v", id, err)
-		}
-		if _, err := r.c.DirectoryRoleAssignments(context.Background(), id+"x"); graph.CodeOf(err) != graph.CodeInvalidArgument {
-			t.Fatalf("principal %q: err = %v", id, err)
-		}
+	// IDs are typed (guid.GUID), so hostile text cannot reach a URL. The one value that parses but is
+	// never an object identity is the nil GUID.
+	if _, err := r.c.GroupMembers(context.Background(), gid.GUID{}); graph.CodeOf(err) != graph.CodeInvalidArgument {
+		t.Fatalf("nil GUID: err = %v", err)
 	}
 	if _, g := r.srv.Calls(); g != 0 {
 		t.Fatalf("graph calls = %d", g)

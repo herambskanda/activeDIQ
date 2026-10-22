@@ -718,9 +718,9 @@ func (g *goFile) callShapes(call *ast.CallExpr, combined map[*ast.BasicLit]combi
 		a, ok1 := g.strLit(call.Args[i])
 		b, ok2 := g.strLit(call.Args[i+1])
 		if ok1 && ok2 && b == a+a && (quoteChars[a] || a == `"`) {
-			home := []string{policy.Pslit, policy.Store, policy.ExportCSV}
+			home := []string{policy.Pslit, policy.Store, policy.ExportCSV, policy.OData}
 			if !policy.MatchAny(g.dir, home) {
-				g.add("FF-SP3", "quote-doubling", call.Pos(), "quote doubling ("+shorten(strconv.Quote(a))+" to "+shorten(strconv.Quote(b))+") is the PatchIQ escapePSPath shape; use pslit, store or export/csv ("+refPS+")")
+				g.add("FF-SP3", "quote-doubling", call.Pos(), "quote doubling ("+shorten(strconv.Quote(a))+" to "+shorten(strconv.Quote(b))+") is the PatchIQ escapePSPath shape; use pslit, store, export/csv or odata ("+refPS+")")
 			}
 		}
 	}

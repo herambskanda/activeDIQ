@@ -19,7 +19,6 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -28,6 +27,7 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/connector/graph"
+	"github.com/skenzeriq/activediq/internal/directory/odata/odatatest"
 )
 
 var b64 = base64.RawURLEncoding
@@ -42,15 +42,16 @@ type Tenant struct {
 	ServicePrincipals map[string]graph.ServicePrincipal    // by object id (needs SPID entry)
 	Assignments       map[string][]graph.AppRoleAssignment // by principal id
 	KeyCredentials    []graph.KeyCredential
+	Owners            map[string][]graph.DirectoryObject // by application/SP/group object id
+	Roles             []graph.RoleAssignment
+	Groups            []graph.Group
+	Members           map[string][]graph.DirectoryObject // by group id
+	Applications      []graph.Application                // other apps' registrations, found by appId
+	Users             []graph.DirectoryObject            // found by userPrincipalName or displayName; duplicates allowed
 	// PasswordCredentials are the application's client secrets (metadata only).
 	PasswordCredentials []graph.PasswordCredential
-	Owners              map[string][]graph.DirectoryObject // by application/SP/group object id
-	Roles               []graph.RoleAssignment
-	Groups              []graph.Group
-	Members             map[string][]graph.DirectoryObject // by group id
 	// Memberships are the groups a principal (by object id) is a direct member of.
-	Memberships  map[string][]graph.Group
-	Applications []graph.Application // other apps' registrations, found by appId
+	Memberships map[string][]graph.Group
 }
 
 // Server is the fake. Fields are guarded by mu; use the helpers.
@@ -250,30 +251,58 @@ func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
-	p := strings.TrimPrefix(r.URL.Path, "/v1.0/")
-	seg := strings.Split(p, "/")
+	target, skip := splitSkip(r.RequestURI)
+	req, err := odatatest.ParseRequest(target, "/v1.0")
+	if err != nil { // the fake accepts exactly what the odata primitive emits
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprintf(w, `{"error":{"code":"Request_BadRequest","message":%q}}`, err.Error())
+		return
+	}
 	t := s.T
+	pg := func(items []any) { s.paged(w, r.Host, target, skip, items) }
+	if len(req.Segments) == 1 && req.Segments[0].Kind == odatatest.SegAlt && req.Segments[0].Prop == "appId" {
+		app := req.Segments[0].Val.Text
+		switch req.Segments[0].Name {
+		case "servicePrincipals":
+			for _, sp := range t.ServicePrincipals {
+				if sp.AppID == app {
+					s.one(w, sp)
+					return
+				}
+			}
+			if app == t.ClientID { // the own SP, when the tenant does not list it by appId
+				s.one(w, t.ServicePrincipals[t.SPID])
+				return
+			}
+		case "applications":
+			if app == t.ClientID {
+				s.one(w, graph.Application{ID: t.AppObjectID, AppID: t.ClientID, DisplayName: "activeDIQ", KeyCredentials: t.KeyCredentials, PasswordCredentials: t.PasswordCredentials})
+				return
+			}
+			for _, a := range t.Applications {
+				if a.AppID == app {
+					s.one(w, a)
+					return
+				}
+			}
+		}
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	var seg []string
+	for _, sg := range req.Segments {
+		switch sg.Kind {
+		case odatatest.SegName, odatatest.SegCast:
+			seg = append(seg, sg.Name)
+		case odatatest.SegKey:
+			seg = append(seg, sg.Val.Text)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+	}
+	p := strings.Join(seg, "/")
 	switch {
-	case len(seg) == 1 && seg[0] == "servicePrincipals(appId='"+t.ClientID+"')":
-		s.one(w, t.ServicePrincipals[t.SPID])
-	case len(seg) == 1 && strings.HasPrefix(seg[0], "servicePrincipals(appId='"):
-		app := strings.TrimSuffix(strings.TrimPrefix(seg[0], "servicePrincipals(appId='"), "')")
-		for _, sp := range t.ServicePrincipals {
-			if sp.AppID == app {
-				s.one(w, sp)
-				return
-			}
-		}
-		w.WriteHeader(http.StatusNotFound)
-	case len(seg) == 1 && strings.HasPrefix(seg[0], "applications(appId='") && seg[0] != "applications(appId='"+t.ClientID+"')":
-		app := strings.TrimSuffix(strings.TrimPrefix(seg[0], "applications(appId='"), "')")
-		for _, a := range t.Applications {
-			if a.AppID == app {
-				s.one(w, a)
-				return
-			}
-		}
-		w.WriteHeader(http.StatusNotFound)
 	case len(seg) == 3 && seg[0] == "servicePrincipals" && seg[2] == "appRoleAssignedTo":
 		var out []graph.AppRoleAssignment
 		for _, as := range t.Assignments {
@@ -284,9 +313,7 @@ func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-		s.paged(w, r, anySlice(out))
-	case len(seg) == 1 && seg[0] == "applications(appId='"+t.ClientID+"')":
-		s.one(w, graph.Application{ID: t.AppObjectID, AppID: t.ClientID, DisplayName: "activeDIQ", KeyCredentials: t.KeyCredentials, PasswordCredentials: t.PasswordCredentials})
+		pg(anySlice(out))
 	case len(seg) == 2 && seg[0] == "servicePrincipals":
 		sp, found := t.ServicePrincipals[seg[1]]
 		if !found {
@@ -295,26 +322,53 @@ func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
 		}
 		s.one(w, sp)
 	case len(seg) == 3 && seg[0] == "servicePrincipals" && seg[2] == "appRoleAssignments":
-		s.paged(w, r, anySlice(t.Assignments[seg[1]]))
+		pg(anySlice(t.Assignments[seg[1]]))
 	case len(seg) == 4 && seg[0] == "servicePrincipals" && seg[2] == "memberOf" && seg[3] == "microsoft.graph.group":
-		s.paged(w, r, anySlice(t.Memberships[seg[1]]))
+		pg(anySlice(t.Memberships[seg[1]]))
 	case len(seg) == 3 && seg[2] == "owners":
-		s.paged(w, r, anySlice(t.Owners[seg[1]]))
+		pg(anySlice(t.Owners[seg[1]]))
 	case len(seg) == 3 && seg[0] == "groups" && seg[2] == "members":
-		s.paged(w, r, anySlice(t.Members[seg[1]]))
+		pg(anySlice(t.Members[seg[1]]))
 	case p == "groups":
+		f := req.Filter
+		if f == nil || f.Op != "eq" || f.Prop != "isAssignableToRole" || f.Lits[0].Kind != odatatest.LitBool {
+			w.WriteHeader(http.StatusBadRequest) // the fake serves only the one group query the connector makes
+			return
+		}
 		var gs []graph.Group
 		for _, g := range t.Groups {
-			if g.IsAssignableToRole {
+			if g.IsAssignableToRole == (f.Lits[0].Text == "true") {
 				gs = append(gs, g)
 			}
 		}
-		s.paged(w, r, anySlice(gs))
+		pg(anySlice(gs))
+	case p == "users":
+		// Lookups by userPrincipalName or displayName. Matching is case-insensitive, like Graph.
+		f := req.Filter
+		if f == nil || f.Op != "eq" || (f.Prop != "userPrincipalName" && f.Prop != "displayName") || f.Lits[0].Kind != odatatest.LitString {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		var out []any
+		for _, u := range t.Users {
+			have := u.UserPrincipalName
+			if f.Prop == "displayName" {
+				have = u.DisplayName
+			}
+			if strings.EqualFold(have, f.Lits[0].Text) {
+				out = append(out, u)
+			}
+		}
+		pg(out)
 	case p == "roleManagement/directory/roleAssignments", p == "roleManagement/directory/roleEligibilitySchedules":
 		want := strings.HasSuffix(p, "Schedules")
 		principal := ""
-		if f := r.URL.Query().Get("$filter"); f != "" {
-			principal = strings.TrimSuffix(strings.TrimPrefix(f, "principalId eq '"), "'")
+		if f := req.Filter; f != nil {
+			if f.Op != "eq" || f.Prop != "principalId" || f.Lits[0].Kind != odatatest.LitString {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			principal = f.Lits[0].Text
 		}
 		var out []any
 		for _, ra := range t.Roles {
@@ -324,10 +378,32 @@ func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
 					"principal": map[string]any{"id": ra.PrincipalID, "@odata.type": principalOData(ra.PrincipalType)}})
 			}
 		}
-		s.paged(w, r, out)
+		pg(out)
 	default:
 		w.WriteHeader(http.StatusNotFound)
 	}
+}
+
+// splitSkip separates the fake's own paging token from the request target, so the rest can be
+// parsed strictly. A real nextLink is opaque; the fake's is the same target plus skiptoken=N.
+func splitSkip(target string) (string, int) {
+	path, query, has := strings.Cut(target, "?")
+	if !has {
+		return target, 0
+	}
+	skip := 0
+	var keep []string
+	for _, part := range strings.Split(query, "&") {
+		if v, ok := strings.CutPrefix(part, "skiptoken="); ok {
+			skip, _ = strconv.Atoi(v)
+			continue
+		}
+		keep = append(keep, part)
+	}
+	if len(keep) == 0 {
+		return path, skip
+	}
+	return path + "?" + strings.Join(keep, "&"), skip
 }
 
 func anySlice[T any](v []T) []any {
@@ -343,23 +419,24 @@ func (s *Server) one(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// paged serves items s.PageSize at a time, linking pages with @odata.nextLink and ?skip=.
-func (s *Server) paged(w http.ResponseWriter, r *http.Request, items []any) {
+// paged serves items s.PageSize at a time, linking pages with @odata.nextLink: the request target
+// plus skiptoken=N.
+func (s *Server) paged(w http.ResponseWriter, host, target string, skip int, items []any) {
 	size := s.PageSize
 	if size <= 0 {
 		size = 2
 	}
-	skip, _ := strconv.Atoi(r.URL.Query().Get("skiptoken"))
 	end := min(skip+size, len(items))
-	resp := map[string]any{"value": items[skip:end]}
-	if resp["value"] == nil || skip >= len(items) {
+	resp := map[string]any{"value": items[min(skip, len(items)):end]}
+	if skip >= len(items) {
 		resp["value"] = []any{}
 	}
 	if end < len(items) {
-		q := r.URL.Query()
-		q.Set("skiptoken", strconv.Itoa(end))
-		u := url.URL{Scheme: "https", Host: r.Host, Path: r.URL.Path, RawQuery: q.Encode()}
-		resp["@odata.nextLink"] = u.String()
+		sep := "?"
+		if strings.Contains(target, "?") {
+			sep = "&"
+		}
+		resp["@odata.nextLink"] = "https://" + host + target + sep + "skiptoken=" + strconv.Itoa(end)
 	}
 	s.one(w, resp)
 }

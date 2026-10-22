@@ -21,6 +21,7 @@ const (
 	Psx        = "internal/connector/psx"        // typed PowerShell sidecar client
 	LDAPFilter = "internal/directory/ldapfilter" // P1
 	DN         = "internal/directory/dn"         // P2
+	OData      = "internal/directory/odata"      // P8
 	Attr       = "internal/directory/attr"       // P3
 	Secret     = "internal/platform/secret"      // Secret and secretjson
 	Store      = "internal/platform/store"       // data-access package: pgx, set_config, reportsql
@@ -50,6 +51,7 @@ const (
 var UnitHomes = map[string][]string{
 	"ldapfilter":      {LDAPFilter},
 	"dn":              {DN},
+	"odata":           {OData},
 	"attr.guid":       {Attr},
 	"attr.sid":        {Attr},
 	"attr.filetime":   {Attr},
