@@ -1452,20 +1452,20 @@ one Action applied to that target.
 `state`, `outcome`, `read_back`, `inverse_input`, `reversibility`) · `state`.
 **Invariants.** I1 The idempotency key is `(operation, item, step)`; each claim carries an
 `attempt` fence (ADR-0005 rule 6). I2 The before-state captured at plan is re-checked at apply,
-inside `applying`. If it changed, the step fails `stale_state` and is never overwritten. I3 Verify reads back from the pinned DC that applied. If that DC stays unavailable past the verify window, it reads back from another DC, which the step records by name, or the step is `verify_failed` with reason `dc_unavailable` (ADR-0005 rule 5). I4 Inverse inputs contain no secrets,
+inside `applying`. If it changed, the step fails `stale_state` and is never overwritten. I3 Verify reads back from the pinned DC that applied. If that DC stays unavailable past the verify window, it reads back from another DC, which the step records by name, or the step is `verify_failed` with reason `dc_unavailable` when the Tier-0 facts were read clean on some DC but the read-back could not be completed. Tier-0 facts still unreadable on every DC after the window are `tier0_after_write` instead (I5, fail closed) (ADR-0005 rules 5 and 7). I4 Inverse inputs contain no secrets,
 and irreversible steps are flagged at plan. I5 A `verify_failed` step carries exactly one reason
 from a closed list (ADR-0005 rules 3, 5 and 7): `read_back_mismatch` (the read-back differs from
 the planned after-state), `scope_changed` (the target left the initiator's scope; alert `high`),
-`dc_unavailable` (I3), and **`tier0_after_write`** (a touched object is `tier0` after the write,
+`dc_unavailable` (I3, AD only; an Entra step whose verify window elapses without the after-state is `read_back_mismatch`), and **`tier0_after_write`** (a touched object is `tier0` after the write,
 found by the server's `tier0` guard on Verify's live re-read or listed in
 `ApplyResponse.tier0_after_write`, with or without a basis, an empty basis being recorded
-`unclassified`; contract v1.2 §8.1 step 9, TM-D23 rule 11). `tier0_after_write` takes precedence
+`unclassified`; the server's re-read follows I3's verify window and DC fallback, so only a fact still `unknown` after both counts as `tier0`, while the connector's report counts at once; contract v1.2 §8.1 step 9, TM-D23 rule 11). `tier0_after_write` takes precedence
 over the others, raises a `critical` security alert above the `scope_changed` alert, and moves the
 operation to `cancelling`. Its step cannot be undone through activeDIQ: the undo's inverse is
 `blocked` at Plan by the `tier0` guard (DM-35.I5), so recovery is the administrator's task that
 the alert hands over.
 **Lifecycle** (ADR-0005 rule 3). Item: `pending → planned | skipped | blocked`; `planned →
-running → succeeded | failed | cancelled`; `planned → cancelled`; `succeeded | failed → undone` (an undo inverts the `verified` and `verify_failed` steps).
+running → succeeded | failed | cancelled`; `planned → cancelled`; `succeeded | failed → undone` (an undo inverts the `verified` and `verify_failed` steps, except a `tier0_after_write` step, whose inverse is `blocked`, so that item stays `failed`).
 Step: `planned → applying → applied → verified | verify_failed`; `applying → failed` (denied,
 stale_state, outcome_unknown, error, retries exhausted); `applying → not_run` (reconciler, operation
 cancelling, no write happened); `planned → not_run`; `verified | verify_failed → undone`
@@ -2020,4 +2020,4 @@ AC2 was re-checked by script: every ADM ID in scope lock §3.3 (123 IDs) appears
   - Nits: the override digest is tagged `adq-override-digest/1`, `.rights.verdict_changed` uses
     its own run's salt, and Q14 is reworded.
 - 2026-10-02 · T-0168 round 2, from the security-architect review. DM-25.I6: every record that a derived override state reads is pinned while the override is kept: the clearing run (new DM-24.I6 (c)), the superseding override (oldest first) and the connection. A property states that no retention pass or crash changes any derivation (tested by T-0119, listed for T-0050). DM-24.I5: no audit event carries a per-finding identifier. Events carry IDs, verdicts, outcomes, counts and `findings_digest`, salted with the new per-run `digest_salt`, and DM-25.I7 does the same for the override events. DM-24.I6: the `connection_verification` retention floor is the audit retention, and rows named by a retained audit event are pinned. DM-25.I7: `.tier0_override.cleared` is emitted in the clearing run's insert transaction. DM-10.I10: an interrupted run returns to `draft` only from `verifying`. DM-10.I11: the gate is re-checked at every Apply chunk, and a V7 `could_not_verify` or `failed` triggers an automatic re-run with backoff. §11 Q12 and Q13 are closed.
-- 2026-10-22 · T-0129 (ADR-0005 amendment of the same date, TM-D23 rule 11, contract v1.2 §8.1 step 9): DM-42.I5 lists the `verify_failed` reasons (`read_back_mismatch`, `scope_changed`, `dc_unavailable`, `tier0_after_write`); `tier0_after_write`, including an empty-basis report, raises a `critical` alert above `scope_changed`, cancels the operation, and its step's undo is refused by the `tier0` guard.
+- 2026-10-22 · T-0129 (ADR-0005 amendment of the same date, TM-D23 rule 11, contract v1.2 §8.1 step 9): DM-42.I5 lists the `verify_failed` reasons (`read_back_mismatch`, `scope_changed`, `dc_unavailable`, `tier0_after_write`); `tier0_after_write`, including an empty-basis report, raises a `critical` alert above `scope_changed`, cancels the operation, and its step's undo is refused by the `tier0` guard. Review round 1: the server's Tier-0 re-read follows the I3 verify window and fallback (only still-`unknown` counts), so `dc_unavailable` stays reachable; Entra window expiry is `read_back_mismatch`; the undo exception is stated in the lifecycle.

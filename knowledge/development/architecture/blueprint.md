@@ -1289,7 +1289,9 @@ who lost the right while waiting fails `denied`. No role touches `tier0`, at eit
 - **Residual.** No directory makes a write conditional on ancestry, membership or correlation.
   Verify reads the same facts again and records `verify_failed` with reason `scope_changed`, and
   alerts (`high`). It also re-runs the `tier0` guard on every touched object's live re-read and
-  takes `ApplyResponse.tier0_after_write` (an empty basis included): a `tier0` object after the
+  takes `ApplyResponse.tier0_after_write` (an empty basis included, counted at once); the re-read
+  uses rule 5's verify window and DC fallback, and only a fact still `unknown` after both counts as
+  `tier0`, so a lost pin with a clean fallback read stays `dc_unavailable`. A `tier0` object after the
   write is `verify_failed` `tier0_after_write`, a `critical` alert, the operation cancelled, and an
   undo the `tier0` guard refuses (ADR-0005 rule 7 as amended by T-0129, TM-D23 rule 11).
 
