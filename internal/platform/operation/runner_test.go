@@ -8,14 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
-
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
 	"github.com/skenzeriq/activediq/internal/platform/store"
+	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
@@ -28,23 +26,6 @@ type fakeDB struct {
 	readOnly  int
 }
 
-type fakeTx struct {
-	db     *fakeDB
-	events []audit.Event
-	writes []string
-}
-
-func (t *fakeTx) Exec(_ context.Context, sql string, _ ...any) (pgconn.CommandTag, error) {
-	if strings.HasPrefix(sql, "SET TRANSACTION READ ONLY") {
-		t.db.readOnly++
-	}
-	return pgconn.CommandTag{}, nil
-}
-func (*fakeTx) Query(context.Context, string, ...any) (pgx.Rows, error) {
-	return nil, errors.New("no rows")
-}
-func (*fakeTx) QueryRow(context.Context, string, ...any) pgx.Row { return nil }
-
 func (d *fakeDB) WithTenant(ctx context.Context, id tenant.ID, fn func(context.Context, store.Tx) error) error {
 	if id.IsZero() {
 		return store.ErrNoTenant
@@ -54,12 +35,17 @@ func (d *fakeDB) WithTenant(ctx context.Context, id tenant.ID, fn func(context.C
 		return errors.New("lock timeout")
 	}
 	d.txs++
-	tx := &fakeTx{db: d}
+	tx := &storetest.FakeTx{}
 	if err := fn(ctx, tx); err != nil {
 		return err // rollback: tx.events and tx.writes are dropped
 	}
-	d.committed = append(d.committed, tx.events...)
-	d.writes = append(d.writes, tx.writes...)
+	for _, e := range tx.Records {
+		d.committed = append(d.committed, e.(audit.Event))
+	}
+	d.writes = append(d.writes, tx.Writes...)
+	if tx.ReadOnly {
+		d.readOnly++
+	}
 	return nil
 }
 
@@ -72,7 +58,8 @@ func (s sink) Append(_ context.Context, tx store.Tx, ev audit.Event) error {
 	if err := ev.Validate(); err != nil {
 		return err
 	}
-	tx.(*fakeTx).events = append(tx.(*fakeTx).events, ev)
+	ft := tx.(*storetest.FakeTx)
+	ft.Records = append(ft.Records, ev)
 	return nil
 }
 
@@ -147,7 +134,8 @@ func (b behaviour) action(t *testing.T, db *fakeDB) Action {
 				return out{}, b.applyErr
 			}
 			*b.applied++
-			s.Tx().(*fakeTx).writes = append(s.Tx().(*fakeTx).writes, p.Payload.Row)
+			ft := s.Tx().(*storetest.FakeTx)
+			ft.Writes = append(ft.Writes, p.Payload.Row)
 			return out{Row: p.Payload.Row}, nil
 		},
 		Verify: func(context.Context, step.Step, TypedStep[payload], out) (Verdict, error) {
