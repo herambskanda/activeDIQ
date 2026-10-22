@@ -1310,6 +1310,19 @@ calls per technician per day, then charges per extra call (parity matrix row 18,
 | `reveal` | `secretResponses` operations (LAPS, BitLocker, token creation) | Principal | 10 | 5 | Each reveal also needs step-up (§7.4). This slows harvesting (TM-Q4); the burst alert threshold stays with the E2.5 spec |
 | `secret` | Operations whose request carries `SecretInput` (password set and reset, credential entry) | Principal | 30 | 10 | A secret operation cannot be `bulk` (ADR-0004 A12), so a script resetting passwords one by one manages 1,800 an hour. A stolen token doing mass resets is slowed to minutes per hundred, and the audit trail shows it |
 
+- **Body-buffer budget.** `apihost` allocates a request's body buffer before its first byte arrives
+  (ADR-0004 rule 6 step 1), so the per-IP limiter alone does not bound memory against stalled
+  senders. A byte semaphore (`WithBodyBudget`, default 64 MiB) is reserved before allocation and
+  released after the buffer is cleared; when it is spent the request gets `429 /problems/rate-limited`
+  with `Retry-After: 1`, never queued. The budget is partitioned: anonymous routes draw only from
+  their own slice of the total (`WithAnonymousBodyBudget`, default a quarter; authenticated routes get
+  the remainder, so the total is the memory ceiling), so an unauthenticated
+  flood cannot make an authenticated write return 429. Residual: anonymous flows (SSPR, enrolment)
+  can still be starved by an anonymous flood; that is the accepted cost, bounded by the per-IP limiter
+  (IPv6 keying: T-0051). A Content-Length over the route cap is `413` before it touches
+  the budget. The listener (`compose/server.newAPIServer`) sets ReadHeaderTimeout 10s, ReadTimeout
+  60s, IdleTimeout 120s and MaxHeaderBytes 32 KiB; WriteTimeout is unset for streaming responses.
+
 - **Tenants can tighten, not loosen.** A tenant may lower any number. Raising one above the default
   is a deployment setting of the host (`apihost` configuration), audited at startup. In the SaaS
   cell, defaults are ceilings.
