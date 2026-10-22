@@ -265,3 +265,39 @@ func TestDesignationsForScopedByTenantAndConnection(t *testing.T) {
 		}
 	})
 }
+
+// A row naming another tenant's connection, a connection of the wrong kind, or with its sides swapped
+// is corrupt: the reader returns ErrCorrupt and nothing, from either side, never a mis-oriented link
+// (the tier0 facts of the AD object must never be read as the peer's).
+func TestCorrelationsForRefusesWrongConnections(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		ctx := context.Background()
+		ad2 := e.conn(t, e.a, connection.KindADForest, connection.TransportLDAPS)
+		ref := func(c inventory.ConnectionID, g string) inventory.Ref { return inventory.Ref{Connection: c, Object: inventory.GUID(g)} }
+		cases := []struct {
+			name   string
+			ad, en inventory.Ref
+		}{
+			{"other tenant's AD connection", ref(e.adB, adG1), ref(e.enA, enG1)},
+			{"AD side is an Entra connection (swapped)", ref(e.enA, enG2), ref(e.adA, adG2)},
+			{"Entra side is an AD forest", ref(e.adA, adG3), ref(ad2, enG3)},
+		}
+		for _, c := range cases {
+			e.seed(t, e.a, c.ad, c.en, "broken", "", "match, ad_sid, ad_tier0, ad_tier0_bases, facts_as_of",
+				"sid", sid, true, []string{"C1"}, time.Now())
+			for _, side := range []inventory.Ref{c.ad, c.en} {
+				got, err := e.r.CorrelationsFor(ctx, e.a, side)
+				if !errors.Is(err, inventory.ErrCorrupt) || got != nil {
+					t.Errorf("%s from %v: %v %v", c.name, side, got, err)
+				}
+			}
+		}
+		// The same connection on both sides is refused by the schema.
+		err := e.exec(e.a, `INSERT INTO public.correlations (tenant_id, ad_connection_id, ad_object_guid, entra_connection_id, entra_object_guid, match, ad_sid)
+			VALUES ($1::uuid,$2::uuid,$3::uuid,$2::uuid,$4::uuid,'sid',$5)`, e.a.String(), string(e.adA), adG1, enG1, sid)
+		if err == nil {
+			t.Error("same connection on both sides accepted")
+		}
+	})
+}

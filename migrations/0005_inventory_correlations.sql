@@ -49,6 +49,7 @@ CREATE TABLE public.correlations (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (tenant_id, id),
+  CHECK (ad_connection_id <> entra_connection_id),
   CHECK ((match = 'anchor') = (anchor_value IS NOT NULL AND anchor_attr <> '')),
   CHECK (match <> 'sid' OR ad_sid IS NOT NULL),
   CHECK ((state = 'candidate') = (candidate_reason <> '')),

@@ -36,9 +36,10 @@ func (r *Reader) with(ctx context.Context, tid tenant.ID, fn func(ctx context.Co
 	return r.db.WithTenant(ctx, tid, fn)
 }
 
-const linkColumns = `id::text, ad_connection_id::text, ad_object_guid::text, entra_connection_id::text, entra_object_guid::text,
-	match, anchor_attr, anchor_value, ad_sid, state, candidate_reason, gate_checked_at, eligible_since, eligibility_class,
-	COALESCE(reconfirmed_by::text, ''), reconfirmed_at, ad_tier0, ad_tier0_bases, entra_tier0, entra_tier0_bases, facts_as_of`
+const linkColumns = `c.id::text, c.ad_connection_id::text, c.ad_object_guid::text, c.entra_connection_id::text, c.entra_object_guid::text,
+	c.match, c.anchor_attr, c.anchor_value, c.ad_sid, c.state, c.candidate_reason, c.gate_checked_at, c.eligible_since, c.eligibility_class,
+	COALESCE(c.reconfirmed_by::text, ''), c.reconfirmed_at, c.ad_tier0, c.ad_tier0_bases, c.entra_tier0, c.entra_tier0_bases, c.facts_as_of,
+	ac.kind, ec.kind`
 
 // CorrelationsFor implements CorrelationSource.
 func (r *Reader) CorrelationsFor(ctx context.Context, tid tenant.ID, ref Ref) ([]Link, error) {
@@ -47,10 +48,12 @@ func (r *Reader) CorrelationsFor(ctx context.Context, tid tenant.ID, ref Ref) ([
 	}
 	var out []Link
 	err := r.with(ctx, tid, func(ctx context.Context, tx store.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT `+linkColumns+` FROM public.correlations
-			WHERE tenant_id = $1::uuid AND state <> 'removed'
-			AND ((ad_connection_id = $2::uuid AND ad_object_guid = $3::uuid)
-			  OR (entra_connection_id = $2::uuid AND entra_object_guid = $3::uuid))
+		rows, err := tx.Query(ctx, `SELECT `+linkColumns+` FROM public.correlations c
+			LEFT JOIN public.connections ac ON ac.tenant_id = $1::uuid AND ac.id = c.ad_connection_id
+			LEFT JOIN public.connections ec ON ec.tenant_id = $1::uuid AND ec.id = c.entra_connection_id
+			WHERE c.tenant_id = $1::uuid AND c.state <> 'removed'
+			AND ((c.ad_connection_id = $2::uuid AND c.ad_object_guid = $3::uuid)
+			  OR (c.entra_connection_id = $2::uuid AND c.entra_object_guid = $3::uuid))
 			LIMIT $4`, tid.String(), string(ref.Connection), string(ref.Object), MaxLinks+1)
 		if err != nil {
 			return fmt.Errorf("inventory: correlations: %w", err)
@@ -63,10 +66,17 @@ func (r *Reader) CorrelationsFor(ctx context.Context, tid tenant.ID, ref Ref) ([
 				gate, since, at, asOf                                         *time.Time
 				adT, enT                                                      bool
 				adB, enB                                                      []string
+				adKind, enKind                                                *string
 			)
 			if err := rows.Scan(&id, &adC, &adO, &enC, &enO, &match, &attr, &anchor, &sid, &state, &reason,
-				&gate, &since, &class, &by, &at, &adT, &adB, &enT, &enB, &asOf); err != nil {
+				&gate, &since, &class, &by, &at, &adT, &adB, &enT, &enB, &asOf, &adKind, &enKind); err != nil {
 				return fmt.Errorf("inventory: correlations: %w", err)
+			}
+			// Both connections must exist in this tenant and be of the right kind: a row that names
+			// another tenant's connection or has its sides swapped would orient the tier0 facts
+			// onto the wrong object (fail-open on a guard input).
+			if adKind == nil || enKind == nil || *adKind != "ad_forest" || *enKind != "entra_tenant" {
+				return ErrCorrupt
 			}
 			l, err := orient(ref, Link{
 				ID: id, State: State(state), Reason: Reason(reason), Match: Match(match), AnchorAttr: attr,

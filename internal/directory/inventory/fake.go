@@ -113,6 +113,18 @@ func (f *Fake) DesignationsFor(ctx context.Context, tid tenant.ID, c ConnectionI
 	if tid.IsZero() {
 		return nil, ErrNoTenant
 	}
+	// Same input checks as Reader, so consumers' tests exercise the same inputs.
+	if cs, ok := canon(string(c)); !ok || cs != string(c) {
+		return nil, ErrInvalid
+	}
+	for _, g := range refs {
+		if cg, ok := canon(string(g)); !ok || cg != string(g) {
+			return nil, ErrInvalid
+		}
+	}
+	if len(refs) > MaxDesignationRefs {
+		return nil, ErrTooMany
+	}
 	set := map[GUID]bool{}
 	f.mu.Lock()
 	d := f.desig[tid][c]
