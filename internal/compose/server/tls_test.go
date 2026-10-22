@@ -3,6 +3,7 @@ package server
 import (
 	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"net"
 	"net/http"
@@ -29,11 +30,19 @@ func TestAPIListenerSpeaksOnlyTLSWithPerInstallCertificate(t *testing.T) {
 	go func() { _ = srv.ServeTLS(ln, "", "") }()
 	defer srv.Close()
 
+	// Trust exactly the install's own certificate: the client verifies the chain and name normally.
+	leaf, err := x509.ParseCertificate(id.Certificate.Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(leaf)
+
 	// TLS 1.1 is refused.
-	if _, err := tls.Dial("tcp", ln.Addr().String(), &tls.Config{InsecureSkipVerify: true, MaxVersion: tls.VersionTLS11}); err == nil { //nolint:gosec // probing the server
+	if _, err := tls.Dial("tcp", ln.Addr().String(), &tls.Config{RootCAs: roots, MaxVersion: tls.VersionTLS11}); err == nil {
 		t.Fatal("TLS 1.1 must be refused")
 	}
-	conn, err := tls.Dial("tcp", ln.Addr().String(), &tls.Config{InsecureSkipVerify: true}) //nolint:gosec // pinned below
+	conn, err := tls.Dial("tcp", ln.Addr().String(), &tls.Config{RootCAs: roots})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +77,7 @@ func TestNonLoopbackWithoutTLSFailsStartup(t *testing.T) {
 		if _, err := apiIdentity(config.Config{APIAddr: a}, time.Now()); err == nil {
 			t.Errorf("%s without TLS must fail", a)
 		}
-		if _, err := apiIdentity(config.Config{APIAddr: a, APITLSDir: t.TempDir()+"/id"}, time.Now()); err != nil {
+		if _, err := apiIdentity(config.Config{APIAddr: a, APITLSDir: t.TempDir() + "/id"}, time.Now()); err != nil {
 			t.Errorf("%s with TLS: %v", a, err)
 		}
 	}
