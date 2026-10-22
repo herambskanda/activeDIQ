@@ -1288,7 +1288,10 @@ who lost the right while waiting fails `denied`. No role touches `tier0`, at eit
   connector never uses Graph advanced queries for these facts.
 - **Residual.** No directory makes a write conditional on ancestry, membership or correlation.
   Verify reads the same facts again and records `verify_failed` with reason `scope_changed`, and
-  alerts.
+  alerts (`high`). It also re-runs the `tier0` guard on every touched object's live re-read and
+  takes `ApplyResponse.tier0_after_write` (an empty basis included): a `tier0` object after the
+  write is `verify_failed` `tier0_after_write`, a `critical` alert, the operation cancelled, and an
+  undo the `tier0` guard refuses (ADR-0005 rule 7 as amended by T-0129, TM-D23 rule 11).
 
 **The approval gate (EP-4) and separation of duties** (ADR-0005 rule 8).
 - **One kernel default and at most one registered gate.** `permission-only` allows (Plan already
