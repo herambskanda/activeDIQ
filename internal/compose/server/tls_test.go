@@ -38,9 +38,14 @@ func TestAPIListenerSpeaksOnlyTLSWithPerInstallCertificate(t *testing.T) {
 	roots := x509.NewCertPool()
 	roots.AddCert(leaf)
 
-	// TLS 1.1 is refused.
-	if _, err := tls.Dial("tcp", ln.Addr().String(), &tls.Config{RootCAs: roots, MaxVersion: tls.VersionTLS11}); err == nil {
+	// TLS 1.1 is refused by the server: offer only 1.1 (Go's client default floor is 1.2, which
+	// would fail client-side without ever reaching the server) and require the server's alert.
+	_, err = tls.Dial("tcp", ln.Addr().String(), &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS11, MaxVersion: tls.VersionTLS11})
+	if err == nil {
 		t.Fatal("TLS 1.1 must be refused")
+	}
+	if !strings.Contains(err.Error(), "protocol version not supported") {
+		t.Fatalf("TLS 1.1 must be refused by the server with a protocol-version alert, got: %v", err)
 	}
 	conn, err := tls.Dial("tcp", ln.Addr().String(), &tls.Config{RootCAs: roots})
 	if err != nil {
