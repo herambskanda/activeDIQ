@@ -1,3 +1,4 @@
 - [GSSAPI/CBT spike lessons](gssapi-cbt-lessons.md) — go-krb5 v0.1.0 lacks CBT, AD no SASL layer on TLS, Samba CBT modes, lab gotchas
 - [attr codec / corpus lessons](attr-codec-lessons.md) — oracle record shapes, unsatisfiable spec vectors, report-dir gotcha, no local Docker
 - [ldapfilter lessons](ldapfilter-lessons.md) — corpus/oracle arg contract, Render(f, schema) shape, preexisting safeprim red
+- [OData P8 lessons](odata-primitive-lessons.md) — external test pkg, multi-key corpus expect, home-registration checklist, pre-existing red
