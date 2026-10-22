@@ -38,7 +38,7 @@ const (
 	// checked without a side effect (for example: does the bound identity see tombstones in a
 	// DirSync object-security feed). Callers must not rely on it alone: they run the reconcile pass.
 	SupportState_SUPPORT_STATE_UNVERIFIED SupportState = 3
-	// A name held for a later specification (Apply, ReadSecret, VerifyUser).
+	// A name held for a later specification (ReadSecret, VerifyUser). Apply left this state in v1.1.
 	SupportState_SUPPORT_STATE_RESERVED SupportState = 4
 )
 

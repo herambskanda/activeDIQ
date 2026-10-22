@@ -1,0 +1,421 @@
+// activediq.connector.v1 — VerifyConnection (contract v1.1, T-0091).
+//
+// The connector's own rights check, run as the connector identity (TM §6.5 for AD, §6.6
+// "Verification" for Entra). It answers DM-24 (ConnectionVerification) and is the only source of
+// the connector's write gate: Plan and Apply refuse with ERROR_CODE_ACTIVATION_REFUSED_OVERPRIVILEGED
+// unless the connector's latest run for the connection opens it (contract §8.2).
+//
+// The response streams: findings are bounded by the Tier-0 set and the managed OU count (DM-24.I7),
+// which can exceed one message. A result is valid only if the stream ends with
+// VerificationCompleted (contract §2 rule 11).
+//
+// Findings hold identifiers, not names (DM-24.I3). They enumerate the forest's Tier-0 exposure, so
+// the server stores them under FR-16 access rules and never copies an identifier into an audit
+// event (DM-24.I5).
+syntax = "proto3";
+
+package activediq.connector.v1;
+
+import "activediq/connector/v1/common.proto";
+import "activediq/connector/v1/errors.proto";
+import "activediq/connector/v1/tier0.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1;connectorv1";
+
+// A feature family whose rights the connector compares with what it holds (TM §6.3 rows R1-R13 for
+// AD, the §6.6 allow-list rows for Entra). The server lists the enabled ones; anything the identity
+// holds beyond them is excessive, anything they need and it lacks is missing.
+enum RightsFamily {
+  RIGHTS_FAMILY_UNSPECIFIED = 0;
+  // AD, TM §6.3.
+  RIGHTS_FAMILY_AD_R1_INVENTORY = 1;
+  RIGHTS_FAMILY_AD_R2_CHANGE_TRACKING = 2;
+  RIGHTS_FAMILY_AD_R3_USER_LIFECYCLE = 3;
+  RIGHTS_FAMILY_AD_R4_ACCOUNT_STATE = 4;
+  RIGHTS_FAMILY_AD_R5_PASSWORD_RESET = 5;
+  RIGHTS_FAMILY_AD_R6_GROUPS = 6;
+  RIGHTS_FAMILY_AD_R7_COMPUTERS = 7;
+  RIGHTS_FAMILY_AD_R8_CONTACTS_OUS_MOVE = 8;
+  RIGHTS_FAMILY_AD_R9_RECYCLE_BIN_RESTORE = 9;
+  RIGHTS_FAMILY_AD_R10_LAPS_READ = 10;
+  RIGHTS_FAMILY_AD_R11_BITLOCKER_READ = 11;
+  RIGHTS_FAMILY_AD_R12_HOME_FOLDERS = 12;
+  // Entra, TM §6.6 allow list (application permissions only; the delegated attestation row is not
+  // a standing right and is never checked here).
+  RIGHTS_FAMILY_ENTRA_TENANT_READ = 21;
+  RIGHTS_FAMILY_ENTRA_SKU_READ = 22;
+  RIGHTS_FAMILY_ENTRA_LICENCE_ASSIGN = 23;
+  RIGHTS_FAMILY_ENTRA_USER_CREATE = 24;
+  RIGHTS_FAMILY_ENTRA_USER_UPDATE = 25;
+  RIGHTS_FAMILY_ENTRA_PASSWORD_RESET = 26;
+  RIGHTS_FAMILY_ENTRA_BLOCK = 27;
+  RIGHTS_FAMILY_ENTRA_HARD_DELETE_RESTORE = 28;
+  RIGHTS_FAMILY_ENTRA_SOFT_DELETE_MANAGER = 29;
+  RIGHTS_FAMILY_ENTRA_REVOKE_SESSIONS = 30;
+  RIGHTS_FAMILY_ENTRA_INVITE = 31;
+  RIGHTS_FAMILY_ENTRA_GROUP_CREATE = 32;
+  RIGHTS_FAMILY_ENTRA_GROUP_UPDATE = 33;
+  RIGHTS_FAMILY_ENTRA_GROUP_MEMBERSHIP = 34;
+  RIGHTS_FAMILY_ENTRA_USER_READ_DELTA = 35;
+  RIGHTS_FAMILY_ENTRA_GROUP_DELTA = 36;
+  RIGHTS_FAMILY_ENTRA_SIGN_IN_ACTIVITY = 37;
+  RIGHTS_FAMILY_ENTRA_ADMIN_PREFLIGHT = 38;
+  RIGHTS_FAMILY_ENTRA_HYBRID_MONITOR = 39;
+}
+
+// The checks of the forest-connection spec (V1-V9) and their Entra counterparts. The list a run
+// executes is code, pinned by `check_list_version` (DM-24).
+enum VerificationCheck {
+  VERIFICATION_CHECK_UNSPECIFIED = 0;
+  VERIFICATION_CHECK_V1_LOCATE = 1;
+  VERIFICATION_CHECK_V2_CLOCK = 2;
+  VERIFICATION_CHECK_V3_TRANSPORT = 3;
+  VERIFICATION_CHECK_V4_AUTHENTICATE = 4;
+  VERIFICATION_CHECK_V5_IDENTITY = 5;
+  VERIFICATION_CHECK_V6_TOPOLOGY = 6;
+  // TM §6.5 steps 1-3 and 5.
+  VERIFICATION_CHECK_V7_OVER_PRIVILEGE = 7;
+  // TM §6.3 R1 and R2 on every managed domain NC, and a change-feed prime.
+  VERIFICATION_CHECK_V8_READ_SUFFICIENCY = 8;
+  // TM §6.5 step 4.
+  VERIFICATION_CHECK_V9_EXCESS_IN_MANAGED_OUS = 9;
+  // Entra, TM §6.6 "Verification".
+  VERIFICATION_CHECK_EV1_TOKEN = 21;
+  VERIFICATION_CHECK_EV2_TENANT_IDENTITY = 22;
+  // Deny-list permissions and any directory role: blocks activation (TM-D5).
+  VERIFICATION_CHECK_EV3_OVER_PRIVILEGE = 23;
+  // Permissions the enabled features need and the app lacks.
+  VERIFICATION_CHECK_EV4_SUFFICIENCY = 24;
+  // Permissions beyond the enabled rows, extra key credentials, owners: warn.
+  VERIFICATION_CHECK_EV5_EXCESS = 25;
+}
+
+enum CheckOutcome {
+  CHECK_OUTCOME_UNSPECIFIED = 0;
+  CHECK_OUTCOME_PASS = 1;
+  CHECK_OUTCOME_WARN = 2;
+  CHECK_OUTCOME_FAIL = 3;
+  // The question could not be answered (FR-11). Blocks like FAIL for V7 and EV3.
+  CHECK_OUTCOME_COULD_NOT_VERIFY = 4;
+  CHECK_OUTCOME_NOT_RUN = 5;
+}
+
+// DM-24.I2, in the same order of precedence.
+enum VerificationVerdict {
+  VERIFICATION_VERDICT_UNSPECIFIED = 0;
+  VERIFICATION_VERDICT_PASS = 1;
+  // A blocking rights check failed: V7 or V8 (AD), EV3 or EV4 (Entra). This is the "refused" flag.
+  VERIFICATION_VERDICT_REFUSED = 2;
+  VERIFICATION_VERDICT_COULD_NOT_VERIFY = 3;
+  // Locate, clock, transport, authentication, identity or topology failed, or the run was cut off.
+  VERIFICATION_VERDICT_FAILED = 4;
+}
+
+enum FindingSeverity {
+  FINDING_SEVERITY_UNSPECIFIED = 0;
+  FINDING_SEVERITY_BLOCK = 1;
+  FINDING_SEVERITY_WARN = 2;
+  FINDING_SEVERITY_INFO = 3;
+}
+
+// What a finding says. EXCESSIVE and MISSING are the two halves the health check reports on every
+// run (TM-D1).
+enum FindingKind {
+  FINDING_KIND_UNSPECIFIED = 0;
+  // A right the identity holds that it should not: on a tier0 object (V7, block) or beyond the
+  // enabled families' mask in a managed OU (V9, warn).
+  FINDING_KIND_EXCESSIVE_RIGHT = 1;
+  // A right an enabled family needs and the identity lacks (V8, EV4).
+  FINDING_KIND_MISSING_RIGHT = 2;
+  // The identity is, transitively, a member of a Tier-0 group (TM §6.5 step 1).
+  FINDING_KIND_TIER0_GROUP_MEMBERSHIP = 3;
+  // Delegation is configured on the identity (TM §6.5 step 5).
+  FINDING_KIND_DELEGATION_CONFIGURED = 4;
+  // Entra: a deny-list application permission is granted (TM-D5).
+  FINDING_KIND_ENTRA_DENY_LIST_PERMISSION = 5;
+  // Entra: the service principal holds a directory role, active or eligible.
+  FINDING_KIND_ENTRA_DIRECTORY_ROLE = 6;
+  // Entra: the application has a key credential other than the certificate this connector holds.
+  FINDING_KIND_ENTRA_EXTRA_KEY_CREDENTIAL = 7;
+  // Entra: the application or its service principal has an owner (the app must have none).
+  FINDING_KIND_ENTRA_OWNER = 8;
+  // The check needed an answer it could not obtain (unreadable object, unreachable domain or GC,
+  // ACL not returned). Names the object it could not decide.
+  FINDING_KIND_COULD_NOT_VERIFY = 9;
+}
+
+// An AD right, as an access-mask bit and the object type it applies to.
+enum AdRightKind {
+  AD_RIGHT_KIND_UNSPECIFIED = 0;
+  AD_RIGHT_KIND_READ_PROPERTY = 1;
+  AD_RIGHT_KIND_WRITE_PROPERTY = 2;
+  AD_RIGHT_KIND_CREATE_CHILD = 3;
+  AD_RIGHT_KIND_DELETE_CHILD = 4;
+  AD_RIGHT_KIND_DELETE = 5;
+  AD_RIGHT_KIND_DELETE_TREE = 6;
+  AD_RIGHT_KIND_CONTROL_ACCESS = 7;
+  AD_RIGHT_KIND_VALIDATED_WRITE = 8;
+  AD_RIGHT_KIND_WRITE_DAC = 9;
+  AD_RIGHT_KIND_WRITE_OWNER = 10;
+  AD_RIGHT_KIND_GENERIC_ALL = 11;
+  AD_RIGHT_KIND_GENERIC_WRITE = 12;
+  // sDRightsEffective reports the identity may write the SACL (SACL_SECURITY_INFORMATION).
+  AD_RIGHT_KIND_WRITE_SACL = 13;
+}
+
+message AdRight {
+  AdRightKind kind = 1;
+  // The ACE's ObjectType or the property/class/right it was found on: an attribute or class
+  // schemaIDGUID, a property-set or control-access rightsGuid. Unset when the right covers all.
+  Guid object_type = 2;
+  // The raw ACCESS_MASK bits behind `kind`, for diagnosis.
+  uint32 access_mask = 3;
+  // lDAPDisplayName of `object_type` when it is an attribute or class, resolved from the schema.
+  // Display only.
+  string object_type_name = 4;
+}
+
+enum DelegationSetting {
+  DELEGATION_SETTING_UNSPECIFIED = 0;
+  // userAccountControl TRUSTED_FOR_DELEGATION.
+  DELEGATION_SETTING_UNCONSTRAINED = 1;
+  // msDS-AllowedToDelegateTo is set.
+  DELEGATION_SETTING_CONSTRAINED = 2;
+  // userAccountControl TRUSTED_TO_AUTH_FOR_DELEGATION.
+  DELEGATION_SETTING_PROTOCOL_TRANSITION = 3;
+  // The identity is listed in an object's msDS-AllowedToActOnBehalfOfOtherIdentity (a DC's, §6.5).
+  DELEGATION_SETTING_RESOURCE_BASED = 4;
+}
+
+enum EntraRoleAssignmentKind {
+  ENTRA_ROLE_ASSIGNMENT_KIND_UNSPECIFIED = 0;
+  ENTRA_ROLE_ASSIGNMENT_KIND_ACTIVE = 1;
+  ENTRA_ROLE_ASSIGNMENT_KIND_ELIGIBLE = 2;
+}
+
+// An Entra right: an application permission, a directory role, a key credential or an owner.
+message EntraRight {
+  oneof right {
+    // An app role of a resource (Microsoft Graph) granted to the service principal.
+    EntraAppPermission app_permission = 1;
+    EntraDirectoryRole directory_role = 2;
+    EntraKeyCredential key_credential = 3;
+    // The owner object id; `RightsFinding.object` is the application or service principal owned.
+    Guid owner = 4;
+  }
+}
+
+message EntraAppPermission {
+  // The resource service principal's appRole id.
+  Guid app_role_id = 1;
+  // The permission's value, e.g. "Directory.ReadWrite.All". Display and classification by the
+  // connector's registered lists; never parsed by the server.
+  string value = 2;
+  Guid resource_app_id = 3;
+}
+
+message EntraDirectoryRole {
+  Guid role_definition_id = 1;
+  EntraRoleAssignmentKind assignment = 2;
+  // "/" for the tenant, or the administrative unit id when scoped to one.
+  string directory_scope_id = 3;
+}
+
+// Metadata of one key credential on the application. Never key material.
+message EntraKeyCredential {
+  Guid key_id = 1;
+  // customKeyIdentifier (the certificate thumbprint for certificates).
+  bytes thumbprint = 2;
+  string key_type = 3;
+  google.protobuf.Timestamp start = 4;
+  google.protobuf.Timestamp end = 5;
+}
+
+// Which right, whatever the directory.
+message RightRef {
+  oneof right {
+    AdRight ad = 1;
+    DelegationSetting delegation = 2;
+    EntraRight entra = 3;
+  }
+}
+
+// Where a right comes from, so the operator can remove it at its source.
+message RightSource {
+  oneof source {
+    // An ACE in an object's DACL (TM §6.5 step 3 and 4).
+    AceSource ace = 1;
+    // A constructed effective-rights attribute read as the identity (TM §6.5 step 2).
+    EffectiveRightsAttribute effective_attribute = 2;
+    // A group membership path from the identity to a Tier-0 group (TM §6.5 step 1).
+    MembershipPath membership = 3;
+    // An attribute of the identity itself (delegation settings, TM §6.5 step 5).
+    string identity_attribute = 4;
+    // Entra: the appRoleAssignment, roleAssignment or roleEligibilitySchedule object id.
+    Guid entra_assignment = 5;
+    // The right is expected by an enabled family and not found (MISSING findings).
+    RightsFamily expected_by = 6;
+  }
+}
+
+message AceSource {
+  // The object whose DACL holds the ACE.
+  Guid on_object = 1;
+  bool inherited = 2;
+  // The object the ACE is inherited from, when the connector can tell.
+  Guid inherited_from = 3;
+  // The trustee SID of the ACE: the identity's own SID or a group SID it holds (tokenGroups).
+  Sid trustee = 4;
+  // The group the trustee SID belongs to, when it resolves to an object in this forest.
+  Guid trustee_group = 5;
+}
+
+enum EffectiveRightsAttributeName {
+  EFFECTIVE_RIGHTS_ATTRIBUTE_NAME_UNSPECIFIED = 0;
+  EFFECTIVE_RIGHTS_ATTRIBUTE_NAME_ALLOWED_ATTRIBUTES_EFFECTIVE = 1;
+  EFFECTIVE_RIGHTS_ATTRIBUTE_NAME_ALLOWED_CHILD_CLASSES_EFFECTIVE = 2;
+  EFFECTIVE_RIGHTS_ATTRIBUTE_NAME_SD_RIGHTS_EFFECTIVE = 3;
+}
+
+message EffectiveRightsAttribute {
+  EffectiveRightsAttributeName name = 1;
+}
+
+// Identity -> group_1 -> … -> the Tier-0 group. Primary-group edges and foreign security
+// principals included. A hop with no object in this forest is a SID only.
+message MembershipPath {
+  repeated MembershipHop hops = 1;
+}
+
+message MembershipHop {
+  Guid group = 1;
+  Sid sid = 2;
+  bool primary_group_edge = 3;
+}
+
+// One finding. Maps 1:1 to a DM-24 Finding (contract §8.4 has the mapping).
+message RightsFinding {
+  VerificationCheck check = 1;
+  FindingKind kind = 2;
+  FindingSeverity severity = 3;
+  // A registered finding code (DM X6), e.g. "over.tier0_group", "over.tier0_write".
+  string code = 4;
+  // The object the finding is about: the Tier-0 group, the tier0 object carrying the right, the
+  // managed OU, the identity itself, the Entra application. Unset when no object applies.
+  Guid object = 5;
+  // AD: the domain of `object`.
+  Sid object_domain_sid = 6;
+  RightRef right = 7;
+  RightSource source = 8;
+  // Why `object` is tier0, when that is what makes the finding blocking (V7, the C1/C13 groups of
+  // step 1, designated groups).
+  repeated Tier0Basis object_tier0_basis = 9;
+  // The family a MISSING or V9 EXCESSIVE finding is measured against.
+  RightsFamily family = 10;
+  // DM-24.I4: SHA-256 over the canonical encoding (audit/canon) of
+  // ("adq-finding/1", check, code, object, qualifier), computed by the connector so the server
+  // stores, and a Tier0Override acknowledges, exactly the value the write gate later compares.
+  bytes fingerprint = 11;
+}
+
+message VerifyConnectionRequest {
+  ConnectionRef connection = 1;
+  // The run kind (DM-24), echoed and logged.
+  VerificationRunKind run_kind = 2;
+  // Generated by the server; becomes the DM-24 row id.
+  Guid verification_id = 3;
+  // The families the connection has enabled. Rights beyond them are excessive, rights they need
+  // and the identity lacks are missing. Empty = read-only connection (R1, R2 or Entra read rows).
+  repeated RightsFamily enabled_families = 4;
+  // AD: the domain NCs the connection manages (V8).
+  repeated Guid managed_domains = 5;
+  // AD: the OUs (delegation roots) whose ACEs V9 compares with the families' mask.
+  repeated Guid managed_roots = 6;
+  // Customer-designated tier0 objects and groups (TM §6.4). Added to the computed set; step 1
+  // intersects the identity's groups with them.
+  repeated Guid designated_tier0 = 7;
+}
+
+enum VerificationRunKind {
+  VERIFICATION_RUN_KIND_UNSPECIFIED = 0;
+  VERIFICATION_RUN_KIND_ONBOARDING = 1;
+  VERIFICATION_RUN_KIND_ACTIVATION = 2;
+  VERIFICATION_RUN_KIND_RESUME = 3;
+  VERIFICATION_RUN_KIND_CREDENTIAL_CHANGE = 4;
+  VERIFICATION_RUN_KIND_SCHEDULED = 5;
+  VERIFICATION_RUN_KIND_MANUAL = 6;
+}
+
+// Who the connector authenticated as (DM-24 `observed_identity`).
+message ObservedIdentity {
+  oneof identity {
+    AdObservedIdentity ad = 1;
+    EntraObservedIdentity entra = 2;
+  }
+}
+
+message AdObservedIdentity {
+  Guid object_guid = 1;
+  Sid object_sid = 2;
+}
+
+message EntraObservedIdentity {
+  Guid app_id = 1;
+  Guid service_principal_id = 2;
+  Guid application_object_id = 3;
+}
+
+message VerificationHeader {
+  Guid verification_id = 1;
+  string check_list_version = 2;
+  google.protobuf.Timestamp started_at = 3;
+  ObservedIdentity identity = 4;
+}
+
+message FindingsChunk {
+  repeated RightsFinding findings = 1;
+}
+
+// The connector's computed tier0 set (C1-C15 or E1-E4 plus `designated_tier0`), streamed so the
+// server can compare it with the set it derives from inventory. A divergence is a health finding
+// for the server, never a reason for the connector to shrink its own set.
+message Tier0SetChunk {
+  repeated Tier0Member members = 1;
+}
+
+message Tier0Member {
+  Guid object = 1;
+  repeated Tier0Basis basis = 2;
+}
+
+message CheckResult {
+  VerificationCheck check = 1;
+  CheckOutcome outcome = 2;
+  // Set when the check failed for a reason that is a connector error (unreachable DC, bind, TLS).
+  optional ConnectorError error = 3;
+}
+
+message VerificationCompleted {
+  VerificationVerdict verdict = 1;
+  repeated CheckResult checks = 2;
+  google.protobuf.Timestamp completed_at = 3;
+  uint32 finding_count = 4;
+  uint32 tier0_member_count = 5;
+  // Whether this run, by itself, opens the connector's write gate: V7/EV3 PASS, or FAIL with
+  // overridable findings only (the server's Tier0Override decides those, contract §8.2). False for
+  // COULD_NOT_VERIFY, NOT_RUN or a FAILED verdict.
+  bool write_gate_openable = 6;
+}
+
+message VerifyConnectionResponse {
+  oneof event {
+    // First message, exactly once.
+    VerificationHeader header = 1;
+    FindingsChunk findings = 2;
+    Tier0SetChunk tier0_set = 3;
+    // Last message, exactly once. A stream that ends without it is an incomplete run (verdict
+    // FAILED, `run_interrupted`).
+    VerificationCompleted completed = 4;
+  }
+}

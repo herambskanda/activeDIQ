@@ -13,6 +13,7 @@ syntax = "proto3";
 package activediq.connector.v1;
 
 import "activediq/connector/v1/common.proto";
+import "activediq/connector/v1/tier0.proto";
 import "google/protobuf/duration.proto";
 
 option go_package = "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1;connectorv1";
@@ -65,6 +66,10 @@ enum ErrorCode {
   // to a wider root, ever.
   ERROR_CODE_DELEGATION_ROOT_GONE = 22;
 
+  // Apply: the target changed since Plan (TargetPrecondition no longer holds). Nothing was written.
+  // The caller re-plans; it never retries the same Apply (contract v1.1, §8.1).
+  ERROR_CODE_TARGET_CHANGED = 23;
+
   // The change-feed cookie cannot be continued (DM-19.I3, I4, I6). Details carry the reason. The
   // caller's SyncCursor becomes resync_required.
   ERROR_CODE_STALE_COOKIE = 30;
@@ -72,6 +77,15 @@ enum ErrorCode {
   // An unmapped provider failure. The LDAP result code or HTTP status is in the detail for
   // diagnosis only; the connector logs the cause, the caller gets no directory text.
   ERROR_CODE_PROVIDER_FAILURE = 40;
+
+  // Plan or Apply: an object the write touches is tier0 (TM-D2, DM-16.I8), or the request's
+  // Tier-0 context is missing, stale or contradicted by the target (contract §8.3). Raised by the
+  // connector on its own evaluation, whatever the server asked. Nothing was written. Never retried.
+  ERROR_CODE_TIER0_REFUSED = 50;
+  // Plan or Apply: the connector's own last VerifyConnection for this connection does not open its
+  // write gate (TM-D1, DM-10.I11): over-privileged with no covering override, could not verify,
+  // not run, failed, or too old. Nothing was written. Fixed by a passing VerifyConnection.
+  ERROR_CODE_ACTIVATION_REFUSED_OVERPRIVILEGED = 51;
 }
 
 // What the caller should do next. Advice, not authority: callers own their retry budgets.
@@ -84,6 +98,8 @@ enum RetryAdvice {
   RETRY_ADVICE_AFTER_RESYNC = 4;
   // A human or the connection's owner must fix something (certificate, credential, delegation).
   RETRY_ADVICE_AFTER_OPERATOR_ACTION = 5;
+  // Plan again from a fresh read; never resend the same Apply (TARGET_CHANGED).
+  RETRY_ADVICE_AFTER_REPLAN = 6;
 }
 
 enum DcFailure {
@@ -170,6 +186,61 @@ message LimitDetails {
   uint64 value = 2;
 }
 
+// At which point of the evaluation the connector refused (contract §8.1 order). The stages before
+// LIVE_REREAD are decided before any directory call.
+enum Tier0RefusalStage {
+  TIER0_REFUSAL_STAGE_UNSPECIFIED = 0;
+  // Tier0Context missing, its CorrelationStatement missing or naming another target (§8.3 F1).
+  TIER0_REFUSAL_STAGE_CONTEXT_MISSING = 1;
+  // CorrelationStatement older than the connector's maximum statement age (F3).
+  TIER0_REFUSAL_STAGE_CONTEXT_STALE = 2;
+  // The request's own context marks a touched object tier0: a designation or a correlated tier0
+  // peer (F2), or an inconsistent peer that counts as tier0 (F5).
+  TIER0_REFUSAL_STAGE_REQUEST_CONTEXT = 3;
+  // The object is in the connector's own computed set from its last VerifyConnection.
+  TIER0_REFUSAL_STAGE_CONNECTOR_SET = 4;
+  // The live re-read found the object tier0 now (for example added to Domain Admins since the last
+  // set computation). Reads happened; no write did.
+  TIER0_REFUSAL_STAGE_LIVE_REREAD = 5;
+  // The live re-read contradicts the CorrelationStatement: a listed peer's evidence (anchor or SID)
+  // does not match the target as read, so the statement was made for another object (F4).
+  TIER0_REFUSAL_STAGE_CONTEXT_CONTRADICTED = 6;
+}
+
+message Tier0RefusedDetails {
+  // The touched object that was refused (the target or another object the change touches).
+  Guid object = 1;
+  repeated Tier0Basis basis = 2;
+  Tier0RefusalStage stage = 3;
+}
+
+enum WriteGateState {
+  WRITE_GATE_STATE_UNSPECIFIED = 0;
+  // The last run has V7/EV3 FAIL and the request's override does not cover every block finding.
+  WRITE_GATE_STATE_OVERPRIVILEGED = 1;
+  // No run of this connector for this connection and credential since it started.
+  WRITE_GATE_STATE_NOT_VERIFIED = 2;
+  // The last run's V7/EV3 is COULD_NOT_VERIFY or NOT_RUN, or the run's verdict is FAILED.
+  WRITE_GATE_STATE_COULD_NOT_VERIFY = 3;
+  // The last run is older than the connector's maximum verification age.
+  WRITE_GATE_STATE_STALE = 4;
+  // V8 or EV4 refused: under-privilege is never overridable (FR-12).
+  WRITE_GATE_STATE_INSUFFICIENT = 5;
+}
+
+message ActivationRefusedDetails {
+  WriteGateState state = 1;
+  // The connector's run the decision rests on, when there is one.
+  Guid verification_id = 2;
+  // Block findings of that run not covered by the request's override. A count only: the
+  // fingerprints are in the run's findings, readable under FR-16.
+  uint32 unacknowledged_findings = 3;
+}
+
+message TargetChangedDetails {
+  Guid object = 1;
+}
+
 message ConnectorError {
   ErrorCode code = 1;
   RetryAdvice retry = 2;
@@ -187,5 +258,8 @@ message ConnectorError {
     ThrottledDetails throttled = 15;
     RootGoneDetails root_gone = 16;
     LimitDetails limit = 17;
+    Tier0RefusedDetails tier0_refused = 18;
+    ActivationRefusedDetails activation_refused = 19;
+    TargetChangedDetails target_changed = 20;
   }
 }

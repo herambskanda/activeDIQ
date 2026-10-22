@@ -1,0 +1,173 @@
+// activediq.connector.v1 — Plan and Apply (the write group, contract v1.1, T-0091).
+//
+// The operation pipeline (ADR-0005) calls Plan while it plans a step: the connector re-reads the
+// target live on the pinned DC, evaluates tier0 on its own (TM-D2 check 1 runs on this live read)
+// and returns the before-state precondition. The pipeline then calls Apply, through
+// `directory/client.Write` with a Clearance only (ADR-0005 rule 2, O2), with that precondition;
+// the connector repeats every check and performs the conditional write of ADR-0005 rule 4 only if
+// the target is unchanged and not tier0. The connector keeps no plan state: Apply stands on its own.
+//
+// Invariants (connector-contract.md §8):
+//   * A tier0 target fails with ERROR_CODE_TIER0_REFUSED and no directory write, whatever the
+//     server asks (TM-D2). Every object the typed change touches is evaluated, not only `target`.
+//   * Plan and Apply fail with ERROR_CODE_ACTIVATION_REFUSED_OVERPRIVILEGED while the connector's
+//     own last VerifyConnection for the connection does not open its write gate (DM-10.I11).
+//   * No credential material travels in these messages (fitness-proto P7). A write kind that sets a
+//     secret (password reset) needs its own sealed-secret shape and a security-architect review.
+//   * The touched set is derived by the connector from the typed change, never from a list the
+//     server sends.
+syntax = "proto3";
+
+package activediq.connector.v1;
+
+import "activediq/connector/v1/common.proto";
+import "activediq/connector/v1/tier0.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1;connectorv1";
+
+// The write operation. v1.1 defines the envelope only: the concrete kinds (create user, set
+// attribute, add member, move, …) are added one per spec ticket, each with its WriteChange arm,
+// its touched-set rule and its conformance cases. Until a kind exists, every Plan and Apply fails
+// with ERROR_CODE_INVALID_ARGUMENT, and Describe reports PLAN and APPLY as UNSUPPORTED.
+enum WriteKind {
+  WRITE_KIND_UNSPECIFIED = 0;
+}
+
+// The typed content of the change. Each WriteKind adds one message arm here (in a `oneof change`
+// introduced with the first kind). No arm may carry a DN, filter or script as text (P2), an Any
+// (P3), or a secret (P7).
+message WriteChange {}
+
+// The object the write is about. For a kind that creates an object this is the parent container.
+message WriteTarget {
+  Guid object = 1;
+  // AD: the domain NC holding the object, so the connector asks a writable DC of that domain.
+  // Entra: unset.
+  Guid nc_guid = 2;
+}
+
+// What Plan observed, so Apply can refuse a target that changed in between (lost update) instead
+// of writing over it.
+message TargetPrecondition {
+  // AD: the DC Plan read from. Apply is pinned to it (read-your-writes, DM-15.I3); an unreachable
+  // pinned DC is ERROR_CODE_UNREACHABLE_DC, never a silent switch.
+  DcIdentity dc = 1;
+  // AD: uSNChanged of the target on `dc`. Meaningful only with `dc`.
+  optional uint64 usn_changed = 2;
+  // SHA-256 over the canonical encoding of the attribute values the kind reads or changes and the
+  // facts the tier0 evaluation used (memberships, parent), computed by the connector. Entra has no
+  // general If-Match on directory objects, so this digest is the Entra precondition.
+  bytes state_digest = 3;
+}
+
+// The ADR-0005 step idempotency key (DM-42.I1). UUIDs travel as Guid (16 bytes, RFC 4122 order).
+message StepKey {
+  Guid operation_id = 1;
+  uint32 item = 2;
+  uint32 step = 3;
+}
+
+// Who asked (TM-TB6-T5): logged by the connector locally with the step key, so a connector never
+// acts without its own record. Identifiers only.
+message ActingPrincipal {
+  // DM-30 Account id.
+  Guid account_id = 1;
+  // The API token when the operation came from a token (ADR-0004), else unset.
+  Guid api_token_id = 2;
+}
+
+// The connector's own Tier-0 evaluation of a write, returned for the audit trail.
+message Tier0Evaluation {
+  // Every object evaluated: the target and every object the typed change touches.
+  repeated Guid evaluated = 1;
+  // When the connector computed the tier0 set it checked against (its last VerifyConnection).
+  google.protobuf.Timestamp tier0_set_computed_at = 2;
+  // The connector's own verification run the write gate rests on.
+  Guid verification_id = 3;
+  // Echo of Tier0Context.tier0_revision.
+  uint64 server_tier0_revision = 4;
+}
+
+// The Tier0Override in force for the connection's current credential (DM-25), when there is one.
+// It can open the write gate only over V7/EV3 findings whose fingerprints it lists; it never covers
+// V8/EV4, COULD_NOT_VERIFY, NOT_RUN or a failed run (DM-10.I9 (b), I11), and it never touches
+// TM-D2: a tier0 target is refused with or without it.
+message WriteGateOverride {
+  Guid override_id = 1;
+  // DM-24.I4 fingerprints, exactly as VerifyConnection returned them in RightsFinding.fingerprint.
+  repeated bytes acknowledged_fingerprints = 2;
+}
+
+message PlanRequest {
+  ConnectionRef connection = 1;
+  StepKey step = 2;
+  WriteTarget target = 3;
+  WriteKind kind = 4;
+  WriteChange change = 5;
+  Tier0Context tier0 = 6;
+  optional WriteGateOverride tier0_override = 7;
+  ActingPrincipal acting_principal = 8;
+  // AD: the operation's pinned writable DC for the target's NC (ADR-0005 rule 5). A pinned DC that
+  // cannot serve is ERROR_CODE_UNREACHABLE_DC, never a silent switch.
+  DcSelection dc = 9;
+}
+
+message PlanResponse {
+  StepKey step = 1;
+  WriteTarget target = 2;
+  // Display only (DM-16.I2).
+  DnValue target_dn = 3;
+  Observation observed = 4;
+  // The before-state Apply's conditional write is predicated on (ADR-0005 rule 4).
+  TargetPrecondition precondition = 5;
+  Tier0Evaluation tier0 = 6;
+  // The target is already in the requested state: Apply would write nothing.
+  bool no_op = 7;
+  // The before-state of the attributes the change touches, for the planned diff (DM-42).
+  // Secret attributes never appear (SecretAttrs).
+  DirectoryEntry before = 8;
+}
+
+message ApplyRequest {
+  ConnectionRef connection = 1;
+  // ADR-0005 idempotency key and the fenced claim's attempt number; both are logged.
+  StepKey step = 2;
+  uint32 attempt = 3;
+  WriteTarget target = 4;
+  WriteKind kind = 5;
+  WriteChange change = 6;
+  // Re-evaluated in full: Apply does not trust that Plan passed.
+  Tier0Context tier0 = 7;
+  // Mandatory. Without one the request is ERROR_CODE_INVALID_ARGUMENT, so Plan cannot be skipped.
+  // `precondition.dc` is the DC pin.
+  TargetPrecondition precondition = 8;
+  optional WriteGateOverride tier0_override = 9;
+  ActingPrincipal acting_principal = 10;
+  // The Step's plan digest (ADR-0005 rule 2). The connector recomputes it from the typed fields of
+  // this request with the same function and refuses a mismatch (INVALID_ARGUMENT, rule id
+  // "PlanDigestMismatch") before any directory call.
+  bytes plan_digest = 11;
+}
+
+enum ApplyOutcome {
+  APPLY_OUTCOME_UNSPECIFIED = 0;
+  APPLY_OUTCOME_APPLIED = 1;
+  // ADR-0005 rule 4 "repeat after success": the after-state was already in place; nothing was
+  // written. `read_back` proves it.
+  APPLY_OUTCOME_ALREADY_APPLIED = 2;
+}
+
+message ApplyResponse {
+  StepKey step = 1;
+  uint32 attempt = 2;
+  WriteTarget target = 3;
+  ApplyOutcome outcome = 4;
+  // The DC (AD) that took the write and its clock, for read-your-writes and the audit trail.
+  Observation written = 5;
+  // AD: uSNChanged of the target on `written.dc` after the write.
+  optional uint64 usn_changed_after = 6;
+  // The touched attributes as read back after the write (ADR-0005 rule 4). No secret attribute.
+  DirectoryEntry read_back = 7;
+  Tier0Evaluation tier0 = 8;
+}

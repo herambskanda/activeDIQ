@@ -186,10 +186,14 @@ func (TimeSentinel) EnumDescriptor() ([]byte, []int) {
 	return file_activediq_connector_v1_common_proto_rawDescGZIP(), []int{2}
 }
 
-// Every operation of the contract, including the three whose NAMES are reserved by T-0064 and
-// whose messages are specified later. Reserved operations are listed in Describe with state
-// RESERVED and any call to them fails with ERROR_CODE_CAPABILITY_UNSUPPORTED. Adding a shape later
-// is additive: it never renumbers or changes anything here.
+// Every operation of the contract, including the two whose NAMES are reserved and whose messages
+// are specified later (READ_SECRET, VERIFY_USER). Reserved operations are listed in Describe with
+// state RESERVED and any call to them fails with ERROR_CODE_CAPABILITY_UNSUPPORTED. Adding a shape
+// later is additive: it never renumbers or changes anything here.
+//
+// v1.1 (T-0091) gave APPLY its shape and added PLAN and VERIFY_CONNECTION. A provider reports
+// PLAN and APPLY SUPPORTED only when its write path is wired for at least one WriteKind and it
+// also reports VERIFY_CONNECTION SUPPORTED; otherwise UNSUPPORTED (never RESERVED again).
 type Operation int32
 
 const (
@@ -200,8 +204,12 @@ const (
 	Operation_OPERATION_READ            Operation = 4
 	Operation_OPERATION_READ_PER_DC     Operation = 5
 	Operation_OPERATION_CHANGE_FEED     Operation = 6
-	// Reserved names (blueprint §7.1). No message shape in v1.
-	Operation_OPERATION_APPLY       Operation = 100
+	// v1.1: the write group and the rights check.
+	Operation_OPERATION_PLAN              Operation = 7
+	Operation_OPERATION_VERIFY_CONNECTION Operation = 8
+	// Named in v1 (blueprint §7.1), shaped in v1.1 (write.proto). The number is kept.
+	Operation_OPERATION_APPLY Operation = 100
+	// Reserved names. No message shape yet.
 	Operation_OPERATION_READ_SECRET Operation = 101
 	Operation_OPERATION_VERIFY_USER Operation = 102
 )
@@ -216,21 +224,25 @@ var (
 		4:   "OPERATION_READ",
 		5:   "OPERATION_READ_PER_DC",
 		6:   "OPERATION_CHANGE_FEED",
+		7:   "OPERATION_PLAN",
+		8:   "OPERATION_VERIFY_CONNECTION",
 		100: "OPERATION_APPLY",
 		101: "OPERATION_READ_SECRET",
 		102: "OPERATION_VERIFY_USER",
 	}
 	Operation_value = map[string]int32{
-		"OPERATION_UNSPECIFIED":     0,
-		"OPERATION_DESCRIBE":        1,
-		"OPERATION_DESCRIBE_SCHEMA": 2,
-		"OPERATION_SCOPED_SEARCH":   3,
-		"OPERATION_READ":            4,
-		"OPERATION_READ_PER_DC":     5,
-		"OPERATION_CHANGE_FEED":     6,
-		"OPERATION_APPLY":           100,
-		"OPERATION_READ_SECRET":     101,
-		"OPERATION_VERIFY_USER":     102,
+		"OPERATION_UNSPECIFIED":       0,
+		"OPERATION_DESCRIBE":          1,
+		"OPERATION_DESCRIBE_SCHEMA":   2,
+		"OPERATION_SCOPED_SEARCH":     3,
+		"OPERATION_READ":              4,
+		"OPERATION_READ_PER_DC":       5,
+		"OPERATION_CHANGE_FEED":       6,
+		"OPERATION_PLAN":              7,
+		"OPERATION_VERIFY_CONNECTION": 8,
+		"OPERATION_APPLY":             100,
+		"OPERATION_READ_SECRET":       101,
+		"OPERATION_VERIFY_USER":       102,
 	}
 )
 
@@ -1392,7 +1404,7 @@ const file_activediq_connector_v1_common_proto_rawDesc = "" +
 	"\fTimeSentinel\x12\x1d\n" +
 	"\x19TIME_SENTINEL_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12TIME_SENTINEL_ZERO\x10\x01\x12\x15\n" +
-	"\x11TIME_SENTINEL_MAX\x10\x02*\x8f\x02\n" +
+	"\x11TIME_SENTINEL_MAX\x10\x02*\xc4\x02\n" +
 	"\tOperation\x12\x19\n" +
 	"\x15OPERATION_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12OPERATION_DESCRIBE\x10\x01\x12\x1d\n" +
@@ -1400,7 +1412,9 @@ const file_activediq_connector_v1_common_proto_rawDesc = "" +
 	"\x17OPERATION_SCOPED_SEARCH\x10\x03\x12\x12\n" +
 	"\x0eOPERATION_READ\x10\x04\x12\x19\n" +
 	"\x15OPERATION_READ_PER_DC\x10\x05\x12\x19\n" +
-	"\x15OPERATION_CHANGE_FEED\x10\x06\x12\x13\n" +
+	"\x15OPERATION_CHANGE_FEED\x10\x06\x12\x12\n" +
+	"\x0eOPERATION_PLAN\x10\a\x12\x1f\n" +
+	"\x1bOPERATION_VERIFY_CONNECTION\x10\b\x12\x13\n" +
 	"\x0fOPERATION_APPLY\x10d\x12\x19\n" +
 	"\x15OPERATION_READ_SECRET\x10e\x12\x19\n" +
 	"\x15OPERATION_VERIFY_USER\x10fBRZPgithub.com/skenzeriq/activediq/internal/proto/activediq/connector/v1;connectorv1b\x06proto3"
