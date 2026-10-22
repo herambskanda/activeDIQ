@@ -11,7 +11,7 @@ var now = time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
 func ev() Evaluator { return Evaluator{Now: func() time.Time { return now }} }
 
 func root(id string, anc ...string) ScopeRoot {
-	r := ScopeRoot{ID: ObjectID(id)}
+	r := ScopeRoot{ID: ObjectID(id), Complete: true}
 	for _, a := range anc {
 		r.Ancestors = append(r.Ancestors, ObjectID(a))
 	}
@@ -224,5 +224,86 @@ func TestOwnerScopedReport(t *testing.T) {
 	owner.Disabled = true
 	if _, err := ev().FilterForOwner(owner, pReset, rows); !errors.Is(err, ErrOwnerDead) {
 		t.Errorf("disabled owner: %v", err)
+	}
+}
+
+func TestGrantFailsClosedOnIncompleteRoots(t *testing.T) {
+	reset := Role{Permissions: []Permission{pReset}}
+	e := ev()
+	incomplete := func(r ScopeRoot) ScopeRoot { r.Complete = false; return r }
+	mk := func(excl ScopeRoot) *Principal {
+		return &Principal{ID: "g", Assignments: []Assignment{{Role: reset,
+			Scope: Scope{Include: []ScopeRoot{root("corp")}, Exclude: []ScopeRoot{excl}}}}}
+	}
+	// (a) grantor exclusion lacks its chain: must not let a grant of corp with no exclusion pass.
+	g := mk(ScopeRoot{ID: "admins"})
+	if err := e.CheckGrant(g, nil, reset, Scope{Include: []ScopeRoot{root("corp")}}); !errors.Is(err, ErrFactsIncomplete) {
+		t.Errorf("incomplete grantor exclusion: %v", err)
+	}
+	// Control: with the live chain the same grant is an escalation.
+	g = mk(root("admins", "corp"))
+	if err := e.CheckGrant(g, nil, reset, Scope{Include: []ScopeRoot{root("corp")}}); !errors.Is(err, ErrEscalation) {
+		t.Errorf("complete chain: %v", err)
+	}
+	// (b) incomplete new include root, and incomplete new exclude root.
+	if err := e.CheckGrant(g, nil, reset, Scope{Include: []ScopeRoot{incomplete(root("hr", "corp"))}}); !errors.Is(err, ErrFactsIncomplete) {
+		t.Errorf("incomplete include: %v", err)
+	}
+	if err := e.CheckGrant(g, nil, reset, Scope{Include: []ScopeRoot{root("hr", "corp")},
+		Exclude: []ScopeRoot{incomplete(root("x", "hr", "corp"))}}); !errors.Is(err, ErrFactsIncomplete) {
+		t.Errorf("incomplete exclude: %v", err)
+	}
+}
+
+func TestBlankIDsNeverMatch(t *testing.T) {
+	p := tech([]Permission{pReset}, Scope{Include: []ScopeRoot{{ID: "", Complete: true}}})
+	tg := Target{ID: "u", Ancestors: []ObjectID{""}, Complete: true}
+	if d := ev().Authorize(p, nil, pReset, tg); d.Allowed || d.Reason != ReasonFactsIncomplete {
+		t.Errorf("blank chain element: %+v", d)
+	}
+	g := tech([]Permission{pReset}, Scope{Include: []ScopeRoot{root("ouA")}})
+	err := ev().CheckGrant(g, nil, Role{Permissions: []Permission{pReset}}, Scope{Include: []ScopeRoot{{ID: "", Complete: true}}})
+	if !errors.Is(err, ErrInvalidGrant) {
+		t.Errorf("blank root: %v", err)
+	}
+	if (ScopeRoot{ID: "", Ancestors: []ObjectID{"a"}}).within("") {
+		t.Error("blank within matched")
+	}
+}
+
+func TestTokenScopeNarrowing(t *testing.T) {
+	p := tech([]Permission{pReset}, Scope{Include: []ScopeRoot{root("corp")}})
+	tok := tokenFor(pReset)
+	narrow := Scope{Include: []ScopeRoot{root("ouA", "corp")}}
+	tok.Scope = &narrow
+	if d := ev().Authorize(p, tok, pReset, target("u", "ouA", "corp")); !d.Allowed {
+		t.Errorf("inside token scope: %+v", d)
+	}
+	if d := ev().Authorize(p, tok, pReset, target("u", "ouB", "corp")); d.Allowed {
+		t.Errorf("outside token scope allowed: %+v", d)
+	}
+	empty := Scope{}
+	tok.Scope = &empty
+	if d := ev().Authorize(p, tok, pReset, target("u", "ouA", "corp")); d.Allowed {
+		t.Error("empty token scope allowed")
+	}
+	// Grant through a narrowed token cannot exceed the token scope.
+	tok.Scope = &narrow
+	reset := Role{Permissions: []Permission{pReset}}
+	if err := ev().CheckGrant(p, tok, reset, Scope{Include: []ScopeRoot{root("ouB", "corp")}}); !errors.Is(err, ErrEscalation) {
+		t.Errorf("grant beyond token scope: %v", err)
+	}
+	if err := ev().CheckGrant(p, tok, reset, Scope{Include: []ScopeRoot{root("ouHR", "ouA", "corp")}}); err != nil {
+		t.Errorf("grant within token scope: %v", err)
+	}
+}
+
+func TestTokenInvalidIsNotOwnerDead(t *testing.T) {
+	p := tech([]Permission{pReset}, Scope{Include: []ScopeRoot{root("ouA")}})
+	if err := ev().CheckToken(p, nil); !errors.Is(err, ErrTokenInvalid) {
+		t.Errorf("nil token: %v", err)
+	}
+	if err := ev().CheckToken(p, &Token{ExpiresAt: now}); !errors.Is(err, ErrTokenInvalid) {
+		t.Errorf("expired token: %v", err)
 	}
 }

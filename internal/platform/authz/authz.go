@@ -39,6 +39,11 @@ var (
 	ErrEscalation = errors.New("authz: grantor does not hold every privilege of the role over the whole scope")
 	// ErrInvalidGrant means the role or scope of a grant is empty or malformed.
 	ErrInvalidGrant = errors.New("authz: invalid grant")
+	// ErrFactsIncomplete means a scope root the check had to consult was not resolved live and
+	// completely. The grant is refused: containment cannot be proven (fail closed).
+	ErrFactsIncomplete = errors.New("authz: scope root facts incomplete")
+	// ErrTokenInvalid means the token is missing or expired (distinct from a dead owner).
+	ErrTokenInvalid = errors.New("authz: token missing or expired")
 )
 
 // ObjectID identifies a directory object by objectGUID (never by DN).
@@ -66,12 +71,29 @@ type Scope struct {
 
 // ScopeRoot is an OU, container or object that roots part of a scope. Ancestors are needed so
 // containment of one scope in another can be decided without a directory read.
+//
+// Ancestors and Complete must be set only by a live resolver reading the directory, never from
+// request input: forged ancestors on a new root would make containment checks pass. Complete is
+// true only when the chain was read live and fully (a domain-root has zero ancestors and is complete).
+// CheckGrant refuses any root it consults that is not Complete.
 type ScopeRoot struct {
 	ID        ObjectID
 	Ancestors []ObjectID
+	Complete  bool
 }
 
-func (r ScopeRoot) within(id ObjectID) bool { return r.ID == id || slices.Contains(r.Ancestors, id) }
+// within reports whether id is this root or one of its ancestors. A blank ID never matches.
+func (r ScopeRoot) within(id ObjectID) bool {
+	if id == "" || r.ID == "" {
+		return false
+	}
+	return r.ID == id || slices.Contains(r.Ancestors, id)
+}
+
+// valid reports whether the root has a GUID and a completely resolved chain.
+func (r ScopeRoot) valid() bool { return r.ID != "" && r.Complete && !slices.Contains(r.Ancestors, "") }
+
+func (s Scope) roots() []ScopeRoot { return append(slices.Clone(s.Include), s.Exclude...) }
 
 // covers reports whether the scope contains the target: some chain element is an include root and
 // no chain element is an exclude root.
@@ -80,6 +102,9 @@ func (s Scope) covers(t Target) bool {
 		return false
 	}
 	chain := t.chain()
+	if slices.Contains(chain, "") {
+		return false
+	}
 	for _, e := range s.Exclude {
 		if slices.Contains(chain, e.ID) {
 			return false
@@ -120,6 +145,9 @@ type Token struct {
 	Permissions []Permission
 	// ExpiresAt is mandatory for API tokens; the zero value is treated as already expired.
 	ExpiresAt time.Time
+	// Scope narrows the token to part of the owner's scope (DM-32 scope_narrowing). Nil means no
+	// narrowing; a non-nil empty Scope matches nothing.
+	Scope *Scope
 }
 
 // Decision is the outcome of one check.
@@ -178,11 +206,14 @@ func (e Evaluator) Authorize(p *Principal, tok *Token, perm Permission, target T
 	if r, ok := e.tokenOK(tok, perm); !ok {
 		return deny(r)
 	}
-	if target.ID == "" || !target.Complete {
+	if target.ID == "" || !target.Complete || slices.Contains(target.Ancestors, "") {
 		return deny(ReasonFactsIncomplete)
 	}
 	if target.Tier0 {
 		return deny(ReasonTier0)
+	}
+	if tok != nil && tok.Scope != nil && !tok.Scope.covers(target) {
+		return deny(ReasonTokenExcludes)
 	}
 	for _, a := range p.Assignments {
 		if a.Role.has(perm) && a.Scope.covers(target) {
@@ -224,7 +255,9 @@ func (e Evaluator) AuthorizeItems(p *Principal, tok *Token, perm Permission, tar
 // ReportRows is the outcome of compiling a report with its owner's scope.
 type ReportRows struct {
 	Permitted []Target
-	Omitted   int
+	// Omitted is for internal audit only. It must never reach a report recipient: counts of
+	// out-of-scope rows leak existence (TM-TB1-T8); any count shown comes after authorisation.
+	Omitted int
 }
 
 // FilterForOwner trims report candidates to what the owner may see now (TM-TB15-T2). A disabled
@@ -244,14 +277,14 @@ func (e Evaluator) FilterForOwner(owner *Principal, perm Permission, candidates 
 	return out, nil
 }
 
-// CheckToken reports ErrOwnerDead when a token's owner is disabled or lost authority, or the token
-// itself has expired (TM-TB2-T8). Call it when a token is presented, before any operation.
+// CheckToken reports ErrOwnerDead when a token's owner is disabled or lost authority, and
+// ErrTokenInvalid when the token is missing or expired (TM-TB2-T8). Call it when a token is presented, before any operation.
 func (e Evaluator) CheckToken(owner *Principal, tok *Token) error {
 	if _, ok := ownerAlive(owner); !ok {
 		return ErrOwnerDead
 	}
 	if tok == nil || tok.ExpiresAt.IsZero() || !e.now().Before(tok.ExpiresAt) {
-		return ErrOwnerDead
+		return ErrTokenInvalid
 	}
 	return nil
 }
@@ -267,8 +300,21 @@ func (e Evaluator) CheckGrant(grantor *Principal, tok *Token, role Role, scope S
 	if _, ok := ownerAlive(grantor); !ok {
 		return ErrOwnerDead
 	}
+	if slices.ContainsFunc(scope.Include, func(r ScopeRoot) bool { return r.ID == "" }) ||
+		slices.ContainsFunc(scope.Exclude, func(r ScopeRoot) bool { return r.ID == "" }) {
+		return ErrInvalidGrant
+	}
+	if !grantRootsComplete(grantor, tok, role, scope) {
+		return ErrFactsIncomplete
+	}
 	for _, perm := range role.Permissions {
-		if _, ok := e.tokenOK(tok, perm); !ok {
+		if r, ok := e.tokenOK(tok, perm); !ok {
+			if r == ReasonTokenExpired {
+				return ErrTokenInvalid
+			}
+			return ErrEscalation
+		}
+		if tok != nil && tok.Scope != nil && !scopeContains(*tok.Scope, scope) {
 			return ErrEscalation
 		}
 		if !holdsOverScope(grantor, perm, scope) {
@@ -311,6 +357,30 @@ func assignmentContains(g Scope, root ScopeRoot, newExcl []ScopeRoot) bool {
 		}
 		// The grantor cannot act inside ge, so the new scope must exclude it too.
 		if !slices.ContainsFunc(newExcl, func(ne ScopeRoot) bool { return ge.within(ne.ID) }) {
+			return false
+		}
+	}
+	return true
+}
+
+// scopeContains reports whether g contains every include root of s (minus s's own excludes).
+func scopeContains(g, s Scope) bool {
+	return !slices.ContainsFunc(s.Include, func(root ScopeRoot) bool {
+		return !assignmentContains(g, root, s.Exclude)
+	})
+}
+
+// grantRootsComplete reports whether every root CheckGrant will consult is valid and Complete: the
+// new scope, the token scope, and the scopes of grantor assignments carrying any role permission.
+func grantRootsComplete(g *Principal, tok *Token, role Role, scope Scope) bool {
+	ok := func(s Scope) bool {
+		return !slices.ContainsFunc(s.roots(), func(r ScopeRoot) bool { return !r.valid() })
+	}
+	if !ok(scope) || (tok != nil && tok.Scope != nil && !ok(*tok.Scope)) {
+		return false
+	}
+	for _, a := range g.Assignments {
+		if slices.ContainsFunc(role.Permissions, a.Role.has) && !ok(a.Scope) {
 			return false
 		}
 	}
