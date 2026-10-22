@@ -74,9 +74,14 @@ components:
 		"web/proof/api-client-violation.ts":                  "export const a = fetch(\"/x\");\n",
 		"api/openapi/policy.yaml":                            basePolicy,
 		"knowledge/development/architecture/threat-model.md": "| AN-1 | Health | x | None |\n| AN-2 | Static | x | None |\n",
-		"internal/platform/apihost/spec/openapi.gen.json":    `{"paths": {"/users": {"get": {}}, "/users/{id}/reset": {"post": {}}, "/jobs": {"get": {}}}}`,
+		"internal/platform/apihost/spec/openapi.gen.json":    baseBundle,
 	}
 }
+
+const baseBundle = `{"paths": {
+ "/users": {"get": {"operationId": "listUsers", "tags": ["users"], "x-permission": "users.read", "x-activediq-limits": {"class": "read"}}},
+ "/users/{id}/reset": {"post": {"operationId": "resetUser", "tags": ["users"], "x-permission": "secret.reveal", "x-activediq-limits": {"class": "reveal"}}},
+ "/jobs": {"get": {"operationId": "listJobs", "tags": ["platform.jobs"], "x-permission": "authenticated", "x-activediq-limits": {"class": "read"}}}}}`
 
 const baseProblems = `components:
   schemas:
@@ -372,6 +377,11 @@ func TestEveryActiveCheckHasAFailingFixture(t *testing.T) {
 	for _, fx := range fixtures {
 		have[fx.check] = true
 	}
+	// A4, A7 (runtime) and A14 need Go routes, not a file tree: their failing fixtures are the
+	// named tests in check_runtime_test.go, which TestRuntimeFixturesCoverEveryRuntimeCheck pins.
+	for _, id := range runtimeFixtureChecks {
+		have[id] = true
+	}
 	for _, id := range activeIDs() {
 		if !have[id] {
 			t.Errorf("active check %s has no failing fixture in check_test.go", id)
@@ -411,26 +421,21 @@ func TestStatusTable(t *testing.T) {
 			t.Errorf("%s should print inactive (<missing input>): %q", id, l)
 		}
 	}
-	if got := strings.Join(activeIDs(), ","); got != "A1,A3,A5,A7,A8,A10,A11,A12,A13" {
-		t.Errorf("the active checks are A1, A3, A5, A7, A8, A10, A11, A12, A13, got %v", activeIDs())
+	if got := strings.Join(activeIDs(), ","); got != "A1,A3,A4,A5,A6,A7,A8,A10,A11,A12,A13,A14" {
+		t.Errorf("the active checks are A1, A3, A4, A5, A6, A7, A8, A10, A11, A12, A13, A14, got %v", activeIDs())
 	}
-	if !strings.Contains(rep.Summary(), "5 INACTIVE") {
+	if !strings.Contains(rep.Summary(), "2 INACTIVE") {
 		t.Errorf("the summary must name the inactive count: %s", rep.Summary())
 	}
 }
 
-func TestInactiveBecomesOverdueWhenItsInputAppears(t *testing.T) {
-	f := base()
-	f["internal/platform/apihost/build.go"] = "package apihost\n\nfunc Build() {}\n"
-	rep, err := Run(write(t, f), nil)
+func TestActiveChecksAreNeverFlaggedOverdue(t *testing.T) {
+	rep, err := Run(write(t, base()), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, l := range rep.Lines {
-		if strings.Contains(l, " A4 ") && !strings.Contains(l, "INPUT NOW PRESENT") {
-			t.Errorf("A4's input exists but the line does not say the check is overdue: %q", l)
-		}
-		if strings.Contains(l, " A13 ") && strings.Contains(l, "INPUT NOW PRESENT") {
+		if strings.Contains(l, " active") && strings.Contains(l, "INPUT NOW PRESENT: this check is overdue") {
 			t.Errorf("an active check must not be flagged overdue: %q", l)
 		}
 	}
