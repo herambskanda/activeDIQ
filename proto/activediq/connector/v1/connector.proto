@@ -1,11 +1,12 @@
-// activediq.connector.v1 — the connector service (read side).
+// activediq.connector.v1 — the connector service (read side, and from v1.1 the write group).
 //
 // One service, two transports, one conformance suite (blueprint §7.2). The same messages travel
 // in-process (embedded) and over the connector-initiated mTLS stream (remote).
 //
-// The contract has no free-form query verb and no script verb (ADR-0002 rule 3). The write group
-// (Apply), named secret reads (ReadSecret) and VerifyUser are not here: their names are reserved
-// in Operation (describe.proto) and their shapes are specified by later tickets, additively.
+// The contract has no free-form query verb and no script verb (ADR-0002 rule 3). Named secret
+// reads (ReadSecret) and VerifyUser are not here: their names are reserved in Operation
+// (common.proto) and their shapes are specified by later tickets, additively. The write group
+// (Plan, Apply) and VerifyConnection arrived in v1.1 (T-0091, contract §8).
 syntax = "proto3";
 
 package activediq.connector.v1;
@@ -13,6 +14,8 @@ package activediq.connector.v1;
 import "activediq/connector/v1/changefeed.proto";
 import "activediq/connector/v1/describe.proto";
 import "activediq/connector/v1/read.proto";
+import "activediq/connector/v1/verify.proto";
+import "activediq/connector/v1/write.proto";
 
 option go_package = "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1;connectorv1";
 
@@ -34,4 +37,14 @@ service Connector {
 
   // DirSync (AD, object-security mode only) or Graph delta (Entra). One call runs until caught up.
   rpc ChangeFeed(ChangeFeedRequest) returns (stream ChangeFeedResponse);
+
+  // The connector's own rights check as its identity (TM §6.5, §6.6). Source of its write gate and
+  // of its tier0 set. Valid only if the stream ends with VerificationCompleted.
+  rpc VerifyConnection(VerifyConnectionRequest) returns (stream VerifyConnectionResponse);
+
+  // Dry run of one write: live re-read, Tier-0 evaluation, precondition. Writes nothing.
+  rpc Plan(PlanRequest) returns (PlanResponse);
+
+  // One write, re-checked in full. TIER0_REFUSED before any directory write on a tier0 target.
+  rpc Apply(ApplyRequest) returns (ApplyResponse);
 }

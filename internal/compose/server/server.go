@@ -10,11 +10,13 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"time"
 
 	"github.com/skenzeriq/activediq/internal/compose/config"
 	"github.com/skenzeriq/activediq/internal/directory"
 	"github.com/skenzeriq/activediq/internal/platform"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
+	"github.com/skenzeriq/activediq/internal/platform/apitls"
 	"github.com/skenzeriq/activediq/internal/platform/capability"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/module"
@@ -37,6 +39,12 @@ func Run(ctx context.Context, cfg config.Config) error {
 	if err != nil {
 		return err
 	}
+	// The identity is settled before anything is opened too: a non-loopback bind without a TLS
+	// directory, or an unwritable one, fails startup here.
+	id, err := apiIdentity(cfg, time.Now())
+	if err != nil {
+		return err
+	}
 	// Capabilities come from the deployment profile once config selects one; no module requires
 	// one yet.
 	if _, err := boot(ctx, capability.NewSet()); err != nil {
@@ -51,10 +59,11 @@ func Run(ctx context.Context, cfg config.Config) error {
 	if err != nil {
 		return fmt.Errorf("server: api listen: %w", err)
 	}
-	srv := newAPIServer(cfg.APIAddr, api)
+	srv := newAPIServer(cfg.APIAddr, api, id.TLSConfig())
 	serveErr := make(chan error, 1)
-	go func() { serveErr <- srv.Serve(ln) }()
-	slog.Info("server: api listening", "addr", ln.Addr().String())
+	// ServeTLS with the certificate held in srv.TLSConfig: the listener never speaks plaintext.
+	go func() { serveErr <- srv.ServeTLS(ln, "", "") }()
+	slog.Info("server: api listening (TLS)", "addr", ln.Addr().String(), "tls_cert_sha256", id.Fingerprint)
 
 	// Modules contribute job kinds to this registry once the Registrar grows a Job method; until then
 	// it is empty and the worker only runs its maintenance timers.
@@ -94,8 +103,22 @@ func Run(ctx context.Context, cfg config.Config) error {
 	return firstErr
 }
 
+// apiIdentity validates the listen address against the TLS configuration and loads or generates the
+// per-install certificate.
+func apiIdentity(cfg config.Config, now time.Time) (apitls.Identity, error) {
+	if err := cfg.ValidateAPIListen(); err != nil {
+		return apitls.Identity{}, fmt.Errorf("server: %w", err)
+	}
+	id, err := apitls.LoadOrGenerate(cfg.APITLSDir, cfg.APIAddr, now)
+	if err != nil {
+		return apitls.Identity{}, fmt.Errorf("server: api tls: %w", err)
+	}
+	return id, nil
+}
+
 // buildAPI makes the API handler: apihost.Build over the embedded contract and the embedded
-// policy.yaml, with the body budget from configuration. No module contributes routes yet, so every tag is unmounted and answers a problem.
+// policy.yaml, with the body budget from configuration. No module contributes routes yet, so every
+// tag is unmounted and answers a problem.
 func buildAPI(cfg config.Config) (http.Handler, error) {
 	policy, err := apihost.LoadPolicy()
 	if err != nil {

@@ -79,12 +79,23 @@ const (
 	// A delegation root GUID now resolves to nothing, e.g. its OU was deleted (LF-31). No fallback
 	// to a wider root, ever.
 	ErrorCode_ERROR_CODE_DELEGATION_ROOT_GONE ErrorCode = 22
+	// Apply: the target changed since Plan (TargetPrecondition no longer holds). Nothing was written.
+	// The caller re-plans; it never retries the same Apply (contract v1.1, §8.1).
+	ErrorCode_ERROR_CODE_TARGET_CHANGED ErrorCode = 23
 	// The change-feed cookie cannot be continued (DM-19.I3, I4, I6). Details carry the reason. The
 	// caller's SyncCursor becomes resync_required.
 	ErrorCode_ERROR_CODE_STALE_COOKIE ErrorCode = 30
 	// An unmapped provider failure. The LDAP result code or HTTP status is in the detail for
 	// diagnosis only; the connector logs the cause, the caller gets no directory text.
 	ErrorCode_ERROR_CODE_PROVIDER_FAILURE ErrorCode = 40
+	// Plan or Apply: an object the write touches is tier0 (TM-D2, DM-16.I8), or the request's
+	// Tier-0 context is missing, stale or contradicted by the target (contract §8.3). Raised by the
+	// connector on its own evaluation, whatever the server asked. Nothing was written. Never retried.
+	ErrorCode_ERROR_CODE_TIER0_REFUSED ErrorCode = 50
+	// Plan or Apply: the connector's own last VerifyConnection for this connection does not open its
+	// write gate (TM-D1, DM-10.I11): over-privileged with no covering override, could not verify,
+	// not run, failed, or too old. Nothing was written. Fixed by a passing VerifyConnection.
+	ErrorCode_ERROR_CODE_ACTIVATION_REFUSED_OVERPRIVILEGED ErrorCode = 51
 )
 
 // Enum value maps for ErrorCode.
@@ -107,29 +118,35 @@ var (
 		20: "ERROR_CODE_INSUFFICIENT_RIGHTS",
 		21: "ERROR_CODE_OBJECT_NOT_FOUND",
 		22: "ERROR_CODE_DELEGATION_ROOT_GONE",
+		23: "ERROR_CODE_TARGET_CHANGED",
 		30: "ERROR_CODE_STALE_COOKIE",
 		40: "ERROR_CODE_PROVIDER_FAILURE",
+		50: "ERROR_CODE_TIER0_REFUSED",
+		51: "ERROR_CODE_ACTIVATION_REFUSED_OVERPRIVILEGED",
 	}
 	ErrorCode_value = map[string]int32{
-		"ERROR_CODE_UNSPECIFIED":                 0,
-		"ERROR_CODE_INVALID_ARGUMENT":            1,
-		"ERROR_CODE_FILTER_REJECTED":             2,
-		"ERROR_CODE_ATTRIBUTE_NOT_ALLOWED":       3,
-		"ERROR_CODE_SECRET_ATTRIBUTE":            4,
-		"ERROR_CODE_CAPABILITY_UNSUPPORTED":      5,
-		"ERROR_CODE_DIRECTORY_IDENTITY_MISMATCH": 6,
-		"ERROR_CODE_UNREACHABLE_DC":              10,
-		"ERROR_CODE_TRANSPORT_SECURITY":          11,
-		"ERROR_CODE_BIND_FAILED":                 12,
-		"ERROR_CODE_UNEXPECTED_REFERRAL":         13,
-		"ERROR_CODE_GLOBAL_CATALOG_NOT_ALLOWED":  14,
-		"ERROR_CODE_THROTTLED":                   15,
-		"ERROR_CODE_LIMIT_EXCEEDED":              16,
-		"ERROR_CODE_INSUFFICIENT_RIGHTS":         20,
-		"ERROR_CODE_OBJECT_NOT_FOUND":            21,
-		"ERROR_CODE_DELEGATION_ROOT_GONE":        22,
-		"ERROR_CODE_STALE_COOKIE":                30,
-		"ERROR_CODE_PROVIDER_FAILURE":            40,
+		"ERROR_CODE_UNSPECIFIED":                       0,
+		"ERROR_CODE_INVALID_ARGUMENT":                  1,
+		"ERROR_CODE_FILTER_REJECTED":                   2,
+		"ERROR_CODE_ATTRIBUTE_NOT_ALLOWED":             3,
+		"ERROR_CODE_SECRET_ATTRIBUTE":                  4,
+		"ERROR_CODE_CAPABILITY_UNSUPPORTED":            5,
+		"ERROR_CODE_DIRECTORY_IDENTITY_MISMATCH":       6,
+		"ERROR_CODE_UNREACHABLE_DC":                    10,
+		"ERROR_CODE_TRANSPORT_SECURITY":                11,
+		"ERROR_CODE_BIND_FAILED":                       12,
+		"ERROR_CODE_UNEXPECTED_REFERRAL":               13,
+		"ERROR_CODE_GLOBAL_CATALOG_NOT_ALLOWED":        14,
+		"ERROR_CODE_THROTTLED":                         15,
+		"ERROR_CODE_LIMIT_EXCEEDED":                    16,
+		"ERROR_CODE_INSUFFICIENT_RIGHTS":               20,
+		"ERROR_CODE_OBJECT_NOT_FOUND":                  21,
+		"ERROR_CODE_DELEGATION_ROOT_GONE":              22,
+		"ERROR_CODE_TARGET_CHANGED":                    23,
+		"ERROR_CODE_STALE_COOKIE":                      30,
+		"ERROR_CODE_PROVIDER_FAILURE":                  40,
+		"ERROR_CODE_TIER0_REFUSED":                     50,
+		"ERROR_CODE_ACTIVATION_REFUSED_OVERPRIVILEGED": 51,
 	}
 )
 
@@ -172,6 +189,8 @@ const (
 	RetryAdvice_RETRY_ADVICE_AFTER_RESYNC RetryAdvice = 4
 	// A human or the connection's owner must fix something (certificate, credential, delegation).
 	RetryAdvice_RETRY_ADVICE_AFTER_OPERATOR_ACTION RetryAdvice = 5
+	// Plan again from a fresh read; never resend the same Apply (TARGET_CHANGED).
+	RetryAdvice_RETRY_ADVICE_AFTER_REPLAN RetryAdvice = 6
 )
 
 // Enum value maps for RetryAdvice.
@@ -183,6 +202,7 @@ var (
 		3: "RETRY_ADVICE_OTHER_DC",
 		4: "RETRY_ADVICE_AFTER_RESYNC",
 		5: "RETRY_ADVICE_AFTER_OPERATOR_ACTION",
+		6: "RETRY_ADVICE_AFTER_REPLAN",
 	}
 	RetryAdvice_value = map[string]int32{
 		"RETRY_ADVICE_UNSPECIFIED":           0,
@@ -191,6 +211,7 @@ var (
 		"RETRY_ADVICE_OTHER_DC":              3,
 		"RETRY_ADVICE_AFTER_RESYNC":          4,
 		"RETRY_ADVICE_AFTER_OPERATOR_ACTION": 5,
+		"RETRY_ADVICE_AFTER_REPLAN":          6,
 	}
 )
 
@@ -360,6 +381,144 @@ func (x ResyncReason) Number() protoreflect.EnumNumber {
 // Deprecated: Use ResyncReason.Descriptor instead.
 func (ResyncReason) EnumDescriptor() ([]byte, []int) {
 	return file_activediq_connector_v1_errors_proto_rawDescGZIP(), []int{3}
+}
+
+// At which point of the evaluation the connector refused (contract §8.1 order). The stages before
+// LIVE_REREAD are decided before any directory call.
+type Tier0RefusalStage int32
+
+const (
+	Tier0RefusalStage_TIER0_REFUSAL_STAGE_UNSPECIFIED Tier0RefusalStage = 0
+	// Tier0Context missing; a touched object (target or other) has no CorrelationStatement; a
+	// statement's `correlation` or `computed_at` is unset (§8.3 F1).
+	Tier0RefusalStage_TIER0_REFUSAL_STAGE_CONTEXT_MISSING Tier0RefusalStage = 1
+	// A CorrelationStatement older than the connector's maximum statement age, or too far in its
+	// future (F3).
+	Tier0RefusalStage_TIER0_REFUSAL_STAGE_CONTEXT_STALE Tier0RefusalStage = 2
+	// The request's own context marks a touched object tier0: a designation or a correlated tier0
+	// peer (F2), or an inconsistent peer that counts as tier0 (F5).
+	Tier0RefusalStage_TIER0_REFUSAL_STAGE_REQUEST_CONTEXT Tier0RefusalStage = 3
+	// The object is in the connector's own computed set from its last VerifyConnection.
+	Tier0RefusalStage_TIER0_REFUSAL_STAGE_CONNECTOR_SET Tier0RefusalStage = 4
+	// The live re-read found the object tier0 now (for example added to Domain Admins since the last
+	// set computation). Reads happened; no write did.
+	Tier0RefusalStage_TIER0_REFUSAL_STAGE_LIVE_REREAD Tier0RefusalStage = 5
+	// The live re-read contradicts a CorrelationStatement: a listed peer's evidence (anchor or SID)
+	// does not match the touched object as read, so the statement was made for another object (F4);
+	// or two statements about one object disagree on whether a HybridLink exists.
+	Tier0RefusalStage_TIER0_REFUSAL_STAGE_CONTEXT_CONTRADICTED Tier0RefusalStage = 6
+)
+
+// Enum value maps for Tier0RefusalStage.
+var (
+	Tier0RefusalStage_name = map[int32]string{
+		0: "TIER0_REFUSAL_STAGE_UNSPECIFIED",
+		1: "TIER0_REFUSAL_STAGE_CONTEXT_MISSING",
+		2: "TIER0_REFUSAL_STAGE_CONTEXT_STALE",
+		3: "TIER0_REFUSAL_STAGE_REQUEST_CONTEXT",
+		4: "TIER0_REFUSAL_STAGE_CONNECTOR_SET",
+		5: "TIER0_REFUSAL_STAGE_LIVE_REREAD",
+		6: "TIER0_REFUSAL_STAGE_CONTEXT_CONTRADICTED",
+	}
+	Tier0RefusalStage_value = map[string]int32{
+		"TIER0_REFUSAL_STAGE_UNSPECIFIED":          0,
+		"TIER0_REFUSAL_STAGE_CONTEXT_MISSING":      1,
+		"TIER0_REFUSAL_STAGE_CONTEXT_STALE":        2,
+		"TIER0_REFUSAL_STAGE_REQUEST_CONTEXT":      3,
+		"TIER0_REFUSAL_STAGE_CONNECTOR_SET":        4,
+		"TIER0_REFUSAL_STAGE_LIVE_REREAD":          5,
+		"TIER0_REFUSAL_STAGE_CONTEXT_CONTRADICTED": 6,
+	}
+)
+
+func (x Tier0RefusalStage) Enum() *Tier0RefusalStage {
+	p := new(Tier0RefusalStage)
+	*p = x
+	return p
+}
+
+func (x Tier0RefusalStage) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (Tier0RefusalStage) Descriptor() protoreflect.EnumDescriptor {
+	return file_activediq_connector_v1_errors_proto_enumTypes[4].Descriptor()
+}
+
+func (Tier0RefusalStage) Type() protoreflect.EnumType {
+	return &file_activediq_connector_v1_errors_proto_enumTypes[4]
+}
+
+func (x Tier0RefusalStage) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use Tier0RefusalStage.Descriptor instead.
+func (Tier0RefusalStage) EnumDescriptor() ([]byte, []int) {
+	return file_activediq_connector_v1_errors_proto_rawDescGZIP(), []int{4}
+}
+
+type WriteGateState int32
+
+const (
+	WriteGateState_WRITE_GATE_STATE_UNSPECIFIED WriteGateState = 0
+	// The last run has V7/EV3 FAIL and the request's override does not cover every block finding.
+	WriteGateState_WRITE_GATE_STATE_OVERPRIVILEGED WriteGateState = 1
+	// No run of this connector for this connection and credential since it started.
+	WriteGateState_WRITE_GATE_STATE_NOT_VERIFIED WriteGateState = 2
+	// The last run's V7/EV3 is COULD_NOT_VERIFY or NOT_RUN, or the run's verdict is FAILED.
+	WriteGateState_WRITE_GATE_STATE_COULD_NOT_VERIFY WriteGateState = 3
+	// The last run is older than the connector's maximum verification age.
+	WriteGateState_WRITE_GATE_STATE_STALE WriteGateState = 4
+	// V8 or EV4 refused: under-privilege is never overridable (FR-12).
+	WriteGateState_WRITE_GATE_STATE_INSUFFICIENT WriteGateState = 5
+)
+
+// Enum value maps for WriteGateState.
+var (
+	WriteGateState_name = map[int32]string{
+		0: "WRITE_GATE_STATE_UNSPECIFIED",
+		1: "WRITE_GATE_STATE_OVERPRIVILEGED",
+		2: "WRITE_GATE_STATE_NOT_VERIFIED",
+		3: "WRITE_GATE_STATE_COULD_NOT_VERIFY",
+		4: "WRITE_GATE_STATE_STALE",
+		5: "WRITE_GATE_STATE_INSUFFICIENT",
+	}
+	WriteGateState_value = map[string]int32{
+		"WRITE_GATE_STATE_UNSPECIFIED":      0,
+		"WRITE_GATE_STATE_OVERPRIVILEGED":   1,
+		"WRITE_GATE_STATE_NOT_VERIFIED":     2,
+		"WRITE_GATE_STATE_COULD_NOT_VERIFY": 3,
+		"WRITE_GATE_STATE_STALE":            4,
+		"WRITE_GATE_STATE_INSUFFICIENT":     5,
+	}
+)
+
+func (x WriteGateState) Enum() *WriteGateState {
+	p := new(WriteGateState)
+	*p = x
+	return p
+}
+
+func (x WriteGateState) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (WriteGateState) Descriptor() protoreflect.EnumDescriptor {
+	return file_activediq_connector_v1_errors_proto_enumTypes[5].Descriptor()
+}
+
+func (WriteGateState) Type() protoreflect.EnumType {
+	return &file_activediq_connector_v1_errors_proto_enumTypes[5]
+}
+
+func (x WriteGateState) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use WriteGateState.Descriptor instead.
+func (WriteGateState) EnumDescriptor() ([]byte, []int) {
+	return file_activediq_connector_v1_errors_proto_rawDescGZIP(), []int{5}
 }
 
 type DcAttempt struct {
@@ -813,6 +972,174 @@ func (x *LimitDetails) GetValue() uint64 {
 	return 0
 }
 
+type Tier0RefusedDetails struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The touched object that was refused (the target or another object the change touches).
+	Object        *Guid             `protobuf:"bytes,1,opt,name=object,proto3" json:"object,omitempty"`
+	Basis         []Tier0Basis      `protobuf:"varint,2,rep,packed,name=basis,proto3,enum=activediq.connector.v1.Tier0Basis" json:"basis,omitempty"`
+	Stage         Tier0RefusalStage `protobuf:"varint,3,opt,name=stage,proto3,enum=activediq.connector.v1.Tier0RefusalStage" json:"stage,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Tier0RefusedDetails) Reset() {
+	*x = Tier0RefusedDetails{}
+	mi := &file_activediq_connector_v1_errors_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Tier0RefusedDetails) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Tier0RefusedDetails) ProtoMessage() {}
+
+func (x *Tier0RefusedDetails) ProtoReflect() protoreflect.Message {
+	mi := &file_activediq_connector_v1_errors_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Tier0RefusedDetails.ProtoReflect.Descriptor instead.
+func (*Tier0RefusedDetails) Descriptor() ([]byte, []int) {
+	return file_activediq_connector_v1_errors_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *Tier0RefusedDetails) GetObject() *Guid {
+	if x != nil {
+		return x.Object
+	}
+	return nil
+}
+
+func (x *Tier0RefusedDetails) GetBasis() []Tier0Basis {
+	if x != nil {
+		return x.Basis
+	}
+	return nil
+}
+
+func (x *Tier0RefusedDetails) GetStage() Tier0RefusalStage {
+	if x != nil {
+		return x.Stage
+	}
+	return Tier0RefusalStage_TIER0_REFUSAL_STAGE_UNSPECIFIED
+}
+
+type ActivationRefusedDetails struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	State WriteGateState         `protobuf:"varint,1,opt,name=state,proto3,enum=activediq.connector.v1.WriteGateState" json:"state,omitempty"`
+	// The connector's run the decision rests on, when there is one.
+	VerificationId *Guid `protobuf:"bytes,2,opt,name=verification_id,json=verificationId,proto3" json:"verification_id,omitempty"`
+	// Block findings of that run not covered by the request's override. A count only: the
+	// fingerprints are in the run's findings, readable under FR-16.
+	UnacknowledgedFindings uint32 `protobuf:"varint,3,opt,name=unacknowledged_findings,json=unacknowledgedFindings,proto3" json:"unacknowledged_findings,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
+}
+
+func (x *ActivationRefusedDetails) Reset() {
+	*x = ActivationRefusedDetails{}
+	mi := &file_activediq_connector_v1_errors_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ActivationRefusedDetails) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ActivationRefusedDetails) ProtoMessage() {}
+
+func (x *ActivationRefusedDetails) ProtoReflect() protoreflect.Message {
+	mi := &file_activediq_connector_v1_errors_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ActivationRefusedDetails.ProtoReflect.Descriptor instead.
+func (*ActivationRefusedDetails) Descriptor() ([]byte, []int) {
+	return file_activediq_connector_v1_errors_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *ActivationRefusedDetails) GetState() WriteGateState {
+	if x != nil {
+		return x.State
+	}
+	return WriteGateState_WRITE_GATE_STATE_UNSPECIFIED
+}
+
+func (x *ActivationRefusedDetails) GetVerificationId() *Guid {
+	if x != nil {
+		return x.VerificationId
+	}
+	return nil
+}
+
+func (x *ActivationRefusedDetails) GetUnacknowledgedFindings() uint32 {
+	if x != nil {
+		return x.UnacknowledgedFindings
+	}
+	return 0
+}
+
+type TargetChangedDetails struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Object        *Guid                  `protobuf:"bytes,1,opt,name=object,proto3" json:"object,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TargetChangedDetails) Reset() {
+	*x = TargetChangedDetails{}
+	mi := &file_activediq_connector_v1_errors_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TargetChangedDetails) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TargetChangedDetails) ProtoMessage() {}
+
+func (x *TargetChangedDetails) ProtoReflect() protoreflect.Message {
+	mi := &file_activediq_connector_v1_errors_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TargetChangedDetails.ProtoReflect.Descriptor instead.
+func (*TargetChangedDetails) Descriptor() ([]byte, []int) {
+	return file_activediq_connector_v1_errors_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *TargetChangedDetails) GetObject() *Guid {
+	if x != nil {
+		return x.Object
+	}
+	return nil
+}
+
 type ConnectorError struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	Code    ErrorCode              `protobuf:"varint,1,opt,name=code,proto3,enum=activediq.connector.v1.ErrorCode" json:"code,omitempty"`
@@ -832,6 +1159,9 @@ type ConnectorError struct {
 	//	*ConnectorError_Throttled
 	//	*ConnectorError_RootGone
 	//	*ConnectorError_Limit
+	//	*ConnectorError_Tier0Refused
+	//	*ConnectorError_ActivationRefused
+	//	*ConnectorError_TargetChanged
 	Details       isConnectorError_Details `protobuf_oneof:"details"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -839,7 +1169,7 @@ type ConnectorError struct {
 
 func (x *ConnectorError) Reset() {
 	*x = ConnectorError{}
-	mi := &file_activediq_connector_v1_errors_proto_msgTypes[9]
+	mi := &file_activediq_connector_v1_errors_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -851,7 +1181,7 @@ func (x *ConnectorError) String() string {
 func (*ConnectorError) ProtoMessage() {}
 
 func (x *ConnectorError) ProtoReflect() protoreflect.Message {
-	mi := &file_activediq_connector_v1_errors_proto_msgTypes[9]
+	mi := &file_activediq_connector_v1_errors_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -864,7 +1194,7 @@ func (x *ConnectorError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConnectorError.ProtoReflect.Descriptor instead.
 func (*ConnectorError) Descriptor() ([]byte, []int) {
-	return file_activediq_connector_v1_errors_proto_rawDescGZIP(), []int{9}
+	return file_activediq_connector_v1_errors_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ConnectorError) GetCode() ErrorCode {
@@ -981,6 +1311,33 @@ func (x *ConnectorError) GetLimit() *LimitDetails {
 	return nil
 }
 
+func (x *ConnectorError) GetTier0Refused() *Tier0RefusedDetails {
+	if x != nil {
+		if x, ok := x.Details.(*ConnectorError_Tier0Refused); ok {
+			return x.Tier0Refused
+		}
+	}
+	return nil
+}
+
+func (x *ConnectorError) GetActivationRefused() *ActivationRefusedDetails {
+	if x != nil {
+		if x, ok := x.Details.(*ConnectorError_ActivationRefused); ok {
+			return x.ActivationRefused
+		}
+	}
+	return nil
+}
+
+func (x *ConnectorError) GetTargetChanged() *TargetChangedDetails {
+	if x != nil {
+		if x, ok := x.Details.(*ConnectorError_TargetChanged); ok {
+			return x.TargetChanged
+		}
+	}
+	return nil
+}
+
 type isConnectorError_Details interface {
 	isConnectorError_Details()
 }
@@ -1017,6 +1374,18 @@ type ConnectorError_Limit struct {
 	Limit *LimitDetails `protobuf:"bytes,17,opt,name=limit,proto3,oneof"`
 }
 
+type ConnectorError_Tier0Refused struct {
+	Tier0Refused *Tier0RefusedDetails `protobuf:"bytes,18,opt,name=tier0_refused,json=tier0Refused,proto3,oneof"`
+}
+
+type ConnectorError_ActivationRefused struct {
+	ActivationRefused *ActivationRefusedDetails `protobuf:"bytes,19,opt,name=activation_refused,json=activationRefused,proto3,oneof"`
+}
+
+type ConnectorError_TargetChanged struct {
+	TargetChanged *TargetChangedDetails `protobuf:"bytes,20,opt,name=target_changed,json=targetChanged,proto3,oneof"`
+}
+
 func (*ConnectorError_Unreachable) isConnectorError_Details() {}
 
 func (*ConnectorError_Referral) isConnectorError_Details() {}
@@ -1033,11 +1402,17 @@ func (*ConnectorError_RootGone) isConnectorError_Details() {}
 
 func (*ConnectorError_Limit) isConnectorError_Details() {}
 
+func (*ConnectorError_Tier0Refused) isConnectorError_Details() {}
+
+func (*ConnectorError_ActivationRefused) isConnectorError_Details() {}
+
+func (*ConnectorError_TargetChanged) isConnectorError_Details() {}
+
 var File_activediq_connector_v1_errors_proto protoreflect.FileDescriptor
 
 const file_activediq_connector_v1_errors_proto_rawDesc = "" +
 	"\n" +
-	"#activediq/connector/v1/errors.proto\x12\x16activediq.connector.v1\x1a#activediq/connector/v1/common.proto\x1a\x1egoogle/protobuf/duration.proto\"k\n" +
+	"#activediq/connector/v1/errors.proto\x12\x16activediq.connector.v1\x1a#activediq/connector/v1/common.proto\x1a\"activediq/connector/v1/tier0.proto\x1a\x1egoogle/protobuf/duration.proto\"k\n" +
 	"\tDcAttempt\x12!\n" +
 	"\fdns_hostname\x18\x01 \x01(\tR\vdnsHostname\x12;\n" +
 	"\afailure\x18\x02 \x01(\x0e2!.activediq.connector.v1.DcFailureR\afailure\"S\n" +
@@ -1063,7 +1438,17 @@ const file_activediq_connector_v1_errors_proto_rawDesc = "" +
 	"\x04root\x18\x01 \x01(\v2\x1c.activediq.connector.v1.GuidR\x04root\":\n" +
 	"\fLimitDetails\x12\x14\n" +
 	"\x05limit\x18\x01 \x01(\tR\x05limit\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\x04R\x05value\"\xa0\a\n" +
+	"\x05value\x18\x02 \x01(\x04R\x05value\"\xc6\x01\n" +
+	"\x13Tier0RefusedDetails\x124\n" +
+	"\x06object\x18\x01 \x01(\v2\x1c.activediq.connector.v1.GuidR\x06object\x128\n" +
+	"\x05basis\x18\x02 \x03(\x0e2\".activediq.connector.v1.Tier0BasisR\x05basis\x12?\n" +
+	"\x05stage\x18\x03 \x01(\x0e2).activediq.connector.v1.Tier0RefusalStageR\x05stage\"\xd8\x01\n" +
+	"\x18ActivationRefusedDetails\x12<\n" +
+	"\x05state\x18\x01 \x01(\x0e2&.activediq.connector.v1.WriteGateStateR\x05state\x12E\n" +
+	"\x0fverification_id\x18\x02 \x01(\v2\x1c.activediq.connector.v1.GuidR\x0everificationId\x127\n" +
+	"\x17unacknowledged_findings\x18\x03 \x01(\rR\x16unacknowledgedFindings\"L\n" +
+	"\x14TargetChangedDetails\x124\n" +
+	"\x06object\x18\x01 \x01(\v2\x1c.activediq.connector.v1.GuidR\x06object\"\xae\t\n" +
 	"\x0eConnectorError\x125\n" +
 	"\x04code\x18\x01 \x01(\x0e2!.activediq.connector.v1.ErrorCodeR\x04code\x129\n" +
 	"\x05retry\x18\x02 \x01(\x0e2#.activediq.connector.v1.RetryAdviceR\x05retry\x12\x18\n" +
@@ -1078,9 +1463,12 @@ const file_activediq_connector_v1_errors_proto_rawDesc = "" +
 	"\x0erejected_input\x18\x0e \x01(\v2,.activediq.connector.v1.RejectedInputDetailsH\x00R\rrejectedInput\x12H\n" +
 	"\tthrottled\x18\x0f \x01(\v2(.activediq.connector.v1.ThrottledDetailsH\x00R\tthrottled\x12F\n" +
 	"\troot_gone\x18\x10 \x01(\v2'.activediq.connector.v1.RootGoneDetailsH\x00R\brootGone\x12<\n" +
-	"\x05limit\x18\x11 \x01(\v2$.activediq.connector.v1.LimitDetailsH\x00R\x05limitB\t\n" +
+	"\x05limit\x18\x11 \x01(\v2$.activediq.connector.v1.LimitDetailsH\x00R\x05limit\x12R\n" +
+	"\rtier0_refused\x18\x12 \x01(\v2+.activediq.connector.v1.Tier0RefusedDetailsH\x00R\ftier0Refused\x12a\n" +
+	"\x12activation_refused\x18\x13 \x01(\v20.activediq.connector.v1.ActivationRefusedDetailsH\x00R\x11activationRefused\x12U\n" +
+	"\x0etarget_changed\x18\x14 \x01(\v2,.activediq.connector.v1.TargetChangedDetailsH\x00R\rtargetChangedB\t\n" +
 	"\adetailsB\x17\n" +
-	"\x15_provider_result_code*\x90\x05\n" +
+	"\x15_provider_result_code*\xff\x05\n" +
 	"\tErrorCode\x12\x1a\n" +
 	"\x16ERROR_CODE_UNSPECIFIED\x10\x00\x12\x1f\n" +
 	"\x1bERROR_CODE_INVALID_ARGUMENT\x10\x01\x12\x1e\n" +
@@ -1099,16 +1487,20 @@ const file_activediq_connector_v1_errors_proto_rawDesc = "" +
 	"\x19ERROR_CODE_LIMIT_EXCEEDED\x10\x10\x12\"\n" +
 	"\x1eERROR_CODE_INSUFFICIENT_RIGHTS\x10\x14\x12\x1f\n" +
 	"\x1bERROR_CODE_OBJECT_NOT_FOUND\x10\x15\x12#\n" +
-	"\x1fERROR_CODE_DELEGATION_ROOT_GONE\x10\x16\x12\x1b\n" +
+	"\x1fERROR_CODE_DELEGATION_ROOT_GONE\x10\x16\x12\x1d\n" +
+	"\x19ERROR_CODE_TARGET_CHANGED\x10\x17\x12\x1b\n" +
 	"\x17ERROR_CODE_STALE_COOKIE\x10\x1e\x12\x1f\n" +
-	"\x1bERROR_CODE_PROVIDER_FAILURE\x10(*\xcd\x01\n" +
+	"\x1bERROR_CODE_PROVIDER_FAILURE\x10(\x12\x1c\n" +
+	"\x18ERROR_CODE_TIER0_REFUSED\x102\x120\n" +
+	",ERROR_CODE_ACTIVATION_REFUSED_OVERPRIVILEGED\x103*\xec\x01\n" +
 	"\vRetryAdvice\x12\x1c\n" +
 	"\x18RETRY_ADVICE_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12RETRY_ADVICE_NEVER\x10\x01\x12&\n" +
 	"\"RETRY_ADVICE_SAME_DC_AFTER_BACKOFF\x10\x02\x12\x19\n" +
 	"\x15RETRY_ADVICE_OTHER_DC\x10\x03\x12\x1d\n" +
 	"\x19RETRY_ADVICE_AFTER_RESYNC\x10\x04\x12&\n" +
-	"\"RETRY_ADVICE_AFTER_OPERATOR_ACTION\x10\x05*\xca\x01\n" +
+	"\"RETRY_ADVICE_AFTER_OPERATOR_ACTION\x10\x05\x12\x1d\n" +
+	"\x19RETRY_ADVICE_AFTER_REPLAN\x10\x06*\xca\x01\n" +
 	"\tDcFailure\x12\x1a\n" +
 	"\x16DC_FAILURE_UNSPECIFIED\x10\x00\x12\x12\n" +
 	"\x0eDC_FAILURE_DNS\x10\x01\x12\x1a\n" +
@@ -1126,7 +1518,22 @@ const file_activediq_connector_v1_errors_proto_rawDesc = "" +
 	"\x1cRESYNC_REASON_COOKIE_TOO_OLD\x10\x04\x12!\n" +
 	"\x1dRESYNC_REASON_SERVER_REJECTED\x10\x05\x12'\n" +
 	"#RESYNC_REASON_COOKIE_FORMAT_UNKNOWN\x10\x06\x12%\n" +
-	"!RESYNC_REASON_DELTA_TOKEN_EXPIRED\x10\aBRZPgithub.com/skenzeriq/activediq/internal/proto/activediq/connector/v1;connectorv1b\x06proto3"
+	"!RESYNC_REASON_DELTA_TOKEN_EXPIRED\x10\a*\xab\x02\n" +
+	"\x11Tier0RefusalStage\x12#\n" +
+	"\x1fTIER0_REFUSAL_STAGE_UNSPECIFIED\x10\x00\x12'\n" +
+	"#TIER0_REFUSAL_STAGE_CONTEXT_MISSING\x10\x01\x12%\n" +
+	"!TIER0_REFUSAL_STAGE_CONTEXT_STALE\x10\x02\x12'\n" +
+	"#TIER0_REFUSAL_STAGE_REQUEST_CONTEXT\x10\x03\x12%\n" +
+	"!TIER0_REFUSAL_STAGE_CONNECTOR_SET\x10\x04\x12#\n" +
+	"\x1fTIER0_REFUSAL_STAGE_LIVE_REREAD\x10\x05\x12,\n" +
+	"(TIER0_REFUSAL_STAGE_CONTEXT_CONTRADICTED\x10\x06*\xe0\x01\n" +
+	"\x0eWriteGateState\x12 \n" +
+	"\x1cWRITE_GATE_STATE_UNSPECIFIED\x10\x00\x12#\n" +
+	"\x1fWRITE_GATE_STATE_OVERPRIVILEGED\x10\x01\x12!\n" +
+	"\x1dWRITE_GATE_STATE_NOT_VERIFIED\x10\x02\x12%\n" +
+	"!WRITE_GATE_STATE_COULD_NOT_VERIFY\x10\x03\x12\x1a\n" +
+	"\x16WRITE_GATE_STATE_STALE\x10\x04\x12!\n" +
+	"\x1dWRITE_GATE_STATE_INSUFFICIENT\x10\x05BRZPgithub.com/skenzeriq/activediq/internal/proto/activediq/connector/v1;connectorv1b\x06proto3"
 
 var (
 	file_activediq_connector_v1_errors_proto_rawDescOnce sync.Once
@@ -1140,54 +1547,69 @@ func file_activediq_connector_v1_errors_proto_rawDescGZIP() []byte {
 	return file_activediq_connector_v1_errors_proto_rawDescData
 }
 
-var file_activediq_connector_v1_errors_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
-var file_activediq_connector_v1_errors_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_activediq_connector_v1_errors_proto_enumTypes = make([]protoimpl.EnumInfo, 6)
+var file_activediq_connector_v1_errors_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_activediq_connector_v1_errors_proto_goTypes = []any{
 	(ErrorCode)(0),                    // 0: activediq.connector.v1.ErrorCode
 	(RetryAdvice)(0),                  // 1: activediq.connector.v1.RetryAdvice
 	(DcFailure)(0),                    // 2: activediq.connector.v1.DcFailure
 	(ResyncReason)(0),                 // 3: activediq.connector.v1.ResyncReason
-	(*DcAttempt)(nil),                 // 4: activediq.connector.v1.DcAttempt
-	(*UnreachableDetails)(nil),        // 5: activediq.connector.v1.UnreachableDetails
-	(*ReferralDetails)(nil),           // 6: activediq.connector.v1.ReferralDetails
-	(*StaleCookieDetails)(nil),        // 7: activediq.connector.v1.StaleCookieDetails
-	(*InsufficientRightsDetails)(nil), // 8: activediq.connector.v1.InsufficientRightsDetails
-	(*RejectedInputDetails)(nil),      // 9: activediq.connector.v1.RejectedInputDetails
-	(*ThrottledDetails)(nil),          // 10: activediq.connector.v1.ThrottledDetails
-	(*RootGoneDetails)(nil),           // 11: activediq.connector.v1.RootGoneDetails
-	(*LimitDetails)(nil),              // 12: activediq.connector.v1.LimitDetails
-	(*ConnectorError)(nil),            // 13: activediq.connector.v1.ConnectorError
-	(*DcIdentity)(nil),                // 14: activediq.connector.v1.DcIdentity
-	(Operation)(0),                    // 15: activediq.connector.v1.Operation
-	(*Guid)(nil),                      // 16: activediq.connector.v1.Guid
-	(*durationpb.Duration)(nil),       // 17: google.protobuf.Duration
+	(Tier0RefusalStage)(0),            // 4: activediq.connector.v1.Tier0RefusalStage
+	(WriteGateState)(0),               // 5: activediq.connector.v1.WriteGateState
+	(*DcAttempt)(nil),                 // 6: activediq.connector.v1.DcAttempt
+	(*UnreachableDetails)(nil),        // 7: activediq.connector.v1.UnreachableDetails
+	(*ReferralDetails)(nil),           // 8: activediq.connector.v1.ReferralDetails
+	(*StaleCookieDetails)(nil),        // 9: activediq.connector.v1.StaleCookieDetails
+	(*InsufficientRightsDetails)(nil), // 10: activediq.connector.v1.InsufficientRightsDetails
+	(*RejectedInputDetails)(nil),      // 11: activediq.connector.v1.RejectedInputDetails
+	(*ThrottledDetails)(nil),          // 12: activediq.connector.v1.ThrottledDetails
+	(*RootGoneDetails)(nil),           // 13: activediq.connector.v1.RootGoneDetails
+	(*LimitDetails)(nil),              // 14: activediq.connector.v1.LimitDetails
+	(*Tier0RefusedDetails)(nil),       // 15: activediq.connector.v1.Tier0RefusedDetails
+	(*ActivationRefusedDetails)(nil),  // 16: activediq.connector.v1.ActivationRefusedDetails
+	(*TargetChangedDetails)(nil),      // 17: activediq.connector.v1.TargetChangedDetails
+	(*ConnectorError)(nil),            // 18: activediq.connector.v1.ConnectorError
+	(*DcIdentity)(nil),                // 19: activediq.connector.v1.DcIdentity
+	(Operation)(0),                    // 20: activediq.connector.v1.Operation
+	(*Guid)(nil),                      // 21: activediq.connector.v1.Guid
+	(*durationpb.Duration)(nil),       // 22: google.protobuf.Duration
+	(Tier0Basis)(0),                   // 23: activediq.connector.v1.Tier0Basis
 }
 var file_activediq_connector_v1_errors_proto_depIdxs = []int32{
 	2,  // 0: activediq.connector.v1.DcAttempt.failure:type_name -> activediq.connector.v1.DcFailure
-	4,  // 1: activediq.connector.v1.UnreachableDetails.attempts:type_name -> activediq.connector.v1.DcAttempt
+	6,  // 1: activediq.connector.v1.UnreachableDetails.attempts:type_name -> activediq.connector.v1.DcAttempt
 	3,  // 2: activediq.connector.v1.StaleCookieDetails.reason:type_name -> activediq.connector.v1.ResyncReason
-	14, // 3: activediq.connector.v1.StaleCookieDetails.issuer:type_name -> activediq.connector.v1.DcIdentity
-	14, // 4: activediq.connector.v1.StaleCookieDetails.observed:type_name -> activediq.connector.v1.DcIdentity
-	15, // 5: activediq.connector.v1.InsufficientRightsDetails.operation:type_name -> activediq.connector.v1.Operation
-	16, // 6: activediq.connector.v1.InsufficientRightsDetails.object:type_name -> activediq.connector.v1.Guid
-	17, // 7: activediq.connector.v1.ThrottledDetails.retry_after:type_name -> google.protobuf.Duration
-	16, // 8: activediq.connector.v1.RootGoneDetails.root:type_name -> activediq.connector.v1.Guid
-	0,  // 9: activediq.connector.v1.ConnectorError.code:type_name -> activediq.connector.v1.ErrorCode
-	1,  // 10: activediq.connector.v1.ConnectorError.retry:type_name -> activediq.connector.v1.RetryAdvice
-	14, // 11: activediq.connector.v1.ConnectorError.dc:type_name -> activediq.connector.v1.DcIdentity
-	5,  // 12: activediq.connector.v1.ConnectorError.unreachable:type_name -> activediq.connector.v1.UnreachableDetails
-	6,  // 13: activediq.connector.v1.ConnectorError.referral:type_name -> activediq.connector.v1.ReferralDetails
-	7,  // 14: activediq.connector.v1.ConnectorError.stale_cookie:type_name -> activediq.connector.v1.StaleCookieDetails
-	8,  // 15: activediq.connector.v1.ConnectorError.insufficient_rights:type_name -> activediq.connector.v1.InsufficientRightsDetails
-	9,  // 16: activediq.connector.v1.ConnectorError.rejected_input:type_name -> activediq.connector.v1.RejectedInputDetails
-	10, // 17: activediq.connector.v1.ConnectorError.throttled:type_name -> activediq.connector.v1.ThrottledDetails
-	11, // 18: activediq.connector.v1.ConnectorError.root_gone:type_name -> activediq.connector.v1.RootGoneDetails
-	12, // 19: activediq.connector.v1.ConnectorError.limit:type_name -> activediq.connector.v1.LimitDetails
-	20, // [20:20] is the sub-list for method output_type
-	20, // [20:20] is the sub-list for method input_type
-	20, // [20:20] is the sub-list for extension type_name
-	20, // [20:20] is the sub-list for extension extendee
-	0,  // [0:20] is the sub-list for field type_name
+	19, // 3: activediq.connector.v1.StaleCookieDetails.issuer:type_name -> activediq.connector.v1.DcIdentity
+	19, // 4: activediq.connector.v1.StaleCookieDetails.observed:type_name -> activediq.connector.v1.DcIdentity
+	20, // 5: activediq.connector.v1.InsufficientRightsDetails.operation:type_name -> activediq.connector.v1.Operation
+	21, // 6: activediq.connector.v1.InsufficientRightsDetails.object:type_name -> activediq.connector.v1.Guid
+	22, // 7: activediq.connector.v1.ThrottledDetails.retry_after:type_name -> google.protobuf.Duration
+	21, // 8: activediq.connector.v1.RootGoneDetails.root:type_name -> activediq.connector.v1.Guid
+	21, // 9: activediq.connector.v1.Tier0RefusedDetails.object:type_name -> activediq.connector.v1.Guid
+	23, // 10: activediq.connector.v1.Tier0RefusedDetails.basis:type_name -> activediq.connector.v1.Tier0Basis
+	4,  // 11: activediq.connector.v1.Tier0RefusedDetails.stage:type_name -> activediq.connector.v1.Tier0RefusalStage
+	5,  // 12: activediq.connector.v1.ActivationRefusedDetails.state:type_name -> activediq.connector.v1.WriteGateState
+	21, // 13: activediq.connector.v1.ActivationRefusedDetails.verification_id:type_name -> activediq.connector.v1.Guid
+	21, // 14: activediq.connector.v1.TargetChangedDetails.object:type_name -> activediq.connector.v1.Guid
+	0,  // 15: activediq.connector.v1.ConnectorError.code:type_name -> activediq.connector.v1.ErrorCode
+	1,  // 16: activediq.connector.v1.ConnectorError.retry:type_name -> activediq.connector.v1.RetryAdvice
+	19, // 17: activediq.connector.v1.ConnectorError.dc:type_name -> activediq.connector.v1.DcIdentity
+	7,  // 18: activediq.connector.v1.ConnectorError.unreachable:type_name -> activediq.connector.v1.UnreachableDetails
+	8,  // 19: activediq.connector.v1.ConnectorError.referral:type_name -> activediq.connector.v1.ReferralDetails
+	9,  // 20: activediq.connector.v1.ConnectorError.stale_cookie:type_name -> activediq.connector.v1.StaleCookieDetails
+	10, // 21: activediq.connector.v1.ConnectorError.insufficient_rights:type_name -> activediq.connector.v1.InsufficientRightsDetails
+	11, // 22: activediq.connector.v1.ConnectorError.rejected_input:type_name -> activediq.connector.v1.RejectedInputDetails
+	12, // 23: activediq.connector.v1.ConnectorError.throttled:type_name -> activediq.connector.v1.ThrottledDetails
+	13, // 24: activediq.connector.v1.ConnectorError.root_gone:type_name -> activediq.connector.v1.RootGoneDetails
+	14, // 25: activediq.connector.v1.ConnectorError.limit:type_name -> activediq.connector.v1.LimitDetails
+	15, // 26: activediq.connector.v1.ConnectorError.tier0_refused:type_name -> activediq.connector.v1.Tier0RefusedDetails
+	16, // 27: activediq.connector.v1.ConnectorError.activation_refused:type_name -> activediq.connector.v1.ActivationRefusedDetails
+	17, // 28: activediq.connector.v1.ConnectorError.target_changed:type_name -> activediq.connector.v1.TargetChangedDetails
+	29, // [29:29] is the sub-list for method output_type
+	29, // [29:29] is the sub-list for method input_type
+	29, // [29:29] is the sub-list for extension type_name
+	29, // [29:29] is the sub-list for extension extendee
+	0,  // [0:29] is the sub-list for field type_name
 }
 
 func init() { file_activediq_connector_v1_errors_proto_init() }
@@ -1196,8 +1618,9 @@ func file_activediq_connector_v1_errors_proto_init() {
 		return
 	}
 	file_activediq_connector_v1_common_proto_init()
+	file_activediq_connector_v1_tier0_proto_init()
 	file_activediq_connector_v1_errors_proto_msgTypes[4].OneofWrappers = []any{}
-	file_activediq_connector_v1_errors_proto_msgTypes[9].OneofWrappers = []any{
+	file_activediq_connector_v1_errors_proto_msgTypes[12].OneofWrappers = []any{
 		(*ConnectorError_Unreachable)(nil),
 		(*ConnectorError_Referral)(nil),
 		(*ConnectorError_StaleCookie)(nil),
@@ -1206,14 +1629,17 @@ func file_activediq_connector_v1_errors_proto_init() {
 		(*ConnectorError_Throttled)(nil),
 		(*ConnectorError_RootGone)(nil),
 		(*ConnectorError_Limit)(nil),
+		(*ConnectorError_Tier0Refused)(nil),
+		(*ConnectorError_ActivationRefused)(nil),
+		(*ConnectorError_TargetChanged)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_activediq_connector_v1_errors_proto_rawDesc), len(file_activediq_connector_v1_errors_proto_rawDesc)),
-			NumEnums:      4,
-			NumMessages:   10,
+			NumEnums:      6,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

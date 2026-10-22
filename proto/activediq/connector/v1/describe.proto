@@ -21,7 +21,7 @@ enum SupportState {
   // checked without a side effect (for example: does the bound identity see tombstones in a
   // DirSync object-security feed). Callers must not rely on it alone: they run the reconcile pass.
   SUPPORT_STATE_UNVERIFIED = 3;
-  // A name held for a later specification (Apply, ReadSecret, VerifyUser).
+  // A name held for a later specification (ReadSecret, VerifyUser). Apply left this state in v1.1.
   SUPPORT_STATE_RESERVED = 4;
 }
 

@@ -1,0 +1,139 @@
+// activediq.connector.v1 — the Tier-0 vocabulary shared by the write group and VerifyConnection
+// (contract v1.1, T-0091).
+//
+// `tier0` is threat-model §6.4 (TM-D4): a computed set (AD C1-C16, Entra E1-E5) plus
+// customer-designated additions. A connector computes C1-C15 for its own forest, or E1-E4 for its
+// own tenant, itself (TM-D2 point 2). Two parts it cannot see from its own directory reach it in
+// the request, and only ever ADD to its set:
+//   * customer designations (held by the server, DM-16.I8 / TM §6.4 "customer-designated");
+//   * cross-directory correlation (C16 for an AD target, E5 for an Entra target, DM-20), which needs
+//     both directories and therefore the server.
+// The fail-closed rules for both are in connector-contract.md §8.3. Nothing in this file can make
+// an object LESS protected than the connector computes on its own.
+syntax = "proto3";
+
+package activediq.connector.v1;
+
+import "activediq/connector/v1/common.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1;connectorv1";
+
+// Why an object is tier0. One value per row of threat-model §6.4. An object can have several.
+enum Tier0Basis {
+  TIER0_BASIS_UNSPECIFIED = 0;
+  // AD, computed by the AD connector.
+  TIER0_BASIS_C1_PROTECTED_GROUP = 1;
+  TIER0_BASIS_C2_PROTECTED_GROUP_MEMBER = 2;
+  TIER0_BASIS_C3_ADMIN_SD_HOLDER = 3;
+  TIER0_BASIS_C4_KRBTGT = 4;
+  TIER0_BASIS_C5_DOMAIN_CONTROLLER = 5;
+  TIER0_BASIS_C6_DC_CONTAINER = 6;
+  TIER0_BASIS_C7_NAMING_CONTEXT_HEAD = 7;
+  TIER0_BASIS_C8_SENSITIVE_SYSTEM_OBJECT = 8;
+  TIER0_BASIS_C9_GPO_REACHING_TIER0 = 9;
+  TIER0_BASIS_C10_PKI = 10;
+  TIER0_BASIS_C11_DCSYNC_PRINCIPAL = 11;
+  TIER0_BASIS_C12_DELEGATION_RISK = 12;
+  TIER0_BASIS_C13_DEFAULT_PRIVILEGED_GROUP = 13;
+  TIER0_BASIS_C14_SEAMLESS_SSO_ACCOUNT = 14;
+  TIER0_BASIS_C15_DC_SITE = 15;
+  // AD, supplied by the server through CorrelationStatement (any correlation state).
+  TIER0_BASIS_C16_CORRELATED_TO_ENTRA_TIER0 = 16;
+  // Entra, computed by the Entra connector.
+  TIER0_BASIS_E1_DIRECTORY_ROLE_HOLDER = 21;
+  TIER0_BASIS_E2_ROLE_ASSIGNABLE_GROUP = 22;
+  TIER0_BASIS_E3_PRIVILEGED_APP_OWNER = 23;
+  TIER0_BASIS_E4_HYBRID_CONTROL = 24;
+  // Entra, supplied by the server through CorrelationStatement (any correlation state).
+  TIER0_BASIS_E5_CORRELATED_TO_AD_TIER0 = 25;
+  // Either directory, supplied by the server: a customer designation (audited, step-up, TM §6.4).
+  TIER0_BASIS_CUSTOMER_DESIGNATED = 30;
+}
+
+// DM-20 correlation state. For protection every state counts (TM §6.4: "any correlation counts,
+// even candidate"); for authority only MATCHED does, and authority is not this contract's business.
+enum CorrelationState {
+  CORRELATION_STATE_UNSPECIFIED = 0;
+  CORRELATION_STATE_CANDIDATE = 1;
+  CORRELATION_STATE_MATCHED = 2;
+  CORRELATION_STATE_BROKEN = 3;
+}
+
+// The value a correlation rests on (DM-20.I1, I1a, I1b), so the connector can bind the statement
+// to the target it re-reads. A statement whose evidence does not match the target is refused.
+message CorrelationEvidence {
+  oneof evidence {
+    // The binary source anchor: an AD objectGUID or ms-DS-ConsistencyGuid, i.e. the bytes whose
+    // base64 is the Entra user's onPremisesImmutableId. 16 bytes, LDAP wire order of the attribute
+    // as stored (the anchor is compared as opaque bytes, never converted).
+    bytes source_anchor = 1;
+    // The AD objectSid, as the Entra object's onPremisesSecurityIdentifier carries it.
+    Sid security_identifier = 2;
+  }
+}
+
+// One correlation of a touched object with an object in the other directory.
+message CorrelatedPeer {
+  // The other directory's kind. PROVIDER_KIND_UNSPECIFIED, or the connection's own kind, makes
+  // the peer inconsistent, and an inconsistent peer counts as tier0 (contract §8.3 F5).
+  ProviderKind peer_kind = 1;
+  DirectoryIdentity peer_directory = 2;
+  Guid peer_object = 3;
+  CorrelationState state = 4;
+  // Whether the peer is tier0 in its own directory, as the server last computed it, and why.
+  // `peer_tier0_basis` is empty exactly when `peer_tier0` is false.
+  bool peer_tier0 = 5;
+  repeated Tier0Basis peer_tier0_basis = 6;
+  // Mandatory. A peer whose `evidence` oneof is unset counts as tier0 (F5); a set value that does
+  // not match the object as re-read is CONTEXT_CONTRADICTED (F4).
+  CorrelationEvidence evidence = 7;
+}
+
+// The server's statement about ONE touched object's cross-directory correlations (C16 for an AD
+// object, E5 for an Entra object). A Tier0Context carries one statement per object of the
+// connector-derived touched set (target included). Rules F1-F6 of contract §8.3 say how a
+// connector uses it; in short: missing, stale or contradicted means TIER0_REFUSED.
+message CorrelationStatement {
+  // The touched object this statement is about.
+  Guid object = 1;
+  oneof correlation {
+    // The connection has no HybridLink (DM-21) to any tenant or forest, so no correlation of any
+    // state can exist for any of its objects.
+    NoHybridLink no_hybrid_link = 2;
+    // The connection has a HybridLink. Every correlation of the object in every state is listed;
+    // an empty list means the server holds none for this object.
+    CorrelatedPeers peers = 3;
+  }
+  // Mandatory. When the server computed the statement from its inventory. Unset is
+  // CONTEXT_MISSING (F1; the zero timestamp is never read as a time). Older than the connector's
+  // maximum statement age, or too far in its future, is CONTEXT_STALE (F3).
+  google.protobuf.Timestamp computed_at = 4;
+}
+
+message NoHybridLink {}
+
+message CorrelatedPeers {
+  repeated CorrelatedPeer peers = 1;
+}
+
+// Request-scoped Tier-0 context that only the server can supply. Every write-group request carries
+// one (fitness-proto P8). It can only widen the connector's own set.
+message Tier0Context {
+  // v1.1 draft had a single `CorrelationStatement correlation = 1` bound to the target only.
+  reserved 1;
+  reserved "correlation";
+  // Customer-designated tier0 objects of the connection's directory that matter for this request:
+  // every object of the touched set that is designated, and every designated group any touched
+  // object is a member of. The connector treats each listed GUID as tier0; listing too many is
+  // harmless, listing too few is residual R-T0CTX-1 (contract §8.3 F6).
+  repeated Guid designated = 2;
+  // The server's tier0-set revision the context was built from, echoed in audit and in errors.
+  uint64 tier0_revision = 3;
+  // One statement per object of the touched set, target included (F1). The connector derives the
+  // touched set itself from the typed change; a touched object with no statement is
+  // CONTEXT_MISSING, statements about objects outside the touched set are ignored (and counted in
+  // the connector's log), and two statements about one object are merged additively, except that
+  // `no_hybrid_link` beside `peers` for the same connection is CONTEXT_CONTRADICTED.
+  repeated CorrelationStatement statements = 4;
+}

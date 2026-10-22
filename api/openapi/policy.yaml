@@ -5,7 +5,9 @@
 # (an AN-n row or a TM- section). It names its subject by `operation` (an operationId), or `method`
 # + `path` for a route (anonymous may use either; nonApiRoutes uses method + path), or `permission`
 # (stepUp). Optional: `host`, `gate`; `schema` is required in secretResponses. An entry that names
-# something absent from the contract fails; `host` fails until the apihost binding table exists.
+# something absent from the contract fails; `host` must name a binding in apihost's table
+# (internal/platform/apihost/policy.go HostBindings), and an anonymous entry's ref must cite that
+# binding's AN row.
 #
 # Seeded by T-0032 with the non-API routes of ADR-0004 rule 5 (AN-1 to AN-3). T-0034 added the AN-1
 # operations getLiveness and getReadiness (TM §7.6 rules 8 and 9). Any other operation, permission
@@ -13,8 +15,8 @@
 # what they name. Its owner adds the row, and security-architect reviews it:
 #
 #   anonymous        AN-4  first-run setup operation                    gate: one-time setup secret
-#                    AN-5  end-user TOTP enrolment operations           host: enrolment binding (T-0018 table first)
-#                    AN-7  [M4] SSPR operations on the L1 listener      host: SSPR binding (T-0018 table first)
+#                    AN-5  end-user TOTP enrolment operations           host: totp-enrolment binding
+#                    AN-7  [M4] SSPR operations on the L1 listener      host: sspr binding
 #                    AN-8  local break-glass sign-in, password step     class auth; TM §7.6 rules 1-4
 #                    AN-9  GET /auth/negotiate (and a nonApiRoutes row) only once the PRD offers SPNEGO
 #                    AN-10 sign-in second-factor operations             gate: pending-sign-in handle

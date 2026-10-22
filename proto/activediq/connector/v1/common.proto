@@ -171,10 +171,14 @@ message DirectoryEntry {
   repeated Attribute attributes = 4;
 }
 
-// Every operation of the contract, including the three whose NAMES are reserved by T-0064 and
-// whose messages are specified later. Reserved operations are listed in Describe with state
-// RESERVED and any call to them fails with ERROR_CODE_CAPABILITY_UNSUPPORTED. Adding a shape later
-// is additive: it never renumbers or changes anything here.
+// Every operation of the contract, including the two whose NAMES are reserved and whose messages
+// are specified later (READ_SECRET, VERIFY_USER). Reserved operations are listed in Describe with
+// state RESERVED and any call to them fails with ERROR_CODE_CAPABILITY_UNSUPPORTED. Adding a shape
+// later is additive: it never renumbers or changes anything here.
+//
+// v1.1 (T-0091) gave APPLY its shape and added PLAN and VERIFY_CONNECTION. A provider reports
+// PLAN and APPLY SUPPORTED only when its write path is wired for at least one WriteKind and it
+// also reports VERIFY_CONNECTION SUPPORTED; otherwise UNSUPPORTED (never RESERVED again).
 enum Operation {
   OPERATION_UNSPECIFIED = 0;
   OPERATION_DESCRIBE = 1;
@@ -183,8 +187,12 @@ enum Operation {
   OPERATION_READ = 4;
   OPERATION_READ_PER_DC = 5;
   OPERATION_CHANGE_FEED = 6;
-  // Reserved names (blueprint §7.1). No message shape in v1.
+  // v1.1: the write group and the rights check.
+  OPERATION_PLAN = 7;
+  OPERATION_VERIFY_CONNECTION = 8;
+  // Named in v1 (blueprint §7.1), shaped in v1.1 (write.proto). The number is kept.
   OPERATION_APPLY = 100;
+  // Reserved names. No message shape yet.
   OPERATION_READ_SECRET = 101;
   OPERATION_VERIFY_USER = 102;
 }

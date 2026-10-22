@@ -1,6 +1,7 @@
 package main
 
-// checkA7 is the static half of ADR-0004 A7 (strict JSON): rule 7's bans. The type-closure,
-// corpus and ajv cross-check parts need the apihost route table and stay inactive until
-// apihost.Build exists.
-func checkA7(t *tree) []Violation { return goStaticJSON(t.root) }
+// checkA7 is ADR-0004 A7 (strict JSON): rule 7's static bans, then the runtime parts over the
+// router apihost.Build makes: the type closure, the corpus and the ajv cross-check.
+func checkA7(t *tree) []Violation {
+	return append(goStaticJSON(t.root), checkA7Runtime(t)...)
+}

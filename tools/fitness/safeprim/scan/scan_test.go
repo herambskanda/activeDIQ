@@ -258,8 +258,51 @@ func TestSkipByLocationNotName(t *testing.T) {
 	rs := "let d = format!(\"CN={},OU=x\", n);\n"
 	want(t, "real native/target beside Cargo.toml", map[string]string{"native/Cargo.toml": "[workspace]\n", "native/target/debug/a.rs": rs}, "", "", "")
 	want(t, "Rust source under a crate folder named target without Cargo.toml", map[string]string{"native/shared/src/target/a.rs": rs}, "FF-SP3", "dn-shape", "native/shared/src/target/a.rs")
-	want(t, "web/dist beside package.json", map[string]string{"web/package.json": "{}\n", "web/dist/a.go": bad}, "", "", "")
 	want(t, "root factory and knowledge", map[string]string{"factory/x.go": bad, "knowledge/y.go": bad}, "", "", "")
+}
+
+// T-0084: build-output names beside a project file hide non-Go output only; Go ignores none of
+// them, so a main-module .go file inside is an importable product package.
+func TestBuildOutputDirsStillScanGo(t *testing.T) {
+	bad := gofile("\t\"fmt\"\n\t\"os/exec\"\n", "func f(x string) string { _ = exec.Command; return fmt.Sprintf(\"(&(objectClass=user)(cn=%s))\", x) }")
+	for _, c := range []struct{ proj, dir string }{
+		{"web/package.json", "web/dist/p"},
+		{"svc/App.csproj", "svc/bin/p"},
+		{"svc/App.csproj", "svc/obj/p"},
+		{"native/Cargo.toml", "native/target/p"},
+	} {
+		f := c.dir + "/x.go"
+		files := map[string]string{c.proj: "{}\n", f: bad, "cmd/srv/main.go": "package main\n\nimport _ \"fx.test/" + c.dir + "\"\n\nfunc main() {}\n"}
+		want(t, "FF-SP3 in "+c.dir, files, "FF-SP3", "ldap-filter-shape", f)
+		want(t, "FF-SP1 in "+c.dir, files, "FF-SP1", "process-api", f)
+	}
+	cs := "var f = $\"(&(objectClass=user)(cn={n}))\";\n"
+	want(t, "non-Go output in build dirs is not scanned", map[string]string{
+		"web/package.json": "{}\n", "web/dist/a.js": "x", "web/dist/a.sql": "SELECT 1;\n",
+		"svc/App.csproj": "<Project/>\n", "svc/bin/A.cs": cs, "svc/obj/B.cs": cs,
+		"native/Cargo.toml": "[workspace]\n", "native/target/a.rs": "let d = format!(\"CN={},OU=x\", n);\n"}, "", "", "")
+}
+
+// T-0083: Go does not ignore node_modules, so a Go package under one is product code; npm's own
+// install beside a package.json is not scanned.
+func TestNodeModulesScannedWhereGoCanBuildIt(t *testing.T) {
+	bad := gofile("\t\"fmt\"\n\t\"os/exec\"\n", "func f(x string) string { _ = exec.Command; return fmt.Sprintf(\"(&(objectClass=user)(cn=%s))\", x) }")
+	f := "internal/node_modules/p/x.go"
+	files := map[string]string{f: bad, "cmd/srv/main.go": "package main\n\nimport _ \"fx.test/internal/node_modules/p\"\n\nfunc main() {}\n"}
+	want(t, "FF-SP3 in internal/node_modules/p", files, "FF-SP3", "ldap-filter-shape", f)
+	want(t, "FF-SP1 in internal/node_modules/p", files, "FF-SP1", "process-api", f)
+	// web/package.json exists in the real repository: node_modules beside it is still Go-buildable.
+	web := map[string]string{"web/package.json": "{}\n", "web/node_modules/dep/x.go": bad, "cmd/srv/main.go": "package main\n\nimport _ \"fx.test/web/node_modules/dep\"\n\nfunc main() {}\n"}
+	want(t, "FF-SP3 in web/node_modules/dep", web, "FF-SP3", "ldap-filter-shape", "web/node_modules/dep/x.go")
+	want(t, "FF-SP1 in web/node_modules/dep", web, "FF-SP1", "process-api", "web/node_modules/dep/x.go")
+	want(t, "nested node_modules inside web/node_modules", map[string]string{"web/package.json": "{}\n", "web/node_modules/a/node_modules/b/x.go": bad}, "FF-SP3", "ldap-filter-shape", "web/node_modules/a/node_modules/b/x.go")
+	// a nested module wired in by a replace directive is compiled into the binary.
+	repl := map[string]string{"go.mod": "module fx.test\n\ngo 1.27.0\n\nrequire other v0.0.0\n\nreplace other => ./web/node_modules/dep\n", "web/package.json": "{}\n", "web/node_modules/dep/go.mod": "module other\n", "web/node_modules/dep/x.go": bad}
+	want(t, "FF-SP3 in replaced module under node_modules", repl, "FF-SP3", "ldap-filter-shape", "web/node_modules/dep/x.go")
+	want(t, "FF-SP1 in replaced module under node_modules", repl, "FF-SP1", "process-api", "web/node_modules/dep/x.go")
+	want(t, "denylisted require in node_modules go.mod", map[string]string{"web/package.json": "{}\n", "web/node_modules/dep/go.mod": "module other\n\ngo 1.27.0\n\nrequire github.com/go-rod/rod v0.1.0\n"}, "FF-SP1", "html-to-pdf-engine", "web/node_modules/dep/go.mod")
+	want(t, "non-Go content under web/node_modules is not scanned", map[string]string{"web/package.json": "{}\n", "web/node_modules/dep/x.cs": "using System.Diagnostics;\nclass C { void F() { Process.Start(\"x\"); } }\n", "web/node_modules/dep/x.sql": "SELECT 1;\n"}, "", "", "")
+	want(t, "foo.package.json is not a package.json", map[string]string{"web/foo.package.json": "{}\n", "web/dist/x.go": bad}, "FF-SP3", "ldap-filter-shape", "web/dist/x.go")
 }
 
 // wantAnalyzed asserts that Analyze (the type-aware passes, one run per Targets entry) reports rule in file.
@@ -538,7 +581,6 @@ func TestFFSP2LocalReplaceModuleIsShippedCode(t *testing.T) {
 	}
 }
 
-
 // T-0082: a root-level directory that skipDir normally skips is scanned once product code imports a
 // package in it, because that package ships. One fixture per root name Go can import (.claude is
 // not an importable path element), each failing FF-SP1 process-api and FF-SP3 ldap-filter-shape.
@@ -653,6 +695,105 @@ func TestRootSkippedDirsBuildTagsEmbedsAndLoadFailure(t *testing.T) {
 		root := tree(t, map[string]string{"go.mod": "module fx.test\n\nrequire (\n", "internal/m/m.go": "package m\n"})
 		if _, err := Scan(root, AllChecks()); err == nil {
 			t.Fatal("expected an error from a broken go.mod, got none")
+		}
+	})
+}
+
+// T-0085: Go compiles an imported testdata/ directory and a symlinked directory, so the scan must
+// not decide what ships from directory names.
+func TestTestdataAndSymlinkedImportsFail(t *testing.T) {
+	bad := gofile("\t\"fmt\"\n\t\"os/exec\"\n", "var _ = exec.Command\n\nfunc F(x string) string { return fmt.Sprintf(\"(&(objectClass=user)(cn=%s))\", x) }")
+	rules := func(t *testing.T, root string) map[string]bool {
+		t.Helper()
+		fs, err := Scan(root, AllChecks())
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := map[string]bool{}
+		for _, f := range fs {
+			got[f.FF+" "+f.Rule+" "+f.File] = true
+		}
+		return got
+	}
+	t.Run("P3 imported internal/testdata", func(t *testing.T) {
+		got := rules(t, tree(t, map[string]string{
+			"internal/testdata/p/x.go": bad,
+			"internal/m/m.go":          "package m\n\nimport _ \"fx.test/internal/testdata/p\"\n",
+		}))
+		for _, k := range []string{"FF-SP1 process-api internal/testdata/p/x.go", "FF-SP3 ldap-filter-shape internal/testdata/p/x.go"} {
+			if !got[k] {
+				t.Errorf("missing %q in %v", k, got)
+			}
+		}
+	})
+	t.Run("P5 directory symlink", func(t *testing.T) {
+		root := tree(t, map[string]string{
+			"garage/p/x.go":   bad,
+			"internal/n/n.go": "package n\n\nimport _ \"fx.test/internal/link\"\n",
+		})
+		if err := os.Symlink("../garage/p", filepath.Join(root, "internal", "link")); err != nil {
+			t.Skip("symlinks unavailable:", err)
+		}
+		if got := rules(t, root); !got["FF-SP1 dir-symlink internal/link"] {
+			t.Errorf("missing dir-symlink finding in %v", got)
+		}
+	})
+	t.Run("P6 replace into third_party/testdata", func(t *testing.T) {
+		got := rules(t, tree(t, map[string]string{
+			"third_party/testdata/lib/go.mod": "module fx.lib\n\ngo 1.22\n",
+			"third_party/testdata/lib/x.go":   bad,
+			"go.mod":                          "module fx.test\n\ngo 1.22\n\nrequire fx.lib v0.0.0\n\nreplace fx.lib => ./third_party/testdata/lib\n",
+			"internal/m/m.go":                 "package m\n\nimport _ \"fx.lib\"\n",
+		}))
+		for _, k := range []string{"FF-SP1 process-api third_party/testdata/lib/x.go"} {
+			if !got[k] {
+				t.Errorf("missing %q in %v", k, got)
+			}
+		}
+	})
+	t.Run("symlink inside entered garage dir", func(t *testing.T) {
+		root := tree(t, map[string]string{
+			"garage/real/x.go": bad,
+			"internal/m/m.go":  "package m\n\nimport _ \"fx.test/garage/link\"\n",
+		})
+		if err := os.Symlink("real", filepath.Join(root, "garage", "link")); err != nil {
+			t.Skip("symlinks unavailable:", err)
+		}
+		if got := rules(t, root); !got["FF-SP1 dir-symlink garage/link"] {
+			t.Errorf("missing dir-symlink finding in %v", got)
+		}
+	})
+	t.Run("file symlinks are scanned through the link", func(t *testing.T) {
+		outside := t.TempDir()
+		if err := os.WriteFile(filepath.Join(outside, "o.go"), []byte(bad), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		root := tree(t, map[string]string{
+			"garage/x.go.src": bad,
+			"internal/m/m.go": "package m\n",
+		})
+		if err := os.Symlink("../../garage/x.go.src", filepath.Join(root, "internal", "m", "in.go")); err != nil {
+			t.Skip("symlinks unavailable:", err)
+		}
+		if err := os.Symlink(filepath.Join(outside, "o.go"), filepath.Join(root, "internal", "m", "out.go")); err != nil {
+			t.Fatal(err)
+		}
+		got := rules(t, root)
+		for _, f := range []string{"internal/m/in.go", "internal/m/out.go"} {
+			for _, k := range []string{"FF-SP1 process-api ", "FF-SP3 ldap-filter-shape "} {
+				if !got[k+f] {
+					t.Errorf("missing %q in %v", k+f, got)
+				}
+			}
+		}
+	})
+	t.Run("dangling symlink fails closed", func(t *testing.T) {
+		root := tree(t, map[string]string{"internal/m/m.go": "package m\n"})
+		if err := os.Symlink("nowhere.go", filepath.Join(root, "internal", "m", "d.go")); err != nil {
+			t.Skip("symlinks unavailable:", err)
+		}
+		if got := rules(t, root); !got["FF-SP1 dangling-symlink internal/m/d.go"] {
+			t.Errorf("missing dangling-symlink finding in %v", got)
 		}
 	})
 }

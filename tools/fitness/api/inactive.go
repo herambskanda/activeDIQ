@@ -2,8 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -41,24 +39,23 @@ var checks = []checkInfo{
 		rest: func(string, *tree) string {
 			return "runtime half: no EP-6 permission catalogue (Registrar and kernel contributions) to check each x-permission against"
 		}},
-	{ID: "A4", Title: "route set (TM-F-ANON)",
-		needs: "no apihost.Build router and profile manifests with hostname bindings to probe",
-		ready: func(root string, _ *tree) bool { return apihostBuildExists(root) }},
+	{ID: "A4", Title: "route set (TM-F-ANON)", run: checkA4,
+		note: "per profile (windows, linux-oci, saas): apihost.Build, served set against the enabled tags, the anonymous set per hostname binding and on an unbound hostname, and the HTTP probe (401, 403, CSRF)",
+		rest: func(root string, _ *tree) string { return runtimeGap(root, true) }},
 	{ID: "A5", Title: "generated client", run: checkA5,
 		note: "generated types cover every operation, open enums widened with a type-check fixture, web/src/api file set, rule 12 ESLint rule wired; byte-for-byte staleness is make gen-api-check and the rule 12 fire-test is make ci-proof"},
-	{ID: "A6", Title: "generated server",
-		needs: "no module api package (internal/modules/*/api) holding generated handlers",
-		ready: func(root string, _ *tree) bool { return globExists(root, "internal/modules/*/api") }},
+	{ID: "A6", Title: "generated server", run: checkA6,
+		note: "source half: route constructors only in generated files, Registrar.API takes api.Bind, no net/http in handler packages, apihost imports no API-serving kernel package, api packages are generated only; *.gen.go staleness is make gen-api-check"},
 	{ID: "A7", Title: "strict JSON", run: checkA7,
-		note: "static half: encoding/json v1 ban, banned v2 options, nojsonv2",
+		note: "static half, then per profile over apihost.Build: type closure of Input, body target and observed responses, the generated corpus through the router, and the ajv cross-check on the same bundle",
 		rest: func(root string, _ *tree) string {
-			r := "type closure, corpus and ajv cross-check: no route table to reflect over (apihost.Build) and no operation to derive a corpus from"
+			r := "secret-buffer zeroing is not observed (apihost has no test-build hook yet); " + runtimeGap(root, false)
 			if n := len(jsonV1Debt(root)); n > 0 {
 				r += fmt.Sprintf("; %d file(s) still import encoding/json v1 under the baseline tools/fitness/api/json-v1-baseline.txt", n)
 			}
 			return r
 		},
-		restReady: func(root string, _ *tree) bool { return apihostBuildExists(root) }},
+	},
 	{ID: "A8", Title: "secrets out (TM-F-SECRETOUT)", run: checkA8,
 		note: "linter half",
 		rest: func(string, *tree) string {
@@ -77,10 +74,15 @@ var checks = []checkInfo{
 	{ID: "A11", Title: "problems", run: checkA11},
 	{ID: "A12", Title: "limits", run: checkA12},
 	{ID: "A13", Title: "policy hygiene", run: checkA13,
-		note: "routes outside the document and hostname bindings cannot be verified until apihost serves routes (A4); an entry naming a host binding fails until then; TM- references are shape-checked only (AN-n rows are resolved)"},
-	{ID: "A14", Title: "responses conform",
-		needs: "no runtime contract-test harness (apihost.Build plus the shared response validator)",
-		ready: func(root string, _ *tree) bool { return apihostBuildExists(root) }},
+		note: "host bindings are looked up in the apihost table; a route outside the document is matched against the routes the server mounts, once any is mounted; TM- references are shape-checked only (AN-n rows are resolved)",
+		rest: func(root string, _ *tree) string {
+			if _, ok := nonAPIServedSource(""); !ok {
+				return "no server mounts a route outside the document yet (/healthz, /readyz, the console), so anonymous and nonApiRoutes entries naming one cannot be matched to a served route"
+			}
+			return ""
+		}},
+	{ID: "A14", Title: "responses conform", run: checkA14,
+		note: "every route is called through internal/platform/apihost/apitest, which validates each response body with the generated validators; module contract tests use the same harness"},
 }
 
 func isActive(id string) bool {
@@ -113,29 +115,25 @@ func activeIDs() []string {
 	return out
 }
 
-// apihostBuildExists reports a non-test Go file in apihost declaring func Build.
-func apihostBuildExists(root string) bool {
-	dir := filepath.Join(root, "internal", "platform", "apihost")
-	ents, err := os.ReadDir(dir)
-	if err != nil {
-		return false
+// runtimeGap names what the runtime checks cannot see yet: routes no module mounts. The real tag
+// source is the module list, and Registrar.API does not exist, so a generated api package is not
+// reachable from it. nonAPI adds the routes outside the document.
+func runtimeGap(root string, nonAPI bool) string {
+	var pkgs []string
+	for d := range apiPackageDirs(root) {
+		pkgs = append(pkgs, d)
 	}
-	for _, e := range ents {
-		n := e.Name()
-		if e.IsDir() || !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") {
-			continue
-		}
-		b, err := os.ReadFile(filepath.Join(dir, n))
-		if err == nil && strings.Contains("\n"+string(b), "\nfunc Build(") {
-			return true
+	sort.Strings(pkgs)
+	var r []string
+	if len(pkgs) > 0 {
+		r = append(r, fmt.Sprintf("generated api package(s) no module mounts yet: %s (Registrar.API is not built), so the router the checks build serves no route and they run on fixtures only", strings.Join(pkgs, ", ")))
+	}
+	if nonAPI {
+		if _, ok := nonAPIServedSource(""); !ok {
+			r = append(r, "no server mounts a route outside the document, so nonApiRoutes is not compared with a served set")
 		}
 	}
-	return false
-}
-
-func globExists(root, pattern string) bool {
-	m, _ := filepath.Glob(filepath.Join(root, filepath.FromSlash(pattern)))
-	return len(m) > 0
+	return strings.Join(r, "; ")
 }
 
 // restText is the unfinished part of an active check, "" when there is none.

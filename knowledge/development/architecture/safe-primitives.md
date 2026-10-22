@@ -1,7 +1,7 @@
 ---
 title: "Safe primitives: LDAP filters, DNs, attribute codecs, command invocation, SQL, output encoders"
 date: 2026-10-02
-updated: 2026-10-21
+updated: 2026-10-22
 status: review
 owner: heramb
 ticket: T-0035, T-0041
@@ -30,6 +30,7 @@ with stable code `X`; nothing is sent to a DC, interpreter or database.
 | P5 | SQL access: generated queries, tenant context, report compiler, LIKE patterns | `Sprintf`/concatenated SQL, session-level `SET` | S | backend-engineer | 7 |
 | P6 | `sd`: binary MS-DTYP security descriptors, SD_FLAGS, diff-based DACL edits, SDDL display-only | hand-sliced `nTSecurityDescriptor` bytes; SDDL on write paths; whole-SD writes | S, A | directory-engineer | sibling doc: `safe-primitives-security-descriptor.md` (old T-0028) |
 | P7 | output encoders: `cellsafe` formula-lead classifier, CSV writer/reader, XLSX writer, HTML (`htmlx`, `msgtpl`, `httpx.Attachment`), e-mail composer, PDF writer | `encoding/csv` and joined rows, raw XLSX/PDF library calls, `text/template`, typed-string conversions, hand-built mail headers, HTML-to-PDF engines; in `web/`, DOM HTML sinks | S (tier W follows §12.5 W1–W5) | reporting-engineer (exports), backend-engineer (`htmlx`, `msgtpl`, mail) | 12 (old T-0029) |
+| P8 | `odata`: Graph `$filter` AST (`Eq`, `In`, `And`), query options, key-segment/path renderer, typed `graphschema` properties | `$filter`/`$search`/… text outside the primitive, glued key segments (`set(prop='`+x+`')`), quote doubling, hand-assembled Graph URLs | S | directory-engineer; devops-engineer (rules) | sibling doc: `safe-primitives-odata.md` (T-0106) |
 
 Tier W (web console) implements **no** primitive and tier L (lab and tools) is exempt from the
 literal-shape ban but never imported by product code — both rules are in §2.1.
@@ -145,6 +146,13 @@ ParseFilterAST(json, caller, limits) -> Filter | Error   // the tier-W wire form
 scope.ScopedSearch(d: Delegation, f: Filter, attrs: AttrName[], page) -> AuthorisedPage   // the only search feature code can call (§3.6)
 scope.ReadSecret(ref: GUIDRef, a: SecretAttr, g: SecretReadGrant, c: SecureConn) -> Secret // §3.7
 ```
+
+**Implemented (T-0101, `internal/directory/ldapfilter`):** the AST, `Render(f, schema)`, the typed values,
+`ParseAttrName`, rules 1–3, 4, 5, 6 (closed set) and 9, secrets refused by name, and vectors LF-01–LF-21, LF-27
+(typed half) and LF-28–LF-29 plus extras LF-41–LF-54 in `testdata/safe-primitives/ldapfilter.jsonl`. Constructors
+never fail; every check runs in `Render`, which takes the `Schema` (so `Render(f, sc)`, not `Render(f)`).
+`Value.DN` takes the P2 interface `DN{CanonicalString()}` until T-0102 lands. Still to build: `ParseAdminFilter`
+/ `ParseFilterAST` (LF-22–26, LF-34, LF-36) and `scope` (LF-30–33, LF-35, LF-37–40).
 
 There is no public `Search(base, …)`. The raw connector search is internal to the `scope` package
 (§3.6), so a feature cannot choose a base, a control or a port.
@@ -1131,6 +1139,7 @@ and is updated by the lab tests, not by hand.
 - `psx`, `pslit`, `proc`;
 - `sql`;
 - `cellsafe`, `csv`, `xlsx`, `html`, `mail`, `pdf` (P7, §12);
+- `odata` (P8, defined in `safe-primitives-odata.md` §5; its FF-SP3 `odata-*` rules and FF-SP2 `odataname`/`graph-url-assembly` are in that document §6);
 - `sd.read`, `sd.write` (P6, defined in `safe-primitives-security-descriptor.md` §5; its rules FF-SD1–5 each have a named owner in that document §6: old T-0118 for FF-SD1/2 and the `sd.read` half of FF-SD5, old T-0138 for FF-SD3/4, old T-0135 for the `sd.write` half; the old T-0033/old T-0034 harness hosts them).
 
 A **record is one input**. A table row listing several inputs separated by `·`, `/` or commas
@@ -1316,6 +1325,7 @@ old T-0034 (FF-SP4–6, 8) and old T-0036 (FF-SP7, implemented inside ADR-0002's
 - old T-0007 — Kerberos-only outbound policy (§6.3) and the secret-memory policy, including the
   `runtime/secret` evaluation (§5.6).
 - old T-0023 — whether GSSAPI sealing can be a `SecureConn` source (§5.6).
+- T-0106 — OData/Graph primitive P8: done as `safe-primitives-odata.md`; build, FF-SP3 rules and Graph lab vectors are follow-up tickets named in its §9.
 - OPATH (Exchange) filter primitive: none planned. OPATH parameters stay banned for data (§6.1 rule 2)
   until the M365 parity scope needs one.
 

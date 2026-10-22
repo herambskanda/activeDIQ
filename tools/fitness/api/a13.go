@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"path"
 	"regexp"
 	"strings"
@@ -172,9 +173,13 @@ func checkA13(t *tree) []Violation {
 				vs = append(vs, Violation{"A13", where, fmt.Sprintf("%s %s: stale: response schema %q is not declared in the contract (ADR-0004 rule 9)", sec.name, label, f["schema"])})
 			}
 			if h := f["host"]; h != "" {
-				// Hostname bindings are declared by the apihost route table (A4's input), which does
-				// not exist yet, so no binding can exist: an entry naming one is stale by definition.
-				vs = append(vs, Violation{"A13", where, fmt.Sprintf("%s %s: names hostname binding %q, but the tree declares no hostname bindings yet (they arrive with apihost, the A4 input); land the binding first (ADR-0004 rule 9)", sec.name, label, h)})
+				b, ok := apihost.LookupHostBinding(h)
+				switch {
+				case !ok:
+					vs = append(vs, Violation{"A13", where, fmt.Sprintf("%s %s: stale: hostname binding %q is not in apihost's binding table (%s) (ADR-0004 rule 9)", sec.name, label, h, bindingNames())})
+				case sec.name == "anonymous" && !refCitesAN(f["ref"], b.Ref):
+					vs = append(vs, Violation{"A13", where, fmt.Sprintf("%s %s: hostname binding %q is justified by %s but the entry's ref is %q (ADR-0004 rule 9)", sec.name, label, h, b.Ref, f["ref"])})
+				}
 			}
 		}
 	}
@@ -210,7 +215,7 @@ func checkRouteEntry(sec policySection, where, label string, f map[string]string
 		case paths[p]:
 			return []Violation{{"A13", where, fmt.Sprintf("%s %s: stale: %s is a path of the document, not a route outside it", sec.name, label, p)}}
 		}
-		return nil // existence of a route outside the document is A4's, once apihost serves routes
+		return servedRoute(sec, where, label, m, p)
 	}
 	if inDoc {
 		if !routes[strings.ToLower(m)+" "+rel] {
@@ -224,7 +229,7 @@ func checkRouteEntry(sec policySection, where, label string, f map[string]string
 	if paths[p] {
 		return []Violation{{"A13", where, fmt.Sprintf("%s %s: stale: the contract has no operation %s %s (ADR-0004 rule 9)", sec.name, label, m, p)}}
 	}
-	return nil // a route outside the document: A4's
+	return servedRoute(sec, where, label, m, p)
 }
 
 func entryLabel(section string, f map[string]string) string {
@@ -237,4 +242,38 @@ func entryLabel(section string, f map[string]string) string {
 		return strings.TrimSpace(f["method"] + " " + f["path"])
 	}
 	return "(unnamed)"
+}
+
+func bindingNames() string {
+	var n []string
+	for _, b := range apihost.HostBindings {
+		n = append(n, b.Name)
+	}
+	return strings.Join(n, ", ")
+}
+
+// servedOutsideDocument is the set of "METHOD /path" the servers mount outside the document, over
+// every profile. ok is false while no server mounts any: then an entry cannot be matched, which
+// A13's inactive part says, and nothing is failed on a guess.
+func servedOutsideDocument() (map[string]bool, bool) {
+	out := map[string]bool{}
+	any := false
+	for _, p := range []string{"windows", "linux-oci", "saas"} {
+		if r, ok := nonAPIServedSource(p); ok {
+			any = true
+			for _, k := range r {
+				out[k] = true
+			}
+		}
+	}
+	return out, any
+}
+
+// servedRoute checks that a route outside the document is one the router serves.
+func servedRoute(sec policySection, where, label, m, p string) []Violation {
+	served, ok := servedOutsideDocument()
+	if !ok || served[m+" "+p] {
+		return nil
+	}
+	return []Violation{{"A13", where, fmt.Sprintf("%s %s: stale: no server mounts %s %s (ADR-0004 rule 9)", sec.name, label, m, p)}}
 }

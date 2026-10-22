@@ -1,70 +1,88 @@
 package connectorv1_test
 
 import (
+	"context"
 	"testing"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
-// The names Apply, ReadSecret and VerifyUser are reserved in the Operation enum and have no RPC
+// The names ReadSecret and VerifyUser are reserved in the Operation enum and have no RPC
 // (connector.proto; fitness-proto rule P6). These checks fail the build, not just the test run,
-// if one of them is implemented before its ticket specifies a shape.
+// if one of them is implemented before its ticket specifies a shape. Apply was reserved in v1 and
+// shaped in contract v1.1 (T-0091); its enum value keeps its number.
 
-// Reserved: the enum values must keep existing. Removing one is a breaking change to the contract.
+// Reserved and kept: the enum values must keep existing with their numbers. Removing or renumbering
+// one is a breaking change to the contract.
 var _ = [...]connectorv1.Operation{
-	connectorv1.Operation_OPERATION_APPLY,
 	connectorv1.Operation_OPERATION_READ_SECRET,
 	connectorv1.Operation_OPERATION_VERIFY_USER,
+	connectorv1.Operation_OPERATION_APPLY,
+	connectorv1.Operation_OPERATION_PLAN,
+	connectorv1.Operation_OPERATION_VERIFY_CONNECTION,
+}
+
+func TestOperationNumbersAreStable(t *testing.T) {
+	for op, want := range map[connectorv1.Operation]int32{
+		connectorv1.Operation_OPERATION_PLAN:              7,
+		connectorv1.Operation_OPERATION_VERIFY_CONNECTION: 8,
+		connectorv1.Operation_OPERATION_APPLY:             100,
+		connectorv1.Operation_OPERATION_READ_SECRET:       101,
+		connectorv1.Operation_OPERATION_VERIFY_USER:       102,
+	} {
+		if int32(op) != want {
+			t.Errorf("%s = %d, want %d", op, int32(op), want)
+		}
+	}
 }
 
 // Unimplemented: each marker declares one method at the same depth as ConnectorServer's. If the
-// service ever gains Apply, ReadSecret or VerifyUser, the selector below becomes ambiguous and
-// the package stops compiling. The same probe is built for the client interface.
+// service ever gains ReadSecret or VerifyUser, the selector below becomes ambiguous and the package
+// stops compiling. The same probe is built for the client interface.
 type (
-	applyMarker      struct{}
 	readSecretMarker struct{}
 	verifyUserMarker struct{}
 )
 
-func (applyMarker) Apply()           {}
 func (readSecretMarker) ReadSecret() {}
 func (verifyUserMarker) VerifyUser() {}
 
 type serverProbe struct {
 	connectorv1.ConnectorServer
-	applyMarker
 	readSecretMarker
 	verifyUserMarker
 }
 
 type clientProbe struct {
 	connectorv1.ConnectorClient
-	applyMarker
 	readSecretMarker
 	verifyUserMarker
 }
 
 var (
-	_ = serverProbe.Apply
 	_ = serverProbe.ReadSecret
 	_ = serverProbe.VerifyUser
-	_ = clientProbe.Apply
 	_ = clientProbe.ReadSecret
 	_ = clientProbe.VerifyUser
 )
 
-// TestServiceHasOnlyTheReadSide pins the RPC list, so a new RPC is a visible change here as well
-// as in connector.proto.
-func TestServiceHasOnlyTheReadSide(t *testing.T) {
-	methods := connectorv1.Connector_ServiceDesc.Methods
+// TestServiceRPCs pins the RPC list, so a new RPC is a visible change here as well as in
+// connector.proto.
+func TestServiceRPCs(t *testing.T) {
 	var got []string
 	for _, s := range connectorv1.Connector_ServiceDesc.Streams {
 		got = append(got, s.StreamName)
 	}
-	for _, m := range methods {
+	for _, m := range connectorv1.Connector_ServiceDesc.Methods {
 		got = append(got, m.MethodName)
 	}
-	want := map[string]bool{"Describe": true, "DescribeSchema": true, "ScopedSearch": true, "Read": true, "ReadPerDC": true, "ChangeFeed": true}
+	want := map[string]bool{
+		"Describe": true, "DescribeSchema": true, "ScopedSearch": true, "Read": true, "ReadPerDC": true, "ChangeFeed": true,
+		"VerifyConnection": true, "Plan": true, "Apply": true,
+	}
 	if len(got) != len(want) {
 		t.Fatalf("service has RPCs %v, want exactly %v", got, want)
 	}
@@ -72,5 +90,38 @@ func TestServiceHasOnlyTheReadSide(t *testing.T) {
 		if !want[g] {
 			t.Errorf("unexpected RPC %s", g)
 		}
+	}
+}
+
+// readOnlyProvider stands for a provider with no write path: it embeds the generated
+// UnimplementedConnectorServer, as every provider must (the generated interface requires it), and
+// implements no write-group method.
+type readOnlyProvider struct {
+	connectorv1.UnimplementedConnectorServer
+}
+
+// TestNoWritePathMeansNoWrite: a provider that does not wire Plan, Apply or VerifyConnection
+// cannot answer them with anything but UNIMPLEMENTED, which the transports map to
+// ERROR_CODE_CAPABILITY_UNSUPPORTED (contract §7). Its Describe must report PLAN and APPLY
+// UNSUPPORTED; conformance case CC-DESC-10 checks that against the running provider.
+func TestNoWritePathMeansNoWrite(t *testing.T) {
+	var p connectorv1.ConnectorServer = readOnlyProvider{}
+	ctx := context.Background()
+	if _, err := p.Plan(ctx, &connectorv1.PlanRequest{}); status.Code(err) != codes.Unimplemented {
+		t.Errorf("Plan on a read-only provider: %v, want Unimplemented", err)
+	}
+	if _, err := p.Apply(ctx, &connectorv1.ApplyRequest{}); status.Code(err) != codes.Unimplemented {
+		t.Errorf("Apply on a read-only provider: %v, want Unimplemented", err)
+	}
+	if err := p.VerifyConnection(&connectorv1.VerifyConnectionRequest{}, nil); status.Code(err) != codes.Unimplemented {
+		t.Errorf("VerifyConnection on a read-only provider: %v, want Unimplemented", err)
+	}
+}
+
+// TestWriteKindHasNoKindYet: v1.1 defines the envelope only. The first concrete WriteKind is a
+// visible change here, and must come with its WriteChange arm and conformance cases (contract §8.1).
+func TestWriteKindHasNoKindYet(t *testing.T) {
+	if n := len(connectorv1.WriteKind_name); n != 1 {
+		t.Fatalf("WriteKind has %d values; adding a kind needs its spec ticket, its WriteChange arm and CC-WRITE cases — update this test with them", n)
 	}
 }

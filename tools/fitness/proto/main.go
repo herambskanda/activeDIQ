@@ -1,4 +1,4 @@
-// Package main is the fitness-proto job (T-0064). It compiles every .proto file under proto/ with
+// Package main is the fitness-proto job (T-0064, extended by T-0091). It compiles every .proto file under proto/ with
 // a pure-Go compiler (no protoc, no buf, no network) and enforces the connector contract's
 // structural rules by reading the compiled descriptors. A contract that does not compile, or that
 // grows a free-form query verb, a DN-text field, a tenant field or a secret-typed field, fails
@@ -15,9 +15,15 @@
 //	    refused.
 //	P5  every RPC of a service has an `OPERATION_<NAME>` value in the package's Operation enum, so
 //	    every operation has a capability entry in Describe.
-//	P6  the reserved operation names Apply, ReadSecret and VerifyUser exist in Operation and have
-//	    no RPC (their shapes belong to later tickets).
+//	P6  the reserved operation names ReadSecret and VerifyUser exist in Operation and have no RPC
+//	    (their shapes belong to later tickets). Apply was reserved in v1 and shaped in v1.1; its
+//	    OPERATION_APPLY value must still exist (the number is part of the contract).
 //	P7  no string or bytes field anywhere is named password, unicode_pwd, credential or secret.
+//	P8  every write-group RPC (Plan, Apply) takes a request with a top-level, non-repeated field of
+//	    the package's Tier0Context message type, and that Tier0Context has a repeated field of the
+//	    package's CorrelationStatement type (one statement per touched object). No write can be
+//	    expressed without the per-object Tier-0 context the connector evaluates fail-closed
+//	    (contract §8.3 F1).
 package main
 
 import (
@@ -51,7 +57,10 @@ var (
 	bannedSecretFields = map[string]bool{
 		"password": true, "unicode_pwd": true, "credential": true, "secret": true,
 	}
-	reservedOperations = []string{"APPLY", "READ_SECRET", "VERIFY_USER"}
+	reservedOperations = []string{"READ_SECRET", "VERIFY_USER"}
+	// requiredOperations must exist in Operation even though they now have an RPC.
+	requiredOperations = []string{"APPLY"}
+	writeGroup         = map[string]bool{"PLAN": true, "APPLY": true}
 )
 
 // Compile parses every .proto file below dir. Import paths are relative to dir.
@@ -83,7 +92,7 @@ func Compile(dir string) (linker.Files, error) {
 	return c.Compile(context.Background(), names...)
 }
 
-// Lint applies P2 to P7 to compiled files.
+// Lint applies P2 to P8 to compiled files.
 func Lint(files linker.Files) []Violation {
 	var vs []Violation
 	requests := map[protoreflect.FullName]protoreflect.MessageDescriptor{}
@@ -110,9 +119,12 @@ func Lint(files linker.Files) []Violation {
 						vs = append(vs, Violation{"P6", pos, "operation name " + r + " is reserved and has no shape in this contract version"})
 					}
 				}
+				if writeGroup[screamingSnake(string(m.Name()))] && !hasTier0Context(m.Input()) {
+					vs = append(vs, Violation{"P8", pos, "write-group request " + string(m.Input().FullName()) + " has no Tier0Context field carrying repeated CorrelationStatement"})
+				}
 			}
 			if ops != nil {
-				for _, r := range reservedOperations {
+				for _, r := range append(append([]string{}, reservedOperations...), requiredOperations...) {
 					if ops.Values().ByName(protoreflect.Name("OPERATION_"+r)) == nil {
 						vs = append(vs, Violation{"P6", string(f.Path()), "Operation enum is missing the reserved name OPERATION_" + r})
 					}
@@ -148,6 +160,37 @@ func Lint(files linker.Files) []Violation {
 	}
 	sort.SliceStable(vs, func(i, j int) bool { return vs[i].String() < vs[j].String() })
 	return dedupe(vs)
+}
+
+// hasTier0Context reports whether m has a top-level, non-repeated field whose type is a message
+// named Tier0Context in m's own package, and that message has a repeated field of a message named
+// CorrelationStatement in the same package (per-object statements, contract §8.3 F1).
+func hasTier0Context(m protoreflect.MessageDescriptor) bool {
+	fields := m.Fields()
+	for i := 0; i < fields.Len(); i++ {
+		fd := fields.Get(i)
+		if fd.Message() == nil || fd.IsList() || fd.IsMap() {
+			continue
+		}
+		if fd.Message().Name() == "Tier0Context" && fd.Message().ParentFile().Package() == m.ParentFile().Package() &&
+			hasRepeatedOf(fd.Message(), "CorrelationStatement") {
+			return true
+		}
+	}
+	return false
+}
+
+// hasRepeatedOf reports whether m has a repeated (non-map) field whose type is a message named name
+// in m's own package.
+func hasRepeatedOf(m protoreflect.MessageDescriptor, name protoreflect.Name) bool {
+	fields := m.Fields()
+	for i := 0; i < fields.Len(); i++ {
+		fd := fields.Get(i)
+		if fd.Message() != nil && fd.IsList() && fd.Message().Name() == name && fd.Message().ParentFile().Package() == m.ParentFile().Package() {
+			return true
+		}
+	}
+	return false
 }
 
 func dedupe(vs []Violation) []Violation {
