@@ -26,6 +26,8 @@ const (
 	Secret     = "internal/platform/secret"      // Secret and secretjson
 	Store      = "internal/platform/store"       // data-access package: pgx, set_config, reportsql
 	Proc       = "internal/platform/proc"        // native process invocation
+	Egress     = "internal/platform/egress"      // the one outbound HTTP client (TM-TB9-T1)
+	GraphConn  = "internal/connector/graph"      // pre-egress Graph client; migrates to egress (follow-up ticket)
 	Pslit      = "internal/platform/pslit"       // PowerShell display literal
 	APIHost    = "internal/platform/apihost"     // the single caller of secretjson.Decode
 	Modules    = "internal/modules"              // server feature modules
