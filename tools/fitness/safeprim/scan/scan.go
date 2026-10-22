@@ -43,21 +43,31 @@ type Checks map[string]bool
 // AllChecks is FF-SP1 to FF-SP3.
 func AllChecks() Checks { return Checks{"FF-SP1": true, "FF-SP2": true, "FF-SP3": true} }
 
-// skipDir reports directories that hold no product code. Only names that can never be a product
+// skipDir reports directories that hold no product code (a root-level one is still entered when a
+// package product code imports lives in it, T-0082). Only names that can never be a product
 // package are skipped at any depth (.git, node_modules, the Go testdata convention). Every other
 // skip is tied to where that directory really is: repository-level working trees at the root, and
 // build output only beside the project file that produces it (bin and obj beside a .csproj, target
 // beside Cargo.toml, dist beside package.json). A product package that happens to be called target,
 // bin or obj, such as internal/modules/target, is therefore scanned.
 func skipDir(root, rel, name string) bool {
+	return skipDirUnless(root, rel, name, nil)
+}
+
+// rootSkipped are the root-level directories that normally hold no product code. They stay
+// skipped unless a package that product code reaches lives in them (T-0082).
+var rootSkipped = map[string]bool{"vendor": true, "factory": true, "knowledge": true, "garage": true, ".claude": true, "dist": true, "third_party": true}
+
+// skipDirUnless is skipDir, except that a root-level directory in rootSkipped is entered when it
+// overlaps a directory in entered (see enteredDirs): it is one, holds one, or lies inside one.
+func skipDirUnless(root, rel, name string, entered map[string]bool) bool {
 	switch name {
 	case ".git", "node_modules", "testdata":
 		return true
 	}
 	if !strings.Contains(rel, "/") {
-		switch name {
-		case "vendor", "factory", "knowledge", "garage", ".claude", "dist", "third_party":
-			return true
+		if rootSkipped[name] {
+			return !overlapsEntered(rel, entered)
 		}
 	}
 	parent := filepath.Join(root, filepath.FromSlash(filepath.ToSlash(filepath.Dir(rel))))
@@ -96,7 +106,11 @@ func dirHasSuffix(dir string, suffixes ...string) bool {
 func Scan(root string, checks Checks) ([]Finding, error) {
 	module, _ := modulePath(filepath.Join(root, "go.mod"))
 	var out []Finding
-	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+	entered, err := enteredDirs(root, module)
+	if err != nil {
+		return nil, err
+	}
+	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -106,10 +120,13 @@ func Scan(root string, checks Checks) ([]Finding, error) {
 		}
 		rel = filepath.ToSlash(rel)
 		if d.IsDir() {
-			if rel != "." && skipDir(root, rel, d.Name()) {
+			if rel != "." && skipDirUnless(root, rel, d.Name(), entered) {
 				return fs.SkipDir
 			}
 			return nil
+		}
+		if inRootSkipped(rel) && !underEntered(rel, entered) {
+			return nil // a file of a skipped root directory that no shipped package reaches
 		}
 		return scanFile(root, rel, module, checks, &out)
 	})
@@ -127,6 +144,11 @@ func Scan(root string, checks Checks) ([]Finding, error) {
 		return a.Rule < b.Rule
 	})
 	return out, nil
+}
+
+func inRootSkipped(rel string) bool {
+	top, _, nested := strings.Cut(rel, "/")
+	return nested && rootSkipped[top]
 }
 
 func scanFile(root, rel, module string, checks Checks, out *[]Finding) error {
