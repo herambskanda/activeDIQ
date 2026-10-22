@@ -10,18 +10,26 @@ var now = time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
 
 func ev() Evaluator { return Evaluator{Now: func() time.Time { return now }} }
 
+// oid maps a readable test name to a deterministic non-zero ObjectID.
+func oid(name string) ObjectID {
+	var id ObjectID
+	id[0] = 0xAA
+	copy(id[1:], name)
+	return id
+}
+
 func root(id string, anc ...string) ScopeRoot {
-	r := ScopeRoot{ID: ObjectID(id), Complete: true}
+	r := ScopeRoot{ID: oid(id), Complete: true}
 	for _, a := range anc {
-		r.Ancestors = append(r.Ancestors, ObjectID(a))
+		r.Ancestors = append(r.Ancestors, oid(a))
 	}
 	return r
 }
 
 func target(id string, anc ...string) Target {
-	t := Target{ID: ObjectID(id), Complete: true}
+	t := Target{ID: oid(id), Complete: true}
 	for _, a := range anc {
-		t.Ancestors = append(t.Ancestors, ObjectID(a))
+		t.Ancestors = append(t.Ancestors, oid(a))
 	}
 	return t
 }
@@ -191,7 +199,7 @@ func TestDeadOwnerToken(t *testing.T) {
 
 func TestBulkPerItem(t *testing.T) {
 	p := tech([]Permission{pReset}, Scope{Include: []ScopeRoot{root("ouA")}})
-	items := []Target{target("1", "ouA"), target("2", "ouB"), target("3", "ouA"), {ID: "4"}}
+	items := []Target{target("1", "ouA"), target("2", "ouB"), target("3", "ouA"), {ID: oid("4")}}
 	res := ev().AuthorizeItems(p, nil, pReset, items)
 	if res.Allowed != 2 || res.Refused != 2 || len(res.Items) != 4 {
 		t.Fatalf("counts: %+v", res)
@@ -212,7 +220,7 @@ func TestOwnerScopedReport(t *testing.T) {
 	owner := tech([]Permission{pReset}, Scope{Include: []ScopeRoot{root("ouA")}})
 	rows := []Target{target("1", "ouA"), target("2", "ouB"), target("3", "ouB")}
 	got, err := ev().FilterForOwner(owner, pReset, rows)
-	if err != nil || len(got.Permitted) != 1 || got.Permitted[0].ID != "1" || got.Omitted != 2 {
+	if err != nil || len(got.Permitted) != 1 || got.Permitted[0].ID != oid("1") || got.Omitted != 2 {
 		t.Fatalf("report: %+v %v", got, err)
 	}
 	// Owner loses the scope: next run delivers only the new scope.
@@ -236,7 +244,7 @@ func TestGrantFailsClosedOnIncompleteRoots(t *testing.T) {
 			Scope: Scope{Include: []ScopeRoot{root("corp")}, Exclude: []ScopeRoot{excl}}}}}
 	}
 	// (a) grantor exclusion lacks its chain: must not let a grant of corp with no exclusion pass.
-	g := mk(ScopeRoot{ID: "admins"})
+	g := mk(ScopeRoot{ID: oid("admins")})
 	if err := e.CheckGrant(g, nil, reset, Scope{Include: []ScopeRoot{root("corp")}}); !errors.Is(err, ErrFactsIncomplete) {
 		t.Errorf("incomplete grantor exclusion: %v", err)
 	}
@@ -256,17 +264,17 @@ func TestGrantFailsClosedOnIncompleteRoots(t *testing.T) {
 }
 
 func TestBlankIDsNeverMatch(t *testing.T) {
-	p := tech([]Permission{pReset}, Scope{Include: []ScopeRoot{{ID: "", Complete: true}}})
-	tg := Target{ID: "u", Ancestors: []ObjectID{""}, Complete: true}
+	p := tech([]Permission{pReset}, Scope{Include: []ScopeRoot{{Complete: true}}})
+	tg := Target{ID: oid("u"), Ancestors: []ObjectID{{}}, Complete: true}
 	if d := ev().Authorize(p, nil, pReset, tg); d.Allowed || d.Reason != ReasonFactsIncomplete {
 		t.Errorf("blank chain element: %+v", d)
 	}
 	g := tech([]Permission{pReset}, Scope{Include: []ScopeRoot{root("ouA")}})
-	err := ev().CheckGrant(g, nil, Role{Permissions: []Permission{pReset}}, Scope{Include: []ScopeRoot{{ID: "", Complete: true}}})
+	err := ev().CheckGrant(g, nil, Role{Permissions: []Permission{pReset}}, Scope{Include: []ScopeRoot{{Complete: true}}})
 	if !errors.Is(err, ErrInvalidGrant) {
 		t.Errorf("blank root: %v", err)
 	}
-	if (ScopeRoot{ID: "", Ancestors: []ObjectID{"a"}}).within("") {
+	if (ScopeRoot{Ancestors: []ObjectID{oid("a")}}).within(ObjectID{}) {
 		t.Error("blank within matched")
 	}
 }
@@ -305,5 +313,55 @@ func TestTokenInvalidIsNotOwnerDead(t *testing.T) {
 	}
 	if err := ev().CheckToken(p, &Token{ExpiresAt: now}); !errors.Is(err, ErrTokenInvalid) {
 		t.Errorf("expired token: %v", err)
+	}
+}
+
+func TestParseObjectIDStrict(t *testing.T) {
+	const canon = "aaaaaaaa-0000-0000-0000-000000000001"
+	want, err := ParseObjectID(canon)
+	if err != nil {
+		t.Fatalf("canonical: %v", err)
+	}
+	if got, err := ParseObjectID("AAAAAAAA-0000-0000-0000-000000000001"); err != nil || got != want {
+		t.Errorf("upper case must equal the same object: %v %v", got, err)
+	}
+	for _, bad := range []string{"", "x", "{" + canon + "}", canon + "0", "aaaaaaaa00000000000000000000000000001",
+		"zzzzzzzz-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000000"} {
+		if _, err := ParseObjectID(bad); !errors.Is(err, ErrInvalidObjectID) {
+			t.Errorf("%q accepted: %v", bad, err)
+		}
+	}
+}
+
+// A spelling variant of an excluded GUID parses to the same value, so the exclusion still bites;
+// a non-parseable ID can never be built into a fact, and the zero value is refused everywhere.
+func TestVariantExclusionStillExcludes(t *testing.T) {
+	admins, _ := ParseObjectID("AAAAAAAA-0000-0000-0000-000000000001")
+	adminsLower, _ := ParseObjectID("aaaaaaaa-0000-0000-0000-000000000001")
+	p := tech([]Permission{pReset}, Scope{
+		Include: []ScopeRoot{root("corp")},
+		Exclude: []ScopeRoot{{ID: admins, Ancestors: []ObjectID{oid("corp")}, Complete: true}}})
+	tg := Target{ID: oid("u"), Ancestors: []ObjectID{adminsLower, oid("corp")}, Complete: true}
+	if d := ev().Authorize(p, nil, pReset, tg); d.Allowed {
+		t.Errorf("excluded OU reachable via spelling variant: %+v", d)
+	}
+}
+
+func TestZeroIDsRefused(t *testing.T) {
+	zero := ScopeRoot{Complete: true}
+	// zero exclusion root in a scope: nothing in the chain can equal it, and CheckGrant refuses it.
+	g := tech([]Permission{pReset}, Scope{Include: []ScopeRoot{root("corp")}, Exclude: []ScopeRoot{zero}})
+	reset := Role{Permissions: []Permission{pReset}}
+	if err := ev().CheckGrant(g, nil, reset, Scope{Include: []ScopeRoot{root("hr", "corp")}, Exclude: []ScopeRoot{zero}}); !errors.Is(err, ErrInvalidGrant) {
+		t.Errorf("zero exclude in grant: %v", err)
+	}
+	if err := ev().CheckGrant(g, nil, reset, Scope{Include: []ScopeRoot{root("hr", "corp")}}); !errors.Is(err, ErrFactsIncomplete) {
+		t.Errorf("zero exclude in grantor scope must fail closed: %v", err)
+	}
+	if err := ev().CheckGrant(g, nil, reset, Scope{Include: []ScopeRoot{{ID: oid("hr"), Ancestors: []ObjectID{{}}, Complete: true}}}); !errors.Is(err, ErrFactsIncomplete) {
+		t.Errorf("zero ancestor in new root: %v", err)
+	}
+	if d := ev().Authorize(g, nil, pReset, Target{Ancestors: []ObjectID{oid("corp")}, Complete: true}); d.Allowed {
+		t.Errorf("zero target id: %+v", d)
 	}
 }

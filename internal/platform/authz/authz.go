@@ -7,6 +7,7 @@
 package authz
 
 import (
+	"encoding/hex"
 	"errors"
 	"slices"
 	"time"
@@ -42,12 +43,34 @@ var (
 	// ErrFactsIncomplete means a scope root the check had to consult was not resolved live and
 	// completely. The grant is refused: containment cannot be proven (fail closed).
 	ErrFactsIncomplete = errors.New("authz: scope root facts incomplete")
+	// ErrInvalidObjectID means a string is not a canonical, non-zero object GUID.
+	ErrInvalidObjectID = errors.New("authz: invalid object id")
 	// ErrTokenInvalid means the token is missing or expired (distinct from a dead owner).
 	ErrTokenInvalid = errors.New("authz: token missing or expired")
 )
 
-// ObjectID identifies a directory object by objectGUID (never by DN).
-type ObjectID string
+// ObjectID identifies a directory object by objectGUID (never by DN). It is an opaque comparable
+// value, not text, so two spellings of one GUID cannot compare unequal and silently skip an
+// exclusion. The zero value is invalid and never matches anything. The platform may not import
+// directory code, so integrators convert their GUID type with ParseObjectID or a byte copy.
+type ObjectID [16]byte
+
+// IsZero reports whether id is the invalid zero value.
+func (id ObjectID) IsZero() bool { return id == ObjectID{} }
+
+// ParseObjectID parses the dashed 8-4-4-4-12 hex form (either case). Anything else, including
+// braces, other lengths and the all-zero GUID, is an error: callers fail closed.
+func ParseObjectID(s string) (ObjectID, error) {
+	var id ObjectID
+	if len(s) != 36 || s[8] != '-' || s[13] != '-' || s[18] != '-' || s[23] != '-' {
+		return id, ErrInvalidObjectID
+	}
+	raw := s[0:8] + s[9:13] + s[14:18] + s[19:23] + s[24:]
+	if _, err := hex.Decode(id[:], []byte(raw)); err != nil || id.IsZero() {
+		return ObjectID{}, ErrInvalidObjectID
+	}
+	return id, nil
+}
 
 // Target is the live fact set about the object an operation touches.
 type Target struct {
@@ -84,25 +107,27 @@ type ScopeRoot struct {
 
 // within reports whether id is this root or one of its ancestors. A blank ID never matches.
 func (r ScopeRoot) within(id ObjectID) bool {
-	if id == "" || r.ID == "" {
+	if id.IsZero() || r.ID.IsZero() {
 		return false
 	}
 	return r.ID == id || slices.Contains(r.Ancestors, id)
 }
 
 // valid reports whether the root has a GUID and a completely resolved chain.
-func (r ScopeRoot) valid() bool { return r.ID != "" && r.Complete && !slices.Contains(r.Ancestors, "") }
+func (r ScopeRoot) valid() bool {
+	return !r.ID.IsZero() && r.Complete && !slices.Contains(r.Ancestors, ObjectID{})
+}
 
 func (s Scope) roots() []ScopeRoot { return append(slices.Clone(s.Include), s.Exclude...) }
 
 // covers reports whether the scope contains the target: some chain element is an include root and
 // no chain element is an exclude root.
 func (s Scope) covers(t Target) bool {
-	if t.ID == "" || !t.Complete {
+	if t.ID.IsZero() || !t.Complete {
 		return false
 	}
 	chain := t.chain()
-	if slices.Contains(chain, "") {
+	if slices.Contains(chain, ObjectID{}) {
 		return false
 	}
 	for _, e := range s.Exclude {
@@ -206,7 +231,7 @@ func (e Evaluator) Authorize(p *Principal, tok *Token, perm Permission, target T
 	if r, ok := e.tokenOK(tok, perm); !ok {
 		return deny(r)
 	}
-	if target.ID == "" || !target.Complete || slices.Contains(target.Ancestors, "") {
+	if target.ID.IsZero() || !target.Complete || slices.Contains(target.Ancestors, ObjectID{}) {
 		return deny(ReasonFactsIncomplete)
 	}
 	if target.Tier0 {
@@ -300,8 +325,8 @@ func (e Evaluator) CheckGrant(grantor *Principal, tok *Token, role Role, scope S
 	if _, ok := ownerAlive(grantor); !ok {
 		return ErrOwnerDead
 	}
-	if slices.ContainsFunc(scope.Include, func(r ScopeRoot) bool { return r.ID == "" }) ||
-		slices.ContainsFunc(scope.Exclude, func(r ScopeRoot) bool { return r.ID == "" }) {
+	if slices.ContainsFunc(scope.Include, func(r ScopeRoot) bool { return r.ID.IsZero() }) ||
+		slices.ContainsFunc(scope.Exclude, func(r ScopeRoot) bool { return r.ID.IsZero() }) {
 		return ErrInvalidGrant
 	}
 	if !grantRootsComplete(grantor, tok, role, scope) {
