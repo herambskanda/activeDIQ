@@ -78,7 +78,7 @@ func (r *Registrar) Action(a operation.Action) error {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	id := string(a.ID())
+	id := string(a.Describe().ID)
 	if err := r.claim("action", id); err != nil {
 		return err
 	}
