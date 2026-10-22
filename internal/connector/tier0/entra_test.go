@@ -393,3 +393,45 @@ func TestADTier0CaseFoldingKeepsTrue(t *testing.T) {
 		wantBases(t, r, err, tier0.E5)
 	}
 }
+
+// appLookupErr makes ApplicationByAppID fail with a fixed error.
+type appLookupErr struct {
+	tier0.Reader
+	err error
+}
+
+func (a appLookupErr) ApplicationByAppID(context.Context, string) (graph.Application, error) {
+	return graph.Application{}, a.err
+}
+
+// Only NotFound (an app registered in another tenant) may skip the application owners; any other
+// failure of the application lookup must fail the snapshot closed (T-0170).
+func TestApplicationLookupFailsClosedExceptNotFound(t *testing.T) {
+	cred := graphtest.NewCredential(t)
+	srv := graphtest.New(t, tenant(), cred)
+	cl, err := graph.New(srv.Config(cred))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, code := range []graph.Code{graph.CodeThrottled, graph.CodeInsufficient, graph.CodeProviderFailure, graph.CodeUnreachable} {
+		t.Run(string(code), func(t *testing.T) {
+			rd := appLookupErr{Reader: cl, err: &graph.Error{Code: code, Message: "injected"}}
+			set, err := tier0.New(rd).Snapshot(context.Background())
+			if err == nil || set != nil {
+				t.Fatalf("must fail closed with no set: %v %v", set, err)
+			}
+			if graph.CodeOf(err) != code {
+				t.Fatalf("code lost: %v", err)
+			}
+			r, err := tier0.New(rd).Classify(context.Background(), appOwner, known)
+			if err == nil || !r.Tier0 || !r.Unknown {
+				t.Fatalf("classify must refuse: %+v %v", r, err)
+			}
+		})
+	}
+	t.Run("notfound", func(t *testing.T) {
+		rd := appLookupErr{Reader: cl, err: &graph.Error{Code: graph.CodeNotFound, Message: "other tenant"}}
+		r, err := tier0.New(rd).Classify(context.Background(), spOwner, known)
+		wantBases(t, r, err, tier0.E3)
+	})
+}
