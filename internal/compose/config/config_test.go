@@ -69,3 +69,19 @@ func TestConfigNeverPrintsDSN(t *testing.T) {
 		t.Errorf("slog output lacks redaction marker: %s", buf.String())
 	}
 }
+
+func TestLoadAPISettings(t *testing.T) {
+	c, err := config.Load(env(nil))
+	if err != nil || c.APIAddr != config.DefaultAPIAddr || c.APIBodyBudget != 64<<20 {
+		t.Fatalf("defaults: %+v, %v", c, err)
+	}
+	c, err = config.Load(env(map[string]string{config.EnvAPIAddr: "0.0.0.0:9", config.EnvAPIBodyBudget: "1048576"}))
+	if err != nil || c.APIAddr != "0.0.0.0:9" || c.APIBodyBudget != 1<<20 {
+		t.Fatalf("explicit: %+v, %v", c, err)
+	}
+	for _, v := range []string{"0", "-5", "lots", "1.5"} {
+		if _, err := config.Load(env(map[string]string{config.EnvAPIBodyBudget: v})); err == nil {
+			t.Errorf("body budget %q must fail startup", v)
+		}
+	}
+}
