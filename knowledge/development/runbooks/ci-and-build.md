@@ -132,7 +132,7 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
   - Where each primitive lives is one table: `tools/analyzers/policy/policy.go`. A new home (for
     example when T-0004 fixes the export package roots) is a change to that table plus a case in
     `tools/fitness/safeprim/scan/scan_test.go`. Rule lists are in `scan/rules.go`.
-  - What is skipped: `.git`, `testdata` at any depth; `node_modules` beside a `package.json` is skipped except for `.go` files of our module (Go builds them; a nested `go.mod` makes a dir a separate module, skipped); `knowledge`, `factory`, `garage`,
+  - What is skipped: `.git`, `testdata` at any depth; `node_modules` beside a `package.json` is skipped except every `.go` file and `go.mod` under it (Go builds them, and a `replace` can compile a nested module; no structural skip); `knowledge`, `factory`, `garage`,
     `vendor`, `third_party` at the repo root; `bin`/`obj` only beside a `.csproj`, `target` only beside
     `Cargo.toml`, `dist` only beside `package.json`. Never skip by a bare directory name: a package
     called `target` is product code.

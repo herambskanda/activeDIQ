@@ -275,7 +275,11 @@ func TestNodeModulesScannedWhereGoCanBuildIt(t *testing.T) {
 	want(t, "FF-SP3 in web/node_modules/dep", web, "FF-SP3", "ldap-filter-shape", "web/node_modules/dep/x.go")
 	want(t, "FF-SP1 in web/node_modules/dep", web, "FF-SP1", "process-api", "web/node_modules/dep/x.go")
 	want(t, "nested node_modules inside web/node_modules", map[string]string{"web/package.json": "{}\n", "web/node_modules/a/node_modules/b/x.go": bad}, "FF-SP3", "ldap-filter-shape", "web/node_modules/a/node_modules/b/x.go")
-	want(t, "dep with its own go.mod is a separate module", map[string]string{"web/package.json": "{}\n", "web/node_modules/dep/go.mod": "module other\n", "web/node_modules/dep/x.go": bad}, "", "", "")
+	// a nested module wired in by a replace directive is compiled into the binary.
+	repl := map[string]string{"go.mod": "module fx.test\n\ngo 1.27.0\n\nrequire other v0.0.0\n\nreplace other => ./web/node_modules/dep\n", "web/package.json": "{}\n", "web/node_modules/dep/go.mod": "module other\n", "web/node_modules/dep/x.go": bad}
+	want(t, "FF-SP3 in replaced module under node_modules", repl, "FF-SP3", "ldap-filter-shape", "web/node_modules/dep/x.go")
+	want(t, "FF-SP1 in replaced module under node_modules", repl, "FF-SP1", "process-api", "web/node_modules/dep/x.go")
+	want(t, "denylisted require in node_modules go.mod", map[string]string{"web/package.json": "{}\n", "web/node_modules/dep/go.mod": "module other\n\ngo 1.27.0\n\nrequire github.com/go-rod/rod v0.1.0\n"}, "FF-SP1", "html-to-pdf-engine", "web/node_modules/dep/go.mod")
 	want(t, "non-Go content under web/node_modules is not scanned", map[string]string{"web/package.json": "{}\n", "web/node_modules/dep/x.cs": "using System.Diagnostics;\nclass C { void F() { Process.Start(\"x\"); } }\n", "web/node_modules/dep/x.sql": "SELECT 1;\n"}, "", "", "")
 	want(t, "foo.package.json is not a package.json", map[string]string{"web/foo.package.json": "{}\n", "web/dist/x.go": bad}, "FF-SP3", "ldap-filter-shape", "web/dist/x.go")
 }

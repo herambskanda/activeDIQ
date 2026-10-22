@@ -84,8 +84,9 @@ func npmDir(root, rel, name string) bool {
 }
 
 // scanNPM walks an npm node_modules tree. npm's own content is not product code, but Go builds any
-// .go file there that belongs to our module, so those are scanned like any other (T-0083). A
-// directory with its own go.mod is a separate module that the build never compiles: skipped.
+// .go file there that belongs to our module, and a nested go.mod can be pulled in with a replace
+// directive, so every .go file and go.mod is scanned like any other (T-0083). There is no
+// structural skip: fail closed, and use a reviewed allowlist if an npm package ever ships Go.
 func scanNPM(root, rel, module string, checks Checks, out *[]Finding) error {
 	return filepath.WalkDir(filepath.Join(root, filepath.FromSlash(rel)), func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -97,12 +98,12 @@ func scanNPM(root, rel, module string, checks Checks, out *[]Finding) error {
 		}
 		r = filepath.ToSlash(r)
 		if d.IsDir() {
-			if d.Name() == ".git" || d.Name() == "testdata" || (r != rel && dirHasName(p, "go.mod")) {
+			if d.Name() == ".git" || d.Name() == "testdata" {
 				return fs.SkipDir
 			}
 			return nil
 		}
-		if strings.EqualFold(filepath.Ext(r), ".go") {
+		if strings.EqualFold(filepath.Ext(r), ".go") || d.Name() == "go.mod" {
 			return scanFile(root, r, module, checks, out)
 		}
 		return nil
