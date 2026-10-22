@@ -398,10 +398,13 @@ const (
 	// The request's own context marks a touched object tier0: a designation or a correlated tier0
 	// peer (F2), or an inconsistent peer that counts as tier0 (F5).
 	Tier0RefusalStage_TIER0_REFUSAL_STAGE_REQUEST_CONTEXT Tier0RefusalStage = 3
-	// The object is in the connector's own computed set from its last VerifyConnection.
+	// The object is in the connector's set: the set its last completed VerifyConnection computed
+	// (with that run's designated_tier0 and correlated_tier0 inputs), plus every object an accepted
+	// Tier0Context has marked tier0 since that run (the ratchet, contract v1.2 §8.3a, TM-D23 rule 8).
 	Tier0RefusalStage_TIER0_REFUSAL_STAGE_CONNECTOR_SET Tier0RefusalStage = 4
 	// The live re-read found the object tier0 now (for example added to Domain Admins since the last
-	// set computation). Reads happened; no write did.
+	// set computation, or a groupPolicyContainer directly linked from the domain head, the Domain
+	// Controllers OU, a C6 OU or a C15 site, TM-D23 rule 10). Reads happened; no write did.
 	Tier0RefusalStage_TIER0_REFUSAL_STAGE_LIVE_REREAD Tier0RefusalStage = 5
 	// The live re-read contradicts a CorrelationStatement: a listed peer's evidence (anchor or SID)
 	// does not match the touched object as read, so the statement was made for another object (F4);

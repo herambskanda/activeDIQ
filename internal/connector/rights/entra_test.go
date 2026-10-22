@@ -76,7 +76,7 @@ func (r *rig) grant(perm string) string {
 
 func (r *rig) verify(families ...v1.RightsFamily) *rights.Result {
 	r.t.Helper()
-	res, err := rights.VerifyEntra(context.Background(), r.c, rights.EntraInput{EnabledFamilies: families, HeldThumbprint: r.thumb})
+	res, err := rights.VerifyEntra(context.Background(), r.c, rights.EntraInput{EnabledFamilies: families, HeldThumbprint: r.thumb, Now: func() time.Time { return time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC) }})
 	if err != nil {
 		r.t.Fatal(err)
 	}
@@ -329,13 +329,15 @@ func TestExtraKeyCredentialsSecretsAndOwnersFlagged(t *testing.T) { // AC4
 	sp.KeyCredentials = []graph.KeyCredential{{KeyID: gid(902), CustomKeyIdentifier: r.thumb, Key: r.srv.T.KeyCredentials[0].Key, Type: "AsymmetricX509Cert"}} // even the held thumbprint is extra here
 	sp.PasswordCredentials = []graph.PasswordCredential{{KeyID: gid(903), StartDateTime: now, EndDateTime: now.Add(time.Hour)}}
 	tn.ServicePrincipals[spID] = sp
-	tn.PasswordCredentials = []graph.PasswordCredential{{KeyID: gid(904)}}
+	// 904 has no end and 905 starts in the future: both unexpired at the test clock.
+	tn.PasswordCredentials = []graph.PasswordCredential{{KeyID: gid(904)},
+		{KeyID: gid(905), StartDateTime: now.AddDate(1, 0, 0), EndDateTime: now.AddDate(2, 0, 0)}}
 	tn.Owners[appObj] = []graph.DirectoryObject{{ID: gid(10), ODataType: "#microsoft.graph.user"}}
 	tn.Owners[spID] = []graph.DirectoryObject{{ID: gid(11), ODataType: "#microsoft.graph.user"}}
 
 	res := r.verify()
-	if res.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_PASS {
-		t.Fatalf("EV5 findings warn, never block: %v", res.Verdict)
+	if res.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_REFUSED {
+		t.Fatalf("an unexpired password credential refuses (EV3): %v", res.Verdict)
 	}
 	holders := map[string]v1.EntraCredentialHolder{}
 	for _, f := range byKind(res, v1.FindingKind_FINDING_KIND_ENTRA_EXTRA_KEY_CREDENTIAL) {
@@ -353,8 +355,20 @@ func TestExtraKeyCredentialsSecretsAndOwnersFlagged(t *testing.T) { // AC4
 		holders[gid(902)] != v1.EntraCredentialHolder_ENTRA_CREDENTIAL_HOLDER_SERVICE_PRINCIPAL {
 		t.Fatalf("holders = %v", holders)
 	}
-	if n := len(byKind(res, v1.FindingKind_FINDING_KIND_ENTRA_PASSWORD_CREDENTIAL)); n != 2 {
-		t.Fatalf("password credential findings = %d", n)
+	pw := map[string]v1.FindingSeverity{}
+	for _, f := range byKind(res, v1.FindingKind_FINDING_KIND_ENTRA_PASSWORD_CREDENTIAL) {
+		pw[f.Qualifier] = f.Severity
+		wantCheck := ev3check
+		if f.Severity == v1.FindingSeverity_FINDING_SEVERITY_WARN {
+			wantCheck = v1.VerificationCheck_VERIFICATION_CHECK_EV5_EXCESS
+		}
+		if f.Check != wantCheck {
+			t.Fatalf("password finding %s: check %v severity %v", f.Qualifier, f.Check, f.Severity)
+		}
+	}
+	block, warn := v1.FindingSeverity_FINDING_SEVERITY_BLOCK, v1.FindingSeverity_FINDING_SEVERITY_WARN
+	if len(pw) != 3 || pw[gid(903)] != warn || pw[gid(904)] != block || pw[gid(905)] != block {
+		t.Fatalf("password credential severities = %v", pw)
 	}
 	owners := map[string]bool{}
 	for _, f := range byKind(res, v1.FindingKind_FINDING_KIND_ENTRA_OWNER) {
@@ -367,6 +381,8 @@ func TestExtraKeyCredentialsSecretsAndOwnersFlagged(t *testing.T) { // AC4
 		t.Fatalf("EV5 = %v", res.Checks[2].Outcome)
 	}
 }
+
+const ev3check = v1.VerificationCheck_VERIFICATION_CHECK_EV3_OVER_PRIVILEGE
 
 func guidEq(g *v1.Guid, text string) bool {
 	if g == nil || len(g.Value) != 16 {

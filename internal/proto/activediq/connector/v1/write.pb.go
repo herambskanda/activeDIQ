@@ -1,4 +1,4 @@
-// activediq.connector.v1 — Plan and Apply (the write group, contract v1.1, T-0091).
+// activediq.connector.v1 — Plan and Apply (the write group, contract v1.1, T-0091; v1.2, T-0122).
 //
 // The operation pipeline (ADR-0005) calls Plan while it plans a step: the connector re-reads the
 // target live on the pinned DC, evaluates tier0 on its own (TM-D2 check 1 runs on this live read)
@@ -906,10 +906,18 @@ type ApplyResponse struct {
 	// AD: uSNChanged of the target on `written.dc` after the write.
 	UsnChangedAfter *uint64 `protobuf:"varint,6,opt,name=usn_changed_after,json=usnChangedAfter,proto3,oneof" json:"usn_changed_after,omitempty"`
 	// The touched attributes as read back after the write (ADR-0005 rule 4). No secret attribute.
-	ReadBack      *DirectoryEntry  `protobuf:"bytes,7,opt,name=read_back,json=readBack,proto3" json:"read_back,omitempty"`
-	Tier0         *Tier0Evaluation `protobuf:"bytes,8,opt,name=tier0,proto3" json:"tier0,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	ReadBack *DirectoryEntry  `protobuf:"bytes,7,opt,name=read_back,json=readBack,proto3" json:"read_back,omitempty"`
+	Tier0    *Tier0Evaluation `protobuf:"bytes,8,opt,name=tier0,proto3" json:"tier0,omitempty"`
+	// Contract v1.2 §8.1 step 9 (TM-D23 rule 11): after the write, the connector re-runs the step-7
+	// live classification on every touched object on the DC that took the write. Each object found
+	// tier0 is listed with its bases; empty when none is. A non-empty list is also written to the
+	// connector's local log (and the Windows event log on Windows hosts). The write is not undone by
+	// the connector; the pipeline's Verify records the step `verify_failed` with reason
+	// `tier0_after_write` and raises the security alert (ADR-0005 rule 7). Absent on
+	// ALREADY_APPLIED, where nothing was written.
+	Tier0AfterWrite []*Tier0Member `protobuf:"bytes,9,rep,name=tier0_after_write,json=tier0AfterWrite,proto3" json:"tier0_after_write,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ApplyResponse) Reset() {
@@ -998,6 +1006,13 @@ func (x *ApplyResponse) GetTier0() *Tier0Evaluation {
 	return nil
 }
 
+func (x *ApplyResponse) GetTier0AfterWrite() []*Tier0Member {
+	if x != nil {
+		return x.Tier0AfterWrite
+	}
+	return nil
+}
+
 var File_activediq_connector_v1_write_proto protoreflect.FileDescriptor
 
 const file_activediq_connector_v1_write_proto_rawDesc = "" +
@@ -1069,7 +1084,7 @@ const file_activediq_connector_v1_write_proto_rawDesc = "" +
 	" \x01(\v2'.activediq.connector.v1.ActingPrincipalR\x0factingPrincipal\x12\x1f\n" +
 	"\vplan_digest\x18\v \x01(\fR\n" +
 	"planDigestB\x11\n" +
-	"\x0f_tier0_override\"\xe5\x03\n" +
+	"\x0f_tier0_override\"\xb6\x04\n" +
 	"\rApplyResponse\x123\n" +
 	"\x04step\x18\x01 \x01(\v2\x1f.activediq.connector.v1.StepKeyR\x04step\x12\x18\n" +
 	"\aattempt\x18\x02 \x01(\rR\aattempt\x12;\n" +
@@ -1078,7 +1093,8 @@ const file_activediq_connector_v1_write_proto_rawDesc = "" +
 	"\awritten\x18\x05 \x01(\v2#.activediq.connector.v1.ObservationR\awritten\x12/\n" +
 	"\x11usn_changed_after\x18\x06 \x01(\x04H\x00R\x0fusnChangedAfter\x88\x01\x01\x12C\n" +
 	"\tread_back\x18\a \x01(\v2&.activediq.connector.v1.DirectoryEntryR\breadBack\x12=\n" +
-	"\x05tier0\x18\b \x01(\v2'.activediq.connector.v1.Tier0EvaluationR\x05tier0B\x14\n" +
+	"\x05tier0\x18\b \x01(\v2'.activediq.connector.v1.Tier0EvaluationR\x05tier0\x12O\n" +
+	"\x11tier0_after_write\x18\t \x03(\v2#.activediq.connector.v1.Tier0MemberR\x0ftier0AfterWriteB\x14\n" +
 	"\x12_usn_changed_after*'\n" +
 	"\tWriteKind\x12\x1a\n" +
 	"\x16WRITE_KIND_UNSPECIFIED\x10\x00*k\n" +
@@ -1124,6 +1140,7 @@ var file_activediq_connector_v1_write_proto_goTypes = []any{
 	(*DnValue)(nil),               // 19: activediq.connector.v1.DnValue
 	(*Observation)(nil),           // 20: activediq.connector.v1.Observation
 	(*DirectoryEntry)(nil),        // 21: activediq.connector.v1.DirectoryEntry
+	(*Tier0Member)(nil),           // 22: activediq.connector.v1.Tier0Member
 }
 var file_activediq_connector_v1_write_proto_depIdxs = []int32{
 	13, // 0: activediq.connector.v1.WriteTarget.object:type_name -> activediq.connector.v1.Guid
@@ -1167,11 +1184,12 @@ var file_activediq_connector_v1_write_proto_depIdxs = []int32{
 	20, // 38: activediq.connector.v1.ApplyResponse.written:type_name -> activediq.connector.v1.Observation
 	21, // 39: activediq.connector.v1.ApplyResponse.read_back:type_name -> activediq.connector.v1.DirectoryEntry
 	7,  // 40: activediq.connector.v1.ApplyResponse.tier0:type_name -> activediq.connector.v1.Tier0Evaluation
-	41, // [41:41] is the sub-list for method output_type
-	41, // [41:41] is the sub-list for method input_type
-	41, // [41:41] is the sub-list for extension type_name
-	41, // [41:41] is the sub-list for extension extendee
-	0,  // [0:41] is the sub-list for field type_name
+	22, // 41: activediq.connector.v1.ApplyResponse.tier0_after_write:type_name -> activediq.connector.v1.Tier0Member
+	42, // [42:42] is the sub-list for method output_type
+	42, // [42:42] is the sub-list for method input_type
+	42, // [42:42] is the sub-list for extension type_name
+	42, // [42:42] is the sub-list for extension extendee
+	0,  // [0:42] is the sub-list for field type_name
 }
 
 func init() { file_activediq_connector_v1_write_proto_init() }

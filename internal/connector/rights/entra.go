@@ -58,6 +58,9 @@ type EntraInput struct {
 	// it: customKeyIdentifier is a caller-chosen label and is never trusted. Every other key
 	// credential, on the application or its service principal, is extra.
 	HeldThumbprint []byte
+	// Now is the connector's clock, used to tell an unexpired password credential from an expired
+	// one (contract v1.2, CC-VER-13). Nil means time.Now.
+	Now func() time.Time
 }
 
 // Finding is a RightsFinding plus the DM-24.I4 qualifier. The fingerprint is computed where
@@ -125,7 +128,11 @@ func VerifyEntra(ctx context.Context, rd EntraReader, in EntraInput) (*Result, e
 
 	b.permissions(in)
 	b.roles()
-	b.credentials(sp, app, spID, appObj, in.HeldThumbprint)
+	now := time.Now
+	if in.Now != nil {
+		now = in.Now
+	}
+	b.credentials(sp, app, spID, appObj, in.HeldThumbprint, now())
 	b.owners(app.ID, appObj, sp.ID, spID)
 
 	res.Findings = b.out
@@ -356,7 +363,7 @@ func (b *builder) roles() {
 	}
 }
 
-func (b *builder) credentials(sp graph.ServicePrincipal, app graph.Application, spID, appObj, held []byte) {
+func (b *builder) credentials(sp graph.ServicePrincipal, app graph.Application, spID, appObj, held []byte, now time.Time) {
 	for _, h := range []struct {
 		holder v1.EntraCredentialHolder
 		object []byte
@@ -391,6 +398,14 @@ func (b *builder) credentials(sp graph.ServicePrincipal, app graph.Application, 
 		for _, p := range h.pwds {
 			right := &v1.EntraRight{Right: &v1.EntraRight_PasswordCredential{PasswordCredential: &v1.EntraPasswordCredential{
 				KeyId: guidOrNil(p.KeyID), Start: ts(p.StartDateTime), End: ts(p.EndDateTime), Holder: h.holder}}}
+			// Contract v1.2 (CC-VER-13): a secret with no end, or one ending after the clock
+			// (whether or not it has started), is a spare bearer credential: EV3 block. An expired
+			// one is only a warning, with a distinct check and so a distinct fingerprint.
+			if p.EndDateTime.IsZero() || p.EndDateTime.After(now) {
+				b.add(ev3, v1.FindingKind_FINDING_KIND_ENTRA_PASSWORD_CREDENTIAL, v1.FindingSeverity_FINDING_SEVERITY_BLOCK,
+					CodeSecret, h.object, right, nil, 0, strings.ToLower(p.KeyID))
+				continue
+			}
 			b.add(ev5, v1.FindingKind_FINDING_KIND_ENTRA_PASSWORD_CREDENTIAL, v1.FindingSeverity_FINDING_SEVERITY_WARN,
 				CodeSecret, h.object, right, nil, 0, strings.ToLower(p.KeyID))
 		}
