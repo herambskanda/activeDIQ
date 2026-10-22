@@ -44,6 +44,7 @@ type Schema struct {
 func NewSchema(attrs ...AttrInfo) *Schema {
 	s := &Schema{byName: make(map[string]AttrInfo, len(attrs)), byOID: map[string]string{}}
 	static := secretattr.Static()
+	groups := map[string][]string{} // numericoid -> every lower-case name claiming it
 	for _, a := range attrs {
 		// An OID-shaped Name would be a second, unclassified entry for an attribute AD resolves by
 		// OID; fail closed by not admitting it. Register the OID in AttrInfo.OID instead.
@@ -63,21 +64,31 @@ func NewSchema(attrs ...AttrInfo) *Schema {
 				a.OID = prev.OID
 			}
 			a.Name = prev.Name
+			a.Syntax = prev.Syntax // first claim wins; only the flags merge upward
 		}
 		s.byName[key] = a
 		if a.OID != "" {
 			if o, err := parseAttrGrammar(a.OID); err == nil && a.OID[0] >= '0' && a.OID[0] <= '9' {
-				if first, dup := s.byOID[o.name]; !dup {
+				if _, dup := s.byOID[o.name]; !dup {
 					s.byOID[o.name] = key
-				} else if first != key {
-					// Two names claim one OID: the first keeps the alias, but each inherits the
-					// other's Secret/Constructed so neither spelling is the weaker way in.
-					f, cur := s.byName[first], s.byName[key]
-					f.Secret, cur.Secret = f.Secret || cur.Secret, f.Secret || cur.Secret
-					f.Constructed, cur.Constructed = f.Constructed || cur.Constructed, f.Constructed || cur.Constructed
-					s.byName[first], s.byName[key] = f, cur
+				}
+				if !slices.Contains(groups[o.name], key) {
+					groups[o.name] = append(groups[o.name], key)
 				}
 			}
+		}
+	}
+	// Every name sharing an OID inherits the OR of their Secret/Constructed, whatever the order, so
+	// no spelling is the weaker way in. The first claimant keeps the alias.
+	for _, keys := range groups {
+		var sec, con bool
+		for _, k := range keys {
+			sec, con = sec || s.byName[k].Secret, con || s.byName[k].Constructed
+		}
+		for _, k := range keys {
+			e := s.byName[k]
+			e.Secret, e.Constructed = sec, con
+			s.byName[k] = e
 		}
 	}
 	return s

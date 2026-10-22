@@ -401,3 +401,26 @@ func TestOIDCollisionFailsClosed(t *testing.T) {
 		}
 	}
 }
+
+// T-0121 review: with 3+ OID claimants the flags must be order-independent.
+func TestOIDCollisionThreeClaimantsAnyOrder(t *testing.T) {
+	names := []string{"a", "b", "c"}
+	for _, flagged := range names {
+		for _, perm := range [][3]int{{0, 1, 2}, {0, 2, 1}, {1, 0, 2}, {1, 2, 0}, {2, 0, 1}, {2, 1, 0}} {
+			var infos []AttrInfo
+			for _, i := range perm {
+				infos = append(infos, AttrInfo{Name: names[i], OID: "1.2.3", Syntax: SynString, Secret: names[i] == flagged})
+			}
+			sc := NewSchema(infos...)
+			for _, n := range append([]string{"1.2.3"}, names...) {
+				a, err := ParseAttrName(n, sc)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := Render(Present(a), sc); Code(err) != SecretAttribute {
+					t.Errorf("flag=%s order=%v name=%s: got %v", flagged, perm, n, err)
+				}
+			}
+		}
+	}
+}
