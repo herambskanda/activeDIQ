@@ -330,6 +330,34 @@ func parent2() DN {
 
 // FuzzParse: Parse never panics, and whatever it accepts re-renders to text that parses to an equal
 // DN (render is a fixed point).
+func TestLenientOpaqueSeparator(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		kind Kind
+	}{
+		{"1.2.3.4=#0401 +CN=a,DC=x", MultiValuedRDN},
+		{"1.2.3.4=#0401 X,DC=x", UnescapedSpecial},
+		{"1.2.3.4=#0401 XCN=evil,DC=x", UnescapedSpecial},
+	} {
+		if _, err := Parse(c.in, Lenient); KindOf(err) != c.kind {
+			t.Errorf("%q: got %v want %s", c.in, err, c.kind)
+		}
+	}
+	if d, err := Parse("1.2.3.4=#0401 ,DC=x", Lenient); err != nil || d.Len() != 2 {
+		t.Errorf("valid lenient opaque: %v", err)
+	}
+}
+
+func TestForRequestBoundsRenderedLength(t *testing.T) {
+	d, err := Parse("CN="+strings.Repeat("=", 6000)+",DC=x", Strict)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DNRef(d).ForRequest(); KindOf(err) != TooLong {
+		t.Errorf("got %v want TooLong", err)
+	}
+}
+
 func FuzzParse(f *testing.F) {
 	for _, s := range []string{`CN=a,DC=x`, `CN=a\,b,DC=x`, "1.2.3=#0400,DC=x", `CN=\ x\ ,DC=x`, "CN=a\xff", "<GUID=00>", `CN=a\2cb`} {
 		f.Add(s, uint8(0))
@@ -339,6 +367,9 @@ func FuzzParse(f *testing.F) {
 		d, err := Parse(s, Mode(m&1))
 		if err != nil {
 			return
+		}
+		if d.Len() > strings.Count(s, ",")+1 {
+			t.Fatalf("more RDNs than separators in %q", s)
 		}
 		for _, r := range d.RDNs() {
 			if !utf8.ValidString(r.Value()) || strings.IndexByte(r.Value(), 0) >= 0 {

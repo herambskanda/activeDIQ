@@ -1,5 +1,7 @@
 package dn
 
+import "strconv"
+
 // Kind classifies a DN or object-reference failure. Messages never echo the input: DN text is
 // attacker-influenced and may carry names we must not log.
 type Kind string
@@ -36,7 +38,7 @@ func (e *Error) Error() string {
 	if e.Pos < 0 {
 		return "dn: " + string(e.Kind)
 	}
-	return "dn: " + string(e.Kind) + " at byte " + itoa(e.Pos)
+	return "dn: " + string(e.Kind) + " at byte " + strconv.Itoa(e.Pos)
 }
 
 // Is lets callers match with errors.Is(err, &dn.Error{Kind: dn.InvalidEscape}).
@@ -61,17 +63,3 @@ func KindOf(err error) Kind {
 }
 
 func fail(k Kind, pos int) error { return &Error{Kind: k, Pos: pos} }
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b [20]byte
-	i := len(b)
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(b[i:])
-}

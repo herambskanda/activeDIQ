@@ -226,6 +226,12 @@ func (p *parser) opaque(r RDN) (RDN, bool, error) {
 	r.opaque = b
 	p.skipSpaces() // lenient only reaches here with spaces
 	if p.i < len(s) {
+		if s[p.i] != ',' {
+			if s[p.i] == '+' {
+				return r, false, fail(MultiValuedRDN, p.i)
+			}
+			return r, false, fail(UnescapedSpecial, p.i)
+		}
 		p.i++ // ','
 		if p.i >= len(s) {
 			return r, false, fail(EmptyRDN, p.i)

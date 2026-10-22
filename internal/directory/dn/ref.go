@@ -52,7 +52,11 @@ func (r ObjectRef) ForRequest() (string, error) {
 				return "", fail(NotRequestable, -1)
 			}
 		}
-		return string(r.d.Render()), nil
+		out := string(r.d.Render())
+		if len(out) > MaxDNLen { // Render can expand ('=' and controls become \3D): bound what we send
+			return "", fail(TooLong, -1)
+		}
+		return out, nil
 	}
 	return "", fail(InvalidObjectRef, -1)
 }
