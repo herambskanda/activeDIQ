@@ -423,3 +423,117 @@ func TestFFSP2ContentDispositionFolded(t *testing.T) {
 		}
 	})
 }
+
+// T-0081: ./... skips _x, .x and testdata directories, but product code can import them and they
+// ship. The type-aware passes must still analyse them, and a Go file no run compiled must fail closed.
+func TestFFSP2ImportedHiddenDirectories(t *testing.T) {
+	const bad = "package p\n\nimport \"html/template\"\n\nfunc F(s string) { _, _ = template.New(\"x\").Parse(s) }\n"
+	for _, dir := range []string{"_p", ".p", "testdata/p"} {
+		t.Run(dir, func(t *testing.T) {
+			file := "internal/x/" + dir + "/x.go"
+			fs, err := Analyze(tree(t, map[string]string{
+				file:                    bad,
+				"internal/x/use/use.go": "package use\n\nimport p \"fx.test/internal/x/" + dir + "\"\n\nvar _ = p.F\n",
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, f := range fs {
+				if f.FF == "FF-SP2" && f.File == file && f.Rule != "build-constrained-unanalysed" {
+					return
+				}
+			}
+			t.Fatalf("expected an FF-SP2 finding in %s, got %v", file, fs)
+		})
+	}
+}
+
+func TestFFSP2TextScanSeesProductTestdata(t *testing.T) {
+	bad := gofile("\t\"fmt\"\n", "func f(x string) string { return fmt.Sprintf(\"(&(objectClass=user)(cn=%s))\", x) }")
+	want(t, "product testdata is scanned", map[string]string{"internal/x/testdata/p/m.go": bad}, "FF-SP3", "ldap-filter-shape", "internal/x/testdata/p/m.go")
+	want(t, "tool fixtures stay exempt", map[string]string{"tools/analyzers/a/testdata/src/m.go": bad}, "", "", "")
+}
+
+func TestFFSP2UnanalysedFilesFailClosed(t *testing.T) {
+	unanalysed := func(t *testing.T, files map[string]string) map[string]bool {
+		t.Helper()
+		fs, err := Analyze(tree(t, files))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := map[string]bool{}
+		for _, f := range fs {
+			if f.Rule == "build-constrained-unanalysed" {
+				got[f.File] = true
+			}
+		}
+		return got
+	}
+	t.Run("every file excluded on all runs", func(t *testing.T) {
+		got := unanalysed(t, map[string]string{
+			"internal/x/ok/ok.go":       "package ok\n",
+			"internal/x/adapter/a.go":   "//go:build neverbuilt\n\npackage adapter\n",
+			"internal/x/adapter/b.go":   "//go:build neverbuilt\n\npackage adapter\n",
+			"internal/x/nodeps/dead.go": "package dead\n",
+		})
+		for _, f := range []string{"internal/x/adapter/a.go", "internal/x/adapter/b.go"} {
+			if !got[f] {
+				t.Fatalf("expected build-constrained-unanalysed for %s, got %v", f, got)
+			}
+		}
+		if got["internal/x/ok/ok.go"] {
+			t.Fatalf("compiled file flagged: %v", got)
+		}
+	})
+	t.Run("nested modules and tool fixtures are exempt", func(t *testing.T) {
+		got := unanalysed(t, map[string]string{
+			"internal/x/ok/ok.go":                   "package ok\n",
+			"garage/spike/go.mod":                   "module spike.test\n\ngo 1.27.0\n",
+			"garage/spike/s.go":                     "package spike\n",
+			"tools/analyzers/a/testdata/src/m/m.go": "package m\n",
+		})
+		if len(got) != 0 {
+			t.Fatalf("expected none, got %v", got)
+		}
+	})
+}
+
+func TestFFSP2LocalReplaceModuleIsShippedCode(t *testing.T) {
+	const bad = "package sub\n\nimport \"text/template\"\n\nfunc F(s string) { template.New(\"x\").Parse(s) }\n"
+	files := func(dir string) map[string]string {
+		return map[string]string{
+			"go.mod":          "module fx.test\n\ngo 1.27.0\n\nrequire sub.test v0.0.0\n\nreplace sub.test => ./" + dir + "\n",
+			dir + "/go.mod":   "module sub.test\n\ngo 1.27.0\n",
+			dir + "/x.go":     bad,
+			"cmd/srv/main.go": "package main\n\nimport \"sub.test\"\n\nfunc main() { sub.F(\"x\") }\n",
+		}
+	}
+	for _, dir := range []string{"internal/sub", "third_party/sub"} {
+		t.Run(dir+" violation reported", func(t *testing.T) {
+			fs, err := Analyze(tree(t, files(dir)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, f := range fs {
+				if f.Rule == "tmplconst" && f.File == dir+"/x.go" {
+					return
+				}
+			}
+			t.Fatalf("expected tmplconst in %s/x.go, got %v", dir, fs)
+		})
+		t.Run(dir+" uncompiled file reported", func(t *testing.T) {
+			f := files(dir)
+			f[dir+"/never.go"] = "//go:build neverbuilt\n\npackage sub\n"
+			fs, err := Analyze(tree(t, f))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, x := range fs {
+				if x.Rule == "build-constrained-unanalysed" && x.File == dir+"/never.go" {
+					return
+				}
+			}
+			t.Fatalf("expected build-constrained-unanalysed for %s/never.go, got %v", dir, fs)
+		})
+	}
+}
