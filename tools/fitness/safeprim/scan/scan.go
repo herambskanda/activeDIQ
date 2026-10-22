@@ -22,8 +22,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-
-	"golang.org/x/tools/go/packages"
 )
 
 // Finding is one broken rule at one place.
@@ -61,15 +59,15 @@ func skipDir(root, rel, name string) bool {
 var rootSkipped = map[string]bool{"vendor": true, "factory": true, "knowledge": true, "garage": true, ".claude": true, "dist": true, "third_party": true}
 
 // skipDirUnless is skipDir, except that a root-level directory in rootSkipped is entered when it
-// holds a Go file some package load compiled (compiled is a set of absolute paths).
-func skipDirUnless(root, rel, name string, compiled map[string]bool) bool {
+// overlaps a directory in entered (see enteredDirs): it is one, holds one, or lies inside one.
+func skipDirUnless(root, rel, name string, entered map[string]bool) bool {
 	switch name {
 	case ".git", "node_modules", "testdata":
 		return true
 	}
 	if !strings.Contains(rel, "/") {
 		if rootSkipped[name] {
-			return !hasCompiledUnder(filepath.Join(root, rel), compiled)
+			return !overlapsEntered(rel, entered)
 		}
 	}
 	parent := filepath.Join(root, filepath.FromSlash(filepath.ToSlash(filepath.Dir(rel))))
@@ -82,64 +80,6 @@ func skipDirUnless(root, rel, name string, compiled map[string]bool) bool {
 		return dirHasSuffix(parent, "package.json")
 	}
 	return false
-}
-
-func hasCompiledUnder(dir string, compiled map[string]bool) bool {
-	prefix := dir + string(filepath.Separator)
-	for f := range compiled {
-		if strings.HasPrefix(f, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
-// compiledGoFiles loads every package of the module (tests included, dependencies followed) and
-// returns the absolute paths of the Go files under root that any of them compiles. It is how the
-// text scan learns that a root directory such as third_party ships code. Load errors are not
-// fatal here: Analyze reports a tree that does not type-check, and a file that fails to load
-// stays covered by its directory being walked when it is not in a skipped one.
-func compiledGoFiles(root string) map[string]bool {
-	out := map[string]bool{}
-	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
-		return out
-	}
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		return out
-	}
-	cfg := &packages.Config{
-		Mode:  packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles | packages.NeedImports | packages.NeedDeps,
-		Dir:   absRoot,
-		Tests: true,
-	}
-	pkgs, err := packages.Load(cfg, "./...")
-	if err != nil {
-		return out
-	}
-	// Start from the packages outside the skipped root directories: only what product code reaches
-	// ships, so an unimported garage prototype or factory tool stays out.
-	var product []*packages.Package
-	for _, p := range pkgs {
-		if len(p.GoFiles) == 0 {
-			continue
-		}
-		rel, err := filepath.Rel(absRoot, p.GoFiles[0])
-		if err != nil || inRootSkipped(filepath.ToSlash(rel)) {
-			continue
-		}
-		product = append(product, p)
-	}
-	packages.Visit(product, nil, func(p *packages.Package) {
-		for _, list := range [][]string{p.GoFiles, p.CompiledGoFiles} {
-			for _, f := range list {
-				if strings.HasSuffix(f, ".go") && strings.HasPrefix(f, absRoot+string(filepath.Separator)) {
-					out[f] = true
-				}
-			}
-		}
-	})
-	return out
 }
 
 // dirHasSuffix reports whether dir directly contains a file whose name ends in one of suffixes.
@@ -166,9 +106,11 @@ func dirHasSuffix(dir string, suffixes ...string) bool {
 func Scan(root string, checks Checks) ([]Finding, error) {
 	module, _ := modulePath(filepath.Join(root, "go.mod"))
 	var out []Finding
-	absRoot, _ := filepath.Abs(root)
-	compiled := compiledGoFiles(root)
-	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+	entered, err := enteredDirs(root, module)
+	if err != nil {
+		return nil, err
+	}
+	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -178,13 +120,13 @@ func Scan(root string, checks Checks) ([]Finding, error) {
 		}
 		rel = filepath.ToSlash(rel)
 		if d.IsDir() {
-			if rel != "." && skipDirUnless(root, rel, d.Name(), compiled) {
+			if rel != "." && skipDirUnless(root, rel, d.Name(), entered) {
 				return fs.SkipDir
 			}
 			return nil
 		}
-		if inRootSkipped(rel) && !compiled[filepath.Join(absRoot, filepath.FromSlash(rel))] {
-			return nil // a file of a skipped root directory that no package compiles
+		if inRootSkipped(rel) && !underEntered(rel, entered) {
+			return nil // a file of a skipped root directory that no shipped package reaches
 		}
 		return scanFile(root, rel, module, checks, &out)
 	})

@@ -346,3 +346,61 @@ func TestRootSkippedDirsScannedWhenImported(t *testing.T) {
 	// Not imported by anything: still skipped.
 	want(t, "unimported third_party stays skipped", map[string]string{"third_party/p/x.go": bad, "internal/m/m.go": "package m\n"}, "", "", "")
 }
+
+// Build tags, embeds and load failures must not hide shipped code in a root-skipped directory
+// (security-architect review of T-0082, bypasses A to D and the fail-closed rule).
+func TestRootSkippedDirsBuildTagsEmbedsAndLoadFailure(t *testing.T) {
+	bad := gofile("\t\"fmt\"\n\t\"os/exec\"\n", "var _ = exec.Command\n\nfunc F(x string) string { return fmt.Sprintf(\"(&(objectClass=user)(cn=%s))\", x) }")
+	importer := "package m\n\nimport _ \"fx.test/third_party/p\"\n"
+	hits := func(t *testing.T, files map[string]string, file string, rules ...string) {
+		t.Helper()
+		fs, err := Scan(tree(t, files), AllChecks())
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := map[string]bool{}
+		for _, f := range fs {
+			if f.File == file {
+				got[f.Rule] = true
+			}
+		}
+		for _, r := range rules {
+			if !got[r] {
+				t.Fatalf("expected %s in %s, got %v", r, file, fs)
+			}
+		}
+	}
+	t.Run("A sibling _windows.go file", func(t *testing.T) {
+		hits(t, map[string]string{
+			"third_party/p/ok.go":        "package x\n",
+			"third_party/p/x_windows.go": bad,
+			"internal/m/m.go":            importer,
+		}, "third_party/p/x_windows.go", "process-api", "ldap-filter-shape")
+	})
+	t.Run("B go:build tagged file", func(t *testing.T) {
+		hits(t, map[string]string{
+			"third_party/p/ok.go": "package x\n",
+			"third_party/p/x.go":  "//go:build windows\n\n" + bad,
+			"internal/m/m.go":     importer,
+		}, "third_party/p/x.go", "process-api", "ldap-filter-shape")
+	})
+	t.Run("C importer only built on windows", func(t *testing.T) {
+		hits(t, map[string]string{
+			"third_party/p/x.go":          bad,
+			"internal/agent/a_windows.go": importer,
+		}, "third_party/p/x.go", "process-api", "ldap-filter-shape")
+	})
+	t.Run("D embedded sql", func(t *testing.T) {
+		hits(t, map[string]string{
+			"third_party/p/x.go":  "package x\n\nimport _ \"embed\"\n\n//go:embed m.sql\nvar S string\n",
+			"third_party/p/m.sql": "CREATE FUNCTION f(t text) RETURNS void AS $$\nBEGIN\n  EXECUTE 'select ' || t;\nEND;\n$$ LANGUAGE plpgsql;\n",
+			"internal/m/m.go":     importer,
+		}, "third_party/p/m.sql", "plpgsql-execute-concat")
+	})
+	t.Run("load failure fails closed", func(t *testing.T) {
+		root := tree(t, map[string]string{"go.mod": "module fx.test\n\nrequire (\n", "internal/m/m.go": "package m\n"})
+		if _, err := Scan(root, AllChecks()); err == nil {
+			t.Fatal("expected an error from a broken go.mod, got none")
+		}
+	})
+}
