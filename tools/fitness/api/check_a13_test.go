@@ -14,6 +14,9 @@ var a13Fixtures = []fixture{
 	{"host binding justified by another AN row", "A13", func(f map[string]string) {
 		repl(f, pol, "    path: /healthz\n", "    path: /healthz\n    host: totp-enrolment\n")
 	}, pol, "is justified by AN-5"},
+	{"host binding whose ref only prefixes the AN row", "A13", func(f map[string]string) {
+		repl(f, pol, "    path: /healthz\n    ref: AN-1\n", "    path: /healthz\n    host: totp-enrolment\n    ref: AN-50\n")
+	}, pol, "is justified by AN-5"},
 }
 
 func TestA13AcceptsADeclaredHostBinding(t *testing.T) {

@@ -177,7 +177,7 @@ func checkA13(t *tree) []Violation {
 				switch {
 				case !ok:
 					vs = append(vs, Violation{"A13", where, fmt.Sprintf("%s %s: stale: hostname binding %q is not in apihost's binding table (%s) (ADR-0004 rule 9)", sec.name, label, h, bindingNames())})
-				case sec.name == "anonymous" && !strings.Contains(f["ref"], b.Ref):
+				case sec.name == "anonymous" && !refCitesAN(f["ref"], b.Ref):
 					vs = append(vs, Violation{"A13", where, fmt.Sprintf("%s %s: hostname binding %q is justified by %s but the entry's ref is %q (ADR-0004 rule 9)", sec.name, label, h, b.Ref, f["ref"])})
 				}
 			}

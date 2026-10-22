@@ -23,6 +23,7 @@ func checkA4(t *tree) []Violation {
 
 func runA4(env *runtimeEnv) []Violation {
 	var vs []Violation
+	vs = append(vs, comparePolicies(env)...)
 	for _, prof := range env.profiles {
 		vs = append(vs, a4Profile(env, prof)...)
 	}
@@ -130,7 +131,7 @@ func a4Profile(env *runtimeEnv, prof string) []Violation {
 
 	// 4. The HTTP probe: the middleware enforces what the table says.
 	for _, r := range srv.Routes() {
-		vs = append(vs, probeRoute(prof, srv, r, media[r.OperationID])...)
+		vs = append(vs, probeRoute(prof, srv, r, media[r.OperationID], probeHosts(env))...)
 	}
 	return vs
 }
@@ -162,7 +163,7 @@ func send(srv http.Handler, method, host, path, ct, principal string, csrf bool)
 	return probeResult{rec.Code, p.Type}
 }
 
-func probeRoute(prof string, srv http.Handler, r apihost.RouteInfo, ct string) []Violation {
+func probeRoute(prof string, srv http.Handler, r apihost.RouteInfo, ct string, hosts []string) []Violation {
 	var vs []Violation
 	where := "profile " + prof
 	bad := func(f string, a ...any) {
@@ -184,16 +185,18 @@ func probeRoute(prof string, srv http.Handler, r apihost.RouteInfo, ct string) [
 		}
 		return vs
 	}
-	if res := send(srv, r.Method, host, path, ct, "", false); res.status != 401 {
-		bad("answered %d to an unauthenticated request, want 401", res.status)
-	}
 	authenticatedOnly := r.Permission == "authenticated"
-	res := send(srv, r.Method, host, path, ct, "nobody", false)
-	switch {
-	case authenticatedOnly && res.status == 403:
-		bad("an authenticated route answered 403 to a principal with no permissions")
-	case !authenticatedOnly && res.status != 403:
-		bad("answered %d to a principal with no permissions, want 403", res.status)
+	for _, h := range hosts {
+		if res := send(srv, r.Method, h, path, ct, "", false); res.status != 401 {
+			bad("answered %d to an unauthenticated request on %s, want 401", res.status, h)
+		}
+		res := send(srv, r.Method, h, path, ct, "nobody", false)
+		switch {
+		case authenticatedOnly && res.status == 403:
+			bad("an authenticated route answered 403 to a principal with no permissions on %s", h)
+		case !authenticatedOnly && res.status != 403:
+			bad("answered %d to a principal with no permissions on %s, want 403", res.status, h)
+		}
 	}
 	if isUnsafeMethod(r.Method) {
 		if res := send(srv, r.Method, host, path, ct, "session", false); res.typ != apitypes.ProblemTypeCSRFFailed {
@@ -201,6 +204,15 @@ func probeRoute(prof string, srv http.Handler, r apihost.RouteInfo, ct string) [
 		}
 	}
 	return vs
+}
+
+// probeHosts is every configured binding hostname plus an unbound one.
+func probeHosts(env *runtimeEnv) []string {
+	hs := []string{"api.fitness.invalid"}
+	for _, k := range sortedKeys(env.policy.Hosts) {
+		hs = append(hs, env.policy.Hosts[k])
+	}
+	return hs
 }
 
 func isUnsafeMethod(m string) bool {
@@ -218,4 +230,45 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// comparePolicies fails when the policy the shipped server passes to Build differs from the one A4
+// probes (policy.yaml), so a hand-copied server policy cannot drift unseen (TM-F-ANON).
+func comparePolicies(env *runtimeEnv) []Violation {
+	if env.serverPolicy == nil {
+		return nil
+	}
+	got, want := env.serverPolicy(), env.policy
+	var vs []Violation
+	add := func(f string, a ...any) { vs = append(vs, fail("A4", "compose/server apiPolicy", f, a...)) }
+	rows := func(p apihost.Policy) map[string]bool {
+		m := map[string]bool{}
+		for _, r := range p.Anonymous {
+			m[r.Operation+" host="+r.Host+" gate="+r.Gate] = true
+		}
+		return m
+	}
+	set := func(l []string) map[string]bool {
+		m := map[string]bool{}
+		for _, s := range l {
+			m[s] = true
+		}
+		return m
+	}
+	diff := func(kind string, g, w map[string]bool) {
+		for _, k := range sortedKeys(g) {
+			if !w[k] {
+				add("the server's policy has %s %q that policy.yaml does not (ADR-0004 A4, TM-F-ANON)", kind, k)
+			}
+		}
+		for _, k := range sortedKeys(w) {
+			if !g[k] {
+				add("policy.yaml has %s %q that the server's policy lacks (ADR-0004 A4, TM-F-ANON)", kind, k)
+			}
+		}
+	}
+	diff("an anonymous row", rows(got), rows(want))
+	diff("an authenticated operation", set(got.Authenticated), set(want.Authenticated))
+	diff("a step-up permission", set(got.StepUp), set(want.StepUp))
+	return vs
 }

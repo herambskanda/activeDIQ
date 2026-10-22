@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json/v2"
+	"github.com/skenzeriq/activediq/internal/compose/server"
 	"net/http"
 	"os"
 	"os/exec"
@@ -119,6 +120,7 @@ func fxEnv(t *testing.T, mutate func(*runtimeEnv, *[]apihost.Route)) *runtimeEnv
 	if mutate != nil {
 		mutate(env, &rows)
 	}
+	env.serverPolicy = func() apihost.Policy { return env.policy }
 	env.tags = func(string) ([]apihost.TagHandlers, error) {
 		return []apihost.TagHandlers{apihost.NewTagHandlers("fx", rows...)}, nil
 	}
@@ -170,6 +172,25 @@ func TestA4Fails(t *testing.T) {
 		env := fxEnv(t, func(e *runtimeEnv, _ *[]apihost.Route) { e.policy.Anonymous = nil })
 		want(t, runA4(env), "A4", "apihost.Build refuses")
 	})
+	t.Run("the server's policy has an extra anonymous row", func(t *testing.T) {
+		env := fxEnv(t, nil)
+		env.serverPolicy = func() apihost.Policy {
+			p := env.policy
+			p.Anonymous = append(append([]apihost.AnonymousRow{}, p.Anonymous...), apihost.AnonymousRow{Operation: "fxList", Gate: "none"})
+			return p
+		}
+		want(t, runA4(env), "A4", "the server's policy has an anonymous row")
+	})
+	t.Run("the server's policy lacks a host binding", func(t *testing.T) {
+		env := fxEnv(t, func(e *runtimeEnv, _ *[]apihost.Route) { e.policy.Anonymous[0].Host = "totp-enrolment" })
+		env.serverPolicy = func() apihost.Policy {
+			p := env.policy
+			p.Anonymous = append([]apihost.AnonymousRow{}, p.Anonymous...)
+			p.Anonymous[0].Host = ""
+			return p
+		}
+		want(t, runA4(env), "A4", "policy.yaml has an anonymous row")
+	})
 	t.Run("a route served outside the document is not in nonApiRoutes", func(t *testing.T) {
 		env := fxEnv(t, func(e *runtimeEnv, _ *[]apihost.Route) {
 			e.nonAPISrv = func(string) ([]string, bool) { return []string{"GET /debug/vars"}, true }
@@ -198,9 +219,9 @@ func TestA4ProbeCatchesAnUnguardedRoute(t *testing.T) {
 	var found bool
 	for _, r := range srv.Routes() {
 		if r.OperationID == "fxList" {
-			vs := probeRoute("windows", srv, r, "")
+			vs := probeRoute("windows", srv, r, "", probeHosts(env))
 			found = len(vs) > 0
-			want(t, vs, "A4", "unauthenticated request, want 401")
+			want(t, vs, "A4", "unauthenticated request on")
 		}
 	}
 	if !found {
@@ -364,5 +385,26 @@ func TestCorpusCoversTheListedCases(t *testing.T) {
 		if !names[n] {
 			t.Errorf("the corpus lacks %q (have %d cases)", n, len(cases))
 		}
+	}
+}
+
+// The synthetic trees of the other tests are not the repository, so they skip the server-policy
+// comparison; TestA4ServerPolicyMatchesPolicyYamlOnTheRealTree runs it against the real files.
+func init() { serverPolicySource = nil }
+
+func TestA4ServerPolicyMatchesPolicyYamlOnTheRealTree(t *testing.T) {
+	serverPolicySource = server.APIPolicy
+	t.Cleanup(func() { serverPolicySource = nil })
+	root := filepath.Join("..", "..", "..")
+	tr, err := load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, vs := loadRuntime(tr, "A4")
+	if env == nil {
+		t.Fatal(vs)
+	}
+	if vs := comparePolicies(env); len(vs) != 0 {
+		t.Fatalf("the server's policy drifted from policy.yaml: %v", vs)
 	}
 }

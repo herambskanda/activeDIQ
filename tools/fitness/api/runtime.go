@@ -13,6 +13,7 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"github.com/skenzeriq/activediq/internal/compose/profile"
+	"github.com/skenzeriq/activediq/internal/compose/server"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 )
 
@@ -36,6 +37,8 @@ type runtimeEnv struct {
 	profiles  []string
 	tags      func(profile string) ([]apihost.TagHandlers, error)
 	nonAPISrv func(profile string) (routes []string, available bool)
+	// serverPolicy is the policy the shipped server passes to Build; nil skips the comparison.
+	serverPolicy func() apihost.Policy
 }
 
 type policyRoute struct{ Method, Path string }
@@ -47,6 +50,10 @@ var tagSource = func(string) ([]apihost.TagHandlers, error) { return nil, nil }
 // no server mounts any.
 var nonAPIServedSource = func(string) ([]string, bool) { return nil, false }
 
+// serverPolicySource is the policy the shipped server passes to Build. Tests whose synthetic tree
+// is not the repository's set it to nil.
+var serverPolicySource = server.APIPolicy
+
 const bundleRel = "internal/platform/apihost/spec/openapi.gen.json"
 
 // hostFor is the hostname the probe gives a binding: a reserved name that cannot be a real host.
@@ -55,7 +62,7 @@ func hostFor(binding string) string { return binding + ".fitness.invalid" }
 // loadRuntime reads the bundle and the policy of the tree. A problem is returned as violations of
 // the named check so a broken input fails the job instead of skipping the check.
 func loadRuntime(t *tree, check string) (*runtimeEnv, []Violation) {
-	env := &runtimeEnv{root: t.root, tags: tagSource, nonAPISrv: nonAPIServedSource}
+	env := &runtimeEnv{root: t.root, tags: tagSource, nonAPISrv: nonAPIServedSource, serverPolicy: serverPolicySource}
 	for _, m := range []profile.Manifest{profile.Windows(), profile.LinuxOCI(), profile.SaaS()} {
 		env.profiles = append(env.profiles, m.Name)
 	}

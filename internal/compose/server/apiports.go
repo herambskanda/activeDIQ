@@ -16,6 +16,10 @@ var apiPolicy = apihost.Policy{Anonymous: []apihost.AnonymousRow{
 	{Operation: "getReadiness", Gate: "none"},
 }}
 
+// APIPolicy is the policy the server passes to apihost.Build. fitness-api A4 compares it with
+// api/openapi/policy.yaml until the server loads that file itself (T-0088).
+func APIPolicy() apihost.Policy { return apiPolicy }
+
 // apiCatalogue is the EP-6 permission set; it is empty until the permission catalogue lands, so any
 // operation with a real permission fails Build rather than being served unguarded.
 var apiCatalogue = apihost.Permissions{}
