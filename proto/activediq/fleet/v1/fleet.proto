@@ -1,0 +1,107 @@
+// activediq.fleet.v1 — the fleet gateway's own contract (T-0152; threat model §5.6, TB6, TB12).
+//
+// Two RPCs and nothing else (TM-TB6-T8: the fleet listener mounts only fleet services):
+//
+//   Enroll  unary. A host with a single-use enrollment token and a freshly generated key pair
+//           (the private key never leaves the host) obtains a signed leaf certificate, the
+//           installation CA bundle it pins, and the server endpoints. The only RPC that works
+//           without a client certificate.
+//   Tunnel  bidirectional, component-initiated. Carries opaque frames of whatever contract the
+//           server binds to the component (activediq.connector.v1, an agent module's contract).
+//           fleet does not read the payload (blueprint §7.2: fleet is contract-agnostic).
+//
+// The tenant is never a field: it comes from the certificate SAN (ADR-0002, TM-TB6-T3).
+// Nothing secret is pushed (TM-TB6-T6): the only secret-shaped inputs are the single-use token in
+// EnrollRequest and the opaque operation payload of a frame. fitness-proto F1 to F5 enforce this.
+syntax = "proto3";
+
+package activediq.fleet.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/skenzeriq/activediq/internal/proto/activediq/fleet/v1;fleetv1";
+
+service Fleet {
+  // Single-use token + CSR in; signed leaf, CA bundle and endpoints out. No client certificate
+  // is required for this RPC and for no other.
+  rpc Enroll(EnrollRequest) returns (EnrollResponse);
+
+  // The component dials out and opens one stream; the server issues calls to the component over
+  // it and the component issues calls to the server. Requires a client certificate; revocation
+  // closes the stream (TM-TB6-T9).
+  rpc Tunnel(stream TunnelFrame) returns (stream TunnelFrame);
+}
+
+message EnrollRequest {
+  // The single-use, short-lived enrollment token shown once to the admin who created it.
+  string enrollment_token = 1;
+  // PKCS#10 certificate request, DER. Proves possession of the private key, which stays on the
+  // host. Subject and SAN in the request are ignored: the server sets the SAN from the token.
+  bytes csr_der = 2;
+  // Informational, for the admin's component list. Never used for a decision.
+  string component_version = 3;
+}
+
+message EnrollResponse {
+  // The signed leaf certificate, DER. Its SAN names tenant and component.
+  bytes leaf_certificate_der = 1;
+  // The installation CA bundle the component pins to verify the server (TM-TB6-T2),
+  // PEM, one or more CA certificates. Public material only.
+  bytes ca_bundle_pem = 2;
+  // Where to dial the Tunnel, in preference order.
+  repeated Endpoint endpoints = 3;
+  google.protobuf.Timestamp leaf_not_after = 4;
+}
+
+message Endpoint {
+  string host = 1;
+  uint32 port = 2;
+}
+
+// One frame of a multiplexed call. `call_id` is chosen by the side that opens the call: odd for
+// the server, even for the component, so ids never collide. Frames of one call keep their order.
+message TunnelFrame {
+  uint64 call_id = 1;
+  oneof body {
+    CallOpen open = 2;
+    CallData data = 3;
+    CallHalfClose half_close = 4;
+    CallClose close = 5;
+    CallCancel cancel = 6;
+    FlowCredit credit = 7;
+  }
+}
+
+// Opens a call. `method` is the full gRPC method name of the bound contract
+// (for example "/activediq.connector.v1.Connector/Describe"); fleet routes on it and never parses
+// the messages.
+message CallOpen {
+  string method = 1;
+  // Call deadline relative to receipt, milliseconds; 0 means none.
+  uint32 timeout_ms = 2;
+}
+
+// One message of the call, serialised by the bound contract. Opaque to fleet.
+message CallData {
+  bytes payload = 1;
+}
+
+// The sender will send no more messages on this call.
+message CallHalfClose {}
+
+// The call ended; carries the gRPC status. Only the sender of the final response closes.
+message CallClose {
+  // google.rpc.Code number.
+  int32 status_code = 1;
+  // Safe, human text. Never an internal error string (api-design: no leaked internals).
+  string status_message = 2;
+}
+
+// The sender abandons the call.
+message CallCancel {}
+
+// Flow control: the sender may send this many more CallData messages on the call (call_id 0:
+// on the whole tunnel). Backpressure for TM-TB6-T7.
+message FlowCredit {
+  uint32 messages = 1;
+}

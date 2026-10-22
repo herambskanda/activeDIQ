@@ -116,3 +116,54 @@ func TestScreamingSnake(t *testing.T) {
 		}
 	}
 }
+
+// fleetBase is a clean fleet contract.
+const fleetBase = `syntax = "proto3";
+package x.fleet.v1;
+message EnrollRequest { string enrollment_token = 1; bytes csr_der = 2; }
+message EnrollResponse { bytes leaf_certificate_der = 1; bytes ca_bundle_pem = 2; }
+message TunnelFrame { uint64 call_id = 1; bytes payload = 2; }
+service Fleet {
+  rpc Enroll(EnrollRequest) returns (EnrollResponse);
+  rpc Tunnel(stream TunnelFrame) returns (stream TunnelFrame);
+}
+`
+
+func TestFleetCleanPasses(t *testing.T) {
+	vs, err := lint(t, fleetBase)
+	if err != nil || len(vs) != 0 {
+		t.Fatalf("want clean, got %v %v", vs, err)
+	}
+}
+
+func TestFleetViolations(t *testing.T) {
+	r := strings.Replace
+	cases := []struct{ name, rule, src string }{
+		{"F1 extra rpc", "F1", r(fleetBase, "service Fleet {", "message PingRequest {}\nservice Fleet { rpc Ping(PingRequest) returns (EnrollResponse);", 1)},
+		{"F1 tunnel not bidirectional", "F1", r(fleetBase, "rpc Tunnel(stream TunnelFrame) returns (stream TunnelFrame)", "rpc Tunnel(TunnelFrame) returns (stream TunnelFrame)", 1)},
+		{"F1 tunnel missing", "F1", r(fleetBase, "  rpc Tunnel(stream TunnelFrame) returns (stream TunnelFrame);\n", "", 1)},
+		{"F1 second service", "F1", fleetBase + "service Other { rpc X(EnrollRequest) returns (EnrollResponse); }\n"},
+		{"F5 streaming enroll", "F5", r(fleetBase, "rpc Enroll(EnrollRequest)", "rpc Enroll(stream EnrollRequest)", 1)},
+		{"F2 tenant in a request", "F2", r(fleetBase, "bytes csr_der = 2;", "bytes csr_der = 2; string tenant_id = 3;", 1)},
+		{"F2 tenant in a response", "F2", r(fleetBase, "bytes ca_bundle_pem = 2;", "bytes ca_bundle_pem = 2; string tenant = 3;", 1)},
+		{"F3 private key in the response", "F3", r(fleetBase, "bytes ca_bundle_pem = 2;", "bytes ca_bundle_pem = 2; bytes private_key_der = 3;", 1)},
+		{"F3 password in a frame", "F3", r(fleetBase, "bytes payload = 2;", "bytes payload = 2; string password = 3;", 1)},
+		{"F3 second token", "F3", r(fleetBase, "bytes payload = 2;", "bytes payload = 2; string session_token = 3;", 1)},
+		{"F3 token moved to another message", "F3", r(fleetBase, "bytes payload = 2;", "bytes payload = 2; string enrollment_token = 3;", 1)},
+		{"F3 nested message", "F3", r(fleetBase, "message TunnelFrame {", "message Inner { string api_key = 1; }\nmessage TunnelFrame { Inner inner = 3;", 1)},
+		{"F4 no CA bundle", "F4", r(fleetBase, "bytes ca_bundle_pem = 2;", "bytes other = 2;", 1)},
+		{"F4 no leaf", "F4", r(fleetBase, "bytes leaf_certificate_der = 1;", "bytes cert = 1;", 1)},
+		{"F5 Any", "F5", r(r(fleetBase, "package x.fleet.v1;", "package x.fleet.v1;\nimport \"google/protobuf/any.proto\";", 1), "bytes payload = 2;", "google.protobuf.Any payload = 2;", 1)},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			vs, err := lint(t, c.src)
+			if err != nil {
+				t.Fatalf("fixture must compile: %v", err)
+			}
+			if !strings.Contains(rules(vs), c.rule) {
+				t.Fatalf("want a %s violation, got %q", c.rule, rules(vs))
+			}
+		})
+	}
+}
