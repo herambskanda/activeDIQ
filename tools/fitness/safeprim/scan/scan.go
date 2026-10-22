@@ -62,8 +62,11 @@ var rootSkipped = map[string]bool{"vendor": true, "factory": true, "knowledge": 
 // overlaps a directory in entered (see enteredDirs): it is one, holds one, or lies inside one.
 func skipDirUnless(root, rel, name string, entered map[string]bool) bool {
 	switch name {
-	case ".git", "node_modules", "testdata":
+	case ".git", "node_modules":
 		return true
+	case "testdata":
+		// Go ignores testdata for ./... but compiles it when imported (T-0085).
+		return !overlapsEntered(rel, entered)
 	}
 	if !strings.Contains(rel, "/") {
 		if rootSkipped[name] {
@@ -110,6 +113,12 @@ func Scan(root string, checks Checks) ([]Finding, error) {
 	if err != nil {
 		return nil, err
 	}
+	for d := range entered {
+		if hasTestdata(d) {
+			out = append(out, Finding{FF: "FF-SP1", Rule: "testdata-import", File: d, Line: 1,
+				Msg: "shipped code imports a package under a testdata path element; Go compiles it, so it must not live there (T-0085)"})
+		}
+	}
 	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -125,8 +134,15 @@ func Scan(root string, checks Checks) ([]Finding, error) {
 			}
 			return nil
 		}
-		if inRootSkipped(rel) && !underEntered(rel, entered) {
-			return nil // a file of a skipped root directory that no shipped package reaches
+		if isSkippedPath(rel) && !underEntered(rel, entered) {
+			return nil // a file of a skipped directory that no shipped package reaches
+		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			if st, serr := os.Stat(p); serr == nil && st.IsDir() {
+				out = append(out, Finding{FF: "FF-SP1", Rule: "dir-symlink", File: rel, Line: 1,
+					Msg: "directory symlinks are rejected: Go compiles the target under this path when imported, while the scan walks by name (T-0085); move the code into the tree"})
+			}
+			return nil
 		}
 		return scanFile(root, rel, module, checks, &out)
 	})
@@ -145,6 +161,19 @@ func Scan(root string, checks Checks) ([]Finding, error) {
 	})
 	return out, nil
 }
+
+// hasTestdata: some path element of rel is "testdata".
+func hasTestdata(rel string) bool {
+	for _, e := range strings.Split(rel, "/") {
+		if e == "testdata" {
+			return true
+		}
+	}
+	return false
+}
+
+// isSkippedPath: rel lies in a directory the walk skips unless shipped code reaches it.
+func isSkippedPath(rel string) bool { return inRootSkipped(rel) || hasTestdata(rel) }
 
 func inRootSkipped(rel string) bool {
 	top, _, nested := strings.Cut(rel, "/")
