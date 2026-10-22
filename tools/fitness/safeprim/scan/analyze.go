@@ -33,22 +33,36 @@ func Analyze(root string) ([]Finding, error) {
 	}
 	// ./... skips _x, .x and testdata directories, yet product code can import them and they then
 	// ship. Analyse every package of the main module reachable in the import graph, not just the roots.
+	absRoot, err := resolvedRoot(root)
+	if err != nil {
+		return nil, err
+	}
+	// In scope is the main module and any module a local-path replace points at inside the repository:
+	// both ship. The module cache and GOROOT are outside the root and stay out.
+	inRepo := func(p *packages.Package) bool {
+		return p.Module != nil && moduleDirInside(absRoot, p.Module)
+	}
 	var use []*packages.Package
+	nestedModules := map[string]bool{} // directories of in-scope modules other than the root
 	compiled := map[string]bool{}
 	seenPkg := map[string]bool{}
 	var firstErr error
-	packages.Visit(pkgs, func(p *packages.Package) bool {
-		return p.Module != nil && p.Module.Main
-	}, func(p *packages.Package) {
-		if p.Module == nil || !p.Module.Main || seenPkg[p.ID] {
+	packages.Visit(pkgs, inRepo, func(p *packages.Package) {
+		if !inRepo(p) || seenPkg[p.ID] {
 			return
 		}
 		seenPkg[p.ID] = true
+		if d := moduleDir(p.Module); !p.Module.Main {
+			if r, err := filepath.EvalSymlinks(d); err == nil {
+				d = r
+			}
+			nestedModules[d] = true
+		}
 		for _, f := range p.CompiledGoFiles {
 			compiled[filepath.Clean(f)] = true
 		}
-		if strings.HasSuffix(p.ID, ".test") {
-			return // the generated test main
+		if isGeneratedTestMain(absRoot, p) {
+			return
 		}
 		if len(p.Errors) > 0 && firstErr == nil {
 			firstErr = fmt.Errorf("package %s does not type-check (run go build ./... first): %v", p.PkgPath, p.Errors[0])
@@ -89,7 +103,7 @@ func Analyze(root string) ([]Finding, error) {
 			}
 		}
 	}
-	missed, err := unanalysed(root, compiled)
+	missed, err := unanalysed(absRoot, nestedModules, compiled)
 	if err != nil {
 		return nil, err
 	}
@@ -99,17 +113,11 @@ func Analyze(root string) ([]Finding, error) {
 // unanalysed is the fail-closed half: every .go file under the module that no package load compiled
 // was never type-checked, so no analyzer saw it (a directory excluded by build constraints on every
 // run, a stray file, a package nothing imports). Nested modules and the analyzer fixtures under
-// tools/ are exempt.
-func unanalysed(root string, compiled map[string]bool) ([]Finding, error) {
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		return nil, err
-	}
-	if r, err := filepath.EvalSymlinks(absRoot); err == nil {
-		absRoot = r // compare equal to the paths go list reports
-	}
+// tools/ are exempt. A nested module is exempt only while no package of it is in the loaded graph;
+// one that product code imports (an in-repo replace) is shipped code and is walked like the rest.
+func unanalysed(absRoot string, nestedModules, compiled map[string]bool) ([]Finding, error) {
 	var out []Finding
-	err = filepath.WalkDir(absRoot, func(p string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(absRoot, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -125,7 +133,7 @@ func unanalysed(root string, compiled map[string]bool) ([]Finding, error) {
 			if skipDir(absRoot, rel, d.Name()) && (d.Name() == ".git" || d.Name() == "node_modules" || d.Name() == "testdata") {
 				return fs.SkipDir
 			}
-			if _, serr := os.Stat(filepath.Join(p, "go.mod")); serr == nil {
+			if _, serr := os.Stat(filepath.Join(p, "go.mod")); serr == nil && !nestedModules[p] {
 				return fs.SkipDir // a nested module is not this module's code
 			}
 			return nil
@@ -138,4 +146,56 @@ func unanalysed(root string, compiled map[string]bool) ([]Finding, error) {
 		return nil
 	})
 	return out, err
+}
+
+// resolvedRoot returns root as an absolute, symlink-free path, comparable to the paths go list reports.
+func resolvedRoot(root string) (string, error) {
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	if r, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = r
+	}
+	return abs, nil
+}
+
+// moduleDir is the directory a module's source is read from: the replacement's when replaced.
+func moduleDir(m *packages.Module) string {
+	if m.Replace != nil && m.Replace.Dir != "" {
+		return filepath.Clean(m.Replace.Dir)
+	}
+	return filepath.Clean(m.Dir)
+}
+
+// moduleDirInside reports whether the module's source lives under absRoot (the main module itself,
+// or a local-path replace). The module cache is elsewhere.
+func moduleDirInside(absRoot string, m *packages.Module) bool {
+	if m.Main {
+		return true
+	}
+	d := moduleDir(m)
+	if d == "." || d == "" {
+		return false
+	}
+	if r, err := filepath.EvalSymlinks(d); err == nil {
+		d = r
+	}
+	rel, err := filepath.Rel(absRoot, d)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// isGeneratedTestMain reports the synthetic "pkg.test" main go list builds for a package's tests: its
+// source sits in the build cache, not under the repository. (A real package may itself be named
+// "x.test", so the ID suffix alone is no test.)
+func isGeneratedTestMain(absRoot string, p *packages.Package) bool {
+	if !strings.HasSuffix(p.ID, ".test") || len(p.CompiledGoFiles) == 0 {
+		return false
+	}
+	for _, f := range p.CompiledGoFiles {
+		if rel, err := filepath.Rel(absRoot, f); err == nil && !strings.HasPrefix(rel, "..") {
+			return false
+		}
+	}
+	return true
 }

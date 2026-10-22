@@ -388,3 +388,43 @@ func TestFFSP2UnanalysedFilesFailClosed(t *testing.T) {
 		}
 	})
 }
+
+func TestFFSP2LocalReplaceModuleIsShippedCode(t *testing.T) {
+	const bad = "package sub\n\nimport \"text/template\"\n\nfunc F(s string) { template.New(\"x\").Parse(s) }\n"
+	files := func(dir string) map[string]string {
+		return map[string]string{
+			"go.mod":          "module fx.test\n\ngo 1.27.0\n\nrequire sub.test v0.0.0\n\nreplace sub.test => ./" + dir + "\n",
+			dir + "/go.mod":   "module sub.test\n\ngo 1.27.0\n",
+			dir + "/x.go":     bad,
+			"cmd/srv/main.go": "package main\n\nimport \"sub.test\"\n\nfunc main() { sub.F(\"x\") }\n",
+		}
+	}
+	for _, dir := range []string{"internal/sub", "third_party/sub"} {
+		t.Run(dir+" violation reported", func(t *testing.T) {
+			fs, err := Analyze(tree(t, files(dir)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, f := range fs {
+				if f.Rule == "tmplconst" && f.File == dir+"/x.go" {
+					return
+				}
+			}
+			t.Fatalf("expected tmplconst in %s/x.go, got %v", dir, fs)
+		})
+		t.Run(dir+" uncompiled file reported", func(t *testing.T) {
+			f := files(dir)
+			f[dir+"/never.go"] = "//go:build neverbuilt\n\npackage sub\n"
+			fs, err := Analyze(tree(t, f))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, x := range fs {
+				if x.Rule == "build-constrained-unanalysed" && x.File == dir+"/never.go" {
+					return
+				}
+			}
+			t.Fatalf("expected build-constrained-unanalysed for %s/never.go, got %v", dir, fs)
+		})
+	}
+}
