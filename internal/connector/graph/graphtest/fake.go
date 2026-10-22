@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -48,7 +49,8 @@ type Tenant struct {
 	Groups              []graph.Group
 	Members             map[string][]graph.DirectoryObject // by group id
 	// Memberships are the groups a principal (by object id) is a direct member of.
-	Memberships map[string][]graph.Group
+	Memberships  map[string][]graph.Group
+	Applications []graph.Application // other apps' registrations, found by appId
 }
 
 // Server is the fake. Fields are guarded by mu; use the helpers.
@@ -254,6 +256,35 @@ func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case len(seg) == 1 && seg[0] == "servicePrincipals(appId='"+t.ClientID+"')":
 		s.one(w, t.ServicePrincipals[t.SPID])
+	case len(seg) == 1 && strings.HasPrefix(seg[0], "servicePrincipals(appId='"):
+		app := strings.TrimSuffix(strings.TrimPrefix(seg[0], "servicePrincipals(appId='"), "')")
+		for _, sp := range t.ServicePrincipals {
+			if sp.AppID == app {
+				s.one(w, sp)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusNotFound)
+	case len(seg) == 1 && strings.HasPrefix(seg[0], "applications(appId='") && seg[0] != "applications(appId='"+t.ClientID+"')":
+		app := strings.TrimSuffix(strings.TrimPrefix(seg[0], "applications(appId='"), "')")
+		for _, a := range t.Applications {
+			if a.AppID == app {
+				s.one(w, a)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusNotFound)
+	case len(seg) == 3 && seg[0] == "servicePrincipals" && seg[2] == "appRoleAssignedTo":
+		var out []graph.AppRoleAssignment
+		for _, as := range t.Assignments {
+			for _, a := range as {
+				if a.ResourceID == seg[1] {
+					out = append(out, a)
+				}
+			}
+		}
+		sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+		s.paged(w, r, anySlice(out))
 	case len(seg) == 1 && seg[0] == "applications(appId='"+t.ClientID+"')":
 		s.one(w, graph.Application{ID: t.AppObjectID, AppID: t.ClientID, DisplayName: "activeDIQ", KeyCredentials: t.KeyCredentials, PasswordCredentials: t.PasswordCredentials})
 	case len(seg) == 2 && seg[0] == "servicePrincipals":
@@ -289,7 +320,8 @@ func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
 		for _, ra := range t.Roles {
 			if ra.Eligible == want && (principal == "" || ra.PrincipalID == principal) {
 				out = append(out, map[string]any{"id": ra.ID, "principalId": ra.PrincipalID, "roleDefinitionId": ra.RoleDefinitionID,
-					"directoryScopeId": ra.DirectoryScopeID, "roleDefinition": ra.Role})
+					"directoryScopeId": ra.DirectoryScopeID, "roleDefinition": ra.Role,
+					"principal": map[string]any{"id": ra.PrincipalID, "@odata.type": principalOData(ra.PrincipalType)}})
 			}
 		}
 		s.paged(w, r, out)
@@ -330,4 +362,11 @@ func (s *Server) paged(w http.ResponseWriter, r *http.Request, items []any) {
 		resp["@odata.nextLink"] = u.String()
 	}
 	s.one(w, resp)
+}
+
+func principalOData(t string) string {
+	if t == "" {
+		return ""
+	}
+	return "#microsoft.graph." + t
 }

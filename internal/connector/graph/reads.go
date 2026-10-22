@@ -35,6 +35,7 @@ type AppRoleAssignment struct {
 	PrincipalID         string `json:"principalId"`
 	ResourceID          string `json:"resourceId"`
 	ResourceDisplayName string `json:"resourceDisplayName"`
+	PrincipalType       string `json:"principalType,omitempty"` // "User", "Group", "ServicePrincipal"
 }
 
 type KeyCredential struct {
@@ -94,14 +95,16 @@ type RoleAssignment struct {
 	DirectoryScopeID string
 	Role             RoleDefinition
 	Eligible         bool
+	PrincipalType    string // Graph type without namespace ("user", "group", "servicePrincipal"); "" when Graph did not say
 }
 
 type rawRoleAssignment struct {
-	ID               string         `json:"id"`
-	PrincipalID      string         `json:"principalId"`
-	RoleDefinitionID string         `json:"roleDefinitionId"`
-	DirectoryScopeID string         `json:"directoryScopeId"`
-	RoleDefinition   RoleDefinition `json:"roleDefinition"`
+	ID               string          `json:"id"`
+	PrincipalID      string          `json:"principalId"`
+	RoleDefinitionID string          `json:"roleDefinitionId"`
+	DirectoryScopeID string          `json:"directoryScopeId"`
+	RoleDefinition   RoleDefinition  `json:"roleDefinition"`
+	Principal        DirectoryObject `json:"principal"`
 }
 
 type Group struct {
@@ -211,7 +214,7 @@ func (c *Client) DirectoryRoleAssignments(ctx context.Context, principalID strin
 		}
 		q.Set("$filter", "principalId eq '"+principalID+"'")
 	}
-	q.Set("$expand", "roleDefinition($select=id,displayName,templateId)")
+	q.Set("$expand", "roleDefinition($select=id,displayName,templateId),principal($select=id)")
 	var out []RoleAssignment
 	for _, k := range []struct {
 		path     string
@@ -223,7 +226,7 @@ func (c *Client) DirectoryRoleAssignments(ctx context.Context, principalID strin
 		}
 		for _, r := range raw {
 			out = append(out, RoleAssignment{ID: r.ID, PrincipalID: r.PrincipalID, RoleDefinitionID: r.RoleDefinitionID,
-				DirectoryScopeID: r.DirectoryScopeID, Role: r.RoleDefinition, Eligible: k.eligible})
+				DirectoryScopeID: r.DirectoryScopeID, Role: r.RoleDefinition, Eligible: k.eligible, PrincipalType: r.Principal.Type()})
 		}
 	}
 	return out, nil
@@ -254,4 +257,34 @@ func (c *Client) RoleAssignableGroups(ctx context.Context) ([]Group, error) {
 	q.Set("$filter", "isAssignableToRole eq true")
 	q.Set("$count", "true")
 	return list[Group](ctx, c, c.endpoint(q, "groups"))
+}
+
+// ServicePrincipalByAppID reads the service principal of the application appID (a GUID), with appRoles.
+func (c *Client) ServicePrincipalByAppID(ctx context.Context, appID string) (ServicePrincipal, error) {
+	var sp ServicePrincipal
+	if err := needGUID(appID); err != nil {
+		return sp, err
+	}
+	err := c.get(ctx, c.endpoint(c.q("id,appId,displayName,appRoles"), "servicePrincipals(appId='"+appID+"')"), &sp)
+	return sp, err
+}
+
+// ApplicationByAppID reads an application object by its appId. A service principal for an app
+// registered in another tenant has none: the error then has CodeNotFound.
+func (c *Client) ApplicationByAppID(ctx context.Context, appID string) (Application, error) {
+	var app Application
+	if err := needGUID(appID); err != nil {
+		return app, err
+	}
+	err := c.get(ctx, c.endpoint(c.q("id,appId,displayName"), "applications(appId='"+appID+"')"), &app)
+	return app, err
+}
+
+// AppRoleAssignedTo lists every principal granted an application permission on the resource service
+// principal resourceID (for example Microsoft Graph).
+func (c *Client) AppRoleAssignedTo(ctx context.Context, resourceID string) ([]AppRoleAssignment, error) {
+	if err := needGUID(resourceID); err != nil {
+		return nil, err
+	}
+	return list[AppRoleAssignment](ctx, c, c.endpoint(c.paged(""), "servicePrincipals", resourceID, "appRoleAssignedTo"))
 }
