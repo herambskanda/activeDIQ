@@ -50,9 +50,8 @@ func AllChecks() Checks { return Checks{"FF-SP1": true, "FF-SP2": true, "FF-SP3"
 // importable product package (T-0083). Beside a package.json it is handled by npmDir instead:
 // non-Go content is skipped, Go files of our module are still scanned. Every other skip is tied to
 // where that directory really is: repository-level working trees at the root, and build output
-// only beside the project file that produces it (bin and obj beside a .csproj, target beside
-// Cargo.toml, dist beside package.json). A product package that happens to be called target, bin
-// or obj, such as internal/modules/target, is therefore scanned.
+// only beside the project file that produces it (buildOutDir), and even then Go files are scanned. A product package that happens to be
+// called target, bin or obj, such as internal/modules/target, is therefore scanned.
 func skipDir(root, rel, name string) bool {
 	return skipDirUnless(root, rel, name, nil)
 }
@@ -77,7 +76,15 @@ func skipDirUnless(root, rel, name string, entered map[string]bool) bool {
 			return !overlapsEntered(rel, entered)
 		}
 	}
-	parent := filepath.Join(root, filepath.FromSlash(filepath.ToSlash(filepath.Dir(rel))))
+	return false
+}
+
+// buildOutDir reports a directory that, beside the project file producing it, normally holds build
+// output: bin and obj beside a .csproj, target beside Cargo.toml, dist beside package.json. Its
+// non-Go content is skipped, but Go ignores none of these names, so a main-module .go file inside
+// is an importable product package: scanGoOnly still scans those (T-0084).
+func buildOutDir(root, rel, name string) bool {
+	parent := filepath.Join(root, filepath.FromSlash(filepath.Dir(rel)))
 	switch name {
 	case "bin", "obj":
 		return dirHasSuffix(parent, ".csproj", ".fsproj", ".vbproj")
@@ -97,11 +104,12 @@ func npmDir(root, rel, name string) bool {
 	return dirHasName(filepath.Join(root, filepath.FromSlash(filepath.Dir(rel))), "package.json")
 }
 
-// scanNPM walks an npm node_modules tree. npm's own content is not product code, but Go builds any
+// scanGoOnly walks a directory whose non-Go content is not product code (an npm node_modules tree, or
+// build output, T-0084). That content is not product code, but Go builds any
 // .go file there that belongs to our module, and a nested go.mod can be pulled in with a replace
 // directive, so every .go file and go.mod is scanned like any other (T-0083). There is no
 // structural skip: fail closed, and use a reviewed allowlist if an npm package ever ships Go.
-func scanNPM(root, rel, module string, checks Checks, out *[]Finding) error {
+func scanGoOnly(root, rel, module string, checks Checks, out *[]Finding) error {
 	return filepath.WalkDir(filepath.Join(root, filepath.FromSlash(rel)), func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -175,8 +183,8 @@ func Scan(root string, checks Checks) ([]Finding, error) {
 			if rel != "." && skipDirUnless(root, rel, d.Name(), entered) {
 				return fs.SkipDir
 			}
-			if rel != "." && npmDir(root, rel, d.Name()) {
-				if err := scanNPM(root, rel, module, checks, &out); err != nil {
+			if rel != "." && (npmDir(root, rel, d.Name()) || buildOutDir(root, rel, d.Name())) {
+				if err := scanGoOnly(root, rel, module, checks, &out); err != nil {
 					return err
 				}
 				return fs.SkipDir

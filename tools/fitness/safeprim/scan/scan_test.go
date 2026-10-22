@@ -258,8 +258,29 @@ func TestSkipByLocationNotName(t *testing.T) {
 	rs := "let d = format!(\"CN={},OU=x\", n);\n"
 	want(t, "real native/target beside Cargo.toml", map[string]string{"native/Cargo.toml": "[workspace]\n", "native/target/debug/a.rs": rs}, "", "", "")
 	want(t, "Rust source under a crate folder named target without Cargo.toml", map[string]string{"native/shared/src/target/a.rs": rs}, "FF-SP3", "dn-shape", "native/shared/src/target/a.rs")
-	want(t, "web/dist beside package.json", map[string]string{"web/package.json": "{}\n", "web/dist/a.go": bad}, "", "", "")
 	want(t, "root factory and knowledge", map[string]string{"factory/x.go": bad, "knowledge/y.go": bad}, "", "", "")
+}
+
+// T-0084: build-output names beside a project file hide non-Go output only; Go ignores none of
+// them, so a main-module .go file inside is an importable product package.
+func TestBuildOutputDirsStillScanGo(t *testing.T) {
+	bad := gofile("\t\"fmt\"\n\t\"os/exec\"\n", "func f(x string) string { _ = exec.Command; return fmt.Sprintf(\"(&(objectClass=user)(cn=%s))\", x) }")
+	for _, c := range []struct{ proj, dir string }{
+		{"web/package.json", "web/dist/p"},
+		{"svc/App.csproj", "svc/bin/p"},
+		{"svc/App.csproj", "svc/obj/p"},
+		{"native/Cargo.toml", "native/target/p"},
+	} {
+		f := c.dir + "/x.go"
+		files := map[string]string{c.proj: "{}\n", f: bad, "cmd/srv/main.go": "package main\n\nimport _ \"fx.test/" + c.dir + "\"\n\nfunc main() {}\n"}
+		want(t, "FF-SP3 in "+c.dir, files, "FF-SP3", "ldap-filter-shape", f)
+		want(t, "FF-SP1 in "+c.dir, files, "FF-SP1", "process-api", f)
+	}
+	cs := "var f = $\"(&(objectClass=user)(cn={n}))\";\n"
+	want(t, "non-Go output in build dirs is not scanned", map[string]string{
+		"web/package.json": "{}\n", "web/dist/a.js": "x", "web/dist/a.sql": "SELECT 1;\n",
+		"svc/App.csproj": "<Project/>\n", "svc/bin/A.cs": cs, "svc/obj/B.cs": cs,
+		"native/Cargo.toml": "[workspace]\n", "native/target/a.rs": "let d = format!(\"CN={},OU=x\", n);\n"}, "", "", "")
 }
 
 // T-0083: Go does not ignore node_modules, so a Go package under one is product code; npm's own
