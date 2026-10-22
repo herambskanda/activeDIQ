@@ -1,9 +1,8 @@
 // Command fitness-api is the ADR-0004 fitness job for the public API contract (A1 to A14). It is
 // the one place that says which of the fourteen checks run. A check whose input does not exist yet
 // prints "inactive (<missing input>)" on every run and the job still exits 0, but ADR-0004 is
-// `accepted` only when no line says inactive. A1, A3 (document half), A5, A7 (static half), A8 (linter half), A10, A11, A12 and A13
-// are active; a check with an unfinished runtime half prints "inactive part". The rest arrive with
-// their subjects (apihost routes, the runtime harness).
+// `accepted` only when no line says inactive. A1, A3 (document half), A4, A5, A6, A7, A8 (linter half), A10, A11, A12, A13 and A14 are
+// active; a check with an unfinished part prints "inactive part". A2 and A9 are delegated.
 package main
 
 import (
