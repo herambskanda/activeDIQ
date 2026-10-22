@@ -25,7 +25,8 @@ const (
 
 // AttrInfo is what the builder needs to know about one schema attribute.
 type AttrInfo struct {
-	Name        string // ldapDisplayName
+	Name        string // ldapDisplayName; must not be OID-shaped (such entries are dropped)
+	OID         string // attributeID (numericoid), optional; an alias for the same entry, never a second one
 	Syntax      Syntax
 	Constructed bool // systemFlags & FLAG_ATTR_IS_CONSTRUCTED (0x4): cannot be filtered (gotcha 12)
 	Secret      bool // in SecretAttrs (§3.7): never filtered by this package
@@ -33,18 +34,34 @@ type AttrInfo struct {
 
 // Schema is the allowlist read at connect (gotcha 15). Lookup is case-insensitive, as LDAP attribute
 // names are.
-type Schema struct{ byName map[string]AttrInfo }
+type Schema struct {
+	byName map[string]AttrInfo
+	byOID  map[string]string // numericoid -> lower-case ldapDisplayName
+}
 
 // NewSchema builds a schema. Attributes on the static secret list are marked Secret whatever the
 // caller says; the schema-flagged half of SecretAttrs is the caller's to set.
 func NewSchema(attrs ...AttrInfo) *Schema {
-	s := &Schema{byName: make(map[string]AttrInfo, len(attrs))}
+	s := &Schema{byName: make(map[string]AttrInfo, len(attrs)), byOID: map[string]string{}}
 	static := secretattr.Static()
 	for _, a := range attrs {
+		// An OID-shaped Name would be a second, unclassified entry for an attribute AD resolves by
+		// OID; fail closed by not admitting it. Register the OID in AttrInfo.OID instead.
+		if c := a.Name; c == "" || c[0] >= '0' && c[0] <= '9' {
+			continue
+		}
 		if slices.ContainsFunc(static, func(n string) bool { return strings.EqualFold(n, a.Name) }) {
 			a.Secret = true
 		}
-		s.byName[strings.ToLower(a.Name)] = a
+		key := strings.ToLower(a.Name)
+		s.byName[key] = a
+		if a.OID != "" {
+			if o, err := parseAttrGrammar(a.OID); err == nil && a.OID[0] >= '0' && a.OID[0] <= '9' {
+				if _, dup := s.byOID[o.name]; !dup {
+					s.byOID[o.name] = key
+				}
+			}
+		}
 	}
 	return s
 }
@@ -70,6 +87,13 @@ func ParseAttrName(s string, sc *Schema) (AttrName, error) {
 	n, err := parseAttrGrammar(s)
 	if err != nil {
 		return AttrName{}, err
+	}
+	if sc != nil {
+		if key, isOID := sc.byOID[n.name]; isOID {
+			// Resolve to the one schema entry so Secret/Constructed apply and the
+			// ldapDisplayName is what gets rendered.
+			n.name = sc.byName[key].Name
+		}
 	}
 	if _, ok := sc.lookup(n.name); !ok {
 		return AttrName{}, fail(UnknownAttribute)

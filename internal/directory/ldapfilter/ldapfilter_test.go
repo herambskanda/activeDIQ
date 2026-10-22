@@ -30,7 +30,8 @@ var testSchema = NewSchema(
 	AttrInfo{Name: "pwdLastSet", Syntax: SynInt64},
 	AttrInfo{Name: "whenCreated", Syntax: SynGenTime},
 	AttrInfo{Name: "msDS-User-Account-Control-Computed", Syntax: SynInt32, Constructed: true},
-	AttrInfo{Name: "unicodePwd", Syntax: SynOctet},
+	AttrInfo{Name: "unicodePwd", OID: "1.2.840.113556.1.4.90", Syntax: SynOctet},
+	AttrInfo{Name: "customSecret", OID: "1.2.3.4.5", Syntax: SynString, Secret: true},
 )
 
 // textDN stands in for P2 (internal/directory/dn, T-0102): its text is already canonical.
@@ -254,7 +255,7 @@ func TestInChainIsExpensive(t *testing.T) {
 }
 
 func TestParseAttrNameGrammar(t *testing.T) {
-	sc := NewSchema(AttrInfo{Name: "cn", Syntax: SynString}, AttrInfo{Name: "2.5.4.3", Syntax: SynString})
+	sc := NewSchema(AttrInfo{Name: "cn", Syntax: SynString}, AttrInfo{Name: "commonName", OID: "2.5.4.3", Syntax: SynString})
 	for in, code := range map[string]string{
 		"": InvalidAttributeName, "1cn": InvalidAttributeName, "-cn": InvalidAttributeName, "c n": InvalidAttributeName,
 		"cn)": InvalidAttributeName, "cn\x00": InvalidAttributeName, "cn:dn": InvalidAttributeName, "cn,": InvalidAttributeName,
@@ -270,6 +271,35 @@ func TestParseAttrNameGrammar(t *testing.T) {
 		if _, err := ParseAttrName(in, sc); err != nil {
 			t.Errorf("ParseAttrName(%q): %v", in, err)
 		}
+	}
+}
+
+func TestOIDResolvesToOneEntry(t *testing.T) {
+	sc := NewSchema(
+		AttrInfo{Name: "unicodePwd", OID: "1.2.840.113556.1.4.90", Syntax: SynOctet},
+		AttrInfo{Name: "ms-Mcs-AdmPwd", OID: "1.2.840.113556.1.8000.2554.50051.45980.28112.18903.35903.6685103.1234.1.1", Syntax: SynString},
+		AttrInfo{Name: "customSecret", OID: "1.2.3.4.5", Syntax: SynString, Secret: true},
+		AttrInfo{Name: "cn", OID: "2.5.4.3", Syntax: SynString},
+		AttrInfo{Name: "9.9.9", Syntax: SynString}, // OID-shaped Name: refused
+	)
+	for _, oid := range []string{"1.2.840.113556.1.4.90", "1.2.840.113556.1.8000.2554.50051.45980.28112.18903.35903.6685103.1234.1.1", "1.2.3.4.5"} {
+		a, err := ParseAttrName(oid, sc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range []Filter{Eq(a, String("x")), Ge(a, String("x")), Present(a), Contains(a, "x")} {
+			if _, err := Render(f, sc); Code(err) != SecretAttribute {
+				t.Errorf("%s: want SecretAttribute, got %v", oid, err)
+			}
+		}
+	}
+	if _, err := ParseAttrName("9.9.9", sc); Code(err) != UnknownAttribute {
+		t.Errorf("OID-shaped Name admitted: %v", err)
+	}
+	a, _ := ParseAttrName("2.5.4.3", sc)
+	got, err := Render(Present(a), sc)
+	if err != nil || got != "(cn=*)" {
+		t.Errorf("got %q %v", got, err)
 	}
 }
 

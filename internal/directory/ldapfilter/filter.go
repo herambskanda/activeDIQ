@@ -3,7 +3,7 @@ package ldapfilter
 // Filter is a node of the filter AST. The interface is sealed: only this package makes nodes.
 type Filter interface {
 	render(r *renderer, depth int) error
-	expensive() bool
+	expensive(depth int) bool
 }
 
 type composite struct {
@@ -83,23 +83,30 @@ func BitOr(a AttrName, mask uint32) Filter { return &ext{oidBitOr, a, uintValue(
 func InChain(a AttrName, d DN) Filter { return &ext{oidInChain, a, DNValue(d), true} }
 
 // IsExpensive reports whether f contains an InChain assertion.
-func IsExpensive(f Filter) bool { return f != nil && f.expensive() }
+func IsExpensive(f Filter) bool { return f != nil && f.expensive(MaxDepth) }
 
 func uintValue(m uint32) Value { return Int64(int64(m)) } // unsigned decimal ([ms-filter]); 0x80000000 is 2147483648
 
-func (c *composite) expensive() bool {
+// expensive takes the remaining depth budget; past it the answer is true (fail towards "expensive"),
+// so an untrusted deeply nested AST cannot exhaust the stack here before Render refuses it.
+func (c *composite) expensive(d int) bool {
+	if d <= 0 {
+		return true
+	}
 	for _, k := range c.kids {
-		if k != nil && k.expensive() {
+		if k != nil && k.expensive(d-1) {
 			return true
 		}
 	}
 	return false
 }
-func (n *not) expensive() bool   { return n.kid != nil && n.kid.expensive() }
-func (*cmp) expensive() bool     { return false }
-func (*present) expensive() bool { return false }
-func (*substr) expensive() bool  { return false }
-func (e *ext) expensive() bool   { return e.chain }
+func (n *not) expensive(d int) bool {
+	return d <= 0 || n.kid != nil && n.kid.expensive(d-1)
+}
+func (*cmp) expensive(int) bool     { return false }
+func (*present) expensive(int) bool { return false }
+func (*substr) expensive(int) bool  { return false }
+func (e *ext) expensive(int) bool   { return e.chain }
 
 func (c *composite) render(r *renderer, depth int) error {
 	if len(c.kids) == 0 {
