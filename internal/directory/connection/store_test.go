@@ -3,6 +3,7 @@ package connection_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"testing"
 
@@ -319,6 +320,57 @@ func TestCreateValidation(t *testing.T) {
 			if _, err := e.reg.Create(ctx, e.a, n); !errors.Is(err, connection.ErrInvalid) {
 				t.Errorf("%s: %v, want ErrInvalid", name, err)
 			}
+		}
+	})
+}
+
+// The database enforces the DM-10 edge table and the no-delete rule itself, for any writer
+// (security review of T-0099): every ordered pair is attempted by a raw UPDATE as the runtime role.
+func TestDatabaseEnforcesTheDM10Table(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		ids := 0
+		retiring := func(st connection.State) bool {
+			return st == connection.StateDecommissioning || st == connection.StateRemoved || st == connection.StateDiscarded
+		}
+		for _, from := range connection.States() {
+			for _, to := range connection.States() {
+				if from == to {
+					continue
+				}
+				ids++
+				id := fmt.Sprintf("00000000-0000-4000-8000-%012d", ids)
+				ident := fmt.Sprintf("00000000-0000-4000-9000-%012d", ids)
+				if from == connection.StateDraft || from == connection.StateVerifying || from == connection.StateDiscarded {
+					ident = ""
+				}
+				_, err := e.raw(e.a, `INSERT INTO public.connections (tenant_id, id, kind, display_name, directory_identity, credential_id, state, retired_at, last_stamp_at, transport_security)
+					VALUES (current_setting('app.tenant_id')::uuid, $1::uuid, 'ad_forest', 'pair', $2, $3::uuid, $4,
+					        CASE WHEN $5::bool THEN now() END, CASE WHEN $5::bool THEN now() END, 'ldaps')`,
+					id, ident, cred, string(from), retiring(from))
+				if err != nil {
+					t.Fatalf("seed %s: %v", from, err)
+				}
+				// Supply what the CHECKs need for a legal target (identity, retirement stamp), so only the edge decides.
+				n, err := e.raw(e.a, `UPDATE public.connections SET state = $2,
+					directory_identity = CASE WHEN directory_identity = '' AND $2 NOT IN ('draft','verifying','discarded') THEN $3 ELSE directory_identity END,
+					retired_at = CASE WHEN retired_at IS NULL AND $4::bool THEN now() ELSE retired_at END,
+					last_stamp_at = CASE WHEN last_stamp_at IS NULL AND $4::bool THEN now() ELSE last_stamp_at END
+					WHERE id = $1::uuid`, id, string(to), fmt.Sprintf("00000000-0000-4000-a000-%012d", ids), retiring(to))
+				if connection.CanTransition(from, to) {
+					if err != nil || n != 1 {
+						t.Errorf("%s → %s is declared but the database refused: n=%d %v", from, to, n, err)
+					}
+					continue
+				}
+				if store.SQLState(err) != "AD403" || n != 0 {
+					t.Errorf("%s → %s is not declared: want AD403, got n=%d %v", from, to, n, err)
+				}
+			}
+		}
+		// Removal is a state, never a delete: the runtime role has no DELETE.
+		if n, err := e.raw(e.a, `DELETE FROM public.connections WHERE id = $1::uuid`, "00000000-0000-4000-8000-000000000001"); store.SQLState(err) != "42501" || n != 0 {
+			t.Fatalf("DELETE as the runtime role: n=%d %v, want 42501", n, err)
 		}
 	})
 }

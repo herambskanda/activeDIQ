@@ -1,6 +1,12 @@
 package connection
 
-import "testing"
+import (
+	"regexp"
+	"strings"
+	"testing"
+
+	"github.com/skenzeriq/activediq/migrations"
+)
 
 // Acceptance 1: every ordered pair of states is legal exactly when DM-10 declares it.
 func TestEveryStatePairAgainstTheDM10Table(t *testing.T) {
@@ -42,5 +48,31 @@ func TestTerminalStates(t *testing.T) {
 	}
 	if State("bogus").Valid() || CanTransition("bogus", StateDraft) {
 		t.Error("an unknown state must be neither valid nor transitionable")
+	}
+}
+
+// TestMigrationEdgesMatchTheGoTable keeps the guard trigger's edge list and edges from drifting.
+func TestMigrationEdgesMatchTheGoTable(t *testing.T) {
+	b, err := migrations.FS.ReadFile("0004_connection_connections.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	i := strings.Index(src, "(OLD.state, NEW.state) NOT IN (")
+	if i < 0 {
+		t.Fatal("no edge list in the guard trigger")
+	}
+	list := src[i : i+strings.Index(src[i:], ") THEN")]
+	got := map[[2]string]bool{}
+	for _, m := range regexp.MustCompile(`\('(\w+)', '(\w+)'\)`).FindAllStringSubmatch(list, -1) {
+		got[[2]string{m[1], m[2]}] = true
+	}
+	if len(got) != len(Edges()) {
+		t.Fatalf("SQL lists %d edges, Go declares %d", len(got), len(Edges()))
+	}
+	for _, e := range Edges() {
+		if !got[[2]string{string(e.From), string(e.To)}] {
+			t.Errorf("edge %s → %s missing from the guard trigger", e.From, e.To)
+		}
 	}
 }

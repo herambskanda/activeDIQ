@@ -266,7 +266,7 @@ func checkT4(ctx context.Context, d *Database, m *catalogModel, reg *registry.Re
 				return e
 			}
 			dl, e := tx.Exec(ctx, `DELETE FROM `+q+` WHERE tenant_id = $1`, tenantB)
-			if e != nil {
+			if e != nil && !deleteNotGranted(e) {
 				return e
 			}
 			if u.RowsAffected() != 0 || dl.RowsAffected() != 0 {
@@ -300,7 +300,7 @@ func checkT4(ctx context.Context, d *Database, m *catalogModel, reg *registry.Re
 				return e
 			}
 			dl, e := tx.Exec(ctx, `DELETE FROM `+q)
-			if e != nil {
+			if e != nil && !deleteNotGranted(e) {
 				return e
 			}
 			if u.RowsAffected() != 0 || dl.RowsAffected() != 0 {
@@ -442,4 +442,12 @@ func probeSessionLeak(ctx context.Context, d *Database) ([]Violation, error) {
 		}
 	}
 	return vs, nil
+}
+
+// deleteNotGranted reports whether err is the runtime role lacking DELETE on the table (insufficient
+// privilege). A table whose rows are never deleted (a state, not a delete, ends them) revokes it, and
+// then the probe's delete touches nothing, which is what the probe asserts.
+func deleteNotGranted(err error) bool {
+	var pe *pgconn.PgError
+	return errors.As(err, &pe) && pe.Code == "42501"
 }

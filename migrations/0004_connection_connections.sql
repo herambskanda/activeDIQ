@@ -58,6 +58,10 @@ CREATE POLICY connections_tenant ON public.connections
   USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
   WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
 
+-- Removal is a state, never a delete (DM-10 L9, I5): audit and verification references must keep
+-- resolving, and a delete would free the I2 identity without passing through decommissioning.
+REVOKE DELETE ON public.connections FROM activediq_app;
+
 COMMENT ON TABLE public.connections IS 'DM-10 Connection (tenant table, RLS). Only internal/directory/connection references it in SQL. Never holds secret material: credential_id names a DM-11 row.';
 
 -- connections_guard backs up the Go store for the invariants that must hold whatever writes the row.
@@ -84,9 +88,21 @@ BEGIN
      AND NEW.last_stamp_at IS DISTINCT FROM OLD.last_stamp_at THEN
     RAISE EXCEPTION 'connections: last_stamp_at only rises (DM-10.I13)' USING ERRCODE = 'AD403';
   END IF;
-  -- Terminal states stay terminal.
-  IF OLD.state IN ('removed', 'discarded') AND NEW.state IS DISTINCT FROM OLD.state THEN
-    RAISE EXCEPTION 'connections: % is terminal', OLD.state USING ERRCODE = 'AD403';
+  -- The DM-10 lifecycle. This list is the SQL twin of edges in internal/directory/connection/transitions.go;
+  -- TestMigrationEdgesMatchTheGoTable fails if the two drift. Terminal states have no outgoing edge.
+  IF NEW.state IS DISTINCT FROM OLD.state AND (OLD.state, NEW.state) NOT IN (
+    ('draft', 'verifying'),
+    ('verifying', 'draft'),
+    ('draft', 'active'),
+    ('verifying', 'active'),
+    ('active', 'suspended'),
+    ('suspended', 'active'),
+    ('active', 'decommissioning'),
+    ('suspended', 'decommissioning'),
+    ('decommissioning', 'removed'),
+    ('draft', 'discarded')
+  ) THEN
+    RAISE EXCEPTION 'connections: % -> % is not a DM-10 transition', OLD.state, NEW.state USING ERRCODE = 'AD403';
   END IF;
   RETURN NEW;
 END
