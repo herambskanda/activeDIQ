@@ -5,7 +5,7 @@ updated: 2026-10-22
 status: review
 owner: heramb
 author: security-architect
-ticket: old T-0007, T-0032, T-0044, T-0051, T-0055
+ticket: old T-0007, T-0032, T-0044, T-0051, T-0055, T-0108
 binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), blueprint v0 (review), safe-primitives.md (review)
 sources_last_checked: 2026-10-02
 ---
@@ -318,7 +318,7 @@ proof is direction, not a control; the proof table says which ticket builds each
 | TM-TB6-T1 | S | X9 enrols a rogue connector with a stolen or guessed token → A11 | Enrollment token single-use, short-lived, stored hashed, rate-limited, issued only by a permission holder after step-up (DM-12.I2, §7.4) | TM-F-FLEET | Token stolen inside its lifetime and used first |
 | TM-TB6-T2 | S | X2 impersonates the server to a connector | The connector pins the installation CA from its enrollment bundle and verifies the server certificate | TM-F-FLEET | — |
 | TM-TB6-T3 | T | A message body names another tenant | Tenant only from the certificate SAN, never the message (ADR-0002) | P4 | — |
-| TM-TB6-T4 | T/E | A compromised server sends hostile operations to an on-site connector | Typed contract only, no query or script verb (ADR-0002 rule 3); connector-side tier-0 guard (TM-D2) | P3, TM-F-T0GUARD | A compromised server can still do what the delegated rights allow (TM-R1) |
+| TM-TB6-T4 | T/E | A compromised server sends hostile operations to an on-site connector | Typed contract only, no query or script verb (ADR-0002 rule 3); connector-side tier-0 guard (TM-D2) | P3, TM-F-T0GUARD | A compromised server can still do what the delegated rights allow (TM-R1); it can omit C16 or a designation it never reported (TM-R14) or forge an override that opens TM-D1 only (TM-R15) |
 | TM-TB6-T5 | R | A connector acts with no server-side record | Every `Apply` carries the operation ID and acting principal; connector logs them locally; server audit (§11) | TM-F-AUDIT | — |
 | TM-TB6-T6 | I | Secrets pushed over fleet to a remote host | Nothing secret is ever pushed; remote credentials are created on the host (TM-D8); the fleet contract has no secret-bearing message type except `SetPassword`/`ReadSecret` payloads of an operation | TM-F-FLEET (contract lint) | — |
 | TM-TB6-T7 | D | Flood in either direction | Per-component stream limits and backpressure `[OPEN → connector spec]` | Conformance suite (P3) | — |
@@ -586,6 +586,78 @@ object that became `tier0` after the last sync (added to Domain Admins) is refus
 the connector; Entra: a write to a privileged-role holder or a role-assignable group is refused
 before Graph is called.
 
+**TM-D23 — what check 2 gets from the server, and how it refuses (T-0108; confirms connector
+contract v1.1 D10, D11 and D16 with the tightenings below).** The connector computes C1–C15 (AD) or
+E1–E4 (Entra) from its own reads ([connector contract](connector-contract.md) §8.1 steps 4 and 7).
+Two inputs cannot come from one directory. C16 and E5 are defined by DM-20 correlations, which only
+the server holds. Customer designations are server state (§6.4). Both reach the connector **in the
+request**: every `Plan` and `Apply` carries a `Tier0Context` (fitness-proto P8). It holds one
+`CorrelationStatement` per object of the touched set and the designated GUIDs relevant to that set.
+The connector derives the touched set from the typed change and never takes it from the server.
+
+**Who this defends against.** With the embedded transport the connector runs inside the server's
+process. There, check 2 catches a server that is *wrong*: a bug, a stale cache, or a correlation job
+that lags. It cannot stop a server that is *compromised*. Against compromise, check 2 matters for
+remote connectors (TB6) and the SaaS cell (TB17). The Entra connector is embedded in every v1
+deployment, so its E5 check is no stronger than check 1 against a compromised server.
+
+The connector uses the context under these rules. Rules 1 to 6 are contract §8.3 F1 to F6,
+confirmed as written. Rules 7 to 11 are tightenings that this model requires. They go to the
+contract through T-0122 (contract v1.2) and must be in place before T-0098 is merged.
+
+| # | Rule | Refusal |
+| --- | --- | --- |
+| 1 | **Missing is refused.** No context; no statement for a touched object; `correlation` unset; `computed_at` unset. Absence never means "not correlated" (F1) | `TIER0_REFUSED` `CONTEXT_MISSING` |
+| 2 | **Additive only.** A designation, or a peer with `peer_tier0`, marks the object `tier0` in every correlation state, `candidate` and `broken` included. No field can remove an object from the connector's own set (F2) | `REQUEST_CONTEXT` |
+| 3 | **Stale is refused.** `computed_at` is older than the maximum statement age (**15 minutes, confirmed**), or more than 5 minutes in the connector's future (F3) | `CONTEXT_STALE` |
+| 4 | **Unbound is refused.** Each peer's evidence must match the object as the connector re-reads it live: anchor = `objectGUID` or `ms-DS-ConsistencyGuid`, or SID = `objectSid`, and the Entra mirror of these (F4). A statement cannot be replayed onto another object | `CONTEXT_CONTRADICTED` |
+| 5 | **Inconsistent is `tier0`.** A peer with an unspecified state or kind, a same-directory kind, unset evidence, or a `peer_tier0` flag and basis that disagree counts as `tier0` (F5). Two statements for one object, one `no_hybrid_link` and one with `peers`, are refused (F1) | `REQUEST_CONTEXT`, `CONTEXT_CONTRADICTED` |
+| 6 | **Omission is the residual.** A server that leaves out a correlated `tier0` peer or a designation cannot be detected by a connector that sees one directory. This is TM-R14, narrowed by rules 7 and 8 | — |
+| 7 | **`computed_at` is an as-of time, not a print time.** It is the as-of time of the *oldest* fact the statement rests on: the correlation's last evaluation and the inventory as-of (DM `data_as_of`) of each peer's `tier0` status. A server that stamps assembly time makes rule 3 test the cache, not the facts. FR-25 allows sync intervals of up to 60 minutes. When the server's inventory is older than the limit, it re-reads those facts live for the touched objects (DM-20.I5 already does this for the target at Plan), or the write is refused. **Never raise the connector's limit to suit a slow sync interval** | `CONTEXT_STALE` |
+| 8 | **Ratchet: the connector's set only grows within one verification epoch.** Every object that an accepted context marks `tier0` stays in the connector's in-memory set until the next completed `VerifyConnection`. `VerifyConnection` gains a `correlated_tier0` input, which is the server's C16 set (AD) or E5 set (Entra) for the connection, handled like `designated_tier0`. A completed run whose `designated_tier0` or `correlated_tier0` entries are fewer than the previous run's writes a `tier0_set_shrink` record to the connector's local log, and to the Windows event log on Windows hosts. The record lists the dropped GUIDs and their bases. To unprotect an object it has already reported, a compromised server must therefore run a smaller verification. That run leaves a record on the connector host which the server cannot erase | `CONNECTOR_SET` |
+| 9 | **An override admission is logged.** For every `Plan` and `Apply` that passes the write gate only because of a `WriteGateOverride`, the connector's local log records the `override_id` and the count of acknowledged fingerprints, next to the fields that TM-TB6-T5 requires | — |
+| 10 | **C9 direct links are read live.** When a touched object is a `groupPolicyContainer`, step 7 also reads `gPLink` on the domain head, on the Domain Controllers OU (resolved through `wellKnownObjects`), and on every C6 OU and C15 site in the connector's set. A link to the GPO from any of these makes it `tier0` with basis C9. `gPLink` is parsed by a typed parser into GUIDs, never matched as a string. This takes the canonical attack, a new GPO linked to the DC OU, out of TM-R16. CC-WRITE-16 must then pin what remains: a GPO that reaches a C1–C4 account only through another OU, or only through loopback | `LIVE_REREAD` |
+| 11 | **A `tier0` object found after a write raises an alert.** Verify re-runs the server's `tier0` guard on each touched object's live re-read. If an object is `tier0` after the write, the step is recorded `verify_failed` with reason `tier0_after_write` and raises a security alert above the `scope_changed` alert of ADR-0005 rule 7. This is the detective control for TM-R17 | — |
+
+**The write gate and its override (contract §8.2, D11) — confirmed.** The connector's gate is
+stricter than DM-10.I11: it adds `STALE` and `INSUFFICIENT`. That is the fail-closed direction. The
+`WriteGateOverride` comes from the server. A forged override opens TM-D1 only. The Tier-0 refusal
+never reads the override (CC-WRITE-08), so a forged override never opens TM-D2. This is TM-R15.
+**Maximum verification age: 26 hours, confirmed.** That is the daily scheduled run plus a margin.
+The server's own guard runs first at Plan and is recomputed on every sync. So the 26-hour bound only
+matters when a third party has made an object `tier0` through a *set* basis **and** the server is
+compromised (TM-R16). Twice-daily runs (13 hours) can be revisited once T-0096 measures the cost of
+a V7 run on the lab.
+
+**`ENTRA_PASSWORD_CREDENTIAL` is blocking while the secret is valid (answers contract §8.4
+`[severity to confirm]`).** The connector authenticates only with a certificate, so every client
+secret on the application or its service principal is a spare credential that no control of ours
+covers. A secret is a bearer string. Anyone holding it gets every Graph permission of §6.6 from
+anywhere, and our TM-D2 guard never sees those calls. An unexpired secret is therefore reported
+under **EV3** with severity **block**. It closes the write gate like any other EV3 finding and can be
+acknowledged with step-up (DM-25). An expired secret stays an EV5 warning. Two findings stay
+warnings:
+- An extra key credential, because certificate rotation briefly leaves two keys on the app.
+- An owner, because the user who registers an app becomes its first owner by default ([Entra
+  training: app management roles](https://learn.microsoft.com/en-us/training/modules/plan-design-integration-of-enterprise-apps-for-sso/5-design-implement-app-management-roles);
+  the custom-role permission page contradicts this for `createAsOwner`, so the default is
+  `[UNVERIFIED — lab G7]`). An owner must also sign in through Conditional Access and MFA before
+  adding a key.
+
+**Proof additions to TM-F-T0GUARD (T-0066, drawn from contract §9.8):**
+- CC-WRITE-03 to -06 and -14 for rules 1 to 5.
+- Rule 7: a statement whose correlation input is 16 minutes old but whose assembly is fresh is
+  refused.
+- Rule 8: an object marked by one request's context is refused on a later request whose context
+  omits it, until the next verification. That verification run, with a smaller `correlated_tier0`
+  input, writes the `tier0_set_shrink` record.
+- Rule 9: the log line for an admitted override.
+- Rule 10: a GPO newly linked to the DC OU is refused `LIVE_REREAD` C9 before the next
+  verification.
+- Rule 11: a member added to Domain Admins between step 7 and the write is recorded with
+  `tier0_after_write` and raises the alert. A fault-injection proxy holds the write so that the
+  member can be added in that window.
+
 ### 6.3 Minimum AD rights per feature family
 
 Source for this table: ad-expert consult for old T-0007 (schema pages and MS-ADTS; GUIDs verified
@@ -673,6 +745,24 @@ and need step-up.
 Customer-designated Entra additions: emergency-access (break-glass) accounts, and the groups that
 Conditional Access policies exclude. **Protection is wider than authority:** for `tier0`, any
 correlation counts, even `candidate`; for authority, only `matched` counts (§6.8).
+
+**How C16, E5 and designations are enforced (TM-D23).** These bases exist only on the server, so
+they reach the connector through the request rather than through its own reads. They are the only
+`tier0` facts where the connector depends on the server for the fact itself.
+- **Server (TM-D2 check 1).** It computes C16 and E5 from DM-20 on every sync, in every correlation
+  state, and refuses at Plan. It also re-checks the target's correlation live (DM-20.I5).
+- **Connector (TM-D2 check 2).** It receives a `CorrelationStatement` for each touched object and
+  the relevant designations in every `Plan` and `Apply`. It uses them under TM-D23 rules 1 to 8:
+  missing, stale, unbound, contradictory or inconsistent context is refused or counts as `tier0`.
+  The context can only widen the connector's own set. Within a verification epoch it ratchets, and
+  `VerifyConnection` receives the same sets as `designated_tier0` and `correlated_tier0`.
+- **What remains.** A compromised server that omits a fact the connector was never told is not
+  detected (TM-R14). For E5, the Entra connector shares the server's process in every v1
+  deployment, so check 2 adds nothing against compromise there.
+
+Marker heuristics, such as refusing any object that carries `ms-DS-ConsistencyGuid`, are rejected
+(contract §8.3 option d). The attribute outlives sync scope, C16 is empty by definition on AD-only
+deployments, and the heuristic would refuse ordinary hybrid writes without closing the omission.
 
 ### 6.5 Verification at onboarding and on every health check
 
@@ -1815,6 +1905,10 @@ control.
 | TM-R11 | Hybrid: whoever controls the sync client, the tenant sync features or SOA transfer can make a correlation `matched`. Takeovers that happened before install go unseen, and so do takeovers in the install-time population (correlations eligible before the tenant's first `attested` state, including an `open` window before it) that our sync never saw cloud-only (TM-D17 rule 4); TM-D19 rule 2 still withholds AD-side authority from them. Between monitor polls a flag flip is undetected; without the optional monitor, it is undetected until the attestation ages out (≤ 90 days) | The correlation gate trusts the sync client by construction (DM-20.I6) | security-architect | Lab G8; if Graph adds app-only read of sync features |
 | TM-R12 | Someone who controls both planes at enrolment (the AD password or a `tenant-owner` approval, plus the Entra sign-in) can enrol a TM-D19 authority factor | Such an attacker is, in effect, the technician; the history residual reduces to this case (§6.9) | security-architect | ADM-143 spec (SPNEGO); lab G10 |
 | TM-R13 | RADIUS PAP over UDP for clients without RADIUS/TLS: a leaked or weak shared secret plus captured traffic reveals passwords | Many NAS devices support only UDP; activeDIQ-generated 32-byte secrets and internal-only exposure narrow it (TM-TB19-T4) | security-architect | M4 RADIUS spec (TM-Q18) |
+| TM-R14 | **R-T0CTX-1 (contract §8.3 F6), accepted with tightenings.** A compromised server sends a remote AD connector a password reset for an on-premises account synced to an Entra role holder, and leaves the C16 peer out of the context. The reset succeeds, password hash sync carries it to the cloud, and the attacker takes the cloud account. The same omission works for a designation | Only the server holds DM-20 correlations. Giving a connector the other directory's credentials (option b) doubles its blast radius. Signing (option c) adds nothing while the Entra connector is embedded. The cases closed: wrong, stale, unbound or inconsistent context is refused (TM-D23 rules 1 to 5 and 7). The case narrowed: an object the connector was already told about cannot be unprotected silently (rule 8, `tier0_set_shrink`). The case left: an object that became C16 or designated after the server was compromised and before the connector heard of it. Customer-side mitigation: Microsoft's guidance to keep privileged cloud accounts cloud-only ([protect M365](https://learn.microsoft.com/en-us/entra/architecture/protect-m365-from-on-premises-attacks)) | security-architect | Entra connectors run remote (option c becomes worth it); SaaS launch (E5.6) |
+| TM-R15 | **D11, accepted.** A forged `WriteGateOverride` lets an over-privileged connector identity write non-`tier0` objects with rights beyond §6.3 | The override is server state (DM-25). The connector checks only that every blocking fingerprint is acknowledged; V8, EV4 and `COULD_NOT_VERIFY` cannot be overridden; the Tier-0 refusal never reads the override (CC-WRITE-08). Each admission is logged on the connector host (TM-D23 rule 9). The excess is limited to typed write kinds on non-`tier0` objects, the same class as TM-R2 | security-architect | With TM-R2; if a write kind can change a security descriptor |
+| TM-R16 | **R-T0SET-1, accepted after narrowing.** An object that became `tier0` through a *set* basis since the connector's last verification is not refused by the connector. The set bases are: C9 reach other than direct links, C13 groups without a well-known RID, C12's DC list, and E3's privileged-app list | Recomputing these per write means walking reach, the schema or the app graph. The server's guard runs first and is recomputed on every sync. The window is at most 26 hours, and it is exploitable only by a compromised server *after* a third party made the change. Rule 10 makes direct C9 links live. CC-WRITE-16 pins what is left | directory-engineer (classifier, T-0093) | T-0096 measures the cost of a V7 run (13-hour age); a new set basis |
+| TM-R17 | **R-T0RACE-1, accepted.** An object that becomes `tier0` between the connector's step-7 read and the write can be written. Examples: added to Domain Admins, granted DCSync, or a DC moved into its OU | LDAP cannot make a modify conditional on membership, ancestry or a DACL elsewhere ([RFC 4511 §4.6](https://www.rfc-editor.org/rfc/rfc4511#section-4.6)). This is the same window as ADR-0005 rule 7 and lasts milliseconds to seconds. Detection: `tier0_after_write` and its alert (TM-D23 rule 11) | security-architect | A directory feature for conditional writes on other objects |
 
 ### 16.2 Decisions owed to the CEO (not asked now)
 
@@ -1936,9 +2030,12 @@ External, in order of first use:
 64. https://theupdateframework.github.io/specification/latest/
 65. https://learn.microsoft.com/en-us/powershell/exchange/app-only-auth-powershell-v2
 66. https://www.rfc-editor.org/rfc/rfc9110#section-9.3.1
+67. https://www.rfc-editor.org/rfc/rfc4511#section-4.6
+68. https://learn.microsoft.com/en-us/training/modules/plan-design-integration-of-enterprise-apps-for-sso/5-design-implement-app-management-roles
 
 ## Changelog
 
+- 2026-10-22 · T-0108. §6.2 adds TM-D23. It confirms connector contract v1.1 D10 (the Tier-0 context, F1 to F6), D11 (the write gate and override), and D16 (statement age 15 minutes, verification age 26 hours). It adds tightenings 7 to 11: `computed_at` is an as-of time; the connector's set ratchets, with `correlated_tier0` and a `tier0_set_shrink` record; override admissions are logged; direct C9 links are read live; `tier0_after_write` raises an alert. An unexpired `ENTRA_PASSWORD_CREDENTIAL` becomes EV3 block. §6.4 states how C16, E5 and designations are enforced. TM-TB6-T4's residual names TM-R14 and TM-R15. §16.1 adds TM-R14 (R-T0CTX-1), TM-R15 (D11), TM-R16 (R-T0SET-1) and TM-R17 (R-T0RACE-1). Contract changes are routed to T-0122. Sources 67 and 68 added.
 - 2026-10-22 · T-0055. Ticket references swept to the live board. Proof owners filed before the re-cut as old T-0053 to old T-0056 are re-filed as T-0066–T-0073 (TM-F-RIGHTS/T0GUARD, HYBRID, NTLM, FLEET, SEAL, EGRESS, AUTHZ, SESSION/SSO/ABUSE); the Entra lab claims G1–G10 are T-0075, lab confirmation T-0076, FEAS corrections T-0077, DM alignment T-0078, security-commitments decision prep T-0079. API fitness rows name the live `fitness-api` tickets (T-0011, T-0017, T-0018). Every other earlier-board ID is marked `old T-xxxx`; T-0080 re-cuts their owners. No control, threat or decision changed.
 - 2026-10-21 · T-0051 (from the T-0043 security review). §7.8: the per-IP limiter key is a network prefix. IPv4 is keyed at /32 (configurable /24 to /32) and IPv6 at /64 (configurable /48 to /64, never finer). Before masking: zone stripped, IPv4-mapped unmapped, NAT64 `64:ff9b::/96` keyed by the embedded IPv4. Unparseable sources share one bucket, and the bucket table is bounded with a throttling overflow bucket. Residual stated (a /48 is 65,536 buckets; per-account gates and `edge` remain the control). Proof cases added to TM-F-SESSION. Adapter build ticket T-0054.
 - 2026-10-21 · v0.4 (T-0044). §7.6 AN-1 lists the operations `getLiveness` and `getReadiness` (T-0034, platform scope, class `anonymous`) next to the non-API probes. New rules 8 (health responses carry no `detail`, dependency, host, version or error text) and 9 (a request body on a `BodyNone` operation is refused with 413, RFC 9110 §9.3.1). TM-F-ANON names `TestHealthProblemsCarryNoDetail` and `TestBodyNoneRefusesBody` (T-0050). "Which rows are in `policy.yaml` today" adds the AN-1 operations. §7.8: the `anonymous` row names the AN-1 operations; the floor row names only the non-API probes.
