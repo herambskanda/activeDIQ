@@ -247,3 +247,47 @@ func TestSkipByLocationNotName(t *testing.T) {
 	want(t, "web/dist beside package.json", map[string]string{"web/package.json": "{}\n", "web/dist/a.go": bad}, "", "", "")
 	want(t, "root factory and knowledge", map[string]string{"factory/x.go": bad, "knowledge/y.go": bad}, "", "", "")
 }
+
+// wantAnalyzed asserts that Analyze (the type-aware passes, one run per Targets entry) reports rule in file.
+func wantAnalyzed(t *testing.T, name string, files map[string]string, rule, file string) {
+	t.Helper()
+	t.Run(name, func(t *testing.T) {
+		fs, err := Analyze(tree(t, files))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range fs {
+			if f.Rule == rule && f.File == file {
+				return
+			}
+		}
+		t.Fatalf("expected %s in %s, got %v", rule, file, fs)
+	})
+}
+
+// T-0058: a file a build constraint excludes on the Linux host must still be type-checked, or
+// Windows-only code (LDAP and PowerShell strings, secrets) escapes every FF-SP2 gate.
+func TestFFSP2BuildConstrainedFiles(t *testing.T) {
+	dispo := "//go:build windows\n\npackage m\n\nimport \"net/http\"\n\nconst k = \"Content-\" + \"Disposition\"\n\nfunc f(w http.ResponseWriter) { w.Header().Set(k, \"inline\") }\n"
+	t.Run("windows file, constant-folded Content-Disposition", func(t *testing.T) {
+		root := tree(t, map[string]string{"internal/modules/m/w_windows.go": dispo})
+		fs, err := Scan(root, AllChecks())
+		if err != nil {
+			t.Fatal(err)
+		}
+		af, err := Analyze(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range append(fs, af...) {
+			if f.Rule == "content-disposition-literal" && f.File == "internal/modules/m/w_windows.go" {
+				return
+			}
+		}
+		t.Fatalf("expected content-disposition-literal in the windows file, got %v %v", fs, af)
+	})
+	wantAnalyzed(t, "windows file, DNString concatenation", map[string]string{
+		"internal/directory/dn/dn.go":     "package dn\n\ntype DNString string\n",
+		"internal/modules/m/w_windows.go": "//go:build windows\n\npackage m\n\nimport \"fx.test/internal/directory/dn\"\n\nfunc f(d dn.DNString) dn.DNString { return d + \",OU=x\" }\n",
+	}, "dnstring", "internal/modules/m/w_windows.go")
+}

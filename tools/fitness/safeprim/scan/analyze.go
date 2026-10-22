@@ -20,7 +20,34 @@ func Analyze(root string) ([]Finding, error) {
 	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
 		return nil, nil
 	}
+	var out []Finding
+	seen := map[string]bool{}
+	for _, t := range Targets {
+		fs, err := analyzeTarget(root, t)
+		if err != nil {
+			return nil, fmt.Errorf("%s/%s: %w", t.GOOS, t.GOARCH, err)
+		}
+		for _, f := range fs {
+			if k := f.String(); !seen[k] {
+				seen[k] = true
+				out = append(out, f)
+			}
+		}
+	}
+	return out, nil
+}
+
+// Target is one GOOS/GOARCH the type-aware passes run against.
+type Target struct{ GOOS, GOARCH string }
+
+// Targets are the platforms activeDIQ ships Go for: the Linux server and the Windows-hosted server
+// and DC-side components. A file excluded by a build constraint on one target is type-checked on
+// another, so //go:build windows code gets the same gates. Add a target here when a new one ships.
+var Targets = []Target{{"linux", "amd64"}, {"windows", "amd64"}}
+
+func analyzeTarget(root string, t Target) ([]Finding, error) {
 	cfg := &packages.Config{
+		Env: append(os.Environ(), "GOOS="+t.GOOS, "GOARCH="+t.GOARCH, "CGO_ENABLED=0"),
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles | packages.NeedImports | packages.NeedTypes |
 			packages.NeedTypesSizes | packages.NeedSyntax | packages.NeedTypesInfo | packages.NeedDeps | packages.NeedModule,
 		Dir:   root,
