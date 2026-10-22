@@ -32,6 +32,11 @@ var testSchema = NewSchema(
 	AttrInfo{Name: "msDS-User-Account-Control-Computed", Syntax: SynInt32, Constructed: true},
 	AttrInfo{Name: "unicodePwd", OID: "1.2.840.113556.1.4.90", Syntax: SynOctet},
 	AttrInfo{Name: "customSecret", OID: "1.2.3.4.5", Syntax: SynString, Secret: true},
+	// Case-variant duplicates: the flagged entry must survive the unflagged one (T-0121).
+	AttrInfo{Name: "dupSecret", Syntax: SynString, Secret: true},
+	AttrInfo{Name: "DUPSECRET", Syntax: SynString},
+	AttrInfo{Name: "dupComputed", Syntax: SynInt32, Constructed: true},
+	AttrInfo{Name: "DUPCOMPUTED", Syntax: SynInt32},
 )
 
 // textDN stands in for P2 (internal/directory/dn, T-0102): its text is already canonical.
@@ -359,4 +364,117 @@ func FuzzFilter(f *testing.F) {
 			t.Fatalf("substring has %d structural stars, want 2: %q", got, sub)
 		}
 	})
+}
+
+func TestDuplicateNameKeepsFlags(t *testing.T) {
+	cases := map[string][]AttrInfo{
+		SecretAttribute:          {{Name: "x", Secret: true}, {Name: "X"}},
+		ConstructedNotFilterable: {{Name: "x", Constructed: true}, {Name: "X"}},
+	}
+	cases[SecretAttribute] = append(cases[SecretAttribute], []AttrInfo{{Name: "X"}, {Name: "x", Secret: true}}...)
+	for code, in := range cases {
+		sc := NewSchema(in...)
+		for _, n := range []string{"x", "X"} {
+			a, err := ParseAttrName(n, sc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Render(Present(a), sc); Code(err) != code {
+				t.Errorf("%s %q: got %v", code, n, err)
+			}
+		}
+	}
+}
+
+func TestOIDCollisionFailsClosed(t *testing.T) {
+	sc := NewSchema(
+		AttrInfo{Name: "a", OID: "1.2.3", Syntax: SynString},
+		AttrInfo{Name: "b", OID: "1.2.3", Syntax: SynString, Secret: true},
+	)
+	for _, n := range []string{"a", "b", "1.2.3"} {
+		a, err := ParseAttrName(n, sc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Render(Present(a), sc); Code(err) != SecretAttribute {
+			t.Errorf("%s: got %v", n, err)
+		}
+	}
+}
+
+// T-0121 review: with 3+ OID claimants the flags must be order-independent.
+func TestOIDCollisionThreeClaimantsAnyOrder(t *testing.T) {
+	names := []string{"a", "b", "c"}
+	for _, flagged := range names {
+		for _, perm := range [][3]int{{0, 1, 2}, {0, 2, 1}, {1, 0, 2}, {1, 2, 0}, {2, 0, 1}, {2, 1, 0}} {
+			var infos []AttrInfo
+			for _, i := range perm {
+				infos = append(infos, AttrInfo{Name: names[i], OID: "1.2.3", Syntax: SynString, Secret: names[i] == flagged})
+			}
+			sc := NewSchema(infos...)
+			for _, n := range append([]string{"1.2.3"}, names...) {
+				a, err := ParseAttrName(n, sc)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := Render(Present(a), sc); Code(err) != SecretAttribute {
+					t.Errorf("flag=%s order=%v name=%s: got %v", flagged, perm, n, err)
+				}
+			}
+		}
+	}
+}
+
+// A case-variant duplicate that brings a different OID joins two OID groups. Flags must propagate
+// across the whole chain deterministically, not depend on map iteration order (T-0121 review).
+func TestOIDChainViaCaseVariantFlagsPropagate(t *testing.T) {
+	for _, kind := range []string{"secret", "constructed"} {
+		set := func(a AttrInfo) AttrInfo {
+			if kind == "secret" {
+				a.Secret = true
+			} else {
+				a.Constructed = true
+			}
+			return a
+		}
+		// 4-entry chain, flag at the head; and a 3-OID chain through two case-variant keys, flag at the tail.
+		cases := []struct {
+			name  string
+			infos []AttrInfo
+			want  []string
+		}{
+			{"four", []AttrInfo{
+				set(AttrInfo{Name: "p", OID: "1.1", Syntax: SynString}),
+				{Name: "q", OID: "1.1", Syntax: SynString},
+				{Name: "Q", OID: "1.2", Syntax: SynString},
+				{Name: "r", OID: "1.2", Syntax: SynString},
+			}, []string{"p", "q", "Q", "r", "1.1", "1.2"}},
+			{"three-oids", []AttrInfo{
+				{Name: "a", OID: "1.1", Syntax: SynString},
+				{Name: "b", OID: "1.1", Syntax: SynString},
+				{Name: "B", OID: "1.2", Syntax: SynString},
+				{Name: "c", OID: "1.2", Syntax: SynString},
+				{Name: "C", OID: "1.3", Syntax: SynString},
+				set(AttrInfo{Name: "d", OID: "1.3", Syntax: SynString}),
+			}, []string{"a", "b", "B", "c", "C", "d", "1.1", "1.2", "1.3"}},
+		}
+		want := SecretAttribute
+		if kind == "constructed" {
+			want = ConstructedNotFilterable
+		}
+		for _, c := range cases {
+			for i := 0; i < 300; i++ {
+				sc := NewSchema(c.infos...)
+				for _, n := range c.want {
+					a, err := ParseAttrName(n, sc)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if _, err := Render(Present(a), sc); Code(err) != want {
+						t.Fatalf("%s/%s iter %d name %s: got %v", kind, c.name, i, n, err)
+					}
+				}
+			}
+		}
+	}
 }
