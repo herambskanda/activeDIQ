@@ -29,13 +29,12 @@ const (
 )
 
 var (
-	guidRE   = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
-	tenantRE = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$`)
+	guidRE = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 )
 
 // Config configures a Client. TenantID pins every endpoint and is checked against the token's tid.
 type Config struct {
-	TenantID   string // GUID (preferred) or verified domain
+	TenantID   string // tenant GUID (a domain is refused)
 	ClientID   string // application (client) id GUID
 	Credential Credential
 	Authority  string        // default DefaultAuthority; must be https
@@ -64,8 +63,10 @@ type Client struct {
 
 // New validates the configuration. It does no I/O.
 func New(cfg Config) (*Client, error) {
-	if !tenantRE.MatchString(cfg.TenantID) {
-		return nil, newErr(CodeInvalidArgument, 0, "tenant id is not a GUID or domain", nil)
+	// A domain name is DNS-controlled and can move between tenants, so only the tenant GUID is
+	// accepted; onboarding resolves a domain once and stores the GUID.
+	if !guidRE.MatchString(cfg.TenantID) {
+		return nil, newErr(CodeInvalidArgument, 0, "tenant id is not a GUID", nil)
 	}
 	if !guidRE.MatchString(cfg.ClientID) {
 		return nil, newErr(CodeInvalidArgument, 0, "client id is not a GUID", nil)
@@ -151,13 +152,21 @@ func contextErr(err error) error {
 	return nil
 }
 
+const maxDuration = time.Duration(1<<63 - 1)
+
 func parseRetryAfter(h string, now time.Time) (time.Duration, bool) {
 	h = strings.TrimSpace(h)
 	if h == "" {
 		return 0, false
 	}
-	if n, err := strconv.Atoi(h); err == nil && n >= 0 {
+	if n, err := strconv.ParseInt(h, 10, 64); err == nil && n >= 0 {
+		if n > int64(maxDuration/time.Second) {
+			return maxDuration, true // saturate so the multiply cannot overflow; the caller applies MaxWait
+		}
 		return time.Duration(n) * time.Second, true
+	}
+	if _, err := strconv.ParseUint(h, 10, 64); err == nil {
+		return maxDuration, true
 	}
 	if t, err := http.ParseTime(h); err == nil {
 		if d := t.Sub(now); d > 0 {
@@ -250,7 +259,7 @@ func (c *Client) bearer(ctx context.Context, force bool) (string, error) {
 	if err != nil {
 		return "", newErr(CodeProviderFailure, 0, "access token has no readable tenant claim", err)
 	}
-	if guidRE.MatchString(c.cfg.TenantID) && !strings.EqualFold(tid, c.cfg.TenantID) {
+	if !strings.EqualFold(tid, c.cfg.TenantID) {
 		return "", newErr(CodeIdentityMismatch, 0, "token was issued for a different tenant", nil)
 	}
 	ttl := time.Duration(tr.ExpiresIn) * time.Second

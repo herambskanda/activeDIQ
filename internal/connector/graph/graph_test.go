@@ -3,12 +3,18 @@ package graph_test
 import (
 	"bytes"
 	"context"
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"strings"
 	"testing"
@@ -429,3 +435,66 @@ func TestContextCancelIsNotATypedDirectoryError(t *testing.T) {
 }
 
 var _ = base64.StdEncoding
+
+func TestAssertionHeaderIsPS256WithThumbprint(t *testing.T) {
+	r := newRig(t)
+	if _, err := r.c.OwnServicePrincipal(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	jwt := r.srv.Assertions[0]
+	raw, err := base64.RawURLEncoding.DecodeString(strings.Split(jwt, ".")[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var h map[string]string
+	if err := json.Unmarshal(raw, &h); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(r.cred.Cert.Raw)
+	if h["alg"] != "PS256" || h["x5t#S256"] != base64.RawURLEncoding.EncodeToString(sum[:]) {
+		t.Fatalf("header = %v", h)
+	}
+}
+
+func TestFakeRefusesPKCS1v15Assertion(t *testing.T) {
+	r := newRig(t)
+	sum := sha256.Sum256(r.cred.Cert.Raw)
+	b := base64.RawURLEncoding
+	hdr, _ := json.Marshal(map[string]string{"alg": "RS256", "typ": "JWT", "x5t#S256": b.EncodeToString(sum[:])})
+	cl, _ := json.Marshal(map[string]any{"aud": r.srv.URL + "/" + tenantID + "/oauth2/v2.0/token", "iss": clientID, "sub": clientID, "exp": time.Now().Add(time.Minute).Unix()})
+	signing := b.EncodeToString(hdr) + "." + b.EncodeToString(cl)
+	d := sha256.Sum256([]byte(signing))
+	sig, err := rsa.SignPKCS1v15(rand.Reader, r.cred.Key.(*rsa.PrivateKey), crypto.SHA256, d[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	form := url.Values{"grant_type": {"client_credentials"}, "client_id": {clientID},
+		"client_assertion_type": {"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"},
+		"client_assertion":      {signing + "." + b.EncodeToString(sig)}, "scope": {"https://graph.microsoft.com/.default"}}
+	resp, err := r.cfg.HTTPClient.PostForm(r.srv.URL+"/"+tenantID+"/oauth2/v2.0/token", form)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 400 {
+		t.Fatalf("fake accepted an RS256/PKCS#1 v1.5 assertion: %d", resp.StatusCode)
+	}
+}
+
+func TestDomainTenantIDRefused(t *testing.T) {
+	r := newRig(t)
+	cfg := r.cfg
+	cfg.TenantID = "contoso.example"
+	if _, err := graph.New(cfg); graph.CodeOf(err) != graph.CodeInvalidArgument {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestRetryAfterOverflowIsNotSlept(t *testing.T) {
+	r := newRig(t)
+	r.srv.FailGraph(graphtest.Failure{Status: 429, RetryAfter: "99999999999"})
+	_, err := r.c.OwnApplication(context.Background())
+	if graph.CodeOf(err) != graph.CodeThrottled || len(r.slept) != 0 {
+		t.Fatalf("err=%v slept=%v", err, r.slept)
+	}
+}

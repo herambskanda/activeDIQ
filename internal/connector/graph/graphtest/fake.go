@@ -211,7 +211,7 @@ func (s *Server) verifyAssertion(a, aud string) error {
 	}
 	th := sha256.Sum256(s.cert.Raw)
 	switch {
-	case hdr.Alg != "RS256" || hdr.X5t != b64.EncodeToString(th[:]):
+	case hdr.Alg != "PS256" || hdr.X5t != b64.EncodeToString(th[:]):
 		return fmt.Errorf("unregistered certificate")
 	case cl.Aud != aud:
 		return fmt.Errorf("bad audience")
@@ -225,7 +225,7 @@ func (s *Server) verifyAssertion(a, aud string) error {
 		return fmt.Errorf("bad signature")
 	}
 	d := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
-	if rsa.VerifyPKCS1v15(s.cert.PublicKey.(*rsa.PublicKey), crypto.SHA256, d[:], sig) != nil {
+	if rsa.VerifyPSS(s.cert.PublicKey.(*rsa.PublicKey), crypto.SHA256, d[:], sig, &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash}) != nil {
 		return fmt.Errorf("signature mismatch")
 	}
 	return nil
