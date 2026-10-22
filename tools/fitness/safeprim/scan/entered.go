@@ -208,7 +208,7 @@ func newResolver(root, module string) (*resolver, error) {
 				return err
 			}
 			if d.IsDir() {
-				if n := d.Name(); n == ".git" || n == "node_modules" || n == "testdata" {
+				if n := d.Name(); n == ".git" || n == "node_modules" {
 					return fs.SkipDir
 				}
 				return nil

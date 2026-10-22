@@ -67,10 +67,14 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
     package path in backticks in the Project cell. A transitive copyleft hit means picking another
     library, or an ADR plus a `licenceExceptions` entry.
   - F5: set the ADR's status through the `adr` skill first.
-- **`fitness-api`** (A1 layout, A13 policy hygiene, ADR-0004): `make fitness-api` re-runs it alone;
-  `-checks A1` runs one. It prints a line per check A1-A14, `active` or `inactive (<missing input>)`,
-  and exits 0 while checks are inactive: **a green run is not "the contract is fully checked"**, read
-  the table. ADR-0004 stays `ratified` until no line says inactive.
+- **`fitness-api`** (A1, A3, A5, A7 static, A8, A10, A11, A12, A13, ADR-0004): `make fitness-api` re-runs it alone;
+  `-checks A1` runs one. It prints a line per check A1-A14: `active`, `active ...; inactive part: <what is
+  missing>` (a check whose runtime half has no input yet), or `inactive (<missing input>)`. It exits 0 while
+  anything is inactive: **a green run is not "the contract is fully checked"**, read the table. ADR-0004
+  stays `ratified` until no line says inactive and no active line has an inactive part.
+  A2 is not re-run here: `tools/gen/api` rejects the dialect (`make gen-api-check`) and vacuum lints it
+  (`make lint-api`), both in `make ci`; its line stays inactive until the ADR's owner decides that
+  delegation satisfies A2.
   - A1: the message names the file, line and the rule 1 clause. Move the file to a rule 1 place
     (`openapi.yaml`, `shared/`, `modules/<id>.yaml`, `platform/<pkg>.yaml`), or create the module or
     kernel package it belongs to; give an operation its file's one tag; rename the duplicate; move a
@@ -82,11 +86,49 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
     threat model's anonymous allow-list, and every `anonymous` entry cites one (`TM-` tokens are
     shape-checked only; resolving them is a follow-up). A repeated mapping key anywhere in a file under
     `api/openapi` fails (A13 for `policy.yaml`, A1 for the rest): merge the two blocks. Entry fields: `api/openapi/policy.yaml` header.
+  - A3 (document half): every operation has exactly one `x-permission` (a permission ID, `authenticated`
+    or `anonymous`). `anonymous` needs `x-activediq-anonymous: AN-n` (an operation row of the allow-list)
+    and a `policy.yaml` `anonymous` entry citing that AN-n; `authenticated` needs a `policy.yaml`
+    `authenticated` entry; a policy row may not name an operation that declares a real permission. The
+    runtime half (a permission nobody declares in the EP-6 catalogue) is the printed inactive part.
+  - A5 (static half): `web/src/api/` holds the generated files, `client.ts`, its test and the README
+    only; `schema.gen.d.ts` has an entry per operation and every `x-activediq-enum: open` schema widened
+    with `| (string & {})` (run `make gen-api`); a `*.test.ts` there assigns an unknown string to a
+    generated open enum so `tsc` (lint-web) fails if the widening is lost; `web/eslint.config.js` keeps
+    the rule 12 bans. The real ESLint run on `web/proof/api-client-violation.ts` is in `make ci-proof`.
+  - A7 (static half): no `encoding/json` import in `internal/**` or `cmd/**` (tests and tools may), no
+    `AllowInvalidUTF8`, `AllowDuplicateNames` or `MatchCaseInsensitiveNames`, no `GOEXPERIMENT` value
+    containing `nojsonv2` in a Makefile, script, Dockerfile, env or CI file. Existing v1 importers are
+    listed in `tools/fitness/api/json-v1-baseline.txt` (migration: T-0064). The list only shrinks: a new
+    importer fails, a listed file that no longer imports v1 fails until its line is deleted, and a line
+    absent from `main:tools/fitness/api/json-v1-baseline.txt` fails (growth is caught against main; an
+    unresolvable `main` in a git checkout is an error, a shallow clone needs `git fetch origin main`).
+  - A8 (linter half): nothing reachable from a response, response headers included (a header name
+    matching the secret list, or a header schema with a secret marker, fails; through `$ref`, `items`, `oneOf`,
+    `additionalProperties`) may carry `x-activediq-secret`, `writeOnly`, `format: password` or a
+    property matching the rule 9 name list (exact or camelCase suffix: `adminPassword` yes,
+    `passwordLastSet` no), unless the operation is in `policy.secretResponses`; no credential-named
+    query parameter (snake and kebab spellings count), no `apiKey` scheme `in: query`; a
+    `secretResponses` operation is class `reveal` with a `secret.*` or token-creation permission.
+  - A10: every operation is `x-activediq-stability: preview|stable`; `deprecated: true` needs
+    `x-activediq-sunset` (a release, `1.4.0`) and the reverse. Against `main` (and the latest `v*` tag
+    once one exists) the stable operations of the committed bundle are diffed with the pinned oasdiff
+    (`tools/apitools`, `go tool oasdiff`); a breaking change, a stable to preview demotion or an early
+    removal fails: ship a new operation and deprecate the old one. `main` must resolve (in a shallow
+    clone: `git fetch origin main --tags`); outside a git checkout the diff is skipped.
+  - A11: every 4xx/5xx/`default` response is `application/problem+json` with
+    `shared/problems.yaml#/components/schemas/Problem`, and any example `type` is one of the catalogue's
+    (the example types of `shared/problems.yaml` `components.responses`); no `http.Error` or
+    `WriteHeader` in `internal/**` outside `apihost` (tests exempt). Prefer `$ref` to a catalogue response.
+  - A12: `x-activediq-limits` holds `class` (read, write, bulk, auth, reveal, secret, anonymous) and
+    `maxBodyBytes` only; anonymous operations use `anonymous` or `auth`; a non-JSON or binary body needs
+    `maxBodyBytes`; above 16 MiB needs a `policy.largeBodies` entry; an operation taking `SecretInput`
+    is class `secret`, declares `maxBodyBytes` of at most 65536 and has a JSON body.
   - `[ADR-0004 self-test]`: the check read fewer operations or entries than a plain text count or
     the committed bundle shows. Fix the reader (`tools/fitness/api/tree.go`), never the assertion.
   - An inactive line ending `[INPUT NOW PRESENT: ... overdue]` means a subject landed (operations,
     `apihost.Build`) and its check has not; it does not fail the job but the ADR cannot be accepted.
-    Implement the check, with a failing fixture, and remove its `needs` text in `inactive.go`.
+    Implement the check, with a failing fixture (`check_test.go`, `check_static_test.go`) and a `tools/ci/proof.sh` case, and remove its `needs` text in `inactive.go`.
 - **`fitness-profiles`** (P1, P7, U1, U2 and the activation table, ADR-0002): `make fitness-profiles`
   re-runs it alone and prints the activation table first. `-checks P1,U2` runs a subset.
   - P1 domain code: take the compose import, environment read or profile-named identifier out of

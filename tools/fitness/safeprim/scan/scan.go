@@ -45,7 +45,7 @@ func AllChecks() Checks { return Checks{"FF-SP1": true, "FF-SP2": true, "FF-SP3"
 
 // skipDir reports directories that hold no product code (a root-level one is still entered when a
 // package product code imports lives in it, T-0082). Only names that can never be a product
-// package are skipped at any depth (.git, node_modules, the Go testdata convention). Every other
+// package are skipped at any depth (.git, node_modules, and testdata fixtures under tools/). Every other
 // skip is tied to where that directory really is: repository-level working trees at the root, and
 // build output only beside the project file that produces it (bin and obj beside a .csproj, target
 // beside Cargo.toml, dist beside package.json). A product package that happens to be called target,
@@ -65,8 +65,9 @@ func skipDirUnless(root, rel, name string, entered map[string]bool) bool {
 	case ".git", "node_modules":
 		return true
 	case "testdata":
-		// Go ignores testdata for ./... but compiles it when imported (T-0085).
-		return !overlapsEntered(rel, entered)
+		// Go lets product code import a testdata (or _x, .x) package, and it then ships. Only the
+		// analyzer fixtures under tools/ are exempt: they are deliberate violations.
+		return strings.HasPrefix(rel, "tools/")
 	}
 	if !strings.Contains(rel, "/") {
 		if rootSkipped[name] {
@@ -113,12 +114,6 @@ func Scan(root string, checks Checks) ([]Finding, error) {
 	if err != nil {
 		return nil, err
 	}
-	for d := range entered {
-		if hasTestdata(d) {
-			out = append(out, Finding{FF: "FF-SP1", Rule: "testdata-import", File: d, Line: 1,
-				Msg: "shipped code imports a package under a testdata path element; Go compiles it, so it must not live there (T-0085)"})
-		}
-	}
 	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -162,18 +157,8 @@ func Scan(root string, checks Checks) ([]Finding, error) {
 	return out, nil
 }
 
-// hasTestdata: some path element of rel is "testdata".
-func hasTestdata(rel string) bool {
-	for _, e := range strings.Split(rel, "/") {
-		if e == "testdata" {
-			return true
-		}
-	}
-	return false
-}
-
 // isSkippedPath: rel lies in a directory the walk skips unless shipped code reaches it.
-func isSkippedPath(rel string) bool { return inRootSkipped(rel) || hasTestdata(rel) }
+func isSkippedPath(rel string) bool { return inRootSkipped(rel) }
 
 func inRootSkipped(rel string) bool {
 	top, _, nested := strings.Cut(rel, "/")

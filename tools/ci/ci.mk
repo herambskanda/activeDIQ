@@ -41,7 +41,7 @@ test-go:
 test-web: web-install
 	npm --prefix web run --silent test
 
-fitness: fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-operation ## Architecture fitness functions: fitness-modules (blueprint §2 import rules), fitness-stack (ADR-0001 F1-F5), fitness-tenancy (ADR-0002 T1-T5), fitness-domain-keys (domain-model X3-X5), fitness-profiles (ADR-0002 P1, P7, U1, U2 and the activation table), fitness-proto (connector contract compiles and keeps its rules) fitness-safeprim (safe-primitives FF-SP1-3), fitness-corpus (FF-SP4, FF-SP5 declarations, FF-SP8) fitness-oracles (FF-SP6 on Linux) and fitness-api (ADR-0004 A1, A13; prints every inactive check)
+fitness: fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-operation ## Architecture fitness functions: fitness-modules (blueprint §2 import rules), fitness-stack (ADR-0001 F1-F5), fitness-tenancy (ADR-0002 T1-T5), fitness-domain-keys (domain-model X3-X5), fitness-profiles (ADR-0002 P1, P7, U1, U2 and the activation table), fitness-proto (connector contract compiles and keeps its rules) fitness-safeprim (safe-primitives FF-SP1-3), fitness-corpus (FF-SP4, FF-SP5 declarations, FF-SP8) fitness-oracles (FF-SP6 on Linux) and fitness-api (ADR-0004 A1, A3, A5, A7 static, A8, A10, A11, A12, A13; prints every inactive check and inactive part)
 	go run ./tools/fitness/modules
 
 fitness-stack: ## ADR-0001: language zones, cgo-free cross-build, one stateful service, licence register, exceptions cite an ADR
@@ -71,7 +71,7 @@ fitness-oracles: fitness-corpus ## T-0034: safe-primitives FF-SP6 on Linux: psli
 	go run ./tools/fitness/oracles pslit -source auto -reports $(SAFEPRIM_REPORTS) -if-present
 	go run ./tools/fitness/oracles ldapfilter -source auto -reports $(SAFEPRIM_REPORTS) -if-present
 
-fitness-api: ## T-0011, ADR-0004: A1 source layout and A13 policy hygiene, with a self-test that fails when a check finds nothing where the tree has something. Prints one line per check A1-A14 (active, or inactive (<missing input>)); exits 0 with inactive checks, and the ADR is not accepted while any is
+fitness-api: ## T-0011, T-0017, ADR-0004: A1 layout, A3 permission (document half), A5 generated client (static), A7 strict JSON (static), A8 secret linter, A10 versioning (oasdiff against main), A11 problems, A12 limits and A13 policy hygiene, with a self-test that fails when a check finds nothing where the tree has something. Prints one line per check A1-A14 (active, or inactive (<missing input>)); exits 0 with inactive checks, and the ADR is not accepted while any is
 	go run ./tools/fitness/api
 
 fitness-operation: ## T-0013: ADR-0005 O9, the kernel import DAG of rule 13: parses the dag block of the ADR itself and fails on any import among the listed platform packages it does not allow; lists each package as existing or pending (O1-O8 land with the code they inspect)
