@@ -86,7 +86,7 @@ func TestLoadAPISettings(t *testing.T) {
 	}
 }
 
-func TestAPIAddrLoopbackOnly(t *testing.T) {
+func TestAPIAddrNonLoopbackNeedsTLS(t *testing.T) {
 	for _, a := range []string{"127.0.0.1:0", "127.0.0.2:8080", "[::1]:8080", "localhost:8080"} {
 		if _, err := config.Load(env(map[string]string{config.EnvAPIAddr: a})); err != nil {
 			t.Errorf("%q must be accepted: %v", a, err)
@@ -94,8 +94,15 @@ func TestAPIAddrLoopbackOnly(t *testing.T) {
 	}
 	for _, a := range []string{"0.0.0.0:9", ":8080", "[::]:8080", "10.0.0.5:8080", "example.com:8080", "8080"} {
 		_, err := config.Load(env(map[string]string{config.EnvAPIAddr: a}))
-		if err == nil || !strings.Contains(err.Error(), config.EnvAPIAddr) || !strings.Contains(err.Error(), "T-0065") {
-			t.Errorf("%q must be refused naming the variable and T-0065: %v", a, err)
+		if err == nil || !strings.Contains(err.Error(), config.EnvAPIAddr) || !strings.Contains(err.Error(), config.EnvAPITLSDir) {
+			t.Errorf("%q without TLS must be refused naming both variables: %v", a, err)
+		}
+		c, err := config.Load(env(map[string]string{config.EnvAPIAddr: a, config.EnvAPITLSDir: "/var/lib/activediq/tls"}))
+		if a != "8080" && err != nil {
+			t.Errorf("%q with TLS configured must be accepted: %v", a, err)
+		}
+		if err == nil && c.APITLSDir == "" {
+			t.Errorf("%q: TLS dir not carried", a)
 		}
 	}
 }
