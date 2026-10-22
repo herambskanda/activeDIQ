@@ -44,14 +44,16 @@ type Checks map[string]bool
 func AllChecks() Checks { return Checks{"FF-SP1": true, "FF-SP2": true, "FF-SP3": true} }
 
 // skipDir reports directories that hold no product code. Only names that can never be a product
-// package are skipped at any depth (.git, node_modules, the Go testdata convention). Every other
+// package are skipped at any depth (.git and the Go testdata convention). node_modules is not one of them: Go does not ignore it, so
+// internal/node_modules/p is an importable product package (T-0083). It is skipped only beside a
+// package.json, where npm installed it. Every other
 // skip is tied to where that directory really is: repository-level working trees at the root, and
 // build output only beside the project file that produces it (bin and obj beside a .csproj, target
 // beside Cargo.toml, dist beside package.json). A product package that happens to be called target,
 // bin or obj, such as internal/modules/target, is therefore scanned.
 func skipDir(root, rel, name string) bool {
 	switch name {
-	case ".git", "node_modules", "testdata":
+	case ".git", "testdata":
 		return true
 	}
 	if !strings.Contains(rel, "/") {
@@ -66,7 +68,7 @@ func skipDir(root, rel, name string) bool {
 		return dirHasSuffix(parent, ".csproj", ".fsproj", ".vbproj")
 	case "target":
 		return dirHasSuffix(parent, "Cargo.toml")
-	case "dist":
+	case "dist", "node_modules":
 		return dirHasSuffix(parent, "package.json")
 	}
 	return false

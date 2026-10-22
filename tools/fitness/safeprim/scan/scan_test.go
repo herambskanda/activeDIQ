@@ -262,6 +262,18 @@ func TestSkipByLocationNotName(t *testing.T) {
 	want(t, "root factory and knowledge", map[string]string{"factory/x.go": bad, "knowledge/y.go": bad}, "", "", "")
 }
 
+// T-0083: Go does not ignore node_modules, so a Go package under one is product code; npm's own
+// install beside a package.json is not scanned.
+func TestNodeModulesScannedWhereGoCanBuildIt(t *testing.T) {
+	bad := gofile("\t\"fmt\"\n\t\"os/exec\"\n", "func f(x string) string { _ = exec.Command; return fmt.Sprintf(\"(&(objectClass=user)(cn=%s))\", x) }")
+	f := "internal/node_modules/p/x.go"
+	files := map[string]string{f: bad, "cmd/srv/main.go": "package main\n\nimport _ \"fx.test/internal/node_modules/p\"\n\nfunc main() {}\n"}
+	want(t, "FF-SP3 in internal/node_modules/p", files, "FF-SP3", "ldap-filter-shape", f)
+	want(t, "FF-SP1 in internal/node_modules/p", files, "FF-SP1", "process-api", f)
+	want(t, "web/node_modules beside package.json is not scanned", map[string]string{"web/package.json": "{}\n", "web/node_modules/dep/x.go": bad}, "", "", "")
+	want(t, "nested node_modules inside web/node_modules", map[string]string{"web/package.json": "{}\n", "web/node_modules/a/node_modules/b/x.go": bad}, "", "", "")
+}
+
 // wantAnalyzed asserts that Analyze (the type-aware passes, one run per Targets entry) reports rule in file.
 func wantAnalyzed(t *testing.T, name string, files map[string]string, rule, file string) {
 	t.Helper()
