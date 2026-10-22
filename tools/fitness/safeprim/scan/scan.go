@@ -129,15 +129,28 @@ func Scan(root string, checks Checks) ([]Finding, error) {
 			}
 			return nil
 		}
-		if isSkippedPath(rel) && !underEntered(rel, entered) {
-			return nil // a file of a skipped directory that no shipped package reaches
-		}
 		if d.Type()&fs.ModeSymlink != 0 {
-			if st, serr := os.Stat(p); serr == nil && st.IsDir() {
+			// Checked before the skipped-path filter: the link entry of an entered directory
+			// (garage/link) is not "under" it, yet Go compiles through it (T-0085).
+			if isSkippedPath(rel) && !underEntered(rel, entered) && !overlapsEntered(rel, entered) {
+				return nil
+			}
+			st, serr := os.Stat(p)
+			switch {
+			case serr != nil:
+				out = append(out, Finding{FF: "FF-SP1", Rule: "dangling-symlink", File: rel, Line: 1,
+					Msg: "symlink cannot be resolved (" + serr.Error() + "); failing closed because the scan cannot see its target (T-0085)"})
+				return nil
+			case st.IsDir():
 				out = append(out, Finding{FF: "FF-SP1", Rule: "dir-symlink", File: rel, Line: 1,
 					Msg: "directory symlinks are rejected: Go compiles the target under this path when imported, while the scan walks by name (T-0085); move the code into the tree"})
+				return nil
 			}
-			return nil
+			// A symlinked file is scanned through the link, as Go compiles it.
+			return scanFile(root, rel, module, checks, &out)
+		}
+		if isSkippedPath(rel) && !underEntered(rel, entered) {
+			return nil // a file of a skipped directory that no shipped package reaches
 		}
 		return scanFile(root, rel, module, checks, &out)
 	})

@@ -708,4 +708,49 @@ func TestTestdataAndSymlinkedImportsFail(t *testing.T) {
 			}
 		}
 	})
+	t.Run("symlink inside entered garage dir", func(t *testing.T) {
+		root := tree(t, map[string]string{
+			"garage/real/x.go": bad,
+			"internal/m/m.go":  "package m\n\nimport _ \"fx.test/garage/link\"\n",
+		})
+		if err := os.Symlink("real", filepath.Join(root, "garage", "link")); err != nil {
+			t.Skip("symlinks unavailable:", err)
+		}
+		if got := rules(t, root); !got["FF-SP1 dir-symlink garage/link"] {
+			t.Errorf("missing dir-symlink finding in %v", got)
+		}
+	})
+	t.Run("file symlinks are scanned through the link", func(t *testing.T) {
+		outside := t.TempDir()
+		if err := os.WriteFile(filepath.Join(outside, "o.go"), []byte(bad), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		root := tree(t, map[string]string{
+			"garage/x.go.src": bad,
+			"internal/m/m.go": "package m\n",
+		})
+		if err := os.Symlink("../../garage/x.go.src", filepath.Join(root, "internal", "m", "in.go")); err != nil {
+			t.Skip("symlinks unavailable:", err)
+		}
+		if err := os.Symlink(filepath.Join(outside, "o.go"), filepath.Join(root, "internal", "m", "out.go")); err != nil {
+			t.Fatal(err)
+		}
+		got := rules(t, root)
+		for _, f := range []string{"internal/m/in.go", "internal/m/out.go"} {
+			for _, k := range []string{"FF-SP1 process-api ", "FF-SP3 ldap-filter-shape "} {
+				if !got[k+f] {
+					t.Errorf("missing %q in %v", k+f, got)
+				}
+			}
+		}
+	})
+	t.Run("dangling symlink fails closed", func(t *testing.T) {
+		root := tree(t, map[string]string{"internal/m/m.go": "package m\n"})
+		if err := os.Symlink("nowhere.go", filepath.Join(root, "internal", "m", "d.go")); err != nil {
+			t.Skip("symlinks unavailable:", err)
+		}
+		if got := rules(t, root); !got["FF-SP1 dangling-symlink internal/m/d.go"] {
+			t.Errorf("missing dangling-symlink finding in %v", got)
+		}
+	})
 }
