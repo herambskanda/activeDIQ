@@ -401,7 +401,7 @@ type appLookupErr struct {
 	err error
 }
 
-func (a appLookupErr) ApplicationByAppID(context.Context, string) (graph.Application, error) {
+func (a appLookupErr) ApplicationByAppID(context.Context, guid.GUID) (graph.Application, error) {
 	return graph.Application{}, a.err
 }
 
