@@ -73,8 +73,26 @@
       "reason": "Test helper: opens a platform-scope transaction so the queue's tests can prove what a no-context transaction may and may not do (cross-tenant enqueue, fenced recording, SKIP LOCKED). It is in a _test.go file and ships in no binary.",
       "withPlatform": true,
       "mintsTenantID": false
+    },
+    {
+      "package": "internal/directory/connection",
+      "function": "env.platform",
+      "reason": "Test helper: runs a transaction with no tenant context to prove that connection queries outside WithTenant fail with ErrNoTenant (DM-10, T-0099 acceptance 4).",
+      "withPlatform": true,
+      "mintsTenantID": false
     }
   ],
   "platformJobs": [],
-  "probeValues": []
+  "probeValues": [
+    {
+      "column": "public.connections.directory_identity",
+      "value": "00000000-0000-4000-8000-000000000001",
+      "reason": "CHECK: the identity is empty or a canonical lower-case UUID (DM-10 I1)."
+    },
+    {
+      "column": "public.connections.kind",
+      "value": "entra_tenant",
+      "reason": "CHECK: kind is ad_forest or entra_tenant; entra_tenant needs no transport_security (DM-10)."
+    }
+  ]
 }
