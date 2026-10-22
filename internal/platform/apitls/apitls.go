@@ -18,6 +18,8 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io/fs"
+	"log/slog"
 	"math/big"
 	"net"
 	"net/netip"
@@ -67,15 +69,30 @@ func Fingerprint(der []byte) string {
 }
 
 // LoadOrGenerate returns the install's identity. dir empty means an in-memory identity. Otherwise
-// the certificate and key are read from dir; when absent, unreadable as a pair, or within 30 days of
-// expiry, a new pair is generated and written (key 0600, directory 0700). addr is the listen
-// address; its host, "localhost", the loopback addresses and the machine's host name become SANs.
-// now is injected for tests.
+// the certificate and key are read from dir. A new pair is generated only when the certificate file
+// does not exist (first boot, or a crash between the key and certificate writes) or the pair is
+// within 30 days of expiry, which is renewed with a WARN log of both fingerprints. Anything else
+// wrong with the directory or files (ownership, permissions, symlinks, unreadable, corrupt,
+// mismatched pair) fails with an error naming the file and leaves it untouched: the server's
+// identity never changes silently. addr is the listen address; its host, "localhost", the loopback
+// addresses and the machine's host name become SANs. now is injected for tests.
 func LoadOrGenerate(dir, addr string, now time.Time) (Identity, error) {
+	var old string
 	if dir != "" {
-		if id, ok := load(dir, now); ok {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return Identity{}, fmt.Errorf("apitls: identity directory: %w", err)
+		}
+		if err := checkDir(dir); err != nil {
+			return Identity{}, err
+		}
+		id, renew, err := load(dir, now)
+		if err != nil {
+			return Identity{}, err
+		}
+		if !renew && id.Fingerprint != "" {
 			return id, nil
 		}
+		old = id.Fingerprint
 	}
 	certPEM, keyPEM, err := generate(addr, now)
 	if err != nil {
@@ -86,7 +103,12 @@ func LoadOrGenerate(dir, addr string, now time.Time) (Identity, error) {
 			return Identity{}, err
 		}
 	}
-	return parse(certPEM, keyPEM)
+	id, err := parse(certPEM, keyPEM)
+	if err == nil && old != "" {
+		slog.Warn("apitls: API certificate renewed; admins who pinned the old fingerprint must re-pin",
+			"old_tls_cert_sha256", old, "new_tls_cert_sha256", id.Fingerprint)
+	}
+	return id, err
 }
 
 func parse(certPEM, keyPEM []byte) (Identity, error) {
@@ -97,21 +119,36 @@ func parse(certPEM, keyPEM []byte) (Identity, error) {
 	return Identity{Certificate: c, Fingerprint: Fingerprint(c.Certificate[0])}, nil
 }
 
-func load(dir string, now time.Time) (Identity, bool) {
-	certPEM, err1 := os.ReadFile(filepath.Join(dir, CertFile))
-	keyPEM, err2 := os.ReadFile(filepath.Join(dir, KeyFile))
-	if err1 != nil || err2 != nil {
-		return Identity{}, false
+// load reads the persisted pair. A missing certificate file is not an error: it returns the zero
+// Identity and renew=false, and the caller generates. renew=true means a valid pair near expiry.
+func load(dir string, now time.Time) (id Identity, renew bool, err error) {
+	certPath, keyPath := filepath.Join(dir, CertFile), filepath.Join(dir, KeyFile)
+	if _, err := os.Lstat(certPath); errors.Is(err, fs.ErrNotExist) {
+		return Identity{}, false, nil
 	}
-	id, err := parse(certPEM, keyPEM)
+	if err := checkFile(certPath, false); err != nil {
+		return Identity{}, false, err
+	}
+	if err := checkFile(keyPath, true); err != nil {
+		return Identity{}, false, err
+	}
+	certPEM, err := os.ReadFile(certPath)
 	if err != nil {
-		return Identity{}, false
+		return Identity{}, false, fmt.Errorf("apitls: read %s: %w", certPath, err)
+	}
+	keyPEM, err := os.ReadFile(keyPath)
+	if err != nil {
+		return Identity{}, false, fmt.Errorf("apitls: read %s: %w", keyPath, err)
+	}
+	id, err = parse(certPEM, keyPEM)
+	if err != nil {
+		return Identity{}, false, fmt.Errorf("apitls: %s and %s are not a valid pair: %w", certPath, keyPath, errors.Unwrap(err))
 	}
 	leaf, err := x509.ParseCertificate(id.Certificate.Certificate[0])
-	if err != nil || now.Add(renewWithin).After(leaf.NotAfter) || now.Before(leaf.NotBefore) {
-		return Identity{}, false
+	if err != nil {
+		return Identity{}, false, fmt.Errorf("apitls: parse %s: %w", certPath, err)
 	}
-	return id, true
+	return id, now.Add(renewWithin).After(leaf.NotAfter), nil
 }
 
 func generate(addr string, now time.Time) (certPEM, keyPEM []byte, err error) {
@@ -179,9 +216,6 @@ func sans(addr string) (dns []string, ips []net.IP) {
 }
 
 func store(dir string, certPEM, keyPEM []byte) error {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("apitls: identity directory: %w", err)
-	}
 	// Key first: a crash between the two leaves a key with no certificate, which regenerates.
 	if err := writeAtomic(filepath.Join(dir, KeyFile), keyPEM, 0o600); err != nil {
 		return err

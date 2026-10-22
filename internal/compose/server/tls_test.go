@@ -68,7 +68,7 @@ func TestNonLoopbackWithoutTLSFailsStartup(t *testing.T) {
 		if _, err := apiIdentity(config.Config{APIAddr: a}, time.Now()); err == nil {
 			t.Errorf("%s without TLS must fail", a)
 		}
-		if _, err := apiIdentity(config.Config{APIAddr: a, APITLSDir: t.TempDir()}, time.Now()); err != nil {
+		if _, err := apiIdentity(config.Config{APIAddr: a, APITLSDir: t.TempDir()+"/id"}, time.Now()); err != nil {
 			t.Errorf("%s with TLS: %v", a, err)
 		}
 	}
