@@ -262,6 +262,28 @@ func TestSkipByLocationNotName(t *testing.T) {
 	want(t, "root factory and knowledge", map[string]string{"factory/x.go": bad, "knowledge/y.go": bad}, "", "", "")
 }
 
+// T-0083: Go does not ignore node_modules, so a Go package under one is product code; npm's own
+// install beside a package.json is not scanned.
+func TestNodeModulesScannedWhereGoCanBuildIt(t *testing.T) {
+	bad := gofile("\t\"fmt\"\n\t\"os/exec\"\n", "func f(x string) string { _ = exec.Command; return fmt.Sprintf(\"(&(objectClass=user)(cn=%s))\", x) }")
+	f := "internal/node_modules/p/x.go"
+	files := map[string]string{f: bad, "cmd/srv/main.go": "package main\n\nimport _ \"fx.test/internal/node_modules/p\"\n\nfunc main() {}\n"}
+	want(t, "FF-SP3 in internal/node_modules/p", files, "FF-SP3", "ldap-filter-shape", f)
+	want(t, "FF-SP1 in internal/node_modules/p", files, "FF-SP1", "process-api", f)
+	// web/package.json exists in the real repository: node_modules beside it is still Go-buildable.
+	web := map[string]string{"web/package.json": "{}\n", "web/node_modules/dep/x.go": bad, "cmd/srv/main.go": "package main\n\nimport _ \"fx.test/web/node_modules/dep\"\n\nfunc main() {}\n"}
+	want(t, "FF-SP3 in web/node_modules/dep", web, "FF-SP3", "ldap-filter-shape", "web/node_modules/dep/x.go")
+	want(t, "FF-SP1 in web/node_modules/dep", web, "FF-SP1", "process-api", "web/node_modules/dep/x.go")
+	want(t, "nested node_modules inside web/node_modules", map[string]string{"web/package.json": "{}\n", "web/node_modules/a/node_modules/b/x.go": bad}, "FF-SP3", "ldap-filter-shape", "web/node_modules/a/node_modules/b/x.go")
+	// a nested module wired in by a replace directive is compiled into the binary.
+	repl := map[string]string{"go.mod": "module fx.test\n\ngo 1.27.0\n\nrequire other v0.0.0\n\nreplace other => ./web/node_modules/dep\n", "web/package.json": "{}\n", "web/node_modules/dep/go.mod": "module other\n", "web/node_modules/dep/x.go": bad}
+	want(t, "FF-SP3 in replaced module under node_modules", repl, "FF-SP3", "ldap-filter-shape", "web/node_modules/dep/x.go")
+	want(t, "FF-SP1 in replaced module under node_modules", repl, "FF-SP1", "process-api", "web/node_modules/dep/x.go")
+	want(t, "denylisted require in node_modules go.mod", map[string]string{"web/package.json": "{}\n", "web/node_modules/dep/go.mod": "module other\n\ngo 1.27.0\n\nrequire github.com/go-rod/rod v0.1.0\n"}, "FF-SP1", "html-to-pdf-engine", "web/node_modules/dep/go.mod")
+	want(t, "non-Go content under web/node_modules is not scanned", map[string]string{"web/package.json": "{}\n", "web/node_modules/dep/x.cs": "using System.Diagnostics;\nclass C { void F() { Process.Start(\"x\"); } }\n", "web/node_modules/dep/x.sql": "SELECT 1;\n"}, "", "", "")
+	want(t, "foo.package.json is not a package.json", map[string]string{"web/foo.package.json": "{}\n", "web/dist/x.go": bad}, "FF-SP3", "ldap-filter-shape", "web/dist/x.go")
+}
+
 // wantAnalyzed asserts that Analyze (the type-aware passes, one run per Targets entry) reports rule in file.
 func wantAnalyzed(t *testing.T, name string, files map[string]string, rule, file string) {
 	t.Helper()
@@ -537,7 +559,6 @@ func TestFFSP2LocalReplaceModuleIsShippedCode(t *testing.T) {
 		})
 	}
 }
-
 
 // T-0082: a root-level directory that skipDir normally skips is scanned once product code imports a
 // package in it, because that package ships. One fixture per root name Go can import (.claude is

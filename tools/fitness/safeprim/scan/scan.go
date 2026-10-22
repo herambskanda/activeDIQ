@@ -45,11 +45,14 @@ func AllChecks() Checks { return Checks{"FF-SP1": true, "FF-SP2": true, "FF-SP3"
 
 // skipDir reports directories that hold no product code (a root-level one is still entered when a
 // package product code imports lives in it, T-0082). Only names that can never be a product
-// package are skipped at any depth (.git, node_modules, and testdata fixtures under tools/). Every other
-// skip is tied to where that directory really is: repository-level working trees at the root, and
-// build output only beside the project file that produces it (bin and obj beside a .csproj, target
-// beside Cargo.toml, dist beside package.json). A product package that happens to be called target,
-// bin or obj, such as internal/modules/target, is therefore scanned.
+// package are skipped at any depth (.git, and testdata fixtures under tools/). node_modules is not
+// one of them: Go does not ignore it, so internal/node_modules/p, or web/node_modules/dep, is an
+// importable product package (T-0083). Beside a package.json it is handled by npmDir instead:
+// non-Go content is skipped, Go files of our module are still scanned. Every other skip is tied to
+// where that directory really is: repository-level working trees at the root, and build output
+// only beside the project file that produces it (bin and obj beside a .csproj, target beside
+// Cargo.toml, dist beside package.json). A product package that happens to be called target, bin
+// or obj, such as internal/modules/target, is therefore scanned.
 func skipDir(root, rel, name string) bool {
 	return skipDirUnless(root, rel, name, nil)
 }
@@ -62,7 +65,7 @@ var rootSkipped = map[string]bool{"vendor": true, "factory": true, "knowledge": 
 // overlaps a directory in entered (see enteredDirs): it is one, holds one, or lies inside one.
 func skipDirUnless(root, rel, name string, entered map[string]bool) bool {
 	switch name {
-	case ".git", "node_modules":
+	case ".git":
 		return true
 	case "testdata":
 		// Go lets product code import a testdata (or _x, .x) package, and it then ships. Only the
@@ -79,9 +82,54 @@ func skipDirUnless(root, rel, name string, entered map[string]bool) bool {
 	case "bin", "obj":
 		return dirHasSuffix(parent, ".csproj", ".fsproj", ".vbproj")
 	case "target":
-		return dirHasSuffix(parent, "Cargo.toml")
+		return dirHasName(parent, "Cargo.toml")
 	case "dist":
-		return dirHasSuffix(parent, "package.json")
+		return dirHasName(parent, "package.json")
+	}
+	return false
+}
+
+// npmDir reports a node_modules directory directly beside a package.json.
+func npmDir(root, rel, name string) bool {
+	if name != "node_modules" {
+		return false
+	}
+	return dirHasName(filepath.Join(root, filepath.FromSlash(filepath.Dir(rel))), "package.json")
+}
+
+// scanNPM walks an npm node_modules tree. npm's own content is not product code, but Go builds any
+// .go file there that belongs to our module, and a nested go.mod can be pulled in with a replace
+// directive, so every .go file and go.mod is scanned like any other (T-0083). There is no
+// structural skip: fail closed, and use a reviewed allowlist if an npm package ever ships Go.
+func scanNPM(root, rel, module string, checks Checks, out *[]Finding) error {
+	return filepath.WalkDir(filepath.Join(root, filepath.FromSlash(rel)), func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		r, rerr := filepath.Rel(root, p)
+		if rerr != nil {
+			return rerr
+		}
+		r = filepath.ToSlash(r)
+		if d.IsDir() {
+			if d.Name() == ".git" || (d.Name() == "testdata" && strings.HasPrefix(r, "tools/")) {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if strings.EqualFold(filepath.Ext(r), ".go") || d.Name() == "go.mod" {
+			return scanFile(root, r, module, checks, out)
+		}
+		return nil
+	})
+}
+
+// dirHasName reports whether dir directly contains a file called exactly one of names.
+func dirHasName(dir string, names ...string) bool {
+	for _, n := range names {
+		if st, err := os.Stat(filepath.Join(dir, n)); err == nil && !st.IsDir() {
+			return true
+		}
 	}
 	return false
 }
@@ -125,6 +173,12 @@ func Scan(root string, checks Checks) ([]Finding, error) {
 		rel = filepath.ToSlash(rel)
 		if d.IsDir() {
 			if rel != "." && skipDirUnless(root, rel, d.Name(), entered) {
+				return fs.SkipDir
+			}
+			if rel != "." && npmDir(root, rel, d.Name()) {
+				if err := scanNPM(root, rel, module, checks, &out); err != nil {
+					return err
+				}
 				return fs.SkipDir
 			}
 			return nil
