@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/tls"
 	"net/http"
 	"time"
 )
@@ -24,10 +25,11 @@ const (
 // newAPIServer is the one place the API's http.Server is made. The write timeout is left to the
 // handler chain: binary downloads and exports stream for as long as the client keeps reading, and a
 // blanket WriteTimeout would cut them off. Total body memory is bounded by apihost's body budget.
-func newAPIServer(addr string, h http.Handler) *http.Server {
+func newAPIServer(addr string, h http.Handler, tlsConfig *tls.Config) *http.Server {
 	return &http.Server{
 		Addr:              addr,
 		Handler:           h,
+		TLSConfig:         tlsConfig,
 		ReadHeaderTimeout: APIReadHeaderTimeout,
 		ReadTimeout:       APIReadTimeout,
 		IdleTimeout:       APIIdleTimeout,

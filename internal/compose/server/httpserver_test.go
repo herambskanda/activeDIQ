@@ -13,7 +13,7 @@ import (
 )
 
 func TestAPIServerTimeoutsAreSet(t *testing.T) {
-	s := newAPIServer("127.0.0.1:0", http.NotFoundHandler())
+	s := newAPIServer("127.0.0.1:0", http.NotFoundHandler(), nil)
 	for name, d := range map[string]int64{
 		"ReadHeaderTimeout": int64(s.ReadHeaderTimeout), "ReadTimeout": int64(s.ReadTimeout),
 		"IdleTimeout": int64(s.IdleTimeout), "MaxHeaderBytes": int64(s.MaxHeaderBytes),
@@ -38,7 +38,7 @@ func TestBuildAPIServesApihostBehindNewAPIServer(t *testing.T) {
 	if _, ok := h.(*apihost.Server); !ok {
 		t.Fatalf("handler is %T, want *apihost.Server", h)
 	}
-	srv := newAPIServer("127.0.0.1:0", h)
+	srv := newAPIServer("127.0.0.1:0", h, nil)
 	if srv.Handler != h || srv.ReadHeaderTimeout <= 0 {
 		t.Fatal("the listener must be newAPIServer around apihost's handler")
 	}

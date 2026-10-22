@@ -30,6 +30,10 @@ const (
 	EnvStopTimeout = "ACTIVEDIQ_STOP_TIMEOUT"
 	// EnvAPIAddr is the address the API listener binds (host:port).
 	EnvAPIAddr = "ACTIVEDIQ_API_ADDR"
+	// EnvAPITLSDir is the directory holding the API's per-install certificate and key. The listener always
+	// serves TLS; with a directory the certificate persists across restarts, without one it is generated in
+	// memory for each process, which is only acceptable on a loopback bind.
+	EnvAPITLSDir = "ACTIVEDIQ_API_TLS_DIR"
 	// EnvAPIBodyBudget is the total bytes of request-body buffers the API may hold at once across all
 	// in-flight requests. It must be a positive integer.
 	EnvAPIBodyBudget = "ACTIVEDIQ_API_BODY_BUDGET"
@@ -39,7 +43,7 @@ const (
 const (
 	DefaultShutdownGrace = 30 * time.Second
 	DefaultStopTimeout   = 90 * time.Second
-	// DefaultAPIAddr binds loopback only. Non-loopback binds are refused until the TLS listener (T-0065) exists.
+	// DefaultAPIAddr binds loopback only. A non-loopback bind needs EnvAPITLSDir (the listener is TLS-only).
 	DefaultAPIAddr = "127.0.0.1:8080"
 	// DefaultAPIBodyBudget is 64 MiB, the same default as apihost.DefaultBodyBudget.
 	DefaultAPIBodyBudget int64 = 64 << 20
@@ -58,6 +62,8 @@ type Config struct {
 	StopTimeout   time.Duration
 	// APIAddr is the API listener's bind address.
 	APIAddr string
+	// APITLSDir is where the per-install API certificate lives; empty means an ephemeral in-memory one.
+	APITLSDir string
 	// APIBodyBudget is passed to apihost.WithBodyBudget. Non-positive values fail startup.
 	APIBodyBudget int64
 }
@@ -82,10 +88,11 @@ func Load(getenv func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	if v := getenv(EnvAPIAddr); v != "" {
-		if err := requireLoopback(v); err != nil {
-			return Config{}, fmt.Errorf("%s: %w", EnvAPIAddr, err)
-		}
 		c.APIAddr = v
+	}
+	c.APITLSDir = getenv(EnvAPITLSDir)
+	if err := c.ValidateAPIListen(); err != nil {
+		return Config{}, err
 	}
 	if v := getenv(EnvAPIBodyBudget); v != "" {
 		n, err := strconv.ParseInt(v, 10, 64)
@@ -149,17 +156,30 @@ func (c Config) LogValue() slog.Value {
 		slog.Duration("shutdown_grace", r.ShutdownGrace),
 		slog.Duration("stop_timeout", r.StopTimeout),
 		slog.String("api_addr", r.APIAddr),
+		slog.String("api_tls_dir", r.APITLSDir),
 		slog.Int64("api_body_budget", r.APIBodyBudget),
 	)
 }
 
-// requireLoopback refuses any API bind address that is not loopback: the listener is plain HTTP
-// until T-0065 adds TLS, and the threat model forbids a plaintext listener on the network.
-// Accepted hosts: "localhost" or a literal loopback IP. Empty and unspecified hosts bind all interfaces.
+// ValidateAPIListen refuses a non-loopback API bind unless a persistent TLS identity directory is
+// configured (TM-TB1-T2): without one the certificate would differ on every start and the admin
+// could never pin its fingerprint. The listener never serves plaintext either way.
+func (c Config) ValidateAPIListen() error {
+	if c.APITLSDir != "" {
+		return nil
+	}
+	if err := requireLoopback(c.APIAddr); err != nil {
+		return fmt.Errorf("%s: TLS is not configured (%s is empty): %w", EnvAPIAddr, EnvAPITLSDir, err)
+	}
+	return nil
+}
+
+// requireLoopback accepts only "localhost" or a literal loopback IP; empty and unspecified hosts bind
+// all interfaces.
 func requireLoopback(addr string) error {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
-		return fmt.Errorf("must be a loopback host:port (non-loopback needs TLS, T-0065): %w", err)
+		return fmt.Errorf("must be a loopback host:port: %w", err)
 	}
 	if host == "localhost" {
 		return nil
@@ -168,5 +188,5 @@ func requireLoopback(addr string) error {
 	if err == nil && ip.IsLoopback() {
 		return nil
 	}
-	return errors.New("must bind a loopback address (127.0.0.0/8, ::1 or localhost); a non-loopback bind needs TLS (T-0065)")
+	return errors.New("must bind a loopback address (127.0.0.0/8, ::1 or localhost) unless a TLS directory is configured")
 }
