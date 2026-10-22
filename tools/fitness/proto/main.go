@@ -19,9 +19,11 @@
 //	    (their shapes belong to later tickets). Apply was reserved in v1 and shaped in v1.1; its
 //	    OPERATION_APPLY value must still exist (the number is part of the contract).
 //	P7  no string or bytes field anywhere is named password, unicode_pwd, credential or secret.
-//	P8  every write-group RPC (Plan, Apply) takes a request with a top-level field of the package's
-//	    Tier0Context message type, so no write can be expressed without the Tier-0 context the
-//	    connector evaluates fail-closed (contract §8.3).
+//	P8  every write-group RPC (Plan, Apply) takes a request with a top-level, non-repeated field of
+//	    the package's Tier0Context message type, and that Tier0Context has a repeated field of the
+//	    package's CorrelationStatement type (one statement per touched object). No write can be
+//	    expressed without the per-object Tier-0 context the connector evaluates fail-closed
+//	    (contract §8.3 F1).
 package main
 
 import (
@@ -118,7 +120,7 @@ func Lint(files linker.Files) []Violation {
 					}
 				}
 				if writeGroup[screamingSnake(string(m.Name()))] && !hasTier0Context(m.Input()) {
-					vs = append(vs, Violation{"P8", pos, "write-group request " + string(m.Input().FullName()) + " has no Tier0Context field"})
+					vs = append(vs, Violation{"P8", pos, "write-group request " + string(m.Input().FullName()) + " has no Tier0Context field carrying repeated CorrelationStatement"})
 				}
 			}
 			if ops != nil {
@@ -161,7 +163,8 @@ func Lint(files linker.Files) []Violation {
 }
 
 // hasTier0Context reports whether m has a top-level, non-repeated field whose type is a message
-// named Tier0Context in m's own package.
+// named Tier0Context in m's own package, and that message has a repeated field of a message named
+// CorrelationStatement in the same package (per-object statements, contract §8.3 F1).
 func hasTier0Context(m protoreflect.MessageDescriptor) bool {
 	fields := m.Fields()
 	for i := 0; i < fields.Len(); i++ {
@@ -169,7 +172,21 @@ func hasTier0Context(m protoreflect.MessageDescriptor) bool {
 		if fd.Message() == nil || fd.IsList() || fd.IsMap() {
 			continue
 		}
-		if fd.Message().Name() == "Tier0Context" && fd.Message().ParentFile().Package() == m.ParentFile().Package() {
+		if fd.Message().Name() == "Tier0Context" && fd.Message().ParentFile().Package() == m.ParentFile().Package() &&
+			hasRepeatedOf(fd.Message(), "CorrelationStatement") {
+			return true
+		}
+	}
+	return false
+}
+
+// hasRepeatedOf reports whether m has a repeated (non-map) field whose type is a message named name
+// in m's own package.
+func hasRepeatedOf(m protoreflect.MessageDescriptor, name protoreflect.Name) bool {
+	fields := m.Fields()
+	for i := 0; i < fields.Len(); i++ {
+		fd := fields.Get(i)
+		if fd.Message() != nil && fd.IsList() && fd.Message().Name() == name && fd.Message().ParentFile().Package() == m.ParentFile().Package() {
 			return true
 		}
 	}

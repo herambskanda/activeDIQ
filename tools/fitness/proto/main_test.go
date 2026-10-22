@@ -77,6 +77,7 @@ func TestViolations(t *testing.T) {
 		{"P6 APPLY value removed", "P6", strings.Replace(base, "  OPERATION_APPLY = 100;\n", "", 1)},
 		{"P8 Apply without Tier0Context", "P8", strings.Replace(base, "service S {", "message ApplyRequest { Guid target = 1; }\nservice S { rpc Apply(ApplyRequest) returns (ReadPerDCResponse);", 1)},
 		{"P8 Plan with a repeated Tier0Context", "P8", strings.Replace(strings.Replace(base, "  OPERATION_APPLY = 100;", "  OPERATION_PLAN = 7;\n  OPERATION_APPLY = 100;", 1), "service S {", "message Tier0Context {}\nmessage PlanRequest { repeated Tier0Context t = 1; }\nservice S { rpc Plan(PlanRequest) returns (ReadPerDCResponse);", 1)},
+		{"P8 Tier0Context with a single CorrelationStatement", "P8", strings.Replace(strings.Replace(base, "  OPERATION_APPLY = 100;", "  OPERATION_PLAN = 7;\n  OPERATION_APPLY = 100;", 1), "service S {", "message CorrelationStatement {}\nmessage Tier0Context { CorrelationStatement correlation = 1; }\nmessage PlanRequest { Tier0Context t = 1; }\nservice S { rpc Plan(PlanRequest) returns (ReadPerDCResponse);", 1)},
 		{"P7 secret as plain text", "P7", strings.Replace(base, "message ReadPerDCResponse { string note = 1; }", "message ReadPerDCResponse { bytes unicode_pwd = 1; }", 1)},
 	}
 	for _, c := range cases {
@@ -94,7 +95,7 @@ func TestViolations(t *testing.T) {
 
 func TestWriteGroupWithTier0ContextPasses(t *testing.T) {
 	src := strings.Replace(strings.Replace(base, "  OPERATION_APPLY = 100;", "  OPERATION_PLAN = 7;\n  OPERATION_APPLY = 100;", 1), "service S {",
-		"message Tier0Context {}\nmessage PlanRequest { Tier0Context tier0 = 1; }\nmessage ApplyRequest { Tier0Context tier0 = 1; }\n"+
+		"message CorrelationStatement {}\nmessage Tier0Context { repeated CorrelationStatement statements = 1; }\nmessage PlanRequest { Tier0Context tier0 = 1; }\nmessage ApplyRequest { Tier0Context tier0 = 1; }\n"+
 			"service S { rpc Plan(PlanRequest) returns (ReadPerDCResponse); rpc Apply(ApplyRequest) returns (ReadPerDCResponse);", 1)
 	vs, err := lint(t, src)
 	if err != nil || len(vs) != 0 {

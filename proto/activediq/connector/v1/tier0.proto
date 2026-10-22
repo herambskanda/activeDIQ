@@ -73,8 +73,10 @@ message CorrelationEvidence {
   }
 }
 
-// One correlation of the write target with an object in the other directory.
+// One correlation of a touched object with an object in the other directory.
 message CorrelatedPeer {
+  // The other directory's kind. PROVIDER_KIND_UNSPECIFIED, or the connection's own kind, makes
+  // the peer inconsistent, and an inconsistent peer counts as tier0 (contract §8.3 F5).
   ProviderKind peer_kind = 1;
   DirectoryIdentity peer_directory = 2;
   Guid peer_object = 3;
@@ -83,25 +85,29 @@ message CorrelatedPeer {
   // `peer_tier0_basis` is empty exactly when `peer_tier0` is false.
   bool peer_tier0 = 5;
   repeated Tier0Basis peer_tier0_basis = 6;
+  // Mandatory. A peer whose `evidence` oneof is unset counts as tier0 (F5); a set value that does
+  // not match the object as re-read is CONTEXT_CONTRADICTED (F4).
   CorrelationEvidence evidence = 7;
 }
 
-// The server's statement about the write target's cross-directory correlations (C16 or E5). It is
-// mandatory on every Plan and Apply. Rules F1-F6 of contract §8.3 say how a connector uses it; in
-// short: missing, stale or contradicted means TIER0_REFUSED.
+// The server's statement about ONE touched object's cross-directory correlations (C16 for an AD
+// object, E5 for an Entra object). A Tier0Context carries one statement per object of the
+// connector-derived touched set (target included). Rules F1-F6 of contract §8.3 say how a
+// connector uses it; in short: missing, stale or contradicted means TIER0_REFUSED.
 message CorrelationStatement {
-  // The target this statement is about. Must equal the request's target.
-  Guid target = 1;
+  // The touched object this statement is about.
+  Guid object = 1;
   oneof correlation {
     // The connection has no HybridLink (DM-21) to any tenant or forest, so no correlation of any
     // state can exist for any of its objects.
     NoHybridLink no_hybrid_link = 2;
-    // The connection has a HybridLink. Every correlation of the target in every state is listed;
-    // an empty list means the server holds none for this target.
+    // The connection has a HybridLink. Every correlation of the object in every state is listed;
+    // an empty list means the server holds none for this object.
     CorrelatedPeers peers = 3;
   }
-  // When the server computed the statement from its inventory. Older than the connector's
-  // maximum statement age (contract §8.3 F3) is refused.
+  // Mandatory. When the server computed the statement from its inventory. Unset is
+  // CONTEXT_MISSING (F1; the zero timestamp is never read as a time). Older than the connector's
+  // maximum statement age, or too far in its future, is CONTEXT_STALE (F3).
   google.protobuf.Timestamp computed_at = 4;
 }
 
@@ -114,12 +120,20 @@ message CorrelatedPeers {
 // Request-scoped Tier-0 context that only the server can supply. Every write-group request carries
 // one (fitness-proto P8). It can only widen the connector's own set.
 message Tier0Context {
-  CorrelationStatement correlation = 1;
+  // v1.1 draft had a single `CorrelationStatement correlation = 1` bound to the target only.
+  reserved 1;
+  reserved "correlation";
   // Customer-designated tier0 objects of the connection's directory that matter for this request:
-  // the target, if designated, and every designated group the target is a member of. The connector
-  // treats each listed GUID as tier0; listing too many is harmless, listing too few is the
-  // documented residual of contract §8.3.
+  // every object of the touched set that is designated, and every designated group any touched
+  // object is a member of. The connector treats each listed GUID as tier0; listing too many is
+  // harmless, listing too few is residual R-T0CTX-1 (contract §8.3 F6).
   repeated Guid designated = 2;
   // The server's tier0-set revision the context was built from, echoed in audit and in errors.
   uint64 tier0_revision = 3;
+  // One statement per object of the touched set, target included (F1). The connector derives the
+  // touched set itself from the typed change; a touched object with no statement is
+  // CONTEXT_MISSING, statements about objects outside the touched set are ignored (and counted in
+  // the connector's log), and two statements about one object are merged additively, except that
+  // `no_hybrid_link` beside `peers` for the same connection is CONTEXT_CONTRADICTED.
+  repeated CorrelationStatement statements = 4;
 }

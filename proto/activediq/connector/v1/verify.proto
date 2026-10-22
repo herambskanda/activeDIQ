@@ -87,7 +87,8 @@ enum VerificationCheck {
   VERIFICATION_CHECK_EV3_OVER_PRIVILEGE = 23;
   // Permissions the enabled features need and the app lacks.
   VERIFICATION_CHECK_EV4_SUFFICIENCY = 24;
-  // Permissions beyond the enabled rows, extra key credentials, owners: warn.
+  // Permissions beyond the enabled rows, extra key and password credentials (application or
+  // service principal), owners: warn.
   VERIFICATION_CHECK_EV5_EXCESS = 25;
 }
 
@@ -136,13 +137,17 @@ enum FindingKind {
   FINDING_KIND_ENTRA_DENY_LIST_PERMISSION = 5;
   // Entra: the service principal holds a directory role, active or eligible.
   FINDING_KIND_ENTRA_DIRECTORY_ROLE = 6;
-  // Entra: the application has a key credential other than the certificate this connector holds.
+  // Entra: the application or its service principal has a key credential other than the
+  // certificate this connector holds.
   FINDING_KIND_ENTRA_EXTRA_KEY_CREDENTIAL = 7;
   // Entra: the application or its service principal has an owner (the app must have none).
   FINDING_KIND_ENTRA_OWNER = 8;
   // The check needed an answer it could not obtain (unreadable object, unreachable domain or GC,
   // ACL not returned). Names the object it could not decide.
   FINDING_KIND_COULD_NOT_VERIFY = 9;
+  // Entra: the application or its service principal has a password credential (client secret).
+  // The connector authenticates with a certificate only, so every password credential is extra.
+  FINDING_KIND_ENTRA_PASSWORD_CREDENTIAL = 10;
 }
 
 // An AD right, as an access-mask bit and the object type it applies to.
@@ -194,7 +199,8 @@ enum EntraRoleAssignmentKind {
   ENTRA_ROLE_ASSIGNMENT_KIND_ELIGIBLE = 2;
 }
 
-// An Entra right: an application permission, a directory role, a key credential or an owner.
+// An Entra right: an application permission, a directory role, a key or password credential, or
+// an owner.
 message EntraRight {
   oneof right {
     // An app role of a resource (Microsoft Graph) granted to the service principal.
@@ -203,7 +209,19 @@ message EntraRight {
     EntraKeyCredential key_credential = 3;
     // The owner object id; `RightsFinding.object` is the application or service principal owned.
     Guid owner = 4;
+    EntraPasswordCredential password_credential = 5;
   }
+}
+
+// Which of the two Entra objects of the connector's app registration holds a credential. Both an
+// application and its service principal carry keyCredentials and passwordCredentials, and either
+// lets its holder authenticate as the app.
+enum EntraCredentialHolder {
+  ENTRA_CREDENTIAL_HOLDER_UNSPECIFIED = 0;
+  // The application object (app registration); `RightsFinding.object` is its object id.
+  ENTRA_CREDENTIAL_HOLDER_APPLICATION = 1;
+  // The service principal (enterprise application); `RightsFinding.object` is its object id.
+  ENTRA_CREDENTIAL_HOLDER_SERVICE_PRINCIPAL = 2;
 }
 
 message EntraAppPermission {
@@ -222,7 +240,8 @@ message EntraDirectoryRole {
   string directory_scope_id = 3;
 }
 
-// Metadata of one key credential on the application. Never key material.
+// Metadata of one key credential on the application or service principal. Never key material
+// (`key`) is read into or sent in this message.
 message EntraKeyCredential {
   Guid key_id = 1;
   // customKeyIdentifier (the certificate thumbprint for certificates).
@@ -230,6 +249,19 @@ message EntraKeyCredential {
   string key_type = 3;
   google.protobuf.Timestamp start = 4;
   google.protobuf.Timestamp end = 5;
+  EntraCredentialHolder holder = 6;
+}
+
+// Metadata of one password credential (client secret) on the application or service principal.
+// keyId and validity only: `secretText` is never returned by Graph after creation and `hint` (the
+// first characters of the secret) is secret material too; neither is read into or sent in this
+// message (CC-WRITE-13 canary). displayName and customKeyIdentifier are free text set by whoever
+// added the secret and are not carried either.
+message EntraPasswordCredential {
+  Guid key_id = 1;
+  google.protobuf.Timestamp start = 2;
+  google.protobuf.Timestamp end = 3;
+  EntraCredentialHolder holder = 4;
 }
 
 // Which right, whatever the directory.
@@ -250,13 +282,26 @@ message RightSource {
     EffectiveRightsAttribute effective_attribute = 2;
     // A group membership path from the identity to a Tier-0 group (TM §6.5 step 1).
     MembershipPath membership = 3;
-    // An attribute of the identity itself (delegation settings, TM §6.5 step 5).
-    string identity_attribute = 4;
+    // An attribute of the identity itself, or of the DC whose RBCD attribute lists it (delegation
+    // settings, TM §6.5 step 5).
+    IdentityAttribute identity_attribute = 7;
     // Entra: the appRoleAssignment, roleAssignment or roleEligibilitySchedule object id.
     Guid entra_assignment = 5;
     // The right is expected by an enabled family and not found (MISSING findings).
     RightsFamily expected_by = 6;
   }
+  // v1.1 draft: `string identity_attribute = 4`, replaced by the enum.
+  reserved 4;
+}
+
+// The attributes a delegation finding can rest on (TM §6.5 step 5).
+enum IdentityAttribute {
+  IDENTITY_ATTRIBUTE_UNSPECIFIED = 0;
+  // TRUSTED_FOR_DELEGATION (0x80000) or TRUSTED_TO_AUTH_FOR_DELEGATION (0x1000000).
+  IDENTITY_ATTRIBUTE_USER_ACCOUNT_CONTROL = 1;
+  IDENTITY_ATTRIBUTE_MS_DS_ALLOWED_TO_DELEGATE_TO = 2;
+  // On the DC object, not the identity: the identity is listed in it.
+  IDENTITY_ATTRIBUTE_MS_DS_ALLOWED_TO_ACT_ON_BEHALF_OF_OTHER_IDENTITY = 3;
 }
 
 message AceSource {

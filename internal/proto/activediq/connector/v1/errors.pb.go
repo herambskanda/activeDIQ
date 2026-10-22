@@ -389,9 +389,11 @@ type Tier0RefusalStage int32
 
 const (
 	Tier0RefusalStage_TIER0_REFUSAL_STAGE_UNSPECIFIED Tier0RefusalStage = 0
-	// Tier0Context missing, its CorrelationStatement missing or naming another target (§8.3 F1).
+	// Tier0Context missing; a touched object (target or other) has no CorrelationStatement; a
+	// statement's `correlation` or `computed_at` is unset (§8.3 F1).
 	Tier0RefusalStage_TIER0_REFUSAL_STAGE_CONTEXT_MISSING Tier0RefusalStage = 1
-	// CorrelationStatement older than the connector's maximum statement age (F3).
+	// A CorrelationStatement older than the connector's maximum statement age, or too far in its
+	// future (F3).
 	Tier0RefusalStage_TIER0_REFUSAL_STAGE_CONTEXT_STALE Tier0RefusalStage = 2
 	// The request's own context marks a touched object tier0: a designation or a correlated tier0
 	// peer (F2), or an inconsistent peer that counts as tier0 (F5).
@@ -401,8 +403,9 @@ const (
 	// The live re-read found the object tier0 now (for example added to Domain Admins since the last
 	// set computation). Reads happened; no write did.
 	Tier0RefusalStage_TIER0_REFUSAL_STAGE_LIVE_REREAD Tier0RefusalStage = 5
-	// The live re-read contradicts the CorrelationStatement: a listed peer's evidence (anchor or SID)
-	// does not match the target as read, so the statement was made for another object (F4).
+	// The live re-read contradicts a CorrelationStatement: a listed peer's evidence (anchor or SID)
+	// does not match the touched object as read, so the statement was made for another object (F4);
+	// or two statements about one object disagree on whether a HybridLink exists.
 	Tier0RefusalStage_TIER0_REFUSAL_STAGE_CONTEXT_CONTRADICTED Tier0RefusalStage = 6
 )
 

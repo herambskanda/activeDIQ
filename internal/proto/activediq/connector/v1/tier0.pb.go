@@ -292,20 +292,24 @@ func (*CorrelationEvidence_SourceAnchor) isCorrelationEvidence_Evidence() {}
 
 func (*CorrelationEvidence_SecurityIdentifier) isCorrelationEvidence_Evidence() {}
 
-// One correlation of the write target with an object in the other directory.
+// One correlation of a touched object with an object in the other directory.
 type CorrelatedPeer struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	PeerKind      ProviderKind           `protobuf:"varint,1,opt,name=peer_kind,json=peerKind,proto3,enum=activediq.connector.v1.ProviderKind" json:"peer_kind,omitempty"`
-	PeerDirectory *DirectoryIdentity     `protobuf:"bytes,2,opt,name=peer_directory,json=peerDirectory,proto3" json:"peer_directory,omitempty"`
-	PeerObject    *Guid                  `protobuf:"bytes,3,opt,name=peer_object,json=peerObject,proto3" json:"peer_object,omitempty"`
-	State         CorrelationState       `protobuf:"varint,4,opt,name=state,proto3,enum=activediq.connector.v1.CorrelationState" json:"state,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The other directory's kind. PROVIDER_KIND_UNSPECIFIED, or the connection's own kind, makes
+	// the peer inconsistent, and an inconsistent peer counts as tier0 (contract §8.3 F5).
+	PeerKind      ProviderKind       `protobuf:"varint,1,opt,name=peer_kind,json=peerKind,proto3,enum=activediq.connector.v1.ProviderKind" json:"peer_kind,omitempty"`
+	PeerDirectory *DirectoryIdentity `protobuf:"bytes,2,opt,name=peer_directory,json=peerDirectory,proto3" json:"peer_directory,omitempty"`
+	PeerObject    *Guid              `protobuf:"bytes,3,opt,name=peer_object,json=peerObject,proto3" json:"peer_object,omitempty"`
+	State         CorrelationState   `protobuf:"varint,4,opt,name=state,proto3,enum=activediq.connector.v1.CorrelationState" json:"state,omitempty"`
 	// Whether the peer is tier0 in its own directory, as the server last computed it, and why.
 	// `peer_tier0_basis` is empty exactly when `peer_tier0` is false.
-	PeerTier0      bool                 `protobuf:"varint,5,opt,name=peer_tier0,json=peerTier0,proto3" json:"peer_tier0,omitempty"`
-	PeerTier0Basis []Tier0Basis         `protobuf:"varint,6,rep,packed,name=peer_tier0_basis,json=peerTier0Basis,proto3,enum=activediq.connector.v1.Tier0Basis" json:"peer_tier0_basis,omitempty"`
-	Evidence       *CorrelationEvidence `protobuf:"bytes,7,opt,name=evidence,proto3" json:"evidence,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	PeerTier0      bool         `protobuf:"varint,5,opt,name=peer_tier0,json=peerTier0,proto3" json:"peer_tier0,omitempty"`
+	PeerTier0Basis []Tier0Basis `protobuf:"varint,6,rep,packed,name=peer_tier0_basis,json=peerTier0Basis,proto3,enum=activediq.connector.v1.Tier0Basis" json:"peer_tier0_basis,omitempty"`
+	// Mandatory. A peer whose `evidence` oneof is unset counts as tier0 (F5); a set value that does
+	// not match the object as re-read is CONTEXT_CONTRADICTED (F4).
+	Evidence      *CorrelationEvidence `protobuf:"bytes,7,opt,name=evidence,proto3" json:"evidence,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CorrelatedPeer) Reset() {
@@ -387,20 +391,22 @@ func (x *CorrelatedPeer) GetEvidence() *CorrelationEvidence {
 	return nil
 }
 
-// The server's statement about the write target's cross-directory correlations (C16 or E5). It is
-// mandatory on every Plan and Apply. Rules F1-F6 of contract §8.3 say how a connector uses it; in
-// short: missing, stale or contradicted means TIER0_REFUSED.
+// The server's statement about ONE touched object's cross-directory correlations (C16 for an AD
+// object, E5 for an Entra object). A Tier0Context carries one statement per object of the
+// connector-derived touched set (target included). Rules F1-F6 of contract §8.3 say how a
+// connector uses it; in short: missing, stale or contradicted means TIER0_REFUSED.
 type CorrelationStatement struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The target this statement is about. Must equal the request's target.
-	Target *Guid `protobuf:"bytes,1,opt,name=target,proto3" json:"target,omitempty"`
+	// The touched object this statement is about.
+	Object *Guid `protobuf:"bytes,1,opt,name=object,proto3" json:"object,omitempty"`
 	// Types that are valid to be assigned to Correlation:
 	//
 	//	*CorrelationStatement_NoHybridLink
 	//	*CorrelationStatement_Peers
 	Correlation isCorrelationStatement_Correlation `protobuf_oneof:"correlation"`
-	// When the server computed the statement from its inventory. Older than the connector's
-	// maximum statement age (contract §8.3 F3) is refused.
+	// Mandatory. When the server computed the statement from its inventory. Unset is
+	// CONTEXT_MISSING (F1; the zero timestamp is never read as a time). Older than the connector's
+	// maximum statement age, or too far in its future, is CONTEXT_STALE (F3).
 	ComputedAt    *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=computed_at,json=computedAt,proto3" json:"computed_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -436,9 +442,9 @@ func (*CorrelationStatement) Descriptor() ([]byte, []int) {
 	return file_activediq_connector_v1_tier0_proto_rawDescGZIP(), []int{2}
 }
 
-func (x *CorrelationStatement) GetTarget() *Guid {
+func (x *CorrelationStatement) GetObject() *Guid {
 	if x != nil {
-		return x.Target
+		return x.Object
 	}
 	return nil
 }
@@ -486,8 +492,8 @@ type CorrelationStatement_NoHybridLink struct {
 }
 
 type CorrelationStatement_Peers struct {
-	// The connection has a HybridLink. Every correlation of the target in every state is listed;
-	// an empty list means the server holds none for this target.
+	// The connection has a HybridLink. Every correlation of the object in every state is listed;
+	// an empty list means the server holds none for this object.
 	Peers *CorrelatedPeers `protobuf:"bytes,3,opt,name=peers,proto3,oneof"`
 }
 
@@ -578,15 +584,20 @@ func (x *CorrelatedPeers) GetPeers() []*CorrelatedPeer {
 // Request-scoped Tier-0 context that only the server can supply. Every write-group request carries
 // one (fitness-proto P8). It can only widen the connector's own set.
 type Tier0Context struct {
-	state       protoimpl.MessageState `protogen:"open.v1"`
-	Correlation *CorrelationStatement  `protobuf:"bytes,1,opt,name=correlation,proto3" json:"correlation,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
 	// Customer-designated tier0 objects of the connection's directory that matter for this request:
-	// the target, if designated, and every designated group the target is a member of. The connector
-	// treats each listed GUID as tier0; listing too many is harmless, listing too few is the
-	// documented residual of contract §8.3.
+	// every object of the touched set that is designated, and every designated group any touched
+	// object is a member of. The connector treats each listed GUID as tier0; listing too many is
+	// harmless, listing too few is residual R-T0CTX-1 (contract §8.3 F6).
 	Designated []*Guid `protobuf:"bytes,2,rep,name=designated,proto3" json:"designated,omitempty"`
 	// The server's tier0-set revision the context was built from, echoed in audit and in errors.
 	Tier0Revision uint64 `protobuf:"varint,3,opt,name=tier0_revision,json=tier0Revision,proto3" json:"tier0_revision,omitempty"`
+	// One statement per object of the touched set, target included (F1). The connector derives the
+	// touched set itself from the typed change; a touched object with no statement is
+	// CONTEXT_MISSING, statements about objects outside the touched set are ignored (and counted in
+	// the connector's log), and two statements about one object are merged additively, except that
+	// `no_hybrid_link` beside `peers` for the same connection is CONTEXT_CONTRADICTED.
+	Statements    []*CorrelationStatement `protobuf:"bytes,4,rep,name=statements,proto3" json:"statements,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -621,13 +632,6 @@ func (*Tier0Context) Descriptor() ([]byte, []int) {
 	return file_activediq_connector_v1_tier0_proto_rawDescGZIP(), []int{5}
 }
 
-func (x *Tier0Context) GetCorrelation() *CorrelationStatement {
-	if x != nil {
-		return x.Correlation
-	}
-	return nil
-}
-
 func (x *Tier0Context) GetDesignated() []*Guid {
 	if x != nil {
 		return x.Designated
@@ -640,6 +644,13 @@ func (x *Tier0Context) GetTier0Revision() uint64 {
 		return x.Tier0Revision
 	}
 	return 0
+}
+
+func (x *Tier0Context) GetStatements() []*CorrelationStatement {
+	if x != nil {
+		return x.Statements
+	}
+	return nil
 }
 
 var File_activediq_connector_v1_tier0_proto protoreflect.FileDescriptor
@@ -663,7 +674,7 @@ const file_activediq_connector_v1_tier0_proto_rawDesc = "" +
 	"\x10peer_tier0_basis\x18\x06 \x03(\x0e2\".activediq.connector.v1.Tier0BasisR\x0epeerTier0Basis\x12G\n" +
 	"\bevidence\x18\a \x01(\v2+.activediq.connector.v1.CorrelationEvidenceR\bevidence\"\xa7\x02\n" +
 	"\x14CorrelationStatement\x124\n" +
-	"\x06target\x18\x01 \x01(\v2\x1c.activediq.connector.v1.GuidR\x06target\x12L\n" +
+	"\x06object\x18\x01 \x01(\v2\x1c.activediq.connector.v1.GuidR\x06object\x12L\n" +
 	"\x0eno_hybrid_link\x18\x02 \x01(\v2$.activediq.connector.v1.NoHybridLinkH\x00R\fnoHybridLink\x12?\n" +
 	"\x05peers\x18\x03 \x01(\v2'.activediq.connector.v1.CorrelatedPeersH\x00R\x05peers\x12;\n" +
 	"\vcomputed_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
@@ -671,13 +682,15 @@ const file_activediq_connector_v1_tier0_proto_rawDesc = "" +
 	"\vcorrelation\"\x0e\n" +
 	"\fNoHybridLink\"O\n" +
 	"\x0fCorrelatedPeers\x12<\n" +
-	"\x05peers\x18\x01 \x03(\v2&.activediq.connector.v1.CorrelatedPeerR\x05peers\"\xc3\x01\n" +
-	"\fTier0Context\x12N\n" +
-	"\vcorrelation\x18\x01 \x01(\v2,.activediq.connector.v1.CorrelationStatementR\vcorrelation\x12<\n" +
+	"\x05peers\x18\x01 \x03(\v2&.activediq.connector.v1.CorrelatedPeerR\x05peers\"\xd4\x01\n" +
+	"\fTier0Context\x12<\n" +
 	"\n" +
 	"designated\x18\x02 \x03(\v2\x1c.activediq.connector.v1.GuidR\n" +
 	"designated\x12%\n" +
-	"\x0etier0_revision\x18\x03 \x01(\x04R\rtier0Revision*\xf1\x06\n" +
+	"\x0etier0_revision\x18\x03 \x01(\x04R\rtier0Revision\x12L\n" +
+	"\n" +
+	"statements\x18\x04 \x03(\v2,.activediq.connector.v1.CorrelationStatementR\n" +
+	"statementsJ\x04\b\x01\x10\x02R\vcorrelation*\xf1\x06\n" +
 	"\n" +
 	"Tier0Basis\x12\x1b\n" +
 	"\x17TIER0_BASIS_UNSPECIFIED\x10\x00\x12\"\n" +
@@ -747,13 +760,13 @@ var file_activediq_connector_v1_tier0_proto_depIdxs = []int32{
 	1,  // 4: activediq.connector.v1.CorrelatedPeer.state:type_name -> activediq.connector.v1.CorrelationState
 	0,  // 5: activediq.connector.v1.CorrelatedPeer.peer_tier0_basis:type_name -> activediq.connector.v1.Tier0Basis
 	2,  // 6: activediq.connector.v1.CorrelatedPeer.evidence:type_name -> activediq.connector.v1.CorrelationEvidence
-	11, // 7: activediq.connector.v1.CorrelationStatement.target:type_name -> activediq.connector.v1.Guid
+	11, // 7: activediq.connector.v1.CorrelationStatement.object:type_name -> activediq.connector.v1.Guid
 	5,  // 8: activediq.connector.v1.CorrelationStatement.no_hybrid_link:type_name -> activediq.connector.v1.NoHybridLink
 	6,  // 9: activediq.connector.v1.CorrelationStatement.peers:type_name -> activediq.connector.v1.CorrelatedPeers
 	12, // 10: activediq.connector.v1.CorrelationStatement.computed_at:type_name -> google.protobuf.Timestamp
 	3,  // 11: activediq.connector.v1.CorrelatedPeers.peers:type_name -> activediq.connector.v1.CorrelatedPeer
-	4,  // 12: activediq.connector.v1.Tier0Context.correlation:type_name -> activediq.connector.v1.CorrelationStatement
-	11, // 13: activediq.connector.v1.Tier0Context.designated:type_name -> activediq.connector.v1.Guid
+	11, // 12: activediq.connector.v1.Tier0Context.designated:type_name -> activediq.connector.v1.Guid
+	4,  // 13: activediq.connector.v1.Tier0Context.statements:type_name -> activediq.connector.v1.CorrelationStatement
 	14, // [14:14] is the sub-list for method output_type
 	14, // [14:14] is the sub-list for method input_type
 	14, // [14:14] is the sub-list for extension type_name
