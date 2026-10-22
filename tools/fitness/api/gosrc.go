@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -113,6 +114,34 @@ func jsonV1Baseline(root string) (map[string]string, []Violation) {
 	return out, nil
 }
 
+const baselinePath = "tools/fitness/api/json-v1-baseline.txt"
+
+// baseBaseline is the seam for the baseline as it stands on main: (entries, checked, error). Outside
+// a git repository there is no main, so checked is false; inside one, an unresolvable main is an
+// error, never a pass.
+var baseBaseline = gitBaseBaseline
+
+func gitBaseBaseline(root string) (map[string]bool, bool, error) {
+	if !isGitRepo(root) {
+		return nil, false, nil
+	}
+	if err := exec.Command("git", "-C", root, "rev-parse", "--verify", "--quiet", "main^{commit}").Run(); err != nil {
+		return nil, true, fmt.Errorf("cannot resolve git ref \"main\": the v1 baseline cannot be checked for growth (a shallow clone needs `git fetch origin main`)")
+	}
+	out := map[string]bool{}
+	b, err := exec.Command("git", "-C", root, "show", "main:"+baselinePath).Output()
+	if err != nil {
+		return nil, false, nil // main has no baseline file yet (the change that introduces it): nothing to compare
+	}
+	for _, l := range strings.Split(string(b), "\n") {
+		l = strings.TrimSpace(l)
+		if l != "" && !strings.HasPrefix(l, "#") {
+			out[strings.Fields(l)[0]] = true
+		}
+	}
+	return out, true, nil
+}
+
 var goexperimentRe = regexp.MustCompile(`GOEXPERIMENT[^\n]*nojsonv2`)
 
 // buildFileNames are the files a GOEXPERIMENT value can reach the build through.
@@ -171,7 +200,14 @@ func goStaticJSON(root string) []Violation {
 			return true
 		})
 	}
+	mainSet, checked, err := baseBaseline(root)
+	if err != nil {
+		add(baselinePath, "%v", err)
+	}
 	for rel, pos := range baseline {
+		if checked && err == nil && !mainSet[rel] {
+			add(pos, "%s is in the baseline but not in the baseline on main: the list may only shrink, so a new importer is fixed, not listed (ADR-0004 rule 7)", rel)
+		}
 		if !importing[rel] {
 			add(pos, "%s no longer imports encoding/json (or no longer exists): remove it from the baseline, which may only shrink (ADR-0004 rule 7)", rel)
 		}

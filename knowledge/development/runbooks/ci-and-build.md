@@ -100,8 +100,11 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
     `AllowInvalidUTF8`, `AllowDuplicateNames` or `MatchCaseInsensitiveNames`, no `GOEXPERIMENT` value
     containing `nojsonv2` in a Makefile, script, Dockerfile, env or CI file. Existing v1 importers are
     listed in `tools/fitness/api/json-v1-baseline.txt` (migration: T-0064). The list only shrinks: a new
-    importer fails, and a listed file that no longer imports v1 fails until its line is deleted.
-  - A8 (linter half): nothing reachable from a response (through `$ref`, `items`, `oneOf`,
+    importer fails, a listed file that no longer imports v1 fails until its line is deleted, and a line
+    absent from `main:tools/fitness/api/json-v1-baseline.txt` fails (growth is caught against main; an
+    unresolvable `main` in a git checkout is an error, a shallow clone needs `git fetch origin main`).
+  - A8 (linter half): nothing reachable from a response, response headers included (a header name
+    matching the secret list, or a header schema with a secret marker, fails; through `$ref`, `items`, `oneOf`,
     `additionalProperties`) may carry `x-activediq-secret`, `writeOnly`, `format: password` or a
     property matching the rule 9 name list (exact or camelCase suffix: `adminPassword` yes,
     `passwordLastSet` no), unless the operation is in `policy.secretResponses`; no credential-named

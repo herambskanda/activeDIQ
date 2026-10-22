@@ -65,25 +65,41 @@ func checkA8(t *tree) []Violation {
 					continue
 				}
 				seen := map[*yaml.Node]bool{}
-				for _, m := range mediaSchemas(get(r.node, "content")) {
-					if m.schema == nil {
-						continue
+				onSchema := func(s *yaml.Node, f *srcFile) {
+					pos := fmt.Sprintf("%s:%d", f.pos, s.Line)
+					switch {
+					case scalar(get(s, "x-activediq-secret")) == "true":
+						add(pos, "%s response %s reaches a schema marked x-activediq-secret: a secret may be returned only by an operation listed in policy secretResponses (ADR-0004 rule 9, A8)", o.label(), r.status)
+					case scalar(get(s, "writeOnly")) == "true":
+						add(pos, "%s response %s reaches a writeOnly schema: write-only values never appear in a response (ADR-0004 rule 9, A8)", o.label(), r.status)
+					case scalar(get(s, "format")) == "password":
+						add(pos, "%s response %s reaches a format: password schema (ADR-0004 rule 9, A8)", o.label(), r.status)
 					}
-					t.walkSchema(r.file, m.schema, seen, func(s *yaml.Node, f *srcFile) {
-						pos := fmt.Sprintf("%s:%d", f.pos, s.Line)
-						switch {
-						case scalar(get(s, "x-activediq-secret")) == "true":
-							add(pos, "%s response %s reaches a schema marked x-activediq-secret: a secret may be returned only by an operation listed in policy secretResponses (ADR-0004 rule 9, A8)", o.label(), r.status)
-						case scalar(get(s, "writeOnly")) == "true":
-							add(pos, "%s response %s reaches a writeOnly schema: write-only values never appear in a response (ADR-0004 rule 9, A8)", o.label(), r.status)
-						case scalar(get(s, "format")) == "password":
-							add(pos, "%s response %s reaches a format: password schema (ADR-0004 rule 9, A8)", o.label(), r.status)
+				}
+				onProp := func(name string, line int, f *srcFile) {
+					if w, ok := nameMatches(name, secretWords); ok {
+						add(fmt.Sprintf("%s:%d", f.pos, line), "%s response %s reaches property %q, which matches the secret-name %q: list the operation in policy secretResponses or rename the member (ADR-0004 rule 9, A8)", o.label(), r.status, name, w)
+					}
+				}
+				for _, m := range mediaSchemas(get(r.node, "content")) {
+					if m.schema != nil {
+						t.walkSchema(r.file, m.schema, seen, onSchema, onProp)
+					}
+				}
+				// Response headers are reachable from the response too, and proxies and access logs keep them.
+				if hs := get(r.node, "headers"); hs != nil && hs.Kind == yaml.MappingNode {
+					for i := 0; i+1 < len(hs.Content); i += 2 {
+						h, hf, ok := t.resolve(r.file, hs.Content[i+1])
+						if !ok || h == nil {
+							continue
 						}
-					}, func(name string, line int, f *srcFile) {
-						if w, ok := nameMatches(name, secretWords); ok {
-							add(fmt.Sprintf("%s:%d", f.pos, line), "%s response %s reaches property %q, which matches the secret-name %q: list the operation in policy secretResponses or rename the member (ADR-0004 rule 9, A8)", o.label(), r.status, name, w)
+						if w, bad := nameMatches(hs.Content[i].Value, secretWords); bad {
+							add(fmt.Sprintf("%s:%d", hf.pos, hs.Content[i].Line), "%s response %s has header %q, which matches the secret-name %q: a secret does not travel in a response header (ADR-0004 rule 9, A8)", o.label(), r.status, hs.Content[i].Value, w)
 						}
-					})
+						if sc := get(h, "schema"); sc != nil {
+							t.walkSchema(hf, sc, seen, onSchema, onProp)
+						}
+					}
 				}
 			}
 		}

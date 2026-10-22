@@ -370,3 +370,93 @@ func TestSemverLess(t *testing.T) {
 		}
 	}
 }
+
+// --- review findings of T-0017 (security-architect) ---------------------------------------------
+
+func a8Header(f map[string]string, name, schema string) {
+	repl(f, users, `        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+`, "        \"400\":\n          $ref: shared/problems.yaml#/components/responses/Validation\n        \"200\":\n          description: ok\n          headers:\n            "+name+":\n              schema:\n"+schema)
+}
+
+func TestA8ResponseHeaders(t *testing.T) {
+	for _, c := range []struct{ name, hdr, schema, want string }{
+		{"format password", "X-Note", "                type: string\n                format: password\n", "format: password"},
+		{"x-activediq-secret", "X-Note", "                type: string\n                x-activediq-secret: true\n", "x-activediq-secret"},
+		{"writeOnly", "X-Note", "                type: string\n                writeOnly: true\n", "writeOnly"},
+		{"secret-named header", "X-Api-Token", "                type: string\n", `header "X-Api-Token"`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := base()
+			a8Header(f, c.hdr, c.schema)
+			for _, v := range run(t, f) {
+				if v.Check == "A8" && strings.Contains(v.Msg, c.want) {
+					return
+				}
+			}
+			t.Fatalf("want an A8 violation containing %q", c.want)
+		})
+	}
+	for _, h := range []string{"Retry-After", "Location"} {
+		f := base()
+		a8Header(f, h, "                type: string\n")
+		for _, v := range run(t, f) {
+			if v.Check == "A8" {
+				t.Errorf("header %s is not a secret: %s", h, v)
+			}
+		}
+	}
+}
+
+func TestA3AnRefIsAWholeToken(t *testing.T) {
+	for _, c := range []struct {
+		ref, an string
+		want    bool
+	}{{"AN-1", "AN-1", true}, {"AN-10", "AN-1", false}, {"TM-D16, AN-1", "AN-1", true}, {"AN-1 and AN-10", "AN-10", true}, {"AN-11", "AN-1", false}} {
+		if refCitesAN(c.ref, c.an) != c.want {
+			t.Errorf("refCitesAN(%q, %q) != %v", c.ref, c.an, c.want)
+		}
+	}
+	f := base()
+	repl(f, jobs, "x-permission: authenticated", "x-permission: anonymous\n      x-activediq-anonymous: AN-1")
+	repl(f, pol, "authenticated:\n  - operation: listJobs\n    ref: TM-D16\n    reason: Any signed-in principal may see the job list.\n", "authenticated: []\n")
+	repl(f, pol, "anonymous:\n", "anonymous:\n  - operation: listJobs\n    ref: AN-10\n    reason: wrong row\n")
+	for _, v := range run(t, f) {
+		if v.Check == "A3" && strings.Contains(v.Msg, "cites") {
+			return
+		}
+	}
+	t.Fatal("an AN-1 operation with a policy row citing AN-10 must fail A3")
+}
+
+func TestA7BaselineMayNotGrow(t *testing.T) {
+	old := baseBaseline
+	t.Cleanup(func() { baseBaseline = old })
+	f := base()
+	f["internal/platform/evil/e.go"] = "package evil\n\nimport \"encoding/json\"\n\nvar _ = json.Marshal\n"
+	f[baselinePath] = "# baseline\ninternal/platform/evil/e.go\n"
+	baseBaseline = func(string) (map[string]bool, bool, error) { return map[string]bool{}, true, nil }
+	found := false
+	for _, v := range run(t, f) {
+		found = found || (v.Check == "A7" && strings.Contains(v.Msg, "not in the baseline on main"))
+	}
+	if !found {
+		t.Fatal("a baseline line absent from main's baseline must fail A7")
+	}
+	baseBaseline = func(string) (map[string]bool, bool, error) {
+		return map[string]bool{"internal/platform/evil/e.go": true}, true, nil
+	}
+	for _, v := range run(t, f) {
+		if v.Check == "A7" {
+			t.Errorf("a line present on main stays allowed: %s", v)
+		}
+	}
+	baseBaseline = func(string) (map[string]bool, bool, error) { return nil, true, os.ErrNotExist }
+	found = false
+	for _, v := range run(t, f) {
+		found = found || (v.Check == "A7" && strings.Contains(v.Msg, "file does not exist"))
+	}
+	if !found {
+		t.Fatal("an unresolvable main must fail A7, not skip it")
+	}
+}

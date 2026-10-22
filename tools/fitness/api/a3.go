@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"go.yaml.in/yaml/v3"
 	"regexp"
-	"strings"
 )
 
 var (
@@ -69,7 +68,7 @@ func checkA3(t *tree) []Violation {
 			switch {
 			case !ok:
 				add(o.where(), "%s is anonymous but policy.yaml anonymous has no entry for operation %q: an anonymous operation needs a reviewed policy row (ADR-0004 rule 9, A3)", o.label(), o.id)
-			case an != "" && !strings.Contains(e.fields["ref"], an):
+			case an != "" && !refCitesAN(e.fields["ref"], an):
 				add(e.pos, "policy anonymous entry for %q cites %q but the operation declares %s (ADR-0004 rule 9, A3)", o.id, e.fields["ref"], an)
 			}
 		case "authenticated":
@@ -98,4 +97,16 @@ func checkA3(t *tree) []Violation {
 		}
 	}
 	return vs
+}
+
+var anTokenRe = regexp.MustCompile(`\bAN-[0-9]+\b`)
+
+// refCitesAN reports whether a policy row's ref names the allow-list row an as a whole token, so AN-10 never satisfies AN-1.
+func refCitesAN(ref, an string) bool {
+	for _, tok := range anTokenRe.FindAllString(ref, -1) {
+		if tok == an {
+			return true
+		}
+	}
+	return false
 }

@@ -147,6 +147,11 @@ must_fail_with "fitness-api A11 on http.Error outside apihost" 'internal/modules
 fresh_fa_tree; sed -i 's/x-permission: orders.read/x-permission: orders.read\n      x-activediq-limits: {class: turbo}/' "$fa/api/openapi/modules/orders.yaml"
 must_fail_with "fitness-api A12 on an unknown rate class" '\[ADR-0004 A12\] GET /orders \(listOrders\) declares unknown rate class "turbo"' fitapi
 
+fresh_fa_tree; printf 'paths:\n  /users:\n    get:\n      operationId: listUsers\n      tags: [users]\n      x-permission: authenticated\n      x-activediq-stability: stable\n      responses:\n        "200":\n          description: ok\n          headers:\n            X-Session-Token:\n              schema: {type: string}\n' >"$fa/api/openapi/modules/users.yaml"
+must_fail_with "fitness-api A8 on a secret-named response header" '\[ADR-0004 A8\] GET /users \(listUsers\) response 200 has header "X-Session-Token"' fitapi
+fresh_fa_tree; sed -i 's/^anonymous: \[\]/anonymous:\n  - operation: listUsers\n    ref: AN-10\n    reason: probe/; s/x-permission: authenticated/x-permission: anonymous\n      x-activediq-anonymous: AN-1/' "$fa/api/openapi/modules/users.yaml" "$fa/api/openapi/policy.yaml"
+must_fail_with "fitness-api A3 on a policy row citing AN-10 for an AN-1 operation" 'cites "AN-10" but the operation declares AN-1' fitapi
+
 # A10 against main, in a throw-away git repository, with the pinned oasdiff of tools/apitools.
 fresh_fa_tree
 ln -s "$root/tools/apitools" "$fa/tools-apitools-link" && mkdir -p "$fa/tools" && mv "$fa/tools-apitools-link" "$fa/tools/apitools"
@@ -157,6 +162,12 @@ must_pass "fitness-api A10 on a bundle identical to main" fitapi
 b2='{"openapi":"3.1.0","info":{"title":"t","version":"1.0.0"},"paths":{"/users":{"get":{"operationId":"listUsers","x-activediq-stability":"stable","parameters":[{"name":"q","in":"query","required":true,"schema":{"type":"string"}}],"responses":{"200":{"description":"ok"}}}},"/orders":{"get":{"operationId":"listOrders","x-activediq-stability":"stable","responses":{"200":{"description":"ok"}}}}}}'
 printf '%s\n' "$b2" >"$fa/internal/platform/apihost/spec/openapi.gen.json"
 must_fail_with "fitness-api A10 on a required parameter added to a stable operation (oasdiff against main)" '\[ADR-0004 A10\] breaking change against main on a stable operation' fitapi
+# A7: the v1 baseline may not grow against main (same throw-away repository, a baseline now committed on main).
+mkdir -p "$fa/tools/fitness/api"; printf '# baseline\n' >"$fa/tools/fitness/api/json-v1-baseline.txt"
+git -C "$fa" add -A && git -C "$fa" -c user.name=proof -c user.email=proof@example.invalid commit -q -m baseline
+printf '%s\n' "$b" >"$fa/internal/platform/apihost/spec/openapi.gen.json"
+printf 'package users\n\nimport "encoding/json"\n\nvar _ = json.Marshal\n' >"$fa/internal/modules/users/j.go"; printf 'internal/modules/users/j.go\n' >>"$fa/tools/fitness/api/json-v1-baseline.txt"
+must_fail_with "fitness-api A7 on a v1 importer added to the baseline (not on main)" 'internal/modules/users/j.go is in the baseline but not in the baseline on main' fitapi
 rm -rf "$fa/.git"
 
 # --- fitness-operation (ADR-0005 O9, the kernel import DAG), the real CLI on throw-away trees ----
