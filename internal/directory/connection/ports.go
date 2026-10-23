@@ -11,12 +11,33 @@ import (
 // verification run can depend on it without importing the transport client (`client` imports
 // `connection`, never the reverse; blueprint §5.2). `directory/client` implements it.
 //
-// It is deliberately one method: the V5 identity read that feeds SetDirectoryIdentity. The rest of
-// verification (V1–V9, rights, override) is another ticket and extends the port when it lands.
+// It is one method: the connector's own rights check (contract v1.1 VerifyConnection, TM §6.5 for AD,
+// §6.6 for Entra). The run also answers the V5 identity question, so there is no separate identity
+// read: the identity is a field of the result.
 type ConnectorClient interface {
-	// ReadIdentity reads the directory identity of the connection's directory: the objectGUID of
-	// the forest root domain NC (AD) or the tenant ID (Entra). It never returns secret material.
-	ReadIdentity(ctx context.Context, c Connection) (DirectoryIdentity, error)
+	// VerifyConnection runs the check list for the connection and returns the completed result. It
+	// returns an error, and no result, when the run did not complete: a stream that ends without its
+	// completion message is not a result (contract §2 rule 11). It never returns secret material.
+	VerifyConnection(ctx context.Context, req VerifyRequest) (VerifyResult, error)
+}
+
+// VerifyRequest names the run. VerificationID is drawn by the server and becomes the DM-24 row ID.
+type VerifyRequest struct {
+	Connection     Connection
+	Kind           VerificationKind
+	VerificationID VerificationID
+}
+
+// VerifyResult is a completed run as the connector reported it, in domain types. Findings are the
+// whole set: the activation gate compares them with an override's acknowledged set.
+type VerifyResult struct {
+	// DirectoryIdentity is what V5 read (AD: the forest root domain NC objectGUID; Entra: the tenant
+	// ID). Empty if the run did not get that far.
+	DirectoryIdentity DirectoryIdentity
+	CheckListVersion  int
+	Outcomes          map[Check]Outcome
+	Verdict           Verdict
+	Findings          []Finding
 }
 
 // HybridLinks is the read port over DM-21 that other packages depend on: the write gate decides

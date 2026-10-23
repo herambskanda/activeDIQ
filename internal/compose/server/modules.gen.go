@@ -4,13 +4,15 @@ package server
 
 import (
 	"github.com/skenzeriq/activediq/internal/directory"
+	"github.com/skenzeriq/activediq/internal/modules/connections"
 	"github.com/skenzeriq/activediq/internal/platform"
 	"github.com/skenzeriq/activediq/internal/platform/module"
 )
 
 // generatedModules builds one Entry per directory under internal/modules, passing every module the
-// same two values (ADR-0003 rules 3 and 4). There are no server modules yet.
+// same two values (ADR-0003 rules 3 and 4).
 func generatedModules(deps platform.Deps, dir directory.Services) []module.Entry {
-	_, _ = deps, dir
-	return nil
+	return []module.Entry{
+		{ID: connections.ModuleID, Module: connections.New(deps, dir)},
+	}
 }
