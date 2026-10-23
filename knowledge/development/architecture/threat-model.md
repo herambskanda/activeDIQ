@@ -2243,7 +2243,7 @@ and denial events (T-0130 operation fitness).
 
 ---
 
-**Residual (checkpoint-key leak after rotation).** With only a retired key pinned and no external anchor newer than the rotation, a leaked old seed lets an attacker fork the log from that key's last legitimate point; nothing inside the bundle distinguishes the fork from the genuine history. Defence is operational: pin the current key after every rotation and anchor checkpoints in the SIEM (AC3). The verifier fails `pinned_key_absent` when a pinned key is not in the export, and checks the manifest's retirement points against the chain. Overwriting retired sealed seeds on `Rotate` is tracked in T-0229.
+**Residual (checkpoint-key leak after rotation).** With only a retired key pinned and no external anchor newer than the rotation, a leaked old seed lets an attacker fork the log from that key's last legitimate point; nothing inside the bundle distinguishes the fork from the genuine history. Defence is operational: pin the current key after every rotation, **remove the pins of retired keys** (a retired key left pinned lets its leaked seed sign a truncated export whose exporter-written manifest calls it current), and anchor checkpoints in the SIEM (AC3). An old pin may be kept only with its window, `-pin KEY@created-retired`; the verifier fails `pin_window` when the export's window for a pinned key differs, and when a truncated export carries several unwindowed pins (T-0243). The verifier fails `pinned_key_absent` when a pinned key is not in the export, and checks the manifest's retirement points against the chain. Overwriting retired sealed seeds on `Rotate` is tracked in T-0229.
 
 ## 12. Control plane and DC-resident code [M3/M4]
 

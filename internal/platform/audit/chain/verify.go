@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sort"
+	"strconv"
+	"strings"
 )
 
 // Status is the verifier's verdict.
@@ -40,6 +42,7 @@ const (
 	ReasonCheckpointTenant = "checkpoint_wrong_tenant"
 	ReasonTruncated        = "truncated"
 	ReasonUntrustedKey     = "untrusted_key"
+	ReasonPinWindow        = "pin_window"
 )
 
 // Options carries the trust root.
@@ -47,9 +50,39 @@ type Options struct {
 	// Pinned are key fingerprints recorded out of band. At least one must have signed a verified
 	// checkpoint.
 	Pinned []string
+	// PinWindows optionally scopes a pinned fingerprint to the key's window (created and retired seq,
+	// retired 0 = open). A bundle whose window for that key differs fails. The manifest of a truncated
+	// export is written by the exporter, so only a window the operator recorded can refute it.
+	PinWindows map[string]PinWindow
 	// Anchors are checkpoints received from outside the host (a SIEM). Each one that falls in the
 	// verified range must match the chain.
 	Anchors []Checkpoint
+}
+
+// PinWindow is the key window an operator recorded with a pin: CreatedSeq must equal the bundle's, and
+// RetiredSeq, when non-zero, must equal the seq of the retirement.
+type PinWindow struct{ CreatedSeq, RetiredSeq uint64 }
+
+// ParsePin splits "FINGERPRINT" or "FINGERPRINT@created-retired" ("@12-" leaves the retirement open).
+func ParsePin(s string) (string, *PinWindow, error) {
+	fp, win, has := strings.Cut(strings.ToLower(strings.TrimSpace(s)), "@")
+	if fp == "" {
+		return "", nil, fmt.Errorf("pin %q has no fingerprint", s)
+	}
+	if !has {
+		return fp, nil, nil
+	}
+	lo, hi, ok := strings.Cut(win, "-")
+	c, err1 := strconv.ParseUint(lo, 10, 64)
+	var r uint64
+	var err2 error
+	if hi != "" {
+		r, err2 = strconv.ParseUint(hi, 10, 64)
+	}
+	if !ok || err1 != nil || err2 != nil || c == 0 || (hi != "" && r <= c) {
+		return "", nil, fmt.Errorf("pin %q: window must be @created-retired or @created-, with created >= 1 and retired > created", s)
+	}
+	return fp, &PinWindow{CreatedSeq: c, RetiredSeq: r}, nil
 }
 
 // Result is the verdict with enough to act on.
@@ -239,6 +272,21 @@ func Verify(b Bundle, opts Options) Result {
 			return fail(0, ReasonPinnedKeyAbsent, "pinned key %s appears neither in the manifest nor in the chain", p)
 		}
 	}
+	// A key whose window the bundle only asserts (the manifest of a truncated export) cannot be told from
+	// a retired key relabelled as current. The operator's pin window refutes it; without windows, more
+	// than one pin leaves the choice of "current" to the exporter.
+	for _, p := range sortedKeys(pinned) {
+		k := keys[p]
+		if w, ok := opts.PinWindows[p]; ok {
+			if k.created != w.CreatedSeq || (w.RetiredSeq != 0 && k.retired != w.RetiredSeq) {
+				return fail(0, ReasonPinWindow, "pinned key %s was recorded with window %d-%d; the export says %d-%d", p, w.CreatedSeq, w.RetiredSeq, k.created, k.retired)
+			}
+			continue
+		}
+		if len(pinned) > 1 && first > 1 && k.created < first && k.chainRet == 0 {
+			return fail(0, ReasonPinWindow, "several keys are pinned and this export starts at seq %d: its manifest alone says whether %s is current. Pin only the current key, or give each pin its window (KEY@created-retired)", first, p)
+		}
+	}
 	rooted := len(pinned) > 0 || anchored
 	// Trust spreads only along cross-signatures from an already trusted key; nothing else the chain
 	// says about a key (a bare key.created, a covering checkpoint) can vouch for it.
@@ -363,4 +411,13 @@ func applyKeyEvent(env Envelope, keys map[string]*keyWin, fromChain map[string]b
 		k.retired, k.chainRet = env.Seq, env.Seq
 	}
 	return nil
+}
+
+func sortedKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

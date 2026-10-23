@@ -2,7 +2,7 @@
 // It needs no installation and no network, and links only the standard library plus the format packages
 // platform/audit/canon and platform/audit/chain, which are themselves standard-library-only.
 //
-//	auditverify -bundle export.json [-pin <fingerprint>]... [-anchors anchors.json]
+//	auditverify -bundle export.json [-pin <fingerprint>[@created-retired]]... [-anchors anchors.json]
 //
 // Exit status: 0 OK, 1 verification FAILED, 2 UNANCHORED (internally consistent, but neither a pinned
 // key fingerprint nor an external anchor was given or matched), 64 usage or unreadable input.
@@ -19,11 +19,24 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
 )
 
-type pinFlags []string
+type pinFlags struct {
+	ids     []string
+	windows map[string]chain.PinWindow
+}
 
-func (p *pinFlags) String() string { return strings.Join(*p, ",") }
+func (p *pinFlags) String() string { return strings.Join(p.ids, ",") }
 func (p *pinFlags) Set(v string) error {
-	*p = append(*p, strings.ToLower(strings.TrimSpace(v)))
+	fp, w, err := chain.ParsePin(v)
+	if err != nil {
+		return err
+	}
+	p.ids = append(p.ids, fp)
+	if w != nil {
+		if p.windows == nil {
+			p.windows = map[string]chain.PinWindow{}
+		}
+		p.windows[fp] = *w
+	}
 	return nil
 }
 
@@ -35,8 +48,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	bundlePath := fs.String("bundle", "", "path of the adq-audit-export/1 file")
 	anchorsPath := fs.String("anchors", "", "path of a JSON array of checkpoints received from a SIEM")
 	var pins pinFlags
-	fs.Var(&pins, "pin", "checkpoint key fingerprint recorded out of band (repeatable). Pin the CURRENT key after every rotation: "+
-		"with only a retired key pinned and no newer external anchor, a leaked old seed can fork the log from that key's last legitimate point and nothing in the bundle can tell")
+	fs.Var(&pins, "pin", "checkpoint key fingerprint recorded out of band, optionally FINGERPRINT@created-retired (key window as sequence numbers; "+
+		"@12- for a current key). After every rotation pin the CURRENT key and REMOVE the pins of retired keys: with a retired key still pinned, "+
+		"a leaked old seed can sign a forked or truncated export that the bundle's own manifest describes as current. "+
+		"To keep an old pin, give it its window; a truncated export with several unwindowed pins is refused")
 	if err := fs.Parse(args); err != nil {
 		return 64
 	}
@@ -55,7 +70,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "auditverify: %v\n", err)
 		return 64
 	}
-	opts := chain.Options{Pinned: pins}
+	opts := chain.Options{Pinned: pins.ids, PinWindows: pins.windows}
 	if *anchorsPath != "" {
 		raw, err := os.ReadFile(*anchorsPath)
 		if err != nil {

@@ -536,3 +536,55 @@ func TestManifestRetirementMustMatchChain(t *testing.T) {
 		t.Fatalf("manifest RetiredSeq=0 accepted while the chain retires: %s", r.Status)
 	}
 }
+
+// T-0243 (probe P3): K1 stays pinned after rotation; an attacker holding K1's seed exports from seq 14
+// with a manifest that calls K1 current and a starting checkpoint signed by K1.
+func TestStaleRetiredKeyPinCannotValidateTruncatedExport(t *testing.T) {
+	g := seeded(t)
+	pub2, priv2 := key(t)
+	g.rotate(t, g.priv, pub2, true) // 11, 12
+	g.add("x")                      // 13
+	g.checkpoint(priv2, pub2)       // cp@13 by K2
+	g.add("y")
+	g.add("z")
+	k1, k2 := Fingerprint(g.pub), Fingerprint(pub2)
+
+	f := newBuilder(t, 1)
+	f.events, f.seq, f.prev = nil, 13, Hash{1}
+	f.checkpoint(g.priv, g.pub) // cp@13 by K1
+	f.add("forged")
+	f.add("forged")
+	forged := f.bundle()
+	forged.FromSeq = 14
+	forged.Keys = []KeyInfo{{KeyID: k1, PublicKey: g.pub, CreatedSeq: 1}, {KeyID: k2, PublicKey: pub2, CreatedSeq: 12}}
+
+	both := Options{Pinned: []string{k1, k2}}
+	want(t, Verify(forged, both), Failed, 0, ReasonPinWindow)
+	win := Options{Pinned: both.Pinned, PinWindows: map[string]PinWindow{k1: {1, 11}, k2: {12, 0}}}
+	want(t, Verify(forged, win), Failed, 0, ReasonPinWindow)
+	if r := Verify(forged, Options{Pinned: []string{k2}}); r.Status == OK {
+		t.Fatalf("forged export validated under the current key alone")
+	}
+
+	// Genuine chain: full range with both pins, and truncated under each documented procedure.
+	if r := Verify(g.bundle(), both); r.Status != OK {
+		t.Fatalf("genuine full export, both pins: %s %s", r.Status, r.Detail)
+	}
+	tr := g.bundle()
+	tr.FromSeq, tr.Events, tr.Checkpoints = 14, tr.Events[13:], g.cps[2:]
+	tr.Keys = []KeyInfo{{KeyID: k1, PublicKey: g.pub, CreatedSeq: 1, RetiredSeq: 11}, {KeyID: k2, PublicKey: pub2, CreatedSeq: 12}}
+	for name, o := range map[string]Options{"current only": {Pinned: []string{k2}}, "windowed": win} {
+		if r := Verify(tr, o); r.Status != OK {
+			t.Fatalf("genuine truncated export, %s: %s %s %s", name, r.Status, r.Reason, r.Detail)
+		}
+	}
+	want(t, Verify(tr, both), Failed, 0, ReasonPinWindow)
+}
+
+func TestParsePin(t *testing.T) {
+	for in, ok := range map[string]bool{"ab": true, "AB@1-5": true, "ab@12-": true, "ab@0-5": false, "ab@5-5": false, "ab@x": false, "@1-2": false, "ab@3": false} {
+		if _, _, err := ParsePin(in); (err == nil) != ok {
+			t.Errorf("ParsePin(%q) err=%v; want ok=%v", in, err, ok)
+		}
+	}
+}
