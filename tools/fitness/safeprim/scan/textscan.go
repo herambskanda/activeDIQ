@@ -3,6 +3,7 @@ package scan
 import (
 	"encoding/json"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -117,7 +118,7 @@ func scanText(root, rel string, rules []textRule, checks Checks, out *[]Finding)
 }
 
 // scanGoMod is FF-SP1 on go.mod: headless browsers and HTML-to-PDF engines are not dependencies of
-// the product (§12.7 rule 1). Tier L modules (tools/, lab/) are exempt.
+// the product (§12.7 rule 1). Tier L modules (tools/, lab/) are exempt (only the scan package directory itself, not subdirectories).
 func scanGoMod(root, rel string, checks Checks, out *[]Finding) error {
 	if !checks["FF-SP1"] || policy.IsToolTier(rel) {
 		return nil
@@ -191,9 +192,9 @@ func isBuildOrEnvFile(base string) bool {
 
 // scanGoCheckLinkname flags any checklinkname mention in a .go file (a tier L release tool passing
 // -ldflags=-checklinkname=0 to exec go build). The safeprim scanner's own sources name the flag to
-// detect it and are exempt.
+// detect it and are exempt (only the scan package directory itself, not subdirectories).
 func scanGoCheckLinkname(rel string, src []byte, checks Checks, out *[]Finding) {
-	if !checks["FF-SP2"] || strings.HasPrefix(rel, "tools/fitness/safeprim/") {
+	if !checks["FF-SP2"] || path.Dir(rel) == "tools/fitness/safeprim/scan" {
 		return
 	}
 	for i, ln := range strings.Split(string(src), "\n") {
@@ -206,7 +207,7 @@ func scanGoCheckLinkname(rel string, src []byte, checks Checks, out *[]Finding) 
 
 var reCheckLinkname = regexp.MustCompile(`(?i)checklinkname`)
 
-var serviceExts = map[string]bool{".yml": true, ".yaml": true, ".service": true, ".wxs": true, ".wxi": true, ".sh": true, ".ps1": true, ".toml": true, ".mk": true, ".conf": true, ".ini": true, ".cfg": true, ".plist": true, ".env": false, ".tmpl": true, ".json": true, ".xml": true, ".props": true}
+var serviceExts = map[string]bool{".yml": true, ".yaml": true, ".service": true, ".wxs": true, ".wxi": true, ".sh": true, ".ps1": true, ".toml": true, ".mk": true, ".conf": true, ".ini": true, ".cfg": true, ".plist": true, ".env": false, ".tmpl": true, ".json": true, ".xml": true, ".props": true, ".fish": true, ".vbs": true, ".nu": true, ".pyw": true}
 
 // scanServiceDefinition is FF-SP2's GOTRACEBACK rule on everything that can define a service's
 // environment: unit files, compose files, Dockerfiles, MSI sources, scripts.
