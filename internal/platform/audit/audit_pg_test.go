@@ -523,6 +523,9 @@ func TestKeyRotationKeepsTheChainVerifiable(t *testing.T) {
 		if b.Checkpoints[len(b.Checkpoints)-1].KeyID != b.Keys[1].KeyID {
 			t.Fatal("the newest checkpoint is not signed by the new key")
 		}
+		if b.Keys[1].CreatedSeq != b.Keys[0].RetiredSeq+1 {
+			t.Fatalf("Rotate's retire and create events are not consecutive: %+v", b.Keys)
+		}
 		ids, _ := r.ownerKeyID(r.id)
 		// Rotate cross-signs the new key with the outgoing one, so pinning only the old key vouches for it.
 		if res := chain.Verify(b, chain.Options{Pinned: ids[:1]}); res.Status != chain.OK {

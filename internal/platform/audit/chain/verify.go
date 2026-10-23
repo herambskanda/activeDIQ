@@ -74,6 +74,7 @@ type keyWin struct {
 	pub     ed25519.PublicKey
 	created uint64
 	retired uint64 // 0: current
+	vouched bool   // already cross-signed a successor
 	// crossBy is the key whose valid cross-signature introduced this one ("" if none).
 	crossBy string
 }
@@ -317,10 +318,14 @@ func applyKeyEvent(env Envelope, keys map[string]*keyWin, fromChain map[string]b
 			if sk != nil && derr == nil {
 				st, derr = CrossSignStatement(env.Tenant, signer, id, pub)
 			}
-			if sk == nil || sk.created >= env.Seq || derr != nil || !ed25519.Verify(sk.pub, st, sig) {
+			// Only the production rotation shape vouches: the signer was retired by the event just
+			// before this one, and it vouches for a single successor. A retired or current key that
+			// leaks later cannot introduce more keys.
+			if sk == nil || sk.created >= env.Seq || sk.retired == 0 || sk.retired != env.Seq-1 || sk.vouched || derr != nil || !ed25519.Verify(sk.pub, st, sig) {
 				r := fail(env.Seq, ReasonKeyEvent, "key %s: the cross-signature by %s does not verify", id, signer)
 				return &r
 			}
+			sk.vouched = true
 			keys[id].crossBy = signer
 		}
 	case KindKeyRetired:

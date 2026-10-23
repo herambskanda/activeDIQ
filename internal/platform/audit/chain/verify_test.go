@@ -439,3 +439,52 @@ func TestManifestKeyWithoutChainEvidenceFails(t *testing.T) {
 	bu.Keys = []KeyInfo{{KeyID: Fingerprint(b.pub), PublicKey: b.pub, CreatedSeq: 1}, {KeyID: Fingerprint(evil), PublicKey: evil, CreatedSeq: 1}}
 	want(t, Verify(bu, pin(b)), Failed, 11, ReasonUntrustedKey)
 }
+
+// crossCreate appends a key.created for newPub cross-signed by signerPriv, with no retirement before it.
+func (b *builder) crossCreate(t *testing.T, signerPriv ed25519.PrivateKey, newPub ed25519.PublicKey) {
+	t.Helper()
+	id, sig, err := CrossSign(b.tenant, signerPriv, newPub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.add(KindKeyCreated, Detail{DetailCrossSignature, hex.EncodeToString(sig)}, Detail{"key_id", Fingerprint(newPub)},
+		Detail{"public_key", hex.EncodeToString(newPub)}, Detail{DetailSignedBy, id})
+}
+
+// (a) A retired key that leaks later cannot vouch for a new key, with K1 pinned or K1+K2 pinned.
+func TestRetiredKeyCannotVouchLater(t *testing.T) {
+	b := seeded(t)
+	pub2, priv2 := key(t)
+	b.rotate(t, b.priv, pub2, true) // 11 retire K1, 12 create K2
+	b.add("x")
+	b.checkpoint(priv2, pub2) // 13
+	evil, evilPriv := key(t)
+	b.add("y")
+	b.crossCreate(t, b.priv, evil) // retired K1 signs evil, several events after retirement
+	b.add("z")
+	b.checkpoint(evilPriv, evil)
+	want(t, Verify(b.bundle(), pin(b)), Failed, 15, ReasonKeyEvent)
+	want(t, Verify(b.bundle(), Options{Pinned: []string{Fingerprint(b.pub), Fingerprint(pub2)}}), Failed, 15, ReasonKeyEvent)
+}
+
+// (b) A key vouches for at most one successor.
+func TestKeyCannotVouchForTwoSuccessors(t *testing.T) {
+	b := seeded(t)
+	pub2, _ := key(t)
+	b.rotate(t, b.priv, pub2, true) // 11 retire K1, 12 create K2
+	evil, evilPriv := key(t)
+	b.crossCreate(t, b.priv, evil) // 13: not adjacent to the retirement and a second successor
+	b.add("z")
+	b.checkpoint(evilPriv, evil)
+	want(t, Verify(b.bundle(), pin(b)), Failed, 13, ReasonKeyEvent)
+}
+
+// (c) The current, unretired key cannot cross-sign a concurrent key.
+func TestCurrentKeyCannotCrossSignConcurrentKey(t *testing.T) {
+	b := seeded(t)
+	evil, evilPriv := key(t)
+	b.crossCreate(t, b.priv, evil) // 11
+	b.add("z")
+	b.checkpoint(evilPriv, evil)
+	want(t, Verify(b.bundle(), pin(b)), Failed, 11, ReasonKeyEvent)
+}
