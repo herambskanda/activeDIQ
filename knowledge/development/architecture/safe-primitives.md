@@ -451,9 +451,12 @@ Builder, parent `P` = `OU=Staff,DC=corp,DC=example`; outputs omit `,` + `P` for 
 
 ### 4.6 Lint / fitness rule
 
-Banned everywhere except the go-ldap round-trip oracle test under `internal/connector/ldap`: the
+Banned everywhere except the go-ldap round-trip oracle test (tests are exempt; it lives in the
+connector package, `internal/connector/ad/dn_oracle_test.go`): the
 library's DN parser and escaper (go-ldap `ParseDN`, `EscapeDN`); `dn` implements RFC 4514 itself
-(blueprint §7.4). Banned outside `dn`: string
+(blueprint §7.4). In the connector, `dnstring` also reports any call to `dn.DN.String` or
+`dn.DN.Render`: a request DN comes only from `ObjectRef.ForRequest`, which enforces `NotRequestable`
+and `MaxDNLen`. Banned outside `dn`: string
 operations (`HasSuffix`, `HasPrefix`, `Contains`, `EqualFold`, `Split`) on `DNString` values;
 `dn.Equal`/`IsDescendantOf` from authorisation packages (import rule). forbidigo matches names and
 cannot see types, so the `DNString` rule is a **go/analysis pass**, `dnstring`, in the fitness tool
