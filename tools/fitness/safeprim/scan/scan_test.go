@@ -143,6 +143,15 @@ func TestFFSP2BannedAPIs(t *testing.T) {
 	} {
 		want(t, c.name, jx(c.body), "FF-SP2", "json-escape-off", "internal/modules/m/m.go")
 	}
+	for _, c := range []struct{ name, body string }{
+		{"EscapeForJS method value", "var f = jsontext.EscapeForJS\nvar o = f(false)"},
+		{"EscapeForHTML method value local", "func g() jsontext.Options { h := jsontext.EscapeForHTML; return h(false) }"},
+		{"EscapeForHTML passed as argument", "func use(func(bool) jsontext.Options) {}\nfunc g() { use(jsontext.EscapeForHTML) }"},
+	} {
+		want(t, c.name, jx(c.body), "FF-SP2", "json-escape-off", "internal/modules/m/m.go")
+	}
+	want(t, "dot import in product code", map[string]string{"internal/modules/m/m.go": gofile("\t. \"encoding/json/jsontext\"\n", "var o = EscapeForHTML(false)")}, "FF-SP2", "dot-import", "internal/modules/m/m.go")
+	want(t, "dot import in a test", map[string]string{"internal/modules/m/m_test.go": gofile("\t. \"encoding/json/jsontext\"\n", "var o = EscapeForHTML(true)")}, "", "", "")
 	want(t, "EscapeForHTML(true) is fine", jx("var o = jsontext.EscapeForHTML(true)\nvar p = jsontext.EscapeForJS(true)"), "", "", "")
 	want(t, "EscapeForHTML(false) in a test", map[string]string{"internal/modules/m/m_test.go": gofile("\t\"encoding/json/jsontext\"\n", "var o = jsontext.EscapeForHTML(false)")}, "", "", "")
 	want(t, "text/template", map[string]string{"internal/modules/m/m.go": gofile("\t_ \"text/template\"\n", "")}, "FF-SP2", "text-template", "internal/modules/m/m.go")
