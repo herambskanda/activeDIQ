@@ -67,7 +67,9 @@ func (c *Client) get(ctx context.Context, u *url.URL, tpl string, out any) error
 		case st == http.StatusUnauthorized:
 			return newErr(CodeBindFailed, st, "Graph rejected the access token", nil)
 		case st == http.StatusForbidden:
-			return newErr(CodeInsufficient, st, "the app registration lacks the permission for this read", nil)
+			e := newErr(CodeInsufficient, st, "the app registration lacks the permission for this read", nil)
+			e.GraphCode = graphErrorCode(body)
+			return e
 		case st == http.StatusNotFound:
 			return newErr(CodeNotFound, st, "object not found", nil)
 		case st == 429 || st == 503 || st == 504:
@@ -89,7 +91,9 @@ func (c *Client) get(ctx context.Context, u *url.URL, tpl string, out any) error
 		case st >= 300 && st < 400:
 			return newErr(CodeProviderFailure, st, "unexpected redirect (not followed)", nil)
 		default:
-			return newErr(CodeProviderFailure, st, "Graph returned an error", nil)
+			e := newErr(CodeProviderFailure, st, "Graph returned an error", nil)
+			e.GraphCode = graphErrorCode(body)
+			return e
 		}
 	}
 }
@@ -147,4 +151,23 @@ func list[T any](ctx context.Context, c *Client, first odata.Request) ([]T, erro
 		}
 		u = next
 	}
+}
+
+// graphErrorCode extracts error.code from a Graph error body. Only a short token of safe characters
+// is kept; anything else yields "" so a hostile body cannot reach a log through it.
+func graphErrorCode(body []byte) string {
+	var e struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &e) != nil || len(e.Error.Code) == 0 || len(e.Error.Code) > 80 {
+		return ""
+	}
+	for _, r := range e.Error.Code {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '.') {
+			return ""
+		}
+	}
+	return e.Error.Code
 }

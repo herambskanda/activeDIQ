@@ -30,7 +30,11 @@ type Error struct {
 	Message    string
 	HTTPStatus int           // provider result code, diagnosis only
 	RetryAfter time.Duration // THROTTLED only
-	cause      error
+	// GraphCode is the provider's error code (error.code of the body, for example
+	// "Authorization_RequestDenied"), kept for exact matching. The message and the rest of the body
+	// are never kept.
+	GraphCode string
+	cause     error
 }
 
 func (e *Error) Error() string {

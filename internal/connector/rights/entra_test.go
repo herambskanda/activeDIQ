@@ -96,8 +96,50 @@ func byKind(res *rights.Result, k v1.FindingKind) []rights.Finding {
 
 func permValue(f rights.Finding) string { return f.Right.GetEntra().GetAppPermission().GetValue() }
 
+const (
+	pimElig   = "PrivilegedEligibilitySchedule.Read.AzureADGroup"
+	pimAssign = "PrivilegedAssignmentSchedule.Read.AzureADGroup"
+)
+
+// TM-F-RIGHTS Entra half (T-0225): the PIM-for-Groups reads are required, and block, whenever any
+// write feature is enabled; not otherwise. Policy.Read.ConditionalAccess is optional and never excess.
+func TestPIMGroupReadsRequiredWithWrites(t *testing.T) {
+	r := newRig(t, append(append([]string{}, baseline...), "User.Create", pimElig)...)
+	res := r.verify(v1.RightsFamily_RIGHTS_FAMILY_ENTRA_USER_CREATE)
+	m := byKind(res, v1.FindingKind_FINDING_KIND_MISSING_RIGHT)
+	if len(m) != 1 || permValue(m[0]) != pimAssign || m[0].Severity != v1.FindingSeverity_FINDING_SEVERITY_BLOCK ||
+		res.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_REFUSED {
+		t.Fatalf("%v %v", res.Verdict, res.Findings)
+	}
+	// No write feature enabled: not required, so not reported missing.
+	res = newRig(t, baseline...).verify()
+	if len(res.Findings) != 0 {
+		t.Fatalf("%v", res.Findings)
+	}
+}
+
+func TestConditionalAccessReadIsNotExcess(t *testing.T) {
+	r := newRig(t, append(append([]string{}, baseline...), "User.Create", pimElig, pimAssign, "Policy.Read.ConditionalAccess")...)
+	res := r.verify(v1.RightsFamily_RIGHTS_FAMILY_ENTRA_USER_CREATE)
+	if res.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_PASS || len(res.Findings) != 0 {
+		t.Fatalf("%v %v", res.Verdict, res.Findings)
+	}
+}
+
+func TestRoleManagementPolicyWriteIsRefused(t *testing.T) {
+	for _, v := range []string{"RoleManagementPolicy.ReadWrite.Directory", "RoleManagementPolicy.ReadWrite.AzureADGroup", "RoleManagementPolicy.ReadWrite.EntraAppRole"} {
+		if !rights.DenyListed(v) {
+			t.Errorf("%s must be deny-listed", v)
+		}
+		res := newRig(t, append(append([]string{}, baseline...), v)...).verify()
+		if res.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_REFUSED || len(byKind(res, v1.FindingKind_FINDING_KIND_ENTRA_DENY_LIST_PERMISSION)) != 1 {
+			t.Errorf("%s: %v %v", v, res.Verdict, res.Findings)
+		}
+	}
+}
+
 func TestCorrectlyGrantedAppPasses(t *testing.T) { // AC5
-	r := newRig(t, append(append([]string{}, baseline...), "User.Create", "Group.Create")...)
+	r := newRig(t, append(append([]string{}, baseline...), "User.Create", "Group.Create", pimElig, pimAssign)...)
 	res := r.verify(v1.RightsFamily_RIGHTS_FAMILY_ENTRA_USER_CREATE, v1.RightsFamily_RIGHTS_FAMILY_ENTRA_GROUP_CREATE)
 	if res.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_PASS || !res.WriteGateOpenable || len(res.Findings) != 0 {
 		t.Fatalf("verdict %v gate %v findings %v", res.Verdict, res.WriteGateOpenable, res.Findings)
@@ -227,7 +269,7 @@ func TestExtraAndMissingPermissionsReported(t *testing.T) { // AC3
 			perms = append(perms, p)
 		}
 	}
-	perms = append(perms, "Group.Create", "Mail.Read")
+	perms = append(perms, "Group.Create", "Mail.Read", pimElig, pimAssign)
 	r := newRig(t, perms...)
 	res := r.verify(v1.RightsFamily_RIGHTS_FAMILY_ENTRA_USER_CREATE)
 
@@ -264,7 +306,7 @@ func TestExtraAndMissingPermissionsReported(t *testing.T) { // AC3
 }
 
 func TestMissingWriteRowOnlyWarns(t *testing.T) {
-	r := newRig(t, baseline...)
+	r := newRig(t, append(append([]string{}, baseline...), pimElig, pimAssign)...)
 	res := r.verify(v1.RightsFamily_RIGHTS_FAMILY_ENTRA_GROUP_CREATE)
 	if res.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_PASS || len(res.Findings) != 1 ||
 		res.Checks[1].Outcome != v1.CheckOutcome_CHECK_OUTCOME_WARN {
