@@ -7,7 +7,7 @@
 -- transaction exists. The tenant is part of the key text instead (class, tenant, principal), so the
 -- same principal ID in two tenants never shares a bucket. Only the owning package may name the table.
 --
--- Refill and take are one statement on the database clock (now()), never a node's clock, and the
+-- Refill and take are one statement on the database clock (clock_timestamp() after the row lock, never now()), never a node's clock, and the
 -- ON CONFLICT row lock makes concurrent takes on one key serial.
 --
 --   tokens      the bucket level as of refilled_at (fractional: refill is rate/60 per second).

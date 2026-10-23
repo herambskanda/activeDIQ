@@ -39,17 +39,21 @@ var _ PrincipalStore = (*PGStore)(nil)
 // Shared reports that every node sees this store's buckets (see RequireShared).
 func (*PGStore) Shared() bool { return true }
 
-// take refills and takes in one statement, on the database clock. The upsert locks the conflicting row,
+// take refills and takes in one statement, on the database clock. The clock is clock_timestamp(), read
+// after the row lock is won, never now(): now() is the transaction start, so a waiter queued on the row
+// would carry an earlier time than the holder it waited for and write it back, crediting the same
+// interval twice. greatest(b.refilled_at, ...) keeps the stored time from ever going backwards. Each
+// read can differ by microseconds; that only under-credits refill, never over-credits. The upsert locks the conflicting row,
 // so concurrent takes on one key run one after the other and each sees the previous one's tokens; no
 // read-then-write window exists. A refused take still stores the refilled level, which is what makes the
 // next refill start from now. admitted is read back from the row this statement wrote.
 const take = `INSERT INTO public.platform_rate_buckets AS b (key, tokens, admitted, refilled_at)
-VALUES ($1, $3::float8 - 1, true, now())
+VALUES ($1, $3::float8 - 1, true, clock_timestamp())
 ON CONFLICT (key) DO UPDATE SET
-  tokens = least($3::float8, b.tokens + greatest(0, extract(epoch FROM now() - b.refilled_at)) * $2::float8 / 60.0)
-    - CASE WHEN least($3::float8, b.tokens + greatest(0, extract(epoch FROM now() - b.refilled_at)) * $2::float8 / 60.0) >= 1 THEN 1 ELSE 0 END,
-  admitted = least($3::float8, b.tokens + greatest(0, extract(epoch FROM now() - b.refilled_at)) * $2::float8 / 60.0) >= 1,
-  refilled_at = now()
+  tokens = least($3::float8, b.tokens + greatest(0, extract(epoch FROM greatest(b.refilled_at, clock_timestamp()) - b.refilled_at)) * $2::float8 / 60.0)
+    - CASE WHEN least($3::float8, b.tokens + greatest(0, extract(epoch FROM greatest(b.refilled_at, clock_timestamp()) - b.refilled_at)) * $2::float8 / 60.0) >= 1 THEN 1 ELSE 0 END,
+  admitted = least($3::float8, b.tokens + greatest(0, extract(epoch FROM greatest(b.refilled_at, clock_timestamp()) - b.refilled_at)) * $2::float8 / 60.0) >= 1,
+  refilled_at = greatest(b.refilled_at, clock_timestamp())
 RETURNING b.tokens, b.admitted`
 
 // Take implements PrincipalStore. Any database error is returned, never turned into an admission.

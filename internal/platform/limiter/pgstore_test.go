@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/store"
@@ -117,6 +118,44 @@ func TestTakeIsAtomicUnderConcurrency(t *testing.T) {
 		wg.Wait()
 		if got := admitted.Load(); got != int32(lim.Burst) {
 			t.Fatalf("%d of %d concurrent takes admitted, want exactly the burst (%d)", got, callers, lim.Burst)
+		}
+	})
+}
+
+// A real refill rate under heavy contention must not credit the same interval twice (the refill clock
+// must not run backwards when waiters queue on the row lock). Admissions are bounded by
+// burst + rate*elapsed.
+func TestRefillIsNotDoubleCreditedUnderContention(t *testing.T) {
+	eachDB(t, func(t *testing.T, d *storetest.Database) {
+		stores := []*PGStore{node(t, d), node(t, d)}
+		lim := Limit{Rate: 60, Burst: 1}
+		const callers = 48
+		const run = 3 * time.Second
+		var admitted atomic.Int32
+		var wg sync.WaitGroup
+		begin := time.Now()
+		deadline := begin.Add(run)
+		for i := 0; i < callers; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for time.Now().Before(deadline) {
+					dec, err := stores[i%2].Take(context.Background(), "contend", lim)
+					if err != nil {
+						t.Errorf("take: %v", err)
+						return
+					}
+					if dec.Allowed {
+						admitted.Add(1)
+					}
+				}
+			}()
+		}
+		wg.Wait()
+		elapsed := time.Since(begin).Seconds()
+		max := float64(lim.Burst) + float64(lim.Rate)*elapsed/60 + 1
+		if got := admitted.Load(); float64(got) > max {
+			t.Fatalf("%d admitted in %.2fs, want at most %.2f (burst + rate*elapsed + 1)", got, elapsed, max)
 		}
 	})
 }
