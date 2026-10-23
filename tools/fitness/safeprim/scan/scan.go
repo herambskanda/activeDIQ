@@ -286,9 +286,9 @@ func modulePath(gomod string) (string, error) {
 }
 
 // nativeExts are the non-Go source files the go tool compiles into a package: assembly, C, C++,
-// Objective-C, Fortran, SWIG and prebuilt objects (.syso). Matching is case-insensitive, so .s and
-// .S are both covered.
-var nativeExts = map[string]bool{".s": true, ".c": true, ".h": true, ".syso": true, ".cc": true, ".cpp": true,
+// Objective-C, Fortran, SWIG and prebuilt objects (.syso). Matching is case-insensitive, so .s, .S and
+// .sx (cgo assembly, as go/build treats it) are covered.
+var nativeExts = map[string]bool{".s": true, ".sx": true, ".c": true, ".h": true, ".syso": true, ".cc": true, ".cpp": true,
 	".cxx": true, ".hh": true, ".hpp": true, ".hxx": true, ".m": true, ".mm": true, ".f": true, ".f90": true,
 	".for": true, ".swig": true, ".swigcxx": true}
 
