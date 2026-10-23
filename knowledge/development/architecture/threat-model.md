@@ -1,11 +1,11 @@
 ---
 title: "Threat model v0 — activeDIQ security architecture"
 date: 2026-10-02
-updated: 2026-10-22
+updated: 2026-10-23
 status: review
 owner: heramb
 author: security-architect
-ticket: old T-0007, T-0032, T-0044, T-0051, T-0055, T-0108
+ticket: old T-0007, T-0032, T-0044, T-0051, T-0055, T-0108, T-0179
 binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), blueprint v0 (review), safe-primitives.md (review)
 sources_last_checked: 2026-10-02
 ---
@@ -324,6 +324,10 @@ proof is direction, not a control; the proof table says which ticket builds each
 | TM-TB6-T7 | D | Flood in either direction | Per-component stream limits and backpressure `[OPEN → connector spec]` | Conformance suite (P3) | — |
 | TM-TB6-T8 | E | A connector certificate reaches non-fleet APIs | The fleet listener mounts only fleet services; console/API routes are not on it; every RPC except `Enroll` requires a client certificate | TM-F-FLEET, TM-F-PORTS | — |
 | TM-TB6-T9 | E | A revoked connector keeps working | Revocation is checked on every stream (re)establishment and kills open streams (DM-12 lifecycle) | TM-F-FLEET | — |
+| TM-TB6-T10 | E | **Method confusion.** X9 sends a `CallOpen.method` that is not a component→server method of its bound contract: a server→component method, another contract's method (an agent's, say), `grpc.health.v1`, `grpc.reflection.v1`, channelz, or a case, slash or suffix variant of an allowed name. If the gateway hands it to a general gRPC server, TM-TB6-T8 is bypassed through the tunnel. The mirror case: a compromised server (X6) opens a non-contract service on the component | TM-D24 rule A: the server picks the bound contract from the component kind in the SAN. Each tunnel has its own dispatch table built from that contract's descriptor, split by direction, and matched byte for byte. The registrar is per tunnel and is never the process's `grpc.Server`. Every refusal is one fixed `PERMISSION_DENIED`. `fleet/dial` does the same on the component | TM-F-FLEET (method corpus) | X9 can still call every component→server method of its own contract, for its own tenant and component. That is the contract's surface, and contract review bounds it (P3) |
+| TM-TB6-T11 | T/D | **call_id hijack.** X9, or a buggy peer, opens a call with the other side's parity, reuses a live or finished id, sends a frame its role may not send, or sends on `call_id` 0. Goal: deliver a response to the wrong waiting call (operation X records Y's outcome, which corrupts the audit trail, §11) or kill the server's calls. Or a component with a cloned identity opens a second tunnel and receives responses to calls made on the first | TM-D24 rule B: call state is keyed by (tunnel instance, `call_id`) and dies with the tunnel. Each side opens only its own parity, with strictly increasing ids. A per-role, per-state frame table applies. `call_id` 0 carries `FlowCredit` only. A violation closes the tunnel and is audited. A pending call on a dead tunnel fails `UNAVAILABLE` with an unknown outcome, never success, and is never rebound | TM-F-FLEET (frame-sequence corpus) | A compromised component can still lie in its responses (as TM-TB12-T8). It can close its own tunnel, which denies service only to itself |
+| TM-TB6-T12 | T/I | **Untrusted `CallClose` text.** X9 puts CR/LF, ANSI escapes, bidi overrides, invalid UTF-8, HTML or megabytes into `status_message`. Goals: forge log lines, inject into the console or a SIEM, mislead an administrator in an audit event, or exhaust memory. The reverse direction: the server leaks internal error text to a component host | TM-D24 rule C: the gateway bounds the text to 1 KiB on a rune boundary, repairs invalid UTF-8, and escapes control, C1 and bidi characters. It is never a format string, never HTML, and never part of an audit summary; it is kept only as a typed `component_reported` field. An out-of-range `status_code` becomes `UNKNOWN`. Server-sent text is a fixed string per code | TM-F-FLEET (hostile-text corpus), TM-F-SECRETOUT | The text can still be false. The console labels it as reported by the component |
+| TM-TB6-T13 | S/I | **CA-bundle content.** (a) The stored installation-CA material has the CA private key concatenated into it, so `EnrollResponse.ca_bundle_pem` hands TM-A11 to every enrolling host. That host can then mint identities and impersonate the server. (b) A bundle with extra or malformed blocks is accepted silently: Go's `AppendCertsFromPEM` skips non-`CERTIFICATE` blocks and certificates it cannot parse ([doc](https://pkg.go.dev/crypto/x509#CertPool.AppendCertsFromPEM); source read at go1.27.0). An empty pool left as `nil` means the host root set ([`tls.Config.RootCAs`](https://pkg.go.dev/crypto/tls#Config)). (c) X2 sits in the path of the first `Enroll`, before anything is pinned, and returns its own CA, which the component then pins for good | TM-D24 rule D: the enrolment material carries a `sha256` pin of the installation CA's SubjectPublicKeyInfo. The component checks the `Enroll` server against the pin before it sends the token. The server re-encodes parsed CA certificates and never passes stored bytes through. The component parses the bundle strictly and requires the pinned CA in it. Any violation fails enrolment and persists nothing | TM-F-FLEET (bundle corpus, pin-mismatch MITM) | Enrolment material copied through a channel the attacker controls (pin and token replaced together). Same exposure as TM-TB6-T1 |
 
 ### 5.7 TB7 — Connector ↔ Graph and the Entra token endpoint
 
@@ -403,7 +407,7 @@ proof is direction, not a control; the proof table says which ticket builds each
 ### 5.12 TB12 — DC agent and file-server agent ↔ `fleet` [M3]; password filter ↔ agent [M4]
 
 Rows T1–T9 cover the `addc` module on DCs and the password filter. Rows T10–T15 cover the
-`fileserver` module on file servers (BP §5.5, §13). A compromised server can send commands to
+`fileserver` module on file servers (BP §5.5, §13). Row T16 covers the shared `Tunnel` (TM-D24). A compromised server can send commands to
 both kinds of agent, so both command sets are closed (TM-D13).
 
 | ID | STRIDE | Threat | Control | Proof | Residual |
@@ -423,6 +427,7 @@ both kinds of agent, so both command sets are closed (TM-D13).
 | TM-TB12-T13 | E | The file-server agent becomes Tier 0, or holds host-wide rights | The `fileserver` module refuses to start on a DC. `SYSVOL`, `NETLOGON` and any DC share can never be a root: writing them plants scripts or policy that every DC and client runs. The agent runs as a virtual service account or gMSA with Modify + WRITE_DAC on its roots only, never LocalSystem and never holding SeBackupPrivilege, SeRestorePrivilege or SeTakeOwnershipPrivilege (each bypasses every ACL on the host). Its tier is the file server's tier (Tier 1). Final identity in the M3 `fileserver` spec | TM-F-AGENTCMD, TM-F-HOST | — |
 | TM-TB12-T14 | R | ACL changes cannot be attributed or undone | Each command carries the operation ID and acting principal; the agent records the before and after security descriptors, so the change is audited and undoable (ENH-04) | TM-F-AUDIT | — |
 | TM-TB12-T15 | I | File-access events and ACL reads expose who can read what | Stored as inventory under RBAC trimming (TM-TB1-T8); per-agent identity in every record | TM-F-AUTHZ | — |
+| TM-TB12-T16 | S/E/T | Agents ride the same `Tunnel`, so TM-TB6-T10 to T13 apply to them. In addition, a DC agent opens `activediq.connector.v1` methods or another module's methods, or a connector opens agent methods, by naming them in `CallOpen.method` | TM-D24 applies unchanged. The bound contract comes from the component kind in the SAN (`addc`, `fileserver`, connector), never from the method string, so one kind's certificate can reach no other kind's contract. The agent pins the CA under rule D, which is TM-TB12-T2's control at first contact | TM-F-FLEET (cross-kind method cases) | As TM-TB6-T10 to T13 |
 
 ### 5.13 TB13 — Credential provider (LogonUI) ↔ SSPR API [M4]
 
@@ -1684,6 +1689,86 @@ details, API responses, metrics or exports (grep of every sink after the test ru
 linter rejects a response schema with a secret-typed field; credentials in query strings are
 refused.
 
+### 9.8 Fleet tunnel and enrolment trust — DECISION TM-D24 (T-0179)
+
+`activediq.fleet.v1` (T-0152, [`fleet-contract.md`](fleet-contract.md)) multiplexes calls of a bound
+contract over one `Tunnel` stream, using `CallOpen.method` and `call_id`. Without the rules below,
+the multiplexer is a second, unauthenticated router inside an authenticated stream. The rules bind
+the server gateway (`fleet`) and the component side (`fleet/dial`) alike. Here, "peer" means the
+side that sent the frame.
+
+**A. Dispatch (TM-TB6-T10, TM-TB12-T16).**
+1. The server picks the bound contract from the component kind in the certificate SAN: connector →
+   `activediq.connector.v1`, and each agent module → that module's contract. Nothing the component
+   sends selects a contract.
+2. Each tunnel gets two allow-sets of full method names, built when the contract binds from the
+   generated service descriptor: one for server→component and one for component→server. A
+   `CallOpen` is dispatched only if `method` equals, byte for byte, an entry in the opener's
+   set. There is no normalisation, prefix match, case folding or fallback to an unknown-service
+   handler.
+3. Component-opened calls go to a per-tunnel `ServiceRegistrar` that holds only that contract's
+   component→server handlers. It is never the process's `grpc.Server`. Health, reflection,
+   channelz, admin and every other service are never registered on it.
+4. A refused method gets `CallClose{PERMISSION_DENIED}` with one fixed message, the same for an
+   unknown method, a wrong direction and a wrong contract, so methods cannot be enumerated. A
+   `method` longer than 256 bytes, or not valid UTF-8, is a protocol error (rule B5).
+5. `fleet/dial` applies rules 2 to 4 on the component. It serves only the server→component
+   methods of the contract it implements.
+
+**B. Call identity (TM-TB6-T11).**
+1. Call state is keyed by (tunnel instance, `call_id`). It is never keyed by component alone, and
+   it is discarded when the tunnel ends.
+2. The server opens odd ids and the component opens even ids. Each side's ids strictly increase,
+   and an id is never reused, even after its call ends.
+3. Only the opener sends `open`, `half_close` and `cancel` on a call, and only the callee sends
+   `close`. Either side may send `data` (the opener only before its `half_close`) and `credit`.
+   `call_id` 0 carries only `FlowCredit`.
+4. A frame for an id that this side has ended (cancelled or closed) and that is at or below the
+   peer's highest opened id is in flight. It is dropped, not counted as an error.
+5. Any other violation is a **protocol error**: a wrong-parity or non-increasing `open`, a frame
+   on an id that was never opened, a frame the sender's role or the call's state forbids, or any
+   other body on `call_id` 0. A protocol error closes the whole tunnel. It is audited against the
+   component identity and counted on the component's health.
+6. When a tunnel ends, every call pending on it fails `UNAVAILABLE`. The operation step's outcome
+   is **unknown**, never success, and is reconciled as ADR-0005 directs. A pending call is never
+   rebound to another tunnel, even one for the same component.
+7. Concurrent open calls per tunnel are bounded, with the numbers set alongside TM-TB6-T7.
+
+**C. Status text (TM-TB6-T12).**
+1. `CallClose.status_message` from a component is untrusted text. The gateway truncates it to
+   1 KiB on a rune boundary, replaces invalid UTF-8, and escapes C0 and C1 controls and the bidi
+   controls U+202A–U+202E and U+2066–U+2069.
+2. It is never a format string. It is logged only as a structured field, through the encoder, and
+   never as HTML. It never appears in an audit event's summary; it may be kept in a typed
+   `component_reported` field. Nothing decides on it: no retry, outcome or authorisation depends
+   on it.
+3. A `status_code` outside the `google.rpc.Code` range 0–16 becomes `UNKNOWN`.
+4. Text the server sends is a fixed string per code, never an internal error string (api-design).
+
+**D. Enrolment trust and the CA bundle (TM-TB6-T13, TM-TB12-T2).**
+1. **Pin before token.** The enrolment material shown once to the administrator carries, next to
+   the token, `sha256:<hex>` of the installation CA's SubjectPublicKeyInfo. The pin is not
+   secret. This is the pattern of kubeadm's `--discovery-token-ca-cert-hash`, "calculated over
+   the bytes of the Subject Public Key Info (SPKI) object (as in RFC7469)"
+   ([kubeadm join](https://kubernetes.io/docs/reference/setup-tools/kubeadm/kubeadm-join/);
+   [RFC 7469](https://www.rfc-editor.org/rfc/rfc7469)). The component sends the token only
+   after the `Enroll` server's certificate chains to a CA whose SPKI matches the pin. Shipped code
+   has no option to skip this check.
+2. **Server.** The gateway builds `ca_bundle_pem` from parsed `x509.Certificate`s, re-encoded
+   as `CERTIFICATE` blocks with no headers. It never passes stored bytes through. Every
+   certificate must be a CA (`BasicConstraintsValid`, `IsCA`, `KeyUsageCertSign`), and the
+   pinned CA must be among them. Otherwise the gateway refuses `Enroll` with the generic error and
+   raises an installation alert. Stored CA material that contains a private-key block is handled
+   as a suspected TM-A11 exposure.
+3. **Component.** The component parses the bundle strictly. Every PEM block must be
+   `CERTIFICATE`, have no headers and parse. Nothing but whitespace may surround the blocks. The
+   bundle holds 1 to 8 certificates in at most 64 KiB, each one a CA, and one of them matches the
+   pin. Any violation fails enrolment, and nothing is persisted, not even the leaf. Raw bundles
+   never go through `AppendCertsFromPEM`, and `RootCAs` is never `nil`.
+
+**Proof:** TM-F-FLEET (§15). The owners are T-0155 (D2), T-0158 (D1, D3, A5) and T-0209 (A1–A4, B,
+C).
+
 ---
 ## 10. Update integrity — DECISION TM-D12
 
@@ -1859,7 +1944,7 @@ Existing proofs this document relies on: FF-SP1–SP9 (`tools/fitness/safeprim`)
 | TM-F-T0GUARD | The connector refuses `Apply` on a `tier0` target even when the server asks; Plan refuses too; Entra `tier0` (E1–E5) is refused, as are AD objects correlated to it (C16) (§6.2) | Lab, both transports | T-0066 (directory-engineer) | TB3-T10, TB6-T4, TB7-T4, TB7-T11, TB17-T4 |
 | TM-F-HYBRID | A forged, SOA-transferred, SID-mismatched, unattested or once-cloud-only correlation authorises anything; a correlation first eligible during a post-attestation `open`/`stale` lapse becomes `matched` without re-confirmation; an install-time correlation (present before the first attestation, not once cloud-only) fails to become `matched` on that attestation; `tenant-owner` crosses a correlation; the attestation flow keeps a token (§6.8). TM-D19 (§6.9): an Entra-only session holds a correlation-derived AD grant; an authority factor enrols without AD-plane proof or owner approval; an Entra-side method reset touches the activeDIQ factor; a less-privileged technician resets a console-backing object | CI, fake Graph + fake IdP + Samba | T-0067 (directory-engineer, with `authz`) | TB7-T8 to T13, TB8-T8 |
 | TM-F-ANON | Anonymous routes of the built router ≠ the reviewed allow-list (§7.6) | CI | `fitness-api` A4 (T-0018) | TB2-T2, TB2-T10 |
-| TM-F-FLEET | Any RPC but `Enroll` succeeds without a client certificate; an enrollment token works twice or after expiry; a connector accepts an unpinned server; a revoked component keeps a stream; the fleet contract gains a secret-bearing message type outside operation payloads | CI (P3 harness) | T-0069 (backend-engineer) | TB6, TB12-T1/T2 |
+| TM-F-FLEET | Any RPC but `Enroll` succeeds without a client certificate; an enrollment token works twice or after expiry; a connector accepts an unpinned server; a revoked component keeps a stream; the fleet contract gains a secret-bearing message type outside operation payloads. **Tunnel (TM-D24, §9.8).** (A) Some `CallOpen.method` reaches a handler although it is outside the opener's direction set of the bound contract. The corpus: another contract's method (including the cross-kind cases connector↔`addc`↔`fileserver`), a server→component method opened by the component, `grpc.health.v1`, `grpc.reflection.v1`, channelz, case, slash and suffix variants of an allowed name, and a name over 256 bytes or not valid UTF-8. Or the refusals differ in code or text, or `fleet/dial` serves a method outside its contract. (B) Some violation leaves the tunnel open, or no audit event names the component. The corpus: a wrong-parity `open`, a reused or non-increasing id, a frame on an id never opened, a frame the sender's role or the call's state forbids, and a non-`FlowCredit` body on `call_id` 0. Also fails: an in-flight frame after this side's cancel or close closes the tunnel; a response reaches a call on another tunnel; a pending call is rebound after its tunnel drops; or it completes with any outcome but unknown. (C) A component `status_message` with CR/LF, ANSI escapes, bidi controls, invalid UTF-8, HTML or 1 MiB of text reaches a log line, audit summary, API response or console view unbounded or unescaped, or outside a `component_reported` field. Or a `status_code` outside 0–16 maps to anything but `UNKNOWN`. (D) The gateway serves an `Enroll` whose `ca_bundle_pem` holds anything but header-free `CERTIFICATE` blocks of CA certificates that include the pinned CA. The corpus: a `PRIVATE KEY` or `RSA PRIVATE KEY` block, PEM headers, trailing bytes, a non-CA certificate, zero certificates, more than 8 certificates or more than 64 KiB. Or a component accepts such a bundle, or a bundle without the pinned CA. Or a component sends its token to an `Enroll` server whose CA SPKI does not match the pin (MITM fixture). Or a pinned dial ever uses the host root set | CI (P3 harness) | T-0069 (backend-engineer); subjects T-0155, T-0158, T-0209 | TB6, TB12-T1/T2, TB12-T16 |
 | TM-F-NTLM | Any outbound NTLM attempt from the activeDIQ host, with NTLM blocked domain-wide or a planted UNC `homeDirectory` (§9.6) | Windows lab | T-0068 (directory-engineer) | TB3-T2, TB9-T2 |
 | TM-F-SEAL | A sealed value opens after being moved to another tenant, row or column; a DEK unwraps under another tenant's context (§9.2) | CI | T-0070 (backend-engineer) | TB4-T6/T7, TB5-T2, TB7-T1 |
 | TM-F-AUDIT | Runtime role can UPDATE/DELETE/TRUNCATE audit; an edited, deleted or reordered event verifies; a checkpoint is not anchored in SIEM and export (§11) | CI + catalog | T-0133 (fitness-audit; needs T-0132 chain) | TB1-T5, TB4-T3/T4, TB15-T5 |
@@ -2032,9 +2117,14 @@ External, in order of first use:
 66. https://www.rfc-editor.org/rfc/rfc9110#section-9.3.1
 67. https://www.rfc-editor.org/rfc/rfc4511#section-4.6
 68. https://learn.microsoft.com/en-us/training/modules/plan-design-integration-of-enterprise-apps-for-sso/5-design-implement-app-management-roles
+69. https://kubernetes.io/docs/reference/setup-tools/kubeadm/kubeadm-join/
+70. https://www.rfc-editor.org/rfc/rfc7469
+71. https://pkg.go.dev/crypto/x509#CertPool.AppendCertsFromPEM
+72. https://pkg.go.dev/crypto/tls#Config
 
 ## Changelog
 
+- 2026-10-23 · T-0179 (from the T-0152 review). New tunnel-level rows TM-TB6-T10 to T13: `CallOpen.method` confusion, `call_id` hijack, untrusted `CallClose` text, and CA-bundle content (including first-`Enroll` MITM). New row TM-TB12-T16: agents on the same tunnel, cross-kind methods. New §9.8 DECISION TM-D24: rules A (dispatch), B (call identity), C (status text) and D (CA pin before token; CA bundle built and parsed strictly). TM-F-FLEET gains failing conditions (A) to (D). New subject ticket T-0209, the tunnel multiplexer; D goes to T-0155 and T-0158.
 - 2026-10-22 · T-0108. §6.2 adds TM-D23. It confirms connector contract v1.1 D10 (the Tier-0 context, F1 to F6), D11 (the write gate and override), and D16 (statement age 15 minutes, verification age 26 hours). It adds tightenings 7 to 11: `computed_at` is an as-of time; the connector's set ratchets, with `correlated_tier0` and a `tier0_set_shrink` record; override admissions are logged; direct C9 links are read live; `tier0_after_write` raises an alert. An unexpired `ENTRA_PASSWORD_CREDENTIAL` becomes EV3 block. §6.4 states how C16, E5 and designations are enforced. TM-TB6-T4's residual names TM-R14 and TM-R15. §16.1 adds TM-R14 (R-T0CTX-1), TM-R15 (D11), TM-R16 (R-T0SET-1) and TM-R17 (R-T0RACE-1). Contract changes are routed to T-0122. Sources 67 and 68 added.
 - 2026-10-22 · T-0080. Owners of the earlier-board proofs and follow-ups re-cut onto live tickets: T-0130 (operation fitness O1–O8), T-0131 (operation kernel), T-0132 (audit chain), T-0133 (fitness-audit, TM-F-AUDIT), T-0134 (blob probe, TM-Q9), T-0135 (log/metric/cache probe, TM-Q10), T-0136 (TM-F-HOST), T-0137 (TM-F-PORTS), T-0138/T-0139 (ENH-07 spec and TM-F-UPDATE), T-0140/T-0141 (release signing design and HSM decision prep), T-0142/T-0143/T-0144 (agent host, `fileserver` spec, TM-F-AGENTCMD), T-0145/T-0146 (password-filter spike and fail-mode decision prep), T-0147 (credential provider), T-0148 (CBT acceptance), T-0149 (SD primitive), T-0150 (export encoders), T-0151 (E2.11 migration spec). Existing fitness jobs are named by path. Remaining `old T-xxxx` marks are citations of sources and history only. No control, threat or decision changed.
 - 2026-10-22 · T-0055. Ticket references swept to the live board. Proof owners filed before the re-cut as old T-0053 to old T-0056 are re-filed as T-0066–T-0073 (TM-F-RIGHTS/T0GUARD, HYBRID, NTLM, FLEET, SEAL, EGRESS, AUTHZ, SESSION/SSO/ABUSE); the Entra lab claims G1–G10 are T-0075, lab confirmation T-0076, FEAS corrections T-0077, DM alignment T-0078, security-commitments decision prep T-0079. API fitness rows name the live `fitness-api` tickets (T-0011, T-0017, T-0018). Every other earlier-board ID is marked `old T-xxxx`; T-0080 re-cuts their owners. No control, threat or decision changed.
