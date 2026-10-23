@@ -84,7 +84,7 @@ func TestOracleRenderParsedByGoLDAP(t *testing.T) {
 // the same value through the strict parser.
 func TestOracleGoLDAPEscapeParsedByDN(t *testing.T) {
 	for _, v := range hostileValues {
-		if !strings.ContainsRune(v, 0) && !isValidUTF8(v) {
+		if !isValidUTF8(v) {
 			continue
 		}
 		text := "CN=" + ldap.EscapeDN(v) + ",DC=corp,DC=example"

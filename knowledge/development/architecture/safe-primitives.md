@@ -256,7 +256,7 @@ reveals whether an out-of-scope DN exists (LF-36).
 
 - Only the connector root `internal/connector/` imports the LDAP library (import-boundary rule,
   FF-SP1), so `ldapfilter` implements RFC 4515 itself.
-- Banned everywhere except the go-ldap round-trip oracle test under `internal/connector/ldap`: the
+- Banned everywhere except the go-ldap round-trip oracle test under `internal/connector/ad`: the
   library's filter compiler and escaper (go-ldap `CompileFilter`, `EscapeFilter`); constructing a search request with a filter string (go-ldap `NewSearchRequest`,
   `SearchRequest{Filter:…}`) outside the connector; in tier X, `DirectorySearcher` and the string
   `SearchRequest` constructors of `System.DirectoryServices.Protocols` (BannedApiAnalyzers).
@@ -1300,7 +1300,7 @@ except the PowerShell quoting rules, which are confirmed in PowerShell's source 
 | Topic | Fixed here (stack-agnostic) | Binding now: ratified ADR-0001 (Go S/A, Rust N, .NET sidecar X, TypeScript W, PostgreSQL) | If ADR-0001 is amended |
 | --- | --- | --- | --- |
 | Filters | AST, canonical renderer, parser rules, LF vectors | Go `ldapfilter`; renders a string because go-ldap's search request takes one; round-trip oracle via go-ldap's parser | .NET server: same renderer feeding S.DS.P; `DirectorySearcher` banned |
-| DNs | grammar, rendering, AD rules, DN vectors | Go `internal/directory/dn`; implements RFC 4514 itself and does **not** wrap go-ldap's `ParseDN`, because ADR-0002 keeps protocol libraries in the connector root (blueprint §7.4). The go-ldap round-trip oracle runs from a test under `internal/connector/ldap` | same contract in the chosen language |
+| DNs | grammar, rendering, AD rules, DN vectors | Go `internal/directory/dn`; implements RFC 4514 itself and does **not** wrap go-ldap's `ParseDN`, because ADR-0002 keeps protocol libraries in the connector root (blueprint §7.4). The go-ldap round-trip oracle runs from a test under `internal/connector/ad` | same contract in the chosen language |
 | Codecs | sentinels, grammars, vectors | Go `attr`; Rust tier N implements `Secret` and any codec it parses, running the same corpus | each tier that decodes AD values runs the corpus |
 | PowerShell | invariant, PSX/PSQ vectors | route A: tier-X sidecar with `AddCommand`/`AddParameter`; route B needs an ADR amendment (F1 bans shipped `.ps1`) | .NET server: in-process SMA under the same rules |
 | Processes | `proc` contract, PROC vectors | Go `proc` + `x/sys/windows`; `ArgumentList` inside the sidecar | — |
