@@ -11,7 +11,7 @@ COMPOSE      := docker compose -f $(LAB_DIR)/docker-compose.yml
 LAB_SEED_HASH := $(shell cat $(LAB_DIR)/seed/generate.py $(LAB_DIR)/seed/post-start.sh $(LAB_DIR)/samba/entrypoint.sh $(LAB_DIR)/samba/Dockerfile 2>/dev/null | shasum -a 256 | cut -c1-12)
 export LAB_TIER
 
-.PHONY: lab-up lab-reset lab-rebuild lab-down lab-destroy lab-status lab-logs lab-shell lab-test lab-test-unit lab-test-live
+.PHONY: lab-up lab-reset lab-rebuild lab-down lab-destroy lab-status lab-logs lab-shell lab-test lab-test-unit lab-test-live lab-test-connector
 
 lab-up: ## Start the AD lab (provision + seed on first run, ~3-4 min); prints connection details
 	@set -e; t0=$$(date +%s); \
@@ -61,5 +61,8 @@ lab-test-unit: ## Seed-generator unit tests (no Docker needed)
 
 lab-test-live: ## Verify the running lab, then prove lab-reset returns it to the seeded state
 	$(LAB_DIR)/tests/verify.sh
+
+lab-test-connector: ## internal/connector/ad against the running lab (T-0092)
+	go test -count=1 -tags lab ./internal/connector/ad/
 
 lab-test: lab-test-unit lab-test-live ## All lab tests
