@@ -21,8 +21,11 @@ import (
 
 type pinFlags []string
 
-func (p *pinFlags) String() string     { return strings.Join(*p, ",") }
-func (p *pinFlags) Set(v string) error { *p = append(*p, strings.ToLower(strings.TrimSpace(v))); return nil }
+func (p *pinFlags) String() string { return strings.Join(*p, ",") }
+func (p *pinFlags) Set(v string) error {
+	*p = append(*p, strings.ToLower(strings.TrimSpace(v)))
+	return nil
+}
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
