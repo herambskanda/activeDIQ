@@ -221,10 +221,15 @@ On every successful enrolment, re-enrolment and reset:
 
 ### 6.6 Audit
 
-Each of these is an audit event (ADR-0005 audit trail, hash-chained), recording actor type
-`end_user` (or the technician), target GUID, connection, method, source address, and never a code
-or seed: `authenticator.enrol.started`, `.confirmed`, `.failed` (reason), `.refused` (reason),
-`.replaced`, `.reset` (with technician and verification factor), `.notice.sent`, `.notice.failed`,
+Each of these is an audit event (ADR-0005 audit trail, hash-chained), recording the actor (a
+directory-user principal: connection + GUID; for a reset, the technician as actor with the user as
+target), target GUID, connection, method, source address, and never a code or seed. Full event
+names, used verbatim by builders and tests:
+`authenticator.enrol.started`, `authenticator.enrol.confirmed`, `authenticator.enrol.failed` (reason),
+`authenticator.enrol.refused` (reason), `authenticator.enrol.replaced`,
+`authenticator.reset.done` (with technician and verification factor),
+`authenticator.notice.sent`, `authenticator.notice.failed`, `authenticator.notice.abandoned`,
+`authenticator.notice.resent` (tenant-owner "resend notice", 6.5),
 `callerverification.issued` / `.verified` / `.failed` / `.expired` / `.cancelled`. The reset audit
 event carries the verification factor, the factor's age and the challenge ID (DM-38.I4).
 
@@ -369,8 +374,8 @@ row). IDs are for traceability.
     contains `authenticator.enrol.confirmed` and `authenticator.notice.sent` (or `.notice.failed`),
     each with actor (directory-user principal), target GUID, connection, method `totp` and source
     address, and no code or seed in any field. Given a confirmed replacement, Then
-    `authenticator.replaced` (carrying the previous enrolment ID) and the notice event are present
-    likewise; Given a technician reset, Then `authenticator.reset` names the technician, verification
+    `authenticator.enrol.replaced` (carrying the previous enrolment ID) and the notice event are present
+    likewise; Given a technician reset, Then `authenticator.reset.done` names the technician, verification
     factor and challenge ID.
 26. **AC-TOTP-1** Given a code from the previous, current or next 30-s step, Then it is accepted;
     from two steps away, Then refused; the same step used twice, Then refused the second time.
