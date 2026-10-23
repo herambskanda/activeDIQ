@@ -5,7 +5,7 @@ updated: 2026-10-23
 status: review
 owner: heramb
 author: solution-architect
-ticket: T-0006 (amended by T-0061, T-0145, T-0155, T-0168, T-0129, T-0191)
+ticket: T-0006 (amended by T-0061, T-0145, T-0155, T-0168, T-0129, T-0191, T-0078)
 binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), ADR-0003 (ratified), blueprint v0 (review), safe-primitives.md (review), threat-model.md v0.2 (review; its TM-D decisions bind, TM §0)
 reviewed_by: ad-expert (AD/Entra semantics, see §12)
 ---
@@ -674,8 +674,8 @@ scope.
 - I4 **Authorizing gate.** A correlation is `matched` only while **all** of the following hold.
   Otherwise it is `candidate`: shown in the UI as a possible match with its reason, and never used
   by DM-30.I5, DM-35.I6, DM-36.I2 or I3. `candidate_reason` names the first check that fails, in
-  the order listed. The threat model confirms (a)–(f) and adds (g) (TM-D17,
-  [threat model §6.8](../architecture/threat-model.md)). A correlation that rests on a value a privileged Entra
+  the order listed. The threat model confirms (a)–(f) and adds (g) (TM-D17 rule 4 (g),
+  [threat model §6.8](../architecture/threat-model.md)); rule 5 (h) is I7 and TM-D19 (§6.9) is I6. A correlation that rests on a value a privileged Entra
   admin can write is never evidence of authority.
   - (a) The Entra object's `onPremisesSyncEnabled` is `true`. It is read-only in Graph, whereas
     `onPremisesImmutableId` can be written by certain privileged admin roles
@@ -778,7 +778,7 @@ scope.
     an activeDIQ-held authority factor enrolled with AD-plane proof or `tenant-owner` approval
     (DM-30.I6, DM-37.I3), and console-backing objects are escalation objects (DM-30.I7). Its
     residual, one person controlling both planes at enrolment, is TM-R12.
-- I7 **Authority that never crosses** (TM-D17 rule 5). Whatever its state, a correlation never
+- I7 **Authority that never crosses** (TM-D17 rule 5 (h)). Whatever its state, a correlation never
   carries `tenant-owner` or any `control_plane` permission (DM-33.I3). Those are assigned only to
   the console account itself, through a RoleAssignment whose subject is that account. A group or
   automation-policy subject can never hold them, in either directory, so no membership and no
@@ -2015,6 +2015,7 @@ AC2 was re-checked by script: every ADM ID in scope lock §3.3 (123 IDs) appears
 
 ## Changelog
 
+- 2026-10-23 · T-0078 (TM-Q24). Carries TM-D17 rule 4 (g), rule 5 (h) and TM-D19 into the domain model by name: DM-20.I4 cites rule 4 (g) (a correlation first eligible during a post-attestation `open`/`stale` lapse, `eligibility_class = lapsed`, needs `tenant-owner` re-confirmation; the install-time population does not), DM-20.I6 cites TM-D19 (authority factor, DM-30.I6/I7, DM-37.I3), DM-20.I7 cites rule 5 (h). Hybrid-trust states in DM-10.I7 (`unattested`/`open`/`stale`/`attested`, `first_attested_at`, `tenant_takeover_open`) already match TM-Q24; no semantic change.
 - 2026-10-23 · T-0191 (ADM-143 spec). DM-39 IdentityProvider added. DM-30.I6: the Kerberos alternative applies in v1 because SPNEGO is offered (console-sso.md §9).
 - 2026-10-02 · v0 drafted (T-0006). The ad-expert review was applied (§12, 13 findings), Q3 was closed, and the status moved to `review`.
 - 2026-10-02 · v0 rework after the director's review (§12 R1–R5, N1–N3): DM-23 GpLink, Entra delegation scopes, X11 erasure, derived append-only states, SSO `directory_ref`. Q9 and Q10 were added.
