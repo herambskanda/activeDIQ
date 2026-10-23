@@ -178,6 +178,16 @@ under RLS.
 example, a SyncCursor write is refused if the token is stale.
 **Lifecycle.** `free → held → (renewed) → released | expired`.
 
+### DM-07 RateBucket · P · owner `platform/limiter`
+**Definition.** One token bucket of the per-principal rate limit (threat model §7.8): the budget a
+principal has left in one rate class, shared by every server node so a budget cannot be multiplied
+by the number of nodes (TM-TB2-T7). Global table, no RLS: the limiter runs before any tenant
+transaction exists, so the tenant is part of the key.
+**Key attributes:** `key` (class, tenant, principal) · `tokens` · `refilled_at` · `admitted`.
+**Invariants.** I1 Refill and take are one atomic statement on the database clock. I2 A store
+error refuses the request; it is never admitted. I3 The same principal ID in two tenants has two
+buckets. I4 A multi-node install never uses an in-memory store.
+
 ## 2. Directories
 
 ### DM-10 Connection · T · owner `directory/connection` (model in `directory/model`; written by the `connections` module through `connection`'s Go API, ADR-0003 F1)

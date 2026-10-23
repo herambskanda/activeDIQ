@@ -3,7 +3,16 @@ package limiter
 import (
 	"fmt"
 	"net/netip"
+	"strconv"
+
+	"github.com/skenzeriq/activediq/internal/platform/apihost"
 )
+
+// principalKey names a principal's bucket: class, tenant and ID, each length-prefixed so no value can
+// run into its neighbour ("a","bc" and "ab","c" differ). It holds no NUL, which PostgreSQL text cannot.
+func principalKey(class string, p apihost.Principal) string {
+	return strconv.Itoa(len(class)) + ":" + class + "/" + strconv.Itoa(len(p.Tenant)) + ":" + p.Tenant + "/" + p.ID
+}
 
 // Prefix-length ranges the host may configure (threat model §7.8, per-IP key rule 3).
 const (

@@ -106,3 +106,27 @@ func TestAPIAddrNonLoopbackNeedsTLS(t *testing.T) {
 		}
 	}
 }
+
+// T-0274 acceptance 3: the in-memory principal store with more than one node fails configuration.
+func TestLoadPrincipalStore(t *testing.T) {
+	c, err := config.Load(env(nil))
+	if err != nil || c.Nodes != 1 || c.PrincipalStore != config.PrincipalStorePostgres {
+		t.Fatalf("defaults = %d %q, %v; want 1 node on the shared store", c.Nodes, c.PrincipalStore, err)
+	}
+	if _, err := config.Load(env(map[string]string{config.EnvNodes: "3"})); err != nil {
+		t.Errorf("three nodes on the shared store: %v", err)
+	}
+	if _, err := config.Load(env(map[string]string{config.EnvPrincipalStore: "memory"})); err != nil {
+		t.Errorf("memory on one node: %v", err)
+	}
+	for name, m := range map[string]map[string]string{
+		"memory on two nodes": {config.EnvPrincipalStore: "memory", config.EnvNodes: "2"},
+		"unknown store":       {config.EnvPrincipalStore: "redis"},
+		"zero nodes":          {config.EnvNodes: "0"},
+		"junk nodes":          {config.EnvNodes: "many"},
+	} {
+		if _, err := config.Load(env(m)); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}

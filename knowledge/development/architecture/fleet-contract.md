@@ -164,3 +164,37 @@ mounts the `Fleet` service on the server `Gateway.NewServer` builds and states e
   unused enrollment token is T-0153's.
 - **Not yet wired**: the composer must pass the same `Lifecycle` as `Config.Components` and `Streams`
   (the gateway), and expose Revoke on the API; both belong to the compose/API tickets.
+
+## Tunnel multiplexer (T-0209, TM-D24 A, B, C)
+
+`internal/platform/fleet/{mux,calls,contract,hub,frame,statustext}.go`. Contract-agnostic and free of
+the generated stubs: the compose adapter that serves `Fleet.Tunnel` translates `fleetv1.TunnelFrame` to
+`fleet.Frame` and supplies a `Transport`. One `Mux` is one tunnel instance; `Role` selects the parity
+(server odd, component even), so `fleet/dial` (T-0158) reuses it with `RoleComponent` and the rules exist once.
+
+- **A. Dispatch.** `Bindings` maps the SAN kind to a `Binding{Contract, Serve}` (`Bindings.For`; an
+  unbound kind has no tunnel). `NewContract` builds two exact-match allow-sets from generated service
+  descriptors (server to component, component to server). There is no normalisation. A component open
+  of anything outside its set (another contract, a server-only method, health, reflection, channelz,
+  case, slash or suffix variants, empty) gets one fixed `PERMISSION_DENIED` ("method not available") and
+  no handler runs; a name over 256 bytes or not UTF-8 is a protocol error (B5) and closes the tunnel.
+  Component-opened calls go to a per-tunnel `registrar` that refuses (and fails `NewMux` on) any method
+  outside the contract; it is never a `grpc.Server`. Calls this side opens are checked against its own
+  set before anything is sent.
+- **B. Call identity.** State is `Mux.calls`, keyed by call id inside the tunnel instance, and dies with
+  it. Each side's open ids have its parity and strictly increase; ids are spent even when refused. The
+  per-role, per-state table is in `Mux.handle`. `call_id` 0 carries `credit` only. A frame for a call this
+  side cancelled or closed (still in the tombstone window, 1024 ended calls; a tombstone holds only the id and how the call ended, never its inbox) is dropped; a second `CallData` from the peer on a unary call is a `forbidden` violation, so it is never buffered; any other
+  violation closes the tunnel and calls `Reporter.ProtocolError(identity, Violation)`, a fixed
+  vocabulary with no peer text. Ending a tunnel (`Mux.fail`) fails every pending call `UNAVAILABLE`
+  as a `CallError` with `OutcomeUnknown(err) == true`; `Hub` never moves a call, and a new tunnel of
+  the same component closes the old one. Open calls per direction are bounded (`MaxCalls`, default 256;
+  a peer open beyond it gets `RESOURCE_EXHAUSTED`).
+- **C. Status text.** The peer's `status_code` goes through `NormalizeCode` (0 to 16, else `UNKNOWN`).
+  The error a caller gets carries `FixedText(code)`; the component's text is `SanitizeStatusText`-ed
+  (at most 1 KiB, invalid UTF-8 replaced, controls, bidi, line separators, backslash and HTML
+  metacharacters as `\uXXXX`) and reachable only through `ComponentReported(err)`, for a typed
+  `component_reported` field. It is logged only as the structured `component_reported` attribute and is
+  never in an error string or an audit summary. What the server sends is `FixedText(code)`.
+- **Not here.** Credit accounting and the numeric flow-control limits (TM-TB6-T7); the compose adapter
+  that serves `Fleet.Tunnel`, the audit `Reporter` and the connector `Bindings`; the `fleet/dial` wiring.

@@ -182,6 +182,7 @@ type rig struct {
 	srv   *grpc.Server
 	comps *fakeComps
 	gw    *fleet.Gateway
+	roots *x509.CertPool // trusts the rig's server certificate
 }
 
 func start(t *testing.T, cas fleet.TenantCAs, pool *x509.CertPool, now func() time.Time) *rig {
@@ -196,6 +197,12 @@ func start(t *testing.T, cas fleet.TenantCAs, pool *x509.CertPool, now func() ti
 		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
 	der, _ := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &sk.PublicKey, sk)
 	srvCert := tls.Certificate{Certificate: [][]byte{der}, PrivateKey: sk}
+	srvLeaf, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(srvLeaf)
 	ff := &fakeFleet{}
 	srv, err := g.NewServer(srvCert, func() *x509.CertPool { return pool }, func(r grpc.ServiceRegistrar) {
 		r.RegisterService(ff.desc("activediq.fleet.v1.Fleet"), ff)
@@ -209,12 +216,18 @@ func start(t *testing.T, cas fleet.TenantCAs, pool *x509.CertPool, now func() ti
 	}
 	go func() { _ = srv.Serve(l) }()
 	t.Cleanup(srv.Stop)
-	return &rig{addr: l.Addr().String(), fleet: ff, pool: pool, srv: srv, comps: comps, gw: g}
+	return &rig{addr: l.Addr().String(), fleet: ff, pool: pool, srv: srv, comps: comps, gw: g, roots: roots}
 }
 
 func (r *rig) dial(t *testing.T, client *tls.Certificate) *grpc.ClientConn {
 	t.Helper()
-	conf := &tls.Config{MinVersion: tls.VersionTLS13, InsecureSkipVerify: true} // test server cert is self-signed
+	return r.dialRoots(t, client, r.roots)
+}
+
+// dialRoots dials verifying the server certificate against roots.
+func (r *rig) dialRoots(t *testing.T, client *tls.Certificate, roots *x509.CertPool) *grpc.ClientConn {
+	t.Helper()
+	conf := &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots, ServerName: "localhost"}
 	if client != nil {
 		conf.Certificates = []tls.Certificate{*client}
 	}
@@ -613,5 +626,18 @@ func TestUncooperativeHandlerIsTornDown(t *testing.T) {
 				_ = ss
 			})
 		}
+	}
+}
+
+func TestDialRejectsUntrustedServerCert(t *testing.T) {
+	r := start(t, casByTenant{}, x509.NewCertPool(), time.Now)
+	other := newCA(t, time.Now().Add(time.Hour))
+	wrong := x509.NewCertPool()
+	wrong.AddCert(other.cert)
+	if err := callEnroll(r.dialRoots(t, nil, wrong)); err == nil {
+		t.Fatal("handshake succeeded against a server cert not issued by the trusted CA")
+	}
+	if err := callEnroll(r.dial(t, nil)); err != nil {
+		t.Fatalf("handshake with the rig's own root failed: %v", err)
 	}
 }
