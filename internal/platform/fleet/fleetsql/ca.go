@@ -338,3 +338,27 @@ func ParseCSR(der []byte) (crypto.PublicKey, error) {
 	}
 	return req.PublicKey, nil
 }
+
+// TenantCAs returns the CA certificates of one tenant, active and retired, for the gateway's check
+// that a client certificate was signed by the CA of the tenant its SAN names (TM-Q8). It never
+// creates a CA, and returns an error rather than a partial list when stored material is bad.
+func (e *Enroller) TenantCAs(ctx context.Context, tid tenant.ID) ([]*x509.Certificate, error) {
+	if err := e.ready(); err != nil {
+		return nil, err
+	}
+	var out []*x509.Certificate
+	err := e.Enrollment.DB.WithTenant(ctx, tid, func(ctx context.Context, tx store.Tx) error {
+		cas, err := loadCAs(ctx, tx, func(k AlertKind) { e.Alerts.Raise(ctx, Alert{Kind: k, Tenant: tid}) })
+		if err != nil {
+			return err
+		}
+		for _, c := range cas {
+			out = append(out, c.cert)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, publicErr(err)
+	}
+	return out, nil
+}
