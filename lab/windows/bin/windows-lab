@@ -1,0 +1,208 @@
+#!/usr/bin/env bash
+# Windows Server 2025 evaluation lab on local KVM/libvirt (T-0254, D-0003 option a).
+# One DC (dc1) + one member/file server (fs1) in a throwaway domain win.activediq.test.
+# Runbook: knowledge/development/runbooks/windows-lab.md
+# Subcommands: preflight | up | reset | down | destroy | status | info | test-connector
+# WIN_LAB_DRYRUN=1 prints every external command instead of running it (used by the offline test).
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$0")/.." && pwd)"
+STATE="${WIN_LAB_STATE:-$HERE/.state}"            # gitignored: disks, ISOs, generated secrets
+ENVF="${WIN_LAB_ENV:-$HERE/.win-lab.env}"          # gitignored, mode 0600: generated credentials
+CAF="${WIN_LAB_CA:-$HERE/.win-lab-ca.pem}"         # gitignored: DC root CA (public cert)
+LOGDIR="${WIN_LAB_LOGDIR:-$HERE/../../knowledge/development/runbooks/windows-lab-runs}"  # run logs live beside the runbook (no secrets are ever logged)
+URI="${WIN_LAB_URI:-qemu:///system}"
+NET=diq-win-lab; SUBNET=192.168.77; DC_IP=$SUBNET.10; FS_IP=$SUBNET.11
+DOMAIN=win.activediq.test; NETBIOS=WINLAB; BASEDN="DC=win,DC=activediq,DC=test"
+DC_VM=diq-win-dc1; FS_VM=diq-win-fs1; SNAP=clean
+DISK_GB="${WIN_LAB_DISK_GB:-48}"; RAM_MB="${WIN_LAB_RAM_MB:-4096}"; CPUS="${WIN_LAB_CPUS:-2}"
+# [UNVERIFIED] Microsoft evaluation-centre link; override with WIN_LAB_ISO_URL (or drop the ISO at $ISO) if it moved.
+ISO_URL="${WIN_LAB_ISO_URL:-https://go.microsoft.com/fwlink/?linkid=2293312&clcid=0x409&culture=en-us&country=us}"
+ISO="${WIN_LAB_ISO:-$STATE/ws2025-eval.iso}"
+WAIT="${WIN_LAB_WAIT_SECS:-5400}"
+DRY="${WIN_LAB_DRYRUN:-}"
+
+die() { echo "windows-lab: $*" >&2; exit 1; }
+run() { if [ "$DRY" = 1 ]; then echo "+ $*"; else "$@"; fi; }
+virsh_() { run virsh -c "$URI" "$@"; }
+mac() { printf '52:54:00:77:00:%02x' "${1##*.}"; }
+
+preflight() {
+  local miss=0 t
+  for t in virsh virt-install qemu-img xorriso curl openssl nc python3; do
+    command -v "$t" >/dev/null 2>&1 || { echo "missing: $t"; miss=1; }
+  done
+  [ -e /dev/kvm ] || { echo "missing: /dev/kvm (enable VT-x/AMD-V; join group kvm)"; miss=1; }
+  if [ "$miss" = 1 ]; then
+    echo "install (Debian/Ubuntu): sudo apt install qemu-kvm libvirt-daemon-system libvirt-clients virtinst ovmf xorriso netcat-openbsd" >&2
+    [ "$DRY" = 1 ] || exit 1
+  fi
+  mkdir -p "$STATE" "$LOGDIR"
+  # thin-provisioned qcow2: ~15 GB real use per VM after install; require headroom for 2 VMs + ISO + snapshots
+  local free; free=$(df -Pk "$STATE" | awk 'NR==2{print int($4/1048576)}')
+  [ "$free" -ge 45 ] || [ "$DRY" = 1 ] || die "need >= 45 GB free in $STATE (have ${free} GB)"
+}
+
+# Random per-lab credentials; never printed, never committed.
+mkenv() {
+  [ -f "$ENVF" ] && return 0
+  ( umask 077
+    pw() { printf 'Wl-%s-aA1!' "$(openssl rand -hex 14)"; }
+    {
+      echo "WIN_LAB_ID=$(openssl rand -hex 6)"
+      echo "WIN_LAB_ADMIN_PASSWORD=$(pw)"   # Administrator, provisioning only
+      echo "WIN_LAB_DSRM_PASSWORD=$(pw)"
+      echo "WIN_LAB_SVC_PASSWORD=$(pw)"     # svc-activediq, delegated; used by connector tests
+      echo "WIN_LAB_USER_PASSWORD=$(pw)"
+    } > "$ENVF" )
+  echo ">> generated $ENVF (random, mode 0600, gitignored)"
+}
+
+fetch_iso() {
+  [ -f "$ISO" ] && return 0
+  echo ">> downloading the Windows Server 2025 evaluation ISO (~5 GB, free, 180-day licence)"
+  run curl -fL --retry 3 -C - -o "$ISO.part" "$ISO_URL"
+  if [ "$DRY" != 1 ]; then
+    local sum; sum=$(sha256sum "$ISO.part" | cut -d' ' -f1)
+    if [ -n "${WIN_LAB_ISO_SHA256:-}" ] && [ "$sum" != "$WIN_LAB_ISO_SHA256" ]; then rm -f "$ISO.part"; die "ISO sha256 mismatch ($sum)"; fi
+    mv "$ISO.part" "$ISO"; echo "$sum  ws2025-eval.iso" > "$ISO.sha256"
+    echo ">> ISO sha256 $sum (recorded beside the ISO; pin it with WIN_LAB_ISO_SHA256 for later rebuilds)"
+  fi
+}
+
+# Per-VM config CD: autounattend.xml + guest scripts + lab.json (secrets). Lives only in $STATE, built 0600.
+mkcfg() {  # name role ip
+  local name=$1 role=$2 ip=$3 d="$STATE/cfg-$1" cn=DC1
+  [ "$role" = dc ] || cn=FS1
+  rm -rf "$d"; mkdir -p "$d"
+  cp "$HERE"/guest/*.ps1 "$d/"
+  sed -e "s/@@COMPUTERNAME@@/$cn/" "$HERE/guest/autounattend.xml.tmpl" > "$d/autounattend.xml.pre"
+  ( umask 077
+    set -a; . "$ENVF"; set +a
+    python3 -I - "$d" "$role" "$ip" "$DOMAIN" "$NETBIOS" "$DC_IP" "$BASEDN" <<'PY'
+import json, os, sys
+from xml.sax.saxutils import escape
+d, role, ip, domain, nb, dcip, basedn = sys.argv[1:8]
+pw = os.environ["WIN_LAB_ADMIN_PASSWORD"]
+x = open(d + "/autounattend.xml.pre").read().replace("@@ADMINPW@@", escape(pw))
+open(d + "/autounattend.xml", "w").write(x); os.remove(d + "/autounattend.xml.pre")
+json.dump({"role": role, "ip": ip, "domain": domain, "netbios": nb, "dcIp": dcip, "baseDn": basedn,
+           "adminPassword": pw, "dsrmPassword": os.environ["WIN_LAB_DSRM_PASSWORD"],
+           "svcPassword": os.environ["WIN_LAB_SVC_PASSWORD"], "userPassword": os.environ["WIN_LAB_USER_PASSWORD"]},
+          open(d + "/lab.json", "w"))
+os.chmod(d + "/lab.json", 0o600); os.chmod(d + "/autounattend.xml", 0o600)
+PY
+  )
+  run xorriso -as mkisofs -quiet -V CIDATA -J -r -o "$STATE/cfg-$name.iso" "$d"
+  chmod 600 "$STATE/cfg-$name.iso" 2>/dev/null || true
+  rm -rf "$d"
+}
+
+mknet() {
+  if [ "$DRY" != 1 ] && virsh -c "$URI" net-info "$NET" >/dev/null 2>&1; then return 0; fi
+  local x="$STATE/net.xml"
+  printf "<network><name>%s</name><forward mode='nat'/><bridge name='virbr-diqwin'/><domain name='%s' localOnly='yes'/><ip address='%s.1' netmask='255.255.255.0'/></network>\n" \
+    "$NET" "$DOMAIN" "$SUBNET" > "$x"
+  virsh_ net-define "$x"; virsh_ net-start "$NET"; virsh_ net-autostart "$NET"
+}
+
+mkvm() {  # name role ip
+  local name=$1 role=$2 ip=$3 disk="$STATE/$1.qcow2"
+  mkcfg "$name" "$role" "$ip"
+  run qemu-img create -f qcow2 "$disk" "${DISK_GB}G" >/dev/null     # thin provisioned
+  run virt-install --connect "$URI" --name "$name" --memory "$RAM_MB" --vcpus "$CPUS" --cpu host-passthrough \
+    --osinfo detect=on,name=win2k25 --boot uefi \
+    --disk "path=$disk,bus=sata" --disk "path=$ISO,device=cdrom" --disk "path=$STATE/cfg-$name.iso,device=cdrom" \
+    --network "network=$NET,model=e1000e,mac=$(mac "$ip")" --graphics none --noautoconsole --sound none
+}
+
+wait_port() {  # ip port label
+  local t=0
+  if [ "$DRY" = 1 ]; then echo "+ wait $1:$2 ($3)"; return 0; fi
+  until nc -z -w 3 "$1" "$2" 2>/dev/null; do
+    sleep 20; t=$((t+20)); [ "$t" -lt "$WAIT" ] || die "timeout waiting for $3 ($1:$2)"
+  done
+}
+
+export_ca() {  # trust anchor = the root CA that guest/dc.ps1 created and that issued dc1's LDAPS certificate
+  if [ -n "${WIN_LAB_SKIP_CA:-}" ]; then return 0; fi   # test seam: the offline test pre-places the CA
+  if [ "$DRY" = 1 ]; then echo "+ export lab root CA from dc1:636 -> $CAF"; return 0; fi
+  openssl s_client -connect "$DC_IP:636" -servername "dc1.$DOMAIN" -showcerts </dev/null 2>/dev/null > "$STATE/chain.txt" || true
+  awk 'BEGIN{RS="-----END CERTIFICATE-----"} /BEGIN CERTIFICATE/{sub(/.*-----BEGIN CERTIFICATE-----/,"-----BEGIN CERTIFICATE-----"); c=$0 "-----END CERTIFICATE-----\n"} END{printf "%s", c}' "$STATE/chain.txt" > "$CAF"
+  openssl x509 -in "$CAF" -noout -subject >/dev/null || die "could not read the lab root CA from dc1"
+}
+
+up() {
+  preflight; mkenv; fetch_iso; mknet
+  if [ "$DRY" != 1 ] && virsh -c "$URI" dominfo "$DC_VM" >/dev/null 2>&1; then
+    echo ">> VMs already exist — starting them (use 'reset' for the clean snapshot, 'destroy' to rebuild)"
+    virsh -c "$URI" start "$DC_VM" 2>/dev/null || true; virsh -c "$URI" start "$FS_VM" 2>/dev/null || true
+    wait_port $DC_IP 636 "dc1 LDAPS"; info; return 0
+  fi
+  local t0; t0=$(date +%s)
+  mkvm "$DC_VM" dc "$DC_IP"
+  wait_port $DC_IP 636 "dc1 LDAPS (install + promotion take ~35 min)"
+  mkvm "$FS_VM" member "$FS_IP"
+  wait_port $FS_IP 445 "fs1 SMB (domain join)"
+  wait_port $FS_IP 5986 "fs1 WinRM-HTTPS"
+  export_ca
+  # clean snapshots, taken with the guests shut down so a revert is crash-consistent
+  local v i
+  for v in "$DC_VM" "$FS_VM"; do virsh_ shutdown "$v"; done
+  if [ "$DRY" != 1 ]; then for v in "$DC_VM" "$FS_VM"; do
+    for i in $(seq 60); do [ "$(virsh -c "$URI" domstate "$v")" = "shut off" ] && break; sleep 5; done; done; fi
+  for v in "$DC_VM" "$FS_VM"; do virsh_ snapshot-create-as "$v" "$SNAP" --description "clean provisioned lab"; done
+  for v in "$DC_VM" "$FS_VM"; do virsh_ start "$v"; done
+  wait_port $DC_IP 636 "dc1 LDAPS after snapshot"
+  echo "windows-lab up finished in $(( $(date +%s) - t0 ))s"; info
+}
+
+reset() {  # revert both VMs to the clean snapshot
+  preflight
+  local v
+  for v in "$DC_VM" "$FS_VM"; do virsh_ snapshot-revert "$v" "$SNAP" --running; done
+  wait_port $DC_IP 636 "dc1 LDAPS after revert"; wait_port $FS_IP 445 "fs1 SMB after revert"
+  echo "windows-lab reset to snapshot '$SNAP'"
+}
+
+down() { local v; for v in "$FS_VM" "$DC_VM"; do virsh_ shutdown "$v" || true; done; }
+
+destroy() {
+  local v
+  for v in "$FS_VM" "$DC_VM"; do
+    virsh_ destroy "$v" 2>/dev/null || true
+    virsh_ undefine "$v" --nvram --snapshots-metadata 2>/dev/null || true
+  done
+  virsh_ net-destroy "$NET" 2>/dev/null || true; virsh_ net-undefine "$NET" 2>/dev/null || true
+  # the ISO is kept (5 GB download); disks, config CDs and credentials go
+  run rm -f "$STATE"/*.qcow2 "$STATE"/cfg-*.iso "$STATE"/net.xml "$STATE"/chain.txt "$ENVF" "$CAF"
+}
+
+info() {
+  echo "Windows lab: domain $DOMAIN ($NETBIOS)  base DN $BASEDN"
+  echo "  dc1  $DC_IP  ldaps://$DC_IP:636 (cert name dc1.$DOMAIN; add '$DC_IP dc1.$DOMAIN' to /etc/hosts)"
+  echo "  fs1  $FS_IP  SMB 445, WinRM-HTTPS 5986"
+  echo "  credentials: $ENVF (mode 0600; svc-activediq@$DOMAIN = WIN_LAB_SVC_PASSWORD)   CA: $CAF"
+  echo "  eval licence: 180 days from first boot; do not rearm — 'destroy' then 'up' rebuilds (~45 min)"
+}
+
+status() {
+  virsh -c "$URI" list --all 2>/dev/null | grep -E "diq-win|Name" || echo "no windows lab VMs"
+  if [ -f "$ENVF" ]; then info; fi
+}
+
+test_connector() {
+  [ -f "$ENVF" ] && [ -f "$CAF" ] || die "lab not up: run make windows-lab-up"
+  mkdir -p "$LOGDIR"
+  local log; log="$LOGDIR/connector-$(date -u +%Y%m%dT%H%M%SZ).log"
+  echo ">> go test -tags 'lab windowslab' ./internal/connector/ad/ against dc1 over LDAPS; log: $log"
+  ( cd "$HERE/../.." && LAB_TARGET=windows go test -count=1 -v -tags 'lab windowslab' ./internal/connector/ad/ ) 2>&1 | tee "$log"
+  return "${PIPESTATUS[0]}"
+}
+
+case "${1:-}" in
+  preflight) preflight && echo "preflight ok";;
+  up) up;; reset) reset;; down) down;; destroy) destroy;; status) status;; info) info;;
+  test-connector) test_connector;;
+  *) echo "usage: windows-lab {preflight|up|reset|down|destroy|status|info|test-connector}" >&2; exit 2;;
+esac
