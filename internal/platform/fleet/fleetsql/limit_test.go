@@ -84,3 +84,49 @@ func TestUnreadableSourceHasNoBucket(t *testing.T) {
 		t.Fatalf("unreadable sources created %d buckets", len(l.m))
 	}
 }
+
+// A real clock moves between calls. Every other test freezes it, which hid a limiter that never
+// blocked (decay took spent just under Burst before each check).
+func TestMemoryLimiterMovingClock(t *testing.T) {
+	now := time.Unix(1000, 0)
+	const refill = 30 * time.Second
+	l := NewMemoryLimiter(MemoryLimiterConfig{Burst: 5, Refill: refill, Now: func() time.Time {
+		now = now.Add(time.Nanosecond)
+		return now
+	}})
+	ctx := context.Background()
+	const src = "203.0.113.9:4444"
+	attempt := func() bool {
+		wait, blocked, err := l.Blocked(ctx, src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if blocked {
+			if wait <= 0 || wait > refill {
+				t.Fatalf("retryAfter %v outside (0, %v]", wait, refill)
+			}
+			return false
+		}
+		l.Failed(ctx, src)
+		return true
+	}
+	admitted := 0
+	for range 1000 {
+		if attempt() {
+			admitted++
+		}
+	}
+	if admitted != 5 {
+		t.Fatalf("admitted %d of 1000, want Burst=5", admitted)
+	}
+	now = now.Add(refill)
+	admitted = 0
+	for range 100 {
+		if attempt() {
+			admitted++
+		}
+	}
+	if admitted != 1 {
+		t.Fatalf("after one Refill admitted %d, want exactly 1", admitted)
+	}
+}

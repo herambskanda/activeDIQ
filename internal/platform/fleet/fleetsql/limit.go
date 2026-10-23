@@ -133,10 +133,14 @@ func (l *MemoryLimiter) Blocked(_ context.Context, source string) (time.Duration
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	b := l.bucket(key, now)
-	if b.spent < float64(l.cfg.Burst) {
+	// A try is admitted only while a whole try is in hand: spent <= Burst-1. Failed caps spent at
+	// Burst, so a source that has used its budget needs one full Refill to earn the next try; the
+	// continuous decay between calls cannot slip it under the line.
+	over := b.spent - float64(l.cfg.Burst-1)
+	if over <= 0 {
 		return 0, false, nil
 	}
-	wait := time.Duration(math.Ceil((b.spent - float64(l.cfg.Burst) + 1) * float64(l.cfg.Refill)))
+	wait := time.Duration(math.Ceil(over * float64(l.cfg.Refill)))
 	return max(wait, time.Millisecond), true, nil
 }
 

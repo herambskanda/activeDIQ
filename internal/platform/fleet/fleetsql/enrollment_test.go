@@ -129,7 +129,8 @@ func TestRedeem(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		e := setup(t, s)
 		ctx := context.Background()
-		svc := e.svc(true, true, nil)
+		// This test is about redeem semantics, not the limiter: a generous budget for its many failures from one source.
+		svc := e.svc(true, true, fleetsql.NewMemoryLimiter(fleetsql.MemoryLimiterConfig{Burst: 1000}))
 		issue := func(tid tenant.ID) fleetsql.Issued {
 			iss, err := svc.Issue(ctx, tid, admin, fleetsql.NewComponent{Kind: fleetsql.KindAgent, Name: "dc1"})
 			if err != nil {
@@ -235,7 +236,7 @@ func TestRedeemRateLimit(t *testing.T) {
 		e := setup(t, s)
 		ctx := context.Background()
 		now := time.Now()
-		lim := fleetsql.NewMemoryLimiter(fleetsql.MemoryLimiterConfig{Burst: 3, Refill: time.Minute, Now: func() time.Time { return now }})
+		lim := fleetsql.NewMemoryLimiter(fleetsql.MemoryLimiterConfig{Burst: 3, Refill: time.Minute, Now: func() time.Time { now = now.Add(time.Nanosecond); return now }})
 		svc := e.svc(true, true, lim)
 		iss, err := svc.Issue(ctx, e.a, admin, fleetsql.NewComponent{Kind: fleetsql.KindConnector, Name: "c"})
 		if err != nil {
