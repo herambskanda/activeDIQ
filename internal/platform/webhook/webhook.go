@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/egress"
+	"github.com/skenzeriq/activediq/internal/platform/secret"
 )
 
 // Header names (canonical form is applied by net/http).
@@ -64,60 +65,75 @@ var (
 	ErrSignature      = errors.New("webhook: no signature matches")
 )
 
-// Secret is a signing secret. It never prints: String, GoString and MarshalText are redacted. The
-// wire form for the endpoint owner is "whsec_" + base64(key), shown once at creation or rotation.
-type Secret struct{ key []byte }
-
-// NewSecret generates a fresh random secret.
-func NewSecret() (Secret, error) {
+// NewSecret generates a fresh random signing secret. The key never exists as a string.
+func NewSecret() (secret.Secret, error) {
 	k := make([]byte, newSecretLen)
+	defer clear(k)
 	if _, err := rand.Read(k); err != nil {
-		return Secret{}, fmt.Errorf("%w: entropy: %v", ErrBadSecret, err)
+		return secret.Secret{}, fmt.Errorf("%w: entropy: %v", ErrBadSecret, err)
 	}
-	return Secret{key: k}, nil
+	return secret.FromBytes(k), nil
 }
 
-// ParseSecret reads the "whsec_<base64>" form (the prefix is optional) of 24 to 64 key bytes.
-func ParseSecret(s string) (Secret, error) {
-	raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(s, secretPrefix))
-	if err != nil || len(raw) < minSecretLen || len(raw) > maxSecretLen {
-		return Secret{}, fmt.Errorf("%w: expected %s<base64> of %d-%d bytes", ErrBadSecret, secretPrefix, minSecretLen, maxSecretLen)
+// ParseSecret reads the "whsec_<base64>" wire form (the prefix is optional) of 24 to 64 key bytes,
+// decoding straight into bytes that are handed to secret.FromBytes.
+func ParseSecret(wire []byte) (secret.Secret, error) {
+	enc := bytes.TrimPrefix(wire, []byte(secretPrefix))
+	raw := make([]byte, base64.StdEncoding.DecodedLen(len(enc)))
+	defer clear(raw)
+	n, err := base64.StdEncoding.Decode(raw, enc)
+	if err != nil || n < minSecretLen || n > maxSecretLen {
+		return secret.Secret{}, fmt.Errorf("%w: expected %s<base64> of %d-%d bytes", ErrBadSecret, secretPrefix, minSecretLen, maxSecretLen)
 	}
-	return Secret{key: raw}, nil
+	return secret.FromBytes(raw[:n]), nil
 }
 
-// Reveal returns the wire form. Call it only where the owner is shown the secret once.
-func (s Secret) Reveal() string { return secretPrefix + base64.StdEncoding.EncodeToString(s.key) }
+// ShowOnce calls fn with the "whsec_<base64>" wire form so the endpoint owner can be shown the
+// secret at creation or rotation. fn must not retain or log the bytes; they are zeroed after.
+func ShowOnce(s secret.Secret, fn func(wire []byte)) {
+	s.Expose(func(k []byte) {
+		out := make([]byte, 0, len(secretPrefix)+base64.StdEncoding.EncodedLen(len(k)))
+		defer clear(out)
+		out = append(out, secretPrefix...)
+		out = base64.StdEncoding.AppendEncode(out, k)
+		fn(out)
+	})
+}
 
-func (s Secret) String() string               { return "whsec_[redacted]" }
-func (s Secret) GoString() string             { return "webhook.Secret{[redacted]}" }
-func (s Secret) MarshalText() ([]byte, error) { return []byte("[redacted]"), nil }
-func (s Secret) valid() bool                  { return len(s.key) >= minSecretLen }
+func valid(s secret.Secret) bool {
+	ok := false
+	s.Expose(func(k []byte) { ok = len(k) >= minSecretLen })
+	return ok
+}
 
-func (s Secret) mac(id string, ts int64, body []byte) []byte {
-	h := hmac.New(sha256.New, s.key)
-	h.Write([]byte(id))
-	h.Write([]byte("."))
-	h.Write([]byte(strconv.FormatInt(ts, 10)))
-	h.Write([]byte("."))
-	h.Write(body)
-	return h.Sum(nil)
+func mac(s secret.Secret, id string, ts int64, body []byte) []byte {
+	var sum []byte
+	s.Expose(func(k []byte) {
+		h := hmac.New(sha256.New, k)
+		h.Write([]byte(id))
+		h.Write([]byte("."))
+		h.Write([]byte(strconv.FormatInt(ts, 10)))
+		h.Write([]byte("."))
+		h.Write(body)
+		sum = h.Sum(nil)
+	})
+	return sum
 }
 
 // Signer produces signature header values. Hold two secrets only while a rotation overlaps.
-type Signer struct{ secrets []Secret }
+type Signer struct{ secrets []secret.Secret }
 
 // NewSigner needs at least one valid secret.
-func NewSigner(secrets ...Secret) (*Signer, error) {
+func NewSigner(secrets ...secret.Secret) (*Signer, error) {
 	if len(secrets) == 0 {
 		return nil, fmt.Errorf("%w: no secret", ErrBadSecret)
 	}
 	for _, s := range secrets {
-		if !s.valid() {
+		if !valid(s) {
 			return nil, fmt.Errorf("%w: zero secret", ErrBadSecret)
 		}
 	}
-	return &Signer{secrets: append([]Secret(nil), secrets...)}, nil
+	return &Signer{secrets: append([]secret.Secret(nil), secrets...)}, nil
 }
 
 // Sign returns the webhook-signature value for the message.
@@ -127,7 +143,7 @@ func (g *Signer) Sign(id string, ts time.Time, body []byte) (string, error) {
 	}
 	parts := make([]string, len(g.secrets))
 	for i, s := range g.secrets {
-		parts[i] = sigVersion + "," + base64.StdEncoding.EncodeToString(s.mac(id, ts.Unix(), body))
+		parts[i] = sigVersion + "," + base64.StdEncoding.EncodeToString(mac(s, id, ts.Unix(), body))
 	}
 	return strings.Join(parts, " "), nil
 }
@@ -149,7 +165,7 @@ func checkID(id string) error {
 // request headers, body the exact raw bytes received, now the receiver's clock. A timestamp more
 // than tolerance from now, in either direction, is rejected (tolerance <= 0 means DefaultTolerance).
 // The timestamp is checked before the signature so a replay costs no HMAC.
-func Verify(h http.Header, body []byte, now time.Time, tolerance time.Duration, secrets ...Secret) error {
+func Verify(h http.Header, body []byte, now time.Time, tolerance time.Duration, secrets ...secret.Secret) error {
 	if tolerance <= 0 {
 		tolerance = DefaultTolerance
 	}
@@ -164,12 +180,13 @@ func Verify(h http.Header, body []byte, now time.Time, tolerance time.Duration, 
 	if d := now.Sub(time.Unix(ts, 0)); d > tolerance || d < -tolerance {
 		return ErrTimestamp
 	}
-	matched := false
+	matched, anyValid := false, false
 	for _, s := range secrets {
-		if !s.valid() {
+		if !valid(s) {
 			continue
 		}
-		want := s.mac(id, ts, body)
+		anyValid = true
+		want := mac(s, id, ts, body)
 		for _, cand := range strings.Fields(sigs) {
 			v, enc, ok := strings.Cut(cand, ",")
 			if !ok || v != sigVersion {
@@ -180,6 +197,9 @@ func Verify(h http.Header, body []byte, now time.Time, tolerance time.Duration, 
 				matched = true
 			}
 		}
+	}
+	if !anyValid {
+		return fmt.Errorf("%w: no valid verification secret", ErrBadSecret)
 	}
 	if !matched {
 		return ErrSignature

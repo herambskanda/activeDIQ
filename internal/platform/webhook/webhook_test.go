@@ -3,6 +3,7 @@ package webhook
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,9 +14,10 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/egress"
+	"github.com/skenzeriq/activediq/internal/platform/secret"
 )
 
-func mustSecret(t *testing.T) Secret {
+func mustSecret(t *testing.T) secret.Secret {
 	t.Helper()
 	s, err := NewSecret()
 	if err != nil {
@@ -35,9 +37,9 @@ func loopbackClient(t *testing.T) *egress.Client {
 
 // The Standard Webhooks reference vector (secret MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw).
 func TestKnownVector(t *testing.T) {
-	s, err := ParseSecret("whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw")
-	if err == nil {
-		_ = s // base64 of that text is 24 bytes: accepted
+	s, err := ParseSecret([]byte("whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw"))
+	if err != nil {
+		t.Fatal(err)
 	}
 	g, err := NewSigner(s)
 	if err != nil {
@@ -115,7 +117,7 @@ func TestRotationOverlap(t *testing.T) {
 	h.Set(HeaderID, "msg_1")
 	h.Set(HeaderTimestamp, strconv.FormatInt(now.Unix(), 10))
 	h.Set(HeaderSignature, sig)
-	for _, s := range []Secret{oldS, newS} {
+	for _, s := range []secret.Secret{oldS, newS} {
 		if err := Verify(h, []byte("x"), now, 0, s); err != nil {
 			t.Fatalf("receiver with one secret: %v", err)
 		}
@@ -152,25 +154,40 @@ func TestMalformedHeaders(t *testing.T) {
 
 func TestSecretNeverPrints(t *testing.T) {
 	s := mustSecret(t)
-	for _, out := range []string{s.String(), strings.TrimSpace(strings.ReplaceAll(strings.Repeat("%v", 1), "%v", s.String()))} {
-		if strings.Contains(out, s.Reveal()[6:]) {
-			t.Fatal("secret leaked")
+	var wire string
+	ShowOnce(s, func(w []byte) { wire = string(w) })
+	if !strings.HasPrefix(wire, "whsec_") {
+		t.Fatalf("wire form %q", wire)
+	}
+	g, _ := NewSigner(s)
+	for _, v := range []any{s, g, *g} {
+		for _, f := range []string{"%v", "%+v", "%#v", "%s"} {
+			if out := fmt.Sprintf(f, v); strings.Contains(out, wire[6:]) {
+				t.Fatalf("%s leaked the key: %s", f, out)
+			}
 		}
 	}
-	rt, err := ParseSecret(s.Reveal())
-	if err != nil || rt.Reveal() != s.Reveal() {
+	rt, err := ParseSecret([]byte(wire))
+	if err != nil || !rt.Equal(s) {
 		t.Fatalf("round trip: %v", err)
 	}
 	for _, bad := range []string{"", "whsec_", "whsec_!!!", "whsec_QUJD"} {
-		if _, err := ParseSecret(bad); !errors.Is(err, ErrBadSecret) {
+		if _, err := ParseSecret([]byte(bad)); !errors.Is(err, ErrBadSecret) {
 			t.Errorf("%q accepted", bad)
 		}
 	}
 	if _, err := NewSigner(); !errors.Is(err, ErrBadSecret) {
 		t.Error("signer without secret")
 	}
-	if _, err := NewSigner(Secret{}); !errors.Is(err, ErrBadSecret) {
+	if _, err := NewSigner(secret.Secret{}); !errors.Is(err, ErrBadSecret) {
 		t.Error("signer with zero secret")
+	}
+	h := http.Header{}
+	h.Set(HeaderID, "a")
+	h.Set(HeaderTimestamp, strconv.FormatInt(time.Now().Unix(), 10))
+	h.Set(HeaderSignature, "v1,AAAA")
+	if err := Verify(h, nil, time.Now(), 0, secret.Secret{}); !errors.Is(err, ErrBadSecret) {
+		t.Errorf("verify with no valid secret: %v", err)
 	}
 }
 
