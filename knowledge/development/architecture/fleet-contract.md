@@ -124,6 +124,24 @@ root never imports generated protos. The listener that mounts it is T-0156.
   certificate's. The row, and so the identity, is kept; only the serial changes, so a superseded certificate
   cannot rotate again. The adapter uses the verified chain only, never `PeerCertificates`.
 - **Source address** is `peer.Addr` from the transport, never a header (T-0153 obligation 3).
-- Not here: the listener and mTLS interceptor (T-0156), revocation (T-0157), the `fleet/dial` client and pin
-  check (T-0158), the issuing handler with its audited Operation and principal-derived tenant (T-0153
+- Not here: the listener and mTLS interceptor (T-0156), revocation (T-0157), the issuing handler with its audited Operation and principal-derived tenant (T-0153
   obligations 1 and 4).
+
+## Component side: `fleet/dial` (T-0158)
+
+- **Enrol.** `dial.Enroll(ctx, Material{Address, Token, Pin}, dir, Exchange)`. The pin is mandatory (D1).
+  First the server's *presented* chain is read by a handshake against an empty, non-nil pool (it fails by
+  design, sends no application data, and yields `tls.CertificateVerificationError.UnverifiedCertificates`);
+  the cert with the pinned SPKI becomes the only root of the real connection, on which the token is sent.
+  No `InsecureSkipVerify`, no verify callback. **Obligation on the gateway (T-0156):** the Enroll listener
+  must include the installation CA in its presented chain, or enrolment is refused (`ErrUntrustedServer`).
+- **Bundle (D3).** `dial.ParseBundle`: CERTIFICATE blocks only, no headers, whitespace-only around, 1 to 8
+  CAs, at most 64 KiB, one matching the pin; `AppendCertsFromPEM` never touches raw bytes.
+- **Leaf.** Must carry our public key, verify to the bundle for client auth, and have a component identity.
+- **Persistence.** `ca-bundle.pem`, `ca-pin.txt`, `endpoints.txt`, `key.pem` (0600, PKCS#8), `leaf.pem`
+  in a 0700 directory, each by temp+rename, leaf last; `Load` re-validates everything. Nothing is written on
+  any failure. Windows ACL checks are T-0104.
+- **Dial-out.** `dial.DialOut(addr, state)` uses `Credentials`: TLS 1.3, roots exactly the pinned CAs.
+  Nothing retries or falls back; retry policy is the caller's and must reuse the same pin.
+- **Seam.** `dial` imports no generated proto; the role package supplies `Exchange` (fleetv1 Enroll call).
+
