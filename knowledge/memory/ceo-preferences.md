@@ -1,6 +1,6 @@
 ---
 title: CEO preferences
-updated: 2026-10-09
+updated: 2026-10-23
 budget: 120 lines
 ---
 
@@ -23,6 +23,7 @@ CEO unless they state otherwise.
 - 2026-08-12 · Status reports in very few lines; no summaries of things they did not ask about. (../UEM/.claude/skills/domain-model/SKILL.md)
 
 ## Models and cost
+- 2026-10-22 · On lab spend, took the free route (Developer Program sandbox) over a small paid tenant or deferring. They did not defer the least-privilege proof. Lead with free-if-eligible and give a priced fallback. Keep their hands-on steps to one command, with no credential pasting. (D-0001, current board)
 - 2026-10-02 · **Nothing runs above `high` effort** (this replaces the kickoff's xhigh/max-on-escalation rule). Use Sonnet at high for most roles and Opus at high only for the important ones ("like yourself"). Daily run cap 300. They prefer more runs on cheaper settings over fewer runs at maximum effort. (CLI answer 2026-10-02)
 - 2026-10-02 · Wanted 6 parallel worker slots and corrected the factory's cautious choice of 4. On throughput they lean towards more capacity, within the 300/day cap. When they ask to change a capacity setting without giving a number, ask for the number in one line. Don't pick a conservative value for them. (CLI, 2026-10-02)
 - 2026-10-02 · Each working stretch stays under 300k tokens with a graceful handoff, never an abrupt stop. (kickoff brief)
