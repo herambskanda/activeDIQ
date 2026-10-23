@@ -1,0 +1,409 @@
+package authz
+
+import (
+	"errors"
+	"testing"
+	"time"
+)
+
+var now = time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+
+func ev() Evaluator { return Evaluator{Now: func() time.Time { return now }} }
+
+// oid maps a readable test name to a deterministic non-zero ObjectID.
+func oid(name string) ObjectID {
+	var id ObjectID
+	id[0] = 0xAA
+	copy(id[1:], name)
+	return id
+}
+
+func root(id string, anc ...string) ScopeRoot {
+	r := ScopeRoot{ID: oid(id), Complete: true}
+	for _, a := range anc {
+		r.Ancestors = append(r.Ancestors, oid(a))
+	}
+	return r
+}
+
+func target(id string, anc ...string) Target {
+	t := Target{ID: oid(id), Complete: true}
+	for _, a := range anc {
+		t.Ancestors = append(t.Ancestors, oid(a))
+	}
+	return t
+}
+
+func tech(perms []Permission, s Scope) *Principal {
+	return &Principal{ID: "tech", Assignments: []Assignment{{Role: Role{Permissions: perms}, Scope: s}}}
+}
+
+func tokenFor(p ...Permission) *Token { return &Token{Permissions: p, ExpiresAt: now.Add(time.Hour)} }
+
+const (
+	pReset  Permission = "objects.user.reset_password"
+	pDelete Permission = "objects.user.delete"
+)
+
+func TestEffectiveIsRoleAndScopeAndToken(t *testing.T) {
+	p := tech([]Permission{pReset}, Scope{Include: []ScopeRoot{root("ouA", "dom")}})
+	inA := target("u1", "ouA", "dom")
+	outB := target("u2", "ouB", "dom")
+
+	cases := []struct {
+		name string
+		tok  *Token
+		perm Permission
+		tgt  Target
+		want bool
+		why  Reason
+	}{
+		{"role+scope, session", nil, pReset, inA, true, ReasonAllowed},
+		{"outside scope", nil, pReset, outB, false, ReasonNotInScope},
+		{"permission not in role", nil, pDelete, inA, false, ReasonNotInScope},
+		{"token carries it", tokenFor(pReset), pReset, inA, true, ReasonAllowed},
+		{"token lacks it though role has it", tokenFor(pDelete), pReset, inA, false, ReasonTokenExcludes},
+		{"empty token allows nothing", tokenFor(), pReset, inA, false, ReasonTokenExcludes},
+		{"token cannot add what role lacks", tokenFor(pDelete), pDelete, inA, false, ReasonNotInScope},
+		{"expired token", &Token{Permissions: []Permission{pReset}, ExpiresAt: now}, pReset, inA, false, ReasonTokenExpired},
+		{"token without expiry", &Token{Permissions: []Permission{pReset}}, pReset, inA, false, ReasonTokenExpired},
+	}
+	for _, c := range cases {
+		d := ev().Authorize(p, c.tok, c.perm, c.tgt)
+		if d.Allowed != c.want || d.Reason != c.why {
+			t.Errorf("%s: got %+v, want allowed=%v reason=%s", c.name, d, c.want, c.why)
+		}
+	}
+}
+
+func TestDenyByDefault(t *testing.T) {
+	e := ev()
+	tg := target("u1", "ouA")
+	if d := e.Authorize(nil, nil, pReset, tg); d.Allowed {
+		t.Error("nil principal allowed")
+	}
+	if d := e.Authorize(&Principal{ID: "x"}, nil, pReset, tg); d.Allowed {
+		t.Error("principal without assignments allowed")
+	}
+	empty := tech([]Permission{pReset}, Scope{})
+	if d := e.Authorize(empty, nil, pReset, tg); d.Allowed {
+		t.Error("empty scope allowed")
+	}
+}
+
+func TestLiveChainAndExcludes(t *testing.T) {
+	p := tech([]Permission{pReset}, Scope{
+		Include: []ScopeRoot{root("ouA", "dom")},
+		Exclude: []ScopeRoot{root("ouVIP", "ouA", "dom")},
+	})
+	if !ev().Authorize(p, nil, pReset, target("u", "ouA", "dom")).Allowed {
+		t.Error("in-scope refused")
+	}
+	if ev().Authorize(p, nil, pReset, target("u", "ouVIP", "ouA", "dom")).Allowed {
+		t.Error("excluded sub-OU allowed")
+	}
+	// The object moved out of ouA: the live chain no longer contains it.
+	if ev().Authorize(p, nil, pReset, target("u", "ouB", "dom")).Allowed {
+		t.Error("moved object still allowed")
+	}
+	// Chain not read live/completely: fail closed.
+	inc := target("u", "ouA", "dom")
+	inc.Complete = false
+	if d := ev().Authorize(p, nil, pReset, inc); d.Allowed || d.Reason != ReasonFactsIncomplete {
+		t.Errorf("incomplete facts: %+v", d)
+	}
+	if d := ev().Authorize(p, nil, pReset, Target{Complete: true}); d.Allowed {
+		t.Error("target without GUID allowed")
+	}
+}
+
+func TestTier0NeverLifted(t *testing.T) {
+	p := tech([]Permission{pReset}, Scope{Include: []ScopeRoot{root("dom")}})
+	tg := target("admin", "dom")
+	tg.Tier0 = true
+	if d := ev().Authorize(p, nil, pReset, tg); d.Allowed || d.Reason != ReasonTier0 {
+		t.Errorf("tier0: %+v", d)
+	}
+}
+
+func TestNoEscalation(t *testing.T) {
+	grantor := &Principal{ID: "g", Assignments: []Assignment{{
+		Role: Role{Permissions: []Permission{pReset}},
+		Scope: Scope{
+			Include: []ScopeRoot{root("ouA", "dom")},
+			Exclude: []ScopeRoot{root("ouVIP", "ouA", "dom")},
+		},
+	}}}
+	reset := Role{Permissions: []Permission{pReset}}
+	both := Role{Permissions: []Permission{pReset, pDelete}}
+	e := ev()
+
+	tests := []struct {
+		name string
+		role Role
+		s    Scope
+		tok  *Token
+		err  error
+	}{
+		{"same role, sub-OU", reset, Scope{Include: []ScopeRoot{root("ouHR", "ouA", "dom")}}, nil, nil},
+		{"same role, same OU, excluding the VIP OU", reset,
+			Scope{Include: []ScopeRoot{root("ouA", "dom")}, Exclude: []ScopeRoot{root("ouVIP", "ouA", "dom")}}, nil, nil},
+		{"extra privilege", both, Scope{Include: []ScopeRoot{root("ouHR", "ouA", "dom")}}, nil, ErrEscalation},
+		{"wider scope", reset, Scope{Include: []ScopeRoot{root("dom")}}, nil, ErrEscalation},
+		{"sibling OU", reset, Scope{Include: []ScopeRoot{root("ouB", "dom")}}, nil, ErrEscalation},
+		{"one root out of two", reset, Scope{Include: []ScopeRoot{root("ouHR", "ouA", "dom"), root("ouB", "dom")}}, nil, ErrEscalation},
+		{"reaches into grantor exclusion", reset, Scope{Include: []ScopeRoot{root("ouA", "dom")}}, nil, ErrEscalation},
+		{"root inside grantor exclusion", reset, Scope{Include: []ScopeRoot{root("ouVIP", "ouA", "dom")}}, nil, ErrEscalation},
+		{"token lacks the permission", reset, Scope{Include: []ScopeRoot{root("ouHR", "ouA", "dom")}}, tokenFor(pDelete), ErrEscalation},
+		{"empty role", Role{}, Scope{Include: []ScopeRoot{root("ouA", "dom")}}, nil, ErrInvalidGrant},
+		{"empty scope", reset, Scope{}, nil, ErrInvalidGrant},
+	}
+	for _, c := range tests {
+		if err := e.CheckGrant(grantor, c.tok, c.role, c.s); !errors.Is(err, c.err) {
+			t.Errorf("%s: got %v, want %v", c.name, err, c.err)
+		}
+	}
+	dead := *grantor
+	dead.Disabled = true
+	if err := e.CheckGrant(&dead, nil, reset, Scope{Include: []ScopeRoot{root("ouHR", "ouA", "dom")}}); !errors.Is(err, ErrOwnerDead) {
+		t.Errorf("disabled grantor: %v", err)
+	}
+}
+
+func TestDeadOwnerToken(t *testing.T) {
+	scope := Scope{Include: []ScopeRoot{root("ouA")}}
+	tg := target("u", "ouA")
+	tok := tokenFor(pReset)
+
+	live := tech([]Permission{pReset}, scope)
+	if err := ev().CheckToken(live, tok); err != nil {
+		t.Fatalf("live owner: %v", err)
+	}
+	disabled := tech([]Permission{pReset}, scope)
+	disabled.Disabled = true
+	lost := &Principal{ID: "tech"}
+	for name, owner := range map[string]*Principal{"disabled": disabled, "lost authority": lost} {
+		if err := ev().CheckToken(owner, tok); !errors.Is(err, ErrOwnerDead) {
+			t.Errorf("%s: CheckToken = %v", name, err)
+		}
+		if d := ev().Authorize(owner, tok, pReset, tg); d.Allowed {
+			t.Errorf("%s: token still authorises", name)
+		}
+	}
+	// Authority narrowed after issue: the token cannot exceed the owner's current authority.
+	narrowed := tech([]Permission{pDelete}, scope)
+	if d := ev().Authorize(narrowed, tok, pReset, tg); d.Allowed {
+		t.Error("token exceeded narrowed owner")
+	}
+}
+
+func TestBulkPerItem(t *testing.T) {
+	p := tech([]Permission{pReset}, Scope{Include: []ScopeRoot{root("ouA")}})
+	items := []Target{target("1", "ouA"), target("2", "ouB"), target("3", "ouA"), {ID: oid("4")}}
+	res := ev().AuthorizeItems(p, nil, pReset, items)
+	if res.Allowed != 2 || res.Refused != 2 || len(res.Items) != 4 {
+		t.Fatalf("counts: %+v", res)
+	}
+	want := []bool{true, false, true, false}
+	for i, it := range res.Items {
+		if it.Allowed != want[i] || it.Target.ID != items[i].ID {
+			t.Errorf("item %d: %+v", i, it)
+		}
+	}
+	p.Disabled = true
+	if r := ev().AuthorizeItems(p, nil, pReset, items); r.Allowed != 0 || r.Refused != 4 {
+		t.Errorf("dead owner bulk: %+v", r)
+	}
+}
+
+func TestOwnerScopedReport(t *testing.T) {
+	owner := tech([]Permission{pReset}, Scope{Include: []ScopeRoot{root("ouA")}})
+	rows := []Target{target("1", "ouA"), target("2", "ouB"), target("3", "ouB")}
+	got, err := ev().FilterForOwner(owner, pReset, rows)
+	if err != nil || len(got.Permitted) != 1 || got.Permitted[0].ID != oid("1") || got.Omitted != 2 {
+		t.Fatalf("report: %+v %v", got, err)
+	}
+	// Owner loses the scope: next run delivers only the new scope.
+	owner.Assignments[0].Scope = Scope{Include: []ScopeRoot{root("ouB")}}
+	got, _ = ev().FilterForOwner(owner, pReset, rows)
+	if len(got.Permitted) != 2 || got.Omitted != 1 {
+		t.Errorf("after scope change: %+v", got)
+	}
+	owner.Disabled = true
+	if _, err := ev().FilterForOwner(owner, pReset, rows); !errors.Is(err, ErrOwnerDead) {
+		t.Errorf("disabled owner: %v", err)
+	}
+}
+
+func TestGrantFailsClosedOnIncompleteRoots(t *testing.T) {
+	reset := Role{Permissions: []Permission{pReset}}
+	e := ev()
+	incomplete := func(r ScopeRoot) ScopeRoot { r.Complete = false; return r }
+	mk := func(excl ScopeRoot) *Principal {
+		return &Principal{ID: "g", Assignments: []Assignment{{Role: reset,
+			Scope: Scope{Include: []ScopeRoot{root("corp")}, Exclude: []ScopeRoot{excl}}}}}
+	}
+	// (a) grantor exclusion lacks its chain: must not let a grant of corp with no exclusion pass.
+	g := mk(ScopeRoot{ID: oid("admins")})
+	if err := e.CheckGrant(g, nil, reset, Scope{Include: []ScopeRoot{root("corp")}}); !errors.Is(err, ErrFactsIncomplete) {
+		t.Errorf("incomplete grantor exclusion: %v", err)
+	}
+	// Control: with the live chain the same grant is an escalation.
+	g = mk(root("admins", "corp"))
+	if err := e.CheckGrant(g, nil, reset, Scope{Include: []ScopeRoot{root("corp")}}); !errors.Is(err, ErrEscalation) {
+		t.Errorf("complete chain: %v", err)
+	}
+	// (b) incomplete new include root, and incomplete new exclude root.
+	if err := e.CheckGrant(g, nil, reset, Scope{Include: []ScopeRoot{incomplete(root("hr", "corp"))}}); !errors.Is(err, ErrFactsIncomplete) {
+		t.Errorf("incomplete include: %v", err)
+	}
+	if err := e.CheckGrant(g, nil, reset, Scope{Include: []ScopeRoot{root("hr", "corp")},
+		Exclude: []ScopeRoot{incomplete(root("x", "hr", "corp"))}}); !errors.Is(err, ErrFactsIncomplete) {
+		t.Errorf("incomplete exclude: %v", err)
+	}
+}
+
+func TestBlankIDsNeverMatch(t *testing.T) {
+	p := tech([]Permission{pReset}, Scope{Include: []ScopeRoot{{Complete: true}}})
+	tg := Target{ID: oid("u"), Ancestors: []ObjectID{{}}, Complete: true}
+	if d := ev().Authorize(p, nil, pReset, tg); d.Allowed || d.Reason != ReasonFactsIncomplete {
+		t.Errorf("blank chain element: %+v", d)
+	}
+	g := tech([]Permission{pReset}, Scope{Include: []ScopeRoot{root("ouA")}})
+	err := ev().CheckGrant(g, nil, Role{Permissions: []Permission{pReset}}, Scope{Include: []ScopeRoot{{Complete: true}}})
+	if !errors.Is(err, ErrInvalidGrant) {
+		t.Errorf("blank root: %v", err)
+	}
+	if (ScopeRoot{Ancestors: []ObjectID{oid("a")}}).within(ObjectID{}) {
+		t.Error("blank within matched")
+	}
+}
+
+func TestTokenScopeNarrowing(t *testing.T) {
+	p := tech([]Permission{pReset}, Scope{Include: []ScopeRoot{root("corp")}})
+	tok := tokenFor(pReset)
+	narrow := Scope{Include: []ScopeRoot{root("ouA", "corp")}}
+	tok.Scope = &narrow
+	if d := ev().Authorize(p, tok, pReset, target("u", "ouA", "corp")); !d.Allowed {
+		t.Errorf("inside token scope: %+v", d)
+	}
+	if d := ev().Authorize(p, tok, pReset, target("u", "ouB", "corp")); d.Allowed {
+		t.Errorf("outside token scope allowed: %+v", d)
+	}
+	empty := Scope{}
+	tok.Scope = &empty
+	if d := ev().Authorize(p, tok, pReset, target("u", "ouA", "corp")); d.Allowed {
+		t.Error("empty token scope allowed")
+	}
+	// Grant through a narrowed token cannot exceed the token scope.
+	tok.Scope = &narrow
+	reset := Role{Permissions: []Permission{pReset}}
+	if err := ev().CheckGrant(p, tok, reset, Scope{Include: []ScopeRoot{root("ouB", "corp")}}); !errors.Is(err, ErrEscalation) {
+		t.Errorf("grant beyond token scope: %v", err)
+	}
+	if err := ev().CheckGrant(p, tok, reset, Scope{Include: []ScopeRoot{root("ouHR", "ouA", "corp")}}); err != nil {
+		t.Errorf("grant within token scope: %v", err)
+	}
+}
+
+func TestTokenInvalidIsNotOwnerDead(t *testing.T) {
+	p := tech([]Permission{pReset}, Scope{Include: []ScopeRoot{root("ouA")}})
+	if err := ev().CheckToken(p, nil); !errors.Is(err, ErrTokenInvalid) {
+		t.Errorf("nil token: %v", err)
+	}
+	if err := ev().CheckToken(p, &Token{ExpiresAt: now}); !errors.Is(err, ErrTokenInvalid) {
+		t.Errorf("expired token: %v", err)
+	}
+}
+
+func TestParseObjectIDStrict(t *testing.T) {
+	const canon = "aaaaaaaa-0000-0000-0000-000000000001"
+	want, err := ParseObjectID(canon)
+	if err != nil {
+		t.Fatalf("canonical: %v", err)
+	}
+	if got, err := ParseObjectID("AAAAAAAA-0000-0000-0000-000000000001"); err != nil || got != want {
+		t.Errorf("upper case must equal the same object: %v %v", got, err)
+	}
+	for _, bad := range []string{"", "x", "{" + canon + "}", canon + "0", "aaaaaaaa00000000000000000000000000001",
+		"zzzzzzzz-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000000"} {
+		if _, err := ParseObjectID(bad); !errors.Is(err, ErrInvalidObjectID) {
+			t.Errorf("%q accepted: %v", bad, err)
+		}
+	}
+}
+
+// A spelling variant of an excluded GUID parses to the same value, so the exclusion still bites;
+// a non-parseable ID can never be built into a fact, and the zero value is refused everywhere.
+func TestVariantExclusionStillExcludes(t *testing.T) {
+	admins, _ := ParseObjectID("AAAAAAAA-0000-0000-0000-000000000001")
+	adminsLower, _ := ParseObjectID("aaaaaaaa-0000-0000-0000-000000000001")
+	p := tech([]Permission{pReset}, Scope{
+		Include: []ScopeRoot{root("corp")},
+		Exclude: []ScopeRoot{{ID: admins, Ancestors: []ObjectID{oid("corp")}, Complete: true}}})
+	tg := Target{ID: oid("u"), Ancestors: []ObjectID{adminsLower, oid("corp")}, Complete: true}
+	if d := ev().Authorize(p, nil, pReset, tg); d.Allowed {
+		t.Errorf("excluded OU reachable via spelling variant: %+v", d)
+	}
+}
+
+func TestZeroIDsRefused(t *testing.T) {
+	zero := ScopeRoot{Complete: true}
+	// zero exclusion root in a scope: Authorize and CheckGrant both fail closed.
+	g := tech([]Permission{pReset}, Scope{Include: []ScopeRoot{root("corp")}, Exclude: []ScopeRoot{zero}})
+	reset := Role{Permissions: []Permission{pReset}}
+	if err := ev().CheckGrant(g, nil, reset, Scope{Include: []ScopeRoot{root("hr", "corp")}, Exclude: []ScopeRoot{zero}}); !errors.Is(err, ErrInvalidGrant) {
+		t.Errorf("zero exclude in grant: %v", err)
+	}
+	if err := ev().CheckGrant(g, nil, reset, Scope{Include: []ScopeRoot{root("hr", "corp")}}); !errors.Is(err, ErrFactsIncomplete) {
+		t.Errorf("zero exclude in grantor scope must fail closed: %v", err)
+	}
+	if err := ev().CheckGrant(g, nil, reset, Scope{Include: []ScopeRoot{{ID: oid("hr"), Ancestors: []ObjectID{{}}, Complete: true}}}); !errors.Is(err, ErrFactsIncomplete) {
+		t.Errorf("zero ancestor in new root: %v", err)
+	}
+	if d := ev().Authorize(g, nil, pReset, Target{Ancestors: []ObjectID{oid("corp")}, Complete: true}); d.Allowed {
+		t.Errorf("zero target id: %+v", d)
+	}
+}
+
+func TestObjectIDCanonicalOrder(t *testing.T) {
+	text, err := ParseObjectID("01234567-89ab-cdef-0011-223344556677")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oct, err := ObjectIDFromOctets([]byte{0x67, 0x45, 0x23, 0x01, 0xab, 0x89, 0xef, 0xcd, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77})
+	if err != nil || text != oct {
+		t.Fatalf("text %x != octets %x (%v)", text, oct, err)
+	}
+	if _, err := ObjectIDFromOctets(make([]byte, 16)); !errors.Is(err, ErrInvalidObjectID) {
+		t.Errorf("zero octets: %v", err)
+	}
+	if _, err := ObjectIDFromOctets(oct[:15]); !errors.Is(err, ErrInvalidObjectID) {
+		t.Errorf("short octets: %v", err)
+	}
+	// exclusion built from text, chain built from octets: must deny.
+	corp := oid("corp")
+	p := &Principal{ID: "tech", Assignments: []Assignment{{
+		Role:  Role{Permissions: []Permission{pReset}},
+		Scope: Scope{Include: []ScopeRoot{{ID: corp, Complete: true}}, Exclude: []ScopeRoot{{ID: text, Complete: true}}},
+	}}}
+	tgt := Target{ID: oid("user"), Ancestors: []ObjectID{oct, corp}, Complete: true}
+	if d := ev().Authorize(p, nil, pReset, tgt); d.Allowed {
+		t.Errorf("text-built exclusion skipped for octet-built chain: %+v", d)
+	}
+}
+
+func TestZeroExcludeDeniesInAuthorize(t *testing.T) {
+	zero := ScopeRoot{Complete: true}
+	tgt := target("user", "admins", "corp")
+	p := tech([]Permission{pReset}, Scope{Include: []ScopeRoot{root("corp")}, Exclude: []ScopeRoot{zero}})
+	if d := ev().Authorize(p, nil, pReset, tgt); d.Allowed {
+		t.Errorf("zero exclude in assignment widened scope: %+v", d)
+	}
+	ok := tech([]Permission{pReset}, Scope{Include: []ScopeRoot{root("corp")}})
+	tok := tokenFor(pReset)
+	tok.Scope = &Scope{Include: []ScopeRoot{root("corp")}, Exclude: []ScopeRoot{zero}}
+	if d := ev().Authorize(ok, tok, pReset, tgt); d.Allowed {
+		t.Errorf("zero exclude in token scope widened scope: %+v", d)
+	}
+}
