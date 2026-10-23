@@ -539,6 +539,32 @@ func TestRoleOnNonAssignableGroupIsNotCounted(t *testing.T) {
 	}
 }
 
+// A role-assignable group whose id is not a GUID cannot be read for roles: it must not pass, and
+// the write gate stays closed (T-0117 review; fails closed by construction).
+func TestNonGUIDRoleAssignableGroupIDNeverPasses(t *testing.T) {
+	for _, id := range []string{"not-a-guid", "00000000-0000-0000-0000-000000000000"} {
+		t.Run(id, func(t *testing.T) {
+			r := newRig(t, baseline...)
+			r.srv.T.Memberships = map[string][]graph.Group{spID: {{ID: id, IsAssignableToRole: true}}}
+			res := r.verify()
+			if res.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_COULD_NOT_VERIFY || res.WriteGateOpenable {
+				t.Fatalf("verdict %v gate %v", res.Verdict, res.WriteGateOpenable)
+			}
+		})
+	}
+}
+
+// An app-role assignment whose resource id is not a GUID cannot be named, so it cannot be classified.
+func TestNonGUIDAppRoleResourceIDNeverPasses(t *testing.T) {
+	r := newRig(t, baseline...)
+	tn := r.srv.T
+	tn.Assignments[spID] = append(tn.Assignments[spID], graph.AppRoleAssignment{ID: gid(5000), AppRoleID: gid(5001), PrincipalID: spID, ResourceID: "not-a-guid"})
+	res := r.verify()
+	if res.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_COULD_NOT_VERIFY || res.WriteGateOpenable {
+		t.Fatalf("verdict %v gate %v", res.Verdict, res.WriteGateOpenable)
+	}
+}
+
 type failingGroups struct{ *graph.Client }
 
 func (failingGroups) ServicePrincipalGroups(context.Context, guid.GUID) ([]graph.Group, error) {

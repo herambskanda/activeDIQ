@@ -59,3 +59,7 @@ func escapeValue(b *strings.Builder, v string) {
 		i += n
 	}
 }
+
+// CanonicalString is the RFC 4514 text with every RDN-value escape applied; it lets a DN be the
+// value of a DN-syntax filter term (ldapfilter.DN).
+func (d DN) CanonicalString() string { return string(d.Render()) }

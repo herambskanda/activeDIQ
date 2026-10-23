@@ -11,7 +11,7 @@ COMPOSE      := docker compose -f $(LAB_DIR)/docker-compose.yml
 LAB_SEED_HASH := $(shell cat $(LAB_DIR)/seed/generate.py $(LAB_DIR)/seed/post-start.sh $(LAB_DIR)/samba/entrypoint.sh $(LAB_DIR)/samba/Dockerfile 2>/dev/null | shasum -a 256 | cut -c1-12)
 export LAB_TIER
 
-.PHONY: lab-up lab-reset lab-rebuild lab-down lab-destroy lab-status lab-logs lab-shell lab-test lab-test-unit lab-test-live
+.PHONY: lab-up lab-reset lab-rebuild lab-down lab-destroy lab-status lab-logs lab-shell lab-test lab-test-unit lab-test-live lab-test-connector entra-lab-bootstrap entra-lab-verify
 
 lab-up: ## Start the AD lab (provision + seed on first run, ~3-4 min); prints connection details
 	@set -e; t0=$$(date +%s); \
@@ -62,4 +62,14 @@ lab-test-unit: ## Seed-generator unit tests (no Docker needed)
 lab-test-live: ## Verify the running lab, then prove lab-reset returns it to the seeded state
 	$(LAB_DIR)/tests/verify.sh
 
+lab-test-connector: ## internal/connector/ad against the running lab (T-0092)
+	go test -count=1 -tags lab ./internal/connector/ad/
+
 lab-test: lab-test-unit lab-test-live ## All lab tests
+
+# Entra lab (T-0183, D-0001): a Microsoft 365 Developer sandbox. DEV TENANT ONLY. Runbook: ad-lab.md §5.
+entra-lab-bootstrap: ## CEO, once per (re)created sandbox: device-code sign-in as its Global Admin; creates the activeDIQ-lab app + certificate, consent, seed objects; writes lab/.entra-lab.env and .entra-lab.pem (0600)
+	$(LAB_DIR)/bin/entra-lab-bootstrap
+
+entra-lab-verify: ## Check the handover: certificate token acquired, consented Graph permissions == lab/entra/permissions.txt, no role, no secret
+	$(LAB_DIR)/bin/entra-lab-verify

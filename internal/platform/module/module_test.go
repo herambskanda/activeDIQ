@@ -5,29 +5,11 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/capability"
 	"github.com/skenzeriq/activediq/internal/platform/module"
 	"github.com/skenzeriq/activediq/internal/platform/module/moduletest"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 )
-
-// action is a test double. It also proves that operation.Action can be implemented in full.
-type action struct{ id operation.ActionID }
-
-func (a action) ID() operation.ActionID       { return a.id }
-func (a action) Permission() authz.Permission { return "test.permission" }
-func (a action) Schema() operation.SchemaRef  { return "#/components/schemas/Test" }
-func (action) Plan(context.Context, operation.Input) (operation.Plan, error) {
-	return operation.Plan{}, nil
-}
-func (action) Apply(context.Context, operation.Plan) (operation.Outcome, error) {
-	return operation.Outcome{}, nil
-}
-func (action) Verify(context.Context, operation.Outcome) error { return nil }
-func (action) Inverse(operation.Outcome) (operation.Input, operation.Reversibility) {
-	return operation.Input{}, operation.Reversibility{}
-}
 
 // fake is a module whose behaviour the test sets.
 type fake struct {
@@ -47,7 +29,7 @@ func (f *fake) Register(r *module.Registrar) error {
 func actions(ids ...operation.ActionID) func(*module.Registrar) error {
 	return func(r *module.Registrar) error {
 		for _, id := range ids {
-			if err := r.Action(action{id: id}); err != nil {
+			if err := r.Action(moduletest.Action(id)); err != nil {
 				return err
 			}
 		}
@@ -62,7 +44,7 @@ func TestRegisterCollectsActions(t *testing.T) {
 		t.Fatalf("Register: %v", err)
 	}
 	got := c.Actions()
-	if len(got) != 2 || got[0].ID() != "fake.thing.do" || got[1].ID() != "fake.thing.undo" {
+	if len(got) != 2 || got[0].Describe().ID != "fake.thing.do" || got[1].Describe().ID != "fake.thing.undo" {
 		t.Fatalf("actions = %v", got)
 	}
 	if l := c.Loaded(); len(l) != 1 || l[0] != "fake" {
@@ -112,7 +94,7 @@ func TestBootRejects(t *testing.T) {
 		})
 	}
 	// A Registrar stashed by a module gains nothing once Boot has returned.
-	if err := stash.Action(action{id: "fake.late"}); !errors.Is(err, module.ErrClosed) {
+	if err := stash.Action(moduletest.Action("fake.late")); !errors.Is(err, module.ErrClosed) {
 		t.Fatalf("Action after Boot err = %v, want ErrClosed", err)
 	}
 }
@@ -127,7 +109,7 @@ func TestRegisterErrorPropagates(t *testing.T) {
 
 func TestZeroRegistrarRefuses(t *testing.T) {
 	var r module.Registrar
-	if err := r.Action(action{id: "fake.thing"}); !errors.Is(err, module.ErrClosed) {
+	if err := r.Action(moduletest.Action("fake.thing")); !errors.Is(err, module.ErrClosed) {
 		t.Fatalf("zero Registrar err = %v, want ErrClosed", err)
 	}
 }
@@ -147,7 +129,7 @@ func TestBootSkipsUnsatisfiedCapability(t *testing.T) {
 	if s := c.Skipped(); len(s) != 1 || s[0] != "entra" {
 		t.Fatalf("skipped = %v", s)
 	}
-	if a := c.Actions(); len(a) != 1 || a[0].ID() != "plain.x" {
+	if a := c.Actions(); len(a) != 1 || a[0].Describe().ID != "plain.x" {
 		t.Fatalf("actions = %v", a)
 	}
 

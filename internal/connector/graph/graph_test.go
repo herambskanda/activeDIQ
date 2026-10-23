@@ -23,6 +23,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/connector/graph"
 	"github.com/skenzeriq/activediq/internal/connector/graph/graphtest"
 	gid "github.com/skenzeriq/activediq/internal/directory/attr/guid"
+	"github.com/skenzeriq/activediq/internal/directory/odata"
 )
 
 const (
@@ -205,7 +206,7 @@ func TestReadsReturnExactly(t *testing.T) {
 	if err != nil || len(roles) != 2 || roles[0].Eligible || !roles[1].Eligible || roles[0].Role.DisplayName != "Directory Readers" {
 		t.Fatalf("roles = %+v, %v", roles, err)
 	}
-	all, err := r.c.DirectoryRoleAssignments(ctx, gid.GUID{})
+	all, err := r.c.AllDirectoryRoleAssignments(ctx)
 	if err != nil || len(all) != 3 {
 		t.Fatalf("all roles = %d, %v", len(all), err)
 	}
@@ -300,7 +301,7 @@ func TestErrorsAreTypedNeverEmptySuccess(t *testing.T) {
 		"app":    func(c *graph.Client) error { _, e := c.OwnApplication(context.Background()); return e },
 		"assign": func(c *graph.Client) error { _, e := c.AppRoleAssignments(context.Background(), G(spID)); return e },
 		"roles": func(c *graph.Client) error {
-			_, e := c.DirectoryRoleAssignments(context.Background(), gid.GUID{})
+			_, e := c.AllDirectoryRoleAssignments(context.Background())
 			return e
 		},
 		"owners":  func(c *graph.Client) error { _, e := c.ApplicationOwners(context.Background(), G(appObj)); return e },
@@ -506,5 +507,41 @@ func TestRetryAfterOverflowIsNotSlept(t *testing.T) {
 	_, err := r.c.OwnApplication(context.Background())
 	if graph.CodeOf(err) != graph.CodeThrottled || len(r.slept) != 0 {
 		t.Fatalf("err=%v slept=%v", err, r.slept)
+	}
+}
+
+// The zero GUID is never a principal: it must be refused before any request is sent, so a caller
+// that ignored a guid.Parse error cannot receive the tenant-wide listing (T-0171).
+func TestDirectoryRoleAssignmentsRefusesZeroGUID(t *testing.T) {
+	r := newRig(t)
+	_, before := r.srv.Calls()
+	got, err := r.c.DirectoryRoleAssignments(context.Background(), gid.GUID{})
+	if got != nil || graph.CodeOf(err) != graph.CodeInvalidArgument {
+		t.Fatalf("got %v, %v", got, err)
+	}
+	if _, after := r.srv.Calls(); after != before {
+		t.Fatalf("a request was sent: %d -> %d", before, after)
+	}
+}
+
+// Debug logging carries the path template only; a key value (a UPN) never reaches the log.
+func TestDebugLogCarriesPathTemplateNotKeyValue(t *testing.T) {
+	r := newRig(t)
+	upn, err := odata.Str("adele.vance@contoso.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seg, err := odata.KeyStr("users", upn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The user does not exist in the fake: the failed read is still logged.
+	_ = graph.ReadForTest(context.Background(), r.c, odata.Get(seg))
+	out := r.logs.String()
+	if !strings.Contains(out, "users({key})") {
+		t.Fatalf("expected the template in the log, got %q", out)
+	}
+	if strings.Contains(out, "adele") || strings.Contains(out, "contoso") {
+		t.Fatalf("key value leaked into the log: %q", out)
 	}
 }

@@ -155,6 +155,7 @@ func (q Query) raw() string {
 type Segment struct {
 	raw string // percent-encoded as sent
 	dec string // decoded, for url.URL.Path
+	tpl string // value-free form for logs: names plus {key}
 	err error
 }
 
@@ -163,7 +164,7 @@ func Seg(n Name) Segment {
 	if !n.valid(false) {
 		return Segment{err: fail(InvalidName)}
 	}
-	return Segment{raw: string(n), dec: string(n)}
+	return Segment{raw: string(n), dec: string(n), tpl: string(n)}
 }
 
 // Cast is a type-cast segment: /microsoft.graph.user.
@@ -171,7 +172,7 @@ func Cast(n Name) Segment {
 	if !n.valid(true) {
 		return Segment{err: fail(InvalidName)}
 	}
-	return Segment{raw: string(n), dec: string(n)}
+	return Segment{raw: string(n), dec: string(n), tpl: string(n)}
 }
 
 // Key is key-as-segment: /<lower-case guid>.
@@ -181,7 +182,7 @@ func Key(id GUID) Segment {
 		return Segment{err: fail(InvalidValue)}
 	}
 	s := id.g.String()
-	return Segment{raw: s, dec: s}
+	return Segment{raw: s, dec: s, tpl: "{key}"}
 }
 
 // KeyStr is `set('value')`: a string key such as a UPN on /users.
@@ -191,6 +192,22 @@ func KeyStr(set Name, v String) (Segment, error) { return keyed(set, "", v.s) }
 func AltKey[V Value](set Name, p Prop[V], v V) (Segment, error) {
 	if !p.name.valid(false) {
 		return Segment{}, fail(InvalidName)
+	}
+	// Same refusals as KeyStr (empty) and Key (nil GUID): an empty or all-zero key is never an
+	// object identity and must not reach the wire.
+	switch x := any(v).(type) {
+	case String:
+		if x.s == "" {
+			return Segment{}, fail(InvalidValue)
+		}
+	case GUIDText:
+		if x.g == (guid.GUID{}) {
+			return Segment{}, fail(InvalidValue)
+		}
+	case GUID:
+		if x.g == (guid.GUID{}) {
+			return Segment{}, fail(InvalidValue)
+		}
 	}
 	return keyedLit(set, string(p.name)+"=", v)
 }
@@ -206,7 +223,7 @@ func keyed(set Name, prefix, v string) (Segment, error) {
 		return Segment{}, fail(SlashInKey)
 	}
 	dec := string(set) + "(" + prefix + quote(v) + ")"
-	return Segment{raw: string(set) + "(" + prefix + encodeKey(quote(v)) + ")", dec: dec}, nil
+	return Segment{raw: string(set) + "(" + prefix + encodeKey(quote(v)) + ")", dec: dec, tpl: string(set) + "({key})"}, nil
 }
 
 func keyedLit[V Value](set Name, prefix string, v V) (Segment, error) {
@@ -217,7 +234,7 @@ func keyedLit[V Value](set Name, prefix string, v V) (Segment, error) {
 	if strings.ContainsAny(lit, "/\\") { // V10
 		return Segment{}, fail(SlashInKey)
 	}
-	return Segment{raw: string(set) + "(" + prefix + encodeKey(lit) + ")", dec: string(set) + "(" + prefix + lit + ")"}, nil
+	return Segment{raw: string(set) + "(" + prefix + encodeKey(lit) + ")", dec: string(set) + "(" + prefix + lit + ")", tpl: string(set) + "({key})"}, nil
 }
 
 // encodeKey is V9: every byte outside A-Z a-z 0-9 - . _ ~ @ ' is percent-encoded, upper-case hex.
@@ -234,6 +251,17 @@ func encodeKey(s string) string {
 		b.WriteByte('%')
 		b.WriteByte(hexd[c>>4])
 		b.WriteByte(hexd[c&15])
+	}
+	return b.String()
+}
+
+// Template is the request path with every key value replaced by {key}: entity-set and navigation
+// names only. It is the one form of the path that is safe to log (keys carry UPNs and object ids).
+func (r Request) Template() string {
+	var b strings.Builder
+	for _, s := range r.segs {
+		b.WriteByte('/')
+		b.WriteString(s.tpl)
 	}
 	return b.String()
 }

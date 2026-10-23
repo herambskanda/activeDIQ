@@ -73,7 +73,7 @@ Read from source, not run `[LAB: Samba]`:
 - Consequence: a notification-based delete test on Samba would **fail where Windows passes** (a
   false failure) and a Samba pass would say nothing about Windows. Delete detection in CI must
   therefore go through DirSync / USN with Show Deleted, which Samba does implement.
-  Whether Samba also supports DirSync's full behaviour is a separate matter (see ad-lab runbook §5).
+  Whether Samba also supports DirSync's full behaviour is a separate matter (see ad-lab runbook §6).
 
 ## [LAB] test procedures
 

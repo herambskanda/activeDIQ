@@ -1,0 +1,119 @@
+package operation
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+
+	"github.com/skenzeriq/activediq/internal/platform/operation/step"
+)
+
+// Typed is the typed shape of an Action: modules write these functions and never handle untyped
+// input. In, P (the step payload) and Out must be encodable as JSON, which the canonical form of the
+// plan hash is built over.
+type Typed[In, P, Out any] struct {
+	Descriptor Descriptor
+	Plan       func(ctx context.Context, pc PlanContext, in In) ([]TypedStep[P], error)
+	Apply      func(ctx context.Context, s step.Step, p TypedStep[P]) (Out, error)
+	Verify     func(ctx context.Context, s step.Step, p TypedStep[P], o Out) (Verdict, error)
+	Inverse    func(p TypedStep[P], o Out) (In, error)
+}
+
+// TypedStep is a StepPlan with a typed payload.
+type TypedStep[P any] struct {
+	Plan    StepPlan
+	Payload P
+}
+
+type defined[In, P, Out any] struct{ t Typed[In, P, Out] }
+
+// Define turns typed functions into an Action. It refuses a definition with a missing function.
+func Define[In, P, Out any](t Typed[In, P, Out]) (Action, error) {
+	if t.Plan == nil || t.Apply == nil || t.Verify == nil || t.Inverse == nil {
+		return nil, fmt.Errorf("%w: %q lacks Plan, Apply, Verify or Inverse", ErrInvalid, t.Descriptor.ID)
+	}
+	if err := t.Descriptor.validate(); err != nil {
+		return nil, err
+	}
+	return defined[In, P, Out]{t}, nil
+}
+
+func (d defined[In, P, Out]) Describe() Descriptor { return d.t.Descriptor }
+
+func (d defined[In, P, Out]) Plan(ctx context.Context, pc PlanContext, in Input) ([]StepPlan, error) {
+	var typed In
+	if err := json.Unmarshal(in, &typed); err != nil {
+		return nil, fmt.Errorf("%w: input does not decode", ErrInvalid)
+	}
+	steps, err := d.t.Plan(ctx, pc, typed)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]StepPlan, 0, len(steps))
+	for _, s := range steps {
+		b, err := json.Marshal(s.Payload)
+		if err != nil {
+			return nil, fmt.Errorf("%w: payload does not encode", ErrInvalid)
+		}
+		p := s.Plan
+		p.Payload = b
+		out = append(out, p)
+	}
+	return out, nil
+}
+
+func (d defined[In, P, Out]) unpack(p StepPlan) (TypedStep[P], error) {
+	var payload P
+	if err := json.Unmarshal(p.Payload, &payload); err != nil {
+		return TypedStep[P]{}, fmt.Errorf("%w: payload does not decode", ErrInvalid)
+	}
+	return TypedStep[P]{Plan: p, Payload: payload}, nil
+}
+
+func (d defined[In, P, Out]) Apply(ctx context.Context, s step.Step, p StepPlan) (Outcome, error) {
+	ts, err := d.unpack(p)
+	if err != nil {
+		return Outcome{}, err
+	}
+	out, err := d.t.Apply(ctx, s, ts)
+	if err != nil {
+		return Outcome{}, err
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return Outcome{}, fmt.Errorf("%w: outcome does not encode", ErrInvalid)
+	}
+	return Outcome{Payload: b}, nil
+}
+
+func (d defined[In, P, Out]) Verify(ctx context.Context, s step.Step, p StepPlan, o Outcome) (Verdict, error) {
+	ts, err := d.unpack(p)
+	if err != nil {
+		return Verdict{}, err
+	}
+	var out Out
+	if err := json.Unmarshal(o.Payload, &out); err != nil {
+		return Verdict{}, fmt.Errorf("%w: outcome does not decode", ErrInvalid)
+	}
+	return d.t.Verify(ctx, s, ts, out)
+}
+
+func (d defined[In, P, Out]) Inverse(p StepPlan, o Outcome) (Input, error) {
+	ts, err := d.unpack(p)
+	if err != nil {
+		return nil, err
+	}
+	var out Out
+	if err := json.Unmarshal(o.Payload, &out); err != nil {
+		return nil, fmt.Errorf("%w: outcome does not decode", ErrInvalid)
+	}
+	in, err := d.t.Inverse(ts, out)
+	if err != nil {
+		return nil, err
+	}
+	b, err := json.Marshal(in)
+	if err != nil {
+		return nil, fmt.Errorf("%w: inverse does not encode", ErrInvalid)
+	}
+	return b, nil
+}

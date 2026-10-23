@@ -16,22 +16,23 @@ import (
 
 // Homes of the primitives (blueprint §1.1 and §7.4).
 const (
-	Connector  = "internal/connector"            // the only importer of directory protocol libraries
-	Scope      = "internal/connector/ad/scope"   // escape controls and the Global Catalog port
-	Psx        = "internal/connector/psx"        // typed PowerShell sidecar client
-	LDAPFilter = "internal/directory/ldapfilter" // P1
-	DN         = "internal/directory/dn"         // P2
-	OData      = "internal/directory/odata"      // P8
-	Attr       = "internal/directory/attr"       // P3
-	Secret     = "internal/platform/secret"      // Secret and secretjson
-	Store      = "internal/platform/store"       // data-access package: pgx, set_config, reportsql
-	Proc       = "internal/platform/proc"        // native process invocation
-	Egress     = "internal/platform/egress"      // the one outbound HTTP client (TM-TB9-T1)
-	GraphConn  = "internal/connector/graph"      // pre-egress Graph client; migrates to egress (follow-up ticket)
-	Pslit      = "internal/platform/pslit"       // PowerShell display literal
-	APIHost    = "internal/platform/apihost"     // the single caller of secretjson.Decode
-	Modules    = "internal/modules"              // server feature modules
-	AgentMods  = "internal/agentmodules"         // agent feature modules
+	Connector   = "internal/connector"                   // the only importer of directory protocol libraries
+	Scope       = "internal/connector/ad/scope"          // escape controls and the Global Catalog port
+	Psx         = "internal/connector/psx"               // typed PowerShell sidecar client
+	LDAPFilter  = "internal/directory/ldapfilter"        // P1
+	DN          = "internal/directory/dn"                // P2
+	OData       = "internal/directory/odata"             // P8
+	GraphSchema = "internal/directory/odata/graphschema" // P8 property declarations
+	Graph       = "internal/connector/graph"             // the Microsoft Graph connector
+	Attr        = "internal/directory/attr"              // P3
+	Secret      = "internal/platform/secret"             // Secret and secretjson
+	Store       = "internal/platform/store"              // data-access package: pgx, set_config, reportsql
+	Proc        = "internal/platform/proc"               // native process invocation
+	Egress      = "internal/platform/egress"             // the one outbound HTTP client (TM-TB9-T1)
+	Pslit       = "internal/platform/pslit"              // PowerShell display literal
+	APIHost     = "internal/platform/apihost"            // the single caller of secretjson.Decode
+	Modules     = "internal/modules"                     // server feature modules
+	AgentMods   = "internal/agentmodules"                // agent feature modules
 
 	// Output encoders (P7). Provisional roots: matched anywhere in the tree.
 	Cellsafe  = "**/export/cellsafe"
@@ -71,6 +72,51 @@ var UnitHomes = map[string][]string{
 	"mail":            {Mail},
 	"pdf":             {ExportPDF},
 }
+
+// TokenURLSite names one function or method of the Graph connector that is exempt from one
+// graph-url-assembly check (FF-SP2, safe-primitives-odata §6). Pkg is the exact package directory,
+// Recv the receiver type name ("" for a plain function, which then never matches a method of the
+// same name) and Func the function or method name.
+type TokenURLSite struct{ Pkg, Recv, Func string }
+
+// GraphTokenURL is the explicit list of token-endpoint sites that may use the URL and form
+// encoders because the OAuth token endpoint is not OData. A new one is a reviewed change here.
+var GraphTokenURL = []TokenURLSite{
+	{Pkg: Graph, Recv: "Client", Func: "bearer"}, // client.go: the client-credentials POST, form body and tokenURL
+}
+
+// GraphURLParse is the explicit list of sites that may call url.Parse and friends in the Graph
+// connector: the config parses in the constructor and the host-pinned @odata.nextLink parse.
+var GraphURLParse = []TokenURLSite{
+	{Pkg: Graph, Func: "New"},  // client.go: Authority and GraphBase from configuration
+	{Pkg: Graph, Func: "list"}, // request.go: nextLink, checked against the pinned base in get
+}
+
+// GraphHTTPSite is the explicit list of sites that may create an outgoing HTTP request in the Graph
+// connector: get (host-pinned, bearer-carrying reads) and bearer (the token endpoint). A request made
+// anywhere else would skip the host pin.
+var GraphHTTPSite = []TokenURLSite{
+	{Pkg: Graph, Recv: "Client", Func: "get"},
+	{Pkg: Graph, Recv: "Client", Func: "bearer"},
+}
+
+func siteListed(sites []TokenURLSite, rel, recv, fn string) bool {
+	for _, s := range sites {
+		if s.Pkg == path.Clean(rel) && s.Recv == recv && s.Func == fn {
+			return true
+		}
+	}
+	return false
+}
+
+// IsGraphTokenURL reports whether the function (recv "" ) or method is a listed token-endpoint site.
+func IsGraphTokenURL(rel, recv, fn string) bool { return siteListed(GraphTokenURL, rel, recv, fn) }
+
+// IsGraphHTTPSite reports whether the function or method may create an HTTP request in the Graph connector.
+func IsGraphHTTPSite(rel, recv, fn string) bool { return siteListed(GraphHTTPSite, rel, recv, fn) }
+
+// IsGraphURLParse reports whether the function or method may parse a URL in the Graph connector.
+func IsGraphURLParse(rel, recv, fn string) bool { return siteListed(GraphURLParse, rel, recv, fn) }
 
 // SidecarHost is where the .NET PowerShell SDK may be referenced.
 const SidecarHost = "sidecars/pshost"

@@ -108,6 +108,26 @@
       "column": "public.connections.kind",
       "value": "entra_tenant",
       "reason": "CHECK: kind is ad_forest or entra_tenant; entra_tenant needs no transport_security (DM-10)."
+    },
+    {
+      "column": "public.components.kind",
+      "value": "connector",
+      "reason": "CHECK: kind is connector or agent (DM-12)."
+    },
+    {
+      "column": "public.enrollment_tokens.token_hash",
+      "value": "\\x0000000000000000000000000000000000000000000000000000000000000000",
+      "reason": "CHECK: a token hash is exactly 32 bytes, the SHA-256 of the token (DM-12.I2)."
+    },
+    {
+      "column": "public.enrollment_tokens.created_at",
+      "value": "2030-01-01T00:00:00Z",
+      "reason": "CHECK: expires_at is after created_at and within 24 hours of it (DM-12.I2); a fixed pair satisfies it."
+    },
+    {
+      "column": "public.enrollment_tokens.expires_at",
+      "value": "2030-01-01T01:00:00Z",
+      "reason": "CHECK: one hour after the fixed created_at above (DM-12.I2)."
     }
   ]
 }

@@ -1,0 +1,25 @@
+# Expected Graph APPLICATION permissions of the activeDIQ-lab app (T-0183).
+# Source: threat-model §6.6 allow list, every feature enabled. One per line; '#' comments.
+# `entra-lab-verify` fails if the consented set differs from this file: no extra, none missing.
+#
+# Deliberately NOT here: User.ReadWrite.All. Lab test G2 asks whether User.DeleteRestore.All is enough
+# for a soft delete; granting the broader permission would make G2 pass for the wrong reason.
+# T-0075 may add a line here when a test needs it (the commit then shows why).
+Organization.Read.All
+LicenseAssignment.Read.All
+LicenseAssignment.ReadWrite.All
+User.Create
+User.ReadUpdate.All
+User-PasswordProfile.ReadWrite.All
+User.EnableDisableAccount.All
+User.Read.All
+User.DeleteRestore.All
+User.RevokeSessions.All
+User.Invite.All
+Group.Create
+Group.ReadWrite.All
+GroupMember.ReadWrite.All
+GroupMember.Read.All
+AuditLog.Read.All
+Directory.Read.All
+RoleManagement.Read.Directory

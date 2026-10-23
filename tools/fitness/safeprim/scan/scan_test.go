@@ -143,6 +143,26 @@ func TestFFSP2BannedAPIs(t *testing.T) {
 	} {
 		want(t, c.name, jx(c.body), "FF-SP2", "json-escape-off", "internal/modules/m/m.go")
 	}
+	for _, c := range []struct{ name, body string }{
+		{"EscapeForJS method value", "var f = jsontext.EscapeForJS\nvar o = f(false)"},
+		{"EscapeForHTML method value local", "func g() jsontext.Options { h := jsontext.EscapeForHTML; return h(false) }"},
+		{"EscapeForHTML passed as argument", "func use(func(bool) jsontext.Options) {}\nfunc g() { use(jsontext.EscapeForHTML) }"},
+	} {
+		want(t, c.name, jx(c.body), "FF-SP2", "json-escape-off", "internal/modules/m/m.go")
+	}
+	const jt = "\t\"encoding/json/jsontext\"\n"
+	want(t, "true shadowed locally", map[string]string{"internal/modules/m/m.go": gofile(jt, "func g() jsontext.Options { true := false; return jsontext.EscapeForHTML(true) }")}, "FF-SP2", "predeclared-shadow", "internal/modules/m/m.go")
+	want(t, "true shadowed by a sibling-file const", map[string]string{
+		"internal/modules/m/m.go":  gofile(jt, "var o = jsontext.EscapeForHTML(true)"),
+		"internal/modules/m/m2.go": gofile("", "const true = false"),
+	}, "FF-SP2", "predeclared-shadow", "internal/modules/m/m2.go")
+	want(t, "true as a range variable", map[string]string{"internal/modules/m/m.go": gofile(jt, "func g() jsontext.Options { for true := range []bool{false} { return jsontext.EscapeForHTML(true) }; return nil }")}, "FF-SP2", "predeclared-shadow", "internal/modules/m/m.go")
+	want(t, "true as a receiver name", map[string]string{"internal/modules/m/m.go": gofile(jt, "type B = bool\nfunc (true B) g() jsontext.Options { return jsontext.EscapeForHTML(true) }")}, "FF-SP2", "predeclared-shadow", "internal/modules/m/m.go")
+	want(t, "true as a type parameter", map[string]string{"internal/modules/m/m.go": gofile("", "func g[true any]() {}")}, "FF-SP2", "predeclared-shadow", "internal/modules/m/m.go")
+	want(t, "true as a parameter name", map[string]string{"internal/modules/m/m.go": gofile("", "func g(false bool) {}")}, "FF-SP2", "predeclared-shadow", "internal/modules/m/m.go")
+	want(t, "true shadowed in a test is exempt", map[string]string{"internal/modules/m/m_test.go": gofile("", "const true = false")}, "", "", "")
+	want(t, "dot import in product code", map[string]string{"internal/modules/m/m.go": gofile("\t. \"encoding/json/jsontext\"\n", "var o = EscapeForHTML(false)")}, "FF-SP2", "dot-import", "internal/modules/m/m.go")
+	want(t, "dot import in a test", map[string]string{"internal/modules/m/m_test.go": gofile("\t. \"encoding/json/jsontext\"\n", "var o = EscapeForHTML(true)")}, "", "", "")
 	want(t, "EscapeForHTML(true) is fine", jx("var o = jsontext.EscapeForHTML(true)\nvar p = jsontext.EscapeForJS(true)"), "", "", "")
 	want(t, "EscapeForHTML(false) in a test", map[string]string{"internal/modules/m/m_test.go": gofile("\t\"encoding/json/jsontext\"\n", "var o = jsontext.EscapeForHTML(false)")}, "", "", "")
 	for _, c := range []struct{ name, imp, use string }{
@@ -157,9 +177,9 @@ func TestFFSP2BannedAPIs(t *testing.T) {
 		want(t, c.name, map[string]string{"internal/modules/m/m.go": gofile("\t\""+c.imp+"\"\n", c.use)}, "FF-SP2", "outbound-http", "internal/modules/m/m.go")
 	}
 	want(t, "egress home, tests and inbound http", map[string]string{
-		"internal/platform/egress/e.go":    gofile("\t\"net/http\"\n", "var c = &http.Client{}"),
-		"internal/modules/m/m_test.go":     gofile("\t\"net/http\"\n", "var c = &http.Client{}"),
-		"internal/modules/m/h.go":          gofile("\t\"net/http\"\n", "var s = &http.Server{}\nvar _ = http.NewRequest"),
+		"internal/platform/egress/e.go": gofile("\t\"net/http\"\n", "var c = &http.Client{}"),
+		"internal/modules/m/m_test.go":  gofile("\t\"net/http\"\n", "var c = &http.Client{}"),
+		"internal/modules/m/h.go":       gofile("\t\"net/http\"\n", "var s = &http.Server{}\nvar _ = http.NewRequest"),
 	}, "", "", "")
 	want(t, "text/template", map[string]string{"internal/modules/m/m.go": gofile("\t_ \"text/template\"\n", "")}, "FF-SP2", "text-template", "internal/modules/m/m.go")
 	want(t, "TLS bypass in a test", map[string]string{"internal/modules/m/m_test.go": gofile("\t\"crypto/tls\"\n", "var c = tls.Config{InsecureSkipVerify: true}")}, "FF-SP2", "tls-skip-verify", "internal/modules/m/m_test.go")
@@ -812,4 +832,24 @@ func TestTestdataAndSymlinkedImportsFail(t *testing.T) {
 			t.Errorf("missing dangling-symlink finding in %v", got)
 		}
 	})
+}
+
+// T-0186: //go:linkname, unsafe and -checklinkname=0.
+func TestFFSP2LinknameUnsafe(t *testing.T) {
+	const m = "internal/modules/m/m.go"
+	ln := "package m\n\nimport _ \"unsafe\"\n\n//go:linkname f github.com/go-ldap/ldap/v3.EscapeFilter\nfunc f(string) string\n"
+	want(t, "linkname to a third-party symbol", map[string]string{m: ln}, "FF-SP2", "linkname", m)
+	want(t, "unsafe import in product code", map[string]string{m: ln}, "FF-SP2", "unsafe-import", m)
+	want(t, "linkname in a test is exempt", map[string]string{"internal/modules/m/m_test.go": ln}, "", "", "")
+	want(t, "linkname in tier L is exempt", map[string]string{"tools/x/x.go": ln}, "", "", "")
+	gen := "// Code generated by protoc-gen-go. DO NOT EDIT.\n\npackage v1\n\nimport \"unsafe\"\n\nvar _ unsafe.Pointer\n"
+	want(t, "unsafe in a generated proto file", map[string]string{"internal/proto/a/v1/a.pb.go": gen}, "", "", "")
+	want(t, "unsafe in a handwritten proto-dir file", map[string]string{"internal/proto/a/v1/a.go": strings.Replace(gen, "// Code generated by protoc-gen-go. DO NOT EDIT.\n\n", "", 1)}, "FF-SP2", "unsafe-import", "internal/proto/a/v1/a.go")
+	want(t, "raw-string unsafe import", map[string]string{m: "package m\n\nimport _ `unsafe`\n"}, "FF-SP2", "unsafe-import", m)
+	want(t, "generated header outside proto", map[string]string{m: strings.Replace(gen, "package v1", "package m", 1)}, "FF-SP2", "unsafe-import", m)
+	for name, f := range map[string]string{"Makefile": "build:\n\tgo build -ldflags=-checklinkname=0 ./...\n", "build.sh": "go build -ldflags=-checklinkname=0\n",
+		"b.sh": "go build -ldflags=-checklinkname=false\n", "c.sh": "go build -ldflags=all=-checklinkname=f\n", "d.sh": "go build -ldflags '-s -checklinkname=FALSE'\n", "ci.yml": "run: go build -ldflags \"-checklinkname=False\"\n"} {
+		want(t, "checklinkname=0 in "+name, map[string]string{"scripts/" + name: f}, "FF-SP2", "checklinkname-off", "scripts/"+name)
+	}
+	want(t, "checklinkname=1 also flagged (no reason to set it)", map[string]string{"scripts/Makefile": "go build -ldflags=-checklinkname=1\n"}, "FF-SP2", "checklinkname-off", "scripts/Makefile")
 }

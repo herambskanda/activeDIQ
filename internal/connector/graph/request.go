@@ -21,9 +21,9 @@ func isTLSError(err error) bool {
 		strings.Contains(err.Error(), "tls:")
 }
 
-// get performs one GET (with throttle retry) against an absolute URL that must be on the pinned
+// get performs one GET (tpl is the request's value-free path template, the only path form logged) (with throttle retry) against an absolute URL that must be on the pinned
 // Graph origin, decoding the JSON body into out.
-func (c *Client) get(ctx context.Context, u *url.URL, out any) error {
+func (c *Client) get(ctx context.Context, u *url.URL, tpl string, out any) error {
 	if u.Scheme != c.graphBase.Scheme || !strings.EqualFold(u.Host, c.graphBase.Host) {
 		return newErr(CodeIdentityMismatch, 0, "link points outside the pinned Graph endpoint", nil)
 	}
@@ -44,7 +44,7 @@ func (c *Client) get(ctx context.Context, u *url.URL, out any) error {
 		}
 		body, rerr := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
 		resp.Body.Close()
-		c.log.Debug("graph get", "path", u.Path, "status", resp.StatusCode)
+		c.log.Debug("graph get", "path", tpl, "status", resp.StatusCode)
 		if rerr != nil {
 			return newErr(CodeUnreachable, resp.StatusCode, "response truncated", rerr)
 		}
@@ -114,7 +114,7 @@ func (c *Client) read(ctx context.Context, req odata.Request, out any) error {
 	if err != nil {
 		return err
 	}
-	return c.get(ctx, u, out)
+	return c.get(ctx, u, req.Template(), out)
 }
 
 type page[T any] struct {
@@ -134,7 +134,7 @@ func list[T any](ctx context.Context, c *Client, first odata.Request) ([]T, erro
 			return nil, newErr(CodeLimitExceeded, 0, "too many pages", nil)
 		}
 		var p page[T]
-		if err := c.get(ctx, u, &p); err != nil {
+		if err := c.get(ctx, u, first.Template(), &p); err != nil {
 			return nil, err
 		}
 		all = append(all, p.Value...)

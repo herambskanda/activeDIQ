@@ -97,11 +97,11 @@ var symbolRules = []symbolRule{
 	// TB9: one egress client (threat-model §5.9, TM-TB9-T1). http.Client is included because a bare
 	// client dials through the default transport without vetting.
 	{Rule: "outbound-http", Pkg: "net/http", Names: []string{"Client", "Transport", "DefaultClient", "DefaultTransport", "Get", "Head", "Post", "PostForm"},
-		Home: []string{policy.Egress, policy.GraphConn}, TestsExempt: true, Msg: egressMsg},
+		Home: []string{policy.Egress, policy.Graph}, TestsExempt: true, Msg: egressMsg},
 	{Rule: "outbound-http", Pkg: "net", Names: []string{"Dial", "DialTimeout", "Dialer", "DialTCP", "DialUDP", "DialIP", "DialUnix"},
-		Home: []string{policy.Egress, policy.GraphConn}, TestsExempt: true, Msg: egressMsg},
+		Home: []string{policy.Egress, policy.Graph}, TestsExempt: true, Msg: egressMsg},
 	{Rule: "outbound-http", Pkg: "crypto/tls", Names: []string{"Dial", "DialWithDialer", "Dialer"},
-		Home: []string{policy.Egress, policy.GraphConn}, TestsExempt: true, Msg: egressMsg},
+		Home: []string{policy.Egress, policy.Graph}, TestsExempt: true, Msg: egressMsg},
 	{Rule: "pgx-simple-protocol", Pkg: "github.com/jackc/pgx/v5", Names: []string{"QueryExecModeSimpleProtocol"}, Home: []string{policy.Store},
 		Msg: "pgx simple protocol interpolates client-side (CVE-2024-27289); only the store's pool-construction assertion may name it (" + refP5 + " rule 6)"},
 	{Rule: "pgx-connection", Pkg: "github.com/jackc/pgx/v5", Names: []string{"Connect", "ConnectConfig", "ParseConfig", "ConnConfig"}, Home: []string{policy.Store},

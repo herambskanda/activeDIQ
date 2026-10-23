@@ -7,12 +7,14 @@ import (
 
 	"github.com/skenzeriq/activediq/tools/analyzers/constdisp"
 	"github.com/skenzeriq/activediq/tools/analyzers/dnstring"
+	"github.com/skenzeriq/activediq/tools/analyzers/graphurl"
+	"github.com/skenzeriq/activediq/tools/analyzers/odataname"
 	"github.com/skenzeriq/activediq/tools/analyzers/secretjson"
 	"github.com/skenzeriq/activediq/tools/analyzers/sqlconst"
 	"github.com/skenzeriq/activediq/tools/analyzers/tmplconst"
 )
 
-// All returns dnstring, sqlconst, secretjson, tmplconst and constdisp.
+// All returns dnstring, sqlconst, secretjson, tmplconst, constdisp, odataname and graphurl.
 func All() []*analysis.Analyzer {
-	return []*analysis.Analyzer{dnstring.Analyzer, sqlconst.Analyzer, secretjson.Analyzer, tmplconst.Analyzer, constdisp.Analyzer}
+	return []*analysis.Analyzer{dnstring.Analyzer, sqlconst.Analyzer, secretjson.Analyzer, tmplconst.Analyzer, constdisp.Analyzer, odataname.Analyzer, graphurl.Analyzer}
 }
