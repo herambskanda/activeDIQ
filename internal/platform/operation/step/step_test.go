@@ -14,7 +14,7 @@ func chain() authority.Chain {
 
 func mint(t *testing.T, key Key, d Digest, recheck RecheckFunc) (Step, func()) {
 	t.Helper()
-	m := &Minter{}
+	m := testMinter()
 	s, revoke, err := m.Mint(Spec{Key: key, Attempt: 1, Actor: chain(), Digest: d, Recheck: recheck})
 	if err != nil {
 		t.Fatal(err)
@@ -91,7 +91,7 @@ func TestRecheckDeniedYieldsNoClearance(t *testing.T) {
 }
 
 func TestMintRefusesIncompleteSpec(t *testing.T) {
-	m := &Minter{}
+	m := testMinter()
 	for name, sp := range map[string]Spec{
 		"no recheck":   {Key: Key{Operation: "o"}, Actor: chain()},
 		"no actor":     {Key: Key{Operation: "o"}, Recheck: ok},
@@ -101,8 +101,19 @@ func TestMintRefusesIncompleteSpec(t *testing.T) {
 			t.Errorf("%s: Mint accepted", name)
 		}
 	}
-	if _, _, err := (*Minter)(nil).Mint(Spec{}); err == nil {
-		t.Error("nil minter minted")
+}
+
+func TestForgedMinterIsRefused(t *testing.T) {
+	sp := Spec{Key: Key{Operation: "o"}, Actor: chain(), Recheck: ok}
+	var zero Minter
+	for name, m := range map[string]*Minter{"zero value": &zero, "new": new(Minter), "nil": nil} {
+		s, rev, err := m.Mint(sp)
+		if !errors.Is(err, ErrNotMinter) {
+			t.Errorf("%s: err = %v", name, err)
+		}
+		if s.Valid() == nil || rev != nil {
+			t.Errorf("%s: produced a live step", name)
+		}
 	}
 }
 

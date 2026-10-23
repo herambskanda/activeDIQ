@@ -33,6 +33,7 @@ var (
 	ErrZeroStep    = errors.New("step: zero step token")
 	ErrRevoked     = errors.New("step: step token revoked")
 	ErrNoClearance = errors.New("step: clearance does not match this step")
+	ErrNotMinter   = errors.New("step: not the issued minter")
 	ErrMinterTaken = errors.New("step: minter already taken")
 	ErrDenied      = errors.New("step: authorisation re-check refused the write")
 )
@@ -174,8 +175,15 @@ type Spec struct {
 	Recheck RecheckFunc
 }
 
-// Minter is the single issuer of Steps.
-type Minter struct{}
+// issued is the package-private proof that a Minter came from TakeMinter.
+type issued struct{ _ byte }
+
+// theIssued is the one proof value. Code outside this package cannot set Minter.t, so a zero Minter,
+// new(step.Minter) or var m step.Minter is refused by Mint.
+var theIssued = &issued{}
+
+// Minter is the single issuer of Steps. Only TakeMinter produces a usable one.
+type Minter struct{ t *issued }
 
 var (
 	mu    sync.Mutex
@@ -192,7 +200,7 @@ func TakeMinter() (*Minter, error) {
 		return nil, ErrMinterTaken
 	}
 	taken = true
-	return &Minter{}, nil
+	return &Minter{t: theIssued}, nil
 }
 
 // MinterTaken reports whether the minter has been handed out.
@@ -205,8 +213,8 @@ func MinterTaken() bool {
 // Mint issues a Step for one claimed step. The returned revoke func kills the Step and every copy of
 // it; the runner calls it as soon as Apply or Verify returns.
 func (m *Minter) Mint(sp Spec) (Step, func(), error) {
-	if m == nil {
-		return Step{}, nil, ErrZeroStep
+	if m == nil || m.t == nil || m.t != theIssued {
+		return Step{}, nil, ErrNotMinter
 	}
 	if sp.Recheck == nil {
 		return Step{}, nil, errors.New("step: a step needs a recheck")

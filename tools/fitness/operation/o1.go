@@ -152,6 +152,9 @@ func o1File(path, rel, stepPath string) ([]Violation, error) {
 			if id, ok := x.X.(*ast.Ident); ok && id.Name == local && x.Sel.Name == "TakeMinter" && !inOperation {
 				add(x.Pos(), "step.TakeMinter is referenced outside internal/platform/operation")
 			}
+			if id, ok := x.X.(*ast.Ident); ok && id.Name == local && x.Sel.Name == "Minter" && !inOperation {
+				add(x.Pos(), "step.Minter is referenced outside internal/platform/operation")
+			}
 		}
 		return true
 	})

@@ -28,6 +28,8 @@ func TestO1Violations(t *testing.T) {
 		"literal":                     {"internal/modules/a/a.go", "package a\n" + stepImport + "var _ = step.Step{}\n", "constructed"},
 		"clearance":                   {"internal/modules/a/a.go", "package a\n" + stepImport + "var _ = step.Clearance{}\n", "constructed"},
 		"minter":                      {"internal/modules/a/a.go", "package a\n" + stepImport + "var _, _ = step.TakeMinter()\n", "TakeMinter"},
+		"minter type var":             {"internal/modules/a/a.go", "package a\n" + stepImport + "func f() { var m step.Minter; _ = m }\n", "step.Minter"},
+		"minter new":                  {"internal/modules/a/a.go", "package a\n" + stepImport + "func f() { _ = new(step.Minter) }\n", "step.Minter"},
 		"minter in operation subtree": {"internal/platform/operation/sub/a.go", "package a\n" + stepImport + "var _, _ = step.TakeMinter()\n", "TakeMinter"},
 		"renamed import":              {"internal/modules/a/a.go", "package a\nimport s \"" + mod + "/internal/platform/operation/step\"\nvar _, _ = s.TakeMinter()\n", "TakeMinter"},
 		"linkname":                    {"internal/modules/a/a.go", "package a\nimport _ \"unsafe\"\n//go:linkname x " + mod + "/internal/platform/operation/step.x\nvar x int\n", "linkname"},
