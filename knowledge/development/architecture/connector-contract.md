@@ -1,12 +1,12 @@
 ---
 title: "Connector contract v1.2: the read side (Describe, search, read, per-DC read, change feed), the write group (Plan, Apply) and VerifyConnection"
 date: 2026-10-02
-updated: 2026-10-22
+updated: 2026-10-23
 status: review
 owner: heramb
 author: directory-engineer
 ticket: T-0064
-amended_by: T-0091 (v1.1, author solution-architect), T-0122 (v1.2, author solution-architect: TM-D23 rules 7-11)
+amended_by: T-0091 (v1.1, author solution-architect), T-0122 (v1.2, author solution-architect: TM-D23 rules 7-11), T-0230 (§8.9, author security-architect: TM-D25 rule 7 guard input)
 binding_sources: blueprint §7.1-7.2, safe-primitives §3.6-3.7, domain-model DM-10, DM-13..DM-20, DM-24, DM-25, threat-model §6.2-§6.6 (TM-D1, TM-D2, TM-D4, TM-D5, TM-D23), §16.1 TM-R14..R17, §6.3 R1/R2 and TM-TB3-*, ADR-0005 rules 2, 4, 5, 7
 ---
 
@@ -846,6 +846,59 @@ before T-0098 is merged.
 | 10 C9 direct links live | §8.1 per-basis table, C9 rows | `TIER0_REFUSED` `LIVE_REREAD`, basis C9 (step 7) | `TIER0_REFUSAL_STAGE_LIVE_REREAD` comment | CC-WRITE-20; CC-WRITE-16 pins what remains | T-0098 with the T-0093 classifier's `gPLink` codec |
 | 11 `tier0` after a write | §8.1 step 9, R-T0RACE-1 | `APPLIED` with `tier0_after_write` (an empty basis marks a failed re-read); the pipeline records `verify_failed` `tier0_after_write` and alerts | `ApplyResponse.tier0_after_write`, `Tier0Member` comment | CC-WRITE-21 | T-0098 (step 9), T-0129 (ADR-0005 rule 7, DM-42), T-0109 (maps it) |
 | `ENTRA_PASSWORD_CREDENTIAL` severity | §8.4 | EV3 block (unexpired), EV5 warn (expired) | `FindingKind` and `VerificationCheck` comments | CC-VER-13 | T-0097 |
+
+### 8.9 The dynamic-group property guard in `Plan` and `Apply` (TM-D25 rule 7, amended by T-0230)
+
+Step 4 of §8.1 gains one check, **`CheckPropertyWrite`**, which runs on both planes and both
+transports and is not skippable by the override (D11): the override admits an operator's `tier0`
+decision, it never admits a change to who is in a Conditional Access exclusion. T-0098's guard
+must have it before the first write kind exists. T-0225 built the Entra half over `user` and
+`device` property keys; the amendments below widen its input and its scope.
+
+**Input: a typed `PropertyWrite`, not a key list.** `{plane: ENTRA | AD, kind: USER | DEVICE | GROUP,
+op, keys[]}`. `op` is one of `UPDATE`, `CREATE`, `INVITE`, `ASSIGN_LICENSE`, `SET_MANAGER`,
+`CLEAR_MANAGER`, `MOVE_OR_RENAME` (AD `ModifyDN`), `GROUP_MEMBERSHIP`. Each write kind declares its
+`PropertyWrite` in its registration (a kind with none fails the build-time check in CC-WRITE-22's
+harness), so a new kind cannot forget it. `keys` are Graph PATCH keys on the Entra plane and LDAP
+attribute names on the AD plane, never rule-side names.
+
+**Scope: the snapshot's `dynamic` set is the union over every dynamic group in a designated
+closure** (TM §6.4 TM-D25 7a), carried in `designated_tier0` as `DynamicClosure{group_id, kind,
+rule_hash}` entries. The connector re-reads `membershipRule` and `membershipRuleProcessingState` of
+each per `Plan` and `Apply` (live, step 7); a changed `rule_hash` re-lexes. A read failure is
+`TIER0_REFUSED` `LIVE_REREAD` basis `Designated`, fail closed.
+
+**Decision table** (the closed mapping is `ruleprops v1`, TM 7g):
+
+| `op` | Refused when |
+| --- | --- |
+| `UPDATE` | any of `keys` maps (7g, by plane) to a property in the merged rule scope; or `RefuseAll` and `keys` is not empty |
+| `CREATE`, `INVITE` | **any** closure dynamic group of the same kind exists (7d); a new object matches by absence |
+| `ASSIGN_LICENSE` | the scope holds `assignedPlans`, or `RefuseAll`. Group-targeted calls too (7e) |
+| `SET_MANAGER`, `CLEAR_MANAGER` | the scope holds `user.manager` (`Direct Reports for`, 7c), or `RefuseAll` |
+| `MOVE_OR_RENAME` (AD) | the scope holds `onPremisesDistinguishedName`, or `RefuseAll` |
+| `GROUP_MEMBERSHIP` | `RefuseAll` caused by a `memberOf` rule only (7b) |
+
+`RefuseAll` is set by an untokenisable rule, a rule property absent from `ruleprops v1`, an empty
+scope that is no recognised whole-rule form, or a `memberOf` rule. An unknown `op` or `kind` is
+refused. The AD plane applies to every user, inetOrgPerson and computer in a synced scope,
+correlated or not (TM 7f); the connector does not know the customer's Connect scope and assumes
+the default flows. Refusal reason `designated_dynamic_rule` (stage `CONNECTOR_SET`, or
+`LIVE_REREAD` for the re-read cases) and the refused `op` and key names go into the audit-ready
+refusal record. Key values are never recorded.
+
+**Lexer obligations (T-0225's `Lex`, extended by the T-0230 build ticket).** It must emit the
+dependency `user.manager` for the form `Direct Reports for "{id}"` (T-0225 already does), the
+`assignedPlans` dependency for `user.assignedPlans -any|-all (...)` including the inner
+`assignedPlan.*` tokens, `device.` and `user.` prefixes separately, `extension_<appId>_<name>`
+as a property, and must mark `RefuseAll` on anything else, as above. No regex, no evaluation.
+
+**Conformance (T-0066 writes them, drawn from the TM T-0230 table):** CC-WRITE-23 nested
+dynamic group at depth 1 and 3, with and without the closure; CC-WRITE-24 `Direct Reports for`;
+CC-WRITE-25 create and invite, including the null-match rule; CC-WRITE-26 licence on user and on
+group; CC-WRITE-27 AD-plane writes (`title`, `userAccountControl`, `ModifyDN`, `manager`) on an
+uncorrelated synced user; CC-WRITE-28 container keys, unknown property and unlexable rule; CC-WRITE-29
+live rule edit. The Samba lab covers LDAP semantics; Entra Connect flows are `[UNVERIFIED — lab]`.
 
 ## 9. Provider conformance suite
 

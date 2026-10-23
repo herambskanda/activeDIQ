@@ -5,7 +5,7 @@ updated: 2026-10-23
 status: review
 owner: heramb
 author: security-architect
-ticket: old T-0007, T-0032, T-0044, T-0051, T-0055, T-0108, T-0179, T-0111, T-0227
+ticket: old T-0007, T-0032, T-0044, T-0051, T-0055, T-0108, T-0179, T-0111, T-0227, T-0230
 binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), blueprint v0 (review), safe-primitives.md (review)
 sources_last_checked: 2026-10-02
 ---
@@ -822,20 +822,154 @@ Our guard has to match that.
    designation cannot be narrowed to "the group only", since protection is wider than authority.
    The same rule holds for a customer-designated **AD** group: its transitive members, walked as in
    C2 (including primary-group edges), are `tier0`.
-7. **Dynamic designated groups.** In a dynamic group, membership follows `membershipRule`, so a
-   property write on any user can add that user. Microsoft gives the same reason for barring dynamic
-   role-assignable groups: "Automated population of dynamic membership groups could lead to an
-   unwanted account being added to the group" (groups-concept). That makes this a designated-group
-   case only; PIM for Groups also excludes dynamic groups (PIM for Groups page), so rule 1(d) is
-   empty for them. The connector reads the `membershipRule` of each designated dynamic group
-   ([group resource](https://learn.microsoft.com/en-us/graph/api/resources/group?view=graph-rest-1.0)).
-   It extracts the referenced property names with a lexer for the rule grammar
-   ([dynamic membership rules](https://learn.microsoft.com/en-us/entra/identity/users/groups-dynamic-membership)),
-   never a regex and never by evaluating the rule. It then refuses any write that sets one of those
-   properties, on every user or device (reason `designated_dynamic_rule`). Two cases refuse every
-   user property write in the tenant until the rule changes or the designation is removed: a rule
-   the lexer cannot fully tokenise, and a rule that refers to group membership (a `memberOf`
-   operator, `[UNVERIFIED — lab G13]`).
+7. **Dynamic groups anywhere in a designated closure (amended by T-0230).** In a dynamic group,
+   membership follows `membershipRule`, so a property write on any user can add that user.
+   Microsoft gives the same reason for barring dynamic role-assignable groups: "Automated
+   population of dynamic membership groups could lead to an unwanted account being added to the
+   group" (groups-concept). Microsoft's own dynamic-rules page now carries the same warning: "the
+   security of that group's membership depends on who can modify the attributes referenced in the
+   rule", in Entra and "in any connected source directories"
+   ([dynamic membership rules](https://learn.microsoft.com/en-us/entra/identity/users/groups-dynamic-membership)).
+   PIM for Groups also excludes dynamic groups (PIM for Groups page), so rule 1(d) is empty for
+   them.
+
+   **7a. Scope: the closure, not the seed.** The original wording covered "dynamic designated
+   groups" only. That left a hole, because rule 6 makes the *transitive* members of a designated
+   group `tier0`. A dynamic group nested inside a designated group (at any depth, by any edge the
+   rule 1 and rule 6 walk follows) puts its computed members in the same Conditional Access
+   exclusion. A property write that adds a user to it is the same bypass as a write that adds the
+   user to the seed. **Rule 7 therefore applies to every dynamic group (`groupTypes` contains
+   `DynamicMembership`, user or device kind) visited by the rule 1 / rule 6 walk from any
+   designated seed, whatever its depth and whether or not it is itself designated.** The rule sets
+   of all of them are merged into one `RuleScope`. A dynamic group reached only through a path the
+   walk cannot read (a failed read) is a snapshot failure under rule 4, so every Entra write is
+   refused. Role-assignable seeds cannot nest groups (rule 1(b)) and so add no dynamic groups.
+   `membershipRuleProcessingState = Paused` does not exempt a group: resuming applies the rule
+   to the property values written meanwhile.
+
+   **7b. Lexing.** The connector reads `membershipRule` of each such group
+   ([group resource](https://learn.microsoft.com/en-us/graph/api/resources/group?view=graph-rest-1.0))
+   and extracts the referenced property names with a lexer for the rule grammar, never a regex and
+   never by evaluating the rule. Per write it **re-reads** `membershipRule` and
+   `membershipRuleProcessingState` of every closure dynamic group, so a rule edited since the
+   snapshot is seen (a dynamic group newly nested since the snapshot is a set basis, TM-R16). Three
+   cases refuse every user (or device) property write, create, invite and licence write in the
+   tenant until the rule changes or the nesting or designation is removed: a rule the lexer
+   cannot fully tokenise; a rule that names a property absent from the mapping table in 7g (an
+   unknown property cannot be proved harmless); and a rule that refers to group membership (a
+   `memberOf` operator, `user.memberOf -any (group.objectId -in [...])`, which Microsoft lists as
+   preview). For the third case the write set also includes **group membership writes** on any
+   group, since adding a user to any group can satisfy the rule `[UNVERIFIED — lab G13]`.
+
+   **7c. `Direct Reports for` rules.** The whole-rule form `Direct Reports for "{objectId}"`
+   has no `user.` property, so a lexer that only collects `user.x` tokens would read it as empty.
+   Microsoft: "For the rule to work, make sure that the `Manager` property is set correctly for
+   users in your organization", and "the manager is also added to a direct reports dynamic group"
+   (dynamic membership rules). The lexer must recognise the form and record the dependency
+   `user.manager` (the manager's objectId is also recorded, for the report only). Any write that
+   sets or clears a user's `manager` is then refused, on **every** user: Graph
+   `PUT /users/{id}/manager/$ref` and `DELETE /users/{id}/manager/$ref`, and for synced users the
+   AD attribute `manager` (7f). A write to the *manager's own* properties changes nothing here. A
+   rule that tokenises to no property and is no recognised whole-rule form is "cannot tokenise"
+   under 7b.
+
+   **7d. Create and invite are writes of every property.** A new object gets values for properties
+   the caller never named, and a rule can match on the *absence* of a value. So create is not
+   "set these keys". Microsoft's own examples include `user.objectId -ne null` (every user),
+   `user.department -eq null` (null is a supported value), `user.assignedPlans -all
+   (assignedPlan.servicePlanId -eq null)` ("selects all users who have no assigned service
+   plan") and `(user.objectId -ne null) -and (user.userType -eq "Member")`; "this rule adds
+   business-to-business guest users and member users". On creation or B2B invitation the object
+   receives `objectId`, `userType`, `accountEnabled`, `userPrincipalName`, `displayName`,
+   `mailNickName`, `mail` and `otherMails` (invite), and the empty `assignedPlans`, and every
+   other rule property starts null. **Decision: while any dynamic group is in a designated
+   closure, `POST /users`, `POST /invitations` and the AD equivalent (create of a user or
+   inetOrgPerson in a synced scope, 7f) are refused (`designated_dynamic_rule`, operation
+   `create`).** The guard does not try to prove that a particular rule cannot match a new object:
+   that needs a sound negation, null and `-not` precedence analysis, and a lexer error there is a
+   bypass. A later ADR may narrow this with lab proof. Cost: tenants that nest a dynamic group in
+   a Conditional Access exclusion cannot provision or invite users through activeDIQ, and
+   connection health says why. No customer risk is accepted, so no CEO decision is needed. Device
+   create is not an activeDIQ operation in v1; if one is added it follows the same rule.
+
+   **7e. Licence assignment writes `user.assignedPlans`.** A rule over `assignedPlans` reads
+   `service`, `servicePlanId` and `capabilityStatus`. Microsoft: "Service plans aren't the same as
+   licenses or products". Assigning a licence changes the plans, and which plans are enabled
+   depends on the SKU and its `disabledPlans`. The guard treats these as writes of
+   `assignedPlans`: `POST /users/{id}/assignLicense` (add, remove, or change `disabledPlans`),
+   **and** `POST /groups/{id}/assignLicense` (group-based licensing changes the plans of every
+   member of the group, so the *target group* need not be in the closure). Both are refused when
+   any closure rule references `assignedPlans`, and under the RefuseAll cases of 7b. A rule that
+   keys on the product the user holds is therefore guarded the same way, on the same path.
+   `assignedPlans` is "Read-only" in Graph (user resource), so licence actions are the only
+   direct write path; plan state also moves without our write when a licence expires, which is
+   outside the guard.
+
+   **7f. Hybrid: an AD write to a synced user is an Entra property write.** For hybrid tenants an
+   on-prem write by activeDIQ to a synced user flows through Microsoft Entra Connect to the cloud
+   object and can add that user to a closure dynamic group. That user is not in the closure, so
+   rule 8 (correlation to a closure *member*) does not cover it. Microsoft warns the same way for
+   "attributes synced from on-premises Active Directory". **The same `CheckPropertyWrite` check
+   applies on the AD write path.** The AD write's LDAP attribute names are mapped to the Entra
+   rule properties they flow to, using the Entra Connect attribute flows (the synchronised
+   attribute list is the sourced basis:
+   [attributes synchronized](https://learn.microsoft.com/en-us/entra/identity/hybrid/connect/reference-connect-sync-attributes-synchronized)).
+   The AD-side vocabulary is fixed in the 7g table. Three AD writes need a note: (1) `userAccountControl`
+   with `UF_ACCOUNTDISABLE` flows to `accountEnabled` (listed on the page); (2) a **move or
+   rename** (`ModifyDN`, the pseudo-attribute `distinguishedName`) changes
+   `onPremisesDistinguishedName`, which is a supported rule property, so a rule on an OU path is
+   moved into or out of by an OU move; (3) group-membership writes on a synced group matter
+   only under the `memberOf` case of 7b and under rule 8. The guard applies to every synced user
+   and device whether or not it is correlated, in any correlation state. Whether a given
+   attribute is in the customer's Connect scope and whether the flow is default are tenant facts
+   the connector does not know, so the guard assumes the default flow: an attribute filtered out
+   of sync is refused too (safe direction). `[UNVERIFIED — lab: each flow, including the
+   `co`/`c` to `country` flow and the rename and move cases, against a lab Entra Connect]`.
+
+   **7g. Mapping table: rule property to write paths (closed, versioned, in code).** Rule
+   property names are not Graph write names. The guard keeps one table, `ruleprops v1`, with a
+   row for every property Microsoft lists as usable in a rule, the Graph write path that sets it,
+   and the AD LDAP attribute whose sync reaches it. A property in a rule that has no row is
+   "unknown" and is RefuseAll (7b). A write key that is in no row can influence no rule and is
+   not refused by rule 7. A drift test compares the table with Microsoft's list.
+
+   | Rule property (user) | Graph write path | AD attribute whose sync reaches it |
+   | --- | --- | --- |
+   | `department`, `companyName`, `givenName`, `surname`, `jobTitle`, `city`, `state`, `streetAddress`, `postalCode`, `country`, `displayName`, `employeeId`, `preferredLanguage`, `usageLocation`, `userPrincipalName`, `userType`, `accountEnabled`, `mail`, `mailNickName` | the same-named key of `PATCH /users/{id}` (`mailNickName` is Graph `mailNickname`) | `department`, `company`, `givenName`, `sn`, `title`, `l`, `st`, `streetAddress`, `postalCode`, `co` (and `c`) `[UNVERIFIED]`, `displayName`, `employeeID`, none for `preferredLanguage` and `userType`, `usageLocation` (no default flow `[UNVERIFIED]`), `userPrincipalName`, `userAccountControl` bit 2, `mail`, `mailNickname` |
+   | `mobile` | `mobilePhone` | `mobile` |
+   | `telephoneNumber` | `businessPhones` | `telephoneNumber` |
+   | `facsimileTelephoneNumber` | `faxNumber` | `facsimileTelephoneNumber` |
+   | `physicalDeliveryOfficeName` | `officeLocation` | `physicalDeliveryOfficeName` |
+   | `otherMails` | `otherMails` | none |
+   | `proxyAddresses` | not directly writable: Graph `mail` changes it ("Changes to the mail property update this collection") | `proxyAddresses`, `mail` |
+   | `sipProxyAddress` | `imAddresses` is read-only `[UNVERIFIED]` | `msRTCSIP-PrimaryUserAddress` `[UNVERIFIED]` |
+   | `passwordPolicies` | `passwordPolicies` | none |
+   | `employeeHireDate` | `employeeHireDate` | none |
+   | `extensionAttribute1` to `15` | key `onPremisesExtensionAttributes` (a container; any subkey counts) | `extensionAttribute1` to `15` |
+   | `extension_<appId>_<name>` | the same-named key | the directory-extension attribute the customer maps (Connect option) |
+   | `objectId` | server-assigned on create (7d) | none (create) |
+   | `assignedPlans` | `assignLicense` on user or group (7e) | none |
+   | `onPremisesDistinguishedName`, `onPremisesSecurityIdentifier`, `dirSyncEnabled` | read-only in Graph | `distinguishedName` (move or rename), none, none |
+   | `manager` (`Direct Reports for`, 7c) | `PUT` or `DELETE /users/{id}/manager/$ref` | `manager` |
+   | `memberOf` | group membership writes (7b) | `member` (synced groups) |
+   | **device:** `extensionAttribute1` to `15` | key `extensionAttributes` (container) on `PATCH /devices/{id}` ([device update](https://learn.microsoft.com/en-us/graph/api/device-update?view=graph-rest-1.0)) | none for cloud; hybrid-joined devices are written by their agent, not by activeDIQ |
+   | **device:** `displayName`, `accountEnabled`, `deviceCategory`, others | same-named key | `displayName` and `userAccountControl` for the computer object |
+
+   Rows marked `[UNVERIFIED]` stay refused-by-default (the property is treated as reaching the
+   rule) until the lab confirms them. The container rule is the one that bit T-0225's first
+   attempt: the rule says `user.extensionAttribute5`, Graph writes `onPremisesExtensionAttributes`.
+   A write whose key is the container is refused if the rule uses **any** `extensionAttributeN`,
+   because the typed patch could set any of them (and for on-prem-synced users the container is
+   "Read-only" in Graph; the authority is the AD attribute).
+
+   **7h. Proof.** Table tests in "Proof TM-F-T0GUARD (T-0230 additions)", each with a negative twin.
+   **Residual (new TM-R19, accepted):** (1) the guard sees only activeDIQ's writes. A customer
+   admin, a user's own SELF write to a synced attribute, or an HR feed can still add a user to a
+   dynamic group, and the post-write check cannot catch ours because rule evaluation is
+   asynchronous. Microsoft's advice (audit write permission of every rule attribute) goes in the
+   onboarding report. (2) A dynamic group created and nested since the snapshot (TM-R16). (3)
+   Availability: create, invite and licence writes stop when a closure dynamic group exists.
+
 8. **Hybrid.** C16 and E5 cover the whole closure. An AD object correlated to any principal in it
    is C16. An AD group correlated to a designated or role-assignable-reach Entra group is C16,
    because its AD membership drives the cloud membership. (PIM for Groups excludes "groups
@@ -934,6 +1068,29 @@ raised from T-0227), the server guard and connector contract §8.1.
     (DnsAdmins, the Exchange groups). Renaming a group does not remove it. An object that *later*
     takes a C13 name is `tier0` as well; the classifier never drops a pinned GUID. An onboarding
     finding appears when no `DnsAdmins` can be found in a domain that hosts AD-integrated DNS zones.
+
+**Proof TM-F-T0GUARD (T-0230 additions).** Each row has a negative twin (the same write with no closure dynamic group, or with an unrelated property) that is allowed. Graph is the connector's fake; AD is the Samba lab; the Connect flows need a lab `[UNVERIFIED — lab]`.
+
+| Test | Setup | Expect |
+| --- | --- | --- |
+| T0-DYN-NEST | designated seed S contains group N, which contains dynamic group D with rule `user.department -eq "X"` (depth 1, then 3) | `department` write on any user refused `designated_dynamic_rule`; the same with D outside the closure is allowed |
+| T0-DYN-NEST-FAIL | the read of N's members fails | snapshot error; every Entra write refused |
+| T0-DYN-DEVICE | D is a device group with `device.extensionAttribute3` | `PATCH /devices` key `extensionAttributes` refused; `displayName` allowed |
+| T0-DYN-DR | D's rule is `Direct Reports for "<id>"` | `PUT` and `DELETE /users/{any}/manager/$ref` refused; `jobTitle` allowed; the lexer does not return an empty scope |
+| T0-DYN-DR-AD | same, synced user | AD write of `manager` refused; `title` allowed |
+| T0-DYN-CREATE | D's rule is `user.department -eq "X"`; request `POST /users` with no department | refused `create`; no closure dynamic group: allowed |
+| T0-DYN-INVITE | D's rule is `user.userType -eq "Guest"` | `POST /invitations` refused |
+| T0-DYN-NULL | D's rule is `user.department -eq null` | create refused (the new object matches by absence) |
+| T0-DYN-LIC | D's rule uses `assignedPlans`; user and group `assignLicense` | both refused; a rule on `city` only: allowed |
+| T0-DYN-EXT | rule `user.extensionAttribute5`; write key `onPremisesExtensionAttributes.extensionAttribute9` | refused (container rule); device rule with `extensionAttributes` refused |
+| T0-DYN-MAP | every row of `ruleprops v1` | each Graph write key and each AD attribute in the row is refused when its rule property is in a closure rule; drift test against the Microsoft list fails on a new property |
+| T0-DYN-UNKNOWN | rule names a property absent from the table | RefuseAll for writes, create, invite, licence |
+| T0-DYN-UNLEX | unterminated string; a rule that tokenises to no property | RefuseAll |
+| T0-DYN-MEMBEROF | rule uses `user.memberOf -any (...)` | every property write and every group membership write refused `[UNVERIFIED — lab G13]` |
+| T0-DYN-AD-HYBRID | synced, uncorrelated, non-closure user; rule `user.jobTitle`; AD write of `title` | refused; `description` allowed; `ModifyDN` refused when the rule uses `onPremisesDistinguishedName` |
+| T0-DYN-AD-UAC | rule `user.accountEnabled -eq true`; AD write toggling `ACCOUNTDISABLE` | refused |
+| T0-DYN-LIVE | rule edited after the snapshot to reference `city`; then a `city` write | refused on the per-write re-read |
+| T0-DYN-PAUSED | `membershipRuleProcessingState = Paused` | rule still counts |
 
 **Proof TM-F-T0GUARD (T-0227 additions).** Table tests, each with a negative twin, then a lab run:
 
@@ -2146,7 +2303,7 @@ Existing proofs this document relies on: FF-SP1–SP9 (`tools/fitness/safeprim`)
 | Proof | What it proves (fails when …) | Kind | Owner ticket | Threats |
 | --- | --- | --- | --- | --- |
 | TM-F-RIGHTS | An over-privileged AD identity (Tier-0 group member, or any write/control right on a `tier0` object) or an Entra app with a denied permission is **refused activation**; a correctly delegated one passes; extras and missing rights are both reported (§6.5, §6.6) | Windows lab (oracle) + Samba where supported; fake Graph | T-0066 (directory-engineer) | TB3-T11, TB7-T3 |
-| TM-F-T0GUARD | The connector refuses `Apply` on a `tier0` target even when the server asks; Plan refuses too; Entra `tier0` (E1–E5) is refused, as are AD objects correlated to it (C16) (§6.2). **TM-D25:** a PIM-for-Groups eligible-only or future-scheduled member or owner of a role-assignable group, a member of a group that is itself eligible there, a transitive member or owner of a designated group, and a user whose write sets a property in a designated dynamic group's rule are each refused; a failed or unlicensed-but-uncorroborated schedule read refuses every Entra write; a classifier given a designated group refuses its nested member  **TM-D26 (T-0227):** see the test table after TM-D26 (C17, C18, callback ACEs, C8 `dSHeuristics`, C13 rename) | Lab, both transports | T-0066 (directory-engineer) | TB3-T10, TB6-T4, TB7-T4, TB7-T11, TB17-T4 |
+| TM-F-T0GUARD | The connector refuses `Apply` on a `tier0` target even when the server asks; Plan refuses too; Entra `tier0` (E1–E5) is refused, as are AD objects correlated to it (C16) (§6.2). **TM-D25:** a PIM-for-Groups eligible-only or future-scheduled member or owner of a role-assignable group, a member of a group that is itself eligible there, a transitive member or owner of a designated group, and a user whose write sets a property in the rule of **any dynamic group in a designated closure** (nested at any depth; Direct Reports, create, invite, licence and AD-side synced writes included, **T-0230**) is refused; a failed or unlicensed-but-uncorroborated schedule read refuses every Entra write; a classifier given a designated group refuses its nested member  **TM-D26 (T-0227):** see the test table after TM-D26 (C17, C18, callback ACEs, C8 `dSHeuristics`, C13 rename) | Lab, both transports | T-0066 (directory-engineer) | TB3-T10, TB6-T4, TB7-T4, TB7-T11, TB17-T4 |
 | TM-F-HYBRID | A forged, SOA-transferred, SID-mismatched, unattested or once-cloud-only correlation authorises anything; a correlation first eligible during a post-attestation `open`/`stale` lapse becomes `matched` without re-confirmation; an install-time correlation (present before the first attestation, not once cloud-only) fails to become `matched` on that attestation; `tenant-owner` crosses a correlation; the attestation flow keeps a token (§6.8). TM-D19 (§6.9): an Entra-only session holds a correlation-derived AD grant; an authority factor enrols without AD-plane proof or owner approval; an Entra-side method reset touches the activeDIQ factor; a less-privileged technician resets a console-backing object | CI, fake Graph + fake IdP + Samba | T-0067 (directory-engineer, with `authz`) | TB7-T8 to T13, TB8-T8 |
 | TM-F-ANON | Anonymous routes of the built router ≠ the reviewed allow-list (§7.6) | CI | `fitness-api` A4 (T-0018) | TB2-T2, TB2-T10 |
 | TM-F-FLEET | Any RPC but `Enroll` succeeds without a client certificate; an enrollment token works twice or after expiry; a connector accepts an unpinned server; a revoked component keeps a stream; the fleet contract gains a secret-bearing message type outside operation payloads. **Tunnel (TM-D24, §9.8).** (A) Some `CallOpen.method` reaches a handler although it is outside the opener's direction set of the bound contract. The corpus: another contract's method (including the cross-kind cases connector↔`addc`↔`fileserver`), a server→component method opened by the component, `grpc.health.v1`, `grpc.reflection.v1`, channelz, case, slash and suffix variants of an allowed name, and a name over 256 bytes or not valid UTF-8. Or the refusals differ in code or text, or `fleet/dial` serves a method outside its contract. (B) Some violation leaves the tunnel open, or no audit event names the component. The corpus: a wrong-parity `open`, a reused or non-increasing id, a frame on an id never opened, a frame the sender's role or the call's state forbids, and a non-`FlowCredit` body on `call_id` 0. Also fails: an in-flight frame after this side's cancel or close closes the tunnel; a response reaches a call on another tunnel; a pending call is rebound after its tunnel drops; or it completes with any outcome but unknown. (C) A component `status_message` with CR/LF, ANSI escapes, bidi controls, invalid UTF-8, HTML or 1 MiB of text reaches a log line, audit summary, API response or console view unbounded or unescaped, or outside a `component_reported` field. Or a `status_code` outside 0–16 maps to anything but `UNKNOWN`. (D) The gateway serves an `Enroll` whose `ca_bundle_pem` holds anything but header-free `CERTIFICATE` blocks of CA certificates that include the pinned CA. The corpus: a `PRIVATE KEY` or `RSA PRIVATE KEY` block, PEM headers, trailing bytes, a non-CA certificate, zero certificates, more than 8 certificates or more than 64 KiB. Or a component accepts such a bundle, or a bundle without the pinned CA. Or a component sends its token to an `Enroll` server whose CA SPKI does not match the pin (MITM fixture). Or a pinned dial ever uses the host root set | CI (P3 harness) | T-0069 (backend-engineer); subjects T-0155, T-0158, T-0209 | TB6, TB12-T1/T2, TB12-T16 |
@@ -2199,6 +2356,7 @@ control.
 | TM-R15 | **D11, accepted.** A forged `WriteGateOverride` lets an over-privileged connector identity write non-`tier0` objects with rights beyond §6.3 | The override is server state (DM-25). The connector checks only that every blocking fingerprint is acknowledged; V8, EV4 and `COULD_NOT_VERIFY` cannot be overridden; the Tier-0 refusal never reads the override (CC-WRITE-08). Each admission is logged on the connector host (TM-D23 rule 9). The excess is limited to typed write kinds on non-`tier0` objects, the same class as TM-R2 | security-architect | With TM-R2; if a write kind can change a security descriptor |
 | TM-R16 | **R-T0SET-1, accepted after narrowing.** An object that became `tier0` through a *set* basis since the connector's last verification is not refused by the connector. The set bases are: C9 reach other than direct links, C13 groups without a well-known RID, C12's DC list, E3's privileged-app list, and TM-D25 reach through a group (a group made eligible, or a designated group's new nested member, since the snapshot; direct schedules on the target are read live, TM-D25 rule 3) | Recomputing these per write means walking reach, the schema or the app graph. The server's guard runs first and is recomputed on every sync. The window is at most 26 hours, and it is exploitable only by a compromised server *after* a third party made the change. Rule 10 makes direct C9 links live. CC-WRITE-16 pins what is left | directory-engineer (classifier, T-0093) | T-0096 measures the cost of a V7 run (13-hour age); a new set basis |
 | TM-R18 | **Foreign app owners, accepted (T-0111).** The owners of a multi-tenant app in its *home* tenant can add credentials to the application object ([addKey](https://learn.microsoft.com/en-us/graph/api/application-addkey?view=graph-rest-1.0)), then act as its service principal in the customer tenant. The customer tenant cannot read that object, so E3 treats a foreign app (404) as having no owners. If such an app holds a role or a deny-listed permission here, its home-tenant owners are invisible `tier0` | We cannot read another tenant's directory, and they are not accounts activeDIQ can write: the risk is that the app itself is Tier 0 in the customer's tenant, not that we reset its owners. Onboarding and health list every foreign service principal that holds a directory role or a deny-listed permission, so the customer can review it ([protect M365](https://learn.microsoft.com/en-us/entra/architecture/protect-m365-from-on-premises-attacks)) | security-architect | Graph exposes home-tenant owners; a write kind that targets foreign SPs |
+| TM-R19 | **Dynamic-group guard sees only our writes, accepted (T-0230).** Customer admins, SELF writes to synced attributes, HR feeds and expiring licences can still move a user into a closure dynamic group. Rule evaluation is asynchronous, so our post-write re-read cannot prove the outcome. Create, invite and licence writes stop while a closure dynamic group exists | The guard stops *our* contribution only. Onboarding reports each closure dynamic group, its rule properties and who can write them, as Microsoft advises ([dynamic membership rules](https://learn.microsoft.com/en-us/entra/identity/users/groups-dynamic-membership)). The availability cost is the fail-closed default (TM-D2) and is shown in connection health | security-architect | A sound lexer-level proof that a rule cannot match a new object (narrows 7d) |
 | TM-R17 | **R-T0RACE-1, accepted.** An object that becomes `tier0` between the connector's step-7 read and the write can be written. Examples: added to Domain Admins, granted DCSync, or a DC moved into its OU | LDAP cannot make a modify conditional on membership, ancestry or a DACL elsewhere ([RFC 4511 §4.6](https://www.rfc-editor.org/rfc/rfc4511#section-4.6)). This is the same window as ADR-0005 rule 7 and lasts milliseconds to seconds. Detection: `tier0_after_write` and its alert (TM-D23 rule 11) | security-architect | A directory feature for conditional writes on other objects |
 
 ### 16.2 Decisions owed to the CEO (not asked now)
@@ -2342,6 +2500,7 @@ External, in order of first use:
 
 ## Changelog
 
+- 2026-10-23 · T-0230 (from the T-0225 review). TM-D25 rule 7 rewritten as 7a to 7h: it covers every dynamic group in a designated closure (nested at any depth, not only designated seeds); `Direct Reports for` rules depend on `user.manager`; create and invite are writes of every property (the new object matches rules by absence), so they are refused while a closure dynamic group exists; licence assignment (user and group) writes `assignedPlans`; synced AD writes, moves and `userAccountControl` are Entra property writes and go through the same `CheckPropertyWrite`; closed mapping table `ruleprops v1` from rule property to Graph write path and AD attribute. New TM-R19; TM-F-T0GUARD extended with the T-0230 proof table. Connector contract §8.9 and T-0098 guard contract updated. Sources: dynamic membership rules, Entra Connect synchronized attributes, Graph user resource, device update.
 - 2026-10-23 · T-0227 (from the T-0093 review). §6.4: new C17 (WriteDACL, WriteOwner, GenericAll, GenericWrite, all-property or `gPLink` WriteProperty, ownership, on the domain, Configuration and Schema heads and AdminSDHolder) and C18 (privileged `sIDHistory`, by RID); C8 gains `dSHeuristics`; C13 is matched by RID, SID or pinned GUID, never by name. New DECISION TM-D26: ten rules (callback ACEs 0x09 and 0x0B count as unconditional allows; the owner is `tier0` whatever OWNER RIGHTS says; ACE trustees match on `sIDHistory`; fail closed; live bases) and sixteen named tests added to TM-F-T0GUARD. Build ticket raised for `internal/connector/tier0`.
 - 2026-10-23 · T-0111 (from the T-0095 review). §6.4: E2 now counts PIM-for-Groups eligible and scheduled members and owners. New DECISION TM-D25 adds nine rules: the reach closure, including group-type eligible principals; which schedules count; the reads, with a live per-target check; fail mode, where a failed read refuses every Entra write and the members-only option is rejected; the unlicensed tenant, empty only when the lab-pinned response and `subscribedSkus` agree; designated groups, whose transitive members and owners are `tier0` (Entra and AD); dynamic designated groups, guarded by a rule lexer; the hybrid reach in C16 and E5; Conditional Access candidates. §6.6: new required RT-4 row `PrivilegedEligibilitySchedule.Read.AzureADGroup` + `PrivilegedAssignmentSchedule.Read.AzureADGroup`; new optional row `Policy.Read.ConditionalAccess`; the deny list gains `RoleManagementPolicy.ReadWrite.*`; lab tests G11 to G13. TM-F-T0GUARD extended. TM-R16 extended; new TM-R18 (foreign app owners). Sources 73 to 79. Build ticket T-0225 (directory-engineer); G11 to G13 routed to T-0075.
 - 2026-10-23 · T-0179 (from the T-0152 review). New tunnel-level rows TM-TB6-T10 to T13: `CallOpen.method` confusion, `call_id` hijack, untrusted `CallClose` text, and CA-bundle content (including first-`Enroll` MITM). New row TM-TB12-T16: agents on the same tunnel, cross-kind methods. New §9.8 DECISION TM-D24: rules A (dispatch), B (call identity), C (status text) and D (CA pin before token; CA bundle built and parsed strictly). TM-F-FLEET gains failing conditions (A) to (D). New subject ticket T-0209, the tunnel multiplexer; D goes to T-0155 and T-0158.
