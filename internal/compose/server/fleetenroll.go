@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 
 	"google.golang.org/grpc/codes"
@@ -10,7 +11,6 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/skenzeriq/activediq/internal/platform/fleet"
 	"github.com/skenzeriq/activediq/internal/platform/fleet/fleetsql"
 	fleetv1 "github.com/skenzeriq/activediq/internal/proto/activediq/fleet/v1"
 )
@@ -27,7 +27,7 @@ const (
 // enrollBackend is what the adapter needs from fleetsql.Enroller.
 type enrollBackend interface {
 	Enroll(ctx context.Context, source, token string, csrDER []byte) (fleetsql.Enrolled, error)
-	Rotate(ctx context.Context, peer fleet.Identity, csrDER []byte) (fleetsql.Enrolled, error)
+	Rotate(ctx context.Context, leaf *x509.Certificate, csrDER []byte) (fleetsql.Enrolled, error)
 }
 
 // fleetEnrollService serves Fleet.Enroll. It embeds the unimplemented server, so Tunnel answers
@@ -61,11 +61,11 @@ func (s *fleetEnrollService) Enroll(ctx context.Context, req *fleetv1.EnrollRequ
 		err error
 	)
 	if req.GetEnrollmentToken() == "" {
-		id, have := verifiedIdentity(p)
-		if !have {
+		leaf := verifiedLeaf(p)
+		if leaf == nil {
 			return nil, errRefused
 		}
-		out, err = s.backend.Rotate(ctx, id, req.GetCsrDer())
+		out, err = s.backend.Rotate(ctx, leaf, req.GetCsrDer())
 	} else {
 		out, err = s.backend.Enroll(ctx, p.Addr.String(), req.GetEnrollmentToken(), req.GetCsrDer())
 	}
@@ -79,15 +79,14 @@ func (s *fleetEnrollService) Enroll(ctx context.Context, req *fleetv1.EnrollRequ
 	return resp, nil
 }
 
-// verifiedIdentity reads the identity from the leaf of a chain the TLS handshake verified. An
-// unverified certificate (PeerCertificates alone) is never used.
-func verifiedIdentity(p *peer.Peer) (fleet.Identity, bool) {
+// verifiedLeaf returns the leaf of a chain the TLS handshake verified, or nil. An unverified
+// certificate (PeerCertificates alone) is never used.
+func verifiedLeaf(p *peer.Peer) *x509.Certificate {
 	ti, ok := p.AuthInfo.(credentials.TLSInfo)
 	if !ok || len(ti.State.VerifiedChains) == 0 || len(ti.State.VerifiedChains[0]) == 0 {
-		return fleet.Identity{}, false
+		return nil
 	}
-	id, err := fleet.IdentityOf(ti.State.VerifiedChains[0][0])
-	return id, err == nil
+	return ti.State.VerifiedChains[0][0]
 }
 
 func mapEnrollErr(err error) error {

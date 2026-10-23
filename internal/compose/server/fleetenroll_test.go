@@ -17,14 +17,13 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
-	"github.com/skenzeriq/activediq/internal/platform/fleet"
 	"github.com/skenzeriq/activediq/internal/platform/fleet/fleetsql"
 	fleetv1 "github.com/skenzeriq/activediq/internal/proto/activediq/fleet/v1"
 )
 
 type fakeBackend struct {
 	source, token string
-	rotated       *fleet.Identity
+	rotated       *x509.Certificate
 	err           error
 }
 
@@ -34,8 +33,8 @@ func (f *fakeBackend) Enroll(_ context.Context, source, token string, _ []byte) 
 		Endpoints: []fleetsql.Endpoint{{Host: "h", Port: 1}}}, f.err
 }
 
-func (f *fakeBackend) Rotate(_ context.Context, id fleet.Identity, _ []byte) (fleetsql.Enrolled, error) {
-	f.rotated = &id
+func (f *fakeBackend) Rotate(_ context.Context, leaf *x509.Certificate, _ []byte) (fleetsql.Enrolled, error) {
+	f.rotated = leaf
 	return fleetsql.Enrolled{LeafDER: []byte{2}, NotAfter: time.Unix(200, 0)}, f.err
 }
 
@@ -96,8 +95,8 @@ func TestEnrollAdapterRotateNeedsAVerifiedCertificate(t *testing.T) {
 	if _, err := s.Enroll(peerCtx("198.51.100.7:4444", verified), &fleetv1.EnrollRequest{CsrDer: []byte{1}}); err != nil {
 		t.Fatal(err)
 	}
-	if b.rotated == nil || b.rotated.Kind != "agent" || b.rotated.ComponentID != "00000000-0000-4000-8000-000000000002" || b.rotated.Serial != "1" {
-		t.Fatalf("rotated identity: %+v", b.rotated)
+	if b.rotated != cert {
+		t.Fatalf("Rotate did not get the VerifiedChains leaf: %+v", b.rotated)
 	}
 }
 

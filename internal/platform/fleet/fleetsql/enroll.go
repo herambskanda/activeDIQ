@@ -113,11 +113,13 @@ func (e *Enroller) Enroll(ctx context.Context, source, tokenText string, csrDER 
 }
 
 // Rotate renews the certificate of an enrolled component that presents its current one. peer is the
-// identity read (fleet.IdentityOf) from a client certificate the gateway has already verified against
-// the installation CA; Rotate trusts nothing else about the caller. The Component row, and so its
+// leaf is the client certificate the gateway has already verified. A chain that verifies only proves
+// that some tenant's CA signed it, so Rotate reads the identity from the leaf itself and requires that
+// one of the named tenant's own CAs (active or retired) signed it; otherwise one tenant's CA key
+// could mint an identity in another tenant. Rotate trusts nothing else about the caller. The Component row, and so its
 // identity, is kept (DM-12.I3); only cert_serial changes. A certificate that is not the current one
 // (an earlier generation, a revoked or removed component) is refused.
-func (e *Enroller) Rotate(ctx context.Context, peer fleet.Identity, csrDER []byte) (Enrolled, error) {
+func (e *Enroller) Rotate(ctx context.Context, leaf *x509.Certificate, csrDER []byte) (Enrolled, error) {
 	if err := e.ready(); err != nil {
 		return Enrolled{}, err
 	}
@@ -125,14 +127,29 @@ func (e *Enroller) Rotate(ctx context.Context, peer fleet.Identity, csrDER []byt
 	if err != nil {
 		return Enrolled{}, ErrCSR
 	}
-	if peer.Tenant.IsZero() || peer.ComponentID == "" || peer.Serial == "" {
+	peer, err := fleet.IdentityOf(leaf)
+	if err != nil || peer.Tenant.IsZero() || peer.ComponentID == "" || peer.Serial == "" {
 		return Enrolled{}, ErrRotateRefused
 	}
 	var out Enrolled
 	err = e.Enrollment.DB.WithTenant(ctx, peer.Tenant, func(ctx context.Context, tx store.Tx) error {
+		cas, err := e.ensureCA(ctx, tx, peer.Tenant)
+		if err != nil {
+			return err
+		}
+		signedByTenant := false
+		for _, c := range cas {
+			if leaf.CheckSignatureFrom(c.cert) == nil {
+				signedByTenant = true
+				break
+			}
+		}
+		if !signedByTenant {
+			return ErrRotateRefused
+		}
 		var kind, state string
 		var serial *string
-		err := tx.QueryRow(ctx, `SELECT kind, state, cert_serial FROM public.components WHERE id = $1::uuid FOR UPDATE`,
+		err = tx.QueryRow(ctx, `SELECT kind, state, cert_serial FROM public.components WHERE id = $1::uuid FOR UPDATE`,
 			peer.ComponentID).Scan(&kind, &state, &serial)
 		if store.IsNoRows(err) {
 			return ErrRotateRefused

@@ -313,30 +313,28 @@ func newSerial() (*big.Int, error) {
 // the token's, never the request's).
 const maxCSRBytes = 8 << 10
 
-var errCSR = errors.New("fleetsql: certificate request is not acceptable")
-
 // ParseCSR checks a PKCS#10 request and returns its public key. It accepts ECDSA P-256 and P-384,
 // Ed25519 and RSA of at least 3072 bits, and requires a valid self-signature.
 func ParseCSR(der []byte) (crypto.PublicKey, error) {
 	if len(der) == 0 || len(der) > maxCSRBytes {
-		return nil, errCSR
+		return nil, ErrCSR
 	}
 	req, err := x509.ParseCertificateRequest(der) // rejects trailing data
 	if err != nil || req.CheckSignature() != nil {
-		return nil, errCSR
+		return nil, ErrCSR
 	}
 	switch k := req.PublicKey.(type) {
 	case *ecdsa.PublicKey:
 		if k.Curve != elliptic.P256() && k.Curve != elliptic.P384() {
-			return nil, errCSR
+			return nil, ErrCSR
 		}
 	case ed25519.PublicKey:
 	case *rsa.PublicKey:
 		if k.N.BitLen() < 3072 {
-			return nil, errCSR
+			return nil, ErrCSR
 		}
 	default:
-		return nil, errCSR
+		return nil, ErrCSR
 	}
 	return req.PublicKey, nil
 }

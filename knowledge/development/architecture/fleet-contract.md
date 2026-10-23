@@ -117,8 +117,9 @@ root never imports generated protos. The listener that mounts it is T-0156.
   Otherwise `Enroll` returns the generic `ErrTokenInvalid`, and an `Alerter` raises `fleet.ca.material_invalid`
   (plus `fleet.ca.suspected_key_exposure` when a private-key marker is seen).
 - **Pin.** `Enroller.CAPin` returns `sha256:<hex>` of the CA SPKI for the enrolment material (D1).
-- **Rotation (DM-12.I3).** `Enroller.Rotate(peer, csr)` takes the identity of a verified client certificate; it
-  requires an `enrolled` or `active` component of the same kind whose current `cert_serial` equals the
+- **Rotation (DM-12.I3).** `Enroller.Rotate(leaf, csr)` takes the verified leaf, reads the identity from it and
+  requires that one of the named tenant's own CAs (active or retired) signed it (a verified chain only proves
+  some tenant's CA did; per-tenant CA isolation depends on this check); it requires an `enrolled` or `active` component of the same kind whose current `cert_serial` equals the
   certificate's. The row, and so the identity, is kept; only the serial changes, so a superseded certificate
   cannot rotate again. The adapter uses the verified chain only, never `PeerCertificates`.
 - **Source address** is `peer.Addr` from the transport, never a header (T-0153 obligation 3).

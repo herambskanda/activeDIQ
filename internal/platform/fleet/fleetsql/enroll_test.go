@@ -14,11 +14,13 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"errors"
+	"math/big"
 	"net"
 	"net/url"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/fleet"
@@ -515,7 +517,7 @@ func TestRotateKeepsIdentity(t *testing.T) {
 		}
 
 		csr2, _ := csrFor(t, nil)
-		second, err := e.enr.Rotate(ctx, peer, csr2)
+		second, err := e.enr.Rotate(ctx, cur, csr2)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -532,27 +534,44 @@ func TestRotateKeepsIdentity(t *testing.T) {
 			t.Fatalf("rows %d state %q serial %v", rows, st, serial)
 		}
 		// The superseded certificate cannot rotate again; another tenant's context cannot rotate it.
-		if _, err := e.enr.Rotate(ctx, peer, csr2); !errors.Is(err, fleetsql.ErrRotateRefused) {
+		if _, err := e.enr.Rotate(ctx, cur, csr2); !errors.Is(err, fleetsql.ErrRotateRefused) {
 			t.Fatalf("old certificate: %v", err)
 		}
-		cross := nid
-		cross.Tenant = e.b
-		if _, err := e.enr.Rotate(ctx, cross, csr2); !errors.Is(err, fleetsql.ErrRotateRefused) {
-			t.Fatalf("cross-tenant: %v", err)
+		// A leaf signed by a CA that is not this tenant's own, naming the tenant, component, kind and
+		// current serial exactly, is refused and changes nothing (one tenant's CA must not mint an
+		// identity in another).
+		forged := forgedLeaf(t, nid)
+		if _, err := e.enr.Rotate(ctx, forged, csr2); !errors.Is(err, fleetsql.ErrRotateRefused) {
+			t.Fatalf("leaf from a foreign CA: %v", err)
 		}
-		wrongKind := nid
-		wrongKind.Kind = "connector"
-		if _, err := e.enr.Rotate(ctx, wrongKind, csr2); !errors.Is(err, fleetsql.ErrRotateRefused) {
-			t.Fatalf("wrong kind: %v", err)
+		if _, serial := e.state(t, e.a, peer.ComponentID); *serial != nid.Serial {
+			t.Fatalf("serial changed by a refused rotation: %v", *serial)
+		}
+		// Tenant B's own CA exists but did not sign a leaf naming tenant A, and vice versa.
+		if err := e.db.WithTenant(ctx, e.b, func(ctx context.Context, tx store.Tx) error { return e.enr.InitTenant(ctx, tx, e.b) }); err != nil {
+			t.Fatal(err)
+		}
+		third, err := e.enr.Rotate(ctx, next, csr2)
+		if err != nil {
+			t.Fatalf("genuine current leaf: %v", err)
+		}
+		thirdLeaf, _ := x509.ParseCertificate(third.LeafDER)
+		// next is now superseded; the same leaf again is refused.
+		if _, err := e.enr.Rotate(ctx, next, csr2); !errors.Is(err, fleetsql.ErrRotateRefused) {
+			t.Fatalf("superseded: %v", err)
+		}
+		// A leaf with no component identity is refused.
+		if _, err := e.enr.Rotate(ctx, &x509.Certificate{SerialNumber: big.NewInt(1)}, csr2); !errors.Is(err, fleetsql.ErrRotateRefused) {
+			t.Fatalf("no identity: %v", err)
 		}
 		// A revoked component cannot rotate.
 		if _, err := e.raw(e.a, `UPDATE public.components SET state = 'revoked' WHERE id = $1::uuid`, peer.ComponentID); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := e.enr.Rotate(ctx, nid, csr2); !errors.Is(err, fleetsql.ErrRotateRefused) {
+		if _, err := e.enr.Rotate(ctx, thirdLeaf, csr2); !errors.Is(err, fleetsql.ErrRotateRefused) {
 			t.Fatalf("revoked: %v", err)
 		}
-		if got := len(e.sink.evs); got != 2 || e.sink.evs[1].Kind != "fleet.component.certificate_rotated" {
+		if got := len(e.sink.evs); got != 3 || e.sink.evs[2].Kind != "fleet.component.certificate_rotated" {
 			t.Fatalf("audit events: %d", got)
 		}
 	})
@@ -564,7 +583,29 @@ func TestEnrollerNotConfigured(t *testing.T) {
 	if _, err := e.Enroll(context.Background(), peerIP, "x", csr); !errors.Is(err, fleetsql.ErrNotConfigured) {
 		t.Fatal(err)
 	}
-	if _, err := (&fleetsql.Enroller{}).Rotate(context.Background(), fleet.Identity{}, csr); !errors.Is(err, fleetsql.ErrNotConfigured) {
+	if _, err := (&fleetsql.Enroller{}).Rotate(context.Background(), nil, csr); !errors.Is(err, fleetsql.ErrNotConfigured) {
 		t.Fatal(err)
 	}
+}
+
+// forgedLeaf is a leaf naming id exactly, signed by a throwaway CA the tenant never created.
+func forgedLeaf(t *testing.T, id fleet.Identity) *x509.Certificate {
+	t.Helper()
+	caKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	caTmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "rogue"}, NotBefore: time.Now().Add(-time.Hour),
+		NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTmpl, caTmpl, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caCert, _ := x509.ParseCertificate(caDER)
+	serial, _ := new(big.Int).SetString(id.Serial, 16)
+	leafKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	der, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{SerialNumber: serial, NotBefore: time.Now().Add(-time.Hour),
+		NotAfter: time.Now().Add(time.Hour), URIs: fleet.URIs(id.Tenant, id.Kind, id.ComponentID)}, caCert, &leafKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf, _ := x509.ParseCertificate(der)
+	return leaf
 }
