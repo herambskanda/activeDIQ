@@ -1,0 +1,7 @@
+# activeDIQ vulnerability disclosure (RFC 9116). Policy and targets: SECURITY.md.
+# Renew before Expires; `make fitness-disclosure` fails 30 days before it.
+Contact: https://github.com/herambskanda/activeDIQ/security/advisories/new
+Expires: 2027-07-23T00:00:00Z
+Policy: https://github.com/herambskanda/activeDIQ/blob/main/SECURITY.md
+Acknowledgments: https://github.com/herambskanda/activeDIQ/security/advisories
+Preferred-Languages: en

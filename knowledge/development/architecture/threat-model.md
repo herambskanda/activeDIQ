@@ -2411,7 +2411,7 @@ Each goes through the `ceo-decisions` skill in business terms when its trigger a
 | --- | --- | --- |
 | Password-filter fail mode: fail-open (passwords allowed if our check cannot run) or fail-closed (password changes refused) | Customer-affecting risk acceptance | The M4 password-filter build (T-0145/T-0146 follow-up) |
 | Code-signing certificates and HSM/KMS for release keys | Money | Signing work in T-0140/T-0141 |
-| External security commitments: `SECURITY.md`, disclosure address and policy, advisory SLA (same-day advisories with CVSS matching the CNA record), independent pentest attestation | They leave the building (SB §10); ME-SEC §4.4 lists what buyers will ask for | First customer release (prepared in T-0079) |
+| External security commitments: `SECURITY.md`, disclosure address and policy, advisory SLA (same-day advisories with CVSS matching the CNA record), independent pentest attestation | They leave the building (SB §10); ME-SEC §4.4 lists what buyers will ask for | First customer release (prepared in T-0079). **Disclosure half decided** (option a, as targets) and published in T-0258: `SECURITY.md`, `.well-known/security.txt`, gate `fitness-disclosure`. Still open: CNA application, advisory template, pentest |
 
 ---
 ## 17. Open items
