@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -883,5 +884,88 @@ func TestManyConcurrentCallsKeepIdsInOrder(t *testing.T) {
 	}
 	if bad.Load() != 0 {
 		t.Fatalf("%d calls failed", bad.Load())
+	}
+}
+
+// unaryServe registers t.v1.Up/Report with a handler h that the test controls.
+func unaryServe(h func(ctx context.Context, dec func(any) error) (any, error)) func(fleet.Identity, grpc.ServiceRegistrar) {
+	return func(_ fleet.Identity, reg grpc.ServiceRegistrar) {
+		reg.RegisterService(&grpc.ServiceDesc{ServiceName: "t.v1.Up", HandlerType: (*any)(nil), Methods: []grpc.MethodDesc{{
+			MethodName: "Report",
+			Handler: func(_ any, ctx context.Context, dec func(any) error, _ grpc.UnaryServerInterceptor) (any, error) {
+				return h(ctx, dec)
+			},
+		}}}, struct{}{})
+	}
+}
+
+// A second CallData on a unary component-opened call is a violation and never reaches the handler.
+func TestSecondDataOnAUnaryCallClosesTheTunnel(t *testing.T) {
+	release := make(chan struct{})
+	started := make(chan struct{})
+	var reads atomic.Int32
+	r := newRig(t, func(c *fleet.MuxConfig) {
+		c.Binding.Serve = unaryServe(func(_ context.Context, dec func(any) error) (any, error) {
+			close(started)
+			<-release
+			for {
+				if err := dec(new(wrapperspb.StringValue)); err != nil {
+					return nil, err
+				}
+				reads.Add(1)
+			}
+		})
+	})
+	r.send(fleet.Frame{CallID: 2, Body: fleet.BodyOpen, Method: mReport})
+	r.send(fleet.Frame{CallID: 2, Body: fleet.BodyData, Payload: str("one")})
+	<-started
+	r.send(fleet.Frame{CallID: 2, Body: fleet.BodyData, Payload: str("two")})
+	select {
+	case <-r.m.Done():
+	case <-time.After(3 * time.Second):
+		t.Fatal("tunnel did not close")
+	}
+	close(release) // Run waits for the handler
+	var pe *fleet.ProtocolError
+	if err := r.closed(t); !errors.As(err, &pe) || pe.Violation != fleet.ViolationForbidden {
+		t.Fatalf("got %v", err)
+	}
+	if vs := r.rep.got(); len(vs) != 1 || r.rep.ids[0].ComponentID != compID {
+		t.Fatalf("audit: %v", vs)
+	}
+	if reads.Load() > 1 {
+		t.Fatalf("handler read %d messages", reads.Load())
+	}
+}
+
+// Calls that end while the component has over-sent data must not leave the payload retained.
+func TestRetiredCallsRetainNoPayload(t *testing.T) {
+	r := newRig(t, func(c *fleet.MuxConfig) {
+		c.Binding.Serve = unaryServe(func(context.Context, func(any) error) (any, error) {
+			return wrapperspb.String("ok"), nil // replies without reading the request
+		})
+	})
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	const calls, size = 300, 1 << 20
+	big := make([]byte, size)
+	for i := 0; i < calls; i++ {
+		id := uint64(2 + 2*i)
+		r.send(fleet.Frame{CallID: id, Body: fleet.BodyOpen, Method: mReport})
+		r.send(fleet.Frame{CallID: id, Body: fleet.BodyData, Payload: append([]byte(nil), big...)})
+		for {
+			f := r.next(t)
+			if f.CallID == id && f.Body == fleet.BodyClose {
+				break
+			}
+		}
+	}
+	r.open(t)
+	runtime.GC()
+	runtime.GC()
+	runtime.ReadMemStats(&after)
+	if grew := int64(after.HeapInuse) - int64(before.HeapInuse); grew > 64<<20 {
+		t.Fatalf("heap grew by %d MiB after %d finished calls", grew>>20, calls)
 	}
 }

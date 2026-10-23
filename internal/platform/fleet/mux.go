@@ -282,6 +282,10 @@ func (m *Mux) retireLocked(c *call) {
 	}
 	close(c.dead)
 	c.cancel()
+	// The map keeps only the id and how the call ended, never the *call: its inbox, which may hold
+	// payload the peer over-sent, is then reachable only from the goroutine still reading it and is
+	// freed with it. A tombstone retains no payload bytes (security review of T-0209).
+	m.calls[c.id] = &call{id: c.id, opener: c.opener, selfDone: c.selfDone || !c.peerDone, peerDone: c.peerDone, retired: true}
 	m.doneQ = append(m.doneQ, c.id)
 	for len(m.doneQ) > maxTombstones {
 		delete(m.calls, m.doneQ[0])
@@ -380,10 +384,11 @@ func (m *Mux) handle(f Frame) Violation {
 		m.mu.Unlock()
 		return ""
 	case BodyData:
-		if peerOpened && c.peerHalf {
-			m.mu.Unlock()
+		if (peerOpened && c.peerHalf) || (c.unary && c.peerData >= 1) {
+			m.mu.Unlock() // a unary call carries one message each way, never buffered beyond that
 			return ViolationForbidden
 		}
+		c.peerData++
 		m.mu.Unlock()
 		select {
 		case c.in <- f.Payload:
@@ -490,6 +495,7 @@ func (m *Mux) handleOpen(f Frame) Violation {
 		timeout = time.Duration(f.TimeoutMS) * time.Millisecond
 	}
 	c := m.newCall(f.CallID, peer, f.Method, m.base, timeout)
+	c.unary = isUnary
 	m.calls[f.CallID] = c
 	m.livePeer++
 	m.wg.Add(1)
@@ -539,7 +545,7 @@ func (m *Mux) serve(c *call, isUnary bool, uh unaryHandler, sh streamHandler) {
 type conn struct{ m *Mux }
 
 func (cn conn) NewStream(ctx context.Context, _ *grpc.StreamDesc, method string, _ ...grpc.CallOption) (grpc.ClientStream, error) {
-	c, err := cn.m.open(ctx, method)
+	c, err := cn.m.open(ctx, method, false)
 	if err != nil {
 		return nil, err
 	}
@@ -547,7 +553,7 @@ func (cn conn) NewStream(ctx context.Context, _ *grpc.StreamDesc, method string,
 }
 
 func (cn conn) Invoke(ctx context.Context, method string, args, reply any, _ ...grpc.CallOption) error {
-	c, err := cn.m.open(ctx, method)
+	c, err := cn.m.open(ctx, method, true)
 	if err != nil {
 		return err
 	}
@@ -593,7 +599,7 @@ func (m *Mux) finalError(c *call) error {
 }
 
 // open starts a call this side opens. The method must be in this side's allow-set (TM-D24 A2).
-func (m *Mux) open(ctx context.Context, method string) (*call, error) {
+func (m *Mux) open(ctx context.Context, method string, unary bool) (*call, error) {
 	if !validMethodName(method) || !m.bind.Contract.allows(m.role, method) {
 		return nil, fixedErr(codes.PermissionDenied)
 	}
@@ -625,6 +631,7 @@ func (m *Mux) open(ctx context.Context, method string) (*call, error) {
 	id := m.nextID
 	m.nextID += 2
 	c := m.newCall(id, m.role, method, ctx, 0)
+	c.unary = unary
 	m.calls[id] = c
 	m.liveSelf++
 	m.mu.Unlock()

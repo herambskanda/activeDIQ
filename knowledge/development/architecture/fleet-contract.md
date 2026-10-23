@@ -164,7 +164,7 @@ the generated stubs: the compose adapter that serves `Fleet.Tunnel` translates `
 - **B. Call identity.** State is `Mux.calls`, keyed by call id inside the tunnel instance, and dies with
   it. Each side's open ids have its parity and strictly increase; ids are spent even when refused. The
   per-role, per-state table is in `Mux.handle`. `call_id` 0 carries `credit` only. A frame for a call this
-  side cancelled or closed (still in the tombstone window, 1024 ended calls) is dropped; any other
+  side cancelled or closed (still in the tombstone window, 1024 ended calls; a tombstone holds only the id and how the call ended, never its inbox) is dropped; a second `CallData` from the peer on a unary call is a `forbidden` violation, so it is never buffered; any other
   violation closes the tunnel and calls `Reporter.ProtocolError(identity, Violation)`, a fixed
   vocabulary with no peer text. Ending a tunnel (`Mux.fail`) fails every pending call `UNAVAILABLE`
   as a `CallError` with `OutcomeUnknown(err) == true`; `Hub` never moves a call, and a new tunnel of

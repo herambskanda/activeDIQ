@@ -62,6 +62,8 @@ type call struct {
 	selfHlf bool       // guarded by sendMu: this side sent half_close
 
 	peerHalf bool // guarded by Mux.mu
+	unary    bool // one message each way: a second data frame from the peer is a violation
+	peerData int  // data frames accepted from the peer
 	selfDone bool // this side cancelled or closed
 	peerDone bool // the peer closed or cancelled
 	retired  bool
