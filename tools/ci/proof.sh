@@ -206,11 +206,12 @@ must_pass "fitness-operation O9 on the repository itself" "$opbin" -root "$root"
 pr="$tmp/proto"
 mkdir -p "$pr"
 printf 'syntax = "proto3";\npackage t.v1;\nenum Operation { OPERATION_UNSPECIFIED = 0; OPERATION_GET = 1; OPERATION_APPLY = 100; OPERATION_READ_SECRET = 101; OPERATION_VERIFY_USER = 102; }\nmessage GetRequest { string dn = 1; }\nmessage GetResponse {}\nservice S { rpc Get(GetRequest) returns (GetResponse); }\n' >"$pr/t.proto"
-must_fail_with "fitness-proto on a request carrying a DN string" "\\[P2\\]" go run ./tools/fitness/proto "$pr"
+must_fail_with "fitness-proto on a request carrying a DN string" "\\[P2\\]" go run ./tools/fitness/proto -optional-fleet "$pr"
 printf 'syntax = "proto3";\npackage t.v1;\nmessage {\n' >"$pr/t.proto"
-must_fail_with "fitness-proto on a file that does not compile" "\\[P1\\]" go run ./tools/fitness/proto "$pr"
+must_fail_with "fitness-proto on a file that does not compile" "\\[P1\\]" go run ./tools/fitness/proto -optional-fleet "$pr"
 printf 'syntax = "proto3";\npackage t.v1;\nenum Operation { OPERATION_UNSPECIFIED = 0; OPERATION_GET = 1; OPERATION_APPLY = 100; OPERATION_READ_SECRET = 101; OPERATION_VERIFY_USER = 102; }\nmessage Guid { bytes value = 1; }\nmessage GetRequest { Guid guid = 1; }\nmessage GetResponse {}\nservice S { rpc Get(GetRequest) returns (GetResponse); }\n' >"$pr/t.proto"
-must_pass "fitness-proto" go run ./tools/fitness/proto "$pr"
+must_fail_with "fitness-proto on a tree without the fleet package" "\\[F11\\]" go run ./tools/fitness/proto "$pr"
+must_pass "fitness-proto" go run ./tools/fitness/proto -optional-fleet "$pr"
 
 # --- gen-check (T-0157): generated connector code must match a fresh generation ------------------
 # Generate into a throw-away tree, then stale / orphan / delete a file and require the real
