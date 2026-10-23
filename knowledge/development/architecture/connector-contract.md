@@ -847,6 +847,21 @@ before T-0098 is merged.
 | 11 `tier0` after a write | §8.1 step 9, R-T0RACE-1 | `APPLIED` with `tier0_after_write` (an empty basis marks a failed re-read); the pipeline records `verify_failed` `tier0_after_write` and alerts | `ApplyResponse.tier0_after_write`, `Tier0Member` comment | CC-WRITE-21 | T-0098 (step 9), T-0129 (ADR-0005 rule 7, DM-42), T-0109 (maps it) |
 | `ENTRA_PASSWORD_CREDENTIAL` severity | §8.4 | EV3 block (unexpired), EV5 warn (expired) | `FindingKind` and `VerificationCheck` comments | CC-VER-13 | T-0097 |
 
+### 8.8 Where §8 is implemented (T-0098)
+
+`internal/connector/write` holds the `Plan`/`Apply` handler (`Handler`), the write gate and ratchet
+(`GateBook`, `FileBaseline`), the AD and Entra providers over the T-0093 and T-0095 classifiers, the
+empty operation table (`ops.go`) and the gRPC wrapper (`Register`). The in-process transport calls
+`Handler` directly; the remote transport registers it on a gRPC server; both return the same
+`*Refusal`. Steps 1 to 4 and 7 run for an unwired kind too, so `TIER0_REFUSED` wins over
+`CAPABILITY_UNSUPPORTED` (the K0 cases). Steps 5, 6, 8 and 9 are generic over the table and are
+exercised by an injected test table until the first kind ticket adds a row. Fitness
+(`fitness_test.go`): no LDAP or Graph write call exists under `internal/connector` outside
+`internal/connector/write/ops/`, which only the guard may import; the three limits (§8.2) are
+constants nobody reads from a setting. Known follow-ups: the Entra `AnchorReader` (F4 for Entra
+statements with evidence is refused until it exists), live nested-membership of designated Entra
+groups, and feeding `GateBook.Complete` from the `VerifyConnection` handlers (T-0096, T-0097).
+
 ### 8.9 The dynamic-group property guard in `Plan` and `Apply` (TM-D25 rule 7, amended by T-0230)
 
 Step 4 of §8.1 gains one check, **`CheckPropertyWrite`**, which runs on both planes and both
