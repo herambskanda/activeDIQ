@@ -640,3 +640,58 @@ func TestContradictoryPinWindowsAreRejected(t *testing.T) {
 		_ = name
 	}
 }
+
+// T-0243 security re-review probe D: the forged range retires the current key K2, which needs no signature.
+func TestForgedRetirementOfCurrentKeyCannotHideItsAbsence(t *testing.T) {
+	g := seeded(t)
+	pub2, priv2 := key(t)
+	g.rotate(t, g.priv, pub2, true) // 11, 12
+	g.add("x")
+	g.checkpoint(priv2, pub2)
+	k1, k2 := Fingerprint(g.pub), Fingerprint(pub2)
+	win := Options{Pinned: []string{k1, k2}, PinWindows: map[string]PinWindow{k1: {1, 11}, k2: {12, 0}}}
+
+	// Truncated: fork at K1's checkpoint, rotate honestly-looking, then retire K2 with no K2 checkpoint.
+	d := newBuilder(t, 1)
+	d.events, d.seq, d.prev = nil, 10, Hash{2}
+	d.checkpoint(g.priv, g.pub)
+	d.rotate(t, g.priv, pub2, true) // 11, 12
+	d.add(KindKeyRetired, Detail{"key_id", k2})
+	d.add("forged")
+	db := d.bundle()
+	db.FromSeq = 11
+	db.Keys = []KeyInfo{{KeyID: k1, PublicKey: g.pub, CreatedSeq: 1, RetiredSeq: 11}}
+	if r := Verify(db, win); r.Status == OK {
+		t.Fatalf("truncated fork with K2 retired verified OK")
+	}
+
+	// Full range, unwindowed K1+K2: the newest pinned key still has to have signed.
+	f := newBuilder(t, 1)
+	f.pub, f.priv = g.pub, g.priv
+	f.events, f.seq, f.prev = nil, 0, Genesis(f.tenant)
+	f.keyCreated(g.pub)
+	for range 9 {
+		f.add("operation.step.applied")
+	}
+	f.checkpoint(g.priv, g.pub)
+	f.rotate(t, g.priv, pub2, true)
+	f.add(KindKeyRetired, Detail{"key_id", k2})
+	f.add("forged")
+	if r := Verify(f.bundle(), Options{Pinned: []string{k1, k2}}); r.Status == OK {
+		t.Fatalf("full-range fork with K2 retired verified OK")
+	}
+
+	// An open window asserts the key is unretired.
+	g2 := seeded(t)
+	pub3, priv3 := key(t)
+	g2.rotate(t, g2.priv, pub3, true)
+	g2.checkpoint(priv3, pub3)
+	g2.add(KindKeyRetired, Detail{"key_id", Fingerprint(pub3)})
+	o := Options{Pinned: []string{Fingerprint(pub3)}, PinWindows: map[string]PinWindow{Fingerprint(pub3): {12, 0}}}
+	want(t, Verify(g2.bundle(), o), Failed, 0, ReasonPinWindow)
+
+	// Genuine exports stay OK.
+	if r := Verify(g.bundle(), win); r.Status != OK {
+		t.Fatalf("genuine full: %s %s", r.Reason, r.Detail)
+	}
+}

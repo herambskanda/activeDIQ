@@ -281,7 +281,7 @@ func Verify(b Bundle, opts Options) Result {
 	for _, p := range sortedKeys(pinned) {
 		k := keys[p]
 		if w, ok := opts.PinWindows[p]; ok {
-			if k.created != w.CreatedSeq || (w.RetiredSeq != 0 && k.retired != w.RetiredSeq) {
+			if k.created != w.CreatedSeq || k.retired != w.RetiredSeq {
 				return fail(0, ReasonPinWindow, "pinned key %s was recorded with window %d-%d; the export says %d-%d", p, w.CreatedSeq, w.RetiredSeq, k.created, k.retired)
 			}
 			continue
@@ -346,13 +346,23 @@ func Verify(b Bundle, opts Options) Result {
 	if len(pinned) > 0 && !pinnedSigned {
 		return fail(0, ReasonPinnedKeyAbsent, "no verified checkpoint is signed by a pinned key")
 	}
-	// A pinned key that is still current must itself have signed once the export reaches its
-	// introduction: a retired pinned key (whose seed may have leaked) cannot carry the export alone.
+	// The newest pinned key (by introduction, the operator's window first) that the export reaches must
+	// itself have signed a verified checkpoint, whatever the bundle says about its retirement: a
+	// retirement needs no signature, so an attacker can retire the current key inside a forged range.
 	if len(pinned) > 1 {
+		var newest string
+		var newestAt uint64
 		for _, p := range sortedKeys(pinned) {
-			if k := keys[p]; k.retired == 0 && k.created <= last && !signedBy[p] {
-				return fail(last, ReasonPinnedKeyAbsent, "pinned current key %s has signed no verified checkpoint in this export, so a retired pinned key cannot be told from a fork", p)
+			at := keys[p].created
+			if w, ok := opts.PinWindows[p]; ok {
+				at = w.CreatedSeq
 			}
+			if at <= last && (newest == "" || at > newestAt) {
+				newest, newestAt = p, at
+			}
+		}
+		if newest != "" && !signedBy[newest] {
+			return fail(last, ReasonPinnedKeyAbsent, "the newest pinned key %s has signed no verified checkpoint in this export, so a retired pinned key cannot be told from a fork", newest)
 		}
 	}
 	if last > lastCP {
