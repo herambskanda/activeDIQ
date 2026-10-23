@@ -362,7 +362,7 @@ func TestDynamicRuleRefusesReferencedProperty(t *testing.T) {
 		{tier0.WriteDevice, []string{"department"}, false},
 		{0, []string{"jobTitle"}, true}, // unknown kind
 	} {
-		got := set.CheckPropertyWrite(tc.kind, tc.props)
+		got := upd(t, set, tc.kind, tc.props)
 		if got.Refused != tc.want || (got.Refused && got.Reason != tier0.ReasonDesignatedDynamicRule) {
 			t.Errorf("%v %v: %+v", tc.kind, tc.props, got)
 		}
@@ -373,7 +373,7 @@ func TestDynamicRuleUntokenisableOrMemberOfRefusesAll(t *testing.T) {
 	for _, rule := range []string{`user.department -eq "unterminated`, `user.department -eq #`, `user.memberOf -any (group.objectId -in ["x"])`,
 		`(user.department -eq "a") -and (user.x -memberOf "g")`, ``} {
 		set := snapshotFor(t, rule)
-		if !set.CheckPropertyWrite(tier0.WriteUser, []string{"jobTitle"}).Refused {
+		if !upd(t, set, tier0.WriteUser, []string{"jobTitle"}).Refused {
 			t.Errorf("rule %q must refuse every user write", rule)
 		}
 	}
@@ -387,7 +387,7 @@ func TestNoDynamicGroupRefusesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plain.CheckPropertyWrite(tier0.WriteUser, []string{"department"}).Refused {
+	if upd(t, plain, tier0.WriteUser, []string{"department"}).Refused {
 		t.Fatal("no designated dynamic group: nothing to protect")
 	}
 }
@@ -407,8 +407,8 @@ func TestDynamicRuleLexer(t *testing.T) {
 		t.Fatalf("%v", props)
 	}
 	// A property named inside a string is not a reference.
-	sc := tier0.ScopeOfRule(`user.a -eq "user.b"`)
-	if len(sc.Properties) != 1 || !sc.Properties["user.a"] || sc.RefuseAll {
+	sc := tier0.ScopeOfRule(`user.department -eq "user.b"`)
+	if len(sc.Properties) != 1 || !sc.Properties["user.department"] || sc.RefuseAll {
 		t.Fatalf("%+v", sc)
 	}
 }
@@ -447,17 +447,17 @@ func FuzzLexRule(f *testing.F) {
 
 func TestDirectReportsRuleRefusesManagerWrite(t *testing.T) {
 	set := snapshotFor(t, `Direct Reports for "`+g(7)+`"`)
-	if !set.CheckPropertyWrite(tier0.WriteUser, []string{"manager"}).Refused {
+	if !upd(t, set, tier0.WriteUser, []string{"manager"}).Refused {
 		t.Fatal("a manager write must be refused")
 	}
-	if set.CheckPropertyWrite(tier0.WriteUser, []string{"jobTitle"}).Refused {
+	if upd(t, set, tier0.WriteUser, []string{"jobTitle"}).Refused {
 		t.Fatal("unrelated property is not refused")
 	}
 }
 
 func TestRuleWithNoPropertiesRefusesAll(t *testing.T) {
 	set := snapshotFor(t, `True -eq True`)
-	if !set.CheckPropertyWrite(tier0.WriteUser, []string{"jobTitle"}).Refused {
+	if !upd(t, set, tier0.WriteUser, []string{"jobTitle"}).Refused {
 		t.Fatal("unknown rule shape must refuse every write")
 	}
 }
@@ -474,10 +474,10 @@ func TestNestedDynamicGroupIsRuleScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !set.CheckPropertyWrite(tier0.WriteUser, []string{"department"}).Refused {
+	if !upd(t, set, tier0.WriteUser, []string{"department"}).Refused {
 		t.Fatal("nested dynamic group's property must be refused")
 	}
-	if set.CheckPropertyWrite(tier0.WriteUser, []string{"jobTitle"}).Refused {
+	if upd(t, set, tier0.WriteUser, []string{"jobTitle"}).Refused {
 		t.Fatal("unrelated property is not refused")
 	}
 	// a failed read of the nested group fails the snapshot
@@ -501,12 +501,22 @@ func TestExtensionAttributeContainerWrites(t *testing.T) {
 		{tier0.WriteDevice, []string{"extensionAttributes"}, true},
 		{tier0.WriteDevice, []string{"onPremisesExtensionAttributes"}, false},
 	} {
-		if got := set.CheckPropertyWrite(tc.kind, tc.props).Refused; got != tc.want {
+		if got := upd(t, set, tc.kind, tc.props).Refused; got != tc.want {
 			t.Errorf("%v %v: %v", tc.kind, tc.props, got)
 		}
 	}
 	other := snapshotFor(t, `user.department -eq "x"`)
-	if other.CheckPropertyWrite(tier0.WriteUser, []string{"onPremisesExtensionAttributes"}).Refused {
+	if upd(t, other, tier0.WriteUser, []string{"onPremisesExtensionAttributes"}).Refused {
 		t.Fatal("rule without extension attributes must not refuse the container")
 	}
+}
+
+// upd runs an Entra-plane UPDATE through the guard.
+func upd(t *testing.T, s *tier0.Set, kind tier0.WriteKind, keys []string) tier0.DynamicRuleRefusal {
+	t.Helper()
+	r, err := s.CheckPropertyWrite(context.Background(), tier0.PropertyWrite{Plane: tier0.PlaneEntra, Kind: kind, Op: tier0.OpUpdate, Keys: keys})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
 }

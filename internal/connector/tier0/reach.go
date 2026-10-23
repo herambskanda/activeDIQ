@@ -72,7 +72,8 @@ func (w *walk) group(it walkItem) error {
 			return fmt.Errorf("tier0: designated group %s: %w", it.id, err)
 		}
 		if g.MembershipRule != "" || hasDynamic(g.GroupTypes) {
-			w.s.dynamic.merge(ScopeOfRule(g.MembershipRule))
+			sc := ScopeOfRule(g.MembershipRule)
+			w.s.dyn = append(w.s.dyn, DynamicClosure{GroupID: lid, User: sc.User, Device: sc.Device, RuleHash: ruleHash(g.MembershipRule), scope: sc})
 		}
 	}
 
