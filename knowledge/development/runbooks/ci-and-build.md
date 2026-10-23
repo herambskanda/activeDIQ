@@ -179,10 +179,15 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
   - Where each primitive lives is one table: `tools/analyzers/policy/policy.go`. A new home (for
     example when T-0004 fixes the export package roots) is a change to that table plus a case in
     `tools/fitness/safeprim/scan/scan_test.go`. Rule lists are in `scan/rules.go`.
-  - What is skipped: `.git`, `testdata` at any depth; `node_modules` beside a `package.json` is skipped except every `.go` file and `go.mod` under it (Go builds them, and a `replace` can compile a nested module; no structural skip); `knowledge`, `factory`, `garage`,
-    `vendor`, `third_party` at the repo root; `bin`/`obj` only beside a `.csproj`, `target` only beside
-    `Cargo.toml`, `dist` only beside `package.json`. Never skip by a bare directory name: a package
-    called `target` is product code.
+  - What is skipped: `.git` at any depth; `testdata` only under `tools/` (the analyzer fixtures are
+    deliberate violations; Go can import a `testdata` package elsewhere, so it is scanned there).
+    `node_modules` beside a `package.json` is skipped except every `.go` file and `go.mod` under it
+    (Go builds them, and a `replace` can compile a nested module; no structural skip). At the repo
+    root: `knowledge`, `factory`, `garage`, `.claude`, `vendor`, `dist`, `third_party`, unless a
+    package that product code imports lives in one (T-0082). `bin`/`obj` only beside a `.csproj`,
+    `target` only beside `Cargo.toml`, `dist` only beside `package.json`; even then their `.go`
+    files are scanned. Never skip by a bare directory name: a package called `target` is product
+    code.
   - Limits: the syntactic scan ignores build tags on purpose; the type-aware passes see only the
     host OS files (run them with `GOOS=windows` once `_windows.go` files exist, follow-up ticket);
     C# and Rust are scanned as text until their toolchains land. `sidecars/BannedSymbols.txt` and
