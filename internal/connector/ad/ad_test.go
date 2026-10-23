@@ -129,6 +129,7 @@ func TestWatchCancelAtCompletionRace(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		a, b := net.Pipe()
 		conn := ldap.NewConn(a, false)
+		conn.Start()
 		go io.Copy(io.Discard, b)
 		s := &Session{conn: conn}
 		stop := s.watch(ctx, conn)

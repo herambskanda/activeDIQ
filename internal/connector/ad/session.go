@@ -202,9 +202,17 @@ func (s *Session) Close() error {
 	if s.conn == nil {
 		return nil
 	}
-	err := s.conn.Unbind()
-	s.conn.Close()
+	conn := s.conn
 	s.conn = nil
+	// Unbind can block on a connection a cancelled context already closed, so bound it.
+	res := make(chan error, 1)
+	go func() { res <- conn.Unbind() }()
+	var err error
+	select {
+	case err = <-res:
+	case <-time.After(2 * time.Second):
+	}
+	conn.Close()
 	return err
 }
 
