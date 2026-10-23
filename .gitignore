@@ -48,6 +48,9 @@ tools/playwright/.record-tmp/
 lab/.entra-lab.env
 lab/.entra-lab.pem
 
+# Built fitness binaries
+/tenancy
+
 # Windows lab (T-0254): disks, ISOs, generated credentials, CA, 
 lab/windows/.state/
 lab/windows/.win-lab.env

@@ -71,6 +71,9 @@ func IdentityOf(c *x509.Certificate) (Identity, error) {
 	return out, nil
 }
 
+// IsComponentID reports whether s is a canonical lower-case UUID, the form of every component ID.
+func IsComponentID(s string) bool { return isCanonicalUUID(s) }
+
 func isCanonicalUUID(s string) bool {
 	if len(s) != 36 {
 		return false

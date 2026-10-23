@@ -145,3 +145,73 @@ root never imports generated protos. The listener that mounts it is T-0156.
   Nothing retries or falls back; retry policy is the caller's and must reuse the same pin.
 - **Seam.** `dial` imports no generated proto; the role package supplies `Exchange` (fleetv1 Enroll call).
 
+## Gateway transport and per-RPC authentication (T-0156)
+
+`internal/platform/fleet/gateway.go`. Contract-agnostic (no generated-stub import): the composer
+mounts the `Fleet` service on the server `Gateway.NewServer` builds and states every method's auth class.
+
+- **Listener**: `NewServer` builds its own TLS (no caller `tls.Config`; the gateway's credentials and interceptors are applied after caller options so they cannot be replaced): TLS 1.3 with `VerifyClientCertIfGiven` (Enroll must work without a
+  certificate), client CA pool read per handshake.
+- **Interceptors** (unary + stream) run before any handler. `ClassPublic` is accepted for `EnrollMethod`
+  only (`NewGateway` rejects any other). Every other method needs a verified chain, a leaf inside its
+  validity (gateway clock) with clientAuth EKU, and a SAN of exactly one tenant + one component.
+- **Tenant bound to issuer** (TM-Q8): the pool holds every tenant's CA, so the leaf must also be signed
+  by a CA of the tenant named in its SAN (`TenantCAs`, implemented by `fleetsql.Enroller.TenantCAs`). A
+  lookup failure refuses (`Unavailable`); it never admits.
+- **Identity** is put in the context (`fleet.IdentityFrom`); handlers never read tenant from a message.
+- **Deny by default**: `NewServer` fails if a registered method has no explicit class, or a service is
+  outside `activediq.fleet.v1.` (no console or API routes). `Routes(srv)` lists the mounted surface.
+
+## Revocation (T-0157, TM-TB6-T9)
+
+- **Refused at establishment, every RPC**: after the certificate checks, the interceptor asks
+  `Config.Components` (`ComponentStatus.Usable`, implemented by `fleetsql.Lifecycle`) whether the
+  component is `enrolled` or `active`. A revoked (or removed, or unknown) component with a still-valid
+  certificate gets `Unauthenticated`; a lookup failure gets `Unavailable`. `Components` is required.
+- **Open streams are closed**: authenticated streams are registered by (tenant, component).
+  `Gateway.CloseComponent` cancels them at once. The interceptor runs the handler on its own goroutine
+  and returns `Unauthenticated` as soon as the stream is revoked, so grpc ends the transport stream and
+  a handler blocked in `RecvMsg`/`SendMsg` is unblocked and exits whether or not it watches its context;
+  each stream also re-checks `Usable` every `Config.Recheck` (default 5 s), which bounds the lifetime
+  of a stream whose component was revoked through another server instance. A failed re-check leaves the
+  stream open (a database blip must not drop the fleet); new RPCs are refused meanwhile.
+- **Revoke**: `fleetsql.Lifecycle.Revoke` checks `fleet.component.revoke` server-side, moves
+  enrolled/active to revoked, appends `fleet.component.revoked` (actor = the human or token principal,
+  target = component GUID, cert serial) in the same transaction, then calls `StreamCloser`. Revoking an
+  unused enrollment token is T-0153's.
+- **Not yet wired**: the composer must pass the same `Lifecycle` as `Config.Components` and `Streams`
+  (the gateway), and expose Revoke on the API; both belong to the compose/API tickets.
+
+## Tunnel multiplexer (T-0209, TM-D24 A, B, C)
+
+`internal/platform/fleet/{mux,calls,contract,hub,frame,statustext}.go`. Contract-agnostic and free of
+the generated stubs: the compose adapter that serves `Fleet.Tunnel` translates `fleetv1.TunnelFrame` to
+`fleet.Frame` and supplies a `Transport`. One `Mux` is one tunnel instance; `Role` selects the parity
+(server odd, component even), so `fleet/dial` (T-0158) reuses it with `RoleComponent` and the rules exist once.
+
+- **A. Dispatch.** `Bindings` maps the SAN kind to a `Binding{Contract, Serve}` (`Bindings.For`; an
+  unbound kind has no tunnel). `NewContract` builds two exact-match allow-sets from generated service
+  descriptors (server to component, component to server). There is no normalisation. A component open
+  of anything outside its set (another contract, a server-only method, health, reflection, channelz,
+  case, slash or suffix variants, empty) gets one fixed `PERMISSION_DENIED` ("method not available") and
+  no handler runs; a name over 256 bytes or not UTF-8 is a protocol error (B5) and closes the tunnel.
+  Component-opened calls go to a per-tunnel `registrar` that refuses (and fails `NewMux` on) any method
+  outside the contract; it is never a `grpc.Server`. Calls this side opens are checked against its own
+  set before anything is sent.
+- **B. Call identity.** State is `Mux.calls`, keyed by call id inside the tunnel instance, and dies with
+  it. Each side's open ids have its parity and strictly increase; ids are spent even when refused. The
+  per-role, per-state table is in `Mux.handle`. `call_id` 0 carries `credit` only. A frame for a call this
+  side cancelled or closed (still in the tombstone window, 1024 ended calls; a tombstone holds only the id and how the call ended, never its inbox) is dropped; a second `CallData` from the peer on a unary call is a `forbidden` violation, so it is never buffered; any other
+  violation closes the tunnel and calls `Reporter.ProtocolError(identity, Violation)`, a fixed
+  vocabulary with no peer text. Ending a tunnel (`Mux.fail`) fails every pending call `UNAVAILABLE`
+  as a `CallError` with `OutcomeUnknown(err) == true`; `Hub` never moves a call, and a new tunnel of
+  the same component closes the old one. Open calls per direction are bounded (`MaxCalls`, default 256;
+  a peer open beyond it gets `RESOURCE_EXHAUSTED`).
+- **C. Status text.** The peer's `status_code` goes through `NormalizeCode` (0 to 16, else `UNKNOWN`).
+  The error a caller gets carries `FixedText(code)`; the component's text is `SanitizeStatusText`-ed
+  (at most 1 KiB, invalid UTF-8 replaced, controls, bidi, line separators, backslash and HTML
+  metacharacters as `\uXXXX`) and reachable only through `ComponentReported(err)`, for a typed
+  `component_reported` field. It is logged only as the structured `component_reported` attribute and is
+  never in an error string or an audit summary. What the server sends is `FixedText(code)`.
+- **Not here.** Credit accounting and the numeric flow-control limits (TM-TB6-T7); the compose adapter
+  that serves `Fleet.Tunnel`, the audit `Reporter` and the connector `Bindings`; the `fleet/dial` wiring.

@@ -99,7 +99,7 @@ unknown key is an error). A missing file is an empty registry. Every entry has a
   "platformPaths":   [{"package": "internal/modules/enroll", "function": "Service.Enroll", "reason": "…",
                        "withPlatform": true, "mintsTenantID": false}],
   "platformJobs":    [{"type": "internal/modules/sweep.Sweep", "reason": "…"}],
-  "probeValues":     [{"column": "public.t.c", "value": "…", "reason": "…"}]
+  "probeValues":     [{"column": "public.t.c", "value": "…", "reason": "…"}] (or `"null": true` instead of `value` for a column whose insert guard demands NULL; a foreign key through such a column is left to T2)
 }
 ```
 

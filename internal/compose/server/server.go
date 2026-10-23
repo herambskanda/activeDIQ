@@ -45,6 +45,11 @@ func Run(ctx context.Context, cfg config.Config) error {
 	if err != nil {
 		return err
 	}
+	// The rate-limit store is settled before the database is opened too: more than one node with the
+	// in-memory store fails startup here, never later (TM-TB2-T7).
+	if err := cfg.ValidatePrincipalStore(); err != nil {
+		return fmt.Errorf("server: %w", err)
+	}
 	// Capabilities come from the deployment profile once config selects one; no module requires
 	// one yet.
 	if _, err := boot(ctx, capability.NewSet()); err != nil {
@@ -55,6 +60,11 @@ func Run(ctx context.Context, cfg config.Config) error {
 		return fmt.Errorf("server: open store: %w", err)
 	}
 	defer db.Close()
+	// The per-principal rate store. The limiter is not yet mounted (the ports stay fail-closed until the
+	// auth kernel lands, T-0277); the store is built now so a bad combination cannot start.
+	if _, err := principalStore(cfg, db); err != nil {
+		return err
+	}
 	ln, err := net.Listen("tcp", cfg.APIAddr)
 	if err != nil {
 		return fmt.Errorf("server: api listen: %w", err)

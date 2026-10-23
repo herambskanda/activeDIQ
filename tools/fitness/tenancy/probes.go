@@ -49,9 +49,13 @@ func checkT4(ctx context.Context, d *Database, m *catalogModel, reg *registry.Re
 		return append(vs, lv...), 1, err
 	}
 
-	p := &prober{models: map[uint32]*tableModel{}, overrides: map[string]string{}}
+	p := &prober{models: map[uint32]*tableModel{}, overrides: map[string]any{}}
 	for _, o := range reg.ProbeValues {
-		p.overrides[o.Column] = o.Value
+		if o.Null {
+			p.overrides[o.Column] = nil
+		} else {
+			p.overrides[o.Column] = o.Value
+		}
 	}
 	for _, r := range append([]*relInfo{tenantsRel}, roots...) {
 		tm, err := loadTableModel(ctx, adm, r)
@@ -261,19 +265,16 @@ func checkT4(ctx context.Context, d *Database, m *catalogModel, reg *registry.Re
 		}
 		probes++
 		err = inTenant(app, tenantA, func(tx pgx.Tx) error {
-			u, e := tx.Exec(ctx, `UPDATE `+q+` SET tenant_id = tenant_id WHERE tenant_id = $1`, tenantB)
-			if e != nil && !deleteNotGranted(e) {
+			u, e := execIfGranted(ctx, tx, `UPDATE `+q+` SET tenant_id = tenant_id WHERE tenant_id = $1`, tenantB)
+			if e != nil {
 				return e
 			}
-			if e != nil { // UPDATE not granted (an append-only table): the failed statement aborted the transaction
-				return nil
-			}
-			dl, e := tx.Exec(ctx, `DELETE FROM `+q+` WHERE tenant_id = $1`, tenantB)
-			if e != nil && !deleteNotGranted(e) {
+			dl, e := execIfGranted(ctx, tx, `DELETE FROM `+q+` WHERE tenant_id = $1`, tenantB)
+			if e != nil {
 				return e
 			}
-			if u.RowsAffected() != 0 || dl.RowsAffected() != 0 {
-				add("write-cross-tenant", r.qname(), fmt.Sprintf("tenant A updated %d and deleted %d row(s) of tenant B", u.RowsAffected(), dl.RowsAffected()))
+			if u != 0 || dl != 0 {
+				add("write-cross-tenant", r.qname(), fmt.Sprintf("tenant A updated %d and deleted %d row(s) of tenant B", u, dl))
 			}
 			return nil
 		})
@@ -298,19 +299,16 @@ func checkT4(ctx context.Context, d *Database, m *catalogModel, reg *registry.Re
 		}
 		probes++
 		err = inTenant(fresh, "", func(tx pgx.Tx) error {
-			u, e := tx.Exec(ctx, `UPDATE `+q+` SET tenant_id = tenant_id`)
-			if e != nil && !deleteNotGranted(e) {
+			u, e := execIfGranted(ctx, tx, `UPDATE `+q+` SET tenant_id = tenant_id`)
+			if e != nil {
 				return e
 			}
-			if e != nil { // UPDATE not granted (an append-only table)
-				return nil
-			}
-			dl, e := tx.Exec(ctx, `DELETE FROM `+q)
-			if e != nil && !deleteNotGranted(e) {
+			dl, e := execIfGranted(ctx, tx, `DELETE FROM `+q)
+			if e != nil {
 				return e
 			}
-			if u.RowsAffected() != 0 || dl.RowsAffected() != 0 {
-				add("write-no-context", r.qname(), fmt.Sprintf("with no tenant set, %d row(s) were updated and %d deleted", u.RowsAffected(), dl.RowsAffected()))
+			if u != 0 || dl != 0 {
+				add("write-no-context", r.qname(), fmt.Sprintf("with no tenant set, %d row(s) were updated and %d deleted", u, dl))
 			}
 			return nil
 		})
@@ -350,6 +348,10 @@ func checkT4(ctx context.Context, d *Database, m *catalogModel, reg *registry.Re
 			}
 			if parent == tm {
 				out("T4   %s: foreign key %s is self-referencing; its shape is covered by T2", r.qname(), f.name)
+				continue
+			}
+			if p.nullInKey(tm, f) {
+				out("T4   %s: foreign key %s is registered NULL at insert (a circular reference); its shape is covered by T2", r.qname(), f.name)
 				continue
 			}
 			probes++
@@ -448,6 +450,28 @@ func probeSessionLeak(ctx context.Context, d *Database) ([]Violation, error) {
 		}
 	}
 	return vs, nil
+}
+
+// execIfGranted runs a write inside a savepoint and returns the rows it touched. A privilege that the
+// runtime role does not hold (an append-only table revokes UPDATE and DELETE) touches nothing, which
+// is the safe outcome, so it is not an error and does not abort the surrounding probe transaction.
+func execIfGranted(ctx context.Context, tx pgx.Tx, sql string, args ...any) (int64, error) {
+	sp, err := tx.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	tag, err := sp.Exec(ctx, sql, args...)
+	if err != nil {
+		_ = sp.Rollback(ctx)
+		if deleteNotGranted(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	if err := sp.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 // deleteNotGranted reports whether err is the runtime role lacking DELETE (or, for the append-only audit

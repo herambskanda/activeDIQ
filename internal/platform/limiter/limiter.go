@@ -54,6 +54,33 @@ type PrincipalStore interface {
 	Take(ctx context.Context, key string, l Limit) (apihost.Decision, error)
 }
 
+// Shared is implemented by a PrincipalStore whose buckets every server node sees. A store without it
+// (MemoryStore) is exact for one node only.
+type Shared interface{ Shared() bool }
+
+// ErrUnsharedStore is returned by RequireShared for an in-memory store on a multi-node install: each
+// node would hold its own budget, so a principal's reveal and secret limits would multiply by the
+// node count (TM-TB2-T7).
+var ErrUnsharedStore = errors.New("limiter: more than one node needs a shared principal store; the in-memory store is for a single node")
+
+// RequireShared refuses, at start-up, a store that cannot hold one budget across nodes. One node may
+// use any store; more than one needs a Shared store; fewer than one is a configuration error.
+func RequireShared(s PrincipalStore, nodes int) error {
+	if s == nil {
+		return errors.New("limiter: a shared PrincipalStore is required")
+	}
+	if nodes < 1 {
+		return fmt.Errorf("limiter: node count %d is not positive", nodes)
+	}
+	if nodes == 1 {
+		return nil
+	}
+	if sh, ok := s.(Shared); ok && sh.Shared() {
+		return nil
+	}
+	return fmt.Errorf("%w (nodes=%d)", ErrUnsharedStore, nodes)
+}
+
 // Config configures a Limiter. Zero values take the defaults.
 type Config struct {
 	// IPv4Bits and IPv6Bits are the per-IP key prefix lengths; 0 means /32 and /64.
@@ -231,8 +258,10 @@ func retryAfter(tokens float64, lim Limit) time.Duration {
 	return max(d, time.Millisecond)
 }
 
-// AllowPrincipal meters against the principal's bucket in the shared store. The key is the class and
-// the principal ID, which is the human behind a token (§7.8), so tokens do not multiply a budget.
+// AllowPrincipal meters against the principal's bucket in the shared store. The key is the class, the
+// tenant and the principal ID, which is the human behind a token (§7.8), so tokens do not multiply a
+// budget and the same ID in two tenants never shares one. A store error refuses the request: the
+// error is returned with a zero Decision, which is never an admission.
 func (l *Limiter) AllowPrincipal(ctx context.Context, class string, p apihost.Principal) (apihost.Decision, error) {
 	lim, ok := principalClasses[class]
 	if !ok {
@@ -241,7 +270,7 @@ func (l *Limiter) AllowPrincipal(ctx context.Context, class string, p apihost.Pr
 	if p.ID == "" {
 		return apihost.Decision{}, errors.New("limiter: principal has no ID")
 	}
-	d, err := l.store.Take(ctx, class+"\x00"+p.ID, lim)
+	d, err := l.store.Take(ctx, principalKey(class, p), lim)
 	if err != nil {
 		return apihost.Decision{}, fmt.Errorf("limiter: principal store: %w", err)
 	}

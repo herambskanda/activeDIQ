@@ -196,7 +196,7 @@ func synth(tm *tableModel, c *colInfo) (string, error) {
 // prober holds what row generation needs: every probed table, and the registry's value overrides.
 type prober struct {
 	models    map[uint32]*tableModel
-	overrides map[string]string
+	overrides map[string]any
 }
 
 // include says whether a column gets a value in the probe row. A column is left to its default (or
@@ -303,4 +303,17 @@ func insertSQL(tm *tableModel, cols []string) string {
 	}
 	b.WriteString(") VALUES (" + strings.Join(ph, ", ") + ")")
 	return b.String()
+}
+
+// nullInKey reports whether a probeValues entry binds NULL to a column of the foreign key: the table's
+// own insert guard demands NULL there, so a row referencing another tenant's parent cannot be built.
+func (p *prober) nullInKey(tm *tableModel, f fkInfo) bool {
+	for _, k := range f.conkey {
+		if c := tm.col(k); c != nil {
+			if v, ok := p.overrides[tm.rel.qname()+"."+c.name]; ok && v == nil {
+				return true
+			}
+		}
+	}
+	return false
 }

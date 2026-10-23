@@ -14,6 +14,11 @@
       "table": "public.platform_leases",
       "reason": "Platform leases give exclusive, expiring ownership of singleton work that runs over every tenant (the job rescuer and cleaner, later schedulers), so a lease row has no tenant_id and no RLS (ADR-0002 Jobs row, DM-06). Any tenant transaction can read it, so only its owning package may name it in SQL.",
       "owner": "internal/platform/jobs"
+    },
+    {
+      "table": "public.platform_rate_buckets",
+      "reason": "The rate limiter meters a principal at chain step 10, before any tenant transaction exists, and the budget must hold across every node, so a bucket row has no RLS policy; the tenant is part of its key text (ADR-0002 rule 6, DM-07, TM-TB2-T7). Any tenant transaction can read it, so only its owning package may name it in SQL.",
+      "owner": "internal/platform/limiter"
     }
   ],
   "securityDefiner": [],
@@ -64,6 +69,13 @@
       "package": "internal/platform/jobs",
       "function": "ReleaseLease",
       "reason": "A platform lease guards work over every tenant, so its table is registered global and the statement runs under WithPlatform (ADR-0002 Jobs row, DM-06).",
+      "withPlatform": true,
+      "mintsTenantID": false
+    },
+    {
+      "package": "internal/platform/limiter",
+      "function": "PGStore.Take",
+      "reason": "The limiter meters a principal before any tenant transaction exists, and its shared bucket table is registered global, so the single upsert runs under WithPlatform (ADR-0002 rule 6, DM-07).",
       "withPlatform": true,
       "mintsTenantID": false
     },
@@ -128,6 +140,61 @@
       "column": "public.enrollment_tokens.expires_at",
       "value": "2030-01-01T01:00:00Z",
       "reason": "CHECK: one hour after the fixed created_at above (DM-12.I2)."
+    },
+    {
+      "column": "public.connections.last_verification_id",
+      "null": true,
+      "reason": "A connection is born with no verification: the insert guard refuses a pointer (DM-10 L1); the foreign key to DM-24 would otherwise fill it from the parent."
+    },
+    {
+      "column": "public.connection_verifications.kind",
+      "value": "scheduled",
+      "reason": "CHECK: kind is one of the run kinds; scheduled needs no requested_by, which the probe row leaves empty (DM-24)."
+    },
+    {
+      "column": "public.connection_verifications.verdict",
+      "value": "pass",
+      "reason": "CHECK: verdict is one of pass, refused, could_not_verify, failed (DM-24)."
+    },
+    {
+      "column": "public.connection_verifications.credential_id",
+      "value": "00000000-0000-4000-8000-0000000000c1",
+      "reason": "The override probe row must name a run of the same credential (DM-25.I1 insert guard); both tables use one constant."
+    },
+    {
+      "column": "public.connection_verifications.digest_salt",
+      "value": "\\xabababababababababababababababab",
+      "reason": "CHECK: the salt is 16 bytes (DM-24.I5)."
+    },
+    {
+      "column": "public.connection_verifications.findings_digest",
+      "value": "\\xabababababababababababababababababababababababababababababababab",
+      "reason": "CHECK: the digest is 32 bytes, SHA-256 (DM-24.I5)."
+    },
+    {
+      "column": "public.connection_verification_findings.check_name",
+      "value": "V1",
+      "reason": "CHECK: check_name is V1..V9 or EV1..EV5 (DM-24)."
+    },
+    {
+      "column": "public.connection_verification_findings.severity",
+      "value": "info",
+      "reason": "CHECK: severity is block, warn or info (DM-24)."
+    },
+    {
+      "column": "public.connection_verification_findings.fingerprint",
+      "value": "abababababababababababababababababababababababababababababababab",
+      "reason": "CHECK: the fingerprint is 64 lower-case hex characters (DM-24.I4)."
+    },
+    {
+      "column": "public.connection_tier0_overrides.credential_id",
+      "value": "00000000-0000-4000-8000-0000000000c1",
+      "reason": "Must equal the evidence run's credential (DM-25.I1 insert guard)."
+    },
+    {
+      "column": "public.connection_tier0_overrides.acknowledged_fingerprints",
+      "value": "{probe}",
+      "reason": "CHECK: an override acknowledges at least one finding (DM-25.I3); the default empty array is refused."
     },
     {
       "column": "public.audit_head.hash",
