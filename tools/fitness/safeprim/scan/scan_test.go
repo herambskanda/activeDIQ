@@ -157,6 +157,8 @@ func TestFFSP2BannedAPIs(t *testing.T) {
 		"internal/modules/m/m2.go": gofile("", "const true = false"),
 	}, "FF-SP2", "predeclared-shadow", "internal/modules/m/m2.go")
 	want(t, "true as a range variable", map[string]string{"internal/modules/m/m.go": gofile(jt, "func g() jsontext.Options { for true := range []bool{false} { return jsontext.EscapeForHTML(true) }; return nil }")}, "FF-SP2", "predeclared-shadow", "internal/modules/m/m.go")
+	want(t, "true as a receiver name", map[string]string{"internal/modules/m/m.go": gofile(jt, "type B = bool\nfunc (true B) g() jsontext.Options { return jsontext.EscapeForHTML(true) }")}, "FF-SP2", "predeclared-shadow", "internal/modules/m/m.go")
+	want(t, "true as a type parameter", map[string]string{"internal/modules/m/m.go": gofile("", "func g[true any]() {}")}, "FF-SP2", "predeclared-shadow", "internal/modules/m/m.go")
 	want(t, "true as a parameter name", map[string]string{"internal/modules/m/m.go": gofile("", "func g(false bool) {}")}, "FF-SP2", "predeclared-shadow", "internal/modules/m/m.go")
 	want(t, "true shadowed in a test is exempt", map[string]string{"internal/modules/m/m_test.go": gofile("", "const true = false")}, "", "", "")
 	want(t, "dot import in product code", map[string]string{"internal/modules/m/m.go": gofile("\t. \"encoding/json/jsontext\"\n", "var o = EscapeForHTML(false)")}, "FF-SP2", "dot-import", "internal/modules/m/m.go")

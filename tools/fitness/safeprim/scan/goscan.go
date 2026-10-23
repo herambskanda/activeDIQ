@@ -340,9 +340,12 @@ func (g *goFile) checkPredeclaredShadow() {
 			}
 		case *ast.TypeSpec:
 			bad(v.Name)
+			fields(v.TypeParams)
 		case *ast.FuncDecl:
 			bad(v.Name)
+			fields(v.Recv)
 		case *ast.FuncType:
+			fields(v.TypeParams)
 			fields(v.Params)
 			fields(v.Results)
 		}
