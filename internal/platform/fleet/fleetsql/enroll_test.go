@@ -609,3 +609,29 @@ func forgedLeaf(t *testing.T, id fleet.Identity) *x509.Certificate {
 	leaf, _ := x509.ParseCertificate(der)
 	return leaf
 }
+
+// The gateway binds a leaf's SAN tenant to the issuer: TenantCAs returns that tenant's CAs and no
+// other tenant's, and never creates one.
+func TestTenantCAsAreOnlyTheTenantsOwn(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setupEnroll(t, s)
+		ctx := context.Background()
+		if cas, err := e.enr.TenantCAs(ctx, e.a); err != nil || len(cas) != 0 {
+			t.Fatalf("before any CA exists: %d, %v", len(cas), err)
+		}
+		for _, tid := range []tenant.ID{e.a, e.b} {
+			tid := tid
+			if err := e.db.WithTenant(ctx, tid, func(ctx context.Context, tx store.Tx) error { return e.enr.InitTenant(ctx, tx, tid) }); err != nil {
+				t.Fatal(err)
+			}
+		}
+		a, err := e.enr.TenantCAs(ctx, e.a)
+		if err != nil || len(a) != 1 {
+			t.Fatalf("tenant A: %d, %v", len(a), err)
+		}
+		b, err := e.enr.TenantCAs(ctx, e.b)
+		if err != nil || len(b) != 1 || a[0].Equal(b[0]) {
+			t.Fatalf("tenant B shares or lacks its CA: %d, %v", len(b), err)
+		}
+	})
+}

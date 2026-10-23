@@ -127,3 +127,20 @@ root never imports generated protos. The listener that mounts it is T-0156.
 - Not here: the listener and mTLS interceptor (T-0156), revocation (T-0157), the `fleet/dial` client and pin
   check (T-0158), the issuing handler with its audited Operation and principal-derived tenant (T-0153
   obligations 1 and 4).
+
+## Gateway transport and per-RPC authentication (T-0156)
+
+`internal/platform/fleet/gateway.go`. Contract-agnostic (no generated-stub import): the composer
+mounts the `Fleet` service on the server `Gateway.NewServer` builds and states every method's auth class.
+
+- **Listener**: `NewServer` builds its own TLS (no caller `tls.Config`; the gateway's credentials and interceptors are applied after caller options so they cannot be replaced): TLS 1.3 with `VerifyClientCertIfGiven` (Enroll must work without a
+  certificate), client CA pool read per handshake.
+- **Interceptors** (unary + stream) run before any handler. `ClassPublic` is accepted for `EnrollMethod`
+  only (`NewGateway` rejects any other). Every other method needs a verified chain, a leaf inside its
+  validity (gateway clock) with clientAuth EKU, and a SAN of exactly one tenant + one component.
+- **Tenant bound to issuer** (TM-Q8): the pool holds every tenant's CA, so the leaf must also be signed
+  by a CA of the tenant named in its SAN (`TenantCAs`, implemented by `fleetsql.Enroller.TenantCAs`). A
+  lookup failure refuses (`Unavailable`); it never admits.
+- **Identity** is put in the context (`fleet.IdentityFrom`); handlers never read tenant from a message.
+- **Deny by default**: `NewServer` fails if a registered method has no explicit class, or a service is
+  outside `activediq.fleet.v1.` (no console or API routes). `Routes(srv)` lists the mounted surface.
