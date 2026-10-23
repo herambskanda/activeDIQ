@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"log/slog"
 	"net"
 	"strconv"
 	"strings"
@@ -13,20 +14,25 @@ import (
 	"github.com/go-ldap/ldap/v3"
 
 	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
+	"github.com/skenzeriq/activediq/internal/platform/secret"
 )
 
 // Credential is the connection credential unsealed for one session. It is the only holder of the
 // bind secret in this package and redacts itself everywhere it can be printed.
 type Credential struct {
-	BindName string // UPN or DN of the connector identity
-	Password string
+	BindName string        // UPN or DN of the connector identity
+	Password secret.Secret // exposed only inside bind(); never stored on a Session
 }
 
 func (Credential) String() string   { return "ad.Credential{redacted}" }
 func (Credential) GoString() string { return "ad.Credential{redacted}" }
 
 // LogValue keeps the credential out of slog output.
-func (Credential) LogValue() any { return "redacted" }
+func (c Credential) LogValue() slog.Value {
+	return slog.GroupValue(slog.String("bind_name", c.BindName), slog.String("password", secret.Redacted))
+}
+
+var _ slog.LogValuer = Credential{}
 
 // Config configures a Session. There is no field that weakens TLS.
 type Config struct {
@@ -62,7 +68,7 @@ type Session struct {
 // Open connects to the first reachable server in cfg.Servers and binds. It never downgrades: a
 // server that does not offer LDAPS with a valid certificate is skipped, never contacted in clear.
 func Open(ctx context.Context, cfg Config) (*Session, error) {
-	if len(cfg.Servers) == 0 || cfg.Credential.BindName == "" || cfg.Credential.Password == "" {
+	if len(cfg.Servers) == 0 || cfg.Credential.BindName == "" || cfg.Credential.Password.IsEmpty() {
 		return nil, fail(CodeInvalidArgument, "servers and credential are required", nil)
 	}
 	if cfg.Timeout <= 0 {
@@ -96,8 +102,10 @@ func Open(ctx context.Context, cfg Config) (*Session, error) {
 			lastErr = err
 			continue
 		}
+		bindCred := cfg.Credential
+		cfg.Credential = Credential{} // the Session never holds the secret
 		s := &Session{conn: conn, cfg: cfg, schema: sc, server: net.JoinHostPort(host, port), pageSize: ps}
-		if err := s.bind(ctx); err != nil {
+		if err := s.bind(ctx, bindCred); err != nil {
 			conn.Close()
 			// A rejected credential is not a reason to hammer the next DC (lockout).
 			return nil, err
@@ -142,10 +150,14 @@ func dial(ctx context.Context, cfg Config, host, port string) (*ldap.Conn, error
 	return c, nil
 }
 
-func (s *Session) bind(ctx context.Context) error {
-	stop := s.watch(ctx)
+func (s *Session) bind(ctx context.Context, cred Credential) error {
+	conn := s.conn
+	stop := s.watch(ctx, conn)
 	defer stop()
-	_, err := s.conn.SimpleBind(&ldap.SimpleBindRequest{Username: s.cfg.Credential.BindName, Password: s.cfg.Credential.Password})
+	var err error
+	cred.Password.Expose(func(b []byte) {
+		_, err = conn.SimpleBind(&ldap.SimpleBindRequest{Username: cred.BindName, Password: string(b)})
+	})
 	if err != nil {
 		if ctx.Err() != nil {
 			return fail(CodeCanceled, "", ctx.Err())
@@ -159,17 +171,25 @@ func (s *Session) bind(ctx context.Context) error {
 }
 
 // watch closes the connection when ctx ends, which aborts the request in flight and releases the
-// DC's search state (CC-SRCH-14). The returned func must be called when the request is done.
-func (s *Session) watch(ctx context.Context) func() {
+// DC's search state (CC-SRCH-14), so a cancelled ctx kills the Session. conn is captured by the
+// caller under the lock; the returned func stops the watcher and waits for it to exit, and must be
+// called when the request is done.
+func (s *Session) watch(ctx context.Context, conn *ldap.Conn) func() {
 	done := make(chan struct{})
+	exited := make(chan struct{})
 	go func() {
+		defer close(exited)
 		select {
 		case <-ctx.Done():
-			s.conn.Close()
+			select {
+			case <-done: // request already finished: leave the connection alone
+			default:
+				conn.Close()
+			}
 		case <-done:
 		}
 	}()
-	return func() { close(done) }
+	return func() { close(done); <-exited }
 }
 
 // Server is the host:port this session is bound to.

@@ -9,6 +9,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/x509"
+	"github.com/skenzeriq/activediq/internal/platform/secret"
 	"os"
 	"path/filepath"
 	"strings"
@@ -60,7 +61,7 @@ func labSession(t *testing.T) *Session {
 	s, err := Open(ctx, Config{
 		Servers:    []string{"localhost:" + port},
 		RootCAs:    pool,
-		Credential: Credential{BindName: "svc-activediq@lab.activediq.test", Password: env["LAB_SVC_PASSWORD"]},
+		Credential: Credential{BindName: "svc-activediq@lab.activediq.test", Password: secret.FromBytes([]byte(env["LAB_SVC_PASSWORD"]))},
 		PageSize:   500,
 	})
 	if err != nil {
@@ -102,12 +103,12 @@ func TestLabBindRejectsWrongPasswordAndUntrustedCert(t *testing.T) {
 	pool := x509.NewCertPool()
 	pool.AppendCertsFromPEM(pem)
 	ctx := context.Background()
-	_, err := Open(ctx, Config{Servers: []string{"localhost:" + port}, RootCAs: pool, Credential: Credential{BindName: "svc-activediq@lab.activediq.test", Password: "wrong-password"}})
+	_, err := Open(ctx, Config{Servers: []string{"localhost:" + port}, RootCAs: pool, Credential: Credential{BindName: "svc-activediq@lab.activediq.test", Password: secret.FromBytes([]byte("wrong-password"))}})
 	if CodeOf(err) != CodeBindFailed {
 		t.Errorf("wrong password: %v", err)
 	}
 	// System roots do not trust the lab CA: the connection must fail, never fall back.
-	_, err = Open(ctx, Config{Servers: []string{"localhost:" + port}, Credential: Credential{BindName: "svc-activediq@lab.activediq.test", Password: env["LAB_SVC_PASSWORD"]}})
+	_, err = Open(ctx, Config{Servers: []string{"localhost:" + port}, Credential: Credential{BindName: "svc-activediq@lab.activediq.test", Password: secret.FromBytes([]byte(env["LAB_SVC_PASSWORD"]))}})
 	if CodeOf(err) != CodeUnreachable {
 		t.Errorf("untrusted CA: %v", err)
 	}

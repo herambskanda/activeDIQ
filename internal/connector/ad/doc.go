@@ -8,4 +8,9 @@
 // flags control is built from SDPart values that have no SACL member. Certificate validation is
 // always on and there is no plaintext or StartTLS path. Out of scope here: change feeds, writes, DC
 // discovery (the caller supplies the DC list) and the gRPC servers.
+//
+// Authentication is the AD-password fallback only: a simple bind over LDAPS. The primary mechanism
+// (SASL GSSAPI with signing and channel binding for a gMSA or keytab identity) is still to be built.
+// The bind password is a secret.Secret, exposed only inside bind(), and never stored on a Session.
+// A cancelled context closes the connection, so it ends the Session.
 package ad

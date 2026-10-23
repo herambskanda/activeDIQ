@@ -46,8 +46,9 @@ func (f SDFlags) IsZero() bool { return f.bits == 0 }
 // Value is the integer sent in the control.
 func (f SDFlags) Value() int32 { return int32(f.bits) }
 
-// sdControl is the SD flags control (1.2.840.113556.1.4.801). Non-critical: a DC that ignores it
-// returns the default, which also excludes the SACL.
+// sdControl is the SD flags control (1.2.840.113556.1.4.801). Sent critical. Without it the DC
+// applies the default of 15 (MS-ADTS 3.1.1.3.4.1.11), which INCLUDES the SACL, so a server that
+// ignored a non-critical control would hand over SACLs. Critical makes it fail instead.
 type sdControl struct{ v int32 }
 
 func (c sdControl) GetControlType() string { return ldap.ControlTypeMicrosoftSDFlags }
@@ -55,6 +56,7 @@ func (c sdControl) GetControlType() string { return ldap.ControlTypeMicrosoftSDF
 func (c sdControl) Encode() *ber.Packet {
 	p := ber.Encode(ber.ClassUniversal, ber.TypeConstructed, ber.TagSequence, nil, "Control")
 	p.AppendChild(ber.NewString(ber.ClassUniversal, ber.TypePrimitive, ber.TagOctetString, ldap.ControlTypeMicrosoftSDFlags, "Control Type (SD Flags)"))
+	p.AppendChild(ber.NewBoolean(ber.ClassUniversal, ber.TypePrimitive, ber.TagBoolean, true, "Criticality"))
 	val := ber.Encode(ber.ClassUniversal, ber.TypePrimitive, ber.TagOctetString, nil, "Control Value")
 	seq := ber.Encode(ber.ClassUniversal, ber.TypeConstructed, ber.TagSequence, nil, "SDFlags")
 	seq.AppendChild(ber.NewInteger(ber.ClassUniversal, ber.TypePrimitive, ber.TagInteger, c.v, "Flags"))

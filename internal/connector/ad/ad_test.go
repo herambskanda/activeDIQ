@@ -3,11 +3,19 @@ package ad
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
+	"net"
+	"strings"
 	"testing"
+
+	"github.com/go-ldap/ldap/v3"
 
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
+	"github.com/skenzeriq/activediq/internal/platform/secret"
 )
 
 func TestSDFlagsSACLNotConstructible(t *testing.T) {
@@ -56,15 +64,79 @@ func TestSDControlEncoding(t *testing.T) {
 }
 
 func TestCredentialRedacted(t *testing.T) {
-	c := Credential{BindName: "svc@x", Password: "hunter2"}
-	for _, s := range []string{fmt.Sprint(c), fmt.Sprintf("%v %+v %#v", c, c, c)} {
-		if bytes.Contains([]byte(s), []byte("hunter2")) {
-			t.Errorf("credential leaked: %q", s)
+	c := Credential{BindName: "svc@x", Password: secret.FromBytes([]byte("hunter2"))}
+	cfg := Config{Credential: c}
+	s := &Session{cfg: cfg}
+	var sb, tb bytes.Buffer
+	slog.New(slog.NewJSONHandler(&sb, nil)).Info("x", "cred", c, "cfg", cfg)
+	slog.New(slog.NewTextHandler(&tb, nil)).Info("x", "cred", c, "cfg", cfg)
+	out := []string{sb.String(), tb.String()}
+	for _, v := range []any{c, cfg, s, &cfg} {
+		out = append(out, fmt.Sprint(v), fmt.Sprintf("%v %+v %#v", v, v, v))
+		if j, err := json.Marshal(v); err == nil {
+			out = append(out, string(j))
 		}
 	}
-	cfg := Config{Credential: c}
-	if s := fmt.Sprintf("%+v", cfg); bytes.Contains([]byte(s), []byte("hunter2")) {
-		t.Errorf("config dump leaked: %q", s)
+	for _, o := range out {
+		if strings.Contains(o, "hunter2") {
+			t.Errorf("credential leaked: %q", o)
+		}
+	}
+}
+
+func TestOpenDoesNotRetainPassword(t *testing.T) {
+	// Open copies the credential out of the stored config before bind.
+	s := &Session{cfg: Config{}}
+	if !s.cfg.Credential.Password.IsEmpty() {
+		t.Fatal("zero session holds a password")
+	}
+}
+
+func TestSDControlIsCritical(t *testing.T) {
+	p := DefaultSDFlags().control().Encode()
+	if len(p.Children) != 3 {
+		t.Fatalf("children = %d, want OID, criticality, value", len(p.Children))
+	}
+	if crit, ok := p.Children[1].Value.(bool); !ok || !crit {
+		t.Errorf("criticality = %v, want TRUE", p.Children[1].Value)
+	}
+}
+
+func TestSDHasSACL(t *testing.T) {
+	withSACL := []byte{1, 0, 0x14, 0x90} // SE_SACL_PRESENT|SE_DACL_PRESENT|SE_SELF_RELATIVE low byte 0x14
+	noSACL := []byte{1, 0, 0x04, 0x84}
+	if !sdHasSACL(withSACL) || sdHasSACL(noSACL) || sdHasSACL(nil) {
+		t.Error("sdHasSACL wrong")
+	}
+}
+
+func TestAbsorbDropsUnrequestedAttributes(t *testing.T) {
+	ent := newEntry("CN=x")
+	pending := map[string]int{}
+	asked := map[string]struct{}{"member": {}}
+	raw := ldap.NewEntry("CN=x", map[string][]string{"foo;range=0-1": {"a"}, "member;range=0-1": {"m"}})
+	absorbEntry(ent, pending, asked, raw)
+	if _, ok := pending["foo"]; ok || len(ent.attrs["foo"]) != 0 {
+		t.Error("unrequested attribute was kept or followed")
+	}
+	if pending["member"] != 2 {
+		t.Errorf("pending = %v", pending)
+	}
+}
+
+func TestWatchCancelAtCompletionRace(t *testing.T) {
+	for i := 0; i < 200; i++ {
+		ctx, cancel := context.WithCancel(context.Background())
+		a, b := net.Pipe()
+		conn := ldap.NewConn(a, false)
+		go io.Copy(io.Discard, b)
+		s := &Session{conn: conn}
+		stop := s.watch(ctx, conn)
+		cancel()
+		stop()
+		go s.Close() // concurrent Close after the watcher has exited must not panic or race
+		_ = s.Close()
+		b.Close()
 	}
 }
 
@@ -190,7 +262,7 @@ func mustDN(t *testing.T, s string) dn.DN {
 }
 
 func TestOpenRefusals(t *testing.T) {
-	cred := Credential{BindName: "a@b", Password: "p"}
+	cred := Credential{BindName: "a@b", Password: secret.FromBytes([]byte("p"))}
 	if _, err := Open(context.Background(), Config{Credential: cred}); CodeOf(err) != CodeInvalidArgument {
 		t.Errorf("no servers: %v", err)
 	}

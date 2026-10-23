@@ -105,7 +105,7 @@ func (s *Session) Search(ctx context.Context, req SearchRequest, fn func(*Entry)
 	if s.conn == nil {
 		return fail(CodeUnreachable, "session closed", nil)
 	}
-	stop := s.watch(ctx)
+	stop := s.watch(ctx, s.conn)
 	defer stop()
 
 	// abandon tells the DC to drop a paging cursor: the same request with page size 0 and the cookie.
@@ -190,7 +190,7 @@ func (s *Session) searchOnce(ctx context.Context, base string, scope int, filter
 	if s.conn == nil {
 		return nil, fail(CodeUnreachable, "session closed", nil)
 	}
-	stop := s.watch(ctx)
+	stop := s.watch(ctx, s.conn)
 	defer stop()
 	return s.searchOnceLocked(ctx, base, scope, filter, attrs, ctrls)
 }

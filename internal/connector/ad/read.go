@@ -98,7 +98,7 @@ func (s *Session) Read(ctx context.Context, ref dn.ObjectRef, attrs []string, op
 	if s.conn == nil {
 		return nil, fail(CodeUnreachable, "session closed", nil)
 	}
-	stop := s.watch(ctx)
+	stop := s.watch(ctx, s.conn)
 	defer stop()
 
 	res, err := s.searchOnceLocked(ctx, base, ldap.ScopeBaseObject, objectClassPresent, req, ctrls)
@@ -110,18 +110,11 @@ func (s *Session) Read(ctx context.Context, ref dn.ObjectRef, attrs []string, op
 	}
 	ent := newEntry(res.Entries[0].DN)
 	pending := map[string]int{} // base name -> next range start still to fetch
-	absorb := func(raw *ldap.Entry) {
-		for _, a := range raw.Attributes {
-			name, _, hi, star, isRange := splitRange(a.Name)
-			key := strings.ToLower(name)
-			ent.attrs[key] = append(ent.attrs[key], a.ByteValues...)
-			if isRange && !star {
-				pending[key] = hi + 1
-			} else if isRange {
-				delete(pending, key)
-			}
-		}
+	asked := make(map[string]struct{}, len(names))
+	for _, n := range names {
+		asked[strings.ToLower(n)] = struct{}{}
 	}
+	absorb := func(raw *ldap.Entry) { absorbEntry(ent, pending, asked, raw) }
 	absorb(res.Entries[0])
 
 	// Follow ranges to the terminal "*" range, bounded by the value ceiling and a round-trip cap.
@@ -151,6 +144,11 @@ func (s *Session) Read(ctx context.Context, ref dn.ObjectRef, attrs []string, op
 	for key := range pending { // round-trip cap reached
 		ent.Truncated = append(ent.Truncated, key)
 	}
+	for _, v := range ent.attrs["ntsecuritydescriptor"] {
+		if sdHasSACL(v) {
+			return nil, fail(CodeInvalidArgument, "security descriptor contains a SACL", nil)
+		}
+	}
 	for key, v := range ent.attrs {
 		if len(v) > max {
 			ent.attrs[key] = v[:max]
@@ -158,4 +156,29 @@ func (s *Session) Read(ctx context.Context, ref dn.ObjectRef, attrs []string, op
 		}
 	}
 	return ent, nil
+}
+
+// sdHasSACL reports whether a binary security descriptor has SE_SACL_PRESENT (0x0010) set in its
+// control word (bytes 2-3, little endian). The connector never requests the SACL; this is the
+// backstop if a DC or intermediary ignores the SD flags control.
+func sdHasSACL(sd []byte) bool {
+	return len(sd) >= 4 && sd[2]&0x10 != 0
+}
+
+// absorbEntry merges one response into ent. Only attributes we asked for are kept or followed: a DC
+// (or proxy) that returns "foo;range=0-1" for something we never requested cannot make us loop.
+func absorbEntry(ent *Entry, pending map[string]int, asked map[string]struct{}, raw *ldap.Entry) {
+	for _, a := range raw.Attributes {
+		name, _, hi, star, isRange := splitRange(a.Name)
+		key := strings.ToLower(name)
+		if _, ok := asked[key]; !ok {
+			continue
+		}
+		ent.attrs[key] = append(ent.attrs[key], a.ByteValues...)
+		if isRange && !star {
+			pending[key] = hi + 1
+		} else if isRange {
+			delete(pending, key)
+		}
+	}
 }
