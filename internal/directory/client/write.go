@@ -19,26 +19,38 @@ var (
 	ErrDigest         = errors.New("client: operation does not match the step's plan digest")
 	ErrInvalidOp      = errors.New("client: invalid write operation")
 	ErrBadResponse    = errors.New("client: connector answered with an unusable response")
+	ErrUnknownKind    = errors.New("client: write kind is not registered; write refused")
+	ErrNoDCPin        = errors.New("client: step has no DC pin for the naming context; write refused")
+	ErrTransport      = errors.New("client: connector call failed")
 )
 
 // WriteOp is one planned directory write, as the Action's Apply hands it over. The Step authorises
 // exactly the write whose digest it carries; Write recomputes the digest from DigestKind, Target and
-// Attrs and refuses a mismatch.
+// Attrs and refuses a mismatch. Everything that goes on the wire is derived from these fields: the
+// connection from Target.Connection, the object from Target.GUID (the planned parent for a create),
+// the naming context from NC, the WriteKind from DigestKind through kindTable. No wire field is
+// caller-supplied, so none can differ from what the digest covers. WriteChange has no arm until a
+// kind ticket adds one with a constructor deriving it from Attrs; until then Change is never sent.
 type WriteOp struct {
 	// DigestKind names the operation in the plan digest ("user.setAttribute").
 	DigestKind string
 	Target     authority.TargetRef
 	Attrs      []step.Attr
-	// NC is the naming context the write lands in; the Step's DC pin for it is what the live facts
-	// are read on (rule 5). Entra has no DC, so no pin is read for it.
+	// NC is the naming context GUID (canonical UUID) the write lands in; empty for Entra. For an AD
+	// write the Step must carry a DC pin for it (rule 5), and the live facts are read on that pin.
 	NC authority.NamingContextID
+}
 
-	// Wire fields. WriteChange has no arm until each concrete kind lands (connector contract §8.1).
-	Connection *connectorv1.ConnectionRef
-	WireTarget *connectorv1.WriteTarget
-	Kind       connectorv1.WriteKind
-	Change     *connectorv1.WriteChange
-	Override   *connectorv1.WriteGateOverride
+// kindTable maps a plan-digest kind to the connector's WriteKind. Each kind ticket adds its row;
+// until one does, every write is refused as an unknown kind.
+var kindTable = map[string]connectorv1.WriteKind{}
+
+// wire is the request material derived from a validated WriteOp.
+type wire struct {
+	conn   *connectorv1.ConnectionRef
+	target *connectorv1.WriteTarget
+	kind   connectorv1.WriteKind
+	ad     bool
 }
 
 // Result is what a completed Write returns.
@@ -93,7 +105,8 @@ func (c *Client) Write(ctx context.Context, s step.Step, op WriteOp) (Result, er
 	if err := s.Valid(); err != nil {
 		return Result{}, err
 	}
-	if err := op.validate(); err != nil {
+	w, err := op.derive()
+	if err != nil {
 		return Result{}, err
 	}
 	if step.Compute(op.DigestKind, op.Target, op.Attrs) != s.Digest() {
@@ -117,7 +130,11 @@ func (c *Client) Write(ctx context.Context, s step.Step, op WriteOp) (Result, er
 	}
 
 	pins := authority.Pins{}
-	if host, ok := s.DC(op.NC); ok {
+	if w.ad {
+		host, ok := s.DC(op.NC)
+		if !ok || host == "" {
+			return Result{}, ErrNoDCPin
+		}
 		pins[op.NC] = host
 	}
 	facts, err := c.facts.Facts(ctx, pins, s.FactsQuery())
@@ -134,8 +151,8 @@ func (c *Client) Write(ctx context.Context, s step.Step, op WriteOp) (Result, er
 		return Result{}, err
 	}
 	plan, err := c.sendPlan(ctx, clr, s, &connectorv1.PlanRequest{
-		Connection: op.Connection, Step: key, Target: op.WireTarget, Kind: op.Kind, Change: op.Change,
-		Tier0: t0, Tier0Override: op.Override, ActingPrincipal: acting,
+		Connection: w.conn, Step: key, Target: w.target, Kind: w.kind,
+		Tier0: t0.Context, Tier0Override: t0.Override, ActingPrincipal: acting,
 	})
 	if err != nil {
 		return Result{}, err
@@ -150,9 +167,9 @@ func (c *Client) Write(ctx context.Context, s step.Step, op WriteOp) (Result, er
 	}
 	d := s.Digest()
 	resp, err := c.sendApply(ctx, clr, s, &connectorv1.ApplyRequest{
-		Connection: op.Connection, Step: key, Attempt: uint32(s.Attempt()), Target: op.WireTarget,
-		Kind: op.Kind, Change: op.Change, Tier0: t0, Precondition: plan.GetPrecondition(),
-		Tier0Override: op.Override, ActingPrincipal: acting, PlanDigest: d[:],
+		Connection: w.conn, Step: key, Attempt: uint32(s.Attempt()), Target: w.target,
+		Kind: w.kind, Tier0: t0.Context, Precondition: plan.GetPrecondition(),
+		Tier0Override: t0.Override, ActingPrincipal: acting, PlanDigest: d[:],
 	})
 	if err != nil {
 		return Result{}, err
@@ -160,23 +177,59 @@ func (c *Client) Write(ctx context.Context, s step.Step, op WriteOp) (Result, er
 	return Result{Apply: resp}, nil
 }
 
-func (op WriteOp) validate() error {
-	if op.DigestKind == "" || op.Connection == nil || op.WireTarget == nil {
-		return ErrInvalidOp
+func (op WriteOp) derive() (wire, error) {
+	if op.DigestKind == "" || op.Target.Connection == "" {
+		return wire{}, ErrInvalidOp
 	}
-	return nil
+	kind, ok := kindTable[op.DigestKind]
+	if !ok || kind == connectorv1.WriteKind_WRITE_KIND_UNSPECIFIED {
+		return wire{}, ErrUnknownKind
+	}
+	obj := op.Target.GUID
+	if obj == "" {
+		obj = op.Target.Parent // a create targets the planned parent container
+	}
+	id, err := parseUUID(obj)
+	if err != nil {
+		return wire{}, fmt.Errorf("%w: target object", ErrInvalidOp)
+	}
+	wt := &connectorv1.WriteTarget{Object: &connectorv1.Guid{Value: id}}
+	if op.NC != "" {
+		nc, err := parseUUID(string(op.NC))
+		if err != nil {
+			return wire{}, fmt.Errorf("%w: naming context", ErrInvalidOp)
+		}
+		wt.NcGuid = &connectorv1.Guid{Value: nc}
+	}
+	return wire{conn: &connectorv1.ConnectionRef{ConnectionId: op.Target.Connection}, target: wt, kind: kind, ad: op.NC != ""}, nil
 }
 
-func (c *Client) buildTier0(ctx context.Context, st Stage, op WriteOp) (*connectorv1.Tier0Context, error) {
+func (c *Client) buildTier0(ctx context.Context, st Stage, op WriteOp) (Tier0, error) {
 	t0, err := c.tier0.Build(ctx, st, op)
 	if err != nil {
-		return nil, fmt.Errorf("client: building Tier0Context at %s: %w", st, err)
+		return Tier0{}, fmt.Errorf("client: building Tier0Context at %s: %w", st, err)
 	}
-	if t0 == nil {
-		return nil, ErrNoTier0
+	if t0.Context == nil {
+		return Tier0{}, ErrNoTier0
 	}
 	return t0, nil
 }
+
+// sanitize keeps a connector's message text, which can carry a DN or directory text, out of every
+// error callers log: a ConnectorError becomes the code-only RemoteError, anything else a fixed
+// error that still unwraps to the cause for MapError.
+func sanitize(err error) error {
+	if re := new(RemoteError); errors.As(FromStatus(err), &re) && re.Err != nil {
+		return re
+	}
+	return &transportError{cause: err}
+}
+
+type transportError struct{ cause error }
+
+func (e *transportError) Error() string   { return ErrTransport.Error() }
+func (e *transportError) Unwrap() error   { return e.cause }
+func (e *transportError) Is(t error) bool { return t == ErrTransport }
 
 // sendPlan and sendApply are the only functions that call the connector's write RPCs. Each checks
 // the Clearance against the step's key and digest on the way to the wire (O2).
@@ -186,7 +239,7 @@ func (c *Client) sendPlan(ctx context.Context, clr step.Clearance, s step.Step, 
 	}
 	resp, err := c.transport.Plan(ctx, req)
 	if err != nil {
-		return nil, err
+		return nil, sanitize(err)
 	}
 	if resp == nil {
 		return nil, ErrBadResponse
@@ -200,7 +253,7 @@ func (c *Client) sendApply(ctx context.Context, clr step.Clearance, s step.Step,
 	}
 	resp, err := c.transport.Apply(ctx, req)
 	if err != nil {
-		return nil, err
+		return nil, sanitize(err)
 	}
 	if resp == nil {
 		return nil, ErrBadResponse

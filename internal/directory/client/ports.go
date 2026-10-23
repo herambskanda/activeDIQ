@@ -37,7 +37,16 @@ const (
 // contract §8.3 F1). The skeleton declares the hook; T-0109 implements it. A builder error or a nil
 // context refuses the write.
 type Tier0Builder interface {
-	Build(ctx context.Context, st Stage, op WriteOp) (*connectorv1.Tier0Context, error)
+	Build(ctx context.Context, st Stage, op WriteOp) (Tier0, error)
+}
+
+// Tier0 is what the builder returns: the context, and the gate override in force for the
+// connection (DM-25) when the server's override store has one. The override's authority is that
+// store (TM-R15), never the Action's input, so WriteOp has no override field; with no
+// OverrideSource wired the builder returns none and the request carries none.
+type Tier0 struct {
+	Context  *connectorv1.Tier0Context
+	Override *connectorv1.WriteGateOverride
 }
 
 // Transport is the connector's write group as the client sees it. The gRPC transport ticket
