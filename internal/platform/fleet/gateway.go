@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc"
@@ -52,11 +53,27 @@ type TenantCAs interface {
 	TenantCAs(ctx context.Context, tid tenant.ID) ([]*x509.Certificate, error)
 }
 
+// ComponentStatus says whether a component may still use the fleet listener: its lifecycle state is
+// enrolled or active (DM-12). It is asked on every client-certificate RPC and every stream
+// establishment, so a revoked component whose certificate is still valid is refused (TM-TB6-T9). An
+// error means "could not tell" and the caller fails closed.
+type ComponentStatus interface {
+	Usable(ctx context.Context, id Identity) (bool, error)
+}
+
+// DefaultRecheck is how often an open stream is re-checked against ComponentStatus. It bounds how
+// long a stream outlives a revocation made through another server instance; a revocation made through
+// this one closes its streams at once (CloseComponent).
+const DefaultRecheck = 5 * time.Second
+
 // Config configures the fleet gateway.
 type Config struct {
 	// Methods maps every full gRPC method ("/pkg.Service/Method") to its auth class.
-	Methods map[string]AuthClass
-	CAs     TenantCAs
+	Methods    map[string]AuthClass
+	CAs        TenantCAs
+	Components ComponentStatus
+	// Recheck is the open-stream re-check period; 0 means DefaultRecheck.
+	Recheck time.Duration
 	Clock   func() time.Time // tests only
 }
 
@@ -74,6 +91,8 @@ var (
 	errBadCert = status.Error(codes.Unauthenticated, "client certificate not accepted")
 	errUnavail = status.Error(codes.Unavailable, "authentication unavailable")
 	errDenied  = status.Error(codes.PermissionDenied, "method not available")
+	// errRevoked ends an open stream. It is also the cause the stream's context carries.
+	errRevoked = status.Error(codes.Unauthenticated, "client certificate not accepted")
 )
 
 type ctxKey struct{}
@@ -89,12 +108,15 @@ func IdentityFrom(ctx context.Context) (Identity, bool) {
 type Gateway struct {
 	methods map[string]AuthClass
 	cas     TenantCAs
+	comps   ComponentStatus
+	recheck time.Duration
 	now     func() time.Time
+	streams streamRegistry
 }
 
 // NewGateway checks the static rules of the config. Registered methods are checked by NewServer.
 func NewGateway(cfg Config) (*Gateway, error) {
-	if cfg.CAs == nil || len(cfg.Methods) == 0 {
+	if cfg.CAs == nil || cfg.Components == nil || len(cfg.Methods) == 0 {
 		return nil, ErrGatewayConfig
 	}
 	m := make(map[string]AuthClass, len(cfg.Methods))
@@ -111,7 +133,11 @@ func NewGateway(cfg Config) (*Gateway, error) {
 	if now == nil {
 		now = time.Now
 	}
-	return &Gateway{methods: m, cas: cfg.CAs, now: now}, nil
+	recheck := cfg.Recheck
+	if recheck <= 0 {
+		recheck = DefaultRecheck
+	}
+	return &Gateway{methods: m, cas: cfg.CAs, comps: cfg.Components, recheck: recheck, now: now, streams: newStreamRegistry()}, nil
 }
 
 // NewServer builds the gRPC server of the fleet listener: TLS built here from the server certificate
@@ -181,15 +207,135 @@ func (g *Gateway) Stream(srv any, ss grpc.ServerStream, info *grpc.StreamServerI
 	if err != nil {
 		return err
 	}
-	return h(srv, &identityStream{ServerStream: ss, ctx: ctx})
+	id, ok := IdentityFrom(ctx)
+	if !ok { // a public method: no component to revoke
+		return h(srv, &identityStream{ServerStream: ss, ctx: ctx})
+	}
+	// An authenticated stream is registered under its component and ends when the component is
+	// revoked (TM-TB6-T9): at once through CloseComponent, and within one recheck period when the
+	// revocation was made elsewhere.
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	st := &identityStream{ServerStream: ss, ctx: ctx}
+	unreg := g.streams.add(id, cancel)
+	defer unreg()
+	go g.watch(ctx, id, cancel)
+	err = h(srv, st)
+	if errors.Is(context.Cause(ctx), errRevoked) {
+		return errRevoked
+	}
+	return err
 }
 
+// CloseComponent closes every open stream of the component and reports how many it closed. The
+// revoking code calls it after the Component row is committed as revoked.
+func (g *Gateway) CloseComponent(tid tenant.ID, componentID string) int {
+	return g.streams.close(tid, componentID)
+}
+
+// watch re-checks the component while its stream is open (it ends when ctx does, which the stream's
+// deferred cancel guarantees). A component that is no longer usable ends the stream. A failure to
+// tell (store unavailable) leaves it open: new RPCs are refused meanwhile, and a database blip must
+// not drop the whole fleet.
+func (g *Gateway) watch(ctx context.Context, id Identity, cancel context.CancelCauseFunc) {
+	t := time.NewTicker(g.recheck)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			cctx, c := context.WithTimeout(ctx, g.recheck)
+			ok, err := g.comps.Usable(cctx, id)
+			c()
+			if err == nil && !ok {
+				cancel(errRevoked)
+				return
+			}
+		}
+	}
+}
+
+// identityStream carries the authenticated context and refuses traffic once that context has ended,
+// so a handler that is blocked in Recv or Send returns promptly when its component is revoked.
 type identityStream struct {
 	grpc.ServerStream
 	ctx context.Context
 }
 
 func (s *identityStream) Context() context.Context { return s.ctx }
+
+func (s *identityStream) closed() error {
+	if s.ctx.Err() == nil {
+		return nil
+	}
+	if errors.Is(context.Cause(s.ctx), errRevoked) {
+		return errRevoked
+	}
+	return s.ctx.Err()
+}
+
+func (s *identityStream) SendMsg(m any) error {
+	if err := s.closed(); err != nil {
+		return err
+	}
+	return s.ServerStream.SendMsg(m)
+}
+
+func (s *identityStream) RecvMsg(m any) error {
+	if err := s.closed(); err != nil {
+		return err
+	}
+	return s.ServerStream.RecvMsg(m)
+}
+
+type streamKey struct {
+	tenant tenant.ID
+	comp   string
+}
+
+// streamRegistry holds the cancel function of every open authenticated stream, by component.
+type streamRegistry struct {
+	mu sync.Mutex
+	m  map[streamKey]map[*context.CancelCauseFunc]struct{}
+}
+
+func newStreamRegistry() streamRegistry {
+	return streamRegistry{m: map[streamKey]map[*context.CancelCauseFunc]struct{}{}}
+}
+
+func (r *streamRegistry) add(id Identity, cancel context.CancelCauseFunc) (remove func()) {
+	k := streamKey{id.Tenant, id.ComponentID}
+	p := &cancel
+	r.mu.Lock()
+	if r.m[k] == nil {
+		r.m[k] = map[*context.CancelCauseFunc]struct{}{}
+	}
+	r.m[k][p] = struct{}{}
+	r.mu.Unlock()
+	return func() {
+		r.mu.Lock()
+		delete(r.m[k], p)
+		if len(r.m[k]) == 0 {
+			delete(r.m, k)
+		}
+		r.mu.Unlock()
+	}
+}
+
+func (r *streamRegistry) close(tid tenant.ID, comp string) int {
+	k := streamKey{tid, comp}
+	r.mu.Lock()
+	cancels := make([]context.CancelCauseFunc, 0, len(r.m[k]))
+	for p := range r.m[k] {
+		cancels = append(cancels, *p)
+	}
+	r.mu.Unlock()
+	for _, c := range cancels {
+		c(errRevoked)
+	}
+	return len(cancels)
+}
 
 // authenticate runs before any handler. A method the gateway does not know is refused, whatever the
 // caller presents.
@@ -230,6 +376,16 @@ func (g *Gateway) authenticate(ctx context.Context, method string) (context.Cont
 	}
 	for _, c := range cas {
 		if c != nil && !now.Before(c.NotBefore) && !now.After(c.NotAfter) && leaf.CheckSignatureFrom(c) == nil {
+			// The certificate is genuine; the component may still have been revoked since it was
+			// issued (TM-TB6-T9). Checked on every RPC, so a revoked component is refused whatever
+			// it dials.
+			usable, err := g.comps.Usable(ctx, id)
+			if err != nil {
+				return nil, errUnavail
+			}
+			if !usable {
+				return nil, errBadCert
+			}
 			return context.WithValue(ctx, ctxKey{}, id), nil
 		}
 	}
