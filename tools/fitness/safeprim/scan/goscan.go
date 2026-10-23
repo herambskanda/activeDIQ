@@ -92,6 +92,7 @@ func scanGo(rel string, src []byte, module string, checks map[string]bool, out *
 		g.checkDotImports()
 		g.checkLinkname()
 		g.checkUnsafe()
+		g.checkCgo()
 		g.checkSymbols()
 		g.checkTLS()
 		g.checkJSONEscape()
@@ -380,6 +381,19 @@ func (g *goFile) checkLinkname() {
 			if strings.HasPrefix(c.Text, "//go:linkname") {
 				g.add("FF-SP2", "linkname", c.Pos(), "//go:linkname binds symbols by name and evades the symbol bans; it is banned in product code (T-0186)")
 			}
+		}
+	}
+}
+
+// checkCgo bans import "C" in product code: cgo steps outside Go's memory safety and compiles
+// foreign code the scan cannot see (T-0215). Tests and tier L are exempt: neither ships.
+func (g *goFile) checkCgo() {
+	if g.isTool || g.isTest {
+		return
+	}
+	for _, is := range g.file.Imports {
+		if path, err := strconv.Unquote(is.Path.Value); err == nil && path == "C" {
+			g.add("FF-SP2", "asm-cgo", is.Pos(), `import "C" (cgo) is banned in product code: it escapes memory safety and builds unscanned foreign code (T-0215)`)
 		}
 	}
 }
