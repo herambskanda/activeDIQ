@@ -93,6 +93,7 @@ func scanGo(rel string, src []byte, module string, checks map[string]bool, out *
 		g.checkSymbols()
 		g.checkTLS()
 		g.checkJSONEscape()
+		g.checkPredeclaredShadow()
 		g.checkLiterals()
 		g.checkFeaturePackages()
 	}
@@ -284,6 +285,58 @@ func (g *goFile) checkJSONEscape() {
 		}
 		if sel, ok := isEscape(e); ok && !allowed[sel] {
 			g.add("FF-SP2", "json-escape-off", sel.Pos(), "jsontext."+sel.Sel.Name+" must be called directly with the literal true in product code: JSON responses keep their HTML and JS escaping ("+refP7+".5 rule 7)")
+		}
+		return true
+	})
+}
+
+// checkPredeclaredShadow bans declaring true or false in product code. The scan reads the literal
+// true as the predeclared identifier (no type information, and a package-level const in a sibling
+// file defeats any per-file check), so `true := false` or `const true = false` would turn
+// EscapeForHTML(true) into EscapeForHTML(false) unseen.
+func (g *goFile) checkPredeclaredShadow() {
+	if g.isTool || g.isTest {
+		return
+	}
+	bad := func(id *ast.Ident) {
+		if id != nil && (id.Name == "true" || id.Name == "false") {
+			g.add("FF-SP2", "predeclared-shadow", id.Pos(), "declares "+id.Name+" in product code: shadowing a predeclared boolean defeats the literal-true checks ("+refP7+".5)")
+		}
+	}
+	fields := func(fl *ast.FieldList) {
+		if fl == nil {
+			return
+		}
+		for _, f := range fl.List {
+			for _, id := range f.Names {
+				bad(id)
+			}
+		}
+	}
+	for _, is := range g.file.Imports {
+		bad(is.Name)
+	}
+	ast.Inspect(g.file, func(n ast.Node) bool {
+		switch v := n.(type) {
+		case *ast.AssignStmt:
+			if v.Tok == token.DEFINE {
+				for _, l := range v.Lhs {
+					if id, ok := l.(*ast.Ident); ok {
+						bad(id)
+					}
+				}
+			}
+		case *ast.ValueSpec:
+			for _, id := range v.Names {
+				bad(id)
+			}
+		case *ast.TypeSpec:
+			bad(v.Name)
+		case *ast.FuncDecl:
+			bad(v.Name)
+		case *ast.FuncType:
+			fields(v.Params)
+			fields(v.Results)
 		}
 		return true
 	})
