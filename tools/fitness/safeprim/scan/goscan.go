@@ -408,7 +408,7 @@ func (g *goFile) checkUnsafe() {
 		return
 	}
 	for _, is := range g.file.Imports {
-		if is.Path.Value == `"unsafe"` {
+		if path, err := strconv.Unquote(is.Path.Value); err == nil && path == "unsafe" {
 			g.add("FF-SP2", "unsafe-import", is.Pos(), "importing unsafe is banned in product code outside generated protobuf packages (T-0186)")
 		}
 	}
