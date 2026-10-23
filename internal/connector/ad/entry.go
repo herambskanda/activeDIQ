@@ -18,6 +18,16 @@ type Entry struct {
 
 func newEntry(dn string) *Entry { return &Entry{DN: dn, attrs: map[string][][]byte{}} }
 
+// NewEntry builds an Entry from raw octet values, for adapters and test doubles of the directory
+// seams that consumers define over Session. Attribute names are case-insensitive.
+func NewEntry(dn string, attrs map[string][][]byte) *Entry {
+	e := newEntry(dn)
+	for k, v := range attrs {
+		e.attrs[strings.ToLower(k)] = v
+	}
+	return e
+}
+
 // Raw returns the octet values of an attribute (nil when absent).
 func (e *Entry) Raw(name string) [][]byte { return e.attrs[strings.ToLower(name)] }
 

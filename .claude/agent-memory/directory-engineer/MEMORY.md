@@ -2,3 +2,4 @@
 - [attr codec / corpus lessons](attr-codec-lessons.md) — oracle record shapes, unsatisfiable spec vectors, report-dir gotcha, no local Docker
 - [ldapfilter lessons](ldapfilter-lessons.md) — corpus/oracle arg contract, Render(f, schema) shape, preexisting safeprim red
 - [OData P8 lessons](odata-primitive-lessons.md) — external test pkg, multi-key corpus expect, home-registration checklist, pre-existing red
+- [tier0 classifier lessons](tier0-classifier-lessons.md) — Samba in-chain cost, ranged member, unreadable GUIDs, lab creds
