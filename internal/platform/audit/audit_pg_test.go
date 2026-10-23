@@ -524,10 +524,9 @@ func TestKeyRotationKeepsTheChainVerifiable(t *testing.T) {
 			t.Fatal("the newest checkpoint is not signed by the new key")
 		}
 		ids, _ := r.ownerKeyID(r.id)
-		// Without a cross-signature (T-0229) the new key is not introduced under a trusted checkpoint, so
-		// pinning only the old key must not vouch for the new key's checkpoints; pinning both does.
-		if res := chain.Verify(b, chain.Options{Pinned: ids[:1]}); res.Status != chain.Failed || res.Reason != chain.ReasonUntrustedKey {
-			t.Fatalf("verify (old key only) = %+v; want FAILED untrusted_key", res)
+		// Rotate cross-signs the new key with the outgoing one, so pinning only the old key vouches for it.
+		if res := chain.Verify(b, chain.Options{Pinned: ids[:1]}); res.Status != chain.OK {
+			t.Fatalf("verify (old key only) = %+v", res)
 		}
 		if res := chain.Verify(b, chain.Options{Pinned: ids}); res.Status != chain.OK {
 			t.Fatalf("verify (both keys pinned) = %+v", res)

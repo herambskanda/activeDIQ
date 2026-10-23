@@ -67,7 +67,7 @@ func (c *Checkpointer) InitTenant(ctx context.Context, tx store.Tx, id tenant.ID
 	if tag.RowsAffected() == 0 {
 		return nil
 	}
-	if err := c.newKey(ctx, tx, id, 1); err != nil {
+	if err := c.newKey(ctx, tx, id, 1, nil); err != nil {
 		return err
 	}
 	return c.chainer.Append(ctx, tx, Event{ID: "audit.tenant.initialised", Kind: chain.KindTenantInited, At: time.Now(),
@@ -75,7 +75,8 @@ func (c *Checkpointer) InitTenant(ctx context.Context, tx store.Tx, id tenant.ID
 }
 
 // newKey creates the tenant's ordinal-th checkpoint key, seals its private key and appends the created event.
-func (c *Checkpointer) newKey(ctx context.Context, tx store.Tx, id tenant.ID, ordinal int) error {
+// A non-nil signer is the outgoing key: it cross-signs the new key's introduction.
+func (c *Checkpointer) newKey(ctx context.Context, tx store.Tx, id tenant.ID, ordinal int, signer ed25519.PrivateKey) error {
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return fmt.Errorf("audit: generate checkpoint key: %w", err)
@@ -96,9 +97,18 @@ func (c *Checkpointer) newKey(ctx context.Context, tx store.Tx, id tenant.ID, or
 		VALUES ($1::uuid, $2, $3, $4, $5, $6)`, id.String(), keyID, []byte(pub), sealed, int32(dek.Version), int32(ordinal)); err != nil {
 		return fmt.Errorf("audit: store checkpoint key: %w", err)
 	}
+	details := []chain.Detail{{Key: "key_id", Value: keyID}, {Key: "public_key", Value: hex.EncodeToString(pub)}}
+	if signer != nil {
+		signerID, sig, err := chain.CrossSign(uuidBytes(id), signer, pub)
+		if err != nil {
+			return fmt.Errorf("audit: cross-sign checkpoint key: %w", err)
+		}
+		// Details must be in key order.
+		details = []chain.Detail{{Key: chain.DetailCrossSignature, Value: hex.EncodeToString(sig)}, details[0], details[1],
+			{Key: chain.DetailSignedBy, Value: signerID}}
+	}
 	return c.chainer.Append(ctx, tx, Event{ID: "audit.key.created." + keyID, Kind: chain.KindKeyCreated, At: time.Now(),
-		Actor: systemActor, Component: "audit", Outcome: Success,
-		Details: []chain.Detail{{Key: "key_id", Value: keyID}, {Key: "public_key", Value: hex.EncodeToString(pub)}}})
+		Actor: systemActor, Component: "audit", Outcome: Success, Details: details})
 }
 
 // Sign signs the current head if anything was appended since the last checkpoint, records it, and sends
@@ -139,24 +149,11 @@ func (c *Checkpointer) signInTx(ctx context.Context, tx store.Tx, id tenant.ID) 
 	if head.seq == 0 || (haveLast && last.Seq == head.seq) {
 		return last, false, nil
 	}
-	// The newest key signs.
-	var keyID string
-	var sealed []byte
-	var version int32
-	if err := tx.QueryRow(ctx, `SELECT key_id, sealed_private_key, key_version FROM audit_checkpoint_key WHERE tenant_id = $1::uuid ORDER BY ordinal DESC LIMIT 1`, id.String()).Scan(&keyID, &sealed, &version); err != nil {
-		return chain.Checkpoint{}, false, fmt.Errorf("audit: read checkpoint key: %w", err)
-	}
-	dek, err := c.ks.DEK(ctx, tx, id, uint32(version))
+	keyID, _, priv, err := c.currentKey(ctx, tx, id)
 	if err != nil {
-		return chain.Checkpoint{}, false, fmt.Errorf("audit: tenant data key: %w", err)
+		return chain.Checkpoint{}, false, err
 	}
-	defer dek.Destroy()
-	seed, err := keys.Open(dek, keyContext(id, keyID, uint32(version)), sealed)
-	if err != nil {
-		return chain.Checkpoint{}, false, fmt.Errorf("audit: open checkpoint key: %w", err)
-	}
-	defer clear(seed)
-	priv := ed25519.NewKeyFromSeed(seed)
+	defer clear(priv)
 	cp := chain.Checkpoint{Tenant: uuidBytes(id), Seq: head.seq, KeyID: keyID}
 	copy(cp.Hash[:], head.hash)
 	if haveLast {
@@ -174,6 +171,26 @@ func (c *Checkpointer) signInTx(ctx context.Context, tx store.Tx, id tenant.ID) 
 		return chain.Checkpoint{}, false, fmt.Errorf("audit: record checkpoint: %w", err)
 	}
 	return cp, true, nil
+}
+
+// currentKey opens the tenant's newest checkpoint key. The caller clears the returned private key.
+func (c *Checkpointer) currentKey(ctx context.Context, tx store.Tx, id tenant.ID) (keyID string, ordinal int, priv ed25519.PrivateKey, err error) {
+	var sealed []byte
+	var version, ord int32
+	if err := tx.QueryRow(ctx, `SELECT key_id, sealed_private_key, key_version, ordinal FROM audit_checkpoint_key WHERE tenant_id = $1::uuid ORDER BY ordinal DESC LIMIT 1`, id.String()).Scan(&keyID, &sealed, &version, &ord); err != nil {
+		return "", 0, nil, fmt.Errorf("audit: read checkpoint key: %w", err)
+	}
+	dek, err := c.ks.DEK(ctx, tx, id, uint32(version))
+	if err != nil {
+		return "", 0, nil, fmt.Errorf("audit: tenant data key: %w", err)
+	}
+	defer dek.Destroy()
+	seed, err := keys.Open(dek, keyContext(id, keyID, uint32(version)), sealed)
+	if err != nil {
+		return "", 0, nil, fmt.Errorf("audit: open checkpoint key: %w", err)
+	}
+	defer clear(seed)
+	return keyID, int(ord), ed25519.NewKeyFromSeed(seed), nil
 }
 
 func latestCheckpoint(ctx context.Context, tx store.Tx, id tenant.ID) (chain.Checkpoint, bool, error) {
@@ -219,16 +236,16 @@ func (c *Checkpointer) Rotate(ctx context.Context, db *store.DB, id tenant.ID, a
 		return err
 	}
 	return db.WithTenant(ctx, id, func(ctx context.Context, tx store.Tx) error {
-		var oldID string
-		var ordinal int32
-		if err := tx.QueryRow(ctx, `SELECT key_id, ordinal FROM audit_checkpoint_key WHERE tenant_id = $1::uuid ORDER BY ordinal DESC LIMIT 1`, id.String()).Scan(&oldID, &ordinal); err != nil {
-			return fmt.Errorf("audit: read checkpoint key: %w", err)
+		oldID, ordinal, oldPriv, err := c.currentKey(ctx, tx, id)
+		if err != nil {
+			return err
 		}
+		defer clear(oldPriv)
 		if err := c.chainer.Append(ctx, tx, Event{ID: "audit.key.retired." + oldID, Kind: chain.KindKeyRetired, At: time.Now(),
 			Actor: actor, Component: "audit", Outcome: Success, Details: []chain.Detail{{Key: "key_id", Value: oldID}}}); err != nil {
 			return err
 		}
-		return c.newKey(ctx, tx, id, int(ordinal)+1)
+		return c.newKey(ctx, tx, id, ordinal+1, oldPriv)
 	})
 }
 

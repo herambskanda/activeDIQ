@@ -74,6 +74,8 @@ type keyWin struct {
 	pub     ed25519.PublicKey
 	created uint64
 	retired uint64 // 0: current
+	// crossBy is the key whose valid cross-signature introduced this one ("" if none).
+	crossBy string
 }
 
 // Verify checks a bundle against opts. It reads nothing but its arguments.
@@ -220,10 +222,19 @@ func Verify(b Bundle, opts Options) Result {
 		}
 	}
 	rooted := len(pinned) > 0 || anchored
+	// Trust spreads only along cross-signatures from an already trusted key; nothing else the chain
+	// says about a key (a bare key.created, a covering checkpoint) can vouch for it.
+	for changed := true; changed; {
+		changed = false
+		for id, k := range keys {
+			if !trusted[id] && k.crossBy != "" && trusted[k.crossBy] {
+				trusted[id], changed = true, true
+			}
+		}
+	}
 
 	pinnedSigned := false
-	var lastCP, trustedUpTo uint64
-	haveTrusted := false
+	var lastCP uint64
 	for i, c := range cps {
 		if c.Tenant != tenant {
 			return fail(c.Seq, ReasonCheckpointTenant, "checkpoint belongs to tenant %s", FormatUUID(c.Tenant))
@@ -249,14 +260,7 @@ func Verify(b Bundle, opts Options) Result {
 			return fail(c.Seq, ReasonCheckpointChain, "prev_checkpoint does not name the checkpoint at seq %d", cps[i-1].Seq)
 		}
 		if rooted && !trusted[c.KeyID] {
-			// A key is trusted only if a verified checkpoint signed by a trusted key already covers
-			// its introduction (the cross-signature of ADR-0005); otherwise the chain vouches for itself.
-			// Only keys the retained chain introduces qualify: the manifest's claims about earlier keys
-			// are unauthenticated, so those must be pinned or anchored.
-			if !haveTrusted || !chainKeys[c.KeyID] || k.created > trustedUpTo {
-				return fail(c.Seq, ReasonUntrustedKey, "key %s is neither pinned nor introduced under a checkpoint signed by a trusted key", c.KeyID)
-			}
-			trusted[c.KeyID] = true
+			return fail(c.Seq, ReasonUntrustedKey, "key %s is neither pinned, anchored nor cross-signed by a trusted key", c.KeyID)
 		}
 		if inRange && (!rooted || trusted[c.KeyID]) {
 			if pinned[c.KeyID] {
@@ -264,9 +268,6 @@ func Verify(b Bundle, opts Options) Result {
 			}
 			if c.Seq > lastCP {
 				lastCP = c.Seq
-			}
-			if rooted {
-				haveTrusted, trustedUpTo = true, c.Seq
 			}
 		}
 		res.Checkpoints++
@@ -306,6 +307,22 @@ func applyKeyEvent(env Envelope, keys map[string]*keyWin, fromChain map[string]b
 			keys[id] = &keyWin{pub: pub, created: env.Seq}
 		}
 		fromChain[id] = true
+		// An explicit cross-signature by an earlier key is the only way a chain-introduced key can
+		// inherit trust. A bad one is a forgery, not an absence.
+		if signer, ok := env.Detail(DetailSignedBy); ok {
+			sigHex, _ := env.Detail(DetailCrossSignature)
+			sig, derr := hex.DecodeString(sigHex)
+			sk := keys[signer]
+			var st []byte
+			if sk != nil && derr == nil {
+				st, derr = CrossSignStatement(env.Tenant, signer, id, pub)
+			}
+			if sk == nil || sk.created >= env.Seq || derr != nil || !ed25519.Verify(sk.pub, st, sig) {
+				r := fail(env.Seq, ReasonKeyEvent, "key %s: the cross-signature by %s does not verify", id, signer)
+				return &r
+			}
+			keys[id].crossBy = signer
+		}
 	case KindKeyRetired:
 		id, _ := env.Detail("key_id")
 		k, ok := keys[id]

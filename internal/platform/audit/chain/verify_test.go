@@ -359,16 +359,70 @@ func TestForgedKeyAfterPinnedCheckpointIsNotTrusted(t *testing.T) {
 	want(t, Verify(b.bundle(), Options{Anchors: b.cps[:1]}), Failed, 12, ReasonUntrustedKey)
 }
 
-// A cross-signed rotation: the old key signs a checkpoint covering the new key's introduction.
-func TestCrossSignedRotationIsTrusted(t *testing.T) {
-	b := newBuilder(t, 1)
+func (b *builder) rotate(t *testing.T, oldPriv ed25519.PrivateKey, newPub ed25519.PublicKey, cross bool) {
+	b.add(KindKeyRetired, Detail{"key_id", Fingerprint(oldPriv.Public().(ed25519.PublicKey))})
+	d := []Detail{{"key_id", Fingerprint(newPub)}, {"public_key", hex.EncodeToString(newPub)}}
+	if cross {
+		id, sig, err := CrossSign(b.tenant, oldPriv, newPub)
+		if err != nil {
+			t.Fatal(err)
+		}
+		d = []Detail{{DetailCrossSignature, hex.EncodeToString(sig)}, d[0], d[1], {DetailSignedBy, id}}
+	}
+	b.add(KindKeyCreated, d...)
+}
+
+// The scenario of the second security re-review: a key injected while the genuine one is current gets
+// covered by the server's next checkpoint, and later signs a rebuilt tail. It must not be trusted.
+func TestInjectedKeyCoveredByGenuineCheckpointIsNotTrusted(t *testing.T) {
+	b := seeded(t) // genuine cp@10
+	evil, evilPriv := key(t)
+	b.keyCreated(evil) // 11, injected
+	b.add("x")         // 12
+	b.checkpoint(b.priv, b.pub)
+	b.add("y")
+	b.checkpoint(evilPriv, evil)
+	want(t, Verify(b.bundle(), pin(b)), Failed, 13, ReasonUntrustedKey)
+}
+
+// The production Rotate order (retire, create, no cross-signature) with only K1 pinned is not OK.
+func TestRotationWithoutCrossSignatureIsNotTrusted(t *testing.T) {
+	b := seeded(t)
 	pub2, priv2 := key(t)
-	b.keyCreated(pub2)          // seq 2
-	b.checkpoint(b.priv, b.pub) // seq 2, old key covers the introduction
-	b.add(KindKeyRetired, Detail{"key_id", Fingerprint(b.pub)})
+	b.rotate(t, b.priv, pub2, false)
+	b.add("x")
+	b.checkpoint(priv2, pub2)
+	r := Verify(b.bundle(), pin(b))
+	if r.Status == OK || r.Reason != ReasonUntrustedKey {
+		t.Fatalf("got %+v", r)
+	}
+}
+
+func TestCrossSignedRotationIsTrusted(t *testing.T) {
+	b := seeded(t)
+	pub2, priv2 := key(t)
+	b.rotate(t, b.priv, pub2, true)
 	b.add("x")
 	b.checkpoint(priv2, pub2)
 	want(t, Verify(b.bundle(), pin(b)), OK, 0, "")
+}
+
+func TestForgedCrossSignatureFails(t *testing.T) {
+	b := seeded(t)
+	evil, evilPriv := key(t)
+	// Signed by the attacker's own key but claiming the genuine key as signer, then by a wrong statement.
+	b.rotate(t, evilPriv, evil, true)
+	b.add("x")
+	b.checkpoint(evilPriv, evil)
+	r := Verify(b.bundle(), pin(b))
+	if r.Status != Failed {
+		t.Fatalf("got %+v", r)
+	}
+	// A cross-signature naming the genuine signer with a bad signature.
+	b2 := seeded(t)
+	b2.add(KindKeyCreated, Detail{DetailCrossSignature, hex.EncodeToString(make([]byte, 64))}, Detail{"key_id", Fingerprint(evil)},
+		Detail{"public_key", hex.EncodeToString(evil)}, Detail{DetailSignedBy, Fingerprint(b2.pub)})
+	want(t, Verify(b2.bundle(), pin(b2)), Failed, 11, ReasonKeyEvent)
 }
 
 func TestManifestKeyWithoutChainEvidenceFails(t *testing.T) {
