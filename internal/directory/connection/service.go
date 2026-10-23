@@ -173,7 +173,7 @@ func (s *Service) run(ctx context.Context, tid tenant.ID, id ID, kind Verificati
 	started := s.now()
 	res, verr := s.client.VerifyConnection(ctx, VerifyRequest{Connection: conn, Kind: kind, VerificationID: vid})
 	if verr == nil {
-		verr = checkResult(res)
+		verr = checkResult(conn.Kind, res)
 	}
 	if verr != nil {
 		return s.interrupted(ctx, tid, conn, kind, vid, started, actor, verr)
@@ -186,9 +186,14 @@ func (s *Service) run(ctx context.Context, tid tenant.ID, id ID, kind Verificati
 }
 
 // checkResult refuses a result that is not a complete answer.
-func checkResult(r VerifyResult) error {
+// A pass that does not answer every required check is an incomplete answer too: it goes through
+// interrupted(), which records a failed run, closes the write gate and audits.
+func checkResult(k Kind, r VerifyResult) error {
 	if r.CheckListVersion < 1 || len(r.Outcomes) == 0 || !r.Verdict.valid() {
 		return fmt.Errorf("%w: the result is incomplete", ErrRunInterrupted)
+	}
+	if r.Verdict == VerdictPass && !passComplete(k, r.Outcomes) {
+		return fmt.Errorf("%w: a pass does not answer every required check", ErrRunInterrupted)
 	}
 	return nil
 }

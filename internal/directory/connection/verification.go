@@ -109,8 +109,9 @@ func passComplete(k Kind, outcomes map[Check]Outcome) bool {
 		}
 	}
 	for _, c := range requiredForPass(k) {
-		if o := outcomes[c]; o != OutcomePass && o != OutcomeWarn {
-			return false
+		o := outcomes[c]
+		if o != OutcomePass && (o != OutcomeWarn || c == overPrivilegeCheck(k)) {
+			return false // the over-privilege check must be a clean pass, as the gate requires
 		}
 	}
 	return true

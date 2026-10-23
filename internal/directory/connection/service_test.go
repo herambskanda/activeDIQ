@@ -321,7 +321,6 @@ func TestVerificationTablesAreAppendOnly(t *testing.T) {
 // activate, for AD and for Entra (security review of TM-D1).
 func TestPassWithoutOverPrivilegeCheckNeverActivates(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
-		e := newSvc(t, s)
 		ctx := context.Background()
 		cases := map[string]map[connection.Check]connection.Outcome{
 			"V7 absent":     {"V5": connection.OutcomePass, "V8": connection.OutcomePass},
@@ -332,6 +331,7 @@ func TestPassWithoutOverPrivilegeCheckNeverActivates(t *testing.T) {
 			"extra not_run": {"V5": connection.OutcomePass, "V7": connection.OutcomePass, "V8": connection.OutcomePass, "V9": connection.OutcomeNotRun},
 		}
 		for name, oc := range cases {
+			e := newSvc(t, s) // one forest identity per connection (DM-10.I2)
 			c := e.draft(t)
 			r := passing()
 			r.Outcomes = oc
@@ -343,8 +343,58 @@ func TestPassWithoutOverPrivilegeCheckNeverActivates(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got.State == connection.StateActive || got.VerifiedAt != nil {
+			if got.State != connection.StateDraft || got.VerifiedAt != nil {
 				t.Errorf("%s: connection %+v", name, got)
+			}
+			h, _ := e.reg.Health(ctx, e.a, c.ID, true, time.Now())
+			if h.Verdict != connection.VerdictFailed || h.WriteGateOpen {
+				t.Errorf("%s: no failed run recorded: %+v", name, h)
+			}
+			e.cl.set(passing(), nil)
+			if _, err := e.svc.Activate(ctx, e.a, c.ID, human("alice")); err != nil {
+				t.Errorf("%s: a following good activation: %v", name, err)
+			}
+		}
+	})
+}
+
+// A scheduled run whose pass does not answer the over-privilege check closes the write gate.
+func TestScheduledIncompletePassClosesTheGate(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := newSvc(t, s)
+		ctx := context.Background()
+		c := e.draft(t)
+		e.cl.set(passing(), nil)
+		if _, err := e.svc.Activate(ctx, e.a, c.ID, human("alice")); err != nil {
+			t.Fatal(err)
+		}
+		bad := map[string]map[connection.Check]connection.Outcome{
+			"V7 absent":  {"V5": connection.OutcomePass, "V8": connection.OutcomePass},
+			"V7 not_run": {"V5": connection.OutcomePass, "V7": connection.OutcomeNotRun, "V8": connection.OutcomePass},
+		}
+		for name, oc := range bad {
+			e.cl.set(passing(), nil) // back to a clean newest run
+			if _, err := e.svc.RunScheduled(ctx, e.a); err != nil {
+				t.Fatal(err)
+			}
+			before := len(e.rec.kinds())
+			r := passing()
+			r.Outcomes = oc
+			e.cl.set(r, nil)
+			res, err := e.svc.RunScheduled(ctx, e.a)
+			if err != nil || len(res) != 1 || res[0].Err == nil {
+				t.Fatalf("%s: scheduled: %+v %v", name, res, err)
+			}
+			h, _ := e.reg.Health(ctx, e.a, c.ID, true, time.Now())
+			if h.WriteGateOpen || h.Status == connection.HealthOK || h.Verdict != connection.VerdictFailed {
+				t.Errorf("%s: health: %+v", name, h)
+			}
+			found := false
+			for _, k := range e.rec.kinds()[before:] {
+				found = found || k == connection.AuditVerificationCompleted
+			}
+			if !found {
+				t.Errorf("%s: no verification_completed audit event", name)
 			}
 		}
 	})
