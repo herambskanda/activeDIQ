@@ -165,6 +165,25 @@ func TestFFSP2BannedAPIs(t *testing.T) {
 	want(t, "dot import in a test", map[string]string{"internal/modules/m/m_test.go": gofile("\t. \"encoding/json/jsontext\"\n", "var o = EscapeForHTML(true)")}, "", "", "")
 	want(t, "EscapeForHTML(true) is fine", jx("var o = jsontext.EscapeForHTML(true)\nvar p = jsontext.EscapeForJS(true)"), "", "", "")
 	want(t, "EscapeForHTML(false) in a test", map[string]string{"internal/modules/m/m_test.go": gofile("\t\"encoding/json/jsontext\"\n", "var o = jsontext.EscapeForHTML(false)")}, "", "", "")
+	for _, c := range []struct{ name, imp, use string }{
+		{"http.Get", "net/http", "func f() { http.Get(\"x\") }"},
+		{"http.DefaultClient", "net/http", "var c = http.DefaultClient"},
+		{"http.Client literal", "net/http", "var c = &http.Client{}"},
+		{"http.Transport", "net/http", "var c = &http.Transport{}"},
+		{"net.Dial", "net", "func f() { net.Dial(\"tcp\", \"x:1\") }"},
+		{"net.Dialer", "net", "var d net.Dialer"},
+		{"tls.Dial", "crypto/tls", "func f() { tls.Dial(\"tcp\", \"x:1\", nil) }"},
+	} {
+		want(t, c.name, map[string]string{"internal/modules/m/m.go": gofile("\t\""+c.imp+"\"\n", c.use)}, "FF-SP2", "outbound-http", "internal/modules/m/m.go")
+	}
+	want(t, "egress home, tests and inbound http", map[string]string{
+		"internal/platform/egress/e.go": gofile("\t\"net/http\"\n", "var c = &http.Client{}"),
+		"internal/modules/m/m_test.go":  gofile("\t\"net/http\"\n", "var c = &http.Client{}"),
+		"internal/modules/m/h.go":       gofile("\t\"net/http\"\n", "var s = &http.Server{}\nvar _ = http.NewRequest"),
+	}, "", "", "")
+	want(t, "AD connector may dial DCs (TB2)", map[string]string{"internal/connector/ad/x.go": gofile("\t\"net\"\n", "var d net.Dialer")}, "", "", "")
+	want(t, "AD connector may not build an http.Client", map[string]string{"internal/connector/ad/x.go": gofile("\t\"net/http\"\n", "var c = &http.Client{}")}, "FF-SP2", "outbound-http", "internal/connector/ad/x.go")
+	want(t, "another connector may not dial", map[string]string{"internal/connector/rights/x.go": gofile("\t\"net\"\n", "var d net.Dialer")}, "FF-SP2", "outbound-http", "internal/connector/rights/x.go")
 	want(t, "text/template", map[string]string{"internal/modules/m/m.go": gofile("\t_ \"text/template\"\n", "")}, "FF-SP2", "text-template", "internal/modules/m/m.go")
 	want(t, "TLS bypass in a test", map[string]string{"internal/modules/m/m_test.go": gofile("\t\"crypto/tls\"\n", "var c = tls.Config{InsecureSkipVerify: true}")}, "FF-SP2", "tls-skip-verify", "internal/modules/m/m_test.go")
 	want(t, "TLS bypass in tier L", map[string]string{"tools/x/x.go": gofile("\t\"crypto/tls\"\n", "var c = tls.Config{InsecureSkipVerify: true}")}, "FF-SP2", "tls-skip-verify", "tools/x/x.go")

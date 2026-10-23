@@ -111,9 +111,14 @@ type Set struct {
 	reach map[string]map[Basis]bool
 	// designatedGroups are the group ids the snapshot was computed for.
 	designatedGroups map[string]bool
-	dynamic          RuleScope
-	computedAt       time.Time
-	pimNotLicensed   bool
+	// dyn are the dynamic groups of the designated closure (rule 7a); r re-reads their rules on
+	// every property-write check (rule 7b); extMap maps customer-mapped directory-extension LDAP
+	// attributes to rule property names.
+	dyn            []DynamicClosure
+	r              Reader
+	extMap         map[string]string
+	computedAt     time.Time
+	pimNotLicensed bool
 }
 
 // ComputedAt is the time the snapshot judged schedule expiry against.
@@ -155,6 +160,7 @@ type Classifier struct {
 	// connector can rely on [UNVERIFIED], so the onboarding check supplies what it finds.
 	syncClientAppIDs []string
 	unlicensed       PIMUnlicensed
+	extMap           map[string]string
 	now              func() time.Time
 }
 
@@ -179,6 +185,17 @@ func New(r Reader, syncClientAppIDs ...string) *Classifier {
 
 // WithPIMUnlicensed sets the lab-G11-pinned unlicensed signal and returns c.
 func (c *Classifier) WithPIMUnlicensed(u PIMUnlicensed) *Classifier { c.unlicensed = u; return c }
+
+// WithDirectoryExtensions tells the guard which LDAP attribute feeds which directory-extension rule
+// property (Entra Connect option, rule 7g): attr -> "extension_<appId>_<name>". Without it, an AD
+// write is refused while any closure rule uses an extension_ property.
+func (c *Classifier) WithDirectoryExtensions(m map[string]string) *Classifier {
+	c.extMap = map[string]string{}
+	for k, v := range m {
+		c.extMap[strings.ToLower(k)] = "user." + strings.TrimPrefix(strings.ToLower(v), "user.")
+	}
+	return c
+}
 
 // WithClock sets the clock for schedule expiry and returns c (tests).
 func (c *Classifier) WithClock(now func() time.Time) *Classifier { c.now = now; return c }
@@ -206,7 +223,7 @@ type Designation struct {
 // customer-designated groups whose reach is walked. Any read error fails the whole snapshot.
 func (c *Classifier) Snapshot(ctx context.Context, designated ...Designation) (*Set, error) {
 	s := &Set{bases: map[string]map[Basis]bool{}, reach: map[string]map[Basis]bool{}, designatedGroups: map[string]bool{},
-		dynamic: RuleScope{Properties: map[string]bool{}}, computedAt: c.now().UTC()}
+		r: c.r, extMap: c.extMap, computedAt: c.now().UTC()}
 
 	// E1 (+E4 labelling): every active and PIM-eligible holder at any scope. The reader fails the
 	// whole call when eligibility is unreadable, so partial answers never get here.

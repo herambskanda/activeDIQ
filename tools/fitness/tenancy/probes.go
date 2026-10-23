@@ -474,7 +474,8 @@ func execIfGranted(ctx context.Context, tx pgx.Tx, sql string, args ...any) (int
 	return tag.RowsAffected(), nil
 }
 
-// deleteNotGranted reports whether err is the runtime role lacking DELETE on the table (insufficient
+// deleteNotGranted reports whether err is the runtime role lacking DELETE (or, for the append-only audit
+// tables, UPDATE) on the table (insufficient
 // privilege). A table whose rows are never deleted (a state, not a delete, ends them) revokes it, and
 // then the probe's delete touches nothing, which is what the probe asserts.
 func deleteNotGranted(err error) bool {

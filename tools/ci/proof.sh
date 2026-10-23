@@ -454,6 +454,84 @@ import (
 func f(d dn.DNString, ou string) bool { return strings.HasSuffix(string(d), ou) }
 GO
 must_fail_with "FF-SP2 analyzer dnstring on a DNString conversion outside dn" 'internal/modules/users/u.go:9: FF-SP2 \[dnstring\]' safeprim -checks FF-SP2
+fresh_sp_tree
+sp_put internal/directory/dn/dn.go <<'GO'
+package dn
+
+type DNString string
+type DN struct{ s string }
+
+func (d DN) String() string { return d.s }
+GO
+sp_put internal/connector/ad/c.go <<'GO'
+package ad
+
+import "sp.test/internal/directory/dn"
+
+func f(d dn.DN) string { return d.String() }
+GO
+must_fail_with "FF-SP2 analyzer dnstring on dn.DN.String in the connector (not ForRequest)" 'internal/connector/ad/c.go:5: FF-SP2 \[dnstring\].*ForRequest' safeprim -checks FF-SP2
+fresh_sp_tree
+sp_put internal/directory/dn/dn.go <<'GO'
+package dn
+
+type DNString string
+type DN struct{ s string }
+
+func (d DN) String() string { return d.s }
+GO
+sp_put internal/connector/ad/c.go <<'GO'
+package ad
+
+import (
+	"fmt"
+
+	"sp.test/internal/directory/dn"
+)
+
+func f(d dn.DN) string { return fmt.Sprint(d) }
+GO
+must_fail_with "FF-SP2 analyzer dnstring on a dn.DN reaching DN.String via fmt in the connector" 'internal/connector/ad/c.go:9: FF-SP2 \[dnstring\].*interface' safeprim -checks FF-SP2
+fresh_sp_tree
+sp_put internal/directory/dn/dn.go <<'GO'
+package dn
+
+type DNString string
+type DN struct{ s string }
+
+func (d DN) String() string { return d.s }
+GO
+sp_put internal/connector/ad/c.go <<'GO'
+package ad
+
+import (
+	"fmt"
+
+	"sp.test/internal/directory/dn"
+)
+
+type entry struct {
+	dn.DN
+	n int
+}
+
+func f(e entry) string { return fmt.Sprint(e) }
+GO
+must_fail_with "FF-SP2 analyzer dnstring on an embedded dn.DN reaching DN.String via fmt in the connector" 'internal/connector/ad/c.go:14: FF-SP2 \[dnstring\].*interface' safeprim -checks FF-SP2
+fresh_sp_tree
+sp_put internal/directory/dn/dn.go <<'GO'
+package dn
+
+type DNString string
+GO
+sp_put internal/connector/ad/c.go <<'GO'
+package ad
+
+import "sp.test/internal/directory/dn"
+
+func f(d dn.DNString) string { return string(d) }
+GO
+must_fail_with "FF-SP2 analyzer dnstring on a DNString conversion in the connector" 'internal/connector/ad/c.go:5: FF-SP2 \[dnstring\].*DNString' safeprim -checks FF-SP2
 fresh_sp_tree; sp_put internal/modules/users/u.go <<'GO'
 package users
 

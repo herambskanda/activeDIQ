@@ -540,6 +540,8 @@ func TestDeclarationsAgreeWithTheDomainModel(t *testing.T) {
 			want(t, vs, "REG", c.rule, "public.a")
 		})
 	}
+	// Bookkeeping beside an append-only entity (the audit chain head) is accepted; claiming both is not.
+	wantNone(t, checkDeclarations(decls(t, decl("public.a_head", "DM-18", "Directory", ", Bookkeeping: true")+decl("public.a", "DM-18", "Directory", ", AppendOnly: true")), es))
 	// A heading that names two kinds ("P and T") is not cross-checked, either kind is declarable.
 	wantNone(t, checkDeclarations(decls(t, decl("public.lease", "DM-06", "Platform", "")+decl("public.lease_t", "DM-06", "Tenant", "")), es))
 }

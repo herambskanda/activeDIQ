@@ -6,7 +6,7 @@ status: review
 owner: heramb
 author: directory-engineer
 ticket: T-0064
-amended_by: T-0091 (v1.1, author solution-architect), T-0122 (v1.2, author solution-architect: TM-D23 rules 7-11), T-0230 (§8.9, author security-architect: TM-D25 rule 7 guard input)
+amended_by: T-0091 (v1.1, author solution-architect), T-0122 (v1.2, author solution-architect: TM-D23 rules 7-11), T-0230 (§8.9, author security-architect: TM-D25 rule 7 guard input), T-0240 (§8.9, author security-architect: group-based licensing, canonical keys)
 binding_sources: blueprint §7.1-7.2, safe-primitives §3.6-3.7, domain-model DM-10, DM-13..DM-20, DM-24, DM-25, threat-model §6.2-§6.6 (TM-D1, TM-D2, TM-D4, TM-D5, TM-D23), §16.1 TM-R14..R17, §6.3 R1/R2 and TM-TB3-*, ADR-0005 rules 2, 4, 5, 7
 ---
 
@@ -847,6 +847,21 @@ before T-0098 is merged.
 | 11 `tier0` after a write | §8.1 step 9, R-T0RACE-1 | `APPLIED` with `tier0_after_write` (an empty basis marks a failed re-read); the pipeline records `verify_failed` `tier0_after_write` and alerts | `ApplyResponse.tier0_after_write`, `Tier0Member` comment | CC-WRITE-21 | T-0098 (step 9), T-0129 (ADR-0005 rule 7, DM-42), T-0109 (maps it) |
 | `ENTRA_PASSWORD_CREDENTIAL` severity | §8.4 | EV3 block (unexpired), EV5 warn (expired) | `FindingKind` and `VerificationCheck` comments | CC-VER-13 | T-0097 |
 
+### 8.8 Where §8 is implemented (T-0098)
+
+`internal/connector/write` holds the `Plan`/`Apply` handler (`Handler`), the write gate and ratchet
+(`GateBook`, `FileBaseline`), the AD and Entra providers over the T-0093 and T-0095 classifiers, the
+empty operation table (`ops.go`) and the gRPC wrapper (`Register`). The in-process transport calls
+`Handler` directly; the remote transport registers it on a gRPC server; both return the same
+`*Refusal`. Steps 1 to 4 and 7 run for an unwired kind too, so `TIER0_REFUSED` wins over
+`CAPABILITY_UNSUPPORTED` (the K0 cases). Steps 5, 6, 8 and 9 are generic over the table and are
+exercised by an injected test table until the first kind ticket adds a row. Fitness
+(`fitness_test.go`): no LDAP or Graph write call exists under `internal/connector` outside
+`internal/connector/write/ops/`, which only the guard may import; the three limits (§8.2) are
+constants nobody reads from a setting. Known follow-ups: the Entra `AnchorReader` (F4 for Entra
+statements with evidence is refused until it exists), live nested-membership of designated Entra
+groups, and feeding `GateBook.Complete` from the `VerifyConnection` handlers (T-0096, T-0097).
+
 ### 8.9 The dynamic-group property guard in `Plan` and `Apply` (TM-D25 rule 7, amended by T-0230)
 
 Step 4 of §8.1 gains one check, **`CheckPropertyWrite`**, which runs on both planes and both
@@ -860,7 +875,12 @@ op, keys[]}`. `op` is one of `UPDATE`, `CREATE`, `INVITE`, `ASSIGN_LICENSE`, `SE
 `CLEAR_MANAGER`, `MOVE_OR_RENAME` (AD `ModifyDN`), `GROUP_MEMBERSHIP`. Each write kind declares its
 `PropertyWrite` in its registration (a kind with none fails the build-time check in CC-WRITE-22's
 harness), so a new kind cannot forget it. `keys` are Graph PATCH keys on the Entra plane and LDAP
-attribute names on the AD plane, never rule-side names.
+attribute names on the AD plane, never rule-side names. **Keys must be canonical (T-0240)**; any
+other key refuses the whole write, before every other check and whether or not a closure exists:
+AD: an ASCII letter, then letters, digits or `-` (so no options such as `;binary`, no numeric
+OID form, [RFC 4512 §2.5](https://www.rfc-editor.org/rfc/rfc4512#section-2.5), no whitespace, no
+empty key); Entra: an ASCII letter, then letters, digits or `_`, with at most one `.` sub-key of
+the same form. Character loops, no regex. Matching to `ruleprops v1` is case-insensitive.
 
 **Scope: the snapshot's `dynamic` set is the union over every dynamic group in a designated
 closure** (TM §6.4 TM-D25 7a), carried in `designated_tier0` as `DynamicClosure{group_id, kind,
@@ -874,10 +894,10 @@ each per `Plan` and `Apply` (live, step 7); a changed `rule_hash` re-lexes. A re
 | --- | --- |
 | `UPDATE` | any of `keys` maps (7g, by plane) to a property in the merged rule scope; or `RefuseAll` and `keys` is not empty |
 | `CREATE`, `INVITE` | **any** closure dynamic group of the same kind exists (7d); a new object matches by absence |
-| `ASSIGN_LICENSE` | the scope holds `assignedPlans`, or `RefuseAll`. Group-targeted calls too (7e) |
+| `ASSIGN_LICENSE` | the scope holds `assignedPlans`, `mail` or `proxyAddresses`, or `RefuseAll`. Group-targeted calls too (7e) |
 | `SET_MANAGER`, `CLEAR_MANAGER` | the scope holds `user.manager` (`Direct Reports for`, 7c), or `RefuseAll` |
 | `MOVE_OR_RENAME` (AD) | the scope holds `onPremisesDistinguishedName`, or `RefuseAll` |
-| `GROUP_MEMBERSHIP` | `RefuseAll` caused by a `memberOf` rule only (7b) |
+| `GROUP_MEMBERSHIP` | the scope holds `memberOf`, `assignedPlans`, `mail` or `proxyAddresses`, or `RefuseAll` **for any cause** (7b, 7e; group-based licensing, T-0240). Any target group, either plane |
 
 `RefuseAll` is set by an untokenisable rule, a rule property absent from `ruleprops v1`, an empty
 scope that is no recognised whole-rule form, or a `memberOf` rule. An unknown `op` or `kind` is
@@ -896,8 +916,8 @@ as a property, and must mark `RefuseAll` on anything else, as above. No regex, n
 **Conformance (T-0066 writes them, drawn from the TM T-0230 table):** CC-WRITE-23 nested
 dynamic group at depth 1 and 3, with and without the closure; CC-WRITE-24 `Direct Reports for`;
 CC-WRITE-25 create and invite, including the null-match rule; CC-WRITE-26 licence on user and on
-group; CC-WRITE-27 AD-plane writes (`title`, `userAccountControl`, `ModifyDN`, `manager`) on an
-uncorrelated synced user; CC-WRITE-28 container keys, unknown property and unlexable rule; CC-WRITE-29
+group, **plus `GROUP_MEMBERSHIP` into a licensed group under an `assignedPlans`, `mail`, `proxyAddresses` or RefuseAll scope on both planes (T0-DYN-LIC-GROUPMEMBER), and `ASSIGN_LICENSE` under `mail`/`proxyAddresses`**; CC-WRITE-27 AD-plane writes (`title`, `userAccountControl`, `ModifyDN`, `manager`, **and `preferredLanguage`, `countryCode`, `operatingSystem`, `operatingSystemVersion`**) on an
+uncorrelated synced user or device; CC-WRITE-28 container keys, unknown property and unlexable rule, **and non-canonical keys (options, OIDs, whitespace, empty; T0-DYN-KEY)**; CC-WRITE-29
 live rule edit. The Samba lab covers LDAP semantics; Entra Connect flows are `[UNVERIFIED — lab]`.
 
 ## 9. Provider conformance suite
