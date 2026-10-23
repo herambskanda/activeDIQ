@@ -1,0 +1,137 @@
+package fleetsql
+
+import (
+	"context"
+	"math"
+	"net/netip"
+	"sync"
+	"time"
+)
+
+// FailureLimiter meters failed redeems per source (TM-TB6-T1). Blocked is asked before the token is
+// looked at, so a refusal never depends on whether the token exists; Failed is told after a redeem
+// that did not succeed. A success is not told, so a legitimate enrolment never spends the budget.
+type FailureLimiter interface {
+	// Blocked reports whether source has spent its budget, and how long until it has a try again.
+	Blocked(ctx context.Context, source string) (retryAfter time.Duration, blocked bool, err error)
+	// Failed records one failed redeem from source.
+	Failed(ctx context.Context, source string)
+}
+
+// MemoryLimiterConfig sets the budget. Zero values take the defaults: 5 failures, then one more try
+// every 30 seconds, at most 100000 sources remembered.
+type MemoryLimiterConfig struct {
+	Burst      int
+	Refill     time.Duration // time to regain one try
+	MaxSources int
+	Now        func() time.Time // tests only
+}
+
+type fail struct {
+	spent float64
+	at    time.Time
+}
+
+// MemoryLimiter is a per-node FailureLimiter. The source is reduced to a network prefix (IPv4 /32,
+// IPv6 /64; an unparseable source shares one bucket) so one attacker cannot mint a bucket per
+// address of a /64, and a full table sends new sources to one shared overflow bucket that is
+// throttled rather than admitted. It is deliberately per node: a shared-store variant implements the
+// same port when the gateway is clustered.
+type MemoryLimiter struct {
+	cfg MemoryLimiterConfig
+	mu  sync.Mutex
+	m   map[string]*fail
+}
+
+// NewMemoryLimiter returns a limiter with cfg's defaults filled in.
+func NewMemoryLimiter(cfg MemoryLimiterConfig) *MemoryLimiter {
+	if cfg.Burst <= 0 {
+		cfg.Burst = 5
+	}
+	if cfg.Refill <= 0 {
+		cfg.Refill = 30 * time.Second
+	}
+	if cfg.MaxSources <= 0 {
+		cfg.MaxSources = 100000
+	}
+	if cfg.Now == nil {
+		cfg.Now = time.Now
+	}
+	return &MemoryLimiter{cfg: cfg, m: map[string]*fail{}}
+}
+
+const (
+	unparseableKey = "?"
+	overflowKey    = "*"
+)
+
+func sourceKey(raw string) string {
+	a, err := netip.ParseAddr(raw)
+	if err != nil {
+		return unparseableKey
+	}
+	a = a.WithZone("").Unmap()
+	bits := 64
+	if a.Is4() {
+		bits = 32
+	}
+	p, err := a.Prefix(bits)
+	if err != nil {
+		return unparseableKey
+	}
+	return p.Masked().String()
+}
+
+// bucket returns the entry for key, decayed to now. Caller holds mu.
+func (l *MemoryLimiter) bucket(key string, now time.Time) *fail {
+	b, ok := l.m[key]
+	if !ok {
+		if len(l.m) >= l.cfg.MaxSources {
+			l.sweep(now)
+		}
+		if len(l.m) >= l.cfg.MaxSources {
+			key = overflowKey
+			b = l.m[key]
+		}
+		if b == nil {
+			b = &fail{at: now}
+			l.m[key] = b
+		}
+	}
+	if d := now.Sub(b.at); d > 0 {
+		b.spent = math.Max(0, b.spent-float64(d)/float64(l.cfg.Refill))
+		b.at = now
+	}
+	return b
+}
+
+// sweep drops sources that have fully recovered: they carry no state.
+func (l *MemoryLimiter) sweep(now time.Time) {
+	for k, b := range l.m {
+		if float64(now.Sub(b.at))/float64(l.cfg.Refill) >= b.spent {
+			delete(l.m, k)
+		}
+	}
+}
+
+// Blocked implements FailureLimiter.
+func (l *MemoryLimiter) Blocked(_ context.Context, source string) (time.Duration, bool, error) {
+	now := l.cfg.Now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	b := l.bucket(sourceKey(source), now)
+	if b.spent < float64(l.cfg.Burst) {
+		return 0, false, nil
+	}
+	wait := time.Duration(math.Ceil((b.spent - float64(l.cfg.Burst) + 1) * float64(l.cfg.Refill)))
+	return max(wait, time.Millisecond), true, nil
+}
+
+// Failed implements FailureLimiter.
+func (l *MemoryLimiter) Failed(_ context.Context, source string) {
+	now := l.cfg.Now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	b := l.bucket(sourceKey(source), now)
+	b.spent = math.Min(b.spent+1, float64(l.cfg.Burst))
+}
