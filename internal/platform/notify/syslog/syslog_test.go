@@ -155,3 +155,16 @@ func TestInternalRangeRefusedUnlessAllowListed(t *testing.T) {
 		}
 	}
 }
+
+func TestBadHostsRefused(t *testing.T) {
+	for _, h := range []string{"a\x00b", "a:b", "[::1]", "ü.example", "a b", "-a.example", "fe80::1%eth0", "a..b", ""} {
+		if _, err := (Destination{ID: "d", Host: h}).Normalize(); !errors.Is(err, ErrBadDestination) {
+			t.Errorf("host %q: err = %v, want ErrBadDestination", h, err)
+		}
+	}
+	for _, h := range []string{"siem.example.com", "10.0.0.5", "::1", "siem"} {
+		if _, err := (Destination{ID: "d", Host: h}).Normalize(); err != nil {
+			t.Errorf("host %q: %v", h, err)
+		}
+	}
+}

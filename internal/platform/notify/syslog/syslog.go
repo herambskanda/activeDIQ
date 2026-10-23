@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -55,8 +56,8 @@ type Destination struct {
 
 // Normalize applies defaults and validates. Callers store the returned value.
 func (d Destination) Normalize() (Destination, error) {
-	if d.ID == "" || d.Host == "" || strings.ContainsAny(d.Host, " /@\r\n\t") {
-		return d, fmt.Errorf("%w: id and a plain host are required", ErrBadDestination)
+	if d.ID == "" || !validHost(d.Host) {
+		return d, fmt.Errorf("%w: id and a plain host name or IP address are required", ErrBadDestination)
 	}
 	switch d.Transport {
 	case "":
@@ -195,4 +196,27 @@ func text(s string) string {
 		}
 		return r
 	}, s)
+}
+
+// validHost accepts an IP literal or an LDH host name (labels 1-63, total at most 253); nothing
+// else reaches the View, the audit details or the dialer.
+func validHost(h string) bool {
+	if _, err := netip.ParseAddr(h); err == nil {
+		return !strings.Contains(h, "%") // no zone ids
+	}
+	if len(h) == 0 || len(h) > 253 {
+		return false
+	}
+	for _, l := range strings.Split(strings.TrimSuffix(h, "."), ".") {
+		if len(l) < 1 || len(l) > 63 || l[0] == '-' || l[len(l)-1] == '-' {
+			return false
+		}
+		for i := 0; i < len(l); i++ {
+			c := l[i]
+			if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-') {
+				return false
+			}
+		}
+	}
+	return true
 }

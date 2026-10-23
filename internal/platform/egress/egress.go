@@ -141,7 +141,7 @@ func New(cfg Config) (*Client, error) {
 		hc:        &http.Client{Transport: tr, Timeout: cfg.Timeout, CheckRedirect: redirectPolicy(cfg.AllowHTTP)},
 		allowHTTP: cfg.AllowHTTP,
 		d:         d,
-		tlsCfg:    tr.TLSClientConfig,
+		tlsCfg:    &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: cfg.RootCAs}, // separate from the transport's: net/http mutates that one (ALPN, h2)
 	}, nil
 }
 
