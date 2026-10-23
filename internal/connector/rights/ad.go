@@ -144,6 +144,9 @@ type adCheck struct {
 	schID   map[adguid.GUID]*SchemaObject
 }
 
+// snapshotHook replaces the tier0 classifier for tests of StreamAD, which builds its own ADInput.
+var snapshotHook func(ctx context.Context) (*tier0.ADSet, error)
+
 var errNoIdentity = errors.New("rights: the connector identity could not be read")
 
 // VerifyAD runs V7 (steps 1, 2, 3, 5), V8 and V9 as the connector identity.
@@ -186,6 +189,9 @@ func VerifyAD(ctx context.Context, d ADDirectory, in ADInput) (*ADResult, error)
 	res := &ADResult{Identity: &v1.AdObservedIdentity{ObjectGuid: pbGuid(c.idGUID), ObjectSid: &v1.Sid{Value: c.idSID.Bytes()}}}
 
 	snap := in.Snapshot
+	if snap == nil {
+		snap = snapshotHook
+	}
 	if snap == nil {
 		snap = tier0.NewAD(d).Snapshot
 	}
