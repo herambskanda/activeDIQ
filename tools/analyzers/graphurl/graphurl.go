@@ -1,6 +1,6 @@
 // Package graphurl is the FF-SP2 pass `graph-url-assembly` of safe-primitives-odata §6. Inside the
 // Graph connector (internal/connector/graph and below) every URL is written by odata.Request.URL
-// or is a host-pinned @odata.nextLink. The pass reports there:
+// or is a host-pinned @odata.nextLink. Function values count as uses. The pass reports there:
 //
 //   - an assignment to, or a composite literal field of, url.URL Path, RawPath, RawQuery or
 //     ForceQuery;
@@ -8,8 +8,11 @@
 //   - a call of url.PathEscape, url.QueryEscape, url.PathUnescape, url.QueryUnescape or
 //     url.Values.Encode;
 //
-//   - http.NewRequest or http.NewRequestWithContext whose URL argument is not `x.String()` on a
+//   - any use of http.NewRequest or http.NewRequestWithContext outside the policy.GraphHTTPSite
+//     methods ((*Client).get, (*Client).bearer); there the URL argument must be `x.String()` on a
 //     *url.URL (the odata result, or the parsed nextLink checked against the pinned base).
+//
+//   - an assignment to, or a literal key of, any other url.URL field (Opaque, Host, Scheme, ...).
 //
 //   - a call of url.Parse, url.ParseRequestURI, url.JoinPath, (*url.URL).Parse, (*url.URL).JoinPath
 //     or (*url.URL).ResolveReference, which would turn a concatenated string into a URL.
@@ -41,7 +44,10 @@ var Analyzer = &analysis.Analyzer{
 	Run:  run,
 }
 
-var urlFields = map[string]bool{"Path": true, "RawPath": true, "RawQuery": true, "ForceQuery": true}
+// urlFields are every field of url.URL: writing any of them hand-builds the URL (Opaque and Host
+// included, which can redirect the bearer token).
+var urlFields = map[string]bool{"Scheme": true, "Opaque": true, "User": true, "Host": true, "Path": true, "RawPath": true,
+	"OmitHost": true, "ForceQuery": true, "RawQuery": true, "Fragment": true, "RawFragment": true}
 var urlFuncs = map[string]bool{"PathEscape": true, "QueryEscape": true, "PathUnescape": true, "QueryUnescape": true}
 
 func isURLType(t types.Type) bool {
@@ -62,13 +68,14 @@ func run(pass *analysis.Pass) (any, error) {
 			continue
 		}
 		for _, d := range f.Decls {
-			var tok, parse bool
+			var tok, parse, httpOK bool
 			if fd, ok := d.(*ast.FuncDecl); ok {
 				recv := recvName(fd)
 				tok = policy.IsGraphTokenURL(dir, recv, fd.Name.Name)
 				parse = policy.IsGraphURLParse(dir, recv, fd.Name.Name)
+				httpOK = policy.IsGraphHTTPSite(dir, recv, fd.Name.Name)
 			}
-			check(pass, d, tok, parse)
+			check(pass, d, tok, parse, httpOK)
 		}
 	}
 	return nil, nil
@@ -107,7 +114,7 @@ var parseFuncs = map[string]bool{"Parse": true, "ParseRequestURI": true, "JoinPa
 
 // check inspects one declaration. tok exempts the token-endpoint encoders (bearer); parse exempts
 // the URL-parsing calls (the constructor's config parses and the nextLink parse in list).
-func check(pass *analysis.Pass, root ast.Node, tok, parse bool) {
+func check(pass *analysis.Pass, root ast.Node, tok, parse, httpOK bool) {
 	if tok {
 		return
 	}
@@ -124,15 +131,19 @@ func check(pass *analysis.Pass, root ast.Node, tok, parse bool) {
 				return true
 			}
 			for _, el := range v.Elts {
-				if kv, ok := el.(*ast.KeyValueExpr); ok {
-					if id, ok := kv.Key.(*ast.Ident); ok && urlFields[id.Name] {
-						report(pass, kv, "url.URL literal sets "+id.Name+": the URL is written by odata.Request.URL only")
-					}
+				kv, ok := el.(*ast.KeyValueExpr)
+				if !ok {
+					report(pass, el, "unkeyed url.URL literal: the URL is written by odata.Request.URL only")
+					break
+				}
+				if id, ok := kv.Key.(*ast.Ident); ok && urlFields[id.Name] {
+					report(pass, kv, "url.URL literal sets "+id.Name+": the URL is written by odata.Request.URL only")
 				}
 			}
-		case *ast.CallExpr:
-			fn := util.Callee(pass, v)
-			if fn == nil || fn.Pkg() == nil {
+		case *ast.Ident:
+			// Any use, not only a call: `p := url.Parse; p(x)` is the same hand-built URL.
+			fn, ok := pass.TypesInfo.Uses[v].(*types.Func)
+			if !ok || fn.Pkg() == nil {
 				return true
 			}
 			switch p := fn.Pkg().Path(); {
@@ -142,7 +153,15 @@ func check(pass *analysis.Pass, root ast.Node, tok, parse bool) {
 				report(pass, v, "url."+fn.Name()+" in the Graph connector: a URL is made by odata.Request.URL, or is a host-pinned nextLink or configured base (policy.GraphURLParse)")
 			case p == "net/url" && fn.Name() == "Encode":
 				report(pass, v, "url.Values.Encode in the Graph connector: query encoding belongs to the odata primitive")
-			case p == "net/http" && (fn.Name() == "NewRequest" || fn.Name() == "NewRequestWithContext"):
+			case p == "net/http" && (fn.Name() == "NewRequest" || fn.Name() == "NewRequestWithContext") && !httpOK:
+				report(pass, v, "http."+fn.Name()+" outside policy.GraphHTTPSite: a request is created only where the host is pinned")
+			}
+		case *ast.CallExpr:
+			fn := util.Callee(pass, v)
+			if fn == nil || fn.Pkg() == nil || !httpOK || fn.Pkg().Path() != "net/http" {
+				return true
+			}
+			if fn.Name() == "NewRequest" || fn.Name() == "NewRequestWithContext" {
 				idx := 1
 				if fn.Name() == "NewRequestWithContext" {
 					idx = 2

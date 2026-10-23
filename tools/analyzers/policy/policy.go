@@ -91,6 +91,14 @@ var GraphURLParse = []TokenURLSite{
 	{Pkg: Graph, Func: "list"}, // request.go: nextLink, checked against the pinned base in get
 }
 
+// GraphHTTPSite is the explicit list of sites that may create an outgoing HTTP request in the Graph
+// connector: get (host-pinned, bearer-carrying reads) and bearer (the token endpoint). A request made
+// anywhere else would skip the host pin.
+var GraphHTTPSite = []TokenURLSite{
+	{Pkg: Graph, Recv: "Client", Func: "get"},
+	{Pkg: Graph, Recv: "Client", Func: "bearer"},
+}
+
 func siteListed(sites []TokenURLSite, rel, recv, fn string) bool {
 	for _, s := range sites {
 		if s.Pkg == path.Clean(rel) && s.Recv == recv && s.Func == fn {
@@ -102,6 +110,9 @@ func siteListed(sites []TokenURLSite, rel, recv, fn string) bool {
 
 // IsGraphTokenURL reports whether the function (recv "" ) or method is a listed token-endpoint site.
 func IsGraphTokenURL(rel, recv, fn string) bool { return siteListed(GraphTokenURL, rel, recv, fn) }
+
+// IsGraphHTTPSite reports whether the function or method may create an HTTP request in the Graph connector.
+func IsGraphHTTPSite(rel, recv, fn string) bool { return siteListed(GraphHTTPSite, rel, recv, fn) }
 
 // IsGraphURLParse reports whether the function or method may parse a URL in the Graph connector.
 func IsGraphURLParse(rel, recv, fn string) bool { return siteListed(GraphURLParse, rel, recv, fn) }
