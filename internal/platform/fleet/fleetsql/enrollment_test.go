@@ -303,3 +303,38 @@ func TestDatabaseGuards(t *testing.T) {
 		}
 	})
 }
+
+// AC4 under concurrency: attempts from one source that overlap are still metered.
+func TestRedeemRateLimitConcurrent(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		ctx := context.Background()
+		svc := e.svc(true, true, fleetsql.NewMemoryLimiter(fleetsql.MemoryLimiterConfig{Burst: 5}))
+		bad := fleetsql.ParseToken("enr1." + e.a.String() + "." + strings.Repeat("A", 43))
+		const n = 40
+		var invalid, limited atomic.Int32
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for range n {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				_, err := svc.Redeem(ctx, "203.0.113.9:4444", bad)
+				switch {
+				case errors.Is(err, fleetsql.ErrTokenInvalid):
+					invalid.Add(1)
+				case errors.Is(err, fleetsql.ErrRateLimited):
+					limited.Add(1)
+				default:
+					t.Errorf("redeem: %v", err)
+				}
+			}()
+		}
+		close(start)
+		wg.Wait()
+		if invalid.Load() != 5 || limited.Load() != n-5 {
+			t.Fatalf("%d invalid, %d limited; want 5 and %d", invalid.Load(), limited.Load(), n-5)
+		}
+	})
+}

@@ -167,7 +167,7 @@ type Redeemed struct {
 // Redeem consumes a token: exactly one caller of the same token succeeds, however many race. A token
 // that is unknown, malformed, expired, already used or whose component is no longer pending returns
 // ErrTokenInvalid, the same answer for each. source is the peer address the gateway saw; once it has
-// spent its failed-redeem budget every attempt is refused with ErrRateLimited before the token is
+// spent its redeem budget every attempt is refused with ErrRateLimited before the token is
 // looked at, so the refusal says nothing about whether the token exists.
 func (e *Enrollment) Redeem(ctx context.Context, source string, tok Token) (Redeemed, error) {
 	if err := e.ready(); err != nil {
@@ -178,16 +178,15 @@ func (e *Enrollment) Redeem(ctx context.Context, source string, tok Token) (Rede
 		// fail closed without touching any shared bucket.
 		return Redeemed{}, fmt.Errorf("%w: redeem source is not an IP address", ErrNotConfigured)
 	}
-	wait, blocked, err := e.Limiter.Blocked(ctx, source)
+	wait, admitted, err := e.Limiter.Admit(ctx, source)
 	if err != nil {
 		return Redeemed{}, fmt.Errorf("%w: %w", errLimiterUnusable, err) // fail closed
 	}
-	if blocked {
+	if !admitted {
 		return Redeemed{}, &RateLimitedError{RetryAfter: wait}
 	}
 	tid, ok := tenantOf(tok)
 	if !ok {
-		e.Limiter.Failed(ctx, source)
 		return Redeemed{}, ErrTokenInvalid
 	}
 	h := hash(tok)
@@ -211,10 +210,8 @@ func (e *Enrollment) Redeem(ctx context.Context, source string, tok Token) (Rede
 		return nil
 	})
 	if err != nil {
-		if errors.Is(err, ErrTokenInvalid) {
-			e.Limiter.Failed(ctx, source)
-		}
 		return Redeemed{}, err
 	}
+	e.Limiter.Succeeded(ctx, source)
 	return out, nil
 }

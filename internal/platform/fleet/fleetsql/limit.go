@@ -10,14 +10,16 @@ import (
 	"time"
 )
 
-// FailureLimiter meters failed redeems per source (TM-TB6-T1). Blocked is asked before the token is
-// looked at, so a refusal never depends on whether the token exists; Failed is told after a redeem
-// that did not succeed. A success is not told, so a legitimate enrolment never spends the budget.
+// FailureLimiter meters redeem attempts per source (TM-TB6-T1). Admit is asked before the token is
+// looked at, so a refusal never depends on whether the token exists. Admit reserves a try
+// atomically with the check, so concurrent attempts cannot all pass before any is charged; Succeeded
+// refunds the try when the redeem worked, so a legitimate enrolment costs nothing. A shared-store
+// implementation must reserve atomically too (INCR or a Lua script), never read then write.
 type FailureLimiter interface {
-	// Blocked reports whether source has spent its budget, and how long until it has a try again.
-	Blocked(ctx context.Context, source string) (retryAfter time.Duration, blocked bool, err error)
-	// Failed records one failed redeem from source.
-	Failed(ctx context.Context, source string)
+	// Admit charges source one try and reports ok, or reports how long until it has a try again.
+	Admit(ctx context.Context, source string) (retryAfter time.Duration, ok bool, err error)
+	// Succeeded refunds the try Admit charged for a redeem that succeeded.
+	Succeeded(ctx context.Context, source string)
 }
 
 // MemoryLimiterConfig sets the budget. Zero values take the defaults: 5 failures, then one more try
@@ -123,8 +125,8 @@ func (l *MemoryLimiter) sweep(now time.Time) {
 	}
 }
 
-// Blocked implements FailureLimiter.
-func (l *MemoryLimiter) Blocked(_ context.Context, source string) (time.Duration, bool, error) {
+// Admit implements FailureLimiter.
+func (l *MemoryLimiter) Admit(_ context.Context, source string) (time.Duration, bool, error) {
 	key, ok := sourceKey(source)
 	if !ok {
 		return 0, false, errUnreadableSource
@@ -133,19 +135,19 @@ func (l *MemoryLimiter) Blocked(_ context.Context, source string) (time.Duration
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	b := l.bucket(key, now)
-	// A try is admitted only while a whole try is in hand: spent <= Burst-1. Failed caps spent at
-	// Burst, so a source that has used its budget needs one full Refill to earn the next try; the
-	// continuous decay between calls cannot slip it under the line.
-	over := b.spent - float64(l.cfg.Burst-1)
-	if over <= 0 {
-		return 0, false, nil
+	// A try is admitted only while a whole try is in hand: spent <= Burst-1. Admitting charges it
+	// under the same lock, capped at Burst, so a source that has used its budget needs one full
+	// Refill to earn the next try; the continuous decay between calls cannot slip it under the line.
+	if over := b.spent - float64(l.cfg.Burst-1); over > 0 {
+		wait := time.Duration(math.Ceil(over * float64(l.cfg.Refill)))
+		return max(wait, time.Millisecond), false, nil
 	}
-	wait := time.Duration(math.Ceil(over * float64(l.cfg.Refill)))
-	return max(wait, time.Millisecond), true, nil
+	b.spent = math.Min(b.spent+1, float64(l.cfg.Burst))
+	return 0, true, nil
 }
 
-// Failed implements FailureLimiter.
-func (l *MemoryLimiter) Failed(_ context.Context, source string) {
+// Succeeded implements FailureLimiter.
+func (l *MemoryLimiter) Succeeded(_ context.Context, source string) {
 	key, ok := sourceKey(source)
 	if !ok {
 		return
@@ -153,6 +155,9 @@ func (l *MemoryLimiter) Failed(_ context.Context, source string) {
 	now := l.cfg.Now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if _, ok := l.m[key]; !ok {
+		return
+	}
 	b := l.bucket(key, now)
-	b.spent = math.Min(b.spent+1, float64(l.cfg.Burst))
+	b.spent = math.Max(0, b.spent-1)
 }

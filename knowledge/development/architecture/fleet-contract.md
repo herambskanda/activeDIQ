@@ -86,7 +86,7 @@ old peers ignore); a removed or renumbered field needs `fleet.v2`.
   transaction, so the Enroll handler never takes a tenant from a message. Possession is proved by the secret.
 - **Redeem** (`Enrollment.Redeem`) is one compare-and-set `UPDATE … WHERE used_at IS NULL AND expires_at > now()`
   against a still-`pending` Component. Unknown, malformed, used, expired and removed all return
-  `ErrTokenInvalid`. A source that has spent its failed-redeem budget (`FailureLimiter`, default 5 then one
+  `ErrTokenInvalid`. A source that has spent its failed-redeem budget (`FailureLimiter`: `Admit` reserves a try atomically with the check and `Succeeded` refunds it, so overlapping attempts are metered; default 5 then one
   per 30 s, per /32 or /64; `ip:port` accepted, an unreadable source is refused as `ErrNotConfigured`, never pooled) is refused with `ErrRateLimited` before the token is looked at.
   Residual (per-node limiter, same follow-up as the shared-store variant): when `MaxSources` is full new
   sources share one overflow bucket, so an attacker with many IPv6 /64s can throttle new legitimate sources.
