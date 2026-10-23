@@ -35,12 +35,16 @@
 //	F3  no field of any message in the package has a secret-shaped name (password, passwd, pwd,
 //	    secret, credential, passphrase, token, key) except the allowlist: EnrollRequest.enrollment_token,
 //	    the single-use token. (Operation payloads travel as `payload` bytes of CallData, opaque.)
-//	F4  EnrollResponse carries the CA bundle the component pins (`ca_bundle_pem`) and the signed
-//	    leaf, and no field that could hold a private key.
 //	F5  no message in the package uses google.protobuf.Any, and Enroll is not a stream.
 //	F6  fleet messages reference only messages of their own package and google.protobuf.Timestamp;
 //	    F2 and F3 walk every RPC input and output transitively, so imported types cannot smuggle
-//	    a tenant or a secret in. F4 is an exact field allowlist for EnrollResponse.
+//	    a tenant or a secret in.
+//	F4  the Enroll RPC's output (resolved from the RPC, not by message name) and every message
+//	    reachable from it are an exact allowlist of field names and types: leaf_certificate_der,
+//	    ca_bundle_pem (both bytes, required), endpoints (repeated Endpoint{host string, port
+//	    uint32}) and leaf_not_after (Timestamp). Anything else, at any depth, fails.
+//	F7  no map fields anywhere in the fleet contract or reachable from an Enroll or Tunnel input or
+//	    output: a map is an unchecked free-form side channel.
 package main
 
 import (
@@ -308,10 +312,64 @@ var secretShaped = []string{"password", "passwd", "pwd", "secret", "credential",
 // fleetSecretAllow are the only secret-shaped fields: the single-use enrollment token.
 var fleetSecretAllow = map[string]bool{"EnrollRequest.enrollment_token": true}
 
-// enrollResponseAllow is the exact field set of EnrollResponse: public material only (F4).
-var enrollResponseAllow = map[string]bool{"leaf_certificate_der": true, "ca_bundle_pem": true, "endpoints": true, "leaf_not_after": true}
+// fieldSpec is one allowed field: its kind and, for messages, the full name of its type.
+type fieldSpec struct {
+	kind    protoreflect.Kind
+	list    bool
+	message protoreflect.FullName
+}
 
-// lintFleet applies F1 to F5 to every fleet package among files.
+// enrollResponseAllow is the exact field set of the Enroll output: public material only (F4).
+var enrollResponseAllow = map[string]fieldSpec{
+	"leaf_certificate_der": {kind: protoreflect.BytesKind},
+	"ca_bundle_pem":        {kind: protoreflect.BytesKind},
+	"endpoints":            {kind: protoreflect.MessageKind, list: true, message: "activediq.fleet.v1.Endpoint"},
+	"leaf_not_after":       {kind: protoreflect.MessageKind, message: "google.protobuf.Timestamp"},
+}
+
+// endpointAllow is the exact field set of Endpoint (F4).
+var endpointAllow = map[string]fieldSpec{
+	"host": {kind: protoreflect.StringKind},
+	"port": {kind: protoreflect.Uint32Kind},
+}
+
+// lintEnrollResponse checks the Enroll output message resp against the F4 allowlist, recursing
+// into the messages it references. Required fields: leaf_certificate_der and ca_bundle_pem.
+func lintEnrollResponse(pkg protoreflect.FullName, resp protoreflect.MessageDescriptor, seen map[protoreflect.FullName]bool) []Violation {
+	var vs []Violation
+	for _, req := range []string{"leaf_certificate_der", "ca_bundle_pem"} {
+		fd := resp.Fields().ByName(protoreflect.Name(req))
+		if fd == nil || fd.Kind() != protoreflect.BytesKind || fd.IsList() {
+			vs = append(vs, Violation{"F4", string(resp.FullName()), "the Enroll response must carry bytes `" + req + "` (the signed leaf and the CA bundle the component pins, TM-TB6-T2)"})
+		}
+	}
+	vs = append(vs, checkAllow(resp, enrollResponseAllow, seen, pkg)...)
+	return vs
+}
+
+func checkAllow(m protoreflect.MessageDescriptor, allow map[string]fieldSpec, seen map[protoreflect.FullName]bool, pkg protoreflect.FullName) []Violation {
+	if seen[m.FullName()] {
+		return nil
+	}
+	seen[m.FullName()] = true
+	var vs []Violation
+	for i := 0; i < m.Fields().Len(); i++ {
+		fd := m.Fields().Get(i)
+		pos := string(m.FullName()) + "." + string(fd.Name())
+		spec, ok := allow[string(fd.Name())]
+		if !ok || fd.IsMap() || fd.Kind() != spec.kind || fd.IsList() != spec.list ||
+			(fd.Message() != nil && fd.Message().FullName() != spec.message) {
+			vs = append(vs, Violation{"F4", pos, "the Enroll response closure is an exact allowlist of names and types (leaf_certificate_der, ca_bundle_pem, endpoints[Endpoint{host, port}], leaf_not_after); any other field needs a security review and an edit of this rule"})
+			continue
+		}
+		if fd.Message() != nil && fd.Message().FullName() == pkg+".Endpoint" {
+			vs = append(vs, checkAllow(fd.Message(), endpointAllow, seen, pkg)...)
+		}
+	}
+	return vs
+}
+
+// lintFleet applies F1 to F7 to every fleet package among files.
 func lintFleet(files linker.Files) []Violation {
 	var vs []Violation
 	pkgs := map[protoreflect.FullName]bool{}
@@ -379,6 +437,9 @@ func lintFleet(files linker.Files) []Violation {
 				if strings.Contains(lower, "tenant") {
 					vs = append(vs, Violation{"F2", pos, "the tenant comes from the certificate SAN, never from a message (ADR-0002)"})
 				}
+				if fd.IsMap() {
+					vs = append(vs, Violation{"F7", pos, "map fields are a free-form side channel and are not allowed in the fleet contract"})
+				}
 				if fd.Message() != nil {
 					full := fd.Message().FullName()
 					if full == "google.protobuf.Any" {
@@ -396,27 +457,16 @@ func lintFleet(files linker.Files) []Violation {
 				}
 			})
 		}
-		for _, f := range files {
-			if f.Package() != pkg {
-				continue
+		// F4: the Enroll RPC's output (whatever it is named) and everything reachable from it is an
+		// exact allowlist of names and types: public material only.
+		var enroll protoreflect.MethodDescriptor
+		for _, svc := range services {
+			if m := svc.Methods().ByName("Enroll"); m != nil {
+				enroll = m
 			}
-			if resp := f.Messages().ByName("EnrollResponse"); resp != nil {
-				ca := resp.Fields().ByName("ca_bundle_pem")
-				if ca == nil || ca.Kind() != protoreflect.BytesKind {
-					vs = append(vs, Violation{"F4", string(resp.FullName()), "EnrollResponse must carry the CA bundle the component pins as bytes `ca_bundle_pem` (TM-TB6-T2)"})
-				}
-				for i := 0; i < resp.Fields().Len(); i++ {
-					fd := resp.Fields().Get(i)
-					if !enrollResponseAllow[string(fd.Name())] {
-						vs = append(vs, Violation{"F4", string(resp.FullName()) + "." + string(fd.Name()), "EnrollResponse is an exact allowlist (leaf_certificate_der, ca_bundle_pem, endpoints, leaf_not_after); any other field needs a security review and an edit of this rule"})
-					}
-				}
-				if resp.Fields().ByName("leaf_certificate_der") == nil {
-					vs = append(vs, Violation{"F4", string(resp.FullName()), "EnrollResponse must carry the signed leaf as `leaf_certificate_der`"})
-				}
-			} else if f.Messages().ByName("EnrollRequest") != nil {
-				vs = append(vs, Violation{"F4", string(f.Path()), "EnrollResponse message is missing"})
-			}
+		}
+		if enroll != nil {
+			vs = append(vs, lintEnrollResponse(pkg, enroll.Output(), map[protoreflect.FullName]bool{})...)
 		}
 	}
 	return vs

@@ -233,3 +233,33 @@ func TestFleetExactPackage(t *testing.T) {
 		t.Fatalf("want P rules only, got %q (%v)", rules(vs), err)
 	}
 }
+
+// TestFleetMapsAndResponseClosure: maps (F7) and messages under allowlisted response fields (F4)
+// cannot smuggle data (second security-architect review of T-0152).
+func TestFleetMapsAndResponseClosure(t *testing.T) {
+	imp := strings.Replace(fleetBase, "package activediq.fleet.v1;", "package activediq.fleet.v1;\nimport \"x/common.proto\";", 1)
+	withEndpoint := func(ep string) string {
+		return r(r(fleetBase, "bytes ca_bundle_pem = 2;", "bytes ca_bundle_pem = 2; repeated Endpoint endpoints = 3;", 1), "service Fleet {", ep+"\nservice Fleet {", 1)
+	}
+	cases := []struct{ name, want, src string }{
+		{"map of foreign messages on a frame", "F7", r(imp, "bytes payload = 2;", "bytes payload = 2; map<string, x.common.v1.Ctx> ext = 3;", 1)},
+		{"map of strings on a frame", "F7", r(fleetBase, "bytes payload = 2;", "bytes payload = 2; map<string, string> headers = 3;", 1)},
+		{"extra field on Endpoint", "F4", withEndpoint("message Endpoint { string host = 1; uint32 port = 2; bytes pkcs8 = 3; }")},
+		{"Endpoint port retyped", "F4", withEndpoint("message Endpoint { string host = 1; bytes port = 2; }")},
+		{"leaf redeclared as a message", "F4", r(fleetBase, "bytes leaf_certificate_der = 1;", "Leaf leaf_certificate_der = 1;", 1) + "message Leaf { bytes cert = 1; bytes pkcs8 = 2; }\n"},
+		{"renamed Enroll output with a pkcs12 blob", "F4", r(r(fleetBase, "EnrollResponse", "Issued", -1), "bytes ca_bundle_pem = 2;", "bytes ca_bundle_pem = 2; bytes leaf_pkcs12 = 3;", 1)},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			vs := lintMany(t, map[string]string{"f.proto": c.src, "x/common.proto": foreignCtx})
+			if !strings.Contains(rules(vs), c.want) {
+				t.Fatalf("want %s, got %q", c.want, rules(vs))
+			}
+		})
+	}
+	// The real shape of Endpoint passes.
+	vs := lintMany(t, map[string]string{"f.proto": withEndpoint("message Endpoint { string host = 1; uint32 port = 2; }")})
+	if len(vs) != 0 {
+		t.Fatalf("want clean, got %v", vs)
+	}
+}
