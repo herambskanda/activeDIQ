@@ -8,12 +8,15 @@ import (
 	"sync"
 	"time"
 
+	"github.com/skenzeriq/activediq/internal/connector/tier0"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
 // Basis is a row of threat-model §6.4.
 type Basis = connectorv1.Tier0Basis
+
+const designatedBasis = tier0.Designated
 
 // Mark is one object the connector knows to be tier0, with the basis and where the knowledge came
 // from. Inputs of a VerifyConnection run (designated_tier0, correlated_tier0) and accepted request
@@ -215,6 +218,46 @@ func (g *GateBook) Lookup(connectionID string, id guid.GUID) []Basis {
 	for b := range e.ratchet[k] {
 		if !seen[b] {
 			seen[b], out = true, append(out, b)
+		}
+	}
+	return out
+}
+
+// Designated returns every object the connector itself holds as a customer-designated group for the
+// connection: the run's inputs and set, and the epoch's ratchet marks, with basis CUSTOMER_DESIGNATED.
+// Step 7 and step 9 check membership of these as well as the request's own designations, so a server
+// that omits a designation cannot unprotect a group the connector was already told about.
+func (g *GateBook) Designated(connectionID string) []guid.GUID {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	e, ok := g.conns[connectionID]
+	if !ok {
+		return nil
+	}
+	seen := map[guid.GUID]bool{}
+	var out []guid.GUID
+	add := func(id guid.GUID) {
+		if !seen[id] {
+			seen[id], out = true, append(out, id)
+		}
+	}
+	for _, m := range e.run.Inputs {
+		if m.Basis == designatedBasis {
+			add(m.Object)
+		}
+	}
+	for k, bases := range e.run.Set {
+		for _, b := range bases {
+			if b == designatedBasis {
+				if id, err := guid.Parse(k); err == nil {
+					add(id)
+				}
+			}
+		}
+	}
+	for _, byBasis := range e.ratchet {
+		if m, ok := byBasis[designatedBasis]; ok {
+			add(m.Object)
 		}
 	}
 	return out

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/connector/tier0"
+	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
@@ -550,5 +551,70 @@ func TestPlanThroughKnownKind(t *testing.T) {
 	var zero Authorised
 	if zero.Valid() || zero.Evaluated() != nil {
 		t.Fatal("the zero token must not be valid")
+	}
+}
+
+// The connector's own designations (run inputs, ratchet marks) are checked live even when the
+// request omits them (security review of T-0098, finding 1): both calls, both transports.
+func TestOwnDesignatedGroupCheckedLive(t *testing.T) {
+	grp, user := mk(60), mk(61)
+	for _, mkRun := range map[string]func() Run{
+		"run input": func() Run {
+			r := passRun(nil)
+			r.Inputs = []Mark{{Object: grp, Basis: tier0.Designated, Source: "run"}}
+			return r
+		},
+		"run set": func() Run { return passRun(map[string][]Basis{grp.String(): {tier0.Designated}}) },
+	} {
+		run := mkRun()
+		r := newRig(t, &run)
+		r.prov.members = map[guid.GUID][]guid.GUID{grp: {user}}
+		for _, tr := range transports(t, r.h) {
+			_, err := tr.Plan(context.Background(), planReq(user, ctxFor(user)))
+			wantTier0(t, err, connectorv1.Tier0RefusalStage_TIER0_REFUSAL_STAGE_LIVE_REREAD)
+			_, err = tr.Apply(context.Background(), applyReq(user, ctxFor(user)))
+			wantTier0(t, err, connectorv1.Tier0RefusalStage_TIER0_REFUSAL_STAGE_LIVE_REREAD)
+		}
+	}
+	// A designation ratcheted from an earlier accepted request counts too.
+	run := passRun(nil)
+	r := newRig(t, &run)
+	r.prov.members = map[guid.GUID][]guid.GUID{grp: {user}}
+	first := ctxFor(mk(62))
+	first.Designated = []*connectorv1.Guid{toWire(grp)}
+	_, _ = r.h.Plan(context.Background(), planReq(mk(62), first))
+	_, err := r.h.Apply(context.Background(), applyReq(user, ctxFor(user)))
+	wantTier0(t, err, connectorv1.Tier0RefusalStage_TIER0_REFUSAL_STAGE_LIVE_REREAD)
+	// Not a member: passes the guard and reaches the empty operation table.
+	r.prov.members = nil
+	_, err = r.h.Apply(context.Background(), applyReq(user, ctxFor(user)))
+	if connErr(t, err).GetCode() != connectorv1.ErrorCode_ERROR_CODE_CAPABILITY_UNSUPPORTED {
+		t.Fatalf("%v", err)
+	}
+}
+
+// Step 9 repeats step 7's reads, designated groups included.
+func TestStep9UsesDesignatedSet(t *testing.T) {
+	grp, tgt := mk(63), mk(64)
+	run := passRun(nil)
+	run.Inputs = []Mark{{Object: grp, Basis: tier0.Designated, Source: "run"}}
+	r := newRig(t, &run)
+	withTestOp(r)
+	q := applyReq(tgt, ctxFor(tgt))
+	q.Kind = 1
+	w := r.h.ops[1]
+	inner := w.Apply
+	w.Apply = func(ctx context.Context, a Authorised, req *connectorv1.ApplyRequest) (*connectorv1.ApplyResponse, error) {
+		r.prov.members = map[guid.GUID][]guid.GUID{grp: {tgt}} // joins during the write window
+		return inner(ctx, a, req)
+	}
+	r.h.ops[1] = w
+	resp, err := r.h.Apply(context.Background(), q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := resp.GetTier0AfterWrite()
+	if len(m) != 1 || len(m[0].GetBasis()) != 1 || m[0].GetBasis()[0] != tier0.Designated {
+		t.Fatalf("after-write: %v", m)
 	}
 }

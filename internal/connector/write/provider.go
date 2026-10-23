@@ -49,6 +49,8 @@ type Provider interface {
 type ADProvider struct {
 	Dir tier0.ADDirectory
 	ID  *connectorv1.DirectoryIdentity
+	// classify is the base classifier; nil means the T-0093 classifier over Dir. Tests substitute it.
+	classify func(ctx context.Context, id guid.GUID) (tier0.ADResult, error)
 }
 
 var _ Provider = (*ADProvider)(nil)
@@ -72,7 +74,13 @@ func (p *ADProvider) Classify(ctx context.Context, id guid.GUID, designated []gu
 		return Verdict{Tier0: true, Bases: []Basis{tier0.C9}}, nil
 	}
 	// The correlation facts are the request's and were applied at steps 3 to 6; this is the live half.
-	r, err := tier0.NewAD(p.Dir).Classify(ctx, dn.GUIDRef(id), tier0.ADInput{CorrelationKnown: true})
+	base := p.classify
+	if base == nil {
+		base = func(ctx context.Context, id guid.GUID) (tier0.ADResult, error) {
+			return tier0.NewAD(p.Dir).Classify(ctx, dn.GUIDRef(id), tier0.ADInput{CorrelationKnown: true})
+		}
+	}
+	r, err := base(ctx, id)
 	if err != nil {
 		return unknown, err
 	}

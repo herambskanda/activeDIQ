@@ -49,6 +49,10 @@ type fakeProv struct {
 	anchErr  error
 	// afterErr makes Classify fail once the first Apply write has happened (step 9).
 	failAfter *bool
+	// members maps a designated group to its live members; Classify returns tier0 Designated for a
+	// member of any designated group it is passed, and records what it was passed.
+	members map[guid.GUID][]guid.GUID
+	seenDes [][]guid.GUID
 }
 
 func newFake() *fakeProv {
@@ -60,10 +64,18 @@ func (f *fakeProv) Kind() connectorv1.ProviderKind { return f.kind }
 func (f *fakeProv) Identity() *connectorv1.DirectoryIdentity {
 	return adIdentity()
 }
-func (f *fakeProv) Classify(_ context.Context, id guid.GUID, _ []guid.GUID) (Verdict, error) {
+func (f *fakeProv) Classify(_ context.Context, id guid.GUID, designated []guid.GUID) (Verdict, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, "classify")
+	f.seenDes = append(f.seenDes, designated)
+	for _, d := range designated {
+		for _, m := range f.members[d] {
+			if m == id {
+				return Verdict{Tier0: true, Bases: []Basis{tier0.Designated}}, nil
+			}
+		}
+	}
 	if f.failAfter != nil && *f.failAfter {
 		return Verdict{Tier0: true}, errors.New("dc unreachable")
 	}

@@ -83,7 +83,9 @@ type passed struct {
 	op      *WriteOp
 	auth    Authorised
 	touched []guid.GUID
-	dec     Decision
+	// designated is the set step 7 checked; step 9 repeats the same reads.
+	designated []guid.GUID
+	dec        Decision
 }
 
 // Plan implements connectorv1.ConnectorServer.
@@ -266,13 +268,13 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 	ev.Ignored = h.ignored(c.t0, touched)
 
 	// Step 7: live re-read and classification of every touched object. An error is tier0.
-	designated := parseGUIDs(c.t0.GetDesignated())
+	designated := unionGUIDs(parseGUIDs(c.t0.GetDesignated()), h.gates.Designated(c.conn.GetConnectionId()))
 	for _, id := range touched {
 		if r := h.live(ctx, idx, id, designated); r != nil {
 			return nil, r
 		}
 	}
-	return &passed{op: op, touched: touched, dec: dec, auth: Authorised{p: &pass{evaluated: touched}}}, nil
+	return &passed{op: op, touched: touched, designated: designated, dec: dec, auth: Authorised{p: &pass{evaluated: touched}}}, nil
 }
 
 // stmt is the merge of every complete statement about one object (F1).
@@ -452,7 +454,7 @@ func (h *Handler) live(ctx context.Context, idx map[string]*stmt, id guid.GUID, 
 func (h *Handler) afterWrite(ctx context.Context, p *passed, ev *Event) []*connectorv1.Tier0Member {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), afterWriteLimit)
 	defer cancel()
-	designated := []guid.GUID(nil)
+	designated := p.designated
 	var out []*connectorv1.Tier0Member
 	for _, id := range p.touched {
 		v, err := h.prov.Classify(ctx, id, designated)
@@ -519,3 +521,16 @@ func wireOrNil(b []byte) *connectorv1.Guid {
 }
 
 func itoa(n uint32) string { return strconv.FormatUint(uint64(n), 10) }
+
+func unionGUIDs(a, b []guid.GUID) []guid.GUID {
+	seen := map[guid.GUID]bool{}
+	var out []guid.GUID
+	for _, l := range [][]guid.GUID{a, b} {
+		for _, id := range l {
+			if !seen[id] {
+				seen[id], out = true, append(out, id)
+			}
+		}
+	}
+	return out
+}

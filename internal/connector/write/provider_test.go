@@ -1,9 +1,16 @@
 package write
 
 import (
+	"context"
+	"errors"
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
+	"github.com/skenzeriq/activediq/internal/connector/graph"
+	"github.com/skenzeriq/activediq/internal/connector/tier0"
+	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
+	"github.com/skenzeriq/activediq/internal/directory/attr/sid"
+	"github.com/skenzeriq/activediq/internal/directory/dn"
 )
 
 // CC-WRITE-20 g: a GPO whose cn is not a GUID is tier0; ordinary objects are not touched by the rule.
@@ -24,4 +31,156 @@ func TestGPOCNMustBeAGUID(t *testing.T) {
 	if gpoCNInvalid(user) {
 		t.Error("a user is not subject to the GPO cn rule")
 	}
+}
+
+// designatedDir is a minimal ADDirectory: Get answers per object GUID. The base classifier is
+// substituted, so Naming and Find are never reached.
+type designatedDir struct {
+	tier0.ADDirectory
+	objs map[guid.GUID]*ad.Entry
+	errs map[guid.GUID]error
+}
+
+func (d *designatedDir) Get(_ context.Context, ref dn.ObjectRef, _ []string) (*ad.Entry, error) {
+	id, ok := ref.GUID()
+	if !ok {
+		return nil, errors.New("test: GUID refs only")
+	}
+	if e := d.errs[id]; e != nil {
+		return nil, e
+	}
+	if o := d.objs[id]; o != nil {
+		return o, nil
+	}
+	return nil, &ad.Error{Code: ad.CodeObjectNotFound}
+}
+
+func sidBytes(t *testing.T, s string) []byte {
+	t.Helper()
+	v, err := sid.Parse(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v.Bytes()
+}
+
+func adRig(t *testing.T) (*ADProvider, *designatedDir, guid.GUID, guid.GUID) {
+	t.Helper()
+	user, grp := mk(70), mk(71)
+	d := &designatedDir{objs: map[guid.GUID]*ad.Entry{
+		user: ad.NewEntry("CN=u,DC=lab", map[string][][]byte{"objectClass": {[]byte("user")}, "cn": {[]byte("u")},
+			"tokenGroups": {sidBytes(t, "S-1-5-21-1-2-3-1100"), sidBytes(t, "S-1-5-21-1-2-3-513")}}),
+		grp: ad.NewEntry("CN=g,DC=lab", map[string][][]byte{"objectSid": {sidBytes(t, "S-1-5-21-1-2-3-1100")}}),
+	}, errs: map[guid.GUID]error{}}
+	p := &ADProvider{Dir: d}
+	p.classify = func(_ context.Context, id guid.GUID) (tier0.ADResult, error) { return tier0.ADResult{GUID: id}, nil }
+	return p, d, user, grp
+}
+
+// Review finding 3: the designated path of ADProvider.Classify, and the Unknown and GUID-mismatch
+// refusals, each fail closed.
+func TestADProviderDesignated(t *testing.T) {
+	ctx := context.Background()
+	p, d, user, grp := adRig(t)
+
+	if v, err := p.Classify(ctx, user, nil); err != nil || v.Tier0 {
+		t.Fatalf("no designation: %+v %v", v, err)
+	}
+	v, err := p.Classify(ctx, user, []guid.GUID{grp})
+	if err != nil || !v.Tier0 || len(v.Bases) != 1 || v.Bases[0] != tier0.Designated {
+		t.Fatalf("member of a designated group: %+v %v", v, err)
+	}
+	// A designated group that is not found designates nothing; the object is not tier0 through it.
+	if v, err := p.Classify(ctx, user, []guid.GUID{mk(72)}); err != nil || v.Tier0 {
+		t.Fatalf("missing designated group: %+v %v", v, err)
+	}
+	// Not a member.
+	d.objs[grp] = ad.NewEntry("CN=g,DC=lab", map[string][][]byte{"objectSid": {sidBytes(t, "S-1-5-21-1-2-3-1200")}})
+	if v, err := p.Classify(ctx, user, []guid.GUID{grp}); err != nil || v.Tier0 {
+		t.Fatalf("non-member: %+v %v", v, err)
+	}
+	// Any other read error is refused (Tier0 true with an error).
+	d.errs[grp] = &ad.Error{Code: ad.CodeProtocol}
+	if v, err := p.Classify(ctx, user, []guid.GUID{grp}); err == nil || !v.Tier0 {
+		t.Fatalf("read error must fail closed: %+v %v", v, err)
+	}
+	delete(d.errs, grp)
+	d.errs[user] = &ad.Error{Code: ad.CodeProtocol}
+	if v, err := p.Classify(ctx, user, []guid.GUID{grp}); err == nil || !v.Tier0 {
+		t.Fatalf("token read error must fail closed: %+v %v", v, err)
+	}
+}
+
+func TestADProviderClassifierAnswersFailClosed(t *testing.T) {
+	ctx := context.Background()
+	p, _, user, _ := adRig(t)
+	p.classify = func(context.Context, guid.GUID) (tier0.ADResult, error) {
+		return tier0.ADResult{Unknown: true, Tier0: true, GUID: user}, nil
+	}
+	if v, err := p.Classify(ctx, user, nil); err == nil || !v.Tier0 {
+		t.Fatalf("Unknown result: %+v %v", v, err)
+	}
+	p.classify = func(context.Context, guid.GUID) (tier0.ADResult, error) { return tier0.ADResult{GUID: mk(99)}, nil }
+	if v, err := p.Classify(ctx, user, nil); err == nil || !v.Tier0 {
+		t.Fatalf("GUID mismatch: %+v %v", v, err)
+	}
+	p.classify = func(context.Context, guid.GUID) (tier0.ADResult, error) {
+		return tier0.ADResult{}, errors.New("dc down")
+	}
+	if v, err := p.Classify(ctx, user, nil); err == nil || !v.Tier0 {
+		t.Fatalf("classifier error: %+v %v", v, err)
+	}
+}
+
+// groupReader answers GroupMembers from a table; the classifier methods are never reached because
+// the base classifier is not part of this test (Classify is exercised through membersOf).
+type groupReader struct {
+	tier0.Reader
+	members map[guid.GUID][]graph.DirectoryObject
+	err     map[guid.GUID]error
+}
+
+func (g groupReader) GroupMembers(_ context.Context, id guid.GUID) ([]graph.DirectoryObject, error) {
+	if e := g.err[id]; e != nil {
+		return nil, e
+	}
+	m, ok := g.members[id]
+	if !ok {
+		return nil, &graph.Error{Code: graph.CodeNotFound}
+	}
+	return m, nil
+}
+
+// An Entra direct member of a designated group is tier0; missing group skipped; other errors refuse.
+func TestEntraDesignatedMembership(t *testing.T) {
+	ctx := context.Background()
+	user, grp := entraID(ePlain), mk(82)
+	h, _, _ := entraRig(t)
+	p := h.prov.(*EntraProvider)
+	p.Reader = withMembers{p.Reader, groupReader{
+		members: map[guid.GUID][]graph.DirectoryObject{entraID(eGroup): {}, grp: {{ID: user.String(), ODataType: "#microsoft.graph.user"}}},
+		err:     map[guid.GUID]error{mk(80): errors.New("graph 500")}}}
+	v, err := p.Classify(ctx, user, []guid.GUID{grp})
+	if err != nil || !v.Tier0 || v.Bases[len(v.Bases)-1] != tier0.Designated {
+		t.Fatalf("direct member: %+v %v", v, err)
+	}
+	if v, err := p.Classify(ctx, user, []guid.GUID{mk(81)}); err != nil || v.Tier0 {
+		t.Fatalf("missing designated group: %+v %v", v, err)
+	}
+	if v, err := p.Classify(ctx, user, []guid.GUID{mk(80)}); err == nil || !v.Tier0 {
+		t.Fatalf("read error must fail closed: %+v %v", v, err)
+	}
+	if v, err := p.Classify(ctx, entraID("77777777-7777-7777-7777-0000000000aa"), []guid.GUID{grp}); err != nil || v.Tier0 {
+		t.Fatalf("non-member: %+v %v", v, err)
+	}
+}
+
+// withMembers sends GroupMembers to the table and everything else to the live (fake Graph) reader.
+type withMembers struct {
+	tier0.Reader
+	g groupReader
+}
+
+func (w withMembers) GroupMembers(ctx context.Context, id guid.GUID) ([]graph.DirectoryObject, error) {
+	return w.g.GroupMembers(ctx, id)
 }
