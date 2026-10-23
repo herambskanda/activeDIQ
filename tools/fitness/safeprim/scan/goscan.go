@@ -90,6 +90,8 @@ func scanGo(rel string, src []byte, module string, checks map[string]bool, out *
 	if checks["FF-SP2"] {
 		g.checkImportBans()
 		g.checkDotImports()
+		g.checkLinkname()
+		g.checkUnsafe()
 		g.checkSymbols()
 		g.checkTLS()
 		g.checkJSONEscape()
@@ -362,6 +364,52 @@ func (g *goFile) checkDotImports() {
 	for _, is := range g.file.Imports {
 		if is.Name != nil && is.Name.Name == "." {
 			g.add("FF-SP2", "dot-import", is.Pos(), "dot import of "+is.Path.Value+" in product code: it hides pkg.Symbol uses from the safe-primitive bans; import the package by name ("+refP7+".5)")
+		}
+	}
+}
+
+// checkLinkname bans //go:linkname in product code: a directive binds any symbol by string name,
+// so it evades every pkg.Sym ban on third-party packages (go-ldap, pgx) with no selector and no
+// import of the package (T-0186). Tests and tier L are exempt: neither ships in the product.
+func (g *goFile) checkLinkname() {
+	if g.isTool || g.isTest {
+		return
+	}
+	for _, cg := range g.file.Comments {
+		for _, c := range cg.List {
+			if strings.HasPrefix(c.Text, "//go:linkname") {
+				g.add("FF-SP2", "linkname", c.Pos(), "//go:linkname binds symbols by name and evades the symbol bans; it is banned in product code (T-0186)")
+			}
+		}
+	}
+}
+
+// unsafeHomes may import "unsafe", and only in files carrying the generated-code header.
+var unsafeHomes = []string{"internal/proto"}
+
+// checkUnsafe bans importing "unsafe" in product code outside generated protobuf packages: linkname
+// needs it, and so does every memory-safety escape. Tests and tier L are exempt.
+func (g *goFile) checkUnsafe() {
+	if g.isTool || g.isTest {
+		return
+	}
+	generated := false
+	for _, cg := range g.file.Comments {
+		if cg.Pos() >= g.file.Package {
+			break
+		}
+		for _, c := range cg.List {
+			if strings.HasPrefix(c.Text, "// Code generated ") && strings.HasSuffix(c.Text, " DO NOT EDIT.") {
+				generated = true
+			}
+		}
+	}
+	if generated && policy.MatchAny(g.dir, unsafeHomes) {
+		return
+	}
+	for _, is := range g.file.Imports {
+		if is.Path.Value == `"unsafe"` {
+			g.add("FF-SP2", "unsafe-import", is.Pos(), "importing unsafe is banned in product code outside generated protobuf packages (T-0186)")
 		}
 	}
 }
