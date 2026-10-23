@@ -1,10 +1,10 @@
 ---
 title: "Runbook: the AD lab (Samba 4 AD DC in Docker)"
 date: 2026-10-02
-updated: 2026-10-02
+updated: 2026-10-23
 status: draft
 owner: devops-engineer
-ticket: T-0012
+ticket: T-0012, T-0183
 ---
 
 # Runbook: the AD lab (Samba 4 AD DC in Docker)
@@ -82,7 +82,7 @@ A snapshot ages like a real directory: after about a month the "expiring" users 
 pinned, reproducible build.
 
 `LAB_TIER=small make lab-up` builds the 300-user tier for faster CI loops (`lab-destroy` first when switching tier; the tier is part of the seed version). The `scale`
-tier (50k users) and a second DC (`2dc`) are not built yet — see §7.
+tier (50k users) and a second DC (`2dc`) are not built yet — see §8.
 
 ## 3. How it works
 
@@ -108,7 +108,7 @@ tier (50k users) and a second DC (`2dc`) are not built yet — see §7.
   `ldbadd` per age bucket). `lastLogon`, `lastLogonTimestamp`, `accountExpires` are written
   directly. As a side effect `whenCreated` of a seeded user or computer is its password-set day; the service account and edge-case users carry the real build time.
 - **Lab audit log:** Samba's JSON auth/dsdb audit lines go to the container log
-  (`make lab-logs`). It is not a Windows event log (§5).
+  (`make lab-logs`). It is not a Windows event log (§6).
 
 ## 4. Using the lab in tests
 
@@ -118,9 +118,58 @@ tier (50k users) and a second DC (`2dc`) are not built yet — see §7.
   run `make lab-reset` between suites. Never rely on GUIDs, SIDs, USNs or `whenCreated`.
 - Tests may not edit the seed to make a test pass: change `generate.py` (this changes the seed
   version) and add a unit test.
-- Tests needing Windows are tagged (`windowslab`) so CI on Samba skips them loudly (§5).
+- Tests needing Windows are tagged (`windowslab`) so CI on Samba skips them loudly (§6).
 
-## 5. What the lab cannot test — and what needs a Windows lab
+## 5. Entra lab (Microsoft 365 Developer sandbox) — T-0183
+
+**Dev-only.** This is the Entra ID P1+P2 sandbox from the Microsoft 365 Developer Program (D-0001): 25
+users, one Global Admin. It is **never** a customer's tenant and the scripts refuse a tenant whose
+initial domain is not `*.onmicrosoft.com`; the interactive run also makes you type the domain back.
+The CEO never pastes a password: sign-in is a device code, in the CEO's own browser.
+
+| Step | Command | Who |
+| --- | --- | --- |
+| Bootstrap (once per sandbox, and again after it is recreated) | `make entra-lab-bootstrap` — open the URL it prints, enter the code, sign in as the sandbox Global Admin, approve the Microsoft Graph Command Line Tools consent | CEO |
+| Verify the handover | `make entra-lab-verify` | anyone with `lab/.entra-lab.*` |
+| Rotate the certificate | `lab/bin/entra-lab-bootstrap --rotate` (device-code sign-in again) | CEO |
+| Unit proof, no tenant needed | `make lab-test-unit` (`lab/tests/test_entra_lab.py`, runs the real scripts against `lab/tests/mock_graph.py`; part of `make ci`) | CI |
+
+**What bootstrap does** (plain HTTPS to Graph with `curl`, `openssl`, `jq`; no SDK, no `az`):
+
+1. Creates the app registration `activeDIQ-lab` (single tenant) with a **certificate credential, no client
+   secret and no owners**, and its service principal. No Entra directory role is assigned to it.
+2. Grants admin consent to **exactly** the application permissions in `lab/entra/permissions.txt` (the
+   threat-model §6.6 allow list). Missing ones are added, unexpected ones removed. `User.ReadWrite.All` is
+   left out on purpose so test G2 is meaningful; T-0075 adds a line to that file if a test needs it.
+3. Seeds, idempotently, by name: `lab-user-01..05`, `lab-disabled` (disabled), `lab-admin-active`
+   (Helpdesk Administrator, active), `lab-admin-eligible` (PIM-eligible only), group `lab-sg-members`
+   (3 members), role-assignable group `lab-rag-privileged` (1 member). Seed-user passwords are random,
+   used once at creation and thrown away; tests reset them through Graph.
+4. Writes `lab/.entra-lab.env` (`ENTRA_TENANT_ID`, `ENTRA_APP_ID`, `ENTRA_CERT_PATH`, `ENTRA_LAB_DOMAIN`,
+   `ENTRA_BOOTSTRAPPED_AT`) and `lab/.entra-lab.pem` (private key + certificate), both mode 0600 and
+   gitignored. Nothing secret is printed: bearer tokens go to `curl` through a 0600 temp file, not argv.
+
+**What verify checks:** it signs a client assertion with the certificate, obtains an app-only token and
+compares the token's `roles` claim to `permissions.txt` (reports MISSING and EXTRA by name); the app's
+service principal has no directory role and the application has no client secret; both files are 0600.
+
+**The 90-day risk.** The developer sandbox can expire or be recreated about every 90 days. When it is,
+the old tenant id and certificate are dead (`entra-lab-verify` fails with "token refused"). Run
+`make entra-lab-bootstrap` again against the new tenant: it finds no app, creates a new one, issues a new
+certificate, reseeds the same objects and overwrites `lab/.entra-lab.env`. The certificate itself lasts
+365 days; a re-run within 30 days of expiry replaces it. Tell the board when a recreation is due; tests
+that need the tenant (T-0075) start from `make entra-lab-verify`.
+
+**Not verified yet.** The bootstrap has run against the offline mock only. The first real run is a
+CEO action and is the proof for: that the "Microsoft Graph Command Line Tools" public client
+(`14d82eec-204b-4c2f-b7e8-296a70dab67e`, overridable with `ENTRA_LAB_BOOTSTRAP_CLIENT_ID`) accepts these
+scopes in the sandbox, and the exact Graph behaviour of the PIM eligibility request `[UNVERIFIED]`.
+
+**G9 is out of scope here.** Test G9 (does an Entra-side reset with password writeback reach an AD
+account in a protected group) needs a Windows lab AD with Entra Connect synchronising to this tenant. That
+lab does not exist, so G9 stays `[UNVERIFIED]` until it does (§6).
+
+## 6. What the lab cannot test — and what needs a Windows lab
 
 Samba's fidelity table is in feasibility §5.2. Below, **Measured** means we observed it in this lab
 (`make lab-test-live` pins it); the rest comes from the cited docs and is `[UNVERIFIED]` until
@@ -137,14 +186,14 @@ proven in a Windows lab.
 | **Name comparison rules** — AD ignores case, width, kana and accents (MS-ADTS sort keys); Samba may not. A uniqueness test can **false-pass** on Samba (José vs Jose) — see `knowledge/memory/lessons.md` | Uniqueness checks in the safe primitives and create/rename flows | any uniqueness or rename test |
 | **Unranged multi-valued reads (Measured):** a plain read of `member` on `GG-Big` returns all 3,000 values on Samba; Windows ranges a large attribute by itself (MaxValRange, default value `[UNVERIFIED]`). Explicit `member;range=0-1499` / `1500-*` paging works on Samba | A connector that forgets to page **passes on Samba and fails on Windows**. Test paging with explicit ranges, and review that code never reads multi-valued attributes unranged | the group-membership connector ticket |
 | Recycle Bin undelete parity, multi-domain forests and trusts, functional levels above 2008 R2 (opt-in), Windows LAPS, AD FS, AD CS | Lifecycle, cross-forest and CA features | respective tickets |
-| Domain Controller **replication** — the lab has one DC, so `uSNChanged`/DirSync tests see one USN space and no per-DC attributes | Sync correctness across DCs | the `2dc` tier (§7), then Windows |
-| **Scale** — 5k users is not 50k+ | Performance budgets | `scale` tier (§7) |
+| Domain Controller **replication** — the lab has one DC, so `uSNChanged`/DirSync tests see one USN space and no per-DC attributes | Sync correctness across DCs | the `2dc` tier (§8), then Windows |
+| **Scale** — 5k users is not 50k+ | Performance budgets | `scale` tier (§8) |
 
 The Windows lab and the Entra test tenant cost money and need accounts, so they are **CEO matters**
 (ADR/decision first). Until they exist, Windows-only tests are written, tagged, and recorded as
 **unverified** in the ticket — never claimed as passing.
 
-## 6. Troubleshooting
+## 7. Troubleshooting
 
 | Symptom | Cause / fix |
 | --- | --- |
@@ -159,7 +208,7 @@ The Windows lab and the Entra test tenant cost money and need accounts, so they 
 CI: the same commands work on a Linux runner with Docker; wiring `make lab-test` into the pipeline
 belongs to the CI ticket (T-0015).
 
-## 7. Known limits and follow-ups
+## 8. Known limits and follow-ups
 
 - Samba is the Debian 13 package (4.22.x). The feasibility doc names 4.25 as latest stable; newer
   Samba (e.g. 4.24's AES-only enctype default) needs a build from source or a newer base — a

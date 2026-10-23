@@ -24,6 +24,33 @@
 //	    package's CorrelationStatement type (one statement per touched object). No write can be
 //	    expressed without the per-object Tier-0 context the connector evaluates fail-closed
 //	    (contract §8.3 F1).
+//
+// The fleet gateway's contract (package activediq.fleet.v1, T-0152) is not an operation contract: it has
+// no Operation enum, one bidirectional stream and no write group, so P4, P5, P6 and P8 do not
+// apply to it. It has its own rules instead (threat model TM-TB6-T3, T6, T8, TM-F-FLEET):
+//
+//	F1  the service set is exactly one `Fleet` service with exactly two RPCs: Enroll (unary) and
+//	    Tunnel (bidirectional streaming). Nothing else is mounted on the fleet listener.
+//	F2  no field of any message in the package has a name containing "tenant".
+//	F3  no field of any message in the package has a secret-shaped name (password, passwd, pwd,
+//	    secret, credential, passphrase, token, key) except the allowlist: EnrollRequest.enrollment_token,
+//	    the single-use token. (Operation payloads travel as `payload` bytes of CallData, opaque.)
+//	F5  no message in the package uses google.protobuf.Any, and Enroll is not a stream.
+//	F6  fleet messages reference only messages of their own package and google.protobuf.Timestamp;
+//	    F2 and F3 walk every RPC input and output transitively, so imported types cannot smuggle
+//	    a tenant or a secret in.
+//	F4  the Enroll RPC's output (resolved from the RPC, not by message name) and every message
+//	    reachable from it are an exact allowlist of field names and types: leaf_certificate_der,
+//	    ca_bundle_pem (both bytes, required), endpoints (repeated Endpoint{host string, port
+//	    uint32}) and leaf_not_after (Timestamp). Anything else, at any depth, fails.
+//	F8  fleet files are syntax proto3 (no editions, proto2, extension ranges or groups) and no file
+//	    extends a fleet message. F6 also covers RPC input and output types, and the token allowance
+//	    is keyed on the full name activediq.fleet.v1.EnrollRequest.enrollment_token on the Enroll input.
+//	F9  no message type in the package has a secret-shaped name (same fragments as F3), so a
+//	    message such as PasswordPush or SecretEnvelope fails even if its fields are innocuous.
+//	    A new RPC fails F1 with a pointer to the ADR and review it needs.
+//	F7  no map fields anywhere in the fleet contract or reachable from an Enroll or Tunnel input or
+//	    output: a map is an unchecked free-form side channel.
 package main
 
 import (
@@ -96,10 +123,17 @@ func Compile(dir string) (linker.Files, error) {
 func Lint(files linker.Files) []Violation {
 	var vs []Violation
 	requests := map[protoreflect.FullName]protoreflect.MessageDescriptor{}
+	vs = append(vs, lintFleet(files)...)
 	for _, f := range files {
 		svcs := f.Services()
 		for i := 0; i < svcs.Len(); i++ {
 			svc := svcs.Get(i)
+			if isFleet(f.Package()) {
+				for j := 0; j < svc.Methods().Len(); j++ {
+					requests[svc.Methods().Get(j).Input().FullName()] = svc.Methods().Get(j).Input()
+				}
+				continue
+			}
 			ops := operationEnum(files, f.Package())
 			for j := 0; j < svc.Methods().Len(); j++ {
 				m := svc.Methods().Get(j)
@@ -271,4 +305,240 @@ func main() {
 	}
 	fmt.Fprintf(os.Stderr, "fitness-proto: %d violation(s)\n", len(vs))
 	os.Exit(1)
+}
+
+// isFleet reports whether pkg is a fleet gateway contract package (exactly activediq.fleet.v1).
+func isFleet(pkg protoreflect.FullName) bool {
+	return pkg == "activediq.fleet.v1"
+}
+
+// secretShaped are the name fragments F3 refuses in the fleet package.
+var secretShaped = []string{"password", "passwd", "pwd", "secret", "credential", "passphrase", "token", "key"}
+
+// fleetSecretAllow are the only secret-shaped fields: the single-use enrollment token.
+var fleetSecretAllow = map[string]bool{"activediq.fleet.v1.EnrollRequest.enrollment_token": true}
+
+// fieldSpec is one allowed field: its kind and, for messages, the full name of its type.
+type fieldSpec struct {
+	kind    protoreflect.Kind
+	list    bool
+	message protoreflect.FullName
+}
+
+// enrollResponseAllow is the exact field set of the Enroll output: public material only (F4).
+var enrollResponseAllow = map[string]fieldSpec{
+	"leaf_certificate_der": {kind: protoreflect.BytesKind},
+	"ca_bundle_pem":        {kind: protoreflect.BytesKind},
+	"endpoints":            {kind: protoreflect.MessageKind, list: true, message: "activediq.fleet.v1.Endpoint"},
+	"leaf_not_after":       {kind: protoreflect.MessageKind, message: "google.protobuf.Timestamp"},
+}
+
+// endpointAllow is the exact field set of Endpoint (F4).
+var endpointAllow = map[string]fieldSpec{
+	"host": {kind: protoreflect.StringKind},
+	"port": {kind: protoreflect.Uint32Kind},
+}
+
+// lintEnrollResponse checks the Enroll output message resp against the F4 allowlist, recursing
+// into the messages it references. Required fields: leaf_certificate_der and ca_bundle_pem.
+func lintEnrollResponse(pkg protoreflect.FullName, resp protoreflect.MessageDescriptor, seen map[protoreflect.FullName]bool) []Violation {
+	var vs []Violation
+	for _, req := range []string{"leaf_certificate_der", "ca_bundle_pem"} {
+		fd := resp.Fields().ByName(protoreflect.Name(req))
+		if fd == nil || fd.Kind() != protoreflect.BytesKind || fd.IsList() {
+			vs = append(vs, Violation{"F4", string(resp.FullName()), "the Enroll response must carry bytes `" + req + "` (the signed leaf and the CA bundle the component pins, TM-TB6-T2)"})
+		}
+	}
+	vs = append(vs, checkAllow(resp, enrollResponseAllow, seen, pkg)...)
+	return vs
+}
+
+func checkAllow(m protoreflect.MessageDescriptor, allow map[string]fieldSpec, seen map[protoreflect.FullName]bool, pkg protoreflect.FullName) []Violation {
+	if seen[m.FullName()] {
+		return nil
+	}
+	seen[m.FullName()] = true
+	var vs []Violation
+	for i := 0; i < m.Fields().Len(); i++ {
+		fd := m.Fields().Get(i)
+		pos := string(m.FullName()) + "." + string(fd.Name())
+		spec, ok := allow[string(fd.Name())]
+		if !ok || fd.IsMap() || fd.Kind() != spec.kind || fd.IsList() != spec.list ||
+			(fd.Message() != nil && fd.Message().FullName() != spec.message) {
+			vs = append(vs, Violation{"F4", pos, "the Enroll response closure is an exact allowlist of names and types (leaf_certificate_der, ca_bundle_pem, endpoints[Endpoint{host, port}], leaf_not_after); any other field needs a security review and an edit of this rule"})
+			continue
+		}
+		if fd.Message() != nil && fd.Message().FullName() == pkg+".Endpoint" {
+			vs = append(vs, checkAllow(fd.Message(), endpointAllow, seen, pkg)...)
+		}
+	}
+	return vs
+}
+
+// lintFleet applies F1 to F8 to every fleet package among files.
+func lintFleet(files linker.Files) []Violation {
+	var vs []Violation
+	pkgs := map[protoreflect.FullName]bool{}
+	for _, f := range files {
+		if isFleet(f.Package()) {
+			pkgs[f.Package()] = true
+		}
+	}
+	for pkg := range pkgs {
+		var services []protoreflect.ServiceDescriptor
+		for _, f := range files {
+			if f.Package() != pkg {
+				continue
+			}
+			for i := 0; i < f.Services().Len(); i++ {
+				services = append(services, f.Services().Get(i))
+			}
+		}
+		if len(services) != 1 {
+			vs = append(vs, Violation{"F1", string(pkg), fmt.Sprintf("fleet package must define exactly one service (Fleet), has %d", len(services))})
+		}
+		for _, svc := range services {
+			pos := string(svc.FullName())
+			if svc.Name() != "Fleet" {
+				vs = append(vs, Violation{"F1", pos, "the fleet service must be named Fleet"})
+			}
+			got := map[protoreflect.Name]protoreflect.MethodDescriptor{}
+			for j := 0; j < svc.Methods().Len(); j++ {
+				m := svc.Methods().Get(j)
+				got[m.Name()] = m
+				if m.Name() != "Enroll" && m.Name() != "Tunnel" {
+					vs = append(vs, Violation{"F1", string(m.FullName()), "only Enroll and Tunnel may be mounted on the fleet listener; a new fleet RPC needs a new ADR (security-architect review, threat model TM-TB6-T8) and an edit of fitness-proto F1"})
+				}
+			}
+			if m := got["Enroll"]; m == nil {
+				vs = append(vs, Violation{"F1", pos, "missing RPC Enroll"})
+			} else if m.IsStreamingClient() || m.IsStreamingServer() {
+				vs = append(vs, Violation{"F5", string(m.FullName()), "Enroll must be unary"})
+			}
+			if m := got["Tunnel"]; m == nil {
+				vs = append(vs, Violation{"F1", pos, "missing RPC Tunnel"})
+			} else if !m.IsStreamingClient() || !m.IsStreamingServer() {
+				vs = append(vs, Violation{"F1", string(m.FullName()), "Tunnel must be bidirectional streaming (component-initiated)"})
+			}
+		}
+		var enroll protoreflect.MethodDescriptor
+		for _, svc := range services {
+			if m := svc.Methods().ByName("Enroll"); m != nil {
+				enroll = m
+			}
+		}
+		// F6 for RPC types: the contract is self-contained, so every RPC input and output is a
+		// message of the fleet package.
+		for _, svc := range services {
+			for j := 0; j < svc.Methods().Len(); j++ {
+				m := svc.Methods().Get(j)
+				for _, t := range []protoreflect.MessageDescriptor{m.Input(), m.Output()} {
+					if t.ParentFile().Package() != pkg {
+						vs = append(vs, Violation{"F6", string(m.FullName()), "RPC types must be messages of the fleet package, not " + string(t.FullName())})
+					}
+				}
+			}
+		}
+		// F8: proto3 only (no editions, proto2, extension ranges or groups), and no extension of
+		// a fleet message from any file.
+		for _, f := range files {
+			if f.Package() == pkg && f.Syntax() != protoreflect.Proto3 {
+				vs = append(vs, Violation{"F8", f.Path(), "fleet files must be syntax proto3: no editions or proto2, so no extension ranges or groups"})
+			}
+			var exts []protoreflect.ExtensionDescriptor
+			collectExtensions(f, &exts)
+			for _, x := range exts {
+				if x.ContainingMessage().ParentFile().Package() == pkg {
+					vs = append(vs, Violation{"F8", string(x.FullName()), "extending a fleet message is not allowed: it is an unchecked side channel"})
+				}
+			}
+		}
+		// Roots: every message the package declares, plus the input and output of every RPC,
+		// walked transitively so a field of an imported type is checked like a local one.
+		var roots []protoreflect.MessageDescriptor
+		for _, f := range files {
+			if f.Package() == pkg {
+				collectMessages(f.Messages(), &roots)
+			}
+		}
+		for _, svc := range services {
+			for j := 0; j < svc.Methods().Len(); j++ {
+				roots = append(roots, svc.Methods().Get(j).Input(), svc.Methods().Get(j).Output())
+			}
+		}
+		seen := map[protoreflect.FullName]bool{}
+		// F9: a secret-bearing message type, whatever its fields are called (TM-TB6-T6).
+		for _, m := range roots {
+			lower := strings.ToLower(string(m.Name()))
+			for _, frag := range secretShaped {
+				if strings.Contains(lower, frag) {
+					vs = append(vs, Violation{"F9", string(m.FullName()), "message type name looks secret-bearing (`" + frag + "`); nothing secret is pushed over fleet (TM-TB6-T6). Secrets travel only as the opaque operation payload of CallData"})
+					break
+				}
+			}
+		}
+		for _, m := range roots {
+			walk(m, string(m.FullName()), seen, func(_ string, fd protoreflect.FieldDescriptor) {
+				parent := fd.ContainingMessage()
+				pos := string(parent.FullName()) + "." + string(fd.Name())
+				lower := strings.ToLower(string(fd.Name()))
+				if strings.Contains(lower, "tenant") {
+					vs = append(vs, Violation{"F2", pos, "the tenant comes from the certificate SAN, never from a message (ADR-0002)"})
+				}
+				if fd.IsMap() {
+					vs = append(vs, Violation{"F7", pos, "map fields are a free-form side channel and are not allowed in the fleet contract"})
+				}
+				if fd.Message() != nil {
+					full := fd.Message().FullName()
+					if full == "google.protobuf.Any" {
+						vs = append(vs, Violation{"F5", pos, "google.protobuf.Any is not allowed in the fleet contract"})
+					} else if full != "google.protobuf.Timestamp" && fd.Message().ParentFile().Package() != pkg {
+						vs = append(vs, Violation{"F6", pos, "fleet messages may reference only messages of their own package and google.protobuf.Timestamp, not " + string(full)})
+					}
+				}
+				key := pos
+				if enroll == nil || parent.FullName() != enroll.Input().FullName() {
+					key = "" // the token is allowed only on the Enroll RPC's own input message
+				}
+				for _, frag := range secretShaped {
+					if strings.Contains(lower, frag) && !fleetSecretAllow[key] {
+						vs = append(vs, Violation{"F3", pos, "field name looks secret-bearing (`" + frag + "`); nothing secret is pushed over fleet (TM-TB6-T6). Only the single-use enrollment token is allowed"})
+						break
+					}
+				}
+			})
+		}
+		// F4: the Enroll RPC's output (whatever it is named) and everything reachable from it is an
+		// exact allowlist of names and types: public material only.
+		if enroll != nil {
+			vs = append(vs, lintEnrollResponse(pkg, enroll.Output(), map[protoreflect.FullName]bool{})...)
+		}
+	}
+	return vs
+}
+
+func collectExtensions(f protoreflect.FileDescriptor, out *[]protoreflect.ExtensionDescriptor) {
+	for i := 0; i < f.Extensions().Len(); i++ {
+		*out = append(*out, f.Extensions().Get(i))
+	}
+	var rec func(ms protoreflect.MessageDescriptors)
+	rec = func(ms protoreflect.MessageDescriptors) {
+		for i := 0; i < ms.Len(); i++ {
+			for j := 0; j < ms.Get(i).Extensions().Len(); j++ {
+				*out = append(*out, ms.Get(i).Extensions().Get(j))
+			}
+			rec(ms.Get(i).Messages())
+		}
+	}
+	rec(f.Messages())
+}
+
+func collectMessages(ms protoreflect.MessageDescriptors, out *[]protoreflect.MessageDescriptor) {
+	for i := 0; i < ms.Len(); i++ {
+		if ms.Get(i).IsMapEntry() {
+			continue
+		}
+		*out = append(*out, ms.Get(i))
+		collectMessages(ms.Get(i).Messages(), out)
+	}
 }

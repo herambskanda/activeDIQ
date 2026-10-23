@@ -39,7 +39,12 @@ type Violation struct {
 	Msg   string
 }
 
-func (v Violation) String() string { return fmt.Sprintf("%s: %s [rule 13] %s", v.Pos, v.Check, v.Msg) }
+func (v Violation) String() string {
+	if v.Check == "O1" {
+		return fmt.Sprintf("%s: %s [rule 2] %s", v.Pos, v.Check, v.Msg)
+	}
+	return fmt.Sprintf("%s: %s [rule 13] %s", v.Pos, v.Check, v.Msg)
+}
 
 // Pkg is one package the block lists, and whether the tree has it yet.
 type Pkg struct {

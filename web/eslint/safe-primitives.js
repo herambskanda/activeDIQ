@@ -355,6 +355,37 @@ const safeUrlAttributes = {
   },
 };
 
+// FF-SP3 web-odata (safe-primitives-odata §6): tier W never talks to Graph and our own API is not
+// OData, so a $filter or $search literal, or a template literal holding ` eq '`, is OData built in the
+// console. Entra pickers send a GUID or opaque search text; the server renders it with P8.
+const ODATA_OPTION = /(?:\$|%24)(?:filter|search)\b/i;
+const ODATA_EQ_QUOTE = /\s(?:eq|ne)\s+'/i;
+
+const webOdata = {
+  meta: {
+    type: "problem",
+    schema: [],
+    messages: {
+      option:
+        "FF-SP3 [web-odata]: a $filter or $search literal in the console. Our API is not OData and tier W never talks to Graph: send the GUID or the search text and let the server render it (safe-primitives-odata §7).",
+      eq: "FF-SP3 [web-odata]: a template literal with an OData comparison (eq '…'). The console builds no filter: send the value and let the server render it (safe-primitives-odata §7).",
+    },
+  },
+  create(context) {
+    return {
+      Literal(node) {
+        const s = stringValue(node);
+        if (s !== null && ODATA_OPTION.test(s)) context.report({ node, messageId: "option" });
+      },
+      TemplateLiteral(node) {
+        const raw = node.quasis.map((q) => q.value.cooked ?? q.value.raw);
+        if (raw.some((r) => ODATA_OPTION.test(r))) context.report({ node, messageId: "option" });
+        else if (raw.some((r) => ODATA_EQ_QUOTE.test(r))) context.report({ node, messageId: "eq" });
+      },
+    };
+  },
+};
+
 export default {
   meta: { name: "safe-primitives" },
   rules: {
@@ -364,5 +395,6 @@ export default {
     "no-export-media-types": noExportMediaTypes,
     "no-unsafe-dom-sinks": noUnsafeDomSinks,
     "safe-url-attributes": safeUrlAttributes,
+    "web-odata": webOdata,
   },
 };

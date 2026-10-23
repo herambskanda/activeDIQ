@@ -135,7 +135,8 @@ type Segment struct{ /* unexported */ }
 func Seg(n Name) Segment                                  // entity set or navigation: /groups, /members
 func Key(id GUID) Segment                                  // key-as-segment: /<lowercase-guid>
 func KeyStr(set Name, v String) (Segment, error)           // set('v'): UPN keys on /users
-func AltKey[V Value](set Name, p Prop[V], v V) (Segment, error) // set(prop=literal): servicePrincipals(appId='…')
+func AltKey[V Value](set Name, p Prop[V], v V) (Segment, error) // set(prop=literal): servicePrincipals(appId='…'); refuses empty String and nil GUID (InvalidValue)
+func (r Request) Template() string                              // path with key values as {key}: the only loggable form
 func Cast(n Name) Segment                                  // /microsoft.graph.user
 
 type Request struct{ /* unexported */ }
@@ -272,17 +273,20 @@ Tests and tier L are exempt, as for P1–P7 (safe-primitives.md §2.1).
 
 | Rule | Family | Fails when (outside the home) |
 | --- | --- | --- |
-| `odata-option-literal` | FF-SP3, flagged on its own (`Always`) | a Go string literal whose text, case-insensitively, is or starts with a system query option name, with or without `$` and in plain or `%24` spelling: `$filter`, `filter=`, `%24filter`, and the same for `search`, `orderby`, `select`, `expand`, `apply`, `compute`, `skiptoken` and `top`. The bare-name forms (`filter=`) are matched only with `=` or as the key argument of `url.Values.Set/Add`, so the English word "filter" is not flagged. **Every** `$filter` in product code outside the home is a finding, constant or not. That is what makes the builder the only path |
-| `odata-filter-shape` | FF-SP3, when combined with data or carrying a printf verb | literals matching `(?i)\b(?:eq\|ne\|gt\|ge\|lt\|le\|has\|in)\s*\(?\s*'` or `(?i)\b(?:startswith\|endswith\|contains\|any\|all)\s*\(` or `'\s*\)?\s+(?i:and\|or)\s` |
-| `odata-key-shape` | FF-SP3, when combined with data or carrying a printf verb | literals matching `[A-Za-z_]\w*\(\s*(?:[A-Za-z_]\w*\s*=\s*)?'?\s*$` (an opening `set(`, `set('` or `set(prop='`) or `^'?\s*\)` (the closing piece) |
+| `odata-option-literal` | FF-SP3, flagged on its own (`Always`) | a Go string literal whose text, case-insensitively, is or starts with a system query option name, with or without `$` and in plain or `%24` spelling: `$filter`, `filter=`, `%24filter`, and the same for `search`, `orderby`, `select`, `expand`, `apply`, `compute`, `skiptoken`, `top`, `count`, `skip`, `deltatoken` and `format`. The bare-name forms (`filter=`) are matched only with `=` or as the key argument of `url.Values.Set/Add`, so the English word "filter" is not flagged. **Every** `$filter` in product code outside the home is a finding, constant or not. That is what makes the builder the only path |
+| `odata-filter-shape` | FF-SP3, when combined with data or carrying a printf verb | literals matching `(?i)\b(?:eq\|ne\|gt\|ge\|lt\|le\|has)\s+'` or `(?i)\bin\s*\(\s*'` or `(?i)\b(?:startswith\|endswith\|contains\|any\|all)\s*\(` or a closing `'` (with optional `)`) followed by `and`/`or` that ends the literal or is followed by another `prop op` clause. Two deviations from the first draft, both from running the rule on main: `in` needs its parenthesis (OData's `in` always has one, and the English "in '_'" matched), and `' and ` alone no longer matches (prose such as "digits, '_' and '.'" did) |
+| `odata-key-shape` | FF-SP3, when combined with data or carrying a printf verb | literals matching `[A-Za-z_]\w*\(\s*(?:[A-Za-z_]\w*\s*=\s*)?'?\s*$` (an opening `set(`, `set('` or `set(prop='`) or `[A-Za-z_]\w*\(\s*(?:[A-Za-z_]\w*\s*=\s*)?'?%[-+# 0-9.]*[a-zA-Z]` (a printf verb inside the key parentheses, FX-3, from the T-0106 review). The closing piece `^'?\s*\)` of the first draft is dropped: it also matched the `')` that ends a `startswith(…)` piece (FX-6), and every key built from text has an opening piece that matches |
 | `quote-doubling` | FF-SP3 (existing rule) | the existing check (`goscan.go:719–725`), with `policy.OData` added to its home list |
-| `odataname` | FF-SP2, go/analysis pass | a conversion to `odata.Name` from a non-constant expression, or a call of `odata.StringProp`/`GUIDProp`/… outside `internal/directory/odata/graphschema` |
-| `graph-url-assembly` | FF-SP2 | inside `internal/connector/graph/**`: an assignment to `url.URL.RawQuery`, `RawPath` or `Path`; `url.PathEscape`/`QueryEscape`/`url.Values.Encode` except the token-endpoint line named in `policy.GraphTokenURL`; `http.NewRequest*` with a URL that is not the result of `odata.Request.URL` or the host-pinned nextLink |
-| `web-odata` | FF-SP3 `web/` ESLint | any `$filter`/`$search` literal, or a template literal containing ` eq '`. Our own API is not OData, and tier W never talks to Graph |
+| `odataname` | FF-SP2, go/analysis pass (`tools/analyzers/odataname`) | a conversion to `odata.Name` from a non-constant expression, or a call of `odata.StringProp`/`GUIDProp`/… outside `internal/directory/odata/graphschema` |
+| `graph-url-assembly` | FF-SP2, go/analysis pass (`tools/analyzers/graphurl`; category `graph-url-assembly`) | inside `internal/connector/graph/**`: an assignment to, or a `url.URL{…}` literal key (or unkeyed literal) of, any `url.URL` field (`Opaque`, `Host`, `Scheme`, `Path`, `RawPath`, `RawQuery`, `ForceQuery`, …); any *use*, not only a call, of the functions below (`p := url.Parse` is flagged); `url.PathEscape`/`QueryEscape`/`url.Values.Encode` except in the methods named in `policy.GraphTokenURL` (receiver *and* name; today `(*Client).bearer`, the client-credentials POST); `url.Parse`, `url.ParseRequestURI`, `url.JoinPath`, `(*url.URL).Parse`/`JoinPath`/`ResolveReference` except at the sites in `policy.GraphURLParse` (today `New`, the configured bases, and `list`, the host-pinned nextLink); `http.NewRequest*` anywhere except the sites in `policy.GraphHTTPSite` (`(*Client).get`, `(*Client).bearer`), and there only with a URL argument that is `x.String()` on a `*url.URL` (the `odata.Request.URL` result, or the nextLink parsed and checked against the pinned base in `get`) |
+| `web-odata` | FF-SP3 `web/` ESLint (`safe-primitives/web-odata`) | any `$filter`/`$search` literal, or a template literal containing ` eq '`. Our own API is not OData, and tier W never talks to Graph |
 
-**CI fixtures (acceptance 2).** These go under `tools/fitness/safeprim/scan/testdata/odata/`, in a
-package path *outside* the home, so they are scanned as product code. Each line must produce exactly
-the named finding, and the scanner's test fails if any fixture passes.
+**CI fixtures (acceptance 2).** They are inline in `tools/fitness/safeprim/scan/odata_test.go`
+(`TestODataFixtures`), written into a throw-away module at a package path *outside* the home, so they
+are scanned as product code. Each fixture must produce exactly the named rules, and the test fails
+if one passes or reports a different rule. `TestODataPreMigrationReadsFail` holds the pre-T-0117
+`reads.go` lines verbatim. The ESLint half is in `web/eslint/safe-primitives.test.js`.
+The fake Graph's own paging token is `fakepage=N`, not a system option name, so `graphtest` needs no exemption.
 
 | Fixture | Code | Expected finding |
 | --- | --- | --- |
@@ -297,6 +301,12 @@ the named finding, and the scanner's test fails if any fixture passes.
 | FX-9 | `q.Set("$filter", "isAssignableToRole eq true")`: constant, but outside the home | `odata-option-literal` |
 | FX-10 | `u.RawQuery = v.Encode()` in a `internal/connector/graph` fixture | `graph-url-assembly` |
 | FX-11 | `odata.Seg(odata.Name(userInput))` | `odataname` |
+| FX-12 | `u, _ := url.Parse(base + "/users/" + upn); http.NewRequest("GET", u.String(), nil)` in a `internal/connector/graph` fixture | `graph-url-assembly` |
+| FX-13 | `b.JoinPath("users", upn)` then `u.String()` into `NewRequest`, same place | `graph-url-assembly` |
+| FX-14 | `url.URL{… Opaque: "//g/users/"+upn}` literal, and `u.Opaque = …`, in a `internal/connector/graph` fixture | `graph-url-assembly` |
+| FX-15 | `u.Host = h`, same place | `graph-url-assembly` |
+| FX-16 | `p := url.Parse; p(base+upn)`, same place | `graph-url-assembly` |
+| FX-17 | `http.NewRequest("GET", u.String(), nil)` in a function not listed in `policy.GraphHTTPSite` | `graph-url-assembly` |
 | FX-N1 | negative control: `odata.Get(odata.Seg("users")).With(odata.Query{}.Filter(odata.Eq(graphschema.UserPrincipalName, v)))` | no finding |
 | FX-N2 | negative control: a log message `"filter applied"`, and a struct field named `Filter` | no finding |
 

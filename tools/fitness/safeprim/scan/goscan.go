@@ -89,9 +89,11 @@ func scanGo(rel string, src []byte, module string, checks map[string]bool, out *
 	}
 	if checks["FF-SP2"] {
 		g.checkImportBans()
+		g.checkDotImports()
 		g.checkSymbols()
 		g.checkTLS()
 		g.checkJSONEscape()
+		g.checkPredeclaredShadow()
 		g.checkLiterals()
 		g.checkFeaturePackages()
 	}
@@ -249,33 +251,119 @@ func (g *goFile) checkSymbols() {
 	})
 }
 
-// checkJSONEscape bans jsontext.EscapeForHTML / EscapeForJS with anything but the literal true: API
-// responses keep their HTML and JS escaping (§12.5 rule 7). A non-constant argument is banned too,
-// because it can be false at run time.
+// checkJSONEscape bans jsontext.EscapeForHTML / EscapeForJS in any form but a direct call with the
+// literal true: API responses keep their HTML and JS escaping (§12.5 rule 7). A non-constant
+// argument is banned because it can be false at run time; a method value (f := jsontext.EscapeForJS)
+// is banned because the argument can no longer be seen.
 func (g *goFile) checkJSONEscape() {
 	if g.isTool || g.isTest {
 		return
 	}
+	isEscape := func(e ast.Expr) (*ast.SelectorExpr, bool) {
+		sel, ok := e.(*ast.SelectorExpr)
+		if !ok || (sel.Sel.Name != "EscapeForHTML" && sel.Sel.Name != "EscapeForJS") {
+			return nil, false
+		}
+		id, ok := sel.X.(*ast.Ident)
+		return sel, ok && g.imports[id.Name] == "encoding/json/jsontext"
+	}
+	allowed := map[*ast.SelectorExpr]bool{}
 	ast.Inspect(g.file, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
+		if call, ok := n.(*ast.CallExpr); ok {
+			if sel, ok := isEscape(call.Fun); ok && len(call.Args) == 1 {
+				if id, ok := call.Args[0].(*ast.Ident); ok && id.Name == "true" {
+					allowed[sel] = true
+				}
+			}
+		}
+		return true
+	})
+	ast.Inspect(g.file, func(n ast.Node) bool {
+		e, ok := n.(ast.Expr)
 		if !ok {
 			return true
 		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok || (sel.Sel.Name != "EscapeForHTML" && sel.Sel.Name != "EscapeForJS") {
-			return true
+		if sel, ok := isEscape(e); ok && !allowed[sel] {
+			g.add("FF-SP2", "json-escape-off", sel.Pos(), "jsontext."+sel.Sel.Name+" must be called directly with the literal true in product code: JSON responses keep their HTML and JS escaping ("+refP7+".5 rule 7)")
 		}
-		if id, ok := sel.X.(*ast.Ident); !ok || g.imports[id.Name] != "encoding/json/jsontext" {
-			return true
-		}
-		if len(call.Args) == 1 {
-			if id, ok := call.Args[0].(*ast.Ident); ok && id.Name == "true" {
-				return true
-			}
-		}
-		g.add("FF-SP2", "json-escape-off", call.Pos(), "jsontext."+sel.Sel.Name+" must be called with the literal true in product code: JSON responses keep their HTML and JS escaping ("+refP7+".5 rule 7)")
 		return true
 	})
+}
+
+// checkPredeclaredShadow bans declaring true or false in product code. The scan reads the literal
+// true as the predeclared identifier (no type information, and a package-level const in a sibling
+// file defeats any per-file check), so `true := false` or `const true = false` would turn
+// EscapeForHTML(true) into EscapeForHTML(false) unseen.
+func (g *goFile) checkPredeclaredShadow() {
+	if g.isTool || g.isTest {
+		return
+	}
+	bad := func(id *ast.Ident) {
+		if id != nil && (id.Name == "true" || id.Name == "false") {
+			g.add("FF-SP2", "predeclared-shadow", id.Pos(), "declares "+id.Name+" in product code: shadowing a predeclared boolean defeats the literal-true checks ("+refP7+".5)")
+		}
+	}
+	fields := func(fl *ast.FieldList) {
+		if fl == nil {
+			return
+		}
+		for _, f := range fl.List {
+			for _, id := range f.Names {
+				bad(id)
+			}
+		}
+	}
+	for _, is := range g.file.Imports {
+		bad(is.Name)
+	}
+	ast.Inspect(g.file, func(n ast.Node) bool {
+		switch v := n.(type) {
+		case *ast.AssignStmt:
+			if v.Tok == token.DEFINE {
+				for _, l := range v.Lhs {
+					if id, ok := l.(*ast.Ident); ok {
+						bad(id)
+					}
+				}
+			}
+		case *ast.RangeStmt:
+			if v.Tok == token.DEFINE {
+				for _, e := range []ast.Expr{v.Key, v.Value} {
+					if id, ok := e.(*ast.Ident); ok {
+						bad(id)
+					}
+				}
+			}
+		case *ast.ValueSpec:
+			for _, id := range v.Names {
+				bad(id)
+			}
+		case *ast.TypeSpec:
+			bad(v.Name)
+			fields(v.TypeParams)
+		case *ast.FuncDecl:
+			bad(v.Name)
+			fields(v.Recv)
+		case *ast.FuncType:
+			fields(v.TypeParams)
+			fields(v.Params)
+			fields(v.Results)
+		}
+		return true
+	})
+}
+
+// checkDotImports bans `import . "pkg"` in product code: it hides every pkg.Sym selector from the
+// symbol bans. Tests and tier L are exempt.
+func (g *goFile) checkDotImports() {
+	if g.isTool || g.isTest {
+		return
+	}
+	for _, is := range g.file.Imports {
+		if is.Name != nil && is.Name.Name == "." {
+			g.add("FF-SP2", "dot-import", is.Pos(), "dot import of "+is.Path.Value+" in product code: it hides pkg.Symbol uses from the safe-primitive bans; import the package by name ("+refP7+".5)")
+		}
+	}
 }
 
 // checkTLS bans verification bypasses everywhere: tests and tier L included (§2.1, §5.6).
@@ -426,8 +514,18 @@ var (
 	rePSReplace   = regexp.MustCompile(`(?i)-i?c?replace\s+["']`)
 	reSQLShape    = regexp.MustCompile(`(?is)\b(?:select\b.+\bfrom|insert\s+into|update\s+[\w."]+\s+set|delete\s+from|alter\s+(?:table|role|user)|drop\s+(?:table|role|user)|create\s+(?:table|role|user|function)|truncate\s+table)\b|\bwhere\s+[\w."()]+\s*(?:=|<|>|like|ilike|in|is)\b|\border\s+by\s+[\w."]|\bset_config\s*\(`)
 	reHTMLShape   = regexp.MustCompile(`(?i)<\s*(?:td|th|tr|table|a\s|script|div|span|img|ul|li|style|iframe|svg|body|html|p>|b>)`)
-	reMailShape   = regexp.MustCompile(`(?i)(?:^|\r\n|\n)\s*(?:subject|bcc|cc|to|from|reply-to|content-type|mime-version|content-transfer-encoding):|\r\n`)
+	// OData (safe-primitives-odata §6). An option name with $ or %24 (any case) at the start of a
+	// literal or of a query segment, or the bare name followed by "=".
+	reODataOption = regexp.MustCompile(`(?i)(?:^|[?&\s])(?:\$|%24)(?:filter|search|orderby|select|expand|apply|compute|skiptoken|top|count|skip|deltatoken|format)\b|(?:^|[?&])(?:filter|search|orderby|select|expand|apply|compute|skiptoken|top|count|skip|deltatoken|format)=`)
+	reODataFilter = regexp.MustCompile(`(?i)\b(?:eq|ne|gt|ge|lt|le|has)\s+'|\bin\s*\(\s*'|\b(?:startswith|endswith|contains|any|all)\s*\(|'\s*\)?\s+(?:and|or)(?:\s*$|\s+\(?\s*[A-Za-z_][\w./]*\s+(?:eq|ne|gt|ge|lt|le|has|in)\b)`)
+	// An opening set(, set(' or set(prop=' piece, or a printf verb inside the key parentheses. The
+	// closing piece of a key is not matched on its own: "')" ends startswith(…) pieces too (FX-6), and
+	// every key built from text has an opening piece that is.
+	reODataKey  = regexp.MustCompile(`[A-Za-z_]\w*\(\s*(?:[A-Za-z_]\w*\s*=\s*)?'?\s*$|[A-Za-z_]\w*\(\s*(?:[A-Za-z_]\w*\s*=\s*)?'?%[-+# 0-9.]*[a-zA-Z]`)
+	reMailShape = regexp.MustCompile(`(?i)(?:^|\r\n|\n)\s*(?:subject|bcc|cc|to|from|reply-to|content-type|mime-version|content-transfer-encoding):|\r\n`)
 )
+
+var reODataBareName = regexp.MustCompile(`(?i)^\s*(?:filter|search|orderby|select|expand|apply|compute|skiptoken|top|count|skip|deltatoken|format)\s*$`)
 
 var shapes = []shape{
 	{Rule: "ldap-filter-shape", Re: reFilterShape, Home: []string{policy.LDAPFilter},
@@ -442,6 +540,12 @@ var shapes = []shape{
 		Msg: "SQL text built from data; use sqlc queries and bind parameters (" + refP5 + ")"},
 	{Rule: "html-shape", Re: reHTMLShape, Home: []string{policy.Htmlx},
 		Msg: "HTML built from text; use html/template through htmlx (" + refP7 + ".5)"},
+	{Rule: "odata-option-literal", Re: reODataOption, Home: []string{policy.OData}, Always: true,
+		Msg: "a system query option name outside the odata primitive; build the request with odata.Query (safe-primitives-odata §6)"},
+	{Rule: "odata-filter-shape", Re: reODataFilter, Home: []string{policy.OData},
+		Msg: "an OData filter built from text; build an odata filter AST (safe-primitives-odata §6)"},
+	{Rule: "odata-key-shape", Re: reODataKey, Home: []string{policy.OData},
+		Msg: "an OData key segment built from text; use odata.Key, KeyStr or AltKey (safe-primitives-odata §6)"},
 	{Rule: "mail-header-shape", Re: reMailShape, Home: []string{policy.Mail},
 		Msg: "mail headers or CRLF built from text; use notify/mail (" + refP7 + ".6)"},
 }
@@ -712,6 +816,12 @@ func (g *goFile) callShapes(call *ast.CallExpr, combined map[*ast.BasicLit]combi
 	}
 	if (name == "WriteString" || name == "Write") && len(call.Args) == 1 {
 		g.markCombined(call.Args[0], byBuilder, combined)
+	}
+	// url.Values.Set/Add with a bare option name as the key: q.Add("filter", x).
+	if (name == "Set" || name == "Add") && len(call.Args) == 2 && !g.isTool && !g.isTest && !policy.Match(g.dir, policy.OData) {
+		if v, ok := g.strLit(call.Args[0]); ok && reODataBareName.MatchString(v) {
+			g.add("FF-SP3", "odata-option-literal", call.Pos(), "query key "+shorten(strconv.Quote(v))+" is a system query option name outside the odata primitive; build the request with odata.Query (safe-primitives-odata §6)")
+		}
 	}
 	// Quote doubling: two adjacent string arguments, the second a doubling of the first.
 	for i := 0; i+1 < len(call.Args); i++ {

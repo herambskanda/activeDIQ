@@ -27,13 +27,19 @@ func main() {
 		fmt.Printf("  %s  %-18s %s\n", state, p.Name, p.Dir)
 	}
 	fmt.Printf("fitness-operation O9: %d existing, %d pending (not yet checked), %d import edge(s) among the listed packages checked\n", existing, pending, rep.Edges)
+	o1, err := CheckO1(*root)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "fitness-operation:", err)
+		os.Exit(2)
+	}
+	rep.Violations = append(rep.Violations, o1...)
 	if len(rep.Violations) == 0 {
-		fmt.Println("fitness-operation: ok (O9; O1-O8 land with the code they inspect)")
+		fmt.Println("fitness-operation: ok (O9; O1 syntactic part; the rest of O1 and O2-O8 land with the code they inspect)")
 		return
 	}
 	for _, v := range rep.Violations {
 		fmt.Fprintln(os.Stderr, v)
 	}
-	fmt.Fprintf(os.Stderr, "fitness-operation: %d violation(s); rules: %s (rule 13, fitness function O9)\n", len(rep.Violations), rep.ADR)
+	fmt.Fprintf(os.Stderr, "fitness-operation: %d violation(s); rules: %s (O1 rule 2, O9 rule 13)\n", len(rep.Violations), rep.ADR)
 	os.Exit(1)
 }

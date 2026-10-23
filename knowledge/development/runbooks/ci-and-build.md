@@ -151,6 +151,11 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
     in a runbook by the ticket that registers them.
 - **`fitness-modules`**: the message names the file, line and blueprint rule. Fix the import. Do not
   edit the rule to pass; a rule changes only by amending the blueprint/ADR.
+- **`fitness-objectid`** (T-0180): fails on any conversion `authz.ObjectID(x)` (any spelling: alias,
+  rename, dot-import) outside package `authz` and its tests, as `file:line:col`. Fix: build the value
+  with `authz.ObjectIDFromOctets` (raw objectGUID bytes) or `authz.ParseObjectID` (text); `guid.GUID`
+  is also `[16]byte` but its byte order differs. Type errors in other packages are printed as
+  warnings (the build gate owns them). Proof: `go test ./tools/fitness/objectid` (positive and negative fixtures).
 - **`fitness-operation`** (O9 of ADR-0005, the kernel import DAG): `make fitness-operation` prints every
   package of the `dag` block as `existing` or `pending`, then the violations as
   `file:line: O9 [rule 13] <importer> imports <imported>; …` with what the importer may import.

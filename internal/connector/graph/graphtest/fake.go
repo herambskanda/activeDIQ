@@ -385,7 +385,7 @@ func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
 }
 
 // splitSkip separates the fake's own paging token from the request target, so the rest can be
-// parsed strictly. A real nextLink is opaque; the fake's is the same target plus skiptoken=N.
+// parsed strictly. A real nextLink is opaque; the fake's is the same target plus fakepage=N (a name that is no OData system option, so no rule mistakes it for one).
 func splitSkip(target string) (string, int) {
 	path, query, has := strings.Cut(target, "?")
 	if !has {
@@ -394,7 +394,7 @@ func splitSkip(target string) (string, int) {
 	skip := 0
 	var keep []string
 	for _, part := range strings.Split(query, "&") {
-		if v, ok := strings.CutPrefix(part, "skiptoken="); ok {
+		if v, ok := strings.CutPrefix(part, "fakepage="); ok {
 			skip, _ = strconv.Atoi(v)
 			continue
 		}
@@ -420,7 +420,7 @@ func (s *Server) one(w http.ResponseWriter, v any) {
 }
 
 // paged serves items s.PageSize at a time, linking pages with @odata.nextLink: the request target
-// plus skiptoken=N.
+// plus fakepage=N (a name that is no OData system option, so no rule mistakes it for one).
 func (s *Server) paged(w http.ResponseWriter, host, target string, skip int, items []any) {
 	size := s.PageSize
 	if size <= 0 {
@@ -436,7 +436,7 @@ func (s *Server) paged(w http.ResponseWriter, host, target string, skip int, ite
 		if strings.Contains(target, "?") {
 			sep = "&"
 		}
-		resp["@odata.nextLink"] = "https://" + host + target + sep + "skiptoken=" + strconv.Itoa(end)
+		resp["@odata.nextLink"] = "https://" + host + target + sep + "fakepage=" + strconv.Itoa(end)
 	}
 	s.one(w, resp)
 }
