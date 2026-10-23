@@ -190,7 +190,7 @@ response, then `ValueChunk` messages for each multi-valued attribute that was ra
 with 50,000 members is 34 chunks, never one 4 MiB message.
 
 - The connector asks for ranges explicitly. **Samba returns all values of a >1,500-value attribute
-  unranged on a plain read while Windows ranges it** (measured, ad-lab runbook §5), so a connector
+  unranged on a plain read while Windows ranges it** (measured, ad-lab runbook §6), so a connector
   that forgets to range passes the lab and fails at a customer. CC-READ-01 asserts the explicit
   range request and the first range's size.
 - Ranges arrive in order; values are as-of-read, not a snapshot. A membership change during the
@@ -855,7 +855,7 @@ provider plus the transport it is reached over. **Both transports run every case
 Samba lab on every merge (blueprint §7.2), unless the column says otherwise. The embedded target
 calls `connector/service` in-process; the remote target dials a `cmd/connector` through a
 `fleet` tunnel. Cases tagged **S** run in CI on Samba. **W** cases are written and tagged
-`windowslab` so CI skips them loudly (ad-lab runbook §5); they are `[UNVERIFIED]` until the Windows
+`windowslab` so CI skips them loudly (ad-lab runbook §6); they are `[UNVERIFIED]` until the Windows
 lab runs them (ticket in §10). **E** cases need the Entra test tenant. **2dc** and **scale** need the
 lab tiers of T-0049. **FI** cases use a fault-injecting LDAP proxy in front of the lab DC (test-engineer
 owns it): the directory behaviour is real, only the injected fault is synthetic.
@@ -1184,4 +1184,4 @@ CC-WRITE-16 to -22 in TM-F-T0GUARD and TM-F-RIGHTS).
 - Entra: [delta query](https://learn.microsoft.com/en-us/graph/delta-query-overview) · [throttling](https://learn.microsoft.com/en-us/graph/throttling)
 - v1.1, write group and rights check: [allowedAttributesEffective](https://learn.microsoft.com/en-us/windows/win32/adschema/a-allowedattributeseffective) · [sDRightsEffective](https://learn.microsoft.com/en-us/windows/win32/adschema/a-sdrightseffective) · [Entra Connect source anchor design](https://learn.microsoft.com/en-us/entra/identity/hybrid/connect/plan-connect-design-concepts) · [Graph user resource (onPremisesImmutableId, onPremisesSecurityIdentifier, onPremisesSyncEnabled)](https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0) · [application addKey](https://learn.microsoft.com/en-us/graph/api/application-addkey?view=graph-rest-1.0) · [passwordCredential resource (hint, secretText, keyId)](https://learn.microsoft.com/en-us/graph/api/resources/passwordcredential?view=graph-rest-1.0) · [servicePrincipal resource (keyCredentials, passwordCredentials)](https://learn.microsoft.com/en-us/graph/api/resources/serviceprincipal?view=graph-rest-1.0) · [tokenGroups](https://learn.microsoft.com/en-us/windows/win32/adschema/a-tokengroups) · [memberOf is a back-link](https://learn.microsoft.com/en-us/windows/win32/adschema/a-memberof) · [RFC 4511 §4.6 Modify](https://www.rfc-editor.org/rfc/rfc4511#section-4.6). Internal: threat-model §6.2 to §6.6 and §6.8, domain-model DM-10.I8 to I11, DM-20, DM-24, DM-25, ADR-0005 rules 2, 4, 5 and 7, forest-connection spec §7 (V1 to V9, FR-10 to FR-13, FR-35).
 - v1.2 (T-0122): [Binding to well-known objects using WKGUID (wellKnownObjects, Domain Controllers)](https://learn.microsoft.com/en-us/windows/win32/ad/binding-to-well-known-objects-using-wkguid) · [gPLink](https://learn.microsoft.com/en-us/windows/win32/adschema/a-gplink) · [MS-GPOL Domain SOM Search (gPLink format and options)](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-gpol/08090b22-bc16-49f4-8e10-f27a8fb16d18) · [passwordCredential (endDateTime, startDateTime)](https://learn.microsoft.com/en-us/graph/api/resources/passwordcredential?view=graph-rest-1.0). Internal: threat-model §6.2 TM-D23 rules 7 to 11 and the `ENTRA_PASSWORD_CREDENTIAL` severity, §6.4, §16.1 TM-R14 to TM-R17; domain-model DM-23.I1, DM-26; forest-connection spec FR-25.
-- Internal: `knowledge/development/domain/ad-change-notifications.md` (T-0018), `knowledge/development/runbooks/ad-lab.md` §5, and the ad-expert consult recorded in the T-0064 notes. The Samba statements in the consult (no `MoreResults`, `;range=0-0`, skipped removed links) come from a reading of the source, not a run, and are `[UNVERIFIED lab]` until CC-FEED-04 and CC-FEED-21 run.
+- Internal: `knowledge/development/domain/ad-change-notifications.md` (T-0018), `knowledge/development/runbooks/ad-lab.md` §6, and the ad-expert consult recorded in the T-0064 notes. The Samba statements in the consult (no `MoreResults`, `;range=0-0`, skipped removed links) come from a reading of the source, not a run, and are `[UNVERIFIED lab]` until CC-FEED-04 and CC-FEED-21 run.
