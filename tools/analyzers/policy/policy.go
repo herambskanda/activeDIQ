@@ -24,10 +24,12 @@ const (
 	OData       = "internal/directory/odata"             // P8
 	GraphSchema = "internal/directory/odata/graphschema" // P8 property declarations
 	Graph       = "internal/connector/graph"             // the Microsoft Graph connector
+	ADConn      = "internal/connector/ad"                // AD connector: LDAPS dial to domain controllers (TB2, not TB9)
 	Attr        = "internal/directory/attr"              // P3
 	Secret      = "internal/platform/secret"             // Secret and secretjson
 	Store       = "internal/platform/store"              // data-access package: pgx, set_config, reportsql
 	Proc        = "internal/platform/proc"               // native process invocation
+	Egress      = "internal/platform/egress"             // the one outbound HTTP client (TM-TB9-T1)
 	Pslit       = "internal/platform/pslit"              // PowerShell display literal
 	APIHost     = "internal/platform/apihost"            // the single caller of secretjson.Decode
 	Modules     = "internal/modules"                     // server feature modules

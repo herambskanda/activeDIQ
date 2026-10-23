@@ -74,6 +74,8 @@ type symbolRule struct {
 	Msg           string
 }
 
+const egressMsg = "outbound HTTP, dialers and raw dials are banned outside internal/platform/egress: it resolves, vets and pins the destination (threat-model §5.9 TM-TB9-T1)"
+
 var symbolRules = []symbolRule{
 	{Rule: "ldap-filter-library", PkgPrefix: "github.com/go-ldap/ldap", Names: []string{"CompileFilter", "DecompileFilter", "EscapeFilter"},
 		Home: []string{policy.LDAPFilter}, TestsExempt: true,
@@ -92,6 +94,19 @@ var symbolRules = []symbolRule{
 		Msg: "syscall process creation is banned outside internal/platform/proc (" + refPr + ")"},
 	{Rule: "process-start", PkgPrefix: "golang.org/x/sys/windows", Names: []string{"CreateProcess", "CreateProcessAsUser", "CreateProcessWithLogon"}, Home: []string{policy.Proc}, TestsExempt: true,
 		Msg: "Win32 process creation is banned outside internal/platform/proc (" + refPr + ")"},
+	// TB9: one egress client (threat-model §5.9, TM-TB9-T1). http.Client is included because a bare
+	// client dials through the default transport without vetting.
+	{Rule: "outbound-http", Pkg: "net/http", Names: []string{"Client", "Transport", "DefaultClient", "DefaultTransport", "Get", "Head", "Post", "PostForm"},
+		Home: []string{policy.Egress, policy.Graph}, TestsExempt: true, Msg: egressMsg},
+	// The AD connector is a Home for the raw dial rules (net, crypto/tls) only, never for net/http
+	// above: its LDAPS dial to a domain controller is the server-to-DC boundary (TB2), not TB9. DCs are
+	// private by design and the targets come only from Config.Servers, set by the customer, so routing
+	// them through egress (which refuses private ranges) would be wrong. It still may not build an
+	// http.Client.
+	{Rule: "outbound-http", Pkg: "net", Names: []string{"Dial", "DialTimeout", "Dialer", "DialTCP", "DialUDP", "DialIP", "DialUnix"},
+		Home: []string{policy.Egress, policy.Graph, policy.ADConn}, TestsExempt: true, Msg: egressMsg},
+	{Rule: "outbound-http", Pkg: "crypto/tls", Names: []string{"Dial", "DialWithDialer", "Dialer"},
+		Home: []string{policy.Egress, policy.Graph, policy.ADConn}, TestsExempt: true, Msg: egressMsg},
 	{Rule: "pgx-simple-protocol", Pkg: "github.com/jackc/pgx/v5", Names: []string{"QueryExecModeSimpleProtocol"}, Home: []string{policy.Store},
 		Msg: "pgx simple protocol interpolates client-side (CVE-2024-27289); only the store's pool-construction assertion may name it (" + refP5 + " rule 6)"},
 	{Rule: "pgx-connection", Pkg: "github.com/jackc/pgx/v5", Names: []string{"Connect", "ConnectConfig", "ParseConfig", "ConnConfig"}, Home: []string{policy.Store},
