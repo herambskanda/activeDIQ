@@ -263,7 +263,23 @@ func (b *builder) permissions(in EntraInput) {
 		enabled[f] = true
 	}
 	allowed := map[string]bool{}
+	for _, p := range optionalAllowed {
+		allowed[strings.ToLower(p)] = true
+	}
 	var rows []Row
+	// The PIM-for-Groups reads are attributed to the lowest-numbered enabled write family.
+	var writeFam v1.RightsFamily
+	for f := range enabled {
+		if writeFamilies[f] && (writeFam == 0 || f < writeFam) {
+			writeFam = f
+		}
+	}
+	if writeFam != 0 {
+		rows = append(rows, Row{Family: writeFam, Needs: pimGroupReadNeeds, MissingBlocks: true})
+		for _, n := range pimGroupReadNeeds {
+			allowed[strings.ToLower(n.Any[0])] = true
+		}
+	}
 	for _, r := range allowRows {
 		if enabled[r.Family] {
 			rows = append(rows, r)

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/skenzeriq/activediq/internal/connector/graph"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
@@ -30,6 +31,12 @@ type Reader interface {
 	ApplicationByAppID(ctx context.Context, appID guid.GUID) (graph.Application, error)
 	ApplicationOwners(ctx context.Context, objectID guid.GUID) ([]graph.DirectoryObject, error)
 	ServicePrincipalOwners(ctx context.Context, objectID guid.GUID) ([]graph.DirectoryObject, error)
+	// TM-D25 reads.
+	GroupTransitiveMembers(ctx context.Context, groupID guid.GUID) ([]graph.DirectoryObject, error)
+	GroupByID(ctx context.Context, groupID guid.GUID) (graph.Group, error)
+	GroupSchedules(ctx context.Context, groupID guid.GUID) ([]graph.GroupSchedule, error)
+	PrincipalSchedules(ctx context.Context, principalID guid.GUID) ([]graph.GroupSchedule, error)
+	SubscribedSKUs(ctx context.Context) ([]graph.SubscribedSKU, error)
 }
 
 var _ Reader = (*graph.Client)(nil)
@@ -78,8 +85,10 @@ var denyExact = map[string]bool{
 	"User-Phone.ReadWrite.All": true, "User-Mail.ReadWrite.All": true, "User.ManageIdentities.All": true,
 }
 
+// RoleManagementPolicy.ReadWrite.* can remove the MFA, approval and justification rules on PIM
+// activation (§6.6, T-0111).
 var denyPrefix = []string{"PrivilegedAccess.ReadWrite.", "Policy.ReadWrite.", "PrivilegedEligibilitySchedule.ReadWrite.",
-	"PrivilegedAssignmentSchedule.ReadWrite."}
+	"PrivilegedAssignmentSchedule.ReadWrite.", "RoleManagementPolicy.ReadWrite."}
 
 func denied(perm string) bool {
 	if denyExact[perm] {
@@ -97,7 +106,28 @@ func denied(perm string) bool {
 // Set is one computed snapshot of the tenant's E1-E4 members, by lower-case object id.
 type Set struct {
 	bases map[string]map[Basis]bool
+	// reach is the groups of the TM-D25 closure with the bases they carry, for the per-write live
+	// schedule check.
+	reach map[string]map[Basis]bool
+	// designatedGroups are the group ids the snapshot was computed for.
+	designatedGroups map[string]bool
+	// dyn are the dynamic groups of the designated closure (rule 7a); r re-reads their rules on
+	// every property-write check (rule 7b); extMap maps customer-mapped directory-extension LDAP
+	// attributes to rule property names.
+	dyn            []DynamicClosure
+	r              Reader
+	extMap         map[string]string
+	computedAt     time.Time
+	pimNotLicensed bool
 }
+
+// ComputedAt is the time the snapshot judged schedule expiry against.
+func (s *Set) ComputedAt() time.Time { return s.computedAt }
+
+// PIMNotLicensed reports the TM-D25 rule 5 assumption: the PIM-for-Groups reads were answered as
+// "not licensed", corroborated by subscribedSkus, and schedules were treated as empty. Connection
+// health states it so the customer sees the assumption.
+func (s *Set) PIMNotLicensed() bool { return s.pimNotLicensed }
 
 func (s *Set) add(id string, b Basis) {
 	id = strings.ToLower(id)
@@ -129,16 +159,71 @@ type Classifier struct {
 	// principals"), for example a Cloud Sync agent's app. Microsoft publishes no stable list the
 	// connector can rely on [UNVERIFIED], so the onboarding check supplies what it finds.
 	syncClientAppIDs []string
+	unlicensed       PIMUnlicensed
+	extMap           map[string]string
+	now              func() time.Time
+}
+
+// PIMUnlicensed is the exact signal lab G11 recorded for a tenant without the PIM licence, and the
+// service plans that carry PIM (TM-D25 rule 5). Until G11 has run both are unknown
+// [UNVERIFIED — lab G11], the zero value matches nothing, and every schedule read failure fails
+// the snapshot.
+type PIMUnlicensed struct {
+	HTTPStatus int
+	GraphCode  string   // error.code of the response
+	PlanIDs    []string // service plan ids carrying PIM; a tenant is unlicensed when none is enabled
+}
+
+func (u PIMUnlicensed) pinned() bool {
+	return u.HTTPStatus != 0 && u.GraphCode != "" && len(u.PlanIDs) > 0
 }
 
 // New returns a Classifier over r. syncClientAppIDs may be nil.
 func New(r Reader, syncClientAppIDs ...string) *Classifier {
-	return &Classifier{r: r, syncClientAppIDs: syncClientAppIDs}
+	return &Classifier{r: r, syncClientAppIDs: syncClientAppIDs, now: time.Now}
 }
 
-// Snapshot reads the tenant and computes E1-E4. Any read error fails the whole snapshot.
-func (c *Classifier) Snapshot(ctx context.Context) (*Set, error) {
-	s := &Set{bases: map[string]map[Basis]bool{}}
+// WithPIMUnlicensed sets the lab-G11-pinned unlicensed signal and returns c.
+func (c *Classifier) WithPIMUnlicensed(u PIMUnlicensed) *Classifier { c.unlicensed = u; return c }
+
+// WithDirectoryExtensions tells the guard which LDAP attribute feeds which directory-extension rule
+// property (Entra Connect option, rule 7g): attr -> "extension_<appId>_<name>". Without it, an AD
+// write is refused while any closure rule uses an extension_ property.
+func (c *Classifier) WithDirectoryExtensions(m map[string]string) *Classifier {
+	c.extMap = map[string]string{}
+	for k, v := range m {
+		c.extMap[strings.ToLower(k)] = "user." + strings.TrimPrefix(strings.ToLower(v), "user.")
+	}
+	return c
+}
+
+// WithClock sets the clock for schedule expiry and returns c (tests).
+func (c *Classifier) WithClock(now func() time.Time) *Classifier { c.now = now; return c }
+
+// Kind is the type of a designated object. Only the caller can say what a designation is; the
+// classifier does not guess (an unknown kind fails closed).
+type Kind int
+
+const (
+	KindUnknown Kind = iota
+	KindUser
+	KindDevice
+	KindServicePrincipal
+	KindGroup
+)
+
+// Designation is one customer-designated Entra object (break-glass account, a group that Conditional
+// Access excludes). A designated group designates its reach (TM-D25 rule 6).
+type Designation struct {
+	ID   string
+	Kind Kind
+}
+
+// Snapshot reads the tenant and computes E1-E4 and the TM-D25 reach closure. designated names the
+// customer-designated groups whose reach is walked. Any read error fails the whole snapshot.
+func (c *Classifier) Snapshot(ctx context.Context, designated ...Designation) (*Set, error) {
+	s := &Set{bases: map[string]map[Basis]bool{}, reach: map[string]map[Basis]bool{}, designatedGroups: map[string]bool{},
+		r: c.r, extMap: c.extMap, computedAt: c.now().UTC()}
 
 	// E1 (+E4 labelling): every active and PIM-eligible holder at any scope. The reader fails the
 	// whole call when eligibility is unreadable, so partial answers never get here.
@@ -165,38 +250,42 @@ func (c *Classifier) Snapshot(ctx context.Context) (*Set, error) {
 		}
 	}
 
-	// E2: role-assignable groups, their members and owners.
+	// E2 and designated groups: the TM-D25 reach closure.
 	groups, err := c.r.RoleAssignableGroups(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("tier0: role-assignable groups: %w", err)
 	}
+	w := &walk{c: c, ctx: ctx, s: s, holdingSP: holdingSP, seen: map[string]bool{}}
 	for _, g := range groups {
-		s.add(g.ID, E2)
-		gid, err := objectID(g.ID)
-		if err != nil {
+		if _, err := objectID(g.ID); err != nil {
 			return nil, fmt.Errorf("tier0: role-assignable group: %w", err)
 		}
-		mem, err := c.r.GroupMembers(ctx, gid)
-		if err != nil {
-			return nil, fmt.Errorf("tier0: members of role-assignable group: %w", err)
-		}
-		own, err := c.r.GroupOwners(ctx, gid)
-		if err != nil {
-			return nil, fmt.Errorf("tier0: owners of role-assignable group: %w", err)
-		}
-		for _, o := range append(mem, own...) {
-			// A member or owner of a role-assignable group holds (or controls) its roles. A service
-			// principal there is a privileged SP: its owners are E3.
-			switch o.Type() {
-			case "user":
-			case "servicePrincipal":
-				holdingSP[strings.ToLower(o.ID)] = true
-			default: // empty or unknown kind: cannot rule out an app, so refuse
-				return nil, fmt.Errorf("tier0: role-assignable group has a member or owner of unknown type %q", o.Type())
+		w.enqueue(g.ID, E2, true)
+	}
+	for _, d := range designated {
+		switch d.Kind {
+		case KindGroup:
+			if _, err := objectID(d.ID); err != nil {
+				return nil, fmt.Errorf("tier0: designated group: %w", err)
 			}
-			s.add(o.ID, E2)
+			s.designatedGroups[strings.ToLower(d.ID)] = true
+			w.enqueue(d.ID, Designated, false)
+		case KindUser, KindDevice, KindServicePrincipal:
+			if _, err := objectID(d.ID); err != nil {
+				return nil, fmt.Errorf("tier0: designated object: %w", err)
+			}
+			s.add(d.ID, Designated)
+			if d.Kind == KindServicePrincipal {
+				holdingSP[strings.ToLower(d.ID)] = true
+			}
+		default:
+			return nil, errors.New("tier0: designated object has an unknown kind")
 		}
 	}
+	if err := w.run(); err != nil {
+		return nil, err
+	}
+	s.pimNotLicensed = w.pimEmpty
 
 	// E3: owners of apps and SPs that hold a directory role or a deny-listed Graph permission.
 	graphApp, err := objectID(graphAppID)
@@ -358,9 +447,9 @@ type Input struct {
 	Peers            []Peer
 	// ADTier0 is the set of AD tier0 object GUIDs the caller computed.
 	ADTier0 map[string]bool
-	// Designated are customer-designated Entra object ids (break-glass accounts, groups that
-	// Conditional Access excludes).
-	Designated []string
+	// Designated are the customer-designated Entra objects (break-glass accounts, groups that
+	// Conditional Access excludes), each with its kind: a designated group designates its reach.
+	Designated []Designation
 }
 
 // Result is the classification of one target.
@@ -371,18 +460,46 @@ type Result struct {
 	Bases   []Basis
 }
 
-// Classify answers whether target (an Entra object id) is tier0, reading a fresh snapshot. On any
-// error the result is {Tier0, Unknown} and the error is returned.
+// Classify answers whether target (an Entra object id) is tier0, reading a fresh snapshot and, for
+// the target, a live read of its own PIM-for-Groups schedules (TM-D25 rule 3). On any error the
+// result is {Tier0, Unknown} and the error is returned.
 func (c *Classifier) Classify(ctx context.Context, target string, in Input) (Result, error) {
-	set, err := c.Snapshot(ctx)
+	refuse := Result{Tier0: true, Unknown: true}
+	set, err := c.Snapshot(ctx, in.Designated...)
 	if err != nil {
-		return Result{Tier0: true, Unknown: true}, err
+		return refuse, err
 	}
-	return set.Classify(target, in)
+	tid, err := objectID(target)
+	if err != nil {
+		return refuse, fmt.Errorf("tier0: target: %w", err)
+	}
+	extra := map[Basis]bool{}
+	if !set.pimNotLicensed {
+		// A direct schedule created since the snapshot is still refused, as for direct C9 links.
+		raw, err := c.r.PrincipalSchedules(ctx, tid)
+		if err != nil {
+			return refuse, fmt.Errorf("tier0: PIM for Groups schedules of the target: %w", err)
+		}
+		live, err := counted(raw, "", set.computedAt)
+		if err != nil {
+			return refuse, err
+		}
+		for _, sc := range live {
+			if !strings.EqualFold(sc.PrincipalID, target) {
+				return refuse, errors.New("tier0: PIM for Groups schedule belongs to another principal than the target")
+			}
+			for b := range set.reach[strings.ToLower(sc.GroupID)] {
+				extra[b] = true
+			}
+		}
+	}
+	return set.classify(target, in, extra)
 }
 
 // Classify applies a snapshot, the caller's correlation facts and designations to target.
-func (s *Set) Classify(target string, in Input) (Result, error) {
+func (s *Set) Classify(target string, in Input) (Result, error) { return s.classify(target, in, nil) }
+
+func (s *Set) classify(target string, in Input, extra map[Basis]bool) (Result, error) {
 	if !in.CorrelationKnown {
 		return Result{Tier0: true, Unknown: true}, errors.New("tier0: correlation statement not supplied")
 	}
@@ -392,6 +509,9 @@ func (s *Set) Classify(target string, in Input) (Result, error) {
 	}
 	b := map[Basis]bool{}
 	for x := range s.bases[t] {
+		b[x] = true
+	}
+	for x := range extra {
 		b[x] = true
 	}
 	ad := make(map[string]bool, len(in.ADTier0))
@@ -407,7 +527,17 @@ func (s *Set) Classify(target string, in Input) (Result, error) {
 		}
 	}
 	for _, d := range in.Designated {
-		if strings.EqualFold(d, t) {
+		switch d.Kind {
+		case KindGroup:
+			// The snapshot must have walked this group's reach, or its members are not in the set.
+			if !s.designatedGroups[strings.ToLower(d.ID)] {
+				return Result{Tier0: true, Unknown: true}, errors.New("tier0: designated group was not part of the snapshot")
+			}
+		case KindUser, KindDevice, KindServicePrincipal:
+		default:
+			return Result{Tier0: true, Unknown: true}, errors.New("tier0: designated object has an unknown kind")
+		}
+		if strings.EqualFold(d.ID, t) {
 			b[Designated] = true
 		}
 	}
@@ -422,4 +552,13 @@ func objectID(s string) (guid.GUID, error) {
 		return guid.GUID{}, errors.New("id is not a GUID")
 	}
 	return g, nil
+}
+
+func hasDynamic(types []string) bool {
+	for _, t := range types {
+		if strings.EqualFold(t, "DynamicMembership") {
+			return true
+		}
+	}
+	return false
 }

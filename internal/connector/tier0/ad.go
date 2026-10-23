@@ -1043,3 +1043,25 @@ func (b *builder) addHost(h string) {
 	b.dcHosts[h] = true
 	b.dcHosts[strings.SplitN(h, ".", 2)[0]] = true
 }
+
+// Members returns the objectGUID of every object in the snapshot, in a stable order. The rights
+// check (TM §6.5 steps 2 and 3) reads each one's effective rights.
+func (s *ADSet) Members() []guid.GUID {
+	out := make([]guid.GUID, 0, len(s.bases))
+	for k := range s.bases {
+		g, err := guid.Parse(k)
+		if err != nil { // keys come from guid.String
+			continue
+		}
+		out = append(out, g)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].String() < out[j].String() })
+	return out
+}
+
+// NewADSet returns an empty set, for callers that supply a snapshot from elsewhere (tests of the
+// rights check).
+func NewADSet() *ADSet { return &ADSet{bases: map[string]map[Basis]bool{}} }
+
+// Add marks g with basis b.
+func (s *ADSet) Add(g guid.GUID, b Basis) { s.add(g, b) }

@@ -4,3 +4,4 @@
 - [OData P8 lessons](odata-primitive-lessons.md) — external test pkg, multi-key corpus expect, home-registration checklist, pre-existing red
 - [tier0 classifier lessons](tier0-classifier-lessons.md) — Samba in-chain cost, ranged member, unreadable GUIDs, lab creds
 - [write guard lessons](write-guard-lessons.md) — gRPC embed trap, graphtest MS Graph SP, GUID wire order, lab creds
+- [rights-check lessons](rights-check-lessons.md) — Samba dsacl/delegation, constructed attrs need Read, own-SID exclusions
