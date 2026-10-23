@@ -205,7 +205,9 @@ func TestCheckpointSignedByRetiredKey(t *testing.T) {
 	opts := Options{Pinned: []string{Fingerprint(b.pub)}}
 	// No cross-signature: nothing trusted covers the new key's introduction (T-0229 adds it).
 	want(t, Verify(b.bundle(), opts), Failed, 5, ReasonUntrustedKey)
-	opts.Pinned = append(opts.Pinned, Fingerprint(pub2)) // pinning both is the operator's explicit choice
+	opts.Pinned = append(opts.Pinned, Fingerprint(pub2)) // pinning both is the operator's explicit choice, with windows
+	want(t, Verify(b.bundle(), opts), Failed, 0, ReasonPinWindow)
+	opts.PinWindows = map[string]PinWindow{Fingerprint(b.pub): {1, 3}, Fingerprint(pub2): {4, 0}}
 	want(t, Verify(b.bundle(), opts), OK, 0, "")
 
 	b.add("c")
@@ -500,7 +502,8 @@ func TestPinnedKeyAbsentFromExportFails(t *testing.T) {
 	b.rotate(t, b.priv, pub2, true) // 11, 12
 	b.add("x")
 	b.checkpoint(priv2, pub2) // 13
-	both := Options{Pinned: []string{Fingerprint(b.pub), Fingerprint(pub2)}}
+	both := Options{Pinned: []string{Fingerprint(b.pub), Fingerprint(pub2)},
+		PinWindows: map[string]PinWindow{Fingerprint(b.pub): {1, 11}, Fingerprint(pub2): {12, 0}}}
 	want(t, Verify(b.bundle(), both), OK, 0, "")
 
 	fork.add("victim-removed-tail")
@@ -534,5 +537,182 @@ func TestManifestRetirementMustMatchChain(t *testing.T) {
 	gb.Keys = []KeyInfo{{KeyID: Fingerprint(g.pub), PublicKey: g.pub, CreatedSeq: 1}}
 	if r := Verify(gb, pin(g)); r.Status != Failed || r.Reason != ReasonKeyMismatch {
 		t.Fatalf("manifest RetiredSeq=0 accepted while the chain retires: %s", r.Status)
+	}
+}
+
+// T-0243 (probe P3): K1 stays pinned after rotation; an attacker holding K1's seed exports from seq 14
+// with a manifest that calls K1 current and a starting checkpoint signed by K1.
+func TestStaleRetiredKeyPinCannotValidateTruncatedExport(t *testing.T) {
+	g := seeded(t)
+	pub2, priv2 := key(t)
+	g.rotate(t, g.priv, pub2, true) // 11, 12
+	g.add("x")                      // 13
+	g.checkpoint(priv2, pub2)       // cp@13 by K2
+	g.add("y")
+	g.add("z")
+	k1, k2 := Fingerprint(g.pub), Fingerprint(pub2)
+
+	f := newBuilder(t, 1)
+	f.events, f.seq, f.prev = nil, 13, Hash{1}
+	f.checkpoint(g.priv, g.pub) // cp@13 by K1
+	f.add("forged")
+	f.add("forged")
+	forged := f.bundle()
+	forged.FromSeq = 14
+	forged.Keys = []KeyInfo{{KeyID: k1, PublicKey: g.pub, CreatedSeq: 1}, {KeyID: k2, PublicKey: pub2, CreatedSeq: 12}}
+
+	both := Options{Pinned: []string{k1, k2}}
+	want(t, Verify(forged, both), Failed, 0, ReasonPinWindow)
+	win := Options{Pinned: both.Pinned, PinWindows: map[string]PinWindow{k1: {1, 11}, k2: {12, 0}}}
+	want(t, Verify(forged, win), Failed, 0, ReasonPinWindow)
+	if r := Verify(forged, Options{Pinned: []string{k2}}); r.Status == OK {
+		t.Fatalf("forged export validated under the current key alone")
+	}
+
+	// Genuine chain: full range with both pins, and truncated under each documented procedure.
+	want(t, Verify(g.bundle(), both), Failed, 0, ReasonPinWindow) // several pins always need windows
+	if r := Verify(g.bundle(), win); r.Status != OK {
+		t.Fatalf("genuine full export, windowed pins: %s %s", r.Status, r.Detail)
+	}
+	tr := g.bundle()
+	tr.FromSeq, tr.Events, tr.Checkpoints = 14, tr.Events[13:], g.cps[2:]
+	tr.Keys = []KeyInfo{{KeyID: k1, PublicKey: g.pub, CreatedSeq: 1, RetiredSeq: 11}, {KeyID: k2, PublicKey: pub2, CreatedSeq: 12}}
+	for name, o := range map[string]Options{"current only": {Pinned: []string{k2}}, "windowed": win} {
+		if r := Verify(tr, o); r.Status != OK {
+			t.Fatalf("genuine truncated export, %s: %s %s %s", name, r.Status, r.Reason, r.Detail)
+		}
+	}
+	want(t, Verify(tr, both), Failed, 0, ReasonPinWindow)
+}
+
+func TestParsePin(t *testing.T) {
+	for in, ok := range map[string]bool{"ab": true, "AB@1-5": true, "ab@12-": true, "ab@0-5": false, "ab@5-5": false, "ab@x": false, "@1-2": false, "ab@3": false} {
+		if _, _, err := ParsePin(in); (err == nil) != ok {
+			t.Errorf("ParsePin(%q) err=%v; want ok=%v", in, err, ok)
+		}
+	}
+}
+
+// T-0243 security re-review probes A-C: the attacker holds K1's seed.
+func TestRetiredPinCannotCarryForgedRotationExport(t *testing.T) {
+	g := seeded(t)
+	pub2, priv2 := key(t)
+	g.rotate(t, g.priv, pub2, true) // 11, 12
+	g.add("x")
+	g.checkpoint(priv2, pub2)
+	k1, k2 := Fingerprint(g.pub), Fingerprint(pub2)
+
+	// A: the rotation sits inside the forged range; no windows. Unwindowed multi-pin truncated is refused.
+	a := newBuilder(t, 1)
+	a.events, a.seq, a.prev = nil, 13, Hash{1}
+	a.checkpoint(g.priv, g.pub)
+	a.rotate(t, g.priv, pub2, true) // 14, 15
+	a.add("forged")
+	ab := a.bundle()
+	ab.FromSeq = 14
+	ab.Keys = []KeyInfo{{KeyID: k1, PublicKey: g.pub, CreatedSeq: 1, RetiredSeq: 14}}
+	want(t, Verify(ab, Options{Pinned: []string{k1, k2}}), Failed, 0, ReasonPinWindow)
+	// With windows the forged retirement (14, not 11) is refuted.
+	win := Options{Pinned: []string{k1, k2}, PinWindows: map[string]PinWindow{k1: {1, 11}, k2: {12, 0}}}
+	want(t, Verify(ab, win), Failed, 0, ReasonPinWindow)
+
+	// B: fork from K1's last checkpoint at the true rotation point, honest-looking windows, no K2 checkpoint.
+	b := newBuilder(t, 1)
+	b.events, b.seq, b.prev = nil, 10, Hash{2}
+	b.checkpoint(g.priv, g.pub)
+	b.rotate(t, g.priv, pub2, true) // 11, 12
+	b.add("forged")
+	bb := b.bundle()
+	bb.FromSeq = 11
+	bb.Keys = []KeyInfo{{KeyID: k1, PublicKey: g.pub, CreatedSeq: 1, RetiredSeq: 11}}
+	want(t, Verify(bb, win), Failed, bb.ToSeq, ReasonPinnedKeyAbsent)
+
+	// The genuine full chain with windowed pins stays OK.
+	if r := Verify(g.bundle(), win); r.Status != OK {
+		t.Fatalf("genuine full, windowed pins: %s %s", r.Reason, r.Detail)
+	}
+}
+
+func TestContradictoryPinWindowsAreRejected(t *testing.T) {
+	g := seeded(t)
+	k1 := Fingerprint(g.pub)
+	for name, ws := range map[string]map[string]PinWindow{
+		"two open":    {k1: {1, 0}, "bb": {12, 0}},
+		"overlapping": {k1: {1, 12}, "bb": {10, 0}},
+	} {
+		want(t, Verify(g.bundle(), Options{Pinned: []string{k1, "bb"}, PinWindows: ws}), Failed, 0, ReasonPinWindow)
+		_ = name
+	}
+}
+
+// T-0243 security re-review probe D: the forged range retires the current key K2, which needs no signature.
+func TestForgedRetirementOfCurrentKeyCannotHideItsAbsence(t *testing.T) {
+	g := seeded(t)
+	pub2, priv2 := key(t)
+	g.rotate(t, g.priv, pub2, true) // 11, 12
+	g.add("x")
+	g.checkpoint(priv2, pub2)
+	k1, k2 := Fingerprint(g.pub), Fingerprint(pub2)
+	win := Options{Pinned: []string{k1, k2}, PinWindows: map[string]PinWindow{k1: {1, 11}, k2: {12, 0}}}
+
+	// Truncated: fork at K1's checkpoint, rotate honestly-looking, then retire K2 with no K2 checkpoint.
+	d := newBuilder(t, 1)
+	d.events, d.seq, d.prev = nil, 10, Hash{2}
+	d.checkpoint(g.priv, g.pub)
+	d.rotate(t, g.priv, pub2, true) // 11, 12
+	d.add(KindKeyRetired, Detail{"key_id", k2})
+	d.add("forged")
+	db := d.bundle()
+	db.FromSeq = 11
+	db.Keys = []KeyInfo{{KeyID: k1, PublicKey: g.pub, CreatedSeq: 1, RetiredSeq: 11}}
+	if r := Verify(db, win); r.Status == OK {
+		t.Fatalf("truncated fork with K2 retired verified OK")
+	}
+
+	// Full range, unwindowed K1+K2: the newest pinned key still has to have signed.
+	f := newBuilder(t, 1)
+	f.pub, f.priv = g.pub, g.priv
+	f.events, f.seq, f.prev = nil, 0, Genesis(f.tenant)
+	f.keyCreated(g.pub)
+	for range 9 {
+		f.add("operation.step.applied")
+	}
+	f.checkpoint(g.priv, g.pub)
+	f.rotate(t, g.priv, pub2, true)
+	f.add(KindKeyRetired, Detail{"key_id", k2})
+	f.add("forged")
+	if r := Verify(f.bundle(), Options{Pinned: []string{k1, k2}}); r.Status == OK {
+		t.Fatalf("full-range fork with K2 retired verified OK")
+	}
+
+	// An open window asserts the key is unretired.
+	g2 := seeded(t)
+	pub3, priv3 := key(t)
+	g2.rotate(t, g2.priv, pub3, true)
+	g2.checkpoint(priv3, pub3)
+	g2.add(KindKeyRetired, Detail{"key_id", Fingerprint(pub3)})
+	o := Options{Pinned: []string{Fingerprint(pub3)}, PinWindows: map[string]PinWindow{Fingerprint(pub3): {12, 0}}}
+	want(t, Verify(g2.bundle(), o), Failed, 0, ReasonPinWindow)
+
+	// Genuine exports stay OK.
+	if r := Verify(g.bundle(), win); r.Status != OK {
+		t.Fatalf("genuine full: %s %s", r.Reason, r.Detail)
+	}
+}
+
+// T-0243 security probe G: a full-range export where the forger orders bare key.created events.
+func TestFullRangeForgedKeyOrderNeedsWindows(t *testing.T) {
+	b := newBuilder(t, 1)
+	pub2, _ := key(t)
+	b.keyCreated(pub2)  // seq 1 bare K2
+	b.keyCreated(b.pub) // seq 2 bare K1 "newest"
+	b.add("forged")
+	b.checkpoint(b.priv, b.pub)
+	k1, k2 := Fingerprint(b.pub), Fingerprint(pub2)
+	win := Options{Pinned: []string{k1, k2}, PinWindows: map[string]PinWindow{k1: {1, 11}, k2: {12, 0}}}
+	for name, o := range map[string]Options{"unwindowed": {Pinned: win.Pinned}, "windowed": win} {
+		if r := Verify(b.bundle(), o); r.Status == OK {
+			t.Fatalf("forged key order validated, %s pins", name)
+		}
 	}
 }
