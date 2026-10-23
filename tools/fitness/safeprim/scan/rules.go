@@ -98,10 +98,15 @@ var symbolRules = []symbolRule{
 	// client dials through the default transport without vetting.
 	{Rule: "outbound-http", Pkg: "net/http", Names: []string{"Client", "Transport", "DefaultClient", "DefaultTransport", "Get", "Head", "Post", "PostForm"},
 		Home: []string{policy.Egress, policy.Graph}, TestsExempt: true, Msg: egressMsg},
+	// The AD connector is a Home for the raw dial rules (net, crypto/tls) only, never for net/http
+	// above: its LDAPS dial to a domain controller is the server-to-DC boundary (TB2), not TB9. DCs are
+	// private by design and the targets come only from Config.Servers, set by the customer, so routing
+	// them through egress (which refuses private ranges) would be wrong. It still may not build an
+	// http.Client.
 	{Rule: "outbound-http", Pkg: "net", Names: []string{"Dial", "DialTimeout", "Dialer", "DialTCP", "DialUDP", "DialIP", "DialUnix"},
-		Home: []string{policy.Egress, policy.Graph}, TestsExempt: true, Msg: egressMsg},
+		Home: []string{policy.Egress, policy.Graph, policy.ADConn}, TestsExempt: true, Msg: egressMsg},
 	{Rule: "outbound-http", Pkg: "crypto/tls", Names: []string{"Dial", "DialWithDialer", "Dialer"},
-		Home: []string{policy.Egress, policy.Graph}, TestsExempt: true, Msg: egressMsg},
+		Home: []string{policy.Egress, policy.Graph, policy.ADConn}, TestsExempt: true, Msg: egressMsg},
 	{Rule: "pgx-simple-protocol", Pkg: "github.com/jackc/pgx/v5", Names: []string{"QueryExecModeSimpleProtocol"}, Home: []string{policy.Store},
 		Msg: "pgx simple protocol interpolates client-side (CVE-2024-27289); only the store's pool-construction assertion may name it (" + refP5 + " rule 6)"},
 	{Rule: "pgx-connection", Pkg: "github.com/jackc/pgx/v5", Names: []string{"Connect", "ConnectConfig", "ParseConfig", "ConnConfig"}, Home: []string{policy.Store},

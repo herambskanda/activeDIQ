@@ -75,7 +75,6 @@ func permitted(ip netip.Addr, allow []netip.Prefix) bool {
 	return true
 }
 
-// coversMetadata reports whether an allow-list prefix would include a metadata address.
 // translation are the prefixes that embed an IPv4 destination. An allow-list entry overlapping one
 // would reach metadata through the embedded address, which the exact-match metadata check cannot
 // see; operators allow-list the IPv4 range instead.
@@ -90,6 +89,7 @@ func overlapsTranslation(p netip.Prefix) bool {
 	return false
 }
 
+// coversMetadata reports whether an allow-list prefix would include a metadata address.
 func coversMetadata(p netip.Prefix) bool {
 	for _, m := range metadata {
 		if p.Contains(m) {

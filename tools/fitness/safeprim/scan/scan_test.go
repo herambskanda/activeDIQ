@@ -181,6 +181,9 @@ func TestFFSP2BannedAPIs(t *testing.T) {
 		"internal/modules/m/m_test.go":  gofile("\t\"net/http\"\n", "var c = &http.Client{}"),
 		"internal/modules/m/h.go":       gofile("\t\"net/http\"\n", "var s = &http.Server{}\nvar _ = http.NewRequest"),
 	}, "", "", "")
+	want(t, "AD connector may dial DCs (TB2)", map[string]string{"internal/connector/ad/x.go": gofile("\t\"net\"\n", "var d net.Dialer")}, "", "", "")
+	want(t, "AD connector may not build an http.Client", map[string]string{"internal/connector/ad/x.go": gofile("\t\"net/http\"\n", "var c = &http.Client{}")}, "FF-SP2", "outbound-http", "internal/connector/ad/x.go")
+	want(t, "another connector may not dial", map[string]string{"internal/connector/rights/x.go": gofile("\t\"net\"\n", "var d net.Dialer")}, "FF-SP2", "outbound-http", "internal/connector/rights/x.go")
 	want(t, "text/template", map[string]string{"internal/modules/m/m.go": gofile("\t_ \"text/template\"\n", "")}, "FF-SP2", "text-template", "internal/modules/m/m.go")
 	want(t, "TLS bypass in a test", map[string]string{"internal/modules/m/m_test.go": gofile("\t\"crypto/tls\"\n", "var c = tls.Config{InsecureSkipVerify: true}")}, "FF-SP2", "tls-skip-verify", "internal/modules/m/m_test.go")
 	want(t, "TLS bypass in tier L", map[string]string{"tools/x/x.go": gofile("\t\"crypto/tls\"\n", "var c = tls.Config{InsecureSkipVerify: true}")}, "FF-SP2", "tls-skip-verify", "tools/x/x.go")

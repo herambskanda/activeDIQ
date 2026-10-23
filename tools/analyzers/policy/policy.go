@@ -24,6 +24,7 @@ const (
 	OData       = "internal/directory/odata"             // P8
 	GraphSchema = "internal/directory/odata/graphschema" // P8 property declarations
 	Graph       = "internal/connector/graph"             // the Microsoft Graph connector
+	ADConn      = "internal/connector/ad"                // AD connector: LDAPS dial to domain controllers (TB2, not TB9)
 	Attr        = "internal/directory/attr"              // P3
 	Secret      = "internal/platform/secret"             // Secret and secretjson
 	Store       = "internal/platform/store"              // data-access package: pgx, set_config, reportsql
