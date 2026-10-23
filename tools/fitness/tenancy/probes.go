@@ -452,9 +452,6 @@ func probeSessionLeak(ctx context.Context, d *Database) ([]Violation, error) {
 	return vs, nil
 }
 
-// deleteNotGranted reports whether err is the runtime role lacking DELETE on the table (insufficient
-// privilege). A table whose rows are never deleted (a state, not a delete, ends them) revokes it, and
-// then the probe's delete touches nothing, which is what the probe asserts.
 // execIfGranted runs a write inside a savepoint and returns the rows it touched. A privilege that the
 // runtime role does not hold (an append-only table revokes UPDATE and DELETE) touches nothing, which
 // is the safe outcome, so it is not an error and does not abort the surrounding probe transaction.
@@ -477,6 +474,9 @@ func execIfGranted(ctx context.Context, tx pgx.Tx, sql string, args ...any) (int
 	return tag.RowsAffected(), nil
 }
 
+// deleteNotGranted reports whether err is the runtime role lacking DELETE on the table (insufficient
+// privilege). A table whose rows are never deleted (a state, not a delete, ends them) revokes it, and
+// then the probe's delete touches nothing, which is what the probe asserts.
 func deleteNotGranted(err error) bool {
 	var pe *pgconn.PgError
 	return errors.As(err, &pe) && pe.Code == "42501"
