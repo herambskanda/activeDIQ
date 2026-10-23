@@ -29,7 +29,7 @@ The CNA application is in `cna-application.md`. The gate is `make fitness-disclo
 
 Reports reach the factory through GitHub private vulnerability reporting, and through the public
 `Security contact request` issue fallback in `SECURITY.md`. Until the factory account can read draft
-advisories (§8, A-2) and T-0270 polls them, the CEO forwards each report by filing a factory ticket. The ticket gets a
+advisories (§8, A-0005) and T-0270 polls them, the CEO forwards each report by filing a factory ticket. The ticket gets a
 neutral title, the tags `security-sensitive,embargoed`, and only the advisory link, never the details.
 
 ## 2. The clock
@@ -125,7 +125,7 @@ carries its short form.
    - CWE, an affected product, the advisory as a public reference, no self-reference and no credit in
      the description.
 3. Paste everything below the front matter of `advisory.md` into the GitHub advisory, enter the same
-   vector in its CVSS field, and publish it (CEO, until §8 A-2 is done).
+   vector in its CVSS field, and publish it (CEO, until §8 A-0005 is done).
 4. Publish the record. With our own CNA, submit `record.json` through CVE Services
    ([Vulnogram](https://vulnogram.github.io/) accepts it). With GitHub's CNA, GitHub publishes it.
    Then replace `record.json` with the record as published (`https://cveawg.mitre.org/api/cve/<CVE-ID>`)
@@ -144,8 +144,9 @@ The repository is public. Anything pushed to `main` is disclosure.
 - Fix tickets carry the tag `embargoed`, a neutral title and summary, and only the advisory link.
 - The fix is built in the advisory's temporary private fork, or on the local ticket branch. Commit
   messages stay neutral until fix day.
-- **An `embargoed` ticket is not merged to `main` before fix day.** Until the dispatcher enforces
-  this (T-0269), the reviewer and QA stages must check the tag before advancing.
+- **An `embargoed` ticket is not merged to `main` before fix day.** The dispatcher holds it
+  (T-0269, `factory/lib/dispatcher.mjs`). Remove the tag on fix day, after the release is built, to let
+  it merge. Never merge by hand around the hold.
 - Reporter embargo: until the fix ships, or 90 days from the report, whichever is first (`SECURITY.md`).
   Exploitation in the wild ends the embargo: ship the fix or a mitigation on the critical clock.
 
@@ -159,11 +160,11 @@ The repository is public. Anything pushed to `main` is disclosure.
 
 ## 8. CEO actions this runbook depends on
 
-Filed on the Factory Board as actions (T-0260):
+Filed on the Factory Board as actions (T-0260; A-0003 filed by factory-director, verified by T-0265):
 
-- **A-1** Turn on GitHub private vulnerability reporting. On 2026-10-23 it was **off**
+- **A-0003** Turn on GitHub private vulnerability reporting. On 2026-10-23 it was **off**
   (`gh api repos/herambskanda/activeDIQ/private-vulnerability-reporting` → `{"enabled":false}`), while
   `SECURITY.md` already points researchers to it. The public-issue fallback works until then.
-- **A-2** Give the factory account the repository *security manager* role, so it can read draft
+- **A-0005** Give the factory account the repository *security manager* role, so it can read draft
   advisories and request CVEs. Without it, the CEO forwards every report and publishes every advisory.
-- **A-3** Submit the CNA application (`cna-application.md` §5).
+- **A-0006** Submit the CNA application (`cna-application.md` §5).

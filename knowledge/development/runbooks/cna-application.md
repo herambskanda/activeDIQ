@@ -39,7 +39,7 @@ complete, CVE IDs come from GitHub's CNA (`security-disclosure.md` §4).
 | --- | --- | --- |
 | Scope Definition, approved by the Root before authorisation (3.1.1) | §4 below | Drafted |
 | Administrative POC: named people with email **and** phone, at least two recommended, kept private (3.2.2) | CEO (§5) | **CEO** |
-| Public POC, published in the List of Partners (3.2.3) | GitHub private vulnerability reporting, plus a public mailbox (§5, A-3b) | **CEO**: reporting is switched off today (A-1) |
+| Public POC, published in the List of Partners (3.2.3) | GitHub private vulnerability reporting, plus a public mailbox (§5, A-0006 b) | **CEO**: reporting is switched off today (A-0003) |
 | A way to request a CVE ID that is not encumbered by restrictive terms (3.2.4.2) | `SECURITY.md` says a CVE request is never conditional on our embargo or safe-harbour terms | Done (T-0260) |
 | Expected response times documented (3.2.4.3) | `SECURITY.md` "What we commit to" | Done (T-0258) |
 | Follow the CNA Discussion mailing list (3.2.4.5) | The administrative POC subscribes | **CEO** at onboarding |
@@ -86,21 +86,21 @@ Start now, so that we are a CNA before the first customer release.
 | Scope Definition | "All skenzeriq products, including activeDIQ, in supported and end-of-life versions." This is the broad Supplier form of CNA Rules 3.1.3; EOL is covered as 3.1.11 allows |
 | Vulnerability disclosure policy URL | <https://github.com/herambskanda/activeDIQ/blob/main/SECURITY.md> |
 | Advisory location URL | <https://github.com/herambskanda/activeDIQ/security/advisories> |
-| Public contact | <https://github.com/herambskanda/activeDIQ/security/advisories/new>, and the public mailbox from A-3b once it exists |
+| Public contact | <https://github.com/herambskanda/activeDIQ/security/advisories/new>, and the public mailbox from A-0006 (b) once it exists |
 | Administrative contacts (private) | **CEO**: at least two named people, each with a personal email address and a phone number |
 | CVE requests in flight | None |
 | Estimated CVEs per year | 0–10 for the first year |
 
-## 5. CEO-only steps (Factory Board actions)
+## 5. CEO-only steps (Factory Board actions A-0003, A-0005, A-0006)
 
 These leave the building or bind the company, so they are the CEO's. Everything else is done.
 
-- **A-1 Switch on private vulnerability reporting** (repository Settings → Security → Private
+- **A-0003 Switch on private vulnerability reporting** (repository Settings → Security → Private
   vulnerability reporting). It is **off** today, although `SECURITY.md` points to it. This step is
   needed now, regardless of the CNA.
-- **A-2 Give the factory account the security manager role** on the repository, so it can read draft
+- **A-0005 Give the factory account the security manager role** on the repository, so it can read draft
   advisories and request CVEs (`security-disclosure.md` §1).
-- **A-3 CNA submission:**
+- **A-0006 CNA submission:**
   - (a) Name the administrative contacts.
   - (b) Decide whether to open a public security mailbox on the company domain. CVE requesters
     without a GitHub account need one, and it may cost money.
@@ -109,6 +109,6 @@ These leave the building or bind the company, so they are the CEO's. Everything 
   - (e) Submit the request form (§3 step 1), attend the call and submit the exercises that
     security-architect prepares.
 
-When A-3 is done, record the CNA status in `knowledge/memory/decisions-log.md`. Then switch
+When A-0006 is done, record the CNA status in `knowledge/memory/decisions-log.md`. Then switch
 `security-disclosure.md` §4 and the `SECURITY.md` "CVE IDs and scores" section from GitHub's CNA to
 our own, in one change.
