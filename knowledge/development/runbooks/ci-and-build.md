@@ -161,6 +161,10 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
   Renew by setting `Expires` to a date 9–12 months ahead (RFC 3339, UTC), and change `Contact` only
   together with the channel named in `SECURITY.md` (the check requires both to match). Do not move
   the date without reading `SECURITY.md` for anything stale. Owner: security-architect.
+  It also checks advisories (T-0260): the message names `security/advisories/<CVE-ID>/advisory.md` or
+  `record.json` and what differs. Fix the advisory or the record so that both say the same thing; never
+  change the score to make the files agree without the second scorer
+  (`security-disclosure.md` §3.2). If the gate says `target_met` is wrong, the advisory must admit the miss.
 - **`fitness-operation`** (O9 of ADR-0005, the kernel import DAG): `make fitness-operation` prints every
   package of the `dag` block as `existing` or `pending`, then the violations as
   `file:line: O9 [rule 13] <importer> imports <imported>; …` with what the importer may import.
