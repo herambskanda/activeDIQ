@@ -28,7 +28,9 @@ type Query struct {
 	Classes []string
 	Eq      []AttrEq
 	EqInt   []AttrInt
-	Has     []string
+	// AnyInt matches objects where at least one of the terms holds (OR-ed, one term of the AND).
+	AnyInt []AttrInt
+	Has    []string
 	// UACAny matches objects whose userAccountControl has any of these bits set.
 	UACAny uint32
 }
@@ -41,9 +43,6 @@ type ADDirectory interface {
 	Get(ctx context.Context, ref dn.ObjectRef, attrs []string) (*ad.Entry, error)
 	// Find streams the objects under base matching q.
 	Find(ctx context.Context, base dn.DN, scope ad.Scope, q Query, attrs []string, fn func(*ad.Entry) error) error
-	// TransitiveMembers streams every transitive member (users, computers and nested groups) of a
-	// group, resolved by the DC (LDAP_MATCHING_RULE_IN_CHAIN on memberOf), cycle-safe.
-	TransitiveMembers(ctx context.Context, group dn.DN, attrs []string, fn func(*ad.Entry) error) error
 }
 
 // SessionDirectory adapts an *ad.Session to ADDirectory.
@@ -83,23 +82,6 @@ func (d SessionDirectory) Find(ctx context.Context, base dn.DN, scope ad.Scope, 
 	return d.S.Search(ctx, ad.SearchRequest{Base: dn.DNRef(base), Scope: scope, Filter: f, Attributes: attrs}, fn)
 }
 
-func (d SessionDirectory) TransitiveMembers(ctx context.Context, group dn.DN, attrs []string, fn func(*ad.Entry) error) error {
-	a, err := ldapfilter.ParseAttrName("memberOf", ad.DefaultSchema())
-	if err != nil {
-		return err
-	}
-	root, err := d.rootOf(ctx)
-	if err != nil {
-		return err
-	}
-	return d.S.Search(ctx, ad.SearchRequest{Base: dn.DNRef(root), Scope: ad.ScopeSubtree, Filter: ldapfilter.InChain(a, group), Attributes: attrs}, fn)
-}
-
-func (d SessionDirectory) rootOf(ctx context.Context) (dn.DN, error) {
-	n, err := d.Naming(ctx)
-	return n.Domain, err
-}
-
 // filter renders q with the typed builder.
 func (q Query) filter() (ldapfilter.Filter, error) {
 	sc := ad.DefaultSchema()
@@ -129,6 +111,17 @@ func (q Query) filter() (ldapfilter.Filter, error) {
 			return nil, err
 		}
 		terms = append(terms, ldapfilter.Eq(a, ldapfilter.Int32(e.Value)))
+	}
+	if len(q.AnyInt) > 0 {
+		var alts []ldapfilter.Filter
+		for _, e := range q.AnyInt {
+			a, err := attr(e.Attr)
+			if err != nil {
+				return nil, err
+			}
+			alts = append(alts, ldapfilter.Eq(a, ldapfilter.Int32(e.Value)))
+		}
+		terms = append(terms, ldapfilter.Or(alts...))
 	}
 	for _, h := range q.Has {
 		a, err := attr(h)

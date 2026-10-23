@@ -401,65 +401,97 @@ func (b *builder) c1c2() error {
 	return b.membersOf(groups, C2)
 }
 
-// membersOf marks the transitive members of the groups, and the users whose primary group is any
-// group in the closure, with basis.
-func (b *builder) membersOf(groups []*ad.Entry, basis Basis) error {
-	closure := map[string]*ad.Entry{}
-	for _, g := range groups {
-		closure[strings.ToLower(g.DN)] = g
+// walkAttrs are read for every node of a membership walk. `member` is ranged by Read to the
+// terminal range, so groups past the server's value limit are followed to the end.
+var walkAttrs = []string{"objectGUID", "objectSid", "objectClass", "member"}
+
+// membersOf marks the transitive members of the groups (roots, already marked by the caller), and
+// the accounts whose primary group is any group reached, with basis. The walk reads each group
+// object (ranged) and each member once, so its cost follows the size of the tier0 groups, never the
+// size of the domain; the visited set ends circular nesting.
+func (b *builder) membersOf(roots []*ad.Entry, basis Basis) error {
+	if len(roots) == 0 {
+		return nil
 	}
-	for _, g := range groups {
-		gd, err := entryDN(g)
+	seen := map[string]bool{}
+	var groups []*ad.Entry
+	var queue []dn.DN
+	for _, r := range roots {
+		d, err := entryDN(r)
 		if err != nil {
 			return err
 		}
-		err = b.d.TransitiveMembers(b.ctx, gd, idAttrs, func(m *ad.Entry) error {
-			if _, err := b.mark(m, basis); err != nil {
+		seen[strings.ToLower(d.String())] = true
+		queue = append(queue, d)
+	}
+	isRoot := map[string]bool{}
+	for k := range seen {
+		isRoot[k] = true
+	}
+	for len(queue) > 0 {
+		d := queue[0]
+		queue = queue[1:]
+		e, found, err := b.get(dn.DNRef(d), walkAttrs)
+		if err != nil {
+			return err
+		}
+		if !found {
+			continue // a member link to an object that no longer exists
+		}
+		k := strings.ToLower(d.String())
+		if !isRoot[k] {
+			if _, err := b.mark(e, basis); err != nil {
 				return err
 			}
 			if basis == C2 {
-				if err := b.noteAccount(m); err != nil {
+				if err := b.noteAccount(e); err != nil {
 					return err
 				}
 			}
-			if hasClass(m, "group") {
-				closure[strings.ToLower(m.DN)] = m
+		}
+		if !hasClass(e, "group") {
+			continue
+		}
+		groups = append(groups, e)
+		for _, m := range e.Strings("member") {
+			md, err := dn.Parse(m, dn.Strict)
+			if err != nil {
+				return errors.New("tier0: DC returned an unparsable member DN")
 			}
-			return nil
-		})
-		if err != nil {
-			return fmt.Errorf("tier0: members: %w", err)
+			if mk := strings.ToLower(md.String()); !seen[mk] {
+				seen[mk] = true
+				queue = append(queue, md)
+			}
 		}
 	}
-	// Primary-group edges: membership by primaryGroupID is not in `member`.
-	keys := make([]string, 0, len(closure))
-	for k := range closure {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		ss, err := closure[k].SIDs("objectSid")
+	// Primary-group edges: membership by primaryGroupID is not in `member`. One scan covers every
+	// group of the walk that lives in this domain.
+	var rids []AttrInt
+	for _, g := range groups {
+		ss, err := g.SIDs("objectSid")
 		if err != nil || len(ss) != 1 {
 			continue // a group without a readable SID cannot be anyone's primary group
 		}
 		dom, ok := ss[0].DomainSID()
 		rid, ok2 := ss[0].RID()
-		if !ok || !ok2 || dom.String() != b.domSID.String() {
-			continue
+		if ok && ok2 && dom.String() == b.domSID.String() {
+			rids = append(rids, AttrInt{Attr: "primaryGroupID", Value: int32(rid)})
 		}
-		q := Query{EqInt: []AttrInt{{Attr: "primaryGroupID", Value: int32(rid)}}}
-		err = b.d.Find(b.ctx, b.nm.Domain, ad.ScopeSubtree, q, idAttrs, func(m *ad.Entry) error {
-			if _, err := b.mark(m, basis); err != nil {
-				return err
-			}
-			if basis == C2 {
-				return b.noteAccount(m)
-			}
-			return nil
-		})
-		if err != nil {
-			return fmt.Errorf("tier0: primary-group members: %w", err)
+	}
+	if len(rids) == 0 {
+		return nil
+	}
+	err := b.d.Find(b.ctx, b.nm.Domain, ad.ScopeSubtree, Query{AnyInt: rids}, idAttrs, func(m *ad.Entry) error {
+		if _, err := b.mark(m, basis); err != nil {
+			return err
 		}
+		if basis == C2 {
+			return b.noteAccount(m)
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("tier0: primary-group members: %w", err)
 	}
 	return nil
 }
@@ -653,8 +685,7 @@ func (b *builder) c8() error {
 		}
 	}
 	err = b.d.Find(b.ctx, sys, ad.ScopeSubtree, Query{Classes: c8SystemClasses}, idAttrs, func(e *ad.Entry) error {
-		_, err := b.mark(e, C8)
-		return err
+		return b.markSoft(e, C8)
 	})
 	if err != nil {
 		return fmt.Errorf("tier0: system objects: %w", err)
@@ -670,6 +701,17 @@ func (b *builder) c8() error {
 	return b.markTree(kds, Query{}, C8)
 }
 
+// markSoft marks an entry in a sensitive subtree. An entry the connector identity cannot identify
+// (no readable objectGUID) is skipped: it cannot act on it, and classifying it as a target fails
+// closed (Unknown) because its identity cannot be read.
+func (b *builder) markSoft(e *ad.Entry, basis Basis) error {
+	if _, err := e.GUID(); err != nil {
+		return nil
+	}
+	_, err := b.mark(e, basis)
+	return err
+}
+
 func (b *builder) markDN(d dn.DN, basis Basis, required bool) error {
 	e, found, err := b.getDN(d)
 	if err != nil {
@@ -681,6 +723,12 @@ func (b *builder) markDN(d dn.DN, basis Basis, required bool) error {
 		}
 		return nil
 	}
+	if _, gerr := e.GUID(); gerr != nil && !required {
+		// The connector identity cannot read this object's identity (the DC returns the entry
+		// without objectGUID, as it does for CN=Password Settings Container). It cannot act on what
+		// it cannot read, and classifying such an object as a target fails closed (Unknown).
+		return nil
+	}
 	_, err = b.mark(e, basis)
 	return err
 }
@@ -688,8 +736,7 @@ func (b *builder) markDN(d dn.DN, basis Basis, required bool) error {
 func (b *builder) markTree(base dn.DN, q Query, basis Basis) error {
 	// A subtree search of a missing base fails with no-such-object, which is the empty case here.
 	err := b.d.Find(b.ctx, base, ad.ScopeSubtree, q, idAttrs, func(e *ad.Entry) error {
-		_, err := b.mark(e, basis)
-		return err
+		return b.markSoft(e, basis)
 	})
 	if err != nil && ad.CodeOf(err) != ad.CodeObjectNotFound {
 		return fmt.Errorf("tier0: subtree: %w", err)
@@ -753,6 +800,7 @@ func holders(aces []allowACE, rights ...guid.GUID) []sid.SID {
 // markPrincipals marks the objects with these SIDs, and the transitive members of those that are
 // groups. A SID with no object (orphaned ACE, well-known SID such as SYSTEM) is skipped.
 func (b *builder) markPrincipals(sids []sid.SID, basis Basis) error {
+	var groups []*ad.Entry
 	for _, s := range sids {
 		e, found, err := b.get(dn.SIDRef(s), idAttrs)
 		if err != nil {
@@ -765,20 +813,10 @@ func (b *builder) markPrincipals(sids []sid.SID, basis Basis) error {
 			return err
 		}
 		if hasClass(e, "group") {
-			gd, err := entryDN(e)
-			if err != nil {
-				return err
-			}
-			err = b.d.TransitiveMembers(b.ctx, gd, idAttrs, func(m *ad.Entry) error {
-				_, err := b.mark(m, basis)
-				return err
-			})
-			if err != nil {
-				return fmt.Errorf("tier0: members: %w", err)
-			}
+			groups = append(groups, e)
 		}
 	}
-	return nil
+	return b.membersOf(groups, basis)
 }
 
 // C12: unconstrained delegation, constrained delegation to a DC service, and RBCD on a DC.

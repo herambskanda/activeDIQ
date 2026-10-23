@@ -112,3 +112,48 @@ func TestLabADMembershipAfterClassification(t *testing.T) {
 		t.Fatalf("after: %+v %v", r, err)
 	}
 }
+
+// Spot checks on the seeded lab: protected groups, krbtgt, the Domain Controllers OU and the domain head.
+func TestLabADSeededObjects(t *testing.T) {
+	env := labEnvAD(t)
+	pem, err := os.ReadFile(filepath.Join("..", "..", "..", "lab", ".lab-ca.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := x509.NewCertPool()
+	pool.AppendCertsFromPEM(pem)
+	port := env["LAB_LDAPS_PORT"]
+	if port == "" {
+		port = "636"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	sess, err := ad.Open(ctx, ad.Config{
+		Servers: []string{"localhost:" + port}, RootCAs: pool, PageSize: 500,
+		Credential: ad.Credential{BindName: "svc-activediq@lab.activediq.test", Password: secret.FromBytes([]byte(env["LAB_SVC_PASSWORD"]))},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sess.Close()
+	c := NewAD(SessionDirectory{S: sess})
+	for _, x := range []struct {
+		dn   string
+		want Basis
+	}{
+		{"CN=Domain Admins,CN=Users," + labDom, C1},
+		{labDom, C7},
+		{"CN=Administrator,CN=Users," + labDom, C1},
+		{"CN=krbtgt,CN=Users," + labDom, C4},
+		{"OU=Domain Controllers," + labDom, C6},
+	} {
+		ref, err := dn.ParseObjectRef(x.dn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, err := c.Classify(ctx, ref, ADInput{CorrelationKnown: true})
+		if err != nil || !r.Tier0 || !has(r, x.want) {
+			t.Errorf("%s: %+v %v", x.dn, r, err)
+		}
+	}
+}

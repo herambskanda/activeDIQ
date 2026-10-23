@@ -189,6 +189,18 @@ func (f *fakeDir) match(o *fobj, q Query) bool {
 			return false
 		}
 	}
+	if len(q.AnyInt) > 0 {
+		hit := false
+		for _, e := range q.AnyInt {
+			for _, v := range o.attrs[strings.ToLower(e.Attr)] {
+				n, _ := strconv.Atoi(v)
+				hit = hit || int32(n) == e.Value
+			}
+		}
+		if !hit {
+			return false
+		}
+	}
 	for _, h := range q.Has {
 		if len(o.attrs[strings.ToLower(h)]) == 0 && len(o.raw[h]) == 0 {
 			return false
@@ -205,30 +217,6 @@ func (f *fakeDir) match(o *fobj, q Query) bool {
 		}
 	}
 	return true
-}
-
-func (f *fakeDir) TransitiveMembers(_ context.Context, group dn.DN, _ []string, fn func(*ad.Entry) error) error {
-	seen := map[string]bool{}
-	var walk func(g string) error
-	walk = func(g string) error {
-		if seen[strings.ToLower(g)] {
-			return nil // cycle
-		}
-		seen[strings.ToLower(g)] = true
-		for _, m := range f.find(g).attrs["member"] {
-			mo := f.find(m)
-			if err := fn(mo.entry()); err != nil {
-				return err
-			}
-			if mo.is("group") {
-				if err := walk(mo.dn); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	}
-	return walk(group.String())
 }
 
 // ---- security descriptor builder ----
