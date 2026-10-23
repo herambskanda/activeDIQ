@@ -82,6 +82,10 @@ func TestEditedDeletedReorderedEventsFail(t *testing.T) {
 		"edited":    func(b *chain.Bundle) { b.Events[1].Envelope[len(b.Events[1].Envelope)-1] ^= 1 },
 		"deleted":   func(b *chain.Bundle) { b.Events = append(b.Events[:1], b.Events[2:]...) },
 		"reordered": func(b *chain.Bundle) { b.Events[1], b.Events[2] = b.Events[2], b.Events[1] },
+		// The newest event and its checkpoint cut off, the manifest left alone and then rewritten to match.
+		"tail deleted":              func(b *chain.Bundle) { b.Events, b.Checkpoints = b.Events[:2], nil },
+		"tail deleted, range fixed": func(b *chain.Bundle) { b.Events, b.Checkpoints, b.ToSeq = b.Events[:2], nil, 2 },
+		"tail deleted, no events":   func(b *chain.Bundle) { b.Events, b.Checkpoints, b.ToSeq = nil, nil, 0; b.FromSeq = 2 },
 	} {
 		p, fp := writeExport(t, mutate)
 		code, out := exec("-bundle", p, "-pin", fp)

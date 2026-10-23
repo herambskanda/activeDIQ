@@ -38,6 +38,8 @@ const (
 	ReasonAnchorMismatch   = "anchor_mismatch"
 	ReasonPinnedKeyAbsent  = "pinned_key_absent"
 	ReasonCheckpointTenant = "checkpoint_wrong_tenant"
+	ReasonTruncated        = "truncated"
+	ReasonUntrustedKey     = "untrusted_key"
 )
 
 // Options carries the trust root.
@@ -86,8 +88,21 @@ func Verify(b Bundle, opts Options) Result {
 	keys := map[string]*keyWin{}
 	var prev Hash
 	var first, last uint64
-	if len(b.Events) > 0 {
+	// The manifest's range is part of what is verified: the events must be exactly FromSeq..ToSeq, so
+	// that deleting the newest events (or all of them) cannot go unnoticed.
+	from := b.FromSeq
+	if from == 0 {
+		from = 1
+	}
+	if len(b.Events) == 0 {
+		if b.ToSeq != 0 || from > 1 {
+			return fail(from, ReasonTruncated, "the export claims seq %d..%d but carries no events", from, b.ToSeq)
+		}
+	} else {
 		first = b.Events[0].Seq
+		if first != from {
+			return fail(from, ReasonSeqGap, "the export claims to start at seq %d but starts at %d", from, first)
+		}
 	}
 
 	// Starting point: genesis, or a signed checkpoint just below the first retained event.
@@ -116,6 +131,11 @@ func Verify(b Bundle, opts Options) Result {
 		keys[k.KeyID] = &keyWin{pub: pub, created: k.CreatedSeq, retired: k.RetiredSeq}
 	}
 	chainKeys := map[string]bool{}
+	for _, c := range b.Checkpoints {
+		if c.Seq > b.ToSeq {
+			return fail(c.Seq, ReasonTruncated, "checkpoint at seq %d lies beyond the export's last seq %d", c.Seq, b.ToSeq)
+		}
+	}
 
 	hashAt := map[uint64]Hash{}
 	if first > 1 {
@@ -154,6 +174,17 @@ func Verify(b Bundle, opts Options) Result {
 		expect++
 	}
 
+	if len(b.Events) > 0 && last != b.ToSeq {
+		return fail(last, ReasonTruncated, "the export claims to end at seq %d but its last event is %d", b.ToSeq, last)
+	}
+	// A key the chain does not introduce cannot be trusted: inside the retained range the chain is the
+	// only evidence, and the manifest may only describe keys introduced before it.
+	for id, k := range keys {
+		if (first <= 1 || k.created >= first) && !chainKeys[id] {
+			return fail(k.created, ReasonKeyMismatch, "manifest key %s has no introduction in the chain", id)
+		}
+	}
+
 	cps := append([]Checkpoint(nil), b.Checkpoints...)
 	sort.Slice(cps, func(i, j int) bool { return cps[i].Seq < cps[j].Seq })
 	res := Result{Events: len(b.Events)}
@@ -161,8 +192,38 @@ func Verify(b Bundle, opts Options) Result {
 	for _, p := range opts.Pinned {
 		pinned[p] = true
 	}
+
+	// Anchors come from outside the host. One beyond the newest event proves the export was cut short.
+	anchored := false
+	trusted := map[string]bool{}
+	for p := range pinned {
+		trusted[p] = true
+	}
+	for _, a := range opts.Anchors {
+		if a.Tenant != tenant {
+			continue
+		}
+		if a.Seq > last {
+			return fail(a.Seq, ReasonTruncated, "the external anchor at seq %d is newer than the export's last event %d", a.Seq, last)
+		}
+		h, ok := hashAt[a.Seq]
+		if !ok {
+			continue
+		}
+		if h != a.Hash {
+			return fail(a.Seq, ReasonAnchorMismatch, "the chain at seq %d differs from the external anchor", a.Seq)
+		}
+		anchored = true
+		// The anchored checkpoint's signer is a trust root, once its signature checks out.
+		if k, ok := keys[a.KeyID]; ok && a.VerifySignature(k.pub) == nil {
+			trusted[a.KeyID] = true
+		}
+	}
+	rooted := len(pinned) > 0 || anchored
+
 	pinnedSigned := false
-	var lastCP uint64
+	var lastCP, trustedUpTo uint64
+	haveTrusted := false
 	for i, c := range cps {
 		if c.Tenant != tenant {
 			return fail(c.Seq, ReasonCheckpointTenant, "checkpoint belongs to tenant %s", FormatUUID(c.Tenant))
@@ -170,7 +231,8 @@ func Verify(b Bundle, opts Options) Result {
 		if i > 0 && cps[i-1].Seq == c.Seq {
 			return fail(c.Seq, ReasonCheckpointChain, "two checkpoints at seq %d", c.Seq)
 		}
-		if h, ok := hashAt[c.Seq]; ok && h != c.Hash {
+		h, inRange := hashAt[c.Seq]
+		if inRange && h != c.Hash {
 			return fail(c.Seq, ReasonCheckpointHash, "the checkpoint's hash differs from the chain at seq %d", c.Seq)
 		}
 		k, ok := keys[c.KeyID]
@@ -186,27 +248,28 @@ func Verify(b Bundle, opts Options) Result {
 		if i > 0 && (c.PrevSeq != cps[i-1].Seq || c.PrevHash != cps[i-1].Hash) {
 			return fail(c.Seq, ReasonCheckpointChain, "prev_checkpoint does not name the checkpoint at seq %d", cps[i-1].Seq)
 		}
-		if pinned[c.KeyID] {
-			pinnedSigned = true
+		if rooted && !trusted[c.KeyID] {
+			// A key is trusted only if a verified checkpoint signed by a trusted key already covers
+			// its introduction (the cross-signature of ADR-0005); otherwise the chain vouches for itself.
+			// Only keys the retained chain introduces qualify: the manifest's claims about earlier keys
+			// are unauthenticated, so those must be pinned or anchored.
+			if !haveTrusted || !chainKeys[c.KeyID] || k.created > trustedUpTo {
+				return fail(c.Seq, ReasonUntrustedKey, "key %s is neither pinned nor introduced under a checkpoint signed by a trusted key", c.KeyID)
+			}
+			trusted[c.KeyID] = true
 		}
-		if _, inRange := hashAt[c.Seq]; inRange && c.Seq > lastCP {
-			lastCP = c.Seq
+		if inRange && (!rooted || trusted[c.KeyID]) {
+			if pinned[c.KeyID] {
+				pinnedSigned = true
+			}
+			if c.Seq > lastCP {
+				lastCP = c.Seq
+			}
+			if rooted {
+				haveTrusted, trustedUpTo = true, c.Seq
+			}
 		}
 		res.Checkpoints++
-	}
-	anchored := false
-	for _, a := range opts.Anchors {
-		if a.Tenant != tenant {
-			continue
-		}
-		h, ok := hashAt[a.Seq]
-		if !ok {
-			continue
-		}
-		if h != a.Hash {
-			return fail(a.Seq, ReasonAnchorMismatch, "the chain at seq %d differs from the external anchor", a.Seq)
-		}
-		anchored = true
 	}
 	if len(pinned) > 0 && !pinnedSigned {
 		return fail(0, ReasonPinnedKeyAbsent, "no verified checkpoint is signed by a pinned key")

@@ -406,6 +406,41 @@ func TestRetriedAppendIsRecordedOnce(t *testing.T) {
 	})
 }
 
+// An ID reused for different content must fail the transaction, never drop the record silently.
+func TestReusedEventIDWithDifferentContentFailsClosed(t *testing.T) {
+	each(t, func(t *testing.T, r *rig) {
+		other := ev("dup")
+		other.Target.GUID = "someone-else"
+		before := len(r.export(r.id).Events)
+		err := r.db.WithTenant(context.Background(), r.id, func(ctx context.Context, tx store.Tx) error {
+			if err := r.ch.Append(ctx, tx, ev("dup")); err != nil {
+				return err
+			}
+			return r.ch.Append(ctx, tx, other) // same transaction
+		})
+		if !errors.Is(err, audit.ErrEventIDReused) {
+			t.Fatalf("same-transaction reuse: err = %v; want ErrEventIDReused", err)
+		}
+		r.append(r.id, "dup")
+		err = r.db.WithTenant(context.Background(), r.id, func(ctx context.Context, tx store.Tx) error {
+			return r.ch.Append(ctx, tx, other) // later transaction
+		})
+		if !errors.Is(err, audit.ErrEventIDReused) {
+			t.Fatalf("cross-transaction reuse: err = %v; want ErrEventIDReused", err)
+		}
+		// Only the one genuine record (plus the exports' own events) was kept.
+		n := 0
+		for _, e := range r.export(r.id).Events {
+			if env, _ := chain.ParseEnvelope(e.Envelope); env.EventID == "dup" {
+				n++
+			}
+		}
+		if n != 1 || len(r.export(r.id).Events) < before {
+			t.Fatalf("dup recorded %d times", n)
+		}
+	})
+}
+
 func TestFailsClosedWhenMiswired(t *testing.T) {
 	each(t, func(t *testing.T, r *rig) {
 		ctx := context.Background()
@@ -489,8 +524,13 @@ func TestKeyRotationKeepsTheChainVerifiable(t *testing.T) {
 			t.Fatal("the newest checkpoint is not signed by the new key")
 		}
 		ids, _ := r.ownerKeyID(r.id)
-		if res := chain.Verify(b, chain.Options{Pinned: ids[:1]}); res.Status != chain.OK {
-			t.Fatalf("verify = %+v", res)
+		// Without a cross-signature (T-0229) the new key is not introduced under a trusted checkpoint, so
+		// pinning only the old key must not vouch for the new key's checkpoints; pinning both does.
+		if res := chain.Verify(b, chain.Options{Pinned: ids[:1]}); res.Status != chain.Failed || res.Reason != chain.ReasonUntrustedKey {
+			t.Fatalf("verify (old key only) = %+v; want FAILED untrusted_key", res)
+		}
+		if res := chain.Verify(b, chain.Options{Pinned: ids}); res.Status != chain.OK {
+			t.Fatalf("verify (both keys pinned) = %+v", res)
 		}
 	})
 }

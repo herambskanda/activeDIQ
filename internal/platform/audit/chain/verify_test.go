@@ -203,6 +203,9 @@ func TestCheckpointSignedByRetiredKey(t *testing.T) {
 	b.add("b")
 	b.checkpoint(priv2, pub2) // seq 5, valid
 	opts := Options{Pinned: []string{Fingerprint(b.pub)}}
+	// No cross-signature: nothing trusted covers the new key's introduction (T-0229 adds it).
+	want(t, Verify(b.bundle(), opts), Failed, 5, ReasonUntrustedKey)
+	opts.Pinned = append(opts.Pinned, Fingerprint(pub2)) // pinning both is the operator's explicit choice
 	want(t, Verify(b.bundle(), opts), OK, 0, "")
 
 	b.add("c")
@@ -235,7 +238,8 @@ func TestWholeChainRebuiltUnderFreshKey(t *testing.T) {
 	}
 	forged.checkpoint(forged.priv, forged.pub)
 	want(t, Verify(forged.bundle(), Options{}), Unanchored, 0, "")
-	want(t, Verify(forged.bundle(), pin(real)), Failed, 0, ReasonPinnedKeyAbsent)
+	want(t, Verify(forged.bundle(), pin(real)), Failed, 6, ReasonUntrustedKey)
+	want(t, Verify(forged.bundle(), Options{Anchors: real.cps[1:]}), Failed, 10, ReasonAnchorMismatch)
 	want(t, Verify(forged.bundle(), Options{Anchors: real.cps}), Failed, 6, ReasonAnchorMismatch)
 }
 
@@ -307,4 +311,77 @@ func (l *limitedBuf) Read(p []byte) (int, error) {
 	n := copy(p, l.b)
 	l.b = l.b[n:]
 	return n, nil
+}
+
+// Deleting the newest events, with or without the checkpoints that covered them, must not verify.
+func TestTailTruncationFails(t *testing.T) {
+	b := seeded(t)
+	for _, tc := range []struct {
+		name string
+		mut  func(*Bundle)
+	}{
+		{"events dropped, claims kept", func(bu *Bundle) { bu.Events = bu.Events[:6] }},
+		{"events and tail checkpoint dropped, claims kept", func(bu *Bundle) { bu.Events = bu.Events[:6]; bu.Checkpoints = bu.Checkpoints[:1] }},
+		{"all of it rewritten to look shorter", func(bu *Bundle) { bu.Events = bu.Events[:6]; bu.Checkpoints = bu.Checkpoints[:1]; bu.ToSeq = 6 }},
+		{"no events at all", func(bu *Bundle) { bu.Events, bu.Checkpoints, bu.ToSeq = nil, nil, 0; bu.FromSeq = 1 }},
+		{"events dropped, range says empty", func(bu *Bundle) { bu.Events = nil }},
+	} {
+		bu := b.bundle()
+		tc.mut(&bu)
+		anchors := []Checkpoint{b.cps[1]} // the SIEM holds the newest checkpoint
+		for _, opts := range []Options{{Anchors: anchors}, {Pinned: []string{Fingerprint(b.pub)}, Anchors: anchors}} {
+			if r := Verify(bu, opts); r.Status != Failed {
+				t.Errorf("%s: %s (%s); want FAILED", tc.name, r.Status, r.Detail)
+			}
+		}
+	}
+	// Against a pin alone, the claimed range still catches every case that leaves ToSeq alone.
+	bu := b.bundle()
+	bu.Events = bu.Events[:6]
+	bu.Checkpoints = bu.Checkpoints[:1]
+	want(t, Verify(bu, pin(b)), Failed, 6, ReasonTruncated)
+	bu = b.bundle()
+	bu.Checkpoints = bu.Checkpoints[:1]
+	bu.Events = bu.Events[:6]
+	bu.ToSeq = 6
+	want(t, Verify(bu, Options{Pinned: []string{Fingerprint(b.pub)}, Anchors: b.cps[1:]}), Failed, 10, ReasonTruncated)
+}
+
+// A key the chain introduces after the last trusted checkpoint does not extend trust.
+func TestForgedKeyAfterPinnedCheckpointIsNotTrusted(t *testing.T) {
+	b := seeded(t)
+	evil, evilPriv := key(t)
+	b.keyCreated(evil) // seq 11, appended by someone with write access
+	b.add("forged")
+	b.checkpoint(evilPriv, evil) // seq 12
+	want(t, Verify(b.bundle(), pin(b)), Failed, 12, ReasonUntrustedKey)
+	// Under anchors only, trust starts from the anchored checkpoint's key.
+	want(t, Verify(b.bundle(), Options{Anchors: b.cps[:1]}), Failed, 12, ReasonUntrustedKey)
+}
+
+// A cross-signed rotation: the old key signs a checkpoint covering the new key's introduction.
+func TestCrossSignedRotationIsTrusted(t *testing.T) {
+	b := newBuilder(t, 1)
+	pub2, priv2 := key(t)
+	b.keyCreated(pub2)          // seq 2
+	b.checkpoint(b.priv, b.pub) // seq 2, old key covers the introduction
+	b.add(KindKeyRetired, Detail{"key_id", Fingerprint(b.pub)})
+	b.add("x")
+	b.checkpoint(priv2, pub2)
+	want(t, Verify(b.bundle(), pin(b)), OK, 0, "")
+}
+
+func TestManifestKeyWithoutChainEvidenceFails(t *testing.T) {
+	b := seeded(t)
+	evil, evilPriv := key(t)
+	b.add("x")
+	b.checkpoint(evilPriv, evil)
+	bu := b.bundle()
+	bu.Keys = []KeyInfo{{KeyID: Fingerprint(evil), PublicKey: evil, CreatedSeq: 1}}
+	want(t, Verify(bu, pin(b)), Failed, 1, ReasonKeyMismatch)
+	// Partial export: a manifest key claimed before the boundary is trusted only under a trusted checkpoint.
+	bu = b.bundle()
+	bu.FromSeq, bu.Events = 7, bu.Events[6:]
+	bu.Keys = []KeyInfo{{KeyID: Fingerprint(b.pub), PublicKey: b.pub, CreatedSeq: 1}, {KeyID: Fingerprint(evil), PublicKey: evil, CreatedSeq: 1}}
+	want(t, Verify(bu, pin(b)), Failed, 11, ReasonUntrustedKey)
 }

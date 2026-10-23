@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -19,6 +20,9 @@ var (
 	ErrIsolation = errors.New("audit: the chain needs a READ COMMITTED transaction")
 	// ErrNoTenantTx is returned when an event is chained in a transaction with no tenant.
 	ErrNoTenantTx = errors.New("audit: events are chained inside a tenant transaction only")
+	// ErrEventIDReused is returned when an event ID is appended again with different content: dropping the
+	// second record silently would lose an audit entry.
+	ErrEventIDReused = errors.New("audit: event id reused with different content")
 	// ErrStaleHead is returned when the head moved under the append (it cannot while its row lock is held).
 	ErrStaleHead = errors.New("audit: the chain head changed during the append")
 )
@@ -130,24 +134,47 @@ func (c *Chainer) beforeCommit(ctx context.Context, tx store.Tx, tenantID string
 	copy(prev[:], hashB)
 	head := seq
 
-	seen := map[string]bool{}
+	seen := map[string][]byte{}
 	for _, ev := range p.events {
-		if seen[ev.ID] {
+		// The event's identity is its content without the fields the chain assigns (tenant, seq, at).
+		env, _ := toEnvelope(ev)
+		ident, err := env.Marshal()
+		if err != nil {
+			return fmt.Errorf("audit: encode event: %w", err)
+		}
+		if prior, ok := seen[ev.ID]; ok {
+			if !bytes.Equal(prior, ident) {
+				return fmt.Errorf("%w: %q", ErrEventIDReused, ev.ID)
+			}
 			continue
 		}
-		seen[ev.ID] = true
-		var dup bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM audit_event WHERE tenant_id = $1::uuid AND event_id = $2)`, tenantID, ev.ID).Scan(&dup); err != nil {
+		seen[ev.ID] = ident
+		var stored []byte
+		err = tx.QueryRow(ctx, `SELECT envelope FROM audit_event WHERE tenant_id = $1::uuid AND event_id = $2`, tenantID, ev.ID).Scan(&stored)
+		switch {
+		case err == nil:
+			// A retried append after an ambiguous COMMIT is the same event; anything else under this
+			// ID would be silently lost, so it fails the transaction.
+			old, perr := chain.ParseEnvelope(stored)
+			if perr != nil {
+				return fmt.Errorf("audit: stored event %q: %w", ev.ID, perr)
+			}
+			old.Tenant, old.Seq, old.At = [16]byte{}, 0, time.Time{}
+			oldIdent, merr := old.Marshal()
+			if merr != nil {
+				return fmt.Errorf("audit: stored event %q: %w", ev.ID, merr)
+			}
+			if !bytes.Equal(oldIdent, ident) {
+				return fmt.Errorf("%w: %q", ErrEventIDReused, ev.ID)
+			}
+			continue
+		case !store.IsNoRows(err):
 			return fmt.Errorf("audit: check event id: %w", err)
-		}
-		if dup { // a retried append after an ambiguous COMMIT: already recorded
-			continue
 		}
 		if err := tx.QueryRow(ctx, `SELECT greatest(clock_timestamp(), $1::timestamptz)`, at).Scan(&at); err != nil {
 			return fmt.Errorf("audit: read clock: %w", err)
 		}
 		at = at.UTC().Truncate(time.Microsecond)
-		env, _ := toEnvelope(ev)
 		env.Tenant, env.Seq, env.At = tenant, seq+1, at
 		raw, err := env.Marshal()
 		if err != nil {

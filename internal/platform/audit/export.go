@@ -52,7 +52,7 @@ func (x *Exporter) Export(ctx context.Context, db *store.DB, id tenant.ID, actor
 		if to == 0 || to > head {
 			to = head
 		}
-		if from > to+1 {
+		if from > to && head > 0 {
 			return fmt.Errorf("audit: empty range %d..%d", from, to)
 		}
 		b = chain.Bundle{Format: chain.BundleFormat, Tenant: id.String(), FromSeq: from, ToSeq: to}
