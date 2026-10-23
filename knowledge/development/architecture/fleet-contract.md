@@ -145,6 +145,26 @@ mounts the `Fleet` service on the server `Gateway.NewServer` builds and states e
 - **Deny by default**: `NewServer` fails if a registered method has no explicit class, or a service is
   outside `activediq.fleet.v1.` (no console or API routes). `Routes(srv)` lists the mounted surface.
 
+## Revocation (T-0157, TM-TB6-T9)
+
+- **Refused at establishment, every RPC**: after the certificate checks, the interceptor asks
+  `Config.Components` (`ComponentStatus.Usable`, implemented by `fleetsql.Lifecycle`) whether the
+  component is `enrolled` or `active`. A revoked (or removed, or unknown) component with a still-valid
+  certificate gets `Unauthenticated`; a lookup failure gets `Unavailable`. `Components` is required.
+- **Open streams are closed**: authenticated streams are registered by (tenant, component).
+  `Gateway.CloseComponent` cancels them at once. The interceptor runs the handler on its own goroutine
+  and returns `Unauthenticated` as soon as the stream is revoked, so grpc ends the transport stream and
+  a handler blocked in `RecvMsg`/`SendMsg` is unblocked and exits whether or not it watches its context;
+  each stream also re-checks `Usable` every `Config.Recheck` (default 5 s), which bounds the lifetime
+  of a stream whose component was revoked through another server instance. A failed re-check leaves the
+  stream open (a database blip must not drop the fleet); new RPCs are refused meanwhile.
+- **Revoke**: `fleetsql.Lifecycle.Revoke` checks `fleet.component.revoke` server-side, moves
+  enrolled/active to revoked, appends `fleet.component.revoked` (actor = the human or token principal,
+  target = component GUID, cert serial) in the same transaction, then calls `StreamCloser`. Revoking an
+  unused enrollment token is T-0153's.
+- **Not yet wired**: the composer must pass the same `Lifecycle` as `Config.Components` and `Streams`
+  (the gateway), and expose Revoke on the API; both belong to the compose/API tickets.
+
 ## Tunnel multiplexer (T-0209, TM-D24 A, B, C)
 
 `internal/platform/fleet/{mux,calls,contract,hub,frame,statustext}.go`. Contract-agnostic and free of

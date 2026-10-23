@@ -11,6 +11,7 @@ import (
 	"errors"
 	"math/big"
 	"net"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	"github.com/skenzeriq/activediq/internal/platform/fleet"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
@@ -54,11 +56,16 @@ func newCA(t *testing.T, notAfter time.Time) testCA {
 
 func (ca testCA) leaf(t *testing.T, tid tenant.ID, notBefore, notAfter time.Time, eku []x509.ExtKeyUsage) tls.Certificate {
 	t.Helper()
+	return ca.leafFor(t, tid, compID, notBefore, notAfter, eku)
+}
+
+func (ca testCA) leafFor(t *testing.T, tid tenant.ID, comp string, notBefore, notAfter time.Time, eku []x509.ExtKeyUsage) tls.Certificate {
+	t.Helper()
 	k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(time.Now().UnixNano()), Subject: pkix.Name{CommonName: "x"},
 		NotBefore: notBefore, NotAfter: notAfter, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: eku,
-		URIs: fleet.URIs(tid, "connector", compID),
+		URIs: fleet.URIs(tid, "connector", comp),
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca.cert, &k.PublicKey, ca.key)
 	if err != nil {
@@ -79,9 +86,35 @@ func (failCAs) TenantCAs(context.Context, tenant.ID) ([]*x509.Certificate, error
 	return nil, errors.New("db down")
 }
 
+// fakeComps is the component lifecycle: every component is usable until it is revoked.
+type fakeComps struct {
+	mu      sync.Mutex
+	revoked map[string]bool
+	err     error
+}
+
+func (f *fakeComps) revoke(comp string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.revoked == nil {
+		f.revoked = map[string]bool{}
+	}
+	f.revoked[comp] = true
+}
+
+func (f *fakeComps) Usable(_ context.Context, id fleet.Identity) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.err == nil && !f.revoked[id.ComponentID], f.err
+}
+
 type fakeFleet struct {
 	calls  atomic.Int32
 	lastID atomic.Value
+	hold   atomic.Bool  // stream handlers block until their context ends
+	mode   atomic.Int32 // with hold: 0 wait on ctx, 1 block in RecvMsg, 2 block in SendMsg
+	open   atomic.Int32
+	exited atomic.Int32 // handlers that have returned
 }
 
 func (f *fakeFleet) desc(name string) *grpc.ServiceDesc {
@@ -115,6 +148,28 @@ func (f *fakeFleet) stream(_ any, ss grpc.ServerStream) error {
 	if id, ok := fleet.IdentityFrom(ss.Context()); ok {
 		f.lastID.Store(id)
 	}
+	if f.hold.Load() {
+		f.open.Add(1)
+		defer f.open.Add(-1)
+		defer f.exited.Add(1)
+		switch f.mode.Load() {
+		case 1: // a tunnel server loop waiting for the component's next frame
+			for {
+				if err := ss.RecvMsg(new(emptypb.Empty)); err != nil {
+					return err
+				}
+			}
+		case 2: // server-to-component sends under flow control: the client never reads
+			chunk := wrapperspb.Bytes(make([]byte, 256<<10))
+			for {
+				if err := ss.SendMsg(chunk); err != nil {
+					return err
+				}
+			}
+		}
+		<-ss.Context().Done()
+		return ss.Context().Err()
+	}
 	return nil
 }
 
@@ -125,12 +180,15 @@ type rig struct {
 	fleet *fakeFleet
 	pool  *x509.CertPool
 	srv   *grpc.Server
+	comps *fakeComps
+	gw    *fleet.Gateway
 	roots *x509.CertPool // trusts the rig's server certificate
 }
 
 func start(t *testing.T, cas fleet.TenantCAs, pool *x509.CertPool, now func() time.Time) *rig {
 	t.Helper()
-	g, err := fleet.NewGateway(fleet.Config{Methods: allMethods, CAs: cas, Clock: now})
+	comps := &fakeComps{}
+	g, err := fleet.NewGateway(fleet.Config{Methods: allMethods, CAs: cas, Components: comps, Recheck: 50 * time.Millisecond, Clock: now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +216,7 @@ func start(t *testing.T, cas fleet.TenantCAs, pool *x509.CertPool, now func() ti
 	}
 	go func() { _ = srv.Serve(l) }()
 	t.Cleanup(srv.Stop)
-	return &rig{addr: l.Addr().String(), fleet: ff, pool: pool, srv: srv, roots: roots}
+	return &rig{addr: l.Addr().String(), fleet: ff, pool: pool, srv: srv, comps: comps, gw: g, roots: roots}
 }
 
 func (r *rig) dial(t *testing.T, client *tls.Certificate) *grpc.ClientConn {
@@ -317,22 +375,22 @@ func TestNoServerAuthOnlyLeafAndCALookupFailureRefused(t *testing.T) {
 
 func TestStartupFailsClosed(t *testing.T) {
 	cas := casByTenant{}
-	if _, err := fleet.NewGateway(fleet.Config{Methods: map[string]fleet.AuthClass{"/activediq.fleet.v1.Fleet/Other": fleet.ClassPublic}, CAs: cas}); !errors.Is(err, fleet.ErrPublicMethod) {
+	if _, err := fleet.NewGateway(fleet.Config{Methods: map[string]fleet.AuthClass{"/activediq.fleet.v1.Fleet/Other": fleet.ClassPublic}, CAs: cas, Components: &fakeComps{}}); !errors.Is(err, fleet.ErrPublicMethod) {
 		t.Fatalf("public non-Enroll: %v", err)
 	}
-	if _, err := fleet.NewGateway(fleet.Config{Methods: map[string]fleet.AuthClass{tunnelMethod: 0}, CAs: cas}); !errors.Is(err, fleet.ErrUnclassified) {
+	if _, err := fleet.NewGateway(fleet.Config{Methods: map[string]fleet.AuthClass{tunnelMethod: 0}, CAs: cas, Components: &fakeComps{}}); !errors.Is(err, fleet.ErrUnclassified) {
 		t.Fatalf("zero class: %v", err)
 	}
 
 	ff := &fakeFleet{}
 	// Tunnel not classified.
-	g, _ := fleet.NewGateway(fleet.Config{Methods: map[string]fleet.AuthClass{fleet.EnrollMethod: fleet.ClassPublic}, CAs: cas})
+	g, _ := fleet.NewGateway(fleet.Config{Methods: map[string]fleet.AuthClass{fleet.EnrollMethod: fleet.ClassPublic}, CAs: cas, Components: &fakeComps{}})
 	if _, err := g.NewServer(tls.Certificate{Certificate: [][]byte{{1}}}, func() *x509.CertPool { return nil }, func(r grpc.ServiceRegistrar) { r.RegisterService(ff.desc("activediq.fleet.v1.Fleet"), ff) }); !errors.Is(err, fleet.ErrUnclassified) {
 		t.Fatalf("unclassified method: %v", err)
 	}
 	// A non-fleet service on the fleet listener.
 	g, _ = fleet.NewGateway(fleet.Config{Methods: map[string]fleet.AuthClass{fleet.EnrollMethod: fleet.ClassPublic, tunnelMethod: fleet.ClassClientCert,
-		"/activediq.console.v1.Console/Enroll": fleet.ClassClientCert, "/activediq.console.v1.Console/Tunnel": fleet.ClassClientCert}, CAs: cas})
+		"/activediq.console.v1.Console/Enroll": fleet.ClassClientCert, "/activediq.console.v1.Console/Tunnel": fleet.ClassClientCert}, CAs: cas, Components: &fakeComps{}})
 	if _, err := g.NewServer(tls.Certificate{Certificate: [][]byte{{1}}}, func() *x509.CertPool { return nil }, func(r grpc.ServiceRegistrar) { r.RegisterService(ff.desc("activediq.console.v1.Console"), ff) }); !errors.Is(err, fleet.ErrForeignMount) {
 		t.Fatalf("foreign service: %v", err)
 	}
@@ -351,7 +409,7 @@ func TestRoutesListOnlyFleet(t *testing.T) {
 }
 
 func TestUnaryClientCertMethodRefusedWithoutPeer(t *testing.T) {
-	g, err := fleet.NewGateway(fleet.Config{Methods: map[string]fleet.AuthClass{"/activediq.fleet.v1.Fleet/Other": fleet.ClassClientCert}, CAs: casByTenant{}})
+	g, err := fleet.NewGateway(fleet.Config{Methods: map[string]fleet.AuthClass{"/activediq.fleet.v1.Fleet/Other": fleet.ClassClientCert}, CAs: casByTenant{}, Components: &fakeComps{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -372,7 +430,7 @@ func TestUnaryClientCertMethodRefusedWithoutPeer(t *testing.T) {
 // A caller-supplied Creds option must not replace the gateway's mTLS (Enroll would be served in
 // plaintext): a plaintext client cannot reach Enroll.
 func TestCallerCredsCannotReplaceTLS(t *testing.T) {
-	g, err := fleet.NewGateway(fleet.Config{Methods: allMethods, CAs: casByTenant{}})
+	g, err := fleet.NewGateway(fleet.Config{Methods: allMethods, CAs: casByTenant{}, Components: &fakeComps{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -402,6 +460,172 @@ func TestCallerCredsCannotReplaceTLS(t *testing.T) {
 	}
 	if ff.calls.Load() != 0 {
 		t.Fatal("handler ran over plaintext")
+	}
+}
+
+func openTunnel(t *testing.T, cc *grpc.ClientConn) grpc.ClientStream {
+	t.Helper()
+	s, err := cc.NewStream(context.Background(), &grpc.StreamDesc{StreamName: "Tunnel", ClientStreams: true, ServerStreams: true}, tunnelMethod)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	for end := time.Now().Add(3 * time.Second); time.Now().Before(end); time.Sleep(10 * time.Millisecond) {
+		if cond() {
+			return
+		}
+	}
+	t.Fatalf("timed out waiting for %s", what)
+}
+
+func recvErr(s grpc.ClientStream) chan error {
+	ch := make(chan error, 1)
+	go func() { ch <- s.RecvMsg(new(emptypb.Empty)) }()
+	return ch
+}
+
+// TestRevokedComponentRefusedAndStreamClosed covers T-0157 criteria 1-3: a revoked component with a
+// valid certificate is refused on every RPC, its open stream is closed (at once through
+// CloseComponent, and by the periodic re-check when the revocation happened elsewhere), and other
+// components, in the same tenant or another, are unaffected.
+func TestRevokedComponentRefusedAndStreamClosed(t *testing.T) {
+	const other = "66666666-7777-4888-8999-aaaaaaaaaaaa"
+	ca := newCA(t, time.Now().Add(time.Hour))
+	tidA := tenant.New()
+	pool := x509.NewCertPool()
+	pool.AddCert(ca.cert)
+	nb, na, eku := time.Now().Add(-time.Minute), time.Now().Add(time.Hour), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+
+	for _, via := range []string{"close", "recheck"} {
+		t.Run(via, func(t *testing.T) {
+			r := start(t, casByTenant{tidA: {ca.cert}}, pool, nil)
+			r.fleet.hold.Store(true)
+			victim := ca.leaf(t, tidA, nb, na, eku)
+			sibling := ca.leafFor(t, tidA, other, nb, na, eku)
+			vs, ss := openTunnel(t, r.dial(t, &victim)), openTunnel(t, r.dial(t, &sibling))
+			waitFor(t, "two open streams", func() bool { return r.fleet.open.Load() == 2 })
+			verr, serr := recvErr(vs), recvErr(ss)
+
+			r.comps.revoke(compID) // the Component row is revoked
+			if via == "close" {
+				if n := r.gw.CloseComponent(tidA, compID); n != 1 {
+					t.Fatalf("CloseComponent closed %d streams, want 1", n)
+				}
+			}
+			select {
+			case err := <-verr:
+				if code(err) != codes.Unauthenticated {
+					t.Fatalf("revoked stream ended with %v", err)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("revoked component's stream stayed open")
+			}
+			select {
+			case err := <-serr:
+				t.Fatalf("sibling stream ended: %v", err)
+			case <-time.After(300 * time.Millisecond):
+			}
+			if r.fleet.open.Load() < 1 {
+				t.Fatal("sibling handler is gone")
+			}
+
+			// Re-establishing and any other RPC: refused with a certificate that is still valid.
+			if err := callTunnel(r.dial(t, &victim)); code(err) != codes.Unauthenticated {
+				t.Fatalf("revoked component re-established a stream: %v", err)
+			}
+		})
+	}
+}
+
+// TestCloseComponentIsTenantScoped: the registry keys on tenant and component, so a component ID
+// that also exists in another tenant is not closed.
+func TestCloseComponentIsTenantScoped(t *testing.T) {
+	ca := newCA(t, time.Now().Add(time.Hour))
+	tidA, tidB := tenant.New(), tenant.New()
+	pool := x509.NewCertPool()
+	pool.AddCert(ca.cert)
+	r := start(t, casByTenant{tidA: {ca.cert}, tidB: {ca.cert}}, pool, nil)
+	r.fleet.hold.Store(true)
+	nb, na, eku := time.Now().Add(-time.Minute), time.Now().Add(time.Hour), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+	a, b := ca.leaf(t, tidA, nb, na, eku), ca.leaf(t, tidB, nb, na, eku)
+	sa, sb := openTunnel(t, r.dial(t, &a)), openTunnel(t, r.dial(t, &b))
+	waitFor(t, "two open streams", func() bool { return r.fleet.open.Load() == 2 })
+	ea, eb := recvErr(sa), recvErr(sb)
+	if n := r.gw.CloseComponent(tidA, compID); n != 1 {
+		t.Fatalf("closed %d", n)
+	}
+	select {
+	case <-ea:
+	case <-time.After(2 * time.Second):
+		t.Fatal("tenant A stream stayed open")
+	}
+	select {
+	case err := <-eb:
+		t.Fatalf("tenant B stream ended: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+func TestStatusLookupFailureRefused(t *testing.T) {
+	ca := newCA(t, time.Now().Add(time.Hour))
+	tid := tenant.New()
+	pool := x509.NewCertPool()
+	pool.AddCert(ca.cert)
+	r := start(t, casByTenant{tid: {ca.cert}}, pool, nil)
+	r.comps.err = errors.New("db down")
+	leaf := ca.leaf(t, tid, time.Now().Add(-time.Minute), time.Now().Add(time.Hour), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+	if err := callTunnel(r.dial(t, &leaf)); code(err) != codes.Unavailable {
+		t.Fatalf("status failure must fail closed: %v", err)
+	}
+}
+
+// TestUncooperativeHandlerIsTornDown: a handler blocked in RecvMsg (silent component) or in SendMsg
+// (client not reading) never watches our context; revocation must still end the RPC and the handler
+// goroutine, via CloseComponent and via the periodic re-check alone, leaving the sibling open.
+func TestUncooperativeHandlerIsTornDown(t *testing.T) {
+	const other = "66666666-7777-4888-8999-aaaaaaaaaaaa"
+	ca := newCA(t, time.Now().Add(time.Hour))
+	tid := tenant.New()
+	pool := x509.NewCertPool()
+	pool.AddCert(ca.cert)
+	nb, na, eku := time.Now().Add(-time.Minute), time.Now().Add(time.Hour), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+	for _, mode := range []struct {
+		name string
+		m    int32
+	}{{"recv", 1}, {"send", 2}} {
+		for _, via := range []string{"close", "recheck"} {
+			t.Run(mode.name+"/"+via, func(t *testing.T) {
+				r := start(t, casByTenant{tid: {ca.cert}}, pool, nil)
+				r.fleet.hold.Store(true)
+				r.fleet.mode.Store(mode.m)
+				victim, sib := ca.leaf(t, tid, nb, na, eku), ca.leafFor(t, tid, other, nb, na, eku)
+				vs, ss := openTunnel(t, r.dial(t, &victim)), openTunnel(t, r.dial(t, &sib))
+				waitFor(t, "two open streams", func() bool { return r.fleet.open.Load() == 2 })
+				if mode.m == 2 {
+					time.Sleep(300 * time.Millisecond) // let the send window fill so SendMsg blocks
+				}
+				r.comps.revoke(compID)
+				if via == "close" {
+					if n := r.gw.CloseComponent(tid, compID); n != 1 {
+						t.Fatalf("closed %d", n)
+					}
+				}
+				waitFor(t, "revoked handler to exit", func() bool { return r.fleet.exited.Load() == 1 && r.fleet.open.Load() == 1 })
+				if code(vs.RecvMsg(new(wrapperspb.BytesValue))) == codes.OK {
+					// recv mode has nothing to read; the call must still fail, not deliver data
+					t.Log("received a buffered frame before the close")
+				}
+				time.Sleep(300 * time.Millisecond)
+				if r.fleet.exited.Load() != 1 || r.fleet.open.Load() != 1 {
+					t.Fatalf("sibling affected: exited=%d open=%d", r.fleet.exited.Load(), r.fleet.open.Load())
+				}
+				_ = ss
+			})
+		}
 	}
 }
 
