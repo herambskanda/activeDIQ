@@ -181,7 +181,7 @@ func scanWebPackage(root, rel string, checks Checks, out *[]Finding) error {
 	return nil
 }
 
-var reCheckLinkname = regexp.MustCompile(`checklinkname[=\s]+0`)
+var reCheckLinkname = regexp.MustCompile(`(?i)checklinkname`)
 
 var serviceExts = map[string]bool{".yml": true, ".yaml": true, ".service": true, ".wxs": true, ".wxi": true, ".sh": true, ".ps1": true, ".toml": true, ".mk": true, ".conf": true, ".ini": true, ".cfg": true, ".plist": true, ".env": false, ".tmpl": true, ".json": true, ".xml": true, ".props": true}
 
@@ -208,7 +208,7 @@ func scanServiceDefinition(root, rel, ext, base string, checks Checks, out *[]Fi
 	for i, ln := range strings.Split(string(data), "\n") {
 		if reCheckLinkname.MatchString(ln) {
 			*out = append(*out, Finding{FF: "FF-SP2", Rule: "checklinkname-off", File: rel, Line: i + 1,
-				Msg: "-checklinkname=0 disables the linker's block on pull-linkname into the standard library; no build or release script may pass it (T-0186)"})
+				Msg: "any -checklinkname flag (=0, =false, =f ...) disables the linker's block on pull-linkname into the standard library; no build or release script may mention it (T-0186)"})
 		}
 		if reGoTraceback.MatchString(ln) {
 			*out = append(*out, Finding{FF: "FF-SP2", Rule: "gotraceback-crash", File: rel, Line: i + 1,
