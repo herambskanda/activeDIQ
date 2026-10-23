@@ -868,7 +868,7 @@ func TestFFSP2LinknameUnsafe(t *testing.T) {
 
 func TestFFSP2AsmCgo(t *testing.T) {
 	m := "internal/modules/m/m.go"
-	for _, f := range []string{"a_amd64.s", "a.S", "b.c", "b.h", "x_linux_amd64.syso", "c.cpp", "d.CC"} {
+	for _, f := range []string{"a_amd64.s", "a.S", "a.sx", "a.SX", "b.c", "b.h", "x_linux_amd64.syso", "c.cpp", "d.CC"} {
 		p := "internal/modules/m/" + f
 		want(t, "native file "+f+" in product code", map[string]string{m: "package m\n", p: "x"}, "FF-SP2", "asm-cgo", p)
 		want(t, "native file "+f+" in tier L is exempt", map[string]string{"tools/x/" + f: "x"}, "", "", "")
