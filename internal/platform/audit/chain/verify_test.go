@@ -238,7 +238,7 @@ func TestWholeChainRebuiltUnderFreshKey(t *testing.T) {
 	}
 	forged.checkpoint(forged.priv, forged.pub)
 	want(t, Verify(forged.bundle(), Options{}), Unanchored, 0, "")
-	want(t, Verify(forged.bundle(), pin(real)), Failed, 6, ReasonUntrustedKey)
+	want(t, Verify(forged.bundle(), pin(real)), Failed, 0, ReasonPinnedKeyAbsent)
 	want(t, Verify(forged.bundle(), Options{Anchors: real.cps[1:]}), Failed, 10, ReasonAnchorMismatch)
 	want(t, Verify(forged.bundle(), Options{Anchors: real.cps}), Failed, 6, ReasonAnchorMismatch)
 }
@@ -487,4 +487,52 @@ func TestCurrentKeyCannotCrossSignConcurrentKey(t *testing.T) {
 	b.add("z")
 	b.checkpoint(evilPriv, evil)
 	want(t, Verify(b.bundle(), pin(b)), Failed, 11, ReasonKeyEvent)
+}
+
+// Finding 9: a pinned key the export never mentions must fail, not be ignored. The attacker holds K1's
+// seed, drops the rotation and signs a forked tail with K1.
+func TestPinnedKeyAbsentFromExportFails(t *testing.T) {
+	b := seeded(t)
+	fork := *b
+	fork.events = append([]StoredEvent(nil), b.events...)
+	fork.cps = append([]Checkpoint(nil), b.cps...)
+	pub2, priv2 := key(t)
+	b.rotate(t, b.priv, pub2, true) // 11, 12
+	b.add("x")
+	b.checkpoint(priv2, pub2) // 13
+	both := Options{Pinned: []string{Fingerprint(b.pub), Fingerprint(pub2)}}
+	want(t, Verify(b.bundle(), both), OK, 0, "")
+
+	fork.add("victim-removed-tail")
+	fork.checkpoint(fork.priv, fork.pub) // cp@11 by K1
+	want(t, Verify(fork.bundle(), both), Failed, 0, ReasonPinnedKeyAbsent)
+	want(t, Verify(fork.bundle(), Options{Pinned: []string{Fingerprint(pub2)}}), Failed, 0, ReasonPinnedKeyAbsent)
+}
+
+// Finding 10: the manifest's retirement point must be matched by a key.retired event in range, and the
+// rotation-shape check uses the chain's retirement only.
+func TestManifestRetirementMustMatchChain(t *testing.T) {
+	b := seeded(t)
+	b.add("ordinary") // 11 is NOT a retirement
+	evil, evilPriv := key(t)
+	b.crossCreate(t, b.priv, evil) // 12, "vouched" by K1 whose retirement the manifest claims at 11
+	b.add("z")
+	b.checkpoint(evilPriv, evil)
+	bu := b.bundle()
+	bu.Keys = []KeyInfo{{KeyID: Fingerprint(b.pub), PublicKey: b.pub, CreatedSeq: 1, RetiredSeq: 11}}
+	if r := Verify(bu, pin(b)); r.Status != Failed || r.Reason != ReasonKeyMismatch {
+		t.Fatalf("manifest-only retirement accepted: %s %q", r.Status, r.Reason)
+	}
+
+	// A manifest saying the key is current while the chain retires it.
+	g := seeded(t)
+	pub2, priv2 := key(t)
+	g.rotate(t, g.priv, pub2, true)
+	g.add("x")
+	g.checkpoint(priv2, pub2)
+	gb := g.bundle()
+	gb.Keys = []KeyInfo{{KeyID: Fingerprint(g.pub), PublicKey: g.pub, CreatedSeq: 1}}
+	if r := Verify(gb, pin(g)); r.Status != Failed || r.Reason != ReasonKeyMismatch {
+		t.Fatalf("manifest RetiredSeq=0 accepted while the chain retires: %s", r.Status)
+	}
 }

@@ -75,6 +75,10 @@ type keyWin struct {
 	created uint64
 	retired uint64 // 0: current
 	vouched bool   // already cross-signed a successor
+	// fromManifest: the window came from the manifest. chainRet is the seq of the key.retired event
+	// actually seen in the chain (0: none); the rotation-shape check trusts only that.
+	fromManifest bool
+	chainRet     uint64
 	// crossBy is the key whose valid cross-signature introduced this one ("" if none).
 	crossBy string
 }
@@ -131,7 +135,7 @@ func Verify(b Bundle, opts Options) Result {
 		if pub == nil || Fingerprint(pub) != k.KeyID {
 			return fail(0, ReasonKeyMismatch, "manifest key %q is malformed", k.KeyID)
 		}
-		keys[k.KeyID] = &keyWin{pub: pub, created: k.CreatedSeq, retired: k.RetiredSeq}
+		keys[k.KeyID] = &keyWin{pub: pub, created: k.CreatedSeq, retired: k.RetiredSeq, fromManifest: true}
 	}
 	chainKeys := map[string]bool{}
 	for _, c := range b.Checkpoints {
@@ -188,6 +192,13 @@ func Verify(b Bundle, opts Options) Result {
 		}
 	}
 
+	// A retirement the manifest claims inside the retained range must be a key.retired event in the chain.
+	for id, k := range keys {
+		if k.fromManifest && k.retired != 0 && k.retired >= first && len(b.Events) > 0 && k.chainRet != k.retired {
+			return fail(k.retired, ReasonKeyMismatch, "manifest says key %s retired at seq %d but the chain does not retire it there", id, k.retired)
+		}
+	}
+
 	cps := append([]Checkpoint(nil), b.Checkpoints...)
 	sort.Slice(cps, func(i, j int) bool { return cps[i].Seq < cps[j].Seq })
 	res := Result{Events: len(b.Events)}
@@ -220,6 +231,12 @@ func Verify(b Bundle, opts Options) Result {
 		// The anchored checkpoint's signer is a trust root, once its signature checks out.
 		if k, ok := keys[a.KeyID]; ok && a.VerifySignature(k.pub) == nil {
 			trusted[a.KeyID] = true
+		}
+	}
+	// A pinned key the export never mentions would be ignored, so adding a pin could weaken the check.
+	for p := range pinned {
+		if _, ok := keys[p]; !ok {
+			return fail(0, ReasonPinnedKeyAbsent, "pinned key %s appears neither in the manifest nor in the chain", p)
 		}
 	}
 	rooted := len(pinned) > 0 || anchored
@@ -318,10 +335,14 @@ func applyKeyEvent(env Envelope, keys map[string]*keyWin, fromChain map[string]b
 			if sk != nil && derr == nil {
 				st, derr = CrossSignStatement(env.Tenant, signer, id, pub)
 			}
+			if sk != nil && sk.retired != 0 && sk.retired == env.Seq-1 && sk.chainRet == 0 {
+				r := fail(sk.retired, ReasonKeyMismatch, "the manifest retires key %s at seq %d but the chain does not", signer, sk.retired)
+				return &r
+			}
 			// Only the production rotation shape vouches: the signer was retired by the event just
 			// before this one, and it vouches for a single successor. A retired or current key that
 			// leaks later cannot introduce more keys.
-			if sk == nil || sk.created >= env.Seq || sk.retired == 0 || sk.retired != env.Seq-1 || sk.vouched || derr != nil || !ed25519.Verify(sk.pub, st, sig) {
+			if sk == nil || sk.created >= env.Seq || sk.chainRet == 0 || sk.chainRet != env.Seq-1 || sk.vouched || derr != nil || !ed25519.Verify(sk.pub, st, sig) {
 				r := fail(env.Seq, ReasonKeyEvent, "key %s: the cross-signature by %s does not verify", id, signer)
 				return &r
 			}
@@ -331,11 +352,15 @@ func applyKeyEvent(env Envelope, keys map[string]*keyWin, fromChain map[string]b
 	case KindKeyRetired:
 		id, _ := env.Detail("key_id")
 		k, ok := keys[id]
-		if !ok || k.retired != 0 && k.retired != env.Seq {
+		if !ok || k.chainRet != 0 {
 			r := fail(env.Seq, ReasonKeyEvent, "retirement of unknown or already retired key %s", id)
 			return &r
 		}
-		k.retired = env.Seq
+		if k.fromManifest && k.retired != env.Seq || k.retired != 0 && k.retired != env.Seq {
+			r := fail(env.Seq, ReasonKeyMismatch, "key %s: the manifest's retirement (seq %d) disagrees with the chain", id, k.retired)
+			return &r
+		}
+		k.retired, k.chainRet = env.Seq, env.Seq
 	}
 	return nil
 }

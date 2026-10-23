@@ -35,7 +35,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	bundlePath := fs.String("bundle", "", "path of the adq-audit-export/1 file")
 	anchorsPath := fs.String("anchors", "", "path of a JSON array of checkpoints received from a SIEM")
 	var pins pinFlags
-	fs.Var(&pins, "pin", "checkpoint key fingerprint recorded out of band (repeatable)")
+	fs.Var(&pins, "pin", "checkpoint key fingerprint recorded out of band (repeatable). Pin the CURRENT key after every rotation: "+
+		"with only a retired key pinned and no newer external anchor, a leaked old seed can fork the log from that key's last legitimate point and nothing in the bundle can tell")
 	if err := fs.Parse(args); err != nil {
 		return 64
 	}
