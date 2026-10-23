@@ -248,19 +248,11 @@ func (c *Classifier) Snapshot(ctx context.Context, designated ...Designation) (*
 	for _, d := range designated {
 		switch d.Kind {
 		case KindGroup:
-			gid, err := objectID(d.ID)
-			if err != nil {
+			if _, err := objectID(d.ID); err != nil {
 				return nil, fmt.Errorf("tier0: designated group: %w", err)
 			}
 			s.designatedGroups[strings.ToLower(d.ID)] = true
 			w.enqueue(d.ID, Designated, false)
-			g, err := c.r.GroupByID(ctx, gid)
-			if err != nil {
-				return nil, fmt.Errorf("tier0: designated group: %w", err)
-			}
-			if g.MembershipRule != "" || hasDynamic(g.GroupTypes) {
-				s.dynamic.merge(ScopeOfRule(g.MembershipRule))
-			}
 		case KindUser, KindDevice, KindServicePrincipal:
 			if _, err := objectID(d.ID); err != nil {
 				return nil, fmt.Errorf("tier0: designated object: %w", err)

@@ -393,7 +393,7 @@ func TestNoDynamicGroupRefusesNothing(t *testing.T) {
 }
 
 func TestDynamicRuleLexer(t *testing.T) {
-	toks, err := tier0.Lex(`(user.assignedPlans -any (assignedPlan.service -eq "x\"y" -and assignedPlan.capabilityStatus -eq "Enabled")) -and user.age -ge 18 -and user.tags -in ["a","b"] -and user.v -eq $null`)
+	toks, err := tier0.Lex("(user.assignedPlans -any (assignedPlan.service -eq \"x`\"y\" -and assignedPlan.capabilityStatus -eq \"Enabled\")) -and user.age -ge 18 -and user.tags -in [\"a\",\"b\"] -and user.v -eq $null")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,7 +414,7 @@ func TestDynamicRuleLexer(t *testing.T) {
 }
 
 func FuzzLexRule(f *testing.F) {
-	for _, s := range []string{``, `user.department -eq "x"`, `(user.a -eq "b\"c")`, `-`, `"`, `user.`, `user..a`, "\x00", `user.memberOf`, `{"a",1.2.3}`} {
+	for _, s := range []string{"", `user.department -eq "x"`, "(user.a -eq \"b`\"c\")", `user.a -eq "x\" -and user.b -eq "y"`, "user.a -eq \"x`\"", `-`, `"`, `user.`, `user..a`, "\x00", `user.memberOf`, `{"a",1.2.3}`} {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, rule string) {
@@ -443,4 +443,70 @@ func FuzzLexRule(f *testing.F) {
 			}
 		}
 	})
+}
+
+func TestDirectReportsRuleRefusesManagerWrite(t *testing.T) {
+	set := snapshotFor(t, `Direct Reports for "`+g(7)+`"`)
+	if !set.CheckPropertyWrite(tier0.WriteUser, []string{"manager"}).Refused {
+		t.Fatal("a manager write must be refused")
+	}
+	if set.CheckPropertyWrite(tier0.WriteUser, []string{"jobTitle"}).Refused {
+		t.Fatal("unrelated property is not refused")
+	}
+}
+
+func TestRuleWithNoPropertiesRefusesAll(t *testing.T) {
+	set := snapshotFor(t, `True -eq True`)
+	if !set.CheckPropertyWrite(tier0.WriteUser, []string{"jobTitle"}).Refused {
+		t.Fatal("unknown rule shape must refuse every write")
+	}
+}
+
+func TestNestedDynamicGroupIsRuleScoped(t *testing.T) {
+	tn, in := designatedGroupTenant()
+	for i := range tn.Groups {
+		if tn.Groups[i].ID == g(101) {
+			tn.Groups[i].GroupTypes = []string{"DynamicMembership"}
+			tn.Groups[i].MembershipRule = `user.department -eq "BreakGlass"`
+		}
+	}
+	set, err := tier0.New(newClient(t, tn)).Snapshot(context.Background(), in.Designated...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !set.CheckPropertyWrite(tier0.WriteUser, []string{"department"}).Refused {
+		t.Fatal("nested dynamic group's property must be refused")
+	}
+	if set.CheckPropertyWrite(tier0.WriteUser, []string{"jobTitle"}).Refused {
+		t.Fatal("unrelated property is not refused")
+	}
+	// a failed read of the nested group fails the snapshot
+	cl, srv := newClientSrv(t, tn)
+	srv.PathFailures = map[string]graphtest.Failure{"groups/" + g(101): {Status: 500}}
+	if _, err := tier0.New(cl).Snapshot(context.Background(), in.Designated...); err == nil {
+		t.Fatal("nested group read failure must fail the snapshot")
+	}
+}
+
+func TestExtensionAttributeContainerWrites(t *testing.T) {
+	set := snapshotFor(t, `(user.extensionAttribute15 -eq "x") -or (device.extensionAttribute1 -eq "y")`)
+	for _, tc := range []struct {
+		kind  tier0.WriteKind
+		props []string
+		want  bool
+	}{
+		{tier0.WriteUser, []string{"onPremisesExtensionAttributes"}, true},
+		{tier0.WriteUser, []string{"onPremisesExtensionAttributes.extensionAttribute3"}, true},
+		{tier0.WriteUser, []string{"extensionAttributes"}, false},
+		{tier0.WriteDevice, []string{"extensionAttributes"}, true},
+		{tier0.WriteDevice, []string{"onPremisesExtensionAttributes"}, false},
+	} {
+		if got := set.CheckPropertyWrite(tc.kind, tc.props).Refused; got != tc.want {
+			t.Errorf("%v %v: %v", tc.kind, tc.props, got)
+		}
+	}
+	other := snapshotFor(t, `user.department -eq "x"`)
+	if other.CheckPropertyWrite(tier0.WriteUser, []string{"onPremisesExtensionAttributes"}).Refused {
+		t.Fatal("rule without extension attributes must not refuse the container")
+	}
 }

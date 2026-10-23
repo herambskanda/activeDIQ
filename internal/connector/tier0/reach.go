@@ -64,6 +64,18 @@ func (w *walk) group(it walkItem) error {
 	}
 	w.s.reach[lid][it.basis] = true
 
+	if it.basis == Designated {
+		// Every group reachable from a designated seed is excluded from CA with it, so a dynamic
+		// group nested anywhere in the closure is rule-scoped too. A failed read fails the snapshot.
+		g, err := w.c.r.GroupByID(w.ctx, gid)
+		if err != nil {
+			return fmt.Errorf("tier0: designated group %s: %w", it.id, err)
+		}
+		if g.MembershipRule != "" || hasDynamic(g.GroupTypes) {
+			w.s.dynamic.merge(ScopeOfRule(g.MembershipRule))
+		}
+	}
+
 	var mem []graph.DirectoryObject
 	if it.direct {
 		mem, err = w.c.r.GroupMembers(w.ctx, gid)

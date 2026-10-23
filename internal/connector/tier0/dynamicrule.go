@@ -22,7 +22,7 @@ type TokenKind int
 const (
 	TokPunct    TokenKind = iota + 1 // ( ) [ ] { } ,
 	TokOperator                      // -eq, -and, -any, … (a leading '-' and a word)
-	TokString                        // "…" with backslash escapes
+	TokString                        // "…" with backtick escapes
 	TokNumber                        // digits, optionally one '.' fraction
 	TokProperty                      // user.x or device.x: a property of the object the rule matches
 	TokIdent                         // any other dotted identifier (lambda variables, True, $null)
@@ -58,7 +58,7 @@ func Lex(rule string) ([]Token, error) {
 				if j >= len(rs) {
 					return nil, errors.New("unterminated string in membership rule")
 				}
-				if rs[j] == '\\' {
+				if rs[j] == '`' { // Entra escapes a double quote with a backtick
 					if j+1 >= len(rs) {
 						return nil, errors.New("unterminated string in membership rule")
 					}
@@ -129,7 +129,15 @@ func ScopeOfRule(rule string) RuleScope {
 		sc.RefuseAll = true
 		return sc
 	}
-	for _, t := range toks {
+	known := false
+	for i, t := range toks {
+		// Whole-rule form 'Direct Reports for "{managerId}"' depends on user.manager.
+		if t.Kind == TokIdent && strings.EqualFold(t.Text, "direct") && i+3 < len(toks) &&
+			toks[i+1].Kind == TokIdent && strings.EqualFold(toks[i+1].Text, "reports") &&
+			toks[i+2].Kind == TokIdent && strings.EqualFold(toks[i+2].Text, "for") && toks[i+3].Kind == TokString {
+			sc.Properties["user.manager"] = true
+			known = true
+		}
 		switch t.Kind {
 		case TokProperty:
 			sc.Properties[strings.ToLower(t.Text)] = true
@@ -142,6 +150,11 @@ func ScopeOfRule(rule string) RuleScope {
 				sc.RefuseAll = true
 			}
 		}
+	}
+	// A rule that tokenises but names no property and is no known whole-rule form is a shape we do
+	// not understand: fail closed.
+	if len(sc.Properties) == 0 && !known {
+		sc.RefuseAll = true
 	}
 	return sc
 }
@@ -172,7 +185,9 @@ type DynamicRuleRefusal struct {
 }
 
 // CheckPropertyWrite is the write path's check (TM-D25 rule 7): a write that sets any of props
-// (Graph property names, such as "department" or "extensionAttribute1") on a user or device is
+// (Graph PATCH key names, such as "department", "manager" or, for extension attributes, the
+// container "onPremisesExtensionAttributes" on a user / "extensionAttributes" on a device, optionally
+// dotted; a write to the container is refused when the rule references any extensionAttributeN) on a user or device is
 // refused when a designated dynamic group's rule refers to one of them, and every user and device
 // property write is refused when a rule is untokenisable or refers to group membership. An unknown
 // kind is refused. A snapshot with no designated dynamic group refuses nothing here.
@@ -191,9 +206,22 @@ func (s *Set) CheckPropertyWrite(kind WriteKind, props []string) DynamicRuleRefu
 	if kind == WriteDevice {
 		prefix = "device."
 	}
+	container := "onpremisesextensionattributes"
+	if kind == WriteDevice {
+		container = "extensionattributes"
+	}
 	for _, p := range props {
-		if s.dynamic.Properties[prefix+strings.ToLower(p)] {
+		lp := strings.ToLower(p)
+		if s.dynamic.Properties[prefix+lp] {
 			return refuse
+		}
+		// Graph writes extension attributes through a container, not as user.extensionAttributeN.
+		if lp == container || strings.HasPrefix(lp, container+".") {
+			for rp := range s.dynamic.Properties {
+				if strings.HasPrefix(rp, prefix+"extensionattribute") {
+					return refuse
+				}
+			}
 		}
 	}
 	return DynamicRuleRefusal{}
