@@ -73,3 +73,22 @@ imports the generated package.
 
 New package, additive. Within `v1` only additive changes (new fields, new frame body kinds that
 old peers ignore); a removed or renumbered field needs `fleet.v2`.
+
+## Enrollment tokens and the Component store (T-0153)
+
+`internal/platform/fleet/fleetsql` is the server-only SQL of DM-12 (migration `0006_fleet_components`).
+`cmd/connector` and `cmd/agent` cannot link it: it imports `platform/store`, which rule 7 bans for both.
+
+- **Issue** (`Enrollment.Issue`) needs `fleet.enrollment.issue` and a fresh step-up, both checked before
+  any write. It creates a `pending` Component and one token, stores only the SHA-256, and returns the
+  plaintext once. Lifetime defaults to 1 h, at most 24 h (a database CHECK too).
+- **Token form** `enr1.<tenant uuid>.<256-bit secret>`. The tenant is routing: `Redeem` opens that tenant's
+  transaction, so the Enroll handler never takes a tenant from a message. Possession is proved by the secret.
+- **Redeem** (`Enrollment.Redeem`) is one compare-and-set `UPDATE … WHERE used_at IS NULL AND expires_at > now()`
+  against a still-`pending` Component. Unknown, malformed, used, expired and removed all return
+  `ErrTokenInvalid`. A source that has spent its failed-redeem budget (`FailureLimiter`: `Admit` reserves a try atomically with the check and `Succeeded` refunds it, so overlapping attempts are metered; default 5 then one
+  per 30 s, per /32 or /64; `ip:port` accepted, an unreadable source is refused as `ErrNotConfigured`, never pooled) is refused with `ErrRateLimited` before the token is looked at.
+  Residual (per-node limiter, same follow-up as the shared-store variant): when `MaxSources` is full new
+  sources share one overflow bucket, so an attacker with many IPv6 /64s can throttle new legitimate sources.
+- Not here: the Enroll handler, the CA, the listener, the `pending → enrolled` write (it needs the
+  certificate serial), revocation, and the audited Operation around Issue.
