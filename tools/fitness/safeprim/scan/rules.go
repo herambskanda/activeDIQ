@@ -102,11 +102,12 @@ var symbolRules = []symbolRule{
 	// above: its LDAPS dial to a domain controller is the server-to-DC boundary (TB2), not TB9. DCs are
 	// private by design and the targets come only from Config.Servers, set by the customer, so routing
 	// them through egress (which refuses private ranges) would be wrong. It still may not build an
-	// http.Client.
+	// http.Client. fleet/dial is a Home for the same two raw dials: a component dials the one server it
+	// was enrolled to (TB6), verified against the pinned installation CA, so egress vetting does not apply.
 	{Rule: "outbound-http", Pkg: "net", Names: []string{"Dial", "DialTimeout", "Dialer", "DialTCP", "DialUDP", "DialIP", "DialUnix"},
-		Home: []string{policy.Egress, policy.Graph, policy.ADConn}, TestsExempt: true, Msg: egressMsg},
+		Home: []string{policy.Egress, policy.Graph, policy.ADConn, policy.FleetDial}, TestsExempt: true, Msg: egressMsg},
 	{Rule: "outbound-http", Pkg: "crypto/tls", Names: []string{"Dial", "DialWithDialer", "Dialer"},
-		Home: []string{policy.Egress, policy.Graph, policy.ADConn}, TestsExempt: true, Msg: egressMsg},
+		Home: []string{policy.Egress, policy.Graph, policy.ADConn, policy.FleetDial}, TestsExempt: true, Msg: egressMsg},
 	{Rule: "pgx-simple-protocol", Pkg: "github.com/jackc/pgx/v5", Names: []string{"QueryExecModeSimpleProtocol"}, Home: []string{policy.Store},
 		Msg: "pgx simple protocol interpolates client-side (CVE-2024-27289); only the store's pool-construction assertion may name it (" + refP5 + " rule 6)"},
 	{Rule: "pgx-connection", Pkg: "github.com/jackc/pgx/v5", Names: []string{"Connect", "ConnectConfig", "ParseConfig", "ConnConfig"}, Home: []string{policy.Store},
