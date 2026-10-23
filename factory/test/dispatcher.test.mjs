@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Dispatcher, planDryRun } from '../lib/dispatcher.mjs';
 import { buildWorkerArgs, launchWorker, runFiles } from '../lib/launcher.mjs';
-import { advanceTicket, claimTicket, createTicket, setTicketLinks } from '../lib/tickets.mjs';
+import { advanceTicket, claimTicket, createTicket, setTicketFields, setTicketLinks, summarizeTicket } from '../lib/tickets.mjs';
 import { ensureWorktree } from '../lib/worktree.mjs';
 import { createHandoff } from '../lib/handoffs.mjs';
 import { createDecision } from '../lib/decisions.mjs';
@@ -458,6 +458,38 @@ test('a merge conflict reopens the ticket for its owner and leaves main clean', 
     assert.match(out[b.id].notes.at(-1).text, /conflicted/);
     assert.equal(git(f.root, 'status', '--porcelain', '--untracked-files=no'), '');
     assert.equal(fs.readFileSync(path.join(f.root, 'shared.txt'), 'utf8'), 'from A\n');
+  });
+});
+
+test('an embargoed ticket is held at merge with a visible reason; removing the tag merges it', async () => {
+  await withFactory({}, {}, async (f) => {
+    initRepo(f.root);
+    const t = createTicket(f.ctx, ticketInput({ status: 'ready', tags: ['embargoed'] }), 'x');
+    const wt = await ensureWorktree(f.ctx, t.id);
+    fs.writeFileSync(path.join(wt.path, 'fix.txt'), 'fix\n');
+    commitAll(wt.path, `work ${t.id}`);
+    claimTicket(f.ctx, t.id);
+    for (let i = 0; i < 3; i++) advanceTicket(f.ctx, t.id, 'w', 'ok');
+    setTicketLinks(f.ctx, t.id, { branch: wt.branch, worktree: wt.path });
+    const d = new Dispatcher(f.ctx);
+    d.shared = false;
+
+    await d.mergePass();
+    await d.mergePass();
+    let cur = tickets(f)[t.id];
+    assert.equal(cur.status, 'done');
+    assert.equal(cur.links.merged, undefined);
+    assert.match(cur.links.held, /embargoed/);
+    assert.equal(fs.existsSync(path.join(f.root, 'fix.txt')), false, 'nothing reached main');
+    assert.equal(texts(f).filter((x) => /merge held/.test(x)).length, 1, 'reason recorded once');
+    assert.match(summarizeTicket(cur).held, /fix day/);
+
+    setTicketFields(f.ctx, t.id, { tags: '' }, 'x');
+    await d.mergePass();
+    cur = tickets(f)[t.id];
+    assert.ok(cur.links.merged);
+    assert.equal(cur.links.held, null);
+    assert.equal(fs.readFileSync(path.join(f.root, 'fix.txt'), 'utf8'), 'fix\n');
   });
 });
 

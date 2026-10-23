@@ -109,6 +109,11 @@
       "name": "agent",
       "tier": "A",
       "package": "./cmd/agent"
+    },
+    {
+      "name": "auditverify",
+      "tier": "A",
+      "package": "./cmd/auditverify"
     }
   ],
   "denylist": [
@@ -277,7 +282,13 @@
     "tools/fitness/profiles/uem-denylist.json"
   ],
   "exceptions": {
-    "platformAdapters": [],
+    "platformAdapters": [
+      {
+        "path": "internal/platform/apitls",
+        "adr": "0001-technology-stack.md",
+        "reason": "identity-directory permission checks differ by OS: perm_unix.go (unix) and perm_other.go (!unix, Windows/OCI ACL checks are T-0104)"
+      }
+    ],
     "sidecars": [],
     "cppFallbacks": [],
     "extraGoModules": [

@@ -79,7 +79,7 @@ test('GET /api/state returns the whole payload in the documented shape', async (
 
     assert.equal(s.tickets.length, 1);
     assert.deepEqual(Object.keys(s.tickets[0]).sort(), [
-      'attempts', 'created', 'decisions', 'depends_on', 'effort_override', 'epic', 'handoff', 'id', 'last_note', 'milestone', 'owner',
+      'attempts', 'created', 'decisions', 'depends_on', 'effort_override', 'epic', 'handoff', 'held', 'id', 'last_note', 'milestone', 'owner',
       'parity_refs', 'priority', 'stage_role', 'status', 'summary', 'tags', 'title', 'type', 'updated',
     ]);
     assert.equal(s.tickets[0].body, undefined, 'summaries leave out the heavy fields');
