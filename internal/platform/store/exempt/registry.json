@@ -128,6 +128,56 @@
       "column": "public.enrollment_tokens.expires_at",
       "value": "2030-01-01T01:00:00Z",
       "reason": "CHECK: one hour after the fixed created_at above (DM-12.I2)."
+    },
+    {
+      "column": "public.audit_head.hash",
+      "value": "\\x0101010101010101010101010101010101010101010101010101010101010101",
+      "reason": "CHECK: a chain hash is 32 bytes (SHA-256)."
+    },
+    {
+      "column": "public.audit_event.hash",
+      "value": "\\x0101010101010101010101010101010101010101010101010101010101010101",
+      "reason": "CHECK: a chain hash is 32 bytes (SHA-256)."
+    },
+    {
+      "column": "public.audit_event.prev_hash",
+      "value": "\\x0101010101010101010101010101010101010101010101010101010101010101",
+      "reason": "CHECK: a chain hash is 32 bytes (SHA-256)."
+    },
+    {
+      "column": "public.audit_checkpoint.hash",
+      "value": "\\x0101010101010101010101010101010101010101010101010101010101010101",
+      "reason": "CHECK: a chain hash is 32 bytes (SHA-256)."
+    },
+    {
+      "column": "public.audit_checkpoint.prev_checkpoint_hash",
+      "value": "\\x0101010101010101010101010101010101010101010101010101010101010101",
+      "reason": "CHECK: a chain hash is 32 bytes (SHA-256)."
+    },
+    {
+      "column": "public.audit_checkpoint.signature",
+      "value": "\\x01010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101",
+      "reason": "CHECK: an Ed25519 signature is 64 bytes."
+    },
+    {
+      "column": "public.audit_checkpoint.key_id",
+      "value": "0000000000000000000000000000000000000000000000000000000000000000",
+      "reason": "CHECK: a key id is the 64-hex-character SHA-256 fingerprint of the public key."
+    },
+    {
+      "column": "public.audit_checkpoint.seq",
+      "value": "2",
+      "reason": "CHECK: prev_checkpoint_seq < seq; the probe row's previous checkpoint seq is 0 or 1."
+    },
+    {
+      "column": "public.audit_checkpoint_key.key_id",
+      "value": "0000000000000000000000000000000000000000000000000000000000000000",
+      "reason": "CHECK: a key id is the 64-hex-character SHA-256 fingerprint of the public key."
+    },
+    {
+      "column": "public.audit_checkpoint_key.public_key",
+      "value": "\\x0101010101010101010101010101010101010101010101010101010101010101",
+      "reason": "CHECK: an Ed25519 public key is 32 bytes."
     }
   ]
 }

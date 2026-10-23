@@ -205,12 +205,14 @@ func readTable(lit *ast.CompositeLit, pos func(ast.Node) string, isSel func(ast.
 			default:
 				bad(kv.Value, "Kind must be "+local+".Platform, "+local+".Tenant or "+local+".Directory")
 			}
-		case "AppendOnly":
+		case "AppendOnly", "Bookkeeping":
 			id, ok := kv.Value.(*ast.Ident)
 			if !ok || id.Name != "true" && id.Name != "false" {
-				bad(kv.Value, "AppendOnly must be the literal true or false")
-			} else {
+				bad(kv.Value, key.Name+" must be the literal true or false")
+			} else if key.Name == "AppendOnly" {
 				d.AppendOnly = id.Name == "true"
+			} else {
+				d.Bookkeeping = id.Name == "true"
 			}
 		case "Sealed", "NameOK":
 			l, ok := strs(kv.Value)

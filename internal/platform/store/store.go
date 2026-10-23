@@ -81,6 +81,7 @@ type DB struct {
 	pool      *pgxpool.Pool
 	timeout   string // statement_timeout in milliseconds, as set_config wants it
 	transport TransportStatus
+	hook      hookHolder
 }
 
 // Open builds the pool, refuses an unsafe configuration and verifies the role it connects as. It refuses,
@@ -277,8 +278,23 @@ func (d *DB) run(ctx context.Context, tenantID string, fn func(ctx context.Conte
 	if _, err := pgtx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true), set_config('statement_timeout', $2, true)`, tenantID, d.timeout); err != nil {
 		return fmt.Errorf("store: set transaction context: %w", err)
 	}
-	if err := fn(ctx, tx{pgtx}); err != nil {
+	st := &txState{hooked: d.hook.get() != nil}
+	if err := fn(ctx, tx{t: pgtx, st: st, guard: true}); err != nil {
 		return err
+	}
+	if len(st.slots) > 0 {
+		hook := d.hook.get()
+		st.sealed = true
+		// The hook's last lock is a hot row (the audit head): bound the wait.
+		if _, err := pgtx.Exec(ctx, `SELECT set_config('lock_timeout', $1, true)`, hookLockTimeout); err != nil {
+			return fmt.Errorf("store: set hook lock timeout: %w", err)
+		}
+		if err := hook(ctx, tx{t: pgtx, st: st}, tenantID); err != nil {
+			return err
+		}
+		if len(st.slots) > 0 {
+			return ErrUndrained
+		}
 	}
 	if err := pgtx.Commit(ctx); err != nil {
 		return fmt.Errorf("store: commit: %w", err)
@@ -287,17 +303,31 @@ func (d *DB) run(ctx context.Context, tenantID string, fn func(ctx context.Conte
 	return nil
 }
 
-// tx hides the pgx.Tx: no Commit, Rollback, Begin or Conn.
-type tx struct{ t pgx.Tx }
+// tx hides the pgx.Tx: no Commit, Rollback, Begin or Conn. guard refuses transaction-control SQL; the
+// hook's own Tx is not guarded.
+type tx struct {
+	t     pgx.Tx
+	st    *txState
+	guard bool
+}
 
 func (x tx) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	if x.guard && isTxControl(sql) {
+		return pgconn.CommandTag{}, ErrTxControl
+	}
 	return x.t.Exec(ctx, sql, args...)
 }
 
 func (x tx) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	if x.guard && isTxControl(sql) {
+		return nil, ErrTxControl
+	}
 	return x.t.Query(ctx, sql, args...)
 }
 
 func (x tx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	if x.guard && isTxControl(sql) {
+		return errRow{ErrTxControl}
+	}
 	return x.t.QueryRow(ctx, sql, args...)
 }

@@ -2,9 +2,10 @@
 // appender uses (ADR-0005 rule 11). An event is requested inside the caller's transaction with
 // Sink.Append, so it commits or rolls back with the change it describes (AG-1).
 //
-// This package carries the envelope and the port. The per-tenant hash chain that implements Sink
-// (the commit-time chainer, checkpoints, export, verifier) is T-0132; until it lands the runner is
-// given a Sink by its host, and the tests give it a recording one.
+// This package carries the envelope and the port, and the per-tenant hash chain that implements Sink:
+// the commit-time Chainer, signed checkpoints, and export. The pure format (canonical encoding, hash
+// links, verifier) is in the standard-library-only subpackages canon and chain, which cmd/auditverify
+// links. Tests of other packages give the runner a recording Sink.
 package audit
 
 import (
@@ -12,6 +13,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
 	"github.com/skenzeriq/activediq/internal/platform/store"
@@ -53,6 +55,9 @@ type Event struct {
 	Reason    string // machine reason code, never free text from a directory or a secret
 	PlanHash  string
 	Changes   []Change
+	// Details are typed public details of the kind, in strictly increasing key order. They never carry
+	// a secret or a personal value (ADR-0005 rules 11 and 12).
+	Details []chain.Detail
 }
 
 // ErrInvalidEvent is returned by Validate for an event missing a field every event needs.

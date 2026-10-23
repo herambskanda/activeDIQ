@@ -262,8 +262,11 @@ func checkT4(ctx context.Context, d *Database, m *catalogModel, reg *registry.Re
 		probes++
 		err = inTenant(app, tenantA, func(tx pgx.Tx) error {
 			u, e := tx.Exec(ctx, `UPDATE `+q+` SET tenant_id = tenant_id WHERE tenant_id = $1`, tenantB)
-			if e != nil {
+			if e != nil && !deleteNotGranted(e) {
 				return e
+			}
+			if e != nil { // UPDATE not granted (an append-only table): the failed statement aborted the transaction
+				return nil
 			}
 			dl, e := tx.Exec(ctx, `DELETE FROM `+q+` WHERE tenant_id = $1`, tenantB)
 			if e != nil && !deleteNotGranted(e) {
@@ -296,8 +299,11 @@ func checkT4(ctx context.Context, d *Database, m *catalogModel, reg *registry.Re
 		probes++
 		err = inTenant(fresh, "", func(tx pgx.Tx) error {
 			u, e := tx.Exec(ctx, `UPDATE `+q+` SET tenant_id = tenant_id`)
-			if e != nil {
+			if e != nil && !deleteNotGranted(e) {
 				return e
+			}
+			if e != nil { // UPDATE not granted (an append-only table)
+				return nil
 			}
 			dl, e := tx.Exec(ctx, `DELETE FROM `+q)
 			if e != nil && !deleteNotGranted(e) {
@@ -444,7 +450,8 @@ func probeSessionLeak(ctx context.Context, d *Database) ([]Violation, error) {
 	return vs, nil
 }
 
-// deleteNotGranted reports whether err is the runtime role lacking DELETE on the table (insufficient
+// deleteNotGranted reports whether err is the runtime role lacking DELETE (or, for the append-only audit
+// tables, UPDATE) on the table (insufficient
 // privilege). A table whose rows are never deleted (a state, not a delete, ends them) revokes it, and
 // then the probe's delete touches nothing, which is what the probe asserts.
 func deleteNotGranted(err error) bool {
