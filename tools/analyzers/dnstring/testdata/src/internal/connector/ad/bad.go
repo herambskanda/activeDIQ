@@ -45,3 +45,23 @@ func good(d dn.DN) error {
 	send(s)
 	return err
 }
+
+type embed struct {
+	dn.DN
+	n int
+}
+
+type holder struct{ D dn.DN }
+
+func stringify[T fmt.Stringer](t T) string { return t.String() }
+func show[T any](t T) string               { return fmt.Sprint(t) }
+
+func more(d dn.DN, ds []dn.DN) {
+	send(fmt.Sprint(embed{DN: d}))    // want `converted to an interface`
+	var s fmt.Stringer = embed{DN: d} // want `converted to an interface`
+	send(s.String())
+	send(stringify(d))             // want `converted to an interface`
+	send(show(d))                  // want `converted to an interface`
+	send(fmt.Sprint(ds))           // want `converted to an interface`
+	send(fmt.Sprint(holder{D: d})) // want `converted to an interface`
+}

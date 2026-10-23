@@ -58,27 +58,36 @@ func isDNMethodFunc(pass *analysis.Pass, fn *types.Func) bool {
 	return ok && n.Obj().Name() == "DN"
 }
 
-// isDNType reports dn.DN or *dn.DN.
+// isDNNamed reports the named type dn.DN.
+func isDNNamed(pass *analysis.Pass, n *types.Named) bool {
+	return n.Obj().Name() == "DN" && n.Obj().Pkg() != nil &&
+		policy.Match(util.TypesPkgDir(pass, n.Obj().Pkg()), policy.DN)
+}
+
+// isDNType reports a type whose formatting can reach dn.DN.String or Render: dn.DN or *dn.DN, a type
+// whose method set promotes either (an embedded dn.DN), and a slice, array, map, channel, pointer or
+// struct that contains one (fmt formats elements and exported fields with String).
 func isDNType(pass *analysis.Pass, t types.Type) bool {
 	if t == nil {
 		return false
 	}
-	if p, ok := types.Unalias(t).(*types.Pointer); ok {
-		t = p.Elem()
+	for _, name := range []string{"String", "Render"} {
+		obj, _, _ := types.LookupFieldOrMethod(t, true, nil, name)
+		if fn, ok := obj.(*types.Func); ok && isDNMethodFunc(pass, fn) {
+			return true
+		}
 	}
-	n, ok := types.Unalias(t).(*types.Named)
-	if !ok || n.Obj().Name() != "DN" || n.Obj().Pkg() == nil {
-		return false
-	}
-	return policy.Match(util.TypesPkgDir(pass, n.Obj().Pkg()), policy.DN)
+	return util.NamedMatches(t, func(n *types.Named) bool { return isDNNamed(pass, n) })
 }
 
+// isInterface reports a target type that dispatches dynamically: an interface, or a type parameter
+// (a generic helper may call String on its argument, whatever the constraint says).
 func isInterface(t types.Type) bool {
 	if t == nil {
 		return false
 	}
 	if _, ok := types.Unalias(t).(*types.TypeParam); ok {
-		return false
+		return true
 	}
 	return types.IsInterface(t)
 }
@@ -139,6 +148,12 @@ func runConnector(pass *analysis.Pass) {
 					break
 				}
 				sig, _ := ft.Underlying().(*types.Signature)
+				if fn := util.Callee(pass, v); fn != nil && fn.Origin() != nil {
+					// the generic signature, so a type-parameter parameter is visible
+					if osig, ok := fn.Origin().Type().(*types.Signature); ok && osig.Params().Len() == sig.Params().Len() {
+						sig = osig
+					}
+				}
 				if sig == nil {
 					break
 				}

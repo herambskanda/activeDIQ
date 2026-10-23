@@ -497,6 +497,32 @@ sp_put internal/directory/dn/dn.go <<'GO'
 package dn
 
 type DNString string
+type DN struct{ s string }
+
+func (d DN) String() string { return d.s }
+GO
+sp_put internal/connector/ad/c.go <<'GO'
+package ad
+
+import (
+	"fmt"
+
+	"sp.test/internal/directory/dn"
+)
+
+type entry struct {
+	dn.DN
+	n int
+}
+
+func f(e entry) string { return fmt.Sprint(e) }
+GO
+must_fail_with "FF-SP2 analyzer dnstring on an embedded dn.DN reaching DN.String via fmt in the connector" 'internal/connector/ad/c.go:14: FF-SP2 \[dnstring\].*interface' safeprim -checks FF-SP2
+fresh_sp_tree
+sp_put internal/directory/dn/dn.go <<'GO'
+package dn
+
+type DNString string
 GO
 sp_put internal/connector/ad/c.go <<'GO'
 package ad
