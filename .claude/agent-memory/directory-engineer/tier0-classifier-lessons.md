@@ -11,3 +11,5 @@ metadata:
 - Non-admin connector gets entries with no objectGUID for some System objects (Password Settings Container): skip in sensitive-subtree sweeps, keep strict for accounts.
 - Unit forest tests missed all three of the above; the running Samba lab (docker `activediq-lab-dc-1`) found them. Lab creds: `docker inspect ... Config.Env` -> lab/.lab.env, CA via `docker cp .../lab-tls/ca.pem`.
 - Entra and AD classifiers share package `tier0`; AD types carry the AD prefix.
+
+- T-0238 guard: `Set.CheckPropertyWrite(ctx, PropertyWrite)` re-reads closure dynamic groups via `GroupByID` per write (graphtest tenant edits are live). Graph group has no `membershipRuleProcessingState` field; the guard never reads it, so Paused counts by construction. Unknown rule property => RefuseAll (so fuzz/lexer tests must use real ruleprops names, not `user.a`).
