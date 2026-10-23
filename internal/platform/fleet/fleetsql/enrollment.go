@@ -166,10 +166,19 @@ type Redeemed struct {
 
 // Redeem consumes a token: exactly one caller of the same token succeeds, however many race. A token
 // that is unknown, malformed, expired, already used or whose component is no longer pending returns
-// ErrTokenInvalid, the same answer for each. source is the peer address the gateway saw; once it has
-// spent its redeem budget every attempt is refused with ErrRateLimited before the token is
-// looked at, so the refusal says nothing about whether the token exists.
+// ErrTokenInvalid, the same answer for each. source is the peer address the gateway saw (the
+// transport peer, never a header); once it has spent its redeem budget every attempt is refused with
+// ErrRateLimited before the token is looked at, so the refusal says nothing about whether the token
+// exists. Redeem commits on its own; the Enroll handler uses redeemWith so that the redemption, the
+// certificate and the pending to enrolled write are one transaction.
 func (e *Enrollment) Redeem(ctx context.Context, source string, tok Token) (Redeemed, error) {
+	return e.redeemWith(ctx, source, tok, nil)
+}
+
+// redeemWith is Redeem with work that must commit or roll back together with the redemption. If
+// within returns an error the token stays unused; a failure that is not the client's (anything but
+// ErrTokenInvalid) is refunded to the source's budget.
+func (e *Enrollment) redeemWith(ctx context.Context, source string, tok Token, within func(context.Context, store.Tx, Redeemed) error) (Redeemed, error) {
 	if err := e.ready(); err != nil {
 		return Redeemed{}, err
 	}
@@ -207,9 +216,15 @@ func (e *Enrollment) Redeem(ctx context.Context, source string, tok Token) (Rede
 			return fmt.Errorf("fleetsql: redeem: %w", err)
 		}
 		out.Kind = Kind(kind)
+		if within != nil {
+			return within(ctx, tx, out)
+		}
 		return nil
 	})
 	if err != nil {
+		if !errors.Is(err, ErrTokenInvalid) {
+			e.Limiter.Succeeded(ctx, source) // not the client's fault: do not charge it
+		}
 		return Redeemed{}, err
 	}
 	e.Limiter.Succeeded(ctx, source)

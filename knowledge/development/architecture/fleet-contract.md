@@ -92,3 +92,37 @@ old peers ignore); a removed or renumbered field needs `fleet.v2`.
   sources share one overflow bucket, so an attacker with many IPv6 /64s can throttle new legitimate sources.
 - Not here: the Enroll handler, the CA, the listener, the `pending → enrolled` write (it needs the
   certificate serial), revocation, and the audited Operation around Issue.
+
+## Enroll handler and the installation CA (T-0155)
+
+Core: `fleetsql.Enroller` (`fleet/fleetsql/enroll.go`, `ca.go`; migration `0008_fleet_ca`). Adapter:
+`internal/compose/server/fleetenroll.go` turns `fleetv1.Enroll` into `Enroller` calls, because the platform
+root never imports generated protos. The listener that mounts it is T-0156.
+
+- **One transaction.** Redeem (token CAS), CA load, leaf signing, `pending → enrolled` with `cert_serial`, and
+  the audit event commit together. A failure after redemption (CA unusable, key provider down) rolls the token
+  back, so a server fault does not burn it (the answer to the T-0153 review's obligation 2). A bad CSR is
+  checked before redemption and is its own answer (`ErrCSR`), never a token oracle.
+- **SAN.** Exactly two URIs, `urn:activediq:tenant:<uuid>` and `urn:activediq:component:<kind>:<uuid>`
+  (`fleet.URIs`, read back by `fleet.IdentityOf`, which refuses any extra name). The values come from the
+  token's own row; `EnrollRequest` carries no tenant or component and the CSR's subject and SAN are ignored.
+  Empty subject, ClientAuth only, 90-day default lifetime, clamped to the CA's.
+- **CA.** One per tenant (`fleet_ca`), ECDSA P-384, created on first need or by `InitTenant`. The private key
+  is PKCS#8 sealed with `keys.Seal` under the tenant DEK, bound to tenant, table, row, column and version
+  (TM-A11, AC4); no column holds it in clear and nothing logs it. Per-tenant, not installation-wide, because
+  `platform/keys` has only tenant DEKs; a shared CA would need an installation-scope DEK (follow-up).
+- **Bundle (TM-D24 D2).** Built from parsed certificates, re-encoded as header-free `CERTIFICATE` blocks; stored
+  bytes never pass through. Every stored row must be a DER CA certificate (no PEM, no trailing bytes,
+  `IsCA`, `KeyUsageCertSign`), at most 8 rows and 64 KiB, SPKI hash matching, and the active CA present.
+  Otherwise `Enroll` returns the generic `ErrTokenInvalid`, and an `Alerter` raises `fleet.ca.material_invalid`
+  (plus `fleet.ca.suspected_key_exposure` when a private-key marker is seen).
+- **Pin.** `Enroller.CAPin` returns `sha256:<hex>` of the CA SPKI for the enrolment material (D1).
+- **Rotation (DM-12.I3).** `Enroller.Rotate(leaf, csr)` takes the verified leaf, reads the identity from it and
+  requires that one of the named tenant's own CAs (active or retired) signed it (a verified chain only proves
+  some tenant's CA did; per-tenant CA isolation depends on this check); it requires an `enrolled` or `active` component of the same kind whose current `cert_serial` equals the
+  certificate's. The row, and so the identity, is kept; only the serial changes, so a superseded certificate
+  cannot rotate again. The adapter uses the verified chain only, never `PeerCertificates`.
+- **Source address** is `peer.Addr` from the transport, never a header (T-0153 obligation 3).
+- Not here: the listener and mTLS interceptor (T-0156), revocation (T-0157), the `fleet/dial` client and pin
+  check (T-0158), the issuing handler with its audited Operation and principal-derived tenant (T-0153
+  obligations 1 and 4).
