@@ -7,6 +7,7 @@ help:
 	@grep -hE '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | sed -E 's/:.*## /\t/' | sort
 
 include lab/lab.mk
+include lab/windows/lab.mk
 include tools/ci/ci.mk
 include tools/gen/api/api.mk
 include tools/secrets/secrets.mk
