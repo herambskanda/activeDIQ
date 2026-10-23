@@ -151,6 +151,8 @@ func TestFleetViolations(t *testing.T) {
 		{"F3 password in a frame", "F3", r(fleetBase, "bytes payload = 2;", "bytes payload = 2; string password = 3;", 1)},
 		{"F3 second token", "F3", r(fleetBase, "bytes payload = 2;", "bytes payload = 2; string session_token = 3;", 1)},
 		{"F3 token moved to another message", "F3", r(fleetBase, "bytes payload = 2;", "bytes payload = 2; string enrollment_token = 3;", 1)},
+		{"F9 secret-named message with innocuous fields", "F9", fleetBase + "message PasswordPush { bytes blob = 1; }\n"},
+		{"F9 credential-named message used in a frame", "F9", r(fleetBase, "message TunnelFrame {", "message CredentialEnvelope { uint32 n = 1; }\nmessage TunnelFrame { CredentialEnvelope env = 3;", 1)},
 		{"F3 nested message", "F3", r(fleetBase, "message TunnelFrame {", "message Inner { string api_key = 1; }\nmessage TunnelFrame { Inner inner = 3;", 1)},
 		{"F4 no CA bundle", "F4", r(fleetBase, "bytes ca_bundle_pem = 2;", "bytes other = 2;", 1)},
 		{"F4 no leaf", "F4", r(fleetBase, "bytes leaf_certificate_der = 1;", "bytes cert = 1;", 1)},
@@ -288,5 +290,18 @@ func TestFleetExtensionsRPCTypesNestedToken(t *testing.T) {
 				t.Fatalf("want %s, got %q", c.want, got)
 			}
 		})
+	}
+}
+
+// TestFleetViolationMessages: the failure names the message and field (TM-TB6-T6), and a new RPC
+// points at the ADR it needs.
+func TestFleetViolationMessages(t *testing.T) {
+	vs, err := lint(t, r(fleetBase, "bytes payload = 2;", "bytes payload = 2; string password = 3;", 1))
+	if err != nil || !strings.Contains(vs[0].String(), "activediq.fleet.v1.TunnelFrame.password") {
+		t.Fatalf("want message and field named, got %v %v", vs, err)
+	}
+	vs, err = lint(t, r(fleetBase, "service Fleet {", "message PingRequest {}\nservice Fleet { rpc Ping(PingRequest) returns (EnrollResponse);", 1))
+	if err != nil || !strings.Contains(vs[0].String(), "new ADR") {
+		t.Fatalf("want an ADR pointer, got %v %v", vs, err)
 	}
 }
