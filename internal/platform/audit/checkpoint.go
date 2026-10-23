@@ -184,16 +184,14 @@ func latestCheckpoint(ctx context.Context, tx store.Tx, id tenant.ID) (chain.Che
 	return cps[0], true, nil
 }
 
+const listCheckpoints = `SELECT seq, hash, signed_at, key_id, prev_checkpoint_seq, prev_checkpoint_hash, signature
+	FROM audit_checkpoint WHERE tenant_id = $1::uuid AND seq > $2 AND ($3 = 0 OR seq <= $3)
+	ORDER BY CASE WHEN $5::boolean THEN -seq ELSE seq END LIMIT $4`
+
 // ListCheckpoints reads checkpoints with after < seq <= upTo (upTo 0: no upper bound), oldest first, at
 // most limit; newest first when newestFirst. The forwarding job reads by this seq watermark.
 func ListCheckpoints(ctx context.Context, tx store.Tx, id tenant.ID, after, upTo uint64, limit int, newestFirst bool) ([]chain.Checkpoint, error) {
-	order := "ASC"
-	if newestFirst {
-		order = "DESC"
-	}
-	rows, err := tx.Query(ctx, `SELECT seq, hash, signed_at, key_id, prev_checkpoint_seq, prev_checkpoint_hash, signature
-		FROM audit_checkpoint WHERE tenant_id = $1::uuid AND seq > $2 AND ($3 = 0 OR seq <= $3)
-		ORDER BY seq `+order+` LIMIT $4`, id.String(), after, upTo, limit)
+	rows, err := tx.Query(ctx, listCheckpoints, id.String(), after, upTo, limit, newestFirst)
 	if err != nil {
 		return nil, fmt.Errorf("audit: list checkpoints: %w", err)
 	}

@@ -23,9 +23,6 @@ var (
 	ErrStaleHead = errors.New("audit: the chain head changed during the append")
 )
 
-// headLockTimeout bounds the wait for the head row lock, the last lock a transaction takes.
-const headLockTimeout = "5000" // milliseconds
-
 // pending is what Append buffers in the transaction's slot until the commit hook chains it.
 type pending struct{ events []Event }
 
@@ -118,9 +115,6 @@ func (c *Chainer) beforeCommit(ctx context.Context, tx store.Tx, tenantID string
 	}
 	if iso != "read committed" {
 		return ErrIsolation
-	}
-	if _, err := tx.Exec(ctx, `SELECT set_config('lock_timeout', $1, true)`, headLockTimeout); err != nil {
-		return fmt.Errorf("audit: set lock timeout: %w", err)
 	}
 	var seq uint64
 	var hashB []byte

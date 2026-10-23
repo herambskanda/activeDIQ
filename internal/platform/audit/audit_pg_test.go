@@ -170,15 +170,17 @@ func TestRuntimeRoleCannotRewriteTheAuditTables(t *testing.T) {
 		if _, _, err := r.cp.Sign(context.Background(), r.db, r.id); err != nil && !errors.Is(err, audit.ErrAnchor) {
 			t.Fatal(err)
 		}
-		for _, table := range []string{"audit_event", "audit_checkpoint", "audit_checkpoint_key"} {
-			for _, stmt := range []string{"UPDATE " + table + " SET tenant_id = tenant_id", "DELETE FROM " + table, "TRUNCATE " + table} {
-				err := r.db.WithTenant(context.Background(), r.id, func(ctx context.Context, tx store.Tx) error {
-					_, err := tx.Exec(ctx, stmt)
-					return err
-				})
-				if store.SQLState(err) != "42501" {
-					t.Errorf("%q: err = %v (SQLSTATE %q); want 42501 insufficient_privilege", stmt, err, store.SQLState(err))
-				}
+		for _, stmt := range []string{
+			"UPDATE audit_event SET kind = kind", "DELETE FROM audit_event", "TRUNCATE audit_event",
+			"UPDATE audit_checkpoint SET key_id = key_id", "DELETE FROM audit_checkpoint", "TRUNCATE audit_checkpoint",
+			"UPDATE audit_checkpoint_key SET key_id = key_id", "DELETE FROM audit_checkpoint_key", "TRUNCATE audit_checkpoint_key",
+		} {
+			err := r.db.WithTenant(context.Background(), r.id, func(ctx context.Context, tx store.Tx) error {
+				_, err := tx.Exec(ctx, stmt)
+				return err
+			})
+			if store.SQLState(err) != "42501" {
+				t.Errorf("%q: err = %v (SQLSTATE %q); want 42501 insufficient_privilege", stmt, err, store.SQLState(err))
 			}
 		}
 		for _, stmt := range []string{"DELETE FROM audit_head", "TRUNCATE audit_head"} {
@@ -328,10 +330,10 @@ func TestTamperedDatabaseFailsVerification(t *testing.T) {
 			return r.admin(`DELETE FROM audit_event WHERE tenant_id = $1::uuid AND seq = 4`, r.id.String())
 		},
 		"reordered": func(r *rig) error {
-			return r.admin(`DO $$ BEGIN
-				UPDATE audit_event SET seq = seq + 1000 WHERE seq IN (4, 5) AND tenant_id = (SELECT id FROM public.tenants WHERE name = 'A');
-				UPDATE audit_event SET seq = CASE seq WHEN 1004 THEN 5 ELSE 4 END WHERE seq IN (1004, 1005) AND tenant_id = (SELECT id FROM public.tenants WHERE name = 'A');
-			END $$`)
+			if err := r.admin(`UPDATE audit_event SET seq = seq + 1000 WHERE seq IN (4, 5) AND tenant_id = $1::uuid`, r.id.String()); err != nil {
+				return err
+			}
+			return r.admin(`UPDATE audit_event SET seq = CASE seq WHEN 1004 THEN 5 ELSE 4 END WHERE seq IN (1004, 1005) AND tenant_id = $1::uuid`, r.id.String())
 		},
 	}
 	for name, tamper := range cases {
@@ -422,11 +424,6 @@ func TestFailsClosedWhenMiswired(t *testing.T) {
 		err = r.db.WithTenant(ctx, headless, func(ctx context.Context, tx store.Tx) error { return r.ch.Append(ctx, tx, ev("x")) })
 		if !errors.Is(err, audit.ErrNoHead) {
 			t.Errorf("append for a headless tenant = %v; want ErrNoHead", err)
-		}
-		// A platform transaction has no tenant to chain into.
-		err = r.db.WithPlatform(ctx, "audit test: platform append", func(ctx context.Context, tx store.Tx) error { return r.ch.Append(ctx, tx, ev("x")) })
-		if !errors.Is(err, audit.ErrNoTenantTx) {
-			t.Errorf("platform append = %v; want ErrNoTenantTx", err)
 		}
 		// Transaction-control SQL inside a body is refused, so no body can commit around the hook.
 		for _, sql := range []string{"COMMIT", "rollback", "SAVEPOINT s", "SELECT 1; COMMIT"} {

@@ -35,6 +35,9 @@ var (
 // transaction). It must take (Slot.Take) everything it handles.
 type BeforeCommitFunc func(ctx context.Context, tx Tx, tenantID string) error
 
+// hookLockTimeout is the lock_timeout, in milliseconds, for the statements of the commit hook.
+const hookLockTimeout = "5000"
+
 type hookHolder struct {
 	mu sync.Mutex
 	f  BeforeCommitFunc
@@ -74,8 +77,8 @@ type Slot[T any] struct{ _ byte }
 // NewSlot makes a slot. Declare it once, in the package that owns the work.
 func NewSlot[T any]() *Slot[T] { return new(Slot[T]) }
 
-func stateOf(tx Tx) (*txState, error) {
-	t, ok := tx.(storeTx)
+func stateOf(x Tx) (*txState, error) {
+	t, ok := x.(tx)
 	if !ok || t.st == nil {
 		return nil, ErrNotStoreTx
 	}

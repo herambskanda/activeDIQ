@@ -238,7 +238,7 @@ func checkDeclarations(src *Source, entities map[string]Entity) []Violation {
 		case e.Kind != "" && e.Kind != string(d.Kind):
 			vs = append(vs, Violation{"REG", "kind-mismatch", d.Name, fmt.Sprintf("%s: declared kind %s, but the domain model says %s %s is kind %s (a registry entity has no table)", d.Pos, d.Kind, e.ID, e.Name, e.Kind)})
 		}
-		if e.AppendOnly && !d.AppendOnly {
+		if e.AppendOnly && !d.AppendOnly && !d.Bookkeeping {
 			vs = append(vs, Violation{"REG", "append-only-missing", d.Name, fmt.Sprintf("%s: %s %s is append-only or insert-only in the domain model (X5), so its tables are declared AppendOnly: true", d.Pos, e.ID, e.Name)})
 		}
 		if !e.AppendOnly && d.AppendOnly {

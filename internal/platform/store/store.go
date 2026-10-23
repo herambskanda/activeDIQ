@@ -279,13 +279,17 @@ func (d *DB) run(ctx context.Context, tenantID string, fn func(ctx context.Conte
 		return fmt.Errorf("store: set transaction context: %w", err)
 	}
 	st := &txState{hooked: d.hook.get() != nil}
-	if err := fn(ctx, storeTx{t: pgtx, st: st, guard: true}); err != nil {
+	if err := fn(ctx, tx{t: pgtx, st: st, guard: true}); err != nil {
 		return err
 	}
 	if len(st.slots) > 0 {
 		hook := d.hook.get()
 		st.sealed = true
-		if err := hook(ctx, storeTx{t: pgtx, st: st}, tenantID); err != nil {
+		// The hook's last lock is a hot row (the audit head): bound the wait.
+		if _, err := pgtx.Exec(ctx, `SELECT set_config('lock_timeout', $1, true)`, hookLockTimeout); err != nil {
+			return fmt.Errorf("store: set hook lock timeout: %w", err)
+		}
+		if err := hook(ctx, tx{t: pgtx, st: st}, tenantID); err != nil {
 			return err
 		}
 		if len(st.slots) > 0 {
@@ -299,29 +303,29 @@ func (d *DB) run(ctx context.Context, tenantID string, fn func(ctx context.Conte
 	return nil
 }
 
-// storeTx hides the pgx.Tx: no Commit, Rollback, Begin or Conn. guard refuses transaction-control SQL; the
+// tx hides the pgx.Tx: no Commit, Rollback, Begin or Conn. guard refuses transaction-control SQL; the
 // hook's own Tx is not guarded.
-type storeTx struct {
+type tx struct {
 	t     pgx.Tx
 	st    *txState
 	guard bool
 }
 
-func (x storeTx) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+func (x tx) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
 	if x.guard && isTxControl(sql) {
 		return pgconn.CommandTag{}, ErrTxControl
 	}
 	return x.t.Exec(ctx, sql, args...)
 }
 
-func (x storeTx) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+func (x tx) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
 	if x.guard && isTxControl(sql) {
 		return nil, ErrTxControl
 	}
 	return x.t.Query(ctx, sql, args...)
 }
 
-func (x storeTx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+func (x tx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
 	if x.guard && isTxControl(sql) {
 		return errRow{ErrTxControl}
 	}

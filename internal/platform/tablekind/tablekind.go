@@ -54,6 +54,11 @@ type Table struct {
 	// DM-25's insert-only Tier0Override as well. It must be true exactly for the entities whose
 	// domain-model heading says "append-only" or "insert-only".
 	AppendOnly bool
+	// Bookkeeping marks a mutable system table that sits beside an append-only entity and exists only to
+	// serialise or index it, such as the audit chain head (ADR-0005 rule 11). It is exempt from the
+	// "entity is append-only" rule (the entity's own rows are in the AppendOnly tables) and still
+	// subject to X3 and X4. It cannot also be AppendOnly.
+	Bookkeeping bool
 	// Sealed lists the columns that hold a sealed (encrypted under the tenant data key) value or key
 	// material: DM-11 sealed_secret, DM-37 sealed_secret, DM-63, DM-82 and DM-85 sealed_credentials,
 	// DM-02 wrapped_dek. They are the only columns allowed a secret-attribute name (X4) and must be
@@ -80,6 +85,8 @@ func (t Table) Validate() error {
 		return fmt.Errorf("tablekind: table name %q is not schema.table in lower case", t.Name)
 	case !entityPattern.MatchString(t.Entity):
 		return fmt.Errorf("tablekind: %s: entity %q is not DM-nn", t.Name, t.Entity)
+	case t.Bookkeeping && t.AppendOnly:
+		return fmt.Errorf("tablekind: %s: a table is either append-only or bookkeeping", t.Name)
 	case t.Kind != Platform && t.Kind != Tenant && t.Kind != Directory:
 		return fmt.Errorf("tablekind: %s: kind %q is not P, T or D", t.Name, t.Kind)
 	}

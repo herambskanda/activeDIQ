@@ -9,8 +9,8 @@
 --       owner role, not here.
 --   I3  audit_head is the one mutable audit table. Its row lock serialises a tenant's appenders. A row can
 --       only be created as the genesis (seq 0, hash_0 recomputed here with sha256()) and with `at` set by the
---       database; it can only move forward. The trigger is not SECURITY DEFINER and is ENABLE ALWAYS, so it
---       holds for a role that cannot set session_replication_role (fitness-audit A1 checks that too).
+--       database; it can only move forward. The triggers are not SECURITY DEFINER; they bind a role that cannot
+--       set session_replication_role, which fitness-audit A1 asserts (fitness-tenancy T3 does too).
 --   I4  a checkpoint can only name an event that exists with the same hash, so the runtime role cannot
 --       insert a checkpoint for a head that was never chained.
 --   Tail-keeping: (tenant_id, seq) is the primary key of audit_event, so a stale head cannot fork the chain,
@@ -65,19 +65,29 @@ CREATE TABLE public.audit_checkpoint_key (
   UNIQUE (tenant_id, ordinal)
 );
 
-DO $rls$
-DECLARE
-  t text;
-BEGIN
-  FOREACH t IN ARRAY ARRAY['audit_head', 'audit_event', 'audit_checkpoint', 'audit_checkpoint_key'] LOOP
-    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
-    EXECUTE format('ALTER TABLE public.%I FORCE ROW LEVEL SECURITY', t);
-    EXECUTE format($p$CREATE POLICY %I ON public.%I
-      USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
-      WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)$p$, t || '_tenant', t);
-  END LOOP;
-END
-$rls$;
+ALTER TABLE public.audit_head ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.audit_head FORCE ROW LEVEL SECURITY;
+CREATE POLICY audit_head_tenant ON public.audit_head
+  USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+
+ALTER TABLE public.audit_event ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.audit_event FORCE ROW LEVEL SECURITY;
+CREATE POLICY audit_event_tenant ON public.audit_event
+  USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+
+ALTER TABLE public.audit_checkpoint ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.audit_checkpoint FORCE ROW LEVEL SECURITY;
+CREATE POLICY audit_checkpoint_tenant ON public.audit_checkpoint
+  USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+
+ALTER TABLE public.audit_checkpoint_key ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.audit_checkpoint_key FORCE ROW LEVEL SECURITY;
+CREATE POLICY audit_checkpoint_key_tenant ON public.audit_checkpoint_key
+  USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
 
 -- I2. DELETE on audit_head is revoked too: a head cannot be recreated (a recreated head would restart the
 -- chain). TRUNCATE is never in the default privileges.
@@ -91,12 +101,17 @@ COMMENT ON TABLE public.audit_event IS 'DM-80 AuditEvent (tenant table, RLS, app
 COMMENT ON TABLE public.audit_checkpoint IS 'DM-81 ChainCheckpoint (tenant table, RLS, append-only for the runtime role). Never purged.';
 COMMENT ON TABLE public.audit_checkpoint_key IS 'DM-81 checkpoint signing keys (tenant table, RLS, append-only); the private key is sealed under the tenant data key.';
 
--- I3. Genesis-only insert. SECURITY INVOKER with a pinned search_path, as components_guard.
+-- I3. Genesis-only insert. The first check repeats the row-security condition so that a row for another
+-- tenant is refused for the reason row security gives, not as a malformed head.
+-- Genesis-only insert. SECURITY INVOKER with a pinned search_path, as components_guard.
 CREATE FUNCTION public.audit_head_guard_insert() RETURNS trigger
   LANGUAGE plpgsql
   SET search_path = pg_catalog
 AS $fn$
 BEGIN
+  IF NEW.tenant_id IS DISTINCT FROM NULLIF(current_setting('app.tenant_id', true), '')::uuid THEN
+    RAISE EXCEPTION 'new row violates row-level security policy for table "audit_head"' USING ERRCODE = '42501';
+  END IF;
   IF NEW.seq <> 0 OR NEW.hash IS DISTINCT FROM
      sha256(convert_to('adq-audit-genesis/1', 'UTF8') || '\x00'::bytea || decode(replace(NEW.tenant_id::text, '-', ''), 'hex')) THEN
     RAISE EXCEPTION 'audit_head: a head is created at seq 0 with the tenant genesis hash' USING ERRCODE = 'AD403';
@@ -108,7 +123,6 @@ $fn$;
 
 CREATE TRIGGER audit_head_guard_insert BEFORE INSERT ON public.audit_head
   FOR EACH ROW EXECUTE FUNCTION public.audit_head_guard_insert();
-ALTER TABLE public.audit_head ENABLE ALWAYS TRIGGER audit_head_guard_insert;
 
 -- The head only moves forward, in seq and in time.
 CREATE FUNCTION public.audit_head_guard_update() RETURNS trigger
@@ -116,6 +130,9 @@ CREATE FUNCTION public.audit_head_guard_update() RETURNS trigger
   SET search_path = pg_catalog
 AS $fn$
 BEGIN
+  IF NEW.tenant_id IS DISTINCT FROM NULLIF(current_setting('app.tenant_id', true), '')::uuid THEN
+    RAISE EXCEPTION 'new row violates row-level security policy for table "audit_head"' USING ERRCODE = '42501';
+  END IF;
   IF NEW.tenant_id IS DISTINCT FROM OLD.tenant_id OR NEW.seq <= OLD.seq OR NEW.at < OLD.at THEN
     RAISE EXCEPTION 'audit_head: the head only moves forward' USING ERRCODE = 'AD403';
   END IF;
@@ -125,7 +142,6 @@ $fn$;
 
 CREATE TRIGGER audit_head_guard_update BEFORE UPDATE ON public.audit_head
   FOR EACH ROW EXECUTE FUNCTION public.audit_head_guard_update();
-ALTER TABLE public.audit_head ENABLE ALWAYS TRIGGER audit_head_guard_update;
 
 -- I4. A checkpoint names a chained event. Under RLS the lookup sees only the tenant's own events.
 CREATE FUNCTION public.audit_checkpoint_guard_insert() RETURNS trigger
@@ -140,6 +156,6 @@ BEGIN
 END
 $fn$;
 
-CREATE TRIGGER audit_checkpoint_guard_insert BEFORE INSERT ON public.audit_checkpoint
+-- AFTER, so that row security judges the row first.
+CREATE TRIGGER audit_checkpoint_guard_insert AFTER INSERT ON public.audit_checkpoint
   FOR EACH ROW EXECUTE FUNCTION public.audit_checkpoint_guard_insert();
-ALTER TABLE public.audit_checkpoint ENABLE ALWAYS TRIGGER audit_checkpoint_guard_insert;
