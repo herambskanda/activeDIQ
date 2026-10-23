@@ -54,6 +54,9 @@ type PlatformJob struct {
 type ProbeValue struct {
 	Column string `json:"column"` // schema.table.column
 	Value  string `json:"value"`
+	// Null binds SQL NULL instead of Value: for a nullable column that a foreign key would otherwise
+	// fill from its parent, where the table's own insert guard demands NULL (a circular reference).
+	Null   bool   `json:"null,omitempty"`
 	Reason string `json:"reason"`
 }
 
@@ -160,6 +163,9 @@ func (r *Registry) Validate() []Problem {
 		e := "probeValues[" + v.Column + "]"
 		dup("probeValue", v.Column)
 		need(e, v.Reason)
+		if v.Null && v.Value != "" {
+			add(e, "null and value are exclusive")
+		}
 		if strings.Count(v.Column, ".") != 2 {
 			add(e, "column must be schema.table.column")
 		}

@@ -130,6 +130,61 @@
       "reason": "CHECK: one hour after the fixed created_at above (DM-12.I2)."
     },
     {
+      "column": "public.connections.last_verification_id",
+      "null": true,
+      "reason": "A connection is born with no verification: the insert guard refuses a pointer (DM-10 L1); the foreign key to DM-24 would otherwise fill it from the parent."
+    },
+    {
+      "column": "public.connection_verifications.kind",
+      "value": "scheduled",
+      "reason": "CHECK: kind is one of the run kinds; scheduled needs no requested_by, which the probe row leaves empty (DM-24)."
+    },
+    {
+      "column": "public.connection_verifications.verdict",
+      "value": "pass",
+      "reason": "CHECK: verdict is one of pass, refused, could_not_verify, failed (DM-24)."
+    },
+    {
+      "column": "public.connection_verifications.credential_id",
+      "value": "00000000-0000-4000-8000-0000000000c1",
+      "reason": "The override probe row must name a run of the same credential (DM-25.I1 insert guard); both tables use one constant."
+    },
+    {
+      "column": "public.connection_verifications.digest_salt",
+      "value": "\\xabababababababababababababababab",
+      "reason": "CHECK: the salt is 16 bytes (DM-24.I5)."
+    },
+    {
+      "column": "public.connection_verifications.findings_digest",
+      "value": "\\xabababababababababababababababababababababababababababababababab",
+      "reason": "CHECK: the digest is 32 bytes, SHA-256 (DM-24.I5)."
+    },
+    {
+      "column": "public.connection_verification_findings.check_name",
+      "value": "V1",
+      "reason": "CHECK: check_name is V1..V9 or EV1..EV5 (DM-24)."
+    },
+    {
+      "column": "public.connection_verification_findings.severity",
+      "value": "info",
+      "reason": "CHECK: severity is block, warn or info (DM-24)."
+    },
+    {
+      "column": "public.connection_verification_findings.fingerprint",
+      "value": "abababababababababababababababababababababababababababababababab",
+      "reason": "CHECK: the fingerprint is 64 lower-case hex characters (DM-24.I4)."
+    },
+    {
+      "column": "public.connection_tier0_overrides.credential_id",
+      "value": "00000000-0000-4000-8000-0000000000c1",
+      "reason": "Must equal the evidence run's credential (DM-25.I1 insert guard)."
+    },
+    {
+      "column": "public.connection_tier0_overrides.acknowledged_fingerprints",
+      "value": "{probe}",
+      "reason": "CHECK: an override acknowledges at least one finding (DM-25.I3); the default empty array is refused."
+    },
+    {
       "column": "public.audit_head.hash",
       "value": "\\x0101010101010101010101010101010101010101010101010101010101010101",
       "reason": "CHECK: a chain hash is 32 bytes (SHA-256)."
