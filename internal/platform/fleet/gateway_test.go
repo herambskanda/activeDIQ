@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 
@@ -138,7 +139,7 @@ func start(t *testing.T, cas fleet.TenantCAs, pool *x509.CertPool, now func() ti
 	der, _ := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &sk.PublicKey, sk)
 	srvCert := tls.Certificate{Certificate: [][]byte{der}, PrivateKey: sk}
 	ff := &fakeFleet{}
-	srv, err := g.NewServer(fleet.ServerTLS(srvCert, func() *x509.CertPool { return pool }), func(r grpc.ServiceRegistrar) {
+	srv, err := g.NewServer(srvCert, func() *x509.CertPool { return pool }, func(r grpc.ServiceRegistrar) {
 		r.RegisterService(ff.desc("activediq.fleet.v1.Fleet"), ff)
 	})
 	if err != nil {
@@ -310,17 +311,16 @@ func TestStartupFailsClosed(t *testing.T) {
 		t.Fatalf("zero class: %v", err)
 	}
 
-	tlsConf := &tls.Config{MinVersion: tls.VersionTLS13}
 	ff := &fakeFleet{}
 	// Tunnel not classified.
 	g, _ := fleet.NewGateway(fleet.Config{Methods: map[string]fleet.AuthClass{fleet.EnrollMethod: fleet.ClassPublic}, CAs: cas})
-	if _, err := g.NewServer(tlsConf, func(r grpc.ServiceRegistrar) { r.RegisterService(ff.desc("activediq.fleet.v1.Fleet"), ff) }); !errors.Is(err, fleet.ErrUnclassified) {
+	if _, err := g.NewServer(tls.Certificate{Certificate: [][]byte{{1}}}, func() *x509.CertPool { return nil }, func(r grpc.ServiceRegistrar) { r.RegisterService(ff.desc("activediq.fleet.v1.Fleet"), ff) }); !errors.Is(err, fleet.ErrUnclassified) {
 		t.Fatalf("unclassified method: %v", err)
 	}
 	// A non-fleet service on the fleet listener.
 	g, _ = fleet.NewGateway(fleet.Config{Methods: map[string]fleet.AuthClass{fleet.EnrollMethod: fleet.ClassPublic, tunnelMethod: fleet.ClassClientCert,
 		"/activediq.console.v1.Console/Enroll": fleet.ClassClientCert, "/activediq.console.v1.Console/Tunnel": fleet.ClassClientCert}, CAs: cas})
-	if _, err := g.NewServer(tlsConf, func(r grpc.ServiceRegistrar) { r.RegisterService(ff.desc("activediq.console.v1.Console"), ff) }); !errors.Is(err, fleet.ErrForeignMount) {
+	if _, err := g.NewServer(tls.Certificate{Certificate: [][]byte{{1}}}, func() *x509.CertPool { return nil }, func(r grpc.ServiceRegistrar) { r.RegisterService(ff.desc("activediq.console.v1.Console"), ff) }); !errors.Is(err, fleet.ErrForeignMount) {
 		t.Fatalf("foreign service: %v", err)
 	}
 }
@@ -353,5 +353,41 @@ func TestUnaryClientCertMethodRefusedWithoutPeer(t *testing.T) {
 		func(context.Context, any) (any, error) { ran = true; return nil, nil })
 	if code(err) != codes.PermissionDenied || ran {
 		t.Fatalf("unknown method: err=%v ran=%v", err, ran)
+	}
+}
+
+// A caller-supplied Creds option must not replace the gateway's mTLS (Enroll would be served in
+// plaintext): a plaintext client cannot reach Enroll.
+func TestCallerCredsCannotReplaceTLS(t *testing.T) {
+	g, err := fleet.NewGateway(fleet.Config{Methods: allMethods, CAs: casByTenant{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sk, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "srv"}, DNSNames: []string{"localhost"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour)}
+	der, _ := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &sk.PublicKey, sk)
+	ff := &fakeFleet{}
+	srv, err := g.NewServer(tls.Certificate{Certificate: [][]byte{der}, PrivateKey: sk}, func() *x509.CertPool { return nil },
+		func(r grpc.ServiceRegistrar) { r.RegisterService(ff.desc("activediq.fleet.v1.Fleet"), ff) },
+		grpc.Creds(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, _ := net.Listen("tcp", "127.0.0.1:0")
+	go func() { _ = srv.Serve(l) }()
+	t.Cleanup(srv.Stop)
+	conn, err := grpc.NewClient(l.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := conn.Invoke(ctx, fleet.EnrollMethod, &emptypb.Empty{}, &emptypb.Empty{}); err == nil {
+		t.Fatal("plaintext client reached Enroll")
+	}
+	if ff.calls.Load() != 0 {
+		t.Fatal("handler ran over plaintext")
 	}
 }

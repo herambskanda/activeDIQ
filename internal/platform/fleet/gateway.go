@@ -114,20 +114,22 @@ func NewGateway(cfg Config) (*Gateway, error) {
 	return &Gateway{methods: m, cas: cfg.CAs, now: now}, nil
 }
 
-// NewServer builds the gRPC server of the fleet listener: TLS from tlsConf, both interceptors, and
+// NewServer builds the gRPC server of the fleet listener: TLS built here from the server certificate
+// and client-CA source (no caller-supplied tls.Config, and the gateway's own credentials and
+// interceptors are applied after opts so no option can replace them), both interceptors, and
 // whatever register mounts. It fails closed if register mounts a method without an explicit class, a
 // public method other than Enroll, or a service outside the fleet package. Nothing is served until
 // the caller calls Serve on the result.
-func (g *Gateway) NewServer(tlsConf *tls.Config, register func(grpc.ServiceRegistrar), opts ...grpc.ServerOption) (*grpc.Server, error) {
-	if tlsConf == nil || register == nil {
+func (g *Gateway) NewServer(server tls.Certificate, clientCAs func() *x509.CertPool, register func(grpc.ServiceRegistrar), opts ...grpc.ServerOption) (*grpc.Server, error) {
+	if len(server.Certificate) == 0 || clientCAs == nil || register == nil {
 		return nil, ErrGatewayConfig
 	}
 	base := []grpc.ServerOption{
-		grpc.Creds(credentials.NewTLS(tlsConf)),
+		grpc.Creds(credentials.NewTLS(serverTLS(server, clientCAs))),
 		grpc.ChainUnaryInterceptor(g.Unary),
 		grpc.ChainStreamInterceptor(g.Stream),
 	}
-	srv := grpc.NewServer(append(base, opts...)...)
+	srv := grpc.NewServer(append(append([]grpc.ServerOption{}, opts...), base...)...)
 	register(srv)
 	if err := g.checkMounted(srv); err != nil {
 		srv.Stop()
@@ -243,10 +245,10 @@ func hasClientAuth(c *x509.Certificate) bool {
 	return false
 }
 
-// ServerTLS returns the fleet listener's TLS configuration: TLS 1.3, a client certificate requested
+// serverTLS returns the fleet listener's TLS configuration: TLS 1.3, a client certificate requested
 // and verified when presented (Enroll must work without one; the interceptor refuses its absence for
 // every other method). clientCAs is read per handshake so CA changes take effect without a restart.
-func ServerTLS(server tls.Certificate, clientCAs func() *x509.CertPool) *tls.Config {
+func serverTLS(server tls.Certificate, clientCAs func() *x509.CertPool) *tls.Config {
 	conf := &tls.Config{
 		MinVersion:   tls.VersionTLS13,
 		Certificates: []tls.Certificate{server},

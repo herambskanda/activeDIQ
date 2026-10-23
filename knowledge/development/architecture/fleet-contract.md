@@ -133,7 +133,7 @@ root never imports generated protos. The listener that mounts it is T-0156.
 `internal/platform/fleet/gateway.go`. Contract-agnostic (no generated-stub import): the composer
 mounts the `Fleet` service on the server `Gateway.NewServer` builds and states every method's auth class.
 
-- **Listener**: `ServerTLS` is TLS 1.3 with `VerifyClientCertIfGiven` (Enroll must work without a
+- **Listener**: `NewServer` builds its own TLS (no caller `tls.Config`; the gateway's credentials and interceptors are applied after caller options so they cannot be replaced): TLS 1.3 with `VerifyClientCertIfGiven` (Enroll must work without a
   certificate), client CA pool read per handshake.
 - **Interceptors** (unary + stream) run before any handler. `ClassPublic` is accepted for `EnrollMethod`
   only (`NewGateway` rejects any other). Every other method needs a verified chain, a leaf inside its
