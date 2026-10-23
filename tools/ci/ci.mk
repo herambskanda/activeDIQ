@@ -2,7 +2,7 @@
 # Standard: knowledge/development/standards/ci-gates.md · Runbook: knowledge/development/runbooks/ci-and-build.md
 # Every gate below has a failing run proving it catches a violation: `make ci-proof` (part of `make ci`).
 
-.PHONY: fitness-objectid ci gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-oracles-windows fitness-oracles-lab fitness-fuzz-nightly fitness-nightly build build-web web-install ci-proof fitness-operation
+.PHONY: fitness-objectid ci gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-oracles-windows fitness-oracles-lab fitness-fuzz-nightly fitness-nightly build build-web web-install ci-proof fitness-operation fitness-disclosure
 
 ci: lint gen-check gen-api-check lint-api test fitness build secrets-scan vuln-scan lab-test-unit ci-proof ## Everything a merge needs: lint, generated-code freshness (connector proto and the API contract), API lint, tests, fitness functions (incl. the ADR-0001 build matrix), web build, secret scan, dependency vulnerability scan, gate proofs
 	@echo "make ci: passed"
@@ -41,7 +41,7 @@ test-go:
 test-web: web-install
 	npm --prefix web run --silent test
 
-fitness: fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-operation fitness-objectid ## Architecture fitness functions: fitness-modules (blueprint §2 import rules), fitness-stack (ADR-0001 F1-F5), fitness-tenancy (ADR-0002 T1-T5), fitness-domain-keys (domain-model X3-X5), fitness-profiles (ADR-0002 P1, P7, U1, U2 and the activation table), fitness-proto (connector contract compiles and keeps its rules) fitness-safeprim (safe-primitives FF-SP1-3), fitness-corpus (FF-SP4, FF-SP5 declarations, FF-SP8) fitness-oracles (FF-SP6 on Linux) and fitness-api (ADR-0004 A1, A3, A4, A5, A6, A7, A8, A10, A11, A12, A13, A14; prints every inactive check and inactive part)
+fitness: fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-operation fitness-objectid fitness-disclosure ## Architecture fitness functions: fitness-disclosure (T-0258 SECURITY.md and RFC 9116 security.txt intake, Expires renewal), fitness-modules (blueprint §2 import rules), fitness-stack (ADR-0001 F1-F5), fitness-tenancy (ADR-0002 T1-T5), fitness-domain-keys (domain-model X3-X5), fitness-profiles (ADR-0002 P1, P7, U1, U2 and the activation table), fitness-proto (connector contract compiles and keeps its rules) fitness-safeprim (safe-primitives FF-SP1-3), fitness-corpus (FF-SP4, FF-SP5 declarations, FF-SP8) fitness-oracles (FF-SP6 on Linux) and fitness-api (ADR-0004 A1, A3, A4, A5, A6, A7, A8, A10, A11, A12, A13, A14; prints every inactive check and inactive part)
 	go run ./tools/fitness/modules
 
 fitness-objectid: ## T-0180: no conversion to authz.ObjectID outside internal/platform/authz (type-checked, tests included); use ObjectIDFromOctets or ParseObjectID
@@ -79,6 +79,9 @@ fitness-api: web-install ## T-0011, T-0017, T-0018, ADR-0004: A1 layout, A3 perm
 
 fitness-operation: ## T-0013: ADR-0005 O9, the kernel import DAG of rule 13: parses the dag block of the ADR itself and fails on any import among the listed platform packages it does not allow; lists each package as existing or pending (O1-O8 land with the code they inspect)
 	go run ./tools/fitness/operation
+
+fitness-disclosure: ## T-0258: SECURITY.md and .well-known/security.txt (RFC 9116): Contact named in SECURITY.md, one RFC 3339 Expires under a year ahead, fails 30 days before it so the file is renewed, Policy points at SECURITY.md
+	go run ./tools/fitness/disclosure
 
 fitness-oracles-windows: ## T-0034: FF-SP6 on the Windows runner/lab (nightly): Windows PowerShell 5.1 parses pslit output; SID and GUID text/bytes through the Win32/.NET APIs. Run from a Windows host with Go and PowerShell 5.1; fails if the oracle cannot run
 	go run ./tools/fitness/corpus -report-dir $(SAFEPRIM_REPORTS)

@@ -868,5 +868,13 @@ must_fail_with "vuln-scan on an allow entry without a reason" 'reason is require
 must_pass "vuln-scan on a module with no dependencies" vulnscan -root "$vt/clean" -allow "$vt/none.json"
 must_fail_with "vuln-scan when the vulnerability database is unreachable (never a silent skip)" 'cause: the vulnerability database .*point GOVULNDB at a mirror' env GOVULNDB="file://$vt/no-such-db" go run ./tools/vulnscan -root "$vt/clean" -allow "$vt/none.json"
 
+# --- fitness-disclosure (T-0258) ----------------------------------------------------------------
+dc="$tmp/disclosure"; mkdir -p "$dc/.well-known"
+cp "$root/SECURITY.md" "$dc/SECURITY.md"
+sed -E 's/^Expires: .*/Expires: 2020-01-01T00:00:00Z/' "$root/.well-known/security.txt" >"$dc/.well-known/security.txt"
+must_fail_with "fitness-disclosure on an expired security.txt" 'Expires .* has passed' go run ./tools/fitness/disclosure "$dc"
+cp "$root/.well-known/security.txt" "$dc/.well-known/security.txt"
+must_pass "fitness-disclosure" go run ./tools/fitness/disclosure "$dc"
+
 if [ "$fails" -ne 0 ]; then echo "ci-proof: $fails proof(s) failed" >&2; exit 1; fi
 echo "ci-proof: every gate rejects its violation and accepts clean input"
