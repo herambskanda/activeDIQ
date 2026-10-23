@@ -1172,6 +1172,7 @@ function ticketCard(t, live, waiting) {
     <span class="tc-top"><span class="id mono">${esc(t.id)}</span>${waiting.length ? `<span class="lock" title="Waiting on your decision: ${esc(waiting.join(', '))}" role="img" aria-label="Waiting on your decision">${ic('lock')}</span>` : ''}${live ? '<span class="live-dot" title="A worker is running this now" role="img" aria-label="Worker running"></span>' : ''}<span class="pri mono ${esc((t.priority || '').toLowerCase())}">${esc(t.priority || '')}</span></span>
     <span class="tc-title">${esc(t.title)}</span>
     <span class="tc-meta">${ownerChip(t.owner)}${t.type ? `<span class="chip">${esc(t.type)}</span>` : ''}</span>
+    ${t.held ? `<span class="tc-tags"><span class="tag sec" title="${esc(t.held)}">${ic('lock')}merge held: embargoed</span></span>` : ''}
     ${tags.length ? `<span class="tc-tags">${tags.map((g) => (g === 'security-sensitive' ? `<span class="tag sec">${ic('shield')}security-sensitive</span>` : `<span class="tag">${esc(g)}</span>`)).join('')}</span>` : ''}
   </a></li>`;
 }
@@ -1584,6 +1585,8 @@ function drawerBody(t, dr) {
     drawerKv('Updated', t.updated ? relEl(t.updated) : ''),
   ].join('');
   const tags = (t.tags || []).length ? `<div class="chips">${t.tags.map((g) => (g === 'security-sensitive' ? `<span class="tag sec">${ic('shield')}security-sensitive</span>` : `<span class="chip">${esc(g)}</span>`)).join('')}</div>` : '';
+  const held = t.held || t.links?.held;
+  const heldChip = held ? `<div class="chips"><span class="tag sec" title="${esc(held)}">${ic('lock')}merge held: ${esc(held)}</span></div>` : '';
   const waiting = (t.decisions || []).map((id) => {
     const dec = decisionById(id);
     return dec ? `<a class="chip ${dec.status === 'pending' ? 'warn' : ''}" href="#decisions" title="${esc(dec.title)}">${dec.status === 'pending' ? ic('lock') : ''}${esc(id)} · ${esc(dec.title)} (${esc(dec.status)})</a>` : `<span class="chip">${esc(id)}</span>`;
@@ -1602,6 +1605,7 @@ function drawerBody(t, dr) {
   return [
     `<dl class="kv">${kv}</dl>`,
     tags,
+    heldChip,
     drawerSection('Summary', t.summary ? `<div class="md">${md(t.summary, { h: 4 })}</div>` : ''),
     drawerSection('Waiting on you', waiting.length ? `<div class="chips">${waiting.join('')}</div>` : ''),
     drawerSection('Acceptance criteria', (t.acceptance || []).length ? `<ol class="ac-list">${t.acceptance.map((a) => `<li><span>${mdi(a)}</span></li>`).join('')}</ol>` : ''),
