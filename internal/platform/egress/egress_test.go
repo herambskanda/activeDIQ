@@ -4,11 +4,11 @@ import (
 	"context"
 	"crypto/x509"
 	"errors"
-	"strings"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"strings"
 	"sync"
 	"testing"
 )
