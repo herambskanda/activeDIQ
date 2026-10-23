@@ -43,6 +43,19 @@ func fx18(c *http.Client, base, upn string, u *url.URL) {
 	_ = req.Header.Get("Authorization")     // Header.Get is not a send
 }
 
+type doer interface {
+	Do(*http.Request) (*http.Response, error)
+}
+
+// FX-18b: any call taking *http.Request and returning *http.Response is a send.
+func fx18b(c *http.Client, req *http.Request, d doer, s string) {
+	_, _ = c.Transport.RoundTrip(req)           // want `http client send RoundTrip outside policy.GraphHTTPSite`
+	_, _ = http.DefaultTransport.RoundTrip(req) // want `http client send RoundTrip outside policy.GraphHTTPSite`
+	_, _ = d.Do(req)                            // want `http client send Do outside policy.GraphHTTPSite`
+	_, _ = http.ReadRequest(nil)                // want `http.ReadRequest outside policy.GraphHTTPSite`
+	_ = new(http.Request)                       // want `new\(http.Request\) outside policy.GraphHTTPSite`
+}
+
 // okReads: reading URL fields is fine.
 func okReads(u *url.URL) {
 	_ = u.Host

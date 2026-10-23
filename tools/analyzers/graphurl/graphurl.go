@@ -12,8 +12,10 @@
 //     methods ((*Client).get, (*Client).bearer); there the URL argument must be `x.String()` on a
 //     *url.URL (the odata result, or the parsed nextLink checked against the pinned base).
 //
-//   - outside the same sites: any use of http.Get, Head, Post or PostForm, of (*http.Client).Get,
-//     Head, Post, PostForm or Do, any http.Request composite literal, and any write to the URL or
+//   - outside the same sites: any use of http.Get, Head, Post, PostForm, of (*http.Client).Get,
+//     Head, Post, PostForm, any function or method taking a *http.Request and returning a
+//     *http.Response (Client.Do, RoundTrip, a doer interface), http.ReadRequest, new(http.Request),
+//     any http.Request composite literal, and any write to the URL or
 //     Host field of an http.Request. Each would send a request that skips the host pin.
 //
 //   - a call of url.Parse, url.ParseRequestURI, url.JoinPath, (*url.URL).Parse, (*url.URL).JoinPath
@@ -75,16 +77,32 @@ func isHTTPNamed(t types.Type, name string) bool {
 }
 
 // isHTTPSend reports fn as a package-level http.Get/Head/Post/PostForm or a method
-// Get/Head/Post/PostForm/Do of *http.Client (http.Header.Get and the like are not matched).
+// Get/Head/Post/PostForm of *http.Client (http.Header.Get and the like are not matched), or any
+// function or method (Client.Do, RoundTripper.RoundTrip, Transport.RoundTrip, a user-defined doer
+// interface, a wrapper) that takes a *http.Request and returns a *http.Response.
 func isHTTPSend(fn *types.Func) bool {
 	sig, ok := fn.Type().(*types.Signature)
 	if !ok {
 		return false
 	}
-	if sig.Recv() == nil {
-		return httpFuncs[fn.Name()]
+	if sig.Recv() == nil && fn.Pkg() != nil && fn.Pkg().Path() == "net/http" && httpFuncs[fn.Name()] {
+		return true
 	}
-	return isHTTPNamed(sig.Recv().Type(), "Client") && (httpFuncs[fn.Name()] || fn.Name() == "Do")
+	if sig.Recv() != nil && isHTTPNamed(sig.Recv().Type(), "Client") && httpFuncs[fn.Name()] {
+		return true
+	}
+	return takesRequestReturnsResponse(sig)
+}
+
+func takesRequestReturnsResponse(sig *types.Signature) bool {
+	var req, resp bool
+	for i := 0; i < sig.Params().Len(); i++ {
+		req = req || isHTTPNamed(sig.Params().At(i).Type(), "Request")
+	}
+	for i := 0; i < sig.Results().Len(); i++ {
+		resp = resp || isHTTPNamed(sig.Results().At(i).Type(), "Response")
+	}
+	return req && resp
 }
 
 func run(pass *analysis.Pass) (any, error) {
@@ -182,7 +200,7 @@ func check(pass *analysis.Pass, root ast.Node, tok, parse, httpOK bool) {
 				return true
 			}
 			switch p := fn.Pkg().Path(); {
-			case p == "net/http" && isHTTPSend(fn) && !httpOK:
+			case isHTTPSend(fn) && !httpOK:
 				report(pass, v, "http client send "+fn.Name()+" outside policy.GraphHTTPSite: a request is sent only where the host is pinned")
 			case p == "net/url" && urlFuncs[fn.Name()]:
 				report(pass, v, "url."+fn.Name()+" in the Graph connector: encoding belongs to the odata primitive")
@@ -190,10 +208,15 @@ func check(pass *analysis.Pass, root ast.Node, tok, parse, httpOK bool) {
 				report(pass, v, "url."+fn.Name()+" in the Graph connector: a URL is made by odata.Request.URL, or is a host-pinned nextLink or configured base (policy.GraphURLParse)")
 			case p == "net/url" && fn.Name() == "Encode":
 				report(pass, v, "url.Values.Encode in the Graph connector: query encoding belongs to the odata primitive")
-			case p == "net/http" && (fn.Name() == "NewRequest" || fn.Name() == "NewRequestWithContext") && !httpOK:
+			case p == "net/http" && (fn.Name() == "NewRequest" || fn.Name() == "NewRequestWithContext" || fn.Name() == "ReadRequest") && !httpOK:
 				report(pass, v, "http."+fn.Name()+" outside policy.GraphHTTPSite: a request is created only where the host is pinned")
 			}
 		case *ast.CallExpr:
+			if id, ok := v.Fun.(*ast.Ident); ok && id.Name == "new" && len(v.Args) == 1 && !httpOK {
+				if _, isBuiltin := pass.TypesInfo.Uses[id].(*types.Builtin); isBuiltin && isHTTPNamed(pass.TypesInfo.TypeOf(v.Args[0]), "Request") {
+					report(pass, v, "new(http.Request) outside policy.GraphHTTPSite: a request is created only where the host is pinned")
+				}
+			}
 			fn := util.Callee(pass, v)
 			if fn == nil || fn.Pkg() == nil || !httpOK || fn.Pkg().Path() != "net/http" {
 				return true
