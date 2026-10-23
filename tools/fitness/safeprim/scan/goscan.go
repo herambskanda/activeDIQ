@@ -89,9 +89,11 @@ func scanGo(rel string, src []byte, module string, checks map[string]bool, out *
 	}
 	if checks["FF-SP2"] {
 		g.checkImportBans()
+		g.checkDotImports()
 		g.checkSymbols()
 		g.checkTLS()
 		g.checkJSONEscape()
+		g.checkPredeclaredShadow()
 		g.checkLiterals()
 		g.checkFeaturePackages()
 	}
@@ -249,33 +251,119 @@ func (g *goFile) checkSymbols() {
 	})
 }
 
-// checkJSONEscape bans jsontext.EscapeForHTML / EscapeForJS with anything but the literal true: API
-// responses keep their HTML and JS escaping (§12.5 rule 7). A non-constant argument is banned too,
-// because it can be false at run time.
+// checkJSONEscape bans jsontext.EscapeForHTML / EscapeForJS in any form but a direct call with the
+// literal true: API responses keep their HTML and JS escaping (§12.5 rule 7). A non-constant
+// argument is banned because it can be false at run time; a method value (f := jsontext.EscapeForJS)
+// is banned because the argument can no longer be seen.
 func (g *goFile) checkJSONEscape() {
 	if g.isTool || g.isTest {
 		return
 	}
+	isEscape := func(e ast.Expr) (*ast.SelectorExpr, bool) {
+		sel, ok := e.(*ast.SelectorExpr)
+		if !ok || (sel.Sel.Name != "EscapeForHTML" && sel.Sel.Name != "EscapeForJS") {
+			return nil, false
+		}
+		id, ok := sel.X.(*ast.Ident)
+		return sel, ok && g.imports[id.Name] == "encoding/json/jsontext"
+	}
+	allowed := map[*ast.SelectorExpr]bool{}
 	ast.Inspect(g.file, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
+		if call, ok := n.(*ast.CallExpr); ok {
+			if sel, ok := isEscape(call.Fun); ok && len(call.Args) == 1 {
+				if id, ok := call.Args[0].(*ast.Ident); ok && id.Name == "true" {
+					allowed[sel] = true
+				}
+			}
+		}
+		return true
+	})
+	ast.Inspect(g.file, func(n ast.Node) bool {
+		e, ok := n.(ast.Expr)
 		if !ok {
 			return true
 		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok || (sel.Sel.Name != "EscapeForHTML" && sel.Sel.Name != "EscapeForJS") {
-			return true
+		if sel, ok := isEscape(e); ok && !allowed[sel] {
+			g.add("FF-SP2", "json-escape-off", sel.Pos(), "jsontext."+sel.Sel.Name+" must be called directly with the literal true in product code: JSON responses keep their HTML and JS escaping ("+refP7+".5 rule 7)")
 		}
-		if id, ok := sel.X.(*ast.Ident); !ok || g.imports[id.Name] != "encoding/json/jsontext" {
-			return true
-		}
-		if len(call.Args) == 1 {
-			if id, ok := call.Args[0].(*ast.Ident); ok && id.Name == "true" {
-				return true
-			}
-		}
-		g.add("FF-SP2", "json-escape-off", call.Pos(), "jsontext."+sel.Sel.Name+" must be called with the literal true in product code: JSON responses keep their HTML and JS escaping ("+refP7+".5 rule 7)")
 		return true
 	})
+}
+
+// checkPredeclaredShadow bans declaring true or false in product code. The scan reads the literal
+// true as the predeclared identifier (no type information, and a package-level const in a sibling
+// file defeats any per-file check), so `true := false` or `const true = false` would turn
+// EscapeForHTML(true) into EscapeForHTML(false) unseen.
+func (g *goFile) checkPredeclaredShadow() {
+	if g.isTool || g.isTest {
+		return
+	}
+	bad := func(id *ast.Ident) {
+		if id != nil && (id.Name == "true" || id.Name == "false") {
+			g.add("FF-SP2", "predeclared-shadow", id.Pos(), "declares "+id.Name+" in product code: shadowing a predeclared boolean defeats the literal-true checks ("+refP7+".5)")
+		}
+	}
+	fields := func(fl *ast.FieldList) {
+		if fl == nil {
+			return
+		}
+		for _, f := range fl.List {
+			for _, id := range f.Names {
+				bad(id)
+			}
+		}
+	}
+	for _, is := range g.file.Imports {
+		bad(is.Name)
+	}
+	ast.Inspect(g.file, func(n ast.Node) bool {
+		switch v := n.(type) {
+		case *ast.AssignStmt:
+			if v.Tok == token.DEFINE {
+				for _, l := range v.Lhs {
+					if id, ok := l.(*ast.Ident); ok {
+						bad(id)
+					}
+				}
+			}
+		case *ast.RangeStmt:
+			if v.Tok == token.DEFINE {
+				for _, e := range []ast.Expr{v.Key, v.Value} {
+					if id, ok := e.(*ast.Ident); ok {
+						bad(id)
+					}
+				}
+			}
+		case *ast.ValueSpec:
+			for _, id := range v.Names {
+				bad(id)
+			}
+		case *ast.TypeSpec:
+			bad(v.Name)
+			fields(v.TypeParams)
+		case *ast.FuncDecl:
+			bad(v.Name)
+			fields(v.Recv)
+		case *ast.FuncType:
+			fields(v.TypeParams)
+			fields(v.Params)
+			fields(v.Results)
+		}
+		return true
+	})
+}
+
+// checkDotImports bans `import . "pkg"` in product code: it hides every pkg.Sym selector from the
+// symbol bans. Tests and tier L are exempt.
+func (g *goFile) checkDotImports() {
+	if g.isTool || g.isTest {
+		return
+	}
+	for _, is := range g.file.Imports {
+		if is.Name != nil && is.Name.Name == "." {
+			g.add("FF-SP2", "dot-import", is.Pos(), "dot import of "+is.Path.Value+" in product code: it hides pkg.Symbol uses from the safe-primitive bans; import the package by name ("+refP7+".5)")
+		}
+	}
 }
 
 // checkTLS bans verification bypasses everywhere: tests and tier L included (§2.1, §5.6).
