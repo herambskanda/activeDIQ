@@ -180,11 +180,11 @@ func (f *failNth) hit() error {
 	}
 	return nil
 }
-func (f *failNth) DirectoryRoleAssignments(ctx context.Context, p guid.GUID) ([]graph.RoleAssignment, error) {
+func (f *failNth) AllDirectoryRoleAssignments(ctx context.Context) ([]graph.RoleAssignment, error) {
 	if err := f.hit(); err != nil {
 		return nil, err
 	}
-	return f.Reader.DirectoryRoleAssignments(ctx, p)
+	return f.Reader.AllDirectoryRoleAssignments(ctx)
 }
 func (f *failNth) RoleAssignableGroups(ctx context.Context) ([]graph.Group, error) {
 	if err := f.hit(); err != nil {
