@@ -190,6 +190,16 @@ op_put authz/actions audit
 must_pass "fitness-operation O9 (store -> tenant, authz/actions -> audit)" "$opbin" -root "$opt"
 sed -i.bak 's/^store  *-> tenant$/store -> (none)/' "$opt/$adr"; rm -f "$opt/$adr.bak"
 must_fail_with "fitness-operation O9 follows an edit of the ADR block (store -> (none))" 'store imports tenant' "$opbin" -root "$opt"
+mkdir -p "$opt/internal/modules/a"
+printf 'package a\n\nimport "op.test/internal/platform/operation/step"\n\nvar kept step.Step\n' >"$opt/internal/modules/a/a.go"
+must_fail_with "fitness-operation O1 on a step.Step held in a global" 'internal/modules/a/a.go:5: O1 \[rule 2\] a step.Step is held in a package-level variable' "$opbin" -root "$opt"
+printf 'package a\n\nimport "op.test/internal/platform/operation/step"\n\nvar _, _ = step.TakeMinter()\n' >"$opt/internal/modules/a/a.go"
+must_fail_with "fitness-operation O1 on step.TakeMinter outside platform/operation" 'step.TakeMinter is referenced outside internal/platform/operation' "$opbin" -root "$opt"
+printf 'package a\n\nimport "op.test/internal/platform/operation/step"\n\nfunc f() { var m step.Minter; _ = m }\n' >"$opt/internal/modules/a/a.go"
+must_fail_with "fitness-operation O1 on var m step.Minter outside platform/operation" 'step.Minter is referenced outside internal/platform/operation' "$opbin" -root "$opt"
+printf 'package a\n\nimport "op.test/internal/platform/operation/step"\n\nfunc f() { _ = new(step.Minter) }\n' >"$opt/internal/modules/a/a.go"
+must_fail_with "fitness-operation O1 on new(step.Minter) outside platform/operation" 'step.Minter is referenced outside internal/platform/operation' "$opbin" -root "$opt"
+rm -rf "$opt/internal/modules"
 must_pass "fitness-operation O9 on the repository itself" "$opbin" -root "$root"
 
 # --- fitness-proto (the connector contract), the real CLI on throw-away trees ------------------
