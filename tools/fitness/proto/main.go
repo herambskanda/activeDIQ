@@ -46,6 +46,9 @@
 //	F8  fleet files are syntax proto3 (no editions, proto2, extension ranges or groups) and no file
 //	    extends a fleet message. F6 also covers RPC input and output types, and the token allowance
 //	    is keyed on the full name activediq.fleet.v1.EnrollRequest.enrollment_token on the Enroll input.
+//	F9  no message type in the package has a secret-shaped name (same fragments as F3), so a
+//	    message such as PasswordPush or SecretEnvelope fails even if its fields are innocuous.
+//	    A new RPC fails F1 with a pointer to the ADR and review it needs.
 //	F7  no map fields anywhere in the fleet contract or reachable from an Enroll or Tunnel input or
 //	    output: a map is an unchecked free-form side channel.
 package main
@@ -404,7 +407,7 @@ func lintFleet(files linker.Files) []Violation {
 				m := svc.Methods().Get(j)
 				got[m.Name()] = m
 				if m.Name() != "Enroll" && m.Name() != "Tunnel" {
-					vs = append(vs, Violation{"F1", string(m.FullName()), "only Enroll and Tunnel may be mounted on the fleet listener"})
+					vs = append(vs, Violation{"F1", string(m.FullName()), "only Enroll and Tunnel may be mounted on the fleet listener; a new fleet RPC needs a new ADR (security-architect review, threat model TM-TB6-T8) and an edit of fitness-proto F1"})
 				}
 			}
 			if m := got["Enroll"]; m == nil {
@@ -464,6 +467,16 @@ func lintFleet(files linker.Files) []Violation {
 			}
 		}
 		seen := map[protoreflect.FullName]bool{}
+		// F9: a secret-bearing message type, whatever its fields are called (TM-TB6-T6).
+		for _, m := range roots {
+			lower := strings.ToLower(string(m.Name()))
+			for _, frag := range secretShaped {
+				if strings.Contains(lower, frag) {
+					vs = append(vs, Violation{"F9", string(m.FullName()), "message type name looks secret-bearing (`" + frag + "`); nothing secret is pushed over fleet (TM-TB6-T6). Secrets travel only as the opaque operation payload of CallData"})
+					break
+				}
+			}
+		}
 		for _, m := range roots {
 			walk(m, string(m.FullName()), seen, func(_ string, fd protoreflect.FieldDescriptor) {
 				parent := fd.ContainingMessage()
