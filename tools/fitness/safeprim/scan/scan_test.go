@@ -869,6 +869,12 @@ func TestFFSP2LinknameUnsafe(t *testing.T) {
 	want(t, "checklinkname in a .go under tools/fitness/safeprim/cmd", map[string]string{"tools/fitness/safeprim/cmd/rel.go": tool}, "FF-SP2", "checklinkname-off", "tools/fitness/safeprim/cmd/rel.go")
 	want(t, "scanner's own scan/ sources stay exempt", map[string]string{"tools/fitness/safeprim/scan/x.go": tool}, "", "", "")
 	want(t, "clean env file passes", map[string]string{"cfg/.env": "FOO=bar\n"}, "", "", "")
+	for _, name := range []string{"a.fish", "a.vbs", "a.nu", "a.pyw"} {
+		want(t, "checklinkname in "+name, map[string]string{"scripts/" + name: gf}, "FF-SP2", "checklinkname-off", "scripts/"+name)
+	}
+	want(t, "checklinkname in a subdirectory of scan/ is not exempt", map[string]string{"tools/fitness/safeprim/scan/sub/rel.go": tool}, "FF-SP2", "checklinkname-off", "tools/fitness/safeprim/scan/sub/rel.go")
+	want(t, "checklinkname in a deeper subdirectory of scan/ is not exempt", map[string]string{"tools/fitness/safeprim/scan/sub/deep/d.go": tool}, "FF-SP2", "checklinkname-off", "tools/fitness/safeprim/scan/sub/deep/d.go")
+	want(t, "checklinkname in the scan package itself is exempt", map[string]string{"tools/fitness/safeprim/scan/x.go": tool}, "", "", "")
 	want(t, "checklinkname=1 also flagged (no reason to set it)", map[string]string{"scripts/Makefile": "go build -ldflags=-checklinkname=1\n"}, "FF-SP2", "checklinkname-off", "scripts/Makefile")
 }
 

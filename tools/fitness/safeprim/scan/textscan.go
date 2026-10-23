@@ -3,6 +3,7 @@ package scan
 import (
 	"encoding/json"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -191,9 +192,10 @@ func isBuildOrEnvFile(base string) bool {
 
 // scanGoCheckLinkname flags any checklinkname mention in a .go file (a tier L release tool passing
 // -ldflags=-checklinkname=0 to exec go build). The safeprim scanner's own sources name the flag to
-// detect it and are exempt (only that directory: other .go under tools/fitness/safeprim/ are scanned, T-0275).
+// detect it and are exempt (only that directory, not its subdirectories; other .go under
+// tools/fitness/safeprim/ are scanned, T-0275, T-0286).
 func scanGoCheckLinkname(rel string, src []byte, checks Checks, out *[]Finding) {
-	if !checks["FF-SP2"] || strings.HasPrefix(rel, "tools/fitness/safeprim/scan/") {
+	if !checks["FF-SP2"] || path.Dir(rel) == "tools/fitness/safeprim/scan" {
 		return
 	}
 	for i, ln := range strings.Split(string(src), "\n") {
@@ -206,7 +208,7 @@ func scanGoCheckLinkname(rel string, src []byte, checks Checks, out *[]Finding) 
 
 var reCheckLinkname = regexp.MustCompile(`(?i)checklinkname`)
 
-var serviceExts = map[string]bool{".yml": true, ".yaml": true, ".service": true, ".wxs": true, ".wxi": true, ".sh": true, ".ps1": true, ".psm1": true, ".psd1": true, ".bat": true, ".cmd": true, ".py": true, ".bash": true, ".zsh": true, ".toml": true, ".mk": true, ".conf": true, ".ini": true, ".cfg": true, ".plist": true, ".env": false, ".tmpl": true, ".json": true, ".xml": true, ".props": true}
+var serviceExts = map[string]bool{".yml": true, ".yaml": true, ".service": true, ".wxs": true, ".wxi": true, ".sh": true, ".ps1": true, ".psm1": true, ".psd1": true, ".bat": true, ".cmd": true, ".py": true, ".bash": true, ".zsh": true, ".toml": true, ".mk": true, ".conf": true, ".ini": true, ".cfg": true, ".plist": true, ".env": false, ".tmpl": true, ".json": true, ".xml": true, ".props": true, ".fish": true, ".vbs": true, ".nu": true, ".pyw": true}
 
 // scanServiceDefinition is FF-SP2's GOTRACEBACK rule on everything that can define a service's
 // environment: unit files, compose files, Dockerfiles, MSI sources, scripts.
