@@ -57,6 +57,12 @@ func DefaultSchema() *ldapfilter.Schema {
 			ldapfilter.AttrInfo{Name: "msDS-SecondaryKrbTgtNumber", OID: "1.2.840.113556.1.4.1926", Syntax: ldapfilter.SynInt32},
 			ldapfilter.AttrInfo{Name: "msDS-AllowedToDelegateTo", OID: "1.2.840.113556.1.4.1787", Syntax: s},
 			ldapfilter.AttrInfo{Name: "msDS-AllowedToActOnBehalfOfOtherIdentity", OID: "1.2.840.113556.1.4.2182", Syntax: ldapfilter.SynOctet},
+			// Path-valued user attributes: read as inert strings only (TM-F-NTLM, T-0256) — the connector
+			// never opens, resolves or dials them.
+			ldapfilter.AttrInfo{Name: "homeDirectory", OID: "1.2.840.113556.1.4.44", Syntax: s},
+			ldapfilter.AttrInfo{Name: "homeDrive", OID: "1.2.840.113556.1.4.45", Syntax: s},
+			ldapfilter.AttrInfo{Name: "profilePath", OID: "1.2.840.113556.1.4.139", Syntax: s},
+			ldapfilter.AttrInfo{Name: "scriptPath", OID: "1.2.840.113556.1.4.62", Syntax: s},
 			ldapfilter.AttrInfo{Name: "serverReference", OID: "1.2.840.113556.1.4.515", Syntax: ldapfilter.SynDN},
 			// dNSHostName: name-only. Its attributeID is also the lazy-commit control OID, which FF-SP2 lets
 			// only scope name; an OID-form descriptor for it stays unknown and fails closed.
