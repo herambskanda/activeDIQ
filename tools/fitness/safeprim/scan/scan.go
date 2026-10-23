@@ -254,6 +254,7 @@ func scanFile(root, rel, module string, checks Checks, out *[]Finding) error {
 		if err := scanGo(rel, src, module, checks, out); err != nil {
 			return fmt.Errorf("%s: %w", rel, err)
 		}
+		scanGoCheckLinkname(rel, src, checks, out)
 	case isNativeSource(rel):
 		scanNative(rel, checks, out)
 	case base == "go.mod":
