@@ -130,3 +130,20 @@ run(
     { code: "const url = get(); <a href={url}>x</a>;", errors: err() },
   ],
 );
+
+run(
+  "web-odata",
+  [
+    "const a = 'filter applied';",
+    "const a = `filter ${x}`;",
+    "const q = { filter: x };", // a property named filter is not a literal option
+    "const a = `name = ${n}`;",
+  ],
+  [
+    { code: "const u = '/x?$filter=a';", errors: err() },
+    { code: "const u = '/x?$Search=a';", errors: err() },
+    { code: "const u = '/x?%24filter=a';", errors: err() },
+    { code: "const u = `/x?$filter=${f}`;", errors: err() },
+    { code: "const f = `displayName eq '${n}'`;", errors: err() },
+  ],
+);
