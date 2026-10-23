@@ -126,3 +126,19 @@ this runbook `reviewed`.
 | Setup stops at "select image" | wrong `/IMAGE/INDEX` (§4) |
 | Net clash with `192.168.77.0/24` | change `SUBNET` in `windows-lab` and `winBind`/`WIN_LAB_DC_ADDR` |
 | Disk pressure | `windows-lab-destroy` frees the disks; the ISO is kept, delete it by hand if needed |
+
+## 9. TM-F-NTLM proof (T-0256, directory half)
+
+Offline (runs in `go test ./internal/connector/ad`): `TestNTLMStaticGuard` fails if the connector
+package references any NTLM/GSSAPI/digest/anonymous bind, imports `net/http`, an NTLM/SMB/Kerberos
+library or `os/exec`, or opens/stats a path. Lab (`-tags lab`, Samba) and Windows lab
+(`-tags 'lab windowslab'`): `TestLabNoSideDialOnPlantedUNC` / `TestWindowsLabNoSideDialOnPlantedUNC`
+plant a user with a UNC `homeDirectory`/`profilePath`/`scriptPath` at a local attacker listener,
+bind+search+read it through the connector with a recording dialer, and assert every dial is the DC
+and the listener sees zero connections.
+
+Still needed from a human run on the Windows lab (evidence for T-0256 AC1/AC2): set
+`RestrictNTLMInDomain` in the lab GPO (§5), run `make lab-test-connector-windows`, then collect
+events 4776 (dc1 Security) and 8001–8004 (`Microsoft-Windows-NTLM/Operational`) for the connector's
+source address over the run window — expected none for the connector — plus a packet capture on the
+attacker host (expected empty). Attach both to `windows-lab-runs/`.
