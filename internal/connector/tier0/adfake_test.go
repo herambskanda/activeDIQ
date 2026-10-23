@@ -1,0 +1,278 @@
+package tier0
+
+import (
+	"context"
+	"encoding/binary"
+	"fmt"
+	"strconv"
+	"strings"
+
+	"github.com/skenzeriq/activediq/internal/connector/ad"
+	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
+	"github.com/skenzeriq/activediq/internal/directory/attr/sid"
+	"github.com/skenzeriq/activediq/internal/directory/dn"
+)
+
+// fobj is one object of the in-memory forest.
+type fobj struct {
+	dn    string
+	cls   []string
+	sid   string
+	attrs map[string][]string
+	raw   map[string][]byte
+	guid  guid.GUID
+}
+
+// fakeDir is an in-memory ADDirectory. It implements the directory's semantics (subtree scope,
+// transitive membership with cycles, NotFound) and nothing of the classifier.
+type fakeDir struct {
+	nm      Naming
+	objs    []*fobj
+	failDN  string // any Get/Find touching a DN containing this fails
+	nextGID byte
+}
+
+func mustDN(s string) dn.DN {
+	d, err := dn.Parse(s, dn.Strict)
+	if err != nil {
+		panic(err)
+	}
+	return d
+}
+
+func newFake() *fakeDir {
+	return &fakeDir{nm: Naming{
+		Domain: mustDN("DC=lab,DC=test"), RootDomain: mustDN("DC=lab,DC=test"),
+		Config: mustDN("CN=Configuration,DC=lab,DC=test"), Schema: mustDN("CN=Schema,CN=Configuration,DC=lab,DC=test"),
+	}}
+}
+
+// add creates an object; kv is attr, value pairs (repeat the attr for multi-values).
+func (f *fakeDir) add(dnText, sidText string, cls []string, kv ...string) *fobj {
+	f.nextGID++
+	o := &fobj{dn: dnText, sid: sidText, cls: cls, attrs: map[string][]string{}, raw: map[string][]byte{}}
+	o.guid[0], o.guid[15] = f.nextGID, 0xA5
+	for i := 0; i < len(kv); i += 2 {
+		o.attrs[strings.ToLower(kv[i])] = append(o.attrs[strings.ToLower(kv[i])], kv[i+1])
+	}
+	f.objs = append(f.objs, o)
+	return o
+}
+
+func (f *fakeDir) find(text string) *fobj {
+	for _, o := range f.objs {
+		if strings.EqualFold(o.dn, text) {
+			return o
+		}
+	}
+	panic("no fake object " + text)
+}
+
+func (o *fobj) entry() *ad.Entry {
+	m := map[string][][]byte{"objectGUID": {o.guid.Bytes()}}
+	for _, c := range o.cls {
+		m["objectClass"] = append(m["objectClass"], []byte(c))
+	}
+	if o.sid != "" {
+		s, err := sid.Parse(o.sid)
+		if err != nil {
+			panic(err)
+		}
+		m["objectSid"] = [][]byte{s.Bytes()}
+	}
+	for k, vs := range o.attrs {
+		for _, v := range vs {
+			m[k] = append(m[k], []byte(v))
+		}
+	}
+	for k, v := range o.raw {
+		m[k] = [][]byte{v}
+	}
+	return ad.NewEntry(o.dn, m)
+}
+
+func (o *fobj) is(class string) bool {
+	for _, c := range o.cls {
+		if strings.EqualFold(c, class) {
+			return true
+		}
+	}
+	return false
+}
+
+func (f *fakeDir) guard(d string) error {
+	if f.failDN != "" && strings.Contains(strings.ToLower(d), strings.ToLower(f.failDN)) {
+		return &ad.Error{Code: ad.CodeUnreachable, Detail: "injected"}
+	}
+	return nil
+}
+
+func (f *fakeDir) Naming(context.Context) (Naming, error) { return f.nm, nil }
+
+func (f *fakeDir) Get(_ context.Context, ref dn.ObjectRef, _ []string) (*ad.Entry, error) {
+	for _, o := range f.objs {
+		switch {
+		case func() bool { d, ok := ref.DN(); return ok && dn.Equal(d, mustDN(o.dn)) }():
+		case func() bool { g, ok := ref.GUID(); return ok && g == o.guid }():
+		case func() bool { s, ok := ref.SID(); return ok && o.sid != "" && s.String() == o.sid }():
+		default:
+			continue
+		}
+		if err := f.guard(o.dn); err != nil {
+			return nil, err
+		}
+		return o.entry(), nil
+	}
+	if d, ok := ref.DN(); ok {
+		if err := f.guard(d.String()); err != nil {
+			return nil, err
+		}
+	}
+	return nil, &ad.Error{Code: ad.CodeObjectNotFound}
+}
+
+func (f *fakeDir) Find(_ context.Context, base dn.DN, _ ad.Scope, q Query, _ []string, fn func(*ad.Entry) error) error {
+	if err := f.guard(base.String()); err != nil {
+		return err
+	}
+	baseFound := false
+	var hits []*fobj
+	for _, o := range f.objs {
+		d := mustDN(o.dn)
+		if dn.Equal(d, base) {
+			baseFound = true
+		} else if !d.IsDescendantOf(base) {
+			continue
+		}
+		if f.match(o, q) {
+			hits = append(hits, o)
+		}
+	}
+	if !baseFound {
+		return &ad.Error{Code: ad.CodeObjectNotFound}
+	}
+	for _, o := range hits {
+		if err := fn(o.entry()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (f *fakeDir) match(o *fobj, q Query) bool {
+	if len(q.Classes) > 0 {
+		ok := false
+		for _, c := range q.Classes {
+			// objectClass "user" matches computers, as in AD (computer is a subclass of user)
+			ok = ok || o.is(c) || (strings.EqualFold(c, "user") && o.is("computer"))
+		}
+		if !ok {
+			return false
+		}
+	}
+	for _, e := range q.Eq {
+		hit := false
+		for _, v := range o.attrs[strings.ToLower(e.Attr)] {
+			hit = hit || strings.EqualFold(v, e.Value)
+		}
+		if !hit {
+			return false
+		}
+	}
+	for _, e := range q.EqInt {
+		hit := false
+		for _, v := range o.attrs[strings.ToLower(e.Attr)] {
+			n, _ := strconv.Atoi(v)
+			hit = hit || int32(n) == e.Value
+		}
+		if !hit {
+			return false
+		}
+	}
+	for _, h := range q.Has {
+		if len(o.attrs[strings.ToLower(h)]) == 0 && len(o.raw[h]) == 0 {
+			return false
+		}
+	}
+	if q.UACAny != 0 {
+		v := o.attrs["useraccountcontrol"]
+		if len(v) == 0 {
+			return false
+		}
+		n, _ := strconv.ParseUint(v[0], 10, 32)
+		if uint32(n)&q.UACAny == 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func (f *fakeDir) TransitiveMembers(_ context.Context, group dn.DN, _ []string, fn func(*ad.Entry) error) error {
+	seen := map[string]bool{}
+	var walk func(g string) error
+	walk = func(g string) error {
+		if seen[strings.ToLower(g)] {
+			return nil // cycle
+		}
+		seen[strings.ToLower(g)] = true
+		for _, m := range f.find(g).attrs["member"] {
+			mo := f.find(m)
+			if err := fn(mo.entry()); err != nil {
+				return err
+			}
+			if mo.is("group") {
+				if err := walk(mo.dn); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	return walk(group.String())
+}
+
+// ---- security descriptor builder ----
+
+type aceSpec struct {
+	sid     string
+	mask    uint32
+	objType *guid.GUID
+	flags   byte
+}
+
+func sdBytes(aces ...aceSpec) []byte {
+	var body []byte
+	for _, a := range aces {
+		s, err := sid.Parse(a.sid)
+		if err != nil {
+			panic(err)
+		}
+		typ, hdr := byte(aceAllowed), []byte{}
+		if a.objType != nil {
+			typ = aceAllowedObject
+			hdr = binary.LittleEndian.AppendUint32(nil, aceObjectTypePresent)
+			hdr = append(hdr, a.objType.Bytes()...)
+		}
+		sb := s.Bytes()
+		size := 8 + len(hdr) + len(sb)
+		ace := []byte{typ, a.flags}
+		ace = binary.LittleEndian.AppendUint16(ace, uint16(size))
+		ace = binary.LittleEndian.AppendUint32(ace, a.mask)
+		ace = append(ace, hdr...)
+		ace = append(ace, sb...)
+		body = append(body, ace...)
+	}
+	acl := []byte{4, 0}
+	acl = binary.LittleEndian.AppendUint16(acl, uint16(8+len(body)))
+	acl = binary.LittleEndian.AppendUint16(acl, uint16(len(aces)))
+	acl = append(acl, 0, 0)
+	acl = append(acl, body...)
+	sd := []byte{1, 0}
+	sd = binary.LittleEndian.AppendUint16(sd, 0x8004)
+	for _, off := range []uint32{0, 0, 0, 20} {
+		sd = binary.LittleEndian.AppendUint32(sd, off)
+	}
+	return append(sd, acl...)
+}
+
+var _ = fmt.Sprint
