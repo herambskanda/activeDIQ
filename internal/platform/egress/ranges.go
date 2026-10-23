@@ -22,6 +22,7 @@ var blocked = mustPrefixes(
 	"::/128",          // unspecified
 	"::1/128",         // loopback
 	"::/96",           // deprecated IPv4-compatible
+	"::ffff:0:0:0/96", // RFC 2765/6145 IPv4-translated (SIIT): embeds an IPv4 destination
 	"64:ff9b::/96",    // NAT64: embeds an IPv4 destination
 	"64:ff9b:1::/48",  // RFC 8215 local-use NAT64: embeds an IPv4 destination
 	"100::/64",        // discard-only
@@ -75,6 +76,20 @@ func permitted(ip netip.Addr, allow []netip.Prefix) bool {
 }
 
 // coversMetadata reports whether an allow-list prefix would include a metadata address.
+// translation are the prefixes that embed an IPv4 destination. An allow-list entry overlapping one
+// would reach metadata through the embedded address, which the exact-match metadata check cannot
+// see; operators allow-list the IPv4 range instead.
+var translation = mustPrefixes("::/96", "::ffff:0:0:0/96", "64:ff9b::/96", "64:ff9b:1::/48", "2002::/16", "2001::/32")
+
+func overlapsTranslation(p netip.Prefix) bool {
+	for _, t := range translation {
+		if p.Overlaps(t) {
+			return true
+		}
+	}
+	return false
+}
+
 func coversMetadata(p netip.Prefix) bool {
 	for _, m := range metadata {
 		if p.Contains(m) {

@@ -65,6 +65,7 @@ func TestBlockedRangesRefusedAfterResolutionAndNeverDialled(t *testing.T) {
 		"127.0.0.1", "::1", "169.254.169.254", "169.254.1.1", "fe80::1", "10.1.2.3", "172.16.0.9", "192.168.1.1",
 		"100.64.0.1", "100.100.100.200", "0.0.0.0", "224.0.0.1", "fd00:ec2::254", "fc00::1", "::ffff:127.0.0.1",
 		"::ffff:169.254.169.254", "64:ff9b::7f00:1", "2002:7f00:1::1", "192.0.0.192", "240.0.0.1", "168.63.129.16", "64:ff9b:1::7f00:1",
+		"::ffff:0:7f00:1", "::ffff:0:a9fe:a9fe", "::ffff:0:a00:1",
 	} {
 		rec := &recorder{}
 		c, err := New(Config{Resolver: &fakeResolver{answers: [][]netip.Addr{addrs(ip)}}, dial: rec.dial})
@@ -133,6 +134,14 @@ func TestAllowListPermitsOperatorRange(t *testing.T) {
 	rec.addrs = nil
 	if _, err := get(t, c, "https://other.corp.example/"); !errors.Is(err, ErrDestinationDenied) || len(rec.addrs) != 0 {
 		t.Fatalf("outside the allow-list: err = %v dialled %v", err, rec.addrs)
+	}
+}
+
+func TestAllowListCannotOverlapTranslationRanges(t *testing.T) {
+	for _, p := range []string{"64:ff9b::/96", "64:ff9b::a9fe:a9fe/128", "2002:a00::/24", "2002::/16", "::ffff:0:0:0/96", "64:ff9b:1::/48", "2001::/32", "::/96"} {
+		if _, err := New(Config{Allow: []netip.Prefix{netip.MustParsePrefix(p)}}); !errors.Is(err, ErrBadConfig) {
+			t.Errorf("%s: err = %v, want ErrBadConfig", p, err)
+		}
 	}
 }
 

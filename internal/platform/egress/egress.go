@@ -103,6 +103,9 @@ func New(cfg Config) (*Client, error) {
 		if p = p.Masked(); coversMetadata(p) {
 			return nil, fmt.Errorf("%w: allow-list prefix %s covers a cloud-metadata address", ErrBadConfig, p)
 		}
+		if overlapsTranslation(p) {
+			return nil, fmt.Errorf("%w: allow-list prefix %s overlaps an IPv4-translation range; allow-list the IPv4 range instead", ErrBadConfig, p)
+		}
 	}
 	if cfg.Timeout < 0 || cfg.MaxConnsPerHost < 0 {
 		return nil, fmt.Errorf("%w: negative limit", ErrBadConfig)
