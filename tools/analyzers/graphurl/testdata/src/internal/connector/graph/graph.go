@@ -56,17 +56,34 @@ func fx18b(c *http.Client, req *http.Request, d doer, s string) {
 	_ = new(http.Request)                       // want `new\(http.Request\) outside policy.GraphHTTPSite`
 }
 
+type sender struct {
+	do func(*http.Request) (*http.Response, error)
+}
+
+type rtFunc func(*http.Request) (*http.Response, error)
+
+// FX-18c: a send through a function value (field, parameter, named func type) is still a send.
+func fx18c(s sender, send func(*http.Request) (*http.Response, error), f rtFunc, req *http.Request) {
+	_, _ = s.do(req) // want `http client send through a function value outside policy.GraphHTTPSite`
+	_, _ = send(req) // want `http client send through a function value outside policy.GraphHTTPSite`
+	_, _ = f(req)    // want `http client send through a function value outside policy.GraphHTTPSite`
+}
+
 // okReads: reading URL fields is fine.
 func okReads(u *url.URL) {
 	_ = u.Host
 	_ = strings.ToLower(u.Path) // reading Path is fine
 }
 
-type Client struct{ hc *http.Client }
+type Client struct {
+	hc *http.Client
+	do func(*http.Request) (*http.Response, error)
+}
 
 // get is a policy.GraphHTTPSite: the request comes from the String() of a *url.URL.
 func (c *Client) get(u *url.URL) {
 	_, _ = http.NewRequest(http.MethodGet, u.String(), nil)
+	_, _ = c.do(&http.Request{URL: u})                               // a func-typed send in the listed site is allowed
 	_, _ = c.hc.Do(&http.Request{URL: u})                            // get is the listed site
 	_, _ = http.NewRequest(http.MethodGet, "https://x/"+u.Path, nil) // want `http.NewRequest with a URL that is not`
 }

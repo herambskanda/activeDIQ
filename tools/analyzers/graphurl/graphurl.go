@@ -218,6 +218,15 @@ func check(pass *analysis.Pass, root ast.Node, tok, parse, httpOK bool) {
 				}
 			}
 			fn := util.Callee(pass, v)
+			if fn == nil && !httpOK {
+				// A call through a function value (struct field, parameter, named func type) with the
+				// send signature; named funcs and methods are reported by the Ident case.
+				if tv, ok := pass.TypesInfo.Types[v.Fun]; ok && !tv.IsType() {
+					if sig, ok := types.Unalias(tv.Type).Underlying().(*types.Signature); ok && takesRequestReturnsResponse(sig) {
+						report(pass, v, "http client send through a function value outside policy.GraphHTTPSite: a request is sent only where the host is pinned")
+					}
+				}
+			}
 			if fn == nil || fn.Pkg() == nil || !httpOK || fn.Pkg().Path() != "net/http" {
 				return true
 			}
