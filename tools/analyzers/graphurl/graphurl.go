@@ -2,8 +2,8 @@
 // Graph connector (internal/connector/graph and below) every URL is written by odata.Request.URL
 // or is a host-pinned @odata.nextLink. Function values count as uses. The pass reports there:
 //
-//   - an assignment to, or a composite literal field of, url.URL Path, RawPath, RawQuery or
-//     ForceQuery;
+//   - an assignment to, or a composite literal field of, any url.URL field (Scheme, Opaque, User,
+//     Host, Path, RawPath, RawQuery, ForceQuery, Fragment, ...), or an unkeyed url.URL literal;
 //
 //   - a call of url.PathEscape, url.QueryEscape, url.PathUnescape, url.QueryUnescape or
 //     url.Values.Encode;
@@ -12,7 +12,9 @@
 //     methods ((*Client).get, (*Client).bearer); there the URL argument must be `x.String()` on a
 //     *url.URL (the odata result, or the parsed nextLink checked against the pinned base).
 //
-//   - an assignment to, or a literal key of, any other url.URL field (Opaque, Host, Scheme, ...).
+//   - outside the same sites: any use of http.Get, Head, Post or PostForm, of (*http.Client).Get,
+//     Head, Post, PostForm or Do, any http.Request composite literal, and any write to the URL or
+//     Host field of an http.Request. Each would send a request that skips the host pin.
 //
 //   - a call of url.Parse, url.ParseRequestURI, url.JoinPath, (*url.URL).Parse, (*url.URL).JoinPath
 //     or (*url.URL).ResolveReference, which would turn a concatenated string into a URL.
@@ -56,6 +58,33 @@ func isURLType(t types.Type) bool {
 	}
 	n, ok := types.Unalias(t).(*types.Named)
 	return ok && n.Obj().Pkg() != nil && n.Obj().Pkg().Path() == "net/url" && n.Obj().Name() == "URL"
+}
+
+var httpFuncs = map[string]bool{"Get": true, "Head": true, "Post": true, "PostForm": true}
+
+// isHTTPNamed reports t (or *t) as the named type net/http.<name>.
+func isHTTPNamed(t types.Type, name string) bool {
+	if t == nil {
+		return false
+	}
+	if p, ok := types.Unalias(t).(*types.Pointer); ok {
+		t = p.Elem()
+	}
+	n, ok := types.Unalias(t).(*types.Named)
+	return ok && n.Obj().Pkg() != nil && n.Obj().Pkg().Path() == "net/http" && n.Obj().Name() == name
+}
+
+// isHTTPSend reports fn as a package-level http.Get/Head/Post/PostForm or a method
+// Get/Head/Post/PostForm/Do of *http.Client (http.Header.Get and the like are not matched).
+func isHTTPSend(fn *types.Func) bool {
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok {
+		return false
+	}
+	if sig.Recv() == nil {
+		return httpFuncs[fn.Name()]
+	}
+	return isHTTPNamed(sig.Recv().Type(), "Client") && (httpFuncs[fn.Name()] || fn.Name() == "Do")
 }
 
 func run(pass *analysis.Pass) (any, error) {
@@ -122,11 +151,17 @@ func check(pass *analysis.Pass, root ast.Node, tok, parse, httpOK bool) {
 		switch v := n.(type) {
 		case *ast.AssignStmt:
 			for _, l := range v.Lhs {
+				if sel, ok := l.(*ast.SelectorExpr); ok && !httpOK && (sel.Sel.Name == "URL" || sel.Sel.Name == "Host") && isHTTPNamed(pass.TypesInfo.TypeOf(sel.X), "Request") {
+					report(pass, v, "assignment to http.Request."+sel.Sel.Name+" outside policy.GraphHTTPSite: a request is created only where the host is pinned")
+				}
 				if sel, ok := l.(*ast.SelectorExpr); ok && urlFields[sel.Sel.Name] && isURLType(pass.TypesInfo.TypeOf(sel.X)) {
 					report(pass, v, "assignment to url.URL."+sel.Sel.Name+": the URL is written by odata.Request.URL only")
 				}
 			}
 		case *ast.CompositeLit:
+			if !httpOK && isHTTPNamed(pass.TypesInfo.TypeOf(v), "Request") {
+				report(pass, v, "http.Request literal outside policy.GraphHTTPSite: a request is created only where the host is pinned")
+			}
 			if !isURLType(pass.TypesInfo.TypeOf(v)) {
 				return true
 			}
@@ -147,6 +182,8 @@ func check(pass *analysis.Pass, root ast.Node, tok, parse, httpOK bool) {
 				return true
 			}
 			switch p := fn.Pkg().Path(); {
+			case p == "net/http" && isHTTPSend(fn) && !httpOK:
+				report(pass, v, "http client send "+fn.Name()+" outside policy.GraphHTTPSite: a request is sent only where the host is pinned")
 			case p == "net/url" && urlFuncs[fn.Name()]:
 				report(pass, v, "url."+fn.Name()+" in the Graph connector: encoding belongs to the odata primitive")
 			case p == "net/url" && parseFuncs[fn.Name()] && !parse:

@@ -32,17 +32,29 @@ func fx17(u *url.URL) {
 	_, _ = http.NewRequest(http.MethodGet, u.String(), nil) // want `http.NewRequest outside policy.GraphHTTPSite`
 }
 
+// FX-18: other ways to send a request skip the host pin and the bearer-token destination check.
+func fx18(c *http.Client, base, upn string, u *url.URL) {
+	_, _ = http.Get(base + "/users/" + upn) // want `http client send Get outside policy.GraphHTTPSite`
+	_, _ = c.Get(base + "/users/" + upn)    // want `http client send Get outside policy.GraphHTTPSite`
+	req := &http.Request{URL: u}            // want `http.Request literal outside policy.GraphHTTPSite`
+	req.URL = u                             // want `assignment to http.Request.URL outside policy.GraphHTTPSite`
+	req.Host = upn                          // want `assignment to http.Request.Host outside policy.GraphHTTPSite`
+	_, _ = c.Do(req)                        // want `http client send Do outside policy.GraphHTTPSite`
+	_ = req.Header.Get("Authorization")     // Header.Get is not a send
+}
+
 // okReads: reading URL fields is fine.
 func okReads(u *url.URL) {
 	_ = u.Host
 	_ = strings.ToLower(u.Path) // reading Path is fine
 }
 
-type Client struct{}
+type Client struct{ hc *http.Client }
 
 // get is a policy.GraphHTTPSite: the request comes from the String() of a *url.URL.
 func (c *Client) get(u *url.URL) {
 	_, _ = http.NewRequest(http.MethodGet, u.String(), nil)
+	_, _ = c.hc.Do(&http.Request{URL: u})                            // get is the listed site
 	_, _ = http.NewRequest(http.MethodGet, "https://x/"+u.Path, nil) // want `http.NewRequest with a URL that is not`
 }
 

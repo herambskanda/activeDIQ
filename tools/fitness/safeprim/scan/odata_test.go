@@ -136,6 +136,8 @@ func TestODataFixtures(t *testing.T) {
 			[]string{"graph-url-assembly"}, true},
 		{"FX-17 NewRequest in an unlisted function", map[string]string{fxGraph: "package graph\n\nimport (\n\t\"net/http\"\n\t\"net/url\"\n)\n\nfunc f(u *url.URL) { _, _ = http.NewRequest(\"GET\", u.String(), nil) }\n"}, fxGraph,
 			[]string{"graph-url-assembly"}, true},
+		{"FX-18 http.Get, Client.Get and a Request literal with Do in an unlisted function", map[string]string{fxGraph: "package graph\n\nimport (\n\t\"net/http\"\n\t\"net/url\"\n)\n\nfunc f(c *http.Client, u *url.URL, b string) {\n\t_, _ = http.Get(b + \"/users\")\n\t_, _ = c.Get(b + \"/users\")\n\t_, _ = c.Do(&http.Request{URL: u})\n}\n"}, fxGraph,
+			[]string{"graph-url-assembly"}, true},
 		{"FX-8d count and skip options", fixture(`func f(x string) string { return "users?$count=true&$skip=" + x }`), fxFile,
 			[]string{"odata-option-literal"}, false},
 		{"FX-N1 the builder", fixture(`func f(v odata.String) odata.Request {
