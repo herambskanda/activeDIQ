@@ -461,7 +461,7 @@ both kinds of agent, so both command sets are closed (TM-D13).
 | TM-TB15-T4 | I | X6 steals a database backup (ADM-158) | Secrets are ciphertext only; backup files ACL'd to the service; backup encryption `[OPEN → E2.12 PRD]` | TM-F-HOST | The PII in inventory is readable (TM-R8) |
 | TM-TB15-T5 | T | An audit export is edited before an auditor sees it | Export carries the chain and signed checkpoints; offline verifier (§11) | TM-F-AUDIT | — |
 | TM-TB15-T6 | R | Bulk data leaves with no record | Every export, download and delivery audited with actor and row count | TM-F-AUDIT | — |
-| TM-TB15-T7 | I | The SIEM stream travels in clear | TLS syslog or HTTPS by default; plain UDP syslog only with an explicit operator opt-in and a warning | TM-F-EGRESS | Customer opts in |
+| TM-TB15-T7 | I | The SIEM stream travels in clear | TLS syslog (verified, port 6514) by default; UDP is not offered; plaintext TCP only with an explicit, audited operator opt-in shown in the API/UI with a warning | TM-F-EGRESS | Customer opts in |
 | TM-TB15-T8 | D | Huge exports exhaust the server | Streaming encoders, row caps, asynchronous jobs | T-0150 | — |
 
 ### 5.16 TB16 — Host and installer

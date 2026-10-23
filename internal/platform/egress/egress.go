@@ -92,6 +92,8 @@ type Config struct {
 type Client struct {
 	hc        *http.Client
 	allowHTTP bool
+	d         *dialer
+	tlsCfg    *tls.Config
 }
 
 // New validates cfg and returns a Client.
@@ -138,6 +140,8 @@ func New(cfg Config) (*Client, error) {
 	return &Client{
 		hc:        &http.Client{Transport: tr, Timeout: cfg.Timeout, CheckRedirect: redirectPolicy(cfg.AllowHTTP)},
 		allowHTTP: cfg.AllowHTTP,
+		d:         d,
+		tlsCfg:    &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: cfg.RootCAs}, // separate from the transport's: net/http mutates that one (ALPN, h2)
 	}, nil
 }
 
