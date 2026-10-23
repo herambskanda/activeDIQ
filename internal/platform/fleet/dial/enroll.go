@@ -57,6 +57,10 @@ func Enroll(ctx context.Context, m Material, dir string, ex Exchange) (*State, e
 	if err != nil || host == "" || m.Token == "" || ex == nil {
 		return nil, errors.New("dial: enrollment material is incomplete")
 	}
+	// Fail before the single-use token is spent if this host cannot store the key safely.
+	if err := ensureDir(dir); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrState, err)
+	}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("dial: generating key: %w", err)

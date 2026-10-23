@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Files of the component's enrollment state directory.
@@ -24,6 +25,10 @@ const (
 
 // ErrState: the state directory is missing, incomplete or unsafe. It names the problem, never content.
 var ErrState = errors.New("dial: enrollment state is not usable")
+
+// ErrExpired: the component certificate (or the CA) is outside its validity period. Distinct from
+// ErrState so a caller can start renewal instead of reporting corruption.
+var ErrExpired = errors.New("dial: component certificate has expired")
 
 // Endpoint is where the component dials the server.
 type Endpoint struct {
@@ -115,7 +120,11 @@ func Load(dir string) (*State, error) {
 	if err != nil || len(pair.Certificate) != 1 {
 		return nil, ErrState
 	}
-	if _, err := pair.Leaf.Verify(x509.VerifyOptions{Roots: Pool(ca), KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, CurrentTime: pair.Leaf.NotBefore}); err != nil {
+	if _, err := pair.Leaf.Verify(x509.VerifyOptions{Roots: Pool(ca), KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, CurrentTime: time.Now()}); err != nil {
+		var ci x509.CertificateInvalidError
+		if errors.As(err, &ci) && ci.Reason == x509.Expired {
+			return nil, ErrExpired // the renewal flow re-enrols; never dial with it
+		}
 		return nil, ErrState
 	}
 	epB, err := read(EndpointsFile, false)
