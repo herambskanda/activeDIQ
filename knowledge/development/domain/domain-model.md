@@ -1,11 +1,11 @@
 ---
 title: "Domain model v0"
 date: 2026-10-02
-updated: 2026-10-02
+updated: 2026-10-23
 status: review
 owner: heramb
 author: solution-architect
-ticket: T-0006 (amended by T-0061, T-0145, T-0155, T-0168, T-0129)
+ticket: T-0006 (amended by T-0061, T-0145, T-0155, T-0168, T-0129, T-0191)
 binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), ADR-0003 (ratified), blueprint v0 (review), safe-primitives.md (review), threat-model.md v0.2 (review; its TM-D decisions bind, TM §0)
 reviewed_by: ad-expert (AD/Entra semantics, see §12)
 ---
@@ -1188,8 +1188,8 @@ I6 **Authority factor** (threat model TM-D19 rules 1–3). A bound `sso` account
 grants that reach it through an `oid` or `onprem_sid` binding, only in a session that has verified
 one of its authority factors (DM-37.I3). The factor is checked at first use in the session and again
 at every step-up (threat model §7.4), and the session records it (DM-31.I3). Where the PRD offers
-SPNEGO sign-in, a session that authenticated the correlated AD account by Kerberos counts instead
-`[OPEN → ADM-143 spec]`. Without either, the session keeps its Entra-side grants and the grants
+SPNEGO sign-in, a session that authenticated the correlated AD account by Kerberos counts instead.
+The ADM-143 spec offers SPNEGO in v1, so this applies (console-sso.md NEG-2, NEG-4). Without either, the session keeps its Entra-side grants and the grants
 made to the account itself. This is the same degraded mode as an unattested tenant, so nothing
 breaks. Each refused use is audited with reason `authority_factor_missing`. A `directory` account
 already authenticates through the AD plane, so this rule adds nothing for it. I7 **Console-backing
@@ -1406,6 +1406,29 @@ plain hash of a six-digit code is enumerated in milliseconds. I3 A verified
 challenge authorises Actions only on its target, once, within its window. I4 The factor is
 recorded in the same audit event as the reset.
 **Lifecycle.** `issued → verified | failed | expired | cancelled`.
+
+### DM-39 IdentityProvider · T · owner `platform/authn`
+**Definition.** A customer IdP the console trusts for sign-in (ADM-143), with the rules that turn
+its verified responses into an account, a session or a pending sign-in. Contract and checks:
+[`../architecture/console-sso.md`](../architecture/console-sso.md). **Replaces (ME):** the SAML
+SSO settings of ADManager Plus.
+**Key attributes:** `protocol` (`oidc`, `saml`) · `enabled` · `display_name` · `issuer` (OIDC
+issuer or SAML entityID) · `client` (OIDC client ID and pinned discovery; SAML IdP SSO URL and
+signing certificates) · `algorithm` (one, pinned) · `credential` (OIDC client secret or key,
+sealed under the tenant data key like DM-11) · `subject_source` · `anchor_claim` (none, `oid`+`tid`,
+`onprem_sid`) · `mfa` (mode `off`/`claim`, evidence rule) · `admission` (`invited`, `mapped`) ·
+`claim_mappings` (claim, value, role). The tenant's `signin.mode` (`choice`, `forced`) and
+designated method sit beside it.
+**Invariants.** I1 Every change is a configuration Action (ADR-0005) that needs step-up, is
+audited and alerts every `tenant-owner` (TM-TB8-T3). I2 `algorithm` is never `none`, HS* or a
+SHA-1 or DSA method; SAML `subject_source` is never a transient or email NameID; `anchor_claim`
+is never a UPN, email, name or immutable ID (DM-30.I5). I3 A claim mapping never targets
+`tenant-owner` or a role with a `control_plane` permission (DM-33.I3, DM-36.I4). I4 An SSO
+transaction (state, nonce, PKCE verifier, AuthnRequest ID, return path) lives at most 5 minutes,
+is stored hashed by its handle and is consumed by the first callback. I5 The SAML replay row
+(IdP, Assertion ID) is unique and kept until the assertion's `NotOnOrAfter` plus skew.
+**Lifecycle.** `draft → enabled ⇄ disabled → deleted`. Transactions and replay rows are purged on
+expiry; they are not evidence (the audit events are).
 
 ## 4. Change: operations and jobs
 
@@ -1992,6 +2015,7 @@ AC2 was re-checked by script: every ADM ID in scope lock §3.3 (123 IDs) appears
 
 ## Changelog
 
+- 2026-10-23 · T-0191 (ADM-143 spec). DM-39 IdentityProvider added. DM-30.I6: the Kerberos alternative applies in v1 because SPNEGO is offered (console-sso.md §9).
 - 2026-10-02 · v0 drafted (T-0006). The ad-expert review was applied (§12, 13 findings), Q3 was closed, and the status moved to `review`.
 - 2026-10-02 · v0 rework after the director's review (§12 R1–R5, N1–N3): DM-23 GpLink, Entra delegation scopes, X11 erasure, derived append-only states, SSO `directory_ref`. Q9 and Q10 were added.
 - 2026-10-02 · v0 round-2 rework (§12 S1, S2, H1–H4): DM-20 authorizing gate (`candidate` vs `matched`, I4–I6), DM-21.I2, and only `matched` correlations count in DM-30.I5, DM-35.I6 and DM-36.I2. DM-23.I2 now says what edge identity means across a reorder.
