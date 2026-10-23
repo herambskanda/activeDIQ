@@ -37,6 +37,18 @@ const (
 	// EnvAPIBodyBudget is the total bytes of request-body buffers the API may hold at once across all
 	// in-flight requests. It must be a positive integer.
 	EnvAPIBodyBudget = "ACTIVEDIQ_API_BODY_BUDGET"
+	// EnvNodes is the number of server nodes in this install (a positive integer, default 1). More than one
+	// node needs the shared principal store: the server refuses to start with the in-memory store.
+	EnvNodes = "ACTIVEDIQ_NODES"
+	// EnvPrincipalStore selects where per-principal rate budgets live: "postgres" (the default, shared by
+	// every node) or "memory" (one process; only valid with a single node).
+	EnvPrincipalStore = "ACTIVEDIQ_PRINCIPAL_STORE"
+)
+
+// Values of EnvPrincipalStore.
+const (
+	PrincipalStorePostgres = "postgres"
+	PrincipalStoreMemory   = "memory"
 )
 
 // Defaults for the shutdown settings. systemd's TimeoutStopSec defaults to 90 s.
@@ -66,13 +78,16 @@ type Config struct {
 	APITLSDir string
 	// APIBodyBudget is passed to apihost.WithBodyBudget. Non-positive values fail startup.
 	APIBodyBudget int64
+	// Nodes is the number of server nodes; PrincipalStore is PrincipalStorePostgres or PrincipalStoreMemory.
+	Nodes          int
+	PrincipalStore string
 }
 
 // Load reads the configuration through getenv (os.Getenv in the binaries, a map in tests).
 // An invalid value is an error; it is never silently replaced by a default.
 func Load(getenv func(string) string) (Config, error) {
 	c := Config{LogLevel: slog.LevelInfo, ShutdownGrace: DefaultShutdownGrace, StopTimeout: DefaultStopTimeout,
-		APIAddr: DefaultAPIAddr, APIBodyBudget: DefaultAPIBodyBudget}
+		APIAddr: DefaultAPIAddr, APIBodyBudget: DefaultAPIBodyBudget, Nodes: 1, PrincipalStore: PrincipalStorePostgres}
 	if v := getenv(EnvLogLevel); v != "" {
 		if err := c.LogLevel.UnmarshalText([]byte(v)); err != nil {
 			return Config{}, fmt.Errorf("%s: %w", EnvLogLevel, err)
@@ -103,6 +118,19 @@ func Load(getenv func(string) string) (Config, error) {
 			return Config{}, fmt.Errorf("%s: must be a positive number of bytes, got %d", EnvAPIBodyBudget, n)
 		}
 		c.APIBodyBudget = n
+	}
+	if v := getenv(EnvNodes); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			return Config{}, fmt.Errorf("%s: must be a positive integer, got %q", EnvNodes, v)
+		}
+		c.Nodes = n
+	}
+	if v := getenv(EnvPrincipalStore); v != "" {
+		c.PrincipalStore = v
+	}
+	if err := c.ValidatePrincipalStore(); err != nil {
+		return Config{}, err
 	}
 	if 2*c.ShutdownGrace >= c.StopTimeout {
 		return Config{}, fmt.Errorf("%s: twice the shutdown grace (%s) must be less than the stop timeout (%s) or the service manager kills the process mid-drain",
@@ -158,6 +186,8 @@ func (c Config) LogValue() slog.Value {
 		slog.String("api_addr", r.APIAddr),
 		slog.String("api_tls_dir", r.APITLSDir),
 		slog.Int64("api_body_budget", r.APIBodyBudget),
+		slog.Int("nodes", r.Nodes),
+		slog.String("principal_store", r.PrincipalStore),
 	)
 }
 
@@ -189,4 +219,24 @@ func requireLoopback(addr string) error {
 		return nil
 	}
 	return errors.New("must bind a loopback address (127.0.0.0/8, ::1 or localhost) unless a TLS directory is configured")
+}
+
+// ValidatePrincipalStore refuses an unknown store and the in-memory store on more than one node: each
+// node would keep its own budget, so a principal's reveal and secret limits would multiply by the node
+// count (TM-TB2-T7). A zero Nodes or empty store is a Config built by hand, not by Load, and is refused.
+func (c Config) ValidatePrincipalStore() error {
+	if c.Nodes < 1 {
+		return fmt.Errorf("%s: node count %d is not positive", EnvNodes, c.Nodes)
+	}
+	switch c.PrincipalStore {
+	case PrincipalStorePostgres:
+		return nil
+	case PrincipalStoreMemory:
+		if c.Nodes > 1 {
+			return fmt.Errorf("%s=%s with %s=%d: every node would keep its own rate budget; use %s",
+				EnvPrincipalStore, PrincipalStoreMemory, EnvNodes, c.Nodes, PrincipalStorePostgres)
+		}
+		return nil
+	}
+	return fmt.Errorf("%s: %q is not %q or %q", EnvPrincipalStore, c.PrincipalStore, PrincipalStorePostgres, PrincipalStoreMemory)
 }
