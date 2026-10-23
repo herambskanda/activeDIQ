@@ -277,7 +277,7 @@ func Verify(b Bundle, opts Options) Result {
 	}
 	// A key whose window the bundle only asserts (the manifest of a truncated export) cannot be told from
 	// a retired key relabelled as current. The operator's pin window refutes it; without windows, more
-	// than one pin leaves the choice of "current" to the exporter.
+	// than one pin leaves the choice of "current" to the exporter (full-range exports too: the forger orders the key events).
 	for _, p := range sortedKeys(pinned) {
 		k := keys[p]
 		if w, ok := opts.PinWindows[p]; ok {
@@ -286,8 +286,8 @@ func Verify(b Bundle, opts Options) Result {
 			}
 			continue
 		}
-		if len(pinned) > 1 && first > 1 {
-			return fail(0, ReasonPinWindow, "several keys are pinned and this export starts at seq %d: its manifest alone says whether %s is current. Pin only the current key, or give each pin its window (KEY@created-retired)", first, p)
+		if len(pinned) > 1 {
+			return fail(0, ReasonPinWindow, "several keys are pinned and %s has no window: the order of keys cannot be taken from the export, which the exporter writes. Pin only the current key, or give each pin its window (KEY@created-retired)", p)
 		}
 	}
 	rooted := len(pinned) > 0 || anchored

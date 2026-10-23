@@ -205,7 +205,9 @@ func TestCheckpointSignedByRetiredKey(t *testing.T) {
 	opts := Options{Pinned: []string{Fingerprint(b.pub)}}
 	// No cross-signature: nothing trusted covers the new key's introduction (T-0229 adds it).
 	want(t, Verify(b.bundle(), opts), Failed, 5, ReasonUntrustedKey)
-	opts.Pinned = append(opts.Pinned, Fingerprint(pub2)) // pinning both is the operator's explicit choice
+	opts.Pinned = append(opts.Pinned, Fingerprint(pub2)) // pinning both is the operator's explicit choice, with windows
+	want(t, Verify(b.bundle(), opts), Failed, 0, ReasonPinWindow)
+	opts.PinWindows = map[string]PinWindow{Fingerprint(b.pub): {1, 3}, Fingerprint(pub2): {4, 0}}
 	want(t, Verify(b.bundle(), opts), OK, 0, "")
 
 	b.add("c")
@@ -500,7 +502,8 @@ func TestPinnedKeyAbsentFromExportFails(t *testing.T) {
 	b.rotate(t, b.priv, pub2, true) // 11, 12
 	b.add("x")
 	b.checkpoint(priv2, pub2) // 13
-	both := Options{Pinned: []string{Fingerprint(b.pub), Fingerprint(pub2)}}
+	both := Options{Pinned: []string{Fingerprint(b.pub), Fingerprint(pub2)},
+		PinWindows: map[string]PinWindow{Fingerprint(b.pub): {1, 11}, Fingerprint(pub2): {12, 0}}}
 	want(t, Verify(b.bundle(), both), OK, 0, "")
 
 	fork.add("victim-removed-tail")
@@ -567,8 +570,9 @@ func TestStaleRetiredKeyPinCannotValidateTruncatedExport(t *testing.T) {
 	}
 
 	// Genuine chain: full range with both pins, and truncated under each documented procedure.
-	if r := Verify(g.bundle(), both); r.Status != OK {
-		t.Fatalf("genuine full export, both pins: %s %s", r.Status, r.Detail)
+	want(t, Verify(g.bundle(), both), Failed, 0, ReasonPinWindow) // several pins always need windows
+	if r := Verify(g.bundle(), win); r.Status != OK {
+		t.Fatalf("genuine full export, windowed pins: %s %s", r.Status, r.Detail)
 	}
 	tr := g.bundle()
 	tr.FromSeq, tr.Events, tr.Checkpoints = 14, tr.Events[13:], g.cps[2:]
@@ -693,5 +697,22 @@ func TestForgedRetirementOfCurrentKeyCannotHideItsAbsence(t *testing.T) {
 	// Genuine exports stay OK.
 	if r := Verify(g.bundle(), win); r.Status != OK {
 		t.Fatalf("genuine full: %s %s", r.Reason, r.Detail)
+	}
+}
+
+// T-0243 security probe G: a full-range export where the forger orders bare key.created events.
+func TestFullRangeForgedKeyOrderNeedsWindows(t *testing.T) {
+	b := newBuilder(t, 1)
+	pub2, _ := key(t)
+	b.keyCreated(pub2)  // seq 1 bare K2
+	b.keyCreated(b.pub) // seq 2 bare K1 "newest"
+	b.add("forged")
+	b.checkpoint(b.priv, b.pub)
+	k1, k2 := Fingerprint(b.pub), Fingerprint(pub2)
+	win := Options{Pinned: []string{k1, k2}, PinWindows: map[string]PinWindow{k1: {1, 11}, k2: {12, 0}}}
+	for name, o := range map[string]Options{"unwindowed": {Pinned: win.Pinned}, "windowed": win} {
+		if r := Verify(b.bundle(), o); r.Status == OK {
+			t.Fatalf("forged key order validated, %s pins", name)
+		}
 	}
 }

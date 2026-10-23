@@ -531,7 +531,11 @@ func TestKeyRotationKeepsTheChainVerifiable(t *testing.T) {
 		if res := chain.Verify(b, chain.Options{Pinned: ids[:1]}); res.Status != chain.OK {
 			t.Fatalf("verify (old key only) = %+v", res)
 		}
-		if res := chain.Verify(b, chain.Options{Pinned: ids}); res.Status != chain.OK {
+		win := map[string]chain.PinWindow{}
+		for _, k := range b.Keys {
+			win[k.KeyID] = chain.PinWindow{CreatedSeq: k.CreatedSeq, RetiredSeq: k.RetiredSeq}
+		}
+		if res := chain.Verify(b, chain.Options{Pinned: ids, PinWindows: win}); res.Status != chain.OK {
 			t.Fatalf("verify (both keys pinned) = %+v", res)
 		}
 	})
