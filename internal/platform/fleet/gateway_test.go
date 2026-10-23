@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	"github.com/skenzeriq/activediq/internal/platform/fleet"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
@@ -110,8 +111,10 @@ func (f *fakeComps) Usable(_ context.Context, id fleet.Identity) (bool, error) {
 type fakeFleet struct {
 	calls  atomic.Int32
 	lastID atomic.Value
-	hold   atomic.Bool // stream handlers block until their context ends
+	hold   atomic.Bool  // stream handlers block until their context ends
+	mode   atomic.Int32 // with hold: 0 wait on ctx, 1 block in RecvMsg, 2 block in SendMsg
 	open   atomic.Int32
+	exited atomic.Int32 // handlers that have returned
 }
 
 func (f *fakeFleet) desc(name string) *grpc.ServiceDesc {
@@ -148,6 +151,22 @@ func (f *fakeFleet) stream(_ any, ss grpc.ServerStream) error {
 	if f.hold.Load() {
 		f.open.Add(1)
 		defer f.open.Add(-1)
+		defer f.exited.Add(1)
+		switch f.mode.Load() {
+		case 1: // a tunnel server loop waiting for the component's next frame
+			for {
+				if err := ss.RecvMsg(new(emptypb.Empty)); err != nil {
+					return err
+				}
+			}
+		case 2: // server-to-component sends under flow control: the client never reads
+			chunk := wrapperspb.Bytes(make([]byte, 256<<10))
+			for {
+				if err := ss.SendMsg(chunk); err != nil {
+					return err
+				}
+			}
+		}
 		<-ss.Context().Done()
 		return ss.Context().Err()
 	}
@@ -548,5 +567,51 @@ func TestStatusLookupFailureRefused(t *testing.T) {
 	leaf := ca.leaf(t, tid, time.Now().Add(-time.Minute), time.Now().Add(time.Hour), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
 	if err := callTunnel(r.dial(t, &leaf)); code(err) != codes.Unavailable {
 		t.Fatalf("status failure must fail closed: %v", err)
+	}
+}
+
+// TestUncooperativeHandlerIsTornDown: a handler blocked in RecvMsg (silent component) or in SendMsg
+// (client not reading) never watches our context; revocation must still end the RPC and the handler
+// goroutine, via CloseComponent and via the periodic re-check alone, leaving the sibling open.
+func TestUncooperativeHandlerIsTornDown(t *testing.T) {
+	const other = "66666666-7777-4888-8999-aaaaaaaaaaaa"
+	ca := newCA(t, time.Now().Add(time.Hour))
+	tid := tenant.New()
+	pool := x509.NewCertPool()
+	pool.AddCert(ca.cert)
+	nb, na, eku := time.Now().Add(-time.Minute), time.Now().Add(time.Hour), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+	for _, mode := range []struct {
+		name string
+		m    int32
+	}{{"recv", 1}, {"send", 2}} {
+		for _, via := range []string{"close", "recheck"} {
+			t.Run(mode.name+"/"+via, func(t *testing.T) {
+				r := start(t, casByTenant{tid: {ca.cert}}, pool, nil)
+				r.fleet.hold.Store(true)
+				r.fleet.mode.Store(mode.m)
+				victim, sib := ca.leaf(t, tid, nb, na, eku), ca.leafFor(t, tid, other, nb, na, eku)
+				vs, ss := openTunnel(t, r.dial(t, &victim)), openTunnel(t, r.dial(t, &sib))
+				waitFor(t, "two open streams", func() bool { return r.fleet.open.Load() == 2 })
+				if mode.m == 2 {
+					time.Sleep(300 * time.Millisecond) // let the send window fill so SendMsg blocks
+				}
+				r.comps.revoke(compID)
+				if via == "close" {
+					if n := r.gw.CloseComponent(tid, compID); n != 1 {
+						t.Fatalf("closed %d", n)
+					}
+				}
+				waitFor(t, "revoked handler to exit", func() bool { return r.fleet.exited.Load() == 1 && r.fleet.open.Load() == 1 })
+				if code(vs.RecvMsg(new(wrapperspb.BytesValue))) == codes.OK {
+					// recv mode has nothing to read; the call must still fail, not deliver data
+					t.Log("received a buffered frame before the close")
+				}
+				time.Sleep(300 * time.Millisecond)
+				if r.fleet.exited.Load() != 1 || r.fleet.open.Load() != 1 {
+					t.Fatalf("sibling affected: exited=%d open=%d", r.fleet.exited.Load(), r.fleet.open.Load())
+				}
+				_ = ss
+			})
+		}
 	}
 }

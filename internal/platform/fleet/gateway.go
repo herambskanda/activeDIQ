@@ -220,11 +220,24 @@ func (g *Gateway) Stream(srv any, ss grpc.ServerStream, info *grpc.StreamServerI
 	unreg := g.streams.add(id, cancel)
 	defer unreg()
 	go g.watch(ctx, id, cancel)
-	err = h(srv, st)
-	if errors.Is(context.Cause(ctx), errRevoked) {
-		return errRevoked
+	// The handler runs on its own goroutine so that revocation ends the RPC whether or not the
+	// handler cooperates: a handler blocked in RecvMsg or SendMsg on the underlying transport never
+	// observes our derived context. Returning from this interceptor makes grpc finish the
+	// transport stream, which unblocks that handler's Recv/Send with an error so it exits.
+	done := make(chan error, 1)
+	go func() { done <- h(srv, st) }()
+	select {
+	case err = <-done:
+		if errors.Is(context.Cause(ctx), errRevoked) {
+			return errRevoked
+		}
+		return err
+	case <-ctx.Done():
+		if errors.Is(context.Cause(ctx), errRevoked) {
+			return errRevoked
+		}
+		return <-done // the transport context ended (client gone): the handler is returning
 	}
-	return err
 }
 
 // CloseComponent closes every open stream of the component and reports how many it closed. The

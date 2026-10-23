@@ -152,7 +152,9 @@ mounts the `Fleet` service on the server `Gateway.NewServer` builds and states e
   component is `enrolled` or `active`. A revoked (or removed, or unknown) component with a still-valid
   certificate gets `Unauthenticated`; a lookup failure gets `Unavailable`. `Components` is required.
 - **Open streams are closed**: authenticated streams are registered by (tenant, component).
-  `Gateway.CloseComponent` cancels them at once (their `Send`/`Recv` fail with `Unauthenticated`);
+  `Gateway.CloseComponent` cancels them at once. The interceptor runs the handler on its own goroutine
+  and returns `Unauthenticated` as soon as the stream is revoked, so grpc ends the transport stream and
+  a handler blocked in `RecvMsg`/`SendMsg` is unblocked and exits whether or not it watches its context;
   each stream also re-checks `Usable` every `Config.Recheck` (default 5 s), which bounds the lifetime
   of a stream whose component was revoked through another server instance. A failed re-check leaves the
   stream open (a database blip must not drop the fleet); new RPCs are refused meanwhile.

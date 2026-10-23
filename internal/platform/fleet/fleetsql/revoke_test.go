@@ -2,6 +2,7 @@ package fleetsql_test
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"testing"
 
@@ -103,7 +104,13 @@ func TestRevokeRefusals(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		ctx := context.Background()
 		e := setupEnroll(t, s)
-		victim := e.enrolled(t, e.a, fleetsql.KindConnector)
+		iss := e.issue(t, e.a, fleetsql.KindConnector)
+		csr, _ := csrFor(t, nil)
+		first, err := e.enr.Enroll(ctx, peerIP, iss.Token.String(), csr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		victim := first.Identity
 		deny := &fleetsql.Lifecycle{DB: e.db, Authz: revokeAuthz{false}, Audit: e.sink}
 		if _, err := deny.Revoke(ctx, e.a, admin, victim.ComponentID); !errors.Is(err, fleetsql.ErrRevokeForbidden) {
 			t.Fatalf("no permission: %v", err)
@@ -126,6 +133,14 @@ func TestRevokeRefusals(t *testing.T) {
 		// A revoked component cannot rotate its certificate either.
 		if _, err := lc.Revoke(ctx, e.a, admin, victim.ComponentID); err != nil {
 			t.Fatal(err)
+		}
+		cur, err := x509.ParseCertificate(first.LeafDER)
+		if err != nil {
+			t.Fatal(err)
+		}
+		csr2, _ := csrFor(t, nil)
+		if _, err := e.enr.Rotate(ctx, cur, csr2); !errors.Is(err, fleetsql.ErrRotateRefused) {
+			t.Fatalf("revoked component rotated its certificate: %v", err)
 		}
 	})
 }
