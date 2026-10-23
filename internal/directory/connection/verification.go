@@ -18,13 +18,13 @@ import (
 // connection, so they carry the same tenant key and are declared for fitness-domain-keys the same way.
 var (
 	verificationsTable = tablekind.Declare(tablekind.Table{
-		Name: "public.connection_verifications", Entity: "DM-24", Kind: tablekind.Tenant,
+		Name: "public.connection_verifications", Entity: "DM-24", Kind: tablekind.Tenant, AppendOnly: true,
 	})
 	findingsTable = tablekind.Declare(tablekind.Table{
-		Name: "public.connection_verification_findings", Entity: "DM-24", Kind: tablekind.Tenant,
+		Name: "public.connection_verification_findings", Entity: "DM-24", Kind: tablekind.Tenant, AppendOnly: true,
 	})
 	overridesTable = tablekind.Declare(tablekind.Table{
-		Name: "public.connection_tier0_overrides", Entity: "DM-25", Kind: tablekind.Tenant,
+		Name: "public.connection_tier0_overrides", Entity: "DM-25", Kind: tablekind.Tenant, AppendOnly: true,
 	})
 )
 

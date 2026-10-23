@@ -40,12 +40,13 @@ CREATE TABLE public.connection_verifications (
   findings_digest bytea NOT NULL CHECK (length(findings_digest) = 32),
   PRIMARY KEY (tenant_id, id),
   FOREIGN KEY (tenant_id, connection_id) REFERENCES public.connections (tenant_id, id),
+  UNIQUE (tenant_id, id, connection_id, credential_id),
   CHECK (completed_at >= started_at)
 );
 CREATE INDEX connection_verifications_conn ON public.connection_verifications (tenant_id, connection_id, completed_at DESC);
 
 CREATE TABLE public.connection_verification_findings (
-  tenant_id uuid NOT NULL,
+  tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   verification_id uuid NOT NULL,
   ordinal integer NOT NULL CHECK (ordinal >= 0),
   -- AD V1..V9, Entra EV1..EV5.
@@ -76,7 +77,9 @@ CREATE TABLE public.connection_tier0_overrides (
   acknowledged_fingerprints text[] NOT NULL CHECK (cardinality(acknowledged_fingerprints) > 0),
   PRIMARY KEY (tenant_id, id),
   FOREIGN KEY (tenant_id, connection_id) REFERENCES public.connections (tenant_id, id),
-  FOREIGN KEY (tenant_id, verification_id) REFERENCES public.connection_verifications (tenant_id, id)
+  -- DM-25.I1: the evidence run belongs to the same connection and credential.
+  FOREIGN KEY (tenant_id, verification_id, connection_id, credential_id)
+    REFERENCES public.connection_verifications (tenant_id, id, connection_id, credential_id)
 );
 CREATE INDEX connection_tier0_overrides_conn ON public.connection_tier0_overrides (tenant_id, connection_id, acknowledged_at DESC);
 
@@ -84,19 +87,26 @@ CREATE INDEX connection_tier0_overrides_conn ON public.connection_tier0_override
 ALTER TABLE public.connections
   ADD FOREIGN KEY (tenant_id, last_verification_id) REFERENCES public.connection_verifications (tenant_id, id);
 
-DO $do$
-DECLARE t text;
-BEGIN
-  FOREACH t IN ARRAY ARRAY['connection_verifications', 'connection_verification_findings', 'connection_tier0_overrides'] LOOP
-    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
-    EXECUTE format('ALTER TABLE public.%I FORCE ROW LEVEL SECURITY', t);
-    EXECUTE format($p$CREATE POLICY %I ON public.%I
-      USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
-      WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)$p$, t || '_tenant', t);
-    EXECUTE format('REVOKE UPDATE, DELETE, TRUNCATE ON public.%I FROM activediq_app', t);
-  END LOOP;
-END
-$do$;
+ALTER TABLE public.connection_verifications ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.connection_verifications FORCE ROW LEVEL SECURITY;
+CREATE POLICY connection_verifications_tenant ON public.connection_verifications
+  USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+REVOKE UPDATE, DELETE, TRUNCATE ON public.connection_verifications FROM activediq_app;
+
+ALTER TABLE public.connection_verification_findings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.connection_verification_findings FORCE ROW LEVEL SECURITY;
+CREATE POLICY connection_verification_findings_tenant ON public.connection_verification_findings
+  USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+REVOKE UPDATE, DELETE, TRUNCATE ON public.connection_verification_findings FROM activediq_app;
+
+ALTER TABLE public.connection_tier0_overrides ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.connection_tier0_overrides FORCE ROW LEVEL SECURITY;
+CREATE POLICY connection_tier0_overrides_tenant ON public.connection_tier0_overrides
+  USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+REVOKE UPDATE, DELETE, TRUNCATE ON public.connection_tier0_overrides FROM activediq_app;
 
 COMMENT ON TABLE public.connection_verifications IS 'DM-24 ConnectionVerification (tenant table, RLS, append-only). Only internal/directory/connection references it in SQL. Findings enumerate Tier-0 exposure: read under FR-16 only.';
 COMMENT ON TABLE public.connection_verification_findings IS 'DM-24 Finding (tenant table, RLS, append-only). Identifiers only, never a DN or a name (DM-24.I3).';
@@ -119,25 +129,7 @@ CREATE TRIGGER connection_verification_findings_append_only BEFORE UPDATE OR DEL
   FOR EACH ROW EXECUTE FUNCTION public.connections_append_only();
 CREATE TRIGGER connection_tier0_overrides_append_only BEFORE UPDATE OR DELETE ON public.connection_tier0_overrides
   FOR EACH ROW EXECUTE FUNCTION public.connections_append_only();
-ALTER TABLE public.connection_verifications ENABLE ALWAYS TRIGGER connection_verifications_append_only;
-ALTER TABLE public.connection_verification_findings ENABLE ALWAYS TRIGGER connection_verification_findings_append_only;
-ALTER TABLE public.connection_tier0_overrides ENABLE ALWAYS TRIGGER connection_tier0_overrides_append_only;
+ALTER TABLE public.connection_verifications ENABLE TRIGGER connection_verifications_append_only;
+ALTER TABLE public.connection_verification_findings ENABLE TRIGGER connection_verification_findings_append_only;
+ALTER TABLE public.connection_tier0_overrides ENABLE TRIGGER connection_tier0_overrides_append_only;
 
--- An override's run must be a run of the same connection and credential (DM-25.I1).
-CREATE FUNCTION public.connection_tier0_overrides_guard_insert() RETURNS trigger
-  LANGUAGE plpgsql
-  SET search_path = pg_catalog
-AS $fn$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM public.connection_verifications v
-                 WHERE v.tenant_id = NEW.tenant_id AND v.id = NEW.verification_id
-                   AND v.connection_id = NEW.connection_id AND v.credential_id = NEW.credential_id) THEN
-    RAISE EXCEPTION 'connection_tier0_overrides: the evidence run must belong to the same connection and credential (DM-25.I1)' USING ERRCODE = 'AD403';
-  END IF;
-  RETURN NEW;
-END
-$fn$;
-
-CREATE TRIGGER connection_tier0_overrides_guard_insert BEFORE INSERT ON public.connection_tier0_overrides
-  FOR EACH ROW EXECUTE FUNCTION public.connection_tier0_overrides_guard_insert();
-ALTER TABLE public.connection_tier0_overrides ENABLE ALWAYS TRIGGER connection_tier0_overrides_guard_insert;

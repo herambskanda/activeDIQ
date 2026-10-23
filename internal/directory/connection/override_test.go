@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -155,9 +156,10 @@ func TestOverrideRefusals(t *testing.T) {
 func (e *svcEnv) backdate(t *testing.T, d time.Duration) {
 	t.Helper()
 	sql := fmt.Sprintf(`ALTER TABLE public.connection_verifications DISABLE TRIGGER connection_verifications_append_only;
-		SET app.tenant_id = '%s';
-		UPDATE public.connection_verifications SET started_at = started_at - interval '%d seconds', completed_at = completed_at - interval '%d seconds';
-		ALTER TABLE public.connection_verifications ENABLE ALWAYS TRIGGER connection_verifications_append_only;`, e.a, int(d.Seconds()), int(d.Seconds()))
+		ALTER TABLE public.connection_verifications NO FORCE ROW LEVEL SECURITY;
+		UPDATE public.connection_verifications SET started_at = started_at - interval '%d seconds', completed_at = completed_at - interval '%d seconds' WHERE tenant_id = '%s';
+		ALTER TABLE public.connection_verifications FORCE ROW LEVEL SECURITY;
+		ALTER TABLE public.connection_verifications ENABLE TRIGGER connection_verifications_append_only;`, int(d.Seconds()), int(d.Seconds()), e.a)
 	if err := e.d.ExecOwner(context.Background(), sql); err != nil {
 		t.Fatal(err)
 	}
@@ -214,5 +216,115 @@ func TestOverrideEvidenceMustBelongToTheConnection(t *testing.T) {
 		if err == nil {
 			t.Fatal("cross-connection evidence accepted")
 		}
+	})
+}
+
+// derived is everything DM-25.I6 says retention must not change for a kept override.
+type derived struct {
+	InForce  *connection.Tier0Override
+	Health   connection.Health
+	GateOpen bool
+}
+
+func (e *svcEnv) derive(t *testing.T, id connection.ID, now time.Time) derived {
+	t.Helper()
+	h, err := e.reg.Health(context.Background(), e.a, id, true, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var in *connection.Tier0Override
+	if err := e.db.WithTenant(context.Background(), e.a, func(ctx context.Context, tx store.Tx) (err error) {
+		in, err = connection.Store{}.Tier0OverrideInForce(ctx, tx, id)
+		return
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return derived{InForce: in, Health: h, GateOpen: h.WriteGateOpen}
+}
+
+// purgeRuns removes the given runs and their findings as a retention pass would: the owner, with the
+// append-only guard off for the statement. Only the unpinned runs are ever passed in.
+func (e *svcEnv) purgeRuns(t *testing.T, ids ...connection.VerificationID) {
+	t.Helper()
+	for _, id := range ids {
+		sql := fmt.Sprintf(`ALTER TABLE public.connection_verification_findings DISABLE TRIGGER connection_verification_findings_append_only;
+			ALTER TABLE public.connection_verifications DISABLE TRIGGER connection_verifications_append_only;
+			ALTER TABLE public.connection_verification_findings NO FORCE ROW LEVEL SECURITY;
+			ALTER TABLE public.connection_verifications NO FORCE ROW LEVEL SECURITY;
+			DELETE FROM public.connection_verification_findings WHERE verification_id = '%[1]s';
+			DELETE FROM public.connection_verifications WHERE id = '%[1]s';
+			ALTER TABLE public.connection_verification_findings FORCE ROW LEVEL SECURITY;
+			ALTER TABLE public.connection_verifications FORCE ROW LEVEL SECURITY;
+			ALTER TABLE public.connection_verification_findings ENABLE TRIGGER connection_verification_findings_append_only;
+			ALTER TABLE public.connection_verifications ENABLE TRIGGER connection_verifications_append_only;`, id)
+		if err := e.d.ExecOwner(context.Background(), sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// DM-25.I6: every derived state of a kept override reads only pinned rows (its evidence run, the
+// clearing run, the newest run), so removing every other run changes neither the override's state
+// nor the DM-10.I9 / I11 result. No retention pass exists yet; this proves the derivation's side of
+// the contract by removing exactly the rows retention may remove. The crash-inside-a-pass half
+// belongs to the retention job when it lands.
+func TestProperty_DM25_I6(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := newSvc(t, s)
+		ctx := context.Background()
+		c := e.draft(t)
+		active := false
+		verify := func(r connection.VerifyResult) connection.VerificationID {
+			t.Helper()
+			e.cl.set(r, nil)
+			if active {
+				res, err := e.svc.RunScheduled(ctx, e.a)
+				if err != nil || len(res) != 1 || res[0].Err != nil {
+					t.Fatalf("scheduled: %+v %v", res, err)
+				}
+				return res[0].Outcome.Verification.ID
+			}
+			out, err := e.svc.Verify(ctx, e.a, c.ID, connection.KindOnboarding, human("alice"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return out.Verification.ID
+		}
+		unpinnedOld := verify(passing())
+		evidence := verify(overPriv("a"))
+		if _, err := e.ack(t, c.ID, evidence); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.activate(t, c.ID); err != nil {
+			t.Fatal(err)
+		}
+		active = true
+		unpinnedMid := verify(overPriv("a")) // still excessive: not a clearing run, not the evidence
+
+		now := time.Now()
+		// in_force: the override stands.
+		before := e.derive(t, c.ID, now)
+		if before.InForce == nil || !before.Health.Tier0Installation {
+			t.Fatalf("override not in force: %+v", before)
+		}
+		newest := verify(overPriv("a"))
+		before = e.derive(t, c.ID, now)
+		e.purgeRuns(t, unpinnedOld, unpinnedMid)
+		if after := e.derive(t, c.ID, now); !reflect.DeepEqual(before, after) {
+			t.Fatalf("in_force state changed by retention:\nbefore %+v\nafter  %+v", before, after)
+		}
+
+		// cleared: a run with the over-privilege check at pass ends it for good.
+		unpinnedLate := verify(overPriv("a"))
+		clearing := verify(passing())
+		before = e.derive(t, c.ID, now)
+		if before.InForce != nil {
+			t.Fatalf("override not cleared: %+v", before.InForce)
+		}
+		e.purgeRuns(t, newest, unpinnedLate)
+		if after := e.derive(t, c.ID, now); !reflect.DeepEqual(before, after) {
+			t.Fatalf("cleared state changed by retention:\nbefore %+v\nafter  %+v", before, after)
+		}
+		_ = clearing
 	})
 }
