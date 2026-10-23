@@ -7,7 +7,7 @@ owner: heramb
 author: product-manager
 ticket: T-0192
 epic: E-001
-milestone: M1
+milestone: M2
 parity: [ADM-142, ADM-136]
 scope: locked
 sources_last_checked: 2026-10-23
@@ -77,9 +77,9 @@ Delivered to the caller; the technician types in what the caller reads back.
 | 4.3 | Attempts per code | **3** wrong entries; the 3rd wrong entry puts the challenge in `failed` and the code is dead even if correct afterwards | 3 wrong then correct → refused |
 | 4.4 | Single use | A correct entry consumes it; the same code never verifies a second time, for any target or operation | Replay of a consumed code → refused |
 | 4.5 | One open challenge per target | Issuing a new challenge for the same target moves the previous open one to `cancelled` | Old code refused after re-issue |
-| 4.6 | Issue rate per target | **3 challenges per target per rolling hour**, across all technicians. The 4th is refused with a reason shown to the technician; no AD change happens. At most 9 guesses per hour per target | 4th issue → refused |
-| 4.7 | Issue rate per technician | **10 challenges per technician per rolling hour**; **5 `failed` challenges per technician per hour** → technician's verification is paused for 15 min and every `helpdesk-lead` role holder is alerted | Boundary tests at 5 and 6 |
-| 4.8 | Guess probability | 3 attempts × 9 issues / 10^6 ≈ 2.7×10⁻⁵ per target-hour at most. Stated so security can challenge it. | Arithmetic in the spec; limits tested by 4.3 and 4.6 |
+| 4.6 | Issue rate per target | **3 challenges per target per rolling hour**, across all technicians. The 4th is refused with a reason shown to the technician; no AD change happens. At most 9 guesses per hour per target (4.8) | 4th issue → refused |
+| 4.7 | Issue rate per technician | **10 challenges per technician per rolling hour**; **5 `failed` challenges per technician per hour** → technician's verification is paused for 15 min and an alert goes (EP-9) to every holder of the permission `authenticator.reset` and every `tenant-owner` | Boundary tests at 5 and 6 |
+| 4.8 | Guess probability | Email/SMS OTP: 3 attempts × 3 issues per target-hour (4.6) = 9 guesses against 10⁶ codes → **9×10⁻⁶ per target-hour**. TOTP (§5): 3 valid codes in the ±1 window × 10 wrong entries per enrolment-hour = 30 guesses against 10⁶ → **3×10⁻⁵ per enrolment-hour**. Stated side by side so security can challenge both. | Arithmetic in the spec; limits tested by 4.3, 4.6 and AC-TOTP-2 |
 | 4.9 | Enforcement | **Server-side only**, in PostgreSQL, shared by all nodes. No client-side counter, no limit keyed on client-reported IP (TM-TB11-T5) | Two nodes, parallel guesses: total still ≤ 3 |
 | 4.10 | Storage | Only `code_mac`, a keyed MAC under a key derived from the tenant data key (DM-38.I2). The code never appears in logs, audit, API responses or the technician's screen | Grep logs and DB in test |
 | 4.11 | Comparison | Constant-time | Code review item, not a Given/When/Then |
@@ -127,19 +127,40 @@ are out of scope for v1 (matrix in §7).
 - **Given** a visitor on the enrolment hostname, **When** they open the page, **Then** they see
   only a sign-in step; no enrolment control is rendered and the enrolment operation answers `401`
   without a valid authentication record.
-- Authentication is one of: **SPNEGO/Kerberos** (AN-9 acceptor, Kerberos only, NTLM refused) from
-  a domain-joined browser, or **username + password through the connector's `VerifyUser`**. Never
-  an LDAP bind from our server, never a password stored (ADR-0002 rule 3).
+- Authentication is one of: **SPNEGO/Kerberos** from a domain-joined browser, or **username +
+  password through the connector's `VerifyUser`**. Never an LDAP bind from our server, never a
+  password stored (ADR-0002 rule 3). AN-9 (`GET /auth/negotiate`) is never served on an AN-5
+  hostname (TM §7.6), so AN-5 **carries its own Negotiate exchange**: an AN-5 route (HTTP Negotiate,
+  [RFC 4559](https://www.rfc-editor.org/rfc/rfc4559)) that hands the AP-REQ to the connector's SPNEGO
+  acceptor — the same acceptor, a separate route. Kerberos only; an NTLM-only token gets the generic
+  failure. The route is a new row in the `policy.yaml` anonymous allow-list under AN-5 and is
+  reviewed under RT-7 (§8).
 - Success yields a **pending enrolment** only: server-side record, CSPRNG handle of ≥128 bits
   stored hashed, bound to the user's GUID and connection, in an `HttpOnly`, `Secure`,
-  `SameSite=Strict`, `__Host-` cookie; lives **10 minutes**, allows **5 code confirmations**,
-  consumed on success or expiry (aligned with TM §7.6 rule 1).
+  `SameSite=Strict`, `__Host-` cookie; lives **10 minutes** (deviation, below), allows **5 code confirmations**,
+  consumed on success or expiry. **Deliberate deviation:** TM §7.6 rule 1 gives a pending sign-in 5
+  minutes; here it is **10**, because a user may need to install an authenticator app after
+  authenticating. The 5-confirmation cap and every other property of rule 1 are kept. For
+  `security-architect` to accept or cut to 5 (§8).
 - Password failures use the **same per-account counter and refusal as TM-TB1-T9**; this spec adds
   no separate numbers. It stops below the domain lockout threshold.
 - Responses for unknown account, wrong password, disabled account and throttled account have the
   same body, status and timing class (TM-TB11-T1).
 - A visitor cannot enrol for any account except the one they authenticated as; the user ID is
   never taken from the request body.
+
+### 6.1a Classification under ADR-0005
+
+- **End-user enrolment and re-enrolment on AN-5 (6.2, 6.3)** is **system bookkeeping** under ADR-0005
+  rule 10 ("own factor enrolment, DM-37 self-service"), not an Action: it writes only our own
+  authentication store, for the person who just proved themselves in the AD plane. The audit actor
+  is a **directory-user principal** (connection + GUID), not a console user. `solution-architect`
+  amends the bookkeeping list and the DM principal kinds (§9).
+- **Technician-verified reset (6.4)** is an administrator change to a security factor, so it **is an
+  Action**: `x-permission: authenticator.reset`, `Target: Store`, run by the operation pipeline with
+  preview, gate and audit. **Step-up: yes** — it removes a security factor, so it is on the TM §7.4
+  step-up list (to be added there by `security-architect`); reversibility class `Irreversible`
+  (the seed cannot be restored; the user enrols anew).
 
 ### 6.2 First enrolment
 
@@ -169,7 +190,7 @@ user with a pending (unconfirmed) enrolment simply restarts; the previous pendin
 
 ### 6.4 Technician-verified reset of an enrolment
 
-- Needs a distinct permission (`authenticator.reset`), held by roles that can also verify callers.
+- Needs a distinct permission (`authenticator.reset`), granted through tenant role data to whoever the tenant chooses (no built-in help-desk role exists, DM-34).
 - The technician must first verify the caller with an **email/SMS OTP (§4)**, never with the TOTP
   being reset. A target with no held destination cannot be reset by the help desk; the console
   says why. (A tenant-owner can use the tenant-owner reset in DM-37.I4 for console accounts; that
@@ -189,8 +210,14 @@ On every successful enrolment, re-enrolment and reset:
 - If there is **no held destination**, enrolment is refused with the generic message "contact your
   help desk" and is counted in a coverage report ("users with no contact data"). 
 - If the transport accepts the message, the cooling-off timer starts (§5). If it fails, the
-  enrolment stays but cooling-off does not start, delivery is retried for up to 24 hours, and a
-  `notice_failed` event is audited and alerts every `tenant-owner`.
+  enrolment stays but cooling-off does not start, delivery is retried every 15 minutes for up to
+  24 hours (`notice_state` = `failed` while retrying), and a `notice.failed` event is audited and
+  alerts every `tenant-owner` on the first failure. **End state:** if all retries fail,
+  `notice_state` = `abandoned`; the enrolment stays `active` but **never usable for caller
+  verification** (cooling-off never starts), a health finding "TOTP enrolment without delivered
+  notice" is raised for the tenant-owner, and `notice.abandoned` is audited. It becomes usable only
+  if a later notice is delivered (a tenant-owner may trigger "resend notice" after fixing the mail
+  transport or the user's contact data); the user can also revoke it by re-enrolling (6.3a).
 
 ### 6.6 Audit
 
@@ -217,12 +244,17 @@ event carries the verification factor, the factor's age and the challenge ID (DM
 
 - **Privileges.** Directory read of `mail`, `mobile` and `whenChanged` metadata. No write. No new
   right beyond the connector's read scope. Console role grants: verify caller (technician),
-  `authenticator.reset` (help-desk lead and above).
+  `authenticator.reset` (granted by tenant role data, e.g. to a help-desk lead; only `tenant-owner` is built in, DM-34).
 - **For `security-architect`.** (1) the cooling-off and destination-hygiene rules against
-  TM-TB1-T13; (2) the AN-5 anonymous surface against TM §7.6 and RT-7 (a new route list in
-  `policy.yaml` is expected); (3) timing equality for 6.1 and 4.18; (4) the 24 h rule's dependence
+  TM-TB1-T13; (2) the AN-5 anonymous surface against TM §7.6 and RT-7: the enrolment operations **and the AN-5
+  Negotiate route** (6.1) are listed in `policy.yaml`; the 10-minute pending lifetime deviation;
+  step-up for the reset Action; (3) timing equality for 6.1 and 4.18; (4) the 24 h rule's dependence
   on replication metadata; (5) residual risk: an attacker who has the password **and** controls
   the user's mailbox can still enrol; the notice only helps if the mailbox is not theirs.
+- **Residual: insider DoS.** The per-target cap (4.6) lets any technician in scope use up a target's
+  3 challenges per hour and so block verification of that user for up to an hour. Accepted for v1
+  (the audit names the technician; 4.7 alerts on abuse); the alternative, per-technician sub-caps,
+  would raise the guess count.
 - **Residual from the threat model.** An attacker with the user's password can enrol first; the
   notice and cooling-off shorten the window (TM-TB1-T13).
 
@@ -232,7 +264,7 @@ No directional question remains. Apply to
 [domain-model.md](../../development/domain/domain-model.md):
 
 **DM-37 AuthenticatorEnrollment**
-- Add attributes: `cooling_off_until` · `notice_state` (`pending`, `sent`, `failed`) ·
+- Add attributes: `cooling_off_until` · `notice_state` (see below) ·
   `last_used_step` · `failed_attempts` · `paused_until` · `replaces` (previous enrollment ID,
   nullable) · `expires_at` (pending only, 10 min) · `confirm_attempts` (pending only, max 5).
 - Add I5: one `active` TOTP per subject (connection+GUID). Confirming a new one revokes the old.
@@ -241,13 +273,20 @@ No directional question remains. Apply to
   needs the existing factor (§6.3a); otherwise a revoke through §6.4.
 - Add I7: a TOTP enrollment cannot satisfy DM-38 before `cooling_off_until`.
 - Add I8: every enrol, replace and reset writes the audit events of §6.6 and a notice (§6.5).
+- `notice_state` enum is `pending`, `sent`, `failed` (retrying), `abandoned` (§6.5).
+- Add I9: an `active` enrolment with `notice_state` ≠ `sent` cannot satisfy DM-38.
+- Principal kind: add a **directory-user principal** (connection + GUID) as audit actor for AN-5
+  self-service; amend ADR-0005 rule 10's bookkeeping list with "own factor enrolment (DM-37
+  self-service)" (§6.1a).
 - Extend lifecycle: `pending → active → revoked`; `pending → expired` (10 min).
 - I3's authority-factor wording stays for `webauthn` console accounts; add that I6 above is its
   end-user analogue so the two are not confused.
 
 **DM-38 CallerVerification**
-- Add attributes: `length` (fixed 6) · `max_attempts` (fixed 3) · `channel` (`email`, `sms`,
-  `totp`) · `delivered_at` · `verified_at` · `authorised_until` (verified_at + 5 min) ·
+- Extend the existing `factor` enum to `email_otp` | `sms_otp` | `totp` (matching DM-37 method
+  names). No `channel` attribute. Length (6) and max attempts (3) are fixed constants of the rule set
+  (§4), not stored per row.
+- Add attributes: `delivered_at` · `verified_at` · `authorised_until` (verified_at + 5 min) ·
   `factor_enrolled_at` (TOTP only; for the age badge).
 - Add I5: at most one open challenge per target; a new issue cancels the old.
 - Add I6: rate limits §4.6, §4.7 and attempt limits §4.3 are enforced in the database, not in
@@ -277,7 +316,7 @@ row). IDs are for traceability.
 6. **AC-OTP-6** Given two nodes handle guesses for one challenge in parallel, When 10 wrong codes
    are sent, Then at most 3 are counted as attempts and the rest are refused without evaluating the code.
 7. **AC-OTP-7** Given a technician reaches 5 failed challenges in an hour, Then further issues are
-   refused for 15 minutes and every `helpdesk-lead` role holder is alerted.
+   refused for 15 minutes and every holder of `authenticator.reset` and every `tenant-owner` is alerted (EP-9).
 8. **AC-OTP-8** Given a target's `mail` attribute was edited 2 hours ago, When a code is requested,
    Then that address is not used (or the tenant fallback applies, §11 Q1) and the technician sees
    why.
@@ -320,10 +359,19 @@ row). IDs are for traceability.
 23. **AC-ENR-9** Given a user with no held contact data, When they try to enrol, Then it is refused
     with the generic message and counted in the coverage report.
 24. **AC-ENR-10** Given a notice the transport rejected, Then the enrolment stays active, cooling-off
-    has not started, a retry runs, and `tenant-owner`s are alerted.
+    has not started, a retry runs every 15 min, and `tenant-owner`s are alerted; When all retries over
+    24 hours fail, Then `notice_state` is `abandoned`, the factor is refused for caller verification,
+    a health finding exists and `notice.abandoned` is audited.
 25. **AC-ENR-11** Given a TOTP enrolled 23 hours after notice acceptance, When a technician tries to
     use it for caller verification, Then it is refused and email/SMS are offered; at 25 hours it is
     accepted and the badge says "enrolled < 7 days ago".
+25a. **AC-ENR-12** Given a confirmed first enrolment, When it completes, Then the audit chain
+    contains `authenticator.enrol.confirmed` and `authenticator.notice.sent` (or `.notice.failed`),
+    each with actor (directory-user principal), target GUID, connection, method `totp` and source
+    address, and no code or seed in any field. Given a confirmed replacement, Then
+    `authenticator.replaced` (carrying the previous enrolment ID) and the notice event are present
+    likewise; Given a technician reset, Then `authenticator.reset` names the technician, verification
+    factor and challenge ID.
 26. **AC-TOTP-1** Given a code from the previous, current or next 30-s step, Then it is accepted;
     from two steps away, Then refused; the same step used twice, Then refused the second time.
 27. **AC-TOTP-2** Given 10 wrong entries in an hour, Then the factor is paused for verification for
@@ -353,10 +401,14 @@ HR-sourced contact data beyond what ENH-03 already provides; "trust this browser
   after the last sync are treated as unverified for 24 h. Not a CEO question.
 - **Q2** `product-designer` confirms the ≤3-interaction target for reset-with-verification (the
   blueprint's §ADM-136 target) and the ≤4-screen enrolment page.
-- **Q3** The NIST out-of-band lifetime/attempt limits for comparison
-  ([SP 800-63B-4](https://pages.nist.gov/800-63-4/sp800-63b.html)) are `[UNVERIFIED]` here:
-  the 5 min / 3 attempt values are ours, chosen to be well inside typical guidance; confirm the
-  citation in review.
+- **Q3 (answered).** [NIST SP 800-63B-4](https://pages.nist.gov/800-63-4/sp800-63b/authenticators/)
+  §3.1.3.2 (out-of-band): invalid unless completed within **10 minutes**; at least six decimal
+  digits; accepted **only once**; a secret under 64 bits needs rate limiting, and generating a new
+  secret **does not reset the failed count**. §3.1.4.2/3.1.5.2 (OTP): accepted once while valid.
+  §3.2.2: upper bound of 100 consecutive failures; lower limits allowed. Our values (5 min, 3
+  attempts, 6 digits, single use) are inside every limit. **Gap this exposes:** NIST says re-issuing
+  must not reset the failed count; our 4.5 cancels the old challenge, but 4.6/4.7 cap total guesses
+  per target-hour at 9, which satisfies it. 4.6 is therefore a requirement, not tuning.
 
 **Follow-up work.** Research ticket for ME's OTP length, validity and attempt limits (post
 CVE-2022-36413 fix) for `market-analyst`.
