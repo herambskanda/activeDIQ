@@ -27,6 +27,12 @@ var (
 	// appRoleAssignment.principalId, Edm.Guid. [UNVERIFIED — lab OD-L4]
 	// https://learn.microsoft.com/graph/api/resources/approleassignment
 	AppRoleAssignmentPrincipalID = odata.GUIDProp("principalId")
+
+	// privilegedAccessGroup{Eligibility,Assignment}Schedule.groupId and .principalId, Edm.String
+	// carrying a GUID. The APIs require an eq filter on one of them (TM-D25 rule 3). [UNVERIFIED — lab G11]
+	// https://learn.microsoft.com/en-us/graph/api/privilegedaccessgroup-list-eligibilityschedules?view=graph-rest-1.0
+	ScheduleGroupID     = odata.GUIDStringProp("groupId")
+	SchedulePrincipalID = odata.GUIDStringProp("principalId")
 )
 
 // Selectable properties. Edm.String unless noted; the type only matters when a property becomes
@@ -39,6 +45,8 @@ var (
 	PasswordCredentials = odata.StringProp("passwordCredentials") // collection of passwordCredential
 	TemplateID          = odata.StringProp("templateId")
 	Mail                = odata.StringProp("mail")
+	GroupTypes          = odata.StringProp("groupTypes")     // collection of String
+	MembershipRule      = odata.StringProp("membershipRule") // dynamic membership rule (TM-D25 rule 7)
 )
 
 // Navigation properties for $expand.
@@ -62,5 +70,12 @@ const (
 	SegOwners            odata.Name = "owners"
 	SegMembers           odata.Name = "members"
 	SegMemberOf          odata.Name = "memberOf"
+	SegTransitiveMembers odata.Name = "transitiveMembers"
+	SetSubscribedSkus    odata.Name = "subscribedSkus"
+	SetIdentityGov       odata.Name = "identityGovernance"
+	SegPrivilegedAccess  odata.Name = "privilegedAccess"
+	SegGroup             odata.Name = "group"
+	SegEligibilitySched  odata.Name = "eligibilitySchedules"
+	SegAssignmentSched   odata.Name = "assignmentSchedules"
 	CastGroup            odata.Name = "microsoft.graph.group"
 )

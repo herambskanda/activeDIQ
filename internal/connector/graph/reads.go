@@ -113,6 +113,10 @@ type Group struct {
 	ID                 string `json:"id"`
 	DisplayName        string `json:"displayName"`
 	IsAssignableToRole bool   `json:"isAssignableToRole"`
+	// GroupTypes and MembershipRule are read by GroupByID only. A dynamic group carries
+	// "DynamicMembership" and a rule (TM-D25 rule 7).
+	GroupTypes     []string `json:"groupTypes,omitempty"`
+	MembershipRule string   `json:"membershipRule,omitempty"`
 }
 
 // q is a query selecting only sel; paged also asks for one page of the configured size.

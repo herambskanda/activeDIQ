@@ -50,8 +50,34 @@ type Tenant struct {
 	Users             []graph.DirectoryObject            // found by userPrincipalName or displayName; duplicates allowed
 	// PasswordCredentials are the application's client secrets (metadata only).
 	PasswordCredentials []graph.PasswordCredential
+	// Schedules are the PIM-for-Groups eligibility and assignment schedules (GroupSchedule.Eligible
+	// picks the endpoint). SubscribedSKUs answers GET /subscribedSkus.
+	Schedules      []graph.GroupSchedule
+	SubscribedSKUs []graph.SubscribedSKU
 	// Memberships are the groups a principal (by object id) is a direct member of.
 	Memberships map[string][]graph.Group
+}
+
+// transitive is the members of group id with nested groups followed (cycles end).
+func (t *Tenant) transitive(id string) []graph.DirectoryObject {
+	var out []graph.DirectoryObject
+	seen := map[string]bool{id: true}
+	queue := []string{id}
+	for len(queue) > 0 {
+		g := queue[0]
+		queue = queue[1:]
+		for _, m := range t.Members[g] {
+			if seen[m.ID] {
+				continue
+			}
+			seen[m.ID] = true
+			out = append(out, m)
+			if m.Type() == "group" {
+				queue = append(queue, m.ID)
+			}
+		}
+	}
+	return out
 }
 
 // Server is the fake. Fields are guarded by mu; use the helpers.
@@ -62,15 +88,17 @@ type Server struct {
 
 	cert *x509.Certificate
 
-	mu          sync.Mutex
-	tokens      map[string]bool
-	Assertions  []string // every accepted assertion, for tests to inspect
-	TokenCalls  int
-	GraphCalls  int
-	Failures    []Failure // consumed in order by Graph calls
-	TokenFail   []Failure // consumed in order by token calls
-	AccessToken string
-	TenantClaim string // tid put in tokens; defaults to Tenant.TenantID
+	mu         sync.Mutex
+	tokens     map[string]bool
+	Assertions []string // every accepted assertion, for tests to inspect
+	TokenCalls int
+	GraphCalls int
+	Failures   []Failure // consumed in order by Graph calls
+	// PathFailures fail every Graph call whose path contains the key (persistent), for tests of one endpoint.
+	PathFailures map[string]Failure
+	TokenFail    []Failure // consumed in order by token calls
+	AccessToken  string
+	TenantClaim  string // tid put in tokens; defaults to Tenant.TenantID
 }
 
 // Failure makes one call return Status (with Retry-After when set).
@@ -243,6 +271,15 @@ func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
 	s.GraphCalls++
 	ok := s.tokens[strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")]
 	inj := s.inject(w, &s.Failures)
+	if !inj {
+		for k, f := range s.PathFailures {
+			if strings.Contains(r.URL.Path, k) {
+				fl := []Failure{f}
+				inj = s.inject(w, &fl)
+				break
+			}
+		}
+	}
 	s.mu.Unlock()
 	if inj {
 		return
@@ -329,6 +366,43 @@ func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
 		pg(anySlice(t.Owners[seg[1]]))
 	case len(seg) == 3 && seg[0] == "groups" && seg[2] == "members":
 		pg(anySlice(t.Members[seg[1]]))
+	case len(seg) == 3 && seg[0] == "groups" && seg[2] == "transitiveMembers":
+		pg(anySlice(t.transitive(seg[1])))
+	case len(seg) == 2 && seg[0] == "groups":
+		for _, g := range t.Groups {
+			if g.ID == seg[1] {
+				s.one(w, g)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusNotFound)
+	case p == "subscribedSkus":
+		pg(anySlice(t.SubscribedSKUs))
+	case p == "identityGovernance/privilegedAccess/group/eligibilitySchedules", p == "identityGovernance/privilegedAccess/group/assignmentSchedules":
+		f := req.Filter
+		if f == nil || f.Op != "eq" || (f.Prop != "groupId" && f.Prop != "principalId") || f.Lits[0].Kind != odatatest.LitString {
+			w.WriteHeader(http.StatusBadRequest) // the real API requires the filter
+			return
+		}
+		want := strings.HasSuffix(p, "eligibilitySchedules")
+		var out []any
+		for _, sc := range t.Schedules {
+			have := sc.GroupID
+			if f.Prop == "principalId" {
+				have = sc.PrincipalID
+			}
+			if sc.Eligible != want || have != f.Lits[0].Text {
+				continue
+			}
+			exp := map[string]any{"type": "noExpiration"}
+			if sc.End != nil {
+				exp = map[string]any{"type": "afterDateTime", "endDateTime": sc.End}
+			}
+			out = append(out, map[string]any{"id": sc.ID, "groupId": sc.GroupID, "principalId": sc.PrincipalID, "accessId": sc.AccessID,
+				"status": sc.Status, "scheduleInfo": map[string]any{"startDateTime": sc.Start, "expiration": exp},
+				"principal": map[string]any{"id": sc.PrincipalID, "@odata.type": principalOData(sc.PrincipalType)}})
+		}
+		pg(out)
 	case p == "groups":
 		f := req.Filter
 		if f == nil || f.Op != "eq" || f.Prop != "isAssignableToRole" || f.Lits[0].Kind != odatatest.LitBool {

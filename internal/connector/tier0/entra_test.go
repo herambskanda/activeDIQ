@@ -137,7 +137,7 @@ func TestE5AnyCorrelationState(t *testing.T) {
 
 func TestDesignatedAdditions(t *testing.T) {
 	c, _ := setup(t)
-	in := tier0.Input{CorrelationKnown: true, Designated: []string{plainUser}}
+	in := tier0.Input{CorrelationKnown: true, Designated: []tier0.Designation{{ID: plainUser, Kind: tier0.KindUser}}}
 	r, err := c.Classify(context.Background(), plainUser, in)
 	if err != nil || !r.Tier0 || r.Bases[0] != tier0.Designated {
 		t.Fatalf("%+v %v", r, err)
@@ -239,6 +239,31 @@ func (f *failNth) ServicePrincipalOwners(ctx context.Context, id guid.GUID) ([]g
 		return nil, err
 	}
 	return f.Reader.ServicePrincipalOwners(ctx, id)
+}
+
+func (f *failNth) GroupTransitiveMembers(ctx context.Context, id guid.GUID) ([]graph.DirectoryObject, error) {
+	if err := f.hit(); err != nil {
+		return nil, err
+	}
+	return f.Reader.GroupTransitiveMembers(ctx, id)
+}
+func (f *failNth) GroupByID(ctx context.Context, id guid.GUID) (graph.Group, error) {
+	if err := f.hit(); err != nil {
+		return graph.Group{}, err
+	}
+	return f.Reader.GroupByID(ctx, id)
+}
+func (f *failNth) GroupSchedules(ctx context.Context, id guid.GUID) ([]graph.GroupSchedule, error) {
+	if err := f.hit(); err != nil {
+		return nil, err
+	}
+	return f.Reader.GroupSchedules(ctx, id)
+}
+func (f *failNth) PrincipalSchedules(ctx context.Context, id guid.GUID) ([]graph.GroupSchedule, error) {
+	if err := f.hit(); err != nil {
+		return nil, err
+	}
+	return f.Reader.PrincipalSchedules(ctx, id)
 }
 
 // Failing any single read of the snapshot must refuse the target as tier0 and report the error.

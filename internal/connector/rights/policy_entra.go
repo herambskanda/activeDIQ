@@ -72,6 +72,36 @@ var allowRows = []Row{
 	{Family: v1.RightsFamily_RIGHTS_FAMILY_ENTRA_HYBRID_MONITOR, Needs: one("AuditLog.Read.All")},
 }
 
+// pimGroupReadNeeds are required whenever any Entra write feature is enabled (TM-D25 rule 4, TM-F-RIGHTS):
+// without them the tier-0 guard cannot see eligible-only members and owners of role-assignable
+// groups. Both are read-only.
+var pimGroupReadNeeds = []Need{
+	{Any: []string{"PrivilegedEligibilitySchedule.Read.AzureADGroup"}},
+	{Any: []string{"PrivilegedAssignmentSchedule.Read.AzureADGroup"}},
+}
+
+// optionalAllowed are permissions that no feature requires but §6.6 recommends; holding one is
+// never reported as excess. Policy.Read.ConditionalAccess proposes CA-excluded designations
+// (TM-D25 rule 9); it reads policy and does not change it.
+var optionalAllowed = []string{"Policy.Read.ConditionalAccess"}
+
+// writeFamilies are the Entra families that change the tenant. Enabling any of them requires
+// pimGroupReadNeeds.
+var writeFamilies = map[v1.RightsFamily]bool{
+	v1.RightsFamily_RIGHTS_FAMILY_ENTRA_LICENCE_ASSIGN:      true,
+	v1.RightsFamily_RIGHTS_FAMILY_ENTRA_USER_CREATE:         true,
+	v1.RightsFamily_RIGHTS_FAMILY_ENTRA_USER_UPDATE:         true,
+	v1.RightsFamily_RIGHTS_FAMILY_ENTRA_PASSWORD_RESET:      true,
+	v1.RightsFamily_RIGHTS_FAMILY_ENTRA_BLOCK:               true,
+	v1.RightsFamily_RIGHTS_FAMILY_ENTRA_HARD_DELETE_RESTORE: true,
+	v1.RightsFamily_RIGHTS_FAMILY_ENTRA_SOFT_DELETE_MANAGER: true,
+	v1.RightsFamily_RIGHTS_FAMILY_ENTRA_REVOKE_SESSIONS:     true,
+	v1.RightsFamily_RIGHTS_FAMILY_ENTRA_INVITE:              true,
+	v1.RightsFamily_RIGHTS_FAMILY_ENTRA_GROUP_CREATE:        true,
+	v1.RightsFamily_RIGHTS_FAMILY_ENTRA_GROUP_UPDATE:        true,
+	v1.RightsFamily_RIGHTS_FAMILY_ENTRA_GROUP_MEMBERSHIP:    true,
+}
+
 // denyPatterns is the §6.6 deny list. A pattern is an exact value, or contains one '*' standing for
 // any run of characters. Matching is case-insensitive (Graph permission names are).
 var denyPatterns = []string{
@@ -91,6 +121,8 @@ var denyPatterns = []string{
 	"EntitlementManagement.ReadWrite.All",
 	"UserAuthenticationMethod.ReadWrite.All",
 	"Policy.ReadWrite.*",
+	// Can remove the MFA, approval and justification rules on PIM activation (T-0111).
+	"RoleManagementPolicy.ReadWrite.*",
 	"Domain.ReadWrite.All",
 	"AdministrativeUnit.ReadWrite.All",
 	// SOA transfer: the user, group and contact counterparts. The contact name is not verified, so
