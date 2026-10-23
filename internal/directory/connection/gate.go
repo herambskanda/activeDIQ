@@ -64,6 +64,11 @@ func onlyOverPrivilege(kind Kind, v Verification) (bool, string) {
 func Qualifies(kind Kind, v Verification, ov *Tier0Override) (bool, string) {
 	switch v.Verdict {
 	case VerdictPass:
+		// Defence in depth for rows already stored: a pass counts only when its over-privilege
+		// check is itself a pass (RecordVerification refuses to store one that is not).
+		if v.Outcomes[overPrivilegeCheck(kind)] != OutcomePass {
+			return false, ReasonVerdictFailed
+		}
 		return true, ""
 	case VerdictFailed:
 		return false, ReasonVerdictFailed

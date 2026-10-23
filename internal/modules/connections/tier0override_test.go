@@ -121,7 +121,7 @@ func refusedDraft(t *testing.T, s *storetest.Server) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner, err := operation.NewRunner(operation.Config{DB: db, Audit: rec, Authz: holders{"owner": true}, Registry: r,
+	runner, err := operation.NewRunner(operation.Config{DB: db, Audit: rec, Authz: holders{"owner": true, "tok": true, "sys": true}, Registry: r,
 		Now: time.Now, NewID: nil})
 	if err != nil {
 		t.Fatal(err)
@@ -225,4 +225,20 @@ func TestModuleRegistersTheAction(t *testing.T) {
 	if !d.StepUp || d.Reversibility != operation.Irreversible || d.Target != operation.TargetStore {
 		t.Fatalf("descriptor %+v", d)
 	}
+}
+
+// A non-human requester holding the permission, even with FreshStepUp set, cannot record an
+// override: it is the operator's acknowledgement (security review of TM-D1).
+func TestOverrideRefusesNonHumanRequesters(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := refusedDraft(t, s)
+		for name, kind := range map[string]authority.PrincipalKind{"tok": authority.APIToken, "sys": authority.System} {
+			req := e.request(name, true, connections.TypedAcknowledgement)
+			req.Actor = authority.Chain{Requester: authority.Principal{ID: authority.PrincipalID(name), Kind: kind}}
+			if _, err := e.runner.RunStore(context.Background(), req); err == nil {
+				t.Errorf("%s requester recorded an override", kind)
+			}
+			e.assertNoOverride(t)
+		}
+	})
 }

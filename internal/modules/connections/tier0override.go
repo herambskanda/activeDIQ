@@ -16,8 +16,9 @@ import (
 const Tier0OverrideActionID operation.ActionID = "connections.tier0_override.acknowledge"
 
 // Tier0OverridePermission is the platform-scope Tier-0-override permission (TM-D1, spec FR-13). It
-// is held only through a role assigned at platform scope; the Descriptor also demands a fresh
-// step-up (TM §7.4), which the runner refuses without before anything else.
+// is meant to be held only through a role assigned at platform scope; the authz kernel has no scope
+// class on permissions yet, so that is enforced by T-0250, not here. The Descriptor also demands a
+// fresh step-up (TM §7.4), which the runner refuses without before anything else.
 const Tier0OverridePermission authz.Permission = "connections.tier0_override.acknowledge"
 
 // AuditTier0OverrideAcknowledged is the event the runner writes for a recorded override.
@@ -89,6 +90,9 @@ func Tier0OverrideAcknowledge() (operation.Action, error) {
 			}}, nil
 		},
 		Apply: func(ctx context.Context, s step.Step, p operation.TypedStep[overridePayload]) (Tier0OverrideOutcome, error) {
+			if err := requireHuman(s.Actor()); err != nil {
+				return Tier0OverrideOutcome{}, err
+			}
 			tx := s.Tx()
 			if tx == nil {
 				return Tier0OverrideOutcome{}, errors.New("connections: override needs the runner's transaction")
@@ -139,4 +143,16 @@ func Tier0OverrideAcknowledge() (operation.Action, error) {
 			return Tier0OverrideInput{}, operation.ErrIrreversible
 		},
 	})
+}
+
+// ReasonHumanRequired is the stable reason for refusing an override from a non-human requester.
+const ReasonHumanRequired = "human_required"
+
+// requireHuman refuses unless the requester is a human: an override is the installation operator's
+// acknowledgement, and step-up is a fresh MFA, which only a person can do (TM-D1, TM §7.4).
+func requireHuman(c authority.Chain) error {
+	if c.Requester.Kind != authority.Human {
+		return fmt.Errorf("%w: %s", operation.ErrDenied, ReasonHumanRequired)
+	}
+	return nil
 }

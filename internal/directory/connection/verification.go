@@ -84,6 +84,38 @@ func overPrivilegeCheck(k Kind) Check {
 	return CheckV7OverPrivilege
 }
 
+// readSufficiencyCheck is the check that the identity can read what the product needs: V8 for AD,
+// EV4 for Entra.
+func readSufficiencyCheck(k Kind) Check {
+	if k == KindEntraTenant {
+		return CheckEV4Sufficiency
+	}
+	return CheckV8ReadSufficient
+}
+
+// requiredForPass lists the checks a pass verdict must answer with a pass or warn outcome: identity,
+// over-privilege and read sufficiency. A pass that lacks one (a connector bug, a check-list version
+// skew, a remote connector that dropped it) must not open any gate.
+func requiredForPass(k Kind) []Check {
+	return []Check{identityCheck(k), overPrivilegeCheck(k), readSufficiencyCheck(k)}
+}
+
+// passComplete reports whether a pass verdict is backed by an answered outcome for every required
+// check and carries no not_run outcome.
+func passComplete(k Kind, outcomes map[Check]Outcome) bool {
+	for _, o := range outcomes {
+		if o == OutcomeNotRun {
+			return false
+		}
+	}
+	for _, c := range requiredForPass(k) {
+		if o := outcomes[c]; o != OutcomePass && o != OutcomeWarn {
+			return false
+		}
+	}
+	return true
+}
+
 // Outcome is the result of one check.
 type Outcome string
 

@@ -316,3 +316,51 @@ func TestVerificationTablesAreAppendOnly(t *testing.T) {
 		}
 	})
 }
+
+// A pass verdict whose over-privilege (or other required) check is missing or not_run must not
+// activate, for AD and for Entra (security review of TM-D1).
+func TestPassWithoutOverPrivilegeCheckNeverActivates(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := newSvc(t, s)
+		ctx := context.Background()
+		cases := map[string]map[connection.Check]connection.Outcome{
+			"V7 absent":     {"V5": connection.OutcomePass, "V8": connection.OutcomePass},
+			"only V5":       {"V5": connection.OutcomePass},
+			"V7 not_run":    {"V5": connection.OutcomePass, "V7": connection.OutcomeNotRun, "V8": connection.OutcomePass},
+			"V8 absent":     {"V5": connection.OutcomePass, "V7": connection.OutcomePass},
+			"V5 absent":     {"V7": connection.OutcomePass, "V8": connection.OutcomePass},
+			"extra not_run": {"V5": connection.OutcomePass, "V7": connection.OutcomePass, "V8": connection.OutcomePass, "V9": connection.OutcomeNotRun},
+		}
+		for name, oc := range cases {
+			c := e.draft(t)
+			r := passing()
+			r.Outcomes = oc
+			e.cl.set(r, nil)
+			if _, err := e.svc.Activate(ctx, e.a, c.ID, human("alice")); err == nil {
+				t.Errorf("%s: activation succeeded", name)
+			}
+			got, err := e.reg.Get(ctx, e.a, c.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.State == connection.StateActive || got.VerifiedAt != nil {
+				t.Errorf("%s: connection %+v", name, got)
+			}
+		}
+	})
+}
+
+func TestQualifiesRequiresOverPrivilegePassOnAPass(t *testing.T) {
+	v := connection.Verification{Verdict: connection.VerdictPass, Outcomes: map[connection.Check]connection.Outcome{"V5": connection.OutcomePass}}
+	if ok, _ := connection.Qualifies(connection.KindADForest, v, nil); ok {
+		t.Error("a stored pass without V7 qualified")
+	}
+	v.Outcomes = map[connection.Check]connection.Outcome{"EV2": connection.OutcomePass}
+	if ok, _ := connection.Qualifies(connection.KindEntraTenant, v, nil); ok {
+		t.Error("a stored Entra pass without EV3 qualified")
+	}
+	v.Outcomes["EV3"] = connection.OutcomePass
+	if ok, _ := connection.Qualifies(connection.KindEntraTenant, v, nil); !ok {
+		t.Error("a pass with EV3 pass was refused")
+	}
+}

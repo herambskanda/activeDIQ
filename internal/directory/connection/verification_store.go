@@ -58,6 +58,9 @@ func (Store) RecordVerification(ctx context.Context, tx store.Tx, n NewVerificat
 	if cur.State.Terminal() || cur.State == StateDecommissioning {
 		return Verification{}, fmt.Errorf("%w: a %s connection is not verified", ErrIllegalTransition, cur.State)
 	}
+	if n.Verdict == VerdictPass && !passComplete(cur.Kind, n.Outcomes) {
+		return Verification{}, fmt.Errorf("%w: a pass verdict needs an answered identity, over-privilege and read-sufficiency check", ErrInvalid)
+	}
 	started := n.StartedAt
 	if started.After(stamp) {
 		started = stamp // a skewed caller clock cannot put the start after the completion
