@@ -20,7 +20,7 @@ import (
 
 // Reader is the part of *graph.Client the classifier reads through.
 type Reader interface {
-	DirectoryRoleAssignments(ctx context.Context, principalID guid.GUID) ([]graph.RoleAssignment, error)
+	AllDirectoryRoleAssignments(ctx context.Context) ([]graph.RoleAssignment, error)
 	RoleAssignableGroups(ctx context.Context) ([]graph.Group, error)
 	GroupMembers(ctx context.Context, groupID guid.GUID) ([]graph.DirectoryObject, error)
 	GroupOwners(ctx context.Context, groupID guid.GUID) ([]graph.DirectoryObject, error)
@@ -142,7 +142,7 @@ func (c *Classifier) Snapshot(ctx context.Context) (*Set, error) {
 
 	// E1 (+E4 labelling): every active and PIM-eligible holder at any scope. The reader fails the
 	// whole call when eligibility is unreadable, so partial answers never get here.
-	roles, err := c.r.DirectoryRoleAssignments(ctx, guid.GUID{})
+	roles, err := c.r.AllDirectoryRoleAssignments(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("tier0: directory role assignments: %w", err)
 	}

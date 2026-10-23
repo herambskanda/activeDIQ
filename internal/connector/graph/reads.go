@@ -197,14 +197,25 @@ func (c *Client) owners(ctx context.Context, coll odata.Name, id guid.GUID) ([]D
 // ---- directory roles and groups ----
 
 // DirectoryRoleAssignments returns active and PIM-eligible directory role assignments at any scope
-// (needs RoleManagement.Read.Directory). The zero principalID (never a real object id) lists every
-// holder in the tenant. Eligibility reads are `[UNVERIFIED — lab G6]`: a failure on either list
-// fails the whole call.
+// for one principal (needs RoleManagement.Read.Directory). The zero principalID is refused with
+// CodeInvalidArgument and no request is sent: unfiltered it would answer for every holder in the
+// tenant, which a caller that ignored a guid.Parse error must never receive by accident. Use
+// AllDirectoryRoleAssignments for the tenant-wide read.
 func (c *Client) DirectoryRoleAssignments(ctx context.Context, principalID guid.GUID) ([]RoleAssignment, error) {
-	q := odata.Query{}
-	if principalID != (guid.GUID{}) {
-		q = q.Filter(odata.Eq(gs.RoleAssignmentPrincipalID, odata.GUIDTextOf(principalID)))
+	if principalID == (guid.GUID{}) {
+		return nil, newErr(CodeInvalidArgument, 0, "principal id must not be the zero GUID", nil)
 	}
+	return c.roleAssignments(ctx, odata.Query{}.Filter(odata.Eq(gs.RoleAssignmentPrincipalID, odata.GUIDTextOf(principalID))))
+}
+
+// AllDirectoryRoleAssignments lists every holder in the tenant, active and PIM-eligible.
+func (c *Client) AllDirectoryRoleAssignments(ctx context.Context) ([]RoleAssignment, error) {
+	return c.roleAssignments(ctx, odata.Query{})
+}
+
+// roleAssignments reads both lists. Eligibility reads are `[UNVERIFIED — lab G6]`: a failure on
+// either list fails the whole call.
+func (c *Client) roleAssignments(ctx context.Context, q odata.Query) ([]RoleAssignment, error) {
 	q = q.Expand(gs.NavRoleDefinition, gs.ID, gs.DisplayName, gs.TemplateID).Expand(gs.NavPrincipal, gs.ID)
 	var out []RoleAssignment
 	for _, k := range []struct {

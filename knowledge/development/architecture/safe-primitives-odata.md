@@ -135,7 +135,8 @@ type Segment struct{ /* unexported */ }
 func Seg(n Name) Segment                                  // entity set or navigation: /groups, /members
 func Key(id GUID) Segment                                  // key-as-segment: /<lowercase-guid>
 func KeyStr(set Name, v String) (Segment, error)           // set('v'): UPN keys on /users
-func AltKey[V Value](set Name, p Prop[V], v V) (Segment, error) // set(prop=literal): servicePrincipals(appId='…')
+func AltKey[V Value](set Name, p Prop[V], v V) (Segment, error) // set(prop=literal): servicePrincipals(appId='…'); refuses empty String and nil GUID (InvalidValue)
+func (r Request) Template() string                              // path with key values as {key}: the only loggable form
 func Cast(n Name) Segment                                  // /microsoft.graph.user
 
 type Request struct{ /* unexported */ }
