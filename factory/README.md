@@ -304,6 +304,7 @@ claude -p "<rendered templates/worker-prompt.md>" \
 
 - Branch `factory/<ticket-id>`, worktree at `<dispatcher.worktree_root>/<ticket-id>`, created from
   `main` on first claim and reused for every later stage of the same ticket.
+- A ticket tagged `embargoed` is never merged (security-disclosure runbook §6, public repo): the dispatcher records `links.held` + one event and the board shows "merge held"; removing the tag merges it on the next pass.
 - When a code-bearing ticket reaches `done`, the dispatcher merges with
   `git merge --no-ff factory/<id>` in the main checkout. On conflict: `git merge --abort`, the
   ticket returns to `in_progress` with a note, owner unchanged. On success: remove the worktree,
@@ -428,7 +429,7 @@ Git behaviour (worktrees, merge, conflict) is tested against real repositories i
 - **Run:** `continuation`, `snapshot` (status, stage role and latest handoff at launch: how "no progress" is judged), `kill_reason` (`timeout` or `shutdown`), `error`; stderr is kept in `state/runs/<id>.err` next to `<id>.log`.
 - **State:** `state/board.json` and `state/dispatcher.json` hold pids; `state/board.log` and `state/dispatcher.log` capture the detached processes; `state/signals/rate-limit.json` is written by the `StopFailure` hook and read by the dispatcher.
 - **Environment:** `FACTORY_HOME`, `FACTORY_CLAUDE_BIN` (the executable to launch, default `claude`), `FACTORY_DEBUG=1` (stack traces).
-- **API:** `/api/state` also carries `company` and `dispatcher.pid`; ticket summaries include `summary`, `created`, `parity_refs`, `effort_override`, `stage_role` and `last_note`.
+- **API:** `/api/state` also carries `company` and `dispatcher.pid`; ticket summaries include `summary`, `created`, `parity_refs`, `effort_override`, `held`, `stage_role` and `last_note`.
 
 ### Where the runtime deliberately differs from, or extends, the reference
 

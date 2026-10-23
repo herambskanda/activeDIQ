@@ -387,6 +387,7 @@ export function summarizeTicket(t) {
     id: t.id, title: t.title, type: t.type, status: t.status, priority: t.priority, owner: t.owner,
     stage_role: t.stage_role ?? null, epic: t.epic ?? null, milestone: t.milestone ?? null,
     tags: t.tags ?? [], parity_refs: t.parity_refs ?? [], decisions: t.decisions ?? [], depends_on: t.depends_on ?? [],
+    held: t.links?.held ?? null,
     summary: t.summary ?? '', effort_override: t.effort_override ?? null,
     attempts: t.attempts ?? 0, handoff: t.handoff ?? { pending: false, latest: null },
     created: t.created, updated: t.updated, last_note: last ? String(last.text).slice(0, 280) : null,
