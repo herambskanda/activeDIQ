@@ -23,8 +23,9 @@ Threat model: §5.6 (TB6), TM-F-FLEET. Blueprint: `fleet` row (§5.1), §7.2.
 
 The service has no other RPC (TM-TB6-T8). The server mounts it alone on the fleet listener.
 
-## Rules (enforced by `fitness-proto` F1 to F8)
+## Rules (enforced by `fitness-proto` F1 to F11)
 
+- **RPC types are pinned** (F1, T-0185). `Tunnel` takes and returns `TunnelFrame` and nothing else; `EnrollRequest` (which carries the single-use token) is the input or output of no RPC but `Enroll`. The proto tree must define `activediq.fleet.v1` at all (F11), so deleting `fleet.proto` fails the gate instead of making every rule vacuous.
 - **No tenant in any message** (TM-TB6-T3, ADR-0002). Tenant and component come from the leaf
   certificate SAN, which the server sets from the enrollment token, not from the CSR.
 - **No secret-bearing message** (TM-TB6-T6). A field whose name contains password, secret,
@@ -58,7 +59,7 @@ The service has no other RPC (TM-TB6-T8). The server mounts it alone on the flee
   (`call_id` 0: on the whole tunnel). Numeric limits are the gateway's, in T-0069's ticket.
 - The connector contract's rule P4 (no bidirectional streams) does not apply to this package:
   `Tunnel` is the transport the connector contract rides on, not an operation of it.
-  P4, P5, P6 and P8 apply to operation contracts only; fleet has F1 to F8 instead.
+  P4, P5, P6 and P8 apply to operation contracts only; fleet has F1 to F11 instead.
 
 ## Placement (blueprint §2 rule 1)
 
