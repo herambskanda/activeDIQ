@@ -1,0 +1,176 @@
+#!/bin/sh
+# One-command Entra lab bootstrap (T-0183). Run once per (re)created Microsoft 365 Developer sandbox,
+# signing in as the sandbox Global Administrator with a device code. Idempotent: run it again after
+# the sandbox is recreated (~90 days) and it rebuilds the same lab objects in the new tenant.
+#
+#   entra-lab-bootstrap [--yes] [--rotate]
+#
+# Creates: app registration "activeDIQ-lab" (certificate credential, NO client secret, NO owners),
+# admin consent for exactly lab/entra/permissions.txt, seeded users/groups/role/PIM objects.
+# Writes (0600, gitignored, never printed): lab/.entra-lab.env (tenant id, app id, cert path) and
+# lab/.entra-lab.pem (private key + certificate). DEV TENANT ONLY — never point this at a customer.
+set -eu
+. "$(dirname -- "$0")/entra-lab-lib"
+need curl openssl jq
+
+YES=0; ROTATE=0
+for a in "$@"; do case $a in --yes) YES=1 ;; --rotate) ROTATE=1 ;; *) die "unknown option $a" ;; esac; done
+BOOT_CLIENT=${ENTRA_LAB_BOOTSTRAP_CLIENT_ID:-14d82eec-204b-4c2f-b7e8-296a70dab67e} # "Microsoft Graph Command Line Tools", a public client
+BOOT_SCOPES='Application.ReadWrite.All AppRoleAssignment.ReadWrite.All User.ReadWrite.All Group.ReadWrite.All RoleManagement.ReadWrite.Directory RoleEligibilitySchedule.ReadWrite.Directory Directory.Read.All Organization.Read.All'
+
+# ---- 1. interactive device-code sign-in (the only human step; nothing is typed into a script) -------
+dc=$(curl -sS -X POST "$LOGIN_BASE/organizations/oauth2/v2.0/devicecode" \
+      --data-urlencode "client_id=$BOOT_CLIENT" --data-urlencode "scope=$BOOT_SCOPES") || die "cannot reach $LOGIN_BASE"
+[ "$(printf '%s' "$dc" | jq -r '.device_code // empty')" ] || die "device-code start failed: $(printf '%s' "$dc" | jq -r '.error_description // .error // "?"' | cut -c1-200)"
+printf '%s' "$dc" | jq -r '.message'
+dev=$(printf '%s' "$dc" | jq -r '.device_code'); interval=$(printf '%s' "$dc" | jq -r '.interval // 5')
+deadline=$(( $(date +%s) + $(printf '%s' "$dc" | jq -r '.expires_in // 900') ))
+while :; do
+  [ "$(date +%s)" -lt "$deadline" ] || die "device code expired; run again"
+  r=$(curl -sS -X POST "$LOGIN_BASE/organizations/oauth2/v2.0/token" --data-urlencode "client_id=$BOOT_CLIENT" \
+        --data-urlencode 'grant_type=urn:ietf:params:oauth:grant-type:device_code' --data-urlencode "device_code=$dev") || die "network error"
+  tok=$(printf '%s' "$r" | jq -r '.access_token // empty')
+  [ -z "$tok" ] || break
+  case $(printf '%s' "$r" | jq -r '.error // empty') in
+    authorization_pending) sleep "$interval" ;;
+    slow_down) interval=$((interval+5)); sleep "$interval" ;;
+    *) die "sign-in failed: $(printf '%s' "$r" | jq -r '.error_description // .error // "?"' | cut -c1-200)" ;;
+  esac
+done
+set_token "$tok"; unset tok r dev
+
+# ---- 2. which tenant is this? Confirm it is the sandbox, not a customer ---------------------------
+org=$(g GET '/organization')
+TENANT=$(printf '%s' "$org" | jq -r '.value[0].id')
+DOMAIN=$(printf '%s' "$org" | jq -r '.value[0].verifiedDomains[] | select(.isInitial) | .name')
+case $DOMAIN in *.onmicrosoft.com) ;; *) die "tenant $TENANT initial domain '$DOMAIN' is not *.onmicrosoft.com; refusing" ;; esac
+say "tenant $TENANT ($DOMAIN)"
+if [ "$YES" != 1 ]; then
+  printf 'This must be the Microsoft 365 Developer sandbox, never a customer tenant. Type the domain to continue: '
+  read -r ans; [ "$ans" = "$DOMAIN" ] || die "aborted"
+fi
+
+# ---- 3. app registration + service principal -----------------------------------------------------
+gsp=$(gf '/servicePrincipals' "appId eq '$GRAPH_APPID'")
+GRAPH_SP=$(printf '%s' "$gsp" | jq -r '.value[0].id')
+roles_json=$(printf '%s' "$gsp" | jq -c '.value[0].appRoles | map(select(.allowedMemberTypes | index("Application")) | {value, id})')
+# role id for each expected permission, resolved by name (never hard-coded GUIDs)
+want=$(expected_perms)
+want_ids=$(for p in $want; do
+  id=$(printf '%s' "$roles_json" | jq -r --arg p "$p" '.[] | select(.value==$p) | .id')
+  [ -n "$id" ] || die "permission $p is not a Graph application role in this tenant"
+  printf '%s\n' "$id"
+done)
+
+app=$(gf '/applications' "displayName eq '$ENTRA_APP_NAME'")
+case $(printf '%s' "$app" | jq '.value|length') in
+  0) say "creating app registration $ENTRA_APP_NAME"
+     ra=$(printf '%s' "$roles_json" | jq -c --argjson want "$(printf '%s\n' $want | jq -R . | jq -sc .)" \
+          '[{resourceAppId:"'$GRAPH_APPID'", resourceAccess:[.[] | select(.value as $v | $want | index($v)) | {id, type:"Role"}]}]')
+     app=$(g POST /applications "$(jq -cn --arg n "$ENTRA_APP_NAME" --argjson ra "$ra" '{displayName:$n, signInAudience:"AzureADMyOrg", requiredResourceAccess:$ra}')") ;;
+  1) say "app registration $ENTRA_APP_NAME exists"; app=$(printf '%s' "$app" | jq '.value[0]') ;;
+  *) die "more than one app named $ENTRA_APP_NAME; delete the extras in the portal" ;;
+esac
+APP_OBJ=$(printf '%s' "$app" | jq -r '.id'); APP_ID=$(printf '%s' "$app" | jq -r '.appId')
+
+# certificate: keep the local one if the tenant, app and key list still agree; else make a new one
+mkcert=0
+if [ "$ROTATE" = 1 ] || [ ! -f "$ENTRA_PEM" ] || [ "$(env_get ENTRA_TENANT_ID)" != "$TENANT" ] || [ "$(env_get ENTRA_APP_ID)" != "$APP_ID" ]; then mkcert=1; fi
+if [ "$mkcert" = 0 ]; then
+  openssl x509 -in "$ENTRA_PEM" -noout -checkend 2592000 >/dev/null 2>&1 || { say "certificate missing or expires within 30 days"; mkcert=1; }
+fi
+if [ "$mkcert" = 1 ]; then
+  say "generating a new certificate (private key stays in $(basename "$ENTRA_PEM"))"
+  openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 365 -subj "/CN=$ENTRA_APP_NAME" \
+    -keyout "$TMP/key.pem" -out "$TMP/cert.pem" 2>/dev/null
+  cat "$TMP/key.pem" "$TMP/cert.pem" > "$TMP/new.pem"; chmod 600 "$TMP/new.pem"
+  der=$(openssl x509 -in "$TMP/cert.pem" -outform DER | openssl base64 -A)
+  # delegated PATCH replaces the key list: the new cert is the only credential; passwordCredentials cleared
+  g PATCH "/applications/$APP_OBJ" "$(jq -cn --arg k "$der" --arg d "lab $(date -u +%F)" \
+     '{keyCredentials:[{type:"AsymmetricX509Cert",usage:"Verify",key:$k,displayName:$d}], passwordCredentials:[]}')" >/dev/null
+  mv "$TMP/new.pem" "$ENTRA_PEM"; chmod 600 "$ENTRA_PEM"
+else
+  say "keeping the existing certificate"
+  der=$(openssl x509 -in "$ENTRA_PEM" -outform DER | openssl base64 -A)
+  have=$(g GET "/applications/$APP_OBJ?\$select=keyCredentials,passwordCredentials")
+  thumb=$(openssl x509 -in "$ENTRA_PEM" -outform DER | openssl dgst -sha1 -hex | sed 's/.*= //' | tr a-f A-F)
+  [ "$(printf '%s' "$have" | jq --arg t "$thumb" '[.keyCredentials[] | select((.customKeyIdentifier // "" | ascii_upcase)==$t)] | length')" -ge 1 ] \
+    || { say "tenant does not hold the local certificate; installing it"
+         g PATCH "/applications/$APP_OBJ" "$(jq -cn --arg k "$der" '{keyCredentials:[{type:"AsymmetricX509Cert",usage:"Verify",key:$k,displayName:"lab (reinstalled)"}]}')" >/dev/null; }
+fi
+
+sp=$(gf '/servicePrincipals' "appId eq '$APP_ID'")
+if [ "$(printf '%s' "$sp" | jq '.value|length')" = 0 ]; then
+  say "creating service principal"
+  sp=$(GRAPH_RETRY=1 g POST /servicePrincipals "$(jq -cn --arg a "$APP_ID" '{appId:$a}')")
+else sp=$(printf '%s' "$sp" | jq '.value[0]'); fi
+SP_ID=$(printf '%s' "$sp" | jq -r '.id')
+
+# ---- 4. admin consent for exactly the expected set (add missing, remove extras) -------------------
+cur=$(g GET "/servicePrincipals/$SP_ID/appRoleAssignments")
+for id in $want_ids; do
+  [ "$(printf '%s' "$cur" | jq --arg i "$id" --arg r "$GRAPH_SP" '[.value[]|select(.appRoleId==$i and .resourceId==$r)]|length')" -ge 1 ] && continue
+  GRAPH_RETRY=1 g POST "/servicePrincipals/$SP_ID/appRoleAssignments" \
+    "$(jq -cn --arg p "$SP_ID" --arg r "$GRAPH_SP" --arg i "$id" '{principalId:$p,resourceId:$r,appRoleId:$i}')" >/dev/null
+  say "consented $(printf '%s' "$roles_json" | jq -r --arg i "$id" '.[]|select(.id==$i)|.value')"
+done
+printf '%s' "$cur" | jq -r --arg w "$want_ids" '.value[] | select(.appRoleId as $i | ($w|split("\n")|index($i))|not) | .id' | while read -r aid; do
+  [ -n "$aid" ] || continue; g DELETE "/servicePrincipals/$SP_ID/appRoleAssignments/$aid" >/dev/null; say "removed an unexpected app role assignment"
+done
+# the app must hold no directory role and have no owners (threat-model §6.6)
+own=$(g GET "/applications/$APP_OBJ/owners"); for oid in $(printf '%s' "$own" | jq -r '.value[].id'); do
+  g DELETE "/applications/$APP_OBJ/owners/$oid/\$ref" >/dev/null; say "removed an app owner"; done
+
+# ---- 5. seed lab users, groups, role holders ------------------------------------------------------
+pw() { printf 'Lab-%s-aA1!' "$(openssl rand -hex 14)"; }   # random per user, never stored or printed
+ensure_user() { # name display -> id
+  upn="$1@$DOMAIN"; u=$(gf '/users' "userPrincipalName eq '$upn'")
+  if [ "$(printf '%s' "$u" | jq '.value|length')" = 0 ]; then
+    u=$(g POST /users "$(jq -cn --arg u "$upn" --arg n "$1" --arg d "$2" --arg p "$(pw)" \
+      '{accountEnabled:true,displayName:$d,mailNickname:$n,userPrincipalName:$u,passwordProfile:{password:$p,forceChangePasswordNextSignIn:false}}')")
+    say "created user $upn"; printf '%s' "$u" | jq -r '.id'
+  else printf '%s' "$u" | jq -r '.value[0].id'; fi
+}
+ensure_group() { # name display roleAssignable(true|false) -> id
+  gr=$(gf '/groups' "displayName eq '$2'")
+  if [ "$(printf '%s' "$gr" | jq '.value|length')" = 0 ]; then
+    gr=$(g POST /groups "$(jq -cn --arg n "$1" --arg d "$2" --argjson r "$3" \
+      '{displayName:$d,mailNickname:$n,mailEnabled:false,securityEnabled:true,isAssignableToRole:$r}')")
+    say "created group $2"; printf '%s' "$gr" | jq -r '.id'
+  else printf '%s' "$gr" | jq -r '.value[0].id'; fi
+}
+add_member() { # group user
+  m=$(g GET "/groups/$1/members?\$select=id")
+  [ "$(printf '%s' "$m" | jq --arg u "$2" '[.value[]|select(.id==$u)]|length')" -ge 1 ] && return 0
+  g POST "/groups/$1/members/\$ref" "$(jq -cn --arg u "$GRAPH_BASE/directoryObjects/$2" '{"@odata.id":$u}')" >/dev/null
+}
+U1=$(ensure_user lab-user-01 'Lab User 01'); U2=$(ensure_user lab-user-02 'Lab User 02'); U3=$(ensure_user lab-user-03 'Lab User 03')
+U4=$(ensure_user lab-user-04 'Lab User 04'); U5=$(ensure_user lab-user-05 'Lab User 05')
+UD=$(ensure_user lab-disabled 'Lab Disabled User'); g PATCH "/users/$UD" '{"accountEnabled":false}' >/dev/null
+ADM_A=$(ensure_user lab-admin-active 'Lab Admin (active role)')
+ADM_E=$(ensure_user lab-admin-eligible 'Lab Admin (PIM eligible only)')
+G_SEC=$(ensure_group lab-sg-members 'lab-sg-members' false)
+G_RAG=$(ensure_group lab-rag-privileged 'lab-rag-privileged' true)
+for u in $U1 $U2 $U3; do add_member "$G_SEC" "$u"; done
+add_member "$G_RAG" "$U4"
+# role holders: Helpdesk Administrator, one active assignment and one PIM-eligible-only (G4, G6)
+rd=$(gf '/roleManagement/directory/roleDefinitions' "displayName eq 'Helpdesk Administrator'")
+ROLE=$(printf '%s' "$rd" | jq -r '.value[0].id'); [ "$ROLE" != null ] || die "Helpdesk Administrator role definition not found"
+ra=$(gf '/roleManagement/directory/roleAssignments' "principalId eq '$ADM_A' and roleDefinitionId eq '$ROLE'")
+if [ "$(printf '%s' "$ra" | jq '.value|length')" = 0 ]; then
+  g POST /roleManagement/directory/roleAssignments "$(jq -cn --arg p "$ADM_A" --arg r "$ROLE" '{principalId:$p,roleDefinitionId:$r,directoryScopeId:"/"}')" >/dev/null
+  say "assigned Helpdesk Administrator (active) to lab-admin-active"
+fi
+re=$(gf '/roleManagement/directory/roleEligibilitySchedules' "principalId eq '$ADM_E' and roleDefinitionId eq '$ROLE'")
+if [ "$(printf '%s' "$re" | jq '.value|length')" = 0 ]; then
+  g POST /roleManagement/directory/roleEligibilityScheduleRequests "$(jq -cn --arg p "$ADM_E" --arg r "$ROLE" --arg s "$(date -u +%FT%TZ)" \
+    '{action:"adminAssign",principalId:$p,roleDefinitionId:$r,directoryScopeId:"/",justification:"activeDIQ lab seed (T-0183)",scheduleInfo:{startDateTime:$s,expiration:{type:"noExpiration"}}}')" >/dev/null
+  say "made lab-admin-eligible PIM-eligible for Helpdesk Administrator"
+fi
+
+# ---- 6. hand over: write the env file (0600, no secrets in it) -----------------------------------
+{ printf 'ENTRA_TENANT_ID=%s\nENTRA_APP_ID=%s\nENTRA_CERT_PATH=%s\nENTRA_LAB_DOMAIN=%s\nENTRA_BOOTSTRAPPED_AT=%s\n' \
+    "$TENANT" "$APP_ID" "$ENTRA_PEM" "$DOMAIN" "$(date -u +%FT%TZ)"; } > "$TMP/env"
+mv "$TMP/env" "$ENTRA_ENV"; chmod 600 "$ENTRA_ENV" "$ENTRA_PEM"
+say "wrote $(basename "$ENTRA_ENV") and $(basename "$ENTRA_PEM") (mode 0600, gitignored; contents not shown)"
+say "next: make entra-lab-verify"

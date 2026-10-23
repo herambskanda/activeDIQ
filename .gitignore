@@ -43,3 +43,7 @@ playwright-report/
 blob-report/
 tools/playwright/.record-tmp/
 .safeprim-reports/
+
+# Entra lab handover (T-0183): tenant/app ids and the app's private key — never committed
+lab/.entra-lab.env
+lab/.entra-lab.pem

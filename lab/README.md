@@ -11,6 +11,10 @@ make lab-reset   # exact seeded state again (seconds)
 make lab-down | lab-destroy | lab-rebuild | lab-status | lab-logs | lab-shell
 ```
 
+Entra lab (a Microsoft 365 Developer sandbox, dev-only): `make entra-lab-bootstrap` (CEO, device-code
+sign-in, once per sandbox) then `make entra-lab-verify`. Scripts `bin/entra-lab-*`, permission set
+`entra/permissions.txt`, handover files `.entra-lab.env` / `.entra-lab.pem` (0600, gitignored).
+
 Full runbook (accounts, ports, what is seeded, **what Samba cannot test**, troubleshooting):
 `knowledge/development/runbooks/ad-lab.md`.
 
