@@ -326,6 +326,14 @@ func (g *goFile) checkPredeclaredShadow() {
 					}
 				}
 			}
+		case *ast.RangeStmt:
+			if v.Tok == token.DEFINE {
+				for _, e := range []ast.Expr{v.Key, v.Value} {
+					if id, ok := e.(*ast.Ident); ok {
+						bad(id)
+					}
+				}
+			}
 		case *ast.ValueSpec:
 			for _, id := range v.Names {
 				bad(id)
