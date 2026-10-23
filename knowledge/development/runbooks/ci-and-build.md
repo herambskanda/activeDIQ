@@ -156,6 +156,11 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
   with `authz.ObjectIDFromOctets` (raw objectGUID bytes) or `authz.ParseObjectID` (text); `guid.GUID`
   is also `[16]byte` but its byte order differs. Type errors in other packages are printed as
   warnings (the build gate owns them). Proof: `go test ./tools/fitness/objectid` (positive and negative fixtures).
+- **`fitness-disclosure`** (T-0258): checks `SECURITY.md` and `.well-known/security.txt`
+  (RFC 9116). It fails **30 days before `Expires`** on purpose: that failure is the renewal job.
+  Renew by setting `Expires` to a date 9–12 months ahead (RFC 3339, UTC), and change `Contact` only
+  together with the channel named in `SECURITY.md` (the check requires both to match). Do not move
+  the date without reading `SECURITY.md` for anything stale. Owner: security-architect.
 - **`fitness-operation`** (O9 of ADR-0005, the kernel import DAG): `make fitness-operation` prints every
   package of the `dag` block as `existing` or `pending`, then the violations as
   `file:line: O9 [rule 13] <importer> imports <imported>; …` with what the importer may import.

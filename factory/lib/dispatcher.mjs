@@ -68,6 +68,9 @@ function madeProgress(snapshot, ticket) {
 const kTokens = (n) => `${Math.round((n ?? 0) / 1000)}k`;
 
 /** The dispatcher. Create one per process; call {@link Dispatcher#run}. */
+const EMBARGO_TAG = 'embargoed';
+const EMBARGO_REASON = 'tagged embargoed — held until fix day; remove the tag to merge (security-disclosure runbook §6)';
+
 export class Dispatcher {
   /**
    * @param {object} ctx
@@ -331,8 +334,27 @@ export class Dispatcher {
       .filter((t) => t.status === 'done' && t.links?.worktree && isCodeType(this.ctx.config, t.type));
     for (const ticket of finished) {
       if (this.stopping) return;
+      if (this.holdEmbargoed(ticket)) continue;
       await this.guard(`merge ${ticket.id}`, () => this.mergeOne(ticket));
     }
+  }
+
+  /**
+   * Security-disclosure runbook §6: the repo is public, so a ticket tagged `embargoed` is never
+   * merged until the tag is removed (fix day). Records the reason once (link + event); the board
+   * shows it as held.
+   */
+  holdEmbargoed(ticket) {
+    const { ctx } = this;
+    if (!(ticket.tags ?? []).includes(EMBARGO_TAG)) {
+      if (ticket.links?.held) setTicketLinks(ctx, ticket.id, { held: null });
+      return false;
+    }
+    if (ticket.links?.held !== EMBARGO_REASON) {
+      setTicketLinks(ctx, ticket.id, { held: EMBARGO_REASON });
+      appendEvent(ctx, { actor: 'dispatcher', kind: 'ticket', ticket: ticket.id, text: `${ticket.id} merge held: ${EMBARGO_REASON}` });
+    }
+    return true;
   }
 
   async mergeOne(ticket) {
@@ -340,7 +362,7 @@ export class Dispatcher {
     const merged = await mergeTicket(ctx, ticket);
     if (merged.status === 'merged') {
       const problems = await cleanupWorktree(ctx, ticket.id);
-      setTicketLinks(ctx, ticket.id, { worktree: null, merged: nowIso(ctx), merge_commit: merged.commit });
+      setTicketLinks(ctx, ticket.id, { worktree: null, held: null, merged: nowIso(ctx), merge_commit: merged.commit });
       appendEvent(ctx, { actor: 'dispatcher', kind: 'ticket', ticket: ticket.id, text: `${ticket.id} merged into ${ctx.config.dispatcher.main_branch} (${merged.commit.slice(0, 8)})${problems.length ? `; cleanup: ${problems.join('; ')}` : ''}` });
     } else if (merged.status === 'conflict') {
       reopenTicket(ctx, ticket.id, 'dispatcher', `merging ${branchName(ticket.id)} into ${ctx.config.dispatcher.main_branch} conflicted (${merged.detail}). Merge ${ctx.config.dispatcher.main_branch} into the branch, resolve the conflicts, re-run the tests and advance again.`);

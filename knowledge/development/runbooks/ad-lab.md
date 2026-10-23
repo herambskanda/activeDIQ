@@ -189,8 +189,7 @@ proven in a Windows lab.
 | Domain Controller **replication** — the lab has one DC, so `uSNChanged`/DirSync tests see one USN space and no per-DC attributes | Sync correctness across DCs | the `2dc` tier (§8), then Windows |
 | **Scale** — 5k users is not 50k+ | Performance budgets | `scale` tier (§8) |
 
-The Windows lab and the Entra test tenant cost money and need accounts, so they are **CEO matters**
-(ADR/decision first). Until they exist, Windows-only tests are written, tagged, and recorded as
+The Windows lab is built from local evaluation VMs on KVM (D-0003, free): see `windows-lab.md` (T-0254). The Entra test tenant needs an account, so it was a **CEO matter**. Until they exist, Windows-only tests are written, tagged, and recorded as
 **unverified** in the ticket — never claimed as passing.
 
 ## 7. Troubleshooting

@@ -206,11 +206,12 @@ must_pass "fitness-operation O9 on the repository itself" "$opbin" -root "$root"
 pr="$tmp/proto"
 mkdir -p "$pr"
 printf 'syntax = "proto3";\npackage t.v1;\nenum Operation { OPERATION_UNSPECIFIED = 0; OPERATION_GET = 1; OPERATION_APPLY = 100; OPERATION_READ_SECRET = 101; OPERATION_VERIFY_USER = 102; }\nmessage GetRequest { string dn = 1; }\nmessage GetResponse {}\nservice S { rpc Get(GetRequest) returns (GetResponse); }\n' >"$pr/t.proto"
-must_fail_with "fitness-proto on a request carrying a DN string" "\\[P2\\]" go run ./tools/fitness/proto "$pr"
+must_fail_with "fitness-proto on a request carrying a DN string" "\\[P2\\]" go run ./tools/fitness/proto -optional-fleet "$pr"
 printf 'syntax = "proto3";\npackage t.v1;\nmessage {\n' >"$pr/t.proto"
-must_fail_with "fitness-proto on a file that does not compile" "\\[P1\\]" go run ./tools/fitness/proto "$pr"
+must_fail_with "fitness-proto on a file that does not compile" "\\[P1\\]" go run ./tools/fitness/proto -optional-fleet "$pr"
 printf 'syntax = "proto3";\npackage t.v1;\nenum Operation { OPERATION_UNSPECIFIED = 0; OPERATION_GET = 1; OPERATION_APPLY = 100; OPERATION_READ_SECRET = 101; OPERATION_VERIFY_USER = 102; }\nmessage Guid { bytes value = 1; }\nmessage GetRequest { Guid guid = 1; }\nmessage GetResponse {}\nservice S { rpc Get(GetRequest) returns (GetResponse); }\n' >"$pr/t.proto"
-must_pass "fitness-proto" go run ./tools/fitness/proto "$pr"
+must_fail_with "fitness-proto on a tree without the fleet package" "\\[F11\\]" go run ./tools/fitness/proto "$pr"
+must_pass "fitness-proto" go run ./tools/fitness/proto -optional-fleet "$pr"
 
 # --- gen-check (T-0157): generated connector code must match a fresh generation ------------------
 # Generate into a throw-away tree, then stale / orphan / delete a file and require the real
@@ -867,6 +868,14 @@ printf '{"entries":[{"osv":"GO-2022-1059","reason":"","ticket":"T-0010","expires
 must_fail_with "vuln-scan on an allow entry without a reason" 'reason is required' vulnscan -root "$vt" -allow "$vt/noreason.json"
 must_pass "vuln-scan on a module with no dependencies" vulnscan -root "$vt/clean" -allow "$vt/none.json"
 must_fail_with "vuln-scan when the vulnerability database is unreachable (never a silent skip)" 'cause: the vulnerability database .*point GOVULNDB at a mirror' env GOVULNDB="file://$vt/no-such-db" go run ./tools/vulnscan -root "$vt/clean" -allow "$vt/none.json"
+
+# --- fitness-disclosure (T-0258) ----------------------------------------------------------------
+dc="$tmp/disclosure"; mkdir -p "$dc/.well-known"
+cp "$root/SECURITY.md" "$dc/SECURITY.md"
+sed -E 's/^Expires: .*/Expires: 2020-01-01T00:00:00Z/' "$root/.well-known/security.txt" >"$dc/.well-known/security.txt"
+must_fail_with "fitness-disclosure on an expired security.txt" 'Expires .* has passed' go run ./tools/fitness/disclosure "$dc"
+cp "$root/.well-known/security.txt" "$dc/.well-known/security.txt"
+must_pass "fitness-disclosure" go run ./tools/fitness/disclosure "$dc"
 
 if [ "$fails" -ne 0 ]; then echo "ci-proof: $fails proof(s) failed" >&2; exit 1; fi
 echo "ci-proof: every gate rejects its violation and accepts clean input"

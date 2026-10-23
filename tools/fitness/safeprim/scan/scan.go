@@ -22,6 +22,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/skenzeriq/activediq/tools/analyzers/policy"
 )
 
 // Finding is one broken rule at one place.
@@ -125,7 +127,7 @@ func scanGoOnly(root, rel, module string, checks Checks, out *[]Finding) error {
 			}
 			return nil
 		}
-		if strings.EqualFold(filepath.Ext(r), ".go") || d.Name() == "go.mod" {
+		if strings.EqualFold(filepath.Ext(r), ".go") || d.Name() == "go.mod" || isNativeSource(r) {
 			return scanFile(root, r, module, checks, out)
 		}
 		return nil
@@ -252,6 +254,8 @@ func scanFile(root, rel, module string, checks Checks, out *[]Finding) error {
 		if err := scanGo(rel, src, module, checks, out); err != nil {
 			return fmt.Errorf("%s: %w", rel, err)
 		}
+	case isNativeSource(rel):
+		scanNative(rel, checks, out)
 	case base == "go.mod":
 		return scanGoMod(root, rel, checks, out)
 	case ext == ".cs" || ext == ".csproj" || base == "Directory.Build.props":
@@ -279,4 +283,28 @@ func modulePath(gomod string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("%s: no module directive", gomod)
+}
+
+// nativeExts are the non-Go source files the go tool compiles into a package: assembly, C, C++,
+// Objective-C, Fortran, SWIG and prebuilt objects (.syso). Matching is case-insensitive, so .s and
+// .S are both covered.
+var nativeExts = map[string]bool{".s": true, ".c": true, ".h": true, ".syso": true, ".cc": true, ".cpp": true,
+	".cxx": true, ".hh": true, ".hpp": true, ".hxx": true, ".m": true, ".mm": true, ".f": true, ".f90": true,
+	".for": true, ".swig": true, ".swigcxx": true}
+
+// nativeHomes are the directories allowed to hold native source. Empty on purpose: adding one is a
+// reviewed change with an ADR (T-0215).
+var nativeHomes = []string{}
+
+func isNativeSource(rel string) bool { return nativeExts[strings.ToLower(filepath.Ext(rel))] }
+
+// scanNative flags assembly, C and objects in product code: assembly can reference any symbol by
+// name with no unsafe import or linkname (evading the symbol bans), and C and .syso objects leave
+// Go's memory safety entirely (T-0215). Tier L (tools, lab) is exempt: it does not ship.
+func scanNative(rel string, checks Checks, out *[]Finding) {
+	if !checks["FF-SP2"] || policy.IsToolTier(rel) || policy.MatchAny(policy.DirOf(rel), nativeHomes) {
+		return
+	}
+	*out = append(*out, Finding{FF: "FF-SP2", Rule: "asm-cgo", File: rel, Line: 1,
+		Msg: "native source (" + filepath.Ext(rel) + ") is banned in product code: assembly and cgo escape the symbol and memory-safety bans and are not scanned (T-0215)"})
 }

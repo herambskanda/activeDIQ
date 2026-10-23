@@ -256,9 +256,22 @@ func (b *builder) get(ref dn.ObjectRef, attrs []string) (e *ad.Entry, found bool
 	return e, true, nil
 }
 
+// dnKey is the case-folded map key for a DN. It goes through ObjectRef.ForRequest so the only DN
+// text the connector ever renders is one the tier-0 guard vetted (NotRequestable, MaxDNLen).
+func dnKey(d dn.DN) (string, error) {
+	t, err := dn.DNRef(d).ForRequest()
+	if err != nil {
+		return "", fmt.Errorf("tier0: DN key: %w", err)
+	}
+	return strings.ToLower(t), nil
+}
+
 // getDN is get by DN with a per-snapshot cache of id-only reads.
 func (b *builder) getDN(d dn.DN) (*ad.Entry, bool, error) {
-	k := strings.ToLower(d.String())
+	k, err := dnKey(d)
+	if err != nil {
+		return nil, false, err
+	}
 	if e, ok := b.cache[k]; ok {
 		return e, e != nil, nil
 	}
@@ -315,7 +328,11 @@ func (b *builder) noteAccount(e *ad.Entry) error {
 		return err
 	}
 	for p := d.Parent(); p.Len() > 0; p = p.Parent() {
-		b.accountAnc[strings.ToLower(p.String())] = true
+		k, err := dnKey(p)
+		if err != nil {
+			return err
+		}
+		b.accountAnc[k] = true
 	}
 	return nil
 }
@@ -421,7 +438,11 @@ func (b *builder) membersOf(roots []*ad.Entry, basis Basis) error {
 		if err != nil {
 			return err
 		}
-		seen[strings.ToLower(d.String())] = true
+		k, err := dnKey(d)
+		if err != nil {
+			return err
+		}
+		seen[k] = true
 		queue = append(queue, d)
 	}
 	isRoot := map[string]bool{}
@@ -438,7 +459,10 @@ func (b *builder) membersOf(roots []*ad.Entry, basis Basis) error {
 		if !found {
 			continue // a member link to an object that no longer exists
 		}
-		k := strings.ToLower(d.String())
+		k, err := dnKey(d)
+		if err != nil {
+			return err
+		}
 		if !isRoot[k] {
 			if _, err := b.mark(e, basis); err != nil {
 				return err
@@ -458,7 +482,11 @@ func (b *builder) membersOf(roots []*ad.Entry, basis Basis) error {
 			if err != nil {
 				return errors.New("tier0: DC returned an unparsable member DN")
 			}
-			if mk := strings.ToLower(md.String()); !seen[mk] {
+			mk, err := dnKey(md)
+			if err != nil {
+				return err
+			}
+			if !seen[mk] {
 				seen[mk] = true
 				queue = append(queue, md)
 			}
@@ -650,10 +678,18 @@ func (b *builder) c5c6c15() error {
 	if err != nil {
 		return errors.New("tier0: unparsable Domain Controllers container DN")
 	}
-	conts := map[string]dn.DN{strings.ToLower(wd.String()): wd}
+	wk0, err := dnKey(wd)
+	if err != nil {
+		return err
+	}
+	conts := map[string]dn.DN{wk0: wd}
 	for _, dc := range b.dcDNs {
 		for p := dc.Parent(); p.Len() > 0 && !p.Equal(b.nm.Domain); p = p.Parent() {
-			conts[strings.ToLower(p.String())] = p
+			pk, err := dnKey(p)
+			if err != nil {
+				return err
+			}
+			conts[pk] = p
 		}
 	}
 	keys := make([]string, 0, len(conts))
@@ -987,8 +1023,12 @@ func (b *builder) c9() error {
 		if err != nil {
 			return fmt.Errorf("tier0: SOM: %w", err)
 		}
+		somKey, err := dnKey(som)
+		if err != nil {
+			return err
+		}
 		reach := som.Equal(b.nm.Domain) || b.s.bases[g.String()][C6] || b.s.bases[g.String()][C15] ||
-			b.accountAnc[strings.ToLower(som.String())]
+			b.accountAnc[somKey]
 		var links []gplink.Link
 		for _, v := range vals {
 			ls, err := gplink.Parse(v)

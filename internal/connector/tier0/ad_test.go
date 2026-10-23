@@ -449,3 +449,37 @@ func TestMembershipWalkGroupWithoutSIDFailsClosed(t *testing.T) {
 		t.Errorf("%+v %v", r, err)
 	}
 }
+
+// T-0268 / T-0263: every DN map key goes through ObjectRef.ForRequest. A Domain Admins member whose
+// DN cannot be requested (opaque #hex RDN) or renders over dn.MaxDNLen must leave the classification
+// Tier0+Unknown with the dn error wrapped - never silently dropped from the walk.
+func TestMembershipWalkUnrequestableDNFailsClosed(t *testing.T) {
+	// 5000 '=' signs are 5 KB as input but render as \3D (3 bytes each) well past MaxDNLen.
+	long := "CN=" + strings.Repeat("=", dn.MaxDNLen/3) + ",OU=Staff," + dom
+	if len(long) > dn.MaxDNLen {
+		t.Fatalf("fixture must parse: input %d > MaxDNLen", len(long))
+	}
+	for _, c := range []struct {
+		name, member string
+		kind         dn.Kind
+	}{
+		{"opaque hex RDN", "2.5.4.3=#04024869,OU=Staff," + dom, dn.NotRequestable},
+		{"renders over MaxDNLen", long, dn.TooLong},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, err := dn.Parse(c.member, dn.Strict); err != nil {
+				t.Fatalf("fixture must parse under Strict (the walk's mode): %v", err)
+			}
+			f := forest()
+			da := f.find("CN=Domain Admins,CN=Users," + dom)
+			da.attrs["member"] = append(da.attrs["member"], c.member)
+			r, err := classify(t, f, "CN=carol,OU=Staff,"+dom)
+			if err == nil || !r.Tier0 || !r.Unknown {
+				t.Fatalf("want Tier0+Unknown+error, got %+v %v", r, err)
+			}
+			if !errors.Is(err, &dn.Error{Kind: c.kind}) || dn.KindOf(err) != c.kind {
+				t.Errorf("want error wrapping dn %s, got %v", c.kind, err)
+			}
+		})
+	}
+}

@@ -50,3 +50,8 @@ lab/.entra-lab.pem
 
 # Built fitness binaries
 /tenancy
+
+# Windows lab (T-0254): disks, ISOs, generated credentials, CA, 
+lab/windows/.state/
+lab/windows/.win-lab.env
+lab/windows/.win-lab-ca.pem
