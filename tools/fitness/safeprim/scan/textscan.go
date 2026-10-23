@@ -181,6 +181,8 @@ func scanWebPackage(root, rel string, checks Checks, out *[]Finding) error {
 	return nil
 }
 
+var reCheckLinkname = regexp.MustCompile(`(?i)checklinkname`)
+
 var serviceExts = map[string]bool{".yml": true, ".yaml": true, ".service": true, ".wxs": true, ".wxi": true, ".sh": true, ".ps1": true, ".toml": true, ".mk": true, ".conf": true, ".ini": true, ".cfg": true, ".plist": true, ".env": false, ".tmpl": true, ".json": true, ".xml": true, ".props": true}
 
 // scanServiceDefinition is FF-SP2's GOTRACEBACK rule on everything that can define a service's
@@ -204,6 +206,10 @@ func scanServiceDefinition(root, rel, ext, base string, checks Checks, out *[]Fi
 		return err
 	}
 	for i, ln := range strings.Split(string(data), "\n") {
+		if reCheckLinkname.MatchString(ln) {
+			*out = append(*out, Finding{FF: "FF-SP2", Rule: "checklinkname-off", File: rel, Line: i + 1,
+				Msg: "any -checklinkname flag (=0, =false, =f ...) disables the linker's block on pull-linkname into the standard library; no build or release script may mention it (T-0186)"})
+		}
 		if reGoTraceback.MatchString(ln) {
 			*out = append(*out, Finding{FF: "FF-SP2", Rule: "gotraceback-crash", File: rel, Line: i + 1,
 				Msg: "a crash-mode GOTRACEBACK writes core dumps that carry secrets (" + refTLS + " R7)"})
