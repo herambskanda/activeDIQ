@@ -251,3 +251,18 @@ func TestNon2xxIsNotDelivered(t *testing.T) {
 		t.Fatalf("%+v %v", res, err)
 	}
 }
+
+func TestSignatureCandidateCap(t *testing.T) {
+	sec := mustSecret(t)
+	g, _ := NewSigner(sec)
+	now := time.Now()
+	sig, _ := g.Sign("m", now, []byte("x"))
+	pad := strings.Repeat("v1,AAAA ", maxSigCandidates)
+	h := http.Header{}
+	h.Set(HeaderID, "m")
+	h.Set(HeaderTimestamp, strconv.FormatInt(now.Unix(), 10))
+	h.Set(HeaderSignature, pad+sig)
+	if err := Verify(h, []byte("x"), now, 0, sec); !errors.Is(err, ErrSignature) {
+		t.Fatalf("candidate beyond cap examined: %v", err)
+	}
+}

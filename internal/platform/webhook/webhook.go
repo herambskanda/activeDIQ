@@ -120,6 +120,9 @@ func mac(s secret.Secret, id string, ts int64, body []byte) []byte {
 	return sum
 }
 
+// maxSigCandidates bounds the signatures a verifier examines in one header.
+const maxSigCandidates = 8
+
 // Signer produces signature header values. Hold two secrets only while a rotation overlaps.
 type Signer struct{ secrets []secret.Secret }
 
@@ -138,6 +141,9 @@ func NewSigner(secrets ...secret.Secret) (*Signer, error) {
 
 // Sign returns the webhook-signature value for the message.
 func (g *Signer) Sign(id string, ts time.Time, body []byte) (string, error) {
+	if err := g.usable(); err != nil {
+		return "", err
+	}
 	if err := checkID(id); err != nil {
 		return "", err
 	}
@@ -146,6 +152,20 @@ func (g *Signer) Sign(id string, ts time.Time, body []byte) (string, error) {
 		parts[i] = sigVersion + "," + base64.StdEncoding.EncodeToString(mac(s, id, ts.Unix(), body))
 	}
 	return strings.Join(parts, " "), nil
+}
+
+// usable fails closed: a zero-value Signer, or one whose secret was destroyed after construction,
+// must never produce an empty or empty-key signature.
+func (g *Signer) usable() error {
+	if g == nil || len(g.secrets) == 0 {
+		return fmt.Errorf("%w: no secret", ErrBadSecret)
+	}
+	for _, s := range g.secrets {
+		if !valid(s) {
+			return fmt.Errorf("%w: secret unusable", ErrBadSecret)
+		}
+	}
+	return nil
 }
 
 func checkID(id string) error {
@@ -187,7 +207,11 @@ func Verify(h http.Header, body []byte, now time.Time, tolerance time.Duration, 
 		}
 		anyValid = true
 		want := mac(s, id, ts, body)
-		for _, cand := range strings.Fields(sigs) {
+		cands := strings.Fields(sigs)
+		if len(cands) > maxSigCandidates {
+			cands = cands[:maxSigCandidates]
+		}
+		for _, cand := range cands {
 			v, enc, ok := strings.Cut(cand, ",")
 			if !ok || v != sigVersion {
 				continue
@@ -239,8 +263,8 @@ func NewSender(c *egress.Client) (*Sender, error) {
 // the timestamp and signature are fresh. A transport failure returns an error; a non-2xx answer
 // returns a Result with Delivered false and a nil error so the caller can decide to retry.
 func (s *Sender) Send(ctx context.Context, url string, m Message, g *Signer) (Result, error) {
-	if g == nil {
-		return Result{}, fmt.Errorf("%w: signer required", ErrBadSecret)
+	if err := g.usable(); err != nil {
+		return Result{}, err
 	}
 	if len(m.Body) > maxBodyBytes {
 		return Result{}, fmt.Errorf("%w: body over %d bytes", ErrBadMessage, maxBodyBytes)
