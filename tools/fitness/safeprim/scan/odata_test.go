@@ -122,6 +122,12 @@ func TestODataFixtures(t *testing.T) {
 			[]string{"graph-url-assembly"}, true},
 		{"FX-11 odata.Name from user input", fixture(`func f(userInput string) odata.Segment { return odata.Seg(odata.Name(userInput)) }`), fxFile,
 			[]string{"odataname"}, true},
+		{"FX-12 url.Parse of a concatenation into NewRequest", map[string]string{fxGraph: "package graph\n\nimport (\n\t\"net/http\"\n\t\"net/url\"\n)\n\nfunc f(base, upn string) { u, _ := url.Parse(base + \"/users/\" + upn); _, _ = http.NewRequest(\"GET\", u.String(), nil) }\n"}, fxGraph,
+			[]string{"graph-url-assembly"}, true},
+		{"FX-13 JoinPath with a variable into NewRequest", map[string]string{fxGraph: "package graph\n\nimport (\n\t\"net/http\"\n\t\"net/url\"\n)\n\nfunc f(b *url.URL, upn string) { u := b.JoinPath(\"users\", upn); _, _ = http.NewRequest(\"GET\", u.String(), nil) }\n"}, fxGraph,
+			[]string{"graph-url-assembly"}, true},
+		{"FX-8d count and skip options", fixture(`func f(x string) string { return "users?$count=true&$skip=" + x }`), fxFile,
+			[]string{"odata-option-literal"}, false},
 		{"FX-N1 the builder", fixture(`func f(v odata.String) odata.Request {
 	return odata.Get(odata.Seg("users")).With(odata.Query{}.Filter(odata.Eq(graphschema.UserPrincipalName, v)))
 }`), fxFile, nil, true},

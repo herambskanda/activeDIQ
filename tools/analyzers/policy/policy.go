@@ -72,25 +72,39 @@ var UnitHomes = map[string][]string{
 	"pdf":             {ExportPDF},
 }
 
-// TokenURLSite names one function of the Graph connector that may use the URL and form encoders
-// because it talks to the OAuth token endpoint, which is not OData (FF-SP2 graph-url-assembly,
-// safe-primitives-odata §6). Pkg is the exact package directory, Func the function or method name.
-type TokenURLSite struct{ Pkg, Func string }
+// TokenURLSite names one function or method of the Graph connector that is exempt from one
+// graph-url-assembly check (FF-SP2, safe-primitives-odata §6). Pkg is the exact package directory,
+// Recv the receiver type name ("" for a plain function, which then never matches a method of the
+// same name) and Func the function or method name.
+type TokenURLSite struct{ Pkg, Recv, Func string }
 
-// GraphTokenURL is the explicit list of token-endpoint sites. A new one is a reviewed change here.
+// GraphTokenURL is the explicit list of token-endpoint sites that may use the URL and form
+// encoders because the OAuth token endpoint is not OData. A new one is a reviewed change here.
 var GraphTokenURL = []TokenURLSite{
-	{Pkg: Graph, Func: "bearer"}, // client.go: the client-credentials POST, form body and tokenURL
+	{Pkg: Graph, Recv: "Client", Func: "bearer"}, // client.go: the client-credentials POST, form body and tokenURL
 }
 
-// IsGraphTokenURL reports whether function fn of package directory rel is a listed token-endpoint site.
-func IsGraphTokenURL(rel, fn string) bool {
-	for _, s := range GraphTokenURL {
-		if s.Pkg == path.Clean(rel) && s.Func == fn {
+// GraphURLParse is the explicit list of sites that may call url.Parse and friends in the Graph
+// connector: the config parses in the constructor and the host-pinned @odata.nextLink parse.
+var GraphURLParse = []TokenURLSite{
+	{Pkg: Graph, Func: "New"},  // client.go: Authority and GraphBase from configuration
+	{Pkg: Graph, Func: "list"}, // request.go: nextLink, checked against the pinned base in get
+}
+
+func siteListed(sites []TokenURLSite, rel, recv, fn string) bool {
+	for _, s := range sites {
+		if s.Pkg == path.Clean(rel) && s.Recv == recv && s.Func == fn {
 			return true
 		}
 	}
 	return false
 }
+
+// IsGraphTokenURL reports whether the function (recv "" ) or method is a listed token-endpoint site.
+func IsGraphTokenURL(rel, recv, fn string) bool { return siteListed(GraphTokenURL, rel, recv, fn) }
+
+// IsGraphURLParse reports whether the function or method may parse a URL in the Graph connector.
+func IsGraphURLParse(rel, recv, fn string) bool { return siteListed(GraphURLParse, rel, recv, fn) }
 
 // SidecarHost is where the .NET PowerShell SDK may be referenced.
 const SidecarHost = "sidecars/pshost"

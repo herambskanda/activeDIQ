@@ -428,7 +428,7 @@ var (
 	reHTMLShape   = regexp.MustCompile(`(?i)<\s*(?:td|th|tr|table|a\s|script|div|span|img|ul|li|style|iframe|svg|body|html|p>|b>)`)
 	// OData (safe-primitives-odata §6). An option name with $ or %24 (any case) at the start of a
 	// literal or of a query segment, or the bare name followed by "=".
-	reODataOption = regexp.MustCompile(`(?i)(?:^|[?&\s])(?:\$|%24)(?:filter|search|orderby|select|expand|apply|compute|skiptoken|top)\b|(?:^|[?&])(?:filter|search|orderby|select|expand|apply|compute|skiptoken|top)=`)
+	reODataOption = regexp.MustCompile(`(?i)(?:^|[?&\s])(?:\$|%24)(?:filter|search|orderby|select|expand|apply|compute|skiptoken|top|count|skip|deltatoken|format)\b|(?:^|[?&])(?:filter|search|orderby|select|expand|apply|compute|skiptoken|top|count|skip|deltatoken|format)=`)
 	reODataFilter = regexp.MustCompile(`(?i)\b(?:eq|ne|gt|ge|lt|le|has)\s+'|\bin\s*\(\s*'|\b(?:startswith|endswith|contains|any|all)\s*\(|'\s*\)?\s+(?:and|or)(?:\s*$|\s+\(?\s*[A-Za-z_][\w./]*\s+(?:eq|ne|gt|ge|lt|le|has|in)\b)`)
 	// An opening set(, set(' or set(prop=' piece, or a printf verb inside the key parentheses. The
 	// closing piece of a key is not matched on its own: "')" ends startswith(…) pieces too (FX-6), and
@@ -437,7 +437,7 @@ var (
 	reMailShape = regexp.MustCompile(`(?i)(?:^|\r\n|\n)\s*(?:subject|bcc|cc|to|from|reply-to|content-type|mime-version|content-transfer-encoding):|\r\n`)
 )
 
-var reODataBareName = regexp.MustCompile(`(?i)^\s*(?:filter|search|orderby|select|expand|apply|compute|skiptoken|top)\s*$`)
+var reODataBareName = regexp.MustCompile(`(?i)^\s*(?:filter|search|orderby|select|expand|apply|compute|skiptoken|top|count|skip|deltatoken|format)\s*$`)
 
 var shapes = []shape{
 	{Rule: "ldap-filter-shape", Re: reFilterShape, Home: []string{policy.LDAPFilter},
