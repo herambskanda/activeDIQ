@@ -1034,7 +1034,7 @@ fallback on a remote host) is `[OPEN → old T-0007]`.
 | Primitive | Package | Used by | Not by |
 | --- | --- | --- | --- |
 | P1 filter AST, renderer, admin-filter parser | `directory/ldapfilter` | modules (build ASTs), `connector` (render), `reports` (admin filters) | `web` |
-| P2 DN, `ObjectRef`, `GUIDRef` | `directory/dn` | everyone server-side. It implements RFC 4514 itself and **does not wrap go-ldap's `ParseDN`**, because ADR-0002 keeps protocol libraries in the connector root. The go-ldap round-trip oracle runs from a test under `internal/connector/ldap` | `web` |
+| P2 DN, `ObjectRef`, `GUIDRef` | `directory/dn` | everyone server-side. It implements RFC 4514 itself and **does not wrap go-ldap's `ParseDN`**, because ADR-0002 keeps protocol libraries in the connector root. The go-ldap round-trip oracle runs from a test under `internal/connector/ad` | `web` |
 | P3 codecs | `directory/attr/*` | `connector` (decode), `inventory`, modules | `web` |
 | `Secret` | `platform/secret` | `helpdesk`, `connector`, `keys`, `authn` | logs, audit details, errors, JSON |
 | Scoped search, controls | `connector/ad/scope` | `provider/ad` only | feature code (it gets `ScopedSearch` via the contract) |
