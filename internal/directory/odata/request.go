@@ -192,6 +192,22 @@ func AltKey[V Value](set Name, p Prop[V], v V) (Segment, error) {
 	if !p.name.valid(false) {
 		return Segment{}, fail(InvalidName)
 	}
+	// Same refusals as KeyStr (empty) and Key (nil GUID): an empty or all-zero key is never an
+	// object identity and must not reach the wire.
+	switch x := any(v).(type) {
+	case String:
+		if x.s == "" {
+			return Segment{}, fail(InvalidValue)
+		}
+	case GUIDText:
+		if x.g == (guid.GUID{}) {
+			return Segment{}, fail(InvalidValue)
+		}
+	case GUID:
+		if x.g == (guid.GUID{}) {
+			return Segment{}, fail(InvalidValue)
+		}
+	}
 	return keyedLit(set, string(p.name)+"=", v)
 }
 

@@ -191,8 +191,22 @@ func TestCorpus(t *testing.T) {
 			}
 			u, err := odata.Get(seg).URL(base)
 			return pathResult(t, u, err, odatatest.Segment{Kind: odatatest.SegKeyStr, Name: str("set"), Val: odatatest.Lit{Kind: odatatest.LitString, Text: str("value")}}, 1)
+		case "AltKeyStr":
+			sv, err := odata.Str(str("value"))
+			if err != nil {
+				return code(err), nil
+			}
+			seg, err := odata.AltKey(odata.Name(str("set")), graphschema.UserPrincipalName, sv)
+			if err != nil {
+				return code(err), nil
+			}
+			u, err := odata.Get(seg).URL(base)
+			return pathResult(t, u, err, odatatest.Segment{Kind: odatatest.SegAlt, Name: str("set"), Prop: "userPrincipalName", Val: odatatest.Lit{Kind: odatatest.LitString, Text: str("value")}}, 1)
 		case "AltKey":
-			g := mustGUID(t, str("guid"))
+			var g guid.GUID // guid.Parse refuses the nil GUID, so the zero value stands for it
+			if str("guid") != "00000000-0000-0000-0000-000000000000" {
+				g = mustGUID(t, str("guid"))
+			}
 			seg, err := odata.AltKey(odata.Name(str("set")), graphschema.ServicePrincipalAppID, odata.GUIDTextOf(g))
 			if err != nil {
 				return code(err), nil
