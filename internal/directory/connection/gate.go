@@ -29,7 +29,13 @@ func overPrivilegeFingerprints(kind Kind, v Verification) []string {
 // An override never covers a read-sufficiency failure, an unanswered question or a failed bind
 // (TM-D1, spec FR-13).
 func onlyOverPrivilege(kind Kind, v Verification) (bool, string) {
-	if v.Verdict != VerdictRefused {
+	switch v.Verdict {
+	case VerdictRefused:
+	case VerdictCouldNotVerify:
+		return false, ReasonCouldNotVerify
+	case VerdictFailed:
+		return false, ReasonVerdictFailed
+	default: // a pass has nothing to override
 		return false, ReasonNotOverridable
 	}
 	chk := overPrivilegeCheck(kind)
