@@ -173,6 +173,11 @@ func (e *Enrollment) Redeem(ctx context.Context, source string, tok Token) (Rede
 	if err := e.ready(); err != nil {
 		return Redeemed{}, err
 	}
+	if _, ok := sourceKey(source); !ok {
+		// A programming error in the caller (it must pass the transport peer), not a client fault:
+		// fail closed without touching any shared bucket.
+		return Redeemed{}, fmt.Errorf("%w: redeem source is not an IP address", ErrNotConfigured)
+	}
 	wait, blocked, err := e.Limiter.Blocked(ctx, source)
 	if err != nil {
 		return Redeemed{}, fmt.Errorf("%w: %w", errLimiterUnusable, err) // fail closed

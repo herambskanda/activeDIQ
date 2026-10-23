@@ -48,3 +48,39 @@ func TestTokenRoundTrip(t *testing.T) {
 		t.Fatal("garbage parsed")
 	}
 }
+
+func TestSourceKeyForms(t *testing.T) {
+	now := time.Unix(1000, 0)
+	l := NewMemoryLimiter(MemoryLimiterConfig{Burst: 2, Refill: time.Minute, Now: func() time.Time { return now }})
+	ctx := context.Background()
+	blocked := func(src string) bool { _, b, err := l.Blocked(ctx, src); return b && err == nil }
+
+	for i := 0; i < 5; i++ {
+		l.Failed(ctx, "203.0.113.9:4000"+string(rune('0'+i)))
+	}
+	if !blocked("203.0.113.9:1") {
+		t.Fatal("ip:port forms of one address do not share a bucket")
+	}
+	if blocked("198.51.100.1:5555") {
+		t.Fatal("a different IP in ip:port form is throttled by another")
+	}
+	l.Failed(ctx, "[2001:db8::1]:443")
+	l.Failed(ctx, "2001:db8::2")
+	if !blocked("[2001:db8::99]:1") {
+		t.Fatal("bracketed and bare IPv6 in one /64 do not share a bucket")
+	}
+}
+
+func TestUnreadableSourceHasNoBucket(t *testing.T) {
+	l := NewMemoryLimiter(MemoryLimiterConfig{Burst: 1})
+	ctx := context.Background()
+	for _, s := range []string{"", "garbage", "1.2.3.4:", "[::1"} {
+		if _, _, err := l.Blocked(ctx, s); err == nil {
+			t.Fatalf("Blocked(%q) did not error", s)
+		}
+		l.Failed(ctx, s)
+	}
+	if len(l.m) != 0 {
+		t.Fatalf("unreadable sources created %d buckets", len(l.m))
+	}
+}

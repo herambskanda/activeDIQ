@@ -87,6 +87,8 @@ old peers ignore); a removed or renumbered field needs `fleet.v2`.
 - **Redeem** (`Enrollment.Redeem`) is one compare-and-set `UPDATE … WHERE used_at IS NULL AND expires_at > now()`
   against a still-`pending` Component. Unknown, malformed, used, expired and removed all return
   `ErrTokenInvalid`. A source that has spent its failed-redeem budget (`FailureLimiter`, default 5 then one
-  per 30 s, per /32 or /64) is refused with `ErrRateLimited` before the token is looked at.
+  per 30 s, per /32 or /64; `ip:port` accepted, an unreadable source is refused as `ErrNotConfigured`, never pooled) is refused with `ErrRateLimited` before the token is looked at.
+  Residual (per-node limiter, same follow-up as the shared-store variant): when `MaxSources` is full new
+  sources share one overflow bucket, so an attacker with many IPv6 /64s can throttle new legitimate sources.
 - Not here: the Enroll handler, the CA, the listener, the `pending → enrolled` write (it needs the
   certificate serial), revocation, and the audited Operation around Issue.

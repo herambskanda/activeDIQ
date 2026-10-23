@@ -2,8 +2,10 @@ package fleetsql
 
 import (
 	"context"
+	"errors"
 	"math"
 	"net/netip"
+	"strings"
 	"sync"
 	"time"
 )
@@ -33,7 +35,7 @@ type fail struct {
 }
 
 // MemoryLimiter is a per-node FailureLimiter. The source is reduced to a network prefix (IPv4 /32,
-// IPv6 /64; an unparseable source shares one bucket) so one attacker cannot mint a bucket per
+// IPv6 /64; an unreadable source is an error, never a shared bucket) so one attacker cannot mint a bucket per
 // address of a /64, and a full table sends new sources to one shared overflow bucket that is
 // throttled rather than admitted. It is deliberately per node: a shared-store variant implements the
 // same port when the gateway is clustered.
@@ -60,15 +62,22 @@ func NewMemoryLimiter(cfg MemoryLimiterConfig) *MemoryLimiter {
 	return &MemoryLimiter{cfg: cfg, m: map[string]*fail{}}
 }
 
-const (
-	unparseableKey = "?"
-	overflowKey    = "*"
-)
+const overflowKey = "*"
 
-func sourceKey(raw string) string {
+var errUnreadableSource = errors.New("fleetsql: source address is not an IP address")
+
+// sourceKey reduces a peer address to its bucket: IPv4 /32, IPv6 /64. It accepts a bare address or
+// the ip:port (bracketed for IPv6) form that net/http and gRPC report. An address it cannot read has
+// no bucket: sharing one would let any anonymous caller throttle every other.
+func sourceKey(raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
 	a, err := netip.ParseAddr(raw)
 	if err != nil {
-		return unparseableKey
+		ap, perr := netip.ParseAddrPort(raw)
+		if perr != nil {
+			return "", false
+		}
+		a = ap.Addr()
 	}
 	a = a.WithZone("").Unmap()
 	bits := 64
@@ -77,9 +86,9 @@ func sourceKey(raw string) string {
 	}
 	p, err := a.Prefix(bits)
 	if err != nil {
-		return unparseableKey
+		return "", false
 	}
-	return p.Masked().String()
+	return p.Masked().String(), true
 }
 
 // bucket returns the entry for key, decayed to now. Caller holds mu.
@@ -116,10 +125,14 @@ func (l *MemoryLimiter) sweep(now time.Time) {
 
 // Blocked implements FailureLimiter.
 func (l *MemoryLimiter) Blocked(_ context.Context, source string) (time.Duration, bool, error) {
+	key, ok := sourceKey(source)
+	if !ok {
+		return 0, false, errUnreadableSource
+	}
 	now := l.cfg.Now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	b := l.bucket(sourceKey(source), now)
+	b := l.bucket(key, now)
 	if b.spent < float64(l.cfg.Burst) {
 		return 0, false, nil
 	}
@@ -129,9 +142,13 @@ func (l *MemoryLimiter) Blocked(_ context.Context, source string) (time.Duration
 
 // Failed implements FailureLimiter.
 func (l *MemoryLimiter) Failed(_ context.Context, source string) {
+	key, ok := sourceKey(source)
+	if !ok {
+		return
+	}
 	now := l.cfg.Now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	b := l.bucket(sourceKey(source), now)
+	b := l.bucket(key, now)
 	b.spent = math.Min(b.spent+1, float64(l.cfg.Burst))
 }

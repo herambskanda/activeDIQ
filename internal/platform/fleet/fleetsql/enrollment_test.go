@@ -138,8 +138,16 @@ func TestRedeem(t *testing.T) {
 			return iss
 		}
 
-		// AC2: sequential double redeem.
+		// Unreadable source: refused as a programming error, not as an invalid token, and no other
+		// source is affected.
 		iss := issue(e.a)
+		for _, src := range []string{"", "garbage"} {
+			if _, err := svc.Redeem(ctx, src, iss.Token); err == nil || errors.Is(err, fleetsql.ErrTokenInvalid) || errors.Is(err, fleetsql.ErrRateLimited) {
+				t.Fatalf("Redeem(source %q) = %v, want a not-configured error", src, err)
+			}
+		}
+
+		// AC2: sequential double redeem.
 		got, err := svc.Redeem(ctx, "192.0.2.1", iss.Token)
 		if err != nil || got.TenantID != e.a || got.ComponentID != iss.ComponentID || got.Kind != fleetsql.KindAgent || got.Name != "dc1" {
 			t.Fatalf("first redeem: %+v %v", got, err)
