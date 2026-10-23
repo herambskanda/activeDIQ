@@ -5,7 +5,7 @@ updated: 2026-10-23
 status: review
 owner: heramb
 author: security-architect
-ticket: old T-0007, T-0032, T-0044, T-0051, T-0055, T-0108, T-0179, T-0111, T-0227, T-0230
+ticket: old T-0007, T-0032, T-0044, T-0051, T-0055, T-0108, T-0179, T-0111, T-0227, T-0230, T-0240
 binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), blueprint v0 (review), safe-primitives.md (review)
 sources_last_checked: 2026-10-02
 ---
@@ -905,6 +905,26 @@ Our guard has to match that.
    direct write path; plan state also moves without our write when a licence expires, which is
    outside the guard.
 
+   **Amended by T-0240 (from the T-0238 review): group-based licensing moves plans through
+   membership, and licence processing can recalculate `mail` and `proxyAddresses`.** Microsoft:
+   licence changes on a group are processed for its members, and the licence update can
+   recalculate the user's `mail` and `proxyAddresses`
+   ([group licences](https://learn.microsoft.com/en-us/microsoft-365/admin/manage/manage-group-licenses?view=o365-worldwide)).
+   So adding a user to a group that carries group-based licensing is a write of `assignedPlans`,
+   `mail` and `proxyAddresses`, and the target group need not be in the closure; the connector
+   cannot tell which groups are licensed (a tenant fact), so it assumes any group may be. Rules:
+   (1) `GROUP_MEMBERSHIP` on any group, either plane, is refused when the merged scope holds
+   `memberOf`, **or RefuseAll for any cause** (an unknown property, an unlexable rule), **or**
+   `user.assignedPlans`, `user.mail` or `user.proxyAddresses`. (2) `ASSIGN_LICENSE` (user or
+   group) is refused when the scope holds `assignedPlans`, `mail` or `proxyAddresses`, or under
+   RefuseAll. (3) A rule on other properties (a `city` rule) leaves group membership writes
+   allowed: that is the negative twin. Cost: tenants whose Conditional Access exclusion nests a
+   dynamic group over those properties cannot change group membership through activeDIQ; connection
+   health says why. Residual: licence state also moves with no write of ours (expiry, an admin in
+   the portal), outside the guard (TM-R19). Which groups carry licences, and the exact recalculation
+   of `mail` and `proxyAddresses`, are `[UNVERIFIED — lab G14]` (T-0075); the refusal does not wait
+   for the lab (safe direction).
+
    **7f. Hybrid: an AD write to a synced user is an Entra property write.** For hybrid tenants an
    on-prem write by activeDIQ to a synced user flows through Microsoft Entra Connect to the cloud
    object and can add that user to a closure dynamic group. That user is not in the closure, so
@@ -935,7 +955,7 @@ Our guard has to match that.
 
    | Rule property (user) | Graph write path | AD attribute whose sync reaches it |
    | --- | --- | --- |
-   | `department`, `companyName`, `givenName`, `surname`, `jobTitle`, `city`, `state`, `streetAddress`, `postalCode`, `country`, `displayName`, `employeeId`, `preferredLanguage`, `usageLocation`, `userPrincipalName`, `userType`, `accountEnabled`, `mail`, `mailNickName` | the same-named key of `PATCH /users/{id}` (`mailNickName` is Graph `mailNickname`) | `department`, `company`, `givenName`, `sn`, `title`, `l`, `st`, `streetAddress`, `postalCode`, `co` (and `c`) `[UNVERIFIED]`, `displayName`, `employeeID`, none for `preferredLanguage` and `userType`, `usageLocation` (no default flow `[UNVERIFIED]`), `userPrincipalName`, `userAccountControl` bit 2, `mail`, `mailNickname` |
+   | `department`, `companyName`, `givenName`, `surname`, `jobTitle`, `city`, `state`, `streetAddress`, `postalCode`, `country`, `displayName`, `employeeId`, `preferredLanguage`, `usageLocation`, `userPrincipalName`, `userType`, `accountEnabled`, `mail`, `mailNickName` | the same-named key of `PATCH /users/{id}` (`mailNickName` is Graph `mailNickname`) | `department`, `company`, `givenName`, `sn`, `title`, `l`, `st`, `streetAddress`, `postalCode`, `co`, `c` and `countryCode` for `country` and `usageLocation` `[UNVERIFIED]`, `displayName`, `employeeID`, **`preferredLanguage` for `preferredLanguage`** (synced: SharePoint Online, Teams and Dynamics tables of the [attributes synchronized](https://learn.microsoft.com/en-us/entra/identity/hybrid/connect/reference-connect-sync-attributes-synchronized) page), none for `userType`, `userPrincipalName`, `userAccountControl` bit 2, `mail`, `mailNickname` |
    | `mobile` | `mobilePhone` | `mobile` |
    | `telephoneNumber` | `businessPhones` | `telephoneNumber` |
    | `facsimileTelephoneNumber` | `faxNumber` | `facsimileTelephoneNumber` |
@@ -954,6 +974,19 @@ Our guard has to match that.
    | `memberOf` | group membership writes (7b) | `member` (synced groups) |
    | **device:** `extensionAttribute1` to `15` | key `extensionAttributes` (container) on `PATCH /devices/{id}` ([device update](https://learn.microsoft.com/en-us/graph/api/device-update?view=graph-rest-1.0)) | none for cloud; hybrid-joined devices are written by their agent, not by activeDIQ |
    | **device:** `displayName`, `accountEnabled`, `deviceCategory`, others | same-named key | `displayName` and `userAccountControl` for the computer object |
+   | **device:** `deviceOSType`, `deviceOSVersion` | same-named key | `operatingSystem` for `deviceOSType`, `operatingSystemVersion` for `deviceOSVersion` (Windows 10 section of the attributes-synchronized page) |
+
+   **Canonical write keys (T-0240).** A write key must be canonical or the guard refuses the write
+   (a key the table cannot recognise would otherwise match no row and pass). AD plane: an ASCII
+   letter, then ASCII letters, digits or `-`. This refuses LDAP attribute-description options
+   (`displayName;binary`), numeric OIDs (`1.2.840.113556.1.2.13`; both forms are valid LDAP
+   attribute descriptions, [RFC 4512 §2.5](https://www.rfc-editor.org/rfc/rfc4512#section-2.5)),
+   leading or inner whitespace, the empty key and non-ASCII. Entra plane: an ASCII letter, then
+   letters, digits or `_`, with at most one `.`-separated sub-key of the same form
+   (`onPremisesExtensionAttributes.extensionAttribute9`). Implementation: character loops, no
+   regex; the check runs before any short-circuit, so it applies when no closure exists and on a
+   nil set. Matching against the table is case-insensitive. Key-forwarding write kinds (bulk
+   modify, CSV import) are the reason: they pass operator-chosen names.
 
    Rows marked `[UNVERIFIED]` stay refused-by-default (the property is treated as reaching the
    rule) until the lab confirms them. The container rule is the one that bit T-0225's first
@@ -1082,6 +1115,8 @@ raised from T-0227), the server guard and connector contract §8.1.
 | T0-DYN-INVITE | D's rule is `user.userType -eq "Guest"` | `POST /invitations` refused |
 | T0-DYN-NULL | D's rule is `user.department -eq null` | create refused (the new object matches by absence) |
 | T0-DYN-LIC | D's rule uses `assignedPlans`; user and group `assignLicense` | both refused; a rule on `city` only: allowed |
+| T0-DYN-LIC-GROUPMEMBER | rule uses `user.assignedPlans` (second run: `user.mail`, third: `user.proxyAddresses`); `GROUP_MEMBERSHIP` on any group, **on both planes** (Entra fake and AD) | refused on each; also refused under RefuseAll (unknown property); `ASSIGN_LICENSE` refused under a `mail` or `proxyAddresses` rule; twin: a rule on `city` only allows `GROUP_MEMBERSHIP` |
+| T0-DYN-KEY | rule `user.displayName`; AD keys `displayName;binary`, ` displayName`, `1.2.840.113556.1.2.13`, empty, inner space, leading digit, non-ASCII; Entra keys `a.b.c`, `a..b` | all refused on both planes, even with no closure; twins: `onPremisesExtensionAttributes.extensionAttribute9` (Entra) and a hyphenated attribute (AD) are accepted as canonical |
 | T0-DYN-EXT | rule `user.extensionAttribute5`; write key `onPremisesExtensionAttributes.extensionAttribute9` | refused (container rule); device rule with `extensionAttributes` refused |
 | T0-DYN-MAP | every row of `ruleprops v1` | each Graph write key and each AD attribute in the row is refused when its rule property is in a closure rule; drift test against the Microsoft list fails on a new property |
 | T0-DYN-UNKNOWN | rule names a property absent from the table | RefuseAll for writes, create, invite, licence |
@@ -1274,7 +1309,14 @@ role-assignable and a non-role-assignable group, member and owner, a group-type 
 and the exact response and service-plan ids of a tenant without the PIM licence (TM-D25 rules 3 and 5);
 G12 an app-only password reset of an eligible-only member of a role-assignable group (expected refused
 by Graph); G13 that a CA exclusion reaches a nested member, a `memberOf` dynamic rule, and reading
-policies with `Policy.Read.ConditionalAccess` (TM-D25 rules 6, 7 and 9).
+policies with `Policy.Read.ConditionalAccess` (TM-D25 rules 6, 7 and 9); **G14 (T-0240)** that
+adding a user to a group with group-based licensing changes `assignedPlans` and recalculates `mail`
+and `proxyAddresses` (7e), and the Entra Connect derived flows `[UNVERIFIED]`: `cn` as the
+`displayName` fallback and `sAMAccountName` as the `mailNickname` fallback when the source
+attribute is empty (if confirmed, `cn` joins the `displayName` row and `sAMAccountName` the
+`mailNickName` row of 7g, in the same change as the code; until then the guard may miss a rule
+on an empty `displayName` or `mailNickName` reached through a `cn` or `sAMAccountName` write,
+a stated gap until G14 runs, not a silent one).
 
 **The customer's independent record.** Service-principal sign-in logs ("can't be changed or
 deleted"), Entra audit logs filtered by our appId, and Graph activity logs (P1/P2, if routed to a
@@ -2327,7 +2369,7 @@ Existing proofs this document relies on: FF-SP1–SP9 (`tools/fitness/safeprim`)
 
 The proofs that no earlier ticket owned are filed as T-0066 to T-0073 (T-0055 re-filed them after the
 board re-cut). The Entra lab claims are T-0075
-(G1–G10; G11–G13 added by T-0111). TM-D25 is built in T-0225. TM-F-MIGRATE and TM-F-RADIUS belong to the specs of their milestones (M2, M4) and are
+(G1–G10; G11–G13 added by T-0111; G14 by T-0240). TM-D25 is built in T-0225. TM-F-MIGRATE and TM-F-RADIUS belong to the specs of their milestones (M2, M4) and are
 carried by those tickets. Until a proof runs in CI or the lab, its control is direction, not a
 control.
 
@@ -2500,6 +2542,7 @@ External, in order of first use:
 
 ## Changelog
 
+- 2026-10-23 · T-0240 (from the T-0238 review). TM-D25 7e: group-membership writes are licence writes (refused under `assignedPlans`, `mail`, `proxyAddresses` or any RefuseAll); `ASSIGN_LICENSE` also refused on `mail` and `proxyAddresses`. 7g: `preferredLanguage`, `countryCode` and device OS rows fixed (the earlier "none for preferredLanguage" was wrong); canonical-key rule added. New proofs T0-DYN-LIC-GROUPMEMBER and T0-DYN-KEY; lab G14 added to T-0075.
 - 2026-10-23 · T-0230 (from the T-0225 review). TM-D25 rule 7 rewritten as 7a to 7h: it covers every dynamic group in a designated closure (nested at any depth, not only designated seeds); `Direct Reports for` rules depend on `user.manager`; create and invite are writes of every property (the new object matches rules by absence), so they are refused while a closure dynamic group exists; licence assignment (user and group) writes `assignedPlans`; synced AD writes, moves and `userAccountControl` are Entra property writes and go through the same `CheckPropertyWrite`; closed mapping table `ruleprops v1` from rule property to Graph write path and AD attribute. New TM-R19; TM-F-T0GUARD extended with the T-0230 proof table. Connector contract §8.9 and T-0098 guard contract updated. Sources: dynamic membership rules, Entra Connect synchronized attributes, Graph user resource, device update.
 - 2026-10-23 · T-0227 (from the T-0093 review). §6.4: new C17 (WriteDACL, WriteOwner, GenericAll, GenericWrite, all-property or `gPLink` WriteProperty, ownership, on the domain, Configuration and Schema heads and AdminSDHolder) and C18 (privileged `sIDHistory`, by RID); C8 gains `dSHeuristics`; C13 is matched by RID, SID or pinned GUID, never by name. New DECISION TM-D26: ten rules (callback ACEs 0x09 and 0x0B count as unconditional allows; the owner is `tier0` whatever OWNER RIGHTS says; ACE trustees match on `sIDHistory`; fail closed; live bases) and sixteen named tests added to TM-F-T0GUARD. Build ticket raised for `internal/connector/tier0`.
 - 2026-10-23 · T-0111 (from the T-0095 review). §6.4: E2 now counts PIM-for-Groups eligible and scheduled members and owners. New DECISION TM-D25 adds nine rules: the reach closure, including group-type eligible principals; which schedules count; the reads, with a live per-target check; fail mode, where a failed read refuses every Entra write and the members-only option is rejected; the unlicensed tenant, empty only when the lab-pinned response and `subscribedSkus` agree; designated groups, whose transitive members and owners are `tier0` (Entra and AD); dynamic designated groups, guarded by a rule lexer; the hybrid reach in C16 and E5; Conditional Access candidates. §6.6: new required RT-4 row `PrivilegedEligibilitySchedule.Read.AzureADGroup` + `PrivilegedAssignmentSchedule.Read.AzureADGroup`; new optional row `Policy.Read.ConditionalAccess`; the deny list gains `RoleManagementPolicy.ReadWrite.*`; lab tests G11 to G13. TM-F-T0GUARD extended. TM-R16 extended; new TM-R18 (foreign app owners). Sources 73 to 79. Build ticket T-0225 (directory-engineer); G11 to G13 routed to T-0075.
