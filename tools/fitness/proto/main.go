@@ -43,6 +43,9 @@
 //	    reachable from it are an exact allowlist of field names and types: leaf_certificate_der,
 //	    ca_bundle_pem (both bytes, required), endpoints (repeated Endpoint{host string, port
 //	    uint32}) and leaf_not_after (Timestamp). Anything else, at any depth, fails.
+//	F8  fleet files are syntax proto3 (no editions, proto2, extension ranges or groups) and no file
+//	    extends a fleet message. F6 also covers RPC input and output types, and the token allowance
+//	    is keyed on the full name activediq.fleet.v1.EnrollRequest.enrollment_token on the Enroll input.
 //	F7  no map fields anywhere in the fleet contract or reachable from an Enroll or Tunnel input or
 //	    output: a map is an unchecked free-form side channel.
 package main
@@ -310,7 +313,7 @@ func isFleet(pkg protoreflect.FullName) bool {
 var secretShaped = []string{"password", "passwd", "pwd", "secret", "credential", "passphrase", "token", "key"}
 
 // fleetSecretAllow are the only secret-shaped fields: the single-use enrollment token.
-var fleetSecretAllow = map[string]bool{"EnrollRequest.enrollment_token": true}
+var fleetSecretAllow = map[string]bool{"activediq.fleet.v1.EnrollRequest.enrollment_token": true}
 
 // fieldSpec is one allowed field: its kind and, for messages, the full name of its type.
 type fieldSpec struct {
@@ -369,7 +372,7 @@ func checkAllow(m protoreflect.MessageDescriptor, allow map[string]fieldSpec, se
 	return vs
 }
 
-// lintFleet applies F1 to F7 to every fleet package among files.
+// lintFleet applies F1 to F8 to every fleet package among files.
 func lintFleet(files linker.Files) []Violation {
 	var vs []Violation
 	pkgs := map[protoreflect.FullName]bool{}
@@ -415,6 +418,38 @@ func lintFleet(files linker.Files) []Violation {
 				vs = append(vs, Violation{"F1", string(m.FullName()), "Tunnel must be bidirectional streaming (component-initiated)"})
 			}
 		}
+		var enroll protoreflect.MethodDescriptor
+		for _, svc := range services {
+			if m := svc.Methods().ByName("Enroll"); m != nil {
+				enroll = m
+			}
+		}
+		// F6 for RPC types: the contract is self-contained, so every RPC input and output is a
+		// message of the fleet package.
+		for _, svc := range services {
+			for j := 0; j < svc.Methods().Len(); j++ {
+				m := svc.Methods().Get(j)
+				for _, t := range []protoreflect.MessageDescriptor{m.Input(), m.Output()} {
+					if t.ParentFile().Package() != pkg {
+						vs = append(vs, Violation{"F6", string(m.FullName()), "RPC types must be messages of the fleet package, not " + string(t.FullName())})
+					}
+				}
+			}
+		}
+		// F8: proto3 only (no editions, proto2, extension ranges or groups), and no extension of
+		// a fleet message from any file.
+		for _, f := range files {
+			if f.Package() == pkg && f.Syntax() != protoreflect.Proto3 {
+				vs = append(vs, Violation{"F8", f.Path(), "fleet files must be syntax proto3: no editions or proto2, so no extension ranges or groups"})
+			}
+			var exts []protoreflect.ExtensionDescriptor
+			collectExtensions(f, &exts)
+			for _, x := range exts {
+				if x.ContainingMessage().ParentFile().Package() == pkg {
+					vs = append(vs, Violation{"F8", string(x.FullName()), "extending a fleet message is not allowed: it is an unchecked side channel"})
+				}
+			}
+		}
 		// Roots: every message the package declares, plus the input and output of every RPC,
 		// walked transitively so a field of an imported type is checked like a local one.
 		var roots []protoreflect.MessageDescriptor
@@ -448,7 +483,10 @@ func lintFleet(files linker.Files) []Violation {
 						vs = append(vs, Violation{"F6", pos, "fleet messages may reference only messages of their own package and google.protobuf.Timestamp, not " + string(full)})
 					}
 				}
-				key := string(parent.Name()) + "." + string(fd.Name())
+				key := pos
+				if enroll == nil || parent.FullName() != enroll.Input().FullName() {
+					key = "" // the token is allowed only on the Enroll RPC's own input message
+				}
 				for _, frag := range secretShaped {
 					if strings.Contains(lower, frag) && !fleetSecretAllow[key] {
 						vs = append(vs, Violation{"F3", pos, "field name looks secret-bearing (`" + frag + "`); nothing secret is pushed over fleet (TM-TB6-T6). Only the single-use enrollment token is allowed"})
@@ -459,17 +497,27 @@ func lintFleet(files linker.Files) []Violation {
 		}
 		// F4: the Enroll RPC's output (whatever it is named) and everything reachable from it is an
 		// exact allowlist of names and types: public material only.
-		var enroll protoreflect.MethodDescriptor
-		for _, svc := range services {
-			if m := svc.Methods().ByName("Enroll"); m != nil {
-				enroll = m
-			}
-		}
 		if enroll != nil {
 			vs = append(vs, lintEnrollResponse(pkg, enroll.Output(), map[protoreflect.FullName]bool{})...)
 		}
 	}
 	return vs
+}
+
+func collectExtensions(f protoreflect.FileDescriptor, out *[]protoreflect.ExtensionDescriptor) {
+	for i := 0; i < f.Extensions().Len(); i++ {
+		*out = append(*out, f.Extensions().Get(i))
+	}
+	var rec func(ms protoreflect.MessageDescriptors)
+	rec = func(ms protoreflect.MessageDescriptors) {
+		for i := 0; i < ms.Len(); i++ {
+			for j := 0; j < ms.Get(i).Extensions().Len(); j++ {
+				*out = append(*out, ms.Get(i).Extensions().Get(j))
+			}
+			rec(ms.Get(i).Messages())
+		}
+	}
+	rec(f.Messages())
 }
 
 func collectMessages(ms protoreflect.MessageDescriptors, out *[]protoreflect.MessageDescriptor) {

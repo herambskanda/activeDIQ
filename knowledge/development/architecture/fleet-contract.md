@@ -23,7 +23,7 @@ Threat model: §5.6 (TB6), TM-F-FLEET. Blueprint: `fleet` row (§5.1), §7.2.
 
 The service has no other RPC (TM-TB6-T8). The server mounts it alone on the fleet listener.
 
-## Rules (enforced by `fitness-proto` F1 to F7)
+## Rules (enforced by `fitness-proto` F1 to F8)
 
 - **No tenant in any message** (TM-TB6-T3, ADR-0002). Tenant and component come from the leaf
   certificate SAN, which the server sets from the enrollment token, not from the CSR.
@@ -38,7 +38,10 @@ The service has no other RPC (TM-TB6-T8). The server mounts it alone on the flee
   exact allowlist of field names and types (F4: `leaf_certificate_der`, `ca_bundle_pem`,
   `endpoints` of `Endpoint{host, port}`, `leaf_not_after`); any addition fails CI and needs
   security review. Map fields are refused everywhere (F7): they are an unchecked side channel. Only the exact package `activediq.fleet.v1` is
-  treated as fleet.
+  treated as fleet. Every RPC input and output type is a fleet-package message (F6), and the
+  token exception is keyed on the full name on the Enroll input only (F3).
+- **No extension side channel** (F8). Fleet files are `syntax = "proto3"` (no editions, proto2,
+  extension ranges or groups) and no file may extend a fleet message.
 - **Tunnel dispatch (TM-TB6-T8).** The gateway dispatches only methods of the contract bound to
   the authenticated component, in the allowed direction; anything else closes the call
   `PERMISSION_DENIED` and is never handed to a non-fleet server. A frame on a call id the sender
@@ -55,7 +58,7 @@ The service has no other RPC (TM-TB6-T8). The server mounts it alone on the flee
   (`call_id` 0: on the whole tunnel). Numeric limits are the gateway's, in T-0069's ticket.
 - The connector contract's rule P4 (no bidirectional streams) does not apply to this package:
   `Tunnel` is the transport the connector contract rides on, not an operation of it.
-  P4, P5, P6 and P8 apply to operation contracts only; fleet has F1 to F7 instead.
+  P4, P5, P6 and P8 apply to operation contracts only; fleet has F1 to F8 instead.
 
 ## Placement (blueprint §2 rule 1)
 

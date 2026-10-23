@@ -263,3 +263,30 @@ func TestFleetMapsAndResponseClosure(t *testing.T) {
 		t.Fatalf("want clean, got %v", vs)
 	}
 }
+
+// TestFleetExtensionsRPCTypesNestedToken: third security-architect review of T-0152.
+func TestFleetExtensionsRPCTypesNestedToken(t *testing.T) {
+	ed := r(fleetBase, `syntax = "proto3";`, `edition = "2023";`, 1)
+	imp := func(s string) string {
+		return r(s, "package activediq.fleet.v1;", "package activediq.fleet.v1;\nimport \"x/common.proto\";", 1)
+	}
+	cases := []struct {
+		name, want string
+		files      map[string]string
+	}{
+		{"edition with extensions on the response", "F8", map[string]string{"f.proto": r(r(ed, "message EnrollResponse {", "message EnrollResponse { extensions 100 to 200;", 1), "service Fleet {", "extend EnrollResponse { bytes pkcs8 = 100; string tenant_id = 101; }\nservice Fleet {", 1)}},
+		{"extension from another package", "F8", map[string]string{
+			"f.proto":   r(ed, "message EnrollResponse {", "message EnrollResponse { extensions 100 to 200;", 1),
+			"x/e.proto": "edition = \"2023\";\npackage x.ext.v1;\nimport \"f.proto\";\nextend activediq.fleet.v1.EnrollResponse { bytes pkcs8 = 100; }\n"}},
+		{"foreign tunnel types", "F6", map[string]string{"f.proto": r(imp(fleetBase), "rpc Tunnel(stream TunnelFrame) returns (stream TunnelFrame)", "rpc Tunnel(stream x.common.v1.Plain) returns (stream x.common.v1.Plain)", 1), "x/common.proto": foreignCtx}},
+		{"foreign enroll input", "F6", map[string]string{"f.proto": r(imp(fleetBase), "rpc Enroll(EnrollRequest)", "rpc Enroll(x.common.v1.Plain)", 1), "x/common.proto": foreignCtx}},
+		{"nested EnrollRequest with a token", "F3", map[string]string{"f.proto": r(fleetBase, "message TunnelFrame {", "message TunnelFrame { message EnrollRequest { string enrollment_token = 1; }", 1)}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := rules(lintMany(t, c.files)); !strings.Contains(got, c.want) {
+				t.Fatalf("want %s, got %q", c.want, got)
+			}
+		})
+	}
+}
