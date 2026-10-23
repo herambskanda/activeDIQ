@@ -16,7 +16,7 @@ type ruleProp struct {
 	Name       string // "user.department" / "device.displayName"
 	Graph      []string
 	AD         []string
-	Unverified bool
+	Unverified bool // documentation only: the table is applied as-is, so unverified rows already refuse
 }
 
 // userSimple are the user properties whose Graph key is the property's own name.
@@ -30,13 +30,14 @@ var userSimple = []string{"department", "companyName", "givenName", "surname", "
 var userAD = map[string][]string{
 	"department": {"department"}, "companyName": {"company"}, "givenName": {"givenName"}, "surname": {"sn"},
 	"jobTitle": {"title"}, "city": {"l"}, "state": {"st"}, "streetAddress": {"streetAddress"},
-	"postalCode": {"postalCode"}, "country": {"co", "c"}, "displayName": {"displayName"}, "employeeId": {"employeeID"},
-	"usageLocation": {"c", "co"}, "userPrincipalName": {"userPrincipalName"}, "accountEnabled": {"userAccountControl"},
+	"postalCode": {"postalCode"}, "country": {"co", "c", "countryCode"}, "displayName": {"displayName"}, "employeeId": {"employeeID"},
+	"usageLocation":     {"c", "co", "countryCode"},
+	"preferredLanguage": {"preferredLanguage"}, "userPrincipalName": {"userPrincipalName"}, "accountEnabled": {"userAccountControl"},
 	"mail": {"mail"}, "mailNickName": {"mailNickname"},
 }
 
 // userUnverified are the simple rows whose AD flow is not confirmed (rule 7g).
-var userUnverified = map[string]bool{"country": true, "usageLocation": true}
+var userUnverified = map[string]bool{"country": true, "usageLocation": true, "preferredLanguage": true}
 
 // devicePropNames are the device properties a rule may use
 // (https://learn.microsoft.com/en-us/entra/identity/users/groups-dynamic-membership).
@@ -46,7 +47,8 @@ var deviceSimple = []string{"accountEnabled", "deviceCategory", "deviceId", "dev
 	"mdmAppId", "deviceTrustType"}
 
 var deviceAD = map[string][]string{"displayName": {"displayName"}, "accountEnabled": {"userAccountControl"},
-	"organizationalUnit": {"distinguishedName"}}
+	"organizationalUnit": {"distinguishedName"}, "deviceOSType": {"operatingSystem"},
+	"deviceOSVersion": {"operatingSystemVersion"}}
 
 const (
 	userExtContainer   = "onpremisesextensionattributes"

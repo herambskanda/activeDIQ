@@ -37,9 +37,9 @@ func TestRulePropsMatchesMicrosoftList(t *testing.T) {
 // unrelated key is not.
 func TestRulePropsEveryMappingRefuses(t *testing.T) {
 	for name, row := range rulePropsV1 {
-		kind, prefix := WriteUser, "user."
+		kind := WriteUser
 		if strings.HasPrefix(name, "device.") {
-			kind, prefix = WriteDevice, "device."
+			kind = WriteDevice
 		}
 		scope := ScopeOfRule(name + ` -eq "x"`)
 		if scope.RefuseAll && !strings.HasSuffix(name, ".memberof") {
@@ -48,7 +48,6 @@ func TestRulePropsEveryMappingRefuses(t *testing.T) {
 		if scope.MemberOf {
 			continue // memberOf is RefuseAll by 7b
 		}
-		_ = prefix
 		for plane, keys := range map[Plane][]string{PlaneEntra: row.Graph, PlaneAD: row.AD} {
 			for _, k := range keys {
 				if decide(PropertyWrite{Plane: plane, Kind: kind, Op: OpUpdate, Keys: []string{k}}, scope, nil) == nil {

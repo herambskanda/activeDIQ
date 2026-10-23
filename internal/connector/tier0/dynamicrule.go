@@ -332,6 +332,11 @@ func validWrite(w PropertyWrite) bool {
 	default:
 		return false
 	}
+	for _, k := range w.Keys {
+		if !canonicalKey(w.Plane, k) {
+			return false
+		}
+	}
 	switch w.Op {
 	case OpUpdate, OpCreate, OpGroupMembership:
 		return w.Op != OpGroupMembership || w.Kind == WriteGroup
@@ -343,6 +348,29 @@ func validWrite(w PropertyWrite) bool {
 		return w.Plane == PlaneAD
 	}
 	return false
+}
+
+// canonicalKey accepts only plain attribute names: AD an ASCII letter then letters, digits or '-'
+// (no ";binary" options, no numeric OIDs, no spaces); Entra an ASCII letter then letters, digits or
+// '_', with at most one '.'-separated sub-key of the same form. Anything else could name a
+// property the table does not (RFC 4512 §2.5), so it is refused.
+func canonicalKey(plane Plane, k string) bool {
+	if plane == PlaneAD {
+		return identOK(k, '-')
+	}
+	head, sub, dotted := strings.Cut(k, ".")
+	return identOK(head, '_') && (!dotted || identOK(sub, '_'))
+}
+
+func identOK(s string, extra byte) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		letter := c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+		if !(letter || i > 0 && (c >= '0' && c <= '9' || c == extra)) {
+			return false
+		}
+	}
+	return s != ""
 }
 
 // decide applies the contract §8.9 decision table. It returns the keys to report (a non-nil empty
@@ -384,7 +412,7 @@ func decide(w PropertyWrite, sc RuleScope, ext map[string]string) []string {
 			return none
 		}
 	case OpAssignLicense:
-		if sc.RefuseAll || sc.Properties["user.assignedplans"] {
+		if sc.RefuseAll || sc.Properties["user.assignedplans"] || sc.Properties["user.mail"] || sc.Properties["user.proxyaddresses"] {
 			return none
 		}
 	case OpSetManager, OpClearManager:
@@ -396,7 +424,9 @@ func decide(w PropertyWrite, sc RuleScope, ext map[string]string) []string {
 			return none
 		}
 	case OpGroupMembership:
-		if sc.MemberOf {
+		// Group-based licensing: joining a licensed group assigns plans and can recalculate
+		// mail/proxyAddresses, so those rule properties are reachable through membership.
+		if sc.MemberOf || sc.RefuseAll || sc.Properties["user.assignedplans"] || sc.Properties["user.mail"] || sc.Properties["user.proxyaddresses"] {
 			return none
 		}
 	}

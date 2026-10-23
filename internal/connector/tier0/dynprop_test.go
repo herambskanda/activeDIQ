@@ -194,8 +194,8 @@ func TestT0DynUnknownAndUnlexable(t *testing.T) {
 		expect(t, rule, set, w(E, U, tier0.OpSetManager), true)
 		expect(t, rule+" AD", set, w(A, U, tier0.OpUpdate, "description"), true)
 		expect(t, rule+" move", set, w(A, U, tier0.OpMoveOrRename), true)
-		// not the membership case: group membership writes stay allowed
-		expect(t, rule+" membership", set, w(E, tier0.WriteGroup, tier0.OpGroupMembership), false)
+		// RefuseAll also refuses group membership (group-based licensing could reach any property)
+		expect(t, rule+" membership", set, w(E, tier0.WriteGroup, tier0.OpGroupMembership), true)
 	}
 }
 
@@ -291,4 +291,48 @@ func TestPropertyWriteMalformedIsRefused(t *testing.T) {
 	if !strings.Contains(tier0.OpMoveOrRename.String(), "MOVE") {
 		t.Fatal("op name")
 	}
+}
+
+// T0-DYN-LIC-GROUPMEMBER: joining a licensed group assigns plans / recalculates mail.
+func TestT0DynLicGroupMember(t *testing.T) {
+	for _, rule := range []string{`user.assignedPlans -any (assignedPlan.servicePlanId -eq "x")`, `user.mail -eq "a@b"`, `user.proxyAddresses -any (_ -eq "x")`} {
+		tn, des := nested(rule, 1, true)
+		set, _ := snap(t, tn, des)
+		expect(t, rule+" entra", set, w(E, tier0.WriteGroup, tier0.OpGroupMembership), true)
+		expect(t, rule+" ad", set, w(A, tier0.WriteGroup, tier0.OpGroupMembership), true)
+	}
+	tn, des := nested(`user.mail -eq "a@b"`, 1, true)
+	set, _ := snap(t, tn, des)
+	expect(t, "license under mail rule", set, w(E, U, tier0.OpAssignLicense), true)
+	tn, des = nested(`user.city -eq "x"`, 1, true)
+	set, _ = snap(t, tn, des)
+	expect(t, "twin membership", set, w(E, tier0.WriteGroup, tier0.OpGroupMembership), false)
+	expect(t, "twin license", set, w(E, U, tier0.OpAssignLicense), false)
+}
+
+// Non-canonical keys fail closed on both planes, even with no rule naming them.
+func TestPropertyWriteNonCanonicalKeyIsRefused(t *testing.T) {
+	tn, des := nested(`user.displayName -eq "x"`, 1, true)
+	set, _ := snap(t, tn, des)
+	for _, k := range []string{"displayName;binary", " displayName", "1.2.840.113556.1.2.13", "", "display Name", "9abc", "a.b.c", "a..b", "display\u00e9"} {
+		expect(t, "ad "+k, set, w(A, U, tier0.OpUpdate, k), true)
+		expect(t, "entra "+k, set, w(E, U, tier0.OpUpdate, k), true)
+	}
+	expect(t, "entra dotted ok", set, w(E, U, tier0.OpUpdate, "onPremisesExtensionAttributes.extensionAttribute9"), false)
+	expect(t, "entra dash", set, w(E, U, tier0.OpUpdate, "a-b"), true)
+	expect(t, "ad dash ok", set, w(A, U, tier0.OpUpdate, "msRTCSIP-PrimaryUserAddress"), false)
+}
+
+func TestT0DynMapPreferredLanguageDeviceOS(t *testing.T) {
+	tn, des := nested(`user.preferredLanguage -eq "en"`, 1, true)
+	set, _ := snap(t, tn, des)
+	expect(t, "pl", set, w(A, U, tier0.OpUpdate, "preferredLanguage"), true)
+	expect(t, "pl twin", set, w(A, U, tier0.OpUpdate, "description"), false)
+	tn, des = nested(`user.country -eq "x"`, 1, true)
+	set, _ = snap(t, tn, des)
+	expect(t, "countryCode", set, w(A, U, tier0.OpUpdate, "countryCode"), true)
+	tn, des = nested(`device.deviceOSType -eq "Windows"`, 1, true)
+	set, _ = snap(t, tn, des)
+	expect(t, "os", set, w(A, D, tier0.OpUpdate, "operatingSystem"), true)
+	expect(t, "os twin", set, w(A, D, tier0.OpUpdate, "description"), false)
 }
