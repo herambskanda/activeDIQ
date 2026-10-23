@@ -470,7 +470,8 @@ func (b *builder) membersOf(roots []*ad.Entry, basis Basis) error {
 	for _, g := range groups {
 		ss, err := g.SIDs("objectSid")
 		if err != nil || len(ss) != 1 {
-			continue // a group without a readable SID cannot be anyone's primary group
+			// Its primaryGroupID members cannot be looked for: fail closed.
+			return errors.New("tier0: a group in the membership walk has no readable objectSid")
 		}
 		dom, ok := ss[0].DomainSID()
 		rid, ok2 := ss[0].RID()
@@ -561,6 +562,14 @@ func (b *builder) c5c6c15() error {
 			b.dcHosts[host] = true
 			b.dcHosts[strings.SplitN(host, ".", 2)[0]] = true
 		}
+		for _, h := range e.Strings("msDS-AdditionalDnsHostName") {
+			b.addHost(h)
+		}
+		for _, spn := range e.Strings("servicePrincipalName") {
+			if _, rest, ok := strings.Cut(spn, "/"); ok {
+				b.addHost(spnHost(rest))
+			}
+		}
 		if sam := e.Strings("sAMAccountName"); len(sam) == 1 {
 			b.dcHosts[strings.ToLower(strings.TrimSuffix(sam[0], "$"))] = true
 		}
@@ -569,7 +578,7 @@ func (b *builder) c5c6c15() error {
 		}
 		return b.noteAccount(e)
 	}
-	attrs := append([]string{"dNSHostName", "sAMAccountName", "msDS-AllowedToActOnBehalfOfOtherIdentity"}, idAttrs...)
+	attrs := append([]string{"dNSHostName", "sAMAccountName", "servicePrincipalName", "msDS-AdditionalDnsHostName", "msDS-AllowedToActOnBehalfOfOtherIdentity"}, idAttrs...)
 	q := Query{Classes: []string{"computer"}, UACAny: uacServerTrust | uacPartialSecrets}
 	if err := b.d.Find(b.ctx, b.nm.Domain, ad.ScopeSubtree, q, attrs, addDC); err != nil {
 		return fmt.Errorf("tier0: domain controllers: %w", err)
@@ -768,7 +777,24 @@ func (b *builder) c11() error {
 	if err != nil {
 		return err
 	}
-	return b.markPrincipals(holders(aces, getChanges, getChangesAll), C11)
+	// Effective rights over the token: a principal can replicate when it holds each right directly
+	// or through any group, so the holders of each right are expanded to their transitive members
+	// and the two sets intersected (a split grant across two groups still makes the common member
+	// a DCSync principal).
+	var eff []map[string]guid.GUID
+	for _, r := range []guid.GUID{getChanges, getChangesAll} {
+		m, err := b.expand(holders(aces, r))
+		if err != nil {
+			return err
+		}
+		eff = append(eff, m)
+	}
+	for k, g := range eff[0] {
+		if _, ok := eff[1][k]; ok {
+			b.s.add(g, C11)
+		}
+	}
+	return nil
 }
 
 // holders returns the SIDs that are granted every right in rights across the ACEs.
@@ -797,8 +823,45 @@ func holders(aces []allowACE, rights ...guid.GUID) []sid.SID {
 	return out
 }
 
+// expand resolves the SIDs and returns them plus the transitive members of those that are groups,
+// by objectGUID, without marking anything.
+func (b *builder) expand(sids []sid.SID) (map[string]guid.GUID, error) {
+	saved := b.s
+	tmp := &ADSet{bases: map[string]map[Basis]bool{}}
+	b.s = tmp
+	defer func() { b.s = saved }()
+	if err := b.markPrincipals(sids, C11); err != nil {
+		return nil, err
+	}
+	out := map[string]guid.GUID{}
+	for k := range tmp.bases {
+		g, err := guid.Parse(k)
+		if err != nil {
+			return nil, err
+		}
+		out[k] = g
+	}
+	return out, nil
+}
+
+// ignorableSID reports SIDs that name no directory principal and cannot carry a security principal
+// into the token: SYSTEM, Enterprise Domain Controllers, SELF, Creator Owner, and orphans under
+// this forest's own domain prefixes.
+func (b *builder) ignorableSID(s sid.SID) bool {
+	switch s.String() {
+	case "S-1-5-18", "S-1-5-9", "S-1-5-10", "S-1-3-0":
+		return true
+	}
+	if dom, ok := s.DomainSID(); ok {
+		return dom.String() == b.domSID.String() || dom.String() == b.rootSID.String()
+	}
+	return false
+}
+
 // markPrincipals marks the objects with these SIDs, and the transitive members of those that are
-// groups. A SID with no object (orphaned ACE, well-known SID such as SYSTEM) is skipped.
+// groups. A SID with no object is skipped only when it is ignorable (see ignorableSID); any other
+// (Everyone, Authenticated Users, a foreign SID) may stand for every principal, so the snapshot
+// fails closed naming it.
 func (b *builder) markPrincipals(sids []sid.SID, basis Basis) error {
 	var groups []*ad.Entry
 	for _, s := range sids {
@@ -807,7 +870,10 @@ func (b *builder) markPrincipals(sids []sid.SID, basis Basis) error {
 			return err
 		}
 		if !found {
-			continue
+			if b.ignorableSID(s) {
+				continue
+			}
+			return fmt.Errorf("tier0: grant to unresolvable SID %s may cover every principal", s)
 		}
 		if _, err := b.mark(e, basis); err != nil {
 			return err
@@ -864,11 +930,7 @@ func (b *builder) spnReachesDC(spn string) bool {
 	if !ok || rest == "" {
 		return true
 	}
-	host := rest
-	if i := strings.IndexAny(host, ":/"); i >= 0 {
-		host = host[:i]
-	}
-	host = strings.ToLower(host)
+	host := strings.ToLower(spnHost(rest))
 	return b.dcHosts[host] || b.dcHosts[strings.SplitN(host, ".", 2)[0]]
 }
 
@@ -962,4 +1024,22 @@ func (b *builder) c9() error {
 		}
 	}
 	return nil
+}
+
+// spnHost is the host part of the "host[:port][/name]" remainder of an SPN.
+func spnHost(rest string) string {
+	if i := strings.IndexAny(rest, ":/"); i >= 0 {
+		rest = rest[:i]
+	}
+	return rest
+}
+
+// addHost registers a DC host name (FQDN and short form) for C12 SPN matching.
+func (b *builder) addHost(h string) {
+	h = strings.ToLower(strings.TrimSpace(h))
+	if h == "" {
+		return
+	}
+	b.dcHosts[h] = true
+	b.dcHosts[strings.SplitN(h, ".", 2)[0]] = true
 }

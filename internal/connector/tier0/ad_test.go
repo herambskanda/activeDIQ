@@ -3,7 +3,9 @@ package tier0
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
@@ -118,7 +120,7 @@ func forest() *fakeDir {
 		aceSpec{sid: dsid + "-1202", mask: 0x100, objType: &getChanges},
 		aceSpec{sid: dsid + "-1203", mask: 0x100},                        // all extended rights
 		aceSpec{sid: dsid + "-1105", mask: 0x100, flags: aceInheritOnly}, // does not apply to the root
-		aceSpec{sid: "S-1-5-32-9999", mask: 0x10000000},                  // orphan SID
+		aceSpec{sid: dsid + "-9999", mask: 0x10000000},                   // orphan SID under the domain prefix
 	)
 
 	// C12
@@ -376,5 +378,74 @@ func TestACEReader(t *testing.T) {
 	null[16], null[17], null[18], null[19] = 0, 0, 0, 0
 	if _, err := allowACEs(null); err == nil {
 		t.Error("NULL DACL accepted")
+	}
+}
+
+func classify(t *testing.T, f *fakeDir, target string) (ADResult, error) {
+	t.Helper()
+	return NewAD(f).Classify(context.Background(), ref(t, target), known())
+}
+
+// Security review #1: Get-Changes via group A, Get-Changes-All via group B; the common member can DCSync.
+func TestC11SplitGrant(t *testing.T) {
+	f := forest()
+	f.add("CN=grpA,OU=Staff,"+dom, dsid+"-3001", group, "member", "CN=both,OU=Staff,"+dom, "member", "CN=onlyA,OU=Staff,"+dom)
+	f.add("CN=grpB,OU=Staff,"+dom, dsid+"-3002", group, "member", "CN=both,OU=Staff,"+dom, "member", "CN=onlyB,OU=Staff,"+dom)
+	for i, n := range []string{"both", "onlyA", "onlyB"} {
+		f.add("CN="+n+",OU=Staff,"+dom, fmt.Sprintf("%s-%d", dsid, 3010+i), user)
+	}
+	root := f.find(dom)
+	root.raw["nTSecurityDescriptor"] = sdBytes(
+		aceSpec{sid: dsid + "-3001", mask: 0x100, objType: &getChanges},
+		aceSpec{sid: dsid + "-3002", mask: 0x100, objType: &getChangesAll})
+	if r, err := classify(t, f, "CN=both,OU=Staff,"+dom); err != nil || !r.Tier0 || !has(r, C11) {
+		t.Errorf("both: %+v %v", r, err)
+	}
+	for _, n := range []string{"onlyA", "onlyB"} {
+		if r, err := classify(t, f, "CN="+n+",OU=Staff,"+dom); err != nil || r.Tier0 {
+			t.Errorf("%s: %+v %v", n, r, err)
+		}
+	}
+}
+
+// Security review #2: broad token SIDs with no object must not be skipped.
+func TestUnresolvableBroadSIDFailsClosed(t *testing.T) {
+	f := forest()
+	f.find(dom).raw["nTSecurityDescriptor"] = sdBytes(aceSpec{sid: "S-1-5-11", mask: 0x100}) // Authenticated Users, all extended rights
+	if r, err := classify(t, f, "CN=carol,OU=Staff,"+dom); err == nil || !r.Tier0 || !r.Unknown {
+		t.Errorf("auth users DCSync: %+v %v", r, err)
+	}
+	f = forest()
+	f.find("CN=DC2,OU=Servers," + dom).raw["msDS-AllowedToActOnBehalfOfOtherIdentity"] = sdBytes(aceSpec{sid: "S-1-1-0", mask: 0x10})
+	if r, err := classify(t, f, "CN=ws1,OU=Workstations,"+dom); err == nil || !r.Tier0 || !r.Unknown {
+		t.Errorf("everyone RBCD: %+v %v", r, err)
+	}
+}
+
+// Security review #3: delegation to a DC's alias SPN host or additional DNS host name.
+func TestC12DelegationToDCAlias(t *testing.T) {
+	for _, attr := range []string{"servicePrincipalName", "msDS-AdditionalDnsHostName"} {
+		f := forest()
+		v := "dcalias.lab.test"
+		if attr == "servicePrincipalName" {
+			v = "HOST/dcalias.lab.test"
+		}
+		o := f.find("CN=DC1,OU=Domain Controllers," + dom)
+		o.attrs[strings.ToLower(attr)] = append(o.attrs[strings.ToLower(attr)], v)
+		f.find("CN=app2,OU=Workstations," + dom).attrs["msds-allowedtodelegateto"] = []string{"cifs/dcalias.lab.test"}
+		if r, err := classify(t, f, "CN=app2,OU=Workstations,"+dom); err != nil || !r.Tier0 || !has(r, C12) {
+			t.Errorf("%s: %+v %v", attr, r, err)
+		}
+	}
+}
+
+// Security review #4: a group in the walk without objectSid fails closed.
+func TestMembershipWalkGroupWithoutSIDFailsClosed(t *testing.T) {
+	f := forest()
+	f.add("CN=nosid,OU=Staff,"+dom, "", group)
+	da := f.find("CN=Domain Admins,CN=Users," + dom)
+	da.attrs["member"] = append(da.attrs["member"], "CN=nosid,OU=Staff,"+dom)
+	if r, err := classify(t, f, "CN=carol,OU=Staff,"+dom); err == nil || !r.Tier0 || !r.Unknown {
+		t.Errorf("%+v %v", r, err)
 	}
 }

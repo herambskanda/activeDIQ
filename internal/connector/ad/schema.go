@@ -59,6 +59,8 @@ func DefaultSchema() *ldapfilter.Schema {
 			ldapfilter.AttrInfo{Name: "msDS-AllowedToActOnBehalfOfOtherIdentity", OID: "1.2.840.113556.1.4.2182", Syntax: ldapfilter.SynOctet},
 			ldapfilter.AttrInfo{Name: "serverReference", OID: "1.2.840.113556.1.4.515", Syntax: ldapfilter.SynDN},
 			ldapfilter.AttrInfo{Name: "dNSHostName", OID: "1.2.840.113556.1.4.619", Syntax: s},
+			ldapfilter.AttrInfo{Name: "servicePrincipalName", OID: "1.2.840.113556.1.4.771", Syntax: s},
+			ldapfilter.AttrInfo{Name: "msDS-AdditionalDnsHostName", OID: "1.2.840.113556.1.4.1717", Syntax: s},
 			ldapfilter.AttrInfo{Name: "nTSecurityDescriptor", OID: "1.2.840.113556.1.4.151", Syntax: ldapfilter.SynOctet, Constructed: c},
 			ldapfilter.AttrInfo{Name: "tokenGroups", OID: "1.2.840.113556.1.4.1301", Syntax: ldapfilter.SynSID, Constructed: c},
 			ldapfilter.AttrInfo{Name: "allowedAttributesEffective", OID: "1.2.840.113556.1.4.914", Syntax: s, Constructed: c},
