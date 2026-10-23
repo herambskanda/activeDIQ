@@ -1,0 +1,25 @@
+#!/bin/sh
+# Verify the Entra lab handover (T-0183): the certificate yields an app-only token, the token's Graph
+# roles equal lab/entra/permissions.txt exactly, the app holds no directory role, no client secret.
+set -eu
+. "$(dirname -- "$0")/entra-lab-lib"
+need curl openssl jq
+[ -f "$ENTRA_ENV" ] && [ -f "$ENTRA_PEM" ] || die "run 'make entra-lab-bootstrap' first"
+[ "$(stat -c %a "$ENTRA_ENV" "$ENTRA_PEM" | sort -u)" = 600 ] || die "$ENTRA_ENV and $ENTRA_PEM must be mode 0600"
+T=$(env_get ENTRA_TENANT_ID); A=$(env_get ENTRA_APP_ID)
+tok=$(app_token "$T" "$A" "$ENTRA_PEM"); say "app-only token acquired with the certificate (tenant $T)"
+set_token "$tok"
+have=$(jwt_roles "$tok"); want=$(expected_perms); rc=0
+printf '%s\n' "$have" > "$TMP/have"; printf '%s\n' "$want" > "$TMP/want"
+missing=$(comm -13 "$TMP/have" "$TMP/want"); extra=$(comm -23 "$TMP/have" "$TMP/want")
+[ -z "$missing" ] || { echo "MISSING permissions: $(echo $missing)" >&2; rc=1; }
+[ -z "$extra" ] || { echo "EXTRA permissions: $(echo $extra)" >&2; rc=1; }
+# role check: the app's own service principal must hold no directory role
+sp=$(gf '/servicePrincipals' "appId eq '$A'"); SP=$(printf '%s' "$sp" | jq -r '.value[0].id')
+ra=$(gf '/roleManagement/directory/roleAssignments' "principalId eq '$SP'")
+[ "$(printf '%s' "$ra" | jq '.value|length')" = 0 ] || { echo "the app holds a directory role (must hold none)" >&2; rc=1; }
+app=$(gf '/applications' "appId eq '$A'")
+[ "$(printf '%s' "$app" | jq '.value[0].passwordCredentials|length')" = 0 ] || { echo "the app has a client secret (certificate only)" >&2; rc=1; }
+[ "$rc" = 0 ] || die "verify FAILED"
+say "consented Graph application permissions = expected set ($(printf '%s\n' "$want" | wc -l | tr -d ' ') permissions); no directory role; no client secret"
+say "verify OK"

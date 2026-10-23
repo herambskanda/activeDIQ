@@ -1,0 +1,79 @@
+#!/bin/sh
+# shellcheck shell=sh
+# Shared helpers for entra-lab-bootstrap / entra-lab-verify (T-0183). Plain HTTPS to Graph with curl,
+# openssl and jq; no SDK, no CLI login. Secrets (tokens, key material, assertions) never reach argv,
+# stdout, stderr or a log: curl reads its auth header from a 0600 temp config file.
+GRAPH_BASE=${GRAPH_BASE:-https://graph.microsoft.com/v1.0}
+LOGIN_BASE=${LOGIN_BASE:-https://login.microsoftonline.com}
+ENTRA_RETRY_SLEEP=${ENTRA_RETRY_SLEEP:-5}
+LAB_DIR=${LAB_DIR:-$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)}
+ENTRA_ENV=${ENTRA_ENV:-$LAB_DIR/.entra-lab.env}
+ENTRA_PEM=${ENTRA_PEM:-$LAB_DIR/.entra-lab.pem}
+ENTRA_APP_NAME=activeDIQ-lab
+GRAPH_APPID=00000003-0000-0000-c000-000000000000
+
+umask 077
+set +x
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT INT TERM
+AUTHCFG=$TMP/curl.cfg
+
+say() { printf '>> %s\n' "$*" >&2; }
+die() { printf 'entra-lab: %s\n' "$*" >&2; exit 1; }
+need() { for c in "$@"; do command -v "$c" >/dev/null 2>&1 || die "$c not found on PATH"; done; }
+
+b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+
+# set_token <access token>: future `g` calls send it. The token only ever lives in $AUTHCFG (0600).
+set_token() { printf 'header = "Authorization: Bearer %s"\n' "$1" > "$AUTHCFG"; }
+
+# g METHOD URL-or-PATH [json body]  -> body on stdout; dies on HTTP >= 400 (error code + message only).
+# Retries 404/409 briefly only when GRAPH_RETRY=1 (newly created objects replicate with a delay).
+g() {
+  _m=$1; _u=$2; _b=${3-}; _try=0
+  case $_u in http*) ;; *) _u=$GRAPH_BASE$_u ;; esac
+  while :; do
+    _try=$((_try+1))
+    if [ -n "$_b" ]; then printf '%s' "$_b" > "$TMP/body"; set -- --data-binary @"$TMP/body" -H 'Content-Type: application/json'; else set --; fi
+    _code=$(curl -sS -o "$TMP/resp" -w '%{http_code}' -K "$AUTHCFG" -X "$_m" "$@" "$_u") || die "network error calling $_m ${_u%%\?*}"
+    if [ "$_code" -lt 400 ]; then cat "$TMP/resp"; return 0; fi
+    if [ "${GRAPH_RETRY:-0}" = 1 ] && [ "$_try" -lt 8 ] && { [ "$_code" = 404 ] || [ "$_code" = 400 ]; }; then sleep "$ENTRA_RETRY_SLEEP"; continue; fi
+    die "Graph $_m ${_u%%\?*} -> HTTP $_code $(jq -r '.error.code // "?"' "$TMP/resp" 2>/dev/null): $(jq -r '.error.message // "" ' "$TMP/resp" 2>/dev/null | cut -c1-200)"
+  done
+}
+
+# gf PATH FILTER -> GET with a url-encoded $filter (single page; every filter here matches <= 1 object)
+gf() {
+  _code=$(curl -sS -o "$TMP/resp" -w '%{http_code}' -K "$AUTHCFG" -G --data-urlencode "\$filter=$2" "$GRAPH_BASE$1") || die "network error on $1"
+  [ "$_code" -lt 400 ] || die "Graph GET $1 -> HTTP $_code $(jq -r '.error.code // "?"' "$TMP/resp" 2>/dev/null)"
+  cat "$TMP/resp"
+}
+
+# Token for the lab app, signed with the certificate (RFC 7523 client assertion). Prints the access token.
+app_token() { # tenant appid pem
+  _t=$1; _a=$2; _p=$3
+  openssl x509 -in "$_p" -noout >/dev/null 2>&1 || die "no certificate in $_p"
+  _x5t=$(openssl x509 -in "$_p" -outform DER | openssl dgst -sha1 -binary | b64url)
+  _now=$(date +%s)
+  _h=$(printf '{"alg":"RS256","typ":"JWT","x5t":"%s"}' "$_x5t" | b64url)
+  _c=$(jq -cn --arg aud "$LOGIN_BASE/$_t/oauth2/v2.0/token" --arg a "$_a" --arg j "$(openssl rand -hex 16)" \
+        --argjson n "$_now" '{aud:$aud,iss:$a,sub:$a,jti:$j,nbf:$n,exp:($n+600)}' | b64url)
+  _sig=$(printf '%s.%s' "$_h" "$_c" | openssl dgst -sha256 -sign "$_p" -binary | b64url)
+  printf 'client_assertion=%s.%s.%s\n' "$_h" "$_c" "$_sig" > "$TMP/assert"
+  _code=$(curl -sS -o "$TMP/resp" -w '%{http_code}' -X POST "$LOGIN_BASE/$_t/oauth2/v2.0/token" \
+    --data-urlencode "client_id=$_a" --data-urlencode 'scope=https://graph.microsoft.com/.default' \
+    --data-urlencode 'grant_type=client_credentials' \
+    --data-urlencode 'client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer' \
+    --data @"$TMP/assert") || die "network error acquiring the app token"
+  rm -f "$TMP/assert"
+  [ "$_code" -lt 400 ] || die "app-only token refused: HTTP $_code $(jq -r '.error_description // .error // "?"' "$TMP/resp" | cut -c1-200)"
+  jq -r '.access_token' "$TMP/resp"
+}
+
+jwt_roles() { # token -> roles claim, one per line, sorted
+  printf '%s' "$1" | cut -d. -f2 | tr '_-' '/+' | awk '{while(length($0)%4)$0=$0"=";print}' | openssl base64 -d -A 2>/dev/null | jq -r '.roles[]?' | sort
+}
+
+expected_perms() { grep -v '^[[:space:]]*\(#\|$\)' "$LAB_DIR/entra/permissions.txt" | sort -u; }
+
+env_get() { [ -f "$ENTRA_ENV" ] && sed -n "s/^$1=//p" "$ENTRA_ENV" | head -1; }
