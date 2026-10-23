@@ -854,6 +854,15 @@ func TestFFSP2LinknameUnsafe(t *testing.T) {
 		"b.sh": "go build -ldflags=-checklinkname=false\n", "c.sh": "go build -ldflags=all=-checklinkname=f\n", "d.sh": "go build -ldflags '-s -checklinkname=FALSE'\n", "ci.yml": "run: go build -ldflags \"-checklinkname=False\"\n"} {
 		want(t, "checklinkname=0 in "+name, map[string]string{"scripts/" + name: f}, "FF-SP2", "checklinkname-off", "scripts/"+name)
 	}
+	// T-0221: dotenv/go.env/justfile/GNUmakefile and Go-coded build tools.
+	gf := "GOFLAGS=-ldflags=-checklinkname=0\n"
+	for _, name := range []string{".env", ".envrc", "go.env", "justfile", "Justfile", "GNUmakefile", ".env.local", "ci.env"} {
+		want(t, "checklinkname in "+name, map[string]string{"cfg/" + name: gf}, "FF-SP2", "checklinkname-off", "cfg/"+name)
+	}
+	tool := "package main\n\nimport \"os/exec\"\n\nfunc main() { _ = exec.Command(\"go\", \"build\", \"-ldflags=-checklinkname=0\") }\n"
+	want(t, "checklinkname in a tier L .go tool", map[string]string{"tools/release/main.go": tool}, "FF-SP2", "checklinkname-off", "tools/release/main.go")
+	want(t, "checklinkname in a tier L .go test", map[string]string{"tools/release/main_test.go": strings.Replace(tool, "main()", "TestX()", 1)}, "FF-SP2", "checklinkname-off", "tools/release/main_test.go")
+	want(t, "clean env file passes", map[string]string{"cfg/.env": "FOO=bar\n"}, "", "", "")
 	want(t, "checklinkname=1 also flagged (no reason to set it)", map[string]string{"scripts/Makefile": "go build -ldflags=-checklinkname=1\n"}, "FF-SP2", "checklinkname-off", "scripts/Makefile")
 }
 
