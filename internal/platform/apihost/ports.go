@@ -18,8 +18,12 @@ const (
 // Principal is who a request acts as. apihost passes it to the ports and to the handler's context;
 // it never inspects an identity beyond this.
 type Principal struct {
-	ID   string
-	Kind PrincipalKind
+	ID string
+	// Tenant is the tenant the principal belongs to, as derived by the Authenticator (ADR-0002 rule 5).
+	// The rate limiter keys on it, so the same ID in two tenants has two budgets. Empty only for a
+	// platform principal.
+	Tenant string
+	Kind   PrincipalKind
 }
 
 // ErrUnauthenticated is what an Authenticator returns for a missing or invalid credential. Any

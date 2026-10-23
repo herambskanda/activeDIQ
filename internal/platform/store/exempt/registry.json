@@ -14,6 +14,11 @@
       "table": "public.platform_leases",
       "reason": "Platform leases give exclusive, expiring ownership of singleton work that runs over every tenant (the job rescuer and cleaner, later schedulers), so a lease row has no tenant_id and no RLS (ADR-0002 Jobs row, DM-06). Any tenant transaction can read it, so only its owning package may name it in SQL.",
       "owner": "internal/platform/jobs"
+    },
+    {
+      "table": "public.platform_rate_buckets",
+      "reason": "The rate limiter meters a principal at chain step 10, before any tenant transaction exists, and the budget must hold across every node, so a bucket row has no RLS policy; the tenant is part of its key text (ADR-0002 rule 6, DM-07, TM-TB2-T7). Any tenant transaction can read it, so only its owning package may name it in SQL.",
+      "owner": "internal/platform/limiter"
     }
   ],
   "securityDefiner": [],
@@ -64,6 +69,13 @@
       "package": "internal/platform/jobs",
       "function": "ReleaseLease",
       "reason": "A platform lease guards work over every tenant, so its table is registered global and the statement runs under WithPlatform (ADR-0002 Jobs row, DM-06).",
+      "withPlatform": true,
+      "mintsTenantID": false
+    },
+    {
+      "package": "internal/platform/limiter",
+      "function": "PGStore.Take",
+      "reason": "The limiter meters a principal before any tenant transaction exists, and its shared bucket table is registered global, so the single upsert runs under WithPlatform (ADR-0002 rule 6, DM-07).",
       "withPlatform": true,
       "mintsTenantID": false
     },
