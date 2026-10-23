@@ -125,6 +125,9 @@ func Verify(b Bundle, opts Options) Result {
 	if err != nil {
 		return fail(0, ReasonFormat, "tenant is not a UUID")
 	}
+	if err := checkPinWindows(opts.PinWindows); err != nil {
+		return fail(0, ReasonPinWindow, "%v", err)
+	}
 	keys := map[string]*keyWin{}
 	var prev Hash
 	var first, last uint64
@@ -283,7 +286,7 @@ func Verify(b Bundle, opts Options) Result {
 			}
 			continue
 		}
-		if len(pinned) > 1 && first > 1 && k.created < first && k.chainRet == 0 {
+		if len(pinned) > 1 && first > 1 {
 			return fail(0, ReasonPinWindow, "several keys are pinned and this export starts at seq %d: its manifest alone says whether %s is current. Pin only the current key, or give each pin its window (KEY@created-retired)", first, p)
 		}
 	}
@@ -300,6 +303,7 @@ func Verify(b Bundle, opts Options) Result {
 	}
 
 	pinnedSigned := false
+	signedBy := map[string]bool{}
 	var lastCP uint64
 	for i, c := range cps {
 		if c.Tenant != tenant {
@@ -329,6 +333,7 @@ func Verify(b Bundle, opts Options) Result {
 			return fail(c.Seq, ReasonUntrustedKey, "key %s is neither pinned, anchored nor cross-signed by a trusted key", c.KeyID)
 		}
 		if inRange && (!rooted || trusted[c.KeyID]) {
+			signedBy[c.KeyID] = true
 			if pinned[c.KeyID] {
 				pinnedSigned = true
 			}
@@ -340,6 +345,15 @@ func Verify(b Bundle, opts Options) Result {
 	}
 	if len(pinned) > 0 && !pinnedSigned {
 		return fail(0, ReasonPinnedKeyAbsent, "no verified checkpoint is signed by a pinned key")
+	}
+	// A pinned key that is still current must itself have signed once the export reaches its
+	// introduction: a retired pinned key (whose seed may have leaked) cannot carry the export alone.
+	if len(pinned) > 1 {
+		for _, p := range sortedKeys(pinned) {
+			if k := keys[p]; k.retired == 0 && k.created <= last && !signedBy[p] {
+				return fail(last, ReasonPinnedKeyAbsent, "pinned current key %s has signed no verified checkpoint in this export, so a retired pinned key cannot be told from a fork", p)
+			}
+		}
 	}
 	if last > lastCP {
 		res.TailUnsigned = last - lastCP
@@ -409,6 +423,32 @@ func applyKeyEvent(env Envelope, keys map[string]*keyWin, fromChain map[string]b
 			return &r
 		}
 		k.retired, k.chainRet = env.Seq, env.Seq
+	}
+	return nil
+}
+
+// checkPinWindows refuses windows that contradict each other: only one key can be current, and a key
+// cannot be valid in two places at once.
+func checkPinWindows(ws map[string]PinWindow) error {
+	ids := make([]string, 0, len(ws))
+	for id := range ws {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for i, a := range ids {
+		for _, b := range ids[i+1:] {
+			wa, wb := ws[a], ws[b]
+			endA, endB := wa.RetiredSeq, wb.RetiredSeq
+			if endA == 0 {
+				endA = ^uint64(0)
+			}
+			if endB == 0 {
+				endB = ^uint64(0)
+			}
+			if wa.CreatedSeq < endB && wb.CreatedSeq < endA {
+				return fmt.Errorf("pin windows of %s and %s overlap: only one key can be current at a time", a, b)
+			}
+		}
 	}
 	return nil
 }

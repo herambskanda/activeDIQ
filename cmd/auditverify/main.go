@@ -51,7 +51,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs.Var(&pins, "pin", "checkpoint key fingerprint recorded out of band, optionally FINGERPRINT@created-retired (key window as sequence numbers; "+
 		"@12- for a current key). After every rotation pin the CURRENT key and REMOVE the pins of retired keys: with a retired key still pinned, "+
 		"a leaked old seed can sign a forked or truncated export that the bundle's own manifest describes as current. "+
-		"To keep an old pin, give it its window; a truncated export with several unwindowed pins is refused")
+		"An old pin may be kept only with its window (windows must not overlap, at most one open); a truncated export with several pins needs every pin windowed, "+
+		"and with several pins the current key must have signed a checkpoint in the export")
 	if err := fs.Parse(args); err != nil {
 		return 64
 	}

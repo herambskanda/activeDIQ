@@ -588,3 +588,55 @@ func TestParsePin(t *testing.T) {
 		}
 	}
 }
+
+// T-0243 security re-review probes A-C: the attacker holds K1's seed.
+func TestRetiredPinCannotCarryForgedRotationExport(t *testing.T) {
+	g := seeded(t)
+	pub2, priv2 := key(t)
+	g.rotate(t, g.priv, pub2, true) // 11, 12
+	g.add("x")
+	g.checkpoint(priv2, pub2)
+	k1, k2 := Fingerprint(g.pub), Fingerprint(pub2)
+
+	// A: the rotation sits inside the forged range; no windows. Unwindowed multi-pin truncated is refused.
+	a := newBuilder(t, 1)
+	a.events, a.seq, a.prev = nil, 13, Hash{1}
+	a.checkpoint(g.priv, g.pub)
+	a.rotate(t, g.priv, pub2, true) // 14, 15
+	a.add("forged")
+	ab := a.bundle()
+	ab.FromSeq = 14
+	ab.Keys = []KeyInfo{{KeyID: k1, PublicKey: g.pub, CreatedSeq: 1, RetiredSeq: 14}}
+	want(t, Verify(ab, Options{Pinned: []string{k1, k2}}), Failed, 0, ReasonPinWindow)
+	// With windows the forged retirement (14, not 11) is refuted.
+	win := Options{Pinned: []string{k1, k2}, PinWindows: map[string]PinWindow{k1: {1, 11}, k2: {12, 0}}}
+	want(t, Verify(ab, win), Failed, 0, ReasonPinWindow)
+
+	// B: fork from K1's last checkpoint at the true rotation point, honest-looking windows, no K2 checkpoint.
+	b := newBuilder(t, 1)
+	b.events, b.seq, b.prev = nil, 10, Hash{2}
+	b.checkpoint(g.priv, g.pub)
+	b.rotate(t, g.priv, pub2, true) // 11, 12
+	b.add("forged")
+	bb := b.bundle()
+	bb.FromSeq = 11
+	bb.Keys = []KeyInfo{{KeyID: k1, PublicKey: g.pub, CreatedSeq: 1, RetiredSeq: 11}}
+	want(t, Verify(bb, win), Failed, bb.ToSeq, ReasonPinnedKeyAbsent)
+
+	// The genuine full chain with windowed pins stays OK.
+	if r := Verify(g.bundle(), win); r.Status != OK {
+		t.Fatalf("genuine full, windowed pins: %s %s", r.Reason, r.Detail)
+	}
+}
+
+func TestContradictoryPinWindowsAreRejected(t *testing.T) {
+	g := seeded(t)
+	k1 := Fingerprint(g.pub)
+	for name, ws := range map[string]map[string]PinWindow{
+		"two open":    {k1: {1, 0}, "bb": {12, 0}},
+		"overlapping": {k1: {1, 12}, "bb": {10, 0}},
+	} {
+		want(t, Verify(g.bundle(), Options{Pinned: []string{k1, "bb"}, PinWindows: ws}), Failed, 0, ReasonPinWindow)
+		_ = name
+	}
+}
