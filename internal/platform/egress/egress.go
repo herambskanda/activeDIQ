@@ -13,11 +13,17 @@
 //     contains a metadata address cannot be allow-listed.
 //   - Redirects are followed at most five times; every hop is held to the scheme rule and to the
 //     same dial vetting, an https to http downgrade is refused, and a hop to another origin drops
-//     every request header except Accept, Accept-Language and User-Agent.
+//     every request header except Accept, Accept-Language and User-Agent (judged against the
+//     ORIGINAL origin on every hop); a cross-origin 307/308 carrying a body is refused.
 //   - TLS is verified against the system roots (or Config.RootCAs for an operator CA), TLS 1.2 or
 //     later. There is no field, option or environment variable that skips verification.
+//   - Errors carry scheme://host[:port] only, never the path or query (they may hold a token).
 //   - No proxy is used (a proxy would dial on our behalf outside the vetting) and no integrated
 //     Windows authentication is attempted (TM-TB9-T2).
+//
+// Residual risk: FF-SP2 cannot see HTTP clients created inside third-party SDKs. An SDK that makes
+// its own requests must be driven through a Client (no SDK may build its own transport), or it
+// bypasses every control above.
 package egress
 
 import (
@@ -141,7 +147,24 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 	if err := checkURL(req.URL, c.allowHTTP); err != nil {
 		return nil, err
 	}
-	return c.hc.Do(req)
+	resp, err := c.hc.Do(req)
+	return resp, redactURL(err)
+}
+
+// redactURL reduces the URL inside a *url.Error to scheme://host[:port]: webhook and SMS URLs
+// carry tokens in the path or query, and these errors get logged. errors.Is/As keep working.
+func redactURL(err error) error {
+	var ue *url.Error
+	if !errors.As(err, &ue) {
+		return err
+	}
+	red := ue.URL
+	if u, perr := url.Parse(ue.URL); perr == nil {
+		red = u.Scheme + "://" + u.Host
+	} else {
+		red = "(unparseable url)"
+	}
+	return &url.Error{Op: ue.Op, URL: red, Err: ue.Err}
 }
 
 // CloseIdleConnections closes pooled connections, for example after an integration is edited.
@@ -179,7 +202,13 @@ func redirectPolicy(allowHTTP bool) func(*http.Request, []*http.Request) error {
 		if prev.URL.Scheme == "https" && req.URL.Scheme != "https" {
 			return fmt.Errorf("%w: https to %s downgrade", ErrRedirectDenied, req.URL.Scheme)
 		}
-		if origin(prev.URL) != origin(req.URL) {
+		// Compare with the ORIGINAL origin, not the previous hop: net/http re-copies the original
+		// request's headers on every hop, so a hop-to-hop comparison would hand them back.
+		if origin(via[0].URL) != origin(req.URL) {
+			if (req.Response != nil && (req.Response.StatusCode == http.StatusTemporaryRedirect || req.Response.StatusCode == http.StatusPermanentRedirect)) &&
+				req.Body != nil && req.Body != http.NoBody {
+				return fmt.Errorf("%w: cross-origin %d would re-send the request body", ErrRedirectDenied, req.Response.StatusCode)
+			}
 			for k := range req.Header {
 				switch http.CanonicalHeaderKey(k) {
 				case "Accept", "Accept-Language", "User-Agent":

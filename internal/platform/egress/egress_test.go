@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/x509"
 	"errors"
+	"strings"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -63,7 +64,7 @@ func TestBlockedRangesRefusedAfterResolutionAndNeverDialled(t *testing.T) {
 	for _, ip := range []string{
 		"127.0.0.1", "::1", "169.254.169.254", "169.254.1.1", "fe80::1", "10.1.2.3", "172.16.0.9", "192.168.1.1",
 		"100.64.0.1", "100.100.100.200", "0.0.0.0", "224.0.0.1", "fd00:ec2::254", "fc00::1", "::ffff:127.0.0.1",
-		"::ffff:169.254.169.254", "64:ff9b::7f00:1", "2002:7f00:1::1", "192.0.0.192", "240.0.0.1",
+		"::ffff:169.254.169.254", "64:ff9b::7f00:1", "2002:7f00:1::1", "192.0.0.192", "240.0.0.1", "168.63.129.16", "64:ff9b:1::7f00:1",
 	} {
 		rec := &recorder{}
 		c, err := New(Config{Resolver: &fakeResolver{answers: [][]netip.Addr{addrs(ip)}}, dial: rec.dial})
@@ -274,5 +275,56 @@ func TestNoProxyAndTLSFloor(t *testing.T) {
 	}
 	if tr.TLSClientConfig.InsecureSkipVerify || tr.TLSClientConfig.MinVersion < 0x0303 {
 		t.Error("TLS config weakened")
+	}
+}
+
+func TestTwoHopRedirectNeverReturnsCredentialHeaders(t *testing.T) {
+	var srv *httptest.Server
+	srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/hop1":
+			http.Redirect(w, r, "https://www.example.com:"+portOf(srv)+"/hop2", http.StatusFound)
+		case "/hop2":
+			http.Redirect(w, r, "https://www.example.com:"+portOf(srv)+"/echo", http.StatusFound)
+		case "/echo":
+			w.Header().Set("X-Seen", r.Header.Get("X-Api-Key")+"|"+r.Header.Get("Authorization"))
+		}
+	}))
+	defer srv.Close()
+	c, _ := New(loopback(t, srv))
+	req, _ := http.NewRequest(http.MethodGet, hostPort(srv, "example.com")+"/hop1", nil)
+	req.Header.Set("X-Api-Key", "secret")
+	req.Header.Set("Authorization", "Bearer t")
+	resp, err := c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if got := resp.Header.Get("X-Seen"); got != "|" {
+		t.Fatalf("credentials reached the second hop on the foreign origin: %q", got)
+	}
+}
+
+func TestCrossOriginTemporaryRedirectWithBodyRefused(t *testing.T) {
+	var srv *httptest.Server
+	srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://www.example.com:"+portOf(srv)+"/x", http.StatusTemporaryRedirect)
+	}))
+	defer srv.Close()
+	c, _ := New(loopback(t, srv))
+	req, _ := http.NewRequest(http.MethodPost, hostPort(srv, "example.com")+"/", strings.NewReader("payload"))
+	if _, err := c.Do(req); !errors.Is(err, ErrRedirectDenied) {
+		t.Fatalf("err = %v, want ErrRedirectDenied", err)
+	}
+}
+
+func TestErrorsDoNotCarryPathOrQuery(t *testing.T) {
+	c, _ := New(Config{Resolver: &fakeResolver{answers: [][]netip.Addr{addrs("10.0.0.1")}}, dial: (&recorder{}).dial})
+	_, err := get(t, c, "https://integration.example/hook/PATHSECRET?token=SECRETQUERY")
+	if !errors.Is(err, ErrDestinationDenied) {
+		t.Fatalf("err = %v", err)
+	}
+	if s := err.Error(); strings.Contains(s, "PATHSECRET") || strings.Contains(s, "SECRETQUERY") {
+		t.Fatalf("error leaks the URL path/query: %s", s)
 	}
 }

@@ -23,6 +23,7 @@ var blocked = mustPrefixes(
 	"::1/128",         // loopback
 	"::/96",           // deprecated IPv4-compatible
 	"64:ff9b::/96",    // NAT64: embeds an IPv4 destination
+	"64:ff9b:1::/48",  // RFC 8215 local-use NAT64: embeds an IPv4 destination
 	"100::/64",        // discard-only
 	"2001::/32",       // Teredo
 	"2001:db8::/32",   // documentation
@@ -39,6 +40,7 @@ var metadata = []netip.Addr{
 	netip.MustParseAddr("100.100.100.200"),
 	netip.MustParseAddr("192.0.0.192"),
 	netip.MustParseAddr("fd00:ec2::254"),
+	netip.MustParseAddr("168.63.129.16"), // Azure WireServer: public range, platform-only, known SSRF target
 }
 
 func mustPrefixes(s ...string) []netip.Prefix {
