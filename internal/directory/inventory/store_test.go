@@ -279,9 +279,13 @@ func TestCorrelationsForRefusesWrongConnections(t *testing.T) {
 			name   string
 			ad, en inventory.Ref
 		}{
-			{"other tenant's AD connection", ref(e.adB, adG1), ref(e.enA, enG1)},
 			{"AD side is an Entra connection (swapped)", ref(e.enA, enG2), ref(e.adA, adG2)},
 			{"Entra side is an AD forest", ref(e.adA, adG3), ref(ad2, enG3)},
+		}
+		// Another tenant's connection is refused by the schema now (composite foreign key, T-0173).
+		if err := e.exec(e.a, `INSERT INTO public.correlations (tenant_id, ad_connection_id, ad_object_guid, entra_connection_id, entra_object_guid, match, ad_sid)
+			VALUES ($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,'sid',$6)`, e.a.String(), string(e.adB), adG1, string(e.enA), enG1, sid); err == nil {
+			t.Error("another tenant's connection accepted")
 		}
 		for _, c := range cases {
 			e.seed(t, e.a, c.ad, c.en, "broken", "", "match, ad_sid, ad_tier0, ad_tier0_bases, facts_as_of",
