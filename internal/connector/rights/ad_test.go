@@ -686,6 +686,12 @@ func TestBroadPrincipalExposure(t *testing.T) {
 		{"domain users ROSS-sync CA", tace{mask: dsControlAccess, objType: &rosync, trustee: dusSID}, 1},
 		{"auth users reanimate CA", tace{mask: dsControlAccess, objType: &reanimate, trustee: "S-1-5-11"}, 1},
 		{"domain users validated SPN", tace{mask: dsSelf, objType: &vspn, trustee: dusSID}, 1},
+		{"network write dac", tace{mask: maskWriteDAC, trustee: "S-1-5-2"}, 1},
+		{"this organization write dac", tace{mask: maskWriteDAC, trustee: "S-1-5-15"}, 1},
+		{"ntlm auth write dac", tace{mask: maskWriteDAC, trustee: "S-1-5-64-10"}, 1},
+		{"auth authority asserted write dac", tace{mask: maskWriteDAC, trustee: "S-1-18-1"}, 1},
+		{"network get-changes-all", tace{mask: dsControlAccess, objType: &getAll, trustee: "S-1-5-2"}, 1},
+		{"this organization get-changes-all", tace{mask: dsControlAccess, objType: &getAll, trustee: "S-1-5-15"}, 1},
 		{"default: everyone change password", tace{mask: dsControlAccess, objType: &changePw, trustee: "S-1-1-0"}, 0},
 		{"default: auth users plain read", tace{mask: dsReadProp, objType: &w.attrMem, trustee: "S-1-5-11"}, 0},
 		{"default: auth users read all", tace{mask: 0x20094, trustee: "S-1-5-11"}, 0},
@@ -783,6 +789,20 @@ func TestForeignPrivilegedTokenSID(t *testing.T) {
 		r := w.run(t, ADInput{})
 		if got := count(r, CodeUnverifiedAD); got != want {
 			t.Fatalf("%s: unverified x%d, want %d: %v", sidText, got, want, codes(r))
+		}
+	}
+}
+
+// Every SID universalSID drops from the own pass must be evaluated by the broad pass (except SELF).
+func TestUniversalSIDsAreBroad(t *testing.T) {
+	c := &adCheck{}
+	for _, s := range []string{"S-1-1-0", "S-1-5-11", "S-1-5-2", "S-1-5-4", "S-1-5-14", "S-1-5-15", "S-1-5-5-0-12345", "S-1-5-64-10", "S-1-5-64-14", "S-1-18-1", "S-1-18-2", "S-1-2-1"} {
+		id, err := sid.Parse(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if universalSID(id) && !c.broadPrincipal(id) {
+			t.Errorf("%s is dropped by the own pass and ignored by the broad pass", s)
 		}
 	}
 }

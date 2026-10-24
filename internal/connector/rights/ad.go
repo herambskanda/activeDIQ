@@ -774,7 +774,7 @@ func (c *adCheck) step3(m *member, e *ad.Entry) {
 		}
 		own[k] = true
 	}
-	if d.hasOwner && c.own[d.owner.String()] && !c.isBroadSID(d.owner) {
+	if d.hasOwner && c.own[d.owner.String()] && !c.broadPrincipal(d.owner) {
 		own[sidOwnerRights] = true
 	}
 	for _, g := range d.grants(own, false) {
@@ -959,13 +959,13 @@ func (c *adCheck) foreignPrivileged(s sid.SID) bool {
 	return !(ok && c.hasDom && d == c.domSID)
 }
 
-var sidOwnerRights = "S-1-3-4"
+const sidOwnerRights = "S-1-3-4"
 
 // ownerRight raises WRITE_DAC from the parsed owner when the owner is in the identity's own token:
 // an owner holds WRITE_DAC implicitly unless the DACL carries an OWNER RIGHTS ACE, which replaces
 // the implicit grant with its own mask. It does not rely on sDRightsEffective.
 func (c *adCheck) ownerRight(m *member, d *descriptor, basis []v1.Tier0Basis) {
-	if !d.hasOwner || !c.own[d.owner.String()] || c.isBroadSID(d.owner) {
+	if !d.hasOwner || !c.own[d.owner.String()] || c.broadPrincipal(d.owner) {
 		return
 	}
 	var or []ace
@@ -987,7 +987,15 @@ func (c *adCheck) ownerRight(m *member, d *descriptor, basis []v1.Tier0Basis) {
 // domain's Domain Users / Domain Computers (TM-D18's list). Self (S-1-5-10) is the object itself.
 func (c *adCheck) broadPrincipal(s sid.SID) bool {
 	switch t := s.String(); t {
-	case "S-1-1-0", "S-1-5-7", "S-1-5-11", "S-1-5-32-545":
+	case "S-1-5-7", "S-1-5-32-545":
+		return true
+	case "S-1-5-10":
+		return false
+	}
+	// Every SID in an authenticated network-logon token (Everyone, Authenticated Users, NETWORK,
+	// This Organization, NTLM/SChannel authentication, asserted identity, logon session...) is
+	// dropped from the own pass by universalSID, so this pass must evaluate it.
+	if universalSID(s) {
 		return true
 	}
 	if d, ok := s.DomainSID(); ok && c.hasDom && d == c.domSID {
@@ -997,8 +1005,6 @@ func (c *adCheck) broadPrincipal(s sid.SID) bool {
 	}
 	return false
 }
-
-func (c *adCheck) isBroadSID(s sid.SID) bool { return c.broadPrincipal(s) }
 
 // broad reports dangerous rights an ACE grants to a broad principal on a tier0 object. Any
 // authenticated principal, and so a stolen connector credential, can use them. Default ACEs
