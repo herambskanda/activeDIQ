@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"sync"
 	"sync/atomic"
 
@@ -238,7 +239,8 @@ func (m *Minter) Mint(sp Spec) (Step, func(), error) {
 	if sp.Key.Operation == "" {
 		return Step{}, nil, errors.New("step: a step needs an operation")
 	}
-	st := &state{key: sp.Key, attempt: sp.Attempt, actor: sp.Actor, pins: sp.Pins, nc: sp.NC, tx: sp.Tx,
+	// The pin is copied: a caller-held map (e.g. a DC-locator cache) must not re-point a minted Step.
+	st := &state{key: sp.Key, attempt: sp.Attempt, actor: sp.Actor, pins: maps.Clone(sp.Pins), nc: sp.NC, tx: sp.Tx,
 		query: sp.Query, digest: sp.Digest, recheck: sp.Recheck}
 	return Step{s: st}, func() { st.revoked.Store(true) }, nil
 }

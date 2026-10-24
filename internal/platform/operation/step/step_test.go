@@ -164,3 +164,15 @@ func TestDigest(t *testing.T) {
 		t.Fatal("secret presence not in the digest")
 	}
 }
+
+func TestMintCopiesPins(t *testing.T) {
+	pins := authority.Pins{"nc1": "dc1.example"}
+	s, _, err := testMinter().Mint(Spec{Key: Key{Operation: "o"}, Actor: chain(), Recheck: ok, Pins: pins, NC: "nc1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pins["nc1"] = "rogue.example"
+	if h, _ := s.DC("nc1"); h != "dc1.example" {
+		t.Errorf("DC = %q after caller mutated its map", h)
+	}
+}

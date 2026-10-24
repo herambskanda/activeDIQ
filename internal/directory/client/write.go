@@ -29,8 +29,8 @@ var (
 // exactly the write whose digest it carries; Write recomputes the digest from DigestKind, Target and
 // Attrs and refuses a mismatch. Everything that goes on the wire is derived from these fields: the
 // connection from Target.Connection, the object from Target.GUID (the planned parent for a create),
-// the naming context from the Step (Target.NC, digest-covered), the WriteKind from DigestKind through kindTable. No wire field is
-// caller-supplied, so none can differ from what the digest covers. WriteChange has no arm until a
+// the naming context from the Step (Target.NC, digest-covered), the
+// WriteKind from DigestKind through kindTable. No wire field is caller-supplied, so none can differ from what the digest covers. WriteChange has no arm until a
 // kind ticket adds one with a constructor deriving it from Attrs; until then Change is never sent.
 type WriteOp struct {
 	// DigestKind names the operation in the plan digest ("user.setAttribute").

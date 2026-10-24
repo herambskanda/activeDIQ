@@ -429,3 +429,22 @@ func (f factsFunc) Facts(_ context.Context, p authority.Pins, _ authority.FactsQ
 	f(p)
 	return authority.Facts{Exists: true}, nil
 }
+
+func TestPinsMutatedAfterMintDoNotRepointStep(t *testing.T) {
+	tr := &transport{}
+	var got authority.Pins
+	c := New(WithTransport(tr), WithFacts(factsFunc(func(p authority.Pins) { got = p })), WithTier0Builder(&builder{}))
+	pins := authority.Pins{ncGUID: "dc1.corp.example"}
+	withStepOf(t, testTarget, pins, func(ctx context.Context, s step.Step) {
+		pins[ncGUID] = "rogue.attacker.example"
+		if h, _ := s.DC(ncGUID); h != "dc1.corp.example" {
+			t.Errorf("step DC re-pointed to %q", h)
+		}
+		if _, err := c.Write(ctx, s, goodOp()); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if got[ncGUID] != "dc1.corp.example" {
+		t.Errorf("facts read on pins %v", got)
+	}
+}
