@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"sync"
 	"sync/atomic"
 
@@ -47,6 +48,7 @@ type state struct {
 	attempt int
 	actor   authority.Chain
 	pins    authority.Pins
+	nc      authority.NamingContextID
 	tx      store.Tx
 	query   authority.FactsQuery
 	digest  Digest
@@ -103,6 +105,16 @@ func (s Step) DC(nc authority.NamingContextID) (string, bool) {
 	}
 	h, ok := s.s.pins[nc]
 	return h, ok
+}
+
+// NC returns the naming context the runner bound into this Step (the planned target's NC, covered by
+// the digest), empty for a step with none. A write API derives AD-ness and the pin key from it, never
+// from the operation it is handed.
+func (s Step) NC() authority.NamingContextID {
+	if s.Valid() != nil {
+		return ""
+	}
+	return s.s.nc
 }
 
 // Tx returns the recording transaction of a Store Action. It is nil for a zero or revoked Step and
@@ -169,6 +181,8 @@ type Spec struct {
 	Attempt int
 	Actor   authority.Chain
 	Pins    authority.Pins
+	// NC is the target naming context; it must equal the NC in the digested TargetRef.
+	NC      authority.NamingContextID
 	Tx      store.Tx
 	Query   authority.FactsQuery
 	Digest  Digest
@@ -225,7 +239,8 @@ func (m *Minter) Mint(sp Spec) (Step, func(), error) {
 	if sp.Key.Operation == "" {
 		return Step{}, nil, errors.New("step: a step needs an operation")
 	}
-	st := &state{key: sp.Key, attempt: sp.Attempt, actor: sp.Actor, pins: sp.Pins, tx: sp.Tx,
+	// The pin is copied: a caller-held map (e.g. a DC-locator cache) must not re-point a minted Step.
+	st := &state{key: sp.Key, attempt: sp.Attempt, actor: sp.Actor, pins: maps.Clone(sp.Pins), nc: sp.NC, tx: sp.Tx,
 		query: sp.Query, digest: sp.Digest, recheck: sp.Recheck}
 	return Step{s: st}, func() { st.revoked.Store(true) }, nil
 }
