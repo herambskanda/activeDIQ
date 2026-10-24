@@ -611,3 +611,63 @@ func TestPinnedReaderRefusesUnpinnedADTargetBeforeThePort(t *testing.T) {
 		t.Fatalf("pinned target: err=%v reads=%d", err, len(got))
 	}
 }
+
+// dirStub is a directory-target Action that records whether Plan was ever reached.
+type dirStub struct {
+	target  TargetKind
+	planned *int
+}
+
+func (d dirStub) Describe() Descriptor {
+	return Descriptor{ID: "dir.thing.set", Version: 1, Permission: "dir.thing.set", Input: "#/components/schemas/Thing",
+		Target: d.target, Reversibility: Reversible, AuditKind: "dir.thing.changed"}
+}
+func (d dirStub) Plan(context.Context, PlanContext, Input) ([]StepPlan, error) {
+	*d.planned++
+	return nil, nil
+}
+func (dirStub) Apply(context.Context, step.Step, StepPlan) (Outcome, error) { return Outcome{}, nil }
+func (dirStub) Verify(context.Context, step.Step, StepPlan, Outcome) (Verdict, error) {
+	return Verdict{}, nil
+}
+func (dirStub) Inverse(StepPlan, Outcome) (Input, error) { return nil, ErrIrreversible }
+func (dirStub) Observe(context.Context, authority.Pins, StepPlan, time.Time) (Observation, error) {
+	return "", nil
+}
+
+func TestDirectoryActionWithNoFactsPortIsRefusedBeforePlan(t *testing.T) {
+	for _, target := range []TargetKind{TargetAD, TargetEntra} {
+		planned := 0
+		reg, err := NewRegistry(dirStub{target: target, planned: &planned})
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, err := NewRunner(Config{DB: &fakeDB{}, Audit: sink{}, Authz: &authzFake{}, Registry: reg})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rq := req()
+		rq.Action = "dir.thing.set"
+		if _, err := r.SubmitDirectory(context.Background(), rq); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: err = %v, want ErrInvalid", target, err)
+		}
+		if planned != 0 {
+			t.Errorf("%s: Plan ran %d times, want 0", target, planned)
+		}
+	}
+}
+
+func TestPinnedReaderNilPortFailsClosedForDirectoryTargetsOnly(t *testing.T) {
+	q := authority.FactsQuery{Target: authority.TargetRef{GUID: "g", NC: "nc-1"}}
+	for _, pr := range []pinnedReader{
+		{ad: true, pins: authority.Pins{"nc-1": "dc1"}},
+		{pins: authority.Pins{"nc-1": "dc1"}}, // Entra
+	} {
+		if f, err := pr.Facts(context.Background(), q); !errors.Is(err, ErrInvalid) || f.Tier0 || f.Exists {
+			t.Errorf("directory reader: facts=%+v err=%v, want ErrInvalid", f, err)
+		}
+	}
+	if _, err := (pinnedReader{store: true}).Facts(context.Background(), q); err != nil {
+		t.Errorf("store reader with nil port: %v, want unchanged (no error)", err)
+	}
+}
