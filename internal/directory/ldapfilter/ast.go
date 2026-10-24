@@ -78,6 +78,13 @@ func (p *astParser) node(m *connectorv1.Filter, depth int) (Filter, error) {
 		if err != nil {
 			return nil, err
 		}
+		total := len(s.GetInitial()) + len(s.GetFinal())
+		for _, x := range s.GetAny() {
+			total += len(x)
+		}
+		if total > p.lim.MaxValueBytes { // same total-across-segments rule as the text parser
+			return nil, fail(ValueTooLong)
+		}
 		return Substring(a, s.GetInitial(), s.GetAny(), s.GetFinal()), nil
 	case *connectorv1.Filter_BitAnd:
 		a, _, err := p.attr(n.BitAnd.GetAttribute())
@@ -143,8 +150,14 @@ func (p *astParser) value(m *connectorv1.FilterValue) (Value, error) {
 	var v Value
 	switch x := m.GetValue().(type) {
 	case *connectorv1.FilterValue_Text:
+		if len(x.Text) > p.lim.MaxValueBytes {
+			return Value{}, fail(ValueTooLong)
+		}
 		v = String(x.Text)
 	case *connectorv1.FilterValue_Octets:
+		if len(x.Octets) > p.lim.MaxValueBytes {
+			return Value{}, fail(ValueTooLong)
+		}
 		v = Bytes(x.Octets)
 	case *connectorv1.FilterValue_Guid:
 		g, err := guid.FromBytes(x.Guid.GetValue())

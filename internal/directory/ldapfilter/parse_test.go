@@ -271,3 +271,27 @@ func TestParseFilterASTJSON(t *testing.T) {
 		t.Errorf("oversize JSON: %v", err)
 	}
 }
+
+func TestParseFilterASTNarrowedMaxValueBytes(t *testing.T) {
+	long := strings.Repeat("a", 100)
+	sub := func(s *connectorv1.Substring) *connectorv1.Filter {
+		s.Attribute = "cn"
+		return &connectorv1.Filter{Node: &connectorv1.Filter_Substring{Substring: s}}
+	}
+	cases := map[string]*connectorv1.Filter{
+		"text":    eqText("cn", long),
+		"initial": sub(&connectorv1.Substring{Initial: &long}),
+		"any":     sub(&connectorv1.Substring{Any: []string{long}}),
+		"final":   sub(&connectorv1.Substring{Final: &long}),
+		"octets": {Node: &connectorv1.Filter_Equal{Equal: &connectorv1.Comparison{Attribute: "cn",
+			Value: &connectorv1.FilterValue{Value: &connectorv1.FilterValue_Octets{Octets: []byte(long)}}}}},
+	}
+	for name, in := range cases {
+		if _, err := ParseFilterAST(in, testSchema, nil, Limits{MaxValueBytes: 10}); Code(err) != ValueTooLong {
+			t.Errorf("%s: got %v", name, err)
+		}
+		if _, err := ParseFilterAST(in, testSchema, nil, Limits{}); Code(err) == ValueTooLong {
+			t.Errorf("%s: default limits must accept 100 bytes", name)
+		}
+	}
+}
