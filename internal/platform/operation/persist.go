@@ -190,3 +190,55 @@ func detail(kv ...any) []chain.Detail {
 	}
 	return out
 }
+
+// claimStep is the planned -> applying edge: attempt + 1 and a lease on the database clock (rule 6).
+// It returns the new attempt and the claim time.
+func claimStep(ctx context.Context, tx store.Tx, t tenant.ID, k step.Key, lease time.Duration) (int, time.Time, error) {
+	if err := Transition(KindStep, string(StepPlanned), string(StepApplying)); err != nil {
+		return 0, time.Time{}, err
+	}
+	var attempt int
+	var at time.Time
+	err := tx.QueryRow(ctx, `UPDATE public.operation_steps SET state = 'applying', attempt = attempt + 1, claimed_at = now(),
+  claimed_until = now() + $5 * interval '1 millisecond', updated_at = now()
+WHERE tenant_id = $1::uuid AND operation_id = $2::uuid AND item_no = $3 AND step_no = $4 AND state = 'planned'
+RETURNING attempt, claimed_at`, t.String(), string(k.Operation), k.Item, k.Step, lease.Milliseconds()).Scan(&attempt, &at)
+	if err != nil {
+		if store.IsNoRows(err) {
+			return 0, time.Time{}, ErrConflict
+		}
+		return 0, time.Time{}, fmt.Errorf("operation: claiming step: %w", err)
+	}
+	return attempt, at, nil
+}
+
+// takeoverStep gives a step that stays `applying` a new attempt: a retry after a transient error, or a
+// takeover of a lapsed claim by the reconciler. It is a compare-and-set on the previous attempt, so
+// only one taker wins and the superseded attempt's late result changes nothing. lapsedOnly demands the
+// previous lease to have run out on the database clock. claimed_at keeps the first claim's time.
+func takeoverStep(ctx context.Context, tx store.Tx, t tenant.ID, k step.Key, prev int, lease time.Duration, lapsedOnly bool) (int, error) {
+	var attempt int
+	err := tx.QueryRow(ctx, `UPDATE public.operation_steps SET attempt = attempt + 1,
+  claimed_until = now() + $6 * interval '1 millisecond', updated_at = now()
+WHERE tenant_id = $1::uuid AND operation_id = $2::uuid AND item_no = $3 AND step_no = $4
+  AND state = 'applying' AND attempt = $5 AND (NOT $7 OR claimed_until < now())
+RETURNING attempt`, t.String(), string(k.Operation), k.Item, k.Step, prev, lease.Milliseconds(), lapsedOnly).Scan(&attempt)
+	if err != nil {
+		if store.IsNoRows(err) {
+			return 0, ErrConflict
+		}
+		return 0, fmt.Errorf("operation: taking over step: %w", err)
+	}
+	return attempt, nil
+}
+
+// renewStep extends the lease of the attempt that still owns the step; false means it was superseded.
+func renewStep(ctx context.Context, tx store.Tx, t tenant.ID, k step.Key, attempt int, lease time.Duration) (bool, error) {
+	tag, err := tx.Exec(ctx, `UPDATE public.operation_steps SET claimed_until = now() + $6 * interval '1 millisecond'
+WHERE tenant_id = $1::uuid AND operation_id = $2::uuid AND item_no = $3 AND step_no = $4
+  AND state = 'applying' AND attempt = $5`, t.String(), string(k.Operation), k.Item, k.Step, attempt, lease.Milliseconds())
+	if err != nil {
+		return false, fmt.Errorf("operation: renewing claim: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}

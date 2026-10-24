@@ -665,3 +665,7 @@ const (
 	JobReconcile = "operation.reconcile"
 	JobSweep     = "operation.sweep"
 )
+
+type verifyArgs struct {
+	Operation string `json:"operation"`
+}

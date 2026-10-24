@@ -124,7 +124,13 @@ func NewRunner(cfg Config) (*Runner, error) {
 	if cfg.AbandonAfter <= 0 {
 		cfg.AbandonAfter = 7 * 24 * time.Hour
 	}
-	return &Runner{cfg: cfg, sleep: time.Sleep}, nil
+	rn := &Runner{cfg: cfg, sleep: time.Sleep}
+	if cfg.Jobs != nil {
+		if err := rn.registerJobs(cfg.Jobs); err != nil {
+			return nil, err
+		}
+	}
+	return rn, nil
 }
 
 func randomID() string {
