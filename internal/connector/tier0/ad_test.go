@@ -463,7 +463,7 @@ func TestMembershipWalkUnrequestableDNFailsClosed(t *testing.T) {
 		name, member string
 		kind         dn.Kind
 	}{
-		{"opaque hex RDN", "2.5.4.3=#04024869,OU=Staff," + dom, dn.NotRequestable},
+		{"opaque hex RDN", "1.3.6.1.4.1.1466.0=#04024869,OU=Staff," + dom, dn.NotRequestable},
 		{"renders over MaxDNLen", long, dn.TooLong},
 	} {
 		t.Run(c.name, func(t *testing.T) {
