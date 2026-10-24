@@ -19,7 +19,7 @@ type Caller interface {
 // Limits tighten the §3.3 rule 9 bounds for one parse. A zero field, or one above the package
 // bound, means the package bound: callers can narrow the limits, never widen them.
 type Limits struct {
-	MaxFilterBytes int // input text (ParseAdminFilter) or its JSON form (ParseFilterASTJSON)
+	MaxFilterBytes int // input text (ParseAdminFilter) or its JSON form (ParseFilterASTJSON); not applied to the binary proto form, which has no input text (Render bounds the output at the package MaxFilterBytes)
 	MaxDepth       int
 	MaxNodes       int
 	MaxFanOut      int
