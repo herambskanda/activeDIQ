@@ -734,6 +734,18 @@ func TestBroadOwnerWarns(t *testing.T) {
 	if count(r, CodeTier0BroadPrincipal) != 1 || r.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_PASS {
 		t.Fatalf("%v %v", r.Verdict, codes(r))
 	}
+	// An OWNER RIGHTS ACE replaces the implicit grant; its mask is the broad owner's exposure.
+	for name, mask := range map[string]uint32{"write_dac": maskWriteDAC, "full_control": dsFullControl} {
+		w.putRaw(w.t0, "nTSecurityDescriptor", [][]byte{sdBytes(dusSID, tace{mask: dsFullControl, trustee: daSID}, tace{mask: mask, trustee: "S-1-3-4"})})
+		r := w.run(t, ADInput{})
+		if count(r, CodeTier0BroadPrincipal) < 1 || r.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_PASS {
+			t.Fatalf("%s: %v %v", name, r.Verdict, codes(r))
+		}
+	}
+	w.putRaw(w.t0, "nTSecurityDescriptor", [][]byte{sdBytes(dusSID, tace{mask: dsFullControl, trustee: daSID}, tace{mask: dsReadProp, trustee: "S-1-3-4"})})
+	if r := w.run(t, ADInput{}); count(r, CodeTier0BroadPrincipal) != 0 {
+		t.Fatalf("read-only owner rights: %v", codes(r))
+	}
 }
 
 // An absent sDRightsEffective is never "no rights": the parsed descriptor answers instead, and
