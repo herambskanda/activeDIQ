@@ -99,6 +99,7 @@ WHERE tenant_id = $1::uuid AND operation_id = $2::uuid AND item_no = $3 AND step
 	if err != nil {
 		return secret.Secret{}, fmt.Errorf("operation: unsealing secret: %w", err)
 	}
+	defer clear(plain) // FromBytes copies; do not leave the unsealed plaintext in the heap
 	return secret.FromBytes(plain), nil
 }
 

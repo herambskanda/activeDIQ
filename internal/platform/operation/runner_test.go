@@ -64,16 +64,20 @@ func (s sink) Append(_ context.Context, tx store.Tx, ev audit.Event) error {
 }
 
 type authzFake struct {
-	deny   map[authority.PrincipalID]bool // principals refused
-	denyAt atomic.Int32                   // refuse starting at the nth Authorize call (1-based), 0 = never
-	calls  atomic.Int32
+	deny    map[authority.PrincipalID]bool // principals refused
+	denyAt2 map[[2]string]bool             // (principal, target GUID) pairs refused
+	denyAt  atomic.Int32                   // refuse starting at the nth Authorize call (1-based), 0 = never
+	calls   atomic.Int32
 }
 
 func (*authzFake) FactsQuery(_ authority.Chain, _ authz.Permission, t authority.TargetRef) authority.FactsQuery {
 	return authority.FactsQuery{Target: t}
 }
-func (a *authzFake) Authorize(_ context.Context, c authority.Chain, _ authz.Permission, _ authority.TargetRef, _ authority.Facts) error {
+func (a *authzFake) Authorize(_ context.Context, c authority.Chain, _ authz.Permission, tr authority.TargetRef, _ authority.Facts) error {
 	n := a.calls.Add(1)
+	if a.denyAt2[[2]string{string(c.Requester.ID), tr.GUID}] {
+		return errors.New("not in scope")
+	}
 	if a.deny[c.Requester.ID] || (a.denyAt.Load() > 0 && n >= a.denyAt.Load()) {
 		return errors.New("not in scope")
 	}
@@ -83,9 +87,13 @@ func (a *authzFake) Authorize(_ context.Context, c authority.Chain, _ authz.Perm
 type factsFake struct {
 	tier0 bool
 	err   error
+	errOn map[string]bool // target GUIDs whose facts are unavailable
 }
 
-func (f factsFake) Facts(context.Context, authority.Pins, authority.FactsQuery) (authority.Facts, error) {
+func (f factsFake) Facts(_ context.Context, _ authority.Pins, q authority.FactsQuery) (authority.Facts, error) {
+	if f.errOn[q.Target.GUID] {
+		return authority.Facts{}, errors.New("facts down")
+	}
 	return authority.Facts{Exists: true, Tier0: f.tier0}, f.err
 }
 

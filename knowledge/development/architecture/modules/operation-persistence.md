@@ -31,3 +31,10 @@ Code: `internal/platform/operation/`; migration `migrations/0010_operation_opera
 
 Deferred: undo, bulk chunked planning, `tier0_after_write` handling, real `directory/client`
 Pinner/Observer wiring (see backlog tickets).
+
+## Approval scope (security review fixes)
+
+- `Approve` and `Reject` require `operation.approve` over every item target, blocked and skipped items included; Reject needs no step-up.
+- A re-plan keeps an approval only if the plan hash and the set of items blocked at plan are both unchanged.
+- An operation held by a workflow Request (`request_ref`) is decided only through `ApproveRequest` / `RejectRequest` with that reference; direct `Approve`/`Reject` return `ErrApprovalByRequest`.
+- Transient secrets: unsealed plaintext is cleared after copy and the step's secret is destroyed when the step ends.

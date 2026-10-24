@@ -34,6 +34,7 @@ type dirFake struct {
 	applies map[string]int
 	mode    map[string]string // guid -> behaviour of Apply
 	secret  string
+	kept    secret.Secret // the Step's secret as the Action saw it
 }
 
 func newDir() *dirFake {
@@ -88,6 +89,7 @@ func (d *dirFake) action(t *testing.T, id ActionID, stepUp, secretIn bool, class
 			d.applies[g]++
 			if secretIn {
 				s.Secret().Expose(func(b []byte) { d.secret = string(b) })
+				d.kept = s.Secret()
 			}
 			switch d.mode[g] {
 			case "transient_before":
@@ -218,6 +220,7 @@ type rigOpt struct {
 	stepUp   bool
 	secretIn bool
 	class    Reversibility
+	ref      string // Request reference the hold gate returns
 }
 
 func newPRig(t *testing.T, s *storetest.Server, o rigOpt) *prig {
@@ -609,6 +612,9 @@ func TestSecretUsedThenDeleted(t *testing.T) {
 		if n := p.owner(`SELECT count(*) FROM public.operation_secrets`)[0]; n != "0" {
 			t.Fatalf("secrets left after success: %s", n)
 		}
+		if !p.dir.kept.IsEmpty() {
+			t.Fatal("the step's secret was not destroyed after the step")
+		}
 		if err := p.d.ExecOwner(context.Background(), `SELECT 1`); err != nil {
 			t.Fatal(err)
 		}
@@ -695,7 +701,7 @@ func TestApprovals(t *testing.T) {
 	human := Approval{Principal: bob, Interactive: true}
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		held := func(t *testing.T, o rigOpt) (*prig, Submission) {
-			o.gate = holdGate{route: Route{Kind: RouteHold, Ref: "REQ-1"}}
+			o.gate = holdGate{route: Route{Kind: RouteHold, Ref: o.ref}}
 			p := newPRig(t, s, o)
 			r := p.req(itemIn{GUID: "a", Want: "n"})
 			r.FreshStepUp = true
@@ -777,6 +783,73 @@ func TestApprovals(t *testing.T) {
 			again, err := p.r.Replan(ctx, p.tn, string(sub.Operation))
 			if err != nil || again.PlanHash != sub.PlanHash || again.State != OpQueued {
 				t.Fatalf("%+v %v", again, err)
+			}
+		})
+		t.Run("approval needs operation.approve over an item blocked at plan", func(t *testing.T) {
+			o := rigOpt{gate: holdGate{route: Route{Kind: RouteHold}}}
+			p := newPRig(t, s, o)
+			p.r.cfg.Facts = factsFake{errOn: map[string]bool{"b": true}}
+			p.r.cfg.Authz.(*authzFake).denyAt2 = map[[2]string]bool{{"bob", "b"}: true}
+			sub, err := p.r.SubmitDirectory(ctx, p.req(itemIn{GUID: "a", Want: "n"}, itemIn{GUID: "b", Want: "n"}))
+			if err != nil || sub.State != OpAwaitingApproval || sub.Blocked != 1 {
+				t.Fatalf("%+v %v", sub, err)
+			}
+			if _, err := p.r.Approve(ctx, p.tn, string(sub.Operation), sub.PlanHash, human); !errors.Is(err, ErrNotApprover) {
+				t.Fatalf("err = %v", err)
+			}
+			if p.opState(sub.Operation) != "awaiting_approval" {
+				t.Fatal("a refused approval moved the operation")
+			}
+		})
+		t.Run("a re-plan that unblocks an item clears the approval", func(t *testing.T) {
+			p := newPRig(t, s, rigOpt{gate: holdGate{route: Route{Kind: RouteHold}}})
+			az := p.r.cfg.Authz.(*authzFake)
+			az.denyAt2 = map[[2]string]bool{{"alice", "b"}: true} // the initiator may not touch b
+			sub, err := p.r.SubmitDirectory(ctx, p.req(itemIn{GUID: "a", Want: "n"}, itemIn{GUID: "b", Want: "n"}))
+			if err != nil || sub.State != OpAwaitingApproval || sub.Blocked != 1 {
+				t.Fatalf("%+v %v", sub, err)
+			}
+			if _, err := p.r.Approve(ctx, p.tn, string(sub.Operation), sub.PlanHash, human); err != nil {
+				t.Fatal(err)
+			}
+			p.exec(`UPDATE public.operations SET state = 'approved'`)
+			az.denyAt2 = nil // b is now authorised for the initiator; the hash is unchanged
+			again, err := p.r.Replan(ctx, p.tn, string(sub.Operation))
+			if err != nil || again.PlanHash != sub.PlanHash || again.State != OpAwaitingApproval {
+				t.Fatalf("%+v %v", again, err)
+			}
+			if p.dir.applies["b"] != 0 {
+				t.Fatal("b was written under an approval that never covered it")
+			}
+		})
+		t.Run("a Request-held operation is decided only through the gate callback", func(t *testing.T) {
+			p, sub := held(t, rigOpt{ref: "REQ-1"})
+			id := string(sub.Operation)
+			if _, err := p.r.Approve(ctx, p.tn, id, sub.PlanHash, human); !errors.Is(err, ErrApprovalByRequest) {
+				t.Fatalf("direct approve: %v", err)
+			}
+			if err := p.r.Reject(ctx, p.tn, id, human); !errors.Is(err, ErrApprovalByRequest) {
+				t.Fatalf("direct reject: %v", err)
+			}
+			if _, err := p.r.ApproveRequest(ctx, p.tn, id, sub.PlanHash, "REQ-2", human); !errors.Is(err, ErrApprovalByRequest) {
+				t.Fatalf("wrong request: %v", err)
+			}
+			if got, err := p.r.ApproveRequest(ctx, p.tn, id, sub.PlanHash, "REQ-1", human); err != nil || got.State != OpQueued {
+				t.Fatalf("%+v %v", got, err)
+			}
+		})
+		t.Run("reject needs operation.approve over the items", func(t *testing.T) {
+			p, sub := held(t, rigOpt{})
+			p.r.cfg.Authz.(*authzFake).deny = map[authority.PrincipalID]bool{"bob": true}
+			if err := p.r.Reject(ctx, p.tn, string(sub.Operation), human); !errors.Is(err, ErrNotApprover) {
+				t.Fatalf("err = %v", err)
+			}
+			if p.opState(sub.Operation) != "awaiting_approval" {
+				t.Fatal("an out-of-scope reject moved the operation")
+			}
+			p.r.cfg.Authz.(*authzFake).deny = nil
+			if err := p.r.Reject(ctx, p.tn, string(sub.Operation), human); err != nil || p.opState(sub.Operation) != "rejected" {
+				t.Fatalf("%v %s", err, p.opState(sub.Operation))
 			}
 		})
 		t.Run("a re-plan with a changed hash clears the approval", func(t *testing.T) {

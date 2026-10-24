@@ -178,6 +178,7 @@ func (r *Runner) execute(ctx context.Context, t tenant.ID, tx txFunc, c *claimed
 		if errors.Is(err, ErrSecretExpired) {
 			return r.record(ctx, t, tx, c, recordSpec{failed: "secret_expired"})
 		}
+		defer sec.Destroy()
 		if err != nil {
 			return err
 		}

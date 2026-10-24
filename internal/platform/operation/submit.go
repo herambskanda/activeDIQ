@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -273,6 +274,32 @@ func (r *Runner) authoriseTarget(ctx context.Context, chain authority.Chain, per
 func (r *Runner) persistPlan(ctx context.Context, tx store.Tx, t tenant.ID, cur opRecord, d Descriptor, items []planItem, pins authority.Pins, hash string, secrets map[int]secret.Secret, ttl time.Duration) (Submission, error) {
 	opID := cur.ID
 	sub := Submission{Operation: step.OperationID(opID), PlanHash: hash, Items: len(items)}
+	// The approval binds the hash and the set of items blocked at plan: a re-plan that unblocks (or
+	// blocks) an item changes what would run, so it clears the approval.
+	var priorBlocked []int
+	rowsB, err := tx.Query(ctx, `SELECT item_no FROM public.operation_items
+WHERE tenant_id = $1::uuid AND operation_id = $2::uuid AND state = 'blocked' ORDER BY item_no`, t.String(), opID)
+	if err != nil {
+		return sub, fmt.Errorf("operation: reading prior blocked items: %w", err)
+	}
+	for rowsB.Next() {
+		var n int
+		if err := rowsB.Scan(&n); err != nil {
+			rowsB.Close()
+			return sub, err
+		}
+		priorBlocked = append(priorBlocked, n)
+	}
+	rowsB.Close()
+	if err := rowsB.Err(); err != nil {
+		return sub, err
+	}
+	var nowBlocked []int
+	for i, it := range items {
+		if it.blocked != "" {
+			nowBlocked = append(nowBlocked, i)
+		}
+	}
 	if _, err := tx.Exec(ctx, `DELETE FROM public.operation_steps WHERE tenant_id = $1::uuid AND operation_id = $2::uuid`, t.String(), opID); err != nil {
 		return sub, err
 	}
@@ -328,7 +355,7 @@ VALUES ($1::uuid, $2::uuid, $3, 0, 'planned', $4::jsonb, $5, $6, $7, $8, $9)`, t
 		next, result = OpNoChange, "no_change"
 	}
 	pinsJSON, _ := json.Marshal(pins)
-	keep := cur.ApprovedHash == hash
+	keep := cur.ApprovedHash == hash && slices.Equal(priorBlocked, nowBlocked)
 	if _, err := tx.Exec(ctx, `UPDATE public.operations SET plan_hash = $3, pins = $4::jsonb,
   plan_valid_until = now() + CASE WHEN $5 THEN interval '1 hour' ELSE interval '24 hours' END,
   approved_by = CASE WHEN $6 THEN approved_by END, approved_plan_hash = CASE WHEN $6 THEN approved_plan_hash END,
