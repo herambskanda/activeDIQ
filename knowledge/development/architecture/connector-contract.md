@@ -882,6 +882,14 @@ OID form, [RFC 4512 §2.5](https://www.rfc-editor.org/rfc/rfc4512#section-2.5), 
 empty key); Entra: an ASCII letter, then letters, digits or `_`, with at most one `.` sub-key of
 the same form. Character loops, no regex. Matching to `ruleprops v1` is case-insensitive.
 
+**As built (T-0239).** `write.WriteOp.PropertyWrite` is a mandatory function of the typed change;
+`validateOps` (run by `write.New` and over the shipped table in the unit tests) fails a kind that
+has none. `Handler.guard` calls it at the end of step 4 through `Provider.PropertyGuard`
+(`*tier0.Set` implements it; a provider with no snapshot returns the refuse-everything guard).
+A refusal is `TIER0_REFUSED` basis `Designated`, stage `CONNECTOR_SET` or `LIVE_REREAD` (read
+failure included); the override is consulted at step 2 only. A declaration for the other plane is
+`INVALID_ARGUMENT`.
+
 **Scope: the snapshot's `dynamic` set is the union over every dynamic group in a designated
 closure** (TM §6.4 TM-D25 7a), carried in `designated_tier0` as `DynamicClosure{group_id, kind,
 rule_hash}` entries. The connector re-reads `membershipRule` and `membershipRuleProcessingState` of

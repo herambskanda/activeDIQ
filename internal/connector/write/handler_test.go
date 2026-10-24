@@ -435,7 +435,9 @@ type recordedOp struct {
 func withTestOp(r *rig, touched ...byte) *recordedOp {
 	rec := &recordedOp{}
 	k := connectorv1.WriteKind(1)
+	r.prov.guard = &stubGuard{} // allows; the guard's own tests are in propwrite_test.go
 	r.h.ops = map[connectorv1.WriteKind]WriteOp{k: {
+		PropertyWrite: declare(adUpdateTitle, nil),
 		Touched: func(target guidT, _ *connectorv1.WriteChange) ([]guidT, error) {
 			out := []guidT{target}
 			for _, b := range touched {

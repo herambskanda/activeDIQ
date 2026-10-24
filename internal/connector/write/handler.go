@@ -58,6 +58,9 @@ func New(p Provider, g *GateBook, opts ...Option) (*Handler, error) {
 	for _, o := range opts {
 		o(h)
 	}
+	if err := validateOps(h.ops); err != nil {
+		return nil, err
+	}
 	return h, nil
 }
 
@@ -236,11 +239,21 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 		return nil, r
 	}
 
-	// Step 5: the kind. A kind that is not wired is answered after the target's live checks.
-	touched := []guid.GUID{target}
+	// Step 4, last check: the dynamic-group property guard (contract §8.9). It is not an input of
+	// the override (D11): c.ov was consulted at step 2 only. A kind that is not wired has no
+	// PropertyWrite and writes nothing.
 	var op *WriteOp
 	if w, ok := h.ops[c.kind]; ok && c.kind != connectorv1.WriteKind_WRITE_KIND_UNSPECIFIED {
 		op = &w
+		if r := h.propertyGuard(ctx, w, c, target, ev); r != nil {
+			return nil, r
+		}
+	}
+
+	// Step 5: the kind. A kind that is not wired is answered after the target's live checks.
+	touched := []guid.GUID{target}
+	if op != nil {
+		w := *op
 		ts, err := w.Touched(target, c.change)
 		if err != nil {
 			return nil, invalid("5", "TouchedSet", "change")
@@ -275,6 +288,64 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 		}
 	}
 	return &passed{op: op, touched: touched, designated: designated, dec: dec, auth: Authorised{p: &pass{evaluated: touched}}}, nil
+}
+
+// Refusal reasons recorded for a property-write refusal that is not a rule verdict.
+const (
+	reasonGuardUnavailable = "property_guard_unavailable"
+	reasonBadDeclaration   = "property_declaration_invalid"
+)
+
+// propertyGuard is CheckPropertyWrite at step 4. Every outcome but a clean allow refuses: a kind
+// whose PropertyWrite cannot be derived, a guard that cannot be built, a read error (LIVE_REREAD)
+// and a refusal verdict. The reason, the declared op and the key names are set on ev (the
+// audit-ready refusal record); attribute values and guard error text never are.
+func (h *Handler) propertyGuard(ctx context.Context, w WriteOp, c *call, target guid.GUID, ev *Event) *Refusal {
+	pw, err := w.PropertyWrite(c.change)
+	plane := tier0.PlaneEntra
+	if h.prov.Kind() == connectorv1.ProviderKind_PROVIDER_KIND_AD {
+		plane = tier0.PlaneAD
+	}
+	if err != nil || pw.Plane != plane { // a declaration for the other plane is a bug in the kind
+		ev.Reason = reasonBadDeclaration
+		if err == nil {
+			ev.PropertyOp, ev.PropertyKeys = pw.Op.String(), append([]string(nil), pw.Keys...)
+		}
+		return invalid("4", "PropertyWrite", "change")
+	}
+	ev.PropertyOp, ev.PropertyKeys = pw.Op.String(), append([]string(nil), pw.Keys...)
+	refuse := func(reason string, st connectorv1.Tier0RefusalStage) *Refusal {
+		ev.Reason = reason
+		return tier0Refusal(toWire(target), []basis{tier0.Designated}, st, "4")
+	}
+	g, err := h.prov.PropertyGuard(ctx)
+	if err != nil || g == nil {
+		return refuse(reasonGuardUnavailable, stLive)
+	}
+	v, err := g.CheckPropertyWrite(ctx, pw)
+	if err != nil {
+		return refuse(reasonGuardUnavailable, stLive)
+	}
+	if v.Refused {
+		if v.Reason != "" {
+			ev.Reason = v.Reason
+		}
+		if v.Op != 0 {
+			ev.PropertyOp = v.Op.String()
+		}
+		if v.Keys != nil {
+			ev.PropertyKeys = append([]string(nil), v.Keys...)
+		}
+		reason := v.Reason
+		if reason == "" {
+			reason = tier0.ReasonDesignatedDynamicRule
+		}
+		if v.Stage == tier0.StageLiveReread {
+			return refuse(reason, stLive)
+		}
+		return refuse(reason, stConnectorSet)
+	}
+	return nil
 }
 
 // stmt is the merge of every complete statement about one object (F1).
