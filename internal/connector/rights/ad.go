@@ -197,7 +197,7 @@ func VerifyAD(ctx context.Context, d ADDirectory, in ADInput) (*ADResult, error)
 		snap = snapshotHook
 	}
 	if snap == nil {
-		snap = tier0.NewAD(d).Snapshot
+		snap = func(ctx context.Context) (*tier0.ADSet, error) { return tier0.NewAD(d).Snapshot(ctx) }
 	}
 	set, serr := snap(ctx)
 	if serr != nil {

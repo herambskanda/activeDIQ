@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -50,6 +51,8 @@ const (
 	C14 = connectorv1.Tier0Basis_TIER0_BASIS_C14_SEAMLESS_SSO_ACCOUNT
 	C15 = connectorv1.Tier0Basis_TIER0_BASIS_C15_DC_SITE
 	C16 = connectorv1.Tier0Basis_TIER0_BASIS_C16_CORRELATED_TO_ENTRA_TIER0
+	C17 = connectorv1.Tier0Basis_TIER0_BASIS_C17_ROOT_OF_TRUST_CONTROL
+	C18 = connectorv1.Tier0Basis_TIER0_BASIS_C18_PRIVILEGED_SID_HISTORY
 )
 
 const (
@@ -88,9 +91,46 @@ var protectedList = []protected{
 	{rid: 550, builtin: true}, {rid: 551, builtin: true}, {rid: 552, builtin: true}, // Print/Backup Operators, Replicator
 }
 
-// c13Groups are looked up by sAMAccountName in the domain. Group Policy Creator Owners is
-// deliberately absent (§6.4 C13).
+// c13Groups are looked up by sAMAccountName in the domain, so an object that later takes one of these
+// names is tier0 too (TM-D26 rule 10). Group Policy Creator Owners is deliberately absent (§6.4 C13).
 var c13Groups = []string{"DnsAdmins", "Cert Publishers", "Exchange Trusted Subsystem", "Exchange Windows Permissions"}
+
+// c13CertPublishersRID is the one C13 group with a well-known RID (TM-D26 rule 10). The others
+// (DnsAdmins, the Exchange groups) have none and are kept by objectGUID, pinned at first discovery.
+const c13CertPublishersRID = 517
+
+// privilegedDomainRIDs are the C1 and C13 accounts and groups that make a sIDHistory value privileged
+// by RID alone, whatever the domain prefix (TM-D26 rule 6a). 520 (Group Policy Creator Owners) is
+// absent on purpose: sensitive, not Tier 0.
+var privilegedDomainRIDs = map[uint32]bool{500: true, 502: true, 512: true, 516: true, 517: true, 518: true,
+	519: true, 521: true, 525: true, 526: true, 527: true}
+
+// privilegedBuiltinRIDs are the C1 built-in S-1-5-32 groups (Appendix C).
+var privilegedBuiltinRIDs = map[uint32]bool{544: true, 548: true, 549: true, 550: true, 551: true, 552: true}
+
+// rootOfTrustRIDMin is the first RID of an ordinary account: an unresolvable sIDHistory value at or
+// above it is not tier0 (migrated users carry such SIDs by the thousand).
+const rootOfTrustRIDMin = 1000
+
+// dsHeuristicsChars are the dSHeuristics characters (1-based) TM-D26 rule 9 reports when non-default.
+var dsHeuristicsChars = []struct {
+	Pos  int
+	Name string
+}{{7, "fLDAPBlockAnonOps"}, {8, "fAllowAnonNSPI"}, {12, "fDontStandardizeSDs"}, {16, "dwAdminSDExMask"}, {29, "BlockOwnerImplicitRights"}}
+
+// DSHeuristic is one non-default dSHeuristics character, for the health page (TM-D26 rule 9).
+type DSHeuristic struct {
+	Pos   int
+	Name  string
+	Value byte
+}
+
+// UnresolvedSIDHistory is a sIDHistory value that is not privileged and resolves to no object
+// (SIDHISTORY_UNRESOLVED on the health page).
+type UnresolvedSIDHistory struct {
+	Object guid.GUID
+	SID    sid.SID
+}
 
 // c8Domain are the sensitive CN=System objects, relative to CN=System,<domain>. AdminSDHolder is C3.
 var c8Domain = []string{"", "CN=RID Manager$", "CN=Password Settings Container"}
@@ -102,7 +142,21 @@ var c8SystemClasses = []string{"secret", "trustedDomain"}
 // ADSet is one computed snapshot of the connector's AD tier0 computed set (C1-C15), by objectGUID.
 type ADSet struct {
 	bases map[string]map[Basis]bool
+
+	unresolved []UnresolvedSIDHistory
+	dsh        []DSHeuristic
+	c13        []guid.GUID
 }
+
+// Unresolved lists the sIDHistory values that matched no privileged RID and no object.
+func (s *ADSet) Unresolved() []UnresolvedSIDHistory { return s.unresolved }
+
+// DSHeuristics lists the non-default dSHeuristics characters of rule 9. It never changes the set.
+func (s *ADSet) DSHeuristics() []DSHeuristic { return s.dsh }
+
+// C13Groups are the objectGUIDs of every C13 group this snapshot found; the caller pins them so a
+// later rename cannot remove them (rule 10) and passes them back as ADInput.PinnedC13.
+func (s *ADSet) C13Groups() []guid.GUID { return s.c13 }
 
 func (s *ADSet) add(g guid.GUID, b Basis) {
 	k := g.String()
@@ -134,6 +188,9 @@ type ADInput struct {
 	Correlated []Peer
 	// Designated are customer-designated objects, by DN or GUID. They add; they never subtract.
 	Designated []dn.ObjectRef
+	// PinnedC13 are the C13 group GUIDs pinned at first discovery (ADSet.C13Groups). They stay C13
+	// whatever their name; a GUID that no longer exists marks nothing and is not an error.
+	PinnedC13 []guid.GUID
 }
 
 // ADResult is the classification of one target.
@@ -159,7 +216,7 @@ func (c *ADClassifier) Classify(ctx context.Context, target dn.ObjectRef, in ADI
 		}
 		corr[g.String()] = true // any state, including unspecified, counts (TM §6.4)
 	}
-	set, err := c.Snapshot(ctx)
+	set, err := c.Snapshot(ctx, in.PinnedC13...)
 	if err != nil {
 		return unknown, err
 	}
@@ -206,6 +263,10 @@ type builder struct {
 
 	domSID, rootSID sid.SID
 	domHead         *ad.Entry
+	pinnedC13       []guid.GUID
+	gpLink          *guid.GUID  // schemaIDGUID of gPLink, read from the schema (C17)
+	hist            []histEntry // objects with a sIDHistory, read once per snapshot
+	histRead        bool
 
 	accountAnc map[string]bool      // lower-case DN of every strict ancestor of a tier0 account (C2/C4/C5)
 	dcDNs      []dn.DN              // DC computer objects (C5)
@@ -216,18 +277,19 @@ type builder struct {
 
 var idAttrs = []string{"objectGUID", "objectSid", "objectClass"}
 
-// Snapshot reads the forest and computes C1-C15. Any error fails the whole snapshot: a caller that
-// ignored the error must not be left holding a partial, under-protective set.
-func (c *ADClassifier) Snapshot(ctx context.Context) (*ADSet, error) {
-	b := &builder{ctx: ctx, d: c.d, s: &ADSet{bases: map[string]map[Basis]bool{}},
+// Snapshot reads the forest and computes C1-C15, C17 and C18. pinnedC13 are the C13 groups pinned at
+// first discovery. Any error fails the whole snapshot: a caller that ignored the error must not be
+// left holding a partial, under-protective set.
+func (c *ADClassifier) Snapshot(ctx context.Context, pinnedC13 ...guid.GUID) (*ADSet, error) {
+	b := &builder{ctx: ctx, d: c.d, pinnedC13: pinnedC13, s: &ADSet{bases: map[string]map[Basis]bool{}},
 		accountAnc: map[string]bool{}, dcHosts: map[string]bool{}, dcSD: map[string][]byte{}, cache: map[string]*ad.Entry{}}
 	nm, err := c.d.Naming(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("tier0: naming contexts: %w", err)
 	}
 	b.nm = nm
-	steps := []func() error{b.c7, b.c1c2, b.c3, b.c4, b.c5c6c15, b.c8, b.c10, b.c11, b.c12, b.c13, b.c14, b.c9}
-	for _, step := range steps { // c9 last: it needs C2/C4/C5/C6/C15
+	steps := []func() error{b.c7, b.c1c2, b.c3, b.c4, b.c5c6c15, b.c8, b.c10, b.c11, b.c12, b.c13, b.c14, b.c17, b.c18, b.c9}
+	for _, step := range steps { // c18 needs every principal basis; c9 last: it needs C2/C4/C5/C6/C15
 		if err := step(); err != nil {
 			return nil, err
 		}
@@ -735,6 +797,11 @@ func (b *builder) c8() error {
 	if err != nil {
 		return fmt.Errorf("tier0: system objects: %w", err)
 	}
+	// dSHeuristics (rule 9): the Directory Service object is C8, and its five security characters are
+	// reported when non-default.
+	if err := b.directoryService(); err != nil {
+		return err
+	}
 	// KDS root keys live in CN=Group Key Distribution Service under Services in the Configuration NC.
 	kds, err := b.child(b.nm.Config, "CN=Services", "CN=Group Key Distribution Service")
 	if err != nil {
@@ -744,6 +811,31 @@ func (b *builder) c8() error {
 		return err
 	}
 	return b.markTree(kds, Query{}, C8)
+}
+
+func (b *builder) directoryService() error {
+	d, err := b.child(b.nm.Config, "CN=Services", "CN=Windows NT", "CN=Directory Service")
+	if err != nil {
+		return err
+	}
+	e, found, err := b.get(dn.DNRef(d), []string{"objectGUID", "dSHeuristics"})
+	if err != nil {
+		return err
+	}
+	if !found {
+		return errors.New("tier0: Directory Service object not found")
+	}
+	if _, err := b.mark(e, C8); err != nil {
+		return err
+	}
+	if v := e.Strings("dSHeuristics"); len(v) == 1 {
+		for _, c := range dsHeuristicsChars {
+			if c.Pos <= len(v[0]) && v[0][c.Pos-1] != '0' {
+				b.s.dsh = append(b.s.dsh, DSHeuristic{Pos: c.Pos, Name: c.Name, Value: v[0][c.Pos-1]})
+			}
+		}
+	}
+	return nil
 }
 
 // markSoft marks an entry in a sensitive subtree. An entry the connector identity cannot identify
@@ -809,7 +901,7 @@ func (b *builder) c11() error {
 	if !found || len(e.Raw("nTSecurityDescriptor")) != 1 {
 		return errors.New("tier0: domain root DACL unreadable")
 	}
-	aces, err := allowACEs(e.Raw("nTSecurityDescriptor")[0])
+	_, aces, err := grantsOf(e.Raw("nTSecurityDescriptor")[0])
 	if err != nil {
 		return err
 	}
@@ -834,18 +926,18 @@ func (b *builder) c11() error {
 }
 
 // holders returns the SIDs that are granted every right in rights across the ACEs.
-func holders(aces []allowACE, rights ...guid.GUID) []sid.SID {
+func holders(aces []aceGrant, rights ...guid.GUID) []sid.SID {
 	have := map[string]map[guid.GUID]bool{}
 	sids := map[string]sid.SID{}
 	for _, a := range aces {
-		k := a.sid.String()
+		k := a.trustee.String()
 		for _, r := range rights {
 			if a.grants(r) {
 				if have[k] == nil {
 					have[k] = map[guid.GUID]bool{}
 				}
 				have[k][r] = true
-				sids[k] = a.sid
+				sids[k] = a.trustee
 			}
 		}
 	}
@@ -894,28 +986,99 @@ func (b *builder) ignorableSID(s sid.SID) bool {
 	return false
 }
 
-// markPrincipals marks the objects with these SIDs, and the transitive members of those that are
-// groups. A SID with no object is skipped only when it is ignorable (see ignorableSID); any other
-// (Everyone, Authenticated Users, a foreign SID) may stand for every principal, so the snapshot
-// fails closed naming it.
-func (b *builder) markPrincipals(sids []sid.SID, basis Basis) error {
-	var groups []*ad.Entry
-	for _, s := range sids {
-		e, found, err := b.get(dn.SIDRef(s), idAttrs)
+// histEntry is an object that carries a sIDHistory, with the values decoded.
+type histEntry struct {
+	e    *ad.Entry
+	sids []sid.SID
+}
+
+// history reads, once per snapshot, every object of the domain with a sIDHistory (one paged presence
+// search through the filter builder; the attribute is indexed). An unreadable sIDHistory fails the
+// snapshot (rule 8).
+func (b *builder) history() ([]histEntry, error) {
+	if b.histRead {
+		return b.hist, nil
+	}
+	attrs := append([]string{"sIDHistory"}, idAttrs...)
+	err := b.d.Find(b.ctx, b.nm.Domain, ad.ScopeSubtree, Query{Has: []string{"sIDHistory"}}, attrs, func(e *ad.Entry) error {
+		ss, err := e.SIDs("sIDHistory")
 		if err != nil {
-			return err
+			return fmt.Errorf("tier0: sIDHistory: %w", err)
 		}
-		if !found {
-			if b.ignorableSID(s) {
-				continue
-			}
-			return fmt.Errorf("tier0: grant to unresolvable SID %s may cover every principal", s)
+		b.hist = append(b.hist, histEntry{e: e, sids: ss})
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("tier0: sIDHistory: %w", err)
+	}
+	b.histRead = true
+	return b.hist, nil
+}
+
+// historyHolders returns the objects whose sIDHistory holds s: their token carries s, so an ACE that
+// names s applies to them (TM-D26 rule 5).
+func (b *builder) historyHolders(s sid.SID) ([]*ad.Entry, error) {
+	h, err := b.history()
+	if err != nil {
+		return nil, err
+	}
+	var out []*ad.Entry
+	for _, x := range h {
+		if slices.Contains(x.sids, s) {
+			out = append(out, x.e)
+		}
+	}
+	return out, nil
+}
+
+// markPrincipals marks the objects with these SIDs, the objects whose sIDHistory holds one of them,
+// and the transitive members of those that are groups. A SID with no object is skipped only when it
+// is ignorable (see ignorableSID); any other (Everyone, Authenticated Users, a foreign SID) may stand
+// for every principal, so the snapshot fails closed naming it.
+func (b *builder) markPrincipals(sids []sid.SID, basis Basis) error {
+	return b.markPrincipalsSkip(sids, basis, nil)
+}
+
+// markPrincipalsSkip is markPrincipals except that an object for which skip is true is not marked and
+// its members are not walked.
+func (b *builder) markPrincipalsSkip(sids []sid.SID, basis Basis, skip func(*ad.Entry) bool) error {
+	var groups []*ad.Entry
+	take := func(e *ad.Entry) error {
+		if skip != nil && skip(e) {
+			return nil
 		}
 		if _, err := b.mark(e, basis); err != nil {
 			return err
 		}
 		if hasClass(e, "group") {
 			groups = append(groups, e)
+		}
+		return nil
+	}
+	for _, s := range sids {
+		e, found, err := b.get(dn.SIDRef(s), idAttrs)
+		if err != nil {
+			return err
+		}
+		holders, err := b.historyHolders(s)
+		if err != nil {
+			return err
+		}
+		if !found && len(holders) == 0 {
+			if b.ignorableSID(s) {
+				continue
+			}
+			return fmt.Errorf("tier0: grant to unresolvable SID %s may cover every principal", s)
+		}
+		if found {
+			if err := take(e); err != nil {
+				return err
+			}
+		}
+		for _, h := range holders {
+			if err := take(h); err != nil {
+				return err
+			}
 		}
 	}
 	return b.membersOf(groups, basis)
@@ -948,12 +1111,12 @@ func (b *builder) c12() error {
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		aces, err := allowACEs(b.dcSD[k])
+		_, aces, err := grantsOf(b.dcSD[k])
 		if err != nil {
 			return err
 		}
 		for _, a := range aces {
-			all = append(all, a.sid)
+			all = append(all, a.trustee)
 		}
 	}
 	return b.markPrincipals(all, C12)
@@ -970,22 +1133,53 @@ func (b *builder) spnReachesDC(spn string) bool {
 	return b.dcHosts[host] || b.dcHosts[strings.SplitN(host, ".", 2)[0]]
 }
 
-// C13: default-privileged groups, and (as equivalent control) their transitive members.
+// C13: default-privileged groups, and (as equivalent control) their transitive members. A group is
+// found by well-known RID (Cert Publishers), by the GUID pinned at first discovery, and by name; the
+// name lookup also catches an object that later takes a C13 name (TM-D26 rule 10).
 func (b *builder) c13() error {
 	var groups []*ad.Entry
-	for _, name := range c13Groups {
-		q := Query{Classes: []string{"group"}, Eq: []AttrEq{{Attr: "sAMAccountName", Value: name}}}
-		err := b.d.Find(b.ctx, b.nm.Domain, ad.ScopeSubtree, q, idAttrs, func(e *ad.Entry) error {
-			if _, err := b.mark(e, C13); err != nil {
+	seen := map[string]bool{}
+	add := func(e *ad.Entry) error {
+		g, err := b.mark(e, C13)
+		if err != nil {
+			return err
+		}
+		if !seen[g.String()] {
+			seen[g.String()] = true
+			groups = append(groups, e)
+			b.s.c13 = append(b.s.c13, g)
+		}
+		return nil
+	}
+	cp, err := withRID(b.domSID, c13CertPublishersRID)
+	if err != nil {
+		return err
+	}
+	if e, found, err := b.get(dn.SIDRef(cp), idAttrs); err != nil {
+		return err
+	} else if found {
+		if err := add(e); err != nil {
+			return err
+		}
+	}
+	for _, g := range b.pinnedC13 {
+		e, found, err := b.get(dn.GUIDRef(g), idAttrs)
+		if err != nil {
+			return err
+		}
+		if found {
+			if err := add(e); err != nil {
 				return err
 			}
-			groups = append(groups, e)
-			return nil
-		})
-		if err != nil {
+		}
+	}
+	for _, name := range c13Groups {
+		q := Query{Classes: []string{"group"}, Eq: []AttrEq{{Attr: "sAMAccountName", Value: name}}}
+		if err := b.d.Find(b.ctx, b.nm.Domain, ad.ScopeSubtree, q, idAttrs, add); err != nil {
 			return fmt.Errorf("tier0: default-privileged groups: %w", err)
 		}
 	}
+	sort.Slice(b.s.c13, func(i, j int) bool { return b.s.c13[i].String() < b.s.c13[j].String() })
 	return b.membersOf(groups, C13)
 }
 
@@ -1064,6 +1258,195 @@ func (b *builder) c9() error {
 		}
 	}
 	return nil
+}
+
+// c17Objects are the roots of trust (TM-D26 rule 1): the domain head, the root-domain head, the
+// Configuration head, the Schema head and AdminSDHolder. Scope limit as for the rest of the file: the
+// domains of the forest the bound DC does not hold are not read.
+func (b *builder) c17Objects() ([]dn.DN, error) {
+	adh, err := b.child(b.nm.Domain, "CN=System", "CN=AdminSDHolder")
+	if err != nil {
+		return nil, err
+	}
+	out := []dn.DN{b.nm.Domain}
+	if !b.nm.RootDomain.Equal(b.nm.Domain) {
+		out = append(out, b.nm.RootDomain)
+	}
+	return append(out, b.nm.Config, b.nm.Schema, adh), nil
+}
+
+// gpLinkGUID reads the schemaIDGUID of gPLink from the schema (never a constant, rule 2).
+func (b *builder) gpLinkGUID() (guid.GUID, error) {
+	if b.gpLink != nil {
+		return *b.gpLink, nil
+	}
+	var found *guid.GUID
+	q := Query{Classes: []string{"attributeSchema"}, Eq: []AttrEq{{Attr: "lDAPDisplayName", Value: "gPLink"}}}
+	err := b.d.Find(b.ctx, b.nm.Schema, ad.ScopeOneLevel, q, []string{"schemaIDGUID"}, func(e *ad.Entry) error {
+		v := e.Raw("schemaIDGUID")
+		if len(v) != 1 {
+			return errors.New("tier0: gPLink schemaIDGUID unreadable")
+		}
+		g, err := guid.FromBytes(v[0])
+		if err != nil {
+			return errors.New("tier0: gPLink schemaIDGUID malformed")
+		}
+		found = &g
+		return nil
+	})
+	if err != nil {
+		return guid.GUID{}, fmt.Errorf("tier0: gPLink schema object: %w", err)
+	}
+	if found == nil {
+		return guid.GUID{}, errors.New("tier0: gPLink schema object not found")
+	}
+	b.gpLink = found
+	return *found, nil
+}
+
+// C17: control of a root of trust. From each root's live DACL and owner (rule 2, 3): every trustee of
+// an allow ACE with any one of the control rights, expanded by token (members of a trustee group,
+// primary-group members, accounts carrying the trustee in sIDHistory), and the owner unless it is a
+// C1 principal already. A root that cannot be read, or whose DACL or owner cannot be decoded, fails
+// the snapshot (rule 8).
+func (b *builder) c17() error {
+	roots, err := b.c17Objects()
+	if err != nil {
+		return err
+	}
+	gp, err := b.gpLinkGUID()
+	if err != nil {
+		return err
+	}
+	for _, r := range roots {
+		e, found, err := b.get(dn.DNRef(r), []string{"objectGUID", "nTSecurityDescriptor"})
+		if err != nil {
+			return err
+		}
+		if !found || len(e.Raw("nTSecurityDescriptor")) != 1 {
+			return errors.New("tier0: a root of trust has no readable security descriptor")
+		}
+		d, aces, err := grantsOf(e.Raw("nTSecurityDescriptor")[0])
+		if err != nil {
+			return err
+		}
+		if !d.HasOwner {
+			return errors.New("tier0: a root of trust has no readable owner")
+		}
+		seen := map[string]bool{}
+		var trustees []sid.SID
+		for _, a := range aces {
+			if a.controlsRoot(gp) && !seen[a.trustee.String()] {
+				seen[a.trustee.String()] = true
+				trustees = append(trustees, a.trustee)
+			}
+		}
+		sort.Slice(trustees, func(i, j int) bool { return trustees[i].String() < trustees[j].String() })
+		if err := b.markPrincipals(trustees, C17); err != nil {
+			return err
+		}
+		// OWNER RIGHTS and dSHeuristics character 29 are ignored on purpose: the owner is tier0.
+		isC1 := func(o *ad.Entry) bool {
+			g, err := o.GUID()
+			return err == nil && b.s.bases[g.String()][C1]
+		}
+		if err := b.markPrincipalsSkip([]sid.SID{d.Owner}, C17, isC1); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// privilegedSID reports a sIDHistory value that is privileged by RID alone, whatever the domain
+// prefix (rule 6a).
+func privilegedSID(s sid.SID) bool {
+	dom, ok := s.DomainSID()
+	rid, ok2 := s.RID()
+	if !ok || !ok2 {
+		return false
+	}
+	if dom.String() == "S-1-5-32" {
+		return privilegedBuiltinRIDs[rid]
+	}
+	return privilegedDomainRIDs[rid]
+}
+
+// C18: privileged sIDHistory. An object is tier0 when a sIDHistory value is privileged by RID, or
+// resolves to an object that is tier0 by another basis (iterated: such an object may itself have
+// become tier0 through C18). A group that qualifies makes its members tier0 through C2 (rule 7). A
+// value that is neither privileged nor resolvable is reported, not marked.
+func (b *builder) c18() error {
+	hist, err := b.history()
+	if err != nil {
+		return err
+	}
+	done := make([]bool, len(hist))
+	// Resolution is cached: one Get per distinct value.
+	type res struct {
+		e     *ad.Entry
+		found bool
+	}
+	cache := map[sid.SID]res{}
+	var groups []*ad.Entry
+	for changed := true; changed; {
+		changed = false
+		for i, h := range hist {
+			if done[i] {
+				continue
+			}
+			qualifies := false
+			for _, s := range h.sids {
+				if privilegedSID(s) {
+					qualifies = true
+					break
+				}
+				r, ok := cache[s]
+				if !ok {
+					e, found, err := b.get(dn.SIDRef(s), idAttrs)
+					if err != nil {
+						return fmt.Errorf("tier0: sIDHistory lookup: %w", err)
+					}
+					r = res{e, found}
+					cache[s] = r
+				}
+				if r.found {
+					g, err := r.e.GUID()
+					if err != nil {
+						return fmt.Errorf("tier0: sIDHistory target: %w", err)
+					}
+					if len(b.s.bases[g.String()]) > 0 {
+						qualifies = true
+						break
+					}
+				}
+			}
+			if !qualifies {
+				continue
+			}
+			done[i], changed = true, true
+			if _, err := b.mark(h.e, C18); err != nil {
+				return err
+			}
+			if hasClass(h.e, "group") {
+				groups = append(groups, h.e)
+			}
+		}
+	}
+	for i, h := range hist {
+		if done[i] {
+			continue
+		}
+		g, err := h.e.GUID()
+		if err != nil {
+			return fmt.Errorf("tier0: sIDHistory holder: %w", err)
+		}
+		for _, s := range h.sids {
+			if !cache[s].found {
+				b.s.unresolved = append(b.s.unresolved, UnresolvedSIDHistory{Object: g, SID: s})
+			}
+		}
+	}
+	return b.membersOf(groups, C2)
 }
 
 // spnHost is the host part of the "host[:port][/name]" remainder of an SPN.
