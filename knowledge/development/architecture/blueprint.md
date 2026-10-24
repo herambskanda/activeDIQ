@@ -1390,9 +1390,9 @@ class, display snapshots); the operation, item, step, request and correlation ID
 **Signed checkpoints and anchoring** (DM-81, AG-6).
 - Each tenant has an Ed25519 checkpoint key ([RFC 8032](https://www.rfc-editor.org/rfc/rfc8032)),
   sealed under the tenant data key, with a **validity window in the chain**
-  (`audit.checkpoint_key.created` / `.retired`). Routine rotation is yearly or on demand and
-  cross-signed; rotation after a suspected compromise is not cross-signed and goes to every sink
-  at once.
+  (`audit.checkpoint_key.created` / `.retired`). Routine rotation is yearly or on demand; the
+  old key cross-signs the new key's chained `key.created` event (ADR-0005 rule 11); rotation
+  after a suspected compromise is not cross-signed and goes to every sink at once.
 - The `audit.checkpoint` job (per tenant, under a lease) signs the head every 1,000 events or 5
   minutes if anything was appended, plus the last event of every time partition, the head before
   every export, and the head on clean shutdown. The signed statement is `adq-canon/1` of
