@@ -485,6 +485,7 @@ func TestPlanWithoutDSAGUIDRefusedBeforeTransport(t *testing.T) {
 		"absent":    nil,
 		"empty":     {ncGUID: ""},
 		"malformed": {ncGUID: "not-a-guid"},
+		"nil":       {ncGUID: "00000000-0000-0000-0000-000000000000"},
 	} {
 		tr, f := &transport{}, &facts{}
 		c := New(WithTransport(tr), WithFacts(f), WithTier0Builder(&builder{}))

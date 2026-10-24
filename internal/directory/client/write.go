@@ -150,6 +150,9 @@ func (c *Client) Write(ctx context.Context, s step.Step, op WriteOp) (Result, er
 	if err != nil {
 		return Result{}, fmt.Errorf("%w: DSA GUID is not a GUID", ErrNoDSAPin)
 	}
+	if string(dsaID) == string(make([]byte, len(dsaID))) {
+		return Result{}, fmt.Errorf("%w: nil DSA GUID", ErrNoDSAPin)
+	}
 	pins := authority.Pins{nc: host}
 	facts, err := c.facts.Facts(ctx, pins, s.FactsQuery())
 	if err != nil {

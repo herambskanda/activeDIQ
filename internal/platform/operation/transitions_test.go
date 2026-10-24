@@ -415,3 +415,18 @@ func TestPropertyRandomEvents(t *testing.T) {
 		})
 	}
 }
+
+func TestValidDSAGUID(t *testing.T) {
+	for g, want := range map[string]bool{
+		"11111111-2222-3333-4444-555555555555":   true,
+		"00000000-0000-0000-0000-000000000000":   false,
+		"":                                       false,
+		"{11111111-2222-3333-4444-555555555555}": false,
+		"11111111222233334444555555555555":       false,
+		"1111111g-2222-3333-4444-555555555555":   false,
+	} {
+		if got := validDSAGUID(g); got != want {
+			t.Errorf("validDSAGUID(%q) = %v, want %v", g, got, want)
+		}
+	}
+}

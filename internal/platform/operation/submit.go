@@ -33,6 +33,32 @@ type DCPin struct {
 	DSAGUID string
 }
 
+// validDSAGUID reports whether g is a canonical 8-4-4-4-12 hex GUID that is not the nil GUID. A pin that
+// fails this is never persisted: the connector could read an all-zero GUID as "no pin" (rule 5).
+func validDSAGUID(g string) bool {
+	if len(g) != 36 {
+		return false
+	}
+	nonZero := false
+	for i := 0; i < len(g); i++ {
+		c := g[i]
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			if c != '-' {
+				return false
+			}
+			continue
+		}
+		switch {
+		case c >= '1' && c <= '9', c >= 'a' && c <= 'f', c >= 'A' && c <= 'F':
+			nonZero = true
+		case c == '0':
+		default:
+			return false
+		}
+	}
+	return nonZero
+}
+
 // ErrGate is returned when the registered gate errored or did not answer: the operation stays planned
 // and is never allowed (rule 8).
 var ErrGate = errors.New("operation: gate did not allow")
@@ -219,6 +245,9 @@ func (r *Runner) planAndRoute(ctx context.Context, t tenant.ID, opID string, inp
 			pin, err := r.cfg.Pinner.Pin(ctx, sp.Target.Connection, sp.Target.NC, pins[sp.Target.NC])
 			if err != nil {
 				return r.failPlan(ctx, t, op, fmt.Errorf("pinning a DC: %w", err))
+			}
+			if pin.Host == "" || !validDSAGUID(pin.DSAGUID) {
+				return r.failPlan(ctx, t, op, fmt.Errorf("pinning a DC: %w: pin lacks a host or a valid DSA GUID", ErrInvalid))
 			}
 			pins[sp.Target.NC], dsas[sp.Target.NC] = pin.Host, pin.DSAGUID
 		}

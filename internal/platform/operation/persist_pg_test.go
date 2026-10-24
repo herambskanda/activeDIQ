@@ -157,6 +157,19 @@ func (d *dirFake) action(t *testing.T, id ActionID, stepUp, secretIn bool, class
 	return a
 }
 
+func cmpPinner(p Pinner) Pinner {
+	if p == nil {
+		return pinFake{}
+	}
+	return p
+}
+
+type badPin DCPin
+
+func (b badPin) Pin(context.Context, string, authority.NamingContextID, string) (DCPin, error) {
+	return DCPin(b), nil
+}
+
 type pinFake struct{}
 
 func (pinFake) Pin(context.Context, string, authority.NamingContextID, string) (DCPin, error) {
@@ -233,6 +246,7 @@ type rigOpt struct {
 	stepUp   bool
 	secretIn bool
 	class    Reversibility
+	pinner   Pinner // overrides pinFake
 	ref      string // Request reference the hold gate returns
 }
 
@@ -261,7 +275,7 @@ func newPRig(t *testing.T, s *storetest.Server, o rigOpt) *prig {
 		t.Fatal(err)
 	}
 	cfg := Config{DB: db, Audit: ch, Authz: &authzFake{}, Registry: reg, Facts: factsFake{}, Gate: o.gate, Jobs: jobs.NewRegistry(),
-		Keys: keySrc{}, Pinner: pinFake{}, Settings: settingsFake{irreversible: o.irrev}, Provenance: p.prov, Alerts: p.alerts,
+		Keys: keySrc{}, Pinner: cmpPinner(o.pinner), Settings: settingsFake{irreversible: o.irrev}, Provenance: p.prov, Alerts: p.alerts,
 		Attempts: o.attempts, Slots: o.slots, Backoff: time.Millisecond, Lease: time.Minute}
 	if p.r, err = NewRunner(cfg); err != nil {
 		t.Fatal(err)
@@ -407,6 +421,29 @@ func TestSubmitAndApplyEndToEnd(t *testing.T) {
 			t.Fatalf("idempotent resubmit = %+v %v", again, err)
 		}
 	})
+}
+
+func TestBadDSAPinFailsPlanAndIsNotPersisted(t *testing.T) {
+	for name, pin := range map[string]DCPin{
+		"empty":  {Host: "dc1.example.test"},
+		"nil":    {Host: "dc1.example.test", DSAGUID: "00000000-0000-0000-0000-000000000000"},
+		"nohost": {DSAGUID: "11111111-2222-3333-4444-555555555555"},
+	} {
+		storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+			p := newPRig(t, s, rigOpt{pinner: badPin(pin)})
+			p.dir.set("g1", "old")
+			sub, err := p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "g1", Want: "new"}))
+			if !errors.Is(err, ErrInvalid) {
+				t.Fatalf("%s: err = %v, want ErrInvalid", name, err)
+			}
+			if st := p.opState(sub.Operation); st != "plan_failed" {
+				t.Fatalf("%s: state = %s, want plan_failed", name, st)
+			}
+			if n := p.owner(`SELECT count(*)::text FROM public.operation_steps WHERE operation_id = $1::uuid`, string(sub.Operation))[0]; n != "0" {
+				t.Fatalf("%s: %s steps persisted for a bad pin", name, n)
+			}
+		})
+	}
 }
 
 func TestPhasesRunInOrder(t *testing.T) {
