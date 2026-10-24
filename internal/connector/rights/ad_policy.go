@@ -25,6 +25,8 @@ var (
 	rightGetChangesAll   = mustAD("1131f6ad-9c07-11d1-f79f-00c04fc2dcd2")
 	rightValidatedSPN    = mustAD("f3a64788-5306-11d1-a9c5-0000f80367c1")
 	rightValidatedDNSHot = mustAD("72e39547-7b18-11d1-adef-00c04fd8d5cd")
+	rightGetChangesFiltered = mustAD("89e95b76-444d-4c62-991a-0facbeda640c")
+	rightSelfMembership     = mustAD("bf9679c0-0de6-11d0-a285-00aa003049e2")
 	// propSetUserAcctRestrictions includes msDS-AllowedToActOnBehalfOfOtherIdentity (R3).
 	propSetUserAcctRestrictions = mustAD("4c164200-20c0-11d0-a768-00aa006e0529")
 )
@@ -95,3 +97,9 @@ var expectations = map[v1.RightsFamily][]expectation{
 // confidential-attribute reads on child objects whose classes vary by LAPS flavour (TM §6.3 R10,
 // `[OPEN → ADM-060 spec]`). Their absence is not reported as missing, and the follow-up ticket
 // named in T-0096's advance note adds them.
+
+// dangerousExtended are the extended rights that are an exposure on a tier0 object when a broad
+// principal holds them: password reset and the replication (DCSync) rights.
+var dangerousExtended = map[adguid.GUID]bool{
+	rightResetPassword: true, rightGetChanges: true, rightGetChangesAll: true, rightGetChangesFiltered: true,
+}
