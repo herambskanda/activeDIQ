@@ -509,7 +509,11 @@
       "SD-H14": true,
       "SD-H15A": true,
       "SD-H15B": true,
-      "SD-H15C": true
+      "SD-H15C": true,
+      "SD-H16A": true,
+      "SD-H16B": true,
+      "SD-H16C": false,
+      "SD-H17": true
     },
     "sql": {
       "SQL-03": true,

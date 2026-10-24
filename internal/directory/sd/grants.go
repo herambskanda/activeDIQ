@@ -88,7 +88,10 @@ func (p Principal) Incomplete() bool { return p.incomplete }
 type RightKind uint8
 
 const (
-	Whole RightKind = iota
+	// Unset is the zero value and fails closed: with an Object GUID it makes Grants answer
+	// Unknown, because the primitive cannot tell an attribute from a property set.
+	Unset RightKind = iota
+	Whole
 	Class
 	Attribute
 	PropertySet
@@ -128,6 +131,10 @@ func Grants(p Principal, right Right, s SD) Result {
 	res := Result{Incomplete: p.incomplete, Anomalous: len(s.Anomalies) > 0}
 	if right.Mask == 0 || right.Mask&(maskGeneric|maskAccessSystemSecurity|maskMaximumAllowed) != 0 {
 		res.Decision, res.Why = Unknown, "mask_not_specific"
+		return res
+	}
+	if right.Object != nil && (right.Kind == Unset || right.Kind == Whole) {
+		res.Decision, res.Why = Unknown, "right_kind_unset"
 		return res
 	}
 	switch s.DACL.Kind {
@@ -215,6 +222,12 @@ func Grants(p Principal, right Right, s SD) Result {
 				continue
 			}
 			res.Decision, res.Why = Unknown, "self_unresolved"
+			return res
+		}
+		if a.Trustee == sidOwnerRights && s.HasOwner && p.holds(s.Owner, nil) {
+			// An OWNER RIGHTS ACE replaces the owner's implicit rights and the DC combines it
+			// with the other ACEs in ways Samba itself documents as unclear: not modelled.
+			res.Decision, res.Sources, res.Why = Unknown, nil, "owner_rights_ace"
 			return res
 		}
 		if !p.holds(a.Trustee, p.objectSID) {

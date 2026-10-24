@@ -200,10 +200,10 @@ def res(decision, sources=(), why=None, incomplete=False):
     return d
 OWN = sid(SYS)
 inh_ace = ace(5, 0x12, 0x100, G1, obj=RP, inh=USER)
-grants("SD-H01", sd(dacl=acl([inh_ace], rev=4), owner=OWN), 0x100, res("yes", [(0, True)]), False, H + "SD-H01 inherited copy on the child; GUID bytes 70 95 29 00 6d 24 d0 11 a7 68 00 aa 00 6e 05 29", obj=RP)
-grants("SD-H02", sd(dacl=acl([ace(5, 0x0A, 0x100, G1, obj=RP, inh=USER)], rev=4), owner=OWN), 0x100, res("no", why="no_matching_ace"), False, H + "SD-H02 INHERIT_ONLY does not apply to its own object", obj=RP)
-grants("SD-H03", sd(dacl=acl([ace(0, 0, 0x100, G1)]), owner=OWN), 0x100, res("yes", [(0, False)]), False, H + "SD-H03 no ObjectType: all extended rights", obj=RP)
-grants("SD-H04", sd(dacl=acl([ace(5, 0, 0x20, G1, obj=RP)], rev=4), owner=OWN), 0x100, res("no", why="no_matching_ace"), True, H + "SD-H04 inert ACE: right GUID with a property mask", obj=RP)
+grants("SD-H01", sd(dacl=acl([inh_ace], rev=4), owner=OWN), 0x100, res("yes", [(0, True)]), False, H + "SD-H01 inherited copy on the child; GUID bytes 70 95 29 00 6d 24 d0 11 a7 68 00 aa 00 6e 05 29", obj=RP, kind="control_access")
+grants("SD-H02", sd(dacl=acl([ace(5, 0x0A, 0x100, G1, obj=RP, inh=USER)], rev=4), owner=OWN), 0x100, res("no", why="no_matching_ace"), False, H + "SD-H02 INHERIT_ONLY does not apply to its own object", obj=RP, kind="control_access")
+grants("SD-H03", sd(dacl=acl([ace(0, 0, 0x100, G1)]), owner=OWN), 0x100, res("yes", [(0, False)]), False, H + "SD-H03 no ObjectType: all extended rights", obj=RP, kind="control_access")
+grants("SD-H04", sd(dacl=acl([ace(5, 0, 0x20, G1, obj=RP)], rev=4), owner=OWN), 0x100, res("no", why="no_matching_ace"), True, H + "SD-H04 inert ACE: right GUID with a property mask", obj=RP, kind="control_access")
 grants("SD-H05", sd(dacl=acl([ace(0, 0, 0x20, "S-1-5-10")]), owner=OWN), 0x20, res("unknown", why="self_unresolved", incomplete=True), True, H + "SD-H05 SELF without a SelfSID", bare=[G1])
 grants("SD-H05B", sd(dacl=acl([ace(0, 0, 0x20, "S-1-5-10")]), owner=OWN), 0x20, res("yes", [(0, False)]), False, H + "SD-H05 SELF when the object is the principal itself", objsid=X1)
 grants("SD-H06", sd(dacl=acl([ace(9, 0, 0x20, G1, tail=b"\0\0\0\0")], rev=4), owner=OWN), 0x20, res("unknown", why="callback_ace"), True, H + "SD-H06 callback conditions are not evaluated")
@@ -214,7 +214,7 @@ grants("SD-H08", sd(dacl=acl([ace(0, 0, 0x20, G1)]), owner=OWN), 0x20, res("no",
 grants("SD-H05C", sd(dacl=acl([ace(0, 0, 0x20, "S-1-5-10"), ace(0, 0, 0x20, G1)]), owner=OWN), 0x20, res("yes", [(1, False)]), False, H + "SD-H05 an unresolved SELF allow does not hide a definite grant")
 grants("SD-H05D", sd(dacl=acl([ace(0, 0, 0x20, "S-1-5-10"), ace(1, 0, 0x20, G1)]), owner=OWN), 0x20, res("unknown", why="self_unresolved"), True, H + "SD-H05 an unresolved SELF allow before a deny: the deny might not be reached")
 grants("SD-H09A", UD, 0x20000, res("yes", [(AU_INDEX, False)], incomplete=True), False, H + "SD-H09 Authenticated Users read-control through the (A;;RC;;;AU) ACE", bare=[AU], objsid=G1)
-grants("SD-H09B", UD, 0x10, res("no", why="no_matching_ace", incomplete=True), False, H + "SD-H09 a property the AU ACEs do not name", obj="11111111-2222-3333-4444-555555555555", bare=[AU], objsid=G1)
+grants("SD-H09B", UD, 0x10, res("no", why="no_matching_ace", incomplete=True), False, H + "SD-H09 a property the AU ACEs do not name", obj="11111111-2222-3333-4444-555555555555", bare=[AU], objsid=G1, kind="class")
 grants("SD-21H", sd(dacl=acl([A, D]), owner=OWN), 0x20, res("yes", [(0, False)]), True, H + "SD-21 helper evaluates in stored order: allow first wins", user=X1, groups=(G1, "S-1-5-32-545"))
 grants("SD-H10", sd(dacl=acl([D, A]), owner=OWN), 0x20, res("no", [(0, False)]), False, H + "canonical order: deny first refuses", user=X1, groups=(G1, "S-1-5-32-545"))
 grants("SD-H11", sd(dacl=acl([ace(0, 0, 0x20, G1), bytes([0x7F, 0]) + struct.pack("<H", 16) + b"\0" * 12]), owner=OWN), 0x10, res("unknown", why="opaque_ace_present"), True, H + "SD-19 opaque ACE: Unknown rather than No")
@@ -231,6 +231,13 @@ grants("SD-H14", sd(dacl=acl([ace(1, 0, 0x40000, "S-1-1-0")]), owner=sid(X1)), 0
 grants("SD-H15A", sd(dacl=acl([]), owner=OWN), 0x01000000, res("unknown", why="mask_not_specific"), True, R + "ACCESS_SYSTEM_SECURITY is decided by privilege")
 grants("SD-H15B", sd(dacl=acl([]), owner=OWN), 0x02000000, res("unknown", why="mask_not_specific"), True, R + "MAXIMUM_ALLOWED is not a DACL bit")
 grants("SD-H15C", sd(dacl=acl([]), owner=OWN), 0x80000, res("unknown", why="privilege_unmodelled"), True, R + "WRITE_OWNER: SeTakeOwnershipPrivilege is not modelled")
+
+R = "security re-review T-0149 / OWNER RIGHTS (S-1-3-4) and fail-closed RightKind "
+OR = "S-1-3-4"
+grants("SD-H16A", sd(dacl=acl([ace(0, 0, 0xF01FF, OR)]), owner=sid(X1)), 0x20, res("unknown", why="owner_rights_ace"), True, R + "owner + allow(OWNER RIGHTS): DC applies it to the owner")
+grants("SD-H16B", sd(dacl=acl([ace(1, 0, 0x20, OR), ace(0, 0, 0x20, "S-1-1-0")]), owner=sid(X1)), 0x20, res("unknown", why="owner_rights_ace"), True, R + "owner + deny(OWNER RIGHTS) + allow(Everyone): not a definite Yes")
+grants("SD-H16C", sd(dacl=acl([ace(0, 0, 0xF01FF, OR)]), owner=OWN), 0x20, res("no", why="no_matching_ace"), False, R + "non-owner: the OWNER RIGHTS ACE is irrelevant")
+grants("SD-H17", sd(dacl=acl([ace(5, 0, 0x20, G1, obj=MEMBERSHIP)], rev=4), owner=OWN), 0x20, res("unknown", why="right_kind_unset"), True, R + "Object set without a Kind fails closed", obj=MEMBER)
 
 with open("testdata/safe-primitives/sd.read.jsonl", "w") as f:
     for r in recs:
