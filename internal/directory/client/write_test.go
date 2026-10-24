@@ -170,6 +170,7 @@ func TestZeroStepRefusedBeforeTransport(t *testing.T) {
 func TestRevokedStepRefused(t *testing.T) {
 	var kept step.Step
 	tr := &transport{}
+	//fitness:allow-step-escape proves a smuggled copy is refused after the runner revokes it (O1 is the static half)
 	withStep(t, func(_ context.Context, s step.Step) { kept = s })
 	c := New(WithTransport(tr), WithFacts(&facts{}), WithTier0Builder(&builder{}))
 	if _, err := c.Write(context.Background(), kept, goodOp()); !errors.Is(err, step.ErrRevoked) {

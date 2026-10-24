@@ -1,5 +1,6 @@
-// Package main is the fitness-operation job (ADR-0005). It carries check O9 only: the kernel import
-// DAG of rule 13. O1-O8 land with the code they inspect (the step token, Actions, the audit chain).
+// Package main is the fitness-operation job (ADR-0005). It carries O9 (the kernel import DAG of
+// rule 13) and O1 (the step token: syntactic part, plus the type-aware stepescape pass). O2-O8 land
+// with the code they inspect (Actions, the audit chain).
 //
 // O9 parses the ```dag block of the ADR file itself, maps each listed name to
 // internal/platform/<name>, reads the import statements of every .go file (tests included) of each

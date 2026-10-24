@@ -22,8 +22,8 @@ import (
 //   - step.TakeMinter is referenced anywhere except the package internal/platform/operation itself;
 //   - a //go:linkname directive names operation/step.
 //
-// Closure capture and "passed to a function with no step.Step parameter" need type information and
-// land with the go/analysis pass (follow-up ticket); this file does not claim to cover them.
+// Closure capture and "passed to a function with no step.Step parameter" need type information; they
+// are the go/analysis pass tools/analyzers/stepescape, run by o1types.go.
 
 const (
 	stepSuffix = "/internal/platform/operation/step"

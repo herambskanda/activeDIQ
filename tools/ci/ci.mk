@@ -77,7 +77,7 @@ fitness-oracles: fitness-corpus ## T-0034: safe-primitives FF-SP6 on Linux: psli
 fitness-api: web-install ## T-0011, T-0017, T-0018, ADR-0004: A1 layout, A3 permission (document half), A4 route set and HTTP probe per profile (apihost.Build), A5 generated client (static), A6 generated server (source), A7 strict JSON (static, type closure, corpus, ajv cross-check from the pinned web deps), A8 secret linter, A10 versioning (oasdiff against main), A11 problems, A12 limits, A13 policy hygiene (host bindings from the apihost table) and A14 responses conform (apitest harness), with a self-test that fails when a check finds nothing where the tree has something. Prints one line per check A1-A14 (active, or inactive (<missing input>)); exits 0 with inactive checks, and the ADR is not accepted while any is
 	go run ./tools/fitness/api
 
-fitness-operation: ## T-0013: ADR-0005 O9, the kernel import DAG of rule 13: parses the dag block of the ADR itself and fails on any import among the listed platform packages it does not allow; lists each package as existing or pending (O1-O8 land with the code they inspect)
+fitness-operation: ## T-0013: ADR-0005 O9, the kernel import DAG of rule 13: parses the dag block of the ADR itself and fails on any import among the listed platform packages it does not allow; lists each package as existing or pending plus O1 step escape (syntactic and the type-aware stepescape analyzer) (O2-O8 land with the code they inspect)
 	go run ./tools/fitness/operation
 
 fitness-disclosure: ## T-0258: SECURITY.md and .well-known/security.txt (RFC 9116): Contact named in SECURITY.md, one RFC 3339 Expires under a year ahead, fails 30 days before it so the file is renewed, Policy points at SECURITY.md
