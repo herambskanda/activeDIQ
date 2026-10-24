@@ -134,6 +134,11 @@ var denyPatterns = []string{
 	"User-Phone.ReadWrite.All",
 	"User-Mail.ReadWrite.All",
 	"User.ManageIdentities.All",
+	// TM-D5a: tenant-wide mailbox/site control on non-Graph resources (Exchange Online, EXO
+	// Protection, SharePoint). Matched on any resource, so these are not Graph-gated.
+	"full_access_as_app",
+	"Exchange.ManageAsApp",
+	"Sites.FullControl.All",
 }
 
 // DenyListed reports whether the permission value is on the §6.6 deny list.

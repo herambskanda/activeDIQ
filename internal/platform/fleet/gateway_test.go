@@ -90,7 +90,26 @@ func (failCAs) TenantCAs(context.Context, tenant.ID) ([]*x509.Certificate, error
 type fakeComps struct {
 	mu      sync.Mutex
 	revoked map[string]bool
+	current map[string]string // component -> its current serial; absent means any serial is current
 	err     error
+}
+
+// rotate records serial as the component's current certificate, as Rotate does in cert_serial.
+func (f *fakeComps) rotate(comp, serial string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.current == nil {
+		f.current = map[string]string{}
+	}
+	f.current[comp] = serial
+}
+
+func (f *fakeComps) Current(_ context.Context, id fleet.Identity) (bool, error) {
+	f.mu.Lock()
+	cur, pinned := f.current[id.ComponentID]
+	f.mu.Unlock()
+	ok, err := f.Usable(context.Background(), id)
+	return ok && (!pinned || cur == id.Serial), err
 }
 
 func (f *fakeComps) revoke(comp string) {
@@ -639,5 +658,52 @@ func TestDialRejectsUntrustedServerCert(t *testing.T) {
 	}
 	if err := callEnroll(r.dial(t, nil)); err != nil {
 		t.Fatalf("handshake with the rig's own root failed: %v", err)
+	}
+}
+
+func serialOf(t *testing.T, c tls.Certificate) string {
+	t.Helper()
+	x, err := x509.ParseCertificate(c.Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := fleet.IdentityOf(x)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id.Serial
+}
+
+// TestSupersededCertificateRefusedAtEstablishment (TM-TB6-T14): after a rotation the old, unexpired
+// certificate gets Unauthenticated on a new stream, the new one passes, and a stream already open on
+// the old certificate survives the rotation.
+func TestSupersededCertificateRefusedAtEstablishment(t *testing.T) {
+	ca := newCA(t, time.Now().Add(time.Hour))
+	tidA := tenant.New()
+	pool := x509.NewCertPool()
+	pool.AddCert(ca.cert)
+	nb, na, eku := time.Now().Add(-time.Minute), time.Now().Add(time.Hour), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+	r := start(t, casByTenant{tidA: {ca.cert}}, pool, nil)
+	r.fleet.hold.Store(true)
+	oldLeaf := ca.leaf(t, tidA, nb, na, eku)
+	newLeaf := ca.leaf(t, tidA, nb, na, eku)
+	r.comps.rotate(compID, serialOf(t, oldLeaf))
+
+	open := openTunnel(t, r.dial(t, &oldLeaf))
+	waitFor(t, "stream open", func() bool { return r.fleet.open.Load() == 1 })
+	ended := recvErr(open)
+
+	r.comps.rotate(compID, serialOf(t, newLeaf)) // Rotate commits
+	if err := callTunnel(r.dial(t, &oldLeaf)); code(err) != codes.Unauthenticated {
+		t.Fatalf("superseded certificate established a stream: %v", err)
+	}
+	cc := r.dial(t, &newLeaf)
+	openTunnel(t, cc)
+	waitFor(t, "new certificate stream open", func() bool { return r.fleet.open.Load() == 2 })
+	// Several recheck periods later the stream made on the old certificate is still open.
+	select {
+	case err := <-ended:
+		t.Fatalf("rotation dropped the open stream: %v", err)
+	case <-time.After(300 * time.Millisecond):
 	}
 }

@@ -44,6 +44,9 @@ type Config struct {
 	Timeout    time.Duration      // per-request timeout, default 30 s
 	PageSize   uint32             // default page size, default 500, clamped to MaxPageSize
 	Dialer     *net.Dialer        // optional, for tests and proxies
+	// SecretAudit receives one event per ReadSecret call (actor, target GUID, attribute, reason,
+	// outcome — never a value). ReadSecret refuses to run without it.
+	SecretAudit func(SecretReadEvent) error
 }
 
 // Limits.
@@ -108,6 +111,12 @@ func Open(ctx context.Context, cfg Config) (*Session, error) {
 		if err := s.bind(ctx, bindCred); err != nil {
 			conn.Close()
 			// A rejected credential is not a reason to hammer the next DC (lockout).
+			return nil, err
+		}
+		// SecretAttrs is computed at connect (safe-primitives §3.7). Failing to compute it fails the
+		// connect: a session that cannot name its secrets must not search.
+		if err := s.loadSecretAttrs(ctx); err != nil {
+			s.Close()
 			return nil, err
 		}
 		return s, nil

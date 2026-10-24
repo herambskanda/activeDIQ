@@ -115,8 +115,26 @@ func humanActor(p apihost.Principal) authority.Chain {
 
 // Usable reports whether the identified component may use the fleet listener: it exists in the
 // tenant its certificate names and is enrolled or active. The certificate's serial is not compared:
-// a rotation must not drop the stream it was made on, and Rotate itself refuses a superseded one.
+// this is the open-stream re-check, and a rotation must not drop the stream it was made on. Use
+// Current at establishment.
 func (l *Lifecycle) Usable(ctx context.Context, id fleet.Identity) (bool, error) {
+	return l.status(ctx, id, false)
+}
+
+// Current is Usable and requires id.Serial to equal the component's current cert_serial, so a
+// certificate superseded by Rotate is refused until it expires (TM-TB6-T14). An empty serial never
+// matches.
+func (l *Lifecycle) Current(ctx context.Context, id fleet.Identity) (bool, error) {
+	if id.Serial == "" {
+		if l == nil || l.DB == nil {
+			return false, ErrNotConfigured
+		}
+		return false, nil
+	}
+	return l.status(ctx, id, true)
+}
+
+func (l *Lifecycle) status(ctx context.Context, id fleet.Identity, bySerial bool) (bool, error) {
 	if l == nil || l.DB == nil {
 		return false, ErrNotConfigured
 	}
@@ -126,7 +144,8 @@ func (l *Lifecycle) Usable(ctx context.Context, id fleet.Identity) (bool, error)
 	var usable bool
 	err := l.DB.WithTenant(ctx, id.Tenant, func(ctx context.Context, tx store.Tx) error {
 		err := tx.QueryRow(ctx, `SELECT state IN ('enrolled', 'active') AND kind = $2
-			FROM public.components WHERE id = $1::uuid`, id.ComponentID, id.Kind).Scan(&usable)
+			AND (NOT $3::boolean OR cert_serial = $4)
+			FROM public.components WHERE id = $1::uuid`, id.ComponentID, id.Kind, bySerial, id.Serial).Scan(&usable)
 		if store.IsNoRows(err) {
 			usable = false
 			return nil

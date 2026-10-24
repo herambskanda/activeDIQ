@@ -30,9 +30,9 @@ func Compute(kind string, t authority.TargetRef, attrs []Attr) Digest {
 		h.Write(n[:])
 		h.Write([]byte(s))
 	}
-	put("adq-step-digest/1")
+	put("adq-step-digest/2")
 	put(kind)
-	for _, f := range []string{t.Connection, t.GUID, t.Class, t.Parent, t.RDN} {
+	for _, f := range []string{t.Connection, t.GUID, t.Class, t.Parent, t.RDN, string(t.NC)} {
 		put(f)
 	}
 	sorted := append([]Attr(nil), attrs...)

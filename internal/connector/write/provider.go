@@ -43,7 +43,18 @@ type Provider interface {
 	Classify(ctx context.Context, id guid.GUID, designated []guid.GUID) (Verdict, error)
 	// Anchors re-reads the identifiers F4 compares evidence with.
 	Anchors(ctx context.Context, id guid.GUID) (Anchors, error)
+	// PropertyGuard returns the dynamic-group property guard for this connection (contract §8.9). It
+	// is never nil: a provider with no snapshot returns a guard that refuses every write.
+	PropertyGuard(ctx context.Context) (PropertyGuard, error)
 }
+
+// PropertyGuard is the §8.9 check. *tier0.Set implements it; a nil *tier0.Set refuses every write,
+// which is the fail-closed answer when no snapshot of the closure exists.
+type PropertyGuard interface {
+	CheckPropertyWrite(ctx context.Context, w tier0.PropertyWrite) (tier0.DynamicRuleRefusal, error)
+}
+
+var _ PropertyGuard = (*tier0.Set)(nil)
 
 // ADProvider classifies through the AD classifier of T-0093 over an ADDirectory.
 type ADProvider struct {
@@ -51,6 +62,10 @@ type ADProvider struct {
 	ID  *connectorv1.DirectoryIdentity
 	// classify is the base classifier; nil means the T-0093 classifier over Dir. Tests substitute it.
 	classify func(ctx context.Context, id guid.GUID) (tier0.ADResult, error)
+	// Dynamic is the Entra snapshot whose designated closure the AD plane's property writes are
+	// checked against (the synced AD user is matched by rules on the Entra side, TM-D25 7f). Nil
+	// refuses every property write.
+	Dynamic PropertyGuard
 }
 
 var _ Provider = (*ADProvider)(nil)
@@ -185,6 +200,8 @@ type EntraProvider struct {
 	TenantID string
 	// AnchorReader may be nil: statements with evidence are then refused (ErrNoAnchors).
 	Anchor AnchorReader
+	// Dynamic is the snapshot of the designated closure. Nil refuses every property write.
+	Dynamic PropertyGuard
 }
 
 var _ Provider = (*EntraProvider)(nil)
@@ -223,6 +240,23 @@ func (p *EntraProvider) Classify(ctx context.Context, id guid.GUID, designated [
 		}
 	}
 	return v, nil
+}
+
+// PropertyGuard returns the snapshot, or the refuse-everything guard when there is none.
+func (p *EntraProvider) PropertyGuard(context.Context) (PropertyGuard, error) {
+	return guardOrRefuse(p.Dynamic), nil
+}
+
+// PropertyGuard returns the snapshot, or the refuse-everything guard when there is none.
+func (p *ADProvider) PropertyGuard(context.Context) (PropertyGuard, error) {
+	return guardOrRefuse(p.Dynamic), nil
+}
+
+func guardOrRefuse(g PropertyGuard) PropertyGuard {
+	if g == nil {
+		return (*tier0.Set)(nil)
+	}
+	return g
 }
 
 func (p *EntraProvider) Anchors(ctx context.Context, id guid.GUID) (Anchors, error) {

@@ -4,7 +4,7 @@ date: 2026-10-02
 updated: 2026-10-21
 status: review
 owner: heramb
-ticket: T-0035, T-0041
+ticket: T-0035, T-0041, T-0107
 binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), ADR-0003 (ratified), ADR-0004 (ratified), ADR-0005 (ratified), safe-primitives.md (review)
 ---
 
@@ -950,11 +950,12 @@ section summarises it; if the two disagree, the ADR wins. Build detail: [api-pip
 A versioned protobuf service of **typed** operations. It has no free-form query verb and no script
 verb (ADR-0002 rule 3).
 
-| Group | Operations (read side finalised in [connector-contract.md](connector-contract.md); write, secret and auth rows remain a sketch) |
+| Group | Operations (read, write and rights-check groups finalised in [connector-contract.md](connector-contract.md) v1.2; named-secret and auth rows remain a sketch) |
 | --- | --- |
-| Discover | `Describe` (provider kind, capabilities, naming contexts, DCs, health), `DescribeSchema` (attribute syntax and flags per class) |
+| Discover | `Describe` (provider kind, capabilities, naming contexts, DCs, health, write kinds supported), `DescribeSchema` (attribute syntax and flags per class). Contract §4 |
+| Verify | `VerifyConnection` (contract §8.4): the connector's own rights check, run as the connector identity, read-only and never gated. AD checks V1–V9, Entra checks EV1–EV5; streams a header, `RightsFinding`s, the connector's computed `tier0` set and exactly one `completed`. Its findings are the DM-24 Findings and the connector computes their fingerprints |
 | Read | `ScopedSearch{connection, delegation roots: GUIDRef[], filter AST, attrs, page}`, `Read{ObjectRef, attrs}`, `ReadPerDC{ObjectRef, attrs}` (exact last logon, ADM-084) |
-| Write | `Apply{op: Create, Modify, Move, Rename, Delete, Restore, MemberAdd, MemberRemove, SetPassword(Secret), Unlock, AssignLicenses…; idempotency key (operation, item, step); attempt; operation ID; acting principal; DC pin; plan digest}` returns read-back state. A conditional write whose precondition is the plan's before-state; the connector re-checks the digest and logs every field (ADR-0005 rules 2, 4) |
+| Write | `Plan` and `Apply` (contract §8.1). **The envelope only**: the write kinds (create, modify, move, rename, delete, restore, member add and remove, set password, unlock, assign licences…) each arrive with their own spec ticket, which adds the kind, its `WriteChange` arm, its touched-set rule and its conformance cases. `Apply` carries the step key `(operation, item, step)`, `attempt`, `acting_principal`, `plan_digest`, the DC pin and the `TargetPrecondition` (the plan's before-state; ADR-0005 rules 2, 4, 5), plus a request-scoped `Tier0Context` (contract §8.3) and the `WriteGateOverride`. The connector re-checks the digest, derives the touched set itself, refuses any `tier0` object (TM-D2) and enforces its own write gate (contract §8.2, TM-D1) as a second check behind the server's (DM-10.I11). No field carries a credential |
 | Named secret ops | `ReadSecret{LAPS, BitLocker}`: each has its own capability and audit kind (safe-primitives §3.7) |
 | Change feed | `ChangeFeed{naming context or Entra tenant, cookie}` returns a stream of batches + new cookie (DirSync / Graph delta). `SecretAttrs` are stripped before they leave the connector |
 | Auth | `VerifyUser` / SPNEGO acceptor for console sign-in with AD identity (ADR-0002 rule 3) |

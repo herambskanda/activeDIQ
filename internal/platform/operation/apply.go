@@ -160,7 +160,7 @@ func (r *Runner) RunChunk(ctx context.Context, t tenant.ID, tx txFunc, a chunkAr
 func (r *Runner) mintFor(c *claimed, attempt int, sec secret.Secret) (step.Step, func(), error) {
 	q := r.cfg.Authz.FactsQuery(c.op.Chain, c.d.Permission, c.plan.Target)
 	return minter.Mint(step.Spec{
-		Key: c.key, Attempt: attempt, Actor: c.op.Chain, Pins: c.op.Pins, Query: q, Digest: stepDigest(c.plan), Secret: sec,
+		Key: c.key, Attempt: attempt, Actor: c.op.Chain, NC: c.plan.Target.NC, Pins: c.op.Pins, Query: q, Digest: stepDigest(c.plan), Secret: sec,
 		Recheck: func(ctx context.Context, f authority.Facts) error {
 			return r.recheck(ctx, c.op.Chain, c.d.Permission, c.plan.Target, f)
 		},

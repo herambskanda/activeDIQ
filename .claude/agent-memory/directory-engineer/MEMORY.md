@@ -5,3 +5,4 @@
 - [tier0 classifier lessons](tier0-classifier-lessons.md) — Samba in-chain cost, ranged member, unreadable GUIDs, lab creds
 - [write guard lessons](write-guard-lessons.md) — gRPC embed trap, graphtest MS Graph SP, GUID wire order, lab creds
 - [rights-check lessons](rights-check-lessons.md) — Samba dsacl/delegation, constructed attrs need Read, own-SID exclusions
+- [scoped/secret lessons](scoped-secret-lessons.md) — Samba can't add schema attrs or referrals; secret-set loading at Open

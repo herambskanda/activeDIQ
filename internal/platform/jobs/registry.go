@@ -1,7 +1,7 @@
 package jobs
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"sort"
@@ -50,7 +50,7 @@ type Kind struct {
 	// ValidateArgs, when set, checks the args of every job of this kind at Enqueue, after the common
 	// rules (a JSON object, at most MaxArgsBytes, tenant_id set from the job). It must accept only typed
 	// references and must not echo values in its error.
-	ValidateArgs func(args json.RawMessage) error
+	ValidateArgs func(args jsontext.Value) error
 	// Run is the body of a ModeDefault kind. It runs in the wrapper's one tenant transaction, which
 	// also records the outcome, so its writes and the job's completion commit together.
 	Run Body

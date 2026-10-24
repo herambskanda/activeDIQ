@@ -108,6 +108,7 @@ type behaviour struct {
 	onApply  func(step.Step)
 	plan     func() []TypedStep[payload]
 	class    Reversibility
+	onPlan   func(PlanContext)
 }
 
 func (b behaviour) action(t *testing.T, db *fakeDB) Action {
@@ -117,7 +118,10 @@ func (b behaviour) action(t *testing.T, db *fakeDB) Action {
 	a, err := Define(Typed[in, payload, out]{
 		Descriptor: Descriptor{ID: "settings.thing.set", Version: 1, Permission: "settings.thing.set",
 			Input: "#/components/schemas/Thing", Target: TargetStore, Reversibility: Irreversible, AuditKind: "settings.thing.changed"},
-		Plan: func(_ context.Context, _ PlanContext, i in) ([]TypedStep[payload], error) {
+		Plan: func(_ context.Context, pc PlanContext, i in) ([]TypedStep[payload], error) {
+			if b.onPlan != nil {
+				b.onPlan(pc)
+			}
 			if b.plan != nil {
 				return b.plan(), nil
 			}
@@ -495,5 +499,67 @@ func TestRegistry(t *testing.T) {
 	}
 	if _, err := Define(Typed[in, payload, out]{Descriptor: bad}); !errors.Is(err, ErrInvalid) {
 		t.Errorf("Define without functions: %v", err)
+	}
+}
+
+// pinsFacts records the pins every Facts call was made with.
+type pinsFacts struct{ got *[]authority.Pins }
+
+func (p pinsFacts) Facts(_ context.Context, pins authority.Pins, _ authority.FactsQuery) (authority.Facts, error) {
+	*p.got = append(*p.got, pins)
+	return authority.Facts{Exists: true}, nil
+}
+
+func TestPlanAndGateReadFactsOnTheRequestPins(t *testing.T) {
+	pins := authority.Pins{"nc-1": "dc1.example"}
+	var got []authority.Pins
+	var planPins authority.Pins
+	b := behaviour{verifyOK: true, onPlan: func(pc PlanContext) {
+		planPins = pc.Pins
+		pc.Pins["nc-1"] = "mutated" // Plan's copy must not alias the request's
+	}}
+	r, _ := newRunner(t, b, nil, pinsFacts{&got}, sink{})
+	rq := req()
+	rq.Pins = pins
+	if _, err := r.RunStore(context.Background(), rq); err != nil {
+		t.Fatal(err)
+	}
+	if planPins["nc-1"] != "mutated" || pins["nc-1"] != "dc1.example" {
+		t.Fatalf("PlanContext.Pins missing or aliases the request: plan=%v req=%v", planPins, pins)
+	}
+	if len(got) == 0 {
+		t.Fatal("facts were never read")
+	}
+	for i, p := range got {
+		if p["nc-1"] != "dc1.example" {
+			t.Errorf("facts read %d on pins %v, want the request's pins", i, p)
+		}
+	}
+}
+
+func TestDirectoryGateRefusesAnNCWithoutAPin(t *testing.T) {
+	for name, tc := range map[string]struct {
+		nc   authority.NamingContextID
+		pins authority.Pins
+		ok   bool
+	}{
+		"pinned":      {"nc-1", authority.Pins{"nc-1": "dc1"}, true},
+		"unpinned NC": {"nc-1", authority.Pins{"nc-2": "dc2"}, false},
+		"nil pins":    {"nc-1", nil, false},
+		"empty NC":    {"", authority.Pins{"nc-1": "dc1"}, false},
+	} {
+		var got []authority.Pins
+		r, _ := newRunner(t, behaviour{verifyOK: true}, nil, pinsFacts{&got}, sink{})
+		u := &run{r: r, d: Descriptor{Target: TargetAD, Permission: "p"}, req: Request{Pins: tc.pins}}
+		_, err := u.authorise(context.Background(), authority.TargetRef{GUID: "g", Class: "user", NC: tc.nc})
+		if tc.ok {
+			if err != nil || len(got) != 1 || got[0]["nc-1"] != "dc1" {
+				t.Errorf("%s: err=%v got=%v", name, err, got)
+			}
+			continue
+		}
+		if !errors.Is(err, ErrDenied) || len(got) != 0 {
+			t.Errorf("%s: err=%v facts reads=%d, want a denial before any read", name, err, len(got))
+		}
 	}
 }

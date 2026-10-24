@@ -22,7 +22,7 @@ func scanLink(r scanner) (HybridLink, error) {
 }
 
 func (s Store) createLink(ctx context.Context, tx store.Tx, n NewHybridLink, origin LinkOrigin) (HybridLink, error) {
-	n, err := n.validate()
+	n, err := n.Validate()
 	if err != nil {
 		return HybridLink{}, err
 	}

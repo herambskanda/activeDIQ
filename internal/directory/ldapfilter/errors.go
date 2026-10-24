@@ -31,6 +31,7 @@ const (
 	ConstructedNotFilterable   = "ConstructedNotFilterable"
 	UnknownAttribute           = "UnknownAttribute"
 	SecretAttribute            = "SecretAttribute"
+	ForbiddenSortKey           = "ForbiddenSortKey"
 	ValueTooLong               = "ValueTooLong"
 	FilterTooLong              = "FilterTooLong"
 	TooDeep                    = "TooDeep"
@@ -39,6 +40,15 @@ const (
 	EmptyComposite             = "EmptyComposite"
 	InvalidValue               = "InvalidValue"
 	InvalidFilter              = "InvalidFilter"
+
+	// Codes only the parsers (parse.go, ast.go) produce.
+	SyntaxError                 = "SyntaxError"
+	TrailingInput               = "TrailingInput"
+	InvalidEscape               = "InvalidEscape"
+	UnsupportedMatchingRule     = "UnsupportedMatchingRule"
+	ForbiddenAttribute          = "ForbiddenAttribute"
+	ReferencedObjectNotReadable = "ReferencedObjectNotReadable"
+	ReferenceCheckFailed        = "ReferenceCheckFailed"
 )
 
 // Limits are the provisional bounds of §3.3 rule 9.

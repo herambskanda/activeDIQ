@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"math/rand/v2"
 	"sort"
 	"time"
@@ -149,6 +150,9 @@ type Request struct {
 	Input       Input
 	Operation   step.OperationID
 	FreshStepUp bool // the submitter completed a fresh MFA (TM-D16)
+	// Pins are the DCs pinned per naming context for this operation (rule 5), chosen by the caller of
+	// the runner, never by an Action.
+	Pins authority.Pins
 
 	// The fields below are used by the persisted Directory path (SubmitDirectory).
 
@@ -248,7 +252,7 @@ func (u *run) exec(ctx context.Context) (Result, error) {
 			return fmt.Errorf("plan transaction: %w", err)
 		}
 		var perr error
-		steps, perr = u.act.Plan(ctx, PlanContext{Tx: tx, Facts: r.cfg.Facts}, u.req.Input)
+		steps, perr = u.act.Plan(ctx, PlanContext{Tx: tx, Facts: r.cfg.Facts, Pins: maps.Clone(u.req.Pins)}, u.req.Input)
 		return perr
 	})
 	if err != nil {
@@ -309,7 +313,7 @@ func (u *run) applyOne(ctx context.Context, tx store.Tx, idx int, sp StepPlan) (
 	u.failKey, u.failTgt = key, sp.Target
 	q := r.cfg.Authz.FactsQuery(u.req.Actor, u.d.Permission, sp.Target)
 	st, revoke, err := minter.Mint(step.Spec{
-		Key: key, Attempt: 1, Actor: u.req.Actor, Tx: tx, Query: q,
+		Key: key, Attempt: 1, Actor: u.req.Actor, NC: sp.Target.NC, Pins: u.req.Pins, Tx: tx, Query: q,
 		Digest: stepDigest(sp),
 		Recheck: func(ctx context.Context, f authority.Facts) error {
 			return r.recheck(ctx, u.req.Actor, u.d.Permission, sp.Target, f)
@@ -320,7 +324,7 @@ func (u *run) applyOne(ctx context.Context, tx store.Tx, idx int, sp StepPlan) (
 	}
 	defer revoke() // the Step dies when Apply or Verify returns; a smuggled copy is dead
 	// The runner, not Action code, runs the Apply-time re-check, on facts read live now.
-	facts, err := u.liveFacts(ctx, q)
+	facts, err := u.liveFacts(ctx, q, sp.Target)
 	if err != nil {
 		return StepResult{}, u.denied("facts_unavailable", err)
 	}
@@ -356,16 +360,23 @@ func (r *Runner) recheck(ctx context.Context, chain authority.Chain, perm authz.
 	return r.cfg.Authz.Authorize(ctx, chain, perm, t, f)
 }
 
-func (u *run) liveFacts(ctx context.Context, q authority.FactsQuery) (authority.Facts, error) {
+// liveFacts reads the facts for one target on the operation's pins (rule 5), so the gate and the
+// write agree on the DC. An AD target whose NC has no pin is refused rather than read unpinned.
+func (u *run) liveFacts(ctx context.Context, q authority.FactsQuery, t authority.TargetRef) (authority.Facts, error) {
 	if u.r.cfg.Facts == nil {
 		return authority.Facts{}, nil
 	}
-	return u.r.cfg.Facts.Facts(ctx, nil, q)
+	if u.d.Target == TargetAD {
+		if t.NC == "" || u.req.Pins[t.NC] == "" {
+			return authority.Facts{}, fmt.Errorf("%w: no DC pin for the target's naming context", ErrInvalid)
+		}
+	}
+	return u.r.cfg.Facts.Facts(ctx, maps.Clone(u.req.Pins), q)
 }
 
 func (u *run) authorise(ctx context.Context, t authority.TargetRef) (authority.Facts, error) {
 	q := u.r.cfg.Authz.FactsQuery(u.req.Actor, u.d.Permission, t)
-	f, err := u.liveFacts(ctx, q)
+	f, err := u.liveFacts(ctx, q, t)
 	if err != nil {
 		return f, u.denied("facts_unavailable", err)
 	}

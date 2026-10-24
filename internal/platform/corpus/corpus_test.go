@@ -48,7 +48,7 @@ func TestLoadGood(t *testing.T) {
 func TestLoadRejects(t *testing.T) {
 	cases := map[string]struct{ line, want string }{
 		"implicit hostile": {`{"id":"A","primitive":"x","call":"c","expect":{"render":"r"},"verified":"doc"}`, "never inferred"},
-		"unknown field":    {`{"id":"A","primitive":"x","call":"c","expect":{"render":"r"},"hostile":true,"verified":"doc","extra":1}`, "unknown field"},
+		"unknown field":    {`{"id":"A","primitive":"x","call":"c","expect":{"render":"r"},"hostile":true,"verified":"doc","extra":1}`, "unknown object member"},
 		"two expectations": {`{"id":"A","primitive":"x","call":"c","expect":{"render":"r","error":"e"},"hostile":true,"verified":"doc"}`, "exactly one"},
 		"no call":          {`{"id":"A","primitive":"x","expect":{"render":"r"},"hostile":true,"verified":"doc"}`, `needs a "call"`},
 		"bad verified":     {`{"id":"A","primitive":"x","call":"c","expect":{"render":"r"},"hostile":true,"verified":"yes"}`, `"verified"`},
