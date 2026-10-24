@@ -31,6 +31,12 @@ var (
 	implicitOwnerRW = uint32(MaskReadControl | MaskWriteDACL)
 )
 
+// Bits the DC decides by privilege or by a different algorithm, not by the DACL walk.
+const (
+	maskAccessSystemSecurity = 0x01000000
+	maskMaximumAllowed       = 0x02000000
+)
+
 func mustSID(s string) sid.SID {
 	v, err := sid.Parse(s)
 	if err != nil {
@@ -120,7 +126,7 @@ type Result struct {
 // remaining bit refuses the request. Conditions it cannot evaluate make the answer Unknown.
 func Grants(p Principal, right Right, s SD) Result {
 	res := Result{Incomplete: p.incomplete, Anomalous: len(s.Anomalies) > 0}
-	if right.Mask == 0 || right.Mask&maskGeneric != 0 {
+	if right.Mask == 0 || right.Mask&(maskGeneric|maskAccessSystemSecurity|maskMaximumAllowed) != 0 {
 		res.Decision, res.Why = Unknown, "mask_not_specific"
 		return res
 	}
@@ -136,13 +142,37 @@ func Grants(p Principal, right Right, s SD) Result {
 	opaqueSeen := false
 	var pendingSelf uint32 // bits a SELF allow ACE might grant, object SID unknown
 	ownerHasACE := false
-	for i, a := range s.DACL.ACEs {
+	for _, a := range s.DACL.ACEs {
 		if s.HasOwner && a.Kind != Opaque && a.Trustee == s.Owner {
 			ownerHasACE = true
 		}
 		if a.Kind != Opaque && a.Trustee == sidOwnerRights {
 			ownerHasACE = true
 		}
+	}
+	// The DC removes the owner's implicit READ_CONTROL|WRITE_DAC and, for a holder of
+	// SeTakeOwnershipPrivilege, WRITE_OWNER from the request before it walks the DACL, so no ACE,
+	// deny included, can take them back. Those bits are not decided by the walk: they make the
+	// answer Unknown (at best) and are removed from what the walk evaluates.
+	var undecided uint32
+	undecidedWhy := ""
+	if s.HasOwner && p.holds(s.Owner, nil) {
+		if b := remaining & implicitOwnerRW; b != 0 {
+			undecided |= b
+			undecidedWhy = "implicit_owner_rights"
+			if ownerHasACE {
+				undecidedWhy = "owner_ace_present"
+			}
+		}
+	}
+	if b := remaining & MaskWriteOwner; b != 0 {
+		undecided |= b
+		if undecidedWhy == "" {
+			undecidedWhy = "privilege_unmodelled" // SeTakeOwnershipPrivilege is not in the model
+		}
+	}
+	remaining &^= undecided
+	for i, a := range s.DACL.ACEs {
 		if a.InheritOnly() {
 			continue
 		}
@@ -162,6 +192,15 @@ func Grants(p Principal, right Right, s SD) Result {
 			continue // audit, label and policy ACEs grant nothing
 		}
 		if a.ObjectType != nil && (right.Object == nil || *right.Object != *a.ObjectType) {
+			// A grant or refusal on an object-tree node (a property set) covers the attributes
+			// in it. Without a catalogue we cannot tell whether this GUID is the asked
+			// attribute's set, so a held ACE that meets the asked read/write bits makes the
+			// answer Unknown. Control-access, validated-write and class asks are exact matches.
+			if right.Kind == Attribute && a.Mask&remaining&(MaskReadProp|MaskWriteProp) != 0 &&
+				(p.holds(a.Trustee, p.objectSID) || a.Trustee == sidSelf && p.objectSID == nil) {
+				res.Decision, res.Sources, res.Why = Unknown, nil, "property_set_unresolved"
+				return res
+			}
 			continue
 		}
 		hit := a.Mask & remaining
@@ -207,14 +246,6 @@ func Grants(p Principal, right Right, s SD) Result {
 			res.Decision, res.Why = Unknown, "self_unresolved"
 			return res
 		}
-		if remaining&implicitOwnerRW != 0 && s.HasOwner && p.holds(s.Owner, nil) {
-			res.Decision = Unknown
-			res.Why = "implicit_owner_rights"
-			if ownerHasACE {
-				res.Why = "owner_ace_present"
-			}
-			return res
-		}
 		res.Decision, res.Why = No, "no_matching_ace"
 		if opaqueSeen {
 			res.Decision, res.Why = Unknown, "opaque_ace_present"
@@ -224,6 +255,8 @@ func Grants(p Principal, right Right, s SD) Result {
 	res.Decision = Yes
 	if opaqueSeen {
 		res.Decision, res.Why = Unknown, "opaque_ace_before_decision"
+	} else if undecided != 0 {
+		res.Decision, res.Sources, res.Why = Unknown, nil, undecidedWhy
 	}
 	return res
 }

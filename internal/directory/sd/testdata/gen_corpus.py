@@ -185,11 +185,12 @@ ctl("SD-C05", 15, {"bytes_hex": "300302010f"}, False, C + "capability issued (te
 H = "safe-primitives-security-descriptor §5.2 "
 X1 = "S-1-5-21-1004336348-1177238915-682003330-1105"
 G1 = "S-1-5-21-1004336348-1177238915-682003330-1200"
-def grants(id_, b, mask, expect, hostile, src, obj=None, user=X1, groups=(G1, AU, "S-1-1-0"), bare=None, objsid=None):
+def grants(id_, b, mask, expect, hostile, src, obj=None, user=X1, groups=(G1, AU, "S-1-1-0"), bare=None, objsid=None, kind=None):
     args = {"sd": hexarg(b), "mask": {"utf8": str(mask)}}
     if bare is not None: args["sids"] = {"utf8": ",".join(bare)}
     else:
         args["user"] = {"utf8": user}; args["groups"] = {"utf8": ",".join(groups)}
+    if kind: args["kind"] = {"utf8": kind}
     if obj: args["object"] = {"utf8": obj}
     if objsid: args["object_sid"] = {"utf8": objsid}
     rec(id_, "Grants", args, {"value": expect}, hostile, src)
@@ -217,6 +218,19 @@ grants("SD-H09B", UD, 0x10, res("no", why="no_matching_ace", incomplete=True), F
 grants("SD-21H", sd(dacl=acl([A, D]), owner=OWN), 0x20, res("yes", [(0, False)]), True, H + "SD-21 helper evaluates in stored order: allow first wins", user=X1, groups=(G1, "S-1-5-32-545"))
 grants("SD-H10", sd(dacl=acl([D, A]), owner=OWN), 0x20, res("no", [(0, False)]), False, H + "canonical order: deny first refuses", user=X1, groups=(G1, "S-1-5-32-545"))
 grants("SD-H11", sd(dacl=acl([ace(0, 0, 0x20, G1), bytes([0x7F, 0]) + struct.pack("<H", 16) + b"\0" * 12]), owner=OWN), 0x10, res("unknown", why="opaque_ace_present"), True, H + "SD-19 opaque ACE: Unknown rather than No")
+
+# Security review of T-0149 (MS-DTYP 2.5.3.2): property sets, owner-implicit rights, privilege bits
+R = "security review T-0149 / MS-DTYP 2.5.3.2 "
+MEMBER = "bf9679c0-0de6-11d0-a285-00aa003049e2"
+MEMBERSHIP = "bc0ac240-79a9-11d0-9020-00c04fc2d4cf"
+grants("SD-H12", sd(dacl=acl([ace(5, 0, 0x20, G1, obj=MEMBERSHIP)], rev=4), owner=OWN), 0x20, res("unknown", why="property_set_unresolved"), True, R + "allow WP on the Membership property set covers member: not a definite No", obj=MEMBER, kind="attribute")
+grants("SD-H13", sd(dacl=acl([ace(6, 0, 0x20, G1, obj=MEMBERSHIP), ace(0, 0, 0x20, G1)], rev=4), owner=OWN), 0x20, res("unknown", why="property_set_unresolved"), True, R + "deny WP on a property set then allow on everything: not a definite Yes", obj=MEMBER, kind="attribute")
+grants("SD-H12B", sd(dacl=acl([ace(5, 0, 0x20, G1, obj=MEMBER)], rev=4), owner=OWN), 0x20, res("yes", [(0, False)]), False, R + "an exact attribute ACE still decides", obj=MEMBER, kind="attribute")
+grants("SD-H12C", sd(dacl=acl([ace(5, 0, 0x20, "S-1-5-32-999", obj=MEMBERSHIP)], rev=4), owner=OWN), 0x20, res("no", why="no_matching_ace"), False, R + "a property-set ACE for a trustee outside the token is irrelevant", obj=MEMBER, kind="attribute")
+grants("SD-H14", sd(dacl=acl([ace(1, 0, 0x40000, "S-1-1-0")]), owner=sid(X1)), 0x40000, res("unknown", why="implicit_owner_rights"), True, R + "owner: a deny WRITE_DAC cannot take back the implicit right")
+grants("SD-H15A", sd(dacl=acl([]), owner=OWN), 0x01000000, res("unknown", why="mask_not_specific"), True, R + "ACCESS_SYSTEM_SECURITY is decided by privilege")
+grants("SD-H15B", sd(dacl=acl([]), owner=OWN), 0x02000000, res("unknown", why="mask_not_specific"), True, R + "MAXIMUM_ALLOWED is not a DACL bit")
+grants("SD-H15C", sd(dacl=acl([]), owner=OWN), 0x80000, res("unknown", why="privilege_unmodelled"), True, R + "WRITE_OWNER: SeTakeOwnershipPrivilege is not modelled")
 
 with open("testdata/safe-primitives/sd.read.jsonl", "w") as f:
     for r in recs:

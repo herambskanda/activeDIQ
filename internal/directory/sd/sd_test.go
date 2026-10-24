@@ -154,6 +154,12 @@ func grantsRecord(t *testing.T, r corpus.Record) (corpus.Result, error) {
 		}
 		right.Object = &g
 	}
+	if _, ok := r.Args["kind"]; ok {
+		k, _ := r.Arg("kind")
+		if k.Text() == "attribute" {
+			right.Kind = Attribute
+		}
+	}
 	var p Principal
 	if _, ok := r.Args["sids"]; ok {
 		in, _ := r.Arg("sids")
