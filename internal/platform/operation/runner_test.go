@@ -626,13 +626,13 @@ func (d dirStub) Plan(context.Context, PlanContext, Input) ([]StepPlan, error) {
 	*d.planned++
 	return nil, nil
 }
-func (dirStub) Apply(context.Context, step.Step, StepPlan) (Outcome, error) { return nil, nil }
+func (dirStub) Apply(context.Context, step.Step, StepPlan) (Outcome, error) { return Outcome{}, nil }
 func (dirStub) Verify(context.Context, step.Step, StepPlan, Outcome) (Verdict, error) {
 	return Verdict{}, nil
 }
 func (dirStub) Inverse(StepPlan, Outcome) (Input, error) { return nil, ErrIrreversible }
 func (dirStub) Observe(context.Context, authority.Pins, StepPlan, time.Time) (Observation, error) {
-	return Observation{}, nil
+	return "", nil
 }
 
 func TestDirectoryActionWithNoFactsPortIsRefusedBeforePlan(t *testing.T) {
