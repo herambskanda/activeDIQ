@@ -298,3 +298,23 @@ func TestLabADRefusals(t *testing.T) {
 		})
 	}
 }
+
+// T-0237 AC1: Authenticated Users holding Reset-Password on a tier0 object is a WARN exposure
+// naming the object, right and trustee; the verdict stays PASS (broad-principal exposure is WARN).
+func TestLabADBroadPrincipalExposure(t *testing.T) {
+	l := newLab(t)
+	ctx := labCtx(t)
+	name, userDN, _ := l.user()
+	l.ace("CN=Administrator,CN=Users,"+labDom, "(OA;;CR;00299570-246d-11d0-a768-00aa006e0529;;AU)")
+	r := l.verify(ctx, name, userDN, ADInput{})
+	got := r.find(CodeTier0BroadPrincipal)
+	if len(got) != 1 {
+		t.Fatalf("want 1 broad-principal finding:%s", dump(r.res))
+	}
+	if got[0].Object == nil || got[0].Severity != v1.FindingSeverity_FINDING_SEVERITY_WARN {
+		t.Fatalf("finding lacks object or is not WARN:%s", dump(r.res))
+	}
+	if r.res.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_PASS {
+		t.Fatalf("verdict %v:%s", r.res.Verdict, dump(r.res))
+	}
+}

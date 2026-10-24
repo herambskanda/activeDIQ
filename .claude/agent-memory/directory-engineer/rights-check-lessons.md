@@ -10,3 +10,4 @@ metadata:
 - entra.go defines `guid()` in package rights: import the AD guid package as `adguid`.
 - Test fake GUID generator must be 2 bytes (1-byte counter wraps at >255 objects).
 - Samba can't prove SDProp inheritance, WAAG readability, Windows event-log sinks (follow-up T-0231).
+- Samba omits sDRightsEffective on computer objects (CN=DC1) for non-admin callers; don't fail closed on absence alone, fall back to the parsed SD. Samba default broad ACEs on tier0: Send-To, Apply-Group-Policy, Unexpire-Password, Update-PNRB, Enable-Per-User-RevEnc (allowlisted in ad_policy.go). Docker may exist: `make lab-up` then `go test -tags lab`.

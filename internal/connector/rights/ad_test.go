@@ -67,6 +67,9 @@ func (f *fakeAD) obj(dnText, sidText string, kv map[string][]string, raw map[str
 	for k, vs := range raw {
 		m[k] = vs
 	}
+	if _, ok := m["nTSecurityDescriptor"]; ok && m["sDRightsEffective"] == nil {
+		m["sDRightsEffective"] = [][]byte{[]byte("0")} // a DC always returns the constructed attribute
+	}
 	if sidText != "" {
 		s, err := sid.Parse(sidText)
 		if err != nil {
@@ -437,6 +440,7 @@ func TestStep2EffectiveRights(t *testing.T) {
 
 func TestStep3DACL(t *testing.T) {
 	w := newWorld(t)
+	w.tokens = append(w.tokens, nestSID)
 	resetPw := rightResetPassword
 	conf := w.attrConf
 	cases := []struct {
@@ -446,7 +450,7 @@ func TestStep3DACL(t *testing.T) {
 		n    int
 	}{
 		{"generic all", tace{mask: dsFullControl, trustee: idSIDt}, CodeTier0GenericAll, 1},
-		{"write dac via group", tace{mask: maskWriteDAC, trustee: dusSID}, CodeTier0WriteDACL, 1},
+		{"write dac via group", tace{mask: maskWriteDAC, trustee: nestSID}, CodeTier0WriteDACL, 1},
 		{"control access typed", tace{mask: dsControlAccess, objType: &resetPw, trustee: idSIDt}, CodeTier0Control, 1},
 		{"control access all", tace{mask: dsControlAccess, trustee: idSIDt}, CodeTier0Control, 1},
 		{"validated write", tace{mask: dsSelf, objType: &resetPw, trustee: idSIDt}, CodeTier0Validated, 1},
@@ -658,5 +662,147 @@ func TestGUIDRoundTrip(t *testing.T) {
 	}
 	if _, err := ParseGUID(&v1.Guid{Value: []byte{1}}); err == nil {
 		t.Fatal("short guid parsed")
+	}
+}
+
+// T-0237: dangerous rights held by broad principals on a tier0 object.
+func TestBroadPrincipalExposure(t *testing.T) {
+	w := newWorld(t)
+	rosync, reanimate, vspn := mustAD("1131f6ae-9c07-11d1-f79f-00c04fc2dcd2"), mustAD("45ec5156-db7e-47bb-b53f-dbeb2d03c40f"), mustAD("f3a64788-5306-11d1-a9c5-0000f80367c1")
+	resetPw, getAll, changePw := rightResetPassword, rightGetChangesAll, mustAD("ab721a53-1e2f-11d0-9819-00aa0040529b")
+	conf := w.attrConf
+	cases := []struct {
+		name string
+		ace  tace
+		want int
+	}{
+		{"auth users reset password", tace{mask: dsControlAccess, objType: &resetPw, trustee: "S-1-5-11"}, 1},
+		{"auth users CA on confidential attr", tace{mask: dsControlAccess, objType: &conf, trustee: "S-1-5-11"}, 1},
+		{"domain users reset password", tace{mask: dsControlAccess, objType: &resetPw, trustee: dusSID}, 1},
+		{"everyone get-changes-all", tace{mask: dsControlAccess, objType: &getAll, trustee: "S-1-1-0"}, 1},
+		{"auth users all extended rights", tace{mask: dsControlAccess, trustee: "S-1-5-11"}, 1},
+		{"auth users confidential read", tace{mask: dsReadProp, objType: &conf, trustee: "S-1-5-11"}, 1},
+		{"everyone write dac", tace{mask: maskWriteDAC, trustee: "S-1-1-0"}, 1},
+		{"domain users ROSS-sync CA", tace{mask: dsControlAccess, objType: &rosync, trustee: dusSID}, 1},
+		{"auth users reanimate CA", tace{mask: dsControlAccess, objType: &reanimate, trustee: "S-1-5-11"}, 1},
+		{"domain users validated SPN", tace{mask: dsSelf, objType: &vspn, trustee: dusSID}, 1},
+		{"network write dac", tace{mask: maskWriteDAC, trustee: "S-1-5-2"}, 1},
+		{"this organization write dac", tace{mask: maskWriteDAC, trustee: "S-1-5-15"}, 1},
+		{"ntlm auth write dac", tace{mask: maskWriteDAC, trustee: "S-1-5-64-10"}, 1},
+		{"auth authority asserted write dac", tace{mask: maskWriteDAC, trustee: "S-1-18-1"}, 1},
+		{"network get-changes-all", tace{mask: dsControlAccess, objType: &getAll, trustee: "S-1-5-2"}, 1},
+		{"this organization get-changes-all", tace{mask: dsControlAccess, objType: &getAll, trustee: "S-1-5-15"}, 1},
+		{"default: everyone change password", tace{mask: dsControlAccess, objType: &changePw, trustee: "S-1-1-0"}, 0},
+		{"default: auth users plain read", tace{mask: dsReadProp, objType: &w.attrMem, trustee: "S-1-5-11"}, 0},
+		{"default: auth users read all", tace{mask: 0x20094, trustee: "S-1-5-11"}, 0},
+		{"self is not broad", tace{mask: dsSelf, trustee: "S-1-5-10"}, 0},
+		{"inherit only skipped", tace{mask: maskWriteDAC, flags: aceFlagInheritOnly, trustee: "S-1-5-11"}, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w.putRaw(w.t0, "nTSecurityDescriptor", [][]byte{sdBytes(daSID, tc.ace)})
+			r := w.run(t, ADInput{})
+			if got := count(r, CodeTier0BroadPrincipal); got != tc.want {
+				t.Fatalf("broad x%d, want %d: %v", got, tc.want, codes(r))
+			}
+			if tc.want == 0 {
+				return
+			}
+			for _, f := range r.Findings {
+				if f.Code != CodeTier0BroadPrincipal {
+					continue
+				}
+				if f.Severity != v1.FindingSeverity_FINDING_SEVERITY_WARN || f.Object == nil || f.Right == nil || f.Source.GetAce().GetTrustee() == nil {
+					t.Fatalf("shape %+v", f.RightsFinding)
+				}
+			}
+			if count(r, CodeTier0Control) != 0 {
+				t.Fatalf("one ACE, one finding: %v", codes(r))
+			}
+			if r.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_PASS {
+				t.Fatalf("a broad-principal exposure warns, it does not refuse: %v", r.Verdict)
+			}
+		})
+	}
+}
+
+// A broad-principal owner is reported from the parsed owner, not only sDRightsEffective.
+func TestBroadOwnerWarns(t *testing.T) {
+	w := newWorld(t)
+	w.putRaw(w.t0, "nTSecurityDescriptor", [][]byte{sdBytes(dusSID, tace{mask: dsFullControl, trustee: daSID})})
+	r := w.run(t, ADInput{})
+	if count(r, CodeTier0BroadPrincipal) != 1 || r.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_PASS {
+		t.Fatalf("%v %v", r.Verdict, codes(r))
+	}
+}
+
+// An absent sDRightsEffective is never "no rights": the parsed descriptor answers instead, and
+// when that is unreadable too the result is COULD_NOT_VERIFY. Samba omits the attribute on
+// computer objects, so absence alone must not make every identity unverifiable.
+func TestAbsentSDRightsEffectiveCouldNotVerify(t *testing.T) {
+	w := newWorld(t)
+	w.putRaw(w.t0, "sDRightsEffective", nil)
+	if r := w.run(t, ADInput{}); r.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_PASS {
+		t.Fatalf("parsed descriptor answers: %v %v", r.Verdict, codes(r))
+	}
+	w.putRaw(w.t0, "nTSecurityDescriptor", [][]byte{sdBytes(idSIDt, tace{mask: dsFullControl, trustee: daSID})})
+	if r := w.run(t, ADInput{}); r.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_REFUSED || count(r, CodeTier0WriteDACL) != 1 {
+		t.Fatalf("owner from parsed SD: %v %v", r.Verdict, codes(r))
+	}
+	w.putRaw(w.t0, "nTSecurityDescriptor", nil)
+	if r := w.run(t, ADInput{}); r.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_COULD_NOT_VERIFY || count(r, CodeUnverifiedAD) < 1 {
+		t.Fatalf("neither signal: %v %v", r.Verdict, codes(r))
+	}
+}
+
+// The owner in the token gives WRITE_DAC from the parsed descriptor even when sDRightsEffective
+// reads 0; an OWNER RIGHTS ACE replaces the implicit grant.
+func TestOwnerImplicitWriteDAC(t *testing.T) {
+	w := newWorld(t)
+	w.putRaw(w.t0, "nTSecurityDescriptor", [][]byte{sdBytes(idSIDt, tace{mask: dsFullControl, trustee: daSID})})
+	if r := w.run(t, ADInput{}); count(r, CodeTier0WriteDACL) != 1 || r.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_REFUSED {
+		t.Fatalf("owner: %v %v", r.Verdict, codes(r))
+	}
+	w.putRaw(w.t0, "nTSecurityDescriptor", [][]byte{sdBytes(idSIDt, tace{mask: dsFullControl, trustee: daSID}, tace{mask: dsReadProp, trustee: "S-1-3-4"})})
+	if r := w.run(t, ADInput{}); count(r, CodeTier0WriteDACL) != 0 {
+		t.Fatalf("owner rights ace: %v", codes(r))
+	}
+	w.putRaw(w.t0, "nTSecurityDescriptor", [][]byte{sdBytes(idSIDt, tace{mask: maskWriteDAC, trustee: "S-1-3-4"})})
+	if r := w.run(t, ADInput{}); count(r, CodeTier0WriteDACL) != 1 || r.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_REFUSED {
+		t.Fatalf("owner rights write dac: %v %v", r.Verdict, codes(r))
+	}
+	w.putRaw(w.t0, "nTSecurityDescriptor", [][]byte{sdBytes(idSIDt, tace{mask: dsFullControl, trustee: "S-1-3-4"})})
+	if r := w.run(t, ADInput{}); count(r, CodeTier0GenericAll) != 1 || r.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_REFUSED {
+		t.Fatalf("owner rights full control: %v %v", r.Verdict, codes(r))
+	}
+	w.putRaw(w.t0, "nTSecurityDescriptor", [][]byte{sdBytes(daSID, tace{mask: dsFullControl, trustee: daSID})})
+	if r := w.run(t, ADInput{}); count(r, CodeTier0WriteDACL) != 0 {
+		t.Fatalf("other owner: %v", codes(r))
+	}
+}
+
+// A token group of another domain with a privileged RID that the DC cannot resolve is not skipped.
+func TestForeignPrivilegedTokenSID(t *testing.T) {
+	w := newWorld(t)
+	for sidText, want := range map[string]int{"S-1-5-21-9-8-7-519": 1, "S-1-5-21-9-8-7-1105": 0} {
+		w.tokens = []string{dusSID, "S-1-1-0", "S-1-5-11", sidText}
+		r := w.run(t, ADInput{})
+		if got := count(r, CodeUnverifiedAD); got != want {
+			t.Fatalf("%s: unverified x%d, want %d: %v", sidText, got, want, codes(r))
+		}
+	}
+}
+
+// Every SID universalSID drops from the own pass must be evaluated by the broad pass (except SELF).
+func TestUniversalSIDsAreBroad(t *testing.T) {
+	c := &adCheck{}
+	for _, s := range []string{"S-1-1-0", "S-1-5-11", "S-1-5-2", "S-1-5-4", "S-1-5-14", "S-1-5-15", "S-1-5-5-0-12345", "S-1-5-64-10", "S-1-5-64-14", "S-1-18-1", "S-1-18-2", "S-1-2-1"} {
+		id, err := sid.Parse(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if universalSID(id) && !c.broadPrincipal(id) {
+			t.Errorf("%s is dropped by the own pass and ignored by the broad pass", s)
+		}
 	}
 }
