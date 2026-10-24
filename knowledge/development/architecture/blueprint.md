@@ -135,7 +135,7 @@ skills and the safe-primitives spec to match.
 | Platform root "`internal/platform/`" (ADR-0002) | **Kept**, with the package list in §5.1 |
 | Connector root (ADR-0002 rule 3) | `internal/connector/` |
 | Data-access package `store` (ADR-0002; safe-primitives P5) | `internal/platform/store`. Its entry points are **`WithTenantTx`** (the ADR-0002 name; the safe-primitives spec's `WithTenant` is renamed) and `WithPlatform`. Exemption registry: `internal/platform/store/exempt`. Report compiler: `internal/platform/store/reportsql` |
-| `ldapfilter`, `dn`, `attr` (safe-primitives P1–P3) | `internal/directory/ldapfilter`, `internal/directory/dn` (incl. `ObjectRef`, `GUIDRef`), and `internal/directory/attr/{guid,sid,filetime,gentime,flags,unicodepwd}` |
+| `ldapfilter`, `dn`, `attr` (safe-primitives P1–P3) | `internal/directory/ldapfilter`, `internal/directory/dn` (incl. `ObjectRef`, `GUIDRef`), and `internal/directory/attr/{guid,sid,filetime,gentime,flags,unicodepwd}`; P6 `internal/directory/sd` (read half: decoder, SD_FLAGS control, `Grants`) |
 | `odata` (safe-primitives P8, [safe-primitives-odata.md](safe-primitives-odata.md)) | `internal/directory/odata`, with `graphschema` (Graph property declarations) and `odatatest` (strict parser: round-trip oracle and the fake Graph's request parser) beneath it |
 | `Secret` (P3 §5.6) | `internal/platform/secret`. The platform needs it for key material and MFA seeds; the corpus unit stays `attr.unicodepwd` |
 | `scope` and `SecureConn` (P1 §3.6, P3 §5.6) | `internal/connector/ad/scope` and `internal/connector/ldap`. Both attach controls or touch the LDAP library, so they sit under the connector root |
@@ -1040,6 +1040,7 @@ fallback on a remote host) is `[OPEN → old T-0007]`.
 | P1 filter AST, renderer, admin-filter parser | `directory/ldapfilter` | modules (build ASTs), `connector` (render), `reports` (admin filters) | `web` |
 | P2 DN, `ObjectRef`, `GUIDRef` | `directory/dn` | everyone server-side. It implements RFC 4514 itself and **does not wrap go-ldap's `ParseDN`**, because ADR-0002 keeps protocol libraries in the connector root. The go-ldap round-trip oracle runs from a test under `internal/connector/ad` | `web` |
 | P3 codecs | `directory/attr/*` | `connector` (decode), `inventory`, modules | `web` |
+| P6 security descriptors | `directory/sd` | `connector` (rights, tier0: not yet wired), modules | `web` |
 | `Secret` | `platform/secret` | `helpdesk`, `connector`, `keys`, `authn` | logs, audit details, errors, JSON |
 | Scoped search, controls | `connector/ad/scope` | `provider/ad` only | feature code (it gets `ScopedSearch` via the contract) |
 | P4 `psx` / `proc` / `pslit` | `connector/psx`, `platform/proc`, `platform/pslit` | connector (sidecars), update client, API (display) | agents call `proc` only |
