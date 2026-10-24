@@ -206,8 +206,8 @@ func (r *Runner) Sweep(ctx context.Context, t tenant.ID, tx txFunc) error {
 	}
 	return tx(ctx, func(ctx context.Context, q store.Tx) error {
 		// Settle running operations with nothing in flight (the terminal detection of a lost recording).
-		ids, err := queryIDs(ctx, q, `SELECT id::text FROM public.operations WHERE tenant_id = $1::uuid AND state IN ('running', 'cancelling')
-AND NOT EXISTS (SELECT 1 FROM public.operation_items i WHERE i.tenant_id = operations.tenant_id AND i.operation_id = operations.id AND i.state = 'running')`, t.String())
+		ids, err := scanIDs(q.Query(ctx, `SELECT id::text FROM public.operations WHERE tenant_id = $1::uuid AND state IN ('running', 'cancelling')
+AND NOT EXISTS (SELECT 1 FROM public.operation_items i WHERE i.tenant_id = operations.tenant_id AND i.operation_id = operations.id AND i.state = 'running')`, t.String()))
 		if err != nil {
 			return err
 		}
@@ -217,11 +217,11 @@ AND NOT EXISTS (SELECT 1 FROM public.operation_items i WHERE i.tenant_id = opera
 			}
 		}
 		// Re-drive queued/running operations with planned work and no recent progress.
-		ids, err = queryIDs(ctx, q, `SELECT o.id::text FROM public.operations o WHERE o.tenant_id = $1::uuid AND o.state IN ('queued', 'running')
+		ids, err = scanIDs(q.Query(ctx, `SELECT o.id::text FROM public.operations o WHERE o.tenant_id = $1::uuid AND o.state IN ('queued', 'running')
 AND o.updated_at < now() - $2 * interval '1 millisecond'
 AND EXISTS (SELECT 1 FROM public.operation_items i WHERE i.tenant_id = o.tenant_id AND i.operation_id = o.id AND i.state = 'planned')
 AND NOT EXISTS (SELECT 1 FROM public.operation_steps s WHERE s.tenant_id = o.tenant_id AND s.operation_id = o.id
-  AND (s.state = 'applying' OR s.updated_at >= now() - $2 * interval '1 millisecond'))`, t.String(), r.cfg.StallWindow.Milliseconds())
+  AND (s.state = 'applying' OR s.updated_at >= now() - $2 * interval '1 millisecond'))`, t.String(), r.cfg.StallWindow.Milliseconds()))
 		if err != nil {
 			return err
 		}
@@ -235,7 +235,7 @@ AND NOT EXISTS (SELECT 1 FROM public.operation_steps s WHERE s.tenant_id = o.ten
 			}
 		}
 		// Deferred read-backs.
-		ids, err = queryIDs(ctx, q, `SELECT DISTINCT operation_id::text FROM public.operation_steps WHERE tenant_id = $1::uuid AND state = 'applied'`, t.String())
+		ids, err = scanIDs(q.Query(ctx, `SELECT DISTINCT operation_id::text FROM public.operation_steps WHERE tenant_id = $1::uuid AND state = 'applied'`, t.String()))
 		if err != nil {
 			return err
 		}
@@ -247,8 +247,8 @@ AND NOT EXISTS (SELECT 1 FROM public.operation_steps s WHERE s.tenant_id = o.ten
 			}
 		}
 		// Abandon plans nobody submitted or approved.
-		ids, err = queryIDs(ctx, q, `SELECT id::text FROM public.operations WHERE tenant_id = $1::uuid AND state IN ('planned', 'awaiting_approval', 'approved')
-AND updated_at < now() - $2 * interval '1 millisecond'`, t.String(), r.cfg.AbandonAfter.Milliseconds())
+		ids, err = scanIDs(q.Query(ctx, `SELECT id::text FROM public.operations WHERE tenant_id = $1::uuid AND state IN ('planned', 'awaiting_approval', 'approved')
+AND updated_at < now() - $2 * interval '1 millisecond'`, t.String(), r.cfg.AbandonAfter.Milliseconds()))
 		if err != nil {
 			return err
 		}
@@ -276,8 +276,15 @@ AND o.state IN ('no_change', 'plan_failed', 'rejected', 'succeeded', 'partially_
 	})
 }
 
-func queryIDs(ctx context.Context, q store.Tx, sql string, args ...any) ([]string, error) {
-	rows, err := q.Query(ctx, sql, args...)
+// scanIDs reads the first column of every row as text; the caller passes the constant query's result.
+type idRows interface {
+	Next() bool
+	Scan(dest ...any) error
+	Close()
+	Err() error
+}
+
+func scanIDs(rows idRows, err error) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("operation: sweep query: %w", err)
 	}

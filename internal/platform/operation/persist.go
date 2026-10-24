@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/audit"
-	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
 	"github.com/skenzeriq/activediq/internal/platform/store"
@@ -69,6 +68,9 @@ const opColumns = `id::text, action_id, action_version, origin, requester_id, re
   COALESCE(request_ref, ''), COALESCE(max_objects, 0), step_up_fresh, COALESCE(approved_by, ''),
   COALESCE(approved_plan_hash, ''), chunk_size`
 
+const selectOp = `SELECT ` + opColumns + ` FROM public.operations WHERE tenant_id = $1::uuid AND id = $2::uuid`
+const selectOpLocked = selectOp + ` FOR UPDATE`
+
 func scanOp(row interface{ Scan(...any) error }) (opRecord, error) {
 	var o opRecord
 	var via, pins []byte
@@ -94,11 +96,10 @@ func scanOp(row interface{ Scan(...any) error }) (opRecord, error) {
 }
 
 func loadOp(ctx context.Context, tx store.Tx, t tenant.ID, id string, lock bool) (opRecord, error) {
-	q := `SELECT ` + opColumns + ` FROM public.operations WHERE tenant_id = $1::uuid AND id = $2::uuid`
 	if lock {
-		q += ` FOR UPDATE`
+		return scanOp(tx.QueryRow(ctx, selectOpLocked, t.String(), id))
 	}
-	return scanOp(tx.QueryRow(ctx, q, t.String(), id))
+	return scanOp(tx.QueryRow(ctx, selectOp, t.String(), id))
 }
 
 // setOperationState is the transition function of the Operation machine: it checks the edge, then
@@ -182,11 +183,11 @@ func (r *Runner) emit(ctx context.Context, tx store.Tx, ev audit.Event) error {
 	return r.cfg.Audit.Append(ctx, tx, ev)
 }
 
-func detail(kv ...any) []chain.Detail {
+func detail(kv ...any) []audit.Detail {
 	// kv is key, value pairs in strictly increasing key order.
-	var out []chain.Detail
+	var out []audit.Detail
 	for i := 0; i+1 < len(kv); i += 2 {
-		out = append(out, chain.Detail{Key: kv[i].(string), Value: fmt.Sprint(kv[i+1])})
+		out = append(out, audit.Detail{Key: kv[i].(string), Value: fmt.Sprint(kv[i+1])})
 	}
 	return out
 }

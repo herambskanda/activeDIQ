@@ -41,6 +41,10 @@ type Change struct {
 	Secret    bool
 }
 
+// Detail is one public detail of an event; Event.Details is a slice of them in key order. Packages that
+// may import audit but not audit/chain (ADR-0005 rule 13) name the type through this alias.
+type Detail = chain.Detail
+
 // Event is the envelope (AG-3). Display snapshots and the client address are personal values and
 // arrive with the personal side store; they are not fields here.
 type Event struct {

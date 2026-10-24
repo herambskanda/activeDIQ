@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/audit"
-	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/keys"
@@ -232,7 +231,7 @@ func newPRig(t *testing.T, s *storetest.Server, o rigOpt) *prig {
 	}
 	t.Cleanup(db.Close)
 	ch := audit.NewChainer(db)
-	cp := audit.NewCheckpointer(ch, keySrc{}, nopAnchor{})
+	cp := audit.NewCheckpointer(ch, keySrc{})
 	tn := tenanttest.Seed(t, d.ExecOwner, "A")
 	if err := db.WithTenant(ctx, tn, func(ctx context.Context, tx store.Tx) error { return cp.InitTenant(ctx, tx, tn) }); err != nil {
 		t.Fatal(err)
@@ -254,10 +253,6 @@ func newPRig(t *testing.T, s *storetest.Server, o rigOpt) *prig {
 	p.r.sleep = func(time.Duration) {}
 	return p
 }
-
-type nopAnchor struct{}
-
-func (nopAnchor) Anchor(context.Context, chain.Checkpoint) error { return nil }
 
 // owner and exec run as the superuser: the owner role is subject to FORCE ROW LEVEL SECURITY and sees no
 // tenant rows. They are fixture helpers; the statements are test text.
@@ -335,6 +330,16 @@ func (p *prig) runChunks(id step.OperationID) {
 	}
 }
 
+// takeJobs claims every available job of a kind, as a worker would, and returns them.
+func (p *prig) takeJobs(kind string) []jobs.Claimed {
+	p.t.Helper()
+	got, err := jobs.Claim(context.Background(), p.db, []jobs.KindLease{{Kind: kind, Lease: time.Minute}}, 100)
+	if err != nil {
+		p.t.Fatal(err)
+	}
+	return got
+}
+
 func (p *prig) events(kind string) int {
 	n := p.owner(`SELECT count(*) FROM public.audit_event WHERE kind = $1`, kind)
 	var c int
@@ -355,8 +360,8 @@ func TestSubmitAndApplyEndToEnd(t *testing.T) {
 		if sub.State != OpQueued || sub.Planned != 2 || sub.Skipped != 1 {
 			t.Fatalf("sub = %+v", sub)
 		}
-		if n := p.owner(`SELECT count(*) FROM public.jobs WHERE kind = 'operation.apply'`)[0]; n != "1" {
-			t.Fatalf("apply jobs = %s", n)
+		if n := len(p.takeJobs(JobApply)); n != 1 {
+			t.Fatalf("apply jobs = %d", n)
 		}
 		p.runChunks(sub.Operation)
 		if st := p.opState(sub.Operation); st != "succeeded" {
@@ -389,8 +394,8 @@ func TestPhasesRunInOrder(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if n := p.owner(`SELECT count(*) FROM public.jobs WHERE kind = 'operation.apply'`)[0]; n != "1" {
-			t.Fatalf("only the first phase is queued, got %s jobs", n)
+		if n := len(p.takeJobs(JobApply)); n != 1 {
+			t.Fatalf("only the first phase is queued, got %d jobs", n)
 		}
 		if err := p.r.RunChunk(context.Background(), p.tn, p.r.txFor(p.tn), chunkArgs{Operation: string(sub.Operation), Phase: 0}); err != nil {
 			t.Fatal(err)
@@ -398,8 +403,8 @@ func TestPhasesRunInOrder(t *testing.T) {
 		if p.dir.get("a") != "" || p.dir.get("b") != "1" {
 			t.Fatal("phase 1 ran before phase 0 finished")
 		}
-		if n := p.owner(`SELECT count(*) FROM public.jobs WHERE kind = 'operation.apply'`)[0]; n != "2" {
-			t.Fatalf("the settled phase enqueues the next in the recording transaction, got %s jobs", n)
+		if n := len(p.takeJobs(JobApply)); n != 1 {
+			t.Fatalf("the settled phase enqueues the next in the recording transaction, got %d new jobs", n)
 		}
 	})
 }
@@ -541,14 +546,19 @@ func TestLostJobRedrivenBySweeper(t *testing.T) {
 		p := newPRig(t, s, rigOpt{})
 		p.r.cfg.StallWindow = time.Minute
 		sub, _ := p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "a", Want: "n"}))
-		p.exec(`DELETE FROM public.jobs`) // the job is lost
+		for _, c := range p.takeJobs(JobApply) { // the job is lost: it ran and vanished without driving the steps
+			err := p.db.WithTenant(context.Background(), p.tn, func(ctx context.Context, tx store.Tx) error { return jobs.Complete(ctx, tx, c.Ref) })
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
 		p.exec(`UPDATE public.operations SET updated_at = now() - interval '1 hour'`)
 		p.exec(`UPDATE public.operation_steps SET updated_at = now() - interval '1 hour'`)
 		if err := p.r.Sweep(context.Background(), p.tn, p.r.txFor(p.tn)); err != nil {
 			t.Fatal(err)
 		}
-		if n := p.owner(`SELECT count(*) FROM public.jobs WHERE kind = 'operation.apply'`)[0]; n != "1" {
-			t.Fatalf("sweeper did not re-drive: %s jobs", n)
+		if n := len(p.takeJobs(JobApply)); n != 1 {
+			t.Fatalf("sweeper did not re-drive: %d jobs", n)
 		}
 		_ = sub
 	})
@@ -630,7 +640,7 @@ func TestGateErrorLeavesOperationPlannedAndAlerts(t *testing.T) {
 		if p.opState(sub.Operation) != "planned" || len(p.alerts.reasons()) != 1 {
 			t.Fatalf("state %s alerts %v", p.opState(sub.Operation), p.alerts.reasons())
 		}
-		if n := p.owner(`SELECT count(*) FROM public.jobs`)[0]; n != "0" {
+		if n := len(p.takeJobs(JobApply)); n != 0 {
 			t.Fatal("an unapproved operation has jobs")
 		}
 	})
