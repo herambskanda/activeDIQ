@@ -1,6 +1,6 @@
 // Package connections is the server module for directory connections (blueprint §5.4, ADR-0003). It
-// contributes the configuration Actions that change a connection: here, the Tier-0 override of
-// TM-D1. It owns no table (F1): it writes DM-10, DM-24 and DM-25 through directory/connection's Go
+// contributes the configuration Actions that change a connection: the Tier-0 override of
+// TM-D1 and the confirm, declare and remove of a HybridLink (DM-21.I2). It owns no table (F1): it writes DM-10, DM-24 and DM-25 through directory/connection's Go
 // API inside its Actions' transactions.
 package connections
 
@@ -35,5 +35,17 @@ func (*Module) Register(r *module.Registrar) error {
 	if err != nil {
 		return err
 	}
-	return r.Action(a)
+	if err := r.Action(a); err != nil {
+		return err
+	}
+	links, err := HybridLinkActions()
+	if err != nil {
+		return err
+	}
+	for _, l := range links {
+		if err := r.Action(l); err != nil {
+			return err
+		}
+	}
+	return nil
 }

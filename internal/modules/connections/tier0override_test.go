@@ -59,6 +59,12 @@ func (r *recorder) Append(_ context.Context, _ store.Tx, ev audit.Event) error {
 	return nil
 }
 
+func (r *recorder) all() []audit.Event {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]audit.Event(nil), r.evs...)
+}
+
 func (r *recorder) last() audit.Event {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -218,7 +224,7 @@ func TestModuleRegistersTheAction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := c.Actions(); len(got) != 1 || got[0].Describe().ID != connections.Tier0OverrideActionID {
+	if got := c.Actions(); len(got) != 4 || got[0].Describe().ID != connections.Tier0OverrideActionID {
 		t.Fatalf("actions %v", got)
 	}
 	d := c.Actions()[0].Describe()

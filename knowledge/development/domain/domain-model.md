@@ -832,7 +832,11 @@ authorize (DM-20.I4), so discovery can never bootstrap its own trust. Confirming
 on cross-directory authority. So confirming, or declaring a link (which creates it `confirmed`),
 requires `connections.hybrid_link.confirm` held over **both** sides: an assignment scope that covers
 the domain's `naming_context`, and one that covers the tenant's `entra_tenant` root (DM-35).
-`tenant-owner` also qualifies. No narrower scope is enough.
+`tenant-owner` also qualifies. No narrower scope is enough. I3 Every transition into `removed` (from
+`proposed` or `confirmed`) needs the same privilege over both sides and is an audited Operation:
+removal makes `HasHybridLink` false, which lets the write gate assert `no_hybrid_link` and the
+connector skip cross-directory Tier-0 peer checks. `HasHybridLink` is false only after that audited
+transition (T-0172, from the T-0168 security review).
 **Lifecycle.** `proposed → confirmed → removed`.
 
 ### DM-22 Snapshot · T · owner `modules/history`
