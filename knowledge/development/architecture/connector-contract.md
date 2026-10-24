@@ -717,8 +717,16 @@ nothing against a compromised server there (TM §6.2 "Who this defends against")
 and appended to when the ratchet adds an entry. It is not a secret and holds identifiers only; it
 is readable and writable by the connector's service identity only: mode 0600 on POSIX; on Windows an
 explicit, protected (non-inheriting) DACL granting full access to the service's token SID and SYSTEM
-only (`internal/platform/ownerfile`, typed security-descriptor API, T-0242). A file found with a wider
-DACL is **corrected** at open (not merely reported); a failure to correct is `LOCAL_RECORD_FAILED`. After a restart, the first
+only (`internal/platform/ownerfile`, typed security-descriptor API, T-0242). An existing file is
+trusted only if it is a regular file (no symlink or reparse point) **owned by the service identity**
+(Windows: or SYSTEM or `BUILTIN\Administrators`; POSIX: the effective uid), because an owner can
+rewrite its own DACL at will. A file owned by anyone else is **refused**, never corrected in place:
+`LOCAL_RECORD_FAILED`, and the operator removes it. A trusted-owner file with a wider DACL is
+**corrected** at open and the correction is **recorded** (`baseline_acl_corrected`, local log and,
+on Windows hosts, the Windows event log): its content may have been written by someone else, so the
+comparison is never silently trusted. A failure to correct or to record is `LOCAL_RECORD_FAILED`.
+The temporary file of a baseline rewrite is created owner-only atomically (`ownerfile.CreateTemp`),
+with no window under an inherited ACL. After a restart, the first
 completed run compares against the persisted baseline, so a smaller verification issued right
 after a restart still leaves its record. A missing or unreadable baseline file is itself recorded
 (`tier0_baseline_missing`) in the local log and, on Windows hosts, the Windows event log. If the

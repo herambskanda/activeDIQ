@@ -2,6 +2,8 @@ package write
 
 import (
 	"context"
+	"os"
+	"runtime"
 	"testing"
 	"time"
 
@@ -618,5 +620,39 @@ func TestStep9UsesDesignatedSet(t *testing.T) {
 	m := resp.GetTier0AfterWrite()
 	if len(m) != 1 || len(m[0].GetBasis()) != 1 || m[0].GetBasis()[0] != tier0.Designated {
 		t.Fatalf("after-write: %v", m)
+	}
+}
+
+// T-0242 review finding 3: a widened baseline is corrected AND recorded; without a recorder the
+// append fails instead of comparing against possibly tampered content silently.
+func TestFileBaselineWidenedIsRecorded(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("DACL widening is covered by the ownerfile windows tests")
+	}
+	rec := &memRecorder{}
+	fb := &FileBaseline{Path: t.TempDir() + "/baseline.jsonl", Recorder: rec}
+	m := []Mark{{Object: mk(1), Basis: tier0.C16, Source: "request"}}
+	if err := fb.Append(connID, m); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.ev) != 0 {
+		t.Fatalf("fresh file recorded %v", rec.ev)
+	}
+	if err := os.Chmod(fb.Path, 0o666); err != nil {
+		t.Fatal(err)
+	}
+	if err := fb.Append(connID, m); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.ev) != 1 || rec.ev[0].Reason != ReasonBaselineACLCorrected {
+		t.Fatalf("events %+v", rec.ev)
+	}
+	if st, _ := os.Stat(fb.Path); st.Mode().Perm() != 0o600 {
+		t.Fatalf("mode %v", st.Mode())
+	}
+	_ = os.Chmod(fb.Path, 0o666)
+	noRec := &FileBaseline{Path: fb.Path}
+	if noRec.Append(connID, m) == nil {
+		t.Fatal("correction without a recorder must fail the append")
 	}
 }

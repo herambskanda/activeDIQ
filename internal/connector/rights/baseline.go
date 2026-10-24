@@ -86,15 +86,13 @@ func (s FileBaselineStore) Save(b *Baseline) error {
 		return err
 	}
 	dir := filepath.Dir(s.Path)
-	tmp, err := os.CreateTemp(dir, ".baseline-*")
+	// Owner-only from creation (no inherited-ACL window on Windows): T-0242.
+	tmp, err := ownerfile.CreateTemp(dir, ".baseline-*")
 	if err != nil {
 		return err
 	}
 	name := tmp.Name()
 	cleanup := func(e error) error { _ = tmp.Close(); _ = os.Remove(name); return e }
-	if _, err := ownerfile.Restrict(name); err != nil {
-		return cleanup(err)
-	}
 	if _, err := tmp.Write(raw); err != nil {
 		return cleanup(err)
 	}

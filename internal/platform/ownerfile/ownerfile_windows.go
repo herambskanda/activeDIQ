@@ -3,8 +3,13 @@
 package ownerfile
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -13,8 +18,10 @@ import (
 // fileAllAccess is FILE_ALL_ACCESS (explicit, so no generic-right mapping is relied on).
 const fileAllAccess = 0x1F01FF
 
-// desiredACL builds the DACL: FILE_ALL_ACCESS for the process user and for SYSTEM. Microsoft Learn:
-// ACL_REVISION via ACLFromEntries (https://learn.microsoft.com/windows/win32/api/aclapi/nf-aclapi-setentriesinacla).
+// noFollow is a POSIX concept; on Windows reparse points are refused by attribute check in apply.
+const noFollow = 0
+
+// desiredSIDs returns the token user and SYSTEM.
 func desiredSIDs() (user, system *windows.SID, err error) {
 	tok := windows.GetCurrentProcessToken()
 	tu, err := tok.GetTokenUser()
@@ -28,6 +35,8 @@ func desiredSIDs() (user, system *windows.SID, err error) {
 	return tu.User.Sid, system, nil
 }
 
+// desiredACL builds the DACL: FILE_ALL_ACCESS for the process user and for SYSTEM. Microsoft Learn:
+// https://learn.microsoft.com/windows/win32/api/aclapi/nf-aclapi-setentriesinacla
 func desiredACL() (*windows.ACL, error) {
 	user, system, err := desiredSIDs()
 	if err != nil {
@@ -52,12 +61,29 @@ func desiredACL() (*windows.ACL, error) {
 	return windows.ACLFromEntries(entries, nil)
 }
 
+// trustedOwner reports whether owner is the token user, SYSTEM or BUILTIN\Administrators. The
+// owner holds implicit READ_CONTROL and WRITE_DAC, so only these may own a file we trust.
+func trustedOwner(owner *windows.SID) (bool, error) {
+	if owner == nil {
+		return false, nil
+	}
+	user, system, err := desiredSIDs()
+	if err != nil {
+		return false, err
+	}
+	admins, err := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid)
+	if err != nil {
+		return false, fmt.Errorf("ownerfile: administrators sid: %w", err)
+	}
+	return owner.Equals(user) || owner.Equals(system) || owner.Equals(admins), nil
+}
+
 func ensure(path string) (bool, error) {
 	acl, err := desiredACL()
 	if err != nil {
 		return false, err
 	}
-	created, err := createNew(path, acl)
+	created, err := createNewAt(path, acl)
 	if err != nil {
 		return false, err
 	}
@@ -67,35 +93,27 @@ func ensure(path string) (bool, error) {
 	return apply(path, acl)
 }
 
-func restrictExisting(path string) (bool, error) {
-	acl, err := desiredACL()
-	if err != nil {
-		return false, err
-	}
-	return apply(path, acl)
-}
-
-// createNew creates the file with the protected DACL atomically (no window where the inherited ACL
-// applies). It reports false when the file already exists.
-func createNew(path string, acl *windows.ACL) (bool, error) {
+func securityAttributes(acl *windows.ACL) (*windows.SecurityAttributes, error) {
 	sd, err := windows.NewSecurityDescriptor()
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	if err := sd.SetDACL(acl, true, false); err != nil {
-		return false, err
+		return nil, err
 	}
 	// Protect the DACL from inheritance in the descriptor control bits.
 	if err := sd.SetControl(windows.SE_DACL_PROTECTED, windows.SE_DACL_PROTECTED); err != nil {
-		return false, err
+		return nil, err
 	}
 	sa := &windows.SecurityAttributes{SecurityDescriptor: sd, InheritHandle: 0}
 	sa.Length = uint32(unsafe.Sizeof(*sa))
-	p, err := windows.UTF16PtrFromString(path)
-	if err != nil {
-		return false, err
-	}
-	h, err := windows.CreateFile(p, windows.GENERIC_WRITE, 0, sa, windows.CREATE_NEW, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	return sa, nil
+}
+
+// createNewAt creates the file with the protected DACL atomically (no window where the inherited ACL
+// applies). It reports false when the file already exists.
+func createNewAt(path string, acl *windows.ACL) (bool, error) {
+	h, err := createHandle(path, acl)
 	if err != nil {
 		if errors.Is(err, windows.ERROR_FILE_EXISTS) {
 			return false, nil
@@ -105,13 +123,77 @@ func createNew(path string, acl *windows.ACL) (bool, error) {
 	return true, windows.CloseHandle(h)
 }
 
-// apply replaces the DACL when it is not exactly the desired one (or is not protected), and reports
-// whether it did. Decision (T-0242 AC2): correct, do not merely report: the baseline is detective
-// evidence, and a wider-than-contract file is repaired at open.
+func createHandle(path string, acl *windows.ACL) (windows.Handle, error) {
+	sa, err := securityAttributes(acl)
+	if err != nil {
+		return 0, err
+	}
+	p, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return 0, err
+	}
+	// Share mode 0: nobody else can hold the file open while we write it.
+	return windows.CreateFile(p, windows.GENERIC_WRITE, 0, sa, windows.CREATE_NEW, windows.FILE_ATTRIBUTE_NORMAL, 0)
+}
+
+func createTemp(dir, pattern string) (*os.File, error) {
+	acl, err := desiredACL()
+	if err != nil {
+		return nil, err
+	}
+	prefix, suffix := pattern, ""
+	if i := strings.LastIndex(pattern, "*"); i >= 0 {
+		prefix, suffix = pattern[:i], pattern[i+1:]
+	}
+	for try := 0; try < 100; try++ {
+		var r [8]byte
+		if _, err := rand.Read(r[:]); err != nil {
+			return nil, err
+		}
+		name := filepath.Join(dir, prefix+hex.EncodeToString(r[:])+suffix)
+		h, err := createHandle(name, acl)
+		if errors.Is(err, windows.ERROR_FILE_EXISTS) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		return os.NewFile(uintptr(h), name), nil
+	}
+	return nil, errors.New("ownerfile: no free temp name")
+}
+
+// apply refuses a reparse point or a foreign owner, and otherwise replaces the DACL when it is not
+// exactly the desired one (or is not protected), reporting whether it did. Decision (T-0242 AC2): a
+// wider file with a trusted owner is corrected at open, and the caller records that; a file owned by
+// anyone else is refused, because its owner can undo any correction.
 func apply(path string, want *windows.ACL) (bool, error) {
-	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	p, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return false, err
+	}
+	attrs, err := windows.GetFileAttributes(p)
+	if err != nil {
+		return false, err
+	}
+	if attrs&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 || attrs&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
+		return false, ErrNotRegular
+	}
+	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		return false, err
+	}
+	owner, _, err := sd.Owner()
+	if err != nil {
+		return false, err
+	}
+	ok, err := trustedOwner(owner)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, ErrForeignOwner
 	}
 	ctrl, _, err := sd.Control()
 	if err != nil {
