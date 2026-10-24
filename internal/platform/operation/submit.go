@@ -24,7 +24,13 @@ import (
 // Pinner pins one writable DC per naming context for the whole operation (rule 5). previous is the pin
 // of an earlier plan of the same operation; the Pinner keeps it while that DC is healthy.
 type Pinner interface {
-	Pin(ctx context.Context, connection string, nc authority.NamingContextID, previous string) (string, error)
+	Pin(ctx context.Context, connection string, nc authority.NamingContextID, previous string) (DCPin, error)
+}
+
+// DCPin is one pinned DC: its host and its DSA GUID (the NTDS Settings objectGUID in canonical form).
+type DCPin struct {
+	Host    string
+	DSAGUID string
 }
 
 // ErrGate is returned when the registered gate errored or did not answer: the operation stays planned
@@ -192,6 +198,10 @@ func (r *Runner) planAndRoute(ctx context.Context, t tenant.ID, opID string, inp
 	for k, v := range op.Pins {
 		pins[k] = v
 	}
+	dsas := authority.DSAPins{}
+	for k, v := range op.DSAs {
+		dsas[k] = v
+	}
 	items := make([]planItem, len(steps))
 	for i, sp := range steps {
 		items[i] = planItem{sp: sp, skipped: len(sp.Diff) == 0}
@@ -206,11 +216,11 @@ func (r *Runner) planAndRoute(ctx context.Context, t tenant.ID, opID string, inp
 			if r.cfg.Pinner == nil {
 				return r.failPlan(ctx, t, op, fmt.Errorf("%w: no DC pinner wired", ErrInvalid))
 			}
-			host, err := r.cfg.Pinner.Pin(ctx, sp.Target.Connection, sp.Target.NC, pins[sp.Target.NC])
+			pin, err := r.cfg.Pinner.Pin(ctx, sp.Target.Connection, sp.Target.NC, pins[sp.Target.NC])
 			if err != nil {
 				return r.failPlan(ctx, t, op, fmt.Errorf("pinning a DC: %w", err))
 			}
-			pins[sp.Target.NC] = host
+			pins[sp.Target.NC], dsas[sp.Target.NC] = pin.Host, pin.DSAGUID
 		}
 		if reason := r.authoriseTarget(ctx, op.Chain, d.Permission, sp.Target, pins); reason != "" {
 			items[i].blocked = reason
@@ -226,7 +236,7 @@ func (r *Runner) planAndRoute(ctx context.Context, t tenant.ID, opID string, inp
 		if cur.State != OpPlanning || cur.Revision != op.Revision {
 			return ErrConflict // cancelled or re-planned meanwhile: the plan does not land (rule 6)
 		}
-		sub, err = r.persistPlan(ctx, tx, t, cur, d, items, pins, hash, secrets, ttl)
+		sub, err = r.persistPlan(ctx, tx, t, cur, d, items, pins, dsas, hash, secrets, ttl)
 		return err
 	})
 	if err != nil {
@@ -280,7 +290,7 @@ func (r *Runner) authoriseTarget(ctx context.Context, chain authority.Chain, per
 // persistPlan replaces the operation's items and steps with the plan and moves planning -> planned,
 // no_change or plan_failed. A re-plan with an unchanged hash keeps the approval; a changed hash
 // clears it (DM-65.I1).
-func (r *Runner) persistPlan(ctx context.Context, tx store.Tx, t tenant.ID, cur opRecord, d Descriptor, items []planItem, pins authority.Pins, hash string, secrets map[int]secret.Secret, ttl time.Duration) (Submission, error) {
+func (r *Runner) persistPlan(ctx context.Context, tx store.Tx, t tenant.ID, cur opRecord, d Descriptor, items []planItem, pins authority.Pins, dsas authority.DSAPins, hash string, secrets map[int]secret.Secret, ttl time.Duration) (Submission, error) {
 	opID := cur.ID
 	sub := Submission{Operation: step.OperationID(opID), PlanHash: hash, Items: len(items)}
 	// The approval binds the hash and the set of items blocked at plan: a re-plan that unblocks (or
@@ -364,12 +374,13 @@ VALUES ($1::uuid, $2::uuid, $3, 0, 'planned', $4::jsonb, $5, $6, $7, $8, $9)`, t
 		next, result = OpNoChange, "no_change"
 	}
 	pinsJSON, _ := json.Marshal(pins)
+	dsasJSON, _ := json.Marshal(dsas)
 	keep := cur.ApprovedHash == hash && slices.Equal(priorBlocked, nowBlocked)
-	if _, err := tx.Exec(ctx, `UPDATE public.operations SET plan_hash = $3, pins = $4::jsonb,
+	if _, err := tx.Exec(ctx, `UPDATE public.operations SET plan_hash = $3, pins = $4::jsonb, dsa_guids = $7::jsonb,
   plan_valid_until = now() + CASE WHEN $5 THEN interval '1 hour' ELSE interval '24 hours' END,
   approved_by = CASE WHEN $6 THEN approved_by END, approved_plan_hash = CASE WHEN $6 THEN approved_plan_hash END,
   approved_at = CASE WHEN $6 THEN approved_at END
-WHERE tenant_id = $1::uuid AND id = $2::uuid`, t.String(), opID, hash, string(pinsJSON), d.Target != TargetStore, keep); err != nil {
+WHERE tenant_id = $1::uuid AND id = $2::uuid`, t.String(), opID, hash, string(pinsJSON), d.Target != TargetStore, keep, string(dsasJSON)); err != nil {
 		return sub, fmt.Errorf("operation: recording plan: %w", err)
 	}
 	if err := setOperationState(ctx, tx, t, opID, OpPlanning, next); err != nil {

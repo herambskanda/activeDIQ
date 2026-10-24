@@ -74,8 +74,24 @@ func withStep(t *testing.T, fn func(ctx context.Context, s step.Step)) {
 	withStepOf(t, testTarget, authority.Pins{ncGUID: "dc1.corp.example"}, fn)
 }
 
+const dsaGUID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+func dsasFor(pins authority.Pins) authority.DSAPins {
+	d := authority.DSAPins{}
+	for nc := range pins {
+		d[nc] = dsaGUID
+	}
+	return d
+}
+
 // withStepOf is withStep for a chosen digested target and DC pin set.
 func withStepOf(t *testing.T, target authority.TargetRef, pins authority.Pins, fn func(ctx context.Context, s step.Step)) {
+	t.Helper()
+	withStepDSA(t, target, pins, dsasFor(pins), fn)
+}
+
+// withStepDSA is withStepOf with an explicit DSA pin set.
+func withStepDSA(t *testing.T, target authority.TargetRef, pins authority.Pins, dsas authority.DSAPins, fn func(ctx context.Context, s step.Step)) {
 	t.Helper()
 	type none struct{}
 	a, err := operation.Define(operation.Typed[none, none, none]{
@@ -107,7 +123,7 @@ func withStepOf(t *testing.T, target authority.TargetRef, pins authority.Pins, f
 		t.Fatal(err)
 	}
 	_, err = r.RunStore(context.Background(), operation.Request{Tenant: tenant.New(), Operation: opID, Action: "settings.thing.set",
-		Input: operation.Input(`{}`), Pins: pins, Actor: authority.Chain{Requester: authority.Principal{ID: account, Kind: authority.Human}}})
+		Input: operation.Input(`{}`), Pins: pins, DSAs: dsas, Actor: authority.Chain{Requester: authority.Principal{ID: account, Kind: authority.Human}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -447,5 +463,58 @@ func TestPinsMutatedAfterMintDoNotRepointStep(t *testing.T) {
 	})
 	if got[ncGUID] != "dc1.corp.example" {
 		t.Errorf("facts read on pins %v", got)
+	}
+}
+
+func TestPlanSendsPinnedDSAGUID(t *testing.T) {
+	tr := &transport{}
+	c := New(WithTransport(tr), WithFacts(&facts{}), WithTier0Builder(&builder{}))
+	withStep(t, func(ctx context.Context, s step.Step) {
+		if _, err := c.Write(ctx, s, goodOp()); err != nil {
+			t.Fatal(err)
+		}
+	})
+	want, _ := parseUUID(dsaGUID)
+	if got := tr.planReq.GetDc().GetPinnedDsaGuid().GetValue(); string(got) != string(want) {
+		t.Errorf("PlanRequest.Dc.PinnedDsaGuid = %x, want %x", got, want)
+	}
+}
+
+func TestPlanWithoutDSAGUIDRefusedBeforeTransport(t *testing.T) {
+	for name, dsas := range map[string]authority.DSAPins{
+		"absent":    nil,
+		"empty":     {ncGUID: ""},
+		"malformed": {ncGUID: "not-a-guid"},
+	} {
+		tr, f := &transport{}, &facts{}
+		c := New(WithTransport(tr), WithFacts(f), WithTier0Builder(&builder{}))
+		withStepDSA(t, testTarget, authority.Pins{ncGUID: "dc1.corp.example"}, dsas, func(ctx context.Context, s step.Step) {
+			if _, err := c.Write(ctx, s, goodOp()); !errors.Is(err, ErrNoDSAPin) {
+				t.Errorf("%s: got %v, want ErrNoDSAPin", name, err)
+			}
+		})
+		if tr.plans != 0 || tr.applies != 0 || f.n != 0 {
+			t.Errorf("%s: facts or transport reached without a DSA pin", name)
+		}
+	}
+}
+
+func TestDSAPinMutatedAfterMintDoesNotRepointStep(t *testing.T) {
+	tr := &transport{}
+	c := New(WithTransport(tr), WithFacts(&facts{}), WithTier0Builder(&builder{}))
+	pins := authority.Pins{ncGUID: "dc1.corp.example"}
+	dsas := authority.DSAPins{ncGUID: dsaGUID}
+	withStepDSA(t, testTarget, pins, dsas, func(ctx context.Context, s step.Step) {
+		dsas[ncGUID] = "11111111-1111-1111-1111-111111111111"
+		if g, _ := s.DSA(ncGUID); g != dsaGUID {
+			t.Errorf("step DSA re-pointed to %q", g)
+		}
+		if _, err := c.Write(ctx, s, goodOp()); err != nil {
+			t.Fatal(err)
+		}
+	})
+	want, _ := parseUUID(dsaGUID)
+	if got := tr.planReq.GetDc().GetPinnedDsaGuid().GetValue(); string(got) != string(want) {
+		t.Errorf("wire DSA GUID %x, want original %x", got, want)
 	}
 }

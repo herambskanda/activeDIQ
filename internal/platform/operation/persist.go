@@ -49,6 +49,7 @@ type opRecord struct {
 	Revision     int
 	ValidUntil   *time.Time
 	Pins         authority.Pins
+	DSAs         authority.DSAPins
 	Input        []byte
 	Hold         HoldReason
 	RequestRef   string
@@ -64,7 +65,7 @@ type chainJSON struct {
 }
 
 const opColumns = `id::text, action_id, action_version, origin, requester_id, requester_kind, via, state,
-  COALESCE(plan_hash, ''), plan_revision, plan_valid_until, pins, input, COALESCE(hold_reason, ''),
+  COALESCE(plan_hash, ''), plan_revision, plan_valid_until, pins, dsa_guids, input, COALESCE(hold_reason, ''),
   COALESCE(request_ref, ''), COALESCE(max_objects, 0), step_up_fresh, COALESCE(approved_by, ''),
   COALESCE(approved_plan_hash, ''), chunk_size`
 
@@ -73,10 +74,10 @@ const selectOpLocked = selectOp + ` FOR UPDATE`
 
 func scanOp(row interface{ Scan(...any) error }) (opRecord, error) {
 	var o opRecord
-	var via, pins []byte
+	var via, pins, dsas []byte
 	var kind, state, action, hold string
 	err := row.Scan(&o.ID, &action, &o.Version, &o.Origin, &o.Chain.Requester.ID, &kind, &via, &state,
-		&o.PlanHash, &o.Revision, &o.ValidUntil, &pins, &o.Input, &hold, &o.RequestRef, &o.MaxObjects,
+		&o.PlanHash, &o.Revision, &o.ValidUntil, &pins, &dsas, &o.Input, &hold, &o.RequestRef, &o.MaxObjects,
 		&o.StepUpFresh, &o.ApprovedBy, &o.ApprovedHash, &o.ChunkSize)
 	if err != nil {
 		if store.IsNoRows(err) {
@@ -91,6 +92,9 @@ func scanOp(row interface{ Scan(...any) error }) (opRecord, error) {
 	}
 	if err := json.Unmarshal(pins, &o.Pins); err != nil {
 		return opRecord{}, fmt.Errorf("operation: corrupt pins: %w", err)
+	}
+	if err := json.Unmarshal(dsas, &o.DSAs); err != nil {
+		return opRecord{}, fmt.Errorf("operation: corrupt DSA pins: %w", err)
 	}
 	return o, nil
 }

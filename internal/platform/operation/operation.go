@@ -152,7 +152,7 @@ type Observer interface {
 
 // PlanContext is what Plan reads through: the store (read only) and live facts on the pins.
 type PlanContext struct {
-	Tx    store.Tx // the runner opens it READ ONLY; Plan has no way to commit or roll it back
+	Tx    store.Tx    // the runner opens it READ ONLY; Plan has no way to commit or roll it back
 	Facts PinnedFacts // reads on a clone of the request's pins; Plan cannot choose a DC (rule 5)
 	Pins  authority.Pins
 }

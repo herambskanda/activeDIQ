@@ -22,6 +22,7 @@ var (
 	ErrUnknownKind    = errors.New("client: write kind is not registered; write refused")
 	ErrNoNC           = errors.New("client: step binds no naming context; write refused")
 	ErrNoDCPin        = errors.New("client: step has no DC pin for the naming context; write refused")
+	ErrNoDSAPin       = errors.New("client: step pins no DSA GUID for the naming context; write refused")
 	ErrTransport      = errors.New("client: connector call failed")
 )
 
@@ -141,6 +142,14 @@ func (c *Client) Write(ctx context.Context, s step.Step, op WriteOp) (Result, er
 	if !ok || host == "" {
 		return Result{}, ErrNoDCPin
 	}
+	dsa, ok := s.DSA(nc)
+	if !ok {
+		return Result{}, ErrNoDSAPin // rule 5: a host alone is not enforceable by the connector; never fall back to unpinned
+	}
+	dsaID, err := parseUUID(dsa)
+	if err != nil {
+		return Result{}, fmt.Errorf("%w: DSA GUID is not a GUID", ErrNoDSAPin)
+	}
 	pins := authority.Pins{nc: host}
 	facts, err := c.facts.Facts(ctx, pins, s.FactsQuery())
 	if err != nil {
@@ -158,6 +167,7 @@ func (c *Client) Write(ctx context.Context, s step.Step, op WriteOp) (Result, er
 	plan, err := c.sendPlan(ctx, clr, s, &connectorv1.PlanRequest{
 		Connection: w.conn, Step: key, Target: w.target, Kind: w.kind,
 		Tier0: t0.Context, Tier0Override: t0.Override, ActingPrincipal: acting,
+		Dc: &connectorv1.DcSelection{PinnedDsaGuid: &connectorv1.Guid{Value: dsaID}},
 	})
 	if err != nil {
 		return Result{}, err

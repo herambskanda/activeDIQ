@@ -159,8 +159,8 @@ func (d *dirFake) action(t *testing.T, id ActionID, stepUp, secretIn bool, class
 
 type pinFake struct{}
 
-func (pinFake) Pin(context.Context, string, authority.NamingContextID, string) (string, error) {
-	return "dc1.example.test", nil
+func (pinFake) Pin(context.Context, string, authority.NamingContextID, string) (DCPin, error) {
+	return DCPin{Host: "dc1.example.test", DSAGUID: "11111111-2222-3333-4444-555555555555"}, nil
 }
 
 type settingsFake struct{ irreversible bool }
