@@ -40,11 +40,21 @@ func (h holders) FactsQuery(_ authority.Chain, _ authz.Permission, t authority.T
 	return authority.FactsQuery{Target: t}
 }
 
-func (h holders) Authorize(_ context.Context, c authority.Chain, p authz.Permission, _ authority.TargetRef, _ authority.Facts) error {
-	if p == inventory.DesignationPermission && h[c.Requester.ID] {
+func (h holders) Authorize(_ context.Context, c authority.Chain, p authz.Permission, t authority.TargetRef, _ authority.Facts) error {
+	// "owner" holds the permission at Tier-0 scope; "ouadmin" holds it only on the object's OU, which
+	// never covers a tier0_scope target.
+	if p == inventory.DesignationPermission && h[c.Requester.ID] && t.Class == inventory.TargetClassScope {
 		return nil
 	}
 	return errors.New("not granted")
+}
+
+// tier0Facts reports the designated object itself as tier0, as a real Facts provider would once it is
+// designated (runner rule 7). The Action must not depend on the object being non-tier0.
+type tier0Facts struct{}
+
+func (tier0Facts) Facts(_ context.Context, _ authority.Pins, q authority.FactsQuery) (authority.Facts, error) {
+	return authority.Facts{Exists: true, Tier0: q.Target.GUID == obj}, nil
 }
 
 type recorder struct {
@@ -101,7 +111,7 @@ func setup(t *testing.T, s *storetest.Server) *env {
 		t.Fatal(err)
 	}
 	rec := &recorder{}
-	runner, err := operation.NewRunner(operation.Config{DB: db, Audit: rec, Authz: holders{"owner": true}, Registry: reg, Now: time.Now})
+	runner, err := operation.NewRunner(operation.Config{DB: db, Audit: rec, Authz: holders{"owner": true}, Facts: tier0Facts{}, Registry: reg, Now: time.Now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,10 +179,10 @@ func TestDesignationChangeGated(t *testing.T) {
 		}
 		ev, _ := e.rec.last()
 		if ev.Kind != inventory.AuditDesignationChanged || ev.Outcome != audit.Success || ev.Actor.Requester.ID != "owner" ||
-			ev.Target.GUID != obj || ev.Target.Connection != string(e.conn) || ev.At.Before(before) {
+			ev.Target.Class != inventory.TargetClassScope || ev.Target.Connection != string(e.conn) || ev.At.Before(before) {
 			t.Fatalf("audit event %+v", ev)
 		}
-		if len(ev.Changes) != 1 || ev.Changes[0].Before[0] != "false" || ev.Changes[0].After[0] != "true" {
+		if len(ev.Changes) != 2 || ev.Changes[0].After[0] != obj || ev.Changes[1].Before[0] != "false" || ev.Changes[1].After[0] != "true" {
 			t.Fatalf("audit changes %+v", ev.Changes)
 		}
 
@@ -190,7 +200,7 @@ func TestDesignationChangeGated(t *testing.T) {
 		if e.designated(t) {
 			t.Fatal("designation still in force")
 		}
-		if ev, n2 := e.rec.last(); n2 != n+1 || ev.Outcome != audit.Success || ev.Changes[0].After[0] != "false" || ev.Actor.Requester.ID != "owner" {
+		if ev, n2 := e.rec.last(); n2 != n+1 || ev.Outcome != audit.Success || ev.Changes[1].After[0] != "false" || ev.Actor.Requester.ID != "owner" {
 			t.Fatalf("removal audit %+v", ev)
 		}
 		var by string

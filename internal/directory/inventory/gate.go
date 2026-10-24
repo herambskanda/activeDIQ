@@ -94,7 +94,7 @@ const (
 // Eligibility is (a)–(e). It is recorded the first time it holds (class from the connection's
 // attestation at that moment) and never rewritten or cleared. State then follows the first failing
 // check in the order a–g. A broken correlation never goes straight to matched (Lifecycle): when the
-// objects match again it returns as a candidate that needs a re-confirmation.
+// objects match again it returns as a candidate for one cycle (no reason, no re-confirmation).
 func Evaluate(in GateInput, now time.Time) Verdict {
 	v := Verdict{}
 	if in.Prior != nil {
@@ -128,9 +128,14 @@ func Evaluate(in GateInput, now time.Time) Verdict {
 		rec = in.Prior.ReconfirmedAt
 	}
 	if (!in.CloudSeenAt.IsZero() && (rec.IsZero() || rec.Before(in.CloudSeenAt))) ||
-		(v.EligibilityClass == ClassLapsed && rec.IsZero()) ||
-		(in.Prior != nil && in.Prior.State == StateBroken) {
+		(v.EligibilityClass == ClassLapsed && rec.IsZero()) {
 		return keep(v, StateCandidate, ReasonReconfirmRequired)
+	}
+	// A broken correlation never goes straight to matched (Lifecycle): it passes through candidate
+	// for one cycle. This is a hold, not a re-confirmation: nothing is stored or asked of the owner,
+	// and the next cycle matches if the checks still pass. The reason stays empty on purpose.
+	if in.Prior != nil && in.Prior.State == StateBroken {
+		return keep(v, StateCandidate, "")
 	}
 	return keep(v, StateMatched, "")
 }

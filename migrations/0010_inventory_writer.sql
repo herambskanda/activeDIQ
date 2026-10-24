@@ -8,7 +8,10 @@
 --    Tier-0 protection from an object, so the runtime role loses DELETE (as on correlations) and the
 --    row keeps who removed it and when. The audit event is the Operation's; this is the data trail.
 --    designated_by is the requester's pseudonymous principal ID (text), not a uuid.
---  * links: DM-17 Link, the membership slice the GroupSource walks. Only forward edges are stored (I1).
+--  * links: DM-17 Link, the membership slice the GroupSource walks: 'member' edges and 'primary_group'
+--    edges (DM-17.I2; a user whose primaryGroupID names a group is in it without a member value).
+--    Only forward edges are stored (I1). Edges are never deleted, only marked removed/deactivated,
+--    so the runtime role loses DELETE (a silent delete would drop Tier-0 protection from members).
 
 ALTER TABLE public.correlations
   ADD CONSTRAINT correlations_ad_connection_fk FOREIGN KEY (tenant_id, ad_connection_id) REFERENCES public.connections (tenant_id, id),
@@ -27,13 +30,15 @@ CREATE TABLE public.links (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   connection_id uuid NOT NULL,
   source_guid uuid NOT NULL,
-  link_attr text NOT NULL CHECK (link_attr IN ('member')),
+  link_attr text NOT NULL CHECK (link_attr IN ('member', 'primary_group')),
   target_guid uuid NOT NULL,
   state text NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'deactivated', 'removed')),
   observed_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (tenant_id, connection_id, source_guid, link_attr, target_guid),
   FOREIGN KEY (tenant_id, connection_id) REFERENCES public.connections (tenant_id, id)
 );
+REVOKE DELETE ON public.links FROM activediq_app;
+
 -- GroupsOf walks from a member up to the groups that contain it.
 CREATE INDEX links_by_target ON public.links (tenant_id, connection_id, link_attr, target_guid) WHERE state = 'active';
 

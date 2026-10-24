@@ -12,7 +12,7 @@ import (
 // and a truncated answer would silently leave a designated group out, so it is ErrTooMany.
 const MaxGroups = 10000
 
-// Groups is the Postgres GroupSource over the DM-17 member edges. The walk is one recursive query
+// Groups is the Postgres GroupSource over the DM-17 member and primary-group edges (a primary-group edge is a membership with no member value, TM-D25 rule 6). The walk is one recursive query
 // with set semantics (UNION), so circular groups (I3) terminate without a depth counter.
 type Groups struct{ db *store.DB }
 
@@ -37,10 +37,10 @@ func (g *Groups) GroupsOf(ctx context.Context, tid tenant.ID, connection Connect
 	err := g.db.WithTenant(ctx, tid, func(ctx context.Context, tx store.Tx) error {
 		rows, err := tx.Query(ctx, `WITH RECURSIVE up(guid) AS (
 				SELECT source_guid FROM public.links
-				WHERE tenant_id = $1::uuid AND connection_id = $2::uuid AND link_attr = 'member' AND state = 'active' AND target_guid = $3::uuid
+				WHERE tenant_id = $1::uuid AND connection_id = $2::uuid AND link_attr IN ('member', 'primary_group') AND state = 'active' AND target_guid = $3::uuid
 			UNION
 				SELECT l.source_guid FROM public.links l JOIN up ON l.target_guid = up.guid
-				WHERE l.tenant_id = $1::uuid AND l.connection_id = $2::uuid AND l.link_attr = 'member' AND l.state = 'active'
+				WHERE l.tenant_id = $1::uuid AND l.connection_id = $2::uuid AND l.link_attr IN ('member', 'primary_group') AND l.state = 'active'
 			)
 			SELECT guid::text FROM up WHERE guid <> $3::uuid ORDER BY guid LIMIT $4`,
 			tid.String(), string(connection), string(member), MaxGroups+1)

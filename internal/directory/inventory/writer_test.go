@@ -196,6 +196,32 @@ func TestGroupSourceTransitive(t *testing.T) {
 		}
 		edge(g1, user)
 
+		// DELETE on links is revoked from the runtime role (edges are marked removed, never deleted).
+		if err := e.tx(t, e.a, func(ctx context.Context, tx store.Tx) error {
+			_, err := tx.Exec(ctx, `DELETE FROM public.links`)
+			return err
+		}); err == nil {
+			t.Fatal("activediq_app can DELETE links")
+		}
+
+		// TM-D25 rule 6: a user whose only tie to a group is a primary-group edge (no member value) is
+		// in it, also through nesting: puser -primary-> pg1 -member-> far.
+		const (
+			puser = "aaaaaaaa-0000-4000-8000-0000000000a2"
+			pg1   = "aaaaaaaa-0000-4000-8000-0000000000b5"
+		)
+		if err := e.tx(t, e.a, func(ctx context.Context, tx store.Tx) error {
+			if err := w.SetPrimaryGroup(ctx, tx, e.adA, pg1, puser, t1); err != nil {
+				return err
+			}
+			return w.SetMember(ctx, tx, e.adA, far, pg1, t1)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := gs.GroupsOf(ctx, e.a, e.adA, puser); err != nil || !reflect.DeepEqual(got, []inventory.GUID{far, pg1}) {
+			t.Fatalf("primary-group edge: %v %v", got, err)
+		}
+
 		// Reader.DesignationsFor finds a designation on a group two levels up.
 		if err := e.tx(t, e.a, func(ctx context.Context, tx store.Tx) error {
 			_, err := w.Designate(ctx, tx, e.adA, far, "alice")

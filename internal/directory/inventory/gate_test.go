@@ -116,4 +116,12 @@ func TestGateEligibilityClassAndMarkers(t *testing.T) {
 	if v9 := inventory.Evaluate(in, t1); v9.State != inventory.StateCandidate || v9.EligibleSince != t0 {
 		t.Fatalf("broken re-form: %+v", v9)
 	}
+	// The hold is one cycle and asks nothing of the owner: no reason, and the next cycle matches.
+	if v9 := inventory.Evaluate(in, t1); v9.Reason != "" {
+		t.Fatalf("broken hold carries a reason: %+v", v9)
+	}
+	in.Prior = &inventory.Prior{State: inventory.StateCandidate, EligibleSince: t0, EligibilityClass: "attested"}
+	if v10 := inventory.Evaluate(in, t1); v10.State != inventory.StateMatched {
+		t.Fatalf("second cycle after broken: %+v", v10)
+	}
 }

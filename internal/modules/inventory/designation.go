@@ -25,6 +25,10 @@ const SetDesignationActionID operation.ActionID = "inventory.tier0_designation.s
 // permission: taking a designation off silently drops protection, so it is no weaker than adding one.
 const DesignationPermission authz.Permission = "inventory.tier0_designation.manage"
 
+// TargetClassScope is the class of the target the Action authorises against: a connection's Tier-0
+// scope. A grant on an OU or on the object itself never covers it.
+const TargetClassScope = "tier0_scope"
+
 // AuditDesignationChanged is the event the runner writes; its change records before and after.
 const AuditDesignationChanged audit.Kind = "inventory.tier0_designation.changed"
 
@@ -71,9 +75,16 @@ func SetDesignation() (operation.Action, error) {
 			}
 			return []operation.TypedStep[designationPayload]{{
 				Plan: operation.StepPlan{
-					Target:        authority.TargetRef{Connection: in.ConnectionID, GUID: in.ObjectGUID, Class: "tier0_designation"},
-					Kind:          "inventory.tier0_designation.set",
-					Diff:          []operation.Change{{Attribute: "tier0_designated", Before: []string{strconv.FormatBool(cur)}, After: []string{strconv.FormatBool(in.Designated)}}},
+					// The target is the connection's Tier-0 scope, not the designated object: the permission
+					// is then checked at a scope only a Tier-0 role holds, and runner rule 7 (no role touches
+					// a tier0 target) does not turn un-designation into a permanent denial. The object is
+					// bound into the step digest and the audit event through the diff.
+					Target: authority.TargetRef{Connection: in.ConnectionID, GUID: in.ConnectionID, Class: TargetClassScope},
+					Kind:   "inventory.tier0_designation.set",
+					Diff: []operation.Change{
+						{Attribute: "object_guid", Before: []string{in.ObjectGUID}, After: []string{in.ObjectGUID}},
+						{Attribute: "tier0_designated", Before: []string{strconv.FormatBool(cur)}, After: []string{strconv.FormatBool(in.Designated)}},
+					},
 					Reversibility: operation.Reversible,
 				},
 				Payload: in,

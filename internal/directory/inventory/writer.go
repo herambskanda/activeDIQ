@@ -274,6 +274,28 @@ func (Writer) IsDesignated(ctx context.Context, tx store.Tx, connection Connecti
 // SetMember records or refreshes the DM-17 member edge group → member as active (the sync ingester's
 // write, in the same transaction as the rest of the cycle). RemoveMember marks it removed.
 func (Writer) SetMember(ctx context.Context, tx store.Tx, connection ConnectionID, group, member GUID, observed time.Time) error {
+	return setEdge(ctx, tx, "member", connection, group, member, observed)
+}
+
+// RemoveMember marks the member edge removed.
+func (Writer) RemoveMember(ctx context.Context, tx store.Tx, connection ConnectionID, group, member GUID, observed time.Time) error {
+	return removeEdge(ctx, tx, "member", connection, group, member, observed)
+}
+
+// SetPrimaryGroup records the DM-17.I2 primary-group edge group → user (the user's primaryGroupID
+// resolved to the group): a membership that has no member value, which the GroupSource must follow
+// or a designated group's primary-group members lose Tier-0 protection. RemovePrimaryGroup marks it removed.
+func (Writer) SetPrimaryGroup(ctx context.Context, tx store.Tx, connection ConnectionID, group, user GUID, observed time.Time) error {
+	return setEdge(ctx, tx, "primary_group", connection, group, user, observed)
+}
+
+// RemovePrimaryGroup marks the primary-group edge removed.
+func (Writer) RemovePrimaryGroup(ctx context.Context, tx store.Tx, connection ConnectionID, group, user GUID, observed time.Time) error {
+	return removeEdge(ctx, tx, "primary_group", connection, group, user, observed)
+}
+
+// setEdge's attr is one of the two constants above, passed as a bind parameter.
+func setEdge(ctx context.Context, tx store.Tx, attr string, connection ConnectionID, group, member GUID, observed time.Time) error {
 	if !(Ref{connection, group}).Valid() || !(Ref{connection, member}).Valid() || observed.IsZero() {
 		return ErrInvalid
 	}
@@ -281,17 +303,16 @@ func (Writer) SetMember(ctx context.Context, tx store.Tx, connection ConnectionI
 		return err
 	}
 	_, err := tx.Exec(ctx, `INSERT INTO public.links (tenant_id, connection_id, source_guid, link_attr, target_guid, state, observed_at)
-		VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, $2::uuid, 'member', $3::uuid, 'active', $4)
+		VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, $2::uuid, $5, $3::uuid, 'active', $4)
 		ON CONFLICT (tenant_id, connection_id, source_guid, link_attr, target_guid) DO UPDATE SET state = 'active', observed_at = EXCLUDED.observed_at`,
-		string(connection), string(group), string(member), observed.UTC())
+		string(connection), string(group), string(member), observed.UTC(), attr)
 	if err != nil {
-		return writeErr("set member", err)
+		return writeErr("set "+attr, err)
 	}
 	return nil
 }
 
-// RemoveMember marks the member edge removed.
-func (Writer) RemoveMember(ctx context.Context, tx store.Tx, connection ConnectionID, group, member GUID, observed time.Time) error {
+func removeEdge(ctx context.Context, tx store.Tx, attr string, connection ConnectionID, group, member GUID, observed time.Time) error {
 	if !(Ref{connection, group}).Valid() || !(Ref{connection, member}).Valid() || observed.IsZero() {
 		return ErrInvalid
 	}
@@ -300,10 +321,10 @@ func (Writer) RemoveMember(ctx context.Context, tx store.Tx, connection Connecti
 	}
 	_, err := tx.Exec(ctx, `UPDATE public.links SET state = 'removed', observed_at = $4
 		WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid
-		AND source_guid = $2::uuid AND link_attr = 'member' AND target_guid = $3::uuid`,
-		string(connection), string(group), string(member), observed.UTC())
+		AND source_guid = $2::uuid AND link_attr = $5 AND target_guid = $3::uuid`,
+		string(connection), string(group), string(member), observed.UTC(), attr)
 	if err != nil {
-		return writeErr("remove member", err)
+		return writeErr("remove "+attr, err)
 	}
 	return nil
 }
