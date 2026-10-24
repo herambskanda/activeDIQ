@@ -35,6 +35,7 @@ type AttrInfo struct {
 // Schema is the allowlist read at connect (gotcha 15). Lookup is case-insensitive, as LDAP attribute
 // names are.
 type Schema struct {
+	list   []AttrInfo // as given, so With can rebuild
 	byName map[string]AttrInfo
 	byOID  map[string]string // numericoid -> lower-case ldapDisplayName
 }
@@ -42,7 +43,7 @@ type Schema struct {
 // NewSchema builds a schema. Attributes on the static secret list are marked Secret whatever the
 // caller says; the schema-flagged half of SecretAttrs is the caller's to set.
 func NewSchema(attrs ...AttrInfo) *Schema {
-	s := &Schema{byName: make(map[string]AttrInfo, len(attrs)), byOID: map[string]string{}}
+	s := &Schema{list: slices.Clone(attrs), byName: make(map[string]AttrInfo, len(attrs)), byOID: map[string]string{}}
 	static := secretattr.Static()
 	groups := map[string][]string{} // numericoid -> every lower-case name claiming it
 	for _, a := range attrs {
@@ -100,6 +101,38 @@ func NewSchema(attrs ...AttrInfo) *Schema {
 		}
 	}
 	return s
+}
+
+// With returns a new schema holding s's attributes plus extra. Flags only merge upward (see NewSchema),
+// so an extra entry can mark an attribute Secret or Constructed but never clear either. s is unchanged.
+func (s *Schema) With(extra ...AttrInfo) *Schema {
+	if s == nil {
+		return NewSchema(extra...)
+	}
+	return NewSchema(append(slices.Clone(s.list), extra...)...)
+}
+
+// IsSecret reports whether name (a descr or numericoid) is a SecretAttrs member of this schema.
+func (s *Schema) IsSecret(name string) bool {
+	n, err := ParseAttrName(name, s)
+	if err != nil {
+		return false
+	}
+	a, ok := s.lookup(n.String())
+	return ok && a.Secret
+}
+
+// ParseSortKey validates a server-side sort or VLV key. Ordering reveals the order of the values, so a
+// SecretAttrs member is refused (LF-35, safe-primitives §3.6).
+func ParseSortKey(name string, sc *Schema) (AttrName, error) {
+	n, err := ParseAttrName(name, sc)
+	if err != nil {
+		return AttrName{}, err
+	}
+	if a, _ := sc.lookup(n.String()); a.Secret {
+		return AttrName{}, fail(ForbiddenSortKey)
+	}
+	return n, nil
 }
 
 func (s *Schema) lookup(name string) (AttrInfo, bool) {

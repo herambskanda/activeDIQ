@@ -16,6 +16,9 @@ const (
 	CodeInsufficientRights  Code = "INSUFFICIENT_RIGHTS"
 	CodeUnexpectedReferral  Code = "UNEXPECTED_REFERRAL"
 	CodeGlobalCatalog       Code = "GLOBAL_CATALOG_NOT_ALLOWED"
+	CodeDelegationRootGone  Code = "DELEGATION_ROOT_GONE"
+	CodeControlNotAllowed   Code = "CONTROL_NOT_ALLOWED"
+	CodeSecretNotSet        Code = "SECRET_NOT_SET"
 	CodeProtocol            Code = "PROTOCOL_ERROR"
 	CodeCanceled            Code = "CANCELED"
 )
