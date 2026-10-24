@@ -1,11 +1,11 @@
 ---
 title: "Domain model v0"
 date: 2026-10-02
-updated: 2026-10-23
+updated: 2026-10-24
 status: review
 owner: heramb
 author: solution-architect
-ticket: T-0006 (amended by T-0061, T-0145, T-0155, T-0168, T-0129, T-0191, T-0078)
+ticket: T-0006 (amended by T-0061, T-0145, T-0155, T-0168, T-0129, T-0191, T-0078, T-0107)
 binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), ADR-0003 (ratified), blueprint v0 (review), safe-primitives.md (review), threat-model.md v0.2 (review; its TM-D decisions bind, TM §0)
 reviewed_by: ad-expert (AD/Entra semantics, see §12)
 ---
@@ -320,12 +320,26 @@ happens next depends on the state the run started from, never on the kind alone:
 
 A restart during a scheduled run therefore never demotes an `active` connection to `draft`.
 
-I11 **Write gate** (TM-D1, spec FR-35, H10). The gate is **open** only when the
+I11 **Write gate** (TM-D1, spec FR-35, H10). For an Entra connection read EV3 for V7 and EV4 for
+V8 throughout (DM-24 "Checks"). The gate is **open** only when the
 `last_verification_id` row has V7 outcome `pass`, or V7 outcome `fail` with every V7 fingerprint
 acknowledged by the Tier0Override in force (I9 (b)). A V7 outcome of `could_not_verify` or
 `not_run` closes the gate, because an unanswered rights question fails closed, as it does at
 onboarding (spec §7 ◆). There is no grace period. The security-architect review of T-0168
-confirmed this (§11 Q13, closed). The gate is evaluated with ADR-0005's authorisation checks, and
+confirmed this (§11 Q13, closed).
+
+  **The connector's gate is stricter, on purpose** (connector contract §8.2, TM-D1 inside the
+  connector). It is an independent second check behind this one, and it also closes on
+  `INSUFFICIENT` (V8 or EV4 `fail`, under-privilege is never overridable), on `STALE` (the
+  latest run is older than the connector's 26-hour build-time maximum) and on a `failed` verdict,
+  and on `LOCAL_RECORD_FAILED`. This gate does not state those conditions: it keeps the gate on
+  `last_verification_id`, re-verifies on schedule (below) and adds no age limit. The asymmetry is
+  a decision, and its direction is fail-closed: every condition here is also a condition there, so
+  the connector's gate is never open where this one is closed, and a `Plan` or `Apply` this gate
+  admits can still be refused by the connector with `WriteGateState` `INSUFFICIENT` or `STALE`. The
+  scheduled and automatic re-runs below keep the connector's run fresh, so `STALE` is reached only
+  when the schedule has stopped. A connector refusal is a step failure at the existing edge
+  `applying → failed` (ADR-0005 rule 3); no new edge is added. The gate is evaluated with ADR-0005's authorisation checks, and
 uses only the edges of ADR-0005 rule 3:
 - **At Plan** (ADR-0005 rule 7, "At Plan"). Every directory write on a closed connection is
   refused. The item goes `pending → blocked` with reason `connection_rights_unverified` and a
@@ -928,13 +942,50 @@ MIG-12 row).
 `outcomes` (one per check of the kind's list: `pass`, `warn`, `fail`, `could_not_verify` or
 `not_run`) · `verdict` (`pass`, `refused`, `could_not_verify` or `failed`) · `digest_salt` (128
 random bits drawn when the row is inserted, I5) · `findings_digest` (I5). Sub-entity
-**Finding**: `check` (AD: `V1`…`V9`) · `code` (a registered string, X6) · `severity` (`block`,
+**Finding**: `check` (AD: `V1`…`V9`; Entra: `EV1`…`EV5`) · `kind` (`FindingKind`, the connector contract's enum) · `code` (a registered string, X6) · `severity` (`block`,
 `warn` or `info`) · `object_guid` (the object the finding is about: the Tier-0 group, the `tier0`
 object carrying the right, the identity itself for its delegation settings, or a DC's `nTDSDSA`;
 empty when no object applies, such as a failed DNS lookup) · `object_domain_sid` (the domain of
 that object) · `qualifier` (the right's GUID, a `schemaIDGUID` or control-access `rightsGuid`, or
 the GUID of the group through which a membership or ACE applies; a SID when the edge is a foreign
 security principal with no object in this forest) · `fingerprint`.
+
+**Checks.** The check list is code, pinned by `check_list_version`, with one list per connection
+type (connector contract §8.4, `VerificationCheck`):
+
+| AD | Entra | Meaning | Role in the gates |
+| --- | --- | --- | --- |
+| V1–V6 | EV1, EV2 | V1 locate, V2 clock, V3 transport, V4 authenticate, V5 identity, V6 topology. EV1 token (the certificate obtains an app-only token), EV2 tenant identity (the token's tenant is the connection's `directory_identity`) | A fail makes the verdict `failed` |
+| V7 | EV3 | Over-privilege. V7: Tier-0 group membership, constructed rights and DACL on `tier0` objects, delegation. EV3: a deny-list permission, any directory role (active or eligible), an **unexpired** password credential | The check the gates read. `fail` is overridable by a DM-25 acknowledgement (DM-10.I9 (b), I11) |
+| V8 | EV4 | Read sufficiency. V8: R1 and R2 on every managed domain NC. EV4: a permission an enabled row needs and the app lacks (block for the read rows, warn for write rows) | `fail` is never overridable (FR-12) |
+| V9 | EV5 | Excess in managed scope. V9: rights beyond the enabled families in a managed OU. EV5: a permission beyond the enabled rows, an extra key credential, an expired password credential, an owner | `warn` only; never changes the verdict |
+
+Where DM-10, DM-25 and the spec say "V7", an Entra connection reads **EV3**; "V8" reads **EV4**.
+The two lists are one shape with per-type parameters (parameterise, don't clone), not two models.
+
+**Finding kinds, codes and the qualifier.** `code` is a registered string (X6): a persisted
+fingerprint or acknowledgement blocks the removal of its code, and a code is never reused. The
+registry is the code constants of the connector's rights packages (`internal/connector/rights`,
+AD and Entra files) and the contract's §8.4 table; a new code is a contract change. `qualifier` is
+derived **per kind**, and the connector computes it (contract §8.4):
+
+| Kind | Checks | Registered codes | `qualifier` |
+| --- | --- | --- | --- |
+| `TIER0_GROUP_MEMBERSHIP` | V7 | `over.tier0_group` | the first group hop's GUID; the SID for a foreign security principal |
+| `EXCESSIVE_RIGHT` (AD) | V7, V9 | V7: `over.tier0_write`, `over.tier0_child`, `over.tier0_write_dacl`, `over.tier0_write_owner`, `over.tier0_write_sacl`, `over.tier0_control_access`, `over.tier0_validated_write`, `over.tier0_confidential_read`, `over.tier0_generic_all`, `over.tier0_generic_write`, `over.tier0_delete_tree`. V9: `over.managed_ou_<kind slug>` | `right.ad.object_type`, else the ACE's `trustee_group`, else its `trustee` |
+| `DELEGATION_CONFIGURED` | V7 | `over.delegation_unconstrained`, `over.delegation_constrained`, `over.delegation_protocol_transition`, `over.delegation_rbcd` | empty |
+| `MISSING_RIGHT` | V8, V9, EV4 | `missing.read_domain`, `missing.family_right`; Entra `missing.entra_permission` | AD: as AD `EXCESSIVE_RIGHT`; Entra: `app_role_id` |
+| `ENTRA_DENY_LIST_PERMISSION` | EV3 | `over.entra_deny_list_permission` | `app_role_id` |
+| `ENTRA_DIRECTORY_ROLE` | EV3 | `over.entra_directory_role` | `role_definition_id`, with `@<group id>` appended when held through a role-assignable group |
+| `EXCESSIVE_RIGHT` (Entra) | EV5 | `over.entra_extra_permission` | `app_role_id` |
+| `ENTRA_EXTRA_KEY_CREDENTIAL` | EV5 | `over.entra_extra_key_credential` | `key_id` (the holder is the `object`) |
+| `ENTRA_PASSWORD_CREDENTIAL` | EV3 (unexpired, block), EV5 (expired, warn) | `over.entra_password_credential` | `key_id`. `check` is in the fingerprint, so the EV3 and EV5 findings of one secret differ |
+| `ENTRA_OWNER` | EV5 | `over.entra_owner` | the owner's object id |
+| `COULD_NOT_VERIFY` | any check marked ◆ | `unverified.ad`, `unverified.entra` | empty |
+
+`run_interrupted` is not a connector finding: the server's job path records it when a stream ends
+without `completed` (DM-10.I10; contract §8.4).
+
 **Invariants.**
 - I1 Append-only (X5). The row and all its Findings are inserted once, in one transaction, when
   the run completes. Nothing is inserted when the run starts: until then the run is its job
@@ -945,7 +996,8 @@ security principal with no object in this forest) · `fingerprint`.
   `could_not_verify` if a check marked ◆ could not be answered; else `refused` if a blocking
   rights check failed (AD: V7 over-privilege, V8 read sufficiency); else `pass`. `warn` never
   changes the verdict. The gates in DM-10.I9–I11 read the outcome of each check, not only the
-  verdict.
+  verdict. For an Entra connection read EV1 and EV2 for V1–V6, EV3 for V7 and EV4 for V8 (table
+  above).
 - I3 **Identifiers only.** A Finding holds GUIDs, SIDs and registered codes. It never holds a DN,
   name, UPN or other display value, so X11 needs no `PersonalRef` here. Names are resolved when
   the finding is read: from inventory (DM-16) once the connection has synced, and before that
@@ -953,7 +1005,10 @@ security principal with no object in this forest) · `fingerprint`.
   (safe-primitives). If neither resolves (a removed connection or a deleted object), the view
   shows the GUID or SID. No Finding carries a secret or a secret attribute's value (X4).
 - I4 **Fingerprint** = SHA-256 over the canonical encoding (`audit/canon`, ADR-0005 rule 11) of
-  `("adq-finding/1", check, code, object_guid, qualifier)`. The same exposure gets the same
+  `("adq-finding/1", check, code, object_guid, qualifier)`, **computed by the connector** and stored
+  as received (connector contract §8.4); the server never recomputes it, so the value a
+  Tier0Override acknowledges is the value the connector's write gate later compares (contract
+  §8.2). `qualifier` is derived per kind (table above). The same exposure gets the same
   fingerprint in every run, and a different right, group path or code gets a different one.
   `(tenant_id, verification_id, fingerprint)` is unique. The fingerprint does not name the
   credential, so an override is bound to a credential (DM-25.I3).
@@ -1013,7 +1068,11 @@ own and not a column on DM-10, because it has a history and a set of fingerprint
 T-0068 review (spec OQ-1) and recorded by T-0168. **Replaces (ME):** none.
 **Key attributes:** `connection_id` · `credential_id` · `verification_id` (the DM-24 run whose
 findings were shown) · `acknowledged_by` (Account) · `acknowledged_at` · `acknowledged_fingerprints`
-(a set). `acknowledged_at` is the connection's ordering stamp (DM-10.I13). These are **derived
+(a set). The fingerprints are **the connector-computed ones** of DM-24.I4, copied as stored. The
+server sends them to the connector unchanged as `WriteGateOverride.acknowledged_fingerprints`
+(connector contract §8.2), where the connector's gate compares them with the blocking
+fingerprints of its own latest run. For an Entra connection the set is the run's EV3 fingerprints
+(read "V7" as EV3 in this entity, DM-24 "Checks"). `acknowledged_at` is the connection's ordering stamp (DM-10.I13). These are **derived
 and never stored**, from the pinned inputs of I6:
 - `cleared_by_verification_id` and `cleared_at`: the first DM-24 run with the same
   `connection_id` and `credential_id`, V7 outcome `pass` and `completed_at` after

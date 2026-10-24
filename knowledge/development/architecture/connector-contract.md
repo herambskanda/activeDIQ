@@ -610,7 +610,7 @@ This follows DM-10.I9 (b) and I11 for V7 and EV3, and adds conditions DM-10.I11 
 in I11), and it treats a `FAILED` verdict as closed. Every condition of I11 is also a condition
 here, so the connector's gate is never open where the server's is closed; it can be closed where
 the server's is open, which is the fail-closed direction. Aligning DM-10.I11's wording
-with these two states is routed to T-0107. The server's gate is checked first, at Plan (ADR-0005 rule 7). The connector's gate is the
+with these two states is done (T-0107): DM-10.I11 now states the asymmetry. The server's gate is checked first, at Plan (ADR-0005 rule 7). The connector's gate is the
 independent second check. `VerifyConnection` itself is never gated.
 
 **The override comes from the server.** DM-25 is server state, guarded by step-up and audit. A
