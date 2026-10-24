@@ -291,6 +291,7 @@ func TestTier0AndUnreadableFactsAreRefused(t *testing.T) {
 
 func TestSmuggledStepIsDeadAfterApply(t *testing.T) {
 	var kept step.Step
+	//fitness:allow-step-escape proves a smuggled copy is dead after Apply (O1 is the static half)
 	r, _ := newRunner(t, behaviour{verifyOK: true, onApply: func(s step.Step) { kept = s }}, nil, factsFake{}, sink{})
 	if _, err := r.RunStore(context.Background(), req()); err != nil {
 		t.Fatal(err)

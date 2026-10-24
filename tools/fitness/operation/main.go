@@ -33,8 +33,20 @@ func main() {
 		os.Exit(2)
 	}
 	rep.Violations = append(rep.Violations, o1...)
+	o1t, err := CheckO1Types(*root)
+	if err != nil {
+		// Fail closed: a tree that cannot be type-checked never passes. When violations are already
+		// known (an import cycle is itself an O9 violation) report them, with the reason O1's
+		// type-aware half could not run.
+		if len(rep.Violations) == 0 {
+			fmt.Fprintln(os.Stderr, "fitness-operation:", err)
+			os.Exit(2)
+		}
+		fmt.Fprintln(os.Stderr, "fitness-operation: type-aware O1 did not run:", err)
+	}
+	rep.Violations = append(rep.Violations, o1t...)
 	if len(rep.Violations) == 0 {
-		fmt.Println("fitness-operation: ok (O9; O1 syntactic part; the rest of O1 and O2-O8 land with the code they inspect)")
+		fmt.Println("fitness-operation: ok (O9; O1 syntactic and type-aware; O2-O8 land with the code they inspect)")
 		return
 	}
 	for _, v := range rep.Violations {
