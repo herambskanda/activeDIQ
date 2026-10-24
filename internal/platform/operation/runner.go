@@ -191,7 +191,7 @@ func (u *run) exec(ctx context.Context) (Result, error) {
 			return fmt.Errorf("plan transaction: %w", err)
 		}
 		var perr error
-		steps, perr = u.act.Plan(ctx, PlanContext{Tx: tx, Facts: r.cfg.Facts, Pins: maps.Clone(u.req.Pins)}, u.req.Input)
+		steps, perr = u.act.Plan(ctx, PlanContext{Tx: tx, Facts: u.pinnedFacts(), Pins: maps.Clone(u.req.Pins)}, u.req.Input)
 		return perr
 	})
 	if err != nil {
@@ -302,15 +302,31 @@ func (r *Runner) recheck(ctx context.Context, chain authority.Chain, perm authz.
 // liveFacts reads the facts for one target on the operation's pins (rule 5), so the gate and the
 // write agree on the DC. An AD target whose NC has no pin is refused rather than read unpinned.
 func (u *run) liveFacts(ctx context.Context, q authority.FactsQuery, t authority.TargetRef) (authority.Facts, error) {
-	if u.r.cfg.Facts == nil {
+	q.Target = t
+	return u.pinnedFacts().Facts(ctx, q)
+}
+
+func (u *run) pinnedFacts() PinnedFacts {
+	return pinnedReader{port: u.r.cfg.Facts, ad: u.d.Target == TargetAD, pins: maps.Clone(u.req.Pins)}
+}
+
+// pinnedReader binds a LiveFacts port to one operation's pins.
+type pinnedReader struct {
+	port LiveFacts
+	ad   bool
+	pins authority.Pins
+}
+
+func (p pinnedReader) Facts(ctx context.Context, q authority.FactsQuery) (authority.Facts, error) {
+	if p.port == nil {
 		return authority.Facts{}, nil
 	}
-	if u.d.Target == TargetAD {
-		if t.NC == "" || u.req.Pins[t.NC] == "" {
+	if p.ad {
+		if nc := q.Target.NC; nc == "" || p.pins[nc] == "" {
 			return authority.Facts{}, fmt.Errorf("%w: no DC pin for the target's naming context", ErrInvalid)
 		}
 	}
-	return u.r.cfg.Facts.Facts(ctx, maps.Clone(u.req.Pins), q)
+	return p.port.Facts(ctx, maps.Clone(p.pins), q)
 }
 
 func (u *run) authorise(ctx context.Context, t authority.TargetRef) (authority.Facts, error) {

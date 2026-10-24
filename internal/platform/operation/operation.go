@@ -120,8 +120,14 @@ var (
 // PlanContext is what Plan reads through: the store (read only) and live facts on the pins.
 type PlanContext struct {
 	Tx    store.Tx // the runner opens it READ ONLY; Plan has no way to commit or roll it back
-	Facts LiveFacts
+	Facts PinnedFacts // reads on a clone of the request's pins; Plan cannot choose a DC (rule 5)
 	Pins  authority.Pins
+}
+
+// PinnedFacts reads live facts on the operation's pins. It has no pins parameter, so a Plan cannot
+// read unpinned; an AD target whose NC has no pin is refused before the port is called.
+type PinnedFacts interface {
+	Facts(ctx context.Context, q authority.FactsQuery) (authority.Facts, error)
 }
 
 // LiveFacts is the port that reads, live and on the pins, exactly what q asks about one target

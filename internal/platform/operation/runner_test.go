@@ -552,3 +552,50 @@ func TestDirectoryGateRefusesAnNCWithoutAPin(t *testing.T) {
 		}
 	}
 }
+
+func TestPlanContextFactsAreBoundToTheRequestPins(t *testing.T) {
+	pins := authority.Pins{"nc-1": "dc1.example"}
+	var got []authority.Pins
+	var planErr error
+	b := behaviour{verifyOK: true, onPlan: func(pc PlanContext) {
+		_, planErr = pc.Facts.Facts(context.Background(), authority.FactsQuery{Target: authority.TargetRef{GUID: "g", NC: "nc-1"}})
+	}}
+	r, _ := newRunner(t, b, nil, pinsFacts{&got}, sink{})
+	rq := req()
+	rq.Pins = pins
+	if _, err := r.RunStore(context.Background(), rq); err != nil {
+		t.Fatal(err)
+	}
+	if planErr != nil {
+		t.Fatal(planErr)
+	}
+	if len(got) < 2 { // gate read plus Plan's read
+		t.Fatalf("expected Plan's read to reach the port, got %d reads", len(got))
+	}
+	got[len(got)-1]["nc-1"] = "mutated"
+	if pins["nc-1"] != "dc1.example" {
+		t.Fatal("Plan's read aliased the request pins")
+	}
+	for i, p := range got[:len(got)-1] {
+		if p["nc-1"] != "dc1.example" {
+			t.Errorf("read %d on pins %v", i, p)
+		}
+	}
+}
+
+func TestPinnedReaderRefusesUnpinnedADTargetBeforeThePort(t *testing.T) {
+	var got []authority.Pins
+	pr := pinnedReader{port: pinsFacts{&got}, ad: true, pins: authority.Pins{"nc-1": "dc1.example"}}
+	for name, nc := range map[string]authority.NamingContextID{"empty NC": "", "unpinned NC": "nc-2"} {
+		_, err := pr.Facts(context.Background(), authority.FactsQuery{Target: authority.TargetRef{GUID: "g", NC: nc}})
+		if !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: err = %v, want ErrInvalid", name, err)
+		}
+	}
+	if len(got) != 0 {
+		t.Fatalf("port called %d times for refused targets", len(got))
+	}
+	if _, err := pr.Facts(context.Background(), authority.FactsQuery{Target: authority.TargetRef{GUID: "g", NC: "nc-1"}}); err != nil || len(got) != 1 {
+		t.Fatalf("pinned target: err=%v reads=%d", err, len(got))
+	}
+}
