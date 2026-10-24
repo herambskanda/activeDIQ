@@ -74,7 +74,14 @@ func (s *Server) routeHandler(rt Route, boundHost string) http.Handler {
 			return
 		}
 		// 6. body cap (declared length; the read enforces it again).
-		if r.ContentLength > meta.MaxBody {
+		// A BodyNone operation takes no body at all (TM §7.6 AN-1): any declared length above zero, an unknown
+		// length (-1) or any Transfer-Encoding is refused here, before authentication and the handler.
+		if meta.Body == BodyNone {
+			if r.ContentLength != 0 || len(r.TransferEncoding) > 0 {
+				fail(apitypes.PayloadTooLarge(""))
+				return
+			}
+		} else if r.ContentLength > meta.MaxBody {
 			fail(apitypes.PayloadTooLarge(""))
 			return
 		}

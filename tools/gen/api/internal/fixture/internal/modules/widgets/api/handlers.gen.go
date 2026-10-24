@@ -636,7 +636,7 @@ func Bind(h Handlers) apihost.TagHandlers {
 		apihost.NewRoute(apihost.RouteMeta{
 			OperationID: "deleteWidget", Tag: "widgets", Method: "DELETE", Path: "/widgets/{widgetId}",
 			Permission: "widgets.write", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
-			Class: "write", MaxBody: 1048576, Body: apihost.BodyNone, MediaType: "", Secret: false,
+			Class: "write", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
 		},
 			func() apihost.Input { return new(DeleteWidgetInput) },
 			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
@@ -652,7 +652,7 @@ func Bind(h Handlers) apihost.TagHandlers {
 		apihost.NewRoute(apihost.RouteMeta{
 			OperationID: "exportWidgets", Tag: "widgets", Method: "GET", Path: "/widgets/export",
 			Permission: "widgets.read", Anonymous: "", Scope: "tenant", Stability: "stable", Deprecated: false, Sunset: "",
-			Class: "read", MaxBody: 1048576, Body: apihost.BodyNone, MediaType: "", Secret: false,
+			Class: "read", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
 		},
 			func() apihost.Input { return new(ExportWidgetsInput) },
 			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
@@ -668,7 +668,7 @@ func Bind(h Handlers) apihost.TagHandlers {
 		apihost.NewRoute(apihost.RouteMeta{
 			OperationID: "getWidget", Tag: "widgets", Method: "GET", Path: "/widgets/{widgetId}",
 			Permission: "widgets.read", Anonymous: "", Scope: "tenant", Stability: "stable", Deprecated: false, Sunset: "",
-			Class: "read", MaxBody: 1048576, Body: apihost.BodyNone, MediaType: "", Secret: false,
+			Class: "read", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
 		},
 			func() apihost.Input { return new(GetWidgetInput) },
 			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
@@ -700,7 +700,7 @@ func Bind(h Handlers) apihost.TagHandlers {
 		apihost.NewRoute(apihost.RouteMeta{
 			OperationID: "listWidgets", Tag: "widgets", Method: "GET", Path: "/widgets",
 			Permission: "widgets.read", Anonymous: "", Scope: "tenant", Stability: "stable", Deprecated: false, Sunset: "",
-			Class: "read", MaxBody: 1048576, Body: apihost.BodyNone, MediaType: "", Secret: false,
+			Class: "read", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
 		},
 			func() apihost.Input { return new(ListWidgetsInput) },
 			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {

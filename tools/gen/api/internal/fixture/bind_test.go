@@ -61,15 +61,15 @@ func TestBindRouteRows(t *testing.T) {
 		class                         string
 	}
 	for id, w := range map[string]row{
-		"listWidgets":         {"GET", "/widgets", "widgets.read", "stable", apihost.BodyNone, "", false, 1 << 20, "read"},
+		"listWidgets":         {"GET", "/widgets", "widgets.read", "stable", apihost.BodyNone, "", false, 0, "read"},
 		"createWidget":        {"POST", "/widgets", "widgets.write", "stable", apihost.BodyJSON, "application/json", false, 1 << 20, "write"},
-		"getWidget":           {"GET", "/widgets/{widgetId}", "widgets.read", "stable", apihost.BodyNone, "", false, 1 << 20, "read"},
+		"getWidget":           {"GET", "/widgets/{widgetId}", "widgets.read", "stable", apihost.BodyNone, "", false, 0, "read"},
 		"updateWidget":        {"PATCH", "/widgets/{widgetId}", "widgets.write", "stable", apihost.BodyMergePatch, "application/merge-patch+json", false, 1 << 20, "write"},
-		"deleteWidget":        {"DELETE", "/widgets/{widgetId}", "widgets.write", "preview", apihost.BodyNone, "", false, 1 << 20, "write"},
+		"deleteWidget":        {"DELETE", "/widgets/{widgetId}", "widgets.write", "preview", apihost.BodyNone, "", false, 0, "write"},
 		"setWidgetCredential": {"PUT", "/widgets/{widgetId}/credential", "widgets.credential", "stable", apihost.BodyJSON, "application/json", true, 4096, "write"},
 		"searchWidgets":       {"POST", "/widgets/search", "widgets.read", "stable", apihost.BodyJSON, "application/json", false, 1 << 20, "read"},
 		"importWidgets":       {"POST", "/widgets/import", "widgets.write", "stable", apihost.BodyBinary, "text/csv", false, 1 << 20, "write"},
-		"exportWidgets":       {"GET", "/widgets/export", "widgets.read", "stable", apihost.BodyNone, "", false, 1 << 20, "read"},
+		"exportWidgets":       {"GET", "/widgets/export", "widgets.read", "stable", apihost.BodyNone, "", false, 0, "read"},
 	} {
 		r, ok := rs[id]
 		if !ok {
