@@ -2,7 +2,10 @@ package ad
 
 import (
 	"context"
+	"errors"
 	"testing"
+
+	"github.com/go-ldap/ldap/v3"
 
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
@@ -150,5 +153,68 @@ func TestReadSecretRefusals(t *testing.T) {
 	s.cfg.SecretAudit = nil
 	if _, err := s.ReadSecret(ctx, dn.GUIDRef(g), attr, grant); CodeOf(err) != CodeInvalidArgument {
 		t.Errorf("no audit sink: %v", err)
+	}
+}
+
+// T-0313 (3): a failed read whose audit also fails returns both errors; the read's code still leads.
+func TestReadSecretFailedReadAndFailedAudit(t *testing.T) {
+	s := newOffline()
+	s.schema = s.schema.With(ldapfilter.AttrInfo{Name: "msFVE-RecoveryPassword", Syntax: ldapfilter.SynString})
+	sinkErr := errors.New("sink down")
+	s.cfg.SecretAudit = func(SecretReadEvent) error { return sinkErr }
+	g := guid.GUID{9}
+	attr, err := s.SecretAttr("msFVE-RecoveryPassword")
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, _ := MintSecretReadGrant("alice", g, attr, "ticket 42")
+	sec, err := s.ReadSecret(context.Background(), dn.GUIDRef(g), attr, grant) // closed session: UNREACHABLE
+	if CodeOf(err) != CodeUnreachable {
+		t.Fatalf("the read failure must stay first: %v", err)
+	}
+	if !errors.Is(err, sinkErr) {
+		t.Errorf("the audit failure is dropped: %v", err)
+	}
+	var found bool
+	for _, e := range err.(interface{ Unwrap() []error }).Unwrap() {
+		if ae, ok := e.(*Error); ok && ae.Code == CodeProtocol {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no audit-failed error in the join: %v", err)
+	}
+	sec.Expose(func(b []byte) {
+		if len(b) != 0 {
+			t.Error("value escaped on a failed read")
+		}
+	})
+}
+
+// T-0313 (4): zero schema-flagged attributes fails closed; any flagged one passes.
+func TestCollectSecretSchemaFailsClosedOnEmpty(t *testing.T) {
+	empty := func([]byte) (*ldap.SearchResult, error) { return &ldap.SearchResult{}, nil }
+	if _, err := collectSecretSchema(empty); CodeOf(err) != CodeProtocol {
+		t.Fatalf("empty schema result must fail closed: %v", err)
+	}
+	one := func([]byte) (*ldap.SearchResult, error) {
+		return &ldap.SearchResult{Entries: []*ldap.Entry{ldap.NewEntry("CN=x", map[string][]string{"lDAPDisplayName": {"customSecret"}})}}, nil
+	}
+	extra, err := collectSecretSchema(one)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saw bool
+	for _, a := range extra {
+		if a.Name == "customSecret" && a.Secret {
+			saw = true
+		}
+	}
+	if !saw {
+		t.Error("flagged attribute not marked secret")
+	}
+	boom := errors.New("boom")
+	if _, err := collectSecretSchema(func([]byte) (*ldap.SearchResult, error) { return nil, boom }); !errors.Is(err, boom) {
+		t.Errorf("page error: %v", err)
 	}
 }

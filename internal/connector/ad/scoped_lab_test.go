@@ -5,6 +5,7 @@ package ad
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -305,3 +306,62 @@ func fmtSprint(v any) string {
 }
 
 var sprintf = fmt.Sprintf
+
+// T-0313 (1): a secret read that succeeded must not outlive a failing audit sink. The value is
+// destroyed and the caller gets an error and a zero Secret.
+func TestLabReadSecretAuditFailureDestroysValue(t *testing.T) {
+	adm, cfg := labAdmin(t)
+	sinkErr := fmt.Errorf("audit sink down")
+	fail := false
+	var events int
+	cfg.SecretAudit = func(SecretReadEvent) error {
+		events++
+		if fail {
+			return sinkErr
+		}
+		return nil
+	}
+	s := labOpen(t, cfg)
+	sam := "t0313aud" + time.Now().Format("150405")
+	u := "CN=" + sam + ",CN=Users," + labBase
+	attrs := userAttrs(sam)
+	attrs["userPassword"] = []string{"lab-only-audit-value"}
+	adminAdd(t, adm, u, attrs)
+	t.Cleanup(func() { _ = adm.Del(ldap.NewDelRequest(u, nil)) })
+	g := adminGUID(t, adm, u)
+	attr, err := s.SecretAttr("userPassword")
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := MintSecretReadGrant("lab-actor", g, attr, "T-0313 lab test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Precondition: with a working sink the value is really readable by this identity, otherwise the
+	// failing-sink assertion below would be vacuous.
+	ok, err := s.ReadSecret(context.Background(), dn.GUIDRef(g), attr, grant)
+	if err != nil {
+		t.Fatalf("precondition: the lab identity must read userPassword (else this test proves nothing): %v", err)
+	}
+	ok.Destroy()
+
+	fail = true
+	sec, err := s.ReadSecret(context.Background(), dn.GUIDRef(g), attr, grant)
+	if err == nil {
+		t.Fatal("ReadSecret succeeded although the audit sink failed")
+	}
+	if CodeOf(err) != CodeProtocol || !errors.Is(err, sinkErr) {
+		t.Errorf("error should be the audit failure carrying the sink error: %v", err)
+	}
+	sec.Expose(func(b []byte) {
+		if len(b) != 0 {
+			t.Errorf("a value survived the audit failure")
+		}
+	})
+	if strings.Contains(err.Error(), "lab-only") {
+		t.Error("value in error text")
+	}
+	if events != 2 {
+		t.Errorf("audit attempts = %d, want 2", events)
+	}
+}

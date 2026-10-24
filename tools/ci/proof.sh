@@ -394,6 +394,23 @@ import "os/exec"
 var _ = exec.Command
 GO
 must_fail_with "FF-SP1 on os/exec imported outside proc" 'internal/modules/users/u.go:3: FF-SP1 \[process-api\]' safeprim -no-analyzers
+fresh_sp_tree; sp_put internal/modules/users/u.go <<'GO'
+package users
+
+import "github.com/skenzeriq/activediq/internal/connector/ad"
+
+var _ = ad.MintSecretReadGrant
+GO
+must_fail_with "FF-SP2 on ad.MintSecretReadGrant outside the authorisation layer" 'internal/modules/users/u.go:5: FF-SP2 \[secret-grant-mint\]' safeprim -no-analyzers
+must_fail_with "FF-SP1 on the AD connector imported by a feature module" 'internal/modules/users/u.go:3: FF-SP1 \[ad-connector-import\]' safeprim -no-analyzers
+fresh_sp_tree; sp_put internal/platform/authz/g.go <<'GO'
+package authz
+
+import "github.com/skenzeriq/activediq/internal/connector/ad"
+
+var _ = ad.MintSecretReadGrant
+GO
+must_pass "fitness-safeprim: authz may mint a SecretReadGrant" safeprim -no-analyzers
 fresh_sp_tree
 sp_put internal/connector/ldap/c.go <<'GO'
 package ldap
