@@ -98,8 +98,9 @@ var expectations = map[v1.RightsFamily][]expectation{
 // `[OPEN → ADM-060 spec]`). Their absence is not reported as missing, and the follow-up ticket
 // named in T-0096's advance note adds them.
 
-// dangerousExtended are the extended rights that are an exposure on a tier0 object when a broad
-// principal holds them: password reset and the replication (DCSync) rights.
-var dangerousExtended = map[adguid.GUID]bool{
-	rightResetPassword: true, rightGetChanges: true, rightGetChangesAll: true, rightGetChangesFiltered: true,
+// benignBroadExtended are the typed extended rights a broad principal holds by default and that
+// are not an exposure on a tier0 object. Default-deny: anything not listed is reported.
+// Confirm further domainDNS defaults on Samba / the Windows lab (T-0231) before adding to it.
+var benignBroadExtended = map[adguid.GUID]bool{
+	mustAD("ab721a53-1e2f-11d0-9819-00aa0040529b"): true, // User-Change-Password (Everyone default)
 }

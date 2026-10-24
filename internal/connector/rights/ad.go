@@ -1002,6 +1002,21 @@ func (c *adCheck) isBroadSID(s sid.SID) bool { return c.broadPrincipal(s) }
 // authenticated principal, and so a stolen connector credential, can use them. Default ACEs
 // (Change Password for Everyone, read for Authenticated Users) are not in the list.
 func (c *adCheck) broad(m *member, d *descriptor, basis []v1.Tier0Basis) {
+	// A broad-principal owner holds WRITE_DAC implicitly unless an OWNER RIGHTS ACE replaces it.
+	if d.hasOwner && c.broadPrincipal(d.owner) {
+		hasOR := false
+		for _, a := range d.aces {
+			if a.trustee.String() == sidOwnerRights && !a.deny && !a.inheritOnly() {
+				hasOR = true
+			}
+		}
+		if !hasOR {
+			o := ace{trustee: d.owner}
+			c.add(&v1.RightsFinding{Check: v7, Kind: v1.FindingKind_FINDING_KIND_EXCESSIVE_RIGHT, Severity: v1.FindingSeverity_FINDING_SEVERITY_WARN,
+				Code: CodeTier0BroadPrincipal, ObjectTier0Basis: basis, Right: adRight(v1.AdRightKind_AD_RIGHT_KIND_WRITE_DAC, nil, maskWriteDAC, ""),
+				Source: aceSource(m.g, o)}, m.g, "broad-owner:"+d.owner.String())
+		}
+	}
 	sids := map[string]bool{}
 	for _, a := range d.aces {
 		if !a.deny && c.broadPrincipal(a.trustee) {
@@ -1040,17 +1055,31 @@ func (c *adCheck) broad(m *member, d *descriptor, basis []v1.Tier0Basis) {
 			if g.has(dsDeleteTree) {
 				hits = append(hits, hit{v1.AdRightKind_AD_RIGHT_KIND_DELETE_TREE, dsDeleteTree, nil})
 			}
-			if g.has(dsControlAccess) && (!a.hasType || dangerousExtended[a.objType]) {
+			// Default-deny (security-architect T-0237 re-review): every CONTROL_ACCESS and Self
+			// right is reported, the same set the own pass reports for these SIDs on main,
+			// except the explicit benign defaults in benignBroadExtended.
+			// A typed CONTROL_ACCESS on a confidential attribute is reported once, below.
+			confAttr := false
+			if g.has(dsControlAccess) && a.hasType {
+				if o, err := c.byID(a.objType); err != nil {
+					c.cannot(v7, &m.g, err)
+				} else if o != nil && !o.Class && o.SearchFlags&searchFlagConfidential != 0 {
+					confAttr = true
+				}
+			}
+			if g.has(dsControlAccess) && !confAttr && !(a.hasType && benignBroadExtended[a.objType]) {
 				hits = append(hits, hit{v1.AdRightKind_AD_RIGHT_KIND_CONTROL_ACCESS, dsControlAccess, typ})
 			}
-			if g.has(dsSelf) && (!a.hasType || a.objType == rightSelfMembership) {
+			if g.has(dsSelf) {
 				hits = append(hits, hit{v1.AdRightKind_AD_RIGHT_KIND_VALIDATED_WRITE, dsSelf, typ})
 			}
 			if g.has(dsWriteProp) && !a.hasType {
 				hits = append(hits, hit{v1.AdRightKind_AD_RIGHT_KIND_WRITE_PROPERTY, dsWriteProp, nil})
 			}
 			// Reading a confidential attribute needs CONTROL_ACCESS on it (RP alone does not).
-			if (g.has(dsReadProp) || g.has(dsControlAccess)) && a.hasType {
+			if confAttr {
+				hits = append(hits, hit{v1.AdRightKind_AD_RIGHT_KIND_READ_PROPERTY, dsReadProp, typ})
+			} else if g.has(dsReadProp) && a.hasType {
 				if o, err := c.byID(a.objType); err != nil {
 					c.cannot(v7, &m.g, err)
 				} else if o != nil && !o.Class && o.SearchFlags&searchFlagConfidential != 0 {

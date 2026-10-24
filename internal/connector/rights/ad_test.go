@@ -668,6 +668,7 @@ func TestGUIDRoundTrip(t *testing.T) {
 // T-0237: dangerous rights held by broad principals on a tier0 object.
 func TestBroadPrincipalExposure(t *testing.T) {
 	w := newWorld(t)
+	rosync, reanimate, vspn := mustAD("1131f6ae-9c07-11d1-f79f-00c04fc2dcd2"), mustAD("45ec5156-db7e-47bb-b53f-dbeb2d03c40f"), mustAD("f3a64788-5306-11d1-a9c5-0000f80367c1")
 	resetPw, getAll, changePw := rightResetPassword, rightGetChangesAll, mustAD("ab721a53-1e2f-11d0-9819-00aa0040529b")
 	conf := w.attrConf
 	cases := []struct {
@@ -682,6 +683,9 @@ func TestBroadPrincipalExposure(t *testing.T) {
 		{"auth users all extended rights", tace{mask: dsControlAccess, trustee: "S-1-5-11"}, 1},
 		{"auth users confidential read", tace{mask: dsReadProp, objType: &conf, trustee: "S-1-5-11"}, 1},
 		{"everyone write dac", tace{mask: maskWriteDAC, trustee: "S-1-1-0"}, 1},
+		{"domain users ROSS-sync CA", tace{mask: dsControlAccess, objType: &rosync, trustee: dusSID}, 1},
+		{"auth users reanimate CA", tace{mask: dsControlAccess, objType: &reanimate, trustee: "S-1-5-11"}, 1},
+		{"domain users validated SPN", tace{mask: dsSelf, objType: &vspn, trustee: dusSID}, 1},
 		{"default: everyone change password", tace{mask: dsControlAccess, objType: &changePw, trustee: "S-1-1-0"}, 0},
 		{"default: auth users plain read", tace{mask: dsReadProp, objType: &w.attrMem, trustee: "S-1-5-11"}, 0},
 		{"default: auth users read all", tace{mask: 0x20094, trustee: "S-1-5-11"}, 0},
@@ -713,6 +717,16 @@ func TestBroadPrincipalExposure(t *testing.T) {
 				t.Fatalf("a broad-principal exposure warns, it does not refuse: %v", r.Verdict)
 			}
 		})
+	}
+}
+
+// A broad-principal owner is reported from the parsed owner, not only sDRightsEffective.
+func TestBroadOwnerWarns(t *testing.T) {
+	w := newWorld(t)
+	w.putRaw(w.t0, "nTSecurityDescriptor", [][]byte{sdBytes(dusSID, tace{mask: dsFullControl, trustee: daSID})})
+	r := w.run(t, ADInput{})
+	if count(r, CodeTier0BroadPrincipal) != 1 || r.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_PASS {
+		t.Fatalf("%v %v", r.Verdict, codes(r))
 	}
 }
 
