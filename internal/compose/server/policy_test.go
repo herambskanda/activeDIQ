@@ -17,7 +17,7 @@ func TestBuildAPIFollowsPolicyFile(t *testing.T) {
 		if err != nil {
 			t.Fatalf("fixture policy: %v", err)
 		}
-		_, err = buildAPIWith(cfg, p)
+		_, err = buildAPIWith(cfg, p, testLimiter(t))
 		return err
 	}
 	row := func(op, extra string) string {
@@ -38,7 +38,7 @@ func TestBuildAPIFollowsPolicyFile(t *testing.T) {
 }
 
 func TestEmbeddedPolicyBuilds(t *testing.T) {
-	if _, err := buildAPI(config.Config{APIBodyBudget: config.DefaultAPIBodyBudget}); err != nil {
+	if _, err := buildAPI(config.Config{APIBodyBudget: config.DefaultAPIBodyBudget}, testLimiter(t)); err != nil {
 		t.Fatal(err)
 	}
 }

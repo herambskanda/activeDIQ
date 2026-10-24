@@ -20,6 +20,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/apitls"
 	"github.com/skenzeriq/activediq/internal/platform/capability"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
+	"github.com/skenzeriq/activediq/internal/platform/limiter"
 	"github.com/skenzeriq/activediq/internal/platform/module"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 	"github.com/skenzeriq/activediq/internal/platform/store"
@@ -35,11 +36,6 @@ var ErrNoDatabase = errors.New("server: no database configured (" + config.EnvDa
 func Run(ctx context.Context, cfg config.Config) error {
 	if cfg.DatabaseDSN == "" {
 		return ErrNoDatabase
-	}
-	// Build the API before anything is opened: a bad budget or contract fails startup here.
-	api, err := buildAPI(cfg)
-	if err != nil {
-		return err
 	}
 	// The identity is settled before anything is opened too: a non-loopback bind without a TLS
 	// directory, or an unwritable one, fails startup here.
@@ -62,9 +58,18 @@ func Run(ctx context.Context, cfg config.Config) error {
 	if _, err := boot(ctx, capability.NewSet(), directoryServices(db)); err != nil {
 		return fmt.Errorf("server: boot modules: %w", err)
 	}
-	// The per-principal rate store. The limiter is not yet mounted (the ports stay fail-closed until the
-	// auth kernel lands, T-0277); the store is built now so a bad combination cannot start.
-	if _, err := principalStore(cfg, db); err != nil {
+	// The per-principal rate store and the limiter over it, mounted as the API's Limits port. A bad
+	// store/node combination, budget or contract fails startup here, before the listener opens.
+	ps, err := principalStore(cfg, db)
+	if err != nil {
+		return err
+	}
+	lim, err := limiter.New(limiter.Config{Principals: ps})
+	if err != nil {
+		return fmt.Errorf("server: rate limiter: %w", err)
+	}
+	api, err := buildAPI(cfg, lim)
+	if err != nil {
 		return err
 	}
 	// The operation runner, its audit chainer and live facts. The registry is empty until modules
@@ -140,21 +145,21 @@ func apiIdentity(cfg config.Config, now time.Time) (apitls.Identity, error) {
 // buildAPI makes the API handler: apihost.Build over the embedded contract and the embedded
 // policy.yaml, with the body budget from configuration. No module contributes routes yet, so every
 // tag is unmounted and answers a problem.
-func buildAPI(cfg config.Config) (http.Handler, error) {
+func buildAPI(cfg config.Config, lim apihost.Limiter) (http.Handler, error) {
 	policy, err := apihost.LoadPolicy()
 	if err != nil {
 		return nil, fmt.Errorf("server: api policy: %w", err)
 	}
-	return buildAPIWith(cfg, policy)
+	return buildAPIWith(cfg, policy, lim)
 }
 
 // buildAPIWith is buildAPI over a given policy; tests use it to prove the router follows policy.yaml.
-func buildAPIWith(cfg config.Config, policy apihost.Policy) (http.Handler, error) {
+func buildAPIWith(cfg config.Config, policy apihost.Policy, lim apihost.Limiter) (http.Handler, error) {
 	doc, err := apihost.LoadDocument()
 	if err != nil {
 		return nil, fmt.Errorf("server: api contract: %w", err)
 	}
-	s, err := apihost.Build(doc, nil, policy, apiCatalogue, failClosedPorts(), apihost.WithBodyBudget(cfg.APIBodyBudget))
+	s, err := apihost.Build(doc, nil, policy, apiCatalogue, failClosedPorts(lim), apihost.WithBodyBudget(cfg.APIBodyBudget))
 	if err != nil {
 		return nil, fmt.Errorf("server: build api: %w", err)
 	}
