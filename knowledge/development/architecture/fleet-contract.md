@@ -168,6 +168,10 @@ mounts the `Fleet` service on the server `Gateway.NewServer` builds and states e
   `Config.Components` (`ComponentStatus.Usable`, implemented by `fleetsql.Lifecycle`) whether the
   component is `enrolled` or `active`. A revoked (or removed, or unknown) component with a still-valid
   certificate gets `Unauthenticated`; a lookup failure gets `Unavailable`. `Components` is required.
+- **Superseded certificate refused (T-0292, TM-TB6-T14)**: establishment calls `ComponentStatus.Current`,
+  which is `Usable` plus "presented serial == `components.cert_serial`". After `Rotate` the old leaf gets
+  `Unauthenticated` until it expires. The open-stream re-check calls `Usable`, which ignores the serial,
+  so a rotation does not drop the stream it was made on.
 - **Open streams are closed**: authenticated streams are registered by (tenant, component).
   `Gateway.CloseComponent` cancels them at once. The interceptor runs the handler on its own goroutine
   and returns `Unauthenticated` as soon as the stream is revoked, so grpc ends the transport stream and

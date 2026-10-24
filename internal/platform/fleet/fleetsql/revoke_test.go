@@ -144,3 +144,48 @@ func TestRevokeRefusals(t *testing.T) {
 		}
 	})
 }
+
+// TestCurrentRefusesSupersededSerial (TM-TB6-T14): after Rotate the old serial is not Current but
+// stays Usable (open-stream re-check); the new serial is both.
+func TestCurrentRefusesSupersededSerial(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		ctx := context.Background()
+		e := setupEnroll(t, s)
+		lc := &fleetsql.Lifecycle{DB: e.db, Authz: revokeAuthz{true}, Audit: e.sink}
+		csr, _ := csrFor(t, nil)
+		iss := e.issue(t, e.a, fleetsql.KindConnector)
+		first, err := e.enr.Enroll(ctx, peerIP, iss.Token.String(), csr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ok, err := lc.Current(ctx, first.Identity); err != nil || !ok {
+			t.Fatalf("fresh certificate not current: %v %v", ok, err)
+		}
+		cur, _ := x509.ParseCertificate(first.LeafDER)
+		csr2, _ := csrFor(t, nil)
+		second, err := e.enr.Rotate(ctx, cur, csr2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ok, err := lc.Current(ctx, first.Identity); err != nil || ok {
+			t.Fatalf("superseded certificate is current: %v %v", ok, err)
+		}
+		if ok, err := lc.Usable(ctx, first.Identity); err != nil || !ok {
+			t.Fatalf("open-stream re-check must stay serial-agnostic: %v %v", ok, err)
+		}
+		if ok, err := lc.Current(ctx, second.Identity); err != nil || !ok {
+			t.Fatalf("new certificate not current: %v %v", ok, err)
+		}
+		noSerial := first.Identity
+		noSerial.Serial = ""
+		if ok, _ := lc.Current(ctx, noSerial); ok {
+			t.Fatal("empty serial matched")
+		}
+		if _, err := lc.Revoke(ctx, e.a, admin, second.Identity.ComponentID); err != nil {
+			t.Fatal(err)
+		}
+		if ok, _ := lc.Current(ctx, second.Identity); ok {
+			t.Fatal("revoked component's current certificate passes")
+		}
+	})
+}
