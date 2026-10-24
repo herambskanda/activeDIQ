@@ -139,7 +139,9 @@ func (h *Handlers) ready(ctx context.Context) (bool, error) {
 	case <-r.done:
 		return r.ok, r.err
 	case <-ctx.Done():
-		return false, ctx.Err()
+		// The caller hung up. Not a server fault: answer not-ready and log nothing, so an
+		// anonymous client cannot generate ERROR lines by disconnecting mid-round.
+		return false, nil
 	}
 }
 
@@ -217,10 +219,14 @@ type panicError struct{ v any }
 func (e *panicError) Error() string { return fmt.Sprintf("check panicked: %v", e.v) }
 
 var (
-	// scheme://user:pass@host
-	reUserinfo = regexp.MustCompile(`(?i)([a-z][a-z0-9+.-]*://[^\s/:@]*):[^\s/@]*@`)
-	// password=..., pwd: ..., secret=..., token=..., key=... (value runs to whitespace, ';' or '&')
-	reKV = regexp.MustCompile(`(?i)\b(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|sslpassword)(\s*[=:]\s*)('[^']*'|"[^"]*"|[^\s;&,]+)`)
+	// scheme://user:pass@host. The password may itself contain '/', ':' or '@', so the match runs
+	// greedily to the LAST '@' of the whitespace-free run (over-redacting is the safe failure).
+	reUserinfo = regexp.MustCompile(`(?i)([a-z][a-z0-9+.-]*://[^\s:/@]*):\S*@`)
+	// <anything>password|passwd|pwd|secret|token|apikey|key, optionally closed by a quote, then '='
+	// or ':' and the value: quoted, or running to whitespace, ';', '&', ',', a quote or a brace.
+	// Covers PGPASSWORD=x, db_password=x, client_secret=x, key=x, "password":"x" and password: x.
+	// There is no word boundary on purpose: any prefix (_ or letters) is part of the key name.
+	reKV = regexp.MustCompile(`(?i)([a-z0-9_.-]*(?:password|passwd|pwd|secret|token|api[_-]?key|key))(["']?\s*[=:]\s*)('[^']*'|"[^"]*"|[^\s;&,"'}]+)`)
 )
 
 // redact removes credentials from error text before it is logged. It is a backstop, not a contract:

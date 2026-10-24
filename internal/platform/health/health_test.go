@@ -266,6 +266,15 @@ func TestCheckErrorSecretsNotLogged(t *testing.T) {
 		`failed host=db01 user=svc password=hunter2pw dbname=x`,
 		`bad Password: "hunter2pw" for svc`,
 		`auth token=hunter2pw rejected`,
+		`env PGPASSWORD=hunter2pw`,
+		`db_password=hunter2pw`,
+		`client_secret=hunter2pw`,
+		`cfg {"password":"hunter2pw"}`,
+		`cfg {"db_password": "hunter2pw"}`,
+		`key=hunter2pw`,
+		`dial postgres://svc:hunter2pw/ss@db01/x`,
+		`dial postgres://svc:hunter2pw@ssw0rd@db01/x`,
+		`dial postgres://svc:p@hunter2pw@db01/x`,
 	} {
 		logs.Reset()
 		c := health.NamedCheck{Name: "database", Check: func(context.Context) error { return errors.New(msg) }}
@@ -298,4 +307,25 @@ func mustPolicy(t *testing.T) apihost.Policy {
 		t.Fatal(err)
 	}
 	return p
+}
+
+func TestReadinessCallerHangupIsNotAnErrorLog(t *testing.T) {
+	var logs bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&logs, nil))
+	release := make(chan struct{})
+	defer close(release)
+	hang := health.NamedCheck{Name: "database", Check: func(context.Context) error { <-release; return nil }}
+	s := build(t, mustDoc(t), mustPolicy(t), log, health.New(log, []health.NamedCheck{hang}, health.WithCheckTimeout(time.Minute)))
+	ctx, cancel := context.WithCancel(context.Background())
+	r := httptest.NewRequest("GET", "/api/v1/health/ready", nil).WithContext(ctx)
+	r.RemoteAddr = "192.0.2.7:4000"
+	rec := httptest.NewRecorder()
+	time.AfterFunc(50*time.Millisecond, cancel)
+	s.ServeHTTP(rec, r)
+	if rec.Code != 503 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	if strings.Contains(logs.String(), "level=ERROR") {
+		t.Fatalf("hang-up logged an error: %s", logs.String())
+	}
 }
