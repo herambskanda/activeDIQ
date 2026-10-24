@@ -762,7 +762,20 @@ func (c *adCheck) step3(m *member, e *ad.Entry) {
 	basis := m.basisList()
 	c.ownerRight(m, d, basis)
 	c.broad(m, d, basis)
-	for _, g := range d.grants(c.own, false) {
+	// security-architect T-0237 review: broad-principal exposure is WARN. Broad trustees are
+	// excluded here so one ACE gives one finding at one severity. An owner in the token with an
+	// OWNER RIGHTS ACE is evaluated as S-1-3-4 so its mask is not invisible to the parsed path.
+	own := map[string]bool{}
+	for k := range c.own {
+		if s, err := sid.Parse(k); err == nil && c.broadPrincipal(s) {
+			continue
+		}
+		own[k] = true
+	}
+	if d.hasOwner && c.own[d.owner.String()] && !c.isBroadSID(d.owner) {
+		own[sidOwnerRights] = true
+	}
+	for _, g := range d.grants(own, false) {
 		a := g.ace
 		var kinds []aceKind
 		var typ *adguid.GUID
@@ -950,7 +963,7 @@ var sidOwnerRights = "S-1-3-4"
 // an owner holds WRITE_DAC implicitly unless the DACL carries an OWNER RIGHTS ACE, which replaces
 // the implicit grant with its own mask. It does not rely on sDRightsEffective.
 func (c *adCheck) ownerRight(m *member, d *descriptor, basis []v1.Tier0Basis) {
-	if !d.hasOwner || !c.own[d.owner.String()] {
+	if !d.hasOwner || !c.own[d.owner.String()] || c.isBroadSID(d.owner) {
 		return
 	}
 	var or []ace
@@ -960,7 +973,7 @@ func (c *adCheck) ownerRight(m *member, d *descriptor, basis []v1.Tier0Basis) {
 		}
 	}
 	if len(or) > 0 {
-		return // OWNER RIGHTS ACEs replace the implicit grant; WRITE_DAC through them is not modelled as owner-implicit
+		return // OWNER RIGHTS ACEs replace the implicit grant; step3 evaluates them as S-1-3-4
 	}
 	owner := ace{trustee: d.owner}
 	c.add(&v1.RightsFinding{Check: v7, Kind: v1.FindingKind_FINDING_KIND_EXCESSIVE_RIGHT, Severity: v1.FindingSeverity_FINDING_SEVERITY_BLOCK,
@@ -982,6 +995,8 @@ func (c *adCheck) broadPrincipal(s sid.SID) bool {
 	}
 	return false
 }
+
+func (c *adCheck) isBroadSID(s sid.SID) bool { return c.broadPrincipal(s) }
 
 // broad reports dangerous rights an ACE grants to a broad principal on a tier0 object. Any
 // authenticated principal, and so a stolen connector credential, can use them. Default ACEs
@@ -1034,7 +1049,8 @@ func (c *adCheck) broad(m *member, d *descriptor, basis []v1.Tier0Basis) {
 			if g.has(dsWriteProp) && !a.hasType {
 				hits = append(hits, hit{v1.AdRightKind_AD_RIGHT_KIND_WRITE_PROPERTY, dsWriteProp, nil})
 			}
-			if g.has(dsReadProp) && a.hasType {
+			// Reading a confidential attribute needs CONTROL_ACCESS on it (RP alone does not).
+			if (g.has(dsReadProp) || g.has(dsControlAccess)) && a.hasType {
 				if o, err := c.byID(a.objType); err != nil {
 					c.cannot(v7, &m.g, err)
 				} else if o != nil && !o.Class && o.SearchFlags&searchFlagConfidential != 0 {

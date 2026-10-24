@@ -440,6 +440,7 @@ func TestStep2EffectiveRights(t *testing.T) {
 
 func TestStep3DACL(t *testing.T) {
 	w := newWorld(t)
+	w.tokens = append(w.tokens, nestSID)
 	resetPw := rightResetPassword
 	conf := w.attrConf
 	cases := []struct {
@@ -449,7 +450,7 @@ func TestStep3DACL(t *testing.T) {
 		n    int
 	}{
 		{"generic all", tace{mask: dsFullControl, trustee: idSIDt}, CodeTier0GenericAll, 1},
-		{"write dac via group", tace{mask: maskWriteDAC, trustee: dusSID}, CodeTier0WriteDACL, 1},
+		{"write dac via group", tace{mask: maskWriteDAC, trustee: nestSID}, CodeTier0WriteDACL, 1},
 		{"control access typed", tace{mask: dsControlAccess, objType: &resetPw, trustee: idSIDt}, CodeTier0Control, 1},
 		{"control access all", tace{mask: dsControlAccess, trustee: idSIDt}, CodeTier0Control, 1},
 		{"validated write", tace{mask: dsSelf, objType: &resetPw, trustee: idSIDt}, CodeTier0Validated, 1},
@@ -675,6 +676,8 @@ func TestBroadPrincipalExposure(t *testing.T) {
 		want int
 	}{
 		{"auth users reset password", tace{mask: dsControlAccess, objType: &resetPw, trustee: "S-1-5-11"}, 1},
+		{"auth users CA on confidential attr", tace{mask: dsControlAccess, objType: &conf, trustee: "S-1-5-11"}, 1},
+		{"domain users reset password", tace{mask: dsControlAccess, objType: &resetPw, trustee: dusSID}, 1},
 		{"everyone get-changes-all", tace{mask: dsControlAccess, objType: &getAll, trustee: "S-1-1-0"}, 1},
 		{"auth users all extended rights", tace{mask: dsControlAccess, trustee: "S-1-5-11"}, 1},
 		{"auth users confidential read", tace{mask: dsReadProp, objType: &conf, trustee: "S-1-5-11"}, 1},
@@ -702,6 +705,9 @@ func TestBroadPrincipalExposure(t *testing.T) {
 				if f.Severity != v1.FindingSeverity_FINDING_SEVERITY_WARN || f.Object == nil || f.Right == nil || f.Source.GetAce().GetTrustee() == nil {
 					t.Fatalf("shape %+v", f.RightsFinding)
 				}
+			}
+			if count(r, CodeTier0Control) != 0 {
+				t.Fatalf("one ACE, one finding: %v", codes(r))
 			}
 			if r.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_PASS {
 				t.Fatalf("a broad-principal exposure warns, it does not refuse: %v", r.Verdict)
@@ -731,6 +737,14 @@ func TestOwnerImplicitWriteDAC(t *testing.T) {
 	w.putRaw(w.t0, "nTSecurityDescriptor", [][]byte{sdBytes(idSIDt, tace{mask: dsFullControl, trustee: daSID}, tace{mask: dsReadProp, trustee: "S-1-3-4"})})
 	if r := w.run(t, ADInput{}); count(r, CodeTier0WriteDACL) != 0 {
 		t.Fatalf("owner rights ace: %v", codes(r))
+	}
+	w.putRaw(w.t0, "nTSecurityDescriptor", [][]byte{sdBytes(idSIDt, tace{mask: maskWriteDAC, trustee: "S-1-3-4"})})
+	if r := w.run(t, ADInput{}); count(r, CodeTier0WriteDACL) != 1 || r.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_REFUSED {
+		t.Fatalf("owner rights write dac: %v %v", r.Verdict, codes(r))
+	}
+	w.putRaw(w.t0, "nTSecurityDescriptor", [][]byte{sdBytes(idSIDt, tace{mask: dsFullControl, trustee: "S-1-3-4"})})
+	if r := w.run(t, ADInput{}); count(r, CodeTier0GenericAll) != 1 || r.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_REFUSED {
+		t.Fatalf("owner rights full control: %v %v", r.Verdict, codes(r))
 	}
 	w.putRaw(w.t0, "nTSecurityDescriptor", [][]byte{sdBytes(daSID, tace{mask: dsFullControl, trustee: daSID})})
 	if r := w.run(t, ADInput{}); count(r, CodeTier0WriteDACL) != 0 {
