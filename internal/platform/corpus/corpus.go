@@ -11,7 +11,8 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
@@ -51,15 +52,15 @@ var verifiedValues = map[string]bool{
 
 // Record is one corpus line: one input.
 type Record struct {
-	ID        string                     `json:"id"`
-	Primitive string                     `json:"primitive"`
-	Call      string                     `json:"call,omitempty"`
-	Args      map[string]json.RawMessage `json:"args,omitempty"`
-	Expect    map[string]json.RawMessage `json:"expect,omitempty"`
-	Hostile   *bool                      `json:"hostile"`
-	Source    string                     `json:"source,omitempty"`
-	Verified  string                     `json:"verified"`
-	Kind      string                     `json:"kind,omitempty"`
+	ID        string                    `json:"id"`
+	Primitive string                    `json:"primitive"`
+	Call      string                    `json:"call,omitempty"`
+	Args      map[string]jsontext.Value `json:"args,omitempty"`
+	Expect    map[string]jsontext.Value `json:"expect,omitempty"`
+	Hostile   *bool                     `json:"hostile"`
+	Source    string                    `json:"source,omitempty"`
+	Verified  string                    `json:"verified"`
+	Kind      string                    `json:"kind,omitempty"`
 }
 
 // IsHostile reports the explicit hostile flag; an unset flag is a schema error, so false here.
@@ -69,7 +70,7 @@ func (r Record) IsHostile() bool { return r.Hostile != nil && *r.Hostile }
 func (r Record) Runtime() bool { return r.Kind == KindRuntime }
 
 // ExpectKey returns the one expectation key of the record (render, bytes_hex, value or error) and its raw value.
-func (r Record) ExpectKey() (string, json.RawMessage) {
+func (r Record) ExpectKey() (string, jsontext.Value) {
 	for _, k := range []string{"render", "bytes_hex", "value", "error"} {
 		if v, ok := r.Expect[k]; ok {
 			return k, v
@@ -100,7 +101,7 @@ func (r Record) Arg(name string) (Input, error) {
 	return decodeInput(raw)
 }
 
-func decodeInput(raw json.RawMessage) (Input, error) {
+func decodeInput(raw jsontext.Value) (Input, error) {
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
 		return Input{Raw: []byte(s)}, nil
@@ -204,9 +205,7 @@ func Load(root, unit string) (*File, error) {
 			continue
 		}
 		var r Record
-		dec := json.NewDecoder(strings.NewReader(text))
-		dec.DisallowUnknownFields()
-		if err := dec.Decode(&r); err != nil {
+		if err := json.Unmarshal([]byte(text), &r, json.RejectUnknownMembers(true)); err != nil {
 			problems = append(problems, fmt.Sprintf("%s:%d: %v", p, line, err))
 			continue
 		}
