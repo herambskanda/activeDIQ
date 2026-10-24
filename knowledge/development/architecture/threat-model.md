@@ -1,11 +1,11 @@
 ---
 title: "Threat model v0 — activeDIQ security architecture"
 date: 2026-10-02
-updated: 2026-10-23
+updated: 2026-10-24
 status: review
 owner: heramb
 author: security-architect
-ticket: old T-0007, T-0032, T-0044, T-0051, T-0055, T-0108, T-0179, T-0111, T-0227, T-0230, T-0240
+ticket: old T-0007, T-0032, T-0044, T-0051, T-0055, T-0108, T-0179, T-0111, T-0227, T-0230, T-0235, T-0240
 binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), blueprint v0 (review), safe-primitives.md (review)
 sources_last_checked: 2026-10-02
 ---
@@ -730,6 +730,7 @@ Computed, per forest and domain (ad-expert consult; Microsoft tier model; Specte
 | C16 | **Hybrid:** AD objects with **any** correlation (`candidate`, `matched` or `broken`, DM-20) to an Entra `tier0` principal (E1–E5 below, the TM-D25 reach closure and Entra designations included; TM-D25 rule 8). A password reset in AD reaches Entra through password hash sync or pass-through authentication. Microsoft: "Ensure that changes to these accounts can't affect the integrity of your cloud environment" ([protect M365](https://learn.microsoft.com/en-us/entra/architecture/protect-m365-from-on-premises-attacks)) |
 | C17 | **Control of a root of trust (TM-D26).** Principals — resolved by token (`objectSid`, `tokenGroups`, **and `sIDHistory`**) — that hold, on the **domain head, the Configuration head, the Schema head or `CN=AdminSDHolder`**, any of: `WRITE_DAC`, `WRITE_OWNER`, `GENERIC_ALL`, `GENERIC_WRITE`, an all-properties or `gPLink` `WriteProperty`, all extended rights, or **ownership** of the object. WriteDACL on the domain object lets the holder "grant full control of the domain" ([BloodHound WriteDacl](https://bloodhound.specterops.io/resources/edges/write-dacl)), and so DCSync in one step. A `gPLink` write on the head reaches every DC (C9) |
 | C18 | **Privileged `sIDHistory` (TM-D26).** Any security principal (user, computer, group, `inetOrgPerson`) whose `sIDHistory` holds a SID that is privileged, by RID alone and whatever the domain prefix, or that resolves to a `tier0` object. It carries that SID in its token, so the member walk (C2) misses it. `sIDHistory` holds "previous SIDs used for the object if the object was moved from another domain" ([sIDHistory](https://learn.microsoft.com/en-us/windows/win32/adschema/a-sidhistory)) |
+| C19 | **Control of a Tier-0 object (TM-D27, depth 1).** Principals — by token, as C17 — that hold a takeover right (TM-D27 table) on, or own, a **C19 object**: a C1 or C13 group, a C1 account (`krbtgt`, `krbtgt_<n>` of each RODC, RID 500), a **DC computer object** (primary group 516 or 521, and the computer behind every `nTDSDSA`), the **Domain Controllers OU** (`wellKnownObjects`) and every OU or container that directly holds a DC object, and each GPO that C9 marks `tier0`. The rights are read from the object's own live DACL, never inferred from SDProp |
 
 **Customer-designated** (not derivable from LDAP): Entra Connect servers — Microsoft: "must be
 treated as a Tier 0 component"
@@ -1151,6 +1152,96 @@ raised from T-0227), the server guard and connector contract §8.1.
 
 Samba proves the LDAP and `sIDHistory` semantics, **not** the Windows ACL behaviour: DACL, owner and
 callback cases need the Windows lab (T-0226 carries them) `[UNVERIFIED — Windows lab]`.
+
+**Control of the other Tier-0 objects — DECISION TM-D27 (T-0235, answers TM-Q29; ad-expert consult).**
+C17 stops at the roots of trust. The same attacker goal is reached by a shorter path: add oneself to Domain
+Admins, set a known `krbtgt` password, write a DC's `msDS-KeyCredentialLink`, or link a GPO to the Domain
+Controllers OU. Eleven rules bind the classifier, extending TM-D26.
+
+1. **C19 object set** is the one in the C19 row. DC computer objects come from the primary-group edge and from
+   `nTDSDSA`, never from the OU alone, so a DC moved out of its OU stays in. C19 is evaluated per domain and
+   per RODC.
+2. **Rights that make a trustee `tier0`, per object class.** Any **one** is enough. Every class: `WRITE_DAC`,
+   `WRITE_OWNER`, `GENERIC_ALL`, `GENERIC_WRITE` (generic and mapped bits), an all-properties `WriteProperty`,
+   and **ownership** (TM-D26 rule 3 applies: OWNER RIGHTS is ignored).
+
+   | Class | Additional rights |
+   | --- | --- |
+   | Group (C1, C13) | `WriteProperty` on `member`; the Self-Membership validated write (`bf9679c0-0de6-11d0-a285-00aa003049e2`) for a trustee that is not already `tier0` (such a trustee can add only itself, which is the same outcome) |
+   | `krbtgt`, RID 500 and other C1 accounts | Reset Password (`00299570-246d-11d0-a768-00aa006e0529`); `WriteProperty` on `unicodePwd`, `msDS-KeyCredentialLink`, `servicePrincipalName` or `userAccountControl`; all extended rights |
+   | DC computer object | Reset Password; `WriteProperty` on `msDS-KeyCredentialLink` (shadow credentials) or `msDS-AllowedToActOnBehalfOfOtherIdentity` (RBCD); `unicodePwd`, `userAccountControl`, `servicePrincipalName`; all extended rights |
+   | DC OU and DC-holding containers | `WriteProperty` on `gPLink` or `gPOptions`; `CreateChild` of any class or of `computer`, `organizationalUnit`, `groupPolicyContainer` (the new child inherits the OU's ACEs); `DeleteChild`; all extended rights |
+   | C9 `tier0` GPO | the common list on the `groupPolicyContainer` object. The GPO's SYSVOL folder ACL is **not** read (rule 9) |
+
+   The GUIDs come from the schema and `extended-rights` at snapshot time, never constants (as for `gPLink` in
+   TM-D26 rule 2). A right named by a GUID the schema cannot resolve counts as all-properties.
+3. **SDProp is not trusted.** SDProp stamps the AdminSDHolder DACL on `krbtgt`, protected-group members and the
+   protected groups every 60 minutes, so C17 on AdminSDHolder normally covers them
+   ([Appendix C](https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/plan/security-best-practices/appendix-c--protected-accounts-and-groups-in-active-directory)).
+   That leaves a 60-minute window after any change, objects excluded by `dwAdminSDExMask` (Account, Server,
+   Print and Backup Operators), DC objects that lack `adminCount` `[UNVERIFIED — Windows lab]`, and orphans
+   with a stale `adminCount` and inheritance on. The classifier therefore reads **each C19 object's own
+   DACL and owner** and applies rule 2. A lab-only fact does not weaken this. The health page also reports a
+   C19 object whose DACL differs from AdminSDHolder's (SDProp drift), without changing the set.
+4. **Trustee handling is TM-D26 rule 5** (token, `sIDHistory`, unresolved SIDs, Authenticated Users or Everyone
+   with a C19 right makes every principal `tier0` or fails the snapshot naming the SID), plus callback ACEs as
+   unconditional allows (rule 4). The ignore list adds only: SELF for validated writes on its own object,
+   SYSTEM, ENTERPRISE DOMAIN CONTROLLERS (`S-1-5-9`), Enterprise Read-only DCs (`S-1-5-498`), the Domain
+   Controllers group, Creator Owner on inherit-only ACEs, and C1 principals themselves. **No other default is
+   assumed.** The classifier does not subtract the schema's `defaultSecurityDescriptor`; it applies the right
+   list to what the DACL says. Key Admins and Enterprise Key Admins are C1, so their `msDS-KeyCredentialLink`
+   ACE needs no exemption.
+5. **Ownership of DC objects.** The owner of a DC object is `tier0` unless it is C1. A DC joined by a non-admin
+   can be owned by the joiner (`ms-DS-CreatorSID`) `[UNVERIFIED — Windows lab]`; the health page lists it.
+6. **Depth 1, then token expansion.** A trustee group's members are expanded (the C2 walk, primary group
+   included). C19 does **not** iterate: a principal that is `tier0` only because it controls a C19 object does
+   not make *its own* controllers `tier0`. This is the accepted residual TM-R21.
+7. **Live basis.** C19 is a live basis in the Step 7 table (like C11, C17): the connector re-reads DACL and
+   owner of every C19 object (a few dozen groups and accounts, one DC OU, and one object per DC) through the
+   SD-flags control before a write, cached at most 60 s per snapshot. Page the reads when there are more than
+   100 DCs. An unreadable object, a failed read or an `Unknown` ACE for a listed right: fail closed, basis
+   `UNKNOWN`. The cost is `[UNVERIFIED]` until T-0096's V7 run measures it.
+8. **Our own identity.** The connector account holding any rule-2 right on any C19 object refuses activation
+   (TM-D1). TM-F-RIGHTS adds the cases below. A feature that writes `member` of a non-C1 group, or resets a
+   password, still needs its R-row; it never needs a C19 right.
+9. **Accepted: GPO file-system control (TM-R22).** Write access to a `tier0` GPO's SYSVOL folder gives code
+   on every DC through the GPO. It is an SMB ACL, outside LDAP. Reading it would give the connector an SMB
+   channel to every DC for the classifier's sake. The classifier does not read it. The GPO object ACL (rule 2)
+   and the link (C9) are covered, and a SYSVOL ACL check is a health-page scan, scoped by TM-Q30.
+10. **Not flagged.** Pre-Windows 2000 Compatible Access and Authenticated Users read access; Cert Publishers'
+    `userCertificate` write on computers (an ADCS matter, C10); a `servicePrincipalName` or delegation-flag
+    write on any object outside the C19 set. On C19 objects those writes are in the rule-2 table.
+    Delegation flags that need `SeEnableDelegationPrivilege` are C12's concern, not a C19 right on their own.
+11. **Samba cannot prove SDProp.** Samba does not run SDProp, so a Samba test of rule 3 would pass falsely.
+    Rule-2 table tests run on the SD fixture (T-0149); SDProp, `adminCount` and owner-reset cases run only in
+    the Windows lab (T-0226) `[UNVERIFIED — Windows lab]`.
+
+**Proof TM-F-T0GUARD (T-0235 additions).** Table tests with a negative twin each (the same trustee with a
+non-takeover right is not `tier0`):
+
+| Test | Setup | Expect |
+| --- | --- | --- |
+| T0-C19-GROUP-MEMBER | `u` holds `WriteProperty member` on Domain Admins; twin: on a non-C1 group | `u` `tier0` basis C19; twin not |
+| T0-C19-GROUP-ACL | `u` holds WriteDACL, WriteOwner, GenericAll or GenericWrite on Enterprise Admins; again on Account Operators (excluded by `dwAdminSDExMask`) and on a renamed DnsAdmins | each `tier0` |
+| T0-C19-SELFMEM | non-`tier0` `u` holds the Self-Membership validated write on Schema Admins; twin: `u` is a C1 member | `u` `tier0`; the twin is unchanged |
+| T0-C19-KRBTGT | `u` holds Reset Password on `krbtgt`, then on `krbtgt_1234` of an RODC; twin: ReadProperty only | `tier0` for each; twin not |
+| T0-C19-DC-SHADOW | `u` holds WP `msDS-KeyCredentialLink` on a DC; again WP `msDS-AllowedToActOnBehalfOfOtherIdentity`; twin: WP `description` | first two `tier0`; twin not |
+| T0-C19-DC-MOVED | a DC computer is moved out of the DC OU, primary group 516 unchanged; `u` holds GenericWrite on it | `u` `tier0` |
+| T0-C19-DCOU-GPLINK | `u` holds WP `gPLink` on the DC OU; again CreateChild `groupPolicyContainer`; again only on a sibling OU | first two `tier0`; the sibling is not |
+| T0-C19-DCOU-HOLDER | a DC lives in `OU=Servers`; `u` holds WriteDACL there | `u` `tier0` |
+| T0-C19-GPO | `u` holds GenericWrite on a GPO linked to the DC OU; twin: GPO linked to an unrelated OU | `u` `tier0`; twin not |
+| T0-C19-OWNER | DC object is owned by non-C1 `u`; OWNER RIGHTS ACE exists | `u` `tier0` either way |
+| T0-C19-GROUPTRUSTEE | the right is granted to a group; `u` is a nested or primary-group member; twin: `u` outside | `u` `tier0` |
+| T0-C19-BROAD | Authenticated Users holds `WriteProperty member` on a C1 group | every principal `tier0` or snapshot error naming the SID |
+| T0-C19-IGNORE | each ignore-list trustee holds its default ACE on a DC or DC OU | none is a finding; a non-listed well-known SID with the same ACE is |
+| T0-C19-CALLBACK | an 0x09 or 0x0B ACE grants a rule-2 right; a malformed callback ACE | grantee `tier0`; malformed fails closed |
+| T0-C19-LIVE | `u` is granted WP `member` on Domain Admins after Verify; then a write on `u` | refused `LIVE_REREAD` basis C19 |
+| T0-C19-FAIL | DACL read of a DC object is denied | snapshot error; writes refused basis `UNKNOWN` |
+| T0-C19-NOTTRANS | `v` holds WriteDACL on `u` only, and `u` holds C19 rights | `u` `tier0`; `v` is not (TM-R21 pinned) |
+| T0-C19-SDPROP-WIN | Windows lab: an ACE is added to Domain Admins' DACL, SDProp not yet run | `tier0` at once; after SDProp it is gone and the set shrinks only through the ratchet rule (TM-D23 rule 8) |
+| T0-RIGHTS-C19 | TM-F-RIGHTS: connector identity holding Reset Password on `krbtgt`, WP `msDS-KeyCredentialLink` on a DC, WP `member` on a C1 group, owner of a DC object, WP `gPLink` on the DC OU | each refuses activation; a correctly delegated identity passes |
+
+SDProp, `adminCount` on DC objects and the owner reset need the Windows lab (T-0226) `[UNVERIFIED — Windows lab]`.
 
 ### 6.5 Verification at onboarding and on every health check
 
@@ -2400,7 +2491,7 @@ Existing proofs this document relies on: FF-SP1–SP9 (`tools/fitness/safeprim`)
 | Proof | What it proves (fails when …) | Kind | Owner ticket | Threats |
 | --- | --- | --- | --- | --- |
 | TM-F-RIGHTS | An over-privileged AD identity (Tier-0 group member, or any write/control right on a `tier0` object) or an Entra app with a denied permission is **refused activation**; a correctly delegated one passes; extras and missing rights are both reported (§6.5, §6.6) | Windows lab (oracle) + Samba where supported; fake Graph | T-0066 (directory-engineer) | TB3-T11, TB7-T3 |
-| TM-F-T0GUARD | The connector refuses `Apply` on a `tier0` target even when the server asks; Plan refuses too; Entra `tier0` (E1–E5) is refused, as are AD objects correlated to it (C16) (§6.2). **TM-D25:** a PIM-for-Groups eligible-only or future-scheduled member or owner of a role-assignable group, a member of a group that is itself eligible there, a transitive member or owner of a designated group, and a user whose write sets a property in the rule of **any dynamic group in a designated closure** (nested at any depth; Direct Reports, create, invite, licence and AD-side synced writes included, **T-0230**) is refused; a failed or unlicensed-but-uncorroborated schedule read refuses every Entra write; a classifier given a designated group refuses its nested member  **TM-D26 (T-0227):** see the test table after TM-D26 (C17, C18, callback ACEs, C8 `dSHeuristics`, C13 rename) | Lab, both transports | T-0066 (directory-engineer) | TB3-T10, TB6-T4, TB7-T4, TB7-T11, TB17-T4 |
+| TM-F-T0GUARD | The connector refuses `Apply` on a `tier0` target even when the server asks; Plan refuses too; Entra `tier0` (E1–E5) is refused, as are AD objects correlated to it (C16) (§6.2). **TM-D25:** a PIM-for-Groups eligible-only or future-scheduled member or owner of a role-assignable group, a member of a group that is itself eligible there, a transitive member or owner of a designated group, and a user whose write sets a property in the rule of **any dynamic group in a designated closure** (nested at any depth; Direct Reports, create, invite, licence and AD-side synced writes included, **T-0230**) is refused; a failed or unlicensed-but-uncorroborated schedule read refuses every Entra write; a classifier given a designated group refuses its nested member  **TM-D27 (T-0235):** C19 table after TM-D27. **TM-D26 (T-0227):** see the test table after TM-D26 (C17, C18, callback ACEs, C8 `dSHeuristics`, C13 rename) | Lab, both transports | T-0066 (directory-engineer) | TB3-T10, TB6-T4, TB7-T4, TB7-T11, TB17-T4 |
 | TM-F-HYBRID | A forged, SOA-transferred, SID-mismatched, unattested or once-cloud-only correlation authorises anything; a correlation first eligible during a post-attestation `open`/`stale` lapse becomes `matched` without re-confirmation; an install-time correlation (present before the first attestation, not once cloud-only) fails to become `matched` on that attestation; `tenant-owner` crosses a correlation; the attestation flow keeps a token (§6.8). TM-D19 (§6.9): an Entra-only session holds a correlation-derived AD grant; an authority factor enrols without AD-plane proof or owner approval; an Entra-side method reset touches the activeDIQ factor; a less-privileged technician resets a console-backing object | CI, fake Graph + fake IdP + Samba | T-0067 (directory-engineer, with `authz`) | TB7-T8 to T13, TB8-T8 |
 | TM-F-ANON | Anonymous routes of the built router ≠ the reviewed allow-list (§7.6) | CI | `fitness-api` A4 (T-0018) | TB2-T2, TB2-T10 |
 | TM-F-FLEET | Any RPC but `Enroll` succeeds without a client certificate; an enrollment token works twice or after expiry; a connector accepts an unpinned server; a revoked component keeps a stream; the fleet contract gains a secret-bearing message type outside operation payloads. **Tunnel (TM-D24, §9.8).** (A) Some `CallOpen.method` reaches a handler although it is outside the opener's direction set of the bound contract. The corpus: another contract's method (including the cross-kind cases connector↔`addc`↔`fileserver`), a server→component method opened by the component, `grpc.health.v1`, `grpc.reflection.v1`, channelz, case, slash and suffix variants of an allowed name, and a name over 256 bytes or not valid UTF-8. Or the refusals differ in code or text, or `fleet/dial` serves a method outside its contract. (B) Some violation leaves the tunnel open, or no audit event names the component. The corpus: a wrong-parity `open`, a reused or non-increasing id, a frame on an id never opened, a frame the sender's role or the call's state forbids, and a non-`FlowCredit` body on `call_id` 0. Also fails: an in-flight frame after this side's cancel or close closes the tunnel; a response reaches a call on another tunnel; a pending call is rebound after its tunnel drops; or it completes with any outcome but unknown. (C) A component `status_message` with CR/LF, ANSI escapes, bidi controls, invalid UTF-8, HTML or 1 MiB of text reaches a log line, audit summary, API response or console view unbounded or unescaped, or outside a `component_reported` field. Or a `status_code` outside 0–16 maps to anything but `UNKNOWN`. (D) The gateway serves an `Enroll` whose `ca_bundle_pem` holds anything but header-free `CERTIFICATE` blocks of CA certificates that include the pinned CA. The corpus: a `PRIVATE KEY` or `RSA PRIVATE KEY` block, PEM headers, trailing bytes, a non-CA certificate, zero certificates, more than 8 certificates or more than 64 KiB. Or a component accepts such a bundle, or a bundle without the pinned CA. Or a component sends its token to an `Enroll` server whose CA SPKI does not match the pin (MITM fixture). Or a pinned dial ever uses the host root set | CI (P3 harness) | T-0069 (backend-engineer); subjects T-0155, T-0158, T-0209 | TB6, TB12-T1/T2, TB12-T16 |
@@ -2456,6 +2547,8 @@ control.
 | TM-R19 | **Dynamic-group guard sees only our writes, accepted (T-0230).** Customer admins, SELF writes to synced attributes, HR feeds and expiring licences can still move a user into a closure dynamic group. Rule evaluation is asynchronous, so our post-write re-read cannot prove the outcome. Create, invite and licence writes stop while a closure dynamic group exists | The guard stops *our* contribution only. Onboarding reports each closure dynamic group, its rule properties and who can write them, as Microsoft advises ([dynamic membership rules](https://learn.microsoft.com/en-us/entra/identity/users/groups-dynamic-membership)). The availability cost is the fail-closed default (TM-D2) and is shown in connection health | security-architect | A sound lexer-level proof that a rule cannot match a new object (narrows 7d) |
 | TM-R17 | **R-T0RACE-1, accepted.** An object that becomes `tier0` between the connector's step-7 read and the write can be written. Examples: added to Domain Admins, granted DCSync, or a DC moved into its OU | LDAP cannot make a modify conditional on membership, ancestry or a DACL elsewhere ([RFC 4511 §4.6](https://www.rfc-editor.org/rfc/rfc4511#section-4.6)). This is the same window as ADR-0005 rule 7 and lasts milliseconds to seconds. Detection: `tier0_after_write` and its alert (TM-D23 rule 11) | security-architect | A directory feature for conditional writes on other objects |
 | TM-R20 | **R-EXO-1, accepted.** An Exchange role-group (or Exchange RBAC for Applications) assignment to the connector's service principal is made in Exchange, not Entra, so `appRoleAssignments` does not show it. With `Exchange.ManageAsApp` denied, the connector holds no way to reach Exchange, but a customer admin could still assign the role to the service principal | Microsoft: RBAC for Applications grants "are independent of the unscoped grants in Microsoft Entra ID" ([Application RBAC](https://learn.microsoft.com/en-us/exchange/permissions-exo/application-rbac)). Without the Entra-side `Exchange.ManageAsApp` consent the token cannot call Exchange PowerShell; Graph-side Exchange roles (`Application Mail.ReadWrite` and similar) do not need it and are not visible to us. Documented at onboarding: do not assign Exchange roles to this service principal (`Test-ServicePrincipalAuthorization` lists them). Lab G15 checks visibility | security-architect | An Exchange-side read for roles of our service principal, if Microsoft exposes one to Graph |
+| TM-R21 | **R-C19-DEPTH, accepted (T-0235).** C19 is depth 1. A principal that controls only a *controller* of a Domain Admins group (for example WriteDACL on a help-desk user who holds WP `member` on Domain Admins) is not `tier0`; the controller is | A transitive closure over ACL edges makes most of a real directory `tier0` and the guard unusable; BloodHound's Tier Zero is likewise a curated set, not a closure `[UNVERIFIED — current definition]`. Two hops of control still need one compromised hop first, and the first hop is `tier0` and refused | security-architect | an exposure-path view (TM-Q30); a customer asking for depth 2 |
+| TM-R22 | **R-C19-SYSVOL, accepted (T-0235).** Control of a `tier0` GPO's SYSVOL folder is not read by the classifier | It is an SMB ACL on every DC; reading it needs a second channel and more rights than the connector may hold. The GPO object ACL and the links are covered | security-architect | TM-Q30 scan |
 
 ### 16.2 Decisions owed to the CEO (not asked now)
 
@@ -2500,7 +2593,8 @@ Each goes through the `ceo-decisions` skill in business terms when its trigger a
 | TM-Q26 | Whether `radius` runs in `cmd/server` or `cmd/radius` | TM-D20 triggers: an EAP method, a non-Go TLS stack or a missed fuzz or flood budget forces `cmd/radius` and an ADR-0002 amendment | M4 RADIUS spec |
 | TM-Q27 | Whether restore (§6.3 R9) needs to list `CN=Deleted Objects` or can address the tombstone by the GUID inventory holds | Never take ownership of the container by default; `[UNVERIFIED — lab]` | T-0076 lab; T-0077 FEAS correction |
 | TM-Q28 | Migration database-adapter mode (customer dump vs live read-only connection) and the ADMP table allow-list per build | TM-D21; TM-TB18-T4/T5: allow-list plus CI deny list, read-only, sealed credential, upload deleted at job end | E2.11 migration spec + lab |
-| TM-Q29 | Control of other Tier-0 objects, beyond the C17 roots of trust: WriteDACL, GenericAll or Reset-Password on a C1 group, on `krbtgt`, on a DC computer object or on the Domain Controllers OU; and who may write `member` of a C1 group. C17 covers heads and AdminSDHolder only | §6.4 TM-D26 | follow-up spec ticket (security-architect, with ad-expert) |
+| TM-Q29 | **Answered (T-0235): C19 and TM-D27.** Residual scope left open as TM-Q30 | §6.4 TM-D27 | closed |
+| TM-Q30 | Optional SYSVOL folder-ACL scan of `tier0` GPOs (TM-R22) and an optional multi-hop "exposure path" view with a hop cap and a truncated flag (TM-R21) | §6.4 TM-D27 rules 6 and 9 | reporting / ENH spec (security-architect, with ad-expert) |
 
 ---
 
@@ -2595,6 +2689,8 @@ External, in order of first use:
 81. https://learn.microsoft.com/en-us/windows/win32/adschema/a-sidhistory
 82. https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/e5899be4-862e-496f-9a38-33950617d2c5
 83. https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-server-2003/cc772633(v=ws.10) (not re-read, `[UNVERIFIED]`)
+84. https://learn.microsoft.com/en-us/windows/win32/adschema/extended-rights (T-0235)
+85. https://bloodhound.specterops.io/ (T-0235; Tier Zero definition not re-read, `[UNVERIFIED]`)
 
 ## Changelog
 
@@ -2615,3 +2711,4 @@ External, in order of first use:
 - 2026-10-02 · v0.2 (old T-0007 review round 2). TM-D17 rule 4 (g) corrected: only a correlation that first became eligible **after** the tenant's first `attested` state, while the state was `open` or `stale`, needs a `tenant-owner` re-confirmation. The install-time population (correlations eligible before the first attested state, through `unattested` or `open`) becomes `matched` on that attestation, under TM-R11 and with TM-D19 rule 2 as the AD-side control. Two TM-F-HYBRID cases added (§6.8, §15). The TB7-T9 residual and TM-R11 extended to match. §6.6: RMAU members are protected from every property write (verbatim quotes). §6.9 rule 6: the RMAU Programmability consequence is stated as intended. §4.1 diagram: `radius` is on its own line. §8.1: RadSec (TCP) would be a new L-row through RT-6.
 - 2026-10-02 · v0.1 (old T-0007 rework after the solution-architect review). New boundaries TB18 (ManageEngine source ↔ migration importer, scanner, comparator; TM-D21) and TB19 (RADIUS; TM-D20, co-location bounded). `fileserver` agent rows TM-TB12-T10…T15 and TM-D13 extended to it; `fpolicy` and `t0-connector` out of scope with an RT-6 trigger. Authentication-plane residual closed by TM-D19 (activeDIQ-held authority factor anchored in the AD plane; TM-TB8-T8, TM-R12). TM-D17 aligned to DM-10.I7 and D-0009: 90 days, optional monitor, DM vocabulary and permissions, old T-0061. §6.3 R9 Deleted Objects finding (TM-Q27). §6.4 C rows reordered. New proofs TM-F-MIGRATE and TM-F-RADIUS; RT-18; TM-R13; TM-Q25 (Exchange leg) to TM-Q28. §18 regenerated (65 URLs).
 - 2026-10-02 · v0 (old T-0007). 17 trust boundaries with STRIDE tables; minimum AD rights R1–R13 and Graph allow and deny lists; the `tier0` set for AD (C1–C16) and Entra (E1–E5), answering DM Q1 and confirming DM-23.I5; the hybrid correlation gate (TM-D17), which confirms DM-20.I4 and tightens it, with (f) attested because Graph has no app-only read; role-granting groups as escalation objects (TM-D18, the DM-36.I2 referral); decisions TM-D1–D18; follow-up tickets old T-0053 to old T-0060. Status `review`.
+- 2026-10-24 · T-0235 (answers TM-Q29, ad-expert consult). §6.4: new C19 (control of a C1 or C13 group, `krbtgt`, a DC computer object, the Domain Controllers OU and DC-holding containers, and `tier0` GPOs) and DECISION TM-D27: eleven rules (per-class takeover rights, SDProp not trusted and live DACL read, ownership, ignore list, depth 1, live basis, connector self-check, Samba cannot prove SDProp) and 19 named T0-C19-* / T0-RIGHTS-C19 tests added to TM-F-T0GUARD. New TM-R21 (depth 1) and TM-R22 (SYSVOL ACL) accepted; TM-Q30 opened. Windows-lab items stay `[UNVERIFIED]`.
