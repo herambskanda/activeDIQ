@@ -21,6 +21,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/capability"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/module"
+	"github.com/skenzeriq/activediq/internal/platform/operation"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 )
 
@@ -64,6 +65,15 @@ func Run(ctx context.Context, cfg config.Config) error {
 	// The per-principal rate store. The limiter is not yet mounted (the ports stay fail-closed until the
 	// auth kernel lands, T-0277); the store is built now so a bad combination cannot start.
 	if _, err := principalStore(cfg, db); err != nil {
+		return err
+	}
+	// The operation runner, its audit chainer and live facts. The registry is empty until modules
+	// contribute Actions; boot still asserts the minter and the wiring.
+	reg, err := operation.NewRegistry()
+	if err != nil {
+		return fmt.Errorf("server: operation registry: %w", err)
+	}
+	if _, err := buildOperation(operation.HoldsMinter, db, directoryFacts(), denyAuthorizer{}, reg); err != nil {
 		return err
 	}
 	ln, err := net.Listen("tcp", cfg.APIAddr)
