@@ -92,9 +92,6 @@ type StepPlan struct {
 	ReversibilityReason string
 	Phase               int
 	Payload             []byte
-	// NC is the naming context the write lands in (empty for Entra and for a Store step). Rule 5: the
-	// runner pins one writable DC per naming context and binds the pin into the Step.
-	NC authority.NamingContextID
 	// Credential marks a step that sets a credential. Reconciliation never re-applies it (rule 6):
 	// a repeat would be refused by password history and record a false failure.
 	Credential bool

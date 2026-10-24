@@ -193,15 +193,19 @@ func (r *Runner) planAndRoute(ctx context.Context, t tenant.ID, opID string, inp
 		if items[i].skipped {
 			continue
 		}
-		if sp.NC != "" {
+		if d.Target == TargetAD {
+			if sp.Target.NC == "" {
+				items[i].blocked = "no_pin" // an AD target without a naming context is never read or written unpinned
+				continue
+			}
 			if r.cfg.Pinner == nil {
 				return r.failPlan(ctx, t, op, fmt.Errorf("%w: no DC pinner wired", ErrInvalid))
 			}
-			host, err := r.cfg.Pinner.Pin(ctx, sp.Target.Connection, sp.NC, pins[sp.NC])
+			host, err := r.cfg.Pinner.Pin(ctx, sp.Target.Connection, sp.Target.NC, pins[sp.Target.NC])
 			if err != nil {
 				return r.failPlan(ctx, t, op, fmt.Errorf("pinning a DC: %w", err))
 			}
-			pins[sp.NC] = host
+			pins[sp.Target.NC] = host
 		}
 		if reason := r.authoriseTarget(ctx, op.Chain, d.Permission, sp.Target, pins); reason != "" {
 			items[i].blocked = reason
@@ -333,7 +337,7 @@ VALUES ($1::uuid, $2::uuid, $3, 'pending', $4, $5::jsonb)`, t.String(), opID, i,
 			if _, err := tx.Exec(ctx, `INSERT INTO public.operation_steps (tenant_id, operation_id, item_no, step_no, state, plan, digest,
   connection_id, dc_host, naming_context, credential)
 VALUES ($1::uuid, $2::uuid, $3, 0, 'planned', $4::jsonb, $5, $6, $7, $8, $9)`, t.String(), opID, i, string(plan), dg[:],
-				it.sp.Target.Connection, pins[it.sp.NC], string(it.sp.NC), it.sp.Credential); err != nil {
+				it.sp.Target.Connection, pins[it.sp.Target.NC], string(it.sp.Target.NC), it.sp.Credential); err != nil {
 				return sub, fmt.Errorf("operation: inserting step: %w", err)
 			}
 			if sec, ok := secrets[i]; ok {

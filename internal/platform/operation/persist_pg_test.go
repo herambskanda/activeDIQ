@@ -34,6 +34,8 @@ type dirFake struct {
 	applies map[string]int
 	mode    map[string]string // guid -> behaviour of Apply
 	secret  string
+	noNC    bool          // plan AD targets without a naming context
+	badNC   string        // set by Apply when the Step's NC/pin disagree with the plan
 	kept    secret.Secret // the Step's secret as the Action saw it
 }
 
@@ -59,17 +61,21 @@ func (d *dirFake) action(t *testing.T, id ActionID, stepUp, secretIn bool, class
 		Descriptor: Descriptor{ID: id, Version: 1, Permission: "ad.user.set", Input: "#/components/schemas/Dir", Target: TargetAD,
 			Reversibility: class, AuditKind: "directory.user.changed", StepUp: stepUp, SecretInput: secretIn},
 		Plan: func(_ context.Context, _ PlanContext, in dirIn) ([]TypedStep[dirPayload], error) {
+			nc := authority.NamingContextID("dc=example")
+			if d.noNC {
+				nc = ""
+			}
 			var out []TypedStep[dirPayload]
 			for _, it := range in.Items {
 				before := d.get(it.GUID)
 				if before == it.Want {
-					out = append(out, TypedStep[dirPayload]{Plan: StepPlan{Target: authority.TargetRef{Connection: "c1", GUID: it.GUID, Class: "user"},
-						Kind: "ldap.modify", Reversibility: class, NC: "dc=example"}, Payload: dirPayload{GUID: it.GUID}})
+					out = append(out, TypedStep[dirPayload]{Plan: StepPlan{Target: authority.TargetRef{Connection: "c1", GUID: it.GUID, Class: "user", NC: nc},
+						Kind: "ldap.modify", Reversibility: class}, Payload: dirPayload{GUID: it.GUID}})
 					continue
 				}
 				out = append(out, TypedStep[dirPayload]{
-					Plan: StepPlan{Target: authority.TargetRef{Connection: "c1", GUID: it.GUID, Class: "user"}, Kind: "ldap.modify",
-						Reversibility: class, Phase: it.Phase, NC: "dc=example", Credential: it.Cred,
+					Plan: StepPlan{Target: authority.TargetRef{Connection: "c1", GUID: it.GUID, Class: "user", NC: nc}, Kind: "ldap.modify",
+						Reversibility: class, Phase: it.Phase, Credential: it.Cred,
 						Diff: []Change{{Attribute: "title", Before: []string{before}, After: []string{it.Want}}}},
 					Payload: dirPayload{GUID: it.GUID, Before: before, Want: it.Want}})
 			}
@@ -79,7 +85,14 @@ func (d *dirFake) action(t *testing.T, id ActionID, stepUp, secretIn bool, class
 			if err := s.Valid(); err != nil {
 				return dirOut{}, err
 			}
-			// What client.Write does: live facts, the re-check, then the write.
+			// What client.Write does: the pin is keyed by the Step's NC, which is the planned target's NC.
+			if h, ok := s.DC(s.NC()); s.NC() != "dc=example" || !ok || h != "dc1.example.test" {
+				d.mu.Lock()
+				d.badNC = fmt.Sprintf("nc=%q dc=%q ok=%v", s.NC(), h, ok)
+				d.mu.Unlock()
+				return dirOut{}, errors.New("nc/pin mismatch")
+			}
+			// Live facts, the re-check, then the write.
 			if _, err := s.Recheck(ctx, authority.Facts{Exists: true}); err != nil {
 				return dirOut{}, err
 			}
@@ -376,6 +389,12 @@ func TestSubmitAndApplyEndToEnd(t *testing.T) {
 		if got := p.stepRow(sub.Operation, 0); got != "verified||1|false" {
 			t.Fatalf("step = %s", got)
 		}
+		if p.dir.badNC != "" {
+			t.Fatalf("Step NC/pin disagree with the plan: %s", p.dir.badNC)
+		}
+		if got := p.owner(`SELECT dc_host || '|' || naming_context FROM public.operation_steps WHERE operation_id = $1::uuid AND item_no = 0`, string(sub.Operation))[0]; got != "dc1.example.test|dc=example" {
+			t.Fatalf("recorded pin = %s", got)
+		}
 		if p.events("directory.user.changed") != 2 || p.events("operation.started") != 1 || p.events("operation.completed") != 1 {
 			t.Fatalf("events: step=%d started=%d completed=%d", p.events("directory.user.changed"), p.events("operation.started"), p.events("operation.completed"))
 		}
@@ -617,6 +636,26 @@ func TestSecretUsedThenDeleted(t *testing.T) {
 		}
 		if err := p.d.ExecOwner(context.Background(), `SELECT 1`); err != nil {
 			t.Fatal(err)
+		}
+	})
+}
+
+func TestADTargetWithoutNCIsBlockedAtPlan(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		p := newPRig(t, s, rigOpt{})
+		p.dir.noNC = true
+		sub, err := p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "a", Want: "n"}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if sub.Blocked != 1 || sub.Planned != 0 {
+			t.Fatalf("sub = %+v", sub)
+		}
+		if n := len(p.takeJobs(JobApply)); n != 0 {
+			t.Fatalf("apply jobs = %d", n)
+		}
+		if p.dir.applies["a"] != 0 {
+			t.Fatal("an unpinned AD target was applied")
 		}
 	})
 }
