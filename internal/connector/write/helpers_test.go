@@ -53,6 +53,9 @@ type fakeProv struct {
 	// member of any designated group it is passed, and records what it was passed.
 	members map[guid.GUID][]guid.GUID
 	seenDes [][]guid.GUID
+	// guard is what PropertyGuard returns; nil means the refuse-everything guard.
+	guard    PropertyGuard
+	guardErr error
 }
 
 func newFake() *fakeProv {
@@ -92,6 +95,18 @@ func (f *fakeProv) Anchors(_ context.Context, id guid.GUID) (Anchors, error) {
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, "anchors")
 	return f.anchors[id], f.anchErr
+}
+func (f *fakeProv) PropertyGuard(context.Context) (PropertyGuard, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "propguard")
+	if f.guardErr != nil {
+		return nil, f.guardErr
+	}
+	if f.guard == nil {
+		return (*tier0.Set)(nil), nil
+	}
+	return f.guard, nil
 }
 func (f *fakeProv) n() int { f.mu.Lock(); defer f.mu.Unlock(); return len(f.calls) }
 

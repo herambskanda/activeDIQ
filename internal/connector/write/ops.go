@@ -2,7 +2,9 @@ package write
 
 import (
 	"context"
+	"fmt"
 
+	"github.com/skenzeriq/activediq/internal/connector/tier0"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
@@ -33,6 +35,11 @@ type WriteOp struct {
 	// Touched returns every object the typed change writes or whose protection it changes,
 	// including the target. It is derived from the typed change, never from a list the server sent.
 	Touched func(target guid.GUID, change *connectorv1.WriteChange) ([]guid.GUID, error)
+	// PropertyWrite declares what the typed change does to directory properties (contract §8.9),
+	// derived from the typed change and never from a list the server sent. It is mandatory: a kind
+	// registered without it fails validateOps (the CC-WRITE-22 build-time check) and New. The guard
+	// calls it at step 4, before every other step that depends on the kind.
+	PropertyWrite func(change *connectorv1.WriteChange) (tier0.PropertyWrite, error)
 	// Digest recomputes the plan digest from the typed fields with the operation/step function.
 	Digest func(req *connectorv1.ApplyRequest) ([]byte, error)
 	Plan   func(ctx context.Context, a Authorised, req *connectorv1.PlanRequest) (*connectorv1.PlanResponse, error)
@@ -44,6 +51,21 @@ type WriteOp struct {
 // directory or Graph write may be called from is a WriteOp body reachable from this table; the
 // fitness test in fitness_test.go enforces that.
 var operations = map[connectorv1.WriteKind]WriteOp{}
+
+// validateOps is the build-time check of contract §8.9 / CC-WRITE-22: every registered write kind
+// declares its PropertyWrite and its other mandatory functions. It runs in New, so a handler cannot
+// be built over a table with a gap, and in the unit tests over the real table on every merge.
+func validateOps(ops map[connectorv1.WriteKind]WriteOp) error {
+	for k, op := range ops {
+		switch {
+		case op.PropertyWrite == nil:
+			return fmt.Errorf("write: kind %s is registered without a PropertyWrite (contract §8.9)", k)
+		case op.Touched == nil || op.Digest == nil || op.Plan == nil || op.Apply == nil:
+			return fmt.Errorf("write: kind %s is registered with a missing function", k)
+		}
+	}
+	return nil
+}
 
 // Capabilities reports the write group's rows for Describe (contract §4, §8.1): PLAN and APPLY are
 // UNSUPPORTED while the operation table is empty, whatever the handler's presence.
