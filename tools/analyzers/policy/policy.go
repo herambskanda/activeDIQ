@@ -26,6 +26,7 @@ const (
 	Graph       = "internal/connector/graph"             // the Microsoft Graph connector
 	ADConn      = "internal/connector/ad"                // AD connector: LDAPS dial to domain controllers (TB2, not TB9)
 	FleetDial   = "internal/platform/fleet/dial"         // component to server dial, pinned to the installation CA (TB6, not TB9)
+	Authz       = "internal/platform/authz"              // the authorisation layer: the only minter of SecretReadGrant (T-0313)
 	Attr        = "internal/directory/attr"              // P3
 	Secret      = "internal/platform/secret"             // Secret and secretjson
 	Store       = "internal/platform/store"              // data-access package: pgx, set_config, reportsql
