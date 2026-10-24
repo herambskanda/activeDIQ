@@ -146,3 +146,10 @@ func (f *Fake) DesignationsFor(ctx context.Context, tid tenant.ID, c ConnectionI
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
 	return out, nil
 }
+
+// Undesignate removes a designation, as the soft delete of the Postgres writer hides it from reads.
+func (f *Fake) Undesignate(tid tenant.ID, c ConnectionID, object GUID) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.desig[tid][c], object)
+}

@@ -6,3 +6,4 @@
 - [write guard lessons](write-guard-lessons.md) — gRPC embed trap, graphtest MS Graph SP, GUID wire order, lab creds
 - [rights-check lessons](rights-check-lessons.md) — Samba dsacl/delegation, constructed attrs need Read, own-SID exclusions
 - [scoped/secret lessons](scoped-secret-lessons.md) — Samba can't add schema attrs or referrals; secret-set loading at Open
+- [inventory writer lessons](inventory-writer-lessons.md) — Action inverse shape, FK probe with two keys, pre-existing red list

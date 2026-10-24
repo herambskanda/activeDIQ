@@ -188,7 +188,7 @@ func (r *Reader) DesignationsFor(ctx context.Context, tid tenant.ID, connection 
 	var out []GUID
 	err := r.with(ctx, tid, func(ctx context.Context, tx store.Tx) error {
 		rows, err := tx.Query(ctx, `SELECT object_guid::text FROM public.tier0_designations
-			WHERE tenant_id = $1::uuid AND connection_id = $2::uuid AND object_guid = ANY($3::uuid[])`,
+			WHERE tenant_id = $1::uuid AND connection_id = $2::uuid AND removed_at IS NULL AND object_guid = ANY($3::uuid[])`,
 			tid.String(), string(connection), ids)
 		if err != nil {
 			return fmt.Errorf("inventory: designations: %w", err)

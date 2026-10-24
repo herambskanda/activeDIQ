@@ -12,6 +12,8 @@ var _ = tablekind.Declare(tablekind.Table{Name: "public.correlations", Entity: "
 
 var _ = tablekind.Declare(tablekind.Table{Name: "public.tier0_designations", Entity: "DM-16", Kind: tablekind.Directory})
 
+var _ = tablekind.Declare(tablekind.Table{Name: "public.links", Entity: "DM-17", Kind: tablekind.Directory})
+
 // Typed errors. None carries a value from the directory or the database.
 var (
 	// ErrInvalid is a malformed reference.
