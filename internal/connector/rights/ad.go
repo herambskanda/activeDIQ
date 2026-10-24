@@ -47,14 +47,14 @@ const (
 	// Users or another broad principal. Warn, not block: it is the customer's ACL, not the
 	// connector's own delegation, and the identity's own excess is reported separately.
 	CodeTier0BroadPrincipal = "exposure.tier0_broad_principal"
-	CodeExcessOU        = "over.managed_ou_" // + kind slug
-	CodeDelegUncons     = "over.delegation_unconstrained"
-	CodeDelegConstr     = "over.delegation_constrained"
-	CodeDelegProto      = "over.delegation_protocol_transition"
-	CodeDelegRBCD       = "over.delegation_rbcd"
-	CodeMissingRead     = "missing.read_domain"
-	CodeMissingFamily   = "missing.family_right"
-	CodeUnverifiedAD    = "unverified.ad"
+	CodeExcessOU            = "over.managed_ou_" // + kind slug
+	CodeDelegUncons         = "over.delegation_unconstrained"
+	CodeDelegConstr         = "over.delegation_constrained"
+	CodeDelegProto          = "over.delegation_protocol_transition"
+	CodeDelegRBCD           = "over.delegation_rbcd"
+	CodeMissingRead         = "missing.read_domain"
+	CodeMissingFamily       = "missing.family_right"
+	CodeUnverifiedAD        = "unverified.ad"
 )
 
 const (

@@ -19,12 +19,12 @@ func mustAD(s string) adguid.GUID {
 }
 
 var (
-	rightResetPassword   = mustAD("00299570-246d-11d0-a768-00aa006e0529")
-	rightReanimate       = mustAD("45ec5156-db7e-47bb-b53f-dbeb2d03c40f")
-	rightGetChanges      = mustAD("1131f6aa-9c07-11d1-f79f-00c04fc2dcd2")
-	rightGetChangesAll   = mustAD("1131f6ad-9c07-11d1-f79f-00c04fc2dcd2")
-	rightValidatedSPN    = mustAD("f3a64788-5306-11d1-a9c5-0000f80367c1")
-	rightValidatedDNSHot = mustAD("72e39547-7b18-11d1-adef-00c04fd8d5cd")
+	rightResetPassword      = mustAD("00299570-246d-11d0-a768-00aa006e0529")
+	rightReanimate          = mustAD("45ec5156-db7e-47bb-b53f-dbeb2d03c40f")
+	rightGetChanges         = mustAD("1131f6aa-9c07-11d1-f79f-00c04fc2dcd2")
+	rightGetChangesAll      = mustAD("1131f6ad-9c07-11d1-f79f-00c04fc2dcd2")
+	rightValidatedSPN       = mustAD("f3a64788-5306-11d1-a9c5-0000f80367c1")
+	rightValidatedDNSHot    = mustAD("72e39547-7b18-11d1-adef-00c04fd8d5cd")
 	rightGetChangesFiltered = mustAD("89e95b76-444d-4c62-991a-0facbeda640c")
 	rightSelfMembership     = mustAD("bf9679c0-0de6-11d0-a285-00aa003049e2")
 	// propSetUserAcctRestrictions includes msDS-AllowedToActOnBehalfOfOtherIdentity (R3).
