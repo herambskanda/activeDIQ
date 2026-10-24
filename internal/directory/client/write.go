@@ -20,6 +20,7 @@ var (
 	ErrInvalidOp      = errors.New("client: invalid write operation")
 	ErrBadResponse    = errors.New("client: connector answered with an unusable response")
 	ErrUnknownKind    = errors.New("client: write kind is not registered; write refused")
+	ErrNoNC           = errors.New("client: step binds no naming context; write refused")
 	ErrNoDCPin        = errors.New("client: step has no DC pin for the naming context; write refused")
 	ErrTransport      = errors.New("client: connector call failed")
 )
@@ -28,7 +29,7 @@ var (
 // exactly the write whose digest it carries; Write recomputes the digest from DigestKind, Target and
 // Attrs and refuses a mismatch. Everything that goes on the wire is derived from these fields: the
 // connection from Target.Connection, the object from Target.GUID (the planned parent for a create),
-// the naming context from NC, the WriteKind from DigestKind through kindTable. No wire field is
+// the naming context from the Step (Target.NC, digest-covered), the WriteKind from DigestKind through kindTable. No wire field is
 // caller-supplied, so none can differ from what the digest covers. WriteChange has no arm until a
 // kind ticket adds one with a constructor deriving it from Attrs; until then Change is never sent.
 type WriteOp struct {
@@ -36,9 +37,6 @@ type WriteOp struct {
 	DigestKind string
 	Target     authority.TargetRef
 	Attrs      []step.Attr
-	// NC is the naming context GUID (canonical UUID) the write lands in; empty for Entra. For an AD
-	// write the Step must carry a DC pin for it (rule 5), and the live facts are read on that pin.
-	NC authority.NamingContextID
 }
 
 // kindTable maps a plan-digest kind to the connector's WriteKind. Each kind ticket adds its row;
@@ -50,7 +48,6 @@ type wire struct {
 	conn   *connectorv1.ConnectionRef
 	target *connectorv1.WriteTarget
 	kind   connectorv1.WriteKind
-	ad     bool
 }
 
 // Result is what a completed Write returns.
@@ -109,9 +106,20 @@ func (c *Client) Write(ctx context.Context, s step.Step, op WriteOp) (Result, er
 	if err != nil {
 		return Result{}, err
 	}
-	if step.Compute(op.DigestKind, op.Target, op.Attrs) != s.Digest() {
+	if step.Compute(op.DigestKind, op.Target, op.Attrs) != s.Digest() || op.Target.NC != s.NC() {
 		return Result{}, ErrDigest
 	}
+	// The NC comes from the Step, not the caller. Every write needs one until an Entra kind declares
+	// itself (no such kind exists); an empty NC never falls back to an unpinned write.
+	nc := s.NC()
+	if nc == "" {
+		return Result{}, ErrNoNC
+	}
+	ncb, err := parseUUID(string(nc))
+	if err != nil {
+		return Result{}, fmt.Errorf("%w: naming context", ErrInvalidOp)
+	}
+	w.target.NcGuid = &connectorv1.Guid{Value: ncb}
 	switch {
 	case c.tier0 == nil:
 		return Result{}, ErrNoTier0Builder
@@ -129,14 +137,11 @@ func (c *Client) Write(ctx context.Context, s step.Step, op WriteOp) (Result, er
 		return Result{}, err
 	}
 
-	pins := authority.Pins{}
-	if w.ad {
-		host, ok := s.DC(op.NC)
-		if !ok || host == "" {
-			return Result{}, ErrNoDCPin
-		}
-		pins[op.NC] = host
+	host, ok := s.DC(nc)
+	if !ok || host == "" {
+		return Result{}, ErrNoDCPin
 	}
+	pins := authority.Pins{nc: host}
 	facts, err := c.facts.Facts(ctx, pins, s.FactsQuery())
 	if err != nil {
 		return Result{}, fmt.Errorf("client: reading live facts: %w", err)
@@ -194,14 +199,7 @@ func (op WriteOp) derive() (wire, error) {
 		return wire{}, fmt.Errorf("%w: target object", ErrInvalidOp)
 	}
 	wt := &connectorv1.WriteTarget{Object: &connectorv1.Guid{Value: id}}
-	if op.NC != "" {
-		nc, err := parseUUID(string(op.NC))
-		if err != nil {
-			return wire{}, fmt.Errorf("%w: naming context", ErrInvalidOp)
-		}
-		wt.NcGuid = &connectorv1.Guid{Value: nc}
-	}
-	return wire{conn: &connectorv1.ConnectionRef{ConnectionId: op.Target.Connection}, target: wt, kind: kind, ad: op.NC != ""}, nil
+	return wire{conn: &connectorv1.ConnectionRef{ConnectionId: op.Target.Connection}, target: wt, kind: kind}, nil
 }
 
 func (c *Client) buildTier0(ctx context.Context, st Stage, op WriteOp) (Tier0, error) {

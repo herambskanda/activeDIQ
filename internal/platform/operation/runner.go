@@ -104,6 +104,9 @@ type Request struct {
 	Input       Input
 	Operation   step.OperationID
 	FreshStepUp bool // the submitter completed a fresh MFA (TM-D16)
+	// Pins are the DCs pinned per naming context for this operation (rule 5), chosen by the caller of
+	// the runner, never by an Action.
+	Pins authority.Pins
 }
 
 // StepResult is the recorded result of one step.
@@ -248,7 +251,7 @@ func (u *run) applyOne(ctx context.Context, tx store.Tx, idx int, sp StepPlan) (
 	u.failKey, u.failTgt = key, sp.Target
 	q := r.cfg.Authz.FactsQuery(u.req.Actor, u.d.Permission, sp.Target)
 	st, revoke, err := minter.Mint(step.Spec{
-		Key: key, Attempt: 1, Actor: u.req.Actor, Tx: tx, Query: q,
+		Key: key, Attempt: 1, Actor: u.req.Actor, NC: sp.Target.NC, Pins: u.req.Pins, Tx: tx, Query: q,
 		Digest: stepDigest(sp),
 		Recheck: func(ctx context.Context, f authority.Facts) error {
 			return r.recheck(ctx, u.req.Actor, u.d.Permission, sp.Target, f)

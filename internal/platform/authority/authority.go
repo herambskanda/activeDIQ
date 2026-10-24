@@ -78,6 +78,9 @@ type TargetRef struct {
 	Class      string // object class, for example "user"
 	Parent     string // planned parent GUID, only for a create
 	RDN        string // planned RDN, only for a create
+	// NC is the naming context the object lives in (AD); empty for Entra and the store. It is covered
+	// by the step digest and keys the DC pin, so a write cannot be re-pointed at another partition.
+	NC NamingContextID
 }
 
 // Membership is the answer to "is the target in this root": fail-closed by design.

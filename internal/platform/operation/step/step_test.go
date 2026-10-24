@@ -143,6 +143,7 @@ func TestDigest(t *testing.T) {
 		"other value":  Compute("modify", tg, []Attr{{Name: "mail", Values: []string{"b@x"}}, {Name: "title", Values: []string{"t"}}}),
 		"other target": Compute("modify", authority.TargetRef{Connection: "c", GUID: "h", Class: "user"}, []Attr{{Name: "mail", Values: []string{"a@x"}}, {Name: "title", Values: []string{"t"}}}),
 		"other kind":   Compute("delete", tg, []Attr{{Name: "mail", Values: []string{"a@x"}}, {Name: "title", Values: []string{"t"}}}),
+		"other nc":     Compute("modify", authority.TargetRef{Connection: "c", GUID: "g", Class: "user", NC: "nc2"}, []Attr{{Name: "mail", Values: []string{"a@x"}}, {Name: "title", Values: []string{"t"}}}),
 		"missing attr": Compute("modify", tg, []Attr{{Name: "mail", Values: []string{"a@x"}}}),
 	} {
 		if d == a {
