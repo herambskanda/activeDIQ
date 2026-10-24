@@ -100,6 +100,14 @@ func result(f Filter, err error) corpus.Result {
 
 func TestCorpus(t *testing.T) {
 	corpustest.Run(t, "go/ldapfilter", "ldapfilter", func(r corpus.Record) (corpus.Result, error) {
+		if r.Call == "ParseAdminFilter" {
+			in, err := r.Arg("value")
+			if err != nil {
+				return corpus.Result{}, err
+			}
+			f, err := ParseAdminFilter(in.Text(), testSchema, restrictedCaller{}, Limits{})
+			return result(f, err), nil
+		}
 		if r.Call == "Or" {
 			return result(Or(), nil), nil
 		}
