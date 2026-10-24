@@ -715,7 +715,10 @@ nothing against a compromised server there (TM §6.2 "Who this defends against")
 **The baseline survives a restart.** The reported set, as `(GUID, basis, source)` entries plus the
 `verification_id` of the epoch's run, is persisted on the connector host after each completed run
 and appended to when the ratchet adds an entry. It is not a secret and holds identifiers only; it
-is readable and writable by the connector's service identity only. After a restart, the first
+is readable and writable by the connector's service identity only: mode 0600 on POSIX; on Windows an
+explicit, protected (non-inheriting) DACL granting full access to the service's token SID and SYSTEM
+only (`internal/platform/ownerfile`, typed security-descriptor API, T-0242). A file found with a wider
+DACL is **corrected** at open (not merely reported); a failure to correct is `LOCAL_RECORD_FAILED`. After a restart, the first
 completed run compares against the persisted baseline, so a smaller verification issued right
 after a restart still leaves its record. A missing or unreadable baseline file is itself recorded
 (`tier0_baseline_missing`) in the local log and, on Windows hosts, the Windows event log. If the

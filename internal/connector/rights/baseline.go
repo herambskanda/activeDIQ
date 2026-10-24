@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/skenzeriq/activediq/internal/platform/ownerfile"
 	v1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
@@ -91,7 +92,7 @@ func (s FileBaselineStore) Save(b *Baseline) error {
 	}
 	name := tmp.Name()
 	cleanup := func(e error) error { _ = tmp.Close(); _ = os.Remove(name); return e }
-	if err := tmp.Chmod(0o600); err != nil {
+	if _, err := ownerfile.Restrict(name); err != nil {
 		return cleanup(err)
 	}
 	if _, err := tmp.Write(raw); err != nil {
