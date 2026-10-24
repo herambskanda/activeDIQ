@@ -14,6 +14,7 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/compose/config"
 	"github.com/skenzeriq/activediq/internal/directory"
+	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/platform"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/apitls"
@@ -50,16 +51,16 @@ func Run(ctx context.Context, cfg config.Config) error {
 	if err := cfg.ValidatePrincipalStore(); err != nil {
 		return fmt.Errorf("server: %w", err)
 	}
-	// Capabilities come from the deployment profile once config selects one; no module requires
-	// one yet.
-	if _, err := boot(ctx, capability.NewSet()); err != nil {
-		return fmt.Errorf("server: boot modules: %w", err)
-	}
 	db, err := store.Open(ctx, store.Config{DSN: cfg.DatabaseDSN})
 	if err != nil {
 		return fmt.Errorf("server: open store: %w", err)
 	}
 	defer db.Close()
+	// Capabilities come from the deployment profile once config selects one; no module requires
+	// one yet. The directory services are built from the store, so boot follows the open.
+	if _, err := boot(ctx, capability.NewSet(), directoryServices(db)); err != nil {
+		return fmt.Errorf("server: boot modules: %w", err)
+	}
 	// The per-principal rate store. The limiter is not yet mounted (the ports stay fail-closed until the
 	// auth kernel lands, T-0277); the store is built now so a bad combination cannot start.
 	if _, err := principalStore(cfg, db); err != nil {
@@ -166,7 +167,13 @@ func runWorker(ctx context.Context, db *store.DB, reg *jobs.Registry, wcfg jobs.
 	return nil
 }
 
+// directoryServices builds the directory services handed to every module: the connection registry,
+// the only writer of connections, backed by the store.
+func directoryServices(db *store.DB) directory.Services {
+	return directory.Services{Connection: connection.NewRegistry(db)}
+}
+
 // boot hands the generated module list to module.Boot, the only caller of it (ADR-0003 rule 5).
-func boot(ctx context.Context, enabled capability.Set) (*module.Contributions, error) {
-	return module.Boot(ctx, generatedModules(platform.Deps{}, directory.Services{}), enabled)
+func boot(ctx context.Context, enabled capability.Set, dir directory.Services) (*module.Contributions, error) {
+	return module.Boot(ctx, generatedModules(platform.Deps{}, dir), enabled)
 }
