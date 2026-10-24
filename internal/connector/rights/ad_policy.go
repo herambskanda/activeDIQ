@@ -103,4 +103,11 @@ var expectations = map[v1.RightsFamily][]expectation{
 // Confirm further domainDNS defaults on Samba / the Windows lab (T-0231) before adding to it.
 var benignBroadExtended = map[adguid.GUID]bool{
 	mustAD("ab721a53-1e2f-11d0-9819-00aa0040529b"): true, // User-Change-Password (Everyone default)
+	// Seen as Everyone/Authenticated Users defaults on Samba 4 tier0 objects in the T-0237 lab run
+	// (schema default SDDL, copied from Windows). Windows-lab confirmation is T-0231 [UNVERIFIED].
+	mustAD("ab721a55-1e2f-11d0-9819-00aa0040529b"): true, // Send-To (messaging only, no directory change)
+	mustAD("edacfd8f-ffb3-11d1-b41d-00a0c968f939"): true, // Apply-Group-Policy (needs GPO read+apply, no write)
+	mustAD("05c74c5e-4deb-43b4-bd9f-86664c2a7fd5"): true, // Enable-Per-User-Reversibly-Encrypted-Password (domainDNS default)
+	mustAD("ccc2dc7d-a6ad-4a7a-8846-c04e3cc53501"): true, // Update-Password-Not-Required-Bit (domainDNS default)
+	mustAD("280f369c-67c7-438e-ae98-1d46f3c6f541"): true, // Unexpire-Password (domainDNS default)
 }

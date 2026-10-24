@@ -694,10 +694,12 @@ func (c *adCheck) step2(m *member, e *ad.Entry) {
 	if n, ok, err := e.Int32(attrSDRights); err != nil {
 		c.cannot(v7, &m.g, err)
 	} else if !ok {
-		// sDRightsEffective is a constructed attribute the DC returns on every read that asks for
-		// it (0 when the caller holds nothing). Absent means we cannot tell, never "no rights": it
-		// is the only signal for the owner-implicit WRITE_DAC on Samba.
-		c.cannot(v7, &m.g, errors.New("sDRightsEffective not returned"))
+		// Absent sDRightsEffective is never read as "no rights". Samba omits it on some objects
+		// (computer objects, for a non-admin caller; seen in the T-0237 lab run), so the parsed
+		// security descriptor answers WRITE_DAC/WRITE_OWNER instead (ownerRight + step3 grants).
+		// step3 raises COULD_NOT_VERIFY when the descriptor cannot be read or parsed, so the
+		// object is never accepted on neither signal. WRITE_SACL needs a privilege and is not
+		// covered by the parsed path.
 	} else {
 		type bit struct {
 			mask int32
@@ -930,10 +932,10 @@ func (c *adCheck) finish(r *ADResult) {
 		r.Checks = append(r.Checks, cr)
 	}
 	switch {
+	case refused: // a definite BLOCK wins over an unverifiable check
+		r.Verdict = v1.VerificationVerdict_VERIFICATION_VERDICT_REFUSED
 	case cnv:
 		r.Verdict = v1.VerificationVerdict_VERIFICATION_VERDICT_COULD_NOT_VERIFY
-	case refused:
-		r.Verdict = v1.VerificationVerdict_VERIFICATION_VERDICT_REFUSED
 	default:
 		r.Verdict = v1.VerificationVerdict_VERIFICATION_VERDICT_PASS
 	}

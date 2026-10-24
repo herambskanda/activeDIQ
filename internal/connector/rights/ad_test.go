@@ -730,13 +730,22 @@ func TestBroadOwnerWarns(t *testing.T) {
 	}
 }
 
-// An absent sDRightsEffective is unknown, never zero.
+// An absent sDRightsEffective is never "no rights": the parsed descriptor answers instead, and
+// when that is unreadable too the result is COULD_NOT_VERIFY. Samba omits the attribute on
+// computer objects, so absence alone must not make every identity unverifiable.
 func TestAbsentSDRightsEffectiveCouldNotVerify(t *testing.T) {
 	w := newWorld(t)
 	w.putRaw(w.t0, "sDRightsEffective", nil)
-	r := w.run(t, ADInput{})
-	if r.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_COULD_NOT_VERIFY || count(r, CodeUnverifiedAD) != 1 {
-		t.Fatalf("%v %v", r.Verdict, codes(r))
+	if r := w.run(t, ADInput{}); r.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_PASS {
+		t.Fatalf("parsed descriptor answers: %v %v", r.Verdict, codes(r))
+	}
+	w.putRaw(w.t0, "nTSecurityDescriptor", [][]byte{sdBytes(idSIDt, tace{mask: dsFullControl, trustee: daSID})})
+	if r := w.run(t, ADInput{}); r.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_REFUSED || count(r, CodeTier0WriteDACL) != 1 {
+		t.Fatalf("owner from parsed SD: %v %v", r.Verdict, codes(r))
+	}
+	w.putRaw(w.t0, "nTSecurityDescriptor", nil)
+	if r := w.run(t, ADInput{}); r.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_COULD_NOT_VERIFY || count(r, CodeUnverifiedAD) < 1 {
+		t.Fatalf("neither signal: %v %v", r.Verdict, codes(r))
 	}
 }
 
