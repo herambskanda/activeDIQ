@@ -3,6 +3,7 @@ package write
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -119,8 +120,16 @@ func TestAC2RefusedAtStep4OnBothRPCsAndTransportsOverrideDoesNotAdmit(t *testing
 		if c.g.calls != 4 {
 			t.Errorf("%s: guard consulted %d times, want 4 (2 RPCs x 2 transports)", c.name, c.g.calls)
 		}
-		if ev := r.rec.last(); ev.Stage != "4" {
+		ev := r.rec.last()
+		if ev.Stage != "4" {
 			t.Errorf("%s: refused at stage %q, want 4", c.name, ev.Stage)
+		}
+		wantReason := tier0.ReasonDesignatedDynamicRule
+		if c.g.err != nil {
+			wantReason = reasonGuardUnavailable
+		}
+		if ev.Reason != wantReason || ev.PropertyOp != "UPDATE" || len(ev.PropertyKeys) != 1 || ev.PropertyKeys[0] != "title" {
+			t.Errorf("%s: audit record reason %q op %q keys %v", c.name, ev.Reason, ev.PropertyOp, ev.PropertyKeys)
 		}
 	}
 }
@@ -230,5 +239,45 @@ func TestK0RealSnapshotThroughTheHandler(t *testing.T) {
 		if err != nil || rec.apply != 1 {
 			t.Errorf("%s: err %v apply %d", row.name, err, rec.apply)
 		}
+	}
+}
+
+// The refusal record carries reason, op and key names and never a value or the guard's error text
+// (CC-WRITE-13 extended to §8.9).
+func TestPropertyRefusalRecordNeverCarriesValues(t *testing.T) {
+	const canary = "CANARY-s3cret-value-7731"
+	tgt := mk(40)
+	for name, g := range map[string]*stubGuard{
+		"guard error text": {err: errors.New("read failed for " + canary)},
+		"verdict":          {v: tier0.DynamicRuleRefusal{Refused: true, Reason: tier0.ReasonDesignatedDynamicRule, Stage: tier0.StageConnectorSet, Op: tier0.OpUpdate, Keys: []string{"title"}}},
+	} {
+		r, _ := armed(t, g, declare(adUpdateTitle, nil), passRun(nil))
+		for tname, tr := range transports(t, r.h) {
+			p := planReq(tgt, ctxFor(tgt))
+			p.Kind = 1
+			_, err := tr.Plan(context.Background(), p)
+			if err == nil || strings.Contains(err.Error(), canary) {
+				t.Errorf("%s/%s: error %v", name, tname, err)
+			}
+			if strings.Contains(fmt.Sprintf("%+v", r.rec.last()), canary) {
+				t.Errorf("%s/%s: canary in the recorded event", name, tname)
+			}
+		}
+	}
+}
+
+// A wrong-plane declaration is a kind bug: it refuses with its own reason, distinct from bad input.
+func TestWrongPlaneDeclarationHasItsOwnReason(t *testing.T) {
+	tgt := mk(40)
+	bad := adUpdateTitle
+	bad.Plane = tier0.PlaneEntra
+	r, _ := armed(t, &stubGuard{}, declare(bad, nil), passRun(nil))
+	p := planReq(tgt, ctxFor(tgt))
+	p.Kind = 1
+	if _, err := r.h.Plan(context.Background(), p); err == nil {
+		t.Fatal("wrong plane admitted")
+	}
+	if ev := r.rec.last(); ev.Reason != reasonBadDeclaration {
+		t.Errorf("reason %q", ev.Reason)
 	}
 }
