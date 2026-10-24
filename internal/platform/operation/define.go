@@ -113,9 +113,9 @@ func (d defined[In, P, Out]) Verify(ctx context.Context, s step.Step, p StepPlan
 	if err != nil {
 		return Verdict{}, err
 	}
-	var out Out
-	if err := json.Unmarshal(o.Payload, &out); err != nil {
-		return Verdict{}, fmt.Errorf("%w: outcome does not decode", ErrInvalid)
+	out, err := decodeOutcome[Out](o)
+	if err != nil {
+		return Verdict{}, err
 	}
 	return d.t.Verify(ctx, s, ts, out)
 }
@@ -125,9 +125,9 @@ func (d defined[In, P, Out]) Inverse(p StepPlan, o Outcome) (Input, error) {
 	if err != nil {
 		return nil, err
 	}
-	var out Out
-	if err := json.Unmarshal(o.Payload, &out); err != nil {
-		return nil, fmt.Errorf("%w: outcome does not decode", ErrInvalid)
+	out, err := decodeOutcome[Out](o)
+	if err != nil {
+		return nil, err
 	}
 	in, err := d.t.Inverse(ts, out)
 	if err != nil {
@@ -138,4 +138,18 @@ func (d defined[In, P, Out]) Inverse(p StepPlan, o Outcome) (Input, error) {
 		return nil, fmt.Errorf("%w: inverse does not encode", ErrInvalid)
 	}
 	return b, nil
+}
+
+// decodeOutcome decodes an Apply outcome. A step recovered by reconciliation has no payload, because the
+// write's reply was lost with the worker; the Action then gets the zero Out and must verify against the
+// directory, not against the reply.
+func decodeOutcome[Out any](o Outcome) (Out, error) {
+	var out Out
+	if len(o.Payload) == 0 {
+		return out, nil
+	}
+	if err := json.Unmarshal(o.Payload, &out); err != nil {
+		return out, fmt.Errorf("%w: outcome does not decode", ErrInvalid)
+	}
+	return out, nil
 }

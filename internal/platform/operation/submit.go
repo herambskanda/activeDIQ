@@ -225,7 +225,9 @@ func (r *Runner) planAndRoute(ctx context.Context, t tenant.ID, opID string, inp
 	if sub.State != OpPlanned {
 		return sub, nil
 	}
-	return r.route(ctx, t, opID)
+	routed, err := r.route(ctx, t, opID)
+	routed.Items, routed.Planned, routed.Skipped, routed.Blocked = sub.Items, sub.Planned, sub.Skipped, sub.Blocked
+	return routed, err
 }
 
 // failPlan records planning -> plan_failed with the failure event.

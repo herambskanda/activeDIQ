@@ -376,6 +376,7 @@ func (r *Runner) recordIn(ctx context.Context, q store.Tx, t tenant.ID, c *claim
 			item, ev = ItemFailed, c.event(r, audit.Failure, s.verifyFailed, s.recovered)
 		default: // deferred: the write is done; the read-back is driven later
 			ev = c.event(r, audit.Success, "applied_verification_pending", s.recovered)
+			ev.ID += "-pending"
 		}
 	}
 	if item != "" {
