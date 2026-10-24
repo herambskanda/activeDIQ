@@ -68,6 +68,10 @@ func (c *comps) Usable(_ context.Context, id fleet.Identity) (bool, error) {
 	return !c.revoked[id.ComponentID], nil
 }
 
+func (c *comps) Current(ctx context.Context, id fleet.Identity) (bool, error) {
+	return c.Usable(ctx, id)
+}
+
 // server is the fleet service the gateway fronts. Enroll signs the CSR for (tid, compID) with ca the
 // way the real Enroller does; Tunnel holds the stream open until its context ends.
 type server struct {

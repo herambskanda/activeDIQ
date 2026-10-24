@@ -59,6 +59,11 @@ type TenantCAs interface {
 // error means "could not tell" and the caller fails closed.
 type ComponentStatus interface {
 	Usable(ctx context.Context, id Identity) (bool, error)
+	// Current is Usable and the identity's certificate serial is the component's current one
+	// (components.cert_serial). A certificate superseded by a rotation is not current, whatever its
+	// validity (TM-TB6-T14). It is asked when a connection or RPC is established, never for an open
+	// stream: Usable is the open-stream re-check, so a rotation does not drop the stream it was made on.
+	Current(ctx context.Context, id Identity) (bool, error)
 }
 
 // DefaultRecheck is how often an open stream is re-checked against ComponentStatus. It bounds how
@@ -392,7 +397,8 @@ func (g *Gateway) authenticate(ctx context.Context, method string) (context.Cont
 			// The certificate is genuine; the component may still have been revoked since it was
 			// issued (TM-TB6-T9). Checked on every RPC, so a revoked component is refused whatever
 			// it dials.
-			usable, err := g.comps.Usable(ctx, id)
+			// Establishment needs the current certificate (TM-TB6-T14); the stream re-check does not.
+			usable, err := g.comps.Current(ctx, id)
 			if err != nil {
 				return nil, errUnavail
 			}
