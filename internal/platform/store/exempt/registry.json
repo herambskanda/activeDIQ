@@ -112,6 +112,16 @@
       "reason": "CHECK: a sid-matched correlation carries the AD objectSid evidence (DM-20.I1b); a 12-byte binary SID."
     },
     {
+      "column": "public.correlations.entra_connection_id",
+      "value": "00000000-0000-4000-8000-0000000000e1",
+      "reason": "CHECK: the AD and Entra connection of a correlation differ (DM-20); every other column of the probe row is the generated value, so this one needs a second value. The foreign-key probe points the sibling key at an alternate parent row."
+    },
+    {
+      "column": "public.links.link_attr",
+      "value": "member",
+      "reason": "CHECK: link_attr is one of the stored linked attributes, currently member (DM-17)."
+    },
+    {
       "column": "public.connections.directory_identity",
       "value": "",
       "reason": "A connection is born draft with no identity: the insert guard refuses anything else (DM-10 L1, I1)."

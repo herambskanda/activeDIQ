@@ -356,6 +356,13 @@ func checkT4(ctx context.Context, d *Database, m *catalogModel, reg *registry.Re
 			}
 			probes++
 			pq := qident(parent.rel.schema, parent.rel.name)
+			// Two keys to one parent: the probe row must violate only f. The other keys are pointed at
+			// a second parent row of tenant A (same tenant, other key value), so the violation Postgres
+			// reports is f's and not whichever key it checks first.
+			sqlF, argsF, siblings, err := p.rowWithSiblingFKs(tm, f, tenantA)
+			if err != nil {
+				return nil, 0, err
+			}
 			err = adminProbe(ctx, adm, func(tx pgx.Tx) error {
 				if _, e := tx.Exec(ctx, `DELETE FROM `+q+` WHERE tenant_id = $1`, tenantA); e != nil {
 					return e
@@ -363,11 +370,16 @@ func checkT4(ctx context.Context, d *Database, m *catalogModel, reg *registry.Re
 				if _, e := tx.Exec(ctx, `DELETE FROM `+pq+` WHERE tenant_id = $1`, tenantA); e != nil {
 					return e
 				}
+				for _, sb := range siblings {
+					if _, e := tx.Exec(ctx, sb.sql, sb.args...); e != nil {
+						return e
+					}
+				}
 				// Back to origin mode so foreign keys are enforced for the insert under test.
 				if _, e := tx.Exec(ctx, `SET LOCAL session_replication_role = origin`); e != nil {
 					return e
 				}
-				_, e := tx.Exec(ctx, sqlA, argsA...)
+				_, e := tx.Exec(ctx, sqlF, argsF...)
 				var pe *pgconn.PgError
 				switch {
 				case e == nil:
