@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
+	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
 )
 
@@ -17,6 +19,9 @@ type Typed[In, P, Out any] struct {
 	Apply      func(ctx context.Context, s step.Step, p TypedStep[P]) (Out, error)
 	Verify     func(ctx context.Context, s step.Step, p TypedStep[P], o Out) (Verdict, error)
 	Inverse    func(p TypedStep[P], o Out) (In, error)
+	// Observe reads the target back on the pinned DC for reconciliation (rule 6). A Directory Action
+	// must provide it; a Store Action must not.
+	Observe func(ctx context.Context, pins authority.Pins, p TypedStep[P], claimedAt time.Time) (Observation, error)
 }
 
 // TypedStep is a StepPlan with a typed payload.
@@ -35,7 +40,24 @@ func Define[In, P, Out any](t Typed[In, P, Out]) (Action, error) {
 	if err := t.Descriptor.validate(); err != nil {
 		return nil, err
 	}
+	if t.Descriptor.Target != TargetStore && t.Observe == nil {
+		return nil, fmt.Errorf("%w: directory action %q needs Observe for reconciliation", ErrInvalid, t.Descriptor.ID)
+	}
+	if t.Observe != nil {
+		return definedObserver[In, P, Out]{defined[In, P, Out]{t}}, nil
+	}
 	return defined[In, P, Out]{t}, nil
+}
+
+// definedObserver is a defined Action that also implements Observer.
+type definedObserver[In, P, Out any] struct{ defined[In, P, Out] }
+
+func (d definedObserver[In, P, Out]) Observe(ctx context.Context, pins authority.Pins, p StepPlan, claimedAt time.Time) (Observation, error) {
+	ts, err := d.unpack(p)
+	if err != nil {
+		return "", err
+	}
+	return d.t.Observe(ctx, pins, ts, claimedAt)
 }
 
 func (d defined[In, P, Out]) Describe() Descriptor { return d.t.Descriptor }
@@ -91,9 +113,9 @@ func (d defined[In, P, Out]) Verify(ctx context.Context, s step.Step, p StepPlan
 	if err != nil {
 		return Verdict{}, err
 	}
-	var out Out
-	if err := json.Unmarshal(o.Payload, &out); err != nil {
-		return Verdict{}, fmt.Errorf("%w: outcome does not decode", ErrInvalid)
+	out, err := decodeOutcome[Out](o)
+	if err != nil {
+		return Verdict{}, err
 	}
 	return d.t.Verify(ctx, s, ts, out)
 }
@@ -103,9 +125,9 @@ func (d defined[In, P, Out]) Inverse(p StepPlan, o Outcome) (Input, error) {
 	if err != nil {
 		return nil, err
 	}
-	var out Out
-	if err := json.Unmarshal(o.Payload, &out); err != nil {
-		return nil, fmt.Errorf("%w: outcome does not decode", ErrInvalid)
+	out, err := decodeOutcome[Out](o)
+	if err != nil {
+		return nil, err
 	}
 	in, err := d.t.Inverse(ts, out)
 	if err != nil {
@@ -116,4 +138,18 @@ func (d defined[In, P, Out]) Inverse(p StepPlan, o Outcome) (Input, error) {
 		return nil, fmt.Errorf("%w: inverse does not encode", ErrInvalid)
 	}
 	return b, nil
+}
+
+// decodeOutcome decodes an Apply outcome. A step recovered by reconciliation has no payload, because the
+// write's reply was lost with the worker; the Action then gets the zero Out and must verify against the
+// directory, not against the reply.
+func decodeOutcome[Out any](o Outcome) (Out, error) {
+	var out Out
+	if len(o.Payload) == 0 {
+		return out, nil
+	}
+	if err := json.Unmarshal(o.Payload, &out); err != nil {
+		return out, fmt.Errorf("%w: outcome does not decode", ErrInvalid)
+	}
+	return out, nil
 }

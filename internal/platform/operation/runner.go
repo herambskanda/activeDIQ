@@ -17,7 +17,9 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
+	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
+	"github.com/skenzeriq/activediq/internal/platform/secret"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
@@ -61,6 +63,25 @@ type Config struct {
 	Now       func() time.Time
 	NewID     func() string
 	Component string
+
+	// The fields below are used by the persisted Directory path. SubmitDirectory needs Jobs, Keys and
+	// Pinner (when an Action writes to AD); the others are optional.
+
+	Jobs       *jobs.Registry // enqueues the chunk jobs at approved -> queued
+	Keys       DEKSource      // seals transient secrets
+	Pinner     Pinner         // pins one writable DC per naming context (rule 5)
+	Settings   Settings       // tenant settings read by the kernel hold rules
+	Provenance Provenance     // the sock-puppet check of rule 8
+	Alerts     Alerter
+	Lease      time.Duration // a step claim's lease; default 2 minutes
+	Slots      int           // concurrent writes per (connection, DC); default 4
+	// Attempts is the transient-error attempt limit of one step; default 5. Backoff is the base delay.
+	Attempts int
+	Backoff  time.Duration
+	// StallWindow is how long an operation with unclaimed work may make no progress before the sweeper
+	// re-drives it; AbandonAfter is how long an unsubmitted plan lives. Defaults 5 minutes and 7 days.
+	StallWindow  time.Duration
+	AbandonAfter time.Duration
 }
 
 // Runner runs Actions through the pipeline. It is safe for concurrent use.
@@ -86,7 +107,31 @@ func NewRunner(cfg Config) (*Runner, error) {
 	if cfg.Component == "" {
 		cfg.Component = "operation"
 	}
-	return &Runner{cfg: cfg, sleep: time.Sleep}, nil
+	if cfg.Lease <= 0 {
+		cfg.Lease = 2 * time.Minute
+	}
+	if cfg.Slots <= 0 {
+		cfg.Slots = 4
+	}
+	if cfg.Attempts <= 0 {
+		cfg.Attempts = 5
+	}
+	if cfg.Backoff <= 0 {
+		cfg.Backoff = 200 * time.Millisecond
+	}
+	if cfg.StallWindow <= 0 {
+		cfg.StallWindow = 5 * time.Minute
+	}
+	if cfg.AbandonAfter <= 0 {
+		cfg.AbandonAfter = 7 * 24 * time.Hour
+	}
+	rn := &Runner{cfg: cfg, sleep: time.Sleep}
+	if cfg.Jobs != nil {
+		if err := rn.registerJobs(cfg.Jobs); err != nil {
+			return nil, err
+		}
+	}
+	return rn, nil
 }
 
 func randomID() string {
@@ -108,6 +153,22 @@ type Request struct {
 	// Pins are the DCs pinned per naming context for this operation (rule 5), chosen by the caller of
 	// the runner, never by an Action.
 	Pins authority.Pins
+
+	// The fields below are used by the persisted Directory path (SubmitDirectory).
+
+	// Origin is how the operation started (DM-41); it defaults to "api".
+	Origin string
+	// MaxObjects is an automation policy's blast-radius limit (DM-60.I3); zero means none.
+	MaxObjects int
+	// IdempotencyKey de-duplicates a retried submission per (tenant, requester) for 24 hours (rule 4).
+	IdempotencyKey string
+	// UndoNeededApproval: this is an undo of an operation that itself needed approval (DM-41.I3).
+	UndoNeededApproval bool
+	// Secrets are transient secret inputs by item number (rule 9). They are sealed into
+	// operation_secrets and never appear in the plan, the input, an event or a log.
+	Secrets map[int]secret.Secret
+	// SecretTTL bounds the secrets' life; zero means 24 hours, and the cap is 72 hours.
+	SecretTTL time.Duration
 }
 
 // StepResult is the recorded result of one step.

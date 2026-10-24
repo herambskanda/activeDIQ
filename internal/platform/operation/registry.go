@@ -47,6 +47,11 @@ func NewRegistry(actions ...Action) (*Registry, error) {
 		if err := d.validate(); err != nil {
 			return nil, err
 		}
+		if _, ok := a.(Observer); !ok && d.Target != TargetStore {
+			// Reconciliation needs to read the target back (rule 6); a Directory Action without it
+			// would leave a crashed step applying.
+			return nil, fmt.Errorf("%w: directory action %q does not implement Observer", ErrInvalid, d.ID)
+		}
 		if _, dup := r.byID[d.ID]; dup {
 			return nil, fmt.Errorf("%w: action %q registered twice", ErrInvalid, d.ID)
 		}

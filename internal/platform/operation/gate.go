@@ -3,6 +3,8 @@ package operation
 import (
 	"context"
 	"errors"
+
+	"github.com/skenzeriq/activediq/internal/platform/authority"
 )
 
 // GateID names a registered approval gate.
@@ -31,6 +33,11 @@ type PlanSummary struct {
 	Steps        []StepPlan
 	PlanHash     string
 	Irreversible bool
+	// HoldReason is set when the kernel already holds the operation (rule 8). The gate then chooses
+	// between a workflow Request and the kernel's single approval; it cannot allow it.
+	HoldReason HoldReason
+	Origin     string
+	Requester  authority.Principal
 }
 
 // Gate is the approval gate (EP-4, rule 8).

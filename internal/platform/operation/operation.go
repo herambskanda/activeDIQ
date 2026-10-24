@@ -7,6 +7,7 @@ package operation
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
@@ -91,6 +92,9 @@ type StepPlan struct {
 	ReversibilityReason string
 	Phase               int
 	Payload             []byte
+	// Credential marks a step that sets a credential. Reconciliation never re-applies it (rule 6):
+	// a repeat would be refused by password history and record a false failure.
+	Credential bool
 }
 
 // Outcome is what Apply did, as the Action read it back.
@@ -115,7 +119,36 @@ var (
 	ErrHeld         = errors.New("operation: held for approval")
 	ErrTarget       = errors.New("operation: target kind not supported by this runner")
 	ErrRecord       = errors.New("operation: outcome could not be recorded")
+	// ErrStaleState is what an Action's Apply returns, wrapped, when the target no longer shows the
+	// plan's before-state. The step fails stale_state and the target is never overwritten (DM-42.I2).
+	ErrStaleState = errors.New("operation: target changed since the plan")
+	// ErrTransient marks a failure the same step may retry with a new attempt: connector unreachable,
+	// DC busy, throttled.
+	ErrTransient = errors.New("operation: transient failure")
+	// ErrOutcomeUnknown is what Apply returns for a credential step whose write may or may not have
+	// happened. The technician retries as a new operation (rule 6).
+	ErrOutcomeUnknown = errors.New("operation: outcome unknown")
+	// ErrDeferVerify is what Verify returns when the read-back cannot be completed yet (Entra, or a
+	// lost DC): the step stays applied and operation.verify drives it later.
+	ErrDeferVerify = errors.New("operation: verification deferred")
 )
+
+// Observation is what a live read of a step's target shows relative to its plan.
+type Observation string
+
+// Observations, for reconciliation.
+const (
+	ObservedBefore Observation = "before" // the planned before-state is still in place
+	ObservedAfter  Observation = "after"  // the planned after-state is in place
+	ObservedOther  Observation = "other"  // anything else
+)
+
+// Observer is implemented by a Directory Action so the runner can recover a step whose claim lapsed
+// (rule 6). It only reads, on the pinned DC, so it takes no Step. For a Credential step, ObservedAfter
+// means the credential's last-set time is later than claimedAt.
+type Observer interface {
+	Observe(ctx context.Context, pins authority.Pins, p StepPlan, claimedAt time.Time) (Observation, error)
+}
 
 // PlanContext is what Plan reads through: the store (read only) and live facts on the pins.
 type PlanContext struct {

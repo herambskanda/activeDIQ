@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 
 	"github.com/skenzeriq/activediq/internal/platform/authority"
+	"github.com/skenzeriq/activediq/internal/platform/secret"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 )
 
@@ -53,6 +54,7 @@ type state struct {
 	query   authority.FactsQuery
 	digest  Digest
 	recheck RecheckFunc
+	secret  secret.Secret
 	revoked atomic.Bool
 }
 
@@ -126,6 +128,16 @@ func (s Step) Tx() store.Tx {
 	return s.s.tx
 }
 
+// Secret returns the transient secret input of this step (rule 9), unsealed by the runner for this
+// claim only. It is the zero Secret for a step with none, and for a zero or revoked Step. The write
+// path hands it to the connector inside the Apply RPC and never persists it.
+func (s Step) Secret() secret.Secret {
+	if s.Valid() != nil {
+		return secret.Secret{}
+	}
+	return s.s.secret
+}
+
 // Digest returns the digest of the planned write this Step authorises.
 func (s Step) Digest() Digest {
 	if s.s == nil {
@@ -187,6 +199,8 @@ type Spec struct {
 	Query   authority.FactsQuery
 	Digest  Digest
 	Recheck RecheckFunc
+	// Secret is the step's transient secret input, if any (rule 9).
+	Secret secret.Secret
 }
 
 // issued is the package-private proof that a Minter came from TakeMinter.
@@ -241,6 +255,6 @@ func (m *Minter) Mint(sp Spec) (Step, func(), error) {
 	}
 	// The pin is copied: a caller-held map (e.g. a DC-locator cache) must not re-point a minted Step.
 	st := &state{key: sp.Key, attempt: sp.Attempt, actor: sp.Actor, pins: maps.Clone(sp.Pins), nc: sp.NC, tx: sp.Tx,
-		query: sp.Query, digest: sp.Digest, recheck: sp.Recheck}
+		query: sp.Query, digest: sp.Digest, recheck: sp.Recheck, secret: sp.Secret}
 	return Step{s: st}, func() { st.revoked.Store(true) }, nil
 }
