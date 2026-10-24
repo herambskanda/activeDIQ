@@ -443,7 +443,10 @@ func TestRequestAndTargetValidation(t *testing.T) {
 		Verify: func(context.Context, step.Step, TypedStep[payload], out) (Verdict, error) {
 			return Verdict{OK: true}, nil
 		},
-		Inverse: func(TypedStep[payload], out) (in, error) { return in{}, nil }})
+		Inverse: func(TypedStep[payload], out) (in, error) { return in{}, nil },
+		Observe: func(context.Context, authority.Pins, TypedStep[payload], time.Time) (Observation, error) {
+			return ObservedBefore, nil
+		}})
 	reg, _ := NewRegistry(a)
 	r2, _ := NewRunner(Config{DB: db, Audit: sink{}, Authz: &authzFake{}, Registry: reg})
 	rq := req()

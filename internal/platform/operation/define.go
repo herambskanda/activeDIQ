@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
+	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
 )
 
@@ -17,6 +19,9 @@ type Typed[In, P, Out any] struct {
 	Apply      func(ctx context.Context, s step.Step, p TypedStep[P]) (Out, error)
 	Verify     func(ctx context.Context, s step.Step, p TypedStep[P], o Out) (Verdict, error)
 	Inverse    func(p TypedStep[P], o Out) (In, error)
+	// Observe reads the target back on the pinned DC for reconciliation (rule 6). A Directory Action
+	// must provide it; a Store Action must not.
+	Observe func(ctx context.Context, pins authority.Pins, p TypedStep[P], claimedAt time.Time) (Observation, error)
 }
 
 // TypedStep is a StepPlan with a typed payload.
@@ -35,7 +40,24 @@ func Define[In, P, Out any](t Typed[In, P, Out]) (Action, error) {
 	if err := t.Descriptor.validate(); err != nil {
 		return nil, err
 	}
+	if t.Descriptor.Target != TargetStore && t.Observe == nil {
+		return nil, fmt.Errorf("%w: directory action %q needs Observe for reconciliation", ErrInvalid, t.Descriptor.ID)
+	}
+	if t.Observe != nil {
+		return definedObserver[In, P, Out]{defined[In, P, Out]{t}}, nil
+	}
 	return defined[In, P, Out]{t}, nil
+}
+
+// definedObserver is a defined Action that also implements Observer.
+type definedObserver[In, P, Out any] struct{ defined[In, P, Out] }
+
+func (d definedObserver[In, P, Out]) Observe(ctx context.Context, pins authority.Pins, p StepPlan, claimedAt time.Time) (Observation, error) {
+	ts, err := d.unpack(p)
+	if err != nil {
+		return "", err
+	}
+	return d.t.Observe(ctx, pins, ts, claimedAt)
 }
 
 func (d defined[In, P, Out]) Describe() Descriptor { return d.t.Descriptor }
