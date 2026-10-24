@@ -14,6 +14,8 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
 )
 
+var gpLinkID = mustGUID("f30e3bbe-9ff0-11d1-b603-0000f80367c1")
+
 const (
 	dom   = "DC=lab,DC=test"
 	cfg   = "CN=Configuration," + dom
@@ -52,6 +54,14 @@ func forest() *fakeDir {
 		"gPLink", link(gDom, "0"))
 	f.add(cfg, "", cls("top", "configuration"))
 	f.add("CN=Schema,"+cfg, "", cls("top", "dMD"))
+	// The roots of trust carry a readable descriptor with an owner (C17); the domain head's is set below.
+	rootSD := sdBytes(aceSpec{sid: dsid + "-512", mask: 0x10000000})
+	f.find(cfg).raw["nTSecurityDescriptor"] = rootSD
+	f.find("CN=Schema," + cfg).raw["nTSecurityDescriptor"] = rootSD
+	gp := f.add("CN=GP-Link,CN=Schema,"+cfg, "", cls("attributeSchema"), "lDAPDisplayName", "gPLink")
+	gp.raw["schemaIDGUID"] = gpLinkID.Bytes()
+	f.add("CN=Windows NT,CN=Services,"+cfg, "", cont)
+	f.add("CN=Directory Service,CN=Windows NT,CN=Services,"+cfg, "", cont)
 
 	// C1 groups, with the nesting nasties.
 	f.add("CN=Domain Admins,CN=Users,"+dom, dsid+"-512", group, "member", "CN=alice,OU=Admins,"+dom, "member", "CN=Nested,OU=Staff,"+dom)
@@ -79,7 +89,8 @@ func forest() *fakeDir {
 
 	// C3, C8
 	f.add("CN=System,"+dom, "", cont)
-	f.add("CN=AdminSDHolder,CN=System,"+dom, "", cont)
+	adh := f.add("CN=AdminSDHolder,CN=System,"+dom, "", cont)
+	adh.raw["nTSecurityDescriptor"] = rootSD
 	f.add("CN=RID Manager$,CN=System,"+dom, "", cls("top", "rIDManager"))
 	f.add("CN=Services,"+cfg, "", cont)
 	f.add("CN=Group Key Distribution Service,CN=Services,"+cfg, "", cont)
@@ -362,22 +373,24 @@ func TestQueryFilterEscapes(t *testing.T) {
 	}
 }
 
-func TestACEReader(t *testing.T) {
+func TestGrantsOf(t *testing.T) {
 	good := sdBytes(aceSpec{sid: dsid + "-5", mask: 0x100, objType: &getChanges})
-	aces, err := allowACEs(good)
-	if err != nil || len(aces) != 1 || !aces[0].grants(getChanges) || aces[0].grants(getChangesAll) {
+	d, aces, err := grantsOf(good)
+	if err != nil || len(aces) != 1 || !aces[0].grants(getChanges) || aces[0].grants(getChangesAll) || !d.HasOwner {
 		t.Fatalf("%+v %v", aces, err)
 	}
-	for i := 0; i < len(good); i++ { // every truncation is refused or parses to fewer ACEs, never panics
-		_, _ = allowACEs(good[:i])
-	}
-	if _, err := allowACEs(good[:len(good)-3]); err == nil {
-		t.Error("truncated ACE accepted")
+	for i := 0; i < len(good); i++ { // every truncation is refused, never panics
+		if _, _, err := grantsOf(good[:i]); err == nil {
+			t.Errorf("truncation to %d bytes accepted", i)
+		}
 	}
 	null := append([]byte(nil), good...)
 	null[16], null[17], null[18], null[19] = 0, 0, 0, 0
-	if _, err := allowACEs(null); err == nil {
+	if _, _, err := grantsOf(null); err == nil {
 		t.Error("NULL DACL accepted")
+	}
+	if _, _, err := grantsOf(sdBytes(aceSpec{sid: dsid + "-5", mask: 0x100, typ: 0x20})); err == nil {
+		t.Error("ACE of an unknown type accepted")
 	}
 }
 

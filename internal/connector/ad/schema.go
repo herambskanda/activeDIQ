@@ -53,6 +53,8 @@ func DefaultSchema() *ldapfilter.Schema {
 			ldapfilter.AttrInfo{Name: "whenChanged", OID: "1.2.840.113556.1.2.3", Syntax: ldapfilter.SynGenTime},
 			ldapfilter.AttrInfo{Name: "uSNChanged", OID: "1.2.840.113556.1.2.120", Syntax: ldapfilter.SynInt64},
 			ldapfilter.AttrInfo{Name: "gPLink", OID: "1.2.840.113556.1.4.891", Syntax: s},
+			ldapfilter.AttrInfo{Name: "sIDHistory", OID: "1.2.840.113556.1.4.609", Syntax: ldapfilter.SynSID},
+			ldapfilter.AttrInfo{Name: "dSHeuristics", OID: "1.2.840.113556.1.2.212", Syntax: s},
 			ldapfilter.AttrInfo{Name: "gPOptions", OID: "1.2.840.113556.1.4.892", Syntax: ldapfilter.SynInt32},
 			ldapfilter.AttrInfo{Name: "wellKnownObjects", OID: "1.2.840.113556.1.4.618", Syntax: s},
 			ldapfilter.AttrInfo{Name: "msDS-SecondaryKrbTgtNumber", OID: "1.2.840.113556.1.4.1926", Syntax: ldapfilter.SynInt32},
