@@ -30,6 +30,7 @@ func DefaultSchema() *ldapfilter.Schema {
 	defaultSchemaOnce.Do(func() {
 		s, c := ldapfilter.SynString, true
 		defaultSchema = ldapfilter.NewSchema(
+			ldapfilter.AttrInfo{Name: "attributeID", OID: "1.2.840.113556.1.2.30", Syntax: s},
 			ldapfilter.AttrInfo{Name: "objectClass", OID: "2.5.4.0", Syntax: s},
 			ldapfilter.AttrInfo{Name: "objectCategory", OID: "1.2.840.113556.1.4.782", Syntax: ldapfilter.SynDN},
 			ldapfilter.AttrInfo{Name: "objectGUID", OID: "1.2.840.113556.1.4.2", Syntax: ldapfilter.SynGUID},

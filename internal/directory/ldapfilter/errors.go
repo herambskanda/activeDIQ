@@ -31,6 +31,7 @@ const (
 	ConstructedNotFilterable   = "ConstructedNotFilterable"
 	UnknownAttribute           = "UnknownAttribute"
 	SecretAttribute            = "SecretAttribute"
+	ForbiddenSortKey           = "ForbiddenSortKey"
 	ValueTooLong               = "ValueTooLong"
 	FilterTooLong              = "FilterTooLong"
 	TooDeep                    = "TooDeep"
