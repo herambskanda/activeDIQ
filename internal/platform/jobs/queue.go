@@ -2,7 +2,7 @@ package jobs
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"time"
 
@@ -22,7 +22,7 @@ type Claimed struct {
 	Kind string
 	// Tenant is the tenant the body must run in; the zero value is a platform job.
 	Tenant      tenant.ID
-	Args        json.RawMessage
+	Args        jsontext.Value
 	MaxAttempts int
 	// ClaimedUntil is the database-clock time the claim lapses; Renew extends it.
 	ClaimedUntil time.Time
