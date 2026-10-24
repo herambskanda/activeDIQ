@@ -230,5 +230,10 @@ func (p *astParser) dnOf(m *connectorv1.Dn) (dn.DN, error) {
 			return dn.DN{}, fail(InvalidValue)
 		}
 	}
+	// The rendered form is what Render emits, so it is bounded by the same narrowed limit the text
+	// parser applies to DN assertion values (checked before asking the Caller to read the object).
+	if len(d.String()) > p.lim.MaxValueBytes {
+		return dn.DN{}, fail(ValueTooLong)
+	}
 	return p.readable(d)
 }

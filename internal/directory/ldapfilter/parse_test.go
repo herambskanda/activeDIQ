@@ -295,3 +295,30 @@ func TestParseFilterASTNarrowedMaxValueBytes(t *testing.T) {
 		}
 	}
 }
+
+func TestParseFilterASTNarrowedMaxValueBytesDN(t *testing.T) {
+	rdns := func(ou string) *connectorv1.Dn {
+		return &connectorv1.Dn{Rdns: []*connectorv1.Rdn{
+			{Type: "CN", Value: &connectorv1.Rdn_Text{Text: "Project X, Inc"}},
+			{Type: "OU", Value: &connectorv1.Rdn_Text{Text: ou}},
+			{Type: "DC", Value: &connectorv1.Rdn_Text{Text: "corp"}}}}
+	}
+	cases := map[string]*connectorv1.Filter{
+		"equal": {Node: &connectorv1.Filter_Equal{Equal: &connectorv1.Comparison{Attribute: "memberOf",
+			Value: &connectorv1.FilterValue{Value: &connectorv1.FilterValue_Dn{Dn: rdns("Groups")}}}}},
+		"in-chain": {Node: &connectorv1.Filter_InChain{InChain: &connectorv1.InChain{Attribute: "memberOf", Dn: rdns("Groups")}}},
+	}
+	for name, in := range cases {
+		if _, err := ParseFilterAST(in, testSchema, restrictedCaller{}, Limits{MaxValueBytes: 10}); Code(err) != ValueTooLong {
+			t.Errorf("%s: narrowed limit: got %v", name, err)
+		}
+		if _, err := ParseFilterAST(in, testSchema, restrictedCaller{}, Limits{}); err != nil {
+			t.Errorf("%s: default limits: %v", name, err)
+		}
+	}
+	// The text and AST parsers agree on the same DN under the same narrowed limit.
+	const txt = `(memberOf=CN=Project X\5c, Inc,OU=Groups,DC=corp)`
+	if got := parseCode(txt, restrictedCaller{}, Limits{MaxValueBytes: 10}); got != ValueTooLong {
+		t.Errorf("text parser: got %q", got)
+	}
+}
