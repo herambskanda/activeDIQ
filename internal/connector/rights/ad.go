@@ -1011,6 +1011,7 @@ func (c *adCheck) broadPrincipal(s sid.SID) bool {
 // (Change Password for Everyone, read for Authenticated Users) are not in the list.
 func (c *adCheck) broad(m *member, d *descriptor, basis []v1.Tier0Basis) {
 	// A broad-principal owner holds WRITE_DAC implicitly unless an OWNER RIGHTS ACE replaces it.
+	sids := map[string]bool{}
 	if d.hasOwner && c.broadPrincipal(d.owner) {
 		hasOR := false
 		for _, a := range d.aces {
@@ -1018,14 +1019,17 @@ func (c *adCheck) broad(m *member, d *descriptor, basis []v1.Tier0Basis) {
 				hasOR = true
 			}
 		}
-		if !hasOR {
+		if hasOR {
+			// The OWNER RIGHTS ACE grants the broad owner exactly its mask, so it is evaluated as
+			// a broad trustee: WRITE_DAC / GenericAll there is exposure to every authenticated user.
+			sids[sidOwnerRights] = true
+		} else {
 			o := ace{trustee: d.owner}
 			c.add(&v1.RightsFinding{Check: v7, Kind: v1.FindingKind_FINDING_KIND_EXCESSIVE_RIGHT, Severity: v1.FindingSeverity_FINDING_SEVERITY_WARN,
 				Code: CodeTier0BroadPrincipal, ObjectTier0Basis: basis, Right: adRight(v1.AdRightKind_AD_RIGHT_KIND_WRITE_DAC, nil, maskWriteDAC, ""),
 				Source: aceSource(m.g, o)}, m.g, "broad-owner:"+d.owner.String())
 		}
 	}
-	sids := map[string]bool{}
 	for _, a := range d.aces {
 		if !a.deny && c.broadPrincipal(a.trustee) {
 			sids[a.trustee.String()] = true
