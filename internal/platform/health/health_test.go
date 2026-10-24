@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -45,7 +47,7 @@ func serve(t *testing.T, logbuf *bytes.Buffer, checks ...health.NamedCheck) *api
 		t.Fatal(err)
 	}
 	log := slog.New(slog.NewTextHandler(logbuf, nil))
-	return build(t, doc, policy, log, api.Handlers(health.New(log, checks...)))
+	return build(t, doc, policy, log, api.Handlers(health.New(log, checks)))
 }
 
 func build(t *testing.T, doc apihost.Document, policy apihost.Policy, log *slog.Logger, h api.Handlers) *apihost.Server {
@@ -170,4 +172,130 @@ func TestHealthInternalErrorCarriesNoDetail(t *testing.T) {
 			t.Fatalf("%s leaks: %s", p, rec.Body)
 		}
 	}
+}
+
+func TestReadinessHangingCheckTimesOut(t *testing.T) {
+	var logs bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&logs, nil))
+	release := make(chan struct{})
+	defer close(release)
+	hang := health.NamedCheck{Name: "database", Check: func(context.Context) error { <-release; return nil }} // ignores ctx
+	s := build(t, mustDoc(t), mustPolicy(t), log, health.New(log, []health.NamedCheck{hang}, health.WithCheckTimeout(50*time.Millisecond)))
+	start := time.Now()
+	rec := call(s, "/health/ready")
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("took %s", d)
+	}
+	if rec.Code != 503 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	if m := members(t, rec); m["detail"] != nil || m["type"] == nil || !strings.HasSuffix(m["type"].(string), "/problems/not-ready") {
+		t.Fatalf("problem: %v", m)
+	}
+	if !strings.Contains(logs.String(), "timed out") {
+		t.Fatalf("log lacks timeout: %s", logs.String())
+	}
+}
+
+func TestReadinessSingleFlight(t *testing.T) {
+	var logs bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&logs, nil))
+	var calls, concurrent, maxConcurrent atomic.Int32
+	gate := make(chan struct{})
+	chk := health.NamedCheck{Name: "database", Check: func(context.Context) error {
+		calls.Add(1)
+		n := concurrent.Add(1)
+		for {
+			m := maxConcurrent.Load()
+			if n <= m || maxConcurrent.CompareAndSwap(m, n) {
+				break
+			}
+		}
+		<-gate
+		concurrent.Add(-1)
+		return nil
+	}}
+	s := build(t, mustDoc(t), mustPolicy(t), log, health.New(log, []health.NamedCheck{chk}, health.WithResultTTL(time.Minute)))
+	const n = 50
+	codes := make(chan int, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); codes <- call(s, "/health/ready").Code }()
+	}
+	time.Sleep(100 * time.Millisecond) // let callers pile onto the one round
+	close(gate)
+	wg.Wait()
+	close(codes)
+	for c := range codes {
+		if c != 200 {
+			t.Fatalf("status %d", c)
+		}
+	}
+	if call(s, "/health/ready").Code != 200 {
+		t.Fatal("cached call failed")
+	}
+	if calls.Load() != 1 || maxConcurrent.Load() != 1 {
+		t.Fatalf("probes run = %d, max concurrent = %d; want 1, 1", calls.Load(), maxConcurrent.Load())
+	}
+}
+
+func TestReadinessDoesNotStackProbesOfAHungCheck(t *testing.T) {
+	var logs bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&logs, nil))
+	var calls atomic.Int32
+	release := make(chan struct{})
+	defer close(release)
+	hang := health.NamedCheck{Name: "database", Check: func(context.Context) error { calls.Add(1); <-release; return nil }}
+	s := build(t, mustDoc(t), mustPolicy(t), log, health.New(log, []health.NamedCheck{hang}, health.WithCheckTimeout(20*time.Millisecond), health.WithResultTTL(0)))
+	for i := 0; i < 5; i++ {
+		if c := call(s, "/health/ready").Code; c != 503 {
+			t.Fatalf("status %d", c)
+		}
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("hung check started %d times, want 1", calls.Load())
+	}
+}
+
+func TestCheckErrorSecretsNotLogged(t *testing.T) {
+	var logs bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&logs, nil))
+	for _, msg := range []string{
+		`dial postgres://svc:hunter2pw@db01:5432/activediq: refused`,
+		`failed host=db01 user=svc password=hunter2pw dbname=x`,
+		`bad Password: "hunter2pw" for svc`,
+		`auth token=hunter2pw rejected`,
+	} {
+		logs.Reset()
+		c := health.NamedCheck{Name: "database", Check: func(context.Context) error { return errors.New(msg) }}
+		s := build(t, mustDoc(t), mustPolicy(t), log, health.New(log, []health.NamedCheck{c}, health.WithResultTTL(0)))
+		if rec := call(s, "/health/ready"); rec.Code != 503 {
+			t.Fatalf("status %d", rec.Code)
+		}
+		if strings.Contains(logs.String(), "hunter2pw") {
+			t.Errorf("secret logged for %q: %s", msg, logs.String())
+		}
+		if !strings.Contains(logs.String(), "readiness check failed") {
+			t.Errorf("failure not logged: %s", logs.String())
+		}
+	}
+}
+
+func mustDoc(t *testing.T) apihost.Document {
+	t.Helper()
+	d, err := apihost.LoadDocument()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d
+}
+
+func mustPolicy(t *testing.T) apihost.Policy {
+	t.Helper()
+	p, err := apihost.LoadPolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
 }
