@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -66,6 +67,10 @@ func (r *Runner) SubmitDirectory(ctx context.Context, req Request) (Submission, 
 	d := act.Describe()
 	if d.Target == TargetStore {
 		return Submission{}, fmt.Errorf("%w: %q is a Store action; use RunStore", ErrTarget, d.ID)
+	}
+	if r.cfg.Facts == nil {
+		// Fail closed: without a Facts port the gate would read empty Facts (Tier0=false) and authorise on RBAC alone.
+		return Submission{}, fmt.Errorf("%w: %q targets %s but the runner has no Facts port", ErrInvalid, d.ID, d.Target)
 	}
 	if req.Origin == "" {
 		req.Origin = OriginAPI
@@ -173,7 +178,7 @@ func (r *Runner) planAndRoute(ctx context.Context, t tenant.ID, opID string, inp
 			return fmt.Errorf("plan transaction: %w", err)
 		}
 		var err error
-		steps, err = act.Plan(ctx, PlanContext{Tx: tx, Facts: r.cfg.Facts, Pins: op.Pins}, input)
+		steps, err = act.Plan(ctx, PlanContext{Tx: tx, Facts: pinnedReader{port: r.cfg.Facts, ad: d.Target == TargetAD, pins: maps.Clone(op.Pins)}, Pins: op.Pins}, input)
 		return err
 	})
 	if perr == nil {
@@ -256,12 +261,12 @@ func (r *Runner) failPlan(ctx context.Context, t tenant.ID, op opRecord, cause e
 // authoriseTarget authorises the initiator chain over live facts and returns a block reason, or "".
 func (r *Runner) authoriseTarget(ctx context.Context, chain authority.Chain, perm authz.Permission, t authority.TargetRef, pins authority.Pins) string {
 	q := r.cfg.Authz.FactsQuery(chain, perm, t)
-	var f authority.Facts
-	if r.cfg.Facts != nil {
-		var err error
-		if f, err = r.cfg.Facts.Facts(ctx, pins, q); err != nil {
-			return "facts_unavailable"
-		}
+	if r.cfg.Facts == nil {
+		return "facts_unavailable"
+	}
+	f, err := r.cfg.Facts.Facts(ctx, pins, q)
+	if err != nil {
+		return "facts_unavailable"
 	}
 	if f.Tier0 {
 		return "tier0"

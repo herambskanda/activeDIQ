@@ -368,19 +368,24 @@ func (u *run) liveFacts(ctx context.Context, q authority.FactsQuery, t authority
 }
 
 func (u *run) pinnedFacts() PinnedFacts {
-	return pinnedReader{port: u.r.cfg.Facts, ad: u.d.Target == TargetAD, pins: maps.Clone(u.req.Pins)}
+	return pinnedReader{port: u.r.cfg.Facts, ad: u.d.Target == TargetAD, store: u.d.Target == TargetStore, pins: maps.Clone(u.req.Pins)}
 }
 
 // pinnedReader binds a LiveFacts port to one operation's pins.
 type pinnedReader struct {
 	port LiveFacts
 	ad   bool
-	pins authority.Pins
+	// store: a Store Action, which reads no directory facts, so a nil port is legitimate.
+	store bool
+	pins  authority.Pins
 }
 
 func (p pinnedReader) Facts(ctx context.Context, q authority.FactsQuery) (authority.Facts, error) {
 	if p.port == nil {
-		return authority.Facts{}, nil
+		if p.store {
+			return authority.Facts{}, nil
+		}
+		return authority.Facts{}, fmt.Errorf("%w: directory target with no Facts port", ErrInvalid)
 	}
 	if p.ad {
 		if nc := q.Target.NC; nc == "" || p.pins[nc] == "" {
