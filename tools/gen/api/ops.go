@@ -181,6 +181,11 @@ func (m *Model) parseOp(p *parser, op *Operation, raw Doc, where string) {
 	if (op.Method == "GET" || op.Method == "HEAD" || op.Method == "DELETE") && op.Body != nil {
 		p.fail(where, "%s carries no request body", op.Method)
 	}
+	if op.Body == nil {
+		// TM §7.6 AN-1: a body-less operation accepts no body at all; apihost refuses Content-Length > 0 and any
+		// Transfer-Encoding with 413 at chain step 6. The row says so: cap 0.
+		op.MaxBody = 0
+	}
 
 	// Responses.
 	resps, _ := raw["responses"].(Doc)

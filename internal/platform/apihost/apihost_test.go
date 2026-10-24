@@ -815,3 +815,63 @@ func TestHandlerSeesPrincipalAndTrace(t *testing.T) {
 		t.Fatalf("%d %v", rec.Code, rec.Header())
 	}
 }
+
+// TM §7.6 AN-1 / TM-F-ANON: a BodyNone operation takes no body, whatever its MaxBody says.
+func TestBodyNoneRefusesBody(t *testing.T) {
+	newRow := func(perm string) (*row, *int) {
+		calls := new(int)
+		m := meta("listWidgets", "GET", "/widgets", perm)
+		m.MaxBody = 1 << 20 // the old generated cap: the chain must not rely on it
+		if perm == "anonymous" {
+			m.Class = "anonymous"
+		}
+		return &row{meta: m, call: func(context.Context, apihost.Input) (apihost.Response, error) {
+			*calls++
+			return resp{status: 200, body: map[string]string{"ok": "yes"}}, nil
+		}}, calls
+	}
+	policy := apihost.Policy{Anonymous: []apihost.AnonymousRow{{Operation: "listWidgets", Gate: "AN-1"}}}
+	cases := []struct {
+		name    string
+		perm    string
+		mutate  func(*http.Request)
+		refused bool
+	}{
+		{"one-byte body", "widgets.read", func(r *http.Request) { r.Body, r.ContentLength = io.NopCloser(strings.NewReader("x")), 1 }, true},
+		{"Content-Length at the old 1 MiB cap", "widgets.read", func(r *http.Request) { r.ContentLength = 1 << 20 }, true},
+		{"chunked body", "widgets.read", func(r *http.Request) {
+			r.Body, r.ContentLength, r.TransferEncoding = io.NopCloser(strings.NewReader("x")), -1, []string{"chunked"}
+		}, true},
+		{"anonymous one-byte body", "anonymous", func(r *http.Request) { r.Body, r.ContentLength = io.NopCloser(strings.NewReader("x")), 1 }, true},
+		{"Content-Length 0", "widgets.read", func(r *http.Request) { r.ContentLength = 0 }, false},
+		{"no body", "widgets.read", func(*http.Request) {}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rw, calls := newRow(c.perm)
+			fp := newPorts()
+			req := get("/widgets")
+			c.mutate(req)
+			var pol apihost.Policy
+			if c.perm == "anonymous" {
+				pol = policy
+			}
+			rec := serve(t, rw, fp, pol, req)
+			if c.refused {
+				problemOf(t, rec, 413, apitypes.ProblemTypePayloadTooLarge)
+				if *calls != 0 {
+					t.Fatal("handler was called")
+				}
+				for _, p := range fp.calls {
+					if p == "authn" || p == "authz" {
+						t.Fatalf("refusal came after %s: %v", p, fp.calls)
+					}
+				}
+				return
+			}
+			if rec.Code != 200 || *calls != 1 {
+				t.Fatalf("status %d, handler calls %d: %s", rec.Code, *calls, rec.Body)
+			}
+		})
+	}
+}

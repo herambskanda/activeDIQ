@@ -124,6 +124,8 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
     `maxBodyBytes` only; anonymous operations use `anonymous` or `auth`; a non-JSON or binary body needs
     `maxBodyBytes`; above 16 MiB needs a `policy.largeBodies` entry; an operation taking `SecretInput`
     is class `secret`, declares `maxBodyBytes` of at most 65536 and has a JSON body.
+    An operation with no request body takes none at all: the generator emits `MaxBody: 0` and apihost answers
+    `413 /problems/payload-too-large` to any `Content-Length > 0` or `Transfer-Encoding` before authentication (TM §7.6 AN-1).
   - `[ADR-0004 self-test]`: the check read fewer operations or entries than a plain text count or
     the committed bundle shows. Fix the reader (`tools/fitness/api/tree.go`), never the assertion.
   - An inactive line ending `[INPUT NOW PRESENT: ... overdue]` means a subject landed (operations,
