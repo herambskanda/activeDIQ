@@ -133,7 +133,8 @@ func Grants(p Principal, right Right, s SD) Result {
 		res.Decision, res.Why = Unknown, "mask_not_specific"
 		return res
 	}
-	if right.Object != nil && (right.Kind == Unset || right.Kind == Whole) {
+	if right.Object != nil && right.Kind != Class && right.Kind != Attribute &&
+		right.Kind != PropertySet && right.Kind != ControlAccess && right.Kind != ValidatedWrite {
 		res.Decision, res.Why = Unknown, "right_kind_unset"
 		return res
 	}
@@ -203,8 +204,12 @@ func Grants(p Principal, right Right, s SD) Result {
 			// in it. Without a catalogue we cannot tell whether this GUID is the asked
 			// attribute's set, so a held ACE that meets the asked read/write bits makes the
 			// answer Unknown. Control-access, validated-write and class asks are exact matches.
-			if right.Kind == Attribute && a.Mask&remaining&(MaskReadProp|MaskWriteProp) != 0 &&
-				(p.holds(a.Trustee, p.objectSID) || a.Trustee == sidSelf && p.objectSID == nil) {
+			// A property-set ask is covered too: a denied child means the set is not fully granted.
+			// An OWNER RIGHTS ACE counts as held when the principal is the owner.
+			if (right.Kind == Attribute || right.Kind == PropertySet) &&
+				a.Mask&remaining&(MaskReadProp|MaskWriteProp) != 0 &&
+				(p.holds(a.Trustee, p.objectSID) || a.Trustee == sidSelf && p.objectSID == nil ||
+					a.Trustee == sidOwnerRights && s.HasOwner && p.holds(s.Owner, nil)) {
 				res.Decision, res.Sources, res.Why = Unknown, nil, "property_set_unresolved"
 				return res
 			}

@@ -157,7 +157,7 @@ func grantsRecord(t *testing.T, r corpus.Record) (corpus.Result, error) {
 	if _, ok := r.Args["kind"]; ok {
 		k, _ := r.Arg("kind")
 		kinds := map[string]RightKind{"whole": Whole, "class": Class, "attribute": Attribute,
-			"property_set": PropertySet, "control_access": ControlAccess, "validated_write": ValidatedWrite}
+			"property_set": PropertySet, "control_access": ControlAccess, "validated_write": ValidatedWrite, "out_of_range": RightKind(99)}
 		kk, ok := kinds[k.Text()]
 		if !ok {
 			return corpus.Result{}, fmt.Errorf("unknown kind %q", k.Text())

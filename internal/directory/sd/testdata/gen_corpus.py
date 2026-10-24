@@ -238,6 +238,12 @@ grants("SD-H16A", sd(dacl=acl([ace(0, 0, 0xF01FF, OR)]), owner=sid(X1)), 0x20, r
 grants("SD-H16B", sd(dacl=acl([ace(1, 0, 0x20, OR), ace(0, 0, 0x20, "S-1-1-0")]), owner=sid(X1)), 0x20, res("unknown", why="owner_rights_ace"), True, R + "owner + deny(OWNER RIGHTS) + allow(Everyone): not a definite Yes")
 grants("SD-H16C", sd(dacl=acl([ace(0, 0, 0xF01FF, OR)]), owner=OWN), 0x20, res("no", why="no_matching_ace"), False, R + "non-owner: the OWNER RIGHTS ACE is irrelevant")
 grants("SD-H17", sd(dacl=acl([ace(5, 0, 0x20, G1, obj=MEMBERSHIP)], rev=4), owner=OWN), 0x20, res("unknown", why="right_kind_unset"), True, R + "Object set without a Kind fails closed", obj=MEMBER)
+R = "security third re-review T-0149 / OWNER RIGHTS on a property set; PropertySet ask "
+grants("SD-H18A", sd(dacl=acl([ace(5, 0, 0x20, OR, obj=MEMBERSHIP)], rev=4), owner=sid(X1)), 0x20, res("unknown", why="property_set_unresolved"), True, R + "owner + OWNER RIGHTS allow on the Membership set covers member", obj=MEMBER, kind="attribute")
+grants("SD-H18B", sd(dacl=acl([ace(6, 0, 0x20, OR, obj=MEMBERSHIP), ace(0, 0, 0x20, "S-1-1-0")], rev=4), owner=sid(X1)), 0x20, res("unknown", why="property_set_unresolved"), True, R + "owner + OWNER RIGHTS deny on the set then allow Everyone: not a definite Yes", obj=MEMBER, kind="attribute")
+grants("SD-H18C", sd(dacl=acl([ace(5, 0, 0x20, OR, obj=MEMBERSHIP)], rev=4), owner=OWN), 0x20, res("no", why="no_matching_ace"), False, R + "non-owner: the OWNER RIGHTS set ACE is irrelevant", obj=MEMBER, kind="attribute")
+grants("SD-H19", sd(dacl=acl([ace(6, 0, 0x20, "S-1-1-0", obj=MEMBER), ace(5, 0, 0x20, "S-1-1-0", obj=MEMBERSHIP)], rev=4), owner=OWN), 0x20, res("unknown", why="property_set_unresolved"), True, R + "PropertySet ask: a denied child means the set is not fully granted", obj=MEMBERSHIP, kind="property_set")
+grants("SD-H20", sd(dacl=acl([ace(5, 0, 0x20, G1, obj=MEMBERSHIP)], rev=4), owner=OWN), 0x20, res("unknown", why="right_kind_unset"), True, R + "a RightKind outside the declared range fails closed", obj=MEMBER, kind="out_of_range")
 
 with open("testdata/safe-primitives/sd.read.jsonl", "w") as f:
     for r in recs:

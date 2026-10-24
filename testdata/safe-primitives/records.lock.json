@@ -513,7 +513,12 @@
       "SD-H16A": true,
       "SD-H16B": true,
       "SD-H16C": false,
-      "SD-H17": true
+      "SD-H17": true,
+      "SD-H18A": true,
+      "SD-H18B": true,
+      "SD-H18C": false,
+      "SD-H19": true,
+      "SD-H20": true
     },
     "sql": {
       "SQL-03": true,
