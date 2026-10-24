@@ -406,3 +406,36 @@ func FuzzObjectRef(f *testing.F) {
 		}
 	})
 }
+
+// T-0314: OID-typed RDNs that AD maps to a known type must normalise, or Equal/IsDescendantOf
+// can be bypassed by spelling the OU as 2.5.4.11=.
+func TestOIDTypedRDNsNormalise(t *testing.T) {
+	for _, mode := range []Mode{Strict, Lenient} {
+		short := mustParse(t, "CN=x,OU=Restricted,DC=a", mode)
+		for _, s := range []string{
+			"CN=x,2.5.4.11=Restricted,DC=a",
+			"2.5.4.3=x,2.5.4.11=Restricted,0.9.2342.19200300.100.1.25=a",
+		} {
+			long := mustParse(t, s, mode)
+			scope := mustParse(t, "OU=Restricted,DC=a", mode)
+			if !Equal(short, long) || !IsDescendantOf(long, scope) || long.Render() != short.Render() {
+				t.Errorf("%q not equivalent to short form: %q", s, long.Render())
+			}
+		}
+		for _, pair := range [][2]string{{"2.5.4.10", "O"}, {"2.5.4.7", "L"}, {"2.5.4.8", "ST"}, {"2.5.4.6", "C"},
+			{"2.5.4.9", "STREET"}, {"0.9.2342.19200300.100.1.1", "UID"}} {
+			if !Equal(mustParse(t, pair[0]+"=v,DC=a", mode), mustParse(t, pair[1]+"=v,DC=a", mode)) {
+				t.Errorf("%s != %s", pair[0], pair[1])
+			}
+		}
+		// Unknown OIDs stay OID; leading-zero arcs and the OID. prefix are refused.
+		if mustParse(t, "1.2.3.4=v,DC=a", mode).RDNs()[0].Type() != OID {
+			t.Error("unknown OID must stay OID")
+		}
+		for _, s := range []string{"2.5.04.11=x,DC=a", "OID.2.5.4.11=x,DC=a"} {
+			if _, err := Parse(s, mode); err == nil {
+				t.Errorf("%q must be refused", s)
+			}
+		}
+	}
+}
