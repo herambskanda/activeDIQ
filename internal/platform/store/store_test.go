@@ -472,3 +472,27 @@ func TestConcurrentTenantsStayIsolated(t *testing.T) {
 		}
 	})
 }
+
+func TestNestedWithTenantIsRefused(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s, Config{})
+		ran := false
+		for _, inner := range []tenant.ID{e.a, e.b} { // same tenant and another tenant
+			err := e.db.WithTenant(context.Background(), e.a, func(ctx context.Context, tx Tx) error {
+				return e.db.WithTenant(ctx, inner, func(context.Context, Tx) error { ran = true; return nil })
+			})
+			if !errors.Is(err, ErrNestedTenant) {
+				t.Fatalf("nested WithTenant = %v; want ErrNestedTenant", err)
+			}
+		}
+		if ran {
+			t.Fatal("the nested function ran")
+		}
+		// sequential use is still fine
+		for i := 0; i < 2; i++ {
+			if err := e.db.WithTenant(context.Background(), e.a, func(context.Context, Tx) error { return nil }); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+}

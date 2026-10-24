@@ -46,6 +46,10 @@ const maxReasonLen = 200
 var (
 	// ErrNoTenant is returned by WithTenant for the zero tenant.ID. No SQL has run.
 	ErrNoTenant = errors.New("store: no tenant: refusing to open a tenant transaction for the zero tenant ID")
+	// ErrNestedTenant is returned by WithTenant when called with the context of a running store
+	// transaction: a second transaction would not see the first's writes, and its tenant could differ.
+	// Do the work through the Tx you were given. No SQL has run.
+	ErrNestedTenant = errors.New("store: nested WithTenant: a transaction is already open on this context; use the Tx fn received")
 	// ErrReasonRequired is returned by WithPlatform when the reason is blank, too long or not printable.
 	ErrReasonRequired = errors.New("store: WithPlatform needs a short printable reason")
 	// ErrSimpleProtocolForbidden is returned by Open when the DSN selects pgx's simple protocol, which
@@ -233,6 +237,9 @@ func (d *DB) WithTenant(ctx context.Context, id tenant.ID, fn func(ctx context.C
 	if id.IsZero() {
 		return ErrNoTenant
 	}
+	if _, nested := ctx.Value(txCtxKey{}).(struct{}); nested {
+		return ErrNestedTenant
+	}
 	return d.run(ctx, id.String(), fn)
 }
 
@@ -246,6 +253,9 @@ func (d *DB) WithPlatform(ctx context.Context, reason string, fn func(ctx contex
 	slog.DebugContext(ctx, "store: platform transaction", "reason", reason)
 	return d.run(ctx, "", fn)
 }
+
+// txCtxKey marks the context handed to fn, so a nested WithTenant can be recognised.
+type txCtxKey struct{}
 
 func validReason(s string) bool {
 	if strings.TrimSpace(s) == "" || len(s) > maxReasonLen || !utf8.ValidString(s) {
@@ -279,7 +289,7 @@ func (d *DB) run(ctx context.Context, tenantID string, fn func(ctx context.Conte
 		return fmt.Errorf("store: set transaction context: %w", err)
 	}
 	st := &txState{hooked: d.hook.get() != nil}
-	if err := fn(ctx, tx{t: pgtx, st: st, guard: true}); err != nil {
+	if err := fn(context.WithValue(ctx, txCtxKey{}, struct{}{}), tx{t: pgtx, st: st, guard: true}); err != nil {
 		return err
 	}
 	if len(st.slots) > 0 {
