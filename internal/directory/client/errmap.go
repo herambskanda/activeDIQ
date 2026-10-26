@@ -63,6 +63,11 @@ func MapError(err error) *StepOutcome {
 	if err == nil {
 		return nil
 	}
+	var tc *Tier0ContextError
+	if errors.As(err, &tc) {
+		// The write was refused here, before the connector: the reason is a code, never an object.
+		return &StepOutcome{Status: StatusFailed, Audit: map[string]string{"error": "tier0_context", "reason": string(tc.Reason)}}
+	}
 	var re *RemoteError
 	if !errors.As(FromStatus(err), &re) || re.Err == nil {
 		return &StepOutcome{Status: StatusFailed, Audit: map[string]string{"error": "transport"}}
