@@ -41,6 +41,11 @@ type Assignment struct {
 // active and inside their validity window at now.
 type Source interface {
 	Assignments(ctx context.Context, t tenant.ID, account string, now time.Time) ([]Assignment, error)
+	// PendingOrActive returns every non-revoked assignment not yet expired at now, including those
+	// whose valid_from is still in the future. TM-D19 rule 5 counts what a backed account holds or
+	// is about to hold: a scheduled grant must not be reachable through its AD object. It is never
+	// used to decide what an actor may do.
+	PendingOrActive(ctx context.Context, t tenant.ID, account string, now time.Time) ([]Assignment, error)
 }
 
 // Store is the Postgres Source.
@@ -60,6 +65,16 @@ const readTimeout = 5 * time.Second
 // authorises from inside its own tenant transaction (the inline path), and a nested tenant transaction
 // is refused. The read is committed state only, which is what an authorisation decision wants.
 func (s *Store) Assignments(_ context.Context, t tenant.ID, account string, now time.Time) ([]Assignment, error) {
+	return s.read(t, account, now, false)
+}
+
+// PendingOrActive is Source.PendingOrActive: revoked and expired assignments are left out, scheduled
+// ones are included.
+func (s *Store) PendingOrActive(_ context.Context, t tenant.ID, account string, now time.Time) ([]Assignment, error) {
+	return s.read(t, account, now, true)
+}
+
+func (s *Store) read(t tenant.ID, account string, now time.Time, includeFuture bool) ([]Assignment, error) {
 	if _, err := tenant.Parse(account); err != nil { // an account is a UUID; anything else holds nothing
 		return nil, nil
 	}
@@ -72,8 +87,8 @@ FROM public.authz_assignments a
 JOIN public.authz_roles r ON r.tenant_id = a.tenant_id AND r.id = a.role_id
 LEFT JOIN public.authz_role_permissions p ON p.tenant_id = r.tenant_id AND p.role_id = r.id
 WHERE a.tenant_id = $1::uuid AND a.account_id = $2::uuid AND a.assignment_state = 'active'
-  AND a.valid_from <= $3 AND (a.valid_until IS NULL OR a.valid_until > $3)
-GROUP BY a.id ORDER BY a.id`, t.String(), account, now)
+  AND ($4::boolean OR a.valid_from <= $3) AND (a.valid_until IS NULL OR a.valid_until > $3)
+GROUP BY a.id ORDER BY a.id`, t.String(), account, now, includeFuture)
 		if err != nil {
 			return fmt.Errorf("rbac: reading assignments: %w", err)
 		}

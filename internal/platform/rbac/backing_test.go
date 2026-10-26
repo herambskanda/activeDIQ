@@ -25,6 +25,24 @@ func (m acctSrc) Assignments(_ context.Context, _ tenant.ID, account string, _ t
 	return m[account], nil
 }
 
+func (m acctSrc) PendingOrActive(_ context.Context, _ tenant.ID, account string, _ time.Time) ([]Assignment, error) {
+	return m[account], nil
+}
+
+// scheduledSrc is time-aware like Store: the accounts listed hold their assignments only from a
+// future valid_from, so Assignments (current) omits them and PendingOrActive includes them.
+type scheduledSrc struct {
+	acctSrc
+	scheduled map[string]bool
+}
+
+func (s scheduledSrc) Assignments(ctx context.Context, tn tenant.ID, account string, now time.Time) ([]Assignment, error) {
+	if s.scheduled[account] {
+		return nil, nil
+	}
+	return s.acctSrc.Assignments(ctx, tn, account, now)
+}
+
 type fakeBacking struct {
 	got BackedAccounts
 	err error
@@ -226,5 +244,42 @@ func TestBackingObjectTier0ScopeIsNotCoveredByTenantRoot(t *testing.T) {
 	err := run(guarded(t, src, &fakeBacking{got: BackedAccounts{Accounts: []string{console}, Complete: true}}, fakeRoots{}), "objects.user.move")
 	if !contains(err, ReasonBackingObject) {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestBackingObjectFutureGrantRefused(t *testing.T) {
+	// The console account's grant starts tomorrow: resetting its AD object now would keep the
+	// password past the start. The backed side counts scheduled grants.
+	src := scheduledSrc{
+		acctSrc:   acctSrc{tech: {helpdesk()}, console: {asg(append([]authz.Permission{"objects.user.delete"}, BackingObjectPermissions...), ou(ouA)...)}},
+		scheduled: map[string]bool{console: true},
+	}
+	a, err := New(src, WithBackingGuard(&fakeBacking{got: BackedAccounts{Accounts: []string{console}, Complete: true}}, fakeRoots{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range BackingObjectPermissions {
+		if err := run(a, p); !contains(err, ReasonBackingObject) {
+			t.Errorf("%s: want %s, got %v", p, ReasonBackingObject, err)
+		}
+	}
+	// The actor side stays current-only: a scheduled grant on the actor does not authorise.
+	src2 := scheduledSrc{acctSrc: acctSrc{tech: {helpdesk()}, console: {helpdesk()}}, scheduled: map[string]bool{tech: true}}
+	a2, _ := New(src2, WithBackingGuard(&fakeBacking{got: BackedAccounts{Accounts: []string{console}, Complete: true}}, fakeRoots{}))
+	if err := run(a2, "objects.user.unlock"); !errors.Is(err, ErrDenied) {
+		t.Errorf("scheduled actor grant must not authorise, got %v", err)
+	}
+}
+
+func TestBackingObjectRootlessBackedGrantRefused(t *testing.T) {
+	src := acctSrc{tech: {helpdesk()}, console: {asg([]authz.Permission{"objects.user.delete"})}}
+	a := guarded(t, src, &fakeBacking{got: BackedAccounts{Accounts: []string{console}, Complete: true}}, fakeRoots{})
+	if err := run(a, "objects.user.reset_password"); !contains(err, ReasonBackingIncomplete) {
+		t.Fatalf("want %s, got %v", ReasonBackingIncomplete, err)
+	}
+	// An exclude-only scope reaches nothing and is still skipped.
+	src[console] = []Assignment{asg([]authz.Permission{"objects.user.delete"}, Root{Kind: OUSubtree, Connection: conn, GUID: ouB, Exclude: true})}
+	if err := run(a, "objects.user.reset_password"); err != nil {
+		t.Fatalf("exclude-only grant reaches nothing: %v", err)
 	}
 }

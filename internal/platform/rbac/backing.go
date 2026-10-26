@@ -83,13 +83,18 @@ func (a *Authorizer) checkBacking(ctx context.Context, tn tenant.ID, actor []Ass
 		if acct == who {
 			continue // holds exactly its own privileges
 		}
-		theirs, err := a.src.Assignments(ctx, tn, acct, a.now())
+		theirs, err := a.src.PendingOrActive(ctx, tn, acct, a.now())
 		if err != nil {
 			return fmt.Errorf("rbac: loading backed account assignments: %w", err)
 		}
 		for _, as := range theirs {
 			if len(as.Permissions) == 0 {
 				continue
+			}
+			if len(as.Roots) == 0 {
+				// Permissions with no roots: what it reaches is undefined (a tenant- or
+				// platform-wide grant could be represented this way). Fail closed.
+				return denied(ReasonBackingIncomplete)
 			}
 			scopes, err := a.scopesOf(ctx, tn, as)
 			if err != nil {

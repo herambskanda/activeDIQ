@@ -31,6 +31,10 @@ func (f fakeSrc) Assignments(context.Context, tenant.ID, string, time.Time) ([]A
 	return f.as, f.err
 }
 
+func (f fakeSrc) PendingOrActive(context.Context, tenant.ID, string, time.Time) ([]Assignment, error) {
+	return f.as, f.err
+}
+
 func human(id string) authority.Chain {
 	return authority.Chain{Requester: authority.Principal{ID: authority.PrincipalID(id), Kind: authority.Human}}
 }
