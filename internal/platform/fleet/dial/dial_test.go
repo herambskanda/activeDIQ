@@ -258,7 +258,7 @@ func TestEnrollRejectsBadResponses(t *testing.T) {
 		"bundle without pinned CA": func(r *Response, i *issuer) { r.CABundlePEM = other.pem() },
 		"leaf from another CA": func(r *Response, i *issuer) {
 			k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-			r.LeafDER = other.sign(t, &x509.Certificate{URIs: fleet.URIs(i.tid, "agent", "11111111-2222-4333-8444-555555555555"), ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}, k.Public())
+			r.LeafDER = other.sign(t, &x509.Certificate{URIs: fleet.URIs(i.tid, "addc", "11111111-2222-4333-8444-555555555555"), ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}, k.Public())
 		},
 		"leaf without identity": func(r *Response, i *issuer) {
 			k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -266,7 +266,7 @@ func TestEnrollRejectsBadResponses(t *testing.T) {
 		},
 		"leaf for a key we do not hold": func(r *Response, i *issuer) {
 			k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-			r.LeafDER = i.ca.sign(t, &x509.Certificate{URIs: fleet.URIs(i.tid, "agent", "11111111-2222-4333-8444-555555555555"), ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}, k.Public())
+			r.LeafDER = i.ca.sign(t, &x509.Certificate{URIs: fleet.URIs(i.tid, "addc", "11111111-2222-4333-8444-555555555555"), ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}, k.Public())
 		},
 		"no endpoints": func(r *Response, i *issuer) { r.Endpoints = nil },
 	}
