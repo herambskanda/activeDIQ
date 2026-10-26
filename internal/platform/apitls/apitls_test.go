@@ -2,6 +2,9 @@ package apitls_test
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -11,6 +14,10 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/apitls"
+	"github.com/skenzeriq/activediq/internal/platform/keys"
+	"github.com/skenzeriq/activediq/internal/platform/keys/keystest"
+	"github.com/skenzeriq/activediq/internal/platform/secret"
+	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
 func TestGenerateThenReuse(t *testing.T) {
@@ -199,4 +206,143 @@ func tdir(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return d
+}
+
+func localProvider(t *testing.T, id string, fill byte) keys.Provider {
+	t.Helper()
+	p, err := keys.NewLocalProvider(id, secret.FromBytes(bytes.Repeat([]byte{fill}, keys.DEKSize)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestSealedKeyIsCiphertextOnlyAndReloads(t *testing.T) {
+	dir := filepath.Join(tdir(t), "tls")
+	p := localProvider(t, "kek-1", 1)
+	a, err := apitls.LoadOrGenerateSealed(dir, "localhost:1", time.Now(), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, apitls.KeyFile)); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("plaintext key must not exist: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, apitls.SealedKeyFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(raw, []byte("PRIVATE KEY")) {
+		t.Fatal("sealed file contains PEM")
+	}
+	// The wrapped bytes must not contain the key's DER.
+	plain := unsealedDER(t, raw, p)
+	if bytes.Contains(raw, plain) {
+		t.Fatal("sealed file contains the plaintext key")
+	}
+	b, err := apitls.LoadOrGenerateSealed(dir, "localhost:1", time.Now(), p)
+	if err != nil || a.Fingerprint != b.Fingerprint {
+		t.Fatalf("reload: %v %q %q", err, a.Fingerprint, b.Fingerprint)
+	}
+}
+
+func unsealedDER(t *testing.T, raw []byte, p keys.Provider) []byte {
+	t.Helper()
+	var sk struct {
+		Provider string `json:"provider"`
+		KeyID    string `json:"key_id"`
+		Wrapped  []byte `json:"wrapped"`
+	}
+	if err := json.Unmarshal(raw, &sk); err != nil {
+		t.Fatal(err)
+	}
+	tn, _ := tenant.Parse("00000000-0000-4000-8000-0000a91c7150")
+	der, err := p.Unwrap(keys.WrapRequest{Tenant: tn, Version: 1}, keys.KEKRef{Provider: sk.Provider, KeyID: sk.KeyID}, sk.Wrapped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return der
+}
+
+func TestCopiedSealedDirectoryCannotLoadOnAnotherHost(t *testing.T) {
+	src := filepath.Join(tdir(t), "tls")
+	if _, err := apitls.LoadOrGenerateSealed(src, "localhost:1", time.Now(), localProvider(t, "kek-1", 1)); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(tdir(t), "tls")
+	_ = os.MkdirAll(dst, 0o700)
+	for _, n := range []string{apitls.CertFile, apitls.SealedKeyFile} {
+		b, _ := os.ReadFile(filepath.Join(src, n))
+		_ = os.WriteFile(filepath.Join(dst, n), b, 0o600)
+	}
+	before := snapshotFiles(t, dst)
+	// Another host: a different KEK, or none at all.
+	for name, p := range map[string]keys.Provider{"other kek": localProvider(t, "kek-1", 2), "no provider": nil} {
+		if _, err := apitls.LoadOrGenerateSealed(dst, "localhost:1", time.Now(), p); err == nil {
+			t.Fatalf("%s: copied directory loaded", name)
+		}
+	}
+	if !reflect.DeepEqual(before, snapshotFiles(t, dst)) {
+		t.Fatal("failed load modified the directory")
+	}
+	if _, err := apitls.LoadOrGenerate(dst, "localhost:1", time.Now()); err == nil {
+		t.Fatal("plain LoadOrGenerate must refuse a sealed directory")
+	}
+}
+
+func snapshotFiles(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	ents, _ := os.ReadDir(dir)
+	for _, e := range ents {
+		b, _ := os.ReadFile(filepath.Join(dir, e.Name()))
+		out[e.Name()] = string(b)
+	}
+	return out
+}
+
+func TestLegacyPlaintextKeyIsSealedKeepingIdentity(t *testing.T) {
+	dir, a := gen(t)
+	b, err := apitls.LoadOrGenerateSealed(dir, "localhost:1", time.Now(), localProvider(t, "kek-1", 1))
+	if err != nil || a.Fingerprint != b.Fingerprint {
+		t.Fatalf("migration: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, apitls.KeyFile)); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal("plaintext key remained after sealing")
+	}
+}
+
+func TestProviderOutageFailsClosedWithoutRegenerating(t *testing.T) {
+	dir := filepath.Join(tdir(t), "tls")
+	kms := keystest.New("k1")
+	a, err := apitls.LoadOrGenerateSealed(dir, "localhost:1", time.Now(), kms)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotFiles(t, dir)
+	kms.SetDown(true)
+	if _, err := apitls.LoadOrGenerateSealed(dir, "localhost:1", time.Now(), kms); err == nil || keys.Code(err) != keys.ProviderUnavailable {
+		t.Fatalf("want ProviderUnavailable, got %v", err)
+	}
+	if !reflect.DeepEqual(before, snapshotFiles(t, dir)) {
+		t.Fatal("outage modified the directory")
+	}
+	kms.SetDown(false)
+	b, err := apitls.LoadOrGenerateSealed(dir, "localhost:1", time.Now(), kms)
+	if err != nil || a.Fingerprint != b.Fingerprint {
+		t.Fatalf("recovery: %v", err)
+	}
+}
+
+func TestRenewalUnderProviderStaysSealed(t *testing.T) {
+	dir := filepath.Join(tdir(t), "tls")
+	p := localProvider(t, "kek-1", 1)
+	now := time.Now()
+	a, _ := apitls.LoadOrGenerateSealed(dir, "localhost:1", now, p)
+	b, err := apitls.LoadOrGenerateSealed(dir, "localhost:1", now.Add(2*365*24*time.Hour-24*time.Hour), p)
+	if err != nil || a.Fingerprint == b.Fingerprint {
+		t.Fatalf("expected renewal: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, apitls.KeyFile)); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal("plaintext key after renewal")
+	}
 }
