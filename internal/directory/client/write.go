@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -22,6 +23,7 @@ var (
 	ErrUnknownKind    = errors.New("client: write kind is not registered; write refused")
 	ErrNoNC           = errors.New("client: step binds no naming context; write refused")
 	ErrNoDCPin        = errors.New("client: step has no DC pin for the naming context; write refused")
+	ErrDCMismatch     = errors.New("client: plan precondition names a DC other than the pinned one; apply refused")
 	ErrNoDSAPin       = errors.New("client: step pins no DSA GUID for the naming context; write refused")
 	ErrTransport      = errors.New("client: connector call failed")
 )
@@ -177,6 +179,12 @@ func (c *Client) Write(ctx context.Context, s step.Step, op WriteOp) (Result, er
 	}
 	if plan.GetNoOp() {
 		return Result{NoOp: true}, nil
+	}
+
+	// Rule 5: Apply goes only to the DC Plan read from, and that is the pinned one. A connector that
+	// planned elsewhere is refused here, before anything is sent.
+	if !bytes.Equal(plan.GetPrecondition().GetDc().GetDsaGuid().GetValue(), dsaID) {
+		return Result{}, ErrDCMismatch
 	}
 
 	t0, err = c.buildTier0(ctx, StageApply, op)

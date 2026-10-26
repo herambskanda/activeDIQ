@@ -76,6 +76,8 @@ type call struct {
 	ov     *connectorv1.WriteGateOverride
 	acting *connectorv1.ActingPrincipal
 
+	dc *connectorv1.DcSelection // Plan only
+
 	attempt uint32
 	pre     *connectorv1.TargetPrecondition
 	digest  []byte
@@ -89,12 +91,14 @@ type passed struct {
 	// designated is the set step 7 checked; step 9 repeats the same reads.
 	designated []guid.GUID
 	dec        Decision
+	// dc is the bound DC's identity (AD only), verified equal to the pin (Plan) or to precondition.dc (Apply).
+	dc *connectorv1.DcIdentity
 }
 
 // Plan implements connectorv1.ConnectorServer.
 func (h *Handler) Plan(ctx context.Context, req *connectorv1.PlanRequest) (*connectorv1.PlanResponse, error) {
 	c := &call{name: "plan", conn: req.GetConnection(), step: req.GetStep(), target: req.GetTarget(), kind: req.GetKind(),
-		change: req.GetChange(), t0: req.GetTier0(), ov: req.GetTier0Override(), acting: req.GetActingPrincipal()}
+		change: req.GetChange(), t0: req.GetTier0(), ov: req.GetTier0Override(), acting: req.GetActingPrincipal(), dc: req.GetDc()}
 	ev := h.event(c)
 	p, err := h.guard(ctx, c, &ev)
 	if err != nil {
@@ -106,6 +110,15 @@ func (h *Handler) Plan(ctx context.Context, req *connectorv1.PlanRequest) (*conn
 	resp, err := p.op.Plan(ctx, p.auth, req)
 	if err != nil {
 		return nil, h.finish(&ev, err)
+	}
+	if p.dc != nil { // AD: the precondition names the DC Plan read from, which is the pinned one
+		if resp.Precondition == nil {
+			resp.Precondition = &connectorv1.TargetPrecondition{}
+		}
+		if d := resp.Precondition.GetDc(); d != nil && !proto.Equal(d.GetDsaGuid(), p.dc.GetDsaGuid()) {
+			return nil, h.finish(&ev, pinRefusal("5"))
+		}
+		resp.Precondition.Dc = p.dc
 	}
 	h.fillEvaluation(&resp.Tier0, p)
 	resp.Step, resp.Target = req.GetStep(), req.GetTarget()
@@ -212,14 +225,46 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 		return nil, invalid("1", "PreconditionRequired", "precondition")
 	}
 
-	// Step 2: the write gate.
 	isAD := h.prov.Kind() == connectorv1.ProviderKind_PROVIDER_KIND_AD
+	// ADR-0005 rule 5: an AD Plan names the DC it must run on; nil or unset is refused before any
+	// directory call. An AD Apply is held to the DC the precondition names.
+	var want *connectorv1.Guid
+	if isAD {
+		if c.name == "plan" {
+			want = c.dc.GetPinnedDsaGuid()
+			if _, err := fromWire(want); err != nil {
+				return nil, invalid("1", "DcRequired", "dc.pinned_dsa_guid")
+			}
+		} else {
+			want = c.pre.GetDc().GetDsaGuid()
+			if _, err := fromWire(want); err != nil {
+				return nil, invalid("1", "DcRequired", "precondition.dc.dsa_guid")
+			}
+		}
+	}
+
+	// Step 2: the write gate.
 	dec := h.gates.Check(c.conn.GetConnectionId(), isAD, c.ov)
 	if dec.ByOverride {
 		ev.OverrideID, ev.OverrideAcked, ev.OverrideListed = guidText(c.ov.GetOverrideId()), dec.Acknowledged, dec.Listed
 	}
 	if !dec.Open {
 		return nil, gateRefusal(dec.State, wireOrNil(dec.VerificationID), dec.Unacknowledged)
+	}
+
+	// Step 2b: the bound DC is the pinned one. A mismatch or an unreadable identity is an error,
+	// never a silent switch (read-your-writes, DM-15.I3).
+	var bound *connectorv1.DcIdentity
+	if isAD {
+		b, ok := h.prov.(DCBinder)
+		if !ok {
+			return nil, pinRefusal("2")
+		}
+		id, err := b.BoundDC(ctx)
+		if err != nil || id == nil || !proto.Equal(id.GetDsaGuid(), want) {
+			return nil, pinRefusal("2")
+		}
+		bound = id
 	}
 
 	// Step 3: Tier0Context present; the target's statement present and fresh.
@@ -287,7 +332,7 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 			return nil, r
 		}
 	}
-	return &passed{op: op, touched: touched, designated: designated, dec: dec, auth: Authorised{p: &pass{evaluated: touched}}}, nil
+	return &passed{op: op, touched: touched, designated: designated, dec: dec, dc: bound, auth: Authorised{p: &pass{evaluated: touched}}}, nil
 }
 
 // Refusal reasons recorded for a property-write refusal that is not a rule verdict.
