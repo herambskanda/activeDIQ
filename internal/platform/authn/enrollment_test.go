@@ -61,10 +61,10 @@ func setup(t *testing.T, s *storetest.Server) *env {
 		t.Fatal(err)
 	}
 	t.Cleanup(db.Close)
-	e := &env{db: db, d: d, now: time.Unix(1_800_000_000, 0)}
+	e := &env{db: db, d: d, now: time.Now().Truncate(time.Second)}
 	e.a = tenanttest.Seed(t, d.ExecOwner, "A")
 	e.b = tenanttest.Seed(t, d.ExecOwner, "B")
-	e.svc = &Service{Keys: &keySource{}, Now: func() time.Time { return e.now }}
+	e.svc = &Service{Keys: &keySource{}, Failures: db, Now: func() time.Time { return e.now }}
 	return e
 }
 
@@ -89,12 +89,15 @@ func (e *env) enrol(t *testing.T, tid tenant.ID) (string, []byte) {
 		p.Seed.Expose(func(b []byte) {
 			seed, err = base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(string(b))
 		})
-		if err != nil {
-			return err
-		}
-		return e.svc.Activate(ctx, tx, tid, id, hotp(seed, stepAt(e.now)))
+		return err
 	})
 	if err != nil {
+		t.Fatal(err)
+	}
+	// Its own transaction: the attempt is charged in a separate one, which sees only committed rows.
+	if err := e.tx(t, tid, func(ctx context.Context, tx store.Tx) error {
+		return e.svc.Activate(ctx, tx, tid, id, hotp(seed, stepAt(e.now)))
+	}); err != nil {
 		t.Fatal(err)
 	}
 	return id, seed

@@ -2,6 +2,7 @@ package m
 
 import (
 	"context"
+	"time"
 
 	"internal/platform/store"
 )
@@ -41,4 +42,13 @@ func good(ctx context.Context, db *store.DB, o other) error {
 		_ = helper(c, db) // indirect call: accepted residual (ADR-0005 rule 11)
 		return o.WithTenant(c, func(context.Context) error { return nil })
 	})
+}
+
+type separator interface {
+	WithTenantSeparate(ctx context.Context, id store.ID, wait time.Duration, fn func(context.Context, store.Tx) error) error
+}
+
+func separate(ctx context.Context, db *store.DB, sep separator) {
+	_ = db.WithTenantSeparate(ctx, "t", time.Second, nil)  // want `WithTenantSeparate opens a second committed`
+	_ = sep.WithTenantSeparate(ctx, "t", time.Second, nil) // want `WithTenantSeparate opens a second committed`
 }

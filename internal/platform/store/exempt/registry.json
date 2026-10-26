@@ -117,6 +117,11 @@
       "reason": "CHECK: a method is totp, the sealed seed is at least 32 bytes and a subject is a console account or a directory user (DM-37); the probe row is a TOTP enrolment of an account."
     },
     {
+      "column": "public.authn_authenticator_enrollments.expires_at",
+      "value": "2030-01-01T00:00:00Z",
+      "reason": "INSERT trigger: an enrolment starts pending with an expiry (DM-37, ENH-09 §5); the probe row is a pending enrolment."
+    },
+    {
       "column": "public.correlations.match",
       "value": "sid",
       "reason": "CHECK: match is anchor or sid; the probe row has no anchor, so sid, which needs only ad_sid (DM-20.I1)."
