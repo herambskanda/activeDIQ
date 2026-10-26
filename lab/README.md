@@ -28,3 +28,12 @@ Full runbook (accounts, ports, what is seeded, **what Samba cannot test**, troub
 
 Generated and gitignored: `.lab.env` (credentials), `.lab-ca.pem` (trust anchor). Credentials are random per
 lab and never committed. Fixtures live only here; product code never imports them.
+
+## Fault proxy (T-0309)
+
+Samba cannot create referral objects, so LF-32 / CC-SRCH-10 is proven by injection:
+`internal/connector/ad/ldapfault_test.go` is a test-only LDAPS proxy that relays every message and plants a
+SearchResultReference in scoped searches. `referral_fault_test.go` runs it over an in-process stand-in
+(no lab needed); `ldapfault_lab_test.go` (tag `lab`, `make lab-test-connector`) runs it in front of the
+Samba lab. The real-Windows-DC case is `TestReferralWindowsRealDCPending`: it shows as SKIP/PENDING in
+`go test -v` output until the Windows lab can host a referral.
