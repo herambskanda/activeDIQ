@@ -5,7 +5,10 @@ LAB_ENV      := $(LAB_DIR)/.lab.env
 LAB_CA       := $(LAB_DIR)/.lab-ca.pem
 LAB_TIER     ?= standard
 LAB_BUILD_FLAGS ?= -q          # e.g. LAB_BUILD_FLAGS=--no-cache for a from-scratch image build
-COMPOSE      := docker compose -f $(LAB_DIR)/docker-compose.yml
+# Per-worktree isolation (T-0373): same derivation as lab/bin/lab-env, so no env file is needed to address it.
+LAB_HASH     := $(shell printf '%s' "$(CURDIR)" | (sha256sum 2>/dev/null || shasum -a 256) | cut -c1-8)
+LAB_PROJECT  := activediq-lab-$(LAB_HASH)
+COMPOSE      := docker compose -p $(LAB_PROJECT) -f $(LAB_DIR)/docker-compose.yml
 # The seed version changes whenever the generator, the image recipe or the tier change, so a stale
 # snapshot is never reused. It is also tied to the credentials file (a new .lab.env => a new lab).
 LAB_SEED_HASH := $(shell cat $(LAB_DIR)/seed/generate.py $(LAB_DIR)/seed/post-start.sh $(LAB_DIR)/seed/schema-seed.sh $(LAB_DIR)/samba/entrypoint.sh $(LAB_DIR)/samba/Dockerfile 2>/dev/null | shasum -a 256 | cut -c1-12)

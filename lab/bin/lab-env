@@ -1,15 +1,48 @@
-#!/bin/sh
-# Create the gitignored credentials file if missing. Credentials are random per lab, never committed,
+#!/bin/bash
+# Create or complete the gitignored lab env file. Credentials are random per lab, never committed,
 # and never printed. Usage: lab-env <path>
+# Per-worktree isolation (T-0373): the compose project, container name and host ports are derived
+# from the worktree's absolute path, so two worktrees never share a volume, container or port.
+# Existing files are completed in place (keys appended only when missing).
 set -eu
 f="$1"
-[ -f "$f" ] && exit 0
 umask 077
+root=$(cd "$(dirname "$0")/../.." && pwd)
+h=$(printf '%s' "$root" | sha256sum 2>/dev/null | cut -c1-8 || true)
+[ -n "$h" ] || h=$(printf '%s' "$root" | shasum -a 256 | cut -c1-8)
 pw() { printf 'Lab-%s-aA1!' "$(openssl rand -hex 14)"; }
-{
-  echo "LAB_ENV_ID=$(openssl rand -hex 6)"
-  echo "LAB_ADMIN_PASSWORD=$(pw)"
-  echo "LAB_USER_PASSWORD=$(pw)"
-  echo "LAB_SVC_PASSWORD=$(pw)"
-} > "$f"
-echo ">> generated $f (random lab credentials; gitignored)"
+has() { [ -f "$f" ] && grep -q "^$1=" "$f"; }
+add() { has "$1" || echo "$1=$2" >> "$f"; }
+
+# first of 5 consecutive free loopback ports, starting at a hash-derived block in 20000-39999
+free_block() {
+  start=$((20000 + ($(printf '%d' "0x$h") % 2500) * 8)); n=0
+  while [ $n -lt 50 ]; do
+    ok=1
+    for off in 0 1 2 3 4; do
+      p=$((start + off))
+      if (exec 3<>/dev/tcp/127.0.0.1/$p) 2>/dev/null; then ok=0; break; fi
+    done
+    [ $ok = 1 ] && { echo $start; return; }
+    start=$((start + 8)); n=$((n + 1))
+  done
+  echo "lab-env: no free port block found" >&2; exit 1
+}
+
+new=0; [ -f "$f" ] || new=1
+add LAB_ENV_ID "$(openssl rand -hex 6)"
+add LAB_ADMIN_PASSWORD "$(pw)"
+add LAB_USER_PASSWORD "$(pw)"
+add LAB_SVC_PASSWORD "$(pw)"
+add COMPOSE_PROJECT_NAME "activediq-lab-$h"
+add LAB_CONTAINER "activediq-lab-$h-dc-1"
+if ! has LAB_LDAPS_PORT; then
+  b=$(free_block)
+  add LAB_LDAPS_PORT $b
+  add LAB_GC_LDAPS_PORT $((b + 1))
+  add LAB_LDAP_PORT $((b + 2))
+  add LAB_KRB_PORT $((b + 3))
+  add LAB_KPASSWD_PORT $((b + 4))
+fi
+[ $new = 1 ] && echo ">> generated $f (random lab credentials, per-worktree project and ports; gitignored)"
+exit 0
