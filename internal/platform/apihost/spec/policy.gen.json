@@ -60,9 +60,44 @@
       "path": "/auth/sso/{idpId}/callback",
       "reason": "SAML assertion consumer service (HTTP-POST binding); same outcome as the OIDC callback.",
       "ref": "AN-3"
+    },
+    {
+      "gate": "the local account's password; success yields only a pending sign-in (AN-10), never a session",
+      "operation": "signInBreakGlassPassword",
+      "reason": "Break-glass first factor when SSO is down (ADM-142); one uniform failure shape, throttled and never locked (TM §7.6 rules 1-4).",
+      "ref": "AN-8"
+    },
+    {
+      "gate": "the pending-sign-in cookie",
+      "operation": "createWebAuthnSignInChallenge",
+      "reason": "Starts the WebAuthn second factor for a pending sign-in from AN-3, AN-8 or AN-9.",
+      "ref": "AN-10"
+    },
+    {
+      "gate": "the pending-sign-in cookie plus the enrolled WebAuthn credential",
+      "operation": "verifyWebAuthnSignIn",
+      "reason": "The only way a WebAuthn first-factor pending sign-in becomes a session (TM §7.6 rule 1).",
+      "ref": "AN-10"
+    },
+    {
+      "gate": "the pending-sign-in cookie plus the enrolled TOTP factor",
+      "operation": "verifyTotpSignIn",
+      "reason": "The only way a TOTP pending sign-in becomes a session (TM §7.6 rule 1).",
+      "ref": "AN-10"
     }
   ],
-  "authenticated": [],
+  "authenticated": [
+    {
+      "operation": "signOut",
+      "reason": "Ends the caller's own session; touches no other principal.",
+      "ref": "TM-F-SESSION"
+    },
+    {
+      "operation": "getCsrfToken",
+      "reason": "Gives the caller's own session its CSRF value; touches no other principal.",
+      "ref": "TM-F-SESSION"
+    }
+  ],
   "largeBodies": [],
   "nonApiRoutes": [
     {

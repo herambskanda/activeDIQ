@@ -1,4 +1,4 @@
--- 0012_authn_sessions: console sessions (T-0194; DM-31, threat model §7.3, ADR-0002 rule 6, ADM-145).
+-- 0013_authn_sessions: console sessions (T-0194; DM-31, threat model §7.3, ADR-0002 rule 6, ADM-145).
 -- Owner: internal/platform/authn. One tenant table.
 --
 -- A session lives in PostgreSQL so any server node serves it and a revocation made on one node is seen

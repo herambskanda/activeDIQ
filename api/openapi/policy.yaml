@@ -17,11 +17,9 @@
 #   anonymous        AN-4  first-run setup operation                    gate: one-time setup secret
 #                    AN-5  end-user TOTP enrolment operations           host: totp-enrolment binding
 #                    AN-7  [M4] SSPR operations on the L1 listener      host: sspr binding
-#                    AN-8  local break-glass sign-in, password step     class auth; TM §7.6 rules 1-4
 #                    AN-9  GET /auth/negotiate (and a nonApiRoutes row) only once the PRD offers SPNEGO
-#                    AN-10 sign-in second-factor operations             gate: pending-sign-in handle
-#   authenticated    getApiDocument (ADR-0004 rule 5); sign-out; the caller's own profile, sessions
-#                    and MFA factors. Never anything that reads or writes another principal.
+#   authenticated    getApiDocument (ADR-0004 rule 5); the caller's own profile, sessions and MFA
+#                    factors. Never anything that reads or writes another principal.
 #   secretResponses  LAPS reveal and BitLocker reveal (secret.* permissions, DM-33.I2); API-token
 #                    creation and connector-enrollment-token creation (shown once, TM §7.5). Class reveal.
 #   stepUp           one row per permission of the TM §7.4 table (TM-D16), named when its operation lands.
@@ -71,7 +69,29 @@ anonymous:
     gate: signed IdP response (SAML ACS, signed assertion, pinned algorithm)
     reason: SAML assertion consumer service (HTTP-POST binding); same outcome as the OIDC callback.
     ref: AN-3
-authenticated: []
+  - operation: signInBreakGlassPassword
+    gate: the local account's password; success yields only a pending sign-in (AN-10), never a session
+    reason: Break-glass first factor when SSO is down (ADM-142); one uniform failure shape, throttled and never locked (TM §7.6 rules 1-4).
+    ref: AN-8
+  - operation: createWebAuthnSignInChallenge
+    gate: the pending-sign-in cookie
+    reason: Starts the WebAuthn second factor for a pending sign-in from AN-3, AN-8 or AN-9.
+    ref: AN-10
+  - operation: verifyWebAuthnSignIn
+    gate: the pending-sign-in cookie plus the enrolled WebAuthn credential
+    reason: The only way a WebAuthn first-factor pending sign-in becomes a session (TM §7.6 rule 1).
+    ref: AN-10
+  - operation: verifyTotpSignIn
+    gate: the pending-sign-in cookie plus the enrolled TOTP factor
+    reason: The only way a TOTP pending sign-in becomes a session (TM §7.6 rule 1).
+    ref: AN-10
+authenticated:
+  - operation: signOut
+    reason: Ends the caller's own session; touches no other principal.
+    ref: TM-F-SESSION
+  - operation: getCsrfToken
+    reason: Gives the caller's own session its CSRF value; touches no other principal.
+    ref: TM-F-SESSION
 nonApiRoutes:
   - method: GET
     path: /healthz

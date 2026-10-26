@@ -118,6 +118,19 @@ components:
             type: /problems/step-up-required
             title: A fresh multi-factor check is required
             status: 401
+    SignInFailed:
+      description: >-
+        The sign-in did not succeed. One answer for every cause (unknown account, wrong secret, non-local
+        account, disabled account, throttled account, expired or exhausted pending sign-in), so the response
+        teaches a caller nothing (TM section 7.6 rule 2). It never carries a detail.
+      content:
+        application/problem+json:
+          schema:
+            $ref: shared/problems.yaml#/components/schemas/Problem
+          example:
+            type: /problems/sign-in-failed
+            title: Sign-in failed
+            status: 401
     Forbidden:
       description: You are not allowed to do this
       content:
@@ -278,6 +291,16 @@ components:
             type: /problems/directory-unavailable
             title: The directory is unavailable
             status: 503
+    NotImplemented:
+      description: The operation is declared but not built yet
+      content:
+        application/problem+json:
+          schema:
+            $ref: shared/problems.yaml#/components/schemas/Problem
+          example:
+            type: /problems/not-implemented
+            title: Not implemented
+            status: 501
     NotReady:
       description: The service is running but not ready to take traffic
       content:
