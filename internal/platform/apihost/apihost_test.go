@@ -16,6 +16,7 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitypes"
+	"github.com/skenzeriq/activediq/internal/platform/authn"
 )
 
 // ---- fakes ------------------------------------------------------------------------------------
@@ -912,5 +913,79 @@ func TestHSTS(t *testing.T) {
 		if got := rec.Header().Get("Strict-Transport-Security"); got != want {
 			t.Errorf("%s: HSTS = %q", name, got)
 		}
+	}
+}
+
+type liveSessions struct{}
+
+func (liveSessions) Lookup(_ context.Context, tok authn.Token) (authn.Session, error) {
+	t, err := tok.Tenant()
+	return authn.Session{Tenant: t, Account: "8f0c1d52-3b0a-4c43-9f0e-2b6d3c1a7e10", State: authn.SessionActive}, err
+}
+
+// TestCSRFRealAuthenticatorInChain proves AC2 against the real authn.Authenticator, not a stub.
+func TestCSRFRealAuthenticatorInChain(t *testing.T) {
+	const ten = "11111111-2222-4333-8444-555555555555"
+	tokA, err := authn.ParseToken(ten + "." + strings.Repeat("A", 42) + "A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokB, err := authn.ParseToken(ten + "." + strings.Repeat("B", 42) + "Q")
+	if err != nil {
+		t.Fatal(err)
+	}
+	au, err := authn.NewAuthenticator(liveSessions{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name    string
+		headers []string
+		ok      bool
+	}{
+		{"no header", nil, false},
+		{"wrong value", []string{"wrong"}, false},
+		{"another session's value", []string{authn.CSRFValue(tokB)}, false},
+		{"two headers", []string{authn.CSRFValue(tokA), authn.CSRFValue(tokA)}, false},
+		{"correct value", []string{authn.CSRFValue(tokA)}, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			calls := 0
+			rw := jsonRow()
+			rw.call = func(context.Context, apihost.Input) (apihost.Response, error) {
+				calls++
+				return resp{status: 200, body: map[string]string{"ok": "yes"}}, nil
+			}
+			fp := newPorts()
+			ports := fp.ports()
+			ports.Authn = au
+			m := rw.meta
+			doc, err := apihost.ParseDocument(docJSON([4]string{m.OperationID, m.Method, m.Path, m.Permission}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			s, err := apihost.Build(doc, []apihost.TagHandlers{apihost.NewTagHandlers("widgets", rw.route())}, apihost.Policy{}, catalogue, ports)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req := post("/widgets", "application/json", `{"name":"a"}`)
+			req.AddCookie(authn.SessionCookie(tokA, time.Hour))
+			for _, h := range c.headers {
+				req.Header.Add(authn.CSRFHeader, h)
+			}
+			rec := httptest.NewRecorder()
+			s.ServeHTTP(rec, req)
+			if c.ok {
+				if rec.Code != 200 || calls != 1 {
+					t.Fatalf("status %d, handler calls %d: %s", rec.Code, calls, rec.Body)
+				}
+				return
+			}
+			problemOf(t, rec, 403, apitypes.ProblemTypeCSRFFailed)
+			if calls != 0 {
+				t.Fatal("handler ran")
+			}
+		})
 	}
 }
