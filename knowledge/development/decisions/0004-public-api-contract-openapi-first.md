@@ -409,6 +409,7 @@ v2's own error text names Go types, so `apihost` maps it to the `malformed-reque
 - **Rate classes.** `x-activediq-limits.class` is one of `read`, `write`, `bulk`, `auth`, `reveal`, `secret` or `anonymous`.
   - The default is `read` for GET and HEAD, and `write` for everything else.
   - Anonymous operations must declare `anonymous` or `auth`.
+  - An anonymous operation that accepts a `SecretInput` (AN-8 password, AN-10 TOTP code) declares `auth`, which satisfies the `secret` rule below: its body cap is still 64 KiB, and `auth` is the stricter, source-IP and account keyed class (T-0193).
   - Operations in `secretResponses` must declare `reveal`.
   - Operations whose request reaches `SecretInput` (rule 6) must declare `secret`.
 - **How the limits work.** Limits apply per source IP (before authentication, chain step 3) and per principal (chain step 10). A limited request gets `429 /problems/rate-limited` with `Retry-After`. There is **no daily quota and no metering**, which keeps the ADM-190 lead. The numbers per class are `apihost` configuration. Their defaults are threat model TM-D22 (§7.8, T-0032), which also gives the reasoning per row:

@@ -1895,8 +1895,11 @@ TM-F-ABUSE for rules 2 and 3. Rows AN-8 to AN-10 were added under RT-7 by T-0032
 **Which rows are in `policy.yaml` today.** An entry that names an operation absent from the
 contract is stale and fails A13, and an entry with a `host` fails until T-0018 lands the
 hostname-binding table. So the seed carries the non-API routes of AN-1 to AN-3, and the two AN-1
-operations entered with their contract (T-0034). AN-4, AN-5,
-AN-7, AN-8 and AN-10 enter with their operations. AN-5 and AN-7 also need their hostname binding
+operations entered with their contract (T-0034). AN-8 and AN-10
+(`signInBreakGlassPassword`, `createWebAuthnSignInChallenge`, `verifyWebAuthnSignIn`, `verifyTotpSignIn`)
+and the `authenticated` rows `signOut` and `getCsrfToken` entered with theirs (T-0193); their handlers
+answer 501 until the build tickets land. The AN-8 failure is one `401 /problems/sign-in-failed` for
+every cause (rule 2). AN-4, AN-5 and AN-7 enter with their operations. AN-5 and AN-7 also need their hostname binding
 from T-0018. AN-9 enters when the PRD offers SPNEGO. The file's header lists each pending row.
 
 ### 7.7 Authorisation
