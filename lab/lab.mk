@@ -8,7 +8,7 @@ LAB_BUILD_FLAGS ?= -q          # e.g. LAB_BUILD_FLAGS=--no-cache for a from-scra
 COMPOSE      := docker compose -f $(LAB_DIR)/docker-compose.yml
 # The seed version changes whenever the generator, the image recipe or the tier change, so a stale
 # snapshot is never reused. It is also tied to the credentials file (a new .lab.env => a new lab).
-LAB_SEED_HASH := $(shell cat $(LAB_DIR)/seed/generate.py $(LAB_DIR)/seed/post-start.sh $(LAB_DIR)/samba/entrypoint.sh $(LAB_DIR)/samba/Dockerfile 2>/dev/null | shasum -a 256 | cut -c1-12)
+LAB_SEED_HASH := $(shell cat $(LAB_DIR)/seed/generate.py $(LAB_DIR)/seed/post-start.sh $(LAB_DIR)/seed/schema-seed.sh $(LAB_DIR)/samba/entrypoint.sh $(LAB_DIR)/samba/Dockerfile 2>/dev/null | shasum -a 256 | cut -c1-12)
 export LAB_TIER
 
 .PHONY: lab-up lab-reset lab-rebuild lab-down lab-destroy lab-status lab-logs lab-shell lab-test lab-test-unit lab-test-live lab-test-connector entra-lab-bootstrap entra-lab-verify
@@ -58,6 +58,7 @@ lab-shell: ## Shell inside the DC container (samba-tool, ldapsearch…)
 
 lab-test-unit: ## Seed-generator unit tests (no Docker needed)
 	python3 -m unittest discover -s $(LAB_DIR)/tests -p 'test_*.py' -v
+	$(LAB_DIR)/tests/test_schema_seed.sh && $(LAB_DIR)/tests/test_schema_seed.sh --selftest
 
 lab-test-live: ## Verify the running lab, then prove lab-reset returns it to the seeded state
 	$(LAB_DIR)/tests/verify.sh

@@ -22,7 +22,7 @@ Full runbook (accounts, ports, what is seeded, **what Samba cannot test**, troub
 | --- | --- |
 | `docker-compose.yml`, `lab.mk` | the stack and the `make lab-*` targets (root `Makefile` includes `lab.mk`) |
 | `samba/` | image recipe (`Dockerfile`) and `entrypoint.sh` (init / serve / restore / healthcheck) |
-| `seed/generate.py` | deterministic seed generator (LDIF + manifest); `seed/post-start.sh` does protocol-level steps |
+| `seed/generate.py` | deterministic seed generator (LDIF + manifest); `seed/post-start.sh` does protocol-level steps; `seed/schema-seed.sh` adds the 0x200-only custom schema attribute (lab-only override) |
 | `tests/` | `test_generate.py` (unit, no Docker), `verify.sh` (live, with `inner-*.sh` run in the container) |
 | `bin/` | `lab-env` (random credentials), `lab-info` |
 
