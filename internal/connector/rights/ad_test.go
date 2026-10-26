@@ -865,14 +865,32 @@ func TestFixtureTokenGroupsLackImplicitSIDs(t *testing.T) {
 	}
 }
 
-func TestImplicitNetworkLogonSIDsComeFromOneSet(t *testing.T) {
-	want := map[string]bool{"S-1-1-0": true, "S-1-5-2": true, "S-1-5-11": true, "S-1-5-15": true}
-	if len(implicitNetworkLogonSIDs) != len(want) {
-		t.Fatalf("set = %v", implicitNetworkLogonSIDs)
-	}
-	for _, s := range implicitNetworkLogonSIDs {
-		if !want[s] {
-			t.Errorf("unexpected %s", s)
+// T-0381 review: the identity's tokenGroups lacks Everyone/Authenticated Users (as in AD), so an
+// expected right granted only to them is covered solely by the checker's implicit logon SIDs.
+func TestExpectedRightGrantedToUniversalSIDIsCovered(t *testing.T) {
+	for _, trustee := range []string{"S-1-1-0", "S-1-5-11", "S-1-5-2", "S-1-5-15"} {
+		w := newWorld(t)
+		classUserG := w.f.schemaClass("user")
+		ou, ouG := w.f.obj("OU=Managed,DC=lab,DC=test", "", nil, nil)
+		w.putRaw(ou, "nTSecurityDescriptor", [][]byte{sdBytes(daSID,
+			tace{mask: dsCreateChild, objType: &classUserG, flags: 0x02, trustee: trustee},
+			tace{mask: dsDeleteChild, objType: &classUserG, flags: 0x02, trustee: trustee},
+		)})
+		r := w.run(t, ADInput{ManagedRoots: []adguid.GUID{ouG},
+			EnabledFamilies: []v1.RightsFamily{v1.RightsFamily_RIGHTS_FAMILY_AD_R3_USER_LIFECYCLE}})
+		if n := count(r, CodeMissingFamily); n != 0 {
+			t.Errorf("%s: expected right held via the implicit logon SID reported missing x%d: %v", trustee, n, codes(r))
 		}
+	}
+	// control: a trustee the identity does not hold leaves both rights missing
+	w := newWorld(t)
+	classUserG := w.f.schemaClass("user")
+	ou, ouG := w.f.obj("OU=Managed,DC=lab,DC=test", "", nil, nil)
+	w.putRaw(ou, "nTSecurityDescriptor", [][]byte{sdBytes(daSID,
+		tace{mask: dsCreateChild, objType: &classUserG, flags: 0x02, trustee: "S-1-5-4"})})
+	r := w.run(t, ADInput{ManagedRoots: []adguid.GUID{ouG},
+		EnabledFamilies: []v1.RightsFamily{v1.RightsFamily_RIGHTS_FAMILY_AD_R3_USER_LIFECYCLE}})
+	if n := count(r, CodeMissingFamily); n != 2 {
+		t.Errorf("control: missing x%d: %v", n, codes(r))
 	}
 }
