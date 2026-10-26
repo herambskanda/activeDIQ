@@ -1478,6 +1478,62 @@ func privilegedSID(s sid.SID) bool {
 	return privilegedDomainRIDs[rid]
 }
 
+// sidBatch bounds the objectSid OR-terms in one resolution search.
+const sidBatch = 100
+
+// resolveSIDs looks up every distinct non-privileged sIDHistory value in batches and calls set once
+// per value (nil entry when no object holds it). Any search error fails the snapshot (fail closed).
+func (b *builder) resolveSIDs(hist []histEntry, set func(sid.SID, *ad.Entry, bool)) error {
+	seen := map[sid.SID]bool{}
+	var todo []sid.SID
+	for _, h := range hist {
+		for _, s := range h.sids {
+			if privilegedSID(s) || seen[s] {
+				continue
+			}
+			seen[s] = true
+			if dom, ok := s.DomainSID(); ok && dom != b.domSID {
+				// Another domain: the GC path (rare, per value; fails closed on error).
+				e, found, foreign, err := b.resolveHistory(s)
+				if err != nil {
+					return fmt.Errorf("tier0: sIDHistory lookup: %w", err)
+				}
+				if !found {
+					e = nil
+				}
+				set(s, e, foreign)
+				continue
+			}
+			todo = append(todo, s)
+		}
+	}
+	for len(todo) > 0 {
+		n := min(sidBatch, len(todo))
+		batch := todo[:n]
+		todo = todo[n:]
+		got := map[sid.SID]*ad.Entry{}
+		err := b.d.Find(b.ctx, b.nm.Domain, ad.ScopeSubtree, Query{AnySID: batch}, idAttrs, func(e *ad.Entry) error {
+			ss, err := e.SIDs("objectSid")
+			if err != nil {
+				return fmt.Errorf("tier0: sIDHistory target: %w", err)
+			}
+			for _, s := range ss {
+				if seen[s] && got[s] == nil {
+					got[s] = e
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("tier0: sIDHistory lookup: %w", err)
+		}
+		for _, s := range batch {
+			set(s, got[s], false)
+		}
+	}
+	return nil
+}
+
 // C18: privileged sIDHistory. An object is tier0 when a sIDHistory value is privileged by RID, or
 // resolves to an object that is tier0 by another basis (iterated: such an object may itself have
 // become tier0 through C18). A group that qualifies makes its members tier0 through C2 (rule 7). A
@@ -1488,12 +1544,15 @@ func (b *builder) c18() error {
 		return err
 	}
 	done := make([]bool, len(hist))
-	// Resolution is cached: one Get per distinct value.
+	// Resolution is batched and cached: ceil(distinct/sidBatch) searches, never one per value.
 	type res struct {
 		e              *ad.Entry
 		found, foreign bool
 	}
 	cache := map[sid.SID]res{}
+	if err := b.resolveSIDs(hist, func(s sid.SID, e *ad.Entry, foreign bool) { cache[s] = res{e, e != nil, foreign} }); err != nil {
+		return err
+	}
 	var groups []*ad.Entry
 	for changed := true; changed; {
 		changed = false
@@ -1507,15 +1566,7 @@ func (b *builder) c18() error {
 					qualifies = true
 					break
 				}
-				r, ok := cache[s]
-				if !ok {
-					e, found, foreign, err := b.resolveHistory(s)
-					if err != nil {
-						return fmt.Errorf("tier0: sIDHistory lookup: %w", err)
-					}
-					r = res{e, found, foreign}
-					cache[s] = r
-				}
+				r := cache[s]
 				if r.found && r.foreign {
 					// The GC cannot clear an object of another domain (no ACLs, no nested membership
 					// there), and only a positive classification may: it is tier0 (TM-D26 rules 6b, 8).

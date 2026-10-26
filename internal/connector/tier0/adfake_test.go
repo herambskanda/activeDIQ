@@ -27,11 +27,13 @@ type fobj struct {
 // fakeDir is an in-memory ADDirectory. It implements the directory's semantics (subtree scope,
 // transitive membership with cycles, NotFound) and nothing of the classifier.
 type fakeDir struct {
-	nm      Naming
-	objs    []*fobj
-	failDN  string // any Get/Find touching a DN containing this fails
-	failHas string // any Find presence-testing this attribute fails
-	nextGID byte
+	nm          Naming
+	objs        []*fobj
+	failDN      string // any Get/Find touching a DN containing this fails
+	failHas     string // any Find presence-testing this attribute fails
+	nextGID     byte
+	failSIDFind bool    // any Find by objectSid fails
+	finds       []Query // every Find, in order (search-count assertions)
 
 	// Forest seam: other domains of the forest and the GC's objects (their objectSid is the key).
 	forestDoms []string
@@ -171,8 +173,12 @@ func (f *fakeDir) Get(_ context.Context, ref dn.ObjectRef, _ []string) (*ad.Entr
 }
 
 func (f *fakeDir) Find(_ context.Context, base dn.DN, _ ad.Scope, q Query, _ []string, fn func(*ad.Entry) error) error {
+	f.finds = append(f.finds, q)
 	if err := f.guard(base.String()); err != nil {
 		return err
+	}
+	if len(q.AnySID) > 0 && f.failSIDFind {
+		return &ad.Error{Code: ad.CodeUnreachable, Detail: "injected"}
 	}
 	for _, h := range q.Has {
 		if f.failHas != "" && strings.EqualFold(h, f.failHas) {
@@ -196,6 +202,11 @@ func (f *fakeDir) Find(_ context.Context, base dn.DN, _ ad.Scope, q Query, _ []s
 		return &ad.Error{Code: ad.CodeObjectNotFound}
 	}
 	for _, o := range hits {
+		if len(q.AnySID) > 0 {
+			if err := f.guard(o.dn); err != nil {
+				return err
+			}
+		}
 		if err := fn(o.entry()); err != nil {
 			return err
 		}
@@ -240,6 +251,15 @@ func (f *fakeDir) match(o *fobj, q Query) bool {
 				n, _ := strconv.Atoi(v)
 				hit = hit || int32(n) == e.Value
 			}
+		}
+		if !hit {
+			return false
+		}
+	}
+	if len(q.AnySID) > 0 {
+		hit := false
+		for _, s := range q.AnySID {
+			hit = hit || (o.sid != "" && s.String() == o.sid)
 		}
 		if !hit {
 			return false
