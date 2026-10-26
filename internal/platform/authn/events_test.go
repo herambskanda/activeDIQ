@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"github.com/skenzeriq/activediq/internal/platform/tenant/tenanttest"
 	"strings"
 	"testing"
 	"time"
@@ -102,6 +104,21 @@ func TestAccountEventsRevokeSessions(t *testing.T) {
 					t.Errorf("%d revoke events with reason %s by the admin, want 2", got, ev.why)
 				}
 			})
+		}
+		// A transaction of another tenant fails closed: the change rolls back, the session stays as it was.
+		{
+			acct := tenant.New().String()
+			victim := create(t, s, e.ten, acct)
+			err := s.db.WithTenant(ctx, tenant.New(), func(ctx context.Context, tx store.Tx) error {
+				_, err := s.OnAccountDisabled(ctx, tx, e.ten, acct, human)
+				return err
+			})
+			if !errors.Is(err, ErrTenantMismatch) {
+				t.Errorf("cross-tenant tx = %v, want ErrTenantMismatch", err)
+			}
+			if _, err := s.Lookup(ctx, victim.Token); err != nil {
+				t.Errorf("session after a refused cross-tenant revoke: %v", err)
+			}
 		}
 		if _, err := s.OnAccountDisabled(ctx, nil, e.ten, tenant.New().String(), human); err != ErrInvalid {
 			t.Errorf("nil tx = %v, want ErrInvalid", err)
@@ -273,6 +290,12 @@ func TestSessionRetentionPurge(t *testing.T) {
 		if _, err := s.Revoke(ctx, e.ten, revokedOld.Session.ID, ReasonOnDemand, human); err != nil {
 			t.Fatal(err)
 		}
+		// Another tenant's old ended session must survive this tenant's purge (the owner role has no RLS).
+		otherTen := tenanttest.Seed(t, e.d.ExecOwner, "t2")
+		otherOld := create(t, s, otherTen, acct)
+		if _, err := s.Revoke(ctx, otherTen, otherOld.Session.ID, ReasonOnDemand, human); err != nil {
+			t.Fatal(err)
+		}
 		expiredOld := create(t, s, e.ten, acct)
 		e.clk.advance(2 * time.Hour)
 		if _, err := s.ExpireDue(ctx, e.ten); err != nil {
@@ -309,14 +332,18 @@ func TestSessionRetentionPurge(t *testing.T) {
 		if err != nil || n != 2 {
 			t.Fatalf("Purge = %d, %v; want 2", n, err)
 		}
-		count := func(id string) int {
+		countIn := func(ten tenant.ID, id string) int {
 			var c int
-			if err := owner.WithTenant(ctx, e.ten, func(ctx context.Context, tx store.Tx) error {
-				return tx.QueryRow(ctx, `SELECT count(*) FROM public.authn_sessions WHERE tenant_id = $1 AND id = $2::uuid`, e.ten.String(), id).Scan(&c)
+			if err := owner.WithTenant(ctx, ten, func(ctx context.Context, tx store.Tx) error {
+				return tx.QueryRow(ctx, `SELECT count(*) FROM public.authn_sessions WHERE tenant_id = $1 AND id = $2::uuid`, ten.String(), id).Scan(&c)
 			}); err != nil {
 				t.Fatal(err)
 			}
 			return c
+		}
+		count := func(id string) int { return countIn(e.ten, id) }
+		if got := countIn(otherTen, otherOld.Session.ID); got != 1 {
+			t.Errorf("another tenant's old ended session: %d rows, want 1 (purge crossed tenants)", got)
 		}
 		for id, want := range map[string]int{revokedOld.Session.ID: 0, expiredOld.Session.ID: 0, active.Session.ID: 1, revokedNew.Session.ID: 1} {
 			if got := count(id); got != want {

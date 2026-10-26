@@ -25,6 +25,9 @@ var (
 	// ErrInvalid is returned for input that is not acceptable (a malformed ID, an unknown reason, no
 	// authentication method). No SQL has run.
 	ErrInvalid = errors.New("authn: invalid input")
+	// ErrTenantMismatch is returned when a transaction passed to RevokeAccountTx (or an On* method) belongs
+	// to a different tenant than the one named; nothing is revoked and the caller's change must roll back.
+	ErrTenantMismatch = errors.New("authn: transaction is not of the named tenant")
 
 	// ErrPolicyRead means the tenant's session policy could not be read, which is what a token naming
 	// an unknown tenant produces. HTTP callers answer it as they answer an unknown session.
@@ -165,8 +168,10 @@ type CreateResult struct {
 }
 
 const (
-	sqlClock  = `SELECT clock_timestamp()`
-	sqlAcctLk = `SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))`
+	sqlClock = `SELECT clock_timestamp()`
+	// sqlTxTenant is the tenant the transaction is scoped to ('' when none).
+	sqlTxTenant = `SELECT coalesce(current_setting('app.tenant_id', true), '')`
+	sqlAcctLk   = `SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))`
 
 	// expireDue ends an account's sessions whose deadline has passed. $2 is NULL for every account.
 	expireDue = `UPDATE public.authn_sessions
@@ -427,10 +432,19 @@ func (s *Store) RevokeAccount(ctx context.Context, t tenant.ID, account string, 
 
 // RevokeAccountTx is RevokeAccount inside the caller's tenant transaction, the one that disables the
 // account, changes its roles or resets its password or MFA: the revocation and its audit records commit
-// with the change, or not at all. tx must be a transaction of tenant t.
+// with the change, or not at all. tx must be a transaction of tenant t: if it is not (row-level security
+// would hide t's rows and the update would silently match nothing) the call fails with ErrTenantMismatch so
+// the caller's change rolls back instead of committing with every session still live.
 func (s *Store) RevokeAccountTx(ctx context.Context, tx store.Tx, t tenant.ID, account string, why Reason, by authority.Chain) (int, error) {
 	if tx == nil || t.IsZero() || !validAccount(account) || !why.valid() || by.Validate() != nil {
 		return 0, ErrInvalid
+	}
+	var cur string
+	if err := tx.QueryRow(ctx, sqlTxTenant).Scan(&cur); err != nil {
+		return 0, fmt.Errorf("authn: revoke: read transaction tenant: %w", err)
+	}
+	if cur != t.String() {
+		return 0, ErrTenantMismatch
 	}
 	now, err := s.now(ctx, tx)
 	if err != nil {
