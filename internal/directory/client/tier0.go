@@ -155,33 +155,30 @@ func (b *tier0Builder) statement(ctx context.Context, ref inventory.Ref, peerKin
 	if err != nil {
 		return nil, ctxErr(ReasonBadRef, nil)
 	}
-	links, asOf, err := b.links(ctx, ref)
+	st := &connectorv1.CorrelationStatement{Object: &connectorv1.Guid{Value: obj}}
+	ls, err := b.Correlations.CorrelationsFor(ctx, b.Tenant, ref)
+	if err != nil {
+		return nil, ctxErr(ReasonSourceUnavailable, err)
+	}
+	if len(ls) == 0 && peerKind == connectorv1.ProviderKind_PROVIDER_KIND_ENTRA {
+		// no_hybrid_link only when the connection has no HybridLink at all (DM-21). This is read live
+		// now, so it is the one empty answer that may be stamped with the time of the read (§8.3 F3).
+		has, err := b.HybridLinks.HasHybridLink(ctx, b.Tenant, connection.ID(ref.Connection))
+		if err != nil {
+			return nil, ctxErr(ReasonSourceUnavailable, err)
+		}
+		if !has {
+			st.Correlation = &connectorv1.CorrelationStatement_NoHybridLink{NoHybridLink: &connectorv1.NoHybridLink{}}
+			st.ComputedAt = timestamppb.New(b.Now())
+			return st, nil
+		}
+	}
+	ls, asOf, err := b.fresh(ctx, ref, ls)
 	if err != nil {
 		return nil, err
 	}
-	st := &connectorv1.CorrelationStatement{Object: &connectorv1.Guid{Value: obj}}
-	if len(links) == 0 {
-		// no_hybrid_link only when the connection has no HybridLink at all (DM-21); read live now, so
-		// the fact counts at the time of the read (§8.3 F3). Only an AD connection has this question
-		// answered by the registry; an Entra object with no correlation lists an empty peer set.
-		read := b.Now()
-		if peerKind == connectorv1.ProviderKind_PROVIDER_KIND_ENTRA {
-			has, err := b.HybridLinks.HasHybridLink(ctx, b.Tenant, connection.ID(ref.Connection))
-			if err != nil {
-				return nil, ctxErr(ReasonSourceUnavailable, err)
-			}
-			if !has {
-				st.Correlation = &connectorv1.CorrelationStatement_NoHybridLink{NoHybridLink: &connectorv1.NoHybridLink{}}
-				st.ComputedAt = timestamppb.New(read)
-				return st, nil
-			}
-		}
-		st.Correlation = &connectorv1.CorrelationStatement_Peers{Peers: &connectorv1.CorrelatedPeers{}}
-		st.ComputedAt = timestamppb.New(minTime(asOf, read))
-		return st, nil
-	}
 	peers := &connectorv1.CorrelatedPeers{}
-	for _, l := range links {
+	for _, l := range ls {
 		p, err := b.peer(ctx, l, peerKind)
 		if err != nil {
 			return nil, err
@@ -189,63 +186,58 @@ func (b *tier0Builder) statement(ctx context.Context, ref inventory.Ref, peerKin
 		peers.Peers = append(peers.Peers, p)
 	}
 	st.Correlation = &connectorv1.CorrelationStatement_Peers{Peers: peers}
-	st.ComputedAt = timestamppb.New(minTime(asOf, b.Now()))
+	st.ComputedAt = timestamppb.New(asOf)
 	return st, nil
 }
 
-// links reads the correlations of ref and the as-of time of the oldest fact among them. When that
-// time is older than the connector accepts, or unknown, it asks for a live re-read once; if the facts
-// are still too old the write is refused rather than sent with a stamp that is not true.
-func (b *tier0Builder) links(ctx context.Context, ref inventory.Ref) ([]inventory.Link, time.Time, error) {
-	for attempt := 0; ; attempt++ {
-		ls, err := b.Correlations.CorrelationsFor(ctx, b.Tenant, ref)
-		if err != nil {
-			return nil, time.Time{}, ctxErr(ReasonSourceUnavailable, err)
-		}
-		asOf, known := oldestFact(ls)
-		if known && b.Now().Sub(asOf) <= statementAgeBudget {
-			return ls, asOf, nil
-		}
-		if len(ls) == 0 {
-			return nil, b.Now(), nil // no fact to be old; the caller stamps its own live read
-		}
-		if attempt > 0 || b.Refresh == nil {
+// fresh returns the correlations with the as-of time of the oldest fact they rest on. An empty answer
+// is itself a fact (no link as of the last evaluation) and a link whose tier0 status or evaluation has
+// no as-of is just as unknown: neither may be stamped with the time of assembly. Unknown or older than
+// the connector accepts means one live re-read; if that does not settle it the write is refused.
+func (b *tier0Builder) fresh(ctx context.Context, ref inventory.Ref, ls []inventory.Link) ([]inventory.Link, time.Time, error) {
+	if asOf, known := oldestFact(ls); known && b.Now().Sub(asOf) <= statementAgeBudget {
+		return ls, asOf, nil
+	}
+	if b.Refresh == nil {
+		return nil, time.Time{}, ctxErr(ReasonStaleFacts, nil)
+	}
+	read, err := b.Refresh.RefreshCorrelations(ctx, b.Tenant, ref)
+	if err != nil {
+		return nil, time.Time{}, ctxErr(ReasonSourceUnavailable, err)
+	}
+	if ls, err = b.Correlations.CorrelationsFor(ctx, b.Tenant, ref); err != nil {
+		return nil, time.Time{}, ctxErr(ReasonSourceUnavailable, err)
+	}
+	if len(ls) == 0 { // the live read found none: the fact is as of that read
+		if read.IsZero() || b.Now().Sub(read) > statementAgeBudget {
 			return nil, time.Time{}, ctxErr(ReasonStaleFacts, nil)
 		}
-		if _, err := b.Refresh.RefreshCorrelations(ctx, b.Tenant, ref); err != nil {
-			return nil, time.Time{}, ctxErr(ReasonSourceUnavailable, err)
-		}
+		return ls, read, nil
 	}
+	asOf, known := oldestFact(ls)
+	if !known || b.Now().Sub(asOf) > statementAgeBudget {
+		return nil, time.Time{}, ctxErr(ReasonStaleFacts, nil)
+	}
+	return ls, asOf, nil
 }
 
 // oldestFact is the minimum, over the links, of the correlation's last evaluation and the inventory
-// as-of of the tier0 facts (§8.3 F3). A link with neither time has no known as-of: known is false.
+// as-of of the tier0 facts (§8.3 F3). A link missing either time, and an empty set, has no known as-of.
 func oldestFact(ls []inventory.Link) (oldest time.Time, known bool) {
 	if len(ls) == 0 {
 		return time.Time{}, false
 	}
 	for _, l := range ls {
-		for _, t := range []time.Time{l.GateCheckedAt, l.FactsAsOf} {
-			if t.IsZero() {
-				continue
-			}
-			if !known || t.Before(oldest) {
-				oldest = t
-			}
-			known = true
-		}
-		if l.GateCheckedAt.IsZero() && l.FactsAsOf.IsZero() {
+		if l.GateCheckedAt.IsZero() || l.FactsAsOf.IsZero() {
 			return time.Time{}, false
+		}
+		for _, t := range []time.Time{l.GateCheckedAt, l.FactsAsOf} {
+			if !known || t.Before(oldest) {
+				oldest, known = t, true
+			}
 		}
 	}
 	return oldest, known
-}
-
-func minTime(a, b time.Time) time.Time {
-	if a.Before(b) {
-		return a
-	}
-	return b
 }
 
 var stateWire = map[inventory.State]connectorv1.CorrelationState{
@@ -348,6 +340,9 @@ func (b *tier0Builder) override(ctx context.Context, id connection.ID) (*connect
 	}
 	if o == nil {
 		return nil, nil
+	}
+	if o.ConnectionID != id { // defence in depth against a provider returning another connection's override
+		return nil, ctxErr(ReasonInconsistent, nil)
 	}
 	oid, err := parseUUID(string(o.ID))
 	if err != nil {

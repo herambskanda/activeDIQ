@@ -86,6 +86,7 @@ func (fakeRev) Tier0Revision(context.Context, tenant.ID) (uint64, error) { retur
 
 type fakeRefresh struct {
 	calls int
+	at    time.Time
 	apply func()
 }
 
@@ -93,6 +94,9 @@ func (f *fakeRefresh) RefreshCorrelations(context.Context, tenant.ID, inventory.
 	f.calls++
 	if f.apply != nil {
 		f.apply()
+	}
+	if !f.at.IsZero() {
+		return f.at, nil
 	}
 	return t0Now, nil
 }
@@ -193,14 +197,24 @@ func TestNoHybridLinkOnlyWhenTheConnectionHasNone(t *testing.T) {
 	if st.GetNoHybridLink() == nil || !st.GetComputedAt().AsTime().Equal(t0Now) {
 		t.Fatalf("statement = %v", st)
 	}
-	r.links.has = true // a link exists, none of this object's correlations: peers, empty
+	// A hybrid connection with no stored correlation: the absence is a fact with no known as-of (the
+	// correlation job may lag), so without a live read the write is refused, never stamped "now".
+	r.links.has = true
+	if _, err = r.builder(t).Build(context.Background(), StagePlan, adOp()); !isReason(err, ReasonStaleFacts) {
+		t.Fatalf("empty answer on a hybrid connection, no refresher: %v", err)
+	}
+	// With a refresher the statement is stamped with the time of that read.
+	readAt := t0Now.Add(-30 * time.Second)
+	r.ref = &fakeRefresh{at: readAt}
 	got, err = r.builder(t).Build(context.Background(), StagePlan, adOp())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st := got.Context.Statements[0]; st.GetNoHybridLink() != nil || st.GetPeers() == nil || len(st.GetPeers().Peers) != 0 {
+	if st := got.Context.Statements[0]; st.GetNoHybridLink() != nil || st.GetPeers() == nil || len(st.GetPeers().Peers) != 0 ||
+		!st.GetComputedAt().AsTime().Equal(readAt) {
 		t.Fatalf("statement = %v", st)
 	}
+	r.ref = nil
 	r.links.err = errors.New("db down")
 	if _, err := r.builder(t).Build(context.Background(), StagePlan, adOp()); err == nil {
 		t.Fatal("a failed link read must not become no_hybrid_link")
@@ -325,7 +339,7 @@ func TestOverrideInForceBecomesWriteGateOverride(t *testing.T) {
 	if err != nil || got.Override != nil {
 		t.Fatalf("no override in force: %v %v", got.Override, err)
 	}
-	r.ov.o = &connection.Tier0Override{ID: ovID, AcknowledgedFingerprints: []string{"0a0b", "ff"}}
+	r.ov.o = &connection.Tier0Override{ID: ovID, ConnectionID: adConn, AcknowledgedFingerprints: []string{"0a0b", "ff"}}
 	got, err = r.builder(t).Build(context.Background(), StageApply, adOp())
 	if err != nil {
 		t.Fatal(err)
@@ -334,6 +348,11 @@ func TestOverrideInForceBecomesWriteGateOverride(t *testing.T) {
 	if len(fp) != 2 || !bytes.Equal(fp[0], []byte{0x0a, 0x0b}) || got.Override.GetOverrideId() == nil {
 		t.Fatalf("override = %v", got.Override)
 	}
+	r.ov.o.ConnectionID = entraConn // another connection's override is never applied
+	if _, err := r.builder(t).Build(context.Background(), StageApply, adOp()); !isReason(err, ReasonInconsistent) {
+		t.Fatalf("foreign override: %v", err)
+	}
+	r.ov.o.ConnectionID = adConn
 	r.ov.o.AcknowledgedFingerprints = []string{"zz"}
 	if _, err := r.builder(t).Build(context.Background(), StageApply, adOp()); err == nil {
 		t.Fatal("a corrupt fingerprint must refuse")
@@ -355,10 +374,15 @@ func TestEntraTargetGetsADPeerKind(t *testing.T) {
 	if p.GetPeerKind() != connectorv1.ProviderKind_PROVIDER_KIND_AD || p.GetPeerDirectory().GetAdForest() == nil {
 		t.Fatalf("peer = %v", p)
 	}
-	// An Entra object with no correlation lists an empty peer set; it never claims no_hybrid_link.
+	// An Entra object with no correlation never claims no_hybrid_link; the absence has no known as-of
+	// without a live read.
 	r.corr.links = nil
+	if _, err = r.builder(t).Build(context.Background(), StagePlan, op); !isReason(err, ReasonStaleFacts) {
+		t.Fatalf("got %v", err)
+	}
+	r.ref = &fakeRefresh{}
 	got, err = r.builder(t).Build(context.Background(), StagePlan, op)
-	if err != nil || got.Context.Statements[0].GetNoHybridLink() != nil {
+	if err != nil || got.Context.Statements[0].GetNoHybridLink() != nil || got.Context.Statements[0].GetPeers() == nil {
 		t.Fatalf("got %v, %v", got, err)
 	}
 }
@@ -464,5 +488,28 @@ func TestMapErrorTier0ContextRefusal(t *testing.T) {
 	o := MapError(fmt.Errorf("x: %w", ctxErr(ReasonStaleFacts, errors.New("cause with "+objGUID))))
 	if o.Status != StatusFailed || o.Retryable || o.Audit["reason"] != "stale_facts" || strings.Contains(fmt.Sprint(o.Audit), objGUID) {
 		t.Fatalf("%+v", o)
+	}
+}
+
+func isReason(err error, want Tier0Reason) bool {
+	var e *Tier0ContextError
+	return errors.As(err, &e) && e.Reason == want
+}
+
+// A peer recorded "not tier0" with no facts as-of has no known as-of for that status: it may not be
+// stamped with the gate check time (F3).
+func TestNonTier0PeerWithoutFactsAsOfIsStale(t *testing.T) {
+	r := newRig()
+	l := link(inventory.StateMatched, false)
+	l.FactsAsOf = time.Time{}
+	r.corr.links = []inventory.Link{l}
+	if _, err := r.builder(t).Build(context.Background(), StagePlan, adOp()); !isReason(err, ReasonStaleFacts) {
+		t.Fatalf("zero FactsAsOf: %v", err)
+	}
+	l = link(inventory.StateMatched, false)
+	l.GateCheckedAt = time.Time{}
+	r.corr.links = []inventory.Link{l}
+	if _, err := r.builder(t).Build(context.Background(), StagePlan, adOp()); !isReason(err, ReasonStaleFacts) {
+		t.Fatalf("zero GateCheckedAt: %v", err)
 	}
 }
