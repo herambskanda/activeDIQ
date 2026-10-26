@@ -50,6 +50,16 @@ func (e *sessEnv) node(t *testing.T, p Policy) *Store {
 	return s
 }
 
+// skewClock is for tests that move the fake clock hours past the database clock: the INSERT guard
+// (migration 0017) bounds timestamps by the database clock, so it is disabled for that test database.
+// TestAuthnSessionInsertGuard exercises the guard and does not call it.
+func (e *sessEnv) skewClock(t *testing.T) {
+	t.Helper()
+	if err := e.d.ExecOwner(context.Background(), `ALTER TABLE public.authn_sessions DISABLE TRIGGER authn_sessions_insert_guard`); err != nil {
+		t.Fatalf("disable the insert guard: %v", err)
+	}
+}
+
 func each(t *testing.T, fn func(t *testing.T, e *sessEnv)) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		d := s.NewDatabase(t)
@@ -112,6 +122,7 @@ func TestSessionIDStoredHashed(t *testing.T) {
 
 func TestSessionExpiry(t *testing.T) {
 	each(t, func(t *testing.T, e *sessEnv) {
+		e.skewClock(t)
 		s := e.node(t, pol)
 		acct := tenant.New().String()
 		state := func(id string) (st, reason string) {
@@ -353,4 +364,51 @@ func TestPolicyOutsideBoundsIsRefused(t *testing.T) {
 	if err := DefaultPolicy.Validate(DefaultBounds); err != nil {
 		t.Fatalf("the default policy is outside the default bounds: %v", err)
 	}
+}
+
+// authn_session_insert_guard: the runtime role cannot mint a session that is ended, backdated, or
+// outlives the platform maximum (T-0390).
+func TestAuthnSessionInsertGuard(t *testing.T) {
+	if DefaultBounds.AbsoluteMax != 24*time.Hour {
+		t.Fatalf("DefaultBounds.AbsoluteMax is %s: migrations/0017_authn_sessions_insert_guard.sql hardcodes 24h; "+
+			"change the guard (new forward migration) together with the Go bound", DefaultBounds.AbsoluteMax)
+	}
+	each(t, func(t *testing.T, e *sessEnv) {
+		s := e.node(t, pol)
+		const ins = `INSERT INTO public.authn_sessions
+  (tenant_id, id_hash, account_id, methods, created_at, last_seen_at, idle_expiry, absolute_expiry, state, ended_at, end_reason)
+VALUES ($1, $2, $3::uuid, ARRAY['password'], $4, $5, $6, $7, $8, $9, $10)`
+		now := time.Now().UTC()
+		type row struct {
+			name                     string
+			created, seen, idle, abs time.Time
+			state                    string
+			endedAt                  *time.Time
+			endReason                *string
+			ok                       bool
+		}
+		reason := "logout"
+		rows := []row{
+			{name: "valid", created: now, seen: now, idle: now.Add(time.Minute), abs: now.Add(time.Hour), state: "active", ok: true},
+			{name: "already ended", created: now, seen: now, idle: now.Add(time.Minute), abs: now.Add(time.Hour), state: "revoked", endedAt: &now, endReason: &reason},
+			{name: "expired deadline", created: now.Add(-2 * time.Hour), seen: now, idle: now.Add(-time.Hour), abs: now.Add(-time.Minute), state: "active"},
+			{name: "backdated", created: now.Add(-3 * time.Hour), seen: now.Add(-3 * time.Hour), idle: now.Add(time.Minute), abs: now.Add(time.Hour), state: "active"},
+			{name: "deadline beyond policy", created: now, seen: now, idle: now.Add(time.Minute), abs: now.Add(30 * 24 * time.Hour), state: "active"},
+			{name: "future-dated", created: now.Add(24 * time.Hour), seen: now.Add(24 * time.Hour), idle: now.Add(24 * time.Hour), abs: now.Add(24*time.Hour + 4*time.Minute), state: "active"},
+			{name: "window beyond policy", created: now.Add(-48 * time.Hour), seen: now, idle: now.Add(time.Minute), abs: now.Add(time.Hour), state: "active"},
+		}
+		for i, r := range rows {
+			hash := sha256.Sum256([]byte{byte(i)})
+			err := s.db.WithTenant(context.Background(), e.ten, func(ctx context.Context, tx store.Tx) error {
+				_, err := tx.Exec(ctx, ins, e.ten.String(), hash[:], tenant.New().String(), r.created, r.seen, r.idle, r.abs, r.state, r.endedAt, r.endReason)
+				return err
+			})
+			if r.ok && err != nil {
+				t.Errorf("%s: refused: %v", r.name, err)
+			}
+			if !r.ok && err == nil {
+				t.Errorf("%s: the database accepted it", r.name)
+			}
+		}
+	})
 }

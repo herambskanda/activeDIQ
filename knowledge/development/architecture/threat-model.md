@@ -1812,6 +1812,7 @@ security-architect reviews every change here.
 | Timeouts | Idle and absolute, tenant-configurable within platform bounds; concurrent-session limit (ADM-145) |
 | Revocation | On account disable (DM-31.I2), on role change of the account, on password/MFA reset, and on demand |
 | Transport | HSTS on the console; no plaintext listener |
+| Runtime-role compromise (T-0390) | A session row **is** the authentication result: arbitrary SQL as `activediq_app` can INSERT a well-formed session for any account with a chosen token hash, bypassing password and TOTP. Mitigation chosen: an INSERT trigger (`0017_authn_sessions_insert_guard`) so a minted row starts active, is not already expired or backdated, and lives at most 24 h (the platform ceiling); UPDATE is guarded and DELETE revoked (`0013`). **Accepted residual:** the database cannot prove a factor was verified, so an in-bounds forged session is possible. Containment is the audit trail, on-demand revocation and the 24 h cap; the T-0361 enrolment guards are defence in depth, not a barrier against this role |
 
 ### 7.4 Step-up re-authentication — DECISION TM-D16 (part 1)
 
