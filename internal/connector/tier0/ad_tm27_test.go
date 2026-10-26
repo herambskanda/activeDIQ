@@ -311,3 +311,48 @@ func TestC19UnresolvedGUID(t *testing.T) { // T0-C19-UNRESOLVED-GUID
 		wantBasis(t, f, tw, C19, false) // description resolves and is not a listed attribute
 	}
 }
+
+// T-0380: a foreignSecurityPrincipal is the principal only for a domain account SID. Every other FSP
+// (well-known and built-in SIDs, including the two-sub-authority ones) is a placeholder, so a rule-2
+// right granted to its SID fails the snapshot closed naming the SID.
+var defaultFSP = map[string]bool{"S-1-5-4": true, "S-1-5-9": true, "S-1-5-11": true, "S-1-5-17": true}
+
+func TestBroadSIDWithFSPFailsClosed(t *testing.T) {
+	sids := []string{"S-1-1-0", "S-1-5-4", "S-1-5-11", "S-1-5-15", "S-1-5-64-10", "S-1-5-64-14", "S-1-5-64-21",
+		"S-1-5-65-1", "S-1-18-1", "S-1-18-2", "S-1-2-0", "S-1-2-1", "S-1-5-113", "S-1-5-114"}
+	for _, w := range sids {
+		for _, c := range []struct {
+			name, obj string
+			ace       aceSpec
+		}{
+			{"C19", daDN, aceSpec{sid: w, mask: wProp, objType: &memberID}},
+			{"C17", dom, aceSpec{sid: w, mask: wDACL}},
+		} {
+			t.Run(c.name+"/"+w, func(t *testing.T) {
+				f := forest()
+				if !defaultFSP[w] {
+					f.add("CN="+w+",CN=ForeignSecurityPrincipals,"+dom, w, cls("top", "foreignSecurityPrincipal"))
+				}
+				if c.name == "C19" {
+					f.find(c.obj).raw["nTSecurityDescriptor"] = sdBytes(c.ace)
+				} else {
+					setSD(f, c.obj, c.ace)
+				}
+				r, err := classify(t, f, "CN=carol,OU=Staff,"+dom)
+				if err == nil || !r.Tier0 || !r.Unknown || !strings.Contains(err.Error(), w) {
+					t.Errorf("%+v %v", r, err)
+				}
+			})
+		}
+	}
+}
+
+// The twin: an FSP for a foreign-domain account is a real principal and is marked.
+func TestForeignDomainAccountFSPStaysPrincipal(t *testing.T) {
+	f := forest()
+	fsp := "S-1-5-21-111-222-333-1105"
+	f.add("CN="+fsp+",CN=ForeignSecurityPrincipals,"+dom, fsp, cls("top", "foreignSecurityPrincipal"))
+	f.find(daDN).raw["nTSecurityDescriptor"] = sdBytes(aceSpec{sid: fsp, mask: wProp, objType: &memberID})
+	wantBasis(t, f, "CN=S-1-5-21-111-222-333-1105,CN=ForeignSecurityPrincipals,"+dom, C19, true)
+	wantBasis(t, f, "CN=carol,OU=Staff,"+dom, C19, false)
+}
