@@ -1,6 +1,7 @@
 package tier0
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -309,5 +310,45 @@ func TestC19UnresolvedGUID(t *testing.T) { // T0-C19-UNRESOLVED-GUID
 			aceSpec{sid: dsid + "-5301", mask: c.mask, objType: &descID})
 		wantBasis(t, f, us, C19, true)
 		wantBasis(t, f, tw, C19, false) // description resolves and is not a listed attribute
+	}
+}
+
+// TM-D27 rule 8 input: the snapshot exposes each rule-2 right and each owner with the C19 object it
+// sits on, so the rights check blames the connector identity by object and right. The negative twin
+// (a trustee with a read-only ACE) records nothing.
+func TestC19RightsExposed(t *testing.T) { // T0-RIGHTS-C19 (classifier half)
+	f := forest()
+	u(f, "rt", 5200)
+	u(f, "rt2", 5201)
+	reset := resetPwdID
+	f.find(krbDN).raw["nTSecurityDescriptor"] = sdBytes(
+		aceSpec{sid: dsid + "-512", mask: gAll},
+		aceSpec{sid: dsid + "-5200", mask: allExt, objType: &reset},
+		aceSpec{sid: dsid + "-5201", mask: rProp})
+	set, err := NewAD(f).Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	krb := f.find(krbDN).guid
+	var got []C19Right
+	for _, r := range set.C19Rights() {
+		if r.Object == krb && !r.Owner && r.Trustee.String() == dsid+"-5200" {
+			got = append(got, r)
+		}
+		if r.Trustee.String() == dsid+"-5201" {
+			t.Fatalf("read-only trustee recorded: %+v", r)
+		}
+	}
+	if len(got) != 1 || got[0].ObjectType == nil || *got[0].ObjectType != reset || got[0].Mask&allExt == 0 {
+		t.Fatalf("rights on krbtgt: %+v", got)
+	}
+	owners := 0
+	for _, r := range set.C19Rights() {
+		if r.Owner && r.Object == krb {
+			owners++
+		}
+	}
+	if owners != 1 {
+		t.Fatalf("owner of krbtgt recorded %d times", owners)
 	}
 }
