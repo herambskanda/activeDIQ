@@ -5,7 +5,8 @@ import (
 	crand "crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -428,7 +429,7 @@ func (u *run) checkPlan(steps []StepPlan) error {
 		Version int
 		Steps   []StepPlan
 	}
-	b, err := json.Marshal(hashed{u.d.ID, u.d.Version, steps})
+	b, err := json.Marshal(hashed{u.d.ID, u.d.Version, steps}, planHashOpts...)
 	if err != nil {
 		return fmt.Errorf("%w: plan does not encode", ErrInvalid)
 	}
@@ -497,3 +498,7 @@ func (u *run) recordFailure(ctx context.Context, cause error) error {
 		"principal", string(u.req.Actor.Requester.ID), "target", u.failTgt.GUID, "outcome", string(u.outcome), "reason", u.reason)
 	return errors.Join(cause, fmt.Errorf("%w: %w", ErrRecord, last))
 }
+
+// planHashOpts keeps the plan-hash bytes those of the v1 encoder (nil slices and maps as null, HTML
+// escaping on) with map keys sorted, so a hash recorded before the json/v2 move still verifies.
+var planHashOpts = []json.Options{json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true)}

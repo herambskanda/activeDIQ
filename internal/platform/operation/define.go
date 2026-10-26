@@ -2,7 +2,7 @@ package operation
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"time"
 
@@ -73,7 +73,7 @@ func (d defined[In, P, Out]) Plan(ctx context.Context, pc PlanContext, in Input)
 	}
 	out := make([]StepPlan, 0, len(steps))
 	for _, s := range steps {
-		b, err := json.Marshal(s.Payload)
+		b, err := json.Marshal(s.Payload, json.Deterministic(true))
 		if err != nil {
 			return nil, fmt.Errorf("%w: payload does not encode", ErrInvalid)
 		}
@@ -101,7 +101,7 @@ func (d defined[In, P, Out]) Apply(ctx context.Context, s step.Step, p StepPlan)
 	if err != nil {
 		return Outcome{}, err
 	}
-	b, err := json.Marshal(out)
+	b, err := json.Marshal(out, json.Deterministic(true))
 	if err != nil {
 		return Outcome{}, fmt.Errorf("%w: outcome does not encode", ErrInvalid)
 	}
@@ -133,7 +133,7 @@ func (d defined[In, P, Out]) Inverse(p StepPlan, o Outcome) (Input, error) {
 	if err != nil {
 		return nil, err
 	}
-	b, err := json.Marshal(in)
+	b, err := json.Marshal(in, json.Deterministic(true))
 	if err != nil {
 		return nil, fmt.Errorf("%w: inverse does not encode", ErrInvalid)
 	}

@@ -2,7 +2,7 @@ package connection
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"time"
 
@@ -69,7 +69,7 @@ func (Store) RecordVerification(ctx context.Context, tx store.Tx, n NewVerificat
 	for c, o := range n.Outcomes {
 		outcomes[string(c)] = string(o)
 	}
-	ob, err := json.Marshal(outcomes)
+	ob, err := json.Marshal(outcomes, json.Deterministic(true))
 	if err != nil {
 		return Verification{}, fmt.Errorf("connection: record verification: %w", err)
 	}

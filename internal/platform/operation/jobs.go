@@ -1,9 +1,9 @@
 package operation
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"time"
@@ -17,7 +17,7 @@ import (
 func (r *Runner) registerJobs(reg *jobs.Registry) error {
 	kinds := []jobs.Kind{
 		{Name: JobApply, Timeout: 30 * time.Minute, Mode: jobs.ModeManagedTx,
-			ValidateArgs: func(a json.RawMessage) error { return decodeArgs(a, &chunkArgs{}) },
+			ValidateArgs: func(a jsontext.Value) error { return decodeArgs(a, &chunkArgs{}) },
 			RunManaged: func(ctx context.Context, run jobs.TenantTx, c jobs.Claimed) error {
 				var a chunkArgs
 				if err := decodeArgs(c.Args, &a); err != nil {
@@ -26,7 +26,7 @@ func (r *Runner) registerJobs(reg *jobs.Registry) error {
 				return r.RunChunk(ctx, c.Tenant, run.Run, a)
 			}},
 		{Name: JobVerify, Timeout: 10 * time.Minute, Mode: jobs.ModeManagedTx,
-			ValidateArgs: func(a json.RawMessage) error { return decodeArgs(a, &verifyArgs{}) },
+			ValidateArgs: func(a jsontext.Value) error { return decodeArgs(a, &verifyArgs{}) },
 			RunManaged: func(ctx context.Context, run jobs.TenantTx, c jobs.Claimed) error {
 				var a verifyArgs
 				if err := decodeArgs(c.Args, &a); err != nil {
@@ -53,16 +53,14 @@ func (r *Runner) registerJobs(reg *jobs.Registry) error {
 }
 
 // decodeArgs decodes typed references and refuses unknown fields: job args never carry values.
-func decodeArgs(raw json.RawMessage, into any) error {
-	var m map[string]json.RawMessage
+func decodeArgs(raw jsontext.Value, into any) error {
+	var m map[string]jsontext.Value
 	if err := json.Unmarshal(raw, &m); err != nil {
 		return errors.New("args are not an object")
 	}
 	delete(m, "tenant_id") // recorded by Enqueue
-	b, _ := json.Marshal(m)
-	dec := json.NewDecoder(bytes.NewReader(b))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(into); err != nil {
+	b, _ := json.Marshal(m, json.Deterministic(true))
+	if err := json.Unmarshal(b, into, json.RejectUnknownMembers(true)); err != nil {
 		return errors.New("args do not match the kind")
 	}
 	return nil
