@@ -21,7 +21,7 @@ lab-up: ## Start the AD lab (provision + seed on first run, ~3-4 min); prints co
 	command -v docker >/dev/null || { echo "docker not found"; exit 1; }; \
 	docker info >/dev/null 2>&1 || { echo "Docker daemon is not running"; exit 1; }; \
 	$(LAB_DIR)/bin/lab-env $(LAB_ENV); \
-	. $(LAB_ENV); \
+	set -a; . $(LAB_ENV); set +a; \
 	$(COMPOSE) build $(LAB_BUILD_FLAGS) dc; \
 	want="$(LAB_SEED_HASH)-$(LAB_TIER)-$$LAB_ENV_ID"; \
 	have=$$($(COMPOSE) run --rm --no-deps -T dc version 2>/dev/null | tail -1 | tr -d '\r'); \
@@ -35,7 +35,7 @@ lab-up: ## Start the AD lab (provision + seed on first run, ~3-4 min); prints co
 	echo "lab-up finished in $$(( $$(date +%s) - t0 ))s"
 
 lab-reset: ## Restore the lab to the exact seeded snapshot (seconds)
-	@set -e; t0=$$(date +%s); . $(LAB_ENV); \
+	@set -e; t0=$$(date +%s); set -a; . $(LAB_ENV); set +a; \
 	$(COMPOSE) stop -t 20 dc; \
 	$(COMPOSE) run --rm --no-deps -T dc restore; \
 	$(COMPOSE) up -d --wait --wait-timeout 240 dc; \
