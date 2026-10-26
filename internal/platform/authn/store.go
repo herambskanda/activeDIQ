@@ -23,6 +23,10 @@ var (
 	// ErrInvalid is returned for input that is not acceptable (a malformed ID, an unknown reason, no
 	// authentication method). No SQL has run.
 	ErrInvalid = errors.New("authn: invalid input")
+
+	// ErrPolicyRead means the tenant's session policy could not be read, which is what a token naming
+	// an unknown tenant produces. HTTP callers answer it as they answer an unknown session.
+	ErrPolicyRead = errors.New("authn: read session policy")
 )
 
 // Reason is why a session was revoked. The set is closed and matches the table's CHECK.
@@ -137,6 +141,9 @@ type CreateInput struct {
 	MFAAt             *time.Time
 	AuthorityFactorAt *time.Time
 	ClientIP          netip.Addr // zero when unknown
+
+	// inherit is set only by Rotate: the new session continues the old one's absolute window.
+	inherit *Session
 }
 
 // CreateResult is returned by Create.
@@ -172,7 +179,7 @@ WHERE tenant_id = $1 AND id IN (
 
 	insert = `INSERT INTO public.authn_sessions
   (tenant_id, id_hash, account_id, methods, mfa_at, authority_factor_at, client_ip, created_at, last_seen_at, idle_expiry, absolute_expiry)
-VALUES ($1, $2, $3::uuid, $4, $5, $6, $7, $8, $8, $9, $10)
+VALUES ($1, $2, $3::uuid, $4, $5, $6, $7, $11, $8, $9, $10)
 RETURNING id`
 
 	columns = `id, account_id::text, methods, mfa_at, authority_factor_at, client_ip, created_at, last_seen_at, idle_expiry, absolute_expiry, state`
@@ -193,7 +200,7 @@ func (s *Store) now(ctx context.Context, tx store.Tx) (time.Time, error) {
 func (s *Store) policy(ctx context.Context, t tenant.ID) (Policy, error) {
 	p, err := s.policies.SessionPolicy(ctx, t)
 	if err != nil {
-		return Policy{}, fmt.Errorf("authn: read session policy: %w", err)
+		return Policy{}, fmt.Errorf("%w: %w", ErrPolicyRead, err)
 	}
 	if err := p.Validate(s.bounds); err != nil {
 		return Policy{}, err
@@ -257,16 +264,30 @@ func (s *Store) Create(ctx context.Context, in CreateInput) (CreateResult, error
 		}
 		idle := now.Add(pol.Idle)
 		abs := now.Add(pol.Absolute)
+		created := now
+		if in.inherit != nil {
+			// A rotated session keeps the original sign-in's window; only a full sign-in starts a new one.
+			created = in.inherit.CreatedAt
+			if a := created.Add(pol.Absolute); a.Before(abs) {
+				abs = a
+			}
+			if in.inherit.AbsoluteExpiry.Before(abs) {
+				abs = in.inherit.AbsoluteExpiry
+			}
+			if !abs.After(now) {
+				return ErrExpired
+			}
+		}
 		if idle.After(abs) {
 			idle = abs
 		}
 		var id string
-		if err := tx.QueryRow(ctx, insert, in.Tenant.String(), tok.hash(), in.Account, in.Methods, in.MFAAt, in.AuthorityFactorAt, ip, now, idle, abs).Scan(&id); err != nil {
+		if err := tx.QueryRow(ctx, insert, in.Tenant.String(), tok.hash(), in.Account, in.Methods, in.MFAAt, in.AuthorityFactorAt, ip, now, idle, abs, created).Scan(&id); err != nil {
 			return err
 		}
 		res.Session = Session{ID: id, Tenant: in.Tenant, Account: in.Account, Methods: append([]string(nil), in.Methods...),
 			MFAAt: in.MFAAt, AuthorityFactorAt: in.AuthorityFactorAt, ClientIP: in.ClientIP.Unmap(),
-			CreatedAt: now, LastSeenAt: now, IdleExpiry: idle, AbsoluteExpiry: abs, State: SessionActive}
+			CreatedAt: created, LastSeenAt: now, IdleExpiry: idle, AbsoluteExpiry: abs, State: SessionActive}
 		return nil
 	})
 	if err != nil {
@@ -387,6 +408,30 @@ func (s *Store) RevokeAccount(ctx context.Context, t tenant.ID, account string, 
 	}
 	return s.revokeN(ctx, t, `UPDATE public.authn_sessions SET state = 'revoked', ended_at = $4, end_reason = $3
 WHERE tenant_id = $1 AND account_id = $2::uuid AND state = 'active'`, account, why)
+}
+
+// Rotate replaces the session a token names with a new one for the same account, methods and factor
+// times, and revokes the old one for why. It is the revocation mechanism for the presenting browser when
+// privilege changes (step-up, role change of the signed-in account; RevokeAccount ends the account's
+// other sessions), so a value captured before the change is dead and the CSRF value, which is derived
+// from the token, changes with it. The new session keeps the old one's CreatedAt and absolute deadline
+// (capped by the current policy): rotation never extends a session's lifetime, only a full sign-in does. The old session is revoked first: if Create then fails the
+// caller is signed out, never left on a stale token. A concurrent Rotate of the same token finds it
+// already ended and gets ErrRevoked.
+func (s *Store) Rotate(ctx context.Context, old Token, why Reason) (CreateResult, error) {
+	sess, err := s.Lookup(ctx, old)
+	if err != nil {
+		return CreateResult{}, err
+	}
+	ended, err := s.Revoke(ctx, sess.Tenant, sess.ID, why)
+	if err != nil {
+		return CreateResult{}, err
+	}
+	if !ended {
+		return CreateResult{}, ErrRevoked
+	}
+	return s.Create(ctx, CreateInput{Tenant: sess.Tenant, Account: sess.Account, Methods: sess.Methods,
+		MFAAt: sess.MFAAt, AuthorityFactorAt: sess.AuthorityFactorAt, ClientIP: sess.ClientIP, inherit: &sess})
 }
 
 // Logout ends the session a token names.

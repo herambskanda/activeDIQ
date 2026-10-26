@@ -3,8 +3,9 @@
 // Sessions (DM-31; threat model §7.3): console sessions kept in PostgreSQL so any node serves them,
 // the session token stored only as a SHA-256 hash, idle and absolute expiry within platform bounds,
 // a concurrent-session limit with a policy-chosen eviction, and revocation on account disable, role
-// change, password or MFA reset and on demand. It has no HTTP: the cookie, CSRF and the request
-// middleware are the next ticket. Callers hold a Store and call Create at sign-in, Lookup on every
+// change, password or MFA reset and on demand. The HTTP binding is http.go: the __Host- cookie
+// attributes, the CSRF value derived from the session token, and the Authenticator that apihost's chain
+// calls (steps 8 and 9). Callers hold a Store and call Create at sign-in, Lookup on every
 // request, and Revoke* when the account changes.
 //
 // TOTP (DM-37 AuthenticatorEnrollment): a seed sealed under the tenant's data key and bound to its
