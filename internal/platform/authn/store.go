@@ -7,8 +7,6 @@ import (
 	"net/netip"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tablekind"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
@@ -16,12 +14,12 @@ import (
 
 var _ = tablekind.Declare(tablekind.Table{Name: "public.authn_sessions", Entity: "DM-31", Kind: tablekind.Tenant})
 
-// Errors. None carries a token, a hash, SQL or a stored value. A caller answers all of ErrNotFound,
+// Errors. None carries a token, a hash, SQL or a stored value. A caller answers all of ErrSessionNotFound,
 // ErrExpired and ErrRevoked with the same 401; they differ only for the audit trail.
 var (
-	ErrNotFound = errors.New("authn: no such session")
-	ErrExpired  = errors.New("authn: session expired")
-	ErrRevoked  = errors.New("authn: session revoked")
+	ErrSessionNotFound = errors.New("authn: no such session")
+	ErrExpired         = errors.New("authn: session expired")
+	ErrRevoked         = errors.New("authn: session revoked")
 	// ErrInvalid is returned for input that is not acceptable (a malformed ID, an unknown reason, no
 	// authentication method). No SQL has run.
 	ErrInvalid = errors.New("authn: invalid input")
@@ -48,14 +46,14 @@ func (r Reason) valid() bool {
 	return false
 }
 
-// State is a session's lifecycle state: active, then expired or revoked.
-type State string
+// SessionState is a session's lifecycle state: active, then expired or revoked.
+type SessionState string
 
 // States.
 const (
-	StateActive  State = "active"
-	StateExpired State = "expired"
-	StateRevoked State = "revoked"
+	SessionActive  SessionState = "active"
+	SessionExpired SessionState = "expired"
+	SessionRevoked SessionState = "revoked"
 )
 
 // PolicySource gives a tenant's session policy. It is read on every Create and Lookup, so a change
@@ -126,7 +124,7 @@ type Session struct {
 	LastSeenAt        time.Time
 	IdleExpiry        time.Time
 	AbsoluteExpiry    time.Time
-	State             State
+	State             SessionState
 }
 
 // CreateInput is what sign-in knows.
@@ -268,7 +266,7 @@ func (s *Store) Create(ctx context.Context, in CreateInput) (CreateResult, error
 		}
 		res.Session = Session{ID: id, Tenant: in.Tenant, Account: in.Account, Methods: append([]string(nil), in.Methods...),
 			MFAAt: in.MFAAt, AuthorityFactorAt: in.AuthorityFactorAt, ClientIP: in.ClientIP.Unmap(),
-			CreatedAt: now, LastSeenAt: now, IdleExpiry: idle, AbsoluteExpiry: abs, State: StateActive}
+			CreatedAt: now, LastSeenAt: now, IdleExpiry: idle, AbsoluteExpiry: abs, State: SessionActive}
 		return nil
 	})
 	if err != nil {
@@ -277,7 +275,7 @@ func (s *Store) Create(ctx context.Context, in CreateInput) (CreateResult, error
 	return res, nil
 }
 
-func scanSession(t tenant.ID, row pgx.Row) (Session, error) {
+func scanSession(t tenant.ID, row interface{ Scan(dest ...any) error }) (Session, error) {
 	var s Session
 	var ip *netip.Addr
 	var st string
@@ -287,7 +285,7 @@ func scanSession(t tenant.ID, row pgx.Row) (Session, error) {
 	if ip != nil {
 		s.ClientIP = *ip
 	}
-	s.Tenant, s.State = t, State(st)
+	s.Tenant, s.State = t, SessionState(st)
 	return s, nil
 }
 
@@ -299,7 +297,7 @@ func scanSession(t tenant.ID, row pgx.Row) (Session, error) {
 func (s *Store) Lookup(ctx context.Context, tok Token) (Session, error) {
 	t, err := tok.Tenant()
 	if err != nil {
-		return Session{}, ErrNotFound
+		return Session{}, ErrSessionNotFound
 	}
 	pol, err := s.policy(ctx, t)
 	if err != nil {
@@ -315,18 +313,18 @@ func (s *Store) Lookup(ctx context.Context, tok Token) (Session, error) {
 			return err
 		}
 		sess, err = scanSession(t, tx.QueryRow(ctx, `SELECT `+columns+` FROM public.authn_sessions WHERE tenant_id = $1 AND id_hash = $2 FOR UPDATE`, t.String(), tok.hash()))
-		if errors.Is(err, pgx.ErrNoRows) {
-			outcome = ErrNotFound
+		if store.IsNoRows(err) {
+			outcome = ErrSessionNotFound
 			return nil
 		}
 		if err != nil {
 			return err
 		}
 		switch sess.State {
-		case StateRevoked:
+		case SessionRevoked:
 			outcome = ErrRevoked
 			return nil
-		case StateExpired:
+		case SessionExpired:
 			outcome = ErrExpired
 			return nil
 		}
@@ -395,7 +393,7 @@ WHERE tenant_id = $1 AND account_id = $2::uuid AND state = 'active'`, account, w
 func (s *Store) Logout(ctx context.Context, tok Token) error {
 	t, err := tok.Tenant()
 	if err != nil {
-		return ErrNotFound
+		return ErrSessionNotFound
 	}
 	n, err := s.revokeN(ctx, t, `UPDATE public.authn_sessions SET state = 'revoked', ended_at = $4, end_reason = $3
 WHERE tenant_id = $1 AND id_hash = $2 AND state = 'active'`, tok.hash(), ReasonLogout)
@@ -403,7 +401,7 @@ WHERE tenant_id = $1 AND id_hash = $2 AND state = 'active'`, tok.hash(), ReasonL
 		return err
 	}
 	if n == 0 {
-		return ErrNotFound
+		return ErrSessionNotFound
 	}
 	return nil
 }

@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"errors"
 	"net/netip"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -17,8 +16,6 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 	"github.com/skenzeriq/activediq/internal/platform/tenant/tenanttest"
 )
-
-func TestMain(m *testing.M) { os.Exit(storetest.Main(m)) }
 
 // fakeClock is shared by every node of a test, so time moves for all of them at once.
 type fakeClock struct {
@@ -33,13 +30,13 @@ func (c *fakeClock) advance(d time.Duration) {
 	c.t = c.t.Add(d)
 }
 
-type env struct {
+type sessEnv struct {
 	d   *storetest.Database
 	ten tenant.ID
 	clk *fakeClock
 }
 
-func (e *env) node(t *testing.T, p Policy) *Store {
+func (e *sessEnv) node(t *testing.T, p Policy) *Store {
 	t.Helper()
 	db, err := store.Open(context.Background(), store.Config{DSN: e.d.AppDSN()})
 	if err != nil {
@@ -53,11 +50,11 @@ func (e *env) node(t *testing.T, p Policy) *Store {
 	return s
 }
 
-func each(t *testing.T, fn func(t *testing.T, e *env)) {
+func each(t *testing.T, fn func(t *testing.T, e *sessEnv)) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		d := s.NewDatabase(t)
 		d.Migrate(t)
-		fn(t, &env{d: d, ten: tenanttest.Seed(t, d.ExecOwner, "t1"), clk: &fakeClock{t: time.Now().UTC().Truncate(time.Millisecond)}})
+		fn(t, &sessEnv{d: d, ten: tenanttest.Seed(t, d.ExecOwner, "t1"), clk: &fakeClock{t: time.Now().UTC().Truncate(time.Millisecond)}})
 	})
 }
 
@@ -73,7 +70,7 @@ func create(t *testing.T, s *Store, ten tenant.ID, acct string) CreateResult {
 }
 
 func TestSessionIDStoredHashed(t *testing.T) {
-	each(t, func(t *testing.T, e *env) {
+	each(t, func(t *testing.T, e *sessEnv) {
 		s := e.node(t, pol)
 		acct := tenant.New().String()
 		r := create(t, s, e.ten, acct)
@@ -114,7 +111,7 @@ func TestSessionIDStoredHashed(t *testing.T) {
 }
 
 func TestSessionExpiry(t *testing.T) {
-	each(t, func(t *testing.T, e *env) {
+	each(t, func(t *testing.T, e *sessEnv) {
 		s := e.node(t, pol)
 		acct := tenant.New().String()
 		state := func(id string) (st, reason string) {
@@ -175,7 +172,7 @@ func TestSessionExpiry(t *testing.T) {
 }
 
 func TestSessionConcurrentLimit(t *testing.T) {
-	each(t, func(t *testing.T, e *env) {
+	each(t, func(t *testing.T, e *sessEnv) {
 		for _, ev := range []EvictionPolicy{EvictOldestCreated, EvictLeastRecentlyUsed} {
 			p := pol
 			p.Eviction = ev
@@ -218,7 +215,7 @@ func TestSessionConcurrentLimit(t *testing.T) {
 }
 
 func TestConcurrentLimitHoldsUnderRace(t *testing.T) {
-	each(t, func(t *testing.T, e *env) {
+	each(t, func(t *testing.T, e *sessEnv) {
 		a, b := e.node(t, pol), e.node(t, pol)
 		acct := tenant.New().String()
 		var wg sync.WaitGroup
@@ -244,7 +241,7 @@ func TestConcurrentLimitHoldsUnderRace(t *testing.T) {
 }
 
 func TestSessionRevocationOnEvents(t *testing.T) {
-	each(t, func(t *testing.T, e *env) {
+	each(t, func(t *testing.T, e *sessEnv) {
 		nodeA, nodeB := e.node(t, pol), e.node(t, pol)
 		for _, why := range []Reason{ReasonAccountDisabled, ReasonRoleChanged, ReasonPasswordReset, ReasonMFAReset, ReasonOnDemand} {
 			acct, other := tenant.New().String(), tenant.New().String()
@@ -295,7 +292,7 @@ func TestSessionRevocationOnEvents(t *testing.T) {
 }
 
 func TestTenantIsolationAndForgedTokens(t *testing.T) {
-	each(t, func(t *testing.T, e *env) {
+	each(t, func(t *testing.T, e *sessEnv) {
 		s := e.node(t, pol)
 		other := tenanttest.Seed(t, e.d.ExecOwner, "t2")
 		acct := tenant.New().String()
@@ -305,8 +302,8 @@ func TestTenantIsolationAndForgedTokens(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.Lookup(context.Background(), forged); !errors.Is(err, ErrNotFound) {
-			t.Fatalf("cross-tenant lookup = %v, want ErrNotFound", err)
+		if _, err := s.Lookup(context.Background(), forged); !errors.Is(err, ErrSessionNotFound) {
+			t.Fatalf("cross-tenant lookup = %v, want ErrSessionNotFound", err)
 		}
 		if n, err := s.RevokeAccount(context.Background(), other, acct, ReasonOnDemand); err != nil || n != 0 {
 			t.Fatalf("cross-tenant revoke = %d, %v", n, err)
@@ -317,31 +314,24 @@ func TestTenantIsolationAndForgedTokens(t *testing.T) {
 			}
 		}
 		unknown, _ := newToken(e.ten)
-		if _, err := s.Lookup(context.Background(), unknown); !errors.Is(err, ErrNotFound) {
+		if _, err := s.Lookup(context.Background(), unknown); !errors.Is(err, ErrSessionNotFound) {
 			t.Fatalf("unknown token = %v", err)
 		}
 	})
 }
 
 func TestEndedSessionsAreFinalAndNotDeletable(t *testing.T) {
-	each(t, func(t *testing.T, e *env) {
+	each(t, func(t *testing.T, e *sessEnv) {
 		s := e.node(t, pol)
 		r := create(t, s, e.ten, tenant.New().String())
 		if _, err := s.Revoke(context.Background(), e.ten, r.Session.ID, ReasonOnDemand); err != nil {
 			t.Fatal(err)
 		}
-		app, err := e.d.App(context.Background())
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer app.Close(context.Background())
-		ctx := context.Background()
-		tx, _ := app.Begin(ctx)
-		defer tx.Rollback(ctx)
-		if _, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, e.ten.String()); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := tx.Exec(ctx, `DELETE FROM public.authn_sessions`); err == nil {
+		err := s.db.WithTenant(context.Background(), e.ten, func(ctx context.Context, tx store.Tx) error {
+			_, err := tx.Exec(ctx, `DELETE FROM public.authn_sessions`)
+			return err
+		})
+		if err == nil {
 			t.Fatal("the runtime role can delete sessions")
 		}
 	})
