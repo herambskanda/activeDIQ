@@ -19,6 +19,19 @@ import (
 // not iterate (rule 6): a principal that is tier0 only through C19 makes none of its own controllers
 // tier0, because the object list is fixed before anything is marked.
 
+// C19Right is one rule-2 right (or the ownership) that a trustee SID holds on a C19 object, as read
+// from the object's own live DACL and owner. The rights check (TM-D27 rule 8) matches the connector
+// identity's token against it; the classifier already derived tier0 membership from the same list, so
+// the two cannot disagree on what a takeover right is. Mask and ObjectType are the ACE's own; for an
+// owner both are zero.
+type C19Right struct {
+	Object     guid.GUID  // the C19 object
+	Trustee    sid.SID    // ACE trustee, or the owner
+	Mask       uint32     // access mask of the ACE
+	ObjectType *guid.GUID // the ACE's objectType as written (not widened for unresolved GUIDs)
+	Owner      bool       // the trustee owns the object
+}
+
 // c19Objects is what the earlier steps hand to c19.
 type c19Objects struct {
 	c1Groups []*ad.Entry // C1 groups
@@ -330,6 +343,7 @@ func (b *builder) c19() error {
 	}
 	var main, self, owners sidSet
 	type tg struct {
+		obj  guid.GUID
 		kind c19Kind
 		aces []aceGrant
 	}
@@ -351,8 +365,13 @@ func (b *builder) c19() error {
 		}
 		// OWNER RIGHTS and dSHeuristics character 29 are ignored on purpose (TM-D26 rule 3): the owner
 		// is tier0.
+		og, err := e.GUID()
+		if err != nil {
+			return errors.New("tier0: a Tier-0 object has no readable objectGUID")
+		}
 		owners.add(d.Owner)
-		decoded = append(decoded, tg{t.kind, aces})
+		b.s.c19Rights = append(b.s.c19Rights, C19Right{Object: og, Trustee: d.Owner, Owner: true})
+		decoded = append(decoded, tg{og, t.kind, aces})
 	}
 	// Rule 2, last sentence: a right named by a GUID the schema cannot resolve counts as all-properties
 	// (WP), all extended rights (CA) or any class (CC), so it is read as an ACE with no objectType.
@@ -368,6 +387,7 @@ func (b *builder) c19() error {
 	}
 	for _, t := range decoded {
 		for _, a := range t.aces {
+			named := a.objectType // what the ACE says, for naming the right in a finding
 			if a.objectType != nil && unresolved[*a.objectType] {
 				a.objectType = nil
 			}
@@ -375,8 +395,10 @@ func (b *builder) c19() error {
 			case c19IgnoredSID[a.trustee.String()]:
 			case sc.takeover(a, t.kind):
 				main.add(a.trustee)
+				b.s.c19Rights = append(b.s.c19Rights, C19Right{Object: t.obj, Trustee: a.trustee, Mask: a.mask, ObjectType: named})
 			case t.kind == kGroup && sc.selfMembership(a):
 				self.add(a.trustee)
+				b.s.c19Rights = append(b.s.c19Rights, C19Right{Object: t.obj, Trustee: a.trustee, Mask: a.mask, ObjectType: named})
 			}
 		}
 	}

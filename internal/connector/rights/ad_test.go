@@ -295,6 +295,15 @@ func (w *world) run(t *testing.T, in ADInput) *ADResult {
 	return res
 }
 
+func (w *world) idRef(t *testing.T) dn.ObjectRef {
+	t.Helper()
+	ref, err := dn.ParseObjectRef(w.id.DN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ref
+}
+
 func codes(r *ADResult) []string {
 	var out []string
 	for _, f := range r.Findings {

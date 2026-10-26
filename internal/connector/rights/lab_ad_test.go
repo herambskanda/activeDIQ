@@ -301,3 +301,51 @@ func TestLabADBroadPrincipalExposure(t *testing.T) {
 		t.Fatalf("verdict %v:%s", r.res.Verdict, dump(r.res))
 	}
 }
+
+// T-0362 / T0-RIGHTS-C19 (TM-D27 rule 8): the identity holding a rule-2 right on a C19 object is
+// refused with the C19 finding naming the object. Samba proves the LDAP and DACL semantics only;
+// owner-of-DC-object and SDProp cases need the Windows lab (T-0226).
+func TestLabADC19Refusals(t *testing.T) {
+	l := newLab(t)
+	ctx := labCtx(t)
+	for _, tc := range []struct {
+		name  string
+		setup func(sid string)
+	}{
+		{"reset password on krbtgt", func(s string) {
+			l.ace("CN=krbtgt,CN=Users,"+labDom, fmt.Sprintf("(OA;;CR;00299570-246d-11d0-a768-00aa006e0529;;%s)", s))
+		}},
+		{"write member on a C1 group", func(s string) {
+			l.ace("CN=Domain Admins,CN=Users,"+labDom, fmt.Sprintf("(OA;;WP;%s;;%s)", attrMember, s))
+		}},
+		{"write gPLink on the DC OU", func(s string) {
+			l.ace("OU=Domain Controllers,"+labDom, fmt.Sprintf("(OA;;WP;f30e3bbe-9ff0-11d1-b603-0000f80367c1;;%s)", s))
+		}},
+		{"write DACL on a DC object", func(s string) { l.ace("CN=DC1,OU=Domain Controllers,"+labDom, fmt.Sprintf("(A;;WD;;;%s)", s)) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l.t = t
+			name, userDN, sidText := l.user()
+			tc.setup(sidText)
+			r := l.verify(ctx, name, userDN, ADInput{})
+			r.refused(t)
+			got := r.find(CodeTier0C19)
+			if len(got) == 0 || got[0].Object == nil {
+				t.Fatalf("no %s finding naming the object:%s", CodeTier0C19, dump(r.res))
+			}
+		})
+	}
+}
+
+// A C19 right granted to Authenticated Users (held by every identity's token) must never pass: it
+// refuses, or the snapshot fails closed (TM-D27 rules 4 and 8).
+func TestLabADC19AuthenticatedUsers(t *testing.T) {
+	l := newLab(t)
+	ctx := labCtx(t)
+	l.ace("CN=Domain Admins,CN=Users,"+labDom, fmt.Sprintf("(OA;;WP;%s;;AU)", attrMember))
+	name, userDN, _ := l.user()
+	r := l.verify(ctx, name, userDN, ADInput{})
+	if r.res.Verdict == v1.VerificationVerdict_VERIFICATION_VERDICT_PASS || r.res.WriteGateOpenable {
+		t.Fatalf("passed with AU WP member on Domain Admins:%s", dump(r.res))
+	}
+}

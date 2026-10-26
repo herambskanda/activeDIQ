@@ -1,6 +1,7 @@
 package tier0
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -355,4 +356,72 @@ func TestForeignDomainAccountFSPStaysPrincipal(t *testing.T) {
 	f.find(daDN).raw["nTSecurityDescriptor"] = sdBytes(aceSpec{sid: fsp, mask: wProp, objType: &memberID})
 	wantBasis(t, f, "CN=S-1-5-21-111-222-333-1105,CN=ForeignSecurityPrincipals,"+dom, C19, true)
 	wantBasis(t, f, "CN=carol,OU=Staff,"+dom, C19, false)
+}
+
+// TM-D27 rule 8 input: the snapshot exposes each rule-2 right and each owner with the C19 object it
+// sits on, so the rights check blames the connector identity by object and right. The negative twin
+// (a trustee with a read-only ACE) records nothing.
+func TestC19RightsExposed(t *testing.T) { // T0-RIGHTS-C19 (classifier half)
+	f := forest()
+	u(f, "rt", 5200)
+	u(f, "rt2", 5201)
+	reset := resetPwdID
+	f.find(krbDN).raw["nTSecurityDescriptor"] = sdBytes(
+		aceSpec{sid: dsid + "-512", mask: gAll},
+		aceSpec{sid: dsid + "-5200", mask: allExt, objType: &reset},
+		aceSpec{sid: dsid + "-5201", mask: rProp})
+	set, err := NewAD(f).Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	krb := f.find(krbDN).guid
+	var got []C19Right
+	for _, r := range set.C19Rights() {
+		if r.Object == krb && !r.Owner && r.Trustee.String() == dsid+"-5200" {
+			got = append(got, r)
+		}
+		if r.Trustee.String() == dsid+"-5201" {
+			t.Fatalf("read-only trustee recorded: %+v", r)
+		}
+	}
+	if len(got) != 1 || got[0].ObjectType == nil || *got[0].ObjectType != reset || got[0].Mask&allExt == 0 {
+		t.Fatalf("rights on krbtgt: %+v", got)
+	}
+	owners := 0
+	for _, r := range set.C19Rights() {
+		if r.Owner && r.Object == krb {
+			owners++
+		}
+	}
+	if owners != 1 {
+		t.Fatalf("owner of krbtgt recorded %d times", owners)
+	}
+}
+
+// A broad trustee (Everyone, Authenticated Users, INTERACTIVE) with a rule-2 right on a C19 object is
+// recorded even when the default ForeignSecurityPrincipal placeholders for those SIDs exist, so the
+// rights check (which matches the identity's whole token) can refuse. Regression for T-0362 review.
+func TestC19RightsBroadTrusteeWithFSPs(t *testing.T) {
+	for _, s := range []string{"S-1-1-0", "S-1-5-4", "S-1-5-11"} {
+		f := forest()
+		for _, p := range []string{"S-1-5-4", "S-1-5-9", "S-1-5-11", "S-1-5-17"} {
+			f.add("CN="+p+",CN=ForeignSecurityPrincipals,"+dom, p, cls("top", "foreignSecurityPrincipal"))
+		}
+		f.find(daDN).raw["nTSecurityDescriptor"] = sdBytes(aceSpec{sid: dsid + "-512", mask: gAll},
+			aceSpec{sid: s, mask: wProp, objType: &memberID})
+		set, err := NewAD(f).Snapshot(context.Background())
+		if err != nil {
+			t.Logf("%s: snapshot failed closed: %v", s, err) // refusal-by-failure is also allowed by rule 4
+			continue
+		}
+		found := false
+		for _, r := range set.C19Rights() {
+			if r.Trustee.String() == s && r.Object == f.find(daDN).guid {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s WP member on Domain Admins not recorded as a C19 right", s)
+		}
+	}
 }

@@ -91,7 +91,16 @@ type DB struct {
 // Open builds the pool, refuses an unsafe configuration and verifies the role it connects as. It refuses,
 // before any connection is attempted, a DSN that would reach a remote host without verified TLS
 // (ErrInsecureTransport) unless Config.AllowInsecureTransport is set.
-func Open(ctx context.Context, cfg Config) (*DB, error) {
+func Open(ctx context.Context, cfg Config) (*DB, error) { return open(ctx, cfg, false) }
+
+// OpenMaintenance opens a store as the owner role, for the maintenance path only (audit retention purges,
+// ADR-0005 rule 11): work the runtime role is denied by design (DELETE on the audit tables, DM-80.I2).
+// It applies every other refusal of Open, and instead of refusing the owner it refuses a role that could
+// bypass row security (a superuser or BYPASSRLS): FORCE ROW LEVEL SECURITY still binds the owner, and
+// every transaction is still a tenant transaction. It is not for request handling.
+func OpenMaintenance(ctx context.Context, cfg Config) (*DB, error) { return open(ctx, cfg, true) }
+
+func open(ctx context.Context, cfg Config, maintenance bool) (*DB, error) {
 	pc, err := guardParse(func() (*pgxpool.Config, error) { return pgxpool.ParseConfig(cfg.DSN) })
 	if err != nil {
 		return nil, err
@@ -119,7 +128,11 @@ func Open(ctx context.Context, cfg Config) (*DB, error) {
 		return nil, fmt.Errorf("store: open pool: %w", err)
 	}
 	d := &DB{pool: pool, timeout: strconv.FormatInt(timeout.Milliseconds(), 10), transport: ts}
-	if err := d.checkRole(ctx); err != nil {
+	check := d.checkRole
+	if maintenance {
+		check = d.checkMaintenanceRole
+	}
+	if err := check(ctx); err != nil {
 		pool.Close()
 		return nil, err
 	}
@@ -176,6 +189,18 @@ const productSchema = `n.nspname NOT IN ('pg_catalog', 'information_schema') AND
 // checkRole refuses a role that could bypass row-level security, directly or through a membership. The
 // fitness job proves the same properties of the provisioned roles (T3); this is the runtime's own
 // refusal to start otherwise.
+// checkMaintenanceRole refuses a login that bypasses row security.
+func (d *DB) checkMaintenanceRole(ctx context.Context) error {
+	var super, bypass bool
+	if err := d.pool.QueryRow(ctx, `SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = session_user`).Scan(&super, &bypass); err != nil {
+		return fmt.Errorf("store: check the maintenance role: %w", err)
+	}
+	if super || bypass {
+		return fmt.Errorf("%w (the maintenance role bypasses row-level security)", ErrPrivilegedRole)
+	}
+	return nil
+}
+
 func (d *DB) checkRole(ctx context.Context) error {
 	var login, running string
 	var switched bool

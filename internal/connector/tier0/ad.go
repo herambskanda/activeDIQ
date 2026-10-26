@@ -157,7 +157,15 @@ type ADSet struct {
 	dsh        []DSHeuristic
 	c13        []guid.GUID
 	findings   []Finding
+	c19Rights  []C19Right
 }
+
+// C19Rights lists every rule-2 right and every owner found on a C19 object (TM-D27 rule 8 input). A
+// trustee may be ignorable (SELF, SYSTEM) only when the classifier ignored it; those never appear.
+func (s *ADSet) C19Rights() []C19Right { return slices.Clone(s.c19Rights) }
+
+// AddC19Right records a right for tests of the rights check, which supply a snapshot from elsewhere.
+func (s *ADSet) AddC19Right(r C19Right) { s.c19Rights = append(s.c19Rights, r) }
 
 // Findings are the onboarding observations of the snapshot (TM-D26 rule 10: no DnsAdmins in a domain
 // that hosts AD-integrated DNS).

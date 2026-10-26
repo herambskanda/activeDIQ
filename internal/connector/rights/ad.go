@@ -43,6 +43,9 @@ const (
 	CodeTier0GenericAll = "over.tier0_generic_all"
 	CodeTier0GenericWr  = "over.tier0_generic_write"
 	CodeTier0DeleteTree = "over.tier0_delete_tree"
+	// CodeTier0C19 (TM-D27 rule 8, TM-F-RIGHTS): the identity holds a rule-2 right on, or owns, a C19
+	// object (krbtgt, a DC object, a C1 group, the DC OU, a tier0 GPO).
+	CodeTier0C19 = "over.tier0_c19_control"
 	// CodeTier0BroadPrincipal: a dangerous right on a tier0 object granted to Everyone, Authenticated
 	// Users or another broad principal. Warn, not block: it is the customer's ACL, not the
 	// connector's own delegation, and the identity's own excess is reported separately.
@@ -235,6 +238,7 @@ func VerifyAD(ctx context.Context, d ADDirectory, in ADInput) (*ADResult, error)
 	if serr == nil {
 		c.step1(id)
 		c.step23()
+		c.c19(set)
 	}
 	c.step5(id)
 	c.v8()
@@ -845,6 +849,80 @@ func (c *adCheck) step3(m *member, e *ad.Entry) {
 				Code: k.code, ObjectTier0Basis: basis, Right: adRight(k.kind, k.typ, k.mask, name), Source: aceSource(m.g, a)}, m.g, aceQualifier(a))
 		}
 	}
+}
+
+// c19 is TM-D27 rule 8: the connector identity (by its whole token) holding any rule-2 right on, or owning, a C19 object refuses activation. The rights
+// come from the classifier's own reading of each object's live DACL and owner, so the check applies
+// the same table as the classification. A failed read already failed the snapshot closed (rule 7).
+// The match is against the whole token (universal SIDs too); the classifier does not reliably fail
+// for a broad trustee (the default ForeignSecurityPrincipal placeholders resolve), so this must refuse.
+func (c *adCheck) c19(set *tier0.ADSet) {
+	for _, r := range set.C19Rights() {
+		// A C19 right is the identity's if its trustee is in the token OR is a broad principal.
+		// tokenGroups never carries the implicit network-logon SIDs (Everyone S-1-1-0, Authenticated
+		// Users S-1-5-11, NETWORK S-1-5-2, This Organization S-1-5-15), yet every bind holds them, so
+		// the token alone would pass a right granted to them. Rule 4 allows only a refusal here.
+		if !c.tokens[r.Trustee.String()] && !c.broadPrincipal(r.Trustee) {
+			continue
+		}
+		var typ *adguid.GUID
+		if r.ObjectType != nil {
+			t := *r.ObjectType
+			typ = &t
+		}
+		kind, mask := c19Kind(r)
+		name := ""
+		if typ != nil {
+			if o, err := c.byID(*typ); err == nil && o != nil {
+				name = o.Name
+			}
+		}
+		basis := []v1.Tier0Basis{v1.Tier0Basis_TIER0_BASIS_C19_CONTROL_OF_TIER0_OBJECT}
+		if m := c.set[r.Object.String()]; m != nil {
+			basis = m.basisList()
+		}
+		q := "c19:" + r.Trustee.String()
+		if r.Owner {
+			q += ":owner"
+		} else {
+			q += fmt.Sprintf(":%08x", r.Mask)
+			if typ != nil {
+				q += ":" + typ.String()
+			}
+		}
+		c.add(&v1.RightsFinding{Check: v7, Kind: v1.FindingKind_FINDING_KIND_EXCESSIVE_RIGHT, Severity: v1.FindingSeverity_FINDING_SEVERITY_BLOCK,
+			Code: CodeTier0C19, ObjectTier0Basis: basis, Right: adRight(kind, typ, mask, name),
+			Source: &v1.RightSource{Source: &v1.RightSource_Ace{Ace: &v1.AceSource{OnObject: pbGuid(r.Object), Trustee: &v1.Sid{Value: r.Trustee.Bytes()}}}}},
+			r.Object, q)
+	}
+}
+
+// c19Kind names the strongest right of a C19 grant, for the finding.
+func c19Kind(r tier0.C19Right) (v1.AdRightKind, uint32) {
+	const genericAll, genericWrite = 0x10000000, 0x40000000
+	switch m := r.Mask; {
+	case r.Owner: // the owner holds implicit READ_CONTROL and WRITE_DAC
+		return v1.AdRightKind_AD_RIGHT_KIND_WRITE_DAC, maskWriteDAC
+	case m&genericAll != 0:
+		return v1.AdRightKind_AD_RIGHT_KIND_GENERIC_ALL, m
+	case m&genericWrite != 0:
+		return v1.AdRightKind_AD_RIGHT_KIND_GENERIC_WRITE, m
+	case m&maskWriteDAC != 0:
+		return v1.AdRightKind_AD_RIGHT_KIND_WRITE_DAC, maskWriteDAC
+	case m&maskWriteOwner != 0:
+		return v1.AdRightKind_AD_RIGHT_KIND_WRITE_OWNER, maskWriteOwner
+	case m&dsControlAccess != 0:
+		return v1.AdRightKind_AD_RIGHT_KIND_CONTROL_ACCESS, m
+	case m&dsWriteProp != 0:
+		return v1.AdRightKind_AD_RIGHT_KIND_WRITE_PROPERTY, m
+	case m&0x2 != 0: // DS_DELETE_CHILD
+		return v1.AdRightKind_AD_RIGHT_KIND_DELETE_CHILD, m
+	case m&dsCreateChild != 0:
+		return v1.AdRightKind_AD_RIGHT_KIND_CREATE_CHILD, m
+	case m&dsSelf != 0:
+		return v1.AdRightKind_AD_RIGHT_KIND_VALIDATED_WRITE, m
+	}
+	return v1.AdRightKind_AD_RIGHT_KIND_UNSPECIFIED, r.Mask
 }
 
 // ---- step 5: the identity's own delegation ---------------------------------------------------
