@@ -107,7 +107,10 @@ root never imports generated protos. The listener that mounts it is T-0156.
 - **SAN.** Exactly two URIs, `urn:activediq:tenant:<uuid>` and `urn:activediq:component:<kind>:<uuid>`
   (`fleet.URIs`, read back by `fleet.IdentityOf`, which refuses any extra name). The values come from the
   token's own row; `EnrollRequest` carries no tenant or component and the CSR's subject and SAN are ignored.
-  Empty subject, ClientAuth only, 90-day default lifetime, clamped to the CA's.
+  The `<kind>` is a closed vocabulary: `connector`, `addc`, `fileserver` (`fleet.ValidKind`, `identity.go`). It
+  selects the `fleet.Binding`, so one module's certificate reaches only its own contract; any other kind, including
+  the bare legacy `agent`, is `ErrIdentity`. A new module adds its kind in `identity.go`, the `components.kind`
+  CHECK and its Binding together. Empty subject, ClientAuth only, 90-day default lifetime, clamped to the CA's.
 - **CA.** One per tenant (`fleet_ca`), ECDSA P-384, created on first need or by `InitTenant`. The private key
   is PKCS#8 sealed with `keys.Seal` under the tenant DEK, bound to tenant, table, row, column and version
   (TM-A11, AC4); no column holds it in clear and nothing logs it. Per-tenant, not installation-wide, because
