@@ -858,9 +858,11 @@ func (c *adCheck) step3(m *member, e *ad.Entry) {
 // for a broad trustee (the default ForeignSecurityPrincipal placeholders resolve), so this must refuse.
 func (c *adCheck) c19(set *tier0.ADSet) {
 	for _, r := range set.C19Rights() {
-		// The full token, universal SIDs included: a C19 right held through Everyone or Authenticated
-		// Users is held by the identity too, and rule 4 allows only a refusal or a failure for it.
-		if !c.tokens[r.Trustee.String()] {
+		// A C19 right is the identity's if its trustee is in the token OR is a broad principal.
+		// tokenGroups never carries the implicit network-logon SIDs (Everyone S-1-1-0, Authenticated
+		// Users S-1-5-11, NETWORK S-1-5-2, This Organization S-1-5-15), yet every bind holds them, so
+		// the token alone would pass a right granted to them. Rule 4 allows only a refusal here.
+		if !c.tokens[r.Trustee.String()] && !c.broadPrincipal(r.Trustee) {
 			continue
 		}
 		var typ *adguid.GUID

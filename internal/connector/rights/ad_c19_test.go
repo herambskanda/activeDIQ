@@ -42,11 +42,14 @@ func TestC19IdentityRights(t *testing.T) {
 		{"authenticated users hold WP member (token SID)", tier0.C19Right{Trustee: mustSID("S-1-5-11"), Mask: dcOUWP, ObjectType: &member}, v1.AdRightKind_AD_RIGHT_KIND_WRITE_PROPERTY, true},
 		{"everyone holds WP member (token SID)", tier0.C19Right{Trustee: mustSID("S-1-1-0"), Mask: dcOUWP, ObjectType: &member}, v1.AdRightKind_AD_RIGHT_KIND_WRITE_PROPERTY, true},
 		{"interactive holds a C19 right (token SID)", tier0.C19Right{Trustee: mustSID("S-1-5-4"), Mask: dsControlAccess}, v1.AdRightKind_AD_RIGHT_KIND_CONTROL_ACCESS, true},
+		{"network holds a C19 right (not in tokenGroups)", tier0.C19Right{Trustee: mustSID("S-1-5-2"), Mask: dsControlAccess}, v1.AdRightKind_AD_RIGHT_KIND_CONTROL_ACCESS, true},
+		{"this organization holds a C19 right (not in tokenGroups)", tier0.C19Right{Trustee: mustSID("S-1-5-15"), Mask: dsControlAccess}, v1.AdRightKind_AD_RIGHT_KIND_CONTROL_ACCESS, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newWorld(t)
-			w.tokens = append(w.tokens, nestSID, "S-1-5-4")
+			// Realistic token: real tokenGroups never lists Everyone / Authenticated Users / NETWORK.
+			w.tokens = []string{dusSID, "S-1-5-32-545", nestSID}
 			w.f.schemaAttr("gPLink", 0)
 			tc.right.Object = w.t0G
 			w.set.AddC19Right(tc.right)
