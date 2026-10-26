@@ -43,12 +43,15 @@ func (k *KMS) Ref() keys.KEKRef {
 }
 
 func ctxString(req keys.WrapRequest) string {
-	return req.Tenant.String() + "|" + string([]byte{byte(req.Version >> 24), byte(req.Version >> 16), byte(req.Version >> 8), byte(req.Version)})
+	return req.Context() + "|" + string([]byte{byte(req.Version >> 24), byte(req.Version >> 16), byte(req.Version >> 8), byte(req.Version)})
 }
 
 func (k *KMS) Wrap(req keys.WrapRequest, plaintext []byte) ([]byte, keys.KEKRef, error) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
+	if !req.Valid() {
+		return nil, keys.KEKRef{}, &keys.Error{Code: keys.InvalidContext}
+	}
 	if k.down {
 		return nil, keys.KEKRef{}, &keys.Error{Code: keys.ProviderUnavailable}
 	}
