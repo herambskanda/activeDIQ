@@ -50,6 +50,16 @@ func (e *sessEnv) node(t *testing.T, p Policy) *Store {
 	return s
 }
 
+// skewClock is for tests that move the fake clock hours past the database clock: the INSERT guard
+// (migration 0017) bounds timestamps by the database clock, so it is disabled for that test database.
+// TestAuthnSessionInsertGuard exercises the guard and does not call it.
+func (e *sessEnv) skewClock(t *testing.T) {
+	t.Helper()
+	if err := e.d.ExecOwner(context.Background(), `ALTER TABLE public.authn_sessions DISABLE TRIGGER authn_sessions_insert_guard`); err != nil {
+		t.Fatalf("disable the insert guard: %v", err)
+	}
+}
+
 func each(t *testing.T, fn func(t *testing.T, e *sessEnv)) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		d := s.NewDatabase(t)
@@ -112,6 +122,7 @@ func TestSessionIDStoredHashed(t *testing.T) {
 
 func TestSessionExpiry(t *testing.T) {
 	each(t, func(t *testing.T, e *sessEnv) {
+		e.skewClock(t)
 		s := e.node(t, pol)
 		acct := tenant.New().String()
 		state := func(id string) (st, reason string) {
@@ -358,6 +369,10 @@ func TestPolicyOutsideBoundsIsRefused(t *testing.T) {
 // authn_session_insert_guard: the runtime role cannot mint a session that is ended, backdated, or
 // outlives the platform maximum (T-0390).
 func TestAuthnSessionInsertGuard(t *testing.T) {
+	if DefaultBounds.AbsoluteMax != 24*time.Hour {
+		t.Fatalf("DefaultBounds.AbsoluteMax is %s: migrations/0017_authn_sessions_insert_guard.sql hardcodes 24h; "+
+			"change the guard (new forward migration) together with the Go bound", DefaultBounds.AbsoluteMax)
+	}
 	each(t, func(t *testing.T, e *sessEnv) {
 		s := e.node(t, pol)
 		const ins = `INSERT INTO public.authn_sessions
@@ -379,6 +394,7 @@ VALUES ($1, $2, $3::uuid, ARRAY['password'], $4, $5, $6, $7, $8, $9, $10)`
 			{name: "expired deadline", created: now.Add(-2 * time.Hour), seen: now, idle: now.Add(-time.Hour), abs: now.Add(-time.Minute), state: "active"},
 			{name: "backdated", created: now.Add(-3 * time.Hour), seen: now.Add(-3 * time.Hour), idle: now.Add(time.Minute), abs: now.Add(time.Hour), state: "active"},
 			{name: "deadline beyond policy", created: now, seen: now, idle: now.Add(time.Minute), abs: now.Add(30 * 24 * time.Hour), state: "active"},
+			{name: "future-dated", created: now.Add(24 * time.Hour), seen: now.Add(24 * time.Hour), idle: now.Add(24 * time.Hour), abs: now.Add(24*time.Hour + 4*time.Minute), state: "active"},
 			{name: "window beyond policy", created: now.Add(-48 * time.Hour), seen: now, idle: now.Add(time.Minute), abs: now.Add(time.Hour), state: "active"},
 		}
 		for i, r := range rows {

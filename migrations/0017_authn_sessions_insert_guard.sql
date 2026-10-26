@@ -5,7 +5,8 @@
 -- an active session with a chosen token hash for any account, skipping password and TOTP. This trigger
 -- makes a minted row at least look like a session the authn package could have written:
 --   * it starts active and un-ended (also enforced by authn_sessions_ended);
---   * it is not already past its deadline and was last seen now (within 5 minutes of the DB clock);
+--   * it is not already past its deadline, and created_at, last_seen_at, mfa_at and authority_factor_at are
+--     all within 5 minutes of the DB clock (no backdated or future-dated rows);
 --   * its absolute lifetime (created_at -> absolute_expiry) is at most 24 hours, the platform ceiling
 --     (authn.DefaultBounds.AbsoluteMax), and the deadline is at most 24 hours + 5 minutes from now.
 --     A rotated session legitimately keeps an older created_at, but never an older-than-24h window.
@@ -31,6 +32,14 @@ BEGIN
   END IF;
   IF NEW.last_seen_at < now_ts - interval '5 minutes' THEN
     RAISE EXCEPTION 'authn_sessions: a session cannot be backdated' USING ERRCODE = 'AD403';
+  END IF;
+  -- No timestamp may be in the future: a future created_at/last_seen_at would sort newest in the
+  -- concurrent-session eviction order and survive it, and would falsify forensics.
+  IF NEW.created_at > now_ts + interval '5 minutes'
+     OR NEW.last_seen_at > now_ts + interval '5 minutes'
+     OR NEW.mfa_at > now_ts + interval '5 minutes'
+     OR NEW.authority_factor_at > now_ts + interval '5 minutes' THEN
+    RAISE EXCEPTION 'authn_sessions: a session cannot be future-dated' USING ERRCODE = 'AD403';
   END IF;
   IF NEW.absolute_expiry - NEW.created_at > interval '24 hours'
      OR NEW.absolute_expiry > now_ts + interval '24 hours 5 minutes' THEN
