@@ -411,6 +411,27 @@ func TestQueryFilterEscapes(t *testing.T) {
 	}
 }
 
+// The schema types schemaIDGUID/attributeSecurityGUID as octet strings and rightsGuid as a string; the
+// C19 resolution queries must render against the real filter schema (fakes do not enforce kinds).
+func TestQueryAnyGUIDRendersAgainstSchema(t *testing.T) {
+	g, err := guid.Parse("ab721a55-1e2f-11d0-9819-00aa0040529b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []Query{
+		{AnyGUID: []AttrGUID{{Attr: "schemaIDGUID", Value: g}, {Attr: "attributeSecurityGUID", Value: g}}},
+		{Classes: []string{"controlAccessRight"}, Eq: []AttrEq{{Attr: "rightsGuid", Value: g.String()}}},
+	} {
+		f, err := q.filter()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ldapfilter.Render(f, ad.DefaultSchema()); err != nil {
+			t.Errorf("render %+v: %v", q, err)
+		}
+	}
+}
+
 func TestGrantsOf(t *testing.T) {
 	good := sdBytes(aceSpec{sid: dsid + "-5", mask: 0x100, objType: &getChanges})
 	d, aces, err := grantsOf(good)

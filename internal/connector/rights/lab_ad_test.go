@@ -301,11 +301,12 @@ func TestLabADRefusals(t *testing.T) {
 
 // T-0237 AC1: Authenticated Users holding Reset-Password on a tier0 object is a WARN exposure
 // naming the object, right and trustee; the verdict stays PASS (broad-principal exposure is WARN).
+// The ACE sits on AdminSDHolder (C3): a broad right on a C19 object fails the snapshot closed (TM-D27 rule 4).
 func TestLabADBroadPrincipalExposure(t *testing.T) {
 	l := newLab(t)
 	ctx := labCtx(t)
 	name, userDN, _ := l.user()
-	l.ace("CN=Administrator,CN=Users,"+labDom, "(OA;;CR;00299570-246d-11d0-a768-00aa006e0529;;AU)")
+	l.ace("CN=AdminSDHolder,CN=System,"+labDom, "(OA;;CR;00299570-246d-11d0-a768-00aa006e0529;;AU)")
 	r := l.verify(ctx, name, userDN, ADInput{})
 	got := r.find(CodeTier0BroadPrincipal)
 	if len(got) != 1 {

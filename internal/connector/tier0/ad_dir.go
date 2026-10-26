@@ -139,7 +139,7 @@ func (q Query) filter() (ldapfilter.Filter, error) {
 			if err != nil {
 				return nil, err
 			}
-			alts = append(alts, ldapfilter.Eq(a, ldapfilter.GUID(e.Value)))
+			alts = append(alts, ldapfilter.Eq(a, ldapfilter.Bytes(e.Value.Bytes())))
 		}
 		terms = append(terms, ldapfilter.Or(alts...))
 	}
