@@ -39,6 +39,7 @@ var (
 
 // opRecord is one row of operations.
 type opRecord struct {
+	Tenant       tenant.ID
 	ID           string
 	Action       ActionID
 	Version      int
@@ -100,10 +101,13 @@ func scanOp(row interface{ Scan(...any) error }) (opRecord, error) {
 }
 
 func loadOp(ctx context.Context, tx store.Tx, t tenant.ID, id string, lock bool) (opRecord, error) {
+	q := selectOp
 	if lock {
-		return scanOp(tx.QueryRow(ctx, selectOpLocked, t.String(), id))
+		q = selectOpLocked
 	}
-	return scanOp(tx.QueryRow(ctx, selectOp, t.String(), id))
+	rec, err := scanOp(tx.QueryRow(ctx, q, t.String(), id))
+	rec.Tenant = t
+	return rec, err
 }
 
 // setOperationState is the transition function of the Operation machine: it checks the edge, then

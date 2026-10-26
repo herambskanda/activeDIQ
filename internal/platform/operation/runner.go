@@ -318,7 +318,7 @@ func (u *run) applyOne(ctx context.Context, tx store.Tx, idx int, sp StepPlan) (
 		Key: key, Attempt: 1, Actor: u.req.Actor, NC: sp.Target.NC, Pins: u.req.Pins, DSAs: u.req.DSAs, Tx: tx, Query: q,
 		Digest: stepDigest(sp),
 		Recheck: func(ctx context.Context, f authority.Facts) error {
-			return r.recheck(ctx, u.req.Actor, u.d.Permission, sp.Target, f)
+			return r.recheck(ctx, u.req.Tenant, u.req.Actor, u.d.Permission, sp.Target, f)
 		},
 	})
 	if err != nil {
@@ -355,11 +355,11 @@ func (u *run) applyOne(ctx context.Context, tx store.Tx, idx int, sp StepPlan) (
 	return StepResult{Key: key, Outcome: out}, nil
 }
 
-func (r *Runner) recheck(ctx context.Context, chain authority.Chain, perm authz.Permission, t authority.TargetRef, f authority.Facts) error {
+func (r *Runner) recheck(ctx context.Context, t tenant.ID, chain authority.Chain, perm authz.Permission, tr authority.TargetRef, f authority.Facts) error {
 	if f.Tier0 {
 		return errors.New("tier0 target") // no role touches tier0 (rule 7)
 	}
-	return r.cfg.Authz.Authorize(ctx, chain, perm, t, f)
+	return r.cfg.Authz.Authorize(authority.WithTenant(ctx, t.String()), chain, perm, tr, f)
 }
 
 // liveFacts reads the facts for one target on the operation's pins (rule 5), so the gate and the
@@ -403,7 +403,7 @@ func (u *run) authorise(ctx context.Context, t authority.TargetRef) (authority.F
 	if err != nil {
 		return f, u.denied("facts_unavailable", err)
 	}
-	if err := u.r.recheck(ctx, u.req.Actor, u.d.Permission, t, f); err != nil {
+	if err := u.r.recheck(ctx, u.req.Tenant, u.req.Actor, u.d.Permission, t, f); err != nil {
 		return f, u.denied("denied", err)
 	}
 	return f, nil
