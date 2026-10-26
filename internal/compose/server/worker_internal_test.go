@@ -123,7 +123,13 @@ func TestSIGTERMDrainsWithinGraceAndLeavesTheClaimForRescue(t *testing.T) {
 		defer stop()
 		const grace = 300 * time.Millisecond
 		done := make(chan error, 1)
-		go func() { done <- runWorker(ctx, e.db, reg, wcfg(grace)) }()
+		// Concurrency 1: the second job is queued while the first body holds the only slot, so it cannot be
+		// claimed before SIGTERM lands (with the default 8 slots a poll could claim it in that window, which
+		// made Rescue see two interrupted claims: T-0399). Whether it is claimed after SIGTERM is still
+		// pinned by the Requeued == 1 and completed == 0 assertions below.
+		cfg := wcfg(grace)
+		cfg.Concurrency = 1
+		go func() { done <- runWorker(ctx, e.db, reg, cfg) }()
 		<-started
 		e.enqueue(t, reg, "t.stuck") // queued while a body is in flight; must not be claimed after SIGTERM
 		sent := time.Now()
