@@ -130,6 +130,48 @@ func TestAuthorizerDecidesOnPersistedGrants(t *testing.T) {
 	})
 }
 
+// TM-D19 rule 5 reads the backed side with PendingOrActive: scheduled grants count, revoked and
+// expired ones do not; the actor-side read stays current-only.
+func TestPendingOrActiveIncludesScheduledGrants(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		if err := e.exec(t, e.a, func(ctx context.Context, tx store.Tx) error { return SeedBuiltIns(ctx, tx, e.a) }); err != nil {
+			t.Fatal(err)
+		}
+		root := Root{Kind: EntraTenant, Connection: conn, GUID: conn}
+		const sched, revoked, expired, current = "55555555-5555-4555-8555-555555555551", "55555555-5555-4555-8555-555555555552", "55555555-5555-4555-8555-555555555553", "55555555-5555-4555-8555-555555555554"
+		past := time.Now().Add(-time.Hour)
+		e.assign(t, e.a, "platform-administrator", sched, nil, "active", root)
+		e.assign(t, e.a, "platform-administrator", revoked, nil, "revoked", root)
+		e.assign(t, e.a, "platform-administrator", expired, &past, "active", root)
+		e.assign(t, e.a, "platform-administrator", current, nil, "active", root)
+		if err := e.exec(t, e.a, func(ctx context.Context, tx store.Tx) error {
+			_, err := tx.Exec(ctx, `UPDATE public.authz_assignments SET valid_from = now() + interval '1 day' WHERE tenant_id = $1::uuid AND account_id = $2::uuid`, e.a.String(), sched)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		src, err := NewStore(e.db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		now := time.Now()
+		for acct, want := range map[string][2]int{sched: {0, 1}, revoked: {0, 0}, expired: {0, 0}, current: {1, 1}} {
+			cur, err := src.Assignments(context.Background(), e.a, acct, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pend, err := src.PendingOrActive(context.Background(), e.a, acct, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(cur) != want[0] || len(pend) != want[1] {
+				t.Errorf("%s: current %d (want %d), pending-or-active %d (want %d)", acct, len(cur), want[0], len(pend), want[1])
+			}
+		}
+	})
+}
+
 // Acceptance 4, at the schema: a Tier-2 role cannot be given the permission, in either order.
 func TestSchemaRefusesTier0PermissionOnATier2Role(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {

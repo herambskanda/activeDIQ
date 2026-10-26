@@ -31,17 +31,23 @@ func denied(r authz.Reason) error { return fmt.Errorf("%w: %s", ErrDenied, r) }
 
 // Authorizer implements operation.Authorizer over authz.Evaluator.
 type Authorizer struct {
-	src  Source
-	eval authz.Evaluator
-	now  func() time.Time
+	src     Source
+	eval    authz.Evaluator
+	now     func() time.Time
+	backing Backing      // TM-D19 rule 5; nil refuses every backing-object permission
+	roots   RootResolver // live scope-root ancestry for the rule 5 containment test
 }
 
 // New returns an Authorizer reading assignments from src.
-func New(src Source) (*Authorizer, error) {
+func New(src Source, opts ...Option) (*Authorizer, error) {
 	if src == nil {
 		return nil, errors.New("rbac: no assignment source")
 	}
-	return &Authorizer{src: src, now: time.Now}, nil
+	a := &Authorizer{src: src, now: time.Now}
+	for _, o := range opts {
+		o(a)
+	}
+	return a, nil
 }
 
 // FactsQuery asks for the Tier-0 fact and the live parent chain of a directory target. A tier0_scope
@@ -89,6 +95,10 @@ func (a *Authorizer) Authorize(ctx context.Context, chain authority.Chain, perm 
 	p := &authz.Principal{ID: string(chain.Requester.ID), Assignments: ev}
 	if d := a.eval.Authorize(p, nil, perm, tgt); !d.Allowed {
 		return denied(d.Reason)
+	}
+	if !scope && isBackingPermission(perm) {
+		// TM-D19 rule 5: a console-backing object is an escalation object.
+		return a.checkBacking(ctx, tn, as, string(chain.Requester.ID), t)
 	}
 	return nil
 }
