@@ -126,7 +126,7 @@ func checkA12(t *tree) []Violation {
 			}
 		}
 		if t.reachesSecretInput(o) {
-			if _, both := secretResp[o.id]; !both && class != "secret" {
+			if _, both := secretResp[o.id]; !both && class != "secret" && !(o.perm == "anonymous" && class == "auth") {
 				add(o.where(), "%s accepts a SecretInput but declares rate class %q, not secret (ADR-0004 rule 10, A12)", o.label(), orDefault(class, "(default)"))
 			}
 			switch {

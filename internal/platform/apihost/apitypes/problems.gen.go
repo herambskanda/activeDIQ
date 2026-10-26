@@ -17,12 +17,14 @@ const (
 	ProblemTypeMalformedRequest        = "/problems/malformed-request"
 	ProblemTypeMethodNotAllowed        = "/problems/method-not-allowed"
 	ProblemTypeNotFound                = "/problems/not-found"
+	ProblemTypeNotImplemented          = "/problems/not-implemented"
 	ProblemTypeNotReady                = "/problems/not-ready"
 	ProblemTypePasswordPolicyViolation = "/problems/password-policy-violation"
 	ProblemTypePayloadTooLarge         = "/problems/payload-too-large"
 	ProblemTypePreconditionFailed      = "/problems/precondition-failed"
 	ProblemTypePreconditionRequired    = "/problems/precondition-required"
 	ProblemTypeRateLimited             = "/problems/rate-limited"
+	ProblemTypeSignInFailed            = "/problems/sign-in-failed"
 	ProblemTypeStepUpRequired          = "/problems/step-up-required"
 	ProblemTypeUnauthenticated         = "/problems/unauthenticated"
 	ProblemTypeUnsupportedMediaType    = "/problems/unsupported-media-type"
@@ -84,6 +86,11 @@ func NotFound(detail string) *Problem {
 	return newProblem(ProblemTypeNotFound, "Not found", 404, detail)
 }
 
+// NotImplemented builds a 501 /problems/not-implemented problem.
+func NotImplemented(detail string) *Problem {
+	return newProblem(ProblemTypeNotImplemented, "Not implemented", 501, detail)
+}
+
 // NotReady builds a 503 /problems/not-ready problem.
 func NotReady(detail string) *Problem {
 	return newProblem(ProblemTypeNotReady, "The service is not ready", 503, detail)
@@ -112,6 +119,11 @@ func PreconditionRequired(detail string) *Problem {
 // RateLimited builds a 429 /problems/rate-limited problem.
 func RateLimited(detail string) *Problem {
 	return newProblem(ProblemTypeRateLimited, "Too many requests", 429, detail)
+}
+
+// SignInFailed builds a 401 /problems/sign-in-failed problem.
+func SignInFailed(detail string) *Problem {
+	return newProblem(ProblemTypeSignInFailed, "Sign-in failed", 401, detail)
 }
 
 // StepUpRequired builds a 401 /problems/step-up-required problem.
