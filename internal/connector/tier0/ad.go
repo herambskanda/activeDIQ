@@ -1632,3 +1632,10 @@ func NewADSet() *ADSet { return &ADSet{bases: map[string]map[Basis]bool{}} }
 
 // Add marks g with basis b.
 func (s *ADSet) Add(g guid.GUID, b Basis) { s.add(g, b) }
+
+// AddC13 marks g as a C13 group and records it for pinning, as a real snapshot does (tests of the
+// rights check, which supply a snapshot from elsewhere).
+func (s *ADSet) AddC13(g guid.GUID) {
+	s.add(g, C13)
+	s.c13 = append(s.c13, g)
+}

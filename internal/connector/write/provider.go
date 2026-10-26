@@ -65,8 +65,8 @@ type ADProvider struct {
 	// group would otherwise stop being tier0.
 	Pins PinStore
 	// classify is the base classifier; nil means the T-0093 classifier over Dir. Tests substitute it.
-	// pins are the PinnedC13 the production path passes on every call.
-	classify func(ctx context.Context, id guid.GUID, pins []guid.GUID) (tier0.ADResult, error)
+	// in is the ADInput the production path builds (see classifierInput): pins and designations.
+	classify func(ctx context.Context, id guid.GUID, in tier0.ADInput) (tier0.ADResult, error)
 	// Dynamic is the Entra snapshot whose designated closure the AD plane's property writes are
 	// checked against (the synced AD user is matched by rules on the Entra side, TM-D25 7f). Nil
 	// refuses every property write.
@@ -117,11 +117,11 @@ func (p *ADProvider) Classify(ctx context.Context, id guid.GUID, designated []gu
 	// The correlation facts are the request's and were applied at steps 3 to 6; this is the live half.
 	base := p.classify
 	if base == nil {
-		base = func(ctx context.Context, id guid.GUID, pins []guid.GUID) (tier0.ADResult, error) {
-			return tier0.NewAD(p.Dir).Classify(ctx, dn.GUIDRef(id), tier0.ADInput{CorrelationKnown: true, PinnedC13: pins})
+		base = func(ctx context.Context, id guid.GUID, in tier0.ADInput) (tier0.ADResult, error) {
+			return tier0.NewAD(p.Dir).Classify(ctx, dn.GUIDRef(id), in)
 		}
 	}
-	r, err := base(ctx, id, pins)
+	r, err := base(ctx, id, classifierInput(pins, designated))
 	if err != nil {
 		return unknown, err
 	}
@@ -173,6 +173,17 @@ func (p *ADProvider) Classify(ctx context.Context, id guid.GUID, designated []gu
 		}
 	}
 	return v, nil
+}
+
+// classifierInput is what the live classifier is given: the pinned C13 groups (TM-D26 rule 10) and the
+// customer designations, so C18 closes over them (a sIDHistory value naming a designated object makes
+// its holder tier0 even though tokenGroups does not carry the holder's own sIDHistory).
+func classifierInput(pins, designated []guid.GUID) tier0.ADInput {
+	in := tier0.ADInput{CorrelationKnown: true, PinnedC13: pins}
+	for _, d := range designated {
+		in.Designated = append(in.Designated, dn.GUIDRef(d))
+	}
+	return in
 }
 
 // gpoCNInvalid is true for a groupPolicyContainer whose cn does not parse as a GUID (CC-WRITE-20 g).

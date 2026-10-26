@@ -818,3 +818,31 @@ func TestUniversalSIDsAreBroad(t *testing.T) {
 		}
 	}
 }
+
+// T-0345 review findings 3 and 4: the pins and designations the check is given reach the snapshot,
+// and the C13 groups the snapshot found are returned so the caller pins them at first discovery.
+func TestPinsReachSnapshotAndC13GroupsAreReturned(t *testing.T) {
+	w := newWorld(t)
+	pin, des := adguid.GUID{0xAA}, adguid.GUID{0xBB}
+	found := adguid.GUID{0xCC}
+	w.set.AddC13(found)
+	w.setTokens()
+	ref, _ := dn.ParseObjectRef(w.id.DN)
+	var gotPins, gotDes []adguid.GUID
+	prev := snapshotWith
+	snapshotWith = func(_ context.Context, _ ADDirectory, pinned, designated []adguid.GUID) (*tier0.ADSet, error) {
+		gotPins, gotDes = pinned, designated
+		return w.set, nil
+	}
+	defer func() { snapshotWith = prev }()
+	res, err := VerifyAD(context.Background(), w.f, ADInput{Identity: ref, PinnedC13: []adguid.GUID{pin}, Designated: []adguid.GUID{des}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gotPins) != 1 || gotPins[0] != pin || len(gotDes) != 1 || gotDes[0] != des {
+		t.Fatalf("snapshot given pins %v designated %v", gotPins, gotDes)
+	}
+	if len(res.C13Groups) != 1 || res.C13Groups[0] != found {
+		t.Fatalf("C13Groups = %v", res.C13Groups)
+	}
+}

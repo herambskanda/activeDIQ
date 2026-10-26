@@ -77,7 +77,7 @@ func adRig(t *testing.T) (*ADProvider, *designatedDir, guid.GUID, guid.GUID) {
 		grp: ad.NewEntry("CN=g,DC=lab", map[string][][]byte{"objectSid": {sidBytes(t, "S-1-5-21-1-2-3-1100")}}),
 	}, errs: map[guid.GUID]error{}}
 	p := &ADProvider{Dir: d, Pins: &memPins{}}
-	p.classify = func(_ context.Context, id guid.GUID, _ []guid.GUID) (tier0.ADResult, error) {
+	p.classify = func(_ context.Context, id guid.GUID, _ tier0.ADInput) (tier0.ADResult, error) {
 		return tier0.ADResult{GUID: id}, nil
 	}
 	return p, d, user, grp
@@ -120,19 +120,19 @@ func TestADProviderDesignated(t *testing.T) {
 func TestADProviderClassifierAnswersFailClosed(t *testing.T) {
 	ctx := context.Background()
 	p, _, user, _ := adRig(t)
-	p.classify = func(context.Context, guid.GUID, []guid.GUID) (tier0.ADResult, error) {
+	p.classify = func(context.Context, guid.GUID, tier0.ADInput) (tier0.ADResult, error) {
 		return tier0.ADResult{Unknown: true, Tier0: true, GUID: user}, nil
 	}
 	if v, err := p.Classify(ctx, user, nil); err == nil || !v.Tier0 {
 		t.Fatalf("Unknown result: %+v %v", v, err)
 	}
-	p.classify = func(context.Context, guid.GUID, []guid.GUID) (tier0.ADResult, error) {
+	p.classify = func(context.Context, guid.GUID, tier0.ADInput) (tier0.ADResult, error) {
 		return tier0.ADResult{GUID: mk(99)}, nil
 	}
 	if v, err := p.Classify(ctx, user, nil); err == nil || !v.Tier0 {
 		t.Fatalf("GUID mismatch: %+v %v", v, err)
 	}
-	p.classify = func(context.Context, guid.GUID, []guid.GUID) (tier0.ADResult, error) {
+	p.classify = func(context.Context, guid.GUID, tier0.ADInput) (tier0.ADResult, error) {
 		return tier0.ADResult{}, errors.New("dc down")
 	}
 	if v, err := p.Classify(ctx, user, nil); err == nil || !v.Tier0 {
@@ -230,8 +230,8 @@ func TestADProviderPlumbsPinnedC13(t *testing.T) {
 	pins := p.Pins.(*memPins)
 	pins.pins = []guid.GUID{mk(80)}
 	var seen [][]guid.GUID
-	p.classify = func(_ context.Context, id guid.GUID, pin []guid.GUID) (tier0.ADResult, error) {
-		seen = append(seen, pin)
+	p.classify = func(_ context.Context, id guid.GUID, in tier0.ADInput) (tier0.ADResult, error) {
+		seen = append(seen, in.PinnedC13)
 		return tier0.ADResult{GUID: id, C13Groups: []guid.GUID{mk(81)}}, nil
 	}
 	for i := 0; i < 2; i++ {
@@ -265,8 +265,8 @@ func TestHandlerRefusesRenamedPinnedGroup(t *testing.T) {
 	g := mk(90)
 	pins := &memPins{pins: []guid.GUID{g}}
 	p := &ADProvider{Pins: pins, ID: adIdentity()}
-	p.classify = func(_ context.Context, id guid.GUID, pin []guid.GUID) (tier0.ADResult, error) {
-		if slices.Contains(pin, id) { // what the classifier does with a pinned GUID whatever its name
+	p.classify = func(_ context.Context, id guid.GUID, in tier0.ADInput) (tier0.ADResult, error) {
+		if slices.Contains(in.PinnedC13, id) { // what the classifier does with a pinned GUID whatever its name
 			return tier0.ADResult{GUID: id, Tier0: true, Bases: []Basis{tier0.C13}}, nil
 		}
 		return tier0.ADResult{GUID: id}, nil
@@ -283,5 +283,30 @@ func TestHandlerRefusesRenamedPinnedGroup(t *testing.T) {
 		if len(d.GetBasis()) != 1 || d.GetBasis()[0] != tier0.C13 {
 			t.Errorf("%s: basis %v", tname, d.GetBasis())
 		}
+	}
+}
+
+// T-0345 review finding 1/2: the input the production path builds carries BOTH the pins and the
+// designations, so C18 closes over designated objects on the write path. Dropping either field fails.
+func TestADProviderClassifierInputCarriesPinsAndDesignations(t *testing.T) {
+	ctx := context.Background()
+	p, _, user, grp := adRig(t)
+	p.Pins.(*memPins).pins = []guid.GUID{mk(80)}
+	var got tier0.ADInput
+	p.classify = func(_ context.Context, id guid.GUID, in tier0.ADInput) (tier0.ADResult, error) {
+		got = in
+		return tier0.ADResult{GUID: id}, nil
+	}
+	if _, err := p.Classify(ctx, user, []guid.GUID{grp}); err != nil {
+		t.Fatal(err)
+	}
+	if !got.CorrelationKnown || !slices.Contains(got.PinnedC13, mk(80)) {
+		t.Errorf("pins missing from classifier input: %+v", got)
+	}
+	if len(got.Designated) != 1 {
+		t.Fatalf("designations missing from classifier input: %+v", got)
+	}
+	if g, ok := got.Designated[0].GUID(); !ok || g != grp {
+		t.Errorf("designated ref = %v", got.Designated[0])
 	}
 }

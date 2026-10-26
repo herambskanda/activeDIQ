@@ -113,6 +113,9 @@ type ADResult struct {
 	Tier0Set []*v1.Tier0Member
 	// Tier0Findings are the classifier's onboarding observations (DNSADMINS_MISSING).
 	Tier0Findings []tier0.Finding
+	// C13Groups are the C13 group GUIDs this snapshot found. The caller pins them at first discovery
+	// (TM-D26 rule 10), so a rename between onboarding and the first write cannot lose them.
+	C13Groups []adguid.GUID
 }
 
 // Blocking reports whether any finding has block severity.
@@ -155,6 +158,11 @@ type adCheck struct {
 
 // snapshotHook replaces the tier0 classifier for tests of StreamAD, which builds its own ADInput.
 var snapshotHook func(ctx context.Context) (*tier0.ADSet, error)
+
+// snapshotWith is the production snapshot; tests replace it to see the pins and designations it is given.
+var snapshotWith = func(ctx context.Context, d ADDirectory, pinned, designated []adguid.GUID) (*tier0.ADSet, error) {
+	return tier0.NewAD(d).SnapshotWith(ctx, pinned, designated)
+}
 
 var errNoIdentity = errors.New("rights: the connector identity could not be read")
 
@@ -203,7 +211,7 @@ func VerifyAD(ctx context.Context, d ADDirectory, in ADInput) (*ADResult, error)
 	}
 	if snap == nil {
 		snap = func(ctx context.Context) (*tier0.ADSet, error) {
-			return tier0.NewAD(d).SnapshotWith(ctx, in.PinnedC13, in.Designated)
+			return snapshotWith(ctx, d, in.PinnedC13, in.Designated)
 		}
 	}
 	set, serr := snap(ctx)
@@ -212,6 +220,7 @@ func VerifyAD(ctx context.Context, d ADDirectory, in ADInput) (*ADResult, error)
 		c.cannot(v7, nil, serr)
 	} else {
 		res.Tier0Findings = set.Findings()
+		res.C13Groups = set.C13Groups()
 		for _, g := range set.Members() {
 			m := &member{g: g, bases: map[tier0.Basis]bool{}}
 			for _, b := range set.Bases(g) {
