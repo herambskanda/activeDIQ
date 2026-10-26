@@ -302,6 +302,34 @@ func TestLabADBroadPrincipalExposure(t *testing.T) {
 	}
 }
 
+// T-0381 AC2: the real tokenGroups of a freshly made user lacks the implicit network-logon SIDs the
+// checker adds from implicitNetworkLogonSIDs. Samba proves the LDAP side; Windows is the same by MS-ADTS.
+func TestLabADTokenGroupsLackImplicitSIDs(t *testing.T) {
+	l := newLab(t)
+	ctx := labCtx(t)
+	name, userDN, _ := l.user()
+	sess := l.open(ctx, name)
+	ref, err := dn.ParseObjectRef(userDN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := sess.Read(ctx, ref, []string{"tokenGroups"}, ad.ReadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	groups, err := e.SIDs("tokenGroups")
+	if err != nil || len(groups) == 0 {
+		t.Fatalf("tokenGroups: %v %v", groups, err)
+	}
+	for _, g := range groups {
+		for _, s := range implicitNetworkLogonSIDs {
+			if g.String() == s {
+				t.Errorf("real tokenGroups contains implicit SID %s", s)
+			}
+		}
+	}
+}
+
 // T-0362 / T0-RIGHTS-C19 (TM-D27 rule 8): the identity holding a rule-2 right on a C19 object is
 // refused with the C19 finding naming the object. Samba proves the LDAP and DACL semantics only;
 // owner-of-DC-object and SDProp cases need the Windows lab (T-0226).

@@ -205,6 +205,10 @@ func VerifyAD(ctx context.Context, d ADDirectory, in ADInput) (*ADResult, error)
 			c.own[g.String()] = true
 		}
 	}
+	// tokenGroups never carries the implicit logon SIDs; a network bind's access token does.
+	for _, s := range implicitNetworkLogonSIDs {
+		c.tokens[s] = true
+	}
 
 	res := &ADResult{Identity: &v1.AdObservedIdentity{ObjectGuid: pbGuid(c.idGUID), ObjectSid: &v1.Sid{Value: c.idSID.Bytes()}}}
 
@@ -305,6 +309,11 @@ func (m *member) basisList() []v1.Tier0Basis {
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
 	return out
 }
+
+// implicitNetworkLogonSIDs is the single named set of SIDs a network-logon access token holds that
+// the tokenGroups constructed attribute does not return (AD and Samba both omit them): Everyone,
+// NETWORK, Authenticated Users, This Organization. They join c.tokens only, never c.own.
+var implicitNetworkLogonSIDs = []string{"S-1-1-0", "S-1-5-2", "S-1-5-11", "S-1-5-15"}
 
 // universalSID reports whether every authenticated principal holds s (or a logon-session or
 // asserted-identity SID the access token carries without any delegation).

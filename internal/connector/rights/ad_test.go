@@ -243,7 +243,7 @@ func newWorld(t *testing.T) *world {
 		map[string][][]byte{"nTSecurityDescriptor": {sdBytes(daSID, tace{mask: dsFullControl, trustee: daSID})}})
 	w.t0, w.t0G = f.obj("CN=AdminSDHolder,CN=System,DC=lab,DC=test", "", nil,
 		map[string][][]byte{"nTSecurityDescriptor": {sdBytes(daSID, tace{mask: dsFullControl, trustee: daSID})}})
-	w.tokens = []string{dusSID, "S-1-1-0", "S-1-5-11"}
+	w.tokens = []string{dusSID}
 	w.id, w.idG = f.obj("CN=svc,CN=Users,DC=lab,DC=test", idSIDt, map[string][]string{"userAccountControl": {"512"}, "primaryGroupID": {"513"}}, nil)
 	f.obj("CN=Domain Users,CN=Users,DC=lab,DC=test", dusSID, nil, nil)
 	w.set = tier0.NewADSet()
@@ -806,7 +806,7 @@ func TestOwnerImplicitWriteDAC(t *testing.T) {
 func TestForeignPrivilegedTokenSID(t *testing.T) {
 	w := newWorld(t)
 	for sidText, want := range map[string]int{"S-1-5-21-9-8-7-519": 1, "S-1-5-21-9-8-7-1105": 0} {
-		w.tokens = []string{dusSID, "S-1-1-0", "S-1-5-11", sidText}
+		w.tokens = []string{dusSID, sidText}
 		r := w.run(t, ADInput{})
 		if got := count(r, CodeUnverifiedAD); got != want {
 			t.Fatalf("%s: unverified x%d, want %d: %v", sidText, got, want, codes(r))
@@ -853,5 +853,53 @@ func TestPinsReachSnapshotAndC13GroupsAreReturned(t *testing.T) {
 	}
 	if len(res.C13Groups) != 1 || res.C13Groups[0] != found {
 		t.Fatalf("C13Groups = %v", res.C13Groups)
+	}
+}
+
+// T-0381: the fixture models tokenGroups as AD returns it (no implicit logon SIDs); the checker adds
+// them from implicitNetworkLogonSIDs only.
+func TestFixtureTokenGroupsLackImplicitSIDs(t *testing.T) {
+	w := newWorld(t)
+	w.setTokens()
+	groups, err := w.id.SIDs("tokenGroups")
+	if err != nil || len(groups) == 0 {
+		t.Fatalf("tokenGroups: %v %v", groups, err)
+	}
+	for _, g := range groups {
+		for _, bad := range []string{"S-1-1-0", "S-1-5-11", "S-1-5-2", "S-1-5-15"} {
+			if g.String() == bad {
+				t.Fatalf("fixture tokenGroups contains %s, which AD never returns", bad)
+			}
+		}
+	}
+}
+
+// T-0381 review: the identity's tokenGroups lacks Everyone/Authenticated Users (as in AD), so an
+// expected right granted only to them is covered solely by the checker's implicit logon SIDs.
+func TestExpectedRightGrantedToUniversalSIDIsCovered(t *testing.T) {
+	for _, trustee := range []string{"S-1-1-0", "S-1-5-11", "S-1-5-2", "S-1-5-15"} {
+		w := newWorld(t)
+		classUserG := w.f.schemaClass("user")
+		ou, ouG := w.f.obj("OU=Managed,DC=lab,DC=test", "", nil, nil)
+		w.putRaw(ou, "nTSecurityDescriptor", [][]byte{sdBytes(daSID,
+			tace{mask: dsCreateChild, objType: &classUserG, flags: 0x02, trustee: trustee},
+			tace{mask: dsDeleteChild, objType: &classUserG, flags: 0x02, trustee: trustee},
+		)})
+		r := w.run(t, ADInput{ManagedRoots: []adguid.GUID{ouG},
+			EnabledFamilies: []v1.RightsFamily{v1.RightsFamily_RIGHTS_FAMILY_AD_R3_USER_LIFECYCLE}})
+		if n := count(r, CodeMissingFamily); n != 0 {
+			t.Errorf("%s: expected right held via the implicit logon SID reported missing x%d: %v", trustee, n, codes(r))
+		}
+	}
+	// control: a trustee the identity does not hold leaves both rights missing
+	w := newWorld(t)
+	classUserG := w.f.schemaClass("user")
+	ou, ouG := w.f.obj("OU=Managed,DC=lab,DC=test", "", nil, nil)
+	w.putRaw(ou, "nTSecurityDescriptor", [][]byte{sdBytes(daSID,
+		tace{mask: dsCreateChild, objType: &classUserG, flags: 0x02, trustee: "S-1-5-4"})})
+	r := w.run(t, ADInput{ManagedRoots: []adguid.GUID{ouG},
+		EnabledFamilies: []v1.RightsFamily{v1.RightsFamily_RIGHTS_FAMILY_AD_R3_USER_LIFECYCLE}})
+	if n := count(r, CodeMissingFamily); n != 2 {
+		t.Errorf("control: missing x%d: %v", n, codes(r))
 	}
 }
