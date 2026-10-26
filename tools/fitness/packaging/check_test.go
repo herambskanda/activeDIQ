@@ -40,6 +40,13 @@ func fixture(t *testing.T, file string, mutate func(string) string) string {
 	return root
 }
 
+func TestMain(m *testing.M) {
+	// Fixtures hold only the packaging files; the PowerShell image pin lives in the real repository.
+	r, _ := filepath.Abs("../../..")
+	os.Setenv("ADIQ_REPO_ROOT", r)
+	os.Exit(m.Run())
+}
+
 func TestRepositoryIsClean(t *testing.T) {
 	if v := Check(repoRoot(t)); len(v) != 0 {
 		t.Fatalf("violations: %v", v)
@@ -72,6 +79,14 @@ func TestViolationsAreCaught(t *testing.T) {
 		{"container runs as root", linCompose, "numeric non-root user", func(s string) string {
 			return strings.ReplaceAll(s, `"10001:10001"          #`, `"0:0"          #`)
 		}},
+		{"script does not parse", winACL, "PowerShell parse error", func(s string) string {
+			return s + "\nWrite-Output \"ACL set on $Path: broken\"\n"
+		}},
+		{"existing dir DACL unchecked", winACL, "own DACL", func(s string) string {
+			return strings.ReplaceAll(s, "Assert-NoUnprivilegedWrite $Path", "# skipped $Path")
+		}},
+		{"generic rights not masked", winACL, "generic rights", func(s string) string { return strings.ReplaceAll(s, "0x52000000", "0") }},
+		{"hardlink check fails open", winACL, "fail closed", func(s string) string { return strings.ReplaceAll(s, "$LASTEXITCODE", "$null") }},
 		{"privileged", linCompose, "must not be privileged", func(s string) string { return s + "    privileged: true\n" }},
 	}
 	for _, c := range cases {

@@ -57,6 +57,9 @@ func Check(root string) []string {
 	need(&v, winACL, w, "hardlink", "hard-linked files must be refused")
 	need(&v, winACL, w, "refusing to adopt", "a pre-existing directory with an untrusted owner must be refused")
 	need(&v, winACL, w, "grants write access", "a parent writable by unprivileged users must be refused")
+	need(&v, winACL, w, "Assert-NoUnprivilegedWrite $Path", "an existing directory's own DACL must be checked for unprivileged write access")
+	need(&v, winACL, w, "0x52000000", "the danger mask must include the raw generic rights (GENERIC_ALL/WRITE, MAXIMUM_ALLOWED)")
+	need(&v, winACL, w, "$LASTEXITCODE", "the hard-link check must fail closed when fsutil fails")
 	t := read(root, winTest, &v)
 	need(&v, winTest, t, "AreAccessRulesProtected", "the lab test must assert the ACL is protected")
 	need(&v, winTest, t, "ProbeCredential", "the lab test must probe as a non-administrator")
@@ -82,6 +85,8 @@ func Check(root string) []string {
 		need(&v, linCompose, c, "type: bind", "the TLS directory must be a bind mount of the prepared host directory")
 		forbid(&v, linCompose, c, "privileged: true", "the server must not be privileged")
 	}
+
+	v = append(v, parsePowerShell(root, repoRootOf(root))...)
 
 	if p != "" && runtime.GOOS != "windows" {
 		v = append(v, runPrepare(root)...)
@@ -174,4 +179,13 @@ func runHostile(script, tmp, uid, gid string) []string {
 		}
 	}
 	return v
+}
+
+// repoRootOf finds the checkout that holds the oracle pin: root itself, or the real repository when
+// Check runs on a fixture copy (TFITNESS_REPO overrides).
+func repoRootOf(root string) string {
+	if r := os.Getenv("ADIQ_REPO_ROOT"); r != "" {
+		return r
+	}
+	return root
 }
