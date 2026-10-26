@@ -1371,6 +1371,49 @@ func privilegedSID(s sid.SID) bool {
 	return privilegedDomainRIDs[rid]
 }
 
+// sidBatch bounds the objectSid OR-terms in one resolution search.
+const sidBatch = 100
+
+// resolveSIDs looks up every distinct non-privileged sIDHistory value in batches and calls set once
+// per value (nil entry when no object holds it). Any search error fails the snapshot (fail closed).
+func (b *builder) resolveSIDs(hist []histEntry, set func(sid.SID, *ad.Entry)) error {
+	seen := map[sid.SID]bool{}
+	var todo []sid.SID
+	for _, h := range hist {
+		for _, s := range h.sids {
+			if !privilegedSID(s) && !seen[s] {
+				seen[s] = true
+				todo = append(todo, s)
+			}
+		}
+	}
+	for len(todo) > 0 {
+		n := min(sidBatch, len(todo))
+		batch := todo[:n]
+		todo = todo[n:]
+		got := map[sid.SID]*ad.Entry{}
+		err := b.d.Find(b.ctx, b.nm.Domain, ad.ScopeSubtree, Query{AnySID: batch}, idAttrs, func(e *ad.Entry) error {
+			ss, err := e.SIDs("objectSid")
+			if err != nil {
+				return fmt.Errorf("tier0: sIDHistory target: %w", err)
+			}
+			for _, s := range ss {
+				if seen[s] && got[s] == nil {
+					got[s] = e
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("tier0: sIDHistory lookup: %w", err)
+		}
+		for _, s := range batch {
+			set(s, got[s])
+		}
+	}
+	return nil
+}
+
 // C18: privileged sIDHistory. An object is tier0 when a sIDHistory value is privileged by RID, or
 // resolves to an object that is tier0 by another basis (iterated: such an object may itself have
 // become tier0 through C18). A group that qualifies makes its members tier0 through C2 (rule 7). A
@@ -1381,12 +1424,15 @@ func (b *builder) c18() error {
 		return err
 	}
 	done := make([]bool, len(hist))
-	// Resolution is cached: one Get per distinct value.
+	// Resolution is batched and cached: ceil(distinct/sidBatch) searches, never one per value.
 	type res struct {
 		e     *ad.Entry
 		found bool
 	}
 	cache := map[sid.SID]res{}
+	if err := b.resolveSIDs(hist, func(s sid.SID, e *ad.Entry) { cache[s] = res{e, e != nil} }); err != nil {
+		return err
+	}
 	var groups []*ad.Entry
 	for changed := true; changed; {
 		changed = false
@@ -1400,15 +1446,7 @@ func (b *builder) c18() error {
 					qualifies = true
 					break
 				}
-				r, ok := cache[s]
-				if !ok {
-					e, found, err := b.get(dn.SIDRef(s), idAttrs)
-					if err != nil {
-						return fmt.Errorf("tier0: sIDHistory lookup: %w", err)
-					}
-					r = res{e, found}
-					cache[s] = r
-				}
+				r := cache[s]
 				if r.found {
 					g, err := r.e.GUID()
 					if err != nil {

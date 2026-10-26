@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
+	"github.com/skenzeriq/activediq/internal/directory/attr/sid"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
 )
@@ -33,6 +34,8 @@ type Query struct {
 	Has    []string
 	// UACAny matches objects whose userAccountControl has any of these bits set.
 	UACAny uint32
+	// AnySID matches objects whose objectSid is any of these (OR-ed, one term of the AND).
+	AnySID []sid.SID
 }
 
 // ADDirectory is what the AD classifier reads through. *Session wraps an *ad.Session; tests use an
@@ -120,6 +123,17 @@ func (q Query) filter() (ldapfilter.Filter, error) {
 				return nil, err
 			}
 			alts = append(alts, ldapfilter.Eq(a, ldapfilter.Int32(e.Value)))
+		}
+		terms = append(terms, ldapfilter.Or(alts...))
+	}
+	if len(q.AnySID) > 0 {
+		a, err := attr("objectSid")
+		if err != nil {
+			return nil, err
+		}
+		var alts []ldapfilter.Filter
+		for _, s := range q.AnySID {
+			alts = append(alts, ldapfilter.Eq(a, ldapfilter.SID(s)))
 		}
 		terms = append(terms, ldapfilter.Or(alts...))
 	}

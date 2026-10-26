@@ -5,7 +5,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/skenzeriq/activediq/internal/connector/ad"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
+	"github.com/skenzeriq/activediq/internal/directory/attr/sid"
+	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
 )
 
 // TM-D26 test table (threat-model §6.4 proof TM-F-T0GUARD, T-0227 additions). Every positive case
@@ -337,5 +340,69 @@ func TestC17Live(t *testing.T) { // T0-C17-LIVE, CC-WRITE-15(d): classification 
 	delete(f.find(dom).raw, "nTSecurityDescriptor")
 	if r, err := classify(t, f, o); err == nil || !r.Unknown {
 		t.Errorf("unreadable head DACL: %+v %v", r, err)
+	}
+}
+
+func TestC18BatchedResolution(t *testing.T) { // T0-C18-BATCH
+	f := forest()
+	us := u(f, "bulk", 4200)
+	const n = 2*sidBatch + 7
+	var vals []string
+	for i := 0; i < n; i++ {
+		vals = append(vals, fmt.Sprintf("%s-%d", foreignID, 20000+i))
+	}
+	f.find(us).history(vals...)
+	wantBasis(t, f, us, C18, false)
+	var sidSearches, wantMax = 0, (n + sidBatch - 1) / sidBatch
+	for _, q := range f.finds {
+		if len(q.AnySID) > 0 {
+			sidSearches++
+			if len(q.AnySID) > sidBatch {
+				t.Errorf("batch of %d exceeds %d", len(q.AnySID), sidBatch)
+			}
+		}
+	}
+	// wantBasis snapshots more than once; each snapshot must stay within the bound.
+	if sidSearches == 0 || sidSearches%wantMax != 0 {
+		t.Errorf("sid searches = %d, want a multiple of %d", sidSearches, wantMax)
+	}
+	f.finds = nil
+	if _, err := NewAD(f).Snapshot(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	sidSearches = 0
+	for _, q := range f.finds {
+		if len(q.AnySID) > 0 {
+			sidSearches++
+		}
+	}
+	if sidSearches != wantMax {
+		t.Errorf("one snapshot used %d sid searches, want %d", sidSearches, wantMax)
+	}
+}
+
+func TestC18BatchLookupFailsClosed(t *testing.T) { // T0-C18-FAIL
+	f := forest()
+	us := u(f, "bulkfail", 4210)
+	f.find(us).history(foreignID + "-30001")
+	f.failSIDFind = true
+	if r, err := classify(t, f, "CN=carol,OU=Staff,"+dom); err == nil || !r.Tier0 || !r.Unknown {
+		t.Errorf("batch lookup error: %+v %v", r, err)
+	}
+}
+
+func TestQueryAnySIDRendersEscapedBinary(t *testing.T) { // T0-C18-BATCH
+	s1, _ := sid.Parse(foreignID + "-1105")
+	s2, _ := sid.Parse(foreignID + "-1106")
+	flt, err := Query{AnySID: []sid.SID{s1, s2}}.filter()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := ldapfilter.Render(flt, ad.DefaultSchema())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := out.String(); !strings.HasPrefix(got, "(&(|(objectSid=\\01\\05") || strings.Count(got, "(objectSid=") != 2 {
+		t.Errorf("filter = %s", got)
 	}
 }
