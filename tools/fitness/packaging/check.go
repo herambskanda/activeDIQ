@@ -52,11 +52,24 @@ func Check(root string) []string {
 	for _, s := range []string{"Everyone", "Authenticated Users", `BUILTIN\Users`, "LocalSystem", "icacls", "/inheritance:e"} {
 		forbid(&v, winACL, w, s, "must not grant or rely on a broad principal")
 	}
+	forbid(&v, winACL, w, "-Recurse", "must not recurse: a planted junction would be followed")
+	need(&v, winACL, w, "ReparsePoint", "reparse points must be refused")
+	need(&v, winACL, w, "hardlink", "hard-linked files must be refused")
+	need(&v, winACL, w, "refusing to adopt", "a pre-existing directory with an untrusted owner must be refused")
+	need(&v, winACL, w, "grants write access", "a parent writable by unprivileged users must be refused")
 	t := read(root, winTest, &v)
 	need(&v, winTest, t, "AreAccessRulesProtected", "the lab test must assert the ACL is protected")
 	need(&v, winTest, t, "ProbeCredential", "the lab test must probe as a non-administrator")
 
+	forbid(&v, winTest, t, "'$Path'", "the probe script must not be built by interpolating the path")
+	need(&v, winTest, t, "ADIQ_PROBE_PATH", "the path must reach the probe as data")
+	need(&v, winTest, t, "read a file inside", "the probe must read a file, not only list")
+
 	p := read(root, linPrep, &v)
+	need(&v, linPrep, p, "! -type f", "non-regular entries must be refused")
+	need(&v, linPrep, p, "-links +1", "hard-linked files must be refused")
+	need(&v, linPrep, p, "setpriv", "modes inside the directory must be tightened as the service uid, not root")
+	forbid(&v, linPrep, p, "-exec chown", "root must not chown by path inside a service-writable directory")
 	need(&v, linPrep, p, "chmod 0700", "the directory must be mode 0700")
 	need(&v, linPrep, p, "chown", "the directory must be owned by the service uid")
 	need(&v, linPrep, p, "0 | ''", "uid 0 must be refused")
@@ -114,6 +127,50 @@ func runPrepare(root string) []string {
 	if err := os.Symlink(dir, link); err == nil {
 		if _, err := exec.Command("sh", script, link, uid, gid).CombinedOutput(); err == nil {
 			v = append(v, linPrep+": accepted a symlink as the directory")
+		}
+	}
+	v = append(v, runHostile(script, tmp, uid, gid)...)
+	return v
+}
+
+// runHostile plants entries a compromised container could leave and requires each to be refused with a
+// file outside the directory untouched.
+func runHostile(script, tmp, uid, gid string) []string {
+	var v []string
+	outside := filepath.Join(tmp, "outside")
+	if err := os.WriteFile(outside, []byte("o"), 0o644); err != nil {
+		return []string{err.Error()}
+	}
+	cases := []struct {
+		name  string
+		plant func(dir string) error
+	}{
+		{"subdirectory", func(d string) error { return os.Mkdir(filepath.Join(d, "sub"), 0o755) }},
+		{"symlink entry", func(d string) error { return os.Symlink(outside, filepath.Join(d, "ln")) }},
+		{"hardlinked file", func(d string) error { return os.Link(outside, filepath.Join(d, "hl")) }},
+	}
+	for _, c := range cases {
+		dir, err := os.MkdirTemp(tmp, "h-")
+		if err != nil {
+			return []string{err.Error()}
+		}
+		if err := c.plant(dir); err != nil {
+			continue // e.g. hard links unsupported here
+		}
+		if out, err := exec.Command("sh", script, dir, uid, gid).CombinedOutput(); err == nil {
+			v = append(v, linPrep+": accepted a "+c.name+": "+strings.TrimSpace(string(out)))
+		}
+		if st, err := os.Stat(outside); err != nil || st.Mode().Perm() != 0o644 {
+			v = append(v, linPrep+": a file outside the directory was modified via a "+c.name)
+		}
+	}
+	if os.Getuid() == 0 { // a file owned by another uid can only be made as root
+		dir, _ := os.MkdirTemp(tmp, "h-")
+		f := filepath.Join(dir, "other")
+		_ = os.WriteFile(f, []byte("x"), 0o644)
+		_ = os.Chown(f, 4242, 4242)
+		if _, err := exec.Command("sh", script, dir, uid, gid).CombinedOutput(); err == nil {
+			v = append(v, linPrep+": accepted a file owned by another uid")
 		}
 	}
 	return v

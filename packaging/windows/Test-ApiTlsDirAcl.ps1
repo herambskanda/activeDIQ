@@ -27,10 +27,36 @@ Check (($sids -join ',') -eq ($want -join ',')) "ACL principals are exactly Admi
 Check (@($acl.Access | Where-Object { $_.AccessControlType -eq 'Deny' }).Count -eq 0) 'no deny entries needed'
 
 if ($ProbeCredential) {
-  $p = Start-Process powershell.exe -Credential $ProbeCredential -LoadUserProfile -Wait -PassThru -WindowStyle Hidden `
-    -ArgumentList '-NoProfile', '-Command', "try { Get-ChildItem -LiteralPath '$Path' -ErrorAction Stop | Out-Null; exit 0 } catch [System.UnauthorizedAccessException] { exit 5 } catch { exit 9 }"
-  Check ($p.ExitCode -eq 5) "non-administrator user is denied (probe exit $($p.ExitCode); 5 = access denied)"
+  # The path is data, never script text: it travels in an environment variable read by a fixed script.
+  $probe = @'
+$p = $env:ADIQ_PROBE_PATH
+try { Get-ChildItem -LiteralPath $p -ErrorAction Stop | Out-Null } catch [System.UnauthorizedAccessException] { exit 5 } catch { exit 9 }
+exit 0
+'@
+  $probeFile = @'
+$p = $env:ADIQ_PROBE_PATH
+try { $f = Get-ChildItem -LiteralPath $p -Force -ErrorAction Stop | Select-Object -First 1; if (-not $f) { exit 8 }; Get-Content -LiteralPath $f.FullName -TotalCount 1 -ErrorAction Stop | Out-Null } catch [System.UnauthorizedAccessException] { exit 5 } catch { exit 9 }
+exit 0
+'@
+  $env:ADIQ_PROBE_PATH = $Path
+  try {
+    foreach ($case in @(@{n='list the directory'; s=$probe}, @{n='read a file inside'; s=$probeFile})) {
+      $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($case.s))
+      $p = Start-Process powershell.exe -Credential $ProbeCredential -LoadUserProfile -Wait -PassThru -WindowStyle Hidden `
+        -ArgumentList '-NoProfile', '-EncodedCommand', $enc
+      # for the file read the directory listing itself is denied (5) or, if listing leaked, the read must be
+      Check ($p.ExitCode -eq 5) "non-administrator user cannot $($case.n) (probe exit $($p.ExitCode); 5 = access denied)"
+    }
+  } finally { Remove-Item Env:ADIQ_PROBE_PATH -ErrorAction SilentlyContinue }
 } else {
   "skipped: behavioural probe (no -ProbeCredential)"
+}
+# Hardening cases (run by the lab after Set-ApiTlsDirAcl.ps1; tracked by T-0409):
+#   - a directory pre-created by a non-admin user is refused (Set-ApiTlsDirAcl.ps1 throws, owner check);
+#   - a junction child is refused and its target's ACL is unchanged;
+#   - files inside end up owned by Administrators.
+Get-ChildItem -LiteralPath $Path -Force -ErrorAction SilentlyContinue | ForEach-Object {
+  $o = (Get-Acl -LiteralPath $_.FullName).GetOwner([System.Security.Principal.SecurityIdentifier]).Value
+  Check ($o -eq 'S-1-5-32-544') "file $($_.Name) is owned by Administrators"
 }
 if ($fail) { exit 1 }

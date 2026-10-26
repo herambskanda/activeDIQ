@@ -15,6 +15,20 @@ umask 077
 mkdir -p "$dir"
 chown "$uid:$gid" "$dir"
 chmod 0700 "$dir"
-# an upgrade may leave files from an earlier layout: keep every file private
-find "$dir" -mindepth 1 -type f -exec chown "$uid:$gid" {} + -exec chmod 0600 {} +
+# The directory is writable by the service uid, which is the container user. Root must therefore never
+# chown or chmod by path inside it: the container could swap a path component for a symlink between the
+# check and the call and turn root into a write primitive on host files (security review of T-0104).
+# So: refuse anything but flat, singly-linked regular files owned by uid:gid, and tighten modes as the
+# service uid, never as root.
+bad=$(find "$dir" -mindepth 1 ! -type f -print -quit)
+if [ -n "$bad" ]; then echo "refusing $dir: '$bad' is not a regular file at depth 1 (subdirectory, symlink, FIFO...)" >&2; exit 2; fi
+bad=$(find "$dir" -mindepth 1 -type f -links +1 -print -quit)
+if [ -n "$bad" ]; then echo "refusing $dir: '$bad' has more than one hard link" >&2; exit 2; fi
+bad=$(find "$dir" -mindepth 1 -type f \( ! -uid "$uid" -o ! -gid "$gid" \) -print -quit)
+if [ -n "$bad" ]; then echo "refusing $dir: '$bad' is not owned by $uid:$gid; fix or remove it" >&2; exit 2; fi
+if [ "$(id -u)" = 0 ]; then
+  find "$dir" -mindepth 1 -type f -exec setpriv --reuid "$uid" --regid "$gid" --clear-groups chmod 0600 {} +
+else
+  find "$dir" -mindepth 1 -type f -exec chmod 0600 {} +
+fi
 echo "prepared $dir: owner $uid:$gid mode 0700"

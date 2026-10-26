@@ -61,6 +61,12 @@ func TestViolationsAreCaught(t *testing.T) {
 		{"no behavioural probe", winTest, "probe as a non-administrator", func(s string) string {
 			return strings.ReplaceAll(s, "ProbeCredential", "Nothing")
 		}},
+		{"recursion added", winACL, "must not recurse", func(s string) string { return s + "\nGet-ChildItem -Recurse $Path\n" }},
+		{"owner check dropped", winACL, "refuse", func(s string) string { return strings.ReplaceAll(s, "refusing to adopt", "adopting") }},
+		{"path interpolated in probe", winTest, "interpolating the path", func(s string) string { return s + "\n\"Get-ChildItem -LiteralPath '$Path'\"\n" }},
+		{"root chowns by path", linPrep, "root must not chown", func(s string) string { return s + "\nfind \"$dir\" -exec chown 1 {} +\n" }},
+		{"symlink entries accepted", linPrep, "non-regular entries", func(s string) string { return strings.ReplaceAll(s, "! -type f", "-type d") }},
+		{"hardlinks accepted", linPrep, "hard-linked", func(s string) string { return strings.ReplaceAll(s, "-links +1", "-links +99") }},
 		{"mode loosened", linPrep, "mode 0700", func(s string) string { return strings.ReplaceAll(s, "chmod 0700", "chmod 0755") }},
 		{"root allowed", linPrep, "uid 0 must be refused", func(s string) string { return strings.ReplaceAll(s, "0 | ''", "'' ") }},
 		{"container runs as root", linCompose, "numeric non-root user", func(s string) string {
