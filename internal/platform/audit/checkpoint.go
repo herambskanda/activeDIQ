@@ -217,7 +217,12 @@ func (c *Checkpointer) signBoundariesInTx(ctx context.Context, tx store.Tx, id t
 		var created uint64
 		if err := tx.QueryRow(ctx, `SELECT e.seq FROM audit_event e WHERE e.tenant_id = $1::uuid AND e.event_id = 'audit.key.created.' || (
 			SELECT key_id FROM audit_checkpoint_key WHERE tenant_id = $1::uuid ORDER BY ordinal DESC LIMIT 1)`, id.String()).Scan(&created); err != nil {
-			return nil, fmt.Errorf("audit: read key introduction: %w", err)
+			// No introduction event: a retention purge deleted it, so the key was introduced below every
+			// retained event (its window lives in the purge event) and any retained seq may be signed.
+			if !store.IsNoRows(err) {
+				return nil, fmt.Errorf("audit: read key introduction: %w", err)
+			}
+			created = 0
 		}
 		if seq < created {
 			return made, nil

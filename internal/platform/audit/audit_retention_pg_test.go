@@ -177,11 +177,55 @@ func TestWipeRefusesAKeyWithoutRetirementEvent(t *testing.T) {
 	})
 }
 
-func rollover(t *testing.T, r *rig, d time.Duration) audit.Partitions {
+// cuts is a partitioning whose boundaries the test places itself, so which events share a partition does not
+// depend on wall-clock timing: everything before the first cut is partition 0, and so on; after the last cut
+// the partition stays open (it ends in the far future).
+type cuts struct {
+	mu sync.Mutex
+	at []time.Time
+}
+
+var farFuture = time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// rollover installs a cuts partitioning on the rig's checkpointer.
+func rollover(t *testing.T, r *rig) (*cuts, audit.Partitions) {
 	t.Helper()
-	p := audit.Fixed(d)
+	c := &cuts{}
+	p := audit.Partitions{
+		Start: func(x time.Time) time.Time {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			start := time.Time{}
+			for _, k := range c.at {
+				if !k.After(x) {
+					start = k
+				}
+			}
+			return start
+		},
+		End: func(x time.Time) time.Time {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			for _, k := range c.at {
+				if k.After(x) {
+					return k
+				}
+			}
+			return farFuture
+		},
+	}
 	r.cp.WithPartitions(p)
-	return p
+	return c, p
+}
+
+// cut ends the current partition. The pauses keep every event already appended strictly before the cut and
+// every later one strictly after it, whatever the clock resolution between the test and the database.
+func (c *cuts) cut() {
+	time.Sleep(20 * time.Millisecond)
+	c.mu.Lock()
+	c.at = append(c.at, time.Now())
+	c.mu.Unlock()
+	time.Sleep(20 * time.Millisecond)
 }
 
 // Acceptance 2 and 3: the last event of every ended partition is checkpointed before it can be purged, only
@@ -189,7 +233,7 @@ func rollover(t *testing.T, r *rig, d time.Duration) audit.Partitions {
 func TestPartitionBoundaryCheckpointsAndRetentionPurge(t *testing.T) {
 	each(t, func(t *testing.T, r *rig) {
 		ctx := context.Background()
-		parts := rollover(t, r, time.Second)
+		cut, parts := rollover(t, r)
 		owner, err := store.OpenMaintenance(ctx, store.Config{DSN: r.d.OwnerDSN()})
 		if err != nil {
 			t.Fatal(err)
@@ -199,9 +243,9 @@ func TestPartitionBoundaryCheckpointsAndRetentionPurge(t *testing.T) {
 		archive := "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
 
 		r.append(r.id, "e1", "e2")
-		time.Sleep(1100 * time.Millisecond)
+		cut.cut()
 		r.append(r.id, "e3", "e4")
-		time.Sleep(1100 * time.Millisecond)
+		cut.cut()
 
 		// Nothing is checkpointed at a boundary yet: a purge is refused and removes nothing.
 		before := len(r.events(r.id))
@@ -294,14 +338,57 @@ func TestPartitionBoundaryCheckpointsAndRetentionPurge(t *testing.T) {
 	})
 }
 
+// Regression: once a purge has deleted the current key's introduction event, a later partition that ends
+// must still be signed at its boundary (the key was introduced below the retained range), and the export
+// must still verify.
+func TestBoundaryCheckpointAfterPurgeRemovedKeyIntroduction(t *testing.T) {
+	each(t, func(t *testing.T, r *rig) {
+		ctx := context.Background()
+		cut, parts := rollover(t, r)
+		owner, err := store.OpenMaintenance(ctx, store.Config{DSN: r.d.OwnerDSN()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(owner.Close)
+		purger := audit.NewPurger(owner).WithPartitions(parts)
+
+		r.append(r.id, "e1")
+		cut.cut()
+		r.append(r.id, "e2")
+		r.sign() // boundary checkpoint at e1 (and the head)
+		purged, err := purger.Purge(ctx, r.id, audit.PurgeRequest{Before: time.Now(), WithoutArchive: true, Actor: human})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if evs := r.events(r.id); evs[0].id == "audit.tenant.initialised" {
+			t.Fatalf("the purge kept the key introduction: %+v", evs)
+		}
+		// The partition holding e2 and the purge event ends; signing must cover it.
+		cut.cut()
+		r.append(r.id, "e3")
+		cps := r.sign()
+		last := cps[len(cps)-1]
+		if len(cps) < 3 {
+			t.Fatalf("checkpoints = %d; want the boundary, the head and the boundary after the purge", len(cps))
+		}
+		b, err := audit.NewExporter(r.cp).Export(ctx, r.db, r.id, human, purged.ToSeq+1, 0)
+		if err != nil && !errors.Is(err, audit.ErrAnchor) {
+			t.Fatal(err)
+		}
+		if res := chain.Verify(b, r.pin(r.id)); res.Status != chain.OK {
+			t.Fatalf("verify = %+v (last checkpoint seq %d)", res, last.Seq)
+		}
+	})
+}
+
 // Rows signed at a boundary survive a rotation: Rotate signs the ended partitions under the outgoing key
 // before it retires it, so no boundary checkpoint needs a key that is gone.
 func TestBoundaryCheckpointsAcrossRotation(t *testing.T) {
 	each(t, func(t *testing.T, r *rig) {
 		ctx := context.Background()
-		rollover(t, r, time.Second)
+		cut, _ := rollover(t, r)
 		r.append(r.id, "e1")
-		time.Sleep(1100 * time.Millisecond)
+		cut.cut()
 		r.append(r.id, "e2")
 		if err := r.cp.Rotate(ctx, r.db, r.id, human); err != nil && !errors.Is(err, audit.ErrAnchor) {
 			t.Fatal(err)
