@@ -451,7 +451,7 @@ func TestNestedBroadFSPInTrusteeClosureFailsClosed(t *testing.T) {
 				}
 				r, err := classify(t, f, "CN=carol,OU=Staff,"+dom)
 				if err == nil || !r.Tier0 || !r.Unknown || !strings.Contains(err.Error(), w) ||
-					!strings.Contains(err.Error(), "Compatible Access") && c != "C19nested" {
+					(c != "C19nested" && !strings.Contains(err.Error(), "Compatible Access")) {
 					t.Errorf("%+v %v", r, err)
 				}
 			})

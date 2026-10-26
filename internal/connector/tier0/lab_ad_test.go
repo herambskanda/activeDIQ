@@ -219,7 +219,7 @@ func TestLabADNestedBroadFSPInTrusteeFailsClosed(t *testing.T) {
 	defer sess.Close()
 
 	daDN := "CN=Domain Admins,CN=Users," + labDom
-	sddl := "(OA;;WP;bf9679c0-0de6-11d0-b285-00c04fb9698d;;PA)" // WP member for S-1-5-32-554
+	sddl := "(OA;;WP;bf9679c0-0de6-11d0-b285-00c04fb9698d;;RU)" // WP member for BUILTIN\Pre-Windows 2000 Compatible Access (S-1-5-32-554; SDDL alias RU)
 	if out, err := exec.Command("docker", "exec", e.Container, "samba-tool", "dsacl", "set", "--objectdn="+daDN, "--sddl="+sddl).CombinedOutput(); err != nil {
 		t.Fatalf("dsacl set: %v %s", err, out)
 	}
@@ -231,8 +231,8 @@ func TestLabADNestedBroadFSPInTrusteeFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	r, err := NewAD(SessionDirectory{S: sess}).Classify(ctx, target, ADInput{CorrelationKnown: true})
-	if err == nil {
-		t.Fatalf("Pre-Windows 2000 Compatible Access WP member on Domain Admins did not fail closed: %+v", r)
+	if err == nil || !strings.Contains(err.Error(), "S-1-5-11") {
+		t.Fatalf("Pre-Windows 2000 Compatible Access WP member on Domain Admins did not fail closed naming S-1-5-11: %+v %v", r, err)
 	}
 	t.Logf("failed closed: %v", err)
 }
