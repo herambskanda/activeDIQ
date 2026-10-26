@@ -275,4 +275,10 @@ func TestOpenRefusals(t *testing.T) {
 			t.Errorf("%s: %v", gc, err)
 		}
 	}
+	// OpenGC is the only door to the GC, and only on 3269 (LDAPS).
+	for _, srv := range []string{"dc1:3268", "dc1:636", "dc1"} {
+		if _, err := OpenGC(context.Background(), Config{Servers: []string{srv}, Credential: cred}); CodeOf(err) != CodeInvalidArgument {
+			t.Errorf("OpenGC %s: %v", srv, err)
+		}
+	}
 }
