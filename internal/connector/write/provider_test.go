@@ -264,7 +264,7 @@ func TestHandlerRefusesRenamedPinnedGroup(t *testing.T) {
 	r := newRig(t, &run)
 	g := mk(90)
 	pins := &memPins{pins: []guid.GUID{g}}
-	p := &ADProvider{Pins: pins, ID: adIdentity()}
+	p := &ADProvider{Pins: pins, ID: adIdentity(), Bound: newFake()}
 	p.classify = func(_ context.Context, id guid.GUID, in tier0.ADInput) (tier0.ADResult, error) {
 		if slices.Contains(in.PinnedC13, id) { // what the classifier does with a pinned GUID whatever its name
 			return tier0.ADResult{GUID: id, Tier0: true, Bases: []Basis{tier0.C13}}, nil

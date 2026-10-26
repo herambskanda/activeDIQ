@@ -154,7 +154,9 @@ type transport struct {
 	noOp           bool
 	planErr        error
 	planReq        *connectorv1.PlanRequest
-	applyReq       *connectorv1.ApplyRequest
+	// otherDC makes the connector answer with a precondition from a different DC.
+	otherDC  bool
+	applyReq *connectorv1.ApplyRequest
 }
 
 func (tr *transport) Plan(_ context.Context, r *connectorv1.PlanRequest) (*connectorv1.PlanResponse, error) {
@@ -163,7 +165,12 @@ func (tr *transport) Plan(_ context.Context, r *connectorv1.PlanRequest) (*conne
 	if tr.planErr != nil {
 		return nil, tr.planErr
 	}
-	return &connectorv1.PlanResponse{NoOp: tr.noOp, Precondition: &connectorv1.TargetPrecondition{StateDigest: []byte{1}}}, nil
+	dsa := r.GetDc().GetPinnedDsaGuid()
+	if tr.otherDC {
+		dsa = &connectorv1.Guid{Value: []byte("0123456789abcdef")}
+	}
+	return &connectorv1.PlanResponse{NoOp: tr.noOp, Precondition: &connectorv1.TargetPrecondition{
+		Dc: &connectorv1.DcIdentity{DsaGuid: dsa}, StateDigest: []byte{1}}}, nil
 }
 func (tr *transport) Apply(_ context.Context, r *connectorv1.ApplyRequest) (*connectorv1.ApplyResponse, error) {
 	tr.applies++
@@ -478,6 +485,40 @@ func TestPlanSendsPinnedDSAGUID(t *testing.T) {
 	if got := tr.planReq.GetDc().GetPinnedDsaGuid().GetValue(); string(got) != string(want) {
 		t.Errorf("PlanRequest.Dc.PinnedDsaGuid = %x, want %x", got, want)
 	}
+}
+
+func TestApplyRefusedWhenPlanPreconditionNamesAnotherDC(t *testing.T) {
+	tr := &transport{otherDC: true}
+	c := New(WithTransport(tr), WithFacts(&facts{}), WithTier0Builder(&builder{}))
+	withStep(t, func(ctx context.Context, s step.Step) {
+		if _, err := c.Write(ctx, s, goodOp()); !errors.Is(err, ErrDCMismatch) {
+			t.Fatalf("got %v, want ErrDCMismatch", err)
+		}
+	})
+	if tr.plans != 1 || tr.applies != 0 {
+		t.Fatalf("plans %d applies %d, want 1 and 0", tr.plans, tr.applies)
+	}
+}
+
+func TestApplyRefusedWhenPlanPreconditionHasNoDC(t *testing.T) {
+	tr := &noDCTransport{}
+	c := New(WithTransport(tr), WithFacts(&facts{}), WithTier0Builder(&builder{}))
+	withStep(t, func(ctx context.Context, s step.Step) {
+		if _, err := c.Write(ctx, s, goodOp()); !errors.Is(err, ErrDCMismatch) {
+			t.Fatalf("got %v, want ErrDCMismatch", err)
+		}
+	})
+	if tr.applies != 0 {
+		t.Fatalf("applies %d, want 0", tr.applies)
+	}
+}
+
+type noDCTransport struct {
+	transport
+}
+
+func (tr *noDCTransport) Plan(context.Context, *connectorv1.PlanRequest) (*connectorv1.PlanResponse, error) {
+	return &connectorv1.PlanResponse{Precondition: &connectorv1.TargetPrecondition{StateDigest: []byte{1}}}, nil
 }
 
 func TestPlanWithoutDSAGUIDRefusedBeforeTransport(t *testing.T) {

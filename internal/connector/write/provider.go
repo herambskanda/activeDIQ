@@ -56,6 +56,23 @@ type PropertyGuard interface {
 
 var _ PropertyGuard = (*tier0.Set)(nil)
 
+// DCBinder is what an AD provider needs for rule 5: the identity of the DC its binding uses, read
+// live on that binding. An AD provider that is not a DCBinder refuses every write.
+type DCBinder interface {
+	BoundDC(ctx context.Context) (*connectorv1.DcIdentity, error)
+}
+
+// SessionDC reads the bound DC from an *ad.Session.
+type SessionDC struct{ S *ad.Session }
+
+func (d SessionDC) BoundDC(ctx context.Context) (*connectorv1.DcIdentity, error) {
+	id, err := d.S.DCIdentity(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &connectorv1.DcIdentity{DsaGuid: toWire(id.DSAGUID), InvocationId: toWire(id.InvocationID), DnsHostname: id.DNSHostName, Site: id.Site}, nil
+}
+
 // ADProvider classifies through the AD classifier of T-0093 over an ADDirectory.
 type ADProvider struct {
 	Dir tier0.ADDirectory
@@ -71,6 +88,8 @@ type ADProvider struct {
 	// checked against (the synced AD user is matched by rules on the Entra side, TM-D25 7f). Nil
 	// refuses every property write.
 	Dynamic PropertyGuard
+	// Bound reports the DC the connector is bound to (rule 5). Nil refuses every write.
+	Bound DCBinder
 }
 
 var _ Provider = (*ADProvider)(nil)
@@ -91,6 +110,17 @@ var ErrNoPins = errors.New("write: C13 pin store not configured")
 func (p *ADProvider) Kind() connectorv1.ProviderKind {
 	return connectorv1.ProviderKind_PROVIDER_KIND_AD
 }
+
+// BoundDC implements DCBinder; with no Bound configured it fails closed.
+func (p *ADProvider) BoundDC(ctx context.Context) (*connectorv1.DcIdentity, error) {
+	if p.Bound == nil {
+		return nil, ErrNoBoundDC
+	}
+	return p.Bound.BoundDC(ctx)
+}
+
+// ErrNoBoundDC is returned when the provider cannot say which DC it is bound to.
+var ErrNoBoundDC = errors.New("write: bound DC identity not available")
 
 func (p *ADProvider) Identity() *connectorv1.DirectoryIdentity { return p.ID }
 
