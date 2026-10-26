@@ -48,6 +48,7 @@ type Checkpointer struct {
 	chainer *Chainer
 	ks      KeySource
 	anchors []Anchor
+	parts   Partitions
 	// schedule, when set, starts the tenant's checkpoint cadence as part of InitTenant.
 	schedule func(ctx context.Context, tx store.Tx, id tenant.ID) error
 }
@@ -60,7 +61,14 @@ func (c *Checkpointer) StartCadenceOnInit(schedule func(ctx context.Context, tx 
 
 // NewCheckpointer makes a checkpointer. The chainer is the one the store was opened with.
 func NewCheckpointer(c *Chainer, ks KeySource, anchors ...Anchor) *Checkpointer {
-	return &Checkpointer{chainer: c, ks: ks, anchors: anchors}
+	return &Checkpointer{chainer: c, ks: ks, anchors: anchors, parts: Monthly}
+}
+
+// WithPartitions sets how time is partitioned for boundary checkpoints (default Monthly) and returns c.
+// Set it before the checkpointer is shared.
+func (c *Checkpointer) WithPartitions(p Partitions) *Checkpointer {
+	c.parts = p
+	return c
 }
 
 // InitTenant is the tenant initialiser of ADR-0005 rule 11 (provision.Initialiser): it creates the
@@ -125,41 +133,150 @@ func (c *Checkpointer) newKey(ctx context.Context, tx store.Tx, id tenant.ID, or
 		Actor: systemActor, Component: "audit", Outcome: Success, Details: details})
 }
 
-// Sign signs the current head if anything was appended since the last checkpoint, records it, and sends
-// it to every anchor after the commit. recorded is false when there was nothing new to sign (the latest
-// checkpoint is returned). A failing anchor yields ErrAnchor with the recorded checkpoint.
+// Sign signs, in order, the last event of every time partition that has ended since the last checkpoint
+// (see SignBoundaries) and then the current head if anything was appended since, records them, and sends
+// each to every anchor after the commit. recorded is false when there was nothing new to sign (the latest
+// checkpoint is returned); cp is the newest checkpoint. A failing anchor yields ErrAnchor with the
+// recorded checkpoint.
 func (c *Checkpointer) Sign(ctx context.Context, db *store.DB, id tenant.ID) (cp chain.Checkpoint, recorded bool, err error) {
 	return c.sign(ctx, db, id, nil)
 }
 
-// duePolicy decides whether a head that moved past the last checkpoint is worth signing now.
+// duePolicy decides whether a head that moved past the last checkpoint is worth signing now. It governs
+// only the head checkpoint: partition-boundary checkpoints are always signed.
 type duePolicy func(newEvents uint64, sinceLast time.Duration) bool
 
 func (c *Checkpointer) sign(ctx context.Context, db *store.DB, id tenant.ID, due duePolicy) (cp chain.Checkpoint, recorded bool, err error) {
+	var made []chain.Checkpoint
 	err = db.WithTenant(ctx, id, func(ctx context.Context, tx store.Tx) error {
-		var e error
-		cp, recorded, e = c.signInTx(ctx, tx, id, due)
-		return e
-	})
-	if err != nil || !recorded {
-		return cp, recorded, err
-	}
-	for _, a := range c.anchors {
-		if aerr := a.Anchor(ctx, cp); aerr != nil {
-			err = ErrAnchor
+		if e := lockSigner(ctx, tx, id); e != nil {
+			return e
 		}
+		var e error
+		made, e = c.signBoundariesInTx(ctx, tx, id)
+		if e != nil {
+			return e
+		}
+		head, ok, e := c.signHeadInTx(ctx, tx, id, due)
+		if e != nil {
+			return e
+		}
+		if ok {
+			made = append(made, head)
+		}
+		if len(made) > 0 {
+			cp = made[len(made)-1]
+			return nil
+		}
+		cp = head
+		return nil
+	})
+	if err != nil || len(made) == 0 {
+		return cp, false, err
 	}
-	return cp, true, err
+	return cp, true, c.anchor(ctx, made)
 }
 
-func (c *Checkpointer) signInTx(ctx context.Context, tx store.Tx, id tenant.ID, due duePolicy) (chain.Checkpoint, bool, error) {
-	// One signer per tenant at a time, whatever the lease says: the checkpoint chain is a list (each names
-	// its predecessor), so two signers that read the same predecessor would fork it. The lock is held to
-	// the commit, so the head and the predecessor read below are the ones this checkpoint extends. A
-	// worker whose lease lapsed mid-run therefore cannot leave a gap or a fork (T-0304).
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('audit.checkpoint/' || $1::text, 0))`, id.String()); err != nil {
-		return chain.Checkpoint{}, false, fmt.Errorf("audit: serialise checkpoint signers: %w", err)
+// SignBoundaries signs the last event of every time partition that has ended and is not yet covered by a
+// checkpoint (ADR-0005 rule 11: the partition-boundary checkpoint is what makes a partition purgeable).
+// Sign does this first on every call, so a rollover job that calls only this is optional. It returns the
+// checkpoints it recorded, oldest first.
+func (c *Checkpointer) SignBoundaries(ctx context.Context, db *store.DB, id tenant.ID) ([]chain.Checkpoint, error) {
+	var made []chain.Checkpoint
+	err := db.WithTenant(ctx, id, func(ctx context.Context, tx store.Tx) error {
+		if e := lockSigner(ctx, tx, id); e != nil {
+			return e
+		}
+		var e error
+		made, e = c.signBoundariesInTx(ctx, tx, id)
+		return e
+	})
+	if err != nil || len(made) == 0 {
+		return nil, err
 	}
+	return made, c.anchor(ctx, made)
+}
+
+func (c *Checkpointer) anchor(ctx context.Context, cps []chain.Checkpoint) error {
+	var err error
+	for _, cp := range cps {
+		for _, a := range c.anchors {
+			if aerr := a.Anchor(ctx, cp); aerr != nil {
+				err = ErrAnchor
+			}
+		}
+	}
+	return err
+}
+
+// signBoundariesInTx walks the partitions that have ended since the latest checkpoint. For each it signs
+// the partition's last event, unless a checkpoint already sits there. Checkpoints chain by seq, so the
+// boundary must be signed before any later checkpoint: Sign calls this before it signs the head.
+func (c *Checkpointer) signBoundariesInTx(ctx context.Context, tx store.Tx, id tenant.ID) ([]chain.Checkpoint, error) {
+	var now time.Time
+	if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
+		return nil, fmt.Errorf("audit: read clock: %w", err)
+	}
+	var made []chain.Checkpoint
+	for {
+		last, haveLast, err := latestCheckpoint(ctx, tx, id)
+		if err != nil {
+			return nil, err
+		}
+		var next time.Time
+		err = tx.QueryRow(ctx, `SELECT at FROM audit_event WHERE tenant_id = $1::uuid AND seq > $2 ORDER BY seq LIMIT 1`, id.String(), last.Seq).Scan(&next)
+		if store.IsNoRows(err) {
+			return made, nil
+		} else if err != nil {
+			return nil, fmt.Errorf("audit: read next event: %w", err)
+		}
+		end := c.parts.End(next)
+		if end.After(now) {
+			return made, nil // the partition is still open
+		}
+		var seq uint64
+		var hash []byte
+		if err := tx.QueryRow(ctx, `SELECT seq, hash FROM audit_event WHERE tenant_id = $1::uuid AND at < $2 ORDER BY seq DESC LIMIT 1`, id.String(), end).Scan(&seq, &hash); err != nil {
+			return nil, fmt.Errorf("audit: read partition boundary: %w", err)
+		}
+		// A key signs only from the seq that introduces it. A partition that ended across a rotation, with
+		// its last event before the current key's introduction, can no longer be signed validly (the old
+		// key is retired, and wiped): it stays unpurgeable and the later partitions are signed as usual.
+		var created uint64
+		if err := tx.QueryRow(ctx, `SELECT e.seq FROM audit_event e WHERE e.tenant_id = $1::uuid AND e.event_id = 'audit.key.created.' || (
+			SELECT key_id FROM audit_checkpoint_key WHERE tenant_id = $1::uuid ORDER BY ordinal DESC LIMIT 1)`, id.String()).Scan(&created); err != nil {
+			// No introduction event: a retention purge deleted it, so the key was introduced below every
+			// retained event (its window lives in the purge event) and any retained seq may be signed.
+			if !store.IsNoRows(err) {
+				return nil, fmt.Errorf("audit: read key introduction: %w", err)
+			}
+			created = 0
+		}
+		if seq < created {
+			return made, nil
+		}
+		cp, err := c.signAt(ctx, tx, id, seq, hash, last, haveLast)
+		if err != nil {
+			return nil, err
+		}
+		made = append(made, cp)
+	}
+}
+
+// lockSigner allows one signer per tenant at a time, whatever the lease says: the checkpoint chain is a
+// list (each names its predecessor), so two signers that read the same predecessor would fork it. The lock
+// is held to the commit, so the head and the predecessor read afterwards are the ones this checkpoint
+// extends. A worker whose lease lapsed mid-run therefore cannot leave a gap or a fork (T-0304).
+func lockSigner(ctx context.Context, tx store.Tx, id tenant.ID) error {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('audit.checkpoint/' || $1::text, 0))`, id.String()); err != nil {
+		return fmt.Errorf("audit: serialise checkpoint signers: %w", err)
+	}
+	return nil
+}
+
+// signHeadInTx signs the head if anything was appended since the latest checkpoint; otherwise it returns
+// that checkpoint with ok false.
+func (c *Checkpointer) signHeadInTx(ctx context.Context, tx store.Tx, id tenant.ID, due duePolicy) (cp chain.Checkpoint, ok bool, err error) {
 	var head struct {
 		seq  uint64
 		hash []byte
@@ -188,28 +305,34 @@ func (c *Checkpointer) signInTx(ctx context.Context, tx store.Tx, id tenant.ID, 
 			return last, false, nil
 		}
 	}
+	cp, err = c.signAt(ctx, tx, id, head.seq, head.hash, last, haveLast)
+	return cp, err == nil, err
+}
+
+// signAt signs the event (seq, hash), chained to the latest checkpoint, and records it.
+func (c *Checkpointer) signAt(ctx context.Context, tx store.Tx, id tenant.ID, seq uint64, hash []byte, last chain.Checkpoint, haveLast bool) (chain.Checkpoint, error) {
 	keyID, _, priv, err := c.currentKey(ctx, tx, id)
 	if err != nil {
-		return chain.Checkpoint{}, false, err
+		return chain.Checkpoint{}, err
 	}
 	defer clear(priv)
-	cp := chain.Checkpoint{Tenant: uuidBytes(id), Seq: head.seq, KeyID: keyID}
-	copy(cp.Hash[:], head.hash)
+	cp := chain.Checkpoint{Tenant: uuidBytes(id), Seq: seq, KeyID: keyID}
+	copy(cp.Hash[:], hash)
 	if haveLast {
 		cp.PrevSeq, cp.PrevHash = last.Seq, last.Hash
 	}
 	if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&cp.SignedAt); err != nil {
-		return chain.Checkpoint{}, false, fmt.Errorf("audit: read clock: %w", err)
+		return chain.Checkpoint{}, fmt.Errorf("audit: read clock: %w", err)
 	}
 	cp.SignedAt = cp.SignedAt.UTC().Truncate(time.Microsecond)
 	if err := cp.Sign(priv); err != nil {
-		return chain.Checkpoint{}, false, err
+		return chain.Checkpoint{}, err
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO audit_checkpoint (tenant_id, seq, hash, signed_at, key_id, prev_checkpoint_seq, prev_checkpoint_hash, signature)
 		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8)`, id.String(), cp.Seq, cp.Hash[:], cp.SignedAt, cp.KeyID, cp.PrevSeq, cp.PrevHash[:], cp.Signature); err != nil {
-		return chain.Checkpoint{}, false, fmt.Errorf("audit: record checkpoint: %w", err)
+		return chain.Checkpoint{}, fmt.Errorf("audit: record checkpoint: %w", err)
 	}
-	return cp, true, nil
+	return cp, nil
 }
 
 // currentKey opens the tenant's newest checkpoint key. The caller clears the returned private key.
@@ -268,13 +391,13 @@ func ListCheckpoints(ctx context.Context, tx store.Tx, id tenant.ID, after, upTo
 }
 
 // Rotate signs a final checkpoint under the current key, then retires it and introduces a new one, both
-// as chained events (routine rotation; ADR-0005 rule 11). The first checkpoint under the new key is
-// signed by the next Sign.
+// as chained events (routine rotation; ADR-0005 rule 11), and finally wipes the retired key's private
+// material (WipeRetiredKeys). The first checkpoint under the new key is signed by the next Sign.
 func (c *Checkpointer) Rotate(ctx context.Context, db *store.DB, id tenant.ID, actor authority.Chain) error {
 	if _, _, err := c.Sign(ctx, db, id); err != nil && !errors.Is(err, ErrAnchor) {
 		return err
 	}
-	return db.WithTenant(ctx, id, func(ctx context.Context, tx store.Tx) error {
+	err := db.WithTenant(ctx, id, func(ctx context.Context, tx store.Tx) error {
 		oldID, ordinal, oldPriv, err := c.currentKey(ctx, tx, id)
 		if err != nil {
 			return err
@@ -285,6 +408,44 @@ func (c *Checkpointer) Rotate(ctx context.Context, db *store.DB, id tenant.ID, a
 			return err
 		}
 		return c.newKey(ctx, tx, id, ordinal+1, oldPriv)
+	})
+	if err != nil {
+		return err
+	}
+	return c.WipeRetiredKeys(ctx, db, id)
+}
+
+// WipeRetiredKeys destroys the sealed private key of every retired checkpoint key of the tenant, through
+// the SECURITY DEFINER function audit_wipe_retired_key; the runtime role cannot update the key table
+// itself (migration 0015, I5). It is idempotent. Rotate calls it once the retirement is committed, and a
+// maintenance job can call it again if that call failed after the rotation.
+func (c *Checkpointer) WipeRetiredKeys(ctx context.Context, db *store.DB, id tenant.ID) error {
+	return db.WithTenant(ctx, id, func(ctx context.Context, tx store.Tx) error {
+		rows, err := tx.Query(ctx, `SELECT key_id FROM audit_checkpoint_key WHERE tenant_id = $1::uuid
+			AND ordinal < (SELECT max(ordinal) FROM audit_checkpoint_key WHERE tenant_id = $1::uuid)
+			AND octet_length(sealed_private_key) > 0 ORDER BY ordinal`, id.String())
+		if err != nil {
+			return fmt.Errorf("audit: list retired keys: %w", err)
+		}
+		var ids []string
+		for rows.Next() {
+			var k string
+			if err := rows.Scan(&k); err != nil {
+				rows.Close()
+				return fmt.Errorf("audit: read retired key: %w", err)
+			}
+			ids = append(ids, k)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("audit: list retired keys: %w", err)
+		}
+		for _, k := range ids {
+			if _, err := tx.Exec(ctx, `SELECT public.audit_wipe_retired_key($1)`, k); err != nil {
+				return fmt.Errorf("audit: wipe retired key %s: %w", k, err)
+			}
+		}
+		return nil
 	})
 }
 

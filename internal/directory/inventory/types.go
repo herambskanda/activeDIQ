@@ -18,6 +18,9 @@ var _ = tablekind.Declare(tablekind.Table{Name: "public.links", Entity: "DM-17",
 var (
 	// ErrInvalid is a malformed reference.
 	ErrInvalid = errors.New("inventory: invalid reference")
+	// ErrStale: a correlation evaluation with a later as-of is already recorded; the caller rolls
+	// back the stale run.
+	ErrStale = errors.New("inventory: a newer correlation evaluation is already recorded")
 	// ErrNoTenant: the call named no tenant.
 	ErrNoTenant = errors.New("inventory: no tenant")
 	// ErrNotConfigured: the reader has no database or no group source.
@@ -119,8 +122,8 @@ type Link struct {
 	// SelfTier0 and SelfBases are the same for Self.
 	SelfTier0 bool
 	SelfBases []Basis
-	// FactsAsOf is the inventory as-of of the two tier0 facts; zero when neither side is tier0 and
-	// none was recorded. The statement's computed_at inherits the oldest such time (contract §8.3 F3).
+	// FactsAsOf is the inventory as-of of the two tier0 facts, tier0 or not (the writer requires it); zero only for
+	// a row written before it was mandatory, which a consumer treats as no as-of. The statement's computed_at inherits the oldest such time (contract §8.3 F3).
 	FactsAsOf time.Time
 
 	GateCheckedAt    time.Time

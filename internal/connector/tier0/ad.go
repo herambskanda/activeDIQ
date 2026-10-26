@@ -53,6 +53,7 @@ const (
 	C16 = connectorv1.Tier0Basis_TIER0_BASIS_C16_CORRELATED_TO_ENTRA_TIER0
 	C17 = connectorv1.Tier0Basis_TIER0_BASIS_C17_ROOT_OF_TRUST_CONTROL
 	C18 = connectorv1.Tier0Basis_TIER0_BASIS_C18_PRIVILEGED_SID_HISTORY
+	C19 = connectorv1.Tier0Basis_TIER0_BASIS_C19_CONTROL_OF_TIER0_OBJECT
 )
 
 const (
@@ -156,7 +157,15 @@ type ADSet struct {
 	dsh        []DSHeuristic
 	c13        []guid.GUID
 	findings   []Finding
+	c19Rights  []C19Right
 }
+
+// C19Rights lists every rule-2 right and every owner found on a C19 object (TM-D27 rule 8 input). A
+// trustee may be ignorable (SELF, SYSTEM) only when the classifier ignored it; those never appear.
+func (s *ADSet) C19Rights() []C19Right { return slices.Clone(s.c19Rights) }
+
+// AddC19Right records a right for tests of the rights check, which supply a snapshot from elsewhere.
+func (s *ADSet) AddC19Right(r C19Right) { s.c19Rights = append(s.c19Rights, r) }
 
 // Findings are the onboarding observations of the snapshot (TM-D26 rule 10: no DnsAdmins in a domain
 // that hosts AD-integrated DNS).
@@ -299,11 +308,13 @@ type builder struct {
 	dcHosts    map[string]bool      // lower-case DC host names (FQDN and short) for C12
 	dcSD       map[string][]byte    // RBCD descriptors by computer GUID
 	cache      map[string]*ad.Entry // Get results by lower-case DN
+
+	c19o c19Objects // the objects whose control makes a trustee tier0 (C19), gathered by the earlier steps
 }
 
 var idAttrs = []string{"objectGUID", "objectSid", "objectClass"}
 
-// Snapshot reads the forest and computes C1-C15, C17 and C18. pinnedC13 are the C13 groups pinned at
+// Snapshot reads the forest and computes C1-C15 and C17-C19. pinnedC13 are the C13 groups pinned at
 // first discovery. Any error fails the whole snapshot: a caller that ignored the error must not be
 // left holding a partial, under-protective set.
 func (c *ADClassifier) Snapshot(ctx context.Context, pinnedC13 ...guid.GUID) (*ADSet, error) {
@@ -327,8 +338,8 @@ func (c *ADClassifier) snapshot(ctx context.Context, pinnedC13, designated []gui
 		return nil, fmt.Errorf("tier0: naming contexts: %w", err)
 	}
 	b.nm = nm
-	steps := []func() error{b.c7, b.c1c2, b.c3, b.c4, b.c5c6c15, b.c8, b.c10, b.c11, b.c12, b.c13, b.c14, b.c17, b.c18, b.c9}
-	for _, step := range steps { // c18 needs every principal basis; c9 last: it needs C2/C4/C5/C6/C15
+	steps := []func() error{b.c7, b.c1c2, b.c3, b.c4, b.c5c6c15, b.c8, b.c10, b.c11, b.c12, b.c13, b.c14, b.c17, b.c18, b.c9, b.c19}
+	for _, step := range steps { // c18 needs every principal basis; c9 needs C2/C4/C5/C6/C15; c19 last: it needs C1/C4/C5/C9 objects
 		if err := step(); err != nil {
 			return nil, err
 		}
@@ -514,6 +525,9 @@ func (b *builder) c1c2() error {
 		}
 		if hasClass(e, "group") {
 			groups = append(groups, e)
+			b.c19o.c1Groups = append(b.c19o.c1Groups, e)
+		} else {
+			b.c19o.accounts = append(b.c19o.accounts, e)
 		}
 	}
 	return b.membersOf(groups, C2)
@@ -659,11 +673,13 @@ func (b *builder) c4() error {
 	if _, err := b.mark(e, C4); err != nil {
 		return err
 	}
+	b.c19o.accounts = append(b.c19o.accounts, e)
 	q := Query{Classes: []string{"user"}, Has: []string{"msDS-SecondaryKrbTgtNumber"}}
 	return b.d.Find(b.ctx, b.nm.Domain, ad.ScopeSubtree, q, idAttrs, func(m *ad.Entry) error {
 		if _, err := b.mark(m, C4); err != nil {
 			return err
 		}
+		b.c19o.accounts = append(b.c19o.accounts, m)
 		return b.noteAccount(m)
 	})
 }
@@ -783,6 +799,7 @@ func (b *builder) c5c6c15() error {
 	if err != nil {
 		return err
 	}
+	b.c19o.dcOU = wd
 	conts := map[string]dn.DN{wk0: wd}
 	for _, dc := range b.dcDNs {
 		for p := dc.Parent(); p.Len() > 0 && !p.Equal(b.nm.Domain); p = p.Parent() {
@@ -1078,6 +1095,17 @@ func (b *builder) markPrincipals(sids []sid.SID, basis Basis) error {
 	return b.markPrincipalsSkip(sids, basis, nil)
 }
 
+// isDomainAccountSID is true for S-1-5-21-a-b-c-RID: authority 5, first sub-authority 21, a three-part
+// domain identifier and a RID.
+func isDomainAccountSID(s sid.SID) bool {
+	p := strings.Split(s.String(), "-")
+	if len(p) != 8 || p[1] != "1" || p[2] != "5" || p[3] != "21" {
+		return false
+	}
+	_, ok := s.DomainSID()
+	return ok
+}
+
 // markPrincipalsSkip is markPrincipals except that an object for which skip is true is not marked and
 // its members are not walked.
 func (b *builder) markPrincipalsSkip(sids []sid.SID, basis Basis, skip func(*ad.Entry) bool) error {
@@ -1098,6 +1126,15 @@ func (b *builder) markPrincipalsSkip(sids []sid.SID, basis Basis, skip func(*ad.
 		e, found, err := b.get(dn.SIDRef(s), idAttrs)
 		if err != nil {
 			return err
+		}
+		// A foreignSecurityPrincipal is a real principal only for a domain account SID
+		// (S-1-5-21-a-b-c-RID, a foreign-domain user or group). Every other FSP - Authenticated Users,
+		// Interactive, Network, NTLM Authentication, This Organization Certificate, ... - is only a
+		// placeholder AD keeps for group membership: the token carries the SID for every principal, so
+		// the FSP is not the principal and the SID is treated as unresolved (ignorable or fail closed).
+		// Allow-list, not deny-list: an unknown SID shape must fail closed.
+		if found && hasClass(e, "foreignSecurityPrincipal") && !isDomainAccountSID(s) {
+			found = false
 		}
 		holders, err := b.historyHolders(s)
 		if err != nil {
@@ -1363,6 +1400,7 @@ func (b *builder) c9() error {
 		if _, err := b.mark(ge, C9); err != nil {
 			return err
 		}
+		b.c19o.gpos = append(b.c19o.gpos, g)
 	}
 	return nil
 }

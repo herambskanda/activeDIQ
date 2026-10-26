@@ -1,6 +1,7 @@
 package tier0
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -251,6 +252,15 @@ func (f *fakeDir) match(o *fobj, q Query) bool {
 				n, _ := strconv.Atoi(v)
 				hit = hit || int32(n) == e.Value
 			}
+		}
+		if !hit {
+			return false
+		}
+	}
+	if len(q.AnyGUID) > 0 {
+		hit := false
+		for _, e := range q.AnyGUID {
+			hit = hit || bytes.Equal(o.raw[e.Attr], e.Value.Bytes())
 		}
 		if !hit {
 			return false

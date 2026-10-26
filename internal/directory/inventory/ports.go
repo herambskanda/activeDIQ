@@ -2,6 +2,7 @@ package inventory
 
 import (
 	"context"
+	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
@@ -19,7 +20,20 @@ type CorrelationSource interface {
 	// removed: candidate, matched and broken are all returned, none filtered by state (C16/E5 count
 	// every state, TM §6.4). The result is empty only if the store holds none. A read error is an
 	// error, never an empty result. Ordered by peer connection, peer object and ID.
-	CorrelationsFor(ctx context.Context, tid tenant.ID, ref Ref) ([]Link, error)
+	//
+	// The answer also carries EvaluatedAt, the as-of of the correlation evaluation that covers ref
+	// (contract §8.3 F3). It is set even when Links is empty: "no peers" is a fact with a time.
+	CorrelationsFor(ctx context.Context, tid tenant.ID, ref Ref) (Correlations, error)
+}
+
+// Correlations is the answer of CorrelationsFor.
+type Correlations struct {
+	Links []Link
+	// EvaluatedAt is the as-of of the oldest input the last completed correlation evaluation of ref's
+	// connection read (not its completion time), so every Link (and the absence of one) is true as of this time. It is the zero time only if no
+	// run has completed yet; a consumer must then treat the answer as having no as-of and refuse or
+	// live-refresh, never substitute the current time.
+	EvaluatedAt time.Time
 }
 
 // Designations is the DM-16.I8 read port.

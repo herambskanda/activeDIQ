@@ -47,7 +47,9 @@ type Formation struct {
 	// Gate.ADSID is stored as the SID evidence.
 	Gate GateInput
 	// ADBases and EntraBases are the tier0 bases the classifiers computed for each side (empty: not
-	// tier0). FactsAsOf is the inventory as-of of those facts; it is required when either is set.
+	// tier0). FactsAsOf is the inventory as-of of those facts and is always required: "not tier0" is
+	// a fact with a time too (contract §8.3 F3), and a link without it would force every write that
+	// relies on it to refuse or live-refresh.
 	ADBases, EntraBases []Basis
 	FactsAsOf           time.Time
 	Now                 time.Time
@@ -90,8 +92,8 @@ func (Writer) Form(ctx context.Context, tx store.Tx, f Formation) (Formed, error
 	default:
 		return Formed{}, ErrInvalid
 	}
-	if (len(f.ADBases) > 0 || len(f.EntraBases) > 0) && f.FactsAsOf.IsZero() {
-		return Formed{}, fmt.Errorf("%w: tier0 facts need an as-of time", ErrInvalid)
+	if f.FactsAsOf.IsZero() {
+		return Formed{}, fmt.Errorf("%w: tier0 status (true or false) needs an as-of time", ErrInvalid)
 	}
 	if f.Now.IsZero() {
 		return Formed{}, ErrInvalid
@@ -186,6 +188,49 @@ func writeErr(what string, err error) error {
 		return fmt.Errorf("%w: %s", ErrInvalid, what)
 	}
 	return fmt.Errorf("inventory: %s: %w", what, err)
+}
+
+// RecordEvaluation records that the correlation job evaluated every object of the connection from
+// inventory as of at (contract §8.3 F3). at is the as-of of the OLDEST input the run read, usually
+// the start of the run, never its completion time: a completion time overstates freshness by the
+// length of the run.
+//
+// It only moves forward, and it refuses a stale run: if a run with a later as-of has already been
+// recorded it returns ErrStale, and the caller must roll back the transaction so this run's Form and
+// Remove calls do not land (otherwise an old run could delete a link a newer run formed while the
+// newer time stays recorded). at later than the database's now() plus five minutes (F3's clock-skew allowance; the time is forward-only and undeletable, so a future
+// value would make every "no peers" answer look fresh for good) is ErrInvalid.
+//
+// To serialise concurrent runs of one connection, call RecordEvaluation FIRST in the run's
+// transaction: the upsert takes the connection's row lock, held until commit, so a competing run
+// waits and then sees the newer time. The reader sees the new time and the run's links together
+// because both commit in that one transaction.
+func (Writer) RecordEvaluation(ctx context.Context, tx store.Tx, connection ConnectionID, at time.Time) error {
+	if _, ok := canon(string(connection)); !ok || at.IsZero() {
+		return ErrInvalid
+	}
+	if err := requireTenant(ctx, tx); err != nil {
+		return err
+	}
+	var future bool
+	if err := tx.QueryRow(ctx, `SELECT $1::timestamptz > now() + interval '5 minutes'`, at.UTC()).Scan(&future); err != nil {
+		return writeErr("record evaluation", err)
+	}
+	if future {
+		return fmt.Errorf("%w: evaluation as-of is in the future", ErrInvalid)
+	}
+	tag, err := tx.Exec(ctx, `INSERT INTO public.correlation_evaluations (tenant_id, connection_id, evaluated_at)
+		VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, $2)
+		ON CONFLICT (tenant_id, connection_id) DO UPDATE SET evaluated_at = EXCLUDED.evaluated_at
+		WHERE EXCLUDED.evaluated_at >= public.correlation_evaluations.evaluated_at`,
+		string(connection), at.UTC())
+	if err != nil {
+		return writeErr("record evaluation", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrStale
+	}
+	return nil
 }
 
 // Remove sets the live correlation of the pair to removed. Nothing is deleted: its I4(g) markers are
