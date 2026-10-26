@@ -8,6 +8,9 @@
 // mapper from a ConnectorError to a step outcome. There is no Tier-0 logic here: with no builder
 // wired, Write refuses (fail closed).
 //
+// VerifyConnection (verify.go) is the read-only run: it implements connection.ConnectorClient over the
+// VerifyTransport port and folds the response stream into a connection.VerifyResult.
+//
 // It imports connection (the registry), never the reverse (blueprint §5.2), and the kernel leaves
 // authority and operation/step. It does not import operation.
 package client
