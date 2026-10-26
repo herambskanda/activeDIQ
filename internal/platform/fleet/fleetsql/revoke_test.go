@@ -44,7 +44,7 @@ func TestRevokeAndUsable(t *testing.T) {
 		cl := &closer{}
 		lc := &fleetsql.Lifecycle{DB: e.db, Authz: revokeAuthz{true}, Audit: e.sink, Streams: cl}
 		victim := e.enrolled(t, e.a, fleetsql.KindConnector)
-		sibling := e.enrolled(t, e.a, fleetsql.KindAgent)
+		sibling := e.enrolled(t, e.a, fleetsql.KindADDC)
 		foreign := e.enrolled(t, e.b, fleetsql.KindConnector)
 		for _, id := range []fleet.Identity{victim, sibling, foreign} {
 			if ok, err := lc.Usable(ctx, id); err != nil || !ok {
@@ -119,7 +119,7 @@ func TestRevokeRefusals(t *testing.T) {
 			t.Fatalf("state changed without permission: %s", st)
 		}
 		// A pending component has nothing to revoke.
-		pending := e.issue(t, e.a, fleetsql.KindAgent)
+		pending := e.issue(t, e.a, fleetsql.KindADDC)
 		lc := &fleetsql.Lifecycle{DB: e.db, Authz: revokeAuthz{true}, Audit: e.sink}
 		if _, err := lc.Revoke(ctx, e.a, admin, pending.ComponentID); !errors.Is(err, fleetsql.ErrNotRevocable) {
 			t.Fatalf("pending: %v", err)

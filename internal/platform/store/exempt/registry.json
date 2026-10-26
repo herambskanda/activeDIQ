@@ -159,7 +159,7 @@
     {
       "column": "public.components.kind",
       "value": "connector",
-      "reason": "CHECK: kind is connector or agent (DM-12)."
+      "reason": "CHECK: kind is connector, addc or fileserver (DM-12); legacy agent is kept only so old rows stay revocable."
     },
     {
       "column": "public.enrollment_tokens.token_hash",

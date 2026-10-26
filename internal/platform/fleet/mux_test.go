@@ -389,8 +389,67 @@ func TestBindingComesFromKind(t *testing.T) {
 	if _, err := b.For(ident("connector")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.For(ident("agent")); !errors.Is(err, fleet.ErrNoBinding) {
-		t.Fatalf("agent kind must not get the connector's contract: %v", err)
+	for _, k := range []string{fleet.KindADDC, fleet.KindFileServer, "agent"} {
+		if _, err := b.For(ident(k)); !errors.Is(err, fleet.ErrNoBinding) {
+			t.Fatalf("%s must not get the connector's contract: %v", k, err)
+		}
+	}
+}
+
+// TM-D24 A1 / TM-TB12-T16: one contract per module kind. A tunnel opened by each kind's identity runs
+// its own contract's method and refuses the methods of either other kind with PERMISSION_DENIED.
+func TestCrossKindContractsAreIsolated(t *testing.T) {
+	svcOf := map[string]string{fleet.KindConnector: "UpConnector", fleet.KindADDC: "UpAddc", fleet.KindFileServer: "UpFileserver"}
+	b := fleet.Bindings{}
+	for k, svc := range svcOf {
+		svc := svc
+		c, err := fleet.NewContract("t"+svc, []protoreflect.ServiceDescriptor{svcDesc(t, "Down"+svc, "Ping")}, []protoreflect.ServiceDescriptor{svcDesc(t, svc, "Report")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		b[k] = fleet.Binding{Contract: c, Serve: func(_ fleet.Identity, reg grpc.ServiceRegistrar) {
+			reg.RegisterService(&grpc.ServiceDesc{ServiceName: "t.v1." + svc, HandlerType: (*any)(nil), Methods: []grpc.MethodDesc{{
+				MethodName: "Report",
+				Handler: func(_ any, _ context.Context, dec func(any) error, _ grpc.UnaryServerInterceptor) (any, error) {
+					in := new(wrapperspb.StringValue)
+					if err := dec(in); err != nil {
+						return nil, err
+					}
+					return wrapperspb.String("ok"), nil
+				},
+			}}}, struct{}{})
+		}}
+	}
+	for k := range svcOf {
+		bd, err := b.For(ident(k))
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := newRig(t, func(c *fleet.MuxConfig) { c.Identity, c.Binding = ident(k), bd })
+		id := uint64(2)
+		for other, svc := range svcOf {
+			m := "/t.v1." + svc + "/Report"
+			r.send(fleet.Frame{CallID: id, Body: fleet.BodyOpen, Method: m})
+			if other == k {
+				r.send(fleet.Frame{CallID: id, Body: fleet.BodyData, Payload: str("x")})
+				r.send(fleet.Frame{CallID: id, Body: fleet.BodyHalfClose})
+			}
+			var f fleet.Frame
+			for {
+				f = r.next(t)
+				if f.CallID == id && f.Body == fleet.BodyClose {
+					break
+				}
+			}
+			want := int32(codes.PermissionDenied)
+			if other == k {
+				want = 0
+			}
+			if f.Code != want {
+				t.Errorf("%s opening %s's method: code %d, want %d", k, other, f.Code, want)
+			}
+			id += 2
+		}
 	}
 }
 

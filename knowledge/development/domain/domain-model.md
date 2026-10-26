@@ -465,9 +465,9 @@ I6 depend on it.
 
 ### DM-12 Component · T · owner `platform/fleet`
 **Definition.** An enrolled remote process with its own mTLS identity. In v1 that is a remote
-**connector**; from M3 also an **agent**. The embedded connector has no identity and is not a
+**connector**; from M3 also agent modules (**addc**, **fileserver**). The embedded connector has no identity and is not a
 Component (ADR-0002). One shape covers both kinds ("parameterise, don't clone").
-**Key attributes:** `kind` (`connector`, `agent`) · `name` · host facts (hostname, OS, version) ·
+**Key attributes:** `kind` (`connector`, `addc`, `fileserver`; a closed vocabulary, one value per module; legacy `agent` rows stay revocable only and `IdentityOf` refuses them) · `name` · host facts (hostname, OS, version) ·
 `cert_serial` · `san_identity` (tenant + component) · `providers` (from `Describe`) ·
 `server_endpoints` · `last_seen` · `state`. Sub-entity **EnrollmentToken**: `token_hash`,
 `issued_by`, `expires_at`, `used_at`.
