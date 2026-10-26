@@ -14,7 +14,22 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
 )
 
-var gpLinkID = mustGUID("f30e3bbe-9ff0-11d1-b603-0000f80367c1")
+var (
+	gpLinkID     = mustGUID("f30e3bbe-9ff0-11d1-b603-0000f80367c1")
+	gpOptionsID  = mustGUID("f30e3bbf-9ff0-11d1-b603-0000f80367c1")
+	memberID     = mustGUID("bf9679c0-0de6-11d0-a285-00aa003049e2") // also the Self-Membership right
+	unicodePwdID = mustGUID("bf9679e1-0de6-11d0-a285-00aa003049e2")
+	spnID        = mustGUID("f3a64788-5306-11d1-a9c5-0000f80367c1")
+	uacID        = mustGUID("bf967a68-0de6-11d0-a285-00aa003049e2")
+	keyCredID    = mustGUID("5b47d60f-6090-40b2-9f37-2a4de88f3063")
+	rbcdID       = mustGUID("3f78c3e5-f79a-46bd-a0b8-9d18116ddc79")
+	descID       = mustGUID("bf967950-0de6-11d0-a285-00aa003049e2")
+	resetPwdID   = mustGUID("00299570-246d-11d0-a768-00aa006e0529")
+	computerID   = mustGUID("bf967a86-0de6-11d0-a285-00aa003049e2")
+	ouClassID    = mustGUID("bf967aa5-0de6-11d0-a285-00aa003049e2")
+	gpcID        = mustGUID("f30e3bc2-9ff0-11d1-b603-0000f80367c1")
+	userClassID  = mustGUID("bf967aba-0de6-11d0-a285-00aa003049e2")
+)
 
 const (
 	dom   = "DC=lab,DC=test"
@@ -60,6 +75,21 @@ func forest() *fakeDir {
 	f.find("CN=Schema," + cfg).raw["nTSecurityDescriptor"] = rootSD
 	gp := f.add("CN=GP-Link,CN=Schema,"+cfg, "", cls("attributeSchema"), "lDAPDisplayName", "gPLink")
 	gp.raw["schemaIDGUID"] = gpLinkID.Bytes()
+	// TM-D27 schema objects and extended rights (GUIDs as shipped by AD).
+	for _, x := range [][2]string{{"member", memberID.String()}, {"unicodePwd", unicodePwdID.String()},
+		{"servicePrincipalName", spnID.String()}, {"userAccountControl", uacID.String()}, {"gPOptions", gpOptionsID.String()},
+		{"msDS-KeyCredentialLink", keyCredID.String()}, {"msDS-AllowedToActOnBehalfOfOtherIdentity", rbcdID.String()},
+		{"description", descID.String()}} {
+		o := f.add("CN="+x[0]+",CN=Schema,"+cfg, "", cls("attributeSchema"), "lDAPDisplayName", x[0])
+		o.raw["schemaIDGUID"] = mustGUID(x[1]).Bytes()
+	}
+	for n, id := range map[string]guid.GUID{"computer": computerID, "organizationalUnit": ouClassID, "groupPolicyContainer": gpcID, "user": userClassID} {
+		o := f.add("CN="+n+",CN=Schema,"+cfg, "", cls("classSchema"), "lDAPDisplayName", n)
+		o.raw["schemaIDGUID"] = id.Bytes()
+	}
+	f.add("CN=Extended-Rights,"+cfg, "", cont)
+	f.add("CN=User-Force-Change-Password,CN=Extended-Rights,"+cfg, "", cls("controlAccessRight"), "cn", "User-Force-Change-Password", "rightsGuid", resetPwdID.String())
+	f.add("CN=Self-Membership,CN=Extended-Rights,"+cfg, "", cls("controlAccessRight"), "cn", "Self-Membership", "rightsGuid", memberID.String())
 	f.add("CN=Windows NT,CN=Services,"+cfg, "", cont)
 	f.add("CN=Directory Service,CN=Windows NT,CN=Services,"+cfg, "", cont)
 
@@ -144,6 +174,14 @@ func forest() *fakeDir {
 	f.add("CN=Group Policy Creator Owners,CN=Users,"+dom, dsid+"-520", group, "sAMAccountName", "Group Policy Creator Owners")
 	// C14
 	f.add("CN=AZUREADSSOACC,OU=Servers,"+dom, dsid+"-1600", comp, "sAMAccountName", "AZUREADSSOACC$")
+	// Every object C19 reads carries a descriptor, as in AD: Domain Admins full control, owned by the
+	// built-in Administrators (a C1 owner adds nothing). Tests overwrite it per case.
+	for _, o := range f.objs {
+		if len(o.raw["nTSecurityDescriptor"]) == 0 && (o.is("group") || o.is("computer") || o.is("organizationalUnit") ||
+			o.is("groupPolicyContainer") || strings.HasPrefix(strings.ToLower(o.dn), "cn=krbtgt") || strings.HasPrefix(o.dn, "CN=Administrator,")) {
+			o.raw["nTSecurityDescriptor"] = sdBytes(aceSpec{sid: dsid + "-512", mask: gAll})
+		}
+	}
 	return f
 }
 

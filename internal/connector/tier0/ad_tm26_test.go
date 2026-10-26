@@ -294,6 +294,9 @@ func TestC13ByRIDAndPinnedGUID(t *testing.T) { // T0-C13-RENAME
 	dns.attrs["samaccountname"] = []string{"NetOps"} // renamed after the pin
 	decoy := f.add("CN=Decoy,OU=Staff,"+dom, dsid+"-4121", group, "sAMAccountName", "DnsAdmins")
 	_ = decoy
+	for _, g := range []*fobj{cp, decoy} { // C19 reads every C13 group's descriptor
+		g.raw["nTSecurityDescriptor"] = sdBytes(aceSpec{sid: dsid + "-512", mask: gAll})
+	}
 	// Cert Publishers renamed: found by RID without any pin; members follow.
 	wantBasis(t, f, cp.dn, C13, true)
 	wantBasis(t, f, cpm, C13, true)
