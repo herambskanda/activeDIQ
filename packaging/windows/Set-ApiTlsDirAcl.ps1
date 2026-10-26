@@ -50,6 +50,9 @@ function Assert-NoUnprivilegedWrite([string]$Target, [string[]]$AllowedSids) {
 $trustedAncestorOwners = @($admins.Value, $system.Value, 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
 $ancestorMask = [int][System.Security.AccessControl.FileSystemRights]'Delete,DeleteSubdirectoriesAndFiles,ChangePermissions,TakeOwnership' -bor 0x52000000
 function Assert-TrustedAncestor([string]$Target) {
+  # Get-Acl resolves a junction to its target, so the owner/DACL checked below would be the target's,
+  # not the attacker-owned junction's. Refuse any reparse point (junction, symlink, mounted-folder root).
+  if ((Get-Item -LiteralPath $Target -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Ancestor '$Target' is a reparse point (junction/symlink/mount); install to a real path." }
   $acl = Get-Acl -LiteralPath $Target
   $o = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
   if ($trustedAncestorOwners -notcontains $o) { throw "Ancestor '$Target' is owned by $o, not Administrators, SYSTEM or TrustedInstaller; refusing." }

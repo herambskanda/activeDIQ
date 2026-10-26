@@ -91,6 +91,9 @@ func TestViolationsAreCaught(t *testing.T) {
 		{"ancestor owner unchecked", winACL, "ancestor owned by an untrusted", func(s string) string {
 			return strings.ReplaceAll(s, "Ancestor '$Target' is owned by", "Ancestor '$Target' has")
 		}},
+		{"ancestor reparse unchecked", winACL, "ancestor that is a junction", func(s string) string {
+			return strings.ReplaceAll(s, "Ancestor '$Target' is a reparse point", "Ancestor '$Target' is fine")
+		}},
 		{"generic rights not masked", winACL, "generic rights", func(s string) string { return strings.ReplaceAll(s, "0x52000000", "0") }},
 		{"hardlink check fails open", winACL, "fail closed", func(s string) string { return strings.ReplaceAll(s, "$LASTEXITCODE", "$null") }},
 		{"privileged", linCompose, "must not be privileged", func(s string) string { return s + "    privileged: true\n" }},
