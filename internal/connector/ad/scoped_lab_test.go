@@ -153,7 +153,7 @@ func TestLabScopedSearch(t *testing.T) {
 	}
 }
 
-// LF-32 (referral) is not provable on Samba: no referral objectClass, no injectable transport (T-0309).
+// LF-32 (referral) is not provable by data on Samba (no referral objects): see referral_fault_test.go and ldapfault_lab_test.go (T-0309), which inject the reference with a test-only proxy.
 
 // LF-33 on the wire: a GC port is refused before any connection.
 func TestLabGlobalCatalogRefused(t *testing.T) {
