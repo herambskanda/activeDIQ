@@ -42,12 +42,18 @@ const linkColumns = `c.id::text, c.ad_connection_id::text, c.ad_object_guid::tex
 	ac.kind, ec.kind`
 
 // CorrelationsFor implements CorrelationSource.
-func (r *Reader) CorrelationsFor(ctx context.Context, tid tenant.ID, ref Ref) ([]Link, error) {
+func (r *Reader) CorrelationsFor(ctx context.Context, tid tenant.ID, ref Ref) (Correlations, error) {
 	if !ref.Valid() {
-		return nil, ErrInvalid
+		return Correlations{}, ErrInvalid
 	}
 	var out []Link
+	var evaluated *time.Time
 	err := r.with(ctx, tid, func(ctx context.Context, tx store.Tx) error {
+		// Same transaction as the links, so the as-of cannot be newer than the links it vouches for.
+		if err := tx.QueryRow(ctx, `SELECT max(evaluated_at) FROM public.correlation_evaluations
+			WHERE tenant_id = $1::uuid AND connection_id = $2::uuid`, tid.String(), string(ref.Connection)).Scan(&evaluated); err != nil {
+			return fmt.Errorf("inventory: evaluation as-of: %w", err)
+		}
 		rows, err := tx.Query(ctx, `SELECT `+linkColumns+` FROM public.correlations c
 			LEFT JOIN public.connections ac ON ac.tenant_id = $1::uuid AND ac.id = c.ad_connection_id
 			LEFT JOIN public.connections ec ON ec.tenant_id = $1::uuid AND ec.id = c.entra_connection_id
@@ -91,13 +97,13 @@ func (r *Reader) CorrelationsFor(ctx context.Context, tid tenant.ID, ref Ref) ([
 		return rows.Err()
 	})
 	if err != nil {
-		return nil, err
+		return Correlations{}, err
 	}
 	if len(out) > MaxLinks {
-		return nil, ErrTooMany
+		return Correlations{}, ErrTooMany
 	}
 	sortLinks(out)
-	return out, nil
+	return Correlations{Links: out, EvaluatedAt: val(evaluated)}, nil
 }
 
 func val(t *time.Time) time.Time {
