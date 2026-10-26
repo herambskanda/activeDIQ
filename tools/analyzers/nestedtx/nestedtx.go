@@ -9,6 +9,11 @@
 //
 // A call that reaches WithTenant through another function stays an accepted residual (ADR-0005
 // rule 11). Tests and tier L are not judged.
+//
+// WithTenantSeparate opens a second, committed-on-its-own transaction on purpose (the failure budget of
+// internal/platform/authn, T-0361; ADR-0005 amendment 2026-10-26). It is reported wherever it is called
+// from outside internal/platform/authn and internal/platform/store, whether on store.DB or through an
+// interface that declares a method of that name.
 package nestedtx
 
 import (
@@ -31,11 +36,26 @@ var Analyzer = &analysis.Analyzer{
 
 const storeDir = "internal/platform/store"
 
+const separateName = "WithTenantSeparate"
+
+// separateAllowed are the packages that may call WithTenantSeparate.
+var separateAllowed = map[string]bool{storeDir: true, "internal/platform/authn": true}
+
 func run(pass *analysis.Pass) (any, error) {
 	reported := map[token.Pos]bool{}
 	for _, f := range pass.Files {
 		if util.SkipFile(pass, f) {
 			continue
+		}
+		if !separateAllowed[util.PkgDir(pass)] {
+			ast.Inspect(f, func(n ast.Node) bool {
+				if call, ok := n.(*ast.CallExpr); ok {
+					if fn := callee(pass, call); fn != nil && fn.Name() == separateName {
+						pass.Reportf(call.Pos(), "%s opens a second committed transaction beside the caller's; only internal/platform/authn may (ADR-0005 amendment 2026-10-26)", separateName)
+					}
+				}
+				return true
+			})
 		}
 		ast.Inspect(f, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)

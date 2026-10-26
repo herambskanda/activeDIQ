@@ -6,7 +6,7 @@
 --   paused_until      10 wrong codes in a rolling hour pause verification for 1 hour; while it is in the
 --                     future even a correct code is refused.
 --   authn_totp_failures  one row per refused code, written by a separate short transaction so a caller that
---                     rolls back on refusal cannot erase it. Insert-only for the app role apart from pruning.
+--                     rolls back on refusal cannot erase it. Insert-only for the app role apart from pruning rows older than 90 minutes (trigger).
 -- The INSERT trigger makes a row start 'pending' with no used step: the guard on UPDATE alone left the app
 -- role able to INSERT an 'active' enrolment with a chosen last_used_step.
 
@@ -65,6 +65,10 @@ BEGIN
   IF NEW.confirm_attempts < OLD.confirm_attempts THEN
     RAISE EXCEPTION 'authn_authenticator_enrollments: confirm_attempts never decreases' USING ERRCODE = 'AD403';
   END IF;
+  -- A pause is cleared only by time passing: it can be set or extended, never cleared or shortened.
+  IF OLD.paused_until IS NOT NULL AND (NEW.paused_until IS NULL OR NEW.paused_until < OLD.paused_until) THEN
+    RAISE EXCEPTION 'authn_authenticator_enrollments: paused_until never decreases or clears' USING ERRCODE = 'AD403';
+  END IF;
   RETURN NEW;
 END
 $fn$;
@@ -85,3 +89,22 @@ $fn$;
 CREATE TRIGGER authn_enrollments_insert_guard BEFORE INSERT ON public.authn_authenticator_enrollments
   FOR EACH ROW EXECUTE FUNCTION public.authn_enrollments_insert_guard();
 ALTER TABLE public.authn_authenticator_enrollments ENABLE ALWAYS TRIGGER authn_enrollments_insert_guard;
+
+-- Failure rows are pruned by the app, but only once they cannot count: the budget looks back one hour, the
+-- app prunes at two, and the database refuses anything younger than 90 minutes (so a deleted row cannot
+-- clear a pause that is about to be set).
+CREATE FUNCTION public.authn_totp_failures_delete_guard() RETURNS trigger
+  LANGUAGE plpgsql
+  SET search_path = pg_catalog
+AS $fn$
+BEGIN
+  IF OLD.at > pg_catalog.now() - interval '90 minutes' THEN
+    RAISE EXCEPTION 'authn_totp_failures: a failure younger than 90 minutes cannot be deleted' USING ERRCODE = 'AD403';
+  END IF;
+  RETURN OLD;
+END
+$fn$;
+
+CREATE TRIGGER authn_totp_failures_delete_guard BEFORE DELETE ON public.authn_totp_failures
+  FOR EACH ROW EXECUTE FUNCTION public.authn_totp_failures_delete_guard();
+ALTER TABLE public.authn_totp_failures ENABLE ALWAYS TRIGGER authn_totp_failures_delete_guard;

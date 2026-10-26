@@ -165,8 +165,8 @@ func Test_totp_pending_expiry_and_confirm_limit(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("4 wrong then right: %v", err)
 		}
-		if _, err := e.exec(t, e.a, `UPDATE public.authn_authenticator_enrollments SET state = 'active' WHERE id = $1::uuid AND state = 'expired'`, id); err != nil {
-			t.Fatal(err)
+		if in := e.info(t, id); in.State != StateActive {
+			t.Fatalf("4 wrong then right: state = %s", in.State)
 		}
 	})
 }
@@ -221,6 +221,53 @@ func Test_totp_without_failure_store_fails_closed(t *testing.T) {
 		e.svc.Failures = nil
 		if err := e.verify(t, e.a, id, hotp(seed, stepAt(e.now)+1)); err == nil || errors.Is(err, ErrCodeRejected) {
 			t.Fatalf("verify without a failure store: %v", err)
+		}
+	})
+}
+
+func Test_totp_pause_cannot_be_cleared_by_app(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		id, _ := e.enrol(t, e.a)
+		set := func(v string) error {
+			_, err := e.exec(t, e.a, `UPDATE public.authn_authenticator_enrollments SET paused_until = `+v+` WHERE id = $1::uuid`, id)
+			return err
+		}
+		if err := set(`now() + interval '1 hour'`); err != nil {
+			t.Fatalf("setting a pause: %v", err)
+		}
+		if err := set(`now() + interval '2 hours'`); err != nil {
+			t.Fatalf("extending a pause: %v", err)
+		}
+		if err := set(`NULL`); err == nil {
+			t.Error("paused_until cleared by the app role")
+		}
+		if err := set(`now() + interval '1 minute'`); err == nil {
+			t.Error("paused_until shortened by the app role")
+		}
+	})
+}
+
+func Test_totp_failure_rows_cannot_be_deleted_early(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		id, _ := e.enrol(t, e.a)
+		for _, age := range []string{"1 minute", "80 minutes", "3 hours"} {
+			if _, err := e.exec(t, e.a, `INSERT INTO public.authn_totp_failures (tenant_id, enrollment_id, at)
+				VALUES ($1::uuid, $2::uuid, now() - $3::interval)`, e.a.String(), id, age); err != nil {
+				t.Fatal(err)
+			}
+		}
+		del := func(age string) error {
+			_, err := e.exec(t, e.a, `DELETE FROM public.authn_totp_failures WHERE enrollment_id = $1::uuid AND at > now() - $2::interval AND at <= now() - $3::interval`,
+				id, "10 hours", age)
+			return err
+		}
+		if err := del("0 seconds"); err == nil {
+			t.Error("recent failure rows deleted by the app role")
+		}
+		if err := del("2 hours"); err != nil {
+			t.Errorf("pruning rows older than 2h refused: %v", err)
 		}
 	})
 }

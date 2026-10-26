@@ -50,6 +50,9 @@ var (
 	// transaction: a second transaction would not see the first's writes, and its tenant could differ.
 	// Do the work through the Tx you were given. No SQL has run.
 	ErrNestedTenant = errors.New("store: nested WithTenant: a transaction is already open on this context; use the Tx fn received")
+	// ErrLockWait is returned by WithTenantSeparate when the lock wait is not positive or exceeds
+	// maxSeparateLockWait.
+	ErrLockWait = errors.New("store: WithTenantSeparate needs a lock wait between 1ms and 10s")
 	// ErrReasonRequired is returned by WithPlatform when the reason is blank, too long or not printable.
 	ErrReasonRequired = errors.New("store: WithPlatform needs a short printable reason")
 	// ErrSimpleProtocolForbidden is returned by Open when the DSN selects pgx's simple protocol, which
@@ -243,17 +246,31 @@ func (d *DB) WithTenant(ctx context.Context, id tenant.ID, fn func(ctx context.C
 	return d.run(ctx, id.String(), fn)
 }
 
+// maxSeparateLockWait caps the lock wait a WithTenantSeparate caller may ask for.
+const maxSeparateLockWait = 10 * time.Second
+
 // WithTenantSeparate is WithTenant for the one case where a second transaction beside a running one
 // is the point: a record that must commit even if the surrounding transaction rolls back (a refused
 // credential attempt counted against its budget). It is allowed on the context of a running
 // transaction; it uses another connection, so it neither sees the outer transaction's uncommitted
-// writes nor can it wait on them for long: the caller must set a lock_timeout in fn and must not
-// touch rows the outer transaction holds locked.
-func (d *DB) WithTenantSeparate(ctx context.Context, id tenant.ID, fn func(ctx context.Context, tx Tx) error) error {
+// writes nor can it wait on them for long: lockWait (required, positive, at most maxSeparateLockWait)
+// is set as the transaction's lock_timeout here, with a bound parameter, so a caller holding a row this
+// body needs gets an error after lockWait instead of a hang. Only internal/platform/authn may call it
+// (nestedtx analyzer, FF-SP2; ADR-0005 amendment 2026-10-26).
+func (d *DB) WithTenantSeparate(ctx context.Context, id tenant.ID, lockWait time.Duration, fn func(ctx context.Context, tx Tx) error) error {
 	if id.IsZero() {
 		return ErrNoTenant
 	}
-	return d.run(ctx, id.String(), fn)
+	if lockWait <= 0 || lockWait > maxSeparateLockWait {
+		return ErrLockWait
+	}
+	ms := strconv.FormatInt(lockWait.Milliseconds(), 10)
+	return d.run(ctx, id.String(), func(ctx context.Context, tx Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT set_config('lock_timeout', $1, true)`, ms); err != nil {
+			return fmt.Errorf("store: set lock timeout: %w", err)
+		}
+		return fn(ctx, tx)
+	})
 }
 
 // WithPlatform runs fn in one transaction with no tenant context, as the same runtime role: every

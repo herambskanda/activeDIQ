@@ -15,7 +15,11 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
-var _ = tablekind.Declare(tablekind.Table{Name: "public.authn_authenticator_enrollments", Entity: "DM-37", Kind: tablekind.Tenant})
+var (
+	_ = tablekind.Declare(tablekind.Table{Name: "public.authn_authenticator_enrollments", Entity: "DM-37", Kind: tablekind.Tenant})
+	// Refused codes: the app role inserts and, to prune, deletes only rows older than two hours (trigger).
+	_ = tablekind.Declare(tablekind.Table{Name: "public.authn_totp_failures", Entity: "DM-37", Kind: tablekind.Tenant})
+)
 
 // Where the sealed seed lives, in the AEAD associated data (TM-D7).
 const (
@@ -54,7 +58,7 @@ const (
 	MaxConfirmAttempts = 5
 	// recordLockWait bounds the failure-recording transaction's wait for the enrollment row, so a
 	// caller holding that row never hangs a refusal.
-	recordLockWait = "3000"
+	recordLockWait = 3 * time.Second
 )
 
 // KeySource gives the tenant's data-encryption key (TM-D7) under which the seed is sealed. version 0
@@ -123,7 +127,7 @@ type Provisioned struct {
 // FailureStore opens the short, separate tenant transaction that records a refused code. *store.DB
 // satisfies it.
 type FailureStore interface {
-	WithTenantSeparate(ctx context.Context, id tenant.ID, fn func(ctx context.Context, tx store.Tx) error) error
+	WithTenantSeparate(ctx context.Context, id tenant.ID, lockWait time.Duration, fn func(ctx context.Context, tx store.Tx) error) error
 }
 
 // Service is the TOTP factor primitive. The caller brings the tenant transaction (store.DB.WithTenant)
@@ -322,10 +326,7 @@ func (s *Service) check(ctx context.Context, tx store.Tx, tid tenant.ID, id, cod
 // locked first so concurrent refusals count in order and the tenth always sets the pause. A pending
 // enrolment counts confirm attempts and expires on the fifth; an active one uses the rolling hour.
 func (s *Service) recordFailure(ctx context.Context, tid tenant.ID, id string, want State, now time.Time) error {
-	err := s.Failures.WithTenantSeparate(ctx, tid, func(ctx context.Context, tx store.Tx) error {
-		if _, err := tx.Exec(ctx, `SELECT set_config('lock_timeout', $1, true)`, recordLockWait); err != nil {
-			return err
-		}
+	err := s.Failures.WithTenantSeparate(ctx, tid, recordLockWait, func(ctx context.Context, tx store.Tx) error {
 		var state string
 		var attempts int32
 		if err := tx.QueryRow(ctx, `SELECT state, confirm_attempts FROM public.authn_authenticator_enrollments
@@ -371,10 +372,7 @@ func (s *Service) recordFailure(ctx context.Context, tid tenant.ID, id string, w
 // expire moves a pending enrolment past its time or confirm limit to expired, committed on its own so
 // the caller's rollback cannot revive it.
 func (s *Service) expire(ctx context.Context, tid tenant.ID, id string, now time.Time) error {
-	err := s.Failures.WithTenantSeparate(ctx, tid, func(ctx context.Context, tx store.Tx) error {
-		if _, err := tx.Exec(ctx, `SELECT set_config('lock_timeout', $1, true)`, recordLockWait); err != nil {
-			return err
-		}
+	err := s.Failures.WithTenantSeparate(ctx, tid, recordLockWait, func(ctx context.Context, tx store.Tx) error {
 		_, err := tx.Exec(ctx, `UPDATE public.authn_authenticator_enrollments SET state = 'expired'
 			WHERE id = $1::uuid AND state = 'pending' AND (expires_at <= $2 OR confirm_attempts >= $3)`, id, now, MaxConfirmAttempts)
 		return err
