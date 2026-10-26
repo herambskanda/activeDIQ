@@ -1095,6 +1095,17 @@ func (b *builder) markPrincipals(sids []sid.SID, basis Basis) error {
 	return b.markPrincipalsSkip(sids, basis, nil)
 }
 
+// isDomainAccountSID is true for S-1-5-21-a-b-c-RID: authority 5, first sub-authority 21, a three-part
+// domain identifier and a RID.
+func isDomainAccountSID(s sid.SID) bool {
+	p := strings.Split(s.String(), "-")
+	if len(p) != 8 || p[1] != "1" || p[2] != "5" || p[3] != "21" {
+		return false
+	}
+	_, ok := s.DomainSID()
+	return ok
+}
+
 // markPrincipalsSkip is markPrincipals except that an object for which skip is true is not marked and
 // its members are not walked.
 func (b *builder) markPrincipalsSkip(sids []sid.SID, basis Basis, skip func(*ad.Entry) bool) error {
@@ -1115,6 +1126,15 @@ func (b *builder) markPrincipalsSkip(sids []sid.SID, basis Basis, skip func(*ad.
 		e, found, err := b.get(dn.SIDRef(s), idAttrs)
 		if err != nil {
 			return err
+		}
+		// A foreignSecurityPrincipal is a real principal only for a domain account SID
+		// (S-1-5-21-a-b-c-RID, a foreign-domain user or group). Every other FSP - Authenticated Users,
+		// Interactive, Network, NTLM Authentication, This Organization Certificate, ... - is only a
+		// placeholder AD keeps for group membership: the token carries the SID for every principal, so
+		// the FSP is not the principal and the SID is treated as unresolved (ignorable or fail closed).
+		// Allow-list, not deny-list: an unknown SID shape must fail closed.
+		if found && hasClass(e, "foreignSecurityPrincipal") && !isDomainAccountSID(s) {
+			found = false
 		}
 		holders, err := b.historyHolders(s)
 		if err != nil {
