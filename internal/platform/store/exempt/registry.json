@@ -308,6 +308,163 @@
       "column": "public.audit_checkpoint_key.public_key",
       "value": "\\x0101010101010101010101010101010101010101010101010101010101010101",
       "reason": "CHECK: an Ed25519 public key is 32 bytes."
+    },
+    {
+      "column": "public.authn_accounts.created_by",
+      "value": "system",
+      "reason": "CHECK: created_by is 'system' or the id of the creating human (ADR-0005 sock-puppet rule); the probe row is system-created."
+    },
+    {
+      "column": "public.authn_sessions.created_at",
+      "value": "2030-01-01T00:00:00Z",
+      "reason": "CHECK/insert order: absolute_expiry is after created_at and idle_expiry is not after absolute_expiry; the seed fixes one ordered set of timestamps (the clock-relative insert guard is switched off for the seed by the probe)."
+    },
+    {
+      "column": "public.authn_sessions.last_seen_at",
+      "value": "2030-01-01T00:00:00Z",
+      "reason": "Same ordered timestamp set as created_at."
+    },
+    {
+      "column": "public.authn_sessions.idle_expiry",
+      "value": "2030-01-01T01:00:00Z",
+      "reason": "CHECK: idle_expiry <= absolute_expiry and absolute_expiry > created_at."
+    },
+    {
+      "column": "public.authn_sessions.absolute_expiry",
+      "value": "2030-01-01T02:00:00Z",
+      "reason": "CHECK: idle_expiry <= absolute_expiry and absolute_expiry > created_at."
+    },
+    {
+      "column": "public.authz_assignment_roots.root_kind",
+      "value": "naming_context",
+      "reason": "CHECK: root_kind is one of four kinds; naming_context needs no root_guid = connection_id rule."
+    },
+    {
+      "column": "public.connection_c13_pins.group_guid",
+      "value": "00000000-0000-4000-8000-0000000000a1",
+      "reason": "CHECK: group_guid is a canonical lower-case UUID text."
+    },
+    {
+      "column": "public.fleet_ca.cert_der",
+      "value": "\\x70707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: cert_der is 64..16384 bytes; the probe row is not parsed as a certificate."
+    },
+    {
+      "column": "public.hybrid_links.nc_guid",
+      "value": "00000000-0000-4000-8000-0000000000a1",
+      "reason": "CHECK: nc_guid is a canonical lower-case UUID text."
+    },
+    {
+      "column": "public.operation_items.state",
+      "value": "pending",
+      "reason": "CHECK: state is one of the item states; pending is the birth state."
+    },
+    {
+      "column": "public.operation_steps.digest",
+      "value": "\\x0000000000000000000000000000000000000000000000000000000000000000",
+      "reason": "CHECK: digest is exactly 32 bytes."
+    },
+    {
+      "column": "public.operations.origin",
+      "value": "api",
+      "reason": "CHECK: origin is one of console, api, csv, workflow, automation, report_results, undo, migration."
+    },
+    {
+      "column": "public.authn_accounts.kind",
+      "value": "local",
+      "reason": "CHECK: kind is local, sso or directory; a local account carries no SSO or directory fields, which are the probe row's NULLs (DM-36)."
+    },
+    {
+      "column": "public.authn_sessions.id_hash",
+      "value": "\\x0000000000000000000000000000000000000000000000000000000000000000",
+      "reason": "CHECK: id_hash is exactly 32 bytes, the SHA-256 of the session id."
+    },
+    {
+      "column": "public.fleet_ca.sealed_key",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: sealed_key is 32..16384 bytes; the probe row holds no real key material."
+    },
+    {
+      "column": "public.hybrid_links.origin",
+      "value": "declared",
+      "reason": "CHECK: origin is declared or discovered; a link is born declared+confirmed or discovered+proposed (DM-21.I2)."
+    },
+    {
+      "column": "public.hybrid_links.state",
+      "value": "confirmed",
+      "reason": "CHECK: state is proposed, confirmed or removed; pairs with origin declared (DM-21.I2)."
+    },
+    {
+      "column": "public.operation_steps.state",
+      "value": "planned",
+      "reason": "CHECK: state is one of the step states; planned is the birth state."
+    },
+    {
+      "column": "public.operations.requester_kind",
+      "value": "human",
+      "reason": "CHECK: requester_kind is human, api_token, automation or system."
+    },
+    {
+      "column": "public.authn_accounts.mfa_required",
+      "value": "true",
+      "reason": "CHECK: a local account requires MFA (authn_accounts_local); the generated boolean may be false."
+    },
+    {
+      "column": "public.authn_sessions.methods",
+      "value": "{password}",
+      "reason": "CHECK: methods holds 1..8 entries; the probe session was authenticated by a password."
+    },
+    {
+      "column": "public.fleet_ca.spki_sha256",
+      "value": "\\x0000000000000000000000000000000000000000000000000000000000000000",
+      "reason": "CHECK: spki_sha256 is exactly 32 bytes."
+    },
+    {
+      "column": "public.operations.state",
+      "value": "draft",
+      "reason": "CHECK: state is one of the operation states; draft is the birth state."
+    },
+    {
+      "column": "public.authn_accounts.sso_issuer",
+      "value": "",
+      "null": true,
+      "reason": "CHECK: a local account carries no SSO, directory or anchor field (authn_accounts_local, DM-36), so the probe row binds NULL."
+    },
+    {
+      "column": "public.authn_accounts.sso_subject",
+      "value": "",
+      "null": true,
+      "reason": "CHECK: a local account carries no SSO, directory or anchor field (authn_accounts_local, DM-36), so the probe row binds NULL."
+    },
+    {
+      "column": "public.authn_accounts.directory_connection_id",
+      "value": "",
+      "null": true,
+      "reason": "CHECK: a local account carries no SSO, directory or anchor field (authn_accounts_local, DM-36), so the probe row binds NULL."
+    },
+    {
+      "column": "public.authn_accounts.directory_object_guid",
+      "value": "",
+      "null": true,
+      "reason": "CHECK: a local account carries no SSO, directory or anchor field (authn_accounts_local, DM-36), so the probe row binds NULL."
+    },
+    {
+      "column": "public.authn_accounts.anchor_kind",
+      "value": "",
+      "null": true,
+      "reason": "CHECK: a local account carries no SSO, directory or anchor field (authn_accounts_local, DM-36), so the probe row binds NULL."
+    },
+    {
+      "column": "public.authn_accounts.anchor_value",
+      "value": "",
+      "null": true,
+      "reason": "CHECK: a local account carries no SSO, directory or anchor field (authn_accounts_local, DM-36), so the probe row binds NULL."
+    },
+    {
+      "column": "public.authn_accounts.anchor_tid",
+      "value": "",
+      "null": true,
+      "reason": "CHECK: a local account carries no SSO, directory or anchor field (authn_accounts_local, DM-36), so the probe row binds NULL."
     }
   ]
 }
