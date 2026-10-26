@@ -30,7 +30,6 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/keys"
-	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
 // File names inside the identity directory.
@@ -42,18 +41,9 @@ const (
 	SealedKeyFile = "api-key.sealed.json"
 )
 
-// sealTenant is the fixed encryption context of the API identity key: the key is a per-install, not a
-// per-tenant, secret, so it is wrapped under a reserved platform tenant at key version 1. A wrapped
-// key moved into any other context (another tenant, version or KEK) does not unwrap.
-var sealTenant = mustTenant("00000000-0000-4000-8000-0000a91c7150")
-
-func mustTenant(s string) tenant.ID {
-	id, err := tenant.Parse(s)
-	if err != nil {
-		panic(err)
-	}
-	return id
-}
+// sealPurpose is the platform wrap purpose of the API identity key: a per-install secret that belongs
+// to no tenant, wrapped in the platform domain of platform/keys so it can never unwrap as a tenant DEK.
+const sealPurpose = "api-tls"
 
 const sealVersion = 1
 
@@ -127,8 +117,12 @@ func LoadOrGenerateSealed(dir, addr string, now time.Time, p keys.Provider) (Ide
 			return Identity{}, err
 		}
 		if p == nil {
-			if _, err := os.Lstat(filepath.Join(dir, SealedKeyFile)); err == nil {
-				return Identity{}, fmt.Errorf("apitls: %s is sealed by a key provider but none is configured", filepath.Join(dir, SealedKeyFile))
+			sealedPath := filepath.Join(dir, SealedKeyFile)
+			switch _, err := os.Lstat(sealedPath); {
+			case err == nil:
+				return Identity{}, fmt.Errorf("apitls: %s is sealed by a key provider but none is configured", sealedPath)
+			case !errors.Is(err, fs.ErrNotExist):
+				return Identity{}, fmt.Errorf("apitls: stat %s: %w", sealedPath, err)
 			}
 		}
 		id, renew, err := load(dir, now, p)
@@ -179,7 +173,7 @@ func load(dir string, now time.Time, p keys.Provider) (id Identity, renew bool, 
 	if err != nil {
 		return Identity{}, false, fmt.Errorf("apitls: read %s: %w", certPath, err)
 	}
-	keyPEM, keyPath, err := readKey(dir, p)
+	keyPEM, keyPath, sk, err := readKey(dir, p)
 	if err != nil {
 		return Identity{}, false, err
 	}
@@ -191,9 +185,8 @@ func load(dir string, now time.Time, p keys.Provider) (id Identity, renew bool, 
 	if err != nil {
 		return Identity{}, false, fmt.Errorf("apitls: parse %s: %w", certPath, err)
 	}
-	if p != nil && keyPath == filepath.Join(dir, KeyFile) {
-		// Legacy plaintext key, now verified against its certificate: seal it, then drop the plaintext.
-		if err := migrateToSealed(dir, keyPEM, p); err != nil {
+	if p != nil {
+		if err := settleSealed(dir, keyPEM, keyPath, sk, p); err != nil {
 			return Identity{}, false, err
 		}
 	}
@@ -265,36 +258,42 @@ func sans(addr string) (dns []string, ips []net.IP) {
 }
 
 // readKey returns the private key PEM and the path it came from: the unsealed SealedKeyFile when it
-// exists (p must then unwrap it), otherwise the plaintext KeyFile.
-func readKey(dir string, p keys.Provider) ([]byte, string, error) {
+// exists (p must then unwrap it; its envelope is returned too), otherwise the plaintext KeyFile. Any
+// error other than "does not exist" on the sealed path is a startup error: a sealed install never
+// falls through to the plaintext or generate path.
+func readKey(dir string, p keys.Provider) ([]byte, string, *sealedKey, error) {
 	sealedPath := filepath.Join(dir, SealedKeyFile)
-	if _, err := os.Lstat(sealedPath); err == nil {
+	_, serr := os.Lstat(sealedPath)
+	switch {
+	case serr == nil:
 		if p == nil {
-			return nil, "", fmt.Errorf("apitls: %s is sealed by a key provider but none is configured", sealedPath)
+			return nil, "", nil, fmt.Errorf("apitls: %s is sealed by a key provider but none is configured", sealedPath)
 		}
 		if err := checkFile(sealedPath, true); err != nil {
-			return nil, "", err
+			return nil, "", nil, err
 		}
 		raw, err := os.ReadFile(sealedPath)
 		if err != nil {
-			return nil, "", fmt.Errorf("apitls: read %s: %w", sealedPath, err)
+			return nil, "", nil, fmt.Errorf("apitls: read %s: %w", sealedPath, err)
 		}
-		der, err := unseal(raw, p)
+		der, sk, err := unseal(raw, p)
 		if err != nil {
-			return nil, "", fmt.Errorf("apitls: unseal %s: %w", sealedPath, err)
+			return nil, "", nil, fmt.Errorf("apitls: unseal %s: %w", sealedPath, err)
 		}
 		defer clear(der)
-		return pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), sealedPath, nil
+		return pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), sealedPath, &sk, nil
+	case !errors.Is(serr, fs.ErrNotExist):
+		return nil, "", nil, fmt.Errorf("apitls: stat %s: %w", sealedPath, serr)
 	}
 	keyPath := filepath.Join(dir, KeyFile)
 	if err := checkFile(keyPath, true); err != nil {
-		return nil, "", err
+		return nil, "", nil, err
 	}
 	b, err := os.ReadFile(keyPath)
 	if err != nil {
-		return nil, "", fmt.Errorf("apitls: read %s: %w", keyPath, err)
+		return nil, "", nil, fmt.Errorf("apitls: read %s: %w", keyPath, err)
 	}
-	return b, keyPath, nil
+	return b, keyPath, nil, nil
 }
 
 func seal(keyPEM []byte, p keys.Provider) ([]byte, error) {
@@ -303,37 +302,45 @@ func seal(keyPEM []byte, p keys.Provider) ([]byte, error) {
 		return nil, errors.New("apitls: private key is not PKCS#8 PEM")
 	}
 	defer clear(blk.Bytes)
-	wrapped, ref, err := p.Wrap(keys.WrapRequest{Tenant: sealTenant, Version: sealVersion}, blk.Bytes)
+	wrapped, ref, err := keys.WrapPlatform(p, sealPurpose, sealVersion, blk.Bytes)
 	if err != nil {
 		return nil, fmt.Errorf("wrap: %w", err)
 	}
 	return json.Marshal(sealedKey{Format: 1, Provider: ref.Provider, KeyID: ref.KeyID, Wrapped: wrapped})
 }
 
-func unseal(raw []byte, p keys.Provider) ([]byte, error) {
+func unseal(raw []byte, p keys.Provider) ([]byte, sealedKey, error) {
 	var sk sealedKey
 	if err := json.Unmarshal(raw, &sk); err != nil || sk.Format != 1 || len(sk.Wrapped) == 0 {
-		return nil, errors.New("not a sealed key envelope")
+		return nil, sealedKey{}, errors.New("not a sealed key envelope")
 	}
-	der, err := p.Unwrap(keys.WrapRequest{Tenant: sealTenant, Version: sealVersion},
+	der, err := keys.UnwrapPlatform(p, sealPurpose, sealVersion,
 		keys.KEKRef{Provider: sk.Provider, KeyID: sk.KeyID}, sk.Wrapped)
 	if err != nil {
-		clear(der)
-		return nil, err
+		return nil, sealedKey{}, err
 	}
-	return der, nil
+	return der, sk, nil
 }
 
-func migrateToSealed(dir string, keyPEM []byte, p keys.Provider) error {
-	env, err := seal(keyPEM, p)
-	if err != nil {
-		return fmt.Errorf("apitls: seal existing key: %w", err)
+// settleSealed runs after the key has been verified against its certificate. It brings the directory
+// to its sealed steady state: a legacy plaintext key is sealed; a key sealed under an older KEK is
+// re-wrapped under the provider's current one (the provider must still be able to unwrap the old
+// reference, as KMS key rotation allows); and a plaintext KeyFile left beside a sealed key is removed.
+// Failing to remove plaintext is a startup error, so the plaintext key never lingers silently.
+func settleSealed(dir string, keyPEM []byte, keyPath string, sk *sealedKey, p keys.Provider) error {
+	sealedPath := filepath.Join(dir, SealedKeyFile)
+	if sk == nil || (sk.Provider != p.Ref().Provider || sk.KeyID != p.Ref().KeyID) {
+		env, err := seal(keyPEM, p)
+		if err != nil {
+			return fmt.Errorf("apitls: seal key: %w", err)
+		}
+		if err := writeAtomic(sealedPath, env, 0o600); err != nil {
+			return err
+		}
 	}
-	if err := writeAtomic(filepath.Join(dir, SealedKeyFile), env, 0o600); err != nil {
-		return err
-	}
-	if err := os.Remove(filepath.Join(dir, KeyFile)); err != nil {
-		return fmt.Errorf("apitls: remove plaintext key after sealing: %w", err)
+	plain := filepath.Join(dir, KeyFile)
+	if err := os.Remove(plain); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("apitls: remove plaintext key %s: %w", plain, err)
 	}
 	return nil
 }

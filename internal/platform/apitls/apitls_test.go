@@ -17,7 +17,6 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/keys"
 	"github.com/skenzeriq/activediq/internal/platform/keys/keystest"
 	"github.com/skenzeriq/activediq/internal/platform/secret"
-	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
 func TestGenerateThenReuse(t *testing.T) {
@@ -255,8 +254,7 @@ func unsealedDER(t *testing.T, raw []byte, p keys.Provider) []byte {
 	if err := json.Unmarshal(raw, &sk); err != nil {
 		t.Fatal(err)
 	}
-	tn, _ := tenant.Parse("00000000-0000-4000-8000-0000a91c7150")
-	der, err := p.Unwrap(keys.WrapRequest{Tenant: tn, Version: 1}, keys.KEKRef{Provider: sk.Provider, KeyID: sk.KeyID}, sk.Wrapped)
+	der, err := p.Unwrap(keys.WrapRequest{Purpose: "api-tls", Version: 1}, keys.KEKRef{Provider: sk.Provider, KeyID: sk.KeyID}, sk.Wrapped)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -344,5 +342,82 @@ func TestRenewalUnderProviderStaysSealed(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, apitls.KeyFile)); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatal("plaintext key after renewal")
+	}
+}
+
+func TestPlaintextKeyBesideSealedKeyIsRemoved(t *testing.T) {
+	dir := filepath.Join(tdir(t), "tls")
+	p := localProvider(t, "kek-1", 1)
+	if _, err := apitls.LoadOrGenerateSealed(dir, "localhost:1", time.Now(), p); err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(dir, apitls.KeyFile)
+	if err := os.WriteFile(stale, []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := apitls.LoadOrGenerateSealed(dir, "localhost:1", time.Now(), p); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(stale); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("stale plaintext key survived: %v", err)
+	}
+}
+
+func TestUnremovablePlaintextKeyFailsStartup(t *testing.T) {
+	dir := filepath.Join(tdir(t), "tls")
+	p := localProvider(t, "kek-1", 1)
+	if _, err := apitls.LoadOrGenerateSealed(dir, "localhost:1", time.Now(), p); err != nil {
+		t.Fatal(err)
+	}
+	// A non-empty directory in KeyFile's place cannot be removed by os.Remove.
+	stale := filepath.Join(dir, apitls.KeyFile)
+	if err := os.MkdirAll(filepath.Join(stale, "x"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := apitls.LoadOrGenerateSealed(dir, "localhost:1", time.Now(), p); err == nil {
+		t.Fatal("startup must fail when the plaintext key cannot be removed")
+	}
+}
+
+func TestKEKRotationRewrapsUnderCurrentKEK(t *testing.T) {
+	dir := filepath.Join(tdir(t), "tls")
+	kms := keystest.New("k1")
+	a, err := apitls.LoadOrGenerateSealed(dir, "localhost:1", time.Now(), kms)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := func() string {
+		raw, _ := os.ReadFile(filepath.Join(dir, apitls.SealedKeyFile))
+		var sk struct {
+			KeyID string `json:"key_id"`
+		}
+		_ = json.Unmarshal(raw, &sk)
+		return sk.KeyID
+	}
+	if read() != "k1" {
+		t.Fatalf("want k1, got %s", read())
+	}
+	kms.Rotate("k2")
+	b, err := apitls.LoadOrGenerateSealed(dir, "localhost:1", time.Now(), kms)
+	if err != nil || a.Fingerprint != b.Fingerprint {
+		t.Fatalf("rotation load: %v", err)
+	}
+	if read() != "k2" {
+		t.Fatalf("not re-wrapped: %s", read())
+	}
+}
+
+func TestLocalProviderCannotFollowKEKChange(t *testing.T) {
+	// A local provider holds one KEK; opening with another fails and leaves the directory unchanged.
+	dir := filepath.Join(tdir(t), "tls")
+	if _, err := apitls.LoadOrGenerateSealed(dir, "localhost:1", time.Now(), localProvider(t, "kek-1", 1)); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotFiles(t, dir)
+	if _, err := apitls.LoadOrGenerateSealed(dir, "localhost:1", time.Now(), localProvider(t, "kek-2", 2)); err == nil {
+		t.Fatal("loaded under a KEK the provider does not hold")
+	}
+	if !reflect.DeepEqual(before, snapshotFiles(t, dir)) {
+		t.Fatal("directory changed")
 	}
 }
