@@ -320,8 +320,14 @@ func TestCorrelationsForCarriesEvaluationAsOf(t *testing.T) {
 		if err := rec(e.a, e.adA, t1); err != nil {
 			t.Fatal(err)
 		}
-		if err := rec(e.a, e.adA, t1.Add(-time.Hour)); err != nil { // late, older run
+		if err := rec(e.a, e.adA, t1); err != nil { // an equal as-of is not stale
 			t.Fatal(err)
+		}
+		if err := rec(e.a, e.adA, t1.Add(-time.Hour)); !errors.Is(err, inventory.ErrStale) { // late, older run
+			t.Fatalf("older run: %v", err)
+		}
+		if err := rec(e.a, e.adA, time.Now().AddDate(100, 0, 0)); !errors.Is(err, inventory.ErrInvalid) {
+			t.Fatalf("future as-of: %v", err)
 		}
 		c, err = e.r.CorrelationsFor(ctx, e.a, ref)
 		if err != nil || len(c.Links) != 0 || !c.EvaluatedAt.Equal(t1) {
@@ -355,6 +361,37 @@ func TestNonTier0LinkCarriesFactsAsOf(t *testing.T) {
 		f.FactsAsOf = time.Time{}
 		if _, err := e.form(t, f); !errors.Is(err, inventory.ErrInvalid) {
 			t.Fatalf("update without as-of: %v", err)
+		}
+	})
+}
+
+// T-0378 security review: a late, older run must not delete a tier0 link a newer run formed while the
+// newer as-of stays recorded. The older run's Remove and RecordEvaluation share a transaction, the
+// stale refusal rolls it back, and the link and its as-of are unchanged.
+func TestStaleRunRollsBack(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		f := formation(e, adG1, enG1)
+		if err := e.tx(t, e.a, func(ctx context.Context, tx store.Tx) error {
+			if _, err := w.Form(ctx, tx, f); err != nil {
+				return err
+			}
+			return w.RecordEvaluation(ctx, tx, e.adA, t1)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		err := e.tx(t, e.a, func(ctx context.Context, tx store.Tx) error {
+			if err := w.RecordEvaluation(ctx, tx, e.adA, t1.Add(-time.Hour)); err != nil {
+				return err
+			}
+			return w.Remove(ctx, tx, f.AD, f.Entra)
+		})
+		if !errors.Is(err, inventory.ErrStale) {
+			t.Fatalf("stale run: %v", err)
+		}
+		c, err := e.r.CorrelationsFor(context.Background(), e.a, f.AD)
+		if err != nil || len(c.Links) != 1 || c.Links[0].State == inventory.StateRemoved || !c.EvaluatedAt.Equal(t1) {
+			t.Fatalf("after rollback: %+v %v", c, err)
 		}
 	})
 }

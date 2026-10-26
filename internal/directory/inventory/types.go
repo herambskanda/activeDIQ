@@ -18,6 +18,9 @@ var _ = tablekind.Declare(tablekind.Table{Name: "public.links", Entity: "DM-17",
 var (
 	// ErrInvalid is a malformed reference.
 	ErrInvalid = errors.New("inventory: invalid reference")
+	// ErrStale: a correlation evaluation with a later as-of is already recorded; the caller rolls
+	// back the stale run.
+	ErrStale = errors.New("inventory: a newer correlation evaluation is already recorded")
 	// ErrNoTenant: the call named no tenant.
 	ErrNoTenant = errors.New("inventory: no tenant")
 	// ErrNotConfigured: the reader has no database or no group source.

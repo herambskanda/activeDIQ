@@ -4,7 +4,9 @@
 -- An object with no correlation has no row to carry a time, yet "this object has no peers" is a
 -- fact with an as-of: the statement's computed_at is the minimum of the correlation evaluation's
 -- time and the tier0 facts' times. One row per connection: the as-of of the last COMPLETED
--- evaluation run covering every object of that connection. It only moves forward.
+-- evaluation run covering every object of that connection: the time of the OLDEST input the run read
+-- (usually its start), never its completion time. It only moves forward (a stale run is refused by
+-- the writer) and is never later than the database clock plus five minutes.
 
 CREATE TABLE public.correlation_evaluations (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),

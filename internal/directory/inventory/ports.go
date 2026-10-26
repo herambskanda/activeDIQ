@@ -29,8 +29,8 @@ type CorrelationSource interface {
 // Correlations is the answer of CorrelationsFor.
 type Correlations struct {
 	Links []Link
-	// EvaluatedAt is when the correlation job last completed an evaluation of ref's connection, so
-	// every Link (and the absence of one) is true as of this time. It is the zero time only if no
+	// EvaluatedAt is the as-of of the oldest input the last completed correlation evaluation of ref's
+	// connection read (not its completion time), so every Link (and the absence of one) is true as of this time. It is the zero time only if no
 	// run has completed yet; a consumer must then treat the answer as having no as-of and refuse or
 	// live-refresh, never substitute the current time.
 	EvaluatedAt time.Time

@@ -190,10 +190,21 @@ func writeErr(what string, err error) error {
 	return fmt.Errorf("inventory: %s: %w", what, err)
 }
 
-// RecordEvaluation records that the correlation job completed an evaluation of every object of the
-// connection as of at (contract §8.3 F3). It only moves forward: an older run finishing late cannot
-// make the as-of older than one already recorded. Call it after the run's Form and Remove calls, in
-// the same transaction, so a reader never sees the new time with the old links.
+// RecordEvaluation records that the correlation job evaluated every object of the connection from
+// inventory as of at (contract §8.3 F3). at is the as-of of the OLDEST input the run read, usually
+// the start of the run, never its completion time: a completion time overstates freshness by the
+// length of the run.
+//
+// It only moves forward, and it refuses a stale run: if a run with a later as-of has already been
+// recorded it returns ErrStale, and the caller must roll back the transaction so this run's Form and
+// Remove calls do not land (otherwise an old run could delete a link a newer run formed while the
+// newer time stays recorded). at later than the database's now() plus five minutes (F3's clock-skew allowance; the time is forward-only and undeletable, so a future
+// value would make every "no peers" answer look fresh for good) is ErrInvalid.
+//
+// To serialise concurrent runs of one connection, call RecordEvaluation FIRST in the run's
+// transaction: the upsert takes the connection's row lock, held until commit, so a competing run
+// waits and then sees the newer time. The reader sees the new time and the run's links together
+// because both commit in that one transaction.
 func (Writer) RecordEvaluation(ctx context.Context, tx store.Tx, connection ConnectionID, at time.Time) error {
 	if _, ok := canon(string(connection)); !ok || at.IsZero() {
 		return ErrInvalid
@@ -201,12 +212,23 @@ func (Writer) RecordEvaluation(ctx context.Context, tx store.Tx, connection Conn
 	if err := requireTenant(ctx, tx); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `INSERT INTO public.correlation_evaluations (tenant_id, connection_id, evaluated_at)
+	var future bool
+	if err := tx.QueryRow(ctx, `SELECT $1::timestamptz > now() + interval '5 minutes'`, at.UTC()).Scan(&future); err != nil {
+		return writeErr("record evaluation", err)
+	}
+	if future {
+		return fmt.Errorf("%w: evaluation as-of is in the future", ErrInvalid)
+	}
+	tag, err := tx.Exec(ctx, `INSERT INTO public.correlation_evaluations (tenant_id, connection_id, evaluated_at)
 		VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, $2)
-		ON CONFLICT (tenant_id, connection_id) DO UPDATE SET evaluated_at = GREATEST(public.correlation_evaluations.evaluated_at, EXCLUDED.evaluated_at)`,
+		ON CONFLICT (tenant_id, connection_id) DO UPDATE SET evaluated_at = EXCLUDED.evaluated_at
+		WHERE EXCLUDED.evaluated_at >= public.correlation_evaluations.evaluated_at`,
 		string(connection), at.UTC())
 	if err != nil {
 		return writeErr("record evaluation", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrStale
 	}
 	return nil
 }
