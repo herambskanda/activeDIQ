@@ -7,6 +7,8 @@ import (
 	"net/netip"
 	"time"
 
+	"github.com/skenzeriq/activediq/internal/platform/audit"
+	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tablekind"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
@@ -76,7 +78,10 @@ func (s StaticPolicy) SessionPolicy(context.Context, tenant.ID) (Policy, error) 
 
 // Config configures a Store.
 type Config struct {
-	DB       *store.DB
+	DB *store.DB
+	// Audit receives every session lifecycle event inside the transaction that causes it (create, evict,
+	// expire, revoke). Required: a session store that cannot record who ended whose session is refused.
+	Audit    audit.Sink
 	Policies PolicySource // nil means DefaultPolicy for every tenant
 	Bounds   Bounds       // zero means DefaultBounds
 	// TouchEvery is how often a busy session writes its sliding idle expiry; 0 means 30 seconds. It
@@ -91,6 +96,7 @@ type Config struct {
 // sharing a database sees the same sessions.
 type Store struct {
 	db       *store.DB
+	audit    audit.Sink
 	policies PolicySource
 	bounds   Bounds
 	touch    time.Duration
@@ -102,7 +108,10 @@ func New(cfg Config) (*Store, error) {
 	if cfg.DB == nil {
 		return nil, errors.New("authn: Store needs a database")
 	}
-	s := &Store{db: cfg.DB, policies: cfg.Policies, bounds: cfg.Bounds, touch: cfg.TouchEvery, clock: cfg.Clock}
+	if cfg.Audit == nil {
+		return nil, errors.New("authn: Store needs an audit sink")
+	}
+	s := &Store{db: cfg.DB, audit: cfg.Audit, policies: cfg.Policies, bounds: cfg.Bounds, touch: cfg.TouchEvery, clock: cfg.Clock}
 	if s.policies == nil {
 		s.policies = StaticPolicy(DefaultPolicy)
 	}
@@ -164,7 +173,8 @@ const (
 SET state = 'expired', ended_at = $3,
     end_reason = CASE WHEN absolute_expiry <= $3 THEN 'absolute_timeout' ELSE 'idle_timeout' END
 WHERE tenant_id = $1 AND ($2::uuid IS NULL OR account_id = $2::uuid) AND state = 'active'
-  AND (idle_expiry <= $3 OR absolute_expiry <= $3)`
+  AND (idle_expiry <= $3 OR absolute_expiry <= $3)
+RETURNING id, account_id::text, end_reason`
 
 	// evict revokes the $4 sessions of one account that the policy ($3) ranks first.
 	evict = `UPDATE public.authn_sessions
@@ -173,7 +183,8 @@ WHERE tenant_id = $1 AND id IN (
   SELECT id FROM public.authn_sessions
   WHERE tenant_id = $1 AND account_id = $2::uuid AND state = 'active'
   ORDER BY CASE WHEN $3::text = 'least_recently_used' THEN last_seen_at ELSE created_at END, created_at, id
-  LIMIT $4)`
+  LIMIT $4)
+RETURNING id, account_id::text, end_reason`
 
 	countActive = `SELECT count(*) FROM public.authn_sessions WHERE tenant_id = $1 AND account_id = $2::uuid AND state = 'active'`
 
@@ -248,7 +259,7 @@ func (s *Store) Create(ctx context.Context, in CreateInput) (CreateResult, error
 		if _, err := tx.Exec(ctx, sqlAcctLk, in.Tenant.String()+"/"+in.Account); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, expireDue, in.Tenant.String(), in.Account, now); err != nil {
+		if _, err := s.endRows(ctx, tx, now, expireDue, []any{in.Tenant.String(), in.Account, now}, KindSessionExpired, nil); err != nil {
 			return err
 		}
 		var active int
@@ -256,11 +267,11 @@ func (s *Store) Create(ctx context.Context, in CreateInput) (CreateResult, error
 			return err
 		}
 		if over := active - (pol.MaxConcurrent - 1); over > 0 {
-			tag, err := tx.Exec(ctx, evict, in.Tenant.String(), in.Account, string(pol.Eviction), over, now)
+			n, err := s.endRows(ctx, tx, now, evict, []any{in.Tenant.String(), in.Account, string(pol.Eviction), over, now}, KindSessionEvicted, nil)
 			if err != nil {
 				return err
 			}
-			res.Evicted = int(tag.RowsAffected())
+			res.Evicted = n
 		}
 		idle := now.Add(pol.Idle)
 		abs := now.Add(pol.Absolute)
@@ -288,7 +299,7 @@ func (s *Store) Create(ctx context.Context, in CreateInput) (CreateResult, error
 		res.Session = Session{ID: id, Tenant: in.Tenant, Account: in.Account, Methods: append([]string(nil), in.Methods...),
 			MFAAt: in.MFAAt, AuthorityFactorAt: in.AuthorityFactorAt, ClientIP: in.ClientIP.Unmap(),
 			CreatedAt: created, LastSeenAt: now, IdleExpiry: idle, AbsoluteExpiry: abs, State: SessionActive}
-		return nil
+		return s.emit(ctx, tx, now, KindSessionCreated, id, in.Account, accountChain(in.Account), "", in.Methods)
 	})
 	if err != nil {
 		return CreateResult{}, fmt.Errorf("authn: create session: %w", err)
@@ -360,6 +371,9 @@ func (s *Store) Lookup(ctx context.Context, tok Token) (Session, error) {
 				t.String(), sess.ID, now, reason); err != nil {
 				return err
 			}
+			if err := s.emit(ctx, tx, now, KindSessionExpired, sess.ID, sess.Account, systemChain, reason, nil); err != nil {
+				return err
+			}
 			outcome = ErrExpired
 			return nil // commit the marking
 		}
@@ -389,25 +403,44 @@ func minTime(a, b time.Time) time.Time {
 	return a
 }
 
-// Revoke ends one session by its handle, on demand or for a stated reason. It reports whether it ended
-// one: revoking an already-ended or unknown session is not an error and returns false.
-func (s *Store) Revoke(ctx context.Context, t tenant.ID, sessionID string, why Reason) (bool, error) {
-	if t.IsZero() || !validAccount(sessionID) || !why.valid() {
+// Revoke ends one session by its handle, on demand or for a stated reason; by is who asked (the real
+// human, or the system principal). It reports whether it ended one: revoking an already-ended or unknown
+// session is not an error and returns false.
+func (s *Store) Revoke(ctx context.Context, t tenant.ID, sessionID string, why Reason, by authority.Chain) (bool, error) {
+	if t.IsZero() || !validAccount(sessionID) || !why.valid() || by.Validate() != nil {
 		return false, ErrInvalid
 	}
-	return s.revoke(ctx, t, `UPDATE public.authn_sessions SET state = 'revoked', ended_at = $4, end_reason = $3
-WHERE tenant_id = $1 AND id = $2::uuid AND state = 'active'`, sessionID, why)
+	n, err := s.revokeN(ctx, t, sqlRevokeSession, sessionID, why, func(string) authority.Chain { return by })
+	return n > 0, err
 }
 
 // RevokeAccount ends every active session of an account: on account disable (DM-31.I2), role change,
 // password or MFA reset, and on demand. It returns how many it ended. Because the store is shared, the
-// next Lookup on any node refuses them.
-func (s *Store) RevokeAccount(ctx context.Context, t tenant.ID, account string, why Reason) (int, error) {
-	if t.IsZero() || !validAccount(account) || !why.valid() {
+// next Lookup on any node refuses them. It commits on its own; a caller changing the account in a
+// transaction of its own uses RevokeAccountTx (or an On* method) so both commit or neither does.
+func (s *Store) RevokeAccount(ctx context.Context, t tenant.ID, account string, why Reason, by authority.Chain) (int, error) {
+	if t.IsZero() || !validAccount(account) || !why.valid() || by.Validate() != nil {
 		return 0, ErrInvalid
 	}
-	return s.revokeN(ctx, t, `UPDATE public.authn_sessions SET state = 'revoked', ended_at = $4, end_reason = $3
-WHERE tenant_id = $1 AND account_id = $2::uuid AND state = 'active'`, account, why)
+	return s.revokeN(ctx, t, sqlRevokeAccount, account, why, func(string) authority.Chain { return by })
+}
+
+// RevokeAccountTx is RevokeAccount inside the caller's tenant transaction, the one that disables the
+// account, changes its roles or resets its password or MFA: the revocation and its audit records commit
+// with the change, or not at all. tx must be a transaction of tenant t.
+func (s *Store) RevokeAccountTx(ctx context.Context, tx store.Tx, t tenant.ID, account string, why Reason, by authority.Chain) (int, error) {
+	if tx == nil || t.IsZero() || !validAccount(account) || !why.valid() || by.Validate() != nil {
+		return 0, ErrInvalid
+	}
+	now, err := s.now(ctx, tx)
+	if err != nil {
+		return 0, err
+	}
+	n, err := s.endRows(ctx, tx, now, sqlRevokeAccount, []any{t.String(), account, string(why), now}, KindSessionRevoked, func(string) authority.Chain { return by })
+	if err != nil {
+		return 0, fmt.Errorf("authn: revoke: %w", err)
+	}
+	return n, nil
 }
 
 // Rotate replaces the session a token names with a new one for the same account, methods and factor
@@ -423,7 +456,7 @@ func (s *Store) Rotate(ctx context.Context, old Token, why Reason) (CreateResult
 	if err != nil {
 		return CreateResult{}, err
 	}
-	ended, err := s.Revoke(ctx, sess.Tenant, sess.ID, why)
+	ended, err := s.Revoke(ctx, sess.Tenant, sess.ID, why, accountChain(sess.Account))
 	if err != nil {
 		return CreateResult{}, err
 	}
@@ -440,8 +473,7 @@ func (s *Store) Logout(ctx context.Context, tok Token) error {
 	if err != nil {
 		return ErrSessionNotFound
 	}
-	n, err := s.revokeN(ctx, t, `UPDATE public.authn_sessions SET state = 'revoked', ended_at = $4, end_reason = $3
-WHERE tenant_id = $1 AND id_hash = $2 AND state = 'active'`, tok.hash(), ReasonLogout)
+	n, err := s.revokeN(ctx, t, sqlRevokeToken, tok.hash(), ReasonLogout, accountChain)
 	if err != nil {
 		return err
 	}
@@ -451,20 +483,23 @@ WHERE tenant_id = $1 AND id_hash = $2 AND state = 'active'`, tok.hash(), ReasonL
 	return nil
 }
 
-func (s *Store) revoke(ctx context.Context, t tenant.ID, sql string, key any, why Reason) (bool, error) {
-	n, err := s.revokeN(ctx, t, sql, key, why)
-	return n > 0, err
-}
+const (
+	sqlRevokeSession = `UPDATE public.authn_sessions SET state = 'revoked', ended_at = $4, end_reason = $3
+WHERE tenant_id = $1 AND id = $2::uuid AND state = 'active' RETURNING id, account_id::text, end_reason`
+	sqlRevokeAccount = `UPDATE public.authn_sessions SET state = 'revoked', ended_at = $4, end_reason = $3
+WHERE tenant_id = $1 AND account_id = $2::uuid AND state = 'active' RETURNING id, account_id::text, end_reason`
+	sqlRevokeToken = `UPDATE public.authn_sessions SET state = 'revoked', ended_at = $4, end_reason = $3
+WHERE tenant_id = $1 AND id_hash = $2 AND state = 'active' RETURNING id, account_id::text, end_reason`
+)
 
-func (s *Store) revokeN(ctx context.Context, t tenant.ID, sql string, key any, why Reason) (int, error) {
+func (s *Store) revokeN(ctx context.Context, t tenant.ID, sql string, key any, why Reason, by func(account string) authority.Chain) (int, error) {
 	var n int
 	err := s.db.WithTenant(ctx, t, func(ctx context.Context, tx store.Tx) error {
 		now, err := s.now(ctx, tx)
 		if err != nil {
 			return err
 		}
-		tag, err := tx.Exec(ctx, sql, t.String(), key, string(why), now)
-		n = int(tag.RowsAffected())
+		n, err = s.endRows(ctx, tx, now, sql, []any{t.String(), key, string(why), now}, KindSessionRevoked, by)
 		return err
 	})
 	if err != nil {
@@ -519,8 +554,7 @@ func (s *Store) ExpireDue(ctx context.Context, t tenant.ID) (int, error) {
 		if err != nil {
 			return err
 		}
-		tag, err := tx.Exec(ctx, expireDue, t.String(), nil, now)
-		n = int(tag.RowsAffected())
+		n, err = s.endRows(ctx, tx, now, expireDue, []any{t.String(), nil, now}, KindSessionExpired, nil)
 		return err
 	})
 	if err != nil {
