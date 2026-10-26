@@ -434,3 +434,47 @@ func valuesFor(extra string) string {
 	}
 	return ", now()"
 }
+
+// T-0345 / TM-D26 rule 10: C13 pins are per connection, idempotent, tenant-scoped and append-only.
+func TestC13PinsAppendOnly(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		ctx := context.Background()
+		c, err := e.reg.Create(ctx, e.a, forest("corp"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		g1, g2 := "11111111-2222-4333-8444-555555555555", "66666666-7777-4888-8999-aaaaaaaaaaaa"
+		err = e.db.WithTenant(ctx, e.a, func(ctx context.Context, tx store.Tx) error {
+			st := connection.Store{}
+			if err := st.PinC13(ctx, tx, c.ID, []string{g1, g2}); err != nil {
+				return err
+			}
+			if err := st.PinC13(ctx, tx, c.ID, []string{g1}); err != nil { // idempotent
+				return err
+			}
+			got, err := st.PinnedC13(ctx, tx, c.ID)
+			if err != nil || len(got) != 2 {
+				t.Errorf("pins = %v %v", got, err)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Another tenant sees none of them.
+		_ = e.db.WithTenant(ctx, e.b, func(ctx context.Context, tx store.Tx) error {
+			if got, err := (connection.Store{}).PinnedC13(ctx, tx, c.ID); err != nil || len(got) != 0 {
+				t.Errorf("tenant B sees %v %v", got, err)
+			}
+			return nil
+		})
+		// The database refuses to drop or rewrite a pin.
+		if _, err := e.raw(e.a, `DELETE FROM public.connection_c13_pins`); err == nil {
+			t.Error("delete of a pin allowed")
+		}
+		if _, err := e.raw(e.a, `UPDATE public.connection_c13_pins SET group_guid = group_guid`); err == nil {
+			t.Error("update of a pin allowed")
+		}
+	})
+}

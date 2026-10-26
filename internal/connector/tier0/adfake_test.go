@@ -34,6 +34,40 @@ type fakeDir struct {
 	nextGID     byte
 	failSIDFind bool    // any Find by objectSid fails
 	finds       []Query // every Find, in order (search-count assertions)
+
+	// Forest seam: other domains of the forest and the GC's objects (their objectSid is the key).
+	forestDoms []string
+	gc         []*fobj
+	gcErr      error
+	gcCalls    int
+}
+
+func (f *fakeDir) ForestDomains(context.Context) ([]sid.SID, error) {
+	if f.gcErr != nil {
+		return nil, f.gcErr
+	}
+	var out []sid.SID
+	for _, d := range f.forestDoms {
+		v, err := sid.Parse(d)
+		if err != nil {
+			panic(err)
+		}
+		out = append(out, v)
+	}
+	return out, nil
+}
+
+func (f *fakeDir) GCLookup(_ context.Context, s sid.SID, _ []string) (*ad.Entry, bool, error) {
+	f.gcCalls++
+	if f.gcErr != nil {
+		return nil, false, f.gcErr
+	}
+	for _, o := range f.gc {
+		if o.sid == s.String() {
+			return o.entry(), true, nil
+		}
+	}
+	return nil, false, nil
 }
 
 func mustDN(s string) dn.DN {

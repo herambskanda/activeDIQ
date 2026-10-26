@@ -251,7 +251,7 @@ func (r *Runner) planAndRoute(ctx context.Context, t tenant.ID, opID string, inp
 			}
 			pins[sp.Target.NC], dsas[sp.Target.NC] = pin.Host, pin.DSAGUID
 		}
-		if reason := r.authoriseTarget(ctx, op.Chain, d.Permission, sp.Target, pins); reason != "" {
+		if reason := r.authoriseTarget(ctx, t, op.Chain, d.Permission, sp.Target, pins); reason != "" {
 			items[i].blocked = reason
 		}
 	}
@@ -298,7 +298,7 @@ func (r *Runner) failPlan(ctx context.Context, t tenant.ID, op opRecord, cause e
 }
 
 // authoriseTarget authorises the initiator chain over live facts and returns a block reason, or "".
-func (r *Runner) authoriseTarget(ctx context.Context, chain authority.Chain, perm authz.Permission, t authority.TargetRef, pins authority.Pins) string {
+func (r *Runner) authoriseTarget(ctx context.Context, tn tenant.ID, chain authority.Chain, perm authz.Permission, t authority.TargetRef, pins authority.Pins) string {
 	q := r.cfg.Authz.FactsQuery(chain, perm, t)
 	if r.cfg.Facts == nil {
 		return "facts_unavailable"
@@ -310,7 +310,7 @@ func (r *Runner) authoriseTarget(ctx context.Context, chain authority.Chain, per
 	if f.Tier0 {
 		return "tier0"
 	}
-	if err := r.recheck(ctx, chain, perm, t, f); err != nil {
+	if err := r.recheck(ctx, tn, chain, perm, t, f); err != nil {
 		return "denied"
 	}
 	return ""

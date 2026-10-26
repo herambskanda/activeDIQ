@@ -78,7 +78,11 @@ func Run(ctx context.Context, cfg config.Config) error {
 	if err != nil {
 		return fmt.Errorf("server: operation registry: %w", err)
 	}
-	if _, err := buildOperation(operation.HoldsMinter, db, directoryFacts(), denyAuthorizer{}, reg); err != nil {
+	authzr, err := rbacAuthorizer(db)
+	if err != nil {
+		return err
+	}
+	if _, err := buildOperation(operation.HoldsMinter, db, directoryFacts(nil), authzr, reg); err != nil {
 		return err
 	}
 	ln, err := net.Listen("tcp", cfg.APIAddr)

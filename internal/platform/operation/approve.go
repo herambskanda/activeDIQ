@@ -94,7 +94,7 @@ WHERE tenant_id = $1::uuid AND operation_id = $2::uuid ORDER BY item_no`, t.Stri
 func (r *Runner) requireApproverScope(ctx context.Context, op opRecord, targets []authority.TargetRef, p authority.Principal) error {
 	approver := authority.Chain{Requester: p}
 	for _, tr := range targets {
-		if reason := r.authoriseTarget(ctx, approver, PermApprove, tr, op.Pins); reason != "" {
+		if reason := r.authoriseTarget(ctx, op.Tenant, approver, PermApprove, tr, op.Pins); reason != "" {
 			return fmt.Errorf("%w: %s", ErrNotApprover, reason)
 		}
 	}
