@@ -140,7 +140,7 @@ root never imports generated protos. The listener that mounts it is T-0156.
 - **Leaf.** Must carry our public key, verify to the bundle for client auth, and have a component identity.
 - **Persistence.** `ca-bundle.pem`, `ca-pin.txt`, `endpoints.txt`, `key.pem` (0600, PKCS#8), `leaf.pem`
   in a 0700 directory, each by temp+rename, leaf last; `Load` re-validates everything. Nothing is written on
-  any failure. On non-unix hosts the package fails closed (no state written or read) until the owner-only DACL lands in T-0291. Load returns ErrExpired for an expired leaf or CA.
+  any failure. On Windows the directory is created atomically with a protected DACL (SYSTEM, Administrators, the service identity; typed ACL API, no SDDL), a pre-existing directory is never adopted unless already owner-only, and Load re-checks owner and DACL of the directory and every file (T-0291). Load returns ErrExpired for an expired leaf or CA.
 - **Dial-out.** `dial.DialOut(addr, state)` uses `Credentials`: TLS 1.3, roots exactly the pinned CAs.
   Nothing retries or falls back; retry policy is the caller's and must reuse the same pin.
 - **Seam.** `dial` imports no generated proto; the role package supplies `Exchange` (fleetv1 Enroll call).
