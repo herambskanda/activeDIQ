@@ -560,3 +560,18 @@ func TestMembershipWalkUnrequestableDNFailsClosed(t *testing.T) {
 		})
 	}
 }
+
+// T-0397: a member value naming an object the connector cannot read (deny-read ACE: the Read returns
+// not-found) must fail the walk closed and name the listing group, never drop out of the closure.
+func TestMembershipWalkUnreadableMemberFailsClosed(t *testing.T) {
+	f := forest()
+	da := f.find("CN=Domain Admins,CN=Users," + dom)
+	da.attrs["member"] = append(da.attrs["member"], "CN=hidden,OU=Staff,"+dom) // not in the fake dir
+	r, err := classify(t, f, "CN=carol,OU=Staff,"+dom)
+	if err == nil || !r.Tier0 || !r.Unknown {
+		t.Fatalf("want Tier0+Unknown+error, got %+v %v", r, err)
+	}
+	if !strings.Contains(err.Error(), "Domain Admins") {
+		t.Errorf("error must name the listing group: %v", err)
+	}
+}

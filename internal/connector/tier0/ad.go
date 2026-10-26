@@ -515,6 +515,8 @@ func (b *builder) c1c2() error {
 			return err
 		}
 		if !found {
+			// Absence is by forest version, looked up by well-known SID (not a link value); a hidden
+			// one is indistinguishable here, and the C19 rights check covers the group's own ACL.
 			continue // not every group exists in every forest (Key Admins before 2016, ...)
 		}
 		if _, err := b.mark(e, C1); err != nil {
@@ -572,12 +574,19 @@ func (b *builder) membersOf(roots []*ad.Entry, basis Basis) error {
 		if err != nil {
 			return err
 		}
-		if !found {
-			continue // a member link to an object that no longer exists
-		}
 		k, err := dnKey(d)
 		if err != nil {
 			return err
+		}
+		if !found {
+			// member is a linked attribute: its value always names an existing object, so a Read
+			// that finds nothing means the connector cannot see it (a deny-read ACE on the object or
+			// its container). Skipping would drop a hidden nested group's subtree, or a hidden broad
+			// FSP, out of the closure: fail closed, naming the group that lists it.
+			if isRoot[k] {
+				return errors.New("tier0: a membership-walk group cannot be read")
+			}
+			return fmt.Errorf("tier0: group %s has a member the connector cannot read; its closure is unknowable", parent[k])
 		}
 		if !isRoot[k] && hasClass(e, "foreignSecurityPrincipal") {
 			// A universal/broad FSP (Everyone, Authenticated Users, Interactive, ...) is a member of
@@ -793,10 +802,13 @@ func (b *builder) c5c6c15() error {
 			if err != nil {
 				return err
 			}
-			if found {
-				if err := addDC(ce); err != nil {
-					return err
-				}
+			if !found {
+				// serverReference is a linked attribute (serverReferenceBL): it names an existing
+				// computer, so not-found means unreadable. A DC we cannot see is a DC we cannot protect.
+				return errors.New("tier0: a domain controller's computer object cannot be read")
+			}
+			if err := addDC(ce); err != nil {
+				return err
 			}
 		}
 	}
@@ -929,6 +941,8 @@ func (b *builder) markDN(d dn.DN, basis Basis, required bool) error {
 		if required {
 			return errors.New("tier0: expected object not found")
 		}
+		// Optional containers are named by well-known path, not linked: they exist only on some
+		// functional levels (markTree sweeps below them), so absence is legitimate.
 		return nil
 	}
 	if _, gerr := e.GUID(); gerr != nil && !required {

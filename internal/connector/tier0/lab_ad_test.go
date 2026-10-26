@@ -236,3 +236,63 @@ func TestLabADNestedBroadFSPInTrusteeFailsClosed(t *testing.T) {
 	}
 	t.Logf("failed closed: %v", err)
 }
+
+// T-0397: a member of a tier0 group that the connector cannot read (deny-read ACE) must not drop
+// out of the walk: the snapshot fails closed naming the group that lists it.
+func TestLabADUnreadableNestedMemberFailsClosed(t *testing.T) {
+	e := testlab.Load(t)
+	dock := func(args ...string) string {
+		t.Helper()
+		out, err := exec.Command("docker", append([]string{"exec", e.Container}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("%v: %v %s", args, err, out)
+		}
+		return string(out)
+	}
+	env := e.Values
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	sess, err := ad.Open(ctx, ad.Config{
+		Servers: []string{"localhost:" + e.Port}, RootCAs: e.Pool, PageSize: 500,
+		Credential: ad.Credential{BindName: "svc-activediq@lab.activediq.test", Password: secret.FromBytes([]byte(env["LAB_SVC_PASSWORD"]))},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sess.Close()
+
+	const grp = "t0397-hidden"
+	grpDN := "CN=" + grp + ",CN=Users," + labDom
+	dock("samba-tool", "group", "add", grp)
+	t.Cleanup(func() {
+		_, _ = exec.Command("docker", "exec", e.Container, "samba-tool", "group", "delete", grp).CombinedOutput()
+	})
+	dock("samba-tool", "group", "addmembers", "Domain Admins", grp)
+	t.Cleanup(func() {
+		_, _ = exec.Command("docker", "exec", e.Container, "samba-tool", "group", "removemembers", "Domain Admins", grp).CombinedOutput()
+	})
+	out := dock("samba-tool", "user", "show", "svc-activediq", "--attributes=objectSid")
+	var svcSID string
+	for _, f := range strings.Fields(out) {
+		if strings.HasPrefix(f, "S-1-5-21-") {
+			svcSID = f
+		}
+	}
+	if svcSID == "" {
+		t.Fatalf("svc SID not found in %q", out)
+	}
+	sddl := "(D;;LCRPLO;;;" + svcSID + ")"
+	dock("samba-tool", "dsacl", "set", "--objectdn="+grpDN, "--sddl="+sddl)
+
+	target, err := dn.ParseObjectRef("CN=Administrator,CN=Users," + labDom)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := NewAD(SessionDirectory{S: sess}).Classify(ctx, target, ADInput{CorrelationKnown: true})
+	// Samba answers a deny-read Read with the entry minus its identity attributes (objectGUID), a
+	// Windows DC with no-such-object (the unit test pins that path); both must fail the snapshot.
+	if err == nil || !r.Unknown {
+		t.Fatalf("hidden nested group did not fail the snapshot closed: %+v %v", r, err)
+	}
+	t.Logf("failed closed: %v", err)
+}
