@@ -12,6 +12,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/attr/sid"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
+	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
 )
 
 // fobj is one object of the in-memory forest.
@@ -151,7 +152,22 @@ func (f *fakeDir) guard(d string) error {
 
 func (f *fakeDir) Naming(context.Context) (Naming, error) { return f.nm, nil }
 
-func (f *fakeDir) Get(_ context.Context, ref dn.ObjectRef, _ []string) (*ad.Entry, error) {
+// checkAttrs refuses an attribute outside the real connector schema, as the live Session does
+// (INVALID_ARGUMENT: UnknownAttribute), so a unit test cannot pass on a read a real DC would reject.
+func checkAttrs(attrs []string) error {
+	sc := ad.DefaultSchema()
+	for _, a := range attrs {
+		if _, err := ldapfilter.ParseAttrName(a, sc); err != nil {
+			return fmt.Errorf("fake dir: attribute %q: %w", a, err)
+		}
+	}
+	return nil
+}
+
+func (f *fakeDir) Get(_ context.Context, ref dn.ObjectRef, attrs []string) (*ad.Entry, error) {
+	if err := checkAttrs(attrs); err != nil {
+		return nil, err
+	}
 	for _, o := range f.objs {
 		switch {
 		case func() bool { d, ok := ref.DN(); return ok && dn.Equal(d, mustDN(o.dn)) }():
@@ -173,7 +189,10 @@ func (f *fakeDir) Get(_ context.Context, ref dn.ObjectRef, _ []string) (*ad.Entr
 	return nil, &ad.Error{Code: ad.CodeObjectNotFound}
 }
 
-func (f *fakeDir) Find(_ context.Context, base dn.DN, _ ad.Scope, q Query, _ []string, fn func(*ad.Entry) error) error {
+func (f *fakeDir) Find(_ context.Context, base dn.DN, _ ad.Scope, q Query, attrs []string, fn func(*ad.Entry) error) error {
+	if err := checkAttrs(attrs); err != nil {
+		return err
+	}
 	f.finds = append(f.finds, q)
 	if err := f.guard(base.String()); err != nil {
 		return err
