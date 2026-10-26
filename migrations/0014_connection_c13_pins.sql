@@ -1,4 +1,4 @@
--- 0012_connection_c13_pins: the C13 group pins (TM-D26 rule 10). Owner: internal/directory/connection.
+-- 0014_connection_c13_pins: the C13 group pins (TM-D26 rule 10). Owner: internal/directory/connection.
 --
 -- DnsAdmins and the Exchange groups have no well-known RID, so the classifier keeps them by
 -- objectGUID, pinned at first discovery, and passes the pins on every Classify. A renamed group stays
