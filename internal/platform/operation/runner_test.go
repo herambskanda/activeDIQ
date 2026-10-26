@@ -671,3 +671,14 @@ func TestPinnedReaderNilPortFailsClosedForDirectoryTargetsOnly(t *testing.T) {
 		t.Errorf("store reader with nil port: %v, want unchanged (no error)", err)
 	}
 }
+
+// Compile-time guard (T-0338): PlanContext.Facts takes PinnedFacts, which pinnedReader satisfies and
+// the raw LiveFacts port must not, so no code path can plan against unpinned reads.
+var _ PinnedFacts = pinnedReader{}
+
+func TestLiveFactsIsNotPinnedFacts(t *testing.T) {
+	var lf any = LiveFacts(pinsFacts{})
+	if _, ok := lf.(PinnedFacts); ok {
+		t.Fatal("LiveFacts port satisfies PinnedFacts: Plan could read without the operation's pins")
+	}
+}
