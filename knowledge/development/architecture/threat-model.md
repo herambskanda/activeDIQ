@@ -1,11 +1,11 @@
 ---
 title: "Threat model v0 — activeDIQ security architecture"
 date: 2026-10-02
-updated: 2026-10-24
+updated: 2026-10-26
 status: review
 owner: heramb
 author: security-architect
-ticket: old T-0007, T-0032, T-0044, T-0051, T-0055, T-0108, T-0179, T-0111, T-0227, T-0230, T-0235, T-0240
+ticket: old T-0007, T-0032, T-0044, T-0051, T-0055, T-0108, T-0179, T-0111, T-0227, T-0230, T-0235, T-0240, T-0395
 binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), blueprint v0 (review), safe-primitives.md (review)
 sources_last_checked: 2026-10-02
 ---
@@ -1362,7 +1362,7 @@ by habit teaches them to override. The deny list is the narrow set whose abuse i
 without a second control we can read. Tenant-wide *data* write permissions on Graph itself are the same class and **are on the list** (T-0303, accepted;
 code in T-0369): `Mail.ReadWrite`, `Mail.Send`, `Mail-Advanced.ReadWrite.All`, `MailboxItem.ReadWrite.All`,
 `MailboxItem.ImportExport.All`, `Files.ReadWrite.All` and `Sites.ReadWrite.All`, matched on any resource,
-case-insensitively (EV3 block). `Sites.Manage.All` joins once lab G15 confirms the name. Their read-only
+case-insensitively (EV3 block). `Sites.Manage.All` joins once lab G16 confirms its name and role id in a real tenant. Their read-only
 counterparts (`Mail.Read`, `Files.Read.All`, `Sites.Read.All`) and the scoped `Sites.Selected` and
 `Files.SelectedOperations.Selected` stay EV5 warn or allowed. Onboarding tells the customer to use a dedicated app
 registration, and to scope any Exchange access through RBAC for Applications rather than tenant-wide consent;
@@ -1392,6 +1392,45 @@ the code change for TM-D5a is T-0302.
   EV3 `ENTRA_DENY_LIST_PERMISSION` for each, with the right `resource_app_id` and `app_role_id`, and
   that an unrelated non-Graph role stays EV5. Record the SharePoint appId and role id for this file,
   and whether Exchange role-group membership shows anywhere in Graph (expected: no).
+- **G16 — Graph data permissions on a real tenant (T-0395, D-0007).** The deny list matches the
+  permission **value**, so a value that differs from Microsoft's live `appRoles` entry would never
+  match. The expected values below come from Microsoft's permissions reference (Application column,
+  read 2026-10-26, [permissions reference](https://learn.microsoft.com/en-us/graph/permissions-reference)). G16
+  checks them against the tenant.
+  (a) **Name and role id.** Read Graph's own service principal
+  (`GET /servicePrincipals(appId='00000003-0000-0000-c000-000000000000')?$select=appRoles`) and record,
+  for each value in the table, the `appRoles` entry's `value`, `id` and `isEnabled`. Pass: `Sites.Manage.All`
+  exists with `value` exactly `Sites.Manage.All` and id `0c0bf378-bf22-4481-8f81-9e89a9b4960a`. The
+  reference describes it as "Allows the app to create or delete document libraries and lists in all site
+  collections without a signed in user". That is the same tenant-wide site-write class as
+  `Sites.ReadWrite.All`. If the live name or id differs, record the live one here and in
+  graph-data-permissions-policy §1 before any code change.
+  (b) **EV3 for the seven D-0007 values.** Consent each value as an application permission on Graph to a
+  throwaway registration in the lab tenant, one at a time or together. Run the connector's onboarding check
+  and health check against that tenant. For each value, assert EV3 `ENTRA_DENY_LIST_PERMISSION` blocks
+  activation with `resource_app_id` `00000003-0000-0000-c000-000000000000` and the `app_role_id` from
+  the table, and that the health check reports the same finding. The tenant's ids must equal the table's.
+  Assert that `Mail.Read`, `Files.Read.All`, `Sites.Read.All` and `Sites.Selected`, consented to the same
+  registration, stay EV5 `EXCESSIVE_RIGHT` (or allowed) and do not block.
+  (c) **Sites.Manage.All.** Consent it too. Until it is on the deny list, the expected result is EV5 warn,
+  which proves the gap is real. When (a) passes, `Sites.Manage.All` joins `denyPatterns`
+  (`internal/connector/rights/policy_entra.go`) with a unit test and this paragraph. That happens in the
+  same change as the lab record, and (b) is re-run to show EV3 for it.
+
+  | Value | Expected Application role id (Graph) |
+  | --- | --- |
+  | `Mail.ReadWrite` | `e2a3a72e-5f79-4c64-b1b1-878b674786c9` |
+  | `Mail.Send` | `b633e1c5-b582-4048-a93e-9f11b44c7e96` |
+  | `Mail-Advanced.ReadWrite.All` | `e118f1da-5c1c-46cf-bff6-8858d786f46f` |
+  | `MailboxItem.ReadWrite.All` | `1583d471-fede-4e7c-b062-57e9d60cfb49` |
+  | `MailboxItem.ImportExport.All` | `76577085-e73d-4f1d-b26a-85fb33892327` |
+  | `Files.ReadWrite.All` | `75359482-378d-4052-8f01-80520e7db3cd` |
+  | `Sites.ReadWrite.All` | `9492366f-7969-46a4-8d15-ed1a20078fff` |
+  | `Sites.Manage.All` (pending, (a) and (c)) | `0c0bf378-bf22-4481-8f81-9e89a9b4960a` |
+
+  Evidence: the `appRoles` read, the onboarding and health-check findings (JSON) for each value, and this
+  file's diff. A registration with any of these consented must not hold other rights in the lab tenant.
+  Delete it after the run.
 
 **Graph's own protections, because the app holds no role.** With application permissions alone the
 app cannot change sensitive properties of, delete, or restore users who hold an admin role, or who
@@ -1471,7 +1510,9 @@ attribute is empty (if confirmed, `cn` joins the `displayName` row and `sAMAccou
 on an empty `displayName` or `mailNickName` reached through a `cn` or `sAMAccountName` write,
 a stated gap until G14 runs, not a silent one); **G15 (T-0116)** that the three non-Graph
 grants (`full_access_as_app`, `Exchange.ManageAsApp`, SharePoint `Sites.FullControl.All`) are refused by
-EV3, and the SharePoint appId and role id (cases above).
+EV3, and the SharePoint appId and role id (cases above); **G16 (T-0395)** that `Sites.Manage.All`'s name
+and role id match the live Graph `appRoles`, and that the seven D-0007 Graph data permissions are refused by
+EV3 in a real tenant (cases above).
 
 **The customer's independent record.** Service-principal sign-in logs ("can't be changed or
 deleted"), Entra audit logs filtered by our appId, and Graph activity logs (P1/P2, if routed to a
@@ -2529,7 +2570,7 @@ Existing proofs this document relies on: FF-SP1–SP9 (`tools/fitness/safeprim`)
 
 The proofs that no earlier ticket owned are filed as T-0066 to T-0073 (T-0055 re-filed them after the
 board re-cut). The Entra lab claims are T-0075
-(G1–G10; G11–G13 added by T-0111; G14 by T-0240; G15 by T-0116). TM-D25 is built in T-0225. TM-F-MIGRATE and TM-F-RADIUS belong to the specs of their milestones (M2, M4) and are
+(G1–G10; G11–G13 added by T-0111; G14 by T-0240; G15 by T-0116; G16 by T-0395). TM-D25 is built in T-0225. TM-F-MIGRATE and TM-F-RADIUS belong to the specs of their milestones (M2, M4) and are
 carried by those tickets. Until a proof runs in CI or the lab, its control is direction, not a
 control.
 
@@ -2708,6 +2749,7 @@ External, in order of first use:
 
 ## Changelog
 
+- 2026-10-26 · T-0395 (D-0007 follow-up). §6.6 adds lab G16. It reads Graph's live `appRoles` to confirm the name and role id of `Sites.Manage.All` (expected `0c0bf378-…`, from Microsoft's permissions reference). It asserts EV3 `ENTRA_DENY_LIST_PERMISSION`, with role ids, for the seven T-0369 values in a real tenant, and EV5 for the read-only counterparts. `Sites.Manage.All` now waits for G16, not G15 (G15 covers only the non-Graph grants). Routed to T-0075.
 - 2026-10-26 · T-0369 (from T-0303). §6.6 deny list adds `Mail.ReadWrite`, `Mail.Send`, `Mail-Advanced.ReadWrite.All`, `MailboxItem.ReadWrite.All`, `MailboxItem.ImportExport.All`, `Files.ReadWrite.All`, `Sites.ReadWrite.All` (any resource, EV3 block); the T-0303 gap sentence is replaced; TM-F-RIGHTS row updated; onboarding guidance: dedicated registration, Exchange RBAC for Applications. `Sites.Manage.All` waits for lab G15.
 - 2026-10-23 · T-0240 (from the T-0238 review). TM-D25 7e: group-membership writes are licence writes (refused under `assignedPlans`, `mail`, `proxyAddresses` or any RefuseAll); `ASSIGN_LICENSE` also refused on `mail` and `proxyAddresses`. 7g: `preferredLanguage`, `countryCode` and device OS rows fixed (the earlier "none for preferredLanguage" was wrong); canonical-key rule added. New proofs T0-DYN-LIC-GROUPMEMBER and T0-DYN-KEY; lab G14 added to T-0075.
 - 2026-10-23 · T-0230 (from the T-0225 review). TM-D25 rule 7 rewritten as 7a to 7h: it covers every dynamic group in a designated closure (nested at any depth, not only designated seeds); `Direct Reports for` rules depend on `user.manager`; create and invite are writes of every property (the new object matches rules by absence), so they are refused while a closure dynamic group exists; licence assignment (user and group) writes `assignedPlans`; synced AD writes, moves and `userAccountControl` are Entra property writes and go through the same `CheckPropertyWrite`; closed mapping table `ruleprops v1` from rule property to Graph write path and AD attribute. New TM-R19; TM-F-T0GUARD extended with the T-0230 proof table. Connector contract §8.9 and T-0098 guard contract updated. Sources: dynamic membership rules, Entra Connect synchronized attributes, Graph user resource, device update.
