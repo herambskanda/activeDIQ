@@ -47,7 +47,9 @@ type Formation struct {
 	// Gate.ADSID is stored as the SID evidence.
 	Gate GateInput
 	// ADBases and EntraBases are the tier0 bases the classifiers computed for each side (empty: not
-	// tier0). FactsAsOf is the inventory as-of of those facts; it is required when either is set.
+	// tier0). FactsAsOf is the inventory as-of of those facts and is always required: "not tier0" is
+	// a fact with a time too (contract §8.3 F3), and a link without it would force every write that
+	// relies on it to refuse or live-refresh.
 	ADBases, EntraBases []Basis
 	FactsAsOf           time.Time
 	Now                 time.Time
@@ -90,8 +92,8 @@ func (Writer) Form(ctx context.Context, tx store.Tx, f Formation) (Formed, error
 	default:
 		return Formed{}, ErrInvalid
 	}
-	if (len(f.ADBases) > 0 || len(f.EntraBases) > 0) && f.FactsAsOf.IsZero() {
-		return Formed{}, fmt.Errorf("%w: tier0 facts need an as-of time", ErrInvalid)
+	if f.FactsAsOf.IsZero() {
+		return Formed{}, fmt.Errorf("%w: tier0 status (true or false) needs an as-of time", ErrInvalid)
 	}
 	if f.Now.IsZero() {
 		return Formed{}, ErrInvalid
@@ -186,6 +188,27 @@ func writeErr(what string, err error) error {
 		return fmt.Errorf("%w: %s", ErrInvalid, what)
 	}
 	return fmt.Errorf("inventory: %s: %w", what, err)
+}
+
+// RecordEvaluation records that the correlation job completed an evaluation of every object of the
+// connection as of at (contract §8.3 F3). It only moves forward: an older run finishing late cannot
+// make the as-of older than one already recorded. Call it after the run's Form and Remove calls, in
+// the same transaction, so a reader never sees the new time with the old links.
+func (Writer) RecordEvaluation(ctx context.Context, tx store.Tx, connection ConnectionID, at time.Time) error {
+	if _, ok := canon(string(connection)); !ok || at.IsZero() {
+		return ErrInvalid
+	}
+	if err := requireTenant(ctx, tx); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `INSERT INTO public.correlation_evaluations (tenant_id, connection_id, evaluated_at)
+		VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, $2)
+		ON CONFLICT (tenant_id, connection_id) DO UPDATE SET evaluated_at = GREATEST(public.correlation_evaluations.evaluated_at, EXCLUDED.evaluated_at)`,
+		string(connection), at.UTC())
+	if err != nil {
+		return writeErr("record evaluation", err)
+	}
+	return nil
 }
 
 // Remove sets the live correlation of the pair to removed. Nothing is deleted: its I4(g) markers are

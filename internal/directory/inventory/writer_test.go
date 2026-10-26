@@ -27,7 +27,7 @@ func formation(e *env, ad, en string) inventory.Formation {
 		AD:    inventory.Ref{Connection: e.adA, Object: inventory.GUID(ad)},
 		Entra: inventory.Ref{Connection: e.enA, Object: inventory.GUID(en)},
 		Match: inventory.MatchAnchor, AnchorAttr: "ms-DS-ConsistencyGuid", AnchorValue: anchor,
-		Gate: g, Now: t1,
+		Gate: g, Now: t1, FactsAsOf: t1,
 	}
 }
 
@@ -51,7 +51,7 @@ func TestFormStoresGateVerdict(t *testing.T) {
 		if err != nil || !got.Created || got.Verdict.State != inventory.StateMatched {
 			t.Fatalf("form: %+v %v", got, err)
 		}
-		ls, err := e.r.CorrelationsFor(ctx, e.a, f.AD)
+		ls, err := links(e.r.CorrelationsFor(ctx, e.a, f.AD))
 		if err != nil || len(ls) != 1 {
 			t.Fatalf("read: %v %v", ls, err)
 		}
@@ -67,7 +67,7 @@ func TestFormStoresGateVerdict(t *testing.T) {
 		if err != nil || got2.Created || got2.ID != got.ID || got2.Verdict.State != inventory.StateCandidate || got2.Verdict.Reason != inventory.ReasonNotSynced {
 			t.Fatalf("re-form: %+v %v", got2, err)
 		}
-		ls, _ = e.r.CorrelationsFor(ctx, e.a, f.AD)
+		ls, _ = links(e.r.CorrelationsFor(ctx, e.a, f.AD))
 		if len(ls) != 1 || ls[0].State != inventory.StateCandidate || ls[0].Reason != "not_synced" || !ls[0].EligibleSince.Equal(l.EligibleSince) || ls[0].EligibilityClass != "attested" {
 			t.Fatalf("after fail: %+v", ls)
 		}
@@ -83,7 +83,7 @@ func TestFormStoresGateVerdict(t *testing.T) {
 		if err := e.tx(t, e.a, func(ctx context.Context, tx store.Tx) error { return w.Remove(ctx, tx, f.AD, f.Entra) }); err != nil {
 			t.Fatal(err)
 		}
-		if ls, err := e.r.CorrelationsFor(ctx, e.a, f.AD); err != nil || len(ls) != 0 {
+		if ls, err := links(e.r.CorrelationsFor(ctx, e.a, f.AD)); err != nil || len(ls) != 0 {
 			t.Fatalf("removed visible: %v %v", ls, err)
 		}
 		f.Gate.SideGone = false
@@ -116,12 +116,13 @@ func TestFormRefusesBadInput(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		e := setup(t, s)
 		bad := map[string]func(*inventory.Formation){
-			"same connection":  func(f *inventory.Formation) { f.Entra.Connection = f.AD.Connection },
-			"anchor w/o value": func(f *inventory.Formation) { f.AnchorValue = nil },
-			"sid w/o sid":      func(f *inventory.Formation) { f.Match, f.Gate.ADSID = inventory.MatchSID, nil },
-			"bases w/o as-of":  func(f *inventory.Formation) { f.ADBases, f.FactsAsOf = []inventory.Basis{"C1"}, time.Time{} },
-			"unknown match":    func(f *inventory.Formation) { f.Match = "name" },
-			"non-canonical":    func(f *inventory.Formation) { f.AD.Object = "AAAAAAAA-0000-4000-8000-000000000001" },
+			"same connection":     func(f *inventory.Formation) { f.Entra.Connection = f.AD.Connection },
+			"anchor w/o value":    func(f *inventory.Formation) { f.AnchorValue = nil },
+			"sid w/o sid":         func(f *inventory.Formation) { f.Match, f.Gate.ADSID = inventory.MatchSID, nil },
+			"bases w/o as-of":     func(f *inventory.Formation) { f.ADBases, f.FactsAsOf = []inventory.Basis{"C1"}, time.Time{} },
+			"not tier0 w/o as-of": func(f *inventory.Formation) { f.FactsAsOf = time.Time{} },
+			"unknown match":       func(f *inventory.Formation) { f.Match = "name" },
+			"non-canonical":       func(f *inventory.Formation) { f.AD.Object = "AAAAAAAA-0000-4000-8000-000000000001" },
 		}
 		for n, m := range bad {
 			f := formation(e, adG1, enG1)
@@ -295,6 +296,65 @@ func TestDesignationSoftDelete(t *testing.T) {
 			return err
 		}); !errors.Is(err, inventory.ErrUnknownConnection) {
 			t.Fatalf("other tenant's connection: %v", err)
+		}
+	})
+}
+
+// links drops the evaluation as-of for tests that only look at the links.
+func links(c inventory.Correlations, err error) ([]inventory.Link, error) { return c.Links, err }
+
+// T-0378 acceptance 1: an object with no correlation still gets the time the job last evaluated its
+// connection; zero only before any run completed; the time only moves forward.
+func TestCorrelationsForCarriesEvaluationAsOf(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		ctx := context.Background()
+		ref := inventory.Ref{Connection: e.adA, Object: adG1}
+		c, err := e.r.CorrelationsFor(ctx, e.a, ref)
+		if err != nil || len(c.Links) != 0 || !c.EvaluatedAt.IsZero() {
+			t.Fatalf("before any run: %+v %v", c, err)
+		}
+		rec := func(tid tenant.ID, conn inventory.ConnectionID, at time.Time) error {
+			return e.tx(t, tid, func(ctx context.Context, tx store.Tx) error { return w.RecordEvaluation(ctx, tx, conn, at) })
+		}
+		if err := rec(e.a, e.adA, t1); err != nil {
+			t.Fatal(err)
+		}
+		if err := rec(e.a, e.adA, t1.Add(-time.Hour)); err != nil { // late, older run
+			t.Fatal(err)
+		}
+		c, err = e.r.CorrelationsFor(ctx, e.a, ref)
+		if err != nil || len(c.Links) != 0 || !c.EvaluatedAt.Equal(t1) {
+			t.Fatalf("no correlations, after run: %+v %v", c, err)
+		}
+		// Another connection and another tenant are not covered by this run.
+		if c, _ = e.r.CorrelationsFor(ctx, e.a, inventory.Ref{Connection: e.enA, Object: enG1}); !c.EvaluatedAt.IsZero() {
+			t.Errorf("other connection: %v", c.EvaluatedAt)
+		}
+		if err := rec(e.a, e.adB, t1); err == nil {
+			t.Error("another tenant's connection accepted")
+		}
+		if err := rec(e.a, e.adA, time.Time{}); !errors.Is(err, inventory.ErrInvalid) {
+			t.Errorf("zero time: %v", err)
+		}
+	})
+}
+
+// T-0378 acceptance 2: a peer recorded NOT tier0 still carries the as-of of that status.
+func TestNonTier0LinkCarriesFactsAsOf(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		f := formation(e, adG1, enG1)
+		if _, err := e.form(t, f); err != nil {
+			t.Fatal(err)
+		}
+		c, err := e.r.CorrelationsFor(context.Background(), e.a, f.AD)
+		if err != nil || len(c.Links) != 1 || c.Links[0].PeerTier0 || !c.Links[0].FactsAsOf.Equal(t1) {
+			t.Fatalf("%+v %v", c, err)
+		}
+		f.FactsAsOf = time.Time{}
+		if _, err := e.form(t, f); !errors.Is(err, inventory.ErrInvalid) {
+			t.Fatalf("update without as-of: %v", err)
 		}
 	})
 }

@@ -119,8 +119,8 @@ type Link struct {
 	// SelfTier0 and SelfBases are the same for Self.
 	SelfTier0 bool
 	SelfBases []Basis
-	// FactsAsOf is the inventory as-of of the two tier0 facts; zero when neither side is tier0 and
-	// none was recorded. The statement's computed_at inherits the oldest such time (contract §8.3 F3).
+	// FactsAsOf is the inventory as-of of the two tier0 facts, tier0 or not (the writer requires it); zero only for
+	// a row written before it was mandatory, which a consumer treats as no as-of. The statement's computed_at inherits the oldest such time (contract §8.3 F3).
 	FactsAsOf time.Time
 
 	GateCheckedAt    time.Time

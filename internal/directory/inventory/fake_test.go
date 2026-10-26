@@ -18,19 +18,19 @@ func TestFakeKeepsTheReaderContract(t *testing.T) {
 	f.AddLink(a, inventory.Link{Self: ad, Peer: en, PeerKind: "entra_tenant", State: inventory.StateBroken, PeerTier0: true, PeerBases: []inventory.Basis{"E1"}})
 	f.AddLink(a, inventory.Link{Self: ad, Peer: inventory.Ref{Connection: en.Connection, Object: enG2}, PeerKind: "entra_tenant", State: inventory.StateRemoved})
 	ctx := context.Background()
-	got, err := f.CorrelationsFor(ctx, a, ad)
+	got, err := links(f.CorrelationsFor(ctx, a, ad))
 	if err != nil || len(got) != 1 || got[0].State != inventory.StateBroken || !got[0].PeerTier0 {
 		t.Fatalf("%v %+v", err, got)
 	}
-	got, err = f.CorrelationsFor(ctx, a, en)
+	got, err = links(f.CorrelationsFor(ctx, a, en))
 	if err != nil || len(got) != 1 || got[0].Peer != ad || got[0].SelfTier0 != true || got[0].PeerKind != "ad_forest" {
 		t.Fatalf("mirror: %v %+v", err, got)
 	}
-	if got, _ := f.CorrelationsFor(ctx, b, ad); len(got) != 0 {
+	if got, _ := links(f.CorrelationsFor(ctx, b, ad)); len(got) != 0 {
 		t.Fatalf("tenant scope: %+v", got)
 	}
 	f.Err = errors.New("down")
-	if got, err := f.CorrelationsFor(ctx, a, ad); err == nil || got != nil {
+	if got, err := links(f.CorrelationsFor(ctx, a, ad)); err == nil || got != nil {
 		t.Fatalf("error must not be empty: %v %v", got, err)
 	}
 	f.Err = nil

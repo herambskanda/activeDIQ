@@ -128,7 +128,7 @@ func TestCorrelationsForReturnsEveryStateFromEitherSide(t *testing.T) {
 		e.seed(t, e.a, ad(adG1), inventory.Ref{Connection: e.enA, Object: "eeeeeeee-0000-4000-8000-0000000000ff"}, "removed", "",
 			"match, ad_sid", "sid", sid)
 
-		got, err := e.r.CorrelationsFor(ctx, e.a, ad(adG1))
+		got, err := links(e.r.CorrelationsFor(ctx, e.a, ad(adG1)))
 		if err != nil || len(got) != 1 {
 			t.Fatalf("AD side: %v %+v", err, got)
 		}
@@ -140,24 +140,24 @@ func TestCorrelationsForReturnsEveryStateFromEitherSide(t *testing.T) {
 			t.Fatalf("candidate link: %+v", l)
 		}
 		// The Entra side of the same row: the peer is the AD object and its tier0 facts swap.
-		got, err = e.r.CorrelationsFor(ctx, e.a, en(enG1))
+		got, err = links(e.r.CorrelationsFor(ctx, e.a, en(enG1)))
 		if err != nil || len(got) != 1 {
 			t.Fatalf("Entra side: %v %+v", err, got)
 		}
 		if l := got[0]; l.Peer != ad(adG1) || l.PeerKind != "ad_forest" || l.PeerTier0 || !l.SelfTier0 {
 			t.Fatalf("Entra side link: %+v", l)
 		}
-		got, err = e.r.CorrelationsFor(ctx, e.a, ad(adG2))
+		got, err = links(e.r.CorrelationsFor(ctx, e.a, ad(adG2)))
 		if err != nil || len(got) != 1 || got[0].State != inventory.StateMatched || got[0].Match != inventory.MatchSID ||
 			!got[0].SelfTier0 || !reflect.DeepEqual(got[0].SelfBases, []inventory.Basis{"C1", "designated"}) || got[0].PeerTier0 {
 			t.Fatalf("matched: %v %+v", err, got)
 		}
-		got, err = e.r.CorrelationsFor(ctx, e.a, en(enG3))
+		got, err = links(e.r.CorrelationsFor(ctx, e.a, en(enG3)))
 		if err != nil || len(got) != 1 || got[0].State != inventory.StateBroken {
 			t.Fatalf("broken: %v %+v", err, got)
 		}
 		// A different tenant sees nothing, even with the same refs.
-		got, err = e.r.CorrelationsFor(ctx, e.b, ad(adG1))
+		got, err = links(e.r.CorrelationsFor(ctx, e.b, ad(adG1)))
 		if err != nil || len(got) != 0 {
 			t.Fatalf("tenant B: %v %+v", err, got)
 		}
@@ -169,23 +169,23 @@ func TestCorrelationsForFailsClosed(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		e := setup(t, s)
 		ref := inventory.Ref{Connection: e.adA, Object: adG1}
-		if _, err := e.r.CorrelationsFor(context.Background(), tenant.ID{}, ref); !errors.Is(err, inventory.ErrNoTenant) {
+		if _, err := links(e.r.CorrelationsFor(context.Background(), tenant.ID{}, ref)); !errors.Is(err, inventory.ErrNoTenant) {
 			t.Fatalf("no tenant: %v", err)
 		}
-		if _, err := e.r.CorrelationsFor(context.Background(), e.a, inventory.Ref{Connection: "x", Object: adG1}); !errors.Is(err, inventory.ErrInvalid) {
+		if _, err := links(e.r.CorrelationsFor(context.Background(), e.a, inventory.Ref{Connection: "x", Object: adG1})); !errors.Is(err, inventory.ErrInvalid) {
 			t.Fatalf("invalid ref: %v", err)
 		}
 		// A cancelled context, then a closed database: both are errors, never an empty list.
 		cctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		if got, err := e.r.CorrelationsFor(cctx, e.a, ref); err == nil || got != nil {
+		if got, err := links(e.r.CorrelationsFor(cctx, e.a, ref)); err == nil || got != nil {
 			t.Fatalf("cancelled: %v %v", got, err)
 		}
 		e.db.Close()
-		if got, err := e.r.CorrelationsFor(context.Background(), e.a, ref); err == nil || got != nil {
+		if got, err := links(e.r.CorrelationsFor(context.Background(), e.a, ref)); err == nil || got != nil {
 			t.Fatalf("closed db: %v %v", got, err)
 		}
-		if _, err := (*inventory.Reader)(nil).CorrelationsFor(context.Background(), e.a, ref); !errors.Is(err, inventory.ErrNotConfigured) {
+		if _, err := links((*inventory.Reader)(nil).CorrelationsFor(context.Background(), e.a, ref)); !errors.Is(err, inventory.ErrNotConfigured) {
 			t.Fatalf("nil reader: %v", err)
 		}
 	})
@@ -274,7 +274,9 @@ func TestCorrelationsForRefusesWrongConnections(t *testing.T) {
 		e := setup(t, s)
 		ctx := context.Background()
 		ad2 := e.conn(t, e.a, connection.KindADForest, connection.TransportLDAPS)
-		ref := func(c inventory.ConnectionID, g string) inventory.Ref { return inventory.Ref{Connection: c, Object: inventory.GUID(g)} }
+		ref := func(c inventory.ConnectionID, g string) inventory.Ref {
+			return inventory.Ref{Connection: c, Object: inventory.GUID(g)}
+		}
 		cases := []struct {
 			name   string
 			ad, en inventory.Ref
@@ -291,7 +293,7 @@ func TestCorrelationsForRefusesWrongConnections(t *testing.T) {
 			e.seed(t, e.a, c.ad, c.en, "broken", "", "match, ad_sid, ad_tier0, ad_tier0_bases, facts_as_of",
 				"sid", sid, true, []string{"C1"}, time.Now())
 			for _, side := range []inventory.Ref{c.ad, c.en} {
-				got, err := e.r.CorrelationsFor(ctx, e.a, side)
+				got, err := links(e.r.CorrelationsFor(ctx, e.a, side))
 				if !errors.Is(err, inventory.ErrCorrupt) || got != nil {
 					t.Errorf("%s from %v: %v %v", c.name, side, got, err)
 				}
