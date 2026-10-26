@@ -1,0 +1,14 @@
+# The API TLS directory for the linux-oci server container (T-0104). Merge into the default Compose file.
+# Prepare the host path first: packaging/linux-oci/prepare-tls-dir.sh ${ACTIVEDIQ_TLS_HOST_DIR} 10001 10001
+services:
+  server:
+    user: "10001:10001"          # numeric non-root uid:gid; never root (TM-TB16-T2)
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      ACTIVEDIQ_API_TLS_DIR: /var/lib/activediq/tls
+    volumes:
+      - type: bind
+        source: ${ACTIVEDIQ_TLS_HOST_DIR:?set to the prepared host directory}
+        target: /var/lib/activediq/tls

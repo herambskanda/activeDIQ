@@ -913,5 +913,15 @@ must_fail_with "fitness-disclosure on an expired security.txt" 'Expires .* has p
 cp "$root/.well-known/security.txt" "$dc/.well-known/security.txt"
 must_pass "fitness-disclosure" go run ./tools/fitness/disclosure "$dc"
 
+# --- fitness-packaging (T-0104) -----------------------------------------------------------------
+pk="$tmp/packaging"; mkdir -p "$pk"; cp -r "$root/packaging" "$pk/packaging"
+sed -i 's/SetAccessRuleProtection(\$true, \$false)/SetAccessRuleProtection($false, $false)/' "$pk/packaging/windows/Set-ApiTlsDirAcl.ps1"
+must_fail_with "fitness-packaging on an ACL script that leaves inheritance on" 'inheritance must be disabled' go run ./tools/fitness/packaging "$pk"
+cp "$root/packaging/windows/Set-ApiTlsDirAcl.ps1" "$pk/packaging/windows/"
+sed -i 's/chmod 0700/chmod 0755/' "$pk/packaging/linux-oci/prepare-tls-dir.sh"
+must_fail_with "fitness-packaging on a prepare script that loosens the mode" 'mode 0700' go run ./tools/fitness/packaging "$pk"
+cp "$root/packaging/linux-oci/prepare-tls-dir.sh" "$pk/packaging/linux-oci/"
+must_pass "fitness-packaging" go run ./tools/fitness/packaging "$pk"
+
 if [ "$fails" -ne 0 ]; then echo "ci-proof: $fails proof(s) failed" >&2; exit 1; fi
 echo "ci-proof: every gate rejects its violation and accepts clean input"

@@ -226,3 +226,13 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
 Proofs: `internal/testlab/harnessdocker` (remove + reap, fails if `-v` is dropped) and
 `storetest.TestStopRemovesContainerAndAnonymousVolume`. Manual sweep of old leaks:
 `docker ps -aq --filter label=activediq.harness=1 | xargs -r docker rm -f -v`.
+
+## API TLS directory permissions (T-0104, TM-TB16-T3)
+
+Go's 0600/0700 modes do nothing on Windows, so packaging sets the access control itself. Files in `packaging/`:
+
+- **Windows** `windows/Set-ApiTlsDirAcl.ps1 -Path <ACTIVEDIQ_API_TLS_DIR> -ServiceIdentity 'DOMAIN\svc$'`: the MSI custom action (and the upgrade path) runs it after the gMSA exists. Inheritance off, owner Administrators, FullControl for Administrators and the service identity only; existing files lose explicit entries. Idempotent. Refuses a broad group, a non-directory and a reparse point.
+- **Windows lab test** `windows/Test-ApiTlsDirAcl.ps1 -Path … -ServiceIdentity … -ProbeCredential (Get-Credential)`: run as Administrator on the lab member (`windows-lab.md`). It asserts the ACL and, with a non-administrator local user's credential, that listing the directory is denied (exit 5). Use a throwaway local user created for the run; never commit its password. Save the output under `windows-lab-runs/`.
+- **linux-oci** `linux-oci/prepare-tls-dir.sh <host-dir> [10001 [10001]]` (root) then merge `linux-oci/compose.tls.yaml`: directory owned by the numeric non-root service uid:gid, mode 0700, the container runs as that user. The server itself also refuses a directory it does not own or that is group/other-writable.
+
+`make fitness-packaging` checks the files statically and runs the prepare script for real; `make ci-proof` shows it failing on a violation.
