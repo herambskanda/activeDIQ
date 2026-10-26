@@ -36,6 +36,25 @@ var (
 	ErrInvalidInput = errors.New("authn: invalid input")
 	// ErrNotFound: no such enrollment in the tenant.
 	ErrNotFound = errors.New("authn: enrollment not found")
+	// ErrFactorPaused: ten wrong codes within an hour paused this enrollment (ENH-09 §5); even a correct
+	// code is refused until PausedUntil. The user-facing answer is the same as ErrCodeRejected; the
+	// caller may use this to steer a technician to another factor. The code is not evaluated.
+	ErrFactorPaused = errors.New("authn: factor paused")
+)
+
+// The failure budget (ENH-09 §5, DM-37).
+const (
+	// MaxFailuresPerHour wrong codes within FailureWindow pause the enrollment for PauseDuration.
+	MaxFailuresPerHour = 10
+	FailureWindow      = time.Hour
+	PauseDuration      = time.Hour
+	// PendingTTL is how long a pending enrollment can be confirmed; MaxConfirmAttempts wrong codes
+	// expire it sooner.
+	PendingTTL         = 10 * time.Minute
+	MaxConfirmAttempts = 5
+	// recordLockWait bounds the failure-recording transaction's wait for the enrollment row, so a
+	// caller holding that row never hangs a refusal.
+	recordLockWait = "3000"
 )
 
 // KeySource gives the tenant's data-encryption key (TM-D7) under which the seed is sealed. version 0
@@ -67,7 +86,7 @@ func (s Subject) validate() error {
 	return ErrInvalidInput
 }
 
-// State is the lifecycle of DM-37: pending → active → revoked.
+// State is the lifecycle of DM-37: pending → active → revoked, or pending → expired.
 type State string
 
 // States.
@@ -75,6 +94,7 @@ const (
 	StatePending State = "pending"
 	StateActive  State = "active"
 	StateRevoked State = "revoked"
+	StateExpired State = "expired"
 )
 
 // Info is what the package returns about an enrollment. It has no field for the seed, the sealed
@@ -87,6 +107,9 @@ type Info struct {
 	State     State
 	LastUsed  *time.Time
 	CreatedAt time.Time
+	// ExpiresAt is set while pending; PausedUntil only while the failure budget has paused the factor.
+	ExpiresAt   *time.Time
+	PausedUntil *time.Time
 }
 
 // Provisioned is the result of Enroll: the only time a seed leaves the package. Seed holds the
@@ -97,10 +120,25 @@ type Provisioned struct {
 	Seed secret.Secret
 }
 
+// FailureStore opens the short, separate tenant transaction that records a refused code. *store.DB
+// satisfies it.
+type FailureStore interface {
+	WithTenantSeparate(ctx context.Context, id tenant.ID, fn func(ctx context.Context, tx store.Tx) error) error
+}
+
 // Service is the TOTP factor primitive. The caller brings the tenant transaction (store.DB.WithTenant)
 // so the factor check, the audit record and the session change commit together.
+//
+// A refused code is the exception: it is recorded through Failures in its own transaction, committed
+// before check returns, so a caller that rolls back on refusal cannot erase it (the budget would
+// otherwise be unenforceable). The caller's transaction therefore must not hold a lock on the
+// enrolment row when it calls Verify or Activate (check itself reads without locking); the recording
+// waits at most 3 s for the row and then fails closed with an error.
 type Service struct {
 	Keys KeySource
+	// Failures records refusals. Required: without it a refusal cannot be counted, so check fails
+	// closed instead of verifying with no budget.
+	Failures FailureStore
 	// Now is the clock; nil means time.Now. Tests inject one.
 	Now func() time.Time
 }
@@ -141,9 +179,9 @@ func (s *Service) Enroll(ctx context.Context, tx store.Tx, tid tenant.ID, subjec
 		return Provisioned{}, fmt.Errorf("authn: seal: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO public.authn_authenticator_enrollments
-		(tenant_id, id, account_id, connection_id, object_guid, method, sealed_secret, key_version, label)
-		VALUES ($1::uuid, $2::uuid, NULLIF($3, '')::uuid, NULLIF($4, '')::uuid, NULLIF($5, '')::uuid, $6, $7, $8, $9)`,
-		tid.String(), rowID, subject.AccountID, subject.ConnectionID, subject.ObjectGUID, methodTOTP, blob, int32(dek.Version), label); err != nil {
+		(tenant_id, id, account_id, connection_id, object_guid, method, sealed_secret, key_version, label, expires_at)
+		VALUES ($1::uuid, $2::uuid, NULLIF($3, '')::uuid, NULLIF($4, '')::uuid, NULLIF($5, '')::uuid, $6, $7, $8, $9, $10)`,
+		tid.String(), rowID, subject.AccountID, subject.ConnectionID, subject.ObjectGUID, methodTOTP, blob, int32(dek.Version), label, s.now().Add(PendingTTL)); err != nil {
 		return Provisioned{}, fmt.Errorf("authn: enroll: %w", err)
 	}
 	text := []byte(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(seed))
@@ -161,9 +199,9 @@ func (s *Service) Get(ctx context.Context, tx store.Tx, id string) (Info, error)
 		state          string
 	)
 	err := tx.QueryRow(ctx, `SELECT id::text, account_id::text, connection_id::text, object_guid::text,
-		method, label, state, last_used, created_at
+		method, label, state, last_used, created_at, expires_at, paused_until
 		FROM public.authn_authenticator_enrollments WHERE id = $1::uuid`, id).
-		Scan(&in.ID, &acc, &conn, &gid, &in.Method, &in.Label, &state, &in.LastUsed, &in.CreatedAt)
+		Scan(&in.ID, &acc, &conn, &gid, &in.Method, &in.Label, &state, &in.LastUsed, &in.CreatedAt, &in.ExpiresAt, &in.PausedUntil)
 	if store.IsNoRows(err) {
 		return Info{}, ErrNotFound
 	}
@@ -198,18 +236,25 @@ func (s *Service) check(ctx context.Context, tx store.Tx, tid tenant.ID, id, cod
 	if tid.IsZero() {
 		return ErrInvalidInput
 	}
+	if s.Failures == nil {
+		return errors.New("authn: no failure store configured")
+	}
 	if _, err := tenant.Parse(id); err != nil || !validCodeText(code) {
-		return ErrCodeRejected
+		return ErrCodeRejected // not an attempt at any enrollment: there is no row to charge
 	}
 	var (
-		blob    []byte
-		version int32
-		state   string
-		last    *int64
+		blob     []byte
+		version  int32
+		state    string
+		last     *int64
+		paused   *time.Time
+		expires  *time.Time
+		attempts int32
 	)
-	err := tx.QueryRow(ctx, `SELECT sealed_secret, key_version, state, last_used_step
-		FROM public.authn_authenticator_enrollments WHERE id = $1::uuid AND method = 'totp' FOR UPDATE`, id).
-		Scan(&blob, &version, &state, &last)
+	// No row lock: a lock held here would block the separate failure transaction below.
+	err := tx.QueryRow(ctx, `SELECT sealed_secret, key_version, state, last_used_step, paused_until, expires_at, confirm_attempts
+		FROM public.authn_authenticator_enrollments WHERE id = $1::uuid AND method = 'totp'`, id).
+		Scan(&blob, &version, &state, &last, &paused, &expires, &attempts)
 	if store.IsNoRows(err) {
 		return ErrCodeRejected
 	}
@@ -218,6 +263,16 @@ func (s *Service) check(ctx context.Context, tx store.Tx, tid tenant.ID, id, cod
 	}
 	if State(state) != want || version <= 0 {
 		return ErrCodeRejected
+	}
+	now := s.now()
+	if want == StatePending && (expires == nil || !now.Before(*expires) || attempts >= MaxConfirmAttempts) {
+		if err := s.expire(ctx, tid, id, now); err != nil {
+			return err
+		}
+		return ErrCodeRejected
+	}
+	if paused != nil && now.Before(*paused) {
+		return ErrFactorPaused // the code is not evaluated: a correct one gets no answer while paused
 	}
 	dek, err := s.Keys.DEK(ctx, tx, tid, uint32(version))
 	if err != nil {
@@ -234,25 +289,98 @@ func (s *Service) check(ctx context.Context, tx store.Tx, tid tenant.ID, id, cod
 	if last != nil {
 		after = *last
 	}
-	now := s.now()
 	step, ok, replayed := matchStep(seed, code, now, after)
-	switch {
-	case replayed:
-		return ErrCodeReplayed
-	case !ok:
-		return ErrCodeRejected
+	if replayed || !ok {
+		refusal := ErrCodeRejected
+		if replayed {
+			refusal = ErrCodeReplayed
+		}
+		if err := s.recordFailure(ctx, tid, id, want, now); err != nil {
+			return err
+		}
+		return refusal
 	}
 	// Spend the step. Conditional, so two submissions of one code racing past the read above cannot
-	// both win even without the row lock; the trigger also refuses a decreasing step.
+	// both win; the budget and expiry are re-asserted in the same statement; the trigger also refuses
+	// a decreasing step.
 	tag, err := tx.Exec(ctx, `UPDATE public.authn_authenticator_enrollments
 		SET last_used_step = $2, last_used = $3, state = CASE WHEN state = 'pending' THEN 'active' ELSE state END
-		WHERE id = $1::uuid AND state = $4 AND (last_used_step IS NULL OR last_used_step < $2)`,
-		id, step, now, string(want))
+		WHERE id = $1::uuid AND state = $4 AND (last_used_step IS NULL OR last_used_step < $2)
+		  AND (paused_until IS NULL OR paused_until <= $3)
+		  AND (state <> 'pending' OR (expires_at > $3 AND confirm_attempts < $5))`,
+		id, step, now, string(want), MaxConfirmAttempts)
 	if err != nil {
 		return fmt.Errorf("authn: spend step: %w", err)
 	}
 	if tag.RowsAffected() != 1 {
 		return ErrCodeReplayed
+	}
+	return nil
+}
+
+// recordFailure charges one refused code to the enrolment in its own committed transaction. The row is
+// locked first so concurrent refusals count in order and the tenth always sets the pause. A pending
+// enrolment counts confirm attempts and expires on the fifth; an active one uses the rolling hour.
+func (s *Service) recordFailure(ctx context.Context, tid tenant.ID, id string, want State, now time.Time) error {
+	err := s.Failures.WithTenantSeparate(ctx, tid, func(ctx context.Context, tx store.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT set_config('lock_timeout', $1, true)`, recordLockWait); err != nil {
+			return err
+		}
+		var state string
+		var attempts int32
+		if err := tx.QueryRow(ctx, `SELECT state, confirm_attempts FROM public.authn_authenticator_enrollments
+			WHERE id = $1::uuid FOR UPDATE`, id).Scan(&state, &attempts); err != nil {
+			return err
+		}
+		if State(state) != want {
+			return nil // changed under us (activated, revoked, expired): nothing left to charge
+		}
+		if want == StatePending {
+			_, err := tx.Exec(ctx, `UPDATE public.authn_authenticator_enrollments
+				SET confirm_attempts = confirm_attempts + 1,
+				    state = CASE WHEN confirm_attempts + 1 >= $2 THEN 'expired' ELSE state END
+				WHERE id = $1::uuid AND state = 'pending'`, id, MaxConfirmAttempts)
+			return err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO public.authn_totp_failures (tenant_id, enrollment_id, at)
+			VALUES ($1::uuid, $2::uuid, $3)`, tid.String(), id, now); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM public.authn_totp_failures WHERE enrollment_id = $1::uuid AND at < $2`,
+			id, now.Add(-2*FailureWindow)); err != nil {
+			return err
+		}
+		var n int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM public.authn_totp_failures
+			WHERE enrollment_id = $1::uuid AND at > $2 AND at <= $3`, id, now.Add(-FailureWindow), now).Scan(&n); err != nil {
+			return err
+		}
+		if n >= MaxFailuresPerHour {
+			_, err := tx.Exec(ctx, `UPDATE public.authn_authenticator_enrollments SET paused_until = $2
+				WHERE id = $1::uuid AND (paused_until IS NULL OR paused_until <= $3)`, id, now.Add(PauseDuration), now)
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("authn: record failed code: %w", err) // fail closed: an uncounted refusal is an unbounded guess
+	}
+	return nil
+}
+
+// expire moves a pending enrolment past its time or confirm limit to expired, committed on its own so
+// the caller's rollback cannot revive it.
+func (s *Service) expire(ctx context.Context, tid tenant.ID, id string, now time.Time) error {
+	err := s.Failures.WithTenantSeparate(ctx, tid, func(ctx context.Context, tx store.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT set_config('lock_timeout', $1, true)`, recordLockWait); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `UPDATE public.authn_authenticator_enrollments SET state = 'expired'
+			WHERE id = $1::uuid AND state = 'pending' AND (expires_at <= $2 OR confirm_attempts >= $3)`, id, now, MaxConfirmAttempts)
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("authn: expire enrollment: %w", err)
 	}
 	return nil
 }

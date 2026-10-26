@@ -64,7 +64,7 @@ func setup(t *testing.T, s *storetest.Server) *env {
 	e := &env{db: db, d: d, now: time.Unix(1_800_000_000, 0)}
 	e.a = tenanttest.Seed(t, d.ExecOwner, "A")
 	e.b = tenanttest.Seed(t, d.ExecOwner, "B")
-	e.svc = &Service{Keys: &keySource{}, Now: func() time.Time { return e.now }}
+	e.svc = &Service{Keys: &keySource{}, Failures: db, Now: func() time.Time { return e.now }}
 	return e
 }
 

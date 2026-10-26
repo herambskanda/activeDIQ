@@ -243,6 +243,19 @@ func (d *DB) WithTenant(ctx context.Context, id tenant.ID, fn func(ctx context.C
 	return d.run(ctx, id.String(), fn)
 }
 
+// WithTenantSeparate is WithTenant for the one case where a second transaction beside a running one
+// is the point: a record that must commit even if the surrounding transaction rolls back (a refused
+// credential attempt counted against its budget). It is allowed on the context of a running
+// transaction; it uses another connection, so it neither sees the outer transaction's uncommitted
+// writes nor can it wait on them for long: the caller must set a lock_timeout in fn and must not
+// touch rows the outer transaction holds locked.
+func (d *DB) WithTenantSeparate(ctx context.Context, id tenant.ID, fn func(ctx context.Context, tx Tx) error) error {
+	if id.IsZero() {
+		return ErrNoTenant
+	}
+	return d.run(ctx, id.String(), fn)
+}
+
 // WithPlatform runs fn in one transaction with no tenant context, as the same runtime role: every
 // tenant table reads as empty and rejects writes, and only registered-global tables are reachable.
 // Call it only from a site listed in the exemption registry; reason says why, and is logged.

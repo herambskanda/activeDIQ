@@ -17,7 +17,15 @@
 // app to scan; nothing else in the package returns it (DM-37.I1). The RFC primitives use only the
 // standard library, so no dependency and no licence-register row is added.
 //
-// Every refusal of a code is an error the caller must answer identically to the user (ErrCodeRejected
-// and ErrCodeReplayed both mean "that code did not work"); the distinction is for the audit trail.
-// Throttling failed attempts is the caller's: it must count them (threat model §7.2).
+// Every refusal of a code is an error the caller must answer identically to the user (ErrCodeRejected,
+// ErrCodeReplayed and ErrFactorPaused all mean "that code did not work"); the distinction is for the
+// audit trail and for steering a technician to another factor.
+//
+// Failure budget (ENH-09 §5, DM-37): the package, not the caller, bounds guesses per enrolment, in the
+// database so every node shares it: 10 refused codes in a rolling hour pause verification for an hour
+// (paused_until; a correct code is then refused unevaluated), and a pending enrolment expires after
+// 10 minutes or 5 wrong confirmations. Each refusal is committed in a separate short transaction
+// (Service.Failures) so a caller rolling back on refusal cannot undo it; callers must not hold a lock on
+// the enrolment row when they call Verify or Activate. Per-caller limits (sign-in, step-up) are
+// additional and do not replace this one.
 package authn
