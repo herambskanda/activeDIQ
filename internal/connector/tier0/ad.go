@@ -560,6 +560,7 @@ func (b *builder) membersOf(roots []*ad.Entry, basis Basis) error {
 		seen[k] = true
 		queue = append(queue, d)
 	}
+	parent := map[string]string{} // member DN key -> DN of the group that listed it (for the error)
 	isRoot := map[string]bool{}
 	for k := range seen {
 		isRoot[k] = true
@@ -577,6 +578,19 @@ func (b *builder) membersOf(roots []*ad.Entry, basis Basis) error {
 		k, err := dnKey(d)
 		if err != nil {
 			return err
+		}
+		if !isRoot[k] && hasClass(e, "foreignSecurityPrincipal") {
+			// A universal/broad FSP (Everyone, Authenticated Users, Interactive, ...) is a member of
+			// the group: every authenticated principal, the connector included, is then transitively
+			// a member, yet tokenGroups never lists the group, so no later token match can see it.
+			// Only a domain account SID FSP is a real (foreign) principal. Allow-list: fail closed.
+			ss, err := e.SIDs("objectSid")
+			if err != nil || len(ss) != 1 {
+				return fmt.Errorf("tier0: group %s has a foreignSecurityPrincipal member with no readable SID", parent[k])
+			}
+			if !isDomainAccountSID(ss[0]) {
+				return fmt.Errorf("tier0: group %s has the broad SID %s as a (nested) member; every principal would be in its closure", parent[k], ss[0])
+			}
 		}
 		if !isRoot[k] {
 			if _, err := b.mark(e, basis); err != nil {
@@ -603,6 +617,7 @@ func (b *builder) membersOf(roots []*ad.Entry, basis Basis) error {
 			}
 			if !seen[mk] {
 				seen[mk] = true
+				parent[mk] = e.DN
 				queue = append(queue, md)
 			}
 		}

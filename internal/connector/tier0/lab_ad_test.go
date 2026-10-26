@@ -197,3 +197,42 @@ func TestLabADBroadSIDWithFSPFailsClosed(t *testing.T) {
 		t.Fatalf("Authenticated Users WP member on Domain Admins did not fail closed: %+v %v", r, err)
 	}
 }
+
+// T-0382: BUILTIN\Pre-Windows 2000 Compatible Access (S-1-5-32-554) has Authenticated Users as a
+// member, so a rule-2 right granted to it is held by every authenticated bind, though tokenGroups never
+// lists the group. The classifier must not succeed.
+func TestLabADNestedBroadFSPInTrusteeFailsClosed(t *testing.T) {
+	e := testlab.Load(t)
+	if out, err := exec.Command("docker", "exec", e.Container, "true").CombinedOutput(); err != nil {
+		t.Fatalf("lab container %s not available (run `make lab-up`): %v %s", e.Container, err, out)
+	}
+	env := e.Values
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	sess, err := ad.Open(ctx, ad.Config{
+		Servers: []string{"localhost:" + e.Port}, RootCAs: e.Pool, PageSize: 500,
+		Credential: ad.Credential{BindName: "svc-activediq@lab.activediq.test", Password: secret.FromBytes([]byte(env["LAB_SVC_PASSWORD"]))},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sess.Close()
+
+	daDN := "CN=Domain Admins,CN=Users," + labDom
+	sddl := "(OA;;WP;bf9679c0-0de6-11d0-b285-00c04fb9698d;;PA)" // WP member for S-1-5-32-554
+	if out, err := exec.Command("docker", "exec", e.Container, "samba-tool", "dsacl", "set", "--objectdn="+daDN, "--sddl="+sddl).CombinedOutput(); err != nil {
+		t.Fatalf("dsacl set: %v %s", err, out)
+	}
+	t.Cleanup(func() {
+		_, _ = exec.Command("docker", "exec", e.Container, "samba-tool", "dsacl", "delete", "--objectdn="+daDN, "--sddl="+sddl).CombinedOutput()
+	})
+	target, err := dn.ParseObjectRef("CN=Administrator,CN=Users," + labDom)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := NewAD(SessionDirectory{S: sess}).Classify(ctx, target, ADInput{CorrelationKnown: true})
+	if err == nil {
+		t.Fatalf("Pre-Windows 2000 Compatible Access WP member on Domain Admins did not fail closed: %+v", r)
+	}
+	t.Logf("failed closed: %v", err)
+}
