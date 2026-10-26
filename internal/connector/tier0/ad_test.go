@@ -93,6 +93,11 @@ func forest() *fakeDir {
 	f.add("CN=Windows NT,CN=Services,"+cfg, "", cont)
 	f.add("CN=Directory Service,CN=Windows NT,CN=Services,"+cfg, "", cont)
 
+	// Default foreignSecurityPrincipals for well-known SIDs, as in real AD and the Samba lab.
+	f.add("CN=ForeignSecurityPrincipals,"+dom, "", cont)
+	for _, w := range []string{"S-1-5-4", "S-1-5-9", "S-1-5-11", "S-1-5-17"} {
+		f.add("CN="+w+",CN=ForeignSecurityPrincipals,"+dom, w, cls("top", "foreignSecurityPrincipal"))
+	}
 	// C1 groups, with the nesting nasties.
 	f.add("CN=Domain Admins,CN=Users,"+dom, dsid+"-512", group, "member", "CN=alice,OU=Admins,"+dom, "member", "CN=Nested,OU=Staff,"+dom)
 	f.add("CN=Domain Controllers,CN=Users,"+dom, dsid+"-516", group)

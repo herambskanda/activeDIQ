@@ -1108,6 +1108,15 @@ func (b *builder) markPrincipalsSkip(sids []sid.SID, basis Basis, skip func(*ad.
 		if err != nil {
 			return err
 		}
+		// A foreignSecurityPrincipal for a well-known SID (Authenticated Users, Interactive, Network,
+		// This Organization, ...) is only a placeholder AD keeps for group membership: the token
+		// carries the SID for every principal, so the FSP is not the principal and the SID is treated
+		// as unresolved (ignorable or fail closed). Foreign-domain FSPs (a domain part) stay principals.
+		if found && hasClass(e, "foreignSecurityPrincipal") {
+			if _, hasDomain := s.DomainSID(); !hasDomain {
+				found = false
+			}
+		}
 		holders, err := b.historyHolders(s)
 		if err != nil {
 			return err

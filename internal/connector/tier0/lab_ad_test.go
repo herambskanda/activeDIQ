@@ -8,7 +8,9 @@ import (
 	"crypto/x509"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -141,5 +143,57 @@ func TestLabADSeededObjects(t *testing.T) {
 		if err != nil || !r.Tier0 || !has(r, x.want) {
 			t.Errorf("%s: %+v %v", x.dn, r, err)
 		}
+	}
+}
+
+// T-0380 / TM-D27 rule 4: Authenticated Users (S-1-5-11) holding WP member on Domain Admins must fail
+// the snapshot closed. The lab holds CN=S-1-5-11,CN=ForeignSecurityPrincipals; resolving the trustee to
+// that FSP and marking only it used to let the snapshot succeed with nobody newly tier0.
+func TestLabADBroadSIDWithFSPFailsClosed(t *testing.T) {
+	e := testlab.Load(t)
+	if out, err := exec.Command("docker", "exec", e.Container, "true").CombinedOutput(); err != nil {
+		t.Fatalf("lab container %s not available (run `make lab-up`): %v %s", e.Container, err, out)
+	}
+	env := e.Values
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	sess, err := ad.Open(ctx, ad.Config{
+		Servers: []string{"localhost:" + e.Port}, RootCAs: e.Pool, PageSize: 500,
+		Credential: ad.Credential{BindName: "svc-activediq@lab.activediq.test", Password: secret.FromBytes([]byte(env["LAB_SVC_PASSWORD"]))},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sess.Close()
+
+	// Precondition: the lab holds the default FSP. Samba cannot resolve it by <SID=S-1-5-11> (the SID
+	// base search reports "Duplicate base-DN matches" across partitions, mapped to not-found), so on
+	// Samba the classifier already fails closed by accident; the FSP-resolves-to-placeholder path that
+	// real AD takes is covered by the unit fake (default FSPs) and needs a Windows-lab test.
+	fspDN, err := dn.ParseObjectRef("CN=S-1-5-11,CN=ForeignSecurityPrincipals," + labDom)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fsp, err := sess.Read(ctx, fspDN, []string{"objectClass"}, ad.ReadOptions{})
+	if err != nil || !hasClass(fsp, "foreignSecurityPrincipal") {
+		t.Fatalf("lab has no FSP for S-1-5-11: %v %v", fsp, err)
+	}
+
+	daDN := "CN=Domain Admins,CN=Users," + labDom
+	sddl := "(OA;;WP;bf9679c0-0de6-11d0-b285-00c04fb9698d;;AU)" // WP member for Authenticated Users
+	if out, err := exec.Command("docker", "exec", e.Container, "samba-tool", "dsacl", "set", "--objectdn="+daDN, "--sddl="+sddl).CombinedOutput(); err != nil {
+		t.Fatalf("dsacl set: %v %s", err, out)
+	}
+	t.Cleanup(func() {
+		_, _ = exec.Command("docker", "exec", e.Container, "samba-tool", "dsacl", "delete", "--objectdn="+daDN, "--sddl="+sddl).CombinedOutput()
+	})
+
+	target, err := dn.ParseObjectRef("CN=Administrator,CN=Users," + labDom)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := NewAD(SessionDirectory{S: sess}).Classify(ctx, target, ADInput{CorrelationKnown: true})
+	if err == nil || !strings.Contains(err.Error(), "S-1-5-11") {
+		t.Fatalf("Authenticated Users WP member on Domain Admins did not fail closed: %+v %v", r, err)
 	}
 }
