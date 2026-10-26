@@ -294,5 +294,9 @@ func TestLabADUnreadableNestedMemberFailsClosed(t *testing.T) {
 	if err == nil || !r.Unknown {
 		t.Fatalf("hidden nested group did not fail the snapshot closed: %+v %v", r, err)
 	}
+	// Assert the cause, so an unrelated read error cannot satisfy this test.
+	if !strings.Contains(err.Error(), "objectGUID missing") {
+		t.Fatalf("failed closed for the wrong reason: %v", err)
+	}
 	t.Logf("failed closed: %v", err)
 }
