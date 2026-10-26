@@ -48,7 +48,7 @@ func buildOperation(holdsMinter func() bool, db *store.DB, facts operation.LiveF
 // facts reader (client.ConnectorFacts). reads is the connector's read adapter; until the gRPC adapter
 // lands (a nil reads) a directory target fails closed with client.ErrNoReads, while a tier0_scope
 // target or a store target is answered without a read.
-func directoryFacts(reads client.Reads) operation.LiveFacts {
+func directoryFacts(reads client.Reads) *client.Client {
 	return client.New(client.WithFacts(client.NewConnectorFacts(reads)))
 }
 

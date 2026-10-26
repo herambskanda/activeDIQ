@@ -38,15 +38,20 @@ type Service struct {
 	client ConnectorClient
 	sink   audit.Sink
 	now    func() time.Time
+	sched  Scheduler
 }
 
 // NewService binds the registry, the connector client and the audit sink. All three are required: a
 // service without a sink would change state with no trail.
-func NewService(reg *Registry, client ConnectorClient, sink audit.Sink) (*Service, error) {
+func NewService(reg *Registry, client ConnectorClient, sink audit.Sink, opts ...Option) (*Service, error) {
 	if reg == nil || reg.db == nil || client == nil || sink == nil {
 		return nil, fmt.Errorf("%w: service needs a registry, a connector client and an audit sink", ErrInvalid)
 	}
-	return &Service{reg: reg, client: client, sink: sink, now: time.Now}, nil
+	sv := &Service{reg: reg, client: client, sink: sink, now: time.Now}
+	for _, o := range opts {
+		o(sv)
+	}
+	return sv, nil
 }
 
 // VerifyOutcome is a recorded run. Findings are filled; the caller shows them only to an account that
@@ -77,7 +82,10 @@ func (s *Service) Activate(ctx context.Context, tid tenant.ID, id ID, actor auth
 				return err
 			}
 		}
-		return s.sink.Append(ctx, tx, s.activatedEvent(actor, c, fast.Verification.ID, audit.Success, ""))
+		if err := s.sink.Append(ctx, tx, s.activatedEvent(actor, c, fast.Verification.ID, audit.Success, "")); err != nil {
+			return err
+		}
+		return s.schedule(ctx, tx, tid)
 	})
 	if err == nil {
 		return fast, nil
@@ -251,7 +259,7 @@ func (s *Service) settle(ctx context.Context, tid tenant.ID, conn Connection, ki
 	var refused error
 	err := s.reg.with(ctx, tid, func(ctx context.Context, tx store.Tx) error {
 		refused, out = nil, VerifyOutcome{}
-		return s.record(ctx, tx, conn, kind, vid, started, actor, r, &out, &refused)
+		return s.record(ctx, tx, tid, conn, kind, vid, started, actor, r, &out, &refused)
 	})
 	if err != nil {
 		return VerifyOutcome{}, err
@@ -259,7 +267,7 @@ func (s *Service) settle(ctx context.Context, tid tenant.ID, conn Connection, ki
 	return out, refused
 }
 
-func (s *Service) record(ctx context.Context, tx store.Tx, conn Connection, kind VerificationKind, vid VerificationID,
+func (s *Service) record(ctx context.Context, tx store.Tx, tid tenant.ID, conn Connection, kind VerificationKind, vid VerificationID,
 	started time.Time, actor authority.Chain, r VerifyResult, out *VerifyOutcome, refused *error) error {
 	var prev *Verification
 	if conn.LastVerificationID != "" {
@@ -297,7 +305,10 @@ func (s *Service) record(ctx context.Context, tx store.Tx, conn Connection, kind
 		switch {
 		case aerr == nil:
 			out.Connection = c
-			return s.sink.Append(ctx, tx, s.activatedEvent(actor, c, v.ID, audit.Success, ""))
+			if err := s.sink.Append(ctx, tx, s.activatedEvent(actor, c, v.ID, audit.Success, "")); err != nil {
+				return err
+			}
+			return s.schedule(ctx, tx, tid)
 		case errors.As(aerr, &ae):
 			// The run is kept; the connection goes back to draft (DM-10.I10) and the refusal is audited.
 			if err := s.sink.Append(ctx, tx, s.activatedEvent(actor, conn, v.ID, audit.Denied, ae.Code)); err != nil {
@@ -318,6 +329,14 @@ func (s *Service) record(ctx context.Context, tx store.Tx, conn Connection, kind
 		out.Connection = c
 	}
 	return nil
+}
+
+// schedule starts the tenant's scheduled check with the activation, in its transaction.
+func (s *Service) schedule(ctx context.Context, tx store.Tx, tid tenant.ID) error {
+	if s.sched == nil {
+		return nil
+	}
+	return s.sched.ScheduleCheck(ctx, tx, tid)
 }
 
 // interrupted records a run that did not complete as failed with the over-privilege check not_run,
