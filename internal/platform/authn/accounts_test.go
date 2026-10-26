@@ -3,8 +3,11 @@ package authn
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"testing"
 
+	"github.com/skenzeriq/activediq/internal/platform/audit"
+	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
@@ -47,6 +50,21 @@ type acctEnv struct {
 	d   *storetest.Database
 	ten tenant.ID
 	a   *Accounts
+	ss  *Store
+	snk *flakySink
+}
+
+// flakySink records events and fails Append while fail is set.
+type flakySink struct {
+	recSink
+	fail bool
+}
+
+func (f *flakySink) Append(ctx context.Context, tx store.Tx, ev audit.Event) error {
+	if f.fail {
+		return errors.New("sink down")
+	}
+	return f.recSink.Append(ctx, tx, ev)
 }
 
 func eachAcct(t *testing.T, fn func(t *testing.T, e *acctEnv)) {
@@ -63,11 +81,16 @@ func eachAcct(t *testing.T, fn func(t *testing.T, e *acctEnv)) {
 			t.Fatal(err)
 		}
 		t.Cleanup(db.Close)
-		a, err := NewAccounts(db)
+		snk := &flakySink{}
+		ss, err := New(Config{DB: db, Audit: snk, Policies: StaticPolicy(pol)})
 		if err != nil {
 			t.Fatal(err)
 		}
-		fn(t, &acctEnv{d: d, ten: ten, a: a})
+		a, err := NewAccounts(db, ss)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fn(t, &acctEnv{d: d, ten: ten, a: a, ss: ss, snk: snk})
 	})
 }
 
@@ -145,7 +168,7 @@ func TestSSOBindingRoundTrip(t *testing.T) {
 			if a.Anchor != nil || a.Ref != nil {
 				t.Fatalf("%s: new sso account should be unbound", tc.name)
 			}
-			if _, err := e.a.Bind(ctx, e.ten, a.ID, tc.anchor, tc.ref); err != nil {
+			if _, err := e.a.Bind(ctx, e.ten, a.ID, tc.anchor, tc.ref, human); err != nil {
 				t.Fatalf("%s: bind: %v", tc.name, err)
 			}
 			got, err := e.a.LookupSSO(ctx, e.ten, "https://idp.example/", tc.sub)
@@ -155,7 +178,7 @@ func TestSSOBindingRoundTrip(t *testing.T) {
 			if got.Anchor == nil || *got.Anchor != tc.anchor || got.Ref == nil || *got.Ref != tc.ref {
 				t.Fatalf("%s: read back anchor=%+v ref=%+v", tc.name, got.Anchor, got.Ref)
 			}
-			if _, err := e.a.Bind(ctx, e.ten, a.ID, tc.anchor, tc.ref); !errors.Is(err, ErrAlreadyBound) {
+			if _, err := e.a.Bind(ctx, e.ten, a.ID, tc.anchor, tc.ref, human); !errors.Is(err, ErrAlreadyBound) {
 				t.Fatalf("%s: rebind = %v, want ErrAlreadyBound", tc.name, err)
 			}
 		}
@@ -177,19 +200,19 @@ func TestAccountsUniquenessAndLifecycle(t *testing.T) {
 		if _, err := e.a.Create(ctx, d); !errors.Is(err, ErrAccountExists) {
 			t.Fatalf("duplicate directory account = %v", err)
 		}
-		if _, err := e.a.Bind(ctx, e.ten, a.ID, Anchor{Kind: AnchorOnpremSID, Value: acctSID}, *d.Ref); !errors.Is(err, ErrInvalidInput) {
+		if _, err := e.a.Bind(ctx, e.ten, a.ID, Anchor{Kind: AnchorOnpremSID, Value: acctSID}, *d.Ref, human); !errors.Is(err, ErrInvalidInput) {
 			t.Fatalf("binding a directory account = %v", err)
 		}
-		if _, err := e.a.SetState(ctx, e.ten, a.ID, AccountActive); err != nil {
+		if _, err := e.a.SetState(ctx, e.ten, a.ID, AccountActive, human); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := e.a.SetState(ctx, e.ten, a.ID, AccountInvited); !errors.Is(err, ErrBadTransition) {
+		if _, err := e.a.SetState(ctx, e.ten, a.ID, AccountInvited, human); !errors.Is(err, ErrBadTransition) {
 			t.Fatalf("active → invited = %v", err)
 		}
-		if _, err := e.a.SetState(ctx, e.ten, a.ID, AccountDeleted); err != nil {
+		if _, err := e.a.SetState(ctx, e.ten, a.ID, AccountDeleted, human); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := e.a.SetState(ctx, e.ten, a.ID, AccountActive); !errors.Is(err, ErrBadTransition) {
+		if _, err := e.a.SetState(ctx, e.ten, a.ID, AccountActive, human); !errors.Is(err, ErrBadTransition) {
 			t.Fatalf("deleted → active = %v", err)
 		}
 		// A deleted account releases its directory object.
@@ -204,6 +227,126 @@ func TestAccountsUniquenessAndLifecycle(t *testing.T) {
 			if _, err := e.a.Create(ctx, bad); !errors.Is(err, ErrInvalidInput) {
 				t.Errorf("Create(%+v) = %v, want ErrInvalidInput", bad, err)
 			}
+		}
+	})
+}
+
+func newSSO(t *testing.T, e *acctEnv, sub string) Account {
+	t.Helper()
+	a, err := e.a.Create(context.Background(), NewAccount{Tenant: e.ten, Kind: KindSSO, DisplayName: sub, CreatedBy: "system",
+		SSOIssuer: "https://idp.example/", SSOSubject: sub, MFARequired: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a
+}
+
+func liveSession(t *testing.T, e *acctEnv, acct string) Token {
+	t.Helper()
+	r, err := e.ss.Create(context.Background(), CreateInput{Tenant: e.ten, Account: acct, Methods: []string{"password"}, ClientIP: netip.MustParseAddr("192.0.2.9")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r.Token
+}
+
+// DM-31.I2: disabling or deleting an account ends its sessions in the same transaction.
+func TestSetStateRevokesSessions(t *testing.T) {
+	eachAcct(t, func(t *testing.T, e *acctEnv) {
+		ctx := context.Background()
+		for _, to := range []AccountState{AccountDisabled, AccountDeleted} {
+			a := newSSO(t, e, "u-"+string(to))
+			if _, err := e.a.SetState(ctx, e.ten, a.ID, AccountActive, human); err != nil {
+				t.Fatal(err)
+			}
+			tok := liveSession(t, e, a.ID)
+			if _, err := e.ss.Lookup(ctx, tok); err != nil {
+				t.Fatalf("live session: %v", err)
+			}
+			if _, err := e.a.SetState(ctx, e.ten, a.ID, to, human); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := e.ss.Lookup(ctx, tok); !errors.Is(err, ErrRevoked) {
+				t.Fatalf("%s: Lookup = %v, want ErrRevoked", to, err)
+			}
+		}
+		// invited → deleted also revokes.
+		a := newSSO(t, e, "u-inv")
+		tok := liveSession(t, e, a.ID)
+		if _, err := e.a.SetState(ctx, e.ten, a.ID, AccountDeleted, human); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.ss.Lookup(ctx, tok); !errors.Is(err, ErrRevoked) {
+			t.Fatalf("invited→deleted: Lookup = %v, want ErrRevoked", err)
+		}
+		// Re-enabling does not touch sessions or fail.
+		b := newSSO(t, e, "u-act")
+		if _, err := e.a.SetState(ctx, e.ten, b.ID, AccountActive, human); err != nil {
+			t.Fatal(err)
+		}
+		tb := liveSession(t, e, b.ID)
+		if _, err := e.a.SetState(ctx, e.ten, b.ID, AccountDisabled, human); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.a.SetState(ctx, e.ten, b.ID, AccountActive, human); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.ss.Lookup(ctx, tb); !errors.Is(err, ErrRevoked) {
+			t.Fatalf("revoked session came back: %v", err)
+		}
+	})
+}
+
+// Bind and SetState are attributed, and a failing audit sink rolls the change back.
+func TestAccountChangesAuditedAndFailClosed(t *testing.T) {
+	eachAcct(t, func(t *testing.T, e *acctEnv) {
+		ctx := context.Background()
+		an, ref := Anchor{Kind: AnchorOID, Value: acctOID, TenantID: acctTID}, DirectoryRef{ConnectionID: acctConn, ObjectGUID: acctGUID}
+		a := newSSO(t, e, "audited")
+
+		e.snk.fail = true
+		if _, err := e.a.Bind(ctx, e.ten, a.ID, an, ref, human); err == nil {
+			t.Fatal("Bind succeeded with the audit sink down")
+		}
+		if got, _ := e.a.Get(ctx, e.ten, a.ID); got.Anchor != nil || got.Ref != nil {
+			t.Fatal("binding persisted despite audit failure")
+		}
+		e.snk.fail = false
+		if _, err := e.a.Bind(ctx, e.ten, a.ID, an, ref, human); err != nil {
+			t.Fatal(err)
+		}
+		evs := e.snk.of(KindAccountBound)
+		if len(evs) != 1 || evs[0].Actor.Requester != human.Requester || evs[0].Target.GUID != a.ID ||
+			evs[0].Details[1].Value != acctConn || evs[0].Details[2].Value != acctGUID {
+			t.Fatalf("bound events = %+v", evs)
+		}
+
+		// State change: failing sink leaves the state and the session alone.
+		if _, err := e.a.SetState(ctx, e.ten, a.ID, AccountActive, human); err != nil {
+			t.Fatal(err)
+		}
+		tok := liveSession(t, e, a.ID)
+		e.snk.fail = true
+		if _, err := e.a.SetState(ctx, e.ten, a.ID, AccountDisabled, human); err == nil {
+			t.Fatal("SetState succeeded with the audit sink down")
+		}
+		e.snk.fail = false
+		if got, _ := e.a.Get(ctx, e.ten, a.ID); got.State != AccountActive {
+			t.Fatalf("state = %s after failed change", got.State)
+		}
+		if _, err := e.ss.Lookup(ctx, tok); err != nil {
+			t.Fatalf("session revoked by a rolled-back change: %v", err)
+		}
+		if _, err := e.a.SetState(ctx, e.ten, a.ID, AccountDisabled, human); err != nil {
+			t.Fatal(err)
+		}
+		sc := e.snk.of(KindAccountStateChanged)
+		last := sc[len(sc)-1]
+		if last.Actor.Requester != human.Requester || last.Details[0].Value != "active" || last.Details[1].Value != "disabled" {
+			t.Fatalf("state_changed = %+v", last)
+		}
+		if _, err := e.a.SetState(ctx, e.ten, a.ID, AccountActive, authority.Chain{}); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("empty chain = %v", err)
 		}
 	})
 }

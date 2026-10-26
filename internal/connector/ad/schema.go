@@ -57,6 +57,7 @@ func DefaultSchema() *ldapfilter.Schema {
 			ldapfilter.AttrInfo{Name: "dSHeuristics", OID: "1.2.840.113556.1.2.212", Syntax: s},
 			ldapfilter.AttrInfo{Name: "gPOptions", OID: "1.2.840.113556.1.4.892", Syntax: ldapfilter.SynInt32},
 			ldapfilter.AttrInfo{Name: "wellKnownObjects", OID: "1.2.840.113556.1.4.618", Syntax: s},
+			ldapfilter.AttrInfo{Name: "msDS-Behavior-Version", OID: "1.2.840.113556.1.4.1459", Syntax: ldapfilter.SynInt32},
 			ldapfilter.AttrInfo{Name: "msDS-SecondaryKrbTgtNumber", OID: "1.2.840.113556.1.4.1926", Syntax: ldapfilter.SynInt32},
 			ldapfilter.AttrInfo{Name: "msDS-AllowedToDelegateTo", OID: "1.2.840.113556.1.4.1787", Syntax: s},
 			ldapfilter.AttrInfo{Name: "msDS-AllowedToActOnBehalfOfOtherIdentity", OID: "1.2.840.113556.1.4.2182", Syntax: ldapfilter.SynOctet},

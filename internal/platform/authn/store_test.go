@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/skenzeriq/activediq/internal/platform/audit"
+	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
@@ -31,9 +33,10 @@ func (c *fakeClock) advance(d time.Duration) {
 }
 
 type sessEnv struct {
-	d   *storetest.Database
-	ten tenant.ID
-	clk *fakeClock
+	d    *storetest.Database
+	ten  tenant.ID
+	clk  *fakeClock
+	sink *recSink
 }
 
 func (e *sessEnv) node(t *testing.T, p Policy) *Store {
@@ -43,18 +46,28 @@ func (e *sessEnv) node(t *testing.T, p Policy) *Store {
 		t.Fatalf("store.Open as the runtime role: %v", err)
 	}
 	t.Cleanup(db.Close)
-	s, err := New(Config{DB: db, Policies: StaticPolicy(p), Clock: e.clk.now, TouchEvery: time.Second})
+	s, err := New(Config{DB: db, Audit: e.sink, Policies: StaticPolicy(p), Clock: e.clk.now, TouchEvery: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return s
 }
 
+// skewClock is for tests that move the fake clock hours past the database clock: the INSERT guard
+// (migration 0017) bounds timestamps by the database clock, so it is disabled for that test database.
+// TestAuthnSessionInsertGuard exercises the guard and does not call it.
+func (e *sessEnv) skewClock(t *testing.T) {
+	t.Helper()
+	if err := e.d.ExecOwner(context.Background(), `ALTER TABLE public.authn_sessions DISABLE TRIGGER authn_sessions_insert_guard`); err != nil {
+		t.Fatalf("disable the insert guard: %v", err)
+	}
+}
+
 func each(t *testing.T, fn func(t *testing.T, e *sessEnv)) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		d := s.NewDatabase(t)
 		d.Migrate(t)
-		fn(t, &sessEnv{d: d, ten: tenanttest.Seed(t, d.ExecOwner, "t1"), clk: &fakeClock{t: time.Now().UTC().Truncate(time.Millisecond)}})
+		fn(t, &sessEnv{d: d, ten: tenanttest.Seed(t, d.ExecOwner, "t1"), clk: &fakeClock{t: time.Now().UTC().Truncate(time.Millisecond)}, sink: &recSink{}})
 	})
 }
 
@@ -112,6 +125,7 @@ func TestSessionIDStoredHashed(t *testing.T) {
 
 func TestSessionExpiry(t *testing.T) {
 	each(t, func(t *testing.T, e *sessEnv) {
+		e.skewClock(t)
 		s := e.node(t, pol)
 		acct := tenant.New().String()
 		state := func(id string) (st, reason string) {
@@ -252,7 +266,7 @@ func TestSessionRevocationOnEvents(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			n, err := nodeA.RevokeAccount(context.Background(), e.ten, acct, why)
+			n, err := nodeA.RevokeAccount(context.Background(), e.ten, acct, why, human)
 			if err != nil || n != 2 {
 				t.Fatalf("%s: RevokeAccount = %d, %v; want 2", why, n, err)
 			}
@@ -266,14 +280,14 @@ func TestSessionRevocationOnEvents(t *testing.T) {
 			if _, err := nodeB.Lookup(context.Background(), bystander.Token); err != nil {
 				t.Fatalf("%s: another account's session was revoked: %v", why, err)
 			}
-			if n, _ := nodeA.RevokeAccount(context.Background(), e.ten, acct, why); n != 0 {
+			if n, _ := nodeA.RevokeAccount(context.Background(), e.ten, acct, why, human); n != 0 {
 				t.Fatalf("%s: second revoke ended %d", why, n)
 			}
 		}
 		// On demand, one session by handle; and logout.
 		acct := tenant.New().String()
 		x, y := create(t, nodeA, e.ten, acct), create(t, nodeA, e.ten, acct)
-		if ok, err := nodeB.Revoke(context.Background(), e.ten, x.Session.ID, ReasonOnDemand); err != nil || !ok {
+		if ok, err := nodeB.Revoke(context.Background(), e.ten, x.Session.ID, ReasonOnDemand, human); err != nil || !ok {
 			t.Fatalf("Revoke = %v, %v", ok, err)
 		}
 		if _, err := nodeA.Lookup(context.Background(), x.Token); !errors.Is(err, ErrRevoked) {
@@ -285,7 +299,7 @@ func TestSessionRevocationOnEvents(t *testing.T) {
 		if _, err := nodeB.Lookup(context.Background(), y.Token); !errors.Is(err, ErrRevoked) {
 			t.Fatalf("logged-out lookup = %v", err)
 		}
-		if _, err := nodeA.RevokeAccount(context.Background(), e.ten, acct, Reason("because")); !errors.Is(err, ErrInvalid) {
+		if _, err := nodeA.RevokeAccount(context.Background(), e.ten, acct, Reason("because"), human); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("unknown reason = %v, want ErrInvalid", err)
 		}
 	})
@@ -305,7 +319,7 @@ func TestTenantIsolationAndForgedTokens(t *testing.T) {
 		if _, err := s.Lookup(context.Background(), forged); !errors.Is(err, ErrSessionNotFound) {
 			t.Fatalf("cross-tenant lookup = %v, want ErrSessionNotFound", err)
 		}
-		if n, err := s.RevokeAccount(context.Background(), other, acct, ReasonOnDemand); err != nil || n != 0 {
+		if n, err := s.RevokeAccount(context.Background(), other, acct, ReasonOnDemand, human); err != nil || n != 0 {
 			t.Fatalf("cross-tenant revoke = %d, %v", n, err)
 		}
 		for _, bad := range []string{"", "x", strings.Repeat("a", 80), r.Token.Reveal() + "A", r.Token.Reveal()[:79]} {
@@ -324,7 +338,7 @@ func TestEndedSessionsAreFinalAndNotDeletable(t *testing.T) {
 	each(t, func(t *testing.T, e *sessEnv) {
 		s := e.node(t, pol)
 		r := create(t, s, e.ten, tenant.New().String())
-		if _, err := s.Revoke(context.Background(), e.ten, r.Session.ID, ReasonOnDemand); err != nil {
+		if _, err := s.Revoke(context.Background(), e.ten, r.Session.ID, ReasonOnDemand, human); err != nil {
 			t.Fatal(err)
 		}
 		err := s.db.WithTenant(context.Background(), e.ten, func(ctx context.Context, tx store.Tx) error {
@@ -353,4 +367,98 @@ func TestPolicyOutsideBoundsIsRefused(t *testing.T) {
 	if err := DefaultPolicy.Validate(DefaultBounds); err != nil {
 		t.Fatalf("the default policy is outside the default bounds: %v", err)
 	}
+}
+
+// authn_session_insert_guard: the runtime role cannot mint a session that is ended, backdated, or
+// outlives the platform maximum (T-0390).
+func TestAuthnSessionInsertGuard(t *testing.T) {
+	if DefaultBounds.AbsoluteMax != 24*time.Hour {
+		t.Fatalf("DefaultBounds.AbsoluteMax is %s: migrations/0017_authn_sessions_insert_guard.sql hardcodes 24h; "+
+			"change the guard (new forward migration) together with the Go bound", DefaultBounds.AbsoluteMax)
+	}
+	each(t, func(t *testing.T, e *sessEnv) {
+		s := e.node(t, pol)
+		const ins = `INSERT INTO public.authn_sessions
+  (tenant_id, id_hash, account_id, methods, created_at, last_seen_at, idle_expiry, absolute_expiry, state, ended_at, end_reason)
+VALUES ($1, $2, $3::uuid, ARRAY['password'], $4, $5, $6, $7, $8, $9, $10)`
+		now := time.Now().UTC()
+		type row struct {
+			name                     string
+			created, seen, idle, abs time.Time
+			state                    string
+			endedAt                  *time.Time
+			endReason                *string
+			ok                       bool
+		}
+		reason := "logout"
+		rows := []row{
+			{name: "valid", created: now, seen: now, idle: now.Add(time.Minute), abs: now.Add(time.Hour), state: "active", ok: true},
+			{name: "already ended", created: now, seen: now, idle: now.Add(time.Minute), abs: now.Add(time.Hour), state: "revoked", endedAt: &now, endReason: &reason},
+			{name: "expired deadline", created: now.Add(-2 * time.Hour), seen: now, idle: now.Add(-time.Hour), abs: now.Add(-time.Minute), state: "active"},
+			{name: "backdated", created: now.Add(-3 * time.Hour), seen: now.Add(-3 * time.Hour), idle: now.Add(time.Minute), abs: now.Add(time.Hour), state: "active"},
+			{name: "deadline beyond policy", created: now, seen: now, idle: now.Add(time.Minute), abs: now.Add(30 * 24 * time.Hour), state: "active"},
+			{name: "future-dated", created: now.Add(24 * time.Hour), seen: now.Add(24 * time.Hour), idle: now.Add(24 * time.Hour), abs: now.Add(24*time.Hour + 4*time.Minute), state: "active"},
+			{name: "window beyond policy", created: now.Add(-48 * time.Hour), seen: now, idle: now.Add(time.Minute), abs: now.Add(time.Hour), state: "active"},
+		}
+		for i, r := range rows {
+			hash := sha256.Sum256([]byte{byte(i)})
+			err := s.db.WithTenant(context.Background(), e.ten, func(ctx context.Context, tx store.Tx) error {
+				_, err := tx.Exec(ctx, ins, e.ten.String(), hash[:], tenant.New().String(), r.created, r.seen, r.idle, r.abs, r.state, r.endedAt, r.endReason)
+				return err
+			})
+			if r.ok && err != nil {
+				t.Errorf("%s: refused: %v", r.name, err)
+			}
+			if !r.ok && err == nil {
+				t.Errorf("%s: the database accepted it", r.name)
+			}
+		}
+	})
+}
+
+var human = authority.Chain{Requester: authority.Principal{ID: "admin-1", Kind: authority.Human}}
+
+// recSink records the audit events a Store requests. It stands in for the chainer where a test reads the
+// events themselves; TestSessionEventsChained uses the real chain.
+type recSink struct {
+	mu  sync.Mutex
+	evs []audit.Event
+}
+
+func (r *recSink) Append(_ context.Context, _ store.Tx, ev audit.Event) error {
+	if err := ev.Validate(); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.evs = append(r.evs, ev)
+	return nil
+}
+
+func (r *recSink) kinds() []audit.Kind {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var k []audit.Kind
+	for _, e := range r.evs {
+		k = append(k, e.Kind)
+	}
+	return k
+}
+
+func (r *recSink) of(k audit.Kind) []audit.Event {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []audit.Event
+	for _, e := range r.evs {
+		if e.Kind == k {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func (r *recSink) reset() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.evs = nil
 }

@@ -168,6 +168,7 @@ func TestRotateKillsOldTokenAndChangesCSRF(t *testing.T) {
 
 func TestRotateKeepsAbsoluteDeadline(t *testing.T) {
 	each(t, func(t *testing.T, e *sessEnv) {
+		e.skewClock(t)
 		s := e.node(t, pol)
 		ctx := context.Background()
 		cur := create(t, s, e.ten, tenant.New().String())

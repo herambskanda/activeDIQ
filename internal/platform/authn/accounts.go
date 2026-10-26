@@ -7,6 +7,9 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/skenzeriq/activediq/internal/platform/audit"
+	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
+	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tablekind"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
@@ -105,15 +108,39 @@ type NewAccount struct {
 	Ref         *DirectoryRef // directory accounts only
 }
 
-// Accounts is the DM-30 store. It is safe for concurrent use.
-type Accounts struct{ db *store.DB }
+// Audit kinds of the account lifecycle (DM-30). Events carry the account's ID, never a secret.
+const (
+	KindAccountBound        audit.Kind = "authn.account.bound"
+	KindAccountStateChanged audit.Kind = "authn.account.state_changed"
+)
 
-// NewAccounts returns the account store over db.
-func NewAccounts(db *store.DB) (*Accounts, error) {
-	if db == nil {
-		return nil, errors.New("authn: accounts need a database")
+// Accounts is the DM-30 store. It is safe for concurrent use. Disabling or deleting an account ends
+// its sessions through the session store inside the same transaction (DM-31.I2), and binding and
+// state changes are audited there too, so a failure of either rolls the change back.
+type Accounts struct {
+	db       *store.DB
+	sessions *Store
+}
+
+// NewAccounts returns the account store over db. sessions is the session store whose audit sink and
+// revocation the account changes use.
+func NewAccounts(db *store.DB, sessions *Store) (*Accounts, error) {
+	if db == nil || sessions == nil {
+		return nil, errors.New("authn: accounts need a database and a session store")
 	}
-	return &Accounts{db: db}, nil
+	return &Accounts{db: db, sessions: sessions}, nil
+}
+
+func (s *Accounts) emit(ctx context.Context, tx store.Tx, now time.Time, id string, kind audit.Kind, eid string, by authority.Chain, reason string, details []chain.Detail) error {
+	ev := audit.Event{
+		ID: "authn.account." + id + "." + eid, Kind: kind, At: now, Actor: by,
+		Target:    authority.TargetRef{GUID: id, Class: "account"},
+		Component: "authn", Outcome: audit.Success, Reason: reason, Details: details,
+	}
+	if err := s.sessions.audit.Append(ctx, tx, ev); err != nil {
+		return fmt.Errorf("authn: audit account event: %w", err)
+	}
+	return nil
 }
 
 var (
@@ -261,9 +288,10 @@ func (s *Accounts) one(ctx context.Context, t tenant.ID, where string, args ...a
 // Bind records the anchor and the directory object it resolved to on an unbound sso account
 // (DM-30.I5). The caller resolves the anchor through DirectoryAnchors first and passes the GUID;
 // the SID is never stored as the reference. An already-bound account returns ErrAlreadyBound: this
-// never rebinds.
-func (s *Accounts) Bind(ctx context.Context, t tenant.ID, id string, an Anchor, ref DirectoryRef) (Account, error) {
-	if t.IsZero() || !uuidRe.MatchString(id) || !an.valid() || !ref.valid() {
+// never rebinds. by is the actor (authority.Chain with a system requester for an admission-rule
+// sign-in); the binding and its authn.account.bound event commit together.
+func (s *Accounts) Bind(ctx context.Context, t tenant.ID, id string, an Anchor, ref DirectoryRef, by authority.Chain) (Account, error) {
+	if t.IsZero() || !uuidRe.MatchString(id) || !an.valid() || !ref.valid() || by.Validate() != nil {
 		return Account{}, ErrInvalidInput
 	}
 	var tid *string
@@ -272,13 +300,25 @@ func (s *Accounts) Bind(ctx context.Context, t tenant.ID, id string, an Anchor, 
 	}
 	var out Account
 	err := s.db.WithTenant(ctx, t, func(ctx context.Context, tx store.Tx) error {
+		now, err := s.sessions.now(ctx, tx)
+		if err != nil {
+			return err
+		}
 		a, err := scanAccount(t, tx.QueryRow(ctx, `UPDATE public.authn_accounts
 			SET directory_connection_id = $3::uuid, directory_object_guid = $4::uuid,
-			    anchor_kind = $5, anchor_value = $6, anchor_tid = $7::uuid, updated_at = now()
+			    anchor_kind = $5, anchor_value = $6, anchor_tid = $7::uuid, updated_at = $8
 			WHERE tenant_id = $1 AND id = $2::uuid AND kind = 'sso' AND anchor_kind IS NULL AND state <> 'deleted'
-			RETURNING `+accountCols, t.String(), id, ref.ConnectionID, ref.ObjectGUID, string(an.Kind), an.Value, tid))
+			RETURNING `+accountCols, t.String(), id, ref.ConnectionID, ref.ObjectGUID, string(an.Kind), an.Value, tid, now))
+		if err != nil {
+			return err
+		}
 		out = a
-		return err
+		// Keys are in increasing order, as the envelope requires.
+		return s.emit(ctx, tx, now, id, KindAccountBound, "bound", by, string(an.Kind), []chain.Detail{
+			{Key: "anchor_kind", Value: string(an.Kind)},
+			{Key: "connection_id", Value: ref.ConnectionID},
+			{Key: "object_guid", Value: ref.ObjectGUID},
+		})
 	})
 	if store.IsNoRows(err) {
 		// Distinguish a missing or non-sso account from one that is already bound.
@@ -307,10 +347,11 @@ var allowed = map[AccountState][]AccountState{
 	AccountDisabled: {AccountActive, AccountDeleted},
 }
 
-// SetState moves an account along its lifecycle. Disabling an account must be followed by
-// Store.RevokeAccount(ReasonAccountDisabled) by the caller (DM-31.I2).
-func (s *Accounts) SetState(ctx context.Context, t tenant.ID, id string, to AccountState) (Account, error) {
-	if t.IsZero() || !uuidRe.MatchString(id) {
+// SetState moves an account along its lifecycle. Moving to disabled or deleted ends every session of
+// the account in the same transaction (DM-31.I2): if the revocation or either audit event fails, the
+// state is unchanged. by is the real actor behind the change.
+func (s *Accounts) SetState(ctx context.Context, t tenant.ID, id string, to AccountState, by authority.Chain) (Account, error) {
+	if t.IsZero() || !uuidRe.MatchString(id) || by.Validate() != nil {
 		return Account{}, ErrInvalidInput
 	}
 	var out Account
@@ -326,8 +367,23 @@ func (s *Accounts) SetState(ctx context.Context, t tenant.ID, id string, to Acco
 		if !ok {
 			return ErrBadTransition
 		}
-		out, err = scanAccount(t, tx.QueryRow(ctx, `UPDATE public.authn_accounts SET state = $3, updated_at = now() WHERE tenant_id = $1 AND id = $2::uuid RETURNING `+accountCols, t.String(), id, string(to)))
-		return err
+		now, err := s.sessions.now(ctx, tx)
+		if err != nil {
+			return err
+		}
+		out, err = scanAccount(t, tx.QueryRow(ctx, `UPDATE public.authn_accounts SET state = $3, updated_at = $4 WHERE tenant_id = $1 AND id = $2::uuid RETURNING `+accountCols, t.String(), id, string(to), now))
+		if err != nil {
+			return err
+		}
+		if to == AccountDisabled || to == AccountDeleted {
+			if _, err := s.sessions.OnAccountDisabled(ctx, tx, t, id, by); err != nil {
+				return err
+			}
+		}
+		return s.emit(ctx, tx, now, id, KindAccountStateChanged, fmt.Sprintf("state.%s.%s.%d", cur.State, to, now.UnixNano()), by, string(to), []chain.Detail{
+			{Key: "from", Value: string(cur.State)},
+			{Key: "to", Value: string(to)},
+		})
 	})
 	switch {
 	case store.IsNoRows(err):
