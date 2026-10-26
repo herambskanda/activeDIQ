@@ -53,6 +53,7 @@ const (
 	C16 = connectorv1.Tier0Basis_TIER0_BASIS_C16_CORRELATED_TO_ENTRA_TIER0
 	C17 = connectorv1.Tier0Basis_TIER0_BASIS_C17_ROOT_OF_TRUST_CONTROL
 	C18 = connectorv1.Tier0Basis_TIER0_BASIS_C18_PRIVILEGED_SID_HISTORY
+	C19 = connectorv1.Tier0Basis_TIER0_BASIS_C19_CONTROL_OF_TIER0_OBJECT
 )
 
 const (
@@ -299,11 +300,13 @@ type builder struct {
 	dcHosts    map[string]bool      // lower-case DC host names (FQDN and short) for C12
 	dcSD       map[string][]byte    // RBCD descriptors by computer GUID
 	cache      map[string]*ad.Entry // Get results by lower-case DN
+
+	c19o c19Objects // the objects whose control makes a trustee tier0 (C19), gathered by the earlier steps
 }
 
 var idAttrs = []string{"objectGUID", "objectSid", "objectClass"}
 
-// Snapshot reads the forest and computes C1-C15, C17 and C18. pinnedC13 are the C13 groups pinned at
+// Snapshot reads the forest and computes C1-C15 and C17-C19. pinnedC13 are the C13 groups pinned at
 // first discovery. Any error fails the whole snapshot: a caller that ignored the error must not be
 // left holding a partial, under-protective set.
 func (c *ADClassifier) Snapshot(ctx context.Context, pinnedC13 ...guid.GUID) (*ADSet, error) {
@@ -327,8 +330,8 @@ func (c *ADClassifier) snapshot(ctx context.Context, pinnedC13, designated []gui
 		return nil, fmt.Errorf("tier0: naming contexts: %w", err)
 	}
 	b.nm = nm
-	steps := []func() error{b.c7, b.c1c2, b.c3, b.c4, b.c5c6c15, b.c8, b.c10, b.c11, b.c12, b.c13, b.c14, b.c17, b.c18, b.c9}
-	for _, step := range steps { // c18 needs every principal basis; c9 last: it needs C2/C4/C5/C6/C15
+	steps := []func() error{b.c7, b.c1c2, b.c3, b.c4, b.c5c6c15, b.c8, b.c10, b.c11, b.c12, b.c13, b.c14, b.c17, b.c18, b.c9, b.c19}
+	for _, step := range steps { // c18 needs every principal basis; c9 needs C2/C4/C5/C6/C15; c19 last: it needs C1/C4/C5/C9 objects
 		if err := step(); err != nil {
 			return nil, err
 		}
@@ -514,6 +517,9 @@ func (b *builder) c1c2() error {
 		}
 		if hasClass(e, "group") {
 			groups = append(groups, e)
+			b.c19o.c1Groups = append(b.c19o.c1Groups, e)
+		} else {
+			b.c19o.accounts = append(b.c19o.accounts, e)
 		}
 	}
 	return b.membersOf(groups, C2)
@@ -659,11 +665,13 @@ func (b *builder) c4() error {
 	if _, err := b.mark(e, C4); err != nil {
 		return err
 	}
+	b.c19o.accounts = append(b.c19o.accounts, e)
 	q := Query{Classes: []string{"user"}, Has: []string{"msDS-SecondaryKrbTgtNumber"}}
 	return b.d.Find(b.ctx, b.nm.Domain, ad.ScopeSubtree, q, idAttrs, func(m *ad.Entry) error {
 		if _, err := b.mark(m, C4); err != nil {
 			return err
 		}
+		b.c19o.accounts = append(b.c19o.accounts, m)
 		return b.noteAccount(m)
 	})
 }
@@ -783,6 +791,7 @@ func (b *builder) c5c6c15() error {
 	if err != nil {
 		return err
 	}
+	b.c19o.dcOU = wd
 	conts := map[string]dn.DN{wk0: wd}
 	for _, dc := range b.dcDNs {
 		for p := dc.Parent(); p.Len() > 0 && !p.Equal(b.nm.Domain); p = p.Parent() {
@@ -1363,6 +1372,7 @@ func (b *builder) c9() error {
 		if _, err := b.mark(ge, C9); err != nil {
 			return err
 		}
+		b.c19o.gpos = append(b.c19o.gpos, g)
 	}
 	return nil
 }

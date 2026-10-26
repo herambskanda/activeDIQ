@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
+	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/attr/sid"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
@@ -18,6 +19,12 @@ type Naming struct {
 
 // AttrEq and AttrInt are equality terms of a Query.
 type AttrEq struct{ Attr, Value string }
+
+// AttrGUID is a GUID-valued equality term; it is rendered as a binary-escaped value.
+type AttrGUID struct {
+	Attr  string
+	Value guid.GUID
+}
 type AttrInt struct {
 	Attr  string
 	Value int32
@@ -33,6 +40,8 @@ type Query struct {
 	// AnyInt matches objects where at least one of the terms holds (OR-ed, one term of the AND).
 	AnyInt []AttrInt
 	Has    []string
+	// AnyGUID matches objects where at least one of the terms holds (OR-ed, one term of the AND).
+	AnyGUID []AttrGUID
 	// UACAny matches objects whose userAccountControl has any of these bits set.
 	UACAny uint32
 	// AnySID matches objects whose objectSid is any of these (OR-ed, one term of the AND).
@@ -161,6 +170,17 @@ func (q Query) filter() (ldapfilter.Filter, error) {
 				return nil, err
 			}
 			alts = append(alts, ldapfilter.Eq(a, ldapfilter.Int32(e.Value)))
+		}
+		terms = append(terms, ldapfilter.Or(alts...))
+	}
+	if len(q.AnyGUID) > 0 {
+		var alts []ldapfilter.Filter
+		for _, e := range q.AnyGUID {
+			a, err := attr(e.Attr)
+			if err != nil {
+				return nil, err
+			}
+			alts = append(alts, ldapfilter.Eq(a, ldapfilter.Bytes(e.Value.Bytes())))
 		}
 		terms = append(terms, ldapfilter.Or(alts...))
 	}
