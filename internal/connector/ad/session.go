@@ -70,7 +70,11 @@ type Session struct {
 
 // Open connects to the first reachable server in cfg.Servers and binds. It never downgrades: a
 // server that does not offer LDAPS with a valid certificate is skipped, never contacted in clear.
-func Open(ctx context.Context, cfg Config) (*Session, error) {
+func Open(ctx context.Context, cfg Config) (*Session, error) { return open(ctx, cfg, false) }
+
+// open is Open for the ordinary (domain) session, or for the GC resolver when gc is set. The two
+// are separate door types: a GC port is refused for every Session (LF-33) and only OpenGC may use it.
+func open(ctx context.Context, cfg Config, gc bool) (*Session, error) {
 	if len(cfg.Servers) == 0 || cfg.Credential.BindName == "" || cfg.Credential.Password.IsEmpty() {
 		return nil, fail(CodeInvalidArgument, "servers and credential are required", nil)
 	}
@@ -97,8 +101,12 @@ func Open(ctx context.Context, cfg Config) (*Session, error) {
 		if host == "" {
 			return nil, fail(CodeInvalidArgument, "empty server", nil)
 		}
-		if port == "3268" || port == "3269" {
+		isGC := port == "3268" || port == "3269"
+		if isGC && !gc {
 			return nil, fail(CodeGlobalCatalog, "", nil) // LF-33
+		}
+		if gc && port != "3269" { // the GC resolver is LDAPS only; there is no default port to fall to
+			return nil, fail(CodeInvalidArgument, "the global catalog server must be host:3269", nil)
 		}
 		conn, err := dial(ctx, cfg, host, port)
 		if err != nil {

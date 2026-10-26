@@ -1,7 +1,9 @@
 package tier0
 
 import (
+	"errors"
 	"fmt"
+	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"strings"
 	"testing"
 
@@ -337,5 +339,133 @@ func TestC17Live(t *testing.T) { // T0-C17-LIVE, CC-WRITE-15(d): classification 
 	delete(f.find(dom).raw, "nTSecurityDescriptor")
 	if r, err := classify(t, f, o); err == nil || !r.Unknown {
 		t.Errorf("unreadable head DACL: %+v %v", r, err)
+	}
+}
+
+// T-0345: a sIDHistory value from another domain of the forest is resolved through the GC (rule 6b);
+// the GC cannot clear a foreign object, so a hit is tier0; a failed lookup fails closed (rule 8).
+func TestC18ForeignDomainViaGC(t *testing.T) {
+	foreign := func(f *fakeDir) *fakeDir {
+		f.forestDoms = []string{foreignID}
+		f.gc = []*fobj{{dn: "CN=ops,DC=other", sid: foreignID + "-1105", cls: group, guid: guid.GUID{9, 9}}}
+		return f
+	}
+	f := foreign(forest())
+	us := u(f, "mig", 4110)
+	f.find(us).history(foreignID + "-1105")
+	wantBasis(t, f, us, C18, true) // resolves to an object we cannot clear in its own domain
+	if f.gcCalls != 1 {
+		t.Errorf("gc calls = %d", f.gcCalls)
+	}
+	// Twin: a forest SID the GC does not have is unresolved, not tier0.
+	f = foreign(forest())
+	us = u(f, "gone", 4111)
+	f.find(us).history(foreignID + "-1999")
+	wantBasis(t, f, us, C18, false)
+	// Twin: a prefix outside the forest never reaches the GC.
+	f = foreign(forest())
+	us = u(f, "ext", 4112)
+	f.find(us).history("S-1-5-21-5-6-7-1105")
+	wantBasis(t, f, us, C18, false)
+	if f.gcCalls != 0 {
+		t.Errorf("gc called for an outside prefix")
+	}
+	// Rule 8: the GC failing fails the snapshot, so the classification is Unknown and tier0.
+	f = foreign(forest())
+	us = u(f, "down", 4113)
+	f.find(us).history(foreignID + "-1105")
+	f.gcErr = errors.New("gc down")
+	if r, err := classify(t, f, us); err == nil || !r.Tier0 || !r.Unknown {
+		t.Errorf("gc down: %+v %v", r, err)
+	}
+	// A directory with no forest seam cannot resolve a foreign SID: closed, not "unresolved".
+	f2 := forest()
+	us = u(f2, "noseam", 4114)
+	f2.find(us).history(foreignID + "-1105")
+	if _, err := NewAD(onlyDirectory{f2}).Classify(t.Context(), ref(t, us), known()); err == nil {
+		t.Error("no ForestDirectory must fail closed")
+	}
+}
+
+// onlyDirectory hides the ForestDirectory methods of the fake.
+type onlyDirectory struct{ ADDirectory }
+
+func findingCodes(t *testing.T, f *fakeDir, pins ...guid.GUID) []string {
+	t.Helper()
+	set, err := NewAD(f).Snapshot(t.Context(), pins...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, x := range set.Findings() {
+		out = append(out, x.Code)
+	}
+	return out
+}
+
+func dropObj(f *fakeDir, dnText string) {
+	for i, o := range f.objs {
+		if strings.EqualFold(o.dn, dnText) {
+			f.objs = append(f.objs[:i], f.objs[i+1:]...)
+			return
+		}
+	}
+	panic("no " + dnText)
+}
+
+// T-0345 / TM-D26 rule 10: a domain with AD-integrated DNS and no DnsAdmins gets an onboarding finding.
+func TestDnsAdminsMissingFinding(t *testing.T) {
+	zones := func(f *fakeDir) {
+		f.add("DC=DomainDnsZones,"+dom, "", cls("top", "domainDNS"))
+		f.add("CN=MicrosoftDNS,DC=DomainDnsZones,"+dom, "", cls("container"))
+		f.add("DC=lab.test,CN=MicrosoftDNS,DC=DomainDnsZones,"+dom, "", cls("dnsZone"))
+	}
+	f := forest()
+	zones(f)
+	if c := findingCodes(t, f); len(c) != 0 {
+		t.Errorf("DnsAdmins present: %v", c)
+	}
+	dns := f.find("CN=DnsAdmins,CN=Users," + dom)
+	pin := dns.guid
+	dropObj(f, dns.dn)
+	if c := findingCodes(t, f); len(c) != 1 || c[0] != FindingDnsAdminsMissing {
+		t.Errorf("DnsAdmins gone: %v", c)
+	}
+	// Twin: no AD-integrated zone, no finding.
+	f = forest()
+	dropObj(f, "CN=DnsAdmins,CN=Users,"+dom)
+	if c := findingCodes(t, f); len(c) != 0 {
+		t.Errorf("no DNS: %v", c)
+	}
+	// Twin: a renamed DnsAdmins that is pinned is still there.
+	f = forest()
+	zones(f)
+	f.find("CN=DnsAdmins,CN=Users," + dom).attrs["samaccountname"] = []string{"NetOps"}
+	if c := findingCodes(t, f, pin); len(c) != 0 {
+		t.Errorf("renamed pinned: %v", c)
+	}
+	if c := findingCodes(t, f); len(c) != 1 {
+		t.Errorf("renamed, pin lost: %v", c)
+	}
+}
+
+// T-0345: a Tier-0 designation has its closure in C18: a holder of the designated object's SID in
+// sIDHistory is tier0 even though the object is in no C1-C15 basis.
+func TestC18DesignationClosure(t *testing.T) {
+	f := forest()
+	g := f.add("CN=Legacy,OU=Staff,"+dom, dsid+"-4140", group)
+	us := u(f, "heir", 4141)
+	f.find(us).history(dsid + "-4140")
+	wantBasis(t, f, us, C18, false) // not designated: nothing
+	in := known()
+	in.Designated = []dn.ObjectRef{ref(t, g.dn)}
+	r, err := NewAD(f).Classify(t.Context(), ref(t, us), in)
+	if err != nil || !has(r, C18) {
+		t.Errorf("designated closure: %+v %v", r, err)
+	}
+	// A designation that names nothing designates nothing.
+	in.Designated = []dn.ObjectRef{ref(t, "CN=nobody,"+dom)}
+	if r, err := NewAD(f).Classify(t.Context(), ref(t, us), in); err != nil || r.Tier0 {
+		t.Errorf("missing designation: %+v %v", r, err)
 	}
 }

@@ -1080,6 +1080,12 @@ raised from T-0227), the server guard and connector contract §8.1.
    Global Catalog, to an object that is `tier0` by any other basis (a C11 or C17 holder, a customer
    designation). An unresolvable value with RID ≥ 1000 is **not** `tier0` (migrated users carry such SIDs
    by the thousand), and is reported as `SIDHISTORY_UNRESOLVED` on the health page.
+   **Implementation (T-0345):** a value whose domain prefix is another domain of the forest is looked up
+   through the GC (`ad.OpenGC`, a read-only resolver: LF-33 still bars every Session from the GC). The GC
+   cannot show another domain's ACLs or nested membership (`adminCount` is not in the default partial
+   attribute set), so a value that *resolves* there is `tier0` (basis C18) unless a positive
+   classification says otherwise; a prefix outside the forest is unresolved; a failed lookup, or no GC
+   configured, fails the snapshot (rule 8). Customer designations are applied inside C18.
 7. **C18 applies to groups.** A group whose `sIDHistory` holds -512 gives its members that SID. Every
    member of such a group is `tier0` (C2 walks from it). The classifier lists `sIDHistory` with a
    presence query through the filter builder (`(sIDHistory=*)`), never a hand-built string. The

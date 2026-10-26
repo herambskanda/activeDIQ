@@ -13,3 +13,5 @@ metadata:
 - Entra and AD classifiers share package `tier0`; AD types carry the AD prefix.
 
 - T-0238 guard: `Set.CheckPropertyWrite(ctx, PropertyWrite)` re-reads closure dynamic groups via `GroupByID` per write (graphtest tenant edits are live). Graph group has no `membershipRuleProcessingState` field; the guard never reads it, so Paused counts by construction. Unknown rule property => RefuseAll (so fuzz/lexer tests must use real ruleprops names, not `user.a`).
+
+- T-0345: GC is reachable only via `ad.OpenGC` (3269, empty base, no domain-scope control); `adminCount` is not in the default GC PAS, so a GC hit on a foreign object can't be cleared -> treated tier0. `ADProvider.Pins` is required (nil = fail closed). DnsAdmins-missing finding can't tell a renamed Exchange pin from DnsAdmins (pins carry no role). GC path is untested on Samba/Windows: needs a Windows-lab ticket.

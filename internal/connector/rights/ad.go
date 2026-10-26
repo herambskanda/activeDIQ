@@ -91,6 +91,9 @@ type ADInput struct {
 	ManagedDomains, ManagedRoots []adguid.GUID
 	// Designated and Correlated add to the computed tier0 set (customer designations, C16).
 	Designated, Correlated []adguid.GUID
+	// PinnedC13 are the C13 group GUIDs pinned for the connection (TM-D26 rule 10). The default
+	// snapshot needs them, or a renamed DnsAdmins would be missing from the set the check reads.
+	PinnedC13 []adguid.GUID
 	// Snapshot computes the tier0 computed set. Nil means the AD classifier over the same directory
 	// (production); tests supply a fixed set.
 	Snapshot func(ctx context.Context) (*tier0.ADSet, error)
@@ -108,6 +111,8 @@ type ADResult struct {
 	Identity          *v1.AdObservedIdentity
 	// Tier0Set is the connector's computed set plus the designated and correlated inputs, with bases.
 	Tier0Set []*v1.Tier0Member
+	// Tier0Findings are the classifier's onboarding observations (DNSADMINS_MISSING).
+	Tier0Findings []tier0.Finding
 }
 
 // Blocking reports whether any finding has block severity.
@@ -197,13 +202,16 @@ func VerifyAD(ctx context.Context, d ADDirectory, in ADInput) (*ADResult, error)
 		snap = snapshotHook
 	}
 	if snap == nil {
-		snap = func(ctx context.Context) (*tier0.ADSet, error) { return tier0.NewAD(d).Snapshot(ctx) }
+		snap = func(ctx context.Context) (*tier0.ADSet, error) {
+			return tier0.NewAD(d).SnapshotWith(ctx, in.PinnedC13, in.Designated)
+		}
 	}
 	set, serr := snap(ctx)
 	if serr != nil {
 		// Without the set, steps 1-3 cannot be decided: refuse to pass (FR-11).
 		c.cannot(v7, nil, serr)
 	} else {
+		res.Tier0Findings = set.Findings()
 		for _, g := range set.Members() {
 			m := &member{g: g, bases: map[tier0.Basis]bool{}}
 			for _, b := range set.Bases(g) {

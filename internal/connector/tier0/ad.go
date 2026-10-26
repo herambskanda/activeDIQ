@@ -132,6 +132,15 @@ type UnresolvedSIDHistory struct {
 	SID    sid.SID
 }
 
+// Finding codes reported by a snapshot. A finding never changes the set.
+const FindingDnsAdminsMissing = "DNSADMINS_MISSING"
+
+// Finding is an onboarding or health observation of a snapshot.
+type Finding struct {
+	Code   string
+	Detail string
+}
+
 // c8Domain are the sensitive CN=System objects, relative to CN=System,<domain>. AdminSDHolder is C3.
 var c8Domain = []string{"", "CN=RID Manager$", "CN=Password Settings Container"}
 
@@ -146,7 +155,12 @@ type ADSet struct {
 	unresolved []UnresolvedSIDHistory
 	dsh        []DSHeuristic
 	c13        []guid.GUID
+	findings   []Finding
 }
+
+// Findings are the onboarding observations of the snapshot (TM-D26 rule 10: no DnsAdmins in a domain
+// that hosts AD-integrated DNS).
+func (s *ADSet) Findings() []Finding { return s.findings }
 
 // Unresolved lists the sIDHistory values that matched no privileged RID and no object.
 func (s *ADSet) Unresolved() []UnresolvedSIDHistory { return s.unresolved }
@@ -200,6 +214,8 @@ type ADResult struct {
 	Unknown bool
 	Bases   []Basis
 	GUID    guid.GUID // the target's objectGUID when it could be resolved
+	// C13Groups are the C13 groups this snapshot found (ADSet.C13Groups); the caller pins them.
+	C13Groups []guid.GUID
 }
 
 // Classify answers whether target is tier0, re-reading the directory live on every call.
@@ -216,7 +232,28 @@ func (c *ADClassifier) Classify(ctx context.Context, target dn.ObjectRef, in ADI
 		}
 		corr[g.String()] = true // any state, including unspecified, counts (TM §6.4)
 	}
-	set, err := c.Snapshot(ctx, in.PinnedC13...)
+	// Designations are resolved before the snapshot: C18 applies their closure (a sIDHistory value
+	// naming a designated object makes its holder tier0).
+	desig := map[string]guid.GUID{}
+	for _, ref := range in.Designated {
+		e, err := c.d.Get(ctx, ref, []string{"objectGUID"})
+		if err != nil {
+			if ad.CodeOf(err) == ad.CodeObjectNotFound {
+				continue // designates nothing that exists
+			}
+			return unknown, fmt.Errorf("tier0: resolve designation: %w", err)
+		}
+		g, err := e.GUID()
+		if err != nil {
+			return unknown, fmt.Errorf("tier0: designation: %w", err)
+		}
+		desig[g.String()] = g
+	}
+	var designated []guid.GUID
+	for _, g := range desig {
+		designated = append(designated, g)
+	}
+	set, err := c.snapshot(ctx, in.PinnedC13, designated)
 	if err != nil {
 		return unknown, err
 	}
@@ -235,23 +272,10 @@ func (c *ADClassifier) Classify(ctx context.Context, target dn.ObjectRef, in ADI
 	if corr[tg.String()] {
 		b[C16] = true
 	}
-	for _, ref := range in.Designated {
-		e, err := c.d.Get(ctx, ref, []string{"objectGUID"})
-		if err != nil {
-			if ad.CodeOf(err) == ad.CodeObjectNotFound {
-				continue // designates nothing that exists
-			}
-			return unknown, fmt.Errorf("tier0: resolve designation: %w", err)
-		}
-		g, err := e.GUID()
-		if err != nil {
-			return unknown, fmt.Errorf("tier0: designation: %w", err)
-		}
-		if g == tg {
-			b[Designated] = true
-		}
+	if _, ok := desig[tg.String()]; ok {
+		b[Designated] = true
 	}
-	return ADResult{Tier0: len(b) > 0, Bases: sortedBases(b), GUID: tg}, nil
+	return ADResult{Tier0: len(b) > 0, Bases: sortedBases(b), GUID: tg, C13Groups: set.C13Groups()}, nil
 }
 
 // builder carries one snapshot's working state.
@@ -264,9 +288,11 @@ type builder struct {
 	domSID, rootSID sid.SID
 	domHead         *ad.Entry
 	pinnedC13       []guid.GUID
-	gpLink          *guid.GUID  // schemaIDGUID of gPLink, read from the schema (C17)
-	hist            []histEntry // objects with a sIDHistory, read once per snapshot
+	desig           map[string]bool // customer-designated objects, by GUID (closure applied in C18)
+	gpLink          *guid.GUID      // schemaIDGUID of gPLink, read from the schema (C17)
+	hist            []histEntry     // objects with a sIDHistory, read once per snapshot
 	histRead        bool
+	forest          map[sid.SID]bool // domain SIDs of the forest, read once from the GC when first needed
 
 	accountAnc map[string]bool      // lower-case DN of every strict ancestor of a tier0 account (C2/C4/C5)
 	dcDNs      []dn.DN              // DC computer objects (C5)
@@ -281,8 +307,21 @@ var idAttrs = []string{"objectGUID", "objectSid", "objectClass"}
 // first discovery. Any error fails the whole snapshot: a caller that ignored the error must not be
 // left holding a partial, under-protective set.
 func (c *ADClassifier) Snapshot(ctx context.Context, pinnedC13 ...guid.GUID) (*ADSet, error) {
-	b := &builder{ctx: ctx, d: c.d, pinnedC13: pinnedC13, s: &ADSet{bases: map[string]map[Basis]bool{}},
+	return c.snapshot(ctx, pinnedC13, nil)
+}
+
+// SnapshotWith is Snapshot with the customer designations, whose closure C18 applies.
+func (c *ADClassifier) SnapshotWith(ctx context.Context, pinnedC13, designated []guid.GUID) (*ADSet, error) {
+	return c.snapshot(ctx, pinnedC13, designated)
+}
+
+// snapshot is Snapshot with the customer designations, whose closure C18 applies.
+func (c *ADClassifier) snapshot(ctx context.Context, pinnedC13, designated []guid.GUID) (*ADSet, error) {
+	b := &builder{ctx: ctx, d: c.d, pinnedC13: pinnedC13, desig: map[string]bool{}, s: &ADSet{bases: map[string]map[Basis]bool{}},
 		accountAnc: map[string]bool{}, dcHosts: map[string]bool{}, dcSD: map[string][]byte{}, cache: map[string]*ad.Entry{}}
+	for _, g := range designated {
+		b.desig[g.String()] = true
+	}
 	nm, err := c.d.Naming(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("tier0: naming contexts: %w", err)
@@ -1162,8 +1201,12 @@ func (b *builder) c13() error {
 			return err
 		}
 	}
+	// dnsAdmins: a DnsAdmins can be found by its name, or as a pinned group that has since been
+	// renamed to something that is not a C13 name. A pin carries no role, so a renamed Exchange group
+	// also counts (the finding errs towards silence there).
+	dnsAdmins := false
 	for _, g := range b.pinnedC13 {
-		e, found, err := b.get(dn.GUIDRef(g), idAttrs)
+		e, found, err := b.get(dn.GUIDRef(g), append([]string{"sAMAccountName"}, idAttrs...))
 		if err != nil {
 			return err
 		}
@@ -1171,17 +1214,81 @@ func (b *builder) c13() error {
 			if err := add(e); err != nil {
 				return err
 			}
+			if !isC13Name(e.Strings("sAMAccountName")) {
+				dnsAdmins = true
+			}
 		}
 	}
 	for _, name := range c13Groups {
 		q := Query{Classes: []string{"group"}, Eq: []AttrEq{{Attr: "sAMAccountName", Value: name}}}
-		if err := b.d.Find(b.ctx, b.nm.Domain, ad.ScopeSubtree, q, idAttrs, add); err != nil {
+		if err := b.d.Find(b.ctx, b.nm.Domain, ad.ScopeSubtree, q, idAttrs, func(e *ad.Entry) error {
+			if strings.EqualFold(name, "DnsAdmins") {
+				dnsAdmins = true
+			}
+			return add(e)
+		}); err != nil {
 			return fmt.Errorf("tier0: default-privileged groups: %w", err)
+		}
+	}
+	if !dnsAdmins {
+		hosts, err := b.hostsDNS()
+		if err != nil {
+			return err
+		}
+		if hosts {
+			b.s.findings = append(b.s.findings, Finding{Code: FindingDnsAdminsMissing,
+				Detail: "the domain hosts AD-integrated DNS zones and no DnsAdmins group can be found"})
 		}
 	}
 	sort.Slice(b.s.c13, func(i, j int) bool { return b.s.c13[i].String() < b.s.c13[j].String() })
 	return b.membersOf(groups, C13)
 }
+
+func isC13Name(names []string) bool {
+	for _, n := range names {
+		for _, c := range c13Groups {
+			if strings.EqualFold(n, c) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hostsDNS reports whether the domain holds an AD-integrated DNS zone (application partition
+// DomainDnsZones, or the legacy CN=System location). A partition that does not exist or that the
+// connector cannot read counts as no zones: the finding is advice, it never gates classification.
+func (b *builder) hostsDNS() (bool, error) {
+	// parent first: child() appends one RDN below the previous
+	bases := [][]string{{"DC=DomainDnsZones", "CN=MicrosoftDNS"}, {"CN=System", "CN=MicrosoftDNS"}}
+	for _, rd := range bases {
+		base := b.nm.Domain
+		for i := 0; i < len(rd); i++ {
+			var err error
+			if base, err = b.child(base, rd[i]); err != nil {
+				return false, err
+			}
+		}
+		hit := false
+		err := b.d.Find(b.ctx, base, ad.ScopeOneLevel, Query{Classes: []string{"dnsZone"}}, idAttrs, func(*ad.Entry) error {
+			hit = true
+			return errStopFind
+		})
+		if err != nil && !errors.Is(err, errStopFind) {
+			switch ad.CodeOf(err) {
+			case ad.CodeObjectNotFound, ad.CodeInsufficientRights:
+				continue
+			}
+			return false, fmt.Errorf("tier0: DNS zones: %w", err)
+		}
+		if hit {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+var errStopFind = errors.New("stop")
 
 // C14: the Seamless SSO computer account.
 func (b *builder) c14() error {
@@ -1383,8 +1490,8 @@ func (b *builder) c18() error {
 	done := make([]bool, len(hist))
 	// Resolution is cached: one Get per distinct value.
 	type res struct {
-		e     *ad.Entry
-		found bool
+		e              *ad.Entry
+		found, foreign bool
 	}
 	cache := map[sid.SID]res{}
 	var groups []*ad.Entry
@@ -1402,19 +1509,25 @@ func (b *builder) c18() error {
 				}
 				r, ok := cache[s]
 				if !ok {
-					e, found, err := b.get(dn.SIDRef(s), idAttrs)
+					e, found, foreign, err := b.resolveHistory(s)
 					if err != nil {
 						return fmt.Errorf("tier0: sIDHistory lookup: %w", err)
 					}
-					r = res{e, found}
+					r = res{e, found, foreign}
 					cache[s] = r
+				}
+				if r.found && r.foreign {
+					// The GC cannot clear an object of another domain (no ACLs, no nested membership
+					// there), and only a positive classification may: it is tier0 (TM-D26 rules 6b, 8).
+					qualifies = true
+					break
 				}
 				if r.found {
 					g, err := r.e.GUID()
 					if err != nil {
 						return fmt.Errorf("tier0: sIDHistory target: %w", err)
 					}
-					if len(b.s.bases[g.String()]) > 0 {
+					if len(b.s.bases[g.String()]) > 0 || b.desig[g.String()] {
 						qualifies = true
 						break
 					}
@@ -1447,6 +1560,37 @@ func (b *builder) c18() error {
 		}
 	}
 	return b.membersOf(groups, C2)
+}
+
+// resolveHistory resolves one sIDHistory value. A value of this domain is read from the DC. A value
+// whose domain prefix is another domain of the forest goes to the Global Catalog; the lookup failing
+// is an error (the snapshot fails, so the write is refused). A prefix outside the forest is not
+// resolvable by anyone here and is reported unresolved.
+func (b *builder) resolveHistory(s sid.SID) (e *ad.Entry, found, foreign bool, err error) {
+	dom, ok := s.DomainSID()
+	if !ok || dom == b.domSID {
+		e, found, err = b.get(dn.SIDRef(s), idAttrs)
+		return e, found, false, err
+	}
+	fd, ok := b.d.(ForestDirectory)
+	if !ok {
+		return nil, false, false, errors.New("directory cannot resolve a SID of another domain")
+	}
+	if b.forest == nil {
+		ds, err := fd.ForestDomains(b.ctx)
+		if err != nil {
+			return nil, false, false, err
+		}
+		b.forest = map[sid.SID]bool{}
+		for _, d := range ds {
+			b.forest[d] = true
+		}
+	}
+	if !b.forest[dom] {
+		return nil, false, false, nil
+	}
+	e, found, err = fd.GCLookup(b.ctx, s, idAttrs)
+	return e, found, true, err
 }
 
 // spnHost is the host part of the "host[:port][/name]" remainder of an SPN.
