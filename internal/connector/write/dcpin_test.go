@@ -1,7 +1,11 @@
 package write
 
 import (
+	"errors"
+
 	"context"
+	"github.com/skenzeriq/activediq/internal/connector/ad"
+	"github.com/skenzeriq/activediq/internal/connector/tier0"
 	"testing"
 
 	"google.golang.org/protobuf/proto"
@@ -151,3 +155,42 @@ func TestPlanPreconditionDCEqualsThePin(t *testing.T) {
 }
 
 func strptr(s string) *string { return &s }
+
+// T-0401 AC3: an Apply whose precondition.dc names DC A while the binder reports DC B is
+// UNREACHABLE_DC with no directory call (Apply only: no Plan runs first).
+func TestApplyRefusedWhenPreconditionDCIsNotTheBoundOne(t *testing.T) {
+	run := passRun(nil)
+	r := newRig(t, &run)
+	r.prov.bound = proto.Clone(testDC()).(*connectorv1.DcIdentity)
+	r.prov.bound.DsaGuid = toWire(mk(99)) // B; the precondition (testDC) names A
+	id := mk(10)
+	for tname, tr := range transports(t, r.h) {
+		_, err := tr.Apply(context.Background(), applyReq(id, ctxFor(id)))
+		if c := connErr(t, err).GetCode(); c != connectorv1.ErrorCode_ERROR_CODE_UNREACHABLE_DC {
+			t.Errorf("%s: apply code %v", tname, c)
+		}
+	}
+	if n := r.prov.n(); n != 0 {
+		t.Fatalf("directory calls after an apply-side pin mismatch: %d", n)
+	}
+}
+
+// T-0401 AC2: the production constructor builds Dir and Bound over the one session, and a provider
+// whose binder sits on another session refuses to name a DC.
+func TestADProviderShareOneSession(t *testing.T) {
+	s1, s2 := &ad.Session{}, &ad.Session{}
+	p := NewADProvider(s1, nil, adIdentity(), &memPins{})
+	if p.Dir.(tier0.SessionDirectory).S != s1 || p.Bound.(SessionDC).S != s1 {
+		t.Fatal("constructor did not share the session")
+	}
+	if !p.sameSession() {
+		t.Fatal("constructed provider reports a session mismatch")
+	}
+	p.Bound = SessionDC{S: s2}
+	if p.sameSession() {
+		t.Fatal("mismatch undetected")
+	}
+	if _, err := p.BoundDC(context.Background()); !errors.Is(err, ErrNoBoundDC) {
+		t.Fatalf("mismatched binder answered: %v", err)
+	}
+}
