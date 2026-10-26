@@ -2,13 +2,20 @@
 title: Tenant-wide Graph data permissions on the connector app — decision prep (TM-D5a follow-up)
 date: 2026-10-26
 updated: 2026-10-26
-status: draft
+status: accepted
 owner: security-architect
 kind: decision-prep
 ticket: T-0303
+decision: D-0007
+implemented_by: T-0369
 ---
 
 # Tenant-wide Graph data permissions on the connector app
+
+**Outcome (2026-10-26):** the factory-director accepted **option A (deny)** at review of T-0303;
+notice **D-0007** (acknowledged by the CEO). **T-0369** implemented it: seven exact-value entries in
+`denyPatterns` (`internal/connector/rights/policy_entra.go`), tests, threat-model §6.6 and the
+TM-F-RIGHTS row. `Sites.Manage.All` is still pending lab G15.
 
 ## The question
 
@@ -24,7 +31,7 @@ unlisted grant as a warning. Should they be blocked?
 **Deny.** Add the data-permission set below to the EV3 deny list, overridable only through the
 existing TM-D1 override. No v1 feature needs any of them, so an allow-list exception is
 machinery for a case that does not exist. T-0302 follow-up implements it as exact-value entries
-in `denyPatterns` (no new matching logic).
+in `denyPatterns` (no new matching logic). Implemented by T-0369.
 
 ## 1. The permissions: blast radius and legitimate need
 
@@ -81,16 +88,18 @@ permission. Here no v1 feature does, and a feature that needs one later arrives 
 process (new Graph permission = new §6.6 row with a reason), which is the allow-list. C would be a
 second, weaker allow path next to the one the threat model already requires.
 
-## 4. What the director decides, and what T-0302's successor implements
+## 4. What the director decided, and what T-0369 implements
 
-**Decision requested:** accept option A for the set in §1 (the three named permissions plus
+**Decision (accepted 2026-10-26, D-0007):** option A for the set in §1 (the three named permissions plus
 `Mail.Send`, `Mail-Advanced.ReadWrite.All`, `MailboxItem.ReadWrite.All`, `MailboxItem.ImportExport.All`;
 `Sites.Manage.All` once lab G15 confirms the name), leaving read-only counterparts at EV5 warn.
 This is a risk-acceptance on customer experience (a block where today there is a warning), so
 it is the director's, not ours. It needs no CEO question: it is a security default with an existing override, not
 scope, money or brand.
 
-**If accepted**, the implementation ticket (directory-engineer, security-sensitive, P2) must:
+**Implementation: T-0369** (directory-engineer, security-sensitive, P2, done 2026-10-26) did steps 1–3 with
+these seven values. No onboarding guide exists yet, so the customer guidance of step 3 lives in
+threat-model §6.6. Step 4 (lab G15, `Sites.Manage.All`) remains open. The implementation ticket had to:
 
 1. Add the values to `denyPatterns` in `internal/connector/rights/policy_entra.go`, matched on any
    resource and case-insensitively, exactly as TM-D5a's three values.
@@ -102,9 +111,9 @@ scope, money or brand.
    dedicated registration or scope Exchange access through RBAC for Applications.
 4. Lab G15 records the exact Graph role ids and names (`Sites.Manage.All` in particular).
 
-**If the director rejects**, B stays and §6.6 should say so in the sentence that now points at T-0303,
-with TM-R-number residual "an activeDIQ credential thief reaches all mail and files if the customer
-consented those".
+**Not taken (kept for the record):** had the director rejected, B would have stayed, and §6.6 would
+have recorded a TM-R residual: "an activeDIQ credential thief reaches all mail and files if the
+customer consented those".
 
 ## Residuals under the recommendation
 
