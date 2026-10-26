@@ -41,8 +41,11 @@ type Violation struct {
 }
 
 func (v Violation) String() string {
-	if v.Check == "O1" {
+	switch v.Check {
+	case "O1", "O2":
 		return fmt.Sprintf("%s: %s [rule 2] %s", v.Pos, v.Check, v.Msg)
+	case "O4":
+		return fmt.Sprintf("%s: %s [rule 3] %s", v.Pos, v.Check, v.Msg)
 	}
 	return fmt.Sprintf("%s: %s [rule 13] %s", v.Pos, v.Check, v.Msg)
 }
