@@ -1431,6 +1431,18 @@ class, display snapshots); the operation, item, step, request and correlation ID
   key events through EP-9 sinks, at least once, de-duplicated by `seq`, **never on the write
   path**. A sink more than 15 minutes behind, or failing repeatedly, alerts. Sink changes need
   step-up. Forwarded events carry personal values in clear unless the sink is `pseudonymous`.
+- **Built (T-0304).** `audit.RegisterJobs` registers both kinds (ManagedTx, EP-5). Each run queues its
+  successor first, keyed by interval bucket (`t<unix/interval>`), so the cadence cannot pile up or
+  fork and survives a failed run; `Jobs.ScheduleCheckpoint` (also `Checkpointer.StartCadenceOnInit`) and
+  `ScheduleForward` start it. `audit.checkpoint` takes the platform lease `audit.checkpoint.<tenant>`
+  and signs when 1,000 events or 5 minutes have passed; signing also takes a per-tenant advisory
+  transaction lock, so a worker whose lease lapsed mid-run cannot fork the checkpoint chain.
+  `audit.forward` takes `audit.forward.<tenant>.<sink>`, sends events then the checkpoints they
+  cover through the `ForwardSink` port in batches of 500, and advances `audit_forward_cursor`
+  (migration 0012) only after `Deliver` returns nil. A failure stores `sink_unavailable` on the job
+  (Backoff retry) and in the cursor (`GetForwardStatus`: lag, failures). Not yet: the T-0139
+  encoders and concrete sinks (adapters implement `ForwardSink`), the lag/7-day alerts, and wiring in
+  `compose/server` (its registry is still empty).
 
 **Personal values are erasable** (ADR-0005 rule 12; DM X11).
 - **The chained form holds no clear personal value.** It holds a `PersonalRef`: a subject
