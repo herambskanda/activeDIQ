@@ -575,3 +575,31 @@ func TestMembershipWalkUnreadableMemberFailsClosed(t *testing.T) {
 		t.Errorf("error must name the listing group: %v", err)
 	}
 }
+
+func (f *fakeDir) drop(text string) {
+	for i, o := range f.objs {
+		if strings.EqualFold(o.dn, text) {
+			f.objs = append(f.objs[:i], f.objs[i+1:]...)
+			return
+		}
+	}
+	panic("no fake object " + text)
+}
+
+func TestUnreadableDCServerObjectFailsClosed(t *testing.T) {
+	f := forest()
+	f.drop("CN=DC1,CN=Servers,CN=Default-First-Site-Name,CN=Sites," + cfg)
+	r, err := classify(t, f, "CN=carol,OU=Staff,"+dom)
+	if err == nil || !r.Tier0 || !r.Unknown || !strings.Contains(err.Error(), "server object") {
+		t.Fatalf("want Tier0+Unknown+server-object error, got %+v %v", r, err)
+	}
+}
+
+func TestUnreadableLinkedGPOFailsClosed(t *testing.T) {
+	f := forest()
+	f.drop(gpoDN(gDom)) // linked at the domain head, which reaches tier0
+	r, err := classify(t, f, "CN=carol,OU=Staff,"+dom)
+	if err == nil || !r.Tier0 || !r.Unknown || !strings.Contains(err.Error(), "GPO") {
+		t.Fatalf("want Tier0+Unknown+GPO error, got %+v %v", r, err)
+	}
+}

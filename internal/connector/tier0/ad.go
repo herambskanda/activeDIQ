@@ -791,7 +791,9 @@ func (b *builder) c5c6c15() error {
 			return err
 		}
 		if !found {
-			continue
+			// The server object is the parent of an nTDSDSA the Find just returned, so it exists:
+			// not-found means unreadable, and skipping it would drop that DC's computer from Tier-0.
+			return errors.New("tier0: a domain controller's server object cannot be read")
 		}
 		for _, ref := range srv.Strings("serverReference") {
 			r, err := dn.Parse(ref, dn.Strict)
@@ -1260,6 +1262,9 @@ func (b *builder) c13() error {
 	if err != nil {
 		return err
 	}
+	// Cert Publishers is looked up by well-known RID: it is absent in a domain without AD CS, which is
+	// legitimate, so not-found is not a link to an unreadable object here (and the name lookup below
+	// also runs).
 	if e, found, err := b.get(dn.SIDRef(cp), idAttrs); err != nil {
 		return err
 	} else if found {
@@ -1276,6 +1281,8 @@ func (b *builder) c13() error {
 		if err != nil {
 			return err
 		}
+		// A pin is a GUID remembered from an earlier snapshot, not a link: not-found means the group was
+		// deleted since (a deleted group has no members to protect), and the name lookup still runs.
 		if found {
 			if err := add(e); err != nil {
 				return err
@@ -1424,7 +1431,10 @@ func (b *builder) c9() error {
 			return err
 		}
 		if !found {
-			continue // dangling link: no GPO object to protect
+			// gPLink is a plain string, so a dangling link is possible, but a GPO the connector may not
+			// read looks identical, and a GPO linked at a Tier-0 SOM controls Tier-0. Fail closed;
+			// the operator removes the dangling link or grants read.
+			return fmt.Errorf("tier0: GPO %s linked at a Tier-0 start of authority cannot be read", g.String())
 		}
 		if _, err := b.mark(ge, C9); err != nil {
 			return err
