@@ -139,6 +139,16 @@ var denyPatterns = []string{
 	"full_access_as_app",
 	"Exchange.ManageAsApp",
 	"Sites.FullControl.All",
+	// Tenant-wide Graph data permissions (graph-data-permissions-policy §4): write access to every
+	// mailbox, file or site. Read-only counterparts and the Selected pair stay EV5 warn.
+	// Sites.Manage.All joins once lab G15 confirms the name.
+	"Mail.ReadWrite",
+	"Mail.Send",
+	"Mail-Advanced.ReadWrite.All",
+	"MailboxItem.ReadWrite.All",
+	"MailboxItem.ImportExport.All",
+	"Files.ReadWrite.All",
+	"Sites.ReadWrite.All",
 }
 
 // DenyListed reports whether the permission value is on the §6.6 deny list.

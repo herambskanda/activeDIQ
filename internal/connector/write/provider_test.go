@@ -3,7 +3,10 @@ package write
 import (
 	"context"
 	"errors"
+	"slices"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
 	"github.com/skenzeriq/activediq/internal/connector/graph"
@@ -11,6 +14,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/attr/sid"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
+	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
 // CC-WRITE-20 g: a GPO whose cn is not a GUID is tier0; ordinary objects are not touched by the rule.
@@ -72,8 +76,10 @@ func adRig(t *testing.T) (*ADProvider, *designatedDir, guid.GUID, guid.GUID) {
 			"tokenGroups": {sidBytes(t, "S-1-5-21-1-2-3-1100"), sidBytes(t, "S-1-5-21-1-2-3-513")}}),
 		grp: ad.NewEntry("CN=g,DC=lab", map[string][][]byte{"objectSid": {sidBytes(t, "S-1-5-21-1-2-3-1100")}}),
 	}, errs: map[guid.GUID]error{}}
-	p := &ADProvider{Dir: d}
-	p.classify = func(_ context.Context, id guid.GUID) (tier0.ADResult, error) { return tier0.ADResult{GUID: id}, nil }
+	p := &ADProvider{Dir: d, Pins: &memPins{}}
+	p.classify = func(_ context.Context, id guid.GUID, _ tier0.ADInput) (tier0.ADResult, error) {
+		return tier0.ADResult{GUID: id}, nil
+	}
 	return p, d, user, grp
 }
 
@@ -114,17 +120,19 @@ func TestADProviderDesignated(t *testing.T) {
 func TestADProviderClassifierAnswersFailClosed(t *testing.T) {
 	ctx := context.Background()
 	p, _, user, _ := adRig(t)
-	p.classify = func(context.Context, guid.GUID) (tier0.ADResult, error) {
+	p.classify = func(context.Context, guid.GUID, tier0.ADInput) (tier0.ADResult, error) {
 		return tier0.ADResult{Unknown: true, Tier0: true, GUID: user}, nil
 	}
 	if v, err := p.Classify(ctx, user, nil); err == nil || !v.Tier0 {
 		t.Fatalf("Unknown result: %+v %v", v, err)
 	}
-	p.classify = func(context.Context, guid.GUID) (tier0.ADResult, error) { return tier0.ADResult{GUID: mk(99)}, nil }
+	p.classify = func(context.Context, guid.GUID, tier0.ADInput) (tier0.ADResult, error) {
+		return tier0.ADResult{GUID: mk(99)}, nil
+	}
 	if v, err := p.Classify(ctx, user, nil); err == nil || !v.Tier0 {
 		t.Fatalf("GUID mismatch: %+v %v", v, err)
 	}
-	p.classify = func(context.Context, guid.GUID) (tier0.ADResult, error) {
+	p.classify = func(context.Context, guid.GUID, tier0.ADInput) (tier0.ADResult, error) {
 		return tier0.ADResult{}, errors.New("dc down")
 	}
 	if v, err := p.Classify(ctx, user, nil); err == nil || !v.Tier0 {
@@ -183,4 +191,122 @@ type withMembers struct {
 
 func (w withMembers) GroupMembers(ctx context.Context, id guid.GUID) ([]graph.DirectoryObject, error) {
 	return w.g.GroupMembers(ctx, id)
+}
+
+// memPins is an in-memory PinStore with failure injection.
+type memPins struct {
+	mu             sync.Mutex
+	pins           []guid.GUID
+	getErr, putErr error
+	reads          int
+}
+
+func (m *memPins) PinnedC13(context.Context) ([]guid.GUID, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.reads++
+	return append([]guid.GUID(nil), m.pins...), m.getErr
+}
+
+func (m *memPins) PinC13(_ context.Context, g []guid.GUID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.putErr != nil {
+		return m.putErr
+	}
+	for _, x := range g {
+		if !slices.Contains(m.pins, x) {
+			m.pins = append(m.pins, x)
+		}
+	}
+	return nil
+}
+
+// T-0345 / TM-D26 rule 10: every Classify carries the persisted pins, and what a snapshot finds is
+// pinned before the answer, so a rename after this call cannot lose it.
+func TestADProviderPlumbsPinnedC13(t *testing.T) {
+	ctx := context.Background()
+	p, _, user, _ := adRig(t)
+	pins := p.Pins.(*memPins)
+	pins.pins = []guid.GUID{mk(80)}
+	var seen [][]guid.GUID
+	p.classify = func(_ context.Context, id guid.GUID, in tier0.ADInput) (tier0.ADResult, error) {
+		seen = append(seen, in.PinnedC13)
+		return tier0.ADResult{GUID: id, C13Groups: []guid.GUID{mk(81)}}, nil
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := p.Classify(ctx, user, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(seen) != 2 || !slices.Contains(seen[0], mk(80)) || !slices.Contains(seen[1], mk(81)) {
+		t.Fatalf("pins passed = %v", seen)
+	}
+	// Fail closed: no store, an unreadable store, an unwritable store.
+	p.Pins = nil
+	if v, err := p.Classify(ctx, user, nil); err == nil || !v.Tier0 {
+		t.Errorf("no store: %+v %v", v, err)
+	}
+	p.Pins = &memPins{getErr: errors.New("db down")}
+	if v, err := p.Classify(ctx, user, nil); err == nil || !v.Tier0 {
+		t.Errorf("read error: %+v %v", v, err)
+	}
+	p.Pins = &memPins{putErr: errors.New("db down")}
+	if v, err := p.Classify(ctx, user, nil); err == nil || !v.Tier0 {
+		t.Errorf("write error: %+v %v", v, err)
+	}
+}
+
+// The default classifier path hands the pins to the real classifier: a renamed pinned group is
+// refused at the handler (TM-D26 rule 10), here with a minimal forest.
+func TestHandlerRefusesRenamedPinnedGroup(t *testing.T) {
+	run := passRun(nil)
+	r := newRig(t, &run)
+	g := mk(90)
+	pins := &memPins{pins: []guid.GUID{g}}
+	p := &ADProvider{Pins: pins, ID: adIdentity()}
+	p.classify = func(_ context.Context, id guid.GUID, in tier0.ADInput) (tier0.ADResult, error) {
+		if slices.Contains(in.PinnedC13, id) { // what the classifier does with a pinned GUID whatever its name
+			return tier0.ADResult{GUID: id, Tier0: true, Bases: []Basis{tier0.C13}}, nil
+		}
+		return tier0.ADResult{GUID: id}, nil
+	}
+	p.Dir = &designatedDir{objs: map[guid.GUID]*ad.Entry{g: ad.NewEntry("CN=NetOps,DC=lab",
+		map[string][][]byte{"objectClass": {[]byte("group")}, "cn": {[]byte("NetOps")}})}, errs: map[guid.GUID]error{}}
+	h, err := New(p, r.gate, WithRecorder(r.rec), WithClock(func() time.Time { return r.now }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for tname, tr := range transports(t, h) {
+		_, err := tr.Plan(context.Background(), planReq(g, ctxFor(g)))
+		d := wantTier0(t, err, connectorv1.Tier0RefusalStage_TIER0_REFUSAL_STAGE_LIVE_REREAD)
+		if len(d.GetBasis()) != 1 || d.GetBasis()[0] != tier0.C13 {
+			t.Errorf("%s: basis %v", tname, d.GetBasis())
+		}
+	}
+}
+
+// T-0345 review finding 1/2: the input the production path builds carries BOTH the pins and the
+// designations, so C18 closes over designated objects on the write path. Dropping either field fails.
+func TestADProviderClassifierInputCarriesPinsAndDesignations(t *testing.T) {
+	ctx := context.Background()
+	p, _, user, grp := adRig(t)
+	p.Pins.(*memPins).pins = []guid.GUID{mk(80)}
+	var got tier0.ADInput
+	p.classify = func(_ context.Context, id guid.GUID, in tier0.ADInput) (tier0.ADResult, error) {
+		got = in
+		return tier0.ADResult{GUID: id}, nil
+	}
+	if _, err := p.Classify(ctx, user, []guid.GUID{grp}); err != nil {
+		t.Fatal(err)
+	}
+	if !got.CorrelationKnown || !slices.Contains(got.PinnedC13, mk(80)) {
+		t.Errorf("pins missing from classifier input: %+v", got)
+	}
+	if len(got.Designated) != 1 {
+		t.Fatalf("designations missing from classifier input: %+v", got)
+	}
+	if g, ok := got.Designated[0].GUID(); !ok || g != grp {
+		t.Errorf("designated ref = %v", got.Designated[0])
+	}
 }

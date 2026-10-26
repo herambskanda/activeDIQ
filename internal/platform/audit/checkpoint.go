@@ -48,6 +48,14 @@ type Checkpointer struct {
 	chainer *Chainer
 	ks      KeySource
 	anchors []Anchor
+	// schedule, when set, starts the tenant's checkpoint cadence as part of InitTenant.
+	schedule func(ctx context.Context, tx store.Tx, id tenant.ID) error
+}
+
+// StartCadenceOnInit makes InitTenant queue the tenant's first audit.checkpoint run in its own
+// transaction, so a tenant is never left without a cadence. Call it with Jobs.ScheduleCheckpoint.
+func (c *Checkpointer) StartCadenceOnInit(schedule func(ctx context.Context, tx store.Tx, id tenant.ID) error) {
+	c.schedule = schedule
 }
 
 // NewCheckpointer makes a checkpointer. The chainer is the one the store was opened with.
@@ -70,8 +78,14 @@ func (c *Checkpointer) InitTenant(ctx context.Context, tx store.Tx, id tenant.ID
 	if err := c.newKey(ctx, tx, id, 1, nil); err != nil {
 		return err
 	}
-	return c.chainer.Append(ctx, tx, Event{ID: "audit.tenant.initialised", Kind: chain.KindTenantInited, At: time.Now(),
-		Actor: systemActor, Component: "audit", Outcome: Success})
+	if err := c.chainer.Append(ctx, tx, Event{ID: "audit.tenant.initialised", Kind: chain.KindTenantInited, At: time.Now(),
+		Actor: systemActor, Component: "audit", Outcome: Success}); err != nil {
+		return err
+	}
+	if c.schedule != nil {
+		return c.schedule(ctx, tx, id)
+	}
+	return nil
 }
 
 // newKey creates the tenant's ordinal-th checkpoint key, seals its private key and appends the created event.
@@ -115,9 +129,16 @@ func (c *Checkpointer) newKey(ctx context.Context, tx store.Tx, id tenant.ID, or
 // it to every anchor after the commit. recorded is false when there was nothing new to sign (the latest
 // checkpoint is returned). A failing anchor yields ErrAnchor with the recorded checkpoint.
 func (c *Checkpointer) Sign(ctx context.Context, db *store.DB, id tenant.ID) (cp chain.Checkpoint, recorded bool, err error) {
+	return c.sign(ctx, db, id, nil)
+}
+
+// duePolicy decides whether a head that moved past the last checkpoint is worth signing now.
+type duePolicy func(newEvents uint64, sinceLast time.Duration) bool
+
+func (c *Checkpointer) sign(ctx context.Context, db *store.DB, id tenant.ID, due duePolicy) (cp chain.Checkpoint, recorded bool, err error) {
 	err = db.WithTenant(ctx, id, func(ctx context.Context, tx store.Tx) error {
 		var e error
-		cp, recorded, e = c.signInTx(ctx, tx, id)
+		cp, recorded, e = c.signInTx(ctx, tx, id, due)
 		return e
 	})
 	if err != nil || !recorded {
@@ -131,7 +152,14 @@ func (c *Checkpointer) Sign(ctx context.Context, db *store.DB, id tenant.ID) (cp
 	return cp, true, err
 }
 
-func (c *Checkpointer) signInTx(ctx context.Context, tx store.Tx, id tenant.ID) (chain.Checkpoint, bool, error) {
+func (c *Checkpointer) signInTx(ctx context.Context, tx store.Tx, id tenant.ID, due duePolicy) (chain.Checkpoint, bool, error) {
+	// One signer per tenant at a time, whatever the lease says: the checkpoint chain is a list (each names
+	// its predecessor), so two signers that read the same predecessor would fork it. The lock is held to
+	// the commit, so the head and the predecessor read below are the ones this checkpoint extends. A
+	// worker whose lease lapsed mid-run therefore cannot leave a gap or a fork (T-0304).
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('audit.checkpoint/' || $1::text, 0))`, id.String()); err != nil {
+		return chain.Checkpoint{}, false, fmt.Errorf("audit: serialise checkpoint signers: %w", err)
+	}
 	var head struct {
 		seq  uint64
 		hash []byte
@@ -148,6 +176,17 @@ func (c *Checkpointer) signInTx(ctx context.Context, tx store.Tx, id tenant.ID) 
 	}
 	if head.seq == 0 || (haveLast && last.Seq == head.seq) {
 		return last, false, nil
+	}
+	if due != nil && haveLast {
+		var since time.Duration
+		var secs float64
+		if err := tx.QueryRow(ctx, `SELECT extract(epoch FROM clock_timestamp() - $1::timestamptz)`, last.SignedAt).Scan(&secs); err != nil {
+			return chain.Checkpoint{}, false, fmt.Errorf("audit: read clock: %w", err)
+		}
+		since = time.Duration(secs * float64(time.Second))
+		if !due(head.seq-last.Seq, since) {
+			return last, false, nil
+		}
 	}
 	keyID, _, priv, err := c.currentKey(ctx, tx, id)
 	if err != nil {

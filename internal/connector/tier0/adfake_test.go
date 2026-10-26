@@ -28,11 +28,47 @@ type fobj struct {
 // fakeDir is an in-memory ADDirectory. It implements the directory's semantics (subtree scope,
 // transitive membership with cycles, NotFound) and nothing of the classifier.
 type fakeDir struct {
-	nm      Naming
-	objs    []*fobj
-	failDN  string // any Get/Find touching a DN containing this fails
-	failHas string // any Find presence-testing this attribute fails
-	nextGID byte
+	nm          Naming
+	objs        []*fobj
+	failDN      string // any Get/Find touching a DN containing this fails
+	failHas     string // any Find presence-testing this attribute fails
+	nextGID     byte
+	failSIDFind bool    // any Find by objectSid fails
+	finds       []Query // every Find, in order (search-count assertions)
+
+	// Forest seam: other domains of the forest and the GC's objects (their objectSid is the key).
+	forestDoms []string
+	gc         []*fobj
+	gcErr      error
+	gcCalls    int
+}
+
+func (f *fakeDir) ForestDomains(context.Context) ([]sid.SID, error) {
+	if f.gcErr != nil {
+		return nil, f.gcErr
+	}
+	var out []sid.SID
+	for _, d := range f.forestDoms {
+		v, err := sid.Parse(d)
+		if err != nil {
+			panic(err)
+		}
+		out = append(out, v)
+	}
+	return out, nil
+}
+
+func (f *fakeDir) GCLookup(_ context.Context, s sid.SID, _ []string) (*ad.Entry, bool, error) {
+	f.gcCalls++
+	if f.gcErr != nil {
+		return nil, false, f.gcErr
+	}
+	for _, o := range f.gc {
+		if o.sid == s.String() {
+			return o.entry(), true, nil
+		}
+	}
+	return nil, false, nil
 }
 
 func mustDN(s string) dn.DN {
@@ -138,8 +174,12 @@ func (f *fakeDir) Get(_ context.Context, ref dn.ObjectRef, _ []string) (*ad.Entr
 }
 
 func (f *fakeDir) Find(_ context.Context, base dn.DN, _ ad.Scope, q Query, _ []string, fn func(*ad.Entry) error) error {
+	f.finds = append(f.finds, q)
 	if err := f.guard(base.String()); err != nil {
 		return err
+	}
+	if len(q.AnySID) > 0 && f.failSIDFind {
+		return &ad.Error{Code: ad.CodeUnreachable, Detail: "injected"}
 	}
 	for _, h := range q.Has {
 		if f.failHas != "" && strings.EqualFold(h, f.failHas) {
@@ -163,6 +203,11 @@ func (f *fakeDir) Find(_ context.Context, base dn.DN, _ ad.Scope, q Query, _ []s
 		return &ad.Error{Code: ad.CodeObjectNotFound}
 	}
 	for _, o := range hits {
+		if len(q.AnySID) > 0 {
+			if err := f.guard(o.dn); err != nil {
+				return err
+			}
+		}
 		if err := fn(o.entry()); err != nil {
 			return err
 		}
@@ -216,6 +261,15 @@ func (f *fakeDir) match(o *fobj, q Query) bool {
 		hit := false
 		for _, e := range q.AnyGUID {
 			hit = hit || bytes.Equal(o.raw[e.Attr], e.Value.Bytes())
+		}
+		if !hit {
+			return false
+		}
+	}
+	if len(q.AnySID) > 0 {
+		hit := false
+		for _, s := range q.AnySID {
+			hit = hit || (o.sid != "" && s.String() == o.sid)
 		}
 		if !hit {
 			return false

@@ -22,9 +22,18 @@ Full runbook (accounts, ports, what is seeded, **what Samba cannot test**, troub
 | --- | --- |
 | `docker-compose.yml`, `lab.mk` | the stack and the `make lab-*` targets (root `Makefile` includes `lab.mk`) |
 | `samba/` | image recipe (`Dockerfile`) and `entrypoint.sh` (init / serve / restore / healthcheck) |
-| `seed/generate.py` | deterministic seed generator (LDIF + manifest); `seed/post-start.sh` does protocol-level steps |
+| `seed/generate.py` | deterministic seed generator (LDIF + manifest); `seed/post-start.sh` does protocol-level steps; `seed/schema-seed.sh` adds the 0x200-only custom schema attribute (lab-only override) |
 | `tests/` | `test_generate.py` (unit, no Docker), `verify.sh` (live, with `inner-*.sh` run in the container) |
 | `bin/` | `lab-env` (random credentials), `lab-info` |
 
 Generated and gitignored: `.lab.env` (credentials), `.lab-ca.pem` (trust anchor). Credentials are random per
 lab and never committed. Fixtures live only here; product code never imports them.
+
+## Fault proxy (T-0309)
+
+Samba cannot create referral objects, so LF-32 / CC-SRCH-10 is proven by injection:
+`internal/connector/ad/ldapfault_test.go` is a test-only LDAPS proxy that relays every message and plants a
+SearchResultReference in scoped searches. `referral_fault_test.go` runs it over an in-process stand-in
+(no lab needed); `ldapfault_lab_test.go` (tag `lab`, `make lab-test-connector`) runs it in front of the
+Samba lab. The real-Windows-DC case is `TestReferralWindowsRealDCPending`: it shows as SKIP/PENDING in
+`go test -v` output until the Windows lab can host a referral.

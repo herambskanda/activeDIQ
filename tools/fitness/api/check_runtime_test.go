@@ -108,8 +108,9 @@ func fxEnv(t *testing.T, mutate func(*runtimeEnv, *[]apihost.Route)) *runtimeEnv
 		t.Fatal(err)
 	}
 	env := &runtimeEnv{root: filepath.Join("..", "..", ".."), doc: doc, bundle: bundle, profiles: []string{"windows"},
-		policy: apihost.Policy{Hosts: map[string]string{"totp-enrolment": hostFor("totp-enrolment")}, Authenticated: []string{"fxMe"},
-			Anonymous: []apihost.AnonymousRow{{Operation: "fxOpen", Gate: "none"}, {Operation: "getLiveness", Gate: "none"}, {Operation: "getReadiness", Gate: "none"}}},
+		policy: apihost.Policy{Hosts: map[string]string{"totp-enrolment": hostFor("totp-enrolment")}, Authenticated: []string{"fxMe", "signOut", "getCsrfToken"},
+			Anonymous: []apihost.AnonymousRow{{Operation: "fxOpen", Gate: "none"}, {Operation: "getLiveness", Gate: "none"}, {Operation: "getReadiness", Gate: "none"},
+				{Operation: "signInBreakGlassPassword", Gate: "password"}, {Operation: "createWebAuthnSignInChallenge", Gate: "pending"}, {Operation: "verifyWebAuthnSignIn", Gate: "pending"}, {Operation: "verifyTotpSignIn", Gate: "pending"}}},
 		nonAPISrv: func(string) ([]string, bool) { return nil, false }}
 	rows := []apihost.Route{
 		fxRoute("fxOpen", "GET", "/fx/open", "anonymous", "anonymous", apihost.BodyNone, func() apihost.Input { return noInput{} }, nil),

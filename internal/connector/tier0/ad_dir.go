@@ -2,10 +2,12 @@ package tier0
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
+	"github.com/skenzeriq/activediq/internal/directory/attr/sid"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
 )
@@ -42,6 +44,8 @@ type Query struct {
 	AnyGUID []AttrGUID
 	// UACAny matches objects whose userAccountControl has any of these bits set.
 	UACAny uint32
+	// AnySID matches objects whose objectSid is any of these (OR-ed, one term of the AND).
+	AnySID []sid.SID
 }
 
 // ADDirectory is what the AD classifier reads through. *Session wraps an *ad.Session; tests use an
@@ -54,10 +58,47 @@ type ADDirectory interface {
 	Find(ctx context.Context, base dn.DN, scope ad.Scope, q Query, attrs []string, fn func(*ad.Entry) error) error
 }
 
-// SessionDirectory adapts an *ad.Session to ADDirectory.
-type SessionDirectory struct{ S *ad.Session }
+// ForestDirectory is the second seam, for a sIDHistory value whose domain is another domain of the
+// forest (TM-D26 rule 6b). A domain controller cannot resolve that SID; the Global Catalog can.
+// An ADDirectory that does not implement it cannot resolve a foreign-domain SID, and the classifier
+// then fails closed (rule 8) instead of calling the value "unresolved".
+type ForestDirectory interface {
+	// ForestDomains are the SIDs of every domain in the forest.
+	ForestDomains(ctx context.Context) ([]sid.SID, error)
+	// GCLookup resolves a SID through the GC. found is false only when the GC has no such object;
+	// any failure is an error.
+	GCLookup(ctx context.Context, s sid.SID, attrs []string) (e *ad.Entry, found bool, err error)
+}
 
-var _ ADDirectory = SessionDirectory{}
+// ErrNoGC is returned by SessionDirectory when a foreign-domain SID must be resolved and no Global
+// Catalog resolver is configured.
+var ErrNoGC = errors.New("tier0: a Global Catalog is required to resolve a sIDHistory value from another domain")
+
+// SessionDirectory adapts an *ad.Session to ADDirectory.
+type SessionDirectory struct {
+	S *ad.Session
+	// GC resolves SIDs of other domains of the forest. Nil means such a SID fails closed.
+	GC *ad.GCResolver
+}
+
+var (
+	_ ADDirectory     = SessionDirectory{}
+	_ ForestDirectory = SessionDirectory{}
+)
+
+func (d SessionDirectory) ForestDomains(ctx context.Context) ([]sid.SID, error) {
+	if d.GC == nil {
+		return nil, ErrNoGC
+	}
+	return d.GC.DomainSIDs(ctx)
+}
+
+func (d SessionDirectory) GCLookup(ctx context.Context, s sid.SID, attrs []string) (*ad.Entry, bool, error) {
+	if d.GC == nil {
+		return nil, false, ErrNoGC
+	}
+	return d.GC.LookupSID(ctx, s, attrs)
+}
 
 func (d SessionDirectory) Naming(ctx context.Context) (Naming, error) {
 	r, err := d.S.RootDSE(ctx)
@@ -140,6 +181,17 @@ func (q Query) filter() (ldapfilter.Filter, error) {
 				return nil, err
 			}
 			alts = append(alts, ldapfilter.Eq(a, ldapfilter.Bytes(e.Value.Bytes())))
+		}
+		terms = append(terms, ldapfilter.Or(alts...))
+	}
+	if len(q.AnySID) > 0 {
+		a, err := attr("objectSid")
+		if err != nil {
+			return nil, err
+		}
+		var alts []ldapfilter.Filter
+		for _, s := range q.AnySID {
+			alts = append(alts, ldapfilter.Eq(a, ldapfilter.SID(s)))
 		}
 		terms = append(terms, ldapfilter.Or(alts...))
 	}

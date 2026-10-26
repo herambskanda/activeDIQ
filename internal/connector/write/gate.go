@@ -2,7 +2,7 @@ package write
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"os"
 	"sync"
@@ -304,7 +304,7 @@ type baselineLine struct {
 	Object     string    `json:"object"`
 	Basis      string    `json:"basis"`
 	Source     string    `json:"source"`
-	Revision   uint64    `json:"tier0_revision,omitempty"`
+	Revision   uint64    `json:"tier0_revision,omitzero"`
 	At         time.Time `json:"at"`
 }
 
@@ -316,10 +316,13 @@ func (f *FileBaseline) Append(connectionID string, marks []Mark) error {
 	if err != nil {
 		return err
 	}
-	enc := json.NewEncoder(fh)
 	for _, m := range marks {
-		if err := enc.Encode(baselineLine{Connection: connectionID, Object: m.Object.String(), Basis: m.Basis.String(),
-			Source: m.Source, Revision: m.Revision, At: time.Now().UTC()}); err != nil {
+		line, err := json.Marshal(baselineLine{Connection: connectionID, Object: m.Object.String(), Basis: m.Basis.String(),
+			Source: m.Source, Revision: m.Revision, At: time.Now().UTC()}, json.Deterministic(true))
+		if err == nil {
+			_, err = fh.Write(append(line, '\n'))
+		}
+		if err != nil {
 			_ = fh.Close()
 			return err
 		}

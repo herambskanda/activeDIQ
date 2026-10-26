@@ -60,8 +60,13 @@ var _ PropertyGuard = (*tier0.Set)(nil)
 type ADProvider struct {
 	Dir tier0.ADDirectory
 	ID  *connectorv1.DirectoryIdentity
+	// Pins is the server-side store of the C13 group GUIDs pinned at first discovery (TM-D26 rule 10).
+	// It is required: with none, every Classify fails closed, because a renamed DnsAdmins or Exchange
+	// group would otherwise stop being tier0.
+	Pins PinStore
 	// classify is the base classifier; nil means the T-0093 classifier over Dir. Tests substitute it.
-	classify func(ctx context.Context, id guid.GUID) (tier0.ADResult, error)
+	// in is the ADInput the production path builds (see classifierInput): pins and designations.
+	classify func(ctx context.Context, id guid.GUID, in tier0.ADInput) (tier0.ADResult, error)
 	// Dynamic is the Entra snapshot whose designated closure the AD plane's property writes are
 	// checked against (the synced AD user is matched by rules on the Entra side, TM-D25 7f). Nil
 	// refuses every property write.
@@ -69,6 +74,19 @@ type ADProvider struct {
 }
 
 var _ Provider = (*ADProvider)(nil)
+
+// PinStore persists the C13 group pins server-side, per connection. Pins only ever grow: a group
+// that was once a default-privileged group stays one whatever it is renamed to. Implementations
+// are durable (a pin held only in memory is lost on restart, which re-opens the rename hole).
+type PinStore interface {
+	// PinnedC13 returns every pinned GUID. An error is an unknown answer.
+	PinnedC13(ctx context.Context) ([]guid.GUID, error)
+	// PinC13 adds GUIDs to the pins (idempotent) and returns only once they are durable.
+	PinC13(ctx context.Context, groups []guid.GUID) error
+}
+
+// ErrNoPins is returned when the provider has no pin store; the guard counts it as tier0.
+var ErrNoPins = errors.New("write: C13 pin store not configured")
 
 func (p *ADProvider) Kind() connectorv1.ProviderKind {
 	return connectorv1.ProviderKind_PROVIDER_KIND_AD
@@ -88,16 +106,30 @@ func (p *ADProvider) Classify(ctx context.Context, id guid.GUID, designated []gu
 	if gpoCNInvalid(ge) {
 		return Verdict{Tier0: true, Bases: []Basis{tier0.C9}}, nil
 	}
+	// The pins ride on every Classify (TM-D26 rule 10); a store that cannot answer fails closed.
+	if p.Pins == nil {
+		return unknown, ErrNoPins
+	}
+	pins, err := p.Pins.PinnedC13(ctx)
+	if err != nil {
+		return unknown, err
+	}
 	// The correlation facts are the request's and were applied at steps 3 to 6; this is the live half.
 	base := p.classify
 	if base == nil {
-		base = func(ctx context.Context, id guid.GUID) (tier0.ADResult, error) {
-			return tier0.NewAD(p.Dir).Classify(ctx, dn.GUIDRef(id), tier0.ADInput{CorrelationKnown: true})
+		base = func(ctx context.Context, id guid.GUID, in tier0.ADInput) (tier0.ADResult, error) {
+			return tier0.NewAD(p.Dir).Classify(ctx, dn.GUIDRef(id), in)
 		}
 	}
-	r, err := base(ctx, id)
+	r, err := base(ctx, id, classifierInput(pins, designated))
 	if err != nil {
 		return unknown, err
+	}
+	// Pin what this snapshot found before answering, so a rename after this call cannot lose it.
+	if len(r.C13Groups) > 0 {
+		if err := p.Pins.PinC13(ctx, r.C13Groups); err != nil {
+			return unknown, err
+		}
 	}
 	if r.Unknown {
 		return unknown, errors.New("write: classification unknown")
@@ -141,6 +173,17 @@ func (p *ADProvider) Classify(ctx context.Context, id guid.GUID, designated []gu
 		}
 	}
 	return v, nil
+}
+
+// classifierInput is what the live classifier is given: the pinned C13 groups (TM-D26 rule 10) and the
+// customer designations, so C18 closes over them (a sIDHistory value naming a designated object makes
+// its holder tier0 even though tokenGroups does not carry the holder's own sIDHistory).
+func classifierInput(pins, designated []guid.GUID) tier0.ADInput {
+	in := tier0.ADInput{CorrelationKnown: true, PinnedC13: pins}
+	for _, d := range designated {
+		in.Designated = append(in.Designated, dn.GUIDRef(d))
+	}
+	return in
 }
 
 // gpoCNInvalid is true for a groupPolicyContainer whose cn does not parse as a GUID (CC-WRITE-20 g).

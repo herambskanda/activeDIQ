@@ -106,7 +106,7 @@ func TestLabAddedToDomainAdminsAfterLastSyncIsRefused(t *testing.T) {
 	run.CompletedAt = now
 	book, _ := NewGateBook(&memBaseline{}, time.Now)
 	book.Complete(connID, run)
-	h, err := New(&ADProvider{Dir: dir, ID: adIdentity()}, book, WithRecorder(&memRecorder{}))
+	h, err := New(&ADProvider{Dir: dir, ID: adIdentity(), Pins: &memPins{}}, book, WithRecorder(&memRecorder{}))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -14,7 +14,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -220,7 +220,7 @@ func (s *Server) token(w http.ResponseWriter, r *http.Request) {
 	cl, _ := json.Marshal(map[string]any{"tid": tid, "appid": s.T.ClientID, "n": len(s.tokens)})
 	tok := b64.EncodeToString(hdr) + "." + b64.EncodeToString(cl) + "." + s.AccessToken
 	s.tokens[tok] = true
-	_ = json.NewEncoder(w).Encode(map[string]any{"token_type": "Bearer", "expires_in": 3599, "access_token": tok})
+	_ = json.MarshalWrite(w, map[string]any{"token_type": "Bearer", "expires_in": 3599, "access_token": tok}, json.Deterministic(true))
 }
 
 func (s *Server) verifyAssertion(a, aud string) error {
@@ -238,8 +238,11 @@ func (s *Server) verifyAssertion(a, aud string) error {
 		return fmt.Errorf("bad header")
 	}
 	var cl struct {
-		Aud, Iss, Sub string
-		Exp, Nbf      int64
+		Aud string `json:"aud"`
+		Iss string `json:"iss"`
+		Sub string `json:"sub"`
+		Exp int64  `json:"exp"`
+		Nbf int64  `json:"nbf"`
 	}
 	if raw, err = b64.DecodeString(parts[1]); err != nil || json.Unmarshal(raw, &cl) != nil {
 		return fmt.Errorf("bad claims")
@@ -490,7 +493,7 @@ func anySlice[T any](v []T) []any {
 
 func (s *Server) one(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(v)
+	_ = json.MarshalWrite(w, v, json.Deterministic(true))
 }
 
 // paged serves items s.PageSize at a time, linking pages with @odata.nextLink: the request target
