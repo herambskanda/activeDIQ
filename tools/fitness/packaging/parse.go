@@ -11,8 +11,8 @@ import (
 )
 
 // parseScript is a constant: the files to parse are found inside the read-only mount, never spliced into
-// script text. It prints one "file:line: message" per ParseError.
-const parseScript = `Get-ChildItem /w -Recurse -Filter *.ps1 | ForEach-Object {
+// script text; the directory arrives as data in ADIQ_PS_ROOT. It prints one "file:line: message" per ParseError.
+const parseScript = `Get-ChildItem -LiteralPath $env:ADIQ_PS_ROOT -Recurse -Filter *.ps1 | ForEach-Object {
   $errs = $null
   [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$errs)
   foreach ($e in $errs) { '{0}:{1}: {2}' -f $_.FullName, $e.Extent.StartLineNumber, $e.Message }
@@ -42,13 +42,14 @@ func parsePowerShell(root, pinRoot string) []string {
 	}
 	var cmd *exec.Cmd
 	if _, err := exec.LookPath("pwsh"); err == nil {
-		cmd = exec.Command("pwsh", "-NoProfile", "-NonInteractive", "-Command", strings.ReplaceAll(parseScript, "/w", dir))
+		cmd = exec.Command("pwsh", "-NoProfile", "-NonInteractive", "-Command", parseScript)
+		cmd.Env = append(os.Environ(), "ADIQ_PS_ROOT="+dir)
 	} else {
 		img, err := pwshImage(pinRoot)
 		if err != nil {
 			return []string{"ps1 parse: " + err.Error()}
 		}
-		cmd = exec.Command("docker", "run", "--rm", "--network", "none", "-v", dir+":/w:ro", img, "pwsh", "-NoProfile", "-NonInteractive", "-Command", parseScript)
+		cmd = exec.Command("docker", "run", "--rm", "--network", "none", "-e", "ADIQ_PS_ROOT=/w", "-v", dir+":/w:ro", img, "pwsh", "-NoProfile", "-NonInteractive", "-Command", parseScript)
 	}
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb

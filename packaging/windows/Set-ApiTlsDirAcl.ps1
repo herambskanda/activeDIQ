@@ -42,9 +42,31 @@ function Assert-NoUnprivilegedWrite([string]$Target, [string[]]$AllowedSids) {
     if (([int]$r.FileSystemRights -band $dangerMask) -ne 0) { throw "'$Target' grants write access to $sidv; refusing. Use a protected location (Administrators/SYSTEM only) and retry." }
   }
 }
-$parent = Split-Path -Parent -Path $Path
+# Every ancestor up to the volume root must be owned by a trusted principal (an owner keeps implicit
+# WRITE_DAC, so a non-admin who pre-created an ancestor can re-grant themselves access and swap the
+# directory later) and must not let an unprivileged principal delete, re-ACL or take ownership of it.
+# The full write check is NOT applied above the immediate parent: stock C:\ and C:\ProgramData grant
+# Users create rights and that would refuse every install.
+$trustedAncestorOwners = @($admins.Value, $system.Value, 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+$ancestorMask = [int][System.Security.AccessControl.FileSystemRights]'Delete,DeleteSubdirectoriesAndFiles,ChangePermissions,TakeOwnership' -bor 0x52000000
+function Assert-TrustedAncestor([string]$Target) {
+  $acl = Get-Acl -LiteralPath $Target
+  $o = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
+  if ($trustedAncestorOwners -notcontains $o) { throw "Ancestor '$Target' is owned by $o, not Administrators, SYSTEM or TrustedInstaller; refusing." }
+  foreach ($r in $acl.Access) {
+    if ($r.AccessControlType -ne 'Allow') { continue }
+    if ($r.PropagationFlags -band [System.Security.AccessControl.PropagationFlags]::InheritOnly) { continue }
+    $sidv = $r.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
+    if ($safeWriters -contains $sidv) { continue }
+    if (([int]$r.FileSystemRights -band $ancestorMask) -ne 0) { throw "Ancestor '$Target' lets $sidv delete, re-ACL or take ownership; refusing." }
+  }
+}
+$full = [System.IO.Path]::GetFullPath($Path)
+$parent = Split-Path -Parent -Path $full
 if (-not $parent -or -not (Test-Path -LiteralPath $parent)) { throw "Parent of '$Path' does not exist; create a protected parent first." }
+for ($a = $parent; $a; $a = Split-Path -Parent -Path $a) { Assert-TrustedAncestor $a }
 Assert-NoUnprivilegedWrite $parent $safeWriters
+$Path = $full
 
 if (-not (Test-Path -LiteralPath $Path)) { New-Item -ItemType Directory -Path $Path | Out-Null }
 $item = Get-Item -LiteralPath $Path -Force

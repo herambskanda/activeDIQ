@@ -85,6 +85,12 @@ func TestViolationsAreCaught(t *testing.T) {
 		{"existing dir DACL unchecked", winACL, "own DACL", func(s string) string {
 			return strings.ReplaceAll(s, "Assert-NoUnprivilegedWrite $Path", "# skipped $Path")
 		}},
+		{"ancestor walk dropped", winACL, "every ancestor", func(s string) string {
+			return strings.ReplaceAll(s, "Assert-TrustedAncestor $a", "Write-Verbose $a")
+		}},
+		{"ancestor owner unchecked", winACL, "ancestor owned by an untrusted", func(s string) string {
+			return strings.ReplaceAll(s, "Ancestor '$Target' is owned by", "Ancestor '$Target' has")
+		}},
 		{"generic rights not masked", winACL, "generic rights", func(s string) string { return strings.ReplaceAll(s, "0x52000000", "0") }},
 		{"hardlink check fails open", winACL, "fail closed", func(s string) string { return strings.ReplaceAll(s, "$LASTEXITCODE", "$null") }},
 		{"privileged", linCompose, "must not be privileged", func(s string) string { return s + "    privileged: true\n" }},

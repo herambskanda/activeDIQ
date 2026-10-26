@@ -58,6 +58,8 @@ func Check(root string) []string {
 	need(&v, winACL, w, "refusing to adopt", "a pre-existing directory with an untrusted owner must be refused")
 	need(&v, winACL, w, "grants write access", "a parent writable by unprivileged users must be refused")
 	need(&v, winACL, w, "Assert-NoUnprivilegedWrite $Path", "an existing directory's own DACL must be checked for unprivileged write access")
+	need(&v, winACL, w, "Assert-TrustedAncestor $a", "every ancestor up to the volume root must be walked")
+	need(&v, winACL, w, "Ancestor '$Target' is owned by", "an ancestor owned by an untrusted principal must be refused")
 	need(&v, winACL, w, "0x52000000", "the danger mask must include the raw generic rights (GENERIC_ALL/WRITE, MAXIMUM_ALLOWED)")
 	need(&v, winACL, w, "$LASTEXITCODE", "the hard-link check must fail closed when fsutil fails")
 	t := read(root, winTest, &v)
@@ -182,7 +184,7 @@ func runHostile(script, tmp, uid, gid string) []string {
 }
 
 // repoRootOf finds the checkout that holds the oracle pin: root itself, or the real repository when
-// Check runs on a fixture copy (TFITNESS_REPO overrides).
+// Check runs on a fixture copy (ADIQ_REPO_ROOT overrides).
 func repoRootOf(root string) string {
 	if r := os.Getenv("ADIQ_REPO_ROOT"); r != "" {
 		return r
