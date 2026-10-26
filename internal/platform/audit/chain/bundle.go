@@ -44,7 +44,7 @@ type KeyInfo struct {
 	KeyID      string `json:"key_id"`
 	PublicKey  []byte `json:"public_key"`
 	CreatedSeq uint64 `json:"created_seq"`
-	RetiredSeq uint64 `json:"retired_seq,omitempty"`
+	RetiredSeq uint64 `json:"retired_seq,omitzero"`
 }
 
 // Bundle is adq-audit-export/1 without its personal side file (personal values arrive with the

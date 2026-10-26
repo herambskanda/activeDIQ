@@ -304,7 +304,7 @@ type baselineLine struct {
 	Object     string    `json:"object"`
 	Basis      string    `json:"basis"`
 	Source     string    `json:"source"`
-	Revision   uint64    `json:"tier0_revision,omitempty"`
+	Revision   uint64    `json:"tier0_revision,omitzero"`
 	At         time.Time `json:"at"`
 }
 
