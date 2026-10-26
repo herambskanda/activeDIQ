@@ -49,6 +49,7 @@ type state struct {
 	attempt int
 	actor   authority.Chain
 	pins    authority.Pins
+	dsas    authority.DSAPins
 	nc      authority.NamingContextID
 	tx      store.Tx
 	query   authority.FactsQuery
@@ -107,6 +108,16 @@ func (s Step) DC(nc authority.NamingContextID) (string, bool) {
 	}
 	h, ok := s.s.pins[nc]
 	return h, ok
+}
+
+// DSA returns the pinned DC's DSA GUID (NTDS Settings objectGUID) for a naming context, and false for
+// none. A write API sends it as the connector's DcSelection.pinned_dsa_guid.
+func (s Step) DSA(nc authority.NamingContextID) (string, bool) {
+	if s.Valid() != nil {
+		return "", false
+	}
+	g, ok := s.s.dsas[nc]
+	return g, ok && g != ""
 }
 
 // NC returns the naming context the runner bound into this Step (the planned target's NC, covered by
@@ -193,6 +204,8 @@ type Spec struct {
 	Attempt int
 	Actor   authority.Chain
 	Pins    authority.Pins
+	// DSAs are the pinned DCs' DSA GUIDs, copied at mint like Pins.
+	DSAs authority.DSAPins
 	// NC is the target naming context; it must equal the NC in the digested TargetRef.
 	NC      authority.NamingContextID
 	Tx      store.Tx
@@ -254,7 +267,7 @@ func (m *Minter) Mint(sp Spec) (Step, func(), error) {
 		return Step{}, nil, errors.New("step: a step needs an operation")
 	}
 	// The pin is copied: a caller-held map (e.g. a DC-locator cache) must not re-point a minted Step.
-	st := &state{key: sp.Key, attempt: sp.Attempt, actor: sp.Actor, pins: maps.Clone(sp.Pins), nc: sp.NC, tx: sp.Tx,
+	st := &state{key: sp.Key, attempt: sp.Attempt, actor: sp.Actor, pins: maps.Clone(sp.Pins), dsas: maps.Clone(sp.DSAs), nc: sp.NC, tx: sp.Tx,
 		query: sp.Query, digest: sp.Digest, recheck: sp.Recheck, secret: sp.Secret}
 	return Step{s: st}, func() { st.revoked.Store(true) }, nil
 }

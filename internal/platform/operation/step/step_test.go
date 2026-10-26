@@ -176,3 +176,21 @@ func TestMintCopiesPins(t *testing.T) {
 		t.Errorf("DC = %q after caller mutated its map", h)
 	}
 }
+
+func TestMintCopiesDSAPins(t *testing.T) {
+	dsas := authority.DSAPins{"nc1": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}
+	s, _, err := testMinter().Mint(Spec{Key: Key{Operation: "o"}, Actor: chain(), Recheck: ok, DSAs: dsas, NC: "nc1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dsas["nc1"] = "rogue"
+	if g, found := s.DSA("nc1"); !found || g != "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" {
+		t.Fatalf("DSA = %q, %v after mutating the caller's map", g, found)
+	}
+	if _, found := s.DSA("other"); found {
+		t.Fatal("DSA for an unpinned NC")
+	}
+	if _, found := (Step{}).DSA("nc1"); found {
+		t.Fatal("zero Step exposes a DSA")
+	}
+}

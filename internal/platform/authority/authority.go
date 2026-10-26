@@ -70,6 +70,11 @@ type NamingContextID string
 // Pins maps each naming context the operation touches to the one DC host pinned for it (rule 5).
 type Pins map[NamingContextID]string
 
+// DSAPins maps each pinned naming context to the canonical GUID of the pinned DC's NTDS Settings
+// object (its DSA GUID), the identity DcSelection.pinned_dsa_guid carries on the wire (rule 5). It is
+// recorded next to Pins; a host alone cannot be enforced by the connector.
+type DSAPins map[NamingContextID]string
+
 // TargetRef names the object a step acts on. Directory objects are keyed by objectGUID, never by DN
 // (domain-model X3). A target "to be created" carries the planned parent GUID and RDN instead of a GUID.
 type TargetRef struct {

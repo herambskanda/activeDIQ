@@ -153,6 +153,8 @@ type Request struct {
 	// Pins are the DCs pinned per naming context for this operation (rule 5), chosen by the caller of
 	// the runner, never by an Action.
 	Pins authority.Pins
+	// DSAs are the pinned DCs' DSA GUIDs per naming context, chosen with Pins.
+	DSAs authority.DSAPins
 
 	// The fields below are used by the persisted Directory path (SubmitDirectory).
 
@@ -313,7 +315,7 @@ func (u *run) applyOne(ctx context.Context, tx store.Tx, idx int, sp StepPlan) (
 	u.failKey, u.failTgt = key, sp.Target
 	q := r.cfg.Authz.FactsQuery(u.req.Actor, u.d.Permission, sp.Target)
 	st, revoke, err := minter.Mint(step.Spec{
-		Key: key, Attempt: 1, Actor: u.req.Actor, NC: sp.Target.NC, Pins: u.req.Pins, Tx: tx, Query: q,
+		Key: key, Attempt: 1, Actor: u.req.Actor, NC: sp.Target.NC, Pins: u.req.Pins, DSAs: u.req.DSAs, Tx: tx, Query: q,
 		Digest: stepDigest(sp),
 		Recheck: func(ctx context.Context, f authority.Facts) error {
 			return r.recheck(ctx, u.req.Actor, u.d.Permission, sp.Target, f)
