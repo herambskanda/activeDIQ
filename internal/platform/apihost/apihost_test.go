@@ -875,3 +875,42 @@ func TestBodyNoneRefusesBody(t *testing.T) {
 		})
 	}
 }
+
+// ---- T-0195: HTTP binding acceptance ------------------------------------------------------------
+
+func TestCSRFRequiredOnMutation(t *testing.T) {
+	for _, hdr := range []string{"", "wrong"} {
+		fp := newPorts()
+		fp.principal.Kind = apihost.KindSession
+		fp.csrfErr = apihost.ErrCSRF // the Authenticator refuses a missing or wrong value
+		r := post("/widgets", "application/json", `{"name":"a"}`)
+		if hdr != "" {
+			r.Header.Set("X-CSRF-Token", hdr)
+		}
+		problemOf(t, serve(t, jsonRow(), fp, apihost.Policy{}, r), 403, apitypes.ProblemTypeCSRFFailed)
+		for _, c := range fp.calls {
+			if c == "handler" || c == "authz" {
+				t.Fatalf("chain went past CSRF: %v", fp.calls)
+			}
+		}
+	}
+}
+
+func TestJSONOnly(t *testing.T) {
+	for _, ct := range []string{"text/plain", "application/x-www-form-urlencoded", "multipart/form-data; boundary=x", "application/xml", ""} {
+		rec := serve(t, jsonRow(), newPorts(), apihost.Policy{}, post("/widgets", ct, `{"name":"a"}`))
+		problemOf(t, rec, 415, apitypes.ProblemTypeUnsupportedMediaType)
+	}
+}
+
+func TestHSTS(t *testing.T) {
+	want := "max-age=63072000; includeSubDomains"
+	ok := serve(t, jsonRow(), newPorts(), apihost.Policy{}, post("/widgets", "application/json", `{"name":"a"}`))
+	bad := serve(t, jsonRow(), newPorts(), apihost.Policy{}, post("/widgets", "text/plain", `x`))
+	miss := serve(t, jsonRow(), newPorts(), apihost.Policy{}, post("/nowhere", "application/json", `{}`))
+	for name, rec := range map[string]*httptest.ResponseRecorder{"ok": ok, "415": bad, "404": miss} {
+		if got := rec.Header().Get("Strict-Transport-Security"); got != want {
+			t.Errorf("%s: HSTS = %q", name, got)
+		}
+	}
+}

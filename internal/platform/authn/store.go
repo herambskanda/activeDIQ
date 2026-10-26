@@ -23,6 +23,10 @@ var (
 	// ErrInvalid is returned for input that is not acceptable (a malformed ID, an unknown reason, no
 	// authentication method). No SQL has run.
 	ErrInvalid = errors.New("authn: invalid input")
+
+	// ErrPolicyRead means the tenant's session policy could not be read, which is what a token naming
+	// an unknown tenant produces. HTTP callers answer it as they answer an unknown session.
+	ErrPolicyRead = errors.New("authn: read session policy")
 )
 
 // Reason is why a session was revoked. The set is closed and matches the table's CHECK.
@@ -193,7 +197,7 @@ func (s *Store) now(ctx context.Context, tx store.Tx) (time.Time, error) {
 func (s *Store) policy(ctx context.Context, t tenant.ID) (Policy, error) {
 	p, err := s.policies.SessionPolicy(ctx, t)
 	if err != nil {
-		return Policy{}, fmt.Errorf("authn: read session policy: %w", err)
+		return Policy{}, fmt.Errorf("%w: %w", ErrPolicyRead, err)
 	}
 	if err := p.Validate(s.bounds); err != nil {
 		return Policy{}, err
@@ -387,6 +391,28 @@ func (s *Store) RevokeAccount(ctx context.Context, t tenant.ID, account string, 
 	}
 	return s.revokeN(ctx, t, `UPDATE public.authn_sessions SET state = 'revoked', ended_at = $4, end_reason = $3
 WHERE tenant_id = $1 AND account_id = $2::uuid AND state = 'active'`, account, why)
+}
+
+// Rotate replaces the session a token names with a new one for the same account, methods and factor
+// times, and revokes the old one for why. It is called when privilege changes (step-up, role change
+// of the signed-in account) so a value captured before the change is dead and the CSRF value, which is
+// derived from the token, changes with it. The old session is revoked first: if Create then fails the
+// caller is signed out, never left on a stale token. A concurrent Rotate of the same token finds it
+// already ended and gets ErrRevoked.
+func (s *Store) Rotate(ctx context.Context, old Token, why Reason) (CreateResult, error) {
+	sess, err := s.Lookup(ctx, old)
+	if err != nil {
+		return CreateResult{}, err
+	}
+	ended, err := s.Revoke(ctx, sess.Tenant, sess.ID, why)
+	if err != nil {
+		return CreateResult{}, err
+	}
+	if !ended {
+		return CreateResult{}, ErrRevoked
+	}
+	return s.Create(ctx, CreateInput{Tenant: sess.Tenant, Account: sess.Account, Methods: sess.Methods,
+		MFAAt: sess.MFAAt, AuthorityFactorAt: sess.AuthorityFactorAt, ClientIP: sess.ClientIP})
 }
 
 // Logout ends the session a token names.

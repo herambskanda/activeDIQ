@@ -223,12 +223,17 @@ func (s *Server) mount(rt Route, host string) (err error) {
 	return nil
 }
 
+// hstsValue is two years with subdomains. No preload: that is a commitment the operator makes.
+const hstsValue = "max-age=63072000; includeSubDomains"
+
 // ServeHTTP is the whole API: recover, trace ID, then the mux. A path or method outside the table
 // is a problem, never the mux's plain text and never HTML.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	trace := newTraceID()
 	r = r.WithContext(withTrace(r.Context(), trace))
 	w.Header().Set("X-Trace-Id", trace)
+	// HSTS on every response of the console, errors included (threat model §7.3). The listener is TLS only.
+	w.Header().Set("Strict-Transport-Security", hstsValue)
 	defer func() {
 		if rec := recover(); rec != nil {
 			if rec == http.ErrAbortHandler {
