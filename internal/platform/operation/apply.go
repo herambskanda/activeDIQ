@@ -162,7 +162,7 @@ func (r *Runner) mintFor(c *claimed, attempt int, sec secret.Secret) (step.Step,
 	return minter.Mint(step.Spec{
 		Key: c.key, Attempt: attempt, Actor: c.op.Chain, NC: c.plan.Target.NC, Pins: c.op.Pins, DSAs: c.op.DSAs, Query: q, Digest: stepDigest(c.plan), Secret: sec,
 		Recheck: func(ctx context.Context, f authority.Facts) error {
-			return r.recheck(ctx, c.op.Chain, c.d.Permission, c.plan.Target, f)
+			return r.recheck(ctx, c.op.Tenant, c.op.Chain, c.d.Permission, c.plan.Target, f)
 		},
 	})
 }

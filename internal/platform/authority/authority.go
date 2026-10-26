@@ -5,7 +5,10 @@
 // without importing authz or operation.
 package authority
 
-import "errors"
+import (
+	"context"
+	"errors"
+)
 
 // PrincipalKind says what kind of subject a Principal is.
 type PrincipalKind string
@@ -111,6 +114,9 @@ type FactsQuery struct {
 	Target TargetRef
 	Roots  []Root
 	Tier0  bool
+	// Ancestry asks for the target's live parent chain (Facts.Ancestors), which an OU- or
+	// naming-context-scoped grant is decided from.
+	Ancestry bool
 }
 
 // Facts is what a live read returned for a FactsQuery.
@@ -118,6 +124,11 @@ type Facts struct {
 	Exists bool
 	Tier0  bool
 	Roots  map[Root]Membership
+	// Ancestors are the GUIDs of the live parent chain, nearest parent first, up to the naming
+	// context head. AncestorsComplete is true only when the chain was read live and in full; an
+	// incomplete chain decides nothing (it fails closed in authz).
+	Ancestors         []string
+	AncestorsComplete bool
 }
 
 // Of returns the membership answer for r, Unknown when the read did not cover it.
@@ -126,4 +137,19 @@ func (f Facts) Of(r Root) Membership {
 		return m
 	}
 	return Unknown
+}
+
+type tenantKey struct{}
+
+// WithTenant returns ctx carrying the canonical tenant ID text an authorisation decision is for. The
+// runner sets it on every Authorizer.Authorize call, so an Authorizer that reads tenant-scoped state
+// (RBAC) reads that tenant's and no other.
+func WithTenant(ctx context.Context, tenantID string) context.Context {
+	return context.WithValue(ctx, tenantKey{}, tenantID)
+}
+
+// TenantFrom returns the tenant ID text set by WithTenant, and false when none was set.
+func TenantFrom(ctx context.Context) (string, bool) {
+	v, ok := ctx.Value(tenantKey{}).(string)
+	return v, ok && v != ""
 }

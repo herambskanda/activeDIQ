@@ -1,15 +1,13 @@
 package server
 
 import (
-	"context"
 	"errors"
 	"fmt"
 
 	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
-	"github.com/skenzeriq/activediq/internal/platform/authority"
-	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
+	"github.com/skenzeriq/activediq/internal/platform/rbac"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 )
 
@@ -46,23 +44,23 @@ func buildOperation(holdsMinter func() bool, db *store.DB, facts operation.LiveF
 	return &operationKernel{Chainer: ch, Runner: r}, nil
 }
 
-// directoryFacts is the live facts reader: the directory client's read half. Until the connector
-// transport and facts reader are wired (T-0174) it refuses every read with client.ErrNoFacts, so a
-// directory step fails closed rather than authorising on guessed facts.
-func directoryFacts() operation.LiveFacts { return client.New() }
-
-// errNoRBAC is the refusal every operation gets until RBAC persistence lands.
-var errNoRBAC = errors.New("server: no RBAC store wired: operation refused")
-
-// denyAuthorizer is the Authorizer until RBAC persistence loads principals and assignments for
-// authz.Evaluator: it refuses every permission, and asks for the Tier-0 fact so nothing is waved
-// through. The runner records each refusal as a denied event.
-type denyAuthorizer struct{}
-
-func (denyAuthorizer) FactsQuery(_ authority.Chain, _ authz.Permission, t authority.TargetRef) authority.FactsQuery {
-	return authority.FactsQuery{Target: t, Tier0: true}
+// directoryFacts is the live facts reader: the directory client's read half over the connector-backed
+// facts reader (client.ConnectorFacts). reads is the connector's read adapter; until the gRPC adapter
+// lands (a nil reads) a directory target fails closed with client.ErrNoReads, while a tier0_scope
+// target or a store target is answered without a read.
+func directoryFacts(reads client.Reads) operation.LiveFacts {
+	return client.New(client.WithFacts(client.NewConnectorFacts(reads)))
 }
 
-func (denyAuthorizer) Authorize(context.Context, authority.Chain, authz.Permission, authority.TargetRef, authority.Facts) error {
-	return errNoRBAC
+// rbacAuthorizer is the operation Authorizer: RBAC persistence read through authz.Evaluator.
+func rbacAuthorizer(db *store.DB) (operation.Authorizer, error) {
+	src, err := rbac.NewStore(db)
+	if err != nil {
+		return nil, fmt.Errorf("server: rbac store: %w", err)
+	}
+	az, err := rbac.New(src)
+	if err != nil {
+		return nil, fmt.Errorf("server: rbac authorizer: %w", err)
+	}
+	return az, nil
 }

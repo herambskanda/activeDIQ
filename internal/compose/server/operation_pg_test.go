@@ -28,7 +28,11 @@ type noAnchor struct{}
 
 func (noAnchor) Anchor(context.Context, chain.Checkpoint) error { return nil }
 
-type allowAuthz struct{ denyAuthorizer }
+type allowAuthz struct{}
+
+func (allowAuthz) FactsQuery(_ authority.Chain, _ authz.Permission, t authority.TargetRef) authority.FactsQuery {
+	return authority.FactsQuery{Target: t}
+}
 
 func (allowAuthz) Authorize(context.Context, authority.Chain, authz.Permission, authority.TargetRef, authority.Facts) error {
 	return nil
@@ -72,7 +76,7 @@ func TestRunnerEventsAreChainedAtCommit(t *testing.T) {
 				t.Fatal(err)
 			}
 			if k == nil {
-				if k, err = buildOperation(operation.HoldsMinter, e.db, directoryFacts(), allowAuthz{}, reg); err != nil {
+				if k, err = buildOperation(operation.HoldsMinter, e.db, directoryFacts(nil), allowAuthz{}, reg); err != nil {
 					t.Fatal(err)
 				}
 			}
