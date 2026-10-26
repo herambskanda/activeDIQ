@@ -97,6 +97,21 @@
   "platformJobs": [],
   "probeValues": [
     {
+      "column": "public.authn_authenticator_enrollments.method",
+      "value": "totp",
+      "reason": "CHECK: a method is totp, the sealed seed is at least 32 bytes and a subject is a console account or a directory user (DM-37); the probe row is a TOTP enrolment of an account."
+    },
+    {
+      "column": "public.authn_authenticator_enrollments.sealed_secret",
+      "value": "\\x70707070707070707070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: a method is totp, the sealed seed is at least 32 bytes and a subject is a console account or a directory user (DM-37); the probe row is a TOTP enrolment of an account."
+    },
+    {
+      "column": "public.authn_authenticator_enrollments.account_id",
+      "value": "0b3f2f9e-6a1c-4c53-9a53-3a7a3f5f1c01",
+      "reason": "CHECK: a method is totp, the sealed seed is at least 32 bytes and a subject is a console account or a directory user (DM-37); the probe row is a TOTP enrolment of an account."
+    },
+    {
       "column": "public.correlations.match",
       "value": "sid",
       "reason": "CHECK: match is anchor or sid; the probe row has no anchor, so sid, which needs only ad_sid (DM-20.I1)."
