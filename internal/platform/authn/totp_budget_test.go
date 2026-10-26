@@ -79,7 +79,7 @@ func Test_totp_enrolment_pause_after_10(t *testing.T) {
 		}
 		// After the pause it works.
 		e.now = in.PausedUntil.Add(time.Second)
-		if err := e.verify(t, e.a, id, hotp(seed, stepAt(e.now))); err != nil {
+		if err := e.verify(t, e.a, id, hotp(seed, stepAt(e.now)+1)); err != nil {
 			t.Fatalf("after the pause: %v", err)
 		}
 	})
@@ -399,6 +399,74 @@ func Test_totp_refund_only_with_spend(t *testing.T) {
 		}
 		if _, err := e.exec(t, e.a, `UPDATE public.authn_totp_failures SET at = now() + interval '1 day' WHERE enrollment_id = $1::uuid`, id); err == nil {
 			t.Error("a failure row was rewritten")
+		}
+	})
+}
+
+// totp_refund_requires_spend: touching the enrolment row without spending a step does not unlock the
+// refund, however many failure rows are flipped (T-0389: the xmin-only guard let 45 guesses through).
+func Test_totp_refund_requires_spend(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		id, _ := e.enrol(t, e.a)
+		for i := 0; i < 3; i++ {
+			if err := e.verify(t, e.a, id, "000000"); !errors.Is(err, ErrCodeRejected) {
+				t.Fatalf("wrong code %d: %v", i, err)
+			}
+		}
+		err := e.tx(t, e.a, func(ctx context.Context, tx store.Tx) error {
+			if _, err := tx.Exec(ctx, `UPDATE public.authn_authenticator_enrollments SET label = label WHERE id = $1::uuid`, id); err != nil {
+				return err
+			}
+			_, err := tx.Exec(ctx, `UPDATE public.authn_totp_failures SET succeeded = true WHERE enrollment_id = $1::uuid`, id)
+			return err
+		})
+		if err == nil {
+			t.Fatal("failure rows flipped to succeeded without spending a step")
+		}
+		// Naming a refund without a strictly increasing step is refused too.
+		var fid string
+		if err := e.tx(t, e.a, func(ctx context.Context, tx store.Tx) error {
+			return tx.QueryRow(ctx, `SELECT id::text FROM public.authn_totp_failures WHERE enrollment_id = $1::uuid LIMIT 1`, id).Scan(&fid)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.exec(t, e.a, `UPDATE public.authn_authenticator_enrollments SET refund_attempt = $2::uuid WHERE id = $1::uuid`, id, fid); err == nil {
+			t.Error("refund_attempt set without a step spend")
+		}
+		var n int
+		_ = e.tx(t, e.a, func(ctx context.Context, tx store.Tx) error {
+			return tx.QueryRow(ctx, `SELECT count(*) FROM public.authn_totp_failures WHERE enrollment_id = $1::uuid AND succeeded`, id).Scan(&n)
+		})
+		if n != 0 {
+			t.Errorf("%d rows succeeded without a spend", n)
+		}
+	})
+}
+
+// totp_refund_only_own_attempt: a real successful Verify refunds exactly its own attempt row.
+func Test_totp_refund_only_own_attempt(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		id, seed := e.enrol(t, e.a)
+		for i := 0; i < 3; i++ {
+			_ = e.verify(t, e.a, id, "000000")
+		}
+		if err := e.verify(t, e.a, id, hotp(seed, stepAt(e.now)+1)); err != nil {
+			t.Fatalf("correct code: %v", err)
+		}
+		var total, ok int
+		if err := e.tx(t, e.a, func(ctx context.Context, tx store.Tx) error {
+			return tx.QueryRow(ctx, `SELECT count(*), count(*) FILTER (WHERE succeeded) FROM public.authn_totp_failures WHERE enrollment_id = $1::uuid`, id).Scan(&total, &ok)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if total != 4 || ok != 1 {
+			t.Fatalf("attempt rows: %d total, %d succeeded; want 4 and exactly 1", total, ok)
+		}
+		// The spent step's refund is not reusable: flipping another row in a later transaction is refused.
+		if _, err := e.exec(t, e.a, `UPDATE public.authn_totp_failures SET succeeded = true WHERE enrollment_id = $1::uuid AND NOT succeeded`, id); err == nil {
+			t.Error("a second refund was accepted")
 		}
 	})
 }
