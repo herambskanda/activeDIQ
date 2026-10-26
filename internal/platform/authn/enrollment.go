@@ -302,11 +302,12 @@ func (s *Service) check(ctx context.Context, tx store.Tx, tid tenant.ID, id, cod
 	// both win; the pause and expiry are re-asserted in the same statement; the trigger also refuses a
 	// decreasing step.
 	tag, err := tx.Exec(ctx, `UPDATE public.authn_authenticator_enrollments
-		SET last_used_step = $2, last_used = $3, state = CASE WHEN state = 'pending' THEN 'active' ELSE state END
+		SET last_used_step = $2, last_used = $3, state = CASE WHEN state = 'pending' THEN 'active' ELSE state END,
+		    refund_attempt = NULLIF($6, '')::uuid
 		WHERE id = $1::uuid AND state = $4 AND (last_used_step IS NULL OR last_used_step < $2)
 		  AND (paused_until IS NULL OR paused_until <= $3)
 		  AND (state <> 'pending' OR (expires_at > $3 AND confirm_attempts <= $5))`,
-		id, step, now, string(want), MaxConfirmAttempts)
+		id, step, now, string(want), MaxConfirmAttempts, attempt)
 	if err != nil {
 		return fmt.Errorf("authn: spend step: %w", err)
 	}
@@ -315,7 +316,7 @@ func (s *Service) check(ctx context.Context, tx store.Tx, tid tenant.ID, id, cod
 	}
 	if attempt != "" {
 		// Refund the attempt, in the transaction that spent the step: if the caller rolls back, the
-		// attempt stays charged (the safe direction). The trigger accepts this update only here.
+		// attempt stays charged (the safe direction). The trigger accepts this update only when the spend named this attempt in refund_attempt.
 		if _, err := tx.Exec(ctx, `UPDATE public.authn_totp_failures SET succeeded = true WHERE id = $1::uuid`, attempt); err != nil {
 			return fmt.Errorf("authn: refund attempt: %w", err)
 		}
