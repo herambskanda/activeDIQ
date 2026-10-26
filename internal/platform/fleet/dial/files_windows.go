@@ -113,7 +113,7 @@ func checkDir(dir string) error {
 	if err != nil {
 		return err
 	}
-	if !st.IsDir() || st.Mode()&os.ModeSymlink != 0 || isReparse(st) {
+	if !st.IsDir() || st.Mode()&os.ModeSymlink != 0 || isReparse(dir) {
 		return fmt.Errorf("%s is not a plain directory", dir)
 	}
 	return checkACL(dir, true)
@@ -125,15 +125,27 @@ func checkFile(path string, _ bool) error {
 	if err != nil {
 		return err
 	}
-	if !st.Mode().IsRegular() || isReparse(st) {
+	if !st.Mode().IsRegular() || isReparse(path) {
 		return fmt.Errorf("%s is not a regular file", filepath.Base(path))
 	}
 	return checkACL(path, false)
 }
 
-func isReparse(st os.FileInfo) bool {
-	d, ok := st.Sys().(*windows.Win32FileAttributeData)
-	return ok && d.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0
+// isReparse reports whether path is a reparse point (junction, symlink, mount point), read straight
+// from the file attributes so it does not depend on Go's winsymlink mapping or on os.FileInfo.Sys()
+// (which is *syscall.Win32FileAttributeData, not the x/sys type). GetFileAttributes does not follow
+// the final link. Any error is treated as "is a reparse point": fail closed.
+// https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-getfileattributesw
+func isReparse(path string) bool {
+	p, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return true
+	}
+	a, err := windows.GetFileAttributes(p)
+	if err != nil {
+		return true
+	}
+	return a&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0
 }
 
 func checkACL(path string, needProtected bool) error {
