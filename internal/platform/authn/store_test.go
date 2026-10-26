@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/skenzeriq/activediq/internal/platform/audit"
+	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
@@ -31,9 +33,10 @@ func (c *fakeClock) advance(d time.Duration) {
 }
 
 type sessEnv struct {
-	d   *storetest.Database
-	ten tenant.ID
-	clk *fakeClock
+	d    *storetest.Database
+	ten  tenant.ID
+	clk  *fakeClock
+	sink *recSink
 }
 
 func (e *sessEnv) node(t *testing.T, p Policy) *Store {
@@ -43,7 +46,7 @@ func (e *sessEnv) node(t *testing.T, p Policy) *Store {
 		t.Fatalf("store.Open as the runtime role: %v", err)
 	}
 	t.Cleanup(db.Close)
-	s, err := New(Config{DB: db, Policies: StaticPolicy(p), Clock: e.clk.now, TouchEvery: time.Second})
+	s, err := New(Config{DB: db, Audit: e.sink, Policies: StaticPolicy(p), Clock: e.clk.now, TouchEvery: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +67,7 @@ func each(t *testing.T, fn func(t *testing.T, e *sessEnv)) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		d := s.NewDatabase(t)
 		d.Migrate(t)
-		fn(t, &sessEnv{d: d, ten: tenanttest.Seed(t, d.ExecOwner, "t1"), clk: &fakeClock{t: time.Now().UTC().Truncate(time.Millisecond)}})
+		fn(t, &sessEnv{d: d, ten: tenanttest.Seed(t, d.ExecOwner, "t1"), clk: &fakeClock{t: time.Now().UTC().Truncate(time.Millisecond)}, sink: &recSink{}})
 	})
 }
 
@@ -263,7 +266,7 @@ func TestSessionRevocationOnEvents(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			n, err := nodeA.RevokeAccount(context.Background(), e.ten, acct, why)
+			n, err := nodeA.RevokeAccount(context.Background(), e.ten, acct, why, human)
 			if err != nil || n != 2 {
 				t.Fatalf("%s: RevokeAccount = %d, %v; want 2", why, n, err)
 			}
@@ -277,14 +280,14 @@ func TestSessionRevocationOnEvents(t *testing.T) {
 			if _, err := nodeB.Lookup(context.Background(), bystander.Token); err != nil {
 				t.Fatalf("%s: another account's session was revoked: %v", why, err)
 			}
-			if n, _ := nodeA.RevokeAccount(context.Background(), e.ten, acct, why); n != 0 {
+			if n, _ := nodeA.RevokeAccount(context.Background(), e.ten, acct, why, human); n != 0 {
 				t.Fatalf("%s: second revoke ended %d", why, n)
 			}
 		}
 		// On demand, one session by handle; and logout.
 		acct := tenant.New().String()
 		x, y := create(t, nodeA, e.ten, acct), create(t, nodeA, e.ten, acct)
-		if ok, err := nodeB.Revoke(context.Background(), e.ten, x.Session.ID, ReasonOnDemand); err != nil || !ok {
+		if ok, err := nodeB.Revoke(context.Background(), e.ten, x.Session.ID, ReasonOnDemand, human); err != nil || !ok {
 			t.Fatalf("Revoke = %v, %v", ok, err)
 		}
 		if _, err := nodeA.Lookup(context.Background(), x.Token); !errors.Is(err, ErrRevoked) {
@@ -296,7 +299,7 @@ func TestSessionRevocationOnEvents(t *testing.T) {
 		if _, err := nodeB.Lookup(context.Background(), y.Token); !errors.Is(err, ErrRevoked) {
 			t.Fatalf("logged-out lookup = %v", err)
 		}
-		if _, err := nodeA.RevokeAccount(context.Background(), e.ten, acct, Reason("because")); !errors.Is(err, ErrInvalid) {
+		if _, err := nodeA.RevokeAccount(context.Background(), e.ten, acct, Reason("because"), human); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("unknown reason = %v, want ErrInvalid", err)
 		}
 	})
@@ -316,7 +319,7 @@ func TestTenantIsolationAndForgedTokens(t *testing.T) {
 		if _, err := s.Lookup(context.Background(), forged); !errors.Is(err, ErrSessionNotFound) {
 			t.Fatalf("cross-tenant lookup = %v, want ErrSessionNotFound", err)
 		}
-		if n, err := s.RevokeAccount(context.Background(), other, acct, ReasonOnDemand); err != nil || n != 0 {
+		if n, err := s.RevokeAccount(context.Background(), other, acct, ReasonOnDemand, human); err != nil || n != 0 {
 			t.Fatalf("cross-tenant revoke = %d, %v", n, err)
 		}
 		for _, bad := range []string{"", "x", strings.Repeat("a", 80), r.Token.Reveal() + "A", r.Token.Reveal()[:79]} {
@@ -335,7 +338,7 @@ func TestEndedSessionsAreFinalAndNotDeletable(t *testing.T) {
 	each(t, func(t *testing.T, e *sessEnv) {
 		s := e.node(t, pol)
 		r := create(t, s, e.ten, tenant.New().String())
-		if _, err := s.Revoke(context.Background(), e.ten, r.Session.ID, ReasonOnDemand); err != nil {
+		if _, err := s.Revoke(context.Background(), e.ten, r.Session.ID, ReasonOnDemand, human); err != nil {
 			t.Fatal(err)
 		}
 		err := s.db.WithTenant(context.Background(), e.ten, func(ctx context.Context, tx store.Tx) error {
@@ -411,4 +414,51 @@ VALUES ($1, $2, $3::uuid, ARRAY['password'], $4, $5, $6, $7, $8, $9, $10)`
 			}
 		}
 	})
+}
+
+var human = authority.Chain{Requester: authority.Principal{ID: "admin-1", Kind: authority.Human}}
+
+// recSink records the audit events a Store requests. It stands in for the chainer where a test reads the
+// events themselves; TestSessionEventsChained uses the real chain.
+type recSink struct {
+	mu  sync.Mutex
+	evs []audit.Event
+}
+
+func (r *recSink) Append(_ context.Context, _ store.Tx, ev audit.Event) error {
+	if err := ev.Validate(); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.evs = append(r.evs, ev)
+	return nil
+}
+
+func (r *recSink) kinds() []audit.Kind {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var k []audit.Kind
+	for _, e := range r.evs {
+		k = append(k, e.Kind)
+	}
+	return k
+}
+
+func (r *recSink) of(k audit.Kind) []audit.Event {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []audit.Event
+	for _, e := range r.evs {
+		if e.Kind == k {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func (r *recSink) reset() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.evs = nil
 }

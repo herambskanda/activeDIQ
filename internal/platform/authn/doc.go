@@ -8,6 +8,13 @@
 // calls (steps 8 and 9). Callers hold a Store and call Create at sign-in, Lookup on every
 // request, and Revoke* when the account changes.
 //
+// Account events (DM-31.I2, threat model §7.3): the account, RBAC and MFA paths call OnAccountDisabled,
+// OnRoleChanged, OnPasswordReset or OnMFAReset with their own transaction, so the change and the
+// revocation of the account's sessions commit together (events.go). Every session create, eviction,
+// expiry and revocation is an audit event requested in the transaction that causes it (audit.go): actor,
+// account and session handle, never the token or its hash. Ended rows are kept for the audit trail and
+// removed by the owner-role Purger (purge.go) once past the retention; the runtime role cannot DELETE.
+//
 // TOTP (DM-37 AuthenticatorEnrollment): a seed sealed under the tenant's data key and bound to its
 // tenant, table, row and column (TM-F-SEAL), an RFC 6238 verifier (HMAC-SHA-1, 6 digits, 30 s step,
 // a window of one step either side) and a used-step guard so a code never verifies twice.
