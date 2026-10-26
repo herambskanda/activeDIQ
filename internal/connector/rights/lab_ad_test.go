@@ -301,3 +301,31 @@ func TestLabADBroadPrincipalExposure(t *testing.T) {
 		t.Fatalf("verdict %v:%s", r.res.Verdict, dump(r.res))
 	}
 }
+
+// T-0381 AC2: the real tokenGroups of a freshly made user lacks the implicit network-logon SIDs the
+// checker adds from implicitNetworkLogonSIDs. Samba proves the LDAP side; Windows is the same by MS-ADTS.
+func TestLabADTokenGroupsLackImplicitSIDs(t *testing.T) {
+	l := newLab(t)
+	ctx := labCtx(t)
+	name, userDN, _ := l.user()
+	sess := l.open(ctx, name)
+	ref, err := dn.ParseObjectRef(userDN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := sess.Read(ctx, ref, []string{"tokenGroups"}, ad.ReadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	groups, err := e.SIDs("tokenGroups")
+	if err != nil || len(groups) == 0 {
+		t.Fatalf("tokenGroups: %v %v", groups, err)
+	}
+	for _, g := range groups {
+		for _, s := range implicitNetworkLogonSIDs {
+			if g.String() == s {
+				t.Errorf("real tokenGroups contains implicit SID %s", s)
+			}
+		}
+	}
+}

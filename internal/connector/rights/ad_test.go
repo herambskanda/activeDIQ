@@ -243,7 +243,7 @@ func newWorld(t *testing.T) *world {
 		map[string][][]byte{"nTSecurityDescriptor": {sdBytes(daSID, tace{mask: dsFullControl, trustee: daSID})}})
 	w.t0, w.t0G = f.obj("CN=AdminSDHolder,CN=System,DC=lab,DC=test", "", nil,
 		map[string][][]byte{"nTSecurityDescriptor": {sdBytes(daSID, tace{mask: dsFullControl, trustee: daSID})}})
-	w.tokens = []string{dusSID, "S-1-1-0", "S-1-5-11"}
+	w.tokens = []string{dusSID}
 	w.id, w.idG = f.obj("CN=svc,CN=Users,DC=lab,DC=test", idSIDt, map[string][]string{"userAccountControl": {"512"}, "primaryGroupID": {"513"}}, nil)
 	f.obj("CN=Domain Users,CN=Users,DC=lab,DC=test", dusSID, nil, nil)
 	w.set = tier0.NewADSet()
@@ -797,7 +797,7 @@ func TestOwnerImplicitWriteDAC(t *testing.T) {
 func TestForeignPrivilegedTokenSID(t *testing.T) {
 	w := newWorld(t)
 	for sidText, want := range map[string]int{"S-1-5-21-9-8-7-519": 1, "S-1-5-21-9-8-7-1105": 0} {
-		w.tokens = []string{dusSID, "S-1-1-0", "S-1-5-11", sidText}
+		w.tokens = []string{dusSID, sidText}
 		r := w.run(t, ADInput{})
 		if got := count(r, CodeUnverifiedAD); got != want {
 			t.Fatalf("%s: unverified x%d, want %d: %v", sidText, got, want, codes(r))
@@ -844,5 +844,35 @@ func TestPinsReachSnapshotAndC13GroupsAreReturned(t *testing.T) {
 	}
 	if len(res.C13Groups) != 1 || res.C13Groups[0] != found {
 		t.Fatalf("C13Groups = %v", res.C13Groups)
+	}
+}
+
+// T-0381: the fixture models tokenGroups as AD returns it (no implicit logon SIDs); the checker adds
+// them from implicitNetworkLogonSIDs only.
+func TestFixtureTokenGroupsLackImplicitSIDs(t *testing.T) {
+	w := newWorld(t)
+	w.setTokens()
+	groups, err := w.id.SIDs("tokenGroups")
+	if err != nil || len(groups) == 0 {
+		t.Fatalf("tokenGroups: %v %v", groups, err)
+	}
+	for _, g := range groups {
+		for _, bad := range []string{"S-1-1-0", "S-1-5-11", "S-1-5-2", "S-1-5-15"} {
+			if g.String() == bad {
+				t.Fatalf("fixture tokenGroups contains %s, which AD never returns", bad)
+			}
+		}
+	}
+}
+
+func TestImplicitNetworkLogonSIDsComeFromOneSet(t *testing.T) {
+	want := map[string]bool{"S-1-1-0": true, "S-1-5-2": true, "S-1-5-11": true, "S-1-5-15": true}
+	if len(implicitNetworkLogonSIDs) != len(want) {
+		t.Fatalf("set = %v", implicitNetworkLogonSIDs)
+	}
+	for _, s := range implicitNetworkLogonSIDs {
+		if !want[s] {
+			t.Errorf("unexpected %s", s)
+		}
 	}
 }
