@@ -3,7 +3,7 @@ package operation
 import (
 	"context"
 	crand "crypto/rand"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"maps"
@@ -126,7 +126,7 @@ func (r *Runner) SubmitDirectory(ctx context.Context, req Request) (Submission, 
 	// Draft -> planning, in one transaction. A repeated idempotency key returns the first operation.
 	var dup *opRecord
 	err := r.cfg.DB.WithTenant(ctx, req.Tenant, func(ctx context.Context, tx store.Tx) error {
-		via, _ := json.Marshal(nonNilPrincipals(req.Actor.Via))
+		via, _ := json.Marshal(nonNilPrincipals(req.Actor.Via), json.Deterministic(true))
 		var input any
 		if !d.SecretInput {
 			input = []byte(req.Input)
@@ -355,7 +355,7 @@ WHERE tenant_id = $1::uuid AND operation_id = $2::uuid AND state = 'blocked' ORD
 		return sub, err
 	}
 	for i, it := range items {
-		target, _ := json.Marshal(it.sp.Target)
+		target, _ := json.Marshal(it.sp.Target, json.Deterministic(true))
 		if _, err := tx.Exec(ctx, `INSERT INTO public.operation_items (tenant_id, operation_id, item_no, state, phase, target)
 VALUES ($1::uuid, $2::uuid, $3, 'pending', $4, $5::jsonb)`, t.String(), opID, i, it.sp.Phase, string(target)); err != nil {
 			return sub, fmt.Errorf("operation: inserting item: %w", err)
@@ -373,7 +373,7 @@ VALUES ($1::uuid, $2::uuid, $3, 'pending', $4, $5::jsonb)`, t.String(), opID, i,
 			}
 		default:
 			sub.Planned++
-			plan, err := json.Marshal(it.sp)
+			plan, err := json.Marshal(it.sp, json.Deterministic(true))
 			if err != nil {
 				return sub, fmt.Errorf("%w: plan does not encode", ErrInvalid)
 			}
@@ -402,8 +402,8 @@ VALUES ($1::uuid, $2::uuid, $3, 0, 'planned', $4::jsonb, $5, $6, $7, $8, $9)`, t
 	case sub.Planned == 0:
 		next, result = OpNoChange, "no_change"
 	}
-	pinsJSON, _ := json.Marshal(pins)
-	dsasJSON, _ := json.Marshal(dsas)
+	pinsJSON, _ := json.Marshal(pins, json.Deterministic(true))
+	dsasJSON, _ := json.Marshal(dsas, json.Deterministic(true))
 	keep := cur.ApprovedHash == hash && slices.Equal(priorBlocked, nowBlocked)
 	if _, err := tx.Exec(ctx, `UPDATE public.operations SET plan_hash = $3, pins = $4::jsonb, dsa_guids = $7::jsonb,
   plan_valid_until = now() + CASE WHEN $5 THEN interval '1 hour' ELSE interval '24 hours' END,

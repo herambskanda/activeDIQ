@@ -1,10 +1,10 @@
 package chain
 
 import (
-	"bytes"
 	"crypto/ed25519"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -111,9 +111,13 @@ func ParseUUID(s string) ([16]byte, error) {
 // WriteBundle writes the bundle as JSON.
 func WriteBundle(w io.Writer, b Bundle) error {
 	b.Format = BundleFormat
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", " ")
-	return enc.Encode(b)
+	// v1 parity: HTML escaping on, nil slices as null, one trailing newline.
+	out, err := json.Marshal(b, jsontext.WithIndent(" "), jsontext.EscapeForHTML(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), json.Deterministic(true))
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(append(out, '\n'))
+	return err
 }
 
 // ReadBundle parses a bundle, refusing unknown fields, trailing data and anything over MaxBundleBytes.
@@ -125,14 +129,10 @@ func ReadBundle(r io.Reader) (Bundle, error) {
 	if len(data) > MaxBundleBytes {
 		return Bundle{}, errors.New("chain: bundle too large")
 	}
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
 	var b Bundle
-	if err := dec.Decode(&b); err != nil {
+	// json.Unmarshal rejects trailing data itself.
+	if err := json.Unmarshal(data, &b, json.RejectUnknownMembers(true)); err != nil {
 		return Bundle{}, fmt.Errorf("chain: bundle: %w", err)
-	}
-	if dec.More() {
-		return Bundle{}, errors.New("chain: bundle: trailing data")
 	}
 	return b, nil
 }
