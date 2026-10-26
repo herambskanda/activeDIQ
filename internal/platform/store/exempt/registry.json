@@ -21,7 +21,12 @@
       "owner": "internal/platform/limiter"
     }
   ],
-  "securityDefiner": [],
+  "securityDefiner": [
+    {
+      "function": "public.audit_wipe_retired_key(text)",
+      "reason": "Destroys a retired audit checkpoint key's sealed private key. The runtime role has no UPDATE on audit_checkpoint_key (append-only, DM-80.I2), so the one allowed change runs with the owner's rights; the function takes the tenant only from app.tenant_id (row-level security still applies), refuses the newest key and a key without a committed retirement event, and the table's update trigger refuses any other change (ADR-0005 rule 11, T-0305)."
+    }
+  ],
   "platformPaths": [
     {
       "package": "internal/platform/tenant/provision",
