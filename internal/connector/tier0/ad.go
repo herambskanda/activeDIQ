@@ -53,6 +53,7 @@ const (
 	C16 = connectorv1.Tier0Basis_TIER0_BASIS_C16_CORRELATED_TO_ENTRA_TIER0
 	C17 = connectorv1.Tier0Basis_TIER0_BASIS_C17_ROOT_OF_TRUST_CONTROL
 	C18 = connectorv1.Tier0Basis_TIER0_BASIS_C18_PRIVILEGED_SID_HISTORY
+	C19 = connectorv1.Tier0Basis_TIER0_BASIS_C19_CONTROL_OF_TIER0_OBJECT
 )
 
 const (
@@ -299,11 +300,13 @@ type builder struct {
 	dcHosts    map[string]bool      // lower-case DC host names (FQDN and short) for C12
 	dcSD       map[string][]byte    // RBCD descriptors by computer GUID
 	cache      map[string]*ad.Entry // Get results by lower-case DN
+
+	c19o c19Objects // the objects whose control makes a trustee tier0 (C19), gathered by the earlier steps
 }
 
 var idAttrs = []string{"objectGUID", "objectSid", "objectClass"}
 
-// Snapshot reads the forest and computes C1-C15, C17 and C18. pinnedC13 are the C13 groups pinned at
+// Snapshot reads the forest and computes C1-C15 and C17-C19. pinnedC13 are the C13 groups pinned at
 // first discovery. Any error fails the whole snapshot: a caller that ignored the error must not be
 // left holding a partial, under-protective set.
 func (c *ADClassifier) Snapshot(ctx context.Context, pinnedC13 ...guid.GUID) (*ADSet, error) {
@@ -327,8 +330,8 @@ func (c *ADClassifier) snapshot(ctx context.Context, pinnedC13, designated []gui
 		return nil, fmt.Errorf("tier0: naming contexts: %w", err)
 	}
 	b.nm = nm
-	steps := []func() error{b.c7, b.c1c2, b.c3, b.c4, b.c5c6c15, b.c8, b.c10, b.c11, b.c12, b.c13, b.c14, b.c17, b.c18, b.c9}
-	for _, step := range steps { // c18 needs every principal basis; c9 last: it needs C2/C4/C5/C6/C15
+	steps := []func() error{b.c7, b.c1c2, b.c3, b.c4, b.c5c6c15, b.c8, b.c10, b.c11, b.c12, b.c13, b.c14, b.c17, b.c18, b.c9, b.c19}
+	for _, step := range steps { // c18 needs every principal basis; c9 needs C2/C4/C5/C6/C15; c19 last: it needs C1/C4/C5/C9 objects
 		if err := step(); err != nil {
 			return nil, err
 		}
@@ -514,6 +517,9 @@ func (b *builder) c1c2() error {
 		}
 		if hasClass(e, "group") {
 			groups = append(groups, e)
+			b.c19o.c1Groups = append(b.c19o.c1Groups, e)
+		} else {
+			b.c19o.accounts = append(b.c19o.accounts, e)
 		}
 	}
 	return b.membersOf(groups, C2)
@@ -659,11 +665,13 @@ func (b *builder) c4() error {
 	if _, err := b.mark(e, C4); err != nil {
 		return err
 	}
+	b.c19o.accounts = append(b.c19o.accounts, e)
 	q := Query{Classes: []string{"user"}, Has: []string{"msDS-SecondaryKrbTgtNumber"}}
 	return b.d.Find(b.ctx, b.nm.Domain, ad.ScopeSubtree, q, idAttrs, func(m *ad.Entry) error {
 		if _, err := b.mark(m, C4); err != nil {
 			return err
 		}
+		b.c19o.accounts = append(b.c19o.accounts, m)
 		return b.noteAccount(m)
 	})
 }
@@ -783,6 +791,7 @@ func (b *builder) c5c6c15() error {
 	if err != nil {
 		return err
 	}
+	b.c19o.dcOU = wd
 	conts := map[string]dn.DN{wk0: wd}
 	for _, dc := range b.dcDNs {
 		for p := dc.Parent(); p.Len() > 0 && !p.Equal(b.nm.Domain); p = p.Parent() {
@@ -1363,6 +1372,7 @@ func (b *builder) c9() error {
 		if _, err := b.mark(ge, C9); err != nil {
 			return err
 		}
+		b.c19o.gpos = append(b.c19o.gpos, g)
 	}
 	return nil
 }
@@ -1478,6 +1488,62 @@ func privilegedSID(s sid.SID) bool {
 	return privilegedDomainRIDs[rid]
 }
 
+// sidBatch bounds the objectSid OR-terms in one resolution search.
+const sidBatch = 100
+
+// resolveSIDs looks up every distinct non-privileged sIDHistory value in batches and calls set once
+// per value (nil entry when no object holds it). Any search error fails the snapshot (fail closed).
+func (b *builder) resolveSIDs(hist []histEntry, set func(sid.SID, *ad.Entry, bool)) error {
+	seen := map[sid.SID]bool{}
+	var todo []sid.SID
+	for _, h := range hist {
+		for _, s := range h.sids {
+			if privilegedSID(s) || seen[s] {
+				continue
+			}
+			seen[s] = true
+			if dom, ok := s.DomainSID(); ok && dom != b.domSID {
+				// Another domain: the GC path (rare, per value; fails closed on error).
+				e, found, foreign, err := b.resolveHistory(s)
+				if err != nil {
+					return fmt.Errorf("tier0: sIDHistory lookup: %w", err)
+				}
+				if !found {
+					e = nil
+				}
+				set(s, e, foreign)
+				continue
+			}
+			todo = append(todo, s)
+		}
+	}
+	for len(todo) > 0 {
+		n := min(sidBatch, len(todo))
+		batch := todo[:n]
+		todo = todo[n:]
+		got := map[sid.SID]*ad.Entry{}
+		err := b.d.Find(b.ctx, b.nm.Domain, ad.ScopeSubtree, Query{AnySID: batch}, idAttrs, func(e *ad.Entry) error {
+			ss, err := e.SIDs("objectSid")
+			if err != nil {
+				return fmt.Errorf("tier0: sIDHistory target: %w", err)
+			}
+			for _, s := range ss {
+				if seen[s] && got[s] == nil {
+					got[s] = e
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("tier0: sIDHistory lookup: %w", err)
+		}
+		for _, s := range batch {
+			set(s, got[s], false)
+		}
+	}
+	return nil
+}
+
 // C18: privileged sIDHistory. An object is tier0 when a sIDHistory value is privileged by RID, or
 // resolves to an object that is tier0 by another basis (iterated: such an object may itself have
 // become tier0 through C18). A group that qualifies makes its members tier0 through C2 (rule 7). A
@@ -1488,12 +1554,15 @@ func (b *builder) c18() error {
 		return err
 	}
 	done := make([]bool, len(hist))
-	// Resolution is cached: one Get per distinct value.
+	// Resolution is batched and cached: ceil(distinct/sidBatch) searches, never one per value.
 	type res struct {
 		e              *ad.Entry
 		found, foreign bool
 	}
 	cache := map[sid.SID]res{}
+	if err := b.resolveSIDs(hist, func(s sid.SID, e *ad.Entry, foreign bool) { cache[s] = res{e, e != nil, foreign} }); err != nil {
+		return err
+	}
 	var groups []*ad.Entry
 	for changed := true; changed; {
 		changed = false
@@ -1507,15 +1576,7 @@ func (b *builder) c18() error {
 					qualifies = true
 					break
 				}
-				r, ok := cache[s]
-				if !ok {
-					e, found, foreign, err := b.resolveHistory(s)
-					if err != nil {
-						return fmt.Errorf("tier0: sIDHistory lookup: %w", err)
-					}
-					r = res{e, found, foreign}
-					cache[s] = r
-				}
+				r := cache[s]
 				if r.found && r.foreign {
 					// The GC cannot clear an object of another domain (no ACLs, no nested membership
 					// there), and only a positive classification may: it is tier0 (TM-D26 rules 6b, 8).

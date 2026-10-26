@@ -59,6 +59,8 @@ const (
 	// AD, computed by the AD connector from the live DACL/owner of the roots of trust and sIDHistory (TM-D26).
 	Tier0Basis_TIER0_BASIS_C17_ROOT_OF_TRUST_CONTROL  Tier0Basis = 17
 	Tier0Basis_TIER0_BASIS_C18_PRIVILEGED_SID_HISTORY Tier0Basis = 18
+	// TM-D27: control of a C1/C13 group, C1 account, DC object, DC OU or tier0 GPO (depth 1).
+	Tier0Basis_TIER0_BASIS_C19_CONTROL_OF_TIER0_OBJECT Tier0Basis = 19
 	// AD, supplied by the server through CorrelationStatement (any correlation state).
 	Tier0Basis_TIER0_BASIS_C16_CORRELATED_TO_ENTRA_TIER0 Tier0Basis = 16
 	// Entra, computed by the Entra connector.
@@ -93,6 +95,7 @@ var (
 		15: "TIER0_BASIS_C15_DC_SITE",
 		17: "TIER0_BASIS_C17_ROOT_OF_TRUST_CONTROL",
 		18: "TIER0_BASIS_C18_PRIVILEGED_SID_HISTORY",
+		19: "TIER0_BASIS_C19_CONTROL_OF_TIER0_OBJECT",
 		16: "TIER0_BASIS_C16_CORRELATED_TO_ENTRA_TIER0",
 		21: "TIER0_BASIS_E1_DIRECTORY_ROLE_HOLDER",
 		22: "TIER0_BASIS_E2_ROLE_ASSIGNABLE_GROUP",
@@ -120,6 +123,7 @@ var (
 		"TIER0_BASIS_C15_DC_SITE":                   15,
 		"TIER0_BASIS_C17_ROOT_OF_TRUST_CONTROL":     17,
 		"TIER0_BASIS_C18_PRIVILEGED_SID_HISTORY":    18,
+		"TIER0_BASIS_C19_CONTROL_OF_TIER0_OBJECT":   19,
 		"TIER0_BASIS_C16_CORRELATED_TO_ENTRA_TIER0": 16,
 		"TIER0_BASIS_E1_DIRECTORY_ROLE_HOLDER":      21,
 		"TIER0_BASIS_E2_ROLE_ASSIGNABLE_GROUP":      22,
@@ -764,7 +768,7 @@ const file_activediq_connector_v1_tier0_proto_rawDesc = "" +
 	"statementsJ\x04\b\x01\x10\x02R\vcorrelation\"}\n" +
 	"\vTier0Member\x124\n" +
 	"\x06object\x18\x01 \x01(\v2\x1c.activediq.connector.v1.GuidR\x06object\x128\n" +
-	"\x05basis\x18\x02 \x03(\x0e2\".activediq.connector.v1.Tier0BasisR\x05basis*\xc8\a\n" +
+	"\x05basis\x18\x02 \x03(\x0e2\".activediq.connector.v1.Tier0BasisR\x05basis*\xf5\a\n" +
 	"\n" +
 	"Tier0Basis\x12\x1b\n" +
 	"\x17TIER0_BASIS_UNSPECIFIED\x10\x00\x12\"\n" +
@@ -785,7 +789,8 @@ const file_activediq_connector_v1_tier0_proto_rawDesc = "" +
 	"$TIER0_BASIS_C14_SEAMLESS_SSO_ACCOUNT\x10\x0e\x12\x1b\n" +
 	"\x17TIER0_BASIS_C15_DC_SITE\x10\x0f\x12)\n" +
 	"%TIER0_BASIS_C17_ROOT_OF_TRUST_CONTROL\x10\x11\x12*\n" +
-	"&TIER0_BASIS_C18_PRIVILEGED_SID_HISTORY\x10\x12\x12-\n" +
+	"&TIER0_BASIS_C18_PRIVILEGED_SID_HISTORY\x10\x12\x12+\n" +
+	"'TIER0_BASIS_C19_CONTROL_OF_TIER0_OBJECT\x10\x13\x12-\n" +
 	")TIER0_BASIS_C16_CORRELATED_TO_ENTRA_TIER0\x10\x10\x12(\n" +
 	"$TIER0_BASIS_E1_DIRECTORY_ROLE_HOLDER\x10\x15\x12(\n" +
 	"$TIER0_BASIS_E2_ROLE_ASSIGNABLE_GROUP\x10\x16\x12'\n" +

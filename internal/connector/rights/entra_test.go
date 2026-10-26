@@ -231,6 +231,18 @@ func TestDenyListMatching(t *testing.T) {
 		"EXCHANGE.MANAGEASAPP":                            true,
 		"sites.fullcontrol.all":                           true,
 		"Sites.Read.All":                                  false,
+		"Mail.ReadWrite":                                  true,
+		"mail.send":                                       true,
+		"Mail-Advanced.ReadWrite.All":                     true,
+		"MailboxItem.ReadWrite.All":                       true,
+		"MailboxItem.ImportExport.All":                    true,
+		"FILES.READWRITE.ALL":                             true,
+		"Sites.ReadWrite.All":                             true,
+		"Mail.Read":                                       false,
+		"Mail.ReadBasic":                                  false,
+		"Files.Read.All":                                  false,
+		"Sites.Selected":                                  false,
+		"Files.SelectedOperations.Selected":               false,
 		"Exchange.ManageAsApp.Extra":                      false,
 		"":                                                false,
 	} {
@@ -664,6 +676,11 @@ func TestTMD5aDenyListOnAnyResource(t *testing.T) {
 		{exchange, "full_access_as_app"}, {exchange, "Exchange.ManageAsApp"}, {exoProt, "Exchange.ManageAsApp"},
 		{exoProt, "full_access_as_app"}, {rights.GraphResourceAppID, "Sites.FullControl.All"},
 		{"00000003-0000-0ff1-ce00-000000000000", "Sites.FullControl.All"},
+		{rights.GraphResourceAppID, "Mail.ReadWrite"}, {rights.GraphResourceAppID, "Mail.Send"},
+		{rights.GraphResourceAppID, "Mail-Advanced.ReadWrite.All"}, {rights.GraphResourceAppID, "MailboxItem.ReadWrite.All"},
+		{rights.GraphResourceAppID, "MailboxItem.ImportExport.All"}, {rights.GraphResourceAppID, "Files.ReadWrite.All"},
+		{rights.GraphResourceAppID, "Sites.ReadWrite.All"}, {rights.GraphResourceAppID, "mail.readwrite"},
+		{exchange, "Mail.ReadWrite"}, {exoProt, "Files.ReadWrite.All"},
 	}
 	for i, c := range cases {
 		t.Run(c.res+"/"+c.val, func(t *testing.T) {

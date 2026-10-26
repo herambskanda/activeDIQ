@@ -153,7 +153,7 @@ func TestLabScopedSearch(t *testing.T) {
 	}
 }
 
-// LF-32 (referral) is not provable on Samba: no referral objectClass, no injectable transport (T-0309).
+// LF-32 (referral) is not provable by data on Samba (no referral objects): see referral_fault_test.go and ldapfault_lab_test.go (T-0309), which inject the reference with a test-only proxy.
 
 // LF-33 on the wire: a GC port is refused before any connection.
 func TestLabGlobalCatalogRefused(t *testing.T) {
@@ -183,10 +183,12 @@ func TestLabSchemaDrivenSecretAttrs(t *testing.T) {
 	} {
 		ad.Attribute(k, v)
 	}
+	// The lab seed (lab/seed/schema-seed.sh, T-0308) carries a custom attribute flagged 0x200 only.
+	const seededCustom = "activediqLabConfidential"
 	addErr := adm.Add(ad)
 	seeded := addErr == nil
 	if !seeded {
-		t.Logf("lab refused the custom 0x200-only attribute (CC-SCH-02 custom case needs a seed addition): %v", addErr)
+		t.Logf("lab refused an LDAP schema add (expected on Samba): %v", addErr)
 	}
 
 	oracle, err := adm.SearchWithPaging(ldap.NewSearchRequest(schemaNC, ldap.ScopeSingleLevel, ldap.NeverDerefAliases, 0, 0, false,
@@ -195,12 +197,18 @@ func TestLabSchemaDrivenSecretAttrs(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := labOpen(t, cfg)
-	flagged, sawCustom := 0, false
+	flagged, sawCustom, sawSeeded := 0, false, false
 	for _, e := range oracle.Entries {
 		name := e.GetAttributeValue("lDAPDisplayName")
 		fl, _ := strconv.Atoi(e.GetAttributeValue("searchFlags"))
 		if name == custom {
 			sawCustom = true
+		}
+		if name == seededCustom {
+			sawSeeded = true
+			if fl != 0x200 {
+				t.Errorf("%s searchFlags = %#x, want exactly 0x200", name, fl)
+			}
 		}
 		if fl&(0x80|0x200|0x1000) == 0 {
 			continue
@@ -220,6 +228,9 @@ func TestLabSchemaDrivenSecretAttrs(t *testing.T) {
 		if _, err := ldapfilter.ParseSortKey(name, s.schema); ldapfilter.Code(err) != ldapfilter.ForbiddenSortKey {
 			t.Errorf("sort %s: %v", name, err)
 		}
+	}
+	if !sawSeeded {
+		t.Errorf("seeded custom attribute %s missing from the lab schema (rebuild: make lab-rebuild)", seededCustom)
 	}
 	t.Logf("%d schema-flagged attributes checked (oracle: %d attributeSchema objects)", flagged, len(oracle.Entries))
 	if flagged == 0 {

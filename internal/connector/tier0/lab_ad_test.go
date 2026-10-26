@@ -3,14 +3,12 @@
 package tier0
 
 import (
-	"bufio"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +17,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/connector/ad"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/platform/secret"
+	"github.com/skenzeriq/activediq/internal/testlab"
 )
 
 // Lab test (Samba AD): `make lab-up && go test -tags lab ./internal/connector/tier0 -run TestLabAD`.
@@ -29,20 +28,7 @@ const labDom = "DC=lab,DC=activediq,DC=test"
 
 func labEnvAD(t *testing.T) map[string]string {
 	t.Helper()
-	f, err := os.Open(filepath.Join("..", "..", "..", "lab", ".lab.env"))
-	if err != nil {
-		t.Fatalf("lab not up (make lab-up): %v", err)
-	}
-	defer f.Close()
-	env := map[string]string{}
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		l := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(sc.Text()), "export "))
-		if k, v, ok := strings.Cut(l, "="); ok && !strings.HasPrefix(l, "#") {
-			env[k] = strings.Trim(v, `"'`)
-		}
-	}
-	return env
+	return testlab.Load(t).Values
 }
 
 // AC1 on the lab: add a fresh user to Domain Admins after a first classification; the next call

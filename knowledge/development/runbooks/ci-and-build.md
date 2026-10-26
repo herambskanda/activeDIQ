@@ -212,3 +212,17 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
 - A new dependency needs a row in `knowledge/business/licensing/open-source-license-register.md`
   first, with its exact package path in backticks.
 - Go dependencies: `go get <path>@<exact version>` then `go mod tidy`. Web: `npm --prefix web i -E`.
+
+## Test Postgres containers: labels, `rm -f -v`, reaping (T-0377)
+
+`storetest` and `tools/fitness/pgharness` start throw-away Postgres containers through
+`internal/testlab/harnessdocker`. The postgres image declares an anonymous data volume (~74 MB), so:
+
+- containers carry `activediq.harness=1` and `activediq.harness.pid=<owner pid>`;
+- they are removed with `docker rm -f -v` (never without `-v`);
+- every start first reaps harness containers whose owner pid is dead (a killed test run). Containers
+  of live sibling test processes are left alone.
+
+Proofs: `internal/testlab/harnessdocker` (remove + reap, fails if `-v` is dropped) and
+`storetest.TestStopRemovesContainerAndAnonymousVolume`. Manual sweep of old leaks:
+`docker ps -aq --filter label=activediq.harness=1 | xargs -r docker rm -f -v`.

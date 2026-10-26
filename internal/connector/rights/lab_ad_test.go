@@ -6,9 +6,7 @@ import (
 	"context"
 	"crypto/x509"
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +16,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/platform/secret"
 	v1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
+	"github.com/skenzeriq/activediq/internal/testlab"
 )
 
 // Lab tests (Samba AD): `make lab-up && go test -tags lab ./internal/connector/rights -run TestLabAD`.
@@ -43,29 +42,12 @@ type lab struct {
 
 func newLab(t *testing.T) *lab {
 	t.Helper()
-	ctr := os.Getenv("LAB_CONTAINER")
-	if ctr == "" {
-		ctr = "activediq-lab-dc-1"
+	// Same source as the tier0 lab tests: lab/.lab.env + lab/.lab-ca.pem. A missing lab FAILS (T-0373).
+	e := testlab.Load(t)
+	if out, err := exec.Command("docker", "exec", e.Container, "true").CombinedOutput(); err != nil {
+		t.Fatalf("lab container %s not available (run `make lab-up`): %v %s", e.Container, err, out)
 	}
-	if out, err := exec.Command("docker", "exec", ctr, "true").CombinedOutput(); err != nil {
-		t.Skipf("lab container not available: %v %s", err, out)
-	}
-	dir := t.TempDir()
-	ca := filepath.Join(dir, "ca.pem")
-	if out, err := exec.Command("docker", "cp", ctr+":/var/lib/samba/lab-tls/ca.pem", ca).CombinedOutput(); err != nil {
-		t.Fatalf("copy CA: %v %s", err, out)
-	}
-	pem, err := os.ReadFile(ca)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pool := x509.NewCertPool()
-	pool.AppendCertsFromPEM(pem)
-	port := os.Getenv("LAB_LDAPS_PORT")
-	if port == "" {
-		port = "636"
-	}
-	return &lab{t: t, ctr: ctr, pool: pool, port: port}
+	return &lab{t: t, ctr: e.Container, pool: e.Pool, port: e.Port}
 }
 
 func (l *lab) tool(args ...string) string {
@@ -301,11 +283,12 @@ func TestLabADRefusals(t *testing.T) {
 
 // T-0237 AC1: Authenticated Users holding Reset-Password on a tier0 object is a WARN exposure
 // naming the object, right and trustee; the verdict stays PASS (broad-principal exposure is WARN).
+// The ACE sits on AdminSDHolder (C3): a broad right on a C19 object fails the snapshot closed (TM-D27 rule 4).
 func TestLabADBroadPrincipalExposure(t *testing.T) {
 	l := newLab(t)
 	ctx := labCtx(t)
 	name, userDN, _ := l.user()
-	l.ace("CN=Administrator,CN=Users,"+labDom, "(OA;;CR;00299570-246d-11d0-a768-00aa006e0529;;AU)")
+	l.ace("CN=AdminSDHolder,CN=System,"+labDom, "(OA;;CR;00299570-246d-11d0-a768-00aa006e0529;;AU)")
 	r := l.verify(ctx, name, userDN, ADInput{})
 	got := r.find(CodeTier0BroadPrincipal)
 	if len(got) != 1 {

@@ -13,7 +13,8 @@ RUN apt-get update \
 COPY samba/entrypoint.sh /usr/local/bin/lab-entrypoint
 COPY seed/generate.py /opt/lab/seed/generate.py
 COPY seed/post-start.sh /opt/lab/seed/post-start.sh
-RUN chmod 0755 /usr/local/bin/lab-entrypoint /opt/lab/seed/post-start.sh
+COPY seed/schema-seed.sh /opt/lab/seed/schema-seed.sh
+RUN chmod 0755 /usr/local/bin/lab-entrypoint /opt/lab/seed/post-start.sh /opt/lab/seed/schema-seed.sh
 
 EXPOSE 389 636 3268 3269 88/tcp 88/udp 464/tcp 464/udp
 HEALTHCHECK --interval=5s --timeout=5s --start-period=20s --retries=60 \
