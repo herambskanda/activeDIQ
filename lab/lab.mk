@@ -5,7 +5,10 @@ LAB_ENV      := $(LAB_DIR)/.lab.env
 LAB_CA       := $(LAB_DIR)/.lab-ca.pem
 LAB_TIER     ?= standard
 LAB_BUILD_FLAGS ?= -q          # e.g. LAB_BUILD_FLAGS=--no-cache for a from-scratch image build
-COMPOSE      := docker compose -f $(LAB_DIR)/docker-compose.yml
+# Per-worktree isolation (T-0373): same derivation as lab/bin/lab-env, so no env file is needed to address it.
+LAB_HASH     := $(shell printf '%s' "$(CURDIR)" | (sha256sum 2>/dev/null || shasum -a 256) | cut -c1-8)
+LAB_PROJECT  := activediq-lab-$(LAB_HASH)
+COMPOSE      := docker compose -p $(LAB_PROJECT) -f $(LAB_DIR)/docker-compose.yml
 # The seed version changes whenever the generator, the image recipe or the tier change, so a stale
 # snapshot is never reused. It is also tied to the credentials file (a new .lab.env => a new lab).
 LAB_SEED_HASH := $(shell cat $(LAB_DIR)/seed/generate.py $(LAB_DIR)/seed/post-start.sh $(LAB_DIR)/seed/schema-seed.sh $(LAB_DIR)/samba/entrypoint.sh $(LAB_DIR)/samba/Dockerfile 2>/dev/null | shasum -a 256 | cut -c1-12)
@@ -18,7 +21,7 @@ lab-up: ## Start the AD lab (provision + seed on first run, ~3-4 min); prints co
 	command -v docker >/dev/null || { echo "docker not found"; exit 1; }; \
 	docker info >/dev/null 2>&1 || { echo "Docker daemon is not running"; exit 1; }; \
 	$(LAB_DIR)/bin/lab-env $(LAB_ENV); \
-	. $(LAB_ENV); \
+	set -a; . $(LAB_ENV); set +a; \
 	$(COMPOSE) build $(LAB_BUILD_FLAGS) dc; \
 	want="$(LAB_SEED_HASH)-$(LAB_TIER)-$$LAB_ENV_ID"; \
 	have=$$($(COMPOSE) run --rm --no-deps -T dc version 2>/dev/null | tail -1 | tr -d '\r'); \
@@ -32,7 +35,7 @@ lab-up: ## Start the AD lab (provision + seed on first run, ~3-4 min); prints co
 	echo "lab-up finished in $$(( $$(date +%s) - t0 ))s"
 
 lab-reset: ## Restore the lab to the exact seeded snapshot (seconds)
-	@set -e; t0=$$(date +%s); . $(LAB_ENV); \
+	@set -e; t0=$$(date +%s); set -a; . $(LAB_ENV); set +a; \
 	$(COMPOSE) stop -t 20 dc; \
 	$(COMPOSE) run --rm --no-deps -T dc restore; \
 	$(COMPOSE) up -d --wait --wait-timeout 240 dc; \

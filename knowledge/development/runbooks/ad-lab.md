@@ -40,13 +40,16 @@ make lab-status    # health + connection details       make lab-shell    # shell
 | --- | --- |
 | Domain / NetBIOS | `lab.activediq.test` (RFC 2606 reserved) / `LAB` |
 | Base DN, product's OU | `DC=lab,DC=activediq,DC=test`, `OU=Managed,DC=lab,DC=activediq,DC=test` |
-| LDAPS | `ldaps://localhost:636` (cert SANs `dc1.lab.activediq.test`, `lab.activediq.test`, `localhost`, `127.0.0.1`, `::1`) |
-| Other ports (loopback only) | 3269 GC over TLS, 389 LDAP (StartTLS only — simple bind refused), 88 Kerberos, 464 kpasswd |
+| LDAPS | `ldaps://localhost:<LAB_LDAPS_PORT>` — per worktree, in `lab/.lab.env` (cert SANs `dc1.lab.activediq.test`, `lab.activediq.test`, `localhost`, `127.0.0.1`, `::1`) |
+| Other ports (loopback only) | `LAB_GC_LDAPS_PORT` GC over TLS, `LAB_LDAP_PORT` LDAP (StartTLS only — simple bind refused), `LAB_KRB_PORT` Kerberos, `LAB_KPASSWD_PORT` kpasswd — a free 5-port block in 20000–39999 chosen by `lab-env` |
 | Product service account | `svc-activediq@lab.activediq.test`, password `LAB_SVC_PASSWORD`. Delegated on `OU=Managed` only (never Domain Admins) |
 | Seeded users | `<sAMAccountName>@lab.activediq.test`, password `LAB_USER_PASSWORD` (same for all, per lab) |
 | Seeding/admin identity | `Administrator`, password `LAB_ADMIN_PASSWORD` — used for provisioning only, not by product code |
 
-Override a port that clashes with something on your machine: `LAB_LDAPS_PORT=1636 make lab-up`
+**Per-worktree isolation (T-0373):** `lab/bin/lab-env` derives the compose project (`activediq-lab-<hash of the worktree path>`), container name (`LAB_CONTAINER`) and a free port block, and records them in `lab/.lab.env`; every `make lab-*` target passes `-p` with the same project, so worktrees never share a volume, container or port and can `make lab-up` concurrently. To move a port that clashes, edit it in `lab/.lab.env` and `make lab-up` again.
+
+**Lab tests fail, not skip:** `internal/testlab` reads `lab/.lab.env` and `lab/.lab-ca.pem`; with `-tags lab` and no reachable lab the tests FAIL with a `make lab-up` message. An old `.lab.env` is completed in place on the next `make lab-up`. Before this ticket, `lab-up` in two worktrees raced on the single `activediq-lab` volume (`Unable to open tdb sam.ldb`).
+
 (also `LAB_GC_LDAPS_PORT`, `LAB_LDAP_PORT`, `LAB_KRB_PORT`, `LAB_KPASSWD_PORT`).
 
 **Always connect over LDAPS with `lab/.lab-ca.pem` trusted. Never skip certificate verification,
@@ -90,8 +93,8 @@ tier (50k users) and a second DC (`2dc`) are not built yet — see §8.
 - **Image** (`lab/samba/Dockerfile`): Debian 13 pinned by digest; Debian's `samba` 4.22.x plus
   `ldb-tools`, `ldap-utils`, `faketime`. Runs on linux/arm64 (Apple silicon) and linux/amd64.
 - **State** lives in two named Docker volumes, not a macOS bind mount, because Samba needs
-  xattr/ACL support on sysvol: `activediq-lab_lab-state` (the live `/var/lib/samba`) and
-  `activediq-lab_lab-snapshots` (`state.tar`).
+  xattr/ACL support on sysvol: `<project>_lab-state` (the live `/var/lib/samba`) and
+  `<project>_lab-snapshots` (`state.tar`).
 - **Init** (`entrypoint.sh init`, only when the volume is empty or the seed version changed):
   provision → generate our own CA and server cert with SANs → load the seed **offline** into the
   stopped `sam.ldb` with `ldbadd`/`ldbmodify` (about a minute for 5,000 users; far faster than
@@ -198,7 +201,7 @@ The Windows lab is built from local evaluation VMs on KVM (D-0003, free): see `w
 | Symptom | Cause / fix |
 | --- | --- |
 | `Docker daemon is not running` | Start Docker Desktop / OrbStack (`orbctl start`) |
-| `port is already allocated` on 636/88/389 | Another service owns it: set `LAB_LDAPS_PORT`, `LAB_KRB_PORT`… (§1) |
+| `port is already allocated` on 636/88/389 | Another service owns it: edit the port in `lab/.lab.env` (§1) |
 | `make lab-up` seems to re-seed every time | `lab/.lab.env` or the lab files changed (new seed version) — expected once |
 | LDAPS handshake fails with certificate errors | Use `lab/.lab-ca.pem` and connect as `localhost`, `127.0.0.1` or `dc1.lab.activediq.test` (add `127.0.0.1 dc1.lab.activediq.test` to `/etc/hosts` for the last) |
 | `Strong(er) authentication required` on port 389 | Intended: simple bind over plain LDAP is refused like on a hardened DC. Use LDAPS or StartTLS |
