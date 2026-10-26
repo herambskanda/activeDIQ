@@ -97,6 +97,34 @@
       "reason": "Test helper: runs a transaction with no tenant context to prove that connection queries outside WithTenant fail with ErrNoTenant (DM-10, T-0099 acceptance 4).",
       "withPlatform": true,
       "mintsTenantID": false
+    },
+    {
+      "package": "internal/platform/rbac",
+      "function": "Authorizer.Authorize",
+      "reason": "The tenant is read from the request context that the authority chain's authentication step set (authority.TenantFrom), never from a request field; the parse only converts that server-set value to the typed ID and fails closed (ADR-0002 rule 5).",
+      "withPlatform": false,
+      "mintsTenantID": true
+    },
+    {
+      "package": "internal/platform/fleet",
+      "function": "IdentityOf",
+      "reason": "The tenant is read from the SAN of a leaf certificate the server's own CA issued and that the TLS handshake has already verified; a client cannot choose it, and the value must round-trip to its canonical form (ADR-0002 rule 5, DM-12).",
+      "withPlatform": false,
+      "mintsTenantID": true
+    },
+    {
+      "package": "internal/platform/fleet/fleetsql",
+      "function": "tenantOf",
+      "reason": "Enrollment-token redemption runs before any identity exists, so the routing tenant is the prefix of the presented token. It is a request value, but it is only a lookup hint and grants nothing: the token is accepted only if the SHA-256 of the whole token (tenant prefix included) matches an unused row visible under that tenant's row-level security, and every failure is the same ErrTokenInvalid. Registered for security-architect review (ADR-0002 rule 5, DM-12.I2).",
+      "withPlatform": false,
+      "mintsTenantID": true
+    },
+    {
+      "package": "internal/platform/audit",
+      "function": "TestRetiredKeyIsWipedThroughSecurityDefiner",
+      "reason": "Test: proves the registered SECURITY DEFINER audit_wipe_retired_key refuses a call made with no tenant context (SQLSTATE 42501), which needs a transaction under WithPlatform. It is in a _test.go file and ships in no binary (ADR-0005 rule 11, T-0305).",
+      "withPlatform": true,
+      "mintsTenantID": false
     }
   ],
   "platformJobs": [],

@@ -23,31 +23,19 @@ const (
 	acctSID   = "S-1-5-21-1004336348-1177238915-682003330-1105"
 )
 
-// ownerAs runs one fixture statement as the owner role inside the tenant's RLS context (the table is
-// FORCEd, so the owner is subject to the policy too).
-func ownerAs(d *storetest.Database, ten tenant.ID, sql string, args ...any) error {
-	ctx := context.Background()
-	c, err := d.Owner(ctx)
-	if err != nil {
+// fixtureAs runs one fixture statement through the runtime role inside the tenant's transaction, the
+// way product code reaches the table. The constraint tests rely on the table's own checks, which
+// bind every role.
+func fixtureAs(db *store.DB, ten tenant.ID, sql string, args ...any) error {
+	return db.WithTenant(context.Background(), ten, func(ctx context.Context, tx store.Tx) error {
+		_, err := tx.Exec(ctx, sql, args...)
 		return err
-	}
-	defer c.Close(ctx)
-	tx, err := c.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, ten.String()); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx, sql, args...); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
+	})
 }
 
 type acctEnv struct {
 	d   *storetest.Database
+	db  *store.DB
 	ten tenant.ID
 	a   *Accounts
 	ss  *Store
@@ -72,15 +60,15 @@ func eachAcct(t *testing.T, fn func(t *testing.T, e *acctEnv)) {
 		d := s.NewDatabase(t)
 		d.Migrate(t)
 		ten := tenanttest.Seed(t, d.ExecOwner, "t1")
-		if err := ownerAs(d, ten, `INSERT INTO public.connections (tenant_id, id, kind, display_name, credential_id, transport_security)
-			VALUES ($1::uuid, $2::uuid, 'ad_forest', 'c', $3::uuid, 'ldaps')`, ten.String(), acctConn, acctConn); err != nil {
-			t.Fatal(err)
-		}
 		db, err := store.Open(context.Background(), store.Config{DSN: d.AppDSN()})
 		if err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(db.Close)
+		if err := fixtureAs(db, ten, `INSERT INTO public.connections (tenant_id, id, kind, display_name, credential_id, transport_security)
+			VALUES ($1::uuid, $2::uuid, 'ad_forest', 'c', $3::uuid, 'ldaps')`, ten.String(), acctConn, acctConn); err != nil {
+			t.Fatal(err)
+		}
 		snk := &flakySink{}
 		ss, err := New(Config{DB: db, Audit: snk, Policies: StaticPolicy(pol)})
 		if err != nil {
@@ -90,7 +78,7 @@ func eachAcct(t *testing.T, fn func(t *testing.T, e *acctEnv)) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		fn(t, &acctEnv{d: d, ten: ten, a: a, ss: ss, snk: snk})
+		fn(t, &acctEnv{d: d, db: db, ten: ten, a: a, ss: ss, snk: snk})
 	})
 }
 
@@ -103,7 +91,7 @@ func TestAccountsTableShapeAndChecks(t *testing.T) {
 			t.Fatalf("RLS enabled+forced = %v, %v", flags, err)
 		}
 		// Positive control: the fixture path accepts a valid row, so each refusal below is the table's.
-		if err := ownerAs(e.d, e.ten, `INSERT INTO public.authn_accounts (tenant_id, kind, display_name, created_by) VALUES ($1::uuid, 'local', 'ok', 'system')`, e.ten.String()); err != nil {
+		if err := fixtureAs(e.db, e.ten, `INSERT INTO public.authn_accounts (tenant_id, kind, display_name, created_by) VALUES ($1::uuid, 'local', 'ok', 'system')`, e.ten.String()); err != nil {
 			t.Fatalf("valid row refused: %v", err)
 		}
 		bad := map[string]string{
@@ -122,7 +110,7 @@ func TestAccountsTableShapeAndChecks(t *testing.T) {
 			"ref to unknown connection": `(tenant_id, kind, display_name, created_by, directory_connection_id, directory_object_guid) VALUES ($1::uuid, 'directory', 'x', 'system', '` + acctGUID + `', '` + acctGUID + `')`,
 		}
 		for name, cols := range bad {
-			if err := ownerAs(e.d, e.ten, `INSERT INTO public.authn_accounts `+cols, e.ten.String()); err == nil {
+			if err := fixtureAs(e.db, e.ten, `INSERT INTO public.authn_accounts `+cols, e.ten.String()); err == nil {
 				t.Errorf("%s: the database accepted it", name)
 			}
 		}
@@ -183,7 +171,7 @@ func TestSSOBindingRoundTrip(t *testing.T) {
 			}
 		}
 		// The database, not just the store, refuses to rewrite a binding.
-		if err := ownerAs(e.d, e.ten, `UPDATE public.authn_accounts SET anchor_value = 'S-1-5-21-1-2-3-4' WHERE anchor_kind = 'onprem_sid'`); err == nil {
+		if err := fixtureAs(e.db, e.ten, `UPDATE public.authn_accounts SET anchor_value = 'S-1-5-21-1-2-3-4' WHERE anchor_kind = 'onprem_sid'`); err == nil {
 			t.Fatal("trigger let an anchor be rewritten")
 		}
 	})
