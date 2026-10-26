@@ -15,7 +15,8 @@ implemented_by: T-0369
 **Outcome (2026-10-26):** the factory-director accepted **option A (deny)** at review of T-0303;
 notice **D-0007** (acknowledged by the CEO). **T-0369** implemented it: seven exact-value entries in
 `denyPatterns` (`internal/connector/rights/policy_entra.go`), tests, threat-model §6.6 and the
-TM-F-RIGHTS row. `Sites.Manage.All` is still pending lab G15.
+TM-F-RIGHTS row. `Sites.Manage.All` is still pending lab G16 (threat-model §6.6, T-0395). G16 confirms its name and
+role id in a real tenant and asserts EV3 for the seven values.
 
 ## The question
 
@@ -53,7 +54,7 @@ Siblings that share the shape (same abuse, same absence of v1 need):
 | --- | --- |
 | `Mail-Advanced.ReadWrite.All`, `MailboxItem.ReadWrite.All`, `MailboxItem.ImportExport.All` | Listed on the same Microsoft page as create/read/update/delete or export-and-import of all users' mailbox items ([Application RBAC](https://learn.microsoft.com/en-us/exchange/permissions-exo/application-rbac)) |
 | `Mail.Send` | "send mail as any user" (same page). It is a phishing and password-reset-social-engineering primitive as any user |
-| `Sites.Manage.All` | `[UNVERIFIED — name and description recalled, not read]`; confirm in lab G15 before adding |
+| `Sites.Manage.All` | Application role id `0c0bf378-bf22-4481-8f81-9e89a9b4960a`, "Allows the app to create or delete document libraries and lists in all site collections without a signed in user" ([permissions reference](https://learn.microsoft.com/en-us/graph/permissions-reference), read 2026-10-26). Lab G16 confirms the name and id against a live tenant's Graph `appRoles` before it is added |
 
 Read-only counterparts (`Mail.Read`, `Files.Read.All`, `Sites.Read.All`, `Mail.ReadBasic.All`)
 **stay EV5 warn**. They are confidentiality-only, a customer may hold them on a shared registration
@@ -92,14 +93,14 @@ second, weaker allow path next to the one the threat model already requires.
 
 **Decision (accepted 2026-10-26, D-0007):** option A for the set in §1 (the three named permissions plus
 `Mail.Send`, `Mail-Advanced.ReadWrite.All`, `MailboxItem.ReadWrite.All`, `MailboxItem.ImportExport.All`;
-`Sites.Manage.All` once lab G15 confirms the name), leaving read-only counterparts at EV5 warn.
+`Sites.Manage.All` once lab G16 confirms the name), leaving read-only counterparts at EV5 warn.
 This is a risk-acceptance on customer experience (a block where today there is a warning), so
 it is the director's, not ours. It needs no CEO question: it is a security default with an existing override, not
 scope, money or brand.
 
 **Implementation: T-0369** (directory-engineer, security-sensitive, P2, done 2026-10-26) did steps 1–3 with
 these seven values. No onboarding guide exists yet, so the customer guidance of step 3 lives in
-threat-model §6.6. Step 4 (lab G15, `Sites.Manage.All`) remains open. The implementation ticket had to:
+threat-model §6.6. Step 4 (`Sites.Manage.All`) remains open. It is lab G16 (T-0395), routed to T-0075. The implementation ticket had to:
 
 1. Add the values to `denyPatterns` in `internal/connector/rights/policy_entra.go`, matched on any
    resource and case-insensitively, exactly as TM-D5a's three values.
@@ -109,7 +110,8 @@ threat-model §6.6. Step 4 (lab G15, `Sites.Manage.All`) remains open. The imple
 3. Update threat-model §6.6 (deny list text; replace the "gap is T-0303" sentence), the TM-F-RIGHTS
    fitness row, and add a changelog line; the onboarding guide must tell the customer to use a
    dedicated registration or scope Exchange access through RBAC for Applications.
-4. Lab G15 records the exact Graph role ids and names (`Sites.Manage.All` in particular).
+4. Lab G16 (originally assigned to G15, which covers only non-Graph grants) records the exact Graph role ids
+   and names (`Sites.Manage.All` in particular).
 
 **Not taken (kept for the record):** had the director rejected, B would have stayed, and §6.6 would
 have recorded a TM-R residual: "an activeDIQ credential thief reaches all mail and files if the

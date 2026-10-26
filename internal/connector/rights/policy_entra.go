@@ -141,7 +141,7 @@ var denyPatterns = []string{
 	"Sites.FullControl.All",
 	// Tenant-wide Graph data permissions (graph-data-permissions-policy §4): write access to every
 	// mailbox, file or site. Read-only counterparts and the Selected pair stay EV5 warn.
-	// Sites.Manage.All joins once lab G15 confirms the name.
+	// Sites.Manage.All joins once lab G16 (threat-model §6.6) confirms its name and role id.
 	"Mail.ReadWrite",
 	"Mail.Send",
 	"Mail-Advanced.ReadWrite.All",
