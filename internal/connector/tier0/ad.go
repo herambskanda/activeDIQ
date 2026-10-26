@@ -78,16 +78,26 @@ func mustGUID(s string) guid.GUID {
 
 // protected is one C1 principal by well-known RID (Appendix C). Builtin groups live under
 // S-1-5-32; forest-wide groups (Enterprise/Schema/Enterprise Key Admins) under the root domain.
+//
+// Absence is only legitimate where the group cannot exist: minLevel is the functional level
+// (msDS-Behavior-Version of the domain head) from which the group exists; 0 means it always does.
+// A root-domain group is only readable by SID from a non-GC DC of the root domain itself.
 type protected struct {
-	rid     uint32
-	builtin bool
-	root    bool
+	rid      uint32
+	builtin  bool
+	root     bool
+	minLevel int32
 }
+
+const (
+	levelWin2008 = 3 // Protected Users / RODC groups appear with 2008 (521) ...
+	levelWin2016 = 7 // ... Key Admins, Enterprise Key Admins with 2016
+)
 
 var protectedList = []protected{
 	{rid: 500}, {rid: 502}, // Administrator, krbtgt (accounts; krbtgt is also C4)
-	{rid: 512}, {rid: 516}, {rid: 521}, {rid: 526}, // Domain Admins, Domain Controllers, RODCs, Key Admins
-	{rid: 518, root: true}, {rid: 519, root: true}, {rid: 527, root: true}, // Schema, Enterprise, Enterprise Key Admins
+	{rid: 512}, {rid: 516}, {rid: 521, minLevel: levelWin2008}, {rid: 526, minLevel: levelWin2016}, // Domain Admins, Domain Controllers, RODCs, Key Admins
+	{rid: 518, root: true}, {rid: 519, root: true}, {rid: 527, root: true, minLevel: levelWin2016}, // Schema, Enterprise, Enterprise Key Admins
 	{rid: 544, builtin: true}, {rid: 548, builtin: true}, {rid: 549, builtin: true}, // Administrators, Account/Server Operators
 	{rid: 550, builtin: true}, {rid: 551, builtin: true}, {rid: 552, builtin: true}, // Print/Backup Operators, Replicator
 }
@@ -295,6 +305,7 @@ type builder struct {
 	s   *ADSet
 
 	domSID, rootSID sid.SID
+	domLevel        int32 // msDS-Behavior-Version of the domain head
 	domHead         *ad.Entry
 	pinnedC13       []guid.GUID
 	desig           map[string]bool // customer-designated objects, by GUID (closure applied in C18)
@@ -453,7 +464,7 @@ func (b *builder) noteAccount(e *ad.Entry) error {
 func (b *builder) c7() error {
 	var err error
 	for _, h := range []dn.DN{b.nm.Domain, b.nm.RootDomain, b.nm.Config, b.nm.Schema} {
-		e, found, gerr := b.get(dn.DNRef(h), []string{"objectGUID", "objectSid", "wellKnownObjects", "gPLink"})
+		e, found, gerr := b.get(dn.DNRef(h), []string{"objectGUID", "objectSid", "wellKnownObjects", "gPLink", "msDS-Behavior-Version"})
 		if gerr != nil {
 			return gerr
 		}
@@ -466,6 +477,12 @@ func (b *builder) c7() error {
 		switch {
 		case h.Equal(b.nm.Domain):
 			b.domHead = e
+			lvl, ok, lerr := e.Int32("msDS-Behavior-Version")
+			if lerr != nil || !ok {
+				// Without the level, an absent Key Admins cannot be told from a hidden one.
+				return errors.New("tier0: domain functional level (msDS-Behavior-Version) unreadable")
+			}
+			b.domLevel = lvl
 			if b.domSID, err = oneSID(e); err != nil {
 				return err
 			}
@@ -499,6 +516,11 @@ func (b *builder) c1c2() error {
 	for _, p := range protectedList {
 		var s sid.SID
 		var err error
+		// A root-domain group read from a child domain's DC is legitimately not found (no GC); the
+		// forest root's own snapshot covers it. The forest-wide groups are only required at the root.
+		if p.root && b.domSID != b.rootSID {
+			continue
+		}
 		switch {
 		case p.builtin:
 			s, err = sid.Parse(fmt.Sprintf("S-1-5-32-%d", p.rid))
@@ -515,9 +537,13 @@ func (b *builder) c1c2() error {
 			return err
 		}
 		if !found {
-			// Absence is by forest version, looked up by well-known SID (not a link value); a hidden
-			// one is indistinguishable here, and the C19 rights check covers the group's own ACL.
-			continue // not every group exists in every forest (Key Admins before 2016, ...)
+			// A hidden group is indistinguishable from an absent one (and a group never found never
+			// reaches the C19 rights check), so absence is accepted only below the functional level
+			// at which the group exists.
+			if b.domLevel < p.minLevel {
+				continue
+			}
+			return fmt.Errorf("tier0: protected group %s not found (unreadable, or deleted): refusing to classify without it", s)
 		}
 		if _, err := b.mark(e, C1); err != nil {
 			return err

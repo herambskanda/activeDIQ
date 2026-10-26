@@ -65,7 +65,7 @@ const (
 // forest builds the lab: every C row has at least one object, plus plain objects that must stay out.
 func forest() *fakeDir {
 	f := newFake()
-	f.add(dom, dsid, cls("top", "domain", "domainDNS"), "wellKnownObjects", "B:32:A361B2FFFFD211D1AA4B00C04FD7D83A:OU=Domain Controllers,"+dom,
+	f.add(dom, dsid, cls("top", "domain", "domainDNS"), "msDS-Behavior-Version", "7", "wellKnownObjects", "B:32:A361B2FFFFD211D1AA4B00C04FD7D83A:OU=Domain Controllers,"+dom,
 		"gPLink", link(gDom, "0"))
 	f.add(cfg, "", cls("top", "configuration"))
 	f.add("CN=Schema,"+cfg, "", cls("top", "dMD"))
@@ -103,6 +103,13 @@ func forest() *fakeDir {
 	f.add("CN=Domain Controllers,CN=Users,"+dom, dsid+"-516", group)
 	f.add("CN=Administrators,CN=Builtin,"+dom, "S-1-5-32-544", group, "member", "CN=Domain Admins,CN=Users,"+dom)
 	f.add("CN=Enterprise Admins,CN=Users,"+dom, dsid+"-519", group)
+	f.add("CN=Schema Admins,CN=Users,"+dom, dsid+"-518", group)
+	f.add("CN=Read-only Domain Controllers,CN=Users,"+dom, dsid+"-521", group)
+	f.add("CN=Key Admins,CN=Users,"+dom, dsid+"-526", group)
+	f.add("CN=Enterprise Key Admins,CN=Users,"+dom, dsid+"-527", group)
+	for _, bi := range [][2]string{{"548", "Account Operators"}, {"549", "Server Operators"}, {"550", "Print Operators"}, {"551", "Backup Operators"}, {"552", "Replicator"}} {
+		f.add("CN="+bi[1]+",CN=Builtin,"+dom, "S-1-5-32-"+bi[0], group)
+	}
 	f.add("CN=Nested,OU=Staff,"+dom, dsid+"-2001", group, "member", "CN=dave\\, Dev,OU=Staff,"+dom, "member", "CN=Domain Admins,CN=Users,"+dom) // circular
 	f.add("CN=Administrator,CN=Users,"+dom, dsid+"-500", user)
 	f.add("CN=krbtgt,CN=Users,"+dom, dsid+"-502", user, "adminCount", "1")
@@ -601,5 +608,55 @@ func TestUnreadableLinkedGPOFailsClosed(t *testing.T) {
 	r, err := classify(t, f, "CN=carol,OU=Staff,"+dom)
 	if err == nil || !r.Tier0 || !r.Unknown || !strings.Contains(err.Error(), "GPO") {
 		t.Fatalf("want Tier0+Unknown+GPO error, got %+v %v", r, err)
+	}
+}
+
+// T-0397: a protected group that must exist but cannot be read fails closed instead of dropping its
+// members from Tier 0 (a deny-read ACE on CN=Builtin or the group is enough to hide it).
+func TestHiddenProtectedGroupFailsClosed(t *testing.T) {
+	for _, g := range []string{"CN=Backup Operators,CN=Builtin," + dom, "CN=Domain Admins,CN=Users," + dom, "CN=Schema Admins,CN=Users," + dom} {
+		f := forest()
+		f.drop(g)
+		r, err := classify(t, f, "CN=carol,OU=Staff,"+dom)
+		if err == nil || !r.Tier0 || !r.Unknown || !strings.Contains(err.Error(), "protected group") {
+			t.Errorf("%s dropped: want Tier0+Unknown+protected-group error, got %+v %v", g, r, err)
+		}
+	}
+}
+
+func TestKeyAdminsRequireFunctionalLevel2016(t *testing.T) {
+	for _, g := range []string{"CN=Key Admins,CN=Users," + dom, "CN=Enterprise Key Admins,CN=Users," + dom} {
+		pre := forest()
+		pre.find(dom).attrs["msds-behavior-version"] = []string{"6"}
+		pre.drop(g)
+		if r, err := classify(t, pre, "CN=carol,OU=Staff,"+dom); err != nil || r.Unknown {
+			t.Errorf("%s absent below 2016 must succeed: %+v %v", g, r, err)
+		}
+		cur := forest()
+		cur.drop(g)
+		if r, err := classify(t, cur, "CN=carol,OU=Staff,"+dom); err == nil || !r.Unknown {
+			t.Errorf("%s absent at 2016 must fail closed: %+v %v", g, r, err)
+		}
+	}
+}
+
+func TestUnreadableFunctionalLevelFailsClosed(t *testing.T) {
+	f := forest()
+	delete(f.find(dom).attrs, "msds-behavior-version")
+	if r, err := classify(t, f, "CN=carol,OU=Staff,"+dom); err == nil || !r.Unknown {
+		t.Errorf("want fail closed, got %+v %v", r, err)
+	}
+}
+
+// In a child domain the forest-root groups are not readable by SID from a non-GC DC: not an error.
+func TestChildDomainRootGroupsMayBeAbsent(t *testing.T) {
+	f := forest()
+	f.nm.RootDomain = mustDN("DC=root,DC=test")
+	f.add("DC=root,DC=test", "S-1-5-21-9-9-9", cls("top", "domain", "domainDNS")).raw["nTSecurityDescriptor"] = f.find(cfg).raw["nTSecurityDescriptor"]
+	for _, g := range []string{"Schema Admins", "Enterprise Admins", "Enterprise Key Admins"} {
+		f.drop("CN=" + g + ",CN=Users," + dom)
+	}
+	if r, err := classify(t, f, "CN=carol,OU=Staff,"+dom); err != nil || r.Unknown {
+		t.Errorf("child domain without root groups must succeed: %+v %v", r, err)
 	}
 }
