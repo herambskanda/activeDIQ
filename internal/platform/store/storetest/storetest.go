@@ -27,7 +27,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"github.com/skenzeriq/activediq/internal/testlab/harnessdocker"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -39,6 +38,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/skenzeriq/activediq/internal/testlab/harnessdocker"
 	"github.com/skenzeriq/activediq/migrations"
 )
 

@@ -37,16 +37,17 @@ func TestRemoveAndReapLeaveNoContainerOrVolume(t *testing.T) {
 		return docker(t, append(a, img)...)
 	}
 	// Owned by a pid that cannot exist: a killed test run's leftover.
-	dead := run("--label", Label+"=1", "--label", OwnerLabel+"=2147483646")
+	const tl, to = "activediq.harness.selftest", "activediq.harness.selftest.pid"
+	dead := run("--label", tl+"=1", "--label", to+"=2147483646")
 	// Owned by this live process: a sibling package's container must survive Reap.
-	live := run(RunArgs()...)
+	live := run(runArgs(tl, to)...)
 	t.Cleanup(func() { Remove(dead); Remove(live) })
 	deadVols, liveVols := volumesOf(t, dead), volumesOf(t, live)
 	if len(deadVols) == 0 || len(liveVols) == 0 {
 		t.Fatal("test image has no anonymous volume; the proof would be vacuous")
 	}
 
-	Reap()
+	reap(tl, to)
 	if got := docker(t, "ps", "-aq", "--filter", "id="+dead); got != "" {
 		t.Fatalf("leftover container of a dead owner survived Reap: %s", got)
 	}

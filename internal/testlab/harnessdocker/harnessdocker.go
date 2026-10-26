@@ -19,8 +19,10 @@ const (
 )
 
 // RunArgs returns the label arguments to insert into `docker run` for the current process.
-func RunArgs() []string {
-	return []string{"--label", Label + "=1", "--label", OwnerLabel + "=" + strconv.Itoa(os.Getpid())}
+func RunArgs() []string { return runArgs(Label, OwnerLabel) }
+
+func runArgs(label, owner string) []string {
+	return []string{"--label", label + "=1", "--label", owner + "=" + strconv.Itoa(os.Getpid())}
 }
 
 // Remove force-removes a container together with its anonymous volumes.
@@ -32,9 +34,14 @@ func Remove(id string) {
 
 // Reap removes harness containers (and volumes) whose owning process is gone, i.e. leftovers of a
 // killed test run. Containers of live sibling processes (parallel packages) are left alone.
-func Reap() {
-	out, err := exec.Command("docker", "ps", "-a", "--filter", "label="+Label+"=1",
-		"--format", `{{.ID}} {{.Label "`+OwnerLabel+`"}}`).Output()
+// Liveness is a pid check, so it assumes all test processes share one pid namespace.
+func Reap() { reap(Label, OwnerLabel) }
+
+// reap is parameterised so this package's own test can use a private label that the production
+// reaper (run by every other test package in parallel) can never see.
+func reap(label, owner string) {
+	out, err := exec.Command("docker", "ps", "-a", "--filter", "label="+label+"=1",
+		"--format", `{{.ID}} {{.Label "`+owner+`"}}`).Output()
 	if err != nil {
 		return
 	}

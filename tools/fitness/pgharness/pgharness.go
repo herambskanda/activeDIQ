@@ -11,7 +11,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/skenzeriq/activediq/internal/testlab/harnessdocker"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,6 +21,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/skenzeriq/activediq/internal/testlab/harnessdocker"
 )
 
 // Role names of the bootstrap contract. The installer (T-0037) creates the same two roles; the job
