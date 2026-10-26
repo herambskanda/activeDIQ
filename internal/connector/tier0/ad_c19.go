@@ -329,6 +329,11 @@ func (b *builder) c19() error {
 		return err
 	}
 	var main, self, owners sidSet
+	type tg struct {
+		kind c19Kind
+		aces []aceGrant
+	}
+	var decoded []tg
 	for _, t := range targets {
 		e, found, err := b.get(t.ref, []string{"objectGUID", "nTSecurityDescriptor"})
 		if err != nil {
@@ -347,7 +352,25 @@ func (b *builder) c19() error {
 		// OWNER RIGHTS and dSHeuristics character 29 are ignored on purpose (TM-D26 rule 3): the owner
 		// is tier0.
 		owners.add(d.Owner)
-		for _, a := range aces {
+		decoded = append(decoded, tg{t.kind, aces})
+	}
+	// Rule 2, last sentence: a right named by a GUID the schema cannot resolve counts as all-properties
+	// (WP), all extended rights (CA) or any class (CC), so it is read as an ACE with no objectType.
+	unresolved, err := b.c19Unresolved(sc, func(yield func(aceGrant)) {
+		for _, t := range decoded {
+			for _, a := range t.aces {
+				yield(a)
+			}
+		}
+	})
+	if err != nil {
+		return err
+	}
+	for _, t := range decoded {
+		for _, a := range t.aces {
+			if a.objectType != nil && unresolved[*a.objectType] {
+				a.objectType = nil
+			}
 			switch {
 			case c19IgnoredSID[a.trustee.String()]:
 			case sc.takeover(a, t.kind):
@@ -367,11 +390,67 @@ func (b *builder) c19() error {
 	if err := b.markPrincipalsSkip(owners.sorted(), C19, isC1); err != nil {
 		return err
 	}
-	// Self-Membership lets a trustee add only itself, which changes nothing for one already tier0.
+	// Self-Membership lets a trustee add only itself, which changes nothing for a user or computer
+	// already tier0. A group trustee is different: "itself" is each of its members, and a group that is
+	// tier0 through C8/C10 never had its members walked, so a group is always taken and expanded.
 	// Evaluated last so the answer does not depend on the order of the objects.
 	alreadyTier0 := func(o *ad.Entry) bool {
+		if hasClass(o, "group") {
+			return false
+		}
 		g, err := o.GUID()
 		return err == nil && len(b.s.bases[g.String()]) > 0
 	}
 	return b.markPrincipalsSkip(self.sorted(), C19, alreadyTier0)
+}
+
+// c19Unresolved returns the objectType GUIDs on WP, CA and CC grants that neither the schema
+// (schemaIDGUID, attributeSecurityGUID) nor the Extended-Rights container (rightsGuid) knows. A failed
+// lookup is an error: the classification fails closed.
+func (b *builder) c19Unresolved(sc *c19Schema, each func(func(aceGrant))) (map[guid.GUID]bool, error) {
+	known := map[guid.GUID]bool{sc.resetPassword: true, sc.selfMb: true}
+	for _, a := range sc.attrs {
+		known[a.id] = true
+		if a.set != nil {
+			known[*a.set] = true
+		}
+	}
+	for _, c := range sc.classes {
+		known[c] = true
+	}
+	var want []guid.GUID
+	asked := map[guid.GUID]bool{}
+	each(func(a aceGrant) {
+		if a.objectType != nil && a.mask&(maskWriteProp|maskControlAcc|sd.MaskCreateChild) != 0 && !known[*a.objectType] && !asked[*a.objectType] {
+			asked[*a.objectType] = true
+			want = append(want, *a.objectType)
+		}
+	})
+	out := map[guid.GUID]bool{}
+	if len(want) == 0 {
+		return out, nil
+	}
+	rights, err := b.child(b.nm.Config, "CN=Extended-Rights")
+	if err != nil {
+		return nil, err
+	}
+	for _, g := range want {
+		found := false
+		q := Query{AnyGUID: []AttrGUID{{Attr: "schemaIDGUID", Value: g}, {Attr: "attributeSecurityGUID", Value: g}}}
+		err := b.d.Find(b.ctx, b.nm.Schema, ad.ScopeOneLevel, q, []string{"schemaIDGUID"}, func(*ad.Entry) error { found = true; return nil })
+		if err != nil {
+			return nil, fmt.Errorf("tier0: resolve rights GUID %s: %w", g, err)
+		}
+		if !found {
+			q := Query{Classes: []string{"controlAccessRight"}, Eq: []AttrEq{{Attr: "rightsGuid", Value: g.String()}}}
+			err := b.d.Find(b.ctx, rights, ad.ScopeOneLevel, q, []string{"rightsGuid"}, func(*ad.Entry) error { found = true; return nil })
+			if err != nil {
+				return nil, fmt.Errorf("tier0: resolve rights GUID %s: %w", g, err)
+			}
+		}
+		if !found {
+			out[g] = true
+		}
+	}
+	return out, nil
 }

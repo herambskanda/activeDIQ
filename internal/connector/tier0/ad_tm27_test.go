@@ -273,3 +273,41 @@ func TestC19NotTransitive(t *testing.T) { // T0-C19-NOTTRANS (TM-R21 pinned)
 	wantBasis(t, f, us, C19, true)
 	wantBasis(t, f, v, C19, false)
 }
+
+func TestC19SelfMembershipGroup(t *testing.T) { // T0-C19-SELFMEM-GROUP
+	f := forest()
+	// A group that is tier0 through C10 (under Public Key Services) never had its members walked.
+	pki := f.add("CN=PKIOps,CN=Public Key Services,CN=Services,"+cfg, dsid+"-5200", group, "member", "CN=inner20,OU=Staff,"+dom)
+	_ = pki
+	f.add("CN=inner20,OU=Staff,"+dom, dsid+"-5201", group, "member", "CN=nested20,OU=Staff,"+dom)
+	nested := u(f, "nested20", 5202)
+	prim := u(f, "prim20", 5203, "primaryGroupID", "5200")
+	out := u(f, "out20", 5204)
+	grant(f, daDN, 5200, 0x8, &memberID)
+	wantBasis(t, f, nested, C19, true)
+	wantBasis(t, f, prim, C19, true)
+	wantBasis(t, f, out, C19, false)
+}
+
+func TestC19UnresolvedGUID(t *testing.T) { // T0-C19-UNRESOLVED-GUID
+	ghost := mustGUID("11111111-2222-3333-4444-555555555555")
+	cases := []struct {
+		name string
+		obj  string
+		mask uint32
+	}{
+		{"WP", daDN, wProp},
+		{"CA", krbDN, allExt},
+		{"CC", dcOUDN, 0x1},
+	}
+	for _, c := range cases {
+		f := forest()
+		us, tw := u(f, "ug", 5300), u(f, "ugtwin", 5301)
+		o := f.find(c.obj)
+		o.raw["nTSecurityDescriptor"] = sdBytes(aceSpec{sid: dsid + "-512", mask: gAll},
+			aceSpec{sid: dsid + "-5300", mask: c.mask, objType: &ghost},
+			aceSpec{sid: dsid + "-5301", mask: c.mask, objType: &descID})
+		wantBasis(t, f, us, C19, true)
+		wantBasis(t, f, tw, C19, false) // description resolves and is not a listed attribute
+	}
+}
