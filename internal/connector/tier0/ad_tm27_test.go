@@ -352,3 +352,31 @@ func TestC19RightsExposed(t *testing.T) { // T0-RIGHTS-C19 (classifier half)
 		t.Fatalf("owner of krbtgt recorded %d times", owners)
 	}
 }
+
+// A broad trustee (Everyone, Authenticated Users, INTERACTIVE) with a rule-2 right on a C19 object is
+// recorded even when the default ForeignSecurityPrincipal placeholders for those SIDs exist, so the
+// rights check (which matches the identity's whole token) can refuse. Regression for T-0362 review.
+func TestC19RightsBroadTrusteeWithFSPs(t *testing.T) {
+	for _, s := range []string{"S-1-1-0", "S-1-5-4", "S-1-5-11"} {
+		f := forest()
+		for _, p := range []string{"S-1-5-4", "S-1-5-9", "S-1-5-11", "S-1-5-17"} {
+			f.add("CN="+p+",CN=ForeignSecurityPrincipals,"+dom, p, cls("top", "foreignSecurityPrincipal"))
+		}
+		f.find(daDN).raw["nTSecurityDescriptor"] = sdBytes(aceSpec{sid: dsid + "-512", mask: gAll},
+			aceSpec{sid: s, mask: wProp, objType: &memberID})
+		set, err := NewAD(f).Snapshot(context.Background())
+		if err != nil {
+			t.Logf("%s: snapshot failed closed: %v", s, err) // refusal-by-failure is also allowed by rule 4
+			continue
+		}
+		found := false
+		for _, r := range set.C19Rights() {
+			if r.Trustee.String() == s && r.Object == f.find(daDN).guid {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s WP member on Domain Admins not recorded as a C19 right", s)
+		}
+	}
+}

@@ -336,3 +336,16 @@ func TestLabADC19Refusals(t *testing.T) {
 		})
 	}
 }
+
+// A C19 right granted to Authenticated Users (held by every identity's token) must never pass: it
+// refuses, or the snapshot fails closed (TM-D27 rules 4 and 8).
+func TestLabADC19AuthenticatedUsers(t *testing.T) {
+	l := newLab(t)
+	ctx := labCtx(t)
+	l.ace("CN=Domain Admins,CN=Users,"+labDom, fmt.Sprintf("(OA;;WP;%s;;AU)", attrMember))
+	name, userDN, _ := l.user()
+	r := l.verify(ctx, name, userDN, ADInput{})
+	if r.res.Verdict == v1.VerificationVerdict_VERIFICATION_VERDICT_PASS || r.res.WriteGateOpenable {
+		t.Fatalf("passed with AU WP member on Domain Admins:%s", dump(r.res))
+	}
+}

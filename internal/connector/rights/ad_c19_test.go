@@ -33,18 +33,20 @@ func TestC19IdentityRights(t *testing.T) {
 		{"reset password on krbtgt", tier0.C19Right{Trustee: mustSID(idSIDt), Mask: dsControlAccess, ObjectType: &rightResetPassword}, v1.AdRightKind_AD_RIGHT_KIND_CONTROL_ACCESS, true},
 		{"WP msDS-KeyCredentialLink on a DC", tier0.C19Right{Trustee: mustSID(idSIDt), Mask: dcOUWP, ObjectType: &keyCred}, v1.AdRightKind_AD_RIGHT_KIND_WRITE_PROPERTY, true},
 		{"WP member on a C1 group via nested group", tier0.C19Right{Trustee: mustSID(nestSID), Mask: dcOUWP, ObjectType: &member}, v1.AdRightKind_AD_RIGHT_KIND_WRITE_PROPERTY, true},
-		{"owner of a DC object", tier0.C19Right{Trustee: mustSID(idSIDt), Owner: true}, v1.AdRightKind_AD_RIGHT_KIND_WRITE_OWNER, true},
+		{"owner of a DC object", tier0.C19Right{Trustee: mustSID(idSIDt), Owner: true}, v1.AdRightKind_AD_RIGHT_KIND_WRITE_DAC, true},
 		{"WP gPLink on the DC OU", tier0.C19Right{Trustee: mustSID(idSIDt), Mask: dcOUWP, ObjectType: &gpLink}, v1.AdRightKind_AD_RIGHT_KIND_WRITE_PROPERTY, true},
 		{"generic all", tier0.C19Right{Trustee: mustSID(idSIDt), Mask: dsFullControl | 0x10000000}, v1.AdRightKind_AD_RIGHT_KIND_GENERIC_ALL, true},
 		{"delete child on the DC OU", tier0.C19Right{Trustee: mustSID(idSIDt), Mask: 0x2}, v1.AdRightKind_AD_RIGHT_KIND_DELETE_CHILD, true},
 		{"someone else's right", tier0.C19Right{Trustee: mustSID(daSID), Mask: dsControlAccess}, 0, false},
 		{"someone else owns it", tier0.C19Right{Trustee: mustSID(daSID), Owner: true}, 0, false},
-		{"authenticated users are the customer's ACL, not our delegation", tier0.C19Right{Trustee: mustSID("S-1-5-11"), Mask: dsControlAccess}, 0, false},
+		{"authenticated users hold WP member (token SID)", tier0.C19Right{Trustee: mustSID("S-1-5-11"), Mask: dcOUWP, ObjectType: &member}, v1.AdRightKind_AD_RIGHT_KIND_WRITE_PROPERTY, true},
+		{"everyone holds WP member (token SID)", tier0.C19Right{Trustee: mustSID("S-1-1-0"), Mask: dcOUWP, ObjectType: &member}, v1.AdRightKind_AD_RIGHT_KIND_WRITE_PROPERTY, true},
+		{"interactive holds a C19 right (token SID)", tier0.C19Right{Trustee: mustSID("S-1-5-4"), Mask: dsControlAccess}, v1.AdRightKind_AD_RIGHT_KIND_CONTROL_ACCESS, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newWorld(t)
-			w.tokens = append(w.tokens, nestSID)
+			w.tokens = append(w.tokens, nestSID, "S-1-5-4")
 			w.f.schemaAttr("gPLink", 0)
 			tc.right.Object = w.t0G
 			w.set.AddC19Right(tc.right)

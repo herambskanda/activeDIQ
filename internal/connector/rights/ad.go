@@ -851,14 +851,16 @@ func (c *adCheck) step3(m *member, e *ad.Entry) {
 	}
 }
 
-// c19 is TM-D27 rule 8: the connector identity (by token, minus the universal SIDs a baseline ACE
-// grants everyone) holding any rule-2 right on, or owning, a C19 object refuses activation. The rights
+// c19 is TM-D27 rule 8: the connector identity (by its whole token) holding any rule-2 right on, or owning, a C19 object refuses activation. The rights
 // come from the classifier's own reading of each object's live DACL and owner, so the check applies
 // the same table as the classification. A failed read already failed the snapshot closed (rule 7).
-// Broad principals are not blamed here: rule 4 fails the whole snapshot for them.
+// The match is against the whole token (universal SIDs too); the classifier does not reliably fail
+// for a broad trustee (the default ForeignSecurityPrincipal placeholders resolve), so this must refuse.
 func (c *adCheck) c19(set *tier0.ADSet) {
 	for _, r := range set.C19Rights() {
-		if !c.own[r.Trustee.String()] || c.broadPrincipal(r.Trustee) {
+		// The full token, universal SIDs included: a C19 right held through Everyone or Authenticated
+		// Users is held by the identity too, and rule 4 allows only a refusal or a failure for it.
+		if !c.tokens[r.Trustee.String()] {
 			continue
 		}
 		var typ *adguid.GUID
@@ -897,8 +899,8 @@ func (c *adCheck) c19(set *tier0.ADSet) {
 func c19Kind(r tier0.C19Right) (v1.AdRightKind, uint32) {
 	const genericAll, genericWrite = 0x10000000, 0x40000000
 	switch m := r.Mask; {
-	case r.Owner:
-		return v1.AdRightKind_AD_RIGHT_KIND_WRITE_OWNER, maskWriteOwner
+	case r.Owner: // the owner holds implicit READ_CONTROL and WRITE_DAC
+		return v1.AdRightKind_AD_RIGHT_KIND_WRITE_DAC, maskWriteDAC
 	case m&genericAll != 0:
 		return v1.AdRightKind_AD_RIGHT_KIND_GENERIC_ALL, m
 	case m&genericWrite != 0:
