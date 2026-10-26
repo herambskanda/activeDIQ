@@ -173,7 +173,7 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
     import)` means the row of `operation` itself.
   - `pending` packages are not checked until they exist; a `self-test` finding means the
     `internal/platform/<name>` mapping found none of the listed packages while the tree has them
-    elsewhere. O1 (step escape) also runs `tools/analyzers/stepescape` type-aware: the module must build first. To exempt a deliberate smuggle in a test, put `//fitness:allow-step-escape <reason>` on or above the line (test files only). O2–O8 are added by the tickets that land the code they inspect.
+    elsewhere. O1 (step escape) also runs `tools/analyzers/stepescape` type-aware: the module must build first. To exempt a deliberate smuggle in a test, put `//fitness:allow-step-escape <reason>` on or above the line (test files only). O2 (write surface) and the SQL half of O4 (state column) run on every invocation; violations read `file:line: O2 [rule 2] …` / `O4 [rule 3] …`. O3, O5–O7 and O8 print `pending <id> … (owner T-…)` until their code lands (T-0391, T-0392, T-0393); the owner replaces the pending entry in `pendingChecks` (tools/fitness/operation/main.go) with the check. A pending line is not a pass.
 - **`fitness-safeprim`** (FF-SP1 to FF-SP3, safe-primitives §8): each finding reads
   `file:line: FF-SPn [rule] message`. `make fitness-safeprim` re-runs it alone;
   `go run ./tools/fitness/safeprim -checks FF-SP1,FF-SP3 -no-analyzers` runs a subset without the

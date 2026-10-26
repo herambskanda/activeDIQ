@@ -208,6 +208,16 @@ printf 'package a\n\nimport (\n\t"fmt"\n\n\t"op.test/internal/platform/operation
 must_fail_with "fitness-operation O1 on a step.Step passed to a function with no step.Step parameter" 'internal/modules/a/a.go:10: O1 \[rule 2\] a step.Step is passed to a function with no step.Step parameter' "$opbin" -root "$opt"
 printf 'package a\n\nimport "op.test/internal/platform/operation/step"\n\nfunc f(s step.Step) { g(s) }\n\nfunc g(s step.Step) { _ = s.Valid() }\n' >"$opt/internal/modules/a/a.go"
 must_pass "fitness-operation O1 on a step.Step passed to a helper that takes one" "$opbin" -root "$opt"
+# O2 (write surface) and O4 (state column SQL), both syntactic.
+printf 'package a\n\nimport _ "github.com/go-ldap/ldap/v3"\n' >"$opt/internal/modules/a/a.go"
+must_fail_with "fitness-operation O2 on an LDAP library imported outside the connector root" 'internal/modules/a/a.go:3: O2 \[rule 2\] directory protocol library' "$opbin" -root "$opt"
+printf 'package a\n\nconst q = `UPDATE public.operations SET state = $1 WHERE id = $2`\n' >"$opt/internal/modules/a/a.go"
+must_fail_with "fitness-operation O4 on SQL updating a state column outside the transition functions" 'internal/modules/a/a.go:3: O4 \[rule 3\] SQL updates a state column' "$opbin" -root "$opt"
+mkdir -p "$opt/internal/directory/client"
+printf 'package client\n\ntype C struct{}\n\nfunc (c *C) Send() { c.sendApply() }\nfunc (c *C) sendApply() {}\n' >"$opt/internal/directory/client/c.go"
+rm -f "$opt/internal/modules/a/a.go"
+must_fail_with "fitness-operation O2 on an exported client method issuing a write RPC without a step.Step" 'O2 \[rule 2\] exported Send issues a connector-contract write RPC but has no step.Step parameter' "$opbin" -root "$opt"
+rm -rf "$opt/internal/directory"
 rm -rf "$opt/internal/modules"
 must_pass "fitness-operation O9 on the repository itself" "$opbin" -root "$root"
 
