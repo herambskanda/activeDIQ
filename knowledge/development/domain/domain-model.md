@@ -976,7 +976,7 @@ derived **per kind**, and the connector computes it (contract §8.4):
 | Kind | Checks | Registered codes | `qualifier` |
 | --- | --- | --- | --- |
 | `TIER0_GROUP_MEMBERSHIP` | V7 | `over.tier0_group` | the first group hop's GUID; the SID for a foreign security principal |
-| `EXCESSIVE_RIGHT` (AD) | V7, V9 | V7: `over.tier0_write`, `over.tier0_child`, `over.tier0_write_dacl`, `over.tier0_write_owner`, `over.tier0_write_sacl`, `over.tier0_control_access`, `over.tier0_validated_write`, `over.tier0_confidential_read`, `over.tier0_generic_all`, `over.tier0_generic_write`, `over.tier0_delete_tree`. V9: `over.managed_ou_<kind slug>` | `right.ad.object_type`, else the ACE's `trustee_group`, else its `trustee` |
+| `EXCESSIVE_RIGHT` (AD) | V7, V9 | V7: `over.tier0_write`, `over.tier0_child`, `over.tier0_write_dacl`, `over.tier0_write_owner`, `over.tier0_write_sacl`, `over.tier0_control_access`, `over.tier0_validated_write`, `over.tier0_confidential_read`, `over.tier0_generic_all`, `over.tier0_generic_write`, `over.tier0_delete_tree`, `over.tier0_c19_control` (TM-D27 rule 8: a rule-2 right on, or ownership of, a C19 object). V9: `over.managed_ou_<kind slug>` | `right.ad.object_type`, else the ACE's `trustee_group`, else its `trustee` |
 | `DELEGATION_CONFIGURED` | V7 | `over.delegation_unconstrained`, `over.delegation_constrained`, `over.delegation_protocol_transition`, `over.delegation_rbcd` | empty |
 | `MISSING_RIGHT` | V8, V9, EV4 | `missing.read_domain`, `missing.family_right`; Entra `missing.entra_permission` | AD: as AD `EXCESSIVE_RIGHT`; Entra: `app_role_id` |
 | `ENTRA_DENY_LIST_PERMISSION` | EV3 | `over.entra_deny_list_permission` | `app_role_id` |
