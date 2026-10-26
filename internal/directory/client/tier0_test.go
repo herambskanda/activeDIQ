@@ -44,13 +44,20 @@ func (f fakeConns) Get(_ context.Context, _ tenant.ID, id connection.ID) (connec
 
 type fakeCorr struct {
 	links []inventory.Link
-	err   error
-	calls int
+	evald time.Time // EvaluatedAt; zero means a recent evaluation (t0Now-1m), see unevaluated
+	// unevaluated makes EvaluatedAt the zero time: no run has completed.
+	unevaluated bool
+	err         error
+	calls       int
 }
 
-func (f *fakeCorr) CorrelationsFor(context.Context, tenant.ID, inventory.Ref) ([]inventory.Link, error) {
+func (f *fakeCorr) CorrelationsFor(context.Context, tenant.ID, inventory.Ref) (inventory.Correlations, error) {
 	f.calls++
-	return f.links, f.err
+	at := f.evald
+	if at.IsZero() && !f.unevaluated {
+		at = t0Now.Add(-time.Minute)
+	}
+	return inventory.Correlations{Links: f.links, EvaluatedAt: at}, f.err
 }
 
 type fakeDes struct{ out []inventory.GUID }
@@ -197,9 +204,10 @@ func TestNoHybridLinkOnlyWhenTheConnectionHasNone(t *testing.T) {
 	if st.GetNoHybridLink() == nil || !st.GetComputedAt().AsTime().Equal(t0Now) {
 		t.Fatalf("statement = %v", st)
 	}
-	// A hybrid connection with no stored correlation: the absence is a fact with no known as-of (the
-	// correlation job may lag), so without a live read the write is refused, never stamped "now".
+	// A hybrid connection with no stored correlation and no completed evaluation: the absence has no
+	// known as-of, so without a live read the write is refused, never stamped "now".
 	r.links.has = true
+	r.corr.unevaluated = true
 	if _, err = r.builder(t).Build(context.Background(), StagePlan, adOp()); !isReason(err, ReasonStaleFacts) {
 		t.Fatalf("empty answer on a hybrid connection, no refresher: %v", err)
 	}
@@ -215,6 +223,18 @@ func TestNoHybridLinkOnlyWhenTheConnectionHasNone(t *testing.T) {
 		t.Fatalf("statement = %v", st)
 	}
 	r.ref = nil
+	// Once an evaluation has completed, the empty answer is a fact as of that evaluation (T-0378).
+	r.corr.unevaluated = false
+	evald := t0Now.Add(-2 * time.Minute)
+	r.corr.evald = evald
+	got, err = r.builder(t).Build(context.Background(), StagePlan, adOp())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st := got.Context.Statements[0]; st.GetPeers() == nil || len(st.GetPeers().Peers) != 0 || !st.GetComputedAt().AsTime().Equal(evald) {
+		t.Fatalf("evaluated-empty statement = %v", st)
+	}
+	r.corr.evald = time.Time{}
 	r.links.err = errors.New("db down")
 	if _, err := r.builder(t).Build(context.Background(), StagePlan, adOp()); err == nil {
 		t.Fatal("a failed link read must not become no_hybrid_link")
@@ -377,6 +397,7 @@ func TestEntraTargetGetsADPeerKind(t *testing.T) {
 	// An Entra object with no correlation never claims no_hybrid_link; the absence has no known as-of
 	// without a live read.
 	r.corr.links = nil
+	r.corr.unevaluated = true
 	if _, err = r.builder(t).Build(context.Background(), StagePlan, op); !isReason(err, ReasonStaleFacts) {
 		t.Fatalf("got %v", err)
 	}

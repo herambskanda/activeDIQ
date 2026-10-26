@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
-	"syscall"
 )
 
 const (
@@ -52,13 +51,4 @@ func reap(label, owner string) {
 		}
 		Remove(id)
 	}
-}
-
-func ownerAlive(pid string) bool {
-	n, err := strconv.Atoi(strings.TrimSpace(pid))
-	if err != nil || n <= 0 {
-		return false
-	}
-	err = syscall.Kill(n, 0)
-	return err == nil || err == syscall.EPERM
 }
