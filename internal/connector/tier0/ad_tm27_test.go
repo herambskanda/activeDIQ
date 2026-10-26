@@ -425,3 +425,48 @@ func TestC19RightsBroadTrusteeWithFSPs(t *testing.T) {
 		}
 	}
 }
+
+// T-0382: a broad FSP nested anywhere in the membership closure of a group that holds a C19/C17 right
+// (or of a tier0 group) puts every principal in that closure, yet tokenGroups never lists the group
+// (Pre-Windows 2000 Compatible Access S-1-5-32-554 ⊇ Authenticated Users). The walk fails closed naming
+// the group and the SID.
+func TestNestedBroadFSPInTrusteeClosureFailsClosed(t *testing.T) {
+	const pre2k = "S-1-5-32-554"
+	for _, w := range []string{"S-1-1-0", "S-1-5-4", "S-1-5-11", "S-1-5-15", "S-1-5-2"} {
+		for _, c := range []string{"C19", "C17", "C19nested"} {
+			t.Run(c+"/"+w, func(t *testing.T) {
+				f := forest()
+				fspDN := "CN=" + w + ",CN=ForeignSecurityPrincipals," + dom
+				f.add(fspDN, w, cls("top", "foreignSecurityPrincipal"))
+				member := fspDN
+				if c == "C19nested" {
+					f.add("CN=inner382,CN=Builtin,"+dom, "S-1-5-32-900", group, "member", fspDN)
+					member = "CN=inner382,CN=Builtin," + dom
+				}
+				f.add("CN=Pre-Windows 2000 Compatible Access,CN=Builtin,"+dom, pre2k, group, "member", member)
+				if c == "C17" {
+					setSD(f, dom, aceSpec{sid: pre2k, mask: wDACL})
+				} else {
+					f.find(daDN).raw["nTSecurityDescriptor"] = sdBytes(aceSpec{sid: pre2k, mask: wProp, objType: &memberID})
+				}
+				r, err := classify(t, f, "CN=carol,OU=Staff,"+dom)
+				if err == nil || !r.Tier0 || !r.Unknown || !strings.Contains(err.Error(), w) ||
+					(c != "C19nested" && !strings.Contains(err.Error(), "Compatible Access")) {
+					t.Errorf("%+v %v", r, err)
+				}
+			})
+		}
+	}
+}
+
+// The twin: a foreign-domain account FSP nested in a trustee group is a real principal, not a failure.
+func TestNestedForeignAccountFSPInTrusteeClosureIsMarked(t *testing.T) {
+	f := forest()
+	fsp := "S-1-5-21-111-222-333-1105"
+	fspDN := "CN=" + fsp + ",CN=ForeignSecurityPrincipals," + dom
+	f.add(fspDN, fsp, cls("top", "foreignSecurityPrincipal"))
+	f.add("CN=ops382,CN=Builtin,"+dom, "S-1-5-32-901", group, "member", fspDN)
+	f.find(daDN).raw["nTSecurityDescriptor"] = sdBytes(aceSpec{sid: "S-1-5-32-901", mask: wProp, objType: &memberID})
+	wantBasis(t, f, fspDN, C19, true)
+	wantBasis(t, f, "CN=carol,OU=Staff,"+dom, C19, false)
+}
