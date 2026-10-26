@@ -42,7 +42,9 @@ const (
 	ReasonBadRef            Tier0Reason = "bad_reference"      // the operation names no valid object
 )
 
-func (e *Tier0ContextError) Error() string { return "client: tier0 context not built: " + string(e.Reason) }
+func (e *Tier0ContextError) Error() string {
+	return "client: tier0 context not built: " + string(e.Reason)
+}
 func (e *Tier0ContextError) Unwrap() error { return e.Cause }
 
 func ctxErr(r Tier0Reason, cause error) error { return &Tier0ContextError{Reason: r, Cause: cause} }
@@ -156,11 +158,11 @@ func (b *tier0Builder) statement(ctx context.Context, ref inventory.Ref, peerKin
 		return nil, ctxErr(ReasonBadRef, nil)
 	}
 	st := &connectorv1.CorrelationStatement{Object: &connectorv1.Guid{Value: obj}}
-	ls, err := b.Correlations.CorrelationsFor(ctx, b.Tenant, ref)
+	cs, err := b.Correlations.CorrelationsFor(ctx, b.Tenant, ref)
 	if err != nil {
 		return nil, ctxErr(ReasonSourceUnavailable, err)
 	}
-	if len(ls) == 0 && peerKind == connectorv1.ProviderKind_PROVIDER_KIND_ENTRA {
+	if len(cs.Links) == 0 && peerKind == connectorv1.ProviderKind_PROVIDER_KIND_ENTRA {
 		// no_hybrid_link only when the connection has no HybridLink at all (DM-21). This is read live
 		// now, so it is the one empty answer that may be stamped with the time of the read (§8.3 F3).
 		has, err := b.HybridLinks.HasHybridLink(ctx, b.Tenant, connection.ID(ref.Connection))
@@ -173,7 +175,7 @@ func (b *tier0Builder) statement(ctx context.Context, ref inventory.Ref, peerKin
 			return st, nil
 		}
 	}
-	ls, asOf, err := b.fresh(ctx, ref, ls)
+	ls, asOf, err := b.fresh(ctx, ref, cs)
 	if err != nil {
 		return nil, err
 	}
@@ -190,13 +192,14 @@ func (b *tier0Builder) statement(ctx context.Context, ref inventory.Ref, peerKin
 	return st, nil
 }
 
-// fresh returns the correlations with the as-of time of the oldest fact they rest on. An empty answer
-// is itself a fact (no link as of the last evaluation) and a link whose tier0 status or evaluation has
-// no as-of is just as unknown: neither may be stamped with the time of assembly. Unknown or older than
-// the connector accepts means one live re-read; if that does not settle it the write is refused.
-func (b *tier0Builder) fresh(ctx context.Context, ref inventory.Ref, ls []inventory.Link) ([]inventory.Link, time.Time, error) {
-	if asOf, known := oldestFact(ls); known && b.Now().Sub(asOf) <= statementAgeBudget {
-		return ls, asOf, nil
+// fresh returns the links with the as-of time of the oldest fact they rest on. An empty answer is
+// itself a fact, true as of the correlation evaluation that covers ref (Correlations.EvaluatedAt); a
+// zero EvaluatedAt, or a link whose tier0 status or evaluation has no as-of, is just as unknown:
+// neither may be stamped with the time of assembly. Unknown or older than the connector accepts
+// means one live re-read; if that does not settle it the write is refused.
+func (b *tier0Builder) fresh(ctx context.Context, ref inventory.Ref, cs inventory.Correlations) ([]inventory.Link, time.Time, error) {
+	if asOf, known := oldestFact(cs); known && b.Now().Sub(asOf) <= statementAgeBudget {
+		return cs.Links, asOf, nil
 	}
 	if b.Refresh == nil {
 		return nil, time.Time{}, ctxErr(ReasonStaleFacts, nil)
@@ -205,39 +208,41 @@ func (b *tier0Builder) fresh(ctx context.Context, ref inventory.Ref, ls []invent
 	if err != nil {
 		return nil, time.Time{}, ctxErr(ReasonSourceUnavailable, err)
 	}
-	if ls, err = b.Correlations.CorrelationsFor(ctx, b.Tenant, ref); err != nil {
+	if cs, err = b.Correlations.CorrelationsFor(ctx, b.Tenant, ref); err != nil {
 		return nil, time.Time{}, ctxErr(ReasonSourceUnavailable, err)
 	}
-	if len(ls) == 0 { // the live read found none: the fact is as of that read
+	if len(cs.Links) == 0 { // the live read found none: the fact is as of that read
 		if read.IsZero() || b.Now().Sub(read) > statementAgeBudget {
 			return nil, time.Time{}, ctxErr(ReasonStaleFacts, nil)
 		}
-		return ls, read, nil
+		return cs.Links, read, nil
 	}
-	asOf, known := oldestFact(ls)
+	asOf, known := oldestFact(cs)
 	if !known || b.Now().Sub(asOf) > statementAgeBudget {
 		return nil, time.Time{}, ctxErr(ReasonStaleFacts, nil)
 	}
-	return ls, asOf, nil
+	return cs.Links, asOf, nil
 }
 
-// oldestFact is the minimum, over the links, of the correlation's last evaluation and the inventory
-// as-of of the tier0 facts (§8.3 F3). A link missing either time, and an empty set, has no known as-of.
-func oldestFact(ls []inventory.Link) (oldest time.Time, known bool) {
-	if len(ls) == 0 {
+// oldestFact is the minimum of the evaluation's as-of, the links' last evaluation and the inventory
+// as-of of their tier0 facts (§8.3 F3). An empty set is as of EvaluatedAt alone. A zero EvaluatedAt,
+// or a link missing either time, means no known as-of.
+func oldestFact(cs inventory.Correlations) (oldest time.Time, known bool) {
+	if cs.EvaluatedAt.IsZero() {
 		return time.Time{}, false
 	}
-	for _, l := range ls {
+	oldest = cs.EvaluatedAt
+	for _, l := range cs.Links {
 		if l.GateCheckedAt.IsZero() || l.FactsAsOf.IsZero() {
 			return time.Time{}, false
 		}
 		for _, t := range []time.Time{l.GateCheckedAt, l.FactsAsOf} {
-			if !known || t.Before(oldest) {
-				oldest, known = t, true
+			if t.Before(oldest) {
+				oldest = t
 			}
 		}
 	}
-	return oldest, known
+	return oldest, true
 }
 
 var stateWire = map[inventory.State]connectorv1.CorrelationState{
@@ -358,4 +363,3 @@ func (b *tier0Builder) override(ctx context.Context, id connection.ID) (*connect
 	}
 	return w, nil
 }
-
