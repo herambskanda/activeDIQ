@@ -38,6 +38,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/skenzeriq/activediq/internal/testlab/harnessdocker"
 	"github.com/skenzeriq/activediq/migrations"
 )
 
@@ -132,8 +133,11 @@ func start(t *testing.T, version string) *Server {
 		t.Fatalf("storetest: no PostgreSQL image known for major version %q (known: 16, 18)", version)
 	}
 	s := &Server{Version: version, Image: image, adminPass: randHex(12), ownerPass: randHex(12), appPass: randHex(12)}
-	out, err := exec.Command("docker", "run", "-d", "--rm", "-e", "POSTGRES_PASSWORD="+s.adminPass, "-p", "127.0.0.1::5432", image,
-		"-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off").CombinedOutput()
+	harnessdocker.Reap() // containers a killed earlier run left behind
+	runArgs := append([]string{"run", "-d", "--rm"}, harnessdocker.RunArgs()...)
+	runArgs = append(runArgs, "-e", "POSTGRES_PASSWORD="+s.adminPass, "-p", "127.0.0.1::5432", image,
+		"-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off")
+	out, err := exec.Command("docker", runArgs...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("storetest: docker run %s: %s", image, strings.TrimSpace(string(out)))
 	}
@@ -162,7 +166,7 @@ func unavailable(t *testing.T, why string) {
 
 func (s *Server) stop() {
 	if s.id != "" {
-		_ = exec.Command("docker", "rm", "-f", s.id).Run()
+		harnessdocker.Remove(s.id) // rm -f -v: the image's anonymous data volume goes too
 		s.id = ""
 	}
 }

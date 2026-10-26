@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/skenzeriq/activediq/internal/testlab/harnessdocker"
 )
 
 // Role names of the bootstrap contract. The installer (T-0037) creates the same two roles; the job
@@ -86,9 +88,11 @@ func StartServer(ctx context.Context, version string, extraBootstrap []string) (
 		ownerRole: DefaultOwnerRole, appRole: DefaultRuntimeRole, extraBoot: extraBootstrap,
 	}
 	// fsync and friends off: the container is thrown away, and the probes write thousands of rows.
-	out, err := exec.CommandContext(ctx, "docker", "run", "-d", "--rm",
-		"-e", "POSTGRES_PASSWORD="+s.adminPass, "-p", "127.0.0.1::5432", image,
-		"-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off").CombinedOutput()
+	harnessdocker.Reap() // containers a killed earlier run left behind
+	runArgs := append([]string{"run", "-d", "--rm"}, harnessdocker.RunArgs()...)
+	runArgs = append(runArgs, "-e", "POSTGRES_PASSWORD="+s.adminPass, "-p", "127.0.0.1::5432", image,
+		"-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off")
+	out, err := exec.CommandContext(ctx, "docker", runArgs...).CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("docker run %s: %s", image, strings.TrimSpace(string(out)))
 	}
@@ -111,12 +115,12 @@ func StartServer(ctx context.Context, version string, extraBootstrap []string) (
 	return s, nil
 }
 
-// Stop removes the container (it was started with --rm).
+// Stop removes the container and its anonymous volume (docker rm -f -v).
 func (s *Server) Stop() {
 	if s.id == "" {
 		return
 	}
-	_ = exec.Command("docker", "rm", "-f", s.id).Run()
+	harnessdocker.Remove(s.id)
 	s.id = ""
 }
 
