@@ -1449,8 +1449,8 @@ revoked. Group delegation (ADM-128) is unaffected for every other role.
 **Key attributes:** `subject` (account, or directory user as connection+GUID) · `method` (totp,
 webauthn, email_otp, sms_otp) · `sealed_secret` or `public_credential` · `authority_anchor`
 (`ad_plane` or `owner_approval`, with the proof's audit reference; I3) · `label` · `last_used` ·
-`state` · `expires_at` (pending only) · `confirm_attempts` · `paused_until`. Refused codes are rows of
-the companion table `authn_totp_failures` (enrollment, time).
+`state` · `expires_at` (pending only) · `confirm_attempts` · `paused_until`. Attempts are rows of
+the companion table `authn_totp_failures` (enrollment, time, `succeeded`).
 **Invariants.** I1 Seeds are sealed and never returned after enrollment. I2 Zero-touch factors
 (email or mobile already in AD or HR) are read live and are not enrollments. I3 **Authority
 factor** (threat model TM-D19 rule 2). An `active` `webauthn` enrollment of an `sso` account with
@@ -1468,8 +1468,11 @@ that factor.
 I5 **Failure budget** (ENH-09 §5). 10 refused codes (wrong or replayed) within a rolling hour pause
 verification of that enrollment for 1 hour (`paused_until`); while paused, a correct code is refused
 and not evaluated. The budget belongs to the enrollment, not the caller, so sign-in, step-up and caller
-verification share it. A refusal is recorded in its own committed transaction, so a caller's rollback
-cannot undo it. `paused_until` is only set or extended by the app role, never cleared or shortened.
+verification share it. An attempt is **charged before the code is evaluated**, in its own committed
+transaction under the enrollment's row lock, so a caller's rollback cannot undo it and a burst of
+concurrent guesses cannot exceed the budget (at most 10 evaluations per hour, 5 per pending enrollment);
+an attempt in flight counts. A success flips its own row to `succeeded` in the transaction that spends
+the step (a trigger allows it nowhere else), which removes it from the count. `paused_until` is only set or extended by the app role, never cleared or shortened.
 I6 **Pending expiry.** A `pending` enrollment expires 10 minutes after creation, or at the 5th wrong
 confirm (`confirm_attempts`), whichever is first; `expired` is terminal. A row is created `pending`,
 unused and unpaused, with `expires_at` set; the database refuses any other INSERT.
@@ -2098,7 +2101,7 @@ AC2 was re-checked by script: every ADM ID in scope lock §3.3 (123 IDs) appears
 
 ## Changelog
 
-- 2026-10-26 · T-0361. DM-37 gains `expires_at`, `confirm_attempts`, `paused_until`, the `expired` state, the `authn_totp_failures` companion table, I5 (failure budget) and I6 (pending expiry).
+- 2026-10-26 · T-0361. DM-37 gains `expires_at`, `confirm_attempts`, `paused_until`, the `expired` state, the `authn_totp_failures` companion table, I5 (failure budget; charge before evaluate) and I6 (pending expiry; the database clamps `expires_at` to 10 minutes).
 
 - 2026-10-23 · T-0078 (TM-Q24). Carries TM-D17 rule 4 (g), rule 5 (h) and TM-D19 into the domain model by name: DM-20.I4 cites rule 4 (g) (a correlation first eligible during a post-attestation `open`/`stale` lapse, `eligibility_class = lapsed`, needs `tenant-owner` re-confirmation; the install-time population does not), DM-20.I6 cites TM-D19 (authority factor, DM-30.I6/I7, DM-37.I3), DM-20.I7 cites rule 5 (h). Hybrid-trust states in DM-10.I7 (`unattested`/`open`/`stale`/`attested`, `first_attested_at`, `tenant_takeover_open`) already match TM-Q24; no semantic change.
 - 2026-10-23 · T-0191 (ADM-143 spec). DM-39 IdentityProvider added. DM-30.I6: the Kerberos alternative applies in v1 because SPNEGO is offered (console-sso.md §9).
