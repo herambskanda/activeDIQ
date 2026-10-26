@@ -210,7 +210,7 @@ func (r *Runner) planAndRoute(ctx context.Context, t tenant.ID, opID string, inp
 			return fmt.Errorf("plan transaction: %w", err)
 		}
 		var err error
-		steps, err = act.Plan(ctx, PlanContext{Tx: tx, Facts: pinnedReader{port: r.cfg.Facts, ad: d.Target == TargetAD, pins: maps.Clone(op.Pins)}, Pins: op.Pins}, input)
+		steps, err = act.Plan(ctx, PlanContext{Tx: tx, Facts: pinnedReader{port: r.cfg.Facts, ad: d.Target == TargetAD, store: d.Target == TargetStore, pins: maps.Clone(op.Pins)}, Pins: op.Pins}, input)
 		return err
 	})
 	if perr == nil {
