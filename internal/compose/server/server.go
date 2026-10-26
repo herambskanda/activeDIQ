@@ -82,7 +82,14 @@ func Run(ctx context.Context, cfg config.Config) error {
 	if err != nil {
 		return err
 	}
-	if _, err := buildOperation(operation.HoldsMinter, db, directoryFacts(nil), authzr, reg); err != nil {
+	dirClient := directoryFacts(nil)
+	ok, err := buildOperation(operation.HoldsMinter, db, dirClient, authzr, reg)
+	if err != nil {
+		return err
+	}
+	// Modules and platform packages contribute job kinds to this registry; the worker runs it.
+	jreg := jobs.NewRegistry()
+	if _, err := buildConnections(db, ok.Chainer, dirClient, jreg); err != nil {
 		return err
 	}
 	ln, err := net.Listen("tcp", cfg.APIAddr)
@@ -95,13 +102,11 @@ func Run(ctx context.Context, cfg config.Config) error {
 	go func() { serveErr <- srv.ServeTLS(ln, "", "") }()
 	slog.Info("server: api listening (TLS)", "addr", ln.Addr().String(), "tls_cert_sha256", id.Fingerprint)
 
-	// Modules contribute job kinds to this registry once the Registrar grows a Job method; until then
-	// it is empty and the worker only runs its maintenance timers.
 	wctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	workerErr := make(chan error, 1)
 	go func() {
-		workerErr <- runWorker(wctx, db, jobs.NewRegistry(), jobs.WorkerConfig{Holder: cfg.InstanceID, ShutdownGrace: cfg.ShutdownGrace})
+		workerErr <- runWorker(wctx, db, jreg, jobs.WorkerConfig{Holder: cfg.InstanceID, ShutdownGrace: cfg.ShutdownGrace})
 	}()
 
 	var firstErr error
