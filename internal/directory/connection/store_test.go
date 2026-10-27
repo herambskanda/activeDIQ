@@ -89,6 +89,16 @@ func (e *env) record(t *testing.T, tid tenant.ID, id connection.ID, verdict conn
 	}
 }
 
+// bind gives the connection its embedded connector binding by plain SQL, for tests that walk the
+// lifecycle table with raw UPDATEs (DM-10.I3: the database wants a binding before `active`).
+func (e *env) bind(t *testing.T, tid tenant.ID, id connection.ID) {
+	t.Helper()
+	if _, err := e.raw(tid, `INSERT INTO public.connector_bindings (tenant_id, connection_id, target)
+		VALUES (current_setting('app.tenant_id')::uuid, $1::uuid, 'embedded')`, string(id)); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // activate takes the one legal door into active: a passing run, then Store.Activate.
 func (e *env) activate(t *testing.T, tid tenant.ID, id connection.ID) connection.Connection {
 	t.Helper()
@@ -402,6 +412,7 @@ func TestDatabaseEnforcesTheDM10Table(t *testing.T) {
 				}
 				// The activation gate evidence (T-0246), so these pairs are decided by the edge alone.
 				e.record(t, e.a, connection.ID(id), connection.VerdictPass, connection.OutcomePass)
+				e.bind(t, e.a, connection.ID(id))
 				prev := connection.StateDraft
 				for _, step := range seedPath[from] {
 					if _, err := e.raw(e.a, `UPDATE public.connections SET state = $2,
@@ -567,6 +578,8 @@ func TestDatabaseRefusesActivationWithoutGateEvidence(t *testing.T) {
 
 		// A fresh pass opens it, through plain SQL as well: the evidence is what counts, not the door.
 		e.record(t, e.a, d.ID, connection.VerdictPass, connection.OutcomePass)
+		refused("fresh pass but no connector binding (DM-10.I3)", d.ID)
+		e.bind(t, e.a, d.ID)
 		if n, err := e.raw(e.a, up, string(d.ID)); err != nil || n != 1 {
 			t.Errorf("fresh pass: n=%d %v", n, err)
 		}

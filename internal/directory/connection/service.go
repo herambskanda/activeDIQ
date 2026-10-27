@@ -20,6 +20,7 @@ import (
 const (
 	AuditVerificationCompleted audit.Kind = "connection.verification.completed"
 	AuditActivated             audit.Kind = "connection.activated"
+	AuditCredentialChanged     audit.Kind = "connection.credential.changed"
 	AuditVerdictChanged        audit.Kind = "connection.rights.verdict_changed"
 )
 
@@ -204,6 +205,29 @@ func (s *Service) SweepStranded(ctx context.Context, tid tenant.ID, grace time.D
 // run is one verification: claim, ask the connector, apply. The connector call is outside every
 // transaction: it is a network round trip to a DC and must not hold a row lock.
 func (s *Service) run(ctx context.Context, tid tenant.ID, id ID, kind VerificationKind, actor authority.Chain) (VerifyOutcome, error) {
+	return s.runCandidate(ctx, tid, id, kind, actor, "")
+}
+
+// ChangeCredential is "Change credential" (spec FR-21, DM-10.I8): it verifies the candidate credential
+// against the connection's own directory identity and swaps it in, atomically with the recorded run,
+// only on a pass. On any other outcome the old credential stays in use and the run is kept as evidence.
+// The run is recorded and returned either way; the caller learns whether the swap happened from
+// Connection.CredentialID. Retiring the old DM-11 row is the credential port's step after a swap.
+func (s *Service) ChangeCredential(ctx context.Context, tid tenant.ID, id ID, candidate CredentialID, actor authority.Chain) (VerifyOutcome, error) {
+	if err := actor.Validate(); err != nil {
+		return VerifyOutcome{}, err
+	}
+	cand, err := ParseCredentialID(string(candidate))
+	if err != nil {
+		return VerifyOutcome{}, err
+	}
+	return s.runCandidate(ctx, tid, id, KindCredentialChange, actor, cand)
+}
+
+// runCandidate is run for a kind that may verify a credential other than the connection's current
+// one. The connection value carried through the run names the credential being verified, so the
+// connector call and the recorded row agree on it.
+func (s *Service) runCandidate(ctx context.Context, tid tenant.ID, id ID, kind VerificationKind, actor authority.Chain, cand CredentialID) (VerifyOutcome, error) {
 	var conn Connection
 	fromDraft := kind == KindActivation || kind == KindOnboarding
 	err := s.reg.with(ctx, tid, func(ctx context.Context, tx store.Tx) (e error) {
@@ -220,6 +244,12 @@ func (s *Service) run(ctx context.Context, tid tenant.ID, id ID, kind Verificati
 		}
 		if conn.State != StateActive && conn.State != StateSuspended {
 			return fmt.Errorf("%w: a %s connection is not re-verified", ErrIllegalTransition, conn.State)
+		}
+		if kind == KindCredentialChange {
+			if cand == "" || cand == conn.CredentialID {
+				return fmt.Errorf("%w: a credential change names a different credential", ErrInvalid)
+			}
+			conn.CredentialID = cand
 		}
 		return nil
 	})
@@ -326,6 +356,14 @@ func (s *Service) record(ctx context.Context, tx store.Tx, tid tenant.ID, conn C
 		}
 		prev = &p
 	}
+	var was CredentialID
+	if kind == KindCredentialChange {
+		cur, err := s.reg.s.Get(ctx, tx, conn.ID) // conn already names the candidate; the row names the one in use
+		if err != nil {
+			return err
+		}
+		was = cur.CredentialID
+	}
 	requestedBy := string(actor.Requester.ID)
 	if kind == KindScheduled {
 		requestedBy = ""
@@ -341,6 +379,20 @@ func (s *Service) record(ctx context.Context, tx store.Tx, tid tenant.ID, conn C
 	out.Connection, out.Verification = conn, v
 	if err := s.sink.Append(ctx, tx, s.verificationEvent(actor, conn, v)); err != nil {
 		return err
+	}
+	if kind == KindCredentialChange {
+		// The pointer moved only on a swap. Re-read the row so the caller sees the credential in use.
+		c, err := s.reg.s.Get(ctx, tx, conn.ID)
+		if err != nil {
+			return err
+		}
+		out.Connection = c
+		if c.CredentialID == v.CredentialID {
+			if err := s.sink.Append(ctx, tx, s.credentialChangedEvent(actor, c, was, v.ID)); err != nil {
+				return err
+			}
+		}
+		return nil // the previous run judged another credential: no verdict-changed event
 	}
 	if prev != nil && prev.Verdict != v.Verdict {
 		if err := s.sink.Append(ctx, tx, s.verdictChangedEvent(actor, conn, v, prev.Verdict)); err != nil {
@@ -432,6 +484,16 @@ func (s *Service) activatedEvent(actor authority.Chain, c Connection, vid Verifi
 	ev.Changes = []audit.Change{{Attribute: "verification_id", After: []string{string(vid)}}}
 	if o == audit.Success {
 		ev.Changes = append(ev.Changes, audit.Change{Attribute: "state", After: []string{string(StateActive)}})
+	}
+	return ev
+}
+
+// credentialChangedEvent records a swap. Only the credential's reference ID appears, never material.
+func (s *Service) credentialChangedEvent(actor authority.Chain, c Connection, was CredentialID, vid VerificationID) audit.Event {
+	ev := s.base(AuditCredentialChanged, actor, c, audit.Success, "")
+	ev.Changes = []audit.Change{
+		{Attribute: "credential_id", Before: []string{string(was)}, After: []string{string(c.CredentialID)}},
+		{Attribute: "verification_id", After: []string{string(vid)}},
 	}
 	return ev
 }
