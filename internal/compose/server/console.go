@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
@@ -29,12 +30,12 @@ type consoleStack struct {
 	Authn    *authnhttp.Authenticator
 }
 
-func buildConsole(db *store.DB, sink audit.Sink) (*consoleStack, error) {
+func buildConsole(db *store.DB, sink audit.Sink, log *slog.Logger) (*consoleStack, error) {
 	sessions, err := authn.New(authn.Config{DB: db, Audit: sink})
 	if err != nil {
 		return nil, fmt.Errorf("server: session store: %w", err)
 	}
-	au, err := authnhttp.NewAuthenticator(sessions, nil)
+	au, err := authnhttp.NewAuthenticator(sessions, log)
 	if err != nil {
 		return nil, fmt.Errorf("server: session authenticator: %w", err)
 	}
@@ -62,7 +63,7 @@ func (a consoleAuthz) Allow(ctx context.Context, p apihost.Principal, permission
 		return false, nil
 	}
 	chain := authority.Chain{Requester: authority.Principal{ID: authority.PrincipalID(p.ID), Kind: authority.Human}}
-	target := authority.TargetRef{GUID: t.String()} // the tenant store root
+	target := authority.TargetRef{Class: rbac.TargetClassTenant, GUID: t.String()} // the tenant store root
 	err = a.az.Authorize(authority.WithTenant(ctx, t.String()), chain, authz.Permission(permission), target, authority.Facts{})
 	switch {
 	case err == nil:

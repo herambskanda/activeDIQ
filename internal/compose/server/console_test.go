@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
@@ -38,7 +39,7 @@ func TestConsoleAuthzAllowsATenantSessionOnlyWhenRBACGrants(t *testing.T) {
 		t.Fatalf("allow = %v, %v", ok, err)
 	}
 	if ra.chain.Requester.ID != authority.PrincipalID(p.ID) || ra.chain.Requester.Kind != authority.Human || len(ra.chain.Via) != 0 ||
-		ra.perm != "connections.takeover.attest" || ra.target.GUID != tn || ra.target.Connection != "" || !ra.tenantO || ra.tenant != tn {
+		ra.perm != "connections.takeover.attest" || ra.target.GUID != tn || ra.target.Class != rbac.TargetClassTenant || ra.target.Connection != "" || !ra.tenantO || ra.tenant != tn {
 		t.Fatalf("authorizer saw %+v", ra)
 	}
 	// RBAC refusal is a clean "no"; any other error is a fault and propagates.
@@ -87,7 +88,7 @@ func TestSessionStepUpRefusesWithoutAStack(t *testing.T) {
 
 // The console stack is assembled with real authn types and mounts every port.
 func TestBuildConsolePorts(t *testing.T) {
-	c, err := buildConsole(&store.DB{}, nopSink{})
+	c, err := buildConsole(&store.DB{}, nopSink{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,11 +96,54 @@ func TestBuildConsolePorts(t *testing.T) {
 	if p.Authn == nil || p.Authz == nil || p.Limits == nil || p.StepUp == nil {
 		t.Fatalf("ports = %+v", p)
 	}
-	if _, err := buildConsole(nil, nopSink{}); err == nil {
+	if _, err := buildConsole(nil, nopSink{}, nil); err == nil {
 		t.Error("nil database accepted")
 	}
 }
 
 func (*recAuthz) FactsQuery(authority.Chain, authz.Permission, authority.TargetRef) authority.FactsQuery {
 	return authority.FactsQuery{}
+}
+
+type memSrc struct{ as []rbac.Assignment }
+
+func (m memSrc) Assignments(context.Context, tenant.ID, string, time.Time) ([]rbac.Assignment, error) {
+	return m.as, nil
+}
+func (m memSrc) SubjectAssignments(context.Context, tenant.ID, rbac.Subjects, time.Time, bool) ([]rbac.Assignment, error) {
+	return nil, nil
+}
+func (m memSrc) PendingOrActive(context.Context, tenant.ID, string, time.Time) ([]rbac.Assignment, error) {
+	return m.as, nil
+}
+
+// consoleAuthz over the real rbac.Authorizer: only a tenant-store root holding the permission grants.
+func TestConsoleAuthzOverRealRBAC(t *testing.T) {
+	const perm = "connections.takeover.attest"
+	tn, other := tenant.New(), tenant.New()
+	root := func(k rbac.RootKind, conn, guid string) []rbac.Root {
+		return []rbac.Root{{Kind: k, Connection: conn, GUID: guid}}
+	}
+	cases := map[string]struct {
+		a    rbac.Assignment
+		want bool
+	}{
+		"tenant root with permission": {rbac.Assignment{Permissions: []authz.Permission{perm}, Roots: root(rbac.TenantStore, tn.String(), tn.String())}, true},
+		"entra_tenant root only":      {rbac.Assignment{Permissions: []authz.Permission{perm}, Roots: root(rbac.EntraTenant, tenant.New().String(), tenant.New().String())}, false},
+		"ou subtree root only":        {rbac.Assignment{Permissions: []authz.Permission{perm}, Roots: root(rbac.OUSubtree, tenant.New().String(), tenant.New().String())}, false},
+		"tier0_scope root only":       {rbac.Assignment{Permissions: []authz.Permission{perm}, Roots: root(rbac.Tier0Scope, tenant.New().String(), tenant.New().String())}, false},
+		"another tenant's root":       {rbac.Assignment{Permissions: []authz.Permission{perm}, Roots: root(rbac.TenantStore, other.String(), other.String())}, false},
+		"tenant root, no permission":  {rbac.Assignment{Permissions: []authz.Permission{"inventory.read"}, Roots: root(rbac.TenantStore, tn.String(), tn.String())}, false},
+	}
+	for name, c := range cases {
+		az, err := rbac.New(memSrc{[]rbac.Assignment{c.a}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		p := apihost.Principal{ID: tenant.New().String(), Tenant: tn.String(), Kind: apihost.KindSession, SessionID: "s"}
+		ok, err := consoleAuthz{az}.Allow(context.Background(), p, perm, "tenant")
+		if err != nil || ok != c.want {
+			t.Errorf("%s: allow = %v, %v; want %v", name, ok, err, c.want)
+		}
+	}
 }

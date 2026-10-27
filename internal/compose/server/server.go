@@ -99,7 +99,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 	}
 	// The console authentication stack: sessions, the cookie Authenticator and the step-up check. The
 	// tenant-owner writer shares its session store (it ends a changed owner's sessions).
-	console, err := buildConsole(db, ok.Chainer)
+	console, err := buildConsole(db, ok.Chainer, slog.Default())
 	if err != nil {
 		return err
 	}
