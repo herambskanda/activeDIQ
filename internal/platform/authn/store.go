@@ -34,6 +34,11 @@ var (
 	// cannot probe which accounts exist. No session row is written.
 	ErrAccountInactive = errors.New("authn: account is not active")
 
+	// ErrCredentialsChanged is returned when the account's password, MFA or roles changed after the
+	// sign-in captured its Epoch: whatever the sign-in verified no longer exists. No session row is
+	// written. Callers answer it as any failed sign-in (the same 401) and may start the sign-in again.
+	ErrCredentialsChanged = errors.New("authn: credentials changed during sign-in")
+
 	// ErrPolicyRead means the tenant's session policy could not be read, which is what a token naming
 	// an unknown tenant produces. HTTP callers answer it as they answer an unknown session.
 	ErrPolicyRead = errors.New("authn: read session policy")
@@ -59,6 +64,15 @@ func (r Reason) valid() bool {
 	}
 	return false
 }
+
+// bumpsEpoch: the reasons that change what a sign-in verifies. Account disable is covered by the state
+// check; logout and on-demand revocation change nothing a sign-in depends on.
+func (r Reason) bumpsEpoch() bool {
+	return r == ReasonPasswordReset || r == ReasonMFAReset || r == ReasonRoleChanged
+}
+
+const sqlBumpEpoch = `UPDATE public.authn_accounts SET session_epoch = session_epoch + 1
+WHERE tenant_id = $1 AND id = $2::uuid AND state <> 'deleted'`
 
 // SessionState is a session's lifecycle state: active, then expired or revoked.
 type SessionState string
@@ -148,6 +162,47 @@ type Session struct {
 	State             SessionState
 }
 
+// Epoch is the account's session epoch as read BEFORE a sign-in verified anything (password, MFA secret,
+// roles). It is bumped by every password reset, MFA reset and role change, and createTx refuses a session
+// minted from an older one (ErrCredentialsChanged). It is obtained only from Store.Epoch / EpochTx; the
+// zero value is invalid, so a caller that forgot to capture one fails closed.
+type Epoch struct {
+	n  int64
+	ok bool
+}
+
+const sqlEpoch = `SELECT session_epoch FROM public.authn_accounts WHERE tenant_id = $1 AND id = $2::uuid`
+
+// Epoch reads the account's current session epoch. Read it before verifying a credential, then pass it
+// in CreateInput (or BeginInput). An unknown account is ErrAccountInactive.
+func (s *Store) Epoch(ctx context.Context, t tenant.ID, account string) (Epoch, error) {
+	if t.IsZero() || !validAccount(account) {
+		return Epoch{}, ErrInvalid
+	}
+	var e Epoch
+	err := s.db.WithTenant(ctx, t, func(ctx context.Context, tx store.Tx) (err error) {
+		e, err = s.EpochTx(ctx, tx, t, account)
+		return err
+	})
+	return e, err
+}
+
+// EpochTx is Epoch inside the caller's tenant transaction, for a sign-in step that reads the epoch and
+// verifies in one transaction. It takes no lock: the check that matters is createTx's.
+func (s *Store) EpochTx(ctx context.Context, tx store.Tx, t tenant.ID, account string) (Epoch, error) {
+	if tx == nil || t.IsZero() || !validAccount(account) {
+		return Epoch{}, ErrInvalid
+	}
+	var n int64
+	if err := tx.QueryRow(ctx, sqlEpoch, t.String(), account).Scan(&n); err != nil {
+		if store.IsNoRows(err) {
+			return Epoch{}, ErrAccountInactive
+		}
+		return Epoch{}, err
+	}
+	return Epoch{n: n, ok: true}, nil
+}
+
 // CreateInput is what sign-in knows.
 type CreateInput struct {
 	Tenant tenant.ID
@@ -158,6 +213,8 @@ type CreateInput struct {
 	MFAAt             *time.Time
 	AuthorityFactorAt *time.Time
 	ClientIP          netip.Addr // zero when unknown
+	// Epoch is the account's epoch captured before the credential/MFA/roles were verified. Required.
+	Epoch Epoch
 
 	// inherit is set only by Rotate: the new session continues the old one's absolute window.
 	inherit *Session
@@ -238,6 +295,9 @@ func validateCreate(in CreateInput) error {
 	if in.Tenant.IsZero() || !validAccount(in.Account) || len(in.Methods) == 0 || len(in.Methods) > 8 {
 		return ErrInvalid
 	}
+	if in.inherit == nil && !in.Epoch.ok {
+		return ErrInvalid // a sign-in that did not capture the epoch cannot be checked: fail closed
+	}
 	for _, m := range in.Methods {
 		if m == "" || len(m) > 32 {
 			return ErrInvalid
@@ -303,13 +363,20 @@ func (s *Store) createTx(ctx context.Context, tx store.Tx, in CreateInput, pol P
 	if err != nil {
 		return CreateResult{}, err
 	}
-	// DM-31.I2: the account row is read FOR SHARE in this transaction, so it cannot move to disabled or
-	// deleted (SetState takes FOR UPDATE) between this check and the INSERT; a SetState that committed
-	// first is seen here, one that arrives later waits for this commit and then revokes the new session.
-	// The row lock is taken before the per-account advisory lock because SetState holds the row and then
-	// takes the advisory lock (OnAccountDisabled); the opposite order here would deadlock.
-	var state string
-	if err := tx.QueryRow(ctx, `SELECT state FROM public.authn_accounts WHERE tenant_id = $1 AND id = $2::uuid FOR SHARE`, in.Tenant.String(), in.Account).Scan(&state); err != nil {
+	// DM-31.I2 and T-0429: the account row is read FOR SHARE in this transaction, so it cannot move to
+	// disabled or deleted (SetState takes FOR UPDATE) and its session_epoch cannot be bumped (a password
+	// reset, MFA reset or role change updates the row, in RevokeAccountTx) between this check and the
+	// INSERT. A change that committed first is seen here: the state or the epoch no longer matches what
+	// the sign-in verified and no session is minted. One that arrives later waits for this commit and
+	// then revokes the new session in its own transaction.
+	// Lock order is account row, then the per-account advisory lock below. RevokeAccountTx never takes the
+	// advisory lock (it holds the row, then updates session rows), so the two paths cannot deadlock; the
+	// row lock comes first here so the advisory lock is never held while waiting on a row.
+	var (
+		state string
+		epoch int64
+	)
+	if err := tx.QueryRow(ctx, `SELECT state, session_epoch FROM public.authn_accounts WHERE tenant_id = $1 AND id = $2::uuid FOR SHARE`, in.Tenant.String(), in.Account).Scan(&state, &epoch); err != nil {
 		if store.IsNoRows(err) {
 			return CreateResult{}, ErrAccountInactive
 		}
@@ -317,6 +384,12 @@ func (s *Store) createTx(ctx context.Context, tx store.Tx, in CreateInput, pol P
 	}
 	if AccountState(state) != AccountActive {
 		return CreateResult{}, ErrAccountInactive
+	}
+	// A rotated session carries no epoch: Rotate revokes the old session and mints the new one in this
+	// same transaction under this lock, so a reset either revoked the old session first (Rotate fails) or
+	// revokes the new one afterwards.
+	if in.inherit == nil && epoch != in.Epoch.n {
+		return CreateResult{}, ErrCredentialsChanged
 	}
 	if _, err := tx.Exec(ctx, sqlAcctLk, in.Tenant.String()+"/"+in.Account); err != nil {
 		return CreateResult{}, err
@@ -482,6 +555,14 @@ func (s *Store) RevokeAccount(ctx context.Context, t tenant.ID, account string, 
 	if t.IsZero() || !validAccount(account) || !why.valid() || by.Validate() != nil {
 		return 0, ErrInvalid
 	}
+	if why.bumpsEpoch() {
+		var n int
+		err := s.db.WithTenant(ctx, t, func(ctx context.Context, tx store.Tx) (err error) {
+			n, err = s.RevokeAccountTx(ctx, tx, t, account, why, by)
+			return err
+		})
+		return n, err
+	}
 	return s.revokeN(ctx, t, sqlRevokeAccount, account, why, func(string) authority.Chain { return by })
 }
 
@@ -505,6 +586,14 @@ func (s *Store) RevokeAccountTx(ctx context.Context, tx store.Tx, t tenant.ID, a
 	if err != nil {
 		return 0, err
 	}
+	if why.bumpsEpoch() {
+		// T-0429: take the account row exclusively and invalidate every sign-in that captured the old
+		// epoch. It waits for in-flight createTx (FOR SHARE) to commit, whose new session the revoke
+		// below then ends. A deleted account is final and its row cannot be updated; it mints nothing.
+		if _, err := tx.Exec(ctx, sqlBumpEpoch, t.String(), account); err != nil {
+			return 0, fmt.Errorf("authn: revoke: bump session epoch: %w", err)
+		}
+	}
 	n, err := s.endRows(ctx, tx, now, sqlRevokeAccount, []any{t.String(), account, string(why), now}, KindSessionRevoked, func(string) authority.Chain { return by })
 	if err != nil {
 		return 0, fmt.Errorf("authn: revoke: %w", err)
@@ -517,23 +606,58 @@ func (s *Store) RevokeAccountTx(ctx context.Context, tx store.Tx, t tenant.ID, a
 // privilege changes (step-up, role change of the signed-in account; RevokeAccount ends the account's
 // other sessions), so a value captured before the change is dead and the CSRF value, which is derived
 // from the token, changes with it. The new session keeps the old one's CreatedAt and absolute deadline
-// (capped by the current policy): rotation never extends a session's lifetime, only a full sign-in does. The old session is revoked first: if Create then fails the
-// caller is signed out, never left on a stale token. A concurrent Rotate of the same token finds it
+// (capped by the current policy): rotation never extends a session's lifetime, only a full sign-in does. The old session is revoked and the new one stored in one
+// transaction under the account row's lock (T-0429); if that fails the old one is revoked on its own, so
+// the caller is signed out, never left on a stale token. A concurrent Rotate of the same token finds it
 // already ended and gets ErrRevoked.
 func (s *Store) Rotate(ctx context.Context, old Token, why Reason) (CreateResult, error) {
 	sess, err := s.Lookup(ctx, old)
 	if err != nil {
 		return CreateResult{}, err
 	}
-	ended, err := s.Revoke(ctx, sess.Tenant, sess.ID, why, accountChain(sess.Account))
+	pol, err := s.policy(ctx, sess.Tenant)
 	if err != nil {
 		return CreateResult{}, err
 	}
-	if !ended {
-		return CreateResult{}, ErrRevoked
+	var res CreateResult
+	err = s.db.WithTenant(ctx, sess.Tenant, func(ctx context.Context, tx store.Tx) error {
+		// T-0429: the account row is locked FOR SHARE before the old session is revoked, and createTx
+		// (same transaction) mints the new one under that lock. A reset that committed earlier already
+		// revoked the old session, so this revoke finds nothing and Rotate fails; one that arrives later
+		// revokes the new session.
+		var one int
+		if err := tx.QueryRow(ctx, `SELECT 1 FROM public.authn_accounts WHERE tenant_id = $1 AND id = $2::uuid FOR SHARE`, sess.Tenant.String(), sess.Account).Scan(&one); err != nil {
+			if store.IsNoRows(err) {
+				return ErrAccountInactive
+			}
+			return err
+		}
+		now, err := s.now(ctx, tx)
+		if err != nil {
+			return err
+		}
+		n, err := s.endRows(ctx, tx, now, sqlRevokeSession, []any{sess.Tenant.String(), sess.ID, string(why), now}, KindSessionRevoked, func(string) authority.Chain { return accountChain(sess.Account) })
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return ErrRevoked
+		}
+		res, err = s.createTx(ctx, tx, CreateInput{Tenant: sess.Tenant, Account: sess.Account, Methods: sess.Methods,
+			MFAAt: sess.MFAAt, AuthorityFactorAt: sess.AuthorityFactorAt, ClientIP: sess.ClientIP, inherit: &sess}, pol)
+		return err
+	})
+	if err != nil {
+		if !errors.Is(err, ErrRevoked) {
+			// The rotation rolled back, so the old token is still live. Rotation exists to kill a captured
+			// value: if it fails for any other reason the caller is signed out, never left on a stale token.
+			if _, rerr := s.Revoke(ctx, sess.Tenant, sess.ID, why, accountChain(sess.Account)); rerr != nil {
+				return CreateResult{}, errors.Join(err, rerr)
+			}
+		}
+		return CreateResult{}, fmt.Errorf("authn: rotate session: %w", err)
 	}
-	return s.Create(ctx, CreateInput{Tenant: sess.Tenant, Account: sess.Account, Methods: sess.Methods,
-		MFAAt: sess.MFAAt, AuthorityFactorAt: sess.AuthorityFactorAt, ClientIP: sess.ClientIP, inherit: &sess})
+	return res, nil
 }
 
 // Logout ends the session a token names.
