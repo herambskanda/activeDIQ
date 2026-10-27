@@ -121,7 +121,11 @@ func TestLabReadPinnedWithVerdict(t *testing.T) {
 	ident := &connectorv1.DirectoryIdentity{Identity: &connectorv1.DirectoryIdentity_AdForest{AdForest: &connectorv1.AdForestIdentity{
 		ForestRootNcGuid: guidOf(labDom)}}}
 	prov := write.NewADProvider(sess, nil, ident, &memPins{})
-	h, err := read.New(read.ADSource{Sess: sess, Prov: prov})
+	adsrc, err := read.NewADSource(sess, prov)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := read.New(adsrc)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,6 +160,17 @@ func TestLabReadPinnedWithVerdict(t *testing.T) {
 	}
 	if !strings.Contains(hd.GetEntry().GetDn().GetDisplayDn(), "Müller") {
 		t.Fatalf("dn %q", hd.GetEntry().GetDn().GetDisplayDn())
+	}
+
+	// Naming-context heads have no parent; the container above an ordinary object is its parent.
+	for _, head := range []string{labDom, "CN=Configuration," + labDom} {
+		s, err := do(guidOf(head), dc.GetDsaGuid(), false)
+		if err != nil {
+			t.Fatalf("%s: %v", head, err)
+		}
+		if s.ms[0].GetHeader().GetEntry().GetParentGuid() != nil {
+			t.Fatalf("%s reported a parent", head)
+		}
 	}
 
 	// Domain Admins: tier0 with a basis.

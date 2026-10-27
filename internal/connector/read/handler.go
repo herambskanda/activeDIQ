@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -35,7 +36,9 @@ type Source interface {
 	BoundDC(ctx context.Context) (*connectorv1.DcIdentity, error)
 	// Read reads the object with every range followed (ad.Session.Read semantics).
 	Read(ctx context.Context, id guid.GUID, attrs []string, maxValues int) (*ad.Entry, error)
-	// Parent returns the objectGUID of the entry's parent; ok is false for a naming-context head.
+	// Parent returns the objectGUID of the entry's parent; ok is false only for a naming-context head.
+	// A parent that cannot be read or decoded is an error: "no parent" is an authoritative claim.
+	// The entry carries instanceType (the handler asks for it).
 	Parent(ctx context.Context, e *ad.Entry) (g guid.GUID, ok bool, err error)
 	// Syntax is the value syntax of an attribute.
 	Syntax(name string) (ldapfilter.Syntax, bool)
@@ -80,6 +83,11 @@ func (h *Handler) Read(ctx context.Context, req *connectorv1.ReadRequest, out Se
 	if len(attrs) == 0 || len(attrs) > maxAttributes {
 		return invalid("attributes")
 	}
+	for _, a := range attrs {
+		if strings.EqualFold(a, "nTSecurityDescriptor") { // held for T-0118 (typed SD + SD-flags control)
+			return refuse(connectorv1.ErrorCode_ERROR_CODE_ATTRIBUTE_NOT_ALLOWED, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "attribute not allowed")
+		}
+	}
 	var pin *connectorv1.Guid
 	if sel := req.GetDc(); sel != nil && sel.PinnedDsaGuid != nil {
 		pin = sel.PinnedDsaGuid
@@ -92,7 +100,7 @@ func (h *Handler) Read(ctx context.Context, req *connectorv1.ReadRequest, out Se
 	if err != nil {
 		return err
 	}
-	e, err := h.src.Read(ctx, id, attrs, int(req.GetMaxValuesPerAttribute()))
+	e, err := h.src.Read(ctx, id, withInstanceType(attrs), int(req.GetMaxValuesPerAttribute()))
 	if err != nil {
 		return mapAD(err, before)
 	}
@@ -102,6 +110,9 @@ func (h *Handler) Read(ctx context.Context, req *connectorv1.ReadRequest, out Se
 	}
 	var parent *connectorv1.Guid
 	if pg, ok, err := h.src.Parent(ctx, e); err != nil {
+		if ad.CodeOf(err) == ad.CodeObjectNotFound {
+			err = errors.New("parent not found") // not OBJECT_NOT_FOUND: the requested object exists
+		}
 		return mapAD(err, before)
 	} else if ok {
 		parent = write.GUIDToWire(pg)
@@ -157,6 +168,18 @@ func (h *Handler) bound(ctx context.Context, pin *connectorv1.Guid) (*connectorv
 	return dc, nil
 }
 
+// withInstanceType adds instanceType to the requested names: the parent decision needs it, and
+// build drops it again unless the caller asked for it.
+func withInstanceType(attrs []string) []string {
+	out := append([]string(nil), attrs...)
+	for _, a := range out {
+		if strings.EqualFold(a, "instanceType") {
+			return out
+		}
+	}
+	return append(out, "instanceType")
+}
+
 func sortedBasis(in []connectorv1.Tier0Basis) []connectorv1.Tier0Basis {
 	seen := map[connectorv1.Tier0Basis]bool{}
 	var out []connectorv1.Tier0Basis
@@ -183,8 +206,12 @@ func (h *Handler) build(e *ad.Entry, id guid.GUID, parent *connectorv1.Guid, ask
 	out := &connectorv1.DirectoryEntry{ObjectGuid: write.GUIDToWire(id), ParentGuid: parent,
 		Dn: &connectorv1.DnValue{DisplayDn: e.DN}}
 	var tails []*connectorv1.ValueChunk
+	want := map[string]bool{}
+	for _, a := range asked {
+		want[strings.ToLower(a)] = true
+	}
 	for _, name := range e.Names() {
-		if name == "objectguid" {
+		if name == "objectguid" || !want[name] {
 			continue
 		}
 		raw := e.Raw(name)

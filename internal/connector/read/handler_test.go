@@ -47,6 +47,8 @@ type src struct {
 	classify write.Verdict
 	clsErr   error
 	calls    []string
+	parErr   error
+	parNone  bool   // naming-context head
 	dcAfter  string // identity reported from the second BoundDC call on
 	boundN   int
 }
@@ -65,7 +67,10 @@ func (s *src) Read(context.Context, guid.GUID, []string, int) (*ad.Entry, error)
 	return s.entry, s.readErr
 }
 func (s *src) Parent(context.Context, *ad.Entry) (guid.GUID, bool, error) {
-	return g(parGUID), true, nil
+	if s.parErr != nil {
+		return guid.GUID{}, false, s.parErr
+	}
+	return g(parGUID), !s.parNone, nil
 }
 func (s *src) Syntax(n string) (ldapfilter.Syntax, bool) {
 	switch n {
@@ -257,7 +262,9 @@ func TestTypedValuesAndRangedChunks(t *testing.T) {
 		"accountExpires": {[]byte("9223372036854775807")}, "pwdLastSet": {[]byte("0")},
 		"whenCreated": {[]byte("20240102030405.0Z")}, "cn": {[]byte("Smith, Ann")},
 	})}
-	ms, err := collect(t, start(t, s), req("", false))
+	r := req("", false)
+	r.Attributes = []string{"member", "userAccountControl", "accountExpires", "pwdLastSet", "whenCreated", "cn"}
+	ms, err := collect(t, start(t, s), r)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,3 +300,72 @@ func TestTypedValuesAndRangedChunks(t *testing.T) {
 		t.Fatalf("chunks %d total %d", chunks, total)
 	}
 }
+
+func TestUnreadableParentFailsTheRead(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err  error
+		want connectorv1.ErrorCode
+	}{
+		"no rights": {ad.NewError(ad.CodeInsufficientRights), connectorv1.ErrorCode_ERROR_CODE_INSUFFICIENT_RIGHTS},
+		"not found": {ad.NewError(ad.CodeObjectNotFound), connectorv1.ErrorCode_ERROR_CODE_PROVIDER_FAILURE},
+		"undecoded": {errors.New("parent GUID does not decode"), connectorv1.ErrorCode_ERROR_CODE_PROVIDER_FAILURE},
+	} {
+		s := &src{dsa: dsaA, entry: entry(map[string][][]byte{"cn": {[]byte("x")}}), parErr: tc.err}
+		ms, err := collect(t, start(t, s), req(dsaA, false))
+		if code(err) != tc.want || len(ms) != 0 {
+			t.Fatalf("%s: code %v msgs %d err %v", name, code(err), len(ms), err)
+		}
+	}
+}
+
+func TestNamingContextHeadHasNoParent(t *testing.T) {
+	s := &src{dsa: dsaA, parNone: true, entry: entry(map[string][][]byte{"cn": {[]byte("x")}})}
+	ms, err := collect(t, start(t, s), req(dsaA, false))
+	if err != nil || ms[0].GetHeader().GetEntry().GetParentGuid() != nil {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestInstanceTypeIsAskedForButNotReturnedUnlessRequested(t *testing.T) {
+	s := &src{dsa: dsaA, entry: entry(map[string][][]byte{"cn": {[]byte("x")}, "instanceType": {[]byte("4")}})}
+	ms, err := collect(t, start(t, s), req(dsaA, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range ms[0].GetHeader().GetEntry().GetAttributes() {
+		if a.GetName() == "instancetype" {
+			t.Fatal("instanceType leaked into the entry")
+		}
+	}
+}
+
+func TestSecurityDescriptorIsRefusedUntilItsTicket(t *testing.T) {
+	s := &src{dsa: dsaA, entry: entry(map[string][][]byte{"cn": {[]byte("x")}})}
+	r := req(dsaA, false)
+	r.Attributes = []string{"cn", "nTSecurityDescriptor"}
+	if _, err := collect(t, start(t, s), r); code(err) != connectorv1.ErrorCode_ERROR_CODE_ATTRIBUTE_NOT_ALLOWED || len(s.calls) != 0 {
+		t.Fatalf("code %v", code(err))
+	}
+}
+
+func TestADSourceRefusesAProviderOverAnotherSession(t *testing.T) {
+	a, b := &ad.Session{}, &ad.Session{}
+	if _, err := read.NewADSource(a, write.NewADProvider(b, nil, ident, nil)); err == nil {
+		t.Fatal("split sessions accepted")
+	}
+	if _, err := read.NewADSource(a, &write.ADProvider{}); err == nil {
+		t.Fatal("provider with test doubles accepted")
+	}
+	if _, err := read.NewADSource(a, write.NewADProvider(a, nil, ident, nil)); err != nil {
+		t.Fatal(err)
+	}
+	// The zero value cannot serve a pinned Read: no bound DC, nothing streamed.
+	h, _ := read.New(&read.ADSource{})
+	if err := h.Read(context.Background(), req(dsaA, true), nopSender{}); err == nil {
+		t.Fatalf("zero source: %v", err)
+	}
+}
+
+type nopSender struct{}
+
+func (nopSender) Send(*connectorv1.ReadResponse) error { return errors.New("streamed") }

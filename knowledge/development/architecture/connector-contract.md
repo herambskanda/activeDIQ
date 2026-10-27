@@ -209,7 +209,14 @@ with 50,000 members is 34 chunks, never one 4 MiB message.
   connector's computed set only: server-held designations and cross-directory correlation (§8.3)
   only add to it. `directory/client.ConnectorReads` reads it from the header and refuses a header
   that names another DC than the pin; the separate `Tier0Verdicts` port is gone. Implemented in
-  `internal/connector/read` (Handler, gRPC Server, `ADSource` over `ad.Session` + `write.ADProvider`).
+  `internal/connector/read` (Handler, gRPC Server, `ADSource` over `ad.Session` + `write.ADProvider`; `NewADSource` refuses a provider whose
+  directory and DC binder are not over the reading session, so the pin, the read and the verdict
+  cannot come from different DCs).
+- **Parent.** `parent_guid` is empty only for a naming-context head, which the connector reads from
+  the object's `instanceType` (`IT_NC_HEAD`; also `CN=Configuration`). Any other object whose parent
+  cannot be read or decoded fails the call (`INSUFFICIENT_RIGHTS` / `PROVIDER_FAILURE`): consumers
+  take an empty parent as "top of the tree" and authorisation relies on that ancestry.
+  `nTSecurityDescriptor` is refused (`ATTRIBUTE_NOT_ALLOWED`) until T-0118.
 - `Read` of a GUID that does not exist, or was deleted, is `OBJECT_NOT_FOUND`. Show-deleted is not
   available on this contract (it belongs to a later named operation). An object the identity cannot
   read can be `INSUFFICIENT_RIGHTS` or `OBJECT_NOT_FOUND` depending on the DC; **callers must not
