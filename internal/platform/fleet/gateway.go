@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync"
@@ -66,6 +67,21 @@ type ComponentStatus interface {
 	Current(ctx context.Context, id Identity) (bool, error)
 }
 
+// SupersededReporter makes a theft signal visible outside the RPC: a genuine, unexpired certificate of
+// a usable component was presented, but it is no longer the component's current one (TM-TB6-T14). The
+// holder is either a stale component or whoever rotated first. The implementation raises a fleet alert
+// and appends an audit event naming the component and both serials. The gateway calls it at most once
+// per component per Config.SupersededWindow, and an error is logged; it never changes the refusal.
+type SupersededReporter interface {
+	Superseded(ctx context.Context, presented Identity) error
+}
+
+// DefaultSupersededWindow is the minimum time between two reports for one component.
+const DefaultSupersededWindow = 10 * time.Minute
+
+// maxSupersededTracked bounds the rate-limit table; at the cap the oldest entry is evicted.
+const maxSupersededTracked = 4096
+
 // DefaultRecheck is how often an open stream is re-checked against ComponentStatus. It bounds how
 // long a stream outlives a revocation made through another server instance; a revocation made through
 // this one closes its streams at once (CloseComponent).
@@ -79,7 +95,12 @@ type Config struct {
 	Components ComponentStatus
 	// Recheck is the open-stream re-check period; 0 means DefaultRecheck.
 	Recheck time.Duration
-	Clock   func() time.Time // tests only
+	// Superseded, when set, is told about superseded-certificate presentations (TM-TB6-T14), at most
+	// once per component per SupersededWindow (0 means DefaultSupersededWindow).
+	Superseded       SupersededReporter
+	SupersededWindow time.Duration
+	Logger           *slog.Logger     // nil: slog.Default()
+	Clock            func() time.Time // tests only
 }
 
 // Errors of NewServer. They name services and methods, never data.
@@ -117,6 +138,12 @@ type Gateway struct {
 	recheck time.Duration
 	now     func() time.Time
 	streams streamRegistry
+
+	superseded SupersededReporter
+	window     time.Duration
+	log        *slog.Logger
+	smu        sync.Mutex
+	reported   map[streamKey]time.Time // last report per component
 }
 
 // NewGateway checks the static rules of the config. Registered methods are checked by NewServer.
@@ -142,7 +169,16 @@ func NewGateway(cfg Config) (*Gateway, error) {
 	if recheck <= 0 {
 		recheck = DefaultRecheck
 	}
-	return &Gateway{methods: m, cas: cfg.CAs, comps: cfg.Components, recheck: recheck, now: now, streams: newStreamRegistry()}, nil
+	window := cfg.SupersededWindow
+	if window <= 0 {
+		window = DefaultSupersededWindow
+	}
+	lg := cfg.Logger
+	if lg == nil {
+		lg = slog.Default()
+	}
+	return &Gateway{methods: m, cas: cfg.CAs, comps: cfg.Components, recheck: recheck, now: now, streams: newStreamRegistry(),
+		superseded: cfg.Superseded, window: window, log: lg, reported: map[streamKey]time.Time{}}, nil
 }
 
 // NewServer builds the gRPC server of the fleet listener: TLS built here from the server certificate
@@ -403,12 +439,78 @@ func (g *Gateway) authenticate(ctx context.Context, method string) (context.Cont
 				return nil, errUnavail
 			}
 			if !usable {
+				g.reportSuperseded(ctx, id)
 				return nil, errBadCert
 			}
 			return context.WithValue(ctx, ctxKey{}, id), nil
 		}
 	}
 	return nil, errBadCert
+}
+
+// reportSuperseded is called for a CA-verified, unexpired leaf that is not the component's current
+// certificate. If the component is still usable, the presentation is a theft signal (TM-TB6-T14) and
+// is reported, rate-limited per component. The caller refuses with errBadCert whatever happens here.
+func (g *Gateway) reportSuperseded(ctx context.Context, id Identity) {
+	if g.superseded == nil {
+		return
+	}
+	rollback, ok := g.reserveReport(id)
+	if !ok {
+		return
+	}
+	// The caller (possibly a thief hanging up) must not be able to cancel the report or burn the
+	// window: run detached with a deadline, and give the window back if the report did not happen.
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	usable, err := g.comps.Usable(rctx, id)
+	if err != nil {
+		rollback()
+		g.log.Error("fleet: superseded certificate could not be checked", slog.String("component", id.ComponentID))
+		return
+	}
+	if !usable {
+		return // revoked or unknown: nothing to add to the refusal; the window stays used
+	}
+	if err := g.superseded.Superseded(rctx, id); err != nil {
+		rollback()
+		g.log.Error("fleet: superseded certificate could not be reported", slog.String("component", id.ComponentID))
+	}
+}
+
+// reserveReport claims the component's report window. The returned func releases the claim (restoring
+// the previous window) so a failed report never silences the next one.
+func (g *Gateway) reserveReport(id Identity) (rollback func(), ok bool) {
+	now, k := g.now(), streamKey{id.Tenant, id.ComponentID}
+	g.smu.Lock()
+	defer g.smu.Unlock()
+	prev, had := g.reported[k]
+	if had && now.Sub(prev) < g.window {
+		return nil, false
+	}
+	if !had && len(g.reported) >= maxSupersededTracked {
+		var oldest streamKey
+		var ot time.Time
+		for kk, t := range g.reported {
+			if ot.IsZero() || t.Before(ot) {
+				oldest, ot = kk, t
+			}
+		}
+		delete(g.reported, oldest)
+	}
+	g.reported[k] = now
+	return func() {
+		g.smu.Lock()
+		defer g.smu.Unlock()
+		if g.reported[k] != now {
+			return
+		}
+		if had {
+			g.reported[k] = prev
+		} else {
+			delete(g.reported, k)
+		}
+	}, true
 }
 
 func hasClientAuth(c *x509.Certificate) bool {

@@ -175,6 +175,12 @@ mounts the `Fleet` service on the server `Gateway.NewServer` builds and states e
   which is `Usable` plus "presented serial == `components.cert_serial`". After `Rotate` the old leaf gets
   `Unauthenticated` until it expires. The open-stream re-check calls `Usable`, which ignores the serial,
   so a rotation does not drop the stream it was made on.
+- **Superseded certificate is a theft signal (T-0300)**: when a CA-verified, unexpired leaf is not
+  `Current` but the component is still `Usable`, the gateway calls the optional `Config.Superseded`
+  (`fleet.SupersededReporter`, implemented by `fleetsql.SupersededReporter`): a fleet alert plus an audit
+  event naming the component, the presented serial and the current serial. At most once per component per
+  `Config.SupersededWindow` (default 10 min). The refusal stays `Unauthenticated`; a reporter error is
+  logged. The response is Revoke.
 - **Open streams are closed**: authenticated streams are registered by (tenant, component).
   `Gateway.CloseComponent` cancels them at once. The interceptor runs the handler on its own goroutine
   and returns `Unauthenticated` as soon as the stream is revoked, so grpc ends the transport stream and

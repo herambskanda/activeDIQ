@@ -59,6 +59,8 @@ type KeySource interface {
 type Alert struct {
 	Kind   AlertKind
 	Tenant tenant.ID
+	// Component is the component GUID, set by alerts about one component.
+	Component string
 }
 
 // AlertKind is the machine reason of an Alert.
@@ -71,6 +73,9 @@ const (
 	AlertCAMaterial AlertKind = "fleet.ca.material_invalid"
 	// AlertCAKeyExposure: stored CA material contained a private-key block, a suspected TM-A11 exposure.
 	AlertCAKeyExposure AlertKind = "fleet.ca.suspected_key_exposure"
+	// AlertSupersededCert: a genuine, unexpired certificate that rotation superseded was presented for a
+	// usable component (TM-TB6-T14): a stale component, or someone who rotated first with a stolen key.
+	AlertSupersededCert AlertKind = "fleet.component.superseded_certificate"
 )
 
 // Alerter raises installation alerts. Raise must not block on the network; an implementation queues.
