@@ -170,6 +170,37 @@ func TestBackingExpandsAccountsAndCorrelations(t *testing.T) {
 	})
 }
 
+// T-0421 acceptance 2: Entra-to-AD expansion. The Entra object has no account of its own; the AD
+// object it is correlated (candidate) to does. BackedBy on the Entra object must return the AD-side
+// account and be complete, so a reset of the Entra object cannot bypass the guard.
+func TestBackingExpandsEntraObjectToADSideAccount(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := bkSetup(t, s)
+		const (
+			adUser = "a0000000-0000-4000-8000-0000000000c1"
+			entraU = "e0000000-0000-4000-8000-0000000000c1"
+			adAcct = "c0000000-0000-4000-8000-0000000000c1"
+			lonely = "e0000000-0000-4000-8000-0000000000c2"
+		)
+		e.account(t, adAcct, "directory", e.ad, adUser, "", "active")
+		e.corr(t, adUser, entraU, "candidate")
+		backing := buildBacking(t, e)
+		ctx := context.Background()
+		got, err := backing.BackedBy(ctx, e.ten, authority.TargetRef{Connection: e.en, GUID: entraU, Class: "user"})
+		if err != nil || !got.Complete {
+			t.Fatalf("complete=%v err=%v", got.Complete, err)
+		}
+		if !slices.Equal(got.Accounts, []string{adAcct}) {
+			t.Errorf("accounts = %v, want [%s]", got.Accounts, adAcct)
+		}
+		// Control: an Entra object with neither an account nor a correlation is backed by nothing.
+		got, err = backing.BackedBy(ctx, e.ten, authority.TargetRef{Connection: e.en, GUID: lonely, Class: "user"})
+		if err != nil || !got.Complete || len(got.Accounts) != 0 {
+			t.Errorf("uncorrelated Entra object: %+v %v; want complete and empty", got, err)
+		}
+	})
+}
+
 func buildBacking(t *testing.T, e *bkEnv) rbac.Backing {
 	t.Helper()
 	idx, err := authn.NewAccountIndex(e.db)
