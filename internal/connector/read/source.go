@@ -96,6 +96,13 @@ func (a *ADSource) Syntax(name string) (ldapfilter.Syntax, bool) {
 	return a.sess.AttrSyntax(name)
 }
 
+func (a *ADSource) CanonicalAttr(name string) (string, error) {
+	if !a.ok() {
+		return "", write.ErrNoBoundDC
+	}
+	return a.sess.CanonicalAttr(name)
+}
+
 func (a *ADSource) Classify(ctx context.Context, id guid.GUID) (write.Verdict, error) {
 	if !a.ok() {
 		return write.Verdict{}, write.ErrNoBoundDC
