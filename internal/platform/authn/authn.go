@@ -15,10 +15,17 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/authn/api"
 )
 
+// TOTPCookieVerifier is the HTTP-facing shape of the AN-10 TOTP step: it takes the pending cookie's value
+// and returns the Set-Cookie lines to send. httpx/authnhttp implements it (authn imports no net/http,
+// ADR-0004 A6), so the cookie attributes live in one place.
+type TOTPCookieVerifier interface {
+	VerifyTOTPCookie(ctx context.Context, pendingCookie, code string, from netip.Addr) (CreateResult, []string, error)
+}
+
 // Handlers implements api.Handlers. AN-10 TOTP is real once a SecondFactor is supplied; the other
 // operations stay 501 stubs until their build tickets land.
 type Handlers struct {
-	SecondFactor *SecondFactor
+	SecondFactor TOTPCookieVerifier
 	Log          *slog.Logger
 }
 
@@ -51,7 +58,7 @@ func (h Handlers) VerifyTOTPSignIn(ctx context.Context, in api.VerifyTOTPSignInI
 	in.Body.Code.Expose(func(b []byte) { code = string(b) })
 	// PeerIP is the client address (the TCP peer, or the right-most untrusted X-Forwarded-For hop when the peer is a configured trusted proxy, ACTIVEDIQ_TRUSTED_PROXIES); the zero Addr only when it does not parse.
 	from, _ := netip.ParseAddr(in.PeerIP)
-	_, cookies, err := h.SecondFactor.VerifyTOTPCookie(ctx, in.HostAdiqPending.Reveal(), code, from)
+	_, lines, err := h.SecondFactor.VerifyTOTPCookie(ctx, in.HostAdiqPending.Reveal(), code, from)
 	if err != nil {
 		if errors.Is(err, ErrPendingInvalid) || errors.Is(err, ErrSecondFactorRefused) {
 			if h.Log != nil {
@@ -60,10 +67,6 @@ func (h Handlers) VerifyTOTPSignIn(ctx context.Context, in api.VerifyTOTPSignInI
 			return nil, apitypes.SignInFailed("")
 		}
 		return nil, err // an infrastructure fault: the chain answers 500 without detail
-	}
-	lines := make([]string, 0, len(cookies))
-	for _, c := range cookies {
-		lines = append(lines, c.String())
 	}
 	return api.VerifyTOTPSignIn204{SetCookie: lines}, nil
 }

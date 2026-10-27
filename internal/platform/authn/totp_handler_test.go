@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"strings"
 	"testing"
 
@@ -15,6 +16,24 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/authn/api"
 	"github.com/skenzeriq/activediq/internal/platform/secret"
 )
+
+// cookieAdapter stands in for httpx/authnhttp.TOTPCookies (authn tests cannot import it: it imports
+// authn). It renders the same two lines; the real attributes are asserted in authnhttp's tests.
+type cookieAdapter struct{ f *SecondFactor }
+
+func (a cookieAdapter) VerifyTOTPCookie(ctx context.Context, pending, code string, from netip.Addr) (CreateResult, []string, error) {
+	h, err := ParsePendingHandle(pending)
+	if err != nil {
+		return CreateResult{}, nil, ErrPendingInvalid
+	}
+	res, err := a.f.VerifyTOTP(ctx, h, code, from)
+	if err != nil {
+		return CreateResult{}, nil, err
+	}
+	sess := &http.Cookie{Name: "__Host-adiq_session", Value: res.Token.Reveal(), Path: "/", MaxAge: 3600, Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode}
+	clr := &http.Cookie{Name: PendingCookieName, Path: "/", MaxAge: -1, Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode}
+	return res, []string{sess.String(), clr.String()}, nil
+}
 
 func totpInput(pending, code string) api.VerifyTOTPSignInInput {
 	return api.VerifyTOTPSignInInput{HostAdiqPending: apitypes.NewCookieValue(pending), PeerIP: "192.0.2.7",
@@ -26,7 +45,7 @@ func totpInput(pending, code string) api.VerifyTOTPSignInInput {
 func Test_verify_totp_handler_sets_session_and_clears_pending(t *testing.T) {
 	eachPending(t, func(t *testing.T, e *pendEnv) {
 		h := e.begin(t)
-		hd := Handlers{SecondFactor: e.sf}
+		hd := Handlers{SecondFactor: cookieAdapter{e.sf}}
 		out, err := hd.VerifyTOTPSignIn(context.Background(), totpInput(h.Reveal(), e.good()))
 		if err != nil {
 			t.Fatal(err)
@@ -46,7 +65,7 @@ func Test_verify_totp_handler_sets_session_and_clears_pending(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if sess.Name != CookieName || sess.Value == "" || !sess.Secure || !sess.HttpOnly || sess.SameSite != http.SameSiteStrictMode || sess.Path != "/" || sess.Domain != "" {
+		if sess.Name != "__Host-adiq_session" || sess.Value == "" || !sess.Secure || !sess.HttpOnly || sess.SameSite != http.SameSiteStrictMode || sess.Path != "/" || sess.Domain != "" {
 			t.Fatalf("session cookie = %+v", sess)
 		}
 		if clr.Name != PendingCookieName || clr.Value != "" || clr.MaxAge >= 0 || !clr.Secure || clr.Path != "/" || clr.Domain != "" {
@@ -66,7 +85,7 @@ func Test_verify_totp_handler_sets_session_and_clears_pending(t *testing.T) {
 func Test_verify_totp_handler_failures_are_one_401(t *testing.T) {
 	eachPending(t, func(t *testing.T, e *pendEnv) {
 		h := e.begin(t)
-		hd := Handlers{SecondFactor: e.sf}
+		hd := Handlers{SecondFactor: cookieAdapter{e.sf}}
 		ctx := context.Background()
 		_, err := hd.VerifyTOTPSignIn(ctx, totpInput("", e.good()))
 		wantSignInFailed(t, err)
