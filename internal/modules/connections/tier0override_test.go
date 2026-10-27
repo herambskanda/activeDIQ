@@ -238,7 +238,7 @@ func TestModuleRegistersTheAction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := c.Actions(); len(got) != 4 || got[0].Describe().ID != connections.Tier0OverrideActionID {
+	if got := c.Actions(); len(got) != 5 || got[0].Describe().ID != connections.Tier0OverrideActionID {
 		t.Fatalf("actions %v", got)
 	}
 	d := c.Actions()[0].Describe()
