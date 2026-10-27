@@ -1,4 +1,8 @@
-package authn
+// Package authnhttp is the HTTP binding of authn (ADR-0004 A6): the __Host- cookie attributes, the CSRF
+// value derived from the session token, and the cookie-session Authenticator that apihost's chain calls
+// (steps 8 and 9). authn itself holds no net/http import, because a kernel package that serves API is a
+// handler package and only apihost and generated code may touch the request.
+package authnhttp
 
 import (
 	"context"
@@ -12,6 +16,7 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
+	"github.com/skenzeriq/activediq/internal/platform/authn"
 )
 
 const (
@@ -25,7 +30,7 @@ const (
 // SessionCookie is the cookie that hands tok to the browser: __Host- prefix, HttpOnly, Secure,
 // SameSite=Strict, Path=/, no Domain. maxAge is the session's absolute lifetime remaining; the
 // server-side deadlines decide, the cookie only stops the browser keeping it longer.
-func SessionCookie(tok Token, maxAge time.Duration) *http.Cookie {
+func SessionCookie(tok authn.Token, maxAge time.Duration) *http.Cookie {
 	return &http.Cookie{Name: CookieName, Value: tok.Reveal(), Path: "/", MaxAge: int(maxAge / time.Second),
 		Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode}
 }
@@ -40,18 +45,18 @@ func ClearCookie() *http.Cookie {
 // CSRFValue is the CSRF value of a session: an HMAC-SHA-256 of a fixed label keyed by the session
 // token, so it is bound to the session, needs no storage, changes when the session is rotated, and
 // does not reveal the token. It is not a credential on its own.
-func CSRFValue(tok Token) string {
-	m := hmac.New(sha256.New, []byte(tok.text))
+func CSRFValue(tok authn.Token) string {
+	m := hmac.New(sha256.New, []byte(tok.Reveal()))
 	m.Write([]byte("activediq csrf v1"))
 	return base64.RawURLEncoding.EncodeToString(m.Sum(nil))
 }
 
 // SessionResolver is what the authenticator needs of the store.
 type SessionResolver interface {
-	Lookup(ctx context.Context, tok Token) (Session, error)
+	Lookup(ctx context.Context, tok authn.Token) (authn.Session, error)
 }
 
-var _ SessionResolver = (*Store)(nil)
+var _ SessionResolver = (*authn.Store)(nil)
 
 // Authenticator implements apihost.Authenticator for console cookie sessions. Bearer API tokens are
 // not its business: a request without the session cookie is unauthenticated here.
@@ -75,21 +80,21 @@ func NewAuthenticator(s SessionResolver, log *slog.Logger) (*Authenticator, erro
 
 // tokenFrom reads the one session cookie. Zero or several cookies of that name are refused: with
 // several, which one the browser meant is not knowable.
-func tokenFrom(r *http.Request) (Token, bool) {
+func tokenFrom(r *http.Request) (authn.Token, bool) {
 	var found *http.Cookie
 	for _, c := range r.Cookies() {
 		if c.Name != CookieName {
 			continue
 		}
 		if found != nil {
-			return Token{}, false
+			return authn.Token{}, false
 		}
 		found = c
 	}
 	if found == nil {
-		return Token{}, false
+		return authn.Token{}, false
 	}
-	tok, err := ParseToken(found.Value)
+	tok, err := authn.ParseToken(found.Value)
 	return tok, err == nil
 }
 
@@ -105,9 +110,9 @@ func (a *Authenticator) Authenticate(r *http.Request) (apihost.Principal, error)
 	sess, err := a.sessions.Lookup(r.Context(), tok)
 	switch {
 	case err == nil:
-	case errors.Is(err, ErrSessionNotFound), errors.Is(err, ErrExpired), errors.Is(err, ErrRevoked),
-		errors.Is(err, ErrInvalidToken), errors.Is(err, ErrPolicyRead):
-		if errors.Is(err, ErrPolicyRead) {
+	case errors.Is(err, authn.ErrSessionNotFound), errors.Is(err, authn.ErrExpired), errors.Is(err, authn.ErrRevoked),
+		errors.Is(err, authn.ErrInvalidToken), errors.Is(err, authn.ErrPolicyRead):
+		if errors.Is(err, authn.ErrPolicyRead) {
 			a.log.Warn("session policy unreadable for a presented token", "trace_id", apihost.TraceID(r.Context()))
 		}
 		return apihost.Principal{}, apihost.ErrUnauthenticated
@@ -133,49 +138,56 @@ func (a *Authenticator) CheckCSRF(r *http.Request, _ apihost.Principal) error {
 
 // PendingCookie is the cookie that hands h to the browser: __Host-, HttpOnly, Secure,
 // SameSite=Strict, Path=/, no Domain, living no longer than the record.
-func PendingCookie(h PendingHandle) *http.Cookie {
-	return &http.Cookie{Name: PendingCookieName, Value: h.Reveal(), Path: "/", MaxAge: int(PendingSignInTTL / time.Second),
+func PendingCookie(h authn.PendingHandle) *http.Cookie {
+	return &http.Cookie{Name: authn.PendingCookieName, Value: h.Reveal(), Path: "/", MaxAge: int(authn.PendingSignInTTL / time.Second),
 		Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode}
 }
 
 // ClearPendingCookie drops the pending cookie, with the attributes the __Host- rules need.
 func ClearPendingCookie() *http.Cookie {
-	return &http.Cookie{Name: PendingCookieName, Value: "", Path: "/", MaxAge: -1,
+	return &http.Cookie{Name: authn.PendingCookieName, Value: "", Path: "/", MaxAge: -1,
 		Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode}
 }
 
 // PendingHandleFromRequest reads the handle from the request's cookie and from nowhere else: a handle
 // in the URL or the body is ignored, so it is "no pending sign-in". Zero or several cookies of that
 // name are refused.
-func PendingHandleFromRequest(r *http.Request) (PendingHandle, error) {
+func PendingHandleFromRequest(r *http.Request) (authn.PendingHandle, error) {
 	var found *http.Cookie
 	for _, c := range r.Cookies() {
-		if c.Name != PendingCookieName {
+		if c.Name != authn.PendingCookieName {
 			continue
 		}
 		if found != nil {
-			return PendingHandle{}, ErrPendingInvalid
+			return authn.PendingHandle{}, authn.ErrPendingInvalid
 		}
 		found = c
 	}
 	if found == nil {
-		return PendingHandle{}, ErrPendingInvalid
+		return authn.PendingHandle{}, authn.ErrPendingInvalid
 	}
-	return ParsePendingHandle(found.Value)
+	return authn.ParsePendingHandle(found.Value)
 }
+
+// TOTPVerifier is what VerifyTOTPRequest needs of authn.SecondFactor.
+type TOTPVerifier interface {
+	VerifyTOTP(ctx context.Context, h authn.PendingHandle, code string, from netip.Addr) (authn.CreateResult, error)
+}
+
+var _ TOTPVerifier = (*authn.SecondFactor)(nil)
 
 // VerifyTOTPRequest is the AN-10 TOTP entry for an HTTP request: the handle comes from the pending
 // cookie only. On success it returns the session and the two cookies to set: the new session cookie
 // and the cleared pending cookie. from is the client address the caller resolved (trusted-proxy rules
 // are the HTTP host's, not this package's).
-func (f *SecondFactor) VerifyTOTPRequest(ctx context.Context, r *http.Request, code string, from netip.Addr) (CreateResult, []*http.Cookie, error) {
+func VerifyTOTPRequest(ctx context.Context, f TOTPVerifier, r *http.Request, code string, from netip.Addr) (authn.CreateResult, []*http.Cookie, error) {
 	h, err := PendingHandleFromRequest(r)
 	if err != nil {
-		return CreateResult{}, nil, err
+		return authn.CreateResult{}, nil, err
 	}
 	res, err := f.VerifyTOTP(ctx, h, code, from)
 	if err != nil {
-		return CreateResult{}, nil, err
+		return authn.CreateResult{}, nil, err
 	}
 	return res, []*http.Cookie{SessionCookie(res.Token, time.Until(res.Session.AbsoluteExpiry)), ClearPendingCookie()}, nil
 }

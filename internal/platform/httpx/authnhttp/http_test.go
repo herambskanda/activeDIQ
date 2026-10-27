@@ -1,33 +1,45 @@
-package authn
+package authnhttp
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
+	"github.com/skenzeriq/activediq/internal/platform/authn"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
 type fakeResolver struct {
 	err  error
-	sess Session
-	got  Token
+	sess authn.Session
+	got  authn.Token
 }
 
-func (f *fakeResolver) Lookup(_ context.Context, tok Token) (Session, error) {
+func (f *fakeResolver) Lookup(_ context.Context, tok authn.Token) (authn.Session, error) {
 	f.got = tok
 	return f.sess, f.err
 }
 
-func mustToken(t *testing.T) (Token, tenant.ID) {
+// randSecret is 32 random bytes in the token's encoding, so two tokens differ.
+func randSecret(t *testing.T) string {
+	t.Helper()
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		t.Fatal(err)
+	}
+	return base64.RawURLEncoding.EncodeToString(b[:])
+}
+
+func mustToken(t *testing.T) (authn.Token, tenant.ID) {
 	t.Helper()
 	ten := tenant.New()
-	tok, err := newToken(ten)
+	tok, err := authn.ParseToken(ten.String() + "." + randSecret(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,8 +106,8 @@ func TestCSRFValueAndCheck(t *testing.T) {
 
 func TestAuthenticateMapsEveryFailureToUnauthenticated(t *testing.T) {
 	tok, ten := mustToken(t)
-	for _, e := range []error{ErrSessionNotFound, ErrExpired, ErrRevoked, ErrInvalidToken,
-		errors.Join(ErrPolicyRead, errors.New("unknown tenant"))} {
+	for _, e := range []error{authn.ErrSessionNotFound, authn.ErrExpired, authn.ErrRevoked, authn.ErrInvalidToken,
+		errors.Join(authn.ErrPolicyRead, errors.New("unknown tenant"))} {
 		a, _ := NewAuthenticator(&fakeResolver{err: e}, nil)
 		if _, err := a.Authenticate(req(tok.Reveal())); !errors.Is(err, apihost.ErrUnauthenticated) {
 			t.Errorf("%v -> %v, want ErrUnauthenticated", e, err)
@@ -115,7 +127,7 @@ func TestAuthenticateMapsEveryFailureToUnauthenticated(t *testing.T) {
 		if _, err := a.Authenticate(r); !errors.Is(err, apihost.ErrUnauthenticated) {
 			t.Errorf("%s: %v", name, err)
 		}
-		if f.got.text != "" {
+		if f.got.Reveal() != "" {
 			t.Errorf("%s: Lookup was called", name)
 		}
 	}
@@ -127,7 +139,7 @@ func TestAuthenticateMapsEveryFailureToUnauthenticated(t *testing.T) {
 	}
 	// Success.
 	acct := tenant.New().String()
-	a, _ = NewAuthenticator(&fakeResolver{sess: Session{Account: acct, Tenant: ten}}, nil)
+	a, _ = NewAuthenticator(&fakeResolver{sess: authn.Session{Account: acct, Tenant: ten}}, nil)
 	p, err := a.Authenticate(req(tok.Reveal()))
 	if err != nil || p.ID != acct || p.Tenant != ten.String() || p.Kind != apihost.KindSession {
 		t.Fatalf("principal = %+v, %v", p, err)
@@ -138,58 +150,4 @@ func TestNewAuthenticatorNeedsResolver(t *testing.T) {
 	if _, err := NewAuthenticator(nil, nil); err == nil {
 		t.Fatal("nil resolver accepted")
 	}
-}
-
-func TestRotateKillsOldTokenAndChangesCSRF(t *testing.T) {
-	each(t, func(t *testing.T, e *sessEnv) {
-		s := e.node(t, pol)
-		ctx := context.Background()
-		acct := e.account(t)
-		old := create(t, s, e.ten, acct)
-		nu, err := s.Rotate(ctx, old.Token, ReasonRoleChanged)
-		if err != nil {
-			t.Fatalf("Rotate: %v", err)
-		}
-		if _, err := s.Lookup(ctx, old.Token); !errors.Is(err, ErrRevoked) {
-			t.Fatalf("old token Lookup = %v, want ErrRevoked", err)
-		}
-		got, err := s.Lookup(ctx, nu.Token)
-		if err != nil || got.Account != acct {
-			t.Fatalf("new token Lookup = %+v, %v", got, err)
-		}
-		if CSRFValue(old.Token) == CSRFValue(nu.Token) {
-			t.Fatal("CSRF value survived rotation")
-		}
-		if _, err := s.Rotate(ctx, old.Token, ReasonRoleChanged); !errors.Is(err, ErrRevoked) {
-			t.Fatalf("second Rotate of the old token = %v, want ErrRevoked", err)
-		}
-	})
-}
-
-func TestRotateKeepsAbsoluteDeadline(t *testing.T) {
-	each(t, func(t *testing.T, e *sessEnv) {
-		e.skewClock(t)
-		s := e.node(t, pol)
-		ctx := context.Background()
-		cur := create(t, s, e.ten, e.account(t))
-		abs := cur.Session.AbsoluteExpiry
-		var err error
-		for i := 0; i < 20; i++ {
-			e.clk.advance(5 * time.Minute)
-			prev := cur
-			if cur, err = s.Rotate(ctx, prev.Token, ReasonOnDemand); err != nil {
-				if !e.clk.now().Before(abs) && (errors.Is(err, ErrExpired) || errors.Is(err, ErrRevoked)) {
-					return // ended no later than the original deadline
-				}
-				t.Fatalf("Rotate #%d at %v (abs %v): %v", i, e.clk.now(), abs, err)
-			}
-			if !cur.Session.AbsoluteExpiry.Equal(abs) || !cur.Session.CreatedAt.Equal(prev.Session.CreatedAt) {
-				t.Fatalf("rotation moved the window: abs %v->%v created %v->%v", abs, cur.Session.AbsoluteExpiry, prev.Session.CreatedAt, cur.Session.CreatedAt)
-			}
-			if !e.clk.now().Before(abs) {
-				t.Fatalf("rotation succeeded at %v past the original deadline %v", e.clk.now(), abs)
-			}
-		}
-		t.Fatal("session survived 100m of rotation under a 1h absolute limit")
-	})
 }

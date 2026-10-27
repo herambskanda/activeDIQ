@@ -17,6 +17,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitypes"
 	"github.com/skenzeriq/activediq/internal/platform/authn"
+	"github.com/skenzeriq/activediq/internal/platform/httpx/authnhttp"
 )
 
 // ---- fakes ------------------------------------------------------------------------------------
@@ -934,7 +935,7 @@ func TestCSRFRealAuthenticatorInChain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	au, err := authn.NewAuthenticator(liveSessions{}, nil)
+	au, err := authnhttp.NewAuthenticator(liveSessions{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -945,9 +946,9 @@ func TestCSRFRealAuthenticatorInChain(t *testing.T) {
 	}{
 		{"no header", nil, false},
 		{"wrong value", []string{"wrong"}, false},
-		{"another session's value", []string{authn.CSRFValue(tokB)}, false},
-		{"two headers", []string{authn.CSRFValue(tokA), authn.CSRFValue(tokA)}, false},
-		{"correct value", []string{authn.CSRFValue(tokA)}, true},
+		{"another session's value", []string{authnhttp.CSRFValue(tokB)}, false},
+		{"two headers", []string{authnhttp.CSRFValue(tokA), authnhttp.CSRFValue(tokA)}, false},
+		{"correct value", []string{authnhttp.CSRFValue(tokA)}, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -970,9 +971,9 @@ func TestCSRFRealAuthenticatorInChain(t *testing.T) {
 				t.Fatal(err)
 			}
 			req := post("/widgets", "application/json", `{"name":"a"}`)
-			req.AddCookie(authn.SessionCookie(tokA, time.Hour))
+			req.AddCookie(authnhttp.SessionCookie(tokA, time.Hour))
 			for _, h := range c.headers {
-				req.Header.Add(authn.CSRFHeader, h)
+				req.Header.Add(authnhttp.CSRFHeader, h)
 			}
 			rec := httptest.NewRecorder()
 			s.ServeHTTP(rec, req)
