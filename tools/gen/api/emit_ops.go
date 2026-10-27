@@ -93,7 +93,7 @@ func (u *unit) emitOperation(f *gofile, op *Operation) {
 		f.p("\t%s %s // %s %q\n", pf.Go, t, pf.P.In, pf.P.Name)
 	}
 	if op.PeerIP {
-		f.p("\tPeerIP string // the TCP peer address, never a forwarded header\n")
+		f.p("\tPeerIP string // the client address: the TCP peer, or the right-most untrusted X-Forwarded-For hop when the peer is a configured trusted proxy (ACTIVEDIQ_TRUSTED_PROXIES)\n")
 	}
 	switch {
 	case op.Body == nil:

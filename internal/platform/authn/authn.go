@@ -49,7 +49,7 @@ func (h Handlers) VerifyTOTPSignIn(ctx context.Context, in api.VerifyTOTPSignInI
 	}
 	var code string
 	in.Body.Code.Expose(func(b []byte) { code = string(b) })
-	// PeerIP is the TCP peer (never a forwarded header); the zero Addr only when it does not parse.
+	// PeerIP is the client address (the TCP peer, or the right-most untrusted X-Forwarded-For hop when the peer is a configured trusted proxy, ACTIVEDIQ_TRUSTED_PROXIES); the zero Addr only when it does not parse.
 	from, _ := netip.ParseAddr(in.PeerIP)
 	_, cookies, err := h.SecondFactor.VerifyTOTPCookie(ctx, in.HostAdiqPending.Reveal(), code, from)
 	if err != nil {

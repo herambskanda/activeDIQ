@@ -16,7 +16,7 @@ import (
 // ClaimWidgetInput is the decoded input of claimWidget: path, query and header parameters, then the body.
 type ClaimWidgetInput struct {
 	ClaimTicket apitypes.CookieValue // cookie "claim_ticket"
-	PeerIP      string               // the TCP peer address, never a forwarded header
+	PeerIP      string               // the client address: the TCP peer, or the right-most untrusted X-Forwarded-For hop when the peer is a configured trusted proxy (ACTIVEDIQ_TRUSTED_PROXIES)
 }
 
 func (in *ClaimWidgetInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {

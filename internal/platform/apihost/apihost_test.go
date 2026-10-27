@@ -1068,6 +1068,9 @@ func TestClientIPTrustedProxies(t *testing.T) {
 		{"multiple header lines", "10.0.0.5:4000", []string{"203.0.113.9", "198.51.100.7, 10.1.1.1"}, trusted, "198.51.100.7"},
 		{"garbage right-most hop falls back to peer", "10.0.0.5:4000", []string{"198.51.100.7, nonsense"}, trusted, "10.0.0.5"},
 		{"no XFF from trusted peer", "10.0.0.5:4000", nil, trusted, "10.0.0.5"},
+		{"hop with port (Azure App Gateway)", "10.0.0.5:4000", []string{"198.51.100.7:51000"}, trusted, "198.51.100.7"},
+		{"v6 hop with port", "10.0.0.5:4000", []string{"[2001:db8::1]:443"}, trusted, "2001:db8::1"},
+		{"zoned hop falls back to peer", "10.0.0.5:4000", []string{"fe80::1%evil"}, trusted, "10.0.0.5"},
 		{"all hops trusted uses left-most", "10.0.0.5:4000", []string{"10.9.9.9, 10.1.1.1"}, trusted, "10.9.9.9"},
 	}
 	for _, c := range cases {

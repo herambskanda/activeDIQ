@@ -158,7 +158,7 @@ func (SignOut204) isSignOutOutput() {}
 // VerifyTOTPSignInInput is the decoded input of verifyTotpSignIn: path, query and header parameters, then the body.
 type VerifyTOTPSignInInput struct {
 	HostAdiqPending apitypes.CookieValue // cookie "__Host-adiq_pending"
-	PeerIP          string               // the TCP peer address, never a forwarded header
+	PeerIP          string               // the client address: the TCP peer, or the right-most untrusted X-Forwarded-For hop when the peer is a configured trusted proxy (ACTIVEDIQ_TRUSTED_PROXIES)
 	Body            TotpCodeRequest
 }
 

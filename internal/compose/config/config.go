@@ -136,6 +136,9 @@ func Load(getenv func(string) string) (Config, error) {
 				}
 				pfx = netip.PrefixFrom(a, a.BitLen())
 			}
+			if pfx.Bits() == 0 {
+				return Config{}, fmt.Errorf("%s: %q would trust every address; list the proxies' own networks", EnvTrustedProxies, part)
+			}
 			c.TrustedProxies = append(c.TrustedProxies, pfx.Masked())
 		}
 	}
@@ -206,7 +209,7 @@ func (c Config) LogValue() slog.Value {
 		slog.String("api_addr", r.APIAddr),
 		slog.String("api_tls_dir", r.APITLSDir),
 		slog.Int64("api_body_budget", r.APIBodyBudget),
-		slog.Int("trusted_proxies", len(r.TrustedProxies)),
+		slog.Any("trusted_proxies", r.TrustedProxies),
 		slog.Int("nodes", r.Nodes),
 		slog.String("principal_store", r.PrincipalStore),
 	)

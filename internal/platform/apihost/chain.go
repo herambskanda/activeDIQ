@@ -38,22 +38,48 @@ func (s *Server) sourceIP(r *http.Request) string {
 	if err != nil || !s.isTrusted(peer) {
 		return host
 	}
-	var hops []string
-	for _, v := range r.Header.Values("X-Forwarded-For") {
-		for h := range strings.SplitSeq(v, ",") {
-			hops = append(hops, strings.TrimSpace(h))
+	// Walk the header lines last to first and each line's hops right to left, without allocating.
+	// If every hop is a trusted proxy, the left-most one is used.
+	var leftmost netip.Addr
+	vals := r.Header.Values("X-Forwarded-For")
+	for vi := len(vals) - 1; vi >= 0; vi-- {
+		rest := vals[vi]
+		for {
+			var hop string
+			i := strings.LastIndexByte(rest, ',')
+			hop, rest = strings.TrimSpace(rest[i+1:]), rest[:max(i, 0)]
+			a, ok := parseHop(hop)
+			if !ok {
+				return host
+			}
+			if !s.isTrusted(a) {
+				return a.String()
+			}
+			leftmost = a
+			if i < 0 {
+				break
+			}
 		}
 	}
-	for i := len(hops) - 1; i >= 0; i-- {
-		a, err := netip.ParseAddr(hops[i])
-		if err != nil {
-			return host
-		}
-		if !s.isTrusted(a) || i == 0 {
-			return a.Unmap().String()
-		}
+	if leftmost.IsValid() {
+		return leftmost.String()
 	}
 	return host
+}
+
+// parseHop reads one X-Forwarded-For element: a bare IP, or ip:port / [v6]:port (Azure Application
+// Gateway writes the port). A zoned address is refused so zone text can never enter a rate-limit key.
+func parseHop(h string) (netip.Addr, bool) {
+	var a netip.Addr
+	if ap, err := netip.ParseAddrPort(h); err == nil {
+		a = ap.Addr()
+	} else if a, err = netip.ParseAddr(h); err != nil {
+		return netip.Addr{}, false
+	}
+	if a.Zone() != "" {
+		return netip.Addr{}, false
+	}
+	return a.Unmap(), true
 }
 
 func (s *Server) isTrusted(a netip.Addr) bool {
@@ -83,7 +109,8 @@ func (s *Server) routeHandler(rt Route, boundHost string) http.Handler {
 		ctx := r.Context()
 
 		// 3. per-source-IP rate limit, before any authentication work.
-		if d, err := s.ports.Limits.AllowIP(ctx, meta.Class, s.sourceIP(r)); err != nil {
+		clientIP := s.sourceIP(r)
+		if d, err := s.ports.Limits.AllowIP(ctx, meta.Class, clientIP); err != nil {
 			fail(err)
 			return
 		} else if !d.Allowed {
@@ -202,7 +229,7 @@ func (s *Server) routeHandler(rt Route, boundHost string) http.Handler {
 				pool.release(reserved) // only after the buffer is cleared
 			}
 		}()
-		req := &Request{PathValue: r.PathValue, Query: query, Header: r.Header, PeerIP: s.sourceIP(r)}
+		req := &Request{PathValue: r.PathValue, Query: query, Header: r.Header, PeerIP: clientIP}
 		for _, c := range r.Cookies() {
 			if !slices.Contains(meta.Cookies, c.Name) {
 				continue // only the cookies the route declares; never the session cookie

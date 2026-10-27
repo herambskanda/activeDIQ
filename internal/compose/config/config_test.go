@@ -144,12 +144,14 @@ func TestTrustedProxies(t *testing.T) {
 	if c, _ := config.Load(func(string) string { return "" }); len(c.TrustedProxies) != 0 {
 		t.Fatal("default must trust nothing")
 	}
-	if _, err := config.Load(func(k string) string {
-		if k == config.EnvTrustedProxies {
-			return "nope"
+	for _, bad := range []string{"nope", "0.0.0.0/0", "::/0", "10.0.0.0/8, 0.0.0.0/0"} {
+		if _, err := config.Load(func(k string) string {
+			if k == config.EnvTrustedProxies {
+				return bad
+			}
+			return ""
+		}); err == nil {
+			t.Fatalf("%q must fail startup", bad)
 		}
-		return ""
-	}); err == nil {
-		t.Fatal("invalid entry must fail startup")
 	}
 }
