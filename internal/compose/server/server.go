@@ -101,6 +101,10 @@ func Run(ctx context.Context, cfg config.Config) error {
 	if err != nil {
 		return err
 	}
+	// The tenant-owner writer: authn answers which owners are active and ends their sessions.
+	if _, err := buildOwnerAssignments(db, ok.Chainer); err != nil {
+		return err
+	}
 	// Modules and platform packages contribute job kinds to this registry; the worker runs it.
 	jreg := jobs.NewRegistry()
 	if _, err := buildConnections(db, ok.Chainer, dirClient, jreg); err != nil {

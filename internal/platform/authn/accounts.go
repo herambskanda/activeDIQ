@@ -432,6 +432,27 @@ func (s *Accounts) SetState(ctx context.Context, t tenant.ID, id string, to Acco
 	return out, nil
 }
 
+// CountActive returns how many of ids are active accounts of t. Ids of other tenants, unknown ids and
+// accounts in any other state are not counted. It reads in tx, so it sees the caller's own changes and
+// honours the locks it holds (rbac.ActiveAccounts).
+func (s *Accounts) CountActive(ctx context.Context, tx store.Tx, t tenant.ID, ids []string) (int, error) {
+	if tx == nil || t.IsZero() {
+		return 0, ErrInvalid
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	return countActiveAccounts(ctx, tx, t, ids)
+}
+
+func countActiveAccounts(ctx context.Context, tx store.Tx, t tenant.ID, ids []string) (int, error) {
+	var n int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM public.authn_accounts WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND state = 'active'`, t.String(), ids).Scan(&n); err != nil {
+		return 0, fmt.Errorf("authn: counting active accounts: %w", err)
+	}
+	return n, nil
+}
+
 // isLastOwner reports whether id is an active tenant-owner and no other active account is. It takes the
 // owner lock first (via the source), so a concurrent removal of another owner has either committed and
 // is seen here, or waits for this transaction.
@@ -454,8 +475,8 @@ func (s *Accounts) isLastOwner(ctx context.Context, tx store.Tx, t tenant.ID, id
 	}
 	var n int
 	if len(others) > 0 {
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM public.authn_accounts WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND state = 'active'`, t.String(), others).Scan(&n); err != nil {
-			return false, fmt.Errorf("authn: counting active owners: %w", err)
+		if n, err = countActiveAccounts(ctx, tx, t, others); err != nil {
+			return false, err
 		}
 	}
 	return n == 0, nil

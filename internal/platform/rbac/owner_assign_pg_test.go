@@ -48,6 +48,13 @@ func (i inactive) CountActive(_ context.Context, _ store.Tx, _ tenant.ID, ids []
 	return n, nil
 }
 
+// noRevoke is a SessionRevoker that ends nothing; the real one is exercised in the authn tests.
+type noRevoke struct{}
+
+func (noRevoke) OnRoleChanged(context.Context, store.Tx, tenant.ID, string, authority.Chain) (int, error) {
+	return 0, nil
+}
+
 const (
 	owner1 = "11111111-1111-4111-8111-111111111111"
 	owner2 = "22222222-2222-4222-8222-222222222222"
@@ -62,7 +69,7 @@ func ownerSetup(t *testing.T, s *storetest.Server, act ActiveAccounts) (*env, *O
 		t.Fatal(err)
 	}
 	snk := &ownerSink{}
-	oa, err := NewOwnerAssignments(e.db, snk, act)
+	oa, err := NewOwnerAssignments(e.db, snk, act, noRevoke{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,8 +283,18 @@ func TestConcurrentRevokesLeaveOneOwner(t *testing.T) {
 }
 
 func TestNewOwnerAssignmentsRequiresCollaborators(t *testing.T) {
-	if _, err := NewOwnerAssignments(nil, &ownerSink{}, inactive{}); err == nil {
+	e := &store.DB{}
+	if _, err := NewOwnerAssignments(nil, &ownerSink{}, inactive{}, noRevoke{}); err == nil {
 		t.Error("nil db accepted")
+	}
+	if _, err := NewOwnerAssignments(e, nil, inactive{}, noRevoke{}); err == nil {
+		t.Error("nil sink accepted")
+	}
+	if _, err := NewOwnerAssignments(e, &ownerSink{}, nil, noRevoke{}); err == nil {
+		t.Error("nil active-account port accepted")
+	}
+	if _, err := NewOwnerAssignments(e, &ownerSink{}, inactive{}, nil); err == nil {
+		t.Error("nil session revoker accepted")
 	}
 }
 

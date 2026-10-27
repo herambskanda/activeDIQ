@@ -40,6 +40,14 @@ type ActiveAccounts interface {
 	CountActive(ctx context.Context, tx store.Tx, t tenant.ID, ids []string) (int, error)
 }
 
+// SessionRevoker ends an account's sessions inside the caller's transaction when its role assignments
+// change (DM-31.I2), so the change and the revocation commit or roll back together. authn.Store
+// implements it (OnRoleChanged); rbac does not import authn.
+type SessionRevoker interface {
+	// OnRoleChanged ends every active session of account in tx and returns how many ended.
+	OnRoleChanged(ctx context.Context, tx store.Tx, t tenant.ID, account string, by authority.Chain) (int, error)
+}
+
 // OwnerAssignments is the one writer of tenant-owner assignments. A grant is personal (an account
 // subject, no scope roots) and unbounded: the schema refuses an expiry or a future start (migration
 // 0034), so a tenant cannot lose its owner through time. A revoke takes the owner advisory lock first
@@ -50,16 +58,18 @@ type OwnerAssignments struct {
 	db     *store.DB
 	audit  audit.Sink
 	active ActiveAccounts
+	roles  SessionRevoker
 	owners Owners
 }
 
-// NewOwnerAssignments returns the writer. All three collaborators are required: without the sink the
-// change would be unaudited, without the account port DM-30.I4 could not be enforced.
-func NewOwnerAssignments(db *store.DB, sink audit.Sink, active ActiveAccounts) (*OwnerAssignments, error) {
-	if db == nil || sink == nil || active == nil {
-		return nil, errors.New("rbac: owner assignments need a database, an audit sink and an active-account source")
+// NewOwnerAssignments returns the writer. All collaborators are required: without the sink the change
+// would be unaudited, without the account port DM-30.I4 could not be enforced, and without the session
+// revoker a demoted owner would keep a live session.
+func NewOwnerAssignments(db *store.DB, sink audit.Sink, active ActiveAccounts, roles SessionRevoker) (*OwnerAssignments, error) {
+	if db == nil || sink == nil || active == nil || roles == nil {
+		return nil, errors.New("rbac: owner assignments need a database, an audit sink, an active-account source and a session revoker")
 	}
-	return &OwnerAssignments{db: db, audit: sink, active: active}, nil
+	return &OwnerAssignments{db: db, audit: sink, active: active, roles: roles}, nil
 }
 
 func (o *OwnerAssignments) emit(ctx context.Context, tx store.Tx, now time.Time, kind audit.Kind, eid, account string, by authority.Chain, outcome audit.Outcome, reason string, details []audit.Detail) error {
@@ -124,6 +134,9 @@ VALUES ($1::uuid, $2::uuid, 0, false, 'tenant', $1::uuid, $1::uuid)`, t.String()
 		now, err := clock(ctx, tx)
 		if err != nil {
 			return err
+		}
+		if _, err := o.roles.OnRoleChanged(ctx, tx, t, account, by); err != nil {
+			return fmt.Errorf("rbac: ending sessions after owner grant: %w", err)
 		}
 		return o.emit(ctx, tx, now, KindOwnerGranted, id+".granted", account, by, audit.Success, "granted",
 			[]audit.Detail{{Key: "assignment", Value: id}})
@@ -190,6 +203,9 @@ WHERE a.tenant_id = $1::uuid AND a.id = $2::uuid AND r.role_name = $3 AND r.buil
 		if _, err := tx.Exec(ctx, `UPDATE public.authz_assignments SET assignment_state = 'revoked' WHERE tenant_id = $1::uuid AND id = $2::uuid`,
 			t.String(), assignment); err != nil {
 			return fmt.Errorf("rbac: revoking tenant-owner: %w", err)
+		}
+		if _, err := o.roles.OnRoleChanged(ctx, tx, t, account, by); err != nil {
+			return fmt.Errorf("rbac: ending sessions after owner revoke: %w", err)
 		}
 		return o.emit(ctx, tx, now, KindOwnerRevoked, assignment+".revoked", account, by, audit.Success, "revoked",
 			[]audit.Detail{{Key: "assignment", Value: assignment}})
