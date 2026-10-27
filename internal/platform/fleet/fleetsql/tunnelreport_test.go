@@ -41,3 +41,37 @@ func TestTunnelReporterAuditsViolationAgainstTheComponent(t *testing.T) {
 		}
 	})
 }
+
+func TestSupersededReporterAlertsAndAuditsBothSerials(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setupEnroll(t, s)
+		id := e.enrolled(t, e.a, fleetsql.KindConnector)
+		old := id
+		old.Serial = "deadbeef"
+		rep := &fleetsql.SupersededReporter{DB: e.db, Audit: e.sink, Alerts: e.al}
+		before := len(e.sink.evs)
+		if err := rep.Superseded(context.Background(), old); err != nil {
+			t.Fatal(err)
+		}
+		if !e.al.has(fleetsql.AlertSupersededCert) || len(e.sink.evs) != before+1 {
+			t.Fatalf("alert %v, events %d", e.al.list, len(e.sink.evs)-before)
+		}
+		ev := e.sink.evs[before]
+		d := map[string]string{}
+		for _, x := range ev.Details {
+			d[x.Key] = x.Value
+		}
+		if ev.Kind != fleetsql.KindSupersededCertificate || ev.Target.GUID != id.ComponentID || ev.Outcome != audit.Denied ||
+			d["presented_serial"] != "deadbeef" || d["current_serial"] != id.Serial {
+			t.Fatalf("event: %+v", ev)
+		}
+		for i := 1; i < len(ev.Details); i++ {
+			if ev.Details[i-1].Key >= ev.Details[i].Key {
+				t.Fatal("details out of key order")
+			}
+		}
+		if err := (&fleetsql.SupersededReporter{}).Superseded(context.Background(), old); !errors.Is(err, fleetsql.ErrReporterNotConfigured) {
+			t.Fatalf("unconfigured: %v", err)
+		}
+	})
+}

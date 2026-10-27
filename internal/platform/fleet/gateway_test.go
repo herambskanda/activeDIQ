@@ -204,10 +204,14 @@ type rig struct {
 	roots *x509.CertPool // trusts the rig's server certificate
 }
 
-func start(t *testing.T, cas fleet.TenantCAs, pool *x509.CertPool, now func() time.Time) *rig {
+func start(t *testing.T, cas fleet.TenantCAs, pool *x509.CertPool, now func() time.Time, opts ...func(*fleet.Config)) *rig {
 	t.Helper()
 	comps := &fakeComps{}
-	g, err := fleet.NewGateway(fleet.Config{Methods: allMethods, CAs: cas, Components: comps, Recheck: 50 * time.Millisecond, Clock: now})
+	cfg := fleet.Config{Methods: allMethods, CAs: cas, Components: comps, Recheck: 50 * time.Millisecond, Clock: now}
+	for _, o := range opts {
+		o(&cfg)
+	}
+	g, err := fleet.NewGateway(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -705,5 +709,75 @@ func TestSupersededCertificateRefusedAtEstablishment(t *testing.T) {
 	case err := <-ended:
 		t.Fatalf("rotation dropped the open stream: %v", err)
 	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+type supReport struct {
+	mu  sync.Mutex
+	ids []fleet.Identity
+}
+
+func (s *supReport) Superseded(_ context.Context, id fleet.Identity) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ids = append(s.ids, id)
+	return nil
+}
+
+func (s *supReport) got() []fleet.Identity {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]fleet.Identity(nil), s.ids...)
+}
+
+// TestSupersededCertificateIsReportedOncePerWindow (TM-TB6-T14, T-0300): a superseded, CA-verified,
+// unexpired leaf is refused Unauthenticated and reported with its serial; repeats inside the window
+// are not reported again, the next window is; the current certificate and a revoked component's old
+// one raise nothing.
+func TestSupersededCertificateIsReportedOncePerWindow(t *testing.T) {
+	ca := newCA(t, time.Now().Add(time.Hour))
+	tidA := tenant.New()
+	pool := x509.NewCertPool()
+	pool.AddCert(ca.cert)
+	nb, na, eku := time.Now().Add(-time.Minute), time.Now().Add(time.Hour), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+	rep := &supReport{}
+	var mu sync.Mutex
+	clock := time.Now()
+	now := func() time.Time { mu.Lock(); defer mu.Unlock(); return clock }
+	r := start(t, casByTenant{tidA: {ca.cert}}, pool, now, func(c *fleet.Config) {
+		c.Superseded, c.SupersededWindow = rep, time.Minute
+	})
+	oldLeaf := ca.leaf(t, tidA, nb, na, eku)
+	newLeaf := ca.leaf(t, tidA, nb, na, eku)
+	r.comps.rotate(compID, serialOf(t, newLeaf))
+
+	if err := callTunnel(r.dial(t, &newLeaf)); err != nil && code(err) == codes.Unauthenticated {
+		t.Fatalf("current certificate refused: %v", err)
+	}
+	if len(rep.got()) != 0 {
+		t.Fatal("current certificate reported")
+	}
+	for i := 0; i < 3; i++ {
+		if err := callTunnel(r.dial(t, &oldLeaf)); code(err) != codes.Unauthenticated {
+			t.Fatalf("superseded certificate: %v", err)
+		}
+	}
+	got := rep.got()
+	if len(got) != 1 || got[0].ComponentID != compID || got[0].Serial != serialOf(t, oldLeaf) {
+		t.Fatalf("reports in one window: %+v", got)
+	}
+	mu.Lock()
+	clock = clock.Add(2 * time.Minute)
+	mu.Unlock()
+	_ = callTunnel(r.dial(t, &oldLeaf))
+	if len(rep.got()) != 2 {
+		t.Fatalf("next window not reported: %d", len(rep.got()))
+	}
+	mu.Lock()
+	clock = clock.Add(2 * time.Minute)
+	mu.Unlock()
+	r.comps.revoke(compID)
+	if err := callTunnel(r.dial(t, &oldLeaf)); code(err) != codes.Unauthenticated || len(rep.got()) != 2 {
+		t.Fatalf("revoked component's old certificate reported: %v %d", err, len(rep.got()))
 	}
 }
