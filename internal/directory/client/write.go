@@ -65,6 +65,8 @@ type Client struct {
 	transport Transport
 	facts     FactsReader
 	tier0     Tier0Builder
+	verify    VerifyTransport
+	scope     VerifyScopeSource
 }
 
 // Option wires one dependency of the Client.

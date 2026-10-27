@@ -4,12 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
+
+// accountIDRe is the canonical text form of an account's UUID, in either case. An account is not a
+// tenant, so it is checked here rather than by converting it to a tenant.ID.
+var accountIDRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 // RootKind is the kind of a scope root (DM-35).
 type RootKind string
@@ -75,7 +80,7 @@ func (s *Store) PendingOrActive(_ context.Context, t tenant.ID, account string, 
 }
 
 func (s *Store) read(t tenant.ID, account string, now time.Time, includeFuture bool) ([]Assignment, error) {
-	if _, err := tenant.Parse(account); err != nil { // an account is a UUID; anything else holds nothing
+	if !accountIDRe.MatchString(account) { // an account is a UUID; anything else holds nothing
 		return nil, nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), readTimeout)

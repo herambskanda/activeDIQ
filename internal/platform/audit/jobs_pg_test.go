@@ -11,6 +11,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
+	"github.com/skenzeriq/activediq/internal/platform/jobs/jobstest"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
@@ -79,9 +80,7 @@ func (r *rig) runDue(w *worker, kind string) jobs.Result {
 	r.t.Helper()
 	// A job runs in a later interval bucket than the one that queued it; the cadence relies on that.
 	time.Sleep(25 * time.Millisecond)
-	if err := r.admin(`UPDATE public.jobs SET run_at = now() WHERE kind = $1 AND state = 'available'`, kind); err != nil {
-		r.t.Fatal(err)
-	}
+	jobstest.MakeDue(r.t, r.d.ExecOwner, kind)
 	cs := r.claim(w, kind)
 	if len(cs) == 0 {
 		r.t.Fatalf("no %s job to run", kind)
@@ -266,7 +265,7 @@ func TestForwardDeliversInOrderAndAdvancesOnlyOnAck(t *testing.T) {
 			t.Fatalf("status after failure = %+v; want cursor at 500, 1 failure, sink_unavailable", st)
 		}
 		// Acceptance 4: the failure is visible in the job's status too, and it will be retried with backoff.
-		codes, err := r.adminStrings(`SELECT coalesce(error_code, '') FROM public.jobs WHERE kind = 'audit.forward' AND attempt = 1 AND state = 'available'`)
+		codes, err := jobstest.QueuedErrorCodes(r.adminStrings, audit.JobForward, 1)
 		if err != nil || len(codes) == 0 || codes[0] != audit.CodeSinkUnavailable {
 			t.Fatalf("job status after the failure = %v, %v; want %s", codes, err, audit.CodeSinkUnavailable)
 		}
@@ -324,7 +323,7 @@ func TestForwardSinkDownKeepsCursorAndRetriesAcrossRuns(t *testing.T) {
 			t.Fatalf("lag = %d", st.Head-st.EventSeq)
 		}
 		// The failure is a code on the job, not text.
-		got, err := r.adminStrings(`SELECT coalesce(error_code, '') FROM public.jobs WHERE kind = 'audit.forward' AND attempt >= 2 ORDER BY id LIMIT 1`)
+		got, err := jobstest.FirstRetryErrorCode(r.adminStrings, audit.JobForward)
 		if err != nil || len(got) != 1 || got[0] != audit.CodeSinkUnavailable {
 			t.Fatalf("job failure = %v, %v; want the code %s", got, err, audit.CodeSinkUnavailable)
 		}
@@ -343,9 +342,9 @@ func TestForwardEndsWhenTheSinkIsRemoved(t *testing.T) {
 		if res := r.runDue(w, audit.JobForward); res != jobs.Completed {
 			t.Fatalf("run = %s", res)
 		}
-		v, _ := r.adminStrings(`SELECT count(*)::text FROM public.jobs WHERE kind = 'audit.forward' AND state = 'available'`)
-		if v[0] != "0" {
-			t.Fatalf("a removed sink still has %s queued runs", v[0])
+		v, _ := jobstest.CountQueued(r.adminStrings, audit.JobForward)
+		if v != "0" {
+			t.Fatalf("a removed sink still has %s queued runs", v)
 		}
 	})
 }
@@ -355,8 +354,8 @@ func TestInitTenantStartsTheCadence(t *testing.T) {
 		w := r.worker("w1", nil, nil)
 		r.cp.StartCadenceOnInit(w.j.ScheduleCheckpoint)
 		id := r.newTenant("B")
-		v, err := r.adminStrings(`SELECT count(*)::text FROM public.jobs WHERE kind = 'audit.checkpoint' AND tenant_id = $1::uuid`, id.String())
-		if err != nil || v[0] != "1" {
+		v, err := jobstest.CountForTenant(r.adminStrings, audit.JobCheckpoint, id.String())
+		if err != nil || v != "1" {
 			t.Fatalf("queued checkpoint runs for the new tenant = %v, %v", v, err)
 		}
 	})

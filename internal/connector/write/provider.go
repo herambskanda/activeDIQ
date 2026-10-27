@@ -73,6 +73,42 @@ func (d SessionDC) BoundDC(ctx context.Context) (*connectorv1.DcIdentity, error)
 	return &connectorv1.DcIdentity{DsaGuid: toWire(id.DSAGUID), InvocationId: toWire(id.InvocationID), DnsHostname: id.DNSHostName, Site: id.Site}, nil
 }
 
+// NewADProvider is the production constructor. Dir, Bound (and, through the caller, the write ops)
+// are all built over the one sess, so the DC whose identity rule 5 checks is the DC the reads and
+// writes reach. A binder on another session would re-open the TOCTOU rule 5 closes.
+func NewADProvider(sess *ad.Session, gc *ad.GCResolver, id *connectorv1.DirectoryIdentity, pins PinStore) *ADProvider {
+	return &ADProvider{
+		Dir:   tier0.SessionDirectory{S: sess, GC: gc},
+		ID:    id,
+		Pins:  pins,
+		Bound: SessionDC{S: sess},
+	}
+}
+
+// sameSession is false when Dir and Bound are both session-backed but over different sessions.
+// Anything else (a test double on either side) is not a session mismatch.
+func (p *ADProvider) sameSession() bool {
+	var ds *ad.Session
+	switch d := p.Dir.(type) {
+	case tier0.SessionDirectory:
+		ds = d.S
+	case *tier0.SessionDirectory:
+		if d != nil {
+			ds = d.S
+		}
+	}
+	var bs *ad.Session
+	switch b := p.Bound.(type) {
+	case SessionDC:
+		bs = b.S
+	case *SessionDC:
+		if b != nil {
+			bs = b.S
+		}
+	}
+	return ds == nil || bs == nil || ds == bs
+}
+
 // ADProvider classifies through the AD classifier of T-0093 over an ADDirectory.
 type ADProvider struct {
 	Dir tier0.ADDirectory
@@ -115,6 +151,9 @@ func (p *ADProvider) Kind() connectorv1.ProviderKind {
 func (p *ADProvider) BoundDC(ctx context.Context) (*connectorv1.DcIdentity, error) {
 	if p.Bound == nil {
 		return nil, ErrNoBoundDC
+	}
+	if !p.sameSession() {
+		return nil, ErrNoBoundDC // binder and directory on different sessions: not the DC the writes reach
 	}
 	return p.Bound.BoundDC(ctx)
 }

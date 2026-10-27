@@ -231,9 +231,54 @@ type KEKRef struct {
 
 // WrapRequest is what a Provider is asked to wrap or unwrap. Tenant is the encryption context; Version
 // is the DEK version the wrapped bytes are stored under. Providers bind both.
+//
+// Domain separation: a request is either a tenant wrap (Tenant set, Purpose empty) or a platform wrap
+// (Purpose set, Tenant zero) for a per-install secret that belongs to no tenant, such as the API TLS key.
+// Setting both or neither is invalid, and a blob wrapped in one domain never unwraps in the other: a
+// provider binds Purpose into its AEAD data or KMS encryption context in place of the tenant ID.
 type WrapRequest struct {
 	Tenant  tenant.ID
+	Purpose string
 	Version uint32
+}
+
+// Valid reports whether exactly one of Tenant and Purpose is set (Version is the caller's concern).
+func (r WrapRequest) Valid() bool { return r.Tenant.IsZero() != (r.Purpose == "") }
+
+// Context is the stable string a provider binds as its encryption context: the tenant ID for tenant
+// wraps, "platform:<purpose>" for platform wraps. The two namespaces cannot collide (a tenant ID is a UUID).
+func (r WrapRequest) Context() string {
+	if r.Purpose != "" {
+		return "platform:" + r.Purpose
+	}
+	return r.Tenant.String()
+}
+
+// WrapPlatform wraps a per-install platform secret (no tenant) for purpose, e.g. "api-tls".
+func WrapPlatform(p Provider, purpose string, version uint32, plaintext []byte) ([]byte, KEKRef, error) {
+	req := WrapRequest{Purpose: purpose, Version: version}
+	if !req.Valid() || version == 0 {
+		return nil, KEKRef{}, newErr(InvalidContext)
+	}
+	wrapped, ref, err := p.Wrap(req, plaintext)
+	if err != nil {
+		return nil, KEKRef{}, providerErr(err, ProviderUnavailable)
+	}
+	return wrapped, ref, nil
+}
+
+// UnwrapPlatform recovers a platform secret wrapped by WrapPlatform. The caller zeroes the result.
+func UnwrapPlatform(p Provider, purpose string, version uint32, ref KEKRef, wrapped []byte) ([]byte, error) {
+	req := WrapRequest{Purpose: purpose, Version: version}
+	if !req.Valid() || version == 0 {
+		return nil, newErr(InvalidContext)
+	}
+	b, err := p.Unwrap(req, ref, wrapped)
+	if err != nil {
+		clear(b)
+		return nil, providerErr(err, UnwrapFailed)
+	}
+	return b, nil
 }
 
 // Provider is the key-provider adapter (EP-12): the one place the KEK lives. KMS-style providers pass
@@ -330,8 +375,13 @@ func NewLocalProvider(keyID string, kek secret.Secret) (*LocalProvider, error) {
 func (p *LocalProvider) Ref() KEKRef { return p.ref }
 
 func wrapAAD(req WrapRequest, ref KEKRef) []byte {
-	out := []byte("diq.wrap.v1")
-	for _, s := range []string{req.Tenant.String(), ref.Provider, ref.KeyID} {
+	out := []byte("diq.wrap.v1") // tenant wraps keep their original AAD so stored blobs still open
+	ctx := req.Tenant.String()
+	if req.Purpose != "" {
+		out = []byte("diq.wrap.platform.v1")
+		ctx = req.Purpose
+	}
+	for _, s := range []string{ctx, ref.Provider, ref.KeyID} {
 		out = append(out, byte(len(s)>>8), byte(len(s)))
 		out = append(out, s...)
 	}
@@ -339,6 +389,9 @@ func wrapAAD(req WrapRequest, ref KEKRef) []byte {
 }
 
 func (p *LocalProvider) Wrap(req WrapRequest, plaintext []byte) ([]byte, KEKRef, error) {
+	if !req.Valid() {
+		return nil, KEKRef{}, newErr(InvalidContext)
+	}
 	nonce := make([]byte, nonceSize, nonceSize+len(plaintext)+tagSize)
 	if _, err := rand.Read(nonce); err != nil {
 		return nil, KEKRef{}, &Error{Code: EntropyFailure, err: err}
@@ -347,6 +400,9 @@ func (p *LocalProvider) Wrap(req WrapRequest, plaintext []byte) ([]byte, KEKRef,
 }
 
 func (p *LocalProvider) Unwrap(req WrapRequest, ref KEKRef, wrapped []byte) ([]byte, error) {
+	if !req.Valid() {
+		return nil, newErr(InvalidContext)
+	}
 	if ref != p.ref {
 		return nil, fmt.Errorf("kek %q not held by this provider: %w", ref.KeyID, newErr(UnwrapFailed))
 	}
