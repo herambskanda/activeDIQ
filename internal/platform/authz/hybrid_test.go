@@ -118,3 +118,48 @@ func TestHybridGateRefusalAuditedEvenWhenDirectAllows(t *testing.T) {
 		t.Fatalf("direct allows, refusal still reported: %+v", d)
 	}
 }
+
+func grantee() authz.Scope { return scope(root("ou-sales", domain)) }
+
+func withDirect(p *authz.Principal, perms ...authz.Permission) *authz.Principal {
+	p.Assignments = append(p.Assignments, authz.Assignment{Role: authz.Role{Permissions: perms}, Scope: grantee()})
+	return p
+}
+
+// hybrid_gate_checkgrant_no_laundering: a derived assignment never backs a grant, in any state.
+func TestHybridGateCheckGrantNoLaundering(t *testing.T) {
+	cand := matched()
+	cand.State = "candidate"
+	open := matched()
+	open.Takeover = "open"
+	t0 := matched()
+	t0.Tier0Either = true
+	for name, c := range map[string]*authz.Correlation{"candidate": cand, "unattested": open, "nil_facts": nil, "tier0": t0, "matched": matched()} {
+		g := withDirect(derived(c, reset), "rbac.assign")
+		err := evaluator().CheckGrant(g, nil, authz.Role{Permissions: []authz.Permission{reset}}, grantee())
+		if err != authz.ErrEscalation {
+			t.Fatalf("%s: want ErrEscalation, got %v", name, err)
+		}
+	}
+}
+
+// hybrid_gate_checkgrant_never_cross: matched correlation, never-cross perm or tenant-owner role.
+func TestHybridGateCheckGrantNeverCross(t *testing.T) {
+	for _, perm := range []authz.Permission{"delegation.scope.edit", "rbac.assign"} {
+		err := evaluator().CheckGrant(derived(matched(), perm), nil, authz.Role{Permissions: []authz.Permission{perm}}, grantee())
+		if err != authz.ErrEscalation {
+			t.Fatalf("%s: got %v", perm, err)
+		}
+	}
+	g := derived(matched(), reset)
+	g.Assignments[0].Role.TenantOwner = true
+	if err := evaluator().CheckGrant(g, nil, authz.Role{Permissions: []authz.Permission{reset}}, grantee()); err != authz.ErrEscalation {
+		t.Fatalf("tenant owner: got %v", err)
+	}
+}
+
+func TestHybridGateNeverCrossesTier0Designation(t *testing.T) {
+	if !authz.NeverCrosses("inventory.tier0_designation.manage") {
+		t.Fatal("tier0 designation must never cross")
+	}
+}

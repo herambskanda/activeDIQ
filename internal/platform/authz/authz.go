@@ -410,7 +410,9 @@ func (e Evaluator) CheckGrant(grantor *Principal, tok *Token, role Role, scope S
 func holdsOverScope(g *Principal, perm Permission, s Scope) bool {
 	for _, root := range s.Include {
 		if !slices.ContainsFunc(g.Assignments, func(a Assignment) bool {
-			return a.Role.has(perm) && assignmentContains(a.Scope, root, s.Exclude)
+			// A grant is RBAC administration, so it never crosses a correlation (TM-D17 rule 5):
+			// a correlation-derived assignment can never back a grant, whatever its state.
+			return a.Via == nil && a.Role.has(perm) && assignmentContains(a.Scope, root, s.Exclude)
 		}) {
 			return false
 		}
@@ -463,7 +465,7 @@ func grantRootsComplete(g *Principal, tok *Token, role Role, scope Scope) bool {
 		return false
 	}
 	for _, a := range g.Assignments {
-		if slices.ContainsFunc(role.Permissions, a.Role.has) && !ok(a.Scope) {
+		if a.Via == nil && slices.ContainsFunc(role.Permissions, a.Role.has) && !ok(a.Scope) {
 			return false
 		}
 	}

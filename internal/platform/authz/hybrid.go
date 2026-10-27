@@ -57,7 +57,9 @@ type Derivation struct {
 
 // neverCrossPrefixes name the permission families that administer RBAC, delegation scopes or
 // connections. Rule 5 (h): they are assigned only to the console account itself.
-var neverCrossPrefixes = []string{"rbac.", "authz.", "delegation.", "scope.", "connections.", "tenant."}
+var neverCrossPrefixes = []string{"rbac.", "authz.", "delegation.", "scope.", "connections.", "tenant.",
+	// inventory.tier0_ administers the Tier-0 designation itself (TM-D2, rule 5 (h)).
+	"inventory.tier0_"}
 
 // NeverCrosses reports whether permission p is one that never carries across a correlation.
 func NeverCrosses(p Permission) bool {
