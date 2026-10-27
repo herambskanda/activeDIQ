@@ -124,7 +124,10 @@ func (s *clientStream) CloseSend() error {
 		return nil
 	}
 	c.selfHlf = true
-	return s.m.send(Frame{CallID: c.id, Body: BodyHalfClose})
+	if err := s.m.send(Frame{CallID: c.id, Body: BodyHalfClose}); err != nil {
+		return s.m.finalError(c)
+	}
+	return nil
 }
 
 func (s *clientStream) SendMsg(msg any) error {

@@ -254,7 +254,9 @@ func (m *Mux) sendData(c *call, b []byte) error {
 		return fixedErr(codes.Canceled)
 	}
 	if err := m.send(Frame{CallID: c.id, Body: BodyData, Payload: b}); err != nil {
-		return fixedErr(codes.Unavailable)
+		// The tunnel ended under this call: report the call's own end (outcome unknown), not a
+		// fresh known-outcome UNAVAILABLE.
+		return m.finalError(c)
 	}
 	return nil
 }
@@ -587,6 +589,10 @@ func (cn conn) Invoke(ctx context.Context, method string, args, reply any, _ ...
 }
 
 func (m *Mux) finalError(c *call) error {
+	// fail() publishes done and every call's final error under m.mu; taking it here means a caller
+	// that saw the tunnel end also sees its call's final error.
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	select {
 	case <-c.fin:
 		if errors.Is(c.finErr, io.EOF) {
