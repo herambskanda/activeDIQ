@@ -229,23 +229,61 @@ func validAccount(a string) bool {
 	return err == nil
 }
 
+func validateCreate(in CreateInput) error {
+	if in.Tenant.IsZero() || !validAccount(in.Account) || len(in.Methods) == 0 || len(in.Methods) > 8 {
+		return ErrInvalid
+	}
+	for _, m := range in.Methods {
+		if m == "" || len(m) > 32 {
+			return ErrInvalid
+		}
+	}
+	return nil
+}
+
 // Create opens a session for an authenticated account. In one transaction, serialised per account, it
 // ends the account's sessions that are past their deadline, revokes as many of the rest as the policy's
 // eviction ranks first so that the new session is within the concurrent limit, and stores the new one
 // with only the hash of its token.
 func (s *Store) Create(ctx context.Context, in CreateInput) (CreateResult, error) {
-	if in.Tenant.IsZero() || !validAccount(in.Account) || len(in.Methods) == 0 || len(in.Methods) > 8 {
-		return CreateResult{}, ErrInvalid
-	}
-	for _, m := range in.Methods {
-		if m == "" || len(m) > 32 {
-			return CreateResult{}, ErrInvalid
-		}
+	if err := validateCreate(in); err != nil {
+		return CreateResult{}, err
 	}
 	pol, err := s.policy(ctx, in.Tenant)
 	if err != nil {
 		return CreateResult{}, err
 	}
+	var res CreateResult
+	err = s.db.WithTenant(ctx, in.Tenant, func(ctx context.Context, tx store.Tx) error {
+		var err error
+		res, err = s.createTx(ctx, tx, in, pol)
+		return err
+	})
+	if err != nil {
+		return CreateResult{}, fmt.Errorf("authn: create session: %w", err)
+	}
+	return res, nil
+}
+
+// CreateTx is Create inside the caller's tenant transaction, so a sign-in step that must commit with
+// the session (consuming a pending sign-in, AN-10) does so atomically: a rollback leaves no session.
+// tx must belong to in.Tenant.
+func (s *Store) CreateTx(ctx context.Context, tx store.Tx, in CreateInput) (CreateResult, error) {
+	if err := validateCreate(in); err != nil {
+		return CreateResult{}, err
+	}
+	pol, err := s.policy(ctx, in.Tenant)
+	if err != nil {
+		return CreateResult{}, err
+	}
+	res, err := s.createTx(ctx, tx, in, pol)
+	if err != nil {
+		return CreateResult{}, fmt.Errorf("authn: create session: %w", err)
+	}
+	return res, nil
+}
+
+func (s *Store) createTx(ctx context.Context, tx store.Tx, in CreateInput, pol Policy) (CreateResult, error) {
 	tok, err := newToken(in.Tenant)
 	if err != nil {
 		return CreateResult{}, err
@@ -256,58 +294,55 @@ func (s *Store) Create(ctx context.Context, in CreateInput) (CreateResult, error
 		ip = &a
 	}
 	res := CreateResult{Token: tok}
-	err = s.db.WithTenant(ctx, in.Tenant, func(ctx context.Context, tx store.Tx) error {
-		now, err := s.now(ctx, tx)
-		if err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, sqlAcctLk, in.Tenant.String()+"/"+in.Account); err != nil {
-			return err
-		}
-		if _, err := s.endRows(ctx, tx, now, expireDue, []any{in.Tenant.String(), in.Account, now}, KindSessionExpired, nil); err != nil {
-			return err
-		}
-		var active int
-		if err := tx.QueryRow(ctx, countActive, in.Tenant.String(), in.Account).Scan(&active); err != nil {
-			return err
-		}
-		if over := active - (pol.MaxConcurrent - 1); over > 0 {
-			n, err := s.endRows(ctx, tx, now, evict, []any{in.Tenant.String(), in.Account, string(pol.Eviction), over, now}, KindSessionEvicted, nil)
-			if err != nil {
-				return err
-			}
-			res.Evicted = n
-		}
-		idle := now.Add(pol.Idle)
-		abs := now.Add(pol.Absolute)
-		created := now
-		if in.inherit != nil {
-			// A rotated session keeps the original sign-in's window; only a full sign-in starts a new one.
-			created = in.inherit.CreatedAt
-			if a := created.Add(pol.Absolute); a.Before(abs) {
-				abs = a
-			}
-			if in.inherit.AbsoluteExpiry.Before(abs) {
-				abs = in.inherit.AbsoluteExpiry
-			}
-			if !abs.After(now) {
-				return ErrExpired
-			}
-		}
-		if idle.After(abs) {
-			idle = abs
-		}
-		var id string
-		if err := tx.QueryRow(ctx, insert, in.Tenant.String(), tok.hash(), in.Account, in.Methods, in.MFAAt, in.AuthorityFactorAt, ip, now, idle, abs, created).Scan(&id); err != nil {
-			return err
-		}
-		res.Session = Session{ID: id, Tenant: in.Tenant, Account: in.Account, Methods: append([]string(nil), in.Methods...),
-			MFAAt: in.MFAAt, AuthorityFactorAt: in.AuthorityFactorAt, ClientIP: in.ClientIP.Unmap(),
-			CreatedAt: created, LastSeenAt: now, IdleExpiry: idle, AbsoluteExpiry: abs, State: SessionActive}
-		return s.emit(ctx, tx, now, KindSessionCreated, id, in.Account, accountChain(in.Account), "", in.Methods)
-	})
+	now, err := s.now(ctx, tx)
 	if err != nil {
-		return CreateResult{}, fmt.Errorf("authn: create session: %w", err)
+		return CreateResult{}, err
+	}
+	if _, err := tx.Exec(ctx, sqlAcctLk, in.Tenant.String()+"/"+in.Account); err != nil {
+		return CreateResult{}, err
+	}
+	if _, err := s.endRows(ctx, tx, now, expireDue, []any{in.Tenant.String(), in.Account, now}, KindSessionExpired, nil); err != nil {
+		return CreateResult{}, err
+	}
+	var active int
+	if err := tx.QueryRow(ctx, countActive, in.Tenant.String(), in.Account).Scan(&active); err != nil {
+		return CreateResult{}, err
+	}
+	if over := active - (pol.MaxConcurrent - 1); over > 0 {
+		n, err := s.endRows(ctx, tx, now, evict, []any{in.Tenant.String(), in.Account, string(pol.Eviction), over, now}, KindSessionEvicted, nil)
+		if err != nil {
+			return CreateResult{}, err
+		}
+		res.Evicted = n
+	}
+	idle := now.Add(pol.Idle)
+	abs := now.Add(pol.Absolute)
+	created := now
+	if in.inherit != nil {
+		// A rotated session keeps the original sign-in's window; only a full sign-in starts a new one.
+		created = in.inherit.CreatedAt
+		if a := created.Add(pol.Absolute); a.Before(abs) {
+			abs = a
+		}
+		if in.inherit.AbsoluteExpiry.Before(abs) {
+			abs = in.inherit.AbsoluteExpiry
+		}
+		if !abs.After(now) {
+			return CreateResult{}, ErrExpired
+		}
+	}
+	if idle.After(abs) {
+		idle = abs
+	}
+	var id string
+	if err := tx.QueryRow(ctx, insert, in.Tenant.String(), tok.hash(), in.Account, in.Methods, in.MFAAt, in.AuthorityFactorAt, ip, now, idle, abs, created).Scan(&id); err != nil {
+		return CreateResult{}, err
+	}
+	res.Session = Session{ID: id, Tenant: in.Tenant, Account: in.Account, Methods: append([]string(nil), in.Methods...),
+		MFAAt: in.MFAAt, AuthorityFactorAt: in.AuthorityFactorAt, ClientIP: in.ClientIP.Unmap(),
+		CreatedAt: created, LastSeenAt: now, IdleExpiry: idle, AbsoluteExpiry: abs, State: SessionActive}
+	if err := s.emit(ctx, tx, now, KindSessionCreated, id, in.Account, accountChain(in.Account), "", in.Methods); err != nil {
+		return CreateResult{}, err
 	}
 	return res, nil
 }

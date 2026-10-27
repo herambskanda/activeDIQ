@@ -129,3 +129,51 @@ func (a *Authenticator) CheckCSRF(r *http.Request, _ apihost.Principal) error {
 	}
 	return nil
 }
+
+// PendingCookie is the cookie that hands h to the browser: __Host-, HttpOnly, Secure,
+// SameSite=Strict, Path=/, no Domain, living no longer than the record.
+func PendingCookie(h PendingHandle) *http.Cookie {
+	return &http.Cookie{Name: PendingCookieName, Value: h.Reveal(), Path: "/", MaxAge: int(PendingSignInTTL / time.Second),
+		Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode}
+}
+
+// ClearPendingCookie drops the pending cookie, with the attributes the __Host- rules need.
+func ClearPendingCookie() *http.Cookie {
+	return &http.Cookie{Name: PendingCookieName, Value: "", Path: "/", MaxAge: -1,
+		Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode}
+}
+
+// PendingHandleFromRequest reads the handle from the request's cookie and from nowhere else: a handle
+// in the URL or the body is ignored, so it is "no pending sign-in". Zero or several cookies of that
+// name are refused.
+func PendingHandleFromRequest(r *http.Request) (PendingHandle, error) {
+	var found *http.Cookie
+	for _, c := range r.Cookies() {
+		if c.Name != PendingCookieName {
+			continue
+		}
+		if found != nil {
+			return PendingHandle{}, ErrPendingInvalid
+		}
+		found = c
+	}
+	if found == nil {
+		return PendingHandle{}, ErrPendingInvalid
+	}
+	return ParsePendingHandle(found.Value)
+}
+
+// VerifyTOTPRequest is the AN-10 TOTP entry for an HTTP request: the handle comes from the pending
+// cookie only. On success it returns the session and the two cookies to set: the new session cookie
+// and the cleared pending cookie.
+func (f *SecondFactor) VerifyTOTPRequest(ctx context.Context, r *http.Request, code string) (CreateResult, []*http.Cookie, error) {
+	h, err := PendingHandleFromRequest(r)
+	if err != nil {
+		return CreateResult{}, nil, err
+	}
+	res, err := f.VerifyTOTP(ctx, h, code)
+	if err != nil {
+		return CreateResult{}, nil, err
+	}
+	return res, []*http.Cookie{SessionCookie(res.Token, time.Until(res.Session.AbsoluteExpiry)), ClearPendingCookie()}, nil
+}
