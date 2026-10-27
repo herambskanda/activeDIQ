@@ -130,6 +130,11 @@
   "platformJobs": [],
   "probeValues": [
     {
+      "column": "public.directory_objects.kind",
+      "value": "other",
+      "reason": "CHECK: a kind is one of the DM-16 kinds; the probe row is an object of kind other."
+    },
+    {
       "column": "public.authn_authenticator_enrollments.method",
       "value": "totp",
       "reason": "CHECK: a method is totp, the sealed seed is at least 32 bytes and a subject is a console account or a directory user (DM-37); the probe row is a TOTP enrolment of an account."

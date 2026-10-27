@@ -77,12 +77,14 @@ type linkMode struct {
 	to    connection.LinkState
 	from  connection.LinkState // required current state; empty for declare (creates) and remove (proposed or confirmed)
 	input string
+	// stepUp: the transition opens or widens a cross-directory authority path (TM §7.4).
+	stepUp bool
 }
 
 var (
-	modeConfirm = linkMode{HybridLinkConfirmActionID, AuditHybridLinkConfirmed, connection.LinkConfirmed, connection.LinkProposed, "#/components/schemas/HybridLinkConfirm"}
-	modeDeclare = linkMode{HybridLinkDeclareActionID, AuditHybridLinkDeclared, connection.LinkConfirmed, "", "#/components/schemas/HybridLinkDeclare"}
-	modeRemove  = linkMode{HybridLinkRemoveActionID, AuditHybridLinkRemoved, connection.LinkRemoved, "", "#/components/schemas/HybridLinkRemove"}
+	modeConfirm = linkMode{HybridLinkConfirmActionID, AuditHybridLinkConfirmed, connection.LinkConfirmed, connection.LinkProposed, "#/components/schemas/HybridLinkConfirm", true}
+	modeDeclare = linkMode{HybridLinkDeclareActionID, AuditHybridLinkDeclared, connection.LinkConfirmed, "", "#/components/schemas/HybridLinkDeclare", true}
+	modeRemove  = linkMode{HybridLinkRemoveActionID, AuditHybridLinkRemoved, connection.LinkRemoved, "", "#/components/schemas/HybridLinkRemove", false}
 )
 
 // HybridLinkActions builds the confirm, declare and remove Actions.
@@ -107,7 +109,7 @@ func hybridLinkAction(m linkMode) (operation.Action, error) {
 	return operation.Define(operation.Typed[HybridLinkInput, linkPayload, HybridLinkOutcome]{
 		Descriptor: operation.Descriptor{
 			ID: m.id, Version: 1, Permission: HybridLinkPermission, Input: operation.SchemaRef(m.input),
-			Target: operation.TargetStore, Reversibility: operation.Irreversible, AuditKind: audit.Kind(m.audit),
+			Target: operation.TargetStore, Reversibility: operation.Irreversible, AuditKind: audit.Kind(m.audit), StepUp: m.stepUp,
 		},
 		Plan: func(ctx context.Context, pc operation.PlanContext, in HybridLinkInput) ([]operation.TypedStep[linkPayload], error) {
 			p, err := planLink(ctx, pc, st, m, in)

@@ -24,6 +24,9 @@ type Principal struct {
 	// platform principal.
 	Tenant string
 	Kind   PrincipalKind
+	// SessionID is the console session's handle (not its token) for a KindSession principal; empty for a
+	// token. The step-up check reads the session's mfa_at through it.
+	SessionID string
 }
 
 // ErrUnauthenticated is what an Authenticator returns for a missing or invalid credential. Any
