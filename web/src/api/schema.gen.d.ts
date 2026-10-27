@@ -789,7 +789,10 @@ export interface operations {
             query?: never;
             header?: never;
             path?: never;
-            cookie?: never;
+            cookie: {
+                /** @description The pending-sign-in handle set by the first factor. It is read from this cookie only; a missing or repeated cookie answers the same 401 as any other sign-in failure. */
+                "__Host-adiq_pending": string;
+            };
         };
         requestBody: {
             content: {
@@ -800,8 +803,8 @@ export interface operations {
             /** @description The second factor passed and a session exists. */
             204: {
                 headers: {
-                    /** @description The new session cookie, __Host-adiq_session; the pending cookie is cleared. */
-                    "Set-Cookie": string;
+                    /** @description Two lines: the new session cookie, __Host-adiq_session, and a clearing __Host-adiq_pending. */
+                    "Set-Cookie": string[];
                     [name: string]: unknown;
                 };
                 content?: never;

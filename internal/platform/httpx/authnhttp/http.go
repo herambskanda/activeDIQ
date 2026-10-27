@@ -185,6 +185,21 @@ func VerifyTOTPRequest(ctx context.Context, f TOTPVerifier, r *http.Request, cod
 	if err != nil {
 		return authn.CreateResult{}, nil, err
 	}
+	return f.verifyTOTPHandle(ctx, h, code, from)
+}
+
+// VerifyTOTPCookie is VerifyTOTPRequest for a caller that already holds the one pending cookie's
+// value (the generated Input of verifyTotpSignIn). An empty or malformed value is ErrPendingInvalid.
+// from is the client address the caller resolved; the zero Addr only when genuinely unknown.
+func (f *SecondFactor) VerifyTOTPCookie(ctx context.Context, pendingCookie, code string, from netip.Addr) (CreateResult, []*http.Cookie, error) {
+	h, err := ParsePendingHandle(pendingCookie)
+	if err != nil {
+		return CreateResult{}, nil, ErrPendingInvalid
+	}
+	return f.verifyTOTPHandle(ctx, h, code, from)
+}
+
+func (f *SecondFactor) verifyTOTPHandle(ctx context.Context, h PendingHandle, code string, from netip.Addr) (CreateResult, []*http.Cookie, error) {
 	res, err := f.VerifyTOTP(ctx, h, code, from)
 	if err != nil {
 		return authn.CreateResult{}, nil, err

@@ -13,6 +13,55 @@ import (
 	"github.com/skenzeriq/activediq/tools/gen/api/internal/fixture/shared"
 )
 
+// ClaimWidgetInput is the decoded input of claimWidget: path, query and header parameters, then the body.
+type ClaimWidgetInput struct {
+	ClaimTicket apitypes.CookieValue // cookie "claim_ticket"
+	PeerIP      string               // the TCP peer address, never a forwarded header
+}
+
+func (in *ClaimWidgetInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
+	_ = r
+	{
+		vs := r.Cookies["claim_ticket"]
+		if len(vs) == 1 {
+			in.ClaimTicket = apitypes.NewCookieValue(vs[0])
+		}
+	}
+	in.PeerIP = r.PeerIP
+}
+
+func (in *ClaimWidgetInput) BodyTarget() any { return nil }
+
+func (in *ClaimWidgetInput) Validate(errs *apitypes.Errors) {
+	_ = errs
+}
+
+func (in *ClaimWidgetInput) DestroySecrets() {}
+
+// ClaimWidgetOutput is one of the responses claimWidget declares. Errors are returned as the error value.
+type ClaimWidgetOutput interface {
+	apihost.Response
+	isClaimWidgetOutput()
+}
+
+// ClaimWidget204 is the 204 response.
+type ClaimWidget204 struct {
+	SetCookie []string // header Set-Cookie, one line per value
+}
+
+func (ClaimWidget204) StatusCode() int   { return 204 }
+func (ClaimWidget204) ResponseBody() any { return nil }
+func (o ClaimWidget204) ResponseHeaders() map[string]string {
+	h := map[string]string{}
+	return h
+}
+func (o ClaimWidget204) ResponseHeaderLists() map[string][]string {
+	return map[string][]string{
+		"Set-Cookie": o.SetCookie,
+	}
+}
+func (ClaimWidget204) isClaimWidgetOutput() {}
+
 // CreateWidgetInput is the decoded input of createWidget: path, query and header parameters, then the body.
 type CreateWidgetInput struct {
 	IdempotencyKey *string // header "Idempotency-Key"
@@ -602,6 +651,7 @@ func (UpdateWidget200) isUpdateWidgetOutput()              {}
 // Handlers is the tag's handler interface: one method per operation. A handler never sees
 // *http.Request, http.ResponseWriter or the raw body (ADR-0004 rule 5).
 type Handlers interface {
+	ClaimWidget(ctx context.Context, in ClaimWidgetInput) (ClaimWidgetOutput, error)
 	CreateWidget(ctx context.Context, in CreateWidgetInput) (CreateWidgetOutput, error)
 	DeleteWidget(ctx context.Context, in DeleteWidgetInput) (DeleteWidgetOutput, error)
 	ExportWidgets(ctx context.Context, in ExportWidgetsInput) (ExportWidgetsOutput, error)
@@ -617,6 +667,23 @@ type Handlers interface {
 // route constructors.
 func Bind(h Handlers) apihost.TagHandlers {
 	return apihost.NewTagHandlers("widgets",
+		apihost.NewRoute(apihost.RouteMeta{
+			OperationID: "claimWidget", Tag: "widgets", Method: "POST", Path: "/widgets/claim",
+			Permission: "widgets.write", Anonymous: "", Scope: "tenant", Stability: "stable", Deprecated: false, Sunset: "",
+			Class: "write", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
+			Cookies: []string{"claim_ticket"},
+		},
+			func() apihost.Input { return new(ClaimWidgetInput) },
+			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
+				out, err := h.ClaimWidget(ctx, *in.(*ClaimWidgetInput))
+				if err != nil {
+					return nil, err
+				}
+				if out == nil {
+					return nil, fmt.Errorf("ClaimWidget returned no output and no error")
+				}
+				return out, nil
+			}),
 		apihost.NewRoute(apihost.RouteMeta{
 			OperationID: "createWidget", Tag: "widgets", Method: "POST", Path: "/widgets",
 			Permission: "widgets.write", Anonymous: "", Scope: "tenant", Stability: "stable", Deprecated: false, Sunset: "",

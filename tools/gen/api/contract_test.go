@@ -252,3 +252,8 @@ func TestAnonymousOperationMustBePlatformScope(t *testing.T) {
 		mustFail(t, contract(t, append(addGadgets(""), edit{"modules/gadgets.yaml", at, anon})...), "anonymous operation has no tenant source", "x-activediq-scope: platform")
 	})
 }
+
+func TestSessionCookieIsNeverAParameter(t *testing.T) {
+	err := contract(t, edit{"modules/widgets.yaml", "- name: claim_ticket\n          in: cookie", "- name: __Host-adiq_session\n          in: cookie"})
+	mustFail(t, err, "session cookie", "authenticator")
+}

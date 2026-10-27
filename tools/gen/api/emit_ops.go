@@ -39,8 +39,8 @@ func (u *unit) emitHandlers() ([]byte, error) {
 		case op.Body != nil:
 			body, media = "BodyJSON", op.Body.Media
 		}
-		f.p(",\n\t\t%s.NewRoute(%s.RouteMeta{\n\t\t\tOperationID: %q, Tag: %q, Method: %q, Path: %q,\n\t\t\tPermission: %q, Anonymous: %q, Scope: %q, Stability: %q, Deprecated: %v, Sunset: %q,\n\t\t\tClass: %q, MaxBody: %d, Body: %s.%s, MediaType: %q, Secret: %v,\n\t\t},\n",
-			ah, ah, op.ID, op.Tag, op.Method, op.Path, op.Permission, op.Anonymous, op.Scope, op.Stability, op.Deprecated, op.Sunset, op.Class, op.MaxBody, ah, body, media, op.Secret)
+		f.p(",\n\t\t%s.NewRoute(%s.RouteMeta{\n\t\t\tOperationID: %q, Tag: %q, Method: %q, Path: %q,\n\t\t\tPermission: %q, Anonymous: %q, Scope: %q, Stability: %q, Deprecated: %v, Sunset: %q,\n\t\t\tClass: %q, MaxBody: %d, Body: %s.%s, MediaType: %q, Secret: %v,%s\n\t\t},\n",
+			ah, ah, op.ID, op.Tag, op.Method, op.Path, op.Permission, op.Anonymous, op.Scope, op.Stability, op.Deprecated, op.Sunset, op.Class, op.MaxBody, ah, body, media, op.Secret, cookiesField(op))
 		f.p("\t\t\tfunc() %s.Input { return new(%sInput) },\n\t\t\tfunc(ctx %s.Context, in %s.Input) (%s.Response, error) {\n\t\t\t\tout, err := h.%s(ctx, *in.(*%sInput))\n\t\t\t\tif err != nil {\n\t\t\t\t\treturn nil, err\n\t\t\t\t}\n\t\t\t\tif out == nil {\n\t\t\t\t\treturn nil, %s.Errorf(\"%s returned no output and no error\")\n\t\t\t\t}\n\t\t\t\treturn out, nil\n\t\t\t})",
 			ah, n, ctx, ah, ah, n, n, strings.TrimSuffix(f.use("fmt"), "."), n)
 	}
@@ -71,7 +71,9 @@ func (u *unit) emitOperation(f *gofile, op *Operation) {
 		seen[g] = "parameter " + pm.Name
 		pf := pfield{Go: g, P: pm}
 		sc := pm.Schema
-		if sc.Type == "array" && sc.Ref == "" {
+		if pm.In == "cookie" {
+			pf.Typ = f.apit("CookieValue") // a cookie can be a bearer handle: it redacts itself
+		} else if sc.Type == "array" && sc.Ref == "" {
 			pf.List, pf.Typ = true, f.goType(sc.Items)
 		} else {
 			pf.Typ = f.goType(sc)
@@ -89,6 +91,9 @@ func (u *unit) emitOperation(f *gofile, op *Operation) {
 			t = "*" + pf.Typ
 		}
 		f.p("\t%s %s // %s %q\n", pf.Go, t, pf.P.In, pf.P.Name)
+	}
+	if op.PeerIP {
+		f.p("\tPeerIP string // the TCP peer address, never a forwarded header\n")
 	}
 	switch {
 	case op.Body == nil:
@@ -109,6 +114,9 @@ func (u *unit) emitOperation(f *gofile, op *Operation) {
 	if op.Body != nil && op.Body.Binary {
 		f.p("\tin.Upload = r.Upload\n")
 	}
+	if op.PeerIP {
+		f.p("\tin.PeerIP = r.PeerIP\n")
+	}
 	f.p("}\n\n")
 
 	// BodyTarget.
@@ -121,6 +129,9 @@ func (u *unit) emitOperation(f *gofile, op *Operation) {
 	// Validate.
 	f.p("func (in *%sInput) Validate(errs *%s) {\n\t_ = errs\n", n, f.apit("Errors"))
 	for _, pf := range pfs {
+		if pf.P.In == "cookie" {
+			continue // a plain string with no bound; see parseParam
+		}
 		sc := pf.P.Schema
 		expr := "in." + pf.Go
 		at := strconv.Quote(pf.P.Name)
@@ -181,7 +192,11 @@ func (u *unit) emitOperation(f *gofile, op *Operation) {
 			f.p("\tBody %s\n", f.goType(r.Schema))
 		}
 		for _, h := range r.Headers {
-			f.p("\t%s string // header %s\n", goIdent(h.Name), h.Name)
+			if h.List {
+				f.p("\t%s []string // header %s, one line per value\n", goIdent(h.Name), h.Name)
+			} else {
+				f.p("\t%s string // header %s\n", goIdent(h.Name), h.Name)
+			}
 		}
 		f.p("}\n\nfunc (%s) StatusCode() int { return %d }\n", rn, r.Status)
 		switch {
@@ -195,9 +210,24 @@ func (u *unit) emitOperation(f *gofile, op *Operation) {
 		} else {
 			f.p("func (o %s) ResponseHeaders() map[string]string {\n\th := map[string]string{}\n", rn)
 			for _, h := range r.Headers {
-				f.p("\tif o.%s != \"\" {\n\t\th[%q] = o.%s\n\t}\n", goIdent(h.Name), h.Name, goIdent(h.Name))
+				if !h.List {
+					f.p("\tif o.%s != \"\" {\n\t\th[%q] = o.%s\n\t}\n", goIdent(h.Name), h.Name, goIdent(h.Name))
+				}
 			}
 			f.p("\treturn h\n}\n")
+			var lists []RespHeader
+			for _, h := range r.Headers {
+				if h.List {
+					lists = append(lists, h)
+				}
+			}
+			if len(lists) > 0 {
+				f.p("func (o %s) ResponseHeaderLists() map[string][]string {\n\treturn map[string][]string{\n", rn)
+				for _, h := range lists {
+					f.p("\t\t%q: o.%s,\n", h.Name, goIdent(h.Name))
+				}
+				f.p("\t}\n}\n")
+			}
 		}
 		f.p("func (%s) is%sOutput() {}\n\n", rn, n)
 	}
@@ -214,8 +244,14 @@ func (u *unit) emitBind(f *gofile, goField string, pm *Param, list bool) {
 		f.p("\t\tvs := []string{r.PathValue(%s)}\n", name)
 	case "query":
 		f.p("\t\tvs := r.Query[%s]\n", name)
+	case "cookie":
+		f.p("\t\tvs := r.Cookies[%s]\n", name)
 	default:
 		f.p("\t\tvs := r.Header.Values(%s)\n", name)
+	}
+	if pm.In == "cookie" {
+		f.p("\t\tif len(vs) == 1 {\n\t\t\tin.%s = %s(vs[0])\n\t\t}\n\t}\n", goField, f.apit("NewCookieValue"))
+		return
 	}
 	elem := pm.Schema
 	if list {
@@ -278,4 +314,28 @@ func (u *unit) emitBind(f *gofile, goField string, pm *Param, list bool) {
 		f.p("\t\t}\n")
 	}
 	f.p("\t}\n")
+}
+
+// cookiesField is the RouteMeta Cookies entry, empty for an operation with no cookie parameter.
+func cookiesField(op *Operation) string {
+	names := cookieNames(op)
+	if len(names) == 0 {
+		return ""
+	}
+	q := make([]string, len(names))
+	for i, n := range names {
+		q[i] = strconv.Quote(n)
+	}
+	return "\n\t\t\tCookies: []string{" + strings.Join(q, ", ") + "},"
+}
+
+// cookieNames are the cookie parameters an operation declares: apihost hands the route only these.
+func cookieNames(op *Operation) []string {
+	var out []string
+	for _, pm := range op.Params {
+		if pm.In == "cookie" {
+			out = append(out, pm.Name)
+		}
+	}
+	return out
 }
