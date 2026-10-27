@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"errors"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
@@ -30,11 +31,20 @@ type enrollBackend interface {
 	Rotate(ctx context.Context, leaf *x509.Certificate, csrDER []byte) (fleetsql.Enrolled, error)
 }
 
-// fleetEnrollService serves Fleet.Enroll. It embeds the unimplemented server, so Tunnel answers
-// UNIMPLEMENTED until the gateway's multiplexer is registered in its place.
+// fleetEnrollService serves Fleet.Enroll. It embeds the unimplemented server, and Tunnel when
+// tunnel dependencies are given; otherwise Tunnel answers UNIMPLEMENTED.
 type fleetEnrollService struct {
 	fleetv1.UnimplementedFleetServer
 	backend enrollBackend
+	tunnel  *TunnelDeps // nil: Tunnel answers UNIMPLEMENTED
+}
+
+// Tunnel serves Fleet.Tunnel through the multiplexer (T-0287).
+func (s *fleetEnrollService) Tunnel(st grpc.BidiStreamingServer[fleetv1.TunnelFrame, fleetv1.TunnelFrame]) error {
+	if s.tunnel == nil {
+		return s.UnimplementedFleetServer.Tunnel(st)
+	}
+	return ServeTunnel(*s.tunnel, st)
 }
 
 // The fixed answers. Nothing here repeats the request, the token or an internal error.

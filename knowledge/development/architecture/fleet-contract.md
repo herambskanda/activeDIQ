@@ -220,5 +220,15 @@ the generated stubs: the compose adapter that serves `Fleet.Tunnel` translates `
   metacharacters as `\uXXXX`) and reachable only through `ComponentReported(err)`, for a typed
   `component_reported` field. It is logged only as the structured `component_reported` attribute and is
   never in an error string or an audit summary. What the server sends is `FixedText(code)`.
-- **Not here.** Credit accounting and the numeric flow-control limits (TM-TB6-T7); the compose adapter
-  that serves `Fleet.Tunnel`, the audit `Reporter` and the connector `Bindings`; the `fleet/dial` wiring.
+- **Compose adapter (T-0287).** `internal/compose/server/fleettunnel.go`: `ServeTunnel(TunnelDeps, stream)`
+  translates `TunnelFrame` to `fleet.Frame`, resolves `Bindings.For(identity)` (only `connector` is bound,
+  server opens every `Connector` method), builds a server-role `Mux`, `Hub.Attach`es it and runs
+  `Mux.Run(stream.Context())` on the gateway's derived context, so `CloseComponent` or the re-check fails
+  the Mux and the Hub refuses the component. `fleetsql.TunnelReporter` implements `Reporter` over the audit
+  port: `fleet.tunnel.protocol_error`, outcome denied, reason and `violation` detail = the fixed violation,
+  target = the component GUID, no peer text. The peer's `CallClose` text stays a structured log attribute
+  (`component_reported`); the `Reporter` interface carries none, so no audit consumer exists for it yet.
+  Proof: `compose/fleetproof/tunnel_test.go` (real gateway: revoke, pending call outcome unknown, hub
+  refuses, sibling unaffected; violation audited).
+- **Not here.** Credit accounting and the numeric flow-control limits (TM-TB6-T7); building the gateway,
+  Hub and listener in `server.Run` (no fleet listener is composed yet); the `fleet/dial` wiring.
