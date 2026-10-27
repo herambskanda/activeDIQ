@@ -1,0 +1,10 @@
+{
+ "id": "S-R03",
+ "class": "replayed",
+ "cites": [
+  "SAML-13"
+ ],
+ "build": "unsolicited_no_inresponseto",
+ "expect": "refuse",
+ "reason": "saml.inresponseto"
+}

@@ -1,0 +1,11 @@
+{
+ "id": "S-R01",
+ "class": "replayed",
+ "cites": [
+  "SAML-16",
+  "SSO-1"
+ ],
+ "build": "same_response_twice",
+ "expect": "refuse",
+ "reason": "saml.replay"
+}

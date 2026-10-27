@@ -1,0 +1,11 @@
+{
+ "id": "S-F06b",
+ "class": "forged",
+ "cites": [
+  "SAML-2",
+  "SAML-8"
+ ],
+ "build": "comment_in_nameid",
+ "expect": "refuse",
+ "reason": "saml.xml"
+}

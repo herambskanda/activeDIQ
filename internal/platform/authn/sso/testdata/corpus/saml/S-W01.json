@@ -1,0 +1,11 @@
+{
+ "id": "S-W01",
+ "class": "wrapped",
+ "cites": [
+  "SAML-3",
+  "SAML-6"
+ ],
+ "build": "wrap_sibling_evil_first",
+ "expect": "refuse",
+ "reason": "saml.structure"
+}

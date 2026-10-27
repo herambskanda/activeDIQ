@@ -1,0 +1,10 @@
+{
+ "id": "S-M10",
+ "class": "misaddressed",
+ "cites": [
+  "SAML-19"
+ ],
+ "build": "logout_request",
+ "expect": "refuse",
+ "reason": "saml.logout"
+}

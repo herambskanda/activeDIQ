@@ -1,0 +1,10 @@
+{
+ "id": "S-D01a",
+ "class": "malformed",
+ "cites": [
+  "SAML-1"
+ ],
+ "build": "body_oversize",
+ "expect": "refuse",
+ "reason": "saml.binding"
+}
