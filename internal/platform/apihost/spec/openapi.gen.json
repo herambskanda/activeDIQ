@@ -1,6 +1,17 @@
 {
   "components": {
     "parameters": {
+      "ConnectionId": {
+        "description": "The Entra connection.",
+        "in": "path",
+        "name": "connectionId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "x-activediq-tag": "connections"
+      },
       "IdempotencyKey": {
         "description": "Makes a mutating bulk call safe to retry. The same key with a different body is refused.",
         "in": "header",
@@ -802,6 +813,37 @@
         "writeOnly": true,
         "x-activediq-secret": true
       },
+      "TakeoverAttestationMaxAge": {
+        "additionalProperties": false,
+        "description": "The new attestation_max_age.",
+        "properties": {
+          "maxAgeSeconds": {
+            "maximum": 7776000,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "maxAgeSeconds"
+        ],
+        "type": "object",
+        "x-activediq-tag": "connections"
+      },
+      "TakeoverAttestationStart": {
+        "additionalProperties": false,
+        "description": "Where the Global Administrator signs in.",
+        "properties": {
+          "authorizeUrl": {
+            "maxLength": 2048,
+            "type": "string"
+          }
+        },
+        "required": [
+          "authorizeUrl"
+        ],
+        "type": "object",
+        "x-activediq-tag": "connections"
+      },
       "TotpCodeRequest": {
         "additionalProperties": false,
         "description": "A TOTP code from the account's authenticator.",
@@ -1315,6 +1357,191 @@
         "x-permission": "anonymous"
       }
     },
+    "/connections/takeover-attestation/callback": {
+      "get": {
+        "description": "The redirect URI of the attestation sign-in. No session or token is read: the single-use state issued by the start is the credential, and the tenant is the one the state names, used only to look the state up. A bad, expired or replayed state, a refused code, a token of another tenant and a failed read all answer the same 303 to the failed page, so the caller learns nothing about the cause (the cause is in the audit). Success answers 303 to the recorded page. The response carries no token and no directory value.",
+        "operationId": "completeTakeoverAttestation",
+        "parameters": [
+          {
+            "description": "The state issued by the start.",
+            "in": "query",
+            "name": "state",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._-]+$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The authorization code. Absent when the IdP reports an error.",
+            "in": "query",
+            "name": "code",
+            "required": false,
+            "schema": {
+              "maxLength": 4096,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The IdP error code, when the administrator declined or the IdP refused. Never echoed.",
+            "in": "query",
+            "name": "error",
+            "required": false,
+            "schema": {
+              "maxLength": 256,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "303": {
+            "description": "Redirect to the console page that shows the outcome",
+            "headers": {
+              "Location": {
+                "description": "/connections?takeover-attestation=recorded or /connections?takeover-attestation=failed",
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "security": [],
+        "summary": "Return from the IdP sign-in of a takeover-protection attestation (AN-11)",
+        "tags": [
+          "connections"
+        ],
+        "x-activediq-anonymous": "AN-11",
+        "x-activediq-limits": {
+          "class": "auth",
+          "maxBodyBytes": 1024
+        },
+        "x-activediq-peer-ip": true,
+        "x-activediq-scope": "platform",
+        "x-activediq-stability": "preview",
+        "x-permission": "anonymous"
+      }
+    },
+    "/connections/{connectionId}/takeover-attestation": {
+      "post": {
+        "description": "Starts the TM-D17 attestation of an Entra connection. The answer is the IdP sign-in URL (authorization code with PKCE, one delegated read-only scope, no offline access) at which a Global Administrator of that tenant signs in. The server then makes the one read of the tenant's sync features itself and discards the token. Needs a fresh step-up.",
+        "operationId": "startTakeoverAttestation",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConnectionId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TakeoverAttestationStart"
+                }
+              }
+            },
+            "description": "The sign-in URL for the Global Administrator"
+          },
+          "401": {
+            "$ref": "#/components/responses/StepUpRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Start a takeover-protection attestation",
+        "tags": [
+          "connections"
+        ],
+        "x-activediq-limits": {
+          "class": "write",
+          "maxBodyBytes": 1024
+        },
+        "x-activediq-stability": "preview",
+        "x-permission": "connections.takeover.attest"
+      }
+    },
+    "/connections/{connectionId}/takeover-attestation/max-age": {
+      "put": {
+        "description": "Sets attestation_max_age. A longer age widens the window in which a missed takeover-flag flip still counts as attested, so it needs the same permission and a fresh step-up as starting an attestation. The value is at most 90 days (7776000 seconds).",
+        "operationId": "setTakeoverAttestationMaxAge",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConnectionId"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TakeoverAttestationMaxAge"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "The age is set"
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/StepUpRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Set how long an attestation stays valid",
+        "tags": [
+          "connections"
+        ],
+        "x-activediq-limits": {
+          "class": "write",
+          "maxBodyBytes": 1024
+        },
+        "x-activediq-stability": "preview",
+        "x-permission": "connections.takeover.attest"
+      }
+    },
     "/health/live": {
       "get": {
         "description": "Answers 200 while the process can serve a request. Status only; it never reports a version, a configuration value or a dependency.",
@@ -1406,6 +1633,10 @@
     }
   ],
   "tags": [
+    {
+      "description": "Directory connections. Attestation of an Entra connection's takeover protection (TM-D17), its maximum age, and the IdP callback.",
+      "name": "connections"
+    },
     {
       "description": "Sign-in, second factor and sign-out for the console. A first factor yields a pending sign-in; only the second factor creates a session.",
       "name": "platform.authn"

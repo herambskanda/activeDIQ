@@ -84,6 +84,12 @@
       "operation": "verifyTotpSignIn",
       "reason": "The only way a TOTP pending sign-in becomes a session (TM §7.6 rule 1).",
       "ref": "AN-10"
+    },
+    {
+      "gate": "the single-use state issued by the start (random, only its hash stored, ten minutes, consumed on first use) plus PKCE; the tenant is read from the state and used only to look it up",
+      "operation": "completeTakeoverAttestation",
+      "reason": "The browser's return from the Global Administrator's sign-in at the IdP (TM-D17). The console session cookie is SameSite=Strict and is not sent on this cross-site redirect.",
+      "ref": "AN-11"
     }
   ],
   "authenticated": [
@@ -144,5 +150,11 @@
     }
   ],
   "secretResponses": [],
-  "stepUp": []
+  "stepUp": [
+    {
+      "permission": "connections.takeover.attest",
+      "reason": "Starting an attestation, and changing how long it stays valid, decide whether hard and soft match blocking count as attested (TM §7.4).",
+      "ref": "TM-D17"
+    }
+  ]
 }

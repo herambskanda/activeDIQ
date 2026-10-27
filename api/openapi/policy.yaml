@@ -85,6 +85,10 @@ anonymous:
     gate: the pending-sign-in cookie plus the enrolled TOTP factor
     reason: The only way a TOTP pending sign-in becomes a session (TM §7.6 rule 1).
     ref: AN-10
+  - operation: completeTakeoverAttestation
+    gate: the single-use state issued by the start (random, only its hash stored, ten minutes, consumed on first use) plus PKCE; the tenant is read from the state and used only to look it up
+    reason: The browser's return from the Global Administrator's sign-in at the IdP (TM-D17). The console session cookie is SameSite=Strict and is not sent on this cross-site redirect.
+    ref: AN-11
 authenticated:
   - operation: signOut
     reason: Ends the caller's own session; touches no other principal.
@@ -122,5 +126,8 @@ nonApiRoutes:
     reason: SAML ACS form post from the IdP; not JSON.
     ref: AN-3
 secretResponses: []
-stepUp: []
+stepUp:
+  - permission: connections.takeover.attest
+    reason: Starting an attestation, and changing how long it stays valid, decide whether hard and soft match blocking count as attested (TM §7.4).
+    ref: TM-D17
 largeBodies: []

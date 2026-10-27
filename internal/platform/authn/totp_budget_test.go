@@ -470,3 +470,171 @@ func Test_totp_refund_only_own_attempt(t *testing.T) {
 		}
 	})
 }
+
+func Test_totp_active_enrolment_cap(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		var ids []string
+		for i := 0; i < MaxActiveTOTPPerAccount; i++ {
+			id, _ := e.enrol(t, e.a)
+			ids = append(ids, id)
+		}
+		// One more is created pending, but its activation is refused and it stays pending.
+		id, seed := e.pending(t, e.a)
+		err := e.tx(t, e.a, func(ctx context.Context, tx store.Tx) error {
+			return e.svc.Activate(ctx, tx, e.a, id, hotp(seed, stepAt(e.now)))
+		})
+		if !errors.Is(err, ErrActiveCap) {
+			t.Fatalf("activate over the cap = %v, want ErrActiveCap", err)
+		}
+		if got := e.info(t, id).State; got != StatePending {
+			t.Fatalf("state = %s, want pending", got)
+		}
+		// The database refuses it even around the service.
+		if _, err := e.exec(t, e.a, `UPDATE public.authn_authenticator_enrollments SET state = 'active' WHERE id = $1::uuid`, id); store.SQLState(err) != "AD409" {
+			t.Fatalf("direct activation = %v, want AD409", err)
+		}
+		// Revoking one frees a slot.
+		if _, err := e.exec(t, e.a, `UPDATE public.authn_authenticator_enrollments SET state = 'revoked' WHERE id = $1::uuid`, ids[0]); err != nil {
+			t.Fatal(err)
+		}
+		e.now = e.now.Add(time.Minute) // a fresh step: the seed's first code was not spent on this row
+		if err := e.tx(t, e.a, func(ctx context.Context, tx store.Tx) error {
+			return e.svc.Activate(ctx, tx, e.a, id, hotp(seed, stepAt(e.now)))
+		}); err != nil {
+			t.Fatalf("activate after revoke: %v", err)
+		}
+	})
+}
+
+// Test_totp_active_cap_concurrent_activation: two activations racing on an account with two active
+// enrolments never leave more than the cap active, whatever isolation level the connection defaults to.
+// READ COMMITTED: exactly one wins and the other gets AD409. REPEATABLE READ: both are refused.
+func Test_totp_active_cap_concurrent_activation(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		for _, level := range []string{"read committed", "repeatable read", "serializable"} {
+			t.Run(level, func(t *testing.T) {
+				e := setup(t, s)
+				for i := 0; i < MaxActiveTOTPPerAccount-1; i++ {
+					e.enrol(t, e.a)
+				}
+				p1, _ := e.pending(t, e.a)
+				p2, _ := e.pending(t, e.a)
+				db, err := store.Open(context.Background(), store.Config{DSN: e.d.AppDSN() + " default_transaction_isolation='" + level + "'"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(db.Close)
+
+				var ready, wg sync.WaitGroup
+				ready.Add(2)
+				release := make(chan struct{})
+				errs := make([]error, 2)
+				for i, id := range []string{p1, p2} {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						errs[i] = db.WithTenant(context.Background(), e.a, func(ctx context.Context, tx store.Tx) error {
+							var n int
+							// Take the transaction's snapshot before either side activates.
+							if err := tx.QueryRow(ctx, `SELECT count(*) FROM public.authn_authenticator_enrollments`).Scan(&n); err != nil {
+								return err
+							}
+							ready.Done()
+							<-release
+							_, err := tx.Exec(ctx, `UPDATE public.authn_authenticator_enrollments SET state = 'active' WHERE id = $1::uuid`, id)
+							return err
+						})
+					}()
+				}
+				ready.Wait()
+				close(release)
+				wg.Wait()
+
+				won := 0
+				for _, err := range errs {
+					switch {
+					case err == nil:
+						won++
+					case store.SQLState(err) != "AD409":
+						t.Errorf("loser error = %v, want AD409", err)
+					}
+				}
+				want := 1
+				if level != "read committed" {
+					want = 0
+				}
+				if won != want {
+					t.Errorf("%s: %d activations succeeded, want %d (errs %v)", level, won, want, errs)
+				}
+				var active int
+				if err := e.tx(t, e.a, func(ctx context.Context, tx store.Tx) error {
+					return tx.QueryRow(ctx, `SELECT count(*) FROM public.authn_authenticator_enrollments WHERE method = 'totp' AND state = 'active' AND account_id = $1::uuid`, acct).Scan(&active)
+				}); err != nil {
+					t.Fatal(err)
+				}
+				if active > MaxActiveTOTPPerAccount {
+					t.Errorf("%d active, cap is %d", active, MaxActiveTOTPPerAccount)
+				}
+			})
+		}
+	})
+}
+
+// A serializable transaction that took its snapshot before a read-committed activation committed must
+// not be able to push the account over the cap (SSI does not track the read-committed writer).
+func Test_totp_active_cap_mixed_isolation(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		for i := 0; i < MaxActiveTOTPPerAccount-1; i++ {
+			e.enrol(t, e.a)
+		}
+		p1, _ := e.pending(t, e.a)
+		p2, _ := e.pending(t, e.a)
+		ser, err := store.Open(context.Background(), store.Config{DSN: e.d.AppDSN() + " default_transaction_isolation='serializable'"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(ser.Close)
+
+		snapped := make(chan struct{})
+		rcDone := make(chan struct{})
+		var serErr error
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			serErr = ser.WithTenant(context.Background(), e.a, func(ctx context.Context, tx store.Tx) error {
+				var n int
+				if err := tx.QueryRow(ctx, `SELECT count(*) FROM public.authn_authenticator_enrollments`).Scan(&n); err != nil {
+					return err
+				}
+				close(snapped)
+				<-rcDone
+				_, err := tx.Exec(ctx, `UPDATE public.authn_authenticator_enrollments SET state = 'active' WHERE id = $1::uuid`, p2)
+				return err
+			})
+		}()
+		<-snapped
+		rcErr := e.tx(t, e.a, func(ctx context.Context, tx store.Tx) error {
+			_, err := tx.Exec(ctx, `UPDATE public.authn_authenticator_enrollments SET state = 'active' WHERE id = $1::uuid`, p1)
+			return err
+		})
+		close(rcDone)
+		<-done
+		if rcErr != nil {
+			t.Errorf("read-committed activation: %v", rcErr)
+		}
+		if store.SQLState(serErr) != "AD409" {
+			t.Errorf("serializable activation error = %v, want AD409", serErr)
+		}
+		var active int
+		if err := e.tx(t, e.a, func(ctx context.Context, tx store.Tx) error {
+			return tx.QueryRow(ctx, `SELECT count(*) FROM public.authn_authenticator_enrollments WHERE method = 'totp' AND state = 'active' AND account_id = $1::uuid`, acct).Scan(&active)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if active > MaxActiveTOTPPerAccount {
+			t.Errorf("%d active, cap is %d", active, MaxActiveTOTPPerAccount)
+		}
+	})
+}

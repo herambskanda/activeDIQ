@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/store"
+	"github.com/skenzeriq/activediq/internal/platform/tablekind"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
@@ -239,4 +240,27 @@ func (f *Facts) RecordLiveFacts(ctx context.Context, tid tenant.ID, ref Ref, tie
 		_, err := Writer{}.RecordLiveFacts(ctx, tx, ref, tier0, readAt)
 		return err
 	})
+}
+
+var _ = tablekind.Declare(tablekind.Table{Name: "public.inventory_tier0_revisions", Entity: "DM-20", Kind: tablekind.Directory})
+
+// Tier0Revision implements client.RevisionSource: a per-tenant counter that the database bumps in the
+// same transaction as every change to the designations or to the tier0 facts of a correlation
+// (migration 0036). It never decreases; a tenant whose tier0 set was never written reads 0.
+func (r *Reader) Tier0Revision(ctx context.Context, tid tenant.ID) (uint64, error) {
+	var rev int64
+	err := r.with(ctx, tid, func(ctx context.Context, tx store.Tx) error {
+		err := tx.QueryRow(ctx, `SELECT revision FROM public.inventory_tier0_revisions WHERE tenant_id = $1::uuid`, tid.String()).Scan(&rev)
+		if store.IsNoRows(err) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("inventory: tier0 revision: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return uint64(rev), nil
 }

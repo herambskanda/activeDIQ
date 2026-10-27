@@ -70,10 +70,6 @@ func Run(ctx context.Context, cfg config.Config) error {
 	if err != nil {
 		return fmt.Errorf("server: rate limiter: %w", err)
 	}
-	api, err := buildAPI(cfg, lim)
-	if err != nil {
-		return err
-	}
 	// The operation runner, its audit chainer and live facts. The registry is empty until modules
 	// contribute Actions; boot still asserts the minter and the wiring.
 	reg, err := operation.NewRegistry()
@@ -98,6 +94,16 @@ func Run(ctx context.Context, cfg config.Config) error {
 		return err
 	}
 	ok, err := buildOperation(operation.HoldsMinter, db, dirClient, authzr, reg)
+	if err != nil {
+		return err
+	}
+	// The TM-D17 attestation routes, when the install is configured for them. Built after the
+	// authorizer, which they share with the operation runner.
+	tags, err := buildAttestation(cfg, db, ok.Chainer, authzr)
+	if err != nil {
+		return err
+	}
+	api, err := buildAPI(cfg, lim, tags...)
 	if err != nil {
 		return err
 	}
@@ -166,23 +172,23 @@ func apiIdentity(cfg config.Config, now time.Time) (apitls.Identity, error) {
 }
 
 // buildAPI makes the API handler: apihost.Build over the embedded contract and the embedded
-// policy.yaml, with the body budget from configuration. No module contributes routes yet, so every
-// tag is unmounted and answers a problem.
-func buildAPI(cfg config.Config, lim apihost.Limiter) (http.Handler, error) {
+// policy.yaml, with the body budget from configuration. A tag no module contributes is unmounted and
+// answers a problem.
+func buildAPI(cfg config.Config, lim apihost.Limiter, tags ...apihost.TagHandlers) (http.Handler, error) {
 	policy, err := apihost.LoadPolicy()
 	if err != nil {
 		return nil, fmt.Errorf("server: api policy: %w", err)
 	}
-	return buildAPIWith(cfg, policy, lim)
+	return buildAPIWith(cfg, policy, lim, tags...)
 }
 
 // buildAPIWith is buildAPI over a given policy; tests use it to prove the router follows policy.yaml.
-func buildAPIWith(cfg config.Config, policy apihost.Policy, lim apihost.Limiter) (http.Handler, error) {
+func buildAPIWith(cfg config.Config, policy apihost.Policy, lim apihost.Limiter, tags ...apihost.TagHandlers) (http.Handler, error) {
 	doc, err := apihost.LoadDocument()
 	if err != nil {
 		return nil, fmt.Errorf("server: api contract: %w", err)
 	}
-	s, err := apihost.Build(doc, nil, policy, apiCatalogue, failClosedPorts(lim), apihost.WithBodyBudget(cfg.APIBodyBudget), apihost.WithTrustedProxies(cfg.TrustedProxies))
+	s, err := apihost.Build(doc, tags, policy, apiCatalogue, failClosedPorts(lim), apihost.WithBodyBudget(cfg.APIBodyBudget), apihost.WithTrustedProxies(cfg.TrustedProxies))
 	if err != nil {
 		return nil, fmt.Errorf("server: build api: %w", err)
 	}

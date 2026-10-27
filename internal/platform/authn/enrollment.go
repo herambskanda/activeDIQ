@@ -44,6 +44,9 @@ var (
 	// code is refused until PausedUntil. The user-facing answer is the same as ErrCodeRejected; the
 	// caller may use this to steer a technician to another factor. The code is not evaluated.
 	ErrFactorPaused = errors.New("authn: factor paused")
+	// ErrActiveCap: the account already has MaxActiveTOTPPerAccount active console TOTP enrolments, so
+	// another cannot be activated until one is revoked. The database enforces it (migration 0035).
+	ErrActiveCap = errors.New("authn: account is at its active TOTP enrolment limit")
 )
 
 // The failure budget (ENH-09 §5, DM-37).
@@ -56,6 +59,9 @@ const (
 	// expire it sooner.
 	PendingTTL         = 10 * time.Minute
 	MaxConfirmAttempts = 5
+	// MaxActiveTOTPPerAccount bounds sign-in guess rate: every active enrolment of an account is tried
+	// per attempt. Mirrors the constant in migrations/0035; a test pins the two together.
+	MaxActiveTOTPPerAccount = 3
 	// recordLockWait bounds the charging transaction's wait for the enrollment row, so a caller
 	// holding that row never hangs an attempt.
 	recordLockWait = 3 * time.Second
@@ -308,6 +314,9 @@ func (s *Service) check(ctx context.Context, tx store.Tx, tid tenant.ID, id, cod
 		  AND (paused_until IS NULL OR paused_until <= $3)
 		  AND (state <> 'pending' OR (expires_at > $3 AND confirm_attempts <= $5))`,
 		id, step, now, string(want), MaxConfirmAttempts, attempt)
+	if store.SQLState(err) == "AD409" {
+		return ErrActiveCap
+	}
 	if err != nil {
 		return fmt.Errorf("authn: spend step: %w", err)
 	}

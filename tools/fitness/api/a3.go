@@ -9,7 +9,7 @@ import (
 var (
 	anIDRe     = regexp.MustCompile(`^AN-[0-9]+$`)
 	permIDRe   = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.:-]*$`)
-	anOpAllows = map[string]bool{"AN-1": true, "AN-4": true, "AN-5": true, "AN-7": true, "AN-8": true, "AN-10": true}
+	anOpAllows = map[string]bool{"AN-1": true, "AN-4": true, "AN-5": true, "AN-7": true, "AN-8": true, "AN-10": true, "AN-11": true}
 )
 
 // checkA3 is the document half of ADR-0004 A3: every operation carries exactly one x-permission;
@@ -60,7 +60,7 @@ func checkA3(t *tree) []Violation {
 			if an == "" {
 				add(o.where(), "%s is anonymous but has no x-activediq-anonymous naming its allow-list row (ADR-0004 rule 3, A3)", o.label())
 			} else if !anIDRe.MatchString(an) || !anOpAllows[an] {
-				add(o.where(), "%s: x-activediq-anonymous %q is not an operation row of the allow-list (AN-1, AN-4, AN-5, AN-7, AN-8, AN-10) (ADR-0004 rule 3, A3)", o.label(), an)
+				add(o.where(), "%s: x-activediq-anonymous %q is not an operation row of the allow-list (AN-1, AN-4, AN-5, AN-7, AN-8, AN-10, AN-11) (ADR-0004 rule 3, A3)", o.label(), an)
 			} else if len(t.anRows) > 0 && !t.anRows[an] {
 				add(o.where(), "%s: x-activediq-anonymous %s is not a row of the threat model's anonymous allow-list (ADR-0004 rule 9, A3)", o.label(), an)
 			}
