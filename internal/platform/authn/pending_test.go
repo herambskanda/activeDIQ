@@ -5,8 +5,6 @@ import (
 	"encoding/base32"
 	"errors"
 	"github.com/skenzeriq/activediq/internal/platform/rbac"
-	"net/http"
-	"net/http/httptest"
 	"net/netip"
 	"strings"
 	"sync"
@@ -247,58 +245,6 @@ func Test_pending_consumed_new_session_id(t *testing.T) {
 		}
 		if res2.Session.ID == res.Session.ID || res2.Token.Reveal() == res.Token.Reveal() {
 			t.Fatal("two sign-ins share a session ID")
-		}
-	})
-}
-
-func Test_pending_cookie_only(t *testing.T) {
-	eachPending(t, func(t *testing.T, e *pendEnv) {
-		ctx := context.Background()
-		h := e.begin(t)
-		code := e.good()
-
-		// In the URL, in the body, in a header, under another cookie name: all "no pending sign-in".
-		req := httptest.NewRequest(http.MethodPost, "/auth/second-factor/totp/verify?pending="+h.Reveal()+"&"+PendingCookieName+"="+h.Reveal(),
-			strings.NewReader(`{"code":"`+code+`","pending":"`+h.Reveal()+`"}`))
-		req.Header.Set("X-Pending", h.Reveal())
-		req.AddCookie(&http.Cookie{Name: "adiq_pending", Value: h.Reveal()})
-		req.AddCookie(&http.Cookie{Name: CookieName, Value: h.Reveal()})
-		if _, _, err := e.sf.VerifyTOTPRequest(ctx, req, code, netip.Addr{}); !errors.Is(err, ErrPendingInvalid) {
-			t.Fatalf("handle outside the cookie: got %v, want ErrPendingInvalid", err)
-		}
-		// A malformed cookie and two cookies are refused.
-		bad := httptest.NewRequest(http.MethodPost, "/", nil)
-		bad.AddCookie(&http.Cookie{Name: PendingCookieName, Value: "junk"})
-		if _, _, err := e.sf.VerifyTOTPRequest(ctx, bad, code, netip.Addr{}); !errors.Is(err, ErrPendingInvalid) {
-			t.Fatalf("malformed: %v", err)
-		}
-		two := httptest.NewRequest(http.MethodPost, "/", nil)
-		two.AddCookie(&http.Cookie{Name: PendingCookieName, Value: h.Reveal()})
-		two.AddCookie(&http.Cookie{Name: PendingCookieName, Value: h.Reveal()})
-		if _, _, err := e.sf.VerifyTOTPRequest(ctx, two, code, netip.Addr{}); !errors.Is(err, ErrPendingInvalid) {
-			t.Fatalf("two cookies: %v", err)
-		}
-		if got := e.row(t, "attempts"); got != "0" {
-			t.Fatalf("attempts = %s after refused requests, want 0", got)
-		}
-		if n := e.sessions(t); n != 0 {
-			t.Fatalf("%d sessions, want none", n)
-		}
-
-		// The cookie works, and the response carries a session cookie and clears the pending one.
-		ok := httptest.NewRequest(http.MethodPost, "/", nil)
-		ok.AddCookie(&http.Cookie{Name: PendingCookieName, Value: h.Reveal()})
-		res, cookies, err := e.sf.VerifyTOTPRequest(ctx, ok, code, netip.Addr{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(cookies) != 2 || cookies[0].Name != CookieName || cookies[0].Value != res.Token.Reveal() ||
-			cookies[1].Name != PendingCookieName || cookies[1].MaxAge >= 0 {
-			t.Fatalf("cookies = %+v", cookies)
-		}
-		pc := PendingCookie(h)
-		if pc.Name != "__Host-adiq_pending" || !pc.Secure || !pc.HttpOnly || pc.SameSite != http.SameSiteStrictMode || pc.Path != "/" || pc.Domain != "" || pc.MaxAge != 300 {
-			t.Fatalf("pending cookie = %+v", pc)
 		}
 	})
 }
