@@ -174,7 +174,8 @@ func TestPutRefusesBadInput(t *testing.T) {
 			t.Errorf("%+v = %v", c, err)
 		}
 	}
-	if _, err := p.Erase(context.Background(), step.Step{}, id, subj); !errors.Is(err, step.ErrZeroStep) {
+	var zero step.Step
+	if _, err := p.Erase(context.Background(), zero, id, subj); !errors.Is(err, step.ErrZeroStep) {
 		t.Errorf("zero step erase = %v", err)
 	}
 }
