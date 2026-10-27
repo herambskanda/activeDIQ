@@ -885,6 +885,8 @@ func (m *Mux) open(ctx context.Context, method string, unary bool) (*call, error
 		// The tunnel ended while queuing: fail() has already ended this call as outcome unknown.
 		return nil, m.finalError(c)
 	}
-	context.AfterFunc(c.ctx, func() { m.cancelCall(c) })
+	// Hook the caller's own context, not c.ctx: retireLocked cancels c.ctx itself, which would spend
+	// the hook at retirement. A live call is cancelled; an ended one has its unread messages released.
+	context.AfterFunc(ctx, func() { m.cancelCall(c); m.release(c) })
 	return c, nil
 }

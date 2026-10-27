@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"runtime"
@@ -1349,5 +1350,39 @@ func TestAbandonedClosedCallReturnsItsUnreadMessages(t *testing.T) {
 	}
 	if f.CallID != 0 || f.Body != fleet.BodyCredit || f.Messages < 4 { // the healthy call's own message may ride along
 		t.Fatalf("got %+v, want tunnel credit 4 (1 read, 3 released)", f)
+	}
+}
+
+// Cancelling the caller's context is a documented way to release a stream. After the peer closed
+// it, the unread buffered messages must go back to the tunnel window, not leak.
+func TestCancellingTheContextOfAClosedStreamReturnsItsUnreadMessages(t *testing.T) {
+	for _, read := range []int{0, 1} {
+		t.Run(fmt.Sprintf("read%d", read), func(t *testing.T) {
+			r := newRig(t, smallWindows(4, 8))
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			cs := r.watch(t, ctx, 1)
+			r.data(1, 4)
+			r.send(fleet.Frame{CallID: 1, Body: fleet.BodyClose})
+			r.healthy(t, 2) // the close was processed
+			for i := 0; i < read; i++ {
+				if err := cs.RecvMsg(new(wrapperspb.StringValue)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cancel()
+			total := 0
+			deadline := time.After(3 * time.Second)
+			for total < 4 {
+				select {
+				case f := <-r.peer.in:
+					if f.CallID == 0 && f.Body == fleet.BodyCredit {
+						total += int(f.Messages)
+					}
+				case <-deadline:
+					t.Fatalf("tunnel credit returned %d of 4 after cancel", total)
+				}
+			}
+		})
 	}
 }
