@@ -1,23 +1,25 @@
 ---
 title: "platform/rbac: RBAC persistence and the operation Authorizer"
 date: 2026-10-26
-updated: 2026-10-26
+updated: 2026-10-27
 status: draft
 owner: backend-engineer
-ticket: T-0324
+ticket: T-0367
 ---
 
 # platform/rbac (DM-34, DM-35, DM-36; threat model §7.7)
 
-Code: `internal/platform/rbac/`; migration `0018_authz_rbac.sql`.
+Code: `internal/platform/rbac/`, `internal/modules/delegation/`; migrations `0018_authz_rbac.sql`, `0035_authz_subjects.sql`.
 
 - **Tables** (tenant, RLS): `authz_roles`, `authz_role_permissions`, `authz_assignments`,
-  `authz_assignment_roots`. Subjects are console accounts only; group, automation and token subjects
-  grant nothing until they have persistence.
+  `authz_assignment_roots`. Subjects are an account, a directory group
+  (connection + objectGUID) or an automation policy (opaque ID owned by lifecycle); `subject_kind` + a shape
+  check in migration 0035. A token is never a subject: it narrows its owner (DM-32).
 - **`Authorizer`** implements `operation.Authorizer` over `authz.Evaluator`. It loads the requester's
   current assignments (own short read, so it works inside the runner's tenant transaction), builds an
   `authz.Target` from the live `authority.Facts` (target, parent chain, connection as chain top) and
-  lets the evaluator decide. A chain with a token or automation in it is refused.
+  lets the evaluator decide. The requester must be a human; the chain may carry at most one `APIToken` and
+  one `Automation` hop (anything else is denied).
 - **Tier-0 scope (T-0173):** a target of class `tier0_scope` (GUID = connection ID) is covered only by
   a `tier0_scope` root for that connection. OU, naming-context and connection-wide roots never cover it;
   a `tier0_scope` root covers nothing else; the Tier-0 scope permission is refused on any other class.
@@ -37,3 +39,34 @@ Code: `internal/platform/rbac/`; migration `0018_authz_rbac.sql`.
   source lands (T-0433): the gRPC adapter and its `client.TunnelSource` (connection → active component
   binding → fleet-hub tunnel, tenant-checked) are wired in `compose/server`.
 - **Wired in** `compose/server`: `rbacAuthorizer(db)`, `directoryFacts(reads)`.
+
+## Subjects, tokens and store targets (T-0367)
+
+- **Group subjects (DM-36.I2):** `authz.Membership` (port, `authz/membership.go`) resolves an account's groups,
+  returning only eligible ones (security groups, no weak DACL, active links); `WithMembership` enables it.
+  Group assignments merge with direct ones in `Authorizer.effective`. An incomplete or failing resolution
+  drops the group grants (incomplete) or fails the decision (error): never a guess. A derived membership
+  carries `Via` and is gated by the hybrid rules like any correlation-derived grant.
+- **Control-plane authority is personal (DM-36.I4):** tenant-owner and `authz.NeverCrosses` permissions are
+  stripped from group and automation assignments at read, refused by `Grants`, and refused by the trigger
+  `authz_control_plane_guard` (0035). A Go test keeps the trigger prefixes equal to `NeverCrosses`.
+- **Tokens (DM-32):** `WithTokens(TokenSource)` supplies the constraint (permission subset, scope, expiry);
+  effective authority is the owner's ∩ the token's. No `TokenSource` → a token in the chain is denied.
+  **Automation (DM-60.I2):** a chain with an automation hop must also pass the policy's own assignments.
+- **Store targets:** a target with an empty connection is a row in activeDIQ's own store. It is covered only by
+  a `tenant` root of the same tenant (`root_kind='tenant'`, id = tenant id, no excludes). Directory and
+  Tier-0 roots never cover it, and a `tenant` root never covers a directory object.
+- **Tenant-owner** holds every permission over its scope (`authz.Role.has`, DM-34.I1).
+- **`Grants`** (`grants.go`) writes `CreateRole`, `SetRolePermissions`, `Grant`, `Revoke` inside the runner's
+  transaction. No-escalation (DM-36.I1) is `holdsOver`: the grantor's live effective assignments, resolved
+  per scope root, must hold every privilege over the whole scope (a personal tenant-owner is exempt).
+  Correlation-derived grants never count. Built-in roles are read-only; tenant-owner is granted only by
+  `OwnerAssignments`. Migration 0035 grants `DELETE` on `authz_role_permissions` (removal only narrows).
+- **`modules/delegation`** contributes four Actions (store targets, class `role`/`assignment`, step-up,
+  audited with a before/after diff): `delegation.role.create`, `.role.update`, `.assignment.grant`,
+  `.assignment.revoke`. Their permissions are control-plane. A nil `platform.Deps.Access` makes every
+  Plan/Apply refuse.
+
+**Not yet wired** (tickets filed): an `authz.Membership` implementation over inventory; the DM-32 token store
+(`TokenSource`); compose passing `Deps.Access` / `WithMembership` / `WithTokens` and registering module
+Actions with the runner; `control_plane` catalogue flags for the new permissions.
