@@ -9,6 +9,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform"
 	"github.com/skenzeriq/activediq/internal/platform/capability"
 	"github.com/skenzeriq/activediq/internal/platform/module"
+	"github.com/skenzeriq/activediq/internal/platform/rbac"
 )
 
 // ModuleID is the module's ID, its OpenAPI tag and its web module ID.
@@ -36,6 +37,13 @@ func (*Module) Register(r *module.Registrar) error {
 		return err
 	}
 	if err := r.Action(a); err != nil {
+		return err
+	}
+	rc, err := ReconfirmCorrelation(rbac.Owners{})
+	if err != nil {
+		return err
+	}
+	if err := r.Action(rc); err != nil {
 		return err
 	}
 	links, err := HybridLinkActions()
