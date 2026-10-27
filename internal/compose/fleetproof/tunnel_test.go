@@ -12,6 +12,12 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/skenzeriq/activediq/internal/platform/audit"
+	"github.com/skenzeriq/activediq/internal/platform/fleet/fleetsql"
+	"github.com/skenzeriq/activediq/internal/platform/store"
+	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
+	"github.com/skenzeriq/activediq/internal/platform/tenant/tenanttest"
+
 	tunnelserver "github.com/skenzeriq/activediq/internal/compose/server"
 	"github.com/skenzeriq/activediq/internal/platform/fleet"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
@@ -21,38 +27,41 @@ import (
 
 const sibID = "66666666-7777-4888-8999-aaaaaaaaaaaa"
 
-type recReporter struct {
-	mu sync.Mutex
-	ev []string
+// recSink records the audit events the real fleetsql.TunnelReporter appends.
+type recSink struct {
+	mu  sync.Mutex
+	evs []audit.Event
 }
 
-func (r *recReporter) ProtocolError(_ context.Context, id fleet.Identity, v fleet.Violation) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.ev = append(r.ev, id.ComponentID+":"+string(v))
+func (s *recSink) Append(_ context.Context, _ store.Tx, ev audit.Event) error {
+	if err := ev.Validate(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.evs = append(s.evs, ev)
+	s.mu.Unlock()
 	return nil
 }
 
-func (r *recReporter) got() []string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return append([]string(nil), r.ev...)
+func (s *recSink) got() []audit.Event {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]audit.Event(nil), s.evs...)
 }
 
-// tunnelSvc serves Fleet.Tunnel through tunnelserver.ServeTunnel under the real gateway.
-type tunnelSvc struct {
-	fleetv1.UnimplementedFleetServer
-	d tunnelserver.TunnelDeps
-}
-
-func (s *tunnelSvc) Tunnel(st grpc.BidiStreamingServer[fleetv1.TunnelFrame, fleetv1.TunnelFrame]) error {
-	return tunnelserver.ServeTunnel(s.d, st)
-}
-
-func startTunnel(t *testing.T) (*rig, *fleet.Hub, *recReporter) {
+// startTunnel serves the real compose Fleet service (NewFleetService) under the real gateway, with
+// the real TunnelReporter over a seeded tenant database.
+func startTunnel(t *testing.T, srv *storetest.Server) (*rig, *fleet.Hub, *recSink) {
 	t.Helper()
+	d := srv.NewDatabase(t)
+	d.Migrate(t)
+	tid := tenanttest.Seed(t, d.ExecOwner, "A")
+	db, err := store.Open(context.Background(), store.Config{DSN: d.AppDSN()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(db.Close)
 	ca := newAuthority(t, "installation CA")
-	tid := tenant.New()
 	cm := &comps{}
 	gw, err := fleet.NewGateway(fleet.Config{Methods: classes(), CAs: cas{tid: {ca.cert}}, Components: cm, Recheck: 50 * time.Millisecond})
 	if err != nil {
@@ -62,8 +71,12 @@ func startTunnel(t *testing.T) (*rig, *fleet.Hub, *recReporter) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hub, rep := fleet.NewHub(), &recReporter{}
-	svc := &tunnelSvc{d: tunnelserver.TunnelDeps{Hub: hub, Bindings: b, Reporter: rep}}
+	hub, sink := fleet.NewHub(), &recSink{}
+	svc, err := tunnelserver.NewFleetService(&fleetsql.Enroller{},
+		tunnelserver.TunnelDeps{Hub: hub, Bindings: b, Reporter: &fleetsql.TunnelReporter{DB: db, Audit: sink}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	pool := x509.NewCertPool()
 	pool.AddCert(ca.cert)
 	gs, err := gw.NewServer(ca.serverCert(t), func() *x509.CertPool { return pool }, func(r grpc.ServiceRegistrar) {
@@ -78,7 +91,7 @@ func startTunnel(t *testing.T) (*rig, *fleet.Hub, *recReporter) {
 	}
 	go func() { _ = gs.Serve(l) }()
 	t.Cleanup(gs.Stop)
-	return &rig{addr: l.Addr().String(), comps: cm, gw: gw, ca: ca, tid: tid, grpc: gs}, hub, rep
+	return &rig{addr: l.Addr().String(), comps: cm, gw: gw, ca: ca, tid: tid, grpc: gs}, hub, sink
 }
 
 // openTunnel dials as comp and returns the stream and a channel of the frames the server sends.
@@ -121,7 +134,11 @@ func invoke(hub *fleet.Hub, tid tenant.ID, comp string) error {
 }
 
 func TestRevokedComponentsMuxFailsAndHubRefusesButSiblingWorks(t *testing.T) {
-	r, hub, _ := startTunnel(t)
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) { revokedProof(t, s) })
+}
+
+func revokedProof(t *testing.T, srv *storetest.Server) {
+	r, hub, _ := startTunnel(t, srv)
 	_, inA := openTunnel(t, r, compID)
 	sibS, sibIn := openTunnel(t, r, sibID)
 
@@ -166,7 +183,18 @@ func TestRevokedComponentsMuxFailsAndHubRefusesButSiblingWorks(t *testing.T) {
 
 	// The sibling's entry still works: answer its Describe with an empty response.
 	done := make(chan error, 1)
-	go func() { done <- invoke(hub, r.tid, sibID) }()
+	go func() {
+		// The sibling's tunnel may not be attached yet: UNAVAILABLE with a known outcome means retry.
+		for end := time.Now().Add(5 * time.Second); ; {
+			err := invoke(hub, r.tid, sibID)
+			if status.Code(err) == codes.Unavailable && !fleet.OutcomeUnknown(err) && time.Now().Before(end) {
+				time.Sleep(10 * time.Millisecond)
+				continue
+			}
+			done <- err
+			return
+		}
+	}()
 	var open *fleetv1.TunnelFrame
 	select {
 	case open = <-sibIn:
@@ -188,7 +216,11 @@ func TestRevokedComponentsMuxFailsAndHubRefusesButSiblingWorks(t *testing.T) {
 }
 
 func TestProtocolErrorOnTunnelIsReportedAgainstTheComponent(t *testing.T) {
-	r, _, rep := startTunnel(t)
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) { violationProof(t, s) })
+}
+
+func violationProof(t *testing.T, srv *storetest.Server) {
+	r, _, rep := startTunnel(t, srv)
 	s, in := openTunnel(t, r, compID)
 	// A frame on a call id that was never opened (TM-D24 B5).
 	if err := s.Send(&fleetv1.TunnelFrame{CallId: 2, Body: &fleetv1.TunnelFrame_HalfClose{HalfClose: &fleetv1.CallHalfClose{}}}); err != nil {
@@ -200,7 +232,9 @@ func TestProtocolErrorOnTunnelIsReportedAgainstTheComponent(t *testing.T) {
 		t.Fatal("tunnel stayed open")
 	}
 	waitFor(t, "audit", func() bool { return len(rep.got()) == 1 })
-	if got := rep.got()[0]; got != compID+":"+string(fleet.ViolationUnknownCall) {
-		t.Fatalf("got %q", got)
+	ev := rep.got()[0]
+	if ev.Kind != fleetsql.KindTunnelProtocolError || ev.Target.GUID != compID || ev.Outcome != audit.Denied ||
+		ev.Reason != string(fleet.ViolationUnknownCall) {
+		t.Fatalf("event: %+v", ev)
 	}
 }

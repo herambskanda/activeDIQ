@@ -39,6 +39,16 @@ type fleetEnrollService struct {
 	tunnel  *TunnelDeps // nil: Tunnel answers UNIMPLEMENTED
 }
 
+// NewFleetService builds the Fleet service the gateway mounts: Enroll over enroll and Tunnel over the
+// multiplexer. Both are required; a missing one is a composition error, not a service that answers
+// UNIMPLEMENTED. The gateway listener in server.Run registers the result (follow-up).
+func NewFleetService(enroll *fleetsql.Enroller, tunnel TunnelDeps) (fleetv1.FleetServer, error) {
+	if enroll == nil || tunnel.Hub == nil || tunnel.Reporter == nil || len(tunnel.Bindings) == 0 {
+		return nil, errors.New("server: fleet service needs an enroller, a hub, bindings and a reporter")
+	}
+	return &fleetEnrollService{backend: enroll, tunnel: &tunnel}, nil
+}
+
 // Tunnel serves Fleet.Tunnel through the multiplexer (T-0287).
 func (s *fleetEnrollService) Tunnel(st grpc.BidiStreamingServer[fleetv1.TunnelFrame, fleetv1.TunnelFrame]) error {
 	if s.tunnel == nil {

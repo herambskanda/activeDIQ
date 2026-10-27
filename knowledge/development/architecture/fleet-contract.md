@@ -228,7 +228,9 @@ the generated stubs: the compose adapter that serves `Fleet.Tunnel` translates `
   port: `fleet.tunnel.protocol_error`, outcome denied, reason and `violation` detail = the fixed violation,
   target = the component GUID, no peer text. The peer's `CallClose` text stays a structured log attribute
   (`component_reported`); the `Reporter` interface carries none, so no audit consumer exists for it yet.
-  Proof: `compose/fleetproof/tunnel_test.go` (real gateway: revoke, pending call outcome unknown, hub
-  refuses, sibling unaffected; violation audited).
+  `server.NewFleetService(enroller, TunnelDeps)` builds the `Fleet` service (Enroll + Tunnel) the gateway mounts.
+  Proof: `compose/fleetproof/tunnel_test.go` serves that real service under the real gateway with the real
+  `TunnelReporter` over a seeded database: revoke, pending call outcome unknown, hub refuses, sibling
+  unaffected; a violation lands as an audit event targeting the component.
 - **Not here.** Credit accounting and the numeric flow-control limits (TM-TB6-T7); building the gateway,
   Hub and listener in `server.Run` (no fleet listener is composed yet); the `fleet/dial` wiring.
