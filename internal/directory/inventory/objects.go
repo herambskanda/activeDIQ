@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
+	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tablekind"
 )
@@ -62,14 +63,58 @@ const (
 var adStates = map[ObjectState]bool{ObjLive: true, ObjDeleted: true, ObjRecycled: true, ObjPurged: true, ObjOutOfScope: true}
 var entraStates = map[ObjectState]bool{ObjActive: true, ObjSoftDeleted: true, ObjPurged: true}
 
-// secretAttrs are attributes that are never stored (DM-16.I3, X4, safe-primitives LF-38). The match is
-// case-insensitive on the whole name.
-var secretAttrs = map[string]bool{
-	"unicodepwd": true, "userpassword": true, "unixuserpassword": true, "ntpwdhistory": true, "lmpwdhistory": true,
-	"dbcspwd": true, "supplementalcredentials": true, "currentvalue": true, "priorvalue": true,
-	"initialauthincomingpwd": true, "initialauthoutgoingpwd": true, "msds-managedpassword": true,
-	"ms-mcs-admpwd": true, "mslaps-password": true, "mslaps-encryptedpassword": true, "msds-keycredentiallink": true,
-	"passwordprofile": true, "pwdhistory": true,
+// secretNames is the refusal set (DM-16.I3, X4, safe-primitives LF-38): the one static list in
+// secretattr, lower-cased once, plus Entra and trust names that list does not carry. Matching is
+// on the lower-cased name with any ";option" suffix removed.
+var secretNames = func() map[string]bool {
+	m := map[string]bool{}
+	for _, n := range secretattr.Static() {
+		m[strings.ToLower(n)] = true
+	}
+	for _, n := range []string{"currentValue", "priorValue", "initialAuthIncomingPwd", "initialAuthOutgoingPwd",
+		"msDS-KeyCredentialLink", "passwordProfile", "pwdHistory", "trustAuthIncoming", "trustAuthOutgoing"} {
+		m[strings.ToLower(n)] = true
+	}
+	return m
+}()
+
+// secretKey reports whether an attribute key must be refused: a secret name (options stripped), or
+// anything that is not ldapDisplayName syntax (numeric OIDs, empty, NUL), since this package cannot map
+// an OID to a name. Producers must also drop the session's schema-flagged SecretAttrs (searchFlags
+// 0x80/0x200/0x1000) before building an Observation; the connector-side producer is T-0326's input.
+func secretKey(k string) bool {
+	if i := strings.IndexByte(k, ';'); i >= 0 {
+		k = k[:i]
+	}
+	if k == "" || !(k[0] >= 'A' && k[0] <= 'Z' || k[0] >= 'a' && k[0] <= 'z') {
+		return true
+	}
+	for i := 0; i < len(k); i++ {
+		c := k[i]
+		if !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' || c == '_' || c == '.') {
+			return true
+		}
+	}
+	return secretNames[strings.ToLower(k)]
+}
+
+// hasSecret walks a decoded JSON value and reports a secret key at any depth.
+func hasSecret(v any) bool {
+	switch t := v.(type) {
+	case map[string]any:
+		for k, e := range t {
+			if secretKey(k) || hasSecret(e) {
+				return true
+			}
+		}
+	case []any:
+		for _, e := range t {
+			if hasSecret(e) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Observation is what one sync cycle saw of one object. The connector (LDAP, DirSync, Graph delta)
@@ -327,16 +372,15 @@ func validateObservation(o *Observation, entra bool) ([]byte, error) {
 			}
 		}
 	}
-	for k := range o.Attributes {
-		if secretAttrs[strings.ToLower(k)] {
-			return bad("a secret attribute is never stored")
-		}
-	}
 	b := []byte("{}")
 	if len(o.Attributes) > 0 {
 		var err error
 		if b, err = json.Marshal(o.Attributes); err != nil || len(b) > maxAttributesSz {
 			return bad("attributes")
+		}
+		var generic any
+		if err := json.Unmarshal(b, &generic); err != nil || hasSecret(generic) {
+			return bad("a secret attribute is never stored")
 		}
 	}
 	if len(o.DN) > 4096 || len(o.RDN) > 1024 || len(o.SAMAccountName) > 256 || len(o.UPN) > 1024 || len(o.DisplayName) > 1024 || len(o.ObservedDSA) > 256 {

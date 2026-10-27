@@ -3,6 +3,8 @@ package inventory_test
 import (
 	"context"
 	"errors"
+	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
+	"strings"
 	"testing"
 	"time"
 
@@ -135,6 +137,22 @@ func TestPopulateStaleAndInvalid(t *testing.T) {
 			"upper guid":      func(o *inventory.Observation) { o.Object = "AAAAAAAA-0000-4000-8000-0000000000A1" },
 			"members on user": func(o *inventory.Observation) { o.Members = []inventory.GUID{usr2} },
 			"cloud on AD":     func(o *inventory.Observation) { o.CloudManaged = true },
+			"option form":     func(o *inventory.Observation) { o.Attributes = map[string]any{"unicodePwd;binary": "x"} },
+			"range option":    func(o *inventory.Observation) { o.Attributes = map[string]any{"ms-Mcs-AdmPwd;range=0-*": "x"} },
+			"OID form":        func(o *inventory.Observation) { o.Attributes = map[string]any{"1.2.840.113556.1.4.90": "x"} },
+			"empty key":       func(o *inventory.Observation) { o.Attributes = map[string]any{"": "x"} },
+			"nested": func(o *inventory.Observation) {
+				o.Attributes = map[string]any{"wrap": map[string]any{"unicodePwd": "x"}}
+			},
+			"nested in list": func(o *inventory.Observation) {
+				o.Attributes = map[string]any{"l": []any{map[string]string{"msFVE-RecoveryPassword": "x"}}}
+			},
+			"trust auth": func(o *inventory.Observation) { o.Attributes = map[string]any{"TrustAuthIncoming": "x"} },
+		}
+		for _, n := range secretattr.Static() {
+			n := n
+			bad["static "+n] = func(o *inventory.Observation) { o.Attributes = map[string]any{strings.ToUpper(n): "x"} }
+			bad["static mixed "+n] = func(o *inventory.Observation) { o.Attributes = map[string]any{n + ";binary": "x"} }
 		}
 		for name, mut := range bad {
 			o := adUser(usr2, nc1)
