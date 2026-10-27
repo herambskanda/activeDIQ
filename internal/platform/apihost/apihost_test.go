@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"sync"
 	"testing"
@@ -17,18 +18,19 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitypes"
 	"github.com/skenzeriq/activediq/internal/platform/authn"
+	"github.com/skenzeriq/activediq/internal/platform/httpx/authnhttp"
 )
 
 // ---- fakes ------------------------------------------------------------------------------------
 
 type fakePorts struct {
-	principal                        apihost.Principal
-	authnErr, csrfErr, authzErr      error
-	allow, stepFresh                 bool
-	ipDeny, principalDeny            bool
-	mu                               sync.Mutex
-	calls                            []string
-	lastPerm, lastScope, lastIPClass string
+	principal                                apihost.Principal
+	authnErr, csrfErr, authzErr              error
+	allow, stepFresh                         bool
+	ipDeny, principalDeny                    bool
+	mu                                       sync.Mutex
+	calls                                    []string
+	lastPerm, lastScope, lastIPClass, lastIP string
 }
 
 func (f *fakePorts) record(c string) {
@@ -56,10 +58,10 @@ func (f *fakePorts) Allow(_ context.Context, _ apihost.Principal, perm, scope st
 	f.mu.Unlock()
 	return f.allow, f.authzErr
 }
-func (f *fakePorts) AllowIP(_ context.Context, class, _ string) (apihost.Decision, error) {
+func (f *fakePorts) AllowIP(_ context.Context, class, ip string) (apihost.Decision, error) {
 	f.record("ip")
 	f.mu.Lock()
-	f.lastIPClass = class
+	f.lastIPClass, f.lastIP = class, ip
 	f.mu.Unlock()
 	return apihost.Decision{Allowed: !f.ipDeny, RetryAfter: 1500 * time.Millisecond}, nil
 }
@@ -102,10 +104,13 @@ type input struct {
 	upload   apihost.Upload
 	failBind bool
 	invalid  bool
+	cookies  map[string][]string
+	peerIP   string
 }
 
 func (i *input) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
 	i.upload = r.Upload
+	i.cookies, i.peerIP = r.Cookies, r.PeerIP
 	if i.failBind {
 		errs.Add(apitypes.InQuery, "limit", apitypes.CodeType, "bad")
 	}
@@ -136,6 +141,14 @@ type resp struct {
 func (r resp) StatusCode() int                    { return r.status }
 func (r resp) ResponseBody() any                  { return r.body }
 func (r resp) ResponseHeaders() map[string]string { return r.hdr }
+
+// listResp is a response that sends a header once per value, like the generated Set-Cookie outputs.
+type listResp struct {
+	resp
+	lists map[string][]string
+}
+
+func (r listResp) ResponseHeaderLists() map[string][]string { return r.lists }
 
 type row struct {
 	meta apihost.RouteMeta
@@ -206,7 +219,7 @@ func docJSON(ops ...[4]string) []byte { // id, method, path, permission
 var catalogue = apihost.Permissions{"widgets.read", "widgets.write"}
 
 // serve builds a one-route server and runs a request through it.
-func serve(t *testing.T, r *row, fp *fakePorts, policy apihost.Policy, req *http.Request) *httptest.ResponseRecorder {
+func serve(t *testing.T, r *row, fp *fakePorts, policy apihost.Policy, req *http.Request, opts ...apihost.Option) *httptest.ResponseRecorder {
 	t.Helper()
 	m := r.meta
 	raw := docJSON([4]string{m.OperationID, m.Method, m.Path, m.Permission})
@@ -215,7 +228,7 @@ func serve(t *testing.T, r *row, fp *fakePorts, policy apihost.Policy, req *http
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := apihost.Build(doc, []apihost.TagHandlers{apihost.NewTagHandlers("widgets", r.route())}, policy, catalogue, fp.ports())
+	s, err := apihost.Build(doc, []apihost.TagHandlers{apihost.NewTagHandlers("widgets", r.route())}, policy, catalogue, fp.ports(), opts...)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -934,7 +947,7 @@ func TestCSRFRealAuthenticatorInChain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	au, err := authn.NewAuthenticator(liveSessions{}, nil)
+	au, err := authnhttp.NewAuthenticator(liveSessions{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -945,9 +958,9 @@ func TestCSRFRealAuthenticatorInChain(t *testing.T) {
 	}{
 		{"no header", nil, false},
 		{"wrong value", []string{"wrong"}, false},
-		{"another session's value", []string{authn.CSRFValue(tokB)}, false},
-		{"two headers", []string{authn.CSRFValue(tokA), authn.CSRFValue(tokA)}, false},
-		{"correct value", []string{authn.CSRFValue(tokA)}, true},
+		{"another session's value", []string{authnhttp.CSRFValue(tokB)}, false},
+		{"two headers", []string{authnhttp.CSRFValue(tokA), authnhttp.CSRFValue(tokA)}, false},
+		{"correct value", []string{authnhttp.CSRFValue(tokA)}, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -970,9 +983,9 @@ func TestCSRFRealAuthenticatorInChain(t *testing.T) {
 				t.Fatal(err)
 			}
 			req := post("/widgets", "application/json", `{"name":"a"}`)
-			req.AddCookie(authn.SessionCookie(tokA, time.Hour))
+			req.AddCookie(authnhttp.SessionCookie(tokA, time.Hour))
 			for _, h := range c.headers {
-				req.Header.Add(authn.CSRFHeader, h)
+				req.Header.Add(authnhttp.CSRFHeader, h)
 			}
 			rec := httptest.NewRecorder()
 			s.ServeHTTP(rec, req)
@@ -985,6 +998,99 @@ func TestCSRFRealAuthenticatorInChain(t *testing.T) {
 			problemOf(t, rec, 403, apitypes.ProblemTypeCSRFFailed)
 			if calls != 0 {
 				t.Fatal("handler ran")
+			}
+		})
+	}
+}
+
+func TestCookiesPeerIPAndHeaderLists(t *testing.T) {
+	m := meta("verify", "GET", "/widgets", "anonymous")
+	m.Class = "anonymous"
+	m.Cookies = []string{"one", "two"}
+	pol := apihost.Policy{Anonymous: []apihost.AnonymousRow{{Operation: "verify"}}}
+	r := &row{meta: m, call: func(context.Context, apihost.Input) (apihost.Response, error) {
+		return listResp{resp: resp{status: 204}, lists: map[string][]string{"Set-Cookie": {"a=1; Path=/", "b=; Max-Age=0", ""}}}, nil
+	}}
+	req := get("/widgets")
+	req.RemoteAddr = "192.0.2.9:5555"
+	req.Header.Set("X-Forwarded-For", "203.0.113.1")
+	req.AddCookie(&http.Cookie{Name: "one", Value: "x"})
+	req.AddCookie(&http.Cookie{Name: "two", Value: "1"})
+	req.AddCookie(&http.Cookie{Name: "two", Value: "2"})
+	req.AddCookie(&http.Cookie{Name: "__Host-adiq_session", Value: "SESSION-CANARY"})
+	rec := serve(t, r, newPorts(), pol, req)
+	if rec.Code != 204 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	if got := rec.Header().Values("Set-Cookie"); len(got) != 2 || got[0] != "a=1; Path=/" || got[1] != "b=; Max-Age=0" {
+		t.Fatalf("Set-Cookie lines = %q", got)
+	}
+	if r.in.peerIP != "192.0.2.9" {
+		t.Fatalf("peer IP = %q, want the TCP peer and not a forwarded header", r.in.peerIP)
+	}
+	if len(r.in.cookies["one"]) != 1 || len(r.in.cookies["two"]) != 2 {
+		t.Fatalf("cookies = %v", r.in.cookies)
+	}
+	if _, leaked := r.in.cookies["__Host-adiq_session"]; leaked {
+		t.Fatal("an undeclared cookie (the session) reached the route")
+	}
+}
+
+func TestUndeclaredCookiesNeverReachRoute(t *testing.T) {
+	m := meta("plain", "GET", "/widgets", "anonymous")
+	m.Class = "anonymous"
+	pol := apihost.Policy{Anonymous: []apihost.AnonymousRow{{Operation: "plain"}}}
+	r := &row{meta: m, call: func(context.Context, apihost.Input) (apihost.Response, error) { return resp{status: 204}, nil }}
+	req := get("/widgets")
+	req.AddCookie(&http.Cookie{Name: "__Host-adiq_session", Value: "SESSION-CANARY"})
+	req.AddCookie(&http.Cookie{Name: "other", Value: "x"})
+	if rec := serve(t, r, newPorts(), pol, req); rec.Code != 204 {
+		t.Fatalf("status %d", rec.Code)
+	}
+	if len(r.in.cookies) != 0 {
+		t.Fatalf("a route declaring no cookie got %v", r.in.cookies)
+	}
+}
+
+func TestClientIPTrustedProxies(t *testing.T) {
+	trusted := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
+	cases := []struct {
+		name, peer string
+		xff        []string
+		trust      []netip.Prefix
+		want       string
+	}{
+		{"no trusted proxies ignores XFF", "192.0.2.7:4000", []string{"198.51.100.7"}, nil, "192.0.2.7"},
+		{"untrusted peer ignores XFF", "192.0.2.7:4000", []string{"198.51.100.7"}, trusted, "192.0.2.7"},
+		{"right-most untrusted hop, not the spoofed left", "10.0.0.5:4000", []string{"spoof, 198.51.100.7"}, trusted, "198.51.100.7"},
+		{"valid spoofed left is still skipped", "10.0.0.5:4000", []string{"203.0.113.9, 198.51.100.7"}, trusted, "198.51.100.7"},
+		{"chained trusted proxies skipped", "10.0.0.5:4000", []string{"198.51.100.7, 10.1.1.1, 10.2.2.2"}, trusted, "198.51.100.7"},
+		{"multiple header lines", "10.0.0.5:4000", []string{"203.0.113.9", "198.51.100.7, 10.1.1.1"}, trusted, "198.51.100.7"},
+		{"garbage right-most hop falls back to peer", "10.0.0.5:4000", []string{"198.51.100.7, nonsense"}, trusted, "10.0.0.5"},
+		{"no XFF from trusted peer", "10.0.0.5:4000", nil, trusted, "10.0.0.5"},
+		{"hop with port (Azure App Gateway)", "10.0.0.5:4000", []string{"198.51.100.7:51000"}, trusted, "198.51.100.7"},
+		{"v6 hop with port", "10.0.0.5:4000", []string{"[2001:db8::1]:443"}, trusted, "2001:db8::1"},
+		{"zoned hop falls back to peer", "10.0.0.5:4000", []string{"fe80::1%evil"}, trusted, "10.0.0.5"},
+		{"all hops trusted uses left-most", "10.0.0.5:4000", []string{"10.9.9.9, 10.1.1.1"}, trusted, "10.9.9.9"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := meta("verify", "GET", "/widgets", "anonymous")
+			m.Class = "anonymous"
+			pol := apihost.Policy{Anonymous: []apihost.AnonymousRow{{Operation: "verify"}}}
+			r := &row{meta: m}
+			fp := newPorts()
+			req := get("/widgets")
+			req.RemoteAddr = c.peer
+			for _, v := range c.xff {
+				req.Header.Add("X-Forwarded-For", v)
+			}
+			rec := serve(t, r, fp, pol, req, apihost.WithTrustedProxies(c.trust))
+			if rec.Code >= 500 {
+				t.Fatalf("status %d: %s", rec.Code, rec.Body)
+			}
+			if r.in.peerIP != c.want || fp.lastIP != c.want {
+				t.Fatalf("PeerIP = %q, rate-limit key = %q, want both %q", r.in.peerIP, fp.lastIP, c.want)
 			}
 		})
 	}

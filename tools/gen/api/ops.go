@@ -45,7 +45,7 @@ func (m *Model) parseOps(p *parser, doc Doc) {
 
 func (m *Model) parseOp(p *parser, op *Operation, raw Doc, where string) {
 	allowed := []string{"tags", "operationId", "summary", "description", "deprecated", "parameters", "requestBody", "responses", "security",
-		"x-permission", "x-activediq-scope", "x-activediq-stability", "x-activediq-sunset", "x-activediq-limits", "x-activediq-anonymous", "x-activediq-parity"}
+		"x-permission", "x-activediq-scope", "x-activediq-stability", "x-activediq-sunset", "x-activediq-limits", "x-activediq-anonymous", "x-activediq-parity", "x-activediq-peer-ip"}
 	for k := range raw {
 		if !contains(allowed, k) {
 			if strings.HasPrefix(k, "x-") {
@@ -88,6 +88,13 @@ func (m *Model) parseOp(p *parser, op *Operation, raw Doc, where string) {
 	}
 	if v, ok := raw["x-activediq-anonymous"].(string); ok {
 		op.Anonymous = v
+	}
+	if v, ok := raw["x-activediq-peer-ip"]; ok {
+		b, isBool := v.(bool)
+		if !isBool {
+			p.fail(where, "x-activediq-peer-ip is true or absent")
+		}
+		op.PeerIP = b
 	}
 	if (perm == "anonymous") != (op.Anonymous != "") {
 		p.fail(where, "x-permission: anonymous and x-activediq-anonymous go together")
@@ -298,11 +305,14 @@ func (p *parser) parseResp(m *Model, raw any, status int, where string) *Resp {
 	for _, n := range hn {
 		hd, _ := headers[n].(Doc)
 		sc, _ := hd["schema"].(Doc)
-		if sc == nil || sc["type"] != "string" {
-			p.fail(where, "response header %q is a string", n)
+		list := false
+		if items, _ := sc["items"].(Doc); sc != nil && sc["type"] == "array" && items != nil && items["type"] == "string" {
+			list = true // a header sent once per value (Set-Cookie)
+		} else if sc == nil || sc["type"] != "string" {
+			p.fail(where, "response header %q is a string or an array of strings", n)
 		}
 		req, _ := hd["required"].(bool)
-		r.Headers = append(r.Headers, RespHeader{Name: n, Required: req})
+		r.Headers = append(r.Headers, RespHeader{Name: n, Required: req, List: list})
 	}
 	content, _ := rd["content"].(Doc)
 	if len(content) > 1 {

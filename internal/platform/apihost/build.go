@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"path"
 	"slices"
 	"sort"
@@ -39,6 +40,13 @@ func WithAnonymousBodyBudget(bytes int64) Option {
 	return func(s *Server) { s.anonBudgetTotal, s.anonSet = bytes, true }
 }
 
+// WithTrustedProxies sets the CIDRs of the reverse proxies / load balancers allowed to assert a client
+// address in X-Forwarded-For. With none (the default) forwarded headers are ignored entirely and the
+// TCP peer is the client for rate limits, audit and Request.PeerIP.
+func WithTrustedProxies(p []netip.Prefix) Option {
+	return func(s *Server) { s.trustedProxies = slices.Clone(p) }
+}
+
 // Server is the built API router. It is an http.Handler that answers every path with either a
 // route of the document or a problem.
 type Server struct {
@@ -50,6 +58,8 @@ type Server struct {
 	unmounted  []string
 	budget     *bodyBudget // authenticated routes: total minus the anonymous slice
 	anonBudget *bodyBudget // anonymous routes only
+
+	trustedProxies []netip.Prefix
 
 	budgetTotal, anonBudgetTotal int64
 	budgetSet, anonSet           bool

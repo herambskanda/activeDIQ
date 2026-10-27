@@ -6,19 +6,26 @@ package authn
 
 import (
 	"context"
+	"errors"
+	"log/slog"
+	"net/netip"
 
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitypes"
 	"github.com/skenzeriq/activediq/internal/platform/authn/api"
 )
 
-// Handlers implements api.Handlers with 501 stubs.
-type Handlers struct{}
+// Handlers implements api.Handlers. AN-10 TOTP is real once a SecondFactor is supplied; the other
+// operations stay 501 stubs until their build tickets land.
+type Handlers struct {
+	SecondFactor *SecondFactor
+	Log          *slog.Logger
+}
 
 var _ api.Handlers = Handlers{}
 
 // API returns the tag's routes for compose/server to mount.
-func API() apihost.TagHandlers { return api.Bind(Handlers{}) }
+func API(h Handlers) apihost.TagHandlers { return api.Bind(h) }
 
 func (Handlers) SignInBreakGlassPassword(context.Context, api.SignInBreakGlassPasswordInput) (api.SignInBreakGlassPasswordOutput, error) {
 	return nil, apitypes.NotImplemented("")
@@ -32,8 +39,33 @@ func (Handlers) VerifyWebAuthnSignIn(context.Context, api.VerifyWebAuthnSignInIn
 	return nil, apitypes.NotImplemented("")
 }
 
-func (Handlers) VerifyTOTPSignIn(context.Context, api.VerifyTOTPSignInInput) (api.VerifyTOTPSignInOutput, error) {
-	return nil, apitypes.NotImplemented("")
+// VerifyTOTPSignIn is AN-10 for TOTP. The pending handle is the cookie and nothing else; every way the
+// sign-in can fail (no cookie, a repeated or malformed one, an expired or exhausted pending sign-in, a
+// wrong code) is the same 401 as any other sign-in failure, so the answer is no oracle. On success the
+// response sets the new session cookie and clears the pending one.
+func (h Handlers) VerifyTOTPSignIn(ctx context.Context, in api.VerifyTOTPSignInInput) (api.VerifyTOTPSignInOutput, error) {
+	if h.SecondFactor == nil {
+		return nil, apitypes.NotImplemented("")
+	}
+	var code string
+	in.Body.Code.Expose(func(b []byte) { code = string(b) })
+	// PeerIP is the client address (the TCP peer, or the right-most untrusted X-Forwarded-For hop when the peer is a configured trusted proxy, ACTIVEDIQ_TRUSTED_PROXIES); the zero Addr only when it does not parse.
+	from, _ := netip.ParseAddr(in.PeerIP)
+	_, cookies, err := h.SecondFactor.VerifyTOTPCookie(ctx, in.HostAdiqPending.Reveal(), code, from)
+	if err != nil {
+		if errors.Is(err, ErrPendingInvalid) || errors.Is(err, ErrSecondFactorRefused) {
+			if h.Log != nil {
+				h.Log.Info("second factor refused", "peer_ip", in.PeerIP, "trace_id", apihost.TraceID(ctx))
+			}
+			return nil, apitypes.SignInFailed("")
+		}
+		return nil, err // an infrastructure fault: the chain answers 500 without detail
+	}
+	lines := make([]string, 0, len(cookies))
+	for _, c := range cookies {
+		lines = append(lines, c.String())
+	}
+	return api.VerifyTOTPSignIn204{SetCookie: lines}, nil
 }
 
 func (Handlers) SignOut(context.Context, api.SignOutInput) (api.SignOutOutput, error) {

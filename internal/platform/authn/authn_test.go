@@ -134,7 +134,7 @@ func TestStubsAnswerNotImplemented(t *testing.T) {
 	_, e1 := h.SignInBreakGlassPassword(ctx, api.SignInBreakGlassPasswordInput{})
 	_, e2 := h.CreateWebAuthnSignInChallenge(ctx, api.CreateWebAuthnSignInChallengeInput{})
 	_, e3 := h.VerifyWebAuthnSignIn(ctx, api.VerifyWebAuthnSignInInput{})
-	_, e4 := h.VerifyTOTPSignIn(ctx, api.VerifyTOTPSignInInput{})
+	_, e4 := h.VerifyTOTPSignIn(ctx, api.VerifyTOTPSignInInput{}) // unwired: no SecondFactor
 	_, e5 := h.SignOut(ctx, api.SignOutInput{})
 	_, e6 := h.GetCSRFToken(ctx, api.GetCSRFTokenInput{})
 	for i, err := range []error{e1, e2, e3, e4, e5, e6} {
@@ -143,7 +143,7 @@ func TestStubsAnswerNotImplemented(t *testing.T) {
 			t.Errorf("stub %d: %v", i, err)
 		}
 	}
-	if API().Tag() == "" {
+	if API(Handlers{}).Tag() == "" {
 		t.Error("API() has no tag")
 	}
 }

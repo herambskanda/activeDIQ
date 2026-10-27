@@ -95,6 +95,15 @@ func writeResponse(w http.ResponseWriter, r *http.Request, meta RouteMeta, resp 
 	for k, v := range resp.ResponseHeaders() {
 		h.Set(k, v)
 	}
+	if hl, ok := resp.(HeaderLists); ok {
+		for k, vs := range hl.ResponseHeaderLists() {
+			for _, v := range vs {
+				if v != "" {
+					h.Add(k, v)
+				}
+			}
+		}
+	}
 	h.Set("Cache-Control", "no-store")
 	h.Set("X-Content-Type-Options", "nosniff")
 	if meta.Deprecated {

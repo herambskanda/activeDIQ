@@ -274,6 +274,12 @@ func (r *Registry) Get(ctx context.Context, tid tenant.ID, id ID) (c Connection,
 	return c, err
 }
 
+// Bindings returns the connection's bindings that are not removed, in routing order, for the tenant.
+func (r *Registry) Bindings(ctx context.Context, tid tenant.ID, id ID) (bs []Binding, err error) {
+	err = r.with(ctx, tid, func(ctx context.Context, tx store.Tx) (e error) { bs, e = r.s.Bindings(ctx, tx, id); return })
+	return bs, err
+}
+
 // List returns the tenant's connections.
 func (r *Registry) List(ctx context.Context, tid tenant.ID, includeDiscarded bool) (cs []Connection, err error) {
 	err = r.with(ctx, tid, func(ctx context.Context, tx store.Tx) (e error) { cs, e = r.s.List(ctx, tx, includeDiscarded); return })

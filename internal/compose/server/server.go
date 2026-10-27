@@ -14,11 +14,13 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/compose/config"
 	"github.com/skenzeriq/activediq/internal/directory"
+	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/platform"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/apitls"
 	"github.com/skenzeriq/activediq/internal/platform/capability"
+	"github.com/skenzeriq/activediq/internal/platform/fleet"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/limiter"
 	"github.com/skenzeriq/activediq/internal/platform/module"
@@ -78,9 +80,15 @@ func Run(ctx context.Context, cfg config.Config) error {
 	if err != nil {
 		return fmt.Errorf("server: operation registry: %w", err)
 	}
-	// No connector endpoint source or Tier-0 verdict source exists yet, so reads is nil and a directory
-	// target fails closed (ErrNoReads); directoryReads wires the adapter the moment both are supplied.
-	reads, err := directoryReads(connection.NewRegistry(db), nil)
+	// The connector endpoint source: a connection resolves, under the context's tenant, to its active
+	// component binding's tunnel on the fleet hub (mutual TLS, established by the component). The Tier-0
+	// verdict arrives in the Read header from the connector, so no separate verdict source exists.
+	conns := connection.NewRegistry(db)
+	src, err := client.NewTunnelSource(conns, conns, fleet.NewHub())
+	if err != nil {
+		return fmt.Errorf("server: connector source: %w", err)
+	}
+	reads, err := directoryReads(conns, src)
 	if err != nil {
 		return err
 	}
@@ -174,7 +182,7 @@ func buildAPIWith(cfg config.Config, policy apihost.Policy, lim apihost.Limiter)
 	if err != nil {
 		return nil, fmt.Errorf("server: api contract: %w", err)
 	}
-	s, err := apihost.Build(doc, nil, policy, apiCatalogue, failClosedPorts(lim), apihost.WithBodyBudget(cfg.APIBodyBudget))
+	s, err := apihost.Build(doc, nil, policy, apiCatalogue, failClosedPorts(lim), apihost.WithBodyBudget(cfg.APIBodyBudget), apihost.WithTrustedProxies(cfg.TrustedProxies))
 	if err != nil {
 		return nil, fmt.Errorf("server: build api: %w", err)
 	}

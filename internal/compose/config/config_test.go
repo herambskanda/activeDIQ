@@ -130,3 +130,28 @@ func TestLoadPrincipalStore(t *testing.T) {
 		}
 	}
 }
+
+func TestTrustedProxies(t *testing.T) {
+	c, err := config.Load(func(k string) string {
+		if k == config.EnvTrustedProxies {
+			return "10.0.0.0/8, 192.0.2.1"
+		}
+		return ""
+	})
+	if err != nil || len(c.TrustedProxies) != 2 || c.TrustedProxies[1].String() != "192.0.2.1/32" {
+		t.Fatalf("got %v, %v", c.TrustedProxies, err)
+	}
+	if c, _ := config.Load(func(string) string { return "" }); len(c.TrustedProxies) != 0 {
+		t.Fatal("default must trust nothing")
+	}
+	for _, bad := range []string{"nope", "0.0.0.0/0", "::/0", "10.0.0.0/8, 0.0.0.0/0"} {
+		if _, err := config.Load(func(k string) string {
+			if k == config.EnvTrustedProxies {
+				return bad
+			}
+			return ""
+		}); err == nil {
+			t.Fatalf("%q must fail startup", bad)
+		}
+	}
+}
