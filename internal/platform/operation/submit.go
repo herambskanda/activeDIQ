@@ -300,7 +300,8 @@ func (r *Runner) failPlan(ctx context.Context, t tenant.ID, op opRecord, cause e
 // planRefusal classifies a plan where no item was planned and at least one was blocked. When every
 // blocked item was refused by authorisation (tier0, denied) the operation is a refused privilege
 // attempt: outcome denied, with the block reason (the common one, else "denied") and the first
-// refused target. Any technical block (facts_unavailable, no_pin, anything else) keeps it a failure
+// refused target. When the refusals carry different reasons no single target is named: each refused
+// item then reaches the audit trail through its own operation.refused event with its own reason. Any technical block (facts_unavailable, no_pin, anything else) keeps it a failure
 // with reason plan_failed, so a SIEM rule can tell a refusal from an outage.
 func planRefusal(items []planItem) (audit.Outcome, string, authority.TargetRef) {
 	var reason string
@@ -316,7 +317,7 @@ func planRefusal(items []planItem) (audit.Outcome, string, authority.TargetRef) 
 		case reason == "":
 			reason, tgt = it.blocked, it.sp.Target
 		case reason != it.blocked:
-			reason = blockDenied
+			reason, tgt = blockDenied, authority.TargetRef{}
 		}
 	}
 	if reason == "" {
@@ -452,6 +453,29 @@ WHERE tenant_id = $1::uuid AND id = $2::uuid`, t.String(), opID, hash, string(pi
 		return sub, err
 	}
 	sub.State = next
+	// Every item refused by authorisation is an audited denied attempt, whatever else the plan holds
+	// (the block reason on operation_items is mutable and outside the hash chain). The one target the
+	// operation.completed denied event already names is not repeated.
+	covered := authority.TargetRef{}
+	if result == "plan_failed" {
+		if o, _, tgt := planRefusal(items); o == audit.Denied {
+			covered = tgt
+		}
+	}
+	for i, it := range items {
+		if it.blocked != blockTier0 && it.blocked != blockDenied {
+			continue
+		}
+		if covered.GUID != "" && it.sp.Target == covered {
+			covered = authority.TargetRef{} // only the first refused item is the named one
+			continue
+		}
+		if err := r.emit(ctx, tx, audit.Event{ID: fmt.Sprintf("op-%s-refused-%d-%d", opID, cur.Revision, i), Kind: KindOperationRefused,
+			Actor: cur.Chain, Key: step.Key{Operation: step.OperationID(opID), Item: i}, Target: it.sp.Target,
+			Outcome: audit.Denied, Reason: it.blocked, PlanHash: hash, Details: detail("phase", "plan")}); err != nil {
+			return sub, err
+		}
+	}
 	if result != "" {
 		out, reason, tgt := audit.Success, result, authority.TargetRef{}
 		if result == "plan_failed" {
