@@ -261,10 +261,21 @@ func TestA11IgnoresTestsAndApihost(t *testing.T) {
 	src := "package x\n\nimport \"net/http\"\n\nfunc H(w http.ResponseWriter) { http.Error(w, \"x\", 400); w.WriteHeader(500) }\n"
 	f["internal/platform/apihost/h.go"] = src
 	f["internal/modules/users/h_test.go"] = src
+	f["internal/connector/graph/graphtest/fake.go"] = src // fake of an external service, not our API
+	f["internal/connector/graph/other/fake.go"] = "package other\n\nimport \"net/http\"\n\nfunc H(w http.ResponseWriter) { w.WriteHeader(500) }\n"
+	sibling := false
 	for _, v := range run(t, f) {
-		if v.Check == "A11" {
-			t.Errorf("apihost and tests may write statuses: %s", v)
+		if v.Check != "A11" {
+			continue
 		}
+		if strings.Contains(v.Pos, "graph/other/") {
+			sibling = true // control: a sibling package is still checked
+			continue
+		}
+		t.Errorf("apihost, tests and external-service fakes may write statuses: %s", v)
+	}
+	if !sibling {
+		t.Error("a package next to graphtest must still be checked")
 	}
 }
 

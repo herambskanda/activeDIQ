@@ -45,7 +45,7 @@ func goHTTPStatusWrites(root string) []Violation {
 	var vs []Violation
 	fset := token.NewFileSet()
 	for _, rel := range goFiles(root, "internal") {
-		if strings.HasPrefix(rel, "internal/platform/apihost/") {
+		if strings.HasPrefix(rel, "internal/platform/apihost/") || isStatusFake(rel) {
 			continue
 		}
 		f, err := parser.ParseFile(fset, filepath.Join(root, filepath.FromSlash(rel)), nil, parser.SkipObjectResolution)
@@ -75,6 +75,20 @@ func goHTTPStatusWrites(root string) []Violation {
 		})
 	}
 	return vs
+}
+
+// statusFakeDirs are in-process fakes of EXTERNAL services (not shipped; tests import them). They
+// must emit the status codes the real service emits, which is not an activeDIQ API response, so
+// ADR-0004 rule 8 (only apihost writes our API's statuses) does not apply. Keep this list explicit.
+var statusFakeDirs = []string{"internal/connector/graph/graphtest/"}
+
+func isStatusFake(rel string) bool {
+	for _, d := range statusFakeDirs {
+		if strings.HasPrefix(rel, d) {
+			return true
+		}
+	}
+	return false
 }
 
 // importName is the local name a file gives an import path ("" when not imported).
