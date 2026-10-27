@@ -72,6 +72,7 @@ type harness struct {
 	auths []string
 
 	jwksKeys  []map[string]any
+	jwksDown  bool                           // /jwks answers 503
 	tokenBody func(h *harness) (int, []byte) // the token endpoint
 	idToken   string                         // raw id_token the token endpoint returns
 	cfg       sso.OIDCConfig
@@ -106,6 +107,9 @@ func (h *harness) Do(req *http.Request) (*http.Response, error) {
 	case "/jwks":
 		status = 200
 		body, _ = json.Marshal(map[string]any{"keys": h.jwksKeys})
+		if h.jwksDown {
+			status, body = 503, []byte("{}")
+		}
 	case "/token":
 		b, _ := io.ReadAll(req.Body)
 		f, _ := url.ParseQuery(string(b))

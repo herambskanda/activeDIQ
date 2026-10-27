@@ -187,3 +187,28 @@ func TestOIDC_RefusesSignature(t *testing.T) {
 		}
 	}
 }
+
+// A failed JWKS refresh must not keep keys alive past the one-hour limit: a key the IdP rotated out after a
+// compromise must stop verifying even while the JWKS endpoint is unreachable.
+func TestOIDC_RefusesStaleKeysAfterFailedRefresh(t *testing.T) {
+	h := newHarness(t)
+	if _, err := h.flow(sso.IntentSignin, h.goodToken(nil), nil); err != nil {
+		t.Fatalf("first sign-in: %v", err)
+	}
+	h.jwksDown = true
+	h.now = h.now.Add(61 * time.Minute)
+	before := h.calls["/jwks"]
+	for i := 0; i < 2; i++ {
+		_, err := h.flow(sso.IntentSignin, h.goodToken(nil), nil)
+		wantReason(t, err, ReasonKey)
+		h.now = h.now.Add(5 * time.Second)
+	}
+	if n := h.calls["/jwks"] - before; n != 1 {
+		t.Fatalf("jwks fetched %d times in the minute, want 1", n)
+	}
+	h.jwksDown = false
+	h.now = h.now.Add(time.Minute)
+	if _, err := h.flow(sso.IntentSignin, h.goodToken(nil), nil); err != nil {
+		t.Fatalf("after recovery: %v", err)
+	}
+}
