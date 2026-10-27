@@ -11,7 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"encoding/hex"
+
 	"github.com/skenzeriq/activediq/internal/platform/audit"
+	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/keys"
@@ -695,6 +698,63 @@ func TestADTargetWithoutNCIsBlockedAtPlan(t *testing.T) {
 			t.Fatal("an unpinned AD target was applied")
 		}
 	})
+}
+
+// completedEnvelope returns the operation's single operation.completed envelope.
+func (p *prig) completedEnvelope(id step.OperationID) chain.Envelope {
+	p.t.Helper()
+	rows := p.owner(`SELECT encode(envelope, 'hex') FROM public.audit_event WHERE kind = 'operation.completed' AND event_id LIKE $1`, "op-"+string(id)+"-%")
+	if len(rows) != 1 {
+		p.t.Fatalf("operation.completed events for %s = %d, want exactly 1", id, len(rows))
+	}
+	raw, err := hex.DecodeString(rows[0])
+	if err != nil {
+		p.t.Fatal(err)
+	}
+	env, err := chain.ParseEnvelope(raw)
+	if err != nil {
+		p.t.Fatal(err)
+	}
+	return env
+}
+
+// T-0477: a plan whose every item is refused by authorisation is a denied attempt; a technical block
+// (facts, pinning) stays a failure.
+func TestPlanRefusalAuditOutcome(t *testing.T) {
+	cases := []struct {
+		name        string
+		setup       func(p *prig)
+		wantOutcome string
+		wantReason  string
+		wantTarget  string
+	}{
+		{"scope denied", func(p *prig) {
+			p.r.cfg.Authz.(*authzFake).deny = map[authority.PrincipalID]bool{"alice": true}
+		}, "denied", "denied", "a"},
+		{"tier0", func(p *prig) { p.r.cfg.Facts = factsFake{tier0: true} }, "denied", "tier0", "a"},
+		{"facts unavailable", func(p *prig) { p.r.cfg.Facts = factsFake{errOn: map[string]bool{"a": true}} }, "failure", "plan_failed", ""},
+		{"no pin", func(p *prig) { p.dir.noNC = true }, "failure", "plan_failed", ""},
+	}
+	for _, c := range cases {
+		storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+			p := newPRig(t, s, rigOpt{})
+			c.setup(p)
+			sub, err := p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "a", Want: "n"}))
+			if err != nil {
+				t.Fatalf("%s: %v", c.name, err)
+			}
+			if sub.State != OpPlanFailed || sub.Blocked != 1 {
+				t.Fatalf("%s: sub = %+v", c.name, sub)
+			}
+			env := p.completedEnvelope(sub.Operation)
+			if env.Outcome != c.wantOutcome || env.Reason != c.wantReason || env.TargetGUID != c.wantTarget {
+				t.Fatalf("%s: outcome/reason/target = %s/%s/%s, want %s/%s/%s", c.name, env.Outcome, env.Reason, env.TargetGUID, c.wantOutcome, c.wantReason, c.wantTarget)
+			}
+			if env.Requester.ID == "" {
+				t.Fatalf("%s: no actor on the event", c.name)
+			}
+		})
+	}
 }
 
 func TestSlotLimit(t *testing.T) {
