@@ -29,9 +29,12 @@ const (
 
 type fakeConnector struct {
 	connectorv1.UnimplementedConnectorServer
-	parents map[string]string // object -> parent; absent = not found
-	got     []*connectorv1.ReadRequest
-	mutate  func(guid string) []*connectorv1.ReadResponse // overrides the stream
+	parents  map[string]string // object -> parent; absent = not found
+	got      []*connectorv1.ReadRequest
+	mutate   func(guid string) []*connectorv1.ReadResponse // overrides the stream
+	tier0    map[string]bool                               // verdict served when the request asks for one
+	noT0     bool                                          // leave the verdict out although asked
+	servedBy []byte                                        // DSA of the DC the header names; default: the pin
 }
 
 func guidOf(s string) *connectorv1.Guid { b, _ := parseUUID(s); return &connectorv1.Guid{Value: b} }
@@ -56,8 +59,19 @@ func (f *fakeConnector) Read(req *connectorv1.ReadRequest, s grpc.ServerStreamin
 	if p != "" {
 		e.ParentGuid = guidOf(p)
 	}
+	h := &connectorv1.ReadHeader{Entry: e}
+	dsa := f.servedBy
+	if dsa == nil {
+		dsa = req.GetDc().GetPinnedDsaGuid().GetValue()
+	}
+	if dsa != nil {
+		h.Observed = &connectorv1.Observation{Dc: &connectorv1.DcIdentity{DsaGuid: &connectorv1.Guid{Value: dsa}}}
+	}
+	if req.GetIncludeTier0() && !f.noT0 {
+		h.Tier0 = &connectorv1.Tier0Verdict{Tier0: f.tier0[g]}
+	}
 	for _, m := range []*connectorv1.ReadResponse{
-		{Event: &connectorv1.ReadResponse_Header{Header: &connectorv1.ReadHeader{Entry: e}}},
+		{Event: &connectorv1.ReadResponse_Header{Header: h}},
 		{Event: &connectorv1.ReadResponse_Completed{Completed: &connectorv1.ReadCompleted{}}},
 	} {
 		if err := s.Send(m); err != nil {
@@ -82,18 +96,7 @@ func (c conns) Get(_ context.Context, tid tenant.ID, id connection.ID) (connecti
 	return connection.Connection{}, errors.New("not found")
 }
 
-type verdicts struct {
-	tier0 map[string]bool
-	err   error
-	dsa   []byte
-}
-
-func (v *verdicts) Tier0(_ context.Context, _ connection.Connection, _ string, g string, dsa []byte) (bool, error) {
-	v.dsa = dsa
-	return v.tier0[g], v.err
-}
-
-func setup(t *testing.T, f *fakeConnector, v *verdicts) *ConnectorReads {
+func setup(t *testing.T, f *fakeConnector) *ConnectorReads {
 	t.Helper()
 	lis := bufconn.Listen(1 << 20)
 	srv := grpc.NewServer()
@@ -110,7 +113,7 @@ func setup(t *testing.T, f *fakeConnector, v *verdicts) *ConnectorReads {
 	tr, _ := NewGRPCReadTransport(connSrc{connectorv1.NewConnectorClient(cc)})
 	tid, _ := tenant.Parse(tTenant)
 	cs := conns{tid.String() + "|c1": {ID: "c1"}}
-	r, err := NewConnectorReads(cs, tr, v)
+	r, err := NewConnectorReads(cs, tr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,9 +127,8 @@ func ctxFor(tenantID string, dsa authority.DSAPins) context.Context {
 var tgt = authority.TargetRef{Connection: "c1", GUID: tUser, Class: "user", NC: tNC}
 
 func TestFactsThroughRealGRPCOnPinnedDC(t *testing.T) {
-	f := &fakeConnector{parents: map[string]string{tUser: tOU, tOU: tHead, tHead: ""}}
-	v := &verdicts{tier0: map[string]bool{tUser: true}}
-	cf := NewConnectorFacts(setup(t, f, v))
+	f := &fakeConnector{parents: map[string]string{tUser: tOU, tOU: tHead, tHead: ""}, tier0: map[string]bool{tUser: true}}
+	cf := NewConnectorFacts(setup(t, f))
 	got, err := cf.Facts(ctxFor(tTenant, authority.DSAPins{tNC: tDSA}), authority.Pins{tNC: "dc1"},
 		authority.FactsQuery{Target: tgt, Tier0: true, Ancestry: true})
 	if err != nil {
@@ -144,13 +146,16 @@ func TestFactsThroughRealGRPCOnPinnedDC(t *testing.T) {
 			t.Errorf("read %d has no nc_guid", i)
 		}
 	}
-	if len(f.got) != 3 || string(v.dsa) != string(want) {
-		t.Fatalf("reads %d, verdict dsa %x", len(f.got), v.dsa)
+	if len(f.got) != 3 {
+		t.Fatalf("reads %d", len(f.got))
+	}
+	if !f.got[0].GetIncludeTier0() {
+		t.Error("the target read did not ask for the verdict")
 	}
 }
 
 func TestMissingObjectIsNotExists(t *testing.T) {
-	cf := NewConnectorFacts(setup(t, &fakeConnector{parents: map[string]string{}}, &verdicts{}))
+	cf := NewConnectorFacts(setup(t, &fakeConnector{parents: map[string]string{}}))
 	got, err := cf.Facts(ctxFor(tTenant, authority.DSAPins{tNC: tDSA}), authority.Pins{tNC: "dc1"}, authority.FactsQuery{Target: tgt})
 	if err != nil || got.Exists {
 		t.Fatalf("%+v, %v", got, err)
@@ -159,7 +164,7 @@ func TestMissingObjectIsNotExists(t *testing.T) {
 
 func TestPinnedReadWithoutDSAFailsClosed(t *testing.T) {
 	f := &fakeConnector{parents: map[string]string{tUser: ""}}
-	r := setup(t, f, &verdicts{})
+	r := setup(t, f)
 	for name, c := range map[string]context.Context{"no dsa pins": ctxFor(tTenant, nil), "other nc": ctxFor(tTenant, authority.DSAPins{"x": tDSA}),
 		"nil dsa": ctxFor(tTenant, authority.DSAPins{tNC: "00000000-0000-0000-0000-000000000000"})} {
 		if _, err := r.Object(c, authority.Pins{tNC: "dc1"}, tgt, tUser, true); !errors.Is(err, ErrReadPin) {
@@ -177,7 +182,7 @@ func TestPinnedReadWithoutDSAFailsClosed(t *testing.T) {
 // nil pins (scope-root ancestry): one unpinned read per call, no DcSelection, and errors still refuse.
 func TestNilPinsLeavesDCToConnector(t *testing.T) {
 	f := &fakeConnector{parents: map[string]string{tOU: tHead, tHead: ""}}
-	cf := NewConnectorFacts(setup(t, f, &verdicts{}))
+	cf := NewConnectorFacts(setup(t, f))
 	root := authority.TargetRef{Connection: "c1", GUID: tOU, Class: "organizationalUnit"}
 	got, err := cf.Facts(ctxFor(tTenant, nil), nil, authority.FactsQuery{Target: root, Ancestry: true})
 	if err != nil || !got.AncestorsComplete || len(got.Ancestors) != 1 {
@@ -192,7 +197,7 @@ func TestNilPinsLeavesDCToConnector(t *testing.T) {
 
 func TestConnectionOfAnotherTenantIsRefused(t *testing.T) {
 	f := &fakeConnector{parents: map[string]string{tUser: ""}}
-	r := setup(t, f, &verdicts{})
+	r := setup(t, f)
 	if _, err := r.Object(ctxFor(tOther, nil), nil, tgt, tUser, true); !errors.Is(err, ErrReadConnection) {
 		t.Fatalf("err %v", err)
 	}
@@ -215,18 +220,17 @@ func TestVerdictErrorAndStreamViolationsFailClosed(t *testing.T) {
 	done := &connectorv1.ReadResponse{Event: &connectorv1.ReadResponse_Completed{Completed: &connectorv1.ReadCompleted{}}}
 	cases := map[string]struct {
 		mutate func(string) []*connectorv1.ReadResponse
-		v      *verdicts
 		want   error
 	}{
-		"no completed":   {func(g string) []*connectorv1.ReadResponse { return ok(g, "") }, &verdicts{}, ErrReadProtocol},
-		"empty stream":   {func(string) []*connectorv1.ReadResponse { return nil }, &verdicts{}, ErrReadProtocol},
-		"two headers":    {func(g string) []*connectorv1.ReadResponse { return append(append(ok(g, ""), ok(g, "")...), done) }, &verdicts{}, ErrReadProtocol},
-		"other object":   {func(string) []*connectorv1.ReadResponse { return append(ok(tOU, ""), done) }, &verdicts{}, ErrReadIdentity},
-		"verdict failed": {func(g string) []*connectorv1.ReadResponse { return append(ok(g, ""), done) }, &verdicts{err: errors.New("boom")}, nil},
+		"no completed":    {func(g string) []*connectorv1.ReadResponse { return ok(g, "") }, ErrReadProtocol},
+		"empty stream":    {func(string) []*connectorv1.ReadResponse { return nil }, ErrReadProtocol},
+		"two headers":     {func(g string) []*connectorv1.ReadResponse { return append(append(ok(g, ""), ok(g, "")...), done) }, ErrReadProtocol},
+		"other object":    {func(string) []*connectorv1.ReadResponse { return append(ok(tOU, ""), done) }, ErrReadIdentity},
+		"verdict missing": {func(g string) []*connectorv1.ReadResponse { return append(ok(g, ""), done) }, ErrNoTier0Verdict},
 	}
 	for name, c := range cases {
-		r := setup(t, &fakeConnector{mutate: c.mutate}, c.v)
-		_, err := r.Object(ctxFor(tTenant, nil), nil, tgt, tUser, true)
+		r := setup(t, &fakeConnector{mutate: c.mutate})
+		_, err := r.Object(ctxFor(tTenant, nil), nil, tgt, tUser, name == "verdict missing")
 		if err == nil || (c.want != nil && !errors.Is(err, c.want)) {
 			t.Errorf("%s: %v", name, err)
 		}
@@ -234,10 +238,24 @@ func TestVerdictErrorAndStreamViolationsFailClosed(t *testing.T) {
 }
 
 func TestNewConnectorReadsRequiresEveryPort(t *testing.T) {
-	if _, err := NewConnectorReads(conns{}, nil, &verdicts{}); !errors.Is(err, ErrNoReadTransport) {
+	if _, err := NewConnectorReads(conns{}, nil); !errors.Is(err, ErrNoReadTransport) {
 		t.Error(err)
 	}
-	if _, err := NewConnectorReads(conns{}, GRPCReadTransport{}, nil); !errors.Is(err, ErrNoTier0Verdict) {
-		t.Error(err)
+}
+
+// Acceptance (T-0433): a pinned read answered by another DC fails, and a verdict that was asked for
+// but not delivered is an error, never false.
+func TestPinnedReadServedByAnotherDCFails(t *testing.T) {
+	other, _ := parseUUID(tOther)
+	r := setup(t, &fakeConnector{parents: map[string]string{tUser: ""}, servedBy: other})
+	if _, err := r.Object(ctxFor(tTenant, authority.DSAPins{tNC: tDSA}), authority.Pins{tNC: "dc1"}, tgt, tUser, false); !errors.Is(err, ErrReadPin) {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestAskedVerdictMissingIsAnError(t *testing.T) {
+	r := setup(t, &fakeConnector{parents: map[string]string{tUser: ""}, noT0: true})
+	if _, err := r.Object(ctxFor(tTenant, authority.DSAPins{tNC: tDSA}), authority.Pins{tNC: "dc1"}, tgt, tUser, true); !errors.Is(err, ErrNoTier0Verdict) {
+		t.Fatalf("err %v", err)
 	}
 }

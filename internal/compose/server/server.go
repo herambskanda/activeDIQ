@@ -80,7 +80,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 	}
 	// No connector endpoint source or Tier-0 verdict source exists yet, so reads is nil and a directory
 	// target fails closed (ErrNoReads); directoryReads wires the adapter the moment both are supplied.
-	reads, err := directoryReads(connection.NewRegistry(db), nil, nil)
+	reads, err := directoryReads(connection.NewRegistry(db), nil)
 	if err != nil {
 		return err
 	}

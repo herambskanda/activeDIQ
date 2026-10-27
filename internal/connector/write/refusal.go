@@ -45,6 +45,12 @@ func grpcCode(c connectorv1.ErrorCode) codes.Code {
 		return codes.Unavailable
 	case connectorv1.ErrorCode_ERROR_CODE_TARGET_CHANGED:
 		return codes.Aborted
+	case connectorv1.ErrorCode_ERROR_CODE_OBJECT_NOT_FOUND:
+		return codes.NotFound
+	case connectorv1.ErrorCode_ERROR_CODE_INSUFFICIENT_RIGHTS:
+		return codes.PermissionDenied
+	case connectorv1.ErrorCode_ERROR_CODE_ATTRIBUTE_NOT_ALLOWED, connectorv1.ErrorCode_ERROR_CODE_SECRET_ATTRIBUTE:
+		return codes.InvalidArgument
 	}
 	return codes.Internal
 }
@@ -95,4 +101,10 @@ func gateRefusal(state connectorv1.WriteGateState, vid *connectorv1.Guid, unack 
 	r.Err.Details = &connectorv1.ConnectorError_ActivationRefused{ActivationRefused: &connectorv1.ActivationRefusedDetails{
 		State: state, VerificationId: vid, UnacknowledgedFindings: unack}}
 	return r
+}
+
+// NewRefusal builds a refusal for another handler of the connector service (the read group), so
+// both transports and both groups end a call the same way. The message must be a fixed text.
+func NewRefusal(code connectorv1.ErrorCode, retry connectorv1.RetryAdvice, msg string) *Refusal {
+	return newRefusal(code, retry, "", msg)
 }
