@@ -273,11 +273,13 @@ func (m *Mux) sendData(c *call, b []byte) error {
 	defer c.sendMu.Unlock()
 	m.mu.Lock()
 	over := c.selfDone || c.peerDone
-	if over {
+	halfClosed := c.opener == m.role && c.selfHlf
+	if over || halfClosed {
 		m.refundCreditLocked(c) // nothing goes out, so the credit was not spent
+		m.wakeSendersLocked()
 	}
 	m.mu.Unlock()
-	if over || (c.opener == m.role && c.selfHlf) {
+	if over || halfClosed {
 		if c.opener == m.role {
 			return io.EOF
 		}

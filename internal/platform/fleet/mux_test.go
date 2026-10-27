@@ -1259,3 +1259,35 @@ func TestCancelledCallReturnsUnreadMessagesToTheTunnelWindow(t *testing.T) {
 		}
 	}
 }
+
+func TestSendsAfterHalfCloseDoNotLeakTunnelCredit(t *testing.T) {
+	r := newRig(t, smallWindows(4, 2))
+	a := r.watch(t, context.Background(), 1)
+	b := r.watch(t, context.Background(), 3)
+	if err := a.CloseSend(); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ { // more than the whole tunnel window
+		if err := a.SendMsg(wrapperspb.String("x")); !errors.Is(err, io.EOF) {
+			t.Fatalf("send %d after half-close: got %v, want EOF", i, err)
+		}
+	}
+	sent := make(chan error, 1)
+	go func() {
+		for i := 0; i < 2; i++ {
+			if err := b.SendMsg(wrapperspb.String("y")); err != nil {
+				sent <- err
+				return
+			}
+		}
+		sent <- nil
+	}()
+	select {
+	case err := <-sent:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("sibling call stalled: tunnel send credit leaked")
+	}
+}
