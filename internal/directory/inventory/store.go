@@ -39,7 +39,8 @@ func (r *Reader) with(ctx context.Context, tid tenant.ID, fn func(ctx context.Co
 
 const linkColumns = `c.id::text, c.ad_connection_id::text, c.ad_object_guid::text, c.entra_connection_id::text, c.entra_object_guid::text,
 	c.match, c.anchor_attr, c.anchor_value, c.ad_sid, c.state, c.candidate_reason, c.gate_checked_at, c.eligible_since, c.eligibility_class,
-	COALESCE(c.reconfirmed_by::text, ''), c.reconfirmed_at, c.ad_tier0, c.ad_tier0_bases, c.entra_tier0, c.entra_tier0_bases, c.facts_as_of,
+	COALESCE(c.reconfirmed_by::text, ''), c.reconfirmed_at, c.ad_tier0, c.ad_tier0_bases, c.entra_tier0, c.entra_tier0_bases,
+	LEAST(COALESCE(c.ad_facts_as_of, c.facts_as_of), COALESCE(c.entra_facts_as_of, c.facts_as_of)),
 	ac.kind, ec.kind`
 
 // CorrelationsFor implements CorrelationSource.
@@ -218,6 +219,27 @@ func (r *Reader) DesignationsFor(ctx context.Context, tid tenant.ID, connection 
 		out = []GUID{}
 	}
 	return out, nil
+}
+
+// Facts is the transaction-owning form of Writer.RecordLiveFacts, for the live refresher
+// (directory/client.LiveRefresher), which has no transaction of its own.
+type Facts struct{ db *store.DB }
+
+// NewFacts binds the live-facts writer to a database.
+func NewFacts(db *store.DB) *Facts { return &Facts{db: db} }
+
+// RecordLiveFacts runs Writer.RecordLiveFacts in tid's transaction.
+func (f *Facts) RecordLiveFacts(ctx context.Context, tid tenant.ID, ref Ref, tier0 bool, readAt time.Time) error {
+	if f == nil || f.db == nil {
+		return ErrNotConfigured
+	}
+	if tid.IsZero() {
+		return ErrNoTenant
+	}
+	return f.db.WithTenant(ctx, tid, func(ctx context.Context, tx store.Tx) error {
+		_, err := Writer{}.RecordLiveFacts(ctx, tx, ref, tier0, readAt)
+		return err
+	})
 }
 
 var _ = tablekind.Declare(tablekind.Table{Name: "public.inventory_tier0_revisions", Entity: "DM-20", Kind: tablekind.Directory})
