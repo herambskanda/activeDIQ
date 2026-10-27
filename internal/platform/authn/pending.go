@@ -86,15 +86,21 @@ func ParsePendingHandle(s string) (PendingHandle, error) {
 // PendingStore holds pending sign-ins in PostgreSQL, so any node completes a sign-in another started.
 type PendingStore struct {
 	db    *store.DB
+	audit audit.Sink
 	clock func() time.Time // nil: the database clock
 }
 
-// NewPendingStore returns a PendingStore. clock is nil in production; tests set it.
-func NewPendingStore(db *store.DB, clock func() time.Time) (*PendingStore, error) {
+// NewPendingStore returns a PendingStore. sink records authn.pending.begun and is required; it must be
+// bound to db (audit.NewChainer) so the event is chained in the transaction that creates the pending
+// sign-in. clock is nil in production; tests set it.
+func NewPendingStore(db *store.DB, sink audit.Sink, clock func() time.Time) (*PendingStore, error) {
 	if db == nil {
 		return nil, errors.New("authn: PendingStore needs a database")
 	}
-	return &PendingStore{db: db, clock: clock}, nil
+	if sink == nil {
+		return nil, errors.New("authn: PendingStore needs an audit sink")
+	}
+	return &PendingStore{db: db, audit: sink, clock: clock}, nil
 }
 
 func (p *PendingStore) now(ctx context.Context, tx store.Tx) (time.Time, error) {
@@ -120,7 +126,9 @@ type BeginInput struct {
 }
 
 // Begin records a passed first factor and returns the handle for the pending cookie. It never creates
-// a session.
+// a session. The row and its authn.pending.begun event commit together: if the event cannot be
+// appended, no pending sign-in exists (fail closed), so a first factor that is never followed by a
+// second one stays visible after PurgePending removes the row.
 func (p *PendingStore) Begin(ctx context.Context, in BeginInput) (PendingHandle, error) {
 	if in.Tenant.IsZero() || !validAccount(in.Account) || !in.FirstFactor.valid() || !in.Epoch.ok {
 		return PendingHandle{}, ErrInvalid
@@ -140,11 +148,14 @@ func (p *PendingStore) Begin(ctx context.Context, in BeginInput) (PendingHandle,
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO public.authn_pending_signins
+		var id string
+		if err := tx.QueryRow(ctx, `INSERT INTO public.authn_pending_signins
   (tenant_id, handle_hash, account_id, first_factor, client_ip, created_at, expires_at, account_epoch)
-VALUES ($1::uuid, $2, $3::uuid, $4, $5, $6, $7, $8)`,
-			in.Tenant.String(), h.hash(), in.Account, string(in.FirstFactor), ip, now, now.Add(PendingSignInTTL), in.Epoch.n)
-		return err
+VALUES ($1::uuid, $2, $3::uuid, $4, $5, $6, $7, $8) RETURNING id::text`,
+			in.Tenant.String(), h.hash(), in.Account, string(in.FirstFactor), ip, now, now.Add(PendingSignInTTL), in.Epoch.n).Scan(&id); err != nil {
+			return err
+		}
+		return p.begun(ctx, tx, id, in, now)
 	})
 	if err != nil {
 		return PendingHandle{}, fmt.Errorf("authn: begin pending sign-in: %w", err)
