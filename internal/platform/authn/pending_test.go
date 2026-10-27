@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base32"
 	"errors"
+	"fmt"
 	"github.com/skenzeriq/activediq/internal/platform/rbac"
 	"net/netip"
 	"strings"
@@ -39,7 +40,7 @@ func eachPending(t *testing.T, fn func(t *testing.T, e *pendEnv)) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		ps, err := NewPendingStore(base.db, clock)
+		ps, err := NewPendingStore(base.db, sink, clock)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -513,6 +514,60 @@ func Test_pending_retention_purge(t *testing.T) {
 		}
 		if n, err := p.PurgePending(ctx, e.ten, human); err != nil || n != 0 || len(psink.of(KindPendingPurged)) != 1 {
 			t.Errorf("second purge = %d, %v", n, err)
+		}
+	})
+}
+
+// failSink refuses every append.
+type failSink struct{}
+
+func (failSink) Append(context.Context, store.Tx, audit.Event) error { return errors.New("audit down") }
+
+// T-0439 acceptance 1: Begin commits authn.pending.begun with account, first factor and client IP, and
+// neither the handle nor its hash.
+func Test_pending_begin_audited(t *testing.T) {
+	eachPending(t, func(t *testing.T, e *pendEnv) {
+		h := e.begin(t)
+		evs := e.sink.of(KindPendingBegun)
+		if len(evs) != 1 {
+			t.Fatalf("%d begun events, want 1", len(evs))
+		}
+		d := detailsOf(evs[0])
+		if evs[0].Outcome != audit.Success || d["account"] != e.account || d["first_factor"] != "password" || d["client_ip"] != "192.0.2.7" {
+			t.Errorf("begun event = %+v %v", evs[0], d)
+		}
+		if evs[0].Target.GUID != e.row(t, "id") {
+			t.Errorf("target %q is not the pending row", evs[0].Target.GUID)
+		}
+		hash := fmt.Sprintf("%x", h.hash())
+		vals := []string{evs[0].ID, evs[0].Target.GUID}
+		for _, v := range d {
+			vals = append(vals, v)
+		}
+		for _, v := range vals {
+			if strings.Contains(v, h.Reveal()) || strings.Contains(v, hash) {
+				t.Errorf("event carries the handle or hash: %q", v)
+			}
+		}
+	})
+}
+
+// T-0439 acceptance 2: an audit failure leaves no pending row.
+func Test_pending_begin_fails_closed_without_audit(t *testing.T) {
+	eachPending(t, func(t *testing.T, e *pendEnv) {
+		ps, err := NewPendingStore(e.db, failSink{}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = ps.Begin(context.Background(), BeginInput{Tenant: e.ten, Account: e.account, FirstFactor: FirstPassword, Epoch: epochOf(t, e.sess, e.ten, e.account)})
+		if err == nil {
+			t.Fatal("Begin succeeded with a failing audit sink")
+		}
+		if n := e.query(t, "SELECT count(*)::text FROM public.authn_pending_signins"); len(n) != 1 || n[0] != "0" {
+			t.Errorf("pending rows after failed audit: %v", n)
+		}
+		if _, err := NewPendingStore(e.db, nil, nil); err == nil {
+			t.Error("NewPendingStore accepted a nil sink")
 		}
 	})
 }
