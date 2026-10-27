@@ -66,8 +66,9 @@ type call struct {
 	sndCredit    int
 	rcvHeld      int
 	rcvConsumed  int
-	tunPend      int  // peer messages of this call still counted against the tunnel window
-	keepBuffered bool // retire without draining: buffered data must still reach the reader
+	tunPend      int         // peer messages of this call still counted against the tunnel window
+	keepBuffered bool        // retire without draining: buffered data must still reach the reader
+	unhook       func() bool // stops the caller-context hook; guarded by Mux.mu, nil once spent
 
 	peerHalf bool // guarded by Mux.mu
 	unary    bool // one message each way: a second data frame from the peer is a violation

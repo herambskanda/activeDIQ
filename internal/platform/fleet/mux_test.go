@@ -1386,3 +1386,44 @@ func TestCancellingTheContextOfAClosedStreamReturnsItsUnreadMessages(t *testing.
 		})
 	}
 }
+
+// A call made on a long-lived caller context must leave nothing registered on it once it has ended.
+func TestCallsOnALongLivedContextRetainNothing(t *testing.T) {
+	srv, _ := e2e(t, make(chan struct{}, 1))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	const rounds = 7000 // 3 calls per round: 21k calls
+	out := new(wrapperspb.StringValue)
+	for i := 0; i < rounds; i++ {
+		if err := srv.Conn().Invoke(ctx, mPing, wrapperspb.String("a"), out); err != nil {
+			t.Fatal(err)
+		}
+		for j := 0; j < 2; j++ {
+			st, err := srv.Conn().NewStream(ctx, &grpc.StreamDesc{ServerStreams: true}, mWatch)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := st.SendMsg(wrapperspb.String("w")); err != nil {
+				t.Fatal(err)
+			}
+			_ = st.CloseSend()
+			for {
+				if err := st.RecvMsg(new(wrapperspb.StringValue)); err != nil {
+					if !errors.Is(err, io.EOF) {
+						t.Fatal(err)
+					}
+					break
+				}
+			}
+		}
+	}
+	runtime.GC()
+	runtime.GC()
+	runtime.ReadMemStats(&after)
+	if grew := int64(after.HeapInuse) - int64(before.HeapInuse); grew > 8<<20 {
+		t.Fatalf("heap grew by %d KiB after %d finished calls on one context", grew>>10, rounds*3)
+	}
+}

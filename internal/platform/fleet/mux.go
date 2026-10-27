@@ -366,6 +366,7 @@ func (m *Mux) consumed(c *call) {
 	}
 	var fs []Frame
 	if c.retired { // only the tunnel window still counts it
+		m.unhookLocked(c)
 		fs = m.grantsLocked(nil)
 	} else {
 		c.rcvConsumed++
@@ -398,6 +399,7 @@ func (m *Mux) finishLocked(c *call, err error) {
 // tunnel window. Credit goes back only when the bytes are released, so the window keeps bounding what
 // the peer can make us hold (TM-TB6-T7); a message the reader already took is credited by consumed.
 func (m *Mux) drainLocked(c *call) {
+	defer m.unhookLocked(c)
 	for {
 		select {
 		case <-c.in:
@@ -409,6 +411,16 @@ func (m *Mux) drainLocked(c *call) {
 		default:
 		}
 		return
+	}
+}
+
+// unhookLocked removes the caller-context hook once nothing of c can still need releasing: the call
+// is retired and holds no messages against the tunnel window. Without it every call made on a
+// long-lived context would leave a registration (and the *call) on that context forever.
+func (m *Mux) unhookLocked(c *call) {
+	if c.unhook != nil && c.retired && c.tunPend == 0 {
+		c.unhook() // never waits for the hook function, so it is safe under m.mu
+		c.unhook = nil
 	}
 }
 
@@ -440,6 +452,7 @@ func (m *Mux) retireLocked(c *call) {
 	} else {
 		m.livePeer--
 	}
+	m.unhookLocked(c)
 	close(c.dead)
 	c.cancel()
 	// The map keeps only the id and how the call ended, never the *call: its inbox, which may hold
@@ -887,6 +900,10 @@ func (m *Mux) open(ctx context.Context, method string, unary bool) (*call, error
 	}
 	// Hook the caller's own context, not c.ctx: retireLocked cancels c.ctx itself, which would spend
 	// the hook at retirement. A live call is cancelled; an ended one has its unread messages released.
-	context.AfterFunc(ctx, func() { m.cancelCall(c); m.release(c) })
+	stop := context.AfterFunc(ctx, func() { m.cancelCall(c); m.release(c) })
+	m.mu.Lock()
+	c.unhook = stop
+	m.unhookLocked(c) // the call may already have ended
+	m.mu.Unlock()
 	return c, nil
 }
