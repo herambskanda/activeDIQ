@@ -353,6 +353,15 @@ The route, gate and rules are TM §7.6 AN-9 and rules 2, 5, 6 and 7, unchanged. 
 When T-0206 lands, AN-9's `GET /auth/negotiate` enters `api/openapi/policy.yaml` `nonApiRoutes`
 (TM §7.6, "Which rows are in policy.yaml today").
 
+**Built (T-0206).** `internal/platform/authn/negotiate` is the core: `RequireKerberos` refuses by structure
+anything but a SPNEGO NegTokenInit that offers Kerberos first with a krb5 AP-REQ (NTLM never reaches an
+acceptor), `Service.SignIn` maps the acceptor's verified PAC user SID through `inventory.Reader.ObjectsBySID`
+and `authn.AccountIndex.BackedBy` to exactly one active account (NEG-2) and begins a `kerberos` pending
+sign-in; every refusal is one `ErrSignInFailed` with the reason going to a `Recorder`. `httpx/negotiatehttp`
+is the header binding (64 KiB cap, 431) and renders through `apihost.ServeNonAPI`, the only place a route
+outside the document writes status. The `Acceptor`, route mounting, audit kinds and NEG-1 switch are T-0492;
+NEG-4 and the sso-correlation mapping route are T-0493. AN-9 is therefore not reachable yet (NEG-9).
+
 ---
 
 ## 10. TM-F-SSO corpus (T-0073, with T-0201 and T-0202)
