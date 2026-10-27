@@ -543,7 +543,7 @@ func TestC18DesignationClosure(t *testing.T) {
 // T-0387 (TM-D27 rule 4): a well-known SID planted in a sIDHistory must not suppress the fail-closed
 // for a grant to that SID; the holder covers one object, the grant reaches every authenticated principal.
 func TestC18WellKnownHistoryFailsClosed(t *testing.T) {
-	for _, wk := range []string{"S-1-5-11", "S-1-1-0"} {
+	for _, wk := range []string{"S-1-5-11", "S-1-1-0", foreignID + "-513", foreignID + "-515", foreignID + "-512"} {
 		f := forest()
 		us := u(f, "heir", 4100)
 		f.find(us).history(wk)
