@@ -555,6 +555,9 @@ func (p *parser) parseParam(raw any, where string, m *Model) *Param {
 		// A cookie never produces a validation problem (the problem "in" enum has no cookie, and a
 		// precise answer would be an oracle): a missing or repeated cookie reads as empty.
 		pm.Required = true // a plain string field; an absent cookie is the empty string
+		if pm.Name == "__Host-adiq_session" {
+			p.fail(where, "the session cookie belongs to the authenticator, never to a handler (cookie parameter %q)", pm.Name)
+		}
 	default:
 		p.fail(where, "parameter location %q is not allowed (path, query, header, cookie)", pm.In)
 	}

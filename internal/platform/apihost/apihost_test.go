@@ -1004,6 +1004,7 @@ func TestCSRFRealAuthenticatorInChain(t *testing.T) {
 func TestCookiesPeerIPAndHeaderLists(t *testing.T) {
 	m := meta("verify", "GET", "/widgets", "anonymous")
 	m.Class = "anonymous"
+	m.Cookies = []string{"one", "two"}
 	pol := apihost.Policy{Anonymous: []apihost.AnonymousRow{{Operation: "verify"}}}
 	r := &row{meta: m, call: func(context.Context, apihost.Input) (apihost.Response, error) {
 		return listResp{resp: resp{status: 204}, lists: map[string][]string{"Set-Cookie": {"a=1; Path=/", "b=; Max-Age=0", ""}}}, nil
@@ -1014,6 +1015,7 @@ func TestCookiesPeerIPAndHeaderLists(t *testing.T) {
 	req.AddCookie(&http.Cookie{Name: "one", Value: "x"})
 	req.AddCookie(&http.Cookie{Name: "two", Value: "1"})
 	req.AddCookie(&http.Cookie{Name: "two", Value: "2"})
+	req.AddCookie(&http.Cookie{Name: "__Host-adiq_session", Value: "SESSION-CANARY"})
 	rec := serve(t, r, newPorts(), pol, req)
 	if rec.Code != 204 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
@@ -1026,5 +1028,24 @@ func TestCookiesPeerIPAndHeaderLists(t *testing.T) {
 	}
 	if len(r.in.cookies["one"]) != 1 || len(r.in.cookies["two"]) != 2 {
 		t.Fatalf("cookies = %v", r.in.cookies)
+	}
+	if _, leaked := r.in.cookies["__Host-adiq_session"]; leaked {
+		t.Fatal("an undeclared cookie (the session) reached the route")
+	}
+}
+
+func TestUndeclaredCookiesNeverReachRoute(t *testing.T) {
+	m := meta("plain", "GET", "/widgets", "anonymous")
+	m.Class = "anonymous"
+	pol := apihost.Policy{Anonymous: []apihost.AnonymousRow{{Operation: "plain"}}}
+	r := &row{meta: m, call: func(context.Context, apihost.Input) (apihost.Response, error) { return resp{status: 204}, nil }}
+	req := get("/widgets")
+	req.AddCookie(&http.Cookie{Name: "__Host-adiq_session", Value: "SESSION-CANARY"})
+	req.AddCookie(&http.Cookie{Name: "other", Value: "x"})
+	if rec := serve(t, r, newPorts(), pol, req); rec.Code != 204 {
+		t.Fatalf("status %d", rec.Code)
+	}
+	if len(r.in.cookies) != 0 {
+		t.Fatalf("a route declaring no cookie got %v", r.in.cookies)
 	}
 }

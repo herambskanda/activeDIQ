@@ -15,8 +15,8 @@ import (
 
 // ClaimWidgetInput is the decoded input of claimWidget: path, query and header parameters, then the body.
 type ClaimWidgetInput struct {
-	ClaimTicket string // cookie "claim_ticket"
-	PeerIP      string // the TCP peer address, never a forwarded header
+	ClaimTicket apitypes.CookieValue // cookie "claim_ticket"
+	PeerIP      string               // the TCP peer address, never a forwarded header
 }
 
 func (in *ClaimWidgetInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
@@ -24,7 +24,7 @@ func (in *ClaimWidgetInput) BindRequest(r *apihost.Request, errs *apitypes.Error
 	{
 		vs := r.Cookies["claim_ticket"]
 		if len(vs) == 1 {
-			in.ClaimTicket = vs[0]
+			in.ClaimTicket = apitypes.NewCookieValue(vs[0])
 		}
 	}
 	in.PeerIP = r.PeerIP
@@ -671,6 +671,7 @@ func Bind(h Handlers) apihost.TagHandlers {
 			OperationID: "claimWidget", Tag: "widgets", Method: "POST", Path: "/widgets/claim",
 			Permission: "widgets.write", Anonymous: "", Scope: "tenant", Stability: "stable", Deprecated: false, Sunset: "",
 			Class: "write", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
+			Cookies: []string{"claim_ticket"},
 		},
 			func() apihost.Input { return new(ClaimWidgetInput) },
 			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {

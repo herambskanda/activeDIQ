@@ -157,8 +157,8 @@ func (SignOut204) isSignOutOutput() {}
 
 // VerifyTOTPSignInInput is the decoded input of verifyTotpSignIn: path, query and header parameters, then the body.
 type VerifyTOTPSignInInput struct {
-	HostAdiqPending string // cookie "__Host-adiq_pending"
-	PeerIP          string // the TCP peer address, never a forwarded header
+	HostAdiqPending apitypes.CookieValue // cookie "__Host-adiq_pending"
+	PeerIP          string               // the TCP peer address, never a forwarded header
 	Body            TotpCodeRequest
 }
 
@@ -167,7 +167,7 @@ func (in *VerifyTOTPSignInInput) BindRequest(r *apihost.Request, errs *apitypes.
 	{
 		vs := r.Cookies["__Host-adiq_pending"]
 		if len(vs) == 1 {
-			in.HostAdiqPending = vs[0]
+			in.HostAdiqPending = apitypes.NewCookieValue(vs[0])
 		}
 	}
 	in.PeerIP = r.PeerIP
@@ -331,6 +331,7 @@ func Bind(h Handlers) apihost.TagHandlers {
 			OperationID: "verifyTotpSignIn", Tag: "platform.authn", Method: "POST", Path: "/auth/second-factor/totp/verify",
 			Permission: "anonymous", Anonymous: "AN-10", Scope: "platform", Stability: "preview", Deprecated: false, Sunset: "",
 			Class: "auth", MaxBody: 1024, Body: apihost.BodyJSON, MediaType: "application/json", Secret: true,
+			Cookies: []string{"__Host-adiq_pending"},
 		},
 			func() apihost.Input { return new(VerifyTOTPSignInInput) },
 			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {

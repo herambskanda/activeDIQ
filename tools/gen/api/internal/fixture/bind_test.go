@@ -268,13 +268,13 @@ func TestCookiePeerIPAndHeaderLists(t *testing.T) {
 	var in widgets.ClaimWidgetInput
 	var errs apitypes.Errors
 	in.BindRequest(&apihost.Request{Cookies: map[string][]string{"claim_ticket": {"t1"}}, PeerIP: "192.0.2.1"}, &errs)
-	if in.ClaimTicket != "t1" || in.PeerIP != "192.0.2.1" || len(errs.All()) != 0 {
+	if in.ClaimTicket.Reveal() != "t1" || in.PeerIP != "192.0.2.1" || len(errs.All()) != 0 {
 		t.Fatalf("in = %+v errs = %v", in, errs.All())
 	}
 	for _, c := range []map[string][]string{nil, {"claim_ticket": {"a", "b"}}} {
 		var again widgets.ClaimWidgetInput
 		again.BindRequest(&apihost.Request{Cookies: c}, &errs)
-		if again.ClaimTicket != "" || len(errs.All()) != 0 {
+		if !again.ClaimTicket.IsZero() || len(errs.All()) != 0 {
 			t.Fatalf("cookies %v: in = %+v errs = %v", c, again, errs.All())
 		}
 	}

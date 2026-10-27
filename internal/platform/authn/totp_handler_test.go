@@ -1,8 +1,12 @@
 package authn
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
@@ -13,7 +17,7 @@ import (
 )
 
 func totpInput(pending, code string) api.VerifyTOTPSignInInput {
-	return api.VerifyTOTPSignInInput{HostAdiqPending: pending, PeerIP: "192.0.2.7",
+	return api.VerifyTOTPSignInInput{HostAdiqPending: apitypes.NewCookieValue(pending), PeerIP: "192.0.2.7",
 		Body: api.TotpCodeRequest{Code: secret.FromBytes([]byte(code))}}
 }
 
@@ -92,5 +96,30 @@ func wantSignInFailed(t *testing.T, err error) {
 	var p *apitypes.Problem
 	if !errors.As(err, &p) || p.Status != 401 || p.Type != apitypes.ProblemTypeSignInFailed || p.Detail != nil {
 		t.Fatalf("err = %v, want the sign-in-failed 401", err)
+	}
+}
+
+// The pending handle is a bearer secret: an Input that is logged or dumped must not show it.
+func Test_verify_totp_input_never_prints_the_pending_handle(t *testing.T) {
+	const canary = "HANDLE-CANARY-abc123"
+	in := totpInput(canary, "123456")
+	for _, got := range []string{
+		fmt.Sprintf("%v", in), fmt.Sprintf("%+v", in), fmt.Sprintf("%#v", in), fmt.Sprintf("%s", in.HostAdiqPending),
+	} {
+		if strings.Contains(got, canary) {
+			t.Fatalf("formatted Input shows the handle: %s", got)
+		}
+	}
+	var text, js bytes.Buffer
+	slog.New(slog.NewTextHandler(&text, nil)).Info("in", "input", in, "cookie", in.HostAdiqPending)
+	slog.New(slog.NewJSONHandler(&js, nil)).Info("in", "input", in, "cookie", in.HostAdiqPending)
+	if strings.Contains(text.String(), canary) || strings.Contains(js.String(), canary) {
+		t.Fatalf("slog shows the handle: %s %s", text.String(), js.String())
+	}
+	if b, err := json.Marshal(in.HostAdiqPending); err != nil || strings.Contains(string(b), canary) {
+		t.Fatalf("json shows the handle: %s %v", b, err)
+	}
+	if in.HostAdiqPending.Reveal() != canary {
+		t.Fatal("Reveal lost the value")
 	}
 }

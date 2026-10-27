@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitypes"
@@ -171,6 +172,9 @@ func (s *Server) routeHandler(rt Route, boundHost string) http.Handler {
 		}()
 		req := &Request{PathValue: r.PathValue, Query: query, Header: r.Header, PeerIP: sourceIP(r)}
 		for _, c := range r.Cookies() {
+			if !slices.Contains(meta.Cookies, c.Name) {
+				continue // only the cookies the route declares; never the session cookie
+			}
 			if req.Cookies == nil {
 				req.Cookies = map[string][]string{}
 			}

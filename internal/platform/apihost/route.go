@@ -35,8 +35,9 @@ type RouteMeta struct {
 	Class       string // rate class (rule 10)
 	MaxBody     int64  // maxBodyBytes
 	Body        BodyKind
-	MediaType   string // the request media type, empty without a body
-	Secret      bool   // the Input type closure reaches SecretInput (rule 6)
+	MediaType   string   // the request media type, empty without a body
+	Secret      bool     // the Input type closure reaches SecretInput (rule 6)
+	Cookies     []string // the cookie parameters the operation declares; no other cookie reaches a handler
 }
 
 // Request is what apihost hands a route after the middleware chain has run: the parts of the HTTP

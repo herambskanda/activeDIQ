@@ -48,7 +48,7 @@ func (h Handlers) VerifyTOTPSignIn(ctx context.Context, in api.VerifyTOTPSignInI
 	}
 	var code string
 	in.Body.Code.Expose(func(b []byte) { code = string(b) })
-	_, cookies, err := h.SecondFactor.VerifyTOTPCookie(ctx, in.HostAdiqPending, code)
+	_, cookies, err := h.SecondFactor.VerifyTOTPCookie(ctx, in.HostAdiqPending.Reveal(), code)
 	if err != nil {
 		if errors.Is(err, ErrPendingInvalid) || errors.Is(err, ErrSecondFactorRefused) {
 			if h.Log != nil {
