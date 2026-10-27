@@ -109,6 +109,34 @@ func (p *ADProvider) sameSession() bool {
 	return ds == nil || bs == nil || ds == bs
 }
 
+// OverSession is true only when the provider's directory and its bound-DC binder are both
+// session-backed and both over s. A test double on either side is false: a caller that needs the
+// reads, the classification and the DC identity to come from one DC (the Read pin) must not accept
+// anything it cannot prove.
+func (p *ADProvider) OverSession(s *ad.Session) bool {
+	if p == nil || s == nil {
+		return false
+	}
+	var ds, bs *ad.Session
+	switch d := p.Dir.(type) {
+	case tier0.SessionDirectory:
+		ds = d.S
+	case *tier0.SessionDirectory:
+		if d != nil {
+			ds = d.S
+		}
+	}
+	switch b := p.Bound.(type) {
+	case SessionDC:
+		bs = b.S
+	case *SessionDC:
+		if b != nil {
+			bs = b.S
+		}
+	}
+	return ds == s && bs == s
+}
+
 // ADProvider classifies through the AD classifier of T-0093 over an ADDirectory.
 type ADProvider struct {
 	Dir tier0.ADDirectory

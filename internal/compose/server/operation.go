@@ -48,18 +48,18 @@ func buildOperation(holdsMinter func() bool, db *store.DB, facts operation.LiveF
 
 // directoryReads builds the connector read adapter (client.ConnectorReads) over the connection
 // registry, so a read resolves its connection under the context's tenant. It returns nil reads, which
-// directoryFacts turns into fail-closed ErrNoReads, when no connector source or Tier-0 verdict source
-// is supplied: neither exists in the server yet (follow-ups on T-0366), and a half-wired adapter must
+// directoryFacts turns into fail-closed ErrNoReads, when no connector source is supplied: none exists
+// in the server yet (follow-ups on T-0366); the Tier-0 verdict comes with the Read header (T-0433), and a half-wired adapter must
 // not answer.
-func directoryReads(conns client.ConnectionSource, src client.ConnectorSource, t0 client.Tier0Verdicts) (client.Reads, error) {
-	if src == nil || t0 == nil {
+func directoryReads(conns client.ConnectionSource, src client.ConnectorSource) (client.Reads, error) {
+	if src == nil {
 		return nil, nil
 	}
 	tr, err := client.NewGRPCReadTransport(src)
 	if err != nil {
 		return nil, fmt.Errorf("server: read transport: %w", err)
 	}
-	r, err := client.NewConnectorReads(conns, tr, t0)
+	r, err := client.NewConnectorReads(conns, tr)
 	if err != nil {
 		return nil, fmt.Errorf("server: connector reads: %w", err)
 	}

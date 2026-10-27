@@ -47,6 +47,7 @@ func DefaultSchema() *ldapfilter.Schema {
 			ldapfilter.AttrInfo{Name: "memberOf", OID: "1.2.840.113556.1.2.102", Syntax: ldapfilter.SynDN},
 			ldapfilter.AttrInfo{Name: "primaryGroupID", OID: "1.2.840.113556.1.4.98", Syntax: ldapfilter.SynInt32},
 			ldapfilter.AttrInfo{Name: "userAccountControl", OID: "1.2.840.113556.1.4.8", Syntax: ldapfilter.SynInt32},
+			ldapfilter.AttrInfo{Name: "instanceType", OID: "1.2.840.113556.1.2.1", Syntax: ldapfilter.SynInt32},
 			ldapfilter.AttrInfo{Name: "groupType", OID: "1.2.840.113556.1.4.750", Syntax: ldapfilter.SynInt32},
 			ldapfilter.AttrInfo{Name: "adminCount", OID: "1.2.840.113556.1.4.150", Syntax: ldapfilter.SynInt32},
 			ldapfilter.AttrInfo{Name: "whenCreated", OID: "1.2.840.113556.1.2.2", Syntax: ldapfilter.SynGenTime},

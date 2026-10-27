@@ -69,7 +69,7 @@ func TestRBACAgreesWithTheDesignationAction(t *testing.T) {
 }
 
 func TestDirectoryReadsIsNilUntilBothSourcesExist(t *testing.T) {
-	r, err := directoryReads(nil, nil, nil)
+	r, err := directoryReads(nil, nil)
 	if err != nil || r != nil {
 		t.Fatalf("%v, %v", r, err)
 	}

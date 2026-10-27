@@ -15,7 +15,7 @@ import (
 // Errors of the connector read adapter. None carries an object identifier or a connector message.
 var (
 	ErrNoReadTransport = errors.New("client: no read transport wired")
-	ErrNoTier0Verdict  = errors.New("client: no tier0 verdict source wired")
+	ErrNoTier0Verdict  = errors.New("client: read returned no tier0 verdict")
 	ErrReadTenant      = errors.New("client: read has no tenant in its context")
 	ErrReadConnection  = errors.New("client: connection not readable for this tenant")
 	ErrReadPin         = errors.New("client: pinned read without a usable DSA pin")
@@ -35,34 +35,25 @@ type ReadTransport interface {
 	Read(ctx context.Context, req *connectorv1.ReadRequest) (ReadStream, error)
 }
 
-// Tier0Verdicts answers whether the connector's classifier reckons an object Tier-0, on the DC the
-// read used. The Read RPC carries no verdict, so this is a separate port; an error, or an object
-// the classifier cannot decide, must be returned as an error (true or error, never a default false).
-type Tier0Verdicts interface {
-	Tier0(ctx context.Context, conn connection.Connection, nc string, guid string, dsa []byte) (bool, error)
-}
-
 // ConnectorReads is the Reads implementation over the connector's Read RPC.
 type ConnectorReads struct {
 	conns ConnectionSource
 	tr    ReadTransport
-	t0    Tier0Verdicts
 }
 
 var _ Reads = (*ConnectorReads)(nil)
 
 // NewConnectorReads returns the adapter. Every argument is required; a missing one is an error here
-// rather than a silent unpinned or unclassified read later.
-func NewConnectorReads(conns ConnectionSource, tr ReadTransport, t0 Tier0Verdicts) (*ConnectorReads, error) {
+// rather than a silent unpinned read later. The Tier-0 verdict is not a port: it rides on the Read
+// header (ReadHeader.tier0), computed by the connector on the DC that served the read.
+func NewConnectorReads(conns ConnectionSource, tr ReadTransport) (*ConnectorReads, error) {
 	switch {
 	case conns == nil:
 		return nil, errors.New("client: connector reads need a connection source")
 	case tr == nil:
 		return nil, ErrNoReadTransport
-	case t0 == nil:
-		return nil, ErrNoTier0Verdict
 	}
-	return &ConnectorReads{conns: conns, tr: tr, t0: t0}, nil
+	return &ConnectorReads{conns: conns, tr: tr}, nil
 }
 
 // Object implements Reads. The connection is resolved under the tenant of ctx (authority.WithTenant),
@@ -90,9 +81,10 @@ func (r *ConnectorReads) Object(ctx context.Context, pins authority.Pins, target
 	}
 
 	req := &connectorv1.ReadRequest{
-		Connection: &connectorv1.ConnectionRef{ConnectionId: target.Connection},
-		Guid:       &connectorv1.Guid{Value: id},
-		Attributes: []string{"objectClass"},
+		Connection:   &connectorv1.ConnectionRef{ConnectionId: target.Connection},
+		Guid:         &connectorv1.Guid{Value: id},
+		Attributes:   []string{"objectClass"},
+		IncludeTier0: needTier0,
 	}
 	var dsa []byte
 	if nc := string(target.NC); nc != "" {
@@ -113,23 +105,12 @@ func (r *ConnectorReads) Object(ctx context.Context, pins authority.Pins, target
 		req.Dc = &connectorv1.DcSelection{PinnedDsaGuid: &connectorv1.Guid{Value: dsa}}
 	}
 
-	out, err := r.read(ctx, req, id)
-	if err != nil || !out.Exists {
-		return out, err
-	}
-	if needTier0 {
-		t, err := r.t0.Tier0(ctx, conn, string(target.NC), guid, dsa)
-		if err != nil {
-			return ObjectRead{}, fmt.Errorf("client: tier0 verdict: %w", err)
-		}
-		out.Tier0 = t
-	}
-	return out, nil
+	return r.read(ctx, req, id, needTier0, dsa)
 }
 
 // read folds the Read stream: exactly one header, then chunks, then one completed; anything else is
 // a protocol error. OBJECT_NOT_FOUND is an answer (Exists false); every other error is an error.
-func (r *ConnectorReads) read(ctx context.Context, req *connectorv1.ReadRequest, want []byte) (ObjectRead, error) {
+func (r *ConnectorReads) read(ctx context.Context, req *connectorv1.ReadRequest, want []byte, needTier0 bool, pin []byte) (ObjectRead, error) {
 	st, err := r.tr.Read(ctx, req)
 	if err != nil {
 		return notFoundOr(err)
@@ -158,6 +139,23 @@ func (r *ConnectorReads) read(ctx context.Context, req *connectorv1.ReadRequest,
 			e := ev.Header.GetEntry()
 			if string(e.GetObjectGuid().GetValue()) != string(want) {
 				return ObjectRead{}, ErrReadIdentity
+			}
+			// A pinned read is served by the pinned DC or fails: a header that names another DC
+			// (or none) is refused, never accepted as an answer from the wrong replica.
+			if len(pin) != 0 {
+				dsa := ev.Header.GetObserved().GetDc().GetDsaGuid().GetValue()
+				if string(dsa) != string(pin) {
+					return ObjectRead{}, ErrReadPin
+				}
+			}
+			// The verdict is present exactly when asked for; a missing one is an error, never false.
+			if needTier0 {
+				if ev.Header.GetTier0() == nil {
+					return ObjectRead{}, ErrNoTier0Verdict
+				}
+				out.Tier0 = ev.Header.GetTier0().GetTier0()
+			} else if ev.Header.GetTier0() != nil {
+				return ObjectRead{}, ErrReadProtocol
 			}
 			header = true
 			out.Exists = true

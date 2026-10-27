@@ -1,6 +1,7 @@
 package ad
 
 import (
+	"sort"
 	"strconv"
 	"strings"
 
@@ -30,6 +31,16 @@ func NewEntry(dn string, attrs map[string][][]byte) *Entry {
 
 // Raw returns the octet values of an attribute (nil when absent).
 func (e *Entry) Raw(name string) [][]byte { return e.attrs[strings.ToLower(name)] }
+
+// Names returns the lower-cased names of the attributes the DC returned, sorted.
+func (e *Entry) Names() []string {
+	out := make([]string, 0, len(e.attrs))
+	for k := range e.attrs {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
 
 // Has reports whether the DC returned the attribute.
 func (e *Entry) Has(name string) bool { _, ok := e.attrs[strings.ToLower(name)]; return ok }

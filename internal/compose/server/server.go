@@ -82,14 +82,13 @@ func Run(ctx context.Context, cfg config.Config) error {
 	}
 	// The connector endpoint source: a connection resolves, under the context's tenant, to its active
 	// component binding's tunnel on the fleet hub (mutual TLS, established by the component). The Tier-0
-	// verdict source is still absent (T-0433 moves the verdict into the Read header), so directoryReads
-	// still yields nil reads and a directory target fails closed (ErrNoReads) until that lands.
+	// verdict arrives in the Read header from the connector, so no separate verdict source exists.
 	conns := connection.NewRegistry(db)
 	src, err := client.NewTunnelSource(conns, conns, fleet.NewHub())
 	if err != nil {
 		return fmt.Errorf("server: connector source: %w", err)
 	}
-	reads, err := directoryReads(conns, src, nil)
+	reads, err := directoryReads(conns, src)
 	if err != nil {
 		return err
 	}
