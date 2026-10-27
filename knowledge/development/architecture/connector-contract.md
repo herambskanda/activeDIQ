@@ -199,6 +199,17 @@ with 50,000 members is 34 chunks, never one 4 MiB message.
   `ReadCompleted.truncated_attributes`. The connector has its own ceiling when the field is 0.
 - Constructed attributes (`tokenGroups`, `msDS-User-Account-Control-Computed`,
   `msDS-UserPasswordExpiryTimeComputed`) are readable here and only here.
+- **Pin and Tier-0 verdict (v1.3, T-0433).** With `dc.pinned_dsa_guid` set, `Read` is served by that
+  DC or fails with `UNREACHABLE_DC`: the connector compares the pin with the DSA GUID of the DC its
+  session is bound to before the read and again after it, and `ReadHeader.observed.dc` names the DC
+  that answered. `ReadRequest.include_tier0` asks for `ReadHeader.tier0` (`Tier0Verdict{tier0, basis[]}`):
+  the connector classifier's answer, run on the same session and so the same DC as the read. The
+  verdict is present exactly when asked for; a classification that cannot be decided fails the
+  whole call (`PROVIDER_FAILURE`, nothing streamed), never `tier0 = false`. The verdict is the
+  connector's computed set only: server-held designations and cross-directory correlation (§8.3)
+  only add to it. `directory/client.ConnectorReads` reads it from the header and refuses a header
+  that names another DC than the pin; the separate `Tier0Verdicts` port is gone. Implemented in
+  `internal/connector/read` (Handler, gRPC Server, `ADSource` over `ad.Session` + `write.ADProvider`).
 - `Read` of a GUID that does not exist, or was deleted, is `OBJECT_NOT_FOUND`. Show-deleted is not
   available on this contract (it belongs to a later named operation). An object the identity cannot
   read can be `INSUFFICIENT_RIGHTS` or `OBJECT_NOT_FOUND` depending on the DC; **callers must not

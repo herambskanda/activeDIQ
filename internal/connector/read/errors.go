@@ -40,8 +40,10 @@ func mapAD(err error, dc *connectorv1.DcIdentity) error {
 		code, msg = connectorv1.ErrorCode_ERROR_CODE_BIND_FAILED, "bind failed"
 	case ad.CodeSecretAttribute:
 		code, msg = connectorv1.ErrorCode_ERROR_CODE_SECRET_ATTRIBUTE, "attribute not readable"
-	case ad.CodeAttributeNotAllowed, ad.CodeInvalidArgument, ad.CodeFilterRejected:
+	case ad.CodeAttributeNotAllowed:
 		code, msg = connectorv1.ErrorCode_ERROR_CODE_ATTRIBUTE_NOT_ALLOWED, "attribute not allowed"
+	case ad.CodeInvalidArgument, ad.CodeFilterRejected:
+		code, msg = connectorv1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, "invalid request"
 	case ad.CodeUnexpectedReferral:
 		code, msg = connectorv1.ErrorCode_ERROR_CODE_UNEXPECTED_REFERRAL, "unexpected referral"
 	}
