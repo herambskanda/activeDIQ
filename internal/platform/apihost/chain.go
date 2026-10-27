@@ -229,7 +229,7 @@ func (s *Server) routeHandler(rt Route, boundHost string) http.Handler {
 				pool.release(reserved) // only after the buffer is cleared
 			}
 		}()
-		req := &Request{PathValue: r.PathValue, Query: query, Header: r.Header, PeerIP: clientIP}
+		req := &Request{PathValue: r.PathValue, Query: query, Header: declaredHeaders(r.Header, meta.Headers), PeerIP: clientIP}
 		for _, c := range r.Cookies() {
 			if !slices.Contains(meta.Cookies, c.Name) {
 				continue // only the cookies the route declares; never the session cookie
@@ -312,4 +312,18 @@ func collectDecodeError(errs *apitypes.Errors, err error) {
 		return
 	}
 	errs.AddBody("", apitypes.CodeType, "the body does not match the schema")
+}
+
+// declaredHeaders copies only the request headers an operation declares as parameters, so Cookie,
+// Authorization, X-CSRF-Token and spoofable peer-address headers never reach a handler (T-0456).
+// The result is never nil.
+func declaredHeaders(in http.Header, declared []string) http.Header {
+	out := make(http.Header, len(declared))
+	for _, name := range declared {
+		k := http.CanonicalHeaderKey(name)
+		if vs, ok := in[k]; ok {
+			out[k] = slices.Clone(vs)
+		}
+	}
+	return out
 }

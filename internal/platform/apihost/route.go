@@ -38,6 +38,7 @@ type RouteMeta struct {
 	MediaType   string   // the request media type, empty without a body
 	Secret      bool     // the Input type closure reaches SecretInput (rule 6)
 	Cookies     []string // the cookie parameters the operation declares; no other cookie reaches a handler
+	Headers     []string // the header parameters the operation declares; no other request header reaches a handler
 }
 
 // Request is what apihost hands a route after the middleware chain has run: the parts of the HTTP

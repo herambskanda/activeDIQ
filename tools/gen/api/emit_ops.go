@@ -39,8 +39,8 @@ func (u *unit) emitHandlers() ([]byte, error) {
 		case op.Body != nil:
 			body, media = "BodyJSON", op.Body.Media
 		}
-		f.p(",\n\t\t%s.NewRoute(%s.RouteMeta{\n\t\t\tOperationID: %q, Tag: %q, Method: %q, Path: %q,\n\t\t\tPermission: %q, Anonymous: %q, Scope: %q, Stability: %q, Deprecated: %v, Sunset: %q,\n\t\t\tClass: %q, MaxBody: %d, Body: %s.%s, MediaType: %q, Secret: %v,%s\n\t\t},\n",
-			ah, ah, op.ID, op.Tag, op.Method, op.Path, op.Permission, op.Anonymous, op.Scope, op.Stability, op.Deprecated, op.Sunset, op.Class, op.MaxBody, ah, body, media, op.Secret, cookiesField(op))
+		f.p(",\n\t\t%s.NewRoute(%s.RouteMeta{\n\t\t\tOperationID: %q, Tag: %q, Method: %q, Path: %q,\n\t\t\tPermission: %q, Anonymous: %q, Scope: %q, Stability: %q, Deprecated: %v, Sunset: %q,\n\t\t\tClass: %q, MaxBody: %d, Body: %s.%s, MediaType: %q, Secret: %v,%s%s\n\t\t},\n",
+			ah, ah, op.ID, op.Tag, op.Method, op.Path, op.Permission, op.Anonymous, op.Scope, op.Stability, op.Deprecated, op.Sunset, op.Class, op.MaxBody, ah, body, media, op.Secret, cookiesField(op), headersField(op))
 		f.p("\t\t\tfunc() %s.Input { return new(%sInput) },\n\t\t\tfunc(ctx %s.Context, in %s.Input) (%s.Response, error) {\n\t\t\t\tout, err := h.%s(ctx, *in.(*%sInput))\n\t\t\t\tif err != nil {\n\t\t\t\t\treturn nil, err\n\t\t\t\t}\n\t\t\t\tif out == nil {\n\t\t\t\t\treturn nil, %s.Errorf(\"%s returned no output and no error\")\n\t\t\t\t}\n\t\t\t\treturn out, nil\n\t\t\t})",
 			ah, n, ctx, ah, ah, n, n, strings.TrimSuffix(f.use("fmt"), "."), n)
 	}
@@ -327,6 +327,20 @@ func cookiesField(op *Operation) string {
 		q[i] = strconv.Quote(n)
 	}
 	return "\n\t\t\tCookies: []string{" + strings.Join(q, ", ") + "},"
+}
+
+// headersField is the RouteMeta Headers entry, empty for an operation with no header parameter.
+func headersField(op *Operation) string {
+	var q []string
+	for _, pm := range op.Params {
+		if pm.In == "header" {
+			q = append(q, strconv.Quote(pm.Name))
+		}
+	}
+	if len(q) == 0 {
+		return ""
+	}
+	return "\n\t\t\tHeaders: []string{" + strings.Join(q, ", ") + "},"
 }
 
 // cookieNames are the cookie parameters an operation declares: apihost hands the route only these.

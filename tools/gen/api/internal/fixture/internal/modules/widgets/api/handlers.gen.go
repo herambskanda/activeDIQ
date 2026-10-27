@@ -688,6 +688,7 @@ func Bind(h Handlers) apihost.TagHandlers {
 			OperationID: "createWidget", Tag: "widgets", Method: "POST", Path: "/widgets",
 			Permission: "widgets.write", Anonymous: "", Scope: "tenant", Stability: "stable", Deprecated: false, Sunset: "",
 			Class: "write", MaxBody: 1048576, Body: apihost.BodyJSON, MediaType: "application/json", Secret: false,
+			Headers: []string{"Idempotency-Key"},
 		},
 			func() apihost.Input { return new(CreateWidgetInput) },
 			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
@@ -768,6 +769,7 @@ func Bind(h Handlers) apihost.TagHandlers {
 			OperationID: "listWidgets", Tag: "widgets", Method: "GET", Path: "/widgets",
 			Permission: "widgets.read", Anonymous: "", Scope: "tenant", Stability: "stable", Deprecated: false, Sunset: "",
 			Class: "read", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
+			Headers: []string{"X-Request-Source"},
 		},
 			func() apihost.Input { return new(ListWidgetsInput) },
 			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
@@ -816,6 +818,7 @@ func Bind(h Handlers) apihost.TagHandlers {
 			OperationID: "updateWidget", Tag: "widgets", Method: "PATCH", Path: "/widgets/{widgetId}",
 			Permission: "widgets.write", Anonymous: "", Scope: "tenant", Stability: "stable", Deprecated: false, Sunset: "",
 			Class: "write", MaxBody: 1048576, Body: apihost.BodyMergePatch, MediaType: "application/merge-patch+json", Secret: false,
+			Headers: []string{"If-Match"},
 		},
 			func() apihost.Input { return new(UpdateWidgetInput) },
 			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
