@@ -1484,7 +1484,7 @@ unused and unpaused, with `expires_at` set; the database refuses any other INSER
 I7 **Active cap.** An account has at most 3 `active` console TOTP enrolments (T-0422). Sign-in tests
 every active enrolment per attempt, so without a cap the online guess rate would scale with N × the I5
 budget. A trigger refuses the transition into `active` (SQLSTATE `AD409`, `ErrActiveCap`) under a
-per-account advisory lock; revoking one frees a slot. End-user (directory-keyed) enrolments are not counted.
+per-account advisory lock, and only under READ COMMITTED (re-read after the lock) or SERIALIZABLE (loser gets 40001); under REPEATABLE READ the activation is refused with `AD409`, because the snapshot would hide a concurrent commit. Revoking one frees a slot. End-user (directory-keyed) enrolments are not counted.
 **Lifecycle.** `pending → active → revoked`; `pending → expired | revoked`. `expired` and `revoked` are
 terminal.
 

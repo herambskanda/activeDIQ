@@ -506,3 +506,77 @@ func Test_totp_active_enrolment_cap(t *testing.T) {
 		}
 	})
 }
+
+// Test_totp_active_cap_concurrent_activation: two activations racing on an account with two active
+// enrolments never leave more than the cap active, whatever isolation level the connection defaults to.
+// READ COMMITTED: exactly one wins and the other gets AD409. REPEATABLE READ: both are refused.
+func Test_totp_active_cap_concurrent_activation(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		for _, level := range []string{"read committed", "repeatable read"} {
+			t.Run(level, func(t *testing.T) {
+				e := setup(t, s)
+				for i := 0; i < MaxActiveTOTPPerAccount-1; i++ {
+					e.enrol(t, e.a)
+				}
+				p1, _ := e.pending(t, e.a)
+				p2, _ := e.pending(t, e.a)
+				db, err := store.Open(context.Background(), store.Config{DSN: e.d.AppDSN() + " default_transaction_isolation='" + level + "'"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(db.Close)
+
+				var ready, wg sync.WaitGroup
+				ready.Add(2)
+				release := make(chan struct{})
+				errs := make([]error, 2)
+				for i, id := range []string{p1, p2} {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						errs[i] = db.WithTenant(context.Background(), e.a, func(ctx context.Context, tx store.Tx) error {
+							var n int
+							// Take the transaction's snapshot before either side activates.
+							if err := tx.QueryRow(ctx, `SELECT count(*) FROM public.authn_authenticator_enrollments`).Scan(&n); err != nil {
+								return err
+							}
+							ready.Done()
+							<-release
+							_, err := tx.Exec(ctx, `UPDATE public.authn_authenticator_enrollments SET state = 'active' WHERE id = $1::uuid`, id)
+							return err
+						})
+					}()
+				}
+				ready.Wait()
+				close(release)
+				wg.Wait()
+
+				won := 0
+				for _, err := range errs {
+					switch {
+					case err == nil:
+						won++
+					case store.SQLState(err) != "AD409":
+						t.Errorf("loser error = %v, want AD409", err)
+					}
+				}
+				want := 1
+				if level == "repeatable read" {
+					want = 0
+				}
+				if won != want {
+					t.Errorf("%s: %d activations succeeded, want %d (errs %v)", level, won, want, errs)
+				}
+				var active int
+				if err := e.tx(t, e.a, func(ctx context.Context, tx store.Tx) error {
+					return tx.QueryRow(ctx, `SELECT count(*) FROM public.authn_authenticator_enrollments WHERE method = 'totp' AND state = 'active' AND account_id = $1::uuid`, acct).Scan(&active)
+				}); err != nil {
+					t.Fatal(err)
+				}
+				if active > MaxActiveTOTPPerAccount {
+					t.Errorf("%d active, cap is %d", active, MaxActiveTOTPPerAccount)
+				}
+			})
+		}
+	})
+}
