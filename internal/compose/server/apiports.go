@@ -24,10 +24,10 @@ func APIPolicy() apihost.Policy {
 // whose permission is missing here rather than serving it unguarded.
 var apiCatalogue = apihost.Permissions{string(connections.TakeoverAttestPermission)}
 
-// failClosedPorts are the ports until the auth, RBAC and step-up kernels exist: those three refuse
-// everything, so a route mounted before the real ports are injected cannot be reached. Limits is the
-// real limiter (per-IP in memory, per-principal in the shared store); with denyAuthn no request reaches
-// chain step 10 yet, and once an Authenticator fills Principal.Tenant the limiter meters it unchanged.
+// failClosedPorts are the ports with no console stack behind them: authentication, RBAC and step-up
+// refuse everything, so a route mounted on them cannot be reached. Tests use them; Run mounts
+// consoleStack.ports instead. Limits is the real limiter (per-IP in memory, per-principal in the shared
+// store).
 func failClosedPorts(lim apihost.Limiter) apihost.Ports {
 	return apihost.Ports{Authn: denyAuthn{}, Authz: denyAuthz{}, Limits: lim, StepUp: denyStepUp{}}
 }

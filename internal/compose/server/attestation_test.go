@@ -15,7 +15,7 @@ import (
 
 // Unconfigured, the attestation is not offered: no tag, so its routes answer a problem.
 func Test_attestation_unmounted_without_config(t *testing.T) {
-	tags, err := buildAttestation(config.Config{}, nil, nil, nil)
+	tags, err := buildAttestation(config.Config{}, nil, nil, nil, nil)
 	if err != nil || len(tags) != 0 {
 		t.Fatalf("tags %d err %v", len(tags), err)
 	}
@@ -25,7 +25,7 @@ func Test_attestation_unmounted_without_config(t *testing.T) {
 // authenticated routes stay behind the fail-closed ports.
 func Test_attestation_routes_with_fail_closed_ports(t *testing.T) {
 	cfg := config.Config{APIBodyBudget: config.DefaultAPIBodyBudget, AttestClientID: "app", PublicURL: "https://diq.example.com/"}
-	tags, err := buildAttestation(cfg, nil, nopSink{}, nil)
+	tags, err := buildAttestation(cfg, nil, nopSink{}, nil, sessionStepUp{})
 	if err != nil || len(tags) != 1 {
 		t.Fatalf("tags %d err %v", len(tags), err)
 	}

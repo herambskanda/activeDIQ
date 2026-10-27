@@ -207,3 +207,23 @@ func Test_stepup_fresh_by_session(t *testing.T) {
 		}
 	})
 }
+
+// T-0475: the freshness check needs only the session store, so a composition with no TOTP key source can
+// answer it; Reverify still needs the factor and refuses.
+func Test_stepup_fresh_without_totp_factor(t *testing.T) {
+	eachStepUp(t, func(t *testing.T, e *stepEnv) {
+		su := &StepUp{Sessions: e.sess}
+		if ok, err := su.FreshSession(context.Background(), e.ten, e.res.Session.ID); err != nil || !ok {
+			t.Fatalf("FreshSession without TOTP = %v, %v", ok, err)
+		}
+		if ok, err := su.Fresh(context.Background(), e.principal()); err != nil || !ok {
+			t.Fatalf("Fresh without TOTP = %v, %v", ok, err)
+		}
+		if _, err := su.Reverify(context.Background(), e.res.Token, "000000"); err == nil {
+			t.Fatal("Reverify without a TOTP factor succeeded")
+		}
+		if ok, err := (&StepUp{}).FreshSession(context.Background(), e.ten, e.res.Session.ID); ok || err == nil {
+			t.Fatalf("StepUp with no store = %v, %v", ok, err)
+		}
+	})
+}

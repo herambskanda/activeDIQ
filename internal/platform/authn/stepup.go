@@ -67,8 +67,21 @@ type StepUp struct {
 
 var _ apihost.StepUpChecker = (*StepUp)(nil)
 
+// readyCheck is what the freshness check needs: the session store only. It reads mfa_at and verifies
+// nothing, so a composition without a TOTP key source can still answer Fresh (and refuse Reverify).
+func (u *StepUp) readyCheck() error {
+	if u == nil || u.Sessions == nil {
+		return errors.New("authn: StepUp is not fully configured")
+	}
+	return nil
+}
+
+// ready is what Reverify needs: the session store and the TOTP factor.
 func (u *StepUp) ready() error {
-	if u == nil || u.Sessions == nil || u.TOTP == nil {
+	if err := u.readyCheck(); err != nil {
+		return err
+	}
+	if u.TOTP == nil {
 		return errors.New("authn: StepUp is not fully configured")
 	}
 	return nil
@@ -116,7 +129,7 @@ func (u *StepUp) FreshSession(ctx context.Context, t tenant.ID, sessionID string
 
 // fresh is the shared check. account, when not empty, must own the session.
 func (u *StepUp) fresh(ctx context.Context, t tenant.ID, sessionID, account string) (bool, error) {
-	if err := u.ready(); err != nil {
+	if err := u.readyCheck(); err != nil {
 		return false, err
 	}
 	if t.IsZero() || !validAccount(sessionID) {
