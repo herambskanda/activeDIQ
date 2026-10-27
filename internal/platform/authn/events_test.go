@@ -56,7 +56,7 @@ func TestAccountEventsRevokeSessions(t *testing.T) {
 		}
 		for _, ev := range events {
 			t.Run(ev.name, func(t *testing.T) {
-				acct, other := tenant.New().String(), tenant.New().String()
+				acct, other := e.account(t), e.account(t)
 				a1, a2, o := create(t, s, e.ten, acct), create(t, s, e.ten, acct), create(t, s, e.ten, other)
 
 				// A rolled-back change revokes nothing.
@@ -107,7 +107,7 @@ func TestAccountEventsRevokeSessions(t *testing.T) {
 		}
 		// A transaction of another tenant fails closed: the change rolls back, the session stays as it was.
 		{
-			acct := tenant.New().String()
+			acct := e.account(t)
 			victim := create(t, s, e.ten, acct)
 			err := s.db.WithTenant(ctx, tenant.New(), func(ctx context.Context, tx store.Tx) error {
 				_, err := s.OnAccountDisabled(ctx, tx, e.ten, acct, human)
@@ -135,7 +135,7 @@ func TestSessionEventsAudited(t *testing.T) {
 		small.MaxConcurrent = 1
 		s := e.node(t, small)
 		ctx := context.Background()
-		acct := tenant.New().String()
+		acct := e.account(t)
 
 		first := create(t, s, e.ten, acct)
 		second := create(t, s, e.ten, acct) // evicts first
@@ -228,7 +228,7 @@ func TestSessionEventsChained(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		acct := tenant.New().String()
+		acct := e.account(t)
 		r := create(t, s, e.ten, acct)
 		if err := db.WithTenant(ctx, e.ten, func(ctx context.Context, tx store.Tx) error {
 			_, err := s.OnAccountDisabled(ctx, tx, e.ten, acct, human)
@@ -284,7 +284,7 @@ func TestSessionRetentionPurge(t *testing.T) {
 		e.skewClock(t)
 		s := e.node(t, pol)
 		ctx := context.Background()
-		acct := tenant.New().String()
+		acct := e.account(t)
 
 		revokedOld := create(t, s, e.ten, acct)
 		if _, err := s.Revoke(ctx, e.ten, revokedOld.Session.ID, ReasonOnDemand, human); err != nil {
@@ -292,6 +292,7 @@ func TestSessionRetentionPurge(t *testing.T) {
 		}
 		// Another tenant's old ended session must survive this tenant's purge (the owner role has no RLS).
 		otherTen := tenanttest.Seed(t, e.d.ExecOwner, "t2")
+		e.seedAccount(t, otherTen, acct, "active")
 		otherOld := create(t, s, otherTen, acct)
 		if _, err := s.Revoke(ctx, otherTen, otherOld.Session.ID, ReasonOnDemand, human); err != nil {
 			t.Fatal(err)

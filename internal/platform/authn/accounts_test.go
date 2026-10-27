@@ -3,8 +3,11 @@ package authn
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/netip"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
@@ -258,15 +261,6 @@ func TestSetStateRevokesSessions(t *testing.T) {
 				t.Fatalf("%s: Lookup = %v, want ErrRevoked", to, err)
 			}
 		}
-		// invited → deleted also revokes.
-		a := newSSO(t, e, "u-inv")
-		tok := liveSession(t, e, a.ID)
-		if _, err := e.a.SetState(ctx, e.ten, a.ID, AccountDeleted, human); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := e.ss.Lookup(ctx, tok); !errors.Is(err, ErrRevoked) {
-			t.Fatalf("invited→deleted: Lookup = %v, want ErrRevoked", err)
-		}
 		// Re-enabling does not touch sessions or fail.
 		b := newSSO(t, e, "u-act")
 		if _, err := e.a.SetState(ctx, e.ten, b.ID, AccountActive, human); err != nil {
@@ -335,6 +329,115 @@ func TestAccountChangesAuditedAndFailClosed(t *testing.T) {
 		}
 		if _, err := e.a.SetState(ctx, e.ten, a.ID, AccountActive, authority.Chain{}); !errors.Is(err, ErrInvalidInput) {
 			t.Fatalf("empty chain = %v", err)
+		}
+	})
+}
+
+// T-0408 / DM-31.I2: a session is minted only for an active account, and a refusal leaves no row.
+func TestCreateRefusesNonActiveAccounts(t *testing.T) {
+	eachAcct(t, func(t *testing.T, e *acctEnv) {
+		ctx := context.Background()
+		in := func(id string) CreateInput {
+			return CreateInput{Tenant: e.ten, Account: id, Methods: []string{"password"}, ClientIP: netip.MustParseAddr("192.0.2.9")}
+		}
+		count := func(id string) int {
+			var n int
+			err := e.ss.db.WithTenant(ctx, e.ten, func(ctx context.Context, tx store.Tx) error {
+				return tx.QueryRow(ctx, `SELECT count(*) FROM public.authn_sessions WHERE tenant_id = $1 AND account_id = $2::uuid`, e.ten.String(), id).Scan(&n)
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return n
+		}
+		inv := newSSO(t, e, "inv")
+		dis := newSSO(t, e, "dis")
+		del := newSSO(t, e, "del")
+		for _, s := range []struct {
+			a  Account
+			to []AccountState
+		}{{dis, []AccountState{AccountActive, AccountDisabled}}, {del, []AccountState{AccountActive, AccountDeleted}}} {
+			for _, to := range s.to {
+				if _, err := e.a.SetState(ctx, e.ten, s.a.ID, to, human); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		for name, id := range map[string]string{"invited": inv.ID, "disabled": dis.ID, "deleted": del.ID, "unknown": tenant.New().String()} {
+			if _, err := e.ss.Create(ctx, in(id)); !errors.Is(err, ErrAccountInactive) {
+				t.Errorf("%s: Create = %v, want ErrAccountInactive", name, err)
+			}
+			if n := count(id); n != 0 {
+				t.Errorf("%s: %d session rows exist", name, n)
+			}
+		}
+		// The caller's own transaction (CreateTx) is refused the same way.
+		err := e.ss.db.WithTenant(ctx, e.ten, func(ctx context.Context, tx store.Tx) error {
+			_, err := e.ss.CreateTx(ctx, tx, in(dis.ID))
+			return err
+		})
+		if !errors.Is(err, ErrAccountInactive) {
+			t.Errorf("CreateTx on a disabled account = %v", err)
+		}
+		// Re-enabled, it works again.
+		if _, err := e.a.SetState(ctx, e.ten, dis.ID, AccountActive, human); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.ss.Create(ctx, in(dis.ID)); err != nil {
+			t.Fatalf("active again: %v", err)
+		}
+	})
+}
+
+// T-0408 / DM-31.I2 race: a sign-in that has already read the account as active and SetState(disabled)
+// running together end with no live session. The barrier holds the sign-in's transaction open after
+// its state read and its INSERT, so SetState has to wait for it and then revokes the new session.
+func TestCreateSerialisedAgainstSetState(t *testing.T) {
+	eachAcct(t, func(t *testing.T, e *acctEnv) {
+		ctx := context.Background()
+		for round := 0; round < 5; round++ {
+			a := newSSO(t, e, fmt.Sprintf("race-%d", round))
+			if _, err := e.a.SetState(ctx, e.ten, a.ID, AccountActive, human); err != nil {
+				t.Fatal(err)
+			}
+			inserted, release := make(chan struct{}), make(chan struct{})
+			var wg sync.WaitGroup
+			var signErr, setErr error
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				signErr = e.ss.db.WithTenant(ctx, e.ten, func(ctx context.Context, tx store.Tx) error {
+					if _, err := e.ss.CreateTx(ctx, tx, CreateInput{Tenant: e.ten, Account: a.ID, Methods: []string{"password"}}); err != nil {
+						return err
+					}
+					close(inserted)
+					<-release
+					return nil
+				})
+			}()
+			select {
+			case <-inserted:
+			case <-time.After(10 * time.Second):
+				t.Fatal("sign-in never reached the barrier")
+			}
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_, setErr = e.a.SetState(ctx, e.ten, a.ID, AccountDisabled, human)
+			}()
+			time.Sleep(300 * time.Millisecond) // SetState is now blocked on the sign-in's row lock
+			close(release)
+			wg.Wait()
+			if signErr != nil || setErr != nil {
+				t.Fatalf("sign-in: %v, SetState: %v", signErr, setErr)
+			}
+			var live int
+			err := e.ss.db.WithTenant(ctx, e.ten, func(ctx context.Context, tx store.Tx) error {
+				return tx.QueryRow(ctx, `SELECT count(*) FROM public.authn_sessions WHERE tenant_id = $1 AND account_id = $2::uuid AND state = 'active'`, e.ten.String(), a.ID).Scan(&live)
+			})
+			if err != nil || live != 0 {
+				t.Fatalf("round %d: %d live sessions on a disabled account (err %v)", round, live, err)
+			}
 		}
 	})
 }

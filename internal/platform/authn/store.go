@@ -29,6 +29,11 @@ var (
 	// to a different tenant than the one named; nothing is revoked and the caller's change must roll back.
 	ErrTenantMismatch = errors.New("authn: transaction is not of the named tenant")
 
+	// ErrAccountInactive is returned when a session is requested for an account that is not active:
+	// invited, disabled, deleted or unknown. It is deliberately one error for all four, so a caller
+	// cannot probe which accounts exist. No session row is written.
+	ErrAccountInactive = errors.New("authn: account is not active")
+
 	// ErrPolicyRead means the tenant's session policy could not be read, which is what a token naming
 	// an unknown tenant produces. HTTP callers answer it as they answer an unknown session.
 	ErrPolicyRead = errors.New("authn: read session policy")
@@ -297,6 +302,21 @@ func (s *Store) createTx(ctx context.Context, tx store.Tx, in CreateInput, pol P
 	now, err := s.now(ctx, tx)
 	if err != nil {
 		return CreateResult{}, err
+	}
+	// DM-31.I2: the account row is read FOR SHARE in this transaction, so it cannot move to disabled or
+	// deleted (SetState takes FOR UPDATE) between this check and the INSERT; a SetState that committed
+	// first is seen here, one that arrives later waits for this commit and then revokes the new session.
+	// The row lock is taken before the per-account advisory lock because SetState holds the row and then
+	// takes the advisory lock (OnAccountDisabled); the opposite order here would deadlock.
+	var state string
+	if err := tx.QueryRow(ctx, `SELECT state FROM public.authn_accounts WHERE tenant_id = $1 AND id = $2::uuid FOR SHARE`, in.Tenant.String(), in.Account).Scan(&state); err != nil {
+		if store.IsNoRows(err) {
+			return CreateResult{}, ErrAccountInactive
+		}
+		return CreateResult{}, err
+	}
+	if AccountState(state) != AccountActive {
+		return CreateResult{}, ErrAccountInactive
 	}
 	if _, err := tx.Exec(ctx, sqlAcctLk, in.Tenant.String()+"/"+in.Account); err != nil {
 		return CreateResult{}, err
