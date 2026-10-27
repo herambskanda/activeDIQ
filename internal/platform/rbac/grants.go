@@ -99,9 +99,27 @@ type roleRow struct {
 	perms   []authz.Permission
 }
 
-func readRole(ctx context.Context, tx store.Tx, tn tenant.ID, id string) (roleRow, error) {
+// roleLock is the row lock taken on the role before its permissions and holders are read. A Set of a
+// role's permissions and a Grant of the role serialise on it, so neither proves against a state the
+// other is about to change (DM-36.I1 under READ COMMITTED).
+type roleLock int
+
+const (
+	lockNone   roleLock = iota
+	lockShare           // Grant: concurrent grants proceed, a permission edit waits
+	lockUpdate          // permission edit: waits for in-flight grants, blocks new ones
+)
+
+func readRole(ctx context.Context, tx store.Tx, tn tenant.ID, id string, lock roleLock) (roleRow, error) {
 	var r roleRow
-	err := tx.QueryRow(ctx, `SELECT role_name, built_in, tier FROM public.authz_roles WHERE tenant_id = $1::uuid AND id = $2::uuid`,
+	q := `SELECT role_name, built_in, tier FROM public.authz_roles WHERE tenant_id = $1::uuid AND id = $2::uuid`
+	switch lock { // fixed clauses only; nothing from the caller reaches the statement text
+	case lockShare:
+		q += ` FOR SHARE`
+	case lockUpdate:
+		q += ` FOR UPDATE`
+	}
+	err := tx.QueryRow(ctx, q,
 		tn.String(), id).Scan(&r.name, &r.builtIn, &r.tier)
 	if store.IsNoRows(err) {
 		return r, ErrNotFound
@@ -264,7 +282,7 @@ func (g *Grants) SetRolePermissions(ctx context.Context, tx store.Tx, by authori
 	if err != nil {
 		return err
 	}
-	role, err := readRole(ctx, tx, tn, roleID)
+	role, err := readRole(ctx, tx, tn, roleID, lockUpdate)
 	if err != nil {
 		return err
 	}
@@ -274,13 +292,20 @@ func (g *Grants) SetRolePermissions(ctx context.Context, tx store.Tx, by authori
 	if err := ValidateRoles([]Role{{Name: role.name, Tier: Tier(role.tier), Permissions: perms}}); err != nil {
 		return ErrInvalid
 	}
-	var added []authz.Permission
+	var added, removed []authz.Permission
 	for _, p := range perms {
 		if !slices.Contains(role.perms, p) && !slices.Contains(added, p) {
 			added = append(added, p)
 		}
 	}
-	if len(added) > 0 {
+	for _, p := range role.perms {
+		if !slices.Contains(perms, p) {
+			removed = append(removed, p)
+		}
+	}
+	if len(added)+len(removed) > 0 {
+		// Adding is a grant to every holder. Removing is a revocation from every holder, and a lower
+		// tier must not strip what it does not hold (DM-36.I1 covers both, as Revoke does).
 		actor, err := g.actorAssignments(ctx, tn, by)
 		if err != nil {
 			return err
@@ -293,7 +318,7 @@ func (g *Grants) SetRolePermissions(ctx context.Context, tx store.Tx, by authori
 			if h.subject != SubjectAccount && controlPlane(added) {
 				return ErrControlPlanePersonal
 			}
-			if err := g.mustHold(ctx, tn, by, actor, added, h.roots); err != nil {
+			if err := g.mustHold(ctx, tn, by, actor, append(slices.Clone(added), removed...), h.roots); err != nil {
 				return err
 			}
 		}
@@ -346,7 +371,7 @@ func validRoots(tn tenant.ID, roots []Root) bool {
 // Grant creates an assignment. The grantor must hold every privilege of the role over the whole
 // scope or be a personal tenant-owner (DM-36.I1); group and automation subjects never receive
 // tenant-owner or a control-plane permission (DM-36.I4). It returns ErrExists for an ID that is
-// taken, and nil for a repeat of the identical grant.
+// taken, including a repeat of the identical grant (the caller treats a retry of a committed Action as done).
 func (g *Grants) Grant(ctx context.Context, tx store.Tx, by authority.Chain, in GrantInput) error {
 	if !accountIDRe.MatchString(in.ID) || !accountIDRe.MatchString(in.RoleID) || !in.Subject.Valid() ||
 		(in.ValidFrom != nil && in.ValidUntil != nil && !in.ValidUntil.After(*in.ValidFrom)) {
@@ -359,7 +384,7 @@ func (g *Grants) Grant(ctx context.Context, tx store.Tx, by authority.Chain, in 
 	if !validRoots(tn, in.Roots) {
 		return ErrInvalid
 	}
-	role, err := readRole(ctx, tx, tn, in.RoleID)
+	role, err := readRole(ctx, tx, tn, in.RoleID, lockShare)
 	if err != nil {
 		return err
 	}
@@ -403,8 +428,9 @@ VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6::uuid, $7::uuid)`, tn.String(), in.ID
 	return nil
 }
 
-// Revoke ends an assignment. Revoking removes authority, so it needs no no-escalation proof, but the
-// tenant-owner path is separate (OwnerAssignments guards the last owner).
+// Revoke ends an assignment. The actor must hold every privilege of the assignment over its scope (or be
+// a personal tenant-owner), so a lower tier cannot end a higher tier's access. The tenant-owner path is
+// separate (OwnerAssignments guards the last owner).
 func (g *Grants) Revoke(ctx context.Context, tx store.Tx, by authority.Chain, id string) error {
 	if by.Validate() != nil || !accountIDRe.MatchString(id) {
 		return ErrInvalid
@@ -413,17 +439,29 @@ func (g *Grants) Revoke(ctx context.Context, tx store.Tx, by authority.Chain, id
 	if err != nil {
 		return err
 	}
-	var owner bool
-	err = tx.QueryRow(ctx, `SELECT r.role_name = $3 AND r.built_in FROM public.authz_assignments a
-JOIN public.authz_roles r ON r.tenant_id = a.tenant_id AND r.id = a.role_id
-WHERE a.tenant_id = $1::uuid AND a.id = $2::uuid AND a.assignment_state = 'active'`, tn.String(), id, TenantOwnerRole).Scan(&owner)
-	if store.IsNoRows(err) {
-		return ErrNotFound
-	} else if err != nil {
-		return fmt.Errorf("rbac: reading assignment: %w", err)
+	av, err := g.Assignment(ctx, tx, id)
+	if err != nil {
+		return err
 	}
-	if owner {
+	if !av.Active {
+		return ErrNotFound
+	}
+	if av.Owner {
 		return ErrOwnerRole
+	}
+	// Revoking is the denial-of-service and tier-crossing lever of the same family as granting: a
+	// help-desk admin must not end a Tier-0 administrator's access. The actor must hold what the
+	// assignment grants, over where it grants it (DM-36.I1), unless a personal tenant-owner.
+	role, err := readRole(ctx, tx, tn, av.RoleID, lockNone)
+	if err != nil {
+		return err
+	}
+	actor, err := g.actorAssignments(ctx, tn, by)
+	if err != nil {
+		return err
+	}
+	if err := g.mustHold(ctx, tn, by, actor, role.perms, av.Roots); err != nil {
+		return err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE public.authz_assignments SET assignment_state = 'revoked' WHERE tenant_id = $1::uuid AND id = $2::uuid`, tn.String(), id); err != nil {
 		return fmt.Errorf("rbac: revoking assignment: %w", err)
@@ -473,7 +511,7 @@ func (g *Grants) Role(ctx context.Context, tx store.Tx, id string) (RoleView, er
 	if err != nil {
 		return RoleView{}, err
 	}
-	r, err := readRole(ctx, tx, tn, id)
+	r, err := readRole(ctx, tx, tn, id, lockNone)
 	if err != nil {
 		return RoleView{}, err
 	}

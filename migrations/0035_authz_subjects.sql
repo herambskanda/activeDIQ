@@ -42,7 +42,9 @@ DECLARE
   tid uuid;
 BEGIN
   IF TG_TABLE_NAME = 'authz_assignments' THEN
-    IF NEW.subject_kind = 'account' THEN
+    -- An account subject is unrestricted; a row that is not (becoming) active grants nothing, and must
+    -- stay revocable: revoking is the remediation for a permission that became control-plane (DM-36.I4).
+    IF NEW.subject_kind = 'account' OR NEW.assignment_state <> 'active' THEN
       RETURN NEW;
     END IF;
     rid := NEW.role_id; tid := NEW.tenant_id;
@@ -75,3 +77,11 @@ COMMENT ON TABLE public.authz_assignments IS 'DM-36 RoleAssignment (tenant table
 -- Editing a custom role can remove one of its permissions (T-0367, rbac.Grants.SetRolePermissions); the
 -- built-in roles are read-only (DM-34.I1) and rbac refuses to edit them. Removal only narrows.
 GRANT DELETE ON public.authz_role_permissions TO activediq_app;
+
+-- Owners granted before this migration have no root; give each the tenant-wide root so the store
+-- targets of the access Actions are covered (OwnerAssignments.Grant does the same for new owners).
+INSERT INTO public.authz_assignment_roots (tenant_id, assignment_id, ordinal, is_exclude, root_kind, connection_id, root_guid)
+SELECT a.tenant_id, a.id, 0, false, 'tenant', a.tenant_id, a.tenant_id
+FROM public.authz_assignments a
+JOIN public.authz_roles r ON r.tenant_id = a.tenant_id AND r.id = a.role_id AND r.role_name = 'tenant-owner' AND r.built_in
+WHERE NOT EXISTS (SELECT 1 FROM public.authz_assignment_roots x WHERE x.tenant_id = a.tenant_id AND x.assignment_id = a.id);

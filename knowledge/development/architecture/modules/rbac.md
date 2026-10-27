@@ -53,20 +53,34 @@ Code: `internal/platform/rbac/`, `internal/modules/delegation/`; migrations `001
 - **Tokens (DM-32):** `WithTokens(TokenSource)` supplies the constraint (permission subset, scope, expiry);
   effective authority is the owner's ∩ the token's. No `TokenSource` → a token in the chain is denied.
   **Automation (DM-60.I2):** a chain with an automation hop must also pass the policy's own assignments.
-- **Store targets:** a target with an empty connection is a row in activeDIQ's own store. It is covered only by
+- **Store targets:** a target of an explicit store class (`role`, `assignment`, `settings`; empty connection) is
+  a row in activeDIQ's own store. A directory class with no connection, or a store class with one, is denied
+  `target_not_a_guid` (never read as a store row, which would skip the Tier-0 and ancestry facts). It is covered only by
   a `tenant` root of the same tenant (`root_kind='tenant'`, id = tenant id, no excludes). Directory and
   Tier-0 roots never cover it, and a `tenant` root never covers a directory object.
 - **Tenant-owner** holds every permission over its scope (`authz.Role.has`, DM-34.I1).
 - **`Grants`** (`grants.go`) writes `CreateRole`, `SetRolePermissions`, `Grant`, `Revoke` inside the runner's
   transaction. No-escalation (DM-36.I1) is `holdsOver`: the grantor's live effective assignments, resolved
   per scope root, must hold every privilege over the whole scope (a personal tenant-owner is exempt).
-  Correlation-derived grants never count. Built-in roles are read-only; tenant-owner is granted only by
+  Correlation-derived grants never count. **Serialisation:** `SetRolePermissions` locks the role row
+  `FOR UPDATE` and `Grant` `FOR SHARE` before reading permissions and holders, so an edit and a grant by one
+  actor cannot combine into an escalation under READ COMMITTED. **Revoke and narrowing are tier-checked:**
+  `Revoke` needs the actor to hold the assignment's privileges over its roots, and `SetRolePermissions`
+  needs the held privileges for added *and* removed permissions per holder (a personal tenant-owner is
+  exempt), so a lower tier cannot end or strip Tier-0 access. The trigger skips non-active rows, so a group
+  assignment whose role became control-plane stays revocable (DM-36.I4 remediation). Built-in roles are read-only; tenant-owner is granted only by
   `OwnerAssignments`. Migration 0035 grants `DELETE` on `authz_role_permissions` (removal only narrows).
 - **`modules/delegation`** contributes four Actions (store targets, class `role`/`assignment`, step-up,
   audited with a before/after diff): `delegation.role.create`, `.role.update`, `.assignment.grant`,
   `.assignment.revoke`. Their permissions are control-plane. A nil `platform.Deps.Access` makes every
   Plan/Apply refuse.
 
+- **Group-membership guard (TM-D18, `groupguard.go`):** `GroupMembershipPermissions` (add member, nest group,
+  set primary group) must be declared by any Action that widens a group's reach, with the Target set to the
+  group whose reach grows. `WithGroupGuard(GroupReach)` answers the role-granting groups reached (itself and
+  transitively); the actor must hold every pending/active privilege of each over its scope. Unwired,
+  incomplete or unresolvable answers are denied (fail closed).
+
 **Not yet wired** (tickets filed): an `authz.Membership` implementation over inventory; the DM-32 token store
 (`TokenSource`); compose passing `Deps.Access` / `WithMembership` / `WithTokens` and registering module
-Actions with the runner; `control_plane` catalogue flags for the new permissions.
+Actions with the runner; a `GroupReach` implementation and the group-member Actions that declare `GroupMembershipPermissions`; `control_plane` catalogue flags for the new permissions.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/authority"
@@ -14,6 +15,18 @@ import (
 // TargetClassTier0Scope is the class of a target that names a connection's Tier-0 scope. Its GUID is
 // the connection ID. It matches the inventory module's TargetClassScope (asserted in compose/server).
 const TargetClassTier0Scope = "tier0_scope"
+
+// Classes of activeDIQ's own store rows that rbac authorises (Connection is empty). Only these are
+// store targets: a directory-class target with no connection is malformed and denied.
+const (
+	TargetClassRole       = "role"
+	TargetClassAssignment = "assignment"
+)
+
+// storeClasses are the target classes authorised as rows of activeDIQ's own store.
+var storeClasses = []string{TargetClassRole, TargetClassAssignment, "settings"}
+
+func isStoreClass(c string) bool { return slices.Contains(storeClasses, c) }
 
 // ErrDenied is wrapped by every refusal. The reason is a stable authz.Reason or an rbac reason; it
 // carries no grant detail.
@@ -41,6 +54,7 @@ type Authorizer struct {
 	roots   RootResolver     // live scope-root ancestry for the rule 5 containment test
 	members authz.Membership // DM-36.I2; nil: group subjects grant nothing
 	tokens  TokenSource      // DM-32; nil: a chain through an API token is refused
+	reach   GroupReach       // TM-D18 membership guard; nil refuses every group-membership permission
 }
 
 // TokenSource reads an API token's constraint (DM-32): its permission subset, mandatory expiry and
@@ -71,7 +85,7 @@ func New(src Source, opts ...Option) (*Authorizer, error) {
 // FactsQuery asks for the Tier-0 fact and the live parent chain of a directory target. A tier0_scope
 // target is a scope, not a directory object: nothing is read about it.
 func (a *Authorizer) FactsQuery(_ authority.Chain, _ authz.Permission, t authority.TargetRef) authority.FactsQuery {
-	if t.Class == TargetClassTier0Scope || t.Connection == "" { // a scope or a store row: nothing to read
+	if t.Class == TargetClassTier0Scope || isStoreClass(t.Class) { // a scope or a store row: nothing to read
 		return authority.FactsQuery{Target: t}
 	}
 	return authority.FactsQuery{Target: t, Tier0: true, Ancestry: true}
@@ -148,6 +162,10 @@ func (a *Authorizer) Authorize(ctx context.Context, chain authority.Chain, perm 
 		// TM-D19 rule 5: a console-backing object is an escalation object.
 		return a.checkBacking(ctx, tn, as, string(chain.Requester.ID), t)
 	}
+	if !scope && isGroupMembershipPermission(perm) {
+		// DM-36.I1 / TM-D18: changing who a role-granting group reaches is an indirect grant.
+		return a.checkGroupMembership(ctx, tn, as, string(chain.Requester.ID), t)
+	}
 	return nil
 }
 
@@ -157,8 +175,15 @@ func (a *Authorizer) view(tn tenant.ID, as []Assignment, t authority.TargetRef, 
 	switch {
 	case t.Class == TargetClassTier0Scope:
 		return tier0ScopeView(as, t)
-	case t.Connection == "":
+	case isStoreClass(t.Class):
+		if t.Connection != "" {
+			return authz.Target{}, nil, denied(ReasonBadTarget)
+		}
 		return storeView(as, t, tn)
+	case t.Connection == "":
+		// A directory target must name its connection: failing here keeps a malformed target from
+		// being read as a store row (which skips the Tier-0 and ancestry facts).
+		return authz.Target{}, nil, denied(ReasonBadTarget)
 	default:
 		return objectView(as, t, f)
 	}

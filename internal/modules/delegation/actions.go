@@ -35,8 +35,8 @@ const (
 	AuditRevoked     audit.Kind = "delegation.assignment.revoked"
 
 	// Target classes: the row in activeDIQ's own store, never a directory object.
-	TargetClassRole       = "role"
-	TargetClassAssignment = "assignment"
+	TargetClassRole       = rbac.TargetClassRole
+	TargetClassAssignment = rbac.TargetClassAssignment
 )
 
 // Stable reasons for a refusal the caller can act on. None carries a stored value.
