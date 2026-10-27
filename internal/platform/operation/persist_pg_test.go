@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -752,6 +753,71 @@ func TestPlanRefusalAuditOutcome(t *testing.T) {
 			}
 			if env.Requester.ID == "" {
 				t.Fatalf("%s: no actor on the event", c.name)
+			}
+		})
+	}
+}
+
+// refusedEvents returns "guid/reason/outcome" of each operation.refused event of the operation.
+func (p *prig) refusedEvents(id step.OperationID) []string {
+	p.t.Helper()
+	rows := p.owner(`SELECT encode(envelope, 'hex') FROM public.audit_event WHERE kind = 'operation.refused' AND event_id LIKE $1 ORDER BY event_id`, "op-"+string(id)+"-%")
+	var out []string
+	for _, h := range rows {
+		raw, err := hex.DecodeString(h)
+		if err != nil {
+			p.t.Fatal(err)
+		}
+		env, err := chain.ParseEnvelope(raw)
+		if err != nil {
+			p.t.Fatal(err)
+		}
+		if env.Requester.ID == "" {
+			p.t.Fatal("refused event without an actor")
+		}
+		out = append(out, env.TargetGUID+"/"+env.Reason+"/"+env.Outcome)
+	}
+	return out
+}
+
+// T-0482: every item refused by authorisation at plan has its own denied event, however the rest of
+// the plan went, and the target named by operation.completed is not repeated.
+func TestPlanRefusalsAreAudited(t *testing.T) {
+	cases := []struct {
+		name      string
+		facts     factsFake
+		items     []itemIn
+		wantState string
+		wantOut   string
+		wantRsn   string
+		want      []string
+	}{
+		{"tier0 mixed with facts unavailable", factsFake{tier0On: map[string]bool{"a": true}, errOn: map[string]bool{"b": true}},
+			[]itemIn{{GUID: "a", Want: "n"}, {GUID: "b", Want: "n"}}, "plan_failed", "failure", "plan_failed", []string{"a/tier0/denied"}},
+		{"tier0 alongside a planned item", factsFake{tier0On: map[string]bool{"b": true}},
+			[]itemIn{{GUID: "a", Want: "n"}, {GUID: "b", Want: "n"}}, "planned", "", "", []string{"b/tier0/denied"}},
+		{"all refused: one event per target", factsFake{tier0On: map[string]bool{"a": true, "b": true}},
+			[]itemIn{{GUID: "a", Want: "n"}, {GUID: "b", Want: "n"}}, "plan_failed", "denied", "tier0", []string{"b/tier0/denied"}},
+	}
+	for _, c := range cases {
+		storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+			p := newPRig(t, s, rigOpt{})
+			p.r.cfg.Facts = c.facts
+			sub, err := p.r.SubmitDirectory(context.Background(), p.req(c.items...))
+			if err != nil {
+				t.Fatalf("%s: %v", c.name, err)
+			}
+			if string(sub.State) != c.wantState && !(c.wantState == "planned" && sub.State != OpPlanFailed) {
+				t.Fatalf("%s: state %s", c.name, sub.State)
+			}
+			if got := p.refusedEvents(sub.Operation); !slices.Equal(got, c.want) {
+				t.Fatalf("%s: refused events = %v, want %v", c.name, got, c.want)
+			}
+			if c.wantOut != "" {
+				env := p.completedEnvelope(sub.Operation)
+				if env.Outcome != c.wantOut || env.Reason != c.wantRsn {
+					t.Fatalf("%s: completed = %s/%s", c.name, env.Outcome, env.Reason)
+				}
 			}
 		})
 	}

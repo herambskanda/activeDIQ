@@ -85,16 +85,17 @@ func (a *authzFake) Authorize(_ context.Context, c authority.Chain, _ authz.Perm
 }
 
 type factsFake struct {
-	tier0 bool
-	err   error
-	errOn map[string]bool // target GUIDs whose facts are unavailable
+	tier0   bool
+	err     error
+	errOn   map[string]bool // target GUIDs whose facts are unavailable
+	tier0On map[string]bool // target GUIDs that are Tier-0
 }
 
 func (f factsFake) Facts(_ context.Context, _ authority.Pins, q authority.FactsQuery) (authority.Facts, error) {
 	if f.errOn[q.Target.GUID] {
 		return authority.Facts{}, errors.New("facts down")
 	}
-	return authority.Facts{Exists: true, Tier0: f.tier0}, f.err
+	return authority.Facts{Exists: true, Tier0: f.tier0 || f.tier0On[q.Target.GUID]}, f.err
 }
 
 type in struct{ Name string }

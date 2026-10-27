@@ -452,6 +452,29 @@ WHERE tenant_id = $1::uuid AND id = $2::uuid`, t.String(), opID, hash, string(pi
 		return sub, err
 	}
 	sub.State = next
+	// Every item refused by authorisation is an audited denied attempt, whatever else the plan holds
+	// (the block reason on operation_items is mutable and outside the hash chain). The one target the
+	// operation.completed denied event already names is not repeated.
+	covered := authority.TargetRef{}
+	if result == "plan_failed" {
+		if o, _, tgt := planRefusal(items); o == audit.Denied {
+			covered = tgt
+		}
+	}
+	for i, it := range items {
+		if it.blocked != blockTier0 && it.blocked != blockDenied {
+			continue
+		}
+		if covered.GUID != "" && it.sp.Target == covered {
+			covered = authority.TargetRef{} // only the first refused item is the named one
+			continue
+		}
+		if err := r.emit(ctx, tx, audit.Event{ID: fmt.Sprintf("op-%s-refused-%d-%d", opID, cur.Revision, i), Kind: KindOperationRefused,
+			Actor: cur.Chain, Key: step.Key{Operation: step.OperationID(opID), Item: i}, Target: it.sp.Target,
+			Outcome: audit.Denied, Reason: it.blocked, PlanHash: hash, Details: detail("phase", "plan")}); err != nil {
+			return sub, err
+		}
+	}
 	if result != "" {
 		out, reason, tgt := audit.Success, result, authority.TargetRef{}
 		if result == "plan_failed" {
