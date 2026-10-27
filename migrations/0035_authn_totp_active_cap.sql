@@ -22,8 +22,8 @@ BEGIN
   IF TG_OP = 'UPDATE' AND OLD.state = 'active' THEN
     RETURN NEW;
   END IF;
-  IF current_setting('transaction_isolation') = 'repeatable read' THEN
-    RAISE EXCEPTION 'authn_authenticator_enrollments: activating a TOTP enrolment is refused under REPEATABLE READ (the cap check needs read committed or serializable)' USING ERRCODE = 'AD409';
+  IF current_setting('transaction_isolation') NOT IN ('read committed', 'read uncommitted') THEN
+    RAISE EXCEPTION 'authn_authenticator_enrollments: activating a TOTP enrolment needs READ COMMITTED (the cap check must see concurrent commits)' USING ERRCODE = 'AD409';
   END IF;
   PERFORM pg_advisory_xact_lock(hashtextextended('authn_totp_active_cap:' || NEW.tenant_id::text || ':' || NEW.account_id::text, 0));
   SELECT count(*) INTO n FROM public.authn_authenticator_enrollments

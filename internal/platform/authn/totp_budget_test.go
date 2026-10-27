@@ -512,7 +512,7 @@ func Test_totp_active_enrolment_cap(t *testing.T) {
 // READ COMMITTED: exactly one wins and the other gets AD409. REPEATABLE READ: both are refused.
 func Test_totp_active_cap_concurrent_activation(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
-		for _, level := range []string{"read committed", "repeatable read"} {
+		for _, level := range []string{"read committed", "repeatable read", "serializable"} {
 			t.Run(level, func(t *testing.T) {
 				e := setup(t, s)
 				for i := 0; i < MaxActiveTOTPPerAccount-1; i++ {
@@ -561,7 +561,7 @@ func Test_totp_active_cap_concurrent_activation(t *testing.T) {
 					}
 				}
 				want := 1
-				if level == "repeatable read" {
+				if level != "read committed" {
 					want = 0
 				}
 				if won != want {
@@ -577,6 +577,64 @@ func Test_totp_active_cap_concurrent_activation(t *testing.T) {
 					t.Errorf("%d active, cap is %d", active, MaxActiveTOTPPerAccount)
 				}
 			})
+		}
+	})
+}
+
+// A serializable transaction that took its snapshot before a read-committed activation committed must
+// not be able to push the account over the cap (SSI does not track the read-committed writer).
+func Test_totp_active_cap_mixed_isolation(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		for i := 0; i < MaxActiveTOTPPerAccount-1; i++ {
+			e.enrol(t, e.a)
+		}
+		p1, _ := e.pending(t, e.a)
+		p2, _ := e.pending(t, e.a)
+		ser, err := store.Open(context.Background(), store.Config{DSN: e.d.AppDSN() + " default_transaction_isolation='serializable'"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(ser.Close)
+
+		snapped := make(chan struct{})
+		rcDone := make(chan struct{})
+		var serErr error
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			serErr = ser.WithTenant(context.Background(), e.a, func(ctx context.Context, tx store.Tx) error {
+				var n int
+				if err := tx.QueryRow(ctx, `SELECT count(*) FROM public.authn_authenticator_enrollments`).Scan(&n); err != nil {
+					return err
+				}
+				close(snapped)
+				<-rcDone
+				_, err := tx.Exec(ctx, `UPDATE public.authn_authenticator_enrollments SET state = 'active' WHERE id = $1::uuid`, p2)
+				return err
+			})
+		}()
+		<-snapped
+		rcErr := e.tx(t, e.a, func(ctx context.Context, tx store.Tx) error {
+			_, err := tx.Exec(ctx, `UPDATE public.authn_authenticator_enrollments SET state = 'active' WHERE id = $1::uuid`, p1)
+			return err
+		})
+		close(rcDone)
+		<-done
+		if rcErr != nil {
+			t.Errorf("read-committed activation: %v", rcErr)
+		}
+		if store.SQLState(serErr) != "AD409" {
+			t.Errorf("serializable activation error = %v, want AD409", serErr)
+		}
+		var active int
+		if err := e.tx(t, e.a, func(ctx context.Context, tx store.Tx) error {
+			return tx.QueryRow(ctx, `SELECT count(*) FROM public.authn_authenticator_enrollments WHERE method = 'totp' AND state = 'active' AND account_id = $1::uuid`, acct).Scan(&active)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if active > MaxActiveTOTPPerAccount {
+			t.Errorf("%d active, cap is %d", active, MaxActiveTOTPPerAccount)
 		}
 	})
 }
