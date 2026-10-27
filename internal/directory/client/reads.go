@@ -21,6 +21,7 @@ var (
 	ErrReadPin         = errors.New("client: pinned read without a usable DSA pin")
 	ErrReadProtocol    = errors.New("client: read stream violates the contract")
 	ErrReadIdentity    = errors.New("client: read returned a different object than asked")
+	ErrReadDirectory   = errors.New("client: connection has no verified directory identity")
 )
 
 // ReadStream is the receiving side of the Read RPC. The generated grpc.ServerStreamingClient
@@ -80,8 +81,14 @@ func (r *ConnectorReads) Object(ctx context.Context, pins authority.Pins, target
 		return ObjectRead{}, ErrReadConnection
 	}
 
+	// The connector refuses a read whose directory identity is not the one it serves; the identity is
+	// the connection record's. An unverified connection has none and the read is refused here.
+	ident := directoryOf(conn)
+	if ident == nil {
+		return ObjectRead{}, ErrReadDirectory
+	}
 	req := &connectorv1.ReadRequest{
-		Connection:   &connectorv1.ConnectionRef{ConnectionId: target.Connection},
+		Connection:   &connectorv1.ConnectionRef{ConnectionId: target.Connection, DirectoryIdentity: ident},
 		Guid:         &connectorv1.Guid{Value: id},
 		Attributes:   []string{"objectClass"},
 		IncludeTier0: needTier0,
