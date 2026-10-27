@@ -146,9 +146,9 @@ func revokedProof(t *testing.T, srv *storetest.Server) {
 	// only while the victim's tunnel is not yet attached (UNAVAILABLE with a known outcome).
 	pending := make(chan error, 1)
 	go func() {
-		for {
+		for end := time.Now().Add(5 * time.Second); ; {
 			err := invoke(hub, r.tid, compID)
-			if status.Code(err) == codes.Unavailable && !fleet.OutcomeUnknown(err) {
+			if status.Code(err) == codes.Unavailable && !fleet.OutcomeUnknown(err) && time.Now().Before(end) {
 				time.Sleep(10 * time.Millisecond)
 				continue
 			}
