@@ -144,7 +144,7 @@ func TestRotateKillsOldTokenAndChangesCSRF(t *testing.T) {
 	each(t, func(t *testing.T, e *sessEnv) {
 		s := e.node(t, pol)
 		ctx := context.Background()
-		acct := tenant.New().String()
+		acct := e.account(t)
 		old := create(t, s, e.ten, acct)
 		nu, err := s.Rotate(ctx, old.Token, ReasonRoleChanged)
 		if err != nil {
@@ -171,7 +171,7 @@ func TestRotateKeepsAbsoluteDeadline(t *testing.T) {
 		e.skewClock(t)
 		s := e.node(t, pol)
 		ctx := context.Background()
-		cur := create(t, s, e.ten, tenant.New().String())
+		cur := create(t, s, e.ten, e.account(t))
 		abs := cur.Session.AbsoluteExpiry
 		var err error
 		for i := 0; i < 20; i++ {
