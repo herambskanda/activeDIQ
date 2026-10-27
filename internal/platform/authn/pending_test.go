@@ -87,7 +87,7 @@ func (e *pendEnv) enrolFor(t *testing.T) {
 
 func (e *pendEnv) begin(t *testing.T) PendingHandle {
 	t.Helper()
-	h, err := e.pending.Begin(context.Background(), BeginInput{Tenant: e.ten, Account: e.account, FirstFactor: FirstPassword, ClientIP: netip.MustParseAddr("192.0.2.7")})
+	h, err := e.pending.Begin(context.Background(), BeginInput{Tenant: e.ten, Account: e.account, FirstFactor: FirstPassword, ClientIP: netip.MustParseAddr("192.0.2.7"), Epoch: epochOf(t, e.sess, e.ten, e.account)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -418,7 +418,7 @@ func Test_pending_refuses_end_user_enrolment(t *testing.T) {
 			t.Fatal(err)
 		}
 		e.now = e.now.Add(StepSeconds * time.Second)
-		h, err := e.pending.Begin(ctx, BeginInput{Tenant: e.ten, Account: a.ID, FirstFactor: FirstKerberos, ClientIP: netip.MustParseAddr("192.0.2.7")})
+		h, err := e.pending.Begin(ctx, BeginInput{Tenant: e.ten, Account: a.ID, FirstFactor: FirstKerberos, ClientIP: netip.MustParseAddr("192.0.2.7"), Epoch: epochOf(t, e.sess, e.ten, a.ID)})
 		if err != nil {
 			t.Fatal(err)
 		}

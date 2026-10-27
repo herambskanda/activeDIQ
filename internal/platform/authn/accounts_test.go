@@ -234,7 +234,7 @@ func newSSO(t *testing.T, e *acctEnv, sub string) Account {
 
 func liveSession(t *testing.T, e *acctEnv, acct string) Token {
 	t.Helper()
-	r, err := e.ss.Create(context.Background(), CreateInput{Tenant: e.ten, Account: acct, Methods: []string{"password"}, ClientIP: netip.MustParseAddr("192.0.2.9")})
+	r, err := e.ss.Create(context.Background(), CreateInput{Tenant: e.ten, Account: acct, Methods: []string{"password"}, ClientIP: netip.MustParseAddr("192.0.2.9"), Epoch: epochOf(t, e.ss, e.ten, acct)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +338,7 @@ func TestCreateRefusesNonActiveAccounts(t *testing.T) {
 	eachAcct(t, func(t *testing.T, e *acctEnv) {
 		ctx := context.Background()
 		in := func(id string) CreateInput {
-			return CreateInput{Tenant: e.ten, Account: id, Methods: []string{"password"}, ClientIP: netip.MustParseAddr("192.0.2.9")}
+			return CreateInput{Tenant: e.ten, Account: id, Methods: []string{"password"}, ClientIP: netip.MustParseAddr("192.0.2.9"), Epoch: Epoch{ok: true}}
 		}
 		count := func(id string) int {
 			var n int
@@ -407,7 +407,7 @@ func TestCreateSerialisedAgainstSetState(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				signErr = e.ss.db.WithTenant(ctx, e.ten, func(ctx context.Context, tx store.Tx) error {
-					if _, err := e.ss.CreateTx(ctx, tx, CreateInput{Tenant: e.ten, Account: a.ID, Methods: []string{"password"}}); err != nil {
+					if _, err := e.ss.CreateTx(ctx, tx, CreateInput{Tenant: e.ten, Account: a.ID, Methods: []string{"password"}, Epoch: epochOf(t, e.ss, e.ten, a.ID)}); err != nil {
 						return err
 					}
 					close(inserted)

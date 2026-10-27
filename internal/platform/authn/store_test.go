@@ -95,9 +95,24 @@ func each(t *testing.T, fn func(t *testing.T, e *sessEnv)) {
 
 var pol = Policy{Idle: 10 * time.Minute, Absolute: time.Hour, MaxConcurrent: 3, Eviction: EvictOldestCreated}
 
+// epochOf captures the account's session epoch the way a sign-in does, before verifying anything.
+func epochOf(t *testing.T, s *Store, ten tenant.ID, acct string) Epoch {
+	t.Helper()
+	ep, err := s.Epoch(context.Background(), ten, acct)
+	if err != nil {
+		t.Fatalf("Epoch: %v", err)
+	}
+	return ep
+}
+
 func create(t *testing.T, s *Store, ten tenant.ID, acct string) CreateResult {
 	t.Helper()
-	r, err := s.Create(context.Background(), CreateInput{Tenant: ten, Account: acct, Methods: []string{"password"}, ClientIP: netip.MustParseAddr("192.0.2.9")})
+	return createAt(t, s, ten, acct, epochOf(t, s, ten, acct))
+}
+
+func createAt(t *testing.T, s *Store, ten tenant.ID, acct string, ep Epoch) CreateResult {
+	t.Helper()
+	r, err := s.Create(context.Background(), CreateInput{Tenant: ten, Account: acct, Methods: []string{"password"}, ClientIP: netip.MustParseAddr("192.0.2.9"), Epoch: ep})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -263,7 +278,7 @@ func TestConcurrentLimitHoldsUnderRace(t *testing.T) {
 				if i%2 == 1 {
 					s = b
 				}
-				if _, err := s.Create(context.Background(), CreateInput{Tenant: e.ten, Account: acct, Methods: []string{"password"}}); err != nil {
+				if _, err := s.Create(context.Background(), CreateInput{Tenant: e.ten, Account: acct, Methods: []string{"password"}, Epoch: epochOf(t, s, e.ten, acct)}); err != nil {
 					t.Error(err)
 				}
 			}(i)
