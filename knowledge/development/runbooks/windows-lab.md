@@ -1,7 +1,7 @@
 ---
 title: "Runbook: the Windows Server 2025 lab (local KVM, evaluation licence)"
 date: 2026-10-23
-updated: 2026-10-23
+updated: 2026-10-27
 status: draft
 owner: devops-engineer
 ticket: T-0254
@@ -142,3 +142,52 @@ Still needed from a human run on the Windows lab (evidence for T-0256 AC1/AC2): 
 events 4776 (dc1 Security) and 8001–8004 (`Microsoft-Windows-NTLM/Operational`) for the connector's
 source address over the run window — expected none for the connector — plus a packet capture on the
 attacker host (expected empty). Attach both to `windows-lab-runs/`.
+
+## 10. External host: prepare Proxmox VM 112 (T-0428)
+
+The CEO supplied an existing Windows Server 2025 Evaluation VM (Proxmox VM 112, 8 GiB, 4 cores, 60 GB)
+as `dc1`, instead of local KVM. Factory tooling never touches the VM; a human does steps 1–6 once.
+No `fs1` in this mode (member-server tests are out of scope until a second VM exists).
+
+**Human steps (inside the VM unless stated)**
+
+1. **Hostname.** Elevated PowerShell: `Rename-Computer -NewName DC1 -Restart`.
+2. **Static IP** (use your Proxmox network values; the DC is its own DNS):
+   `New-NetIPAddress -InterfaceAlias Ethernet -IPAddress <DC_IP> -PrefixLength 24 -DefaultGateway <GATEWAY>` then
+   `Set-DnsClientServerAddress -InterfaceAlias Ethernet -ServerAddresses <DC_IP>` (check the alias with `Get-NetAdapter`).
+3. **Copy the guest scripts** (`lab/windows/guest/*.ps1` from the repo) to the VM, e.g. `C:\guest\`.
+4. **Initialise:** `powershell -ExecutionPolicy Bypass -File C:\guest\external-init.ps1 -DcIp <DC_IP>`.
+   It creates `C:\lab`, generates random passwords into `C:\lab\lab.json` (ACL: SYSTEM + Administrators) and
+   a host-format `C:\lab\win-lab.env`. Passwords are not printed.
+5. **Provision:** `powershell -ExecutionPolicy Bypass -File C:\lab\boot.ps1`. It runs `dc.ps1` (forest
+   `win.activediq.test`, enterprise root CA, LDAPS cert, `svc-activediq`, then `audit-gpo.ps1` and
+   `entra-ready.ps1`), reboots by itself and resumes through the `LabResume` task. Done when
+   `C:\lab\provision.log` ends with `dc1 provisioned` (~30 min). `audit-gpo.ps1` and `entra-ready.ps1` are
+   idempotent and may be re-run by hand at any time, also after provisioning: `C:\lab\audit-gpo.ps1`,
+   `C:\lab\entra-ready.ps1`. They do not need `lab.json` (deleted when provisioning finishes); they read the
+   domain from AD. Only if a `g9-*` account is missing does `entra-ready.ps1` stop and ask for a re-provision.
+6. **Export the CA and credentials:** `certutil -ca.cert C:\lab\ca.cer` then
+   `certutil -encode C:\lab\ca.cer C:\lab\ca.pem`. Copy `ca.pem` and `win-lab.env` to the lab host
+   (`scp`; never email or chat), then delete `C:\lab\win-lab.env` from the VM.
+7. **Snapshot clean** (Proxmox host, VM shut down for a crash-consistent snapshot):
+   `qm shutdown 112 && qm snapshot 112 clean --description "clean provisioned lab" && qm start 112`
+   (or Datacenter → VM 112 → Snapshots → Take Snapshot, name `clean`). Revert later with `qm rollback 112 clean`.
+   Note the build date: the evaluation licence is 180 days (§4); rebuild, don't rearm.
+
+**On the lab host**
+
+```bash
+install -m 600 /path/from/scp/win-lab.env lab/windows/.win-lab.env     # gitignored
+cp /path/from/scp/ca.pem lab/windows/.win-lab-ca.pem                   # gitignored
+export WIN_LAB_MODE=external WIN_LAB_DC_ADDR=<DC_IP> WIN_LAB_TLS_NAME=dc1.win.activediq.test
+# optional overrides: WIN_LAB_CA=<ca.pem path>  WIN_LAB_ENV=<env file path>
+make windows-lab-preflight        # validates config, CA, env mode 0600 — no network
+make lab-test-connector-windows   # go test -tags 'lab windowslab' against <DC_IP>:636, TLS name + CA verified
+```
+
+In external mode `up`, `reset`, `down` and `destroy` refuse (they manage libvirt VMs); nothing calls `virsh`.
+Reset = `qm rollback 112 clean` by a human. Certificate verification is never disabled: the Go tests dial
+`<DC_IP>:636` with `ServerName=$WIN_LAB_TLS_NAME` and the CA pool from `$WIN_LAB_CA`; a wrong CA fails
+(`TestWindowsLab…` untrusted-CA test). `make lab-test-windows-unit` proves the mode offline (stub `go`/`virsh`,
+checks refusals, misconfiguration errors and that the password never appears in argv, logs or stdout).
+Status: **untested against VM 112 until a human completes the steps above** (the PowerShell is as untested as §8 says).

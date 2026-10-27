@@ -3,6 +3,9 @@
 # One DC (dc1) + one member/file server (fs1) in a throwaway domain win.activediq.test.
 # Runbook: knowledge/development/runbooks/windows-lab.md
 # Subcommands: preflight | up | reset | down | destroy | status | info | test-connector
+# External mode (T-0428): WIN_LAB_MODE=external targets a DC someone else provides (e.g. Proxmox VM 112) instead of
+# local libvirt. Needs WIN_LAB_DC_ADDR (IP/host), WIN_LAB_TLS_NAME (name in the DC cert), WIN_LAB_CA (root CA PEM),
+# WIN_LAB_ENV (credentials file, mode 0600). Only preflight|status|info|test-connector work; nothing calls virsh.
 # WIN_LAB_DRYRUN=1 prints every external command instead of running it (used by the offline test).
 set -euo pipefail
 
@@ -21,10 +24,19 @@ ISO_URL="${WIN_LAB_ISO_URL:-https://go.microsoft.com/fwlink/?linkid=2293312&clci
 ISO="${WIN_LAB_ISO:-$STATE/ws2025-eval.iso}"
 WAIT="${WIN_LAB_WAIT_SECS:-5400}"
 DRY="${WIN_LAB_DRYRUN:-}"
+MODE="${WIN_LAB_MODE:-local}"
+GO="${WIN_LAB_GO:-go}"
 
 die() { echo "windows-lab: $*" >&2; exit 1; }
 run() { if [ "$DRY" = 1 ]; then echo "+ $*"; else "$@"; fi; }
-virsh_() { run virsh -c "$URI" "$@"; }
+virsh_() { [ "$MODE" = external ] && die "internal error: virsh in external mode"; run virsh -c "$URI" "$@"; }
+case "$MODE" in
+  local) ;;
+  external)
+    DC_IP="${WIN_LAB_DC_ADDR:-}"; TLS_NAME="${WIN_LAB_TLS_NAME:-dc1.$DOMAIN}"
+    export WIN_LAB_DC_ADDR="$DC_IP" WIN_LAB_TLS_NAME="$TLS_NAME" ;;
+  *) die "WIN_LAB_MODE must be 'local' or 'external' (got '$MODE')";;
+esac
 mac() { printf '52:54:00:77:00:%02x' "${1##*.}"; }
 
 preflight() {
@@ -179,6 +191,11 @@ destroy() {
 }
 
 info() {
+  if [ "$MODE" = external ]; then
+    echo "Windows lab (external host): $DC_IP  ldaps://$DC_IP:636  TLS name $TLS_NAME  CA $CAF  credentials $ENVF"
+    echo "  snapshot/revert is done in Proxmox by a human: runbook windows-lab.md, 'Prepare VM 112'"
+    return 0
+  fi
   echo "Windows lab: domain $DOMAIN ($NETBIOS)  base DN $BASEDN"
   echo "  dc1  $DC_IP  ldaps://$DC_IP:636 (cert name dc1.$DOMAIN; add '$DC_IP dc1.$DOMAIN' to /etc/hosts)"
   echo "  fs1  $FS_IP  SMB 445, WinRM-HTTPS 5986"
@@ -187,19 +204,45 @@ info() {
 }
 
 status() {
+  if [ "$MODE" = external ]; then info; return 0; fi
   virsh -c "$URI" list --all 2>/dev/null | grep -E "diq-win|Name" || echo "no windows lab VMs"
   if [ -f "$ENVF" ]; then info; fi
 }
 
+# External mode: validate configuration before anything touches the network. Secrets are only ever read from files.
+check_external() {
+  [ -n "$DC_IP" ] || die "external mode: set WIN_LAB_DC_ADDR (DC IP or host name)"
+  [[ "$DC_IP" =~ ^[A-Za-z0-9]([A-Za-z0-9.:-]*[A-Za-z0-9])?$ ]] || die "external mode: WIN_LAB_DC_ADDR is not a plain IP/host name"
+  [[ "$TLS_NAME" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || die "external mode: WIN_LAB_TLS_NAME is not a plain DNS name"
+  [ -f "$CAF" ] || die "external mode: CA file not found: $CAF (WIN_LAB_CA; export it per the runbook, section 'Prepare VM 112')"
+  [ -f "$ENVF" ] || die "external mode: credentials file not found: $ENVF (WIN_LAB_ENV)"
+  local m; m=$(stat -c %a "$ENVF")
+  case "$m" in 400|600) ;; *) die "external mode: $ENVF must be mode 0600 (is $m): chmod 600 it";; esac
+  grep -q '^WIN_LAB_SVC_PASSWORD=' "$ENVF" || die "external mode: $ENVF has no WIN_LAB_SVC_PASSWORD"
+}
+
 test_connector() {
+  if [ "$MODE" = external ]; then
+    check_external
+    # absolute paths: go test runs in the package directory
+    export WIN_LAB_CA; WIN_LAB_CA="$(cd "$(dirname "$CAF")" && pwd)/$(basename "$CAF")"
+    export WIN_LAB_ENV; WIN_LAB_ENV="$(cd "$(dirname "$ENVF")" && pwd)/$(basename "$ENVF")"
+    echo ">> external mode: $DC_IP:636, TLS name $TLS_NAME, certificate verification ON"
+  fi
   [ -f "$ENVF" ] && [ -f "$CAF" ] || die "lab not up: run make windows-lab-up"
   mkdir -p "$LOGDIR"
   local log; log="$LOGDIR/connector-$(date -u +%Y%m%dT%H%M%SZ).log"
   echo ">> go test -tags 'lab windowslab' ./internal/connector/ad/ against dc1 over LDAPS; log: $log"
-  ( cd "$HERE/../.." && LAB_TARGET=windows go test -count=1 -v -tags 'lab windowslab' ./internal/connector/ad/ ) 2>&1 | tee "$log"
+  ( cd "$HERE/../.." && LAB_TARGET=windows "$GO" test -count=1 -v -tags 'lab windowslab' ./internal/connector/ad/ ) 2>&1 | tee "$log"
   return "${PIPESTATUS[0]}"
 }
 
+if [ "$MODE" = external ]; then
+  case "${1:-}" in
+    up|reset|down|destroy) die "'$1' manages local libvirt VMs; in external mode the VM is operated by a human (Proxmox). See the runbook.";;
+    preflight) for t in openssl go; do command -v "$t" >/dev/null 2>&1 || [ "$t" = go ] || die "missing: $t"; done; check_external && echo "preflight ok (external)"; exit 0;;
+  esac
+fi
 case "${1:-}" in
   preflight) preflight && echo "preflight ok";;
   up) up;; reset) reset;; down) down;; destroy) destroy;; status) status;; info) info;;
