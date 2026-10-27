@@ -155,3 +155,26 @@ func TestTrustedProxies(t *testing.T) {
 		}
 	}
 }
+
+func TestAttestationSettings(t *testing.T) {
+	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+	if c, err := config.Load(env(nil)); err != nil || c.AttestClientID != "" {
+		t.Fatalf("default: %+v %v", c, err)
+	}
+	ok := map[string]string{config.EnvAttestClientID: "app", config.EnvPublicURL: "https://diq.example.com"}
+	if c, err := config.Load(env(ok)); err != nil || c.AttestClientID != "app" {
+		t.Fatalf("configured: %v", err)
+	}
+	for name, m := range map[string]map[string]string{
+		"client without url": {config.EnvAttestClientID: "app"},
+		"url without client": {config.EnvPublicURL: "https://diq.example.com"},
+		"http":               {config.EnvAttestClientID: "app", config.EnvPublicURL: "http://diq.example.com"},
+		"path":               {config.EnvAttestClientID: "app", config.EnvPublicURL: "https://diq.example.com/x"},
+		"userinfo":           {config.EnvAttestClientID: "app", config.EnvPublicURL: "https://u:p@diq.example.com"},
+		"query":              {config.EnvAttestClientID: "app", config.EnvPublicURL: "https://diq.example.com/?a=b"},
+	} {
+		if _, err := config.Load(env(m)); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}

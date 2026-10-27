@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -172,12 +173,15 @@ type Attester struct {
 // NewAttester validates the wiring.
 func NewAttester(cfg AttestConfig) (*Attester, error) {
 	if cfg.DB == nil || cfg.Audit == nil || cfg.Authz == nil || cfg.StepUp == nil || cfg.IdP == nil || cfg.Graph == nil ||
-		cfg.ClientID == "" || cfg.RedirectURI == "" || cfg.Authority == "" || cfg.Component == "" || cfg.NewID == nil {
+		cfg.ClientID == "" || cfg.RedirectURI == "" || cfg.Authority == "" || cfg.Component == "" {
 		return nil, errors.New("connections: attester is not fully configured")
 	}
 	u, err := url.Parse(cfg.Authority)
 	if err != nil || u.Scheme != "https" || u.Host == "" {
 		return nil, errors.New("connections: attester authority must be https")
+	}
+	if cfg.NewID == nil {
+		cfg.NewID = randomEventID
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
@@ -473,4 +477,13 @@ func boolText(b bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+// randomEventID is the default audit event ID: 128 random bits in hex, like the operation runner's.
+func randomEventID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic("connections: no entropy: " + err.Error())
+	}
+	return hex.EncodeToString(b[:])
 }
