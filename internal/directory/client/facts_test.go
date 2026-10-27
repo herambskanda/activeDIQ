@@ -14,7 +14,7 @@ type readsFake struct {
 	calls int
 }
 
-func (r *readsFake) Object(_ context.Context, _ authority.Pins, _ authority.TargetRef, guid string) (ObjectRead, error) {
+func (r *readsFake) Object(_ context.Context, _ authority.Pins, _ authority.TargetRef, guid string, _ bool) (ObjectRead, error) {
 	r.calls++
 	return r.objs[guid], r.err
 }

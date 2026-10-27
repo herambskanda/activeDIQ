@@ -46,10 +46,30 @@ func buildOperation(holdsMinter func() bool, db *store.DB, facts operation.LiveF
 	return &operationKernel{Chainer: ch, Runner: r}, nil
 }
 
+// directoryReads builds the connector read adapter (client.ConnectorReads) over the connection
+// registry, so a read resolves its connection under the context's tenant. It returns nil reads, which
+// directoryFacts turns into fail-closed ErrNoReads, when no connector source or Tier-0 verdict source
+// is supplied: neither exists in the server yet (follow-ups on T-0366), and a half-wired adapter must
+// not answer.
+func directoryReads(conns client.ConnectionSource, src client.ConnectorSource, t0 client.Tier0Verdicts) (client.Reads, error) {
+	if src == nil || t0 == nil {
+		return nil, nil
+	}
+	tr, err := client.NewGRPCReadTransport(src)
+	if err != nil {
+		return nil, fmt.Errorf("server: read transport: %w", err)
+	}
+	r, err := client.NewConnectorReads(conns, tr, t0)
+	if err != nil {
+		return nil, fmt.Errorf("server: connector reads: %w", err)
+	}
+	return r, nil
+}
+
 // directoryFacts is the live facts reader: the directory client's read half over the connector-backed
-// facts reader (client.ConnectorFacts). reads is the connector's read adapter; until the gRPC adapter
-// lands (a nil reads) a directory target fails closed with client.ErrNoReads, while a tier0_scope
-// target or a store target is answered without a read.
+// facts reader (client.ConnectorFacts). reads is the connector's read adapter (directoryReads); with a
+// nil reads a directory target fails closed with client.ErrNoReads, while a tier0_scope target or a
+// store target is answered without a read.
 func directoryFacts(reads client.Reads) *client.Client {
 	return client.New(client.WithFacts(client.NewConnectorFacts(reads)))
 }
