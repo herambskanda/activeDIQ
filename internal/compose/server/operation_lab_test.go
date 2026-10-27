@@ -51,14 +51,11 @@ type readRec struct {
 }
 
 // recTransport is an in-process client.ReadTransport over the connector's read.Handler. It records
-// every read. It adds exactly one thing to the request: the connector's DirectoryIdentity, which
-// client.ConnectorReads does not send and the handler requires (BUG T-0465; delete the injection when
-// that is fixed, and the test must still pass).
+// every read and adds nothing to the request: client.ConnectorReads sends the DirectoryIdentity itself.
 type recTransport struct {
-	h     *read.Handler
-	ident *connectorv1.DirectoryIdentity
-	mu    sync.Mutex
-	rs    []readRec
+	h  *read.Handler
+	mu sync.Mutex
+	rs []readRec
 }
 
 type replay struct {
@@ -80,9 +77,6 @@ func (c *collect) Send(m *connectorv1.ReadResponse) error { c.ms = append(c.ms, 
 
 func (t *recTransport) Read(ctx context.Context, req *connectorv1.ReadRequest) (client.ReadStream, error) {
 	c := &collect{}
-	if req.Connection.DirectoryIdentity == nil {
-		req.Connection.DirectoryIdentity = t.ident
-	}
 	rec := readRec{Object: uuidText(req.GetGuid().GetValue())}
 	if p := req.GetDc().GetPinnedDsaGuid().GetValue(); len(p) != 0 {
 		rec.Pinned, rec.PinDSA = true, uuidText(p)
@@ -270,7 +264,7 @@ func newLabRig(t *testing.T, s *storetest.Server) *labRig {
 		if _, err := reg.SetDirectoryIdentity(ctx, e.ten, connection.ID(e.ad), connectionIdentity(nc)); err != nil {
 			t.Fatalf("connection identity: %v", err)
 		}
-		tr := &recTransport{h: h, ident: ident}
+		tr := &recTransport{h: h}
 		reads, err := client.NewConnectorReads(reg, tr)
 		if err != nil {
 			t.Fatal(err)
@@ -382,7 +376,7 @@ func TestLabRule5LiveFactsDecideBackingObject(t *testing.T) {
 
 // openBugs lists the product bugs this test is marked expected-to-fail for. While any is open the run
 // must fail with its symptom; the moment it passes, the test fails and says to remove the marker.
-var openBugs = []string{"T-0465 (ConnectorReads sends no DirectoryIdentity)", "T-0466 (SubmitDirectory reads facts without tenant or DSA pins)"}
+var openBugs = []string{"T-0466 (SubmitDirectory reads facts without tenant or DSA pins)"}
 
 // T-0421 acceptance 1: through SubmitDirectory. EXPECTED TO FAIL until T-0465 and T-0466 land: today
 // the ordinary in-scope reset is blocked facts_unavailable as well, because no live read reaches the
