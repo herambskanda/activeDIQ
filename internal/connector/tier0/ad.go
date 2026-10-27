@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
@@ -623,6 +624,9 @@ func (b *builder) membersOf(roots []*ad.Entry, basis Basis) error {
 			if err != nil || len(ss) != 1 {
 				return fmt.Errorf("tier0: group %s has a foreignSecurityPrincipal member with no readable SID", parent[k])
 			}
+			if isDomainAccountSID(ss[0]) && broadForeignRID(ss[0]) {
+				return fmt.Errorf("tier0: group %s has %s, a well-known group of another domain, as a (nested) member; every principal of that domain would be in its closure", parent[k], ss[0])
+			}
 			if !isDomainAccountSID(ss[0]) {
 				return fmt.Errorf("tier0: group %s has the broad SID %s as a (nested) member; every principal would be in its closure", parent[k], ss[0])
 			}
@@ -1163,6 +1167,20 @@ func isDomainAccountSID(s sid.SID) bool {
 	return ok
 }
 
+// broadForeignRID is true for a domain account SID whose RID is below 1000 and is not one of the three
+// well-known single accounts (500 Administrator, 501 Guest, 502 krbtgt). Such a RID is a well-known
+// group (Domain Users 513, Domain Guests 514, Domain Computers 515, Domain Admins 512, ...) whose
+// membership in a trusted domain we cannot enumerate, so an FSP for it stands for every principal of
+// that domain. Allow-list of single accounts: new well-known group RIDs must fail closed (T-0384).
+func broadForeignRID(s sid.SID) bool {
+	p := strings.Split(s.String(), "-")
+	rid, err := strconv.ParseUint(p[len(p)-1], 10, 32)
+	if err != nil {
+		return true
+	}
+	return rid < 1000 && rid != 500 && rid != 501 && rid != 502
+}
+
 // markPrincipalsSkip is markPrincipals except that an object for which skip is true is not marked and
 // its members are not walked.
 func (b *builder) markPrincipalsSkip(sids []sid.SID, basis Basis, skip func(*ad.Entry) bool) error {
@@ -1196,6 +1214,9 @@ func (b *builder) markPrincipalsSkip(sids []sid.SID, basis Basis, skip func(*ad.
 		holders, err := b.historyHolders(s)
 		if err != nil {
 			return err
+		}
+		if found && hasClass(e, "foreignSecurityPrincipal") && broadForeignRID(s) {
+			return fmt.Errorf("tier0: grant to %s, a well-known group of another domain, covers every principal of that domain", s)
 		}
 		// A sIDHistory holder stands in for a foreign-domain account SID (migration), but a SID that
 		// is not a domain account SID (Everyone, Authenticated Users, ...) is in every token: a holder

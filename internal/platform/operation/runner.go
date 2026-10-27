@@ -371,7 +371,7 @@ func (u *run) liveFacts(ctx context.Context, q authority.FactsQuery, t authority
 }
 
 func (u *run) pinnedFacts() PinnedFacts {
-	return pinnedReader{port: u.r.cfg.Facts, ad: u.d.Target == TargetAD, store: u.d.Target == TargetStore, pins: maps.Clone(u.req.Pins)}
+	return pinnedReader{port: u.r.cfg.Facts, ad: u.d.Target == TargetAD, store: u.d.Target == TargetStore, pins: maps.Clone(u.req.Pins), dsas: maps.Clone(u.req.DSAs), tenant: u.req.Tenant}
 }
 
 // pinnedReader binds a LiveFacts port to one operation's pins.
@@ -379,8 +379,10 @@ type pinnedReader struct {
 	port LiveFacts
 	ad   bool
 	// store: a Store Action, which reads no directory facts, so a nil port is legitimate.
-	store bool
-	pins  authority.Pins
+	store  bool
+	pins   authority.Pins
+	dsas   authority.DSAPins
+	tenant tenant.ID
 }
 
 func (p pinnedReader) Facts(ctx context.Context, q authority.FactsQuery) (authority.Facts, error) {
@@ -395,6 +397,8 @@ func (p pinnedReader) Facts(ctx context.Context, q authority.FactsQuery) (author
 			return authority.Facts{}, fmt.Errorf("%w: no DC pin for the target's naming context", ErrInvalid)
 		}
 	}
+	// The read adapter resolves the connection under the tenant and pins the DC by DSA GUID.
+	ctx = authority.WithDSAPins(authority.WithTenant(ctx, p.tenant.String()), maps.Clone(p.dsas))
 	return p.port.Facts(ctx, maps.Clone(p.pins), q)
 }
 
