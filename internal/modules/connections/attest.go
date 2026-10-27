@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -172,12 +173,15 @@ type Attester struct {
 // NewAttester validates the wiring.
 func NewAttester(cfg AttestConfig) (*Attester, error) {
 	if cfg.DB == nil || cfg.Audit == nil || cfg.Authz == nil || cfg.StepUp == nil || cfg.IdP == nil || cfg.Graph == nil ||
-		cfg.ClientID == "" || cfg.RedirectURI == "" || cfg.Authority == "" || cfg.Component == "" || cfg.NewID == nil {
+		cfg.ClientID == "" || cfg.RedirectURI == "" || cfg.Authority == "" || cfg.Component == "" {
 		return nil, errors.New("connections: attester is not fully configured")
 	}
 	u, err := url.Parse(cfg.Authority)
 	if err != nil || u.Scheme != "https" || u.Host == "" {
 		return nil, errors.New("connections: attester authority must be https")
+	}
+	if cfg.NewID == nil {
+		cfg.NewID = randomEventID
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
@@ -221,10 +225,13 @@ func (a *Attester) Start(ctx context.Context, req StartRequest) (string, error) 
 	if !fresh {
 		return deny(ReasonStepUpRequired, ErrStepUpRequired)
 	}
-	state, err := a.random(32)
+	nonce, err := a.random(32)
 	if err != nil {
 		return "", err
 	}
+	// The state names its tenant so the unauthenticated callback can open the right tenant's
+	// transaction. The prefix is only where to look: the attempt is found by the hash of the whole state.
+	state := req.Tenant.String() + stateSep + nonce
 	verifier, err := a.random(32) // 43 base64url characters, RFC 7636 §4.1
 	if err != nil {
 		return "", err
@@ -253,6 +260,23 @@ func (a *Attester) Start(ctx context.Context, req StartRequest) (string, error) 
 		return "", err
 	}
 	return a.authorizeURL(tenantID, state, verifier), nil
+}
+
+const stateSep = "."
+
+// StateTenant reads the tenant a state was issued for. The callback uses it for one thing, to choose
+// whose attempt table to look the state up in; the lookup is by the hash of the whole state, so a
+// state that was never issued for that tenant finds nothing. It is not an identity.
+func StateTenant(state string) (tenant.ID, bool) {
+	prefix, _, ok := strings.Cut(state, stateSep)
+	if !ok {
+		return tenant.ID{}, false
+	}
+	t, err := tenant.Parse(prefix)
+	if err != nil || t.IsZero() {
+		return tenant.ID{}, false
+	}
+	return t, true
 }
 
 func attestable(c connection.Connection) bool {
@@ -453,4 +477,13 @@ func boolText(b bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+// randomEventID is the default audit event ID: 128 random bits in hex, like the operation runner's.
+func randomEventID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic("connections: no entropy: " + err.Error())
+	}
+	return hex.EncodeToString(b[:])
 }

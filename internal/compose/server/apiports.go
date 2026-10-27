@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/skenzeriq/activediq/internal/modules/connections"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 )
 
@@ -19,9 +20,9 @@ func APIPolicy() apihost.Policy {
 	return p
 }
 
-// apiCatalogue is the EP-6 permission set; it is empty until the permission catalogue lands, so any
-// operation with a real permission fails Build rather than being served unguarded.
-var apiCatalogue = apihost.Permissions{}
+// apiCatalogue is the EP-6 permission set as far as mounted operations use it: Build fails an operation
+// whose permission is missing here rather than serving it unguarded.
+var apiCatalogue = apihost.Permissions{string(connections.TakeoverAttestPermission)}
 
 // failClosedPorts are the ports until the auth, RBAC and step-up kernels exist: those three refuse
 // everything, so a route mounted before the real ports are injected cannot be reached. Limits is the

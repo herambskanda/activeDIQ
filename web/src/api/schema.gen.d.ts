@@ -121,6 +121,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/connections/{connectionId}/takeover-attestation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start a takeover-protection attestation
+         * @description Starts the TM-D17 attestation of an Entra connection. The answer is the IdP sign-in URL (authorization code with PKCE, one delegated read-only scope, no offline access) at which a Global Administrator of that tenant signs in. The server then makes the one read of the tenant's sync features itself and discards the token. Needs a fresh step-up.
+         */
+        post: operations["startTakeoverAttestation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connections/{connectionId}/takeover-attestation/max-age": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set how long an attestation stays valid
+         * @description Sets attestation_max_age. A longer age widens the window in which a missed takeover-flag flip still counts as attested, so it needs the same permission and a fresh step-up as starting an attestation. The value is at most 90 days (7776000 seconds).
+         */
+        put: operations["setTakeoverAttestationMaxAge"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connections/takeover-attestation/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Return from the IdP sign-in of a takeover-protection attestation (AN-11)
+         * @description The redirect URI of the attestation sign-in. No session or token is read: the single-use state issued by the start is the credential, and the tenant is the one the state names, used only to look the state up. A bad, expired or replayed state, a refused code, a token of another tenant and a failed read all answer the same 303 to the failed page, so the caller learns nothing about the cause (the cause is in the audit). Success answers 303 to the recorded page. The response carries no token and no directory value.
+         */
+        get: operations["completeTakeoverAttestation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health/live": {
         parameters: {
             query?: never;
@@ -282,6 +342,14 @@ export interface components {
         };
         /** @description A secret a client sends: a password, a token. It is write-only, never appears in a response, and is held in memory only as a secret.Secret that is destroyed after the request. */
         SecretInput: string;
+        /** @description The new attestation_max_age. */
+        TakeoverAttestationMaxAge: {
+            maxAgeSeconds: number;
+        };
+        /** @description Where the Global Administrator signs in. */
+        TakeoverAttestationStart: {
+            authorizeUrl: string;
+        };
         /** @description A TOTP code from the account's authenticator. */
         TotpCodeRequest: {
             code: components["schemas"]["SecretInput"];
@@ -689,6 +757,8 @@ export interface components {
         };
     };
     parameters: {
+        /** @description The Entra connection. */
+        ConnectionId: string;
         /** @description Makes a mutating bulk call safe to retry. The same key with a different body is refused. */
         IdempotencyKey: string;
         /** @description The ETag of the version being changed; a stale value answers precondition-failed. */
@@ -872,6 +942,97 @@ export interface operations {
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
             501: components["responses"]["NotImplemented"];
+        };
+    };
+    startTakeoverAttestation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The Entra connection. */
+                connectionId: components["parameters"]["ConnectionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The sign-in URL for the Global Administrator */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TakeoverAttestationStart"];
+                };
+            };
+            401: components["responses"]["StepUpRequired"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    setTakeoverAttestationMaxAge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The Entra connection. */
+                connectionId: components["parameters"]["ConnectionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TakeoverAttestationMaxAge"];
+            };
+        };
+        responses: {
+            /** @description The age is set */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["StepUpRequired"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    completeTakeoverAttestation: {
+        parameters: {
+            query: {
+                /** @description The authorization code. Absent when the IdP reports an error. */
+                code?: string;
+                /** @description The IdP error code, when the administrator declined or the IdP refused. Never echoed. */
+                error?: string;
+                /** @description The state issued by the start. */
+                state: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Redirect to the console page that shows the outcome */
+            303: {
+                headers: {
+                    /** @description /connections?takeover-attestation=recorded or /connections?takeover-attestation=failed */
+                    Location: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["Validation"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
         };
     };
     getLiveness: {

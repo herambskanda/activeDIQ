@@ -1,0 +1,132 @@
+package inventory_test
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/skenzeriq/activediq/internal/directory/inventory"
+	"github.com/skenzeriq/activediq/internal/platform/store"
+	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
+	"github.com/skenzeriq/activediq/internal/platform/tenant"
+)
+
+func (e *env) rev(t *testing.T, tid tenant.ID) uint64 {
+	t.Helper()
+	v, err := e.r.Tier0Revision(context.Background(), tid)
+	if err != nil {
+		t.Fatalf("Tier0Revision: %v", err)
+	}
+	return v
+}
+
+func (e *env) designate(t *testing.T, tid tenant.ID, c inventory.ConnectionID, obj string, on bool) {
+	t.Helper()
+	err := e.db.WithTenant(context.Background(), tid, func(ctx context.Context, tx store.Tx) error {
+		if on {
+			_, err := w.Designate(ctx, tx, c, inventory.GUID(obj), "alice")
+			return err
+		}
+		return w.Undesignate(ctx, tx, c, inventory.GUID(obj), "alice")
+	})
+	if err != nil {
+		t.Fatalf("designate(%v): %v", on, err)
+	}
+}
+
+// Acceptance 1: adding, removing and re-adding a designation each strictly increase the revision;
+// a no-op designate does not.
+func TestTier0RevisionDesignations(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		const obj = "aaaaaaaa-0000-4000-8000-0000000000d1"
+		r0 := e.rev(t, e.a)
+		e.designate(t, e.a, e.adA, obj, true)
+		r1 := e.rev(t, e.a)
+		if r1 <= r0 {
+			t.Fatalf("add: %d -> %d", r0, r1)
+		}
+		e.designate(t, e.a, e.adA, obj, true) // no-op
+		if r := e.rev(t, e.a); r != r1 {
+			t.Fatalf("no-op designate moved the revision: %d -> %d", r1, r)
+		}
+		e.designate(t, e.a, e.adA, obj, false)
+		r2 := e.rev(t, e.a)
+		if r2 <= r1 {
+			t.Fatalf("remove: %d -> %d", r1, r2)
+		}
+		e.designate(t, e.a, e.adA, obj, true)
+		if r3 := e.rev(t, e.a); r3 <= r2 {
+			t.Fatalf("re-add: %d -> %d", r2, r3)
+		}
+	})
+}
+
+// Acceptance 2: a change to the tier0 facts of a correlation increases the revision; re-stating the
+// same facts later (a refresh) and a non-tier0 correlation leave it unchanged.
+func TestTier0RevisionFacts(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		f := formation(e, adG1, enG1)
+		if _, err := e.form(t, f); err != nil { // not tier0
+			t.Fatal(err)
+		}
+		r0 := e.rev(t, e.a)
+		f.FactsAsOf, f.Now = t1.Add(time.Hour), t1.Add(time.Hour)
+		if _, err := e.form(t, f); err != nil { // same facts, newer as-of
+			t.Fatal(err)
+		}
+		if r := e.rev(t, e.a); r != r0 {
+			t.Fatalf("unchanged facts moved the revision: %d -> %d", r0, r)
+		}
+		f.ADBases = []inventory.Basis{inventory.BasisC16}
+		if _, err := e.form(t, f); err != nil {
+			t.Fatal(err)
+		}
+		r1 := e.rev(t, e.a)
+		if r1 <= r0 {
+			t.Fatalf("facts became tier0: %d -> %d", r0, r1)
+		}
+		f.FactsAsOf = f.FactsAsOf.Add(time.Hour)
+		if _, err := e.form(t, f); err != nil {
+			t.Fatal(err)
+		}
+		if r := e.rev(t, e.a); r != r1 {
+			t.Fatalf("re-stated facts moved the revision: %d -> %d", r1, r)
+		}
+		f.ADBases = nil
+		if _, err := e.form(t, f); err != nil {
+			t.Fatal(err)
+		}
+		if r := e.rev(t, e.a); r <= r1 {
+			t.Fatalf("facts stopped being tier0: %d -> %d", r1, r)
+		}
+	})
+}
+
+// Acceptance 3: one tenant's changes never move another's revision, and the counter cannot be
+// moved backwards through the runtime role.
+func TestTier0RevisionTenantIsolationAndMonotone(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		rb := e.rev(t, e.b)
+		e.designate(t, e.a, e.adA, "aaaaaaaa-0000-4000-8000-0000000000d2", true)
+		if r := e.rev(t, e.b); r != rb {
+			t.Fatalf("tenant B moved: %d -> %d", rb, r)
+		}
+		e.designate(t, e.b, e.adB, "aaaaaaaa-0000-4000-8000-0000000000d3", true)
+		ra := e.rev(t, e.a)
+		if e.rev(t, e.b) <= rb || ra == 0 {
+			t.Fatal("each tenant counts its own changes")
+		}
+		if err := e.exec(e.a, `UPDATE public.inventory_tier0_revisions SET revision = 1`); err == nil && ra > 1 {
+			t.Fatal("the runtime role moved the revision backwards")
+		}
+		if r := e.rev(t, e.a); r != ra {
+			t.Fatalf("revision changed: %d -> %d", ra, r)
+		}
+		if _, err := e.r.Tier0Revision(context.Background(), tenant.ID{}); err == nil {
+			t.Fatal("zero tenant must be refused")
+		}
+	})
+}

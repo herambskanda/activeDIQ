@@ -29,6 +29,7 @@ type OverrideSource interface {
 }
 
 var _ OverrideSource = (*connection.Registry)(nil)
+var _ RevisionSource = (*inventory.Reader)(nil)
 
 // ConnectionSource reads a connection's kind and directory identity (DM-10).
 type ConnectionSource interface {

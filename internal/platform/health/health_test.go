@@ -50,9 +50,21 @@ func serve(t *testing.T, logbuf *bytes.Buffer, checks ...health.NamedCheck) *api
 	return build(t, doc, policy, log, api.Handlers(health.New(log, checks)))
 }
 
+// catalogueOf names every permission the document uses, so the test builds the whole document
+// and does not break when another tag adds an operation.
+func catalogueOf(doc apihost.Document) apihost.Permissions {
+	var out apihost.Permissions
+	for _, o := range doc.Operations() {
+		if o.Permission != "" && o.Permission != "anonymous" && o.Permission != "authenticated" {
+			out = append(out, o.Permission)
+		}
+	}
+	return out
+}
+
 func build(t *testing.T, doc apihost.Document, policy apihost.Policy, log *slog.Logger, h api.Handlers) *apihost.Server {
 	t.Helper()
-	s, err := apihost.Build(doc, []apihost.TagHandlers{api.Bind(h)}, policy, apihost.Permissions{}, apihost.Ports{Authn: ports{}, Authz: ports{}, Limits: ports{}, StepUp: ports{}}, apihost.WithLogger(log))
+	s, err := apihost.Build(doc, []apihost.TagHandlers{api.Bind(h)}, policy, catalogueOf(doc), apihost.Ports{Authn: ports{}, Authz: ports{}, Limits: ports{}, StepUp: ports{}}, apihost.WithLogger(log))
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}

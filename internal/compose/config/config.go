@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -47,6 +48,14 @@ const (
 	// EnvPrincipalStore selects where per-principal rate budgets live: "postgres" (the default, shared by
 	// every node) or "memory" (one process; only valid with a single node).
 	EnvPrincipalStore = "ACTIVEDIQ_PRINCIPAL_STORE"
+	// EnvAttestClientID is the application (client) ID of the Entra app registration that carries the
+	// delegated OnPremDirectorySynchronization.Read.All permission for the TM-D17 takeover attestation. Empty
+	// (the default) leaves the attestation routes unmounted.
+	EnvAttestClientID = "ACTIVEDIQ_ATTEST_CLIENT_ID"
+	// EnvPublicURL is the https origin browsers reach this install by. The attestation's redirect URI is
+	// this origin plus the callback path, and must be registered on the app registration. Required with
+	// EnvAttestClientID.
+	EnvPublicURL = "ACTIVEDIQ_PUBLIC_URL"
 )
 
 // Values of EnvPrincipalStore.
@@ -87,6 +96,9 @@ type Config struct {
 	// Nodes is the number of server nodes; PrincipalStore is PrincipalStorePostgres or PrincipalStoreMemory.
 	Nodes          int
 	PrincipalStore string
+	// AttestClientID and PublicURL configure the TM-D17 attestation; both empty means it is not offered.
+	AttestClientID string
+	PublicURL      string
 }
 
 // Load reads the configuration through getenv (os.Getenv in the binaries, a map in tests).
@@ -153,6 +165,10 @@ func Load(getenv func(string) string) (Config, error) {
 		c.PrincipalStore = v
 	}
 	if err := c.ValidatePrincipalStore(); err != nil {
+		return Config{}, err
+	}
+	c.AttestClientID, c.PublicURL = getenv(EnvAttestClientID), getenv(EnvPublicURL)
+	if err := c.ValidateAttestation(); err != nil {
 		return Config{}, err
 	}
 	if 2*c.ShutdownGrace >= c.StopTimeout {
@@ -243,6 +259,22 @@ func requireLoopback(addr string) error {
 		return nil
 	}
 	return errors.New("must bind a loopback address (127.0.0.0/8, ::1 or localhost) unless a TLS directory is configured")
+}
+
+// ValidateAttestation refuses a half-configured attestation, and a public URL that is not a plain https
+// origin: the redirect URI is built from it and the authorization code returns there.
+func (c Config) ValidateAttestation() error {
+	if c.AttestClientID == "" && c.PublicURL == "" {
+		return nil
+	}
+	if c.AttestClientID == "" || c.PublicURL == "" {
+		return fmt.Errorf("%s and %s must be set together", EnvAttestClientID, EnvPublicURL)
+	}
+	u, err := url.Parse(c.PublicURL)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("%s: must be an https origin such as https://diq.example.com", EnvPublicURL)
+	}
+	return nil
 }
 
 // ValidatePrincipalStore refuses an unknown store and the in-memory store on more than one node: each

@@ -1,16 +1,10 @@
 package server
 
 import (
-	"context"
 	"testing"
 
-	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 )
-
-type nopSink struct{}
-
-func (nopSink) Append(context.Context, store.Tx, audit.Event) error { return nil }
 
 // T-0445 acceptance 2: the owner writer is built with the authn implementations, and a missing
 // collaborator fails startup instead of leaving an unguarded writer.

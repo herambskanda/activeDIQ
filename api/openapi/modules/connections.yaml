@@ -1,0 +1,170 @@
+# TM-D17 hybrid-trust attestation of an Entra connection (threat model section 6.8, DM-10.I7).
+# Start and SetMaxAge need connections.takeover.attest over the connection's entra_tenant scope and a fresh
+# step-up (section 7.4). The callback is the browser's return from the IdP (AN-11): it carries no
+# credential of ours, so the state it presents is the credential.
+paths:
+  /connections/{connectionId}/takeover-attestation:
+    post:
+      tags: [connections]
+      operationId: startTakeoverAttestation
+      summary: Start a takeover-protection attestation
+      description: >-
+        Starts the TM-D17 attestation of an Entra connection. The answer is the IdP sign-in URL
+        (authorization code with PKCE, one delegated read-only scope, no offline access) at which a
+        Global Administrator of that tenant signs in. The server then makes the one read of the tenant's
+        sync features itself and discards the token. Needs a fresh step-up.
+      x-permission: connections.takeover.attest
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: write
+        maxBodyBytes: 1024
+      parameters:
+        - $ref: modules/connections.yaml#/components/parameters/ConnectionId
+      responses:
+        "200":
+          description: The sign-in URL for the Global Administrator
+          content:
+            application/json:
+              schema:
+                $ref: modules/connections.yaml#/components/schemas/TakeoverAttestationStart
+        "401":
+          $ref: shared/problems.yaml#/components/responses/StepUpRequired
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "404":
+          $ref: shared/problems.yaml#/components/responses/NotFound
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+  /connections/{connectionId}/takeover-attestation/max-age:
+    put:
+      tags: [connections]
+      operationId: setTakeoverAttestationMaxAge
+      summary: Set how long an attestation stays valid
+      description: >-
+        Sets attestation_max_age. A longer age widens the window in which a missed takeover-flag flip
+        still counts as attested, so it needs the same permission and a fresh step-up as starting an
+        attestation. The value is at most 90 days (7776000 seconds).
+      x-permission: connections.takeover.attest
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: write
+        maxBodyBytes: 1024
+      parameters:
+        - $ref: modules/connections.yaml#/components/parameters/ConnectionId
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: modules/connections.yaml#/components/schemas/TakeoverAttestationMaxAge
+      responses:
+        "204":
+          description: The age is set
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+        "401":
+          $ref: shared/problems.yaml#/components/responses/StepUpRequired
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "404":
+          $ref: shared/problems.yaml#/components/responses/NotFound
+        "413":
+          $ref: shared/problems.yaml#/components/responses/PayloadTooLarge
+        "415":
+          $ref: shared/problems.yaml#/components/responses/UnsupportedMediaType
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+  /connections/takeover-attestation/callback:
+    get:
+      tags: [connections]
+      operationId: completeTakeoverAttestation
+      summary: Return from the IdP sign-in of a takeover-protection attestation (AN-11)
+      description: >-
+        The redirect URI of the attestation sign-in. No session or token is read: the single-use state
+        issued by the start is the credential, and the tenant is the one the state names, used only to
+        look the state up. A bad, expired or replayed state, a refused code, a token of another tenant
+        and a failed read all answer the same 303 to the failed page, so the caller learns nothing
+        about the cause (the cause is in the audit). Success answers 303 to the recorded page. The
+        response carries no token and no directory value.
+      x-permission: anonymous
+      x-activediq-scope: platform
+      x-activediq-anonymous: AN-11
+      x-activediq-stability: preview
+      x-activediq-peer-ip: true
+      x-activediq-limits:
+        class: auth
+        maxBodyBytes: 1024
+      security: []
+      parameters:
+        - name: state
+          in: query
+          required: true
+          description: The state issued by the start.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z0-9._-]+$
+        - name: code
+          in: query
+          required: false
+          description: The authorization code. Absent when the IdP reports an error.
+          schema:
+            type: string
+            maxLength: 4096
+        - name: error
+          in: query
+          required: false
+          description: The IdP error code, when the administrator declined or the IdP refused. Never echoed.
+          schema:
+            type: string
+            maxLength: 256
+      responses:
+        "303":
+          description: Redirect to the console page that shows the outcome
+          headers:
+            Location:
+              description: /connections?takeover-attestation=recorded or /connections?takeover-attestation=failed
+              required: true
+              schema:
+                type: string
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+components:
+  parameters:
+    ConnectionId:
+      name: connectionId
+      in: path
+      required: true
+      description: The Entra connection.
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    TakeoverAttestationStart:
+      description: Where the Global Administrator signs in.
+      type: object
+      required: [authorizeUrl]
+      additionalProperties: false
+      properties:
+        authorizeUrl:
+          type: string
+          maxLength: 2048
+    TakeoverAttestationMaxAge:
+      description: The new attestation_max_age.
+      type: object
+      required: [maxAgeSeconds]
+      additionalProperties: false
+      properties:
+        maxAgeSeconds:
+          type: integer
+          minimum: 1
+          maximum: 7776000
