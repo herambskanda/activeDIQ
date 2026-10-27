@@ -12,6 +12,16 @@
 //   - No built-in Tier-2 role holds a Tier-0 scope permission (Catalog, checked at build and by a
 //     trigger in the schema).
 //
+// TM-D19 rule 5 (backing-object guard) is enabled by WithBackingGuard(Backing, RootResolver); without
+// it every permission in BackingObjectPermissions is refused. The two ports are implemented here
+// over narrower ports so this package never reads another module's tables:
+//   - NewBacking(AccountIndex, PeerIndex): the accounts resting on the object (authn.AccountIndex:
+//     directory accounts and sso accounts bound by oid or onprem_sid) plus those on every object
+//     correlated to it in any DM-20 state but removed, both directions. Complete only when every
+//     read succeeded. compose/server adapts authn and directory/inventory to the two indexes.
+//   - NewRootResolver(FactsReader): a scope root's ancestor chain read live through the directory
+//     client, unpinned (a read of a container); an unreadable or partial chain is not Complete.
+//
 // Only a human requester acting directly is authorised for now: group, automation and API-token
 // subjects have no persistence yet, so a chain with one in it is refused (fail closed).
 package rbac

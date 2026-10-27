@@ -78,11 +78,11 @@ func Run(ctx context.Context, cfg config.Config) error {
 	if err != nil {
 		return fmt.Errorf("server: operation registry: %w", err)
 	}
-	authzr, err := rbacAuthorizer(db)
+	dirClient := directoryFacts(nil)
+	authzr, err := rbacAuthorizer(db, dirClient)
 	if err != nil {
 		return err
 	}
-	dirClient := directoryFacts(nil)
 	ok, err := buildOperation(operation.HoldsMinter, db, dirClient, authzr, reg)
 	if err != nil {
 		return err

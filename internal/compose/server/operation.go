@@ -5,7 +5,9 @@ import (
 	"fmt"
 
 	"github.com/skenzeriq/activediq/internal/directory/client"
+	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
+	"github.com/skenzeriq/activediq/internal/platform/authn"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 	"github.com/skenzeriq/activediq/internal/platform/rbac"
 	"github.com/skenzeriq/activediq/internal/platform/store"
@@ -52,13 +54,27 @@ func directoryFacts(reads client.Reads) *client.Client {
 	return client.New(client.WithFacts(client.NewConnectorFacts(reads)))
 }
 
-// rbacAuthorizer is the operation Authorizer: RBAC persistence read through authz.Evaluator.
-func rbacAuthorizer(db *store.DB) (operation.Authorizer, error) {
+// rbacAuthorizer is the operation Authorizer: RBAC persistence read through authz.Evaluator, with the
+// TM-D19 rule 5 backing-object guard wired to the account and correlation stores and a live root
+// resolver over facts. Without the guard every backing-object permission is refused.
+func rbacAuthorizer(db *store.DB, facts rbac.FactsReader) (operation.Authorizer, error) {
 	src, err := rbac.NewStore(db)
 	if err != nil {
 		return nil, fmt.Errorf("server: rbac store: %w", err)
 	}
-	az, err := rbac.New(src)
+	idx, err := authn.NewAccountIndex(db)
+	if err != nil {
+		return nil, fmt.Errorf("server: account index: %w", err)
+	}
+	backing, err := rbac.NewBacking(accountAdapter{idx}, peerAdapter{inventory.NewReader(db, nil)})
+	if err != nil {
+		return nil, fmt.Errorf("server: rbac backing: %w", err)
+	}
+	roots, err := rbac.NewRootResolver(facts)
+	if err != nil {
+		return nil, fmt.Errorf("server: rbac root resolver: %w", err)
+	}
+	az, err := rbac.New(src, rbac.WithBackingGuard(backing, roots))
 	if err != nil {
 		return nil, fmt.Errorf("server: rbac authorizer: %w", err)
 	}
