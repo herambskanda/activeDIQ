@@ -71,3 +71,7 @@ ALTER TABLE public.authz_assignments ENABLE ALWAYS TRIGGER authz_assignments_con
 ALTER TABLE public.authz_role_permissions ENABLE ALWAYS TRIGGER authz_role_permissions_control_plane;
 
 COMMENT ON TABLE public.authz_assignments IS 'DM-36 RoleAssignment (tenant table, RLS). Subject: account, directory group or automation policy.';
+
+-- Editing a custom role can remove one of its permissions (T-0367, rbac.Grants.SetRolePermissions); the
+-- built-in roles are read-only (DM-34.I1) and rbac refuses to edit them. Removal only narrows.
+GRANT DELETE ON public.authz_role_permissions TO activediq_app;
