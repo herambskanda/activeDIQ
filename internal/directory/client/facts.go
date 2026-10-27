@@ -31,9 +31,10 @@ type ObjectRead struct {
 }
 
 // Reads is the connector's read half as the facts reader needs it: one object, live, on the pins.
-// The gRPC adapter over the connector's Read RPC implements it; nothing in this package dials.
+// ConnectorReads (reads.go) implements it over the connector's Read RPC. needTier0 asks for the
+// Tier-0 verdict, which only the target's own read needs; a parent-chain read passes false.
 type Reads interface {
-	Object(ctx context.Context, pins authority.Pins, target authority.TargetRef, guid string) (ObjectRead, error)
+	Object(ctx context.Context, pins authority.Pins, target authority.TargetRef, guid string, needTier0 bool) (ObjectRead, error)
 }
 
 // ConnectorFacts is the connector-backed FactsReader. It reads the target and, when asked, walks
@@ -60,7 +61,7 @@ func (c *ConnectorFacts) Facts(ctx context.Context, pins authority.Pins, q autho
 	if c == nil || c.reads == nil {
 		return authority.Facts{}, ErrNoReads
 	}
-	obj, err := c.reads.Object(ctx, pins, t, t.GUID)
+	obj, err := c.reads.Object(ctx, pins, t, t.GUID, true)
 	if err != nil {
 		return authority.Facts{}, fmt.Errorf("client: reading target: %w", err)
 	}
@@ -75,7 +76,7 @@ func (c *ConnectorFacts) Facts(ctx context.Context, pins authority.Pins, q autho
 		}
 		seen[parent] = true
 		f.Ancestors = append(f.Ancestors, parent)
-		p, err := c.reads.Object(ctx, pins, t, parent)
+		p, err := c.reads.Object(ctx, pins, t, parent, false)
 		if err != nil {
 			return authority.Facts{}, fmt.Errorf("client: reading parent chain: %w", err)
 		}
