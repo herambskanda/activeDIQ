@@ -369,9 +369,21 @@ func (a *Attester) Callback(ctx context.Context, req CallbackRequest) (res Resul
 	return res, nil
 }
 
-// SetMaxAge shortens attestation_max_age. A value above the 90-day cap is refused and the refusal is
-// audited (acceptance: attest_max_age_cap).
-func (a *Attester) SetMaxAge(ctx context.Context, tid tenant.ID, id connection.ID, c authority.Chain, d time.Duration) error {
+// MaxAgeRequest is who changes attestation_max_age, on which Entra connection.
+type MaxAgeRequest struct {
+	Tenant       tenant.ID
+	ConnectionID connection.ID
+	Chain        authority.Chain
+	SessionID    string // the console session, for the step-up check
+	MaxAge       time.Duration
+}
+
+// SetMaxAge changes attestation_max_age. It is a DM-10 security setting (a longer age widens the window
+// in which a missed takeover-flag flip still counts as attested), so it needs the permission and a
+// fresh step-up (TM §7.4); a step-up fault fails closed. A value above the 90-day cap is refused. Every
+// refusal is audited (acceptance: attest_max_age_cap).
+func (a *Attester) SetMaxAge(ctx context.Context, req MaxAgeRequest) error {
+	tid, id, c, d := req.Tenant, req.ConnectionID, req.Chain, req.MaxAge
 	target := authority.TargetRef{Connection: string(id), GUID: string(id), Class: classEntraTenant}
 	if c.Validate() != nil || c.Requester.Kind != authority.Human || len(c.Via) != 0 {
 		a.auditOnly(ctx, tid, c, target, AuditMaxAgeSet, audit.Denied, ReasonNotPermitted, nil)
@@ -380,6 +392,14 @@ func (a *Attester) SetMaxAge(ctx context.Context, tid tenant.ID, id connection.I
 	if err := a.cfg.Authz.Authorize(ctx, c, TakeoverAttestPermission, target); err != nil {
 		a.auditOnly(ctx, tid, c, target, AuditMaxAgeSet, audit.Denied, ReasonNotPermitted, nil)
 		return ErrNotPermitted
+	}
+	fresh, err := a.cfg.StepUp.Fresh(ctx, tid, req.SessionID)
+	if err != nil {
+		return fmt.Errorf("connections: step-up check: %w", err)
+	}
+	if !fresh {
+		a.auditOnly(ctx, tid, c, target, AuditMaxAgeSet, audit.Denied, ReasonStepUpRequired, nil)
+		return ErrStepUpRequired
 	}
 	if err := connection.ValidateAttestationMaxAge(d); err != nil {
 		a.auditOnly(ctx, tid, c, target, AuditMaxAgeSet, audit.Denied, "max_age_above_cap", nil)

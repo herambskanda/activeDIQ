@@ -204,13 +204,18 @@ func (s Store) SetAttestationMaxAge(ctx context.Context, tx store.Tx, id ID, d t
 	return nil
 }
 
-// CreateAttempt stores a started attempt under the hash of its state value.
+// CreateAttempt stores a started attempt under the hash of its state value. It first deletes every
+// expired attempt of the tenant (this is the purge: abandoned attempts, each holding a PKCE verifier,
+// do not accumulate).
 func (s Store) CreateAttempt(ctx context.Context, tx store.Tx, a Attempt, stateHash [32]byte, now time.Time, ttl time.Duration) error {
 	if err := requireTenant(ctx, tx); err != nil {
 		return err
 	}
 	if _, err := s.entraRecord(ctx, tx, a.ConnectionID, false); err != nil {
 		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM public.connection_attestation_attempts WHERE expires_at < $1`, now); err != nil {
+		return fmt.Errorf("connection: purge expired attestation attempts: %w", err)
 	}
 	_, err := tx.Exec(ctx, `INSERT INTO public.connection_attestation_attempts
 		(tenant_id, connection_id, state_hash, code_verifier, started_by, created_at, expires_at)
@@ -224,7 +229,7 @@ func (s Store) CreateAttempt(ctx context.Context, tx store.Tx, a Attempt, stateH
 
 // ConsumeAttempt deletes and returns the attempt for a state hash. It is single use: a second call
 // returns ErrAttemptInvalid, as does an expired or unknown state. An expired state is refused with the DELETE rolled back by the
-// caller's transaction, so the row stays until the purge sweep; it can never be redeemed.
+// caller's transaction, so the row stays until the next CreateAttempt purges it; it can never be redeemed.
 func (s Store) ConsumeAttempt(ctx context.Context, tx store.Tx, stateHash [32]byte, now time.Time) (Attempt, error) {
 	if err := requireTenant(ctx, tx); err != nil {
 		return Attempt{}, err

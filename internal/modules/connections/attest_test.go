@@ -563,6 +563,63 @@ func (e *attestEnv) rawExec(sql string, args ...any) (int64, error) {
 	return n, err
 }
 
+func (e *attestEnv) attemptRows(t *testing.T) int {
+	t.Helper()
+	var n int
+	err := e.db.WithTenant(context.Background(), e.tid, func(ctx context.Context, tx store.Tx) error {
+		return tx.QueryRow(ctx, `SELECT count(*) FROM public.connection_attestation_attempts`).Scan(&n)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func (e *attestEnv) maxAgeReq(who string, d time.Duration) connections.MaxAgeRequest {
+	return connections.MaxAgeRequest{Tenant: e.tid, ConnectionID: e.conn.ID, Chain: human(who), SessionID: "sess", MaxAge: d}
+}
+
+// Changing the age is a DM-10 setting: a stale step-up is refused, audited, and changes nothing.
+func TestAttestMaxAgeRequiresStepUp(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := newAttestEnv(t, s)
+		day := 24 * time.Hour
+		if err := e.at.SetMaxAge(context.Background(), e.maxAgeReq("admin", 7*day)); err != nil {
+			t.Fatal(err)
+		}
+		stale := e.attester(t, stepUp{fresh: false})
+		if err := stale.SetMaxAge(context.Background(), e.maxAgeReq("admin", 90*day)); !errors.Is(err, connections.ErrStepUpRequired) {
+			t.Fatalf("stale step-up: %v", err)
+		}
+		if ev := lastOfKind(t, e.rec, connections.AuditMaxAgeSet); ev.Outcome != audit.Denied || ev.Reason != connections.ReasonStepUpRequired {
+			t.Fatalf("refusal not audited: %+v", ev)
+		}
+		if tk := e.takeover(t); tk.Record.MaxAge != 7*day {
+			t.Fatalf("a refused save changed the age: %v", tk.Record.MaxAge)
+		}
+	})
+}
+
+// Expired attempts are purged when the next one starts.
+func TestAttestExpiredAttemptsPurged(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := newAttestEnv(t, s)
+		if _, err := e.start(t, "admin"); err != nil {
+			t.Fatal(err)
+		}
+		if n := e.attemptRows(t); n != 1 {
+			t.Fatalf("rows = %d, want 1", n)
+		}
+		e.now = e.now.Add(24 * time.Hour)
+		if _, err := e.start(t, "admin"); err != nil {
+			t.Fatal(err)
+		}
+		if n := e.attemptRows(t); n != 1 {
+			t.Fatalf("rows = %d, want only the new attempt", n)
+		}
+	})
+}
+
 // Acceptance 5.
 func TestAttestMaxAgeCap(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
@@ -570,7 +627,7 @@ func TestAttestMaxAgeCap(t *testing.T) {
 		ctx := context.Background()
 		day := 24 * time.Hour
 		for _, d := range []time.Duration{90*day + time.Second, 91 * day, 365 * day, 0, -day, 90*day + time.Millisecond} {
-			if err := e.at.SetMaxAge(ctx, e.tid, e.conn.ID, human("admin"), d); !errors.Is(err, connection.ErrAttestationMaxAge) {
+			if err := e.at.SetMaxAge(ctx, e.maxAgeReq("admin", d)); !errors.Is(err, connection.ErrAttestationMaxAge) {
 				t.Errorf("%v: %v, want refused", d, err)
 			}
 		}
@@ -584,11 +641,11 @@ func TestAttestMaxAgeCap(t *testing.T) {
 		if _, err := e.rawExec(`UPDATE public.connections SET attestation_max_age_seconds = $2 WHERE id = $1::uuid`, string(e.conn.ID), 91*86400); err == nil {
 			t.Fatal("the database accepted 91 days")
 		}
-		if err := e.at.SetMaxAge(ctx, e.tid, e.conn.ID, human("stranger"), 30*day); !errors.Is(err, connections.ErrNotPermitted) {
+		if err := e.at.SetMaxAge(ctx, e.maxAgeReq("stranger", 30*day)); !errors.Is(err, connections.ErrNotPermitted) {
 			t.Fatalf("no permission: %v", err)
 		}
 		for _, d := range []time.Duration{30 * day, 90 * day} {
-			if err := e.at.SetMaxAge(ctx, e.tid, e.conn.ID, human("admin"), d); err != nil {
+			if err := e.at.SetMaxAge(ctx, e.maxAgeReq("admin", d)); err != nil {
 				t.Fatalf("%v: %v", d, err)
 			}
 			if tk := e.takeover(t); tk.Record.MaxAge != d {
