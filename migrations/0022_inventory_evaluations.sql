@@ -1,4 +1,4 @@
--- 0015_inventory_evaluations: when the correlation job last finished evaluating a connection
+-- 0022_inventory_evaluations: when the correlation job last finished evaluating a connection
 -- (connector-contract §8.3 F3, T-0378). Owner: internal/directory/inventory.
 --
 -- An object with no correlation has no row to carry a time, yet "this object has no peers" is a

@@ -1,4 +1,4 @@
--- 0013_authz_rbac: RBAC persistence for the operation Authorizer (T-0324; DM-34 Role, DM-36
+-- 0018_authz_rbac: RBAC persistence for the operation Authorizer (T-0324; DM-34 Role, DM-36
 -- RoleAssignment; threat model §7.7). Owner: internal/platform/rbac. Four tenant tables.
 --
 --   authz_roles             a named set of permissions. tier says where the role sits: 0 holds Tier-0

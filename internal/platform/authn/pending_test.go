@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
@@ -28,13 +29,15 @@ type pendEnv struct {
 	accts   *Accounts
 	account string
 	seed    []byte
+	sink    *recSink
 }
 
 func eachPending(t *testing.T, fn func(t *testing.T, e *pendEnv)) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		base := setup(t, s)
 		clock := func() time.Time { return base.now }
-		sess, err := New(Config{DB: base.db, Audit: &recSink{}, Clock: clock})
+		sink := &recSink{}
+		sess, err := New(Config{DB: base.db, Audit: sink, Clock: clock})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -46,8 +49,8 @@ func eachPending(t *testing.T, fn func(t *testing.T, e *pendEnv)) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		e := &pendEnv{env: base, ten: base.a, pending: ps, sess: sess, accts: accts,
-			sf: &SecondFactor{DB: base.db, Pending: ps, Sessions: sess, TOTP: base.svc}}
+		e := &pendEnv{env: base, ten: base.a, pending: ps, sess: sess, accts: accts, sink: sink,
+			sf: &SecondFactor{DB: base.db, Pending: ps, Sessions: sess, TOTP: base.svc, Audit: sink}}
 		a, err := accts.Create(context.Background(), NewAccount{Tenant: e.ten, Kind: KindLocal, DisplayName: "bg", CreatedBy: "system"})
 		if err != nil {
 			t.Fatal(err)
@@ -149,7 +152,7 @@ func Test_pending_expires_5m(t *testing.T) {
 	eachPending(t, func(t *testing.T, e *pendEnv) {
 		h := e.begin(t)
 		e.now = e.now.Add(PendingSignInTTL)
-		if _, err := e.sf.VerifyTOTP(context.Background(), h, e.good()); !errors.Is(err, ErrPendingInvalid) {
+		if _, err := e.sf.VerifyTOTP(context.Background(), h, e.good(), netip.Addr{}); !errors.Is(err, ErrPendingInvalid) {
 			t.Fatalf("a correct code after 5 minutes: got %v, want ErrPendingInvalid", err)
 		}
 		if n := e.sessions(t); n != 0 {
@@ -163,7 +166,7 @@ func Test_pending_expires_5m(t *testing.T) {
 		e.now = e.now.Add(-PendingSignInTTL)
 		h2 := e.begin(t)
 		e.now = e.now.Add(4 * time.Minute)
-		if _, err := e.sf.VerifyTOTP(context.Background(), h2, e.good()); err != nil {
+		if _, err := e.sf.VerifyTOTP(context.Background(), h2, e.good(), netip.Addr{}); err != nil {
 			t.Fatalf("4m: %v", err)
 		}
 	})
@@ -173,11 +176,11 @@ func Test_pending_max_5_attempts(t *testing.T) {
 	eachPending(t, func(t *testing.T, e *pendEnv) {
 		h := e.begin(t)
 		for i := 0; i < MaxSignInAttempts; i++ {
-			if _, err := e.sf.VerifyTOTP(context.Background(), h, e.bad()); !errors.Is(err, ErrSecondFactorRefused) {
+			if _, err := e.sf.VerifyTOTP(context.Background(), h, e.bad(), netip.Addr{}); !errors.Is(err, ErrSecondFactorRefused) {
 				t.Fatalf("wrong code %d: got %v", i+1, err)
 			}
 		}
-		if _, err := e.sf.VerifyTOTP(context.Background(), h, e.good()); !errors.Is(err, ErrPendingInvalid) {
+		if _, err := e.sf.VerifyTOTP(context.Background(), h, e.good(), netip.Addr{}); !errors.Is(err, ErrPendingInvalid) {
 			t.Fatalf("6th (correct) code: got %v, want ErrPendingInvalid", err)
 		}
 		if got := e.row(t, "state"); got != "dead" {
@@ -187,7 +190,7 @@ func Test_pending_max_5_attempts(t *testing.T) {
 			t.Fatalf("%d sessions exist, want none", n)
 		}
 		// Dead stays dead.
-		if _, err := e.sf.VerifyTOTP(context.Background(), h, e.good()); !errors.Is(err, ErrPendingInvalid) {
+		if _, err := e.sf.VerifyTOTP(context.Background(), h, e.good(), netip.Addr{}); !errors.Is(err, ErrPendingInvalid) {
 			t.Fatalf("after dead: %v", err)
 		}
 	})
@@ -197,9 +200,9 @@ func Test_pending_fifth_attempt_may_succeed(t *testing.T) {
 	eachPending(t, func(t *testing.T, e *pendEnv) {
 		h := e.begin(t)
 		for i := 0; i < MaxSignInAttempts-1; i++ {
-			_, _ = e.sf.VerifyTOTP(context.Background(), h, e.bad())
+			_, _ = e.sf.VerifyTOTP(context.Background(), h, e.bad(), netip.Addr{})
 		}
-		if _, err := e.sf.VerifyTOTP(context.Background(), h, e.good()); err != nil {
+		if _, err := e.sf.VerifyTOTP(context.Background(), h, e.good(), netip.Addr{}); err != nil {
 			t.Fatalf("5th attempt: %v", err)
 		}
 	})
@@ -209,7 +212,7 @@ func Test_pending_consumed_new_session_id(t *testing.T) {
 	eachPending(t, func(t *testing.T, e *pendEnv) {
 		ctx := context.Background()
 		h := e.begin(t)
-		res, err := e.sf.VerifyTOTP(ctx, h, e.good())
+		res, err := e.sf.VerifyTOTP(ctx, h, e.good(), netip.Addr{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -230,7 +233,7 @@ func Test_pending_consumed_new_session_id(t *testing.T) {
 		}
 		// Replay of the handle, with a fresh valid code, makes nothing.
 		e.now = e.now.Add(StepSeconds * time.Second)
-		if _, err := e.sf.VerifyTOTP(ctx, h, e.good()); !errors.Is(err, ErrPendingInvalid) {
+		if _, err := e.sf.VerifyTOTP(ctx, h, e.good(), netip.Addr{}); !errors.Is(err, ErrPendingInvalid) {
 			t.Fatalf("replay: got %v, want ErrPendingInvalid", err)
 		}
 		if n := e.sessions(t); n != 1 {
@@ -238,7 +241,7 @@ func Test_pending_consumed_new_session_id(t *testing.T) {
 		}
 		// A second sign-in gets a different session ID.
 		h2 := e.begin(t)
-		res2, err := e.sf.VerifyTOTP(ctx, h2, e.good())
+		res2, err := e.sf.VerifyTOTP(ctx, h2, e.good(), netip.Addr{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -260,19 +263,19 @@ func Test_pending_cookie_only(t *testing.T) {
 		req.Header.Set("X-Pending", h.Reveal())
 		req.AddCookie(&http.Cookie{Name: "adiq_pending", Value: h.Reveal()})
 		req.AddCookie(&http.Cookie{Name: CookieName, Value: h.Reveal()})
-		if _, _, err := e.sf.VerifyTOTPRequest(ctx, req, code); !errors.Is(err, ErrPendingInvalid) {
+		if _, _, err := e.sf.VerifyTOTPRequest(ctx, req, code, netip.Addr{}); !errors.Is(err, ErrPendingInvalid) {
 			t.Fatalf("handle outside the cookie: got %v, want ErrPendingInvalid", err)
 		}
 		// A malformed cookie and two cookies are refused.
 		bad := httptest.NewRequest(http.MethodPost, "/", nil)
 		bad.AddCookie(&http.Cookie{Name: PendingCookieName, Value: "junk"})
-		if _, _, err := e.sf.VerifyTOTPRequest(ctx, bad, code); !errors.Is(err, ErrPendingInvalid) {
+		if _, _, err := e.sf.VerifyTOTPRequest(ctx, bad, code, netip.Addr{}); !errors.Is(err, ErrPendingInvalid) {
 			t.Fatalf("malformed: %v", err)
 		}
 		two := httptest.NewRequest(http.MethodPost, "/", nil)
 		two.AddCookie(&http.Cookie{Name: PendingCookieName, Value: h.Reveal()})
 		two.AddCookie(&http.Cookie{Name: PendingCookieName, Value: h.Reveal()})
-		if _, _, err := e.sf.VerifyTOTPRequest(ctx, two, code); !errors.Is(err, ErrPendingInvalid) {
+		if _, _, err := e.sf.VerifyTOTPRequest(ctx, two, code, netip.Addr{}); !errors.Is(err, ErrPendingInvalid) {
 			t.Fatalf("two cookies: %v", err)
 		}
 		if got := e.row(t, "attempts"); got != "0" {
@@ -285,7 +288,7 @@ func Test_pending_cookie_only(t *testing.T) {
 		// The cookie works, and the response carries a session cookie and clears the pending one.
 		ok := httptest.NewRequest(http.MethodPost, "/", nil)
 		ok.AddCookie(&http.Cookie{Name: PendingCookieName, Value: h.Reveal()})
-		res, cookies, err := e.sf.VerifyTOTPRequest(ctx, ok, code)
+		res, cookies, err := e.sf.VerifyTOTPRequest(ctx, ok, code, netip.Addr{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -328,7 +331,7 @@ func Test_pending_refused_when_account_not_active_or_unenrolled(t *testing.T) {
 		if _, err := e.accts.SetState(ctx, e.ten, e.account, AccountDisabled, authority.Chain{Requester: authority.Principal{ID: "system", Kind: authority.System}}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := e.sf.VerifyTOTP(ctx, h, e.good()); !errors.Is(err, ErrSecondFactorRefused) {
+		if _, err := e.sf.VerifyTOTP(ctx, h, e.good(), netip.Addr{}); !errors.Is(err, ErrSecondFactorRefused) {
 			t.Fatalf("disabled account: %v", err)
 		}
 		if n := e.sessions(t); n != 0 {
@@ -348,7 +351,7 @@ func Test_pending_double_submit_one_session(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				if _, err := e.sf.VerifyTOTP(context.Background(), h, code); err == nil {
+				if _, err := e.sf.VerifyTOTP(context.Background(), h, code, netip.Addr{}); err == nil {
 					mu.Lock()
 					wins++
 					mu.Unlock()
@@ -365,7 +368,7 @@ func Test_pending_double_submit_one_session(t *testing.T) {
 func Test_pending_table_guards(t *testing.T) {
 	eachPending(t, func(t *testing.T, e *pendEnv) {
 		h := e.begin(t)
-		_, _ = e.sf.VerifyTOTP(context.Background(), h, e.bad()) // one attempt charged
+		_, _ = e.sf.VerifyTOTP(context.Background(), h, e.bad(), netip.Addr{}) // one attempt charged
 		for name, sql := range map[string]string{
 			"lifetime over 5m": `UPDATE public.authn_pending_signins SET expires_at = expires_at + interval '1 hour'`,
 			"attempts reset":   `UPDATE public.authn_pending_signins SET attempts = 0`,
@@ -423,7 +426,7 @@ func Test_pending_refuses_end_user_enrolment(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := e.sf.VerifyTOTP(ctx, h, hotp(seed, stepAt(e.now))); !errors.Is(err, ErrSecondFactorRefused) {
+		if _, err := e.sf.VerifyTOTP(ctx, h, hotp(seed, stepAt(e.now)), netip.Addr{}); !errors.Is(err, ErrSecondFactorRefused) {
 			t.Fatalf("end-user enrolment accepted as console second factor: %v", err)
 		}
 		if n := e.sessions(t); n != 0 {
@@ -431,6 +434,139 @@ func Test_pending_refuses_end_user_enrolment(t *testing.T) {
 		}
 		if got := e.row(t, "attempts"); got != "1" {
 			t.Fatalf("attempts = %s, want 1 (charged)", got)
+		}
+	})
+}
+
+func detailsOf(ev audit.Event) map[string]string {
+	m := map[string]string{}
+	for _, d := range ev.Details {
+		m[d.Key] = d.Value
+	}
+	return m
+}
+
+var attackerIP = netip.MustParseAddr("198.51.100.9")
+
+// T-0418 acceptance 1: five wrong codes are each audited, and the sixth records the dead pending
+// sign-in with account, first factor and addresses.
+func Test_pending_refusals_audited(t *testing.T) {
+	eachPending(t, func(t *testing.T, e *pendEnv) {
+		ctx := context.Background()
+		h := e.begin(t)
+		for i := 0; i < MaxSignInAttempts; i++ {
+			if _, err := e.sf.VerifyTOTP(ctx, h, e.bad(), attackerIP); !errors.Is(err, ErrSecondFactorRefused) {
+				t.Fatalf("wrong code %d: %v", i+1, err)
+			}
+		}
+		evs := e.sink.of(KindSecondFactorRefused)
+		if len(evs) != MaxSignInAttempts {
+			t.Fatalf("%d refusal events after 5 wrong codes, want 5", len(evs))
+		}
+		if evs[0].Reason != RefusedWrongCode || evs[0].Outcome != audit.Denied {
+			t.Errorf("first event = %+v", evs[0])
+		}
+		if _, err := e.sf.VerifyTOTP(ctx, h, e.good(), attackerIP); !errors.Is(err, ErrPendingInvalid) {
+			t.Fatalf("6th: %v", err)
+		}
+		evs = e.sink.of(KindSecondFactorRefused)
+		if len(evs) != MaxSignInAttempts+1 {
+			t.Fatalf("%d events, want 6", len(evs))
+		}
+		dead := evs[len(evs)-1]
+		d := detailsOf(dead)
+		if dead.Reason != RefusedAttemptsExhausted || d["account"] != e.account || d["first_factor"] != "password" ||
+			d["source_ip"] != attackerIP.String() || d["first_factor_ip"] != "192.0.2.7" || dead.Outcome != audit.Denied {
+			t.Errorf("dead event = %+v %v", dead, d)
+		}
+		// Later submissions to the dead row add nothing.
+		_, _ = e.sf.VerifyTOTP(ctx, h, e.good(), attackerIP)
+		if n := len(e.sink.of(KindSecondFactorRefused)); n != MaxSignInAttempts+1 {
+			t.Errorf("a dead pending sign-in was audited again: %d events", n)
+		}
+		for _, ev := range evs {
+			for _, v := range detailsOf(ev) {
+				if strings.Contains(v, e.good()) || strings.Contains(v, e.bad()) {
+					t.Errorf("event carries a code: %+v", ev)
+				}
+			}
+		}
+	})
+}
+
+func Test_pending_expiry_and_disabled_audited(t *testing.T) {
+	eachPending(t, func(t *testing.T, e *pendEnv) {
+		ctx := context.Background()
+		h := e.begin(t)
+		e.now = e.now.Add(PendingSignInTTL)
+		_, _ = e.sf.VerifyTOTP(ctx, h, e.good(), attackerIP)
+		evs := e.sink.of(KindSecondFactorRefused)
+		if len(evs) != 1 || evs[0].Reason != RefusedPendingExpired {
+			t.Fatalf("expiry events = %+v", evs)
+		}
+		e.now = e.now.Add(-PendingSignInTTL)
+		h2 := e.begin(t)
+		if _, err := e.accts.SetState(ctx, e.ten, e.account, AccountDisabled, authority.Chain{Requester: authority.Principal{ID: "system", Kind: authority.System}}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.sf.VerifyTOTP(ctx, h2, e.good(), attackerIP); !errors.Is(err, ErrSecondFactorRefused) {
+			t.Fatal(err)
+		}
+		evs = e.sink.of(KindSecondFactorRefused)
+		if len(evs) != 2 || evs[1].Reason != RefusedAccountDisabled {
+			t.Fatalf("disabled events = %+v", evs)
+		}
+	})
+}
+
+// T-0418 acceptance 2: the owner-role purge removes ended pending rows past retention and audits the count.
+func Test_pending_retention_purge(t *testing.T) {
+	eachPending(t, func(t *testing.T, e *pendEnv) {
+		ctx := context.Background()
+		// The INSERT guard bounds created_at by the database clock; this test moves the fake clock months.
+		if err := e.d.ExecOwner(ctx, `ALTER TABLE public.authn_pending_signins DISABLE TRIGGER authn_pending_signins_insert_guard`); err != nil {
+			t.Fatal(err)
+		}
+		dead := e.begin(t)
+		for i := 0; i <= MaxSignInAttempts; i++ {
+			_, _ = e.sf.VerifyTOTP(ctx, dead, e.bad(), attackerIP)
+		}
+		_ = e.begin(t) // still active and unexpired: must survive
+		e.now = e.now.Add(91 * 24 * time.Hour)
+		fresh := e.begin(t)
+		_, _ = e.sf.VerifyTOTP(ctx, fresh, e.bad(), attackerIP) // live, recent: survives
+
+		if err := e.tx(t, e.ten, func(ctx context.Context, tx store.Tx) error {
+			_, err := tx.Exec(ctx, `DELETE FROM public.authn_pending_signins WHERE tenant_id = $1::uuid`, e.ten.String())
+			return err
+		}); err == nil {
+			t.Fatal("the runtime role deleted pending sign-ins")
+		}
+		owner, err := store.OpenMaintenance(ctx, store.Config{DSN: e.d.OwnerDSN()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(owner.Close)
+		psink := &recSink{}
+		p, err := NewPurger(owner, psink, 90*24*time.Hour, func() time.Time { return e.now })
+		if err != nil {
+			t.Fatal(err)
+		}
+		human := authority.Chain{Requester: authority.Principal{ID: "ops", Kind: authority.Human}}
+		n, err := p.PurgePending(ctx, e.ten, human)
+		// dead (ended 91d ago) and the abandoned active row (expired 91d ago) go; the recent one stays.
+		if err != nil || n != 2 {
+			t.Fatalf("PurgePending = %d, %v; want 2", n, err)
+		}
+		if got := e.query(t, `SELECT count(*)::text FROM public.authn_pending_signins`); got[0] != "1" {
+			t.Errorf("%s rows remain, want 1", got[0])
+		}
+		evs := psink.of(KindPendingPurged)
+		if len(evs) != 1 || detailsOf(evs[0])["pending_signins"] != "2" {
+			t.Fatalf("purge events = %+v", evs)
+		}
+		if n, err := p.PurgePending(ctx, e.ten, human); err != nil || n != 0 || len(psink.of(KindPendingPurged)) != 1 {
+			t.Errorf("second purge = %d, %v", n, err)
 		}
 	})
 }

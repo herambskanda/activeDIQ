@@ -1,4 +1,4 @@
--- 0018_authn_pending_signins: pending sign-ins, the state between a first factor and AN-10 (T-0198;
+-- 0027_authn_pending_signins: pending sign-ins, the state between a first factor and AN-10 (T-0198;
 -- threat model §7.6 rule 1, DM-31). Owner: internal/platform/authn. One tenant table.
 --
 -- A first factor (AN-3 when the IdP does not assert MFA, AN-8, AN-9) yields a row here, never a session.

@@ -410,7 +410,7 @@ func TestPolicyOutsideBoundsIsRefused(t *testing.T) {
 // outlives the platform maximum (T-0390).
 func TestAuthnSessionInsertGuard(t *testing.T) {
 	if DefaultBounds.AbsoluteMax != 24*time.Hour {
-		t.Fatalf("DefaultBounds.AbsoluteMax is %s: migrations/0017_authn_sessions_insert_guard.sql hardcodes 24h; "+
+		t.Fatalf("DefaultBounds.AbsoluteMax is %s: migrations/0025_authn_sessions_insert_guard.sql hardcodes 24h; "+
 			"change the guard (new forward migration) together with the Go bound", DefaultBounds.AbsoluteMax)
 	}
 	each(t, func(t *testing.T, e *sessEnv) {

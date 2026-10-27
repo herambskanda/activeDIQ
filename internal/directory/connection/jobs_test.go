@@ -2,11 +2,13 @@ package connection_test
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
+	"github.com/skenzeriq/activediq/internal/platform/jobs/jobstest"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
@@ -48,11 +50,13 @@ func (f *fwd) ScheduleCheck(ctx context.Context, tx store.Tx, tid tenant.ID) err
 
 func queued(t *testing.T, e *env) int {
 	t.Helper()
-	var n int
-	err := e.db.WithTenant(context.Background(), e.a, func(ctx context.Context, tx store.Tx) error {
-		return tx.QueryRow(ctx, `SELECT count(*) FROM public.jobs WHERE kind = $1 AND state = 'available'`,
-			connection.JobScheduledCheck).Scan(&n)
-	})
+	v, err := jobstest.CountQueued(func(sql string, args ...any) ([]string, error) {
+		return e.d.OwnerStrings(context.Background(), sql, args...)
+	}, connection.JobScheduledCheck)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := strconv.Atoi(v)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,9 +92,7 @@ func TestScheduledCheckJobRecordsRunAndAuditsDrift(t *testing.T) {
 		// Time passes: the rights drift and the job becomes due (the test cannot wait out the bucket, so it
 		// moves the job to its own key, as a real run in a later bucket has).
 		e.cl.set(overPriv("drift"), nil)
-		if err := e.d.ExecOwner(ctx, `UPDATE public.jobs SET run_at = now() - interval '1 second', unique_key = 'due' WHERE kind = $1`, connection.JobScheduledCheck); err != nil {
-			t.Fatal(err)
-		}
+		jobstest.MakeDueUnderKey(t, e.d.ExecOwner, connection.JobScheduledCheck, "due")
 		cl, err := jobs.Claim(ctx, e.db, e.jreg.Leases(), 5)
 		if err != nil || len(cl) != 1 {
 			t.Fatalf("claim: %v %v", cl, err)
@@ -143,9 +145,7 @@ func TestScheduledCheckJobSweepsStrandedRuns(t *testing.T) {
 		if err := e.db.WithTenant(ctx, e.a, func(ctx context.Context, tx store.Tx) error { return e.jobs.Schedule(ctx, tx, e.a) }); err != nil {
 			t.Fatal(err)
 		}
-		if err := e.d.ExecOwner(ctx, `UPDATE public.jobs SET run_at = now() - interval '1 second' WHERE kind = $1`, connection.JobScheduledCheck); err != nil {
-			t.Fatal(err)
-		}
+		jobstest.MakeDue(t, e.d.ExecOwner, connection.JobScheduledCheck)
 		cl, err := jobs.Claim(ctx, e.db, e.jreg.Leases(), 5)
 		if err != nil || len(cl) != 1 {
 			t.Fatalf("claim: %v %v", cl, err)

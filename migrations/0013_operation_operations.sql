@@ -1,4 +1,4 @@
--- 0010_operation_operations: the persisted operation pipeline (ADR-0005 rules 3, 6, 8, 9; DM-41, DM-42,
+-- 0013_operation_operations: the persisted operation pipeline (ADR-0005 rules 3, 6, 8, 9; DM-41, DM-42,
 -- DM-43.I1). Owner: internal/platform/operation.
 --
 -- The OperationItem is the system of record; the job is only a driver. Every table is a tenant table
