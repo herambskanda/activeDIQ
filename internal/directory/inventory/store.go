@@ -218,3 +218,24 @@ func (r *Reader) DesignationsFor(ctx context.Context, tid tenant.ID, connection 
 	}
 	return out, nil
 }
+
+// Facts is the transaction-owning form of Writer.RecordLiveFacts, for the live refresher
+// (directory/client.LiveRefresher), which has no transaction of its own.
+type Facts struct{ db *store.DB }
+
+// NewFacts binds the live-facts writer to a database.
+func NewFacts(db *store.DB) *Facts { return &Facts{db: db} }
+
+// RecordLiveFacts runs Writer.RecordLiveFacts in tid's transaction.
+func (f *Facts) RecordLiveFacts(ctx context.Context, tid tenant.ID, ref Ref, tier0 bool, readAt time.Time) error {
+	if f == nil || f.db == nil {
+		return ErrNotConfigured
+	}
+	if tid.IsZero() {
+		return ErrNoTenant
+	}
+	return f.db.WithTenant(ctx, tid, func(ctx context.Context, tx store.Tx) error {
+		_, err := Writer{}.RecordLiveFacts(ctx, tx, ref, tier0, readAt)
+		return err
+	})
+}

@@ -395,3 +395,61 @@ func TestStaleRunRollsBack(t *testing.T) {
 		}
 	})
 }
+
+// T-0480: a live read moves the object's own tier0 fact and facts_as_of, only forward, only in its
+// tenant, and never invents a basis.
+func TestRecordLiveFacts(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		ctx := context.Background()
+		f := formation(e, adG1, enG1)
+		f.EntraBases = []inventory.Basis{"E1"}
+		if _, err := e.form(t, f); err != nil {
+			t.Fatal(err)
+		}
+		rec := func(tid tenant.ID, ref inventory.Ref, tier0 bool, at time.Time) (n int, err error) {
+			err = e.tx(t, tid, func(ctx context.Context, tx store.Tx) (err error) {
+				n, err = w.RecordLiveFacts(ctx, tx, ref, tier0, at)
+				return
+			})
+			return
+		}
+		now := time.Now().UTC().Truncate(time.Second)
+
+		// AD side was not tier0; a tier0 verdict with no stored basis writes nothing.
+		if n, err := rec(e.a, f.AD, true, now); !errors.Is(err, inventory.ErrBasisUnknown) || n != 0 {
+			t.Fatalf("no basis: %d %v", n, err)
+		}
+		c, _ := e.r.CorrelationsFor(ctx, e.a, f.AD)
+		if !c.Links[0].FactsAsOf.Equal(t1) {
+			t.Fatalf("as-of advanced on refusal: %v", c.Links[0].FactsAsOf)
+		}
+		// Entra side keeps its basis and advances; the AD side (the other end) is untouched.
+		if n, err := rec(e.a, f.Entra, true, now); err != nil || n != 1 {
+			t.Fatalf("entra: %d %v", n, err)
+		}
+		c, _ = e.r.CorrelationsFor(ctx, e.a, f.AD)
+		l := c.Links[0]
+		if !l.FactsAsOf.Equal(now) || !l.PeerTier0 || !reflect.DeepEqual(l.PeerBases, []inventory.Basis{"E1"}) || l.SelfTier0 || l.State != inventory.StateCandidate && l.State != inventory.StateMatched {
+			t.Fatalf("after entra refresh: %+v", l)
+		}
+		// Not tier0 any more: flag and bases clear together. An older read never moves the as-of back.
+		if n, err := rec(e.a, f.Entra, false, now.Add(-time.Hour)); err != nil || n != 1 {
+			t.Fatalf("clear: %d %v", n, err)
+		}
+		c, _ = e.r.CorrelationsFor(ctx, e.a, f.AD)
+		if l = c.Links[0]; l.PeerTier0 || len(l.PeerBases) != 0 || !l.FactsAsOf.Equal(now) {
+			t.Fatalf("after clear: %+v", l)
+		}
+		// Another tenant cannot touch it; a future time and a bad ref are refused.
+		if n, err := rec(e.b, f.Entra, false, now); err != nil || n != 0 {
+			t.Fatalf("cross-tenant: %d %v", n, err)
+		}
+		if _, err := rec(e.a, f.AD, false, now.Add(time.Hour)); !errors.Is(err, inventory.ErrInvalid) {
+			t.Fatalf("future: %v", err)
+		}
+		if _, err := rec(e.a, inventory.Ref{}, false, now); !errors.Is(err, inventory.ErrInvalid) {
+			t.Fatalf("bad ref: %v", err)
+		}
+	})
+}
