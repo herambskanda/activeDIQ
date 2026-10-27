@@ -48,13 +48,13 @@ Each of these has an owner; none is faked.
 
 | Gate | Owner |
 | --- | --- |
-| SBOM generation; NuGet transitive licence scan (fails closed once a sidecar is declared) | later `ops` tickets |
+| NuGet transitive licence scan (fails closed once a sidecar is declared) | later `ops` tickets. Go/npm SBOM per release and signing of the SBOM: T-0261 (`release-and-security-txt.md`); installer signing stays T-0140/T-0141 |
 | Safe-primitives FF-SP5 nightly fuzz log and the FF-SP6 Windows (PowerShell 5.1, SID, GUID) and Samba lab rows: the targets exist (`fitness-nightly`, `fitness-oracles-windows`) but no scheduler or Windows runner exists | follow-up tickets from T-0034 (runbook `safe-primitives-fitness.md`) |
 | Safe-primitives FF-SP9 to FF-SP11 | the `psx` build, the P7 build tickets |
 | Activation-table checks P2 to P6, U3 and U4 (installer build and boot, connector transports, multi-tenant composition, offline round trip, no egress, agent contract): each is implemented by the ticket that lands its subject, and `fitness-profiles` fails until it is | the packaging, connector, updater and agent-proto tickets (T-0039, T-0040, M2) |
 | `modules.gen.go` / `modules.gen.ts` staleness, which needs `tools/gen/modules` | the module-system ADR (T-0045) |
 | `fitness-api` checks A2-A8, A10-A12 (static, they need operations) and A4, A6, A7, A14 (runtime, they need `apihost.Build`); A9 is T5 in `fitness-tenancy`. Each prints `inactive` until its input exists | the API-contract fitness tickets (follow-ups of T-0011) |
-| Duplication check, signing, release; npm/web audit | later `ops` tickets; signing is a CEO matter (T-0027) |
+| Duplication check; npm/web audit; installer and binary signing | later `ops` tickets; key custody is T-0140/T-0141 |
 | Dispatcher runs `make ci` before merge | T-0015 |
 
 ## Rules for adding a gate
