@@ -186,6 +186,12 @@ mounts the `Fleet` service on the server `Gateway.NewServer` builds and states e
   which is `Usable` plus "presented serial == `components.cert_serial`". After `Rotate` the old leaf gets
   `Unauthenticated` until it expires. The open-stream re-check calls `Usable`, which ignores the serial,
   so a rotation does not drop the stream it was made on.
+- **Superseded certificate is a theft signal (T-0300)**: when a CA-verified, unexpired leaf is not
+  `Current` but the component is still `Usable`, the gateway calls the optional `Config.Superseded`
+  (`fleet.SupersededReporter`, implemented by `fleetsql.SupersededReporter`): a fleet alert plus an audit
+  event naming the component, the presented serial and the current serial. At most once per component per
+  `Config.SupersededWindow` (default 10 min). The refusal stays `Unauthenticated`; a reporter error is
+  logged. The response is Revoke.
 - **Open streams are closed**: authenticated streams are registered by (tenant, component).
   `Gateway.CloseComponent` cancels them at once. The interceptor runs the handler on its own goroutine
   and returns `Unauthenticated` as soon as the stream is revoked, so grpc ends the transport stream and
@@ -234,5 +240,16 @@ the generated stubs: the compose adapter that serves `Fleet.Tunnel` translates `
 - **Late frames.** A frame for an id this side certainly used (its own below `nextID`, the peer's at or
   below the highest open seen) that has aged out of the tombstone window is dropped like a tombstone's;
   its data is returned to the tunnel window. A peer id it skipped is indistinguishable, so it is also dropped.
-- **Not here.** The compose adapter
-  that serves `Fleet.Tunnel`, the audit `Reporter` and the connector `Bindings`; the `fleet/dial` wiring.
+- **Compose adapter (T-0287).** `internal/compose/server/fleettunnel.go`: `ServeTunnel(TunnelDeps, stream)`
+  translates `TunnelFrame` to `fleet.Frame`, resolves `Bindings.For(identity)` (only `connector` is bound,
+  server opens every `Connector` method), builds a server-role `Mux`, `Hub.Attach`es it and runs
+  `Mux.Run(stream.Context())` on the gateway's derived context, so `CloseComponent` or the re-check fails
+  the Mux and the Hub refuses the component. `fleetsql.TunnelReporter` implements `Reporter` over the audit
+  port: `fleet.tunnel.protocol_error`, outcome denied, reason and `violation` detail = the fixed violation,
+  target = the component GUID, no peer text. The peer's `CallClose` text stays a structured log attribute
+  (`component_reported`); the `Reporter` interface carries none, so no audit consumer exists for it yet.
+  `server.NewFleetService(enroller, TunnelDeps)` builds the `Fleet` service (Enroll + Tunnel) the gateway mounts.
+  Proof: `compose/fleetproof/tunnel_test.go` serves that real service under the real gateway with the real
+  `TunnelReporter` over a seeded database: revoke, pending call outcome unknown, hub refuses, sibling
+  unaffected; a violation lands as an audit event targeting the component.
+- **Not here.** Building the gateway, Hub and listener in `server.Run` (no fleet listener is composed yet); the `fleet/dial` wiring.

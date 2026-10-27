@@ -1427,3 +1427,24 @@ func TestCallsOnALongLivedContextRetainNothing(t *testing.T) {
 		t.Fatalf("heap grew by %d KiB after %d finished calls on one context", grew>>10, rounds*3)
 	}
 }
+
+// Regression (T-0287): a tunnel that ends while the caller is still sending must end the pending call
+// as UNAVAILABLE with an unknown outcome — never a raw transport error, never a known-outcome
+// UNAVAILABLE that a retry loop would take for "not sent".
+func TestCallPendingWhenTunnelEndsAlwaysEndsOutcomeUnknown(t *testing.T) {
+	for i := 0; i < 300; i++ {
+		r := newRig(t, nil)
+		errc := make(chan error, 1)
+		go func() {
+			errc <- r.m.Conn().Invoke(context.Background(), mPing, wrapperspb.String("x"), new(wrapperspb.StringValue))
+		}()
+		if f := r.next(t); f.Body != fleet.BodyOpen {
+			t.Fatalf("got %+v", f)
+		}
+		r.m.Close()
+		err := <-errc
+		if status.Code(err) != codes.Unavailable || !fleet.OutcomeUnknown(err) {
+			t.Fatalf("iteration %d: %v (unknown=%v)", i, err, fleet.OutcomeUnknown(err))
+		}
+	}
+}

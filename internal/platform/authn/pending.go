@@ -113,12 +113,15 @@ type BeginInput struct {
 	Account     string // the console account's ID, a canonical UUID
 	FirstFactor FirstFactor
 	ClientIP    netip.Addr // zero when unknown
+	// Epoch is the account's epoch (Store.Epoch) read before the first factor was verified. Required: a
+	// second factor completed after a password/MFA reset or role change is refused (T-0429).
+	Epoch Epoch
 }
 
 // Begin records a passed first factor and returns the handle for the pending cookie. It never creates
 // a session.
 func (p *PendingStore) Begin(ctx context.Context, in BeginInput) (PendingHandle, error) {
-	if in.Tenant.IsZero() || !validAccount(in.Account) || !in.FirstFactor.valid() {
+	if in.Tenant.IsZero() || !validAccount(in.Account) || !in.FirstFactor.valid() || !in.Epoch.ok {
 		return PendingHandle{}, ErrInvalid
 	}
 	tok, err := newToken(in.Tenant)
@@ -137,9 +140,9 @@ func (p *PendingStore) Begin(ctx context.Context, in BeginInput) (PendingHandle,
 			return err
 		}
 		_, err = tx.Exec(ctx, `INSERT INTO public.authn_pending_signins
-  (tenant_id, handle_hash, account_id, first_factor, client_ip, created_at, expires_at)
-VALUES ($1::uuid, $2, $3::uuid, $4, $5, $6, $7)`,
-			in.Tenant.String(), h.hash(), in.Account, string(in.FirstFactor), ip, now, now.Add(PendingSignInTTL))
+  (tenant_id, handle_hash, account_id, first_factor, client_ip, created_at, expires_at, account_epoch)
+VALUES ($1::uuid, $2, $3::uuid, $4, $5, $6, $7, $8)`,
+			in.Tenant.String(), h.hash(), in.Account, string(in.FirstFactor), ip, now, now.Add(PendingSignInTTL), in.Epoch.n)
 		return err
 	})
 	if err != nil {
@@ -155,6 +158,7 @@ type pendingRef struct {
 	Account  string
 	First    FirstFactor
 	ClientIP netip.Addr
+	Epoch    Epoch
 }
 
 // charge spends one attempt of the pending sign-in h names, in its own committed transaction and before
@@ -181,9 +185,9 @@ func (p *PendingStore) charge(ctx context.Context, h PendingHandle) (pendingRef,
 			first    string
 			ip       *netip.Addr
 		)
-		err = tx.QueryRow(ctx, `SELECT id::text, account_id::text, first_factor, client_ip, attempts, state, expires_at
+		err = tx.QueryRow(ctx, `SELECT id::text, account_id::text, first_factor, client_ip, attempts, state, expires_at, account_epoch
 FROM public.authn_pending_signins WHERE tenant_id = $1::uuid AND handle_hash = $2 FOR UPDATE`, t.String(), h.hash()).
-			Scan(&ref.ID, &ref.Account, &first, &ip, &attempts, &state, &expires)
+			Scan(&ref.ID, &ref.Account, &first, &ip, &attempts, &state, &expires, &ref.Epoch.n)
 		if store.IsNoRows(err) {
 			outcome = ErrPendingInvalid
 			return nil
@@ -207,7 +211,7 @@ WHERE tenant_id = $1::uuid AND id = $2::uuid AND state = 'active'`, t.String(), 
 WHERE tenant_id = $1::uuid AND id = $2::uuid AND state = 'active'`, t.String(), ref.ID); err != nil {
 			return err
 		}
-		ref.Tenant, ref.First = t, FirstFactor(first)
+		ref.Tenant, ref.First, ref.Epoch.ok = t, FirstFactor(first), true
 		if ip != nil {
 			ref.ClientIP = *ip
 		}
@@ -294,12 +298,15 @@ func (f *SecondFactor) VerifyTOTP(ctx context.Context, h PendingHandle, code str
 			return err
 		}
 		res, err = f.Sessions.CreateTx(ctx, tx, CreateInput{Tenant: ref.Tenant, Account: ref.Account,
-			Methods: []string{string(ref.First), methodTOTP}, MFAAt: &now, ClientIP: ref.ClientIP})
+			Methods: []string{string(ref.First), methodTOTP}, MFAAt: &now, ClientIP: ref.ClientIP, Epoch: ref.Epoch})
 		return err
 	})
 	if err != nil {
 		if errors.Is(err, ErrSecondFactorRefused) || errors.Is(err, ErrPendingInvalid) {
 			return CreateResult{}, err
+		}
+		if errors.Is(err, ErrCredentialsChanged) {
+			return CreateResult{}, ErrPendingInvalid // the first factor predates a reset; start over
 		}
 		return CreateResult{}, fmt.Errorf("authn: second factor: %w", err)
 	}

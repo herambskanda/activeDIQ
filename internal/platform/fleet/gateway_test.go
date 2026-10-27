@@ -92,6 +92,9 @@ type fakeComps struct {
 	revoked map[string]bool
 	current map[string]string // component -> its current serial; absent means any serial is current
 	err     error
+	// failUsableAt makes the Usable call with that 1-based number fail (0: never). Current calls
+	// Usable first, so 2 is the gateway's own check after a superseded presentation.
+	failUsableAt, usableCalls int
 }
 
 // rotate records serial as the component's current certificate, as Rotate does in cert_serial.
@@ -124,6 +127,10 @@ func (f *fakeComps) revoke(comp string) {
 func (f *fakeComps) Usable(_ context.Context, id fleet.Identity) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.usableCalls++
+	if f.failUsableAt == f.usableCalls {
+		return false, errors.New("transient")
+	}
 	return f.err == nil && !f.revoked[id.ComponentID], f.err
 }
 
@@ -204,10 +211,14 @@ type rig struct {
 	roots *x509.CertPool // trusts the rig's server certificate
 }
 
-func start(t *testing.T, cas fleet.TenantCAs, pool *x509.CertPool, now func() time.Time) *rig {
+func start(t *testing.T, cas fleet.TenantCAs, pool *x509.CertPool, now func() time.Time, opts ...func(*fleet.Config)) *rig {
 	t.Helper()
 	comps := &fakeComps{}
-	g, err := fleet.NewGateway(fleet.Config{Methods: allMethods, CAs: cas, Components: comps, Recheck: 50 * time.Millisecond, Clock: now})
+	cfg := fleet.Config{Methods: allMethods, CAs: cas, Components: comps, Recheck: 50 * time.Millisecond, Clock: now}
+	for _, o := range opts {
+		o(&cfg)
+	}
+	g, err := fleet.NewGateway(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -706,4 +717,131 @@ func TestSupersededCertificateRefusedAtEstablishment(t *testing.T) {
 		t.Fatalf("rotation dropped the open stream: %v", err)
 	case <-time.After(300 * time.Millisecond):
 	}
+}
+
+type supReport struct {
+	mu  sync.Mutex
+	ids []fleet.Identity
+}
+
+func (s *supReport) Superseded(_ context.Context, id fleet.Identity) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ids = append(s.ids, id)
+	return nil
+}
+
+func (s *supReport) got() []fleet.Identity {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]fleet.Identity(nil), s.ids...)
+}
+
+// TestSupersededCertificateIsReportedOncePerWindow (TM-TB6-T14, T-0300): a superseded, CA-verified,
+// unexpired leaf is refused Unauthenticated and reported with its serial; repeats inside the window
+// are not reported again, the next window is; the current certificate and a revoked component's old
+// one raise nothing.
+func TestSupersededCertificateIsReportedOncePerWindow(t *testing.T) {
+	ca := newCA(t, time.Now().Add(time.Hour))
+	tidA := tenant.New()
+	pool := x509.NewCertPool()
+	pool.AddCert(ca.cert)
+	nb, na, eku := time.Now().Add(-time.Minute), time.Now().Add(time.Hour), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+	rep := &supReport{}
+	var mu sync.Mutex
+	clock := time.Now()
+	now := func() time.Time { mu.Lock(); defer mu.Unlock(); return clock }
+	r := start(t, casByTenant{tidA: {ca.cert}}, pool, now, func(c *fleet.Config) {
+		c.Superseded, c.SupersededWindow = rep, time.Minute
+	})
+	oldLeaf := ca.leaf(t, tidA, nb, na, eku)
+	newLeaf := ca.leaf(t, tidA, nb, na, eku)
+	r.comps.rotate(compID, serialOf(t, newLeaf))
+
+	if err := callTunnel(r.dial(t, &newLeaf)); err != nil && code(err) == codes.Unauthenticated {
+		t.Fatalf("current certificate refused: %v", err)
+	}
+	if len(rep.got()) != 0 {
+		t.Fatal("current certificate reported")
+	}
+	for i := 0; i < 3; i++ {
+		if err := callTunnel(r.dial(t, &oldLeaf)); code(err) != codes.Unauthenticated {
+			t.Fatalf("superseded certificate: %v", err)
+		}
+	}
+	got := rep.got()
+	if len(got) != 1 || got[0].ComponentID != compID || got[0].Serial != serialOf(t, oldLeaf) {
+		t.Fatalf("reports in one window: %+v", got)
+	}
+	mu.Lock()
+	clock = clock.Add(2 * time.Minute)
+	mu.Unlock()
+	_ = callTunnel(r.dial(t, &oldLeaf))
+	if len(rep.got()) != 2 {
+		t.Fatalf("next window not reported: %d", len(rep.got()))
+	}
+	mu.Lock()
+	clock = clock.Add(2 * time.Minute)
+	mu.Unlock()
+	r.comps.revoke(compID)
+	if err := callTunnel(r.dial(t, &oldLeaf)); code(err) != codes.Unauthenticated || len(rep.got()) != 2 {
+		t.Fatalf("revoked component's old certificate reported: %v %d", err, len(rep.got()))
+	}
+}
+
+// ctxReport honours its context, as the real reporter's database calls do.
+type ctxReport struct {
+	delay time.Duration
+	ok    atomic.Int32
+}
+
+func (c *ctxReport) Superseded(ctx context.Context, _ fleet.Identity) error {
+	select {
+	case <-time.After(c.delay):
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	c.ok.Add(1)
+	return nil
+}
+
+// TestSupersededReportSurvivesHangUp (T-0300 review): a thief that presents the superseded leaf and
+// hangs up cannot cancel the report or use up the window; a transient Usable error does not either.
+func TestSupersededReportSurvivesHangUp(t *testing.T) {
+	ca := newCA(t, time.Now().Add(time.Hour))
+	tidA := tenant.New()
+	pool := x509.NewCertPool()
+	pool.AddCert(ca.cert)
+	nb, na, eku := time.Now().Add(-time.Minute), time.Now().Add(time.Hour), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+	rep := &ctxReport{delay: 150 * time.Millisecond}
+	r := start(t, casByTenant{tidA: {ca.cert}}, pool, time.Now, func(c *fleet.Config) {
+		c.Superseded, c.SupersededWindow = rep, time.Hour
+	})
+	oldLeaf := ca.leaf(t, tidA, nb, na, eku)
+	newLeaf := ca.leaf(t, tidA, nb, na, eku)
+	r.comps.rotate(compID, serialOf(t, newLeaf))
+
+	// A transient Usable error on the first presentation: the next one is still reported.
+	r.comps.mu.Lock()
+	r.comps.failUsableAt = 2
+	r.comps.mu.Unlock()
+	if err := callTunnel(r.dial(t, &oldLeaf)); code(err) != codes.Unauthenticated {
+		t.Fatalf("superseded certificate: %v", err)
+	}
+	if rep.ok.Load() != 0 {
+		t.Fatal("reported despite Usable error")
+	}
+
+	// The thief hangs up as soon as it has dialled: the report must still complete.
+	cc := r.dial(t, &oldLeaf)
+	ctx, cancel := context.WithCancel(context.Background())
+	s, err := cc.NewStream(ctx, &grpc.StreamDesc{StreamName: "Tunnel", ClientStreams: true, ServerStreams: true}, tunnelMethod)
+	if err == nil {
+		_ = s
+	}
+	cancel()
+	waitFor(t, "report completes after the caller hung up", func() bool { return rep.ok.Load() == 1 })
 }

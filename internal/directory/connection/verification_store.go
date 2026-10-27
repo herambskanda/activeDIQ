@@ -39,24 +39,35 @@ func scanVerification(r scanner) (Verification, error) {
 // a pass leaves nothing to activate on. completed_at is the connection's next ordering stamp, so the
 // run, an override and a retirement of one connection are strictly ordered (DM-10.I13).
 //
-// It does not change the lifecycle state: the caller decides that from the run (I10). A
-// credential_change run needs the credential port (DM-11) and is refused until it lands.
+// It does not change the lifecycle state: the caller decides that from the run (I10).
+//
+// A credential_change run (spec FR-21) verifies a candidate credential, so n.CredentialID differs from
+// the connection's. It needs an active or suspended connection and, to swap, a pass that read the
+// connection's own directory identity. A pass swaps credential_id and moves the pointer in this
+// transaction; any other verdict records the evidence and leaves the pointer, verified_at and
+// credential_id as they were, because the old credential stays in use (DM-10.I8). Retiring the old
+// DM-11 row (DM-11.I5) belongs to the credential port, which calls in after this returns.
 func (Store) RecordVerification(ctx context.Context, tx store.Tx, n NewVerification) (Verification, error) {
 	if err := n.validate(); err != nil {
 		return Verification{}, err
-	}
-	if n.Kind == KindCredentialChange {
-		return Verification{}, fmt.Errorf("%w: credential_change runs arrive with the credential port", ErrInvalid)
 	}
 	cur, stamp, err := lock(ctx, tx, n.ConnectionID)
 	if err != nil {
 		return Verification{}, err
 	}
-	if cur.CredentialID != n.CredentialID {
-		return Verification{}, fmt.Errorf("%w: the run verified a credential the connection does not use", ErrInvalid)
+	change := n.Kind == KindCredentialChange
+	if change != (cur.CredentialID != n.CredentialID) {
+		return Verification{}, fmt.Errorf("%w: a run verifies the connection's own credential, and only a credential_change run verifies another", ErrInvalid)
 	}
 	if cur.State.Terminal() || cur.State == StateDecommissioning {
 		return Verification{}, fmt.Errorf("%w: a %s connection is not verified", ErrIllegalTransition, cur.State)
+	}
+	if change && cur.State != StateActive && cur.State != StateSuspended {
+		return Verification{}, fmt.Errorf("%w: a credential of a %s connection is edited, not changed", ErrIllegalTransition, cur.State)
+	}
+	swap := change && n.Verdict == VerdictPass
+	if swap && n.ObservedIdentity != cur.DirectoryIdentity {
+		return Verification{}, fmt.Errorf("%w: the new credential must reach the same directory identity", ErrInvalid)
 	}
 	if n.Verdict == VerdictPass && !passComplete(cur.Kind, n.Outcomes) {
 		return Verification{}, fmt.Errorf("%w: a pass verdict needs an answered identity, over-privilege and read-sufficiency check", ErrInvalid)
@@ -95,13 +106,23 @@ func (Store) RecordVerification(ctx context.Context, tx store.Tx, n NewVerificat
 			return Verification{}, err
 		}
 	}
-	var verifiedAt *time.Time
-	if n.Verdict == VerdictPass {
-		verifiedAt = &stamp
+	var rows int64
+	if change && !swap {
+		// The old credential stays in use: only the ordering stamp moves (DM-10.I8, I13).
+		tag, e := tx.Exec(ctx, `UPDATE public.connections SET last_stamp_at = $2, updated_at = now() WHERE id = $1::uuid`,
+			string(n.ConnectionID), stamp)
+		rows, err = tag.RowsAffected(), e
+	} else {
+		var verifiedAt *time.Time
+		if n.Verdict == VerdictPass {
+			verifiedAt = &stamp
+		}
+		tag, e := tx.Exec(ctx, `UPDATE public.connections SET credential_id = $5::uuid, last_verification_id = $2::uuid,
+			verified_at = $3, last_stamp_at = $4, updated_at = now() WHERE id = $1::uuid`,
+			string(n.ConnectionID), string(n.ID), verifiedAt, stamp, string(n.CredentialID))
+		rows, err = tag.RowsAffected(), e
 	}
-	tag, err := tx.Exec(ctx, `UPDATE public.connections SET last_verification_id = $2::uuid, verified_at = $3,
-		last_stamp_at = $4, updated_at = now() WHERE id = $1::uuid`, string(n.ConnectionID), string(n.ID), verifiedAt, stamp)
-	if err != nil || tag.RowsAffected() != 1 {
+	if err != nil || rows != 1 {
 		return Verification{}, fmt.Errorf("connection: record verification: moving the pointer: %w", errOrNoRow(err))
 	}
 	v.Findings = append([]Finding(nil), n.Findings...)

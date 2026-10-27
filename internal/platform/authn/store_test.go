@@ -63,6 +63,28 @@ func (e *sessEnv) skewClock(t *testing.T) {
 	}
 }
 
+// account seeds an active local account and returns its id; Create refuses an account that is not active.
+func (e *sessEnv) account(t *testing.T) string {
+	t.Helper()
+	id := tenant.New().String()
+	e.seedAccount(t, e.ten, id, "active")
+	return id
+}
+
+// seedAccount inserts an account row with the given id and state into a tenant.
+func (e *sessEnv) seedAccount(t *testing.T, ten tenant.ID, id, state string) {
+	t.Helper()
+	db, err := store.Open(context.Background(), store.Config{DSN: e.d.AppDSN()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := fixtureAs(db, ten, `INSERT INTO public.authn_accounts (tenant_id, id, kind, display_name, state, created_by)
+		VALUES ($1::uuid, $2::uuid, 'local', 'fixture', $3, 'system')`, ten.String(), id, state); err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+}
+
 func each(t *testing.T, fn func(t *testing.T, e *sessEnv)) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		d := s.NewDatabase(t)
@@ -73,9 +95,24 @@ func each(t *testing.T, fn func(t *testing.T, e *sessEnv)) {
 
 var pol = Policy{Idle: 10 * time.Minute, Absolute: time.Hour, MaxConcurrent: 3, Eviction: EvictOldestCreated}
 
+// epochOf captures the account's session epoch the way a sign-in does, before verifying anything.
+func epochOf(t *testing.T, s *Store, ten tenant.ID, acct string) Epoch {
+	t.Helper()
+	ep, err := s.Epoch(context.Background(), ten, acct)
+	if err != nil {
+		t.Fatalf("Epoch: %v", err)
+	}
+	return ep
+}
+
 func create(t *testing.T, s *Store, ten tenant.ID, acct string) CreateResult {
 	t.Helper()
-	r, err := s.Create(context.Background(), CreateInput{Tenant: ten, Account: acct, Methods: []string{"password"}, ClientIP: netip.MustParseAddr("192.0.2.9")})
+	return createAt(t, s, ten, acct, epochOf(t, s, ten, acct))
+}
+
+func createAt(t *testing.T, s *Store, ten tenant.ID, acct string, ep Epoch) CreateResult {
+	t.Helper()
+	r, err := s.Create(context.Background(), CreateInput{Tenant: ten, Account: acct, Methods: []string{"password"}, ClientIP: netip.MustParseAddr("192.0.2.9"), Epoch: ep})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -85,7 +122,7 @@ func create(t *testing.T, s *Store, ten tenant.ID, acct string) CreateResult {
 func TestSessionIDStoredHashed(t *testing.T) {
 	each(t, func(t *testing.T, e *sessEnv) {
 		s := e.node(t, pol)
-		acct := tenant.New().String()
+		acct := e.account(t)
 		r := create(t, s, e.ten, acct)
 		plain := r.Token.Reveal()
 		if _, err := ParseToken(plain); err != nil {
@@ -127,7 +164,7 @@ func TestSessionExpiry(t *testing.T) {
 	each(t, func(t *testing.T, e *sessEnv) {
 		e.skewClock(t)
 		s := e.node(t, pol)
-		acct := tenant.New().String()
+		acct := e.account(t)
 		state := func(id string) (st, reason string) {
 			c, err := e.d.Admin(context.Background())
 			if err != nil {
@@ -191,7 +228,7 @@ func TestSessionConcurrentLimit(t *testing.T) {
 			p := pol
 			p.Eviction = ev
 			s := e.node(t, p)
-			acct := tenant.New().String()
+			acct := e.account(t)
 			var rs []CreateResult
 			for i := 0; i < 3; i++ {
 				e.clk.advance(time.Second)
@@ -231,7 +268,7 @@ func TestSessionConcurrentLimit(t *testing.T) {
 func TestConcurrentLimitHoldsUnderRace(t *testing.T) {
 	each(t, func(t *testing.T, e *sessEnv) {
 		a, b := e.node(t, pol), e.node(t, pol)
-		acct := tenant.New().String()
+		acct := e.account(t)
 		var wg sync.WaitGroup
 		for i := 0; i < 12; i++ {
 			wg.Add(1)
@@ -241,7 +278,7 @@ func TestConcurrentLimitHoldsUnderRace(t *testing.T) {
 				if i%2 == 1 {
 					s = b
 				}
-				if _, err := s.Create(context.Background(), CreateInput{Tenant: e.ten, Account: acct, Methods: []string{"password"}}); err != nil {
+				if _, err := s.Create(context.Background(), CreateInput{Tenant: e.ten, Account: acct, Methods: []string{"password"}, Epoch: epochOf(t, s, e.ten, acct)}); err != nil {
 					t.Error(err)
 				}
 			}(i)
@@ -258,7 +295,7 @@ func TestSessionRevocationOnEvents(t *testing.T) {
 	each(t, func(t *testing.T, e *sessEnv) {
 		nodeA, nodeB := e.node(t, pol), e.node(t, pol)
 		for _, why := range []Reason{ReasonAccountDisabled, ReasonRoleChanged, ReasonPasswordReset, ReasonMFAReset, ReasonOnDemand} {
-			acct, other := tenant.New().String(), tenant.New().String()
+			acct, other := e.account(t), e.account(t)
 			mine := []CreateResult{create(t, nodeA, e.ten, acct), create(t, nodeB, e.ten, acct)}
 			bystander := create(t, nodeA, e.ten, other)
 			for _, r := range mine {
@@ -285,7 +322,7 @@ func TestSessionRevocationOnEvents(t *testing.T) {
 			}
 		}
 		// On demand, one session by handle; and logout.
-		acct := tenant.New().String()
+		acct := e.account(t)
 		x, y := create(t, nodeA, e.ten, acct), create(t, nodeA, e.ten, acct)
 		if ok, err := nodeB.Revoke(context.Background(), e.ten, x.Session.ID, ReasonOnDemand, human); err != nil || !ok {
 			t.Fatalf("Revoke = %v, %v", ok, err)
@@ -309,7 +346,7 @@ func TestTenantIsolationAndForgedTokens(t *testing.T) {
 	each(t, func(t *testing.T, e *sessEnv) {
 		s := e.node(t, pol)
 		other := tenanttest.Seed(t, e.d.ExecOwner, "t2")
-		acct := tenant.New().String()
+		acct := e.account(t)
 		r := create(t, s, e.ten, acct)
 		// The same secret presented under another tenant's prefix finds nothing.
 		forged, err := ParseToken(other.String() + r.Token.Reveal()[36:])
@@ -337,7 +374,7 @@ func TestTenantIsolationAndForgedTokens(t *testing.T) {
 func TestEndedSessionsAreFinalAndNotDeletable(t *testing.T) {
 	each(t, func(t *testing.T, e *sessEnv) {
 		s := e.node(t, pol)
-		r := create(t, s, e.ten, tenant.New().String())
+		r := create(t, s, e.ten, e.account(t))
 		if _, err := s.Revoke(context.Background(), e.ten, r.Session.ID, ReasonOnDemand, human); err != nil {
 			t.Fatal(err)
 		}
