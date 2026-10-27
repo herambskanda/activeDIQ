@@ -13,11 +13,7 @@ import (
 // authn account store answers which owners are active (rbac.ActiveAccounts), and the authn session store
 // ends a changed account's sessions in the same transaction (rbac.SessionRevoker, reason role_changed).
 // Both audit into sink. rbac.NewOwnerAssignments refuses a nil port, so a half-wired writer fails startup.
-func buildOwnerAssignments(db *store.DB, sink audit.Sink) (*rbac.OwnerAssignments, error) {
-	sessions, err := authn.New(authn.Config{DB: db, Audit: sink})
-	if err != nil {
-		return nil, fmt.Errorf("server: session store: %w", err)
-	}
+func buildOwnerAssignments(db *store.DB, sink audit.Sink, sessions *authn.Store) (*rbac.OwnerAssignments, error) {
 	accounts, err := authn.NewAccounts(db, sessions, rbac.Owners{})
 	if err != nil {
 		return nil, fmt.Errorf("server: account store: %w", err)

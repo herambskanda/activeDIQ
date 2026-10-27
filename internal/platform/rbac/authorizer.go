@@ -21,10 +21,13 @@ const TargetClassTier0Scope = "tier0_scope"
 const (
 	TargetClassRole       = "role"
 	TargetClassAssignment = "assignment"
+	// TargetClassTenant is the tenant store root itself (GUID is the tenant ID). Only a tenant-wide
+	// root covers it: it is the target of an operation scoped to the whole tenant.
+	TargetClassTenant = "tenant"
 )
 
 // storeClasses are the target classes authorised as rows of activeDIQ's own store.
-var storeClasses = []string{TargetClassRole, TargetClassAssignment, "settings"}
+var storeClasses = []string{TargetClassRole, TargetClassAssignment, TargetClassTenant, "settings"}
 
 func isStoreClass(c string) bool { return slices.Contains(storeClasses, c) }
 

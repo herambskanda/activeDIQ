@@ -102,17 +102,22 @@ func Run(ctx context.Context, cfg config.Config) error {
 	if err != nil {
 		return err
 	}
-	// The tenant-owner writer: authn answers which owners are active and ends their sessions.
-	if _, err := buildOwnerAssignments(db, ok.Chainer); err != nil {
+	// The console authentication stack: sessions, the cookie Authenticator and the step-up check. The
+	// tenant-owner writer shares its session store (it ends a changed owner's sessions).
+	console, err := buildConsole(db, ok.Chainer, slog.Default())
+	if err != nil {
+		return err
+	}
+	if _, err := buildOwnerAssignments(db, ok.Chainer, console.Sessions); err != nil {
 		return err
 	}
 	// The TM-D17 attestation routes, when the install is configured for them. Built after the
 	// authorizer, which they share with the operation runner.
-	tags, err := buildAttestation(cfg, db, ok.Chainer, authzr)
+	tags, err := buildAttestation(cfg, db, ok.Chainer, authzr, sessionStepUp{console.StepUp})
 	if err != nil {
 		return err
 	}
-	api, err := buildAPI(cfg, lim, tags...)
+	api, err := buildAPIPorts(cfg, console.ports(lim, authzr), tags...)
 	if err != nil {
 		return err
 	}
@@ -180,24 +185,21 @@ func apiIdentity(cfg config.Config, now time.Time) (apitls.Identity, error) {
 	return id, nil
 }
 
-// buildAPI makes the API handler: apihost.Build over the embedded contract and the embedded
-// policy.yaml, with the body budget from configuration. A tag no module contributes is unmounted and
-// answers a problem.
-func buildAPI(cfg config.Config, lim apihost.Limiter, tags ...apihost.TagHandlers) (http.Handler, error) {
+// buildAPIPorts makes the API handler over the given ports: Run mounts the console stack's.
+func buildAPIPorts(cfg config.Config, ports apihost.Ports, tags ...apihost.TagHandlers) (http.Handler, error) {
 	policy, err := apihost.LoadPolicy()
 	if err != nil {
 		return nil, fmt.Errorf("server: api policy: %w", err)
 	}
-	return buildAPIWith(cfg, policy, lim, tags...)
+	return buildAPIPortsWith(cfg, policy, ports, tags...)
 }
 
-// buildAPIWith is buildAPI over a given policy; tests use it to prove the router follows policy.yaml.
-func buildAPIWith(cfg config.Config, policy apihost.Policy, lim apihost.Limiter, tags ...apihost.TagHandlers) (http.Handler, error) {
+func buildAPIPortsWith(cfg config.Config, policy apihost.Policy, ports apihost.Ports, tags ...apihost.TagHandlers) (http.Handler, error) {
 	doc, err := apihost.LoadDocument()
 	if err != nil {
 		return nil, fmt.Errorf("server: api contract: %w", err)
 	}
-	s, err := apihost.Build(doc, tags, policy, apiCatalogue, failClosedPorts(lim), apihost.WithBodyBudget(cfg.APIBodyBudget), apihost.WithTrustedProxies(cfg.TrustedProxies))
+	s, err := apihost.Build(doc, tags, policy, apiCatalogue, ports, apihost.WithBodyBudget(cfg.APIBodyBudget), apihost.WithTrustedProxies(cfg.TrustedProxies))
 	if err != nil {
 		return nil, fmt.Errorf("server: build api: %w", err)
 	}

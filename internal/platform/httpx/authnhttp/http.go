@@ -119,7 +119,7 @@ func (a *Authenticator) Authenticate(r *http.Request) (apihost.Principal, error)
 	default:
 		return apihost.Principal{}, err // an infrastructure failure: the chain refuses, fail closed
 	}
-	return apihost.Principal{ID: sess.Account, Tenant: sess.Tenant.String(), Kind: apihost.KindSession}, nil
+	return apihost.Principal{ID: sess.Account, Tenant: sess.Tenant.String(), Kind: apihost.KindSession, SessionID: sess.ID}, nil
 }
 
 // CheckCSRF compares the X-CSRF-Token header with the value derived from the request's own session

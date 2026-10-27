@@ -5,17 +5,19 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/compose/config"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
+	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 )
 
 // Unconfigured, the attestation is not offered: no tag, so its routes answer a problem.
 func Test_attestation_unmounted_without_config(t *testing.T) {
-	tags, err := buildAttestation(config.Config{}, nil, nil, nil)
+	tags, err := buildAttestation(config.Config{}, nil, nil, nil, nil)
 	if err != nil || len(tags) != 0 {
 		t.Fatalf("tags %d err %v", len(tags), err)
 	}
@@ -25,7 +27,7 @@ func Test_attestation_unmounted_without_config(t *testing.T) {
 // authenticated routes stay behind the fail-closed ports.
 func Test_attestation_routes_with_fail_closed_ports(t *testing.T) {
 	cfg := config.Config{APIBodyBudget: config.DefaultAPIBodyBudget, AttestClientID: "app", PublicURL: "https://diq.example.com/"}
-	tags, err := buildAttestation(cfg, nil, nopSink{}, nil)
+	tags, err := buildAttestation(cfg, nil, nopSink{}, nil, sessionStepUp{})
 	if err != nil || len(tags) != 1 {
 		t.Fatalf("tags %d err %v", len(tags), err)
 	}
@@ -76,3 +78,24 @@ func splitOnce(s string) (string, string, bool) {
 type nopSink struct{}
 
 func (nopSink) Append(context.Context, store.Tx, audit.Event) error { return nil }
+
+// The attestation's entra_tenant target is read with the facts a connection root has; any other target
+// gets none, so RBAC refuses it.
+func Test_connectionAuthorizer_facts(t *testing.T) {
+	conn := "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+	for name, c := range map[string]struct {
+		t    authority.TargetRef
+		want authority.Facts
+	}{
+		"entra_tenant connection root": {authority.TargetRef{Connection: conn, GUID: conn, Class: "entra_tenant"}, authority.Facts{Exists: true, AncestorsComplete: true}},
+		"other class":                  {authority.TargetRef{Connection: conn, GUID: conn, Class: "ou"}, authority.Facts{}},
+		"object under the connection":  {authority.TargetRef{Connection: conn, GUID: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", Class: "entra_tenant"}, authority.Facts{}},
+		"no connection":                {authority.TargetRef{GUID: conn, Class: "entra_tenant"}, authority.Facts{}},
+	} {
+		ra := &recAuthz{}
+		_ = connectionAuthorizer{ra}.Authorize(context.Background(), authority.Chain{}, "p", c.t)
+		if !reflect.DeepEqual(ra.facts, c.want) {
+			t.Errorf("%s: facts %+v want %+v", name, ra.facts, c.want)
+		}
+	}
+}

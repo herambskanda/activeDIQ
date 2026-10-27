@@ -34,7 +34,11 @@ const (
 // attestAuthz grants TakeoverAttestPermission to the named requesters over entra_tenant.
 type attestAuthz map[authority.PrincipalID]bool
 
-func (a attestAuthz) Authorize(_ context.Context, c authority.Chain, p authz.Permission, t authority.TargetRef) error {
+func (a attestAuthz) Authorize(ctx context.Context, c authority.Chain, p authz.Permission, t authority.TargetRef) error {
+	// The real authorizer (RBAC) refuses a call with no tenant on the context (no_tenant).
+	if tid, ok := authority.TenantFrom(ctx); !ok || tid == "" {
+		return errors.New("no tenant on the authorisation context")
+	}
 	if p == connections.TakeoverAttestPermission && t.Class == "entra_tenant" && a[c.Requester.ID] {
 		return nil
 	}
