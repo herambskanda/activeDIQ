@@ -124,3 +124,37 @@ func TestRegisterJobsRefusesBadInput(t *testing.T) {
 		}
 	}
 }
+
+// The cadence recovers a run stranded in verifying: the connection returns to draft with a failed run.
+func TestScheduledCheckJobSweepsStrandedRuns(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := newJobEnv(t, s)
+		ctx := context.Background()
+		c, err := e.reg.Create(ctx, e.a, forest("corp"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.reg.Transition(ctx, e.a, c.ID, connection.StateDraft, connection.StateVerifying); err != nil {
+			t.Fatal(err)
+		}
+		if n, err := e.raw(e.a, `UPDATE public.connections SET updated_at = now() - interval '1 hour' WHERE id = $1::uuid`, string(c.ID)); err != nil || n != 1 {
+			t.Fatalf("backdating: %d %v", n, err)
+		}
+		if err := e.db.WithTenant(ctx, e.a, func(ctx context.Context, tx store.Tx) error { return e.jobs.Schedule(ctx, tx, e.a) }); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.d.ExecOwner(ctx, `UPDATE public.jobs SET run_at = now() - interval '1 second' WHERE kind = $1`, connection.JobScheduledCheck); err != nil {
+			t.Fatal(err)
+		}
+		cl, err := jobs.Claim(ctx, e.db, e.jreg.Leases(), 5)
+		if err != nil || len(cl) != 1 {
+			t.Fatalf("claim: %v %v", cl, err)
+		}
+		if res, err := jobs.NewRunner(e.db, e.jreg).Execute(ctx, cl[0]); err != nil || res != jobs.Completed {
+			t.Fatalf("execute: %v %v", res, err)
+		}
+		if got, err := e.reg.Get(ctx, e.a, c.ID); err != nil || got.State != connection.StateDraft || got.LastVerificationID == "" {
+			t.Fatalf("connection: %+v %v", got, err)
+		}
+	})
+}

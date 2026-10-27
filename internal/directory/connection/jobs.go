@@ -103,6 +103,11 @@ func (j *Jobs) run(ctx context.Context, run jobs.TenantTx, c jobs.Claimed) error
 	if err != nil {
 		return &jobs.Failure{Code: CodeCheckFailed, Err: err}
 	}
+	// Runs stranded in verifying by a crash are recovered on the same cadence (DM-10.I10). A failure to
+	// sweep is logged and does not stop the rights check.
+	if swept, err := j.svc.SweepStranded(ctx, c.Tenant, 0); err != nil {
+		slog.Warn("connection: sweep of stranded runs incomplete", "tenant", c.Tenant.String(), "swept", len(swept), "err", err)
+	}
 	res, err := j.svc.RunScheduled(ctx, c.Tenant)
 	if err != nil {
 		return &jobs.Failure{Code: CodeCheckFailed, Err: err}
