@@ -201,7 +201,7 @@ type StartRequest struct {
 
 // Start checks the permission over the connection's entra_tenant scope and a fresh step-up, stores the
 // attempt and returns the URL the Global Administrator signs in at. A refusal is audited with its
-// reason. The state and PKCE verifier are random; only the hash of the state is stored.
+// reason (unless the chain itself fails validation, which has no valid actor to audit). The state and PKCE verifier are random; only the hash of the state is stored.
 func (a *Attester) Start(ctx context.Context, req StartRequest) (string, error) {
 	target := authority.TargetRef{Connection: string(req.ConnectionID), GUID: string(req.ConnectionID), Class: classEntraTenant}
 	deny := func(reason string, err error) (string, error) {

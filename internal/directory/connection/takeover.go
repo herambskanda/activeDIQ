@@ -223,7 +223,8 @@ func (s Store) CreateAttempt(ctx context.Context, tx store.Tx, a Attempt, stateH
 }
 
 // ConsumeAttempt deletes and returns the attempt for a state hash. It is single use: a second call
-// returns ErrAttemptInvalid, as does an expired or unknown state. Expired rows are removed too.
+// returns ErrAttemptInvalid, as does an expired or unknown state. An expired state is refused with the DELETE rolled back by the
+// caller's transaction, so the row stays until the purge sweep; it can never be redeemed.
 func (s Store) ConsumeAttempt(ctx context.Context, tx store.Tx, stateHash [32]byte, now time.Time) (Attempt, error) {
 	if err := requireTenant(ctx, tx); err != nil {
 		return Attempt{}, err

@@ -597,3 +597,26 @@ func TestAttestMaxAgeCap(t *testing.T) {
 		}
 	})
 }
+
+// An expired state is refused, audited, and records nothing.
+func TestAttestExpiredStateRefused(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := newAttestEnv(t, s)
+		u, err := e.start(t, "admin")
+		if err != nil {
+			t.Fatal(err)
+		}
+		st, _ := stateOf(t, u)
+		e.now = e.now.Add(24 * time.Hour)
+		e.graph.calls = 0
+		if _, err := e.callback(st); !errors.Is(err, connection.ErrAttemptInvalid) {
+			t.Fatalf("expired state: %v", err)
+		}
+		if e.graph.calls != 0 || len(e.idp.reqs) != 0 {
+			t.Fatal("an expired state reached the IdP or Graph")
+		}
+		if ev := lastOfKind(t, e.rec, connections.AuditAttestFailed); ev.Reason != connections.ReasonAttemptInvalid {
+			t.Fatalf("not audited: %+v", ev)
+		}
+	})
+}
