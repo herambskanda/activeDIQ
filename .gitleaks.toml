@@ -19,11 +19,12 @@ regexTarget = "match"
 regexes = ['''\$\{?[A-Za-z_]+''', '''\$\(''']
 
 # --- Allowlist ------------------------------------------------------------------------------------
-# RULE: allowlist ONLY provably fake values (vendor-published documentation examples). No path
+# RULE: allowlist ONLY provably fake values (vendor-published documentation examples) or a single exact
+# enum-label line (see T-0450 below, rule + path + literal all required). No bare path
 # allowlists: a path exemption would hide a real secret pasted into it. Never allowlist a rule
 # globally or a directory of real config. Every entry needs a comment saying why it is fake. Prefer building fake secrets at
 # test runtime (tools/secrets/test.sh does) over allowlisting.
-[allowlist]
+[[allowlists]]
 description = "Provably-fake values only"
 # Values published as documentation examples by their vendors (AKIAIOSFODNN7EXAMPLE etc. are also
 # ignored by gitleaks's own aws rule; listed so the intent is explicit).
@@ -31,3 +32,15 @@ regexes = [
   '''AKIAIOSFODNN7EXAMPLE''',
   '''wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY''',
 ]
+
+# T-0450: the authz.Reason constant ReasonScopeOnly = "tier0_scope_permission_off_scope" (T-0324)
+# trips generic-api-key on its high-entropy-looking snake_case string. It is an enum label, not a
+# credential. Scoped to ONE rule AND this exact file AND this exact literal (condition = AND), so a
+# different value planted in the same file, or this value elsewhere, is still scanned.
+[[allowlists]]
+description = "rbac ReasonScopeOnly enum label (T-0450)"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^internal/platform/rbac/authorizer\.go$''']
+regexTarget = "line"
+regexes = ['''ReasonScopeOnly\s+authz\.Reason\s*=\s*"tier0_scope_permission_off_scope"''']
