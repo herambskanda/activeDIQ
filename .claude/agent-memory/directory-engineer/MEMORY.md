@@ -9,3 +9,4 @@
 - [inventory writer lessons](inventory-writer-lessons.md) — Action inverse shape, FK probe with two keys, pre-existing red list
 - [sd primitive lessons](sd-primitive-lessons.md) — P6 read half: generated corpus, decode phase order, SELF semantics, pre-existing red
 - [C19 lessons](c19-lessons.md) — filter-schema attrs, fixture SDs, hand-edited pb.go
+- [attestation wiring lessons](attestation-wiring-lessons.md) — apihost path-param fix, A6/A7 rules, AN allow-list, fake Microsoft TLS server
