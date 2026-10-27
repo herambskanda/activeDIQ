@@ -430,15 +430,24 @@ func TestRecordLiveFacts(t *testing.T) {
 		}
 		c, _ = e.r.CorrelationsFor(ctx, e.a, f.AD)
 		l := c.Links[0]
-		if !l.FactsAsOf.Equal(now) || !l.PeerTier0 || !reflect.DeepEqual(l.PeerBases, []inventory.Basis{"E1"}) || l.SelfTier0 || l.State != inventory.StateCandidate && l.State != inventory.StateMatched {
+		if !l.FactsAsOf.Equal(t1) || !l.PeerTier0 || !reflect.DeepEqual(l.PeerBases, []inventory.Basis{"E1"}) || l.SelfTier0 || l.State != inventory.StateCandidate && l.State != inventory.StateMatched {
 			t.Fatalf("after entra refresh: %+v", l)
+		}
+		// A one-sided read must not vouch for the peer: the pair stays as of t1 (the AD fact is
+		// from t1) until the AD side is read too; then it is the older of the two reads.
+		if n, err := rec(e.a, f.AD, false, now.Add(-time.Minute)); err != nil || n != 1 {
+			t.Fatalf("ad: %d %v", n, err)
+		}
+		c, _ = e.r.CorrelationsFor(ctx, e.a, f.AD)
+		if l = c.Links[0]; !l.FactsAsOf.Equal(now.Add(-time.Minute)) {
+			t.Fatalf("pair as-of after both sides: %v", l.FactsAsOf)
 		}
 		// Not tier0 any more: flag and bases clear together. An older read never moves the as-of back.
 		if n, err := rec(e.a, f.Entra, false, now.Add(-time.Hour)); err != nil || n != 1 {
 			t.Fatalf("clear: %d %v", n, err)
 		}
 		c, _ = e.r.CorrelationsFor(ctx, e.a, f.AD)
-		if l = c.Links[0]; l.PeerTier0 || len(l.PeerBases) != 0 || !l.FactsAsOf.Equal(now) {
+		if l = c.Links[0]; l.PeerTier0 || len(l.PeerBases) != 0 || !l.FactsAsOf.Equal(now.Add(-time.Minute)) {
 			t.Fatalf("after clear: %+v", l)
 		}
 		// Another tenant cannot touch it; a future time and a bad ref are refused.

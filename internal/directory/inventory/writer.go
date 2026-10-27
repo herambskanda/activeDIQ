@@ -145,7 +145,8 @@ func (Writer) Form(ctx context.Context, tx store.Tx, f Formation) (Formed, error
 		_, err = tx.Exec(ctx, `UPDATE public.correlations SET match = $2, anchor_attr = $3, anchor_value = $4, ad_sid = $5,
 			state = $6, candidate_reason = $7, gate_checked_at = $8,
 			eligible_since = COALESCE(eligible_since, $9::timestamptz), eligibility_class = COALESCE(NULLIF(eligibility_class, ''), $10),
-			ad_tier0 = $11, ad_tier0_bases = $12, entra_tier0 = $13, entra_tier0_bases = $14, facts_as_of = $15, updated_at = now()
+			ad_tier0 = $11, ad_tier0_bases = $12, entra_tier0 = $13, entra_tier0_bases = $14, facts_as_of = $15,
+			ad_facts_as_of = NULL, entra_facts_as_of = NULL, updated_at = now()
 			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND id = $1::uuid`,
 			p.id, string(f.Match), f.AnchorAttr, anchor, sid, string(v.State), string(v.Reason), f.Now.UTC(),
 			since, v.EligibilityClass, len(adB) > 0, adB, len(enB) > 0, enB, asOf)
@@ -380,12 +381,13 @@ func removeEdge(ctx context.Context, tx store.Tx, attr string, connection Connec
 var ErrBasisUnknown = errors.New("inventory: live read found the object tier0 with no recorded basis")
 
 // RecordLiveFacts stores the tier0 verdict of a live read of ref, taken at readAt, on every live
-// correlation ref is a side of (DM-20.I5; contract §8.3 F3), and moves each one's facts_as_of to
-// readAt if that is later. It returns how many correlations it updated (zero is valid: ref has none).
+// correlation ref is a side of (DM-20.I5; contract §8.3 F3), and moves that side's as-of
+// (ad_facts_as_of / entra_facts_as_of) to readAt if that is later. It returns how many correlations it updated (zero is valid: ref has none).
 //
 // Only ref's own side changes, and only the tier0 fact of it: the peer's fact, the gate verdict, the
 // state and gate_checked_at are not touched, because a read of one object cannot vouch for them. The
-// as-of of the whole statement therefore stays the oldest of those inputs. A verdict of not-tier0 clears
+// as-of of the pair (Link.FactsAsOf) is the older of the two sides' as-ofs, so it moves only once the
+// peer's side has been refreshed too. A verdict of not-tier0 clears
 // the bases. A verdict of tier0 keeps the stored bases; with none stored it is ErrBasisUnknown and
 // nothing is written. The time never moves back, and one later than the database's now() plus five
 // minutes is ErrInvalid. Runs in the caller's tenant transaction; the caller rolls back on error.
@@ -406,7 +408,7 @@ func (Writer) RecordLiveFacts(ctx context.Context, tx store.Tx, ref Ref, tier0 b
 	n := 0
 	for _, q := range []struct{ update, missing string }{
 		{`UPDATE public.correlations SET ad_tier0 = $3, ad_tier0_bases = CASE WHEN $3 THEN ad_tier0_bases ELSE '{}' END,
-			facts_as_of = GREATEST(COALESCE(facts_as_of, $4), $4), updated_at = now()
+			ad_facts_as_of = GREATEST(COALESCE(ad_facts_as_of, facts_as_of, $4), $4), updated_at = now()
 			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
 			AND ad_connection_id = $1::uuid AND ad_object_guid = $2::uuid AND state <> 'removed'
 			AND (NOT $3 OR cardinality(ad_tier0_bases) > 0)`,
@@ -414,7 +416,7 @@ func (Writer) RecordLiveFacts(ctx context.Context, tx store.Tx, ref Ref, tier0 b
 			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
 			AND ad_connection_id = $1::uuid AND ad_object_guid = $2::uuid AND state <> 'removed' AND cardinality(ad_tier0_bases) = 0`},
 		{`UPDATE public.correlations SET entra_tier0 = $3, entra_tier0_bases = CASE WHEN $3 THEN entra_tier0_bases ELSE '{}' END,
-			facts_as_of = GREATEST(COALESCE(facts_as_of, $4), $4), updated_at = now()
+			entra_facts_as_of = GREATEST(COALESCE(entra_facts_as_of, facts_as_of, $4), $4), updated_at = now()
 			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
 			AND entra_connection_id = $1::uuid AND entra_object_guid = $2::uuid AND state <> 'removed'
 			AND (NOT $3 OR cardinality(entra_tier0_bases) > 0)`,
