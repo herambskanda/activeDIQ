@@ -1750,7 +1750,7 @@ authority through activeDIQ.
    | `set_spn` → `objects.user.set_spn` | `servicePrincipalName` | An SPN on a user account makes its service ticket requestable, which is encrypted with the account key and can be cracked offline (targeted Kerberoasting). On a computer or service it can also hijack the service identity | [Targeted Kerberoasting](https://thehacker.recipes/ad/movement/dacl/targeted-kerberoasting) (ext); §6.3 R7 "never delegate" (internal) |
    | `signin_flags` → `objects.user.signin_flags` | UAC bits **set**: `PASSWD_NOTREQD` 0x0020, `ENCRYPTED_TEXT_PWD_ALLOWED` 0x0080, `DONT_EXPIRE_PASSWORD` 0x10000, `USE_DES_KEY_ONLY` 0x200000, `DONT_REQ_PREAUTH` 0x400000; UAC bits **cleared**: `SMARTCARD_REQUIRED` 0x40000, `NOT_DELEGATED` 0x100000; `msDS-SupportedEncryptionTypes` any change | Empty or reversible password, a password that never ages, weak keys, or an AS-REP the actor can crack offline; dropping smart-card or delegation protection returns the account to a guessable password path | [KB 305144](https://support.microsoft.com/kb/305144) (doc for names and meaning; hex values from the same KB `[UNVERIFIED]`, check against MS-ADTS in the lab); [AS-REP roasting](https://thehacker.recipes/ad/movement/kerberos/asreproast) `[UNVERIFIED]` not re-read |
    | `signin_limits` → `objects.user.signin_limits` | `accountExpires` set to anything but "now or earlier"; `logonHours` replaced by anything not provably a subset of the current value; `userWorkstations` widened or cleared | Re-opens an expired account, or opens hours or hosts that were closed | [accountExpires](https://learn.microsoft.com/windows/win32/adschema/a-accountexpires) (doc: `0` and `0x7FFFFFFFFFFFFFFF` mean never); `logonHours`, `userWorkstations`: [User security attributes](https://learn.microsoft.com/en-gb/windows/win32/ad/security-properties) (doc) |
-   | Entra `reset_password`, `enable`, `rename_logon` | Graph `passwordProfile`, `accountEnabled`, `userPrincipalName` on `PATCH /users/{id}` | Same as the AD rows | [Graph user resource](https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0) (not re-read, `[UNVERIFIED]`); the property-to-permission mapping joins the TM-D25 7g table |
+   | Entra `reset_password`, `enable`, `rename_logon` | Graph `PATCH /users/{id}`: `passwordProfile`, `mobilePhone`, `otherMails` → `reset_password` (SSPR contact points let the actor reset the password `[UNVERIFIED]`); `accountEnabled` set true → `enable` (false is tightening); `userPrincipalName` → `rename_logon` | Same as the AD rows | [Graph user resource](https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0) (not re-read, `[UNVERIFIED]`); the property-to-permission mapping joins the TM-D25 7g table |
    | Entra `map_credential` (deny) | `authenticationMethods`, Temporary Access Pass, `phoneMethods`, federation settings | Directly a sign-in method | Already a §6.6 deny-list item; B8 below proves no Action reaches them |
 
    **Tightening is not guarded.** Setting `ACCOUNTDISABLE`, setting `accountExpires` to a time at or
@@ -1841,6 +1841,15 @@ it at four layers, so a missing declaration fails in CI and, if CI is bypassed, 
    one guarded class and declare that class's permission; an Action that needs two (for example
    reset and enable) is two Actions, or a Workflow of two (ADR-0005), each gated on its own.
    A tightening-only Action (disable, expire now) touches no class.
+   **Creating a new object is outside the classes.** A create-user Action (`DigestKind`
+   `user.create`) sets `unicodePwd`, clears `ACCOUNTDISABLE` and sets a name on an object that
+   did not exist, so no one is backed by it yet. It declares its own create permission, not a
+   class permission, and may use only the dedicated `guarded.NewUser(...)` constructor, which
+   emits exactly `unicodePwd`, `ACCOUNTDISABLE` cleared, `userPrincipalName` and `sAMAccountName`
+   on an `add` operation. It cannot emit any other guarded attribute (B3 still applies) and the
+   constructor refuses a modify of an existing object; the runtime check treats `add` through
+   `NewUser` as class `none`, and any modify of the new object afterwards is a normal classed
+   write. B4 treats `NewUser` as touching no class; B5 includes `NewUser` as a fixture.
 4. **Runtime backstop in the write layer.** `client.Write` derives the classes from the `WriteOp`'s
    `Attrs` and `DigestKind` through the table (never from a caller field), reads the permission the
    Step was planned under, and refuses with `ErrGuardedUndeclared` if the permission is not the
@@ -1861,7 +1870,7 @@ accepted as covering rule 5. Each rule has a failing case in `tools/ci/proof.sh`
 | B2 constant names | a `step.Attr{Name: …}`, Graph property key or `WriteOp.DigestKind` outside `internal/directory/guarded` is not a compile-time constant | type-aware; a string built with `+`, `fmt`, a variable, or read from input fails |
 | B3 no hand-built guarded attribute | a composite literal of `step.Attr` (or a Graph property) names a guarded or denied attribute, in any case, OID form or with options; or a `denied` constructor is called by any Action | constants are resolved and normalised exactly as the runtime table does; one normaliser serves both |
 | B4 declared permission | for any type implementing `operation.Action`, the guarded constructors reachable from its `Plan` and `Apply` (SSA call graph) name a class whose permission differs from `Descriptor.Permission`, or name two classes. An interface call or reflection that could reach a `WriteOp` with no resolved target counts as touching every class | SSA over `internal/...`; unresolved dispatch fails closed |
-| B5 runtime matrix | for every row of the table (generated, so new rows are covered), `client.Write` with a missing permission, another class's permission, a `tier0`-style permission or the right one does not return `ErrGuardedUndeclared` for the first three cases and success for the last; and the same for the name variants (upper case, OID, `;binary`) | table-driven unit test against a fake `Transport` |
+| B5 runtime matrix | for every row of the table (generated, so new rows are covered), `client.Write` does not give these results for the four cases: (1) no permission → `ErrGuardedUndeclared`; (2) another class's permission → `ErrGuardedUndeclared`; (3) a `tier0`-style permission (for example `objects.tier0.update`) → `ErrGuardedUndeclared`; (4) the class's own permission → success (tier0 targets are still refused by the connector gate, TM-D1). It also fails if a `NewUser` add with the create permission is refused, or a `NewUser` carrying any other guarded attribute succeeds; and the same for the name variants (upper case, OID, `;binary`) | table-driven unit test against a fake `Transport` |
 | B6 registry replay | an Action registered with the operation registry, planned against corpus inputs with a recording fake connector, emits a `WriteOp` whose classes differ from its Descriptor | one test iterating the registry (`internal/platform/operation`), so an Action that is not in the registry cannot ship (an unregistered Action cannot be run by the pipeline, ADR-0005 rule 1) |
 | B7 no other writer | `ldap.NewModifyRequest`, `ModifyDNRequest`, `PasswordModifyRequest` or a Graph `PATCH`/`POST` call is reachable from outside `internal/connector/write` and `internal/directory/graphwrite`; or a kind added to `kindTable` has no class or `none` | import and call-graph check; init-time check on `kindTable` |
 | B8 Entra | an Action reaches an `authenticationMethods`, TAP, phone-method or federation endpoint; the Graph property → class map (`ruleprops` extension) lacks `passwordProfile`, `accountEnabled`, `userPrincipalName`, `authorizationInfo`, `onPremisesImmutableId`, `mobilePhone`, `otherMails` | static; the deny-list half reuses TM-F-RIGHTS' list |
@@ -1871,16 +1880,15 @@ Deliberately failing fixtures ship with the checker (a bad Action per rule), as 
 (`go test ./tools/fitness/backing/...`), so the checker itself cannot rot into a no-op.
 
 ```guarded-v1
-reset_password: unicodePwd, userPassword, pwdLastSet=-1
+reset_password: unicodePwd, userPassword, pwdLastSet=-1, entra:passwordProfile, entra:mobilePhone, entra:otherMails
 unlock: lockoutTime=0, uac.clear(LOCKOUT 0x0010)
-enable: uac.clear(ACCOUNTDISABLE 0x0002)
+enable: uac.clear(ACCOUNTDISABLE 0x0002), entra:accountEnabled=true
 rename_logon: userPrincipalName, sAMAccountName, dNSHostName, entra:userPrincipalName
 move: modifyDN
 map_credential: msDS-KeyCredentialLink, altSecurityIdentities, entra:authorizationInfo.certificateUserIds, entra:onPremisesImmutableId
 set_spn: servicePrincipalName
 signin_flags: uac.set(PASSWD_NOTREQD 0x0020, ENCRYPTED_TEXT_PWD_ALLOWED 0x0080, DONT_EXPIRE_PASSWORD 0x10000, USE_DES_KEY_ONLY 0x200000, DONT_REQ_PREAUTH 0x400000), uac.clear(SMARTCARD_REQUIRED 0x40000, NOT_DELEGATED 0x100000), msDS-SupportedEncryptionTypes
 signin_limits: accountExpires>now, logonHours (not provably a subset), userWorkstations (widened or cleared)
-entra_credential: entra:passwordProfile, entra:accountEnabled=true, entra:mobilePhone, entra:otherMails
 denied: msDS-AllowedToActOnBehalfOfOtherIdentity, msDS-AllowedToDelegateTo, uac.set(TRUSTED_FOR_DELEGATION 0x80000, TRUSTED_TO_AUTH_FOR_DELEGATION 0x1000000), sIDHistory, primaryGroupID, entra:authenticationMethods, entra:temporaryAccessPass
 ```
 
