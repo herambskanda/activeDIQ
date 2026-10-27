@@ -27,6 +27,8 @@ var (
 	ErrAlreadyBound = errors.New("authn: account already bound")
 	// ErrBadTransition: the lifecycle does not allow that state change.
 	ErrBadTransition = errors.New("authn: account state transition refused")
+	// ErrLastOwner: the change would leave the tenant without an active tenant-owner (DM-30.I4).
+	ErrLastOwner = errors.New("authn: at least one active tenant-owner is required")
 )
 
 // AccountKind is how an account authenticates (DM-30).
@@ -112,6 +114,9 @@ type NewAccount struct {
 const (
 	KindAccountBound        audit.Kind = "authn.account.bound"
 	KindAccountStateChanged audit.Kind = "authn.account.state_changed"
+	// KindAccountStateRefused records a disable or delete refused because it would remove the last
+	// active tenant-owner (DM-30.I4).
+	KindAccountStateRefused audit.Kind = "authn.account.state_refused"
 )
 
 // Accounts is the DM-30 store. It is safe for concurrent use. Disabling or deleting an account ends
@@ -120,22 +125,36 @@ const (
 type Accounts struct {
 	db       *store.DB
 	sessions *Store
+	owners   OwnerSource
+}
+
+// OwnerSource tells the account store who holds the tenant-owner role (authz data, DM-36), so DM-30.I4
+// is enforced on the write path without authn reading authz tables. TenantOwners must take a
+// transaction-scoped lock that serialises every writer able to remove an owner, then return the
+// holders; the lock is held until tx ends.
+type OwnerSource interface {
+	TenantOwners(ctx context.Context, tx store.Tx, t tenant.ID) ([]string, error)
 }
 
 // NewAccounts returns the account store over db. sessions is the session store whose audit sink and
-// revocation the account changes use.
-func NewAccounts(db *store.DB, sessions *Store) (*Accounts, error) {
-	if db == nil || sessions == nil {
-		return nil, errors.New("authn: accounts need a database and a session store")
+// revocation the account changes use. owners is required: without it DM-30.I4 could not be enforced,
+// so there is no unguarded construction.
+func NewAccounts(db *store.DB, sessions *Store, owners OwnerSource) (*Accounts, error) {
+	if db == nil || sessions == nil || owners == nil {
+		return nil, errors.New("authn: accounts need a database, a session store and an owner source")
 	}
-	return &Accounts{db: db, sessions: sessions}, nil
+	return &Accounts{db: db, sessions: sessions, owners: owners}, nil
 }
 
-func (s *Accounts) emit(ctx context.Context, tx store.Tx, now time.Time, id string, kind audit.Kind, eid string, by authority.Chain, reason string, details []chain.Detail) error {
+func (s *Accounts) emit(ctx context.Context, tx store.Tx, now time.Time, id string, kind audit.Kind, eid string, by authority.Chain, reason string, details []chain.Detail, outcome ...audit.Outcome) error {
+	oc := audit.Success
+	if len(outcome) > 0 {
+		oc = outcome[0]
+	}
 	ev := audit.Event{
 		ID: "authn.account." + id + "." + eid, Kind: kind, At: now, Actor: by,
 		Target:    authority.TargetRef{GUID: id, Class: "account"},
-		Component: "authn", Outcome: audit.Success, Reason: reason, Details: details,
+		Component: "authn", Outcome: oc, Reason: reason, Details: details,
 	}
 	if err := s.sessions.audit.Append(ctx, tx, ev); err != nil {
 		return fmt.Errorf("authn: audit account event: %w", err)
@@ -355,6 +374,7 @@ func (s *Accounts) SetState(ctx context.Context, t tenant.ID, id string, to Acco
 		return Account{}, ErrInvalidInput
 	}
 	var out Account
+	refused := false
 	err := s.db.WithTenant(ctx, t, func(ctx context.Context, tx store.Tx) error {
 		cur, err := scanAccount(t, tx.QueryRow(ctx, `SELECT `+accountCols+` FROM public.authn_accounts WHERE tenant_id = $1 AND id = $2::uuid FOR UPDATE`, t.String(), id))
 		if err != nil {
@@ -371,6 +391,20 @@ func (s *Accounts) SetState(ctx context.Context, t tenant.ID, id string, to Acco
 		if err != nil {
 			return err
 		}
+		if cur.State == AccountActive && (to == AccountDisabled || to == AccountDeleted) {
+			last, err := s.isLastOwner(ctx, tx, t, id)
+			if err != nil {
+				return err
+			}
+			if last {
+				// Commit only the refusal's audit event; the state change is not made.
+				refused = true
+				return s.emit(ctx, tx, now, id, KindAccountStateRefused, fmt.Sprintf("state-refused.%s.%s.%d", cur.State, to, now.UnixNano()), by, "last_tenant_owner", []chain.Detail{
+					{Key: "from", Value: string(cur.State)},
+					{Key: "to", Value: string(to)},
+				}, audit.Denied)
+			}
+		}
 		out, err = scanAccount(t, tx.QueryRow(ctx, `UPDATE public.authn_accounts SET state = $3, updated_at = $4 WHERE tenant_id = $1 AND id = $2::uuid RETURNING `+accountCols, t.String(), id, string(to), now))
 		if err != nil {
 			return err
@@ -386,6 +420,8 @@ func (s *Accounts) SetState(ctx context.Context, t tenant.ID, id string, to Acco
 		})
 	})
 	switch {
+	case err == nil && refused:
+		return Account{}, ErrLastOwner
 	case store.IsNoRows(err):
 		return Account{}, ErrAccountNotFound
 	case errors.Is(err, ErrBadTransition):
@@ -394,4 +430,33 @@ func (s *Accounts) SetState(ctx context.Context, t tenant.ID, id string, to Acco
 		return Account{}, fmt.Errorf("authn: set account state: %w", err)
 	}
 	return out, nil
+}
+
+// isLastOwner reports whether id is an active tenant-owner and no other active account is. It takes the
+// owner lock first (via the source), so a concurrent removal of another owner has either committed and
+// is seen here, or waits for this transaction.
+func (s *Accounts) isLastOwner(ctx context.Context, tx store.Tx, t tenant.ID, id string) (bool, error) {
+	holders, err := s.owners.TenantOwners(ctx, tx, t)
+	if err != nil {
+		return false, fmt.Errorf("authn: reading tenant owners: %w", err)
+	}
+	self := false
+	var others []string
+	for _, h := range holders {
+		if h == id {
+			self = true
+		} else {
+			others = append(others, h)
+		}
+	}
+	if !self {
+		return false, nil
+	}
+	var n int
+	if len(others) > 0 {
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM public.authn_accounts WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND state = 'active'`, t.String(), others).Scan(&n); err != nil {
+			return false, fmt.Errorf("authn: counting active owners: %w", err)
+		}
+	}
+	return n == 0, nil
 }

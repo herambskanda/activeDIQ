@@ -11,6 +11,7 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
+	"github.com/skenzeriq/activediq/internal/platform/rbac"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
@@ -77,7 +78,7 @@ func eachAcct(t *testing.T, fn func(t *testing.T, e *acctEnv)) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		a, err := NewAccounts(db, ss)
+		a, err := NewAccounts(db, ss, rbac.Owners{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -437,6 +438,150 @@ func TestCreateSerialisedAgainstSetState(t *testing.T) {
 			})
 			if err != nil || live != 0 {
 				t.Fatalf("round %d: %d live sessions on a disabled account (err %v)", round, live, err)
+			}
+		}
+	})
+}
+
+// activeOwner makes an active account hold the built-in tenant-owner role through an assignment.
+func activeOwner(t *testing.T, e *acctEnv, name string) Account {
+	t.Helper()
+	ctx := context.Background()
+	a := newSSO(t, e, name)
+	if _, err := e.a.SetState(ctx, e.ten, a.ID, AccountActive, human); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixtureAs(e.db, e.ten, `INSERT INTO public.authz_roles (tenant_id, role_name, built_in, tier) VALUES ($1::uuid, 'tenant-owner', true, 0) ON CONFLICT DO NOTHING`, e.ten.String()); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixtureAs(e.db, e.ten, `INSERT INTO public.authz_assignments (tenant_id, account_id, role_id, valid_from, granted_by)
+		SELECT $1::uuid, $2::uuid, r.id, now() - interval '1 hour', 'test' FROM public.authz_roles r WHERE r.tenant_id = $1::uuid AND r.role_name = 'tenant-owner'`, e.ten.String(), a.ID); err != nil {
+		t.Fatal(err)
+	}
+	return a
+}
+
+func stateOf(t *testing.T, e *acctEnv, id string) AccountState {
+	t.Helper()
+	a, err := e.a.Get(context.Background(), e.ten, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a.State
+}
+
+// DM-30.I4, acceptance 1: the last active tenant-owner cannot be disabled or deleted; nothing commits and
+// the refusal is audited. A second owner lifts the refusal (positive control).
+func TestLastTenantOwnerRefused(t *testing.T) {
+	eachAcct(t, func(t *testing.T, e *acctEnv) {
+		ctx := context.Background()
+		o1 := activeOwner(t, e, "owner-1")
+		tok := liveSession(t, e, o1.ID)
+		for _, to := range []AccountState{AccountDisabled, AccountDeleted} {
+			before := len(e.snk.of(KindAccountStateRefused))
+			if _, err := e.a.SetState(ctx, e.ten, o1.ID, to, human); !errors.Is(err, ErrLastOwner) {
+				t.Fatalf("%s: err = %v, want ErrLastOwner", to, err)
+			}
+			if got := stateOf(t, e, o1.ID); got != AccountActive {
+				t.Fatalf("%s: state = %s, refusal committed a change", to, got)
+			}
+			if _, err := e.ss.Lookup(ctx, tok); err != nil {
+				t.Fatalf("%s: session revoked by a refused change: %v", to, err)
+			}
+			evs := e.snk.of(KindAccountStateRefused)[before:]
+			if len(evs) != 1 || evs[0].Outcome != audit.Denied || evs[0].Reason != "last_tenant_owner" {
+				t.Fatalf("%s: audit events = %+v, want one denied state_refused", to, evs)
+			}
+		}
+		// A disabled owner does not count as another owner.
+		o2 := activeOwner(t, e, "owner-2")
+		if _, err := e.a.SetState(ctx, e.ten, o2.ID, AccountDisabled, human); err != nil {
+			t.Fatalf("disabling one of two owners: %v", err)
+		}
+		if _, err := e.a.SetState(ctx, e.ten, o1.ID, AccountDisabled, human); !errors.Is(err, ErrLastOwner) {
+			t.Fatalf("o2 disabled, o1 disable = %v, want ErrLastOwner", err)
+		}
+		// Re-enable o2: now o1 may go.
+		if _, err := e.a.SetState(ctx, e.ten, o2.ID, AccountActive, human); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.a.SetState(ctx, e.ten, o1.ID, AccountDisabled, human); err != nil {
+			t.Fatalf("o1 disable with o2 active: %v", err)
+		}
+		// A non-owner is never refused.
+		n := newSSO(t, e, "plain")
+		if _, err := e.a.SetState(ctx, e.ten, n.ID, AccountActive, human); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.a.SetState(ctx, e.ten, n.ID, AccountDeleted, human); err != nil {
+			t.Fatalf("non-owner delete: %v", err)
+		}
+	})
+}
+
+// A revoked or expired assignment makes no owner.
+func TestOwnerAssignmentMustBeLive(t *testing.T) {
+	eachAcct(t, func(t *testing.T, e *acctEnv) {
+		ctx := context.Background()
+		o1 := activeOwner(t, e, "owner-1")
+		o2 := activeOwner(t, e, "owner-2")
+		if err := fixtureAs(e.db, e.ten, `UPDATE public.authz_assignments SET assignment_state = 'revoked' WHERE tenant_id = $1::uuid AND account_id = $2::uuid`, e.ten.String(), o2.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.a.SetState(ctx, e.ten, o1.ID, AccountDisabled, human); !errors.Is(err, ErrLastOwner) {
+			t.Fatalf("revoked second owner counted: %v", err)
+		}
+	})
+}
+
+// DM-30.I4, acceptance 2: two active owners disabling each other concurrently, exactly one succeeds.
+func TestConcurrentOwnerRemovalExactlyOne(t *testing.T) {
+	eachAcct(t, func(t *testing.T, e *acctEnv) {
+		ctx := context.Background()
+		for round := 0; round < 8; round++ {
+			a := activeOwner(t, e, fmt.Sprintf("ra-%d", round))
+			b := activeOwner(t, e, fmt.Sprintf("rb-%d", round))
+			// Other rounds' owners must not count: park them.
+			if round > 0 {
+				if err := fixtureAs(e.db, e.ten, `UPDATE public.authz_assignments SET assignment_state = 'revoked' WHERE tenant_id = $1::uuid AND account_id <> ALL($2::uuid[])`, e.ten.String(), []string{a.ID, b.ID}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			start := make(chan struct{})
+			errs := make([]error, 2)
+			var wg sync.WaitGroup
+			for i, pair := range [][2]string{{a.ID, b.ID}, {b.ID, a.ID}} {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					<-start
+					_, errs[i] = e.a.SetState(ctx, e.ten, pair[0], AccountDisabled, human)
+				}()
+			}
+			close(start)
+			wg.Wait()
+			ok, refused := 0, 0
+			for _, err := range errs {
+				switch {
+				case err == nil:
+					ok++
+				case errors.Is(err, ErrLastOwner):
+					refused++
+				default:
+					t.Fatalf("round %d: unexpected error %v", round, err)
+				}
+			}
+			if ok != 1 || refused != 1 {
+				t.Fatalf("round %d: %d succeeded, %d refused (errs %v); want exactly one of each", round, ok, refused, errs)
+			}
+			active := 0
+			for _, id := range []string{a.ID, b.ID} {
+				if stateOf(t, e, id) == AccountActive {
+					active++
+				}
+			}
+			if active != 1 {
+				t.Fatalf("round %d: %d owners still active, want 1", round, active)
 			}
 		}
 	})

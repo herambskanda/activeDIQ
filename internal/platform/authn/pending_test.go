@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base32"
 	"errors"
+	"github.com/skenzeriq/activediq/internal/platform/rbac"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -41,7 +42,7 @@ func eachPending(t *testing.T, fn func(t *testing.T, e *pendEnv)) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		accts, err := NewAccounts(base.db, sess)
+		accts, err := NewAccounts(base.db, sess, rbac.Owners{})
 		if err != nil {
 			t.Fatal(err)
 		}
