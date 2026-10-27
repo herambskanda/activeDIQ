@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/store"
+	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
 // Tier0OverrideID identifies a DM-25 row.
@@ -118,6 +119,17 @@ func (Store) Tier0OverrideInForce(ctx context.Context, tx store.Tx, id ID) (*Tie
 		return nil, err
 	}
 	return overrideInForce(ctx, tx, c)
+}
+
+// Tier0OverrideInForce is the tenant-explicit read for the connector client (client.OverrideSource,
+// TM-R15): the override in force for the connection's current credential, or nil. A connection of
+// another tenant is not visible under tid's row-level security and reads as not found.
+func (r *Registry) Tier0OverrideInForce(ctx context.Context, tid tenant.ID, id ID) (o *Tier0Override, err error) {
+	err = r.with(ctx, tid, func(ctx context.Context, tx store.Tx) (e error) { o, e = r.s.Tier0OverrideInForce(ctx, tx, id); return })
+	if err != nil {
+		return nil, err
+	}
+	return o, nil
 }
 
 func overrideInForce(ctx context.Context, tx store.Tx, c Connection) (*Tier0Override, error) {
