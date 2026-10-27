@@ -1,11 +1,11 @@
 ---
 title: "Threat model v0 — activeDIQ security architecture"
 date: 2026-10-02
-updated: 2026-10-26
+updated: 2026-10-27
 status: review
 owner: heramb
 author: security-architect
-ticket: old T-0007, T-0032, T-0044, T-0051, T-0055, T-0108, T-0179, T-0111, T-0227, T-0230, T-0235, T-0240, T-0395
+ticket: T-0388, old T-0007, T-0032, T-0044, T-0051, T-0055, T-0108, T-0179, T-0111, T-0227, T-0230, T-0235, T-0240, T-0395
 binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), blueprint v0 (review), safe-primitives.md (review)
 sources_last_checked: 2026-10-02
 ---
@@ -342,6 +342,7 @@ proof is direction, not a control; the proof table says which ticket builds each
 | TM-TB7-T6 | D | Graph throttling stalls jobs | Honour `Retry-After`, backoff, per-tenant concurrency | P3 conformance (fake Graph) | — |
 | TM-TB7-T7 | S | [SaaS] a job of tenant A authenticates with tenant B's certificate | Unseal only inside the tenant's own `WithTenantTx` | P4 | — |
 | TM-TB7-T8 | S/E | An Entra admin stamps an AD admin's `objectGUID` as `onPremisesImmutableId` on a cloud-only user, signs in by SSO and inherits that admin's AD-side grants (forged anchor) → A1 | Only `matched` correlations authorise; the gate needs `onPremisesSyncEnabled = true` (read-only in Graph) and the SID to equal `objectSid` (DM-20.I4 a–e; TM-D17) | TM-F-HYBRID | — |
+| TM-F-BACKING | A guarded attribute (`guarded v1`, §6.9 rule 5) is written by an Action that does not declare its class's permission, or two classes in one Action; a hand-built, non-constant, differently cased or OID-named guarded `step.Attr`; a `denied` attribute written; a write path outside `internal/connector/write` and `internal/directory/graphwrite`; a `kindTable` row with no class; the table and the `guarded-v1` block differ (§6.9a, TM-D28 B1–B9) | CI, `tools/fitness/backing` + analyser; failing fixtures; lab G17 for the `[UNVERIFIED]` bits | T-0284 follow-on (directory-engineer, devops-engineer) | TB8-T8 (console-backing) |
 | TM-TB7-T9 | S/E | Takeover through hard or soft match: a pre-created cloud user is taken over when its target enters sync scope, and keeps the attacker's sign-in methods → A1 | (f): both tenant blocking flags, attested by a Global Administrator and watched in the directory audit; eligibility only goes down (g); `tenant-owner` and RBAC administration never cross a correlation (h) (TM-D17) | TM-F-HYBRID | Takeovers before install or in the install-time population (TM-R11) |
 | TM-TB7-T10 | T/E | After an SOA transfer (`isCloudManaged`) the on-premises attributes, the SID included, become admin-writable → a forged match | Gate (b) and (a); the object is once-cloud-managed, so it needs re-confirmation (g) | TM-F-HYBRID | — |
 | TM-TB7-T11 | E | A technician resets the AD password of a synced user who holds an Entra role, and password hash sync hands over that role | C16: an AD object correlated to an Entra `tier0` principal is `tier0`, whatever the correlation state; ENH-08 reports synced role holders | TM-F-T0GUARD, TM-F-HYBRID | — |
@@ -1724,10 +1725,54 @@ authority through activeDIQ.
    - the object an `sso` account is bound to;
    - any object correlated to either.
 
-   Through activeDIQ, these changes to such an object need an actor who holds every privilege the
-   backed account holds (DM-36.I1): resetting its password, unlocking or enabling it, changing its
-   UPN or sign-in name, and moving it. Otherwise the change is refused. The Entra app never writes
-   authentication methods (§6.6 deny list).
+   Through activeDIQ, a **sign-in-granting change** to such an object needs an actor who holds
+   every privilege the backed account holds (DM-36.I1). Otherwise the change is refused. A change
+   is sign-in-granting when it gives the actor, or anyone they choose, a way to authenticate as
+   the account, or keeps a known credential usable, or exposes the account's key to offline
+   cracking. TM-D28 below fixes the list as a closed table (`guarded v1`); it replaces the
+   five-item list this rule had (reset, unlock, enable, UPN or sign-in name, move). The Entra app
+   never writes authentication methods (§6.6 deny list).
+
+   **Guarded v1.** One class per permission. Every class needs its permission declared in the
+   Action's Descriptor (`internal/platform/rbac/backing.go`, `BackingObjectPermissions`).
+   Attribute names compare case-insensitively and also by OID; the `;binary` and other options
+   are stripped first. "Source" is where the attack or the semantics are documented; `doc` is
+   Microsoft documentation, `ext` a security-research source, `[UNVERIFIED]` not yet run in the lab.
+
+   | Class → permission | AD writes (attribute / bit / operation) | Why it grants sign-in | Source |
+   | --- | --- | --- | --- |
+   | `reset_password` → `objects.user.reset_password` | `unicodePwd`; `userPassword` (a password write on LDS-style and Samba back ends); `pwdLastSet` set to `-1` | A known password. `-1` removes a pending must-change, so a password the actor knows stays usable | §6.3 R4 (internal); `pwdLastSet` `-1` semantics `[UNVERIFIED — lab G17]` |
+   | `unlock` → `objects.user.unlock` | `lockoutTime` set to `0`; UAC `LOCKOUT` 0x0010 cleared | Lifts the brute-force throttle on a guessed password | [KB 305144](https://support.microsoft.com/kb/305144) (doc) |
+   | `enable` → `objects.user.enable` | UAC `ACCOUNTDISABLE` 0x0002 cleared | Re-opens a disabled account (disabling is not guarded) | [KB 305144](https://support.microsoft.com/kb/305144) (doc) |
+   | `rename_logon` → `objects.user.rename_logon` | `userPrincipalName`, `sAMAccountName`; on computers `dNSHostName` | Implicit certificate mapping and SSO matching use these names: pointing a name at an account with a matching certificate or IdP claim signs in as it | [KB5014754](https://support.microsoft.com/kb/5014754) (doc: weak name-based mappings); `dNSHostName` `[UNVERIFIED]` |
+   | `move` → `objects.user.move` | `modifyDN` (rename or move), any `newSuperior` | Moves the object under an OU whose ACL, GPO or delegation the actor controls (TM-D18 analogue) | §6.3 and TM-D18 (internal) |
+   | `map_credential` → `objects.user.map_credential` | `msDS-KeyCredentialLink` (shadow credentials); `altSecurityIdentities` (certificate mapping); Entra `authorizationInfo.certificateUserIds`; Entra `onPremisesImmutableId` | A key pair, or a certificate the actor holds, authenticates as the account without its password. In Entra, a value that binds a certificate or a sync anchor to the user | [Shadow credentials](https://specterops.io/blog/2021/06/17/shadow-credentials-abusing-key-trust-account-mapping-for-account-takeover/) (ext); [KB5014754](https://support.microsoft.com/kb/5014754) (doc: the attribute and its weak and strong formats); [certificateUserIds](https://learn.microsoft.com/en-us/entra/identity/authentication/concept-certificate-based-authentication-certificateuserids) (doc: the value lives in `authorizationInfo`; AD admins can change it for any synced account); `onPremisesImmutableId`: TM-D17 (§6.8) hard and soft match |
+   | `set_spn` → `objects.user.set_spn` | `servicePrincipalName` | An SPN on a user account makes its service ticket requestable, which is encrypted with the account key and can be cracked offline (targeted Kerberoasting). On a computer or service it can also hijack the service identity | [Targeted Kerberoasting](https://thehacker.recipes/ad/movement/dacl/targeted-kerberoasting) (ext); §6.3 R7 "never delegate" (internal) |
+   | `signin_flags` → `objects.user.signin_flags` | UAC bits **set**: `PASSWD_NOTREQD` 0x0020, `ENCRYPTED_TEXT_PWD_ALLOWED` 0x0080, `DONT_EXPIRE_PASSWORD` 0x10000, `USE_DES_KEY_ONLY` 0x200000, `DONT_REQ_PREAUTH` 0x400000; UAC bits **cleared**: `SMARTCARD_REQUIRED` 0x40000, `NOT_DELEGATED` 0x100000; `msDS-SupportedEncryptionTypes` any change | Empty or reversible password, a password that never ages, weak keys, or an AS-REP the actor can crack offline; dropping smart-card or delegation protection returns the account to a guessable password path | [KB 305144](https://support.microsoft.com/kb/305144) (doc for names and meaning; hex values from the same KB `[UNVERIFIED]`, check against MS-ADTS in the lab); [AS-REP roasting](https://thehacker.recipes/ad/movement/kerberos/asreproast) `[UNVERIFIED]` not re-read |
+   | `signin_limits` → `objects.user.signin_limits` | `accountExpires` set to anything but "now or earlier"; `logonHours` replaced by anything not provably a subset of the current value; `userWorkstations` widened or cleared | Re-opens an expired account, or opens hours or hosts that were closed | [accountExpires](https://learn.microsoft.com/windows/win32/adschema/a-accountexpires) (doc: `0` and `0x7FFFFFFFFFFFFFFF` mean never); `logonHours`, `userWorkstations`: [User security attributes](https://learn.microsoft.com/en-gb/windows/win32/ad/security-properties) (doc) |
+   | Entra `reset_password`, `enable`, `rename_logon` | Graph `passwordProfile`, `accountEnabled`, `userPrincipalName` on `PATCH /users/{id}` | Same as the AD rows | [Graph user resource](https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0) (not re-read, `[UNVERIFIED]`); the property-to-permission mapping joins the TM-D25 7g table |
+   | Entra `map_credential` (deny) | `authenticationMethods`, Temporary Access Pass, `phoneMethods`, federation settings | Directly a sign-in method | Already a §6.6 deny-list item; B8 below proves no Action reaches them |
+
+   **Tightening is not guarded.** Setting `ACCOUNTDISABLE`, setting `accountExpires` to a time at or
+   before now, and a `revokeSignInSessions` call remove sign-in. They need only the Action's own
+   permission. The classifier calls a change tightening only when it can prove it from the typed
+   value; anything it cannot prove is relaxing and is guarded (fail closed).
+
+   **Never offered in v1 (denied, not guarded).** No Action may write these. Adding one needs a
+   security review that edits this table: `msDS-AllowedToActOnBehalfOfOtherIdentity` (RBCD),
+   `msDS-AllowedToDelegateTo`, UAC `TRUSTED_FOR_DELEGATION` 0x80000 and
+   `TRUSTED_TO_AUTH_FOR_DELEGATION` 0x1000000, `sIDHistory`, `primaryGroupID`. The first four are
+   already "never delegate" in §6.3 R7; `sIDHistory` is C18; `primaryGroupID` changes grants and
+   belongs to TM-D18. B3 fails any Action that writes one.
+
+   **Considered, not guarded (and why).** `scriptPath`, `profilePath`, `homeDirectory`: they run
+   code or mount a share at the account's own sign-in; they do not let the actor sign in as it
+   (code execution as the user is a different threat, TM-D18 neighbour; left to the OU/GPO
+   guards). `msDS-AdditionalDnsHostName`: no known sign-in effect `[UNVERIFIED]`. `mail`,
+   `otherMails`, `mobilePhone` in Entra can feed self-service password reset contact data
+   `[UNVERIFIED — lab G17, Entra tenant with SSPR]`; until G17 reports, they are written only
+   through the same Entra constructor path and are guarded as `reset_password` (conservative).
+   `userCertificate`: no AD sign-in effect on users; computers and ADCS are C10.
 6. **These roles are not added to E4.** With rules 1 and 2 they reach no AD-side authority through
    activeDIQ. They stay in E1, where every role holder is write-protected.
    - **Recommended customer hardening** (setup guide and a health hint): put hybrid technicians'
@@ -1766,6 +1811,103 @@ for the CEO (factory-director files it), like D-0009.
 - a simulated Entra-side method reset leaves the activeDIQ factor untouched;
 - a technician resetting, through activeDIQ, the AD password of a console account that holds more
   privileges than they do is refused (rule 5).
+
+
+### 6.9a Every write of a guarded attribute declares its permission — DECISION TM-D28 (T-0388)
+
+**The gap.** The T-0284 guard (`internal/platform/rbac/backing.go`) keys on the Action's declared
+`Descriptor.Permission`. Nothing stopped an Action from writing `msDS-KeyCredentialLink` while
+declaring `objects.user.update`, or from flipping `DONT_REQ_PREAUTH` inside a generic
+`userAccountControl` write. The guard would never run, so rule 5 would hold only for the five
+changes someone remembered to label. TM-D28 makes the guarded table the single source and proves
+it at four layers, so a missing declaration fails in CI and, if CI is bypassed, at runtime.
+
+**TM-D28 — rules.**
+1. **One closed table.** `guarded v1` (rule 5 above) is a Go table in `internal/directory/guarded`:
+   `(attribute names and OIDs, bit mask or operation) → class → permission`, plus the `denied` set.
+   It is the only place a class is decided. The permission list `BackingObjectPermissions` is
+   generated from it, not typed beside it. New permissions
+   (`objects.user.map_credential`, `.set_spn`, `.signin_flags`, `.signin_limits`) enter the RBAC
+   catalogue (DM-36) as ordinary object permissions with no default grant, step-up required
+   (§7.4), and `tier0` objects stay refused whatever the grant (TM-D2).
+2. **Typed constructors only.** A `step.Attr` or Graph property for a guarded attribute is built only by
+   a constructor in `internal/directory/guarded` (`guarded.SetUACBits(mask)`,
+   `guarded.ClearUACBits(mask)`, `guarded.KeyCredentialLink(...)`, `guarded.AltSecurityIdentities(...)`,
+   `guarded.SPN(...)`, `guarded.AccountExpires(t)`, `guarded.LogonHours(h)`, …). Each returns the
+   attribute and its class. A bitfield such as `userAccountControl` is never a raw `Values`
+   string: the constructor takes named bits, so the class follows the bits, not the attribute.
+   Attribute names must be compile-time constants everywhere else.
+3. **One class per Action.** An Action's Descriptor carries one `Permission`. An Action may touch
+   one guarded class and declare that class's permission; an Action that needs two (for example
+   reset and enable) is two Actions, or a Workflow of two (ADR-0005), each gated on its own.
+   A tightening-only Action (disable, expire now) touches no class.
+4. **Runtime backstop in the write layer.** `client.Write` derives the classes from the `WriteOp`'s
+   `Attrs` and `DigestKind` through the table (never from a caller field), reads the permission the
+   Step was planned under, and refuses with `ErrGuardedUndeclared` if the permission is not the
+   class's. A `denied` attribute is `ErrGuardedDenied`. Every `kindTable` row carries an explicit
+   class or `none`; an unclassified kind is refused at init. The check runs in both Plan and
+   Apply, like T-0284. The connector's own write gate (§8.2) remains the second line for `tier0`
+   (TM-D1); it does not know RBAC, so this check lives on the server, in the same trust domain as
+   the guard.
+
+**Fitness function `fitness-backing` (TM-F-BACKING).** Code: `tools/fitness/backing`, with a
+type-aware analyser in `tools/analyzers/guardedattr`. It runs in `make fitness` and `make ci`, like
+`fitness-operation`. It is a separate job from O1–O9; until it runs green on `main` the T-0284 guard is not
+accepted as covering rule 5. Each rule has a failing case in `tools/ci/proof.sh`.
+
+| Rule | Fails CI when … | How it is found |
+| --- | --- | --- |
+| B1 table ↔ document | the `guarded v1` Go table and the machine-readable block in this section differ in any attribute, bit, OID, class or permission, or a permission in `BackingObjectPermissions` is not generated from the table | the check parses the fenced `guarded-v1` block below, like O9 parses the ADR DAG |
+| B2 constant names | a `step.Attr{Name: …}`, Graph property key or `WriteOp.DigestKind` outside `internal/directory/guarded` is not a compile-time constant | type-aware; a string built with `+`, `fmt`, a variable, or read from input fails |
+| B3 no hand-built guarded attribute | a composite literal of `step.Attr` (or a Graph property) names a guarded or denied attribute, in any case, OID form or with options; or a `denied` constructor is called by any Action | constants are resolved and normalised exactly as the runtime table does; one normaliser serves both |
+| B4 declared permission | for any type implementing `operation.Action`, the guarded constructors reachable from its `Plan` and `Apply` (SSA call graph) name a class whose permission differs from `Descriptor.Permission`, or name two classes. An interface call or reflection that could reach a `WriteOp` with no resolved target counts as touching every class | SSA over `internal/...`; unresolved dispatch fails closed |
+| B5 runtime matrix | for every row of the table (generated, so new rows are covered), `client.Write` with a missing permission, another class's permission, a `tier0`-style permission or the right one does not return `ErrGuardedUndeclared` for the first three cases and success for the last; and the same for the name variants (upper case, OID, `;binary`) | table-driven unit test against a fake `Transport` |
+| B6 registry replay | an Action registered with the operation registry, planned against corpus inputs with a recording fake connector, emits a `WriteOp` whose classes differ from its Descriptor | one test iterating the registry (`internal/platform/operation`), so an Action that is not in the registry cannot ship (an unregistered Action cannot be run by the pipeline, ADR-0005 rule 1) |
+| B7 no other writer | `ldap.NewModifyRequest`, `ModifyDNRequest`, `PasswordModifyRequest` or a Graph `PATCH`/`POST` call is reachable from outside `internal/connector/write` and `internal/directory/graphwrite`; or a kind added to `kindTable` has no class or `none` | import and call-graph check; init-time check on `kindTable` |
+| B8 Entra | an Action reaches an `authenticationMethods`, TAP, phone-method or federation endpoint; the Graph property → class map (`ruleprops` extension) lacks `passwordProfile`, `accountEnabled`, `userPrincipalName`, `authorizationInfo`, `onPremisesImmutableId`, `mobilePhone`, `otherMails` | static; the deny-list half reuses TM-F-RIGHTS' list |
+| B9 twins (no theatre) | the negative controls fail: writing `description`, or `ACCOUNTDISABLE` set, or `accountExpires` ≤ now, is refused for lack of a permission; or writing `DONT_REQ_PREAUTH` with the `objects.user.update` permission succeeds | in B5 and B6 as fixtures |
+
+Deliberately failing fixtures ship with the checker (a bad Action per rule), as with `safeprim`
+(`go test ./tools/fitness/backing/...`), so the checker itself cannot rot into a no-op.
+
+```guarded-v1
+reset_password: unicodePwd, userPassword, pwdLastSet=-1
+unlock: lockoutTime=0, uac.clear(LOCKOUT 0x0010)
+enable: uac.clear(ACCOUNTDISABLE 0x0002)
+rename_logon: userPrincipalName, sAMAccountName, dNSHostName, entra:userPrincipalName
+move: modifyDN
+map_credential: msDS-KeyCredentialLink, altSecurityIdentities, entra:authorizationInfo.certificateUserIds, entra:onPremisesImmutableId
+set_spn: servicePrincipalName
+signin_flags: uac.set(PASSWD_NOTREQD 0x0020, ENCRYPTED_TEXT_PWD_ALLOWED 0x0080, DONT_EXPIRE_PASSWORD 0x10000, USE_DES_KEY_ONLY 0x200000, DONT_REQ_PREAUTH 0x400000), uac.clear(SMARTCARD_REQUIRED 0x40000, NOT_DELEGATED 0x100000), msDS-SupportedEncryptionTypes
+signin_limits: accountExpires>now, logonHours (not provably a subset), userWorkstations (widened or cleared)
+entra_credential: entra:passwordProfile, entra:accountEnabled=true, entra:mobilePhone, entra:otherMails
+denied: msDS-AllowedToActOnBehalfOfOtherIdentity, msDS-AllowedToDelegateTo, uac.set(TRUSTED_FOR_DELEGATION 0x80000, TRUSTED_TO_AUTH_FOR_DELEGATION 0x1000000), sIDHistory, primaryGroupID, entra:authenticationMethods, entra:temporaryAccessPass
+```
+
+Hex values are `[UNVERIFIED]` against MS-ADTS until lab G17 reads each bit on Samba and
+Windows; B1 pins them so a lab correction changes table and block together.
+
+**Alternatives rejected.**
+- **A review checklist or a naming convention** ("generic update Actions must not write
+  credentials"). This is how PatchIQ hid 18 RLS bypasses (postmortem §8): a label nobody tests.
+- **Guard at the connector only.** The connector does not know RBAC or the backed accounts, and a
+  compromised server does not care; the server-side guard needs the declaration.
+- **Classify by `DigestKind` only** (`user.setAttribute` stays one kind). A generic setter would
+  carry every class; the class must come from the typed attribute, not the kind label.
+- **Guard every write of every attribute.** Makes ordinary `description` and `department` edits
+  need all the backed account's privileges; the guarded population is small and the table is
+  where it grows, with B1 forcing the doc to change with it.
+
+**Residual (TM-R23).** The table is only as complete as our knowledge of sign-in-granting
+attributes. Schema extensions, a future Windows attribute, and ADCS template changes (C10) can
+add one. Mitigation: B1 makes every addition a reviewed diff; `Describe` (connector contract §4)
+reports the DC's schema version, and the lab job G17 greps the live schema for attributes with
+credential-like syntax (`msDS-*Key*`, `*Identities`, `*Password*`) not present in the table, and
+fails the nightly job on an unexplained one. The Entra and SSPR rows rest on lab G17.
+
+**Routed.** Build: T-0284 follow-on (extend `BackingObjectPermissions` and the RBAC catalogue,
+generate from the table), `internal/directory/guarded` and the `client.Write` check
+(directory-engineer), `fitness-backing` (devops-engineer). Lab G17 → T-0075.
 
 ---
 
@@ -2606,6 +2748,7 @@ control.
 | TM-R20 | **R-EXO-1, accepted.** An Exchange role-group (or Exchange RBAC for Applications) assignment to the connector's service principal is made in Exchange, not Entra, so `appRoleAssignments` does not show it. With `Exchange.ManageAsApp` denied, the connector holds no way to reach Exchange, but a customer admin could still assign the role to the service principal | Microsoft: RBAC for Applications grants "are independent of the unscoped grants in Microsoft Entra ID" ([Application RBAC](https://learn.microsoft.com/en-us/exchange/permissions-exo/application-rbac)). Without the Entra-side `Exchange.ManageAsApp` consent the token cannot call Exchange PowerShell; Graph-side Exchange roles (`Application Mail.ReadWrite` and similar) do not need it and are not visible to us. Documented at onboarding: do not assign Exchange roles to this service principal (`Test-ServicePrincipalAuthorization` lists them). Lab G15 checks visibility | security-architect | An Exchange-side read for roles of our service principal, if Microsoft exposes one to Graph |
 | TM-R21 | **R-C19-DEPTH, accepted (T-0235).** C19 is depth 1. A principal that controls only a *controller* of a Domain Admins group (for example WriteDACL on a help-desk user who holds WP `member` on Domain Admins) is not `tier0`; the controller is | A transitive closure over ACL edges makes most of a real directory `tier0` and the guard unusable; BloodHound's Tier Zero is likewise a curated set, not a closure `[UNVERIFIED — current definition]`. Two hops of control still need one compromised hop first, and the first hop is `tier0` and refused | security-architect | an exposure-path view (TM-Q30); a customer asking for depth 2 |
 | TM-R22 | **R-C19-SYSVOL, accepted (T-0235).** Control of a `tier0` GPO's SYSVOL folder is not read by the classifier | It is an SMB ACL on every DC; reading it needs a second channel and more rights than the connector may hold. The GPO object ACL and the links are covered | security-architect | TM-Q30 scan |
+| TM-R23 | The guarded table is only as complete as our knowledge: a schema extension, a new Windows attribute or an ADCS change can add a sign-in-granting write we do not list. Entra SSPR contact rows are conservative until lab G17 | Closed tables cannot know the future; B1 makes every addition a reviewed diff and the nightly schema grep flags credential-like attributes (§6.9a) | security-architect | Lab G17 (T-0075) |
 
 ### 16.2 Decisions owed to the CEO (not asked now)
 
@@ -2748,9 +2891,19 @@ External, in order of first use:
 83. https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-server-2003/cc772633(v=ws.10) (not re-read, `[UNVERIFIED]`)
 84. https://learn.microsoft.com/en-us/windows/win32/adschema/extended-rights (T-0235)
 85. https://bloodhound.specterops.io/ (T-0235; Tier Zero definition not re-read, `[UNVERIFIED]`)
+86. https://specterops.io/blog/2021/06/17/shadow-credentials-abusing-key-trust-account-mapping-for-account-takeover/ (T-0388; `msDS-KeyCredentialLink`)
+87. https://support.microsoft.com/kb/5014754 (T-0388; `altSecurityIdentities` formats, weak and strong)
+88. https://support.microsoft.com/kb/305144 (T-0388; UAC flag names; hex values `[UNVERIFIED]`)
+89. https://thehacker.recipes/ad/movement/dacl/targeted-kerberoasting (T-0388; SPN write)
+90. https://learn.microsoft.com/en-us/entra/identity/authentication/concept-certificate-based-authentication-certificateuserids (T-0388; `certificateUserIds` in `authorizationInfo`, who can update)
+91. https://learn.microsoft.com/windows/win32/adschema/a-accountexpires (T-0388)
+92. https://learn.microsoft.com/en-gb/windows/win32/ad/security-properties (T-0388; `logonHours`, `userWorkstations`)
+93. https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0 (T-0388; not re-read, `[UNVERIFIED]`)
+94. https://thehacker.recipes/ad/movement/kerberos/asreproast (T-0388; not re-read, `[UNVERIFIED]`)
 
 ## Changelog
 
+- 2026-10-27 · T-0388. §6.9 rule 5 rewritten from five changes to the closed `guarded v1` table (AD and Entra classes, a `denied` set, a tightening exemption), each with a source. New §6.9a DECISION TM-D28: typed constructors, one class per Action, a runtime check in `client.Write`, and fitness function `fitness-backing` rules B1 to B9 with a machine-readable `guarded-v1` block. New proof TM-F-BACKING, residual TM-R23, lab G17 (routed to T-0075), sources 86 to 94. DM-30.I7 updated to match.
 - 2026-10-26 · T-0395 (D-0007 follow-up). §6.6 adds lab G16. It reads Graph's live `appRoles` to confirm the name and role id of `Sites.Manage.All` (expected `0c0bf378-…`, from Microsoft's permissions reference). It asserts EV3 `ENTRA_DENY_LIST_PERMISSION`, with role ids, for the seven T-0369 values in a real tenant, and EV5 for the read-only counterparts. `Sites.Manage.All` now waits for G16, not G15 (G15 covers only the non-Graph grants). Routed to T-0075.
 - 2026-10-26 · T-0369 (from T-0303). §6.6 deny list adds `Mail.ReadWrite`, `Mail.Send`, `Mail-Advanced.ReadWrite.All`, `MailboxItem.ReadWrite.All`, `MailboxItem.ImportExport.All`, `Files.ReadWrite.All`, `Sites.ReadWrite.All` (any resource, EV3 block); the T-0303 gap sentence is replaced; TM-F-RIGHTS row updated; onboarding guidance: dedicated registration, Exchange RBAC for Applications. `Sites.Manage.All` waits for lab G15.
 - 2026-10-23 · T-0240 (from the T-0238 review). TM-D25 7e: group-membership writes are licence writes (refused under `assignedPlans`, `mail`, `proxyAddresses` or any RefuseAll); `ASSIGN_LICENSE` also refused on `mail` and `proxyAddresses`. 7g: `preferredLanguage`, `countryCode` and device OS rows fixed (the earlier "none for preferredLanguage" was wrong); canonical-key rule added. New proofs T0-DYN-LIC-GROUPMEMBER and T0-DYN-KEY; lab G14 added to T-0075.
