@@ -1,10 +1,10 @@
 package connections_test
 
 import (
-	"fmt"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"sync"
 	"testing"
