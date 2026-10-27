@@ -470,3 +470,42 @@ func TestNestedForeignAccountFSPInTrusteeClosureIsMarked(t *testing.T) {
 	wantBasis(t, f, fspDN, C19, true)
 	wantBasis(t, f, "CN=carol,OU=Staff,"+dom, C19, false)
 }
+
+// T-0384: a foreign-domain FSP for a well-known group RID (Domain Users/Guests/Computers, ...) stands
+// for every principal of that domain, so a right it holds fails the snapshot closed naming the SID;
+// the well-known single accounts 500/501/502 stay a single principal.
+func TestForeignBroadRIDFSPFailsClosed(t *testing.T) {
+	for _, rid := range []string{"512", "513", "514", "515", "516", "525", "999"} {
+		for _, c := range []string{"C19", "C17", "nested"} {
+			t.Run(c+"/"+rid, func(t *testing.T) {
+				f := forest()
+				fsp := "S-1-5-21-111-222-333-" + rid
+				fspDN := "CN=" + fsp + ",CN=ForeignSecurityPrincipals," + dom
+				f.add(fspDN, fsp, cls("top", "foreignSecurityPrincipal"))
+				switch c {
+				case "C19":
+					f.find(daDN).raw["nTSecurityDescriptor"] = sdBytes(aceSpec{sid: fsp, mask: wProp, objType: &memberID})
+				case "C17":
+					setSD(f, dom, aceSpec{sid: fsp, mask: wDACL})
+				default:
+					f.add("CN=ops384,CN=Builtin,"+dom, "S-1-5-32-902", group, "member", fspDN)
+					f.find(daDN).raw["nTSecurityDescriptor"] = sdBytes(aceSpec{sid: "S-1-5-32-902", mask: wProp, objType: &memberID})
+				}
+				r, err := classify(t, f, "CN=carol,OU=Staff,"+dom)
+				if err == nil || !r.Tier0 || !r.Unknown || !strings.Contains(err.Error(), fsp) {
+					t.Errorf("%+v %v", r, err)
+				}
+			})
+		}
+	}
+}
+
+func TestForeignWellKnownAccountFSPStaysPrincipal(t *testing.T) {
+	for _, rid := range []string{"500", "501", "502", "1000"} {
+		f := forest()
+		fsp := "S-1-5-21-111-222-333-" + rid
+		f.add("CN="+fsp+",CN=ForeignSecurityPrincipals,"+dom, fsp, cls("top", "foreignSecurityPrincipal"))
+		f.find(daDN).raw["nTSecurityDescriptor"] = sdBytes(aceSpec{sid: fsp, mask: wProp, objType: &memberID})
+		wantBasis(t, f, "CN="+fsp+",CN=ForeignSecurityPrincipals,"+dom, C19, true)
+	}
+}
