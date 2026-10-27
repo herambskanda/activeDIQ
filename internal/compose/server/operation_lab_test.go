@@ -382,7 +382,7 @@ func TestLabRule5LiveFactsDecideBackingObject(t *testing.T) {
 
 // openBugs lists the product bugs this test is marked expected-to-fail for. While any is open the run
 // must fail with its symptom; the moment it passes, the test fails and says to remove the marker.
-var openBugs = []string{"T-0465 (ConnectorReads sends no DirectoryIdentity)", "T-0466 (SubmitDirectory reads facts without tenant or DSA pins)"}
+var openBugs = []string{"T-0465 (ConnectorReads sends no DirectoryIdentity)"}
 
 // T-0421 acceptance 1: through SubmitDirectory. EXPECTED TO FAIL until T-0465 and T-0466 land: today
 // the ordinary in-scope reset is blocked facts_unavailable as well, because no live read reaches the

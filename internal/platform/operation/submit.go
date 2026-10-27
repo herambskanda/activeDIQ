@@ -210,7 +210,7 @@ func (r *Runner) planAndRoute(ctx context.Context, t tenant.ID, opID string, inp
 			return fmt.Errorf("plan transaction: %w", err)
 		}
 		var err error
-		steps, err = act.Plan(ctx, PlanContext{Tx: tx, Facts: pinnedReader{port: r.cfg.Facts, ad: d.Target == TargetAD, store: d.Target == TargetStore, pins: maps.Clone(op.Pins)}, Pins: op.Pins}, input)
+		steps, err = act.Plan(ctx, PlanContext{Tx: tx, Facts: pinnedReader{port: r.cfg.Facts, ad: d.Target == TargetAD, store: d.Target == TargetStore, pins: maps.Clone(op.Pins), dsas: maps.Clone(op.DSAs), tenant: t}, Pins: op.Pins}, input)
 		return err
 	})
 	if perr == nil {
@@ -251,7 +251,7 @@ func (r *Runner) planAndRoute(ctx context.Context, t tenant.ID, opID string, inp
 			}
 			pins[sp.Target.NC], dsas[sp.Target.NC] = pin.Host, pin.DSAGUID
 		}
-		if reason := r.authoriseTarget(ctx, t, op.Chain, d.Permission, sp.Target, pins); reason != "" {
+		if reason := r.authoriseTarget(ctx, t, op.Chain, d.Permission, sp.Target, pins, dsas); reason != "" {
 			items[i].blocked = reason
 		}
 	}
@@ -298,12 +298,14 @@ func (r *Runner) failPlan(ctx context.Context, t tenant.ID, op opRecord, cause e
 }
 
 // authoriseTarget authorises the initiator chain over live facts and returns a block reason, or "".
-func (r *Runner) authoriseTarget(ctx context.Context, tn tenant.ID, chain authority.Chain, perm authz.Permission, t authority.TargetRef, pins authority.Pins) string {
+func (r *Runner) authoriseTarget(ctx context.Context, tn tenant.ID, chain authority.Chain, perm authz.Permission, t authority.TargetRef, pins authority.Pins, dsas authority.DSAPins) string {
 	q := r.cfg.Authz.FactsQuery(chain, perm, t)
 	if r.cfg.Facts == nil {
 		return "facts_unavailable"
 	}
-	f, err := r.cfg.Facts.Facts(ctx, pins, q)
+	// The read adapter resolves the connection under the tenant and pins the DC by DSA GUID.
+	rctx := authority.WithDSAPins(authority.WithTenant(ctx, tn.String()), maps.Clone(dsas))
+	f, err := r.cfg.Facts.Facts(rctx, pins, q)
 	if err != nil {
 		return "facts_unavailable"
 	}

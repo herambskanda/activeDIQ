@@ -682,3 +682,37 @@ func TestLiveFactsIsNotPinnedFacts(t *testing.T) {
 		t.Fatal("LiveFacts port satisfies PinnedFacts: Plan could read without the operation's pins")
 	}
 }
+
+// ctxFacts is a LiveFacts that, like client.ConnectorReads, fails without the tenant and a DSA pin
+// for the target's naming context in the context (T-0466).
+type ctxFacts struct{}
+
+func (ctxFacts) Facts(ctx context.Context, _ authority.Pins, q authority.FactsQuery) (authority.Facts, error) {
+	if _, ok := authority.TenantFrom(ctx); !ok {
+		return authority.Facts{}, errors.New("read: no tenant in context")
+	}
+	if authority.DSAPinsFrom(ctx)[q.Target.NC] == "" {
+		return authority.Facts{}, errors.New("read: no DSA pin for the naming context")
+	}
+	return authority.Facts{Exists: true}, nil
+}
+
+func TestAuthoriseTargetAppliesTenantAndDSAPins(t *testing.T) {
+	r, _ := newRunner(t, behaviour{verifyOK: true}, nil, ctxFacts{}, sink{})
+	chain := authority.Chain{Requester: authority.Principal{ID: "alice", Kind: authority.Human}}
+	tr := authority.TargetRef{GUID: "g1", NC: "nc-1"}
+	pins := authority.Pins{"nc-1": "dc1.example"}
+	if got := r.authoriseTarget(context.Background(), tenant.New(), chain, "p", tr, pins, authority.DSAPins{"nc-1": "guid"}); got != "" {
+		t.Fatalf("pinned read blocked: %q", got)
+	}
+	if got := r.authoriseTarget(context.Background(), tenant.New(), chain, "p", tr, pins, nil); got != "facts_unavailable" {
+		t.Fatalf("unpinned read: %q, want facts_unavailable (the fake must really require the pins)", got)
+	}
+}
+
+func TestPlanReaderCarriesTenantAndDSAPins(t *testing.T) {
+	pr := pinnedReader{port: ctxFacts{}, ad: true, pins: authority.Pins{"nc-1": "dc1"}, dsas: authority.DSAPins{"nc-1": "guid"}, tenant: tenant.New()}
+	if _, err := pr.Facts(context.Background(), authority.FactsQuery{Target: authority.TargetRef{NC: "nc-1"}}); err != nil {
+		t.Fatal(err)
+	}
+}
