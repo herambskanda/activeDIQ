@@ -923,5 +923,32 @@ must_fail_with "fitness-packaging on a prepare script that loosens the mode" 'mo
 cp "$root/packaging/linux-oci/prepare-tls-dir.sh" "$pk/packaging/linux-oci/"
 must_pass "fitness-packaging" go run ./tools/fitness/packaging "$pk"
 
+# --- release tooling and workflows (T-0261) -----------------------------------------------------
+rt="$tmp/release"; mkdir -p "$rt"
+printf 'Contact: https://example.test/r\nExpires: 2020-01-01T00:00:00Z\n' >"$rt/security.txt"
+must_pass "renewsecuritytxt reports a stale file as due" bash -c "go run ./tools/release/renewsecuritytxt -file '$rt/security.txt' | grep -qx renew"
+go run ./tools/release/renewsecuritytxt -file "$rt/security.txt" -write >/dev/null
+must_pass "renewsecuritytxt rewrote Expires away from the stale date" bash -c "! grep -q 2020-01-01 '$rt/security.txt'"
+must_pass "renewsecuritytxt reports the renewed file as current" bash -c "go run ./tools/release/renewsecuritytxt -file '$rt/security.txt' | grep -qx current"
+printf 'Contact: x\n' >"$rt/none.txt"
+must_fail_with "renewsecuritytxt on a file without Expires" 'want exactly 1' go run ./tools/release/renewsecuritytxt -file "$rt/none.txt"
+must_fail_with "sbom without SOURCE_DATE_EPOCH (not reproducible)" 'SOURCE_DATE_EPOCH must be set' env -u SOURCE_DATE_EPOCH go run ./tools/release/sbom -version v0 -o "$rt/s.json"
+must_pass "sbom of this repository" env SOURCE_DATE_EPOCH=1790000000 go run ./tools/release/sbom -version v0.0.0-proof -o "$rt/s.json"
+seeds=$(go run ./tools/release/sign keygen); seed=$(echo "$seeds" | awk '$1=="seed"{print $2}'); pubkey=$(echo "$seeds" | awk '$1=="public"{print $2}')
+echo "$pubkey" >"$rt/k.pub"
+must_fail_with "sign without a key (never an unsigned release)" 'RELEASE_SIGNING_KEY' env -u RELEASE_SIGNING_KEY go run ./tools/release/sign sign -sig "$rt/s.sig" "$rt/s.json"
+must_pass "sign" env RELEASE_SIGNING_KEY="$seed" go run ./tools/release/sign sign -sig "$rt/s.sig" "$rt/s.json"
+must_pass "verify of the signed SBOM" go run ./tools/release/sign verify -pub "$rt/k.pub" -sig "$rt/s.sig" "$rt/s.json"
+echo tampered >>"$rt/s.json"
+must_fail_with "verify of a tampered SBOM" 'does not match' go run ./tools/release/sign verify -pub "$rt/k.pub" -sig "$rt/s.sig" "$rt/s.json"
+wf="$tmp/wf"; mkdir -p "$wf"; cp "$root"/.github/workflows/*.yml "$wf/"
+must_pass "workflows-check" tools/ci/workflows-check.sh "$wf"
+sed -i '0,/steps:/s//continue-on-error: true\n    steps:/' "$wf/release.yml"
+must_fail_with "workflows-check on continue-on-error" 'continue-on-error' tools/ci/workflows-check.sh "$wf"
+cp "$root/.github/workflows/release.yml" "$wf/"; sed -i -E 's/(uses: actions\/checkout)@[0-9a-f]{40}/\1@v4/' "$wf/release.yml"
+must_fail_with "workflows-check on an unpinned action" 'not pinned' tools/ci/workflows-check.sh "$wf"
+cp "$root/.github/workflows/release.yml" "$wf/"; sed -i 's/sign verify/sign noop/' "$wf/release.yml"
+must_fail_with "workflows-check on a release that does not verify" 'without verifying' tools/ci/workflows-check.sh "$wf"
+
 if [ "$fails" -ne 0 ]; then echo "ci-proof: $fails proof(s) failed" >&2; exit 1; fi
 echo "ci-proof: every gate rejects its violation and accepts clean input"

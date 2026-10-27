@@ -2,9 +2,9 @@
 # Standard: knowledge/development/standards/ci-gates.md · Runbook: knowledge/development/runbooks/ci-and-build.md
 # Every gate below has a failing run proving it catches a violation: `make ci-proof` (part of `make ci`).
 
-.PHONY: fitness-objectid ci gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-oracles-windows fitness-oracles-lab fitness-fuzz-nightly fitness-nightly build build-web web-install ci-proof fitness-operation fitness-disclosure fitness-packaging
+.PHONY: fitness-objectid ci gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-oracles-windows fitness-oracles-lab fitness-fuzz-nightly fitness-nightly build build-web web-install ci-proof fitness-operation fitness-disclosure fitness-packaging workflows-check
 
-ci: lint gen-check gen-api-check lint-api test fitness build secrets-scan vuln-scan lab-test-unit lab-test-windows-unit ci-proof ## Everything a merge needs: lint, generated-code freshness (connector proto and the API contract), API lint, tests, fitness functions (incl. the ADR-0001 build matrix), web build, secret scan, dependency vulnerability scan, gate proofs
+ci: lint gen-check gen-api-check lint-api test fitness workflows-check build secrets-scan vuln-scan lab-test-unit lab-test-windows-unit ci-proof ## Everything a merge needs: lint, generated-code freshness (connector proto and the API contract), API lint, tests, fitness functions (incl. the ADR-0001 build matrix), web build, secret scan, dependency vulnerability scan, gate proofs
 	@echo "make ci: passed"
 
 gen-proto: ## T-0157: regenerate the connector contract's Go code (internal/proto) from proto/ with the pinned pure-Go toolchain (no protoc, no buf)
@@ -85,6 +85,9 @@ fitness-packaging: ## T-0104, TM-TB16-T3: the Windows ACL script (Administrators
 
 fitness-disclosure: ## T-0258: SECURITY.md and .well-known/security.txt (RFC 9116): Contact named in SECURITY.md, one RFC 3339 Expires under a year ahead, fails 30 days before it so the file is renewed, Policy points at SECURITY.md
 	go run ./tools/fitness/disclosure
+
+workflows-check: ## T-0261: .github/workflows has no continue-on-error, every action is pinned to a commit SHA, release.yml verifies its signatures; the release tools' tests run in `make test`, their failing cases in `make ci-proof`
+	tools/ci/workflows-check.sh
 
 fitness-oracles-windows: ## T-0034: FF-SP6 on the Windows runner/lab (nightly): Windows PowerShell 5.1 parses pslit output; SID and GUID text/bytes through the Win32/.NET APIs. Run from a Windows host with Go and PowerShell 5.1; fails if the oracle cannot run
 	go run ./tools/fitness/corpus -report-dir $(SAFEPRIM_REPORTS)
