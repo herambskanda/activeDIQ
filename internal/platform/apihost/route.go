@@ -47,7 +47,7 @@ type Request struct {
 	Query     url.Values
 	Header    http.Header
 	Cookies   map[string][]string // cookie values by name, for cookie parameters
-	PeerIP    string              // the TCP peer address (never a forwarded header), for x-activediq-peer-ip operations
+	PeerIP    string              // the client address: the TCP peer, or the right-most untrusted X-Forwarded-For hop when the peer is a configured trusted proxy, for x-activediq-peer-ip operations
 	Upload    Upload              // set for a binary request body
 }
 

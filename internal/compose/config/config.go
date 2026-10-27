@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/netip"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -37,6 +38,9 @@ const (
 	// EnvAPIBodyBudget is the total bytes of request-body buffers the API may hold at once across all
 	// in-flight requests. It must be a positive integer.
 	EnvAPIBodyBudget = "ACTIVEDIQ_API_BODY_BUDGET"
+	// EnvTrustedProxies is a comma-separated list of CIDRs (or bare IPs) of reverse proxies whose
+	// X-Forwarded-For is believed. Empty (the default) means forwarded headers are never trusted.
+	EnvTrustedProxies = "ACTIVEDIQ_TRUSTED_PROXIES"
 	// EnvNodes is the number of server nodes in this install (a positive integer, default 1). More than one
 	// node needs the shared principal store: the server refuses to start with the in-memory store.
 	EnvNodes = "ACTIVEDIQ_NODES"
@@ -78,6 +82,8 @@ type Config struct {
 	APITLSDir string
 	// APIBodyBudget is passed to apihost.WithBodyBudget. Non-positive values fail startup.
 	APIBodyBudget int64
+	// TrustedProxies is passed to apihost.WithTrustedProxies.
+	TrustedProxies []netip.Prefix
 	// Nodes is the number of server nodes; PrincipalStore is PrincipalStorePostgres or PrincipalStoreMemory.
 	Nodes          int
 	PrincipalStore string
@@ -118,6 +124,20 @@ func Load(getenv func(string) string) (Config, error) {
 			return Config{}, fmt.Errorf("%s: must be a positive number of bytes, got %d", EnvAPIBodyBudget, n)
 		}
 		c.APIBodyBudget = n
+	}
+	if v := getenv(EnvTrustedProxies); v != "" {
+		for part := range strings.SplitSeq(v, ",") {
+			part = strings.TrimSpace(part)
+			pfx, err := netip.ParsePrefix(part)
+			if err != nil {
+				a, aerr := netip.ParseAddr(part)
+				if aerr != nil {
+					return Config{}, fmt.Errorf("%s: %q is not a CIDR or IP address", EnvTrustedProxies, part)
+				}
+				pfx = netip.PrefixFrom(a, a.BitLen())
+			}
+			c.TrustedProxies = append(c.TrustedProxies, pfx.Masked())
+		}
 	}
 	if v := getenv(EnvNodes); v != "" {
 		n, err := strconv.Atoi(v)
@@ -186,6 +206,7 @@ func (c Config) LogValue() slog.Value {
 		slog.String("api_addr", r.APIAddr),
 		slog.String("api_tls_dir", r.APITLSDir),
 		slog.Int64("api_body_budget", r.APIBodyBudget),
+		slog.Int("trusted_proxies", len(r.TrustedProxies)),
 		slog.Int("nodes", r.Nodes),
 		slog.String("principal_store", r.PrincipalStore),
 	)

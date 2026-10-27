@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"slices"
 	"strings"
@@ -21,12 +22,43 @@ func isUnsafe(method string) bool {
 	return true
 }
 
-func sourceIP(r *http.Request) string {
+// sourceIP is the client address for rate limits and audit. It is the TCP peer unless the peer is a
+// configured trusted proxy, in which case it is the right-most X-Forwarded-For hop that is not itself
+// a trusted proxy. Forwarded headers from any other peer are ignored; the left-most entries are
+// client-supplied and never trusted. Any unparsable hop makes the result the peer (fail safe).
+func (s *Server) sourceIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
+	}
+	if len(s.trustedProxies) == 0 {
+		return host
+	}
+	peer, err := netip.ParseAddr(host)
+	if err != nil || !s.isTrusted(peer) {
+		return host
+	}
+	var hops []string
+	for _, v := range r.Header.Values("X-Forwarded-For") {
+		for h := range strings.SplitSeq(v, ",") {
+			hops = append(hops, strings.TrimSpace(h))
+		}
+	}
+	for i := len(hops) - 1; i >= 0; i-- {
+		a, err := netip.ParseAddr(hops[i])
+		if err != nil {
+			return host
+		}
+		if !s.isTrusted(a) || i == 0 {
+			return a.Unmap().String()
+		}
 	}
 	return host
+}
+
+func (s *Server) isTrusted(a netip.Addr) bool {
+	a = a.Unmap()
+	return slices.ContainsFunc(s.trustedProxies, func(p netip.Prefix) bool { return p.Contains(a) })
 }
 
 func hostOnly(h string) string {
@@ -51,7 +83,7 @@ func (s *Server) routeHandler(rt Route, boundHost string) http.Handler {
 		ctx := r.Context()
 
 		// 3. per-source-IP rate limit, before any authentication work.
-		if d, err := s.ports.Limits.AllowIP(ctx, meta.Class, sourceIP(r)); err != nil {
+		if d, err := s.ports.Limits.AllowIP(ctx, meta.Class, s.sourceIP(r)); err != nil {
 			fail(err)
 			return
 		} else if !d.Allowed {
@@ -170,7 +202,7 @@ func (s *Server) routeHandler(rt Route, boundHost string) http.Handler {
 				pool.release(reserved) // only after the buffer is cleared
 			}
 		}()
-		req := &Request{PathValue: r.PathValue, Query: query, Header: r.Header, PeerIP: sourceIP(r)}
+		req := &Request{PathValue: r.PathValue, Query: query, Header: r.Header, PeerIP: s.sourceIP(r)}
 		for _, c := range r.Cookies() {
 			if !slices.Contains(meta.Cookies, c.Name) {
 				continue // only the cookies the route declares; never the session cookie

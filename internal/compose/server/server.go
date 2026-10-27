@@ -174,7 +174,7 @@ func buildAPIWith(cfg config.Config, policy apihost.Policy, lim apihost.Limiter)
 	if err != nil {
 		return nil, fmt.Errorf("server: api contract: %w", err)
 	}
-	s, err := apihost.Build(doc, nil, policy, apiCatalogue, failClosedPorts(lim), apihost.WithBodyBudget(cfg.APIBodyBudget))
+	s, err := apihost.Build(doc, nil, policy, apiCatalogue, failClosedPorts(lim), apihost.WithBodyBudget(cfg.APIBodyBudget), apihost.WithTrustedProxies(cfg.TrustedProxies))
 	if err != nil {
 		return nil, fmt.Errorf("server: build api: %w", err)
 	}

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"sync"
 	"testing"
@@ -23,13 +24,13 @@ import (
 // ---- fakes ------------------------------------------------------------------------------------
 
 type fakePorts struct {
-	principal                        apihost.Principal
-	authnErr, csrfErr, authzErr      error
-	allow, stepFresh                 bool
-	ipDeny, principalDeny            bool
-	mu                               sync.Mutex
-	calls                            []string
-	lastPerm, lastScope, lastIPClass string
+	principal                                apihost.Principal
+	authnErr, csrfErr, authzErr              error
+	allow, stepFresh                         bool
+	ipDeny, principalDeny                    bool
+	mu                                       sync.Mutex
+	calls                                    []string
+	lastPerm, lastScope, lastIPClass, lastIP string
 }
 
 func (f *fakePorts) record(c string) {
@@ -57,10 +58,10 @@ func (f *fakePorts) Allow(_ context.Context, _ apihost.Principal, perm, scope st
 	f.mu.Unlock()
 	return f.allow, f.authzErr
 }
-func (f *fakePorts) AllowIP(_ context.Context, class, _ string) (apihost.Decision, error) {
+func (f *fakePorts) AllowIP(_ context.Context, class, ip string) (apihost.Decision, error) {
 	f.record("ip")
 	f.mu.Lock()
-	f.lastIPClass = class
+	f.lastIPClass, f.lastIP = class, ip
 	f.mu.Unlock()
 	return apihost.Decision{Allowed: !f.ipDeny, RetryAfter: 1500 * time.Millisecond}, nil
 }
@@ -218,7 +219,7 @@ func docJSON(ops ...[4]string) []byte { // id, method, path, permission
 var catalogue = apihost.Permissions{"widgets.read", "widgets.write"}
 
 // serve builds a one-route server and runs a request through it.
-func serve(t *testing.T, r *row, fp *fakePorts, policy apihost.Policy, req *http.Request) *httptest.ResponseRecorder {
+func serve(t *testing.T, r *row, fp *fakePorts, policy apihost.Policy, req *http.Request, opts ...apihost.Option) *httptest.ResponseRecorder {
 	t.Helper()
 	m := r.meta
 	raw := docJSON([4]string{m.OperationID, m.Method, m.Path, m.Permission})
@@ -227,7 +228,7 @@ func serve(t *testing.T, r *row, fp *fakePorts, policy apihost.Policy, req *http
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := apihost.Build(doc, []apihost.TagHandlers{apihost.NewTagHandlers("widgets", r.route())}, policy, catalogue, fp.ports())
+	s, err := apihost.Build(doc, []apihost.TagHandlers{apihost.NewTagHandlers("widgets", r.route())}, policy, catalogue, fp.ports(), opts...)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -1048,5 +1049,46 @@ func TestUndeclaredCookiesNeverReachRoute(t *testing.T) {
 	}
 	if len(r.in.cookies) != 0 {
 		t.Fatalf("a route declaring no cookie got %v", r.in.cookies)
+	}
+}
+
+func TestClientIPTrustedProxies(t *testing.T) {
+	trusted := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
+	cases := []struct {
+		name, peer string
+		xff        []string
+		trust      []netip.Prefix
+		want       string
+	}{
+		{"no trusted proxies ignores XFF", "192.0.2.7:4000", []string{"198.51.100.7"}, nil, "192.0.2.7"},
+		{"untrusted peer ignores XFF", "192.0.2.7:4000", []string{"198.51.100.7"}, trusted, "192.0.2.7"},
+		{"right-most untrusted hop, not the spoofed left", "10.0.0.5:4000", []string{"spoof, 198.51.100.7"}, trusted, "198.51.100.7"},
+		{"valid spoofed left is still skipped", "10.0.0.5:4000", []string{"203.0.113.9, 198.51.100.7"}, trusted, "198.51.100.7"},
+		{"chained trusted proxies skipped", "10.0.0.5:4000", []string{"198.51.100.7, 10.1.1.1, 10.2.2.2"}, trusted, "198.51.100.7"},
+		{"multiple header lines", "10.0.0.5:4000", []string{"203.0.113.9", "198.51.100.7, 10.1.1.1"}, trusted, "198.51.100.7"},
+		{"garbage right-most hop falls back to peer", "10.0.0.5:4000", []string{"198.51.100.7, nonsense"}, trusted, "10.0.0.5"},
+		{"no XFF from trusted peer", "10.0.0.5:4000", nil, trusted, "10.0.0.5"},
+		{"all hops trusted uses left-most", "10.0.0.5:4000", []string{"10.9.9.9, 10.1.1.1"}, trusted, "10.9.9.9"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := meta("verify", "GET", "/widgets", "anonymous")
+			m.Class = "anonymous"
+			pol := apihost.Policy{Anonymous: []apihost.AnonymousRow{{Operation: "verify"}}}
+			r := &row{meta: m}
+			fp := newPorts()
+			req := get("/widgets")
+			req.RemoteAddr = c.peer
+			for _, v := range c.xff {
+				req.Header.Add("X-Forwarded-For", v)
+			}
+			rec := serve(t, r, fp, pol, req, apihost.WithTrustedProxies(c.trust))
+			if rec.Code >= 500 {
+				t.Fatalf("status %d: %s", rec.Code, rec.Body)
+			}
+			if r.in.peerIP != c.want || fp.lastIP != c.want {
+				t.Fatalf("PeerIP = %q, rate-limit key = %q, want both %q", r.in.peerIP, fp.lastIP, c.want)
+			}
+		})
 	}
 }
