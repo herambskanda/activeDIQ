@@ -180,29 +180,13 @@ func apiIdentity(cfg config.Config, now time.Time) (apitls.Identity, error) {
 	return id, nil
 }
 
-// buildAPI makes the API handler: apihost.Build over the embedded contract and the embedded
-// policy.yaml, with the body budget from configuration. A tag no module contributes is unmounted and
-// answers a problem.
-func buildAPI(cfg config.Config, lim apihost.Limiter, tags ...apihost.TagHandlers) (http.Handler, error) {
-	policy, err := apihost.LoadPolicy()
-	if err != nil {
-		return nil, fmt.Errorf("server: api policy: %w", err)
-	}
-	return buildAPIPortsWith(cfg, policy, failClosedPorts(lim), tags...)
-}
-
-// buildAPIPorts is buildAPI over the given ports: Run mounts the console stack's.
+// buildAPIPorts makes the API handler over the given ports: Run mounts the console stack's.
 func buildAPIPorts(cfg config.Config, ports apihost.Ports, tags ...apihost.TagHandlers) (http.Handler, error) {
 	policy, err := apihost.LoadPolicy()
 	if err != nil {
 		return nil, fmt.Errorf("server: api policy: %w", err)
 	}
 	return buildAPIPortsWith(cfg, policy, ports, tags...)
-}
-
-// buildAPIWith is buildAPI over a given policy; tests use it to prove the router follows policy.yaml.
-func buildAPIWith(cfg config.Config, policy apihost.Policy, lim apihost.Limiter, tags ...apihost.TagHandlers) (http.Handler, error) {
-	return buildAPIPortsWith(cfg, policy, failClosedPorts(lim), tags...)
 }
 
 func buildAPIPortsWith(cfg config.Config, policy apihost.Policy, ports apihost.Ports, tags ...apihost.TagHandlers) (http.Handler, error) {

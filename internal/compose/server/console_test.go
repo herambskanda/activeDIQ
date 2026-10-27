@@ -22,9 +22,11 @@ type recAuthz struct {
 	target  authority.TargetRef
 	tenant  string
 	tenantO bool
+	facts   authority.Facts
 }
 
-func (r *recAuthz) Authorize(ctx context.Context, c authority.Chain, p authz.Permission, t authority.TargetRef, _ authority.Facts) error {
+func (r *recAuthz) Authorize(ctx context.Context, c authority.Chain, p authz.Permission, t authority.TargetRef, f authority.Facts) error {
+	r.facts = f
 	r.called, r.chain, r.perm, r.target = true, c, p, t
 	r.tenant, r.tenantO = authority.TenantFrom(ctx)
 	return r.err

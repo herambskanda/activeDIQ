@@ -128,7 +128,9 @@ type Graph interface {
 	ReadSyncFeatures(ctx context.Context, token Bearer) (SyncFeatures, error)
 }
 
-// Authorizer decides a permission over a target for the initiator chain.
+// Authorizer decides a permission over a target for the initiator chain. The Attester puts the request's
+// tenant on ctx (authority.WithTenant), as the operation runner does, so a tenant-scoped authorizer
+// reads that tenant's assignments.
 type Authorizer interface {
 	Authorize(ctx context.Context, chain authority.Chain, perm authz.Permission, t authority.TargetRef) error
 }
@@ -215,7 +217,7 @@ func (a *Attester) Start(ctx context.Context, req StartRequest) (string, error) 
 	if req.Chain.Validate() != nil || req.Chain.Requester.Kind != authority.Human || len(req.Chain.Via) != 0 {
 		return deny(ReasonNotPermitted, ErrNotPermitted)
 	}
-	if err := a.cfg.Authz.Authorize(ctx, req.Chain, TakeoverAttestPermission, target); err != nil {
+	if err := a.cfg.Authz.Authorize(authority.WithTenant(ctx, req.Tenant.String()), req.Chain, TakeoverAttestPermission, target); err != nil {
 		return deny(ReasonNotPermitted, ErrNotPermitted)
 	}
 	fresh, err := a.cfg.StepUp.Fresh(ctx, req.Tenant, req.SessionID)
@@ -413,7 +415,7 @@ func (a *Attester) SetMaxAge(ctx context.Context, req MaxAgeRequest) error {
 		a.auditOnly(ctx, tid, c, target, AuditMaxAgeSet, audit.Denied, ReasonNotPermitted, nil)
 		return ErrNotPermitted
 	}
-	if err := a.cfg.Authz.Authorize(ctx, c, TakeoverAttestPermission, target); err != nil {
+	if err := a.cfg.Authz.Authorize(authority.WithTenant(ctx, tid.String()), c, TakeoverAttestPermission, target); err != nil {
 		a.auditOnly(ctx, tid, c, target, AuditMaxAgeSet, audit.Denied, ReasonNotPermitted, nil)
 		return ErrNotPermitted
 	}

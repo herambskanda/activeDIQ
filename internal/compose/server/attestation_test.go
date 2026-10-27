@@ -5,11 +5,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/compose/config"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
+	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 )
 
@@ -76,3 +78,24 @@ func splitOnce(s string) (string, string, bool) {
 type nopSink struct{}
 
 func (nopSink) Append(context.Context, store.Tx, audit.Event) error { return nil }
+
+// The attestation's entra_tenant target is read with the facts a connection root has; any other target
+// gets none, so RBAC refuses it.
+func Test_connectionAuthorizer_facts(t *testing.T) {
+	conn := "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+	for name, c := range map[string]struct {
+		t    authority.TargetRef
+		want authority.Facts
+	}{
+		"entra_tenant connection root": {authority.TargetRef{Connection: conn, GUID: conn, Class: "entra_tenant"}, authority.Facts{Exists: true, AncestorsComplete: true}},
+		"other class":                  {authority.TargetRef{Connection: conn, GUID: conn, Class: "ou"}, authority.Facts{}},
+		"object under the connection":  {authority.TargetRef{Connection: conn, GUID: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", Class: "entra_tenant"}, authority.Facts{}},
+		"no connection":                {authority.TargetRef{GUID: conn, Class: "entra_tenant"}, authority.Facts{}},
+	} {
+		ra := &recAuthz{}
+		_ = connectionAuthorizer{ra}.Authorize(context.Background(), authority.Chain{}, "p", c.t)
+		if !reflect.DeepEqual(ra.facts, c.want) {
+			t.Errorf("%s: facts %+v want %+v", name, ra.facts, c.want)
+		}
+	}
+}

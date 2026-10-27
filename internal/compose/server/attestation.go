@@ -39,7 +39,7 @@ func buildAttestation(cfg config.Config, db *store.DB, sink audit.Sink, az opera
 		return nil, fmt.Errorf("server: attestation egress: %w", err)
 	}
 	at, err := connections.NewAttester(connections.AttestConfig{
-		DB: db, Audit: sink, Authz: storeAuthorizer{az}, StepUp: su,
+		DB: db, Audit: sink, Authz: connectionAuthorizer{az}, StepUp: su,
 		IdP:      &entra.OIDCIdP{HTTP: hc, Authority: entraAuthority, ClientID: cfg.AttestClientID},
 		Graph:    &entra.GraphReader{HTTP: hc, Base: graphBase},
 		ClientID: cfg.AttestClientID, RedirectURI: publicOrigin(cfg.PublicURL) + attestCallbackPath, Authority: entraAuthority,
@@ -59,13 +59,20 @@ func publicOrigin(u string) string {
 	return u
 }
 
-// storeAuthorizer adapts the operation Authorizer's two-step question to the single call the Attester
-// makes. The attestation's target is the tenant scope of a connection, a store object, so no directory
-// facts exist to read: the facts are empty, exactly as the runner passes them for a Store action.
-type storeAuthorizer struct{ operation.Authorizer }
+// connectionAuthorizer adapts the operation Authorizer's two-step question to the single call the
+// Attester makes. The attestation's target is the entra_tenant scope of a connection: the connection is
+// the top of its own chain, so it has no ancestors and no live directory read could add any. The facts
+// say exactly that (it exists, its chain is complete, it is not a Tier-0 object) and only for a target
+// shaped that way; any other target gets empty facts, which RBAC refuses (target_facts_incomplete).
+// Without them every entra_tenant check is refused and the attestation can never start.
+type connectionAuthorizer struct{ operation.Authorizer }
 
-func (a storeAuthorizer) Authorize(ctx context.Context, c authority.Chain, p authz.Permission, t authority.TargetRef) error {
-	return a.Authorizer.Authorize(ctx, c, p, t, authority.Facts{})
+func (a connectionAuthorizer) Authorize(ctx context.Context, c authority.Chain, p authz.Permission, t authority.TargetRef) error {
+	var f authority.Facts
+	if t.Class == "entra_tenant" && t.Connection != "" && t.Connection == t.GUID {
+		f = authority.Facts{Exists: true, AncestorsComplete: true}
+	}
+	return a.Authorizer.Authorize(ctx, c, p, t, f)
 }
 
 // sessionStepUp adapts authn.StepUp.FreshSession (tenant + session handle) to the attestation's StepUp
