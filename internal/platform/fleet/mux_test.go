@@ -690,6 +690,47 @@ func TestConcurrentCallsAreBounded(t *testing.T) {
 	}
 }
 
+// A handler that outlives its cancelled call still counts against MaxCalls (T-0430, TM-TB6-T7).
+func TestCancelledPeerCallsStillCountUntilHandlerReturns(t *testing.T) {
+	release := make(chan struct{})
+	var running, peak atomic.Int32
+	serve := func(_ fleet.Identity, reg grpc.ServiceRegistrar) {
+		reg.RegisterService(&grpc.ServiceDesc{ServiceName: "t.v1.Up", HandlerType: (*any)(nil), Methods: []grpc.MethodDesc{{
+			MethodName: "Report",
+			Handler: func(_ any, _ context.Context, _ func(any) error, _ grpc.UnaryServerInterceptor) (any, error) {
+				n := running.Add(1)
+				for p := peak.Load(); n > p && !peak.CompareAndSwap(p, n); p = peak.Load() {
+				}
+				<-release // ignores cancellation, as a slow handler may
+				running.Add(-1)
+				return wrapperspb.String("late"), nil
+			},
+		}}}, struct{}{})
+	}
+	r := newRig(t, func(c *fleet.MuxConfig) { c.MaxCalls = 2; c.Binding.Serve = serve })
+	t.Cleanup(func() { close(release) })
+	for id := uint64(2); id <= 10; id += 2 {
+		r.send(fleet.Frame{CallID: id, Body: fleet.BodyOpen, Method: mReport})
+		r.send(fleet.Frame{CallID: id, Body: fleet.BodyCancel})
+	}
+	refused := 0
+	deadline := time.After(3 * time.Second)
+	for refused < 3 {
+		select {
+		case f := <-r.peer.in:
+			if f.Body == fleet.BodyClose && f.Code == int32(codes.ResourceExhausted) {
+				refused++
+			}
+		case <-deadline:
+			t.Fatalf("only %d opens refused", refused)
+		}
+	}
+	if p := peak.Load(); p > 2 {
+		t.Fatalf("%d handlers ran at once, MaxCalls is 2", p)
+	}
+	r.open(t)
+}
+
 // ---- C: untrusted CallClose text ----
 
 func TestSanitizeStatusText(t *testing.T) {
