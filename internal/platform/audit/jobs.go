@@ -2,7 +2,8 @@ package audit
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"regexp"
@@ -114,10 +115,10 @@ func RegisterJobs(cfg JobsConfig) (*Jobs, error) {
 	j := &Jobs{cfg: cfg}
 	kinds := []jobs.Kind{
 		{Name: JobCheckpoint, Timeout: 2 * time.Minute, Mode: jobs.ModeManagedTx,
-			ValidateArgs: func(a json.RawMessage) error { _, err := decodeJobArgs(a); return err },
+			ValidateArgs: func(a jsontext.Value) error { _, err := decodeJobArgs(a); return err },
 			RunManaged:   j.runCheckpoint},
 		{Name: JobForward, Timeout: 5 * time.Minute, Mode: jobs.ModeManagedTx,
-			ValidateArgs: func(a json.RawMessage) error {
+			ValidateArgs: func(a jsontext.Value) error {
 				v, err := decodeJobArgs(a)
 				if err == nil && !sinkPattern.MatchString(v.Sink) {
 					err = errors.New("args name no valid sink")
@@ -139,17 +140,15 @@ type jobArgs struct {
 }
 
 // decodeJobArgs decodes typed references and refuses unknown fields.
-func decodeJobArgs(raw json.RawMessage) (jobArgs, error) {
-	var m map[string]json.RawMessage
+func decodeJobArgs(raw jsontext.Value) (jobArgs, error) {
+	var m map[string]jsontext.Value
 	if err := json.Unmarshal(raw, &m); err != nil {
 		return jobArgs{}, errors.New("args are not an object")
 	}
 	delete(m, "tenant_id") // recorded by Enqueue
 	b, _ := json.Marshal(m)
 	var a jobArgs
-	dec := json.NewDecoder(strings.NewReader(string(b)))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&a); err != nil {
+	if err := json.Unmarshal(b, &a, json.RejectUnknownMembers(true)); err != nil {
 		return jobArgs{}, errors.New("args do not match the kind")
 	}
 	return a, nil

@@ -15,7 +15,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"encoding/pem"
 	"errors"
 	"fmt"
