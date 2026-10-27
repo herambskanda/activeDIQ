@@ -58,8 +58,7 @@ CREATE TABLE public.connection_attestation_attempts (
   expires_at timestamptz NOT NULL,
   PRIMARY KEY (tenant_id, id),
   FOREIGN KEY (tenant_id, connection_id) REFERENCES public.connections (tenant_id, id),
-  UNIQUE (tenant_id, state_hash),
-  CHECK (expires_at > created_at)
+  UNIQUE (tenant_id, state_hash)
 );
 
 ALTER TABLE public.connection_attestation_attempts ENABLE ROW LEVEL SECURITY;
