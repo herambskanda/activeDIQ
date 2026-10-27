@@ -5,7 +5,7 @@ updated: 2026-10-27
 status: review
 owner: heramb
 author: security-architect
-ticket: T-0495, T-0388, old T-0007, T-0032, T-0044, T-0051, T-0055, T-0108, T-0179, T-0111, T-0227, T-0230, T-0235, T-0240, T-0395
+ticket: T-0495, T-0388, T-0359, old T-0007, T-0032, T-0044, T-0051, T-0055, T-0108, T-0179, T-0111, T-0227, T-0230, T-0235, T-0240, T-0395
 binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), blueprint v0 (review), safe-primitives.md (review)
 sources_last_checked: 2026-10-02
 ---
@@ -2028,6 +2028,46 @@ operation of the document (`x-permission: anonymous`, ADR-0004 rule 5) or a non-
    for an unknown account, a wrong password, a non-local account, a disabled account and a
    throttled account. An unknown account still costs one password-hash verification against a
    fixed dummy hash. AN-9 answers the same for an unmapped principal and a disabled account.
+   **Per-account limit on AN-8 (DECISION TM-D22 amendment, T-0359).** The per-account `auth` bucket
+   of §7.8 is a *throttle*, never a status code. A `429` that appears only for a name that has
+   been tried is an oracle for "this name was tried", and a `429` that appears only for existing
+   accounts is an oracle for existence, so AN-8 never answers a per-account `429`. The rules:
+   a. **Key.** The bucket and the rule-3 failure counter share one key: tenant plus the
+      *normalised submitted username*, using the same normalisation function the account lookup
+      uses (trim, Unicode NFC, case-fold), so a spelling variant cannot reach a fresh bucket. The
+      key is created for **every** submitted name, whether or not the account exists, is local,
+      or is disabled. The store holds `HMAC-SHA256(server key, tenant ‖ normalised name)`, never the
+      name, and rows expire after the 15-minute window. A key that exists only for real accounts
+      would be the oracle, so there is no code path "account not found, skip the throttle".
+   b. **Effect.** When the bucket is empty, or the rule-3 delay window has not passed, the request
+      is **not evaluated**: the password is not checked, even if it is right. It does the same
+      work as an unknown account (one hash verification against the fixed dummy hash) and answers
+      the one `401 /problems/sign-in-failed`. The delay is a not-before time, so the server holds
+      no connection open for it; every answer leaves after the same fixed latency floor
+      (the dummy-hash cost), whichever branch ran.
+   c. **Identical on the wire.** Throttled-known, throttled-unknown, wrong-password and
+      unknown-account answers have the same status, body bytes and header names and values:
+      no `Retry-After` (the T-0193 contract allows one only if common to all failures, and AN-8
+      gives none), no `Set-Cookie`, no rate-limit headers, the same `Content-Length`.
+   d. **`429` that remains.** Only the *source-IP* `429` (§7.8 floor and per-IP `auth` rows, chain
+      step 3, before the body is read) and the global limits below. They are decided before the
+      submitted name is known or by values that do not depend on it. A failure of the shared
+      store refuses the request with the same `401` (fail closed, no evaluation).
+   e. **Bounded state.** The key table has a cap. When it is full, a *new* key falls into one
+      shared overflow bucket for all new keys; the answer is still the uniform `401`, so the cap
+      is not observable per name. The delay window uses no waiting goroutine, so a flood of
+      names does not exhaust connections.
+   f. **Counting.** A non-evaluated attempt counts as a failure for rule 3 (otherwise
+      hammering during the window would be free), capped at the rule-3 ceiling of 15 minutes.
+      Residual R-AN8-1: anyone on L1 can push a known break-glass name into the delay window with
+      5 bad guesses. That is the cost of "throttled, never locked" (rule 3), alerts reach every
+      `tenant-owner` at 10 failures in an hour, and the CIDR allow-list (rule 4) bounds who can.
+   g. **Never logged by name.** The audit event for an AN-8 failure records the key hash, tenant
+      and client IP. The raw submitted name is recorded only when it matches an existing account,
+      because a mistyped password in the username field must not reach the log.
+   **AN-10** may keep `429` for its pending-handle bucket: the handle is a 256-bit random value,
+   not an account name, and an unknown, expired and live handle all consume the same bucket keyed
+   on the hash of the submitted handle, so the status leaks nothing about accounts.
 3. **Break-glass is throttled, never locked.** A hard lockout of a break-glass account would let
    anyone on L1 disable the emergency path, which is a denial of service on recovery. Instead, after
    5 failures in 15 minutes the account is delayed exponentially (1 s doubling to a 15-minute cap,
@@ -2130,7 +2170,7 @@ appears in the body, and that the 200 body is exactly `{"status":"ok"}` (rule 8)
 1 MiB `Content-Length` and with a chunked body to a `BodyNone` operation, and asserts 413 with the
 handler never called, and that `Content-Length: 0` reaches the handler (rule 9). Adding a
 row to the table above is a §14 trigger (RT-7). TM-F-SESSION adds cases for rules 1 to 4, and
-TM-F-ABUSE for rules 2 and 3. Rows AN-8 to AN-10 were added under RT-7 by T-0032 (2026-10-21).
+TM-F-ABUSE for rules 2 and 3. **TM-F-ABUSE AN-8 tests (T-0359; package `internal/platform/authn`, each run against the real handler with the store faked only at its port):** `TestAN8ThrottledKnownEqualsUnknown` (a known local account and an unknown name, each driven past burst 5 and past the rule-3 window, give byte-identical status, body and header sets, and no `Retry-After`), `TestAN8NeverAnswersPerAccount429` (100 requests for one name spread over 10 source IPs, each under the per-IP `auth` burst of 30, and none is `429`), `TestAN8ThrottledCorrectPasswordRefused` (the right password sent while the bucket is empty answers the `401` and creates no pending sign-in), `TestAN8ThrottleKeyIgnoresExistence` (the store sees one key per submitted name for existing, unknown, non-local and disabled accounts, and a case or Unicode-normalisation variant maps to the same key) and `TestAN8TableFullIsNameIndependent` (with the key table full, a new existing and a new unknown name both get the uniform `401`). `fitness-api` A12 additionally refuses an AN-8 operation that declares a `429` response outside the source-IP form. Rows AN-8 to AN-10 were added under RT-7 by T-0032 (2026-10-21).
 
 **Which rows are in `policy.yaml` today.** An entry that names an operation absent from the
 contract is stale and fails A13, and an entry with a `host` fails until T-0018 lands the
@@ -2191,7 +2231,8 @@ expired, replayed assertion ID, algorithm substitution, XML external entities �
 
 ADR-0004 rule 10 gives every operation a rate class. These are the default numbers `apihost` ships
 with. Each limit is a token bucket: **rate** is the refill per minute and **burst** is the bucket
-size. A limited request gets `429 /problems/rate-limited` with `Retry-After`. There is no daily
+size. A limited request gets `429 /problems/rate-limited` with `Retry-After`, **except** the AN-8
+per-account row, which answers the uniform `401` (§7.6 rule 2, T-0359). There is no daily
 quota and no metering, which keeps the ADM-190 lead. The competitor's ADManager Plus allows 50 API
 calls per technician per day, then charges per extra call (parity matrix row 18,
 `knowledge/business/competitive-analysis/feature-parity-matrix.md`).
@@ -2201,7 +2242,8 @@ calls per technician per day, then charges per extra call (parity matrix row 18,
 | *(all)* | Every request, chain step 3, before authentication | Source IP | 1200 | 300 | A floor against unauthenticated floods that still fits about 50 technicians behind one NAT or proxy at about 20 requests a minute each. The non-API health probes (`/healthz`, `/readyz`) and static assets (AN-1, AN-2) are limited only by this |
 | `anonymous` | AN-1 operations (`getLiveness`, `getReadiness`), AN-4, AN-5, AN-7 operations | Source IP | 60 | 20 | End users enrol from shared office IPs. The flow's own per-account gate (TM-TB1-T9 counter, TB11 rules) is the real control; this bounds cost. For AN-1 the class is the whole control. A monitor polling both operations every 10 seconds uses 12 a minute. Orchestrators probe `/healthz` and `/readyz`, which only the floor limits |
 | `auth` | AN-3, AN-8, AN-9, AN-10, AN-11 | Source IP | 60 | 30 | A morning sign-in rush through one NAT takes 2 to 4 requests per person. Password guessing is stopped per account (§7.6 rule 3, TM-TB1-T9), not by this |
-| `auth` | AN-8, AN-10 | Target account or pending handle | 10 | 5 | Per-account guessing. AN-10 is further capped by 5 attempts per pending sign-in |
+| `auth` | AN-8 | Normalised submitted username (per tenant, any name, existing or not), **uniform 401, never 429** | 10 | 5 | Per-account guessing. Enforced as the §7.6 rule 2 throttle (no evaluation, dummy-hash work, uniform `401 /problems/sign-in-failed`) plus the rule 3 delay, because a `429` here is an enumeration oracle (T-0359) |
+| `auth` | AN-10 | Pending handle (hash of the submitted value) | 10 | 5 | Per-handle guessing. A limited request gets `429` (the handle is not an account name, §7.6 rule 2). Further capped by 5 attempts per pending sign-in |
 | `read` | GET and HEAD by default | Principal (session or token) | 600 | 120 | A console page fans out to 10 to 20 calls. A script paging through 100,000 users at 1,000 per page needs 100 calls. Generous because reads are scope-trimmed and cheap |
 | `write` | Other methods by default | Principal | 120 | 30 | Two single-object writes a second sustained. Mass change goes through `bulk`, so it gets Plan, approvals and per-DC concurrency |
 | `bulk` | Bulk-job submission | Principal | 10 | 3 | Each call starts a job of many items. The job queue and per-DC concurrency meter the directory load, not HTTP |
@@ -2754,7 +2796,7 @@ Existing proofs this document relies on: FF-SP1–SP9 (`tools/fitness/safeprim`)
 | TM-F-SSO | A forged, wrapped, replayed or mis-addressed SAML/OIDC response is accepted (§7.7) | CI fuzz corpus | T-0073 (backend-engineer), with ADM-143 spec | TB8 |
 | TM-F-SECRETOUT | A canary secret appears in any log, error, audit detail, response, metric or export; a response schema carries a secret field (§9.7) | CI | `tools/fitness/safeprim` (FF-SP extension, `secretjson` delivered) + `fitness-api` A8 (T-0017) | TB1-T7, TB2-T6, TB8-T5, TB9-T5/T6 |
 | TM-F-EGRESS | An integration reaches loopback, link-local, metadata or private ranges without an allow-list entry; a redirect escapes; DNS rebinding works; TLS is unverified; webhooks are unsigned | CI | T-0071 (backend-engineer) | TB9, TB15-T7 |
-| TM-F-ABUSE | Responses differ for existing vs non-existing accounts (body, status, timing class), including AN-8 and AN-9 (§7.6 rule 2); a break-glass account locks rather than throttles (§7.6 rule 3); our counter lets the domain lockout threshold be reached; an OTP works twice or late; enrolment proceeds without the user's own authentication | CI + Samba lab | T-0073 (backend-engineer); ENH-09 spec; M4 SSPR spec | TB1-T9/T13, TB3-T8, TB11, TB13-T5 |
+| TM-F-ABUSE | Responses differ for existing vs non-existing accounts (body, status, timing class), including AN-8 and AN-9 (§7.6 rule 2); AN-8 answers a per-account `429` or any status, body or header difference between a throttled known name and a throttled unknown name (rule 2 a to g, T-0359); a break-glass account locks rather than throttles (§7.6 rule 3); our counter lets the domain lockout threshold be reached; an OTP works twice or late; enrolment proceeds without the user's own authentication | CI + Samba lab | T-0073 (backend-engineer); ENH-09 spec; M4 SSPR spec | TB1-T9/T13, TB3-T8, TB11, TB13-T5 |
 | TM-F-HOST | Installer runs on a DC; service runs as LocalSystem/root; config, keytab or keystore readable by others; a default credential or plaintext listener exists at first run; setup secret reusable; dumps enabled; a remote DB DSN without full TLS verification is accepted | Windows lab + OCI CI, extends P2 | T-0136 (devops-engineer), T-0104 | TB1-T2, TB4-T1, TB5, TB14-T3, TB16 |
 | TM-F-PORTS | A booted install listens on anything not in §8.1 | CI, extends P2 | T-0137 | TB6-T8, TB14-T6, TB16-T10 |
 | TM-F-EDGE [M4] | An admin/API route is reachable through the tunnel; an unpinned tunnel peer is accepted; edge links credential or store code (§8.2) | CI | M4 SSPR spec | TB11 |
@@ -2800,6 +2842,7 @@ control.
 | TM-R21 | **R-C19-DEPTH, accepted (T-0235).** C19 is depth 1. A principal that controls only a *controller* of a Domain Admins group (for example WriteDACL on a help-desk user who holds WP `member` on Domain Admins) is not `tier0`; the controller is | A transitive closure over ACL edges makes most of a real directory `tier0` and the guard unusable; BloodHound's Tier Zero is likewise a curated set, not a closure `[UNVERIFIED — current definition]`. Two hops of control still need one compromised hop first, and the first hop is `tier0` and refused | security-architect | an exposure-path view (TM-Q30); a customer asking for depth 2 |
 | TM-R22 | **R-C19-SYSVOL, accepted (T-0235).** Control of a `tier0` GPO's SYSVOL folder is not read by the classifier | It is an SMB ACL on every DC; reading it needs a second channel and more rights than the connector may hold. The GPO object ACL and the links are covered | security-architect | TM-Q30 scan |
 | TM-R23 | The guarded table is only as complete as our knowledge: a schema extension, a new Windows attribute or an ADCS change can add a sign-in-granting write we do not list. Entra SSPR contact rows are conservative until lab G17 | Closed tables cannot know the future; B1 makes every addition a reviewed diff and the nightly schema grep flags credential-like attributes (§6.9a) | security-architect | Lab G17 (T-0075) |
+| R-AN8-1 | Anyone who reaches AN-8 on L1 can push a known break-glass name into the rule 3 delay window with 5 bad guesses, delaying the legitimate operator (T-0359, §7.6 rule 2f) | "Throttled, never locked" (rule 3) trades lockout for delay; a hard lock would let L1 disable recovery | security-architect | alerts at 10 failures/hour, CIDR allow-list (rule 4); a customer asking for a second recovery path |
 
 ### 16.2 Decisions owed to the CEO (not asked now)
 
@@ -2957,6 +3000,7 @@ External, in order of first use:
 - 2026-10-27 · T-0495 (from the T-0206 review). §7.6 rule 10: AN-9 refuses AD-disabled, expired, locked-out, deleted or SID-changed principals by an inventory pre-check plus an authoritative live connector read at sign-in, failing closed; no ticket-age bound (authtime is the TGT logon time). Residual R-AN9-1 (DC replication lag), R-AN9-2 (timing). TM-F-SSO adds `an9_refuses_ad_disabled`.
 - 2026-10-27 · T-0388. §6.9 rule 5 rewritten from five changes to the closed `guarded v1` table (AD and Entra classes, a `denied` set, a tightening exemption), each with a source. New §6.9a DECISION TM-D28: typed constructors, one class per Action, a runtime check in `client.Write`, and fitness function `fitness-backing` rules B1 to B9 with a machine-readable `guarded-v1` block. New proof TM-F-BACKING, residual TM-R23, lab G17 (routed to T-0075), sources 86 to 94. DM-30.I7 updated to match.
 - 2026-10-26 · T-0395 (D-0007 follow-up). §6.6 adds lab G16. It reads Graph's live `appRoles` to confirm the name and role id of `Sites.Manage.All` (expected `0c0bf378-…`, from Microsoft's permissions reference). It asserts EV3 `ENTRA_DENY_LIST_PERMISSION`, with role ids, for the seven T-0369 values in a real tenant, and EV5 for the read-only counterparts. `Sites.Manage.All` now waits for G16, not G15 (G15 covers only the non-Graph grants). Routed to T-0075.
+- 2026-10-27 · T-0359 (from the T-0193 review). §7.6 rule 2 gains sub-rules a to g and §7.8 splits the `auth` per-account row: AN-8 is throttled by no-evaluation plus the rule 3 delay and the uniform `401`, keyed on the normalised submitted name (HMAC, every name, bounded table, fail closed); AN-10 keeps `429` on the pending handle. New residual R-AN8-1. TM-F-ABUSE names the five tests below (§7.6 proof note). Build ticket T-0200 must pass them.
 - 2026-10-26 · T-0369 (from T-0303). §6.6 deny list adds `Mail.ReadWrite`, `Mail.Send`, `Mail-Advanced.ReadWrite.All`, `MailboxItem.ReadWrite.All`, `MailboxItem.ImportExport.All`, `Files.ReadWrite.All`, `Sites.ReadWrite.All` (any resource, EV3 block); the T-0303 gap sentence is replaced; TM-F-RIGHTS row updated; onboarding guidance: dedicated registration, Exchange RBAC for Applications. `Sites.Manage.All` waits for lab G15.
 - 2026-10-23 · T-0240 (from the T-0238 review). TM-D25 7e: group-membership writes are licence writes (refused under `assignedPlans`, `mail`, `proxyAddresses` or any RefuseAll); `ASSIGN_LICENSE` also refused on `mail` and `proxyAddresses`. 7g: `preferredLanguage`, `countryCode` and device OS rows fixed (the earlier "none for preferredLanguage" was wrong); canonical-key rule added. New proofs T0-DYN-LIC-GROUPMEMBER and T0-DYN-KEY; lab G14 added to T-0075.
 - 2026-10-23 · T-0230 (from the T-0225 review). TM-D25 rule 7 rewritten as 7a to 7h: it covers every dynamic group in a designated closure (nested at any depth, not only designated seeds); `Direct Reports for` rules depend on `user.manager`; create and invite are writes of every property (the new object matches rules by absence), so they are refused while a closure dynamic group exists; licence assignment (user and group) writes `assignedPlans`; synced AD writes, moves and `userAccountControl` are Entra property writes and go through the same `CheckPropertyWrite`; closed mapping table `ruleprops v1` from rule property to Graph write path and AD attribute. New TM-R19; TM-F-T0GUARD extended with the T-0230 proof table. Connector contract §8.9 and T-0098 guard contract updated. Sources: dynamic membership rules, Entra Connect synchronized attributes, Graph user resource, device update.
