@@ -106,6 +106,9 @@ type Target struct {
 	Complete  bool
 	// Tier0 is the Tier-0 flag (DM-16.I8): no role or scope may lift it.
 	Tier0 bool
+	// CorrelatedTier0 is true when the target has any correlation to a tier0 object on the other
+	// side (C16, E5). Correlation-derived grants never apply to it.
+	CorrelatedTier0 bool
 }
 
 // chain returns the target itself followed by its ancestors.
@@ -179,6 +182,8 @@ func (s Scope) covers(t Target) bool {
 // Role is a set of permissions.
 type Role struct {
 	Permissions []Permission
+	// TenantOwner marks the tenant-owner role. It never carries across a correlation (TM-D17 (h)).
+	TenantOwner bool
 }
 
 func (r Role) has(p Permission) bool { return slices.Contains(r.Permissions, p) }
@@ -187,6 +192,8 @@ func (r Role) has(p Permission) bool { return slices.Contains(r.Permissions, p) 
 type Assignment struct {
 	Role  Role
 	Scope Scope
+	// Via is non-nil when the assignment reaches the principal through a correlation (hybrid.go).
+	Via *Derivation
 }
 
 // Principal is the human (or owner) whose authority is evaluated. Assignments must be the current
@@ -212,6 +219,9 @@ type Token struct {
 type Decision struct {
 	Allowed bool
 	Reason  Reason
+	// HybridRefusals lists correlation-derived grants that matched the permission and target but
+	// were skipped by the hybrid gate. The caller audits each with its reason, allowed or not.
+	HybridRefusals []HybridRefusal
 }
 
 func deny(r Reason) Decision { return Decision{Reason: r} }
@@ -273,10 +283,25 @@ func (e Evaluator) Authorize(p *Principal, tok *Token, perm Permission, target T
 	if tok != nil && tok.Scope != nil && !tok.Scope.covers(target) {
 		return deny(ReasonTokenExcludes)
 	}
+	var refusals []HybridRefusal
 	for _, a := range p.Assignments {
-		if a.Role.has(perm) && a.Scope.covers(target) {
-			return Decision{Allowed: true, Reason: ReasonAllowed}
+		if !a.Role.has(perm) || !a.Scope.covers(target) {
+			continue
 		}
+		if a.Via != nil {
+			r, ok := hybridCheck(a, perm)
+			if ok && target.CorrelatedTier0 {
+				r, ok = HybridRefusal{Reason: ReasonHybridTier0}, false
+			}
+			if !ok {
+				refusals = append(refusals, r)
+				continue
+			}
+		}
+		return Decision{Allowed: true, Reason: ReasonAllowed, HybridRefusals: refusals}
+	}
+	if len(refusals) > 0 {
+		return Decision{Reason: refusals[0].Reason, HybridRefusals: refusals}
 	}
 	return deny(ReasonNotInScope)
 }
@@ -385,7 +410,9 @@ func (e Evaluator) CheckGrant(grantor *Principal, tok *Token, role Role, scope S
 func holdsOverScope(g *Principal, perm Permission, s Scope) bool {
 	for _, root := range s.Include {
 		if !slices.ContainsFunc(g.Assignments, func(a Assignment) bool {
-			return a.Role.has(perm) && assignmentContains(a.Scope, root, s.Exclude)
+			// A grant is RBAC administration, so it never crosses a correlation (TM-D17 rule 5):
+			// a correlation-derived assignment can never back a grant, whatever its state.
+			return a.Via == nil && a.Role.has(perm) && assignmentContains(a.Scope, root, s.Exclude)
 		}) {
 			return false
 		}
@@ -438,7 +465,7 @@ func grantRootsComplete(g *Principal, tok *Token, role Role, scope Scope) bool {
 		return false
 	}
 	for _, a := range g.Assignments {
-		if slices.ContainsFunc(role.Permissions, a.Role.has) && !ok(a.Scope) {
+		if a.Via == nil && slices.ContainsFunc(role.Permissions, a.Role.has) && !ok(a.Scope) {
 			return false
 		}
 	}
