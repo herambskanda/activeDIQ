@@ -1,6 +1,7 @@
 package connection
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"time"
@@ -184,4 +185,52 @@ func (s Store) Activate(ctx context.Context, tx store.Tx, id ID) (Connection, er
 		return Connection{}, &ActivationError{Code: why}
 	}
 	return s.Transition(ctx, tx, id, cur.State, StateActive)
+}
+
+// OverrideEvidence is what the override's audit event commits to (DM-25.I7): how many fingerprints
+// the override acknowledges and their salted digest. It carries no fingerprint.
+type OverrideEvidence struct {
+	Count  int
+	Digest []byte
+}
+
+// OverrideEvidenceFor computes the evidence for acknowledging the run: the run's whole over-privilege
+// fingerprint set, digested under adq-override-digest/1 with the run's digest_salt. A run is
+// immutable, so this agrees with what AcknowledgeTier0Override stores for the same run.
+func (s Store) OverrideEvidenceFor(ctx context.Context, tx store.Tx, conn ID, vid VerificationID) (OverrideEvidence, error) {
+	if err := requireTenant(ctx, tx); err != nil {
+		return OverrideEvidence{}, err
+	}
+	cur, err := s.Get(ctx, tx, conn)
+	if err != nil {
+		return OverrideEvidence{}, err
+	}
+	v, err := getVerification(ctx, tx, conn, vid, true)
+	if err != nil {
+		return OverrideEvidence{}, err
+	}
+	var salt []byte
+	if err := tx.QueryRow(ctx, `SELECT digest_salt FROM public.connection_verifications WHERE connection_id = $1::uuid AND id = $2::uuid`,
+		string(conn), string(vid)).Scan(&salt); err != nil {
+		return OverrideEvidence{}, fmt.Errorf("connection: override evidence: %w", errOrNoRow(err))
+	}
+	fps := overPrivilegeFingerprints(cur.Kind, v)
+	if len(fps) == 0 {
+		return OverrideEvidence{}, &OverrideError{Code: ReasonNoFindings}
+	}
+	return OverrideEvidence{Count: len(fps), Digest: OverrideDigest(salt, fps)}, nil
+}
+
+// VerifyOverrideEvidence reports whether the stored override acknowledges exactly the set the plan
+// committed to. Apply calls it so the event never states a digest the row does not back.
+func (Store) VerifyOverrideEvidence(ctx context.Context, tx store.Tx, o Tier0Override, want OverrideEvidence) error {
+	var salt []byte
+	if err := tx.QueryRow(ctx, `SELECT digest_salt FROM public.connection_verifications WHERE connection_id = $1::uuid AND id = $2::uuid`,
+		string(o.ConnectionID), string(o.VerificationID)).Scan(&salt); err != nil {
+		return fmt.Errorf("connection: override evidence: %w", errOrNoRow(err))
+	}
+	if len(o.AcknowledgedFingerprints) != want.Count || !bytes.Equal(OverrideDigest(salt, o.AcknowledgedFingerprints), want.Digest) {
+		return fmt.Errorf("%w: the acknowledged set changed since the plan", ErrInvalid)
+	}
+	return nil
 }
