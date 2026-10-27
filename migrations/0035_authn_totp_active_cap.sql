@@ -3,10 +3,13 @@
 -- online guess rate would otherwise scale with N times the per-enrolment failure budget (DM-37.I5).
 -- Enforced here, not in the application: a trigger on the transition into 'active' (and on an insert
 -- that is born active) counts the account's other active TOTP rows under a per-account advisory lock,
--- so two concurrent activations cannot both pass. The count must see the other transaction's commit,
--- which a REPEATABLE READ snapshot taken before the lock would not, so that isolation level is refused
--- (READ COMMITTED re-reads after the lock; SERIALIZABLE fails the loser with 40001). End-user enrolments (keyed by directory object) are
--- not console factors and are not counted. SQLSTATE AD409 = cap reached.
+-- so two concurrent activations cannot both pass. The count must see the other transaction's commit.
+-- Only READ COMMITTED (and READ UNCOMMITTED, which PostgreSQL runs as READ COMMITTED) are accepted:
+-- they take a fresh snapshot per statement, so the count after the lock sees the winner's commit.
+-- REPEATABLE READ and SERIALIZABLE are refused with AD409, because a transaction snapshot taken
+-- before the lock hides a concurrent commit, and SSI does not detect a race with a READ COMMITTED
+-- writer. End-user enrolments (keyed by directory object) are not console factors and are not
+-- counted. SQLSTATE AD409 = cap reached.
 
 CREATE FUNCTION public.authn_enrollments_active_cap() RETURNS trigger
   LANGUAGE plpgsql
