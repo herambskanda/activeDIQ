@@ -380,3 +380,56 @@ func Test_pending_table_guards(t *testing.T) {
 		}
 	})
 }
+
+// An end-user (AN-5) TOTP enrolment, keyed by the account's directory object, is gated only by the AD
+// password. It must never satisfy the console second factor (TM §7.6 rule 1, DM-04.I2).
+func Test_pending_refuses_end_user_enrolment(t *testing.T) {
+	const conn, guid = "00000000-0000-4000-8000-0000000000c1", "11111111-2222-4333-8444-555555555555"
+	eachPending(t, func(t *testing.T, e *pendEnv) {
+		ctx := context.Background()
+		if err := fixtureAs(e.db, e.ten, `INSERT INTO public.connections (tenant_id, id, kind, display_name, credential_id, transport_security)
+			VALUES ($1::uuid, $2::uuid, 'ad_forest', 'c', $3::uuid, 'ldaps')`, e.ten.String(), conn, conn); err != nil {
+			t.Fatal(err)
+		}
+		a, err := e.accts.Create(ctx, NewAccount{Tenant: e.ten, Kind: KindDirectory, DisplayName: "ad", CreatedBy: "system",
+			Ref: &DirectoryRef{ConnectionID: conn, ObjectGUID: guid}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.accts.SetState(ctx, e.ten, a.ID, AccountActive, authority.Chain{Requester: authority.Principal{ID: "system", Kind: authority.System}}); err != nil {
+			t.Fatal(err)
+		}
+		var id string
+		var seed []byte
+		if err := e.tx(t, e.ten, func(ctx context.Context, tx store.Tx) error {
+			p, err := e.svc.Enroll(ctx, tx, e.ten, Subject{ConnectionID: conn, ObjectGUID: guid}, "phone")
+			if err != nil {
+				return err
+			}
+			id = p.ID
+			p.Seed.Expose(func(b []byte) { seed, err = base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(string(b)) })
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.tx(t, e.ten, func(ctx context.Context, tx store.Tx) error {
+			return e.svc.Activate(ctx, tx, e.ten, id, hotp(seed, stepAt(e.now)))
+		}); err != nil {
+			t.Fatal(err)
+		}
+		e.now = e.now.Add(StepSeconds * time.Second)
+		h, err := e.pending.Begin(ctx, BeginInput{Tenant: e.ten, Account: a.ID, FirstFactor: FirstKerberos, ClientIP: netip.MustParseAddr("192.0.2.7")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.sf.VerifyTOTP(ctx, h, hotp(seed, stepAt(e.now))); !errors.Is(err, ErrSecondFactorRefused) {
+			t.Fatalf("end-user enrolment accepted as console second factor: %v", err)
+		}
+		if n := e.sessions(t); n != 0 {
+			t.Fatalf("%d sessions", n)
+		}
+		if got := e.row(t, "attempts"); got != "1" {
+			t.Fatalf("attempts = %s, want 1 (charged)", got)
+		}
+	})
+}

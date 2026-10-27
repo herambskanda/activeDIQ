@@ -306,13 +306,13 @@ func (f *SecondFactor) VerifyTOTP(ctx context.Context, h PendingHandle, code str
 	return res, nil
 }
 
-// activeTOTPIDs lists the active TOTP enrolments of an active account, oldest first: those keyed by
-// the account, and those keyed by its directory object (connection + objectGUID). nil when the account
-// is not active or has none.
+// activeTOTPIDs lists the active console-MFA TOTP enrolments of an active account, oldest first. Only
+// enrolments keyed by the account itself count: an end-user (AN-5) enrolment is keyed by directory
+// object and is gated by the AD password alone, so accepting it here would make both factors one
+// password (TM §7.6 rule 1; DM-04.I2). nil when the account is not active or has none.
 func activeTOTPIDs(ctx context.Context, tx store.Tx, t tenant.ID, account string) ([]string, error) {
 	rows, err := tx.Query(ctx, `SELECT e.id::text FROM public.authn_authenticator_enrollments e
-JOIN public.authn_accounts a ON a.tenant_id = e.tenant_id
- AND ((e.account_id = a.id) OR (e.connection_id = a.directory_connection_id AND e.object_guid = a.directory_object_guid))
+JOIN public.authn_accounts a ON a.tenant_id = e.tenant_id AND e.account_id = a.id
 WHERE a.tenant_id = $1::uuid AND a.id = $2::uuid AND a.state = 'active' AND e.method = 'totp' AND e.state = 'active'
 ORDER BY e.created_at, e.id`, t.String(), account)
 	if err != nil {
