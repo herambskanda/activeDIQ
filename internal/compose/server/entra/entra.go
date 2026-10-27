@@ -1,11 +1,13 @@
-package connections
+package entra
 
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"github.com/skenzeriq/activediq/internal/modules/connections"
 	"io"
 	"net/http"
 	"net/url"
@@ -19,10 +21,10 @@ type HTTPDoer interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
-// maxIdPBody caps what the adapters read from the token endpoint or Graph.
+// maxIdPBody caps what the adapters read from the token endpoint or connections.Graph.
 const maxIdPBody = 1 << 20
 
-// graphResource is the audience of a Microsoft Graph access token (appId and URL forms).
+// graphResource is the audience of a Microsoft connections.Graph access token (appId and URL forms).
 // https://learn.microsoft.com/en-us/graph/auth/auth-concepts
 const (
 	graphAppID = "00000003-0000-0000-c000-000000000000"
@@ -41,7 +43,7 @@ var (
 // OIDCIdP redeems an authorization code at login.microsoftonline.com (authorization code + PKCE,
 // public client). It requests nothing but the attestation scope, so the endpoint issues no refresh
 // token and no ID token; if it sent either anyway, they are never decoded into a field, so they die with
-// the response. Only the access token, as a Bearer, and the claims the flow needs leave Exchange.
+// the response. Only the access token, as a connections.Bearer, and the claims the flow needs leave Exchange.
 type OIDCIdP struct {
 	HTTP      HTTPDoer
 	Authority string // https://login.microsoftonline.com; the tenant is appended per request
@@ -49,7 +51,7 @@ type OIDCIdP struct {
 	Now       func() time.Time // nil: time.Now
 }
 
-var _ IdP = (*OIDCIdP)(nil)
+var _ connections.IdP = (*OIDCIdP)(nil)
 
 type tokenResponse struct {
 	AccessToken string `json:"access_token"`
@@ -57,10 +59,10 @@ type tokenResponse struct {
 	Scope       string `json:"scope"`
 }
 
-// Exchange implements IdP.
-func (i *OIDCIdP) Exchange(ctx context.Context, req ExchangeRequest) (Grant, error) {
+// Exchange implements connections.IdP.
+func (i *OIDCIdP) Exchange(ctx context.Context, req connections.ExchangeRequest) (connections.Grant, error) {
 	if i == nil || i.HTTP == nil || i.Authority == "" || i.ClientID == "" || req.TenantID == "" || req.Code == "" || req.CodeVerifier == "" {
-		return Grant{}, ErrIdPExchange
+		return connections.Grant{}, ErrIdPExchange
 	}
 	form := url.Values{}
 	form.Set("client_id", i.ClientID)
@@ -72,56 +74,56 @@ func (i *OIDCIdP) Exchange(ctx context.Context, req ExchangeRequest) (Grant, err
 	endpoint := strings.TrimRight(i.Authority, "/") + "/" + url.PathEscape(req.TenantID) + "/oauth2/v2.0/token"
 	hr, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
 	if err != nil {
-		return Grant{}, ErrIdPExchange
+		return connections.Grant{}, ErrIdPExchange
 	}
 	hr.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	hr.Header.Set("Accept", "application/json")
 	resp, err := i.HTTP.Do(hr)
 	if err != nil {
-		return Grant{}, ErrIdPExchange // the transport error is dropped: it can quote the URL
+		return connections.Grant{}, ErrIdPExchange // the transport error is dropped: it can quote the URL
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxIdPBody+1))
 	if err != nil || len(body) > maxIdPBody {
-		return Grant{}, ErrIdPResponse
+		return connections.Grant{}, ErrIdPResponse
 	}
 	if resp.StatusCode != http.StatusOK {
-		return Grant{}, ErrIdPExchange // the error body names the cause and may echo input; not kept
+		return connections.Grant{}, ErrIdPExchange // the error body names the cause and may echo input; not kept
 	}
 	var tr tokenResponse
 	if err := json.Unmarshal(body, &tr); err != nil {
-		return Grant{}, ErrIdPResponse
+		return connections.Grant{}, ErrIdPResponse
 	}
 	clear(body)
 	if !strings.EqualFold(tr.TokenType, "Bearer") || tr.AccessToken == "" {
-		return Grant{}, ErrIdPResponse
+		return connections.Grant{}, ErrIdPResponse
 	}
 	claims, err := i.claims(tr.AccessToken, req.TenantID)
 	if err != nil {
-		return Grant{}, err
+		return connections.Grant{}, err
 	}
 	scopes := claims.scopes()
 	if len(scopes) == 0 {
 		scopes = normaliseScopes(strings.Fields(tr.Scope))
 	}
-	return Grant{TenantID: claims.TID, ObjectID: claims.OID, Scopes: scopes, Token: NewBearer([]byte(tr.AccessToken))}, nil
+	return connections.Grant{TenantID: claims.TID, ObjectID: claims.OID, Scopes: scopes, Token: connections.NewBearer([]byte(tr.AccessToken))}, nil
 }
 
 type accessClaims struct {
-	TID string          `json:"tid"`
-	OID string          `json:"oid"`
-	Iss string          `json:"iss"`
-	Aud json.RawMessage `json:"aud"`
-	Exp float64         `json:"exp"`
-	Scp string          `json:"scp"`
+	TID string         `json:"tid"`
+	OID string         `json:"oid"`
+	Iss string         `json:"iss"`
+	Aud jsontext.Value `json:"aud"`
+	Exp float64        `json:"exp"`
+	Scp string         `json:"scp"`
 }
 
 func (c accessClaims) scopes() []string { return normaliseScopes(strings.Fields(c.Scp)) }
 
 // claims reads the payload of the access token. The token came straight from the tenant-specific
 // token endpoint over verified TLS, which is the channel OIDC Core §3.1.3.7 accepts in place of a
-// signature check for a token received from the token endpoint. A Graph access token is also not
-// meant to be validated by its holder (its header carries a nonce); Graph validates it on the read.
+// signature check for a token received from the token endpoint. A connections.Graph access token is also not
+// meant to be validated by its holder (its header carries a nonce); connections.Graph validates it on the read.
 // So the signature is not checked here; the issuer, tenant, audience and expiry are.
 // https://openid.net/specs/openid-connect-core-1_0.html#IDTokenValidation
 func (i *OIDCIdP) claims(jwt, wantTenant string) (accessClaims, error) {
@@ -142,7 +144,7 @@ func (i *OIDCIdP) claims(jwt, wantTenant string) (accessClaims, error) {
 	case c.TID == "" || c.OID == "":
 		return c, ErrIdPClaims
 	case !sameTenant(c.TID, wantTenant):
-		return c, ErrTenantMismatch
+		return c, connections.ErrTenantMismatch
 	case !issuerOfTenant(c.Iss, c.TID):
 		return c, ErrIdPClaims
 	case !graphAudience(c.Aud):
@@ -161,7 +163,7 @@ func issuerOfTenant(iss, tid string) bool {
 	return iss == "https://login.microsoftonline.com/"+tid+"/v2.0" || iss == "https://sts.windows.net/"+tid+"/"
 }
 
-func graphAudience(raw json.RawMessage) bool {
+func graphAudience(raw jsontext.Value) bool {
 	var s string
 	if json.Unmarshal(raw, &s) != nil {
 		return false
@@ -186,7 +188,7 @@ type GraphReader struct {
 	Base string // default https://graph.microsoft.com/v1.0
 }
 
-var _ Graph = (*GraphReader)(nil)
+var _ connections.Graph = (*GraphReader)(nil)
 
 type syncAnswer struct {
 	Value []struct {
@@ -197,18 +199,18 @@ type syncAnswer struct {
 	} `json:"value"`
 }
 
-// ReadSyncFeatures implements Graph. The request selects the one property the flow reads. A flag
+// ReadSyncFeatures implements connections.Graph. The request selects the one property the flow reads. A flag
 // that is absent from the answer is an error, never "false": an absent flag must not look attested
 // or un-attested by accident.
-func (g *GraphReader) ReadSyncFeatures(ctx context.Context, token Bearer) (SyncFeatures, error) {
+func (g *GraphReader) ReadSyncFeatures(ctx context.Context, token connections.Bearer) (connections.SyncFeatures, error) {
 	if g == nil || g.HTTP == nil {
-		return SyncFeatures{}, ErrGraphRefused
+		return connections.SyncFeatures{}, ErrGraphRefused
 	}
 	base := strings.TrimRight(g.Base, "/")
 	if base == "" {
 		base = graphURL + "/v1.0"
 	}
-	var out SyncFeatures
+	var out connections.SyncFeatures
 	err := token.Use(func(b []byte) error {
 		if len(b) == 0 {
 			return ErrGraphRefused
@@ -236,9 +238,14 @@ func (g *GraphReader) ReadSyncFeatures(ctx context.Context, token Bearer) (SyncF
 			a.Value[0].Features.HardMatch == nil || a.Value[0].Features.SoftMatch == nil {
 			return ErrGraphAnswer
 		}
-		out = SyncFeatures{BlockCloudObjectTakeoverThroughHardMatch: *a.Value[0].Features.HardMatch,
+		out = connections.SyncFeatures{BlockCloudObjectTakeoverThroughHardMatch: *a.Value[0].Features.HardMatch,
 			BlockSoftMatch: *a.Value[0].Features.SoftMatch}
 		return nil
 	})
 	return out, err
+}
+
+func sameTenant(a, b string) bool {
+	x, y := strings.ToLower(a), strings.ToLower(b)
+	return x != "" && x == y
 }

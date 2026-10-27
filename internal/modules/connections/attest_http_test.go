@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/skenzeriq/activediq/internal/compose/server/entra"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/modules/connections"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
@@ -100,8 +101,8 @@ func newHTTPEnv(t *testing.T, s *storetest.Server, gate connections.CallbackGate
 	ms := newMicrosoft(t)
 	at, err := connections.NewAttester(connections.AttestConfig{
 		DB: e.db, Audit: e.rec, Authz: attestAuthz{"admin": true}, StepUp: stepUp{fresh: true},
-		IdP:      &connections.OIDCIdP{HTTP: ms.srv.Client(), Authority: ms.srv.URL, ClientID: "app-client"},
-		Graph:    &connections.GraphReader{HTTP: ms.srv.Client(), Base: ms.srv.URL + "/v1.0"},
+		IdP:      &entra.OIDCIdP{HTTP: ms.srv.Client(), Authority: ms.srv.URL, ClientID: "app-client"},
+		Graph:    &entra.GraphReader{HTTP: ms.srv.Client(), Base: ms.srv.URL + "/v1.0"},
 		ClientID: "app-client", RedirectURI: "https://diq.example/api/v1/connections/takeover-attestation/callback", Authority: ms.srv.URL,
 		Component: "connections", NewID: func() string { e.seq++; return fmt.Sprintf("ev-%d", e.seq) },
 		Now: func() time.Time { return e.now },

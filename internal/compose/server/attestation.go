@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/skenzeriq/activediq/internal/compose/config"
+	"github.com/skenzeriq/activediq/internal/compose/server/entra"
 	"github.com/skenzeriq/activediq/internal/modules/connections"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
@@ -40,8 +41,8 @@ func buildAttestation(cfg config.Config, db *store.DB, sink audit.Sink, az opera
 	// is refused: Start and SetMaxAge cannot succeed, and the authn port is fail-closed besides.
 	at, err := connections.NewAttester(connections.AttestConfig{
 		DB: db, Audit: sink, Authz: storeAuthorizer{az}, StepUp: denyAttestStepUp{},
-		IdP:      &connections.OIDCIdP{HTTP: hc, Authority: entraAuthority, ClientID: cfg.AttestClientID},
-		Graph:    &connections.GraphReader{HTTP: hc, Base: graphBase},
+		IdP:      &entra.OIDCIdP{HTTP: hc, Authority: entraAuthority, ClientID: cfg.AttestClientID},
+		Graph:    &entra.GraphReader{HTTP: hc, Base: graphBase},
 		ClientID: cfg.AttestClientID, RedirectURI: publicOrigin(cfg.PublicURL) + attestCallbackPath, Authority: entraAuthority,
 		Component: "connections",
 	})
