@@ -153,8 +153,8 @@ func overrideInForce(ctx context.Context, tx store.Tx, c Connection) (*Tier0Over
 // stable reason. It runs no verification: a stale or missing run is the caller's cue to start one
 // (the Service does).
 //
-// Binding creation (DM-10.I3) belongs to the transaction that makes the connection active and lands
-// with DM-13.
+// The embedded connector binding (DM-13, DM-10.I3) is created in this same transaction, just before
+// the transition; the database refuses an activation with no live binding.
 func (s Store) Activate(ctx context.Context, tx store.Tx, id ID) (Connection, error) {
 	cur, stamp, err := lock(ctx, tx, id)
 	if err != nil {
@@ -182,6 +182,9 @@ func (s Store) Activate(ctx context.Context, tx store.Tx, id ID) (Connection, er
 	}
 	if ok, why := Qualifies(cur.Kind, v, ov); !ok {
 		return Connection{}, &ActivationError{Code: why}
+	}
+	if err := ensureEmbeddedBinding(ctx, tx, id); err != nil {
+		return Connection{}, err
 	}
 	return s.Transition(ctx, tx, id, cur.State, StateActive)
 }
