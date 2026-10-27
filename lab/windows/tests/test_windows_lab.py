@@ -16,6 +16,7 @@ case "$(basename "$0")" in
   virsh) case "$*" in *domstate*) echo "shut off";; *net-info*|*dominfo*) exit 1;; esac;;
   curl) for a; do p="$a"; done; : > "$p"; for a; do [ "$prev" = -o ] && : > "$a"; prev="$a"; done;;
   openssl) echo stub;;
+  go) echo "go-env WIN_LAB_DC_ADDR=$WIN_LAB_DC_ADDR WIN_LAB_TLS_NAME=$WIN_LAB_TLS_NAME WIN_LAB_CA=$WIN_LAB_CA WIN_LAB_ENV=$WIN_LAB_ENV" >> "$STUB_LOG";;
 esac
 exit 0
 """
@@ -25,12 +26,12 @@ class WindowsLab(unittest.TestCase):
     def setUp(self):
         self.d = Path(tempfile.mkdtemp())
         b = self.d / "bin"; b.mkdir()
-        for n in ("virsh", "virt-install", "qemu-img", "xorriso", "curl", "nc"):
+        for n in ("virsh", "virt-install", "qemu-img", "xorriso", "curl", "nc", "go"):
             (b / n).write_text(STUB); (b / n).chmod(0o755)
         self.log = self.d / "stub.log"; self.log.write_text("")
         self.env = dict(os.environ, PATH=f"{b}:{os.environ['PATH']}", STUB_LOG=str(self.log), WIN_LAB_STATE=str(self.d / "st"),
                         WIN_LAB_ENV=str(self.d / "w.env"), WIN_LAB_CA=str(self.d / "ca.pem"), WIN_LAB_LOGDIR=str(self.d / "logs"),
-                        WIN_LAB_WAIT_SECS="1", WIN_LAB_DRYRUN="")
+                        WIN_LAB_WAIT_SECS="1", WIN_LAB_DRYRUN="", WIN_LAB_MODE="local")
         (self.d / "st").mkdir()
         (self.d / "st/ws2025-eval.iso").write_text("iso")  # pretend the ISO is already downloaded
 
@@ -104,6 +105,66 @@ class WindowsLab(unittest.TestCase):
     def test_no_state_or_credentials_tracked(self):
         out = subprocess.run(["git", "ls-files", str(LAB)], capture_output=True, text=True, cwd=LAB).stdout
         self.assertNotRegex(out, r"\.win-lab\.env|\.state/|\.qcow2|\.iso")
+
+
+SECRET = "Wl-" + "ab" * 14 + "-aA1!"
+
+
+class ExternalMode(unittest.TestCase):
+    """T-0428: WIN_LAB_MODE=external targets an operator-provided DC (Proxmox VM 112): no virsh, LDAPS verified."""
+
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp())
+        b = self.d / "bin"; b.mkdir()
+        for n in ("virsh", "virt-install", "qemu-img", "xorriso", "curl", "nc", "go"):
+            (b / n).write_text(STUB); (b / n).chmod(0o755)
+        self.log = self.d / "stub.log"; self.log.write_text("")
+        self.envf = self.d / "ext.env"; self.envf.write_text(f"WIN_LAB_SVC_PASSWORD={SECRET}\n"); self.envf.chmod(0o600)
+        self.ca = self.d / "ca.pem"; self.ca.write_text("pem")
+        self.base = dict(os.environ, PATH=f"{b}:{os.environ['PATH']}", STUB_LOG=str(self.log), WIN_LAB_MODE="external",
+                         WIN_LAB_DC_ADDR="10.9.8.7", WIN_LAB_TLS_NAME="dc1.win.activediq.test", WIN_LAB_CA=str(self.ca),
+                         WIN_LAB_ENV=str(self.envf), WIN_LAB_LOGDIR=str(self.d / "logs"), WIN_LAB_STATE=str(self.d / "st"))
+
+    def ctl(self, *a, **kw):
+        return subprocess.run([str(CTL), *a], env=dict(self.base, **kw), capture_output=True, text=True, timeout=60)
+
+    def test_connector_run_targets_external_host_without_virsh_and_without_secrets_in_argv(self):
+        r = self.ctl("test-connector")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        log = self.log.read_text()
+        self.assertIn("go test", log); self.assertIn("-tags lab windowslab", log)
+        self.assertIn("WIN_LAB_DC_ADDR=10.9.8.7", log); self.assertIn("WIN_LAB_TLS_NAME=dc1.win.activediq.test", log)
+        self.assertIn(f"WIN_LAB_CA={self.ca}", log); self.assertIn(f"WIN_LAB_ENV={self.envf}", log)
+        for tool in ("virsh", "virt-install", "qemu-img", "xorriso"):
+            self.assertNotRegex(log, rf"(?m)^{tool} ")
+        self.assertNotIn(SECRET, log + r.stdout + r.stderr)
+        self.assertIn("verification ON", r.stdout)
+        self.assertEqual(len(list((self.d / "logs").glob("connector-*.log"))), 1)
+
+    def test_vm_lifecycle_commands_refused_in_external_mode(self):
+        for cmd in ("up", "reset", "down", "destroy"):
+            r = self.ctl(cmd)
+            self.assertNotEqual(r.returncode, 0, cmd); self.assertIn("external mode", r.stderr)
+        self.assertEqual(self.log.read_text(), "")  # nothing was executed
+
+    def test_misconfiguration_fails_loudly(self):
+        self.assertIn("WIN_LAB_DC_ADDR", self.ctl("test-connector", WIN_LAB_DC_ADDR="").stderr)
+        self.assertIn("plain IP", self.ctl("test-connector", WIN_LAB_DC_ADDR="1.2.3.4;rm").stderr)
+        self.assertIn("plain DNS", self.ctl("test-connector", WIN_LAB_TLS_NAME="a b").stderr)
+        self.assertIn("CA file not found", self.ctl("test-connector", WIN_LAB_CA=str(self.d / "none")).stderr)
+        self.assertIn("credentials file not found", self.ctl("test-connector", WIN_LAB_ENV=str(self.d / "none")).stderr)
+        self.envf.chmod(0o644)
+        self.assertIn("0600", self.ctl("test-connector").stderr)
+        self.assertNotIn("go test", self.log.read_text())  # never reached the tests
+
+    def test_unknown_mode_rejected(self):
+        self.assertNotEqual(self.ctl("info", WIN_LAB_MODE="cloud").returncode, 0)
+
+    def test_guest_init_is_secret_free_and_external_aware(self):
+        init = (LAB / "guest/external-init.ps1").read_text()
+        self.assertIsNone(re.search(r"Wl-[0-9a-f]{20}", init))
+        self.assertIn("external = $true", init); self.assertIn("DC1", init)
+        self.assertIn("$c.external", (LAB / "guest/boot.ps1").read_text())
 
 
 if __name__ == "__main__":
