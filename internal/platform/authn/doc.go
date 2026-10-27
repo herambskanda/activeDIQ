@@ -13,7 +13,7 @@
 // revocation of the account's sessions commit together (events.go). Every session create, eviction,
 // expiry and revocation is an audit event requested in the transaction that causes it (audit.go): actor,
 // account and session handle, never the token or its hash. Ended rows are kept for the audit trail and
-// removed by the owner-role Purger (purge.go) once past the retention; the runtime role cannot DELETE.
+// removed by the owner-role Purger (purge.go; Purge for sessions, PurgePending for pending sign-ins) once past the retention; the runtime role cannot DELETE.
 //
 // TOTP (DM-37 AuthenticatorEnrollment): a seed sealed under the tenant's data key and bound to its
 // tenant, table, row and column (TM-F-SEAL), an RFC 6238 verifier (HMAC-SHA-1, 6 digits, 30 s step,

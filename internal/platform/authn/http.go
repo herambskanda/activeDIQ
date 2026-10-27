@@ -8,6 +8,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
@@ -165,13 +166,14 @@ func PendingHandleFromRequest(r *http.Request) (PendingHandle, error) {
 
 // VerifyTOTPRequest is the AN-10 TOTP entry for an HTTP request: the handle comes from the pending
 // cookie only. On success it returns the session and the two cookies to set: the new session cookie
-// and the cleared pending cookie.
-func (f *SecondFactor) VerifyTOTPRequest(ctx context.Context, r *http.Request, code string) (CreateResult, []*http.Cookie, error) {
+// and the cleared pending cookie. from is the client address the caller resolved (trusted-proxy rules
+// are the HTTP host's, not this package's).
+func (f *SecondFactor) VerifyTOTPRequest(ctx context.Context, r *http.Request, code string, from netip.Addr) (CreateResult, []*http.Cookie, error) {
 	h, err := PendingHandleFromRequest(r)
 	if err != nil {
 		return CreateResult{}, nil, err
 	}
-	res, err := f.VerifyTOTP(ctx, h, code)
+	res, err := f.VerifyTOTP(ctx, h, code, from)
 	if err != nil {
 		return CreateResult{}, nil, err
 	}
