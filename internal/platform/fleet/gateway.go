@@ -452,26 +452,43 @@ func (g *Gateway) authenticate(ctx context.Context, method string) (context.Cont
 // certificate. If the component is still usable, the presentation is a theft signal (TM-TB6-T14) and
 // is reported, rate-limited per component. The caller refuses with errBadCert whatever happens here.
 func (g *Gateway) reportSuperseded(ctx context.Context, id Identity) {
-	if g.superseded == nil || !g.allowReport(id) {
+	if g.superseded == nil {
 		return
 	}
-	usable, err := g.comps.Usable(ctx, id)
-	if err != nil || !usable {
-		return // revoked, unknown or unknowable: nothing to add to the refusal
+	rollback, ok := g.reserveReport(id)
+	if !ok {
+		return
 	}
-	if err := g.superseded.Superseded(ctx, id); err != nil {
+	// The caller (possibly a thief hanging up) must not be able to cancel the report or burn the
+	// window: run detached with a deadline, and give the window back if the report did not happen.
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	usable, err := g.comps.Usable(rctx, id)
+	if err != nil {
+		rollback()
+		g.log.Error("fleet: superseded certificate could not be checked", slog.String("component", id.ComponentID))
+		return
+	}
+	if !usable {
+		return // revoked or unknown: nothing to add to the refusal; the window stays used
+	}
+	if err := g.superseded.Superseded(rctx, id); err != nil {
+		rollback()
 		g.log.Error("fleet: superseded certificate could not be reported", slog.String("component", id.ComponentID))
 	}
 }
 
-func (g *Gateway) allowReport(id Identity) bool {
+// reserveReport claims the component's report window. The returned func releases the claim (restoring
+// the previous window) so a failed report never silences the next one.
+func (g *Gateway) reserveReport(id Identity) (rollback func(), ok bool) {
 	now, k := g.now(), streamKey{id.Tenant, id.ComponentID}
 	g.smu.Lock()
 	defer g.smu.Unlock()
-	if last, ok := g.reported[k]; ok && now.Sub(last) < g.window {
-		return false
+	prev, had := g.reported[k]
+	if had && now.Sub(prev) < g.window {
+		return nil, false
 	}
-	if _, ok := g.reported[k]; !ok && len(g.reported) >= maxSupersededTracked {
+	if !had && len(g.reported) >= maxSupersededTracked {
 		var oldest streamKey
 		var ot time.Time
 		for kk, t := range g.reported {
@@ -482,7 +499,18 @@ func (g *Gateway) allowReport(id Identity) bool {
 		delete(g.reported, oldest)
 	}
 	g.reported[k] = now
-	return true
+	return func() {
+		g.smu.Lock()
+		defer g.smu.Unlock()
+		if g.reported[k] != now {
+			return
+		}
+		if had {
+			g.reported[k] = prev
+		} else {
+			delete(g.reported, k)
+		}
+	}, true
 }
 
 func hasClientAuth(c *x509.Certificate) bool {
