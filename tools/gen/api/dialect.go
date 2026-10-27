@@ -550,7 +550,13 @@ func (p *parser) parseParam(raw any, where string, m *Model) *Param {
 		if n := strings.ToLower(pm.Name); n == "dn" || n == "distinguishedname" {
 			p.fail(where, "a directory object is addressed by objectGUID, never by DN (path parameter %q)", pm.Name)
 		}
-	case "query", "header":
+	case "query":
+	case "header":
+		// Request.Header carries the full r.Header, so a header parameter named for a credential
+		// would hand a handler the raw session cookie or bearer token.
+		if n := strings.ToLower(pm.Name); n == "cookie" || n == "authorization" || n == "proxy-authorization" || strings.HasPrefix(n, "x-forwarded-") {
+			p.fail(where, "the %q header belongs to the authenticator or the edge, never to a handler (header parameter %q); the peer address comes from the platform", pm.Name, pm.Name)
+		}
 	case "cookie":
 		// A cookie never produces a validation problem (the problem "in" enum has no cookie, and a
 		// precise answer would be an oracle): a missing or repeated cookie reads as empty.
