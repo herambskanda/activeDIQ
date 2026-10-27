@@ -88,7 +88,12 @@ func Run(ctx context.Context, cfg config.Config) error {
 	if err != nil {
 		return err
 	}
-	dirClient := directoryFacts(reads)
+	// The Tier0Context builder every write Plan and Apply carries; a missing source fails startup.
+	t0, err := buildTier0(db, reads)
+	if err != nil {
+		return err
+	}
+	dirClient := directoryFacts(reads, client.WithTier0Builder(t0))
 	authzr, err := rbacAuthorizer(db, dirClient)
 	if err != nil {
 		return err
