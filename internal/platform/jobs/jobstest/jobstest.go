@@ -34,6 +34,16 @@ func MakeDue(t testing.TB, exec Exec, kind string) {
 	}
 }
 
+// MakeDueUnderKey makes every queued job of the kind runnable now and moves it to its own unique key, as
+// a real run in a later schedule bucket has (a test cannot wait out the bucket).
+func MakeDueUnderKey(t testing.TB, exec Exec, kind, uniqueKey string) {
+	t.Helper()
+	if err := exec(context.Background(),
+		`UPDATE public.jobs SET run_at = now() - interval '1 second', unique_key = $2 WHERE kind = $1`, kind, uniqueKey); err != nil {
+		t.Fatalf("jobstest: make %s due: %v", kind, err)
+	}
+}
+
 // QueuedErrorCodes returns the error_code ("" when none) of each queued job of the kind that has made
 // exactly the given number of attempts.
 func QueuedErrorCodes(q Query, kind string, attempt int) ([]string, error) {

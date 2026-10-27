@@ -1,4 +1,4 @@
--- 0012_audit_forward_cursor: where audit.forward has got to, per tenant and SIEM sink (T-0304; ADR-0005
+-- 0015_audit_forward_cursor: where audit.forward has got to, per tenant and SIEM sink (T-0304; ADR-0005
 -- rule 11, "SIEM forwarding"). Owner: internal/platform/audit.
 --
 -- Database-stated invariants:

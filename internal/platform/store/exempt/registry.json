@@ -99,6 +99,13 @@
       "mintsTenantID": false
     },
     {
+      "package": "internal/directory/client",
+      "function": "ConnectorReads.Object",
+      "reason": "The tenant is read from the request context that the authority chain set (authority.TenantFrom), never from a request field; the parse only converts that server-set value to the typed ID for the connection lookup and fails closed (ADR-0002 rule 5).",
+      "withPlatform": false,
+      "mintsTenantID": true
+    },
+    {
       "package": "internal/platform/rbac",
       "function": "Authorizer.Authorize",
       "reason": "The tenant is read from the request context that the authority chain's authentication step set (authority.TenantFrom), never from a request field; the parse only converts that server-set value to the typed ID and fails closed (ADR-0002 rule 5).",
@@ -403,6 +410,51 @@
       "column": "public.hybrid_links.origin",
       "value": "declared",
       "reason": "CHECK: origin is declared or discovered; a link is born declared+confirmed or discovered+proposed (DM-21.I2)."
+    },
+    {
+      "column": "public.authn_pending_signins.created_at",
+      "value": "2030-01-01T00:00:00Z",
+      "reason": "CHECK: expires_at is after created_at and within 5 minutes of it (authn_pending_life); a fixed pair satisfies it."
+    },
+    {
+      "column": "public.authn_pending_signins.expires_at",
+      "value": "2030-01-01T00:04:00Z",
+      "reason": "CHECK: four minutes after the fixed created_at above (authn_pending_life)."
+    },
+    {
+      "column": "public.connector_bindings.target",
+      "value": "embedded",
+      "reason": "CHECK: target is embedded or component, and a component target needs component_id; the probe row is the embedded binding, which has none (DM-13)."
+    },
+    {
+      "column": "public.notify_syslog_destinations.transport",
+      "value": "tls",
+      "reason": "CHECK: transport is tls or tcp, and plaintext_opt_in is true exactly for tcp (notify_syslog_destinations_optin); the probe row is a TLS destination."
+    },
+    {
+      "column": "public.notify_syslog_destinations.plaintext_opt_in",
+      "value": "false",
+      "reason": "CHECK: false for tls (notify_syslog_destinations_optin); the generated boolean may be true."
+    },
+    {
+      "column": "public.authn_pending_signins.first_factor",
+      "value": "password",
+      "reason": "CHECK: first_factor is password, sso or kerberos; the probe row is a password first factor."
+    },
+    {
+      "column": "public.authn_pending_signins.handle_hash",
+      "value": "\\x0000000000000000000000000000000000000000000000000000000000000000",
+      "reason": "CHECK: handle_hash is exactly 32 bytes, the SHA-256 of the handle."
+    },
+    {
+      "column": "public.authn_pending_signins.attempts",
+      "value": "0",
+      "reason": "CHECK: attempts is 0..5; a fresh sign-in has made none."
+    },
+    {
+      "column": "public.connector_bindings.component_id",
+      "null": true,
+      "reason": "CHECK: an embedded target carries no component_id and a component target needs one (DM-13); the probe row is embedded, so NULL."
     },
     {
       "column": "public.hybrid_links.state",

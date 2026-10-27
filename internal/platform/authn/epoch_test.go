@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"sync"
 	"testing"
 	"time"
@@ -170,7 +171,7 @@ func TestPendingSignInDiesWithReset(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		_, err := e.sf.VerifyTOTP(ctx, h, e.good())
+		_, err := e.sf.VerifyTOTP(ctx, h, e.good(), netip.Addr{})
 		if !errors.Is(err, ErrPendingInvalid) {
 			t.Fatalf("VerifyTOTP after reset = %v, want ErrPendingInvalid", err)
 		}

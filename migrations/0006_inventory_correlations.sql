@@ -1,4 +1,4 @@
--- 0005_inventory_correlations: DM-20 Correlation and the customer tier0 designations of DM-16.I8.
+-- 0006_inventory_correlations: DM-20 Correlation and the customer tier0 designations of DM-16.I8.
 -- Owner: internal/directory/inventory.
 --
 -- This migration holds what the READ API needs (T-0167): the columns of DM-20's key attributes, the

@@ -1,4 +1,4 @@
--- 0007_audit_chain: the per-tenant audit hash chain (DM-80, DM-81; ADR-0005 rule 11, threat model
+-- 0008_audit_chain: the per-tenant audit hash chain (DM-80, DM-81; ADR-0005 rule 11, threat model
 -- TM-F-AUDIT). Owner: internal/platform/audit.
 --
 -- Database-stated invariants:

@@ -132,3 +132,5 @@ type Link struct {
 	ReconfirmedBy    string
 	ReconfirmedAt    time.Time
 }
+
+var _ = tablekind.Declare(tablekind.Table{Name: "public.correlation_evaluations", Entity: "DM-20", Kind: tablekind.Directory})

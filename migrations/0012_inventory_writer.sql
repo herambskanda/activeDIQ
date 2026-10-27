@@ -1,4 +1,4 @@
--- 0010_inventory_writer: what the inventory WRITER (T-0173) needs on top of the read slice of 0005.
+-- 0012_inventory_writer: what the inventory WRITER (T-0173) needs on top of the read slice of 0006.
 -- Owner: internal/directory/inventory.
 --
 --  * correlations: the two connection references become real foreign keys (security review of T-0167:

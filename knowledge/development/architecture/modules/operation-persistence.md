@@ -9,7 +9,7 @@ ticket: T-0174
 
 # platform/operation persistence (ADR-0005 rules 3, 6, 8, 9)
 
-Code: `internal/platform/operation/`; migration `migrations/0010_operation_operations.sql`.
+Code: `internal/platform/operation/`; migration `migrations/0013_operation_operations.sql`.
 
 - **Tables** (all tenant-keyed, FORCE RLS): `operations`, `operation_items`, `operation_steps`,
   `operation_secrets` (runtime role has no UPDATE). The item is the system of record; the job is a driver.

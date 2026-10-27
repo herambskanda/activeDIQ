@@ -9,7 +9,7 @@ ticket: T-0324
 
 # platform/rbac (DM-34, DM-35, DM-36; threat model §7.7)
 
-Code: `internal/platform/rbac/`; migration `0013_authz_rbac.sql`.
+Code: `internal/platform/rbac/`; migration `0018_authz_rbac.sql`.
 
 - **Tables** (tenant, RLS): `authz_roles`, `authz_role_permissions`, `authz_assignments`,
   `authz_assignment_roots`. Subjects are console accounts only; group, automation and token subjects

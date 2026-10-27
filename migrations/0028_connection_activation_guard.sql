@@ -1,4 +1,4 @@
--- 0018_connection_activation_guard: DM-10.I9 in the database (T-0246). Owner: internal/directory/connection.
+-- 0028_connection_activation_guard: DM-10.I9 in the database (T-0246). Owner: internal/directory/connection.
 --
 -- Store.Activate is the one door into `active` from draft or verifying. This trigger makes the
 -- database refuse any other door: a direct UPDATE (a repair by hand, a future writer, a compromised
