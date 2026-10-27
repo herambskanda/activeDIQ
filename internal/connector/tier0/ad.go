@@ -1218,11 +1218,22 @@ func (b *builder) markPrincipalsSkip(sids []sid.SID, basis Basis, skip func(*ad.
 		if found && hasClass(e, "foreignSecurityPrincipal") && broadForeignRID(s) {
 			return fmt.Errorf("tier0: grant to %s, a well-known group of another domain, covers every principal of that domain", s)
 		}
-		if !found && len(holders) == 0 {
+		// A sIDHistory holder stands in for a foreign-domain account SID (migration), but a SID that
+		// is not a domain account SID (Everyone, Authenticated Users, ...) is in every token: a holder
+		// of it covers one object, not the principals the grant really reaches, so it cannot suppress
+		// the fail-closed (a planted well-known SID in sIDHistory would otherwise hide the grant). The same
+		// holds for a trusted domain's broad well-known RID (Domain Users 513, ...): its tokens carry it
+		// with or without an FSP, so a holder cannot stand in for the principals it reaches.
+		if !found && (len(holders) == 0 || !isDomainAccountSID(s) || broadForeignRID(s)) {
 			if b.ignorableSID(s) {
-				continue
+				// Ignorable SIDs name no principal; a holder (SYSTEM planted in sIDHistory) is
+				// still marked below.
+				if len(holders) == 0 {
+					continue
+				}
+			} else {
+				return fmt.Errorf("tier0: grant to unresolvable SID %s may cover every principal", s)
 			}
-			return fmt.Errorf("tier0: grant to unresolvable SID %s may cover every principal", s)
 		}
 		if found {
 			if err := take(e); err != nil {

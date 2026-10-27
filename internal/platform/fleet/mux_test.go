@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"runtime"
@@ -593,10 +594,11 @@ func TestInFlightFramesAfterOwnEndAreDropped(t *testing.T) {
 	})
 }
 
-func TestCreditOnCallZeroIsAllowed(t *testing.T) {
+func TestCreditOnCallZeroReturnsWhatWasSpent(t *testing.T) {
 	r := newRig(t, nil)
-	r.send(fleet.Frame{CallID: 0, Body: fleet.BodyCredit, Messages: 10})
-	r.healthy(t, 2)
+	r.healthy(t, 2) // the reply spends one message of the server's tunnel credit
+	r.send(fleet.Frame{CallID: 0, Body: fleet.BodyCredit, Messages: 1})
+	r.healthy(t, 4)
 }
 
 func TestPendingCallsFailUnavailableOutcomeUnknownAndAreNeverRebound(t *testing.T) {
@@ -1052,6 +1054,9 @@ func TestRetiredCallsRetainNoPayload(t *testing.T) {
 	big := make([]byte, size)
 	for i := 0; i < calls; i++ {
 		id := uint64(2 + 2*i)
+		if i > 0 {
+			r.send(fleet.Frame{CallID: 0, Body: fleet.BodyCredit, Messages: 1}) // the previous reply
+		}
 		r.send(fleet.Frame{CallID: id, Body: fleet.BodyOpen, Method: mReport})
 		r.send(fleet.Frame{CallID: id, Body: fleet.BodyData, Payload: append([]byte(nil), big...)})
 		for {
@@ -1067,6 +1072,400 @@ func TestRetiredCallsRetainNoPayload(t *testing.T) {
 	runtime.ReadMemStats(&after)
 	if grew := int64(after.HeapInuse) - int64(before.HeapInuse); grew > 64<<20 {
 		t.Fatalf("heap grew by %d MiB after %d finished calls", grew>>20, calls)
+	}
+}
+
+// ---- flow control (TM-TB6-T7) ----
+
+// watchRig opens a server-opened streaming call (id 1, then 3, ...) whose responses the test peer
+// sends as data frames. It returns the client stream; nothing reads it until the test does.
+func (r *tunRig) watch(t *testing.T, ctx context.Context, wantID uint64) grpc.ClientStream {
+	t.Helper()
+	cs, err := r.m.Conn().NewStream(ctx, &grpc.StreamDesc{ServerStreams: true}, mWatch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f := r.next(t); f.Body != fleet.BodyOpen || f.CallID != wantID {
+		t.Fatalf("got %+v, want open of %d", f, wantID)
+	}
+	return cs
+}
+
+func (r *tunRig) data(id uint64, n int) {
+	for i := 0; i < n; i++ {
+		r.send(fleet.Frame{CallID: id, Body: fleet.BodyData, Payload: str("m")})
+	}
+}
+
+func (r *tunRig) wantViolation(t *testing.T, v fleet.Violation) {
+	t.Helper()
+	var pe *fleet.ProtocolError
+	if err := r.closed(t); !errors.As(err, &pe) || pe.Violation != v {
+		t.Fatalf("got %v, want %s", err, v)
+	}
+	if vs := r.rep.got(); len(vs) != 1 || vs[0] != v {
+		t.Fatalf("audit: %v", vs)
+	}
+}
+
+func smallWindows(call, tun int) func(*fleet.MuxConfig) {
+	return func(c *fleet.MuxConfig) { c.CallWindow, c.TunnelWindow = call, tun }
+}
+
+func TestDataBeyondCallCreditClosesTheTunnel(t *testing.T) {
+	r := newRig(t, smallWindows(4, 64))
+	r.watch(t, context.Background(), 1) // nobody reads: no credit comes back
+	r.data(1, 4)
+	r.open(t) // exactly the window is fine
+	r.data(1, 1)
+	r.wantViolation(t, fleet.ViolationDataOverCredit)
+}
+
+func TestDataBeyondTunnelCreditClosesTheTunnel(t *testing.T) {
+	r := newRig(t, smallWindows(4, 6))
+	r.watch(t, context.Background(), 1)
+	r.watch(t, context.Background(), 3)
+	r.data(1, 4)
+	r.data(3, 2)
+	r.open(t)
+	r.data(3, 1)
+	r.wantViolation(t, fleet.ViolationDataOverCredit)
+}
+
+func TestConsumingMessagesGrantsCreditBack(t *testing.T) {
+	r := newRig(t, smallWindows(4, 64))
+	cs := r.watch(t, context.Background(), 1)
+	r.data(1, 4)
+	for i := 0; i < 2; i++ {
+		if err := cs.RecvMsg(new(wrapperspb.StringValue)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if f := r.next(t); f.CallID != 1 || f.Body != fleet.BodyCredit || f.Messages != 2 {
+		t.Fatalf("got %+v, want credit 2 on call 1", f)
+	}
+	r.data(1, 2) // inside the regained window
+	r.open(t)
+	r.data(1, 1) // two unread + two unread + ... window is full again
+	r.wantViolation(t, fleet.ViolationDataOverCredit)
+}
+
+func TestSlowHandlerNeverBlocksTheReadLoop(t *testing.T) {
+	r := newRig(t, smallWindows(4, 64))
+	r.watch(t, context.Background(), 1) // never read
+	r.data(1, 4)
+	r.healthy(t, 2) // the read loop is still serving other calls
+}
+
+func TestSenderBlocksWithoutCreditAndResumesOnGrant(t *testing.T) {
+	r := newRig(t, smallWindows(4, 64))
+	cs := r.watch(t, context.Background(), 1)
+	for i := 0; i < 4; i++ {
+		if err := cs.SendMsg(wrapperspb.String("x")); err != nil {
+			t.Fatal(err)
+		}
+		if f := r.next(t); f.Body != fleet.BodyData {
+			t.Fatalf("got %+v", f)
+		}
+	}
+	sent := make(chan error, 1)
+	go func() { sent <- cs.SendMsg(wrapperspb.String("blocked")) }()
+	select {
+	case err := <-sent:
+		t.Fatalf("sent without credit: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	r.send(fleet.Frame{CallID: 1, Body: fleet.BodyCredit, Messages: 1})
+	if err := <-sent; err != nil {
+		t.Fatal(err)
+	}
+	if f := r.next(t); f.Body != fleet.BodyData {
+		t.Fatalf("got %+v", f)
+	}
+}
+
+func TestBlockedSenderEndsWithItsContext(t *testing.T) {
+	r := newRig(t, smallWindows(1, 64))
+	ctx, cancel := context.WithCancel(context.Background())
+	cs := r.watch(t, ctx, 1)
+	if err := cs.SendMsg(wrapperspb.String("x")); err != nil {
+		t.Fatal(err)
+	}
+	sent := make(chan error, 1)
+	go func() { sent <- cs.SendMsg(wrapperspb.String("blocked")) }()
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-sent:
+		if status.Code(err) != codes.Canceled {
+			t.Fatalf("got %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("blocked sender did not return")
+	}
+}
+
+func TestTunnelCreditBoundsSendsAcrossCalls(t *testing.T) {
+	r := newRig(t, smallWindows(4, 2))
+	a := r.watch(t, context.Background(), 1)
+	b := r.watch(t, context.Background(), 3)
+	for _, cs := range []grpc.ClientStream{a, b} {
+		if err := cs.SendMsg(wrapperspb.String("x")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sent := make(chan error, 1)
+	go func() { sent <- a.SendMsg(wrapperspb.String("blocked")) }()
+	select {
+	case err := <-sent:
+		t.Fatalf("sent without tunnel credit: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	r.send(fleet.Frame{CallID: 0, Body: fleet.BodyCredit, Messages: 1})
+	if err := <-sent; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestInvalidCreditClosesTheTunnel(t *testing.T) {
+	for name, f := range map[string]fleet.Frame{
+		"zero on the tunnel":    {CallID: 0, Body: fleet.BodyCredit},
+		"over-grant on tunnel":  {CallID: 0, Body: fleet.BodyCredit, Messages: 1},
+		"zero on a call":        {CallID: 1, Body: fleet.BodyCredit},
+		"over-grant on a call":  {CallID: 1, Body: fleet.BodyCredit, Messages: 1},
+		"overflowing on a call": {CallID: 1, Body: fleet.BodyCredit, Messages: 1<<32 - 1},
+		"overflowing on tunnel": {CallID: 0, Body: fleet.BodyCredit, Messages: 1<<32 - 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newRig(t, smallWindows(4, 8))
+			r.watch(t, context.Background(), 1)
+			r.send(f)
+			r.wantViolation(t, fleet.ViolationCreditInvalid)
+		})
+	}
+}
+
+// A late frame for a call that aged out of the tombstone window is dropped, not a violation.
+func TestLateFrameForAnEvictedTombstoneIsDropped(t *testing.T) {
+	r := newRig(t, nil)
+	r.send(fleet.Frame{CallID: 2, Body: fleet.BodyOpen, Method: mOther}) // refused: ended by us
+	r.next(t)
+	const more = 1100
+	for i := 0; i < more; i += 50 {
+		for j := 0; j < 50; j++ {
+			r.send(fleet.Frame{CallID: uint64(4 + 2*(i+j)), Body: fleet.BodyOpen, Method: mOther})
+		}
+		for j := 0; j < 50; j++ {
+			r.next(t)
+		}
+	}
+	r.send(fleet.Frame{CallID: 2, Body: fleet.BodyData, Payload: str("late")})
+	r.send(fleet.Frame{CallID: 2, Body: fleet.BodyCancel})
+	r.healthy(t, uint64(4+2*more))
+}
+
+// Data dropped for an ended call still returns its tunnel credit, so a stream of late frames cannot
+// wear the window down.
+func TestDroppedDataReturnsTunnelCredit(t *testing.T) {
+	r := newRig(t, smallWindows(4, 4))
+	r.send(fleet.Frame{CallID: 2, Body: fleet.BodyOpen, Method: mOther})
+	r.next(t)
+	for i := 0; i < 10; i++ {
+		r.data(2, 2) // half the tunnel window: the drop must be granted back, which we wait for
+		if f := r.next(t); f.CallID != 0 || f.Body != fleet.BodyCredit || f.Messages != 2 {
+			t.Fatalf("round %d: got %+v, want tunnel credit 2", i, f)
+		}
+	}
+	r.open(t)
+}
+
+// Unread messages of a call this side cancels return to the tunnel window with no further peer frame,
+// or a peer that used the whole window would stay blocked and starve its other calls.
+func TestCancelledCallReturnsUnreadMessagesToTheTunnelWindow(t *testing.T) {
+	r := newRig(t, smallWindows(8, 8))
+	ctx, cancel := context.WithCancel(context.Background())
+	r.watch(t, ctx, 1)
+	r.data(1, 6)    // unread; below the half-window grant threshold, so nothing is granted yet
+	r.healthy(t, 2) // round trip: proves the six data frames were processed before the cancel
+	cancel()
+	var sawCancel, sawCredit bool
+	for !(sawCancel && sawCredit) {
+		f := r.next(t)
+		switch {
+		case f.CallID == 1 && f.Body == fleet.BodyCancel:
+			sawCancel = true
+		case f.CallID == 0 && f.Body == fleet.BodyCredit && f.Messages >= 6:
+			sawCredit = true
+		default:
+			t.Fatalf("unexpected %+v", f)
+		}
+	}
+}
+
+func TestSendsAfterHalfCloseDoNotLeakTunnelCredit(t *testing.T) {
+	r := newRig(t, smallWindows(4, 2))
+	a := r.watch(t, context.Background(), 1)
+	b := r.watch(t, context.Background(), 3)
+	if err := a.CloseSend(); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ { // more than the whole tunnel window
+		if err := a.SendMsg(wrapperspb.String("x")); !errors.Is(err, io.EOF) {
+			t.Fatalf("send %d after half-close: got %v, want EOF", i, err)
+		}
+	}
+	sent := make(chan error, 1)
+	go func() {
+		for i := 0; i < 2; i++ {
+			if err := b.SendMsg(wrapperspb.String("y")); err != nil {
+				sent <- err
+				return
+			}
+		}
+		sent <- nil
+	}()
+	select {
+	case err := <-sent:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("sibling call stalled: tunnel send credit leaked")
+	}
+}
+
+// A peer that answers each call with a full window and closes it must not get tunnel credit back
+// while those messages are still buffered: the tunnel window bounds what it can make us hold.
+func TestClosedCallsKeepUnreadMessagesCountedAgainstTheTunnelWindow(t *testing.T) {
+	r := newRig(t, smallWindows(4, 8))
+	r.watch(t, context.Background(), 1)
+	r.watch(t, context.Background(), 3)
+	for _, id := range []uint64{1, 3} {
+		r.data(id, 4)
+		r.send(fleet.Frame{CallID: id, Body: fleet.BodyClose})
+	}
+	r.watch(t, context.Background(), 5)
+	r.data(5, 1) // nothing was read, so the tunnel window of 8 is still full
+	r.wantViolation(t, fleet.ViolationDataOverCredit)
+	for {
+		select {
+		case f := <-r.peer.in:
+			if f.Body == fleet.BodyCredit {
+				t.Fatalf("tunnel credit %+v returned for unread messages", f)
+			}
+		default:
+			return
+		}
+	}
+}
+
+func TestReadingBufferedMessagesOfAClosedCallReturnsTunnelCredit(t *testing.T) {
+	r := newRig(t, smallWindows(4, 8))
+	cs := r.watch(t, context.Background(), 1)
+	r.data(1, 4)
+	r.send(fleet.Frame{CallID: 1, Body: fleet.BodyClose})
+	r.healthy(t, 2) // round trip: the close was processed before the reader starts
+	for i := 0; i < 4; i++ {
+		if err := cs.RecvMsg(new(wrapperspb.StringValue)); err != nil {
+			t.Fatalf("buffered message %d: %v", i, err)
+		}
+	}
+	if f := r.next(t); f.CallID != 0 || f.Body != fleet.BodyCredit || f.Messages != 4 {
+		t.Fatalf("got %+v, want tunnel credit 4", f)
+	}
+}
+
+func TestAbandonedClosedCallReturnsItsUnreadMessages(t *testing.T) {
+	r := newRig(t, smallWindows(4, 8))
+	cs := r.watch(t, context.Background(), 1)
+	r.send(fleet.Frame{CallID: 1, Body: fleet.BodyData, Payload: []byte{0xff}}) // not a valid message
+	r.data(1, 3)
+	r.send(fleet.Frame{CallID: 1, Body: fleet.BodyClose})
+	r.healthy(t, 2) // round trip: the close was processed before the reader starts
+	if err := cs.RecvMsg(new(wrapperspb.StringValue)); err == nil {
+		t.Fatal("want a decode error")
+	}
+	f := r.next(t)
+	if f.CallID == 1 && f.Body == fleet.BodyCancel { // the close frame may not have been processed yet
+		f = r.next(t)
+	}
+	if f.CallID != 0 || f.Body != fleet.BodyCredit || f.Messages < 4 { // the healthy call's own message may ride along
+		t.Fatalf("got %+v, want tunnel credit 4 (1 read, 3 released)", f)
+	}
+}
+
+// Cancelling the caller's context is a documented way to release a stream. After the peer closed
+// it, the unread buffered messages must go back to the tunnel window, not leak.
+func TestCancellingTheContextOfAClosedStreamReturnsItsUnreadMessages(t *testing.T) {
+	for _, read := range []int{0, 1} {
+		t.Run(fmt.Sprintf("read%d", read), func(t *testing.T) {
+			r := newRig(t, smallWindows(4, 8))
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			cs := r.watch(t, ctx, 1)
+			r.data(1, 4)
+			r.send(fleet.Frame{CallID: 1, Body: fleet.BodyClose})
+			r.healthy(t, 2) // the close was processed
+			for i := 0; i < read; i++ {
+				if err := cs.RecvMsg(new(wrapperspb.StringValue)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cancel()
+			total := 0
+			deadline := time.After(3 * time.Second)
+			for total < 4 {
+				select {
+				case f := <-r.peer.in:
+					if f.CallID == 0 && f.Body == fleet.BodyCredit {
+						total += int(f.Messages)
+					}
+				case <-deadline:
+					t.Fatalf("tunnel credit returned %d of 4 after cancel", total)
+				}
+			}
+		})
+	}
+}
+
+// A call made on a long-lived caller context must leave nothing registered on it once it has ended.
+func TestCallsOnALongLivedContextRetainNothing(t *testing.T) {
+	srv, _ := e2e(t, make(chan struct{}, 1))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	const rounds = 7000 // 3 calls per round: 21k calls
+	out := new(wrapperspb.StringValue)
+	for i := 0; i < rounds; i++ {
+		if err := srv.Conn().Invoke(ctx, mPing, wrapperspb.String("a"), out); err != nil {
+			t.Fatal(err)
+		}
+		for j := 0; j < 2; j++ {
+			st, err := srv.Conn().NewStream(ctx, &grpc.StreamDesc{ServerStreams: true}, mWatch)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := st.SendMsg(wrapperspb.String("w")); err != nil {
+				t.Fatal(err)
+			}
+			_ = st.CloseSend()
+			for {
+				if err := st.RecvMsg(new(wrapperspb.StringValue)); err != nil {
+					if !errors.Is(err, io.EOF) {
+						t.Fatal(err)
+					}
+					break
+				}
+			}
+		}
+	}
+	runtime.GC()
+	runtime.GC()
+	runtime.ReadMemStats(&after)
+	if grew := int64(after.HeapInuse) - int64(before.HeapInuse); grew > 8<<20 {
+		t.Fatalf("heap grew by %d KiB after %d finished calls on one context", grew>>10, rounds*3)
 	}
 }
 
