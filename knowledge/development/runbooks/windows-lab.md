@@ -127,7 +127,7 @@ this runbook `reviewed`.
 | Net clash with `192.168.77.0/24` | change `SUBNET` in `windows-lab` and `winBind`/`WIN_LAB_DC_ADDR` |
 | Disk pressure | `windows-lab-destroy` frees the disks; the ISO is kept, delete it by hand if needed |
 
-## 9b. TM-F-NTLM proof (T-0256, directory half)
+## 9. TM-F-NTLM proof (T-0256, directory half)
 
 Offline (runs in `go test ./internal/connector/ad`): `TestNTLMStaticGuard` fails if the connector
 package references any NTLM/GSSAPI/digest/anonymous bind, imports `net/http`, an NTLM/SMB/Kerberos
@@ -163,7 +163,9 @@ No `fs1` in this mode (member-server tests are out of scope until a second VM ex
    `win.activediq.test`, enterprise root CA, LDAPS cert, `svc-activediq`, then `audit-gpo.ps1` and
    `entra-ready.ps1`), reboots by itself and resumes through the `LabResume` task. Done when
    `C:\lab\provision.log` ends with `dc1 provisioned` (~30 min). `audit-gpo.ps1` and `entra-ready.ps1` are
-   idempotent and may be re-run by hand: `C:\lab\audit-gpo.ps1` (needs `lab.json`, so do it before step 7).
+   idempotent and may be re-run by hand at any time, also after provisioning: `C:\lab\audit-gpo.ps1`,
+   `C:\lab\entra-ready.ps1`. They do not need `lab.json` (deleted when provisioning finishes); they read the
+   domain from AD. Only if a `g9-*` account is missing does `entra-ready.ps1` stop and ask for a re-provision.
 6. **Export the CA and credentials:** `certutil -ca.cert C:\lab\ca.cer` then
    `certutil -encode C:\lab\ca.cer C:\lab\ca.pem`. Copy `ca.pem` and `win-lab.env` to the lab host
    (`scp`; never email or chat), then delete `C:\lab\win-lab.env` from the VM.

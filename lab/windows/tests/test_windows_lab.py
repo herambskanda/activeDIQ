@@ -166,6 +166,20 @@ class ExternalMode(unittest.TestCase):
         self.assertIn("external = $true", init); self.assertIn("DC1", init)
         self.assertIn("$c.external", (LAB / "guest/boot.ps1").read_text())
 
+    def test_rerunnable_guest_scripts_do_not_require_lab_json(self):
+        """dc.ps1 deletes lab.json when provisioning ends (Remove-LabSecrets); the scripts the runbook tells a
+        human to re-run afterwards must therefore fall back to AD instead of reading lab.json."""
+        g = LAB / "guest"
+        common = (g / "common.ps1").read_text()
+        self.assertIn("Remove-Item \"$script:LabDir\\lab.json\"", common)  # the premise: it is deleted
+        self.assertRegex(common, r"function Get-LabContext[\s\S]*Test-Path[\s\S]*Get-ADDomain")
+        for n in ("audit-gpo.ps1", "entra-ready.ps1"):
+            t = (g / n).read_text()
+            self.assertIn("Get-LabContext", t, n)
+            self.assertNotIn("Get-LabConfig", t, n)
+        rb = (LAB.parent.parent / "knowledge/development/runbooks/windows-lab.md").read_text()
+        self.assertNotIn("so do it before step 7", rb)
+
 
 if __name__ == "__main__":
     unittest.main()
