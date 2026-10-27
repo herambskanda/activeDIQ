@@ -22,7 +22,10 @@ var stepUpTable = map[operation.ActionID]string{
 	// Declare writes a confirmed link directly, skipping proposed: the same cross-directory authority
 	// path as confirm, so it carries the same flag.
 	connections.HybridLinkDeclareActionID: "HybridLink declaration confirms without a proposal; same path as confirm",
-	inventory.SetDesignationActionID:      "Designating or un-designating tier0 objects (§6.4)",
+	// Re-confirming a correlation held for reconfirm_required (TM-D17 rule 4 (g)) is an irreversible
+	// cross-directory authority decision; it also requires a current tenant-owner.
+	connections.ReconfirmActionID:    "Correlation re-confirmation (TM-D17 rule 4 (g))",
+	inventory.SetDesignationActionID: "Designating or un-designating tier0 objects (§6.4)",
 }
 
 func catalogue(t *testing.T) []operation.Descriptor {
