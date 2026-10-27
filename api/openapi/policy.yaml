@@ -17,7 +17,6 @@
 #   anonymous        AN-4  first-run setup operation                    gate: one-time setup secret
 #                    AN-5  end-user TOTP enrolment operations           host: totp-enrolment binding
 #                    AN-7  [M4] SSPR operations on the L1 listener      host: sspr binding
-#                    AN-9  GET /auth/negotiate (and a nonApiRoutes row) only once the PRD offers SPNEGO
 #   authenticated    getApiDocument (ADR-0004 rule 5); the caller's own profile, sessions and MFA
 #                    factors. Never anything that reads or writes another principal.
 #   secretResponses  LAPS reveal and BitLocker reveal (secret.* permissions, DM-33.I2); API-token
@@ -69,6 +68,11 @@ anonymous:
     gate: signed IdP response (SAML ACS, signed assertion, pinned algorithm)
     reason: SAML assertion consumer service (HTTP-POST binding); same outcome as the OIDC callback.
     ref: AN-3
+  - method: GET
+    path: /auth/negotiate
+    gate: a Kerberos AP-REQ for the console's HTTP service principal, verified by the acceptor; NTLM is refused, success yields only a pending sign-in (AN-10), never a session
+    reason: Integrated Windows sign-in (ADM-143); Kerberos only (TM §7.6 rules 5-7, console-sso.md §9). Off until an administrator enables it (NEG-1).
+    ref: AN-9
   - operation: signInBreakGlassPassword
     gate: the local account's password; success yields only a pending sign-in (AN-10), never a session
     reason: Break-glass first factor when SSO is down (ADM-142); one uniform failure shape, throttled and never locked (TM §7.6 rules 1-4).
@@ -125,6 +129,10 @@ nonApiRoutes:
     path: /auth/sso/{idpId}/callback
     reason: SAML ACS form post from the IdP; not JSON.
     ref: AN-3
+  - method: GET
+    path: /auth/negotiate
+    reason: HTTP Negotiate (RFC 4559) is a header exchange, not JSON.
+    ref: AN-9
 secretResponses: []
 stepUp:
   - permission: connections.takeover.attest
