@@ -242,3 +242,13 @@ func ldapCode(err error) string {
 
 // AttrSyntax returns the value syntax the session's schema allowlist records for an attribute.
 func (s *Session) AttrSyntax(name string) (ldapfilter.Syntax, bool) { return s.schema.Syntax(name) }
+
+// CanonicalAttr resolves a requested attribute name (descr in any case, or numeric OID) to the
+// schema's ldapDisplayName, so callers apply holds and filters to one spelling.
+func (s *Session) CanonicalAttr(name string) (string, error) {
+	a, err := ldapfilter.ParseAttrName(name, s.schema)
+	if err != nil {
+		return "", fail(CodeInvalidArgument, "attribute: "+ldapfilter.Code(err), err)
+	}
+	return a.String(), nil
+}

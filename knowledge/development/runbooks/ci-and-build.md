@@ -236,3 +236,9 @@ Go's 0600/0700 modes do nothing on Windows, so packaging sets the access control
 - **linux-oci** `linux-oci/prepare-tls-dir.sh <host-dir> [10001 [10001]]` (root) then merge `linux-oci/compose.tls.yaml`: directory owned by the numeric non-root service uid:gid, mode 0700, the container runs as that user. Root never chowns/chmods by path inside the directory (the container can swap paths for symlinks): the script refuses non-regular entries, hard-linked files and files owned by another uid (exit 2), and tightens modes as the service uid via `setpriv`. The server itself also refuses a directory it does not own or that is group/other-writable.
 
 `make fitness-packaging` checks the files statically and runs the prepare script for real, parses every `packaging/**/*.ps1` with PowerShell's own parser (needs pwsh or Docker); `make ci-proof` shows it failing on a violation.
+
+## Release tooling (T-0261)
+
+`workflows-check` guards `.github/workflows/`; the security.txt renewal job, the per-release SBOM and the
+signed publication are in `release-and-security-txt.md`. The renewal PR is the job `fitness-disclosure`
+above refers to, opened 60+ days before that gate fails.

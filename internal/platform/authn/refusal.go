@@ -19,6 +19,12 @@ import (
 // attempt. It never carries the code, the handle or its hash.
 const KindSecondFactorRefused audit.Kind = "authn.secondfactor.refused"
 
+// KindPendingBegun records a passed first factor that yielded a pending sign-in (T-0439). Outcome is
+// success; Target is the pending sign-in; the details are the account, the first factor and, when known,
+// the client address. It never carries the handle or its hash. A begun event with no later session for the
+// account is the compromised-credential signal of TM §7.6.
+const KindPendingBegun audit.Kind = "authn.pending.begun"
+
 // KindPendingPurged is what the pending sign-in retention purge records about itself.
 const KindPendingPurged audit.Kind = "authn.pending.purged"
 
@@ -78,4 +84,22 @@ func (f *SecondFactor) refuseOwn(ctx context.Context, ref pendingRef, reason str
 		}
 		return f.refuse(ctx, tx, ref, now, reason, from)
 	})
+}
+
+// begun appends the authn.pending.begun event to tx, the transaction that inserted the pending row.
+func (p *PendingStore) begun(ctx context.Context, tx store.Tx, id string, in BeginInput, now time.Time) error {
+	details := []chain.Detail{{Key: "account", Value: in.Account}}
+	if in.ClientIP.IsValid() {
+		details = append(details, chain.Detail{Key: "client_ip", Value: in.ClientIP.Unmap().String()})
+	}
+	details = append(details, chain.Detail{Key: "first_factor", Value: string(in.FirstFactor)})
+	ev := audit.Event{
+		ID: "authn.pending." + id + ".begun", Kind: KindPendingBegun, At: now, Actor: accountChain(in.Account),
+		Target:    authority.TargetRef{GUID: id, Class: "pending_signin"},
+		Component: "authn", Outcome: audit.Success, Details: details,
+	}
+	if err := p.audit.Append(ctx, tx, ev); err != nil {
+		return fmt.Errorf("authn: audit pending sign-in: %w", err)
+	}
+	return nil
 }

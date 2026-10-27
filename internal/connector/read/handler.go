@@ -42,6 +42,9 @@ type Source interface {
 	Parent(ctx context.Context, e *ad.Entry) (g guid.GUID, ok bool, err error)
 	// Syntax is the value syntax of an attribute.
 	Syntax(name string) (ldapfilter.Syntax, bool)
+	// CanonicalAttr resolves a requested name (ldapDisplayName in any case, or the schema's numeric
+	// OID) to the schema's ldapDisplayName. An attribute outside the schema is an error.
+	CanonicalAttr(name string) (string, error)
 	// Classify is the connector classifier's verdict on the same session.
 	Classify(ctx context.Context, id guid.GUID) (write.Verdict, error)
 }
@@ -83,6 +86,17 @@ func (h *Handler) Read(ctx context.Context, req *connectorv1.ReadRequest, out Se
 	if len(attrs) == 0 || len(attrs) > maxAttributes {
 		return invalid("attributes")
 	}
+	// Canonicalise once: the SD hold, the DC request and the answer filter all work on the schema
+	// names, so an OID spelling can neither pass the hold nor be dropped from the answer.
+	canon := make([]string, 0, len(attrs))
+	for _, a := range attrs {
+		c, err := h.src.CanonicalAttr(a)
+		if err != nil {
+			return mapAD(err, nil)
+		}
+		canon = append(canon, c)
+	}
+	attrs = canon
 	for _, a := range attrs {
 		if strings.EqualFold(a, "nTSecurityDescriptor") { // held for T-0118 (typed SD + SD-flags control)
 			return refuse(connectorv1.ErrorCode_ERROR_CODE_ATTRIBUTE_NOT_ALLOWED, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "attribute not allowed")

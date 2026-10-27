@@ -1,7 +1,7 @@
 ---
 title: "Domain model v0"
 date: 2026-10-02
-updated: 2026-10-24
+updated: 2026-10-27
 status: review
 owner: heramb
 author: solution-architect
@@ -1272,9 +1272,14 @@ objects are escalation objects** (TM-D19 rule 5). The following objects back a c
 - any object with a correlation (DM-20), in any state except `removed`, to either.
 
 Through activeDIQ, some changes to such an object need an actor who holds every privilege the
-backed account holds, over every scope it holds it (the DM-36.I1 test). Those changes are a
-password reset, an unlock, enabling the object, a change of its UPN or `sAMAccountName`, and a
-move. Without that, Plan refuses the item and the refusal is audited. The Entra app never writes
+backed account holds, over every scope it holds it (the DM-36.I1 test). Those changes are the
+classes of the closed table `guarded v1` (threat model §6.9 rule 5, TM-D28): password reset, unlock,
+enable, UPN or `sAMAccountName` (and `dNSHostName`), move, credential mapping (`msDS-KeyCredentialLink`,
+`altSecurityIdentities`, Entra `certificateUserIds`), `servicePrincipalName`, the sign-in `userAccountControl`
+bits (`PASSWD_NOTREQD`, `DONT_REQ_PREAUTH`, `USE_DES_KEY_ONLY` and others), and widening `accountExpires`,
+`logonHours` or `userWorkstations`. Tightening changes (disable, expire now) are not guarded. Each class
+has an object permission, and every Action that makes the change declares it; `fitness-backing` fails CI
+otherwise (TM-F-BACKING). Without that, Plan refuses the item and the refusal is audited. The Entra app never writes
 authentication methods (threat model §6.6 deny list).
 **Lifecycle.** `invited → active ⇄ disabled → deleted`. Audit keeps the ID and a name snapshot,
 which is erasable under X11.
@@ -2106,6 +2111,7 @@ AC2 was re-checked by script: every ADM ID in scope lock §3.3 (123 IDs) appears
 
 ## Changelog
 
+- 2026-10-27 · T-0388. DM-30.I7 lists the guarded classes of threat model §6.9 rule 5 (TM-D28) instead of the five original changes, and names the fitness function that forces Actions to declare the permission.
 - 2026-10-26 · T-0361. DM-37 gains `expires_at`, `confirm_attempts`, `paused_until`, the `expired` state, the `authn_totp_failures` companion table, I5 (failure budget; charge before evaluate) and I6 (pending expiry; the database clamps `expires_at` to 10 minutes).
 
 - 2026-10-23 · T-0078 (TM-Q24). Carries TM-D17 rule 4 (g), rule 5 (h) and TM-D19 into the domain model by name: DM-20.I4 cites rule 4 (g) (a correlation first eligible during a post-attestation `open`/`stale` lapse, `eligibility_class = lapsed`, needs `tenant-owner` re-confirmation; the install-time population does not), DM-20.I6 cites TM-D19 (authority factor, DM-30.I6/I7, DM-37.I3), DM-20.I7 cites rule 5 (h). Hybrid-trust states in DM-10.I7 (`unattested`/`open`/`stale`/`attested`, `first_attested_at`, `tenant_takeover_open`) already match TM-Q24; no semantic change.
