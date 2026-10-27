@@ -85,6 +85,15 @@ func (s *src) Syntax(n string) (ldapfilter.Syntax, bool) {
 	}
 	return ldapfilter.SynString, true
 }
+func (s *src) CanonicalAttr(n string) (string, error) {
+	switch n {
+	case "1.2.840.113556.1.4.151":
+		return "nTSecurityDescriptor", nil
+	case "2.5.4.3":
+		return "cn", nil
+	}
+	return n, nil
+}
 func (s *src) Classify(context.Context, guid.GUID) (write.Verdict, error) {
 	s.calls = append(s.calls, "classify")
 	return s.classify, s.clsErr
@@ -345,6 +354,29 @@ func TestSecurityDescriptorIsRefusedUntilItsTicket(t *testing.T) {
 	r.Attributes = []string{"cn", "nTSecurityDescriptor"}
 	if _, err := collect(t, start(t, s), r); code(err) != connectorv1.ErrorCode_ERROR_CODE_ATTRIBUTE_NOT_ALLOWED || len(s.calls) != 0 {
 		t.Fatalf("code %v", code(err))
+	}
+}
+
+func TestSecurityDescriptorByOIDIsRefused(t *testing.T) {
+	s := &src{dsa: dsaA, entry: entry(map[string][][]byte{"cn": {[]byte("x")}})}
+	r := req(dsaA, false)
+	r.Attributes = []string{"cn", "1.2.840.113556.1.4.151"}
+	if _, err := collect(t, start(t, s), r); code(err) != connectorv1.ErrorCode_ERROR_CODE_ATTRIBUTE_NOT_ALLOWED || len(s.calls) != 0 {
+		t.Fatalf("code %v", code(err))
+	}
+}
+
+func TestAttributeRequestedByOIDIsReturned(t *testing.T) {
+	s := &src{dsa: dsaA, entry: entry(map[string][][]byte{"cn": {[]byte("x")}})}
+	r := req(dsaA, false)
+	r.Attributes = []string{"2.5.4.3"}
+	ms, err := collect(t, start(t, s), r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	as := ms[0].GetHeader().GetEntry().GetAttributes()
+	if len(as) != 1 || as[0].GetName() != "cn" {
+		t.Fatalf("attributes %v", as)
 	}
 }
 
