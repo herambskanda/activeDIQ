@@ -362,6 +362,16 @@
       "reason": "CHECK: cert_der is 64..16384 bytes; the probe row is not parsed as a certificate."
     },
     {
+      "column": "public.connection_attestation_attempts.code_verifier",
+      "value": "probe-code-verifier-0123456789-0123456789-0123",
+      "reason": "CHECK: a PKCE code_verifier is 43..128 characters (RFC 7636 §4.1)."
+    },
+    {
+      "column": "public.connection_attestation_attempts.state_hash",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: state_hash is a 32-byte SHA-256 of the attempt's state value."
+    },
+    {
       "column": "public.hybrid_links.nc_guid",
       "value": "00000000-0000-4000-8000-0000000000a1",
       "reason": "CHECK: nc_guid is a canonical lower-case UUID text."
