@@ -59,8 +59,11 @@ The service has no other RPC (TM-TB6-T8). The server mounts it alone on the flee
   (`call_id` 0: on the whole tunnel). Each side starts with the same fixed window, so there is no
   handshake: 16 messages per call (`DefaultCallWindow`), 64 per tunnel (`DefaultTunnelWindow`), plus
   256 concurrent calls and 4 MiB per message. Credit is granted back only when the local handler has
-  consumed a message (batched at half a window), and a retired call's unread messages go back to the
-  tunnel window. Data beyond either window, or a grant of 0 or one that would lift the sender above
+  consumed a message (batched at half a window). A call that ends with messages still buffered returns
+  them to the tunnel window only when they are released: discarded at once if nobody will read them
+  (local cancel or close, peer cancel), or as the reader consumes them (peer close of a call we opened;
+  the reader abandoning the call discards the rest). Pending credit is retried by the writer after
+  each frame it sends. Data beyond either window, or a grant of 0 or one that would lift the sender above
   its window, is a protocol violation (`data_exceeds_credit`, `credit_invalid`): the tunnel closes and
   is audited, so the read loop never waits on a slow handler. A sender with no credit blocks (until
   credit, the call's context, the call's end or the tunnel's end). Worst case buffered per tunnel is

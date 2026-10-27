@@ -63,9 +63,11 @@ type call struct {
 
 	// Flow control, guarded by Mux.mu: credit we hold to send on this call, messages the peer sent
 	// that we have not granted back, and the part of those the handler already consumed.
-	sndCredit   int
-	rcvHeld     int
-	rcvConsumed int
+	sndCredit    int
+	rcvHeld      int
+	rcvConsumed  int
+	tunPend      int  // peer messages of this call still counted against the tunnel window
+	keepBuffered bool // retire without draining: buffered data must still reach the reader
 
 	peerHalf bool // guarded by Mux.mu
 	unary    bool // one message each way: a second data frame from the peer is a violation

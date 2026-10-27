@@ -1291,3 +1291,63 @@ func TestSendsAfterHalfCloseDoNotLeakTunnelCredit(t *testing.T) {
 		t.Fatal("sibling call stalled: tunnel send credit leaked")
 	}
 }
+
+// A peer that answers each call with a full window and closes it must not get tunnel credit back
+// while those messages are still buffered: the tunnel window bounds what it can make us hold.
+func TestClosedCallsKeepUnreadMessagesCountedAgainstTheTunnelWindow(t *testing.T) {
+	r := newRig(t, smallWindows(4, 8))
+	r.watch(t, context.Background(), 1)
+	r.watch(t, context.Background(), 3)
+	for _, id := range []uint64{1, 3} {
+		r.data(id, 4)
+		r.send(fleet.Frame{CallID: id, Body: fleet.BodyClose})
+	}
+	r.watch(t, context.Background(), 5)
+	r.data(5, 1) // nothing was read, so the tunnel window of 8 is still full
+	r.wantViolation(t, fleet.ViolationDataOverCredit)
+	for {
+		select {
+		case f := <-r.peer.in:
+			if f.Body == fleet.BodyCredit {
+				t.Fatalf("tunnel credit %+v returned for unread messages", f)
+			}
+		default:
+			return
+		}
+	}
+}
+
+func TestReadingBufferedMessagesOfAClosedCallReturnsTunnelCredit(t *testing.T) {
+	r := newRig(t, smallWindows(4, 8))
+	cs := r.watch(t, context.Background(), 1)
+	r.data(1, 4)
+	r.send(fleet.Frame{CallID: 1, Body: fleet.BodyClose})
+	r.healthy(t, 2) // round trip: the close was processed before the reader starts
+	for i := 0; i < 4; i++ {
+		if err := cs.RecvMsg(new(wrapperspb.StringValue)); err != nil {
+			t.Fatalf("buffered message %d: %v", i, err)
+		}
+	}
+	if f := r.next(t); f.CallID != 0 || f.Body != fleet.BodyCredit || f.Messages != 4 {
+		t.Fatalf("got %+v, want tunnel credit 4", f)
+	}
+}
+
+func TestAbandonedClosedCallReturnsItsUnreadMessages(t *testing.T) {
+	r := newRig(t, smallWindows(4, 8))
+	cs := r.watch(t, context.Background(), 1)
+	r.send(fleet.Frame{CallID: 1, Body: fleet.BodyData, Payload: []byte{0xff}}) // not a valid message
+	r.data(1, 3)
+	r.send(fleet.Frame{CallID: 1, Body: fleet.BodyClose})
+	r.healthy(t, 2) // round trip: the close was processed before the reader starts
+	if err := cs.RecvMsg(new(wrapperspb.StringValue)); err == nil {
+		t.Fatal("want a decode error")
+	}
+	f := r.next(t)
+	if f.CallID == 1 && f.Body == fleet.BodyCancel { // the close frame may not have been processed yet
+		f = r.next(t)
+	}
+	if f.CallID != 0 || f.Body != fleet.BodyCredit || f.Messages < 4 { // the healthy call's own message may ride along
+		t.Fatalf("got %+v, want tunnel credit 4 (1 read, 3 released)", f)
+	}
+}
