@@ -171,6 +171,20 @@ func (f *SecondFactor) VerifyTOTPRequest(ctx context.Context, r *http.Request, c
 	if err != nil {
 		return CreateResult{}, nil, err
 	}
+	return f.verifyTOTPHandle(ctx, h, code)
+}
+
+// VerifyTOTPCookie is VerifyTOTPRequest for a caller that already holds the one pending cookie's
+// value (the generated Input of verifyTotpSignIn). An empty or malformed value is ErrPendingInvalid.
+func (f *SecondFactor) VerifyTOTPCookie(ctx context.Context, pendingCookie, code string) (CreateResult, []*http.Cookie, error) {
+	h, err := ParsePendingHandle(pendingCookie)
+	if err != nil {
+		return CreateResult{}, nil, ErrPendingInvalid
+	}
+	return f.verifyTOTPHandle(ctx, h, code)
+}
+
+func (f *SecondFactor) verifyTOTPHandle(ctx context.Context, h PendingHandle, code string) (CreateResult, []*http.Cookie, error) {
 	res, err := f.VerifyTOTP(ctx, h, code)
 	if err != nil {
 		return CreateResult{}, nil, err

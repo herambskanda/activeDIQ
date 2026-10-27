@@ -49,7 +49,7 @@ func routes(t *testing.T, h widgets.Handlers) map[string]apihost.Route {
 
 func TestBindRouteRows(t *testing.T) {
 	rs := routes(t, &handlers{})
-	if len(rs) != 9 {
+	if len(rs) != 10 {
 		t.Fatalf("want one route per operation, got %d", len(rs))
 	}
 	type row struct {
@@ -70,6 +70,7 @@ func TestBindRouteRows(t *testing.T) {
 		"searchWidgets":       {"POST", "/widgets/search", "widgets.read", "stable", apihost.BodyJSON, "application/json", false, 1 << 20, "read"},
 		"importWidgets":       {"POST", "/widgets/import", "widgets.write", "stable", apihost.BodyBinary, "text/csv", false, 1 << 20, "write"},
 		"exportWidgets":       {"GET", "/widgets/export", "widgets.read", "stable", apihost.BodyNone, "", false, 0, "read"},
+		"claimWidget":         {"POST", "/widgets/claim", "widgets.write", "stable", apihost.BodyNone, "", false, 0, "write"},
 	} {
 		r, ok := rs[id]
 		if !ok {
@@ -258,5 +259,27 @@ func TestTypeClosureHasNoV1JSONMethods(t *testing.T) {
 	}
 	if n < 40 {
 		t.Fatalf("the walk visited only %d types", n)
+	}
+}
+
+// A cookie parameter binds only when the cookie occurs exactly once, the peer address is copied, and a
+// multi-valued header is sent once per value.
+func TestCookiePeerIPAndHeaderLists(t *testing.T) {
+	var in widgets.ClaimWidgetInput
+	var errs apitypes.Errors
+	in.BindRequest(&apihost.Request{Cookies: map[string][]string{"claim_ticket": {"t1"}}, PeerIP: "192.0.2.1"}, &errs)
+	if in.ClaimTicket != "t1" || in.PeerIP != "192.0.2.1" || len(errs.All()) != 0 {
+		t.Fatalf("in = %+v errs = %v", in, errs.All())
+	}
+	for _, c := range []map[string][]string{nil, {"claim_ticket": {"a", "b"}}} {
+		var again widgets.ClaimWidgetInput
+		again.BindRequest(&apihost.Request{Cookies: c}, &errs)
+		if again.ClaimTicket != "" || len(errs.All()) != 0 {
+			t.Fatalf("cookies %v: in = %+v errs = %v", c, again, errs.All())
+		}
+	}
+	out := widgets.ClaimWidget204{SetCookie: []string{"a=1", "b=2"}}
+	if got := out.ResponseHeaderLists()["Set-Cookie"]; len(got) != 2 {
+		t.Fatalf("lists = %v", got)
 	}
 }

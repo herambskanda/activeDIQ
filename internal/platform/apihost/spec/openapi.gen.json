@@ -1122,6 +1122,17 @@
       "post": {
         "description": "Needs the pending-sign-in cookie. Success and failure behave as for verifyWebAuthnSignIn.",
         "operationId": "verifyTotpSignIn",
+        "parameters": [
+          {
+            "description": "The pending-sign-in handle set by the first factor. It is read from this cookie only; a missing or repeated cookie answers the same 401 as any other sign-in failure.",
+            "in": "cookie",
+            "name": "__Host-adiq_pending",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -1137,10 +1148,13 @@
             "description": "The second factor passed and a session exists.",
             "headers": {
               "Set-Cookie": {
-                "description": "The new session cookie, __Host-adiq_session; the pending cookie is cleared.",
+                "description": "Two lines: the new session cookie, __Host-adiq_session, and a clearing __Host-adiq_pending.",
                 "required": true,
                 "schema": {
-                  "type": "string"
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
                 }
               }
             }
@@ -1180,6 +1194,7 @@
         "x-activediq-parity": [
           "ADM-142"
         ],
+        "x-activediq-peer-ip": true,
         "x-activediq-scope": "platform",
         "x-activediq-stability": "preview",
         "x-permission": "anonymous"

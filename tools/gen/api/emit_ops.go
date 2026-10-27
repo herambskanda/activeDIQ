@@ -90,6 +90,9 @@ func (u *unit) emitOperation(f *gofile, op *Operation) {
 		}
 		f.p("\t%s %s // %s %q\n", pf.Go, t, pf.P.In, pf.P.Name)
 	}
+	if op.PeerIP {
+		f.p("\tPeerIP string // the TCP peer address, never a forwarded header\n")
+	}
 	switch {
 	case op.Body == nil:
 	case op.Body.Binary:
@@ -109,6 +112,9 @@ func (u *unit) emitOperation(f *gofile, op *Operation) {
 	if op.Body != nil && op.Body.Binary {
 		f.p("\tin.Upload = r.Upload\n")
 	}
+	if op.PeerIP {
+		f.p("\tin.PeerIP = r.PeerIP\n")
+	}
 	f.p("}\n\n")
 
 	// BodyTarget.
@@ -121,6 +127,9 @@ func (u *unit) emitOperation(f *gofile, op *Operation) {
 	// Validate.
 	f.p("func (in *%sInput) Validate(errs *%s) {\n\t_ = errs\n", n, f.apit("Errors"))
 	for _, pf := range pfs {
+		if pf.P.In == "cookie" {
+			continue // a plain string with no bound; see parseParam
+		}
 		sc := pf.P.Schema
 		expr := "in." + pf.Go
 		at := strconv.Quote(pf.P.Name)
@@ -181,7 +190,11 @@ func (u *unit) emitOperation(f *gofile, op *Operation) {
 			f.p("\tBody %s\n", f.goType(r.Schema))
 		}
 		for _, h := range r.Headers {
-			f.p("\t%s string // header %s\n", goIdent(h.Name), h.Name)
+			if h.List {
+				f.p("\t%s []string // header %s, one line per value\n", goIdent(h.Name), h.Name)
+			} else {
+				f.p("\t%s string // header %s\n", goIdent(h.Name), h.Name)
+			}
 		}
 		f.p("}\n\nfunc (%s) StatusCode() int { return %d }\n", rn, r.Status)
 		switch {
@@ -195,9 +208,24 @@ func (u *unit) emitOperation(f *gofile, op *Operation) {
 		} else {
 			f.p("func (o %s) ResponseHeaders() map[string]string {\n\th := map[string]string{}\n", rn)
 			for _, h := range r.Headers {
-				f.p("\tif o.%s != \"\" {\n\t\th[%q] = o.%s\n\t}\n", goIdent(h.Name), h.Name, goIdent(h.Name))
+				if !h.List {
+					f.p("\tif o.%s != \"\" {\n\t\th[%q] = o.%s\n\t}\n", goIdent(h.Name), h.Name, goIdent(h.Name))
+				}
 			}
 			f.p("\treturn h\n}\n")
+			var lists []RespHeader
+			for _, h := range r.Headers {
+				if h.List {
+					lists = append(lists, h)
+				}
+			}
+			if len(lists) > 0 {
+				f.p("func (o %s) ResponseHeaderLists() map[string][]string {\n\treturn map[string][]string{\n", rn)
+				for _, h := range lists {
+					f.p("\t\t%q: o.%s,\n", h.Name, goIdent(h.Name))
+				}
+				f.p("\t}\n}\n")
+			}
 		}
 		f.p("func (%s) is%sOutput() {}\n\n", rn, n)
 	}
@@ -214,8 +242,14 @@ func (u *unit) emitBind(f *gofile, goField string, pm *Param, list bool) {
 		f.p("\t\tvs := []string{r.PathValue(%s)}\n", name)
 	case "query":
 		f.p("\t\tvs := r.Query[%s]\n", name)
+	case "cookie":
+		f.p("\t\tvs := r.Cookies[%s]\n", name)
 	default:
 		f.p("\t\tvs := r.Header.Values(%s)\n", name)
+	}
+	if pm.In == "cookie" {
+		f.p("\t\tif len(vs) == 1 {\n\t\t\tin.%s = vs[0]\n\t\t}\n\t}\n", goField)
+		return
 	}
 	elem := pm.Schema
 	if list {

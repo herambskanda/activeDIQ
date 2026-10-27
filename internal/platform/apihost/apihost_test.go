@@ -102,10 +102,13 @@ type input struct {
 	upload   apihost.Upload
 	failBind bool
 	invalid  bool
+	cookies  map[string][]string
+	peerIP   string
 }
 
 func (i *input) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
 	i.upload = r.Upload
+	i.cookies, i.peerIP = r.Cookies, r.PeerIP
 	if i.failBind {
 		errs.Add(apitypes.InQuery, "limit", apitypes.CodeType, "bad")
 	}
@@ -136,6 +139,14 @@ type resp struct {
 func (r resp) StatusCode() int                    { return r.status }
 func (r resp) ResponseBody() any                  { return r.body }
 func (r resp) ResponseHeaders() map[string]string { return r.hdr }
+
+// listResp is a response that sends a header once per value, like the generated Set-Cookie outputs.
+type listResp struct {
+	resp
+	lists map[string][]string
+}
+
+func (r listResp) ResponseHeaderLists() map[string][]string { return r.lists }
 
 type row struct {
 	meta apihost.RouteMeta
@@ -987,5 +998,33 @@ func TestCSRFRealAuthenticatorInChain(t *testing.T) {
 				t.Fatal("handler ran")
 			}
 		})
+	}
+}
+
+func TestCookiesPeerIPAndHeaderLists(t *testing.T) {
+	m := meta("verify", "GET", "/widgets", "anonymous")
+	m.Class = "anonymous"
+	pol := apihost.Policy{Anonymous: []apihost.AnonymousRow{{Operation: "verify"}}}
+	r := &row{meta: m, call: func(context.Context, apihost.Input) (apihost.Response, error) {
+		return listResp{resp: resp{status: 204}, lists: map[string][]string{"Set-Cookie": {"a=1; Path=/", "b=; Max-Age=0", ""}}}, nil
+	}}
+	req := get("/widgets")
+	req.RemoteAddr = "192.0.2.9:5555"
+	req.Header.Set("X-Forwarded-For", "203.0.113.1")
+	req.AddCookie(&http.Cookie{Name: "one", Value: "x"})
+	req.AddCookie(&http.Cookie{Name: "two", Value: "1"})
+	req.AddCookie(&http.Cookie{Name: "two", Value: "2"})
+	rec := serve(t, r, newPorts(), pol, req)
+	if rec.Code != 204 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	if got := rec.Header().Values("Set-Cookie"); len(got) != 2 || got[0] != "a=1; Path=/" || got[1] != "b=; Max-Age=0" {
+		t.Fatalf("Set-Cookie lines = %q", got)
+	}
+	if r.in.peerIP != "192.0.2.9" {
+		t.Fatalf("peer IP = %q, want the TCP peer and not a forwarded header", r.in.peerIP)
+	}
+	if len(r.in.cookies["one"]) != 1 || len(r.in.cookies["two"]) != 2 {
+		t.Fatalf("cookies = %v", r.in.cookies)
 	}
 }

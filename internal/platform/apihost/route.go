@@ -45,7 +45,14 @@ type Request struct {
 	PathValue func(name string) string
 	Query     url.Values
 	Header    http.Header
-	Upload    Upload // set for a binary request body
+	Cookies   map[string][]string // cookie values by name, for cookie parameters
+	PeerIP    string              // the TCP peer address (never a forwarded header), for x-activediq-peer-ip operations
+	Upload    Upload              // set for a binary request body
+}
+
+// HeaderLists is implemented by a Response that sends a header once per value (Set-Cookie).
+type HeaderLists interface {
+	ResponseHeaderLists() map[string][]string
 }
 
 // Upload is a binary request body, read through a cap apihost enforces. It is never secret-bearing.

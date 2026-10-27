@@ -169,7 +169,13 @@ func (s *Server) routeHandler(rt Route, boundHost string) http.Handler {
 				pool.release(reserved) // only after the buffer is cleared
 			}
 		}()
-		req := &Request{PathValue: r.PathValue, Query: query, Header: r.Header}
+		req := &Request{PathValue: r.PathValue, Query: query, Header: r.Header, PeerIP: sourceIP(r)}
+		for _, c := range r.Cookies() {
+			if req.Cookies == nil {
+				req.Cookies = map[string][]string{}
+			}
+			req.Cookies[c.Name] = append(req.Cookies[c.Name], c.Value)
+		}
 		var errs apitypes.Errors
 		if meta.Body == BodyBinary {
 			req.Upload = Upload{Reader: http.MaxBytesReader(w, r.Body, meta.MaxBody)}

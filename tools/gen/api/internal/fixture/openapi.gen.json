@@ -825,6 +825,47 @@
         "x-permission": "widgets.write"
       }
     },
+    "/widgets/claim": {
+      "post": {
+        "operationId": "claimWidget",
+        "parameters": [
+          {
+            "in": "cookie",
+            "name": "claim_ticket",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Claimed",
+            "headers": {
+              "Set-Cookie": {
+                "required": true,
+                "schema": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "summary": "A cookie parameter, the peer address and a multi-line Set-Cookie header",
+        "tags": [
+          "widgets"
+        ],
+        "x-activediq-peer-ip": true,
+        "x-activediq-stability": "stable",
+        "x-permission": "widgets.write"
+      }
+    },
     "/widgets/export": {
       "get": {
         "operationId": "exportWidgets",

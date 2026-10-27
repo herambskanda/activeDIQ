@@ -157,11 +157,20 @@ func (SignOut204) isSignOutOutput() {}
 
 // VerifyTOTPSignInInput is the decoded input of verifyTotpSignIn: path, query and header parameters, then the body.
 type VerifyTOTPSignInInput struct {
-	Body TotpCodeRequest
+	HostAdiqPending string // cookie "__Host-adiq_pending"
+	PeerIP          string // the TCP peer address, never a forwarded header
+	Body            TotpCodeRequest
 }
 
 func (in *VerifyTOTPSignInInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
 	_ = r
+	{
+		vs := r.Cookies["__Host-adiq_pending"]
+		if len(vs) == 1 {
+			in.HostAdiqPending = vs[0]
+		}
+	}
+	in.PeerIP = r.PeerIP
 }
 
 func (in *VerifyTOTPSignInInput) BodyTarget() any { return &in.Body }
@@ -183,17 +192,19 @@ type VerifyTOTPSignInOutput interface {
 
 // VerifyTOTPSignIn204 is the 204 response.
 type VerifyTOTPSignIn204 struct {
-	SetCookie string // header Set-Cookie
+	SetCookie []string // header Set-Cookie, one line per value
 }
 
 func (VerifyTOTPSignIn204) StatusCode() int   { return 204 }
 func (VerifyTOTPSignIn204) ResponseBody() any { return nil }
 func (o VerifyTOTPSignIn204) ResponseHeaders() map[string]string {
 	h := map[string]string{}
-	if o.SetCookie != "" {
-		h["Set-Cookie"] = o.SetCookie
-	}
 	return h
+}
+func (o VerifyTOTPSignIn204) ResponseHeaderLists() map[string][]string {
+	return map[string][]string{
+		"Set-Cookie": o.SetCookie,
+	}
 }
 func (VerifyTOTPSignIn204) isVerifyTOTPSignInOutput() {}
 
