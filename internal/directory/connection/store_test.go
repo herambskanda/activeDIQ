@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/platform/store"
@@ -58,6 +59,49 @@ func (e *env) raw(tid tenant.ID, sql string, args ...any) (int64, error) {
 // platform runs fn with no tenant context, to prove a tenant query outside WithTenant fails.
 func (e *env) platform(fn func(ctx context.Context, tx store.Tx) error) error {
 	return e.db.WithPlatform(context.Background(), "test: a tenant query outside WithTenant", fn)
+}
+
+var runSeq int
+
+// record stores a verification run for the connection through the Go store (which also moves the
+// connection's last_verification_id pointer) and returns its ID.
+func (e *env) record(t *testing.T, tid tenant.ID, id connection.ID, verdict connection.Verdict, v7 connection.Outcome) {
+	t.Helper()
+	runSeq++
+	err := e.db.WithTenant(context.Background(), tid, func(ctx context.Context, tx store.Tx) error {
+		_, err := connection.Store{}.RecordVerification(ctx, tx, connection.NewVerification{
+			ID:               connection.VerificationID(fmt.Sprintf("00000000-0000-4000-b000-%012d", runSeq)),
+			ConnectionID:     id,
+			CredentialID:     cred,
+			Kind:             connection.KindManual,
+			RequestedBy:      "principal-test",
+			StartedAt:        time.Now(),
+			CheckListVersion: 1,
+			Verdict:          verdict,
+			Outcomes: map[connection.Check]connection.Outcome{
+				"V5": connection.OutcomePass, connection.CheckV7OverPrivilege: v7, connection.CheckV8ReadSufficient: connection.OutcomePass,
+			},
+		})
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// activate takes the one legal door into active: a passing run, then Store.Activate.
+func (e *env) activate(t *testing.T, tid tenant.ID, id connection.ID) connection.Connection {
+	t.Helper()
+	e.record(t, tid, id, connection.VerdictPass, connection.OutcomePass)
+	var c connection.Connection
+	err := e.db.WithTenant(context.Background(), tid, func(ctx context.Context, tx store.Tx) (err error) {
+		c, err = connection.Store{}.Activate(ctx, tx, id)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
 }
 
 func forest(name string) connection.New {
@@ -128,7 +172,7 @@ func TestLifecycleAndRetirementStamp(t *testing.T) {
 			}
 			return n
 		}
-		if n := step(connection.StateVerifying, connection.StateActive); n.RetiredAt != nil {
+		if n := e.activate(t, e.a, c.ID); n.RetiredAt != nil {
 			t.Fatal("active has no retired_at")
 		}
 		step(connection.StateActive, connection.StateSuspended)
@@ -203,7 +247,8 @@ func TestDuplicateIdentityAmongLiveConnections(t *testing.T) {
 		}
 
 		// Remove the first; the identity can be connected again.
-		for _, st := range [][2]connection.State{{connection.StateVerifying, connection.StateActive}, {connection.StateActive, connection.StateDecommissioning}, {connection.StateDecommissioning, connection.StateRemoved}} {
+		e.activate(t, e.a, first.ID)
+		for _, st := range [][2]connection.State{{connection.StateActive, connection.StateDecommissioning}, {connection.StateDecommissioning, connection.StateRemoved}} {
 			if _, err := e.reg.Transition(ctx, e.a, first.ID, st[0], st[1]); err != nil {
 				t.Fatal(err)
 			}
@@ -355,6 +400,8 @@ func TestDatabaseEnforcesTheDM10Table(t *testing.T) {
 					VALUES (current_setting('app.tenant_id')::uuid, $1::uuid, 'ad_forest', 'pair', $2::uuid, 'ldaps')`, id, cred); err != nil {
 					t.Fatalf("seed draft: %v", err)
 				}
+				// The activation gate evidence (T-0246), so these pairs are decided by the edge alone.
+				e.record(t, e.a, connection.ID(id), connection.VerdictPass, connection.OutcomePass)
 				prev := connection.StateDraft
 				for _, step := range seedPath[from] {
 					if _, err := e.raw(e.a, `UPDATE public.connections SET state = $2,
@@ -475,6 +522,57 @@ func TestC13PinsAppendOnly(t *testing.T) {
 		}
 		if _, err := e.raw(e.a, `UPDATE public.connection_c13_pins SET group_guid = group_guid`); err == nil {
 			t.Error("update of a pin allowed")
+		}
+	})
+}
+
+// T-0246 / DM-10.I9: the database refuses draft|verifying -> active unless the gate evidence exists,
+// whoever writes the row.
+func TestDatabaseRefusesActivationWithoutGateEvidence(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		const up = `UPDATE public.connections SET state = 'active' WHERE id = $1::uuid`
+		refused := func(label string, id connection.ID) {
+			t.Helper()
+			if n, err := e.raw(e.a, up, string(id)); store.SQLState(err) != "AD403" || n != 0 {
+				t.Errorf("%s: want AD403, got n=%d %v", label, n, err)
+			}
+		}
+		// A direct UPDATE with no run at all.
+		c := e.verifying(t, e.a, "no-run", idA)
+		refused("no run", c.ID)
+
+		// A failed run, and a refused run with no override.
+		d := e.verifying(t, e.a, "failed-run", idB)
+		e.record(t, e.a, d.ID, connection.VerdictFailed, connection.OutcomeFail)
+		refused("failed run", d.ID)
+		e.record(t, e.a, d.ID, connection.VerdictRefused, connection.OutcomeFail)
+		refused("refused, no override", d.ID)
+
+		// A run that could not answer over-privilege.
+		e.record(t, e.a, d.ID, connection.VerdictCouldNotVerify, connection.OutcomeCouldNotVerify)
+		refused("could not verify", d.ID)
+
+		// A stale pass: the owner ages the run beyond the window (the append-only trigger is off for it).
+		e.record(t, e.a, d.ID, connection.VerdictPass, connection.OutcomePass)
+		if err := e.d.ExecOwner(context.Background(), fmt.Sprintf(`
+			ALTER TABLE public.connection_verifications DISABLE TRIGGER connection_verifications_append_only;
+			ALTER TABLE public.connection_verifications NO FORCE ROW LEVEL SECURITY;
+			UPDATE public.connection_verifications SET started_at = started_at - interval '1 hour', completed_at = completed_at - interval '1 hour' WHERE tenant_id = '%s';
+			ALTER TABLE public.connection_verifications FORCE ROW LEVEL SECURITY;
+			ALTER TABLE public.connection_verifications ENABLE TRIGGER connection_verifications_append_only;`, e.a)); err != nil {
+			t.Fatal(err)
+		}
+		refused("stale pass", d.ID)
+
+		// A fresh pass opens it, through plain SQL as well: the evidence is what counts, not the door.
+		e.record(t, e.a, d.ID, connection.VerdictPass, connection.OutcomePass)
+		if n, err := e.raw(e.a, up, string(d.ID)); err != nil || n != 1 {
+			t.Errorf("fresh pass: n=%d %v", n, err)
+		}
+		// Another tenant's context sees none of it: fail closed.
+		if n, err := e.raw(e.b, up, string(c.ID)); err != nil || n != 0 {
+			t.Errorf("other tenant: n=%d %v", n, err)
 		}
 	})
 }
