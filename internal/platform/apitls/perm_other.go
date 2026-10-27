@@ -4,7 +4,7 @@ package apitls
 
 import "os"
 
-// Windows and OCI ACL checks are T-0104; until then only symlinks and non-regular files are refused.
+// The installer sets the Windows ACL (T-0104); the runtime owner/DACL check here is T-0413. Until then only symlinks and non-regular files are refused.
 func checkDir(string) error { return nil }
 
 func checkFile(path string, _ bool) error {

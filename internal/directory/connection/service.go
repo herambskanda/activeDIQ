@@ -155,6 +155,52 @@ func (s *Service) RunScheduled(ctx context.Context, tid tenant.ID) ([]ScheduledR
 	return out, nil
 }
 
+// StrandedGrace is how long a connection may stay verifying before its run is presumed lost. A run is
+// one connector call, bounded well below this; the margin means a slow live run is never swept.
+const StrandedGrace = 15 * time.Minute
+
+// sweeperID is the system principal a swept run is recorded under.
+const sweeperID = "system:sweeper"
+
+// SweepStranded finds connections left in verifying by a crash (no live run can outlast grace; zero
+// takes StrandedGrace) and, for each, records a failed run with the over-privilege check not_run and
+// returns it to draft (DM-10.I10). It returns the connections it recovered. A connection whose state
+// moved meanwhile (the run finished after all) is skipped; a connection that cannot be recorded is
+// reported in the error and the others are still swept.
+func (s *Service) SweepStranded(ctx context.Context, tid tenant.ID, grace time.Duration) ([]ID, error) {
+	if grace <= 0 {
+		grace = StrandedGrace
+	}
+	var cs []Connection
+	err := s.reg.with(ctx, tid, func(ctx context.Context, tx store.Tx) (e error) {
+		cs, e = s.reg.s.ListStranded(ctx, tx, s.now().Add(-grace))
+		return
+	})
+	if err != nil {
+		return nil, err
+	}
+	actor := authority.Chain{Requester: authority.Principal{ID: sweeperID, Kind: authority.System}}
+	var swept []ID
+	var errs []error
+	for _, c := range cs {
+		if err := ctx.Err(); err != nil {
+			return swept, errors.Join(append(errs, err)...)
+		}
+		// Onboarding is the run kind that ends verifying → draft without an activation attempt; the
+		// original kind is not recorded and does not matter, both end in draft on a failed run.
+		_, err := s.recordInterrupted(ctx, tid, c, KindOnboarding, newVerificationID(), s.now(), actor)
+		switch {
+		case err == nil:
+			swept = append(swept, c.ID)
+		case errors.Is(err, ErrStateConflict):
+			// Settled by its own run in the meantime: nothing to recover.
+		default:
+			errs = append(errs, fmt.Errorf("connection %s: %w", c.ID, err))
+		}
+	}
+	return swept, errors.Join(errs...)
+}
+
 // run is one verification: claim, ask the connector, apply. The connector call is outside every
 // transaction: it is a network round trip to a DC and must not hold a row lock.
 func (s *Service) run(ctx context.Context, tid tenant.ID, id ID, kind VerificationKind, actor authority.Chain) (VerifyOutcome, error) {
@@ -163,8 +209,11 @@ func (s *Service) run(ctx context.Context, tid tenant.ID, id ID, kind Verificati
 	err := s.reg.with(ctx, tid, func(ctx context.Context, tx store.Tx) (e error) {
 		if fromDraft {
 			// draft → verifying is the claim: a second concurrent press fails the compare-and-set.
-			conn, e = s.reg.s.Transition(ctx, tx, id, StateDraft, StateVerifying)
-			return
+			if conn, e = s.reg.s.Transition(ctx, tx, id, StateDraft, StateVerifying); e != nil {
+				return
+			}
+			// The cadence also carries the sweep of runs stranded here, so it starts with the first claim.
+			return s.schedule(ctx, tx, tid)
 		}
 		if conn, e = s.reg.s.Get(ctx, tx, id); e != nil {
 			return
@@ -345,18 +394,29 @@ func (s *Service) schedule(ctx context.Context, tx store.Tx, tid tenant.ID) erro
 // request never strands the connection in verifying.
 func (s *Service) interrupted(ctx context.Context, tid tenant.ID, conn Connection, kind VerificationKind, vid VerificationID,
 	started time.Time, actor authority.Chain, cause error) (VerifyOutcome, error) {
-	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-	defer cancel()
-	r := VerifyResult{CheckListVersion: 1, Verdict: VerdictFailed,
-		Outcomes: map[Check]Outcome{overPrivilegeCheck(conn.Kind): OutcomeNotRun}}
-	o, err := s.settle(rctx, tid, conn, kind, vid, started, actor, r)
-	if err != nil && !errors.Is(err, ErrActivationRefused) { // an activation run's own refusal is expected here
+	o, err := s.recordInterrupted(ctx, tid, conn, kind, vid, started, actor)
+	if err != nil {
 		return VerifyOutcome{}, errors.Join(fmt.Errorf("%w: and it could not be recorded", ErrRunInterrupted), err)
 	}
 	if errors.Is(cause, ErrRunInterrupted) {
 		return o, cause
 	}
 	return o, fmt.Errorf("%w: %w", ErrRunInterrupted, cause)
+}
+
+// recordInterrupted writes the failed run and the verifying → draft step, in a context that outlives
+// the caller's cancellation. It returns only a recording failure.
+func (s *Service) recordInterrupted(ctx context.Context, tid tenant.ID, conn Connection, kind VerificationKind, vid VerificationID,
+	started time.Time, actor authority.Chain) (VerifyOutcome, error) {
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	r := VerifyResult{CheckListVersion: 1, Verdict: VerdictFailed,
+		Outcomes: map[Check]Outcome{overPrivilegeCheck(conn.Kind): OutcomeNotRun}}
+	o, err := s.settle(rctx, tid, conn, kind, vid, started, actor, r)
+	if err != nil && !errors.Is(err, ErrActivationRefused) { // an activation run's own refusal is expected here
+		return VerifyOutcome{}, err
+	}
+	return o, nil
 }
 
 func (s *Service) base(kind audit.Kind, actor authority.Chain, c Connection, o audit.Outcome, reason string) audit.Event {
