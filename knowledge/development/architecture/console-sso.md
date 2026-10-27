@@ -1,11 +1,11 @@
 ---
 title: "Console SSO (ADM-143): OIDC and SAML verifier contract, MFA-asserting IdPs, forced SSO, SPNEGO"
 date: 2026-10-23
-updated: 2026-10-23
+updated: 2026-10-27
 status: review
 owner: heramb
 author: solution-architect
-ticket: T-0191
+ticket: T-0191, T-0495
 parity: ADM-143, ADM-142
 binding_sources: ADR-0001, ADR-0002, ADR-0003, ADR-0004, ADR-0005 (all ratified); threat-model.md (review) §5.8, §6.9, §7; domain-model.md DM-30, DM-31, DM-36, DM-37
 sources_last_checked: 2026-10-23
@@ -349,6 +349,7 @@ The route, gate and rules are TM §7.6 AN-9 and rules 2, 5, 6 and 7, unchanged. 
 | NEG-7 | Channel binding to the TLS session is requested where the browser offers it; its absence is not a refusal in v1, because browser support varies `[UNVERIFIED — lab]` |
 | NEG-8 | The Negotiate header cap (64 KiB, 431) and the FF-SP5 fuzz target of rule 6 stand |
 | NEG-9 | **Gate per adapter.** AN-9 is enabled on a profile only when its lab cases pass (NEG-6 replay, rule 5 NTLM refusal, NEG-2 mapping). If the krb5 adapter cannot refuse replays, `linux-oci` serves AN-9 through a Windows-hosted remote connector, never through a profile conditional (BP §4) |
+| NEG-10 | **A disabled, expired or locked-out principal is refused (T-0495, TM §7.6 rule 10).** After NEG-2 maps the SID, `Service.SignIn` (a) pre-checks inventory `enabled` and `account_expires` (fail closed on unknown), then (b) makes one live connector read of the mapped object by GUID (base scope, typed attribute selection, 2 s) for `userAccountControl`, `accountExpires`, `objectSid`, `msDS-User-Account-Control-Computed`, and refuses on `ACCOUNTDISABLE`, a passed `accountExpires`, `LOCKOUT`, a missing object or a SID that differs from the PAC SID. A connector error is a refusal (`directory_unavailable`), never a fallback to inventory. `PASSWORD_EXPIRED` is not a refusal. Ticket `authtime`/`starttime` are not used: `authtime` is the TGT logon time, so any useful bound rejects ordinary users. All refusals are the one `ErrSignInFailed`; audit reasons `principal_disabled`, `principal_expired`, `principal_locked_out`, `principal_gone`, `principal_sid_mismatch`, `principal_state_unknown`, `directory_unavailable`. Residual: DC replication lag between the disabling DC and the connector's DC (TM R-AN9-1) |
 
 When T-0206 lands, AN-9's `GET /auth/negotiate` enters `api/openapi/policy.yaml` `nonApiRoutes`
 (TM §7.6, "Which rows are in policy.yaml today").
@@ -361,6 +362,41 @@ sign-in; every refusal is one `ErrSignInFailed` with the reason going to a `Reco
 is the header binding (64 KiB cap, 431) and renders through `apihost.ServeNonAPI`, the only place a route
 outside the document writes status. The `Acceptor`, route mounting, audit kinds and NEG-1 switch are T-0492;
 NEG-4 and the sso-correlation mapping route are T-0493. AN-9 is therefore not reachable yet (NEG-9).
+
+**NEG-10 build spec (T-0495, for the T-0492 builder).** `negotiate.Directory` gains a method
+`PrincipalState(ctx, t, ref inventory.Ref) (State, error)` where `State` carries `Enabled *bool`,
+`ExpiresAt *time.Time` (nil = never or unknown-as-never is **not** allowed: the reader returns
+`ExpiresKnown`) and is read from `directory_objects` (extend `internal/directory/inventory`, parameterised
+SQL; do not widen `ObjectsBySID`). A second interface `Live` (`Check(ctx, t, ref, wantSID sid.SID)
+(LiveState, error)`) is implemented in `directory/client` over the connector read RPC, with the
+`filetime` and `attr/flags` codecs (`UAC`, `UACComputed`), never raw integer compares. `Service` runs
+inventory then live, and the two run **after** `mapAccount` and **before** `Pending.Begin`. A nil `Live`
+is a construction error (the service refuses to start with AN-9 enabled), not a skip.
+
+Test **`an9_refuses_ad_disabled`** (`TestAN9RefusesADDisabled`, one subtest per row; each uses a
+valid acceptor result and asserts `ErrSignInFailed`, no pending sign-in created, exactly one audit
+record with the reason, and an identical HTTP response to the unmapped case):
+
+| Row | Inventory | Live read | Expected reason |
+| --- | --- | --- | --- |
+| disabled-in-inventory | `enabled=false` | not called (assert zero calls) | `principal_disabled` |
+| expired-in-inventory | `account_expires` past | not called | `principal_expired` |
+| unknown-inventory | `enabled` NULL | not called | `principal_state_unknown` |
+| stale-inventory | `enabled=true` | `ACCOUNTDISABLE` | `principal_disabled` (the leaver case) |
+| expired-live | enabled | `accountExpires` past | `principal_expired` |
+| never-expires | enabled | `0` and `0x7FFFFFFFFFFFFFFF` | **accepted** (pending sign-in begins) |
+| locked-out | enabled | computed `LOCKOUT` | `principal_locked_out` |
+| password-expired | enabled | computed `PASSWORD_EXPIRED` only | **accepted** |
+| deleted | enabled | not found | `principal_gone` |
+| sid-reused | enabled | different `objectSid` | `principal_sid_mismatch` |
+| connector-down | enabled | error / 2 s timeout | `directory_unavailable`, no inventory fallback |
+| clock-edge | expires == now | | refused (`<=` now) |
+| healthy | enabled | clean | accepted; `Live` called once with the GUID |
+
+Plus a fitness check that the live read builds no filter string (base-scope read by DN/GUID through the
+builders) and that `Live == nil` fails construction. The Samba lab case (disable via `samba-tool user
+disable`, replay a ticket obtained before) is added to the NEG-9 gate list; Windows replication timing
+stays `[UNVERIFIED — lab]`.
 
 ---
 

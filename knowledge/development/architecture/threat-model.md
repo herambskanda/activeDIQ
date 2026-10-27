@@ -5,7 +5,7 @@ updated: 2026-10-27
 status: review
 owner: heramb
 author: security-architect
-ticket: T-0388, old T-0007, T-0032, T-0044, T-0051, T-0055, T-0108, T-0179, T-0111, T-0227, T-0230, T-0235, T-0240, T-0395
+ticket: T-0495, T-0388, old T-0007, T-0032, T-0044, T-0051, T-0055, T-0108, T-0179, T-0111, T-0227, T-0230, T-0235, T-0240, T-0395
 binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), blueprint v0 (review), safe-primitives.md (review)
 sources_last_checked: 2026-10-02
 ---
@@ -2043,7 +2043,8 @@ operation of the document (`x-permission: anonymous`, ADR-0004 rule 5) or a non-
 5. **SPNEGO is Kerberos only.** The acceptor refuses NTLM (TM-D10's `"!ntlm"` package list on
    Windows; the krb5 adapter has none). A Negotiate token that offers only NTLM gets the generic
    failure, so an attacker cannot downgrade to relayable NTLM (TM-X2). The client principal maps to
-   a console account by the `objectSid` of a `directory`-linked identity, never by name. Our server
+   a console account by the `objectSid` of a `directory`-linked identity, never by name, and only if
+   AD still lets that principal sign in (rule 10). Our server
    never runs code from the ticket beyond the acceptor. The acceptor's replay detection and TLS
    channel binding are `[UNVERIFIED — lab]` for the krb5 adapter; the windows profile uses SSPI's.
    Registering the `HTTP/` service principal is an installer or administrator step: activeDIQ never
@@ -2070,6 +2071,47 @@ operation of the document (`x-permission: anonymous`, ADR-0004 rule 5) or a non-
    Content in a GET "has no generally defined semantics" and may be rejected for "its potential as
    a request smuggling attack" ([RFC 9110 §9.3.1](https://www.rfc-editor.org/rfc/rfc9110#section-9.3.1)).
    The rule applies to every `BodyNone` operation, not only AN-1. `Content-Length: 0` is allowed.
+10. **AN-9 refuses a principal AD no longer lets sign in (T-0495, NEG-2, TM-F-SSO).** A Kerberos
+    service ticket stays cryptographically valid until its `endtime` (default 10 hours) after the
+    account is disabled or expires, and the acceptor proves only the ticket. So, after the SID maps to
+    exactly one console account and **before** the pending sign-in begins:
+    a. **Inventory pre-check.** Refuse when `directory_objects.enabled` is false or not known (NULL),
+       or `account_expires` is set, non-zero and not after now. Reasons `principal_disabled`,
+       `principal_expired`, `principal_state_unknown`. This is cheap and removes the common case, but
+       it is only as fresh as the last sync (up to 60 minutes, forest-connection FR-25), so it is
+       **not** the control.
+    b. **Live check (the control).** One connector read of the mapped object, **by objectGUID,
+       base scope, no filter string**, for `userAccountControl`, `accountExpires`, `objectSid` and
+       `msDS-User-Account-Control-Computed`. Refuse when `ACCOUNTDISABLE` (0x2) is set, `accountExpires`
+       is set (neither 0 nor 0x7FFFFFFFFFFFFFFF) and has passed, `LOCKOUT` (0x10) is set, the object is
+       gone, or the returned `objectSid` differs from the ticket's PAC SID (`principal_disabled`,
+       `principal_expired`, `principal_locked_out`, `principal_gone`, `principal_sid_mismatch`).
+       `PASSWORD_EXPIRED` does not refuse: it stops the KDC issuing *new* tickets, the ticket in hand is
+       still a valid proof, and AN-10 still follows.
+    c. **Fail closed.** A connector error, timeout (2 s) or missing attribute is the generic failure
+       with reason `directory_unavailable` or `principal_state_unknown`. There is no fallback to the
+       inventory answer: a leaver must not get in because the DC is slow. The break-glass path (AN-8)
+       and OIDC/SAML cover a directory outage. This is a fail-mode choice inside the existing
+       "AN-9 is a convenience first factor" scope, not a customer risk acceptance.
+    d. **No ticket-age bound.** `authtime` is the time of the original TGT logon and survives
+       TGS requests and renewals, so a morning logon makes every legitimate afternoon ticket "old";
+       `starttime` is optional and normally absent. Any bound short enough to matter locks out
+       ordinary users, and one long enough to be harmless adds nothing over `endtime`. The acceptor
+       is not asked for either. (Principle: [RFC 4120 §5.3](https://www.rfc-editor.org/rfc/rfc4120#section-5.3)
+       defines `authtime` as the initial authentication time, carried unchanged into derived tickets.)
+    e. **Response and audit.** Every refusal is the one `ErrSignInFailed` (rule 2); body and status do
+       not differ by reason. Audit records the reason code, the connection and object GUID, tenant and
+       client IP, never the ticket. Timing differs between unmapped and mapped-but-disabled (one
+       connector read); only a holder of a valid ticket for that principal reaches the read, and learns
+       nothing but their own account's state, so this is accepted (residual R-AN9-2).
+    f. **Abuse bound.** The live read happens only after the acceptor succeeds (a valid, unreplayed
+       ticket) and under the `auth` rate class, so unauthenticated traffic cannot drive connector load.
+    **Residual (R-AN9-1).** The live read asks the DC the connector is bound to. Between a disable on
+    another DC and its replication there, the old state is read: intra-site replication is seconds,
+    inter-site is by default minutes to 15 `[UNVERIFIED — lab]`. After that the window is zero, not
+    "up to the ticket lifetime". AN-10 still needs the account's own enrolled factor, and
+    `directory`-backed accounts of an AD-disabled user are for offboarding (§7.3) to disable. **Test**
+    `an9_refuses_ad_disabled` (T-0492): see console-sso.md §9 NEG-10.
    Enforcement and both tests are T-0050.
 
 Other AD-password sign-in (a username and password checked by connector `VerifyUser` on the console)
@@ -2912,6 +2954,7 @@ External, in order of first use:
 
 ## Changelog
 
+- 2026-10-27 · T-0495 (from the T-0206 review). §7.6 rule 10: AN-9 refuses AD-disabled, expired, locked-out, deleted or SID-changed principals by an inventory pre-check plus an authoritative live connector read at sign-in, failing closed; no ticket-age bound (authtime is the TGT logon time). Residual R-AN9-1 (DC replication lag), R-AN9-2 (timing). TM-F-SSO adds `an9_refuses_ad_disabled`.
 - 2026-10-27 · T-0388. §6.9 rule 5 rewritten from five changes to the closed `guarded v1` table (AD and Entra classes, a `denied` set, a tightening exemption), each with a source. New §6.9a DECISION TM-D28: typed constructors, one class per Action, a runtime check in `client.Write`, and fitness function `fitness-backing` rules B1 to B9 with a machine-readable `guarded-v1` block. New proof TM-F-BACKING, residual TM-R23, lab G17 (routed to T-0075), sources 86 to 94. DM-30.I7 updated to match.
 - 2026-10-26 · T-0395 (D-0007 follow-up). §6.6 adds lab G16. It reads Graph's live `appRoles` to confirm the name and role id of `Sites.Manage.All` (expected `0c0bf378-…`, from Microsoft's permissions reference). It asserts EV3 `ENTRA_DENY_LIST_PERMISSION`, with role ids, for the seven T-0369 values in a real tenant, and EV5 for the read-only counterparts. `Sites.Manage.All` now waits for G16, not G15 (G15 covers only the non-Graph grants). Routed to T-0075.
 - 2026-10-26 · T-0369 (from T-0303). §6.6 deny list adds `Mail.ReadWrite`, `Mail.Send`, `Mail-Advanced.ReadWrite.All`, `MailboxItem.ReadWrite.All`, `MailboxItem.ImportExport.All`, `Files.ReadWrite.All`, `Sites.ReadWrite.All` (any resource, EV3 block); the T-0303 gap sentence is replaced; TM-F-RIGHTS row updated; onboarding guidance: dedicated registration, Exchange RBAC for Applications. `Sites.Manage.All` waits for lab G15.
