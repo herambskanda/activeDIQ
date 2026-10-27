@@ -87,7 +87,7 @@ type Mux struct {
 	nextID   uint64
 	peerHigh uint64
 	liveSelf int
-	livePeer int
+	serving  int // peer-opened calls whose serve goroutine has not returned: bounds handlers and what they pin, even after a peer cancel retires the call
 
 	// Flow control (TM-TB6-T7), all guarded by mu. *Held counts what the peer sent that we have not
 	// yet granted back; *Consumed is the part of it already consumed and waiting for a grant frame.
@@ -452,8 +452,6 @@ func (m *Mux) retireLocked(c *call) {
 	}
 	if c.opener == m.role {
 		m.liveSelf--
-	} else {
-		m.livePeer--
 	}
 	m.unhookLocked(c)
 	close(c.dead)
@@ -737,7 +735,6 @@ func (m *Mux) handleOpen(f Frame) Violation {
 		// The id is spent: remember it as ended by us so its in-flight frames are dropped.
 		c := m.newCall(f.CallID, peer, "", context.Background(), 0)
 		c.selfDone = true
-		m.livePeer++ // retireLocked takes it off again
 		m.calls[f.CallID] = c
 		m.finishLocked(c, fixedErr(code))
 		m.retireLocked(c)
@@ -748,7 +745,7 @@ func (m *Mux) handleOpen(f Frame) Violation {
 	if !ok {
 		return refuse(codes.PermissionDenied) // one answer for unknown method, wrong direction and wrong contract (A4)
 	}
-	if m.livePeer >= m.maxCalls {
+	if m.serving >= m.maxCalls {
 		return refuse(codes.ResourceExhausted)
 	}
 	var timeout time.Duration
@@ -758,7 +755,7 @@ func (m *Mux) handleOpen(f Frame) Violation {
 	c := m.newCall(f.CallID, peer, f.Method, m.base, timeout)
 	c.unary = isUnary
 	m.calls[f.CallID] = c
-	m.livePeer++
+	m.serving++
 	m.wg.Add(1)
 	m.mu.Unlock()
 	go m.serve(c, isUnary, uh, sh)
@@ -768,6 +765,11 @@ func (m *Mux) handleOpen(f Frame) Violation {
 // serve runs one component-opened call on the per-tunnel registrar's handler.
 func (m *Mux) serve(c *call, isUnary bool, uh unaryHandler, sh streamHandler) {
 	defer m.wg.Done()
+	defer func() {
+		m.mu.Lock()
+		m.serving--
+		m.mu.Unlock()
+	}()
 	code := codes.OK
 	func() {
 		defer func() {
