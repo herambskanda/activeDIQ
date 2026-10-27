@@ -14,11 +14,13 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/compose/config"
 	"github.com/skenzeriq/activediq/internal/directory"
+	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/platform"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/apitls"
 	"github.com/skenzeriq/activediq/internal/platform/capability"
+	"github.com/skenzeriq/activediq/internal/platform/fleet"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/limiter"
 	"github.com/skenzeriq/activediq/internal/platform/module"
@@ -78,9 +80,16 @@ func Run(ctx context.Context, cfg config.Config) error {
 	if err != nil {
 		return fmt.Errorf("server: operation registry: %w", err)
 	}
-	// No connector endpoint source or Tier-0 verdict source exists yet, so reads is nil and a directory
-	// target fails closed (ErrNoReads); directoryReads wires the adapter the moment both are supplied.
-	reads, err := directoryReads(connection.NewRegistry(db), nil, nil)
+	// The connector endpoint source: a connection resolves, under the context's tenant, to its active
+	// component binding's tunnel on the fleet hub (mutual TLS, established by the component). The Tier-0
+	// verdict source is still absent (T-0433 moves the verdict into the Read header), so directoryReads
+	// still yields nil reads and a directory target fails closed (ErrNoReads) until that lands.
+	conns := connection.NewRegistry(db)
+	src, err := client.NewTunnelSource(conns, conns, fleet.NewHub())
+	if err != nil {
+		return fmt.Errorf("server: connector source: %w", err)
+	}
+	reads, err := directoryReads(conns, src, nil)
 	if err != nil {
 		return err
 	}
