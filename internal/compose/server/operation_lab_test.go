@@ -374,19 +374,12 @@ func TestLabRule5LiveFactsDecideBackingObject(t *testing.T) {
 	})
 }
 
-// openBugs lists the product bugs this test is marked expected-to-fail for. While any is open the run
-// must fail with its symptom; the moment it passes, the test fails and says to remove the marker.
-var openBugs = []string{"T-0477 (plan-time authorisation refusal is audited failure, not denied)"}
-
-// T-0421 acceptance 1: through SubmitDirectory. EXPECTED TO FAIL until T-0465 and T-0466 land: today
-// the ordinary in-scope reset is blocked facts_unavailable as well, because no live read reaches the
-// connector. The transport here injects the identity (the T-0465 gap) so the T-0466 symptom is what
-// shows; both are asserted so the marker cannot hide a different failure.
+// T-0421 acceptance 1: through SubmitDirectory, an ordinary in-scope reset plans and a reset of a
+// backing object is refused at plan, blocked denied and audited outcome denied (T-0477).
 func TestLabRule5ResetOfBackingObjectIsRefusedThroughTheRunner(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		r := newLabRig(t, s)
-		var fails []string
-		failf := func(f string, a ...any) { fails = append(fails, fmt.Sprintf(f, a...)) }
+		failf := func(f string, a ...any) { t.Errorf(f, a...) }
 		submit := func(target string) operation.Submission {
 			sub, err := r.runner.SubmitDirectory(r.ctx, operation.Request{Tenant: r.e.ten, Action: "objects.user.reset_password",
 				Input: operation.Input(fmt.Sprintf(`{"GUID":%q}`, target)), Actor: r.human()})
@@ -407,12 +400,6 @@ func TestLabRule5ResetOfBackingObjectIsRefusedThroughTheRunner(t *testing.T) {
 		}
 		if got := auditOutcomes(t, r.e, r.cp, r.ctx, "lab"); !contains(got, "denied") {
 			failf("audit outcomes %v: none is denied", got)
-		}
-		if len(fails) == 0 {
-			t.Fatalf("passes: remove the expected-to-fail marker for %v", openBugs)
-		}
-		for _, f := range fails {
-			t.Logf("EXPECTED FAILURE (%v): %s", openBugs, f)
 		}
 	})
 }
