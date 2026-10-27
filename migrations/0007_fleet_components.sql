@@ -1,4 +1,4 @@
--- 0006_fleet_components: DM-12 Component and its sub-entity EnrollmentToken (domain-model DM-12,
+-- 0007_fleet_components: DM-12 Component and its sub-entity EnrollmentToken (domain-model DM-12,
 -- ADR-0003 F1, threat model TM-TB6-T1). Owner: internal/platform/fleet (SQL in fleet/fleetsql, which
 -- only the server links: blueprint §2 rule 7).
 --

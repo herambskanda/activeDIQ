@@ -88,7 +88,7 @@ old peers ignore); a removed or renumbered field needs `fleet.v2`.
 
 ## Enrollment tokens and the Component store (T-0153)
 
-`internal/platform/fleet/fleetsql` is the server-only SQL of DM-12 (migration `0006_fleet_components`).
+`internal/platform/fleet/fleetsql` is the server-only SQL of DM-12 (migration `0007_fleet_components`).
 `cmd/connector` and `cmd/agent` cannot link it: it imports `platform/store`, which rule 7 bans for both.
 
 - **Issue** (`Enrollment.Issue`) needs `fleet.enrollment.issue` and a fresh step-up, both checked before
@@ -107,7 +107,7 @@ old peers ignore); a removed or renumbered field needs `fleet.v2`.
 
 ## Enroll handler and the installation CA (T-0155)
 
-Core: `fleetsql.Enroller` (`fleet/fleetsql/enroll.go`, `ca.go`; migration `0008_fleet_ca`). Adapter:
+Core: `fleetsql.Enroller` (`fleet/fleetsql/enroll.go`, `ca.go`; migration `0010_fleet_ca`). Adapter:
 `internal/compose/server/fleetenroll.go` turns `fleetv1.Enroll` into `Enroller` calls, because the platform
 root never imports generated protos. The listener that mounts it is T-0156.
 

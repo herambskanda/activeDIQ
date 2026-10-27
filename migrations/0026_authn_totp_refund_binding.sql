@@ -1,7 +1,7 @@
--- 0017_authn_totp_refund_binding: bind the TOTP attempt refund to a real step spend (T-0389; fixes the
--- xmin check of 0015's authn_totp_failures_update_guard). Owner: internal/platform/authn.
+-- 0026_authn_totp_refund_binding: bind the TOTP attempt refund to a real step spend (T-0389; fixes the
+-- xmin check of 0021's authn_totp_failures_update_guard). Owner: internal/platform/authn.
 --
--- 0015 let a failure row flip to succeeded in any transaction that had written the enrolment row, so
+-- 0021 let a failure row flip to succeeded in any transaction that had written the enrolment row, so
 -- 'UPDATE enrollments SET label = label' followed by 'UPDATE authn_totp_failures SET succeeded = true'
 -- reset the budget. Now the spend UPDATE records the refunded attempt in refund_attempt; the enrolment
 -- guard lets that column change only when last_used_step strictly increases; the failures guard requires

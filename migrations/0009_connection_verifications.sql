@@ -1,4 +1,4 @@
--- 0007_connection_verifications: DM-24 ConnectionVerification (+ Finding) and DM-25 Tier0Override
+-- 0009_connection_verifications: DM-24 ConnectionVerification (+ Finding) and DM-25 Tier0Override
 -- (domain-model DM-24, DM-25, ADR-0003 F1). Owner: internal/directory/connection.
 --
 -- A verification is one completed run of a connection's rights checks. It is the evidence behind

@@ -1,4 +1,4 @@
--- 0012_authn_authenticator_enrollments: DM-37 AuthenticatorEnrollment, the TOTP slice (T-0196; threat
+-- 0016_authn_authenticator_enrollments: DM-37 AuthenticatorEnrollment, the TOTP slice (T-0196; threat
 -- model §7.2, TM-F-SEAL). Owner: internal/platform/authn. One tenant table.
 --
 --   sealed_secret   the TOTP seed, AEAD-sealed under the tenant DEK with associated data binding tenant,

@@ -1,4 +1,4 @@
--- 0015_audit_retention: key wipe, boundary lookups (T-0305; ADR-0005 rule 11, DM-81, AG-4, AG-6).
+-- 0020_audit_retention: key wipe, boundary lookups (T-0305; ADR-0005 rule 11, DM-81, AG-4, AG-6).
 -- Owner: internal/platform/audit.
 --
 --   I5  a retired checkpoint key's private material can be destroyed, and only through

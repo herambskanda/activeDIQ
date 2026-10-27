@@ -1,4 +1,4 @@
--- 0020_authn_session_epoch: serialise session minting against credential, MFA and role changes (T-0429;
+-- 0032_authn_session_epoch: serialise session minting against credential, MFA and role changes (T-0429;
 -- same race class as DM-31.I2). Owner: internal/platform/authn.
 --
 -- authn_accounts.session_epoch is bumped, under the row's exclusive lock, by every change that must end

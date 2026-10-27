@@ -1,4 +1,4 @@
--- 0017_authn_accounts: DM-30 Account (T-0400; domain model DM-30 I1, I5; console-sso.md §7).
+-- 0024_authn_accounts: DM-30 Account (T-0400; domain model DM-30 I1, I5; console-sso.md §7).
 -- Owner: internal/platform/authn. One tenant table.
 --
 -- An account is a human who signs in to the console or API.

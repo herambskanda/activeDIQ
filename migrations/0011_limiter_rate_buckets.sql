@@ -1,4 +1,4 @@
--- 0009_limiter_rate_buckets: the shared per-principal token buckets of the rate limiter (T-0274; threat
+-- 0011_limiter_rate_buckets: the shared per-principal token buckets of the rate limiter (T-0274; threat
 -- model §7.8 and TM-TB2-T7, ADR-0002 rule 6, DM-07). Owner: internal/platform/limiter.
 --
 -- Per-principal budgets (reveal, secret, bulk, write, read) must hold across every server node, so the

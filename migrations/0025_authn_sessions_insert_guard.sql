@@ -1,4 +1,4 @@
--- 0017_authn_sessions_insert_guard: bound what the runtime role can INSERT into authn_sessions (T-0390).
+-- 0025_authn_sessions_insert_guard: bound what the runtime role can INSERT into authn_sessions (T-0390).
 -- Owner: internal/platform/authn.
 --
 -- 0013 guarded UPDATE and revoked DELETE but left INSERT open: arbitrary SQL as activediq_app could mint

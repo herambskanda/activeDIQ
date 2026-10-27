@@ -1,4 +1,4 @@
--- 0021_inventory_objects: DM-16 DirectoryObject, the current last-observed state of one AD or Entra
+-- 0033_inventory_objects: DM-16 DirectoryObject, the current last-observed state of one AD or Entra
 -- object (T-0431). Owner: internal/directory/inventory.
 --
 --  * Identity is (tenant_id, connection_id, object_guid) (DM-16.I1, X3). dn, sam_account_name and upn are
