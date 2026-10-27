@@ -364,6 +364,12 @@ func (m *Mux) consumed(c *call) {
 	m.tunConsumed++
 	fs := m.grantsLocked(c)
 	m.mu.Unlock()
+	m.sendGrants(fs)
+}
+
+// sendGrants sends credit frames computed under m.mu. A retired call's unread messages return to
+// the tunnel window here, so the peer learns of them even when no further peer frame arrives.
+func (m *Mux) sendGrants(fs []Frame) {
 	for _, f := range fs {
 		_ = m.send(f) // a dead tunnel needs no credit
 	}
@@ -435,8 +441,10 @@ func (m *Mux) cancelCall(c *call) {
 	}
 	m.finishLocked(c, err)
 	m.retireLocked(c)
+	fs := m.grantsLocked(nil)
 	m.mu.Unlock()
 	_ = m.send(Frame{CallID: c.id, Body: BodyCancel}) // best effort: a dead tunnel needs no cancel
+	m.sendGrants(fs)
 }
 
 func (m *Mux) abandon(c *call, _ error) { m.cancelCall(c) }
@@ -452,8 +460,10 @@ func (m *Mux) closeCall(c *call, code codes.Code) {
 	}
 	c.selfDone = true
 	m.retireLocked(c)
+	fs := m.grantsLocked(nil)
 	m.mu.Unlock()
 	_ = m.send(Frame{CallID: c.id, Body: BodyClose, Code: int32(code), Message: FixedText(code)})
+	m.sendGrants(fs)
 }
 
 // ---- receiving ----
@@ -467,7 +477,16 @@ func (m *Mux) handle(f Frame) Violation {
 		fs := m.grantsLocked(nil)
 		m.mu.Unlock()
 		for _, g := range fs {
-			m.reply(g)
+			select {
+			case m.out <- g:
+			default:
+				// The writer is behind. Credit is not urgent, so keep it pending for the next
+				// grant instead of ending the tunnel over it; only refusals must be queued.
+				m.mu.Lock()
+				m.tunHeld += int(g.Messages)
+				m.tunConsumed += int(g.Messages)
+				m.mu.Unlock()
+			}
 		}
 	}
 	return v

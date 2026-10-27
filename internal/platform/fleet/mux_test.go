@@ -1229,8 +1229,33 @@ func TestDroppedDataReturnsTunnelCredit(t *testing.T) {
 	r.send(fleet.Frame{CallID: 2, Body: fleet.BodyOpen, Method: mOther})
 	r.next(t)
 	for i := 0; i < 10; i++ {
-		r.data(2, 1)
-		time.Sleep(5 * time.Millisecond)
+		r.data(2, 2) // half the tunnel window: the drop must be granted back, which we wait for
+		if f := r.next(t); f.CallID != 0 || f.Body != fleet.BodyCredit || f.Messages != 2 {
+			t.Fatalf("round %d: got %+v, want tunnel credit 2", i, f)
+		}
 	}
 	r.open(t)
+}
+
+// Unread messages of a call this side cancels return to the tunnel window with no further peer frame,
+// or a peer that used the whole window would stay blocked and starve its other calls.
+func TestCancelledCallReturnsUnreadMessagesToTheTunnelWindow(t *testing.T) {
+	r := newRig(t, smallWindows(8, 8))
+	ctx, cancel := context.WithCancel(context.Background())
+	r.watch(t, ctx, 1)
+	r.data(1, 6)    // unread; below the half-window grant threshold, so nothing is granted yet
+	r.healthy(t, 2) // round trip: proves the six data frames were processed before the cancel
+	cancel()
+	var sawCancel, sawCredit bool
+	for !(sawCancel && sawCredit) {
+		f := r.next(t)
+		switch {
+		case f.CallID == 1 && f.Body == fleet.BodyCancel:
+			sawCancel = true
+		case f.CallID == 0 && f.Body == fleet.BodyCredit && f.Messages >= 6:
+			sawCredit = true
+		default:
+			t.Fatalf("unexpected %+v", f)
+		}
+	}
 }
