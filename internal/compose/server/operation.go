@@ -70,8 +70,8 @@ func directoryReads(conns client.ConnectionSource, src client.ConnectorSource) (
 // facts reader (client.ConnectorFacts). reads is the connector's read adapter (directoryReads); with a
 // nil reads a directory target fails closed with client.ErrNoReads, while a tier0_scope target or a
 // store target is answered without a read.
-func directoryFacts(reads client.Reads) *client.Client {
-	return client.New(client.WithFacts(client.NewConnectorFacts(reads)))
+func directoryFacts(reads client.Reads, opts ...client.Option) *client.Client {
+	return client.New(append([]client.Option{client.WithFacts(client.NewConnectorFacts(reads))}, opts...)...)
 }
 
 // rbacAuthorizer is the operation Authorizer: RBAC persistence read through authz.Evaluator, with the

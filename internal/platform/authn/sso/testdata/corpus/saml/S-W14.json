@@ -1,0 +1,10 @@
+{
+ "id": "S-W14",
+ "class": "wrapped",
+ "cites": [
+  "SAML-2"
+ ],
+ "build": "namespace_confusion",
+ "expect": "refuse",
+ "reason": "saml.xml"
+}

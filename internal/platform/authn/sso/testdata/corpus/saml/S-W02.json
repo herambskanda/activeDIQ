@@ -1,0 +1,11 @@
+{
+ "id": "S-W02",
+ "class": "wrapped",
+ "cites": [
+  "SAML-3",
+  "SAML-6"
+ ],
+ "build": "wrap_signed_in_extensions",
+ "expect": "refuse",
+ "reason": "saml.structure"
+}

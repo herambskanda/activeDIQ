@@ -221,6 +221,27 @@ the stored values, not a metadata URL, are what verification uses.
 | SAML-18 | **Subject**: the account subject comes from the configured source (§7.2). A `transient` NameID, or an `emailAddress`-format NameID, cannot be the subject source and is refused at config and at verify | `saml.subject` |
 | SAML-19 | **No SAML logout in v1**: the ACS and every other route refuse `LogoutRequest` and `LogoutResponse` documents (§11). Our sign-out ends our session only | `saml.logout` |
 
+### 5.1 As built (T-0202)
+
+`internal/platform/authn/sso/saml` implements SAML-1..19; the test IdP is `sso/saml/samltest` (it imports
+the XML libraries, so it sits inside the FIT-SSO-1 fence) and the corpus records are in
+`sso/testdata/corpus/saml/`. Decisions the build fixed:
+
+- **Libraries.** goxmldsig v1.6.1 (signature, canonicalisation), etree and the round-trip validator. gosaml2
+  is not imported: its decoder folds several checks into one error and accepts a Response-level signature
+  alone, which would leave SAML-4 and the per-check reason codes to the library. The register row stays
+  (the transitive closure is the same); SAML-7 is enforced by our shape rules, since goxmldsig exposes no
+  algorithm allow-list.
+- **Order.** SAML-1/2/3 on the raw bytes, then SAML-4/5/7/8 shape rules, then the library's cryptography
+  against each configured certificate alone, then SAML-6, then claims. A signature that fails
+  cryptography is `saml.unsigned`; a KeyInfo naming a certificate that is not configured is `saml.key`.
+- **Comments.** Any XML comment is refused as `saml.xml` (defence in depth for the CVE-2017-11427 class).
+- **Reasons beyond the table.** `sso.idp` (SSO-2), `saml.config`, `saml.anchor`. `InResponseTo` missing or
+  different anywhere (Response or SubjectConfirmationData) is `saml.inresponseto`; wrong Recipient,
+  method or SubjectConfirmationData expiry is `saml.recipient`.
+- **Replay cache.** The verifier takes a `ReplayCache`; the in-memory one is single-node. The shared
+  PostgreSQL implementation, written in the transaction that consumes the Transaction, is T-0203's.
+
 ## 6. Shared checks and MFA-asserting IdPs (SSO-D3, SSO-D4)
 
 | # | Check |

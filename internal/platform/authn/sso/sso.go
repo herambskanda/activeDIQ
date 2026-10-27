@@ -92,6 +92,7 @@ type IdP struct {
 	Protocol Protocol
 	Enabled  bool
 	OIDC     *OIDCConfig
+	SAML     *SAMLConfig
 }
 
 // MFA modes of an IdP (spec §6.1).

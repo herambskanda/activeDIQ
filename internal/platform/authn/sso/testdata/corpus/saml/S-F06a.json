@@ -1,0 +1,10 @@
+{
+ "id": "S-F06a",
+ "class": "forged",
+ "cites": [
+  "SAML-8"
+ ],
+ "build": "c14n_with_comments",
+ "expect": "refuse",
+ "reason": "saml.transform"
+}
