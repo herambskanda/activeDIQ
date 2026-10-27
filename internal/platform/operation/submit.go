@@ -300,7 +300,8 @@ func (r *Runner) failPlan(ctx context.Context, t tenant.ID, op opRecord, cause e
 // planRefusal classifies a plan where no item was planned and at least one was blocked. When every
 // blocked item was refused by authorisation (tier0, denied) the operation is a refused privilege
 // attempt: outcome denied, with the block reason (the common one, else "denied") and the first
-// refused target. Any technical block (facts_unavailable, no_pin, anything else) keeps it a failure
+// refused target. When the refusals carry different reasons no single target is named: each refused
+// item then reaches the audit trail through its own operation.refused event with its own reason. Any technical block (facts_unavailable, no_pin, anything else) keeps it a failure
 // with reason plan_failed, so a SIEM rule can tell a refusal from an outage.
 func planRefusal(items []planItem) (audit.Outcome, string, authority.TargetRef) {
 	var reason string
@@ -316,7 +317,7 @@ func planRefusal(items []planItem) (audit.Outcome, string, authority.TargetRef) 
 		case reason == "":
 			reason, tgt = it.blocked, it.sp.Target
 		case reason != it.blocked:
-			reason = blockDenied
+			reason, tgt = blockDenied, authority.TargetRef{}
 		}
 	}
 	if reason == "" {

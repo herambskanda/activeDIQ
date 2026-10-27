@@ -795,7 +795,7 @@ func TestPlanRefusalsAreAudited(t *testing.T) {
 		{"tier0 mixed with facts unavailable", factsFake{tier0On: map[string]bool{"a": true}, errOn: map[string]bool{"b": true}},
 			[]itemIn{{GUID: "a", Want: "n"}, {GUID: "b", Want: "n"}}, "plan_failed", "failure", "plan_failed", []string{"a/tier0/denied"}},
 		{"tier0 alongside a planned item", factsFake{tier0On: map[string]bool{"b": true}},
-			[]itemIn{{GUID: "a", Want: "n"}, {GUID: "b", Want: "n"}}, "planned", "", "", []string{"b/tier0/denied"}},
+			[]itemIn{{GUID: "a", Want: "n"}, {GUID: "b", Want: "n"}}, "queued", "", "", []string{"b/tier0/denied"}},
 		{"all refused: one event per target", factsFake{tier0On: map[string]bool{"a": true, "b": true}},
 			[]itemIn{{GUID: "a", Want: "n"}, {GUID: "b", Want: "n"}}, "plan_failed", "denied", "tier0", []string{"b/tier0/denied"}},
 	}
@@ -807,7 +807,7 @@ func TestPlanRefusalsAreAudited(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s: %v", c.name, err)
 			}
-			if string(sub.State) != c.wantState && !(c.wantState == "planned" && sub.State != OpPlanFailed) {
+			if string(sub.State) != c.wantState {
 				t.Fatalf("%s: state %s", c.name, sub.State)
 			}
 			if got := p.refusedEvents(sub.Operation); !slices.Equal(got, c.want) {
@@ -1104,4 +1104,42 @@ func TestDeferredVerifyIsDrivenLater(t *testing.T) {
 			t.Fatalf("step %s op %s", p.stepRow(sub.Operation, 0), p.opState(sub.Operation))
 		}
 	})
+}
+
+// T-0482 security review: refusals with different reasons in one plan each reach the chain exactly
+// once with their own reason, whichever order the items come in.
+func TestPlanRefusalsKeepEachReason(t *testing.T) {
+	for _, order := range [][]string{{"a", "b"}, {"b", "a"}} {
+		storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+			p := newPRig(t, s, rigOpt{})
+			p.r.cfg.Facts = factsFake{tier0On: map[string]bool{"a": true}}
+			p.r.cfg.Authz.(*authzFake).denyAt2 = map[[2]string]bool{{"alice", "b"}: true}
+			var items []itemIn
+			for _, g := range order {
+				items = append(items, itemIn{GUID: g, Want: "n"})
+			}
+			sub, err := p.r.SubmitDirectory(context.Background(), p.req(items...))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if sub.State != OpPlanFailed {
+				t.Fatalf("order %v: state %s", order, sub.State)
+			}
+			seen := map[string][]string{}
+			env := p.completedEnvelope(sub.Operation)
+			if env.Outcome != "denied" {
+				t.Fatalf("order %v: completed outcome %s", order, env.Outcome)
+			}
+			if env.TargetGUID != "" {
+				seen[env.TargetGUID] = append(seen[env.TargetGUID], env.Reason)
+			}
+			for _, e := range p.refusedEvents(sub.Operation) {
+				parts := strings.Split(e, "/")
+				seen[parts[0]] = append(seen[parts[0]], parts[1])
+			}
+			if !slices.Equal(seen["a"], []string{"tier0"}) || !slices.Equal(seen["b"], []string{"denied"}) || len(seen) != 2 {
+				t.Fatalf("order %v: events by target = %v", order, seen)
+			}
+		})
+	}
 }
