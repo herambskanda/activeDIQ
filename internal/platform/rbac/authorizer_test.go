@@ -24,7 +24,12 @@ const (
 
 type fakeSrc struct {
 	as  []Assignment
+	sub []Assignment // returned for group and automation reads
 	err error
+}
+
+func (f fakeSrc) SubjectAssignments(context.Context, tenant.ID, Subjects, time.Time, bool) ([]Assignment, error) {
+	return f.sub, f.err
 }
 
 func (f fakeSrc) Assignments(context.Context, tenant.ID, string, time.Time) ([]Assignment, error) {

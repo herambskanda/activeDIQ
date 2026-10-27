@@ -115,6 +115,12 @@ func (o *OwnerAssignments) Grant(ctx context.Context, t tenant.ID, account strin
 VALUES ($1::uuid, $2::uuid, $3::uuid, $4) RETURNING id::text`, t.String(), account, roleID, string(by.Requester.ID)).Scan(&id); err != nil {
 			return fmt.Errorf("rbac: granting tenant-owner: %w", err)
 		}
+		// An owner holds the tenant-wide root, which is what covers the store targets of the access
+		// Actions (delegation.*); directory targets stay unscoped for an owner.
+		if _, err := tx.Exec(ctx, `INSERT INTO public.authz_assignment_roots (tenant_id, assignment_id, ordinal, is_exclude, root_kind, connection_id, root_guid)
+VALUES ($1::uuid, $2::uuid, 0, false, 'tenant', $1::uuid, $1::uuid)`, t.String(), id); err != nil {
+			return fmt.Errorf("rbac: granting tenant-owner root: %w", err)
+		}
 		now, err := clock(ctx, tx)
 		if err != nil {
 			return err

@@ -5,6 +5,7 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/directory"
 	"github.com/skenzeriq/activediq/internal/modules/connections"
+	"github.com/skenzeriq/activediq/internal/modules/delegation"
 	"github.com/skenzeriq/activediq/internal/modules/inventory"
 	"github.com/skenzeriq/activediq/internal/platform"
 	"github.com/skenzeriq/activediq/internal/platform/module/moduletest"
@@ -26,6 +27,11 @@ var stepUpTable = map[operation.ActionID]string{
 	// cross-directory authority decision; it also requires a current tenant-owner.
 	connections.ReconfirmActionID:    "Correlation re-confirmation (TM-D17 rule 4 (g))",
 	inventory.SetDesignationActionID: "Designating or un-designating tier0 objects (§6.4)",
+	// RBAC changes (§7.4): every role or assignment change is a step-up operation.
+	delegation.RoleCreateID: "RBAC change: creating a custom role",
+	delegation.RoleUpdateID: "RBAC change: editing a custom role's permissions",
+	delegation.GrantID:      "RBAC change: granting an assignment",
+	delegation.RevokeID:     "RBAC change: revoking an assignment",
 }
 
 func catalogue(t *testing.T) []operation.Descriptor {

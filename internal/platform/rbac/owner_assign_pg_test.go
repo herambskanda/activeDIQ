@@ -280,3 +280,20 @@ func TestNewOwnerAssignmentsRequiresCollaborators(t *testing.T) {
 		t.Error("nil db accepted")
 	}
 }
+
+// A granted owner holds the tenant-wide root, so it is covered on the store targets of the access Actions.
+func TestGrantedOwnerHoldsTheTenantRoot(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e, oa, _ := ownerSetup(t, s, inactive{})
+		id, err := oa.Grant(context.Background(), e.a, ownerAcct, human(adminAcct))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var kind, guid string
+		if err := e.do(t, func(ctx context.Context, tx store.Tx) error {
+			return tx.QueryRow(ctx, `SELECT root_kind, root_guid::text FROM public.authz_assignment_roots WHERE tenant_id = $1::uuid AND assignment_id = $2::uuid`, e.a.String(), id).Scan(&kind, &guid)
+		}); err != nil || kind != "tenant" || guid != e.a.String() {
+			t.Fatalf("root %q %q: %v", kind, guid, err)
+		}
+	})
+}

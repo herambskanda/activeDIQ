@@ -19,13 +19,15 @@ func TestMain(m *testing.M) { os.Exit(storetest.Main(m)) }
 type env struct {
 	db   *store.DB
 	a, b tenant.ID
+	// owner runs one fixture statement as the database owner.
+	owner func(ctx context.Context, sql string, args ...any) error
 }
 
 func setup(t *testing.T, s *storetest.Server) *env {
 	t.Helper()
 	d := s.NewDatabase(t)
 	d.Migrate(t)
-	e := &env{a: tenanttest.Seed(t, d.ExecOwner, "A"), b: tenanttest.Seed(t, d.ExecOwner, "B")}
+	e := &env{a: tenanttest.Seed(t, d.ExecOwner, "A"), b: tenanttest.Seed(t, d.ExecOwner, "B"), owner: d.ExecOwner}
 	db, err := store.Open(context.Background(), store.Config{DSN: d.AppDSN()})
 	if err != nil {
 		t.Fatal(err)
