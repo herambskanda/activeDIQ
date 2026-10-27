@@ -1,14 +1,18 @@
 package syslog
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"sync"
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/platform/audit"
+	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
+	"github.com/skenzeriq/activediq/internal/platform/keys"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
@@ -70,8 +74,8 @@ func TestCreateDefaultsToVerifiedTLS(t *testing.T) {
 		if v.Transport != "tls" || !v.TLSVerified || v.PlaintextOptIn || v.Port != 6514 || v.Warning != "" || v.ID == "" {
 			t.Fatalf("view = %+v", v)
 		}
-		if len(snk.evs) != 0 {
-			t.Fatalf("a TLS destination must not append an opt-in event: %v", snk.evs)
+		if len(snk.evs) != 1 || snk.evs[0].Kind != KindDestinationCreated {
+			t.Fatalf("a TLS create appends exactly one created event, no opt-in: %v", snk.evs)
 		}
 		got, err := s.Get(context.Background(), ten, v.ID)
 		if err != nil || got != v {
@@ -91,22 +95,23 @@ func TestPlaintextAppendsOptInEvent(t *testing.T) {
 		if v.Transport != "tcp" || v.TLSVerified || !v.PlaintextOptIn || v.Warning == "" || v.Port != 514 {
 			t.Fatalf("view = %+v", v)
 		}
-		if len(snk.evs) != 1 || snk.evs[0].Kind != KindPlaintextOptIn || snk.evs[0].Target.GUID != v.ID || snk.evs[0].Actor.Requester.ID != "u1" {
+		if len(snk.evs) != 2 || snk.evs[1].Kind != KindPlaintextOptIn || snk.evs[1].Target.GUID != v.ID || snk.evs[1].Actor.Requester.ID != "u1" {
 			t.Fatalf("events = %+v", snk.evs)
 		}
+		snk.evs = nil
 		// Updating TLS -> plaintext appends again; plaintext -> TLS does not.
 		tv, _ := s.Create(ctx, ten, Spec{Host: "a.example.com"}, human, "r2")
 		if _, err := s.Update(ctx, ten, tv.ID, Spec{Host: "a.example.com", Transport: TCP, PlaintextOptIn: true}, human, "r3"); err != nil {
 			t.Fatal(err)
 		}
-		if len(snk.evs) != 2 {
-			t.Fatalf("events after update = %d", len(snk.evs))
+		if n := count(snk.evs, KindPlaintextOptIn); n != 1 {
+			t.Fatalf("opt-in events after update = %d", n)
 		}
 		if _, err := s.Update(ctx, ten, tv.ID, Spec{Host: "a.example.com"}, human, "r4"); err != nil {
 			t.Fatal(err)
 		}
-		if len(snk.evs) != 2 {
-			t.Fatalf("events after back to TLS = %d", len(snk.evs))
+		if n := count(snk.evs, KindPlaintextOptIn); n != 1 {
+			t.Fatalf("opt-in events after back to TLS = %d", n)
 		}
 	})
 }
@@ -126,6 +131,107 @@ func TestAuditFailureRollsBackDestination(t *testing.T) {
 	})
 }
 
+func count(evs []audit.Event, k audit.Kind) (n int) {
+	for _, e := range evs {
+		if e.Kind == k {
+			n++
+		}
+	}
+	return n
+}
+
+// A TLS host change is recorded with the old and new target, and a failing sink rolls it back.
+func TestTLSHostChangeIsAudited(t *testing.T) {
+	each(t, func(t *testing.T, s *Store, ten tenant.ID, snk *sink, _ *store.DB) {
+		ctx := context.Background()
+		v, _ := s.Create(ctx, ten, Spec{Host: "siem.corp.example"}, human, "r1")
+		if _, err := s.Update(ctx, ten, v.ID, Spec{Host: "attacker.example.net"}, human, "r2"); err != nil {
+			t.Fatal(err)
+		}
+		if len(snk.evs) != 2 || snk.evs[1].Kind != KindDestinationUpdated {
+			t.Fatalf("events = %+v", snk.evs)
+		}
+		got := map[string]string{}
+		for _, d := range snk.evs[1].Details {
+			got[d.Key] = d.Value
+		}
+		if got["previous_host"] != "siem.corp.example" || got["host"] != "attacker.example.net" || got["previous_transport"] != "tls" {
+			t.Fatalf("details = %v", got)
+		}
+		snk.fail = true
+		if _, err := s.Update(ctx, ten, v.ID, Spec{Host: "other.example.net"}, human, "r3"); err == nil {
+			t.Fatal("update succeeded with the audit sink down")
+		}
+		if cur, _ := s.Get(ctx, ten, v.ID); cur.Host != "attacker.example.net" {
+			t.Fatalf("host after failed update = %s", cur.Host)
+		}
+		if _, err := s.Create(ctx, ten, Spec{Host: "n.example.com"}, human, "r4"); err == nil {
+			t.Fatal("TLS create succeeded with the audit sink down")
+		}
+		if l, _ := s.List(ctx, ten); len(l) != 1 {
+			t.Fatalf("list = %d", len(l))
+		}
+	})
+}
+
+// With the real chain: envelope checks pass and the rows carry kind and target.
+func TestRealChainerRecordsEvents(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, srv *storetest.Server) {
+		d := srv.NewDatabase(t)
+		d.Migrate(t)
+		ctx := context.Background()
+		ten := tenanttest.Seed(t, d.ExecOwner, "t1")
+		db, err := store.Open(ctx, store.Config{DSN: d.AppDSN()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(db.Close)
+		ch := audit.NewChainer(db)
+		cp := audit.NewCheckpointer(ch, fixedKeys{}, noAnchor{})
+		if err := db.WithTenant(ctx, ten, func(ctx context.Context, tx store.Tx) error { return cp.InitTenant(ctx, tx, ten) }); err != nil {
+			t.Fatal(err)
+		}
+		s, _ := NewStore(db, ch)
+		v, err := s.Create(ctx, ten, Spec{Host: "10.0.0.5", Transport: TCP, PlaintextOptIn: true}, human, "req-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Update(ctx, ten, v.ID, Spec{Host: "siem.example.com"}, human, "req-2"); err != nil {
+			t.Fatal(err)
+		}
+		var kinds []string
+		err = db.WithTenant(ctx, ten, func(ctx context.Context, tx store.Tx) error {
+			rows, err := tx.Query(ctx, `SELECT kind FROM public.audit_event WHERE tenant_id = $1 AND event_id LIKE $2 ORDER BY seq`, ten.String(), "siem.destination."+v.ID+".%")
+			if err != nil {
+				return err
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var k string
+				if err := rows.Scan(&k); err != nil {
+					return err
+				}
+				kinds = append(kinds, k)
+			}
+			return rows.Err()
+		})
+		want := []string{"siem.destination.created", "siem.destination.plaintext_opt_in", "siem.destination.updated"}
+		if err != nil || fmt.Sprint(kinds) != fmt.Sprint(want) {
+			t.Fatalf("kinds = %v, %v; want %v", kinds, err, want)
+		}
+	})
+}
+
+type fixedKeys struct{}
+
+func (fixedKeys) DEK(context.Context, store.Tx, tenant.ID, uint32) (keys.DEK, error) {
+	return keys.DEKFromBytes(1, bytes.Repeat([]byte{9}, keys.DEKSize))
+}
+
+type noAnchor struct{}
+
+func (noAnchor) Anchor(context.Context, chain.Checkpoint) error { return nil }
+
 func TestRefusals(t *testing.T) {
 	each(t, func(t *testing.T, s *Store, ten tenant.ID, snk *sink, db *store.DB) {
 		ctx := context.Background()
@@ -140,6 +246,11 @@ func TestRefusals(t *testing.T) {
 		}
 		if _, err := s.Update(ctx, ten, "00000000-0000-4000-8000-000000000001", Spec{Host: "h.example.com"}, human, "r"); !errors.Is(err, ErrNotFound) {
 			t.Fatalf("update missing: %v", err)
+		}
+		for _, bad := range []string{"", "has space", "caf\u00e9", string(make([]byte, 129))} {
+			if _, err := s.Create(ctx, ten, Spec{Host: "h.example.com"}, human, bad); !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("request id %q: %v", bad, err)
+			}
 		}
 		if _, err := s.Get(ctx, ten, "x"); !errors.Is(err, ErrInvalidInput) {
 			t.Fatalf("get bad id: %v", err)

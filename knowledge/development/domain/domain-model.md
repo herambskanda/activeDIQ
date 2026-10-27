@@ -1832,8 +1832,9 @@ HTTP). **Replaces (ME):** mail, SMS and proxy settings (ADM-205) and SIEM forwar
 setting.
 **Lifecycle.** `draft → active ⇄ disabled → archived`.
 **Realised so far (T-0251).** SIEM syslog destinations live in `notify_syslog_destinations` (host, port,
-transport, `plaintext_opt_in`; the table CHECK ties plaintext to the opt-in). A plaintext destination is
-stored with its `siem.destination.plaintext_opt_in` audit event in one transaction. Other channel kinds
+transport, `plaintext_opt_in`; the table CHECK ties plaintext to the opt-in). Every write is stored with a
+`siem.destination.created`/`.updated` audit event (updates record the previous host, port and transport,
+read FOR UPDATE) in one transaction; a plaintext write also appends `siem.destination.plaintext_opt_in`. Other channel kinds
 and the lifecycle states arrive with their own tickets.
 
 ### DM-83 NotificationTemplate · T (shipped defaults + overrides) · owner `platform/notify`

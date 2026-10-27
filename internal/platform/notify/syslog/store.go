@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/audit"
+	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tablekind"
@@ -22,6 +24,8 @@ var (
 	ErrInvalidInput = errors.New("syslog: invalid input")
 )
 
+var requestIDRe = regexp.MustCompile(`^[\x21-\x7e]{1,128}$`)
+
 var uuidRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 // Spec is the writable part of a destination. A zero Transport means TLS; Port 0 takes the default.
@@ -32,8 +36,8 @@ type Spec struct {
 	PlaintextOptIn bool
 }
 
-// Store persists destinations per tenant. Every write normalizes the destination, and a plaintext
-// destination is stored together with its OptInEvent in one transaction (TM-TB15-T7): if the audit
+// Store persists destinations per tenant. Every write normalizes the destination and is stored in one transaction with its audit
+// event; a plaintext write also carries its OptInEvent (TM-TB15-T7). If an audit
 // append fails, the destination is not stored. Safe for concurrent use.
 type Store struct {
 	db    *store.DB
@@ -60,14 +64,16 @@ func scan(row interface{ Scan(dest ...any) error }) (Destination, error) {
 	return d, nil
 }
 
-// Create stores a new destination and returns its View. requestID is the caller's idempotency key
-// for the request; it names the opt-in event so a retried commit is not recorded twice.
+// Create stores a new destination and returns its View. requestID names the audit events of the
+// request. Create draws a fresh destination id per call, so a caller that retries after an ambiguous
+// commit may create two destinations, each with its own events; Update is safe to retry.
 func (s *Store) Create(ctx context.Context, t tenant.ID, sp Spec, by authority.Chain, requestID string) (View, error) {
 	return s.write(ctx, t, "", sp, by, requestID)
 }
 
-// Update replaces the writable fields of destination id and returns its View. A plaintext result
-// appends a new opt-in event, because the plaintext target or its settings were just (re)approved.
+// Update replaces the writable fields of destination id and returns its View. Every write appends a
+// siem.destination.updated event with the previous and new target; a plaintext result also appends an
+// opt-in event, because the plaintext target or its settings were just (re)approved.
 func (s *Store) Update(ctx context.Context, t tenant.ID, id string, sp Spec, by authority.Chain, requestID string) (View, error) {
 	if !uuidRe.MatchString(id) {
 		return View{}, ErrInvalidInput
@@ -76,7 +82,7 @@ func (s *Store) Update(ctx context.Context, t tenant.ID, id string, sp Spec, by 
 }
 
 func (s *Store) write(ctx context.Context, t tenant.ID, id string, sp Spec, by authority.Chain, requestID string) (View, error) {
-	if t.IsZero() || by.Validate() != nil || requestID == "" || len(requestID) > 128 {
+	if t.IsZero() || by.Validate() != nil || !requestIDRe.MatchString(requestID) {
 		return View{}, ErrInvalidInput
 	}
 	creating := id == ""
@@ -88,6 +94,15 @@ func (s *Store) write(ctx context.Context, t tenant.ID, id string, sp Spec, by a
 		}
 		if creating {
 			if err := tx.QueryRow(ctx, `SELECT gen_random_uuid()::text`).Scan(&id); err != nil {
+				return err
+			}
+		}
+		var prev Destination
+		if !creating {
+			// Lock the row so the recorded previous target is the one this write replaces.
+			var err error
+			if prev, err = scan(tx.QueryRow(ctx, `SELECT `+cols+` FROM public.notify_syslog_destinations
+				WHERE tenant_id = $1 AND id = $2::uuid FOR UPDATE`, t.String(), id)); err != nil {
 				return err
 			}
 		}
@@ -111,6 +126,9 @@ func (s *Store) write(ctx context.Context, t tenant.ID, id string, sp Spec, by a
 		if out, err = scan(row); err != nil {
 			return err
 		}
+		if err := s.audit.Append(ctx, tx, changeEvent(requestID, by, creating, prev, out, at.UTC())); err != nil {
+			return fmt.Errorf("syslog: audit destination change: %w", err)
+		}
 		if ev := OptInEvent("siem.destination."+out.ID+".plaintext_opt_in."+requestID, by, out, at.UTC()); ev != nil {
 			ev.Target = authority.TargetRef{GUID: out.ID, Class: "siem_destination"}
 			if err := s.audit.Append(ctx, tx, *ev); err != nil {
@@ -129,6 +147,38 @@ func (s *Store) write(ctx context.Context, t tenant.ID, id string, sp Spec, by a
 		return View{}, fmt.Errorf("syslog: store destination: %w", err)
 	}
 	return out.View(), nil
+}
+
+// Audit kinds of a destination's lifecycle. Any change of target redirects the SIEM stream, so every
+// write is recorded, TLS or not.
+const (
+	KindDestinationCreated audit.Kind = "siem.destination.created"
+	KindDestinationUpdated audit.Kind = "siem.destination.updated"
+)
+
+// changeEvent records the stored destination and, for an update, the target it replaced. Details are
+// in strictly increasing key order.
+func changeEvent(requestID string, by authority.Chain, creating bool, prev, cur Destination, at time.Time) audit.Event {
+	kind, verb := KindDestinationUpdated, "updated"
+	details := []chain.Detail{
+		{Key: "destination", Value: cur.ID},
+		{Key: "host", Value: cur.Host},
+		{Key: "port", Value: strconv.Itoa(cur.Port)},
+	}
+	if creating {
+		kind, verb = KindDestinationCreated, "created"
+	} else {
+		details = append(details,
+			chain.Detail{Key: "previous_host", Value: prev.Host},
+			chain.Detail{Key: "previous_port", Value: strconv.Itoa(prev.Port)},
+			chain.Detail{Key: "previous_transport", Value: string(prev.Transport)})
+	}
+	details = append(details, chain.Detail{Key: "transport", Value: string(cur.Transport)})
+	return audit.Event{
+		ID: "siem.destination." + cur.ID + "." + verb + "." + requestID, Kind: kind, At: at, Actor: by,
+		Target:    authority.TargetRef{GUID: cur.ID, Class: "siem_destination"},
+		Component: "notify.syslog", Outcome: audit.Success, Reason: verb, Details: details,
+	}
 }
 
 // List returns the Views of the tenant's destinations, oldest first.
