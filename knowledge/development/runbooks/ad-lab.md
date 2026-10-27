@@ -61,6 +61,8 @@ LDAPTLS_CACERT=lab/.lab-ca.pem ldapsearch -H ldaps://localhost:636 -x \
   -b OU=Managed,DC=lab,DC=activediq,DC=test -s one dn      # after: . lab/.lab.env
 ```
 
+**Rule 5 end-to-end (T-0421):** `go test -tags lab ./internal/compose/server -run TestLabRule5` needs the lab up and Docker for Postgres. It makes its own OUs and users with the lab admin (cleaned up after) and drives the real rbac authorizer, root resolver and `client.ConnectorReads` over a real `read.Handler` on the lab DC; it records which DC (DSA GUID) served each pinned and unpinned read. Samba has one DC, so the unpinned-vs-pinned consistency residual (two replicas of one NC) is a Windows-lab case. `TestLabRule5ResetOfBackingObjectIsRefusedThroughTheRunner` is expected-to-fail while T-0465 and T-0466 are open and fails when it starts passing.
+
 ## 2. What is seeded (tier `standard`, seed `20261002`)
 
 Everything is synthetic: names come from fixed lists, mail is `@example.com`, and the company is
