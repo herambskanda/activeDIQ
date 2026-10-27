@@ -287,6 +287,16 @@
         "path": "internal/platform/apitls",
         "adr": "0001-technology-stack.md",
         "reason": "identity-directory permission checks differ by OS: perm_unix.go (unix) and perm_other.go (!unix, Windows/OCI ACL checks are T-0104)"
+      },
+      {
+        "path": "internal/platform/fleet/dial",
+        "adr": "0001-technology-stack.md",
+        "reason": "unix-socket versus other-OS dial of the fleet transport: files_unix.go (unix) and files_other.go (!unix); no shared portable form exists"
+      },
+      {
+        "path": "internal/testlab/harnessdocker",
+        "adr": "0001-technology-stack.md",
+        "reason": "test-lab Docker harness file-ownership handling differs by OS: owner_unix.go and owner_windows.go; test tooling, never shipped"
       }
     ],
     "sidecars": [],
@@ -309,6 +319,26 @@
         "path": ".githooks/pre-commit",
         "adr": "0001-technology-stack.md",
         "reason": "git hook that refuses a commit containing a secret (T-0013); a git hook must live at a fixed path outside lab/ and tools/"
+      },
+      {
+        "path": "internal/directory/sd/testdata/gen_corpus.py",
+        "adr": "0001-technology-stack.md",
+        "reason": "independent Python oracle that generates the sd.read.jsonl corpus the Go decoder is checked against; a test fixture generator, never shipped"
+      },
+      {
+        "path": "packaging/linux-oci/prepare-tls-dir.sh",
+        "adr": "0001-technology-stack.md",
+        "reason": "packaging-time script that prepares the API TLS directory permissions in the OCI image; build-time, runs no product input"
+      },
+      {
+        "path": "packaging/windows/Set-ApiTlsDirAcl.ps1",
+        "adr": "0001-technology-stack.md",
+        "reason": "installer-time script that sets the API TLS directory ACL on Windows; fixed arguments, no constructed security descriptors from input"
+      },
+      {
+        "path": "packaging/windows/Test-ApiTlsDirAcl.ps1",
+        "adr": "0001-technology-stack.md",
+        "reason": "packaging verification script that checks the API TLS directory ACL on Windows"
       }
     ],
     "devNodeTools": [
