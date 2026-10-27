@@ -44,7 +44,7 @@ func BuiltInRoles() []Role {
 	return []Role{
 		{Name: "tier0-administrator", Tier: Tier0, Permissions: []authz.Permission{"inventory.tier0_designation.manage"}},
 		{Name: "platform-administrator", Tier: Tier1, Permissions: []authz.Permission{
-			"connections.hybrid_link.confirm", "operation.approve", "objects.user.reset_password", "objects.user.delete"}},
+			"connections.hybrid_link.confirm", "connections.takeover.attest", "operation.approve", "objects.user.reset_password", "objects.user.delete"}},
 		// The tenant owner (ADM-126, DM-30.I4). Read-only, personal assignments only, never time-bounded
 		// (migration 0034). It carries no operation permission of its own yet: what an owner may do
 		// is granted by the operation catalogue as operations land, not guessed here.

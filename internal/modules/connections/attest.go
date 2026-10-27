@@ -221,10 +221,13 @@ func (a *Attester) Start(ctx context.Context, req StartRequest) (string, error) 
 	if !fresh {
 		return deny(ReasonStepUpRequired, ErrStepUpRequired)
 	}
-	state, err := a.random(32)
+	nonce, err := a.random(32)
 	if err != nil {
 		return "", err
 	}
+	// The state names its tenant so the unauthenticated callback can open the right tenant's
+	// transaction. The prefix is only where to look: the attempt is found by the hash of the whole state.
+	state := req.Tenant.String() + stateSep + nonce
 	verifier, err := a.random(32) // 43 base64url characters, RFC 7636 §4.1
 	if err != nil {
 		return "", err
@@ -253,6 +256,23 @@ func (a *Attester) Start(ctx context.Context, req StartRequest) (string, error) 
 		return "", err
 	}
 	return a.authorizeURL(tenantID, state, verifier), nil
+}
+
+const stateSep = "."
+
+// StateTenant reads the tenant a state was issued for. The callback uses it for one thing, to choose
+// whose attempt table to look the state up in; the lookup is by the hash of the whole state, so a
+// state that was never issued for that tenant finds nothing. It is not an identity.
+func StateTenant(state string) (tenant.ID, bool) {
+	prefix, _, ok := strings.Cut(state, stateSep)
+	if !ok {
+		return tenant.ID{}, false
+	}
+	t, err := tenant.Parse(prefix)
+	if err != nil || t.IsZero() {
+		return tenant.ID{}, false
+	}
+	return t, true
 }
 
 func attestable(c connection.Connection) bool {

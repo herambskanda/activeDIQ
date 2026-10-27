@@ -266,7 +266,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	h, pattern := s.mux.Handler(r)
 	if pattern != "" {
-		h.ServeHTTP(w, r)
+		// ServeHTTP, not h.ServeHTTP: only the mux's own dispatch records the matched wildcards that
+		// r.PathValue reads, so calling the handler directly left every path parameter empty.
+		s.mux.ServeHTTP(w, r)
 		return
 	}
 	probe := &statusProbe{header: http.Header{}}

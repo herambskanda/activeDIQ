@@ -98,16 +98,18 @@ func TestOIDCExchangeRefusals(t *testing.T) {
 		d    doerFunc
 		want error
 	}{
-		"http error":       {respond(400, `{"error":"invalid_grant","error_description":"code the-code expired"}`), ErrIdPExchange},
-		"not json":         {respond(200, `<html>`), ErrIdPResponse},
-		"not bearer":       {respond(200, `{"token_type":"mac","access_token":"a.b.c"}`), ErrIdPResponse},
-		"opaque token":     {respond(200, tokenBody("opaque")), ErrIdPClaims},
-		"other tenant":     {respond(200, tokenBody(mut(func(c map[string]any) { c["tid"] = "99999999-2222-3333-4444-555555555555" }))), ErrTenantMismatch},
-		"foreign issuer":   {respond(200, tokenBody(mut(func(c map[string]any) { c["iss"] = "https://evil.example/" + tTenant + "/v2.0" }))), ErrIdPClaims},
-		"not graph aud":    {respond(200, tokenBody(mut(func(c map[string]any) { c["aud"] = "api://other" }))), ErrIdPClaims},
-		"expired":          {respond(200, tokenBody(mut(func(c map[string]any) { c["exp"] = tNow.Add(-time.Second).Unix() }))), ErrIdPClaims},
-		"no oid":           {respond(200, tokenBody(mut(func(c map[string]any) { delete(c, "oid") }))), ErrIdPClaims},
-		"transport":        {func(*http.Request) (*http.Response, error) { return nil, errors.New("Post https://x/token?code=the-code") }, ErrIdPExchange},
+		"http error":     {respond(400, `{"error":"invalid_grant","error_description":"code the-code expired"}`), ErrIdPExchange},
+		"not json":       {respond(200, `<html>`), ErrIdPResponse},
+		"not bearer":     {respond(200, `{"token_type":"mac","access_token":"a.b.c"}`), ErrIdPResponse},
+		"opaque token":   {respond(200, tokenBody("opaque")), ErrIdPClaims},
+		"other tenant":   {respond(200, tokenBody(mut(func(c map[string]any) { c["tid"] = "99999999-2222-3333-4444-555555555555" }))), ErrTenantMismatch},
+		"foreign issuer": {respond(200, tokenBody(mut(func(c map[string]any) { c["iss"] = "https://evil.example/" + tTenant + "/v2.0" }))), ErrIdPClaims},
+		"not graph aud":  {respond(200, tokenBody(mut(func(c map[string]any) { c["aud"] = "api://other" }))), ErrIdPClaims},
+		"expired":        {respond(200, tokenBody(mut(func(c map[string]any) { c["exp"] = tNow.Add(-time.Second).Unix() }))), ErrIdPClaims},
+		"no oid":         {respond(200, tokenBody(mut(func(c map[string]any) { delete(c, "oid") }))), ErrIdPClaims},
+		"transport": {func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("Post https://x/token?code=the-code")
+		}, ErrIdPExchange},
 		"oversized answer": {respond(200, strings.Repeat("a", maxIdPBody+10)), ErrIdPResponse},
 	}
 	for name, c := range cases {
