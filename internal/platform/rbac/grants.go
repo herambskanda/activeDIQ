@@ -61,7 +61,8 @@ type SubjectRef struct {
 	Automation string // automation policy ID
 }
 
-func (s SubjectRef) valid() bool {
+// Valid reports whether exactly the fields of the subject's kind are set, as canonical UUIDs.
+func (s SubjectRef) Valid() bool {
 	switch s.Kind {
 	case SubjectAccount:
 		return accountIDRe.MatchString(s.Account) && s.Connection == "" && s.Group == "" && s.Automation == ""
@@ -347,7 +348,7 @@ func validRoots(tn tenant.ID, roots []Root) bool {
 // tenant-owner or a control-plane permission (DM-36.I4). It returns ErrExists for an ID that is
 // taken, and nil for a repeat of the identical grant.
 func (g *Grants) Grant(ctx context.Context, tx store.Tx, by authority.Chain, in GrantInput) error {
-	if !accountIDRe.MatchString(in.ID) || !accountIDRe.MatchString(in.RoleID) || !in.Subject.valid() ||
+	if !accountIDRe.MatchString(in.ID) || !accountIDRe.MatchString(in.RoleID) || !in.Subject.Valid() ||
 		(in.ValidFrom != nil && in.ValidUntil != nil && !in.ValidUntil.After(*in.ValidFrom)) {
 		return ErrInvalid
 	}
@@ -362,11 +363,8 @@ func (g *Grants) Grant(ctx context.Context, tx store.Tx, by authority.Chain, in 
 	if err != nil {
 		return err
 	}
-	if role.builtIn && role.name == TenantOwnerRole {
-		return ErrOwnerRole
-	}
-	if in.Subject.Kind != SubjectAccount && controlPlane(role.perms) {
-		return ErrControlPlanePersonal
+	if err := CheckGrantable(RoleView{Name: role.name, BuiltIn: role.builtIn, Tier: Tier(role.tier), Permissions: role.perms}, in.Subject); err != nil {
+		return err
 	}
 	actor, err := g.actorAssignments(ctx, tn, by)
 	if err != nil {
@@ -431,4 +429,93 @@ WHERE a.tenant_id = $1::uuid AND a.id = $2::uuid AND a.assignment_state = 'activ
 		return fmt.Errorf("rbac: revoking assignment: %w", err)
 	}
 	return nil
+}
+
+// ValidID reports whether s is the canonical UUID text every row ID and directory GUID here uses.
+func ValidID(s string) bool { return accountIDRe.MatchString(s) }
+
+// RoleView is a role as stored.
+type RoleView struct {
+	Name        string
+	BuiltIn     bool
+	Tier        Tier
+	Permissions []authz.Permission
+}
+
+// AssignmentView is an assignment as stored.
+type AssignmentView struct {
+	RoleID   string
+	RoleName string
+	Owner    bool // the built-in tenant-owner role
+	Active   bool
+	Subject  SubjectRef
+	Roots    []Root
+}
+
+// CheckGrantable is the actor-free part of a grant, so a Plan can refuse it before anyone is asked:
+// tenant-owner has its own path, and control-plane authority is personal (DM-36.I4).
+func CheckGrantable(role RoleView, subject SubjectRef) error {
+	if role.BuiltIn && role.Name == TenantOwnerRole {
+		return ErrOwnerRole
+	}
+	if subject.Kind != SubjectAccount && controlPlane(role.Permissions) {
+		return ErrControlPlanePersonal
+	}
+	return nil
+}
+
+// Role reads a role of the transaction's tenant.
+func (g *Grants) Role(ctx context.Context, tx store.Tx, id string) (RoleView, error) {
+	if !ValidID(id) {
+		return RoleView{}, ErrInvalid
+	}
+	tn, err := tenantOf(ctx, tx)
+	if err != nil {
+		return RoleView{}, err
+	}
+	r, err := readRole(ctx, tx, tn, id)
+	if err != nil {
+		return RoleView{}, err
+	}
+	return RoleView{Name: r.name, BuiltIn: r.builtIn, Tier: Tier(r.tier), Permissions: r.perms}, nil
+}
+
+// Assignment reads an assignment of the transaction's tenant, whatever its state.
+func (g *Grants) Assignment(ctx context.Context, tx store.Tx, id string) (AssignmentView, error) {
+	if !ValidID(id) {
+		return AssignmentView{}, ErrInvalid
+	}
+	tn, err := tenantOf(ctx, tx)
+	if err != nil {
+		return AssignmentView{}, err
+	}
+	var v AssignmentView
+	var kind, state string
+	var acct, conn, grp, pol *string
+	err = tx.QueryRow(ctx, `SELECT a.role_id::text, r.role_name, r.role_name = $3 AND r.built_in, a.assignment_state, a.subject_kind,
+a.account_id::text, a.group_connection_id::text, a.group_guid::text, a.automation_policy_id::text
+FROM public.authz_assignments a JOIN public.authz_roles r ON r.tenant_id = a.tenant_id AND r.id = a.role_id
+WHERE a.tenant_id = $1::uuid AND a.id = $2::uuid`, tn.String(), id, TenantOwnerRole).
+		Scan(&v.RoleID, &v.RoleName, &v.Owner, &state, &kind, &acct, &conn, &grp, &pol)
+	if store.IsNoRows(err) {
+		return v, ErrNotFound
+	} else if err != nil {
+		return v, fmt.Errorf("rbac: reading assignment: %w", err)
+	}
+	v.Active = state == "active"
+	v.Subject = SubjectRef{Kind: SubjectKind(kind)}
+	if acct != nil {
+		v.Subject.Account = *acct
+	}
+	if conn != nil {
+		v.Subject.Connection = *conn
+	}
+	if grp != nil {
+		v.Subject.Group = *grp
+	}
+	if pol != nil {
+		v.Subject.Automation = *pol
+	}
+	v.Roots, err = readRoots(ctx, tx, tn, id)
+	return v, err
 }

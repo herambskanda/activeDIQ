@@ -186,7 +186,8 @@ type Role struct {
 	TenantOwner bool
 }
 
-func (r Role) has(p Permission) bool { return slices.Contains(r.Permissions, p) }
+// has: the tenant-owner role holds every permission (DM-34.I1); its reach is still its scope's.
+func (r Role) has(p Permission) bool { return r.TenantOwner || slices.Contains(r.Permissions, p) }
 
 // Assignment is role × scope for one principal.
 type Assignment struct {
