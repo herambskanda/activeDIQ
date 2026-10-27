@@ -1,0 +1,10 @@
+{
+ "id": "S-W10",
+ "class": "wrapped",
+ "cites": [
+  "SAML-3"
+ ],
+ "build": "wrap_signed_in_advice",
+ "expect": "refuse",
+ "reason": "saml.structure"
+}

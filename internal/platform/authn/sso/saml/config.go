@@ -1,0 +1,147 @@
+package saml
+
+import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rsa"
+	"crypto/x509"
+	"net/url"
+	"slices"
+
+	"github.com/skenzeriq/activediq/internal/platform/authn/sso"
+)
+
+// Reason codes: the "Refusal reason" column of spec §5. Audit and the log carry these; the user sees one
+// generic page.
+const (
+	ReasonBinding      = "saml.binding"      // SAML-1
+	ReasonXML          = "saml.xml"          // SAML-2
+	ReasonStructure    = "saml.structure"    // SAML-3
+	ReasonUnsigned     = "saml.unsigned"     // SAML-4
+	ReasonKey          = "saml.key"          // SAML-5
+	ReasonWrapped      = "saml.wrapped"      // SAML-6
+	ReasonAlg          = "saml.alg"          // SAML-7
+	ReasonTransform    = "saml.transform"    // SAML-8
+	ReasonStatus       = "saml.status"       // SAML-9
+	ReasonIssuer       = "saml.issuer"       // SAML-10
+	ReasonDestination  = "saml.destination"  // SAML-11
+	ReasonRecipient    = "saml.recipient"    // SAML-12
+	ReasonInResponseTo = "saml.inresponseto" // SAML-13
+	ReasonAudience     = "saml.audience"     // SAML-14
+	ReasonTime         = "saml.time"         // SAML-15
+	ReasonReplay       = "saml.replay"       // SAML-16
+	ReasonAuthn        = "saml.authn"        // SAML-17
+	ReasonSubject      = "saml.subject"      // SAML-18
+	ReasonLogout       = "saml.logout"       // SAML-19
+
+	// Reasons that are not one of the numbered checks.
+	ReasonConfig = "saml.config" // the IdP configuration cannot be used
+	ReasonAnchor = "saml.anchor" // the configured anchor attribute is missing or malformed (DM-30.I5)
+	ReasonIdP    = "sso.idp"     // SSO-2: the callback, the Transaction and the IdP name different IdPs
+)
+
+// XML-DSig URIs. The pin set of SAML-7 and SAML-8 is exactly these.
+const (
+	algRSASHA256   = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"
+	algRSASHA384   = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha384"
+	algRSASHA512   = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha512"
+	algECDSASHA256 = "http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256"
+	algECDSASHA384 = "http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha384"
+
+	digestSHA256 = "http://www.w3.org/2001/04/xmlenc#sha256"
+	digestSHA384 = "http://www.w3.org/2001/04/xmldsig-more#sha384"
+	digestSHA512 = "http://www.w3.org/2001/04/xmlenc#sha512"
+
+	transformEnveloped = "http://www.w3.org/2000/09/xmldsig#enveloped-signature"
+	c14nExclusive      = "http://www.w3.org/2001/10/xml-exc-c14n#"
+
+	minRSABits = 2048
+)
+
+// Exported for the test IdP and the settings screen.
+const (
+	AlgRSASHA256   = algRSASHA256
+	AlgRSASHA384   = algRSASHA384
+	AlgRSASHA512   = algRSASHA512
+	AlgECDSASHA256 = algECDSASHA256
+	AlgECDSASHA384 = algECDSASHA384
+)
+
+var (
+	pinnable      = []string{algRSASHA256, algRSASHA384, algRSASHA512, algECDSASHA256, algECDSASHA384}
+	digestAllowed = []string{digestSHA256, digestSHA384, digestSHA512}
+)
+
+// ValidateConfig checks an IdP configuration against spec §5 before it is stored and before every use. It
+// returns a *sso.Refusal: saml.alg for an algorithm or key the pin set excludes, saml.config otherwise.
+func ValidateConfig(c *sso.SAMLConfig) error {
+	if c == nil || c.EntityID == "" || c.SPEntityID == "" || httpsURL(c.SSOURL) != nil || httpsURL(c.ACSURL) != nil {
+		return sso.Refuse(ReasonConfig)
+	}
+	if !slices.Contains(pinnable, c.Alg) {
+		return sso.Refuse(ReasonAlg)
+	}
+	if n := len(c.Certs); n < 1 || n > 2 {
+		return sso.Refuse(ReasonConfig)
+	}
+	for _, cert := range c.Certs {
+		if cert == nil || !keyMatchesAlg(cert.PublicKey, c.Alg) {
+			return sso.Refuse(ReasonAlg)
+		}
+	}
+	switch c.MFAMode {
+	case "", sso.MFAOff:
+		if len(c.MFAEvidence) != 0 {
+			return sso.Refuse(ReasonConfig)
+		}
+	case sso.MFAClaim:
+		if len(c.MFAEvidence) == 0 {
+			return sso.Refuse(ReasonConfig)
+		}
+	default:
+		return sso.Refuse(ReasonConfig)
+	}
+	switch c.AnchorClaim {
+	case "":
+	case "oid":
+		if c.AnchorAttribute == "" || c.TenantAttribute == "" {
+			return sso.Refuse(ReasonConfig)
+		}
+	case "onprem_sid":
+		if c.AnchorAttribute == "" {
+			return sso.Refuse(ReasonConfig)
+		}
+	default:
+		return sso.Refuse(ReasonConfig)
+	}
+	return nil
+}
+
+// keyMatchesAlg: RSA keys of at least 2048 bits for rsa-*, and P-256 / P-384 for the matching ecdsa-*.
+func keyMatchesAlg(pub any, alg string) bool {
+	switch k := pub.(type) {
+	case *rsa.PublicKey:
+		return k.N.BitLen() >= minRSABits && (alg == algRSASHA256 || alg == algRSASHA384 || alg == algRSASHA512)
+	case *ecdsa.PublicKey:
+		return (alg == algECDSASHA256 && k.Curve == elliptic.P256()) || (alg == algECDSASHA384 && k.Curve == elliptic.P384())
+	}
+	return false
+}
+
+// certsUsable reports whether every configured certificate satisfies the key rules; used at verify time too.
+func certsUsable(certs []*x509.Certificate, alg string) bool {
+	for _, c := range certs {
+		if c == nil || !keyMatchesAlg(c.PublicKey, alg) {
+			return false
+		}
+	}
+	return true
+}
+
+func httpsURL(s string) error {
+	u, err := url.Parse(s)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.Fragment != "" || u.User != nil {
+		return sso.Refuse(ReasonConfig)
+	}
+	return nil
+}

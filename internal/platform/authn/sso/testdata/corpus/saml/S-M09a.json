@@ -1,0 +1,10 @@
+{
+ "id": "S-M09a",
+ "class": "misaddressed",
+ "cites": [
+  "SAML-18"
+ ],
+ "build": "nameid_transient",
+ "expect": "refuse",
+ "reason": "saml.subject"
+}

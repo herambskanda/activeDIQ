@@ -1,0 +1,10 @@
+{
+ "id": "S-D01b",
+ "class": "malformed",
+ "cites": [
+  "SAML-1"
+ ],
+ "build": "too_many_tokens",
+ "expect": "refuse",
+ "reason": "saml.binding"
+}

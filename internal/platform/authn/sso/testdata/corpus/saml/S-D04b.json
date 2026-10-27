@@ -1,0 +1,11 @@
+{
+ "id": "S-D04b",
+ "class": "malformed",
+ "cites": [
+  "SAML-1",
+  "SAML-2"
+ ],
+ "build": "non_utf8_declaration",
+ "expect": "refuse",
+ "reason": "saml.xml"
+}

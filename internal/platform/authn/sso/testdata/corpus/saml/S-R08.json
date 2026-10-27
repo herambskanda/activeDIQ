@@ -1,0 +1,10 @@
+{
+ "id": "S-R08",
+ "class": "replayed",
+ "cites": [
+  "SAML-17"
+ ],
+ "build": "stepup_old_authn",
+ "expect": "refuse",
+ "reason": "saml.authn"
+}
