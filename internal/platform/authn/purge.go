@@ -54,6 +54,30 @@ func NewPurger(owner *store.DB, sink audit.Sink, retention time.Duration, clock 
 // authn.sessions.purged (count and cutoff, nothing about the sessions) in the same transaction. It
 // returns how many rows it deleted.
 func (p *Purger) Purge(ctx context.Context, t tenant.ID, by authority.Chain) (int, error) {
+	return p.purge(ctx, t, by, purgeSpec{
+		sql:  `DELETE FROM public.authn_sessions WHERE tenant_id = $1 AND state <> 'active' AND ended_at < $2`,
+		kind: KindSessionsPurged, idPrefix: "authn.sessions.purged.", countKey: "sessions", what: "sessions",
+	})
+}
+
+// PurgePending deletes the tenant's pending sign-ins that ended more than the retention ago (consumed or
+// dead), and those still marked active whose five minutes ran out more than the retention ago (nothing
+// else ever ends them), and records authn.pending.purged (count and cutoff) in the same transaction.
+func (p *Purger) PurgePending(ctx context.Context, t tenant.ID, by authority.Chain) (int, error) {
+	return p.purge(ctx, t, by, purgeSpec{
+		sql: `DELETE FROM public.authn_pending_signins WHERE tenant_id = $1::uuid
+AND ((state <> 'active' AND ended_at < $2) OR (state = 'active' AND expires_at < $2))`,
+		kind: KindPendingPurged, idPrefix: "authn.pending.purged.", countKey: "pending_signins", what: "pending sign-ins",
+	})
+}
+
+// purgeSpec parameterises one retention purge: a constant DELETE taking (tenant, cutoff).
+type purgeSpec struct {
+	sql, idPrefix, countKey, what string
+	kind                          audit.Kind
+}
+
+func (p *Purger) purge(ctx context.Context, t tenant.ID, by authority.Chain, spec purgeSpec) (int, error) {
 	if t.IsZero() || by.Validate() != nil {
 		return 0, ErrInvalid
 	}
@@ -66,7 +90,7 @@ func (p *Purger) Purge(ctx context.Context, t tenant.ID, by authority.Chain) (in
 			return err
 		}
 		cutoff := now.Add(-p.retention)
-		tag, err := tx.Exec(ctx, `DELETE FROM public.authn_sessions WHERE tenant_id = $1 AND state <> 'active' AND ended_at < $2`, t.String(), cutoff)
+		tag, err := tx.Exec(ctx, spec.sql, t.String(), cutoff)
 		if err != nil {
 			return err
 		}
@@ -74,15 +98,16 @@ func (p *Purger) Purge(ctx context.Context, t tenant.ID, by authority.Chain) (in
 		if n == 0 {
 			return nil
 		}
+		// Keys in increasing order: cutoff, then the count key ("pending_signins" and "sessions" both sort after it).
 		return p.sink.Append(ctx, tx, audit.Event{
-			ID: "authn.sessions.purged." + strconv.FormatInt(cutoff.UnixNano(), 10), Kind: KindSessionsPurged, At: now, Actor: by,
+			ID: spec.idPrefix + strconv.FormatInt(cutoff.UnixNano(), 10), Kind: spec.kind, At: now, Actor: by,
 			Target:    authority.TargetRef{GUID: t.String(), Class: "tenant"},
 			Component: "authn", Outcome: audit.Success,
-			Details: []chain.Detail{{Key: "cutoff", Value: cutoff.Format(time.RFC3339Nano)}, {Key: "sessions", Value: strconv.Itoa(n)}},
+			Details: []chain.Detail{{Key: "cutoff", Value: cutoff.Format(time.RFC3339Nano)}, {Key: spec.countKey, Value: strconv.Itoa(n)}},
 		})
 	})
 	if err != nil {
-		return 0, fmt.Errorf("authn: purge sessions: %w", err)
+		return 0, fmt.Errorf("authn: purge %s: %w", spec.what, err)
 	}
 	return n, nil
 }

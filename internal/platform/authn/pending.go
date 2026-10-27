@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"time"
 
+	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tablekind"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
@@ -159,12 +160,16 @@ type pendingRef struct {
 	First    FirstFactor
 	ClientIP netip.Addr
 	Epoch    Epoch
+	Attempt  int // 1-based number of the attempt just charged
 }
 
 // charge spends one attempt of the pending sign-in h names, in its own committed transaction and before
 // the code is looked at, so neither a rollback nor racing requests can give a caller more than
 // MaxSignInAttempts evaluations. A pending sign-in that is expired or out of attempts is marked dead.
-func (p *PendingStore) charge(ctx context.Context, h PendingHandle) (pendingRef, error) {
+//
+// onDead is called in the same transaction as the marking, once, when this call is the one that ended
+// the pending sign-in (reason "expired" or "attempts_exhausted"), so the audit event commits with it.
+func (p *PendingStore) charge(ctx context.Context, h PendingHandle, onDead func(ctx context.Context, tx store.Tx, ref pendingRef, now time.Time, reason string) error) (pendingRef, error) {
 	t, err := h.tok.Tenant()
 	if err != nil {
 		return pendingRef{}, ErrPendingInvalid
@@ -205,13 +210,21 @@ WHERE tenant_id = $1::uuid AND id = $2::uuid AND state = 'active'`, t.String(), 
 				return err
 			}
 			outcome = ErrPendingInvalid
-			return nil // commit the marking
+			reason := RefusedPendingExpired
+			if now.Before(expires) {
+				reason = RefusedAttemptsExhausted
+			}
+			ref.Tenant, ref.First, ref.Attempt = t, FirstFactor(first), attempts
+			if ip != nil {
+				ref.ClientIP = *ip
+			}
+			return onDead(ctx, tx, ref, now, reason) // commit the marking and its event
 		}
 		if _, err := tx.Exec(ctx, `UPDATE public.authn_pending_signins SET attempts = attempts + 1
 WHERE tenant_id = $1::uuid AND id = $2::uuid AND state = 'active'`, t.String(), ref.ID); err != nil {
 			return err
 		}
-		ref.Tenant, ref.First, ref.Epoch.ok = t, FirstFactor(first), true
+		ref.Tenant, ref.First, ref.Epoch.ok, ref.Attempt = t, FirstFactor(first), true, attempts+1
 		if ip != nil {
 			ref.ClientIP = *ip
 		}
@@ -248,17 +261,25 @@ type SecondFactor struct {
 	Pending  *PendingStore
 	Sessions *Store
 	TOTP     *Service
+	// Audit records the refused attempts (authn.secondfactor.refused). Required; it must be bound to DB
+	// (audit.NewChainer) so an event is chained in the transaction that writes it.
+	Audit audit.Sink
 }
 
 // VerifyTOTP checks a TOTP code for the pending sign-in h names. One attempt is charged first. On
 // success, in one transaction, the pending sign-in is consumed and a session with a new ID is created
 // (methods: the first factor and "totp"); a rollback leaves neither. Every refusal is ErrPendingInvalid
-// or ErrSecondFactorRefused and creates nothing.
-func (f *SecondFactor) VerifyTOTP(ctx context.Context, h PendingHandle, code string) (CreateResult, error) {
-	if f.DB == nil || f.Pending == nil || f.Sessions == nil || f.TOTP == nil {
+// or ErrSecondFactorRefused and creates nothing. from is the address the attempt arrived from (zero when
+// unknown); a refusal of a known pending sign-in is audited with it (see refuse). A handle that names no
+// pending sign-in, or one already ended, is not audited: there is no account to name and a flood of
+// them must not flood the trail.
+func (f *SecondFactor) VerifyTOTP(ctx context.Context, h PendingHandle, code string, from netip.Addr) (CreateResult, error) {
+	if f.DB == nil || f.Pending == nil || f.Sessions == nil || f.TOTP == nil || f.Audit == nil {
 		return CreateResult{}, errors.New("authn: SecondFactor is not fully configured")
 	}
-	ref, err := f.Pending.charge(ctx, h)
+	ref, err := f.Pending.charge(ctx, h, func(ctx context.Context, tx store.Tx, ref pendingRef, now time.Time, reason string) error {
+		return f.refuse(ctx, tx, ref, now, reason, from)
+	})
 	if err != nil {
 		return CreateResult{}, err
 	}
@@ -269,14 +290,27 @@ func (f *SecondFactor) VerifyTOTP(ctx context.Context, h PendingHandle, code str
 			return err
 		}
 		if ids == nil {
-			return ErrSecondFactorRefused // no active account, or no TOTP enrolled
+			reason := RefusedAccountDisabled
+			if active, err := accountActive(ctx, tx, ref.Tenant, ref.Account); err != nil {
+				return err
+			} else if active {
+				reason = RefusedNoEnrolment
+			}
+			return &refusal{reason: reason}
 		}
+		reason := RefusedWrongCode
 		matched := false
 		for _, id := range ids {
 			switch err := f.TOTP.Verify(ctx, tx, ref.Tenant, id, code); {
 			case err == nil:
 				matched = true
-			case errors.Is(err, ErrCodeRejected), errors.Is(err, ErrCodeReplayed), errors.Is(err, ErrFactorPaused):
+			case errors.Is(err, ErrCodeRejected):
+				continue
+			case errors.Is(err, ErrCodeReplayed):
+				reason = RefusedCodeReplayed
+				continue
+			case errors.Is(err, ErrFactorPaused):
+				reason = RefusedFactorPaused
 				continue
 			default:
 				return err // an infrastructure or integrity fault: fail closed
@@ -284,7 +318,7 @@ func (f *SecondFactor) VerifyTOTP(ctx context.Context, h PendingHandle, code str
 			break
 		}
 		if !matched {
-			return ErrSecondFactorRefused
+			return &refusal{reason: reason}
 		}
 		won, err := f.Pending.consume(ctx, tx, ref)
 		if err != nil {
@@ -302,15 +336,36 @@ func (f *SecondFactor) VerifyTOTP(ctx context.Context, h PendingHandle, code str
 		return err
 	})
 	if err != nil {
-		if errors.Is(err, ErrSecondFactorRefused) || errors.Is(err, ErrPendingInvalid) {
+		var r *refusal
+		switch {
+		case errors.As(err, &r):
+			// The transaction above rolled back, so the refusal is recorded in its own.
+			if aerr := f.refuseOwn(ctx, ref, r.reason, from); aerr != nil {
+				return CreateResult{}, aerr
+			}
+			return CreateResult{}, ErrSecondFactorRefused
+		case errors.Is(err, ErrPendingInvalid):
 			return CreateResult{}, err
-		}
-		if errors.Is(err, ErrCredentialsChanged) {
-			return CreateResult{}, ErrPendingInvalid // the first factor predates a reset; start over
+		case errors.Is(err, ErrCredentialsChanged):
+			// the first factor predates a reset; start over
+			if aerr := f.refuseOwn(ctx, ref, RefusedCredentialsChanged, from); aerr != nil {
+				return CreateResult{}, aerr
+			}
+			return CreateResult{}, ErrPendingInvalid
 		}
 		return CreateResult{}, fmt.Errorf("authn: second factor: %w", err)
 	}
 	return res, nil
+}
+
+// accountActive reports whether the console account exists and is active.
+func accountActive(ctx context.Context, tx store.Tx, t tenant.ID, account string) (bool, error) {
+	var state string
+	err := tx.QueryRow(ctx, `SELECT state FROM public.authn_accounts WHERE tenant_id = $1::uuid AND id = $2::uuid`, t.String(), account).Scan(&state)
+	if store.IsNoRows(err) {
+		return false, nil
+	}
+	return state == "active", err
 }
 
 // activeTOTPIDs lists the active console-MFA TOTP enrolments of an active account, oldest first. Only
