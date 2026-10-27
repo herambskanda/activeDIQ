@@ -97,6 +97,10 @@ func Run(ctx context.Context, cfg config.Config) error {
 	if err != nil {
 		return err
 	}
+	// The tenant-owner writer: authn answers which owners are active and ends their sessions.
+	if _, err := buildOwnerAssignments(db, ok.Chainer); err != nil {
+		return err
+	}
 	// The TM-D17 attestation routes, when the install is configured for them. Built after the
 	// authorizer, which they share with the operation runner.
 	tags, err := buildAttestation(cfg, db, ok.Chainer, authzr)
