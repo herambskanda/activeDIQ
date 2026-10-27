@@ -22,11 +22,15 @@ type BindingTarget string
 // TargetEmbedded is the connector inside the server process (ADR-0002).
 const TargetEmbedded BindingTarget = "embedded"
 
+// TargetComponent is a remote connector component reached over its fleet tunnel.
+const TargetComponent BindingTarget = "component"
+
 // Binding is one DM-13 row.
 type Binding struct {
 	ID           string
 	ConnectionID ID
 	Target       BindingTarget
+	ComponentID  string // the enrolled component of a TargetComponent binding; empty for embedded
 	Priority     int
 	State        string
 }
@@ -54,7 +58,7 @@ func (Store) Bindings(ctx context.Context, tx store.Tx, id ID) ([]Binding, error
 	if _, err := ParseID(string(id)); err != nil {
 		return nil, err
 	}
-	rows, err := tx.Query(ctx, `SELECT id, connection_id, target, priority, state FROM public.connector_bindings
+	rows, err := tx.Query(ctx, `SELECT id, connection_id, target, COALESCE(component_id::text, ''), priority, state FROM public.connector_bindings
 		WHERE connection_id = $1::uuid AND state <> 'removed' ORDER BY priority, id LIMIT $2`, string(id), maxBindings)
 	if err != nil {
 		return nil, fmt.Errorf("connection: bindings: %w", err)
@@ -64,7 +68,7 @@ func (Store) Bindings(ctx context.Context, tx store.Tx, id ID) ([]Binding, error
 	for rows.Next() {
 		var b Binding
 		var conn, target string
-		if err := rows.Scan(&b.ID, &conn, &target, &b.Priority, &b.State); err != nil {
+		if err := rows.Scan(&b.ID, &conn, &target, &b.ComponentID, &b.Priority, &b.State); err != nil {
 			return nil, fmt.Errorf("connection: bindings: %w", err)
 		}
 		b.ConnectionID, b.Target = ID(conn), BindingTarget(target)

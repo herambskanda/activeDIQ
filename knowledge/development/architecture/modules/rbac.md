@@ -25,6 +25,7 @@ Code: `internal/platform/rbac/`; migration `0018_authz_rbac.sql`.
   `ValidateRoles`, and by a trigger in the schema.
 - **Facts:** `directory/client.ConnectorFacts` is the `operation.LiveFacts` reader over a `Reads` port
   (the connector's Read). It answers a `tier0_scope` or store target without a read (Exists, not Tier-0),
-  walks the parent chain for a directory target, and fails closed with `ErrNoReads` until the gRPC
-  adapter is wired.
+  walks the parent chain for a directory target, and fails closed with `ErrNoReads` until the Tier-0 verdict
+  source lands (T-0433): the gRPC adapter and its `client.TunnelSource` (connection → active component
+  binding → fleet-hub tunnel, tenant-checked) are wired in `compose/server`.
 - **Wired in** `compose/server`: `rbacAuthorizer(db)`, `directoryFacts(reads)`.
