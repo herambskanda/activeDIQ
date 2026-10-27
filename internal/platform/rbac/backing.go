@@ -83,7 +83,7 @@ func (a *Authorizer) checkBacking(ctx context.Context, tn tenant.ID, actor []Ass
 		if acct == who {
 			continue // holds exactly its own privileges
 		}
-		theirs, err := a.src.PendingOrActive(ctx, tn, acct, a.now())
+		theirs, err := a.effective(ctx, tn, acct, true)
 		if err != nil {
 			return fmt.Errorf("rbac: loading backed account assignments: %w", err)
 		}
@@ -128,9 +128,12 @@ func (a *Authorizer) checkBacking(ctx context.Context, tn tenant.ID, actor []Ass
 func (a *Authorizer) principalFor(ctx context.Context, tn tenant.ID, who string, as []Assignment, conn string, t0 bool) (*authz.Principal, error) {
 	p := &authz.Principal{ID: who}
 	for _, x := range as {
+		if x.Via != nil {
+			continue // a correlation-derived grant never backs a grant (TM-D17 rule 5)
+		}
 		var s authz.Scope
 		for _, r := range x.Roots {
-			if r.Connection != conn || (r.Kind == Tier0Scope) != t0 {
+			if r.Kind == TenantStore || r.Connection != conn || (r.Kind == Tier0Scope) != t0 {
 				continue
 			}
 			// Resolved live like the backed side: an exclusion is compared by ancestry, so a

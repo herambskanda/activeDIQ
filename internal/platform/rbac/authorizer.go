@@ -25,6 +25,9 @@ const (
 	ReasonNoTenant         authz.Reason = "no_tenant"
 	ReasonScopeOnly        authz.Reason = "tier0_scope_permission_off_scope"
 	ReasonBadTarget        authz.Reason = "target_not_a_guid"
+	ReasonTokenUnusable    authz.Reason = "token_unusable"
+	ReasonNoTokenSource    authz.Reason = "token_source_missing"
+	ReasonAutomationDenied authz.Reason = "automation_policy_not_granted"
 )
 
 func denied(r authz.Reason) error { return fmt.Errorf("%w: %s", ErrDenied, r) }
@@ -34,9 +37,24 @@ type Authorizer struct {
 	src     Source
 	eval    authz.Evaluator
 	now     func() time.Time
-	backing Backing      // TM-D19 rule 5; nil refuses every backing-object permission
-	roots   RootResolver // live scope-root ancestry for the rule 5 containment test
+	backing Backing          // TM-D19 rule 5; nil refuses every backing-object permission
+	roots   RootResolver     // live scope-root ancestry for the rule 5 containment test
+	members authz.Membership // DM-36.I2; nil: group subjects grant nothing
+	tokens  TokenSource      // DM-32; nil: a chain through an API token is refused
 }
+
+// TokenSource reads an API token's constraint (DM-32): its permission subset, mandatory expiry and
+// scope narrowing. It returns an error unless the token is active and owned by owner; a disabled or
+// lost owner is the evaluator's to refuse. authn implements it over its token store.
+type TokenSource interface {
+	Constraint(ctx context.Context, t tenant.ID, tokenID, owner string) (authz.Token, error)
+}
+
+// WithMembership enables group subjects (DM-36.I2). Without it a group assignment grants nothing.
+func WithMembership(m authz.Membership) Option { return func(a *Authorizer) { a.members = m } }
+
+// WithTokens enables API tokens in the initiator chain. Without it such a chain is refused.
+func WithTokens(ts TokenSource) Option { return func(a *Authorizer) { a.tokens = ts } }
 
 // New returns an Authorizer reading assignments from src.
 func New(src Source, opts ...Option) (*Authorizer, error) {
@@ -53,7 +71,7 @@ func New(src Source, opts ...Option) (*Authorizer, error) {
 // FactsQuery asks for the Tier-0 fact and the live parent chain of a directory target. A tier0_scope
 // target is a scope, not a directory object: nothing is read about it.
 func (a *Authorizer) FactsQuery(_ authority.Chain, _ authz.Permission, t authority.TargetRef) authority.FactsQuery {
-	if t.Class == TargetClassTier0Scope {
+	if t.Class == TargetClassTier0Scope || t.Connection == "" { // a scope or a store row: nothing to read
 		return authority.FactsQuery{Target: t}
 	}
 	return authority.FactsQuery{Target: t, Tier0: true, Ancestry: true}
@@ -69,38 +87,197 @@ func (a *Authorizer) Authorize(ctx context.Context, chain authority.Chain, perm 
 	if err != nil {
 		return denied(ReasonNoTenant)
 	}
-	// Only a person acting directly holds assignments today; a token or automation in the chain would
-	// need its own constraint, which has no persistence yet.
-	if chain.Validate() != nil || chain.Requester.Kind != authority.Human || len(chain.Via) > 0 {
+	// The requester is a person. Whatever acted for them narrows their authority and never widens it
+	// (ADR-0005 rule 7): an API token intersects it, an automation policy must be granted the same
+	// permission as its own subject (DM-60.I2).
+	if chain.Validate() != nil || chain.Requester.Kind != authority.Human {
 		return denied(ReasonUnsupportedChain)
+	}
+	var tokenID, policy string
+	for _, v := range chain.Via {
+		switch {
+		case v.Kind == authority.APIToken && tokenID == "":
+			tokenID = string(v.ID)
+		case v.Kind == authority.Automation && policy == "":
+			policy = string(v.ID)
+		default:
+			return denied(ReasonUnsupportedChain)
+		}
+	}
+	var tok *authz.Token
+	if tokenID != "" {
+		if a.tokens == nil {
+			return denied(ReasonNoTokenSource)
+		}
+		c, err := a.tokens.Constraint(ctx, tn, tokenID, string(chain.Requester.ID))
+		if err != nil {
+			return denied(ReasonTokenUnusable)
+		}
+		tok = &c
 	}
 	scope := t.Class == TargetClassTier0Scope
 	if !scope && isTier0Scope(perm) {
 		return denied(ReasonScopeOnly)
 	}
-	as, err := a.src.Assignments(ctx, tn, string(chain.Requester.ID), a.now())
+	as, err := a.effective(ctx, tn, string(chain.Requester.ID), false)
 	if err != nil {
-		return fmt.Errorf("rbac: loading assignments: %w", err)
+		return err
 	}
-	var tgt authz.Target
-	var ev []authz.Assignment
-	if scope {
-		tgt, ev, err = tier0ScopeView(as, t)
-	} else {
-		tgt, ev, err = objectView(as, t, f)
-	}
+	tgt, ev, err := a.view(tn, as, t, f)
 	if err != nil {
 		return err
 	}
 	p := &authz.Principal{ID: string(chain.Requester.ID), Assignments: ev}
-	if d := a.eval.Authorize(p, nil, perm, tgt); !d.Allowed {
+	if d := a.eval.Authorize(p, tok, perm, tgt); !d.Allowed {
 		return denied(d.Reason)
+	}
+	if policy != "" {
+		pas, err := a.automation(ctx, tn, policy)
+		if err != nil {
+			return err
+		}
+		_, pev, err := a.view(tn, pas, t, f)
+		if err != nil {
+			return err
+		}
+		if d := a.eval.Authorize(&authz.Principal{ID: policy, Assignments: pev}, nil, perm, tgt); !d.Allowed {
+			return denied(ReasonAutomationDenied)
+		}
 	}
 	if !scope && isBackingPermission(perm) {
 		// TM-D19 rule 5: a console-backing object is an escalation object.
 		return a.checkBacking(ctx, tn, as, string(chain.Requester.ID), t)
 	}
 	return nil
+}
+
+// view builds the evaluator's view of target t from assignments as: a Tier-0 scope, a store target
+// (no connection), or a directory object.
+func (a *Authorizer) view(tn tenant.ID, as []Assignment, t authority.TargetRef, f authority.Facts) (authz.Target, []authz.Assignment, error) {
+	switch {
+	case t.Class == TargetClassTier0Scope:
+		return tier0ScopeView(as, t)
+	case t.Connection == "":
+		return storeView(as, t, tn)
+	default:
+		return objectView(as, t, f)
+	}
+}
+
+// storeView builds the view of a target in activeDIQ's own store: the row, with the tenant as the
+// top of its chain. Only a tenant-wide root covers it. The runner reads no live facts for a store
+// target, so completeness is by construction. Every directory root is dropped here.
+func storeView(as []Assignment, t authority.TargetRef, tn tenant.ID) (authz.Target, []authz.Assignment, error) {
+	id, err := authz.ParseObjectID(t.GUID)
+	if err != nil {
+		return authz.Target{}, nil, denied(ReasonBadTarget)
+	}
+	var tenantRoot authz.ObjectID
+	var out []authz.Assignment
+	for _, a := range as {
+		var inc []authz.ScopeRoot
+		for _, r := range a.Roots {
+			if r.Kind != TenantStore || r.Exclude {
+				continue
+			}
+			rid, err := authz.ParseObjectID(r.GUID)
+			if err != nil || r.Connection != r.GUID || r.GUID != tn.String() { // only this tenant's root
+				continue
+			}
+			tenantRoot = rid
+			inc = append(inc, authz.ScopeRoot{ID: rid, Complete: true})
+		}
+		if len(inc) > 0 {
+			out = append(out, authz.Assignment{Role: authz.Role{Permissions: a.Permissions, TenantOwner: a.TenantOwner}, Scope: authz.Scope{Include: inc}, Via: a.Via})
+		}
+	}
+	tgt := authz.Target{ID: id, Complete: true}
+	if !tenantRoot.IsZero() {
+		tgt.Ancestors = []authz.ObjectID{tenantRoot}
+	}
+	return tgt, out, nil
+}
+
+// effective returns every assignment that reaches account: its own, and those of the directory
+// groups it is a member of (DM-36.I2). A group assignment never carries tenant-owner or a
+// control-plane permission (DM-36.I4); such a row is dropped here as well as refused by the schema,
+// for a permission that became control-plane after the grant. Membership that is incomplete grants
+// nothing through groups. includeFuture adds assignments that have not started (backing guard).
+func (a *Authorizer) effective(ctx context.Context, tn tenant.ID, account string, includeFuture bool) ([]Assignment, error) {
+	var as []Assignment
+	var err error
+	if includeFuture {
+		as, err = a.src.PendingOrActive(ctx, tn, account, a.now())
+	} else {
+		as, err = a.src.Assignments(ctx, tn, account, a.now())
+	}
+	if err != nil {
+		return nil, fmt.Errorf("rbac: loading assignments: %w", err)
+	}
+	if a.members == nil {
+		return as, nil
+	}
+	g, err := a.members.GroupsOf(ctx, tn.String(), account)
+	if err != nil {
+		return nil, fmt.Errorf("rbac: resolving group membership: %w", err)
+	}
+	if !g.Complete || len(g.Groups) == 0 {
+		return as, nil
+	}
+	gas, err := a.src.SubjectAssignments(ctx, tn, Subjects{Groups: g.Groups}, a.now(), includeFuture)
+	if err != nil {
+		return nil, fmt.Errorf("rbac: loading group assignments: %w", err)
+	}
+	for _, ga := range gas {
+		if ga.Subject != SubjectGroup {
+			continue
+		}
+		for _, grp := range g.Groups {
+			if grp.Connection != ga.GroupConn || grp.GUID != ga.GroupGUID {
+				continue
+			}
+			if x, ok := personalOnly(ga); ok {
+				x.Via = grp.Via
+				as = append(as, x)
+			}
+			break // the first matching membership decides provenance; a direct one is listed first
+		}
+	}
+	return as, nil
+}
+
+// automation returns the assignments of an automation policy as its own subject (DM-60.I2), without
+// control-plane authority.
+func (a *Authorizer) automation(ctx context.Context, tn tenant.ID, policy string) ([]Assignment, error) {
+	pas, err := a.src.SubjectAssignments(ctx, tn, Subjects{Automation: policy}, a.now(), false)
+	if err != nil {
+		return nil, fmt.Errorf("rbac: loading automation assignments: %w", err)
+	}
+	var out []Assignment
+	for _, x := range pas {
+		if x.Subject == SubjectAutomation {
+			if y, ok := personalOnly(x); ok {
+				out = append(out, y)
+			}
+		}
+	}
+	return out, nil
+}
+
+// personalOnly strips what a non-account subject may never hold (DM-36.I4): a tenant-owner assignment
+// is dropped whole, and control-plane permissions are removed from the rest.
+func personalOnly(x Assignment) (Assignment, bool) {
+	if x.TenantOwner {
+		return x, false
+	}
+	var keep []authz.Permission
+	for _, p := range x.Permissions {
+		if !authz.NeverCrosses(p) {
+			keep = append(keep, p)
+		}
+	}
+	x.Permissions = keep
+	return x, len(keep) > 0
 }
 
 func isTier0Scope(p authz.Permission) bool {
@@ -134,7 +311,7 @@ func tier0ScopeView(as []Assignment, t authority.TargetRef) (authz.Target, []aut
 			inc = append(inc, authz.ScopeRoot{ID: id, Complete: true})
 		}
 		if len(inc) > 0 {
-			out = append(out, authz.Assignment{Role: authz.Role{Permissions: a.Permissions}, Scope: authz.Scope{Include: inc}})
+			out = append(out, authz.Assignment{Role: authz.Role{Permissions: a.Permissions, TenantOwner: a.TenantOwner}, Scope: authz.Scope{Include: inc}, Via: a.Via})
 		}
 	}
 	return authz.Target{ID: conn, Complete: true}, out, nil
@@ -164,7 +341,7 @@ func objectView(as []Assignment, t authority.TargetRef, f authority.Facts) (auth
 	for _, a := range as {
 		var sc authz.Scope
 		for _, r := range a.Roots {
-			if r.Kind == Tier0Scope || r.Connection != t.Connection {
+			if r.Kind == Tier0Scope || r.Kind == TenantStore || r.Connection != t.Connection {
 				continue
 			}
 			rid, err := authz.ParseObjectID(r.GUID)
@@ -179,7 +356,7 @@ func objectView(as []Assignment, t authority.TargetRef, f authority.Facts) (auth
 				sc.Include = append(sc.Include, root)
 			}
 		}
-		out = append(out, authz.Assignment{Role: authz.Role{Permissions: a.Permissions}, Scope: sc})
+		out = append(out, authz.Assignment{Role: authz.Role{Permissions: a.Permissions, TenantOwner: a.TenantOwner}, Scope: sc, Via: a.Via})
 	}
 	return tgt, out, nil
 }

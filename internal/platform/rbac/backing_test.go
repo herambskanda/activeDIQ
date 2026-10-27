@@ -25,6 +25,10 @@ func (m acctSrc) Assignments(_ context.Context, _ tenant.ID, account string, _ t
 	return m[account], nil
 }
 
+func (m acctSrc) SubjectAssignments(context.Context, tenant.ID, Subjects, time.Time, bool) ([]Assignment, error) {
+	return nil, nil
+}
+
 func (m acctSrc) PendingOrActive(_ context.Context, _ tenant.ID, account string, _ time.Time) ([]Assignment, error) {
 	return m[account], nil
 }
