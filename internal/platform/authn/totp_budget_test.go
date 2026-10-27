@@ -470,3 +470,39 @@ func Test_totp_refund_only_own_attempt(t *testing.T) {
 		}
 	})
 }
+
+func Test_totp_active_enrolment_cap(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		var ids []string
+		for i := 0; i < MaxActiveTOTPPerAccount; i++ {
+			id, _ := e.enrol(t, e.a)
+			ids = append(ids, id)
+		}
+		// One more is created pending, but its activation is refused and it stays pending.
+		id, seed := e.pending(t, e.a)
+		err := e.tx(t, e.a, func(ctx context.Context, tx store.Tx) error {
+			return e.svc.Activate(ctx, tx, e.a, id, hotp(seed, stepAt(e.now)))
+		})
+		if !errors.Is(err, ErrActiveCap) {
+			t.Fatalf("activate over the cap = %v, want ErrActiveCap", err)
+		}
+		if got := e.info(t, id).State; got != StatePending {
+			t.Fatalf("state = %s, want pending", got)
+		}
+		// The database refuses it even around the service.
+		if _, err := e.exec(t, e.a, `UPDATE public.authn_authenticator_enrollments SET state = 'active' WHERE id = $1::uuid`, id); store.SQLState(err) != "AD409" {
+			t.Fatalf("direct activation = %v, want AD409", err)
+		}
+		// Revoking one frees a slot.
+		if _, err := e.exec(t, e.a, `UPDATE public.authn_authenticator_enrollments SET state = 'revoked' WHERE id = $1::uuid`, ids[0]); err != nil {
+			t.Fatal(err)
+		}
+		e.now = e.now.Add(time.Minute) // a fresh step: the seed's first code was not spent on this row
+		if err := e.tx(t, e.a, func(ctx context.Context, tx store.Tx) error {
+			return e.svc.Activate(ctx, tx, e.a, id, hotp(seed, stepAt(e.now)))
+		}); err != nil {
+			t.Fatalf("activate after revoke: %v", err)
+		}
+	})
+}

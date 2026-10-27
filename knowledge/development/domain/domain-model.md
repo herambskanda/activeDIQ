@@ -1481,6 +1481,10 @@ the step (a trigger allows it nowhere else), which removes it from the count. `p
 I6 **Pending expiry.** A `pending` enrollment expires 10 minutes after creation, or at the 5th wrong
 confirm (`confirm_attempts`), whichever is first; `expired` is terminal. A row is created `pending`,
 unused and unpaused, with `expires_at` set; the database refuses any other INSERT.
+I7 **Active cap.** An account has at most 3 `active` console TOTP enrolments (T-0422). Sign-in tests
+every active enrolment per attempt, so without a cap the online guess rate would scale with N × the I5
+budget. A trigger refuses the transition into `active` (SQLSTATE `AD409`, `ErrActiveCap`) under a
+per-account advisory lock; revoking one frees a slot. End-user (directory-keyed) enrolments are not counted.
 **Lifecycle.** `pending → active → revoked`; `pending → expired | revoked`. `expired` and `revoked` are
 terminal.
 
@@ -2112,6 +2116,7 @@ AC2 was re-checked by script: every ADM ID in scope lock §3.3 (123 IDs) appears
 ## Changelog
 
 - 2026-10-27 · T-0388. DM-30.I7 lists the guarded classes of threat model §6.9 rule 5 (TM-D28) instead of the five original changes, and names the fitness function that forces Actions to declare the permission.
+- 2026-10-27 · T-0422. DM-37 gains I7 (at most 3 active console TOTP enrolments per account, enforced by trigger).
 - 2026-10-26 · T-0361. DM-37 gains `expires_at`, `confirm_attempts`, `paused_until`, the `expired` state, the `authn_totp_failures` companion table, I5 (failure budget; charge before evaluate) and I6 (pending expiry; the database clamps `expires_at` to 10 minutes).
 
 - 2026-10-23 · T-0078 (TM-Q24). Carries TM-D17 rule 4 (g), rule 5 (h) and TM-D19 into the domain model by name: DM-20.I4 cites rule 4 (g) (a correlation first eligible during a post-attestation `open`/`stale` lapse, `eligibility_class = lapsed`, needs `tenant-owner` re-confirmation; the install-time population does not), DM-20.I6 cites TM-D19 (authority factor, DM-30.I6/I7, DM-37.I3), DM-20.I7 cites rule 5 (h). Hybrid-trust states in DM-10.I7 (`unattested`/`open`/`stale`/`attested`, `first_attested_at`, `tenant_takeover_open`) already match TM-Q24; no semantic change.
