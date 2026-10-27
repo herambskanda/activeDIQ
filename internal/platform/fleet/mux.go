@@ -14,14 +14,17 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// Defaults for the numeric limits of TM-D24 B7 and the frame size. The flow-control numbers of
-// TM-TB6-T7 (credit accounting) are a separate ticket.
+// Defaults for the numeric limits of TM-D24 B7, the frame size and the flow-control windows of
+// TM-TB6-T7. The windows are protocol constants: each side assumes the peer started with the same
+// initial credit (a call's window, the tunnel's window), so neither needs a handshake. The worst case
+// a peer can make us buffer is DefaultTunnelWindow messages of DefaultMaxPayload bytes.
 const (
-	DefaultMaxCalls   = 256
-	DefaultMaxPayload = 4 << 20
-	outQueue          = 64
-	callInbox         = 16
-	maxTombstones     = 1024
+	DefaultMaxCalls     = 256
+	DefaultMaxPayload   = 4 << 20
+	DefaultCallWindow   = 16 // CallData messages a peer may have outstanding on one call
+	DefaultTunnelWindow = 64 // CallData messages a peer may have outstanding across all calls
+	outQueue            = 64
+	maxTombstones       = 1024
 )
 
 // ErrTunnelConfig is returned by NewMux for an unusable configuration.
@@ -48,6 +51,10 @@ type MuxConfig struct {
 	Logger     *slog.Logger // nil: slog.Default()
 	MaxCalls   int          // concurrent open calls per direction; 0: DefaultMaxCalls
 	MaxPayload int          // bytes per CallData; 0: DefaultMaxPayload
+	// CallWindow and TunnelWindow are the initial credit in messages, per call and per tunnel; 0 takes
+	// the default. Both ends of a tunnel must use the same values, so production code leaves them 0.
+	CallWindow   int
+	TunnelWindow int
 }
 
 // Mux is the multiplexer of one tunnel instance. All call state lives here and dies with it
@@ -61,6 +68,8 @@ type Mux struct {
 	log        *slog.Logger
 	maxCalls   int
 	maxPayload int
+	callWin    int
+	tunWin     int
 	reg        *registrar
 
 	out  chan Frame
@@ -79,6 +88,13 @@ type Mux struct {
 	peerHigh uint64
 	liveSelf int
 	livePeer int
+
+	// Flow control (TM-TB6-T7), all guarded by mu. *Held counts what the peer sent that we have not
+	// yet granted back; *Consumed is the part of it already consumed and waiting for a grant frame.
+	tunHeld     int // peer messages outstanding on the tunnel
+	tunConsumed int
+	tunSend     int           // credit we hold to send on the tunnel
+	credWake    chan struct{} // closed and replaced whenever send credit arrives
 }
 
 // NewMux builds the multiplexer and the per-tunnel registrar (TM-D24 A3). It fails if the binding's
@@ -90,6 +106,7 @@ func NewMux(cfg MuxConfig) (*Mux, error) {
 	m := &Mux{
 		role: cfg.Role, id: cfg.Identity, bind: cfg.Binding, tr: cfg.Transport, rep: cfg.Reporter,
 		log: cfg.Logger, maxCalls: cfg.MaxCalls, maxPayload: cfg.MaxPayload,
+		callWin: cfg.CallWindow, tunWin: cfg.TunnelWindow, credWake: make(chan struct{}),
 		out: make(chan Frame, outQueue), done: make(chan struct{}), calls: map[uint64]*call{},
 	}
 	if m.log == nil {
@@ -101,6 +118,13 @@ func NewMux(cfg MuxConfig) (*Mux, error) {
 	if m.maxPayload <= 0 {
 		m.maxPayload = DefaultMaxPayload
 	}
+	if m.callWin <= 0 {
+		m.callWin = DefaultCallWindow
+	}
+	if m.tunWin <= 0 {
+		m.tunWin = DefaultTunnelWindow
+	}
+	m.tunSend = m.tunWin
 	m.nextID = 1
 	if cfg.Role == RoleComponent {
 		m.nextID = 2
@@ -239,13 +263,19 @@ func (m *Mux) isSelfDone(c *call) bool {
 }
 
 func (m *Mux) sendData(c *call, b []byte) error {
-	c.sendMu.Lock()
-	defer c.sendMu.Unlock()
 	if len(b) > m.maxPayload {
 		return fixedErr(codes.ResourceExhausted)
 	}
+	if err := m.takeCredit(c); err != nil {
+		return err
+	}
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
 	m.mu.Lock()
 	over := c.selfDone || c.peerDone
+	if over {
+		m.refundCreditLocked(c) // nothing goes out, so the credit was not spent
+	}
 	m.mu.Unlock()
 	if over || (c.opener == m.role && c.selfHlf) {
 		if c.opener == m.role {
@@ -257,6 +287,86 @@ func (m *Mux) sendData(c *call, b []byte) error {
 		return fixedErr(codes.Unavailable)
 	}
 	return nil
+}
+
+// takeCredit reserves one message of the call's and the tunnel's send credit, blocking while either
+// is exhausted (TM-TB6-T7). It gives up when the call or the tunnel ends or the call's context is done.
+// It does not hold the call's send lock, so a cancel is never queued behind a blocked sender.
+func (m *Mux) takeCredit(c *call) error {
+	for {
+		m.mu.Lock()
+		switch {
+		case m.closed:
+			m.mu.Unlock()
+			return fixedErr(codes.Unavailable)
+		case c.retired || c.selfDone || c.peerDone:
+			m.mu.Unlock()
+			if c.opener == m.role {
+				return io.EOF
+			}
+			return fixedErr(codes.Canceled)
+		case c.sndCredit > 0 && m.tunSend > 0:
+			c.sndCredit--
+			m.tunSend--
+			m.mu.Unlock()
+			return nil
+		}
+		wake := m.credWake
+		m.mu.Unlock()
+		select {
+		case <-wake:
+		case <-c.dead:
+		case <-m.done:
+		case <-c.ctx.Done():
+			return status.FromContextError(c.ctx.Err()).Err()
+		}
+	}
+}
+
+func (m *Mux) refundCreditLocked(c *call) {
+	c.sndCredit++
+	m.tunSend++
+}
+
+// wakeSendersLocked releases every sender waiting for credit to look again.
+func (m *Mux) wakeSendersLocked() {
+	close(m.credWake)
+	m.credWake = make(chan struct{})
+}
+
+// grantsLocked returns the credit frames due now: a call's once half its window has been consumed, and
+// the tunnel's likewise. Granting only on consumption is what bounds what the peer can make us buffer.
+func (m *Mux) grantsLocked(c *call) []Frame {
+	var fs []Frame
+	if c != nil && !c.retired && c.rcvConsumed >= max(1, m.callWin/2) {
+		n := c.rcvConsumed
+		c.rcvHeld -= n
+		c.rcvConsumed = 0
+		fs = append(fs, Frame{CallID: c.id, Body: BodyCredit, Messages: uint32(n)})
+	}
+	if m.tunConsumed >= max(1, m.tunWin/2) {
+		n := m.tunConsumed
+		m.tunHeld -= n
+		m.tunConsumed = 0
+		fs = append(fs, Frame{CallID: 0, Body: BodyCredit, Messages: uint32(n)})
+	}
+	return fs
+}
+
+// consumed records that the handler took one inbound message of c and grants credit back when due.
+func (m *Mux) consumed(c *call) {
+	m.mu.Lock()
+	if c.retired { // its held messages went back to the tunnel when it retired
+		m.mu.Unlock()
+		return
+	}
+	c.rcvConsumed++
+	m.tunConsumed++
+	fs := m.grantsLocked(c)
+	m.mu.Unlock()
+	for _, f := range fs {
+		_ = m.send(f) // a dead tunnel needs no credit
+	}
 }
 
 // ---- call lifecycle (all *Locked helpers hold m.mu) ----
@@ -275,6 +385,8 @@ func (m *Mux) retireLocked(c *call) {
 		return
 	}
 	c.retired = true
+	m.tunConsumed += c.rcvHeld - c.rcvConsumed // what is left in the inbox is discarded
+	c.rcvHeld, c.rcvConsumed = 0, 0
 	if c.opener == m.role {
 		m.liveSelf--
 	} else {
@@ -303,7 +415,7 @@ func (m *Mux) newCall(id uint64, opener Role, method string, parent context.Cont
 	}
 	return &call{
 		id: id, opener: opener, method: method, ctx: ctx, cancel: cancel,
-		in: make(chan []byte, callInbox), fin: make(chan struct{}), dead: make(chan struct{}),
+		sndCredit: m.callWin, in: make(chan []byte, m.callWin), fin: make(chan struct{}), dead: make(chan struct{}),
 	}
 }
 
@@ -348,6 +460,20 @@ func (m *Mux) closeCall(c *call, code codes.Code) {
 
 // handle applies one peer frame. It returns the violation that must close the tunnel, or "".
 func (m *Mux) handle(f Frame) Violation {
+	v := m.handleFrame(f)
+	if v == "" {
+		// Retiring a call returns its unread messages to the tunnel window; tell the peer.
+		m.mu.Lock()
+		fs := m.grantsLocked(nil)
+		m.mu.Unlock()
+		for _, g := range fs {
+			m.reply(g)
+		}
+	}
+	return v
+}
+
+func (m *Mux) handleFrame(f Frame) Violation {
 	if f.Body == BodyNone {
 		return ViolationEmptyBody
 	}
@@ -358,6 +484,13 @@ func (m *Mux) handle(f Frame) Violation {
 		if f.Body != BodyCredit {
 			return ViolationCallZero
 		}
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if f.Messages == 0 || int64(m.tunSend)+int64(f.Messages) > int64(m.tunWin) {
+			return ViolationCreditInvalid // credit is only returned for what was consumed
+		}
+		m.tunSend += int(f.Messages)
+		m.wakeSendersLocked()
 		return ""
 	}
 	if f.Body == BodyOpen {
@@ -366,6 +499,12 @@ func (m *Mux) handle(f Frame) Violation {
 
 	m.mu.Lock()
 	c := m.calls[f.CallID]
+	if c == nil && m.evictedLocked(f.CallID) {
+		// A late frame for a call that ended and aged out of the tombstone window: dropped like one
+		// for a tombstone. Its data still used tunnel credit, which goes back.
+		defer m.mu.Unlock()
+		return m.dropLocked(f)
+	}
 	if c == nil {
 		m.mu.Unlock()
 		return ViolationUnknownCall
@@ -375,26 +514,38 @@ func (m *Mux) handle(f Frame) Violation {
 		return ViolationForbidden
 	}
 	if c.selfDone {
-		m.mu.Unlock() // in flight after this side's cancel or close (TM-D24 B4)
-		return ""
+		defer m.mu.Unlock() // in flight after this side's cancel or close (TM-D24 B4)
+		return m.dropLocked(f)
 	}
 	peerOpened := c.opener != m.role
 	switch f.Body {
 	case BodyCredit:
-		m.mu.Unlock()
+		defer m.mu.Unlock()
+		if f.Messages == 0 || int64(c.sndCredit)+int64(f.Messages) > int64(m.callWin) {
+			return ViolationCreditInvalid
+		}
+		c.sndCredit += int(f.Messages)
+		m.wakeSendersLocked()
 		return ""
 	case BodyData:
 		if (peerOpened && c.peerHalf) || (c.unary && c.peerData >= 1) {
 			m.mu.Unlock() // a unary call carries one message each way, never buffered beyond that
 			return ViolationForbidden
 		}
-		c.peerData++
-		m.mu.Unlock()
-		select {
-		case c.in <- f.Payload:
-		case <-c.dead:
-		case <-m.done:
+		if c.rcvHeld >= m.callWin || m.tunHeld >= m.tunWin {
+			m.mu.Unlock() // more than the peer was granted: the read loop never waits for a handler
+			return ViolationDataOverCredit
 		}
+		c.peerData++
+		c.rcvHeld++
+		m.tunHeld++
+		select {
+		case c.in <- f.Payload: // cannot be full: unread messages are at most rcvHeld <= the inbox size
+		default:
+			m.mu.Unlock()
+			return ViolationDataOverCredit
+		}
+		m.mu.Unlock()
 		return ""
 	case BodyHalfClose:
 		if !peerOpened || c.peerHalf {
@@ -424,6 +575,31 @@ func (m *Mux) handle(f Frame) Violation {
 		return ViolationForbidden
 	}
 	m.mu.Unlock()
+	return ""
+}
+
+// evictedLocked reports whether id names a call that has certainly existed and is no longer in the
+// map. This side's own ids are allocated in sequence, so any below nextID existed; the peer's ids only
+// increase, so any at or below peerHigh was either opened or skipped, and a skipped one is
+// indistinguishable. Ids above those marks were never opened.
+func (m *Mux) evictedLocked(id uint64) bool {
+	if id&1 == m.role.parity() {
+		return id < m.nextID
+	}
+	return id <= m.peerHigh
+}
+
+// dropLocked discards a frame for a call this side has ended. The frame's data was sent against
+// tunnel credit, so it is counted and returned at once.
+func (m *Mux) dropLocked(f Frame) Violation {
+	if f.Body != BodyData {
+		return ""
+	}
+	if m.tunHeld >= m.tunWin {
+		return ViolationDataOverCredit
+	}
+	m.tunHeld++
+	m.tunConsumed++
 	return ""
 }
 
@@ -574,7 +750,7 @@ func (cn conn) Invoke(ctx context.Context, method string, args, reply any, _ ...
 		}
 		return err
 	}
-	p, err := c.recv(c.ctx) // the end of the call: a second response is a contract violation
+	p, err := cn.m.recv(c, c.ctx) // the end of the call: a second response is a contract violation
 	switch {
 	case err == nil:
 		_ = p

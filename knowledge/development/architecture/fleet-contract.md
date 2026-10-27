@@ -55,8 +55,16 @@ The service has no other RPC (TM-TB6-T8). The server mounts it alone on the flee
 - **Contract-agnostic.** `CallOpen.method` is the full gRPC method of the bound contract
   (for example `/activediq.connector.v1.Connector/Describe`); payloads are the bound contract's
   serialised messages. Call ids: odd = server-opened, even = component-opened.
-- **Flow control** (TM-TB6-T7): `FlowCredit` grants the peer N more `CallData` messages on a call
-  (`call_id` 0: on the whole tunnel). Numeric limits are the gateway's, in T-0069's ticket.
+- **Flow control** (TM-TB6-T7, T-0288): `FlowCredit` grants the peer N more `CallData` messages on a call
+  (`call_id` 0: on the whole tunnel). Each side starts with the same fixed window, so there is no
+  handshake: 16 messages per call (`DefaultCallWindow`), 64 per tunnel (`DefaultTunnelWindow`), plus
+  256 concurrent calls and 4 MiB per message. Credit is granted back only when the local handler has
+  consumed a message (batched at half a window), and a retired call's unread messages go back to the
+  tunnel window. Data beyond either window, or a grant of 0 or one that would lift the sender above
+  its window, is a protocol violation (`data_exceeds_credit`, `credit_invalid`): the tunnel closes and
+  is audited, so the read loop never waits on a slow handler. A sender with no credit blocks (until
+  credit, the call's context, the call's end or the tunnel's end). Worst case buffered per tunnel is
+  64 x 4 MiB; one slow call can hold tunnel credit and so slows its siblings (accepted).
 - The connector contract's rule P4 (no bidirectional streams) does not apply to this package:
   `Tunnel` is the transport the connector contract rides on, not an operation of it.
   P4, P5, P6 and P8 apply to operation contracts only; fleet has F1 to F11 instead.
@@ -220,5 +228,8 @@ the generated stubs: the compose adapter that serves `Fleet.Tunnel` translates `
   metacharacters as `\uXXXX`) and reachable only through `ComponentReported(err)`, for a typed
   `component_reported` field. It is logged only as the structured `component_reported` attribute and is
   never in an error string or an audit summary. What the server sends is `FixedText(code)`.
-- **Not here.** Credit accounting and the numeric flow-control limits (TM-TB6-T7); the compose adapter
+- **Late frames.** A frame for an id this side certainly used (its own below `nextID`, the peer's at or
+  below the highest open seen) that has aged out of the tombstone window is dropped like a tombstone's;
+  its data is returned to the tunnel window. A peer id it skipped is indistinguishable, so it is also dropped.
+- **Not here.** The compose adapter
   that serves `Fleet.Tunnel`, the audit `Reporter` and the connector `Bindings`; the `fleet/dial` wiring.

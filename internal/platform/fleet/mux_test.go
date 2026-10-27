@@ -593,10 +593,11 @@ func TestInFlightFramesAfterOwnEndAreDropped(t *testing.T) {
 	})
 }
 
-func TestCreditOnCallZeroIsAllowed(t *testing.T) {
+func TestCreditOnCallZeroReturnsWhatWasSpent(t *testing.T) {
 	r := newRig(t, nil)
-	r.send(fleet.Frame{CallID: 0, Body: fleet.BodyCredit, Messages: 10})
-	r.healthy(t, 2)
+	r.healthy(t, 2) // the reply spends one message of the server's tunnel credit
+	r.send(fleet.Frame{CallID: 0, Body: fleet.BodyCredit, Messages: 1})
+	r.healthy(t, 4)
 }
 
 func TestPendingCallsFailUnavailableOutcomeUnknownAndAreNeverRebound(t *testing.T) {
@@ -1011,6 +1012,9 @@ func TestRetiredCallsRetainNoPayload(t *testing.T) {
 	big := make([]byte, size)
 	for i := 0; i < calls; i++ {
 		id := uint64(2 + 2*i)
+		if i > 0 {
+			r.send(fleet.Frame{CallID: 0, Body: fleet.BodyCredit, Messages: 1}) // the previous reply
+		}
 		r.send(fleet.Frame{CallID: id, Body: fleet.BodyOpen, Method: mReport})
 		r.send(fleet.Frame{CallID: id, Body: fleet.BodyData, Payload: append([]byte(nil), big...)})
 		for {
@@ -1027,4 +1031,206 @@ func TestRetiredCallsRetainNoPayload(t *testing.T) {
 	if grew := int64(after.HeapInuse) - int64(before.HeapInuse); grew > 64<<20 {
 		t.Fatalf("heap grew by %d MiB after %d finished calls", grew>>20, calls)
 	}
+}
+
+// ---- flow control (TM-TB6-T7) ----
+
+// watchRig opens a server-opened streaming call (id 1, then 3, ...) whose responses the test peer
+// sends as data frames. It returns the client stream; nothing reads it until the test does.
+func (r *tunRig) watch(t *testing.T, ctx context.Context, wantID uint64) grpc.ClientStream {
+	t.Helper()
+	cs, err := r.m.Conn().NewStream(ctx, &grpc.StreamDesc{ServerStreams: true}, mWatch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f := r.next(t); f.Body != fleet.BodyOpen || f.CallID != wantID {
+		t.Fatalf("got %+v, want open of %d", f, wantID)
+	}
+	return cs
+}
+
+func (r *tunRig) data(id uint64, n int) {
+	for i := 0; i < n; i++ {
+		r.send(fleet.Frame{CallID: id, Body: fleet.BodyData, Payload: str("m")})
+	}
+}
+
+func (r *tunRig) wantViolation(t *testing.T, v fleet.Violation) {
+	t.Helper()
+	var pe *fleet.ProtocolError
+	if err := r.closed(t); !errors.As(err, &pe) || pe.Violation != v {
+		t.Fatalf("got %v, want %s", err, v)
+	}
+	if vs := r.rep.got(); len(vs) != 1 || vs[0] != v {
+		t.Fatalf("audit: %v", vs)
+	}
+}
+
+func smallWindows(call, tun int) func(*fleet.MuxConfig) {
+	return func(c *fleet.MuxConfig) { c.CallWindow, c.TunnelWindow = call, tun }
+}
+
+func TestDataBeyondCallCreditClosesTheTunnel(t *testing.T) {
+	r := newRig(t, smallWindows(4, 64))
+	r.watch(t, context.Background(), 1) // nobody reads: no credit comes back
+	r.data(1, 4)
+	r.open(t) // exactly the window is fine
+	r.data(1, 1)
+	r.wantViolation(t, fleet.ViolationDataOverCredit)
+}
+
+func TestDataBeyondTunnelCreditClosesTheTunnel(t *testing.T) {
+	r := newRig(t, smallWindows(4, 6))
+	r.watch(t, context.Background(), 1)
+	r.watch(t, context.Background(), 3)
+	r.data(1, 4)
+	r.data(3, 2)
+	r.open(t)
+	r.data(3, 1)
+	r.wantViolation(t, fleet.ViolationDataOverCredit)
+}
+
+func TestConsumingMessagesGrantsCreditBack(t *testing.T) {
+	r := newRig(t, smallWindows(4, 64))
+	cs := r.watch(t, context.Background(), 1)
+	r.data(1, 4)
+	for i := 0; i < 2; i++ {
+		if err := cs.RecvMsg(new(wrapperspb.StringValue)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if f := r.next(t); f.CallID != 1 || f.Body != fleet.BodyCredit || f.Messages != 2 {
+		t.Fatalf("got %+v, want credit 2 on call 1", f)
+	}
+	r.data(1, 2) // inside the regained window
+	r.open(t)
+	r.data(1, 1) // two unread + two unread + ... window is full again
+	r.wantViolation(t, fleet.ViolationDataOverCredit)
+}
+
+func TestSlowHandlerNeverBlocksTheReadLoop(t *testing.T) {
+	r := newRig(t, smallWindows(4, 64))
+	r.watch(t, context.Background(), 1) // never read
+	r.data(1, 4)
+	r.healthy(t, 2) // the read loop is still serving other calls
+}
+
+func TestSenderBlocksWithoutCreditAndResumesOnGrant(t *testing.T) {
+	r := newRig(t, smallWindows(4, 64))
+	cs := r.watch(t, context.Background(), 1)
+	for i := 0; i < 4; i++ {
+		if err := cs.SendMsg(wrapperspb.String("x")); err != nil {
+			t.Fatal(err)
+		}
+		if f := r.next(t); f.Body != fleet.BodyData {
+			t.Fatalf("got %+v", f)
+		}
+	}
+	sent := make(chan error, 1)
+	go func() { sent <- cs.SendMsg(wrapperspb.String("blocked")) }()
+	select {
+	case err := <-sent:
+		t.Fatalf("sent without credit: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	r.send(fleet.Frame{CallID: 1, Body: fleet.BodyCredit, Messages: 1})
+	if err := <-sent; err != nil {
+		t.Fatal(err)
+	}
+	if f := r.next(t); f.Body != fleet.BodyData {
+		t.Fatalf("got %+v", f)
+	}
+}
+
+func TestBlockedSenderEndsWithItsContext(t *testing.T) {
+	r := newRig(t, smallWindows(1, 64))
+	ctx, cancel := context.WithCancel(context.Background())
+	cs := r.watch(t, ctx, 1)
+	if err := cs.SendMsg(wrapperspb.String("x")); err != nil {
+		t.Fatal(err)
+	}
+	sent := make(chan error, 1)
+	go func() { sent <- cs.SendMsg(wrapperspb.String("blocked")) }()
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-sent:
+		if status.Code(err) != codes.Canceled {
+			t.Fatalf("got %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("blocked sender did not return")
+	}
+}
+
+func TestTunnelCreditBoundsSendsAcrossCalls(t *testing.T) {
+	r := newRig(t, smallWindows(4, 2))
+	a := r.watch(t, context.Background(), 1)
+	b := r.watch(t, context.Background(), 3)
+	for _, cs := range []grpc.ClientStream{a, b} {
+		if err := cs.SendMsg(wrapperspb.String("x")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sent := make(chan error, 1)
+	go func() { sent <- a.SendMsg(wrapperspb.String("blocked")) }()
+	select {
+	case err := <-sent:
+		t.Fatalf("sent without tunnel credit: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	r.send(fleet.Frame{CallID: 0, Body: fleet.BodyCredit, Messages: 1})
+	if err := <-sent; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestInvalidCreditClosesTheTunnel(t *testing.T) {
+	for name, f := range map[string]fleet.Frame{
+		"zero on the tunnel":    {CallID: 0, Body: fleet.BodyCredit},
+		"over-grant on tunnel":  {CallID: 0, Body: fleet.BodyCredit, Messages: 1},
+		"zero on a call":        {CallID: 1, Body: fleet.BodyCredit},
+		"over-grant on a call":  {CallID: 1, Body: fleet.BodyCredit, Messages: 1},
+		"overflowing on a call": {CallID: 1, Body: fleet.BodyCredit, Messages: 1<<32 - 1},
+		"overflowing on tunnel": {CallID: 0, Body: fleet.BodyCredit, Messages: 1<<32 - 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newRig(t, smallWindows(4, 8))
+			r.watch(t, context.Background(), 1)
+			r.send(f)
+			r.wantViolation(t, fleet.ViolationCreditInvalid)
+		})
+	}
+}
+
+// A late frame for a call that aged out of the tombstone window is dropped, not a violation.
+func TestLateFrameForAnEvictedTombstoneIsDropped(t *testing.T) {
+	r := newRig(t, nil)
+	r.send(fleet.Frame{CallID: 2, Body: fleet.BodyOpen, Method: mOther}) // refused: ended by us
+	r.next(t)
+	const more = 1100
+	for i := 0; i < more; i += 50 {
+		for j := 0; j < 50; j++ {
+			r.send(fleet.Frame{CallID: uint64(4 + 2*(i+j)), Body: fleet.BodyOpen, Method: mOther})
+		}
+		for j := 0; j < 50; j++ {
+			r.next(t)
+		}
+	}
+	r.send(fleet.Frame{CallID: 2, Body: fleet.BodyData, Payload: str("late")})
+	r.send(fleet.Frame{CallID: 2, Body: fleet.BodyCancel})
+	r.healthy(t, uint64(4+2*more))
+}
+
+// Data dropped for an ended call still returns its tunnel credit, so a stream of late frames cannot
+// wear the window down.
+func TestDroppedDataReturnsTunnelCredit(t *testing.T) {
+	r := newRig(t, smallWindows(4, 4))
+	r.send(fleet.Frame{CallID: 2, Body: fleet.BodyOpen, Method: mOther})
+	r.next(t)
+	for i := 0; i < 10; i++ {
+		r.data(2, 1)
+		time.Sleep(5 * time.Millisecond)
+	}
+	r.open(t)
 }

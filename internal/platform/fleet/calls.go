@@ -61,6 +61,12 @@ type call struct {
 	sendMu  sync.Mutex // orders this call's own frames: nothing goes out after cancel or close
 	selfHlf bool       // guarded by sendMu: this side sent half_close
 
+	// Flow control, guarded by Mux.mu: credit we hold to send on this call, messages the peer sent
+	// that we have not granted back, and the part of those the handler already consumed.
+	sndCredit   int
+	rcvHeld     int
+	rcvConsumed int
+
 	peerHalf bool // guarded by Mux.mu
 	unary    bool // one message each way: a second data frame from the peer is a violation
 	peerData int  // data frames accepted from the peer
@@ -73,10 +79,11 @@ type call struct {
 // recv returns the next inbound message, or the end of the inbound side. Buffered data is always
 // delivered before the end, and the end before a context error, so a peer's real close status is not
 // masked by the cancellation that follows a retired call.
-func (c *call) recv(ctx context.Context) ([]byte, error) {
+func (m *Mux) recv(c *call, ctx context.Context) ([]byte, error) {
 	for {
 		select {
 		case p := <-c.in:
+			m.consumed(c)
 			return p, nil
 		default:
 		}
@@ -84,6 +91,7 @@ func (c *call) recv(ctx context.Context) ([]byte, error) {
 		case <-c.fin:
 			select {
 			case p := <-c.in:
+				m.consumed(c)
 				return p, nil
 			default:
 			}
@@ -92,6 +100,7 @@ func (c *call) recv(ctx context.Context) ([]byte, error) {
 		}
 		select {
 		case p := <-c.in:
+			m.consumed(c)
 			return p, nil
 		case <-c.fin:
 			continue
@@ -144,7 +153,7 @@ func (s *clientStream) RecvMsg(msg any) error {
 	if !ok {
 		return fixedErr(codes.Internal)
 	}
-	p, err := s.c.recv(s.c.ctx)
+	p, err := s.m.recv(s.c, s.c.ctx)
 	if err != nil {
 		if errors.Is(err, io.EOF) {
 			return io.EOF
@@ -187,7 +196,7 @@ func (s *serverStream) RecvMsg(msg any) error {
 	if !ok {
 		return fixedErr(codes.Internal)
 	}
-	p, err := s.c.recv(s.c.ctx)
+	p, err := s.m.recv(s.c, s.c.ctx)
 	if err != nil {
 		return err
 	}
