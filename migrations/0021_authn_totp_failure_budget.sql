@@ -1,4 +1,4 @@
--- 0015_authn_totp_failure_budget: the per-enrolment failure budget and pending expiry of DM-37 (T-0361;
+-- 0021_authn_totp_failure_budget: the per-enrolment failure budget and pending expiry of DM-37 (T-0361;
 -- ENH-09 §5, §9). Owner: internal/platform/authn.
 --
 --   expires_at        a pending enrolment is good for 10 minutes; after that it is 'expired' (terminal).

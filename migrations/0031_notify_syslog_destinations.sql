@@ -1,4 +1,4 @@
--- 0019_notify_syslog_destinations: SIEM syslog destinations (EP-9, TM-TB15-T7; T-0251).
+-- 0031_notify_syslog_destinations: SIEM syslog destinations (EP-9, TM-TB15-T7; T-0251).
 -- Owner: internal/platform/notify/syslog. One tenant table.
 --
 -- A destination is where a tenant's notifications are forwarded over syslog. The table states the

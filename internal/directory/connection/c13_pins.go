@@ -5,7 +5,16 @@ import (
 	"fmt"
 
 	"github.com/skenzeriq/activediq/internal/platform/store"
+	"github.com/skenzeriq/activediq/internal/platform/tablekind"
 )
+
+// c13PinsTable declares public.connection_c13_pins (TM-D26 rule 10) for fitness-domain-keys: pinned
+// group objectGUIDs of a connection, written by discovery.
+var c13PinsTable = tablekind.Declare(tablekind.Table{
+	Name:   "public.connection_c13_pins",
+	Entity: "DM-10",
+	Kind:   tablekind.Tenant,
+})
 
 // maxPins bounds one read: a domain has a handful of C13 groups.
 const maxPins = 1000

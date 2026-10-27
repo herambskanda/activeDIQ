@@ -1,4 +1,4 @@
--- 0019_connection_bindings: DM-13 ConnectorBinding (domain-model DM-13, ADR-0003 F1). Owner:
+-- 0030_connection_bindings: DM-13 ConnectorBinding (domain-model DM-13, ADR-0003 F1). Owner:
 -- internal/directory/connection (T-0249).
 --
 -- A binding routes a connection to the connector that serves it. In v1 the only target is the

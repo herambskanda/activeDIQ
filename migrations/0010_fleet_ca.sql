@@ -1,4 +1,4 @@
--- 0008_fleet_ca: the installation CA of the fleet (T-0155; threat model TM-A11, TM-D24 rule D).
+-- 0010_fleet_ca: the installation CA of the fleet (T-0155; threat model TM-A11, TM-D24 rule D).
 -- Owner: internal/platform/fleet (SQL in fleet/fleetsql). One tenant table.
 --
 -- The CA that signs component leaf certificates is held per tenant, so its private key is sealed under
