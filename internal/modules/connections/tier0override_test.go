@@ -1,6 +1,7 @@
 package connections_test
 
 import (
+	"fmt"
 	"context"
 	"encoding/json"
 	"errors"
@@ -207,6 +208,19 @@ func TestOverrideSucceeds(t *testing.T) {
 					t.Fatalf("the audit event carries a finding fingerprint (DM-24.I5)")
 				}
 			}
+		}
+		// DM-25.I7: the event commits to the acknowledged set by count and a salted digest of its own tag.
+		got := map[string]string{}
+		for _, ch := range ev.Changes {
+			if len(ch.After) == 1 {
+				got[ch.Attribute] = ch.After[0]
+			}
+		}
+		if got["acknowledged_count"] != "1" {
+			t.Fatalf("acknowledged_count = %q", got["acknowledged_count"])
+		}
+		if d := got["override_digest"]; len(d) != 64 || d == fmt.Sprintf("%x", e.ver.FindingsDigest) {
+			t.Fatalf("override_digest %q must be a SHA-256 distinct from the findings digest", d)
 		}
 		h, err := e.reg.Health(ctx, e.tid, e.conn.ID, false, time.Now())
 		if err != nil {
