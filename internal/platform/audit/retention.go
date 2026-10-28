@@ -180,8 +180,8 @@ func (p *Purger) Purge(ctx context.Context, id tenant.ID, req PurgeRequest) (Pur
 		if err != nil {
 			return err
 		}
-		// A legal hold (rule 11, T-0515): the hold rows are locked FOR SHARE first, so a hold set during
-		// this purge is either seen here or commits after the purge. The purge is a prefix of the chain, so
+		// A legal hold (rule 11, T-0515): the tenant's subject rows are locked FOR SHARE first and the
+		// hold flag read under that lock, so a hold set during this purge is seen here or commits after it. The purge is a prefix of the chain, so
 		// it stops before the oldest partition holding an event that references a held subject.
 		var block *HoldBlock
 		if found && toSeq >= first {
@@ -299,10 +299,13 @@ func (p *Purger) boundary(ctx context.Context, tx store.Tx, id tenant.ID, cutoff
 	return 0, nil, false, nil
 }
 
-// lockHeldSubjects takes the tenant's hold rows FOR SHARE and returns the held subject refs. A writer that
-// sets a hold needs the row exclusively, so it waits for this transaction or has committed before it.
+// lockHeldSubjects takes every one of the tenant's subject rows FOR SHARE, whatever their hold flag, and only
+// then reads the flag: a row with an uncommitted UPDATE of hold blocks this statement until that commits,
+// and the row is then re-evaluated, so the new hold is seen. Locking only rows already held would not
+// serialise a hold being set. A writer that sets a hold afterwards needs the row exclusively, so it waits
+// for this transaction and commits after the purge.
 func lockHeldSubjects(ctx context.Context, tx store.Tx, id tenant.ID) (map[string]struct{}, error) {
-	rows, err := tx.Query(ctx, `SELECT subject_ref FROM public.personal_subject WHERE tenant_id = $1::uuid AND hold FOR SHARE`, id.String())
+	rows, err := tx.Query(ctx, `SELECT subject_ref, hold FROM public.personal_subject WHERE tenant_id = $1::uuid FOR SHARE`, id.String())
 	if err != nil {
 		return nil, fmt.Errorf("audit: read legal holds: %w", err)
 	}
@@ -310,10 +313,13 @@ func lockHeldSubjects(ctx context.Context, tx store.Tx, id tenant.ID) (map[strin
 	held := map[string]struct{}{}
 	for rows.Next() {
 		var s string
-		if err := rows.Scan(&s); err != nil {
+		var on bool
+		if err := rows.Scan(&s, &on); err != nil {
 			return nil, fmt.Errorf("audit: read legal hold: %w", err)
 		}
-		held[s] = struct{}{}
+		if on {
+			held[s] = struct{}{}
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("audit: read legal holds: %w", err)

@@ -699,3 +699,64 @@ func TestPersonEventWithoutSubjectIsRefused(t *testing.T) {
 		t.Fatalf("Validate with subject = %v", err)
 	}
 }
+
+// A hold being set while the purge runs (uncommitted UPDATE on a not-yet-held subject) is waited for and
+// then seen: the purge deletes nothing from the held partition on.
+func TestLegalHoldSetDuringPurgeIsSeen(t *testing.T) {
+	each(t, func(t *testing.T, r *rig) {
+		ctx := context.Background()
+		cut, parts := rollover(t, r)
+		owner, err := store.OpenMaintenance(ctx, store.Config{DSN: r.d.OwnerDSN()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(owner.Close)
+		purger := audit.NewPurger(owner).WithPartitions(parts)
+		r.append(r.id, "p1a")
+		cut.cut()
+		r.appendEvent(personalEvent("p2-held"))
+		cut.cut()
+		r.append(r.id, "p3-open")
+		r.sign()
+
+		c, err := r.d.Admin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close(ctx)
+		tx, err := c.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(ctx, `UPDATE public.personal_subject SET hold = true WHERE tenant_id = $1::uuid AND subject_ref = $2`, r.id.String(), pSubject); err != nil {
+			t.Fatal(err)
+		}
+		type out struct {
+			res audit.PurgeResult
+			err error
+		}
+		done := make(chan out, 1)
+		go func() {
+			res, err := purger.Purge(ctx, r.id, audit.PurgeRequest{Before: time.Now(), WithoutArchive: true, Actor: human})
+			done <- out{res, err}
+		}()
+		select {
+		case o := <-done:
+			_ = tx.Rollback(ctx)
+			t.Fatalf("purge finished while a hold was uncommitted: %+v, %v", o.res, o.err)
+		case <-time.After(1500 * time.Millisecond):
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+		o := <-done
+		if o.err != nil || o.res.BlockedByHold == nil {
+			t.Fatalf("purge after the hold committed = %+v, %v; want blocked by hold", o.res, o.err)
+		}
+		for _, id := range []string{"p2-held", "p3-open"} {
+			if !r.hasEvent(id) {
+				t.Fatalf("event %s was deleted despite the hold", id)
+			}
+		}
+	})
+}
