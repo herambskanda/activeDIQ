@@ -17,10 +17,12 @@ import (
 )
 
 const (
-	afConn = "00000000-0000-4000-8000-0000000000c1"
-	afGUID = "11111111-2222-4333-8444-555555555555"
-	afOID  = "99999999-aaaa-4bbb-8ccc-dddddddddddd"
-	afTID  = "88888888-aaaa-4bbb-8ccc-dddddddddddd"
+	afConn      = "00000000-0000-4000-8000-0000000000c1"
+	afGUID      = "11111111-2222-4333-8444-555555555555" // the AD object the oid-bound account correlates to
+	afEntraConn = "00000000-0000-4000-8000-0000000000e1"
+	afEntraGUID = "22222222-3333-4444-8555-666666666666" // the Entra object the account is bound to
+	afOID       = "99999999-aaaa-4bbb-8ccc-dddddddddddd"
+	afTID       = "88888888-aaaa-4bbb-8ccc-dddddddddddd"
 )
 
 // register answers BeginEnrol's challenge the way an authenticator with attestation "none" does
@@ -51,13 +53,33 @@ func (f *fakeOwners) TenantOwners(context.Context, store.Tx, tenant.ID) ([]strin
 	return append([]string(nil), f.ids...), nil
 }
 
+type fakeAnchors struct {
+	ad  DirectoryRef
+	err error
+}
+
+func (f *fakeAnchors) Resolve(context.Context, tenant.ID, Anchor) (DirectoryRef, error) {
+	return DirectoryRef{}, ErrAnchorNoMatch
+}
+func (f *fakeAnchors) Matched(context.Context, tenant.ID, DirectoryRef, DirectoryRef) (bool, error) {
+	return true, nil
+}
+func (f *fakeAnchors) MatchedAD(_ context.Context, _ tenant.ID, entra DirectoryRef) (DirectoryRef, error) {
+	if f.err != nil || entra.ConnectionID != afEntraConn {
+		return DirectoryRef{}, ErrAnchorNoMatch
+	}
+	return f.ad, nil
+}
+
 type fakeAD struct {
 	err   error
 	calls int
 	got   []byte
+	refs  []DirectoryRef
 }
 
-func (f *fakeAD) VerifyUser(_ context.Context, _ tenant.ID, _ DirectoryRef, cred []byte) error {
+func (f *fakeAD) VerifyUser(_ context.Context, _ tenant.ID, ref DirectoryRef, cred []byte) error {
+	f.refs = append(f.refs, ref)
 	f.calls++
 	f.got = append([]byte(nil), cred...)
 	return f.err
@@ -67,6 +89,7 @@ type afEnv struct {
 	*pendEnv
 	af          *AuthorityFactors
 	ad          *fakeAD
+	anchors     *fakeAnchors
 	owners      *fakeOwners
 	user, owner Actor
 	owner2      string
@@ -119,10 +142,15 @@ func eachAuthority(t *testing.T, fn func(t *testing.T, e *afEnv)) {
 			VALUES ($1::uuid, $2::uuid, 'ad_forest', 'c', $3::uuid, 'ldaps')`, p.ten.String(), afConn, afConn); err != nil {
 			t.Fatal(err)
 		}
-		e := &afEnv{pendEnv: p, ad: &fakeAD{}, key: newSoftKey(t)}
+		if err := fixtureAs(p.db, p.ten, `INSERT INTO public.connections (tenant_id, id, kind, display_name, credential_id, transport_security)
+			VALUES ($1::uuid, $2::uuid, 'entra_tenant', 'e', $3::uuid, NULL)`, p.ten.String(), afEntraConn, afEntraConn); err != nil {
+			t.Fatal(err)
+		}
+		e := &afEnv{pendEnv: p, ad: &fakeAD{}, key: newSoftKey(t),
+			anchors: &fakeAnchors{ad: DirectoryRef{ConnectionID: afConn, ObjectGUID: afGUID}}}
 		user := e.mkAccount(t, NewAccount{Kind: KindSSO, DisplayName: "sso user", SSOIssuer: "https://idp.example.test", SSOSubject: "u1"})
 		if _, err := p.accts.Bind(ctx, p.ten, user, Anchor{Kind: AnchorOID, Value: afOID, TenantID: afTID},
-			DirectoryRef{ConnectionID: afConn, ObjectGUID: afGUID}, authority.Chain{Requester: authority.Principal{ID: "system", Kind: authority.System}}); err != nil {
+			DirectoryRef{ConnectionID: afEntraConn, ObjectGUID: afEntraGUID}, authority.Chain{Requester: authority.Principal{ID: "system", Kind: authority.System}}); err != nil {
 			t.Fatal(err)
 		}
 		e.userSeed = e.enrolTOTP(t, user)
@@ -130,7 +158,7 @@ func eachAuthority(t *testing.T, fn func(t *testing.T, e *afEnv)) {
 		e.owners = &fakeOwners{ids: []string{p.account, e.owner2}}
 		e.stepUp = &StepUp{Sessions: p.sess, TOTP: p.svc}
 		af, err := NewAuthorityFactors(WebAuthnConfig{RPID: waRPID, RPDisplayName: "activeDIQ", Origins: []string{waOrigin}},
-			p.db, p.sess, p.accts, e.owners, e.stepUp, e.ad)
+			p.db, p.sess, p.accts, e.owners, e.stepUp, e.ad, e.anchors)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -221,8 +249,31 @@ func Test_enrol_requires_ad_proof_or_owner(t *testing.T) {
 		if _, err = e.af.BeginEnrol(ctx, e.ten, EnrolInput{Actor: e.user, ADCredential: []byte("x")}); err == nil || errors.Is(err, ErrAuthorityRefused) {
 			t.Fatalf("outage: %v", err)
 		}
+		// The proof is about the correlated AD object, never the Entra one the account is bound to.
+		if len(e.ad.refs) == 0 {
+			t.Fatal("connector not asked")
+		}
+		for _, r := range e.ad.refs {
+			if r.ConnectionID != afConn || r.ObjectGUID != afGUID {
+				t.Fatalf("VerifyUser got %+v, want the AD object", r)
+			}
+		}
+		// No matched correlation: refused on the AD-proof path and the connector is never called.
+		before := e.ad.calls
+		e.anchors.err = ErrAnchorNoMatch
+		_, err = e.af.BeginEnrol(ctx, e.ten, EnrolInput{Actor: e.user, ADCredential: []byte("x")})
+		wantRefusal(t, err, AuthorityNoCorrelation)
+		// A correlation that lands on a non-AD-forest connection is refused too.
+		e.anchors.err = nil
+		e.anchors.ad = DirectoryRef{ConnectionID: afEntraConn, ObjectGUID: afGUID}
+		_, err = e.af.BeginEnrol(ctx, e.ten, EnrolInput{Actor: e.user, ADCredential: []byte("x")})
+		wantRefusal(t, err, AuthorityNoCorrelation)
+		e.anchors.ad = DirectoryRef{ConnectionID: afConn, ObjectGUID: afGUID}
+		if e.ad.calls != before {
+			t.Fatalf("VerifyUser called %d more times without a correlation", e.ad.calls-before)
+		}
 		// No connector configured: fail closed.
-		noAD, _ := NewAuthorityFactors(WebAuthnConfig{RPID: waRPID, RPDisplayName: "a", Origins: []string{waOrigin}}, e.db, e.sess, e.accts, e.owners, e.stepUp, nil)
+		noAD, _ := NewAuthorityFactors(WebAuthnConfig{RPID: waRPID, RPDisplayName: "a", Origins: []string{waOrigin}}, e.db, e.sess, e.accts, e.owners, e.stepUp, nil, e.anchors)
 		_, err = noAD.BeginEnrol(ctx, e.ten, EnrolInput{Actor: e.user, ADCredential: []byte("x")})
 		wantRefusal(t, err, AuthorityADProofMissing)
 		if e.count(t, `SELECT count(*)::text FROM public.authn_webauthn_credentials WHERE purpose = 'authority'`) != 0 {

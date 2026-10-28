@@ -63,17 +63,18 @@ const (
 
 // Refusal reasons, recorded in the audit event and on the typed error. Stable and safe to log.
 const (
-	AuthorityNoProof          = "no_proof"             // neither an AD-plane proof nor an owner approval
-	AuthorityTwoProofs        = "two_proofs"           // both given: the caller must say which anchors the enrolment
-	AuthorityADProofRefused   = "ad_proof_refused"     // the connector did not prove the correlated AD account
-	AuthorityADProofMissing   = "ad_proof_unavailable" // no connector port is configured: fail closed
-	AuthorityApprovalInvalid  = "approval_invalid"     // unknown, expired, used, another account's, or the approver lost ownership
-	AuthorityNotEligible      = "not_eligible"         // not an active, bound sso account
-	AuthorityAlreadyEnrolled  = "already_enrolled"     // an authority credential is active: reset it first
-	AuthorityNotOwner         = "not_owner"            // the actor is not a tenant-owner by direct assignment
-	AuthorityStepUpRequired   = "step_up_required"     // no fresh step-up
-	AuthorityNoSession        = "no_session"           // the session is not active or is not the actor's
-	AuthorityNoChallenge      = "no_challenge"         // none issued, expired, or already used
+	AuthorityNoProof          = "no_proof"               // neither an AD-plane proof nor an owner approval
+	AuthorityTwoProofs        = "two_proofs"             // both given: the caller must say which anchors the enrolment
+	AuthorityADProofRefused   = "ad_proof_refused"       // the connector did not prove the correlated AD account
+	AuthorityADProofMissing   = "ad_proof_unavailable"   // no connector port is configured: fail closed
+	AuthorityNoCorrelation    = "no_matched_correlation" // no matched AD counterpart on an AD forest to prove
+	AuthorityApprovalInvalid  = "approval_invalid"       // unknown, expired, used, another account's, or the approver lost ownership
+	AuthorityNotEligible      = "not_eligible"           // not an active, bound sso account
+	AuthorityAlreadyEnrolled  = "already_enrolled"       // an authority credential is active: reset it first
+	AuthorityNotOwner         = "not_owner"              // the actor is not a tenant-owner by direct assignment
+	AuthorityStepUpRequired   = "step_up_required"       // no fresh step-up
+	AuthorityNoSession        = "no_session"             // the session is not active or is not the actor's
+	AuthorityNoChallenge      = "no_challenge"           // none issued, expired, or already used
 	AuthorityAttestationBad   = "attestation_invalid"
 	AuthorityNoCredential     = "no_credential" // nothing enrolled
 	AuthorityAssertionInvalid = RefusedAssertionInvalid
@@ -99,7 +100,8 @@ func refused(reason string) error { return &AuthorityRefusal{Reason: reason} }
 var ErrADProofRefused = errors.New("authn: AD proof refused")
 
 // ADProver is the connector's VerifyUser (BP §11) as this package needs it: prove that the holder of
-// credential knows the AD account ref names, with nothing written and nothing returned. The credential
+// credential knows the AD account ref names. ref is always an object on an ad_forest connection: the AD
+// counterpart of the account's matched correlation, never the Entra object (TM-D19 rule 2), with nothing written and nothing returned. The credential
 // is never logged, stored or put in an audit event; the caller zeroes it after the call.
 type ADProver interface {
 	VerifyUser(ctx context.Context, t tenant.ID, ref DirectoryRef, credential []byte) error
@@ -118,12 +120,13 @@ type AuthorityFactors struct {
 	Owners   OwnerSource
 	StepUp   apihost.StepUpChecker
 	AD       ADProver
+	Anchors  DirectoryAnchors // resolves the AD object the proof is about; nil refuses the AD-proof path
 
 	wa *webauthn.WebAuthn
 }
 
 // NewAuthorityFactors validates the relying party and returns the service.
-func NewAuthorityFactors(cfg WebAuthnConfig, db *store.DB, sessions *Store, accounts *Accounts, owners OwnerSource, stepUp apihost.StepUpChecker, ad ADProver) (*AuthorityFactors, error) {
+func NewAuthorityFactors(cfg WebAuthnConfig, db *store.DB, sessions *Store, accounts *Accounts, owners OwnerSource, stepUp apihost.StepUpChecker, ad ADProver, anchors DirectoryAnchors) (*AuthorityFactors, error) {
 	if db == nil || sessions == nil || accounts == nil || owners == nil || stepUp == nil || len(cfg.Origins) == 0 {
 		return nil, errors.New("authn: AuthorityFactors is not fully configured")
 	}
@@ -134,7 +137,7 @@ func NewAuthorityFactors(cfg WebAuthnConfig, db *store.DB, sessions *Store, acco
 	if err != nil {
 		return nil, fmt.Errorf("authn: WebAuthn relying party: %w", err)
 	}
-	return &AuthorityFactors{DB: db, Sessions: sessions, Accounts: accounts, Owners: owners, StepUp: stepUp, AD: ad, wa: wa}, nil
+	return &AuthorityFactors{DB: db, Sessions: sessions, Accounts: accounts, Owners: owners, StepUp: stepUp, AD: ad, Anchors: anchors, wa: wa}, nil
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -180,14 +183,67 @@ func (f *AuthorityFactors) freshStepUp(ctx context.Context, t tenant.ID, a Actor
 // eligible reads the account that an authority factor can be held by: active, sso, bound to a directory
 // object. It returns the directory reference the AD proof is about.
 func eligible(ctx context.Context, tx store.Tx, t tenant.ID, account string) (DirectoryRef, error) {
-	var ref DirectoryRef
-	err := tx.QueryRow(ctx, `SELECT directory_connection_id::text, directory_object_guid::text FROM public.authn_accounts
-WHERE tenant_id = $1::uuid AND id = $2::uuid AND kind = 'sso' AND state = 'active'
-  AND directory_connection_id IS NOT NULL AND directory_object_guid IS NOT NULL`, t.String(), account).Scan(&ref.ConnectionID, &ref.ObjectGUID)
-	if store.IsNoRows(err) {
-		return DirectoryRef{}, refused(AuthorityNotEligible)
-	}
+	ref, _, err := eligibleAnchor(ctx, tx, t, account)
 	return ref, err
+}
+
+// eligibleAnchor is eligible plus the anchor the binding was made through.
+func eligibleAnchor(ctx context.Context, tx store.Tx, t tenant.ID, account string) (DirectoryRef, Anchor, error) {
+	var ref DirectoryRef
+	var an Anchor
+	var kind string
+	var tid *string
+	err := tx.QueryRow(ctx, `SELECT directory_connection_id::text, directory_object_guid::text, anchor_kind, anchor_value, anchor_tid::text FROM public.authn_accounts
+WHERE tenant_id = $1::uuid AND id = $2::uuid AND kind = 'sso' AND state = 'active'
+  AND directory_connection_id IS NOT NULL AND directory_object_guid IS NOT NULL AND anchor_kind IS NOT NULL`, t.String(), account).Scan(&ref.ConnectionID, &ref.ObjectGUID, &kind, &an.Value, &tid)
+	if store.IsNoRows(err) {
+		return DirectoryRef{}, Anchor{}, refused(AuthorityNotEligible)
+	}
+	an.Kind = AnchorKind(kind)
+	if tid != nil {
+		an.TenantID = *tid
+	}
+	return ref, an, err
+}
+
+// proofTarget is the AD object the AD proof is about: the matched AD counterpart of an oid-bound
+// account's Entra object, or the bound AD object of an onprem_sid account, re-resolved and re-checked.
+// It refuses with AuthorityNoCorrelation when there is none, or when it is not on an ad_forest connection.
+func (f *AuthorityFactors) proofTarget(ctx context.Context, t tenant.ID, bound DirectoryRef, an Anchor) (DirectoryRef, error) {
+	if f.Anchors == nil {
+		return DirectoryRef{}, refused(AuthorityADProofMissing)
+	}
+	var target DirectoryRef
+	var err error
+	switch an.Kind {
+	case AnchorOID:
+		target, err = f.Anchors.MatchedAD(ctx, t, bound)
+	case AnchorOnpremSID:
+		target, err = f.Anchors.Resolve(ctx, t, an)
+		if err == nil && target != bound {
+			err = ErrAnchorNoMatch
+		}
+	default:
+		err = ErrAnchorNoMatch
+	}
+	if errors.Is(err, ErrAnchorNoMatch) {
+		return DirectoryRef{}, refused(AuthorityNoCorrelation)
+	}
+	if err != nil {
+		return DirectoryRef{}, fmt.Errorf("authn: resolve AD proof target: %w", err)
+	}
+	var n int
+	err = f.DB.WithTenant(ctx, t, func(ctx context.Context, tx store.Tx) error {
+		return tx.QueryRow(ctx, `SELECT 1 FROM public.connections WHERE tenant_id = $1::uuid AND id = $2::uuid AND kind = 'ad_forest'`,
+			t.String(), target.ConnectionID).Scan(&n)
+	})
+	if store.IsNoRows(err) {
+		return DirectoryRef{}, refused(AuthorityNoCorrelation)
+	}
+	if err != nil {
+		return DirectoryRef{}, err
+	}
+	return target, nil
 }
 
 func hasAuthorityCredential(ctx context.Context, tx store.Tx, t tenant.ID, account string) (bool, error) {
@@ -347,6 +403,7 @@ func (f *AuthorityFactors) beginEnrol(ctx context.Context, t tenant.ID, in Enrol
 	}
 	// Stage 1: who is asking, and which AD account the proof is about.
 	var ref DirectoryRef
+	var anchor Anchor
 	err := f.DB.WithTenant(ctx, t, func(ctx context.Context, tx store.Tx) error {
 		now, err := f.Sessions.now(ctx, tx)
 		if err != nil {
@@ -355,7 +412,7 @@ func (f *AuthorityFactors) beginEnrol(ctx context.Context, t tenant.ID, in Enrol
 		if err := f.session(ctx, tx, t, a, now); err != nil {
 			return err
 		}
-		if ref, err = eligible(ctx, tx, t, a.Account); err != nil {
+		if ref, anchor, err = eligibleAnchor(ctx, tx, t, a.Account); err != nil {
 			return err
 		}
 		if has, err := hasAuthorityCredential(ctx, tx, t, a.Account); err != nil {
@@ -370,17 +427,31 @@ func (f *AuthorityFactors) beginEnrol(ctx context.Context, t tenant.ID, in Enrol
 	}
 	// The connector call runs outside any transaction: it is a network round trip to a domain controller.
 	proof := "owner_approval"
+	var proved DirectoryRef
 	if len(in.ADCredential) > 0 {
 		proof = "ad_proof"
 		if f.AD == nil {
 			return nil, refused(AuthorityADProofMissing)
 		}
-		switch err := f.AD.VerifyUser(ctx, t, ref, in.ADCredential); {
+		target, err := f.proofTarget(ctx, t, ref, anchor)
+		if err != nil {
+			return nil, err
+		}
+		proved = target
+		switch err := f.AD.VerifyUser(ctx, t, target, in.ADCredential); {
 		case err == nil:
 		case errors.Is(err, ErrADProofRefused):
 			return nil, refused(AuthorityADProofRefused)
 		default:
 			return nil, fmt.Errorf("authn: AD proof: %w", err)
+		}
+	}
+	// The correlation is re-checked now that the proof is in: it must still name the AD object proved.
+	if proof == "ad_proof" {
+		if again, err := f.proofTarget(ctx, t, ref, anchor); err != nil {
+			return nil, err
+		} else if again != proved {
+			return nil, refused(AuthorityNoCorrelation)
 		}
 	}
 	// Stage 2: spend the approval, if that is the proof, and issue the challenge, in one transaction.

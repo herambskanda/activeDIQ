@@ -20,4 +20,8 @@ type DirectoryAnchors interface {
 	Resolve(ctx context.Context, t tenant.ID, a Anchor) (DirectoryRef, error)
 	// Matched reports whether the Entra object and the AD object have a matched correlation (DM-20.I4).
 	Matched(ctx context.Context, t tenant.ID, entra, ad DirectoryRef) (bool, error)
+	// MatchedAD returns the AD object that has a matched correlation (DM-20.I4) with the given Entra
+	// object. ErrAnchorNoMatch when there is none or more than one. The TM-D19 AD proof is about this
+	// object, never about the Entra one.
+	MatchedAD(ctx context.Context, t tenant.ID, entra DirectoryRef) (DirectoryRef, error)
 }
