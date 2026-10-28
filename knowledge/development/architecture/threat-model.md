@@ -569,7 +569,7 @@ M4 RADIUS spec proposes:
 | PostgreSQL roles | Owner role (migrations) ≠ runtime role (ADR-0002 rule 4) | Data access | Runtime: no ownership, no `BYPASSRLS`, no `TRUNCATE`, INSERT-only on audit (§11) |
 | Server process | `windows`: the gMSA (embedded transport); `linux-oci`: non-root container, keytab mounted read-only | Runs `server` + embedded `connector` | Host-level only what the service needs (TM-F-HOST) |
 | Sidecars [M3] | Inherit the launcher's identity | Typed operations | No credentials of their own |
-| DC agent [M3] | A virtual service account in Event Log Readers preferred over LocalSystem ([WEF Appendix D](https://learn.microsoft.com/en-us/windows/security/operating-system-security/device-management/use-windows-event-forwarding-to-assist-in-intrusion-detection); FEAS §2.3) | Event collection, filter IPC | Final choice in T-0142 |
+| DC agent [M3] | A virtual service account in Event Log Readers preferred over LocalSystem ([WEF Appendix D](https://learn.microsoft.com/en-us/windows/security/operating-system-security/device-management/use-windows-event-forwarding-to-assist-in-intrusion-detection); FEAS §2.3) | Event collection, filter IPC | ADR-0006 |
 | Edge [M4] | Own host | Public front | **No directory identity** |
 
 ### 6.2 Never Domain Admin — DECISIONS TM-D1 and TM-D2
@@ -2504,7 +2504,7 @@ hygiene); request decoders are fuzzed (FF-SP5).
 | SMTP / SMS / ITSM / SIEM / HR credentials | Sealed (DM-82, DM-85, DM-63) | DEK + associated data | `notify`, `itsm`, `lifecycle` | In the UI; never returned | Rotate at the peer |
 | Audit checkpoint signing key | Sealed | DEK; public key exported with checkpoints | `audit` | Rotation recorded in the chain `[mechanics → T-0132]` | Re-anchor; earlier anchored checkpoints stay valid |
 | Edge tunnel key [M4] | Edge host | Host ACL | Edge | Certificate rollover | Revoke the tunnel certificate at the server |
-| Agent-policy signing key [M3] | Sealed (BP §12) | DEK | Policy signer in the management plane | `[OPEN → T-0142]` | Bounded by TM-D14: policy is data |
+| Agent-policy signing key [M3] | Sealed (BP §12) | DEK | Policy signer in the management plane | Per ADR-0007: keyset chain, 180-day schedule, emergency = re-enrolment | Bounded by TM-D14: policy is data |
 | Release-signing keys | **skenzeriq only**: offline root, HSM/KMS (T-0140/T-0141) | HSM/KMS | CI release job | TUF root rotation | §10 |
 | First-run setup secret | Installer output | OS ACL | Installing administrator | One use | Reinstall |
 
@@ -2789,7 +2789,7 @@ and T-0147 (credential provider). These constraints are binding on those tickets
   works offline; can never block normal logon. This designs out the competitor's recurring
   "logon-screen client" class (ME-SEC §4.3: CVE-2020-11552, CVE-2026-74849).
 - **DC agent identity.** A virtual service account in Event Log Readers is preferred over
-  LocalSystem (FEAS §2.3; SB checklist D); final choice in T-0142 (§6.1).
+  LocalSystem (FEAS §2.3; SB checklist D); decided in [ADR-0006](../decisions/0006-dc-agent-runs-as-a-virtual-service-account.md) (virtual account, restricted token, channel ACE; never LocalSystem), contract in [agent-host-addc-contract](./agent-host-addc-contract.md).
 
 **Proof TM-F-AGENTCMD.** The `activediq.addc.v1` and `activediq.fileserver.v1` contract lints
 fail on any verb in a denied category (exec, arbitrary file write, delete, service/registry change,
