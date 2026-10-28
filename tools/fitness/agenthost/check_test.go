@@ -370,6 +370,57 @@ func TestA1Installer(t *testing.T) {
 	}
 	wantClean(t, ca(nil, `<RegistryValue Root="HKLM" Key="SOFTWARE\skenzeriq\activeDIQ" Name="Version" Value="1"/><RegistryValue Root="HKCU" Key="System\x" Name="a" Value="b"/>`))
 	wantViolation(t, script("custom.js", "// activediq-agent\nvar a = 'NT AUTHORITY\\\\SYSTEM';\n"), "NT AUTHORITY")
+
+	// Fourth security review: judge the parsed, entity-decoded structure; deny services, ACLs and file types by default.
+	// 1. An entity-encoded agent name still gets the full pin (no agent file, no raw match).
+	enc := func(body string) Result {
+		r := t.TempDir()
+		write(t, r, "packaging/windows/core/Product.wxs", `<Wix><Package>`+body+`</Package></Wix>`)
+		return checkInstaller(r)
+	}
+	wantViolation(t, enc(`<ServiceInstall Name="activeDIQ&#65;gent" Account="NT SERVICE\activeDIQ&#65;gent"><ServiceConfig ServiceName="activeDIQ&#65;gent" ServiceSid="unrestricted" RequiredPrivileges="SeDebugPrivilege,SeBackupPrivilege"/></ServiceInstall>`), "service SID type")
+	wantViolation(t, enc(`<ServiceInstall Name="activeDIQ&#65;gent" Account="NT SERVICE\activeDIQ&#65;gent"><ServiceConfig ServiceName="activeDIQ&#65;gent" ServiceSid="unrestricted" RequiredPrivileges="SeDebugPrivilege"/></ServiceInstall>`), "RequiredPrivileges")
+	wantViolation(t, enc(`<ServiceInstall Name="Other" Account="&#76;ocalSystem"/>`), "LocalSystem")
+	wantViolation(t, enc(`<ServiceInstall Name="Other" Account="NT SERVICE\Other"/><Property Id="X" Value="&#65;"/>`), "character reference")
+	// 2. Implicit LocalSystem and foreign accounts; one service per agent Component and per agent file.
+	wantViolation(t, enc(`<ServiceInstall Name="skzHelper" Type="ownProcess" Start="auto" ErrorControl="normal"/>`), "no Account")
+	wantViolation(t, enc(`<ServiceInstall Name="Other" Account="NT SERVICE\Different"/>`), "its own virtual account")
+	comp := strings.Replace(goodWxs, `<ServiceInstall Name="activediq-agent"`, `<Component Id="C"><ServiceInstall Name="skzHelper" Account="NT SERVICE\skzHelper"/><ServiceInstall Name="activediq-agent"`, 1)
+	comp = strings.Replace(comp, `</ServiceInstall>
+  </Package>`, `</ServiceInstall></Component>
+  </Package>`, 1)
+	wantViolation(t, mk(comp), "exactly one")
+	wantViolation(t, enc(`<Component Id="C"><ServiceInstall Name="activeDIQ&#65;gent" Account="NT SERVICE\activeDIQ&#65;gent"/><ServiceInstall Name="x" Account=".\svc"/></Component>`), "exactly one")
+	wantClean(t, func() Result {
+		r := t.TempDir()
+		write(t, r, "packaging/windows/agent.wxs", goodWxs)
+		write(t, r, "packaging/windows/core/Product.wxs", `<Wix><Package><ServiceInstall Id="SvcOther" Name="Other" Account=".\svc"/></Package></Wix>`)
+		return checkInstallerAllow(r, []string{"SvcOther"})
+	}())
+	// 3. Any Permission/PermissionEx/util:PermissionEx fails unless the parent Id is reviewed.
+	svcWith := func(p string) string {
+		return strings.Replace(goodWxs, `<ServiceConfig ServiceSid`, p+`<ServiceConfig ServiceSid`, 1)
+	}
+	wantViolation(t, mk(svcWith(`<PermissionEx Sddl="D:(A;;GA;;;WD)"/>`)), "grants an ACL")
+	wantViolation(t, mk(svcWith(`<util:PermissionEx xmlns:util="u" User="Everyone" GenericAll="yes"/>`)), "grants an ACL")
+	wantViolation(t, mk(strings.Replace(goodWxs, `</Package>`, `<CreateFolder Directory="D"><Permission User="Users" GenericAll="yes"/></CreateFolder></Package>`, 1)), "grants an ACL")
+	wantClean(t, func() Result {
+		r := t.TempDir()
+		write(t, r, "packaging/windows/agent.wxs", strings.Replace(goodWxs, `</Package>`, `<CreateFolder Id="DataDir" Directory="D"><PermissionEx Sddl="x"/></CreateFolder></Package>`, 1))
+		return checkInstallerAllow(r, []string{"DataDir"})
+	}())
+	// 4. Templates and unknown file types in the agent packaging are denied unless reviewed.
+	tmpl := func(allow []string, rel, body string) Result {
+		r := t.TempDir()
+		write(t, r, "packaging/windows/agent/Product.wxs", goodWxs)
+		write(t, r, rel, body)
+		return checkInstallerAllow(r, allow)
+	}
+	tbody := `<ServiceInstall Name="activeDIQAgent" Account="NT SERVICE\activeDIQAgent"><ServiceConfig ServiceSid="unrestricted"/></ServiceInstall>`
+	wantViolation(t, tmpl(nil, "packaging/windows/agent/Product.wxs.in", tbody), "template or transform")
+	wantViolation(t, tmpl(nil, "packaging/windows/core/heat.xslt", "<x/>"), "template or transform")
+	wantViolation(t, tmpl(nil, "packaging/windows/agent/notes.txt", "activeDIQAgent"), "unknown file type")
+	wantClean(t, tmpl([]string{"packaging/windows/agent/Product.wxs.in"}, "packaging/windows/agent/Product.wxs.in", "x"))
 }
 
 func TestA4Judge(t *testing.T) {

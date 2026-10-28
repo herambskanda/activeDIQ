@@ -662,7 +662,7 @@ func agentInstallerFiles(root string) []instFile {
 		rel, _ := filepath.Rel(root, p)
 		rel = filepath.ToSlash(rel)
 		inPath := agentFileRe.MatchString(strings.TrimPrefix(rel, "packaging/"))
-		wix := isWixXML(p)
+		wix := isWixXML(p) || isTemplate(p)
 		if binaryExts[strings.ToLower(filepath.Ext(p))] {
 			return nil
 		}
@@ -696,6 +696,12 @@ func agentInstallerFiles(root string) []instFile {
 	return out
 }
 
+// templateExts are generators of WiX (heat/xslt transforms, preprocessed templates): they are not parsed,
+// so they are denied under packaging/ unless a reviewed installer-allow.txt entry lists them.
+var templateExts = setOf(".in", ".tmpl", ".tpl", ".template", ".xsl", ".xslt", ".j2", ".erb", ".mustache")
+
+func isTemplate(p string) bool { return templateExts[strings.ToLower(filepath.Ext(p))] }
+
 func isWixXML(p string) bool {
 	switch strings.ToLower(filepath.Ext(p)) {
 	case ".wxs", ".wxi", ".wixproj", ".xml":
@@ -727,6 +733,7 @@ func checkInstallerAllow(root string, allow []string) Result {
 		return r
 	}
 	services := 0
+	namedAgent := false
 	var sids []string
 	var privs []string
 	for _, f := range files {
@@ -743,6 +750,12 @@ func checkInstallerAllow(root string, allow []string) Result {
 		if m := localSystemRe.FindString(f.text); m != "" {
 			r.Violations = append(r.Violations, fmt.Sprintf("%s names %q: the agent never runs as LocalSystem or a shared service identity (ADR-0006 rule 1)", rel, m))
 		}
+		if isTemplate(f.path) && !allowed(rel, allow) {
+			r.Violations = append(r.Violations, fmt.Sprintf("%s is a template or transform under packaging/: it is not parsed, so it could emit a ServiceInstall, ServiceSid or ACL the check never sees; list it in installer-allow.txt after a security-architect review", rel))
+		}
+		if isWixXML(f.path) && strings.Contains(f.text, "&#") && !allowed(rel, allow) {
+			r.Violations = append(r.Violations, fmt.Sprintf("%s contains a numeric character reference (&#...): names, accounts and SIDs must be plain text so they can be read", rel))
+		}
 		if f.agent {
 			for _, line := range strings.Split(f.text, "\n") {
 				if scAccountRe.MatchString(line) && !strings.Contains(strings.ToLower(line), strings.ToLower(pinnedAccount)) {
@@ -751,19 +764,27 @@ func checkInstallerAllow(root string, allow []string) Result {
 			}
 			if scriptExts[strings.ToLower(filepath.Ext(f.path))] && !allowed(rel, allow) {
 				r.Violations = append(r.Violations, fmt.Sprintf("%s is a script in the agent packaging: nothing may compute the service account, SID type or privileges in a script; list it in installer-allow.txt after a security-architect review", rel))
+			} else if !isWixXML(f.path) && !isTemplate(f.path) && !scriptExts[strings.ToLower(filepath.Ext(f.path))] && !allowed(rel, allow) {
+				r.Violations = append(r.Violations, fmt.Sprintf("%s is an unknown file type in the agent packaging: only WiX (parsed), known binaries and files listed in installer-allow.txt are allowed", rel))
 			}
 		}
 		if !isWixXML(f.path) {
 			continue
 		}
-		x := judgeInstallerXML(rel, []byte(f.text), allow)
+		x := judgeInstallerXML(rel, []byte(f.text), allow, f.agent)
+		if x.namesAgent {
+			namedAgent = true
+		}
+		if m := localSystemRe.FindString(x.attrText); m != "" && !localSystemRe.MatchString(f.text) {
+			r.Violations = append(r.Violations, fmt.Sprintf("%s names %q once its XML is decoded: the agent never runs as LocalSystem or a shared service identity (ADR-0006 rule 1)", rel, m))
+		}
 		services += x.services
 		sids = append(sids, x.sids...)
 		privs = append(privs, x.privs...)
 		r.Violations = append(r.Violations, x.violations...)
 	}
 	switch {
-	case !anyAgentSource(files):
+	case !anyAgentSource(files) && !namedAgent:
 		// Only WiX sources that never name the agent (a core MSI): their LocalSystem, registry, action and
 		// literal-name rules above still apply, but there is no agent service to pin yet.
 	case services == 0:
@@ -806,6 +827,8 @@ type xmlEl struct {
 
 type installerFacts struct {
 	services   int
+	namesAgent bool   // a parsed (entity-decoded) element names the agent service
+	attrText   string // every decoded attribute value and text node, for the string rules
 	sids       []string
 	privs      []string
 	violations []string
@@ -828,12 +851,13 @@ func isAgentName(s string) bool { return agentBodyRe.MatchString(s) }
 // judgeInstallerXML reads one WiX file. The ServiceInstall for the agent service, every ServiceSid and
 // privilege on the agent service, the literal-name rule for every service element, the deny-by-default
 // custom action rule and the ban on HKLM\SYSTEM registry writes are judged here.
-func judgeInstallerXML(rel string, b []byte, allow []string) installerFacts {
+func judgeInstallerXML(rel string, b []byte, allow []string, agentFile bool) installerFacts {
 	dec := xml.NewDecoder(bytes.NewReader(b))
 	dec.Strict = false
 	dec.CharsetReader = func(_ string, in io.Reader) (io.Reader, error) { return in, nil } // text is already decoded
 	var els []xmlEl
 	var stack []int
+	var attrText strings.Builder
 	for {
 		tok, err := dec.Token()
 		if err == io.EOF {
@@ -850,12 +874,14 @@ func judgeInstallerXML(rel string, b []byte, allow []string) installerFacts {
 			}
 			for _, a := range t.Attr {
 				e.Attrs[strings.ToLower(a.Name.Local)] = a.Value
+				attrText.WriteString(a.Value + "\n")
 			}
 			els = append(els, e)
 			stack = append(stack, len(els)-1)
 		case xml.CharData:
 			if len(stack) > 0 {
 				els[stack[len(stack)-1]].Text += string(t)
+				attrText.Write(t)
 			}
 		case xml.EndElement:
 			if len(stack) > 0 {
@@ -864,6 +890,7 @@ func judgeInstallerXML(rel string, b []byte, allow []string) installerFacts {
 		}
 	}
 	var f installerFacts
+	f.attrText = attrText.String()
 	fail := func(format string, a ...any) { f.violations = append(f.violations, rel+": "+fmt.Sprintf(format, a...)) }
 	// agentSvc: the element is the agent's ServiceInstall, or sits under it.
 	agentSvc := func(i int) bool {
@@ -886,10 +913,20 @@ func judgeInstallerXML(rel string, b []byte, allow []string) installerFacts {
 			if dynamicRe.MatchString(name) {
 				fail("%s names its service %q through a variable or property: the service name must be a literal so the account and SID type can be judged", e.Name, name)
 			}
+			if e.Name == "ServiceInstall" {
+				acct := e.Attrs["account"]
+				switch {
+				case acct == "":
+					fail("ServiceInstall %q has no Account: the service would run as LocalSystem", name)
+				case !isAgentName(name) && !strings.EqualFold(acct, `NT SERVICE\`+name) && !allowed(e.Attrs["id"], allow):
+					fail("ServiceInstall %q runs as %q: every service must run as its own virtual account NT SERVICE\\<its name> (or be listed by Id in installer-allow.txt after review)", name, acct)
+				}
+			}
 			naming := isAgentName(name) || agentSvc(i)
 			if !naming {
 				continue
 			}
+			f.namesAgent = true
 			if e.Name == "ServiceInstall" && agentSvc(i) && isAgentName(name) {
 				f.services++
 				if acct := e.Attrs["account"]; acct != pinnedAccount {
@@ -913,6 +950,14 @@ func judgeInstallerXML(rel string, b []byte, allow []string) installerFacts {
 			} else if v := strings.TrimSpace(e.Text); v != "" {
 				f.privs = append(f.privs, v)
 			}
+		case e.Name == "Permission" || e.Name == "PermissionEx":
+			p := ""
+			if e.Parent >= 0 {
+				p = els[e.Parent].Attrs["id"]
+			}
+			if p == "" || dynamicRe.MatchString(p) || !allowed(p, allow) {
+				fail("%s grants an ACL (parent Id %q): a weak service or data-directory DACL lets any local user reconfigure the agent; list the parent Id in installer-allow.txt after a security-architect review", e.Name, p)
+			}
 		case actionEls[e.Name]:
 			id := e.Attrs["id"]
 			if id == "" || dynamicRe.MatchString(id) || !allowed(id, allow) {
@@ -929,6 +974,34 @@ func judgeInstallerXML(rel string, b []byte, allow []string) installerFacts {
 				fail("%s writes HKLM key %q: the installer has no business under HKLM\\SYSTEM (the service account, SID type and privileges live there) and a key built from a property or variable cannot be judged", e.Name, key)
 			}
 		}
+	}
+	// One ServiceInstall in the agent's Component (WiX runs it on the Component's KeyPath file) and in any
+	// file that names the agent.
+	total := 0
+	perComp := map[int]int{}
+	agentComp := map[int]bool{}
+	for i, e := range els {
+		if e.Name != "ServiceInstall" {
+			continue
+		}
+		total++
+		for j := i; j >= 0; j = els[j].Parent {
+			if els[j].Name == "Component" {
+				perComp[j]++
+				if isAgentName(e.Attrs["name"]) {
+					agentComp[j] = true
+				}
+				break
+			}
+		}
+	}
+	for c := range agentComp {
+		if perComp[c] > 1 {
+			fail("%d ServiceInstall elements in the Component that installs the agent service: a second service would run the agent binary under another name; there must be exactly one", perComp[c])
+		}
+	}
+	if agentFile && total > 1 {
+		fail("%d ServiceInstall elements in a file that names the agent: there must be exactly one", total)
 	}
 	return f
 }
