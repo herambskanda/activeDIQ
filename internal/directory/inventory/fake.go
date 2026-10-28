@@ -18,6 +18,7 @@ type Fake struct {
 	links  map[tenant.ID][]Link
 	desig  map[tenant.ID]map[ConnectionID]map[GUID]bool
 	groups map[tenant.ID]map[Ref][]GUID
+	rows   map[tenant.ID]map[Ref]bool
 	evals  map[tenant.ID]map[ConnectionID]time.Time
 }
 
@@ -25,11 +26,12 @@ var (
 	_ CorrelationSource = (*Fake)(nil)
 	_ Designations      = (*Fake)(nil)
 	_ GroupSource       = (*Fake)(nil)
+	_ GroupRows         = (*Fake)(nil)
 )
 
 // NewFake returns an empty fake.
 func NewFake() *Fake {
-	return &Fake{links: map[tenant.ID][]Link{}, desig: map[tenant.ID]map[ConnectionID]map[GUID]bool{}, groups: map[tenant.ID]map[Ref][]GUID{}, evals: map[tenant.ID]map[ConnectionID]time.Time{}}
+	return &Fake{links: map[tenant.ID][]Link{}, desig: map[tenant.ID]map[ConnectionID]map[GUID]bool{}, groups: map[tenant.ID]map[Ref][]GUID{}, rows: map[tenant.ID]map[Ref]bool{}, evals: map[tenant.ID]map[ConnectionID]time.Time{}}
 }
 
 // AddLink stores l, a link seen from l.Self; it is returned from either side. The fake stores the
@@ -165,4 +167,24 @@ func (f *Fake) Undesignate(tid tenant.ID, c ConnectionID, object GUID) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.desig[tid][c], object)
+}
+
+// AddGroup records an active group row, which GroupExists reports.
+func (f *Fake) AddGroup(tid tenant.ID, c ConnectionID, group GUID) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.rows[tid] == nil {
+		f.rows[tid] = map[Ref]bool{}
+	}
+	f.rows[tid][Ref{c, group}] = true
+}
+
+// GroupExists implements GroupRows.
+func (f *Fake) GroupExists(_ context.Context, tid tenant.ID, c ConnectionID, group GUID) (bool, error) {
+	if f.Err != nil {
+		return false, f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.rows[tid][Ref{c, group}], nil
 }

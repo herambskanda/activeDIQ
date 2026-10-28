@@ -80,8 +80,12 @@ Code: `internal/platform/rbac/`, `internal/modules/delegation/`; migrations `001
   group whose reach grows. `WithGroupGuard(GroupReach)` answers the role-granting groups reached (itself and
   transitively); the actor must hold every pending/active privilege of each over its scope. Unwired,
   incomplete or unresolvable answers are denied (fail closed). `inventory.Reach` implements `GroupReach` over
-  the DM-17 member and primary-group edges (Complete false for a non-group target or a closure beyond
-  `MaxGroups`); compose wires it in `rbacAuthorizer`. The Target rule is enforced twice:
+  the DM-17 member and primary-group edges (Complete false for a non-group target, a group with no active
+  inventory row — unsynced, out of scope, another tenant's GUID — or a closure beyond `MaxGroups`; `Path` is left
+  empty because the source returns the closure, not the chain); compose wires it in `rbacAuthorizer`; `inventory/reach_authz_test.go` runs it with the real Authorizer over Postgres
+  (inner⊂middle⊂outer). **The guard keys on the permission:** an Action that changes group membership but declares a
+  different permission skips it, so every group-member Action ticket must declare one of
+  `GroupMembershipPermissions`. The Target rule is enforced twice:
   `Descriptor.TargetClass` ("group") is checked on every planned step by the runner, and
   `Test_group_membership_actions_target_the_group` (compose/server) fails when a registered Action with a
   `GroupMembershipPermissions` permission does not declare it.

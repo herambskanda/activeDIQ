@@ -51,3 +51,10 @@ type Designations interface {
 type GroupSource interface {
 	GroupsOf(ctx context.Context, tid tenant.ID, connection ConnectionID, member GUID) ([]GUID, error)
 }
+
+// GroupRows reports whether the inventory holds an active group row. Reach needs it because
+// GroupSource answers "no outer groups" identically for a group with none and for a group the
+// inventory does not know (unsynced, out of scope, another tenant's GUID under RLS).
+type GroupRows interface {
+	GroupExists(ctx context.Context, tid tenant.ID, connection ConnectionID, group GUID) (bool, error)
+}

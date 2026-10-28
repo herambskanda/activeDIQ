@@ -23,6 +23,10 @@ func grp(g string) authority.TargetRef {
 
 type tooMany struct{}
 
+func (tooMany) GroupExists(context.Context, tenant.ID, inventory.ConnectionID, inventory.GUID) (bool, error) {
+	return true, nil
+}
+
 func (tooMany) GroupsOf(context.Context, tenant.ID, inventory.ConnectionID, inventory.GUID) ([]inventory.GUID, error) {
 	return nil, inventory.ErrTooMany
 }
@@ -38,6 +42,7 @@ func idSet(r []string) map[string]bool {
 func TestReachedFromIsTargetPlusOuterGroups(t *testing.T) {
 	f := inventory.NewFake()
 	tid := tenant.New()
+	f.AddGroup(tid, rc, inner)
 	f.AddMembership(tid, rc, inner, middle)
 	f.AddMembership(tid, rc, inner, outer) // the source answers transitively
 	got, err := inventory.NewReach(f).ReachedFrom(context.Background(), tid, grp(inner))
@@ -48,6 +53,9 @@ func TestReachedFromIsTargetPlusOuterGroups(t *testing.T) {
 	for _, g := range got.Groups {
 		if g.Connection != rc {
 			t.Errorf("connection %q", g.Connection)
+		}
+		if len(g.Path) != 0 { // the source returns the closure, not the chain: no invented path
+			t.Errorf("path %v", g.Path)
 		}
 		ids = append(ids, g.GUID)
 	}
@@ -60,13 +68,15 @@ func TestReachedFromFailsClosed(t *testing.T) {
 	tid := tenant.New()
 	ctx := context.Background()
 	f := inventory.NewFake()
+	f.AddGroup(tid, rc, inner)
 	cases := map[string]struct {
 		r *inventory.Reach
 		t authority.TargetRef
 	}{
-		"member class, not a group": {inventory.NewReach(f), authority.TargetRef{Connection: rc, GUID: inner, Class: "user"}},
-		"malformed guid":            {inventory.NewReach(f), grp("not-a-guid")},
-		"truncated closure":         {inventory.NewReach(tooMany{}), grp(inner)},
+		"member class, not a group":     {inventory.NewReach(f), authority.TargetRef{Connection: rc, GUID: inner, Class: "user"}},
+		"unknown group (no active row)": {inventory.NewReach(f), grp(middle)},
+		"malformed guid":                {inventory.NewReach(f), grp("not-a-guid")},
+		"truncated closure":             {inventory.NewReach(tooMany{}), grp(inner)},
 	}
 	for name, c := range cases {
 		got, err := c.r.ReachedFrom(ctx, tid, c.t)

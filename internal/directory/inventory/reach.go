@@ -39,6 +39,20 @@ func (r *Reach) ReachedFrom(ctx context.Context, t tenant.ID, target authority.T
 	if target.Class != groupClass || !ref.Valid() {
 		return authz.Groups{}, nil
 	}
+	// No active group row means the inventory does not know the group (unsynced, out of scope, another
+	// tenant's GUID under RLS): its reach is unknown, not "itself only". Fail closed on the source
+	// not being able to say so either.
+	rows, ok := r.src.(GroupRows)
+	if !ok {
+		return authz.Groups{}, ErrNotConfigured
+	}
+	known, err := rows.GroupExists(ctx, t, ref.Connection, ref.Object)
+	if err != nil {
+		return authz.Groups{}, err
+	}
+	if !known {
+		return authz.Groups{}, nil
+	}
 	outer, err := r.src.GroupsOf(ctx, t, ref.Connection, ref.Object)
 	switch {
 	case errors.Is(err, ErrTooMany):
@@ -47,9 +61,11 @@ func (r *Reach) ReachedFrom(ctx context.Context, t tenant.ID, target authority.T
 		return authz.Groups{}, err
 	}
 	out := authz.Groups{Complete: true, Groups: make([]authz.Group, 0, len(outer)+1)}
-	out.Groups = append(out.Groups, authz.Group{Connection: string(ref.Connection), GUID: string(ref.Object), Path: []string{string(ref.Object)}})
+	// Path is left empty: GroupSource returns the closure, not the chain, and a two-element
+	// [target, outer] would misstate a deeper chain in deny reasons and audit.
+	out.Groups = append(out.Groups, authz.Group{Connection: string(ref.Connection), GUID: string(ref.Object)})
 	for _, g := range outer {
-		out.Groups = append(out.Groups, authz.Group{Connection: string(ref.Connection), GUID: string(g), Path: []string{string(ref.Object), string(g)}})
+		out.Groups = append(out.Groups, authz.Group{Connection: string(ref.Connection), GUID: string(g)})
 	}
 	return out, nil
 }
