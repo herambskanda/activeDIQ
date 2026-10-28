@@ -326,6 +326,11 @@
         "reason": "independent Python oracle that generates the sd.read.jsonl corpus the Go decoder is checked against; a test fixture generator, never shipped"
       },
       {
+        "path": "internal/directory/sd/testdata/gen_write_corpus.py",
+        "adr": "0001-technology-stack.md",
+        "reason": "independent Python oracle that generates the sd.write.jsonl corpus the Go DACL planner is checked against; a test fixture generator, never shipped"
+      },
+      {
         "path": "packaging/linux-oci/prepare-tls-dir.sh",
         "adr": "0001-technology-stack.md",
         "reason": "packaging-time script that prepares the API TLS directory permissions in the OCI image; build-time, runs no product input"

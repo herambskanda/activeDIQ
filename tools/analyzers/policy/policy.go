@@ -53,8 +53,7 @@ const (
 // UnitHomes maps each FF-SP4 corpus unit to the home package patterns of its implementation. The
 // corpus gate (tools/fitness/corpus) fails when Go code exists in a home but no implementation entry
 // in testdata/safe-primitives/implementations.json declares the unit, so an implementation cannot
-// exist without running the corpus. sd.read lives in the sd package (T-0149); sd.write has no home
-// yet: its package is named by the write-half build ticket T-0135.
+// exist without running the corpus. sd.read (T-0149) and sd.write (T-0583) live in the sd package.
 var UnitHomes = map[string][]string{
 	"ldapfilter":      {LDAPFilter},
 	"dn":              {DN},
@@ -76,6 +75,7 @@ var UnitHomes = map[string][]string{
 	"mail":            {Mail},
 	"pdf":             {ExportPDF},
 	"sd.read":         {SD},
+	"sd.write":        {SD},
 }
 
 // TokenURLSite names one function or method of the Graph connector that is exempt from one
