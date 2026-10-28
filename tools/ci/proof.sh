@@ -982,6 +982,40 @@ must_fail_with "workflows-check on an unpinned action" 'not pinned' tools/ci/wor
 cp "$root/.github/workflows/release.yml" "$wf/"; sed -i 's/sign verify/sign noop/' "$wf/release.yml"
 must_fail_with "workflows-check on a release that does not verify" 'without verifying' tools/ci/workflows-check.sh "$wf"
 
+# --- fitness-audit (ADR-0005 A1-A9, TM-F-AUDIT), the real CLI ------------------------------------
+# The per-rule proofs of A1 are the tool's own tests (go test ./tools/fitness/audit/...). Here: A1 on a
+# real migration sequence with one extra migration that lets the runtime role DELETE audit rows (needs
+# Docker), and the test bindings of A2-A9 on a throw-away module whose bound tests fail, are skipped or
+# are missing.
+aubin="$tmp/fitness-audit"
+go build -o "$aubin" ./tools/fitness/audit
+au="$tmp/au"
+mkdir -p "$au/migrations" "$au/internal/platform/audit"
+cp migrations/*.sql "$au/migrations/"
+printf 'module au.test\n\ngo 1.27.0\n' >"$au/go.mod"
+printf 'GRANT DELETE ON public.audit_event TO activediq_app;\n' >"$au/migrations/9999_audit_proof.sql"
+must_fail_with "fitness-audit A1 when the runtime role can DELETE audit events" 'A1 audit_event \[runtime-privilege\]: .*holds DELETE' "$aubin" -root "$au" -pg 18 -checks A1
+rm "$au/migrations/9999_audit_proof.sql"
+printf 'GRANT TRUNCATE ON public.audit_checkpoint TO activediq_app;\n' >"$au/migrations/9999_audit_proof.sql"
+must_fail_with "fitness-audit A1 when the runtime role can TRUNCATE the checkpoints" 'A1 audit_checkpoint \[runtime-privilege\]: .*holds TRUNCATE' "$aubin" -root "$au" -pg 18 -checks A1
+rm "$au/migrations/9999_audit_proof.sql"
+must_pass "fitness-audit A1" "$aubin" -root "$au" -pg 18 -checks A1
+a2tests="TestRolledBackAppendLeavesNothingAndTheChainStaysGapless TestA2NonReadCommittedAppendIsRefusedAndChainStaysGapless TestFailsClosedWhenMiswired TestHeadGuards"
+write_a2() { # $1 = body of TestHeadGuards
+  { printf 'package audit_test\n\nimport "testing"\n\n'
+    for n in $a2tests; do [ "$n" = TestHeadGuards ] || printf 'func %s(t *testing.T) {}\n' "$n"; done
+    printf 'func TestHeadGuards(t *testing.T) { %s }\n' "$1"; } >"$au/internal/platform/audit/a_test.go"
+}
+write_a2 't.Fatal("an edited event verified")'
+must_fail_with "fitness-audit A2 when a bound test fails" 'A2 \./internal/platform/audit TestHeadGuards \[test-failed\]' "$aubin" -root "$au" -checks A2
+write_a2 't.Skip("no docker")'
+must_fail_with "fitness-audit A2 when a bound test is skipped" 'A2 \./internal/platform/audit TestHeadGuards \[test-skipped\]' "$aubin" -root "$au" -checks A2
+write_a2 ''
+sed -i 's/TestHeadGuards/TestHeadGuardsRenamed/' "$au/internal/platform/audit/a_test.go"
+must_fail_with "fitness-audit A2 when a bound test is renamed away" 'A2 \./internal/platform/audit TestHeadGuards \[test-missing\]' "$aubin" -root "$au" -checks A2
+write_a2 ''
+must_pass "fitness-audit A2" "$aubin" -root "$au" -checks A2
+
 # --- fuzz-target / fuzz-saml (T-0490) -----------------------------------------------------------
 fz="$tmp/fuzz"
 mkdir -p "$fz"
