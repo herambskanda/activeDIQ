@@ -79,6 +79,24 @@ func call(s *apihost.Server, path string) *httptest.ResponseRecorder {
 	return rec
 }
 
+// redacted returns the response body and each header value with the server-generated trace ID
+// removed. The trace ID is 32 random hex characters and can by chance spell "dc01" (hex-only), so
+// it must not be scanned for leak canaries; it is itself asserted to be well-formed, and the body
+// must carry the same ID as the X-Trace-Id header.
+func redacted(t *testing.T, rec *httptest.ResponseRecorder) (body string, headers map[string]string) {
+	t.Helper()
+	id := rec.Header().Get("X-Trace-Id")
+	if len(id) != 32 || strings.Trim(id, "0123456789abcdef") != "" {
+		t.Fatalf("X-Trace-Id = %q, want 32 lowercase hex characters", id)
+	}
+	body = strings.ReplaceAll(rec.Body.String(), id, "TRACE")
+	headers = map[string]string{}
+	for k, v := range rec.Header() {
+		headers[k] = strings.ReplaceAll(strings.Join(v, ","), id, "TRACE")
+	}
+	return body, headers
+}
+
 func members(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
 	t.Helper()
 	var m map[string]any
@@ -118,13 +136,14 @@ func TestHealthProblemsCarryNoDetail(t *testing.T) {
 		if m["type"] != "/problems/not-ready" {
 			t.Fatalf("type = %v", m["type"])
 		}
+		body, headers := redacted(t, rec)
 		for _, leak := range []string{host, version, "dc01", "database", "refused", "dial"} {
-			if strings.Contains(rec.Body.String(), leak) {
+			if strings.Contains(body, leak) {
 				t.Fatalf("body leaks %q: %s", leak, rec.Body)
 			}
 		}
-		for k, v := range rec.Header() {
-			if strings.Contains(strings.Join(v, ","), "dc01") {
+		for k, v := range headers {
+			if strings.Contains(v, "dc01") {
 				t.Fatalf("header %s leaks the host", k)
 			}
 		}
@@ -180,7 +199,8 @@ func TestHealthInternalErrorCarriesNoDetail(t *testing.T) {
 		if _, has := m["detail"]; has || rec.Code != 500 || m["type"] != "/problems/internal" {
 			t.Fatalf("%s = %d %s", p, rec.Code, rec.Body)
 		}
-		if strings.Contains(rec.Body.String(), "dc01") || strings.Contains(rec.Body.String(), "16.4.2") {
+		body, _ := redacted(t, rec)
+		if strings.Contains(body, "dc01") || strings.Contains(body, "16.4.2") {
 			t.Fatalf("%s leaks: %s", p, rec.Body)
 		}
 	}
