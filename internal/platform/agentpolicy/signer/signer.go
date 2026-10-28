@@ -215,9 +215,9 @@ func (s *Signer) newKey(ctx context.Context, tx store.Tx, tid tenant.ID, state a
 		clear(priv)
 		return keyRow{}, nil, fmt.Errorf("signer: seal key: %w", err)
 	}
-	kr := keyRow{id: rowID, keyID: agentpolicy.KeyID(pub), public: pub, sealed: sealed, version: dek.Version, state: state}
-	if _, err := tx.Exec(ctx, `INSERT INTO public.agent_policy_key (tenant_id, id, key_id, public_key, sealed_key, key_version, state)
-		VALUES ($1, $2, $3, $4, $5, $6, 'active')`, tid.String(), rowID, kr.keyID, []byte(pub), sealed, int32(dek.Version)); err != nil {
+	kr := keyRow{id: rowID, keyID: agentpolicy.KeyID(pub), public: pub, sealed: sealed, version: dek.Version, state: state, createdAt: s.now()}
+	if _, err := tx.Exec(ctx, `INSERT INTO public.agent_policy_key (tenant_id, id, key_id, public_key, sealed_key, key_version, state, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, 'active', $7)`, tid.String(), rowID, kr.keyID, []byte(pub), sealed, int32(dek.Version), s.now()); err != nil {
 		clear(priv)
 		return keyRow{}, nil, fmt.Errorf("signer: insert key: %w", err)
 	}
