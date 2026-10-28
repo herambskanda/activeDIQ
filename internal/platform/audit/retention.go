@@ -12,6 +12,7 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
+	"github.com/skenzeriq/activediq/internal/platform/personal"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
@@ -48,6 +49,44 @@ type PurgeResult struct {
 	FromSeq, ToSeq uint64 // the deleted range; ToSeq is the boundary checkpoint's seq
 	Events         int64
 	Boundary       chain.Checkpoint
+	// PersonalValues and PersonalSubjects count the side-store rows (values, salts) the purge deleted.
+	PersonalValues, PersonalSubjects int
+}
+
+// purgedValueIDs lists the personal value IDs referenced by the envelopes of events up to seq.
+func purgedValueIDs(ctx context.Context, tx store.Tx, id tenant.ID, upTo uint64) ([][16]byte, error) {
+	rows, err := tx.Query(ctx, `SELECT seq, envelope FROM audit_event WHERE tenant_id = $1::uuid AND seq <= $2 ORDER BY seq`, id.String(), upTo)
+	if err != nil {
+		return nil, fmt.Errorf("audit: read events to purge: %w", err)
+	}
+	defer rows.Close()
+	var ids [][16]byte
+	for rows.Next() {
+		var seq uint64
+		var raw []byte
+		if err := rows.Scan(&seq, &raw); err != nil {
+			return nil, fmt.Errorf("audit: read event to purge: %w", err)
+		}
+		env, err := chain.ParseEnvelope(raw)
+		if err != nil {
+			return nil, fmt.Errorf("audit: event %d: %w", seq, err)
+		}
+		for _, r := range env.Snapshots {
+			ids = append(ids, r.ValueID)
+		}
+		for _, c := range env.Changes {
+			for _, r := range c.Before {
+				ids = append(ids, r.ValueID)
+			}
+			for _, r := range c.After {
+				ids = append(ids, r.ValueID)
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("audit: read events to purge: %w", err)
+	}
+	return ids, nil
 }
 
 // Purger deletes whole time partitions below a signed checkpoint. It runs on the maintenance path, with a
@@ -145,6 +184,16 @@ func (p *Purger) Purge(ctx context.Context, id tenant.ID, req PurgeRequest) (Pur
 		if err != nil {
 			return err
 		}
+		// The personal values only these events reference go with them, in this transaction (A9).
+		valueIDs, err := purgedValueIDs(ctx, tx, id, res.ToSeq)
+		if err != nil {
+			return err
+		}
+		pv, err := personal.New().PurgeValues(ctx, tx, id, valueIDs)
+		if err != nil {
+			return fmt.Errorf("audit: purge personal values: %w", err)
+		}
+		res.PersonalValues, res.PersonalSubjects = pv.Values, pv.Subjects
 		tag, err := tx.Exec(ctx, `DELETE FROM audit_event WHERE tenant_id = $1::uuid AND seq <= $2`, id.String(), res.ToSeq)
 		if err != nil {
 			return fmt.Errorf("audit: purge events: %w", err)

@@ -209,6 +209,68 @@ func erase(ctx context.Context, tx store.Tx, tid tenant.ID, subject string) (int
 	return int(tag.RowsAffected()), nil
 }
 
+// Purged counts what PurgeValues removed.
+type Purged struct {
+	Values   int // personal_value rows deleted
+	Subjects int // personal_subject rows (salts) deleted
+}
+
+// PurgeValues deletes the values with the given IDs and then the salt of every subject those values
+// belonged to that is left with no value and no legal hold (ADR-0005 rule 11, A9). The retention purge
+// calls it, in its own maintenance transaction, with the value IDs referenced by the events it deletes;
+// each value_id belongs to exactly one record, so no retained record loses a value. tx must run as a role
+// that may DELETE (the maintenance owner): the runtime role's deletes are erasure's alone. Unknown IDs are
+// ignored, so the call is idempotent. A subject under hold keeps its salt, and keeps any value other
+// records still reference.
+func (*Store) PurgeValues(ctx context.Context, tx store.Tx, tid tenant.ID, ids [][16]byte) (Purged, error) {
+	var out Purged
+	if tid.IsZero() {
+		return out, ErrInvalid
+	}
+	const batch = 1000
+	subjects := map[string]struct{}{}
+	for start := 0; start < len(ids); start += batch {
+		end := min(start+batch, len(ids))
+		strs := make([]string, 0, end-start)
+		for _, id := range ids[start:end] {
+			strs = append(strs, uuidString(id))
+		}
+		rows, err := tx.Query(ctx, `DELETE FROM public.personal_value WHERE tenant_id = $1::uuid AND value_id = ANY($2::uuid[]) RETURNING subject_ref`,
+			tid.String(), strs)
+		if err != nil {
+			return out, fmt.Errorf("personal: purge values: %w", err)
+		}
+		for rows.Next() {
+			var s string
+			if err := rows.Scan(&s); err != nil {
+				rows.Close()
+				return out, fmt.Errorf("personal: purge values: %w", err)
+			}
+			subjects[s] = struct{}{}
+			out.Values++
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return out, fmt.Errorf("personal: purge values: %w", err)
+		}
+	}
+	if len(subjects) == 0 {
+		return out, nil
+	}
+	refs := make([]string, 0, len(subjects))
+	for s := range subjects {
+		refs = append(refs, s)
+	}
+	tag, err := tx.Exec(ctx, `DELETE FROM public.personal_subject s WHERE s.tenant_id = $1::uuid AND s.subject_ref = ANY($2::text[])
+		AND NOT s.hold AND NOT EXISTS (SELECT 1 FROM public.personal_value v WHERE v.tenant_id = s.tenant_id AND v.subject_ref = s.subject_ref)`,
+		tid.String(), refs)
+	if err != nil {
+		return out, fmt.Errorf("personal: purge subjects: %w", err)
+	}
+	out.Subjects = int(tag.RowsAffected())
+	return out, nil
+}
+
 func uuidString(u [16]byte) string {
 	const hex = "0123456789abcdef"
 	b := make([]byte, 0, 36)
