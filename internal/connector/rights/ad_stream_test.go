@@ -23,7 +23,7 @@ func guidN(n byte) adguid.GUID {
 }
 
 func request(w *world, correlated ...*v1.Tier0Member) *v1.VerifyConnectionRequest {
-	return &v1.VerifyConnectionRequest{VerificationId: pbGuid(guidN(99)), CorrelatedTier0: correlated}
+	return &v1.VerifyConnectionRequest{Connection: &v1.ConnectionRef{ConnectionId: "conn-1"}, VerificationId: pbGuid(guidN(99)), CorrelatedTier0: correlated}
 }
 
 func (w *world) stream(t *testing.T, ep *EpochState, req *v1.VerifyConnectionRequest) ([]*v1.VerifyConnectionResponse, error) {
