@@ -93,7 +93,7 @@ func TestNormalize(t *testing.T) {
 	}
 	bad := []string{"", "fs1", `\\files.attacker.example\h`, "files.attacker.example\\h", "10.0.0.1", "fs1.corp.example:445", "a b.example",
 		"-a.example", "a-.example", "a..example", "fs1.corp.example..", "fs\x00.example", "fs1\n.example", "ünï.example", "fs1.corp.example/x",
-		"user@fs1.corp.example", "dc01 & calc.example", strings.Repeat("a", 64) + ".example", strings.Repeat("a.", 130) + "io"}
+		"user@fs1.corp.example", "dc01 & calc.example", "0x7f.0x1", "1.2.3.0x4", "1.2.3.4e", "a.b.1x", strings.Repeat("a", 64) + ".example", strings.Repeat("a.", 130) + "io"}
 	for _, in := range bad {
 		if _, err := invhost.Normalize(in); !errors.Is(err, invhost.ErrInvalidHostname) {
 			t.Errorf("Normalize(%q) err = %v; want ErrInvalidHostname", in, err)
@@ -230,4 +230,24 @@ func FuzzNormalizeNeverAllowsSeparators(f *testing.F) {
 			t.Fatalf("not idempotent: %q -> %q -> %q, %v", s, out, again, err)
 		}
 	})
+}
+
+func TestRegisterRefusesNonHuman(t *testing.T) {
+	via := []authority.Principal{{ID: "svc", Kind: authority.System}}
+	cases := map[string]authority.Chain{
+		"automation": {Requester: authority.Principal{ID: "a", Kind: authority.Automation}},
+		"system":     {Requester: authority.Principal{ID: "s", Kind: authority.System}},
+		"api_token":  {Requester: authority.Principal{ID: "t", Kind: authority.APIToken}},
+		"human_via":  {Requester: authority.Principal{ID: "h", Kind: authority.Human}, Via: via},
+	}
+	for name, who := range cases {
+		r := newRig()
+		_, err := r.svc.Register(context.Background(), r.tid, who, "files.attacker.example")
+		if !errors.Is(err, invhost.ErrNotHuman) || len(r.st.rows) != 0 {
+			t.Errorf("%s: err = %v rows = %v", name, err, r.st.rows)
+		}
+		if len(r.sink.events) != 1 || r.sink.events[0].Outcome != audit.Denied || r.sink.events[0].Reason != invhost.ReasonNotHuman {
+			t.Errorf("%s: refusal not audited: %+v", name, r.sink.events)
+		}
+	}
 }

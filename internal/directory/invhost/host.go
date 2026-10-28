@@ -33,6 +33,8 @@ var (
 	ErrNotInventoryHost = errors.New("invhost: NotInventoryHost")
 	// ErrInvalidHostname is returned by Register for a name that is not a plain DNS name.
 	ErrInvalidHostname = errors.New("invhost: InvalidHostname")
+	// ErrNotHuman is returned by Register when the requester is not a human acting directly.
+	ErrNotHuman = errors.New("invhost: registration needs a human admin")
 	// ErrNotConfigured is returned by a Service built without a required collaborator.
 	ErrNotConfigured = errors.New("invhost: not configured")
 	// ErrNoTenant is returned when the tenant is missing.
@@ -62,7 +64,7 @@ func (h InventoryHost) String() string { return h.fqdn }
 
 // Normalize validates name as a plain multi-label DNS host name and returns its stored form: ASCII letters,
 // digits and hyphens in labels of 1-63 characters, at least two labels, 253 characters in all, not
-// starting or ending a label with a hyphen, not an IP literal, with at most one trailing dot removed. No
+// starting or ending a label with a hyphen, not an IP literal (last label starts with a letter), with at most one trailing dot removed. No
 // UNC prefix, path, port, userinfo, whitespace or control character is accepted.
 func Normalize(name string) (string, error) {
 	n := strings.TrimSuffix(name, ".")
@@ -92,16 +94,9 @@ func Normalize(name string) (string, error) {
 		b.WriteByte('.')
 	}
 	out := strings.TrimSuffix(b.String(), ".")
-	// An IP literal (or anything numeric in the last label) is not a host name we register.
-	last := labels[len(labels)-1]
-	allDigits := true
-	for i := 0; i < len(last); i++ {
-		if last[i] < '0' || last[i] > '9' {
-			allDigits = false
-			break
-		}
-	}
-	if allDigits {
+	// An IP literal in any form a resolver accepts (dotted decimal, 0x7f.0x1, 1.2.3.4e) ends in a label that
+	// starts with a digit; real TLDs and xn-- labels start with a letter.
+	if last := labels[len(labels)-1]; last[0] < 'a' && (last[0] < 'A' || last[0] > 'Z') || last[0] > 'z' {
 		return "", ErrInvalidHostname
 	}
 	return out, nil

@@ -21,6 +21,7 @@ const (
 	KindRefused    audit.Kind = "inventory.host.refused"
 
 	ReasonNotInventory = "not_inventory"
+	ReasonNotHuman     = "not_human"
 	component          = "invhost"
 )
 
@@ -96,6 +97,14 @@ func (s *Service) Register(ctx context.Context, tid tenant.ID, actor authority.C
 	}
 	if err := actor.Validate(); err != nil {
 		return InventoryHost{}, err
+	}
+	// Only a human admin acting directly may register: an automation, system or API-token requester could
+	// otherwise launder a host read from the directory (homeDirectory, dNSHostName) into the inventory.
+	if actor.Requester.Kind != authority.Human || len(actor.Via) != 0 {
+		if aerr := s.refuse(ctx, tid, actor, ReasonNotHuman, name); aerr != nil {
+			return InventoryHost{}, errors.Join(ErrNotHuman, aerr)
+		}
+		return InventoryHost{}, ErrNotHuman
 	}
 	fqdn, err := Normalize(name)
 	if err != nil {
