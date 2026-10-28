@@ -240,7 +240,11 @@ the XML libraries, so it sits inside the FIT-SSO-1 fence) and the corpus records
   different anywhere (Response or SubjectConfirmationData) is `saml.inresponseto`; wrong Recipient,
   method or SubjectConfirmationData expiry is `saml.recipient`.
 - **Replay cache.** The verifier takes a `ReplayCache`; the in-memory one is single-node. The shared
-  PostgreSQL implementation, written in the transaction that consumes the Transaction, is T-0203's.
+  `saml.PGReplayCache` (T-0489, table `authn_saml_replay`, migration 0042, tenant table with RLS) uses the
+  primary key (tenant, IdP, Assertion ID) as the check and the database clock for expiry (a CHECK caps
+  `expires_at` at 24 h). It is insert-only; the runtime role may delete only expired rows, which each call
+  trims. `saml.RememberTx(ctx, tx, …)` records inside the caller's tenant transaction; T-0203 calls it in
+  the transaction that consumes the Transaction (SAML-16).
 
 ## 6. Shared checks and MFA-asserting IdPs (SSO-D3, SSO-D4)
 
