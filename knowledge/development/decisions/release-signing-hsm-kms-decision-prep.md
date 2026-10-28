@@ -51,22 +51,32 @@ re-check on the vendor calculator when we sign up**. Tagged `[UNVERIFIED]` where
 
 ### C. Root tokens
 
-Five hardware tokens (FIDO2/PIV-class, or YubiHSM-class devices if Ed25519 on-device is required) plus tamper-evident bags
-and five storage locations. Tokens are low hundreds each `[UNVERIFIED]` (YubiHSM-class: the ~€936 figure above);
-storage is a safe-deposit box per site, tens of dollars a month. One-off about **$1,000–$5,000** all-in. Needs five distinct
-custodians; with fewer people, trusted outside parties may hold sealed tokens (a CEO matter, design §9).
+Cheapest viable build: five PIV/FIDO2-class tokens that can hold an ECDSA P-256 root key, plus two spares, plus tamper-evident
+bags. Itemised (all `[UNVERIFIED]`, retail ranges to re-check):
+
+| Line | Quantity x unit | One-off |
+| --- | --- | --- |
+| PIV/FIDO2 tokens (5 root + 2 spare) | 7 x $50-$100 | $350-$700 |
+| Tamper-evident bags and seals | one lot | $50-$100 |
+| **One-off total** | | **$400-$800** |
+
+Storage (a safe-deposit box per site, five sites, about $60-$120 per site per year) is a **running** cost, counted once, in §3.
+Fallback if Ed25519 must live on the device: YubiHSM-class devices, 5 x about $650-$940 (the figures in B3) = $3,250-$4,700 plus
+bags, so a one-off of about $3,300-$4,800; not recommended unless the design forces it. Needs five distinct custodians; with fewer
+people, trusted outside parties may hold sealed tokens (a CEO matter, design §9).
 
 ## 3. Cost summary (first year, indicative)
 
 | Package | One-off | Running per year | Notes |
 | --- | --- | --- | --- |
-| **Recommended**: A1 (or A2 if A1 ineligible) + B1 + C | $1,000–$5,000 | A1: about $120. A2: about $800–$1,500. B1: about $60. Storage: about $300–$600. **Total roughly $500 to $2,200** | Supports every KC check in the design |
-| Heavy: A2 + B2 + C | same | about $30,000 for the HSM alone | No threat-model driver |
+| **Recommended, A1 path**: A1 + B1 + C | $400-$800 (C) | A1 about $120 + B1 about $60 + storage $300-$600 = **$480-$780** | **Year one: $880-$1,580** |
+| **Recommended, A2 path** (if A1 ineligible): A2 + B1 + C | $400-$800 (C) | A2 $800-$1,500 + B1 $60 + storage $300-$600 = **$1,160-$2,160** | **Year one: $1,560-$2,960** |
+| Heavy: A2 + B2 + C | $400-$800 | about $30,000 for the HSM alone | No threat-model driver |
 | Minimal: keep interim repository-secret key | $0 | $0 | **Not acceptable** for DC code or auto-update; the first customer release is gated (design §9) |
 
 ## 4. Recommendation
 
-1. **Fund the recommended package: B1 + C now, A1 if we are eligible, A2 otherwise.** About $500–$2,200 in year one. This is the cheapest option that
+1. **Fund the recommended package: B1 + C now, A1 if we are eligible, A2 otherwise.** Year one is $880–$1,580 on the A1 path and $1,560–$2,960 on the A2 path (one-off plus running, §3); about $480–$780 or $1,160–$2,160 a year after that. This is the cheapest option that
    passes the design's fitness functions (no long-lived key in CI, non-exportable, per-sign audit, claim-constrained identity).
 2. **Do not buy EV certificates or a dedicated HSM (B2).** No threat in TM-TB10-T4 needs them. Revisit B2 if a named customer's
    procurement or a compliance regime (FIPS 140-3 L3 sole-tenant) demands it in writing.
@@ -86,9 +96,15 @@ custodians; with fewer people, trusted outside parties may hold sealed tokens (a
 
 ## 6. Decision wanted (for factory-director via `ceo-decisions`)
 
-Approve a first-year release-signing budget of **up to $2,500 one-off plus $2,500 per year** (headroom over the estimate), using the
-recommended package; the factory chooses vendors within it and escalates only if A1 and A2 both fail eligibility, or an
-ask exceeds the ceiling.
+Approve a release-signing budget of **a first-year ceiling of $3,000 all-in (one-off and running; the estimate tops out at
+$2,960 on the A2 path, $1,580 on A1) and up to $2,200 per year from year two** (A2 running top is $2,160), using the recommended
+package. The factory chooses vendors within it and escalates only if A1 and A2 both fail eligibility, the YubiHSM-class fallback
+becomes necessary (adds about $2,900-$4,000 one-off), or an ask exceeds the ceiling.
+
+**Reversibility and what it blocks.** Spend is small and monthly services can be cancelled, but tokens and certificates are
+sunk once bought. Without this approval the first customer MSI and auto-update stay gated (design §9): we may not ship DC
+code or enable updates on the interim repository-secret key. **If the CEO declines**, fallback is to ship only a manually
+verified, unsigned-update build to design partners with no DC-side components; we recommend against it.
 
 ## 7. Fitness function (for ADR status)
 
