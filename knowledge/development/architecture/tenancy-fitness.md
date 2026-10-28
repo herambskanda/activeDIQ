@@ -130,7 +130,7 @@ turn tenant text into a `tenant.ID`. It sits under `authn` (so T5 admits it) and
 cycle). Contract: callers pass only text that authentication or the runner already put on the principal
 (`p.Tenant`), the authority context (`authority.TenantFrom`), the runner payload, or the transaction's
 `app.tenant_id`, never text from a request body, path or query. The zero tenant is refused.
-`tenantref/callers_test.go` pins the packages that may call it; adding one is a security review item.
+`tenantref/callers_test.go` pins the permitted callers by file (it parses import paths, so aliased, dot and blank imports are caught, and a new file in a permitted package is flagged); adding one is a security review item.
 
 Unauthenticated input is not routed through it. The only such site, `connections.StateTenant` (the Entra
 attestation callback, which has no principal), is a registry-listed `mintsTenantID` platform path with a written
