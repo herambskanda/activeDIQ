@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/skenzeriq/activediq/internal/platform/notify/syslog"
 	"log/slog"
 	"net"
 	"net/http"
@@ -117,6 +118,12 @@ func Run(ctx context.Context, cfg config.Config) error {
 	if err != nil {
 		return err
 	}
+	// The SIEM destination routes (siem.destination.manage). The audit chainer is the store's sink.
+	siem, err := syslog.NewStore(db, ok.Chainer)
+	if err != nil {
+		return err
+	}
+	tags = append(tags, syslog.Handlers{Store: siem}.Bind())
 	api, err := buildAPIPorts(cfg, console.ports(lim, authzr), tags...)
 	if err != nil {
 		return err

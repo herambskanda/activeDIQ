@@ -138,4 +138,7 @@ stepUp:
   - permission: connections.takeover.attest
     reason: Starting an attestation, and changing how long it stays valid, decide whether hard and soft match blocking count as attested (TM §7.4).
     ref: TM-D17
+  - permission: siem.destination.manage
+    reason: Creating or changing a SIEM destination can redirect or blind the tenant's audit stream, so it needs a fresh MFA (TM §7.4, AG-8). Reads do not.
+    ref: TM-D16
 largeBodies: []
