@@ -9,6 +9,10 @@ import (
 )
 
 func TestTableMatchesNFKC(t *testing.T) {
+	if norm.Version != tableUnicodeVersion {
+		t.Fatalf("norm.Version = %s, table.go pins tableUnicodeVersion = %s: re-verify the table, then update the const, the table.go comment and safe-primitives §12.2 together",
+			norm.Version, tableUnicodeVersion)
+	}
 	var gen []rune
 	for r := rune(0); r <= utf8.MaxRune; r++ {
 		if r >= 0xD800 && r <= 0xDFFF {
