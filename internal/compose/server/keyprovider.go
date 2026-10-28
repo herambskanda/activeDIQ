@@ -46,10 +46,21 @@ func readPassphrase(path string) (secret.Secret, error) {
 	}
 	defer f.Close()
 	raw, err := io.ReadAll(io.LimitReader(f, maxPassphraseBytes+1))
-	if err != nil || len(raw) > maxPassphraseBytes {
-		clear(raw)
+	if err != nil {
+		clear(raw[:cap(raw)])
 		return secret.Secret{}, kekErr(KEKFileUnsafe, EnvKEKPassphraseFile)
 	}
+	return passphraseFromBuffer(raw)
+}
+
+// passphraseFromBuffer turns the bytes read from the passphrase file into a Secret, strips trailing line
+// endings, and zeroes the whole buffer (its full capacity) on every path, so no plaintext copy stays on the heap.
+func passphraseFromBuffer(buf []byte) (secret.Secret, error) {
+	defer clear(buf[:cap(buf)])
+	if len(buf) > maxPassphraseBytes {
+		return secret.Secret{}, kekErr(KEKFileUnsafe, EnvKEKPassphraseFile)
+	}
+	raw := buf
 	for len(raw) > 0 && (raw[len(raw)-1] == '\n' || raw[len(raw)-1] == '\r') {
 		raw = raw[:len(raw)-1]
 	}

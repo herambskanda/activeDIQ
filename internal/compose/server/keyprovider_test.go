@@ -300,3 +300,24 @@ func useKEKEnv(t *testing.T) func(string) string {
 	initKEK(t, get)
 	return get
 }
+
+func TestPassphraseFromBufferZeroesInput(t *testing.T) {
+	for name, in := range map[string]string{
+		"ok":      "correct horse battery\r\n",
+		"empty":   "\n",
+		"toolong": strings.Repeat("x", maxPassphraseBytes+1),
+	} {
+		buf := make([]byte, len(in), len(in)+8)
+		copy(buf, in)
+		copy(buf[len(in):cap(buf)], "TAILSECR")
+		_, err := passphraseFromBuffer(buf)
+		if (name == "ok") != (err == nil) {
+			t.Fatalf("%s: unexpected err %v", name, err)
+		}
+		for i, b := range buf[:cap(buf)] {
+			if b != 0 {
+				t.Fatalf("%s: byte %d not zeroed", name, i)
+			}
+		}
+	}
+}
