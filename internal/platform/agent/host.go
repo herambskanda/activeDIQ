@@ -50,6 +50,14 @@ type ModuleDeps struct {
 	Now    func() time.Time
 }
 
+// sinkOnly is the only view of the outbox a module gets. A module that type-asserts its EventSink
+// finds a struct with Append and Flush and nothing else: no Next, Ack, Close, and no reachable
+// file. The host never hands a module a concrete *os.File, net.Conn or *Outbox.
+type sinkOnly struct{ o *Outbox }
+
+func (s sinkOnly) Append(ev *agentv1.AgentEvent) (uint64, error) { return s.o.Append(ev) }
+func (s sinkOnly) Flush() error                                  { return s.o.Flush() }
+
 // Module is an agent module (addc today). The host owns its lifecycle and its policy.
 type Module interface {
 	// Validate checks what only the module knows about a verified policy, such as its compiled-in
@@ -184,7 +192,7 @@ func (h *Host) poke() {
 // Run starts the module with the installed policy (if any) and the sender, and blocks until ctx is
 // done. It returns after the module has stopped and the outbox is closed.
 func (h *Host) Run(ctx context.Context) error {
-	d := ModuleDeps{Events: h.outbox, Blobs: h.blobs, Log: h.log, Now: h.now}
+	d := ModuleDeps{Events: sinkOnly{h.outbox}, Blobs: h.blobs, Log: h.log, Now: h.now}
 	h.mu.Lock()
 	if h.policy != nil {
 		if err := h.cfg.Module.Activate(*h.policy); err != nil {
