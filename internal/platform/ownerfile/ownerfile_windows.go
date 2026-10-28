@@ -93,17 +93,17 @@ func create(path string, disposition uint32, access uint32) (*os.File, error) {
 	}
 	sa := &windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})), SecurityDescriptor: sd}
 	// FILE_FLAG_OPEN_REPARSE_POINT: a link planted at the path is opened as itself, then refused by the check.
-	h, err := windows.CreateFile(p, access, windows.FILE_SHARE_READ, sa, disposition,
+	h, err := windows.CreateFile(p, access|windows.READ_CONTROL, windows.FILE_SHARE_READ, sa, disposition,
 		windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
 	if err != nil {
 		return nil, err
 	}
-	f := os.NewFile(uintptr(h), path)
-	if err := check(path); err != nil {
-		_ = f.Close()
+	// Verify the handle we write through, not the path (no check-then-use window).
+	if err := verifyHandle(h, false, fmt.Errorf("%w: %s", ErrUnsafe, filepath.Base(path))); err != nil {
+		_ = windows.CloseHandle(h)
 		return nil, err
 	}
-	return f, nil
+	return os.NewFile(uintptr(h), path), nil
 }
 
 func openAppend(path string) (*os.File, error) {
@@ -236,26 +236,29 @@ func openChecked(path string, access uint32, dir bool, bad error) (windows.Handl
 	if err != nil {
 		return 0, err
 	}
-	var info windows.ByHandleFileInformation
-	if err := windows.GetFileInformationByHandle(h, &info); err != nil {
-		_ = windows.CloseHandle(h)
-		return 0, err
-	}
-	isDir := info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0
-	if info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 || isDir != dir {
-		_ = windows.CloseHandle(h)
-		return 0, bad
-	}
-	sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT,
-		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
-	if err == nil {
-		err = verifySD(sd, bad)
-	}
-	if err != nil {
+	if err := verifyHandle(h, dir, bad); err != nil {
 		_ = windows.CloseHandle(h)
 		return 0, err
 	}
 	return h, nil
+}
+
+// verifyHandle checks an already-open handle: not a reparse point, expected kind, owner and DACL.
+func verifyHandle(h windows.Handle, dir bool, bad error) error {
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(h, &info); err != nil {
+		return err
+	}
+	isDir := info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0
+	if info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 || isDir != dir {
+		return bad
+	}
+	sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		return err
+	}
+	return verifySD(sd, bad)
 }
 
 func readFile(path string) ([]byte, error) {

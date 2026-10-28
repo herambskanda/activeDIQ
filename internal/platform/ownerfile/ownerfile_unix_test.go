@@ -6,7 +6,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func TestOpenAppendCreatesRestricted(t *testing.T) {
@@ -118,5 +120,47 @@ func TestEnsureDir(t *testing.T) {
 	}
 	if err := CheckDir(link); !errors.Is(err, ErrDirUnsafe) {
 		t.Fatalf("symlink dir: got %v", err)
+	}
+}
+
+// A FIFO planted at the path must be refused, never block open(2) (security review of T-0577).
+func withTimeout(t *testing.T, f func() error) error {
+	t.Helper()
+	ch := make(chan error, 1)
+	go func() { ch <- f() }()
+	select {
+	case err := <-ch:
+		return err
+	case <-time.After(2 * time.Second):
+		t.Fatal("blocked on FIFO")
+		return nil
+	}
+}
+
+func TestReadFileRefusesFIFO(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "baseline.json")
+	if err := syscall.Mkfifo(p, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := withTimeout(t, func() error { _, err := ReadFile(p); return err })
+	if !errors.Is(err, ErrUnsafe) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestOpenAppendRefusesFIFO(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "records.log")
+	if err := syscall.Mkfifo(p, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := withTimeout(t, func() error {
+		f, err := OpenAppend(p)
+		if f != nil {
+			f.Close()
+		}
+		return err
+	})
+	if !errors.Is(err, ErrUnsafe) {
+		t.Fatalf("got %v", err)
 	}
 }

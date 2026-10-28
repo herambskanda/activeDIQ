@@ -19,8 +19,11 @@ func openAppend(path string) (*os.File, error) {
 		}
 	}
 	// O_NOFOLLOW: a symlink planted at the path is refused, never followed.
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY|syscall.O_NOFOLLOW, 0o600)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0o600)
 	if err != nil {
+		if unsafeOpenErr(err) {
+			return nil, fmt.Errorf("%w: %s", ErrUnsafe, filepath.Base(path))
+		}
 		return nil, err
 	}
 	if err := checkOpen(f); err != nil {
@@ -28,6 +31,13 @@ func openAppend(path string) (*os.File, error) {
 		return nil, err
 	}
 	return f, nil
+}
+
+// unsafeOpenErr: ELOOP is O_NOFOLLOW on a symlink; ENXIO is O_NONBLOCK|O_WRONLY on a FIFO with no
+// reader. O_NONBLOCK keeps open(2) on a planted FIFO from blocking forever before the fstat check
+// (which then refuses any non-regular file); it is harmless for regular files.
+func unsafeOpenErr(err error) bool {
+	return errors.Is(err, syscall.ELOOP) || errors.Is(err, syscall.ENXIO)
 }
 
 func createTemp(dir, pattern string) (*os.File, error) {
@@ -69,9 +79,9 @@ func checkInfo(path string, st os.FileInfo) error {
 }
 
 func readFile(path string) ([]byte, error) {
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		if errors.Is(err, syscall.ELOOP) { // O_NOFOLLOW on a symlink
+		if unsafeOpenErr(err) {
 			return nil, fmt.Errorf("%w: %s", ErrUnsafe, filepath.Base(path))
 		}
 		return nil, err
