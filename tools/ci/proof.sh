@@ -1060,11 +1060,16 @@ sed -i 's/SeChangeNotifyPrivilege/SeChangeNotifyPrivilege SeBackupPrivilege/' "$
 must_fail_with "fitness-agent-host on an extra privilege in the MSI source (A1)" 'RequiredPrivileges of .*are' agenthost "$ah"
 cp "$tmp/agent.wxs.clean" "$ah/packaging/windows/agent.wxs"
 # T-0664: the WiX SDK compiles **/*.wxs, so testdata/ and node_modules/ under packaging/ are scanned.
-for d in testdata node_modules; do
-  mkdir -p "$ah/packaging/windows/$d"
-  printf '<Wix><Package><ServiceInstall Name="skzHelper" Account="LocalSystem"/></Package></Wix>\n' >"$ah/packaging/windows/$d/x.wxs"
-  must_fail_with "fitness-agent-host on a LocalSystem service in packaging/windows/$d (A1)" 'LocalSystem' agenthost "$ah"
-  rm -rf "$ah/packaging/windows/$d"
+# Fourth review: no reachability heuristic; WiX files in testdata/ or node_modules/ anywhere are scanned.
+lsys='<Wix><Package><ServiceInstall Name="skzHelper" Account="LocalSystem"/></Package></Wix>'
+for d in packaging/windows/testdata packaging/windows/node_modules testdata "src[/testdata" src/testdata; do
+  mkdir -p "$ah/$d"
+  printf '%s\n' "$lsys" >"$ah/$d/x.wxs"
+  [ "$d" = "src/testdata" ] && printf '<Project/>\n' >"$ah/$d/Evil.wixproj"
+  [ "$d" = "src[/testdata" ] && printf '<Project/>\n' >"$ah/src[/Evil.wixproj"
+  [ "$d" = "testdata" ] && printf '<Project><ItemGroup><Compile Include="..\\..\\testdata\\x.wxs"/></ItemGroup></Project>\n' >"$ah/packaging/windows/A.wixproj"
+  must_fail_with "fitness-agent-host on a LocalSystem service in $d (A1)" 'LocalSystem' agenthost "$ah"
+  rm -rf "$ah/$d" "$ah/src[" "$ah/src" "$ah/packaging/windows/A.wixproj"
 done
 printf 'package main\n\nimport _ "fx.test/internal/directory/client"\n\nfunc main() {}\n' >"$ah/cmd/agent/main.go"
 must_fail_with "fitness-agent-host on a directory client in the agent binary (A4)" 'internal/directory/client' agenthost "$ah"
