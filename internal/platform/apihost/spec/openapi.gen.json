@@ -1246,6 +1246,17 @@
       "post": {
         "description": "Needs the pending-sign-in cookie from a first factor. Answers the WebAuthn request options for the account's enrolled credentials. A missing, expired, consumed or exhausted pending sign-in gets 401 /problems/sign-in-failed, the same as a wrong factor.",
         "operationId": "createWebAuthnSignInChallenge",
+        "parameters": [
+          {
+            "description": "The pending-sign-in handle set by the first factor. It is read from this cookie only; a missing or repeated cookie answers the same 401 as any other sign-in failure.",
+            "in": "cookie",
+            "name": "__Host-adiq_pending",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -1285,6 +1296,7 @@
         "x-activediq-parity": [
           "ADM-142"
         ],
+        "x-activediq-peer-ip": true,
         "x-activediq-scope": "platform",
         "x-activediq-stability": "preview",
         "x-permission": "anonymous"
@@ -1294,6 +1306,17 @@
       "post": {
         "description": "Needs the pending-sign-in cookie. On success the pending sign-in is consumed, a new session is created with a new ID, and the response (204, no body) sets the session cookie and clears the pending cookie. Any failure is 401 /problems/sign-in-failed and counts against the pending sign-in's five attempts.",
         "operationId": "verifyWebAuthnSignIn",
+        "parameters": [
+          {
+            "description": "The pending-sign-in handle set by the first factor. It is read from this cookie only; a missing or repeated cookie answers the same 401 as any other sign-in failure.",
+            "in": "cookie",
+            "name": "__Host-adiq_pending",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -1355,6 +1378,7 @@
         "x-activediq-parity": [
           "ADM-142"
         ],
+        "x-activediq-peer-ip": true,
         "x-activediq-scope": "platform",
         "x-activediq-stability": "preview",
         "x-permission": "anonymous"
