@@ -42,6 +42,9 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
 - **`go mod tidy -diff`**: run `go mod tidy` and commit `go.mod`/`go.sum`.
 - **`gen-api-check`** (stale or missing generated file): run `make gen-api` and commit the result; never edit a `*.gen.*` file.
   **`lint-api`**: vacuum findings on the bundled contract. Both: `runbooks/api-contract-workflow.md`.
+- **`fuzz-saml`** (T-0490; `tools/ci/fuzz-target.sh`): `FuzzSAMLComplete` found a forged or replayed login. Go writes the crasher to
+  `internal/platform/authn/sso/saml/testdata/fuzz/FuzzSAMLComplete/`; reproduce with `go test ./internal/platform/authn/sso/saml -run FuzzSAMLComplete`,
+  fix the verifier (never the oracle), and commit the crasher file as a regression seed. Runs 60s; `make fuzz-saml SAML_FUZZ_TIME=5s` for a quick local run.
 - **`vuln-scan`** (T-0010; `go run ./tools/vulnscan`, govulncheck pinned in `tools/vulntools`): each line names an OSV
   id, the vulnerable symbol your code reaches, the module and the fixed version.
   - *Called vulnerability*: upgrade the module (`go get <module>@<fixed>`, `go mod tidy`) or, for a standard-library

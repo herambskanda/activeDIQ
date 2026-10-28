@@ -950,5 +950,17 @@ must_fail_with "workflows-check on an unpinned action" 'not pinned' tools/ci/wor
 cp "$root/.github/workflows/release.yml" "$wf/"; sed -i 's/sign verify/sign noop/' "$wf/release.yml"
 must_fail_with "workflows-check on a release that does not verify" 'without verifying' tools/ci/workflows-check.sh "$wf"
 
+# --- fuzz-target / fuzz-saml (T-0490) -----------------------------------------------------------
+fz="$tmp/fuzz"
+mkdir -p "$fz"
+printf 'module fuzz.test\n\ngo 1.27.0\n' >"$fz/go.mod"
+printf 'package x\n\nimport "testing"\n\nfunc FuzzT(f *testing.F) {\n\tf.Add([]byte("a"))\n\tf.Fuzz(func(t *testing.T, b []byte) {\n\t\tif len(b) > 0 && b[0] != 0 {\n\t\t\tt.Fatal("oracle violated")\n\t\t}\n\t})\n}\n' >"$fz/x_test.go"
+must_fail_with "fuzz-target on a target whose oracle is violated" "oracle violated" tools/ci/fuzz-target.sh "$fz" FuzzT 5s
+must_fail_with "fuzz-target on a target that does not exist (a silent no-op)" "did not fuzz" tools/ci/fuzz-target.sh "$fz" FuzzMissing 5s
+rm -rf "$fz/testdata"
+printf 'package x\n\nimport "testing"\n\nfunc FuzzT(f *testing.F) {\n\tf.Add([]byte("a"))\n\tf.Fuzz(func(t *testing.T, b []byte) {})\n}\n' >"$fz/x_test.go"
+must_pass "fuzz-target" tools/ci/fuzz-target.sh "$fz" FuzzT 3s
+must_pass "make fuzz-saml is wired into make ci" bash -c "make -n ci | grep -q 'fuzz-target.sh internal/platform/authn/sso/saml FuzzSAMLComplete 60s'"
+
 if [ "$fails" -ne 0 ]; then echo "ci-proof: $fails proof(s) failed" >&2; exit 1; fi
 echo "ci-proof: every gate rejects its violation and accepts clean input"
