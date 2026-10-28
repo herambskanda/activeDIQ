@@ -332,6 +332,20 @@ is verified at every step-up as TM-D19 rule 1 says; the IdP round trip does not 
 
 ---
 
+### 7.3 As built (T-0203)
+
+The start and callback routes, `GET /auth/sso/{idpId}/start` and `GET|POST /auth/sso/{idpId}/callback`.
+
+- **Layers.** `authn/sso/signin` is the core (no `net/http`, ADR-0004 A6): `Service.Start` and `Service.Callback` over the ports `IdPs`, `Accounts`, `Epochs`, `Sessions`, `Pending`, `Transactions`, `Privileges` and `Recorder`. `httpx/ssohttp` binds it as nonApiRoutes through `apihost.ServeNonAPI`. `signin/signintest` holds the fakes.
+- **Transaction store (SSO-1).** Migration `0046` adds `authn_sso_transactions` (tenant table, RLS forced; only the SHA-256 of the 256-bit handle is stored; `expires_at - created_at` is CHECKed at most 5 minutes). `TxStore.Consume` is one `DELETE ... RETURNING` in its own committed transaction, so the Transaction is gone before the verifier runs and whatever happens after. A Transaction at or past 5 minutes is removed and refused. Browser binding is the cookie `__Host-adq-sso` (HttpOnly, Secure, Path=/, no Domain; SameSite Lax for OIDC, None for SAML); a callback without it, or with it repeated, cannot consume anything.
+- **Order in `Callback`.** consume, IdP and intent match, verifier `Complete`, account by (issuer, subject) (admission is by invitation only), account active, anchor rule, epoch read, then MFA decision.
+- **Anchor (7.2).** Only claims `oid` (with `tid`) and `onprem_sid` bind; UPN, email and every other claim bind nothing. An unbound account is bound once through `authn.DirectoryAnchors.Resolve` and `Accounts.Bind`; a no-match leaves it unbound with warning `sso.anchor_unresolved`. A bound account must present an anchor that resolves to the same object: no anchor is `sso.anchor_missing`, another object is `sso.anchor_changed`; nothing is rebound.
+- **MFA (MFA-1..5).** A session is created only when the IdP is marked MFA-asserting and this response carries the proof (`Verified.MFAAsserted`) and the account holds neither tenant-owner nor any control_plane permission (`Privileges`; an error counts as holding). Everything else begins a pending sign-in (AN-10) and the browser goes to the second-factor page. Test `sso_non_mfa_pending_only`.
+- **Hand-off.** Both outcomes answer a small same-origin page (`NonAPIResult.Handoff`, meta refresh) so the Strict session cookie rides the next navigation.
+- **Refusals.** Every refusal is the same 401 `sign-in-failed` problem and clears the binding cookie (X-13); the reason is only in the audit event `auth.sso.refused` (`auth.sso.succeeded` on success; ids and methods only, no claim values).
+- **Residual risk: success audit fails open.** If writing `auth.sso.succeeded` fails, the session is still issued and the failure is logged; `authn.session.created` still records the account, but the IdP-asserted MFA evidence (amr methods, response ID, TM-TB8-T4) for that session is lost. Chosen because the `Sessions` port has no revoke and a store outage would otherwise lock every SSO user out. Pinned by `Test_sso_success_audit_failure_keeps_session`; alerting on the log line is for operations.
+- **Not in this change** (follow-up tickets): the IdP configuration store and its admin Actions, the step-up round trip with the (iss, sub) equals bound-account check, mapped admission and claim-to-role mapping, the `rbac` `Privileges` implementation, the `inventory` implementation of `DirectoryAnchors` and the compose wiring, `SessionCap` in session creation, the HTML refusal page, and the SSO-5 rate class on these routes.
+
 ## 8. Forced SSO (SSO-D6)
 
 ADManager Plus calls it "Force SAML login". activeDIQ has a tenant setting `signin.mode`:
