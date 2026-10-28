@@ -929,8 +929,8 @@ export interface operations {
             /** @description The second factor passed and a session exists. */
             204: {
                 headers: {
-                    /** @description The new session cookie, __Host-adiq_session; the pending cookie is cleared. */
-                    "Set-Cookie": string;
+                    /** @description Two lines: the new session cookie, __Host-adiq_session, and a clearing __Host-adiq_pending. */
+                    "Set-Cookie": string[];
                     [name: string]: unknown;
                 };
                 content?: never;

@@ -62,6 +62,13 @@
       "ref": "AN-3"
     },
     {
+      "gate": "a Kerberos AP-REQ for the console's HTTP service principal, verified by the acceptor; NTLM is refused, success yields only a pending sign-in (AN-10), never a session",
+      "method": "GET",
+      "path": "/auth/negotiate",
+      "reason": "Integrated Windows sign-in (ADM-143); Kerberos only (TM §7.6 rules 5-7, console-sso.md §9). Off until an administrator enables it (NEG-1).",
+      "ref": "AN-9"
+    },
+    {
       "gate": "the local account's password; success yields only a pending sign-in (AN-10), never a session",
       "operation": "signInBreakGlassPassword",
       "reason": "Break-glass first factor when SSO is down (ADM-142); one uniform failure shape, throttled and never locked (TM §7.6 rules 1-4).",
@@ -147,6 +154,12 @@
       "path": "/auth/sso/{idpId}/callback",
       "reason": "SAML ACS form post from the IdP; not JSON.",
       "ref": "AN-3"
+    },
+    {
+      "method": "GET",
+      "path": "/auth/negotiate",
+      "reason": "HTTP Negotiate (RFC 4559) is a header exchange, not JSON.",
+      "ref": "AN-9"
     }
   ],
   "secretResponses": [],

@@ -234,17 +234,19 @@ type VerifyWebAuthnSignInOutput interface {
 
 // VerifyWebAuthnSignIn204 is the 204 response.
 type VerifyWebAuthnSignIn204 struct {
-	SetCookie string // header Set-Cookie
+	SetCookie []string // header Set-Cookie, one line per value
 }
 
 func (VerifyWebAuthnSignIn204) StatusCode() int   { return 204 }
 func (VerifyWebAuthnSignIn204) ResponseBody() any { return nil }
 func (o VerifyWebAuthnSignIn204) ResponseHeaders() map[string]string {
 	h := map[string]string{}
-	if o.SetCookie != "" {
-		h["Set-Cookie"] = o.SetCookie
-	}
 	return h
+}
+func (o VerifyWebAuthnSignIn204) ResponseHeaderLists() map[string][]string {
+	return map[string][]string{
+		"Set-Cookie": o.SetCookie,
+	}
 }
 func (VerifyWebAuthnSignIn204) isVerifyWebAuthnSignInOutput() {}
 
