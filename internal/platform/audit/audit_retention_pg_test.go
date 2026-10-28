@@ -545,3 +545,47 @@ func TestPurgeDeletesPersonalValuesOnlyPurgedEventsReference(t *testing.T) {
 		}
 	})
 }
+
+// T-0372 security review: a legal hold on a subject keeps its salt through a retention purge (the values
+// referenced by purged events are still deleted, per ADR-0005 A9) and the subject is not counted as purged.
+// Removing `AND NOT s.hold` from personal.PurgeValues makes this test fail.
+func TestPurgeKeepsSaltOfSubjectUnderLegalHold(t *testing.T) {
+	each(t, func(t *testing.T, r *rig) {
+		ctx := context.Background()
+		cut, parts := rollover(t, r)
+		owner, err := store.OpenMaintenance(ctx, store.Config{DSN: r.d.OwnerDSN()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(owner.Close)
+		purger := audit.NewPurger(owner).WithPartitions(parts)
+
+		r.appendEvent(personalEvent("old-held"))
+		cut.cut()
+		r.sign()
+
+		c, err := r.d.Admin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tag, err := c.Exec(ctx, `UPDATE public.personal_subject SET hold = true WHERE tenant_id = $1::uuid AND subject_ref = $2`, r.id.String(), pSubject)
+		c.Close(ctx)
+		if err != nil || tag.RowsAffected() != 1 {
+			t.Fatalf("set hold: rows=%d err=%v", tag.RowsAffected(), err)
+		}
+
+		res, err := purger.Purge(ctx, r.id, audit.PurgeRequest{Before: time.Now(), WithoutArchive: true, Actor: human})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.PersonalValues == 0 {
+			t.Fatalf("purge removed no values: %+v", res)
+		}
+		if res.PersonalSubjects != 0 {
+			t.Fatalf("held subject counted as purged: %d", res.PersonalSubjects)
+		}
+		if v, s := r.personalCounts(pSubject); v != 0 || s != 1 {
+			t.Fatalf("held subject has %d values, %d salts; want 0, 1", v, s)
+		}
+	})
+}
