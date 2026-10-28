@@ -324,6 +324,9 @@ func (r *Runner) record(ctx context.Context, t tenant.ID, tx txFunc, c *claimed,
 	if errors.Is(err, errSuperseded) {
 		return nil
 	}
+	if err == nil && s.verifyFailed == ReasonTier0AfterWrite {
+		r.tier0Alert(rctx, string(c.key.Operation))
+	}
 	return err
 }
 
@@ -395,7 +398,43 @@ func (r *Runner) recordIn(ctx context.Context, q store.Tx, t tenant.ID, c *claim
 			return err
 		}
 	}
+	if s.verifyFailed == ReasonTier0AfterWrite {
+		if err := r.cancelOnTier0(ctx, q, t, c); err != nil {
+			return err
+		}
+	}
 	return r.settle(ctx, q, t, opID)
+}
+
+// ReasonTier0AfterWrite is the Verify reason for a step whose write left a touched object in Tier-0
+// (ADR-0005 rule 7, TM-F-T0GUARD rule 11). It takes precedence over every other Verify reason.
+const ReasonTier0AfterWrite = "tier0_after_write"
+
+// cancelOnTier0 requests cancel of a running operation in the transaction that records the step
+// (running -> cancelling, so no further item is started) and audits the signal. An operation that is
+// no longer running (already settled, or already cancelling) is not moved: the signal is only audited.
+func (r *Runner) cancelOnTier0(ctx context.Context, q store.Tx, t tenant.ID, c *claimed) error {
+	opID := string(c.key.Operation)
+	op, err := loadOp(ctx, q, t, opID, true)
+	if err != nil {
+		return err
+	}
+	ev := audit.Event{ID: fmt.Sprintf("op-%s-i%d-s%d-tier0", opID, c.key.Item, c.key.Step), Kind: KindOperationCancelled,
+		Actor: op.Chain, Target: c.plan.Target, Key: c.key, Outcome: audit.Success, Reason: ReasonTier0AfterWrite, PlanHash: op.PlanHash}
+	if op.State == OpRunning {
+		if err := setOperationState(ctx, q, t, opID, OpRunning, OpCancelling); err != nil {
+			return err
+		}
+		ev.Details = detail("cancel_requested", true)
+	} else {
+		ev.Details = detail("cancel_requested", false, "operation_state", op.State)
+	}
+	return r.emit(ctx, q, ev)
+}
+
+// tier0Alert raises the critical alert after the recording transaction committed.
+func (r *Runner) tier0Alert(ctx context.Context, opID string) {
+	r.alert(ctx, Alert{Severity: "critical", Reason: ReasonTier0AfterWrite, Operation: opID})
 }
 
 // settle looks at the whole operation in the recording transaction and, when nothing is left to do,

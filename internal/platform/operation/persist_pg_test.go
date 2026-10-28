@@ -130,6 +130,9 @@ func (d *dirFake) action(t *testing.T, id ActionID, stepUp, secretIn bool, class
 			if d.mode[p.Payload.GUID] == "defer" && d.mode["verified"] != "yes" {
 				return Verdict{}, ErrDeferVerify
 			}
+			if d.mode[p.Payload.GUID] == "tier0" {
+				return Verdict{Reason: ReasonTier0AfterWrite}, nil
+			}
 			if d.get(p.Payload.GUID) != p.Payload.Want {
 				return Verdict{Reason: "mismatch"}, nil
 			}
@@ -1142,4 +1145,83 @@ func TestPlanRefusalsKeepEachReason(t *testing.T) {
 			}
 		})
 	}
+}
+
+// T-0319: the Verify reason tier0_after_write moves a running operation to cancelling in the recording
+// transaction, so no later item is started, and raises the critical alert.
+func TestTier0AfterWriteCancelsRunningOperation(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		p := newPRig(t, s, rigOpt{})
+		p.dir.mode["a"] = "tier0"
+		sub, _ := p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "a", Want: "n"}, itemIn{GUID: "b", Want: "n"}))
+		p.runChunks(sub.Operation)
+		if got := p.stepRow(sub.Operation, 0); got != "verify_failed|tier0_after_write|1|false" {
+			t.Fatalf("step a = %s", got)
+		}
+		if p.dir.get("b") != "" {
+			t.Fatal("an item was executed after the tier0_after_write signal")
+		}
+		if got := p.stepRow(sub.Operation, 1); !strings.HasPrefix(got, "not_run|") {
+			t.Fatalf("step b = %s", got)
+		}
+		if st := p.opState(sub.Operation); st != "cancelled" {
+			t.Fatalf("operation = %s", st)
+		}
+		if got := p.alerts.reasons(); len(got) != 1 || got[0] != ReasonTier0AfterWrite || p.alerts.got[0].Severity != "critical" || p.alerts.got[0].Operation != string(sub.Operation) {
+			t.Fatalf("alerts = %+v", p.alerts.got)
+		}
+		if n := p.events("operation.cancelled"); n != 2 { // the tier0 signal and the completed cancel
+			t.Fatalf("operation.cancelled events = %d", n)
+		}
+		if got := p.owner(`SELECT count(*) FROM public.audit_event WHERE kind = 'operation.cancelled' AND event_id LIKE '%-tier0'`)[0]; got != "1" {
+			t.Fatalf("tier0 audit events = %s", got)
+		}
+	})
+}
+
+// The deferred read-back path does the same.
+func TestTier0AfterWriteFromDeferredVerify(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		p := newPRig(t, s, rigOpt{})
+		p.dir.mode["a"] = "defer"
+		sub, _ := p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "a", Want: "n"}))
+		p.runChunks(sub.Operation)
+		p.dir.mode["verified"] = "yes"
+		p.dir.mode["a"] = "tier0"
+		if err := p.r.Verify(context.Background(), p.tn, p.r.txFor(p.tn), string(sub.Operation)); err != nil {
+			t.Fatal(err)
+		}
+		if got := p.stepRow(sub.Operation, 0); got != "verify_failed|tier0_after_write|1|false" || p.opState(sub.Operation) != "cancelled" {
+			t.Fatalf("step %s op %s", got, p.opState(sub.Operation))
+		}
+		if got := p.alerts.reasons(); len(got) != 1 || got[0] != ReasonTier0AfterWrite {
+			t.Fatalf("alerts = %v", got)
+		}
+	})
+}
+
+// A signal that arrives once the operation has settled is only audited; the operation is not
+// retroactively cancelled.
+func TestTier0AfterWriteOnSettledOperationIsOnlyAudited(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		p := newPRig(t, s, rigOpt{})
+		sub, _ := p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "a", Want: "n"}))
+		p.runChunks(sub.Operation)
+		if st := p.opState(sub.Operation); st != "succeeded" {
+			t.Fatalf("operation = %s", st)
+		}
+		c := &claimed{key: step.Key{Operation: sub.Operation}}
+		err := p.r.txFor(p.tn)(context.Background(), func(ctx context.Context, q store.Tx) error {
+			return p.r.cancelOnTier0(ctx, q, p.tn, c)
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st := p.opState(sub.Operation); st != "succeeded" {
+			t.Fatalf("settled operation moved to %s", st)
+		}
+		if got := p.owner(`SELECT count(*) FROM public.audit_event WHERE kind = 'operation.cancelled' AND event_id LIKE '%-tier0'`)[0]; got != "1" {
+			t.Fatalf("tier0 audit events = %s", got)
+		}
+	})
 }
