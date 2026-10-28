@@ -78,7 +78,7 @@ type Setup struct {
 type Dumps struct {
 	CoreLimitZero  bool `json:"core_limit_zero"` // RLIMIT_CORE == 0 (Linux)
 	NotDumpable    bool `json:"not_dumpable"`    // PR_SET_DUMPABLE == 0 (Linux)
-	TracebackCrash bool `json:"traceback_crash"` // GOTRACEBACK=crash set
+	TracebackCrash bool `json:"traceback_crash"` // the GOTRACEBACK variable selects the crash level
 	PprofListens   bool `json:"pprof_listens"`
 	WERLocalDumps  bool `json:"wer_local_dumps"` // HKLM\...\Windows Error Reporting\LocalDumps has an entry for the service (Windows)
 }
@@ -216,7 +216,7 @@ func Evaluate(o Observation) []Result {
 			}
 		}
 		if d.TracebackCrash {
-			fail(CaseDumps, "GOTRACEBACK=crash is set")
+			fail(CaseDumps, "the Go runtime is set to write a crash dump on a fatal error (GOTRACEBACK, TM-TB16-T6)")
 		}
 		if d.PprofListens {
 			fail(CaseDumps, "a pprof endpoint is served")

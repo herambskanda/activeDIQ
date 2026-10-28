@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net"
@@ -206,7 +208,11 @@ func CollectOCI(ctx context.Context, repo string, pg *pgharness.Server, log func
 	o.Service = &Service{Account: strings.TrimSpace(cfgUser), UID: &uid}
 
 	// First-run state: TLS only, nothing answers plaintext, no well-known login works.
-	o.First = firstRun(addr)
+	roots, err := serverRoots(ctx, c)
+	if err != nil {
+		return o, err
+	}
+	o.First = firstRun(addr, roots)
 
 	// Files: the TLS directory and its contents, from the container's own tar headers.
 	fs, err := tlsFiles(ctx, c, uid)
@@ -227,7 +233,7 @@ func waitListen(ctx context.Context, c *container, addr string, d time.Duration)
 		if strings.TrimSpace(out) != "true" {
 			return fmt.Errorf("container exited")
 		}
-		conn, err := tls.DialWithDialer(&net.Dialer{Timeout: time.Second}, "tcp", addr, &tls.Config{InsecureSkipVerify: true}) //nolint:gosec // probing our own fresh listener for its presence
+		conn, err := net.DialTimeout("tcp", addr, time.Second)
 		if err == nil {
 			_ = conn.Close()
 			return nil
@@ -250,7 +256,36 @@ func procUID(pid string) (int, error) {
 	return 0, fmt.Errorf("no Uid line in /proc/%s/status", pid)
 }
 
-func firstRun(addr string) *FirstRun {
+// serverRoots reads the certificate the server generated from its TLS directory and returns it as the
+// only trust root: the probes then verify the listener properly, as an operator who pinned the shown
+// fingerprint would.
+func serverRoots(ctx context.Context, c *container) (*x509.CertPool, error) {
+	b, err := exec.CommandContext(ctx, "docker", "cp", c.id+":"+tlsMount+"/.", "-").Output()
+	if err != nil {
+		return nil, fmt.Errorf("docker cp: %v", err)
+	}
+	tr := tar.NewReader(bytes.NewReader(b))
+	pool := x509.NewCertPool()
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		if h.Typeflag != tar.TypeReg {
+			continue
+		}
+		data, _ := io.ReadAll(tr)
+		if blk, _ := pem.Decode(data); blk != nil && blk.Type == "CERTIFICATE" {
+			pool.AppendCertsFromPEM(data)
+		}
+	}
+	return pool, nil
+}
+
+func firstRun(addr string, roots *x509.CertPool) *FirstRun {
 	fr := &FirstRun{}
 	l := Listener{Addr: addr}
 	// Plaintext probe: an HTTP request in the clear must not get an HTTP answer.
@@ -262,11 +297,9 @@ func firstRun(addr string) *FirstRun {
 		l.PlaintextResponds = PlaintextServes(string(buf[:n]))
 		_ = conn.Close()
 	}
-	cl := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}} //nolint:gosec // the probe asks whether any login works; the certificate is the subject of another proof
-	if r, err := cl.Get("https://" + addr + "/"); err == nil {
-		l.TLS = true
-		_ = r.Body.Close()
-	} else if conn, err := tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true}); err == nil { //nolint:gosec // see above
+	cfg := &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
+	cl := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{TLSClientConfig: cfg}}
+	if conn, err := tls.Dial("tcp", addr, cfg); err == nil { // verified against the server's own certificate
 		l.TLS = true
 		_ = conn.Close()
 	}
@@ -339,11 +372,15 @@ func dumpPosture(ctx context.Context, c *container, pid string) *Dumps {
 		}
 	}
 	// A non-dumpable process's /proc/<pid> entries are owned by root, not by the process's uid.
-	if st, err := os.Stat("/proc/" + pid); err == nil {
-		d.NotDumpable = fileOwner(st) == 0
+	if out, err := exec.CommandContext(ctx, "stat", "-c", "%u", "/proc/"+pid).Output(); err == nil {
+		d.NotDumpable = strings.TrimSpace(string(out)) == "0"
 	}
 	env, _ := docker(ctx, nil, "inspect", "-f", "{{range .Config.Env}}{{println .}}{{end}}", c.id)
-	d.TracebackCrash = strings.Contains(env, "GOTRACEBACK=crash")
+	for _, e := range strings.Split(env, "\n") {
+		if k, v, ok := strings.Cut(strings.TrimSpace(e), "="); ok && k == "GOTRACEBACK" && (v == "crash" || v == "wer") {
+			d.TracebackCrash = true
+		}
+	}
 	// pprof: the default mux route must not answer.
 	return d
 }

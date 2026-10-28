@@ -86,7 +86,7 @@ func TestEachCaseFailsOnItsViolation(t *testing.T) {
 		{"setup probe proves nothing", CaseSetup, "first time", func(o *Observation) { o.Setup.UsedOnce = false }},
 		{"core dumps allowed", CaseDumps, "RLIMIT_CORE", func(o *Observation) { o.Dumps.CoreLimitZero = false }},
 		{"dumpable", CaseDumps, "dumpable", func(o *Observation) { o.Dumps.NotDumpable = false }},
-		{"GOTRACEBACK=crash", CaseDumps, "GOTRACEBACK", func(o *Observation) { o.Dumps.TracebackCrash = true }},
+		{"crash-level traceback", CaseDumps, "crash dump", func(o *Observation) { o.Dumps.TracebackCrash = true }},
 		{"pprof", CaseDumps, "pprof", func(o *Observation) { o.Dumps.PprofListens = true }},
 		{"remote DSN accepted weak", CaseDSN, "was accepted", func(o *Observation) { o.DSN[0].Accepted = true }},
 		{"remote DSN dialled first", CaseDSN, "connected to a remote host", func(o *Observation) { o.DSN[0].Contacted = true }},

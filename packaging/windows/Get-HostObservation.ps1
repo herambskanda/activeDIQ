@@ -68,6 +68,6 @@ if ($ServiceName) {
   $base = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps'
   $wer = (Test-Path -LiteralPath $base) -and ((Get-ItemProperty -LiteralPath $base -ErrorAction SilentlyContinue).PSObject.Properties.Name -contains 'DumpFolder' -or (Test-Path -LiteralPath (Join-Path $base $img)))
   $envBlock = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName" -ErrorAction SilentlyContinue).Environment
-  $obs.dumps = [ordered]@{ wer_local_dumps = [bool]$wer; traceback_crash = [bool]($envBlock -match '^GOTRACEBACK=crash$'); pprof_listens = $false; core_limit_zero = $false; not_dumpable = $false }
+  $obs.dumps = [ordered]@{ wer_local_dumps = [bool]$wer; traceback_crash = [bool]($envBlock | Where-Object { $_ -match '^GOTRACEBACK=(crash|wer)$' }); pprof_listens = $false; core_limit_zero = $false; not_dumpable = $false }
 }
 $obs | ConvertTo-Json -Depth 6
