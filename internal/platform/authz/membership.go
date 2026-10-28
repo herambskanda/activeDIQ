@@ -10,6 +10,11 @@ type Group struct {
 	Connection string
 	GUID       string
 	Via        *Derivation
+	// Path names how the account reaches the group, for the audit and the role page: the GUIDs from
+	// the first object the walk started at (the account's own object, or the matched peer it was
+	// derived from) up to this group. A nested membership lists every group on the way. It decides
+	// nothing: Via, not Path, marks a correlation-derived grant.
+	Path []string
 }
 
 // Groups is the answer of Membership. Complete is true only when every source was read in full;
