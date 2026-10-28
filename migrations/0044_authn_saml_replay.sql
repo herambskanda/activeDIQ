@@ -1,4 +1,4 @@
--- 0042_authn_saml_replay: the SAML replay cache (T-0489; DM-39.I5, SAML-16). Owner: internal/platform/authn
+-- 0044_authn_saml_replay: the SAML replay cache (T-0489; DM-39.I5, SAML-16). Owner: internal/platform/authn
 -- (sso/saml). One tenant table, shared by every node through PostgreSQL (ADR-0002 rule 6).
 --
 -- One row per accepted assertion: (tenant, IdP, Assertion ID). The primary key is the replay check: a second

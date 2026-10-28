@@ -116,13 +116,13 @@ func TestPGReplayRaceHasOneWinner(t *testing.T) {
 func TestPGReplayExpiredRowDoesNotBlockAndUnexpiredIsNotTrimmed(t *testing.T) {
 	eachPG(t, func(t *testing.T, r *pgRig) {
 		ctx := context.Background()
-		if fresh, err := r.nodeA.Remember(ctx, r.t1, "idp-1", "_short", time.Now().Add(300*time.Millisecond)); err != nil || !fresh {
+		if fresh, err := r.nodeA.Remember(ctx, r.t1, "idp-1", "_short", time.Now().Add(1500*time.Millisecond)); err != nil || !fresh {
 			t.Fatalf("fresh=%v err=%v", fresh, err)
 		}
 		if fresh, err := r.nodeA.Remember(ctx, r.t1, "idp-1", "_long", time.Now().Add(time.Hour)); err != nil || !fresh {
 			t.Fatalf("fresh=%v err=%v", fresh, err)
 		}
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(2 * time.Second)
 		// Any later call trims the expired row; the unexpired one stays and still refuses.
 		if fresh, err := r.nodeB.Remember(ctx, r.t1, "idp-1", "_other", time.Now().Add(time.Minute)); err != nil || !fresh {
 			t.Fatalf("fresh=%v err=%v", fresh, err)
