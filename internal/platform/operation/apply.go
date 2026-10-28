@@ -322,6 +322,11 @@ func (r *Runner) record(ctx context.Context, t tenant.ID, tx txFunc, c *claimed,
 		return r.recordIn(ctx, q, t, c, s)
 	})
 	if errors.Is(err, errSuperseded) {
+		// A superseded attempt changes no step or item state, but a Tier-0 signal it saw is the
+		// protective control's input: audit it, request cancel and alert regardless.
+		if s.verifyFailed == ReasonTier0AfterWrite {
+			return r.tier0Superseded(rctx, t, tx, c)
+		}
 		return nil
 	}
 	if err == nil && s.verifyFailed == ReasonTier0AfterWrite {
@@ -399,7 +404,7 @@ func (r *Runner) recordIn(ctx context.Context, q store.Tx, t tenant.ID, c *claim
 		}
 	}
 	if s.verifyFailed == ReasonTier0AfterWrite {
-		if err := r.cancelOnTier0(ctx, q, t, c); err != nil {
+		if err := r.cancelOnTier0(ctx, q, t, c, false); err != nil {
 			return err
 		}
 	}
@@ -413,23 +418,41 @@ const ReasonTier0AfterWrite = "tier0_after_write"
 // cancelOnTier0 requests cancel of a running operation in the transaction that records the step
 // (running -> cancelling, so no further item is started) and audits the signal. An operation that is
 // no longer running (already settled, or already cancelling) is not moved: the signal is only audited.
-func (r *Runner) cancelOnTier0(ctx context.Context, q store.Tx, t tenant.ID, c *claimed) error {
+func (r *Runner) cancelOnTier0(ctx context.Context, q store.Tx, t tenant.ID, c *claimed, superseded bool) error {
 	opID := string(c.key.Operation)
 	op, err := loadOp(ctx, q, t, opID, true)
 	if err != nil {
 		return err
 	}
-	ev := audit.Event{ID: fmt.Sprintf("op-%s-i%d-s%d-tier0", opID, c.key.Item, c.key.Step), Kind: KindOperationCancelled,
+	id := fmt.Sprintf("op-%s-i%d-s%d-tier0", opID, c.key.Item, c.key.Step)
+	if superseded {
+		id = fmt.Sprintf("op-%s-i%d-s%d-a%d-tier0", opID, c.key.Item, c.key.Step, c.attempt)
+	}
+	ev := audit.Event{ID: id, Kind: KindOperationCancelled,
 		Actor: op.Chain, Target: c.plan.Target, Key: c.key, Outcome: audit.Success, Reason: ReasonTier0AfterWrite, PlanHash: op.PlanHash}
 	if op.State == OpRunning {
 		if err := setOperationState(ctx, q, t, opID, OpRunning, OpCancelling); err != nil {
 			return err
 		}
-		ev.Details = detail("cancel_requested", true)
+		ev.Details = detail("cancel_requested", true, "superseded", superseded)
 	} else {
-		ev.Details = detail("cancel_requested", false, "operation_state", op.State)
+		ev.Details = detail("cancel_requested", false, "operation_state", op.State, "superseded", superseded)
 	}
 	return r.emit(ctx, q, ev)
+}
+
+// tier0Superseded handles a tier0_after_write verdict from an attempt that no longer owns the step:
+// the step and item are left exactly as the owning attempt recorded them, but the signal is audited
+// (event id distinct per attempt, superseded=true), a running operation is moved to cancelling and the
+// critical alert is raised. Detection must not fail open on the attempt that happened to be superseded.
+func (r *Runner) tier0Superseded(ctx context.Context, t tenant.ID, tx txFunc, c *claimed) error {
+	if err := tx(ctx, func(ctx context.Context, q store.Tx) error {
+		return r.cancelOnTier0(ctx, q, t, c, true)
+	}); err != nil {
+		return err
+	}
+	r.tier0Alert(ctx, string(c.key.Operation))
+	return nil
 }
 
 // tier0Alert raises the critical alert after the recording transaction committed.
