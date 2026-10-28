@@ -324,12 +324,15 @@ func UnwrapDEK(p Provider, t tenant.ID, v uint32, ref KEKRef, wrapped []byte) (D
 	b, err := p.Unwrap(WrapRequest{Tenant: t, Version: v}, ref, wrapped)
 	if err != nil {
 		clear(b)
+		countUnwrap(t, OutcomeFailure)
 		return DEK{}, providerErr(err, UnwrapFailed)
 	}
 	d, derr := DEKFromBytes(v, b)
 	if derr != nil {
+		countUnwrap(t, OutcomeFailure)
 		return DEK{}, newErr(UnwrapFailed)
 	}
+	countUnwrap(t, OutcomeSuccess)
 	return d, nil
 }
 

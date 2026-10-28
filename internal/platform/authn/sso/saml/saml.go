@@ -178,6 +178,9 @@ func (v *Verifier) Complete(ctx context.Context, t tenant.ID, idp sso.IdP, tx ss
 	}
 
 	// SAML-16, last, so that only a response that passed everything else uses up its ID.
+	// The expiry MUST be a pure function of signed fields (NotOnOrAfter, IssueInstant), never of the clock:
+	// the replay cache trims expired rows, and a replay after the trim is refused only because it recomputes
+	// the same past expiry (see replay_pg.go sqlReplayTrim). Do not change this to now+X.
 	fresh, err := v.replay.Remember(ctx, t, idp.ID, a.id, a.replayUntil().Add(skew))
 	if err != nil {
 		return sso.Verified{}, &sso.Refusal{Reason: ReasonReplay, Cause: err}

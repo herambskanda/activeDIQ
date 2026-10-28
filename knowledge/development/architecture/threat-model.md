@@ -296,7 +296,7 @@ proof is direction, not a control; the proof table says which ticket builds each
 | TM-TB4-T5 | I | X11 reads another tenant's rows (RLS bypass) → A6 | "Where tenancy lives" rules: RLS + FORCE, composite FKs, tenant-led unique indexes, no `SECURITY DEFINER`, `security_invoker` views | T1–T5 | — |
 | TM-TB4-T6 | I | X6 steals a dump or backup → A2, A12 | Only ciphertext of secrets in the database; KEK never in the database; AEAD with associated data (TM-D7) | TM-F-SEAL | PII in inventory is readable (TM-TB15-T4) |
 | TM-TB4-T7 | T | X6 with DB write copies a sealed Entra key from tenant A's row into tenant B's → B's jobs sign as A | Associated data binds tenant, table, row, column and key version (TM-D7) | TM-F-SEAL | — |
-| TM-TB4-T8 | I | Blob objects read across tenants | Keys prefixed by tenant through `platform/blob` only | Blob isolation probe `[OPEN → T-0134 adds it to T4]` | — |
+| TM-TB4-T8 | I | Blob objects read across tenants | Keys prefixed by tenant through `platform/blob` only | T4 blob isolation probe (`tools/fitness/tenancy/blobprobe.go`, T-0134) | — |
 | TM-TB4-T9 | D | Database unavailable mid-operation | Writes fail closed: no directory write without its audit row in the same transaction (§11); leases expire | T-0130 operation fitness | Availability |
 | TM-TB4-T10 | E | The runtime role owns objects or has `BYPASSRLS` | Separate owner role for migrations | T3, FF-SP7 | — |
 
@@ -2868,7 +2868,7 @@ Each goes through the `ceo-decisions` skill in business terms when its trigger a
 | TM-Q6 | Change-volume limits for HR-driven lifecycle | Through Plan and approvals | E2.9 lifecycle spec |
 | TM-Q7 | KEK recovery path; backup encryption; bundled DB backup | No plaintext fallback | E2.12 PRD |
 | TM-Q8 | Fleet stream limits; per-tenant issuing CA in SaaS | No secret pushed over fleet (TM-D8) | Connector spec |
-| TM-Q9 | Blob isolation probe | Tenant-prefixed keys only | T-0134 (adds it to T4) |
+| TM-Q9 | Blob isolation probe | Tenant-prefixed keys only | T-0134: T4 `blob-*` rules, done |
 | TM-Q10 | Log/metric/cache tenant isolation probe | Tenant ID on every line | T-0135 (extends P4; `tools/fitness/profiles/p4.go`) |
 | TM-Q11 | Update protocol details; courier telemetry; OCI apply without Docker socket | §10 rules | T-0138 (ENH-07 spec) |
 | TM-Q12 | Hardening wizard delegation plan; "remove delegation" plan on uninstall | Never holds WRITE_DAC (TM-D3) | ENH-08 spec |

@@ -244,7 +244,11 @@ the XML libraries, so it sits inside the FIT-SSO-1 fence) and the corpus records
   primary key (tenant, IdP, Assertion ID) as the check and the database clock for expiry (a CHECK caps
   `expires_at` at 24 h). It is insert-only; the runtime role may delete only expired rows, which each call
   trims. `saml.RememberTx(ctx, tx, …)` records inside the caller's tenant transaction; T-0203 calls it in
-  the transaction that consumes the Transaction (SAML-16).
+  the transaction that consumes the Transaction (SAML-16). **Trim-safety invariant (T-0524):** the expiry
+  passed in must derive from signed fields only (`replayUntil()+skew`), never from the clock, so a replay
+  after its row is trimmed recomputes the same past expiry and fails the CHECK (`ErrReplayInput`). The trim
+  is taken under a per-tenant `pg_try_advisory_xact_lock`: one transaction trims, concurrent ones skip, so
+  long callback transactions never queue on each other's row locks.
 
 ## 6. Shared checks and MFA-asserting IdPs (SSO-D3, SSO-D4)
 

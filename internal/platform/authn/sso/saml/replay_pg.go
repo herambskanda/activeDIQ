@@ -61,8 +61,23 @@ func (c *PGReplayCache) Remember(ctx context.Context, t tenant.ID, idpID, assert
 
 const (
 	// Trims this tenant's expired rows (the DELETE policy refuses any other), so the table stays small
-	// without a scheduled job, and an expired row never blocks a later insert of the same ID.
-	sqlReplayTrim = `DELETE FROM public.authn_saml_replay WHERE tenant_id = $1::uuid AND expires_at <= clock_timestamp()`
+	// without a scheduled job.
+	//
+	// Trim-safety invariant: trimming is safe only because the caller's expiry is a pure function of the
+	// signed assertion (see Verifier.Verify, replayUntil()+skew). A replay presented after its row was
+	// trimmed recomputes the same, already-past expiry and fails CHECK expires_at > created_at, so it is
+	// refused as ErrReplayInput. An expiry derived from the clock (now+X) would break this and reopen
+	// replays. TestPGReplayAfterTrimIsStillRefused pins it.
+	//
+	// Lock contention: the DELETE row-locks what it removes until the caller's transaction ends (the
+	// sign-in callback's is long). A transaction-scoped advisory lock per tenant, taken with try, lets
+	// exactly one transaction trim at a time; the others skip the trim instead of queueing behind it. A
+	// skipped trim is harmless: an expired, untrimmed row only means the same already-refused replay is
+	// reported through the primary key instead of the CHECK. (FOR UPDATE SKIP LOCKED is not usable: the
+	// runtime role has no UPDATE privilege on this insert-only table, which row locking requires.)
+	sqlReplayTrim = `WITH g AS (SELECT pg_try_advisory_xact_lock(hashtextextended('authn_saml_replay.trim/' || $1::text, 0)) AS ok)
+DELETE FROM public.authn_saml_replay
+WHERE tenant_id = $1::uuid AND expires_at <= clock_timestamp() AND (SELECT ok FROM g)`
 
 	sqlReplayInsert = `INSERT INTO public.authn_saml_replay (tenant_id, idp_id, assertion_id, expires_at)
 VALUES ($1::uuid, $2, $3, $4)
@@ -73,6 +88,8 @@ ON CONFLICT (tenant_id, idp_id, assertion_id) DO NOTHING`
 // back with the consumption of the sign-in Transaction. It reports whether the assertion was new; a
 // duplicate is the replay, not an error. tx must be a transaction of tenant t (WithTenant sets the
 // tenant that row security checks; a different one makes the insert fail, never write to another tenant).
+//
+// until MUST be deterministic from the signed assertion, never from the clock: see sqlReplayTrim.
 func RememberTx(ctx context.Context, tx store.Tx, t tenant.ID, idpID, assertionID string, until time.Time) (bool, error) {
 	if err := checkReplayInput(t, idpID, assertionID); err != nil {
 		return false, err

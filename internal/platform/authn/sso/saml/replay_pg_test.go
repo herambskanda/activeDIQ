@@ -230,3 +230,78 @@ func TestPGReplayTenantIsolationAndInsertOnly(t *testing.T) {
 		}
 	})
 }
+
+// Acceptance 1 (T-0524): the trim-safety invariant. Once an assertion's row has expired and been trimmed,
+// presenting the same assertion again (same, deterministic expiry) is still refused, as ErrReplayInput.
+func TestPGReplayAfterTrimIsStillRefused(t *testing.T) {
+	eachPG(t, func(t *testing.T, r *pgRig) {
+		ctx := context.Background()
+		until := time.Now().Add(1500 * time.Millisecond)
+		if fresh, err := r.nodeA.Remember(ctx, r.t1, "idp-1", "_trim", until); err != nil || !fresh {
+			t.Fatalf("fresh=%v err=%v", fresh, err)
+		}
+		time.Sleep(2 * time.Second)
+		// A later call trims the expired row.
+		if _, err := r.nodeB.Remember(ctx, r.t1, "idp-1", "_other", time.Now().Add(time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+		var n int
+		if err := r.dbA.WithTenant(ctx, r.t1, func(ctx context.Context, tx store.Tx) error {
+			return tx.QueryRow(ctx, `SELECT count(*) FROM public.authn_saml_replay WHERE assertion_id = '_trim'`).Scan(&n)
+		}); err != nil || n != 0 {
+			t.Fatalf("row should be trimmed: n=%d err=%v", n, err)
+		}
+		fresh, err := r.nodeB.Remember(ctx, r.t1, "idp-1", "_trim", until)
+		if fresh || !errors.Is(err, saml.ErrReplayInput) {
+			t.Fatalf("replay after trim: fresh=%v err=%v, want ErrReplayInput", fresh, err)
+		}
+	})
+}
+
+// Acceptance 3 (T-0524): a long transaction that trimmed expired rows does not make a concurrent
+// RememberTx of the same tenant wait for it.
+func TestPGRememberTxTrimDoesNotSerialise(t *testing.T) {
+	eachPG(t, func(t *testing.T, r *pgRig) {
+		ctx := context.Background()
+		for _, id := range []string{"_e1", "_e2"} {
+			if _, err := r.nodeA.Remember(ctx, r.t1, "idp-1", id, time.Now().Add(1200*time.Millisecond)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		time.Sleep(1800 * time.Millisecond)
+
+		trimmed, release, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+		var once sync.Once
+		releaseTx := func() { once.Do(func() { close(release) }) }
+		defer releaseTx() // a failing assertion must not leave the transaction open
+		go func() {
+			done <- r.dbA.WithTenant(ctx, r.t1, func(ctx context.Context, tx store.Tx) error {
+				if _, err := saml.RememberTx(ctx, tx, r.t1, "idp-1", "_long1", time.Now().Add(time.Minute)); err != nil {
+					return err
+				}
+				close(trimmed)
+				<-release // keep the transaction (and any row locks) open
+				return nil
+			})
+		}()
+		<-trimmed
+
+		second := make(chan error, 1)
+		go func() {
+			_, err := r.nodeB.Remember(ctx, r.t1, "idp-1", "_long2", time.Now().Add(time.Minute))
+			second <- err
+		}()
+		select {
+		case err := <-second:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("second RememberTx blocked behind the first transaction's trim")
+		}
+		releaseTx()
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	})
+}
