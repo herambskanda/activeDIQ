@@ -493,7 +493,7 @@ both kinds of agent, so both command sets are closed (TM-D13).
 | TM-TB17-T5 | E | A compromised cell uses every tenant's Entra certificate | One certificate per tenant; KMS encryption context per tenant; KMS audit log; permission limits (§6.6); a regulated tenant binds Entra on-site (ADR-0002 amendment path) | §13 | **Accepted for design** (TM-R10) |
 | TM-TB17-T6 | R | Unwraps are not independently recorded | KMS audit log (e.g. CloudTrail) is an independent record of every unwrap | §13 | — |
 | TM-TB17-T7 | D | A noisy neighbour starves other tenants | Per-tenant quotas `[OPEN → E5.6]` | — | — |
-| TM-TB17-T8 | I | Logs, metrics or caches mix tenants | Tenant ID on every log line and metric; caches keyed by tenant (ADR-0002) | P4 (extended to logs and caches) `[OPEN → T-0135]` | — |
+| TM-TB17-T8 | I | Logs, metrics or caches mix tenants | Tenant ID on every log line and metric; caches keyed by tenant (ADR-0002) | P4 (extended to logs, metrics and caches: `tools/fitness/profiles/p4.go`, T-0135) | — |
 
 ### 5.18 TB18 — ManageEngine source ↔ migration importer, discovery scanner, parallel-run comparator [M2]
 
@@ -2869,7 +2869,7 @@ Each goes through the `ceo-decisions` skill in business terms when its trigger a
 | TM-Q7 | KEK recovery path; backup encryption; bundled DB backup | No plaintext fallback | E2.12 PRD |
 | TM-Q8 | Fleet stream limits; per-tenant issuing CA in SaaS | No secret pushed over fleet (TM-D8) | Connector spec |
 | TM-Q9 | Blob isolation probe | Tenant-prefixed keys only | T-0134 (adds it to T4) |
-| TM-Q10 | Log/metric/cache tenant isolation probe | Tenant ID on every line | T-0135 (extends P4) |
+| TM-Q10 | Log/metric/cache tenant isolation probe | Tenant ID on every line | T-0135 (extends P4; `tools/fitness/profiles/p4.go`) |
 | TM-Q11 | Update protocol details; courier telemetry; OCI apply without Docker socket | §10 rules | T-0138 (ENH-07 spec) |
 | TM-Q12 | Hardening wizard delegation plan; "remove delegation" plan on uninstall | Never holds WRITE_DAC (TM-D3) | ENH-08 spec |
 | TM-Q13 | LAPS decryptor group for non-DC policies | Never DCs, never via Domain Admins (§6.3 R10) | ADM-060 spec + Windows lab |

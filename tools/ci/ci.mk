@@ -41,7 +41,7 @@ test-go:
 test-web: web-install
 	npm --prefix web run --silent test
 
-fitness: fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-operation fitness-objectid fitness-disclosure fitness-packaging ## Architecture fitness functions: fitness-packaging (T-0104 API TLS directory ACL/mode in packaging/), fitness-disclosure (T-0258 SECURITY.md and RFC 9116 security.txt intake, Expires renewal), fitness-modules (blueprint §2 import rules), fitness-stack (ADR-0001 F1-F5), fitness-tenancy (ADR-0002 T1-T5), fitness-domain-keys (domain-model X3-X5), fitness-profiles (ADR-0002 P1, P7, U1, U2 and the activation table), fitness-proto (connector contract compiles and keeps its rules) fitness-safeprim (safe-primitives FF-SP1-3), fitness-corpus (FF-SP4, FF-SP5 declarations, FF-SP8) fitness-oracles (FF-SP6 on Linux) and fitness-api (ADR-0004 A1, A3, A4, A5, A6, A7, A8, A10, A11, A12, A13, A14; prints every inactive check and inactive part)
+fitness: fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-operation fitness-objectid fitness-disclosure fitness-packaging ## Architecture fitness functions: fitness-packaging (T-0104 API TLS directory ACL/mode in packaging/), fitness-disclosure (T-0258 SECURITY.md and RFC 9116 security.txt intake, Expires renewal), fitness-modules (blueprint §2 import rules), fitness-stack (ADR-0001 F1-F5), fitness-tenancy (ADR-0002 T1-T5), fitness-domain-keys (domain-model X3-X5), fitness-profiles (ADR-0002 P1, P4 logs/metrics/caches, P7, U1, U2 and the activation table), fitness-proto (connector contract compiles and keeps its rules) fitness-safeprim (safe-primitives FF-SP1-3), fitness-corpus (FF-SP4, FF-SP5 declarations, FF-SP8) fitness-oracles (FF-SP6 on Linux) and fitness-api (ADR-0004 A1, A3, A4, A5, A6, A7, A8, A10, A11, A12, A13, A14; prints every inactive check and inactive part)
 	go run ./tools/fitness/modules
 
 fitness-objectid: ## T-0180: no conversion to authz.ObjectID outside internal/platform/authz (type-checked, tests included); use ObjectIDFromOctets or ParseObjectID
@@ -56,7 +56,7 @@ fitness-tenancy: ## ADR-0002 T1-T5 (and safe-primitives FF-SP7): migration 1, ca
 fitness-domain-keys: ## T-0050: domain-model X3 (no directory table keyed or joined on a DN, SID, name), X4 (no column for a SecretAttrs attribute outside the declared sealed columns), X5 (append-only tables: no UPDATE, DELETE only by the retention role, no state column; DM-25.I6 property test present), and every table declared through tablekind.Declare; against PostgreSQL 16 and 18 containers (needs Docker)
 	go run ./tools/fitness/domainkeys
 
-fitness-profiles: ## T-0038, ADR-0002: P1 composition boundary, P7 branch policy, U1 UEM independence, U2 extractable platform root, and the activation table (P2-P6, U3, U4 become mandatory the moment their subject lands)
+fitness-profiles: ## T-0038, T-0135, ADR-0002: P1 composition boundary, P4 tenant ID on every log line, metric and cache key (TM-TB17-T8), P7 branch policy, U1 UEM independence, U2 extractable platform root, and the activation table (P2-P6, U3, U4 become mandatory the moment their subject lands)
 	go run ./tools/fitness/profiles
 
 fitness-proto: ## T-0064: every proto/ file compiles (pure Go, no protoc) and the connector contract keeps its structural rules P1-P8

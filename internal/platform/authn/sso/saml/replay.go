@@ -16,11 +16,17 @@ type ReplayCache interface {
 	Remember(ctx context.Context, t tenant.ID, idpID, assertionID string, until time.Time) (fresh bool, err error)
 }
 
+// replayKey is the cache key: the tenant is part of it, so one tenant's assertion can never answer another's.
+type replayKey struct {
+	tenant         tenant.ID
+	idp, assertion string
+}
+
 // MemoryReplayCache is a process-local ReplayCache. It is correct for one node and is what tests use; two
 // nodes need the shared implementation.
 type MemoryReplayCache struct {
 	mu   sync.Mutex
-	seen map[string]time.Time
+	seen map[replayKey]time.Time
 	now  func() time.Time
 }
 
@@ -29,12 +35,12 @@ func NewMemoryReplayCache(now func() time.Time) *MemoryReplayCache {
 	if now == nil {
 		now = time.Now
 	}
-	return &MemoryReplayCache{seen: map[string]time.Time{}, now: now}
+	return &MemoryReplayCache{seen: map[replayKey]time.Time{}, now: now}
 }
 
 // Remember implements ReplayCache.
 func (m *MemoryReplayCache) Remember(_ context.Context, t tenant.ID, idpID, assertionID string, until time.Time) (bool, error) {
-	key := t.String() + "\x00" + idpID + "\x00" + assertionID
+	key := replayKey{tenant: t, idp: idpID, assertion: assertionID}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := m.now()
