@@ -139,13 +139,6 @@
       "reason": "Test: proves the registered SECURITY DEFINER audit_wipe_retired_key refuses a call made with no tenant context (SQLSTATE 42501), which needs a transaction under WithPlatform. It is in a _test.go file and ships in no binary (ADR-0005 rule 11, T-0305).",
       "withPlatform": true,
       "mintsTenantID": false
-    },
-    {
-      "package": "internal/modules/connections",
-      "function": "StateTenant",
-      "reason": "The tenant prefix of an OAuth state is only a lookup hint to choose whose attempt table to search; the lookup is by the hash of the whole state, so a state never issued for that tenant finds nothing, and the value grants nothing (ADR-0002 rule 5).",
-      "withPlatform": false,
-      "mintsTenantID": true
     }
   ],
   "platformJobs": [],
@@ -154,6 +147,16 @@
       "column": "public.personal_subject.salt",
       "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
       "reason": "CHECK: a subject salt is exactly 32 bytes (personal_subject_salt_check, ADR-0005 rule 12); the probe row carries a 32-byte placeholder, not a real salt."
+    },
+    {
+      "column": "public.authn_saml_replay.created_at",
+      "value": "2000-01-01 00:00:00+00",
+      "reason": "CHECK: authn_saml_replay_life ties expires_at to created_at (later, within 24 hours); the probe row pins both to fixed instants so the check holds whatever the clock says."
+    },
+    {
+      "column": "public.authn_saml_replay.expires_at",
+      "value": "2000-01-01 12:00:00+00",
+      "reason": "CHECK: authn_saml_replay_life, see created_at; 12 hours after the pinned created_at."
     },
     {
       "column": "public.directory_objects.kind",
