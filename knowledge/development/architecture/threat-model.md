@@ -1,11 +1,11 @@
 ---
 title: "Threat model v0 — activeDIQ security architecture"
 date: 2026-10-02
-updated: 2026-10-27
+updated: 2026-10-28
 status: review
 owner: heramb
 author: security-architect
-ticket: T-0495, T-0388, T-0359, old T-0007, T-0032, T-0044, T-0051, T-0055, T-0108, T-0179, T-0111, T-0227, T-0230, T-0235, T-0240, T-0395
+ticket: T-0544, T-0495, T-0388, T-0359, old T-0007, T-0032, T-0044, T-0051, T-0055, T-0108, T-0179, T-0111, T-0227, T-0230, T-0235, T-0240, T-0395
 binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), blueprint v0 (review), safe-primitives.md (review)
 sources_last_checked: 2026-10-02
 ---
@@ -2212,13 +2212,90 @@ from T-0018. AN-9 enters when the PRD offers SPNEGO. The file's header lists eac
   The no-escalation rule covers membership: changing the membership of a role-granting group
   through activeDIQ requires the actor to hold every privilege that group grants (DM-36.I1).
 
+  **TM-D18 extension (T-0544): the fact crosses planes by correlation, and dynamic groups grant
+  nothing in v1.** The first wording judged a group by its own plane's facts. Two Entra group kinds
+  have their membership set somewhere else, so their own Entra attributes prove nothing.
+
+  *Verdicts.* Every group gets one of three: `eligible`, `ineligible` (grants nothing, flagged on
+  the role page) or `unknown`. `unknown` is omitted from the answer and makes `Complete` false, so
+  no grant is derived from it (as T-0469 already does). Only `eligible` grants.
+
+  **D18-1. Synced Entra groups follow their AD source.** A group is *synced* when Graph reports
+  `onPremisesSyncEnabled = true`. Graph: true if synced from on-premises, null if never synced,
+  false if previously synced and now cloud-managed
+  ([group](https://learn.microsoft.com/en-us/graph/api/resources/group?view=graph-rest-1.0)).
+  Membership of a synced group is written by the sync client from the AD group, so whoever can
+  change the AD `member` attribute (the Self-Membership ACE of the rule above included) can change
+  who holds the Entra copy's roles. Rules:
+  1. `onPremisesSyncEnabled` absent from inventory is `unknown`. `null` or `false` means the group
+     is cloud-managed and is judged by the ordinary Entra rules (security-enabled, not Public,
+     `groupTypes` present and not Unified, DM-36.I2). `true` goes through rules 2 to 6.
+  2. The Entra copy is `eligible` only when **all** hold: (a) it has a **matched** correlation
+     (DM-20, TM-D17 gate: anchor `onPremisesSecurityIdentifier` equal to the AD group's `objectSid`
+     in the connection's forest, `takeover_protection = attested`, not `candidate`) to exactly one
+     AD group; (b) that AD group's `diq_broadMembershipWrite` is known and `false`; (c) the AD
+     group is not `tier0` (§6.4, C16) and the Entra group is not `tier0` (E5); (d) the AD group
+     itself passes the AD-plane eligibility (security-enabled, active). A missing correlation, a
+     `candidate`, an AD group not in inventory, or an AD fact that is absent is `unknown`. An AD
+     fact that is `true` is `ineligible`, **and so is the Entra copy.**
+  3. **Freshness.** The pair's as-of is the older of the correlation's evaluation time and the AD
+     fact's `computed_at`. If it is older than the verification age of TM-D23 (26 hours), the
+     verdict is `unknown`. Never the cached last good value.
+  4. **One read, two rows.** The verdict is computed inside the same inventory read transaction
+     that walks membership, from the Entra row and the AD row it is correlated to. It is never
+     stored as an Entra attribute, so there is no second copy to go stale or be forged by an
+     Entra-side writer. The producer (T-0541) writes `diq_broadMembershipWrite` on AD groups only.
+  5. **Nesting.** The walk judges every hop. A synced Entra group nested in an eligible group
+     is judged again by this rule, and an `unknown` or `ineligible` hop is not walked through.
+  6. **Written-back groups.** For a group that Entra writes back to AD (cloud-origin), the AD copy
+     is derived from Entra. It is judged by rule 2(b) only if it is also reachable as a synced group;
+     otherwise the AD copy is `unknown` until the lab (G18) shows which side wins on a conflicting
+     write `[UNVERIFIED — lab G18]`.
+
+  **D18-2. Dynamic-membership groups never grant in v1.** A group whose `groupTypes` contains
+  `DynamicMembership` is `ineligible`, whatever its rule, its `membershipRuleProcessingState`
+  (a paused group resumes and applies the rule to values written meanwhile, §6.4 rule 7a) or its
+  place in a nest. Reason: the rule reads user or device properties
+  ([dynamic membership rules](https://learn.microsoft.com/en-us/entra/identity/users/groups-dynamic-membership)),
+  and the closed table `ruleprops v1` (§6.4 rule 7g) shows who writes them: the user themself
+  for some properties, a help-desk or HR delegate for others, a guest's inviter for `userType` and
+  `displayName`, and any delegated AD OU administrator for every property that sync copies from
+  AD. None of these writers is `tier0`, so a rule is only as strong as its weakest writable
+  property, and proving a rule safe needs a policy for who may write each property. We do not
+  have that policy. The lexer of §6.4 rule 7b is reused only to *flag* the rule's properties on
+  the role page. An unreadable `groupTypes` is `unknown`. Lifting this (an allow-list of properties
+  held only by `tier0`) needs its own decision; it is not an option the implementer may add.
+  Customers lose "role by department" through dynamic groups in v1 and are told so on the role
+  page; the workaround is a static or synced group.
+
+  **Residual R-D18-1.** Between an AD DACL change and the next fact computation (up to the
+  26-hour bound, less if a change feed triggers it) a newly broad group is still `eligible`. The
+  health check flags it on the next run. Nothing smaller is claimed `[UNVERIFIED — whether
+  `ntSecurityDescriptor` changes arrive in the uSNChanged feed; lab G18]`.
+
 **Proof TM-F-AUTHZ.** Lab tests: a technician acts on a user just outside the delegated OU
 (refused); an object moved out of scope between Plan and Apply (refused); a bulk job with one
 out-of-scope item (that item refused, others reported per row); a grant of a role the grantor does
 not fully hold (refused); a token whose owner was disabled (dead); a scheduled report whose owner
 lost scope (delivers only the new scope or stops); a role-granting AD group whose DACL gives Domain
 Users Self-Membership (grants nothing, flagged); a technician adding themselves to a role-granting
-group whose privileges they do not hold (refused).
+group whose privileges they do not hold (refused). **Cross-plane and dynamic cases (T-0544, TM-D18
+extension):** (1) *synced-weak:* an Entra group with `onPremisesSyncEnabled=true` whose matched AD
+source gives Domain Users Self-Membership is not returned, whatever its own Entra attributes say;
+(2) *synced-unknown:* the same Entra group with no AD fact, with the AD group absent from
+inventory, with a `candidate` correlation, with `takeover_protection` not `attested`, or with the
+pair older than 26 hours is omitted and `Complete` is false; (3) *synced-good:* the matched AD
+source with fact `false` yields the group, and flipping the AD fact to `true` in the same
+transaction removes it; (4) *synced-tier0:* an AD source in `tier0` makes the Entra copy
+ineligible; (5) *sync-flag:* `onPremisesSyncEnabled` absent is omitted with `Complete` false,
+`null` or `false` is judged as a cloud group; (6) *synced-nest:* an eligible group containing a
+weak synced group is not walked through the weak one; (7) *forged-peer:* an Entra group whose
+`onPremisesSecurityIdentifier` names an AD group of another forest, or two Entra groups sharing
+one SID, does not inherit the AD group's `false`; (8) *dynamic-attr:* a security group with
+`DynamicMembership` and rule `user.department -eq "IT"` is not returned and is flagged, also when
+paused, when nested in an eligible group, and when a user adds themselves by writing `department`;
+(9) *dynamic-unknown:* `groupTypes` absent is omitted with `Complete` false. Each case runs on the
+inventory tables with PG16 and PG18; (1), (3), (7) also run against the Samba lab for the AD fact.
 
 **Proof TM-F-SESSION.** Cookie attributes; CSRF rejection; idle and absolute expiry; revocation on
 disable; every operation in the §7.4 list refuses without fresh MFA; API token entropy, prefix,
@@ -2792,7 +2869,7 @@ Existing proofs this document relies on: FF-SP1–SP9 (`tools/fitness/safeprim`)
 | TM-F-SEAL | A sealed value opens after being moved to another tenant, row or column; a DEK unwraps under another tenant's context (§9.2) | CI | T-0070 (backend-engineer) | TB4-T6/T7, TB5-T2, TB7-T1 |
 | TM-F-AUDIT | Runtime role can UPDATE/DELETE/TRUNCATE audit; an edited, deleted or reordered event verifies; a checkpoint is not anchored in SIEM and export (§11) | CI + catalog | T-0133 (fitness-audit; needs T-0132 chain) | TB1-T5, TB4-T3/T4, TB15-T5 |
 | TM-F-UPDATE | A tampered, rolled-back, frozen, revoked-key or server-signed update is accepted, on either courier (§10) | CI, extends P5 | T-0138 (ENH-07 spec) + T-0139 (proof) | TB10 |
-| TM-F-AUTHZ | Scope escape, move-between-check-and-write, bulk item out of scope, self-escalation, dead-owner token or a report beyond its owner's scope succeeds (§7.7) | CI + Samba lab | T-0072 (backend-engineer) | TB1-T8/T11/T12, TB2-T8, TB15-T2 |
+| TM-F-AUTHZ | Scope escape, move-between-check-and-write, bulk item out of scope, self-escalation, dead-owner token, a report beyond its owner's scope, a synced Entra group with a weak or unknown AD source, or a dynamic-membership group grants (§7.7, TM-D18 extension) | CI + Samba lab | T-0072 (backend-engineer) | TB1-T8/T11/T12, TB2-T8, TB15-T2 |
 | TM-F-SESSION | Cookie, CSRF, timeout, revocation, step-up or token rules of §7.3–§7.5 do not hold; a session exists without a completed AN-10 second factor, or a pending sign-in outlives 5 minutes or 5 attempts (§7.6 rules 1, 4); a rate class admits burst + 1 (§7.8) | CI | T-0073 (backend-engineer) | TB1, TB2-T1, TB2-T7, TB8-T3/T6 |
 | TM-F-SSO | A forged, wrapped, replayed or mis-addressed SAML/OIDC response is accepted (§7.7) | CI fuzz corpus | T-0073 (backend-engineer), with ADM-143 spec | TB8 |
 | TM-F-SECRETOUT | A canary secret appears in any log, error, audit detail, response, metric or export; a response schema carries a secret field (§9.7) | CI | `tools/fitness/safeprim` (FF-SP extension, `secretjson` delivered) + `fitness-api` A8 (T-0017) | TB1-T7, TB2-T6, TB8-T5, TB9-T5/T6 |
@@ -2998,6 +3075,7 @@ External, in order of first use:
 
 ## Changelog
 
+- 2026-10-28 · T-0544 (from the T-0469 review). §7.7 TM-D18 extension: D18-1 synced Entra groups are judged from their matched AD source's `diq_broadMembershipWrite` (unknown unless the pair is matched, attested, fresh within 26 h and the fact is known and false; computed in one read, never stored on the Entra row); D18-2 dynamic-membership groups never grant in v1. Nine cases added to TM-F-AUTHZ. Residual R-D18-1; lab G18 routed to T-0075. Build changes routed to T-0541 and a new judge ticket.
 - 2026-10-27 · T-0495 (from the T-0206 review). §7.6 rule 10: AN-9 refuses AD-disabled, expired, locked-out, deleted or SID-changed principals by an inventory pre-check plus an authoritative live connector read at sign-in, failing closed; no ticket-age bound (authtime is the TGT logon time). Residual R-AN9-1 (DC replication lag), R-AN9-2 (timing). TM-F-SSO adds `an9_refuses_ad_disabled`.
 - 2026-10-27 · T-0388. §6.9 rule 5 rewritten from five changes to the closed `guarded v1` table (AD and Entra classes, a `denied` set, a tightening exemption), each with a source. New §6.9a DECISION TM-D28: typed constructors, one class per Action, a runtime check in `client.Write`, and fitness function `fitness-backing` rules B1 to B9 with a machine-readable `guarded-v1` block. New proof TM-F-BACKING, residual TM-R23, lab G17 (routed to T-0075), sources 86 to 94. DM-30.I7 updated to match.
 - 2026-10-26 · T-0395 (D-0007 follow-up). §6.6 adds lab G16. It reads Graph's live `appRoles` to confirm the name and role id of `Sites.Manage.All` (expected `0c0bf378-…`, from Microsoft's permissions reference). It asserts EV3 `ENTRA_DENY_LIST_PERMISSION`, with role ids, for the seven T-0369 values in a real tenant, and EV5 for the read-only counterparts. `Sites.Manage.All` now waits for G16, not G15 (G15 covers only the non-Graph grants). Routed to T-0075.
