@@ -544,9 +544,13 @@ func ts(t time.Time) *timestamppb.Timestamp {
 	return timestamppb.New(t)
 }
 
-// connectorError maps a failed read to the contract's error. Only the graph error code and the HTTP
+// connectorError maps a failed read to the contract's error: an AD session error by its typed code
+// (adConnectorError), a Graph error by its code. Only the graph error code and the HTTP
 // status are carried; response bodies and messages from Graph never are.
 func connectorError(err error) *v1.ConnectorError {
+	if ce, ok := adConnectorError(err); ok {
+		return ce
+	}
 	ce := &v1.ConnectorError{Code: v1.ErrorCode_ERROR_CODE_PROVIDER_FAILURE, Retry: v1.RetryAdvice_RETRY_ADVICE_SAME_DC_AFTER_BACKOFF,
 		Message: "an Entra read for this check failed"}
 	var ge *graph.Error
