@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
-	"github.com/skenzeriq/activediq/internal/connector/labfixture"
 	"github.com/skenzeriq/activediq/internal/connector/read"
 	"github.com/skenzeriq/activediq/internal/connector/write"
 	"github.com/skenzeriq/activediq/internal/directory/client"
@@ -28,6 +27,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 	"github.com/skenzeriq/activediq/internal/testlab"
+	"github.com/skenzeriq/activediq/lab/labfixture"
 )
 
 // T-0421 on Samba: `make lab-up && go test -tags lab ./internal/compose/server -run TestLabRule5`.

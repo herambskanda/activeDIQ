@@ -1,9 +1,7 @@
-//go:build lab
-
-// Package labfixture is the lab-only LDAP admin fixture helper. Tests outside internal/connector
-// (e.g. internal/compose/server) need to create and look up directory objects on the lab DC; the
-// directory protocol library may only be imported under internal/connector (ADR-0005 O2), so that
-// access lives here. It carries the `lab` build tag and is never part of a ship build.
+// Package labfixture is the lab-only LDAP admin fixture helper (tier L: lab/). Tests such as
+// internal/compose/server need to create and look up objects on the lab DC; the directory protocol
+// library may only be imported under internal/connector, tools/ or lab/ (ADR-0005 O2), so the access
+// lives here. Only lab tests import it; no ship build does.
 package labfixture
 
 import (
