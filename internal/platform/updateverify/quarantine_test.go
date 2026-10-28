@@ -106,6 +106,45 @@ func TestResultOpenDetectsSwapAfterVerify(t *testing.T) {
 	}
 }
 
+func TestResultOpenRefusesWritableByOthers(t *testing.T) {
+	cases := map[string]func(t *testing.T, path string){
+		"parent-swap": func(t *testing.T, path string) {
+			dir := filepath.Dir(path)
+			b, _ := os.ReadFile(path)
+			if err := os.Rename(dir, dir+".old"); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(dir, 0o777); err != nil {
+				t.Fatal(err)
+			}
+			_ = os.Chmod(dir, 0o777)
+			if err := os.WriteFile(path, b, 0o666); err != nil {
+				t.Fatal(err)
+			}
+			_ = os.Chmod(path, 0o666)
+		},
+		"in-place-0666": func(t *testing.T, path string) {
+			if err := os.Chmod(path, 0o666); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+	for name, swap := range cases {
+		w, fl, q := setup(t)
+		res, err := w.verifier(fl, DirQuarantine{q}).Verify(context.Background(), w.input())
+		if err != nil {
+			t.Fatal(err)
+		}
+		swap(t, res.Path)
+		f, err := res.Open()
+		if err == nil {
+			f.Close()
+			t.Fatalf("%s: opened", name)
+		}
+		wantRefusal(t, err, ReasonTamper)
+	}
+}
+
 func TestPinnedComponentRefusesOtherSignedRelease(t *testing.T) {
 	w, fl, q := setup(t) // the signed manifest lists only server/windows
 	for _, pin := range [][2]string{{"agent", "windows"}, {"server", "linux"}} {

@@ -27,3 +27,16 @@ func checkPrivateDir(dir string) error {
 	}
 	return nil
 }
+
+// checkPrivateFile refuses a file another local user could rewrite in place: it must be owned by
+// the process user with no group or other write bit.
+func checkPrivateFile(fi os.FileInfo) error {
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok || int(st.Uid) != os.Geteuid() {
+		return errors.New("not owned by the process user")
+	}
+	if fi.Mode().Perm()&0o022 != 0 {
+		return fmt.Errorf("writable by group or other (mode %o)", fi.Mode().Perm())
+	}
+	return nil
+}

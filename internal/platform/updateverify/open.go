@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 )
 
 // Open returns the verified artefact for the apply mechanism. It reopens the quarantined file,
@@ -21,6 +22,9 @@ func (r *Result) Open() (io.ReadSeekCloser, error) {
 	want, err := hex.DecodeString(r.Release.SHA256)
 	if err != nil || len(want) != sha256.Size {
 		return nil, refuse(ReasonTamper, "artefact", "release hash is not valid")
+	}
+	if err := checkPrivateDir(filepath.Dir(r.Path)); err != nil {
+		return nil, refuse(ReasonTamper, "artefact", "quarantine directory is no longer private: "+err.Error())
 	}
 	li, err := os.Lstat(r.Path)
 	if err != nil {
@@ -40,6 +44,9 @@ func (r *Result) Open() (io.ReadSeekCloser, error) {
 	}
 	if !os.SameFile(li, fi) {
 		return fail(refuse(ReasonTamper, "artefact", "quarantined artefact was replaced"))
+	}
+	if err := checkPrivateFile(fi); err != nil {
+		return fail(refuse(ReasonTamper, "artefact", "quarantined artefact is writable by others: "+err.Error()))
 	}
 	h := sha256.New()
 	n, err := io.Copy(h, io.LimitReader(f, r.Release.Length+1))
