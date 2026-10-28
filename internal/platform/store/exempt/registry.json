@@ -132,6 +132,69 @@
       "reason": "Test: proves the registered SECURITY DEFINER audit_wipe_retired_key refuses a call made with no tenant context (SQLSTATE 42501), which needs a transaction under WithPlatform. It is in a _test.go file and ships in no binary (ADR-0005 rule 11, T-0305).",
       "withPlatform": true,
       "mintsTenantID": false
+    },
+    {
+      "package": "internal/compose/server",
+      "function": "consoleAuthz.Allow",
+      "reason": "The tenant is the one the authority chain's authentication step set on the request context or principal (authority.TenantFrom, apihost.Principal), never a request field; the parse only converts that server-set value to the typed ID and fails closed (ADR-0002 rule 5).",
+      "withPlatform": false,
+      "mintsTenantID": true
+    },
+    {
+      "package": "internal/compose/server",
+      "function": "tenantTier0.Build",
+      "reason": "The tenant is the one the authority chain's authentication step set on the request context or principal (authority.TenantFrom, apihost.Principal), never a request field; the parse only converts that server-set value to the typed ID and fails closed (ADR-0002 rule 5).",
+      "withPlatform": false,
+      "mintsTenantID": true
+    },
+    {
+      "package": "internal/compose/server",
+      "function": "newTenantTier0",
+      "reason": "Startup only: tenant.New() is a throwaway ID handed to the client's own source check so the two cannot drift; it names no tenant, is never stored and reaches no query (ADR-0002 rule 5).",
+      "withPlatform": false,
+      "mintsTenantID": true
+    },
+    {
+      "package": "internal/directory/client",
+      "function": "TunnelSource.Connector",
+      "reason": "The tenant is the one the authority chain's authentication step set on the request context or principal (authority.TenantFrom, apihost.Principal), never a request field; the parse only converts that server-set value to the typed ID and fails closed (ADR-0002 rule 5).",
+      "withPlatform": false,
+      "mintsTenantID": true
+    },
+    {
+      "package": "internal/modules/connections",
+      "function": "StateTenant",
+      "reason": "The tenant prefix of an OAuth state is only a lookup hint to choose whose attempt table to search; the lookup is by the hash of the whole state, so a state never issued for that tenant finds nothing, and the value grants nothing (ADR-0002 rule 5).",
+      "withPlatform": false,
+      "mintsTenantID": true
+    },
+    {
+      "package": "internal/modules/connections",
+      "function": "WindowGate.AllowTenant",
+      "reason": "Holds a tenant.ID key and the zero ID as the overflow bucket of the callback rate window; it reads or writes no data and mints no identity (ADR-0002 rule 5).",
+      "withPlatform": false,
+      "mintsTenantID": true
+    },
+    {
+      "package": "internal/modules/connections",
+      "function": "sessionRequest",
+      "reason": "The tenant is the one the authority chain's authentication step set on the request context or principal (authority.TenantFrom, apihost.Principal), never a request field; the parse only converts that server-set value to the typed ID and fails closed (ADR-0002 rule 5).",
+      "withPlatform": false,
+      "mintsTenantID": true
+    },
+    {
+      "package": "internal/modules/connections",
+      "function": "ReconfirmCorrelation",
+      "reason": "The tenant is the one the runner stored in the operation payload from the authenticated request; the parse converts it to the typed ID and fails closed (ADR-0002 rule 5).",
+      "withPlatform": false,
+      "mintsTenantID": true
+    },
+    {
+      "package": "internal/platform/rbac",
+      "function": "tenantOf",
+      "reason": "The tenant is read back from app.tenant_id, which WithTenant set for this transaction from the authenticated context; the parse only converts it to the typed ID and fails closed (ADR-0002 rule 5).",
+      "withPlatform": false,
+      "mintsTenantID": true
     }
   ],
   "platformJobs": [],
@@ -532,6 +595,11 @@
       "value": "",
       "null": true,
       "reason": "CHECK: a local account carries no SSO, directory or anchor field (authn_accounts_local, DM-36), so the probe row binds NULL."
+    },
+    {
+      "column": "public.authz_assignments.account_id",
+      "value": "0b3f2f9e-6a1c-4c53-9a53-3a7a3f5f1c02",
+      "reason": "CHECK: authz_assignments_subject_shape ties each subject_kind to its columns; the probe row is the default account subject, so account_id is set (DM-36)."
     }
   ]
 }
