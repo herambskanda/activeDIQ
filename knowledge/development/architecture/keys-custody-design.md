@@ -237,7 +237,7 @@ tenant's keys (UPDATE on `state` is granted); the FF-KEY-2 scan covers Go only.
 - **DEK cache.** `KeySource` may cache an unwrapped DEK per `(tenant, version)` in memory for at most
   60 seconds (entries zeroed on expiry and on shred). Other nodes therefore stop using a shredded key
   within 60 s; the `deleting` tenant state already refuses new operations earlier. Unwrap count per
-  tenant is a metric (TM-TB5-T3, T-0177).
+  tenant is a metric (TM-TB5-T3, T-0177): `activediq_keys_dek_unwraps_total{tenant,outcome}`, counted in `keys.UnwrapDEK` (`internal/platform/keys/metrics.go`), so every provider profile is covered.
 
 ## 6. `KeySource` and failure behaviour
 
