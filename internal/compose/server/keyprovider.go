@@ -2,7 +2,6 @@ package server
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"runtime"
 
@@ -72,7 +71,7 @@ func readSmallFile(path string, limit int64) ([]byte, error) {
 	defer f.Close()
 	raw, err := io.ReadAll(io.LimitReader(f, limit+1))
 	if err != nil || int64(len(raw)) > limit {
-		return nil, fmt.Errorf("%w", kekErr(KEKFileUnsafe, EnvKEKDir))
+		return nil, kekErr(KEKFileUnsafe, EnvKEKDir)
 	}
 	return raw, nil
 }
