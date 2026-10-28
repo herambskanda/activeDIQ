@@ -2251,6 +2251,9 @@ from T-0018. AN-9 enters when the PRD offers SPNEGO. The file's header lists eac
      is derived from Entra. It is judged by rule 2(b) only if it is also reachable as a synced group;
      otherwise the AD copy is `unknown` until the lab (G18) shows which side wins on a conflicting
      write `[UNVERIFIED — lab G18]`.
+     Implemented (T-0572): the producer (T-0541) writes the boolean `diq_writtenBack` on every AD
+     group it reads; the judge returns `unknown` when it is `true` **or absent** (marker unread). The
+     exact AD-side writeback marker it is derived from is confirmed in lab G18 / T-0075.
 
   **D18-2. Dynamic-membership groups never grant in v1.** A group whose `groupTypes` contains
   `DynamicMembership` is `ineligible`, whatever its rule, its `membershipRuleProcessingState`
