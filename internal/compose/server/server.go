@@ -136,6 +136,12 @@ func Run(ctx context.Context, cfg config.Config) error {
 	go func() { serveErr <- srv.ServeTLS(ln, "", "") }()
 	slog.Info("server: api listening (TLS)", "addr", ln.Addr().String(), "tls_cert_sha256", id.Fingerprint)
 
+	ops, err := startOps(cfg, id.TLSConfig())
+	if err != nil {
+		_ = srv.Close()
+		return err
+	}
+
 	wctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	workerErr := make(chan error, 1)
@@ -150,6 +156,8 @@ func Run(ctx context.Context, cfg config.Config) error {
 	case err := <-serveErr:
 		firstErr = fmt.Errorf("server: api listener: %w", err)
 		serveErr = nil
+	case err := <-ops.err():
+		firstErr = fmt.Errorf("server: ops listener: %w", err)
 	}
 	cancel()
 	// The listener stops accepting and in-flight requests get the shutdown grace.
@@ -163,6 +171,9 @@ func Run(ctx context.Context, cfg config.Config) error {
 	}
 	if serveErr != nil {
 		<-serveErr
+	}
+	if err := ops.shutdown(sctx); err != nil && firstErr == nil {
+		firstErr = err
 	}
 	if workerErr != nil {
 		if err := <-workerErr; err != nil && firstErr == nil {

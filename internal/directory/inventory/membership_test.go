@@ -43,7 +43,7 @@ func (s tkSrc) TakeoverProtection(context.Context, tenant.ID, inventory.Connecti
 
 // adGroup is an AD group row. groupType -2147483646 is a global security group, 2 a global distribution group.
 func adGroup(g string, groupType int, broad any, members ...string) inventory.Observation {
-	attrs := map[string]any{inventory.AttrGroupType: groupType}
+	attrs := map[string]any{inventory.AttrGroupType: groupType, inventory.AttrWrittenBack: false}
 	if broad != nil {
 		attrs[inventory.AttrBroadMembershipWrite] = broad
 	}
@@ -127,6 +127,35 @@ func TestMembership_eligible_groups(t *testing.T) {
 		}
 		if g.Complete || slices.Contains(guids(g), mEUni) {
 			t.Fatalf("Unified group without visibility: got %v complete=%v, want omitted and incomplete", guids(g), g.Complete)
+		}
+	})
+}
+
+// TM-D18 D18-1 rule 6: a written-back AD copy, or one whose marker was not read, is unknown.
+func TestMembership_writtenBackADGroup(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		ctx := context.Background()
+		const mWB, mNoMark = "aaaaaaaa-0000-4000-8000-0000000000d1", "aaaaaaaa-0000-4000-8000-0000000000d2"
+		wb := adGroup(mWB, -2147483646, false, mUser)
+		wb.Attributes[inventory.AttrWrittenBack] = true
+		nomark := adGroup(mNoMark, -2147483646, false, mUser)
+		delete(nomark.Attributes, inventory.AttrWrittenBack)
+		for _, tc := range []struct {
+			name string
+			grp  inventory.Observation
+			id   string
+		}{{"marker present", wb, mWB}, {"marker unread", nomark, mNoMark}} {
+			if _, err := e.populate(t, e.adA, t1, adUser(mUser, nc1), tc.grp); err != nil {
+				t.Fatal(err)
+			}
+			g, err := e.membership(inventory.Ref{Connection: e.adA, Object: mUser}, authn.KindDirectory, "").GroupsOf(ctx, e.a.String(), mAcct)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if g.Complete || slices.Contains(guids(g), tc.id) {
+				t.Fatalf("%s: got %v complete=%v, want omitted and incomplete", tc.name, guids(g), g.Complete)
+			}
 		}
 	})
 }
