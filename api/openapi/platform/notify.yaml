@@ -1,0 +1,237 @@
+# SIEM syslog destinations (EP-9, TM-TB15-T7; T-0423). Every operation needs siem.destination.manage,
+# including the reads: where a tenant's notifications go is itself sensitive. There is no delete
+# operation: the runtime role cannot delete a destination row. A destination holds no secret; the View
+# states the transport, whether the server certificate is verified and the plaintext opt-in.
+paths:
+  /notify/siem-destinations:
+    get:
+      tags: [platform.notify]
+      operationId: listSiemDestinations
+      summary: List the SIEM syslog destinations
+      description: >-
+        Answers every destination of the tenant, oldest first. A tenant has a handful of destinations,
+        so the list is not paged.
+      x-permission: siem.destination.manage
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: read
+      responses:
+        "200":
+          description: The destinations
+          content:
+            application/json:
+              schema:
+                $ref: platform/notify.yaml#/components/schemas/SiemDestinationList
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+    post:
+      tags: [platform.notify]
+      operationId: createSiemDestination
+      summary: Create a SIEM syslog destination
+      description: >-
+        Creates a destination. The default transport is TLS with certificate verification; plaintext TCP
+        needs transport tcp together with plaintextOptIn true, and the opt-in is audited. The
+        Idempotency-Key is the request ID of the audit events and names the destination: a retry with the
+        same key and body answers the destination already created and changes nothing, and the
+        same key with a different body is refused.
+      x-permission: siem.destination.manage
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: write
+        maxBodyBytes: 2048
+      parameters:
+        - $ref: platform/notify.yaml#/components/parameters/RequiredIdempotencyKey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: platform/notify.yaml#/components/schemas/SiemDestinationWrite
+      responses:
+        "201":
+          description: The destination is created
+          content:
+            application/json:
+              schema:
+                $ref: platform/notify.yaml#/components/schemas/SiemDestination
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "413":
+          $ref: shared/problems.yaml#/components/responses/PayloadTooLarge
+        "415":
+          $ref: shared/problems.yaml#/components/responses/UnsupportedMediaType
+        "422":
+          $ref: shared/problems.yaml#/components/responses/IdempotencyKeyReuse
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+  /notify/siem-destinations/{destinationId}:
+    get:
+      tags: [platform.notify]
+      operationId: getSiemDestination
+      summary: Get a SIEM syslog destination
+      x-permission: siem.destination.manage
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: read
+      parameters:
+        - $ref: platform/notify.yaml#/components/parameters/DestinationId
+      responses:
+        "200":
+          description: The destination
+          content:
+            application/json:
+              schema:
+                $ref: platform/notify.yaml#/components/schemas/SiemDestination
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "404":
+          $ref: shared/problems.yaml#/components/responses/NotFound
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+    put:
+      tags: [platform.notify]
+      operationId: updateSiemDestination
+      summary: Replace the settings of a SIEM syslog destination
+      description: >-
+        Replaces the writable fields. The change redirects the SIEM stream, so it is audited with the
+        previous and the new target. The Idempotency-Key is the request ID of the audit events; use a new
+        key for each intended change.
+      x-permission: siem.destination.manage
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: write
+        maxBodyBytes: 2048
+      parameters:
+        - $ref: platform/notify.yaml#/components/parameters/DestinationId
+        - $ref: platform/notify.yaml#/components/parameters/RequiredIdempotencyKey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: platform/notify.yaml#/components/schemas/SiemDestinationWrite
+      responses:
+        "200":
+          description: The destination as stored
+          content:
+            application/json:
+              schema:
+                $ref: platform/notify.yaml#/components/schemas/SiemDestination
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "404":
+          $ref: shared/problems.yaml#/components/responses/NotFound
+        "413":
+          $ref: shared/problems.yaml#/components/responses/PayloadTooLarge
+        "415":
+          $ref: shared/problems.yaml#/components/responses/UnsupportedMediaType
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+components:
+  parameters:
+    DestinationId:
+      name: destinationId
+      in: path
+      required: true
+      description: The destination.
+      schema:
+        type: string
+        format: uuid
+    RequiredIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: The request ID. It names the audit events of the change and makes a retry of a create safe.
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+        pattern: ^[A-Za-z0-9._~-]+$
+  schemas:
+    SiemTransportSetting:
+      description: tls is RFC 5425 with certificate verification and is the default; tcp is plaintext and needs the opt-in. UDP is not offered.
+      type: string
+      enum: [tls, tcp]
+    SiemTransport:
+      description: The transport of a stored destination. Clients ignore values they do not know.
+      type: string
+      enum: [tls, tcp]
+      x-activediq-enum: open
+    SiemDestinationWrite:
+      description: The writable settings of a destination.
+      type: object
+      required: [host]
+      additionalProperties: false
+      properties:
+        host:
+          type: string
+          minLength: 1
+          maxLength: 253
+          description: A plain host name or IP address. No scheme, port or path.
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+          description: Absent takes 6514 for tls and 514 for tcp.
+        transport:
+          $ref: platform/notify.yaml#/components/schemas/SiemTransportSetting
+        plaintextOptIn:
+          type: boolean
+          description: Must be true with transport tcp and false or absent with tls.
+    SiemDestination:
+      description: A destination as stored. It never carries a credential.
+      type: object
+      required: [id, host, port, transport, tlsVerified, plaintextOptIn]
+      properties:
+        id:
+          type: string
+          format: uuid
+        host:
+          type: string
+          maxLength: 253
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        transport:
+          $ref: platform/notify.yaml#/components/schemas/SiemTransport
+        tlsVerified:
+          type: boolean
+          description: True when the server certificate is verified (transport tls).
+        plaintextOptIn:
+          type: boolean
+        warning:
+          type: string
+          maxLength: 256
+          description: Present for a plaintext destination.
+    SiemDestinationList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: platform/notify.yaml#/components/schemas/SiemDestination

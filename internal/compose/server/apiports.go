@@ -6,6 +6,7 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/modules/connections"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
+	"github.com/skenzeriq/activediq/internal/platform/notify/syslog"
 )
 
 // APIPolicy is the policy the server passes to apihost.Build: policy.yaml as embedded in the binary
@@ -22,7 +23,7 @@ func APIPolicy() apihost.Policy {
 
 // apiCatalogue is the EP-6 permission set as far as mounted operations use it: Build fails an operation
 // whose permission is missing here rather than serving it unguarded.
-var apiCatalogue = apihost.Permissions{string(connections.TakeoverAttestPermission)}
+var apiCatalogue = apihost.Permissions{string(connections.TakeoverAttestPermission), syslog.ManagePermission}
 
 // failClosedPorts are the ports with no console stack behind them: authentication, RBAC and step-up
 // refuse everything, so a route mounted on them cannot be reached. Tests use them; Run mounts

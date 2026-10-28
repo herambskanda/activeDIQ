@@ -63,7 +63,10 @@ type Derivation struct {
 // connections. Rule 5 (h): they are assigned only to the console account itself.
 var neverCrossPrefixes = []string{"rbac.", "authz.", "delegation.", "scope.", "connections.", "tenant.",
 	// inventory.tier0_ administers the Tier-0 designation itself (TM-D2, rule 5 (h)).
-	"inventory.tier0_"}
+	"inventory.tier0_",
+	// siem. redirects where the tenant's notifications are sent (TM-TB15-T7): configuration of the platform
+	// itself, assigned only to the console account.
+	"siem."}
 
 // NeverCrosses reports whether permission p is one that never carries across a correlation.
 func NeverCrosses(p Permission) bool {
