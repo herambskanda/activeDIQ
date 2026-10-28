@@ -242,7 +242,8 @@ func (r *Runner) planAndRoute(ctx context.Context, t tenant.ID, opID string, inp
 			if r.cfg.Pinner == nil {
 				return r.failPlan(ctx, t, op, fmt.Errorf("%w: no DC pinner wired", ErrInvalid))
 			}
-			pin, err := r.cfg.Pinner.Pin(ctx, sp.Target.Connection, sp.Target.NC, pins[sp.Target.NC])
+			// The operation's own tenant always wins over whatever the caller's ctx carries.
+			pin, err := r.cfg.Pinner.Pin(authority.WithTenant(ctx, t.String()), sp.Target.Connection, sp.Target.NC, pins[sp.Target.NC])
 			if err != nil {
 				return r.failPlan(ctx, t, op, fmt.Errorf("pinning a DC: %w", err))
 			}
