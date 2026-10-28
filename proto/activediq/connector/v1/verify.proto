@@ -466,6 +466,12 @@ message VerificationCompleted {
   // run. The record itself stays on the connector host; this count lets an honest server raise a
   // health finding.
   uint32 tier0_inputs_dropped = 7;
+  // Contract v1.3 (T-0412): the directory the run was answered against, as V5 (AD: objectGUID of
+  // the forest root domain NC head) or EV2 (Entra: the tenant id) read it. Set on every run whose
+  // verdict is not FAILED or COULD_NOT_VERIFY; the server records it on the connection (DM-10.I1)
+  // and rejects a run that lacks it, or carries the other directory kind, fail-closed
+  // (client.ErrIdentityMissing / ErrIdentityMismatch). Identifiers only, never names.
+  DirectoryIdentity directory_identity = 8;
 }
 
 message VerifyConnectionResponse {

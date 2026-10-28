@@ -22,6 +22,12 @@ var (
 	// ErrStreamProtocol: the stream broke contract §2 rule 11 or §8.4 (no header, a second header,
 	// a message after completion, no completion, counts that do not add up, a mismatched run id).
 	ErrStreamProtocol = errors.New("client: verify stream violates the contract")
+	// ErrIdentityMissing: a run that reached a verdict beyond FAILED / COULD_NOT_VERIFY did not carry
+	// the directory identity V5 (AD) or EV2 (Entra) read (contract v1.3). Fail-closed: no result.
+	ErrIdentityMissing = errors.New("client: verify response carries no directory identity")
+	// ErrIdentityMismatch: the identity is malformed or is of the other directory kind than the
+	// connection (an Entra tenant id on an AD forest, or the reverse).
+	ErrIdentityMismatch = errors.New("client: verify response directory identity does not fit the connection")
 )
 
 // VerifyScope is what a run is told it manages (contract §8.4): the families the connection has
@@ -198,6 +204,9 @@ func foldVerify(st VerifyStream, req connection.VerifyRequest) (connection.Verif
 			if res.Outcomes, err = mapChecks(cm.GetChecks()); err != nil {
 				return connection.VerifyResult{}, err
 			}
+			if res.DirectoryIdentity, err = mapDirectoryIdentity(cm.GetDirectoryIdentity(), req.Connection.Kind, res.Verdict); err != nil {
+				return connection.VerifyResult{}, err
+			}
 		default:
 			return connection.VerifyResult{}, protocolErr("unknown message")
 		}
@@ -206,6 +215,42 @@ func foldVerify(st VerifyStream, req connection.VerifyRequest) (connection.Verif
 		return connection.VerifyResult{}, protocolErr("no completion")
 	}
 	return res, nil
+}
+
+// mapDirectoryIdentity reads `completed.directory_identity` (contract v1.3). It is required unless
+// the run failed or could not verify; when present it must be of the connection's directory kind and
+// a canonical GUID / UUID. The text never echoes the wire value.
+func mapDirectoryIdentity(d *connectorv1.DirectoryIdentity, kind connection.Kind, v connection.Verdict) (connection.DirectoryIdentity, error) {
+	if d.GetIdentity() == nil {
+		if v == connection.VerdictFailed || v == connection.VerdictCouldNotVerify {
+			return "", nil
+		}
+		return "", ErrIdentityMissing
+	}
+	var text string
+	switch id := d.GetIdentity().(type) {
+	case *connectorv1.DirectoryIdentity_AdForest:
+		if kind != connection.KindADForest {
+			return "", ErrIdentityMismatch
+		}
+		g, err := guidText(id.AdForest.GetForestRootNcGuid().GetValue())
+		if err != nil {
+			return "", ErrIdentityMismatch
+		}
+		text = g
+	case *connectorv1.DirectoryIdentity_EntraTenantId:
+		if kind != connection.KindEntraTenant {
+			return "", ErrIdentityMismatch
+		}
+		text = id.EntraTenantId
+	default:
+		return "", ErrIdentityMismatch
+	}
+	out, err := connection.ParseDirectoryIdentity(text)
+	if err != nil {
+		return "", ErrIdentityMismatch
+	}
+	return out, nil
 }
 
 func mapVerdict(v connectorv1.VerificationVerdict) (connection.Verdict, error) {
