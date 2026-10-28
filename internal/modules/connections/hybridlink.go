@@ -109,7 +109,7 @@ func hybridLinkAction(m linkMode) (operation.Action, error) {
 	return operation.Define(operation.Typed[HybridLinkInput, linkPayload, HybridLinkOutcome]{
 		Descriptor: operation.Descriptor{
 			ID: m.id, Version: 1, Permission: HybridLinkPermission, Input: operation.SchemaRef(m.input),
-			Target: operation.TargetStore, Reversibility: operation.Irreversible, AuditKind: audit.Kind(m.audit), StepUp: m.stepUp,
+			Target: operation.TargetStore, Reversibility: operation.Irreversible, AuditKind: audit.Kind(m.audit), StepUp: m.stepUp, ControlPlane: true,
 		},
 		Plan: func(ctx context.Context, pc operation.PlanContext, in HybridLinkInput) ([]operation.TypedStep[linkPayload], error) {
 			p, err := planLink(ctx, pc, st, m, in)

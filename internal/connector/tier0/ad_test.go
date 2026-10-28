@@ -65,7 +65,7 @@ const (
 // forest builds the lab: every C row has at least one object, plus plain objects that must stay out.
 func forest() *fakeDir {
 	f := newFake()
-	f.add(dom, dsid, cls("top", "domain", "domainDNS"), "msDS-Behavior-Version", "7", "wellKnownObjects", "B:32:A361B2FFFFD211D1AA4B00C04FD7D83A:OU=Domain Controllers,"+dom,
+	f.add(dom, dsid, cls("top", "domain", "domainDNS"), "msDS-Behavior-Version", "7", "fSMORoleOwner", "CN=NTDS Settings,CN=DC1,CN=Servers,CN=Default-First-Site-Name,CN=Sites,"+cfg, "wellKnownObjects", "B:32:A361B2FFFFD211D1AA4B00C04FD7D83A:OU=Domain Controllers,"+dom,
 		"gPLink", link(gDom, "0"))
 	f.add(cfg, "", cls("top", "configuration"))
 	f.add("CN=Schema,"+cfg, "", cls("top", "dMD"))
@@ -144,7 +144,7 @@ func forest() *fakeDir {
 
 	// C5, C6, C15: DC1 in the default OU, DC2 moved out; two sites, one holding DCs.
 	f.add("OU=Domain Controllers,"+dom, "", ou, "gPLink", link(gDCOU, "0"))
-	f.add("CN=DC1,OU=Domain Controllers,"+dom, dsid+"-1000", comp, "userAccountControl", "532480", "dNSHostName", "dc1.lab.test", "sAMAccountName", "DC1$")
+	f.add("CN=DC1,OU=Domain Controllers,"+dom, dsid+"-1000", comp, "userAccountControl", "532480", "dNSHostName", "dc1.lab.test", "sAMAccountName", "DC1$", "operatingSystemVersion", "10.0 (17763)")
 	rb := f.add("CN=DC2,OU=Servers,"+dom, dsid+"-1001", comp, "userAccountControl", "8192", "dNSHostName", "dc2.lab.test", "sAMAccountName", "DC2$")
 	rb.raw["msDS-AllowedToActOnBehalfOfOtherIdentity"] = sdBytes(aceSpec{sid: dsid + "-1301", mask: 0x10})
 	f.add("OU=Servers,"+dom, "", ou, "gPLink", link(gServ, "0"))
@@ -640,18 +640,68 @@ func TestHiddenProtectedGroupFailsClosed(t *testing.T) {
 	}
 }
 
-func TestKeyAdminsRequireFunctionalLevel2016(t *testing.T) {
-	for _, g := range []string{"CN=Key Admins,CN=Users," + dom, "CN=Enterprise Key Admins,CN=Users," + dom} {
-		pre := forest()
-		pre.find(dom).attrs["msds-behavior-version"] = []string{"6"}
-		pre.drop(g)
-		if r, err := classify(t, pre, "CN=carol,OU=Staff,"+dom); err != nil || r.Unknown {
-			t.Errorf("%s absent below 2016 must succeed: %+v %v", g, r, err)
+func keyAdminsGroups() []string {
+	return []string{"CN=Key Admins,CN=Users," + dom, "CN=Enterprise Key Admins,CN=Users," + dom}
+}
+
+const dc1Comp = "CN=DC1,OU=Domain Controllers," + dom
+
+// T-0631 (TM-R25): below functional level 7 the groups exist when the PDC emulator is 2016+.
+func TestKeyAdminsHiddenWith2016PDCFailsClosed(t *testing.T) {
+	for i, g := range keyAdminsGroups() {
+		f := forest()
+		f.find(dom).attrs["msds-behavior-version"] = []string{"6"}
+		f.drop(g)
+		r, err := classify(t, f, "CN=carol,OU=Staff,"+dom)
+		want := []string{"-526", "-527"}[i]
+		if err == nil || !r.Unknown || !strings.Contains(err.Error(), "S-1-5-21-") || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: want Unknown naming %s, got %+v %v", g, want, r, err)
 		}
-		cur := forest()
-		cur.drop(g)
-		if r, err := classify(t, cur, "CN=carol,OU=Staff,"+dom); err == nil || !r.Unknown {
-			t.Errorf("%s absent at 2016 must fail closed: %+v %v", g, r, err)
+	}
+}
+
+func TestKeyAdminsAbsentWith2012R2PDCSucceeds(t *testing.T) {
+	for _, g := range keyAdminsGroups() {
+		f := forest()
+		f.find(dom).attrs["msds-behavior-version"] = []string{"6"}
+		f.find(dc1Comp).attrs["operatingsystemversion"] = []string{"6.3 (9600)"}
+		f.drop(g)
+		if r, err := classify(t, f, "CN=carol,OU=Staff,"+dom); err != nil || r.Unknown {
+			t.Errorf("%s absent with 2012R2 PDC must succeed: %+v %v", g, r, err)
+		}
+	}
+}
+
+func TestKeyAdminsAbsentAtLevel2016FailsClosedRegardlessOfPDC(t *testing.T) {
+	for _, g := range keyAdminsGroups() {
+		f := forest()
+		f.find(dc1Comp).attrs["operatingsystemversion"] = []string{"6.3 (9600)"}
+		f.drop(g)
+		if r, err := classify(t, f, "CN=carol,OU=Staff,"+dom); err == nil || !r.Unknown {
+			t.Errorf("%s absent at level 7 must fail closed: %+v %v", g, r, err)
+		}
+	}
+}
+
+func TestKeyAdminsUnreadablePDCFailsClosed(t *testing.T) {
+	cuts := map[string]func(f *fakeDir){
+		"no fSMORoleOwner":      func(f *fakeDir) { delete(f.find(dom).attrs, "fsmoroleowner") },
+		"bad fSMORoleOwner":     func(f *fakeDir) { f.find(dom).attrs["fsmoroleowner"] = []string{"not a dn"} },
+		"server object missing": func(f *fakeDir) { f.drop("CN=DC1,CN=Servers,CN=Default-First-Site-Name,CN=Sites," + cfg) },
+		"no serverReference": func(f *fakeDir) {
+			delete(f.find("CN=DC1,CN=Servers,CN=Default-First-Site-Name,CN=Sites,"+cfg).attrs, "serverreference")
+		},
+		"computer missing":          func(f *fakeDir) { f.drop(dc1Comp) },
+		"no operatingSystemVersion": func(f *fakeDir) { delete(f.find(dc1Comp).attrs, "operatingsystemversion") },
+		"garbled version":           func(f *fakeDir) { f.find(dc1Comp).attrs["operatingsystemversion"] = []string{"junk"} },
+	}
+	for name, cut := range cuts {
+		f := forest()
+		f.find(dom).attrs["msds-behavior-version"] = []string{"6"}
+		f.drop(keyAdminsGroups()[0])
+		cut(f)
+		if r, err := classify(t, f, "CN=carol,OU=Staff,"+dom); err == nil || !r.Unknown {
+			t.Errorf("%s: want fail closed, got %+v %v", name, r, err)
 		}
 	}
 }

@@ -64,3 +64,5 @@ lab/windows/.win-lab-ca.pem
 !/tools/fitness/*/*.go
 !/tools/fitness/*/*.txt
 !/tools/fitness/*/testdata/
+# stray `go build ./tools/fitness/audit` output
+/audit
