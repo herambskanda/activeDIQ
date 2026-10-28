@@ -85,7 +85,7 @@ The service runs in a Windows job object: CPU hard-cap `[EST]` 5% of the DC (con
 | C15 | Candidate-password IPC content (TB12-T7, TM-Q19 first half) | **Not decided here.** Constraint for T-0145: the pipe carries no more than the candidate and verdict; never logged; zeroed at both ends; no field of the `addc` surface or event record may carry a password or hash | R5 lint: no field named or typed as password/credential in `addc.v1`; remainder T-0145 |
 | C16 | Fail-open/closed of the filter (TB12-T6) | **Out of scope**: CEO decision TM-Q20 before M4. The host contract has no setting for it, so a policy cannot choose it | R2 (no such field) |
 
-R-tests run in `fitness-agent-host` (CI) and the proto lint; L/lab tests run in the Windows lab. `fitness-agent-host` is the ADR-0006/0007 fitness function and is the CI half of TM-F-AGENTCMD for `addc`.
+R-tests run in `fitness-agent-host` (CI, `tools/fitness/agenthost`, T-0554: R1/R2/R5 call the AG rules of `fitness-proto`, R3/R4 scan agent-owned Go source, F1 is `internal/platform/agentpolicy/f1_test.go` and its fuzz target) and the proto lint; L/lab tests run in the Windows lab. `fitness-agent-host` is the ADR-0006/0007 fitness function and is the CI half of TM-F-AGENTCMD for `addc`.
 
 ## 7. Open items
 

@@ -1,7 +1,7 @@
 ---
 title: "Runbook: CI, build and the repository scaffold"
 date: 2026-10-02
-updated: 2026-10-21
+updated: 2026-10-28
 status: draft
 owner: devops-engineer
 ticket: T-0014
@@ -276,3 +276,19 @@ What it enforces: a booted install is judged on eight named cases (threat-model 
 - **Open gaps:** `HOST-NO-DUMPS` on linux-oci (T-0634); `HOST-DC-REFUSED` (T-0635) and `HOST-SETUP-SECRET-SINGLE-USE`
   (T-0636) are INACTIVE until their product subject exists. The positive verify-full DSN control needs a TLS
   PostgreSQL and is covered by `store.CheckTransport`'s own tests.
+
+## `fitness-agent-host` (T-0554: ADR-0006 A1/A4, ADR-0007 P1-P8, contract R1-R5, F1)
+
+`make fitness-agent-host` (part of `make fitness` and `make ci`). Run a subset: `go run ./tools/fitness/agenthost -checks A1,P`. It prints one line per check; `inactive (<missing input>)` means the subject does not exist yet and the check did not run (exit 0). **ADR-0006 and ADR-0007 become `accepted` only when no line is inactive** and the lab items in ADR-0006 "Verification owed" are confirmed.
+
+| Check | Inactive until | Who lands it |
+| --- | --- | --- |
+| R1, R2, R5 | `proto/skenzeriq/agent/v1/*.proto` and `proto/activediq/addc/v1/*.proto` exist | T-0600 (the proto) |
+| A1 | a WiX source under `packaging/` that names the agent (file name contains `agent`, or body mentions `activediq-agent`/`activeDIQAgent`) | the agent MSI ticket (windows-engineer) |
+| R3, R4, A4, P1-P8, F1 | always active | — |
+
+**What the installer author must write for A1.** The WiX source must contain a `ServiceInstall` with `Account="NT SERVICE\activeDIQAgent"` and no `Password`; `ServiceSid="restricted"` and `RequiredPrivileges="SeChangeNotifyPrivilege"` on that `ServiceInstall` or on a `ServiceConfig` beneath it (a `RequiredPrivilege Name=`/`Privilege Name=` child element is also read). Any text `LocalSystem`, `LocalService`, `NetworkService`, `NT AUTHORITY\SYSTEM` or SIDs S-1-5-18/19/20 anywhere in an agent installer file fails, comments included, so write "never the system account" rather than the name. If WiX spells the privilege list differently, extend `judgeInstallerXML` and its fixture together; do not loosen the pin.
+
+**If it fails.** The line names the rule and the file. A4: the import path is in the message; the agent has no directory or network-identity client, so remove the import, never the ban. P/F1: the test name is printed; fix the verifier or the bound, never the test. A missing test means a rename: P1-P8 are found by the prefixes `TestP1`…`TestP8`, `TestF1`, `FuzzF1`. A `FuzzF1` crasher is written to `internal/platform/agentpolicy/testdata/fuzz/`: commit it as a regression seed. `make fitness-agent-host AGENT_POLICY_FUZZ_TIME=2s` for a quick local run.
+
+**Not covered here (lab or other tickets).** ADR-0006 A2/A3 (token privilege refusal, channel ACE read, write-denied outside the data directory) run in the Windows lab; F2/F3 (hostile in-bounds policy has no side effect beyond verdicts, applying a policy writes the local entry) need the agent host and rule engine; S1 is T-0556's ingest test.

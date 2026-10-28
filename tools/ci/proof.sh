@@ -998,6 +998,78 @@ must_fail_with "workflows-check on an unpinned action" 'not pinned' tools/ci/wor
 cp "$root/.github/workflows/release.yml" "$wf/"; sed -i 's/sign verify/sign noop/' "$wf/release.yml"
 must_fail_with "workflows-check on a release that does not verify" 'without verifying' tools/ci/workflows-check.sh "$wf"
 
+# --- fitness-agent-host (T-0554) ----------------------------------------------------------------
+# The Go-test half (P1-P8, F1) is judged from `go test -json`; judgeTests' cases fail on a failed,
+# skipped or deleted test (tools/fitness/agenthost/check_test.go). The CLI cases below use -skip-tests.
+ah="$tmp/agenthost"; mkdir -p "$ah/proto/skenzeriq/agent/v1" "$ah/proto/activediq/addc/v1" "$ah/proto/activediq/fleet/v1"
+cp "$root/proto/activediq/fleet/v1/fleet.proto" "$ah/proto/activediq/fleet/v1/"
+cat >"$ah/proto/skenzeriq/agent/v1/agent.proto" <<'PROTO'
+syntax = "proto3";
+package skenzeriq.agent.v1;
+message Empty {}
+message SignedPolicy { bytes payload = 1; bytes signature = 2; }
+message SignedKeyset { bytes payload = 1; bytes signature = 2; }
+message StageRequest { bytes tuf_metadata = 1; bytes artefact_digest = 2; }
+message AckRequest { uint64 through_agent_seq = 1; }
+message Status { uint64 policy_seq = 1; }
+service Host {
+  rpc GetStatus(Empty) returns (Status);
+  rpc ApplyPolicy(SignedPolicy) returns (Status);
+  rpc ApplyKeyset(SignedKeyset) returns (Status);
+  rpc StageUpdate(StageRequest) returns (Status);
+  rpc AckEvents(AckRequest) returns (Status);
+}
+PROTO
+cat >"$ah/proto/activediq/addc/v1/addc.proto" <<'PROTO'
+syntax = "proto3";
+package activediq.addc.v1;
+message Empty {}
+message CollectionState { uint64 last_event_record_id = 1; }
+message PasswordPolicy { uint32 min_length = 1; repeated string banned_terms = 2; }
+message AddcPolicy { PasswordPolicy password = 1; bool collection_enabled = 2; }
+service Addc { rpc GetCollectionState(Empty) returns (CollectionState); }
+PROTO
+mkdir -p "$ah/packaging/windows" "$ah/cmd/agent" "$ah/internal/agentmodules/addc" "$ah/internal/directory/client"
+cat >"$ah/packaging/windows/agent.wxs" <<'WXS'
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"><Package Name="agent">
+<ServiceInstall Name="activediq-agent" Account="NT SERVICE\activeDIQAgent" Start="auto">
+<ServiceConfig ServiceSid="restricted" RequiredPrivileges="SeChangeNotifyPrivilege" /></ServiceInstall></Package></Wix>
+WXS
+printf 'module fx.test\n\ngo 1.22\n' >"$ah/go.mod"
+printf 'package client\n' >"$ah/internal/directory/client/c.go"
+printf 'package main\n\nfunc main() {}\n' >"$ah/cmd/agent/main.go"
+printf 'package addc\n' >"$ah/internal/agentmodules/addc/a.go"
+agenthost() { go run ./tools/fitness/agenthost -skip-tests -root "$@"; }
+must_pass "fitness-agent-host on a clean agent tree" agenthost "$ah"
+cp "$ah/proto/skenzeriq/agent/v1/agent.proto" "$tmp/agent.proto.clean"
+sed -i 's/service Host {/service Host { rpc RunCommand(Empty) returns (Status);/' "$ah/proto/skenzeriq/agent/v1/agent.proto"
+must_fail_with "fitness-agent-host on a denied verb (exec) in the agent proto (R1)" '\[AG2\].*contains .run.' agenthost "$ah"
+cp "$tmp/agent.proto.clean" "$ah/proto/skenzeriq/agent/v1/agent.proto"
+cp "$ah/proto/activediq/addc/v1/addc.proto" "$tmp/addc.proto.clean"
+sed -i 's/bool collection_enabled = 2;/bool collection_enabled = 2; string log_path = 3;/' "$ah/proto/activediq/addc/v1/addc.proto"
+must_fail_with "fitness-agent-host on a path field in the policy (R2)" '\[AG4\]' agenthost "$ah"
+sed -i 's/string log_path = 3;/uint32 password_hash = 3;/' "$ah/proto/activediq/addc/v1/addc.proto"
+must_fail_with "fitness-agent-host on a password field in the addc surface (R5)" 'AG6' agenthost "$ah"
+cp "$tmp/addc.proto.clean" "$ah/proto/activediq/addc/v1/addc.proto"
+cp "$ah/packaging/windows/agent.wxs" "$tmp/agent.wxs.clean"
+sed -i 's/NT SERVICE\\activeDIQAgent/LocalSystem/' "$ah/packaging/windows/agent.wxs"
+must_fail_with "fitness-agent-host on LocalSystem in the MSI source (A1)" 'LocalSystem' agenthost "$ah"
+cp "$tmp/agent.wxs.clean" "$ah/packaging/windows/agent.wxs"
+sed -i 's/SeChangeNotifyPrivilege/SeChangeNotifyPrivilege SeBackupPrivilege/' "$ah/packaging/windows/agent.wxs"
+must_fail_with "fitness-agent-host on an extra privilege in the MSI source (A1)" 'RequiredPrivileges are' agenthost "$ah"
+cp "$tmp/agent.wxs.clean" "$ah/packaging/windows/agent.wxs"
+printf 'package main\n\nimport _ "fx.test/internal/directory/client"\n\nfunc main() {}\n' >"$ah/cmd/agent/main.go"
+must_fail_with "fitness-agent-host on a directory client in the agent binary (A4)" 'internal/directory/client' agenthost "$ah"
+printf 'package main\n\nfunc main() {}\n' >"$ah/cmd/agent/main.go"
+printf 'package addc\n\nimport "os/exec"\n\nvar _ = exec.Command\n' >"$ah/internal/agentmodules/addc/a.go"
+must_fail_with "fitness-agent-host on os/exec in an agent module (R3)" 'imports os/exec' agenthost "$ah"
+printf 'package addc\n' >"$ah/internal/agentmodules/addc/a.go"
+printf 'package main\n\nimport "net"\n\nfunc main() { _, _ = net.Listen("tcp", ":1") }\n' >"$ah/cmd/agent/main.go"
+must_fail_with "fitness-agent-host on a listener in the agent (R4)" 'calls net.Listen' agenthost "$ah"
+printf 'package main\n\nfunc main() {}\n' >"$ah/cmd/agent/main.go"
+must_pass "fitness-agent-host after the violations are removed" agenthost "$ah"
+must_pass "fitness-agent-host is wired into make fitness" bash -c "make -n fitness | grep -q 'tools/fitness/agenthost'"
+
 # --- fuzz-target / fuzz-saml (T-0490) -----------------------------------------------------------
 fz="$tmp/fuzz"
 mkdir -p "$fz"
