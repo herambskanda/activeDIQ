@@ -64,7 +64,7 @@ func (d defined[In, P, Out]) Describe() Descriptor { return d.t.Descriptor }
 
 func (d defined[In, P, Out]) Plan(ctx context.Context, pc PlanContext, in Input) ([]StepPlan, error) {
 	var typed In
-	if err := json.Unmarshal(in, &typed); err != nil {
+	if err := json.Unmarshal(in, &typed, json.RejectUnknownMembers(true)); err != nil {
 		return nil, fmt.Errorf("%w: input does not decode", ErrInvalid)
 	}
 	steps, err := d.t.Plan(ctx, pc, typed)
