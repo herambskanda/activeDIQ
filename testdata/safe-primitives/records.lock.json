@@ -543,6 +543,7 @@
       "SD-E10E": true,
       "SD-E10F": false,
       "SD-E10G": false,
+      "SD-E10H": true,
       "SD-E11": true,
       "SD-E12": true,
       "SD-E12B": true,
@@ -578,7 +579,11 @@
       "SD-W15": true,
       "SD-W16": true,
       "SD-W17": true,
-      "SD-W18": false
+      "SD-W18": false,
+      "SD-W19": true,
+      "SD-W20": true,
+      "SD-W21": false,
+      "SD-W22": true
     },
     "sql": {
       "SQL-03": true,

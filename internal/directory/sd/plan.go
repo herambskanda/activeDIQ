@@ -51,12 +51,19 @@ func editableBase(base SD, allowOrder bool) error {
 // positions; new ACEs go to their canonical position. Nothing is repaired silently: a base that is
 // not editable, a diff that would write an inert or unstorable ACE, a stale reference or a result
 // that would lock the connector out is an error with a stable code.
-func PlanDACL(base SD, d ACEDiff, cat RightsCatalog, o ObjectCtx, opt PlanOpts) (DACLWrite, Plan, error) {
+func PlanDACL(in SD, d ACEDiff, cat RightsCatalog, o ObjectCtx, opt PlanOpts) (DACLWrite, Plan, error) {
 	var plan Plan
+	base, err := in.trusted()
+	if err != nil {
+		return DACLWrite{}, plan, err
+	}
+	if o.ObjectGUID == (guid.GUID{}) {
+		return DACLWrite{}, plan, fail(ErrObjectRequired)
+	}
 	if o.ProtectedBySDProp {
 		return DACLWrite{}, plan, fail(ErrSDPropWillRevert)
 	}
-	if err := editableBase(base, opt.Normalize); err != nil {
+	if err = editableBase(base, opt.Normalize); err != nil {
 		return DACLWrite{}, plan, err
 	}
 	if d.WantControl != nil && (*d.WantControl^base.Control)&(ControlDACLProtected|ControlDACLAutoInh) != 0 {
@@ -138,9 +145,9 @@ func PlanDACL(base SD, d ACEDiff, cat RightsCatalog, o ObjectCtx, opt PlanOpts) 
 		origin[pos] = i
 	}
 	plan.Inserted = make([]int, len(adds))
-	for i, o := range origin {
-		if o >= 0 {
-			plan.Inserted[o] = i
+	for i, oi := range origin {
+		if oi >= 0 {
+			plan.Inserted[oi] = i
 		}
 	}
 	rev := base.DACL.Revision
@@ -153,12 +160,19 @@ func PlanDACL(base SD, d ACEDiff, cat RightsCatalog, o ObjectCtx, opt PlanOpts) 
 }
 
 // PlanInheritance changes the DACL-protected flag. It is the only function that does.
-func PlanInheritance(base SD, op InheritanceOp, o ObjectCtx) (DACLWrite, Plan, error) {
+func PlanInheritance(in SD, op InheritanceOp, o ObjectCtx) (DACLWrite, Plan, error) {
 	var plan Plan
+	base, err := in.trusted()
+	if err != nil {
+		return DACLWrite{}, plan, err
+	}
+	if o.ObjectGUID == (guid.GUID{}) {
+		return DACLWrite{}, plan, fail(ErrObjectRequired)
+	}
 	if o.ProtectedBySDProp {
 		return DACLWrite{}, plan, fail(ErrSDPropWillRevert)
 	}
-	if err := editableBase(base, false); err != nil {
+	if err = editableBase(base, false); err != nil {
 		return DACLWrite{}, plan, err
 	}
 	if len(o.Connector.sids) == 0 {
@@ -215,6 +229,25 @@ func finish(base SD, o ObjectCtx, baseDigest Digest, rev uint8, aces []ACE, ctl 
 	after := Grants(o.Connector, right, withDACL(base, rev, aces))
 	if after.Decision == No && before.Decision != No {
 		return DACLWrite{}, plan, fail(ErrSelfLockout)
+	}
+	// A connector that holds WRITE_DAC only through the owner's implicit rights loses them as soon as
+	// the DACL names the owner or OWNER RIGHTS (MS-DTYP 2.5.3.2): both answers are Unknown, so test
+	// that case directly and require an explicit WRITE_DAC allow for such an ACE.
+	if before.Decision == Unknown && before.Why == "implicit_owner_rights" {
+		named := false
+		for _, a := range aces {
+			if a.Kind != Opaque && !a.InheritOnly() && (a.Trustee == sidOwnerRights || (base.HasOwner && a.Trustee == base.Owner)) {
+				named = true
+			}
+		}
+		if named {
+			// Evaluate as if the connector were not the owner: only an explicit route counts.
+			ns := withDACL(base, rev, aces)
+			ns.HasOwner = false
+			if Grants(o.Connector, right, ns).Decision != Yes {
+				return DACLWrite{}, plan, fail(ErrSelfLockout)
+			}
+		}
 	}
 	return DACLWrite{ok: true, object: o.ObjectGUID, baseDigest: baseDigest, value: encodeDACLSD(ctl, rev, aces, size)}, plan, nil
 }

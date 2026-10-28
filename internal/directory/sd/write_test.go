@@ -42,6 +42,7 @@ type jsonOpts struct {
 	Normalize   bool   `json:"normalize"`
 	SDProp      bool   `json:"sdprop"`
 	NoConnector bool   `json:"no_connector"`
+	NoObject    bool   `json:"no_object"`
 	WantControl *int   `json:"want_control"`
 	ExpectBase  string `json:"expect_base"`
 	Connector   struct {
@@ -107,7 +108,9 @@ func loadWriteFixture(r corpus.Record) (writeFixture, error) {
 	}
 	f.opt.Normalize = opts.Normalize
 	f.octx.ProtectedBySDProp = opts.SDProp
-	f.octx.ObjectGUID = *mustGUID("11111111-0000-0000-0000-000000000001")
+	if !opts.NoObject {
+		f.octx.ObjectGUID = *mustGUID("11111111-0000-0000-0000-000000000001")
+	}
 	if !opts.NoConnector {
 		u, err := sid.Parse(opts.Connector.User)
 		if err != nil {
@@ -337,7 +340,7 @@ func mustPlanSimple(t *testing.T) DACLWrite {
 		t.Fatal(err)
 	}
 	w, _, err := PlanDACL(s, ACEDiff{Add: []NewACE{{Trustee: mustSID("S-1-1-0"), Mask: MaskReadProp}}}, nil,
-		ObjectCtx{Connector: PrincipalFromToken(user, []sid.SID{mustSID("S-1-1-0")})}, PlanOpts{})
+		ObjectCtx{ObjectGUID: *mustGUID("11111111-0000-0000-0000-000000000001"), Connector: PrincipalFromToken(user, []sid.SID{mustSID("S-1-1-0")})}, PlanOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -409,7 +412,7 @@ func TestPlanRoundTripProperty(t *testing.T) {
 		if len(diff.Add)+len(diff.Remove) == 0 {
 			continue
 		}
-		w, plan, err := PlanDACL(base, diff, nil, ObjectCtx{Connector: PrincipalFromToken(conn, []sid.SID{mustSID("S-1-1-0")})}, PlanOpts{})
+		w, plan, err := PlanDACL(base, diff, nil, ObjectCtx{ObjectGUID: *mustGUID("11111111-0000-0000-0000-000000000001"), Connector: PrincipalFromToken(conn, []sid.SID{mustSID("S-1-1-0")})}, PlanOpts{})
 		if err != nil {
 			t.Fatalf("iter %d: %v", iter, err)
 		}
@@ -489,7 +492,7 @@ func FuzzPlan(f *testing.F) {
 		if n := len(base.DACL.ACEs); n > 0 {
 			diff.Remove = []ACERef{{Index: 0, Digest: DigestACE(base.DACL.ACEs[0])}}
 		}
-		w, plan, err := PlanDACL(base, diff, nil, ObjectCtx{Connector: PrincipalFromToken(user, []sid.SID{mustSID("S-1-1-0")})}, PlanOpts{Normalize: len(in)%2 == 0})
+		w, plan, err := PlanDACL(base, diff, nil, ObjectCtx{ObjectGUID: *mustGUID("11111111-0000-0000-0000-000000000001"), Connector: PrincipalFromToken(user, []sid.SID{mustSID("S-1-1-0")})}, PlanOpts{Normalize: len(in)%2 == 0})
 		if err != nil {
 			if codec.Code(err) == "" || w.Valid() {
 				t.Fatalf("error %v without a code, or with a usable write", err)
@@ -506,5 +509,65 @@ func FuzzPlan(f *testing.F) {
 		if len(plan.Inserted) != 1 || !bytes.Equal(got.DACL.ACEs[plan.Inserted[0]].Raw[:2], []byte{TypeAccessAllowed, 0}) {
 			t.Fatal("inserted ACE not where the plan says")
 		}
+		// The written DACL has no anomaly beyond the order violations the plan reports.
+		for _, an := range got.Anomalies {
+			if an.Code != AnomalyOrderOutcome {
+				t.Fatalf("plan output has anomaly %v", an)
+			}
+		}
+		if len(got.Anomalies) > 0 && len(plan.NonCanonicalResult) == 0 && len(base.Anomalies) == 0 {
+			t.Fatal("plan output is non-canonical and the plan does not say so")
+		}
 	})
+}
+
+// The planners work only on bytes Decode parsed: editing exported fields, or building an SD by
+// hand, changes nothing or is refused.
+func TestPlannersIgnoreMutatedSD(t *testing.T) {
+	user := mustSID("S-1-5-21-1-2-3-1105")
+	octx := ObjectCtx{ObjectGUID: *mustGUID("11111111-0000-0000-0000-000000000001"), Connector: PrincipalFromToken(user, []sid.SID{mustSID("S-1-1-0")})}
+	diff := ACEDiff{Add: []NewACE{{Trustee: mustSID("S-1-1-0"), Mask: MaskReadProp}}}
+
+	for _, name := range []string{"literal", "zero"} {
+		s := SD{}
+		if name == "literal" {
+			s = SD{DACL: ACL{Kind: List, Revision: 4}, Control: ControlDACLPresent | ControlSelfRelative}
+		}
+		if _, _, err := PlanDACL(s, diff, nil, octx, PlanOpts{}); codec.Code(err) != ErrNotEditable {
+			t.Fatalf("%s PlanDACL: %v", name, err)
+		}
+		if _, _, err := PlanInheritance(s, BlockKeepInherited, octx); codec.Code(err) != ErrNotEditable {
+			t.Fatalf("%s PlanInheritance: %v", name, err)
+		}
+	}
+
+	// Mutating an SD from Decode must not change what is planned.
+	raw := buildBase(t, []NewACE{{Trustee: mustSID("S-1-5-18"), Mask: 0xF01FF}, {Trustee: user, Mask: MaskWriteDACL}}, user)
+	good, err := Decode(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w0, _, err := PlanDACL(good, diff, nil, octx, PlanOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad := good
+	bad.DACL.ACEs = append([]ACE(nil), good.DACL.ACEs...)
+	bad.DACL.ACEs[0].Raw = []byte{0x7F, 0, 3, 0}
+	bad.DACL.ACEs[0].Flags |= FlagInherited
+	bad.Anomalies = []Anomaly{{Code: "x"}}
+	bad.Control |= ControlDACLProtected
+	w1, _, err := PlanDACL(bad, diff, nil, octx, PlanOpts{})
+	if err != nil {
+		t.Fatalf("mutation changed the outcome: %v", err)
+	}
+	if !bytes.Equal(w0.Value(), w1.Value()) || w0.BaseDigest() != w1.BaseDigest() {
+		t.Fatal("mutated exported fields reached the write")
+	}
+	if err := w0.VerifyBase(bad); err != nil {
+		t.Fatalf("VerifyBase must use the decoded bytes: %v", err)
+	}
+	if _, _, err := PlanDACL(good, diff, nil, ObjectCtx{Connector: octx.Connector}, PlanOpts{}); codec.Code(err) != ErrObjectRequired {
+		t.Fatalf("zero object: %v", err)
+	}
 }

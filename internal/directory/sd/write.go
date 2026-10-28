@@ -35,6 +35,7 @@ const (
 	ErrConnectorRequired     = "sd.connector_required"
 	ErrInheritanceUnchanged  = "sd.inheritance_unchanged"
 	ErrBadInheritanceOp      = "sd.bad_inheritance_op"
+	ErrObjectRequired        = "sd.object_required"
 )
 
 // Limits of the 16-bit ACL fields (MS-DTYP 2.4.5).
@@ -55,11 +56,14 @@ type Digest [sha256.Size]byte
 // DigestACE is the digest of one ACE's stored bytes. A removal names an ACE by index and this digest.
 func DigestACE(a ACE) Digest { return sha256.Sum256(a.Raw) }
 
-// DigestDACL is the digest of a DACL's state and every ACE's bytes, in order. It is what
+// DigestDACL is the digest of a DACL's state, the PD and DI control bits and every ACE's bytes, in order. It is what
 // DACLWrite.VerifyBase compares.
 func DigestDACL(s SD) Digest {
 	h := sha256.New()
 	h.Write([]byte{byte(s.DACL.Kind), s.DACL.Revision})
+	var c [2]byte
+	binary.LittleEndian.PutUint16(c[:], uint16(s.Control&(ControlDACLProtected|ControlDACLAutoInh)))
+	h.Write(c[:])
 	var n [4]byte
 	binary.LittleEndian.PutUint32(n[:], uint32(len(s.DACL.ACEs)))
 	h.Write(n[:])
@@ -206,7 +210,11 @@ func (w DACLWrite) VerifyBase(current SD) error {
 	if !w.ok {
 		return fail(ErrNotEditable)
 	}
-	if DigestDACL(current) != w.baseDigest {
+	t, err := current.trusted()
+	if err != nil {
+		return err
+	}
+	if DigestDACL(t) != w.baseDigest {
 		return fail(ErrStaleBase)
 	}
 	return nil

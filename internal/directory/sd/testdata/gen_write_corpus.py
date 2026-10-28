@@ -41,9 +41,9 @@ def written(aces, rev, control=0x8004):
     """What Value() must be: header with owner/group/SACL offsets 0, DACL right after it."""
     return bytes([1, 0]) + struct.pack("<H", control) + struct.pack("<IIII", 0, 0, 0, 20) + acl(aces, rev)
 
-def dacl_digest(aces, rev):
+def dacl_digest(aces, rev, control=0):
     h = hashlib.sha256()
-    h.update(bytes([2, rev]) + struct.pack("<I", len(aces)))
+    h.update(bytes([2, rev]) + struct.pack("<H", control & 0x1400) + struct.pack("<I", len(aces)))
     for a in aces: h.update(struct.pack("<I", len(a)) + a)
     return h.hexdigest()
 
@@ -169,6 +169,10 @@ rec("SD-E10B", "VerifyBase", {"sd": hx(BASE), "add": js([RC]), "current": hx(CHA
 rec("SD-E10G", "VerifyBase", {"sd": hx(BASE), "add": js([RC]), "current": hx(BASE), "opts": js({"connector": CONN}), "catalog": js(CATALOG)},
     {"value": {"ok": True}}, False, "SD-E10b DACL unchanged: the write may go")
 
+PD_ONLY = sd(dacl=acl(B, 4), owner=sid(SYS), control=0x8000 | 0x1000)
+rec("SD-E10H", "VerifyBase", {"sd": hx(BASE), "add": js([RC]), "current": hx(PD_ONLY), "opts": js({"connector": CONN}), "catalog": js(CATALOG)},
+    {"error": "sd.stale_base"}, True, "SD-E10b only the protected flag changed on the DC: the plan would silently clear it")
+
 plan("SD-E11", BASE, add=[RC], opts={"sdprop": True}, expect="sd.sdprop_will_revert", source="SD-E11 object in the SDProp-protected set")
 
 # SD-E12: Value() shape for a plain edit
@@ -186,6 +190,14 @@ plan("SD-E13", BASE, remove=[{"index": 2, "digest": dg(B[2])}], expect="sd.self_
 plan("SD-E13B", BASE, add=[new(G1, 0x40000, deny=True)], expect="sd.self_lockout", source="SD-E13 an added deny takes WRITE_DAC away")
 plan("SD-E13C", BASE_OWNER_CONN, remove=[{"index": 2, "digest": dg(B[2])}], hostile=False, source="SD-E13 the connector is the owner: implicit WRITE_DAC, not a lockout",
      expect=outcome(written(B[:2] + B[3:], 4), removed=[2]))
+
+# SD-E13: the connector holds WRITE_DAC only as the owner (implicit); naming the owner or OWNER RIGHTS removes that
+OWN_ONLY = sd(dacl=acl([ace(0, 0, 0xF01FF, SYS)], 4), owner=sid(X1))
+plan("SD-W19", OWN_ONLY, add=[new(X1, 0x10)], expect="sd.self_lockout", source="SD-E13 any ACE for the owner drops its implicit rights")
+plan("SD-W20", OWN_ONLY, add=[new("S-1-3-4", 0x10)], expect="sd.self_lockout", source="SD-E13 an OWNER RIGHTS ACE drops the owner's implicit rights")
+plan("SD-W21", OWN_ONLY, add=[new(X1, 0x40000)], hostile=False, source="SD-E13 the owner ACE grants WRITE_DAC explicitly: still a route",
+     expect=outcome(written([ace(0, 0, 0xF01FF, SYS), ace(0, 0, 0x40000, X1)], 4), inserted=[1]))
+plan("SD-W22", OWN_ONLY, add=[RC], opts={"no_object": True}, expect="sd.object_required", source="a write bound to no object")
 
 # SD-E14
 plan("SD-E14", BASE, add=[RC], opts={"want_control": 0x8004 | 0x1000}, expect="sd.protect_flag_change", source="SD-E14 PD")
