@@ -237,7 +237,7 @@ func finish(base SD, o ObjectCtx, baseDigest Digest, rev uint8, aces []ACE, ctl 
 	if base.HasOwner && o.Connector.holds(base.Owner, nil) {
 		named := false
 		for _, a := range aces {
-			if a.Kind != Opaque && !a.InheritOnly() && (a.Trustee == sidOwnerRights || a.Trustee == base.Owner) {
+			if a.Kind != Opaque && (a.Trustee == sidOwnerRights || a.Trustee == base.Owner) {
 				named = true
 			}
 		}

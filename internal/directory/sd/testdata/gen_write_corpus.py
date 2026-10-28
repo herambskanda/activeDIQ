@@ -205,6 +205,11 @@ plan("SD-W24", OWN_ROUTE, add=[new("S-1-3-4", 0x20000)], hostile=False, source="
      expect=outcome(written([ace(0, 0, 0xF01FF, SYS), ace(0, 0, 0x10, X1), ace(0, 0, 0x40000, G1), ace(0, 0, 0x20000, "S-1-3-4")], 4), inserted=[3]))
 GRP_OWN = sd(dacl=acl([ace(0, 0, 0xF01FF, SYS), ace(0, 0, 0x10, G1)], 4), owner=sid(G1))
 plan("SD-W25", GRP_OWN, add=[new("S-1-3-4", 0x20000)], expect="sd.self_lockout", source="SD-E13 the connector reaches the owner through a group SID in its token")
+# SD-E13: an inherit-only ACE still counts for the owner clause of MS-DTYP 2.5.3.2 (only the DACL walk skips it); fail closed
+plan("SD-W26", OWN_ONLY, add=[new("S-1-3-4", 0x20000, flags=0x0A)], expect="sd.self_lockout", source="SD-E13 CI|IO OWNER RIGHTS (the usual creator-owner strip) still drops implicit owner rights")
+plan("SD-W27", OWN_ONLY, add=[new(X1, 0x20000, flags=0x0A)], expect="sd.self_lockout", source="SD-E13 CI|IO owner-SID ACE still drops implicit owner rights")
+plan("SD-W28", OWN_ROUTE, add=[new("S-1-3-4", 0x20000, flags=0x0A)], hostile=False, source="SD-E13 CI|IO OWNER RIGHTS with an explicit WRITE_DAC route through a group",
+     expect=outcome(written([ace(0, 0, 0xF01FF, SYS), ace(0, 0, 0x10, X1), ace(0, 0, 0x40000, G1), ace(0, 0x0A, 0x20000, "S-1-3-4")], 4), inserted=[3]))
 plan("SD-W22", OWN_ONLY, add=[RC], opts={"no_object": True}, expect="sd.object_required", source="a write bound to no object")
 
 # SD-E14

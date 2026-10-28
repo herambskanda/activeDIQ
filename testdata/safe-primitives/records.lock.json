@@ -586,7 +586,10 @@
       "SD-W22": true,
       "SD-W23": true,
       "SD-W24": false,
-      "SD-W25": true
+      "SD-W25": true,
+      "SD-W26": true,
+      "SD-W27": true,
+      "SD-W28": false
     },
     "sql": {
       "SQL-03": true,
