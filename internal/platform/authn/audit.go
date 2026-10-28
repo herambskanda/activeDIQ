@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/audit"
-	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 )
@@ -73,9 +72,9 @@ func (s *Store) emit(ctx context.Context, tx store.Tx, now time.Time, kind audit
 		phase = "created"
 	}
 	// Keys are in increasing order, as the envelope requires.
-	details := []chain.Detail{{Key: "account", Value: account}}
+	details := []audit.Detail{{Key: "account", Value: account}}
 	if len(methods) > 0 {
-		details = append(details, chain.Detail{Key: "methods", Value: strings.Join(methods, ",")})
+		details = append(details, audit.Detail{Key: "methods", Value: strings.Join(methods, ",")})
 	}
 	ev := audit.Event{
 		ID: "authn.session." + sessionID + "." + phase, Kind: kind, At: now, Actor: actor,
