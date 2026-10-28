@@ -2860,6 +2860,8 @@ by a test server; a path outside its local roots; a junction, symbolic-link, `..
 or stream escape (escape corpus); a `SYSVOL` or `NETLOGON` root; starting on a DC; starting while
 its token holds SeBackupPrivilege. Owner: T-0142 (`addc`) and the M3 `fileserver` spec.
 
+*Status (T-0144).* Contract half live: `fitness-proto` rules AG1-AG8 (`tools/fitness/proto/agent.go`) lint `skenzeriq.agent.v1`, `activediq.addc.v1` and `activediq.fileserver.v1` the moment they exist (closed golden RPC list, denied-verb words, unary only, no `Any`/map/free-form path, URL, command or SDDL field, policy messages data-only, no password/hash field, no fail-mode field) and are proved failing by `make ci-proof`. Still owed, because the code does not exist: out-of-bounds policy rejection and the hostile-policy fuzz (agent runtime, T-0555), and the `fileserver` refusals (denied verb sent, path outside roots, escape corpus, SYSVOL/NETLOGON root, start on a DC, start holding SeBackupPrivilege), which need the module and a Windows lab (follow-up ticket from T-0144).
+
 **Proof TM-F-CREDPROV.** The credential-provider binary imports no web-rendering or shell-dialog
 component (import scan); logon works with the server unreachable; a server with an unpinned
 certificate is refused. Owner: T-0147.
