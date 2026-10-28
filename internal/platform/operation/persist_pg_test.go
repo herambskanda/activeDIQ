@@ -1317,3 +1317,27 @@ func TestTier0AfterWriteFromSupersededDeferredVerify(t *testing.T) {
 		}
 	})
 }
+
+// tenantPin records the tenant the runner puts on the ctx it hands to Pin.
+type tenantPin struct{ got string }
+
+func (t *tenantPin) Pin(ctx context.Context, _ string, _ authority.NamingContextID, _ string) (DCPin, error) {
+	t.got, _ = authority.TenantFrom(ctx)
+	return DCPin{Host: "dc1.example.test", DSAGUID: "11111111-2222-3333-4444-555555555555"}, nil
+}
+
+// The pinner always sees the operation's own tenant, even when the caller's ctx carries another one.
+func TestPinnerReceivesOperationTenant(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		tp := &tenantPin{}
+		p := newPRig(t, s, rigOpt{pinner: tp})
+		p.dir.set("g1", "old")
+		ctx := authority.WithTenant(context.Background(), "99999999-9999-9999-9999-999999999999")
+		if _, err := p.r.SubmitDirectory(ctx, p.req(itemIn{GUID: "g1", Want: "new"})); err != nil {
+			t.Fatal(err)
+		}
+		if tp.got != p.tn.String() {
+			t.Fatalf("pinner saw tenant %q, want the operation's %q", tp.got, p.tn.String())
+		}
+	})
+}

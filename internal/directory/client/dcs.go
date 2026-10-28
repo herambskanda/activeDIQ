@@ -15,9 +15,10 @@ import (
 
 // Errors of the DC directory. None carries a connector message or a DC list.
 var (
-	ErrNoDescribe = errors.New("client: no connector source wired for DC discovery")
-	ErrDCNC       = errors.New("client: naming context is not one the connection describes")
-	ErrDCIdentity = errors.New("client: connector returned a DC without a usable identity")
+	ErrNoDescribe     = errors.New("client: no connector source wired for DC discovery")
+	ErrDescribeFailed = errors.New("client: connector describe failed")
+	ErrDCNC           = errors.New("client: naming context is not one the connection describes")
+	ErrDCIdentity     = errors.New("client: connector returned a DC without a usable identity")
 )
 
 // WritableDC is one reachable, writable DC: the host and the DSA GUID the connector read from that same
@@ -79,7 +80,11 @@ func (d *DCDirectory) WritableDCs(ctx context.Context, connectionID string, nc a
 		Refresh:    true,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("client: connector describe: %w", FromStatus(err))
+		// A status without a ConnectorError detail carries a free-text message: never pass it on.
+		if re := (&RemoteError{}); errors.As(FromStatus(err), &re) {
+			return nil, fmt.Errorf("client: connector describe: %w", re)
+		}
+		return nil, ErrDescribeFailed
 	}
 	return writableDCsOf(resp, want)
 }
