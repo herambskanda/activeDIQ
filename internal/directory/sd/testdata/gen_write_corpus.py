@@ -197,6 +197,14 @@ plan("SD-W19", OWN_ONLY, add=[new(X1, 0x10)], expect="sd.self_lockout", source="
 plan("SD-W20", OWN_ONLY, add=[new("S-1-3-4", 0x10)], expect="sd.self_lockout", source="SD-E13 an OWNER RIGHTS ACE drops the owner's implicit rights")
 plan("SD-W21", OWN_ONLY, add=[new(X1, 0x40000)], hostile=False, source="SD-E13 the owner ACE grants WRITE_DAC explicitly: still a route",
      expect=outcome(written([ace(0, 0, 0xF01FF, SYS), ace(0, 0, 0x40000, X1)], 4), inserted=[1]))
+# SD-E13: the base already names the owner (the usual creator ACE), so the Grants reason is owner_ace_present
+OWN_ACE = sd(dacl=acl([ace(0, 0, 0xF01FF, SYS), ace(0, 0, 0x10, X1)], 4), owner=sid(X1))
+plan("SD-W23", OWN_ACE, add=[new("S-1-3-4", 0x20000)], expect="sd.self_lockout", source="SD-E13 OWNER RIGHTS added when the base already has an owner ACE: implicit WRITE_DAC is dropped")
+OWN_ROUTE = sd(dacl=acl([ace(0, 0, 0xF01FF, SYS), ace(0, 0, 0x10, X1), ace(0, 0, 0x40000, G1)], 4), owner=sid(X1))
+plan("SD-W24", OWN_ROUTE, add=[new("S-1-3-4", 0x20000)], hostile=False, source="SD-E13 the connector also holds an explicit WRITE_DAC route through a group",
+     expect=outcome(written([ace(0, 0, 0xF01FF, SYS), ace(0, 0, 0x10, X1), ace(0, 0, 0x40000, G1), ace(0, 0, 0x20000, "S-1-3-4")], 4), inserted=[3]))
+GRP_OWN = sd(dacl=acl([ace(0, 0, 0xF01FF, SYS), ace(0, 0, 0x10, G1)], 4), owner=sid(G1))
+plan("SD-W25", GRP_OWN, add=[new("S-1-3-4", 0x20000)], expect="sd.self_lockout", source="SD-E13 the connector reaches the owner through a group SID in its token")
 plan("SD-W22", OWN_ONLY, add=[RC], opts={"no_object": True}, expect="sd.object_required", source="a write bound to no object")
 
 # SD-E14

@@ -230,13 +230,14 @@ func finish(base SD, o ObjectCtx, baseDigest Digest, rev uint8, aces []ACE, ctl 
 	if after.Decision == No && before.Decision != No {
 		return DACLWrite{}, plan, fail(ErrSelfLockout)
 	}
-	// A connector that holds WRITE_DAC only through the owner's implicit rights loses them as soon as
-	// the DACL names the owner or OWNER RIGHTS (MS-DTYP 2.5.3.2): both answers are Unknown, so test
-	// that case directly and require an explicit WRITE_DAC allow for such an ACE.
-	if before.Decision == Unknown && before.Why == "implicit_owner_rights" {
+	// A connector that is (or reaches) the owner may hold WRITE_DAC through the owner's implicit rights.
+	// Those vanish as soon as the DACL names OWNER RIGHTS (MS-DTYP 2.5.3.2), and we stay conservative
+	// for an ACE naming the owner SID. Do not key on the Grants reason text: it differs by base shape
+	// (implicit_owner_rights, owner_ace_present). Require an explicit WRITE_DAC route instead.
+	if base.HasOwner && o.Connector.holds(base.Owner, nil) {
 		named := false
 		for _, a := range aces {
-			if a.Kind != Opaque && !a.InheritOnly() && (a.Trustee == sidOwnerRights || (base.HasOwner && a.Trustee == base.Owner)) {
+			if a.Kind != Opaque && !a.InheritOnly() && (a.Trustee == sidOwnerRights || a.Trustee == base.Owner) {
 				named = true
 			}
 		}
