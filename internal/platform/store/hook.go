@@ -7,6 +7,8 @@ import (
 	"sync"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
 // The two neutral mechanisms a package above store can use to do work at commit without store knowing
@@ -31,9 +33,9 @@ var (
 )
 
 // BeforeCommitFunc runs after the body of a transaction and before COMMIT, in the same transaction,
-// when at least one slot holds something. tenantID is the transaction's tenant ("" for a platform
+// when at least one slot holds something. tid is the transaction's tenant (the zero ID for a platform
 // transaction). It must take (Slot.Take) everything it handles.
-type BeforeCommitFunc func(ctx context.Context, tx Tx, tenantID string) error
+type BeforeCommitFunc func(ctx context.Context, tx Tx, tid tenant.ID) error
 
 // hookLockTimeout is the lock_timeout, in milliseconds, for the statements of the commit hook.
 const hookLockTimeout = "5000"

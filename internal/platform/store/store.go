@@ -317,7 +317,7 @@ func (d *DB) WithTenant(ctx context.Context, id tenant.ID, fn func(ctx context.C
 	if _, nested := ctx.Value(txCtxKey{}).(struct{}); nested {
 		return ErrNestedTenant
 	}
-	return d.run(ctx, d.main(), 0, id.String(), fn)
+	return d.run(ctx, d.main(), 0, id, fn)
 }
 
 // maxSeparateLockWait caps the lock wait a WithTenantSeparate caller may ask for.
@@ -339,7 +339,7 @@ func (d *DB) WithTenantSeparate(ctx context.Context, id tenant.ID, lockWait time
 		return ErrLockWait
 	}
 	ms := strconv.FormatInt(lockWait.Milliseconds(), 10)
-	return d.run(ctx, d.separate(), d.sepTimeout(), id.String(), func(ctx context.Context, tx Tx) error {
+	return d.run(ctx, d.separate(), d.sepTimeout(), id, func(ctx context.Context, tx Tx) error {
 		if _, err := tx.Exec(ctx, `SELECT set_config('lock_timeout', $1, true)`, ms); err != nil {
 			return fmt.Errorf("store: set lock timeout: %w", err)
 		}
@@ -355,7 +355,7 @@ func (d *DB) WithPlatform(ctx context.Context, reason string, fn func(ctx contex
 		return ErrReasonRequired
 	}
 	slog.DebugContext(ctx, "store: platform transaction", "reason", reason)
-	return d.run(ctx, d.main(), 0, "", fn)
+	return d.run(ctx, d.main(), 0, noTenant, fn)
 }
 
 // txCtxKey marks the context handed to fn, so a nested WithTenant can be recognised.
@@ -373,9 +373,13 @@ func validReason(s string) bool {
 //
 // pool is the main pool, or for WithTenantSeparate the dedicated one; acquire (when positive) bounds the
 // wait for a connection from it.
-func (d *DB) run(ctx context.Context, pool *pgxpool.Pool, acquire time.Duration, tenantID string, fn func(ctx context.Context, tx Tx) error) error {
+func (d *DB) run(ctx context.Context, pool *pgxpool.Pool, acquire time.Duration, tid tenant.ID, fn func(ctx context.Context, tx Tx) error) error {
 	if d == nil || pool == nil {
 		return ErrClosed
+	}
+	tenantID := "" // the zero ID is a platform transaction
+	if !tid.IsZero() {
+		tenantID = tid.String()
 	}
 	bctx, bcancel := ctx, context.CancelFunc(func() {})
 	if acquire > 0 {
@@ -411,7 +415,7 @@ func (d *DB) run(ctx context.Context, pool *pgxpool.Pool, acquire time.Duration,
 		if _, err := pgtx.Exec(ctx, `SELECT set_config('lock_timeout', $1, true)`, hookLockTimeout); err != nil {
 			return fmt.Errorf("store: set hook lock timeout: %w", err)
 		}
-		if err := hook(ctx, tx{t: pgtx, st: st}, tenantID); err != nil {
+		if err := hook(ctx, tx{t: pgtx, st: st}, tid); err != nil {
 			return err
 		}
 		if len(st.slots) > 0 {
@@ -453,3 +457,6 @@ func (x tx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
 	}
 	return x.t.QueryRow(ctx, sql, args...)
 }
+
+// noTenant is the zero tenant.ID: the transaction has no tenant (WithPlatform).
+var noTenant tenant.ID
