@@ -2179,7 +2179,7 @@ hostname-binding table. So the seed carries the non-API routes of AN-1 to AN-3, 
 operations entered with their contract (T-0034). AN-8 and AN-10
 (`signInBreakGlassPassword`, `createWebAuthnSignInChallenge`, `verifyWebAuthnSignIn`, `verifyTotpSignIn`)
 and the `authenticated` rows `signOut` and `getCsrfToken` entered with theirs (T-0193); their handlers
-answer 501 until the build tickets land. The AN-8 failure is one `401 /problems/sign-in-failed` for
+answer 501 until the build tickets land (`createWebAuthnSignInChallenge` and `verifyWebAuthnSignIn` are real once a `WebAuthnCookieVerifier` is supplied, T-0207: the challenge is consumed by the first assertion naming the pending sign-in, `webauthn_replay`; user verification is required; the signature counter must advance when the authenticator counts). The AN-8 failure is one `401 /problems/sign-in-failed` for
 every cause (rule 2). AN-4, AN-5 and AN-7 enter with their operations. AN-5 and AN-7 also need their hostname binding
 from T-0018. AN-9 enters when the PRD offers SPNEGO. The file's header lists each pending row.
 

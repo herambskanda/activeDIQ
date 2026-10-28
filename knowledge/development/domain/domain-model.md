@@ -2119,6 +2119,7 @@ AC2 was re-checked by script: every ADM ID in scope lock §3.3 (123 IDs) appears
 ## Changelog
 
 - 2026-10-27 · T-0388. DM-30.I7 lists the guarded classes of threat model §6.9 rule 5 (TM-D28) instead of the five original changes, and names the fitness function that forces Actions to declare the permission.
+- 2026-10-28 · T-0207. DM-37 `webauthn` slice: public credentials live in `authn_webauthn_credentials` (credential ID, COSE key, user handle, BE flag, `sign_count` that never decreases, state `active → revoked`) and the AN-10 challenge in `authn_webauthn_challenges` (one per pending sign-in, consumed by the first assertion, in its own committed transaction before evaluation). Registration is not yet built.
 - 2026-10-27 · T-0422. DM-37 gains I7 (at most 3 active console TOTP enrolments per account, enforced by trigger).
 - 2026-10-26 · T-0361. DM-37 gains `expires_at`, `confirm_attempts`, `paused_until`, the `expired` state, the `authn_totp_failures` companion table, I5 (failure budget; charge before evaluate) and I6 (pending expiry; the database clamps `expires_at` to 10 minutes).
 
