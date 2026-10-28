@@ -40,10 +40,13 @@ type Config struct {
 	RootCAs    *x509.CertPool // customer CA bundle; nil means the system roots
 	ServerName string         // optional TLS name override when Servers are addresses; empty = the host
 	Credential Credential
-	Schema     *ldapfilter.Schema // filter and attribute allowlist; nil means DefaultSchema()
-	Timeout    time.Duration      // per-request timeout, default 30 s
-	PageSize   uint32             // default page size, default 500, clamped to MaxPageSize
-	Dialer     *net.Dialer        // optional, for tests and proxies
+	// Kerberos, when set, replaces Credential: SASL GSSAPI over LDAPS with channel binding. Set one
+	// of the two, never both.
+	Kerberos *Kerberos
+	Schema   *ldapfilter.Schema // filter and attribute allowlist; nil means DefaultSchema()
+	Timeout  time.Duration      // per-request timeout, default 30 s
+	PageSize uint32             // default page size, default 500, clamped to MaxPageSize
+	Dialer   *net.Dialer        // optional, for tests and proxies
 	// SecretAudit receives one event per ReadSecret call (actor, target GUID, attribute, reason,
 	// outcome — never a value). ReadSecret refuses to run without it.
 	SecretAudit func(SecretReadEvent) error
@@ -75,8 +78,17 @@ func Open(ctx context.Context, cfg Config) (*Session, error) { return open(ctx, 
 // open is Open for the ordinary (domain) session, or for the GC resolver when gc is set. The two
 // are separate door types: a GC port is refused for every Session (LF-33) and only OpenGC may use it.
 func open(ctx context.Context, cfg Config, gc bool) (*Session, error) {
-	if len(cfg.Servers) == 0 || cfg.Credential.BindName == "" || cfg.Credential.Password.IsEmpty() {
+	hasPwd := cfg.Credential.BindName != "" || !cfg.Credential.Password.IsEmpty()
+	if len(cfg.Servers) == 0 || (cfg.Kerberos == nil && (cfg.Credential.BindName == "" || cfg.Credential.Password.IsEmpty())) {
 		return nil, fail(CodeInvalidArgument, "servers and credential are required", nil)
+	}
+	if cfg.Kerberos != nil {
+		if hasPwd {
+			return nil, fail(CodeInvalidArgument, "set either a password credential or a kerberos identity", nil)
+		}
+		if err := cfg.Kerberos.validate(); err != nil {
+			return nil, err
+		}
 	}
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = defaultTimeout
@@ -113,10 +125,20 @@ func open(ctx context.Context, cfg Config, gc bool) (*Session, error) {
 			lastErr = err
 			continue
 		}
-		bindCred := cfg.Credential
-		cfg.Credential = Credential{} // the Session never holds the secret
+		bindCred, krb := cfg.Credential, cfg.Kerberos
+		cfg.Credential, cfg.Kerberos = Credential{}, nil // the Session never holds the secret
 		s := &Session{conn: conn, cfg: cfg, schema: sc, server: net.JoinHostPort(host, port), pageSize: ps}
-		if err := s.bind(ctx, bindCred); err != nil {
+		var berr error
+		if krb != nil {
+			name := cfg.ServerName
+			if name == "" {
+				name = host
+			}
+			berr = s.bindKerberos(ctx, *krb, name)
+		} else {
+			berr = s.bind(ctx, bindCred)
+		}
+		if err := berr; err != nil {
 			conn.Close()
 			// A rejected credential is not a reason to hammer the next DC (lockout).
 			return nil, err
@@ -185,6 +207,17 @@ func (s *Session) bind(ctx context.Context, cred Credential) error {
 		return fail(CodeBindFailed, ldapCode(err), nil)
 	}
 	return nil
+}
+
+func (s *Session) bindKerberos(ctx context.Context, k Kerberos, spnHost string) error {
+	conn := s.conn
+	stop := s.watch(ctx, conn)
+	defer stop()
+	err := bindGSSAPI(conn, k, spnHost)
+	if err != nil && ctx.Err() != nil {
+		return fail(CodeCanceled, "", ctx.Err())
+	}
+	return err
 }
 
 // watch closes the connection when ctx ends, which aborts the request in flight and releases the
