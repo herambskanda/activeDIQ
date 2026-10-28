@@ -1,6 +1,7 @@
 package agentingest_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"sync"
@@ -9,8 +10,10 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/platform/agentingest"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
+	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
 	"github.com/skenzeriq/activediq/internal/platform/fleet"
 	"github.com/skenzeriq/activediq/internal/platform/fleet/fleetsql"
+	"github.com/skenzeriq/activediq/internal/platform/keys"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
@@ -67,8 +70,10 @@ func setup(t *testing.T, s *storetest.Server) *env {
 	return &env{db: db, a: a, b: b}
 }
 
+var observed = time.Date(2026, 10, 28, 6, 0, 0, 123456000, time.UTC)
+
 func rec(seq uint64) agentingest.Record {
-	return agentingest.Record{AgentSeq: seq, Type: agentingest.TypeEvent, Channel: "security", ObservedAt: time.Now(),
+	return agentingest.Record{AgentSeq: seq, Type: agentingest.TypeEvent, Channel: "security", ObservedAt: observed,
 		Fields: map[string]string{"event_id": "4740"}}
 }
 
@@ -203,6 +208,131 @@ func TestEventTableIsAppendOnlyForTheAppRole(t *testing.T) {
 			if err == nil {
 				t.Fatalf("%q succeeded", q)
 			}
+		}
+	})
+}
+
+type noAnchor struct{}
+
+func (noAnchor) Anchor(context.Context, chain.Checkpoint) error { return nil }
+
+type fixedKeys struct{}
+
+func (fixedKeys) DEK(context.Context, store.Tx, tenant.ID, uint32) (keys.DEK, error) {
+	return keys.DEKFromBytes(1, bytes.Repeat([]byte{9}, keys.DEKSize))
+}
+
+func fieldsOf(t *testing.T, e *env, seq int64) string {
+	t.Helper()
+	var f string
+	err := e.db.WithTenant(context.Background(), e.a, func(ctx context.Context, tx store.Tx) error {
+		return tx.QueryRow(ctx, `SELECT fields::text FROM public.agent_event WHERE agent_seq = $1`, seq).Scan(&f)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+// Content the database cannot hold must not stop collection: the record is repaired, marked, and stored.
+func TestUnstorableContentIsRepairedNotRefused(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		ing := &agentingest.Ingester{DB: e.db, Audit: &sink{}}
+		id := fleet.Identity{Tenant: e.a, Kind: fleet.KindADDC, ComponentID: compA}
+		mk := func(seq uint64, k, v string) agentingest.Record {
+			r := rec(seq)
+			r.Fields = map[string]string{k: v}
+			return r
+		}
+		b := agentingest.Batch{Records: []agentingest.Record{
+			mk(1, "TargetUserName", "ev\x00il"),
+			mk(2, "TargetUserName", "bad\xffbyte"),
+			mk(3, "TargetUserName", "surr\xed\xa0\x80ogate"),
+			mk(4, "TargetUserName", "fine"),
+			mk(5, "k\x00ey", "v"),
+		}}
+		r, err := ing.Append(context.Background(), id, b)
+		if err != nil || r.Accepted != 5 {
+			t.Fatalf("%+v %v", r, err)
+		}
+		for seq := int64(1); seq <= 3; seq++ {
+			f := fieldsOf(t, e, seq)
+			if !bytes.Contains([]byte(f), []byte(`"_sanitized"`)) || !bytes.Contains([]byte(f), []byte(`TargetUserName`)) {
+				t.Fatalf("seq %d not marked: %s", seq, f)
+			}
+		}
+		if f := fieldsOf(t, e, 4); bytes.Contains([]byte(f), []byte("_sanitized")) {
+			t.Fatalf("clean record marked: %s", f)
+		}
+		// a hostile marker from the agent is replaced
+		h := mk(6, agentingest.SanitizedKey, "forged")
+		if _, err := ing.Append(context.Background(), id, agentingest.Batch{Records: []agentingest.Record{h}}); err != nil {
+			t.Fatal(err)
+		}
+		if f := fieldsOf(t, e, 6); bytes.Contains([]byte(f), []byte("forged")) {
+			t.Fatalf("forged marker kept: %s", f)
+		}
+		over := rec(1 << 63)
+		if _, err := ing.Append(context.Background(), id, agentingest.Batch{Records: []agentingest.Record{over}}); !errors.Is(err, agentingest.ErrInvalid) {
+			t.Fatalf("seq > MaxInt64: %v", err)
+		}
+	})
+}
+
+// A redelivery with different content under a stored sequence is a divergence, not a duplicate.
+func TestSeqDivergenceIsTypedAlertedAndNeverOverwrites(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		al := &alerts{}
+		ing := &agentingest.Ingester{DB: e.db, Audit: &sink{}, Alerts: al}
+		id := fleet.Identity{Tenant: e.a, Kind: fleet.KindADDC, ComponentID: compA}
+		if _, err := ing.Append(context.Background(), id, agentingest.Batch{Records: []agentingest.Record{rec(1), rec(2)}}); err != nil {
+			t.Fatal(err)
+		}
+		changed := rec(2)
+		changed.Fields = map[string]string{"event_id": "4625"}
+		r, err := ing.Append(context.Background(), id, agentingest.Batch{Records: []agentingest.Record{rec(1), changed, rec(3)}})
+		var de *agentingest.DivergenceError
+		if !errors.Is(err, agentingest.ErrSeqDivergence) || !errors.As(err, &de) || len(de.Seqs) != 1 || de.Seqs[0] != 2 {
+			t.Fatalf("err: %v", err)
+		}
+		if r.Duplicates != 1 || r.Accepted != 1 || len(r.Diverged) != 1 {
+			t.Fatalf("%+v", r)
+		}
+		if len(al.got) != 1 || al.got[0].Kind != agentingest.AlertSeqDivergence || al.got[0].Component != compA {
+			t.Fatalf("alerts: %+v", al.got)
+		}
+		if f := fieldsOf(t, e, 2); !bytes.Contains([]byte(f), []byte("4740")) {
+			t.Fatalf("stored row was replaced: %s", f)
+		}
+	})
+}
+
+// Against the real chainer (which refuses a reused event ID): a batch filling sequences below the maximum
+// must still be audited.
+func TestBatchesBelowTheMaximumAreAuditedByTheRealChainer(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		ch := audit.NewChainer(e.db)
+		cp := audit.NewCheckpointer(ch, fixedKeys{}, noAnchor{})
+		ctx := context.Background()
+		if err := e.db.WithTenant(ctx, e.a, func(ctx context.Context, tx store.Tx) error { return cp.InitTenant(ctx, tx, e.a) }); err != nil {
+			t.Fatal(err)
+		}
+		ing := &agentingest.Ingester{DB: e.db, Audit: ch}
+		id := fleet.Identity{Tenant: e.a, Kind: fleet.KindADDC, ComponentID: compA}
+		for _, recs := range [][]agentingest.Record{{rec(1), rec(2), rec(3), rec(10)}, {rec(4), rec(5)}, {rec(4), rec(5), rec(6)}} {
+			if _, err := ing.Append(ctx, id, agentingest.Batch{Records: recs}); err != nil {
+				t.Fatalf("batch ending %d: %v", recs[len(recs)-1].AgentSeq, err)
+			}
+		}
+		var n int
+		err := e.db.WithTenant(ctx, e.a, func(ctx context.Context, tx store.Tx) error {
+			return tx.QueryRow(ctx, `SELECT count(*) FROM audit_event WHERE kind = $1`, string(agentingest.KindBatchAccepted)).Scan(&n)
+		})
+		if err != nil || n != 3 {
+			t.Fatalf("audited batches: %d %v", n, err)
 		}
 	})
 }

@@ -60,6 +60,9 @@ CREATE TABLE public.agent_event (
   observed_at timestamptz NOT NULL,
   reported_dc_guid uuid,
   fields jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (octet_length(fields::text) <= 65536),
+  -- sha256 of the agent-supplied content: a redelivery with the same hash is a duplicate, a different
+  -- hash under the same agent_seq means the agent's state went backwards (divergence, never discarded).
+  content_sha256 bytea NOT NULL CHECK (octet_length(content_sha256) = 32),
   received_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (tenant_id, component_id, agent_seq)
 );

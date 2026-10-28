@@ -1903,10 +1903,10 @@ inside the contract's bounds, never code (addc contract §3).
 own collection. Append-only. **Replaces (ME):** none directly; the feed ADAudit Plus gets by agentless
 collection.
 **Key attributes:** `component_id` · `agent_seq` · `record_type` · `channel` · `event_record_id` ·
-`observed_at` · `reported_dc_guid` · `fields` · `received_at`.
+`observed_at` · `reported_dc_guid` · `fields` · `content_sha256` · `received_at`.
 **Invariants.** I1 `tenant_id` and `component_id` are stamped from the client certificate; nothing in the
-payload names them (S1). I2 `(tenant_id, component_id, agent_seq)` is unique, so redelivery is
-idempotent. I3 `reported_dc_guid` is data to cross-check, never identity.
+payload names them (S1). I2 `(tenant_id, component_id, agent_seq)` is unique, so redelivery of an identical record is
+idempotent; the same seq with a different `content_sha256` is a divergence (alert, stored row kept). I3 `reported_dc_guid` is data to cross-check, never identity.
 
 ---
 
