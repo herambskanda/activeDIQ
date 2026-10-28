@@ -775,7 +775,15 @@ as the connector identity and streams:
   correlated entries, each with its bases, so the server can compare it with its inventory-derived
   set; a difference is a server health finding and never shrinks the connector's set);
 - exactly one `completed` (verdict, each check's outcome, counts, `write_gate_openable`, and from
-  v1.2 `tier0_inputs_dropped`, §8.3a).
+  v1.2 `tier0_inputs_dropped`, §8.3a, and from v1.3 (T-0412) `directory_identity`).
+
+**`completed.directory_identity` (v1.3, T-0412).** The directory the run was answered against, as V5
+(AD: objectGUID of the forest root domain NC head) or EV2 (Entra: the tenant id) read it. The
+connector sets it on every run (the AD stream refuses to start without a bound directory). The
+server's client requires it unless the verdict is `FAILED` or `COULD_NOT_VERIFY`: a missing identity
+is `client.ErrIdentityMissing`, a malformed one or one of the other directory kind than the
+connection is `client.ErrIdentityMismatch`, and in both cases the run yields no result (fail-closed).
+The server transport is `client.GRPCVerifyTransport` over the connector source used for reads.
 
 **`correlated_tier0` (v1.2, TM-D23 rule 8).** The server's C16 set (AD connection) or E5 set (Entra
 connection) for the connection, in every correlation state, as `Tier0Member` entries. It is handled

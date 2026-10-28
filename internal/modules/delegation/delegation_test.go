@@ -307,3 +307,33 @@ func TestNoAccessServiceFailsClosed(t *testing.T) {
 		}
 	})
 }
+
+// T-0617: a time-bound grant must never decode into a permanent one. A snake_case valid_until (or a
+// wrongly cased ValidUntil) is an unknown member and is refused at Plan, the decode the runner uses for
+// every caller (HTTP, workflow, approval re-plan).
+func TestGrantRefusesUnknownMemberInsteadOfDroppingValidUntil(t *testing.T) {
+	acts, err := delegation.Actions(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var grant operation.Action
+	for _, a := range acts {
+		if a.Describe().ID == delegation.GrantID {
+			grant = a
+		}
+	}
+	if grant == nil {
+		t.Fatal("grant action not registered")
+	}
+	for _, member := range []string{"valid_until", "ValidUntil"} {
+		in := operation.Input(`{"assignmentId":"a1","roleId":"r1","roots":[],"` + member + `":"2030-01-01T00:00:00Z"}`)
+		if _, err := grant.Plan(context.Background(), operation.PlanContext{}, in); !errors.Is(err, operation.ErrInvalid) {
+			t.Errorf("%s: want ErrInvalid, got %v", member, err)
+		}
+	}
+	// Control: the correctly spelled member is not rejected as unknown (it fails later, unavailable).
+	ok := operation.Input(`{"assignmentId":"a1","roleId":"r1","roots":[],"validUntil":"2030-01-01T00:00:00Z"}`)
+	if _, err := grant.Plan(context.Background(), operation.PlanContext{}, ok); errors.Is(err, operation.ErrInvalid) {
+		t.Errorf("validUntil wrongly refused as invalid: %v", err)
+	}
+}

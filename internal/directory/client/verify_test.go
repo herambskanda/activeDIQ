@@ -15,9 +15,10 @@ import (
 )
 
 const (
-	vConn = "11111111-2222-4333-8444-555555555555"
-	vRun  = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
-	vDom  = "01020304-0506-4708-890a-0b0c0d0e0f10"
+	vConn     = "11111111-2222-4333-8444-555555555555"
+	vRun      = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+	vIdentity = connection.DirectoryIdentity("01020304-0506-0708-090a-0b0c0d0e0f05")
+	vDom      = "01020304-0506-4708-890a-0b0c0d0e0f10"
 )
 
 type fakeStream struct {
@@ -82,7 +83,12 @@ func findings(fs ...*connectorv1.RightsFinding) *connectorv1.VerifyConnectionRes
 
 func completed(v connectorv1.VerificationVerdict, nf, nt uint32, cs ...*connectorv1.CheckResult) *connectorv1.VerifyConnectionResponse {
 	return &connectorv1.VerifyConnectionResponse{Event: &connectorv1.VerifyConnectionResponse_Completed{
-		Completed: &connectorv1.VerificationCompleted{Verdict: v, Checks: cs, FindingCount: nf, Tier0MemberCount: nt}}}
+		Completed: &connectorv1.VerificationCompleted{Verdict: v, Checks: cs, FindingCount: nf, Tier0MemberCount: nt,
+			DirectoryIdentity: adIdentity()}}}
+}
+
+func adIdentity() *connectorv1.DirectoryIdentity {
+	return &connectorv1.DirectoryIdentity{Identity: &connectorv1.DirectoryIdentity_AdForest{AdForest: &connectorv1.AdForestIdentity{ForestRootNcGuid: g16(5)}}}
 }
 
 func tier0(n int) *connectorv1.VerifyConnectionResponse {
@@ -145,6 +151,9 @@ func TestVerifyConnectionFoldsStreamAndSendsScope(t *testing.T) {
 	}
 	if res.Outcomes[connection.CheckV7OverPrivilege] != connection.OutcomeFail || res.Outcomes["V5"] != connection.OutcomePass {
 		t.Fatalf("outcomes: %v", res.Outcomes)
+	}
+	if res.DirectoryIdentity != vIdentity {
+		t.Fatalf("directory identity = %q", res.DirectoryIdentity)
 	}
 	if len(res.Findings) != 1 {
 		t.Fatalf("findings: %v", res.Findings)

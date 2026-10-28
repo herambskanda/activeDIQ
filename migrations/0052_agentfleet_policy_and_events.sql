@@ -1,4 +1,4 @@
--- 0048_agentfleet_policy_and_events: server side of the addc agent module (T-0556; ADR-0007; contract
+-- 0052_agentfleet_policy_and_events: server side of the addc agent module (T-0556; ADR-0007; contract
 -- agent-host-addc-contract §2, §4). Owner: internal/platform/agentpolicy/signer (keys, keysets, policy
 -- head) and internal/platform/agentpolicy/ingest (events). Four tenant tables, all FORCE ROW LEVEL SECURITY.
 --

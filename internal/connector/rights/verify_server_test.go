@@ -50,7 +50,7 @@ func (w *world) handler(t *testing.T, ep *EpochState, dir ADDirectory) *VerifyHa
 	}
 	snapshotHook = func(context.Context) (*tier0.ADSet, error) { return w.set, nil }
 	t.Cleanup(func() { snapshotHook = nil })
-	return &VerifyHandler{Dir: dir, Epoch: ep, Identity: ref}
+	return &VerifyHandler{Dir: dir, Epoch: ep, Identity: ref, Directory: testDirectory()}
 }
 
 func connErr(t *testing.T, err error) *v1.ConnectorError {

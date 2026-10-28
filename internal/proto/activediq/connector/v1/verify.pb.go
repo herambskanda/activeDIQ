@@ -2608,8 +2608,14 @@ type VerificationCompleted struct {
 	// run. The record itself stays on the connector host; this count lets an honest server raise a
 	// health finding.
 	Tier0InputsDropped uint32 `protobuf:"varint,7,opt,name=tier0_inputs_dropped,json=tier0InputsDropped,proto3" json:"tier0_inputs_dropped,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Contract v1.3 (T-0412): the directory the run was answered against, as V5 (AD: objectGUID of
+	// the forest root domain NC head) or EV2 (Entra: the tenant id) read it. Set on every run whose
+	// verdict is not FAILED or COULD_NOT_VERIFY; the server records it on the connection (DM-10.I1)
+	// and rejects a run that lacks it, or carries the other directory kind, fail-closed
+	// (client.ErrIdentityMissing / ErrIdentityMismatch). Identifiers only, never names.
+	DirectoryIdentity *DirectoryIdentity `protobuf:"bytes,8,opt,name=directory_identity,json=directoryIdentity,proto3" json:"directory_identity,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *VerificationCompleted) Reset() {
@@ -2689,6 +2695,13 @@ func (x *VerificationCompleted) GetTier0InputsDropped() uint32 {
 		return x.Tier0InputsDropped
 	}
 	return 0
+}
+
+func (x *VerificationCompleted) GetDirectoryIdentity() *DirectoryIdentity {
+	if x != nil {
+		return x.DirectoryIdentity
+	}
+	return nil
 }
 
 type VerifyConnectionResponse struct {
@@ -2936,7 +2949,7 @@ const file_activediq_connector_v1_verify_proto_rawDesc = "" +
 	"\x05check\x18\x01 \x01(\x0e2).activediq.connector.v1.VerificationCheckR\x05check\x12>\n" +
 	"\aoutcome\x18\x02 \x01(\x0e2$.activediq.connector.v1.CheckOutcomeR\aoutcome\x12A\n" +
 	"\x05error\x18\x03 \x01(\v2&.activediq.connector.v1.ConnectorErrorH\x00R\x05error\x88\x01\x01B\b\n" +
-	"\x06_error\"\x8f\x03\n" +
+	"\x06_error\"\xe9\x03\n" +
 	"\x15VerificationCompleted\x12E\n" +
 	"\averdict\x18\x01 \x01(\x0e2+.activediq.connector.v1.VerificationVerdictR\averdict\x12;\n" +
 	"\x06checks\x18\x02 \x03(\v2#.activediq.connector.v1.CheckResultR\x06checks\x12=\n" +
@@ -2944,7 +2957,8 @@ const file_activediq_connector_v1_verify_proto_rawDesc = "" +
 	"\rfinding_count\x18\x04 \x01(\rR\ffindingCount\x12,\n" +
 	"\x12tier0_member_count\x18\x05 \x01(\rR\x10tier0MemberCount\x12.\n" +
 	"\x13write_gate_openable\x18\x06 \x01(\bR\x11writeGateOpenable\x120\n" +
-	"\x14tier0_inputs_dropped\x18\a \x01(\rR\x12tier0InputsDropped\"\xc3\x02\n" +
+	"\x14tier0_inputs_dropped\x18\a \x01(\rR\x12tier0InputsDropped\x12X\n" +
+	"\x12directory_identity\x18\b \x01(\v2).activediq.connector.v1.DirectoryIdentityR\x11directoryIdentity\"\xc3\x02\n" +
 	"\x18VerifyConnectionResponse\x12D\n" +
 	"\x06header\x18\x01 \x01(\v2*.activediq.connector.v1.VerificationHeaderH\x00R\x06header\x12C\n" +
 	"\bfindings\x18\x02 \x01(\v2%.activediq.connector.v1.FindingsChunkH\x00R\bfindings\x12D\n" +
@@ -3139,6 +3153,7 @@ var file_activediq_connector_v1_verify_proto_goTypes = []any{
 	(*ConnectionRef)(nil),             // 40: activediq.connector.v1.ConnectionRef
 	(*Tier0Member)(nil),               // 41: activediq.connector.v1.Tier0Member
 	(*ConnectorError)(nil),            // 42: activediq.connector.v1.ConnectorError
+	(*DirectoryIdentity)(nil),         // 43: activediq.connector.v1.DirectoryIdentity
 }
 var file_activediq_connector_v1_verify_proto_depIdxs = []int32{
 	6,  // 0: activediq.connector.v1.AdRight.kind:type_name -> activediq.connector.v1.AdRightKind
@@ -3212,15 +3227,16 @@ var file_activediq_connector_v1_verify_proto_depIdxs = []int32{
 	3,  // 68: activediq.connector.v1.VerificationCompleted.verdict:type_name -> activediq.connector.v1.VerificationVerdict
 	33, // 69: activediq.connector.v1.VerificationCompleted.checks:type_name -> activediq.connector.v1.CheckResult
 	37, // 70: activediq.connector.v1.VerificationCompleted.completed_at:type_name -> google.protobuf.Timestamp
-	30, // 71: activediq.connector.v1.VerifyConnectionResponse.header:type_name -> activediq.connector.v1.VerificationHeader
-	31, // 72: activediq.connector.v1.VerifyConnectionResponse.findings:type_name -> activediq.connector.v1.FindingsChunk
-	32, // 73: activediq.connector.v1.VerifyConnectionResponse.tier0_set:type_name -> activediq.connector.v1.Tier0SetChunk
-	34, // 74: activediq.connector.v1.VerifyConnectionResponse.completed:type_name -> activediq.connector.v1.VerificationCompleted
-	75, // [75:75] is the sub-list for method output_type
-	75, // [75:75] is the sub-list for method input_type
-	75, // [75:75] is the sub-list for extension type_name
-	75, // [75:75] is the sub-list for extension extendee
-	0,  // [0:75] is the sub-list for field type_name
+	43, // 71: activediq.connector.v1.VerificationCompleted.directory_identity:type_name -> activediq.connector.v1.DirectoryIdentity
+	30, // 72: activediq.connector.v1.VerifyConnectionResponse.header:type_name -> activediq.connector.v1.VerificationHeader
+	31, // 73: activediq.connector.v1.VerifyConnectionResponse.findings:type_name -> activediq.connector.v1.FindingsChunk
+	32, // 74: activediq.connector.v1.VerifyConnectionResponse.tier0_set:type_name -> activediq.connector.v1.Tier0SetChunk
+	34, // 75: activediq.connector.v1.VerifyConnectionResponse.completed:type_name -> activediq.connector.v1.VerificationCompleted
+	76, // [76:76] is the sub-list for method output_type
+	76, // [76:76] is the sub-list for method input_type
+	76, // [76:76] is the sub-list for extension type_name
+	76, // [76:76] is the sub-list for extension extendee
+	0,  // [0:76] is the sub-list for field type_name
 }
 
 func init() { file_activediq_connector_v1_verify_proto_init() }
