@@ -235,22 +235,12 @@ func TestWindowsLabTier0DenyReadNestedGroupFailsClosed(t *testing.T) {
 	// The cause, pinned. Windows answers a denied Read with an entry that has no attributes
 	// (observed, T-0404), so the walk fails in builder.mark. Any other error (timeout, bind,
 	// protocol) is not this cause and must fail the test.
-	if !strings.Contains(err.Error(), "entry without objectGUID") {
+	if !strings.Contains(err.Error(), "without objectGUID") {
 		t.Fatalf("fail-closed for the wrong cause: %v", err)
 	}
-	// Naming the group is the spec's ask; the product does not yet (T-0626).
-	xfail(t, "T-0626", strings.Contains(err.Error(), "Domain Admins") || strings.Contains(err.Error(), nested),
-		"error does not name the unreadable group: "+err.Error())
-}
-
-// xfail records a known product gap. While the product still has the gap (fixed == false) it logs
-// EXPECTED-FAIL with the bug ID; once fixed, it fails the test so the marker gets removed.
-func xfail(t *testing.T, bug string, fixed bool, why string) {
-	t.Helper()
-	if fixed {
-		t.Fatalf("%s is fixed: remove the xfail", bug)
+	if !strings.Contains(err.Error(), nested) {
+		t.Fatalf("error does not name the unreadable group %s: %v", nested, err)
 	}
-	t.Logf("EXPECTED-FAIL %s: %s", bug, why)
 }
 
 // AC2: deny-read on CN=Backup Operators,CN=Builtin: the snapshot fails closed naming S-1-5-32-551.
@@ -266,10 +256,12 @@ func TestWindowsLabTier0DenyReadBackupOperatorsFailsClosed(t *testing.T) {
 	w.denyRead(t, bo)
 	w.observe(t, bo)
 	_, err := c.Snapshot(ctx)
-	if err == nil || !strings.Contains(err.Error(), "entry without objectGUID") {
+	if err == nil || !strings.Contains(err.Error(), "without objectGUID") {
 		t.Fatalf("deny-read Backup Operators: err = %v, want a fail-closed entry-without-objectGUID refusal", err)
 	}
-	xfail(t, "T-0626", strings.Contains(err.Error(), "S-1-5-32-551"), "refusal does not name S-1-5-32-551: "+err.Error())
+	if !strings.Contains(err.Error(), "S-1-5-32-551") {
+		t.Fatalf("refusal does not name S-1-5-32-551: %v", err)
+	}
 }
 
 // AC4 evidence: report the domain functional level, forest level and whether Key Admins /
