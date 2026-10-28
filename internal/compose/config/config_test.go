@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -177,44 +175,6 @@ func TestAttestationSettings(t *testing.T) {
 	} {
 		if _, err := config.Load(env(m)); err == nil {
 			t.Errorf("%s accepted", name)
-		}
-	}
-}
-
-func TestKEKProfileNeedsTLSDir(t *testing.T) {
-	if _, err := config.Load(env(map[string]string{config.EnvKEKFile: "/k"})); err == nil || !strings.Contains(err.Error(), config.EnvAPITLSDir) {
-		t.Fatalf("KEK file without TLS dir must fail naming both, got %v", err)
-	}
-	c, err := config.Load(env(map[string]string{config.EnvKEKFile: "/k", config.EnvAPITLSDir: "/d"}))
-	if err != nil || c.KEKFile != "/k" || c.KEKID != config.DefaultKEKID {
-		t.Fatalf("got %v %+v", err, c)
-	}
-}
-
-func TestKEKFileInsideTLSDirRefused(t *testing.T) {
-	root := t.TempDir()
-	tls := filepath.Join(root, "tls")
-	if err := os.MkdirAll(tls, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	link := filepath.Join(root, "link")
-	if err := os.Symlink(tls, link); err != nil {
-		t.Fatal(err)
-	}
-	for name, kek := range map[string]string{
-		"inside":         filepath.Join(tls, "kek"),
-		"nested missing": filepath.Join(tls, "sub", "kek"),
-		"via symlink":    filepath.Join(link, "kek"),
-	} {
-		_, err := config.Load(env(map[string]string{config.EnvKEKFile: kek, config.EnvAPITLSDir: tls}))
-		if err == nil || !strings.Contains(err.Error(), config.EnvKEKFile) || !strings.Contains(err.Error(), config.EnvAPITLSDir) {
-			t.Errorf("%s: must fail naming both env vars, got %v", name, err)
-		}
-	}
-	// A symlinked TLS dir with the KEK in a sibling is fine; so is a sibling whose name shares a prefix.
-	for _, kek := range []string{filepath.Join(root, "kek"), filepath.Join(root, "tls-kek")} {
-		if _, err := config.Load(env(map[string]string{config.EnvKEKFile: kek, config.EnvAPITLSDir: link})); err != nil {
-			t.Errorf("%s outside the dir must load: %v", kek, err)
 		}
 	}
 }

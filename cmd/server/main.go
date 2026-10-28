@@ -17,6 +17,9 @@ func main() {
 		fmt.Fprintln(os.Stderr, "server:", err)
 		os.Exit(2)
 	}
+	if len(os.Args) > 1 && os.Args[1] == "kek" {
+		os.Exit(runKEK(os.Args[2:]))
+	}
 	cfg, err := config.Load(os.Getenv)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "server:", err)
@@ -28,4 +31,18 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+// runKEK is `activediq-server kek <command>`. Only init exists; it generates the installation KEK, which the
+// server itself never does.
+func runKEK(args []string) int {
+	if len(args) == 0 || args[0] != "init" {
+		fmt.Fprintln(os.Stderr, "usage: activediq-server kek init   (see the key-custody settings in the install guide)")
+		return 2
+	}
+	if err := server.KEKInit(args[1:], os.Getenv, os.Stdout); err != nil {
+		fmt.Fprintln(os.Stderr, "server:", err)
+		return 1
+	}
+	return 0
 }
