@@ -339,9 +339,39 @@ func TestA1Installer(t *testing.T) {
 	wantViolation(t, third("Product.wxs", `<Wix><Package><ServiceInstall Name="[SVC]" Account="x"/></Package></Wix>`), "through a variable")
 	wantViolation(t, third("Product.wxs", `<Wix><Package><ServiceControl Name="!(bind.x)" Stop="both"/></Package></Wix>`), "through a variable")
 	wantViolation(t, third("Product.wxs", `<Wix><Package><ServiceInstall Name="Other" Account="LocalSystem"/></Package></Wix>`), "LocalSystem")
-	wantClean(t, third("Product.wxs", `<Wix><Package><ServiceInstall Name="Other" Account="NT SERVICE\Other"/></Package></Wix>`))
+	wantClean(t, third("Product.wxs", `<Wix><Package><ServiceInstall Name="Other" Account="NT SERVICE\Other" ServiceSid="restricted" RequiredPrivileges="SeChangeNotifyPrivilege"/></Package></Wix>`))
+	// Fifth review, 1: DOCTYPE/ENTITY and named entities are denied in every WiX file.
+	ent := `<!DOCTYPE Wix [<!ENTITY g "Agent">]><Wix><Package><Component><ServiceInstall Name="activeDIQ&g;" Account="NT SERVICE\activeDIQ&g;"><ServiceConfig ServiceName="activeDIQ&g;" ServiceSid="unrestricted" RequiredPrivileges="SeDebugPrivilege"/></ServiceInstall></Component></Package></Wix>`
+	wantViolation(t, third("core.wxs", ent), "DOCTYPE or ENTITY")
+	wantViolation(t, third("core.wxs", `<Wix><Package><ServiceInstall Name="Other&nbsp;" Account="x"/></Package></Wix>`), "named entity")
+	wantClean(t, third("core.wxs", `<Wix><Package><ServiceInstall Name="Other" Account="NT SERVICE\Other" ServiceSid="restricted" RequiredPrivileges="SeChangeNotifyPrivilege"/><X a="a&amp;b &lt;"/></Package></Wix>`))
+	// Fifth review, 2: WiX outside packaging/ is MSI source too.
+	outside := func(rel, body string) Result {
+		r := t.TempDir()
+		write(t, r, rel, body)
+		return checkInstaller(r)
+	}
+	wantViolation(t, outside("installer/agent.wxs", `<Wix><Package><ServiceInstall Name="activeDIQAgent" Account="LocalSystem"/></Package></Wix>`), "LocalSystem")
+	wantViolation(t, outside("src/Product.wxs.in", `<Wix/>`), "template or transform")
+	wantViolation(t, outside("tools/x/a.wixproj", `<Project>LocalSystem</Project>`), "LocalSystem")
+	if r := outside("testdata/agent.wxs", `<Wix><ServiceInstall Name="activeDIQAgent" Account="LocalSystem"/></Wix>`); r.Inactive == "" {
+		t.Fatalf("fixtures under testdata/ must not be scanned: %v", r.Violations)
+	}
+	// Fifth review, 3: every service gets the full pin; an allowlisted Id is the only exception.
+	helper := `<Wix><Package><Component><ServiceInstall Id="SkzHelper" Name="skzHelper" Account="NT SERVICE\skzHelper"><ServiceConfig ServiceSid="unrestricted" RequiredPrivileges="SeDebugPrivilege,SeBackupPrivilege"/></ServiceInstall></Component></Package></Wix>`
+	wantViolation(t, third("Helper.wxs", helper), "service SID type of")
+	wantViolation(t, third("Helper.wxs", helper), "RequiredPrivileges of")
+	wantViolation(t, third("Helper.wxs", `<Wix><Package><ServiceInstall Name="skzHelper" Account="NT SERVICE\skzHelper"/></Package></Wix>`), "no ServiceSid")
+	wantViolation(t, third("Helper.wxs", `<Wix><Package><ServiceInstall Name="skzHelper" Account="NT SERVICE\skzHelper" ServiceSid="restricted" RequiredPrivileges="SeChangeNotifyPrivilege"/><ServiceConfig ServiceName="skzHelper" ServiceSid="unrestricted"/></Package></Wix>`), "service SID type of")
+	wantViolation(t, third("Helper.wxs", `<Wix><Package><ServiceConfig ServiceName="existingSvc" RequiredPrivileges="SeDebugPrivilege"/></Package></Wix>`), "other than the pin")
+	{
+		r := t.TempDir()
+		write(t, r, "packaging/windows/agent.wxs", goodWxs)
+		write(t, r, "packaging/windows/core/Helper.wxs", helper)
+		wantClean(t, checkInstallerAllow(r, []string{"SkzHelper"}))
+	}
 	// A neighbouring service naming the agent literally is judged against the pin.
-	wantViolation(t, third("Product.wxs", `<Wix><Package><ServiceConfig ServiceName="activeDIQAgent" ServiceSid="unrestricted"/></Package></Wix>`), "service SID type")
+	wantViolation(t, third("Product.wxs", `<Wix><Package><ServiceConfig ServiceName="activeDIQAgent" ServiceSid="unrestricted"/></Package></Wix>`), "other than the pin")
 	// Custom actions: deny by default, whatever their spelling.
 	ca := func(allow []string, body string) Result {
 		r := t.TempDir()

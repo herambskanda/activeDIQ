@@ -654,15 +654,29 @@ func utf16Text(b []byte, bigEndian bool) string {
 // binary extension.
 func agentInstallerFiles(root string) []instFile {
 	var out []instFile
-	pack := filepath.Join(root, "packaging")
-	_ = filepath.WalkDir(pack, func(p string, e fs.DirEntry, err error) error {
-		if err != nil || e.IsDir() {
+	_ = filepath.WalkDir(root, func(p string, e fs.DirEntry, err error) error {
+		if err != nil {
 			return nil
 		}
-		rel, _ := filepath.Rel(root, p)
-		rel = filepath.ToSlash(rel)
-		inPath := agentFileRe.MatchString(strings.TrimPrefix(rel, "packaging/"))
-		wix := isWixXML(p) || isTemplate(p)
+		relp, _ := filepath.Rel(root, p)
+		relp = filepath.ToSlash(relp)
+		if e.IsDir() {
+			switch e.Name() {
+			case ".git", "node_modules", "testdata":
+				return filepath.SkipDir
+			}
+			if relp == "tools/fitness" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		inPack := strings.HasPrefix(relp, "packaging/")
+		if !inPack && !isRepoWix(p) {
+			return nil
+		}
+		rel := relp
+		inPath := inPack && agentFileRe.MatchString(strings.TrimPrefix(rel, "packaging/"))
+		wix := isWixXML(p) || isTemplate(p) || !inPack
 		if binaryExts[strings.ToLower(filepath.Ext(p))] {
 			return nil
 		}
@@ -702,10 +716,38 @@ var templateExts = setOf(".in", ".tmpl", ".tpl", ".template", ".xsl", ".xslt", "
 
 func isTemplate(p string) bool { return templateExts[strings.ToLower(filepath.Ext(p))] }
 
+// isRepoWix: a WiX source or WiX template anywhere in the repo, not only under packaging/ (ADR-0006 A1 says
+// any LocalSystem string in the MSI source fails, wherever the MSI source sits).
+func isRepoWix(p string) bool {
+	switch strings.ToLower(filepath.Ext(p)) {
+	case ".wxs", ".wxi", ".wxl", ".wixproj":
+		return true
+	}
+	return wixTemplateRe.MatchString(strings.ToLower(filepath.Base(p)))
+}
+
+var wixTemplateRe = regexp.MustCompile(`\.(wxs|wxi|wxl|wixproj)\.[a-z0-9]+$`)
+
 func isWixXML(p string) bool {
 	switch strings.ToLower(filepath.Ext(p)) {
-	case ".wxs", ".wxi", ".wixproj", ".xml":
+	case ".wxs", ".wxi", ".wxl", ".wixproj", ".xml":
 		return true
+	}
+	return false
+}
+
+var (
+	docTypeRe     = regexp.MustCompile(`(?i)<!(DOCTYPE|ENTITY)`)
+	namedEntityRe = regexp.MustCompile(`(?i)&([a-z_][\w.-]*);`)
+)
+
+func hasNamedEntity(text string) bool {
+	for _, m := range namedEntityRe.FindAllStringSubmatch(text, -1) {
+		switch strings.ToLower(m[1]) {
+		case "amp", "lt", "gt", "quot", "apos":
+		default:
+			return true
+		}
 	}
 	return false
 }
@@ -734,8 +776,6 @@ func checkInstallerAllow(root string, allow []string) Result {
 	}
 	services := 0
 	namedAgent := false
-	var sids []string
-	var privs []string
 	for _, f := range files {
 		rel := f.rel
 		if f.unreadable != "" {
@@ -752,6 +792,9 @@ func checkInstallerAllow(root string, allow []string) Result {
 		}
 		if isTemplate(f.path) && !allowed(rel, allow) {
 			r.Violations = append(r.Violations, fmt.Sprintf("%s is a template or transform under packaging/: it is not parsed, so it could emit a ServiceInstall, ServiceSid or ACL the check never sees; list it in installer-allow.txt after a security-architect review", rel))
+		}
+		if isWixXML(f.path) && (docTypeRe.MatchString(f.text) || hasNamedEntity(f.text)) && !allowed(rel, allow) {
+			r.Violations = append(r.Violations, fmt.Sprintf("%s declares a DOCTYPE or ENTITY, or uses a named entity other than amp, lt, gt, quot, apos: a name, account or SID built from an entity cannot be read", rel))
 		}
 		if isWixXML(f.path) && strings.Contains(f.text, "&#") && !allowed(rel, allow) {
 			r.Violations = append(r.Violations, fmt.Sprintf("%s contains a numeric character reference (&#...): names, accounts and SIDs must be plain text so they can be read", rel))
@@ -779,8 +822,6 @@ func checkInstallerAllow(root string, allow []string) Result {
 			r.Violations = append(r.Violations, fmt.Sprintf("%s names %q once its XML is decoded: the agent never runs as LocalSystem or a shared service identity (ADR-0006 rule 1)", rel, m))
 		}
 		services += x.services
-		sids = append(sids, x.sids...)
-		privs = append(privs, x.privs...)
 		r.Violations = append(r.Violations, x.violations...)
 	}
 	switch {
@@ -792,18 +833,6 @@ func checkInstallerAllow(root string, allow []string) Result {
 	case services > 1:
 		r.Violations = append(r.Violations, fmt.Sprintf("%d ServiceInstall elements for the agent service in the installer source, must be exactly one", services))
 	default:
-		// Every ServiceSid seen must be the pin: a later unrestricted setting must not hide behind an earlier one.
-		if len(sids) == 0 {
-			r.Violations = append(r.Violations, fmt.Sprintf("no ServiceSid in the agent installer source, must be %q (ServiceSid on ServiceInstall/ServiceConfig)", pinnedSidType))
-		}
-		for _, v := range sids {
-			if !strings.EqualFold(v, pinnedSidType) {
-				r.Violations = append(r.Violations, fmt.Sprintf("service SID type is %q, must be %q (every ServiceSid seen must be the pin)", v, pinnedSidType))
-			}
-		}
-		if !sameSet(privs, pinnedPrivileges) {
-			r.Violations = append(r.Violations, fmt.Sprintf("RequiredPrivileges are %v, must be exactly %v", privs, pinnedPrivileges))
-		}
 	}
 	return r
 }
@@ -829,8 +858,6 @@ type installerFacts struct {
 	services   int
 	namesAgent bool   // a parsed (entity-decoded) element names the agent service
 	attrText   string // every decoded attribute value and text node, for the string rules
-	sids       []string
-	privs      []string
 	violations []string
 }
 
@@ -922,11 +949,9 @@ func judgeInstallerXML(rel string, b []byte, allow []string, agentFile bool) ins
 					fail("ServiceInstall %q runs as %q: every service must run as its own virtual account NT SERVICE\\<its name> (or be listed by Id in installer-allow.txt after review)", name, acct)
 				}
 			}
-			naming := isAgentName(name) || agentSvc(i)
-			if !naming {
-				continue
+			if isAgentName(name) || agentSvc(i) {
+				f.namesAgent = true
 			}
-			f.namesAgent = true
 			if e.Name == "ServiceInstall" && agentSvc(i) && isAgentName(name) {
 				f.services++
 				if acct := e.Attrs["account"]; acct != pinnedAccount {
@@ -935,20 +960,6 @@ func judgeInstallerXML(rel string, b []byte, allow []string, agentFile bool) ins
 				if e.Attrs["password"] != "" {
 					fail("ServiceInstall carries a Password; a virtual account has none")
 				}
-			}
-			if e.Name != "ServiceControl" {
-				if v, ok := e.Attrs["servicesid"]; ok {
-					f.sids = append(f.sids, v)
-				}
-				if v := e.Attrs["requiredprivileges"]; v != "" {
-					f.privs = append(f.privs, splitPrivs(v)...)
-				}
-			}
-		case (e.Name == "RequiredPrivilege" || e.Name == "Privilege") && agentSvc(i):
-			if v := e.Attrs["name"]; v != "" {
-				f.privs = append(f.privs, v)
-			} else if v := strings.TrimSpace(e.Text); v != "" {
-				f.privs = append(f.privs, v)
 			}
 		case e.Name == "Permission" || e.Name == "PermissionEx":
 			p := ""
@@ -973,6 +984,92 @@ func judgeInstallerXML(rel string, b []byte, allow []string, agentFile bool) ins
 			if strings.HasPrefix(trim, `system\`) || trim == "system" || dynamicRe.MatchString(key) || dynamicRe.MatchString(root) {
 				fail("%s writes HKLM key %q: the installer has no business under HKLM\\SYSTEM (the service account, SID type and privileges live there) and a key built from a property or variable cannot be judged", e.Name, key)
 			}
+		}
+	}
+	// Rule 3 for EVERY service: the SID type and privileges of each ServiceInstall (its own attributes, its
+	// descendants, and any ServiceConfig naming it in this file) must be the pin, unless the ServiceInstall
+	// Id is on the reviewed list. A second service running the agent binary gets no weaker SID or extra
+	// privileges.
+	var orphans []int
+	for i, e := range els {
+		if e.Name != "ServiceConfig" {
+			continue
+		}
+		owned := false
+		for j := i; j >= 0; j = els[j].Parent {
+			if els[j].Name == "ServiceInstall" {
+				owned = true
+			}
+		}
+		if !owned {
+			orphans = append(orphans, i)
+		}
+	}
+	for i, e := range els {
+		if e.Name != "ServiceInstall" {
+			continue
+		}
+		name := e.Attrs["name"]
+		var sids, privs []string
+		take := func(x xmlEl) {
+			if v, ok := x.Attrs["servicesid"]; ok {
+				sids = append(sids, v)
+			}
+			if v := x.Attrs["requiredprivileges"]; v != "" {
+				privs = append(privs, splitPrivs(v)...)
+			}
+		}
+		take(e)
+		for k, c := range els {
+			under := false
+			for j := k; j >= 0; j = els[j].Parent {
+				if j == i {
+					under = true
+				}
+			}
+			if !under || k == i {
+				continue
+			}
+			take(c)
+			if c.Name == "RequiredPrivilege" || c.Name == "Privilege" {
+				if v := c.Attrs["name"]; v != "" {
+					privs = append(privs, v)
+				} else if v := strings.TrimSpace(c.Text); v != "" {
+					privs = append(privs, v)
+				}
+			}
+		}
+		for _, k := range orphans {
+			if strings.EqualFold(els[k].Attrs["servicename"], name) {
+				take(els[k])
+			}
+		}
+		if id := e.Attrs["id"]; id != "" && !isAgentName(name) && allowed(id, allow) {
+			continue
+		}
+		if len(sids) == 0 {
+			fail("ServiceInstall %q has no ServiceSid, must be %q (every service in the MSI source is pinned unless its Id is in installer-allow.txt)", name, pinnedSidType)
+		}
+		for _, v := range sids {
+			if !strings.EqualFold(v, pinnedSidType) {
+				fail("service SID type of %q is %q, must be %q (every ServiceSid seen must be the pin)", name, v, pinnedSidType)
+			}
+		}
+		if !sameSet(privs, pinnedPrivileges) {
+			fail("RequiredPrivileges of %q are %v, must be exactly %v", name, privs, pinnedPrivileges)
+		}
+	}
+	for _, k := range orphans {
+		n := els[k].Attrs["servicename"]
+		matched := false
+		for _, e := range els {
+			if e.Name == "ServiceInstall" && strings.EqualFold(e.Attrs["name"], n) {
+				matched = true
+			}
+		}
+		rp := els[k].Attrs["requiredprivileges"]
+		if v := els[k].Attrs["servicesid"]; !matched && ((v != "" && !strings.EqualFold(v, pinnedSidType)) || (rp != "" && !sameSet(splitPrivs(rp), pinnedPrivileges))) {
+			fail("ServiceConfig for %q has a SID type or privileges other than the pin", n)
 		}
 	}
 	// One ServiceInstall in the agent's Component (WiX runs it on the Component's KeyPath file) and in any
