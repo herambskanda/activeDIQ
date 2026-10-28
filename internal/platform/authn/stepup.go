@@ -9,7 +9,6 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
-	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
@@ -252,7 +251,7 @@ func (u *StepUp) emit(ctx context.Context, tx store.Tx, now time.Time, kind audi
 		// One event per attempt: the nanosecond makes the ID unique, a retried tx rewrites the same one.
 		ID: "authn.session." + s.ID + ".stepup." + strconv.FormatInt(now.UnixNano(), 10), Kind: kind, At: now,
 		Actor: accountChain(s.Account), Target: authority.TargetRef{GUID: s.ID, Class: "session"},
-		Component: "authn", Outcome: out, Details: []chain.Detail{{Key: "account", Value: s.Account}},
+		Component: "authn", Outcome: out, Details: []audit.Detail{{Key: "account", Value: s.Account}},
 	}
 	if err := u.Sessions.audit.Append(ctx, tx, ev); err != nil {
 		return fmt.Errorf("authn: audit step-up: %w", err)

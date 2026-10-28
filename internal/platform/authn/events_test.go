@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/audit"
-	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
 	"github.com/skenzeriq/activediq/internal/platform/keys"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
@@ -263,7 +262,7 @@ func TestSessionEventsChained(t *testing.T) {
 
 type noAnchor struct{}
 
-func (noAnchor) Anchor(context.Context, chain.Checkpoint) error { return nil }
+func (noAnchor) Anchor(context.Context, audit.Checkpoint) error { return nil }
 
 type fixedKeys struct{}
 

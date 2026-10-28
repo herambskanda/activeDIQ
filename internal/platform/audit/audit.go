@@ -50,6 +50,17 @@ type Change struct {
 // may import audit but not audit/chain (ADR-0005 rule 13) name the type through this alias.
 type Detail = chain.Detail
 
+// Envelope is a chained event's canonical envelope (what Render takes), and Checkpoint a signed chain
+// head (what an Anchor receives). The aliases, and ParseEnvelope, let packages that may import audit but
+// not audit/chain (rule 13) read a stored envelope and implement an Anchor.
+type (
+	Envelope   = chain.Envelope
+	Checkpoint = chain.Checkpoint
+)
+
+// ParseEnvelope decodes a stored envelope; it is chain.ParseEnvelope.
+func ParseEnvelope(b []byte) (Envelope, error) { return chain.ParseEnvelope(b) }
+
 // Snapshot is a display value (a name or similar) as it read when the event happened. Like a change value
 // it is kept by reference.
 type Snapshot struct {
