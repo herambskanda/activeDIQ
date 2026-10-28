@@ -256,7 +256,7 @@ export interface paths {
         get: operations["getSiemDestination"];
         /**
          * Replace the settings of a SIEM syslog destination
-         * @description Replaces the writable fields. The change redirects the SIEM stream, so it is audited with the previous and the new target. The Idempotency-Key is the request ID of the audit events; use a new key for each intended change.
+         * @description Replaces the writable fields. The change redirects the SIEM stream, so it is audited with the previous and the new target. The Idempotency-Key is the request ID of the audit events; use a new key for each intended change. A key that already recorded an update is never applied twice: a replay with the same settings returns the current destination, with different settings it is a 422.
          */
         put: operations["updateSiemDestination"];
         post?: never;
@@ -1292,6 +1292,7 @@ export interface operations {
             404: components["responses"]["NotFound"];
             413: components["responses"]["PayloadTooLarge"];
             415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["IdempotencyKeyReuse"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
         };

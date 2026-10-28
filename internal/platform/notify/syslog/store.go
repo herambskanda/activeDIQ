@@ -126,6 +126,22 @@ func (s *Store) write(ctx context.Context, t tenant.ID, id string, sp Spec, by a
 		if err != nil {
 			return err
 		}
+		if !creating {
+			// A key that already recorded an update must never change the row again: the audit chain
+			// treats a repeated event as a retry and would skip it, leaving a change with no event.
+			var seen bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM public.audit_event WHERE tenant_id = $1::uuid AND event_id = $2)`,
+				t.String(), "siem.destination."+id+".updated."+requestID).Scan(&seen); err != nil {
+				return err
+			}
+			if seen {
+				if d != prev {
+					return ErrIdempotencyConflict
+				}
+				out = prev
+				return nil
+			}
+		}
 		var row interface{ Scan(dest ...any) error }
 		if creating {
 			row = tx.QueryRow(ctx, `INSERT INTO public.notify_syslog_destinations
@@ -159,6 +175,9 @@ func (s *Store) write(ctx context.Context, t tenant.ID, id string, sp Spec, by a
 	if err != nil {
 		if errors.Is(err, ErrBadDestination) || errors.Is(err, ErrPlaintextNotOptedIn) || errors.Is(err, ErrIdempotencyConflict) {
 			return View{}, err
+		}
+		if errors.Is(err, audit.ErrEventIDReused) {
+			return View{}, ErrIdempotencyConflict
 		}
 		return View{}, fmt.Errorf("syslog: store destination: %w", err)
 	}
