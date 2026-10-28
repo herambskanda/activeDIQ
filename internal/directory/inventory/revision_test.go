@@ -1,11 +1,8 @@
 package inventory_test
 
 import (
-	"errors"
-	"strings"
-
 	"context"
-	"github.com/jackc/pgx/v5/pgconn"
+	"strings"
 	"testing"
 	"time"
 
@@ -146,12 +143,12 @@ func TestTier0RevisionRowSecurityRefusesTenantReassignment(t *testing.T) {
 		check := func(label string) {
 			t.Helper()
 			err := e.exec(e.a, move, e.b.String(), e.a.String())
-			var pg *pgconn.PgError
-			if !errors.As(err, &pg) {
+			code := store.SQLState(err)
+			if code == "" {
 				t.Fatalf("%s: re-assignment was not refused by the database: %v", label, err)
 			}
-			if label == "triggers disabled" && (pg.Code != "42501" || !strings.Contains(pg.Message, "row-level security")) {
-				t.Fatalf("%s: want a row-security refusal (42501), got %s %q", label, pg.Code, pg.Message)
+			if label == "triggers disabled" && (code != "42501" || !strings.Contains(err.Error(), "row-level security")) {
+				t.Fatalf("%s: want a row-security refusal (42501), got %s %v", label, code, err)
 			}
 		}
 		check("triggers enabled")
