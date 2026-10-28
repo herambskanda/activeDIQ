@@ -28,3 +28,27 @@ func CreateTemp(dir, pattern string) (*os.File, error) { return createTemp(dir, 
 // access is limited to the service identity (and SYSTEM on Windows). A missing file returns an error
 // satisfying errors.Is(err, fs.ErrNotExist), not ErrUnsafe.
 func Check(path string) error { return check(path) }
+
+// ErrDirUnsafe is returned (wrapped) when the state directory is not a real directory owned by the
+// service identity with access for the service identity (and SYSTEM on Windows) only.
+var ErrDirUnsafe = errors.New("ownerfile: state directory is not restricted to the service identity")
+
+// MaxReadSize bounds ReadFile: the files held here are small identifier lists.
+const MaxReadSize = 64 << 20
+
+// ReadFile reads path through a single handle: it opens the path without following a link
+// (O_NOFOLLOW / FILE_FLAG_OPEN_REPARSE_POINT), verifies owner and access on that open handle
+// (fstat / GetSecurityInfo), and reads from the same handle. A path swapped for a link after any
+// earlier Check is therefore refused, and the foreign contents are never read. Errors are ErrUnsafe
+// or satisfy errors.Is(err, fs.ErrNotExist).
+func ReadFile(path string) ([]byte, error) { return readFile(path) }
+
+// EnsureDir creates the state directory (and only the last element; the parent must exist) with the
+// service-identity-only protection, or verifies an existing one, and returns an error wrapping
+// ErrDirUnsafe if it is wider. The connector calls it at startup and refuses to start on error.
+// Unix: mode 0700, owned by the effective uid. Windows: owner = service identity, PROTECTED DACL of
+// the service identity and SYSTEM only.
+func EnsureDir(path string) error { return ensureDir(path) }
+
+// CheckDir verifies an existing state directory without creating it.
+func CheckDir(path string) error { return checkDir(path) }

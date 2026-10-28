@@ -55,3 +55,68 @@ func TestCheckMissingIsNotUnsafe(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestReadFileRefusesSymlinkAndWider(t *testing.T) {
+	d := t.TempDir()
+	foreign := filepath.Join(d, "foreign")
+	if err := os.WriteFile(foreign, []byte("FORGED"), 0o666); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(foreign, 0o666); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(d, "baseline.json")
+	if err := os.Symlink(foreign, link); err != nil {
+		t.Fatal(err)
+	}
+	b, err := ReadFile(link)
+	if !errors.Is(err, ErrUnsafe) || len(b) != 0 {
+		t.Fatalf("symlink: got %q, %v", b, err)
+	}
+	if b, err := ReadFile(foreign); !errors.Is(err, ErrUnsafe) || len(b) != 0 {
+		t.Fatalf("0666: got %q, %v", b, err)
+	}
+}
+
+func TestReadFileOwnerOnly(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "b")
+	if err := os.WriteFile(p, []byte("ok"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := ReadFile(p); err != nil || string(b) != "ok" {
+		t.Fatalf("%q %v", b, err)
+	}
+	if _, err := ReadFile(p + ".none"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestEnsureDir(t *testing.T) {
+	root := t.TempDir()
+	d := filepath.Join(root, "state")
+	if err := EnsureDir(d); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := os.Stat(d); st.Mode().Perm() != 0o700 {
+		t.Fatalf("mode %v", st.Mode())
+	}
+	if err := EnsureDir(d); err != nil { // idempotent
+		t.Fatal(err)
+	}
+	if err := os.Chmod(d, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureDir(d); !errors.Is(err, ErrDirUnsafe) {
+		t.Fatalf("0755: got %v", err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(d, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(d, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckDir(link); !errors.Is(err, ErrDirUnsafe) {
+		t.Fatalf("symlink dir: got %v", err)
+	}
+}

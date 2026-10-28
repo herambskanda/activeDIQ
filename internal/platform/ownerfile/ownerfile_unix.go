@@ -3,7 +3,10 @@
 package ownerfile
 
 import (
+	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -61,6 +64,47 @@ func checkInfo(path string, st os.FileInfo) error {
 	s, ok := st.Sys().(*syscall.Stat_t)
 	if !st.Mode().IsRegular() || !ok || int(s.Uid) != os.Geteuid() || st.Mode().Perm()&0o077 != 0 {
 		return fmt.Errorf("%w: %s", ErrUnsafe, filepath.Base(path))
+	}
+	return nil
+}
+
+func readFile(path string) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		if errors.Is(err, syscall.ELOOP) { // O_NOFOLLOW on a symlink
+			return nil, fmt.Errorf("%w: %s", ErrUnsafe, filepath.Base(path))
+		}
+		return nil, err
+	}
+	defer f.Close()
+	if err := checkOpen(f); err != nil {
+		return nil, err
+	}
+	b, err := io.ReadAll(io.LimitReader(f, MaxReadSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > MaxReadSize {
+		return nil, fmt.Errorf("%w: %s too large", ErrUnsafe, filepath.Base(path))
+	}
+	return b, nil
+}
+
+func ensureDir(path string) error {
+	if err := os.Mkdir(path, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+		return err
+	}
+	return checkDir(path)
+}
+
+func checkDir(path string) error {
+	st, err := os.Lstat(path) // Lstat: a symlinked state directory is refused
+	if err != nil {
+		return err
+	}
+	s, ok := st.Sys().(*syscall.Stat_t)
+	if !st.IsDir() || !ok || int(s.Uid) != os.Geteuid() || st.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("%w: %s", ErrDirUnsafe, filepath.Base(path))
 	}
 	return nil
 }

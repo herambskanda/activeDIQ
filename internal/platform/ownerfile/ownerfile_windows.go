@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,7 +38,7 @@ func principals() (system, self *windows.SID, err error) {
 	return
 }
 
-func descriptor() (*windows.SECURITY_DESCRIPTOR, error) {
+func descriptor(inherit uint32) (*windows.SECURITY_DESCRIPTOR, error) {
 	system, self, err := principals()
 	if err != nil {
 		return nil, err
@@ -51,7 +52,7 @@ func descriptor() (*windows.SECURITY_DESCRIPTOR, error) {
 		entries = append(entries, windows.EXPLICIT_ACCESS{
 			AccessPermissions: windows.GENERIC_ALL,
 			AccessMode:        windows.GRANT_ACCESS,
-			Inheritance:       windows.NO_INHERITANCE,
+			Inheritance:       inherit,
 			Trustee: windows.TRUSTEE{
 				TrusteeForm:  windows.TRUSTEE_IS_SID,
 				TrusteeType:  windows.TRUSTEE_IS_UNKNOWN,
@@ -82,7 +83,7 @@ func descriptor() (*windows.SECURITY_DESCRIPTOR, error) {
 // create opens path with the restricted descriptor. disposition is CREATE_NEW or OPEN_ALWAYS (the
 // descriptor only applies when the file is created).
 func create(path string, disposition uint32, access uint32) (*os.File, error) {
-	sd, err := descriptor()
+	sd, err := descriptor(windows.NO_INHERITANCE)
 	if err != nil {
 		return nil, err
 	}
@@ -154,12 +155,18 @@ func check(path string) error {
 	if !st.Mode().IsRegular() || isReparse(path) {
 		return bad
 	}
-	system, self, err := principals()
+	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
 		return err
 	}
-	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
-		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	return verifySD(sd, bad)
+}
+
+// verifySD accepts only: owner = service identity, PROTECTED DACL, allow ACEs for the service
+// identity and SYSTEM. Inheritance flags on the ACEs are irrelevant to the principal check.
+func verifySD(sd *windows.SECURITY_DESCRIPTOR, bad error) error {
+	system, self, err := principals()
 	if err != nil {
 		return err
 	}
@@ -207,4 +214,88 @@ func isReparse(path string) bool {
 		return true
 	}
 	return a&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+// openChecked opens path without following a reparse point (FILE_FLAG_OPEN_REPARSE_POINT), then
+// verifies the open handle: not a reparse point, expected kind, owner and DACL read with
+// GetSecurityInfo on the handle itself. The caller works only with the returned handle, so a swap
+// of the path after this point cannot change what is read.
+// https://learn.microsoft.com/windows/win32/api/aclapi/nf-aclapi-getsecurityinfo
+// https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle
+func openChecked(path string, access uint32, dir bool, bad error) (windows.Handle, error) {
+	p, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return 0, err
+	}
+	flags := uint32(windows.FILE_ATTRIBUTE_NORMAL | windows.FILE_FLAG_OPEN_REPARSE_POINT)
+	if dir {
+		flags |= windows.FILE_FLAG_BACKUP_SEMANTICS
+	}
+	h, err := windows.CreateFile(p, access|windows.READ_CONTROL, windows.FILE_SHARE_READ, nil,
+		windows.OPEN_EXISTING, flags, 0)
+	if err != nil {
+		return 0, err
+	}
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(h, &info); err != nil {
+		_ = windows.CloseHandle(h)
+		return 0, err
+	}
+	isDir := info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0
+	if info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 || isDir != dir {
+		_ = windows.CloseHandle(h)
+		return 0, bad
+	}
+	sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	if err == nil {
+		err = verifySD(sd, bad)
+	}
+	if err != nil {
+		_ = windows.CloseHandle(h)
+		return 0, err
+	}
+	return h, nil
+}
+
+func readFile(path string) ([]byte, error) {
+	bad := fmt.Errorf("%w: %s", ErrUnsafe, filepath.Base(path))
+	h, err := openChecked(path, windows.GENERIC_READ, false, bad)
+	if err != nil {
+		return nil, err
+	}
+	f := os.NewFile(uintptr(h), path)
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, MaxReadSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > MaxReadSize {
+		return nil, bad
+	}
+	return b, nil
+}
+
+func ensureDir(path string) error {
+	sd, err := descriptor(windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT)
+	if err != nil {
+		return err
+	}
+	p, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return err
+	}
+	sa := &windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})), SecurityDescriptor: sd}
+	if err := windows.CreateDirectory(p, sa); err != nil && !errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
+		return err
+	}
+	return checkDir(path)
+}
+
+func checkDir(path string) error {
+	h, err := openChecked(path, windows.FILE_LIST_DIRECTORY, true, fmt.Errorf("%w: %s", ErrDirUnsafe, filepath.Base(path)))
+	if err != nil {
+		return err
+	}
+	return windows.CloseHandle(h)
 }

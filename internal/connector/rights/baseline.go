@@ -71,16 +71,14 @@ var ErrBaselineUnsafe = errors.New("rights: baseline file is not restricted to t
 type FileBaselineStore struct{ Path string }
 
 func (s FileBaselineStore) Load() (*Baseline, error) {
-	// Refuse a file another principal could have written: a wider DACL (an ACE for Users) or a foreign
-	// owner (T-0537, T-0329). The refusal is ErrBaselineUnsafe, never a silent adoption.
-	if err := ownerfile.Check(s.Path); err != nil {
+	// ownerfile.ReadFile opens without following links and checks owner and access on the open
+	// handle, then reads from it: no check-then-read race (T-0577). A file another principal could
+	// have written is ErrBaselineUnsafe, never a silent adoption (T-0537, T-0329).
+	raw, err := ownerfile.ReadFile(s.Path)
+	if err != nil {
 		if errors.Is(err, ownerfile.ErrUnsafe) {
 			return nil, fmt.Errorf("%w: %w", ErrBaselineUnsafe, err)
 		}
-		return nil, err
-	}
-	raw, err := os.ReadFile(s.Path)
-	if err != nil {
 		return nil, err
 	}
 	var b Baseline

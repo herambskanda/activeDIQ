@@ -737,7 +737,7 @@ and appended to when the ratchet adds an entry. It is not a secret and holds ide
 is readable and writable by the connector's service identity only: mode 0600 owned by the euid on
 Unix; on Windows a protected DACL granting the service identity and SYSTEM only, owner the service
 identity, set in `CreateFile` so the file never carries the inherited ACL (T-0537,
-`internal/platform/ownerfile`). The shrink-record and write-baseline files are created the same way.
+`internal/platform/ownerfile`). The shrink-record and write-baseline files are created the same way. The state directory is created or verified at startup with `ownerfile.EnsureDir` (0700 on Unix; on Windows owner = service identity and a PROTECTED DACL of service identity + SYSTEM) and the connector refuses to start with `ErrDirUnsafe` if it is wider (T-0577). `Load` reads through `ownerfile.ReadFile`: open without following links, check owner and DACL on the open handle, read from that handle (no check-then-read race).
 Loading re-checks owner and DACL: a baseline with any other ACE or owner is refused (`ErrBaselineUnsafe`),
 treated as unreadable (`tier0_baseline_missing`, reason `unsafe_acl`) and replaced by the next completed
 run. After a restart, the first
