@@ -10,6 +10,7 @@ import (
 	"github.com/go-krb5/krb5/client"
 	"github.com/go-krb5/krb5/config"
 	krb5gssapi "github.com/go-krb5/krb5/gssapi"
+	"github.com/go-krb5/krb5/iana/etypeID"
 	"github.com/go-krb5/krb5/keytab"
 	"github.com/go-ldap/ldap/v3"
 
@@ -78,30 +79,36 @@ func splitKDC(s string) (host, port string) {
 	return s, ""
 }
 
-// krb5Conf renders the client configuration. Only validated tokens reach the text (realm and KDC
-// charsets exclude whitespace, braces and '='), so no input can add a stanza. Only AES enctypes are
+// krb5Config builds the client configuration as a typed struct: no krb5.conf text is formatted
+// from realm or KDC input, so no input can add a stanza or a relation. Only AES enctypes are
 // requested: RC4 is never offered.
-func (k Kerberos) krb5Conf() string {
-	var b strings.Builder
-	dns := "true"
+func (k Kerberos) krb5Config() *config.Config {
+	c := config.New()
+	aesNames := []string{"aes256-cts-hmac-sha1-96", "aes128-cts-hmac-sha1-96"}
+	aesIDs := []int32{etypeID.AES256_CTS_HMAC_SHA1_96, etypeID.AES128_CTS_HMAC_SHA1_96}
+	ld := &c.LibDefaults
+	ld.DefaultRealm = k.Realm
+	ld.DNSLookupKDC = len(k.KDCs) == 0
+	ld.DNSLookupRealm = false
+	ld.UDPPreferenceLimit = 1
+	ld.DefaultTktEnctypes = append([]string(nil), aesNames...)
+	ld.DefaultTGSEnctypes = append([]string(nil), aesNames...)
+	ld.PermittedEnctypes = append([]string(nil), aesNames...)
+	ld.DefaultTktEnctypeIDs = append([]int32(nil), aesIDs...)
+	ld.DefaultTGSEnctypeIDs = append([]int32(nil), aesIDs...)
+	ld.PermittedEnctypeIDs = append([]int32(nil), aesIDs...)
 	if len(k.KDCs) > 0 {
-		dns = "false"
-	}
-	fmt.Fprintf(&b, "[libdefaults]\n default_realm = %[1]s\n dns_lookup_kdc = %[2]s\n dns_lookup_realm = false\n udp_preference_limit = 1\n", k.Realm, dns)
-	const aes = "aes256-cts-hmac-sha1-96 aes128-cts-hmac-sha1-96"
-	fmt.Fprintf(&b, " default_tkt_enctypes = %[1]s\n default_tgs_enctypes = %[1]s\n permitted_enctypes = %[1]s\n", aes)
-	if len(k.KDCs) > 0 {
-		fmt.Fprintf(&b, "[realms]\n %s = {\n", k.Realm)
+		r := config.Realm{Realm: k.Realm}
 		for _, kdc := range k.KDCs {
 			h, p := splitKDC(kdc)
 			if p == "" {
 				p = "88"
 			}
-			fmt.Fprintf(&b, "  kdc = %s\n", net.JoinHostPort(h, p))
+			r.KDC = append(r.KDC, net.JoinHostPort(h, p))
 		}
-		b.WriteString(" }\n")
+		c.Realms = []config.Realm{r}
 	}
-	return b.String()
+	return c
 }
 
 // bindGSSAPI performs the SASL GSSAPI bind on conn. spnHost is the DC's DNS name (never an IP
@@ -115,20 +122,41 @@ func bindGSSAPI(conn *ldap.Conn, k Kerberos, spnHost string) error {
 	if err != nil {
 		return fail(CodeBindFailed, "no channel binding", nil)
 	}
-	conf, err := config.NewFromString(k.krb5Conf())
-	if err != nil {
-		return fail(CodeInvalidArgument, "kerberos config", nil)
-	}
+	return bindWithKeytab(conn, k, cb, spnHost)
+}
+
+// bindWithKeytab parses the keytab, runs the handshake and wipes the parsed keys on every path.
+func bindWithKeytab(conn *ldap.Conn, k Kerberos, cb *krb5gssapi.ChannelBinding, spnHost string) error {
+	conf := k.krb5Config()
 	var kt *keytab.Keytab
 	var ktErr error
 	k.Keytab.Expose(func(b []byte) {
 		kt = keytab.New()
 		ktErr = kt.Unmarshal(b)
 	})
+	defer zeroKeytab(kt)
 	if ktErr != nil {
 		return fail(CodeInvalidArgument, "keytab unreadable", nil)
 	}
+	if keytabParsed != nil {
+		keytabParsed(kt)
+	}
 	return gssapiHandshake(conn, k, kt, conf, cb, spnHost)
+}
+
+// keytabParsed is a test seam: it receives the parsed keytab so a test can inspect it after the
+// bind returns. It is nil in production.
+var keytabParsed func(*keytab.Keytab)
+
+// zeroKeytab wipes every parsed key in kt. The Secret holding the keytab bytes is wiped by its
+// owner; this clears the parsed copy, which the Kerberos client otherwise leaves on the heap.
+func zeroKeytab(kt *keytab.Keytab) {
+	if kt == nil {
+		return
+	}
+	for i := range kt.Entries {
+		clear(kt.Entries[i].Key.KeyValue)
+	}
 }
 
 func gssapiHandshake(conn *ldap.Conn, k Kerberos, kt *keytab.Keytab, conf *config.Config, cb *krb5gssapi.ChannelBinding, spnHost string) error {
