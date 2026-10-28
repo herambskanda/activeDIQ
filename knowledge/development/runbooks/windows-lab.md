@@ -191,3 +191,30 @@ Reset = `qm rollback 112 clean` by a human. Certificate verification is never di
 (`TestWindowsLab…` untrusted-CA test). `make lab-test-windows-unit` proves the mode offline (stub `go`/`virsh`,
 checks refusals, misconfiguration errors and that the password never appears in argv, logs or stdout).
 Status: **untested against VM 112 until a human completes the steps above** (the PowerShell is as untested as §8 says).
+
+## 11. SASL GSSAPI + channel binding proof (T-0566)
+
+`kerberos_windows_lab_test.go` (`-tags 'lab windowslab'`) is the Windows twin of the Samba `kerberos_lab_test.go`
+(T-0560). It needs dc1 enforcing **LDAP signing required** (`LDAPServerIntegrity=2`) and **channel binding always**
+(`LdapEnforceChannelBindingTokens=2`), plus a keytab identity.
+
+1. On dc1 run `C:\guest\gssapi-ready.ps1` (source: `lab/windows/guest/gssapi-ready.ps1`). It sets both registry values
+   under `HKLM\SYSTEM\CurrentControlSet\Services\NTDS\Parameters` (**reboot dc1 afterwards**), creates the AES-only
+   account `svc-t0566-gssapi` with an AES256 keytab (`ktpass`), and creates the AES-only gMSA `gmsa-t0566$` and exports its
+   managed-password blob. Output: `C:\lab\gssapi\svc.keytab`, `C:\lab\gssapi\gmsa.json`.
+2. `scp` them to the lab host as `lab/windows/.win-lab-gssapi.keytab` and `lab/windows/.win-lab-gmsa.json` (gitignored,
+   mode 0600; override with `WIN_LAB_GSSAPI_KEYTAB`, `WIN_LAB_GMSA`), then delete them from the VM. Snapshot `clean` again.
+3. `make lab-test-connector-windows` (or `go test -tags 'lab windowslab' -run WindowsLabKerberos -v ./internal/connector/ad/`).
+
+| Test | Pins |
+| --- | --- |
+| `…KeytabBindWithChannelBinding` | keytab identity binds over LDAPS, SPN `ldap/<fqdn>`, layer none, whoami + rootDSE work |
+| `…GMSAKeytabBind` | keytab derived from the gMSA managed password binds |
+| `…WrongChannelBindingRejected` | control with the DC's own cert binds; a binding of another cert is refused with ldap 49 |
+| `…MissingChannelBindingRefusedClientSide` | no request without a binding (the server-side "absent" case cannot be produced by this client) |
+| `…WrongSPNFails`, `…BadKeytabFailsBind` | SPN for another host and a foreign key are both refused |
+
+Untested assumptions to confirm on the first run (fix the script or test, do not skip): the `ktpass` flags in
+`gssapi-ready.ps1`, and the gMSA string-to-key derivation (UTF-16 password re-encoded to UTF-8, host-style salt) in
+`winGMSAIdentity`. Status: **written and compiled, not yet run against a Windows DC** (no lab on the build host).
+

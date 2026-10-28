@@ -55,6 +55,8 @@ lab/.entra-lab.pem
 lab/windows/.state/
 lab/windows/.win-lab.env
 lab/windows/.win-lab-ca.pem
+lab/windows/.win-lab-gssapi.keytab
+lab/windows/.win-lab-gmsa.json
 
 # stray go build output of tools/fitness/profiles
 /profiles
