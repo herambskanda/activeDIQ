@@ -161,10 +161,10 @@ func TestMigrationNumbersAreUniqueAndContiguous(t *testing.T) {
 	}
 }
 
-// Upgrade proof for 0047 (T-0562): a database that already holds revoked and expired enrolments, in two
+// Upgrade proof for 0051 (T-0562): a database that already holds revoked and expired enrolments, in two
 // tenants, upgrades cleanly. The backfill must reach every tenant's rows although the owner is bound by FORCE
 // ROW LEVEL SECURITY, and the controls it lifted for that statement must be back afterwards.
-func TestMigration0047UpgradeErasesTerminalSeedsInEveryTenant(t *testing.T) {
+func TestMigration0051UpgradeErasesTerminalSeedsInEveryTenant(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		d := s.NewDatabase(t)
 		ctx := context.Background()
@@ -174,7 +174,7 @@ func TestMigration0047UpgradeErasesTerminalSeedsInEveryTenant(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, e := range ents {
-			if strings.HasSuffix(e.Name(), ".sql") && e.Name() < "0047" {
+			if strings.HasSuffix(e.Name(), ".sql") && e.Name() < "0051" {
 				b, err := migrations.FS.ReadFile(e.Name())
 				if err != nil {
 					t.Fatal(err)
@@ -237,13 +237,13 @@ func TestMigration0047UpgradeErasesTerminalSeedsInEveryTenant(t *testing.T) {
 			}
 		}
 
-		// Apply 0047 on its own, over the seeded database.
-		b, err := migrations.FS.ReadFile("0047_authn_enrollment_terminal_no_secret.sql")
+		// Apply 0051 on its own, over the seeded database.
+		b, err := migrations.FS.ReadFile("0051_authn_enrollment_terminal_no_secret.sql")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := d.Apply(ctx, fstest.MapFS{"0047_authn_enrollment_terminal_no_secret.sql": {Data: b}}); err != nil {
-			t.Fatalf("0047 over a database with terminal rows: %v", err)
+		if err := d.Apply(ctx, fstest.MapFS{"0051_authn_enrollment_terminal_no_secret.sql": {Data: b}}); err != nil {
+			t.Fatalf("0051 over a database with terminal rows: %v", err)
 		}
 
 		// The admin role bypasses RLS, so it sees every tenant's rows.

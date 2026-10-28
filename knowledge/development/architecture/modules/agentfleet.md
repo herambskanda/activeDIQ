@@ -29,7 +29,7 @@ listener, outside an Operation, so the tables belong to the platform packages th
 
 | Table | Entity (DM-nn) | Migration | Partitioned | Retention |
 | --- | --- | --- | --- | --- |
-| `agent_policy_key` | DM-86, owner `platform/agentpolicy/signer` | `0048_agentfleet_policy_and_events.sql` | no | rows kept; a dropped key's sealed material is erased |
+| `agent_policy_key` | DM-86, owner `platform/agentpolicy/signer` | `0052_agentfleet_policy_and_events.sql` | no | rows kept; a dropped key's sealed material is erased |
 | `agent_policy_keyset` | DM-87, same owner, append-only | same | no | whole chain kept (an agent offline for months replays it) |
 | `agent_policy_head` | DM-88, same owner | same | no | one row per tenant and agent kind |
 | `agent_event` | DM-89, owner `platform/agentingest`, append-only | same | not yet | not decided; `[OPEN]` with the audit retention work |

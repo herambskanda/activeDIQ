@@ -1,4 +1,4 @@
--- 0047_authn_enrollment_terminal_no_secret: TM-D29 controls 1+2 for DM-37 (T-0562; threat model §9.2.1).
+-- 0051_authn_enrollment_terminal_no_secret: TM-D29 controls 1+2 for DM-37 (T-0562; threat model §9.2.1).
 -- Owner: internal/platform/authn.
 --
 -- A revoked or expired enrolment holds no seed: sealed_secret is NULL exactly in those two states, enforced
