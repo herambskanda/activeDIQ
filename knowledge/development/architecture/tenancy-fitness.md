@@ -122,3 +122,16 @@ column whose CHECK or domain the generated value cannot satisfy.
 
 Still to come from other tickets: job argument types expose `Kind() string` and the job wrapper (T-0084);
 platform-scope OpenAPI operations carry `x-activediq-scope: platform` (API tickets).
+
+## Reading a tenant back from authenticated text (T-0504, ADR-0002 rule 5)
+
+`internal/platform/authn/tenantref` is the one sanctioned way for code outside `authn`, `jobs` and `tenant` to
+turn tenant text into a `tenant.ID`. It sits under `authn` (so T5 admits it) and imports no authn code (no
+cycle). Contract: callers pass only text that authentication or the runner already put on the principal
+(`p.Tenant`), the authority context (`authority.TenantFrom`), the runner payload, or the transaction's
+`app.tenant_id`, never text from a request body, path or query. The zero tenant is refused.
+`tenantref/callers_test.go` pins the packages that may call it; adding one is a security review item.
+
+Unauthenticated input is not routed through it. The only such site, `connections.StateTenant` (the Entra
+attestation callback, which has no principal), is a registry-listed `mintsTenantID` platform path with a written
+reason: the parsed ID only chooses whose RLS-scoped attempt table is read, by the hash of the whole state.

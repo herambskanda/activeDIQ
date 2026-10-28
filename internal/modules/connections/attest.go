@@ -16,7 +16,6 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
-	"github.com/skenzeriq/activediq/internal/platform/authn/tenantref"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/store"
@@ -275,9 +274,11 @@ func StateTenant(state string) (t tenant.ID, ok bool) {
 	if !found {
 		return t, false
 	}
-	t, err := tenantref.TenantFromText(prefix)
-	if err != nil {
-		return t, false // TenantFromText returns the zero ID with an error
+	// A registered mint (internal/platform/store/exempt/registry.json, T-0504): the callback is
+	// unauthenticated, so the only tenant text available is the state's own prefix.
+	t, err := tenant.Parse(prefix)
+	if err != nil || t.IsZero() {
+		return tenant.ID{}, false
 	}
 	return t, true
 }

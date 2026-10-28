@@ -36,6 +36,13 @@
       "mintsTenantID": true
     },
     {
+      "package": "internal/modules/connections",
+      "function": "StateTenant",
+      "reason": "The Entra attestation callback is an unauthenticated redirect from the IdP, so no principal carries a tenant. The state the start step issued begins with the tenant it was issued for; the callback parses that prefix only to choose whose attempt table to read. The lookup is by the SHA-256 of the whole state under that tenant's RLS, so a forged or other-tenant prefix finds nothing and grants nothing. The ID is never used as an identity or authorisation input (ADR-0002 rule 5; T-0504; needs security-architect review).",
+      "withPlatform": false,
+      "mintsTenantID": true
+    },
+    {
       "package": "internal/platform/jobs",
       "function": "Claim",
       "reason": "Claim must see every tenant's runnable jobs, so it runs outside a tenant context under WithPlatform; the caller then runs each body in the job's own tenant (ADR-0002 Jobs row).",

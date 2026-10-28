@@ -45,7 +45,7 @@ var _ client.Tier0Builder = (*tenantTier0)(nil)
 // at startup, rather than on the first write.
 func newTenantTier0(s tier0Sources) (*tenantTier0, error) {
 	// The client's own source check, without a tenant, so the two cannot drift.
-	var none tenant.ID // the check does not look at the tenant
+	var none tenant.ID // the zero ID is correct: the source check reads no tenant, and no per-tenant builder is made from it
 	if err := client.CheckTier0Sources(s.sources(none)); err != nil {
 		return nil, fmt.Errorf("server: tier0 builder: %w", err)
 	}

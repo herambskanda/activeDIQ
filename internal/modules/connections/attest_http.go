@@ -95,7 +95,7 @@ func (g *WindowGate) AllowTenant(t tenant.ID) bool {
 	defer g.mu.Unlock()
 	g.roll()
 	if _, seen := g.tenants[t]; !seen && len(g.tenants) >= g.max() {
-		var overflow tenant.ID // the shared bucket for tenants beyond the cap
+		var overflow tenant.ID // the zero ID is the one shared bucket for tenants beyond the cap; it is a map key only, never an identity
 		t = overflow
 	}
 	g.tenants[t]++
