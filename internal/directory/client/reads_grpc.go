@@ -35,3 +35,26 @@ func (t GRPCReadTransport) Read(ctx context.Context, req *connectorv1.ReadReques
 	}
 	return cc.Read(ctx, req)
 }
+
+// GRPCVerifyTransport is the VerifyTransport over the generated Connector client (contract §8.4).
+type GRPCVerifyTransport struct{ src ConnectorSource }
+
+var _ VerifyTransport = GRPCVerifyTransport{}
+
+// NewGRPCVerifyTransport returns the transport over src.
+func NewGRPCVerifyTransport(src ConnectorSource) (GRPCVerifyTransport, error) {
+	if src == nil {
+		return GRPCVerifyTransport{}, errors.New("client: verify transport needs a connector source")
+	}
+	return GRPCVerifyTransport{src: src}, nil
+}
+
+// VerifyConnection implements VerifyTransport. The connector is resolved by the request's
+// connection id; the source refuses a connection it cannot route.
+func (t GRPCVerifyTransport) VerifyConnection(ctx context.Context, req *connectorv1.VerifyConnectionRequest) (VerifyStream, error) {
+	cc, err := t.src.Connector(ctx, req.GetConnection().GetConnectionId())
+	if err != nil {
+		return nil, err
+	}
+	return cc.VerifyConnection(ctx, req)
+}

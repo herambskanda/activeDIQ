@@ -21,7 +21,9 @@ type VerifyHandler struct {
 	Dir      ADDirectory
 	Epoch    *EpochState
 	Identity dn.ObjectRef
-	Now      func() time.Time
+	// Directory is the forest the connector is bound to; streamed in `completed` (contract v1.3).
+	Directory *v1.DirectoryIdentity
+	Now       func() time.Time
 	// OnLocalRecordFailed is called when the stream ends with LOCAL_RECORD_FAILED, so the caller can
 	// close the write gate (contract §8.3a). May be nil.
 	OnLocalRecordFailed func()
@@ -35,7 +37,7 @@ func (h *VerifyHandler) VerifyConnection(ctx context.Context, req *v1.VerifyConn
 		sendFailed = err != nil
 		return err
 	}
-	err := StreamAD(ctx, h.Dir, h.Epoch, req, h.Identity, send, h.Now)
+	err := StreamAD(ctx, h.Dir, h.Epoch, req, h.Identity, h.Directory, send, h.Now)
 	if err == nil {
 		return nil
 	}
