@@ -16,6 +16,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
+	"github.com/skenzeriq/activediq/internal/platform/personal"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 )
 
@@ -100,6 +101,16 @@ func (e Event) Validate() error {
 	for _, s := range e.Snapshots {
 		if s.Subject == "" || s.Field == "" {
 			return ErrInvalidEvent
+		}
+	}
+	// An event about a directory object carries that object's subject on every value it records, so a
+	// legal hold finds it (ADR-0005 rule 11, A9). A change with values and no Subject would be kept as
+	// counts only and fall outside every hold.
+	if _, person := personal.DirSubject(e.Target.Connection, e.Target.GUID); person {
+		for _, c := range e.Changes {
+			if c.Subject == "" && !c.Secret && (len(c.Before) > 0 || len(c.After) > 0) {
+				return ErrInvalidEvent
+			}
 		}
 	}
 	switch e.Outcome {
