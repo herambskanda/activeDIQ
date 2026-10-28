@@ -717,3 +717,18 @@ func TestPlanReaderCarriesTenantAndDSAPins(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A Descriptor.TargetClass binds every planned step: an Action declaring "group" cannot plan a step
+// aimed at the member (TM-D18).
+func TestCheckPlanEnforcesTargetClass(t *testing.T) {
+	u := &run{d: Descriptor{ID: "x.group.add", Reversibility: Reversible, TargetClass: "group"}}
+	step := func(class string) []StepPlan {
+		return []StepPlan{{Kind: "k", Reversibility: Reversible, Target: authority.TargetRef{Class: class}}}
+	}
+	if err := u.checkPlan(step("user")); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("member-targeted step: %v", err)
+	}
+	if err := u.checkPlan(step("group")); err != nil {
+		t.Fatalf("group step: %v", err)
+	}
+}
