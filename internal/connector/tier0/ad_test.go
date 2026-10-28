@@ -342,6 +342,22 @@ func TestADReadErrorFailsClosed(t *testing.T) {
 	}
 }
 
+// T-0626: a deny-read ACE makes Windows return the entry with no attributes; the refusal still fails
+// closed and now names the protected SID and the DN.
+func TestADAttributelessProtectedEntryNamesSIDAndDN(t *testing.T) {
+	f := forest()
+	f.find("CN=Backup Operators,CN=Builtin," + dom).bare = true
+	_, err := NewAD(f).Snapshot(context.Background())
+	if err == nil {
+		t.Fatal("snapshot succeeded over an unreadable protected group")
+	}
+	for _, want := range []string{"S-1-5-32-551", "CN=Backup Operators,CN=Builtin", "without objectGUID"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err, want)
+		}
+	}
+}
+
 func TestADMalformedInputsFailClosed(t *testing.T) {
 	f := forest()
 	f.find(dom).attrs["gplink"] = []string{"[LDAP://garbage"}
