@@ -1059,6 +1059,13 @@ cp "$tmp/agent.wxs.clean" "$ah/packaging/windows/agent.wxs"
 sed -i 's/SeChangeNotifyPrivilege/SeChangeNotifyPrivilege SeBackupPrivilege/' "$ah/packaging/windows/agent.wxs"
 must_fail_with "fitness-agent-host on an extra privilege in the MSI source (A1)" 'RequiredPrivileges of .*are' agenthost "$ah"
 cp "$tmp/agent.wxs.clean" "$ah/packaging/windows/agent.wxs"
+# T-0664: the WiX SDK compiles **/*.wxs, so testdata/ and node_modules/ under packaging/ are scanned.
+for d in testdata node_modules; do
+  mkdir -p "$ah/packaging/windows/$d"
+  printf '<Wix><Package><ServiceInstall Name="skzHelper" Account="LocalSystem"/></Package></Wix>\n' >"$ah/packaging/windows/$d/x.wxs"
+  must_fail_with "fitness-agent-host on a LocalSystem service in packaging/windows/$d (A1)" 'LocalSystem' agenthost "$ah"
+  rm -rf "$ah/packaging/windows/$d"
+done
 printf 'package main\n\nimport _ "fx.test/internal/directory/client"\n\nfunc main() {}\n' >"$ah/cmd/agent/main.go"
 must_fail_with "fitness-agent-host on a directory client in the agent binary (A4)" 'internal/directory/client' agenthost "$ah"
 printf 'package main\n\nfunc main() {}\n' >"$ah/cmd/agent/main.go"

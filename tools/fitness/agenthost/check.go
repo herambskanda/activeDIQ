@@ -646,6 +646,26 @@ func utf16Text(b []byte, bigEndian bool) string {
 	return string(utf16.Decode(u))
 }
 
+// wixReaches reports whether the WiX SDK's default **/*.wxs glob can reach directory dir: it sits under
+// packaging/, or a .wixproj lies in one of its ancestors up to root.
+func wixReaches(root, dir string) bool {
+	rel, err := filepath.Rel(root, dir)
+	if err != nil {
+		return true
+	}
+	if strings.HasPrefix(filepath.ToSlash(rel), "packaging/") {
+		return true
+	}
+	for d := filepath.Dir(dir); ; d = filepath.Dir(d) {
+		if m, _ := filepath.Glob(filepath.Join(d, "*.wixproj")); len(m) > 0 {
+			return true
+		}
+		if d == root || len(d) <= len(root) {
+			return false
+		}
+	}
+}
+
 // agentInstallerFiles are every WiX source under packaging/ (a service or custom action can name the agent
 // through a variable) and the other files that name the agent in their relative path or body:
 // also install scripts, custom actions and anything else a service account can be set in
@@ -662,8 +682,14 @@ func agentInstallerFiles(root string) []instFile {
 		relp = filepath.ToSlash(relp)
 		if e.IsDir() {
 			switch e.Name() {
-			case ".git", "node_modules", "testdata":
+			case ".git":
 				return filepath.SkipDir
+			case "node_modules", "testdata":
+				// The WiX SDK compiles **/*.wxs, so these names hide nothing under packaging/ or below a
+				// .wixproj (T-0664); elsewhere they are fixtures and vendored trees.
+				if !wixReaches(root, p) {
+					return filepath.SkipDir
+				}
 			}
 			if relp == "tools/fitness" {
 				return filepath.SkipDir

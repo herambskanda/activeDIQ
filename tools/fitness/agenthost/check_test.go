@@ -357,6 +357,17 @@ func TestA1Installer(t *testing.T) {
 	if r := outside("testdata/agent.wxs", `<Wix><ServiceInstall Name="activeDIQAgent" Account="LocalSystem"/></Wix>`); r.Inactive == "" {
 		t.Fatalf("fixtures under testdata/ must not be scanned: %v", r.Violations)
 	}
+	// T-0664: the WiX SDK compiles **/*.wxs, so testdata/ and node_modules/ hide nothing under packaging/
+	// or below a .wixproj.
+	lsys := `<Wix><Package><ServiceInstall Name="skzHelper" Account="LocalSystem"/></Package></Wix>`
+	wantViolation(t, third("../testdata/x.wxs", lsys), "LocalSystem")
+	wantViolation(t, third("../node_modules/x.wxs", lsys), "LocalSystem")
+	{
+		r := t.TempDir()
+		write(t, r, "src/App.wixproj", `<Project/>`)
+		write(t, r, "src/testdata/x.wxs", lsys)
+		wantViolation(t, checkInstaller(r), "LocalSystem")
+	}
 	// Fifth review, 3: every service gets the full pin; an allowlisted Id is the only exception.
 	helper := `<Wix><Package><Component><ServiceInstall Id="SkzHelper" Name="skzHelper" Account="NT SERVICE\skzHelper"><ServiceConfig ServiceSid="unrestricted" RequiredPrivileges="SeDebugPrivilege,SeBackupPrivilege"/></ServiceInstall></Component></Package></Wix>`
 	wantViolation(t, third("Helper.wxs", helper), "service SID type of")
