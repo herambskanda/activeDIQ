@@ -143,6 +143,9 @@ func checkA12(t *tree) []Violation {
 	return append(vs, checkA12AN8(t)...)
 }
 
+// an8Statuses are the response codes an AN-8 operation may declare (authn.yaml).
+var an8Statuses = map[string]bool{"204": true, "400": true, "401": true, "413": true, "415": true, "429": true, "500": true, "501": true}
+
 // checkA12AN8 enforces threat model 7.6 rule 2 (T-0359, T-0497): an AN-8 operation never answers a
 // per-account 429. The only 429 it may declare is the shared RateLimited response, and its description
 // must say the source-IP limiter is the one that answers it. Any other shape (an inline response, a
@@ -154,7 +157,18 @@ func checkA12AN8(t *tree) []Violation {
 		if scalar(get(o.node, "x-activediq-anonymous")) != "AN-8" {
 			continue
 		}
-		r := get(get(o.node, "responses"), "429")
+		rs := get(o.node, "responses")
+		if rs != nil {
+			// Only the statuses authn.yaml lists may appear. A 4XX or default response is a way to
+			// declare "too many attempts for this account" without the literal 429 key.
+			for i := 0; i+1 < len(rs.Content); i += 2 {
+				code := rs.Content[i].Value
+				if !an8Statuses[code] {
+					vs = append(vs, Violation{"A12", o.where(), fmt.Sprintf("%s (AN-8) declares response %q: AN-8 may declare only 204, 400, 401, 413, 415, 429, 500 and 501, so no 4XX or default can describe a per-account limit (threat model 7.6 rule 2d, A12)", o.label(), code)})
+				}
+			}
+		}
+		r := get(rs, "429")
 		if r == nil {
 			continue
 		}

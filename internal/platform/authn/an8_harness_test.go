@@ -13,11 +13,16 @@ package authn
 //     assertions accept a correct implementation and bite on each violation.
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/skenzeriq/activediq/internal/platform/apihost/apitypes"
+	"github.com/skenzeriq/activediq/internal/platform/authn/api"
 )
 
 // an8Resp is everything a caller can observe of one AN-8 answer.
@@ -45,6 +50,9 @@ type an8Target interface {
 	Keys() []string
 	// Pending is the number of pending sign-ins created.
 	Pending() int
+	// HashVerifications is the number of password-hash verifications run so far, dummy ones included.
+	// Rule 2b: every answer that reaches the name check costs exactly one, on every branch.
+	HashVerifications() int
 	// FillTable makes the key table full with names unrelated to the seed.
 	FillTable()
 }
@@ -57,11 +65,18 @@ const (
 
 var an8Seeds = an8Seed{Known: "bg-admin", Password: "correct horse battery staple", NonLocal: "corp-user", Disabled: "bg-old"}
 
-// newTarget builds the target for a test: the real handler when it is built, else the XFAIL skip.
+// newRealTarget builds the target for a test: the real handler when it is built, else the XFAIL skip.
 func newRealTarget(t *testing.T) an8Target {
 	t.Helper()
 	tg, ok := realAN8Target(t, an8Seeds)
 	if !ok {
+		// A skip is never a pass: the moment the stub is replaced without wiring realAN8Target, fail.
+		_, err := Handlers{}.SignInBreakGlassPassword(context.Background(), api.SignInBreakGlassPasswordInput{})
+		var p *apitypes.Problem
+		if !errors.As(err, &p) || p.Status != 501 {
+			t.Fatalf("the AN-8 handler is no longer the 501 stub (got %v) but realAN8Target is not wired: "+
+				"T-0200 must fill in an8_real_test.go so these tests run against it", err)
+		}
 		t.Skipf("XFAIL T-0200: the AN-8 handler is still a 501 stub, so this spec test cannot run against it; " +
 			"T-0200 must wire realAN8Target (an8_real_test.go) and this test must pass before it merges. " +
 			"The assertions are proven by TestAN8AssertionsAgainstReference.")
@@ -69,38 +84,49 @@ func newRealTarget(t *testing.T) an8Target {
 	return tg
 }
 
+// an8Baseline is the answer for a name nobody has tried: a fresh key, a wrong password, unthrottled. Every
+// other failure answer must equal it (rule 2c), or the difference tells an attacker that a name was tried.
+func an8Baseline(tg an8Target) an8Resp {
+	return tg.Do("untried-baseline-name", an8Wrong, "192.0.2.250")
+}
+
 // ---- the five assertions, each a function of a target so the meta tests can reuse them -------------
 
 func an8ThrottledKnownEqualsUnknown(t an8T, tg an8Target) {
 	t.Helper()
 	const unknown = "no-such-account"
-	drive := func(name string) {
-		for i := 0; i < an8BurstFails+3; i++ { // past burst 5
-			tg.Do(name, an8Wrong, "198.51.100.1")
+	base := an8Baseline(tg)
+	names := []string{an8Seeds.Known, unknown, an8Seeds.NonLocal, an8Seeds.Disabled}
+	for i, n := range names { // past burst 5, each name from its own source address
+		for j := 0; j < an8BurstFails+3; j++ {
+			tg.Do(n, an8Wrong, fmt.Sprintf("198.51.100.%d", 10+i))
 		}
 	}
-	drive(an8Seeds.Known)
-	drive(unknown)
 
-	// In the delay window: a wrong and the RIGHT password for the known name, against the unknown name.
-	k := tg.Do(an8Seeds.Known, an8Wrong, "198.51.100.2")
-	u := tg.Do(unknown, an8Wrong, "198.51.100.2")
-	kRight := tg.Do(an8Seeds.Known, an8Seeds.Password, "198.51.100.2")
-	assertSameAnswer(t, "throttled known vs unknown (wrong password)", k, u)
-	assertSameAnswer(t, "throttled known (right password) vs unknown", kRight, u)
+	// In the delay window every throttled answer equals the untried baseline, so "throttled" is not
+	// observable at all; known, unknown, non-local and disabled are therefore also equal to each other.
+	ip := "198.51.100.2"
+	u := tg.Do(unknown, an8Wrong, ip)
+	assertSameAnswer(t, "throttled unknown vs untried baseline", u, base)
+	assertSameAnswer(t, "throttled known (wrong password) vs untried baseline", tg.Do(an8Seeds.Known, an8Wrong, ip), base)
+	assertSameAnswer(t, "throttled known (right password) vs untried baseline", tg.Do(an8Seeds.Known, an8Seeds.Password, ip), base)
+	assertSameAnswer(t, "throttled non-local vs untried baseline", tg.Do(an8Seeds.NonLocal, an8Wrong, ip), base)
+	assertSameAnswer(t, "throttled disabled vs untried baseline", tg.Do(an8Seeds.Disabled, an8Wrong, ip), base)
 	if u.Status != 401 {
 		t.Errorf("throttled answer status = %d, want the uniform 401", u.Status)
 	}
 
-	// Past the rule-3 window, the wrong-password answers are still the same for both names.
+	// Past the rule-3 window, the answers are still the same for every name.
 	tg.Advance(an8DelayWindow + time.Second)
-	assertSameAnswer(t, "after the window, known vs unknown wrong password",
-		tg.Do(an8Seeds.Known, an8Wrong, "198.51.100.3"), tg.Do(unknown, an8Wrong, "198.51.100.3"))
+	ip = "198.51.100.3"
+	assertSameAnswer(t, "after the window, known vs untried baseline", tg.Do(an8Seeds.Known, an8Wrong, ip), base)
+	assertSameAnswer(t, "after the window, unknown vs untried baseline", tg.Do(unknown, an8Wrong, ip), base)
 }
 
 func an8NeverAnswersPerAccount429(t an8T, tg an8Target) {
 	t.Helper()
 	// 100 requests for one name over 10 source IPs: 10 each, far under the per-IP auth burst of 30.
+	first := an8Baseline(tg)
 	for _, name := range []string{an8Seeds.Known, "no-such-account"} {
 		for i := 0; i < 100; i++ {
 			ip := fmt.Sprintf("203.0.113.%d", 1+i%10)
@@ -114,6 +140,8 @@ func an8NeverAnswersPerAccount429(t an8T, tg an8Target) {
 			if _, ok := r.Headers["Retry-After"]; ok {
 				t.Fatalf("request %d for %q carries Retry-After: AN-8 gives none (rule 2c)", i+1, name)
 			}
+			// Status, body and headers all equal the first (untried) answer: nothing marks a tried name.
+			assertSameAnswer(t, fmt.Sprintf("request %d for %q vs the first answer", i+1, name), r, first)
 		}
 	}
 }
@@ -124,12 +152,16 @@ func an8ThrottledCorrectPasswordRefused(t an8T, tg an8Target) {
 		tg.Do(an8Seeds.Known, an8Wrong, "198.51.100.9")
 	}
 	before := tg.Pending()
+	hashBefore := tg.HashVerifications()
 	r := tg.Do(an8Seeds.Known, an8Seeds.Password, "198.51.100.9")
 	if r.Status != 401 {
 		t.Fatalf("right password while throttled answered %d, want the uniform 401 (rule 2b: not evaluated)", r.Status)
 	}
 	if got := tg.Pending(); got != before {
 		t.Fatalf("pending sign-ins %d -> %d: a throttled attempt must create none", before, got)
+	}
+	if got := tg.HashVerifications(); got != hashBefore+1 {
+		t.Fatalf("a throttled request ran %d hash verifications, want exactly 1 (rule 2b: one dummy verification on every branch)", got-hashBefore)
 	}
 	if _, ok := r.Headers["Set-Cookie"]; ok {
 		t.Fatalf("throttled answer sets a cookie: %v", r.Headers["Set-Cookie"])
@@ -145,8 +177,11 @@ func an8ThrottleKeyIgnoresExistence(t an8T, tg an8Target) {
 	t.Helper()
 	names := []string{an8Seeds.Known, an8Seeds.NonLocal, an8Seeds.Disabled, "no-such-account"}
 	for _, n := range names {
-		before := len(tg.Keys())
+		before, hashes := len(tg.Keys()), tg.HashVerifications()
 		tg.Do(n, an8Wrong, "198.51.100.20")
+		if got := tg.HashVerifications() - hashes; got != 1 {
+			t.Errorf("one failed attempt for %q ran %d hash verifications, want exactly 1 whether or not the account exists (rule 2b: no timing class per name)", n, got)
+		}
 		if got := len(tg.Keys()) - before; got != 1 {
 			t.Errorf("one failed attempt for %q created %d keys, want exactly 1 whether or not the account exists, is local or is disabled (rule 2a)", n, got)
 		}
@@ -180,10 +215,18 @@ func an8ThrottleKeyIgnoresExistence(t an8T, tg an8Target) {
 
 func an8TableFullIsNameIndependent(t an8T, tg an8Target) {
 	t.Helper()
+	base := an8Baseline(tg)
+	tg.Do(an8Seeds.Known, an8Wrong, "198.51.100.29") // Known is keyed before the table fills
 	tg.FillTable()
-	newKnown := tg.Do(an8Seeds.Known, an8Wrong, "198.51.100.30") // a new key for a real account
-	newUnknown := tg.Do("never-seen-before", an8Wrong, "198.51.100.30")
-	assertSameAnswer(t, "table full: new existing vs new unknown name", newKnown, newUnknown)
+	ip := "198.51.100.30"
+	keyedBefore := tg.Do(an8Seeds.Known, an8Wrong, ip)     // an existing key
+	newKnown := tg.Do(an8Seeds.Disabled, an8Wrong, ip)     // a new key for a real account
+	newUnknown := tg.Do("never-seen-before", an8Wrong, ip) // a new key for no account
+	assertSameAnswer(t, "table full: new real name vs new unknown name", newKnown, newUnknown)
+	// A new key and an old key must look alike, or "overflow" tells an attacker the name was not tried.
+	assertSameAnswer(t, "table full: new real name vs untried baseline", newKnown, base)
+	assertSameAnswer(t, "table full: new unknown name vs untried baseline", newUnknown, base)
+	assertSameAnswer(t, "table full: name keyed before the fill vs new name", keyedBefore, newKnown)
 	if newKnown.Status != 401 {
 		t.Errorf("table full answered %d, want the uniform 401 (the cap must not be observable per name)", newKnown.Status)
 	}

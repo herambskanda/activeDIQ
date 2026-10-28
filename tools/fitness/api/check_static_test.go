@@ -224,6 +224,12 @@ var staticFixtures = []fixture{
 	{"AN-8 429 not described as the source-IP limiter", "A12", func(f map[string]string) {
 		an8Op(f, "Rate limited.", "        \"429\":\n          $ref: shared/problems.yaml#/components/responses/RateLimited\n")
 	}, jobs, "does not say it is the source-IP limiter"},
+	{"AN-8 4XX response describing a per-account limit", "A12", func(f map[string]string) {
+		an8Op(f, "Source-IP only.", "        \"4XX\":\n          description: Too many attempts for this account\n")
+	}, jobs, "AN-8 may declare only"},
+	{"AN-8 default response", "A12", func(f map[string]string) {
+		an8Op(f, "Source-IP only.", "        default:\n          description: Account throttled\n")
+	}, jobs, "AN-8 may declare only"},
 }
 
 // an8Op turns listJobs into an AN-8 operation with the given description and a responses block.

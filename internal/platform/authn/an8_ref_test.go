@@ -26,6 +26,10 @@ type an8Mutation struct {
 	RetryAfter        bool // adds Retry-After when throttled
 	DistinctThrottled bool // throttled body differs for existing accounts
 	FullTable429      bool // a full table answers differently for new real accounts
+	ThrottledBodyAll  bool // every throttled answer, any name, gets a different body
+	ThrottledHeader   bool // every throttled answer carries X-RateLimit-Remaining
+	OverflowAll       bool // every new key while the table is full carries an extra header
+	NoHashUnknown     bool // no dummy verification for a name that is not a real account
 }
 
 type refKeyState struct {
@@ -42,6 +46,7 @@ type refAN8 struct {
 	cap     int
 	perIP   map[string]int
 	pending int
+	hashes  int
 }
 
 const refTableCap = 50
@@ -86,6 +91,9 @@ func (r *refAN8) Do(name, password, ip string) an8Resp {
 	}
 	k := r.key(name)
 	real := r.isReal(name)
+	if real || !r.m.NoHashUnknown {
+		r.hashes++ // rule 2b: a real verification or the dummy one, on every branch
+	}
 	st := r.table[k]
 	if st == nil {
 		if r.m.SkipUnknownKey && !real {
@@ -96,6 +104,11 @@ func (r *refAN8) Do(name, password, ip string) an8Resp {
 			if st = r.table[k]; st == nil {
 				st = &refKeyState{}
 				r.table[k] = st
+			}
+			if r.m.OverflowAll {
+				resp := r.fail()
+				resp.Headers["X-Overflow"] = []string{"1"}
+				return resp
 			}
 			if r.m.FullTable429 && real {
 				resp := r.fail()
@@ -121,6 +134,13 @@ func (r *refAN8) Do(name, password, ip string) an8Resp {
 		resp := r.fail()
 		if r.m.RetryAfter {
 			resp.Headers["Retry-After"] = []string{"1"}
+		}
+		if r.m.ThrottledBodyAll {
+			resp.Body = `{"type":"/problems/too-many-attempts","status":401}`
+			resp.Headers["Content-Length"] = []string{strconv.Itoa(len(resp.Body))}
+		}
+		if r.m.ThrottledHeader {
+			resp.Headers["X-RateLimit-Remaining"] = []string{"0"}
 		}
 		if r.m.DistinctThrottled && real {
 			resp.Body += " "
@@ -159,6 +179,7 @@ func (r *refAN8) delay(fails int) time.Duration {
 
 func (r *refAN8) Advance(d time.Duration) { r.now = r.now.Add(d) }
 func (r *refAN8) Pending() int            { return r.pending }
+func (r *refAN8) HashVerifications() int  { return r.hashes }
 func (r *refAN8) Keys() []string {
 	out := make([]string, 0, len(r.table))
 	for k := range r.table {
@@ -211,6 +232,12 @@ func TestAN8AssertionsBiteOnMutants(t *testing.T) {
 		{"Retry-After on throttle", an8Mutation{RetryAfter: true}, "ThrottledKnownEqualsUnknown"},
 		{"throttled body differs for real accounts", an8Mutation{DistinctThrottled: true}, "ThrottledKnownEqualsUnknown"},
 		{"full table observable per name", an8Mutation{FullTable429: true}, "TableFullIsNameIndependent"},
+		{"throttled body differs for all names", an8Mutation{ThrottledBodyAll: true}, "ThrottledKnownEqualsUnknown"},
+		{"throttled body differs for all names", an8Mutation{ThrottledBodyAll: true}, "NeverAnswersPerAccount429"},
+		{"rate-limit header on throttle", an8Mutation{ThrottledHeader: true}, "ThrottledKnownEqualsUnknown"},
+		{"rate-limit header on throttle", an8Mutation{ThrottledHeader: true}, "NeverAnswersPerAccount429"},
+		{"overflow answer on every new key", an8Mutation{OverflowAll: true}, "TableFullIsNameIndependent"},
+		{"no dummy hash for unknown names", an8Mutation{NoHashUnknown: true}, "ThrottleKeyIgnoresExistence"},
 	}
 	for _, c := range cases {
 		a := pick(c.caught)
