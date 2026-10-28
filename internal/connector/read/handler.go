@@ -43,7 +43,8 @@ type Source interface {
 	// Syntax is the value syntax of an attribute.
 	Syntax(name string) (ldapfilter.Syntax, bool)
 	// CanonicalAttr resolves a requested name (ldapDisplayName in any case, or the schema's numeric
-	// OID) to the schema's ldapDisplayName. An attribute outside the schema is an error.
+	// OID). An OID returns the ldapDisplayName; a descr returns in the case typed, so compare
+	// case-insensitively. An attribute outside the schema is an error.
 	CanonicalAttr(name string) (string, error)
 	// Classify is the connector classifier's verdict on the same session.
 	Classify(ctx context.Context, id guid.GUID) (write.Verdict, error)
