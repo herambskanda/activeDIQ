@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"encoding/hex"
+	"encoding/json/v2"
 
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
@@ -129,6 +130,9 @@ func (d *dirFake) action(t *testing.T, id ActionID, stepUp, secretIn bool, class
 		Verify: func(_ context.Context, _ step.Step, p TypedStep[dirPayload], _ dirOut) (Verdict, error) {
 			if d.mode[p.Payload.GUID] == "defer" && d.mode["verified"] != "yes" {
 				return Verdict{}, ErrDeferVerify
+			}
+			if d.mode[p.Payload.GUID] == "tier0" {
+				return Verdict{Reason: ReasonTier0AfterWrite}, nil
 			}
 			if d.get(p.Payload.GUID) != p.Payload.Want {
 				return Verdict{Reason: "mismatch"}, nil
@@ -562,6 +566,9 @@ func TestSupersededAttemptChangesNothing(t *testing.T) {
 		}
 		if got := p.stepRow(sub.Operation, 0); got != before || !strings.HasPrefix(got, "verified") {
 			t.Fatalf("a superseded attempt changed the step: %s -> %s", before, got)
+		}
+		if got := p.alerts.reasons(); len(got) != 0 {
+			t.Fatalf("a non-tier0 late result raised alerts: %v", got)
 		}
 	})
 }
@@ -1142,4 +1149,172 @@ func TestPlanRefusalsKeepEachReason(t *testing.T) {
 			}
 		})
 	}
+}
+
+// T-0319: the Verify reason tier0_after_write moves a running operation to cancelling in the recording
+// transaction, so no later item is started, and raises the critical alert.
+func TestTier0AfterWriteCancelsRunningOperation(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		p := newPRig(t, s, rigOpt{})
+		p.dir.mode["a"] = "tier0"
+		sub, _ := p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "a", Want: "n"}, itemIn{GUID: "b", Want: "n"}))
+		p.runChunks(sub.Operation)
+		if got := p.stepRow(sub.Operation, 0); got != "verify_failed|tier0_after_write|1|false" {
+			t.Fatalf("step a = %s", got)
+		}
+		if p.dir.get("b") != "" {
+			t.Fatal("an item was executed after the tier0_after_write signal")
+		}
+		if got := p.stepRow(sub.Operation, 1); !strings.HasPrefix(got, "not_run|") {
+			t.Fatalf("step b = %s", got)
+		}
+		if st := p.opState(sub.Operation); st != "cancelled" {
+			t.Fatalf("operation = %s", st)
+		}
+		if got := p.alerts.reasons(); len(got) != 1 || got[0] != ReasonTier0AfterWrite || p.alerts.got[0].Severity != "critical" || p.alerts.got[0].Operation != string(sub.Operation) {
+			t.Fatalf("alerts = %+v", p.alerts.got)
+		}
+		if n := p.events("operation.cancelled"); n != 2 { // the tier0 signal and the completed cancel
+			t.Fatalf("operation.cancelled events = %d", n)
+		}
+		if got := p.owner(`SELECT count(*) FROM public.audit_event WHERE kind = 'operation.cancelled' AND event_id LIKE '%-tier0'`)[0]; got != "1" {
+			t.Fatalf("tier0 audit events = %s", got)
+		}
+	})
+}
+
+// The deferred read-back path does the same.
+func TestTier0AfterWriteFromDeferredVerify(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		p := newPRig(t, s, rigOpt{})
+		p.dir.mode["a"] = "defer"
+		sub, _ := p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "a", Want: "n"}))
+		p.runChunks(sub.Operation)
+		p.dir.mode["verified"] = "yes"
+		p.dir.mode["a"] = "tier0"
+		if err := p.r.Verify(context.Background(), p.tn, p.r.txFor(p.tn), string(sub.Operation)); err != nil {
+			t.Fatal(err)
+		}
+		if got := p.stepRow(sub.Operation, 0); got != "verify_failed|tier0_after_write|1|false" || p.opState(sub.Operation) != "cancelled" {
+			t.Fatalf("step %s op %s", got, p.opState(sub.Operation))
+		}
+		if got := p.alerts.reasons(); len(got) != 1 || got[0] != ReasonTier0AfterWrite {
+			t.Fatalf("alerts = %v", got)
+		}
+	})
+}
+
+// A signal that arrives once the operation has settled is only audited; the operation is not
+// retroactively cancelled.
+func TestTier0AfterWriteOnSettledOperationIsOnlyAudited(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		p := newPRig(t, s, rigOpt{})
+		sub, _ := p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "a", Want: "n"}))
+		p.runChunks(sub.Operation)
+		if st := p.opState(sub.Operation); st != "succeeded" {
+			t.Fatalf("operation = %s", st)
+		}
+		c := &claimed{key: step.Key{Operation: sub.Operation}}
+		err := p.r.txFor(p.tn)(context.Background(), func(ctx context.Context, q store.Tx) error {
+			return p.r.cancelOnTier0(ctx, q, p.tn, c, false)
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st := p.opState(sub.Operation); st != "succeeded" {
+			t.Fatalf("settled operation moved to %s", st)
+		}
+		if got := p.owner(`SELECT count(*) FROM public.audit_event WHERE kind = 'operation.cancelled' AND event_id LIKE '%-tier0'`)[0]; got != "1" {
+			t.Fatalf("tier0 audit events = %s", got)
+		}
+	})
+}
+
+const tier0Count = `SELECT count(*) FROM public.audit_event WHERE kind = 'operation.cancelled' AND event_id LIKE '%-tier0'`
+
+// A tier0_after_write verdict from a superseded attempt must not fail open: the step stays as the
+// owning attempt recorded it, but the signal is audited, the running operation is cancelled and the
+// critical alert is raised (immediate path).
+func TestTier0AfterWriteFromSupersededAttempt(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		p := newPRig(t, s, rigOpt{})
+		p.dir.set("a", "old")
+		sub, _ := p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "a", Want: "new"}, itemIn{GUID: "b", Want: "new"}))
+		old := p.claimOnly(sub.Operation)
+		p.lapse(sub.Operation)
+		p.dir.set("a", "old")
+		if _, err := p.r.Reconcile(context.Background(), p.tn, p.r.txFor(p.tn), 10); err != nil {
+			t.Fatal(err)
+		}
+		before := p.stepRow(sub.Operation, 0)
+		if st := p.opState(sub.Operation); st != "running" {
+			t.Fatalf("precondition: operation = %s", st)
+		}
+		spec := recordSpec{applied: true, verifyFailed: ReasonTier0AfterWrite}
+		if err := p.r.record(context.Background(), p.tn, p.r.txFor(p.tn), old, spec); err != nil {
+			t.Fatal(err)
+		}
+		if got := p.stepRow(sub.Operation, 0); got != before {
+			t.Fatalf("superseded attempt changed the step: %s -> %s", before, got)
+		}
+		if st := p.opState(sub.Operation); st != "cancelling" {
+			t.Fatalf("operation = %s", st)
+		}
+		if got := p.alerts.reasons(); len(got) != 1 || got[0] != ReasonTier0AfterWrite || p.alerts.got[0].Severity != "critical" {
+			t.Fatalf("alerts = %+v", p.alerts.got)
+		}
+		if got := p.owner(tier0Count)[0]; got != "1" {
+			t.Fatalf("tier0 audit events = %s", got)
+		}
+		if got := p.owner(`SELECT count(*) FROM public.audit_event WHERE event_id LIKE '%-a1-tier0'`)[0]; got != "1" {
+			t.Fatalf("per-attempt event id missing: %s", got)
+		}
+	})
+}
+
+// The same for the deferred read-back path (verifyApplied) when the attempt no longer owns the step.
+func TestTier0AfterWriteFromSupersededDeferredVerify(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		p := newPRig(t, s, rigOpt{})
+		p.dir.mode["a"] = "defer"
+		sub, _ := p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "a", Want: "n"}))
+		p.runChunks(sub.Operation)
+		c := &claimed{key: step.Key{Operation: sub.Operation}, attempt: 1}
+		err := p.r.txFor(p.tn)(context.Background(), func(ctx context.Context, q store.Tx) error {
+			op, err := loadOp(ctx, q, p.tn, string(sub.Operation), false)
+			if err != nil {
+				return err
+			}
+			act, _ := p.r.cfg.Registry.Lookup(op.Action)
+			c.op, c.act, c.d = op, act, act.Describe()
+			var plan []byte
+			if err := q.QueryRow(ctx, `SELECT plan FROM public.operation_steps WHERE operation_id = $1::uuid`, string(sub.Operation)).Scan(&plan); err != nil {
+				return err
+			}
+			return json.Unmarshal(plan, &c.plan)
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// A reconciler attempt took the step over; this stale one sees Tier-0 on its read-back.
+		p.exec(`UPDATE public.operation_steps SET attempt = 2 WHERE operation_id = $1::uuid`, string(sub.Operation))
+		before := p.stepRow(sub.Operation, 0)
+		p.dir.mode["verified"] = "yes"
+		p.dir.mode["a"] = "tier0"
+		if err := p.r.verifyApplied(context.Background(), p.tn, p.r.txFor(p.tn), c); err != nil {
+			t.Fatal(err)
+		}
+		if got := p.stepRow(sub.Operation, 0); got != before {
+			t.Fatalf("superseded attempt changed the step: %s -> %s", before, got)
+		}
+		if st := p.opState(sub.Operation); st != "cancelling" {
+			t.Fatalf("operation = %s", st)
+		}
+		if got := p.alerts.reasons(); len(got) != 1 || got[0] != ReasonTier0AfterWrite {
+			t.Fatalf("alerts = %v", got)
+		}
+		if got := p.owner(tier0Count)[0]; got != "1" {
+			t.Fatalf("tier0 audit events = %s", got)
+		}
+	})
 }
