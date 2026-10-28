@@ -3,6 +3,7 @@ package rbac
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -228,5 +229,47 @@ func TestTier0ScopePermissionIsInNoTier2Role(t *testing.T) {
 	}
 	if err := ValidateRoles([]Role{{Name: "x", Tier: Tier2, Permissions: []authz.Permission{manage}}}); err == nil {
 		t.Fatal("ValidateRoles must refuse a Tier-2 role holding the permission")
+	}
+}
+
+// reconfirmPerm is connections.ReconfirmPermission; rbac cannot import the module, so the compose
+// package pins the two equal (TestTenantOwnerCatalogueGrantsTheReconfirmPermission).
+const reconfirmPerm = authz.Permission("connections.correlation.reconfirm")
+
+func builtIn(t *testing.T, name string) Role {
+	t.Helper()
+	for _, r := range BuiltInRoles() {
+		if r.Name == name {
+			return r
+		}
+	}
+	t.Fatalf("no built-in role %q", name)
+	return Role{}
+}
+
+// T-0453 acceptance 1 and 2: the role as resolved from the catalogue allows the reconfirm permission
+// for a tenant owner; every other built-in role is denied.
+func TestTenantOwnerRoleGrantsReconfirmAndOtherRolesDoNot(t *testing.T) {
+	tgt := authority.TargetRef{Connection: conn, GUID: obj, Class: "correlation", NC: "nc"}
+	f := authority.Facts{Exists: true, Ancestors: []string{ncHead}, AncestorsComplete: true}
+	roots := []Root{{Kind: EntraTenant, Connection: conn, GUID: conn}}
+	for _, r := range BuiltInRoles() {
+		a := az(t, Assignment{ID: "a1", Permissions: r.Permissions, TenantOwner: r.Name == TenantOwnerRole, Roots: roots})
+		err := a.Authorize(ctxT(), human(acct), reconfirmPerm, tgt, f)
+		if r.Name == TenantOwnerRole {
+			if err != nil {
+				t.Errorf("tenant-owner: want allowed, got %v", err)
+			}
+			if !slices.Contains(r.Permissions, reconfirmPerm) {
+				t.Errorf("tenant-owner catalogue lacks %s", reconfirmPerm)
+			}
+			continue
+		}
+		if !errors.Is(err, ErrDenied) {
+			t.Errorf("role %q: want denied, got %v", r.Name, err)
+		}
+	}
+	if len(builtIn(t, TenantOwnerRole).Permissions) != 1 {
+		t.Errorf("tenant-owner holds %v; migration 0043 allow-lists exactly the reconfirm permission", builtIn(t, TenantOwnerRole).Permissions)
 	}
 }

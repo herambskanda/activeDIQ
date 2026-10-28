@@ -36,6 +36,13 @@
       "mintsTenantID": true
     },
     {
+      "package": "internal/modules/connections",
+      "function": "StateTenant",
+      "reason": "The Entra attestation callback is an unauthenticated redirect from the IdP, so no principal carries a tenant. The state the start step issued begins with the tenant it was issued for; the callback parses that prefix only to choose whose attempt table to read. The lookup is by the SHA-256 of the whole state under that tenant's RLS, so a forged or other-tenant prefix finds nothing and grants nothing. The ID is never used as an identity or authorisation input (ADR-0002 rule 5; T-0504; needs security-architect review).",
+      "withPlatform": false,
+      "mintsTenantID": true
+    },
+    {
       "package": "internal/platform/jobs",
       "function": "Claim",
       "reason": "Claim must see every tenant's runnable jobs, so it runs outside a tenant context under WithPlatform; the caller then runs each body in the job's own tenant (ADR-0002 Jobs row).",
@@ -134,71 +141,20 @@
       "mintsTenantID": false
     },
     {
-      "package": "internal/compose/server",
-      "function": "consoleAuthz.Allow",
-      "reason": "The tenant is the one the authority chain's authentication step set on the request context or principal (authority.TenantFrom, apihost.Principal), never a request field; the parse only converts that server-set value to the typed ID and fails closed (ADR-0002 rule 5).",
-      "withPlatform": false,
-      "mintsTenantID": true
-    },
-    {
-      "package": "internal/compose/server",
-      "function": "tenantTier0.Build",
-      "reason": "The tenant is the one the authority chain's authentication step set on the request context or principal (authority.TenantFrom, apihost.Principal), never a request field; the parse only converts that server-set value to the typed ID and fails closed (ADR-0002 rule 5).",
-      "withPlatform": false,
-      "mintsTenantID": true
-    },
-    {
-      "package": "internal/compose/server",
-      "function": "newTenantTier0",
-      "reason": "Startup only: tenant.New() is a throwaway ID handed to the client's own source check so the two cannot drift; it names no tenant, is never stored and reaches no query (ADR-0002 rule 5).",
-      "withPlatform": false,
-      "mintsTenantID": true
-    },
-    {
-      "package": "internal/directory/client",
-      "function": "TunnelSource.Connector",
-      "reason": "The tenant is the one the authority chain's authentication step set on the request context or principal (authority.TenantFrom, apihost.Principal), never a request field; the parse only converts that server-set value to the typed ID and fails closed (ADR-0002 rule 5).",
-      "withPlatform": false,
-      "mintsTenantID": true
-    },
-    {
       "package": "internal/modules/connections",
       "function": "StateTenant",
       "reason": "The tenant prefix of an OAuth state is only a lookup hint to choose whose attempt table to search; the lookup is by the hash of the whole state, so a state never issued for that tenant finds nothing, and the value grants nothing (ADR-0002 rule 5).",
-      "withPlatform": false,
-      "mintsTenantID": true
-    },
-    {
-      "package": "internal/modules/connections",
-      "function": "WindowGate.AllowTenant",
-      "reason": "Holds a tenant.ID key and the zero ID as the overflow bucket of the callback rate window; it reads or writes no data and mints no identity (ADR-0002 rule 5).",
-      "withPlatform": false,
-      "mintsTenantID": true
-    },
-    {
-      "package": "internal/modules/connections",
-      "function": "sessionRequest",
-      "reason": "The tenant is the one the authority chain's authentication step set on the request context or principal (authority.TenantFrom, apihost.Principal), never a request field; the parse only converts that server-set value to the typed ID and fails closed (ADR-0002 rule 5).",
-      "withPlatform": false,
-      "mintsTenantID": true
-    },
-    {
-      "package": "internal/modules/connections",
-      "function": "ReconfirmCorrelation",
-      "reason": "The tenant is the one the runner stored in the operation payload from the authenticated request; the parse converts it to the typed ID and fails closed (ADR-0002 rule 5).",
-      "withPlatform": false,
-      "mintsTenantID": true
-    },
-    {
-      "package": "internal/platform/rbac",
-      "function": "tenantOf",
-      "reason": "The tenant is read back from app.tenant_id, which WithTenant set for this transaction from the authenticated context; the parse only converts it to the typed ID and fails closed (ADR-0002 rule 5).",
       "withPlatform": false,
       "mintsTenantID": true
     }
   ],
   "platformJobs": [],
   "probeValues": [
+    {
+      "column": "public.personal_subject.salt",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: a subject salt is exactly 32 bytes (personal_subject_salt_check, ADR-0005 rule 12); the probe row carries a 32-byte placeholder, not a real salt."
+    },
     {
       "column": "public.directory_objects.kind",
       "value": "other",

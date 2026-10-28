@@ -164,7 +164,7 @@ func TestTier0RevisionRowSecurityRefusesTenantReassignment(t *testing.T) {
 	})
 }
 
-// T-0506: the AFTER trigger inventory_tier0_revisions_tenant_guard (migration 0039) is the last line
+// T-0506: the AFTER trigger inventory_tier0_revisions_tenant_guard (migration 0041) is the last line
 // against a writer that row security does not constrain. Here the writer is the table owner with
 // NO FORCE ROW LEVEL SECURITY (the owner is then exempt from the policy) and the BEFORE guard is
 // disabled, so nothing but the AFTER trigger can refuse the move. If it is dropped, this fails.

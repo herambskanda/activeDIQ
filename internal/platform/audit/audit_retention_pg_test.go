@@ -480,3 +480,112 @@ func TestA2NonReadCommittedAppendIsRefusedAndChainStaysGapless(t *testing.T) {
 		})
 	}
 }
+
+func (r *rig) personalCounts(subject string) (values, subjects int) {
+	r.t.Helper()
+	ctx := context.Background()
+	c, err := r.d.Admin(ctx)
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	defer c.Close(ctx)
+	if err := c.QueryRow(ctx, `SELECT count(*) FROM public.personal_value WHERE tenant_id = $1::uuid AND subject_ref = $2`, r.id.String(), subject).Scan(&values); err != nil {
+		r.t.Fatal(err)
+	}
+	if err := c.QueryRow(ctx, `SELECT count(*) FROM public.personal_subject WHERE tenant_id = $1::uuid AND subject_ref = $2`, r.id.String(), subject).Scan(&subjects); err != nil {
+		r.t.Fatal(err)
+	}
+	return values, subjects
+}
+
+// T-0372 acceptance 1 (A9): a purge deletes, in its own transaction, the personal values only the purged
+// events reference, and the salt of a subject left with no value; a subject still referenced by a retained
+// event keeps its salt and the retained event's values.
+func TestPurgeDeletesPersonalValuesOnlyPurgedEventsReference(t *testing.T) {
+	each(t, func(t *testing.T, r *rig) {
+		ctx := context.Background()
+		cut, parts := rollover(t, r)
+		owner, err := store.OpenMaintenance(ctx, store.Config{DSN: r.d.OwnerDSN()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(owner.Close)
+		purger := audit.NewPurger(owner).WithPartitions(parts)
+
+		const otherGUID = "33333333-3333-4333-8333-333333333333"
+		other := "dir:" + pConn + ":" + otherGUID
+		old := personalEvent("old-both")
+		old.Changes = append(old.Changes, audit.Change{Subject: other, Attribute: "title", After: []string{"Analyst"}})
+		r.appendEvent(old)
+		cut.cut()
+		kept := personalEvent("new-one")
+		kept.Changes = kept.Changes[:1]
+		kept.Changes[0].Before, kept.Changes[0].After = nil, []string{"kept@example.test"}
+		kept.Snapshots = nil
+		kept.Target.GUID = otherGUID
+		kept.Changes[0].Subject = other
+		r.appendEvent(kept) // stays in the open partition, so it is not purgeable
+		r.sign()
+
+		if v, s := r.personalCounts(pSubject); v != 4 || s != 1 {
+			t.Fatalf("before purge subject has %d values, %d salts; want 4, 1", v, s)
+		}
+		res, err := purger.Purge(ctx, r.id, audit.PurgeRequest{Before: time.Now(), WithoutArchive: true, Actor: human})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.PersonalValues != 5 || res.PersonalSubjects != 1 {
+			t.Fatalf("purge removed %d values, %d salts; want 5, 1", res.PersonalValues, res.PersonalSubjects)
+		}
+		if v, s := r.personalCounts(pSubject); v != 0 || s != 0 {
+			t.Fatalf("purged-only subject keeps %d values, %d salts", v, s)
+		}
+		if v, s := r.personalCounts(other); v != 1 || s != 1 {
+			t.Fatalf("subject of a retained event has %d values, %d salts; want 1, 1", v, s)
+		}
+	})
+}
+
+// T-0372 security review: a legal hold on a subject keeps its salt through a retention purge (the values
+// referenced by purged events are still deleted, per ADR-0005 A9) and the subject is not counted as purged.
+// Removing `AND NOT s.hold` from personal.PurgeValues makes this test fail.
+func TestPurgeKeepsSaltOfSubjectUnderLegalHold(t *testing.T) {
+	each(t, func(t *testing.T, r *rig) {
+		ctx := context.Background()
+		cut, parts := rollover(t, r)
+		owner, err := store.OpenMaintenance(ctx, store.Config{DSN: r.d.OwnerDSN()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(owner.Close)
+		purger := audit.NewPurger(owner).WithPartitions(parts)
+
+		r.appendEvent(personalEvent("old-held"))
+		cut.cut()
+		r.sign()
+
+		c, err := r.d.Admin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tag, err := c.Exec(ctx, `UPDATE public.personal_subject SET hold = true WHERE tenant_id = $1::uuid AND subject_ref = $2`, r.id.String(), pSubject)
+		c.Close(ctx)
+		if err != nil || tag.RowsAffected() != 1 {
+			t.Fatalf("set hold: rows=%d err=%v", tag.RowsAffected(), err)
+		}
+
+		res, err := purger.Purge(ctx, r.id, audit.PurgeRequest{Before: time.Now(), WithoutArchive: true, Actor: human})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.PersonalValues == 0 {
+			t.Fatalf("purge removed no values: %+v", res)
+		}
+		if res.PersonalSubjects != 0 {
+			t.Fatalf("held subject counted as purged: %d", res.PersonalSubjects)
+		}
+		if v, s := r.personalCounts(pSubject); v != 0 || s != 1 {
+			t.Fatalf("held subject has %d values, %d salts; want 0, 1", v, s)
+		}
+	})
+}

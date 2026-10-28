@@ -8,6 +8,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/skenzeriq/activediq/internal/platform/authn/tenantref"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/store"
@@ -84,12 +85,16 @@ type GrantInput struct {
 	ValidUntil *time.Time
 }
 
-func tenantOf(ctx context.Context, tx store.Tx) (tenant.ID, error) {
+func tenantOf(ctx context.Context, tx store.Tx) (t tenant.ID, _ error) {
 	var s string
 	if err := tx.QueryRow(ctx, `SELECT COALESCE(current_setting('app.tenant_id', true), '')`).Scan(&s); err != nil {
-		return tenant.ID{}, fmt.Errorf("rbac: reading tenant: %w", err)
+		return t, fmt.Errorf("rbac: reading tenant: %w", err)
 	}
-	return tenant.Parse(s)
+	t, err := tenantref.TenantFromText(s)
+	if err != nil {
+		return t, fmt.Errorf("rbac: reading tenant: %w", err)
+	}
+	return t, nil
 }
 
 type roleRow struct {

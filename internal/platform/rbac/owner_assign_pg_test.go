@@ -88,7 +88,7 @@ func (e *env) owners(t *testing.T) []string {
 	return out
 }
 
-// Acceptance 1: seeding creates a read-only built-in tenant-owner role.
+// Acceptance 1: seeding creates a read-only built-in tenant-owner role holding only the named grants.
 func TestSeedCreatesReadOnlyTenantOwnerRole(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		e, _, _ := ownerSetup(t, s, inactive{})
@@ -99,7 +99,7 @@ func TestSeedCreatesReadOnlyTenantOwnerRole(t *testing.T) {
 				return err
 			}
 			return tx.QueryRow(ctx, `SELECT count(*) FROM public.authz_role_permissions p JOIN public.authz_roles r ON r.tenant_id = p.tenant_id AND r.id = p.role_id WHERE r.role_name = 'tenant-owner'`).Scan(&perms)
-		}); err != nil || !builtIn || perms != 0 {
+		}); err != nil || !builtIn || perms != 1 {
 			t.Fatalf("role: builtIn=%v perms=%d err=%v", builtIn, perms, err)
 		}
 		// Read-only: no rename, no new permission, and the name is reserved.

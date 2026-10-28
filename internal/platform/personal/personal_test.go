@@ -43,25 +43,11 @@ func (r *rig) in(id tenant.ID, fn func(ctx context.Context, tx store.Tx) error) 
 }
 
 // owner runs one statement as the owner role in the rig's tenant (row-level security is forced for it too).
-func (r *rig) owner(sql string) error {
-	ctx := context.Background()
-	c, err := r.d.Owner(ctx)
-	if err != nil {
-		return err
-	}
-	defer c.Close(ctx)
-	tx, err := c.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, r.id.String()); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx, sql); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
+func (r *rig) owner(table, sql string) error {
+	// The owner role owns the table, so it may switch off forced row-level security for it (the owner is
+	// otherwise subject to it) and then change rows directly, as an attacker with the owner credential would.
+	// This avoids setting the tenant by hand: only internal/platform/store sets it (fitness-tenancy T5).
+	return r.d.ExecOwner(context.Background(), `ALTER TABLE public.`+table+` NO FORCE ROW LEVEL SECURITY; `+sql)
 }
 
 func TestPutResolveEraseKeepsHash(t *testing.T) {
@@ -143,7 +129,7 @@ func TestHoldTamperAndRuntimeRoleCannotUpdate(t *testing.T) {
 		if err == nil {
 			t.Fatal("runtime role updated personal_value")
 		}
-		if err := r.owner(`UPDATE public.personal_value SET value = 'evil'`); err != nil {
+		if err := r.owner("personal_value", `UPDATE public.personal_value SET value = 'evil'`); err != nil {
 			t.Fatal(err)
 		}
 		_ = r.in(r.id, func(ctx context.Context, tx store.Tx) error {
@@ -153,7 +139,7 @@ func TestHoldTamperAndRuntimeRoleCannotUpdate(t *testing.T) {
 			return nil
 		})
 		// Legal hold blocks erasure and deletes nothing.
-		if err := r.owner(`UPDATE public.personal_subject SET hold = true`); err != nil {
+		if err := r.owner("personal_subject", `UPDATE public.personal_subject SET hold = true`); err != nil {
 			t.Fatal(err)
 		}
 		_ = r.in(r.id, func(ctx context.Context, tx store.Tx) error {

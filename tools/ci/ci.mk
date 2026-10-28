@@ -2,9 +2,9 @@
 # Standard: knowledge/development/standards/ci-gates.md · Runbook: knowledge/development/runbooks/ci-and-build.md
 # Every gate below has a failing run proving it catches a violation: `make ci-proof` (part of `make ci`).
 
-.PHONY: fitness-objectid ci gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-oracles-windows fitness-oracles-lab fitness-fuzz-nightly fitness-nightly build build-web web-install ci-proof fitness-operation fitness-disclosure fitness-packaging workflows-check
+.PHONY: fitness-objectid ci gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-oracles-windows fitness-oracles-lab fitness-fuzz-nightly fitness-nightly fuzz-saml build build-web web-install ci-proof fitness-operation fitness-disclosure fitness-packaging workflows-check
 
-ci: lint gen-check gen-api-check lint-api test fitness workflows-check build secrets-scan vuln-scan lab-test-unit lab-test-windows-unit ci-proof ## Everything a merge needs: lint, generated-code freshness (connector proto and the API contract), API lint, tests, fitness functions (incl. the ADR-0001 build matrix), web build, secret scan, dependency vulnerability scan, gate proofs
+ci: lint gen-check gen-api-check lint-api test fitness workflows-check build secrets-scan vuln-scan fuzz-saml lab-test-unit lab-test-windows-unit ci-proof ## Everything a merge needs: lint, generated-code freshness (connector proto and the API contract), API lint, tests, fitness functions (incl. the ADR-0001 build matrix), web build, secret scan, dependency vulnerability scan, gate proofs
 	@echo "make ci: passed"
 
 gen-proto: ## T-0157: regenerate the connector contract's Go code (internal/proto) from proto/ with the pinned pure-Go toolchain (no protoc, no buf)
@@ -105,6 +105,11 @@ fitness-fuzz-nightly: ## T-0034: FF-SP5 nightly: every declared fuzz target for 
 	go run ./tools/fitness/corpus -fuzz -nightly -parallel 4 -log $(SAFEPRIM_REPORTS)/fuzz.log
 
 fitness-nightly: fitness-fuzz-nightly fitness-oracles-lab ## T-0034: the nightly job: FF-SP5 long fuzz, FF-SP6 Samba lab; the Windows rows are fitness-oracles-windows on the Windows lab (runbook safe-primitives-fitness.md)
+
+SAML_FUZZ_TIME ?= 60s
+
+fuzz-saml: ## T-0490: FuzzSAMLComplete for 60s (go test -fuzz): any forged Verified tuple or replayed assertion fails the build; a crasher lands in internal/platform/authn/sso/saml/testdata/fuzz/ (commit it)
+	tools/ci/fuzz-target.sh internal/platform/authn/sso/saml FuzzSAMLComplete $(SAML_FUZZ_TIME)
 
 build: build-web ## Build the web assets; the CGO_ENABLED=0 Go cross-build of the ADR-0001 matrix runs in fitness-stack (F2)
 

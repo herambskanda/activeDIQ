@@ -7,7 +7,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/skenzeriq/activediq/internal/directory/connection"
-	"github.com/skenzeriq/activediq/internal/platform/authority"
+	"github.com/skenzeriq/activediq/internal/platform/authn/tenantref"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
@@ -60,11 +60,7 @@ func NewTunnelSource(conns ConnectionSource, bindings BindingSource, tunnels Tun
 
 // Connector implements ConnectorSource.
 func (s *TunnelSource) Connector(ctx context.Context, connectionID string) (connectorv1.ConnectorClient, error) {
-	tidText, ok := authority.TenantFrom(ctx)
-	if !ok {
-		return nil, ErrReadTenant
-	}
-	tid, err := tenant.Parse(tidText)
+	tid, err := tenantref.TenantFromContext(ctx)
 	if err != nil {
 		return nil, ErrReadTenant
 	}
