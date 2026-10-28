@@ -55,3 +55,6 @@ lab/.entra-lab.pem
 lab/windows/.state/
 lab/windows/.win-lab.env
 lab/windows/.win-lab-ca.pem
+
+# stray go build output of tools/fitness/profiles
+/profiles

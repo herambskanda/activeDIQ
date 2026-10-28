@@ -134,13 +134,20 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
   - An inactive line ending `[INPUT NOW PRESENT: ... overdue]` means a subject landed (operations,
     `apihost.Build`) and its check has not; it does not fail the job but the ADR cannot be accepted.
     Implement the check, with a failing fixture (`check_test.go`, `check_static_test.go`) and a `tools/ci/proof.sh` case, and remove its `needs` text in `inactive.go`.
-- **`fitness-profiles`** (P1, P7, U1, U2 and the activation table, ADR-0002): `make fitness-profiles`
+- **`fitness-profiles`** (P1, P4 telemetry, P7, U1, U2 and the activation table, ADR-0002): `make fitness-profiles`
   re-runs it alone and prints the activation table first. `-checks P1,U2` runs a subset.
   - P1 domain code: take the compose import, environment read or profile-named identifier out of
     domain code; pass a value in from the composition root instead, or name the *capability*
     (`directory.ad`), never the profile. Profile logic belongs in `internal/compose/**`.
   - P1 capability asymmetry: both self-hosted manifests get the capability, or the solution-architect
     adds an ADR-cited `Exceptions` entry to the manifest first.
+  - P4 telemetry (T-0135, TM-TB17-T8): a log line in a function that has a tenant in scope (a `tenant.ID`
+    parameter, variable or receiver field) must pass `"tenant_id"` or log through `With("tenant_id", ...)`;
+    a Prometheus-style metric constructor must list the label `tenant_id` in a `[]string` literal; a map in a
+    struct field or package variable named `*cache*` (or in a `*Cache` type) is keyed by `tenant.ID` or a struct
+    with a `tenant.ID` field. Fix the code. A platform-scope or one-tenant-per-instance case is a
+    `p4.exempt` entry in the manifest (`path` = `file`, `file#Func` or `file#Name`, a ratified ADR, a reason);
+    a stale entry fails. The check is syntactic: it cannot see a log line whose tenant is only in a context.
   - P7: delete the branch (`git branch -D <name>`, and the remote copy); only `main` and
     `factory/T-NNNN` exist.
   - U1: remove the module. Ported UEM or PatchIQ code is copied with its source named in the commit

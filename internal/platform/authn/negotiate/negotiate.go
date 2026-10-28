@@ -190,7 +190,7 @@ func (s *Service) mapAccount(ctx context.Context, t tenant.ID, id sid.SID) (acco
 
 func (s *Service) refuse(ctx context.Context, req Request, reason string) (authn.PendingHandle, error) {
 	if err := s.Recorder.Refused(ctx, req.Tenant, reason, req.ClientIP); err != nil && s.Log != nil {
-		s.Log.ErrorContext(ctx, "negotiate: refusal not recorded", "reason", reason, "error", err)
+		s.Log.ErrorContext(ctx, "negotiate: refusal not recorded", "tenant_id", req.Tenant.String(), "reason", reason, "error", err)
 	}
 	return authn.PendingHandle{}, ErrSignInFailed
 }

@@ -466,7 +466,7 @@ func (g *Gateway) reportSuperseded(ctx context.Context, id Identity) {
 	usable, err := g.comps.Usable(rctx, id)
 	if err != nil {
 		rollback()
-		g.log.Error("fleet: superseded certificate could not be checked", slog.String("component", id.ComponentID))
+		g.log.Error("fleet: superseded certificate could not be checked", slog.String("tenant_id", id.Tenant.String()), slog.String("component", id.ComponentID))
 		return
 	}
 	if !usable {
@@ -474,7 +474,7 @@ func (g *Gateway) reportSuperseded(ctx context.Context, id Identity) {
 	}
 	if err := g.superseded.Superseded(rctx, id); err != nil {
 		rollback()
-		g.log.Error("fleet: superseded certificate could not be reported", slog.String("component", id.ComponentID))
+		g.log.Error("fleet: superseded certificate could not be reported", slog.String("tenant_id", id.Tenant.String()), slog.String("component", id.ComponentID))
 	}
 }
 

@@ -797,7 +797,7 @@ must_pass "FF-SP6 ldapfilter oracle on an escaped injection" "$orbin" ldapfilter
 printf '%s\n' '{"id":"LF-01","primitive":"ldapfilter","call":"Eq","args":{"attr":"cn","value":{"utf8":"*)(uid=*"}},"expect":{"render":"(cn=*)(uid=*)"},"hostile":true,"verified":"doc"}' >"$orc/testdata/safe-primitives/ldapfilter.jsonl"
 must_fail_with "FF-SP6 ldapfilter oracle on an unescaped injection" 'LF-01: .*go-ldap rejects the rendered filter' "$orbin" ldapfilter -root "$orc"
 
-# --- fitness-profiles (ADR-0002 P1, P7, U1, U2, activation table), the real CLI on throw-away trees
+# --- fitness-profiles (ADR-0002 P1, P4 telemetry, P7, U1, U2, activation table), the real CLI on throw-away trees
 pf="$tmp/pf"
 fresh_pf_tree() {
   rm -rf "$pf"; mkdir -p "$pf/internal/platform/capability" "$pf/internal/platform/tenant" "$pf/internal/directory/dn" \
@@ -805,7 +805,14 @@ fresh_pf_tree() {
     "$pf/knowledge/development/decisions"
   printf 'module pf.test\n\ngo 1.27.0\n' >"$pf/go.mod"
   printf -- '---\nstatus: ratified\n---\n' >"$pf/knowledge/development/decisions/0002-deployment-model.md"
-  cp tools/fitness/profiles/manifest.json tools/fitness/profiles/uem-denylist.json "$pf/tools/fitness/profiles/"
+  cp tools/fitness/profiles/uem-denylist.json "$pf/tools/fitness/profiles/"
+  # The real manifest, minus its p4.exempt entries (they name files this throw-away tree does not have).
+  python3 - tools/fitness/profiles/manifest.json "$pf/tools/fitness/profiles/manifest.json" <<'PY'
+import json, sys
+m = json.load(open(sys.argv[1]))
+m["p4"]["exempt"] = []
+json.dump(m, open(sys.argv[2], "w"), indent=2)
+PY
   printf '{"denylistExtends": ["tools/fitness/profiles/uem-denylist.json"]}\n' >"$pf/tools/fitness/stack/manifest.json"
   printf 'package capability\n\ntype ID string\n\nconst (\n\tDirectoryAD ID = "directory.ad"\n\tDirectoryEntra ID = "directory.entra"\n)\n' >"$pf/internal/platform/capability/c.go"
   printf 'package tenant\n' >"$pf/internal/platform/tenant/t.go"
@@ -876,6 +883,20 @@ fresh_pf_tree; printf '{"denylistExtends": []}\n' >"$pf/tools/fitness/stack/mani
 must_fail_with "fitness-profiles U1 on a stack manifest that does not extend the UEM denylist" 'U1 .*denylistExtends' profiles -checks U1
 fresh_pf_tree; printf 'package tenant\n\nimport _ "pf.test/internal/directory/dn"\n' >"$pf/internal/platform/tenant/t.go"
 must_fail_with "fitness-profiles U2 on a platform package importing the directory domain" 'internal/platform/tenant/t.go:3: U2 ' profiles -checks U2
+P4HDR='package svc\n\nimport (\n\t"log/slog"\n\n\t"pf.test/internal/platform/tenant"\n)\n\nvar _ = slog.Info\n\n'
+fresh_pf_tree; printf 'package tenant\n\ntype ID struct{ b [16]byte }\n' >"$pf/internal/platform/tenant/t.go"; mkdir -p "$pf/internal/modules/svc"
+printf "$P4HDR"'func Work(t tenant.ID) { slog.Info("synced") }\n' >"$pf/internal/modules/svc/s.go"
+must_fail_with "fitness-profiles P4 on a log line without the tenant ID" 'internal/modules/svc/s.go:11: P4 .*does not carry "tenant_id"' profiles -checks P4
+printf "$P4HDR"'func Work(t tenant.ID) { slog.Info("synced", "tenant_id", "x") }\n' >"$pf/internal/modules/svc/s.go"
+must_pass "fitness-profiles P4 on a log line with the tenant ID" profiles -checks P4
+printf 'package svc\n\nimport "github.com/prometheus/client_golang/prometheus"\n\nvar m = prometheus.NewCounterVec(prometheus.CounterOpts{}, []string{"result"})\n' >"$pf/internal/modules/svc/s.go"
+must_fail_with "fitness-profiles P4 on a metric without the tenant label" 'internal/modules/svc/s.go:5: P4 .*does not list the label "tenant_id"' profiles -checks P4
+printf 'package svc\n\nimport "github.com/prometheus/client_golang/prometheus"\n\nvar m = prometheus.NewCounterVec(prometheus.CounterOpts{}, []string{"tenant_id", "result"})\n' >"$pf/internal/modules/svc/s.go"
+must_pass "fitness-profiles P4 on a metric with the tenant label" profiles -checks P4
+printf 'package svc\n\ntype S struct{ cache map[string]int }\n' >"$pf/internal/modules/svc/s.go"
+must_fail_with "fitness-profiles P4 on a cache not keyed by tenant" 'internal/modules/svc/s.go:3: P4 .*cache S.cache is not keyed by tenant' profiles -checks P4
+printf 'package svc\n\nimport "pf.test/internal/platform/tenant"\n\ntype S struct{ cache map[tenant.ID]int }\n' >"$pf/internal/modules/svc/s.go"
+must_pass "fitness-profiles P4 on a cache keyed by tenant" profiles -checks P4
 fresh_pf_tree; mkdir -p "$pf/packaging/windows"; : >"$pf/packaging/windows/product.wxs"
 must_fail_with "fitness-profiles activation: an installer without its P2 check" 'ACT .*packaging/windows exists, which activates P2.*not implemented' profiles -checks ACT
 fresh_pf_tree; mkdir -p "$pf/internal/connector/ldap"

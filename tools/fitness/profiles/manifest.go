@@ -44,6 +44,9 @@ type Config struct {
 	// P7.
 	BranchAllow []string `json:"branchAllow"` // regular expressions, anchored by the tool
 
+	// P4 telemetry half: tenant ID on every log line, metric and cache key (T-0135).
+	P4 *P4Config `json:"p4"`
+
 	// Activation table.
 	Activation []Activation `json:"activation"`
 }
