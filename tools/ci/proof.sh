@@ -1071,6 +1071,19 @@ for d in packaging/windows/testdata packaging/windows/node_modules testdata "src
   must_fail_with "fitness-agent-host on a LocalSystem service in $d (A1)" 'LocalSystem' agenthost "$ah"
   rm -rf "$ah/$d" "$ah/src[" "$ah/src" "$ah/packaging/windows/A.wixproj"
 done
+# T-0677: the A1 walker fails closed on a tools/fitness include, a symlinked dir and an unreadable dir.
+mkdir -p "$ah/tools/fitness/x/testdata"; printf '%s\n' "$lsys" >"$ah/tools/fitness/x/testdata/evil.wxs"
+printf '<Project><ItemGroup><Compile Include="..\\..\\tools\\fitness\\x\\testdata\\evil.wxs"/></ItemGroup></Project>\n' >"$ah/packaging/windows/A.wixproj"
+must_fail_with "fitness-agent-host on a Compile Include of a tools/fitness fixture (A1)" 'references tools/fitness' agenthost "$ah"
+rm -rf "$ah/tools/fitness/x" "$ah/packaging/windows/A.wixproj"; rmdir "$ah/tools/fitness" "$ah/tools" 2>/dev/null || true
+mkdir -p "$ah/elsewhere"; printf '%s\n' "$lsys" >"$ah/elsewhere/x.wxs"; ln -s "$ah/elsewhere" "$ah/packaging/windows/testdata"
+must_fail_with "fitness-agent-host on a symlinked directory under packaging/ (A1)" 'symbolic link' agenthost "$ah"
+rm -rf "$ah/packaging/windows/testdata" "$ah/elsewhere"
+if [ "$(id -u)" != 0 ]; then
+  mkdir -p "$ah/packaging/windows/testdata"; printf '%s\n' "$lsys" >"$ah/packaging/windows/testdata/x.wxs"; chmod 000 "$ah/packaging/windows/testdata"
+  must_fail_with "fitness-agent-host on an unreadable directory under packaging/ (A1)" 'cannot be walked' agenthost "$ah"
+  chmod 755 "$ah/packaging/windows/testdata"; rm -rf "$ah/packaging/windows/testdata"
+fi
 printf 'package main\n\nimport _ "fx.test/internal/directory/client"\n\nfunc main() {}\n' >"$ah/cmd/agent/main.go"
 must_fail_with "fitness-agent-host on a directory client in the agent binary (A4)" 'internal/directory/client' agenthost "$ah"
 printf 'package main\n\nfunc main() {}\n' >"$ah/cmd/agent/main.go"

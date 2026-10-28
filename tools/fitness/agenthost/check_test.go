@@ -380,6 +380,49 @@ func TestA1Installer(t *testing.T) {
 		write(t, r, "testdata/evil.wxs", lsys)
 		wantViolation(t, checkInstaller(r), "LocalSystem")
 	}
+	// T-0677: the walker fails closed.
+	{
+		r := t.TempDir() // (1) a .wixproj Compile-Includes a fixture under tools/fitness
+		write(t, r, "packaging/windows/A.wixproj", `<Project><ItemGroup><Compile Include="..\..\tools\fitness\agenthost\testdata\evil.wxs"/></ItemGroup></Project>`)
+		write(t, r, "tools/fitness/agenthost/testdata/evil.wxs", lsys)
+		wantViolation(t, checkInstaller(r), "references tools/fitness")
+	}
+	{
+		r := t.TempDir() // a root-level project globs tools/fitness
+		write(t, r, "Evil.wixproj", `<Project/>`)
+		wantViolation(t, checkInstaller(r), "sits above tools/fitness")
+	}
+	{
+		r := t.TempDir() // (2) a symlinked directory holding a LocalSystem file
+		write(t, r, "packaging/windows/agent.wxs", goodWxs)
+		write(t, r, "elsewhere/x.wxs", lsys)
+		if err := os.Symlink(filepath.Join(r, "elsewhere"), filepath.Join(r, "packaging/windows/testdata")); err != nil {
+			t.Skip("symlinks unavailable:", err)
+		}
+		wantViolation(t, checkInstaller(r), "symbolic link")
+	}
+	{
+		r := t.TempDir() // a symlinked WiX file outside packaging/
+		write(t, r, "elsewhere/x.wxs", lsys)
+		if err := os.Symlink(filepath.Join(r, "elsewhere/x.wxs"), filepath.Join(r, "link.wxs")); err != nil {
+			t.Skip("symlinks unavailable:", err)
+		}
+		wantViolation(t, checkInstaller(r), "symbolic link")
+	}
+	{
+		r := t.TempDir() // (3) an unreadable directory
+		write(t, r, "packaging/windows/agent.wxs", goodWxs)
+		write(t, r, "packaging/windows/testdata/x.wxs", lsys)
+		d := filepath.Join(r, "packaging/windows/testdata")
+		if err := os.Chmod(d, 0); err != nil {
+			t.Fatal(err)
+		}
+		defer os.Chmod(d, 0o755)
+		if _, err := os.ReadDir(d); err == nil {
+			t.Skip("directory permissions are not enforced (running as root)")
+		}
+		wantViolation(t, checkInstaller(r), "cannot be walked")
+	}
 	// Fifth review, 3: every service gets the full pin; an allowlisted Id is the only exception.
 	helper := `<Wix><Package><Component><ServiceInstall Id="SkzHelper" Name="skzHelper" Account="NT SERVICE\skzHelper"><ServiceConfig ServiceSid="unrestricted" RequiredPrivileges="SeDebugPrivilege,SeBackupPrivilege"/></ServiceInstall></Component></Package></Wix>`
 	wantViolation(t, third("Helper.wxs", helper), "service SID type of")

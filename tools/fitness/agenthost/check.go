@@ -597,6 +597,7 @@ type instFile struct {
 	path, rel, text string
 	agent           bool   // the path or body names the agent (a WiX file is judged either way)
 	unreadable      string // why it could not be read as text; empty when text is valid
+	problem         string // a walk error or symlink: reported as an A1 violation as it is (fail closed, T-0677)
 }
 
 var binaryExts = setOf(".ico", ".bmp", ".png", ".jpg", ".gif", ".dll", ".exe", ".cab", ".msi", ".cer", ".pfx", ".zip", ".gz", ".bin")
@@ -655,11 +656,24 @@ func utf16Text(b []byte, bigEndian bool) string {
 func agentInstallerFiles(root string) []instFile {
 	var out []instFile
 	_ = filepath.WalkDir(root, func(p string, e fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
 		relp, _ := filepath.Rel(root, p)
 		relp = filepath.ToSlash(relp)
+		if err != nil {
+			// T-0677: a directory or file the walk cannot read hides WiX the SDK may still compile; fail closed.
+			out = append(out, instFile{path: p, rel: relp, problem: "cannot be walked (" + err.Error() + "): an unreadable path under the repo could hide a WiX source the build compiles"})
+			if e != nil && e.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if e.Type()&fs.ModeSymlink != 0 {
+			// T-0677: WalkDir does not follow symlinks, MSBuild globs may. Under packaging/ or named like WiX
+			// a symlink is a violation (not resolved), so nothing is reachable that was not scanned.
+			if strings.HasPrefix(relp, "packaging/") || isRepoWix(p) {
+				out = append(out, instFile{path: p, rel: relp, problem: "is a symbolic link in the installer sources: the scan does not follow it, the build might; copy the content in instead"})
+			}
+			return nil
+		}
 		if e.IsDir() {
 			switch e.Name() {
 			case ".git":
@@ -729,6 +743,9 @@ func isRepoWix(p string) bool {
 	return wixTemplateRe.MatchString(strings.ToLower(filepath.Base(p)))
 }
 
+// fitnessRefRe matches any mention of the fitness tree or a wildcard over tools/ in WiX text.
+var fitnessRefRe = regexp.MustCompile(`(?i)(fitness|tools[\\/]+[^"'<>\s]*\*)`)
+
 var wixTemplateRe = regexp.MustCompile(`\.(wxs|wxi|wxl|wixproj)\.[a-z0-9]+$`)
 
 func isWixXML(p string) bool {
@@ -781,6 +798,10 @@ func checkInstallerAllow(root string, allow []string) Result {
 	namedAgent := false
 	for _, f := range files {
 		rel := f.rel
+		if f.problem != "" {
+			r.Violations = append(r.Violations, fmt.Sprintf("%s %s (ADR-0006 A1 fails closed)", rel, f.problem))
+			continue
+		}
 		if f.unreadable != "" {
 			r.Violations = append(r.Violations, fmt.Sprintf("%s %s: a WiX source or agent packaging file must be readable text (or have a known binary extension)", rel, f.unreadable))
 			continue
@@ -792,6 +813,16 @@ func checkInstallerAllow(root string, allow []string) Result {
 		}
 		if m := localSystemRe.FindString(f.text); m != "" {
 			r.Violations = append(r.Violations, fmt.Sprintf("%s names %q: the agent never runs as LocalSystem or a shared service identity (ADR-0006 rule 1)", rel, m))
+		}
+		// T-0677: tools/fitness holds deliberately bad fixtures and is not scanned, so nothing in the
+		// installer sources may reach into it (Compile/Include/<?include?>, a path property, a glob).
+		if (isWixXML(f.path) || isTemplate(f.path)) && fitnessRefRe.MatchString(f.text) {
+			r.Violations = append(r.Violations, fmt.Sprintf("%s references tools/fitness, which is not scanned for LocalSystem: installer sources must not include fixtures", rel))
+		}
+		if strings.HasSuffix(strings.ToLower(f.path), ".wixproj") {
+			if d := filepath.ToSlash(filepath.Dir(rel)); d == "." || d == "tools" {
+				r.Violations = append(r.Violations, fmt.Sprintf("%s sits above tools/fitness: its default **/*.wxs glob reaches the unscanned fixtures; move the project down", rel))
+			}
 		}
 		if isTemplate(f.path) && !allowed(rel, allow) {
 			r.Violations = append(r.Violations, fmt.Sprintf("%s is a template or transform under packaging/: it is not parsed, so it could emit a ServiceInstall, ServiceSid or ACL the check never sees; list it in installer-allow.txt after a security-architect review", rel))
