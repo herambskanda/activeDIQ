@@ -1,4 +1,4 @@
--- 0046_authn_webauthn: WebAuthn credentials and sign-in challenges for AN-10 (T-0207; DM-37 webauthn slice,
+-- 0047_authn_webauthn: WebAuthn credentials and sign-in challenges for AN-10 (T-0207; DM-37 webauthn slice,
 -- threat model §7.2 and §7.6 rule 1). Owner: internal/platform/authn. Two tenant tables.
 --
 --   authn_webauthn_credentials  one row per registered authenticator of a console account. Public data only:
