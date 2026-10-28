@@ -109,11 +109,12 @@ func uuidText(b []byte) string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
-// labPinner pins the lab DC (the one the session is bound to) for every naming context.
-type labPinner struct{ dsa string }
+// labDCs lists the lab DC (the one the session is bound to) as the only writable DC; the production
+// pinner (dcPinner) turns it into the pin.
+type labDCs struct{ dsa string }
 
-func (p labPinner) Pin(context.Context, string, authority.NamingContextID, string) (operation.DCPin, error) {
-	return operation.DCPin{Host: "localhost", DSAGUID: p.dsa}, nil
+func (l labDCs) WritableDCs(context.Context, string, authority.NamingContextID) ([]client.WritableDC, error) {
+	return []client.WritableDC{{Host: "localhost", DSAGUID: l.dsa}}, nil
 }
 
 type labSettings struct{}
@@ -254,8 +255,12 @@ func newLabRig(t *testing.T, s *storetest.Server) *labRig {
 		if err != nil {
 			t.Fatal(err)
 		}
+		labPin, err := newDCPinner(labDCs{dsa: dsa})
+		if err != nil {
+			t.Fatal(err)
+		}
 		runner, err := operation.NewRunner(operation.Config{DB: e.db, Audit: ch, Authz: az, Registry: actions, Facts: facts, Jobs: jobs.NewRegistry(),
-			Keys: fixedKeys{}, Pinner: labPinner{dsa: dsa}, Settings: labSettings{}, Component: "lab"})
+			Keys: fixedKeys{}, Pinner: labPin, Settings: labSettings{}, Component: "lab"})
 		if err != nil {
 			t.Fatal(err)
 		}

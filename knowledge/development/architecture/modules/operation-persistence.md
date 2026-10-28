@@ -29,8 +29,13 @@ Code: `internal/platform/operation/`; migration `migrations/0013_operation_opera
   the recording tx and at every terminal state; expired -> `secret_expired`.
 - `audit.Detail` is an alias of `chain.Detail` so `operation` need not import `audit/chain` (O9).
 
-Deferred: undo, bulk chunked planning, `tier0_after_write` handling, real `directory/client`
-Pinner/Observer wiring (see backlog tickets).
+Pinner (T-0320): `compose/server.dcPinner` implements `operation.Pinner` over `client.DCDirectory`
+(connector `Describe` with refresh): host and DSA GUID come from one DC entry, GUID validated by the
+`attr/guid` codec; a kept `previous` host is re-read (rebuilt DC => new GUID); failures never yield a
+partial pin. Built in `server.go` and passed to `buildOperation`.
+
+Deferred: undo, bulk chunked planning, `tier0_after_write` handling, a real Observer (per-Action; the
+first Directory Action supplies it, see backlog ticket).
 
 ## Approval scope (security review fixes)
 

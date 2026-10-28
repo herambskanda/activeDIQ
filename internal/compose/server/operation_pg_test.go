@@ -76,7 +76,7 @@ func TestRunnerEventsAreChainedAtCommit(t *testing.T) {
 				t.Fatal(err)
 			}
 			if k == nil {
-				if k, err = buildOperation(operation.HoldsMinter, e.db, directoryFacts(nil), allowAuthz{}, reg); err != nil {
+				if k, err = buildOperation(operation.HoldsMinter, e.db, directoryFacts(nil), allowAuthz{}, reg, nil); err != nil {
 					t.Fatal(err)
 				}
 			}
