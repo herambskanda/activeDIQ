@@ -25,7 +25,7 @@ func newKey() key {
 }
 
 func ks(tid tenant.ID, seq uint64, signer key, active key, retiring ...key) agentpolicy.SignedKeyset {
-	k := agentpolicy.Keyset{Tenant: tid, Seq: seq, IssuedAt: t0, SignerKeyID: signer.id}
+	k := agentpolicy.Keyset{Tenant: tid.String(), Seq: seq, IssuedAt: t0, SignerKeyID: signer.id}
 	k.Keys = append(k.Keys, agentpolicy.KeysetKey{KeyID: active.id, Public: active.pub, State: agentpolicy.KeyActive})
 	for _, r := range retiring {
 		k.Keys = append(k.Keys, agentpolicy.KeysetKey{KeyID: r.id, Public: r.pub, State: agentpolicy.KeyRetiring, RetireAfter: t0.Add(agentpolicy.OverlapWindow)})
@@ -58,7 +58,7 @@ func sign(tid tenant.ID, k key, seq uint64, life time.Duration) agentpolicy.Sign
 	if err != nil {
 		panic(err)
 	}
-	sp, err := agentpolicy.SignPolicy(agentpolicy.PolicyHeader{Tenant: tid, Kind: agentpolicy.KindADDC, Seq: seq, IssuedAt: t0, NotAfter: t0.Add(life), KeyID: k.id}, b, k.priv)
+	sp, err := agentpolicy.SignPolicy(agentpolicy.PolicyHeader{Tenant: tid.String(), Kind: agentpolicy.KindADDC, Seq: seq, IssuedAt: t0, NotAfter: t0.Add(life), KeyID: k.id}, b, k.priv)
 	if err != nil {
 		panic(err)
 	}
@@ -128,7 +128,7 @@ func TestP3ExpiredRefusedInstalledKept(t *testing.T) {
 	}
 	// The signer refuses an over-long lifetime; a forged one (signed by hand) is refused by the agent.
 	b, _ := pol().Encode()
-	h := agentpolicy.PolicyHeader{Tenant: a, Kind: agentpolicy.KindADDC, Seq: 3, IssuedAt: t0, NotAfter: t0.Add(agentpolicy.MaxLifetime + time.Second), KeyID: k.id}
+	h := agentpolicy.PolicyHeader{Tenant: a.String(), Kind: agentpolicy.KindADDC, Seq: 3, IssuedAt: t0, NotAfter: t0.Add(agentpolicy.MaxLifetime + time.Second), KeyID: k.id}
 	if _, err := agentpolicy.SignPolicy(h, b, k.priv); err == nil {
 		t.Fatal("signer signed an over-long lifetime")
 	}

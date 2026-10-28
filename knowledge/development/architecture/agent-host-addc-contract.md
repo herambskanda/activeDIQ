@@ -89,7 +89,7 @@ R-tests run in `fitness-agent-host` (CI) and the proto lint; L/lab tests run in 
 
 ## 7. Open items
 
-- The server-side module that owns `activediq.addc.v1` and the policy signer is not yet on the map (name `agentfleet` is a placeholder; backend-engineer names it when the follow-up lands).
+- The server side is named: module `agentfleet` ([page](modules/agentfleet.md), T-0556). The signer, keyset rotation job and event ingest are built; the `activediq.addc.v1` RPC handlers wait for the proto (T-0600), the composition for the tenant DEK source (T-0598), the operator Actions for T-0599 and the dc_guid cross-check data for T-0601.
 - The lab confirmations in ADR-0006 "Verification owed" gate `accepted`, not `ratified`.
 - Password-filter IPC content (C15) belongs to T-0145; this file fixes only what the agent surface must never carry.
 - `[UNVERIFIED]` the `[EST]` resource figures in §5.

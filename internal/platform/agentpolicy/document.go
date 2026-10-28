@@ -6,8 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"time"
-
-	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
 // Domain-separation prefixes. A signature over a policy can never verify as a keyset, or as anything
@@ -50,7 +48,7 @@ func KeyID(pub ed25519.PublicKey) string {
 
 // PolicyHeader is the signed part of a policy besides the body (ADR-0007 decision 2).
 type PolicyHeader struct {
-	Tenant   tenant.ID
+	Tenant   string // canonical tenant text; compared with the Verifier's tenant, never minted into an ID
 	Kind     string
 	Seq      uint64 // strictly increasing per tenant and kind
 	IssuedAt time.Time
@@ -67,7 +65,7 @@ type SignedPolicy struct {
 }
 
 func (h PolicyHeader) encode(e *enc) {
-	e.str(h.Tenant.String())
+	e.str(h.Tenant)
 	e.str(h.Kind)
 	e.u64(h.Seq)
 	e.u64(uint64(h.IssuedAt.Unix()))
@@ -113,14 +111,9 @@ func ParseSignedPolicy(b []byte) (SignedPolicy, error) {
 	return p, nil
 }
 
-// tenant reads a tenant ID in its canonical text form (the only form tenant.Parse accepts).
-func (d *dec) tenant() tenant.ID {
-	id, err := tenant.Parse(d.str(36))
-	if d.err == nil && err != nil {
-		d.err = ErrMalformed
-	}
-	return id
-}
+// tenant reads the tenant text of a document. It is never turned into a tenant.ID: the Verifier compares
+// it with its own tenant's text, so document bytes cannot mint an identity.
+func (d *dec) tenant() string { return d.str(36) }
 
 func decodeHeader(d *dec) (PolicyHeader, error) {
 	var h PolicyHeader
@@ -154,7 +147,7 @@ type KeysetKey struct {
 
 // Keyset is the set of public keys an agent trusts for a tenant.
 type Keyset struct {
-	Tenant   tenant.ID
+	Tenant   string // canonical tenant text; compared with the Verifier's tenant, never minted into an ID
 	Seq      uint64
 	IssuedAt time.Time
 	// SignerKeyID names the key, already in the previous keyset (or in this one for the first),
@@ -175,7 +168,7 @@ var ErrKeyset = errors.New("agentpolicy: keyset is not well formed")
 
 // validate checks the keyset's own shape: sorted, one active, IDs derived from keys.
 func (k Keyset) validate() error {
-	if k.Tenant.IsZero() || k.Seq == 0 || len(k.Keys) == 0 || len(k.Keys) > MaxKeys || len(k.SignerKeyID) > maxKeyIDLen {
+	if k.Tenant == "" || k.Seq == 0 || len(k.Keys) == 0 || len(k.Keys) > MaxKeys || len(k.SignerKeyID) > maxKeyIDLen {
 		return ErrKeyset
 	}
 	active := 0
@@ -204,7 +197,7 @@ func (k Keyset) validate() error {
 }
 
 func (k Keyset) encode(e *enc) {
-	e.str(k.Tenant.String())
+	e.str(k.Tenant)
 	e.u64(k.Seq)
 	e.u64(uint64(k.IssuedAt.Unix()))
 	e.str(k.SignerKeyID)
@@ -288,7 +281,7 @@ func SignKeyset(k Keyset, priv ed25519.PrivateKey) (SignedKeyset, error) {
 // KeyID must be the ID of priv's public key.
 func SignPolicy(h PolicyHeader, body []byte, priv ed25519.PrivateKey) (SignedPolicy, error) {
 	pub, ok := priv.Public().(ed25519.PublicKey)
-	if !ok || h.KeyID != KeyID(pub) || !ValidKind(h.Kind) || h.Tenant.IsZero() || h.Seq == 0 ||
+	if !ok || h.KeyID != KeyID(pub) || !ValidKind(h.Kind) || h.Tenant == "" || h.Seq == 0 ||
 		!h.NotAfter.After(h.IssuedAt) || h.NotAfter.Sub(h.IssuedAt) > MaxLifetime {
 		return SignedPolicy{}, ErrMalformed
 	}

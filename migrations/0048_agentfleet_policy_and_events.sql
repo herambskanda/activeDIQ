@@ -74,7 +74,7 @@ BEGIN
     EXECUTE format('ALTER TABLE public.%I FORCE ROW LEVEL SECURITY', t);
     EXECUTE format($p$CREATE POLICY %I ON public.%I
       USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
-      WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)$p$, t || '_tenant', t);
+      WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)$p$, concat(t, '_tenant'), t);
     EXECUTE format('REVOKE DELETE ON public.%I FROM activediq_app', t);
   END LOOP;
 END

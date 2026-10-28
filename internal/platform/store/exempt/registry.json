@@ -188,7 +188,7 @@
     {
       "column": "public.authn_authenticator_enrollments.expires_at",
       "value": "2030-01-01T00:00:00Z",
-      "reason": "INSERT trigger: an enrolment starts pending with an expiry (DM-37, ENH-09 §5); the probe row is a pending enrolment."
+      "reason": "INSERT trigger: an enrolment starts pending with an expiry (DM-37, ENH-09 \u00a75); the probe row is a pending enrolment."
     },
     {
       "column": "public.correlations.match",
@@ -393,7 +393,7 @@
     {
       "column": "public.connection_attestation_attempts.code_verifier",
       "value": "probe-code-verifier-0123456789-0123456789-0123",
-      "reason": "CHECK: a PKCE code_verifier is 43..128 characters (RFC 7636 §4.1)."
+      "reason": "CHECK: a PKCE code_verifier is 43..128 characters (RFC 7636 \u00a74.1)."
     },
     {
       "column": "public.connection_attestation_attempts.state_hash",
@@ -596,6 +596,61 @@
       "column": "public.authn_webauthn_challenges.expires_at",
       "value": "2000-01-01 00:03:00+00",
       "reason": "CHECK: authn_webauthn_challenges_life, see created_at; 3 minutes after the pinned created_at (T-0207)."
+    },
+    {
+      "column": "public.agent_policy_key.key_id",
+      "value": "k-0123456789abcdef",
+      "reason": "CHECK: a policy key ID is k- and 16 hex digits (agent_policy_key key_id check) (T-0556)"
+    },
+    {
+      "column": "public.agent_policy_key.public_key",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: an Ed25519 public key is exactly 32 bytes; the probe row carries a placeholder (T-0556)"
+    },
+    {
+      "column": "public.agent_policy_key.state",
+      "value": "dropped",
+      "reason": "CHECK: state is one of active/retiring/dropped and agent_policy_key_sealed_iff_live ties it to the sealed key; a dropped probe row needs no key material (T-0556)"
+    },
+    {
+      "column": "public.agent_policy_key.dropped_at",
+      "value": "2000-01-01 00:00:00+00",
+      "reason": "CHECK: agent_policy_key_dropped requires dropped_at exactly when state is dropped (T-0556)"
+    },
+    {
+      "column": "public.agent_policy_keyset.keyset_seq",
+      "value": "1",
+      "reason": "CHECK: keyset_seq > 0 (T-0556)"
+    },
+    {
+      "column": "public.agent_policy_keyset.signed",
+      "value": "\\x70707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: a signed keyset is 64 to 4096 bytes; the probe row carries a 64-byte placeholder (T-0556)"
+    },
+    {
+      "column": "public.agent_policy_head.agent_kind",
+      "value": "addc",
+      "reason": "CHECK: agent_kind is addc or fileserver (T-0556)"
+    },
+    {
+      "column": "public.agent_policy_head.policy_seq",
+      "value": "1",
+      "reason": "CHECK: policy_seq > 0 (T-0556)"
+    },
+    {
+      "column": "public.agent_policy_head.signed",
+      "value": "\\x70707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: a signed policy is 64 bytes to 1.5 MB; the probe row carries a 64-byte placeholder (T-0556)"
+    },
+    {
+      "column": "public.agent_event.agent_seq",
+      "value": "1",
+      "reason": "CHECK: agent_seq > 0 (T-0556)"
+    },
+    {
+      "column": "public.agent_event.record_type",
+      "value": "event",
+      "reason": "CHECK: record_type is event, gap or dropped (T-0556)"
     }
   ]
 }

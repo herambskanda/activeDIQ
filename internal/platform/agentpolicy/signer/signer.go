@@ -21,8 +21,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/skenzeriq/activediq/internal/platform/agentpolicy"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
@@ -226,7 +224,7 @@ func (s *Signer) newKey(ctx context.Context, tx store.Tx, tid tenant.ID, state a
 
 // keysetOf builds the next keyset document body from key rows.
 func keysetOf(tid tenant.ID, seq uint64, now time.Time, signer string, ks []keyRow) agentpolicy.Keyset {
-	out := agentpolicy.Keyset{Tenant: tid, Seq: seq, IssuedAt: now, SignerKeyID: signer}
+	out := agentpolicy.Keyset{Tenant: tid.String(), Seq: seq, IssuedAt: now, SignerKeyID: signer}
 	for _, k := range ks {
 		out.Keys = append(out.Keys, agentpolicy.KeysetKey{KeyID: k.keyID, Public: k.public, State: k.state, RetireAfter: k.retireAfter})
 	}
@@ -285,7 +283,7 @@ func (s *Signer) EnsureKeyset(ctx context.Context, tx store.Tx, tid tenant.ID, a
 func currentKeyset(ctx context.Context, tx store.Tx) (agentpolicy.SignedKeyset, bool, error) {
 	var raw []byte
 	err := tx.QueryRow(ctx, `SELECT signed FROM public.agent_policy_keyset ORDER BY keyset_seq DESC LIMIT 1`).Scan(&raw)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if store.IsNoRows(err) {
 		return agentpolicy.SignedKeyset{}, false, nil
 	}
 	if err != nil {
@@ -489,7 +487,7 @@ func (s *Signer) SignPolicy(ctx context.Context, tx store.Tx, tid tenant.ID, kin
 	}
 	var floor int64
 	err = tx.QueryRow(ctx, `SELECT policy_seq FROM public.agent_policy_head WHERE agent_kind = $1`, kind).Scan(&floor)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	if err != nil && !store.IsNoRows(err) {
 		return agentpolicy.SignedPolicy{}, fmt.Errorf("signer: read policy sequence: %w", err)
 	}
 	priv, err := s.openPrivate(ctx, tx, tid, active)
@@ -498,7 +496,7 @@ func (s *Signer) SignPolicy(ctx context.Context, tx store.Tx, tid tenant.ID, kin
 	}
 	defer clear(priv)
 	now := s.now()
-	h := agentpolicy.PolicyHeader{Tenant: tid, Kind: kind, Seq: uint64(floor) + 1, IssuedAt: now, NotAfter: now.Add(lifetime), KeyID: active.keyID}
+	h := agentpolicy.PolicyHeader{Tenant: tid.String(), Kind: kind, Seq: uint64(floor) + 1, IssuedAt: now, NotAfter: now.Add(lifetime), KeyID: active.keyID}
 	sp, err := agentpolicy.SignPolicy(h, enc, priv)
 	if err != nil {
 		return agentpolicy.SignedPolicy{}, err
@@ -522,7 +520,7 @@ func (s *Signer) SignPolicy(ctx context.Context, tx store.Tx, tid tenant.ID, kin
 func (s *Signer) CurrentPolicy(ctx context.Context, tx store.Tx, kind string) (agentpolicy.SignedPolicy, bool, error) {
 	var raw []byte
 	err := tx.QueryRow(ctx, `SELECT signed FROM public.agent_policy_head WHERE agent_kind = $1`, kind).Scan(&raw)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if store.IsNoRows(err) {
 		return agentpolicy.SignedPolicy{}, false, nil
 	}
 	if err != nil {

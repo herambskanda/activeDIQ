@@ -1874,6 +1874,40 @@ report run, request, reminder) · `attempts` · `provider_message_id` · `state`
 **Invariants.** I1 An inbound ticket creates a Request (DM-65), never a direct write.
 **Lifecycle.** `draft → active ⇄ disabled → archived`.
 
+### DM-86 AgentPolicyKey · T · owner `platform/agentpolicy` (signer)
+**Definition.** One Ed25519 key a tenant signs host-agent policy with (ADR-0007). The private half is
+sealed under the tenant DEK. **Replaces (ME):** none (ADManager Plus has no host agent).
+**Key attributes:** `key_id` (`k-` + 16 hex of SHA-256 of the public key) · `public_key` ·
+`sealed_key` · `key_version` · `state` · `retire_after` · `created_at` · `dropped_at`.
+**Invariants.** I1 At most one `active` key per tenant. I2 `sealed_key` is present exactly while the key
+is not `dropped`; dropping erases it. I3 Only `platform/agentpolicy/signer` names this table or opens the
+sealed key (fitness P8). I4 Identity columns never change; state moves only `active → retiring →
+dropped`.
+**Lifecycle.** `active → retiring` (rotation; overlap 30 days) `→ dropped`.
+
+### DM-87 AgentPolicyKeyset · T · append-only · owner `platform/agentpolicy` (signer)
+**Definition.** One signed keyset in a tenant's chain: the public keys agents trust, signed by a key the
+previous keyset carried. Append-only.
+**Key attributes:** `keyset_seq` · `signed` (canonical bytes) · `issued_at`.
+**Invariants.** I1 `keyset_seq` rises by one per publication; keyset 1 is self-signed (trust on first
+use at enrolment). I2 Rows are never updated or deleted.
+
+### DM-88 AgentPolicyHead · T · owner `platform/agentpolicy` (signer)
+**Definition.** The latest signed policy per tenant and agent kind, and its sequence floor.
+**Key attributes:** `agent_kind` · `policy_seq` · `signed` · `issued_at`.
+**Invariants.** I1 `policy_seq` only rises (a guard trigger refuses otherwise). I2 The body is typed data
+inside the contract's bounds, never code (addc contract §3).
+
+### DM-89 AgentEvent · T · append-only · owner `platform/agentingest`
+**Definition.** One record a host agent appended: an event, or a gap or drop the agent reports about its
+own collection. Append-only. **Replaces (ME):** none directly; the feed ADAudit Plus gets by agentless
+collection.
+**Key attributes:** `component_id` · `agent_seq` · `record_type` · `channel` · `event_record_id` ·
+`observed_at` · `reported_dc_guid` · `fields` · `received_at`.
+**Invariants.** I1 `tenant_id` and `component_id` are stamped from the client certificate; nothing in the
+payload names them (S1). I2 `(tenant_id, component_id, agent_seq)` is unique, so redelivery is
+idempotent. I3 `reported_dc_guid` is data to cross-check, never identity.
+
 ---
 
 ## 9. ManageEngine concepts → activeDIQ entities

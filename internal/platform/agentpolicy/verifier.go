@@ -113,7 +113,7 @@ func (v *Verifier) Anchor(sk SignedKeyset) error {
 	if err := sk.Keyset.validate(); err != nil {
 		return err
 	}
-	if sk.Tenant != v.tenant {
+	if sk.Tenant != v.tenant.String() {
 		return ErrWrongTenant
 	}
 	key, ok := findKey(sk.Keys, sk.SignerKeyID)
@@ -138,7 +138,7 @@ func (v *Verifier) ApplyKeyset(sk SignedKeyset) error {
 	if err := sk.Keyset.validate(); err != nil {
 		return err
 	}
-	if sk.Tenant != v.tenant {
+	if sk.Tenant != v.tenant.String() {
 		return ErrWrongTenant
 	}
 	signer, ok := findKey(v.st.Keys, sk.SignerKeyID)
@@ -164,7 +164,7 @@ func (v *Verifier) ApplyPolicy(sp SignedPolicy, now time.Time) (AddcPolicy, erro
 		return AddcPolicy{}, ErrNotAnchored
 	}
 	h := sp.Header
-	if h.Tenant != v.tenant {
+	if h.Tenant != v.tenant.String() {
 		return AddcPolicy{}, ErrWrongTenant
 	}
 	if h.Kind != v.kind {
