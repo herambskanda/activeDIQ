@@ -228,3 +228,43 @@ func Test_ValidReturnPath(t *testing.T) {
 		}
 	}
 }
+
+// DM-30.I5 never rebinds, even when a concurrent sign-in wins the race to bind the account.
+func Test_sso_bind_race_never_rebinds(t *testing.T) {
+	for name, bindErr := range map[string]error{"already bound": authn.ErrAlreadyBound, "object held by another account": authn.ErrAccountExists} {
+		t.Run(name, func(t *testing.T) {
+			r := signintest.NewRig()
+			r.SetMFA()
+			r.Verifier.Out.MFAAsserted = true
+			r.Verifier.Out.Anchor = &sso.Anchor{Claim: "oid", Value: "0b1f", TID: "tid-1"}
+			r.Accounts.BindErr = bindErr
+			_, err := r.Callback(context.Background(), started(t, r))
+			wantRefused(t, err, r, signin.ReasonAnchorChanged)
+		})
+	}
+}
+
+// OIDC-4 mix-up: a Transaction started at one IdP is refused at another, before any verifier runs.
+func Test_sso_callback_idp_mismatch_refused(t *testing.T) {
+	r := signintest.NewRig()
+	cookie := started(t, r) // started at idp1
+	_, err := r.Service.Callback(context.Background(), signin.CallbackRequest{Tenant: signintest.Tenant, IdPID: "idp2", Cookie: cookie,
+		Callback: sso.Callback{IdPID: "idp2"}})
+	wantRefused(t, err, r, signin.ReasonTransactionIdP)
+	if len(r.Verifier.Completed) != 0 {
+		t.Fatalf("verifier ran for a mismatched IdP: %d", len(r.Verifier.Completed))
+	}
+}
+
+// Residual risk (console-sso.md 7.3): a failed success-audit write does not revoke the session; it is
+// logged. This pins that behaviour so changing it is a decision, not an accident.
+func Test_sso_success_audit_failure_keeps_session(t *testing.T) {
+	r := signintest.NewRig()
+	r.SetMFA()
+	r.Verifier.Out.MFAAsserted = true
+	r.Rec.Err = errors.New("audit store down")
+	res, err := r.Callback(context.Background(), started(t, r))
+	if err != nil || res.Kind != signin.ResultSession || len(r.Sessions.Created) != 1 {
+		t.Fatalf("res=%v err=%v sessions=%d, want the session kept", res.Kind, err, len(r.Sessions.Created))
+	}
+}

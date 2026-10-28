@@ -252,6 +252,8 @@ func (f *Priv) HoldsControlPlane(context.Context, tenant.ID, string) (bool, erro
 type Recorder struct {
 	mu sync.Mutex
 	O  []signin.Outcome
+	// Err is returned by Record (the Outcome is still kept).
+	Err error
 }
 
 // Record implements signin.Recorder.
@@ -259,7 +261,7 @@ func (f *Recorder) Record(_ context.Context, o signin.Outcome) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.O = append(f.O, o)
-	return nil
+	return f.Err
 }
 
 // Last returns the latest Outcome.
