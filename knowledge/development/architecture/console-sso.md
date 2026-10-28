@@ -181,6 +181,16 @@ algorithm, and the redirect URI `https://<console-host>/auth/sso/{idpId}/callbac
 | OIDC-16 | **Claims come from the ID token only.** The UserInfo endpoint is not called and the access token is not used, so `at_hash` is not needed; group overage (`_claim_names`, `hasgroups`) yields no group claims and an audit warning, never a Graph call from `authn` (§7.1) | `oidc.claims` |
 | OIDC-17 | **Discovery is pinned at setup.** Its `issuer` must equal the configured issuer, every endpoint is HTTPS, and changes to issuer, client, algorithm or endpoints are an IdP configuration change: step-up, audited, all `tenant-owner` accounts alerted (TM-TB8-T3, TM §7.4). Only the JWKS refreshes on its own | `oidc.config` |
 
+**Implementation note (T-0201).** `sso/oidc` verifies the ID token with go-jose directly and does not import
+go-oidc. go-oidc's `IDTokenVerifier` returns unstructured errors (no stable reason per check), applies a
+fixed 5-minute `nbf` leeway against OIDC-13's 120 s, and its `RemoteKeySet` refreshes without OIDC-8's
+one-per-minute bound; the checks it would have done (signature first, `iss`, `aud`, `exp`) are the
+package's own and each has a `TestOIDC_Refuses*` test. go-oidc is therefore not in `go.mod`; its register
+row stays Candidate and is unused. Discovery is fetched once at setup (`oidc.Discover`) and pinned
+(`sso.OIDCConfig.Discovery`); `oidc.ValidateConfig` runs at setup and again on every `Start` and `Complete`.
+Transaction persistence and consume-first (SSO-1), IdP lookup (SSO-2), account lookup (SSO-3) and audit
+(SSO-4) belong to the callback handler, T-0203.
+
 ## 5. SAML checks (T-0202)
 
 Configuration fixes, per IdP: IdP `entityID`, one or two signing certificates (two only during a
