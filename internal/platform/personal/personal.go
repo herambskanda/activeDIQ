@@ -371,6 +371,19 @@ func releaseHold(ctx context.Context, tx store.Tx, tid tenant.ID, subject string
 	return nil
 }
 
+// Held reports whether the subject is under legal hold. The compliance Actions read it at Plan to show the
+// before state and to refuse a no-op; it takes no lock, so it decides nothing about erasure or the purge.
+func (*Store) Held(ctx context.Context, tx store.Tx, tid tenant.ID, subject string) (bool, error) {
+	if tid.IsZero() || !subjectRe.MatchString(subject) {
+		return false, ErrInvalid
+	}
+	var n int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM public.personal_hold WHERE tenant_id = $1::uuid AND subject_ref = $2`, tid.String(), subject).Scan(&n); err != nil {
+		return false, fmt.Errorf("personal: read hold: %w", err)
+	}
+	return n > 0, nil
+}
+
 // LockHolds returns the tenant's held subjects after taking the hold lock exclusively until tx ends: a
 // SetHold whose transaction is still open is waited for and then seen, and one that starts later waits for
 // tx. The retention purge calls it in its maintenance transaction before deciding what it may delete.

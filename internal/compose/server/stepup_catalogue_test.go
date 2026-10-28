@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/directory"
+	"github.com/skenzeriq/activediq/internal/modules/compliance"
 	"github.com/skenzeriq/activediq/internal/modules/connections"
 	"github.com/skenzeriq/activediq/internal/modules/delegation"
 	"github.com/skenzeriq/activediq/internal/modules/inventory"
@@ -29,6 +30,10 @@ var stepUpTable = map[operation.ActionID]string{
 	// cross-directory authority decision; it also requires a current tenant-owner.
 	connections.ReconfirmActionID:    "Correlation re-confirmation (TM-D17 rule 4 (g))",
 	inventory.SetDesignationActionID: "Designating or un-designating tier0 objects (§6.4)",
+	// Legal holds (T-0605): lifting one lets the next retention purge destroy evidence, and placing one
+	// withholds data from erasure; both are a compliance officer's act and need a fresh MFA.
+	compliance.SetHoldActionID:     "Placing a legal hold on a personal subject",
+	compliance.ReleaseHoldActionID: "Releasing a legal hold (lets the retention purge destroy evidence)",
 	// RBAC changes (§7.4): every role or assignment change is a step-up operation.
 	delegation.RoleCreateID: "RBAC change: creating a custom role",
 	delegation.RoleUpdateID: "RBAC change: editing a custom role's permissions",
