@@ -28,6 +28,15 @@ type Options struct {
 	SkipTests    bool
 	Only         string
 	ClosureAllow []string // overrides closure-allow.txt (fixtures); nil uses the reviewed file
+	// InstallerAllow overrides installer-allow.txt (fixtures); nil uses the reviewed file.
+	InstallerAllow []string
+}
+
+func installerAllow(o Options) []string {
+	if o.InstallerAllow != nil {
+		return o.InstallerAllow
+	}
+	return parseAllow(embeddedInstallerAllow)
 }
 
 func closureAllow(o Options) []string {
@@ -80,7 +89,7 @@ func Run(root string, o Options) []Result {
 	add("R3", checkModuleCapabilities(root))
 	add("R4", checkNoListener(root))
 	add("R5", checkProto(root, "R5", "no password/credential/hash field or message, no fail-mode field (AG6, AG7)", []string{"AG6", "AG7"}))
-	add("A1", checkInstaller(root))
+	add("A1", checkInstallerAllow(root, installerAllow(o)))
 	add("A4", checkAgentImports(root, closureAllow(o)))
 	if want("P") || want("F1") {
 		if o.SkipTests {
@@ -226,9 +235,31 @@ var r3AllowedStd = setOf(
 var r3AllowedOS = setOf("os.Getenv", "os.LookupEnv", "os.ErrNotExist", "os.ErrExist", "os.ErrPermission",
 	"os.IsNotExist", "os.IsExist", "os.IsPermission")
 
-// r3AllowedOwn: path fragments of our own packages an agent module may import (its siblings and the
-// host dependency-struct and policy packages). Matched against the import path.
-var r3AllowedOwn = []string{"/internal/agentmodules/", "/internal/platform/agentpolicy", "/internal/agenthost/api"}
+// r3FilepathBanned: selectors of path/filepath that read the host filesystem directly (they enumerate
+// C:\Windows\NTDS, follow links); contract §1 routes reads through the host's dependency struct.
+var r3FilepathBanned = setOf("filepath.WalkDir", "filepath.Walk", "filepath.Glob", "filepath.EvalSymlinks")
+
+// r3OwnPrefix and r3OwnExact: the own packages an agent module may import (its siblings, and the host's
+// policy and dependency-struct packages), as paths under the module path read from go.mod.
+var (
+	r3OwnPrefix = []string{"/internal/agentmodules"}
+	r3OwnExact  = []string{"/internal/platform/agentpolicy", "/internal/agenthost/api"}
+)
+
+const defaultModulePath = "github.com/skenzeriq/activediq"
+
+// modulePath reads the module path from root/go.mod (fixture trees without one use the product's).
+func modulePath(root string) string {
+	b, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err == nil {
+		for _, l := range strings.Split(string(b), "\n") {
+			if f := strings.Fields(l); len(f) == 2 && f[0] == "module" {
+				return strings.Trim(f[1], "\"")
+			}
+		}
+	}
+	return defaultModulePath
+}
 
 // r3Named: the reason given for the imports most likely to be tried, so the message teaches.
 var r3Named = map[string]string{
@@ -277,14 +308,17 @@ func checkModuleCapabilities(root string) Result {
 	for _, f := range foreign {
 		r.Violations = append(r.Violations, f+": only .go files (and testdata/) may sit in an agent module directory; assembly, objects and C sources link code the import scan cannot see")
 	}
+	mod := modulePath(root)
 	for _, f := range files {
 		scanGo(root, f, func(rel, imp, name string, line int) {
-			if msg := judgeModuleImport(imp, name); msg != "" {
+			if msg := judgeModuleImport(mod, imp, name); msg != "" {
 				r.Violations = append(r.Violations, fmt.Sprintf("%s:%d %s", rel, line, msg))
 			}
 		}, func(rel, call string, line int) {
 			if strings.HasPrefix(call, "os.") && !r3AllowedOS[call] {
 				r.Violations = append(r.Violations, fmt.Sprintf("%s:%d uses %s: an agent module may use only os.Getenv/LookupEnv and the os.Err* values; files and processes come from the host's dependency struct", rel, line, call))
+			} else if r3FilepathBanned[call] {
+				r.Violations = append(r.Violations, fmt.Sprintf("%s:%d calls %s: reading the host filesystem goes through the host's dependency struct (contract §1)", rel, line, call))
 			} else if r3BannedCalls[call] || strings.HasPrefix(call, "ioutil.") {
 				r.Violations = append(r.Violations, fmt.Sprintf("%s:%d calls %s: an agent module cannot mutate files or start processes (write through the host's data-directory capability)", rel, line, call))
 			}
@@ -320,7 +354,7 @@ func foreignModuleFiles(root string) []string {
 }
 
 // judgeModuleImport returns "" when an agent module may import imp under the local name, else the reason.
-func judgeModuleImport(imp, name string) string {
+func judgeModuleImport(mod, imp, name string) string {
 	switch name {
 	case ".":
 		return fmt.Sprintf("dot-imports %s: dot and blank imports hide what a module can call", imp)
@@ -336,12 +370,17 @@ func judgeModuleImport(imp, name string) string {
 	if r3AllowedStd[imp] || imp == "os" {
 		return ""
 	}
-	for _, o := range r3AllowedOwn {
-		if strings.Contains(imp, o) {
+	for _, o := range r3OwnPrefix {
+		if imp == mod+o || strings.HasPrefix(imp, mod+o+"/") {
 			return ""
 		}
 	}
-	return fmt.Sprintf("imports %s, which is not on the agent-module allowlist (tools/fitness/agenthost r3AllowedStd/r3AllowedOwn): a module gets only the host's dependency struct", imp)
+	for _, o := range r3OwnExact {
+		if imp == mod+o {
+			return ""
+		}
+	}
+	return fmt.Sprintf("imports %s, which is not on the agent-module allowlist (tools/fitness/agenthost r3AllowedStd, r3OwnPrefix, r3OwnExact): a module gets only the host's dependency struct", imp)
 }
 
 // r4ListenNames are selectors that open or serve a listener, whatever they are called on: method calls on
@@ -556,6 +595,7 @@ var (
 // instFile is one file under packaging/ that concerns the agent, decoded to text.
 type instFile struct {
 	path, rel, text string
+	agent           bool   // the path or body names the agent (a WiX file is judged either way)
 	unreadable      string // why it could not be read as text; empty when text is valid
 }
 
@@ -606,8 +646,9 @@ func utf16Text(b []byte, bigEndian bool) string {
 	return string(utf16.Decode(u))
 }
 
-// agentInstallerFiles are the files under packaging/ that name the agent in their relative path or body:
-// WiX sources and also install scripts, custom actions and anything else a service account can be set in
+// agentInstallerFiles are every WiX source under packaging/ (a service or custom action can name the agent
+// through a variable) and the other files that name the agent in their relative path or body:
+// also install scripts, custom actions and anything else a service account can be set in
 // (ADR-0006 A1 covers any LocalSystem string in the MSI source). UTF-16 files are decoded. A file whose
 // path names the agent that cannot be read as text, or is too large, fails closed unless it has a known
 // binary extension.
@@ -621,31 +662,33 @@ func agentInstallerFiles(root string) []instFile {
 		rel, _ := filepath.Rel(root, p)
 		rel = filepath.ToSlash(rel)
 		inPath := agentFileRe.MatchString(strings.TrimPrefix(rel, "packaging/"))
+		wix := isWixXML(p)
 		if binaryExts[strings.ToLower(filepath.Ext(p))] {
 			return nil
 		}
 		if info, err := e.Info(); err != nil || info.Size() > 4<<20 {
-			if inPath {
+			if inPath || wix {
 				out = append(out, instFile{path: p, rel: rel, unreadable: "is too large to scan"})
 			}
 			return nil
 		}
 		b, err := os.ReadFile(p)
 		if err != nil {
-			if inPath {
+			if inPath || wix {
 				out = append(out, instFile{path: p, rel: rel, unreadable: err.Error()})
 			}
 			return nil
 		}
 		text, ok := decodeText(b)
 		if !ok {
-			if inPath {
+			if inPath || wix {
 				out = append(out, instFile{path: p, rel: rel, unreadable: "cannot be read as text"})
 			}
 			return nil
 		}
-		if inPath || agentBodyRe.MatchString(text) {
-			out = append(out, instFile{path: p, rel: rel, text: text})
+		isAgent := inPath || agentBodyRe.MatchString(text)
+		if isAgent || wix {
+			out = append(out, instFile{path: p, rel: rel, text: text, agent: isAgent})
 		}
 		return nil
 	})
@@ -670,8 +713,14 @@ var scAccountRe = regexp.MustCompile(`(?i)((sc(\.exe)?\s+(config|create)|set-ser
 // RegistryKey/RegistryValue, reg.exe, New-ItemProperty or Set-ItemProperty alike.
 var svcRegistryRe = regexp.MustCompile(`(?i)(currentcontrolset|controlset\d+)\\+services`)
 
+var scriptExts = setOf(".ps1", ".psm1", ".psd1", ".cmd", ".bat", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh", ".sh", ".py", ".pl", ".hta")
+
 func checkInstaller(root string) Result {
-	r := Result{ID: "A1", What: "agent installer names " + pinnedAccount + ", service SID type " + pinnedSidType + ", the pinned RequiredPrivileges, and no LocalSystem (ADR-0006 rules 1, 3)"}
+	return checkInstallerAllow(root, parseAllow(embeddedInstallerAllow))
+}
+
+func checkInstallerAllow(root string, allow []string) Result {
+	r := Result{ID: "A1", What: "agent installer names " + pinnedAccount + ", service SID type " + pinnedSidType + ", the pinned RequiredPrivileges, no LocalSystem, and no custom action or script unless reviewed (ADR-0006 rules 1, 3)"}
 	files := agentInstallerFiles(root)
 	if len(files) == 0 {
 		r.Inactive = "no agent installer source under packaging/ (windows-engineer's MSI ticket)"
@@ -683,35 +732,44 @@ func checkInstaller(root string) Result {
 	for _, f := range files {
 		rel := f.rel
 		if f.unreadable != "" {
-			r.Violations = append(r.Violations, fmt.Sprintf("%s %s: an agent packaging file must be readable text (or have a known binary extension)", rel, f.unreadable))
+			r.Violations = append(r.Violations, fmt.Sprintf("%s %s: a WiX source or agent packaging file must be readable text (or have a known binary extension)", rel, f.unreadable))
 			continue
 		}
-		b := []byte(f.text)
-		if svcRegistryRe.Match(b) {
+		// Every file here is WiX or names the agent: LocalSystem and the Services registry key are
+		// forbidden in all of it, whichever service the element claims to configure.
+		if svcRegistryRe.MatchString(f.text) {
 			r.Violations = append(r.Violations, fmt.Sprintf("%s references the Services registry key: the account, SID type and privileges are set only by ServiceInstall/ServiceConfig, never through the registry (ADR-0006 rules 1, 3)", rel))
 		}
-		if m := localSystemRe.FindString(string(b)); m != "" {
+		if m := localSystemRe.FindString(f.text); m != "" {
 			r.Violations = append(r.Violations, fmt.Sprintf("%s names %q: the agent never runs as LocalSystem or a shared service identity (ADR-0006 rule 1)", rel, m))
 		}
-		for _, line := range strings.Split(string(b), "\n") {
-			if scAccountRe.MatchString(line) && !strings.Contains(strings.ToLower(line), strings.ToLower(pinnedAccount)) {
-				r.Violations = append(r.Violations, fmt.Sprintf("%s sets a service account other than %s: %q", rel, pinnedAccount, strings.TrimSpace(line)))
+		if f.agent {
+			for _, line := range strings.Split(f.text, "\n") {
+				if scAccountRe.MatchString(line) && !strings.Contains(strings.ToLower(line), strings.ToLower(pinnedAccount)) {
+					r.Violations = append(r.Violations, fmt.Sprintf("%s sets a service account other than %s: %q", rel, pinnedAccount, strings.TrimSpace(line)))
+				}
+			}
+			if scriptExts[strings.ToLower(filepath.Ext(f.path))] && !allowed(rel, allow) {
+				r.Violations = append(r.Violations, fmt.Sprintf("%s is a script in the agent packaging: nothing may compute the service account, SID type or privileges in a script; list it in installer-allow.txt after a security-architect review", rel))
 			}
 		}
 		if !isWixXML(f.path) {
 			continue
 		}
-		x := judgeInstallerXML(rel, b)
+		x := judgeInstallerXML(rel, []byte(f.text), allow)
 		services += x.services
 		sids = append(sids, x.sids...)
 		privs = append(privs, x.privs...)
 		r.Violations = append(r.Violations, x.violations...)
 	}
 	switch {
+	case !anyAgentSource(files):
+		// Only WiX sources that never name the agent (a core MSI): their LocalSystem, registry, action and
+		// literal-name rules above still apply, but there is no agent service to pin yet.
 	case services == 0:
-		r.Violations = append(r.Violations, "no ServiceInstall in the agent installer source: the account cannot be verified")
+		r.Violations = append(r.Violations, "no ServiceInstall naming the agent service in the installer source: the account cannot be verified")
 	case services > 1:
-		r.Violations = append(r.Violations, fmt.Sprintf("%d ServiceInstall elements in the agent installer source, must be exactly one", services))
+		r.Violations = append(r.Violations, fmt.Sprintf("%d ServiceInstall elements for the agent service in the installer source, must be exactly one", services))
 	default:
 		// Every ServiceSid seen must be the pin: a later unrestricted setting must not hide behind an earlier one.
 		if len(sids) == 0 {
@@ -729,11 +787,21 @@ func checkInstaller(root string) Result {
 	return r
 }
 
+// anyAgentSource reports whether some packaging file names the agent (or cannot be read to tell).
+func anyAgentSource(files []instFile) bool {
+	for _, f := range files {
+		if f.agent || f.unreadable != "" {
+			return true
+		}
+	}
+	return false
+}
+
 type xmlEl struct {
-	Name  string
-	Attrs map[string]string
-	Text  string
-	Depth int
+	Name   string
+	Attrs  map[string]string
+	Text   string
+	Parent int // index of the parent element, -1 at the root
 }
 
 type installerFacts struct {
@@ -743,9 +811,24 @@ type installerFacts struct {
 	violations []string
 }
 
-// judgeInstallerXML reads one WiX file: the ServiceInstall count, every ServiceSid and privilege it sets,
-// and the violations that are local to the element (account, password).
-func judgeInstallerXML(rel string, b []byte) installerFacts {
+// dynamicRe: a WiX value that is resolved at build or install time, so the text cannot be judged.
+var dynamicRe = regexp.MustCompile(`\$\(|\[|!\(`)
+
+// serviceEls are the WiX elements that name a service; the name must be a literal.
+var serviceEls = setOf("ServiceInstall", "ServiceConfig", "ServiceControl")
+
+// registryEls write or remove registry data.
+var registryEls = setOf("RegistryKey", "RegistryValue", "RemoveRegistryKey", "RemoveRegistryValue")
+
+// actionEls run code at install time; each needs a reviewed allowlist entry by Id.
+var actionEls = setOf("CustomAction", "Binary")
+
+func isAgentName(s string) bool { return agentBodyRe.MatchString(s) }
+
+// judgeInstallerXML reads one WiX file. The ServiceInstall for the agent service, every ServiceSid and
+// privilege on the agent service, the literal-name rule for every service element, the deny-by-default
+// custom action rule and the ban on HKLM\SYSTEM registry writes are judged here.
+func judgeInstallerXML(rel string, b []byte, allow []string) installerFacts {
 	dec := xml.NewDecoder(bytes.NewReader(b))
 	dec.Strict = false
 	dec.CharsetReader = func(_ string, in io.Reader) (io.Reader, error) { return in, nil } // text is already decoded
@@ -761,7 +844,10 @@ func judgeInstallerXML(rel string, b []byte) installerFacts {
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
-			e := xmlEl{Name: t.Name.Local, Attrs: map[string]string{}, Depth: len(stack)}
+			e := xmlEl{Name: t.Name.Local, Attrs: map[string]string{}, Parent: -1}
+			if len(stack) > 0 {
+				e.Parent = stack[len(stack)-1]
+			}
 			for _, a := range t.Attr {
 				e.Attrs[strings.ToLower(a.Name.Local)] = a.Value
 			}
@@ -778,33 +864,90 @@ func judgeInstallerXML(rel string, b []byte) installerFacts {
 		}
 	}
 	var f installerFacts
-	for _, e := range els {
-		switch e.Name {
-		case "ServiceInstall":
-			f.services++
-			if acct := e.Attrs["account"]; acct != pinnedAccount {
-				f.violations = append(f.violations, fmt.Sprintf("%s: ServiceInstall Account is %q, must be exactly %q", rel, acct, pinnedAccount))
+	fail := func(format string, a ...any) { f.violations = append(f.violations, rel+": "+fmt.Sprintf(format, a...)) }
+	// agentSvc: the element is the agent's ServiceInstall, or sits under it.
+	agentSvc := func(i int) bool {
+		for ; i >= 0; i = els[i].Parent {
+			if els[i].Name == "ServiceInstall" && isAgentName(els[i].Attrs["name"]) {
+				return true
 			}
-			if e.Attrs["password"] != "" {
-				f.violations = append(f.violations, rel+": ServiceInstall carries a Password; a virtual account has none")
+		}
+		return false
+	}
+	for i, e := range els {
+		switch {
+		case serviceEls[e.Name]:
+			name := e.Attrs["name"]
+			if e.Name == "ServiceConfig" {
+				if v, ok := e.Attrs["servicename"]; ok {
+					name = v
+				}
 			}
-			fallthrough
-		case "ServiceConfig":
-			if v, ok := e.Attrs["servicesid"]; ok {
-				f.sids = append(f.sids, v)
+			if dynamicRe.MatchString(name) {
+				fail("%s names its service %q through a variable or property: the service name must be a literal so the account and SID type can be judged", e.Name, name)
 			}
-			if v := e.Attrs["requiredprivileges"]; v != "" {
-				f.privs = append(f.privs, splitPrivs(v)...)
+			naming := isAgentName(name) || agentSvc(i)
+			if !naming {
+				continue
 			}
-		case "RequiredPrivilege", "Privilege":
+			if e.Name == "ServiceInstall" && agentSvc(i) && isAgentName(name) {
+				f.services++
+				if acct := e.Attrs["account"]; acct != pinnedAccount {
+					fail("ServiceInstall Account is %q, must be exactly %q", acct, pinnedAccount)
+				}
+				if e.Attrs["password"] != "" {
+					fail("ServiceInstall carries a Password; a virtual account has none")
+				}
+			}
+			if e.Name != "ServiceControl" {
+				if v, ok := e.Attrs["servicesid"]; ok {
+					f.sids = append(f.sids, v)
+				}
+				if v := e.Attrs["requiredprivileges"]; v != "" {
+					f.privs = append(f.privs, splitPrivs(v)...)
+				}
+			}
+		case (e.Name == "RequiredPrivilege" || e.Name == "Privilege") && agentSvc(i):
 			if v := e.Attrs["name"]; v != "" {
 				f.privs = append(f.privs, v)
 			} else if v := strings.TrimSpace(e.Text); v != "" {
 				f.privs = append(f.privs, v)
 			}
+		case actionEls[e.Name]:
+			id := e.Attrs["id"]
+			if id == "" || dynamicRe.MatchString(id) || !allowed(id, allow) {
+				fail("%s %q runs code at install time: the account, SID type and privileges may not be computed there; list the Id in installer-allow.txt after a security-architect review", e.Name, id)
+			}
+		case registryEls[e.Name]:
+			root, key := registryRootKey(els, i)
+			upper := strings.ToUpper(root)
+			if upper == "HKCU" || upper == "HKCR" || upper == "HKU" {
+				continue
+			}
+			trim := strings.TrimLeft(strings.ToLower(key), `\/ `)
+			if strings.HasPrefix(trim, `system\`) || trim == "system" || dynamicRe.MatchString(key) || dynamicRe.MatchString(root) {
+				fail("%s writes HKLM key %q: the installer has no business under HKLM\\SYSTEM (the service account, SID type and privileges live there) and a key built from a property or variable cannot be judged", e.Name, key)
+			}
 		}
 	}
 	return f
+}
+
+// registryRootKey resolves the Root and the full Key of a registry element, joining the keys of the
+// RegistryKey elements it sits in (outermost first); Root comes from the nearest element that sets it.
+func registryRootKey(els []xmlEl, i int) (root, key string) {
+	var keys []string
+	for j := i; j >= 0; j = els[j].Parent {
+		if registryEls[els[j].Name] {
+			if k := els[j].Attrs["key"]; k != "" {
+				keys = append([]string{k}, keys...)
+			}
+			if root == "" {
+				root = els[j].Attrs["root"]
+			}
+		}
+	}
+	return root, strings.Join(keys, `\`)
 }
 
 func splitPrivs(s string) []string {
@@ -848,6 +991,9 @@ var a4BannedFragments = []string{"/internal/directory", "/internal/connector"}
 
 //go:embed closure-allow.txt
 var embeddedClosureAllow string
+
+//go:embed installer-allow.txt
+var embeddedInstallerAllow string
 
 // parseAllow reads an allowlist: one import path per line, `path/...` for a subtree, `#` comments.
 func parseAllow(text string) []string {

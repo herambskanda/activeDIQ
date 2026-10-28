@@ -17,6 +17,7 @@ func main() {
 	skipTests := flag.Bool("skip-tests", false, "do not run the P1-P8/F1 Go tests (the proof script uses this on fixture trees)")
 	only := flag.String("checks", "", "comma-separated subset of R1,R2,R3,R4,R5,A1,A4,P,F1 (default all)")
 	allowFile := flag.String("closure-allow", "", "A4 allowlist file replacing the reviewed closure-allow.txt (the proof script's fixture trees)")
+	instFile := flag.String("installer-allow", "", "A1 allowlist file replacing the reviewed installer-allow.txt (the proof script's fixture trees)")
 	flag.Parse()
 	o := Options{SkipTests: *skipTests, Only: *only}
 	if *allowFile != "" {
@@ -26,6 +27,14 @@ func main() {
 			os.Exit(2)
 		}
 		o.ClosureAllow = append([]string{}, parseAllow(string(b))...)
+	}
+	if *instFile != "" {
+		b, err := os.ReadFile(*instFile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "fitness-agent-host:", err)
+			os.Exit(2)
+		}
+		o.InstallerAllow = append([]string{}, parseAllow(string(b))...)
 	}
 	res := Run(*root, o)
 	for _, r := range res {

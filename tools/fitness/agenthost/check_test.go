@@ -149,6 +149,10 @@ func TestR3ModuleCapabilities(t *testing.T) {
 		"os.FindProcess Kill":   "package addc\n\nimport \"os\"\n\nfunc f() { p, _ := os.FindProcess(4); _ = p.Kill() }\n",
 		"File.Chmod":            "package addc\n\nimport \"os\"\n\nfunc f(f *os.File) { _ = f.Chmod(0) }\n",
 		"aliased os OpenRoot":   "package addc\n\nimport o \"os\"\n\nvar _ = o.OpenRoot\n",
+		"filepath.WalkDir":      "package addc\n\nimport \"path/filepath\"\n\nvar _ = filepath.WalkDir\n",
+		"filepath.Walk":         "package addc\n\nimport \"path/filepath\"\n\nvar _ = filepath.Walk\n",
+		"filepath.Glob":         "package addc\n\nimport \"path/filepath\"\n\nvar _ = filepath.Glob\n",
+		"filepath.EvalSymlinks": "package addc\n\nimport f \"path/filepath\"\n\nvar _ = f.EvalSymlinks\n",
 		"aliased os WriteFile":  "package addc\n\nimport o \"os\"\n\nfunc f() { _ = o.WriteFile(\"x\", nil, 0) }\n",
 	} {
 		bad := t.TempDir()
@@ -169,6 +173,25 @@ func TestR3ModuleCapabilities(t *testing.T) {
 	osok := t.TempDir()
 	write(t, osok, "internal/agentmodules/addc/ok.go", "package addc\n\nimport (\n\t\"errors\"\n\t\"os\"\n)\n\nfunc f(err error) (string, bool) { return os.Getenv(\"X\"), errors.Is(err, os.ErrNotExist) }\n")
 	wantClean(t, checkModuleCapabilities(osok))
+	// A foreign module's look-alike path, and a lookalike sibling name, are not ours.
+	for name, imp := range map[string]string{
+		"foreign agenthost api exec": "github.com/x/internal/agenthost/apix/exec",
+		"foreign agentmodules":       "github.com/x/internal/agentmodules/shared",
+		"apix prefix":                "github.com/skenzeriq/activediq/internal/agenthost/apix",
+		"agentmodulesx":              "github.com/skenzeriq/activediq/internal/agentmodulesx",
+		"policy subpackage":          "github.com/skenzeriq/activediq/internal/platform/agentpolicyx",
+	} {
+		bad := t.TempDir()
+		write(t, bad, "internal/agentmodules/addc/bad.go", "package addc\n\nimport _x \""+imp+"\"\n\nvar _ = _x.Y\n")
+		if r := checkModuleCapabilities(bad); len(r.Violations) == 0 {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	// The module path comes from go.mod.
+	gm := t.TempDir()
+	write(t, gm, "go.mod", "module example.org/m\n\ngo 1.22\n")
+	write(t, gm, "internal/agentmodules/addc/ok.go", "package addc\n\nimport _x \"example.org/m/internal/platform/agentpolicy\"\n\nvar _ = _x.X\n")
+	wantClean(t, checkModuleCapabilities(gm))
 	// Allowed: a sibling module package and the policy package.
 	ok := t.TempDir()
 	write(t, ok, "internal/agentmodules/addc/ok.go", "package addc\n\nimport (\n\t\"context\"\n\t\"encoding/json\"\n\t\"github.com/skenzeriq/activediq/internal/agentmodules/shared\"\n\t\"github.com/skenzeriq/activediq/internal/platform/agentpolicy\"\n)\n\nvar _ = context.Background\nvar _ = json.Marshal\nvar _ = shared.X\nvar _ = agentpolicy.X\n")
@@ -242,13 +265,19 @@ func TestA1Installer(t *testing.T) {
 	write(t, root, "packaging/windows/product.wxs", strings.Replace(goodWxs, `NT SERVICE\activeDIQAgent`, `LocalSystem`, 1))
 	wantViolation(t, checkInstaller(root), "LocalSystem")
 	// Scripts and custom actions are MSI source too.
-	script := func(name, body string) Result {
+	scriptAllow := func(allow []string, name, body string) Result {
 		r := t.TempDir()
 		write(t, r, "packaging/windows/agent.wxs", goodWxs)
 		write(t, r, "packaging/windows/"+name, body)
-		return checkInstaller(r)
+		return checkInstallerAllow(r, allow)
 	}
-	wantClean(t, script("Install-Agent.ps1", "sc.exe config activeDIQAgent obj= \"NT SERVICE\\activeDIQAgent\"\n"))
+	script := func(name, body string) Result { return scriptAllow(nil, name, body) }
+	// Deny by default: a script in the agent packaging fails unless a reviewed entry lists it.
+	good := "sc.exe config activeDIQAgent obj= \"NT SERVICE\\activeDIQAgent\"\n"
+	wantViolation(t, script("Install-Agent.ps1", good), "is a script in the agent packaging")
+	wantClean(t, scriptAllow([]string{"packaging/windows/Install-Agent.ps1"}, "Install-Agent.ps1", good))
+	// An allowlisted script is still judged by content.
+	wantViolation(t, scriptAllow([]string{"packaging/windows/Install-Agent.ps1"}, "Install-Agent.ps1", "sc.exe config activeDIQAgent obj= LocalSystem\n"), "LocalSystem")
 	wantViolation(t, script("Install-Agent.ps1", "sc.exe config activeDIQAgent obj= LocalSystem\n"), "LocalSystem")
 	wantViolation(t, script("Install-Agent.ps1", "sc.exe config activeDIQAgent obj= CORP\\svc-agent password= x\n"), "other than")
 	wantViolation(t, script("Install-Agent.ps1", "Set-Service activeDIQAgent -Credential $c\n"), "other than")
@@ -283,7 +312,7 @@ func TestA1Installer(t *testing.T) {
 	wantViolation(t, script("Install-Agent.ps1", u16(bad16, true, true)), "LocalSystem")
 	wantViolation(t, script("Install-Agent.ps1", u16(bad16, false, true)), "LocalSystem")
 	wantViolation(t, script("Install-Agent.ps1", u16(bad16, true, false)), "LocalSystem")
-	wantClean(t, script("Install-Agent.ps1", u16("sc.exe config activeDIQAgent obj= \"NT SERVICE\\activeDIQAgent\"\n", true, true)))
+	wantClean(t, scriptAllow([]string{"packaging/windows/Install-Agent.ps1"}, "Install-Agent.ps1", u16(good, true, true)))
 	// A neutral file name inside an agent/ directory is selected by relative path.
 	dir := t.TempDir()
 	write(t, dir, "packaging/windows/agent/Product.wxs", goodWxs)
@@ -298,6 +327,48 @@ func TestA1Installer(t *testing.T) {
 	os.Remove(filepath.Join(opaque, "packaging/windows/agent/blob.dat"))
 	write(t, opaque, "packaging/windows/agent/icon.ico", "\x00\x01\x02\x00")
 	wantClean(t, checkInstaller(opaque))
+	third := func(name, body string) Result {
+		r := t.TempDir()
+		write(t, r, "packaging/windows/agent.wxs", goodWxs)
+		write(t, r, "packaging/windows/core/"+name, body)
+		return checkInstaller(r)
+	}
+	// Third security review: WiX files that never name the agent literally are judged too.
+	wantViolation(t, third("Product.wxs", `<?define P="activeDIQ"?><Wix><Package><ServiceConfig ServiceName="$(var.P)Agent" ServiceSid="unrestricted"/></Package></Wix>`), "through a variable")
+	wantViolation(t, third("Product.wxs", `<Wix><Package><ServiceInstall Name="$(var.P)Agent" Account="LocalSystem"/></Package></Wix>`), "LocalSystem")
+	wantViolation(t, third("Product.wxs", `<Wix><Package><ServiceInstall Name="[SVC]" Account="x"/></Package></Wix>`), "through a variable")
+	wantViolation(t, third("Product.wxs", `<Wix><Package><ServiceControl Name="!(bind.x)" Stop="both"/></Package></Wix>`), "through a variable")
+	wantViolation(t, third("Product.wxs", `<Wix><Package><ServiceInstall Name="Other" Account="LocalSystem"/></Package></Wix>`), "LocalSystem")
+	wantClean(t, third("Product.wxs", `<Wix><Package><ServiceInstall Name="Other" Account="NT SERVICE\Other"/></Package></Wix>`))
+	// A neighbouring service naming the agent literally is judged against the pin.
+	wantViolation(t, third("Product.wxs", `<Wix><Package><ServiceConfig ServiceName="activeDIQAgent" ServiceSid="unrestricted"/></Package></Wix>`), "service SID type")
+	// Custom actions: deny by default, whatever their spelling.
+	ca := func(allow []string, body string) Result {
+		r := t.TempDir()
+		write(t, r, "packaging/windows/agent.wxs", goodWxs)
+		write(t, r, "packaging/windows/core/ca.wxs", `<Wix><Package>`+body+`</Package></Wix>`)
+		return checkInstallerAllow(r, allow)
+	}
+	wantViolation(t, ca(nil, `<CustomAction Id="CA_Acct" ExeCommand='"[SystemFolder]sc.exe" config activeDIQAgent obj= [ACCT] password= [PW]' Execute="deferred"/><Property Id="ACCT" Value=".\svc-admin"/>`), "runs code at install time")
+	wantViolation(t, ca(nil, `<CustomAction Id="CA_Vbs" Script="vbscript">sc = "sc config x obj= " &amp; Chr(46) &amp; "\svc-admin"</CustomAction>`), "runs code at install time")
+	wantViolation(t, ca(nil, `<CustomAction Id="CA_Dll" BinaryRef="B" DllEntry="Go"/>`), "runs code at install time")
+	wantViolation(t, ca(nil, `<Binary Id="B" SourceFile="x.dll"/>`), "runs code at install time")
+	wantViolation(t, ca([]string{"CA_Other"}, `<CustomAction Id="CA_Acct" ExeCommand="x"/>`), "runs code at install time")
+	wantClean(t, ca([]string{"CA_Reviewed"}, `<CustomAction Id="CA_Reviewed" ExeCommand="x"/>`))
+	// HKLM\SYSTEM registry writes, including property-split keys and nested RegistryKey elements.
+	for name, body := range map[string]string{
+		"literal":     `<RegistryValue Root="HKLM" Key="SYSTEM\CurrentControlSet\Services\activeDIQAgent" Name="ObjectName" Value="x"/>`,
+		"split":       `<RegistryValue Root="HKLM" Key="SYSTEM\CurrentControlSet\[K]" Name="ObjectName" Value="x"/>`,
+		"var":         `<RegistryValue Root="HKLM" Key="$(var.K)" Name="ObjectName" Value="x"/>`,
+		"nested":      `<RegistryKey Root="HKLM" Key="SYSTEM"><RegistryKey Key="Foo"><RegistryValue Name="a" Value="b"/></RegistryKey></RegistryKey>`,
+		"hkmu":        `<RegistryValue Root="HKMU" Key="System\Foo" Name="a" Value="b"/>`,
+		"remove":      `<RemoveRegistryKey Root="HKLM" Key="SYSTEM\Foo" Action="removeOnInstall"/>`,
+		"dynamicroot": `<RegistryValue Root="[R]" Key="Foo" Name="a" Value="b"/>`,
+	} {
+		wantViolation(t, ca(nil, body), "HKLM")
+		_ = name
+	}
+	wantClean(t, ca(nil, `<RegistryValue Root="HKLM" Key="SOFTWARE\skenzeriq\activeDIQ" Name="Version" Value="1"/><RegistryValue Root="HKCU" Key="System\x" Name="a" Value="b"/>`))
 	wantViolation(t, script("custom.js", "// activediq-agent\nvar a = 'NT AUTHORITY\\\\SYSTEM';\n"), "NT AUTHORITY")
 }
 
