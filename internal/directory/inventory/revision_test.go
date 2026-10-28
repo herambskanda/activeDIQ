@@ -163,3 +163,38 @@ func TestTier0RevisionRowSecurityRefusesTenantReassignment(t *testing.T) {
 		}
 	})
 }
+
+// T-0506: the AFTER trigger inventory_tier0_revisions_tenant_guard (migration 0039) is the last line
+// against a writer that row security does not constrain. Here the writer is the table owner with
+// NO FORCE ROW LEVEL SECURITY (the owner is then exempt from the policy) and the BEFORE guard is
+// disabled, so nothing but the AFTER trigger can refuse the move. If it is dropped, this fails.
+func TestTier0RevisionAfterTriggerRefusesTenantMoveByRLSBypassingWriter(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		ctx := context.Background()
+		e.designate(t, e.a, e.adA, "aaaaaaaa-0000-4000-8000-0000000000f2", true)
+		const tbl = `public.inventory_tier0_revisions`
+		for _, stmt := range []string{
+			`ALTER TABLE ` + tbl + ` NO FORCE ROW LEVEL SECURITY`,
+			`ALTER TABLE ` + tbl + ` DISABLE TRIGGER inventory_tier0_revisions_guard`,
+		} {
+			if err := e.d.ExecOwner(ctx, stmt); err != nil {
+				t.Fatalf("%s: %v", stmt, err)
+			}
+		}
+		// The owner now sees tenant A's row: the move below targets a non-empty set, so a refusal
+		// cannot be a filtered-out zero-row UPDATE.
+		rows, err := e.d.OwnerStrings(ctx, `SELECT count(*)::text FROM `+tbl+` WHERE tenant_id = $1`, e.a.String())
+		if err != nil || len(rows) != 1 || rows[0] == "0" {
+			t.Fatalf("owner must see tenant A's revision row, got %v (err %v)", rows, err)
+		}
+		err = e.d.ExecOwner(ctx, `UPDATE `+tbl+` SET tenant_id = $1 WHERE tenant_id = $2`, e.b.String(), e.a.String())
+		if code := store.SQLState(err); code != "23514" || !strings.Contains(err.Error(), "never change tenant") {
+			t.Fatalf("want 23514 from the AFTER tenant guard, got %q: %v", code, err)
+		}
+		rows, err = e.d.OwnerStrings(ctx, `SELECT count(*)::text FROM `+tbl+` WHERE tenant_id = $1`, e.a.String())
+		if err != nil || len(rows) != 1 || rows[0] == "0" {
+			t.Fatalf("tenant A lost its revision row: %v (err %v)", rows, err)
+		}
+	})
+}
