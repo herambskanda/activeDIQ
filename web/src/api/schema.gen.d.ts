@@ -181,6 +181,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/directory/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search users
+         * @description Answers the users of the caller's tenant whose display name, sAMAccountName or userPrincipalName contains q, in a stable order, at most limit of them. q is plain text: the characters ( ) * \ & | = ! < > ~ and control characters are refused with a 400, as is a q longer than 256 characters. Nothing from q is ever placed in a directory query as syntax.
+         */
+        get: operations["searchDirectoryUsers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health/live": {
         parameters: {
             query?: never;
@@ -320,6 +340,18 @@ export interface components {
         DelegationId: string;
         /** @description Permission names, each of the form family.noun.verb. Duplicates are collapsed. */
         DelegationPermissions: string[];
+        /** @description A user as search shows it. Only these fields; the objectGuid is the key. */
+        DirectoryUser: {
+            displayName: string;
+            enabled: boolean;
+            /** Format: uuid */
+            objectGuid: string;
+            samAccountName: string;
+            userPrincipalName: string;
+        };
+        DirectoryUserList: {
+            items: components["schemas"]["DirectoryUser"][];
+        };
         /** @description A reference to a directory object by objectGUID. A DN is never a key. */
         GUIDRef: {
             /** Format: uuid */
@@ -1205,6 +1237,36 @@ export interface operations {
                 content?: never;
             };
             400: components["responses"]["Validation"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    searchDirectoryUsers: {
+        parameters: {
+            query: {
+                /** @description The most users to answer. Defaults to 25. */
+                limit?: number;
+                /** @description Text to find. Plain text only; no filter syntax. */
+                q: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The matching users */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DirectoryUserList"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
         };

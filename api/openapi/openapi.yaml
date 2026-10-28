@@ -29,6 +29,8 @@ tags:
     description: Notification sinks. SIEM syslog destinations; TLS by default, plaintext only by an audited opt-in. No destination can be deleted.
   - name: delegation
     description: Roles and assignments. The input contracts of the delegation.* control-plane Actions; personal to an account, step-up required.
+  - name: directory
+    description: Read-only directory queries. User search by plain text, tenant-scoped, permission directory.read.
 components:
   securitySchemes:
     bearer:

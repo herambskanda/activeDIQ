@@ -608,6 +608,55 @@
         "type": "array",
         "x-activediq-tag": "delegation"
       },
+      "DirectoryUser": {
+        "description": "A user as search shows it. Only these fields; the objectGuid is the key.",
+        "properties": {
+          "displayName": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "objectGuid": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "samAccountName": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "userPrincipalName": {
+            "maxLength": 1024,
+            "type": "string"
+          }
+        },
+        "required": [
+          "objectGuid",
+          "displayName",
+          "samAccountName",
+          "userPrincipalName",
+          "enabled"
+        ],
+        "type": "object",
+        "x-activediq-tag": "directory"
+      },
+      "DirectoryUserList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DirectoryUser"
+            },
+            "maxItems": 100,
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "x-activediq-tag": "directory"
+      },
       "GUIDRef": {
         "additionalProperties": false,
         "description": "A reference to a directory object by objectGUID. A DN is never a key.",
@@ -1950,6 +1999,73 @@
         "x-permission": "connections.takeover.attest"
       }
     },
+    "/directory/users": {
+      "get": {
+        "description": "Answers the users of the caller's tenant whose display name, sAMAccountName or userPrincipalName contains q, in a stable order, at most limit of them. q is plain text: the characters ( ) * \\ & | = ! < > ~ and control characters are refused with a 400, as is a q longer than 256 characters. Nothing from q is ever placed in a directory query as syntax.",
+        "operationId": "searchDirectoryUsers",
+        "parameters": [
+          {
+            "description": "Text to find. Plain text only; no filter syntax.",
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^[^()*\\\\&|=!<>~\\x00-\\x1f\\x7f]+$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The most users to answer. Defaults to 25.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectoryUserList"
+                }
+              }
+            },
+            "description": "The matching users"
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Search users",
+        "tags": [
+          "directory"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-stability": "preview",
+        "x-permission": "directory.read"
+      }
+    },
     "/health/live": {
       "get": {
         "description": "Answers 200 while the process can serve a request. Status only; it never reports a version, a configuration value or a dependency.",
@@ -2269,6 +2385,10 @@
     {
       "description": "Roles and assignments. The input contracts of the delegation.* control-plane Actions; personal to an account, step-up required.",
       "name": "delegation"
+    },
+    {
+      "description": "Read-only directory queries. User search by plain text, tenant-scoped, permission directory.read.",
+      "name": "directory"
     },
     {
       "description": "Sign-in, second factor and sign-out for the console. A first factor yields a pending sign-in; only the second factor creates a session.",
