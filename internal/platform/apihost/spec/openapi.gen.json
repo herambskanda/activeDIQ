@@ -2061,7 +2061,7 @@
           "class": "read"
         },
         "x-activediq-stability": "preview",
-        "x-permission": "siem.destination.manage"
+        "x-permission": "siem.destination.read"
       },
       "post": {
         "description": "Creates a destination. The default transport is TLS with certificate verification; plaintext TCP needs transport tcp together with plaintextOptIn true, and the opt-in is audited. The Idempotency-Key is the request ID of the audit events and names the destination: a retry with the same key and body answers the destination already created and changes nothing, and the same key with a different body is refused.",
@@ -2172,7 +2172,7 @@
           "class": "read"
         },
         "x-activediq-stability": "preview",
-        "x-permission": "siem.destination.manage"
+        "x-permission": "siem.destination.read"
       },
       "put": {
         "description": "Replaces the writable fields. The change redirects the SIEM stream, so it is audited with the previous and the new target. The Idempotency-Key is the request ID of the audit events; use a new key for each intended change. A key that already recorded an update is never applied twice: a replay with the same settings returns the current destination, with different settings it is a 422.",

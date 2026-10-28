@@ -248,7 +248,7 @@ func Bind(h Handlers) apihost.TagHandlers {
 			}),
 		apihost.NewRoute(apihost.RouteMeta{
 			OperationID: "getSiemDestination", Tag: "platform.notify", Method: "GET", Path: "/notify/siem-destinations/{destinationId}",
-			Permission: "siem.destination.manage", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
+			Permission: "siem.destination.read", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
 			Class: "read", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
 		},
 			func() apihost.Input { return new(GetSiemDestinationInput) },
@@ -264,7 +264,7 @@ func Bind(h Handlers) apihost.TagHandlers {
 			}),
 		apihost.NewRoute(apihost.RouteMeta{
 			OperationID: "listSiemDestinations", Tag: "platform.notify", Method: "GET", Path: "/notify/siem-destinations",
-			Permission: "siem.destination.manage", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
+			Permission: "siem.destination.read", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
 			Class: "read", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
 		},
 			func() apihost.Input { return new(ListSiemDestinationsInput) },

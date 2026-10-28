@@ -19,12 +19,20 @@ import (
 type ports struct {
 	p     apihost.Principal
 	allow bool
+	only  string // when set, the one permission granted instead of both
+	stale bool   // no fresh MFA
 }
 
 func (x ports) Authenticate(*http.Request) (apihost.Principal, error) { return x.p, nil }
 func (ports) CheckCSRF(*http.Request, apihost.Principal) error        { return nil }
 func (x ports) Allow(_ context.Context, _ apihost.Principal, perm, _ string) (bool, error) {
-	return x.allow && perm == ManagePermission, nil
+	if !x.allow {
+		return false, nil
+	}
+	if x.only != "" {
+		return perm == x.only, nil
+	}
+	return perm == ManagePermission || perm == ReadPermission, nil
 }
 func (ports) AllowIP(context.Context, string, string) (apihost.Decision, error) {
 	return apihost.Decision{Allowed: true}, nil
@@ -32,9 +40,14 @@ func (ports) AllowIP(context.Context, string, string) (apihost.Decision, error) 
 func (ports) AllowPrincipal(context.Context, string, apihost.Principal) (apihost.Decision, error) {
 	return apihost.Decision{Allowed: true}, nil
 }
-func (ports) Fresh(context.Context, apihost.Principal) (bool, error) { return true, nil }
+func (x ports) Fresh(context.Context, apihost.Principal) (bool, error) { return !x.stale, nil }
 
 func newAPI(t *testing.T, s *Store, ten tenant.ID, allow bool) http.Handler {
+	t.Helper()
+	return newAPIWith(t, s, ten, ports{allow: allow})
+}
+
+func newAPIWith(t *testing.T, s *Store, ten tenant.ID, px ports) http.Handler {
 	t.Helper()
 	doc, err := apihost.LoadDocument()
 	if err != nil {
@@ -44,8 +57,8 @@ func newAPI(t *testing.T, s *Store, ten tenant.ID, allow bool) http.Handler {
 	if err != nil {
 		t.Fatal(err)
 	}
-	px := ports{p: apihost.Principal{ID: "admin", Tenant: ten.String(), Kind: apihost.KindSession, SessionID: "s"}, allow: allow}
-	srv, err := apihost.Build(doc, []apihost.TagHandlers{Handlers{Store: s}.Bind()}, pol, apihost.Permissions{ManagePermission, "connections.takeover.attest"},
+	px.p = apihost.Principal{ID: "admin", Tenant: ten.String(), Kind: apihost.KindSession, SessionID: "s"}
+	srv, err := apihost.Build(doc, []apihost.TagHandlers{Handlers{Store: s}.Bind()}, pol, apihost.Permissions{ManagePermission, ReadPermission, "connections.takeover.attest"},
 		apihost.Ports{Authn: px, Authz: px, Limits: px, StepUp: px})
 	if err != nil {
 		t.Fatal(err)
@@ -197,6 +210,60 @@ func TestRefusalsAndTenantIsolation(t *testing.T) {
 		}
 		if w := call(h, "PUT", "/notify/siem-destinations/"+v.ID, "req-000009", `{"host":"x.example.com"}`); w.Code != 404 {
 			t.Fatalf("cross-tenant put: %d", w.Code)
+		}
+	})
+}
+
+// TM §7.4 / AG-8: create and update need a fresh MFA; reads do not. A refused call writes nothing.
+func TestWritesNeedStepUpReadsDoNot(t *testing.T) {
+	each(t, func(t *testing.T, s *Store, ten tenant.ID, snk *sink, _ *store.DB) {
+		v, err := s.Create(context.Background(), ten, Spec{Host: "keep.example.com"}, human, "seed-0001")
+		if err != nil {
+			t.Fatal(err)
+		}
+		before := len(snk.evs)
+		h := newAPIWith(t, s, ten, ports{allow: true, stale: true})
+		for _, c := range []struct{ m, p, k, b string }{
+			{"POST", "/notify/siem-destinations", "req-000001", `{"host":"attacker.example.net","transport":"tcp","plaintextOptIn":true}`},
+			{"PUT", "/notify/siem-destinations/" + v.ID, "req-000002", `{"host":"attacker.example.net","transport":"tcp","plaintextOptIn":true}`},
+		} {
+			w := call(h, c.m, c.p, c.k, c.b)
+			if w.Code != 401 || !strings.Contains(w.Body.String(), "step-up-required") {
+				t.Fatalf("%s %s without fresh MFA: %d %s", c.m, c.p, w.Code, w.Body)
+			}
+		}
+		got, err := s.Get(context.Background(), ten, v.ID)
+		if err != nil || got.Host != "keep.example.com" || destCount(t, s, ten) != 1 || len(snk.evs) != before {
+			t.Fatalf("a step-up refusal changed state: %+v %v events %d→%d", got, err, before, len(snk.evs))
+		}
+		for _, p := range []string{"/notify/siem-destinations", "/notify/siem-destinations/" + v.ID} {
+			if w := call(h, "GET", p, "", ""); w.Code != 200 {
+				t.Fatalf("GET %s without fresh MFA: %d %s", p, w.Code, w.Body)
+			}
+		}
+	})
+}
+
+// A principal holding only .read can read and cannot create or update.
+func TestReadOnlyPrincipalCannotWrite(t *testing.T) {
+	each(t, func(t *testing.T, s *Store, ten tenant.ID, snk *sink, _ *store.DB) {
+		v, err := s.Create(context.Background(), ten, Spec{Host: "keep.example.com"}, human, "seed-0001")
+		if err != nil {
+			t.Fatal(err)
+		}
+		before := len(snk.evs)
+		h := newAPIWith(t, s, ten, ports{allow: true, only: ReadPermission})
+		if w := call(h, "GET", "/notify/siem-destinations", "", ""); w.Code != 200 {
+			t.Fatalf("list with .read: %d %s", w.Code, w.Body)
+		}
+		if w := call(h, "POST", "/notify/siem-destinations", "req-000001", `{"host":"evil.example.com"}`); w.Code != 403 {
+			t.Fatalf("create with .read: %d %s", w.Code, w.Body)
+		}
+		if w := call(h, "PUT", "/notify/siem-destinations/"+v.ID, "req-000002", `{"host":"evil.example.com"}`); w.Code != 403 {
+			t.Fatalf("update with .read: %d %s", w.Code, w.Body)
+		}
+		if destCount(t, s, ten) != 1 || len(snk.evs) != before {
+			t.Fatal("a refused write changed state")
 		}
 	})
 }

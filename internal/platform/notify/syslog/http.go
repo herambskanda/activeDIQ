@@ -13,7 +13,10 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
-// ManagePermission is the permission every SIEM destination operation needs, the reads included.
+// ReadPermission is what list and get need; it is not a step-up permission (TM §7.4, AG-8).
+const ReadPermission = "siem.destination.read"
+
+// ManagePermission is what create and update need; policy.yaml makes it a step-up permission.
 // apihost authorises it server-side (chain step 12) before a handler runs; the handler adds nothing
 // and changes nothing for a caller who failed it.
 const ManagePermission = "siem.destination.manage"

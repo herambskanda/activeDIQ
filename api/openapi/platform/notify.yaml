@@ -1,5 +1,5 @@
-# SIEM syslog destinations (EP-9, TM-TB15-T7; T-0423). Every operation needs siem.destination.manage,
-# including the reads: where a tenant's notifications go is itself sensitive. There is no delete
+# SIEM syslog destinations (EP-9, TM-TB15-T7; T-0423). Create and update need siem.destination.manage (fresh MFA,
+# TM §7.4 / AG-8); list and get need siem.destination.read (no step-up). Where a tenant's notifications go is sensitive. There is no delete
 # operation: the runtime role cannot delete a destination row. A destination holds no secret; the View
 # states the transport, whether the server certificate is verified and the plaintext opt-in.
 paths:
@@ -11,7 +11,7 @@ paths:
       description: >-
         Answers every destination of the tenant, oldest first. A tenant has a handful of destinations,
         so the list is not paged.
-      x-permission: siem.destination.manage
+      x-permission: siem.destination.read
       x-activediq-stability: preview
       x-activediq-limits:
         class: read
@@ -81,7 +81,7 @@ paths:
       tags: [platform.notify]
       operationId: getSiemDestination
       summary: Get a SIEM syslog destination
-      x-permission: siem.destination.manage
+      x-permission: siem.destination.read
       x-activediq-stability: preview
       x-activediq-limits:
         class: read
