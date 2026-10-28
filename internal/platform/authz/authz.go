@@ -203,6 +203,10 @@ type Principal struct {
 	ID          string
 	Disabled    bool
 	Assignments []Assignment
+	// AuthorityFactor is true when the session being evaluated holds a current activeDIQ authority
+	// factor (TM-D19 rule 1). Correlation-derived assignments apply only when it is true; the zero
+	// value denies them.
+	AuthorityFactor bool
 }
 
 // Token is an API token's constraint. Effective permission is the owner's current authority
@@ -290,7 +294,7 @@ func (e Evaluator) Authorize(p *Principal, tok *Token, perm Permission, target T
 			continue
 		}
 		if a.Via != nil {
-			r, ok := hybridCheck(a, perm)
+			r, ok := hybridCheck(a, perm, p.AuthorityFactor)
 			if ok && target.CorrelatedTier0 {
 				r, ok = HybridRefusal{Reason: ReasonHybridTier0}, false
 			}

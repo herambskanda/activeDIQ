@@ -125,10 +125,9 @@ func (f *WebAuthnFactor) AddCredential(ctx context.Context, t tenant.ID, account
 	}
 	var id string
 	err := f.DB.WithTenant(ctx, t, func(ctx context.Context, tx store.Tx) error {
-		return tx.QueryRow(ctx, `INSERT INTO public.authn_webauthn_credentials
-  (tenant_id, account_id, credential_id, public_key, user_handle, backup_eligible, aaguid, sign_count, label)
-VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9) RETURNING id::text`,
-			t.String(), account, c.CredentialID, c.PublicKey, c.UserHandle, c.BackupEligible, c.AAGUID, int64(c.SignCount), c.Label).Scan(&id)
+		var err error
+		id, err = insertCredential(ctx, tx, t, account, purposeSecondFactor, c)
+		return err
 	})
 	if err != nil {
 		return "", fmt.Errorf("authn: add webauthn credential: %w", err)
@@ -136,18 +135,35 @@ VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9) RETURNING id::text`,
 	return id, nil
 }
 
+// insertCredential stores a verified credential of the purpose for the account.
+func insertCredential(ctx context.Context, tx store.Tx, t tenant.ID, account, purpose string, c WebAuthnCredential) (string, error) {
+	var id string
+	err := tx.QueryRow(ctx, `INSERT INTO public.authn_webauthn_credentials
+  (tenant_id, account_id, credential_id, public_key, user_handle, backup_eligible, aaguid, sign_count, label, purpose)
+VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id::text`,
+		t.String(), account, c.CredentialID, c.PublicKey, c.UserHandle, c.BackupEligible, c.AAGUID, int64(c.SignCount), c.Label, purpose).Scan(&id)
+	return id, err
+}
+
 type storedCred struct {
 	id string
 	WebAuthnCredential
 }
 
-// credentials lists the active credentials of an active account; nil when it has none or is not active.
-func credentials(ctx context.Context, tx store.Tx, t tenant.ID, account string) ([]storedCred, error) {
+// Credential purposes (migration 0048). AN-10 reads only second_factor; the authority factor (TM-D19) only authority.
+const (
+	purposeSecondFactor = "second_factor"
+	purposeAuthority    = "authority"
+)
+
+// credentials lists the active credentials of the purpose of an active account; nil when it has none or
+// is not active.
+func credentials(ctx context.Context, tx store.Tx, t tenant.ID, account, purpose string) ([]storedCred, error) {
 	rows, err := tx.Query(ctx, `SELECT c.id::text, c.credential_id, c.public_key, c.user_handle, c.backup_eligible, c.aaguid, c.sign_count
 FROM public.authn_webauthn_credentials c
 JOIN public.authn_accounts a ON a.tenant_id = c.tenant_id AND a.id = c.account_id
-WHERE c.tenant_id = $1::uuid AND c.account_id = $2::uuid AND c.state = 'active' AND a.state = 'active'
-ORDER BY c.created_at, c.id`, t.String(), account)
+WHERE c.tenant_id = $1::uuid AND c.account_id = $2::uuid AND c.state = 'active' AND a.state = 'active' AND c.purpose = $3
+ORDER BY c.created_at, c.id`, t.String(), account, purpose)
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +231,7 @@ func (f *WebAuthnFactor) Begin(ctx context.Context, h PendingHandle) (WebAuthnOp
 	}
 	var out WebAuthnOptions
 	err = f.DB.WithTenant(ctx, ref.Tenant, func(ctx context.Context, tx store.Tx) error {
-		cs, err := credentials(ctx, tx, ref.Tenant, ref.Account)
+		cs, err := credentials(ctx, tx, ref.Tenant, ref.Account, purposeSecondFactor)
 		if err != nil {
 			return err
 		}
@@ -302,7 +318,7 @@ func (f *WebAuthnFactor) Verify(ctx context.Context, h PendingHandle, in WebAuth
 	}
 	var res CreateResult
 	err = f.DB.WithTenant(ctx, ref.Tenant, func(ctx context.Context, tx store.Tx) error {
-		cs, err := credentials(ctx, tx, ref.Tenant, ref.Account)
+		cs, err := credentials(ctx, tx, ref.Tenant, ref.Account, purposeSecondFactor)
 		if err != nil {
 			return err
 		}
@@ -322,33 +338,14 @@ func (f *WebAuthnFactor) Verify(ctx context.Context, h PendingHandle, in WebAuth
 		if err != nil {
 			return &refusal{reason: RefusedAssertionInvalid}
 		}
-		// Signature counter (WebAuthn §6.1.1). Authenticators that do not count report 0 throughout; one
-		// that counts must advance. A counter that stands still or goes back is a clone or a replay.
-		var matched *storedCred
-		for i := range cs {
-			if string(cs[i].CredentialID) == string(cred.ID) {
-				matched = &cs[i]
-			}
-		}
-		if matched == nil {
-			return &refusal{reason: RefusedAssertionInvalid}
-		}
-		newCount := parsed.Response.AuthenticatorData.Counter
-		if (newCount != 0 || matched.SignCount != 0) && newCount <= matched.SignCount {
-			return &refusal{reason: RefusedCounterRegression}
-		}
 		now, err := f.Pending.now(ctx, tx)
 		if err != nil {
 			return err
 		}
-		tag, err := tx.Exec(ctx, `UPDATE public.authn_webauthn_credentials SET sign_count = $4, last_used = $5
-WHERE tenant_id = $1::uuid AND id = $2::uuid AND state = 'active' AND sign_count = $3`,
-			ref.Tenant.String(), matched.id, int64(matched.SignCount), int64(newCount), now)
-		if err != nil {
+		if reason, err := useCredential(ctx, tx, ref.Tenant, cs, cred.ID, parsed, now); err != nil {
 			return err
-		}
-		if tag.RowsAffected() != 1 {
-			return &refusal{reason: RefusedCounterRegression} // a concurrent use of the same credential won
+		} else if reason != "" {
+			return &refusal{reason: reason}
 		}
 		won, err := f.Pending.consume(ctx, tx, ref)
 		if err != nil {
@@ -377,6 +374,36 @@ WHERE tenant_id = $1::uuid AND id = $2::uuid AND state = 'active' AND sign_count
 		return CreateResult{}, fmt.Errorf("authn: webauthn second factor: %w", err)
 	}
 	return res, nil
+}
+
+// useCredential finds the credential an assertion validated against among cs and advances its signature
+// counter (WebAuthn §6.1.1). Authenticators that do not count report 0 throughout; one that counts must
+// advance. A counter that stands still or goes back is a clone or a replay. It returns the refusal reason
+// ("" on success); an error is infrastructure.
+func useCredential(ctx context.Context, tx store.Tx, t tenant.ID, cs []storedCred, credID []byte, parsed *protocol.ParsedCredentialAssertionData, now time.Time) (string, error) {
+	var matched *storedCred
+	for i := range cs {
+		if string(cs[i].CredentialID) == string(credID) {
+			matched = &cs[i]
+		}
+	}
+	if matched == nil {
+		return RefusedAssertionInvalid, nil
+	}
+	newCount := parsed.Response.AuthenticatorData.Counter
+	if (newCount != 0 || matched.SignCount != 0) && newCount <= matched.SignCount {
+		return RefusedCounterRegression, nil
+	}
+	tag, err := tx.Exec(ctx, `UPDATE public.authn_webauthn_credentials SET sign_count = $4, last_used = $5
+WHERE tenant_id = $1::uuid AND id = $2::uuid AND state = 'active' AND sign_count = $3`,
+		t.String(), matched.id, int64(matched.SignCount), int64(newCount), now)
+	if err != nil {
+		return "", err
+	}
+	if tag.RowsAffected() != 1 {
+		return RefusedCounterRegression, nil // a concurrent use of the same credential won
+	}
+	return "", nil
 }
 
 // deny audits a refusal in its own transaction and returns ErrSecondFactorRefused (or the audit failure).

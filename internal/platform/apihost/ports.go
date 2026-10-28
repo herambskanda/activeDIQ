@@ -27,6 +27,9 @@ type Principal struct {
 	// SessionID is the console session's handle (not its token) for a KindSession principal; empty for a
 	// token. The step-up check reads the session's mfa_at through it.
 	SessionID string
+	// AuthorityFactor is true when the session holds a current activeDIQ authority factor (TM-D19
+	// rule 1): verified, and not older than the session's latest step-up. Set by the Authenticator.
+	AuthorityFactor bool
 }
 
 // ErrUnauthenticated is what an Authenticator returns for a missing or invalid credential. Any
