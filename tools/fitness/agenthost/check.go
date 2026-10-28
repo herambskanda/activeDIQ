@@ -662,9 +662,12 @@ func agentInstallerFiles(root string) []instFile {
 		relp = filepath.ToSlash(relp)
 		if e.IsDir() {
 			switch e.Name() {
-			case ".git", "node_modules", "testdata":
+			case ".git":
 				return filepath.SkipDir
 			}
+			// testdata/ and node_modules/ are deliberately NOT skipped (T-0664): the WiX SDK compiles
+			// **/*.wxs and a .wixproj can Compile-Include any path, so reachability cannot be guessed;
+			// every WiX file outside tools/fitness is scanned or fails A1.
 			if relp == "tools/fitness" {
 				return filepath.SkipDir
 			}

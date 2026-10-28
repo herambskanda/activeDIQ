@@ -354,8 +354,31 @@ func TestA1Installer(t *testing.T) {
 	wantViolation(t, outside("installer/agent.wxs", `<Wix><Package><ServiceInstall Name="activeDIQAgent" Account="LocalSystem"/></Package></Wix>`), "LocalSystem")
 	wantViolation(t, outside("src/Product.wxs.in", `<Wix/>`), "template or transform")
 	wantViolation(t, outside("tools/x/a.wixproj", `<Project>LocalSystem</Project>`), "LocalSystem")
-	if r := outside("testdata/agent.wxs", `<Wix><ServiceInstall Name="activeDIQAgent" Account="LocalSystem"/></Wix>`); r.Inactive == "" {
-		t.Fatalf("fixtures under testdata/ must not be scanned: %v", r.Violations)
+	// T-0664: the WiX SDK compiles **/*.wxs, so testdata/ and node_modules/ hide nothing under packaging/
+	// or below a .wixproj.
+	lsys := `<Wix><Package><ServiceInstall Name="skzHelper" Account="LocalSystem"/></Package></Wix>`
+	wantViolation(t, third("../testdata/x.wxs", lsys), "LocalSystem")
+	wantViolation(t, third("../node_modules/x.wxs", lsys), "LocalSystem")
+	// Fourth T-0664 review: no reachability heuristic; WiX in testdata/ or node_modules/ is scanned anywhere.
+	wantViolation(t, outside("testdata/agent.wxs", lsys), "LocalSystem")
+	wantViolation(t, outside("web/node_modules/x/agent.wxs", lsys), "LocalSystem")
+	{
+		r := t.TempDir() // a .wixproj inside the testdata dir itself
+		write(t, r, "src/testdata/Evil.wixproj", `<Project/>`)
+		write(t, r, "src/testdata/x.wxs", lsys)
+		wantViolation(t, checkInstaller(r), "LocalSystem")
+	}
+	{
+		r := t.TempDir() // glob metacharacter in a parent directory name
+		write(t, r, "src[/Evil.wixproj", `<Project/>`)
+		write(t, r, "src[/testdata/x.wxs", lsys)
+		wantViolation(t, checkInstaller(r), "LocalSystem")
+	}
+	{
+		r := t.TempDir() // root testdata pulled in by an explicit Compile Include
+		write(t, r, "packaging/windows/A.wixproj", `<Project><ItemGroup><Compile Include="..\..\testdata\evil.wxs"/></ItemGroup></Project>`)
+		write(t, r, "testdata/evil.wxs", lsys)
+		wantViolation(t, checkInstaller(r), "LocalSystem")
 	}
 	// Fifth review, 3: every service gets the full pin; an allowlisted Id is the only exception.
 	helper := `<Wix><Package><Component><ServiceInstall Id="SkzHelper" Name="skzHelper" Account="NT SERVICE\skzHelper"><ServiceConfig ServiceSid="unrestricted" RequiredPrivileges="SeDebugPrivilege,SeBackupPrivilege"/></ServiceInstall></Component></Package></Wix>`
