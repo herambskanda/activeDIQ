@@ -138,15 +138,23 @@ type Observation struct {
 	PwdLastSet      time.Time
 	AccountExpires  time.Time
 	ConsistencyGUID []byte
-	Attributes      map[string]any
-	WhenCreated     time.Time
-	WhenChanged     time.Time
-	ObservedDSA     string
-	State           ObjectState
+	// Attributes is the generic attribute bag. It never carries a judge key (judgeKeys): those enter
+	// only through Facts, so a fact cannot be stored without its computed-at.
+	Attributes map[string]any
+	// Facts are the typed group facts the eligibility judge reads (DM-36.I2, TM-D18).
+	Facts       GroupFacts
+	WhenCreated time.Time
+	WhenChanged time.Time
+	ObservedDSA string
+	State       ObjectState
 	// Entra only, users and groups: onPremisesSyncEnabled (nil = absent) and
 	// onPremisesSyncBehavior.isCloudManaged. They decide cloud_seen_at (DM-16.I9).
 	OnPremisesSyncEnabled *bool
 	CloudManaged          bool
+	// OnPremisesSyncRead says the sync read onPremisesSyncEnabled on this Entra group. With it set,
+	// a nil OnPremisesSyncEnabled is Graph's JSON null (never synced); without it the key is stored
+	// absent, which the judge treats as unknown. OnPremisesSyncEnabled set requires it.
+	OnPremisesSyncRead bool
 	// Entra only, users and groups: the other inputs of the DM-20.I4 gate, kept so that a later AD-side
 	// cycle can run the gate again. OnPremisesSID is onPremisesSecurityIdentifier (binary),
 	// OnPremisesDomainName is onPremisesDomainName ("" when not populated) and OnPremisesImmutableID is
@@ -165,6 +173,93 @@ type Observation struct {
 	MembersComplete bool
 	// RemovedMembers are explicit removals (a DirSync delta).
 	RemovedMembers []GUID
+}
+
+// GroupFacts are the judge's inputs, typed so the producer cannot store one without the others it
+// depends on. A nil pointer or nil slice is "not read", which the judge treats as unknown. AD groups
+// use GroupType, BroadMembershipWrite(+At) and WrittenBack; Entra groups use SecurityEnabled,
+// Visibility and GroupTypes (and Observation.OnPremisesSyncRead).
+type GroupFacts struct {
+	GroupType *int32 // AD groupType
+	// BroadMembershipWrite is the computed fact (TM-D18); BroadMembershipWriteAt is when it was
+	// computed and is required with it: a fact without an age cannot grant.
+	BroadMembershipWrite   *bool
+	BroadMembershipWriteAt time.Time
+	WrittenBack            *bool
+	SecurityEnabled        *bool
+	Visibility             string   // "" is not read / none
+	GroupTypes             []string // nil is not read; empty non-nil is read and has no entries
+}
+
+func (f GroupFacts) ad() bool {
+	return f.GroupType != nil || f.BroadMembershipWrite != nil || !f.BroadMembershipWriteAt.IsZero() || f.WrittenBack != nil
+}
+
+func (f GroupFacts) entra() bool {
+	return f.SecurityEnabled != nil || f.Visibility != "" || f.GroupTypes != nil
+}
+
+// judgeKeys are the attribute keys the judge reads. They are produced only from typed fields.
+var judgeKeys = []string{AttrGroupType, AttrSecurityEnabled, AttrVisibility, AttrGroupTypes,
+	AttrBroadMembershipWrite, AttrWrittenBack, AttrBroadMembershipWriteAt, AttrOnPremisesSyncEnabled}
+
+// merged returns the attributes to store: the generic bag plus the typed facts. A judge key in the
+// bag is refused, whatever its case.
+func (o *Observation) merged(entra bool) (map[string]any, error) {
+	for k := range o.Attributes {
+		for _, j := range judgeKeys {
+			if strings.EqualFold(k, j) {
+				return nil, fmt.Errorf("judge key %q in attributes; use the typed fields", k)
+			}
+		}
+	}
+	f := o.Facts
+	if o.Kind != KindGroup {
+		if f.ad() || f.entra() || o.OnPremisesSyncRead {
+			return nil, fmt.Errorf("group facts on a non-group")
+		}
+		return o.Attributes, nil
+	}
+	if entra && f.ad() || !entra && (f.entra() || o.OnPremisesSyncRead) {
+		return nil, fmt.Errorf("group facts of the other plane")
+	}
+	if (f.BroadMembershipWrite == nil) != f.BroadMembershipWriteAt.IsZero() {
+		return nil, fmt.Errorf("broadMembershipWrite and its computed-at come together")
+	}
+	if entra && o.OnPremisesSyncEnabled != nil && !o.OnPremisesSyncRead {
+		return nil, fmt.Errorf("onPremisesSyncEnabled set without OnPremisesSyncRead")
+	}
+	out := make(map[string]any, len(o.Attributes)+8)
+	for k, v := range o.Attributes {
+		out[k] = v
+	}
+	if f.GroupType != nil {
+		out[AttrGroupType] = *f.GroupType
+	}
+	if f.BroadMembershipWrite != nil {
+		out[AttrBroadMembershipWrite] = *f.BroadMembershipWrite
+		out[AttrBroadMembershipWriteAt] = f.BroadMembershipWriteAt.UTC().Format(time.RFC3339)
+	}
+	if f.WrittenBack != nil {
+		out[AttrWrittenBack] = *f.WrittenBack
+	}
+	if f.SecurityEnabled != nil {
+		out[AttrSecurityEnabled] = *f.SecurityEnabled
+	}
+	if f.Visibility != "" {
+		out[AttrVisibility] = f.Visibility
+	}
+	if f.GroupTypes != nil {
+		out[AttrGroupTypes] = f.GroupTypes
+	}
+	if o.OnPremisesSyncRead {
+		if o.OnPremisesSyncEnabled != nil {
+			out[AttrOnPremisesSyncEnabled] = *o.OnPremisesSyncEnabled
+		} else {
+			out[AttrOnPremisesSyncEnabled] = nil
+		}
+	}
+	return out, nil
 }
 
 // Populated is the outcome of Populate.
@@ -408,9 +503,12 @@ func validateObservation(o *Observation, entra bool) ([]byte, error) {
 		}
 	}
 	b := []byte("{}")
-	if len(o.Attributes) > 0 {
-		var err error
-		if b, err = json.Marshal(o.Attributes); err != nil || len(b) > maxAttributesSz {
+	attrs, err := o.merged(entra)
+	if err != nil {
+		return bad(err.Error())
+	}
+	if len(attrs) > 0 {
+		if b, err = json.Marshal(attrs); err != nil || len(b) > maxAttributesSz {
 			return bad("attributes")
 		}
 		var generic any
