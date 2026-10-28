@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/directory"
@@ -124,10 +123,8 @@ func Test_group_target_check_rejects_member_targets(t *testing.T) {
 	}
 }
 
-// The control_plane flag is the authz.NeverCrosses rule made visible in the catalogue: a flag is never set
-// on a permission outside a never-crosses family, and every delegation.* Action carries it. The other
-// never-crosses families (connections., inventory.tier0_) are flagged by T-0616; the check tightens to an
-// equivalence there.
+// The control_plane flag is the authz.NeverCrosses rule made visible in the catalogue: an Action carries
+// it if and only if its permission is in a never-crosses family.
 func Test_control_plane_flag_catalogue_matches_never_crosses(t *testing.T) {
 	cat := catalogue(t)
 	flagged := 0
@@ -135,8 +132,8 @@ func Test_control_plane_flag_catalogue_matches_never_crosses(t *testing.T) {
 		if d.ControlPlane && !authz.NeverCrosses(d.Permission) {
 			t.Errorf("%s (permission %s) is flagged control_plane but its permission is not in a never-crosses family", d.ID, d.Permission)
 		}
-		if strings.HasPrefix(string(d.Permission), "delegation.") && !d.ControlPlane {
-			t.Errorf("%s (permission %s) is a delegation.* Action and must be flagged control_plane", d.ID, d.Permission)
+		if authz.NeverCrosses(d.Permission) && !d.ControlPlane {
+			t.Errorf("%s (permission %s) is in a never-crosses family and must be flagged control_plane", d.ID, d.Permission)
 		}
 		if d.ControlPlane {
 			flagged++

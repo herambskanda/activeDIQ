@@ -173,6 +173,20 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
   Renew by setting `Expires` to a date 9–12 months ahead (RFC 3339, UTC), and change `Contact` only
   together with the channel named in `SECURITY.md` (the check requires both to match). Do not move
   the date without reading `SECURITY.md` for anything stale. Owner: security-architect.
+- **`fitness-audit`** (A1–A9 of ADR-0005, TM-F-AUDIT; T-0133): `make fitness-audit` (needs Docker).
+  - **A1** runs the real migrations in PostgreSQL 16 and 18 containers and prints
+    `A1 <rule> [<table>]: …` for a runtime-role privilege (UPDATE/DELETE/TRUNCATE on the audit tables,
+    UPDATE on the personal and secret side tables, anything beyond SELECT/INSERT/UPDATE on
+    `audit_head`), a missing or disabled genesis trigger, a trigger that accepts a head other than
+    `seq 0` with the tenant's `hash_0` or keeps a caller-supplied `at`, and a runtime role that owns
+    `audit_head`, is a superuser or can `SET session_replication_role`. Fix the migration or the role
+    bootstrap, never the check.
+  - **A2, A3, A5, A6, A9** run the tests listed in `tools/fitness/audit/bindings.go` and fail with
+    `test-failed`, `test-skipped` (no Docker is a failure, not a pass) or `test-missing` (renamed or
+    deleted: update the binding in the same change, with the reviewer's eyes on it).
+  - **A4, A7, A8** and the alerting half of A6 are printed `pending` with the owning ticket (T-0638,
+    T-0639, T-0640) on every run. Whoever lands the guarded code lands the check and deletes the line.
+  - Proof: `tools/fitness/audit` tests (one mutation per A1 rule) and `tools/ci/proof.sh`.
 - **`fitness-operation`** (O9 of ADR-0005, the kernel import DAG): `make fitness-operation` prints every
   package of the `dag` block as `existing` or `pending`, then the violations as
   `file:line: O9 [rule 13] <importer> imports <imported>; …` with what the importer may import.
