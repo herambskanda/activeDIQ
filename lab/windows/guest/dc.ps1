@@ -4,7 +4,8 @@ $c = Get-LabConfig
 $LabDir = 'C:\lab'
 switch (Get-Stage) {
   'start' {
-    $feat = Install-WindowsFeature AD-Domain-Services, DNS, GPMC, RSAT-AD-Tools, RSAT-AD-PowerShell, ADCS-Cert-Authority -IncludeManagementTools
+    $feat = Install-WindowsFeature AD-Domain-Services, DNS, GPMC, RSAT-AD-Tools, RSAT-AD-PowerShell -IncludeManagementTools
+    # ADCS is deliberately NOT installed here: Install-ADDSForest refuses while Certificate Server is installed (T-0496)
     # Windows refuses Install-ADDSForest while a restart from the role install is pending (T-0496): reboot and resume
     # at 'start'. One reboot only (marker file), so a flag that never clears cannot loop; the stage stays 'start'.
     if ($feat.RestartNeeded -ne 'No' -and -not (Test-Path "$LabDir\feature-reboot")) {
@@ -23,6 +24,7 @@ switch (Get-Stage) {
   'promoted' {
     Import-Module ActiveDirectory
     for ($i = 0; $i -lt 30; $i++) { try { Get-ADDomain | Out-Null; break } catch { Start-Sleep 20 } }
+    Install-WindowsFeature ADCS-Cert-Authority -IncludeManagementTools | Out-Null
     # enterprise root CA, so the DC gets a CA-issued LDAPS certificate (Domain Controller template) by autoenrolment
     Install-AdcsCertificationAuthority -CAType EnterpriseRootCa -CaCommonName 'activeDIQ Lab Root CA' -KeyLength 3072 `
       -HashAlgorithmName SHA256 -ValidityPeriod Years -ValidityPeriodUnits 5 -Force | Out-Null

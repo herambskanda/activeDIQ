@@ -208,12 +208,19 @@ class GuestStageOrdering(unittest.TestCase):
         self.assertLess(b.index("Set-Stage 'promoted'"), b.rindex("Restart-Computer"))
 
     def test_stage_failure_is_logged_without_dying_silently(self):
-        for n in ("boot.ps1",):
+        for n in ("boot.ps1",):  # single file by design
             t = (LAB / "guest" / n).read_text()
             self.assertRegex(t, r"try \{[\s\S]*dc\.ps1[\s\S]*member\.ps1[\s\S]*\} catch \{[\s\S]*Write-LabLog[^\n]*Exception\.Message")
             self.assertIn("exit 1", t)
         catch = (LAB / "guest/boot.ps1").read_text().split("catch {")[1]
         self.assertNotIn("$c.", catch)  # never log config values (secrets)
+
+    def test_adcs_installed_only_after_promotion(self):
+        """Install-ADDSForest refuses with 'Certificate Server is installed' (VM 119), so ADCS comes after promotion."""
+        d = self.dc()
+        self.assertNotIn("ADCS-Cert-Authority", self.start_block())
+        promoted = d[d.index("'promoted' {"):d.index("'configure' {")]
+        self.assertLess(promoted.index("Install-WindowsFeature ADCS-Cert-Authority"), promoted.index("Install-AdcsCertificationAuthority"))
 
     def test_external_and_local_modes_share_the_same_dc_path(self):
         """external mode skips only NIC setup in boot.ps1; the DC promotion path is the one tested above."""
