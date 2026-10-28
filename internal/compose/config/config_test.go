@@ -218,3 +218,28 @@ func TestKEKFileInsideTLSDirRefused(t *testing.T) {
 		}
 	}
 }
+
+func TestOpsListenerSettings(t *testing.T) {
+	ok := map[string]string{config.EnvOpsAddr: "127.0.0.1:9100", config.EnvOpsTokenFile: "/x/tok"}
+	c, err := config.Load(env(ok))
+	if err != nil || c.OpsAddr != "127.0.0.1:9100" || c.OpsTokenFile != "/x/tok" {
+		t.Fatalf("valid: %+v, %v", c, err)
+	}
+	if c, err = config.Load(env(nil)); err != nil || c.OpsAddr != "" {
+		t.Fatalf("default must be off: %+v, %v", c, err)
+	}
+	for name, m := range map[string]map[string]string{
+		"addr without token":  {config.EnvOpsAddr: "127.0.0.1:9100"},
+		"token without addr":  {config.EnvOpsTokenFile: "/x/tok"},
+		"same as API":         {config.EnvOpsAddr: config.DefaultAPIAddr, config.EnvOpsTokenFile: "/x/tok"},
+		"non-loopback no TLS": {config.EnvOpsAddr: "0.0.0.0:9100", config.EnvOpsTokenFile: "/x/tok"},
+		"not host:port":       {config.EnvOpsAddr: "9100", config.EnvOpsTokenFile: "/x/tok"},
+	} {
+		if _, err := config.Load(env(m)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	if _, err := config.Load(env(map[string]string{config.EnvOpsAddr: "0.0.0.0:9100", config.EnvOpsTokenFile: "/x/tok", config.EnvAPITLSDir: t.TempDir()})); err != nil {
+		t.Errorf("non-loopback with TLS dir refused: %v", err)
+	}
+}

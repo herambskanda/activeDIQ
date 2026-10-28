@@ -67,6 +67,14 @@ const (
 	// EnvKEKID names the KEK in the sealed envelope (default DefaultKEKID); rotate by changing it together
 	// with the file.
 	EnvKEKID = "ACTIVEDIQ_KEK_ID"
+	// EnvOpsAddr is the bind address of the operator (ops) listener that serves /metrics (T-0533). Unset
+	// means no ops listener and no metrics endpoint. It must differ from EnvAPIAddr: metrics list every
+	// tenant, so they are never served on the API listener. Same TLS rules as the API listener.
+	EnvOpsAddr = "ACTIVEDIQ_OPS_ADDR"
+	// EnvOpsTokenFile is the path of a 0600 file holding the operator bearer token (at least 32 bytes)
+	// that scrapes must present. Required with EnvOpsAddr; it is a separate credential from every
+	// tenant session and API key.
+	EnvOpsTokenFile = "ACTIVEDIQ_OPS_TOKEN_FILE"
 )
 
 // DefaultKEKID is the KEK reference name when EnvKEKID is unset.
@@ -116,6 +124,9 @@ type Config struct {
 	// KEKFile is the KEK profile's key file (empty: no KEK profile); KEKID names the key.
 	KEKFile string
 	KEKID   string
+	// OpsAddr and OpsTokenFile configure the operator metrics listener; both empty means it is off.
+	OpsAddr      string
+	OpsTokenFile string
 }
 
 // Load reads the configuration through getenv (os.Getenv in the binaries, a map in tests).
@@ -191,6 +202,10 @@ func Load(getenv func(string) string) (Config, error) {
 	c.KEKFile, c.KEKID = getenv(EnvKEKFile), getenv(EnvKEKID)
 	if c.KEKID == "" {
 		c.KEKID = DefaultKEKID
+	}
+	c.OpsAddr, c.OpsTokenFile = getenv(EnvOpsAddr), getenv(EnvOpsTokenFile)
+	if err := c.ValidateOps(); err != nil {
+		return Config{}, err
 	}
 	if c.KEKFile != "" && c.APITLSDir == "" {
 		return Config{}, fmt.Errorf("%s: needs %s, there is no persisted API key to seal without it", EnvKEKFile, EnvAPITLSDir)
@@ -269,6 +284,29 @@ func (c Config) ValidateAPIListen() error {
 	}
 	if err := requireLoopback(c.APIAddr); err != nil {
 		return fmt.Errorf("%s: TLS is not configured (%s is empty): %w", EnvAPIAddr, EnvAPITLSDir, err)
+	}
+	return nil
+}
+
+// ValidateOps refuses a half-configured ops listener, one sharing the API's address, and (as for the API)
+// a non-loopback bind without a persistent TLS identity directory.
+func (c Config) ValidateOps() error {
+	if c.OpsAddr == "" && c.OpsTokenFile == "" {
+		return nil
+	}
+	if c.OpsAddr == "" || c.OpsTokenFile == "" {
+		return fmt.Errorf("%s and %s must be set together", EnvOpsAddr, EnvOpsTokenFile)
+	}
+	if c.OpsAddr == c.APIAddr {
+		return fmt.Errorf("%s must differ from %s: metrics are never served on the API listener", EnvOpsAddr, EnvAPIAddr)
+	}
+	if _, _, err := net.SplitHostPort(c.OpsAddr); err != nil {
+		return fmt.Errorf("%s: must be host:port: %w", EnvOpsAddr, err)
+	}
+	if c.APITLSDir == "" {
+		if err := requireLoopback(c.OpsAddr); err != nil {
+			return fmt.Errorf("%s: TLS is not configured (%s is empty): %w", EnvOpsAddr, EnvAPITLSDir, err)
+		}
 	}
 	return nil
 }
