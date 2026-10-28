@@ -74,6 +74,10 @@ type Descriptor struct {
 	AuditKind     audit.Kind    // the step event kind, declared by the same owner
 	StepUp        bool          // submit needs a fresh MFA (TM-D16 §7.4)
 	SecretInput   bool          // the input carries a secret (rule 9)
+	// ControlPlane marks an Action whose permission administers RBAC, delegation, scopes, connections or
+	// the tenant: personal to an account, never carried by a group, token, automation policy or hybrid
+	// correlation. It must equal authz.NeverCrosses(Permission); a test in compose/server holds the two.
+	ControlPlane bool
 }
 
 // Input is the validated, canonically encodable input of one invocation.

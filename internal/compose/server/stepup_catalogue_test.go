@@ -1,6 +1,7 @@
 package server
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/directory"
@@ -113,5 +114,37 @@ func Test_group_target_check_rejects_member_targets(t *testing.T) {
 	}
 	if bad := groupTargetViolations(cat); len(bad) != 2 || bad[0] != "x.group.add" || bad[1] != "x.group.nest" {
 		t.Fatalf("got %v", bad)
+	}
+}
+
+// The control_plane flag is the authz.NeverCrosses rule made visible in the catalogue: a flag is never set
+// on a permission outside a never-crosses family, and every delegation.* Action carries it. The other
+// never-crosses families (connections., inventory.tier0_) are flagged by T-0616; the check tightens to an
+// equivalence there.
+func Test_control_plane_flag_catalogue_matches_never_crosses(t *testing.T) {
+	cat := catalogue(t)
+	flagged := 0
+	for _, d := range cat {
+		if d.ControlPlane && !authz.NeverCrosses(d.Permission) {
+			t.Errorf("%s (permission %s) is flagged control_plane but its permission is not in a never-crosses family", d.ID, d.Permission)
+		}
+		if strings.HasPrefix(string(d.Permission), "delegation.") && !d.ControlPlane {
+			t.Errorf("%s (permission %s) is a delegation.* Action and must be flagged control_plane", d.ID, d.Permission)
+		}
+		if d.ControlPlane {
+			flagged++
+		}
+	}
+	for _, id := range []operation.ActionID{delegation.RoleCreateID, delegation.RoleUpdateID, delegation.GrantID, delegation.RevokeID} {
+		found := false
+		for _, d := range cat {
+			found = found || (d.ID == id && d.ControlPlane)
+		}
+		if !found {
+			t.Errorf("%s is not in the catalogue flagged control_plane", id)
+		}
+	}
+	if flagged == 0 {
+		t.Error("no Action is flagged control_plane")
 	}
 }
