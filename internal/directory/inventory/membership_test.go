@@ -59,6 +59,8 @@ func enGroup(g string, sec bool, vis string, members ...string) inventory.Observ
 	attrs := map[string]any{inventory.AttrSecurityEnabled: sec}
 	if vis != "" {
 		attrs[inventory.AttrVisibility] = vis
+	} else {
+		attrs[inventory.AttrGroupTypes] = []string{} // a plain security group
 	}
 	o := inventory.Observation{Object: inventory.GUID(g), Kind: inventory.KindGroup, Class: "group", State: inventory.ObjActive, Attributes: attrs}
 	for _, m := range members {
@@ -112,6 +114,20 @@ func TestMembership_eligible_groups(t *testing.T) {
 		}
 		if !g.Complete || !slices.Equal(guids(g), []string{mEPriv}) {
 			t.Fatalf("Entra: got %v complete=%v, want only the private security group", guids(g), g.Complete)
+		}
+		// A securityEnabled Unified group with no stored visibility may be Public: not granted, incomplete.
+		const mEUni = "eeeeeeee-0000-4000-8000-0000000000c5"
+		uni := enGroup(mEUni, true, "", mEUser)
+		uni.Attributes[inventory.AttrGroupTypes] = []string{"Unified"}
+		if _, err := e.populate(t, e.enA, t2, enUser(mEUser, nil), uni); err != nil {
+			t.Fatal(err)
+		}
+		g, err = e.membership(inventory.Ref{Connection: e.enA, Object: mEUser}, authn.KindSSO, "").GroupsOf(ctx, e.a.String(), mAcct)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if g.Complete || slices.Contains(guids(g), mEUni) {
+			t.Fatalf("Unified group without visibility: got %v complete=%v, want omitted and incomplete", guids(g), g.Complete)
 		}
 	})
 }
@@ -184,8 +200,8 @@ func TestMembership_via(t *testing.T) {
 		// An sso account gets no correlation-derived group here (authority factor, DM-30.I6).
 		g, _ = e.membership(inventory.Ref{Connection: e.adA, Object: mUser}, authn.KindSSO, "attested").GroupsOf(ctx, e.a.String(), mAcct)
 		for _, x := range g.Groups {
-			if x.Via != nil {
-				t.Fatalf("sso account must not receive a derived group: %+v", x)
+			if x.Via != nil || x.Connection == string(e.enA) {
+				t.Fatalf("sso account with an AD ref must not receive a correlation-reached group: %+v", x)
 			}
 		}
 	})

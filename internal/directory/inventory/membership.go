@@ -23,6 +23,9 @@ const (
 	// AttrVisibility is the Entra group visibility ("Public" never grants, DM-36.I2). Absent is fine
 	// for a security group, which has none.
 	AttrVisibility = "visibility"
+	// AttrGroupTypes is the Entra groupTypes string list. Visibility is nullable in Graph and an M365
+	// (Unified) group without one is Public, so an absent visibility is judged by this list (fail closed).
+	AttrGroupTypes = "groupTypes"
 	// AttrBroadMembershipWrite is the sync's computed fact for an AD group (TM-D18): true when its
 	// DACL lets a broad principal change membership. It is a boolean, never the DACL itself.
 	AttrBroadMembershipWrite = "diq_broadMembershipWrite"
@@ -147,14 +150,17 @@ func (m *Membership) GroupsOf(ctx context.Context, tenantID, account string) (au
 		}}
 	}
 
+	// An sso account takes groups only from its own directory_ref root. A correlation-reached root
+	// would be same-plane to the walk and skip the rbac hybrid gate, and using one needs the session's
+	// authority factor and issuer tenant (DM-30.I6), which this port cannot see (T-0543). Left out by
+	// policy, not an incomplete read.
 	var roots []root
-	if selfKind == signKind {
+	if acc.Kind == authn.KindSSO {
 		roots = append(roots, root{ref: self})
-	}
-	// A derived root reaches the account through a correlation. An sso account uses those only in a
-	// session that verified the authority factor (DM-30.I6), which this port cannot see: they are
-	// left out by policy (not an incomplete read) until the port carries the session.
-	if acc.Kind != authn.KindSSO {
+	} else {
+		if selfKind == signKind {
+			roots = append(roots, root{ref: self})
+		}
 		for _, l := range matched {
 			peerKind := connKindEntraTenant
 			if l.PeerKind == "ad_forest" {
@@ -165,12 +171,6 @@ func (m *Membership) GroupsOf(ctx context.Context, tenantID, account string) (au
 				r.via = nil
 			}
 			roots = append(roots, r)
-		}
-	} else {
-		for _, l := range matched {
-			if l.PeerKind == "entra_tenant" { // self is AD; the peer is the sign-in identity's object
-				roots = append(roots, root{ref: l.Peer})
-			}
 		}
 	}
 
@@ -385,8 +385,21 @@ func judge(connKind string, kind Kind, state ObjectState, raw []byte) verdict {
 		if !sec {
 			return verdictIneligible
 		}
-		if v, _ := attrs[AttrVisibility].(string); strings.EqualFold(v, "public") {
-			return verdictIneligible
+		if v, _ := attrs[AttrVisibility].(string); v != "" {
+			if strings.EqualFold(v, "public") {
+				return verdictIneligible
+			}
+			return verdictEligible
+		}
+		// No stored visibility: only a group known not to be Unified (a plain security group) is safe.
+		gts, ok := attrs[AttrGroupTypes].([]any)
+		if !ok {
+			return verdictUnknown
+		}
+		for _, t := range gts {
+			if s, _ := t.(string); strings.EqualFold(s, "Unified") {
+				return verdictUnknown
+			}
 		}
 		return verdictEligible
 	}
