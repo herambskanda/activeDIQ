@@ -46,7 +46,7 @@ var (
 // Declared for fitness-domain-keys. Both tables sit beside the append-only audit entity (DM-80) and are
 // deleted from by erasure and the retention purge, so they are bookkeeping, not append-only.
 var (
-	_ = tablekind.Declare(tablekind.Table{Name: "public.personal_subject", Entity: "DM-80", Kind: tablekind.Tenant, Bookkeeping: true, NameOK: []string{"hold"}})
+	_ = tablekind.Declare(tablekind.Table{Name: "public.personal_subject", Entity: "DM-80", Kind: tablekind.Tenant, Bookkeeping: true})
 	_ = tablekind.Declare(tablekind.Table{Name: "public.personal_value", Entity: "DM-80", Kind: tablekind.Tenant, Bookkeeping: true})
 )
 

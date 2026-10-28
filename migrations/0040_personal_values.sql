@@ -1,4 +1,4 @@
--- 0038_personal_values: erasable personal values (T-0357; ADR-0005 rule 12, domain model X11).
+-- 0040_personal_values: erasable personal values (T-0357; ADR-0005 rule 12, domain model X11).
 -- Owner: internal/platform/personal. Two tenant tables.
 --
 --   personal_subject  one row per person a value is about: the 256-bit secret salt that keys every

@@ -1,4 +1,4 @@
--- 0035_authn_totp_active_cap: at most three active console TOTP enrolments per account (T-0422; T-0198
+-- 0036_authn_totp_active_cap: at most three active console TOTP enrolments per account (T-0422; T-0198
 -- review finding 2, AN-10). Sign-in tests every active enrolment of the account per attempt, so the
 -- online guess rate would otherwise scale with N times the per-enrolment failure budget (DM-37.I5).
 -- Enforced here, not in the application: a trigger on the transition into 'active' (and on an insert
