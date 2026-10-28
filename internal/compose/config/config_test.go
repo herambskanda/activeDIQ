@@ -178,3 +178,13 @@ func TestAttestationSettings(t *testing.T) {
 		}
 	}
 }
+
+func TestKEKProfileNeedsTLSDir(t *testing.T) {
+	if _, err := config.Load(env(map[string]string{config.EnvKEKFile: "/k"})); err == nil || !strings.Contains(err.Error(), config.EnvAPITLSDir) {
+		t.Fatalf("KEK file without TLS dir must fail naming both, got %v", err)
+	}
+	c, err := config.Load(env(map[string]string{config.EnvKEKFile: "/k", config.EnvAPITLSDir: "/d"}))
+	if err != nil || c.KEKFile != "/k" || c.KEKID != config.DefaultKEKID {
+		t.Fatalf("got %v %+v", err, c)
+	}
+}

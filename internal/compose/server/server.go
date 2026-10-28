@@ -178,7 +178,13 @@ func apiIdentity(cfg config.Config, now time.Time) (apitls.Identity, error) {
 	if err := cfg.ValidateAPIListen(); err != nil {
 		return apitls.Identity{}, fmt.Errorf("server: %w", err)
 	}
-	id, err := apitls.LoadOrGenerate(cfg.APITLSDir, cfg.APIAddr, now)
+	// With the KEK profile configured the provider is built first and any failure (missing, unreadable
+	// or malformed KEK) stops startup: there is no fallback to an unsealed key.
+	p, err := platformKeyProvider(cfg)
+	if err != nil {
+		return apitls.Identity{}, fmt.Errorf("server: key provider: %w", err)
+	}
+	id, err := apitls.LoadOrGenerateSealed(cfg.APITLSDir, cfg.APIAddr, now, p)
 	if err != nil {
 		return apitls.Identity{}, fmt.Errorf("server: api tls: %w", err)
 	}
