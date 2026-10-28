@@ -1,7 +1,7 @@
 ---
 title: "Safe primitives: LDAP filters, DNs, attribute codecs, command invocation, SQL, output encoders"
 date: 2026-10-02
-updated: 2026-10-22
+updated: 2026-10-28
 status: review
 owner: heramb
 ticket: T-0035, T-0041
@@ -1444,10 +1444,22 @@ FormulaLeadTable            // generated, committed, reviewed; pinned to a Unico
 
 `FormulaLeadTable` holds every code point whose NFKC normalisation starts with `=`, `+`, `-`, `@`
 or U+2212 MINUS SIGN. NFKC is used **only to build the table**: no value is ever normalised (R4).
-Under Unicode 16.0 the table has 22 entries, generated with Python's `unicodedata.normalize`:
-`+ - = @`, U+207A–U+207C, U+208A–U+208C, U+2212, U+2A75, U+2A76, U+FB29, U+FE62, U+FE63, U+FE66,
-U+FE6B, U+FF0B, U+FF0D, U+FF1D, U+FF20. The generator runs in CI with Go's
-`golang.org/x/text/unicode/norm` and fails when its output differs from the committed table.
+The table has 22 entries: `+ - = @`, U+207A–U+207C, U+208A–U+208C, U+2212, U+2A75, U+2A76,
+U+FB29, U+FE62, U+FE63, U+FE66, U+FE6B, U+FF0B, U+FF0D, U+FF1D, U+FF20.
+
+**Source and Unicode version.** The source of truth is the generator test in `cellsafe`. It rebuilds
+the table in CI with Go's `golang.org/x/text/unicode/norm` and fails when its output differs from
+the committed table. The Unicode version is therefore pinned by the `x/text` version in `go.mod`
+together with the Go toolchain, not by this document. `x/text` v0.42.0 ships two table sets and
+picks one by build tag: `tables15.0.0.go` (`!go1.27`) and `tables17.0.0.go` (`go1.27`). With
+`go 1.27.3` in `go.mod`, CI builds **Unicode 17.0.0** (`norm.Version`). The 22-entry set was checked
+under 17.0.0 (x/text, go1.27.3) and under 15.0.0 (Python 3.12 `unicodedata`), and the two sets are
+the same (T-0534). Unicode's normalization stability policy says "once a character is
+assigned, its decomposition mapping will not change" ([Unicode Stability Policy][unicode-stability]),
+so Unicode 16.0, which sits between the two, gives the same set too. A future `x/text` or Go bump
+that changes `norm.Version` must update this paragraph and the `table.go` doc comment in the same
+change.
+
 U+2212 is included conservatively: whether any spreadsheet treats it as an operator is
 `[UNVERIFIED — lab]`.
 
@@ -1962,6 +1974,7 @@ both. Lab-dependent claims in this section are listed in §9.
 [dotnet-prof]: https://learn.microsoft.com/en-us/dotnet/core/runtime-config/debugging-profiling
 [owasp-csv]:https://owasp.org/www-community/attacks/CSV_Injection
 [wstg-csv]: https://github.com/OWASP/wstg/blob/master/document/4-Web_Application_Security_Testing/07-Injection/21-CSV_Injection.md
+[unicode-stability]: https://www.unicode.org/policies/stability_policy.html
 [cve-exceljs]: https://app.opencve.io/cve/CVE-2026-78209
 [excel-limits]: https://support.microsoft.com/en-us/office/excel-specifications-and-limits-1672b34d-7043-467e-8e27-269d656771c3
 [oxml-quoteprefix]: https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.spreadsheet.cellformat.quoteprefix
