@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -119,6 +120,11 @@ func Open(cfg Config) (*Host, error) {
 	}
 	if now == nil {
 		now = time.Now
+	}
+	// Created owner-only on unix; on Windows it inherits the pinned DACL of its parent, which the MSI
+	// set (agentsetup prepare-datadir). CheckDataDir then verifies the result either way.
+	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
+		return nil, fmt.Errorf("agent: creating data directory: %w", err)
 	}
 	if err := CheckDataDir(cfg.DataDir); err != nil {
 		return nil, fmt.Errorf("agent: data directory is not safe: %w", err)
