@@ -404,6 +404,122 @@
       }
     },
     "schemas": {
+      "AssignmentGrant": {
+        "additionalProperties": false,
+        "description": "Input of delegation.assignment.grant. The caller chooses assignmentId, so a retry is the same grant. A role holding a control_plane permission is granted to an account only.",
+        "properties": {
+          "assignmentId": {
+            "$ref": "#/components/schemas/DelegationId"
+          },
+          "roleId": {
+            "$ref": "#/components/schemas/DelegationId"
+          },
+          "roots": {
+            "items": {
+              "$ref": "#/components/schemas/AssignmentRoot"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "subject": {
+            "$ref": "#/components/schemas/AssignmentSubject"
+          },
+          "validFrom": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "validUntil": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "assignmentId",
+          "roleId",
+          "subject",
+          "roots"
+        ],
+        "type": "object",
+        "x-activediq-tag": "delegation"
+      },
+      "AssignmentRevoke": {
+        "additionalProperties": false,
+        "description": "Input of delegation.assignment.revoke. Ends one assignment; a revoked assignment is not restored.",
+        "properties": {
+          "assignmentId": {
+            "$ref": "#/components/schemas/DelegationId"
+          }
+        },
+        "required": [
+          "assignmentId"
+        ],
+        "type": "object",
+        "x-activediq-tag": "delegation"
+      },
+      "AssignmentRoot": {
+        "additionalProperties": false,
+        "description": "One scope root of an assignment (DM-35). exclude subtracts the subtree from the scope.",
+        "properties": {
+          "connectionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "exclude": {
+            "type": "boolean"
+          },
+          "guid": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AssignmentRootKind"
+          }
+        },
+        "required": [
+          "kind",
+          "connectionId",
+          "guid"
+        ],
+        "type": "object",
+        "x-activediq-tag": "delegation"
+      },
+      "AssignmentRootKind": {
+        "description": "What the root's guid names. The server refuses a kind it does not know.",
+        "enum": [
+          "naming_context",
+          "ou_subtree",
+          "entra_tenant",
+          "tier0_scope",
+          "tenant"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "delegation"
+      },
+      "AssignmentSubject": {
+        "description": "Who holds the assignment, by kind. Exactly the members of its kind are accepted.",
+        "discriminator": {
+          "mapping": {
+            "account": "#/components/schemas/SubjectAccount",
+            "automation": "#/components/schemas/SubjectAutomation",
+            "group": "#/components/schemas/SubjectGroup"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/SubjectAccount"
+          },
+          {
+            "$ref": "#/components/schemas/SubjectGroup"
+          },
+          {
+            "$ref": "#/components/schemas/SubjectAutomation"
+          }
+        ],
+        "x-activediq-tag": "delegation"
+      },
       "BreakGlassPasswordRequest": {
         "additionalProperties": false,
         "description": "The local break-glass account and its password.",
@@ -448,6 +564,25 @@
         "maxLength": 1024,
         "minLength": 1,
         "type": "string"
+      },
+      "DelegationId": {
+        "description": "A caller-chosen identifier of a role or an assignment, a canonical UUID.",
+        "format": "uuid",
+        "type": "string",
+        "x-activediq-tag": "delegation"
+      },
+      "DelegationPermissions": {
+        "description": "Permission names, each of the form family.noun.verb. Duplicates are collapsed.",
+        "items": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-z0-9_]+(\\.[a-z0-9_]+)+$",
+          "type": "string"
+        },
+        "maxItems": 512,
+        "minItems": 1,
+        "type": "array",
+        "x-activediq-tag": "delegation"
       },
       "GUIDRef": {
         "additionalProperties": false,
@@ -807,11 +942,125 @@
         ],
         "type": "object"
       },
+      "RoleCreate": {
+        "additionalProperties": false,
+        "description": "Input of delegation.role.create. The caller chooses roleId, so a retry is the same role. A role is never deleted; empty it with delegation.role.update.",
+        "properties": {
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "permissions": {
+            "$ref": "#/components/schemas/DelegationPermissions"
+          },
+          "roleId": {
+            "$ref": "#/components/schemas/DelegationId"
+          },
+          "tier": {
+            "description": "0 administers Tier-0 scope, 1 platform administration, 2 help desk.",
+            "maximum": 2,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "roleId",
+          "name",
+          "tier",
+          "permissions"
+        ],
+        "type": "object",
+        "x-activediq-tag": "delegation"
+      },
+      "RoleUpdate": {
+        "additionalProperties": false,
+        "description": "Input of delegation.role.update. Replaces a custom role's permissions; a built-in role is refused.",
+        "properties": {
+          "permissions": {
+            "$ref": "#/components/schemas/DelegationPermissions"
+          },
+          "roleId": {
+            "$ref": "#/components/schemas/DelegationId"
+          }
+        },
+        "required": [
+          "roleId",
+          "permissions"
+        ],
+        "type": "object",
+        "x-activediq-tag": "delegation"
+      },
       "SecretInput": {
         "description": "A secret a client sends: a password, a token. It is write-only, never appears in a response, and is held in memory only as a secret.Secret that is destroyed after the request.",
         "type": "string",
         "writeOnly": true,
         "x-activediq-secret": true
+      },
+      "SubjectAccount": {
+        "additionalProperties": false,
+        "description": "A console account. The only kind that may hold a control_plane role.",
+        "properties": {
+          "accountId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "const": "account",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "accountId"
+        ],
+        "type": "object",
+        "x-activediq-tag": "delegation"
+      },
+      "SubjectAutomation": {
+        "additionalProperties": false,
+        "description": "An automation policy. Never holds a control_plane role.",
+        "properties": {
+          "kind": {
+            "const": "automation",
+            "type": "string"
+          },
+          "policyId": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "policyId"
+        ],
+        "type": "object",
+        "x-activediq-tag": "delegation"
+      },
+      "SubjectGroup": {
+        "additionalProperties": false,
+        "description": "A directory group, by connection and objectGUID. Never holds a control_plane role.",
+        "properties": {
+          "connectionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "groupGuid": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "const": "group",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "connectionId",
+          "groupGuid"
+        ],
+        "type": "object",
+        "x-activediq-tag": "delegation"
       },
       "TakeoverAttestationMaxAge": {
         "additionalProperties": false,
@@ -1663,6 +1912,10 @@
     {
       "description": "Directory connections. Attestation of an Entra connection's takeover protection (TM-D17), its maximum age, and the IdP callback.",
       "name": "connections"
+    },
+    {
+      "description": "Roles and assignments. The input contracts of the delegation.* control-plane Actions; personal to an account, step-up required.",
+      "name": "delegation"
     },
     {
       "description": "Sign-in, second factor and sign-out for the console. A first factor yields a pending sign-in; only the second factor creates a session.",

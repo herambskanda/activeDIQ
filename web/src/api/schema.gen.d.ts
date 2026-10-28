@@ -225,6 +225,37 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description Input of delegation.assignment.grant. The caller chooses assignmentId, so a retry is the same grant. A role holding a control_plane permission is granted to an account only. */
+        AssignmentGrant: {
+            assignmentId: components["schemas"]["DelegationId"];
+            roleId: components["schemas"]["DelegationId"];
+            roots: components["schemas"]["AssignmentRoot"][];
+            subject: components["schemas"]["AssignmentSubject"];
+            /** Format: date-time */
+            validFrom?: string;
+            /** Format: date-time */
+            validUntil?: string;
+        };
+        /** @description Input of delegation.assignment.revoke. Ends one assignment; a revoked assignment is not restored. */
+        AssignmentRevoke: {
+            assignmentId: components["schemas"]["DelegationId"];
+        };
+        /** @description One scope root of an assignment (DM-35). exclude subtracts the subtree from the scope. */
+        AssignmentRoot: {
+            /** Format: uuid */
+            connectionId: string;
+            exclude?: boolean;
+            /** Format: uuid */
+            guid: string;
+            kind: components["schemas"]["AssignmentRootKind"];
+        };
+        /**
+         * @description What the root's guid names. The server refuses a kind it does not know.
+         * @enum {string}
+         */
+        AssignmentRootKind: "naming_context" | "ou_subtree" | "entra_tenant" | "tier0_scope" | "tenant" | (string & {});
+        /** @description Who holds the assignment, by kind. Exactly the members of its kind are accepted. */
+        AssignmentSubject: components["schemas"]["SubjectAccount"] | components["schemas"]["SubjectGroup"] | components["schemas"]["SubjectAutomation"];
         /** @description The local break-glass account and its password. */
         BreakGlassPasswordRequest: {
             password: components["schemas"]["SecretInput"];
@@ -237,6 +268,13 @@ export interface components {
         };
         /** @description An opaque page cursor. Clients pass it back unchanged. */
         Cursor: string;
+        /**
+         * Format: uuid
+         * @description A caller-chosen identifier of a role or an assignment, a canonical UUID.
+         */
+        DelegationId: string;
+        /** @description Permission names, each of the form family.noun.verb. Duplicates are collapsed. */
+        DelegationPermissions: string[];
         /** @description A reference to a directory object by objectGUID. A DN is never a key. */
         GUIDRef: {
             /** Format: uuid */
@@ -340,8 +378,53 @@ export interface components {
             type: string;
             value: string;
         };
+        /** @description Input of delegation.role.create. The caller chooses roleId, so a retry is the same role. A role is never deleted; empty it with delegation.role.update. */
+        RoleCreate: {
+            name: string;
+            permissions: components["schemas"]["DelegationPermissions"];
+            roleId: components["schemas"]["DelegationId"];
+            /** @description 0 administers Tier-0 scope, 1 platform administration, 2 help desk. */
+            tier: number;
+        };
+        /** @description Input of delegation.role.update. Replaces a custom role's permissions; a built-in role is refused. */
+        RoleUpdate: {
+            permissions: components["schemas"]["DelegationPermissions"];
+            roleId: components["schemas"]["DelegationId"];
+        };
         /** @description A secret a client sends: a password, a token. It is write-only, never appears in a response, and is held in memory only as a secret.Secret that is destroyed after the request. */
         SecretInput: string;
+        /** @description A console account. The only kind that may hold a control_plane role. */
+        SubjectAccount: {
+            /** Format: uuid */
+            accountId: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "account";
+        };
+        /** @description An automation policy. Never holds a control_plane role. */
+        SubjectAutomation: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "automation";
+            /** Format: uuid */
+            policyId: string;
+        };
+        /** @description A directory group, by connection and objectGUID. Never holds a control_plane role. */
+        SubjectGroup: {
+            /** Format: uuid */
+            connectionId: string;
+            /** Format: uuid */
+            groupGuid: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "group";
+        };
         /** @description The new attestation_max_age. */
         TakeoverAttestationMaxAge: {
             maxAgeSeconds: number;
