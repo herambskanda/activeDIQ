@@ -27,6 +27,25 @@ var permitted = map[string]string{
 	"internal/platform/rbac/grants.go":            "app.tenant_id set by store.WithTenant",
 }
 
+// scanRoots are the trees the T5 fitness check walks (tools/fitness/tenancy/static/run.go); cmd/ may
+// import an internal package of the same module, so it must be scanned too.
+var scanRoots = []string{"cmd", "internal"}
+
+// allImporters scans every scanRoot that exists under root.
+func allImporters(t *testing.T, root string) []string {
+	t.Helper()
+	var out []string
+	for _, top := range scanRoots {
+		dir := filepath.Join(root, top)
+		if st, err := os.Stat(dir); err != nil || !st.IsDir() {
+			continue
+		}
+		out = append(out, importers(t, root, dir)...)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // importers returns the slash-separated, root-relative non-test .go files under dir that import tenantref
 // under any name (aliased, dot or blank), matched on the import path rather than on source text.
 func importers(t *testing.T, root, dir string) []string {
@@ -75,7 +94,7 @@ func TestOnlyPermittedFilesImportTenantref(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bad := unpermitted(importers(t, root, filepath.Join(root, "internal"))); len(bad) > 0 {
+	if bad := unpermitted(allImporters(t, root)); len(bad) > 0 {
 		t.Fatalf("files import tenantref without being permitted (add with security review): %v", bad)
 	}
 }
@@ -98,10 +117,12 @@ func TestImporterScanCatchesBypasses(t *testing.T) {
 	// A new file inside an already permitted package is caught because the pin is per file.
 	write("internal/platform/rbac/newfile.go", "package rbac\nimport "+imp+"\nvar _ = tenantref.TenantFromText\n")
 	write("internal/platform/rbac/grants.go", "package rbac\nimport "+imp+"\n")
+	write("cmd/zzbypass/x.go", "package main\nimport tr "+imp+"\nvar _ = tr.TenantFromText\nfunc main() {}\n")
 	write("internal/other/ok.go", "package other\nimport \"fmt\"\nvar _ = fmt.Sprint\n")
 
-	got := unpermitted(importers(t, root, filepath.Join(root, "internal")))
+	got := unpermitted(allImporters(t, root))
 	want := []string{
+		"cmd/zzbypass/x.go",
 		"internal/platform/rbac/newfile.go",
 		"internal/zzblank/x.go",
 		"internal/zzbypass/x.go",
