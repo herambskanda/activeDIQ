@@ -56,10 +56,12 @@ const (
 	// this origin plus the callback path, and must be registered on the app registration. Required with
 	// EnvAttestClientID.
 	EnvPublicURL = "ACTIVEDIQ_PUBLIC_URL"
-	// EnvKEKFile selects the KEK profile: the path of a file holding the platform key-encryption key as 64
+	// EnvKEKFile selects the KEK profile (the interim linux-oci/dev key-provider profile, until the
+	// passphrase keystore or the OS/KMS adapters of ADR-0002 land; threat model TM-TB5-T7): the path of a file holding the platform key-encryption key as 64
 	// hex characters (0600 on Unix). With it the API TLS private key is sealed at rest under that KEK; the
 	// server refuses to start if the file is missing or unusable, or if it cannot unseal what is on disk.
-	// Requires EnvAPITLSDir. Unset keeps the legacy plaintext 0600 key file, and a directory already sealed
+	// Requires EnvAPITLSDir, and the file must live outside it (a copied directory must not carry its own
+	// key). Unset keeps the legacy plaintext 0600 key file, and a directory already sealed
 	// then fails startup instead of downgrading.
 	EnvKEKFile = "ACTIVEDIQ_KEK_FILE"
 	// EnvKEKID names the KEK in the sealed envelope (default DefaultKEKID); rotate by changing it together
@@ -192,6 +194,9 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if c.KEKFile != "" && c.APITLSDir == "" {
 		return Config{}, fmt.Errorf("%s: needs %s, there is no persisted API key to seal without it", EnvKEKFile, EnvAPITLSDir)
+	}
+	if err := c.validateKEKPlacement(); err != nil {
+		return Config{}, err
 	}
 	if 2*c.ShutdownGrace >= c.StopTimeout {
 		return Config{}, fmt.Errorf("%s: twice the shutdown grace (%s) must be less than the stop timeout (%s) or the service manager kills the process mid-drain",

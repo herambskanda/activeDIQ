@@ -1,11 +1,11 @@
 package server
 
 import (
+	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"runtime"
 
 	"github.com/skenzeriq/activediq/internal/compose/config"
@@ -33,19 +33,12 @@ func platformKeyProvider(cfg config.Config) (keys.Provider, error) {
 }
 
 func readKEKFile(path string) (secret.Secret, error) {
-	fi, err := os.Lstat(path)
+	if err := kekFileSupported(runtime.GOOS); err != nil {
+		return secret.Secret{}, err
+	}
+	f, err := openKEKFile(path)
 	if err != nil {
-		return secret.Secret{}, fmt.Errorf("KEK file %s: %w", path, errors.Unwrap(err))
-	}
-	if !fi.Mode().IsRegular() {
-		return secret.Secret{}, fmt.Errorf("KEK file %s must be a regular file, not a link or device", path)
-	}
-	if runtime.GOOS != "windows" && fi.Mode().Perm()&0o077 != 0 {
-		return secret.Secret{}, fmt.Errorf("KEK file %s must not be accessible to group or others (chmod 600)", path)
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		return secret.Secret{}, fmt.Errorf("KEK file %s: %w", path, errors.Unwrap(err))
+		return secret.Secret{}, err
 	}
 	defer f.Close()
 	raw, err := io.ReadAll(io.LimitReader(f, 256))
@@ -60,6 +53,9 @@ func readKEKFile(path string) (secret.Secret, error) {
 	defer clear(key)
 	if _, err := hex.Decode(key, raw); err != nil || len(key) != keys.DEKSize {
 		return secret.Secret{}, fmt.Errorf("KEK file %s must hold exactly %d hex characters", path, 2*keys.DEKSize)
+	}
+	if subtle.ConstantTimeCompare(key, make([]byte, len(key))) == 1 {
+		return secret.Secret{}, fmt.Errorf("KEK file %s holds an all-zero key", path)
 	}
 	return secret.FromBytes(key), nil
 }

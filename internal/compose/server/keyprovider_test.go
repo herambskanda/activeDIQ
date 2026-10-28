@@ -130,3 +130,45 @@ func TestAPIIdentitySealsLegacyPlaintextKey(t *testing.T) {
 		t.Fatal("plaintext key must be removed")
 	}
 }
+
+func TestKEKFileRefusals(t *testing.T) {
+	mk := func(content string) config.Config {
+		cfg := kekCfg(t, filepath.Join(t.TempDir(), "t"), "x")
+		if err := os.WriteFile(cfg.KEKFile, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return cfg
+	}
+	if _, err := apiIdentity(mk(strings.Repeat("00", 32)), time.Now()); err == nil {
+		t.Error("all-zero KEK must fail")
+	}
+	// Symlink at the open site is refused even though the target is a valid 0600 KEK.
+	cfg := kekCfg(t, filepath.Join(t.TempDir(), "t"), kekA)
+	target := cfg.KEKFile
+	cfg.KEKFile = filepath.Join(t.TempDir(), "kek-link")
+	if err := os.Symlink(target, cfg.KEKFile); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := apiIdentity(cfg, time.Now()); err == nil {
+		t.Error("symlinked KEK must fail")
+	}
+	if err := kekFileSupported("windows"); err == nil {
+		t.Error("windows must refuse the file profile")
+	}
+	if err := kekFileSupported("linux"); err != nil {
+		t.Errorf("linux: %v", err)
+	}
+}
+
+func TestKEKFileOtherOwnerRefused(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root to chown")
+	}
+	cfg := kekCfg(t, filepath.Join(t.TempDir(), "t"), kekA)
+	if err := os.Chown(cfg.KEKFile, 12345, -1); err != nil {
+		t.Skip(err)
+	}
+	if _, err := apiIdentity(cfg, time.Now()); err == nil {
+		t.Error("KEK owned by another uid must fail")
+	}
+}
