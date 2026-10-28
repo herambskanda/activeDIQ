@@ -180,7 +180,7 @@ func Test_totp_expired_is_terminal(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		e := setup(t, s)
 		id, _ := e.pending(t, e.a)
-		if _, err := e.exec(t, e.a, `UPDATE public.authn_authenticator_enrollments SET state = 'expired' WHERE id = $1::uuid`, id); err != nil {
+		if _, err := e.exec(t, e.a, `UPDATE public.authn_authenticator_enrollments SET state = 'expired', sealed_secret = NULL WHERE id = $1::uuid`, id); err != nil {
 			t.Fatal(err)
 		}
 		for _, st := range []string{"active", "pending", "revoked"} {
@@ -495,7 +495,7 @@ func Test_totp_active_enrolment_cap(t *testing.T) {
 			t.Fatalf("direct activation = %v, want AD409", err)
 		}
 		// Revoking one frees a slot.
-		if _, err := e.exec(t, e.a, `UPDATE public.authn_authenticator_enrollments SET state = 'revoked' WHERE id = $1::uuid`, ids[0]); err != nil {
+		if _, err := e.exec(t, e.a, `UPDATE public.authn_authenticator_enrollments SET state = 'revoked', sealed_secret = NULL WHERE id = $1::uuid`, ids[0]); err != nil {
 			t.Fatal(err)
 		}
 		e.now = e.now.Add(time.Minute) // a fresh step: the seed's first code was not spent on this row
