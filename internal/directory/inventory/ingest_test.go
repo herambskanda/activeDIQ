@@ -275,3 +275,50 @@ func TestIngestPreconditions(t *testing.T) {
 		}
 	})
 }
+
+func TestIngestPrincipalTypeMismatchNeverPassesTheGate(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		cg := wire(t, "12345678-1234-4234-8234-123456789abc")
+		at := func(x *ingestEnv) time.Time { return x.now.Add(-20 * time.Minute) }
+		for _, kc := range []struct {
+			kind  inventory.Kind
+			class string
+		}{{inventory.KindComputer, "computer"}, {inventory.KindGMSA, "msDS-GroupManagedServiceAccount"},
+			{inventory.KindContact, "contact"}, {inventory.KindGroup, "group"}} {
+			x := newIngestEnv(t, s)
+			x.link(t, true)
+			x.attest(t, true, true)
+			o := adUserCG(usr1, cg)
+			o.Kind, o.Class = kc.kind, kc.class
+			if _, err := x.ingest(t, x.adA, at(x), adDomainHead(), o); err != nil {
+				t.Fatal(err)
+			}
+			res, err := x.ingest(t, x.enA, at(x).Add(time.Minute), enUserFor(enU1, cg, userSID))
+			if err != nil || res.Pairs != 0 || res.Created != 0 || res.Matched != 0 {
+				t.Fatalf("%s must form no pair: %+v %v", kc.kind, res, err)
+			}
+		}
+
+		// A live matched pair whose AD row changes kind is demoted, never kept matched.
+		x := newIngestEnv(t, s)
+		x.link(t, true)
+		x.attest(t, true, true)
+		if _, err := x.ingest(t, x.adA, at(x), adDomainHead(), adUserCG(usr1, cg)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := x.ingest(t, x.enA, at(x).Add(time.Minute), enUserFor(enU1, cg, userSID)); err != nil {
+			t.Fatal(err)
+		}
+		if st, _, _ := x.state(t, enU1); st != "matched" {
+			t.Fatalf("setup: %s", st)
+		}
+		o := adUserCG(usr1, cg)
+		o.Kind, o.Class = inventory.KindComputer, "computer"
+		if _, err := x.ingest(t, x.adA, at(x).Add(2*time.Minute), o); err != nil {
+			t.Fatal(err)
+		}
+		if st, _, _ := x.state(t, enU1); st == "matched" {
+			t.Fatal("a correlation to a non-user AD object stayed matched")
+		}
+	})
+}

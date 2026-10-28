@@ -419,7 +419,7 @@ func (g Ingester) resolve(ctx context.Context, tx store.Tx, eo entraRow, ads []C
 		p.match, p.anchor = MatchAnchor, eo.immutable
 		q = `SELECT connection_id::text, object_guid::text, COALESCE(consistency_guid = $2, false) FROM public.directory_objects
 			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = ANY($1::uuid[])
-			AND nc_guid IS NOT NULL AND state <> 'purged' AND (consistency_guid = $2 OR object_guid = $3::uuid)
+			AND nc_guid IS NOT NULL AND kind IN ('user','inetorgperson') AND state <> 'purged' AND (consistency_guid = $2 OR object_guid = $3::uuid)
 			ORDER BY connection_id, object_guid LIMIT $4`
 		args = []any{ids, gd.Bytes(), gd.String(), maxCandidate}
 	default:
@@ -447,6 +447,17 @@ func (g Ingester) resolve(ctx context.Context, tx store.Tx, eo entraRow, ads []C
 		p.attr = ""
 	}
 	return refs, p, rows.Err()
+}
+
+// kindFits: a user pairs with an AD user or inetOrgPerson, a group with an AD group.
+func kindFits(entra Kind, ad string) bool {
+	switch entra {
+	case KindUser:
+		return ad == string(KindUser) || ad == string(KindInetOrgPerson)
+	case KindGroup:
+		return ad == string(KindGroup)
+	}
+	return false
 }
 
 func (g Ingester) judge(ctx context.Context, tx store.Tx, entra ConnectionID, eo entraRow, p pair, takeover TakeoverProtection,
@@ -497,6 +508,13 @@ func (g Ingester) judge(ctx context.Context, tx store.Tx, entra ConnectionID, eo
 	}
 
 	matches := p.matchCount
+	// A principal-type mismatch never passes the gate (DM-20.I1a is user-to-user, group-to-group): a stored
+	// correlation whose AD row is no longer the right kind counts no anchor match / no AD SID.
+	if !kindFits(eo.kind, ad.kind) {
+		matches = 0
+		adSID = nil
+		p.resolved = false
+	}
 	if !p.resolved {
 		matches = 0 // the anchor no longer resolves to this object: never carry the old pair on a count of another
 	}
@@ -566,4 +584,3 @@ func dnsName(dnText string) string {
 	}
 	return out
 }
-

@@ -111,7 +111,8 @@ var ErrTooMany = errors.New("connection: result exceeds the bound")
 // maxLinks bounds ListHybridLinks.
 const maxLinks = 1000
 
-// ListHybridLinks returns the links of one AD connection, oldest first, removed ones only if asked.
+// ListHybridLinks returns the links of one AD connection, oldest first, removed ones only if asked. More
+// than maxLinks is ErrTooMany, never a truncated list.
 func (Store) ListHybridLinks(ctx context.Context, tx store.Tx, adConn ID, includeRemoved bool) ([]HybridLink, error) {
 	if err := requireTenant(ctx, tx); err != nil {
 		return nil, err
@@ -121,7 +122,7 @@ func (Store) ListHybridLinks(ctx context.Context, tx store.Tx, adConn ID, includ
 	}
 	rows, err := tx.Query(ctx, `SELECT `+linkColumns+` FROM public.hybrid_links
 		WHERE ad_connection_id = $1::uuid AND ($2 OR state <> 'removed') ORDER BY created_at, id LIMIT $3`,
-		string(adConn), includeRemoved, maxLinks)
+		string(adConn), includeRemoved, maxLinks+1)
 	if err != nil {
 		return nil, fmt.Errorf("connection: list hybrid links: %w", err)
 	}
@@ -136,6 +137,9 @@ func (Store) ListHybridLinks(ctx context.Context, tx store.Tx, adConn ID, includ
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("connection: list hybrid links: %w", err)
+	}
+	if len(out) > maxLinks {
+		return nil, ErrTooMany
 	}
 	return out, nil
 }
