@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"net/http"
 	"sync"
 	"time"
 
@@ -54,12 +53,7 @@ func (k *keySet) lookup(ctx context.Context, hc HTTPClient, now time.Time, kid s
 }
 
 func (k *keySet) refresh(ctx context.Context, hc HTTPClient) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, k.uri, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Accept", "application/json")
-	body, err := fetch(hc, req, maxJWKSBytes)
+	body, err := fetch(ctx, hc, Request{Method: "GET", URL: k.uri, Header: map[string]string{"Accept": "application/json"}}, maxJWKSBytes)
 	if err != nil {
 		return err
 	}

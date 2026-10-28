@@ -8,9 +8,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json/v2"
-	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/go-jose/go-jose/v4"
@@ -43,16 +41,14 @@ func (v *Verifier) exchange(ctx context.Context, c *sso.OIDCConfig, code, codeVe
 			basic = base64.StdEncoding.EncodeToString([]byte(url.QueryEscape(c.ClientID) + ":" + url.QueryEscape(string(s))))
 		})
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Discovery.TokenEndpoint, strings.NewReader(form.Encode()))
-	if err != nil {
-		return "", sso.Refuse(ReasonToken)
+	req := Request{
+		Method: "POST", URL: c.Discovery.TokenEndpoint, Body: []byte(form.Encode()),
+		Header: map[string]string{"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"},
 	}
 	if basic != "" {
-		req.Header.Set("Authorization", "Basic "+basic)
+		req.Header["Authorization"] = "Basic " + basic
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-	body, err := fetch(v.hc, req, maxTokenBytes)
+	body, err := fetch(ctx, v.hc, req, maxTokenBytes)
 	if err != nil {
 		return "", &sso.Refusal{Reason: ReasonToken, Cause: err}
 	}
