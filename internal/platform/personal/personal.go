@@ -322,7 +322,17 @@ func lockSubject(ctx context.Context, tx store.Tx, tid tenant.ID, subject string
 // in the transaction of the compliance Action that authorises it (step.Tx()). Holding a held subject
 // succeeds. It serialises with the retention purge: it waits for a running purge, and a purge that starts
 // while this transaction is uncommitted waits for it.
-func (*Store) SetHold(ctx context.Context, tx store.Tx, tid tenant.ID, subject string) error {
+func (*Store) SetHold(ctx context.Context, s step.Step, tid tenant.ID, subject string) error {
+	if err := s.Valid(); err != nil {
+		return err
+	}
+	return setHold(ctx, s.Tx(), tid, subject)
+}
+
+// setHold is SetHold's body, split out so tests can drive it without a runner-minted step. The database
+// also takes both locks on every INSERT into personal_hold (migration 0049), so a writer that bypasses
+// this function is serialised with the purge all the same.
+func setHold(ctx context.Context, tx store.Tx, tid tenant.ID, subject string) error {
 	if tid.IsZero() || !subjectRe.MatchString(subject) {
 		return ErrInvalid
 	}
@@ -339,7 +349,16 @@ func (*Store) SetHold(ctx context.Context, tx store.Tx, tid tenant.ID, subject s
 }
 
 // ReleaseHold lifts a legal hold; releasing a subject that is not held succeeds.
-func (*Store) ReleaseHold(ctx context.Context, tx store.Tx, tid tenant.ID, subject string) error {
+// It takes the step of the authorising compliance Action, like SetHold: lifting a hold is what lets the next
+// purge destroy evidence, so it never runs outside an authorised, audited Action.
+func (*Store) ReleaseHold(ctx context.Context, s step.Step, tid tenant.ID, subject string) error {
+	if err := s.Valid(); err != nil {
+		return err
+	}
+	return releaseHold(ctx, s.Tx(), tid, subject)
+}
+
+func releaseHold(ctx context.Context, tx store.Tx, tid tenant.ID, subject string) error {
 	if tid.IsZero() || !subjectRe.MatchString(subject) {
 		return ErrInvalid
 	}

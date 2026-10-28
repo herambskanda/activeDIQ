@@ -33,3 +33,21 @@ ALTER TABLE public.personal_subject FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.personal_subject DROP COLUMN hold;
 
 COMMENT ON TABLE public.personal_hold IS 'Legal holds on personal subjects (ADR-0005 rule 11), independent of the salt row. Tenant table, RLS; no UPDATE. Only internal/platform/personal references it in SQL.';
+
+-- Every INSERT into personal_hold takes the locks the retention purge serialises on, so the guarantee is the
+-- database's and holds for any writer (bulk hold, import, tool, migration), not only personal.SetHold.
+-- Keys match internal/platform/personal: tenant shared (holds do not block each other; the purge takes it
+-- exclusive) and the subject. Locks are re-entrant, so SetHold taking them first is harmless.
+CREATE FUNCTION public.personal_hold_insert_lock() RETURNS trigger
+  LANGUAGE plpgsql
+  SET search_path = pg_catalog
+AS $fn$
+BEGIN
+  PERFORM pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended('personal_hold:' || NEW.tenant_id::text, 0));
+  PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('personal_subject:' || NEW.tenant_id::text || ':' || NEW.subject_ref, 0));
+  RETURN NEW;
+END
+$fn$;
+
+CREATE TRIGGER personal_hold_insert_lock BEFORE INSERT ON public.personal_hold
+  FOR EACH ROW EXECUTE FUNCTION public.personal_hold_insert_lock();

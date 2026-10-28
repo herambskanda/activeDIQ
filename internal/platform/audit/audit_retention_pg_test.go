@@ -12,7 +12,6 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
-	"github.com/skenzeriq/activediq/internal/platform/personal"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
@@ -733,7 +732,7 @@ func TestLegalHoldSetDuringPurgeIsSeen(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := personal.New().SetHold(ctx, tx, r.id, pSubject); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO public.personal_hold (tenant_id, subject_ref) VALUES ($1::uuid, $2) ON CONFLICT DO NOTHING`, r.id.String(), pSubject); err != nil {
 			t.Fatal(err)
 		}
 		type out struct {
@@ -811,7 +810,7 @@ func TestLegalHoldOnActorAccountBlocksPurge(t *testing.T) {
 
 // A hold on a person with no personal_subject row, set concurrently (uncommitted) with a running purge, is
 // waited for and then seen: none of the person's events is deleted (T-0587).
-func TestLegalHoldWithoutSaltRowSerialisesWithPurge(t *testing.T) {
+func TestLegalHoldRawInsertSerialisesWithPurge(t *testing.T) {
 	each(t, func(t *testing.T, r *rig) {
 		ctx := context.Background()
 		cut, parts := rollover(t, r)
@@ -833,7 +832,7 @@ func TestLegalHoldWithoutSaltRowSerialisesWithPurge(t *testing.T) {
 			t.Fatalf("setup: subject has %d values, %d salts; want none", v, s)
 		}
 
-		c, err := r.d.Admin(ctx)
+		c, err := r.d.App(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -842,7 +841,11 @@ func TestLegalHoldWithoutSaltRowSerialisesWithPurge(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := personal.New().SetHold(ctx, tx, r.id, pSubject); err != nil {
+		if _, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, r.id.String()); err != nil {
+			t.Fatal(err)
+		}
+		// A raw INSERT as the runtime role, not personal.SetHold: the database trigger must serialise it.
+		if _, err := tx.Exec(ctx, `INSERT INTO public.personal_hold (tenant_id, subject_ref) VALUES ($1::uuid, $2) ON CONFLICT DO NOTHING`, r.id.String(), pSubject); err != nil {
 			t.Fatal(err)
 		}
 		type out struct {

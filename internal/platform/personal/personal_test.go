@@ -164,6 +164,12 @@ func TestPutRefusesBadInput(t *testing.T) {
 	if _, err := p.Erase(context.Background(), zero, id, subj); !errors.Is(err, step.ErrZeroStep) {
 		t.Errorf("zero step erase = %v", err)
 	}
+	if err := p.SetHold(context.Background(), zero, id, subj); !errors.Is(err, step.ErrZeroStep) {
+		t.Errorf("zero step set hold = %v", err)
+	}
+	if err := p.ReleaseHold(context.Background(), zero, id, subj); !errors.Is(err, step.ErrZeroStep) {
+		t.Errorf("zero step release hold = %v", err)
+	}
 }
 
 func TestCommitmentBindsAllFields(t *testing.T) {
