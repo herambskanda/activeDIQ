@@ -5,6 +5,7 @@ package agent
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -15,6 +16,18 @@ import (
 // It reads the DACL through the typed security APIs; no SDDL string is built or parsed.
 // https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-getnamedsecurityinfow
 func CheckDataDir(dir string) error {
+	allowed, err := allowedSIDs()
+	if err != nil {
+		return err
+	}
+	if err := checkOne(dir, allowed); err != nil {
+		return err
+	}
+	// The parent (the agent root) must pass too, or its owner could swap the tree after the check.
+	return checkOne(filepath.Dir(filepath.Clean(dir)), allowed)
+}
+
+func checkOne(dir string, allowed []*windows.SID) error {
 	p, err := windows.UTF16PtrFromString(dir)
 	if err != nil {
 		return err
@@ -26,39 +39,48 @@ func CheckDataDir(dir string) error {
 	if attrs&windows.FILE_ATTRIBUTE_DIRECTORY == 0 || attrs&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
 		return fmt.Errorf("%s is not a plain directory", dir)
 	}
-	sd, err := windows.GetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	sd, err := windows.GetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.OWNER_SECURITY_INFORMATION)
 	if err != nil {
 		return err
+	}
+	// The owner holds implicit READ_CONTROL|WRITE_DAC, so it counts as a principal with access.
+	owner, _, err := sd.Owner()
+	if err != nil || owner == nil || !inSet(owner, allowed) {
+		return fmt.Errorf("%s has an owner outside SYSTEM, Administrators and the service identity", dir)
 	}
 	acl, _, err := sd.DACL()
 	if err != nil || acl == nil {
 		return errors.New("data directory has no DACL (everyone has access)")
-	}
-	allowed, err := allowedSIDs()
-	if err != nil {
-		return err
 	}
 	for i := uint32(0); i < uint32(acl.AceCount); i++ {
 		var ace *windows.ACCESS_ALLOWED_ACE
 		if err := windows.GetAce(acl, i, &ace); err != nil {
 			return err
 		}
-		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE {
+		// Only plain allow and deny entries are understood. Any other type (callback/conditional,
+		// object, compound) could grant access we cannot evaluate, so it is refused.
+		switch ace.Header.AceType {
+		case windows.ACCESS_DENIED_ACE_TYPE:
 			continue
+		case windows.ACCESS_ALLOWED_ACE_TYPE:
+		default:
+			return fmt.Errorf("%s has an ACE of unsupported type %d", dir, ace.Header.AceType)
 		}
 		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
-		ok := false
-		for _, a := range allowed {
-			if windows.EqualSid(sid, a) {
-				ok = true
-				break
-			}
-		}
-		if !ok {
-			return fmt.Errorf("data directory grants access to %s", sid.String())
+		if !inSet(sid, allowed) {
+			return fmt.Errorf("%s grants access to %s", dir, sid.String())
 		}
 	}
 	return nil
+}
+
+func inSet(sid *windows.SID, set []*windows.SID) bool {
+	for _, a := range set {
+		if windows.EqualSid(sid, a) {
+			return true
+		}
+	}
+	return false
 }
 
 func allowedSIDs() ([]*windows.SID, error) {

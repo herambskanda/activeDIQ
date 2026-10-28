@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/svc/eventlog"
 )
 
 // The virtual account of ADR-0006 decision 1. Compiled in; never taken from input.
@@ -44,6 +46,9 @@ func run(args []string) int {
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "agentsetup:", err)
+		if args[0] == "revoke-channel" {
+			warnRevokeFailed(err)
+		}
 		return 1
 	}
 	return 0
@@ -165,9 +170,20 @@ func editSDDL(current string, sid *windows.SID, grant bool) (string, error) {
 
 // ---- Data directory ----
 
+// prepareDataDir builds the agent's data tree below %ProgramData% as SYSTEM. Any local principal can
+// create folders under ProgramData and owns what it creates, so nothing here trusts a path that
+// already exists: each component is created with the protected DACL and Administrators as owner in
+// one call; an existing component is opened without following a reparse point, must be owned by
+// SYSTEM or Administrators, and (the leaf only) has its DACL set through the open handle, never by
+// name. A planted junction or a user-owned parent is refused.
 func prepareDataDir(dir string) error {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	pd, err := windows.KnownFolderPath(windows.FOLDERID_ProgramData, 0)
+	if err != nil {
 		return err
+	}
+	rel, err := filepath.Rel(filepath.Clean(pd), filepath.Clean(dir))
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return fmt.Errorf("data directory must be below %s", pd)
 	}
 	sid, err := serviceSID()
 	if err != nil {
@@ -193,8 +209,78 @@ func prepareDataDir(dir string) error {
 	if err != nil {
 		return err
 	}
-	// PROTECTED: no inherited entries from the parent. Owner is Administrators.
-	return windows.SetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT,
+	sd, err := windows.NewSecurityDescriptor()
+	if err != nil {
+		return err
+	}
+	if err := sd.SetOwner(admins, false); err != nil {
+		return err
+	}
+	if err := sd.SetDACL(acl, true, false); err != nil {
+		return err
+	}
+	if err := sd.SetControl(windows.SE_DACL_PROTECTED, windows.SE_DACL_PROTECTED); err != nil {
+		return err
+	}
+	sa := &windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})), SecurityDescriptor: sd}
+	trusted := []*windows.SID{system, admins}
+
+	parts := strings.Split(rel, string(filepath.Separator))
+	cur := filepath.Clean(pd)
+	for i, part := range parts {
+		cur = filepath.Join(cur, part)
+		leaf := i == len(parts)-1
+		if err := ensureDir(cur, sa, trusted, leaf, acl, admins); err != nil {
+			return fmt.Errorf("%s: %w", cur, err)
+		}
+	}
+	return nil
+}
+
+// ensureDir creates path with sa, or validates and (for the leaf) re-secures an existing one.
+func ensureDir(path string, sa *windows.SecurityAttributes, trusted []*windows.SID, leaf bool, acl *windows.ACL, admins *windows.SID) error {
+	p, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return err
+	}
+	err = windows.CreateDirectory(p, sa)
+	if err != nil && !errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
+		return err
+	}
+	// Open what is there (including what we just made) without following a reparse point.
+	// https://learn.microsoft.com/en-us/windows/win32/fileio/reparse-points-and-file-operations
+	h, err := windows.CreateFile(p, windows.READ_CONTROL|windows.WRITE_DAC|windows.WRITE_OWNER, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(h)
+	var fi windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(h, &fi); err != nil {
+		return err
+	}
+	if fi.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY == 0 || fi.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		return errors.New("is a reparse point or not a directory; refusing")
+	}
+	osd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
+	if err != nil {
+		return err
+	}
+	owner, _, err := osd.Owner()
+	if err != nil || owner == nil {
+		return errors.New("cannot read owner; refusing")
+	}
+	ok := false
+	for _, t := range trusted {
+		ok = ok || windows.EqualSid(owner, t)
+	}
+	if !ok {
+		return fmt.Errorf("owned by %s, not SYSTEM or Administrators; refusing", owner.String())
+	}
+	if !leaf {
+		return nil
+	}
+	return windows.SetSecurityInfo(h, windows.SE_FILE_OBJECT,
 		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION|windows.OWNER_SECURITY_INFORMATION,
 		admins, nil, acl, nil)
 }
@@ -223,4 +309,16 @@ func writeConfig() error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(filepath.Dir(exe), "agent.json"), b, 0o644)
+}
+
+// warnRevokeFailed records in the Application log that the Security-log read ACE for the service
+// SID was not removed at uninstall (the custom action is Return=ignore so uninstall still
+// completes). Best effort: a failure to log is itself ignored.
+func warnRevokeFailed(cause error) {
+	l, err := eventlog.Open("activeDIQAgent")
+	if err != nil {
+		return
+	}
+	defer l.Close()
+	_ = l.Warning(4101, "uninstall could not remove the Security event log read permission for NT SERVICE\\activeDIQAgent; remove it with wevtutil sl Security or by repeating the uninstall. Cause: "+cause.Error())
 }
