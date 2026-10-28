@@ -17,8 +17,7 @@ func twoNodeMemory() config.Config {
 // T-0274 acceptance 3: with more than one node and the in-memory store, the server refuses to start,
 // before it opens the database (the DSN here is unusable, so reaching it would give another error).
 func TestRunRefusesMemoryStoreOnMultipleNodes(t *testing.T) {
-	useKEKEnv(t)
-	err := Run(context.Background(), twoNodeMemory())
+	err := Run(context.Background(), twoNodeMemory(), useKEKEnv(t))
 	if err == nil || !strings.Contains(err.Error(), config.EnvPrincipalStore) {
 		t.Fatalf("Run = %v, want the principal-store refusal", err)
 	}

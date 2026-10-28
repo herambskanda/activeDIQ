@@ -27,7 +27,7 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := server.Run(ctx, cfg); err != nil {
+	if err := server.Run(ctx, cfg, os.Getenv); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

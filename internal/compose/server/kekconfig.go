@@ -2,7 +2,6 @@ package server
 
 import (
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
 )
@@ -163,6 +162,3 @@ func resolveLoose(p string) (string, error) {
 }
 
 var errNotExist = errors.New("does not exist")
-
-// kekGetenv is how Run reads the KEK settings; tests replace it.
-var kekGetenv = os.Getenv

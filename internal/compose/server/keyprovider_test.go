@@ -215,7 +215,7 @@ func TestPlatformKeyProviderUnlock(t *testing.T) {
 		KeyID string `json:"key_id"`
 	}
 	raw, _ := os.ReadFile(kc.KeystorePath())
-	if err := jsonUnmarshal(raw, &f); err != nil || p.Ref().KeyID != f.KeyID {
+	if err := json.Unmarshal(raw, &f); err != nil || p.Ref().KeyID != f.KeyID {
 		t.Fatalf("ref %v, key_id %q (%v)", p.Ref(), f.KeyID, err)
 	}
 
@@ -285,25 +285,18 @@ func TestAPIIdentitySealedByKeystore(t *testing.T) {
 	}
 }
 
-// Run reads the settings itself and stops before serving when they are missing.
+// Run stops before serving when the KEK settings are missing.
 func TestRunFailsWithoutKEKProvider(t *testing.T) {
-	old := kekGetenv
-	kekGetenv = func(string) string { return "" }
-	defer func() { kekGetenv = old }()
-	err := Run(t.Context(), config.Config{DatabaseDSN: "postgres://unused", APIAddr: "127.0.0.1:0"})
+	err := Run(t.Context(), config.Config{DatabaseDSN: "postgres://unused", APIAddr: "127.0.0.1:0"}, func(string) string { return "" })
 	if kekCode(err) != KEKProviderUnset {
 		t.Fatalf("Run = %v, want KEKProviderUnset", err)
 	}
 }
 
-func jsonUnmarshal(b []byte, v any) error { return json.Unmarshal(b, v) }
-
-// useKEKEnv points Run's KEK settings at a freshly initialised keystore for the test.
-func useKEKEnv(t *testing.T) {
+// useKEKEnv initialises a keystore and returns the getenv that selects it.
+func useKEKEnv(t *testing.T) func(string) string {
 	t.Helper()
 	_, get := kekEnv(t)
 	initKEK(t, get)
-	old := kekGetenv
-	kekGetenv = get
-	t.Cleanup(func() { kekGetenv = old })
+	return get
 }

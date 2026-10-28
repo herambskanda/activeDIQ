@@ -34,15 +34,16 @@ import (
 var ErrNoDatabase = errors.New("server: no database configured (" + config.EnvDatabaseDSN + ")")
 
 // Run runs the server role until ctx is done: it boots the modules, opens the store and runs the job
-// worker. When ctx ends the worker stops claiming and drains; Run returns jobs.ErrDrainTimeout (wrapped)
+// worker. getenv (os.Getenv in the binary) is how the KEK settings are read: they are named and validated only
+// in this package (LoadKEKConfig). When ctx ends the worker stops claiming and drains; Run returns jobs.ErrDrainTimeout (wrapped)
 // if running bodies ignored the forced cancellation, which the binary turns into a non-zero exit.
-func Run(ctx context.Context, cfg config.Config) error {
+func Run(ctx context.Context, cfg config.Config, getenv func(string) string) error {
 	if cfg.DatabaseDSN == "" {
 		return ErrNoDatabase
 	}
 	// The identity is settled before anything is opened too: a non-loopback bind without a TLS
 	// directory, or an unwritable one, fails startup here.
-	kc, err := LoadKEKConfig(kekGetenv)
+	kc, err := LoadKEKConfig(getenv)
 	if err != nil {
 		return fmt.Errorf("server: %w", err)
 	}
