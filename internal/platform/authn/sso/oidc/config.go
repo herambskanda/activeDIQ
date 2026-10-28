@@ -7,7 +7,6 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"io"
-	"net/http"
 	"net/url"
 	"slices"
 	"strings"
@@ -15,10 +14,25 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/authn/sso"
 )
 
-// HTTPClient is the outbound client. Production passes an *egress.Client (TM-TB9-T1); this package builds no
-// transport of its own.
+// Request is one outbound call. It carries no net/http type: this package is under authn, which serves
+// API, so net/http stays in apihost and generated code (ADR-0004 A6).
+type Request struct {
+	Method string
+	URL    string
+	Header map[string]string
+	Body   []byte
+}
+
+// Response is the reply to a Request. Body is closed by the caller.
+type Response struct {
+	Status int
+	Body   io.ReadCloser
+}
+
+// HTTPClient is the outbound client. Production passes oidchttp.New over an *egress.Client (TM-TB9-T1);
+// this package builds no transport of its own.
 type HTTPClient interface {
-	Do(*http.Request) (*http.Response, error)
+	Do(context.Context, Request) (Response, error)
 }
 
 const (
@@ -61,12 +75,8 @@ func Discover(ctx context.Context, hc HTTPClient, issuer string) (sso.Discovery,
 	if err := httpsURL(issuer); err != nil {
 		return sso.Discovery{}, sso.Refuse(ReasonConfig)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(issuer, "/")+"/.well-known/openid-configuration", nil)
-	if err != nil {
-		return sso.Discovery{}, sso.Refuse(ReasonConfig)
-	}
-	req.Header.Set("Accept", "application/json")
-	body, err := fetch(hc, req, maxDiscoveryBytes)
+	req := Request{Method: "GET", URL: strings.TrimRight(issuer, "/") + "/.well-known/openid-configuration", Header: map[string]string{"Accept": "application/json"}}
+	body, err := fetch(ctx, hc, req, maxDiscoveryBytes)
 	if err != nil {
 		return sso.Discovery{}, &sso.Refusal{Reason: ReasonConfig, Cause: err}
 	}
@@ -88,14 +98,14 @@ func Discover(ctx context.Context, hc HTTPClient, issuer string) (sso.Discovery,
 }
 
 // fetch performs req and returns the body, refusing a non-200 status or a body over limit.
-func fetch(hc HTTPClient, req *http.Request, limit int64) ([]byte, error) {
-	resp, err := hc.Do(req)
+func fetch(ctx context.Context, hc HTTPClient, req Request, limit int64) ([]byte, error) {
+	resp, err := hc.Do(ctx, req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("status %d", resp.StatusCode)
+	if resp.Status != 200 {
+		return nil, fmt.Errorf("status %d", resp.Status)
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
