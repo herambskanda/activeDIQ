@@ -4,7 +4,6 @@ package server
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"strings"
@@ -12,12 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-ldap/ldap/v3"
-
 	"github.com/skenzeriq/activediq/internal/connector/ad"
+	"github.com/skenzeriq/activediq/internal/connector/labfixture"
 	"github.com/skenzeriq/activediq/internal/connector/read"
 	"github.com/skenzeriq/activediq/internal/connector/write"
-	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
@@ -183,53 +180,16 @@ func newLabRig(t *testing.T, s *storetest.Server) *labRig {
 		t.Cleanup(cancel)
 
 		// --- the lab: an admin connection for fixtures, a service session for the connector.
-		admin, err := ldap.DialURL("ldaps://localhost:"+le.Port, ldap.DialWithTLSConfig(&tls.Config{RootCAs: le.Pool, ServerName: "localhost"}))
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { admin.Close() })
-		if err := admin.Bind("Administrator@lab.activediq.test", le.Values["LAB_ADMIN_PASSWORD"]); err != nil {
-			t.Fatal(err)
-		}
+		admin := labfixture.Dial(t, le.Port, le.Pool, "Administrator@lab.activediq.test", le.Values["LAB_ADMIN_PASSWORD"])
 		sess, err := ad.Open(ctx, ad.Config{Servers: []string{"localhost:" + le.Port}, RootCAs: le.Pool, PageSize: 500,
 			Credential: ad.Credential{BindName: "svc-activediq@lab.activediq.test", Password: secret.FromBytes([]byte(le.Values["LAB_SVC_PASSWORD"]))}})
 		if err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { sess.Close() })
-		guidOf := func(dn string) string {
-			r, err := admin.Search(ldap.NewSearchRequest(dn, ldap.ScopeBaseObject, ldap.NeverDerefAliases, 0, 0, false, "(objectClass=*)", []string{"objectGUID"}, nil))
-			if err != nil || len(r.Entries) != 1 {
-				t.Fatalf("guid of %s: %v", dn, err)
-			}
-			g, err := guid.FromBytes(r.Entries[0].GetRawAttributeValue("objectGUID"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			return uuidText(write.GUIDToWire(g).GetValue())
-		}
+		guidOf := func(dn string) string { return uuidText(write.GUIDToWire(admin.GUID(dn)).GetValue()) }
 		seq := time.Now().UnixNano() % 1_000_000
-		mkOU := func(name, parent string) string {
-			dn := "OU=" + name + "," + parent
-			add := ldap.NewAddRequest(dn, nil)
-			add.Attribute("objectClass", []string{"top", "organizationalUnit"})
-			if err := admin.Add(add); err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = admin.Del(ldap.NewDelRequest(dn, nil)) })
-			return dn
-		}
-		mkUser := func(cn, parent string) string {
-			dn := "CN=" + cn + "," + parent
-			add := ldap.NewAddRequest(dn, nil)
-			add.Attribute("objectClass", []string{"top", "person", "organizationalPerson", "user"})
-			add.Attribute("sAMAccountName", []string{cn})
-			if err := admin.Add(add); err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = admin.Del(ldap.NewDelRequest(dn, nil)) })
-			return dn
-		}
+		mkOU, mkUser := admin.MkOU, admin.MkUser
 		broadDN := mkOU(fmt.Sprintf("T0421b%d", seq), labDom)
 		kidDN := mkOU("Kid", broadDN)
 		plainDN := mkUser(fmt.Sprintf("t0421p%d", seq), kidDN)
