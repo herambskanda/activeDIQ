@@ -58,3 +58,6 @@ lab/windows/.win-lab-ca.pem
 
 # stray go build output of tools/fitness/profiles
 /profiles
+
+# stray `go build ./tools/fitness/audit` output
+/audit
