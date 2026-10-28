@@ -893,7 +893,10 @@ export interface operations {
             query?: never;
             header?: never;
             path?: never;
-            cookie?: never;
+            cookie: {
+                /** @description The pending-sign-in handle set by the first factor. It is read from this cookie only; a missing or repeated cookie answers the same 401 as any other sign-in failure. */
+                "__Host-adiq_pending": string;
+            };
         };
         requestBody?: never;
         responses: {
@@ -918,7 +921,10 @@ export interface operations {
             query?: never;
             header?: never;
             path?: never;
-            cookie?: never;
+            cookie: {
+                /** @description The pending-sign-in handle set by the first factor. It is read from this cookie only; a missing or repeated cookie answers the same 401 as any other sign-in failure. */
+                "__Host-adiq_pending": string;
+            };
         };
         requestBody: {
             content: {
