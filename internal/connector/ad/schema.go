@@ -59,7 +59,7 @@ func DefaultSchema() *ldapfilter.Schema {
 			ldapfilter.AttrInfo{Name: "gPOptions", OID: "1.2.840.113556.1.4.892", Syntax: ldapfilter.SynInt32},
 			ldapfilter.AttrInfo{Name: "wellKnownObjects", OID: "1.2.840.113556.1.4.618", Syntax: s},
 			ldapfilter.AttrInfo{Name: "msDS-Behavior-Version", OID: "1.2.840.113556.1.4.1459", Syntax: ldapfilter.SynInt32},
-			ldapfilter.AttrInfo{Name: "msDS-SecondaryKrbTgtNumber", OID: "1.2.840.113556.1.4.1926", Syntax: ldapfilter.SynInt32},
+			ldapfilter.AttrInfo{Name: "msDS-SecondaryKrbTgtNumber", OID: "1.2.840.113556.1.4.1929", Syntax: ldapfilter.SynInt32},
 			ldapfilter.AttrInfo{Name: "msDS-AllowedToDelegateTo", OID: "1.2.840.113556.1.4.1787", Syntax: s},
 			ldapfilter.AttrInfo{Name: "msDS-AllowedToActOnBehalfOfOtherIdentity", OID: "1.2.840.113556.1.4.2182", Syntax: ldapfilter.SynOctet},
 			// Path-valued user attributes: read as inert strings only (TM-F-NTLM, T-0256) — the connector
@@ -79,7 +79,7 @@ func DefaultSchema() *ldapfilter.Schema {
 			ldapfilter.AttrInfo{Name: "attributeSecurityGUID", OID: "1.2.840.113556.1.4.149", Syntax: ldapfilter.SynOctet},
 			ldapfilter.AttrInfo{Name: "rightsGuid", OID: "1.2.840.113556.1.4.340", Syntax: s},
 			ldapfilter.AttrInfo{Name: "searchFlags", OID: "1.2.840.113556.1.2.334", Syntax: ldapfilter.SynInt32},
-			ldapfilter.AttrInfo{Name: "nTSecurityDescriptor", OID: "1.2.840.113556.1.4.151", Syntax: ldapfilter.SynOctet, Constructed: c},
+			ldapfilter.AttrInfo{Name: "nTSecurityDescriptor", OID: "1.2.840.113556.1.2.281", Syntax: ldapfilter.SynOctet, Constructed: c},
 			ldapfilter.AttrInfo{Name: "tokenGroups", OID: "1.2.840.113556.1.4.1301", Syntax: ldapfilter.SynSID, Constructed: c},
 			ldapfilter.AttrInfo{Name: "allowedAttributesEffective", OID: "1.2.840.113556.1.4.914", Syntax: s, Constructed: c},
 			ldapfilter.AttrInfo{Name: "allowedChildClassesEffective", OID: "1.2.840.113556.1.4.912", Syntax: s, Constructed: c},

@@ -243,8 +243,10 @@ func ldapCode(err error) string {
 // AttrSyntax returns the value syntax the session's schema allowlist records for an attribute.
 func (s *Session) AttrSyntax(name string) (ldapfilter.Syntax, bool) { return s.schema.Syntax(name) }
 
-// CanonicalAttr resolves a requested attribute name (descr in any case, or numeric OID) to the
-// schema's ldapDisplayName, so callers apply holds and filters to one spelling.
+// CanonicalAttr resolves a requested attribute name (descr in any case, or numeric OID). A numeric
+// OID comes back as the schema's ldapDisplayName; a descr comes back in the case it was typed in,
+// NOT normalised. Callers must therefore compare the result case-insensitively (the SD hold uses
+// EqualFold and the schema builder lowercases names).
 func (s *Session) CanonicalAttr(name string) (string, error) {
 	a, err := ldapfilter.ParseAttrName(name, s.schema)
 	if err != nil {

@@ -86,13 +86,15 @@ func (s *src) Syntax(n string) (ldapfilter.Syntax, bool) {
 	return ldapfilter.SynString, true
 }
 func (s *src) CanonicalAttr(n string) (string, error) {
-	switch n {
-	case "1.2.840.113556.1.4.151":
-		return "nTSecurityDescriptor", nil
-	case "2.5.4.3":
-		return "cn", nil
+	// The real built-in schema, so OID spellings are checked against the shipped table.
+	a, err := ldapfilter.ParseAttrName(n, ad.DefaultSchema())
+	if err != nil {
+		if n != "" && (n[0] < '0' || n[0] > '9') { // descr outside the built-in table: pass through
+			return n, nil
+		}
+		return "", err
 	}
-	return n, nil
+	return a.String(), nil
 }
 func (s *src) Classify(context.Context, guid.GUID) (write.Verdict, error) {
 	s.calls = append(s.calls, "classify")
@@ -360,9 +362,19 @@ func TestSecurityDescriptorIsRefusedUntilItsTicket(t *testing.T) {
 func TestSecurityDescriptorByOIDIsRefused(t *testing.T) {
 	s := &src{dsa: dsaA, entry: entry(map[string][][]byte{"cn": {[]byte("x")}})}
 	r := req(dsaA, false)
-	r.Attributes = []string{"cn", "1.2.840.113556.1.4.151"}
+	r.Attributes = []string{"cn", "1.2.840.113556.1.2.281"}
 	if _, err := collect(t, start(t, s), r); code(err) != connectorv1.ErrorCode_ERROR_CODE_ATTRIBUTE_NOT_ALLOWED || len(s.calls) != 0 {
 		t.Fatalf("code %v", code(err))
+	}
+}
+
+// 1.2.840.113556.1.4.151 is oEMInformation, not the SD: it must not trip the SD hold.
+func TestOEMInformationOIDIsNotTheSecurityDescriptor(t *testing.T) {
+	s := &src{dsa: dsaA, entry: entry(map[string][][]byte{"cn": {[]byte("x")}})}
+	r := req(dsaA, false)
+	r.Attributes = []string{"1.2.840.113556.1.4.151"}
+	if _, err := collect(t, start(t, s), r); code(err) == connectorv1.ErrorCode_ERROR_CODE_ATTRIBUTE_NOT_ALLOWED {
+		t.Fatalf("oEMInformation OID wrongly refused as the SD")
 	}
 }
 
