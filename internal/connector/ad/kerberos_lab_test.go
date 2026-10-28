@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-krb5/krb5/config"
 	krb5gssapi "github.com/go-krb5/krb5/gssapi"
 	"github.com/go-krb5/krb5/iana/etypeID"
 	"github.com/go-krb5/krb5/keytab"
@@ -132,10 +131,7 @@ func bindWith(t *testing.T, mode string) error {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	conf, err := config.NewFromString(k.krb5Conf())
-	if err != nil {
-		t.Fatal(err)
-	}
+	conf := k.krb5Config()
 	kt := keytab.New()
 	k.Keytab.Expose(func(b []byte) { err = kt.Unmarshal(b) })
 	if err != nil {
