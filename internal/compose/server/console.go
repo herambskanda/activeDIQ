@@ -9,13 +9,13 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authn"
+	"github.com/skenzeriq/activediq/internal/platform/authn/tenantref"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/httpx/authnhttp"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 	"github.com/skenzeriq/activediq/internal/platform/rbac"
 	"github.com/skenzeriq/activediq/internal/platform/store"
-	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
 // consoleStack is the console authentication stack the API ports and the attestation share: one session
@@ -58,7 +58,7 @@ func (a consoleAuthz) Allow(ctx context.Context, p apihost.Principal, permission
 	if a.az == nil || scope != "tenant" || p.Kind != apihost.KindSession || p.ID == "" {
 		return false, nil
 	}
-	t, err := tenant.Parse(p.Tenant)
+	t, err := tenantref.TenantFromText(p.Tenant)
 	if err != nil {
 		return false, nil
 	}

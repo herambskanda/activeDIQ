@@ -9,6 +9,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
+	"github.com/skenzeriq/activediq/internal/platform/authn/tenantref"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
@@ -43,8 +44,9 @@ var _ client.Tier0Builder = (*tenantTier0)(nil)
 // newTenantTier0 validates the sources and returns the builder. A missing required source fails here,
 // at startup, rather than on the first write.
 func newTenantTier0(s tier0Sources) (*tenantTier0, error) {
-	// A probe with a throwaway tenant applies the client's own source check, so the two cannot drift.
-	if _, err := client.NewTier0Builder(s.sources(tenant.New())); err != nil {
+	// The client's own source check, without a tenant, so the two cannot drift.
+	var none tenant.ID // the check does not look at the tenant
+	if err := client.CheckTier0Sources(s.sources(none)); err != nil {
 		return nil, fmt.Errorf("server: tier0 builder: %w", err)
 	}
 	return &tenantTier0{src: s, per: map[tenant.ID]client.Tier0Builder{}}, nil
@@ -63,8 +65,8 @@ func (b *tenantTier0) Build(ctx context.Context, st client.Stage, op client.Writ
 	if !ok {
 		return client.Tier0{}, ErrNoTier0Tenant
 	}
-	tid, err := tenant.Parse(txt)
-	if err != nil || tid.IsZero() {
+	tid, err := tenantref.TenantFromText(txt)
+	if err != nil {
 		return client.Tier0{}, ErrNoTier0Tenant
 	}
 	inner, err := b.forTenant(tid)

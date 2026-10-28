@@ -12,6 +12,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/modules/connections/api"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitypes"
+	"github.com/skenzeriq/activediq/internal/platform/authn/tenantref"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
@@ -94,7 +95,8 @@ func (g *WindowGate) AllowTenant(t tenant.ID) bool {
 	defer g.mu.Unlock()
 	g.roll()
 	if _, seen := g.tenants[t]; !seen && len(g.tenants) >= g.max() {
-		t = tenant.ID{}
+		var overflow tenant.ID // the shared bucket for tenants beyond the cap
+		t = overflow
 	}
 	g.tenants[t]++
 	n := g.PerTenant
@@ -135,14 +137,14 @@ func (h *AttestHandlers) log() *slog.Logger {
 
 // sessionRequest derives who asks from the authenticated principal. Only a console session is a human
 // with a step-up; a token is refused here and never reaches the Attester.
-func sessionRequest(ctx context.Context) (tenant.ID, authority.Chain, string, error) {
+func sessionRequest(ctx context.Context) (t tenant.ID, _ authority.Chain, _ string, _ error) {
 	p, ok := apihost.PrincipalFrom(ctx)
 	if !ok || p.Kind != apihost.KindSession || p.SessionID == "" {
-		return tenant.ID{}, authority.Chain{}, "", apitypes.Forbidden("")
+		return t, authority.Chain{}, "", apitypes.Forbidden("")
 	}
-	t, err := tenant.Parse(p.Tenant)
-	if err != nil || t.IsZero() {
-		return tenant.ID{}, authority.Chain{}, "", apitypes.Forbidden("")
+	t, err := tenantref.TenantFromText(p.Tenant)
+	if err != nil {
+		return t, authority.Chain{}, "", apitypes.Forbidden("")
 	}
 	return t, authority.Chain{Requester: authority.Principal{ID: authority.PrincipalID(p.ID), Kind: authority.Human}}, p.SessionID, nil
 }

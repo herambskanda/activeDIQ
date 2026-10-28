@@ -16,6 +16,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
+	"github.com/skenzeriq/activediq/internal/platform/authn/tenantref"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/store"
@@ -269,14 +270,14 @@ const stateSep = "."
 // StateTenant reads the tenant a state was issued for. The callback uses it for one thing, to choose
 // whose attempt table to look the state up in; the lookup is by the hash of the whole state, so a
 // state that was never issued for that tenant finds nothing. It is not an identity.
-func StateTenant(state string) (tenant.ID, bool) {
-	prefix, _, ok := strings.Cut(state, stateSep)
-	if !ok {
-		return tenant.ID{}, false
+func StateTenant(state string) (t tenant.ID, ok bool) {
+	prefix, _, found := strings.Cut(state, stateSep)
+	if !found {
+		return t, false
 	}
-	t, err := tenant.Parse(prefix)
-	if err != nil || t.IsZero() {
-		return tenant.ID{}, false
+	t, err := tenantref.TenantFromText(prefix)
+	if err != nil {
+		return t, false // TenantFromText returns the zero ID with an error
 	}
 	return t, true
 }
