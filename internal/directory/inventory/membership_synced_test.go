@@ -2,6 +2,7 @@ package inventory_test
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -244,5 +245,105 @@ func TestMembership_dynamic(t *testing.T) { // cases 8 and 9
 		if g := s.groups("attested"); g.Complete || slices.Contains(guids(g), sEG) {
 			t.Fatalf("groupTypes absent: %v complete=%v", guids(g), g.Complete)
 		}
+	})
+}
+
+// pairWith seeds a matched sid correlation of sEG with sADG whose recorded ad_sid is corr, with the
+// Entra-side tier0 fact set as given, and a completed evaluation at asOf.
+func (s synced) pairWith(corr []byte, entraTier0 bool, asOf time.Time) {
+	s.t.Helper()
+	if entraTier0 {
+		s.seed(s.t, s.a, inventory.Ref{Connection: s.adA, Object: sADG}, inventory.Ref{Connection: s.enA, Object: sEG},
+			"matched", "", "match, ad_sid, entra_tier0, entra_tier0_bases, facts_as_of", "sid", corr, true, []string{"E5"}, asOf)
+	} else {
+		s.seed(s.t, s.a, inventory.Ref{Connection: s.adA, Object: sADG}, inventory.Ref{Connection: s.enA, Object: sEG},
+			"matched", "", "match, ad_sid, facts_as_of", "sid", corr, asOf)
+	}
+	if err := s.exec(s.a, `INSERT INTO public.correlation_evaluations (tenant_id, connection_id, evaluated_at) VALUES ($1::uuid, $2::uuid, $3)`,
+		s.a.String(), string(s.enA), asOf); err != nil {
+		s.t.Fatal(err)
+	}
+}
+
+// Guard tests (security review of T-0549): each pins one check of judgeSynced / judgeEntra.
+
+func TestMembership_sync_flag_column_precedence(t *testing.T) {
+	now := time.Now()
+	yes, no := true, false
+	for _, attr := range []any{nil, false} { // the attribute says cloud, the typed column says synced
+		t.Run(fmt.Sprintf("attr %v, column true", attr), func(t *testing.T) {
+			run(t, func(s synced) {
+				g := syncedGroup(sEG, sUser)
+				g.Attributes[inventory.AttrOnPremisesSyncEnabled] = attr
+				g.OnPremisesSyncEnabled = &yes
+				s.populate_(s.enA, t1, enUser(sUser, nil), g)
+				s.populate_(s.adA, t1, adSrc(sADG, true, now)) // weak AD source
+				s.pair("matched", "", false, now)
+				s.want("column true, attr cloud", s.groups("attested"), true)
+			})
+		})
+	}
+	t.Run("attr true, column false", func(t *testing.T) { // still synced: judged from its (good) AD source
+		run(t, func(s synced) {
+			g := syncedGroup(sEG, sUser)
+			g.OnPremisesSyncEnabled = &no
+			s.populate_(s.enA, t1, enUser(sUser, nil), g)
+			s.populate_(s.adA, t1, adSrc(sADG, true, now))
+			s.pair("matched", "", false, now)
+			s.want("weak source", s.groups("attested"), true)
+			s.populate_(s.adA, t2, adSrc(sADG, false, now))
+			s.want("good source", s.groups("attested"), true, sEG)
+		})
+	})
+}
+
+func TestMembership_sync_flag_not_boolean(t *testing.T) {
+	run(t, func(s synced) {
+		g := enGroup(sEG, true, "", sUser)
+		g.Attributes[inventory.AttrOnPremisesSyncEnabled] = "true"
+		s.populate_(s.enA, t1, enUser(sUser, nil), g)
+		s.want("string flag", s.groups("attested"), false)
+	})
+}
+
+func TestMembership_forged_peer_stale_ad_sid(t *testing.T) {
+	run(t, func(s synced) {
+		now := time.Now()
+		other := adSrc(sADG, false, now)
+		other.SID = []byte{1, 1, 0, 0, 0, 0, 0, 5, 21, 0, 0, 0, 5, 5, 0, 0} // live objectSid differs from the correlation's
+		s.populate_(s.enA, t1, enUser(sUser, nil), syncedGroup(sEG, sUser))
+		s.populate_(s.adA, t1, other)
+		s.pairWith(sidG, false, now) // correlation ad_sid == Entra on_prem_sid
+		s.want("stale correlation", s.groups("attested"), false)
+	})
+}
+
+func TestMembership_synced_entra_tier0(t *testing.T) {
+	run(t, func(s synced) {
+		now := time.Now()
+		s.populate_(s.enA, t1, enUser(sUser, nil), syncedGroup(sEG, sUser))
+		s.populate_(s.adA, t1, adSrc(sADG, false, now)) // good AD fact, ad_tier0 false
+		s.pairWith(sidG, true, now)
+		s.want("entra tier0", s.groups("attested"), true)
+	})
+}
+
+func TestMembership_synced_future_dated(t *testing.T) {
+	now := time.Now()
+	t.Run("computed_at", func(t *testing.T) {
+		run(t, func(s synced) {
+			s.populate_(s.enA, t1, enUser(sUser, nil), syncedGroup(sEG, sUser))
+			s.populate_(s.adA, t1, adSrc(sADG, false, now.Add(time.Hour)))
+			s.pair("matched", "", false, now)
+			s.want("computed_at in the future", s.groups("attested"), false)
+		})
+	})
+	t.Run("evaluation and facts as-of", func(t *testing.T) {
+		run(t, func(s synced) {
+			s.populate_(s.enA, t1, enUser(sUser, nil), syncedGroup(sEG, sUser))
+			s.populate_(s.adA, t1, adSrc(sADG, false, now))
+			s.pair("matched", "", false, now.Add(time.Hour))
+			s.want("as-of in the future", s.groups("attested"), false)
+		})
 	})
 }
