@@ -56,7 +56,21 @@ const (
 	// this origin plus the callback path, and must be registered on the app registration. Required with
 	// EnvAttestClientID.
 	EnvPublicURL = "ACTIVEDIQ_PUBLIC_URL"
+	// EnvKEKFile selects the KEK profile (the interim linux-oci/dev key-provider profile, until the
+	// passphrase keystore or the OS/KMS adapters of ADR-0002 land; threat model TM-TB5-T7): the path of a file holding the platform key-encryption key as 64
+	// hex characters (0600 on Unix). With it the API TLS private key is sealed at rest under that KEK; the
+	// server refuses to start if the file is missing or unusable, or if it cannot unseal what is on disk.
+	// Requires EnvAPITLSDir, and the file must live outside it (a copied directory must not carry its own
+	// key). Unset keeps the legacy plaintext 0600 key file, and a directory already sealed
+	// then fails startup instead of downgrading.
+	EnvKEKFile = "ACTIVEDIQ_KEK_FILE"
+	// EnvKEKID names the KEK in the sealed envelope (default DefaultKEKID); rotate by changing it together
+	// with the file.
+	EnvKEKID = "ACTIVEDIQ_KEK_ID"
 )
+
+// DefaultKEKID is the KEK reference name when EnvKEKID is unset.
+const DefaultKEKID = "platform"
 
 // Values of EnvPrincipalStore.
 const (
@@ -99,6 +113,9 @@ type Config struct {
 	// AttestClientID and PublicURL configure the TM-D17 attestation; both empty means it is not offered.
 	AttestClientID string
 	PublicURL      string
+	// KEKFile is the KEK profile's key file (empty: no KEK profile); KEKID names the key.
+	KEKFile string
+	KEKID   string
 }
 
 // Load reads the configuration through getenv (os.Getenv in the binaries, a map in tests).
@@ -171,6 +188,16 @@ func Load(getenv func(string) string) (Config, error) {
 	if err := c.ValidateAttestation(); err != nil {
 		return Config{}, err
 	}
+	c.KEKFile, c.KEKID = getenv(EnvKEKFile), getenv(EnvKEKID)
+	if c.KEKID == "" {
+		c.KEKID = DefaultKEKID
+	}
+	if c.KEKFile != "" && c.APITLSDir == "" {
+		return Config{}, fmt.Errorf("%s: needs %s, there is no persisted API key to seal without it", EnvKEKFile, EnvAPITLSDir)
+	}
+	if err := c.validateKEKPlacement(); err != nil {
+		return Config{}, err
+	}
 	if 2*c.ShutdownGrace >= c.StopTimeout {
 		return Config{}, fmt.Errorf("%s: twice the shutdown grace (%s) must be less than the stop timeout (%s) or the service manager kills the process mid-drain",
 			EnvShutdownGrace, c.ShutdownGrace, c.StopTimeout)
@@ -224,6 +251,8 @@ func (c Config) LogValue() slog.Value {
 		slog.Duration("stop_timeout", r.StopTimeout),
 		slog.String("api_addr", r.APIAddr),
 		slog.String("api_tls_dir", r.APITLSDir),
+		slog.String("kek_file", r.KEKFile),
+		slog.String("kek_id", r.KEKID),
 		slog.Int64("api_body_budget", r.APIBodyBudget),
 		slog.Any("trusted_proxies", r.TrustedProxies),
 		slog.Int("nodes", r.Nodes),
