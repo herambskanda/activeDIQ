@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -146,5 +148,29 @@ func Test_control_plane_flag_catalogue_matches_never_crosses(t *testing.T) {
 	}
 	if flagged == 0 {
 		t.Error("no Action is flagged control_plane")
+	}
+}
+
+// T-0617: every registered Action decodes its input strictly. An input with an extra member is refused
+// with ErrInvalid before Plan's own logic runs, so a mistyped or drifted member can never be dropped
+// silently (an expiring grant becoming permanent).
+func Test_every_action_plan_refuses_unknown_input_member(t *testing.T) {
+	var all []operation.Action
+	for _, m := range generatedModules(platform.Deps{}, directory.Services{}) {
+		c, err := moduletest.Register(m.Module)
+		if err != nil {
+			t.Fatalf("register %s: %v", m.ID, err)
+		}
+		all = append(all, c.Actions()...)
+	}
+	if len(all) == 0 {
+		t.Fatal("no actions registered")
+	}
+	for _, a := range all {
+		id := a.Describe().ID
+		_, err := a.Plan(context.Background(), operation.PlanContext{}, operation.Input(`{"__unknown_member__":1}`))
+		if !errors.Is(err, operation.ErrInvalid) {
+			t.Errorf("%s: Plan with an unknown input member returned %v, want ErrInvalid", id, err)
+		}
 	}
 }
