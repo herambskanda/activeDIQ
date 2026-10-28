@@ -22,15 +22,15 @@ Decision: [ADR-0007](../decisions/0007-agent-policy-trust-and-key-rotation.md) ย
 ## Steps
 
 1. **Generate the new policy key first.** The sweep does not create keys. The new key must exist and be the one the server delivers on the agents' first authenticated call, otherwise they re-anchor on the compromised key. *Owed:* the policy signer module is not built yet (follow-up ticket), so this flow is not usable end to end until it lands; do not run the sweep before then.
-2. **Run the sweep** with reason `suspected_key_exposure` (or `backup_restored_to_new_host`) and a token lifetime (default 1 h, max 24 h). Complete step-up when asked. Entry point today: `fleetsql.Reenroller.ReenrolAddc`; the API/UI surface is a follow-up.
-3. **Read the result**: per agent, success with a one-time token, or a failure reason. The token is shown **once**; it is stored only as a hash. Hand each token to the DC's operator over a secure channel. Agents that failed are still enrolled; fix the cause and run the sweep again (it only touches agents still enrolled or active, so it is safe to repeat).
-4. **Re-enrol each DC**: on the DC, enrol the agent with its token. The agent gets a new certificate, resets its anchor and accepts the first keyset delivered, which is the new key's. Do this before the token expires; if it does, run the sweep again for the remaining agents (their old components are already revoked, so issue fresh tokens through the normal enrollment-token flow).
+2. **Run the sweep** with reason `suspected_key_exposure` (or `backup_restored_to_new_host`), a token lifetime (default 1 h, max 24 h) and the **cutoff** (`EnrolledBefore`): the instant the new key became the one the server delivers. Only agents created before the cutoff are revoked; agents that already re-anchored are newer and are never touched. A missing or future cutoff is refused. Always reuse the same cutoff when repeating. Complete step-up when asked. Entry point today: `fleetsql.Reenroller.ReenrolAddc`; the API/UI surface is a follow-up.
+3. **Read the result**: per agent, success with a one-time token, or a failure reason. The token is shown **once**; it is stored only as a hash. Hand each token to the DC's operator over a secure channel. Agents that failed are still enrolled; fix the cause and run the sweep again with the **same cutoff**: it handles only agents created before the cutoff and still enrolled, so successors that already redeemed are not revoked.
+4. **Re-enrol each DC**: on the DC, enrol the agent with its token. The agent gets a new certificate, resets its anchor and accepts the first keyset delivered, which is the new key's. Do this before the token expires; if it does, the sweep will not reissue it (a rerun skips pending successors). For that DC, issue a new `addc` component with the same name through the normal enrollment-token flow (`Enrollment.Issue`, step-up required) and enrol with that token; the stranded pending successor cannot authenticate and is harmless.
 5. **Verify**: every addc component of the tenant is `enrolled`/`active` with a new component ID, `GetStatus` shows the new `keyset_seq`, and no old component is usable.
 
 ## What the audit trail records
 
 - `fleet.component.revoked` per agent: the human who ran it, old component, serial of the revoked certificate, successor component ID, sweep ID, reason code.
-- `fleet.agents.reenrol_sweep` once: the same human, counts found / re-enrolling / failed, outcome.
+- `fleet.agents.reenrol_sweep` once: the same human, counts found / re-enrolling / failed, the cutoff, outcome.
 - The agent's own Windows Application-log entry and audit event for the new keyset (ADR-0007 ยง8).
 
 ## Rehearsal

@@ -35,6 +35,7 @@ const (
 var (
 	ErrReenrolForbidden = errors.New("fleetsql: the principal may not run the emergency re-enrolment")
 	ErrReenrolReason    = errors.New("fleetsql: the re-enrolment reason is not one of the allowed codes")
+	ErrReenrolCutoff    = errors.New("fleetsql: the re-enrolment cutoff is missing or in the future")
 )
 
 // Reenroller runs the emergency sweep. It needs both the revoke and the issue permission (least
@@ -50,8 +51,12 @@ type Reenroller struct {
 
 // ReenrolRequest is the sweep's input.
 type ReenrolRequest struct {
-	Reason string        // ReasonKeyExposure or ReasonBackupRestore
-	TTL    time.Duration // lifetime of each new token; 0 means DefaultTTL
+	Reason string // ReasonKeyExposure or ReasonBackupRestore
+	// EnrolledBefore is required: the moment the new policy key became the one the server delivers.
+	// Only agents created before it are swept, so agents that already re-anchored on the new key
+	// (and a concurrent or repeated sweep) are never revoked again. Zero or future values are refused.
+	EnrolledBefore time.Time
+	TTL            time.Duration // lifetime of each new token; 0 means DefaultTTL
 }
 
 // ReenrolItem is the per-agent outcome. Token is the only copy of the plaintext; it is empty when
@@ -93,7 +98,8 @@ func (r *Reenroller) now() time.Time {
 // ReenrolAddc revokes every enrolled or active addc component of the tenant and issues its
 // successor. Each agent is one transaction (revoke, successor, token, audit), so a crash or a
 // cancellation leaves every agent either untouched or fully swapped, and re-running the sweep
-// only handles those still enrolled: it is idempotent and resumable. Authorisation and step-up are
+// only handles agents created before the required cutoff and still enrolled: it is idempotent
+// and resumable, and never revokes a successor that has redeemed its token. Authorisation and step-up are
 // checked before anything is written. A failing agent does not stop the others; its error is in
 // the result. Cancelling ctx stops before the next agent and returns what was done.
 func (r *Reenroller) ReenrolAddc(ctx context.Context, tid tenant.ID, p apihost.Principal, req ReenrolRequest) (ReenrolResult, error) {
@@ -106,6 +112,10 @@ func (r *Reenroller) ReenrolAddc(ctx context.Context, tid tenant.ID, p apihost.P
 	ttl, err := NewComponent{Kind: KindADDC, Name: "x", TTL: req.TTL}.validate()
 	if err != nil {
 		return ReenrolResult{}, err
+	}
+	cutoff := req.EnrolledBefore.UTC()
+	if req.EnrolledBefore.IsZero() || cutoff.After(r.now()) {
+		return ReenrolResult{}, ErrReenrolCutoff
 	}
 	if tid.IsZero() || p.ID == "" || utf8.RuneCountInString(p.ID) > 200 {
 		return ReenrolResult{}, ErrReenrolForbidden
@@ -137,7 +147,8 @@ func (r *Reenroller) ReenrolAddc(ctx context.Context, tid tenant.ID, p apihost.P
 	var targets []target
 	err = r.DB.WithTenant(ctx, tid, func(ctx context.Context, tx store.Tx) error {
 		rows, err := tx.Query(ctx, `SELECT id::text, name FROM public.components
-			WHERE kind = $1 AND state IN ('enrolled', 'active') ORDER BY created_at, id`, string(KindADDC))
+			WHERE kind = $1 AND state IN ('enrolled', 'active') AND created_at < $2
+			ORDER BY created_at, id`, string(KindADDC), cutoff)
 		if err != nil {
 			return err
 		}
@@ -159,7 +170,7 @@ func (r *Reenroller) ReenrolAddc(ctx context.Context, tid tenant.ID, p apihost.P
 		if ctx.Err() != nil {
 			break
 		}
-		it := r.one(ctx, tid, p, req.Reason, res.SweepID, ttl, t.id, t.name)
+		it := r.one(ctx, tid, p, req.Reason, res.SweepID, ttl, cutoff, t.id, t.name)
 		res.Items = append(res.Items, it)
 	}
 
@@ -184,6 +195,7 @@ func (r *Reenroller) ReenrolAddc(ctx context.Context, tid tenant.ID, p apihost.P
 				{Key: "agents_failed", Value: fmt.Sprint(len(targets) - res.Succeeded())},
 				{Key: "agents_found", Value: fmt.Sprint(len(targets))},
 				{Key: "agents_reenrolling", Value: fmt.Sprint(res.Succeeded())},
+				{Key: "enrolled_before", Value: cutoff.Format(time.RFC3339Nano)},
 				{Key: "sweep_id", Value: res.SweepID},
 			},
 		})
@@ -194,7 +206,7 @@ func (r *Reenroller) ReenrolAddc(ctx context.Context, tid tenant.ID, p apihost.P
 	return res, nil
 }
 
-func (r *Reenroller) one(ctx context.Context, tid tenant.ID, p apihost.Principal, reason, sweepID string, ttl time.Duration, oldID, name string) ReenrolItem {
+func (r *Reenroller) one(ctx context.Context, tid tenant.ID, p apihost.Principal, reason, sweepID string, ttl time.Duration, cutoff time.Time, oldID, name string) ReenrolItem {
 	it := ReenrolItem{OldComponentID: oldID, Name: name}
 	tok, h, err := newToken(tid)
 	if err != nil {
@@ -204,8 +216,8 @@ func (r *Reenroller) one(ctx context.Context, tid tenant.ID, p apihost.Principal
 	err = r.DB.WithTenant(ctx, tid, func(ctx context.Context, tx store.Tx) error {
 		var serial string
 		err := tx.QueryRow(ctx, `UPDATE public.components SET state = 'revoked', updated_at = now()
-			WHERE id = $1::uuid AND kind = $2 AND state IN ('enrolled', 'active')
-			RETURNING COALESCE(cert_serial, '')`, oldID, string(KindADDC)).Scan(&serial)
+			WHERE id = $1::uuid AND kind = $2 AND state IN ('enrolled', 'active') AND created_at < $3
+			RETURNING COALESCE(cert_serial, '')`, oldID, string(KindADDC), cutoff).Scan(&serial)
 		if store.IsNoRows(err) {
 			return ErrNotRevocable // changed since the listing: another sweep or a manual revoke got it
 		}
