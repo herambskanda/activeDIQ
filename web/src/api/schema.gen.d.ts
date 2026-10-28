@@ -1269,6 +1269,7 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
+            503: components["responses"]["DirectoryUnavailable"];
         };
     };
     getLiveness: {

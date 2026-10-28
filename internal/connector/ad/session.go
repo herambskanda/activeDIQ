@@ -279,6 +279,10 @@ func ldapCode(err error) string {
 // AttrSyntax returns the value syntax the session's schema allowlist records for an attribute.
 func (s *Session) AttrSyntax(name string) (ldapfilter.Syntax, bool) { return s.schema.Syntax(name) }
 
+// FilterSchema is the session's filter and attribute allowlist, for validating a wire filter before
+// it is rendered for this DC.
+func (s *Session) FilterSchema() *ldapfilter.Schema { return s.schema }
+
 // CanonicalAttr resolves a requested attribute name (descr in any case, or numeric OID). A numeric
 // OID comes back as the schema's ldapDisplayName; a descr comes back in the case it was typed in,
 // NOT normalised. Callers must therefore compare the result case-insensitively (the SD hold uses

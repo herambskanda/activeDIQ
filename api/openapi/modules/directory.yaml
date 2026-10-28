@@ -52,6 +52,8 @@ paths:
           $ref: shared/problems.yaml#/components/responses/RateLimited
         "500":
           $ref: shared/problems.yaml#/components/responses/Internal
+        "503":
+          $ref: shared/problems.yaml#/components/responses/DirectoryUnavailable
 components:
   schemas:
     DirectoryUser:

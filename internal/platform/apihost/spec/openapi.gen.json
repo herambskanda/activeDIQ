@@ -2053,6 +2053,9 @@
           },
           "500": {
             "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/DirectoryUnavailable"
           }
         },
         "summary": "Search users",

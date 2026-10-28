@@ -109,3 +109,21 @@ func (a *ADSource) Classify(ctx context.Context, id guid.GUID) (write.Verdict, e
 	}
 	return a.prov.Classify(ctx, id, nil)
 }
+
+var _ SearchSource = (*ADSource)(nil)
+
+// FilterSchema implements SearchSource.
+func (a *ADSource) FilterSchema() *ldapfilter.Schema {
+	if !a.ok() {
+		return ldapfilter.NewSchema()
+	}
+	return a.sess.FilterSchema()
+}
+
+// ScopedSearch implements SearchSource over the one session, hence one DC.
+func (a *ADSource) ScopedSearch(ctx context.Context, req ad.ScopedRequest, fn func(*ad.Entry) error) (ad.ScopedResult, error) {
+	if !a.ok() {
+		return ad.ScopedResult{}, write.ErrNoBoundDC
+	}
+	return a.sess.ScopedSearch(ctx, req, fn)
+}
