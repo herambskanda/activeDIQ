@@ -6,7 +6,7 @@ status: proposed
 owner: solution-architect
 kind: technical
 ticket: T-0142
-fitness: fitness-agent-host (to be built, follow-up ticket)
+fitness: fitness-agent-host (built, T-0554: `make fitness-agent-host`, tools/fitness/agenthost; checks needing the agent proto or MSI print inactive until they land)
 ---
 
 # ADR-0006: The DC agent runs as a virtual service account with a restricted token and a channel ACE, never LocalSystem

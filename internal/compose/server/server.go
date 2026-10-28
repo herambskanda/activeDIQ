@@ -99,7 +99,15 @@ func Run(ctx context.Context, cfg config.Config) error {
 	if err != nil {
 		return err
 	}
-	ok, err := buildOperation(operation.HoldsMinter, db, dirClient, authzr, reg)
+	dcs, err := client.NewDCDirectory(conns, src)
+	if err != nil {
+		return fmt.Errorf("server: DC directory: %w", err)
+	}
+	pinner, err := newDCPinner(dcs)
+	if err != nil {
+		return err
+	}
+	ok, err := buildOperation(operation.HoldsMinter, db, dirClient, authzr, reg, pinner)
 	if err != nil {
 		return err
 	}

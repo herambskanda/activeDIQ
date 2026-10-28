@@ -651,6 +651,11 @@
       "column": "public.agent_event.record_type",
       "value": "event",
       "reason": "CHECK: record_type is event, gap or dropped (T-0556)"
+    },
+    {
+      "column": "public.tenant_keys.state",
+      "value": "active",
+      "reason": "CHECK: state is active, retired or shredded; the probe row is an active key with a non-empty wrapped_dek (T-0520)"
     }
   ]
 }

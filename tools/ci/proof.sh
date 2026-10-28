@@ -998,6 +998,154 @@ must_fail_with "workflows-check on an unpinned action" 'not pinned' tools/ci/wor
 cp "$root/.github/workflows/release.yml" "$wf/"; sed -i 's/sign verify/sign noop/' "$wf/release.yml"
 must_fail_with "workflows-check on a release that does not verify" 'without verifying' tools/ci/workflows-check.sh "$wf"
 
+# --- fitness-agent-host (T-0554) ----------------------------------------------------------------
+# The Go-test half (P1-P8, F1) is judged from `go test -json`; judgeTests' cases fail on a failed,
+# skipped or deleted test (tools/fitness/agenthost/check_test.go). The CLI cases below use -skip-tests.
+ah="$tmp/agenthost"; mkdir -p "$ah/proto/skenzeriq/agent/v1" "$ah/proto/activediq/addc/v1" "$ah/proto/activediq/fleet/v1"
+cp "$root/proto/activediq/fleet/v1/fleet.proto" "$ah/proto/activediq/fleet/v1/"
+cat >"$ah/proto/skenzeriq/agent/v1/agent.proto" <<'PROTO'
+syntax = "proto3";
+package skenzeriq.agent.v1;
+message Empty {}
+message SignedPolicy { bytes payload = 1; bytes signature = 2; }
+message SignedKeyset { bytes payload = 1; bytes signature = 2; }
+message StageRequest { bytes tuf_metadata = 1; bytes artefact_digest = 2; }
+message AckRequest { uint64 through_agent_seq = 1; }
+message Status { uint64 policy_seq = 1; }
+service Host {
+  rpc GetStatus(Empty) returns (Status);
+  rpc ApplyPolicy(SignedPolicy) returns (Status);
+  rpc ApplyKeyset(SignedKeyset) returns (Status);
+  rpc StageUpdate(StageRequest) returns (Status);
+  rpc AckEvents(AckRequest) returns (Status);
+}
+PROTO
+cat >"$ah/proto/activediq/addc/v1/addc.proto" <<'PROTO'
+syntax = "proto3";
+package activediq.addc.v1;
+message Empty {}
+message CollectionState { uint64 last_event_record_id = 1; }
+message PasswordPolicy { uint32 min_length = 1; repeated string banned_terms = 2; }
+message AddcPolicy { PasswordPolicy password = 1; bool collection_enabled = 2; }
+service Addc { rpc GetCollectionState(Empty) returns (CollectionState); }
+PROTO
+mkdir -p "$ah/packaging/windows" "$ah/cmd/agent" "$ah/internal/agentmodules/addc" "$ah/internal/directory/client"
+cat >"$ah/packaging/windows/agent.wxs" <<'WXS'
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"><Package Name="agent">
+<ServiceInstall Name="activediq-agent" Account="NT SERVICE\activeDIQAgent" Start="auto">
+<ServiceConfig ServiceSid="restricted" RequiredPrivileges="SeChangeNotifyPrivilege" /></ServiceInstall></Package></Wix>
+WXS
+printf 'module fx.test\n\ngo 1.22\n' >"$ah/go.mod"
+printf 'package client\n' >"$ah/internal/directory/client/c.go"
+printf 'package main\n\nfunc main() {}\n' >"$ah/cmd/agent/main.go"
+printf 'package addc\n' >"$ah/internal/agentmodules/addc/a.go"
+printf 'fx.test/cmd/agent\n' >"$tmp/agenthost-allow.txt"
+agenthost() { go run ./tools/fitness/agenthost -skip-tests -closure-allow "$tmp/agenthost-allow.txt" -root "$@"; }
+must_pass "fitness-agent-host on a clean agent tree" agenthost "$ah"
+cp "$ah/proto/skenzeriq/agent/v1/agent.proto" "$tmp/agent.proto.clean"
+sed -i 's/service Host {/service Host { rpc RunCommand(Empty) returns (Status);/' "$ah/proto/skenzeriq/agent/v1/agent.proto"
+must_fail_with "fitness-agent-host on a denied verb (exec) in the agent proto (R1)" '\[AG2\].*contains .run.' agenthost "$ah"
+cp "$tmp/agent.proto.clean" "$ah/proto/skenzeriq/agent/v1/agent.proto"
+cp "$ah/proto/activediq/addc/v1/addc.proto" "$tmp/addc.proto.clean"
+sed -i 's/bool collection_enabled = 2;/bool collection_enabled = 2; string log_path = 3;/' "$ah/proto/activediq/addc/v1/addc.proto"
+must_fail_with "fitness-agent-host on a path field in the policy (R2)" '\[AG4\]' agenthost "$ah"
+sed -i 's/string log_path = 3;/uint32 password_hash = 3;/' "$ah/proto/activediq/addc/v1/addc.proto"
+must_fail_with "fitness-agent-host on a password field in the addc surface (R5)" 'AG6' agenthost "$ah"
+cp "$tmp/addc.proto.clean" "$ah/proto/activediq/addc/v1/addc.proto"
+cp "$ah/packaging/windows/agent.wxs" "$tmp/agent.wxs.clean"
+sed -i 's/NT SERVICE\\activeDIQAgent/LocalSystem/' "$ah/packaging/windows/agent.wxs"
+must_fail_with "fitness-agent-host on LocalSystem in the MSI source (A1)" 'LocalSystem' agenthost "$ah"
+cp "$tmp/agent.wxs.clean" "$ah/packaging/windows/agent.wxs"
+sed -i 's/SeChangeNotifyPrivilege/SeChangeNotifyPrivilege SeBackupPrivilege/' "$ah/packaging/windows/agent.wxs"
+must_fail_with "fitness-agent-host on an extra privilege in the MSI source (A1)" 'RequiredPrivileges of .*are' agenthost "$ah"
+cp "$tmp/agent.wxs.clean" "$ah/packaging/windows/agent.wxs"
+printf 'package main\n\nimport _ "fx.test/internal/directory/client"\n\nfunc main() {}\n' >"$ah/cmd/agent/main.go"
+must_fail_with "fitness-agent-host on a directory client in the agent binary (A4)" 'internal/directory/client' agenthost "$ah"
+printf 'package main\n\nfunc main() {}\n' >"$ah/cmd/agent/main.go"
+printf 'package addc\n\nimport "os/exec"\n\nvar _ = exec.Command\n' >"$ah/internal/agentmodules/addc/a.go"
+must_fail_with "fitness-agent-host on os/exec in an agent module (R3)" 'imports os/exec' agenthost "$ah"
+printf 'package addc\n' >"$ah/internal/agentmodules/addc/a.go"
+printf 'package main\n\nimport "net"\n\nfunc main() { _, _ = net.Listen("tcp", ":1") }\n' >"$ah/cmd/agent/main.go"
+must_fail_with "fitness-agent-host on a listener in the agent (R4)" 'calls net.Listen' agenthost "$ah"
+printf 'package main\n\nfunc main() {}\n' >"$ah/cmd/agent/main.go"
+# Bypasses the security review found in the first version of R3/R4/A1/A4: each must fail now.
+printf 'package addc\n\nimport "golang.org/x/sys/windows"\n\nvar _ = windows.CreateProcess\n' >"$ah/internal/agentmodules/addc/a.go"
+must_fail_with "fitness-agent-host on windows.CreateProcess in an agent module (R3 allowlist)" 'x/sys/windows' agenthost "$ah"
+printf 'package addc\n\nimport . "os"\n\nfunc f() { _ = WriteFile("x", nil, 0) }\n' >"$ah/internal/agentmodules/addc/a.go"
+must_fail_with "fitness-agent-host on a dot-import in an agent module (R3)" 'dot-imports' agenthost "$ah"
+printf 'package addc\n' >"$ah/internal/agentmodules/addc/a.go"
+printf 'package main\n\nimport "net"\n\nfunc main() { var lc net.ListenConfig; _ = lc }\n' >"$ah/cmd/agent/main.go"
+must_fail_with "fitness-agent-host on net.ListenConfig in the agent (R4)" 'ListenConfig' agenthost "$ah"
+mkdir -p "$ah/internal/other"; printf 'package other\n' >"$ah/internal/other/o.go"
+printf 'package main\n\nimport _ "fx.test/internal/other"\n\nfunc main() {}\n' >"$ah/cmd/agent/main.go"
+must_fail_with "fitness-agent-host on a package outside the closure allowlist (A4)" 'not on the allowlist' agenthost "$ah"
+printf 'package main\n\nfunc main() {}\n' >"$ah/cmd/agent/main.go"
+sed -i 's|<ServiceConfig ServiceSid="restricted"|<ServiceConfig ServiceSid="unrestricted" /><ServiceConfig ServiceSid="restricted"|' "$ah/packaging/windows/agent.wxs"
+must_fail_with "fitness-agent-host on an unrestricted ServiceSid followed by a restricted one (A1)" 'service SID type of .* is .unrestricted' agenthost "$ah"
+cp "$tmp/agent.wxs.clean" "$ah/packaging/windows/agent.wxs"
+printf 'sc.exe config activeDIQAgent obj= LocalSystem\n' >"$ah/packaging/windows/Install-Agent.ps1"
+must_fail_with "fitness-agent-host on LocalSystem in an install script (A1)" 'Install-Agent.ps1 names' agenthost "$ah"
+rm "$ah/packaging/windows/Install-Agent.ps1"
+# Second security review: os.OpenRoot, assembly, service registry key, WMI, UTF-16 script.
+printf 'package addc\n\nimport "os"\n\nvar _ = os.OpenRoot\n' >"$ah/internal/agentmodules/addc/a.go"
+must_fail_with "fitness-agent-host on os.OpenRoot in an agent module (R3 os allowlist)" 'uses os.OpenRoot' agenthost "$ah"
+printf 'package addc\n' >"$ah/internal/agentmodules/addc/a.go"
+printf 'TEXT sys(SB),0,$0\n\tSYSCALL\n' >"$ah/internal/agentmodules/addc/a_linux_amd64.s"
+must_fail_with "fitness-agent-host on an assembly file in an agent module (R3)" 'only .go files' agenthost "$ah"
+rm "$ah/internal/agentmodules/addc/a_linux_amd64.s"
+printf '<Wix><RegistryValue Key="SYSTEM\\CurrentControlSet\\Services\\activeDIQAgent" Name="ObjectName" Value=".\\svc-admin" /></Wix>\n' >"$ah/packaging/windows/agent-reg.wxs"
+must_fail_with "fitness-agent-host on a service registry key in the MSI source (A1)" 'Services registry key' agenthost "$ah"
+rm "$ah/packaging/windows/agent-reg.wxs"
+printf 'Invoke-CimMethod -Query "SELECT * FROM Win32_Service WHERE Name=%sactiveDIQAgent%s" -MethodName Change -Arguments @{StartName=%s.\\svc-admin%s}\n' "'" "'" "'" "'" >"$ah/packaging/windows/Install-Agent.ps1"
+must_fail_with "fitness-agent-host on a WMI service account change (A1)" 'other than' agenthost "$ah"
+printf 'sc.exe config activeDIQAgent obj= LocalSystem\n' | iconv -f UTF-8 -t UTF-16 >"$ah/packaging/windows/Install-Agent.ps1"
+must_fail_with "fitness-agent-host on LocalSystem in a UTF-16 install script (A1)" 'Install-Agent.ps1 names' agenthost "$ah"
+rm "$ah/packaging/windows/Install-Agent.ps1"
+# Third security review: an allow-by-exception installer. Unselected WiX files, custom actions, scripts, HKLM\SYSTEM.
+mkdir -p "$ah/packaging/windows/core"
+printf '<?define P="activeDIQ"?><Wix><Package><ServiceConfig ServiceName="$(var.P)Agent" ServiceSid="unrestricted"/></Package></Wix>\n' >"$ah/packaging/windows/core/Product.wxs"
+must_fail_with "fitness-agent-host on a variable service name in a WiX file that never names the agent (A1)" 'through a variable' agenthost "$ah"
+printf '<Wix><Package><CustomAction Id="CA_Acct" ExeCommand=%s"[SystemFolder]sc.exe" config activeDIQAgent obj= [ACCT]%s/></Package></Wix>\n' "'" "'" >"$ah/packaging/windows/core/Product.wxs"
+must_fail_with "fitness-agent-host on a quoted sc.exe custom action (A1 deny-by-default)" 'runs code at install time' agenthost "$ah"
+printf '<Wix><Package><RegistryValue Root="HKLM" Key="SYSTEM\\CurrentControlSet\\[K]" Name="ObjectName" Value="x"/></Package></Wix>\n' >"$ah/packaging/windows/core/Product.wxs"
+must_fail_with "fitness-agent-host on a property-split HKLM\\SYSTEM registry key (A1)" 'HKLM key' agenthost "$ah"
+rm "$ah/packaging/windows/core/Product.wxs"
+printf 'sc.exe config activeDIQAgent obj= "NT SERVICE\\activeDIQAgent"\n' >"$ah/packaging/windows/Install-Agent.ps1"
+must_fail_with "fitness-agent-host on an unreviewed script in the agent packaging (A1)" 'is a script in the agent packaging' agenthost "$ah"
+rm "$ah/packaging/windows/Install-Agent.ps1"
+printf 'package addc\n\nimport _x "fx.test/internal/agenthost/apix/exec"\n\nvar _ = _x.Y\n' >"$ah/internal/agentmodules/addc/a.go"
+must_fail_with "fitness-agent-host on a look-alike own package path in an agent module (R3 exact match)" 'allowlist' agenthost "$ah"
+printf 'package addc\n\nimport "path/filepath"\n\nvar _ = filepath.WalkDir\n' >"$ah/internal/agentmodules/addc/a.go"
+must_fail_with "fitness-agent-host on filepath.WalkDir in an agent module (R3)" 'filepath.WalkDir' agenthost "$ah"
+# Fourth security review: parsed, entity-decoded structure; services, ACLs and file types denied by default.
+printf '<Wix><Package><ServiceInstall Name="activeDIQ&#65;gent" Account="NT SERVICE\\activeDIQ&#65;gent"><ServiceConfig ServiceName="activeDIQ&#65;gent" ServiceSid="unrestricted" RequiredPrivileges="SeDebugPrivilege"/></ServiceInstall></Package></Wix>\n' >"$ah/packaging/windows/core/Product.wxs"
+must_fail_with "fitness-agent-host on an entity-encoded agent service name with an unrestricted SID (A1)" 'character reference' agenthost "$ah"
+printf '<Wix><Package><ServiceInstall Name="skzHelper" Type="ownProcess" Start="auto"/></Package></Wix>\n' >"$ah/packaging/windows/core/Product.wxs"
+must_fail_with "fitness-agent-host on a ServiceInstall with no Account, i.e. implicit LocalSystem (A1)" 'no Account' agenthost "$ah"
+printf '<Wix><Package><Component Id="C"><ServiceInstall Name="activediq-agent" Account="NT SERVICE\\activeDIQAgent"/><ServiceInstall Name="x" Account="NT SERVICE\\x"/></Component></Package></Wix>\n' >"$ah/packaging/windows/core/Product.wxs"
+must_fail_with "fitness-agent-host on a second service in the agent Component (A1)" 'exactly one' agenthost "$ah"
+printf '<Wix><Package><ServiceInstall Name="Other" Account="NT SERVICE\\Other"><PermissionEx Sddl="D:(A;;GA;;;WD)"/></ServiceInstall></Package></Wix>\n' >"$ah/packaging/windows/core/Product.wxs"
+must_fail_with "fitness-agent-host on a PermissionEx ACL (A1 deny-by-default)" 'grants an ACL' agenthost "$ah"
+# Fifth security review: DTD entities, WiX outside packaging/, every service pinned.
+printf '<!DOCTYPE Wix [<!ENTITY g "Agent">]><Wix><Package><ServiceInstall Name="activeDIQ&g;" Account="NT SERVICE\\activeDIQ&g;"><ServiceConfig ServiceName="activeDIQ&g;" ServiceSid="unrestricted" RequiredPrivileges="SeDebugPrivilege"/></ServiceInstall></Package></Wix>\n' >"$ah/packaging/windows/core/Product.wxs"
+must_fail_with "fitness-agent-host on a DOCTYPE/ENTITY-built agent service name (A1)" 'DOCTYPE or ENTITY' agenthost "$ah"
+printf '<Wix><Package><Component><ServiceInstall Name="skzHelper" Account="NT SERVICE\\skzHelper"><ServiceConfig ServiceSid="unrestricted" RequiredPrivileges="SeDebugPrivilege,SeBackupPrivilege"/></ServiceInstall></Component></Package></Wix>\n' >"$ah/packaging/windows/core/Product.wxs"
+must_fail_with "fitness-agent-host on a second service with an unrestricted SID and extra privileges (A1)" 'service SID type of' agenthost "$ah"
+rm "$ah/packaging/windows/core/Product.wxs"
+mkdir -p "$ah/installer"
+printf '<Wix><Package><ServiceInstall Name="activeDIQAgent" Account="LocalSystem"/></Package></Wix>\n' >"$ah/installer/agent.wxs"
+must_fail_with "fitness-agent-host on LocalSystem in WiX outside packaging/ (A1)" 'LocalSystem' agenthost "$ah"
+rm -rf "$ah/installer"
+printf '<Wix><Package><ServiceInstall Name="x" Account="NT SERVICE\\x" ServiceSid="restricted" RequiredPrivileges="SeChangeNotifyPrivilege"/></Package></Wix>\n' >"$ah/packaging/windows/core/Product.wxs"
+rm "$ah/packaging/windows/core/Product.wxs"
+mkdir -p "$ah/packaging/windows/agent"
+printf '<ServiceInstall Name="activeDIQAgent" Account="NT SERVICE\\activeDIQAgent"><ServiceConfig ServiceSid="unrestricted"/></ServiceInstall>\n' >"$ah/packaging/windows/agent/Product.wxs.in"
+must_fail_with "fitness-agent-host on an unparsed WiX template in the agent packaging (A1)" 'template or transform' agenthost "$ah"
+rm -rf "$ah/packaging/windows/agent"
+printf 'package addc\n' >"$ah/internal/agentmodules/addc/a.go"
+must_pass "fitness-agent-host after the violations are removed" agenthost "$ah"
+must_pass "fitness-agent-host is wired into make fitness" bash -c "make -n fitness | grep -q 'tools/fitness/agenthost'"
+
 # --- fitness-audit (ADR-0005 A1-A9, TM-F-AUDIT), the real CLI ------------------------------------
 # The per-rule proofs of A1 are the tool's own tests (go test ./tools/fitness/audit/...). Here: A1 on a
 # real migration sequence with one extra migration that lets the runtime role DELETE audit rows (needs
