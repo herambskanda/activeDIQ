@@ -34,15 +34,20 @@ import (
 var ErrNoDatabase = errors.New("server: no database configured (" + config.EnvDatabaseDSN + ")")
 
 // Run runs the server role until ctx is done: it boots the modules, opens the store and runs the job
-// worker. When ctx ends the worker stops claiming and drains; Run returns jobs.ErrDrainTimeout (wrapped)
+// worker. getenv (os.Getenv in the binary) reads the KEK settings, which are named and validated only
+// in this package (LoadKEKConfig). When ctx ends the worker stops claiming and drains; Run returns jobs.ErrDrainTimeout (wrapped)
 // if running bodies ignored the forced cancellation, which the binary turns into a non-zero exit.
-func Run(ctx context.Context, cfg config.Config) error {
+func Run(ctx context.Context, cfg config.Config, getenv func(string) string) error {
 	if cfg.DatabaseDSN == "" {
 		return ErrNoDatabase
 	}
 	// The identity is settled before anything is opened too: a non-loopback bind without a TLS
 	// directory, or an unwritable one, fails startup here.
-	id, err := apiIdentity(cfg, time.Now())
+	kc, err := LoadKEKConfig(getenv)
+	if err != nil {
+		return fmt.Errorf("server: %w", err)
+	}
+	id, err := apiIdentity(cfg, kc, time.Now())
 	if err != nil {
 		return err
 	}
@@ -200,13 +205,16 @@ func Run(ctx context.Context, cfg config.Config) error {
 
 // apiIdentity validates the listen address against the TLS configuration and loads or generates the
 // per-install certificate.
-func apiIdentity(cfg config.Config, now time.Time) (apitls.Identity, error) {
+func apiIdentity(cfg config.Config, kc KEKConfig, now time.Time) (apitls.Identity, error) {
 	if err := cfg.ValidateAPIListen(); err != nil {
 		return apitls.Identity{}, fmt.Errorf("server: %w", err)
 	}
-	// With the KEK profile configured the provider is built first and any failure (missing, unreadable
-	// or malformed KEK) stops startup: there is no fallback to an unsealed key.
-	p, err := platformKeyProvider(cfg)
+	// The KEK provider is unlocked first and any failure (no keystore, wrong passphrase, corrupt file) stops
+	// startup: there is no fallback to an unsealed key and nothing is generated here.
+	if err := kc.checkPlacement(cfg.APITLSDir); err != nil {
+		return apitls.Identity{}, fmt.Errorf("server: %w", err)
+	}
+	p, err := platformKeyProvider(kc)
 	if err != nil {
 		return apitls.Identity{}, fmt.Errorf("server: key provider: %w", err)
 	}
