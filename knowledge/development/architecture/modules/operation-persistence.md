@@ -54,7 +54,7 @@ with the step key; they are not `operation.*` kinds.
 | `operation.rejected` | `denied` / `gate_denied` or `rejected_by_approver` | `gate_denied`: the gate returned deny at submit, operation `rejected`. `rejected_by_approver`: an approver rejected an `awaiting_approval` operation. |
 | `operation.refused` | `denied` / `tier0` or `denied` | One event **per item** refused by authorisation at plan time: `tier0` = target is Tier-0 protected, `denied` = the initiator lacks the permission over it. Key carries the item index, `target` the object GUID and DN, detail `phase=plan`. Emitted whatever else the plan holds, so a partly refused plan still leaves one denied event per refused item. The block reason on `operation_items` is mutable and outside the hash chain; this event is the durable record. |
 | `operation.completed` | see below | The operation reaches a terminal state other than cancelled, or planning ends with no work. |
-| `operation.cancelled` | `success` / `cancel_requested`, `cancelled` or `abandoned` | `cancel_requested`: the requester asked to cancel (running -> cancelling, or a pre-run cancel). `cancelled`: a cancelling operation drained and settled. `abandoned`: reconcile cancelled an operation nobody progressed. |
+| `operation.cancelled` | `success` / `cancel_requested`, `cancelled` or `abandoned` | `cancel_requested`: the requester asked to cancel a running operation (running -> cancelling). `cancelled`: a pre-run operation was cancelled at once, or a cancelling operation drained and settled. `abandoned`: reconcile cancelled an operation nobody progressed. |
 
 ### `operation.completed` outcomes
 
