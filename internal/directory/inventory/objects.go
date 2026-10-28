@@ -147,6 +147,13 @@ type Observation struct {
 	// onPremisesSyncBehavior.isCloudManaged. They decide cloud_seen_at (DM-16.I9).
 	OnPremisesSyncEnabled *bool
 	CloudManaged          bool
+	// Entra only, users and groups: the other inputs of the DM-20.I4 gate, kept so that a later AD-side
+	// cycle can run the gate again. OnPremisesSID is onPremisesSecurityIdentifier (binary),
+	// OnPremisesDomainName is onPremisesDomainName ("" when not populated) and OnPremisesImmutableID is
+	// the decoded onPremisesImmutableId (the anchor, 16 bytes for a GUID anchor).
+	OnPremisesSID         []byte
+	OnPremisesDomainName  string
+	OnPremisesImmutableID []byte
 
 	// PrimaryGroup is a user's primaryGroupID resolved to the group (DM-17.I2). Zero: none observed.
 	PrimaryGroup GUID
@@ -180,6 +187,13 @@ func nullGUID(g GUID) any {
 		return nil
 	}
 	return string(g)
+}
+
+func nilIfEmpty(b []byte) []byte {
+	if len(b) == 0 {
+		return nil
+	}
+	return b
 }
 
 func nullTime(t time.Time) any {
@@ -241,6 +255,14 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 			((o.OnPremisesSyncEnabled == nil || !*o.OnPremisesSyncEnabled) || o.CloudManaged) {
 			cloud = observed.UTC()
 		}
+		// The gate inputs are stored for Entra users and groups only; for anything else they stay NULL.
+		var onPremSync, onPremCloud any
+		if entra && (o.Kind == KindUser || o.Kind == KindGroup) {
+			if o.OnPremisesSyncEnabled != nil {
+				onPremSync = *o.OnPremisesSyncEnabled
+			}
+			onPremCloud = o.CloudManaged
+		}
 		anc := make([]string, len(o.Ancestry))
 		for j, a := range o.Ancestry {
 			anc[j] = string(a)
@@ -255,9 +277,11 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 		var inserted bool
 		err := tx.QueryRow(ctx, `INSERT INTO public.directory_objects AS d (tenant_id, connection_id, object_guid, nc_guid, kind, object_class,
 				parent_guid, ancestry, dn, rdn, sid, sam_account_name, upn, display_name, enabled, lockout_time, pwd_last_set, account_expires,
-				consistency_guid, attributes, when_created, when_changed, observed_at, observed_dsa, cloud_seen_at, state)
+				consistency_guid, attributes, when_created, when_changed, observed_at, observed_dsa, cloud_seen_at, state,
+				on_prem_sync_enabled, on_prem_cloud_managed, on_prem_sid, on_prem_domain_name, on_prem_immutable_id)
 			VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, $2::uuid, $3::uuid, $4, $5,
-				$6::uuid, $7::uuid[], $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb, $20, $21, $22, $23, $24, $25)
+				$6::uuid, $7::uuid[], $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb, $20, $21, $22, $23, $24, $25,
+				$26, $27, $28, $29, $30)
 			ON CONFLICT (tenant_id, connection_id, object_guid) DO UPDATE SET
 				nc_guid = EXCLUDED.nc_guid, kind = EXCLUDED.kind, object_class = EXCLUDED.object_class, parent_guid = EXCLUDED.parent_guid,
 				ancestry = EXCLUDED.ancestry, dn = EXCLUDED.dn, rdn = EXCLUDED.rdn, sid = EXCLUDED.sid,
@@ -266,13 +290,17 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 				account_expires = EXCLUDED.account_expires, consistency_guid = EXCLUDED.consistency_guid, attributes = EXCLUDED.attributes,
 				when_created = EXCLUDED.when_created, when_changed = EXCLUDED.when_changed, observed_at = EXCLUDED.observed_at,
 				observed_dsa = EXCLUDED.observed_dsa, state = EXCLUDED.state,
+				on_prem_sync_enabled = EXCLUDED.on_prem_sync_enabled, on_prem_cloud_managed = EXCLUDED.on_prem_cloud_managed,
+				on_prem_sid = EXCLUDED.on_prem_sid, on_prem_domain_name = EXCLUDED.on_prem_domain_name,
+				on_prem_immutable_id = EXCLUDED.on_prem_immutable_id,
 				cloud_seen_at = GREATEST(d.cloud_seen_at, EXCLUDED.cloud_seen_at)
 			WHERE d.observed_at <= EXCLUDED.observed_at
 			RETURNING (xmax = 0)`,
 			string(connection), string(o.Object), nullGUID(o.NC), string(o.Kind), o.Class,
 			nullGUID(o.Parent), anc, o.DN, o.RDN, sid, o.SAMAccountName, o.UPN, o.DisplayName, o.Enabled,
 			nullTime(o.LockoutTime), nullTime(o.PwdLastSet), nullTime(o.AccountExpires),
-			cg, string(attrs[i]), nullTime(o.WhenCreated), nullTime(o.WhenChanged), observed.UTC(), o.ObservedDSA, cloud, string(o.State)).Scan(&inserted)
+			cg, string(attrs[i]), nullTime(o.WhenCreated), nullTime(o.WhenChanged), observed.UTC(), o.ObservedDSA, cloud, string(o.State),
+			onPremSync, onPremCloud, nilIfEmpty(o.OnPremisesSID), o.OnPremisesDomainName, nilIfEmpty(o.OnPremisesImmutableID)).Scan(&inserted)
 		if store.IsNoRows(err) {
 			out.Stale++
 			continue
@@ -329,11 +357,18 @@ func validateObservation(o *Observation, entra bool) ([]byte, error) {
 		return bad("kind or class")
 	}
 	if entra {
+		if len(o.OnPremisesSID) != 0 && (len(o.OnPremisesSID) < 8 || len(o.OnPremisesSID) > 68) {
+			return bad("onPremisesSecurityIdentifier")
+		}
+		if len(o.OnPremisesImmutableID) > 64 || len(o.OnPremisesDomainName) > 255 || strings.ContainsRune(o.OnPremisesDomainName, 0) {
+			return bad("onPremises anchor or domain")
+		}
 		if o.NC != "" || len(o.SID) > 0 || len(o.ConsistencyGUID) > 0 || !entraStates[o.State] {
 			return bad("entra object with AD-only fields or state")
 		}
 	} else {
-		if !validGUID(o.NC) || !adStates[o.State] || o.OnPremisesSyncEnabled != nil || o.CloudManaged {
+		if !validGUID(o.NC) || !adStates[o.State] || o.OnPremisesSyncEnabled != nil || o.CloudManaged ||
+			len(o.OnPremisesSID) > 0 || o.OnPremisesDomainName != "" || len(o.OnPremisesImmutableID) > 0 {
 			return bad("AD object nc, state or cloud fields")
 		}
 		if len(o.ConsistencyGUID) != 0 {
