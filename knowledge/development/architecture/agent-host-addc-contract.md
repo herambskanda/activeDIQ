@@ -93,3 +93,20 @@ R-tests run in `fitness-agent-host` (CI) and the proto lint; L/lab tests run in 
 - The lab confirmations in ADR-0006 "Verification owed" gate `accepted`, not `ratified`.
 - Password-filter IPC content (C15) belongs to T-0145; this file fixes only what the agent surface must never carry.
 - `[UNVERIFIED]` the `[EST]` resource figures in §5.
+
+## 8. Implementation status (T-0555)
+
+Built on Linux, compile-checked for Windows (`GOOS=windows go vet`), **not run on Windows**.
+
+| Piece | Where | State |
+| --- | --- | --- |
+| Protos (`SubmitEvents` replaces `Append`; `EventIngest` in the AG1 golden list) | `proto/skenzeriq/agent/v1`, `proto/activediq/addc/v1` | built; `fitness-proto` green |
+| Host: verifier-before-parse, transactional apply, durable bounded outbox, sender | `internal/platform/agent` | built; unit and fault tests pass (-race) |
+| addc module: rule engine, catalogue, collector with GAP/throttle/bookmark, wevtapi source | `internal/agentmodules/addc` | built; Windows source compile-checked only |
+| Role package, local ceilings file, enrol, tunnel dial | `internal/compose/agent`, `cmd/agent` | built; Windows enrol/load fails closed until T-0291's ACL support is on main |
+| Token privilege refusal, job-object caps, Application event log (IDs 100 applied, 101 start refused, 102 channel unreadable) | `internal/platform/agent/*_windows.go` | compile-checked only (A2 NOT RUN) |
+| MSI source and `agentsetup` custom actions | `packaging/windows/agent/Agent.wxs`, `cmd/agentsetup` | not built (no WiX in the lab) |
+| `StageUpdate` | host | **fails closed** (`FailedPrecondition`): no TUF verifier exists yet |
+| Fitness | `tools/fitness/agenthost` (`fitness-agent-host`) | A1, A4, R3 in CI; A2, A3 print NOT RUN |
+
+The agent sends no "policy applied" audit record: the server's ingest rejects unknown record kinds. The local log and Windows event 100 carry the trace until a kind is added (follow-up).
