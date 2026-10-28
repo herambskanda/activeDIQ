@@ -183,10 +183,10 @@ func VerifyAD(ctx context.Context, d ADDirectory, in ADInput) (*ADResult, error)
 	}
 	id, err := d.Read(ctx, in.Identity, []string{"objectSid", "tokenGroups", "userAccountControl", attrAllowedToDelegateTo, "primaryGroupID", "memberOf"}, ad.ReadOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", errNoIdentity, err)
+		return nil, fmt.Errorf("%w: %w", errNoIdentity, err)
 	}
 	if c.idGUID, err = id.GUID(); err != nil {
-		return nil, fmt.Errorf("%w: %v", errNoIdentity, err)
+		return nil, fmt.Errorf("%w: %w", errNoIdentity, err)
 	}
 	sids, err := id.SIDs("objectSid")
 	if err != nil || len(sids) != 1 {

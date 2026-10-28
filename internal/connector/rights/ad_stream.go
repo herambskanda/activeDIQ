@@ -33,6 +33,10 @@ func ADInputFromRequest(req *v1.VerifyConnectionRequest, identity dn.ObjectRef) 
 		}
 		return out, nil
 	}
+	// A verification_id that is not a GUID would write "" into the baseline and the shrink record.
+	if _, err := ParseGUID(req.GetVerificationId()); err != nil {
+		return in, &InvalidArgumentError{"verification_id: not a GUID"}
+	}
 	var err error
 	if in.ManagedDomains, err = conv("managed_domains", req.GetManagedDomains()); err != nil {
 		return in, err
