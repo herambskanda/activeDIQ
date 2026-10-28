@@ -34,7 +34,12 @@ const (
 )
 
 // Change is one attribute's before and after value. A secret attribute carries neither value (AG-9).
+// The values are personal data: the Chainer stores them in the personal side store at commit and the
+// chained envelope holds a personal reference per value (T-0306), never the value. Subject names the
+// person the values are about (dir:<connection>:<objectGUID> or acct:<id>, see personal.DirSubject). A
+// change with no Subject is not about a person (a connection state, say) and records counts only.
 type Change struct {
+	Subject   string
 	Attribute string
 	Before    []string
 	After     []string
@@ -45,8 +50,15 @@ type Change struct {
 // may import audit but not audit/chain (ADR-0005 rule 13) name the type through this alias.
 type Detail = chain.Detail
 
-// Event is the envelope (AG-3). Display snapshots and the client address are personal values and
-// arrive with the personal side store; they are not fields here.
+// Snapshot is a display value (a name or similar) as it read when the event happened. Like a change value
+// it is kept by reference.
+type Snapshot struct {
+	Subject string
+	Field   string
+	Value   string
+}
+
+// Event is the envelope (AG-3). The client address is a personal value too and is not a field yet.
 type Event struct {
 	ID        string // stable per logical event: a retried append reuses it, so an ambiguous commit is not recorded twice
 	Kind      Kind
@@ -59,6 +71,8 @@ type Event struct {
 	Reason    string // machine reason code, never free text from a directory or a secret
 	PlanHash  string
 	Changes   []Change
+	// Snapshots are display values kept by personal reference.
+	Snapshots []Snapshot
 	// Details are typed public details of the kind, in strictly increasing key order. They never carry
 	// a secret or a personal value (ADR-0005 rules 11 and 12).
 	Details []chain.Detail
@@ -71,6 +85,11 @@ var ErrInvalidEvent = errors.New("audit: invalid event")
 func (e Event) Validate() error {
 	if e.ID == "" || e.Kind == "" || e.At.IsZero() || e.Actor.Validate() != nil {
 		return ErrInvalidEvent
+	}
+	for _, s := range e.Snapshots {
+		if s.Subject == "" || s.Field == "" {
+			return ErrInvalidEvent
+		}
 	}
 	switch e.Outcome {
 	case Success, Failure, Denied:

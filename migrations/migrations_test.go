@@ -2,6 +2,7 @@ package migrations_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"regexp"
 	"strings"
@@ -133,5 +134,29 @@ func TestMigration0001RefusesABrokenRoleSplit(t *testing.T) {
 				}
 			})
 		})
+	}
+}
+
+// A migration number is used once: two files sharing a number leave the apply order to the file
+// name alone, and a security migration (row security, authz) could then land in a different order
+// on different installs (T-0501).
+func TestMigrationNumbersAreUniqueAndContiguous(t *testing.T) {
+	ents, err := migrations.FS.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := 1
+	for _, e := range ents { // ReadDir is sorted by file name
+		if !strings.HasSuffix(e.Name(), ".sql") {
+			continue
+		}
+		var n int
+		if _, err := fmt.Sscanf(e.Name()[:4], "%d", &n); err != nil {
+			t.Fatalf("%s: %v", e.Name(), err)
+		}
+		if n != next {
+			t.Errorf("%s: expected number %04d (numbers are unique and have no gap)", e.Name(), next)
+		}
+		next = n + 1
 	}
 }

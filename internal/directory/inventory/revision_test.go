@@ -2,6 +2,7 @@ package inventory_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -127,6 +128,73 @@ func TestTier0RevisionTenantIsolationAndMonotone(t *testing.T) {
 		}
 		if _, err := e.r.Tier0Revision(context.Background(), tenant.ID{}); err == nil {
 			t.Fatal("zero tenant must be refused")
+		}
+	})
+}
+
+// T-0500: row security itself refuses a tenant re-assigning its revision row to another tenant. The
+// forward-only triggers are disabled so only the policy's WITH CHECK can be what refuses it; with them
+// enabled the move is refused too.
+func TestTier0RevisionRowSecurityRefusesTenantReassignment(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		e.designate(t, e.a, e.adA, "aaaaaaaa-0000-4000-8000-0000000000e2", true)
+		move := `UPDATE public.inventory_tier0_revisions SET tenant_id = $1 WHERE tenant_id = $2`
+		check := func(label string) {
+			t.Helper()
+			err := e.exec(e.a, move, e.b.String(), e.a.String())
+			code := store.SQLState(err)
+			if code == "" {
+				t.Fatalf("%s: re-assignment was not refused by the database: %v", label, err)
+			}
+			if label == "triggers disabled" && (code != "42501" || !strings.Contains(err.Error(), "row-level security")) {
+				t.Fatalf("%s: want a row-security refusal (42501), got %s %v", label, code, err)
+			}
+		}
+		check("triggers enabled")
+		for _, trg := range []string{"inventory_tier0_revisions_guard", "inventory_tier0_revisions_tenant_guard"} {
+			if err := e.d.ExecOwner(context.Background(), `ALTER TABLE public.inventory_tier0_revisions DISABLE TRIGGER `+trg); err != nil {
+				t.Fatalf("disable %s: %v", trg, err)
+			}
+		}
+		check("triggers disabled")
+		if r := e.rev(t, e.a); r == 0 {
+			t.Fatal("tenant A lost its revision row")
+		}
+	})
+}
+
+// T-0506: the AFTER trigger inventory_tier0_revisions_tenant_guard (migration 0039) is the last line
+// against a writer that row security does not constrain. Here the writer is the table owner with
+// NO FORCE ROW LEVEL SECURITY (the owner is then exempt from the policy) and the BEFORE guard is
+// disabled, so nothing but the AFTER trigger can refuse the move. If it is dropped, this fails.
+func TestTier0RevisionAfterTriggerRefusesTenantMoveByRLSBypassingWriter(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		ctx := context.Background()
+		e.designate(t, e.a, e.adA, "aaaaaaaa-0000-4000-8000-0000000000f2", true)
+		const tbl = `public.inventory_tier0_revisions`
+		for _, stmt := range []string{
+			`ALTER TABLE ` + tbl + ` NO FORCE ROW LEVEL SECURITY`,
+			`ALTER TABLE ` + tbl + ` DISABLE TRIGGER inventory_tier0_revisions_guard`,
+		} {
+			if err := e.d.ExecOwner(ctx, stmt); err != nil {
+				t.Fatalf("%s: %v", stmt, err)
+			}
+		}
+		// The owner now sees tenant A's row: the move below targets a non-empty set, so a refusal
+		// cannot be a filtered-out zero-row UPDATE.
+		rows, err := e.d.OwnerStrings(ctx, `SELECT count(*)::text FROM `+tbl+` WHERE tenant_id = $1`, e.a.String())
+		if err != nil || len(rows) != 1 || rows[0] == "0" {
+			t.Fatalf("owner must see tenant A's revision row, got %v (err %v)", rows, err)
+		}
+		err = e.d.ExecOwner(ctx, `UPDATE `+tbl+` SET tenant_id = $1 WHERE tenant_id = $2`, e.b.String(), e.a.String())
+		if code := store.SQLState(err); code != "23514" || !strings.Contains(err.Error(), "never change tenant") {
+			t.Fatalf("want 23514 from the AFTER tenant guard, got %q: %v", code, err)
+		}
+		rows, err = e.d.OwnerStrings(ctx, `SELECT count(*)::text FROM `+tbl+` WHERE tenant_id = $1`, e.a.String())
+		if err != nil || len(rows) != 1 || rows[0] == "0" {
+			t.Fatalf("tenant A lost its revision row: %v (err %v)", rows, err)
 		}
 	})
 }

@@ -1,4 +1,4 @@
--- 0038_inventory_entra_hybrid_inputs: the Entra-side facts the DM-20.I4 gate reads, stored as the
+-- 0042_inventory_entra_hybrid_inputs: the Entra-side facts the DM-20.I4 gate reads, stored as the
 -- sync cycle saw them (T-0326). Owner: internal/directory/inventory.
 --
 -- The gate runs again whenever the AD side, the link or the attestation changes, not only when the

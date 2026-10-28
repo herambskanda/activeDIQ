@@ -1,4 +1,4 @@
--- 0037_inventory_side_facts_as_of: per-side as-of of a correlation's tier0 facts (T-0480; DM-20.I5,
+-- 0039_inventory_side_facts_as_of: per-side as-of of a correlation's tier0 facts (T-0480; DM-20.I5,
 -- connector-contract §8.3 F3). Owner: internal/directory/inventory.
 --
 -- facts_as_of vouches for BOTH tier0 facts as the correlation job last computed them. A live read of

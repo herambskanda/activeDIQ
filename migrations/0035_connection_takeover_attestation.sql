@@ -1,4 +1,4 @@
--- 0022_connection_takeover_attestation: DM-10.I7 takeover-protection attestation (threat model §6.8,
+-- 0035_connection_takeover_attestation: DM-10.I7 takeover-protection attestation (threat model §6.8,
 -- TM-D17). Owner: internal/directory/connection.
 --
 -- The latest attestation lives on the Entra connection: who signed in (the Global Administrator's

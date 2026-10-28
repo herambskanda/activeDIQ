@@ -75,6 +75,29 @@ type Change struct {
 	Secret      bool
 	BeforeCount uint64
 	AfterCount  uint64
+	// Before and After hold one Ref per value, in value order, when the values were kept by reference
+	// (T-0306). They hold commitments only; the hash covers them, so erasing a subject changes nothing.
+	Before []Ref
+	After  []Ref
+}
+
+// Ref is the chained form of a personal.Ref: the subject, the value ID, the field and the commitment.
+// Its encoding is byte-identical to personal.Ref.Canonical.
+type Ref struct {
+	Subject    string
+	ValueID    [16]byte
+	Field      string
+	Commitment [32]byte
+}
+
+// Bytes returns the adq-canon/1 encoding of the ref.
+func (r Ref) Bytes() ([]byte, error) {
+	var e canon.Encoder
+	e.String(1, r.Subject)
+	e.UUID(2, r.ValueID)
+	e.String(3, r.Field)
+	e.Bytes(4, r.Commitment[:])
+	return e.Result()
 }
 
 // Detail is one typed public detail of an event, kept in key order.
@@ -104,6 +127,7 @@ type Envelope struct {
 	PlanHash    string
 	Changes     []Change
 	Details     []Detail
+	Snapshots   []Ref // display snapshots (a name or similar as it read at the time), by reference
 }
 
 // Field tags of the envelope. They are part of the format and never reused.
@@ -129,6 +153,7 @@ const (
 	tPlanHash
 	tChanges
 	tDetails
+	tSnapshots
 )
 
 func principalBytes(p Principal) ([]byte, error) {
@@ -188,6 +213,12 @@ func (v Envelope) Marshal() ([]byte, error) {
 			}
 			ce.Uint(3, c.BeforeCount)
 			ce.Uint(4, c.AfterCount)
+			if err := putRefs(&ce, 5, c.Before); err != nil {
+				return nil, err
+			}
+			if err := putRefs(&ce, 6, c.After); err != nil {
+				return nil, err
+			}
 			b, err := ce.Result()
 			if err != nil {
 				return nil, err
@@ -213,7 +244,64 @@ func (v Envelope) Marshal() ([]byte, error) {
 		}
 		e.List(tDetails, items)
 	}
+	if err := putRefs(&e, tSnapshots, v.Snapshots); err != nil {
+		return nil, err
+	}
 	return e.Result()
+}
+
+func putRefs(e *canon.Encoder, tag uint64, refs []Ref) error {
+	if len(refs) == 0 {
+		return nil
+	}
+	items := make([][]byte, 0, len(refs))
+	for _, r := range refs {
+		b, err := r.Bytes()
+		if err != nil {
+			return err
+		}
+		items = append(items, b)
+	}
+	e.List(tag, items)
+	return nil
+}
+
+func parseRefs(b []byte) ([]Ref, error) {
+	items, err := canon.AsList(b)
+	if err != nil {
+		return nil, err
+	}
+	var out []Ref
+	for _, it := range items {
+		fs, err := canon.Decode(it)
+		if err != nil {
+			return nil, err
+		}
+		var r Ref
+		for _, f := range fs {
+			switch f.Tag {
+			case 1:
+				r.Subject, err = canon.AsString(f.Value)
+			case 2:
+				r.ValueID, err = canon.AsUUID(f.Value)
+			case 3:
+				r.Field, err = canon.AsString(f.Value)
+			case 4:
+				if len(f.Value) != len(r.Commitment) {
+					err = fmt.Errorf("%w: commitment length", canon.ErrNonCanonical)
+				} else {
+					copy(r.Commitment[:], f.Value)
+				}
+			default:
+				err = fmt.Errorf("%w: unknown ref tag %d", canon.ErrNonCanonical, f.Tag)
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+		out = append(out, r)
+	}
+	return out, nil
 }
 
 func optString(e *canon.Encoder, tag uint64, s string) {
@@ -305,6 +393,8 @@ func ParseEnvelope(b []byte) (Envelope, error) {
 			v.Changes, err = parseChanges(f.Value)
 		case tDetails:
 			v.Details, err = parseDetails(f.Value)
+		case tSnapshots:
+			v.Snapshots, err = parseRefs(f.Value)
 		default:
 			err = fmt.Errorf("%w: unknown tag %d", canon.ErrNonCanonical, f.Tag)
 		}
@@ -347,6 +437,10 @@ func parseChanges(b []byte) ([]Change, error) {
 				c.BeforeCount, err = canon.AsUint(f.Value)
 			case 4:
 				c.AfterCount, err = canon.AsUint(f.Value)
+			case 5:
+				c.Before, err = parseRefs(f.Value)
+			case 6:
+				c.After, err = parseRefs(f.Value)
 			default:
 				err = fmt.Errorf("%w: unknown change tag %d", canon.ErrNonCanonical, f.Tag)
 			}

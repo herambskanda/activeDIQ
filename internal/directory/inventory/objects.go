@@ -467,6 +467,9 @@ func (Writer) removeOtherPrimaryGroups(ctx context.Context, tx store.Tx, connect
 // so a wrong list is an error, never a silent undercount. A value that is not 16 bytes cannot be a
 // GUID anchor and matches nothing here (string anchors are a separate lookup).
 //
+// Only user and inetOrgPerson rows count (DM-20.I1a is user-to-user); computers, gMSAs, groups and
+// contacts sharing the GUID are not matches.
+//
 // The count, not a bool: more than one is DM-20 `ambiguous_anchor`.
 func (Writer) AnchorMatches(ctx context.Context, tx store.Tx, adConnections []ConnectionID, anchor []byte) (int, error) {
 	if len(adConnections) == 0 || len(adConnections) > 1000 {
@@ -497,7 +500,7 @@ func (Writer) AnchorMatches(ctx context.Context, tx store.Tx, adConnections []Co
 	var n int
 	err = tx.QueryRow(ctx, `SELECT count(*) FROM public.directory_objects
 		WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = ANY($1::uuid[])
-		AND nc_guid IS NOT NULL AND state <> 'purged' AND (consistency_guid = $2 OR object_guid = $3::uuid)`,
+		AND nc_guid IS NOT NULL AND state <> 'purged' AND kind IN ('user','inetorgperson') AND (consistency_guid = $2 OR object_guid = $3::uuid)`,
 		ids, g.Bytes(), g.String()).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("inventory: anchor matches: %w", err)

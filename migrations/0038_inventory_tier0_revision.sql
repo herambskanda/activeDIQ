@@ -1,4 +1,4 @@
--- 0036_inventory_tier0_revision: the per-tenant tier0-set revision (client.RevisionSource, T-0376).
+-- 0038_inventory_tier0_revision: the per-tenant tier0-set revision (client.RevisionSource, T-0376).
 -- Owner: internal/directory/inventory.
 --
 -- The connector echoes this number in audit and in errors (connector-contract §8.3) so an operator can
