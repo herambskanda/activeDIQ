@@ -103,19 +103,16 @@ func toEnvelope(ev Event) (chain.Envelope, error) {
 }
 
 // beforeCommit chains the transaction's buffered events (ADR-0005 rule 11, steps 1 to 4).
-func (c *Chainer) beforeCommit(ctx context.Context, tx store.Tx, tenantID string) error {
+func (c *Chainer) beforeCommit(ctx context.Context, tx store.Tx, tid tenantpkg.ID) error {
 	p, ok := c.slot.Take(tx)
 	if !ok || len(p.events) == 0 {
 		return nil
 	}
-	if tenantID == "" {
+	if tid.IsZero() {
 		return ErrNoTenantTx
 	}
+	tenantID := tid.String()
 	tenant, err := chain.ParseUUID(tenantID)
-	if err != nil {
-		return ErrNoTenantTx
-	}
-	tid, err := tenantpkg.Parse(tenantID)
 	if err != nil {
 		return ErrNoTenantTx
 	}

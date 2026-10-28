@@ -141,65 +141,9 @@
       "mintsTenantID": false
     },
     {
-      "package": "internal/compose/server",
-      "function": "consoleAuthz.Allow",
-      "reason": "The tenant is the one the authority chain's authentication step set on the request context or principal (authority.TenantFrom, apihost.Principal), never a request field; the parse only converts that server-set value to the typed ID and fails closed (ADR-0002 rule 5).",
-      "withPlatform": false,
-      "mintsTenantID": true
-    },
-    {
-      "package": "internal/compose/server",
-      "function": "tenantTier0.Build",
-      "reason": "The tenant is the one the authority chain's authentication step set on the request context or principal (authority.TenantFrom, apihost.Principal), never a request field; the parse only converts that server-set value to the typed ID and fails closed (ADR-0002 rule 5).",
-      "withPlatform": false,
-      "mintsTenantID": true
-    },
-    {
-      "package": "internal/compose/server",
-      "function": "newTenantTier0",
-      "reason": "Startup only: tenant.New() is a throwaway ID handed to the client's own source check so the two cannot drift; it names no tenant, is never stored and reaches no query (ADR-0002 rule 5).",
-      "withPlatform": false,
-      "mintsTenantID": true
-    },
-    {
-      "package": "internal/directory/client",
-      "function": "TunnelSource.Connector",
-      "reason": "The tenant is the one the authority chain's authentication step set on the request context or principal (authority.TenantFrom, apihost.Principal), never a request field; the parse only converts that server-set value to the typed ID and fails closed (ADR-0002 rule 5).",
-      "withPlatform": false,
-      "mintsTenantID": true
-    },
-    {
       "package": "internal/modules/connections",
       "function": "StateTenant",
       "reason": "The tenant prefix of an OAuth state is only a lookup hint to choose whose attempt table to search; the lookup is by the hash of the whole state, so a state never issued for that tenant finds nothing, and the value grants nothing (ADR-0002 rule 5).",
-      "withPlatform": false,
-      "mintsTenantID": true
-    },
-    {
-      "package": "internal/modules/connections",
-      "function": "WindowGate.AllowTenant",
-      "reason": "Holds a tenant.ID key and the zero ID as the overflow bucket of the callback rate window; it reads or writes no data and mints no identity (ADR-0002 rule 5).",
-      "withPlatform": false,
-      "mintsTenantID": true
-    },
-    {
-      "package": "internal/modules/connections",
-      "function": "sessionRequest",
-      "reason": "The tenant is the one the authority chain's authentication step set on the request context or principal (authority.TenantFrom, apihost.Principal), never a request field; the parse only converts that server-set value to the typed ID and fails closed (ADR-0002 rule 5).",
-      "withPlatform": false,
-      "mintsTenantID": true
-    },
-    {
-      "package": "internal/modules/connections",
-      "function": "ReconfirmCorrelation",
-      "reason": "The tenant is the one the runner stored in the operation payload from the authenticated request; the parse converts it to the typed ID and fails closed (ADR-0002 rule 5).",
-      "withPlatform": false,
-      "mintsTenantID": true
-    },
-    {
-      "package": "internal/platform/rbac",
-      "function": "tenantOf",
-      "reason": "The tenant is read back from app.tenant_id, which WithTenant set for this transaction from the authenticated context; the parse only converts it to the typed ID and fails closed (ADR-0002 rule 5).",
       "withPlatform": false,
       "mintsTenantID": true
     }
