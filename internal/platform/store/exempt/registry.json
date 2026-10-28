@@ -566,6 +566,36 @@
       "column": "public.authz_assignments.account_id",
       "value": "0b3f2f9e-6a1c-4c53-9a53-3a7a3f5f1c02",
       "reason": "CHECK: authz_assignments_subject_shape ties each subject_kind to its columns; the probe row is the default account subject, so account_id is set (DM-36)."
+    },
+    {
+      "column": "public.authn_webauthn_credentials.credential_id",
+      "value": "\\x70707070707070707070707070707070",
+      "reason": "CHECK: a credential ID is 16 to 1023 bytes (authn_webauthn_credentials_credential_id_check); the probe row carries a 16-byte placeholder (T-0207)."
+    },
+    {
+      "column": "public.authn_webauthn_credentials.public_key",
+      "value": "\\x70707070707070707070707070707070",
+      "reason": "CHECK: a stored COSE key is 16 to 2048 bytes; the probe row carries a 16-byte placeholder, not a real key (T-0207)."
+    },
+    {
+      "column": "public.authn_webauthn_credentials.user_handle",
+      "value": "\\x70707070707070707070707070707070",
+      "reason": "CHECK: a user handle is 16 to 64 bytes; the probe row carries a 16-byte placeholder (T-0207)."
+    },
+    {
+      "column": "public.authn_webauthn_challenges.challenge",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: a challenge is 32 to 64 bytes (authn_webauthn_challenges_challenge_check); the probe row carries a 32-byte placeholder (T-0207)."
+    },
+    {
+      "column": "public.authn_webauthn_challenges.created_at",
+      "value": "2000-01-01 00:00:00+00",
+      "reason": "CHECK: authn_webauthn_challenges_life ties expires_at to created_at (later, within 5 minutes); the probe row pins both to fixed instants (T-0207)."
+    },
+    {
+      "column": "public.authn_webauthn_challenges.expires_at",
+      "value": "2000-01-01 00:03:00+00",
+      "reason": "CHECK: authn_webauthn_challenges_life, see created_at; 3 minutes after the pinned created_at (T-0207)."
     }
   ]
 }
