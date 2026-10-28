@@ -139,7 +139,7 @@ func TestHoldTamperAndRuntimeRoleCannotUpdate(t *testing.T) {
 			return nil
 		})
 		// Legal hold blocks erasure and deletes nothing.
-		if err := r.owner("personal_subject", `UPDATE public.personal_subject SET hold = true`); err != nil {
+		if err := r.owner("personal_hold", `ALTER TABLE public.personal_subject NO FORCE ROW LEVEL SECURITY; INSERT INTO public.personal_hold (tenant_id, subject_ref) SELECT tenant_id, subject_ref FROM public.personal_subject`); err != nil {
 			t.Fatal(err)
 		}
 		_ = r.in(r.id, func(ctx context.Context, tx store.Tx) error {
