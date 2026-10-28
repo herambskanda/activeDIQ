@@ -181,5 +181,54 @@ class ExternalMode(unittest.TestCase):
         self.assertNotIn("so do it before step 7", rb)
 
 
+class GuestStageOrdering(unittest.TestCase):
+    """T-0496: static proof (no PowerShell in CI) of the pending-restart path and of loud failures. Each assertion
+    fails on the original dc.ps1/boot.ps1, which set 'promoted' before Install-ADDSForest and died silently."""
+
+    def dc(self):
+        return (LAB / "guest/dc.ps1").read_text()
+
+    def start_block(self):
+        d = self.dc()
+        return d[d.index("'start' {"):d.index("'promoted' {")]
+
+    def test_pending_restart_after_feature_install_reboots_and_resumes_at_start(self):
+        b = self.start_block()
+        self.assertRegex(b, r"\$feat = Install-WindowsFeature")
+        self.assertIn("RestartNeeded", b)
+        self.assertLess(b.index("RestartNeeded"), b.index("Restart-Computer"))
+        self.assertLess(b.index("Restart-Computer"), b.index("Install-ADDSForest -DomainName"))
+        self.assertRegex(b, r"Restart-Computer -Force\s+return")  # stops before promotion; stage stays 'start'
+        self.assertIn("feature-reboot", b)  # one-shot marker: no reboot loop
+
+    def test_stage_promoted_only_after_install_addsforest_succeeds(self):
+        b = self.start_block()
+        self.assertLess(b.index("Install-ADDSForest -DomainName"), b.index("Set-Stage 'promoted'"))
+        self.assertIn("-NoRebootOnCompletion ", b); self.assertNotIn("-NoRebootOnCompletion:$false", b)
+        self.assertLess(b.index("Set-Stage 'promoted'"), b.rindex("Restart-Computer"))
+
+    def test_stage_failure_is_logged_without_dying_silently(self):
+        for n in ("boot.ps1",):  # single file by design
+            t = (LAB / "guest" / n).read_text()
+            self.assertRegex(t, r"try \{[\s\S]*dc\.ps1[\s\S]*member\.ps1[\s\S]*\} catch \{[\s\S]*Write-LabLog[^\n]*Exception\.Message")
+            self.assertIn("exit 1", t)
+        catch = (LAB / "guest/boot.ps1").read_text().split("catch {")[1]
+        self.assertNotIn("$c.", catch)  # never log config values (secrets)
+
+    def test_adcs_installed_only_after_promotion(self):
+        """Install-ADDSForest refuses with 'Certificate Server is installed' (VM 119), so ADCS comes after promotion."""
+        d = self.dc()
+        self.assertNotIn("ADCS-Cert-Authority", self.start_block())
+        promoted = d[d.index("'promoted' {"):d.index("'configure' {")]
+        self.assertLess(promoted.index("Install-WindowsFeature ADCS-Cert-Authority"), promoted.index("Install-AdcsCertificationAuthority"))
+
+    def test_external_and_local_modes_share_the_same_dc_path(self):
+        """external mode skips only NIC setup in boot.ps1; the DC promotion path is the one tested above."""
+        boot = (LAB / "guest/boot.ps1").read_text()
+        self.assertIn("if (-not $external)", boot)
+        self.assertIn("& C:\\lab\\dc.ps1", boot)
+        self.assertIn("catch", boot.split("& C:\\lab\\dc.ps1")[1])  # failure handler covers both modes
+
+
 if __name__ == "__main__":
     unittest.main()
