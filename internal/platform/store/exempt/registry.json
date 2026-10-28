@@ -113,6 +113,13 @@
       "mintsTenantID": true
     },
     {
+      "package": "internal/directory/inventory",
+      "function": "Membership.GroupsOf",
+      "reason": "authz.Membership receives the tenant as a string from the authorizer, which took it from the authenticated principal set by the authority chain, never from a request field; the parse only converts that server-set value to the typed ID and fails closed with ErrNoTenant (ADR-0002 rule 5).",
+      "withPlatform": false,
+      "mintsTenantID": true
+    },
+    {
       "package": "internal/platform/rbac",
       "function": "Authorizer.Authorize",
       "reason": "The tenant is read from the request context that the authority chain's authentication step set (authority.TenantFrom), never from a request field; the parse only converts that server-set value to the typed ID and fails closed (ADR-0002 rule 5).",
