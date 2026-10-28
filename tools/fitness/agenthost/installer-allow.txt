@@ -1,0 +1,7 @@
+# Reviewed exceptions to fitness-agent-host A1's deny-by-default for the installer source (ADR-0006 rules 1, 3).
+# Under packaging/ every WiX CustomAction (or Binary), and every script-type file (.ps1 .psm1 .cmd .bat
+# .vbs .js .wsf ...) that names the agent, fails unless it is listed here: the account, SID type and
+# privileges are declared by ServiceInstall/ServiceConfig, so nothing may compute them in a script.
+# One entry per line: a CustomAction/Binary Id, or a repo-relative path (`dir/...` for a subtree).
+# Adding a line is a security-architect review: say what the action runs and as whom in the commit message.
+# (Empty today.)
