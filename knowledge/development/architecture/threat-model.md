@@ -5,7 +5,7 @@ updated: 2026-10-28
 status: review
 owner: heramb
 author: security-architect
-ticket: T-0544, T-0495, T-0388, T-0359, old T-0007, T-0032, T-0044, T-0051, T-0055, T-0108, T-0179, T-0111, T-0227, T-0230, T-0235, T-0240, T-0395
+ticket: T-0544, T-0495, T-0388, T-0359, old T-0007, T-0032, T-0044, T-0051, T-0055, T-0108, T-0179, T-0111, T-0227, T-0230, T-0235, T-0240, T-0395, T-0178
 binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), blueprint v0 (review), safe-primitives.md (review)
 sources_last_checked: 2026-10-02
 ---
@@ -2529,6 +2529,60 @@ the tenant ID as encryption context, so a wrapped DEK moved between tenants fail
 each open fails with a typed error and no plaintext; a DEK wrapped for tenant A fails to unwrap as
 B (KMS profile, fake KMS); tampering with one byte fails.
 
+### 9.2.1 Rollback of a sealed value — DECISION TM-D29 (T-0178)
+
+**Gap in TM-D7.** The associated data binds *where* a blob lives and *which key version*, not *when*.
+An attacker with database write (TM-X-class SQL injection, a stolen application role) who holds an
+older blob that was sealed for the same cell and the same DEK version can write it back, and `Open`
+accepts it. They need no key: the blob is a copy of what was legitimately stored earlier (a backup
+read, a replica, an earlier read of the table). The gain is **resurrecting a secret the owner
+replaced**, for example a TOTP seed the user retired because the phone was lost.
+
+**What does not work: a seal counter in the AAD.** The counter would live in the same row, so the
+attacker who rolls the blob back rolls the counter back with it, and `Open` still succeeds. A counter
+gives freshness only if it is held where the attacker cannot write (a KMS-side counter, or the
+signed audit chain). Neither is worth building for the values below, so **no per-row seal counter**.
+
+**Rule.** A sealed cell never changes meaning in place. The three controls, in order of preference:
+
+1. **New row on change** (the DM-11 I5 pattern). The old row's blob goes into a different cell
+   (the row id is in the AAD), so it cannot be replayed into the live row.
+2. **Terminal rows hold no secret.** A row that is `rotated`, `revoked` or `expired` has
+   `sealed_* IS NULL`, enforced by a `CHECK` constraint, and its state cannot leave a terminal value,
+   enforced by a trigger. Replaying the old blob into the old row then fails at the database, and
+   making the old row live again needs a state change the trigger refuses. Both survive an
+   application-role attacker. A database owner or superuser can drop them; that attacker is TM-R4's
+   host administrator, not this threat.
+3. **Accepted residual** only where an older value gives the attacker nothing the owner has not
+   already revoked at the source, and the replay shows up as a failed use.
+
+DEK rotation (TM-D15) bounds the rest: a retired DEK version is shredded once nothing references it,
+so a blob sealed under it can no longer be opened, whatever is written back.
+
+| Sealed column (§9.2 list) | What an older blob would restore | Control | Residual |
+| --- | --- | --- | --- |
+| DM-11 `sealed_secret` (AD password fallback, Entra private key) | A replaced service-account password or Entra key | **1 + 2.** Already new-row (DM-11.I5). Add: `CHECK (state NOT IN ('rotated','revoked') OR sealed_secret IS NULL)` and a state trigger (terminal states are final) | None for the application role. Re-wrap under a new version keeps the same plaintext, so an older wrap of the same secret is harmless |
+| DM-37 `sealed_secret` (TOTP seed; MFA seeds) | A seed the user retired after losing a device or being compromised, giving the holder a valid second factor again | **1 + 2.** Re-enrolment creates a new enrollment row; the old row moves to `revoked` with its seed erased; same `CHECK` and trigger. **No in-place seed edit exists** | None for the application role |
+| DM-39 IdP `credential` (OIDC client secret or key) | An IdP client secret the admin replaced | **1 + 2** for a secret change (new credential row, old one terminal). Any change is already a step-up Action (DM-39.I1) | None for the application role |
+| DM-63 DataSource, DM-82 NotificationChannel, DM-85 ItsmConnection `sealed_credentials` (and M4 RADIUS client secrets) | An older integration token or shared secret | **3** for DM-63/82/85: edited in place by design, because the connections are referenced by rules, runs and schedules. A rotated token is revoked at the source, so the replay fails on the next use and `last_test` and the failed-use audit event show it. M4 RADIUS client secrets: the M4 spec must make a secret change a new secret row (control 1), because an old shared secret still accepted by the NAS is exactly the PAP exposure of TM-TB19-T4 | **TM-R24** (accepted) |
+| Audit checkpoint key | A checkpoint key from before a rotation | **Detective.** Rotation is recorded in the chain (§9.1); a checkpoint signed by a key the chain shows as superseded fails verification (TM-F-AUDIT) | The key stays valid for checkpoints already anchored |
+| Agent-policy signing key | A superseded policy key | **Bounded by ADR-0007.** Agents hold the keyset chain and refuse a `key_id` not in the keyset and any `policy_seq` at or below the highest seen; a key dropped from the keyset signs nothing agents accept. Rotation makes a new key row (control 1) | A key still in the `retiring` overlap (≤30 days) is accepted by design (TM-R7) |
+| Fleet CA key | A CA key replaced after compromise | **1 + 2.** The fleet-contract owner makes CA rollover a new CA row with the old key erased, and clients pin the CA by certificate, not by position in a table. Until that is in `fleet-contract.md`, this row is **open** | Tracked by the follow-up ticket |
+| Step secret input (password being set) | A password from an earlier step | Deleted at the step's terminal state (domain model, ADR-0005 rule 9); steps are one-shot and cannot return to `running` (control 2 applies to the step row) | None |
+| DM-02 `wrapped_dek` | An older wrap of the same DEK version | Versions are immutable: the same plaintext, so a replay changes nothing. A DEK wrapped under a previous KEK is covered by KEK rotation (§9.3 step 5) | None |
+
+**Restoring a whole database backup** is a rollback of everything at once. It is a host and backup
+access problem (TM-TB15-T4, TM-R4), not a cell-level one; ADR-0007 rule 6 already makes it a
+policy-key rotation trigger.
+
+**Proof TM-F-SEAL (rollback cases).** (a) Seal v1, replace the credential or enrolment, write the
+saved v1 blob back into the old row as the application role: the `CHECK` refuses it. (b) Set the old
+row's state back to `active` as the application role: the trigger refuses it. (c) For DM-37, a
+retired seed never verifies a code after re-enrolment. (d) After DEK rotation and shredding of
+version *n*, a saved version-*n* blob returns `KeyVersionMismatch`. (e) A DM-63/82/85 rollback test
+is **not** claimed: it documents TM-R24 by asserting the failed-use audit event and `last_test`
+change.
+
 ### 9.3 DEK rotation — DECISION TM-D15 (answers DM Q2)
 
 1. Create DEK version *n+1* as `active`; version *n* becomes `retired` (decrypt-only) in the same
@@ -2866,7 +2920,7 @@ Existing proofs this document relies on: FF-SP1–SP9 (`tools/fitness/safeprim`)
 | TM-F-ANON | Anonymous routes of the built router ≠ the reviewed allow-list (§7.6) | CI | `fitness-api` A4 (T-0018) | TB2-T2, TB2-T10 |
 | TM-F-FLEET | Any RPC but `Enroll` succeeds without a client certificate; an enrollment token works twice or after expiry; a connector accepts an unpinned server; a revoked component keeps a stream; the fleet contract gains a secret-bearing message type outside operation payloads. **Tunnel (TM-D24, §9.8).** (A) Some `CallOpen.method` reaches a handler although it is outside the opener's direction set of the bound contract. The corpus: another contract's method (including the cross-kind cases connector↔`addc`↔`fileserver`), a server→component method opened by the component, `grpc.health.v1`, `grpc.reflection.v1`, channelz, case, slash and suffix variants of an allowed name, and a name over 256 bytes or not valid UTF-8. Or the refusals differ in code or text, or `fleet/dial` serves a method outside its contract. (B) Some violation leaves the tunnel open, or no audit event names the component. The corpus: a wrong-parity `open`, a reused or non-increasing id, a frame on an id never opened, a frame the sender's role or the call's state forbids, and a non-`FlowCredit` body on `call_id` 0. Also fails: an in-flight frame after this side's cancel or close closes the tunnel; a response reaches a call on another tunnel; a pending call is rebound after its tunnel drops; or it completes with any outcome but unknown. (C) A component `status_message` with CR/LF, ANSI escapes, bidi controls, invalid UTF-8, HTML or 1 MiB of text reaches a log line, audit summary, API response or console view unbounded or unescaped, or outside a `component_reported` field. Or a `status_code` outside 0–16 maps to anything but `UNKNOWN`. (D) The gateway serves an `Enroll` whose `ca_bundle_pem` holds anything but header-free `CERTIFICATE` blocks of CA certificates that include the pinned CA. The corpus: a `PRIVATE KEY` or `RSA PRIVATE KEY` block, PEM headers, trailing bytes, a non-CA certificate, zero certificates, more than 8 certificates or more than 64 KiB. Or a component accepts such a bundle, or a bundle without the pinned CA. Or a component sends its token to an `Enroll` server whose CA SPKI does not match the pin (MITM fixture). Or a pinned dial ever uses the host root set | CI (P3 harness) | T-0069 (backend-engineer); subjects T-0155, T-0158, T-0209 | TB6, TB12-T1/T2, TB12-T16 |
 | TM-F-NTLM | Any outbound NTLM attempt from the activeDIQ host, with NTLM blocked domain-wide or a planted UNC `homeDirectory` (§9.6) | Windows lab | T-0068 (directory-engineer) | TB3-T2, TB9-T2 |
-| TM-F-SEAL | A sealed value opens after being moved to another tenant, row or column; a DEK unwraps under another tenant's context (§9.2) | CI | T-0070 (backend-engineer) | TB4-T6/T7, TB5-T2, TB7-T1 |
+| TM-F-SEAL | A sealed value opens after being moved to another tenant, row or column; a DEK unwraps under another tenant's context (§9.2); a retired DM-11/DM-37 secret is written back into a terminal row or the row leaves its terminal state, or a blob of a shredded DEK version opens (§9.2.1) | CI | T-0070 (backend-engineer) | TB4-T6/T7, TB5-T2, TB7-T1 |
 | TM-F-AUDIT | Runtime role can UPDATE/DELETE/TRUNCATE audit; an edited, deleted or reordered event verifies; a checkpoint is not anchored in SIEM and export (§11) | CI + catalog | T-0133 (fitness-audit; needs T-0132 chain) | TB1-T5, TB4-T3/T4, TB15-T5 |
 | TM-F-UPDATE | A tampered, rolled-back, frozen, revoked-key or server-signed update is accepted, on either courier (§10) | CI, extends P5 | T-0138 (ENH-07 spec) + T-0139 (proof) | TB10 |
 | TM-F-AUTHZ | Scope escape, move-between-check-and-write, bulk item out of scope, self-escalation, dead-owner token, a report beyond its owner's scope, a synced Entra group with a weak or unknown AD source, or a dynamic-membership group grants (§7.7, TM-D18 extension) | CI + Samba lab | T-0072 (backend-engineer) | TB1-T8/T11/T12, TB2-T8, TB15-T2 |
@@ -2920,6 +2974,7 @@ control.
 | TM-R21 | **R-C19-DEPTH, accepted (T-0235).** C19 is depth 1. A principal that controls only a *controller* of a Domain Admins group (for example WriteDACL on a help-desk user who holds WP `member` on Domain Admins) is not `tier0`; the controller is | A transitive closure over ACL edges makes most of a real directory `tier0` and the guard unusable; BloodHound's Tier Zero is likewise a curated set, not a closure `[UNVERIFIED — current definition]`. Two hops of control still need one compromised hop first, and the first hop is `tier0` and refused | security-architect | an exposure-path view (TM-Q30); a customer asking for depth 2 |
 | TM-R22 | **R-C19-SYSVOL, accepted (T-0235).** Control of a `tier0` GPO's SYSVOL folder is not read by the classifier | It is an SMB ACL on every DC; reading it needs a second channel and more rights than the connector may hold. The GPO object ACL and the links are covered | security-architect | TM-Q30 scan |
 | TM-R23 | The guarded table is only as complete as our knowledge: a schema extension, a new Windows attribute or an ADCS change can add a sign-in-granting write we do not list. Entra SSPR contact rows are conservative until lab G17 | Closed tables cannot know the future; B1 makes every addition a reviewed diff and the nightly schema grep flags credential-like attributes (§6.9a) | security-architect | Lab G17 (T-0075) |
+| TM-R24 | **In-place rollback of integration credentials, accepted (T-0178).** An attacker with application-role database write can replace a DM-63 / DM-82 / DM-85 `sealed_credentials` blob with an older one for the same cell and DEK version, and `Open` accepts it (TM-D29) | Edited in place by design because rules, runs and schedules reference the connection. The older token was revoked at its source when the admin rotated it, so the likely effect is a failed use that audit and `last_test` show; a source that did not revoke it gives the attacker an older credential, not a new one. A counter in the same row would not help (rolled back with the blob) | security-architect | If a source is found that cannot revoke a replaced credential, or the integrations move to new-row-on-change |
 | R-AN8-1 | Anyone who reaches AN-8 on L1 can push a known break-glass name into the rule 3 delay window with 5 bad guesses, delaying the legitimate operator (T-0359, §7.6 rule 2f) | "Throttled, never locked" (rule 3) trades lockout for delay; a hard lock would let L1 disable recovery | security-architect | alerts at 10 failures/hour, CIDR allow-list (rule 4); a customer asking for a second recovery path |
 
 ### 16.2 Decisions owed to the CEO (not asked now)
@@ -3099,3 +3154,4 @@ External, in order of first use:
 - 2026-10-02 · v0.1 (old T-0007 rework after the solution-architect review). New boundaries TB18 (ManageEngine source ↔ migration importer, scanner, comparator; TM-D21) and TB19 (RADIUS; TM-D20, co-location bounded). `fileserver` agent rows TM-TB12-T10…T15 and TM-D13 extended to it; `fpolicy` and `t0-connector` out of scope with an RT-6 trigger. Authentication-plane residual closed by TM-D19 (activeDIQ-held authority factor anchored in the AD plane; TM-TB8-T8, TM-R12). TM-D17 aligned to DM-10.I7 and D-0009: 90 days, optional monitor, DM vocabulary and permissions, old T-0061. §6.3 R9 Deleted Objects finding (TM-Q27). §6.4 C rows reordered. New proofs TM-F-MIGRATE and TM-F-RADIUS; RT-18; TM-R13; TM-Q25 (Exchange leg) to TM-Q28. §18 regenerated (65 URLs).
 - 2026-10-02 · v0 (old T-0007). 17 trust boundaries with STRIDE tables; minimum AD rights R1–R13 and Graph allow and deny lists; the `tier0` set for AD (C1–C16) and Entra (E1–E5), answering DM Q1 and confirming DM-23.I5; the hybrid correlation gate (TM-D17), which confirms DM-20.I4 and tightens it, with (f) attested because Graph has no app-only read; role-granting groups as escalation objects (TM-D18, the DM-36.I2 referral); decisions TM-D1–D18; follow-up tickets old T-0053 to old T-0060. Status `review`.
 - 2026-10-24 · T-0235 (answers TM-Q29, ad-expert consult). §6.4: new C19 (control of a C1 or C13 group, `krbtgt`, a DC computer object, the Domain Controllers OU and DC-holding containers, and `tier0` GPOs) and DECISION TM-D27: eleven rules (per-class takeover rights, SDProp not trusted and live DACL read, ownership, ignore list, depth 1, live basis, connector self-check, Samba cannot prove SDProp) and 19 named T0-C19-* / T0-RIGHTS-C19 tests added to TM-F-T0GUARD. New TM-R21 (depth 1) and TM-R22 (SYSVOL ACL) accepted; TM-Q30 opened. Windows-lab items stay `[UNVERIFIED]`.
+- 2026-10-28 · T-0178: §9.2.1 and TM-D29 (rollback of sealed values): no seal counter in the AAD (it rolls back with the blob); per column new-row-on-change plus terminal rows hold no secret (CHECK and trigger), detective or ADR-bounded for key material, TM-R24 accepted for DM-63/82/85. TM-F-SEAL extended.
