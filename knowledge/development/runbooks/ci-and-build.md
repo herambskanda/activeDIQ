@@ -266,3 +266,27 @@ Go's 0600/0700 modes do nothing on Windows, so packaging sets the access control
 `workflows-check` guards `.github/workflows/`; the security.txt renewal job, the per-release SBOM and the
 signed publication are in `release-and-security-txt.md`. The renewal PR is the job `fitness-disclosure`
 above refers to, opened 60+ days before that gate fails.
+
+## TM-F-HOST proof (`make fitness-host`, T-0136)
+
+What it enforces: a booted install is judged on eight named cases (threat-model §15, TM-F-HOST):
+`HOST-DC-REFUSED`, `HOST-SERVICE-NOT-PRIVILEGED`, `HOST-FILE-PERMISSIONS`, `HOST-NO-DEFAULT-CREDENTIAL`,
+`HOST-NO-PLAINTEXT-LISTENER`, `HOST-SETUP-SECRET-SINGLE-USE`, `HOST-NO-DUMPS`, `HOST-REMOTE-DSN-FULL-TLS`.
+
+- **linux-oci (needs Docker):** `go run ./tools/fitness/host oci` builds `cmd/server` (static) into
+  `packaging/linux-oci/Dockerfile.server` (`FROM scratch`, uid 10001, TLS dir 0700), boots it against PostgreSQL 16
+  and observes the live process: kernel uid, `/proc/<pid>/limits`, the TLS directory's tar headers, a plaintext
+  request and well-known logins against the TLS listener, and five remote-DSN boots (`disable`, `allow`, `prefer`,
+  `require`, `verify-ca` without a root) that must each be refused before any dial.
+- **windows (lab):** on a lab host run `packaging/windows/Get-HostObservation.ps1 -ServiceName … -InstallDir …
+  -ConfigPaths … -InstallerResult refused|installed > obs.json`, then `go run ./tools/fitness/host evaluate obs.json`.
+  Run it on dc1 with the MSI once it exists (T-0635) to prove the DC refusal. The script has not yet been run on a
+  Windows host (no MSI to observe); first run must be logged in `windows-lab-runs/`.
+- **Results:** `ok`, `FAIL` (build fails), `INACTIVE` (the collector could not observe it: the subject does not exist
+  yet), `GAP` (fails today, tolerated until the named ticket lands). `tools/fitness/host/known-gaps.json` is a
+  ratchet: a gap that passes fails the build until its entry is deleted. Never add a gap without a ticket.
+- **Proof it fails:** `hostcheck_test.go` has one violating fixture per case (and asserts no other case trips);
+  `make ci-proof` runs `host evaluate` on a compliant observation and on eight mutated ones.
+- **Open gaps:** `HOST-NO-DUMPS` on linux-oci (T-0634); `HOST-DC-REFUSED` (T-0635) and `HOST-SETUP-SECRET-SINGLE-USE`
+  (T-0636) are INACTIVE until their product subject exists. The positive verify-full DSN control needs a TLS
+  PostgreSQL and is covered by `store.CheckTransport`'s own tests.

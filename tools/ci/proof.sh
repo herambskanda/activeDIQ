@@ -955,6 +955,22 @@ must_fail_with "fitness-packaging on a prepare script that loosens the mode" 'mo
 cp "$root/packaging/linux-oci/prepare-tls-dir.sh" "$pk/packaging/linux-oci/"
 must_pass "fitness-packaging" go run ./tools/fitness/packaging "$pk"
 
+# --- fitness-host (T-0136, TM-F-HOST) -----------------------------------------------------------
+ht="$tmp/host"; mkdir -p "$ht"; hf="$root/tools/fitness/host/testdata/clean-windows.json"
+must_pass "fitness-host on a compliant Windows observation" go run ./tools/fitness/host evaluate -repo "$root" "$hf"
+host_case() { # <label> <expected case> <sed expression>
+  sed -e "$3" "$hf" >"$ht/o.json"
+  must_fail_with "fitness-host: $1" "FAIL   $2" go run ./tools/fitness/host evaluate -repo "$root" "$ht/o.json"
+}
+host_case "installer accepts a domain controller" HOST-DC-REFUSED 's/"refused": true/"refused": false/'
+host_case "service runs as LocalSystem" HOST-SERVICE-NOT-PRIVILEGED 's/CORP\\\\activediq\$/LocalSystem/'
+host_case "config readable by others" HOST-FILE-PERMISSIONS '0,/"tls-dir", "readable_by_others": false/s//"tls-dir", "readable_by_others": true/'
+host_case "default credential works" HOST-NO-DEFAULT-CREDENTIAL 's/"default_credentials": \[\]/"default_credentials": ["admin"]/'
+host_case "plaintext listener" HOST-NO-PLAINTEXT-LISTENER 's/"plaintext_responds": false/"plaintext_responds": true/'
+host_case "setup secret reusable" HOST-SETUP-SECRET-SINGLE-USE 's/"accepted_again": false/"accepted_again": true/'
+host_case "WER LocalDumps configured" HOST-NO-DUMPS 's/"wer_local_dumps": false/"wer_local_dumps": true/'
+host_case "remote DSN without TLS accepted" HOST-REMOTE-DSN-FULL-TLS 's/"mode": "disable", "remote": true, "accepted": false/"mode": "disable", "remote": true, "accepted": true/'
+
 # --- release tooling and workflows (T-0261) -----------------------------------------------------
 rt="$tmp/release"; mkdir -p "$rt"
 printf 'Contact: https://example.test/r\nExpires: 2020-01-01T00:00:00Z\n' >"$rt/security.txt"

@@ -61,7 +61,7 @@ func Tier0OverrideAcknowledge() (operation.Action, error) {
 			ID: Tier0OverrideActionID, Version: 1, Permission: Tier0OverridePermission,
 			Input: "#/components/schemas/Tier0OverrideAcknowledge", Target: operation.TargetStore,
 			Reversibility: operation.Irreversible, // an acknowledgement is evidence: no undo (DM-25.I5)
-			AuditKind:     AuditTier0OverrideAcknowledged, StepUp: true,
+			AuditKind:     AuditTier0OverrideAcknowledged, StepUp: true, ControlPlane: true,
 		},
 		Plan: func(ctx context.Context, pc operation.PlanContext, in Tier0OverrideInput) ([]operation.TypedStep[overridePayload], error) {
 			if in.Acknowledgment != TypedAcknowledgement {

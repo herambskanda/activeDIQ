@@ -362,7 +362,9 @@ func (c *ADClassifier) snapshot(ctx context.Context, pinnedC13, designated []gui
 func (b *builder) mark(e *ad.Entry, basis Basis) (guid.GUID, error) {
 	g, err := e.GUID()
 	if err != nil {
-		return g, fmt.Errorf("tier0: entry without objectGUID: %w", err)
+		// Windows answers a denied Read with an entry that has no attributes at all, so the DN is
+		// the only thing left to name; callers that know the SID being classified add it.
+		return g, fmt.Errorf("tier0: entry %q without objectGUID (unreadable by the connector?): %w", e.DN, err)
 	}
 	b.s.add(g, basis)
 	return g, nil
@@ -547,7 +549,7 @@ func (b *builder) c1c2() error {
 			return fmt.Errorf("tier0: protected group %s not found (unreadable, or deleted): refusing to classify without it", s)
 		}
 		if _, err := b.mark(e, C1); err != nil {
-			return err
+			return fmt.Errorf("tier0: protected object %s: %w", s, err)
 		}
 		if err := b.noteAccount(e); err != nil { // Administrator, krbtgt
 			return err
