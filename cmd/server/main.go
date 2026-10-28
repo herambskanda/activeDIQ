@@ -13,6 +13,10 @@ import (
 )
 
 func main() {
+	if err := hardenProcess(os.Getenv); err != nil {
+		fmt.Fprintln(os.Stderr, "server:", err)
+		os.Exit(2)
+	}
 	cfg, err := config.Load(os.Getenv)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "server:", err)
