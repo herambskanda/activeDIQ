@@ -10,10 +10,15 @@
 
 ALTER TABLE public.authn_authenticator_enrollments ALTER COLUMN sealed_secret DROP NOT NULL;
 
--- Erase the seeds of rows already terminal. The guard is switched off for this statement only.
+-- Erase the seeds of rows already terminal. The owner is bound by FORCE ROW LEVEL SECURITY and no tenant is
+-- set here, so the policy would match no rows and the erase would silently do nothing (then the CHECK below
+-- would fail the upgrade). Lift FORCE and the guard for this one statement, inside this migration's single
+-- transaction, and put both back.
+ALTER TABLE public.authn_authenticator_enrollments NO FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.authn_authenticator_enrollments DISABLE TRIGGER authn_enrollments_guard;
 UPDATE public.authn_authenticator_enrollments SET sealed_secret = NULL WHERE state IN ('revoked', 'expired');
 ALTER TABLE public.authn_authenticator_enrollments ENABLE ALWAYS TRIGGER authn_enrollments_guard;
+ALTER TABLE public.authn_authenticator_enrollments FORCE ROW LEVEL SECURITY;
 
 ALTER TABLE public.authn_authenticator_enrollments ADD CONSTRAINT authn_enrollments_terminal_no_secret
   CHECK ((state IN ('revoked', 'expired')) = (sealed_secret IS NULL));
