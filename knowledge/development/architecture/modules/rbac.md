@@ -14,7 +14,7 @@ Code: `internal/platform/rbac/`, `internal/modules/delegation/`; migrations `001
 - **Tables** (tenant, RLS): `authz_roles`, `authz_role_permissions`, `authz_assignments`,
   `authz_assignment_roots`. Subjects are an account, a directory group
   (connection + objectGUID) or an automation policy (opaque ID owned by lifecycle); `subject_kind` + a shape
-  check in migration 0035. A token is never a subject: it narrows its owner (DM-32).
+  check in migration 0037. A token is never a subject: it narrows its owner (DM-32).
 - **`Authorizer`** implements `operation.Authorizer` over `authz.Evaluator`. It loads the requester's
   current assignments (own short read, so it works inside the runner's tenant transaction), builds an
   `authz.Target` from the live `authority.Facts` (target, parent chain, connection as chain top) and

@@ -45,7 +45,7 @@ var (
 	// caller may use this to steer a technician to another factor. The code is not evaluated.
 	ErrFactorPaused = errors.New("authn: factor paused")
 	// ErrActiveCap: the account already has MaxActiveTOTPPerAccount active console TOTP enrolments, so
-	// another cannot be activated until one is revoked. The database enforces it (migration 0035).
+	// another cannot be activated until one is revoked. The database enforces it (migration 0036).
 	ErrActiveCap = errors.New("authn: account is at its active TOTP enrolment limit")
 )
 
@@ -60,7 +60,7 @@ const (
 	PendingTTL         = 10 * time.Minute
 	MaxConfirmAttempts = 5
 	// MaxActiveTOTPPerAccount bounds sign-in guess rate: every active enrolment of an account is tried
-	// per attempt. Mirrors the constant in migrations/0035; a test pins the two together.
+	// per attempt. Mirrors the constant in migrations/0036; a test pins the two together.
 	MaxActiveTOTPPerAccount = 3
 	// recordLockWait bounds the charging transaction's wait for the enrollment row, so a caller
 	// holding that row never hangs an attempt.

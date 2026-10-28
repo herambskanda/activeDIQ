@@ -1,7 +1,7 @@
 -- 0041_inventory_tier0_revisions_rls_first: let row security, not a trigger, refuse a tenant re-assignment
 -- (T-0500; fitness-tenancy T4). Owner: internal/directory/inventory.
 --
--- 0036's BEFORE UPDATE guard also rejected a changed tenant_id, and a BEFORE trigger runs before the
+-- 0038's BEFORE UPDATE guard also rejected a changed tenant_id, and a BEFORE trigger runs before the
 -- WITH CHECK of the RLS policy, so the fitness probe "tenant A re-assigns its row to tenant B" was refused
 -- by the trigger and never showed that row security refuses it. The BEFORE guard now only keeps the
 -- revision monotone within a tenant; an AFTER trigger (which runs after the policy's WITH CHECK) still
