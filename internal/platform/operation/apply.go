@@ -51,7 +51,7 @@ type claimed struct {
 func (c *claimed) event(r *Runner, o audit.Outcome, reason string, recovered bool) audit.Event {
 	ev := audit.Event{ID: fmt.Sprintf("op-%s-i%d-s%d", c.key.Operation, c.key.Item, c.key.Step), Kind: c.d.AuditKind,
 		Actor: c.op.Chain, Target: c.plan.Target, Key: c.key, Outcome: o, Reason: reason, PlanHash: c.op.PlanHash,
-		Changes: changesOf(c.plan.Diff)}
+		Changes: changesOf(c.plan.Target, c.plan.Diff)}
 	if recovered {
 		ev.Details = detail("recovered", true)
 	}

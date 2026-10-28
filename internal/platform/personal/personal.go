@@ -55,6 +55,16 @@ var (
 	labelRe   = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,63}$`)
 )
 
+// DirSubject returns the subject string for a directory object, and false when the connection or objectGUID
+// is not a UUID (the object cannot be a personal subject).
+func DirSubject(connection, objectGUID string) (string, bool) {
+	s := "dir:" + connection + ":" + objectGUID
+	if connection == "" || objectGUID == "" || !subjectRe.MatchString(s) {
+		return "", false
+	}
+	return s, true
+}
+
 // Ref is the form a chained record carries in place of a personal value. It holds no clear value.
 type Ref struct {
 	Subject    string // dir:<connection>:<objectGUID> or acct:<account_id>
