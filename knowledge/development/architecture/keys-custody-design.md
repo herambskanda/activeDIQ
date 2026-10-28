@@ -212,8 +212,8 @@ Operations, all inside the tenant's
 `WithTenantTx`, all emit an audit event in the same transaction (`tenant_key.provisioned|rotated|shredded`,
 carrying tenant, version and `kek_key_id`, no key material):
 
-- **Rotate DEK** `keys.Store.Rotate`: `SELECT … FOR UPDATE` the active row, insert `version+1` active,
-  set the old row `retired`. New seals use the new version; old blobs still open (`BlobVersion` picks the
+- **Rotate DEK** `keys.Store.Rotate`: `SELECT … FOR UPDATE` the active row, set it `retired` **first**, then
+  insert `version+1` active (the partial unique index `tenant_keys_one_active` is not deferrable, so the reverse order fails), all in one transaction. New seals use the new version; old blobs still open (`BlobVersion` picks the
   DEK). A re-seal job that moves sealed values to the new version and a rule for when a retired
   version may be shredded alone are **not specified here**: the owning ticket (T-0007 was cancelled and
   its DM-02 Q2 is orphaned) is created as follow-up F2. Until it exists, retired versions are kept.
