@@ -140,5 +140,30 @@ func checkA12(t *tree) []Violation {
 			}
 		}
 	}
+	return append(vs, checkA12AN8(t)...)
+}
+
+// checkA12AN8 enforces threat model 7.6 rule 2 (T-0359, T-0497): an AN-8 operation never answers a
+// per-account 429. The only 429 it may declare is the shared RateLimited response, and its description
+// must say the source-IP limiter is the one that answers it. Any other shape (an inline response, a
+// per-account response, a 429 added without that sentence) is refused, because a 429 that depends on
+// the submitted name is an enumeration oracle.
+func checkA12AN8(t *tree) []Violation {
+	var vs []Violation
+	for _, o := range t.ops {
+		if scalar(get(o.node, "x-activediq-anonymous")) != "AN-8" {
+			continue
+		}
+		r := get(get(o.node, "responses"), "429")
+		if r == nil {
+			continue
+		}
+		if ref := scalar(get(r, "$ref")); !strings.HasSuffix(ref, "#/components/responses/RateLimited") {
+			vs = append(vs, Violation{"A12", o.where(), fmt.Sprintf("%s (AN-8) declares a 429 that is not the shared RateLimited response: AN-8 answers 429 only from the source-IP limiter, never per account (threat model 7.6 rule 2d, A12)", o.label())})
+		}
+		if d := strings.ToLower(scalar(get(o.node, "description"))); !strings.Contains(d, "source-ip") {
+			vs = append(vs, Violation{"A12", o.where(), fmt.Sprintf("%s (AN-8) declares a 429 but its description does not say it is the source-IP limiter (threat model 7.6 rule 2d, A12)", o.label())})
+		}
+	}
 	return vs
 }
