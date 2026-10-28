@@ -231,6 +231,17 @@ must_fail_with "fitness-proto on a file that does not compile" "\\[P1\\]" go run
 printf 'syntax = "proto3";\npackage t.v1;\nenum Operation { OPERATION_UNSPECIFIED = 0; OPERATION_GET = 1; OPERATION_APPLY = 100; OPERATION_READ_SECRET = 101; OPERATION_VERIFY_USER = 102; }\nmessage Guid { bytes value = 1; }\nmessage GetRequest { Guid guid = 1; }\nmessage GetResponse {}\nservice S { rpc Get(GetRequest) returns (GetResponse); }\n' >"$pr/t.proto"
 must_fail_with "fitness-proto on a tree without the fleet package" "\\[F11\\]" go run ./tools/fitness/proto "$pr"
 must_pass "fitness-proto" go run ./tools/fitness/proto -optional-fleet "$pr"
+# TM-F-AGENTCMD (T-0144), contract half: a denied verb, an RPC off the golden list and a free-form
+# policy string are each refused by the real CLI; the clean addc contract passes.
+ac='syntax = "proto3";\npackage activediq.addc.v1;\nmessage Empty {}\nmessage CollectionState { uint64 last_event_record_id = 1; }\n'
+printf "${ac}service Addc { rpc GetCollectionState(Empty) returns (CollectionState); }\n" >"$pr/t.proto"
+must_pass "fitness-proto on the clean addc contract" go run ./tools/fitness/proto -optional-fleet "$pr"
+printf "${ac}service Addc { rpc GetCollectionState(Empty) returns (CollectionState); rpc RunScript(Empty) returns (Empty); }\n" >"$pr/t.proto"
+must_fail_with "fitness-proto on an addc contract carrying an exec verb" "\\[AG2\\]" go run ./tools/fitness/proto -optional-fleet "$pr"
+printf "${ac}service Addc { rpc GetCollectionState(Empty) returns (CollectionState); rpc Ping(Empty) returns (Empty); }\n" >"$pr/t.proto"
+must_fail_with "fitness-proto on an addc RPC off the golden list" "\\[AG1\\]" go run ./tools/fitness/proto -optional-fleet "$pr"
+printf 'syntax = "proto3";\npackage activediq.fileserver.v1;\nmessage R { string root_id = 1; string path = 2; }\nmessage O {}\nservice Fileserver { rpc ReadAcl(R) returns (O); }\n' >"$pr/t.proto"
+must_fail_with "fitness-proto on a fileserver request carrying an absolute path" "\\[AG4\\]" go run ./tools/fitness/proto -optional-fleet "$pr"
 
 # --- gen-check (T-0157): generated connector code must match a fresh generation ------------------
 # Generate into a throw-away tree, then stale / orphan / delete a file and require the real

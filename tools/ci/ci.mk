@@ -59,7 +59,7 @@ fitness-domain-keys: ## T-0050: domain-model X3 (no directory table keyed or joi
 fitness-profiles: ## T-0038, T-0135, ADR-0002: P1 composition boundary, P4 tenant ID on every log line, metric and cache key (TM-TB17-T8), P7 branch policy, U1 UEM independence, U2 extractable platform root, and the activation table (P2-P6, U3, U4 become mandatory the moment their subject lands)
 	go run ./tools/fitness/profiles
 
-fitness-proto: ## T-0064: every proto/ file compiles (pure Go, no protoc) and the connector contract keeps its structural rules P1-P8
+fitness-proto: ## T-0064, T-0144: every proto/ file compiles (pure Go, no protoc) and the connector contract keeps its structural rules P1-P8, fleet F1-F11 and the agent contracts (skenzeriq.agent.v1, activediq.addc.v1, activediq.fileserver.v1) AG1-AG8 (closed RPC list, denied verbs, unary, no free-form fields, policy data only; TM-F-AGENTCMD contract half)
 	go run ./tools/fitness/proto proto
 
 fitness-safeprim: ## T-0033: safe-primitives FF-SP1 import boundaries, FF-SP2 banned APIs and analyzers (dnstring, sqlconst, secretjson, tmplconst, constdisp), FF-SP3 literal shapes; the web/ half of FF-SP3 runs in lint-web
