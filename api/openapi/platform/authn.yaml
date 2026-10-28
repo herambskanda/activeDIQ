@@ -120,10 +120,14 @@ paths:
           description: The second factor passed and a session exists.
           headers:
             Set-Cookie:
-              description: The new session cookie, __Host-adiq_session; the pending cookie is cleared.
+              description: >-
+                Two lines: the new session cookie, __Host-adiq_session, and a clearing
+                __Host-adiq_pending.
               required: true
               schema:
-                type: string
+                type: array
+                items:
+                  type: string
         "400":
           $ref: shared/problems.yaml#/components/responses/Validation
         "401":
