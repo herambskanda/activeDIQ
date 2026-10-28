@@ -207,6 +207,11 @@
   "platformJobs": [],
   "probeValues": [
     {
+      "column": "public.personal_subject.salt",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: a subject salt is exactly 32 bytes (personal_subject_salt_check, ADR-0005 rule 12); the probe row carries a 32-byte placeholder, not a real salt."
+    },
+    {
       "column": "public.directory_objects.kind",
       "value": "other",
       "reason": "CHECK: a kind is one of the DM-16 kinds; the probe row is an object of kind other."

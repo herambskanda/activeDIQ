@@ -19,8 +19,6 @@ import (
 	"fmt"
 	"regexp"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/skenzeriq/activediq/internal/platform/audit/canon"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
 	"github.com/skenzeriq/activediq/internal/platform/store"
@@ -155,7 +153,7 @@ func (*Store) Resolve(ctx context.Context, tx store.Tx, tid tenant.ID, ref Ref) 
 		JOIN public.personal_subject s ON s.tenant_id = v.tenant_id AND s.subject_ref = v.subject_ref
 		WHERE v.tenant_id = $1::uuid AND v.value_id = $2::uuid AND v.subject_ref = $3 AND v.field = $4`,
 		tid.String(), uuidString(ref.ValueID), ref.Subject, ref.Field).Scan(&value, &salt)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if store.IsNoRows(err) {
 		return Redacted, true, nil
 	}
 	if err != nil {
@@ -190,7 +188,7 @@ func erase(ctx context.Context, tx store.Tx, tid tenant.ID, subject string) (int
 	var hold bool
 	err := tx.QueryRow(ctx, `SELECT hold FROM public.personal_subject WHERE tenant_id = $1::uuid AND subject_ref = $2`,
 		tid.String(), subject).Scan(&hold)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if store.IsNoRows(err) {
 		return 0, nil
 	}
 	if err != nil {
