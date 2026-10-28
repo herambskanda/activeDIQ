@@ -13,29 +13,38 @@ import (
 // at signing and at the agent, whatever the bytes say. Every bound has a case, so a loosened bound fails.
 func TestF1OutOfBoundsPolicyRejected(t *testing.T) {
 	long := strings.Repeat("a", agentpolicy.MaxBannedTermLen+1)
+	// 66 UTF-16 units from 33 runes (4 bytes each): over the 64-unit bound only if units, not runes or bytes, are counted.
+	astral33 := strings.Repeat("\U0001F600", 33)
+	// 16385 terms of 64 bytes each are individually in bounds and one term over the 1 MiB total.
+	overTotal := make([]string, agentpolicy.MaxBannedBytes/agentpolicy.MaxBannedTermLen+1)
+	for i := range overTotal {
+		overTotal[i] = strings.Repeat("a", agentpolicy.MaxBannedTermLen)
+	}
 	cases := map[string]func(p *agentpolicy.AddcPolicy){
-		"min_length 0":              func(p *agentpolicy.AddcPolicy) { p.Password.MinLength = 0 },
-		"min_length 257":            func(p *agentpolicy.AddcPolicy) { p.Password.MinLength = 257 },
-		"max_length below min":      func(p *agentpolicy.AddcPolicy) { p.Password.MaxLength = p.Password.MinLength - 1 },
-		"max_length 257":            func(p *agentpolicy.AddcPolicy) { p.Password.MaxLength = 257 },
-		"min_classes 5":             func(p *agentpolicy.AddcPolicy) { p.Password.MinClasses = 5 },
-		"class 0":                   func(p *agentpolicy.AddcPolicy) { p.Password.ClassesRequired = []agentpolicy.Class{0} },
-		"class 5":                   func(p *agentpolicy.AddcPolicy) { p.Password.ClassesRequired = []agentpolicy.Class{5} },
-		"duplicate class":           func(p *agentpolicy.AddcPolicy) { p.Password.ClassesRequired = []agentpolicy.Class{1, 1} },
-		"empty banned term":         func(p *agentpolicy.AddcPolicy) { p.Password.BannedTerms = []string{""} },
-		"banned term over 64 units": func(p *agentpolicy.AddcPolicy) { p.Password.BannedTerms = []string{long} },
-		"banned term invalid utf-8": func(p *agentpolicy.AddcPolicy) { p.Password.BannedTerms = []string{"\xff\xfe"} },
-		"banned terms over 20000":   func(p *agentpolicy.AddcPolicy) { p.Password.BannedTerms = make([]string, agentpolicy.MaxBannedTerms+1) },
-		"third channel":             func(p *agentpolicy.AddcPolicy) { p.Events.Channels = []agentpolicy.Channel{1, 2, 3} },
-		"unknown channel":           func(p *agentpolicy.AddcPolicy) { p.Events.Channels = []agentpolicy.Channel{7} },
-		"unsorted event ids":        func(p *agentpolicy.AddcPolicy) { p.Events.EventIDs = []uint32{4740, 4624} },
-		"event id 0":                func(p *agentpolicy.AddcPolicy) { p.Events.EventIDs = []uint32{0} },
-		"over 256 event ids":        func(p *agentpolicy.AddcPolicy) { p.Events.EventIDs = ascending(agentpolicy.MaxEventIDs + 1) },
-		"events/s 0":                func(p *agentpolicy.AddcPolicy) { p.Events.MaxEventsPerSecond = 0 },
-		"events/s over ceiling":     func(p *agentpolicy.AddcPolicy) { p.Events.MaxEventsPerSecond = agentpolicy.MaxEventsPerSec + 1 },
-		"batch 0":                   func(p *agentpolicy.AddcPolicy) { p.Events.BatchMaxBytes = 0 },
-		"batch above outbox":        func(p *agentpolicy.AddcPolicy) { p.Events.BatchMaxBytes = p.Events.OutboxMaxBytes + 1 },
-		"outbox 0":                  func(p *agentpolicy.AddcPolicy) { p.Events.OutboxMaxBytes = 0 },
+		"banned terms over 1 MiB total":          func(p *agentpolicy.AddcPolicy) { p.Password.BannedTerms = overTotal },
+		"33 astral characters (66 UTF-16 units)": func(p *agentpolicy.AddcPolicy) { p.Password.BannedTerms = []string{astral33} },
+		"min_length 0":                           func(p *agentpolicy.AddcPolicy) { p.Password.MinLength = 0 },
+		"min_length 257":                         func(p *agentpolicy.AddcPolicy) { p.Password.MinLength = 257 },
+		"max_length below min":                   func(p *agentpolicy.AddcPolicy) { p.Password.MaxLength = p.Password.MinLength - 1 },
+		"max_length 257":                         func(p *agentpolicy.AddcPolicy) { p.Password.MaxLength = 257 },
+		"min_classes 5":                          func(p *agentpolicy.AddcPolicy) { p.Password.MinClasses = 5 },
+		"class 0":                                func(p *agentpolicy.AddcPolicy) { p.Password.ClassesRequired = []agentpolicy.Class{0} },
+		"class 5":                                func(p *agentpolicy.AddcPolicy) { p.Password.ClassesRequired = []agentpolicy.Class{5} },
+		"duplicate class":                        func(p *agentpolicy.AddcPolicy) { p.Password.ClassesRequired = []agentpolicy.Class{1, 1} },
+		"empty banned term":                      func(p *agentpolicy.AddcPolicy) { p.Password.BannedTerms = []string{""} },
+		"banned term over 64 units":              func(p *agentpolicy.AddcPolicy) { p.Password.BannedTerms = []string{long} },
+		"banned term invalid utf-8":              func(p *agentpolicy.AddcPolicy) { p.Password.BannedTerms = []string{"\xff\xfe"} },
+		"banned terms over 20000":                func(p *agentpolicy.AddcPolicy) { p.Password.BannedTerms = make([]string, agentpolicy.MaxBannedTerms+1) },
+		"third channel":                          func(p *agentpolicy.AddcPolicy) { p.Events.Channels = []agentpolicy.Channel{1, 2, 3} },
+		"unknown channel":                        func(p *agentpolicy.AddcPolicy) { p.Events.Channels = []agentpolicy.Channel{7} },
+		"unsorted event ids":                     func(p *agentpolicy.AddcPolicy) { p.Events.EventIDs = []uint32{4740, 4624} },
+		"event id 0":                             func(p *agentpolicy.AddcPolicy) { p.Events.EventIDs = []uint32{0} },
+		"over 256 event ids":                     func(p *agentpolicy.AddcPolicy) { p.Events.EventIDs = ascending(agentpolicy.MaxEventIDs + 1) },
+		"events/s 0":                             func(p *agentpolicy.AddcPolicy) { p.Events.MaxEventsPerSecond = 0 },
+		"events/s over ceiling":                  func(p *agentpolicy.AddcPolicy) { p.Events.MaxEventsPerSecond = agentpolicy.MaxEventsPerSec + 1 },
+		"batch 0":                                func(p *agentpolicy.AddcPolicy) { p.Events.BatchMaxBytes = 0 },
+		"batch above outbox":                     func(p *agentpolicy.AddcPolicy) { p.Events.BatchMaxBytes = p.Events.OutboxMaxBytes + 1 },
+		"outbox 0":                               func(p *agentpolicy.AddcPolicy) { p.Events.OutboxMaxBytes = 0 },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -48,6 +57,18 @@ func TestF1OutOfBoundsPolicyRejected(t *testing.T) {
 				t.Fatalf("Encode signed-ready bytes for an out-of-bounds policy: %v", err)
 			}
 		})
+	}
+	// Boundary controls: 32 astral characters are exactly 64 UTF-16 units (128 bytes) and are in bounds, and the
+	// total at exactly 1 MiB is in bounds, so a byte-count or off-by-one regression fails the cases above or here.
+	for name, terms := range map[string][]string{
+		"32 astral characters": {strings.Repeat("\U0001F600", 32)},
+		"exactly 1 MiB total":  overTotal[:agentpolicy.MaxBannedBytes/agentpolicy.MaxBannedTermLen],
+	} {
+		p := pol()
+		p.Password.BannedTerms = terms
+		if err := p.Validate(); err != nil {
+			t.Fatalf("%s rejected: %v", name, err)
+		}
 	}
 	// The in-bounds control, so a Validate that rejects everything cannot pass this test.
 	if err := pol().Validate(); err != nil {

@@ -128,6 +128,22 @@ func TestR3ModuleCapabilities(t *testing.T) {
 		"service mgr":  "package addc\n\nimport \"golang.org/x/sys/windows/svc/mgr\"\n\nvar _ = mgr.Connect\n",
 		"os.WriteFile": "package addc\n\nimport \"os\"\n\nfunc f() { _ = os.WriteFile(\"x\", nil, 0) }\n",
 		"os.RemoveAll": "package addc\n\nimport \"os\"\n\nfunc f() { _ = os.RemoveAll(\"x\") }\n",
+		// The security review's bypasses: each passed the first version of this check.
+		"windows.CreateProcess": "package addc\n\nimport \"golang.org/x/sys/windows\"\n\nvar _ = windows.CreateProcess\n",
+		"windows.OpenSCManager": "package addc\n\nimport \"golang.org/x/sys/windows\"\n\nvar _ = windows.OpenSCManager\n",
+		"syscall.Unlink":        "package addc\n\nimport \"syscall\"\n\nvar _ = syscall.Unlink\n",
+		"io/ioutil.WriteFile":   "package addc\n\nimport \"io/ioutil\"\n\nvar _ = ioutil.WriteFile\n",
+		"dot-import of os":      "package addc\n\nimport . \"os\"\n\nfunc f() { _ = WriteFile(\"x\", nil, 0) }\n",
+		"blank import":          "package addc\n\nimport _ \"unsafe\"\n",
+		"renamed os/exec":       "package addc\n\nimport e \"os/exec\"\n\nvar _ = e.Command\n",
+		"unsafe":                "package addc\n\nimport \"unsafe\"\n\nvar _ unsafe.Pointer\n",
+		"cgo":                   "package addc\n\nimport \"C\"\n",
+		"net (unlisted stdlib)": "package addc\n\nimport \"net\"\n\nvar _ = net.Dial\n",
+		"unlisted third party":  "package addc\n\nimport \"example.com/x/y\"\n\nvar _ = y.Z\n",
+		"os.NewFile":            "package addc\n\nimport \"os\"\n\nvar _ = os.NewFile\n",
+		"os.Lchown":             "package addc\n\nimport \"os\"\n\nvar _ = os.Lchown\n",
+		"plugin":                "package addc\n\nimport \"plugin\"\n\nvar _ = plugin.Open\n",
+		"aliased os WriteFile":  "package addc\n\nimport o \"os\"\n\nfunc f() { _ = o.WriteFile(\"x\", nil, 0) }\n",
 	} {
 		bad := t.TempDir()
 		write(t, bad, "internal/agentmodules/addc/bad.go", src)
@@ -136,10 +152,15 @@ func TestR3ModuleCapabilities(t *testing.T) {
 			t.Errorf("%s: accepted", name)
 		}
 	}
+	// Allowed: a sibling module package and the policy package.
+	ok := t.TempDir()
+	write(t, ok, "internal/agentmodules/addc/ok.go", "package addc\n\nimport (\n\t\"context\"\n\t\"encoding/json\"\n\t\"github.com/skenzeriq/activediq/internal/agentmodules/shared\"\n\t\"github.com/skenzeriq/activediq/internal/platform/agentpolicy\"\n)\n\nvar _ = context.Background\nvar _ = json.Marshal\nvar _ = shared.X\nvar _ = agentpolicy.X\n")
+	wantClean(t, checkModuleCapabilities(ok))
 }
 
 func TestR4NoListener(t *testing.T) {
 	root := t.TempDir()
+	write(t, root, "go.mod", "module fx.test\n\ngo 1.22\n")
 	write(t, root, "cmd/agent/main.go", "package main\n\nfunc main() {}\n")
 	wantClean(t, checkNoListener(root))
 	for name, src := range map[string]string{
@@ -147,13 +168,28 @@ func TestR4NoListener(t *testing.T) {
 		"ListenAndServe":        "package main\n\nimport \"net/http\"\n\nfunc main() { _ = http.ListenAndServe(\":1\", nil) }\n",
 		"server ListenAndServe": "package main\n\nimport \"net/http\"\n\nfunc main() { s := &http.Server{}; _ = s.ListenAndServe() }\n",
 		"httptest":              "package main\n\nimport \"net/http/httptest\"\n\nvar _ = httptest.NewServer\n\nfunc main() {}\n",
+		// The security review's bypasses.
+		"net.ListenConfig.Listen": "package main\n\nimport (\"context\"; \"net\")\n\nfunc main() { var lc net.ListenConfig; _, _ = lc.Listen(context.Background(), \"tcp\", \":1\") }\n",
+		"ListenConfig type":       "package main\n\nimport \"net\"\n\nvar _ net.ListenConfig\n\nfunc main() {}\n",
+		"syscall.Listen":          "package main\n\nimport \"syscall\"\n\nfunc main() { _ = syscall.Listen(3, 1) }\n",
+		"syscall.Bind":            "package main\n\nimport \"syscall\"\n\nfunc main() { _ = syscall.Bind(3, nil) }\n",
+		"grpc Server.Serve":       "package main\n\ntype s struct{}\n\nfunc (s) Serve(l int) {}\n\nfunc main() { var x struct{ srv s }; x.srv.Serve(0) }\n",
+		"dot-import net":          "package main\n\nimport . \"net\"\n\nfunc main() { _, _ = Listen(\"tcp\", \":1\") }\n",
+		"tls.Listen":              "package main\n\nimport \"crypto/tls\"\n\nfunc main() { _, _ = tls.Listen(\"tcp\", \":1\", nil) }\n",
 	} {
 		bad := t.TempDir()
+		write(t, bad, "go.mod", "module fx.test\n\ngo 1.22\n")
 		write(t, bad, "cmd/agent/main.go", src)
 		if r := checkNoListener(bad); len(r.Violations) == 0 {
 			t.Errorf("%s: accepted", name)
 		}
 	}
+	// A listener in a package the agent imports that is not agent-owned by directory name.
+	far := t.TempDir()
+	write(t, far, "go.mod", "module fx.test\n\ngo 1.22\n")
+	write(t, far, "cmd/agent/main.go", "package main\n\nimport _ \"fx.test/internal/platform/net\"\n\nfunc main() {}\n")
+	write(t, far, "internal/platform/net/n.go", "package net\n\nimport stdnet \"net\"\n\nfunc init() { _, _ = stdnet.Listen(\"tcp\", \":1\") }\n")
+	wantViolation(t, checkNoListener(far), "internal/platform/net/n.go")
 }
 
 func TestA1Installer(t *testing.T) {
@@ -171,41 +207,90 @@ func TestA1Installer(t *testing.T) {
 	wantViolation(t, mk(strings.Replace(goodWxs, `NT SERVICE\activeDIQAgent`, `NT AUTHORITY\NetworkService`, 1)), "Account")
 	wantViolation(t, mk(strings.Replace(goodWxs, `NT SERVICE\activeDIQAgent`, `NT SERVICE\SomethingElse`, 1)), "Account is")
 	wantViolation(t, mk(strings.Replace(goodWxs, `ServiceSid="restricted"`, `ServiceSid="unrestricted"`, 1)), "service SID type")
-	wantViolation(t, mk(strings.Replace(goodWxs, ` ServiceSid="restricted"`, ``, 1)), "service SID type")
+	wantViolation(t, mk(strings.Replace(goodWxs, ` ServiceSid="restricted"`, ``, 1)), "ServiceSid")
 	wantViolation(t, mk(strings.Replace(goodWxs, `SeChangeNotifyPrivilege"`, `SeChangeNotifyPrivilege SeBackupPrivilege"`, 1)), "RequiredPrivileges")
 	wantViolation(t, mk(strings.Replace(goodWxs, ` RequiredPrivileges="SeChangeNotifyPrivilege"`, ``, 1)), "RequiredPrivileges")
 	wantViolation(t, mk(strings.Replace(goodWxs, `Start="auto"`, `Start="auto" Password="x"`, 1)), "Password")
 	wantViolation(t, mk(`<Wix><Package/></Wix>`), "no ServiceInstall")
+	// Last-wins: an unrestricted ServiceConfig followed by a restricted one must not pass.
+	wantViolation(t, mk(strings.Replace(goodWxs, `<ServiceConfig ServiceSid="restricted"`,
+		`<ServiceConfig ServiceSid="unrestricted" /><ServiceConfig ServiceSid="restricted"`, 1)), "service SID type")
+	// And the reverse order.
+	wantViolation(t, mk(strings.Replace(goodWxs, `RequiredPrivileges="SeChangeNotifyPrivilege" />`,
+		`RequiredPrivileges="SeChangeNotifyPrivilege" /><ServiceConfig ServiceSid="unrestricted" />`, 1)), "service SID type")
+	// Two ServiceInstall elements.
+	wantViolation(t, mk(strings.Replace(goodWxs, `</Package>`, strings.SplitN(strings.SplitN(goodWxs, "<Package Name=\"activeDIQ Agent\">", 2)[1], "</Package>", 2)[0]+`</Package>`, 1)), "exactly one")
 	// The agent is found by its body when the file name does not say so.
 	root := t.TempDir()
 	write(t, root, "packaging/windows/product.wxs", strings.Replace(goodWxs, `NT SERVICE\activeDIQAgent`, `LocalSystem`, 1))
 	wantViolation(t, checkInstaller(root), "LocalSystem")
+	// Scripts and custom actions are MSI source too.
+	script := func(name, body string) Result {
+		r := t.TempDir()
+		write(t, r, "packaging/windows/agent.wxs", goodWxs)
+		write(t, r, "packaging/windows/"+name, body)
+		return checkInstaller(r)
+	}
+	wantClean(t, script("Install-Agent.ps1", "sc.exe config activeDIQAgent obj= \"NT SERVICE\\activeDIQAgent\"\n"))
+	wantViolation(t, script("Install-Agent.ps1", "sc.exe config activeDIQAgent obj= LocalSystem\n"), "LocalSystem")
+	wantViolation(t, script("Install-Agent.ps1", "sc.exe config activeDIQAgent obj= CORP\\svc-agent password= x\n"), "other than")
+	wantViolation(t, script("Install-Agent.ps1", "Set-Service activeDIQAgent -Credential $c\n"), "other than")
+	wantViolation(t, script("ca.cmd", "sc config activediqagent obj= .\\admin\n"), "other than")
+	wantViolation(t, script("custom.js", "// activediq-agent\nvar a = 'NT AUTHORITY\\\\SYSTEM';\n"), "NT AUTHORITY")
 }
 
 func TestA4Judge(t *testing.T) {
-	clean := []string{"fmt", "crypto/tls", "google.golang.org/grpc", "github.com/skenzeriq/activediq/internal/platform/agentpolicy"}
-	if v := judgeDeps(clean); len(v) != 0 {
+	allow := []string{"github.com/skenzeriq/activediq/internal/platform/agentpolicy", "example.com/ok/..."}
+	std := func(p string) pkgInfo { return pkgInfo{Path: p, Std: true} }
+	ext := func(p string) pkgInfo { return pkgInfo{Path: p} }
+	clean := []pkgInfo{std("fmt"), std("crypto/tls"), ext("github.com/skenzeriq/activediq/internal/platform/agentpolicy"), ext("example.com/ok/sub/pkg")}
+	if v := judgeDeps(clean, allow); len(v) != 0 {
 		t.Fatalf("clean closure rejected: %v", v)
 	}
 	for _, bad := range []string{
 		"github.com/go-ldap/ldap/v3", "github.com/go-krb5/krb5/client", "github.com/alexbrainman/sspi/negotiate",
 		"github.com/skenzeriq/activediq/internal/directory/client", "github.com/skenzeriq/activediq/internal/connector/ad",
 		"golang.org/x/sys/windows/registry",
+		// Real clients the first (denylist-only) version let through, and one it could never know.
+		"github.com/hirochachacha/go-smb2", "github.com/nmcclain/ldap", "github.com/mavricknz/ldap",
+		"example.org/some/unlisted/ldapclient", "google.golang.org/grpc",
 	} {
-		if v := judgeDeps(append([]string{"fmt"}, bad)); len(v) == 0 {
+		if v := judgeDeps([]pkgInfo{std("fmt"), ext(bad)}, allow); len(v) == 0 {
 			t.Errorf("%s accepted in the agent closure", bad)
 		}
+	}
+	// Even if an allowlist line is added by mistake, the named bans still say no.
+	if v := judgeDeps([]pkgInfo{ext("github.com/hirochachacha/go-smb2")}, []string{"github.com/hirochachacha/go-smb2"}); len(v) == 0 {
+		t.Error("named ban overridden by the allowlist")
 	}
 }
 
 func TestA4RealClosure(t *testing.T) {
 	root := t.TempDir()
+	allow := []string{"fx.test/cmd/agent"}
 	write(t, root, "go.mod", "module fx.test\n\ngo 1.22\n")
 	write(t, root, "cmd/agent/main.go", "package main\n\nfunc main() {}\n")
-	wantClean(t, checkAgentImports(root))
+	wantClean(t, checkAgentImports(root, allow))
 	write(t, root, "internal/directory/client/c.go", "package client\n")
 	write(t, root, "cmd/agent/main.go", "package main\n\nimport _ \"fx.test/internal/directory/client\"\n\nfunc main() {}\n")
-	wantViolation(t, checkAgentImports(root), "internal/directory/client")
+	wantViolation(t, checkAgentImports(root, allow), "internal/directory/client")
+	// An own package that is not on the allowlist is refused, not waved through.
+	write(t, root, "internal/other/o.go", "package other\n")
+	write(t, root, "cmd/agent/main.go", "package main\n\nimport _ \"fx.test/internal/other\"\n\nfunc main() {}\n")
+	wantViolation(t, checkAgentImports(root, allow), "not on the allowlist")
+	wantClean(t, checkAgentImports(root, append(allow, "fx.test/internal/other")))
+}
+
+func TestADRAcceptedWhileInactive(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "knowledge/development/decisions/0006-x.md", "---\nstatus: accepted\n---\nbody\n")
+	res := Run(root, Options{SkipTests: true})
+	for _, r := range res {
+		if r.ID == "ADR" && len(r.Violations) > 0 {
+			return
+		}
+	}
+	t.Fatal("an accepted ADR-0006 with inactive checks must fail")
 }
 
 func TestJudgeTests(t *testing.T) {

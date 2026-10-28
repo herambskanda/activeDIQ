@@ -1,0 +1,7 @@
+# The only non-standard-library packages the agent binary (cmd/agent, GOOS windows and linux) may link.
+# fitness-agent-host A4 fails on anything else. Adding a line is a security-architect review: say what
+# the package can reach (sockets, processes, files, directory protocols) in the commit message.
+# One import path per line; `path/...` allows a subtree.
+github.com/skenzeriq/activediq/cmd/agent
+github.com/skenzeriq/activediq/internal/compose/agent
+github.com/skenzeriq/activediq/internal/compose/config
