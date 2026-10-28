@@ -132,6 +132,13 @@ func Run(ctx context.Context, cfg config.Config) error {
 		return err
 	}
 	tags = append(tags, syslog.Handlers{Store: siem}.Bind())
+	// directory.users.search: the connection registry for the active connection and its service-account
+	// gate, the connector source for the ScopedSearch RPC (over the tunnel the connector dialled).
+	dirTag, err := buildDirectory(conns, src)
+	if err != nil {
+		return err
+	}
+	tags = append(tags, dirTag)
 	api, err := buildAPIPorts(cfg, console.ports(lim, authzr), tags...)
 	if err != nil {
 		return err
