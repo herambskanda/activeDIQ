@@ -162,6 +162,17 @@ type Session struct {
 	State             SessionState
 }
 
+// AuthorityCurrent reports whether the session holds a current authority factor (TM-D19 rule 1): one was
+// verified, and no step-up has moved mfa_at past it since. A TOTP step-up refreshes mfa_at only, so it
+// makes the factor stale until the WebAuthn authority factor is verified again (T-0199 review note).
+func (s Session) AuthorityCurrent() bool {
+	return authorityCurrent(s.AuthorityFactorAt, s.MFAAt)
+}
+
+func authorityCurrent(authorityAt, mfaAt *time.Time) bool {
+	return authorityAt != nil && (mfaAt == nil || !authorityAt.Before(*mfaAt))
+}
+
 // Epoch is the account's session epoch as read BEFORE a sign-in verified anything (password, MFA secret,
 // roles). It is bumped by every password reset, MFA reset and role change, and createTx refuses a session
 // minted from an older one (ErrCredentialsChanged). It is obtained only from Store.Epoch / EpochTx; the
