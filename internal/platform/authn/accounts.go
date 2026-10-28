@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/audit"
-	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tablekind"
@@ -146,7 +145,7 @@ func NewAccounts(db *store.DB, sessions *Store, owners OwnerSource) (*Accounts, 
 	return &Accounts{db: db, sessions: sessions, owners: owners}, nil
 }
 
-func (s *Accounts) emit(ctx context.Context, tx store.Tx, now time.Time, id string, kind audit.Kind, eid string, by authority.Chain, reason string, details []chain.Detail, outcome ...audit.Outcome) error {
+func (s *Accounts) emit(ctx context.Context, tx store.Tx, now time.Time, id string, kind audit.Kind, eid string, by authority.Chain, reason string, details []audit.Detail, outcome ...audit.Outcome) error {
 	oc := audit.Success
 	if len(outcome) > 0 {
 		oc = outcome[0]
@@ -333,7 +332,7 @@ func (s *Accounts) Bind(ctx context.Context, t tenant.ID, id string, an Anchor, 
 		}
 		out = a
 		// Keys are in increasing order, as the envelope requires.
-		return s.emit(ctx, tx, now, id, KindAccountBound, "bound", by, string(an.Kind), []chain.Detail{
+		return s.emit(ctx, tx, now, id, KindAccountBound, "bound", by, string(an.Kind), []audit.Detail{
 			{Key: "anchor_kind", Value: string(an.Kind)},
 			{Key: "connection_id", Value: ref.ConnectionID},
 			{Key: "object_guid", Value: ref.ObjectGUID},
@@ -399,7 +398,7 @@ func (s *Accounts) SetState(ctx context.Context, t tenant.ID, id string, to Acco
 			if last {
 				// Commit only the refusal's audit event; the state change is not made.
 				refused = true
-				return s.emit(ctx, tx, now, id, KindAccountStateRefused, fmt.Sprintf("state-refused.%s.%s.%d", cur.State, to, now.UnixNano()), by, "last_tenant_owner", []chain.Detail{
+				return s.emit(ctx, tx, now, id, KindAccountStateRefused, fmt.Sprintf("state-refused.%s.%s.%d", cur.State, to, now.UnixNano()), by, "last_tenant_owner", []audit.Detail{
 					{Key: "from", Value: string(cur.State)},
 					{Key: "to", Value: string(to)},
 				}, audit.Denied)
@@ -414,7 +413,7 @@ func (s *Accounts) SetState(ctx context.Context, t tenant.ID, id string, to Acco
 				return err
 			}
 		}
-		return s.emit(ctx, tx, now, id, KindAccountStateChanged, fmt.Sprintf("state.%s.%s.%d", cur.State, to, now.UnixNano()), by, string(to), []chain.Detail{
+		return s.emit(ctx, tx, now, id, KindAccountStateChanged, fmt.Sprintf("state.%s.%s.%d", cur.State, to, now.UnixNano()), by, string(to), []audit.Detail{
 			{Key: "from", Value: string(cur.State)},
 			{Key: "to", Value: string(to)},
 		})

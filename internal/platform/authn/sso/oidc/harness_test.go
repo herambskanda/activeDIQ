@@ -1,6 +1,7 @@
 package oidc
 
 import (
+	"context"
 	"bytes"
 	"crypto"
 	"crypto/rand"
@@ -11,7 +12,6 @@ import (
 	"encoding/json/v2"
 	"io"
 	"math/big"
-	"net/http"
 	"net/url"
 	"strings"
 	"sync"
@@ -98,12 +98,13 @@ func newHarness(t *testing.T) *harness {
 	return h
 }
 
-func (h *harness) Do(req *http.Request) (*http.Response, error) {
+func (h *harness) Do(_ context.Context, req Request) (Response, error) {
+	u, _ := url.Parse(req.URL)
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.calls[req.URL.Path]++
+	h.calls[u.Path]++
 	status, body := 404, []byte("{}")
-	switch req.URL.Path {
+	switch u.Path {
 	case "/jwks":
 		status = 200
 		body, _ = json.Marshal(map[string]any{"keys": h.jwksKeys})
@@ -111,13 +112,12 @@ func (h *harness) Do(req *http.Request) (*http.Response, error) {
 			status, body = 503, []byte("{}")
 		}
 	case "/token":
-		b, _ := io.ReadAll(req.Body)
-		f, _ := url.ParseQuery(string(b))
+		f, _ := url.ParseQuery(string(req.Body))
 		h.forms = append(h.forms, f)
-		h.auths = append(h.auths, req.Header.Get("Authorization"))
+		h.auths = append(h.auths, req.Header["Authorization"])
 		status, body = h.tokenBody(h)
 	}
-	return &http.Response{StatusCode: status, Body: io.NopCloser(bytes.NewReader(body)), Header: http.Header{}}, nil
+	return Response{Status: status, Body: io.NopCloser(bytes.NewReader(body))}, nil
 }
 
 func (h *harness) idp() sso.IdP {
@@ -198,7 +198,7 @@ type discoClient struct {
 	url  string
 }
 
-func (d *discoClient) Do(req *http.Request) (*http.Response, error) {
-	d.url = req.URL.String()
-	return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(d.body))}, nil
+func (d *discoClient) Do(_ context.Context, req Request) (Response, error) {
+	d.url = req.URL
+	return Response{Status: 200, Body: io.NopCloser(strings.NewReader(d.body))}, nil
 }

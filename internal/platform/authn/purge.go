@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/audit"
-	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
@@ -103,7 +102,7 @@ func (p *Purger) purge(ctx context.Context, t tenant.ID, by authority.Chain, spe
 			ID: spec.idPrefix + strconv.FormatInt(cutoff.UnixNano(), 10), Kind: spec.kind, At: now, Actor: by,
 			Target:    authority.TargetRef{GUID: t.String(), Class: "tenant"},
 			Component: "authn", Outcome: audit.Success,
-			Details: []chain.Detail{{Key: "cutoff", Value: cutoff.Format(time.RFC3339Nano)}, {Key: spec.countKey, Value: strconv.Itoa(n)}},
+			Details: []audit.Detail{{Key: "cutoff", Value: cutoff.Format(time.RFC3339Nano)}, {Key: spec.countKey, Value: strconv.Itoa(n)}},
 		})
 	})
 	if err != nil {

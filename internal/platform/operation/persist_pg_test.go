@@ -16,7 +16,6 @@ import (
 	"encoding/json/v2"
 
 	"github.com/skenzeriq/activediq/internal/platform/audit"
-	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/keys"
@@ -709,7 +708,7 @@ func TestADTargetWithoutNCIsBlockedAtPlan(t *testing.T) {
 }
 
 // completedEnvelope returns the operation's single operation.completed envelope.
-func (p *prig) completedEnvelope(id step.OperationID) chain.Envelope {
+func (p *prig) completedEnvelope(id step.OperationID) audit.Envelope {
 	p.t.Helper()
 	rows := p.owner(`SELECT encode(envelope, 'hex') FROM public.audit_event WHERE kind = 'operation.completed' AND event_id LIKE $1`, "op-"+string(id)+"-%")
 	if len(rows) != 1 {
@@ -719,7 +718,7 @@ func (p *prig) completedEnvelope(id step.OperationID) chain.Envelope {
 	if err != nil {
 		p.t.Fatal(err)
 	}
-	env, err := chain.ParseEnvelope(raw)
+	env, err := audit.ParseEnvelope(raw)
 	if err != nil {
 		p.t.Fatal(err)
 	}
@@ -775,7 +774,7 @@ func (p *prig) refusedEvents(id step.OperationID) []string {
 		if err != nil {
 			p.t.Fatal(err)
 		}
-		env, err := chain.ParseEnvelope(raw)
+		env, err := audit.ParseEnvelope(raw)
 		if err != nil {
 			p.t.Fatal(err)
 		}

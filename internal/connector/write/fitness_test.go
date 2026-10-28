@@ -29,6 +29,12 @@ var httpWriteMethods = map[string]bool{"MethodPost": true, "MethodPut": true, "M
 // to the token endpoint. It writes nothing to the directory.
 const tokenEndpointFile = "internal/connector/graph/client.go"
 
+// labFixtureDir is the one narrowly scoped allowance (T-0519): lab-test support that creates and
+// deletes throw-away OUs and users on the lab DC, so tests outside internal/connector need not
+// import go-ldap (fitness O2). It is not a product write path: TestLabAdminImportedOnlyByTests
+// below proves no non-test code can reach it. Any other file added here is still a violation.
+const labFixtureDir = "internal/connector/labadmin/"
+
 func TestNoWriteCallOutsideTheGuard(t *testing.T) {
 	root := filepath.Join("..", "..", "..")
 	base := filepath.Join(root, "internal", "connector")
@@ -40,7 +46,7 @@ func TestNoWriteCallOutsideTheGuard(t *testing.T) {
 		}
 		rel, _ := filepath.Rel(root, path)
 		rel = filepath.ToSlash(rel)
-		if strings.HasPrefix(rel, "internal/connector/write/ops/") {
+		if strings.HasPrefix(rel, "internal/connector/write/ops/") || strings.HasPrefix(rel, labFixtureDir) {
 			return nil
 		}
 		f, err := parser.ParseFile(fset, path, nil, 0)
@@ -159,4 +165,33 @@ func importName(f *ast.File, path string) string {
 		}
 	}
 	return ""
+}
+
+// labadmin is lab-test support: only _test.go files may import it, so no product binary links it.
+func TestLabAdminImportedOnlyByTests(t *testing.T) {
+	root := filepath.Join("..", "..", "..")
+	const labPath = `"github.com/skenzeriq/activediq/internal/connector/labadmin"`
+	fset := token.NewFileSet()
+	err := filepath.WalkDir(filepath.Join(root, "internal"), func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return err
+		}
+		rel, _ := filepath.Rel(root, path)
+		if strings.HasPrefix(filepath.ToSlash(rel), labFixtureDir) {
+			return nil
+		}
+		f, err := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
+		if err != nil {
+			return err
+		}
+		for _, im := range f.Imports {
+			if im.Path.Value == labPath {
+				t.Errorf("%s imports labadmin; it is lab-test support, importable from _test.go files only", rel)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 }

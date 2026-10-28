@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/audit"
-	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 )
@@ -49,16 +48,16 @@ func (r *refusal) Is(target error) bool { return target == ErrSecondFactorRefuse
 
 // refuse appends the refusal event to tx.
 func (f *SecondFactor) refuse(ctx context.Context, tx store.Tx, ref pendingRef, now time.Time, reason string, from netip.Addr) error {
-	details := []chain.Detail{
+	details := []audit.Detail{
 		{Key: "account", Value: ref.Account},
 		{Key: "attempt", Value: strconv.Itoa(ref.Attempt)},
 		{Key: "first_factor", Value: string(ref.First)},
 	}
 	if ref.ClientIP.IsValid() {
-		details = append(details, chain.Detail{Key: "first_factor_ip", Value: ref.ClientIP.Unmap().String()})
+		details = append(details, audit.Detail{Key: "first_factor_ip", Value: ref.ClientIP.Unmap().String()})
 	}
 	if from.IsValid() {
-		details = append(details, chain.Detail{Key: "source_ip", Value: from.Unmap().String()})
+		details = append(details, audit.Detail{Key: "source_ip", Value: from.Unmap().String()})
 	}
 	phase := "refused." + strconv.Itoa(ref.Attempt)
 	if reason == RefusedPendingExpired || reason == RefusedAttemptsExhausted {
@@ -88,11 +87,11 @@ func (f *SecondFactor) refuseOwn(ctx context.Context, ref pendingRef, reason str
 
 // begun appends the authn.pending.begun event to tx, the transaction that inserted the pending row.
 func (p *PendingStore) begun(ctx context.Context, tx store.Tx, id string, in BeginInput, now time.Time) error {
-	details := []chain.Detail{{Key: "account", Value: in.Account}}
+	details := []audit.Detail{{Key: "account", Value: in.Account}}
 	if in.ClientIP.IsValid() {
-		details = append(details, chain.Detail{Key: "client_ip", Value: in.ClientIP.Unmap().String()})
+		details = append(details, audit.Detail{Key: "client_ip", Value: in.ClientIP.Unmap().String()})
 	}
-	details = append(details, chain.Detail{Key: "first_factor", Value: string(in.FirstFactor)})
+	details = append(details, audit.Detail{Key: "first_factor", Value: string(in.FirstFactor)})
 	ev := audit.Event{
 		ID: "authn.pending." + id + ".begun", Kind: KindPendingBegun, At: now, Actor: accountChain(in.Account),
 		Target:    authority.TargetRef{GUID: id, Class: "pending_signin"},

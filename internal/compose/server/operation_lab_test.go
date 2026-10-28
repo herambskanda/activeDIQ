@@ -12,8 +12,10 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
+	"github.com/skenzeriq/activediq/internal/connector/labadmin"
 	"github.com/skenzeriq/activediq/internal/connector/read"
 	"github.com/skenzeriq/activediq/internal/connector/write"
+	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
@@ -27,7 +29,6 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 	"github.com/skenzeriq/activediq/internal/testlab"
-	"github.com/skenzeriq/activediq/lab/labfixture"
 )
 
 // T-0421 on Samba: `make lab-up && go test -tags lab ./internal/compose/server -run TestLabRule5`.
@@ -180,16 +181,23 @@ func newLabRig(t *testing.T, s *storetest.Server) *labRig {
 		t.Cleanup(cancel)
 
 		// --- the lab: an admin connection for fixtures, a service session for the connector.
-		admin := labfixture.Dial(t, le.Port, le.Pool, "Administrator@lab.activediq.test", le.Values["LAB_ADMIN_PASSWORD"])
+		admin := labadmin.Dial(t, le.Port, le.Pool, "Administrator@lab.activediq.test", le.Values["LAB_ADMIN_PASSWORD"])
 		sess, err := ad.Open(ctx, ad.Config{Servers: []string{"localhost:" + le.Port}, RootCAs: le.Pool, PageSize: 500,
 			Credential: ad.Credential{BindName: "svc-activediq@lab.activediq.test", Password: secret.FromBytes([]byte(le.Values["LAB_SVC_PASSWORD"]))}})
 		if err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { sess.Close() })
-		guidOf := func(dn string) string { return uuidText(write.GUIDToWire(admin.GUID(dn)).GetValue()) }
+		guidOf := func(dn string) string {
+			g, err := guid.FromBytes(admin.ObjectGUID(dn))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return uuidText(write.GUIDToWire(g).GetValue())
+		}
 		seq := time.Now().UnixNano() % 1_000_000
-		mkOU, mkUser := admin.MkOU, admin.MkUser
+		mkOU := admin.CreateOU
+		mkUser := admin.CreateUser
 		broadDN := mkOU(fmt.Sprintf("T0421b%d", seq), labDom)
 		kidDN := mkOU("Kid", broadDN)
 		plainDN := mkUser(fmt.Sprintf("t0421p%d", seq), kidDN)
