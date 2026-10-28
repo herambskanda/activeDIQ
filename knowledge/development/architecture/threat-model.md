@@ -5,7 +5,7 @@ updated: 2026-10-28
 status: review
 owner: heramb
 author: security-architect
-ticket: T-0544, T-0495, T-0388, T-0359, old T-0007, T-0032, T-0044, T-0051, T-0055, T-0108, T-0179, T-0111, T-0227, T-0230, T-0235, T-0240, T-0395, T-0178, T-0623
+ticket: T-0544, T-0495, T-0388, T-0359, old T-0007, T-0032, T-0044, T-0051, T-0055, T-0108, T-0179, T-0111, T-0227, T-0230, T-0235, T-0240, T-0395, T-0178, T-0623, T-0633
 binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), blueprint v0 (review), safe-primitives.md (review)
 sources_last_checked: 2026-10-02
 ---
@@ -59,7 +59,7 @@ written next to it. `[M3]` / `[M4]` marks a later milestone; it is drawn now so 
 block it. `[UNVERIFIED]` marks an external claim not yet confirmed; `[LAB]` marks a behaviour that
 needs the Windows or Samba lab. Proof names that exist already: `FF-SP1`–`FF-SP9` (SP §8,
 `tools/fitness/safeprim`), `fitness-tenancy` T1–T5 (ADR-0002; `tools/fitness/tenancy`), `fitness-profiles` P1–P7 (ADR-0002,
-`tools/fitness/profiles`), `fitness-api` A1–A14 (ADR-0004; T-0011, T-0017, T-0018) and the operation/audit fitness of ADR-0005 (T-0130 for O1–O8, T-0133 for A1–A9; O9 is live in T-0013).
+`tools/fitness/profiles`), `fitness-api` A1–A14 (ADR-0004; T-0011, T-0017, T-0018) and the operation/audit fitness of ADR-0005 (`make fitness-operation`: O1, O2, O4 and O9 are live with `tools/ci/proof.sh` cases; O3 → T-0391, O5–O7 → T-0392, O8 → T-0393; T-0133 for A1–A9).
 
 **Ticket IDs.** The board was re-cut on 2026-10-21 (T-0031). A bare `T-xxxx` names a live
 ticket whose title matches the purpose given here (each checked against the board by T-0055).
@@ -265,7 +265,7 @@ proof is direction, not a control; the proof table says which ticket builds each
 | TM-TB2-T6 | I | Token in a URL, query string or log line | `Authorization` header only; query-string credentials rejected; log redaction | TM-F-SECRETOUT | — |
 | TM-TB2-T7 | D | X4 floods the API or the DCs through automation | Per-principal rate limits by class, tokens counting against their owner (TM-D22, §7.8); bulk caps; per-DC concurrency | `fitness-api` A12 (T-0017), limiter T-0054, TM-F-SESSION | — |
 | TM-TB2-T8 | E | A token outlives or exceeds its owner's authority | Effective = owner's current authority ∩ token subset; a disabled owner kills the token (DM-32.I1) | TM-F-AUTHZ | Within sync freshness for directory-group-based roles (DM-36.I2) |
-| TM-TB2-T9 | E | X12 (ITSM) creates a direct directory write | An inbound ticket creates only a Request, which goes through approval (DM-85.I1); writes only via `Action.Apply` | T-0130 operation fitness | — |
+| TM-TB2-T9 | E | X12 (ITSM) creates a direct directory write | An inbound ticket creates only a Request, which goes through approval (DM-85.I1); writes only via `Action.Apply` | `make fitness-operation` O1/O2 (landed); O8 T-0393 | — |
 | TM-TB2-T10 | E | [M3] PowerShell module or MCP server adds a second auth path | They are clients of the same OpenAPI operations with the same token model; no private endpoint `[OPEN → M3 specs]` | TM-F-ANON (route set unchanged) | — |
 
 ### 5.3 TB3 — Connector ↔ domain controllers
@@ -297,7 +297,7 @@ proof is direction, not a control; the proof table says which ticket builds each
 | TM-TB4-T6 | I | X6 steals a dump or backup → A2, A12 | Only ciphertext of secrets in the database; KEK never in the database; AEAD with associated data (TM-D7) | TM-F-SEAL | PII in inventory is readable (TM-TB15-T4) |
 | TM-TB4-T7 | T | X6 with DB write copies a sealed Entra key from tenant A's row into tenant B's → B's jobs sign as A | Associated data binds tenant, table, row, column and key version (TM-D7) | TM-F-SEAL | — |
 | TM-TB4-T8 | I | Blob objects read across tenants | Keys prefixed by tenant through `platform/blob` only | T4 blob isolation probe (`tools/fitness/tenancy/blobprobe.go`, T-0134) | — |
-| TM-TB4-T9 | D | Database unavailable mid-operation | Writes fail closed: no directory write without its audit row in the same transaction (§11); leases expire | T-0130 operation fitness | Availability |
+| TM-TB4-T9 | D | Database unavailable mid-operation | Writes fail closed: no directory write without its audit row in the same transaction (§11); leases expire | O8 pipeline behaviour, T-0393 | Availability |
 | TM-TB4-T10 | E | The runtime role owns objects or has `BYPASSRLS` | Separate owner role for migrations | T3, FF-SP7 | — |
 
 ### 5.5 TB5 — Server ↔ key provider
@@ -370,8 +370,8 @@ proof is direction, not a control; the proof table says which ticket builds each
 | --- | --- | --- | --- | --- | --- |
 | TM-TB9-T1 | I/E | X5 points an integration URL at loopback, link-local, a cloud metadata endpoint or an internal service (SSRF) | One egress client for every integration: resolve, then refuse loopback, link-local, metadata and private ranges unless the installation operator allow-lists them; connect to the resolved IP (no DNS rebinding); no redirect to a disallowed host (SB checklist F) | TM-F-EGRESS | Allow-listed internal ranges remain reachable by design |
 | TM-TB9-T2 | I | Our identity authenticates to an attacker-chosen HTTP endpoint (NTLM via HTTP) | No HTTP client does integrated Windows authentication (TM-D10) | TM-F-NTLM | — |
-| TM-TB9-T3 | S | X12 spoofs an HR feed or ITSM callback | Inbound ITSM authenticated by API token or signature and only creates Requests (DM-85.I1); HR/DB pulled by us over verified TLS | TM-F-EGRESS, T-0130 | — |
-| TM-TB9-T4 | T | X12 (HR) drives mass leaver actions | Lifecycle policies run through Plan, approvals and per-run change-volume limits `[OPEN → E2.9 lifecycle spec]` | T-0130 operation fitness | A believable HR change still flows if within limits |
+| TM-TB9-T3 | S | X12 spoofs an HR feed or ITSM callback | Inbound ITSM authenticated by API token or signature and only creates Requests (DM-85.I1); HR/DB pulled by us over verified TLS | TM-F-EGRESS, `make fitness-operation` O1/O2 (landed) | — |
+| TM-TB9-T4 | T | X12 (HR) drives mass leaver actions | Lifecycle policies run through Plan, approvals and per-run change-volume limits `[OPEN → E2.9 lifecycle spec]` | O8 pipeline behaviour (`max_objects` hold), T-0393 | A believable HR change still flows if within limits |
 | TM-TB9-T5 | I | Integration credentials returned or logged | Sealed, write-only, never returned (DM-82.I1, DM-63, DM-85) | TM-F-SECRETOUT, TM-F-SEAL | — |
 | TM-TB9-T6 | I | A new password travels in a notification | Default: no password in any notification; any "deliver initial password" feature needs its own security review `[OPEN → E2.5 helpdesk spec]` | TM-F-SECRETOUT | OTP codes are sent by design (they are the factor) |
 | TM-TB9-T7 | R | Deliveries cannot be proven | Delivery outcome recorded and audited (BP §14 flow 4) | TM-F-AUDIT | — |
@@ -514,7 +514,7 @@ values that any user can write on their own object (TM-X3).
 | TM-TB18-T4 | I | ADMP's own stored AD credentials or technician passwords are read or imported. Horizon3 found "highly privileged" AD credentials in a competitor product's database (ME-SEC §4.4) | Adapters read an **allow-list** of tables and columns per ADMP build. A CI-checked deny list covers every credential, key and password table or column. A database dump or backup is read as a stream, only allow-listed tables are extracted, and the upload is deleted when the job ends; it never enters the blob store. Technicians are re-created by invitation or SSO, never with imported passwords | TM-F-MIGRATE | ADMP's service account keeps its rights until the customer removes it (playbook phase 6) |
 | TM-TB18-T5 | I | The credential for the ADMP database or API leaks; that database holds ADMP's AD credentials | Sealed per-integration credential (TM-D7), write-only, never returned (TM-TB9-T5). Read-only by contract: a read-only database login or a read-only technician token, read-only transactions, no write statement in adapter code (FF-SP7 scope). Windows authentication to SQL Server is Kerberos only (TM-D10). The credential is deleted when the migration project closes | TM-F-MIGRATE, TM-F-SECRETOUT | The customer grants a login that can write; the adapter still never writes |
 | TM-TB18-T6 | S/I | A scanner or comparator target is used for SSRF or NTLM coercion | ManageEngine servers are registered explicitly. They are reached only through the egress client (TM-TB9-T1); AD only through the connector and `InventoryHost`. Kerberos only, no NTLM (TM-D10) | TM-F-EGRESS, TM-F-NTLM | — |
-| TM-TB18-T7 | E | Parallel run executes imported automations for real (a leaver deleted twice; MIG-14) | Comparator runs are Plan-only operations with no Apply path. activeDIQ refuses to run a job whose owner is ManageEngine (MIG-14). Switching ownership is an audited Action with step-up | TM-F-MIGRATE, T-0130 operation fitness | — |
+| TM-TB18-T7 | E | Parallel run executes imported automations for real (a leaver deleted twice; MIG-14) | Comparator runs are Plan-only operations with no Apply path. activeDIQ refuses to run a job whose owner is ManageEngine (MIG-14). Switching ownership is an audited Action with step-up | TM-F-MIGRATE, O7 contract behaviour (Plan writes nothing), T-0392 | — |
 | TM-TB18-T8 | T | X13 feeds false results so the comparator reports parity | Comparator output is advisory and never triggers a write. The fidelity report shows the source of each row | — | A wrong parity sign-off; the customer's review is the control |
 | TM-TB18-T9 | S/I | An imported scheduled report or notification delivers to an attacker-chosen recipient (MIG-06) | Imported schedules land disabled, with recipients shown for review. Recipients outside the tenant's allowed domains are flagged. Delivery runs with the owner's scope (TM-TB15-T2) | TM-F-MIGRATE | — |
 | TM-TB18-T10 | I | Discovery output (privileged accounts, delegations) becomes a reconnaissance map (A6) | The scanner needs its own permission and uses only R1 read rights (§6.3). Its output is inventory under RBAC trimming; exports go through the TB15 encoders and are audited | TM-F-AUTHZ | — |
@@ -2824,7 +2824,7 @@ change, including ours (BP §9).
 tables (with T3). Chain test: edit, delete or reorder one event → the verifier fails at that `seq`.
 Anchor test: a checkpoint hash appears in the SIEM stream and in the export; rewriting events
 before it is detected by the offline verifier. Coverage: every Action kind emits success, failure
-and denial events (T-0130 operation fitness).
+and denial events (ADR-0005 O7 contract behaviour, T-0392).
 
 ---
 
@@ -2928,8 +2928,8 @@ change is a review reject.**
 ## 15. Proofs summary
 
 Existing proofs this document relies on: FF-SP1–SP9 (`tools/fitness/safeprim`), `fitness-tenancy` T1–T5
-(`tools/fitness/tenancy`), `fitness-profiles` P1–P7 (`tools/fitness/profiles`), `fitness-api` (T-0011, T-0017, T-0018), operation and audit fitness
-(T-0130, T-0133), CBT acceptance (T-0148), SD golden tests (T-0149), encoder corpus (T-0150). New proofs:
+(`tools/fitness/tenancy`), `fitness-profiles` P1–P7 (`tools/fitness/profiles`), `fitness-api` (T-0011, T-0017, T-0018), operation fitness
+(`make fitness-operation` O1/O2/O4/O9 live; O3 T-0391, O5–O7 T-0392, O8 incl. TM-F-T0GUARD rule 11 T-0393), audit fitness (T-0133), CBT acceptance (T-0148), SD golden tests (T-0149), encoder corpus (T-0150). New proofs:
 
 | Proof | What it proves (fails when …) | Kind | Owner ticket | Threats |
 | --- | --- | --- | --- | --- |
@@ -3177,3 +3177,4 @@ External, in order of first use:
 - 2026-10-28 · T-0178: §9.2.1 and TM-D29 (rollback of sealed values): no seal counter in the AAD (it rolls back with the blob); per column new-row-on-change plus terminal rows hold no secret (CHECK and trigger), detective or ADR-bounded for key material, TM-R24 accepted for DM-63/82/85. TM-F-SEAL extended.
 - 2026-10-28 · T-0404: §6.4 records what a Windows DC returns for a denied Read (an attribute-less entry, not no-such-object); fail-closed confirmed on the lab; naming gap filed as T-0626.
 - 2026-10-28 · T-0623: §6.4 carries the security-architect-signed note accepting the Key Admins / Enterprise Key Admins residual on a pre-2016-level domain with a 2016+ PDC emulator; new TM-R25 in §16.1; narrowing ticket T-0631 (P3).
+- 2026-10-28 · T-0633: T-0130 cancelled as superseded; operation-fitness proof cells repointed to the live `make fitness-operation` checks (O1/O2/O4/O9) or the ticket that lands each pending check (O3 T-0391, O5–O7 T-0392, O8 T-0393).
