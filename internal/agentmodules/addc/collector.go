@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"log/slog"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -101,14 +102,23 @@ func (r *run) closeThrottle() {
 
 // handle processes one event. It never blocks beyond a local disk append.
 func (r *run) handle(ev RawEvent) {
-	if ev.RecordID <= r.lastSeen {
+	if ev.RecordID != 0 && ev.RecordID <= r.lastSeen {
 		return // already seen (resubscribe overlap)
 	}
-	if r.lastSeen != 0 && ev.RecordID > r.lastSeen+1 {
+	if ev.Unparsable {
+		// Never drop silently (TM-R7): say which record was lost. Not throttled: a flood of unparsable
+		// events must stay visible, and the outbox bound already protects the disk.
 		r.st.gaps.Add(1)
 		r.closeThrottle()
-		r.append(r.gapRecord("record_id_jump", r.lastSeen+1, ev.RecordID-1))
+		r.append(r.gapRecord("unparsable", ev.RecordID, ev.RecordID))
+		if ev.RecordID > r.lastSeen {
+			r.lastSeen = ev.RecordID
+		}
+		return
 	}
+	// A record-id jump is NOT a gap signal: the subscription filters by event id, so ids outside the
+	// catalogue legitimately leave holes. Wraps and clears are detected from the channel's oldest
+	// record at (re)subscribe (checkWrap) and from event 1102.
 	r.lastSeen = ev.RecordID
 	if !r.bk.allow(r.now()) {
 		r.st.throttled.Add(1)
@@ -130,6 +140,22 @@ func (r *run) handle(ev RawEvent) {
 	r.st.collected.Add(1)
 	r.st.lastID.Store(ev.RecordID)
 	r.persist()
+}
+
+// checkWrap compares the bookmark with the channel's oldest record: if the oldest is past the
+// bookmark, records between them were overwritten or cleared while we were not reading.
+func (r *run) checkWrap(src Source) {
+	if r.lastSeen == 0 {
+		return
+	}
+	oldest, err := src.OldestRecord(r.ch)
+	if err != nil || oldest == 0 || oldest <= r.lastSeen+1 {
+		return
+	}
+	r.st.gaps.Add(1)
+	r.closeThrottle()
+	r.append(r.gapRecord("log_wrapped", r.lastSeen+1, oldest-1))
+	r.lastSeen = oldest - 1
 }
 
 // persist saves the bookmark only after the events before it are durable, so a crash re-reads
@@ -218,7 +244,8 @@ func (c *Collector) collect(ctx context.Context, ch agentpolicy.Channel, ev agen
 	backoff := time.Second
 	for ctx.Err() == nil {
 		st.status.Store(int32(addcv1.ChannelStatus_CHANNEL_STATUS_COLLECTING))
-		err := c.src.Subscribe(ctx, ch, r.lastSeen, ev.EventIDs, r.handle)
+		r.checkWrap(c.src)
+		err := c.src.Subscribe(ctx, ch, r.lastSeen, withAlways(ch, ev.EventIDs), r.handle)
 		r.closeThrottle()
 		_ = c.deps.Events.Flush()
 		if ctx.Err() != nil {
@@ -238,6 +265,16 @@ func (c *Collector) collect(ctx context.Context, ch agentpolicy.Channel, ev agen
 		}
 		backoff = min(backoff*2, time.Minute)
 	}
+}
+
+func withAlways(ch agentpolicy.Channel, ids []uint32) []uint32 {
+	out := append([]uint32(nil), ids...)
+	for _, a := range alwaysIDs(ch) {
+		if !slices.Contains(out, a) {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // Snapshot returns the per-channel state in a stable order.

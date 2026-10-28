@@ -17,3 +17,5 @@ func NewSource() Source { return unsupported{} }
 func (unsupported) Subscribe(context.Context, agentpolicy.Channel, uint64, []uint32, func(RawEvent)) error {
 	return ErrUnsupported
 }
+
+func (unsupported) OldestRecord(agentpolicy.Channel) (uint64, error) { return 0, ErrUnsupported }

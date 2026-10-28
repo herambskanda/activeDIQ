@@ -13,6 +13,7 @@ import (
 // https://learn.microsoft.com/en-us/windows/security/threat-protection/auditing/event-<id>.
 var catalogue = map[agentpolicy.Channel]map[uint32]struct{}{
 	agentpolicy.ChannelSecurity: setOf(
+		1102,                         // the audit log was cleared (reported as itself, always subscribed)
 		4624, 4625, 4634, 4647, 4648, // logon / logoff
 		4662,                                     // an operation was performed on an object (DS access)
 		4720, 4722, 4723, 4724, 4725, 4726, 4738, // user account lifecycle and password change/reset
@@ -62,4 +63,12 @@ func logName(c agentpolicy.Channel) string {
 		return "Directory Service"
 	}
 	return "Security"
+}
+
+// alwaysIDs are subscribed on a channel whatever the policy selects: losing them hides tampering.
+func alwaysIDs(c agentpolicy.Channel) []uint32 {
+	if c == agentpolicy.ChannelSecurity {
+		return []uint32{1102}
+	}
+	return nil
 }

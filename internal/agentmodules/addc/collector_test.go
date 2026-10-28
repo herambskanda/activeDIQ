@@ -2,8 +2,11 @@ package addc
 
 import (
 	"context"
+	"encoding/binary"
 	"log/slog"
 	"os"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -36,16 +39,40 @@ func (m *memSink) kinds() []agentv1.EventKind {
 	return k
 }
 
+// scripted is a log of (record id, event id) pairs. Like the real subscription it honours the event
+// id filter, so ids outside the filter leave holes in the record ids it delivers.
 type scripted struct {
-	ids []uint64
-	err error
+	recs   [][2]uint64 // {record id, event id}
+	ids    []uint64    // shorthand: record ids with event id 4624
+	err    error
+	oldest uint64
+	bad    map[uint64]bool // record ids delivered as unparsable
+	mu     sync.Mutex
+	asked  []uint32
 }
 
-func (s *scripted) Subscribe(ctx context.Context, _ agentpolicy.Channel, after uint64, _ []uint32, emit func(RawEvent)) error {
+func (s *scripted) OldestRecord(agentpolicy.Channel) (uint64, error) { return s.oldest, nil }
+
+func (s *scripted) Subscribe(ctx context.Context, _ agentpolicy.Channel, after uint64, filter []uint32, emit func(RawEvent)) error {
+	s.mu.Lock()
+	s.asked = filter
+	s.mu.Unlock()
+	recs := s.recs
 	for _, id := range s.ids {
-		if id > after {
-			emit(RawEvent{RecordID: id, EventID: 4624})
+		recs = append(recs, [2]uint64{id, 4624})
+	}
+	for _, r := range recs {
+		if r[0] <= after {
+			continue
 		}
+		if s.bad[r[0]] {
+			emit(RawEvent{Unparsable: true, RecordID: r[0]})
+			continue
+		}
+		if len(filter) > 0 && !slices.Contains(filter, uint32(r[1])) {
+			continue
+		}
+		emit(RawEvent{RecordID: r[0], EventID: uint32(r[1])})
 	}
 	if s.err != nil {
 		return s.err
@@ -87,20 +114,73 @@ func waitFor(t *testing.T, f func() bool) {
 	t.Fatal("condition not reached")
 }
 
-func TestCollectorRecordIDJumpEmitsGap(t *testing.T) {
+func gapReasons(s *memSink) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []string
+	for _, e := range s.ev {
+		if e.Kind == agentv1.EventKind_EVENT_KIND_GAP {
+			out = append(out, e.Fields[0].Value+":"+e.Fields[1].Value+"-"+e.Fields[2].Value)
+		}
+	}
+	return out
+}
+
+// An interleaved log with ids outside the filter must produce no GAP records.
+func TestFilteredInterleavedLogHasNoGaps(t *testing.T) {
 	sink := &memSink{}
-	c := run1(t, &scripted{ids: []uint64{1, 2, 7}}, deps(t, sink, time.Now), rulesEv(1000))
-	waitFor(t, func() bool { return len(sink.kinds()) == 4 })
-	k := sink.kinds()
-	if k[2] != agentv1.EventKind_EVENT_KIND_GAP {
-		t.Fatalf("kinds %v", k)
-	}
-	if g := sink.ev[2]; g.Fields[1].Value != "3" || g.Fields[2].Value != "6" {
-		t.Fatalf("gap range %v", g.Fields)
-	}
+	src := &scripted{recs: [][2]uint64{{1, 4624}, {2, 4672}, {3, 5156}, {4, 4624}, {5, 4672}, {6, 4624}}}
+	c := run1(t, src, deps(t, sink, time.Now), rulesEv(1000))
+	waitFor(t, func() bool { return c.Snapshot()[0].EventsCollected == 3 })
 	c.Stop()
-	if s := c.Snapshot()[0]; s.GapsSeen != 1 || s.EventsCollected != 3 {
-		t.Fatalf("state %+v", s)
+	if g := gapReasons(sink); len(g) != 0 {
+		t.Fatalf("unexpected gaps %v", g)
+	}
+	if !slices.Contains(src.asked, 1102) {
+		t.Fatalf("1102 not always subscribed: %v", src.asked)
+	}
+}
+
+func TestClearedLogIsReportedAsItself(t *testing.T) {
+	sink := &memSink{}
+	src := &scripted{recs: [][2]uint64{{1, 4624}, {2, 1102}}}
+	c := run1(t, src, deps(t, sink, time.Now), rulesEv(1000))
+	waitFor(t, func() bool { return c.Snapshot()[0].EventsCollected == 2 })
+	c.Stop()
+	if g := gapReasons(sink); len(g) != 0 {
+		t.Fatalf("gaps %v", g)
+	}
+	if sink.ev[1].Fields[0].Value != "1102" {
+		t.Fatalf("%v", sink.ev[1].Fields)
+	}
+}
+
+func TestOldestPastBookmarkGivesOneGap(t *testing.T) {
+	sink := &memSink{}
+	d := deps(t, sink, time.Now)
+	var b [8]byte
+	binary.BigEndian.PutUint64(b[:], 10)
+	if err := d.Blobs.Save(blobName(agentpolicy.ChannelSecurity), b[:]); err != nil {
+		t.Fatal(err)
+	}
+	src := &scripted{ids: []uint64{50, 51}, oldest: 40}
+	c := run1(t, src, d, rulesEv(1000))
+	waitFor(t, func() bool { return c.Snapshot()[0].EventsCollected == 2 })
+	c.Stop()
+	g := gapReasons(sink)
+	if len(g) != 1 || g[0] != "log_wrapped:11-39" {
+		t.Fatalf("gaps %v", g)
+	}
+}
+
+func TestUnparsableEventIsReportedNotDropped(t *testing.T) {
+	sink := &memSink{}
+	src := &scripted{ids: []uint64{1, 2, 3}, bad: map[uint64]bool{2: true}}
+	c := run1(t, src, deps(t, sink, time.Now), rulesEv(1000))
+	waitFor(t, func() bool { return len(sink.kinds()) == 3 })
+	c.Stop()
+	if g := gapReasons(sink); len(g) != 1 || g[0] != "unparsable:2-2" {
+		t.Fatalf("gaps %v", g)
 	}
 }
 
@@ -187,5 +267,30 @@ func TestParseEventXML(t *testing.T) {
 	}
 	if got := truncate("ééé", 3); got != "é" {
 		t.Fatalf("truncate split a rune: %q", got)
+	}
+}
+
+func TestParseEventXMLSanitisesIllegalCharacters(t *testing.T) {
+	for _, v := range []string{"a\x01b", "a&#x1;b", "a&#1;b", "a&#xFFFE;b", "a&#99999999999;b"} {
+		x := "<Event><System><EventID>5136</EventID><EventRecordID>9</EventRecordID></System><EventData><Data Name=\"V\">" + v + "</Data></EventData></Event>"
+		e, err := ParseEventXML([]byte(x))
+		if err != nil || e.RecordID != 9 || len(e.Fields) != 1 || e.Fields[0].Value != "a\uFFFDb" {
+			t.Fatalf("%q: %+v %v", v, e, err)
+		}
+	}
+	// legal references survive
+	e, err := ParseEventXML([]byte("<Event><System><EventID>1</EventID><EventRecordID>2</EventRecordID></System><EventData><Data Name=\"V\">a&#x41;&amp;b</Data></EventData></Event>"))
+	if err != nil || e.Fields[0].Value != "aA&b" {
+		t.Fatalf("%+v %v", e, err)
+	}
+}
+
+func TestDecodeEventKeepsRecordIDOfUnparsable(t *testing.T) {
+	big := "<Event><System><EventID>5136</EventID><EventRecordID>1234</EventRecordID></System><EventData><Data Name=\"V\">" + strings.Repeat("x", maxXMLBytes) + "</Data></EventData></Event>"
+	for _, x := range []string{big, "<Event><System><EventRecordID>77</EventRecordID><EventID>1</EventID></System><Oops></Event>"} {
+		e := DecodeEvent([]byte(x))
+		if !e.Unparsable || e.RecordID == 0 {
+			t.Fatalf("%+v", e)
+		}
 	}
 }

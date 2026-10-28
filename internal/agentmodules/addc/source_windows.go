@@ -107,9 +107,7 @@ func (winSource) Subscribe(ctx context.Context, ch agentpolicy.Channel, after ui
 				return e
 			}
 			for i := uint32(0); i < n; i++ {
-				if ev, err := render(evs[i]); err == nil {
-					emit(ev)
-				}
+				emit(render(evs[i]))
 				closeHandle(evs[i])
 			}
 		}
@@ -121,17 +119,49 @@ func (winSource) Subscribe(ctx context.Context, ch agentpolicy.Channel, after ui
 }
 
 // render calls EvtRender(EvtRenderEventXml) with a size-probe retry, bounded by maxXMLBytes.
-func render(ev uintptr) (RawEvent, error) {
+// A failure yields an Unparsable placeholder, never a skipped event.
+func render(ev uintptr) RawEvent {
 	buf := make([]uint16, 4096)
 	for {
 		var used, props uint32
 		r, _, e := procEvtRender.Call(0, ev, evtRenderEventXml, uintptr(len(buf)*2), uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&used)), uintptr(unsafe.Pointer(&props)))
 		if r != 0 {
-			return ParseEventXML([]byte(windows.UTF16ToString(buf[:used/2])))
+			return DecodeEvent([]byte(windows.UTF16ToString(buf[:used/2])))
 		}
 		if e != syscall.Errno(122) /* ERROR_INSUFFICIENT_BUFFER */ || int(used) > maxXMLBytes*2 {
-			return RawEvent{}, e
+			return RawEvent{Unparsable: true}
 		}
 		buf = make([]uint16, used/2+1)
 	}
+}
+
+var (
+	procEvtOpenLog    = wevtapi.NewProc("EvtOpenLog")
+	procEvtGetLogInfo = wevtapi.NewProc("EvtGetLogInfo")
+)
+
+const (
+	evtOpenChannelPath       = 1
+	evtLogOldestRecordNumber = 6 // EVT_LOG_PROPERTY_ID [UNVERIFIED — lab]
+)
+
+// OldestRecord reads EvtLogOldestRecordNumber with EvtGetLogInfo.
+// https://learn.microsoft.com/en-us/windows/win32/api/winevt/nf-winevt-evtgetloginfo
+func (winSource) OldestRecord(ch agentpolicy.Channel) (uint64, error) {
+	p, err := windows.UTF16PtrFromString(logName(ch))
+	if err != nil {
+		return 0, err
+	}
+	h, _, e := procEvtOpenLog.Call(0, uintptr(unsafe.Pointer(p)), evtOpenChannelPath)
+	if h == 0 {
+		return 0, e
+	}
+	defer closeHandle(h)
+	var v [16]byte // EVT_VARIANT: 8-byte union, Count, Type
+	var used uint32
+	r, _, e := procEvtGetLogInfo.Call(h, evtLogOldestRecordNumber, uintptr(len(v)), uintptr(unsafe.Pointer(&v[0])), uintptr(unsafe.Pointer(&used)))
+	if r == 0 {
+		return 0, e
+	}
+	return *(*uint64)(unsafe.Pointer(&v[0])), nil
 }

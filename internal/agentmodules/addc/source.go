@@ -18,6 +18,9 @@ type RawEvent struct {
 	At       time.Time
 	DCGUID   string
 	Fields   []Field
+	// Unparsable marks an event the reader could not render or parse. RecordID is best effort (0 when
+	// unknown). The collector turns it into an explicit GAP record: an event is never dropped silently.
+	Unparsable bool
 }
 
 // ErrUnreadable means the service identity may not read the channel (channel ACE missing or reset by
@@ -31,5 +34,8 @@ var ErrUnsupported = errors.New("addc: event log is not available on this platfo
 // blocks until ctx is done or the subscription fails. emit must be fast; it never performs I/O other
 // than an outbox append.
 type Source interface {
+	// OldestRecord returns the oldest record id still in the channel (0 when empty or unknown). The
+	// collector compares it with the bookmark to tell a wrapped or cleared log from a filtered one.
+	OldestRecord(ch agentpolicy.Channel) (uint64, error)
 	Subscribe(ctx context.Context, ch agentpolicy.Channel, after uint64, ids []uint32, emit func(RawEvent)) error
 }
