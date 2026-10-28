@@ -9,7 +9,7 @@ ticket: T-0367
 
 # platform/rbac (DM-34, DM-35, DM-36; threat model §7.7)
 
-Code: `internal/platform/rbac/`, `internal/modules/delegation/`; migrations `0018_authz_rbac.sql`, `0035_authz_subjects.sql`.
+Code: `internal/platform/rbac/`, `internal/modules/delegation/`; migrations `0018_authz_rbac.sql`, `0037_authz_subjects.sql`.
 
 - **Tables** (tenant, RLS): `authz_roles`, `authz_role_permissions`, `authz_assignments`,
   `authz_assignment_roots`. Subjects are an account, a directory group

@@ -1,4 +1,4 @@
--- 0035_authz_subjects: group and automation-policy subjects, and the tenant-wide root for activeDIQ's
+-- 0037_authz_subjects: group and automation-policy subjects, and the tenant-wide root for activeDIQ's
 -- own store (T-0367; DM-36 subject, DM-35 root kinds, DM-36.I4). Owner: internal/platform/rbac.
 --
 --   * authz_assignments gains subject_kind. 'account' keeps account_id; 'group' is a directory group

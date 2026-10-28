@@ -1,4 +1,4 @@
--- 0039_inventory_tier0_revisions_rls_first: let row security, not a trigger, refuse a tenant re-assignment
+-- 0041_inventory_tier0_revisions_rls_first: let row security, not a trigger, refuse a tenant re-assignment
 -- (T-0500; fitness-tenancy T4). Owner: internal/directory/inventory.
 --
 -- 0036's BEFORE UPDATE guard also rejected a changed tenant_id, and a BEFORE trigger runs before the
