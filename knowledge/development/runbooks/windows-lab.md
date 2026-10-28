@@ -191,3 +191,25 @@ Reset = `qm rollback 112 clean` by a human. Certificate verification is never di
 (`TestWindowsLab…` untrusted-CA test). `make lab-test-windows-unit` proves the mode offline (stub `go`/`virsh`,
 checks refusals, misconfiguration errors and that the password never appears in argv, logs or stdout).
 Status: **untested against VM 112 until a human completes the steps above** (the PowerShell is as untested as §8 says).
+
+## 11. Agent identity harness (T-0613, for T-0557)
+
+Creates `NT SERVICE\activeDIQAgent` with the ADR-0006 token (service SID `restricted`, `RequiredPrivileges` =
+`SeChangeNotifyPrivilege`, data dir DACL service SID + SYSTEM + Administrators) on any Windows host (dc1 for
+T-0557). No agent MSI or service host exists, so the service binary is a lab-only stub that records `whoami`
+output from inside the service token. This is not the installer.
+
+```bash
+make windows-agent-harness-build          # -> lab/windows/.state/agent-harness/svcstub.exe
+# copy svcstub.exe and lab/windows/agent-harness/Install-AgentLabHarness.ps1 to the host (e.g. C:\lab\agent-harness\)
+```
+Elevated PowerShell on the host:
+`powershell -ExecutionPolicy Bypass -File C:\lab\agent-harness\Install-AgentLabHarness.ps1`
+Evidence (sc qc/qprivs/qsidtype, `whoami /priv|/user|/groups` as the service, data-dir SDDL, OS build) goes to
+`C:\lab\agent-harness-evidence`; copy it to `windows-lab-runs/agent-harness-<UTC>/`. Exit 0 = every check
+passed. Remove with `-Uninstall` (service, key and data dir). Offline guard: `make lab-test-windows-unit`.
+
+Status: **not yet run on a Windows host** (no VM in the implementing session; same state as §8). Things to
+watch on the first run: the restricted SID type adds restricting SIDs, so the stub's read of
+`System32\whoami.exe` or the binary directory may need an ACE for the service SID. Record what fails; that is
+an input to the MSI design and the A3 fitness item of ADR-0006.
