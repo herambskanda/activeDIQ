@@ -2423,6 +2423,7 @@ listener supports a source-CIDR allow-list (ADM-145). Internet-facing self-servi
 | L1 | HTTPS console + public API | Browsers, scripts, ITSM | Session or API token; anonymous only for §7.6 AN-1 to AN-5 and AN-7 to AN-10 | Internal network; source-CIDR allow-list |
 | L2 | Fleet gRPC | Remote connectors, [M3] agents | Client certificate required for every RPC except `Enroll` (token-gated, single-use, short-lived, rate-limited) | Internal network, or reachable by on-site connectors (SaaS) |
 | L3 [M4] | RADIUS (UDP) | Customer NAS / VPN devices | Per-client shared secret; `Message-Authenticator` required in every request and response; bounded by §5.19 (TB19) and TM-D20 | Internal networks only |
+| L4 (optional) | Operator metrics (HTTPS, `GET /metrics` only) | The operator's Prometheus scraper | One operator bearer token (`ACTIVEDIQ_OPS_TOKEN_FILE`, ≥ 32 bytes, 0600 file), constant-time compare; no tenant session or API key is accepted (T-0533) | Off unless `ACTIVEDIQ_OPS_ADDR` is set; loopback unless a TLS directory is configured; never on L1 |
 | — | Edge tunnel [M4] | — | Not a listener: the server dials **out** to edge | — |
 | — | Bundled PostgreSQL | The server | Loopback only by default; TLS + SCRAM and a host allow-list when nodes are added | Not exposed |
 
@@ -2430,6 +2431,9 @@ L3 is UDP only. RADIUS over TLS (RadSec, TM-Q18) runs "over TCP", by default on 
 ([RFC 6614](https://www.rfc-editor.org/rfc/rfc6614)), so it would be a **second listener**. If the
 M4 RADIUS spec adopts it, it gets its own L-row through an RT-6 review (§14) before it ships, and
 TM-F-PORTS checks it like any other row.
+
+The L4 socket is covered by the same proof (it appears only when `ACTIVEDIQ_OPS_ADDR` is set); the
+port-proof test itself is tracked in T-0137 and does not yet enumerate L4.
 
 Through M4, no other listener exists: no debug or profiling port (FF-SP2 bans `pprof`), no
 sidecar port, no unauthenticated metrics. **Proof TM-F-PORTS:** on a booted install of each

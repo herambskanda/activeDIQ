@@ -20,6 +20,9 @@ Code: `internal/platform/keys/`; fake KMS: `internal/platform/keys/keystest/`.
   passphrase/test profile; KMS, Vault, DPAPI-NG and TPM adapters implement the same interface later.
   The server feeds `LocalProvider` from the interim file KEK profile (`ACTIVEDIQ_KEK_FILE`, T-0407; threat model
   TM-TB5-T7): linux-oci/dev only, until the passphrase keystore or OS/KMS adapters land.
+- `keys.WriteMetrics` renders `activediq_keys_dek_unwraps_total{tenant,outcome}` in Prometheus text format (label values
+  escaped per the exposition format). It is cross-tenant data, so it is served only by `internal/platform/opsmetrics`
+  on the optional operator listener (bearer token, never the API listener; see `api-pipeline.md`, T-0533).
 - `DEK` holds its bytes in a `secret.Secret` (DM-02.I3): redacted when printed, zeroed by `Destroy`.
 - Not here: DM-02 table/migration, active-version selection, rotation/re-seal job (T-0007/TM-D15), shredding.
   Callers call these inside the tenant's `WithTenantTx`.
