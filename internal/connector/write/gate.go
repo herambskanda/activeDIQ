@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"encoding/json/v2"
 	"errors"
-	"os"
 	"sync"
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/connector/tier0"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
+	"github.com/skenzeriq/activediq/internal/platform/ownerfile"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
@@ -293,7 +293,7 @@ func (g *GateBook) Ratchet(connectionID string, marks []Mark) error {
 }
 
 // FileBaseline appends marks as JSON lines to one file, readable and writable by the connector's
-// service identity only (mode 0600), and syncs it before returning. It holds identifiers only.
+// service identity only (ownerfile: 0600 on Unix, a protected service-identity+SYSTEM DACL on Windows), and syncs it before returning. It holds identifiers only.
 type FileBaseline struct {
 	mu   sync.Mutex
 	Path string
@@ -312,7 +312,7 @@ type baselineLine struct {
 func (f *FileBaseline) Append(connectionID string, marks []Mark) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	fh, err := os.OpenFile(f.Path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	fh, err := ownerfile.OpenAppend(f.Path)
 	if err != nil {
 		return err
 	}

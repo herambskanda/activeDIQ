@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/skenzeriq/activediq/internal/platform/ownerfile"
 	v1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
@@ -59,12 +60,25 @@ type BaselineStore interface {
 	Save(*Baseline) error
 }
 
+// ErrBaselineUnsafe is returned by FileBaselineStore.Load when the file is not restricted to the
+// service identity (Windows: owner and protected DACL of the service identity and SYSTEM only; Unix:
+// owned by the euid, mode 0600).
+var ErrBaselineUnsafe = errors.New("rights: baseline file is not restricted to the service identity")
+
 // FileBaselineStore keeps the baseline in one file readable and writable by the connector's service
 // identity only. Save writes a temporary file, flushes it, renames it over the target and flushes the
 // directory.
 type FileBaselineStore struct{ Path string }
 
 func (s FileBaselineStore) Load() (*Baseline, error) {
+	// Refuse a file another principal could have written: a wider DACL (an ACE for Users) or a foreign
+	// owner (T-0537, T-0329). The refusal is ErrBaselineUnsafe, never a silent adoption.
+	if err := ownerfile.Check(s.Path); err != nil {
+		if errors.Is(err, ownerfile.ErrUnsafe) {
+			return nil, fmt.Errorf("%w: %w", ErrBaselineUnsafe, err)
+		}
+		return nil, err
+	}
 	raw, err := os.ReadFile(s.Path)
 	if err != nil {
 		return nil, err
@@ -82,15 +96,12 @@ func (s FileBaselineStore) Save(b *Baseline) error {
 		return err
 	}
 	dir := filepath.Dir(s.Path)
-	tmp, err := os.CreateTemp(dir, ".baseline-*")
+	tmp, err := ownerfile.CreateTemp(dir, ".baseline-*") // service identity (and SYSTEM) only, from creation
 	if err != nil {
 		return err
 	}
 	name := tmp.Name()
 	cleanup := func(e error) error { _ = tmp.Close(); _ = os.Remove(name); return e }
-	if err := tmp.Chmod(0o600); err != nil {
-		return cleanup(err)
-	}
 	if _, err := tmp.Write(raw); err != nil {
 		return cleanup(err)
 	}
@@ -101,16 +112,11 @@ func (s FileBaselineStore) Save(b *Baseline) error {
 		_ = os.Remove(name)
 		return err
 	}
-	if err := os.Rename(name, s.Path); err != nil {
+	if err := renameDurable(name, s.Path); err != nil {
 		_ = os.Remove(name)
 		return err
 	}
-	d, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-	return d.Sync()
+	return nil
 }
 
 // ShrinkRecord is the tier0_set_shrink record.
@@ -133,7 +139,7 @@ type RecordSink interface {
 	WriteBaselineMissing(ctx context.Context, verificationID string, cause error) error
 }
 
-// FileRecordSink appends JSON lines to a local log file (mode 0600) and flushes each one.
+// FileRecordSink appends JSON lines to a local log file restricted to the service identity (ownerfile) and flushes each one.
 type FileRecordSink struct{ Path string }
 
 func (s FileRecordSink) append(v any) error {
@@ -141,7 +147,7 @@ func (s FileRecordSink) append(v any) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(s.Path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	f, err := ownerfile.OpenAppend(s.Path)
 	if err != nil {
 		return err
 	}
@@ -161,8 +167,11 @@ func (s FileRecordSink) WriteShrink(_ context.Context, r ShrinkRecord) error { r
 func (s FileRecordSink) WriteBaselineMissing(_ context.Context, id string, cause error) error {
 	// The cause is classified, never echoed: it can carry a path.
 	reason := "unreadable"
-	if errors.Is(cause, fs.ErrNotExist) {
+	switch {
+	case errors.Is(cause, fs.ErrNotExist):
 		reason = "not_found"
+	case errors.Is(cause, ErrBaselineUnsafe):
+		reason = "unsafe_acl"
 	}
 	return s.append(map[string]any{"event": "tier0_baseline_missing", "time": time.Now().UTC(), "verification_id": id, "reason": reason})
 }

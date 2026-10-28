@@ -734,7 +734,13 @@ nothing against a compromised server there (TM §6.2 "Who this defends against")
 **The baseline survives a restart.** The reported set, as `(GUID, basis, source)` entries plus the
 `verification_id` of the epoch's run, is persisted on the connector host after each completed run
 and appended to when the ratchet adds an entry. It is not a secret and holds identifiers only; it
-is readable and writable by the connector's service identity only. After a restart, the first
+is readable and writable by the connector's service identity only: mode 0600 owned by the euid on
+Unix; on Windows a protected DACL granting the service identity and SYSTEM only, owner the service
+identity, set in `CreateFile` so the file never carries the inherited ACL (T-0537,
+`internal/platform/ownerfile`). The shrink-record and write-baseline files are created the same way.
+Loading re-checks owner and DACL: a baseline with any other ACE or owner is refused (`ErrBaselineUnsafe`),
+treated as unreadable (`tier0_baseline_missing`, reason `unsafe_acl`) and replaced by the next completed
+run. After a restart, the first
 completed run compares against the persisted baseline, so a smaller verification issued right
 after a restart still leaves its record. A missing or unreadable baseline file is itself recorded
 (`tier0_baseline_missing`) in the local log and, on Windows hosts, the Windows event log. If the
