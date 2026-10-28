@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf16"
 )
 
 const pTestsWhat = "P1-P8 (ADR-0007) and F1 (out-of-bounds policy) tests exist, run and pass"
@@ -211,14 +212,19 @@ var agentModuleDirs = []string{"internal/agentmodules"}
 var agentOwnedDirs = []string{"cmd/agent", "internal/agentmodules", "internal/compose/agent"}
 
 // r3AllowedStd: the standard-library packages an agent module may import. Pure computation, text,
-// encoding, time and synchronisation. "os" is allowed for its read-only and environment helpers; the
-// mutating calls are denied below as a second layer. To add one, review what it can reach.
+// encoding, time and synchronisation. Package "os" is not here: it is allowed only as the named
+// selectors in r3AllowedOS, because methods on its values (OpenRoot().Create, FindProcess().Kill,
+// File.Chmod) cannot be told apart by name. To add one, review what it can reach.
 var r3AllowedStd = setOf(
 	"bytes", "bufio", "context", "errors", "fmt", "io", "log/slog", "maps", "math", "math/big", "math/bits",
-	"os", "path", "path/filepath", "regexp", "slices", "sort", "strconv", "strings", "sync", "sync/atomic",
+	"path", "path/filepath", "regexp", "slices", "sort", "strconv", "strings", "sync", "sync/atomic",
 	"time", "unicode", "unicode/utf16", "unicode/utf8", "encoding/binary", "encoding/hex", "encoding/json",
 	"encoding/base64", "crypto/sha256", "crypto/subtle", "hash", "hash/fnv", "iter", "cmp",
 )
+
+// r3AllowedOS: the only selectors of package os an agent module may use (environment and error values).
+var r3AllowedOS = setOf("os.Getenv", "os.LookupEnv", "os.ErrNotExist", "os.ErrExist", "os.ErrPermission",
+	"os.IsNotExist", "os.IsExist", "os.IsPermission")
 
 // r3AllowedOwn: path fragments of our own packages an agent module may import (its siblings and the
 // host dependency-struct and policy packages). Matched against the import path.
@@ -227,6 +233,8 @@ var r3AllowedOwn = []string{"/internal/agentmodules/", "/internal/platform/agent
 // r3Named: the reason given for the imports most likely to be tried, so the message teaches.
 var r3Named = map[string]string{
 	"os/exec":                               "process execution (C1/C2)",
+	"os/signal":                             "process signals",
+	"os/user":                               "account lookup",
 	"plugin":                                "loading code",
 	"syscall":                               "raw system calls: process, file, socket and service APIs",
 	"unsafe":                                "memory the type system cannot check",
@@ -261,9 +269,13 @@ func setOf(s ...string) map[string]bool {
 func checkModuleCapabilities(root string) Result {
 	r := Result{ID: "R3", What: "agent modules import only allowlisted packages and call no file-mutating or process API (C2, C3)"}
 	files := goFiles(root, agentModuleDirs)
-	if len(files) == 0 {
+	foreign := foreignModuleFiles(root)
+	if len(files) == 0 && len(foreign) == 0 {
 		r.Inactive = "no Go source under internal/agentmodules (T-0600 onward)"
 		return r
+	}
+	for _, f := range foreign {
+		r.Violations = append(r.Violations, f+": only .go files (and testdata/) may sit in an agent module directory; assembly, objects and C sources link code the import scan cannot see")
 	}
 	for _, f := range files {
 		scanGo(root, f, func(rel, imp, name string, line int) {
@@ -271,12 +283,40 @@ func checkModuleCapabilities(root string) Result {
 				r.Violations = append(r.Violations, fmt.Sprintf("%s:%d %s", rel, line, msg))
 			}
 		}, func(rel, call string, line int) {
-			if r3BannedCalls[call] || strings.HasPrefix(call, "ioutil.") {
+			if strings.HasPrefix(call, "os.") && !r3AllowedOS[call] {
+				r.Violations = append(r.Violations, fmt.Sprintf("%s:%d uses %s: an agent module may use only os.Getenv/LookupEnv and the os.Err* values; files and processes come from the host's dependency struct", rel, line, call))
+			} else if r3BannedCalls[call] || strings.HasPrefix(call, "ioutil.") {
 				r.Violations = append(r.Violations, fmt.Sprintf("%s:%d calls %s: an agent module cannot mutate files or start processes (write through the host's data-directory capability)", rel, line, call))
 			}
 		})
 	}
 	return r
+}
+
+// foreignModuleFiles lists files under the agent-module directories that are not .go sources and not in
+// a testdata directory (.s, .syso, .c, .h, .cc, .m, .S, .swig, ... all link code the AST scan cannot see).
+func foreignModuleFiles(root string) []string {
+	var out []string
+	for _, d := range agentModuleDirs {
+		_ = filepath.WalkDir(filepath.Join(root, d), func(p string, e fs.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			if e.IsDir() {
+				if e.Name() == "testdata" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !strings.HasSuffix(p, ".go") {
+				rel, _ := filepath.Rel(root, p)
+				out = append(out, filepath.ToSlash(rel))
+			}
+			return nil
+		})
+	}
+	sort.Strings(out)
+	return out
 }
 
 // judgeModuleImport returns "" when an agent module may import imp under the local name, else the reason.
@@ -293,7 +333,7 @@ func judgeModuleImport(imp, name string) string {
 	if why, bad := r3Named[imp]; bad {
 		return fmt.Sprintf("imports %s: %s", imp, why)
 	}
-	if r3AllowedStd[imp] {
+	if r3AllowedStd[imp] || imp == "os" {
 		return ""
 	}
 	for _, o := range r3AllowedOwn {
@@ -513,28 +553,103 @@ var (
 	agentBodyRe   = regexp.MustCompile(`(?i)activediq-agent|activediqagent`)
 )
 
-// agentInstallerFiles are the files under packaging/ that name the agent in their file name or body:
+// instFile is one file under packaging/ that concerns the agent, decoded to text.
+type instFile struct {
+	path, rel, text string
+	unreadable      string // why it could not be read as text; empty when text is valid
+}
+
+var binaryExts = setOf(".ico", ".bmp", ".png", ".jpg", ".gif", ".dll", ".exe", ".cab", ".msi", ".cer", ".pfx", ".zip", ".gz", ".bin")
+
+// decodeText returns the text of b, decoding UTF-16 (BOM or the NUL pattern of ASCII-range UTF-16) and
+// stripping a UTF-8 BOM. ok is false when b has NULs and does not look like UTF-16.
+func decodeText(b []byte) (string, bool) {
+	switch {
+	case bytes.HasPrefix(b, []byte{0xEF, 0xBB, 0xBF}):
+		return string(b[3:]), bytes.IndexByte(b, 0) < 0
+	case bytes.HasPrefix(b, []byte{0xFF, 0xFE}):
+		return utf16Text(b[2:], false), true
+	case bytes.HasPrefix(b, []byte{0xFE, 0xFF}):
+		return utf16Text(b[2:], true), true
+	}
+	if bytes.IndexByte(b, 0) < 0 {
+		return string(b), true
+	}
+	odd, even := 0, 0
+	for i, c := range b {
+		if c == 0 {
+			if i%2 == 1 {
+				odd++
+			} else {
+				even++
+			}
+		}
+	}
+	switch {
+	case odd*4 >= len(b):
+		return utf16Text(b, false), true
+	case even*4 >= len(b):
+		return utf16Text(b, true), true
+	}
+	return "", false
+}
+
+func utf16Text(b []byte, bigEndian bool) string {
+	u := make([]uint16, 0, len(b)/2)
+	for i := 0; i+1 < len(b); i += 2 {
+		if bigEndian {
+			u = append(u, uint16(b[i])<<8|uint16(b[i+1]))
+		} else {
+			u = append(u, uint16(b[i+1])<<8|uint16(b[i]))
+		}
+	}
+	return string(utf16.Decode(u))
+}
+
+// agentInstallerFiles are the files under packaging/ that name the agent in their relative path or body:
 // WiX sources and also install scripts, custom actions and anything else a service account can be set in
-// (ADR-0006 A1 covers any LocalSystem string in the MSI source). Binary and very large files are skipped.
-func agentInstallerFiles(root string) []string {
-	var out []string
-	_ = filepath.WalkDir(filepath.Join(root, "packaging"), func(p string, e fs.DirEntry, err error) error {
+// (ADR-0006 A1 covers any LocalSystem string in the MSI source). UTF-16 files are decoded. A file whose
+// path names the agent that cannot be read as text, or is too large, fails closed unless it has a known
+// binary extension.
+func agentInstallerFiles(root string) []instFile {
+	var out []instFile
+	pack := filepath.Join(root, "packaging")
+	_ = filepath.WalkDir(pack, func(p string, e fs.DirEntry, err error) error {
 		if err != nil || e.IsDir() {
 			return nil
 		}
+		rel, _ := filepath.Rel(root, p)
+		rel = filepath.ToSlash(rel)
+		inPath := agentFileRe.MatchString(strings.TrimPrefix(rel, "packaging/"))
+		if binaryExts[strings.ToLower(filepath.Ext(p))] {
+			return nil
+		}
 		if info, err := e.Info(); err != nil || info.Size() > 4<<20 {
+			if inPath {
+				out = append(out, instFile{path: p, rel: rel, unreadable: "is too large to scan"})
+			}
 			return nil
 		}
 		b, err := os.ReadFile(p)
-		if err != nil || bytes.IndexByte(b, 0) >= 0 {
+		if err != nil {
+			if inPath {
+				out = append(out, instFile{path: p, rel: rel, unreadable: err.Error()})
+			}
 			return nil
 		}
-		if agentFileRe.MatchString(filepath.Base(p)) || agentBodyRe.Match(b) {
-			out = append(out, p)
+		text, ok := decodeText(b)
+		if !ok {
+			if inPath {
+				out = append(out, instFile{path: p, rel: rel, unreadable: "cannot be read as text"})
+			}
+			return nil
+		}
+		if inPath || agentBodyRe.MatchString(text) {
+			out = append(out, instFile{path: p, rel: rel, text: text})
 		}
 		return nil
 	})
-	sort.Strings(out)
+	sort.Slice(out, func(i, j int) bool { return out[i].rel < out[j].rel })
 	return out
 }
 
@@ -548,7 +663,12 @@ func isWixXML(p string) bool {
 
 // scAccountRe finds a service created or reconfigured with an account: sc.exe config/create ... obj=,
 // Set-Service/New-Service ... -Credential. Such a line must name the pinned account and nothing else.
-var scAccountRe = regexp.MustCompile(`(?i)(sc(\.exe)?\s+(config|create)|set-service|new-service)[^\n]*(obj\s*=|-credential)`)
+var scAccountRe = regexp.MustCompile(`(?i)((sc(\.exe)?\s+(config|create)|set-service|new-service)[^\n]*(obj\s*=|-credential)|win32_service[^\n]*(change|create|startname)|startname|changeserviceconfig|createservice)`)
+
+// svcRegistryRe finds any reference to a service's registry key, where the account (ObjectName), SID type
+// (ServiceSidType) and privileges (RequiredPrivileges) can be set without ServiceInstall: from WiX
+// RegistryKey/RegistryValue, reg.exe, New-ItemProperty or Set-ItemProperty alike.
+var svcRegistryRe = regexp.MustCompile(`(?i)(currentcontrolset|controlset\d+)\\+services`)
 
 func checkInstaller(root string) Result {
 	r := Result{ID: "A1", What: "agent installer names " + pinnedAccount + ", service SID type " + pinnedSidType + ", the pinned RequiredPrivileges, and no LocalSystem (ADR-0006 rules 1, 3)"}
@@ -561,12 +681,14 @@ func checkInstaller(root string) Result {
 	var sids []string
 	var privs []string
 	for _, f := range files {
-		rel, _ := filepath.Rel(root, f)
-		rel = filepath.ToSlash(rel)
-		b, err := os.ReadFile(f)
-		if err != nil {
-			r.Violations = append(r.Violations, rel+": "+err.Error())
+		rel := f.rel
+		if f.unreadable != "" {
+			r.Violations = append(r.Violations, fmt.Sprintf("%s %s: an agent packaging file must be readable text (or have a known binary extension)", rel, f.unreadable))
 			continue
+		}
+		b := []byte(f.text)
+		if svcRegistryRe.Match(b) {
+			r.Violations = append(r.Violations, fmt.Sprintf("%s references the Services registry key: the account, SID type and privileges are set only by ServiceInstall/ServiceConfig, never through the registry (ADR-0006 rules 1, 3)", rel))
 		}
 		if m := localSystemRe.FindString(string(b)); m != "" {
 			r.Violations = append(r.Violations, fmt.Sprintf("%s names %q: the agent never runs as LocalSystem or a shared service identity (ADR-0006 rule 1)", rel, m))
@@ -576,7 +698,7 @@ func checkInstaller(root string) Result {
 				r.Violations = append(r.Violations, fmt.Sprintf("%s sets a service account other than %s: %q", rel, pinnedAccount, strings.TrimSpace(line)))
 			}
 		}
-		if !isWixXML(f) {
+		if !isWixXML(f.path) {
 			continue
 		}
 		x := judgeInstallerXML(rel, b)
@@ -626,6 +748,7 @@ type installerFacts struct {
 func judgeInstallerXML(rel string, b []byte) installerFacts {
 	dec := xml.NewDecoder(bytes.NewReader(b))
 	dec.Strict = false
+	dec.CharsetReader = func(_ string, in io.Reader) (io.Reader, error) { return in, nil } // text is already decoded
 	var els []xmlEl
 	var stack []int
 	for {

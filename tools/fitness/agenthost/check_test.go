@@ -143,6 +143,12 @@ func TestR3ModuleCapabilities(t *testing.T) {
 		"os.NewFile":            "package addc\n\nimport \"os\"\n\nvar _ = os.NewFile\n",
 		"os.Lchown":             "package addc\n\nimport \"os\"\n\nvar _ = os.Lchown\n",
 		"plugin":                "package addc\n\nimport \"plugin\"\n\nvar _ = plugin.Open\n",
+		"os.OpenRoot + Create":  "package addc\n\nimport \"os\"\n\nfunc f() { r, _ := os.OpenRoot(`C:\\Windows\\System32`); _, _ = r.Create(\"evil.dll\") }\n",
+		"os.OpenInRoot":         "package addc\n\nimport \"os\"\n\nvar _ = os.OpenInRoot\n",
+		"os.CopyFS":             "package addc\n\nimport \"os\"\n\nfunc f() { _ = os.CopyFS(\"d\", os.DirFS(\"s\")) }\n",
+		"os.FindProcess Kill":   "package addc\n\nimport \"os\"\n\nfunc f() { p, _ := os.FindProcess(4); _ = p.Kill() }\n",
+		"File.Chmod":            "package addc\n\nimport \"os\"\n\nfunc f(f *os.File) { _ = f.Chmod(0) }\n",
+		"aliased os OpenRoot":   "package addc\n\nimport o \"os\"\n\nvar _ = o.OpenRoot\n",
 		"aliased os WriteFile":  "package addc\n\nimport o \"os\"\n\nfunc f() { _ = o.WriteFile(\"x\", nil, 0) }\n",
 	} {
 		bad := t.TempDir()
@@ -152,6 +158,17 @@ func TestR3ModuleCapabilities(t *testing.T) {
 			t.Errorf("%s: accepted", name)
 		}
 	}
+	// Non-Go files link code the AST scan cannot see.
+	for name, file := range map[string]string{"a_linux_amd64.s": "TEXT ·sys(SB),0,$0\n\tSYSCALL\n", "x.syso": "obj", "c.c": "int x;", "h.h": "", "m.m": "", "S.S": ""} {
+		bad := t.TempDir()
+		write(t, bad, "internal/agentmodules/addc/ok.go", "package addc\n")
+		write(t, bad, "internal/agentmodules/addc/"+name, file)
+		wantViolation(t, checkModuleCapabilities(bad), "only .go files")
+	}
+	// The os selectors that stay allowed.
+	osok := t.TempDir()
+	write(t, osok, "internal/agentmodules/addc/ok.go", "package addc\n\nimport (\n\t\"errors\"\n\t\"os\"\n)\n\nfunc f(err error) (string, bool) { return os.Getenv(\"X\"), errors.Is(err, os.ErrNotExist) }\n")
+	wantClean(t, checkModuleCapabilities(osok))
 	// Allowed: a sibling module package and the policy package.
 	ok := t.TempDir()
 	write(t, ok, "internal/agentmodules/addc/ok.go", "package addc\n\nimport (\n\t\"context\"\n\t\"encoding/json\"\n\t\"github.com/skenzeriq/activediq/internal/agentmodules/shared\"\n\t\"github.com/skenzeriq/activediq/internal/platform/agentpolicy\"\n)\n\nvar _ = context.Background\nvar _ = json.Marshal\nvar _ = shared.X\nvar _ = agentpolicy.X\n")
@@ -236,6 +253,51 @@ func TestA1Installer(t *testing.T) {
 	wantViolation(t, script("Install-Agent.ps1", "sc.exe config activeDIQAgent obj= CORP\\svc-agent password= x\n"), "other than")
 	wantViolation(t, script("Install-Agent.ps1", "Set-Service activeDIQAgent -Credential $c\n"), "other than")
 	wantViolation(t, script("ca.cmd", "sc config activediqagent obj= .\\admin\n"), "other than")
+	// The service registry key sets account, SID type and privileges without ServiceInstall.
+	for _, v := range []string{`ObjectName" Value=".\svc-admin`, `ServiceSidType" Value="0`, `RequiredPrivileges" Value="SeDebugPrivilege`} {
+		wantViolation(t, script("reg.wxs", `<Wix><Component><RegistryValue Root="HKLM" Key="SYSTEM\CurrentControlSet\\Services\activeDIQAgent" Name="`+v+`" /></Component></Wix>`), "Services registry key")
+	}
+	wantViolation(t, script("Install-Agent.ps1", "Set-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\activeDIQAgent' ObjectName x\n"), "Services registry key")
+	wantViolation(t, script("Install-Agent.ps1", "reg add HKLM\\SYSTEM\\ControlSet001\\Services\\activeDIQAgent /v ObjectName\n"), "Services registry key")
+	// WMI / CIM account changes.
+	wantViolation(t, script("Install-Agent.ps1", "Invoke-CimMethod -Query \"SELECT * FROM Win32_Service WHERE Name='activeDIQAgent'\" -MethodName Change -Arguments @{StartName='.\\svc-admin'}\n"), "other than")
+	wantViolation(t, script("ca.js", "// activediq-agent\nsvc.ChangeServiceConfig(x)\n"), "other than")
+	// UTF-16LE (PowerShell 5.1 'Unicode') and BE with and without a BOM are decoded, not skipped.
+	u16 := func(s string, le, bom bool) string {
+		var b []byte
+		if bom && le {
+			b = append(b, 0xFF, 0xFE)
+		} else if bom {
+			b = append(b, 0xFE, 0xFF)
+		}
+		for _, r := range s {
+			if le {
+				b = append(b, byte(r), 0)
+			} else {
+				b = append(b, 0, byte(r))
+			}
+		}
+		return string(b)
+	}
+	bad16 := "sc.exe config activeDIQAgent obj= LocalSystem\n"
+	wantViolation(t, script("Install-Agent.ps1", u16(bad16, true, true)), "LocalSystem")
+	wantViolation(t, script("Install-Agent.ps1", u16(bad16, false, true)), "LocalSystem")
+	wantViolation(t, script("Install-Agent.ps1", u16(bad16, true, false)), "LocalSystem")
+	wantClean(t, script("Install-Agent.ps1", u16("sc.exe config activeDIQAgent obj= \"NT SERVICE\\activeDIQAgent\"\n", true, true)))
+	// A neutral file name inside an agent/ directory is selected by relative path.
+	dir := t.TempDir()
+	write(t, dir, "packaging/windows/agent/Product.wxs", goodWxs)
+	write(t, dir, "packaging/windows/agent/setup.cmd", "sc config x obj= LocalSystem\n")
+	wantViolation(t, checkInstaller(dir), "LocalSystem")
+	// An agent-path file that is not text fails closed; a known binary extension does not.
+	opaque := t.TempDir()
+	write(t, opaque, "packaging/windows/agent.wxs", goodWxs)
+	write(t, opaque, "packaging/windows/agent/blob.dat", "abcdefghijklmnop\x00qrstuvwxyz0123456789ABCDEFGHIJ")
+	wantViolation(t, checkInstaller(opaque), "cannot be read as text")
+	write(t, opaque, "packaging/windows/agent/blob.dat", "")
+	os.Remove(filepath.Join(opaque, "packaging/windows/agent/blob.dat"))
+	write(t, opaque, "packaging/windows/agent/icon.ico", "\x00\x01\x02\x00")
+	wantClean(t, checkInstaller(opaque))
 	wantViolation(t, script("custom.js", "// activediq-agent\nvar a = 'NT AUTHORITY\\\\SYSTEM';\n"), "NT AUTHORITY")
 }
 
