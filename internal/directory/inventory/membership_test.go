@@ -55,12 +55,11 @@ func adGroup(g string, groupType int, broad any, members ...string) inventory.Ob
 	return o
 }
 
+// enGroup is an Entra group the sync read as cloud-managed (onPremisesSyncEnabled null) with groupTypes [].
 func enGroup(g string, sec bool, vis string, members ...string) inventory.Observation {
-	attrs := map[string]any{inventory.AttrSecurityEnabled: sec}
+	attrs := map[string]any{inventory.AttrSecurityEnabled: sec, inventory.AttrGroupTypes: []string{}, inventory.AttrOnPremisesSyncEnabled: nil}
 	if vis != "" {
 		attrs[inventory.AttrVisibility] = vis
-	} else {
-		attrs[inventory.AttrGroupTypes] = []string{} // a plain security group
 	}
 	o := inventory.Observation{Object: inventory.GUID(g), Kind: inventory.KindGroup, Class: "group", State: inventory.ObjActive, Attributes: attrs}
 	for _, m := range members {
