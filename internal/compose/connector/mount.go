@@ -1,36 +1,39 @@
 package connector
 
 import (
-	"crypto/tls"
-	"crypto/x509"
 	"errors"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	"github.com/skenzeriq/activediq/internal/connector/rights"
+	"github.com/skenzeriq/activediq/internal/platform/fleet"
+	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
 // ErrMount is returned for an incomplete mount; it carries no certificate or directory text.
-var ErrMount = errors.New("connector: mount needs a server certificate, client CAs and a verify handler")
+var ErrMount = errors.New("connector: mount needs a verify handler")
 
-// NewServer builds the connector's gRPC server and mounts the VerifyConnection group on it with
-// rights.Register. rights.Register adds no authentication of its own (T-0233 review), so the server
-// itself requires mTLS (connector contract): TLS 1.3, a client certificate that verifies against
-// clientCAs is mandatory, and there is no insecure or optional-client-certificate path. A nil
-// handler, an empty CA pool or a missing server certificate refuses construction.
-func NewServer(server tls.Certificate, clientCAs *x509.CertPool, h *rights.VerifyHandler, opts ...grpc.ServerOption) (*grpc.Server, error) {
-	if h == nil || clientCAs == nil || clientCAs.Equal(x509.NewCertPool()) || len(server.Certificate) == 0 {
-		return nil, ErrMount
+// TunnelBinding is the connector's side of the "connector" contract (TB6, TM-TB6-T10): the server
+// opens every Connector method over the tunnel the connector dialled out, and this binding serves
+// them. rights.Register mounts the VerifyConnection group on the per-tunnel registrar, which is never
+// a process grpc.Server; the connector opens no listener. The peer is authenticated by the tunnel's
+// pinned-server mTLS (fleet/dial), and the registrar refuses any method outside the contract.
+// Its contract is built from the same descriptor as compose/server.FleetBindings. A nil handler
+// refuses construction.
+func TunnelBinding(h *rights.VerifyHandler) (fleet.Binding, error) {
+	if h == nil {
+		return fleet.Binding{}, ErrMount
 	}
-	creds := credentials.NewTLS(&tls.Config{
-		MinVersion:   tls.VersionTLS13,
-		Certificates: []tls.Certificate{server},
-		ClientAuth:   tls.RequireAndVerifyClientCert,
-		ClientCAs:    clientCAs,
-	})
-	// Caller options go first so they can never replace the credentials.
-	srv := grpc.NewServer(append(append([]grpc.ServerOption{}, opts...), grpc.Creds(creds))...)
-	rights.Register(srv, h)
-	return srv, nil
+	svc := connectorv1.File_activediq_connector_v1_connector_proto.Services().ByName("Connector")
+	if svc == nil {
+		return fleet.Binding{}, fleet.ErrContract
+	}
+	c, err := fleet.NewContract("connector", []protoreflect.ServiceDescriptor{svc}, nil)
+	if err != nil {
+		return fleet.Binding{}, err
+	}
+	return fleet.Binding{Contract: c, Serve: func(_ fleet.Identity, reg grpc.ServiceRegistrar) {
+		rights.Register(reg, h)
+	}}, nil
 }
