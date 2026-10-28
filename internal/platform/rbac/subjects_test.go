@@ -119,7 +119,7 @@ func TestGroupSubjectCorrelationDerivedIsGated(t *testing.T) {
 	ga := groupAssign([]authz.Permission{del}, ouRoot)
 	run := func(c *authz.Correlation) error {
 		m := authz.Groups{Complete: true, Groups: []authz.Group{{Connection: conn, GUID: grpGUID, Via: &authz.Derivation{Correlation: c}}}}
-		return newAz(t, fakeSrc{sub: []Assignment{ga}}, WithMembership(fakeMembers{g: m})).Authorize(ctxT(), human(acct), del, userTarget, userFacts)
+		return newAz(t, fakeSrc{sub: []Assignment{ga}}, WithMembership(fakeMembers{g: m})).Authorize(authority.WithAuthorityFactor(ctxT(), true), human(acct), del, userTarget, userFacts)
 	}
 	if err := run(&authz.Correlation{State: authz.CorrelationMatched, Takeover: authz.TakeoverAttested}); err != nil {
 		t.Fatalf("matched and attested: %v", err)

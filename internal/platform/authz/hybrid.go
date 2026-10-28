@@ -25,6 +25,10 @@ const (
 	// ReasonHybridNeverCrosses: tenant-owner, or a permission administering RBAC, delegation
 	// scopes or connections, is never effective across a correlation (rule 5 (h)).
 	ReasonHybridNeverCrosses Reason = "hybrid_authority_never_crosses"
+	// ReasonAuthorityFactorMissing: the session has not verified its activeDIQ-held authority factor
+	// (or has not since its last step-up), so correlation-derived grants do not apply (TM-D19 rule 1,
+	// DM-30.I6). Entra-side and direct grants still do.
+	ReasonAuthorityFactorMissing Reason = "authority_factor_missing"
 )
 
 // Takeover protection states (DM-10.I7), as read through the connections port.
@@ -79,7 +83,7 @@ type HybridRefusal struct {
 }
 
 // hybridCheck decides whether a derived assignment may apply for perm. ok is false with the refusal.
-func hybridCheck(a Assignment, perm Permission) (HybridRefusal, bool) {
+func hybridCheck(a Assignment, perm Permission, authorityFactor bool) (HybridRefusal, bool) {
 	c := a.Via.Correlation
 	if c == nil {
 		return HybridRefusal{Reason: ReasonHybridNotMatched, CorrelationReason: "facts_missing"}, false
@@ -95,6 +99,11 @@ func hybridCheck(a Assignment, perm Permission) (HybridRefusal, bool) {
 	}
 	if a.Role.TenantOwner || NeverCrosses(perm) {
 		return HybridRefusal{Reason: ReasonHybridNeverCrosses}, false
+	}
+	if !authorityFactor {
+		// Last, so the more specific refusals above keep their reasons; the session may be missing
+		// the factor and the correlation unusable at once.
+		return HybridRefusal{Reason: ReasonAuthorityFactorMissing}, false
 	}
 	return HybridRefusal{}, true
 }

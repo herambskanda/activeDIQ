@@ -64,7 +64,7 @@ func (a consoleAuthz) Allow(ctx context.Context, p apihost.Principal, permission
 	}
 	chain := authority.Chain{Requester: authority.Principal{ID: authority.PrincipalID(p.ID), Kind: authority.Human}}
 	target := authority.TargetRef{Class: rbac.TargetClassTenant, GUID: t.String()} // the tenant store root
-	err = a.az.Authorize(authority.WithTenant(ctx, t.String()), chain, authz.Permission(permission), target, authority.Facts{})
+	err = a.az.Authorize(authority.WithAuthorityFactor(authority.WithTenant(ctx, t.String()), p.AuthorityFactor), chain, authz.Permission(permission), target, authority.Facts{})
 	switch {
 	case err == nil:
 		return true, nil
