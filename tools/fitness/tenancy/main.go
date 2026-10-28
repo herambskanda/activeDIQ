@@ -41,6 +41,8 @@ type Options struct {
 	ExtraBootstrap []string
 	// Servers lets a caller (the tests) supply running servers by major version; they are not stopped.
 	Servers map[string]*Server
+	// Blob opens the blob store the T4 blob isolation probe runs against; nil means the real adapter.
+	Blob BlobFactory
 }
 
 func main() {
@@ -133,6 +135,18 @@ func Run(ctx context.Context, o Options) ([]Violation, error) {
 			}
 			record(ver, vs)
 		}
+	}
+	if o.Checks["T4"] {
+		vs, err := checkBlob(ctx, o.Blob)
+		if err != nil {
+			return nil, err
+		}
+		status := "ok"
+		if len(vs) > 0 {
+			status = fmt.Sprintf("FAILED (%d)", len(vs))
+		}
+		out("T4 %-31s %s", "blob isolation (TM-Q9)", status)
+		record("", vs)
 	}
 	if o.Checks["T5"] {
 		vs, err := checkT5(ctx, o, reg, out)
