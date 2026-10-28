@@ -2442,8 +2442,9 @@ L3 is UDP only. RADIUS over TLS (RadSec, TM-Q18) runs "over TCP", by default on 
 M4 RADIUS spec adopts it, it gets its own L-row through an RT-6 review (§14) before it ships, and
 TM-F-PORTS checks it like any other row.
 
-The L4 socket is covered by the same proof (it appears only when `ACTIVEDIQ_OPS_ADDR` is set); the
-port-proof test itself is tracked in T-0137 and does not yet enumerate L4.
+The L4 socket is covered by the same proof (it appears only when `ACTIVEDIQ_OPS_ADDR` is set). The
+proof is `tools/fitness/ports` (T-0137; runbook `tm-f-ports.md`): it boots `cmd/server` and enumerates L1 and L4.
+L2 and L3 join its case table when they are built.
 
 Through M4, no other listener exists: no debug or profiling port (FF-SP2 bans `pprof`), no
 sidecar port, no unauthenticated metrics. **Proof TM-F-PORTS:** on a booted install of each
