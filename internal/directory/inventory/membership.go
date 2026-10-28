@@ -29,6 +29,12 @@ const (
 	// AttrBroadMembershipWrite is the sync's computed fact for an AD group (TM-D18): true when its
 	// DACL lets a broad principal change membership. It is a boolean, never the DACL itself.
 	AttrBroadMembershipWrite = "diq_broadMembershipWrite"
+	// AttrWrittenBack is the sync's computed fact for an AD group (TM-D18 D18-1 rule 6): true when the
+	// group is the AD copy of an Entra group written back by group writeback, so its membership comes
+	// from Entra and its DACL proves nothing. A boolean derived from the writeback marker on the AD
+	// object (the exact marker is confirmed in lab G18 / T-0075; the producer is T-0541). Absent means
+	// the marker was not read, which is unknown, not "not written back".
+	AttrWrittenBack = "diq_writtenBack"
 )
 
 const adSecurityEnabled = uint32(0x80000000)
@@ -365,6 +371,12 @@ func judge(connKind string, kind Kind, state ObjectState, raw []byte) verdict {
 		}
 		if uint32(int64(gt))&adSecurityEnabled == 0 { // a distribution group
 			return verdictIneligible
+		}
+		// Rule 6: a written-back copy (or one whose marker was not read) is unknown. Judged by rule 2(b)
+		// only through its synced Entra group, never from this row.
+		wb, ok := attrs[AttrWrittenBack].(bool)
+		if !ok || wb {
+			return verdictUnknown
 		}
 		broad, ok := attrs[AttrBroadMembershipWrite].(bool)
 		if !ok {
