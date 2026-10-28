@@ -2,7 +2,7 @@
 title: fleet.v1 contract
 status: draft
 date: 2026-10-22
-updated: 2026-10-22
+updated: 2026-10-28
 owner: api-engineer
 author: api-engineer
 ticket: T-0152
@@ -140,6 +140,20 @@ root never imports generated protos. The listener that mounts it is T-0156.
 - **Source address** is `peer.Addr` from the transport, never a header (T-0153 obligation 3).
 - Not here: the listener and mTLS interceptor (T-0156), revocation (T-0157), the issuing handler with its audited Operation and principal-derived tenant (T-0153
   obligations 1 and 4).
+
+## CA key rollover (T-0563, TM-D29)
+
+Decision: replacing the fleet CA key is **a new `fleet_ca` row, never an in-place change**, and the **old key is erased when its row retires**. Components **pin the CA by certificate** (SPKI hash), not by row, position or "the latest". This closes the TM-D29 "Fleet CA key" row ([threat-model §9.2.1](threat-model.md)).
+
+1. **New row.** Rollover generates a new ECDSA P-384 key and CA certificate and inserts a new row (new `id`, new `spki_sha256`). The key is sealed with the row id in the AAD (`keys.Seal`, TM-A11), so a blob from another row cannot be replayed into it. Nothing updates `cert_der`, `spki_sha256`, `sealed_key` or `key_version` of an existing row (the `fleet_ca_guard` trigger already refuses it). The new row becomes `active` and the previous `active` row becomes `retired` **in the same transaction** (the partial unique index `fleet_ca_one_active` stays satisfied).
+2. **Old key erased.** The `active → retired` transition sets `sealed_key` to NULL in that same transaction. A `retired` row holds only the public certificate. Migration (follow-up): `sealed_key` becomes nullable, with `CHECK (state = 'active' OR sealed_key IS NULL)` and `CHECK (state <> 'active' OR sealed_key IS NOT NULL)`; `fleet_ca_guard` allows `sealed_key` to change only on `active → retired`, and only to NULL. `retired` stays terminal (the trigger already refuses leaving it). Replaying the saved blob into the retired row fails at the CHECK; making the row `active` again fails at the trigger; both hold against the application role (TM-D29 controls 1 + 2). Signing (`Enroller`, `Rotate`) loads only the `active` row, so no path needs a retired key. Cryptographic erasure alone (DEK shredding, TM-D15) is not the control: the DEK is shared by the tenant's other values.
+3. **Retired certificates stay as trust anchors.** The retired row's `cert_der` remains in `TenantCAs` and the bundle, so leaves it signed keep verifying until they expire (90 days at most, clamped to the CA's `not_after`). A retired row is removed from the bundle only when no unexpired, non-superseded leaf chains to it, or at once on the compromise path below. Bundle limits are unchanged (at most 8 rows, 64 KiB).
+4. **Clients pin by certificate.** `ca-pin.txt` is the SHA-256 of the SPKI of a CA certificate, and `dial.ParseBundle` accepts a bundle only if it contains a certificate with that SPKI (D3). The pin identifies a key, so it never "follows" the active row. After a rollover the old pin still validates every certificate chaining to the old CA. A component adopts the new CA only from a bundle delivered over a connection it already verified against its pinned CA (a leaf `Rotate`/`Enroll` answer carrying `ca_bundle_pem`), and only if the new CA certificate is **cross-signed by the old CA key** at rollover (the one use of the old key, before step 2 erases it; the cross-certificate is public and stored with the new row). The client then pins both SPKIs, and drops the old pin when the old CA leaves the bundle.
+5. **Planned versus compromise.** *Planned* (expiry approaching, yearly): steps 1 to 4, no re-enrolment; the cross-signature carries the fleet over. *Suspected key exposure* (`fleet.ca.suspected_key_exposure`, TM-D24): a cross-signature from a possibly stolen key proves nothing, so the old row is retired and erased **and removed from the bundle and `TenantCAs` at once**, which makes the gateway refuse every leaf it signed (TM-Q8); every component re-enrols with a new single-use token against the new pin, which an admin reads from the console out of band. This is a deliberate availability cost and is audited as one operation.
+6. **Authorisation and audit.** Rollover is an admin Action behind a fresh step-up and its own permission (`fleet.ca.rotate`), one transaction, with an audit event `fleet.ca.rotated` naming old and new SPKI hashes and the path (planned or compromise). The key itself never appears in any event or log.
+7. **Fitness (TM-F-SEAL, extended).** (a) After rollover the old row has `sealed_key IS NULL`, and writing the saved old blob back as the application role is refused by the CHECK. (b) Setting the old row `active`, or changing any column of a retired row, is refused by the trigger. (c) Two concurrent rollovers leave exactly one `active` row. (d) A component with the old pin accepts the new CA only with a valid cross-signature and refuses a bundle without its pinned SPKI. (e) On the compromise path a leaf signed by the old CA gets `Unauthenticated` at once.
+
+Wire shape: no change to `fleet.v1`. `EnrollResponse.ca_bundle_pem` already carries the CA certificates, F4's allowlist is untouched, and the cross-certificate travels as one more `CERTIFICATE` block in the bundle. Follow-ups: migration and `Enroller.RotateCA`, `dial` pin-set handling, the fitness tests above.
 
 ## Component side: `fleet/dial` (T-0158)
 
