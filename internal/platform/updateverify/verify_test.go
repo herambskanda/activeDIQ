@@ -285,18 +285,18 @@ func TestPinnedRootMustBeSelfSigned(t *testing.T) {
 	w := newWorld(t)
 	_, err := New(Config{PinnedRoot: mkRoot(t, rootSpec{version: 1, roles: map[string]roleSpec{
 		RoleRoot: {w.rootK, 2}, RoleTimestamp: {[]tkey{w.ts}, 1}, RoleSnapshot: {[]tkey{w.sn}, 1}, RoleTargets: {[]tkey{w.tg}, 1}}, signers: w.rootK[:1]}),
-		Floor: &MemoryFloor{}, Quarantine: DirQuarantine{t.TempDir()}, NoPlatformCheck: true})
+		Floor: &MemoryFloor{}, Quarantine: DirQuarantine{t.TempDir()}, Name: "server", Platform: "windows", NoPlatformCheck: true})
 	if err == nil {
 		t.Fatal("pinned root under threshold accepted")
 	}
-	if _, err := New(Config{PinnedRoot: w.rootRaw, Floor: &MemoryFloor{}, Quarantine: DirQuarantine{t.TempDir()}}); err == nil {
+	if _, err := New(Config{PinnedRoot: w.rootRaw, Floor: &MemoryFloor{}, Quarantine: DirQuarantine{t.TempDir()}, Name: "server", Platform: "windows"}); err == nil {
 		t.Fatal("missing PlatformCheck must be a construction error")
 	}
 }
 
 func TestPlatformCheckRunsBeforeReturn(t *testing.T) {
 	w, fl, q := setup(t)
-	v, err := New(Config{PinnedRoot: w.rootRaw, Floor: fl, Quarantine: DirQuarantine{q}, Now: func() time.Time { return t0 },
+	v, err := New(Config{PinnedRoot: w.rootRaw, Floor: fl, Quarantine: DirQuarantine{q}, Name: "server", Platform: "windows", Now: func() time.Time { return t0 },
 		PlatformCheck: func(context.Context, string, Release) error { return errors.New("bad authenticode") }})
 	if err != nil {
 		t.Fatal(err)

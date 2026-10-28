@@ -120,11 +120,11 @@ func (w *world) input() Input {
 	tg := sign(t, targetsSigned{header{RoleTargets, w.tgV, w.issued, w.tgExp}, []Release{w.rel}}, w.tg)
 	sn := sign(t, snapshotSigned{header{RoleSnapshot, w.snV, w.issued, w.snExp}, w.rootV, ref(tg, w.tgV)}, w.sn)
 	ts := sign(t, timestampSigned{header{RoleTimestamp, w.tsV, w.issued, w.tsExp}, ref(sn, w.snV)}, w.ts)
-	return Input{Timestamp: ts, Snapshot: sn, Targets: tg, Name: "server", Platform: "windows", Artifact: bytesReader(w.artefact)}
+	return Input{Timestamp: ts, Snapshot: sn, Targets: tg, Artifact: bytesReader(w.artefact)}
 }
 
 func (w *world) verifier(floor FloorStore, q Quarantine) *Verifier {
-	v, err := New(Config{PinnedRoot: w.rootRaw, Floor: floor, Quarantine: q, NoPlatformCheck: true, Now: func() time.Time { return t0 }})
+	v, err := New(Config{PinnedRoot: w.rootRaw, Floor: floor, Quarantine: q, Name: "server", Platform: "windows", NoPlatformCheck: true, Now: func() time.Time { return t0 }})
 	if err != nil {
 		w.t.Fatal(err)
 	}

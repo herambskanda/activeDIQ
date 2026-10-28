@@ -8,11 +8,13 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 )
 
 // FileFloor is the host half of the floor: a small JSON file outside the database (and outside any
-// backup the database is restored from). Writes are atomic (temp file, fsync, rename).
+// backup the database is restored from). Its directory must be writable by the service account
+// only: anyone who can write there can lower the floor. Writes are atomic (temp file, fsync, rename).
 type FileFloor struct {
 	Path string
 	mu   sync.Mutex
@@ -70,5 +72,22 @@ func (f *FileFloor) Raise(_ context.Context, n Floor) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), f.Path)
+	if err := os.Rename(tmp.Name(), f.Path); err != nil {
+		return err
+	}
+	return syncDir(filepath.Dir(f.Path))
+}
+
+// syncDir makes the rename durable so a crash cannot lose a floor raise. Windows cannot fsync a
+// directory handle; NTFS journals the rename there.
+func syncDir(dir string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }

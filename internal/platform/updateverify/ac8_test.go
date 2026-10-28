@@ -42,7 +42,7 @@ func onlineInput(t *testing.T, w *world) Input {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { resp.Body.Close() })
-	return Input{Timestamp: get("/ts"), Snapshot: get("/sn"), Targets: get("/tg"), Name: in.Name, Platform: in.Platform, Artifact: resp.Body}
+	return Input{Timestamp: get("/ts"), Snapshot: get("/sn"), Targets: get("/tg"), Artifact: resp.Body}
 }
 
 func offlineInput(t *testing.T, w *world) Input {
@@ -58,7 +58,7 @@ func offlineInput(t *testing.T, w *world) Input {
 	if err := json.Unmarshal(raw, &b); err != nil {
 		t.Fatal(err)
 	}
-	return Input{Timestamp: b.TS, Snapshot: b.SN, Targets: b.TG, Name: in.Name, Platform: in.Platform, Artifact: bytes.NewReader(b.Art)}
+	return Input{Timestamp: b.TS, Snapshot: b.SN, Targets: b.TG, Artifact: bytes.NewReader(b.Art)}
 }
 
 func TestAC8SameVerifierBothCouriers(t *testing.T) {

@@ -25,6 +25,10 @@ type Config struct {
 	PinnedRoot []byte
 	Floor      FloorStore
 	Quarantine Quarantine
+	// Name and Platform pin which component this consumer installs ("agent"/"windows"). They are
+	// fixed here, never taken from the courier, so a compromised server or a crafted bundle cannot
+	// steer a consumer to another genuinely signed release (TM-TB10-T5). Both are required.
+	Name, Platform string
 	// PlatformCheck verifies the Authenticode or OCI signature on the quarantined artefact. It runs
 	// after hash and length pass and before Verify returns the path. It must not extract.
 	PlatformCheck func(ctx context.Context, quarantinedPath string, rel Release) error
@@ -49,6 +53,9 @@ type Verifier struct {
 func New(cfg Config) (*Verifier, error) {
 	if cfg.Floor == nil || cfg.Quarantine == nil {
 		return nil, errors.New("updateverify: Floor and Quarantine are required")
+	}
+	if cfg.Name == "" || cfg.Platform == "" {
+		return nil, errors.New("updateverify: Name and Platform are required")
 	}
 	if cfg.PlatformCheck == nil && !cfg.NoPlatformCheck {
 		return nil, errors.New("updateverify: PlatformCheck is required (or NoPlatformCheck set explicitly)")
@@ -84,8 +91,6 @@ type Input struct {
 	Timestamp []byte
 	Snapshot  []byte
 	Targets   []byte
-	// Name and Platform select the release in the signed targets.
-	Name, Platform string
 	// Artifact streams the artefact bytes.
 	Artifact io.Reader
 }
@@ -93,7 +98,8 @@ type Input struct {
 // Result is a fully verified release sitting in quarantine, plus facts for the audit event.
 type Result struct {
 	Release Release
-	// Path of the verified artefact inside quarantine. Nothing has been extracted.
+	// Path of the verified artefact inside quarantine, for logs only. The apply mechanism must
+	// consume the artefact through Open, never by reopening Path.
 	Path string
 	// SignerKeyIDs are the keys that signed each role's metadata, for update.verified.
 	SignerKeyIDs map[string][]string
@@ -111,7 +117,7 @@ func (v *Verifier) Verify(ctx context.Context, in Input) (res *Result, err error
 	if err != nil {
 		return nil, fmt.Errorf("updateverify: load floor: %w", err)
 	}
-	if now.Before(floor.NewestSigning) {
+	if now.Add(v.cfg.ClockSkew).Before(floor.NewestSigning) {
 		return nil, refuse(ReasonFreeze, "", "system clock is earlier than the newest verified signing time")
 	}
 
@@ -206,7 +212,7 @@ func (v *Verifier) Verify(ctx context.Context, in Input) (res *Result, err error
 		return nil, fmt.Errorf("updateverify: persist floor: %w", err)
 	}
 
-	rel, err := pick(tg, in.Name, in.Platform)
+	rel, err := pick(tg, v.cfg.Name, v.cfg.Platform)
 	if err != nil {
 		return nil, err
 	}

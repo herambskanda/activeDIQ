@@ -21,7 +21,9 @@ type Quarantine interface {
 	Create() (QuarantineFile, error)
 }
 
-// DirQuarantine quarantines into Dir (created 0700 if missing). Files are 0600.
+// DirQuarantine quarantines into Dir (created 0700 if missing). Files are 0600. Create refuses a
+// Dir that is a symlink, is not owned by the process user, or is writable by group or other; on
+// Windows, where the DACL is not checked yet, it fails closed (see T-0662).
 type DirQuarantine struct{ Dir string }
 
 func (d DirQuarantine) Create() (QuarantineFile, error) {
@@ -30,6 +32,9 @@ func (d DirQuarantine) Create() (QuarantineFile, error) {
 	}
 	if err := os.MkdirAll(d.Dir, 0o700); err != nil {
 		return nil, err
+	}
+	if err := checkPrivateDir(d.Dir); err != nil {
+		return nil, fmt.Errorf("updateverify: quarantine directory refused: %w", err)
 	}
 	f, err := os.CreateTemp(d.Dir, "artefact-*.part")
 	if err != nil {
