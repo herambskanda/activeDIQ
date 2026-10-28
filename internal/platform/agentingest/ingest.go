@@ -16,6 +16,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"regexp"
 	"slices"
@@ -37,6 +38,12 @@ var _ = tablekind.Declare(tablekind.Table{Name: "public.agent_event", Entity: "D
 const (
 	MaxBatchRecords = 1000
 	MaxFieldsBytes  = 64 << 10
+	// maxEncodedFields leaves room for jsonb::text re-rendering (extra separator spaces) under the column CHECK.
+	maxEncodedFields = MaxFieldsBytes - 4096
+	maxKeyRunes      = 32
+	// The agent's FILETIME clock spans 1601..30828; the server accepts 1601..9999, which timestamptz stores.
+	minObservedYear = 1601
+	maxObservedYear = 9999
 	maxFieldKeys    = 64
 )
 
@@ -61,8 +68,15 @@ const AlertSeqDivergence fleetsql.AlertKind = "agentfleet.event.seq_divergence"
 // overwritten.
 const SanitizedKey = "_sanitized"
 
+// TruncatedKey names the field that lists the keys whose value was cut to fit the stored size bound.
+// Like SanitizedKey, one the agent sent is replaced.
+const TruncatedKey = "_truncated"
+
 // Audit kind of an accepted batch. Details carry counts and the highest sequence only.
 const KindBatchAccepted audit.Kind = "agentfleet.events.accepted"
+
+// KindSeqDivergence is audited when redelivered sequences differ from what is stored.
+const KindSeqDivergence audit.Kind = "agentfleet.events.seq_divergence"
 
 var (
 	// ErrNoIdentity: the call had no client-certificate identity. The gateway guarantees one for every
@@ -213,25 +227,42 @@ func (g *Ingester) Append(ctx context.Context, id fleet.Identity, b Batch) (Resu
 			return fmt.Errorf("agentingest: read high-water mark: %w", err)
 		}
 		res.HighestSeq = uint64(hi)
-		if res.Accepted == 0 {
+		if res.Accepted == 0 && len(res.Diverged) == 0 {
 			return nil
 		}
 		now := time.Now().UTC()
 		if g.Clock != nil {
 			now = g.Clock().UTC()
 		}
-		return g.Audit.Append(ctx, tx, audit.Event{
+		actor := authority.Chain{Requester: authority.Principal{ID: authority.PrincipalID("component:" + id.ComponentID), Kind: authority.System}}
+		target := authority.TargetRef{GUID: id.ComponentID, Class: "component"}
+		if res.Accepted > 0 {
 			// The accepted range identifies the batch: a batch that fills sequences below the current
 			// maximum must not reuse the ID of an earlier one (the chainer refuses a reused ID).
-			ID:   fmt.Sprintf("%s.%s.%d-%d", KindBatchAccepted, id.ComponentID, first, last),
-			Kind: KindBatchAccepted, At: now,
-			Actor:     authority.Chain{Requester: authority.Principal{ID: authority.PrincipalID("component:" + id.ComponentID), Kind: authority.System}},
-			Target:    authority.TargetRef{GUID: id.ComponentID, Class: "component"},
-			Component: "agentfleet", Outcome: audit.Success,
-			Details: []chain.Detail{ // key order is required by the chain
-				{Key: "accepted", Value: fmt.Sprint(res.Accepted)}, {Key: "diverged", Value: fmt.Sprint(len(res.Diverged))},
-				{Key: "duplicates", Value: fmt.Sprint(res.Duplicates)}, {Key: "first_seq", Value: fmt.Sprint(first)},
-				{Key: "highest_seq", Value: fmt.Sprint(res.HighestSeq)}, {Key: "last_seq", Value: fmt.Sprint(last)}},
+			if err := g.Audit.Append(ctx, tx, audit.Event{
+				ID:   fmt.Sprintf("%s.%s.%d-%d", KindBatchAccepted, id.ComponentID, first, last),
+				Kind: KindBatchAccepted, At: now, Actor: actor, Target: target,
+				Component: "agentfleet", Outcome: audit.Success,
+				Details: []chain.Detail{ // key order is required by the chain
+					{Key: "accepted", Value: fmt.Sprint(res.Accepted)}, {Key: "diverged", Value: fmt.Sprint(len(res.Diverged))},
+					{Key: "duplicates", Value: fmt.Sprint(res.Duplicates)}, {Key: "first_seq", Value: fmt.Sprint(first)},
+					{Key: "highest_seq", Value: fmt.Sprint(res.HighestSeq)}, {Key: "last_seq", Value: fmt.Sprint(last)}},
+			}); err != nil {
+				return err
+			}
+		}
+		if len(res.Diverged) == 0 {
+			return nil
+		}
+		// A DC state rollback is a tamper signal. The agent redelivers the same head until an operator
+		// acts, so every attempt is its own event: the timestamp keeps the ID unique.
+		return g.Audit.Append(ctx, tx, audit.Event{
+			ID:   fmt.Sprintf("%s.%s.%d-%d.%d", KindSeqDivergence, id.ComponentID, res.Diverged[0], res.Diverged[len(res.Diverged)-1], now.UnixNano()),
+			Kind: KindSeqDivergence, At: now, Actor: actor, Target: target,
+			Component: "agentfleet", Outcome: audit.Failure,
+			Details: []chain.Detail{
+				{Key: "diverged", Value: fmt.Sprint(len(res.Diverged))}, {Key: "first_seq", Value: fmt.Sprint(res.Diverged[0])},
+				{Key: "highest_seq", Value: fmt.Sprint(res.HighestSeq)}, {Key: "last_seq", Value: fmt.Sprint(res.Diverged[len(res.Diverged)-1])}},
 		})
 	})
 	if err != nil {
@@ -284,8 +315,8 @@ func prepare(b Batch) ([]prepared, error) {
 		default:
 			return nil, fmt.Errorf("%w: agent_seq %d: record type", ErrInvalid, r.AgentSeq)
 		}
-		if r.ObservedAt.IsZero() {
-			return nil, fmt.Errorf("%w: agent_seq %d: observed_at", ErrInvalid, r.AgentSeq)
+		if y := r.ObservedAt.UTC().Year(); r.ObservedAt.IsZero() || y < minObservedYear || y > maxObservedYear {
+			return nil, fmt.Errorf("%w: agent_seq %d: observed_at outside %d..%d", ErrInvalid, r.AgentSeq, minObservedYear, maxObservedYear)
 		}
 		if r.EventRecordID != nil && *r.EventRecordID > 1<<62 {
 			return nil, fmt.Errorf("%w: agent_seq %d: event_record_id", ErrInvalid, r.AgentSeq)
@@ -296,15 +327,7 @@ func prepare(b Batch) ([]prepared, error) {
 		if len(r.Fields) > maxFieldKeys {
 			return nil, fmt.Errorf("%w: agent_seq %d: fields", ErrInvalid, r.AgentSeq)
 		}
-		fields := sanitizeFields(r.Fields)
-		size := 0
-		for k, v := range fields {
-			size += len(k) + len(v) + 6
-		}
-		if size > MaxFieldsBytes/2 { // escaping can double the JSON; the column check is the hard limit
-			return nil, fmt.Errorf("%w: agent_seq %d: fields too large", ErrInvalid, r.AgentSeq)
-		}
-		enc, err := json.Marshal(fields)
+		fields, enc, err := fitFields(sanitizeFields(r.Fields))
 		if err != nil {
 			return nil, fmt.Errorf("%w: agent_seq %d: fields: %v", ErrInvalid, r.AgentSeq, err)
 		}
@@ -326,15 +349,18 @@ func sanitizeFields(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in)+1)
 	var repaired []string
 	for _, k := range keys {
-		if k == SanitizedKey {
+		if k == SanitizedKey || k == TruncatedKey {
 			continue
 		}
 		nk, kc := repair(k)
+		if r := []rune(nk); len(r) > maxKeyRunes {
+			nk, kc = string(r[:maxKeyRunes]), true
+		}
 		nv, vc := repair(in[k])
-		if _, taken := out[nk]; taken || nk == SanitizedKey {
+		if _, taken := out[nk]; taken || nk == SanitizedKey || nk == TruncatedKey {
 			for n := 2; ; n++ {
 				c := fmt.Sprintf("%s#%d", nk, n)
-				if _, t := out[c]; !t && c != SanitizedKey {
+				if _, t := out[c]; !t && c != SanitizedKey && c != TruncatedKey {
 					nk = c
 					break
 				}
@@ -350,6 +376,42 @@ func sanitizeFields(in map[string]string) map[string]string {
 		out[SanitizedKey] = strings.Join(repaired, ",")
 	}
 	return out
+}
+
+// fitFields encodes fields and, if the encoding exceeds the stored bound (control characters escape to six
+// bytes each), halves the largest values until it fits, listing the cut keys under TruncatedKey. The record
+// is always stored; it is never refused for size. Keys are bounded, so the loop terminates.
+func fitFields(fields map[string]string) (map[string]string, []byte, error) {
+	var cut []string
+	for {
+		enc, err := json.Marshal(fields)
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(enc) <= maxEncodedFields {
+			return fields, enc, nil
+		}
+		big, bigLen := "", 0
+		for _, k := range slices.Sorted(maps.Keys(fields)) {
+			if k == SanitizedKey || k == TruncatedKey {
+				continue
+			}
+			if n := len(fields[k]); n > bigLen {
+				big, bigLen = k, n
+			}
+		}
+		if bigLen == 0 {
+			return nil, nil, errors.New("keys alone exceed the size bound")
+		}
+		// Halve by encoded weight: control characters cost six bytes, so cut on runes, not bytes.
+		r := []rune(fields[big])
+		fields[big] = string(r[:len(r)/2])
+		if !slices.Contains(cut, big) {
+			cut = append(cut, big)
+			slices.Sort(cut)
+			fields[TruncatedKey] = strings.Join(cut, ",")
+		}
+	}
 }
 
 func repair(s string) (string, bool) {

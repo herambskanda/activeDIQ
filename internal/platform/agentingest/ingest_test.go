@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -333,6 +334,108 @@ func TestBatchesBelowTheMaximumAreAuditedByTheRealChainer(t *testing.T) {
 		})
 		if err != nil || n != 3 {
 			t.Fatalf("audited batches: %d %v", n, err)
+		}
+	})
+}
+
+// Control characters escape to six bytes in JSON: a field that passes a raw-byte check can still exceed the
+// stored bound. The record is truncated and marked, never refused, and no DB error escapes.
+func TestOversizedEncodedFieldsAreTruncatedNotRefused(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		ing := &agentingest.Ingester{DB: e.db, Audit: &sink{}}
+		id := fleet.Identity{Tenant: e.a, Kind: fleet.KindADDC, ComponentID: compA}
+		mk := func(seq uint64, v string) agentingest.Record {
+			r := rec(seq)
+			r.Fields = map[string]string{"CommandLine": v, "small": "keep"}
+			return r
+		}
+		ctl := make([]byte, 30000)
+		for i := range ctl {
+			ctl[i] = 1
+		}
+		b := agentingest.Batch{Records: []agentingest.Record{
+			mk(1, "valid"), mk(2, string(ctl)), mk(3, string(bytes.Repeat([]byte(`"`), 60000))),
+			mk(4, string(bytes.Repeat([]byte("\x00"), 30000))),
+		}}
+		r, err := ing.Append(context.Background(), id, b)
+		if err != nil || r.Accepted != 4 {
+			t.Fatalf("%+v %v", r, err)
+		}
+		if f := fieldsOf(t, e, 1); bytes.Contains([]byte(f), []byte("_truncated")) {
+			t.Fatalf("valid record marked: %s", f)
+		}
+		for seq := int64(2); seq <= 4; seq++ {
+			f := fieldsOf(t, e, seq)
+			if !bytes.Contains([]byte(f), []byte(`"_truncated": "CommandLine"`)) || !bytes.Contains([]byte(f), []byte(`"small": "keep"`)) {
+				t.Fatalf("seq %d: %.200s", seq, f)
+			}
+		}
+		// many control-heavy keys and values still fit
+		huge := map[string]string{}
+		for i := 0; i < 64; i++ {
+			huge[string(bytes.Repeat([]byte{1}, 500))+string(rune('a'+i%26))+string(rune('A'+i/26))] = string(ctl)
+		}
+		h := rec(5)
+		h.Fields = huge
+		if r, err := ing.Append(context.Background(), id, agentingest.Batch{Records: []agentingest.Record{h}}); err != nil || r.Accepted != 1 {
+			t.Fatalf("%+v %v", r, err)
+		}
+	})
+}
+
+func TestObservedAtOutsideTheStorableRangeIsTypedInvalid(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		ing := &agentingest.Ingester{DB: e.db, Audit: &sink{}}
+		id := fleet.Identity{Tenant: e.a, Kind: fleet.KindADDC, ComponentID: compA}
+		for _, y := range []int{300000, -5000, 1600, 10000} {
+			r := rec(1)
+			r.ObservedAt = time.Date(y, 1, 1, 0, 0, 0, 0, time.UTC)
+			_, err := ing.Append(context.Background(), id, agentingest.Batch{Records: []agentingest.Record{r}})
+			if !errors.Is(err, agentingest.ErrInvalid) || !strings.Contains(err.Error(), "agent_seq 1") {
+				t.Fatalf("year %d: %v", y, err)
+			}
+		}
+		r := rec(1)
+		r.ObservedAt = time.Date(1601, 1, 1, 0, 0, 0, 0, time.UTC)
+		if _, err := ing.Append(context.Background(), id, agentingest.Batch{Records: []agentingest.Record{r}}); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+// A batch of only diverged records is a rollback signal: audited, and each redelivery of the same head is
+// its own event so the real chainer never sees a reused ID.
+func TestDivergenceOnlyBatchesAreAudited(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		ch := audit.NewChainer(e.db)
+		cp := audit.NewCheckpointer(ch, fixedKeys{}, noAnchor{})
+		ctx := context.Background()
+		if err := e.db.WithTenant(ctx, e.a, func(ctx context.Context, tx store.Tx) error { return cp.InitTenant(ctx, tx, e.a) }); err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		ing := &agentingest.Ingester{DB: e.db, Audit: ch, Clock: func() time.Time { n++; return time.Unix(1_800_000_000, int64(n)).UTC() }}
+		id := fleet.Identity{Tenant: e.a, Kind: fleet.KindADDC, ComponentID: compA}
+		if _, err := ing.Append(ctx, id, agentingest.Batch{Records: []agentingest.Record{rec(1), rec(2)}}); err != nil {
+			t.Fatal(err)
+		}
+		changed := rec(2)
+		changed.Fields = map[string]string{"event_id": "4625"}
+		for i := 0; i < 2; i++ {
+			r, err := ing.Append(ctx, id, agentingest.Batch{Records: []agentingest.Record{changed}})
+			if !errors.Is(err, agentingest.ErrSeqDivergence) || r.Accepted != 0 {
+				t.Fatalf("attempt %d: %+v %v", i, r, err)
+			}
+		}
+		var got int
+		err := e.db.WithTenant(ctx, e.a, func(ctx context.Context, tx store.Tx) error {
+			return tx.QueryRow(ctx, `SELECT count(*) FROM audit_event WHERE kind = $1`, string(agentingest.KindSeqDivergence)).Scan(&got)
+		})
+		if err != nil || got != 2 {
+			t.Fatalf("divergence events: %d %v", got, err)
 		}
 	})
 }
