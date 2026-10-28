@@ -11,28 +11,31 @@ import (
 
 // Limits bound a Reader (R5). Zero fields take the defaults.
 type Limits struct {
-	MaxFieldBytes int // default 1 MiB
-	MaxFields     int // per record; default 16384
-	MaxRows       int // default 1 048 576 records
+	MaxFieldBytes  int // default 1 MiB
+	MaxFields      int // per record; default 16384
+	MaxRows        int // default 1 048 576 records
+	MaxRecordBytes int // field bytes per record; default 16 MiB
 }
 
 // Reader errors.
 var (
-	ErrFieldTooLong = errors.New("csv: field exceeds limit")
-	ErrTooManyCells = errors.New("csv: record has too many fields")
-	ErrTooManyRows  = errors.New("csv: too many records")
-	ErrSyntax       = errors.New("csv: malformed quoting")
+	ErrFieldTooLong  = errors.New("csv: field exceeds limit")
+	ErrTooManyCells  = errors.New("csv: record has too many fields")
+	ErrTooManyRows   = errors.New("csv: too many records")
+	ErrRecordTooLong = errors.New("csv: record exceeds byte limit")
+	ErrSyntax        = errors.New("csv: malformed quoting")
 )
 
 // Reader parses RFC 4180 CSV and reverses the neutraliser: from a field it drops one leading TAB
 // when the rest classifies as a FormulaLead (rule 5, so Read(Write(v)) == v). It does not use
 // encoding/csv because that normalises CRLF inside quoted fields, which would break the round trip.
 type Reader struct {
-	br    *bufio.Reader
-	delim byte
-	lim   Limits
-	rows  int
-	first bool
+	br       *bufio.Reader
+	delim    byte
+	lim      Limits
+	rows     int
+	recBytes int // field bytes accumulated in the current record
+	first    bool
 }
 
 // NewReader returns a Reader on r. A leading UTF-8 BOM is skipped.
@@ -46,6 +49,9 @@ func NewReader(r io.Reader, o Options, l Limits) (*Reader, error) {
 	}
 	if l.MaxFields <= 0 {
 		l.MaxFields = 16384
+	}
+	if l.MaxRecordBytes <= 0 {
+		l.MaxRecordBytes = 16 << 20
 	}
 	if l.MaxRows <= 0 {
 		l.MaxRows = 1 << 20
@@ -68,6 +74,7 @@ func (r *Reader) Row() ([]string, error) {
 		return nil, ErrTooManyRows
 	}
 	r.rows++
+	r.recBytes = 0
 	var rec []string
 	for {
 		f, end, err := r.field()
@@ -114,7 +121,9 @@ func (r *Reader) field() (val string, end bool, err error) {
 				n, perr := r.br.Peek(1)
 				if perr == nil && n[0] == '"' {
 					r.br.ReadByte()
-					sb.WriteByte('"')
+					if err := r.put(&sb, '"'); err != nil {
+						return "", false, err
+					}
 				} else {
 					quoted = false
 					// after the closing quote only a delimiter or record end may follow
@@ -142,11 +151,24 @@ func (r *Reader) field() (val string, end bool, err error) {
 				return sb.String(), true, nil
 			}
 		}
-		if sb.Len() >= r.lim.MaxFieldBytes {
-			return "", false, ErrFieldTooLong
+		if err := r.put(&sb, c); err != nil {
+			return "", false, err
 		}
-		sb.WriteByte(c)
 	}
+}
+
+// put appends one byte to a field after enforcing the field and record limits. Every byte that
+// grows a field goes through here, the doubled-quote path included.
+func (r *Reader) put(sb *strings.Builder, c byte) error {
+	if sb.Len() >= r.lim.MaxFieldBytes {
+		return ErrFieldTooLong
+	}
+	if r.recBytes >= r.lim.MaxRecordBytes {
+		return ErrRecordTooLong
+	}
+	r.recBytes++
+	sb.WriteByte(c)
+	return nil
 }
 
 func (r *Reader) eol(c byte) {
