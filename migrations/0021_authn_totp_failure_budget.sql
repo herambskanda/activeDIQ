@@ -17,7 +17,12 @@ ALTER TABLE public.authn_authenticator_enrollments
   ADD COLUMN confirm_attempts integer NOT NULL DEFAULT 0 CHECK (confirm_attempts BETWEEN 0 AND 5),
   ADD COLUMN paused_until timestamptz;
 
+-- Backfill pending rows. The owner is bound by FORCE ROW LEVEL SECURITY and no tenant is set here, so the
+-- policy would match no rows and the CHECK below would then fail the upgrade (T-0580). Lift FORCE for this one
+-- statement, inside this migration's single transaction, and put it back (same pattern as 0047).
+ALTER TABLE public.authn_authenticator_enrollments NO FORCE ROW LEVEL SECURITY;
 UPDATE public.authn_authenticator_enrollments SET expires_at = created_at + interval '10 minutes' WHERE state = 'pending';
+ALTER TABLE public.authn_authenticator_enrollments FORCE ROW LEVEL SECURITY;
 
 ALTER TABLE public.authn_authenticator_enrollments DROP CONSTRAINT authn_authenticator_enrollments_state_check;
 ALTER TABLE public.authn_authenticator_enrollments ADD CONSTRAINT authn_authenticator_enrollments_state_check
