@@ -269,11 +269,13 @@ const stateSep = "."
 // StateTenant reads the tenant a state was issued for. The callback uses it for one thing, to choose
 // whose attempt table to look the state up in; the lookup is by the hash of the whole state, so a
 // state that was never issued for that tenant finds nothing. It is not an identity.
-func StateTenant(state string) (tenant.ID, bool) {
-	prefix, _, ok := strings.Cut(state, stateSep)
-	if !ok {
-		return tenant.ID{}, false
+func StateTenant(state string) (t tenant.ID, ok bool) {
+	prefix, _, found := strings.Cut(state, stateSep)
+	if !found {
+		return t, false
 	}
+	// A registered mint (internal/platform/store/exempt/registry.json, T-0504): the callback is
+	// unauthenticated, so the only tenant text available is the state's own prefix.
 	t, err := tenant.Parse(prefix)
 	if err != nil || t.IsZero() {
 		return tenant.ID{}, false
