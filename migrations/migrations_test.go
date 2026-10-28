@@ -1,8 +1,8 @@
 package migrations_test
 
 import (
-	"fmt"
 	"context"
+	"fmt"
 	"os"
 	"regexp"
 	"strings"
