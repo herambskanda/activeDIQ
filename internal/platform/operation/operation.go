@@ -60,11 +60,16 @@ func (r Reversibility) rank() int {
 
 // Descriptor is the static description of an Action.
 type Descriptor struct {
-	ID            ActionID
-	Version       int
-	Permission    authz.Permission // checked at Plan and again at Apply
-	Input         SchemaRef
-	Target        TargetKind
+	ID         ActionID
+	Version    int
+	Permission authz.Permission // checked at Plan and again at Apply
+	Input      SchemaRef
+	Target     TargetKind
+	// TargetClass, when set, is the object class every step's Target must have (checked at Plan). An
+	// Action holding a rbac.GroupMembershipPermissions permission MUST declare "group": the TM-D18
+	// guard computes reach from the authorisation Target, so a step aimed at the member would compute it
+	// from the wrong object.
+	TargetClass   string
 	Reversibility Reversibility // worst case
 	AuditKind     audit.Kind    // the step event kind, declared by the same owner
 	StepUp        bool          // submit needs a fresh MFA (TM-D16 §7.4)

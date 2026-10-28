@@ -76,7 +76,8 @@ func directoryFacts(reads client.Reads, opts ...client.Option) *client.Client {
 
 // rbacAuthorizer is the operation Authorizer: RBAC persistence read through authz.Evaluator, with the
 // TM-D19 rule 5 backing-object guard wired to the account and correlation stores and a live root
-// resolver over facts. Without the guard every backing-object permission is refused.
+// resolver over facts, and the TM-D18 group-membership guard over inventory's group edges. Without a
+// guard its permissions are refused.
 func rbacAuthorizer(db *store.DB, facts rbac.FactsReader) (operation.Authorizer, error) {
 	src, err := rbac.NewStore(db)
 	if err != nil {
@@ -94,7 +95,7 @@ func rbacAuthorizer(db *store.DB, facts rbac.FactsReader) (operation.Authorizer,
 	if err != nil {
 		return nil, fmt.Errorf("server: rbac root resolver: %w", err)
 	}
-	az, err := rbac.New(src, rbac.WithBackingGuard(backing, roots))
+	az, err := rbac.New(src, rbac.WithBackingGuard(backing, roots), rbac.WithGroupGuard(inventory.NewReach(inventory.NewGroups(db))))
 	if err != nil {
 		return nil, fmt.Errorf("server: rbac authorizer: %w", err)
 	}

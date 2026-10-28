@@ -8,8 +8,10 @@ import (
 	"github.com/skenzeriq/activediq/internal/modules/delegation"
 	"github.com/skenzeriq/activediq/internal/modules/inventory"
 	"github.com/skenzeriq/activediq/internal/platform"
+	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/module/moduletest"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
+	"github.com/skenzeriq/activediq/internal/platform/rbac"
 )
 
 // stepUpTable is the §7.4 table (TM-D16 part 1) as far as its operations exist. An operation of the
@@ -73,5 +75,43 @@ func Test_stepup_flag_catalogue_matches_table(t *testing.T) {
 		if _, listed := stepUpTable[d.ID]; d.StepUp && !listed {
 			t.Errorf("%s carries StepUp but is not in stepUpTable: add its §7.4 row", d.ID)
 		}
+	}
+}
+
+// groupTargetViolations lists the Actions that hold a group-membership permission without declaring the
+// group class as their target.
+func groupTargetViolations(cat []operation.Descriptor) []string {
+	special := map[authz.Permission]bool{}
+	for _, p := range rbac.GroupMembershipPermissions {
+		special[p] = true
+	}
+	var bad []string
+	for _, d := range cat {
+		if special[d.Permission] && d.TargetClass != "group" {
+			bad = append(bad, string(d.ID))
+		}
+	}
+	return bad
+}
+
+// TM-D18: the group-membership guard computes reach from the authorisation Target, so every Action that
+// changes who a group reaches must declare the group class as its target. An Action aimed at the member
+// (the natural LDAP shape) would compute reach from the wrong object.
+func Test_group_membership_actions_target_the_group(t *testing.T) {
+	if bad := groupTargetViolations(catalogue(t)); len(bad) > 0 {
+		t.Errorf("group-membership Actions without TargetClass \"group\": %v", bad)
+	}
+}
+
+// The check bites: a member-targeted Action, or one with no class, is reported.
+func Test_group_target_check_rejects_member_targets(t *testing.T) {
+	cat := []operation.Descriptor{
+		{ID: "x.group.add", Permission: "objects.group.add_member", TargetClass: "user"},
+		{ID: "x.group.nest", Permission: "objects.group.nest"},
+		{ID: "x.user.primary", Permission: "objects.user.set_primary_group", TargetClass: "group"},
+		{ID: "x.user.reset", Permission: "objects.user.reset_password", TargetClass: "user"},
+	}
+	if bad := groupTargetViolations(cat); len(bad) != 2 || bad[0] != "x.group.add" || bad[1] != "x.group.nest" {
+		t.Fatalf("got %v", bad)
 	}
 }
