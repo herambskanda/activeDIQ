@@ -24,7 +24,7 @@ FF-KEY-1..6 (below) are green in `make ci`.
 | --- | --- |
 | K1 | **The KEK is selected and read only in the composition root** (`internal/compose/server`), through one typed `KEKConfig`. Domain and platform packages receive a `keys.Provider`. Never the environment, never a path. |
 | K2 | **No auto-generation of key material at server start.** The KEK is created by an explicit command (`activediq-server kek init`), run by the installer/prepare script or the operator. A server that finds no KEK, or a KEK that does not match DM-02, **refuses to start**. Regenerating silently would orphan every sealed value. |
-| K3 | **First DEK is eager**: created in the same transaction as the tenant row (`keys.Store.Provision`). If the provider is down, tenant creation fails. There is no lazy creation anywhere; `KeySource.DEK` has no INSERT path. |
+| K3 | **First DEK is eager and idempotent**: `keys.Store.Provision` is a per-tenant initialiser (like `audit.InitTenant`), run by tenant creation immediately after the `tenants` row commits, in the tenant's own `WithTenantTx`. If the provider is down, creation returns the error and the tenant exists but is **keyless and unusable** (`KeySource` returns `NoActiveKey`, boot sweep fails closed) until the initialiser is re-run, which every `provision.FirstRun`/tenant-create retry does. There is no lazy creation anywhere; `KeySource.DEK` has no INSERT path. |
 | K4 | **One module owns `tenant_keys`**: only `internal/platform/keys` (and its SQL sub-package) references the table in SQL (same pattern as `personal`). |
 | K5 | **Fail closed, non-leaking**: every failure is a `*keys.Error` with a stable code. API, logs and audit carry the code only. |
 | K6 | **Per-profile adapters implement the one `keys.Provider` interface.** M1 ships `passphrase` (the `LocalProvider`); `dpapi-ng`, `tpm2`, `kms`, `vault` are later adapter tickets with no change to this document's table shape. |
@@ -45,7 +45,7 @@ provider **fails startup**.
 
 | Profile | Providers allowed | Bootstrap (`kek init`) | Start-up |
 | --- | --- | --- | --- |
-| `windows` | `dpapi-ng` (descriptor bound to the service identity, e.g. the gMSA SID), `tpm2` optional. `passphrase` allowed for lab only. | MSI post-install action runs `kek init`: generates a random 32-byte KEK, protects it with DPAPI-NG (and TPM where present), writes the protected blob to `ACTIVEDIQ_KEK_DIR`. `[UNVERIFIED — Windows lab: DPAPI-NG descriptor semantics for gMSA on a non-domain-joined host]` (TM-TB5-T1) | Unprotect as the service identity; self-test (below). |
+| `windows` | `dpapi-ng` (descriptor bound to the service identity, e.g. the gMSA SID), `tpm2` optional. `passphrase` allowed for lab only (startup validation refuses it unless `ACTIVEDIQ_LAB=1`). | MSI post-install action runs `kek init`: generates a random 32-byte KEK, protects it with DPAPI-NG (and TPM where present), writes the protected blob to `ACTIVEDIQ_KEK_DIR`. `[UNVERIFIED — Windows lab: DPAPI-NG descriptor semantics for gMSA on a non-domain-joined host]` (TM-TB5-T1) | Unprotect as the service identity; self-test (below). |
 | `linux-oci` | `passphrase` (default for the OCI image), `tpm2`, `kms`, `vault`. | Prepare script / `docker run … kek init` before first `serve`. For `passphrase` the operator is prompted (or supplies the secret file) once. | Reads the passphrase from the secret file; no prompt in a headless service. |
 | `saas` | `kms` only; `passphrase` refused. | Provisioned by skenzeriq operations with the cell; the KMS key and its encryption-context policy are infrastructure. `kek init` is a no-op that verifies reachability. | KMS call with encryption context `tenant_id` / `platform:<purpose>`. |
 
@@ -66,11 +66,12 @@ directly needs its register row set to Approved first (follow-up ticket records 
    table `installation_kek` (§4a) inside `WithPlatform(ctx, "keys.boot-check", …)`: it is global, so it
    is visible with no tenant set and RLS is not involved. If a row exists, the provider's
    `Ref()` must equal its `(kek_provider, kek_key_id)` (or an older ref the provider still holds) **and**
-   `HMAC-SHA256(KEK, "activediq/kek-check/v1")` must equal its `check_value`; otherwise start fails
+   `Provider.UnwrapPlatform(check_value)` under purpose `kek-check` must succeed and return the stored
+   canary; otherwise start fails
    (`KekMismatch`). This is the "restored the database but lost the keystore" guard (TM-TB5-T5). It does
-   not depend on DM-02 rows, so RLS cannot make it see "empty".
+   not depend on DM-02 rows, so RLS cannot make it see "empty". Recovery is re-entering the original credentials; the passphrase file and database backups must never share a backup set (TM-TB5-T4: `passphrase` custody is only as strong as that host's file permissions); the KEK backup procedure is a runbook item `[OPEN → E2.12 PRD]`.
 4. **No keyless live tenant.** If `installation_kek` has **no row**, the installation must be fresh:
-   `tenants` (global, same `WithPlatform` call) must hold no non-`deleted` tenant, else start fails
+   the tenant package's port `tenant.Live(ctx)` (called inside the same `WithPlatform` site; `keys` never names the `tenants` table, T5 `global-table-sql`) must report no non-`deleted` tenant, else start fails
    (`NoInstallationKek`: a database that has tenants but lost its key record is a restore, not an
    install). If a row exists, the sweep in §3a verifies each live tenant has an active key; any gap fails
    start with `NoActiveKey` (fail closed; the operator runs `keys provision --missing`, §3, which is the
@@ -81,19 +82,35 @@ secret mount or the same KMS key). A node that cannot unlock fails its own start
 KEK rotation across nodes (keyring with a current and previous KEK, re-wrap job) is out of this
 ticket's build scope: single-KEK `LocalProvider` rejects a `kek_ref` it does not hold. Follow-up below.
 
+**Wrap binding (all providers, TM-D7, TM-TB5-T2).** Every `wrapped_dek` is AEAD-sealed with associated
+data `(tenant_id, version, kek_provider, kek_key_id)` (KMS: the same values in the encryption context,
+plus the existing `tenant_id`). Copying a wrapped DEK to another tenant row or version, or editing
+`kek_key_id`, makes unwrap fail (`UnwrapFailed`). The `passphrase` file's `sealed_kek` binds
+`(format, kdf, key_id)` as associated data, and the loader enforces an Argon2id floor and ceiling
+(`m` 19 MiB-1 GiB, `t` 2-10, `p` 1-16) so a doctored file can neither downgrade the KDF nor exhaust memory.
+
 ## 3. First DEK policy: eager
 
 - `keys.Store.Provision(ctx, tx, tenant)` generates a DEK (`NewDEK(1)`), wraps it
-  (`WrapDEK`), inserts version 1 `active`, destroys the plaintext. It is called by tenant creation in
-  the **same transaction** as the `tenants` insert (inside the new tenant's `WithTenantTx`, so RLS
-  applies). A provider failure rolls the tenant back: there is never an active tenant without a key.
-- Self-hosted: the installer's single tenant row is created through that same path.
+  (`WrapDEK`), inserts version 1 `active`, destroys the plaintext. It runs in the new tenant's own
+  `WithTenantTx` (RLS applies), **after** the `tenants` row commits: `tenants` is inserted under
+  `WithPlatform` (no tenant context), so the two cannot share a transaction. This is the
+  `provision.FirstRun` pattern ([tenancy-fitness](tenancy-fitness.md): row commits first, idempotent
+  initialisers run on every call and complete a half-initialised tenant). It is idempotent: it does
+  nothing if the tenant already has any `tenant_keys` row. Guarantee: **a tenant without an active key
+  can exist for a moment but can never be used**: no sealed operation succeeds (`NoActiveKey`), the
+  tenant is not offered by the API as ready, and boot refuses to serve (§2 step 4).
+- Self-hosted: the installer's single tenant is created by `provision.FirstRun` with `keys.Store.Provision` as one of its initialisers.
 - Existing tenants without a key (dev databases from before this design): the explicit, idempotent
   command `activediq-server keys provision --missing`: list tenants through the tenant package's port
-  (`tenants` is registered-global; the call is one `WithPlatform(ctx, "keys.provision-missing", …)` site
+  (`tenant.Live`; `tenants` is registered-global and owned by `tenant`; the call is one `WithPlatform(ctx, "keys.provision-missing", …)` site
   in the registry), then **for each tenant** open its own `WithTenantTx`, take `pg_advisory_xact_lock`
-  on the tenant, skip if an active row exists, else `Provision`. It never reads `tenant_keys` without a
+  on the tenant, **refuse unless** the tenant is live (state not `deleting`/`deleted`) **and has zero `tenant_keys` rows of any state**; a tenant with only retired/shredded rows, or one in `deleting`, is reported and skipped, never re-keyed (a tenant that should have keys but has none after a partial restore is exactly the silent re-key §3 rejects, so the command lists such tenants and requires the explicit flag `--tenant <id> --confirm-no-prior-data` per tenant). It skips **only** the §2 step 4 sweep; steps 1-3 (provider, round trip, `installation_kek` match) always run. It never reads `tenant_keys` without a
   tenant context and never needs SECURITY DEFINER or BYPASSRLS. Operator-run, never triggered by a request.
+
+**Registry entries (added with the code, T-0520/T-0525):** `WithPlatform` sites `keys.boot-check` and
+`keys.provision-missing` (each with reason and owner), and the global table `public.installation_kek`
+(owner `internal/platform/keys`).
 
 ### 3a. The cross-tenant path (the only one)
 
@@ -171,7 +188,7 @@ CREATE TABLE public.installation_kek (
   singleton     boolean     PRIMARY KEY DEFAULT true CHECK (singleton),
   kek_provider  text        NOT NULL,
   kek_key_id    text        NOT NULL,
-  check_value   bytea       NOT NULL CHECK (octet_length(check_value) = 32),
+  check_value   bytea       NOT NULL CHECK (octet_length(check_value) > 0),   -- WrapPlatform(canary, purpose 'kek-check')
   created_at    timestamptz NOT NULL DEFAULT now()
 );
 ```
@@ -179,8 +196,7 @@ CREATE TABLE public.installation_kek (
 Runtime role: `SELECT, INSERT` only (no UPDATE/DELETE/TRUNCATE). `Provision` inserts it
 (`ON CONFLICT DO NOTHING`, then verifies equality) in the transaction that creates the installation's
 **first** tenant key. KEK rotation (follow-up F2) replaces it through the owner-role `keys rewrap`
-command. `check_value` is an HMAC of a public label under the KEK: it reveals nothing usable about a
-256-bit random key, and leaking the table does not weaken custody.
+command. `check_value` is a wrapped fixed public canary (`WrapPlatform`, purpose `kek-check`), so the check needs only the Provider interface and works for non-exportable KEKs (`kms`, `vault`, `tpm2`); the raw KEK is never required. A wrapped known plaintext is ordinary AEAD output and leaking the table does not weaken custody.
 
 ## 5. Lifecycle: rotation and shred states
 
@@ -204,7 +220,16 @@ carrying tenant, version and `kek_key_id`, no key material):
 - **Shred tenant** `keys.Store.ShredTenant`: called by tenant deletion **before** rows are purged
   (DM-01.I5). Sets every version `shredded`, empties `wrapped_dek`, in one transaction, and evicts the
   node's DEK cache. Irreversible.
-- **Honest limit of crypto-shredding.** A database backup or WAL archive taken before the shred still
+- **Audit and operators.** `kek init`, `keys provision`, `keys rewrap` and the creation of `installation_kek`
+each emit an audit event with an attributable operator identity (OS user / service principal), no key
+material. Shredding a tenant's DEK also makes that tenant's sealed audit checkpoint key unreadable, so
+audit export or attestation must complete **before** deletion (deletion runbook). The `current_user =
+'activediq_owner'` trigger check is sound because T3 forbids the runtime role any membership in the owner
+role. The transition trigger also asserts every column not listed for a transition is unchanged.
+Residual risk (for the threat model): SQL injection at runtime privilege could retire or shred its own
+tenant's keys (UPDATE on `state` is granted); the FF-KEY-2 scan covers Go only.
+
+**Honest limit of crypto-shredding.** A database backup or WAL archive taken before the shred still
   holds the wrapped DEK, which the (unchanged) KEK can unwrap. Shredding is complete for the live
   system; for backups it is complete only once backups older than the shred age out, or the KEK that
   wrapped those versions is retired. With a per-installation KEK the KMS cannot shred one tenant. This
@@ -248,8 +273,8 @@ New job `make fitness-keys` (`tools/fitness/keycustody`), plus declarations pick
 | FF-KEY-2 | **Single owner (AST/string scan).** Any Go source outside `internal/platform/keys` and the migrations references `tenant_keys`; or calls `keys.NewDEK`, `keys.DEKFromBytes`, `Provider.Wrap`/`Unwrap`, `WrapDEK` or `UnwrapDEK` outside `internal/platform/keys`, `keystest` and `compose/server`. |
 | FF-KEY-3 | **Config only in the root.** `ACTIVEDIQ_KEK_*` is read by anything but `internal/compose/server`; any config struct, flag or DB column carries a passphrase/KEK value; `ACTIVEDIQ_KEK_PROVIDER` has a default. |
 | FF-KEY-4 | **Boot tests (integration).** Server start fails with a one-code error and never serves when: provider unset; keystore missing; passphrase wrong; keystore present but `installation_kek` names another KEK or check value; provider unreachable. **Rows exist, no tenant context** (the boot check runs with none): a database with live tenants and `tenant_keys` rows but a freshly `kek init`-ed keystore must fail `KekMismatch`; one with live tenants and no `installation_kek` row must fail `NoInstallationKek`; a live tenant without an active key must fail `NoActiveKey`, and `keys provision --missing` must then repair it using only per-tenant `WithTenantTx` (the test also asserts no SECURITY DEFINER/BYPASSRLS exists, via T2/T3). No test path succeeds by falling back to plaintext or to a generated key. |
-| FF-KEY-5 | **Eager, not lazy.** A test creates a tenant with a failing provider and asserts the tenant row rolled back; an AST check asserts the only `INSERT INTO tenant_keys` statements are in `Provision` and `Rotate`, never reachable from `KeySource`. **Callers:** `Rotate`/`ShredTenant` are called only from the packages of the two registered Actions and the deletion job; `keys rewrap` is the only user of `OpenMaintenance` in `keys`; the trigger test proves the runtime role cannot perform `active→same` re-wrap. |
-| FF-KEY-6 | **Non-leaking.** For each failure row in §6, the error string, the API problem body and the audit event contain none of: tenant id, version, `kek_key_id`, provider name, a path, SQL. Cross-tenant: tenant B's tx asking for tenant A's version gets `KeyNotFound`, identical in body to a nonexistent version. Property test on the transition table (§4): no sequence reaches `retired → active` or leaves a shredded row with non-empty `wrapped_dek`. |
+| FF-KEY-5 | **Eager, not lazy.** A test creates a tenant with a failing provider and asserts the tenant is keyless, every sealed operation returns `NoActiveKey`, boot refuses, and a retry of the initialiser completes it; `provision --missing` cases: a tenant with a shredded row and one in `deleting` are skipped, never re-keyed; an AST check asserts the only `INSERT INTO tenant_keys` statements are in `Provision` and `Rotate`, never reachable from `KeySource`. **Callers:** `Rotate`/`ShredTenant` are called only from the packages of the two registered Actions and the deletion job; `keys rewrap` is the only user of `OpenMaintenance` in `keys`; the trigger test proves the runtime role cannot perform `active→same` re-wrap. |
+| FF-KEY-6 | **Non-leaking.** For each failure row in §6, the error string, the API problem body and the audit event contain none of: tenant id, version, `kek_key_id`, provider name, a path, SQL. Cross-tenant: tenant B's tx asking for tenant A's version gets `KeyNotFound`, identical in body to a nonexistent version. Wrap-binding case: a wrapped DEK moved to another tenant row or version, or with edited `kek_key_id`, fails `UnwrapFailed`. FF-KEY-4 also runs against a fake non-exportable provider (no raw KEK access). Property test on the transition table (§4): no sequence reaches `retired → active` or leaves a shredded row with non-empty `wrapped_dek`. |
 
 ## 8. Follow-up tickets
 
