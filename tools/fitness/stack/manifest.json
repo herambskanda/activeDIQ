@@ -334,6 +334,11 @@
         "reason": "process dump hardening (RLIMIT_CORE, PR_SET_DUMPABLE) is Linux-only syscalls: hardening_linux.go and hardening_other.go; no portable form exists"
       },
       {
+        "path": "internal/compose/agent",
+        "adr": "0001-technology-stack.md",
+        "reason": "agent config path resolution: configpath_windows.go (MSI writes the config beside the executable) and configpath_other.go (!windows stub); no portable form exists"
+      },
+      {
         "path": "internal/compose/server",
         "adr": "0001-technology-stack.md",
         "reason": "KEK provider file open differs by OS: kekopen_unix.go and kekopen_windows.go; no portable form exists"
