@@ -246,8 +246,8 @@ inh("SD-W10", IBASE, "block_keep", "sd.plan_non_canonical", True,
     "SD-R7 break inheritance and keep copies: the inherited deny would sit after an explicit allow, a Windows DC re-sorts on write (T-0606/T-0727) so the preview would not be what is stored (T-0728): refused before any write, no plan order is ever sent")
 inh("SD-W10N", IBASE, "block_keep",
     outcome(written([W10_LIST[3], W10_LIST[0], W10_LIST[1], W10_LIST[2]], 2, 0x8004 | 0x1000 | 0x0400), control=0x8004 | 0x1000 | 0x0400,
-            moves=[(3, 0), (0, 1), (1, 2), (2, 3)]), False,
-    "SD-R7 with Normalize: the plan holds the canonical order the DC stores (denies first, T-0728); no trustee in isolation changes rights here", opts={"normalize": True})
+            moves=[(3, 0), (0, 1), (1, 2), (2, 3)], incomplete=True), False,
+    "SD-R7 with Normalize: the plan holds the canonical order the DC stores (denies first, T-0728); no named trustee changes rights, but the moved Guests deny passes allows for other trustees that Guests may contain, so the report is incomplete (T-0770)", opts={"normalize": True})
 inh("SD-W11", IBASE, "block_remove", outcome(written(IB[:2], 2, 0x8004 | 0x1000 | 0x0400), removed=[2, 3], control=0x8004 | 0x1000 | 0x0400), False,
     "SD-R7 break inheritance and remove the inherited ACEs")
 PIB = sd(dacl=acl(IB, 2), owner=sid(SYS), control=0x8000 | 0x1000 | 0x0400)
@@ -266,6 +266,39 @@ inh("SD-W18N", W18_BASE, "block_keep",
             moves=[(3, 1), (1, 2), (2, 3)],
             changes=[{"trustee": ADMINS, "mask": 0x20, "before": "yes", "after": "no"}]), False,
     "with Normalize the plan is the DC's canonical order and reports that ADMINS loses WP", opts={"normalize": True})
+
+# T-0770: a moved deny naming Everyone narrows another trustee's right; the report must say so
+EB = [ace(0, 0, 0xF01FF, G1), ace(0, 0, 0x20, X1), ace(1, 0x10, 0x20, EVERYONE)]
+E_BASE = sd(dacl=acl(EB, 2), owner=sid(SYS))
+E_AFTER = [EB[2][:1] + bytes([0]) + EB[2][2:], EB[0], EB[1]]
+E_CH = [{"trustee": X1, "mask": 0x20, "before": "yes", "after": "no"},
+        {"trustee": G1, "mask": 0x20, "before": "yes", "after": "no"}]  # G1 holds full control, so it loses WP too
+E_MOVES = [(2, 0), (0, 1), (1, 2)]
+inh("SD-W19N", E_BASE, "block_keep", outcome(written(E_AFTER, 2, 0x8004 | 0x1000), control=0x8004 | 0x1000, moves=E_MOVES, changes=E_CH, incomplete=True), False,
+    "T-0770: block_keep with Normalize moves the inherited Everyone deny first; X1 loses WP through Everyone, which the per-trustee evaluation used to miss", opts={"normalize": True})
+D_BASE_L = [ace(0, 0, 0xF01FF, G1), ace(0, 0, 0x20, X1), ace(1, 0, 0x20, EVERYONE)]
+D_BASE = sd(dacl=acl(D_BASE_L, 2), owner=sid(SYS))
+D_ADD = ace(0, 0, 0x20000, X1)
+plan("SD-E08C", D_BASE, add=[new(X1, 0x20000)], opts={"normalize": True}, hostile=True,
+     expect=outcome(written([D_BASE_L[2], D_BASE_L[0], D_BASE_L[1], D_ADD], 2), inserted=[3], moves=[(2, 0), (0, 1), (1, 2)], changes=E_CH, incomplete=True),
+     source="T-0770: PlanDACL Normalize moves the explicit Everyone deny first; X1 loses WP through Everyone and the report says so")
+
+# T-0770 (security review): a property-set ACE covers its member attributes, so a moved deny on the set
+# (or on an attribute in it) for a group passes the other trustee's allow on the other: incomplete
+def pset_cases(tag, deny_obj, allow_obj):
+    base_l = [ace(0, 0, 0xF01FF, SYS), ace(0, 0, 0x60000, G1), ace(5, 0, 0x20, X1, obj=allow_obj)]
+    moved = ace(6, 0, 0x20, ADMINS, obj=deny_obj)
+    out_l = [moved, base_l[0], base_l[1], base_l[2]]
+    mv = [(3, 0), (0, 1), (1, 2), (2, 3)]
+    # No PlanInheritance record: it runs with a nil catalogue, so any moved object ACE is already
+    # reported incomplete (Unset kind) on main and such a record could not fail on this change.
+    d_l = base_l + [moved]
+    extra = ace(0, 0, 0x20000, X1)
+    plan("SD-E08" + tag, sd(dacl=acl(d_l, 4), owner=sid(SYS)), add=[new(X1, 0x20000)], opts={"normalize": True}, hostile=True,
+         expect=outcome(written(out_l[:3] + [extra, out_l[3]], 4), inserted=[3], moves=mv, incomplete=True),
+         source="T-0770: PlanDACL Normalize, same property-set/attribute overlap (" + tag + ")")
+pset_cases("P", PSET, ATTR1)   # set deny, attribute allow
+pset_cases("Q", ATTR1, PSET)   # attribute deny, set allow
 
 with open("testdata/safe-primitives/sd.write.jsonl", "w") as f:
     for r in recs:
