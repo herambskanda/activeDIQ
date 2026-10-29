@@ -83,8 +83,7 @@ IdP" flag is out of scope (`[OPEN]`, needs a vendor-specific proof design).
 
 **D-FP5 — Break-glass (AN-8).**
 - Break-glass accounts are **in scope of P1 but not of P2/P3**. They are availability-critical and
-  already carry throttling without lockout, CIDR allow-list, owner alerts on every use (
-  rules 3–4).
+  already carry throttling without lockout, CIDR allow-list, owner alerts on every use (AN-8 rules 3–4, TM §7.2).
 - A break-glass account holds **either** TOTP **or** a passkey, never a working mix: enrolling a
   passkey on it triggers P1 and TOTP stops working. The enrolment UI says so before confirming.
 - Recommended practice (documented, not enforced): break-glass = two device-bound passkeys on
