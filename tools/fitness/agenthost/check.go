@@ -1257,6 +1257,24 @@ var pinnedActions = func() map[string]map[string]string {
 	}
 }()
 
+// pinnedPermissions: the reviewed Permission/PermissionEx elements, keyed "<parent element>/<parent Id>"
+// (WiX Ids are unique per table, not globally, so the Id alone is not an identity). Each value holds the
+// exact attributes (lower-cased names) plus "" -> the element's local name. Empty today: the installer
+// source grants no ACL through WiX. Adding an entry is a security-architect review (T-0725).
+var pinnedPermissions = map[string]map[string]string{}
+
+func samePermission(got, want map[string]string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for k, v := range want {
+		if g, ok := got[k]; !ok || g != v {
+			return false
+		}
+	}
+	return true
+}
+
 func isAgentName(s string) bool { return agentBodyRe.MatchString(s) }
 
 // judgeInstallerXML reads one WiX file. The ServiceInstall for the agent service, every ServiceSid and
@@ -1346,12 +1364,27 @@ func judgeInstallerXML(rel string, b []byte, allow []string, agentFile bool) ins
 				}
 			}
 		case e.Name == "Permission" || e.Name == "PermissionEx":
-			p := ""
+			// T-0725: WiX Ids are per table, so a parent Id that equals a reviewed CustomAction Id says
+			// nothing about the ACL. A permission is judged by parent element type + Id, with its exact
+			// attributes pinned in pinnedPermissions; installer-allow.txt plays no part.
+			ptype, pid := "", ""
 			if e.Parent >= 0 {
-				p = els[e.Parent].Attrs["id"]
+				ptype, pid = els[e.Parent].Name, els[e.Parent].Attrs["id"]
 			}
-			if p == "" || dynamicRe.MatchString(p) || !allowed(p, allow) {
-				fail("%s grants an ACL (parent Id %q): a weak service or data-directory DACL lets any local user reconfigure the agent; list the parent Id in installer-allow.txt after a security-architect review", e.Name, p)
+			want, ok := pinnedPermissions[ptype+"/"+pid]
+			switch {
+			case pid == "" || dynamicRe.MatchString(pid) || !ok:
+				fail("%s under %s %q grants an ACL that is not in the reviewed permission pins: a weak service or data-directory DACL lets any local user reconfigure the agent (on a DC that is SYSTEM); pin the parent element type, Id and exact attributes in pinnedPermissions after a security-architect review (T-0725)", e.Name, ptype, pid)
+			default:
+				got := map[string]string{"": e.Name}
+				for k, v := range e.Attrs {
+					if !strings.HasPrefix(k, "xmlns") {
+						got[k] = v
+					}
+				}
+				if !samePermission(got, want) {
+					fail("%s under %s %q differs from the reviewed pin (attributes %v, reviewed %v): a changed SDDL or grant is a new ACL and needs a new review (T-0725)", e.Name, ptype, pid, got, want)
+				}
 			}
 		case actionEls[e.Name]:
 			id := e.Attrs["id"]
