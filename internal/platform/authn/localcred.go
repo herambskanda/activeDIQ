@@ -36,6 +36,8 @@ var (
 	// ErrSignInRefused is the one refusal of the password step.
 	ErrSignInRefused = errors.New("authn: sign-in refused")
 	// ErrWeakPassword: the password is shorter than MinPasswordLength runes.
+	// ErrSignInBusy: too many attempts are in flight; the refusal does not depend on the submitted name.
+	ErrSignInBusy   = errors.New("authn: sign-in is busy")
 	ErrWeakPassword = errors.New("authn: password is too short")
 	// ErrUsernameTaken: another local account of the tenant holds this (normalised) username.
 	ErrUsernameTaken = errors.New("authn: username is taken")
@@ -61,6 +63,8 @@ const (
 	ThrottleCeiling = 15 * time.Minute
 	// DefaultThrottleKeys caps the key table; a new key past it falls into one shared overflow bucket.
 	DefaultThrottleKeys = 100000
+	// DefaultMaxConcurrent bounds in-flight attempts: 4 x 64 MiB of hash memory at most.
+	DefaultMaxConcurrent = 4
 	// DefaultLatencyFloor is the least time every answer of the password step takes.
 	DefaultLatencyFloor = 300 * time.Millisecond
 
@@ -151,8 +155,15 @@ type LocalCredentials struct {
 	LatencyFloor time.Duration
 	Clock        func() time.Time // nil: the real clock
 
-	hashes int // verifications run (tests)
-	mu     sync.Mutex
+	// MaxConcurrent caps attempts in flight (DefaultMaxConcurrent when 0): each holds a 64 MiB hash.
+	MaxConcurrent int
+
+	hashes   int // verifications run (tests)
+	inflight int
+	peak     int
+	mu       sync.Mutex
+	gate     chan struct{}
+	gateOnce sync.Once
 }
 
 func (l *LocalCredentials) now() time.Time {
@@ -176,10 +187,25 @@ func (l *LocalCredentials) Verifications() int {
 	return l.hashes
 }
 
-func (l *LocalCredentials) count() {
+// PeakVerifications is the most verifications that ever ran at once (tests of the in-flight cap).
+func (l *LocalCredentials) PeakVerifications() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.peak
+}
+
+// startVerify counts one verification and returns the function that ends it.
+func (l *LocalCredentials) startVerify() (done func()) {
 	l.mu.Lock()
 	l.hashes++
+	l.inflight++
+	l.peak = max(l.peak, l.inflight)
 	l.mu.Unlock()
+	return func() {
+		l.mu.Lock()
+		l.inflight--
+		l.mu.Unlock()
+	}
 }
 
 // SetPassword gives the local account its username and password inside the caller's transaction. The
@@ -260,6 +286,14 @@ func (l *LocalCredentials) BeginPassword(ctx context.Context, username string, p
 }
 
 func (l *LocalCredentials) begin(ctx context.Context, username string, password secret.Secret, from netip.Addr) (PendingHandle, error) {
+	// A process-wide cap on in-flight attempts, taken before any name-dependent work: a verification costs
+	// 64 MiB and ~260 ms, so an unbounded burst would exhaust memory. A full gate refuses with the
+	// name-independent ErrSignInBusy; it never queues (threat model §7.6 rule 2d).
+	release, ok := l.acquire()
+	if !ok {
+		return PendingHandle{}, ErrSignInBusy
+	}
+	defer release()
 	t, ok := l.Tenant()
 	if !ok {
 		return PendingHandle{}, errors.New("authn: the install's tenant is not ready")
@@ -272,10 +306,15 @@ func (l *LocalCredentials) begin(ctx context.Context, username string, password 
 		}
 	}
 	var (
-		granted bool
-		account string
+		key     []byte
+		acct    string
+		hash    string
 		epoch   Epoch
+		matched bool
 	)
+	// Transaction 1: the throttle row is locked, the attempt is counted as a failure up front (a crash or
+	// a cancel mid-verify leaves it counted) and the credential is read. It commits before the hash runs,
+	// so no row lock and no pool connection is held across the 260 ms verification.
 	err := l.DB.WithTenant(ctx, t, func(ctx context.Context, tx store.Tx) error {
 		now := l.now()
 		pepper, err := l.pepper(ctx, tx, t)
@@ -283,8 +322,7 @@ func (l *LocalCredentials) begin(ctx context.Context, username string, password 
 			return err
 		}
 		defer clear(pepper)
-		key := throttleKey(pepper, t, name)
-		key, err = l.cappedKey(ctx, tx, t, key, now)
+		key, err = l.cappedKey(ctx, tx, t, throttleKey(pepper, t, name), now)
 		if err != nil {
 			return err
 		}
@@ -293,8 +331,6 @@ func (l *LocalCredentials) begin(ctx context.Context, username string, password 
 			return err
 		}
 		throttled := now.Before(notBefore)
-		var hash string
-		var acct string
 		var active bool
 		if !throttled && nameOK {
 			err := tx.QueryRow(ctx, `SELECT c.account_id::text, c.password_hash, a.state = 'active' AND a.kind = 'local'
@@ -316,31 +352,36 @@ WHERE c.tenant_id = $1::uuid AND c.username_norm = $2`, t.String(), name).Scan(&
 				return err
 			}
 		}
-		verified := false
-		check := dummy()
-		if hash != "" {
-			check = hash
-		}
-		pw := secretBytes(password)
-		l.count()
-		match := verifyHash(check, pw)
-		clear(pw)
-		verified = match && hash != "" && !password.IsEmpty()
-		if verified {
-			granted, account = true, acct
+		matched = hash != ""
+		return l.recordFailure(ctx, tx, t, key, failures, now)
+	})
+	if err != nil {
+		return PendingHandle{}, err
+	}
+	check := dummy()
+	if matched {
+		check = hash
+	}
+	pw := secretBytes(password)
+	done := l.startVerify()
+	ok = verifyHash(check, pw)
+	done()
+	clear(pw)
+	granted := ok && matched && !password.IsEmpty()
+	// Transaction 2: the outcome. Success undoes the up-front failure; both branches write one audit event.
+	err = l.DB.WithTenant(ctx, t, func(ctx context.Context, tx store.Tx) error {
+		now := l.now()
+		if granted {
 			if err := l.resetThrottle(ctx, tx, t, key); err != nil {
 				return err
 			}
 			return l.record(ctx, tx, t, KindSignInPasswordSucceeded, key, acct, from, now)
 		}
-		matched := ""
-		if hash != "" {
-			matched = acct // the name matched an account: only then may the log name it (rule 2g)
+		who := ""
+		if matched {
+			who = acct // the name matched an account: only then may the log name it (rule 2g)
 		}
-		if err := l.recordFailure(ctx, tx, t, key, failures, now); err != nil {
-			return err
-		}
-		return l.record(ctx, tx, t, KindSignInPasswordFailed, key, matched, from, now)
+		return l.record(ctx, tx, t, KindSignInPasswordFailed, key, who, from, now)
 	})
 	if err != nil {
 		return PendingHandle{}, err
@@ -348,7 +389,24 @@ WHERE c.tenant_id = $1::uuid AND c.username_norm = $2`, t.String(), name).Scan(&
 	if !granted {
 		return PendingHandle{}, ErrSignInRefused
 	}
-	return l.Pending.Begin(ctx, BeginInput{Tenant: t, Account: account, FirstFactor: FirstPassword, ClientIP: from, Epoch: epoch})
+	return l.Pending.Begin(ctx, BeginInput{Tenant: t, Account: acct, FirstFactor: FirstPassword, ClientIP: from, Epoch: epoch})
+}
+
+// acquire takes one in-flight slot without waiting; ok is false when all are taken.
+func (l *LocalCredentials) acquire() (release func(), ok bool) {
+	l.gateOnce.Do(func() {
+		n := l.MaxConcurrent
+		if n <= 0 {
+			n = DefaultMaxConcurrent
+		}
+		l.gate = make(chan struct{}, n)
+	})
+	select {
+	case l.gate <- struct{}{}:
+		return func() { <-l.gate }, true
+	default:
+		return nil, false
+	}
 }
 
 func secretBytes(s secret.Secret) []byte {

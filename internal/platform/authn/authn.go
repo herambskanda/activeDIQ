@@ -59,7 +59,14 @@ func (h Handlers) SignInBreakGlassPassword(ctx context.Context, in api.SignInBre
 			}
 			return nil, apitypes.SignInFailed("")
 		}
-		return nil, err // an infrastructure fault: the chain answers 500 without detail
+		if errors.Is(err, ErrSignInBusy) {
+			return nil, apitypes.RateLimited("")
+		}
+		// A store or key fault fails closed with the same 401 (threat model §7.6 rule 2d).
+		if h.Log != nil {
+			h.Log.Error("password step failed", "error", err.Error(), "peer_ip", in.PeerIP, "trace_id", apihost.TraceID(ctx))
+		}
+		return nil, apitypes.SignInFailed("")
 	}
 	return api.SignInBreakGlassPassword204{SetCookie: line}, nil
 }
