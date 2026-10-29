@@ -30,9 +30,7 @@ func main() {
 		die(err)
 	}
 	o := Options{Pinned: ParsePinned(string(pb)), RequireAgent: !*noAgent}
-	for _, l := range splitLines(string(ab)) {
-		o.Allow = append(o.Allow, l)
-	}
+	o.Allow = splitLines(string(ab))
 
 	type job struct{ name, dir string }
 	var jobs []job
