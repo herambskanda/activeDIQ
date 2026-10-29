@@ -8,9 +8,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"log/slog"
-	"net"
 	"os"
-	"strconv"
 
 	"github.com/skenzeriq/activediq/internal/compose/config"
 	kernel "github.com/skenzeriq/activediq/internal/platform/agent"
@@ -41,8 +39,6 @@ type Hooks struct {
 	Confine func() error
 	Version string
 }
-
-func endpointAddr(e dial.Endpoint) string { return net.JoinHostPort(e.Host, strconv.Itoa(int(e.Port))) }
 
 // Run runs the agent role until ctx is done.
 func Run(ctx context.Context, cfg config.Config) error { return RunWith(ctx, cfg, Hooks{}) }
