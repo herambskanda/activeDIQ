@@ -1163,6 +1163,12 @@ func checkInstallerAllow(root string, allow []string) Result {
 		if m := localSystemRe.FindString(f.text); m != "" {
 			r.Violations = append(r.Violations, fmt.Sprintf("%s names %q: the agent never runs as LocalSystem or a shared service identity (ADR-0006 rule 1)", rel, m))
 		}
+		// T-0776: the WiX preprocessor reads any environment variable ($(env.X), !(env.X)) into the MSI, in
+		// attributes, text, <?define?> and other processing instructions. Scanned over the raw text so no
+		// XML position can hide it; never approvable via installer-allow.txt.
+		if (isWixXML(f.path) || f.xml) && !strings.EqualFold(filepath.Ext(f.path), ".wixproj") && wixEnvRe.MatchString(f.text) {
+			r.Violations = append(r.Violations, fmt.Sprintf("%s reads an environment variable through the WiX preprocessor ($(env.NAME) or !(env.NAME)): a CI secret would be compiled into the MSI; installer-allow.txt cannot approve it (T-0776)", rel))
+		}
 		if isTemplate(f.path) && !allowed(rel, allow) {
 			r.Violations = append(r.Violations, fmt.Sprintf("%s is a template or transform under packaging/: it is not parsed, so it could emit a ServiceInstall, ServiceSid or ACL the check never sees; list it in installer-allow.txt after a security-architect review", rel))
 		}
@@ -1263,6 +1269,8 @@ type installerFacts struct {
 const wixCoreNS = "http://wixtoolset.org/schemas/v4/wxs"
 
 var reviewedNS = map[string]bool{"http://wixtoolset.org/schemas/v4/wxs/util": true}
+
+var wixEnvRe = regexp.MustCompile(`(?i)[$!]\(\s*env\s*\.`)
 
 var dynamicRe = regexp.MustCompile(`\$\(|\[|!\(`)
 
