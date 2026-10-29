@@ -1,6 +1,6 @@
 //go:build linux
 
-package main
+package prochardening
 
 import (
 	"os"
@@ -16,7 +16,7 @@ func TestHardenProcessChild(t *testing.T) {
 	if os.Getenv("T0634_CHILD") != "1" {
 		t.Skip("child helper")
 	}
-	if err := hardenProcess(func(string) string { return "" }); err != nil {
+	if err := Apply(func(string) string { return "" }); err != nil {
 		t.Fatal(err)
 	}
 	var rl syscall.Rlimit
