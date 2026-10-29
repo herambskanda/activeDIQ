@@ -146,6 +146,15 @@ func readRole(ctx context.Context, tx store.Tx, tn tenant.ID, id string, lock ro
 	return r, rows.Err()
 }
 
+// platformOnlyErr refuses a role that lists a platform-scope-only permission: a tenant or delegation
+// grant cannot carry one (T-0250). It is ErrInvalid and authz.ErrInvalidGrant at once.
+func platformOnlyErr(perms []authz.Permission) error {
+	if slices.ContainsFunc(perms, authz.IsPlatformOnly) {
+		return fmt.Errorf("%w: %w", ErrInvalid, authz.ErrInvalidGrant)
+	}
+	return nil
+}
+
 func controlPlane(perms []authz.Permission) bool {
 	return slices.ContainsFunc(perms, authz.NeverCrosses)
 }
@@ -187,6 +196,9 @@ func (g *Grants) CreateRole(ctx context.Context, tx store.Tx, by authority.Chain
 		if !permissionRe.MatchString(string(p)) {
 			return ErrInvalid
 		}
+	}
+	if err := platformOnlyErr(perms); err != nil {
+		return err
 	}
 	if err := ValidateRoles([]Role{{Name: name, Tier: tier, Permissions: perms}}); err != nil {
 		return ErrInvalid
@@ -282,6 +294,9 @@ func (g *Grants) SetRolePermissions(ctx context.Context, tx store.Tx, by authori
 		if !permissionRe.MatchString(string(p)) {
 			return ErrInvalid
 		}
+	}
+	if err := platformOnlyErr(perms); err != nil {
+		return err
 	}
 	tn, err := tenantOf(ctx, tx)
 	if err != nil {
@@ -394,6 +409,9 @@ func (g *Grants) Grant(ctx context.Context, tx store.Tx, by authority.Chain, in 
 		return err
 	}
 	if err := CheckGrantable(RoleView{Name: role.name, BuiltIn: role.builtIn, Tier: Tier(role.tier), Permissions: role.perms}, in.Subject); err != nil {
+		return err
+	}
+	if err := platformOnlyErr(role.perms); err != nil {
 		return err
 	}
 	actor, err := g.actorAssignments(ctx, tn, by)
