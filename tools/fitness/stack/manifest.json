@@ -299,11 +299,6 @@
         "reason": "MSI custom actions that edit the event-log channel ACE and the data-dir DACL through typed Windows ACL APIs (run_windows.go); run_other.go is the non-Windows stub"
       },
       {
-        "path": "internal/agentmodules/addc",
-        "adr": "0001-technology-stack.md",
-        "reason": "Security event-log reader: source_windows.go uses wevtapi, source_other.go is the non-Windows stub; no portable form exists"
-      },
-      {
         "path": "internal/platform/agent",
         "adr": "0001-technology-stack.md",
         "reason": "agent token/privilege pin, job-object confinement, event-log writer and data-dir DACL (*_windows.go) with *_other.go stubs; Windows-only OS APIs with no portable form"
