@@ -10,6 +10,8 @@
   no Active Directory object is created or changed.
   No inbound firewall exception is installed: the agent has no listener and only dials out.
   No reboot is requested.
+  Flow: install starts the service UNENROLLED; it idles (event 103, warning) and picks up `agent enroll`
+  within 15 s. Recovery actions live in the core ServiceConfig (util:ServiceConfig is WIX1149-deprecated).
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
   <Package Name="activeDIQ Agent" Manufacturer="skenzeriq" Version="$(var.Version)" UpgradeCode="6f3b8c1e-5d1a-4f6e-9a57-3c2b7d0e4a11" Scope="perMachine" InstallerVersion="500">
@@ -33,14 +35,14 @@
           <!-- Restricted service SID and exactly one privilege, declared here and never through the
                registry (T-0688 ruling 4b). Whether WiX writes the privilege list is [UNVERIFIED - lab]:
                T-0648 reads it back (sc qprivs, running token). -->
-          <ServiceConfig ServiceSid="restricted" OnInstall="yes" OnReinstall="yes">
+          <ServiceConfig ServiceSid="restricted" OnInstall="yes" OnReinstall="yes"
+                         FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="restart"
+                         RestartServiceDelayInSeconds="30" ResetPeriodInDays="1">
             <RequiredPrivilege Name="SeChangeNotifyPrivilege" />
           </ServiceConfig>
         </ServiceInstall>
         <ServiceControl Id="AgentServiceControl" Name="activeDIQAgent" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
-        <util:ServiceConfig ServiceName="activeDIQAgent" FirstFailureActionType="restart" SecondFailureActionType="restart"
-                            ThirdFailureActionType="restart" RestartServiceDelayInSeconds="30" ResetPeriodInDays="1" />
-        <util:EventSource Log="Application" Name="activeDIQ Agent" EventMessageFile="[SystemFolder]EventCreate.exe"
+        <util:EventSource Log="Application" Name="activeDIQ Agent" EventMessageFile="[WindowsFolder]Microsoft.NET\Framework64\v4.0.30319\EventLogMessages.dll"
                           SupportsErrors="yes" SupportsInformationals="yes" SupportsWarnings="yes" />
       </Component>
       <Component Id="SetupExe" Guid="*">

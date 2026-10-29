@@ -9,6 +9,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/skenzeriq/activediq/internal/compose/config"
 	kernel "github.com/skenzeriq/activediq/internal/platform/agent"
@@ -112,4 +113,34 @@ func leafOf(st *dial.State) (*x509.Certificate, error) {
 		return nil, ErrNotEnrolled
 	}
 	return x509.ParseCertificate(st.Leaf.Certificate[0])
+}
+
+// WaitInterval is how often a service that is installed but not yet enrolled re-checks for the
+// enrolment material.
+const WaitInterval = 15 * time.Second
+
+// RunServing is RunWith for the Windows service: an agent that is installed but not yet enrolled is
+// an expected state (the MSI starts the service before the operator runs `agent enroll`), not a
+// failure. It calls waiting once, then re-checks every interval until enrolment appears or ctx is
+// done, so the SCM never sees an exit and the recovery action never loops. Every other error
+// (privileges, bad config) is returned unchanged and still stops the service.
+func RunServing(ctx context.Context, cfg config.Config, hk Hooks, interval time.Duration, waiting func()) error {
+	announced := false
+	for {
+		err := RunWith(ctx, cfg, hk)
+		if !errors.Is(err, ErrNotEnrolled) {
+			return err
+		}
+		if !announced {
+			announced = true
+			if waiting != nil {
+				waiting()
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(interval):
+		}
+	}
 }

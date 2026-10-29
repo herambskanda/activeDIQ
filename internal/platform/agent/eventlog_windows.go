@@ -10,12 +10,13 @@ import (
 )
 
 // Event IDs written to the Windows Application log by source "activeDIQ Agent" (documented in the
-// agent runbook). They are within 1..1000 so a source registered with EventCreate.exe as its message
-// file renders them [UNVERIFIED — lab].
+// agent runbook). The source's message file is .NET's EventLogMessages.dll (registered by the MSI),
+// whose message table is a bare "%1" for every ID, so each event renders its insertion string.
 const (
 	EventApplied       = 100 // a policy or keyset was applied (what, sequence; never content)
 	EventStartRefused  = 101 // the agent refused to start (reason class only)
 	EventChannelUnread = 102
+	EventNotEnrolled   = 103 // installed but not enrolled: idling until `agent enroll` runs (warning)
 )
 
 var (
@@ -25,6 +26,7 @@ var (
 	procReportEvent     = advapi.NewProc("ReportEventW")
 	eventLogInformation = 4
 	eventLogError       = 1
+	eventLogWarning     = 2
 )
 
 // EventLog writes to the Application log. Contract:
@@ -64,4 +66,10 @@ func (l *EventLog) Applied(what string, seq uint64) {
 // secrets or server-supplied text by construction.
 func (l *EventLog) Failed(err error) {
 	l.report(eventLogError, EventStartRefused, "agent stopped: "+err.Error())
+}
+
+// NotEnrolled records, once per service start, that the agent is waiting for enrolment. It is a
+// warning, not a failure: the service stays running and picks up enrolment on its own.
+func (l *EventLog) NotEnrolled() {
+	l.report(eventLogWarning, EventNotEnrolled, "agent is installed but not enrolled; run `activediq-agent.exe enroll <server:port> <pin>` — waiting")
 }

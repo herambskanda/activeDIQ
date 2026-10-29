@@ -62,7 +62,13 @@ func (h *handler) Execute(_ []string, req <-chan svc.ChangeRequest, st chan<- sv
 	st <- svc.Status{State: svc.StartPending}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- agent.RunWith(ctx, h.cfg, hooks(h.log)) }()
+	go func() {
+		done <- agent.RunServing(ctx, h.cfg, hooks(h.log), agent.WaitInterval, func() {
+			if h.log != nil {
+				h.log.NotEnrolled()
+			}
+		})
+	}()
 	st <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
 	for {
 		select {
