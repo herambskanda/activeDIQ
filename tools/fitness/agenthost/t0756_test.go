@@ -63,4 +63,20 @@ func TestT0756PrivateChainIds(t *testing.T) {
 	// Unrelated secure properties.
 	wantClean(t, run(dir+`<Property Id="SecureCustomProperties" Value="Foo;Bar"/>`))
 	wantClean(t, run(dir+`<Property Id="SomeFlag" Secure="yes" Value="1"/>`))
+
+	// Review fix: the chain is judged from element structure, not the joined string. A Name carrying
+	// "/" or ":" forges a string that looks like TARGETDIR > standard folder > AgentDir.
+	const forge = "can forge the pinned parent chain"
+	pin("Directory:TARGETDIR:SourceDir/Directory:ProgramFiles64Folder:pf/Directory:AgentDir:Agent")
+	wantViolation(t, run(leaf(`<Directory Id="TARGETDIR" Name="SourceDir/Directory:ProgramFiles64Folder:pf"><Directory Id="AgentDir" Name="Agent">@</Directory></Directory>`)), forge)
+	// ':' inside the Name of a mid-chain element.
+	pin("Directory:TARGETDIR:SourceDir/Directory:ProgramFiles64Folder:pf:x/Directory:AgentDir:Agent")
+	wantViolation(t, run(leaf(`<Directory Id="TARGETDIR" Name="SourceDir"><Directory Id="ProgramFiles64Folder" Name="pf:x"><Directory Id="AgentDir" Name="Agent">@</Directory></Directory></Directory>`)), forge)
+	// Without the forgery the same shape (no standard folder) still fails the TARGETDIR rule.
+	pin("Directory:TARGETDIR:SourceDir/Directory:AgentDir:Agent")
+	wantViolation(t, run(leaf(`<Directory Id="TARGETDIR" Name="SourceDir"><Directory Id="AgentDir" Name="Agent">@</Directory></Directory>`)), msg)
+
+	// A Type 51 CustomAction that sets SecureCustomProperties at run time fails closed.
+	pin("Directory:LogDir:Logs")
+	wantViolation(t, run(dir+`<CustomAction Id="SetSec" Property="SecureCustomProperties" Value="LogDir"/>`), "sets SecureCustomProperties at run time")
 }
