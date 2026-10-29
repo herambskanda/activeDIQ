@@ -151,7 +151,28 @@ func msbuildWildcardImported(rel, dir string, projDirs, projNames []string) bool
 
 // msbuildPropFunc matches a property function or registry lookup after XML decoding: MSBuild tolerates
 // whitespace and (removed-before-expansion) XML comments between "$(" and "[" or "registry:".
-var msbuildPropFunc = regexp.MustCompile(`(?i)\$\(\s*(\[|registry:)`)
+var msbuildPlainRef = regexp.MustCompile(`^\$\([A-Za-z_][A-Za-z0-9_.\-]*\)`)
+
+// msbuildBadExpr is an allowlist, not a denylist: after XML decoding, every "$(" must start a plain
+// $(PropertyName) reference. Whitespace of any kind (MSBuild skips Unicode whitespace), "[", "Registry:",
+// nesting or an unterminated "$(" all fail.
+type msbuildExpr struct{}
+
+func (msbuildExpr) MatchString(s string) bool {
+	for {
+		i := strings.Index(s, "$(")
+		if i < 0 {
+			return false
+		}
+		s = s[i:]
+		if !msbuildPlainRef.MatchString(s) {
+			return true
+		}
+		s = s[2:]
+	}
+}
+
+var msbuildPropFunc = msbuildExpr{}
 
 func judgeMSBuild(rel string, b []byte) []string {
 	var out []string

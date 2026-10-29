@@ -99,6 +99,24 @@ func TestT0762MSBuildAndTransforms(t *testing.T) {
 	// A Directory.Build.* unrelated to any WiX source is not judged.
 	wantClean(t, mk(nil, map[string]string{"sidecars/Directory.Build.props": `<Project><Target Name="x"/></Project>`}))
 
+	// Unicode whitespace (MSBuild skips char.IsWhiteSpace) between "$(" and "[": allowlist, not denylist.
+	for _, ws := range []string{"\u00a0", "\u2003", "\u0085", "\u3000", "\u2028"} {
+		fn := "[System.IO.File]::ReadAllText(`s.txt`)"
+		forms := map[string]string{
+			"val":  sdk + `<PropertyGroup><DefineConstants>X=$(` + ws + fn + `)</DefineConstants></PropertyGroup></Project>`,
+			"cond": sdk + `<PropertyGroup Condition="'$(` + ws + fn + `)' == 'x'"/></Project>`,
+			"incl": sdk + `<ItemGroup><Compile Include="$(` + ws + fn + `)"/></ItemGroup></Project>`,
+		}
+		for _, body := range forms {
+			for _, f := range []string{"packaging/windows/agent.wixproj", "packaging/Directory.Build.props", "Directory.Build.props"} {
+				files := map[string]string{f: body}
+				wantViolation(t, mk(nil, files), "T-0762")
+				wantViolation(t, mk([]string{f, "agent.wixproj"}, files), "T-0762")
+			}
+		}
+	}
+	wantClean(t, mk(nil, map[string]string{"packaging/windows/agent.wixproj": sdk + `<PropertyGroup Condition="'$(Configuration)' == 'Release'"><OutputName>$(MSBuildProjectName)</OutputName></PropertyGroup></Project>`}))
+
 	for _, ext := range []string{".mst", ".msp", ".pcp", ".MST"} {
 		f := "vendor/evil" + ext
 		r := mk(nil, map[string]string{f: "x"})
