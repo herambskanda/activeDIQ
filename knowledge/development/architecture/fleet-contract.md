@@ -278,13 +278,13 @@ mounts the `Fleet` service on the server `Gateway.NewServer` builds and states e
   target = component GUID, cert serial) in the same transaction, then calls `StreamCloser`. Revoking an
   unused enrollment token is T-0153's.
 - **CA withdrawal (T-0777)**: `fleetsql.CAAdmin.Withdraw` (`withdraw.go`) is the committing process of the
-  F-POOL-8 bound. It checks `fleet.ca.withdraw` server-side, moves an active or retired `fleet_ca` row to
+  F-POOL-8 bound. It requires the principal's tenant to equal the target tenant, checks `fleet.ca.withdraw` server-side, requires a fresh step-up (`StepUp`, `ErrStepUpRequired`), moves an active or retired `fleet_ca` row to
   `withdrawn` (sealed key destroyed), inserts the replacement active CA in the same transaction when the
   withdrawn row was the active one (a retired row's withdrawal keeps the existing active CA), and appends
   `fleet.ca.withdrawn` (human actor, CA GUID, tenant, CA serial and SPKI, previous state, reason,
   replacement SPKI) in that transaction. After the commit it calls `PoolInvalidator.Invalidate` and
-  `TenantCloser.CloseTenant` (both required ports; `*gateway.PoolProvider`, `*gateway.Gateway`). No step-up
-  yet and no API route: the composer and API tickets wire both.
+  `TenantCloser.CloseTenant` (both required ports; `*gateway.PoolProvider`, `*gateway.Gateway`). No API route yet:
+  the composer and API tickets wire it.
 - **Not yet wired**: the composer must pass the same `Lifecycle` as `Config.Components` and `Streams`
   (the gateway), and expose Revoke on the API; both belong to the compose/API tickets.
 

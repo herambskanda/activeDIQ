@@ -52,6 +52,7 @@ type CAAdmin struct {
 	Authz   apihost.Authorizer
 	Keys    KeySource // seals the replacement CA's key (TM-D7)
 	Audit   audit.Sink
+	StepUp  apihost.StepUpChecker
 	Pool    PoolInvalidator
 	Streams TenantCloser
 	Clock   func() time.Time // tests only
@@ -80,10 +81,15 @@ func (a *CAAdmin) now() time.Time {
 // it call PoolProvider.Invalidate and Gateway.CloseTenant. The permission is checked server-side before
 // any write.
 func (a *CAAdmin) Withdraw(ctx context.Context, tid tenant.ID, p apihost.Principal, caID, reason string) (Withdrawn, error) {
-	if a == nil || a.DB == nil || a.Authz == nil || a.Keys == nil || a.Audit == nil || a.Pool == nil || a.Streams == nil {
+	if a == nil || a.DB == nil || a.Authz == nil || a.Keys == nil || a.Audit == nil || a.StepUp == nil || a.Pool == nil || a.Streams == nil {
 		return Withdrawn{}, ErrNotConfigured
 	}
 	if p.ID == "" || utf8.RuneCountInString(p.ID) > 200 {
+		return Withdrawn{}, ErrWithdrawForbidden
+	}
+	// The permission is evaluated in the principal's own tenant, so the target tenant must be exactly
+	// that tenant: no cross-tenant withdrawal, and a platform principal (empty Tenant) is refused too.
+	if pt, perr := tenant.Parse(p.Tenant); perr != nil || pt != tid {
 		return Withdrawn{}, ErrWithdrawForbidden
 	}
 	ok, err := a.Authz.Allow(ctx, p, PermissionCAWithdraw, "tenant")
@@ -92,6 +98,14 @@ func (a *CAAdmin) Withdraw(ctx context.Context, tid tenant.ID, p apihost.Princip
 	}
 	if !ok {
 		return Withdrawn{}, ErrWithdrawForbidden
+	}
+	// Destroying a tenant's fleet trust is Tier-0: a fresh step-up, never satisfied by an API token.
+	fresh, err := a.StepUp.Fresh(ctx, p)
+	if err != nil {
+		return Withdrawn{}, fmt.Errorf("fleetsql: step-up check: %w", err)
+	}
+	if !fresh {
+		return Withdrawn{}, ErrStepUpRequired
 	}
 	if !validReason(reason) {
 		return Withdrawn{}, ErrWithdrawReason
@@ -166,7 +180,7 @@ func validReason(s string) bool {
 		return false
 	}
 	for _, r := range s {
-		if unicode.IsControl(r) {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) { // Cf (RLO, ZWSP) would spoof the audit display
 			return false
 		}
 	}

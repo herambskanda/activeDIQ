@@ -114,8 +114,8 @@ func TestCAAdminWithdrawEndsTenantStreams(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		admin := &fleetsql.CAAdmin{DB: db, Authz: wAuthz{}, Keys: ks, Audit: wSink{}, Pool: pp, Streams: r.gw}
-		res, err := admin.Withdraw(ctx, tidA, apihost.Principal{ID: "human-1", Kind: apihost.KindSession}, caID, "key exposure suspected")
+		admin := &fleetsql.CAAdmin{DB: db, Authz: wAuthz{}, Keys: ks, Audit: wSink{}, StepUp: wStepUp{}, Pool: pp, Streams: r.gw}
+		res, err := admin.Withdraw(ctx, tidA, apihost.Principal{ID: "human-1", Tenant: tidA.String(), Kind: apihost.KindSession}, caID, "key exposure suspected")
 		if err != nil || res.ClosedStreams != 2 || !res.Replaced {
 			t.Fatalf("withdraw: %+v %v", res, err)
 		}

@@ -14,6 +14,12 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
+func adminIn(t tenant.ID) apihost.Principal {
+	p := admin
+	p.Tenant = t.String()
+	return p
+}
+
 type caAuthz struct{ allow bool }
 
 func (a caAuthz) Allow(_ context.Context, _ apihost.Principal, perm, scope string) (bool, error) {
@@ -91,8 +97,9 @@ func (e *enrollEnv) initCA(t *testing.T, tid tenant.ID) {
 	}
 }
 
-func (e *enrollEnv) caAdmin(allow bool, p *commitProbe) *fleetsql.CAAdmin {
-	return &fleetsql.CAAdmin{DB: e.db, Authz: caAuthz{allow}, Keys: e.ks, Audit: e.sink, Pool: p, Streams: p}
+func (e *enrollEnv) caAdmin(allow bool, p *commitProbe, fresh ...bool) *fleetsql.CAAdmin {
+	f := len(fresh) == 0 || fresh[0]
+	return &fleetsql.CAAdmin{DB: e.db, Authz: caAuthz{allow}, Keys: e.ks, Audit: e.sink, StepUp: fakeStepUp{f}, Pool: p, Streams: p}
 }
 
 func TestWithdrawActiveCA(t *testing.T) {
@@ -110,7 +117,7 @@ func TestWithdrawActiveCA(t *testing.T) {
 		ca := e.caAdmin(true, probe)
 		before := len(e.sink.evs)
 
-		res, err := ca.Withdraw(ctx, e.a, admin, old[0].id, "key exposure suspected on host CA-1")
+		res, err := ca.Withdraw(ctx, e.a, adminIn(e.a), old[0].id, "key exposure suspected on host CA-1")
 		if err != nil || res.ClosedStreams != 3 || !res.Replaced {
 			t.Fatalf("withdraw: %+v %v", res, err)
 		}
@@ -152,11 +159,11 @@ func TestWithdrawActiveCA(t *testing.T) {
 
 		// A withdrawn CA is terminal: a second withdrawal is refused and calls nothing.
 		probe.order = nil
-		if _, err := ca.Withdraw(ctx, e.a, admin, old[0].id, "again"); !errors.Is(err, fleetsql.ErrWithdrawRefused) || len(probe.order) != 0 {
+		if _, err := ca.Withdraw(ctx, e.a, adminIn(e.a), old[0].id, "again"); !errors.Is(err, fleetsql.ErrWithdrawRefused) || len(probe.order) != 0 {
 			t.Fatalf("second withdraw: %v %v", err, probe.order)
 		}
 		// Another tenant's CA id is not visible from this tenant.
-		if _, err := ca.Withdraw(ctx, e.a, admin, bBefore[0].id, "cross tenant"); !errors.Is(err, fleetsql.ErrWithdrawRefused) {
+		if _, err := ca.Withdraw(ctx, e.a, adminIn(e.a), bBefore[0].id, "cross tenant"); !errors.Is(err, fleetsql.ErrWithdrawRefused) {
 			t.Fatalf("cross-tenant withdraw: %v", err)
 		}
 		if got := e.caRows(t, e.b); got[0].state != "active" {
@@ -201,7 +208,7 @@ func TestWithdrawRetiredCA(t *testing.T) {
 			t.Fatal(err)
 		}
 		probe := &commitProbe{e: e, tid: e.a}
-		res, err := e.caAdmin(true, probe).Withdraw(ctx, e.a, admin, first.id, "retired CA host compromised")
+		res, err := e.caAdmin(true, probe).Withdraw(ctx, e.a, adminIn(e.a), first.id, "retired CA host compromised")
 		if err != nil || res.Replaced {
 			t.Fatalf("withdraw retired: %+v %v", res, err)
 		}
@@ -221,6 +228,8 @@ func TestWithdrawRefusals(t *testing.T) {
 		ctx := context.Background()
 		e := setupEnroll(t, s)
 		e.initCA(t, e.a)
+		e.initCA(t, e.b)
+		bRows := e.caRows(t, e.b)
 		id := e.caRows(t, e.a)[0].id
 		probe := &commitProbe{e: e, tid: e.a}
 		before := len(e.sink.evs)
@@ -232,28 +241,52 @@ func TestWithdrawRefusals(t *testing.T) {
 			}
 		}
 
-		if _, err := e.caAdmin(false, probe).Withdraw(ctx, e.a, admin, id, "why"); !errors.Is(err, fleetsql.ErrWithdrawForbidden) {
+		if _, err := e.caAdmin(false, probe).Withdraw(ctx, e.a, adminIn(e.a), id, "why"); !errors.Is(err, fleetsql.ErrWithdrawForbidden) {
 			t.Fatalf("without the right: %v", err)
 		}
 		untouched(t, "forbidden")
 
 		ca := e.caAdmin(true, probe)
-		for _, r := range []string{"", "bad\nreason", "x\x00"} {
-			if _, err := ca.Withdraw(ctx, e.a, admin, id, r); !errors.Is(err, fleetsql.ErrWithdrawReason) {
+		for _, r := range []string{"", "bad\nreason", "x\x00", "a\u202eb", "a\u200bb"} {
+			if _, err := ca.Withdraw(ctx, e.a, adminIn(e.a), id, r); !errors.Is(err, fleetsql.ErrWithdrawReason) {
 				t.Fatalf("reason %q: %v", r, err)
 			}
 		}
 		if _, err := ca.Withdraw(ctx, e.a, apihost.Principal{}, id, "why"); !errors.Is(err, fleetsql.ErrWithdrawForbidden) {
 			t.Fatalf("no principal: %v", err)
 		}
-		if _, err := ca.Withdraw(ctx, e.a, admin, "not-a-uuid", "why"); !errors.Is(err, fleetsql.ErrWithdrawRefused) {
+		if _, err := ca.Withdraw(ctx, e.a, adminIn(e.a), "not-a-uuid", "why"); !errors.Is(err, fleetsql.ErrWithdrawRefused) {
 			t.Fatalf("bad id: %v", err)
 		}
 		untouched(t, "invalid input")
 
+		// Confused deputy: a tenant-A principal naming tenant B, and a platform principal, are refused.
+		if _, err := ca.Withdraw(ctx, e.b, adminIn(e.a), id, "x"); !errors.Is(err, fleetsql.ErrWithdrawForbidden) {
+			t.Fatalf("cross-tenant principal: %v", err)
+		}
+		if _, err := ca.Withdraw(ctx, e.a, admin, id, "x"); !errors.Is(err, fleetsql.ErrWithdrawForbidden) {
+			t.Fatalf("platform principal: %v", err)
+		}
+		untouched(t, "cross-tenant")
+		if got := e.caRows(t, e.b); len(got) != 1 || got[0] != bRows[0] {
+			t.Fatalf("tenant B changed: %+v", got)
+		}
+
+		// No fresh step-up: refused, nothing changed.
+		if _, err := e.caAdmin(true, probe, false).Withdraw(ctx, e.a, adminIn(e.a), id, "why"); !errors.Is(err, fleetsql.ErrStepUpRequired) {
+			t.Fatalf("stale step-up: %v", err)
+		}
+		untouched(t, "stale step-up")
+		noSU := e.caAdmin(true, probe)
+		noSU.StepUp = nil
+		if _, err := noSU.Withdraw(ctx, e.a, adminIn(e.a), id, "why"); !errors.Is(err, fleetsql.ErrNotConfigured) {
+			t.Fatalf("nil step-up: %v", err)
+		}
+		untouched(t, "nil step-up")
+
 		// A replacement that cannot be sealed rolls the whole withdrawal back.
 		e.ks.setFail(true)
-		if _, err := ca.Withdraw(ctx, e.a, admin, id, "why"); err == nil {
+		if _, err := ca.Withdraw(ctx, e.a, adminIn(e.a), id, "why"); err == nil {
 			t.Fatal("withdraw succeeded without a data key")
 		}
 		e.ks.setFail(false)
@@ -262,7 +295,7 @@ func TestWithdrawRefusals(t *testing.T) {
 		// A missing port is a configuration error, never a partial commit.
 		bad := e.caAdmin(true, probe)
 		bad.Streams = nil
-		if _, err := bad.Withdraw(ctx, e.a, admin, id, "why"); !errors.Is(err, fleetsql.ErrNotConfigured) {
+		if _, err := bad.Withdraw(ctx, e.a, adminIn(e.a), id, "why"); !errors.Is(err, fleetsql.ErrNotConfigured) {
 			t.Fatalf("missing port: %v", err)
 		}
 		untouched(t, "misconfigured")
