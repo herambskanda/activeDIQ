@@ -619,6 +619,22 @@ func TestA1Installer(t *testing.T) {
 				}
 			}
 		}
+		{ // T-0677 attempt 9: us-ascii & co. only for pure-ASCII files (.NET maps bytes >= 0x80 to '?')
+			for _, enc := range []string{"us-ascii", "iso-8859-1", "windows-1252"} {
+				content := `<?xml version="1.0" encoding="` + enc + `"?><?x ` + "\x80" + `>` + "<Wix><Fragment>" + lsys + "</Fragment></Wix><?y ?>"
+				for _, where := range []string{"tools/x/evil.xml", "packaging/windows/evil.dat"} {
+					r := t.TempDir()
+					write(t, r, "packaging/windows/A.wixproj", inc(`..\..\`+strings.ReplaceAll(where, "/", `\`)))
+					write(t, r, where, content)
+					wantViolation(t, checkInstaller(r), "declares an encoding")
+				}
+			}
+			r := t.TempDir()
+			write(t, r, "packaging/windows/agent.wxs", `<?xml version="1.0" encoding="us-ascii"?>`+goodWxs)
+			if v := checkInstaller(r).Violations; len(v) != 0 {
+				t.Errorf("pure-ASCII us-ascii good WiX flagged: %v", v)
+			}
+		}
 		{ // a long prolog does not hide the root element
 			r := t.TempDir()
 			write(t, r, "docs/evil.txt", "<!--"+strings.Repeat("x", 100<<10)+"-->"+lsys)

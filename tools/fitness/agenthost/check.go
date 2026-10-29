@@ -711,14 +711,29 @@ func encodingProblem(b []byte) string {
 			if wide {
 				continue
 			}
-		case "utf-8", "us-ascii", "iso-8859-1", "windows-1252":
+		case "utf-8":
 			if !wide {
+				continue
+			}
+		case "us-ascii", "iso-8859-1", "windows-1252":
+			// .NET's ASCII decoder turns every byte >= 0x80 into '?', which can hide a document boundary
+			// from this check; only pure-ASCII files decode identically under these names.
+			if !wide && isPureASCII(b) {
 				continue
 			}
 		}
 		return "declares an encoding this check does not decode (" + m[1] + "): it could be a WiX document the build reads differently, so it is not classifiable"
 	}
 	return ""
+}
+
+func isPureASCII(b []byte) bool {
+	for _, c := range b {
+		if c >= 0x80 {
+			return false
+		}
+	}
+	return true
 }
 
 func utf32Text(b []byte, bigEndian bool) string {
