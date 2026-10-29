@@ -213,12 +213,20 @@ Threat-model links: TM-A11 (key never leaves the sealed column; unreachable here
   No `InsecureSkipVerify`, no verify callback. **Obligation on the gateway (T-0156):** the Enroll listener
   must include the installation CA in its presented chain, or enrolment is refused (`ErrUntrustedServer`).
 - **Bundle (D3).** `dial.ParseBundle`: CERTIFICATE blocks only, no headers, whitespace-only around, 1 to 8
-  CAs, at most 64 KiB, one matching the pin; `AppendCertsFromPEM` never touches raw bytes.
-- **Leaf.** Must carry our public key, verify to the bundle for client auth, and have a component identity.
+  CAs, at most 64 KiB, one matching the pin; `AppendCertsFromPEM` never touches raw bytes. The result is a
+  `Bundle{Roots, ClientCAs}` (ADR-0008 decision 5): **Roots** are exactly the certificates matching the pin and
+  must have the server-root shape (`IsCA`, `MaxPathLen 0`, `KeyUsageCertSign`); **ClientCAs** are all others
+  (the tenant's client CAs and cross-certificates) and never become a TLS root.
+- **Leaf.** Must carry our public key, verify for ClientAuth to a **ClientCA** of the bundle (never to the pinned
+  server CA), and have a component identity.
+- **Repin (ADR-0008 obligation 5).** `dial.Repin(ctx, dir, newPin, audit)` / `agentsetup repin <pin>`: the new
+  pin arrives out of band; the new root is taken from a configured endpoint's chain (SPKI match + full
+  verification), key and leaf are untouched, and the state is rewritten in three loadable steps (bundle with
+  both roots, new pin, bundle without the old root). One audit event per use (Application log 4102/4103).
 - **Persistence.** `ca-bundle.pem`, `ca-pin.txt`, `endpoints.txt`, `key.pem` (0600, PKCS#8), `leaf.pem`
   in a 0700 directory, each by temp+rename, leaf last; `Load` re-validates everything. Nothing is written on
   any failure. On non-unix hosts the package fails closed (no state written or read) until the owner-only DACL lands in T-0291. Load returns ErrExpired for an expired leaf or CA.
-- **Dial-out.** `dial.DialOut(addr, state)` uses `Credentials`: TLS 1.3, roots exactly the pinned CAs.
+- **Dial-out.** `dial.DialOut(addr, state)` uses `Credentials`: TLS 1.3, roots exactly `State.Roots` (the pinned server CA); a leaf signed by a tenant CA is refused as a server.
   Nothing retries or falls back; retry policy is the caller's and must reuse the same pin.
 - **Seam.** `dial` imports no generated proto; the role package supplies `Exchange` (fleetv1 Enroll call).
 

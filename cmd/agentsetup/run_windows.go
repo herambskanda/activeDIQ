@@ -22,6 +22,14 @@ const serviceAccount = `NT SERVICE\activeDIQAgent`
 const channelReadAccess = 0x1
 
 func run(args []string) int {
+	if pin, ok := parseRepin(args); ok {
+		root, err := dataRoot()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "agentsetup:", err)
+			return 1
+		}
+		return repin(filepath.Join(root, "enrol"), pin, auditRepin)
+	}
 	verb, ok := parseVerb(args)
 	if !ok {
 		return usage()
@@ -326,4 +334,20 @@ func warnRevokeFailed(cause error) {
 	}
 	defer l.Close()
 	_ = l.Warning(4101, "uninstall could not remove the Security event log read permission for NT SERVICE\\activeDIQAgent; remove it with wevtutil sl Security or by repeating the uninstall. Cause: "+cause.Error())
+}
+
+// auditRepin records a use of repin in the Application log (event 4102: success, 4103: failure) and
+// on stderr. Pins are public values; no key material is involved.
+func auditRepin(msg string, failed bool) {
+	fmt.Fprintln(os.Stderr, "agentsetup:", msg)
+	l, err := eventlog.Open("activeDIQAgent")
+	if err != nil {
+		return
+	}
+	defer l.Close()
+	if failed {
+		_ = l.Error(4103, msg)
+		return
+	}
+	_ = l.Info(4102, msg)
 }
