@@ -47,8 +47,8 @@ func buildConsole(db *store.DB, sink audit.Sink, ks authn.KeySource, log *slog.L
 }
 
 // ports are the API ports with the real authentication, RBAC and step-up behind the given limiter.
-func (c *consoleStack) ports(lim apihost.Limiter, az operation.Authorizer) apihost.Ports {
-	return apihost.Ports{Authn: c.Authn, Authz: consoleAuthz{az}, Limits: lim, StepUp: c.StepUp}
+func (c *consoleStack) ports(lim apihost.Limiter, az operation.Authorizer, cat apihost.Permissions) apihost.Ports {
+	return apihost.Ports{Authn: c.Authn, Authz: consoleAuthz{az, cat}, Limits: lim, StepUp: c.StepUp}
 }
 
 // consoleAuthz is apihost's chain step 12: may this principal hold the operation's permission at all.
@@ -56,10 +56,13 @@ func (c *consoleStack) ports(lim apihost.Limiter, az operation.Authorizer) apiho
 // console session is a principal here (an API token's constraint is not read yet, so it is refused), and
 // a platform-scoped operation has no authorizer yet. An operation whose object scope is narrower than the
 // tenant is authorised again by its own handler against the real target (the attestation does).
-type consoleAuthz struct{ az operation.Authorizer }
+type consoleAuthz struct {
+	az  operation.Authorizer
+	cat apihost.Permissions // the permission catalogue: a permission outside it is denied before RBAC is asked
+}
 
 func (a consoleAuthz) Allow(ctx context.Context, p apihost.Principal, permission, scope string) (bool, error) {
-	if a.az == nil || scope != "tenant" || p.Kind != apihost.KindSession || p.ID == "" {
+	if a.az == nil || !a.cat.Has(permission) || scope != "tenant" || p.Kind != apihost.KindSession || p.ID == "" {
 		return false, nil
 	}
 	t, err := tenantref.TenantFromText(p.Tenant)
