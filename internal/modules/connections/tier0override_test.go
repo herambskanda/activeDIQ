@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/directory"
+	dirclient "github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/modules/connections"
 	"github.com/skenzeriq/activediq/internal/platform"
@@ -20,6 +21,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/module/moduletest"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
+	"github.com/skenzeriq/activediq/internal/platform/rbac"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
@@ -95,6 +97,13 @@ type env struct {
 // refusedDraft builds a draft connection whose activation was refused for over-privilege alone.
 func refusedDraft(t *testing.T, s *storetest.Server) *env {
 	t.Helper()
+	return refusedDraftWith(t, s, nil, nil)
+}
+
+// refusedDraftWith is refusedDraft with the runner's Authorizer and Facts port replaced by the real ones when
+// non-nil; seed runs against the tenant before the runner is built.
+func refusedDraftWith(t *testing.T, s *storetest.Server, mk func(*testing.T, *store.DB, tenant.ID) operation.Authorizer, facts operation.LiveFacts) *env {
+	t.Helper()
 	d := s.NewDatabase(t)
 	d.Migrate(t)
 	tid := tenanttest.Seed(t, d.ExecOwner, "A")
@@ -128,7 +137,11 @@ func refusedDraft(t *testing.T, s *storetest.Server) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner, err := operation.NewRunner(operation.Config{DB: db, Audit: rec, Authz: holders{"owner": true, "tok": true, "sys": true}, Registry: r,
+	var az operation.Authorizer = holders{"owner": true, "tok": true, "sys": true}
+	if mk != nil {
+		az = mk(t, db, tid)
+	}
+	runner, err := operation.NewRunner(operation.Config{DB: db, Audit: rec, Authz: az, Facts: facts, Registry: r,
 		Now: time.Now, NewID: nil})
 	if err != nil {
 		t.Fatal(err)
@@ -199,7 +212,7 @@ func TestOverrideSucceeds(t *testing.T) {
 		}
 		ev := e.rec.last()
 		if ev.Kind != connections.AuditTier0OverrideAcknowledged || ev.Outcome != audit.Success || ev.Actor.Requester.ID != "owner" ||
-			ev.Target.GUID != string(e.conn.ID) || ev.Target.Class != "connection" {
+			ev.Target.Class != rbac.TargetClassTenant {
 			t.Fatalf("audit event %+v", ev)
 		}
 		for _, ch := range ev.Changes {
@@ -259,6 +272,58 @@ func TestOverrideRefusesNonHumanRequesters(t *testing.T) {
 				t.Errorf("%s requester recorded an override", kind)
 			}
 			e.assertNoOverride(t)
+		}
+	})
+}
+
+// The override runs through the real rbac.Authorizer and the server's facts reader (ConnectorFacts, no
+// directory reads wired): the connection target is answered without a directory read, the tenant owner is
+// granted, and the acknowledgement commits an audit event whose connection target passes audit.Validate.
+func TestOverrideThroughRealAuthorizer(t *testing.T) {
+	const owner = "33333333-3333-4333-8333-333333333333"
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		mk := func(t *testing.T, db *store.DB, tid tenant.ID) operation.Authorizer {
+			if err := db.WithTenant(context.Background(), tid, func(ctx context.Context, tx store.Tx) error {
+				if err := rbac.SeedBuiltIns(ctx, tx, tid); err != nil {
+					return err
+				}
+				var aid string
+				if err := tx.QueryRow(ctx, `INSERT INTO public.authz_assignments (tenant_id, account_id, role_id, valid_from, granted_by)
+SELECT $1::uuid, $2::uuid, r.id, now() - interval '1 hour', 'seed' FROM public.authz_roles r WHERE r.tenant_id = $1::uuid AND r.role_name = $3 RETURNING id::text`,
+					tid.String(), owner, rbac.TenantOwnerRole).Scan(&aid); err != nil {
+					return err
+				}
+				_, err := tx.Exec(ctx, `INSERT INTO public.authz_assignment_roots (tenant_id, assignment_id, ordinal, is_exclude, root_kind, connection_id, root_guid)
+VALUES ($1::uuid, $2::uuid, 0, false, 'tenant', $1::uuid, $1::uuid)`, tid.String(), aid)
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			src, err := rbac.NewStore(db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			az, err := rbac.New(src)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return az
+		}
+		e := refusedDraftWith(t, s, mk, dirclient.NewConnectorFacts(nil))
+		res, err := e.runner.RunStore(context.Background(), e.request(owner, true, connections.TypedAcknowledgement))
+		if err != nil {
+			t.Fatalf("override through the real authorizer: %v", err)
+		}
+		var out connections.Tier0OverrideOutcome
+		if err := json.Unmarshal(res.Steps[0].Outcome.Payload, &out); err != nil || !out.Activated {
+			t.Fatalf("outcome %+v %v", out, err)
+		}
+		ev := e.rec.last()
+		if ev.Kind != connections.AuditTier0OverrideAcknowledged || ev.Outcome != audit.Success || ev.Target.Class != rbac.TargetClassTenant {
+			t.Fatalf("audit event %+v", ev)
+		}
+		if err := ev.Validate(); err != nil {
+			t.Fatalf("the committed override event must pass audit.Validate: %v", err)
 		}
 	})
 }

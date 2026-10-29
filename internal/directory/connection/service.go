@@ -474,9 +474,7 @@ func (s *Service) recordInterrupted(ctx context.Context, tid tenant.ID, conn Con
 func (s *Service) base(kind audit.Kind, actor authority.Chain, c Connection, o audit.Outcome, reason string) audit.Event {
 	return audit.Event{
 		ID: newEventID(), Kind: kind, At: s.now(), Actor: actor,
-		// The connection is not a directory object: naming it as one (Connection and GUID both set) makes the
-		// audit chain treat it as a personal subject and refuse every event that records a value change.
-		Target:    authority.TargetRef{GUID: string(c.ID), Class: "connection"},
+		Target:    authority.TargetRef{Connection: string(c.ID), GUID: string(c.ID), Class: "connection"},
 		Component: "connection", Outcome: o, Reason: reason,
 	}
 }
