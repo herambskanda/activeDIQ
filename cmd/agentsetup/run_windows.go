@@ -23,6 +23,7 @@ const serviceAccount = `NT SERVICE\activeDIQAgent`
 const channelReadAccess = 0x1
 
 func run(args []string) int {
+	initProcs()
 	if pin, ok := parseRepin(args); ok {
 		root, err := dataRoot()
 		if err != nil {
@@ -79,14 +80,18 @@ func serviceSID() (*windows.SID, error) {
 // EvtSaveChannelConfig: https://learn.microsoft.com/en-us/windows/win32/api/winevt/
 // The property id of EvtChannelConfigAccess is 5 [UNVERIFIED — lab].
 
-var (
-	wevtapi   = windows.NewLazySystemDLL("wevtapi.dll")
-	pOpenCfg  = wevtapi.NewProc("EvtOpenChannelConfig")
-	pGetCfg   = wevtapi.NewProc("EvtGetChannelConfigProperty")
-	pSetCfg   = wevtapi.NewProc("EvtSetChannelConfigProperty")
-	pSaveCfg  = wevtapi.NewProc("EvtSaveChannelConfig")
+// The procs are bound in initProcs, called first thing in run, so that no package-level initialiser
+// runs a call before main has hardened the process (TM-TB16-T6).
+var pOpenCfg, pGetCfg, pSetCfg, pSaveCfg, pCloseEvt *windows.LazyProc
+
+func initProcs() {
+	wevtapi := windows.NewLazySystemDLL("wevtapi.dll")
+	pOpenCfg = wevtapi.NewProc("EvtOpenChannelConfig")
+	pGetCfg = wevtapi.NewProc("EvtGetChannelConfigProperty")
+	pSetCfg = wevtapi.NewProc("EvtSetChannelConfigProperty")
+	pSaveCfg = wevtapi.NewProc("EvtSaveChannelConfig")
 	pCloseEvt = wevtapi.NewProc("EvtClose")
-)
+}
 
 const (
 	evtChannelConfigAccess = 5
