@@ -21,16 +21,16 @@ import (
 // consoleStack is the console authentication stack the API ports and the attestation share: one session
 // store, the cookie-session Authenticator over it, and the step-up check over the same store.
 //
-// StepUp carries no TOTP factor yet: the tenant data-encryption-key source authn.Service needs is not
-// composed (no keys.DEK provider exists in the server role). Fresh and FreshSession only read mfa_at, so
-// they work; Reverify refuses ("not fully configured"), which is the safe direction.
+// StepUp carries the TOTP factor: authn.Service over the tenant data-encryption-key source (the store-backed
+// keys.KeySource, unwrapped by the boot-unlocked KEK provider) and the store as its failure recorder. A
+// tenant with no active key, or a failed unwrap, makes Reverify refuse (fail closed, "keys: <Code>" only).
 type consoleStack struct {
 	Sessions *authn.Store
 	StepUp   *authn.StepUp
 	Authn    *authnhttp.Authenticator
 }
 
-func buildConsole(db *store.DB, sink audit.Sink, log *slog.Logger) (*consoleStack, error) {
+func buildConsole(db *store.DB, sink audit.Sink, ks authn.KeySource, log *slog.Logger) (*consoleStack, error) {
 	sessions, err := authn.New(authn.Config{DB: db, Audit: sink})
 	if err != nil {
 		return nil, fmt.Errorf("server: session store: %w", err)
@@ -39,7 +39,11 @@ func buildConsole(db *store.DB, sink audit.Sink, log *slog.Logger) (*consoleStac
 	if err != nil {
 		return nil, fmt.Errorf("server: session authenticator: %w", err)
 	}
-	return &consoleStack{Sessions: sessions, StepUp: &authn.StepUp{Sessions: sessions}, Authn: au}, nil
+	if ks == nil {
+		return nil, errors.New("server: console: no tenant key source for the TOTP factor")
+	}
+	totp := &authn.Service{Keys: ks, Failures: db}
+	return &consoleStack{Sessions: sessions, StepUp: &authn.StepUp{Sessions: sessions, TOTP: totp}, Authn: au}, nil
 }
 
 // ports are the API ports with the real authentication, RBAC and step-up behind the given limiter.

@@ -23,6 +23,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/capability"
 	"github.com/skenzeriq/activediq/internal/platform/fleet"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
+	"github.com/skenzeriq/activediq/internal/platform/keys"
 	"github.com/skenzeriq/activediq/internal/platform/limiter"
 	"github.com/skenzeriq/activediq/internal/platform/module"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
@@ -47,7 +48,7 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	if err != nil {
 		return fmt.Errorf("server: %w", err)
 	}
-	id, err := apiIdentity(cfg, kc, time.Now())
+	id, kekp, err := apiIdentityProvider(cfg, kc, time.Now())
 	if err != nil {
 		return err
 	}
@@ -118,7 +119,7 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	}
 	// The console authentication stack: sessions, the cookie Authenticator and the step-up check. The
 	// tenant-owner writer shares its session store (it ends a changed owner's sessions).
-	console, err := buildConsole(db, ok.Chainer, slog.Default())
+	console, err := buildConsole(db, ok.Chainer, keys.NewStore(kekp).KeySource(), slog.Default())
 	if err != nil {
 		return err
 	}
@@ -206,23 +207,30 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 // apiIdentity validates the listen address against the TLS configuration and loads or generates the
 // per-install certificate.
 func apiIdentity(cfg config.Config, kc KEKConfig, now time.Time) (apitls.Identity, error) {
+	id, _, err := apiIdentityProvider(cfg, kc, now)
+	return id, err
+}
+
+// apiIdentityProvider is apiIdentity that also returns the unlocked KEK provider, so the keystore is opened
+// (and its passphrase stretched) once per boot and the same provider serves the tenant DEK source.
+func apiIdentityProvider(cfg config.Config, kc KEKConfig, now time.Time) (apitls.Identity, keys.Provider, error) {
 	if err := cfg.ValidateAPIListen(); err != nil {
-		return apitls.Identity{}, fmt.Errorf("server: %w", err)
+		return apitls.Identity{}, nil, fmt.Errorf("server: %w", err)
 	}
 	// The KEK provider is unlocked first and any failure (no keystore, wrong passphrase, corrupt file) stops
 	// startup: there is no fallback to an unsealed key and nothing is generated here.
 	if err := kc.checkPlacement(cfg.APITLSDir); err != nil {
-		return apitls.Identity{}, fmt.Errorf("server: %w", err)
+		return apitls.Identity{}, nil, fmt.Errorf("server: %w", err)
 	}
 	p, err := platformKeyProvider(kc)
 	if err != nil {
-		return apitls.Identity{}, fmt.Errorf("server: key provider: %w", err)
+		return apitls.Identity{}, nil, fmt.Errorf("server: key provider: %w", err)
 	}
 	id, err := apitls.LoadOrGenerateSealed(cfg.APITLSDir, cfg.APIAddr, now, p)
 	if err != nil {
-		return apitls.Identity{}, fmt.Errorf("server: api tls: %w", err)
+		return apitls.Identity{}, nil, fmt.Errorf("server: api tls: %w", err)
 	}
-	return id, nil
+	return id, p, nil
 }
 
 // buildAPIPorts makes the API handler over the given ports: Run mounts the console stack's.
