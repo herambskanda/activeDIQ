@@ -1,6 +1,8 @@
 package main
 
 import (
+	"archive/zip"
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -451,6 +453,86 @@ func TestA1Installer(t *testing.T) {
 			t.Skip("directory permissions are not enforced (running as root)")
 		}
 		wantViolation(t, checkInstaller(r), "cannot be walked")
+	}
+	// Security-architect review of T-0677, attempt 2: WiX is classified by CONTENT, not by name.
+	{
+		inc := func(rel string) string {
+			return `<Project><ItemGroup><Compile Include="` + rel + `"/></ItemGroup></Project>`
+		}
+		for _, name := range []string{"evil.xml", "evil.golden"} { // 1a, 1b: the ticket's case with the file renamed
+			r := t.TempDir()
+			write(t, r, "packaging/windows/A.wixproj", inc(`..\..\tools\fitness\x\testdata\`+name))
+			write(t, r, "tools/fitness/x/testdata/"+name, lsys)
+			wantViolation(t, checkInstaller(r), "LocalSystem")
+		}
+		{ // 1c: <?include?> takes any file name
+			r := t.TempDir()
+			write(t, r, "packaging/windows/core.wxs", `<Wix><?include ../../docs/evil.txt ?></Wix>`)
+			write(t, r, "docs/evil.txt", `<Include><ServiceInstall Name="x" Account="LocalSystem"/></Include>`)
+			wantViolation(t, checkInstaller(r), "LocalSystem")
+		}
+		{ // a long prolog does not hide the root element
+			r := t.TempDir()
+			write(t, r, "docs/evil.txt", "<!--"+strings.Repeat("x", 100<<10)+"-->"+lsys)
+			wantViolation(t, checkInstaller(r), "LocalSystem")
+		}
+		{ // 2: prebuilt WiX intermediates, by extension and as a renamed zip
+			r := t.TempDir()
+			write(t, r, "vendor/core.wixlib", "PK")
+			wantViolation(t, checkInstaller(r), "prebuilt WiX intermediate")
+			r = t.TempDir()
+			var zb bytes.Buffer
+			zw := zip.NewWriter(&zb)
+			w, _ := zw.Create("wix-ir.json")
+			w.Write([]byte("{}"))
+			zw.Close()
+			write(t, r, "vendor/blob.dat", zb.String())
+			wantViolation(t, checkInstaller(r), "wix-ir.json")
+			r = t.TempDir() // an ordinary zip is not flagged
+			zb.Reset()
+			zw = zip.NewWriter(&zb)
+			w, _ = zw.Create("readme.txt")
+			w.Write([]byte("x"))
+			zw.Close()
+			write(t, r, "vendor/blob.dat", zb.String())
+			if res := checkInstaller(r); len(res.Violations) != 0 {
+				t.Fatalf("ordinary zip flagged: %v", res.Violations)
+			}
+		}
+		{ // 3a: a dangling link that is not WiX-named
+			r := t.TempDir()
+			write(t, r, "packaging/windows/A.wixproj", inc(`src\*.wxs`))
+			if err := os.Symlink("/nonexistent/agent-src", filepath.Join(r, "packaging/windows/src")); err != nil {
+				t.Skip("symlinks unavailable:", err)
+			}
+			wantViolation(t, checkInstaller(r), "cannot be resolved")
+		}
+		{ // 3b: a file link that leaves the repo
+			outside := t.TempDir()
+			write(t, outside, "evil.xml", lsys)
+			r := t.TempDir()
+			write(t, r, "packaging/windows/agent.wxs", goodWxs)
+			if err := os.Symlink(filepath.Join(outside, "evil.xml"), filepath.Join(r, "tools_fx.dat")); err != nil {
+				t.Skip("symlinks unavailable:", err)
+			}
+			wantViolation(t, checkInstaller(r), "leaves the repository")
+		}
+		{ // 3c: an in-repo file link to a WiX document by content
+			r := t.TempDir()
+			write(t, r, "docs/evil.xml", lsys)
+			if err := os.Symlink(filepath.Join(r, "docs/evil.xml"), filepath.Join(r, "fx.dat")); err != nil {
+				t.Skip("symlinks unavailable:", err)
+			}
+			wantViolation(t, checkInstaller(r), "symbolic link")
+		}
+		{ // negative: Go source holding the snippet in a string literal is not WiX
+			r := t.TempDir()
+			write(t, r, "tools/x/fix.go", "package x\n\nconst S = `"+lsys+"`\n")
+			write(t, r, "tools/x/fix.sh", "echo '"+lsys+"'\n")
+			if res := checkInstaller(r); len(res.Violations) != 0 || res.Inactive == "" {
+				t.Fatalf("a Go/sh file holding the snippet must not be WiX: %+v", res)
+			}
+		}
 	}
 	// Fifth review, 3: every service gets the full pin; an allowlisted Id is the only exception.
 	helper := `<Wix><Package><Component><ServiceInstall Id="SkzHelper" Name="skzHelper" Account="NT SERVICE\skzHelper"><ServiceConfig ServiceSid="unrestricted" RequiredPrivileges="SeDebugPrivilege,SeBackupPrivilege"/></ServiceInstall></Component></Package></Wix>`
