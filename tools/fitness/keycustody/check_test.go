@@ -1,0 +1,274 @@
+package main
+
+// Every rule has a fixture that breaks only that rule and must be reported (a check without a failing
+// case is not a check). Static rules run on synthetic trees; FF-KEY-1 runs mutations on the real migrated
+// schema in PostgreSQL (skipped locally without Docker, fatal under CI).
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/skenzeriq/activediq/tools/fitness/pgharness"
+)
+
+func tree(t *testing.T, files map[string]string) string {
+	t.Helper()
+	root := t.TempDir()
+	base := map[string]string{
+		"internal/platform/keys/store.go": "package keys\n\nvar _ = tablekind.Declare(tablekind.Table{Name: \"public.tenant_keys\", Entity: \"DM-02\", Kind: tablekind.Tenant, Sealed: []string{\"wrapped_dek\"}})\n\n" +
+			"func Provision() { _ = `INSERT INTO public.tenant_keys (tenant_id) VALUES ($1)` }\nfunc (k *KeySource) DEK() { _ = `SELECT 1 FROM public.tenant_keys` }\n",
+	}
+	for k, v := range files {
+		base[k] = v
+	}
+	for p, c := range base {
+		full := filepath.Join(root, filepath.FromSlash(p))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(c), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+func all(t *testing.T, root string) []string {
+	t.Helper()
+	files, err := loadGo(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vs := append(checkDeclarations(files), checkFFKey2(files)...)
+	v3, err := checkFFKey3(root, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v5, _ := checkFFKey5(files)
+	vs = append(append(vs, v3...), v5...)
+	var out []string
+	for _, v := range vs {
+		out = append(out, v.String())
+	}
+	return out
+}
+
+func TestStaticRules(t *testing.T) {
+	const imp = "package x\n\nimport \"github.com/skenzeriq/activediq/internal/platform/keys\"\n\n"
+	cases := []struct {
+		name  string
+		files map[string]string
+		want  string // substring; "" = clean
+	}{
+		{"clean tree", nil, ""},
+		{"errors.Unwrap is not Provider.Unwrap", map[string]string{"internal/a/a.go": imp + "func f(e error) { _ = errors.Unwrap(e); _ = keys.X }\n"}, ""},
+		{"FF-KEY-2 other package reads tenant_keys", map[string]string{"internal/a/a.go": "package a\n\nvar q = `SELECT * FROM tenant_keys`\n"}, "FF-KEY-2 [tenant_keys-owner]"},
+		{"FF-KEY-2 keys.NewDEK outside", map[string]string{"internal/a/a.go": imp + "func f() { keys.NewDEK() }\n"}, "FF-KEY-2 [dek-calls]"},
+		{"FF-KEY-2 keys.DEKFromBytes outside", map[string]string{"internal/a/a.go": imp + "func f() { keys.DEKFromBytes() }\n"}, "FF-KEY-2 [dek-calls]"},
+		{"FF-KEY-2 Provider.Unwrap outside", map[string]string{"internal/a/a.go": imp + "func f(p keys.Provider) { p.Unwrap(1, 2, 3) }\n"}, "FF-KEY-2 [provider-calls]"},
+		{"FF-KEY-2 Provider.Wrap outside", map[string]string{"internal/a/a.go": imp + "func f(p keys.Provider) { p.Wrap(1, 2) }\n"}, "FF-KEY-2 [provider-calls]"},
+		{"FF-KEY-2 composition root may call", map[string]string{"internal/compose/server/a.go": imp + "func f(p keys.Provider) { keys.NewDEK(); p.Wrap(1, 2) }\n"}, ""},
+		{"FF-KEY-3 KEK env read elsewhere", map[string]string{"internal/a/a.go": "package a\n\nvar e = \"" + kekPrefix + "DIR\"\n"}, "FF-KEY-3 [env-owner]"},
+		{"FF-KEY-3 passphrase field", map[string]string{"internal/a/a.go": "package a\n\ntype C struct{ Passphrase string }\n"}, "FF-KEY-3 [secret-field]"},
+		{"FF-KEY-3 KEK bytes field", map[string]string{"internal/a/a.go": "package a\n\ntype C struct{ KEK []byte }\n"}, "FF-KEY-3 [secret-field]"},
+		{"FF-KEY-3 passphrase flag", map[string]string{"cmd/s/m.go": "package main\n\nimport \"flag\"\n\nvar _ = flag.String(\"kek-passphrase\", \"\", \"\")\n"}, "FF-KEY-3 [secret-flag]"},
+		{"FF-KEY-3 passphrase-file flag is fine", map[string]string{"cmd/s/m.go": "package main\n\nimport \"flag\"\n\nvar _ = flag.String(\"kek-passphrase-file\", \"\", \"\")\n"}, ""},
+		{"FF-KEY-3 passphrase column", map[string]string{"migrations/0099_x.sql": "CREATE TABLE t (\n  passphrase text NOT NULL\n);\n"}, "FF-KEY-3 [secret-column]"},
+		{"FF-KEY-3 default provider in packaging", map[string]string{"packaging/linux-oci/compose.yaml": "environment:\n  " + kekPrefix + "PROVIDER: passphrase\n"}, "FF-KEY-3 [provider-default]"},
+		{"FF-KEY-5 insert from KeySource", map[string]string{"internal/platform/keys/extra.go": "package keys\n\nfunc (k *KeySource) Lazy() { _ = `insert into tenant_keys (a) values (1)` }\n"}, "FF-KEY-5 [insert-site]"},
+		{"FF-KEY-5 insert outside keys", map[string]string{"internal/a/a.go": "package a\n\nfunc Provision() { _ = `INSERT INTO tenant_keys (a) VALUES (1)` }\n"}, "FF-KEY-5 [insert-site]"},
+		{"FF-KEY-5 Rotate from a stray package", map[string]string{"internal/a/a.go": imp + "func f(s *keys.Store) { s.Rotate() }\n"}, "FF-KEY-5 [callers]"},
+		{"FF-KEY-5 ShredTenant from a stray package", map[string]string{"internal/a/a.go": imp + "func f(s *keys.Store) { s.ShredTenant() }\n"}, "FF-KEY-5 [callers]"},
+		{"FF-KEY-5 OpenMaintenance from a stray package", map[string]string{"internal/a/a.go": imp + "func f() { keys.OpenMaintenance() }\n"}, "FF-KEY-5 [callers]"},
+		{"FF-KEY-5 OpenMaintenance from the rewrap command", map[string]string{"cmd/server/rewrap.go": imp + "func f() { keys.OpenMaintenance() }\n"}, ""},
+		{"FF-KEY-1 declaration without Sealed", map[string]string{"internal/platform/keys/store.go": "package keys\n\nvar _ = tablekind.Declare(tablekind.Table{Name: \"public.tenant_keys\", Entity: \"DM-02\", Kind: tablekind.Tenant})\n\nfunc Provision() { _ = `INSERT INTO tenant_keys` }\n"}, "FF-KEY-1 [sealed-declaration]"},
+		{"FF-KEY-1 installation_kek not global", map[string]string{"internal/platform/keys/kek.go": "package keys\n\nvar _ = tablekind.Declare(tablekind.Table{Name: \"public.installation_kek\", Entity: \"DM-02\", Kind: tablekind.Tenant})\n"}, "FF-KEY-1 [global-declaration]"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := strings.Join(all(t, tree(t, c.files)), "\n")
+			if c.want == "" {
+				if got != "" {
+					t.Fatalf("clean input rejected:\n%s", got)
+				}
+				return
+			}
+			if !strings.Contains(got, c.want) {
+				t.Fatalf("want a violation containing %q, got:\n%s", c.want, got)
+			}
+			// Only that rule family fires: a fixture must break the rule it names.
+			fam := c.want[:strings.Index(c.want, " [")]
+			for _, l := range strings.Split(got, "\n") {
+				if !strings.Contains(l, fam) && !strings.Contains(c.name, "insert outside keys") { // that one is also a tenant_keys-owner breach
+					t.Errorf("fixture for %s also tripped another rule: %s", fam, l)
+				}
+			}
+		})
+	}
+}
+
+func TestRunBindingsReportsMissingFailedSkipped(t *testing.T) {
+	b := []binding{{"FF-KEY-9", "what", "./p", []string{"TestOk", "TestBad", "TestSkip", "TestGone", "TestSubSkip"}}}
+	out := `{"Action":"pass","Test":"TestOk"}
+{"Action":"fail","Test":"TestBad"}
+{"Action":"skip","Test":"TestSkip"}
+{"Action":"skip","Test":"TestSubSkip/db"}
+{"Action":"pass","Test":"TestSubSkip"}
+`
+	vs, err := runBindings(context.Background(), ".", b, func(context.Context, string, string, []string) ([]byte, error) { return []byte(out), nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules := map[string]bool{}
+	for _, v := range vs {
+		rules[v.Rule+" "+v.Where] = true
+	}
+	for _, w := range []string{"test-failed ./p TestBad", "test-skipped ./p TestSkip", "test-missing ./p TestGone", "test-skipped ./p TestSubSkip"} {
+		if !rules[w] {
+			t.Errorf("missing violation %q in %v", w, rules)
+		}
+	}
+	if len(vs) != 4 {
+		t.Errorf("want 4 violations, got %d: %v", len(vs), vs)
+	}
+}
+
+func TestBoundTestsExist(t *testing.T) {
+	// A bound test that was renamed or deleted must fail the build; here the real names must exist in
+	// the repository's sources (the job itself also fails on test-missing when it runs them).
+	for _, b := range defaultBindings {
+		dir := filepath.Join("..", "..", "..", strings.TrimPrefix(b.Pkg, "./"))
+		var src strings.Builder
+		ents, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range ents {
+			if strings.HasSuffix(e.Name(), "_test.go") {
+				bs, _ := os.ReadFile(filepath.Join(dir, e.Name()))
+				src.Write(bs)
+			}
+		}
+		for _, name := range b.Tests {
+			if !strings.Contains(src.String(), "func "+name+"(") {
+				t.Errorf("%s: bound test %s does not exist in %s", b.Check, name, b.Pkg)
+			}
+		}
+	}
+}
+
+// --- FF-KEY-1 against PostgreSQL ---
+
+var (
+	srvMu sync.Mutex
+	srv   *pgharness.Server
+)
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if srv != nil {
+		srv.Stop()
+	}
+	os.Exit(code)
+}
+
+func server(t *testing.T) *pgharness.Server {
+	t.Helper()
+	srvMu.Lock()
+	defer srvMu.Unlock()
+	if srv != nil {
+		return srv
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	if err := pgharness.DockerAvailable(ctx); err != nil {
+		if os.Getenv("CI") != "" {
+			t.Fatalf("Docker is required in CI: %v", err)
+		}
+		t.Skipf("SKIPPED, NOT PROVEN: %v", err)
+	}
+	s, err := pgharness.StartServer(ctx, "18", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv = s
+	return s
+}
+
+func TestFFKey1Schema(t *testing.T) {
+	s := server(t)
+	ms, ps, err := pgharness.ListMigrations(filepath.Join("..", "..", "..", "migrations"))
+	if err != nil || len(ps) > 0 || len(ms) == 0 {
+		t.Fatalf("migrations: %v %v", err, ps)
+	}
+	const app = "activediq_app"
+	cases := []struct {
+		name string
+		sql  []string
+		want string
+	}{
+		{"clean schema", nil, ""},
+		{"RLS not forced", []string{`ALTER TABLE public.tenant_keys NO FORCE ROW LEVEL SECURITY`}, "[rls]"},
+		{"RLS off", []string{`ALTER TABLE public.tenant_keys DISABLE ROW LEVEL SECURITY`}, "[rls]"},
+		{"active index dropped", []string{`DROP INDEX public.tenant_keys_one_active`}, "[one-active]"},
+		{"active index not partial", []string{`DROP INDEX public.tenant_keys_one_active`, `CREATE UNIQUE INDEX tenant_keys_one_active ON public.tenant_keys (tenant_id)`}, "[one-active]"},
+		{"trigger dropped", []string{`DROP TRIGGER tenant_keys_guard ON public.tenant_keys`}, "[transition-trigger]"},
+		{"trigger not ALWAYS", []string{`ALTER TABLE public.tenant_keys ENABLE TRIGGER tenant_keys_guard`}, "[transition-trigger]"},
+		{"trigger disabled", []string{`ALTER TABLE public.tenant_keys DISABLE TRIGGER tenant_keys_guard`}, "[transition-trigger]"},
+		{"runtime DELETE", []string{`GRANT DELETE ON public.tenant_keys TO ` + app}, "tenant_keys FF-KEY-1 [runtime-privilege]: the runtime role holds DELETE"},
+		{"runtime TRUNCATE", []string{`GRANT TRUNCATE ON public.tenant_keys TO ` + app}, "holds TRUNCATE"},
+		{"runtime UPDATE tenant_id", []string{`GRANT UPDATE (tenant_id) ON public.tenant_keys TO ` + app}, "tenant_keys.tenant_id FF-KEY-1 [runtime-privilege]"},
+		{"runtime UPDATE version", []string{`GRANT UPDATE (version) ON public.tenant_keys TO ` + app}, "tenant_keys.version FF-KEY-1 [runtime-privilege]"},
+		{"runtime UPDATE created_at", []string{`GRANT UPDATE (created_at) ON public.tenant_keys TO ` + app}, "tenant_keys.created_at FF-KEY-1 [runtime-privilege]"},
+		{"table missing", []string{`DROP TABLE public.tenant_keys CASCADE`}, "[table-missing]"},
+		{"installation_kek runtime UPDATE", []string{`CREATE TABLE public.installation_kek (id int PRIMARY KEY, check_value bytea)`, `GRANT UPDATE ON public.installation_kek TO ` + app}, "installation_kek FF-KEY-1 [runtime-privilege]: the runtime role holds UPDATE"},
+		{"installation_kek runtime DELETE", []string{`CREATE TABLE public.installation_kek (id int PRIMARY KEY)`, `GRANT DELETE ON public.installation_kek TO ` + app}, "installation_kek FF-KEY-1 [runtime-privilege]: the runtime role holds DELETE"},
+		{"installation_kek select-only is clean", []string{`CREATE TABLE public.installation_kek (id int PRIMARY KEY)`, `GRANT SELECT ON public.installation_kek TO ` + app}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+			defer cancel()
+			d, err := s.NewDatabase(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer d.Drop(ctx)
+			if failed, msg, err := pgharness.Apply(ctx, d, ms); err != nil || failed != "" {
+				t.Fatalf("apply: %v %s %s", err, failed, msg)
+			}
+			if len(c.sql) > 0 {
+				a, err := d.Admin(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, q := range c.sql {
+					if _, err := a.Exec(ctx, q); err != nil {
+						t.Fatalf("%s: %v", q, err)
+					}
+				}
+				a.Close(ctx)
+			}
+			vs, _, err := checkFFKey1(ctx, d)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var lines []string
+			for _, v := range vs {
+				lines = append(lines, v.String())
+			}
+			got := strings.Join(lines, "\n")
+			if c.want == "" && got != "" {
+				t.Fatalf("clean input rejected:\n%s", got)
+			}
+			if c.want != "" && !strings.Contains(got, c.want) {
+				t.Fatalf("want %q, got:\n%s", c.want, got)
+			}
+		})
+	}
+}

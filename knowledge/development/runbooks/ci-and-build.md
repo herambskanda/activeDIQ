@@ -179,6 +179,7 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
   change the score to make the files agree without the second scorer
   (`security-disclosure.md` §3.2). If the gate says `target_met` is wrong, the advisory must admit the miss.
 - **`fitness-audit`** (A1–A9 of ADR-0005, TM-F-AUDIT; T-0133): `make fitness-audit` (needs Docker).
+- **`fitness-keys`** (FF-KEY-1..6 of `keys-custody-design.md` §7; T-0525): `make fitness-keys` (needs Docker for FF-KEY-1 and the bound database tests). A violation prints `file:line CHECK [rule]: …`. FF-KEY-2/3/5 are source scans (`-static-only` runs just those; `internal/compose/server` is the only place that may name the KEK settings, and `internal/platform/keys` the only owner of `tenant_keys`). Parts whose code has not landed are printed `pending` on every run (not a pass): the boot checks and `keys provision --missing` (FF-KEY-4/5), `installation_kek` privileges, the problem-body/audit non-leak and transition property test (FF-KEY-6). The ticket that lands each removes its `pending` line and adds the test to `bindings.go`; when `Rotate`, `ShredTenant` or `OpenMaintenance` land, add their allowed caller packages to `callersAllow` in `static5.go` in the same change.
   - **A1** runs the real migrations in PostgreSQL 16 and 18 containers and prints
     `A1 <rule> [<table>]: …` for a runtime-role privilege (UPDATE/DELETE/TRUNCATE on the audit tables,
     UPDATE on the personal and secret side tables, anything beyond SELECT/INSERT/UPDATE on
