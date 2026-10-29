@@ -199,7 +199,7 @@ func TestOverrideSucceeds(t *testing.T) {
 		}
 		ev := e.rec.last()
 		if ev.Kind != connections.AuditTier0OverrideAcknowledged || ev.Outcome != audit.Success || ev.Actor.Requester.ID != "owner" ||
-			ev.Target.Connection != string(e.conn.ID) {
+			ev.Target.GUID != string(e.conn.ID) || ev.Target.Class != "connection" {
 			t.Fatalf("audit event %+v", ev)
 		}
 		for _, ch := range ev.Changes {

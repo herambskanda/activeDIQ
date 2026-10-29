@@ -90,7 +90,7 @@ func Tier0OverrideAcknowledge() (operation.Action, error) {
 			}
 			return []operation.TypedStep[overridePayload]{{
 				Plan: operation.StepPlan{
-					Target: authority.TargetRef{Connection: string(cid), GUID: string(cid), Class: "connection"},
+					Target: authority.TargetRef{GUID: string(cid), Class: "connection"},
 					Kind:   "connection.tier0_override.acknowledge",
 					Diff: []operation.Change{{Attribute: "tier0_installation", Before: []string{"false"}, After: []string{"true"}}, {Attribute: "verification_id", After: []string{string(vid)}},
 						{Attribute: "acknowledged_count", After: []string{strconv.Itoa(ev.Count)}},
