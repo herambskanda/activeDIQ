@@ -40,8 +40,10 @@ func TestAPIListenerDoesNotServeMetrics(t *testing.T) {
 		}
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, r)
-		if rec.Code == http.StatusOK || strings.Contains(rec.Body.String(), "activediq_keys_dek_unwraps_total") {
-			t.Fatalf("API listener served /metrics: %d", rec.Code)
+		// With a console embedded the listener answers the console shell for any non-API path (T-0686); what
+		// must never be served is the exposition.
+		if strings.Contains(rec.Body.String(), "activediq_keys_dek_unwraps_total") || strings.HasPrefix(rec.Header().Get("Content-Type"), "text/plain") {
+			t.Fatalf("API listener served /metrics: %d %s", rec.Code, rec.Header().Get("Content-Type"))
 		}
 	}
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/apitls"
 	"github.com/skenzeriq/activediq/internal/platform/capability"
+	"github.com/skenzeriq/activediq/internal/webui"
 
 	"github.com/skenzeriq/activediq/internal/platform/fleet/gateway"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
@@ -276,7 +277,7 @@ func buildAPIPortsWith(cfg config.Config, policy apihost.Policy, ports apihost.P
 	if err != nil {
 		return nil, fmt.Errorf("server: api contract: %w", err)
 	}
-	s, err := apihost.Build(doc, tags, policy, apiCatalogue, ports, apihost.WithBodyBudget(cfg.APIBodyBudget), apihost.WithTrustedProxies(cfg.TrustedProxies))
+	s, err := apihost.Build(doc, tags, policy, apiCatalogue, ports, apihost.WithBodyBudget(cfg.APIBodyBudget), apihost.WithTrustedProxies(cfg.TrustedProxies), apihost.WithConsole(webui.Console()))
 	if err != nil {
 		return nil, fmt.Errorf("server: build api: %w", err)
 	}
