@@ -18,6 +18,8 @@ github.com/skenzeriq/activediq/internal/platform/agent
 github.com/skenzeriq/activediq/internal/platform/agentpolicy
 github.com/skenzeriq/activediq/internal/platform/fleet
 github.com/skenzeriq/activediq/internal/platform/fleet/dial
+# tunnelclient (T-0665): the dial-out client extracted from compose/agent. Imports only fleet, fleet/dial, the fleet proto and grpc (all already allowed); outbound mTLS dial only, no listener, no process, no file access.
+github.com/skenzeriq/activediq/internal/platform/fleet/tunnelclient
 github.com/skenzeriq/activediq/internal/platform/tenant
 # prochardening (T-0644): RLIMIT_CORE=0, PR_SET_DUMPABLE=0, refuses GOTRACEBACK=crash. Reaches only the
 # process's own limits and environment through syscall/os; no socket, no child process, no file write.
