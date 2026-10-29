@@ -282,3 +282,40 @@ func TestVerifyLogsCodeOnly(t *testing.T) {
 		}
 	}
 }
+
+// T-0665: a handler bound to a connection by configuration refuses any other connection_id before it
+// touches the directory, and LOCAL_RECORD_FAILED closes the bound connection's gate.
+func TestVerifyBoundConnectionMismatchRefused(t *testing.T) {
+	w := newWorld(t)
+	h := w.handler(t, nil, nil)
+	h.boundConn = "conn-2"
+	st := &fakeStream{}
+	err := h.VerifyConnection(context.Background(), request(w), st) // names conn-1
+	if ce := connErr(t, err); ce.Code != v1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT {
+		t.Fatalf("mismatch: %v", ce)
+	}
+	if len(st.sent) != 0 {
+		t.Fatal("events sent for a refused connection")
+	}
+	if d := h.gate.Check("conn-1", true, nil); len(d.VerificationID) != 0 {
+		t.Fatal("a refused request fed the gate")
+	}
+}
+
+func TestVerifyBoundConnectionLRFClosesBoundGate(t *testing.T) {
+	w := newWorld(t)
+	h := w.handler(t, nil, nil)
+	h.boundConn = "conn-1"
+	if err := h.VerifyConnection(context.Background(), request(w), &fakeStream{}); err != nil {
+		t.Fatal(err)
+	}
+	d := t.TempDir()
+	h.epoch = NewEpochState(FileBaselineStore{filepath.Join(d, "baseline.json")}, FileRecordSink{filepath.Join(d, "no-dir", "records.log")}, nil)
+	err := h.VerifyConnection(context.Background(), request(w), &fakeStream{})
+	if ce := connErr(t, err); ce.Code != v1.ErrorCode_ERROR_CODE_LOCAL_RECORD_FAILED {
+		t.Fatalf("%v", ce)
+	}
+	if after := h.gate.Check("conn-1", true, nil); after.Open || after.State != v1.WriteGateState_WRITE_GATE_STATE_LOCAL_RECORD_FAILED {
+		t.Fatalf("bound gate still open: %+v", after)
+	}
+}

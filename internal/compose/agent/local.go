@@ -39,7 +39,7 @@ func ParseLocal(b []byte) (Local, error) {
 	if len(b) == 0 || len(b) > maxLocalBytes {
 		return l, errors.New("agent: local configuration has an invalid size")
 	}
-	// v2 Unmarshal rejects trailing data, invalid UTF-8 and duplicate names by itself.
+	// v2 Unmarshal rejects trailing data, duplicate names and invalid UTF-8 by itself.
 	if err := json.Unmarshal(b, &l, json.RejectUnknownMembers(true)); err != nil {
 		return Local{}, fmt.Errorf("agent: local configuration: %w", err)
 	}

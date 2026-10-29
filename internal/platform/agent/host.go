@@ -13,7 +13,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/skenzeriq/activediq/internal/agenthost/api"
+	"github.com/skenzeriq/activediq/internal/agenthost/hostapi"
 	"github.com/skenzeriq/activediq/internal/platform/agentpolicy"
 	"github.com/skenzeriq/activediq/internal/platform/fleet"
 	agentv1 "github.com/skenzeriq/activediq/internal/proto/skenzeriq/agent/v1"
@@ -32,11 +32,11 @@ func (c Ceilings) Valid() bool {
 	return c.OutboxMaxBytes >= 4*DefaultSegmentBytes && c.BatchMaxBytes >= 4096 && c.BatchMaxBytes <= c.OutboxMaxBytes && c.MaxEventsPerSecond >= 1
 }
 
-// EventSink and ModuleDeps are the module boundary, defined in internal/agenthost/api so a module
+// EventSink and ModuleDeps are the module boundary, defined in internal/agenthost/hostapi so a module
 // imports the boundary and not the host (T-0688 ruling 1).
 type (
-	EventSink  = api.EventSink
-	ModuleDeps = api.ModuleDeps
+	EventSink  = hostapi.EventSink
+	ModuleDeps = hostapi.ModuleDeps
 )
 
 // sinkOnly is the only view of the outbox a module gets. A module that type-asserts its EventSink
@@ -44,8 +44,8 @@ type (
 // file. The host never hands a module a concrete *os.File, net.Conn or *Outbox.
 type sinkOnly struct{ o *Outbox }
 
-func (s sinkOnly) Append(ev *api.Event) (uint64, error) { return s.o.Append(ev) }
-func (s sinkOnly) Flush() error                         { return s.o.Flush() }
+func (s sinkOnly) Append(ev *hostapi.Event) (uint64, error) { return s.o.Append(ev) }
+func (s sinkOnly) Flush() error                             { return s.o.Flush() }
 
 // Module is an agent module (addc today). The host owns its lifecycle and its policy.
 type Module interface {
@@ -55,12 +55,12 @@ type Module interface {
 	// Activate puts a policy that passed Validate in force. It must not block.
 	Activate(agentpolicy.AddcPolicy) error
 	// Start begins work; Stop ends it. Both are bounded by ctx.
-	Start(ctx context.Context, d api.ModuleDeps) error
+	Start(ctx context.Context, d hostapi.ModuleDeps) error
 	Stop(ctx context.Context) error
 	// Collection reports what the module is doing, for GetStatus.
 	Collection() agentv1.CollectionState
 	// Register adds the module's own server-callable service to reg (the tunnel's registrar).
-	Register(reg api.ServiceRegistrar)
+	Register(reg hostapi.ServiceRegistrar)
 }
 
 // UpdateStager verifies and stages an update. The one TUF verifier (TM-D12) implements it. Until it
@@ -85,7 +85,7 @@ type Config struct {
 	Updates          UpdateStager
 	Now              func() time.Time
 	// Source is the read-only event log the module may use. Nil selects the platform source.
-	Source api.EventSource
+	Source hostapi.EventSource
 }
 
 // Host is the agent host. It implements skenzeriq.agent.v1.Host.
@@ -162,7 +162,7 @@ func (h *Host) Outbox() *Outbox { return h.outbox }
 
 // Register adds Host and the module's service to reg. The tunnel's registrar refuses a method outside
 // the bound contract, so registering more than the contract names fails closed.
-func (h *Host) Register(reg api.ServiceRegistrar) {
+func (h *Host) Register(reg hostapi.ServiceRegistrar) {
 	agentv1.RegisterHostServer(reg, h)
 	h.cfg.Module.Register(reg)
 }

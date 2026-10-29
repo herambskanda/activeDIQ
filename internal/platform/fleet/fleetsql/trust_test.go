@@ -1,9 +1,18 @@
 package fleetsql_test
 
 import (
+	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"errors"
+	"math/big"
 	"testing"
+	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/fleet/fleetsql"
 	"github.com/skenzeriq/activediq/internal/platform/store"
@@ -349,5 +358,88 @@ func TestFleetCAGuardTransitions(t *testing.T) {
 				}
 			}
 		})
+	})
+}
+
+func selfSignedCA(t *testing.T, serial int64) *x509.Certificate {
+	t.Helper()
+	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(serial), Subject: pkix.Name{CommonName: "activeDIQ fleet CA", Organization: []string{"activeDIQ"}},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(24 * time.Hour), KeyUsage: x509.KeyUsageCertSign,
+		BasicConstraintsValid: true, IsCA: true, MaxPathLen: 0, MaxPathLenZero: true}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &k.PublicKey, k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// TestTrustAnchorsPoolContents covers F-POOL-3 (active and retired in, expired and withdrawn out) and
+// F-POOL-6 (every generated CA subject is the constant and carries nothing of the tenant).
+func TestTrustAnchorsPoolContents(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setupEnroll(t, s)
+		ctx := context.Background()
+		e.initCAs(t)
+		c, err := e.d.Admin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close(ctx)
+		add := func(cert *x509.Certificate, state string, notAfter string) {
+			t.Helper()
+			sum := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
+			if _, err := c.Exec(ctx, `INSERT INTO public.fleet_ca (tenant_id, cert_der, spki_sha256, sealed_key, key_version, not_after, state)
+				VALUES ($1::uuid, $2, $3, NULL, 1, `+notAfter+`, $4)`, e.a.String(), cert.Raw, sum[:], state); err != nil {
+				t.Fatal(err)
+			}
+		}
+		retired, expired, withdrawn := selfSignedCA(t, 11), selfSignedCA(t, 12), selfSignedCA(t, 13)
+		add(retired, "retired", "now() + interval '1 day'")
+		add(expired, "retired", "now() - interval '1 minute'")
+		add(withdrawn, "withdrawn", "now() + interval '1 day'")
+
+		ta := &fleetsql.TrustAnchors{DB: e.db, Alerts: e.al}
+		certs, err := ta.Certificates(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(certs) != 3 { // A active + A retired + B active
+			t.Fatalf("want 3 certificates (two active, one retired), got %d", len(certs))
+		}
+		has := func(c *x509.Certificate) bool {
+			for _, x := range certs {
+				if x.Equal(c) {
+					return true
+				}
+			}
+			return false
+		}
+		if !has(retired) || has(expired) || has(withdrawn) {
+			t.Fatalf("retired in %v, expired in %v, withdrawn in %v", has(retired), has(expired), has(withdrawn))
+		}
+		// F-POOL-6, on the CAs the product generated.
+		for _, x := range certs {
+			if x.Equal(retired) {
+				continue
+			}
+			if x.Subject.CommonName != "activeDIQ fleet CA" || len(x.Subject.Organization) != 1 || x.Subject.Organization[0] != "activeDIQ" ||
+				len(x.Subject.OrganizationalUnit)+len(x.Subject.Country)+len(x.Subject.Province)+len(x.Subject.Locality)+len(x.Subject.StreetAddress)+len(x.Subject.PostalCode)+len(x.Subject.ExtraNames) != 0 ||
+				x.Subject.SerialNumber != "" || len(x.DNSNames)+len(x.EmailAddresses)+len(x.IPAddresses)+len(x.URIs) != 0 {
+				t.Fatalf("CA subject or names are not the constant: %q", x.Subject)
+			}
+			for _, tid := range []string{e.a.String(), e.b.String()} {
+				if bytes.Contains(x.Raw, []byte(tid)) {
+					t.Fatal("a tenant id appears in a CA certificate")
+				}
+			}
+		}
 	})
 }

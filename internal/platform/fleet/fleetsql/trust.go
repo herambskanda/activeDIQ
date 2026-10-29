@@ -79,3 +79,17 @@ func (t *TrustAnchors) raise(ctx context.Context, k AlertKind, id tenant.ID) {
 		t.Alerts.Raise(ctx, Alert{Kind: k, Tenant: id})
 	}
 }
+
+// Certificates is Load without the tenant ids: the shape the gateway's pool provider takes. The pool
+// needs only certificates; the per-RPC check, not the pool, binds a certificate to its tenant.
+func (t *TrustAnchors) Certificates(ctx context.Context) ([]*x509.Certificate, error) {
+	as, err := t.Load(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*x509.Certificate, len(as))
+	for i, a := range as {
+		out[i] = a.Cert
+	}
+	return out, nil
+}

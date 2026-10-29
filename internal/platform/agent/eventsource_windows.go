@@ -10,7 +10,7 @@ import (
 
 	"golang.org/x/sys/windows"
 
-	"github.com/skenzeriq/activediq/internal/agenthost/api"
+	"github.com/skenzeriq/activediq/internal/agenthost/hostapi"
 )
 
 // Windows event log API, wevtapi.dll. Contract of each call:
@@ -35,11 +35,11 @@ const (
 type winSource struct{}
 
 // NewEventSource returns the wevtapi-backed source.
-func NewEventSource() api.EventSource { return winSource{} }
+func NewEventSource() hostapi.EventSource { return winSource{} }
 
 func closeHandle(h uintptr) { _, _, _ = procEvtClose.Call(h) }
 
-func (winSource) Subscribe(ctx context.Context, ch api.Channel, after uint64, ids []uint16, emit func([]byte)) error {
+func (winSource) Subscribe(ctx context.Context, ch hostapi.Channel, after uint64, ids []uint16, emit func([]byte)) error {
 	name, err := channelPath(ch)
 	if err != nil {
 		return err
@@ -67,7 +67,7 @@ func (winSource) Subscribe(ctx context.Context, ch api.Channel, after uint64, id
 	h, _, e := procEvtSubscribe.Call(0, uintptr(sig), uintptr(unsafe.Pointer(chPtr)), uintptr(unsafe.Pointer(qPtr)), 0, 0, 0, flags)
 	if h == 0 {
 		if errors.Is(e, windows.ERROR_ACCESS_DENIED) {
-			return api.ErrUnreadable
+			return hostapi.ErrUnreadable
 		}
 		return e
 	}
@@ -82,7 +82,7 @@ func (winSource) Subscribe(ctx context.Context, ch api.Channel, after uint64, id
 					break
 				}
 				if errors.Is(e, windows.ERROR_ACCESS_DENIED) {
-					return api.ErrUnreadable
+					return hostapi.ErrUnreadable
 				}
 				return e
 			}
@@ -108,7 +108,7 @@ func render(ev uintptr) []byte {
 		if r != 0 {
 			return []byte(windows.UTF16ToString(buf[:used/2]))
 		}
-		if e != syscall.Errno(122) /* ERROR_INSUFFICIENT_BUFFER */ || int(used) > api.MaxEventXMLBytes*2 {
+		if e != syscall.Errno(122) /* ERROR_INSUFFICIENT_BUFFER */ || int(used) > hostapi.MaxEventXMLBytes*2 {
 			return nil
 		}
 		buf = make([]uint16, used/2+1)
@@ -127,7 +127,7 @@ const (
 
 // OldestRecord reads EvtLogOldestRecordNumber with EvtGetLogInfo.
 // https://learn.microsoft.com/en-us/windows/win32/api/winevt/nf-winevt-evtgetloginfo
-func (winSource) OldestRecord(ch api.Channel) (uint64, error) {
+func (winSource) OldestRecord(ch hostapi.Channel) (uint64, error) {
 	name, err := channelPath(ch)
 	if err != nil {
 		return 0, err

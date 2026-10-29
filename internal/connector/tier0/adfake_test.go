@@ -33,6 +33,7 @@ type fakeDir struct {
 	nm          Naming
 	objs        []*fobj
 	failDN      string // any Get/Find touching a DN containing this fails
+	denyDN      string // any Find under a DN containing this is refused (InsufficientRights)
 	failHas     string // any Find presence-testing this attribute fails
 	nextGID     byte
 	failSIDFind bool    // any Find by objectSid fails
@@ -43,6 +44,20 @@ type fakeDir struct {
 	gc         []*fobj
 	gcErr      error
 	gcCalls    int
+
+	// Trust seam (nil trust = the directory does not implement TrustDirectory semantics: see noTrust).
+	trust    map[string]TrustedPrincipal // by foreign account SID
+	trustErr error
+}
+
+// trustFakeDir adds the TrustDirectory seam to a fakeDir; fakeDir alone does not implement it.
+type trustFakeDir struct{ *fakeDir }
+
+func (t trustFakeDir) ResolveTrusted(_ context.Context, s sid.SID) (TrustedPrincipal, error) {
+	if t.trustErr != nil {
+		return TrustedPrincipal{}, t.trustErr
+	}
+	return t.trust[s.String()], nil // missing = TrustUnknown
 }
 
 func (f *fakeDir) ForestDomains(context.Context) ([]sid.SID, error) {
@@ -148,6 +163,9 @@ func (o *fobj) is(class string) bool {
 }
 
 func (f *fakeDir) guard(d string) error {
+	if f.denyDN != "" && strings.Contains(strings.ToLower(d), strings.ToLower(f.denyDN)) {
+		return &ad.Error{Code: ad.CodeInsufficientRights, Detail: "injected"}
+	}
 	if f.failDN != "" && strings.Contains(strings.ToLower(d), strings.ToLower(f.failDN)) {
 		return &ad.Error{Code: ad.CodeUnreachable, Detail: "injected"}
 	}

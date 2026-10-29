@@ -72,7 +72,7 @@ func verifyOptions(src client.ConnectorSource) ([]client.Option, error) {
 // genesis head and checkpoint key (ADR-0005 rule 11), and registers the audit jobs with the
 // checkpoint cadence started by the initialiser. It runs on every start; every step is idempotent.
 // Nothing here is fabricated: keys come from the unlocked KEK provider, and a failure stops boot.
-func bootstrapTenant(ctx context.Context, cfg config.Config, db *store.DB, ch *audit.Chainer, kekp keys.Provider, jreg *jobs.Registry) (tenant.ID, error) {
+func bootstrapTenant(ctx context.Context, cfg config.Config, db *store.DB, ch *audit.Chainer, kekp keys.Provider, jreg *jobs.Registry) (tid tenant.ID, _ error) {
 	ks := keys.NewStore(kekp)
 	cp := audit.NewCheckpointer(ch, ks.KeySource())
 	holder := cfg.InstanceID
@@ -81,7 +81,7 @@ func bootstrapTenant(ctx context.Context, cfg config.Config, db *store.DB, ch *a
 	}
 	aj, err := audit.RegisterJobs(audit.JobsConfig{DB: db, Checkpointer: cp, Registry: jreg, Holder: holder})
 	if err != nil {
-		return tenant.ID{}, fmt.Errorf("server: audit jobs: %w", err)
+		return tid, fmt.Errorf("server: audit jobs: %w", err)
 	}
 	cp.StartCadenceOnInit(aj.ScheduleCheckpoint)
 	ictx, cancel := context.WithTimeout(ctx, time.Minute)
@@ -89,7 +89,7 @@ func bootstrapTenant(ctx context.Context, cfg config.Config, db *store.DB, ch *a
 	// The tenant data key first: the checkpoint key is sealed under it.
 	res, err := provision.FirstRun(ictx, db, firstRunTenantName, ks.Provision, cp.InitTenant)
 	if err != nil {
-		return tenant.ID{}, fmt.Errorf("server: first-run tenant: %w", err)
+		return tid, fmt.Errorf("server: first-run tenant: %w", err)
 	}
 	return res.Tenant, nil
 }

@@ -150,6 +150,11 @@ type UnresolvedSIDHistory struct {
 // Finding codes reported by a snapshot. A finding never changes the set.
 const FindingDnsAdminsMissing = "DNSADMINS_MISSING"
 
+// FindingDnsAdminsUndetermined is raised instead of DNSADMINS_MISSING when the connector was denied
+// the read that tells whether the domain hosts AD-integrated DNS zones: silence there would hide a
+// missing DnsAdmins group, so the observation says it could not be made.
+const FindingDnsAdminsUndetermined = "DNSADMINS_UNDETERMINED"
+
 // Finding is an onboarding or health observation of a snapshot.
 type Finding struct {
 	Code   string
@@ -702,6 +707,17 @@ func (b *builder) membersOf(roots []*ad.Entry, basis Basis) error {
 			if !isDomainAccountSID(ss[0]) {
 				return fmt.Errorf("tier0: group %s has the broad SID %s as a (nested) member; every principal would be in its closure", parent[k], ss[0])
 			}
+			if trustResolvedRID(ss[0]) {
+				ms, err := b.foreignGroupMembers(ss[0])
+				if err != nil {
+					return err
+				}
+				for _, m := range ms {
+					if _, err := b.mark(m, basis); err != nil {
+						return err
+					}
+				}
+			}
 		}
 		if !isRoot[k] {
 			if _, err := b.mark(e, basis); err != nil {
@@ -1253,6 +1269,46 @@ func broadForeignRID(s sid.SID) bool {
 	return rid < 1000 && rid != 500 && rid != 501 && rid != 502
 }
 
+// trustResolvedRID is true for a foreign domain account SID whose RID is 1000 or more: a custom user,
+// computer or group of the trusted domain, which its FSP does not distinguish (T-0435).
+func trustResolvedRID(s sid.SID) bool {
+	p := strings.Split(s.String(), "-")
+	rid, err := strconv.ParseUint(p[len(p)-1], 10, 32)
+	return err == nil && rid >= 1000
+}
+
+// foreignGroupMembers resolves a foreign account FSP (RID >= 1000) through the trust. A user returns
+// nil; a group returns the FSP objects of its members (a member with no FSP here holds no right in
+// this domain and has no object to mark). When the directory cannot resolve through a trust, or the
+// trust cannot say what the SID is, it fails closed: the SID may be a group whose members hold the right.
+func (b *builder) foreignGroupMembers(s sid.SID) ([]*ad.Entry, error) {
+	td, ok := b.d.(TrustDirectory)
+	if !ok {
+		return nil, fmt.Errorf("tier0: grant to %s, an account of another domain that may be a group; no trust lookup can show it is a user", s)
+	}
+	tp, err := td.ResolveTrusted(b.ctx, s)
+	if err != nil {
+		return nil, fmt.Errorf("tier0: grant to %s, an account of another domain that may be a group; trust lookup failed: %w", s, err)
+	}
+	switch tp.Kind {
+	case TrustUser:
+		return nil, nil
+	case TrustGroup:
+		var out []*ad.Entry
+		for _, m := range tp.Members {
+			e, found, err := b.get(dn.SIDRef(m), idAttrs)
+			if err != nil {
+				return nil, err
+			}
+			if found && hasClass(e, "foreignSecurityPrincipal") {
+				out = append(out, e)
+			}
+		}
+		return out, nil
+	}
+	return nil, fmt.Errorf("tier0: grant to %s, an account of another domain that the trust could not identify as a user", s)
+}
+
 // markPrincipalsSkip is markPrincipals except that an object for which skip is true is not marked and
 // its members are not walked.
 func (b *builder) markPrincipalsSkip(sids []sid.SID, basis Basis, skip func(*ad.Entry) bool) error {
@@ -1296,6 +1352,17 @@ func (b *builder) markPrincipalsSkip(sids []sid.SID, basis Basis, skip func(*ad.
 		// the fail-closed (a planted well-known SID in sIDHistory would otherwise hide the grant). The same
 		// holds for a trusted domain's broad well-known RID (Domain Users 513, ...): its tokens carry it
 		// with or without an FSP, so a holder cannot stand in for the principals it reaches.
+		if found && hasClass(e, "foreignSecurityPrincipal") && trustResolvedRID(s) {
+			ms, err := b.foreignGroupMembers(s)
+			if err != nil {
+				return err
+			}
+			for _, m := range ms {
+				if err := take(m); err != nil {
+					return err
+				}
+			}
+		}
 		if !found && (len(holders) == 0 || !isDomainAccountSID(s) || broadForeignRID(s)) {
 			if b.ignorableSID(s) {
 				// Ignorable SIDs name no principal; a holder (SYSTEM planted in sIDHistory) is
@@ -1434,9 +1501,13 @@ func (b *builder) c13() error {
 		}
 	}
 	if !dnsAdmins {
-		hosts, err := b.hostsDNS()
+		hosts, undetermined, err := b.hostsDNS()
 		if err != nil {
 			return err
+		}
+		if undetermined && !hosts {
+			b.s.findings = append(b.s.findings, Finding{Code: FindingDnsAdminsUndetermined,
+				Detail: "no DnsAdmins group can be found and the connector cannot read the DNS zone containers to tell whether the domain hosts AD-integrated DNS"})
 		}
 		if hosts {
 			b.s.findings = append(b.s.findings, Finding{Code: FindingDnsAdminsMissing,
@@ -1459,17 +1530,17 @@ func isC13Name(names []string) bool {
 }
 
 // hostsDNS reports whether the domain holds an AD-integrated DNS zone (application partition
-// DomainDnsZones, or the legacy CN=System location). A partition that does not exist or that the
-// connector cannot read counts as no zones: the finding is advice, it never gates classification.
-func (b *builder) hostsDNS() (bool, error) {
+// DomainDnsZones, or the legacy CN=System location). A partition that does not exist counts as no
+// zones; one the connector may not read sets undetermined (it is not "no zones"). The finding is
+// advice, it never gates classification.
+func (b *builder) hostsDNS() (hosts, undetermined bool, err error) {
 	// parent first: child() appends one RDN below the previous
 	bases := [][]string{{"DC=DomainDnsZones", "CN=MicrosoftDNS"}, {"CN=System", "CN=MicrosoftDNS"}}
 	for _, rd := range bases {
 		base := b.nm.Domain
 		for i := 0; i < len(rd); i++ {
-			var err error
 			if base, err = b.child(base, rd[i]); err != nil {
-				return false, err
+				return false, false, err
 			}
 		}
 		hit := false
@@ -1479,16 +1550,19 @@ func (b *builder) hostsDNS() (bool, error) {
 		})
 		if err != nil && !errors.Is(err, errStopFind) {
 			switch ad.CodeOf(err) {
-			case ad.CodeObjectNotFound, ad.CodeInsufficientRights:
+			case ad.CodeObjectNotFound:
+				continue
+			case ad.CodeInsufficientRights:
+				undetermined = true
 				continue
 			}
-			return false, fmt.Errorf("tier0: DNS zones: %w", err)
+			return false, false, fmt.Errorf("tier0: DNS zones: %w", err)
 		}
 		if hit {
-			return true, nil
+			return true, false, nil
 		}
 	}
-	return false, nil
+	return false, undetermined, nil
 }
 
 var errStopFind = errors.New("stop")
@@ -1564,7 +1638,7 @@ func (b *builder) c9() error {
 			// gPLink is a plain string, so a dangling link is possible, but a GPO the connector may not
 			// read looks identical, and a GPO linked at a Tier-0 SOM controls Tier-0. Fail closed;
 			// the operator removes the dangling link or grants read.
-			return fmt.Errorf("tier0: GPO %s linked at a Tier-0 start of authority cannot be read", g.String())
+			return fmt.Errorf("tier0: GPO %s linked at a Tier-0 start of authority cannot be read", g.CanonicalString())
 		}
 		if _, err := b.mark(ge, C9); err != nil {
 			return err

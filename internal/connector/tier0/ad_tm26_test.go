@@ -553,3 +553,29 @@ func TestC18WellKnownHistoryFailsClosed(t *testing.T) {
 		}
 	}
 }
+
+// T-0358: a connector that may not read the DNS zone containers cannot tell whether the domain hosts
+// AD-integrated DNS. DNSADMINS_MISSING must not be suppressed silently: a distinct finding says so.
+func TestDnsAdminsUndeterminedWhenZonesUnreadable(t *testing.T) {
+	f := forest()
+	f.add("DC=DomainDnsZones,"+dom, "", cls("top", "domainDNS"))
+	f.add("CN=MicrosoftDNS,DC=DomainDnsZones,"+dom, "", cls("container"))
+	f.add("DC=lab.test,CN=MicrosoftDNS,DC=DomainDnsZones,"+dom, "", cls("dnsZone"))
+	dropObj(f, "CN=DnsAdmins,CN=Users,"+dom)
+	f.denyDN = "CN=MicrosoftDNS"
+	if c := findingCodes(t, f); len(c) != 1 || c[0] != FindingDnsAdminsUndetermined {
+		t.Errorf("zones unreadable: %v", c)
+	}
+	// Twin: DnsAdmins present, nothing to say even when the zones are unreadable.
+	f = forest()
+	f.denyDN = "CN=MicrosoftDNS"
+	if c := findingCodes(t, f); len(c) != 0 {
+		t.Errorf("DnsAdmins present: %v", c)
+	}
+	// Twin: a missing container (no DNS role) is still "no zones", not undetermined.
+	f = forest()
+	dropObj(f, "CN=DnsAdmins,CN=Users,"+dom)
+	if c := findingCodes(t, f); len(c) != 0 {
+		t.Errorf("no DNS: %v", c)
+	}
+}

@@ -21,6 +21,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/apitls"
 	"github.com/skenzeriq/activediq/internal/platform/capability"
+	"github.com/skenzeriq/activediq/internal/webui"
 
 	"github.com/skenzeriq/activediq/internal/platform/fleet/gateway"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
@@ -92,7 +93,14 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	if err != nil {
 		return fmt.Errorf("server: connector source: %w", err)
 	}
-	reads, err := directoryReads(conns, src)
+	// Lab builds only (T-0684): an env-configured lab seeds an active connection served by an in-process
+	// connector; the production build's labBootstrap returns src unchanged.
+	csrc, labSeed, labClose, err := labBootstrap(ctx, getenv, src)
+	if err != nil {
+		return err
+	}
+	defer labClose()
+	reads, err := directoryReads(conns, csrc)
 	if err != nil {
 		return err
 	}
@@ -101,7 +109,7 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	if err != nil {
 		return err
 	}
-	vopts, err := verifyOptions(src)
+	vopts, err := verifyOptions(csrc)
 	if err != nil {
 		return err
 	}
@@ -110,7 +118,7 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	if err != nil {
 		return err
 	}
-	dcs, err := client.NewDCDirectory(conns, src)
+	dcs, err := client.NewDCDirectory(conns, csrc)
 	if err != nil {
 		return fmt.Errorf("server: DC directory: %w", err)
 	}
@@ -128,7 +136,12 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	if err != nil {
 		return err
 	}
-	if _, err := buildOwnerAssignments(db, ok.Chainer, console.Sessions); err != nil {
+	ownerWriter, err := buildOwnerAssignments(db, ok.Chainer, console.Sessions)
+	if err != nil {
+		return err
+	}
+	firstOwner, err := newFirstOwners(db, ok.Chainer, ownerWriter)
+	if err != nil {
 		return err
 	}
 	// The TM-D17 attestation routes, when the install is configured for them. Built after the
@@ -145,22 +158,33 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	tags = append(tags, syslog.Handlers{Store: siem}.Bind())
 	// First-run setup (TM-TB16-T7, AN-4): an unclaimed install holds a one-time secret the installing
 	// administrator reads from the setup directory; the claim route consumes it. Needs the TLS directory.
-	setupTags, err := buildSetup(cfg, time.Now)
+	setupTags, err := buildSetup(cfg, time.Now, firstOwner)
 	if err != nil {
 		return err
 	}
 	tags = append(tags, setupTags...)
-	api, err := buildAPIPorts(cfg, console.ports(lim, authzr), tags...)
+	cat := permissionCatalogue()
+	if err := checkCatalogue(cat); err != nil {
+		return err
+	}
+	api, err := buildAPIPorts(cfg, cat, console.ports(lim, authzr, cat), tags...)
 	if err != nil {
 		return err
 	}
 	// Modules and platform packages contribute job kinds to this registry; the worker runs it.
 	jreg := jobs.NewRegistry()
-	if _, err := buildConnections(db, ok.Chainer, dirClient, jreg); err != nil {
+	connKernel, err := buildConnections(db, ok.Chainer, dirClient, jreg)
+	if err != nil {
 		return err
 	}
 	// The tenant, its data key and its audit genesis exist before anything listens or the worker claims.
-	if _, err := bootstrapTenant(ctx, cfg, db, ok.Chainer, kekp, jreg); err != nil {
+	tid, err := bootstrapTenant(ctx, cfg, db, ok.Chainer, kekp, jreg)
+	if err != nil {
+		return err
+	}
+	firstOwner.SetTenant(tid) // the claim route can now create the first owner
+	// Lab builds only (T-0684): create and activate the lab connections through the real activation path.
+	if err := labSeed(ctx, conns, connKernel.Service, tid); err != nil {
 		return err
 	}
 	ln, err := net.Listen("tcp", cfg.APIAddr)
@@ -250,20 +274,20 @@ func apiIdentityProvider(cfg config.Config, kc KEKConfig, now time.Time) (apitls
 }
 
 // buildAPIPorts makes the API handler over the given ports: Run mounts the console stack's.
-func buildAPIPorts(cfg config.Config, ports apihost.Ports, tags ...apihost.TagHandlers) (http.Handler, error) {
+func buildAPIPorts(cfg config.Config, cat apihost.Permissions, ports apihost.Ports, tags ...apihost.TagHandlers) (http.Handler, error) {
 	policy, err := apihost.LoadPolicy()
 	if err != nil {
 		return nil, fmt.Errorf("server: api policy: %w", err)
 	}
-	return buildAPIPortsWith(cfg, policy, ports, tags...)
+	return buildAPIPortsWith(cfg, policy, cat, ports, tags...)
 }
 
-func buildAPIPortsWith(cfg config.Config, policy apihost.Policy, ports apihost.Ports, tags ...apihost.TagHandlers) (http.Handler, error) {
+func buildAPIPortsWith(cfg config.Config, policy apihost.Policy, cat apihost.Permissions, ports apihost.Ports, tags ...apihost.TagHandlers) (http.Handler, error) {
 	doc, err := apihost.LoadDocument()
 	if err != nil {
 		return nil, fmt.Errorf("server: api contract: %w", err)
 	}
-	s, err := apihost.Build(doc, tags, policy, apiCatalogue, ports, apihost.WithBodyBudget(cfg.APIBodyBudget), apihost.WithTrustedProxies(cfg.TrustedProxies))
+	s, err := apihost.Build(doc, tags, policy, cat, ports, apihost.WithBodyBudget(cfg.APIBodyBudget), apihost.WithTrustedProxies(cfg.TrustedProxies), apihost.WithConsole(webui.Console()))
 	if err != nil {
 		return nil, fmt.Errorf("server: build api: %w", err)
 	}

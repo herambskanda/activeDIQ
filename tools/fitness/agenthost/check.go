@@ -21,6 +21,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf16"
 	"unicode/utf8"
 )
@@ -251,10 +252,10 @@ var r3FilepathBanned = setOf("filepath.WalkDir", "filepath.Walk", "filepath.Glob
 // policy and dependency-struct packages), as paths under the module path read from go.mod.
 var (
 	r3OwnPrefix = []string{"/internal/agentmodules"}
-	// internal/agenthost/api is the module boundary (T-0688 ruling 1): ModuleDeps, the event source and
+	// internal/agenthost/hostapi is the module boundary (T-0688 ruling 1): ModuleDeps, the event source and
 	// sink, aliases for the wire data types and for grpc.ServiceRegistrar. internal/proto/activediq/addc/v1
 	// is the module's own contract (typed data; a module gets its own, never skenzeriq/agent/v1 or fleet).
-	r3OwnExact = []string{"/internal/platform/agentpolicy", "/internal/agenthost/api", "/internal/proto/activediq/addc/v1"}
+	r3OwnExact = []string{"/internal/platform/agentpolicy", "/internal/agenthost/hostapi", "/internal/proto/activediq/addc/v1"}
 )
 
 const defaultModulePath = "github.com/skenzeriq/activediq"
@@ -323,7 +324,7 @@ func checkModuleCapabilities(root string) Result {
 	// The module boundary itself (T-0688 ruling 1): it hands modules capabilities, so it may import only
 	// pure standard-library packages, the wire data types it aliases, and grpc for ServiceRegistrar. It
 	// can never be the way a module reaches os/exec, net, syscall or x/sys.
-	for _, f := range goFiles(root, []string{"internal/agenthost/api"}) {
+	for _, f := range goFiles(root, []string{"internal/agenthost/hostapi"}) {
 		scanGo(root, f, func(rel, imp, name string, line int) {
 			if msg := judgeAPIImport(mod, imp, name); msg != "" {
 				r.Violations = append(r.Violations, fmt.Sprintf("%s:%d %s", rel, line, msg))
@@ -348,7 +349,7 @@ func checkModuleCapabilities(root string) Result {
 	return r
 }
 
-// judgeAPIImport: what internal/agenthost/api may import. Strictly the standard library the modules
+// judgeAPIImport: what internal/agenthost/hostapi may import. Strictly the standard library the modules
 // themselves may use, the agent wire types it aliases, and grpc (ServiceRegistrar). Not os, net, syscall.
 func judgeAPIImport(mod, imp, name string) string {
 	if name == "." || name == "_" {
@@ -357,7 +358,7 @@ func judgeAPIImport(mod, imp, name string) string {
 	if r3AllowedStd[imp] || imp == mod+"/internal/proto/skenzeriq/agent/v1" || imp == "google.golang.org/grpc" {
 		return ""
 	}
-	return fmt.Sprintf("the module boundary package internal/agenthost/api imports %s: it may import only the pure standard library, skenzeriq/agent/v1 and grpc (T-0688 ruling 1)", imp)
+	return fmt.Sprintf("the module boundary package internal/agenthost/hostapi imports %s: it may import only the pure standard library, skenzeriq/agent/v1 and grpc (T-0688 ruling 1)", imp)
 }
 
 // foreignModuleFiles lists files under the agent-module directories that are not .go sources and not in
@@ -927,7 +928,8 @@ func agentInstallerFiles(root string) []instFile {
 }
 
 // wixIntermediateExts are prebuilt WiX intermediates (zips holding wix-ir.json): opaque to this check.
-var wixIntermediateExts = setOf(".wixlib", ".wixipl", ".wixobj")
+// .msm is a compiled merge module: an MSI database whose CustomAction and sequence rows merge into the agent MSI (T-0759).
+var wixIntermediateExts = setOf(".wixlib", ".wixipl", ".wixobj", ".msm")
 
 // wixRoots are the root elements of a WiX compiler input (any namespace).
 var wixRoots = setOf("Wix", "Include", "WixLocalization")
@@ -1133,13 +1135,16 @@ func checkInstaller(root string) Result {
 func checkInstallerAllow(root string, allow []string) Result {
 	r := Result{ID: "A1", What: "agent installer names " + pinnedAccount + ", service SID type " + pinnedSidType + ", the pinned RequiredPrivileges, no LocalSystem, and no custom action or script unless reviewed (ADR-0006 rules 1, 3)"}
 	files := agentInstallerFiles(root)
-	if len(files) == 0 {
+	// T-0762: opaque MSI transforms/patches and MSBuild post-processing; never approvable via installer-allow.txt.
+	r.Violations = append(r.Violations, msbuildProblems(root)...)
+	if len(files) == 0 && len(r.Violations) == 0 {
 		r.Inactive = "no agent installer source under packaging/ (windows-engineer's MSI ticket)"
 		return r
 	}
 	services := 0
 	namedAgent := false
 	dirsAt, propsAt, pinAt := map[string][]string{}, map[string][]string{}, map[string][]string{}
+	pinPrivAt, secureAt := map[string][]string{}, map[string][]string{}
 	for _, f := range files {
 		rel := f.rel
 		if f.problem != "" {
@@ -1157,6 +1162,12 @@ func checkInstallerAllow(root string, allow []string) Result {
 		}
 		if m := localSystemRe.FindString(f.text); m != "" {
 			r.Violations = append(r.Violations, fmt.Sprintf("%s names %q: the agent never runs as LocalSystem or a shared service identity (ADR-0006 rule 1)", rel, m))
+		}
+		// T-0776: the WiX preprocessor reads any environment variable ($(env.X), !(env.X)) into the MSI, in
+		// attributes, text, <?define?> and other processing instructions. Scanned over the raw text so no
+		// XML position can hide it; never approvable via installer-allow.txt.
+		if (isWixXML(f.path) || f.xml) && !strings.EqualFold(filepath.Ext(f.path), ".wixproj") && wixEnvRefs(f.text) {
+			r.Violations = append(r.Violations, fmt.Sprintf("%s reads an environment variable through the WiX preprocessor ($(env.NAME) or !(env.NAME)): a CI secret would be compiled into the MSI; installer-allow.txt cannot approve it (T-0776)", rel))
 		}
 		if isTemplate(f.path) && !allowed(rel, allow) {
 			r.Violations = append(r.Violations, fmt.Sprintf("%s is a template or transform under packaging/: it is not parsed, so it could emit a ServiceInstall, ServiceSid or ACL the check never sees; list it in installer-allow.txt after a security-architect review", rel))
@@ -1198,10 +1209,17 @@ func checkInstallerAllow(root string, allow []string) Result {
 		for _, id := range x.pinDirs {
 			pinAt[id] = append(pinAt[id], rel)
 		}
+		for _, id := range x.pinPrivDirs {
+			pinPrivAt[id] = append(pinPrivAt[id], rel)
+		}
+		for _, id := range x.secureIDs {
+			secureAt[id] = append(secureAt[id], rel)
+		}
 		services += x.services
 		r.Violations = append(r.Violations, x.violations...)
 	}
 	r.Violations = append(r.Violations, judgeRetargets(dirsAt, propsAt, pinAt)...)
+	r.Violations = append(r.Violations, judgeSecureProps(pinPrivAt, secureAt)...)
 	switch {
 	case !anyAgentSource(files) && !namedAgent:
 		// Only WiX sources that never name the agent (a core MSI): their LocalSystem, registry, action and
@@ -1234,13 +1252,15 @@ type xmlEl struct {
 }
 
 type installerFacts struct {
-	services   int
-	namesAgent bool     // a parsed (entity-decoded) element names the agent service
-	dirIDs     []string // Ids of Directory/StandardDirectory elements defined here (T-0742)
-	propIDs    []string // Ids of Property, SetProperty and SetDirectory elements: each can set a path (T-0742)
-	pinDirs    []string // directory Ids in the chain of every Permission parent's resolved directory (T-0742)
-	attrText   string   // every decoded attribute value and text node, for the string rules
-	violations []string
+	services    int
+	namesAgent  bool     // a parsed (entity-decoded) element names the agent service
+	dirIDs      []string // Ids of Directory/StandardDirectory elements defined here (T-0742)
+	propIDs     []string // Ids of Property, SetProperty and SetDirectory elements: each can set a path (T-0742)
+	pinDirs     []string // directory Ids in the chain of every Permission parent's resolved directory (T-0742)
+	pinPrivDirs []string // pinDirs minus a TARGETDIR root that a standard folder follows (T-0756)
+	secureIDs   []string // property names listed in SecureCustomProperties or declared Secure="yes" (T-0756)
+	attrText    string   // every decoded attribute value and text node, for the string rules
+	violations  []string
 }
 
 // dynamicRe: a WiX value that is resolved at build or install time, so the text cannot be judged.
@@ -1249,6 +1269,49 @@ type installerFacts struct {
 const wixCoreNS = "http://wixtoolset.org/schemas/v4/wxs"
 
 var reviewedNS = map[string]bool{"http://wixtoolset.org/schemas/v4/wxs/util": true}
+
+var wixEnvRe = regexp.MustCompile(`(?i)[$!]\(\s*env\s*\.|<\?\s*(?:ifdef|ifndef)\s+env\s*\.`)
+
+var xmlCharRefRe = regexp.MustCompile(`&(?:#[0-9]+|#[xX][0-9a-fA-F]+|amp|lt|gt|quot|apos);`)
+
+// wixEnvRefs reports an env reference in the raw text or in the text as the XML reader sees it: numeric
+// character references and predefined entities are decoded first (to a fixed point, so nested escapes
+// cannot hide it), because the WiX preprocessor runs on the decoded attribute and text values (T-0776).
+func wixEnvRefs(text string) bool {
+	for i := 0; i < 8; i++ {
+		if wixEnvRe.MatchString(text) {
+			return true
+		}
+		next := xmlCharRefRe.ReplaceAllStringFunc(text, func(m string) string {
+			switch m {
+			case "&amp;":
+				return "&"
+			case "&lt;":
+				return "<"
+			case "&gt;":
+				return ">"
+			case "&quot;":
+				return `"`
+			case "&apos;":
+				return "'"
+			}
+			digits, base := strings.TrimSuffix(strings.TrimPrefix(m, "&#"), ";"), 10
+			if digits[0] == 'x' || digits[0] == 'X' {
+				digits, base = digits[1:], 16
+			}
+			n, err := strconv.ParseInt(digits, base, 32)
+			if err != nil || n < 0 || n > 0x10FFFF {
+				return m
+			}
+			return string(rune(n))
+		})
+		if next == text {
+			return false
+		}
+		text = next
+	}
+	return true // still decoding after 8 rounds: refuse rather than guess
+}
 
 var dynamicRe = regexp.MustCompile(`\$\(|\[|!\(`)
 
@@ -1291,66 +1354,104 @@ func isDirEl(n string) bool {
 	return n == "Directory" || n == "StandardDirectory" || n == "DirectoryRef"
 }
 
-// dirChain returns the pin string for the directory defined by element k: the chain of Directory and
-// StandardDirectory elements from the outermost down, each as "Element:Id:Name". A DirectoryRef never ends
-// the chain: it is resolved to the single element in this file that defines its Id. ok is false when an Id
-// has no definition, or more than one, in this file (it may live in another fragment), or on a cycle.
-func dirChain(els []xmlEl, k, depth int) (string, bool) {
-	if depth > 32 {
-		return "", false
+// dirPart is one Directory/StandardDirectory element of a chain. Security decisions (TARGETDIR exemption,
+// lowercase test) are made on these parts, never on the joined pin string: attribute values are not escaped
+// in that string, so a Name containing "/" or ":" can forge a chain (T-0756).
+type dirPart struct{ Elem, ID, Name string }
+
+func joinParts(parts []dirPart) string {
+	s := make([]string, len(parts))
+	for i, p := range parts {
+		s[i] = p.Elem + ":" + p.ID + ":" + p.Name
 	}
-	var parts []string
+	return strings.Join(s, "/")
+}
+
+// dirChainParts returns the chain of Directory and StandardDirectory elements from the outermost down for
+// the directory defined by element k. A DirectoryRef never ends the chain: it is resolved to the single
+// element in this file that defines its Id. ok is false when an Id has no definition, or more than one, in
+// this file (it may live in another fragment), or on a cycle.
+func dirChainParts(els []xmlEl, k, depth int) ([]dirPart, bool) {
+	if depth > 32 {
+		return nil, false
+	}
+	var parts []dirPart
 	for ; k >= 0; k = els[k].Parent {
 		switch els[k].Name {
 		case "Directory", "StandardDirectory":
-			parts = append([]string{els[k].Name + ":" + els[k].Attrs["id"] + ":" + els[k].Attrs["name"]}, parts...)
+			parts = append([]dirPart{{els[k].Name, els[k].Attrs["id"], els[k].Attrs["name"]}}, parts...)
 		case "DirectoryRef":
-			d, ok := dirByID(els, els[k].Attrs["id"], depth+1)
+			d, ok := dirByIDParts(els, els[k].Attrs["id"], depth+1)
 			if !ok {
-				return "", false
+				return nil, false
 			}
-			return strings.Join(append([]string{d}, parts...), "/"), true
+			return append(d, parts...), true
 		}
 	}
-	return strings.Join(parts, "/"), len(parts) > 0
+	return parts, len(parts) > 0
 }
 
-// dirByID resolves a directory Id to its one defining Directory/StandardDirectory element in the file.
-func dirByID(els []xmlEl, id string, depth int) (string, bool) {
+// dirChain returns the pin string "Element:Id:Name/..." for the directory defined by element k.
+func dirChain(els []xmlEl, k, depth int) (string, bool) {
+	p, ok := dirChainParts(els, k, depth)
+	return joinParts(p), ok
+}
+
+// dirByIDParts resolves a directory Id to its one defining Directory/StandardDirectory element in the file.
+func dirByIDParts(els []xmlEl, id string, depth int) ([]dirPart, bool) {
 	def := -1
 	for i, e := range els {
 		if (e.Name == "Directory" || e.Name == "StandardDirectory") && id != "" && e.Attrs["id"] == id {
 			if def >= 0 {
-				return "", false
+				return nil, false
 			}
 			def = i
 		}
 	}
 	if def < 0 {
-		return "", false
+		return nil, false
 	}
-	return dirChain(els, def, depth)
+	return dirChainParts(els, def, depth)
 }
 
-// effectiveDirectory resolves the directory a CreateFolder or File acts on, walking up from element i:
+func dirByID(els []xmlEl, id string, depth int) (string, bool) {
+	p, ok := dirByIDParts(els, id, depth)
+	return joinParts(p), ok
+}
+
+// effectiveDirectoryParts resolves the directory a CreateFolder or File acts on, walking up from element i:
 // the element's own Directory attribute, else the nearest Component (or ComponentGroup) Directory
 // attribute, else the nearest enclosing Directory/StandardDirectory/DirectoryRef. Every Id is resolved to
 // its defining element and the whole chain is pinned, so renaming or re-parenting it changes the pin.
-func effectiveDirectory(els []xmlEl, i int) (string, bool) {
+func effectiveDirectoryParts(els []xmlEl, i int) ([]dirPart, bool) {
 	if d := els[i].Attrs["directory"]; d != "" {
-		return dirByID(els, d, 0)
+		return dirByIDParts(els, d, 0)
 	}
 	for j := els[i].Parent; j >= 0; j = els[j].Parent {
 		switch els[j].Name {
 		case "Component", "ComponentGroup":
 			if d := els[j].Attrs["directory"]; d != "" {
-				return dirByID(els, d, 0)
+				return dirByIDParts(els, d, 0)
 			}
 		case "Directory", "StandardDirectory", "DirectoryRef":
-			return dirChain(els, j, 0)
+			return dirChainParts(els, j, 0)
 		}
 	}
-	return "", false
+	return nil, false
+}
+
+func effectiveDirectory(els []xmlEl, i int) (string, bool) {
+	p, ok := effectiveDirectoryParts(els, i)
+	return joinParts(p), ok
+}
+
+// pinDirParts returns the structural directory chain of a pinned parent (CreateFolder or File), or nil.
+func pinDirParts(els []xmlEl, p int) []dirPart {
+	if n := els[p].Name; n != "CreateFolder" && n != "File" {
+		return nil
+	}
+	parts, _ := effectiveDirectoryParts(els, p)
+	return parts
 }
 
 // parentTarget returns the pin keys ("parent.<attr>") naming the object a Permission's parent acts on,
@@ -1401,15 +1502,34 @@ func samePermission(got, want map[string]string) bool {
 	return true
 }
 
-// chainIDs returns the directory Ids in a pin string "Element:Id:Name/Element:Id:Name".
-func chainIDs(chain string) []string {
-	var ids []string
-	for _, part := range strings.Split(chain, "/") {
-		if p := strings.SplitN(part, ":", 3); len(p) == 3 && p[1] != "" {
-			ids = append(ids, p[1])
+// standardFolders: the Windows Installer standard directory properties. MSI resolves each from its own
+// property, so overriding TARGETDIR does not move a child that sits under one (T-0756).
+var standardFolders = setOf("ProgramFilesFolder", "ProgramFiles64Folder", "ProgramFiles6432Folder",
+	"CommonFilesFolder", "CommonFiles64Folder", "CommonFiles6432Folder", "CommonAppDataFolder", "AppDataFolder",
+	"LocalAppDataFolder", "System64Folder", "SystemFolder", "WindowsFolder", "ProgramMenuFolder",
+	"StartMenuFolder", "DesktopFolder", "TempFolder", "WindowsVolume")
+
+func hasLower(s string) bool {
+	for _, r := range s {
+		if unicode.IsLower(r) {
+			return true
 		}
 	}
-	return ids
+	return false
+}
+
+// judgeSecureProps (T-0756): a directory in a Permission's pinned chain may not be listed in
+// SecureCustomProperties (or Secure="yes") in any installer source: that is what lets a managed install pass
+// it on the msiexec command line.
+func judgeSecureProps(pinned, secure map[string][]string) []string {
+	var v []string
+	for id, pIn := range pinned {
+		if sIn, ok := secure[id]; ok {
+			v = append(v, fmt.Sprintf("%s: %q is listed in SecureCustomProperties (or Secure=\"yes\") and is a directory in a pinned Permission chain (Permission in %s): an unprivileged caller of a managed install could set it and retarget the reviewed ACL (T-0756)", strings.Join(sIn, ", "), id, strings.Join(pIn, ", ")))
+		}
+	}
+	sort.Strings(v)
+	return v
 }
 
 // judgeRetargets is the cross-file half of T-0742: a Property that shares an Id with a Directory or
@@ -1556,7 +1676,21 @@ func judgeInstallerXML(rel string, b []byte, allow []string, agentFile bool) ins
 				// carry a reviewed ACL onto another object. Pin keys: "parent.<attr>".
 				tgt, resolved := parentTarget(els, e.Parent)
 				if resolved {
-					f.pinDirs = append(f.pinDirs, chainIDs(tgt["parent.directory"])...)
+					parts := pinDirParts(els, e.Parent)
+					for n, dp := range parts {
+						id := dp.ID
+						f.pinDirs = append(f.pinDirs, id)
+						if strings.ContainsAny(id, "/:") || strings.ContainsAny(dp.Name, "/:") {
+							fail("%s under %s %q: directory %s %q has a '/' or ':' in its Id or Name, which can forge the pinned parent chain string; refused (T-0756)", e.Name, ptype, pid, dp.Elem, id)
+						}
+						if n == 0 && id == "TARGETDIR" && len(parts) > 1 && standardFolders[parts[1].ID] {
+							continue
+						}
+						f.pinPrivDirs = append(f.pinPrivDirs, id)
+						if !hasLower(id) {
+							fail("%s under %s %q: directory Id %q in the pinned parent chain has no lowercase letter, so it is a public property: msiexec %s=<path> (and SecureCustomProperties in managed installs) retargets the reviewed ACL at install time; use a private (mixed-case) Id, like AgentDir (T-0756)", e.Name, ptype, pid, id, id)
+						}
+					}
 				}
 				if !resolved {
 					fail("%s under %s %q: the parent's effective target cannot be resolved (unknown parent type, or its directory/registry root comes from a ComponentRef or another fragment); an unresolved target cannot be pinned (T-0730)", e.Name, ptype, pid)
@@ -1629,18 +1763,44 @@ func judgeInstallerXML(rel string, b []byte, allow []string, agentFile bool) ins
 		switch e.Name {
 		case "Directory", "StandardDirectory":
 			f.dirIDs = append(f.dirIDs, e.Attrs["id"])
-		case "Property":
-			f.propIDs = append(f.propIDs, e.Attrs["id"])
+		case "Property", "SetProperty":
+			if e.Name == "Property" {
+				f.propIDs = append(f.propIDs, e.Attrs["id"])
+			}
+			if strings.EqualFold(e.Attrs["id"], "SecureCustomProperties") {
+				v := e.Attrs["value"] + ";" + e.Text
+				if dynamicRe.MatchString(v) {
+					f.violations = append(f.violations, fmt.Sprintf("%s: SecureCustomProperties is built through a variable or property: it must be a literal list so it can be judged against the Permission pins (T-0756)", rel))
+				}
+				for _, p := range strings.Split(v, ";") {
+					if p = strings.TrimSpace(p); p != "" {
+						f.secureIDs = append(f.secureIDs, p)
+					}
+				}
+			}
+			if e.Name == "Property" && (strings.EqualFold(e.Attrs["secure"], "yes") || strings.EqualFold(e.Attrs["secure"], "true")) {
+				f.secureIDs = append(f.secureIDs, e.Attrs["id"])
+			}
 		case "CustomAction":
 			// T-0742: Property=X Value=... is a Type 51 and Directory=X Value=... a Type 35 action; both
 			// compile to the same row as SetProperty/SetDirectory. Directory without Value is only a
 			// working directory (the pinned actions) and is not a retarget.
 			if p := e.Attrs["property"]; p != "" {
 				f.propIDs = append(f.propIDs, p)
+				if strings.EqualFold(p, "SecureCustomProperties") {
+					// T-0756: a Type 51 action can set the secure list at run time; whether the server side
+					// honours it is unverified, so fail closed.
+					f.violations = append(f.violations, fmt.Sprintf("%s: CustomAction %q sets SecureCustomProperties at run time, so the list cannot be judged against the Permission pins; set it as a literal Property (T-0756)", rel, e.Attrs["id"]))
+				}
 			}
 			if _, hasValue := e.Attrs["value"]; hasValue && e.Attrs["directory"] != "" {
 				f.propIDs = append(f.propIDs, e.Attrs["directory"])
 			}
+		case "Merge", "MergeRef":
+			// T-0759: a merge module is an opaque MSI database; its CustomAction, SetDirectory-style and
+			// Directory rows and its ModuleInstallExecuteSequence merge into the agent MSI, bypassing every
+			// custom-action rule above. Not approvable via installer-allow.txt until a reviewed merge-module path exists.
+			f.violations = append(f.violations, fmt.Sprintf("%s: %s element in an installer source: a merge module (.msm) is opaque and merges its own CustomAction, Directory and sequence rows into the MSI, bypassing the custom-action gate; installer-allow.txt cannot approve one (T-0759)", rel, e.Name))
 		case "UI", "UIRef", "Dialog", "DialogRef", "Control", "Publish", "Subscribe", "ProgressText", "TextStyle":
 			// T-0742: fail closed. UI properties and events are Formatted and indirect ([Prop], Indirect=yes,
 			// WIXUI_INSTALLDIR), so enumerating spellings that set a directory will keep missing variants. The

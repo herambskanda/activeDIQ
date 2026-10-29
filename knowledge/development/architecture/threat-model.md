@@ -1955,7 +1955,7 @@ security-architect reviews every change here.
   library (licence-register row first), the algorithm pinned, signed assertions required, and a
   signature-wrapping fuzz corpus. The lesson is the competitor's pre-auth RCE through an outdated
   XML-DSig library in SAML handling, CVE-2022-47966 (ME-SEC §4.1, §4.3 "third-party components").
-- **MFA for every console user.** WebAuthn/passkeys are preferred; TOTP is allowed. MFA claims from
+- **MFA for every console user.** WebAuthn/passkeys are preferred; TOTP is allowed. **Once an account owns a passkey, or holds an owner/control-plane role, TOTP no longer completes AN-10 (factor policy, `factor-policy-phishing-resistant-mfa.md`, T-0574).** MFA claims from
   the IdP are accepted only when the tenant configures that IdP as MFA-asserting `[OPEN → ADM-143
   spec]`. Local accounts exist only for break-glass, always require MFA (DM-30.I1, ADM-142), and
   every use raises an alert to all `tenant-owner` accounts. AD-side grants that reach an `sso`
@@ -3013,7 +3013,7 @@ Each goes through the `ceo-decisions` skill in business terms when its trigger a
 | --- | --- | --- |
 | Password-filter fail mode: fail-open (passwords allowed if our check cannot run) or fail-closed (password changes refused) | Customer-affecting risk acceptance | The M4 password-filter build (T-0145/T-0146 follow-up) |
 | Code-signing certificates and HSM/KMS for release keys | Money | Signing work in T-0140/T-0141 |
-| External security commitments: `SECURITY.md`, disclosure address and policy, advisory SLA (same-day advisories with CVSS matching the CNA record), independent pentest attestation | They leave the building (SB §10); ME-SEC §4.4 lists what buyers will ask for | First customer release (prepared in T-0079). **Disclosure half decided** (option a, as targets) and published in T-0258: `SECURITY.md`, `.well-known/security.txt`, gate `fitness-disclosure`. T-0260: severity-to-deadline table, advisory template and the advisory-equals-record gate (`runbooks/security-disclosure.md`), CNA application ready (`runbooks/cna-application.md`; the CEO submits it, Board actions). Still open: CNA submission, pentest (Decision 2) |
+| External security commitments: `SECURITY.md`, disclosure address and policy, advisory SLA (same-day advisories with CVSS matching the CNA record), independent pentest attestation | They leave the building (SB §10); ME-SEC §4.4 lists what buyers will ask for | First customer release (prepared in T-0079). **Disclosure half decided** (option a, as targets) and published in T-0258: `SECURITY.md`, `.well-known/security.txt`, gate `fitness-disclosure`. T-0260: severity-to-deadline table, advisory template and the advisory-equals-record gate (`runbooks/security-disclosure.md`), CNA application ready (`runbooks/cna-application.md`; the CEO submits it, Board actions). GitHub private vulnerability reporting enabled (D-0006 a), verified 2026-10-29 in T-0265. Still open: CNA submission, pentest (Decision 2) |
 
 ---
 ## 17. Open items

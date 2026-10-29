@@ -79,9 +79,8 @@ func startTunnel(t *testing.T, srv *storetest.Server) (*rig, *gateway.Hub, *recS
 	if err != nil {
 		t.Fatal(err)
 	}
-	pool := x509.NewCertPool()
-	pool.AddCert(ca.cert)
-	gs, err := gw.NewServer(srvCA.serverCert(t), func() *x509.CertPool { return pool }, func(r grpc.ServiceRegistrar) {
+	pool := gateway.NewCAIndex([]*x509.Certificate{ca.cert})
+	gs, err := gw.NewServer(srvCA.serverCert(t), func() *gateway.CAIndex { return pool }, func(r grpc.ServiceRegistrar) {
 		fleetv1.RegisterFleetServer(r, svc)
 	})
 	if err != nil {

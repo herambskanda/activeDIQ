@@ -244,6 +244,101 @@ func TestRepinRefusals(t *testing.T) {
 	}
 }
 
+// snapshotDir returns every file in dir (name -> bytes), so a test can prove nothing was touched.
+func snapshotDir(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]string{}
+	for _, e := range ents {
+		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		out[e.Name()] = string(b)
+	}
+	return out
+}
+
+// T-0736 finding 3 / TM-D24 rule D3: the transition bundle is proven to parse before any write. A new
+// server CA whose transition bundle (old roots + new root + client CAs) exceeds MaxBundleBytes must
+// be refused with nothing written: no state file changes, no temp file, and Load still succeeds.
+func TestRepinOversizedTransitionBundleRefusedBeforeAnyWrite(t *testing.T) {
+	if !runtimeUnix() {
+		t.Skip("unix only")
+	}
+	iss, _, dir := repinSetup(t)
+
+	// A server-shaped CA (IsCA, MaxPathLenZero, CertSign) padded by a non-critical extension of
+	// ~52 KB, so its PEM alone is over MaxBundleBytes.
+	k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	tpl := &x509.Certificate{
+		SerialNumber: big.NewInt(time.Now().UnixNano()), Subject: pkix.Name{CommonName: "oversized new server CA"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+		IsCA: true, BasicConstraintsValid: true, MaxPathLenZero: true, KeyUsage: x509.KeyUsageCertSign,
+		ExtraExtensions: []pkix.Extension{{Id: []int{1, 3, 6, 1, 4, 1, 99999, 1}, Value: make([]byte, 52000)}},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tpl, tpl, k.Public(), k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, _ := x509.ParseCertificate(der)
+	bigCA := authority{c, k, der}
+
+	before, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transPEM := bigCA.pem()
+	for _, r := range before.Roots {
+		transPEM = append(transPEM, authority{der: r.Raw}.pem()...)
+	}
+	if len(transPEM) <= MaxBundleBytes {
+		t.Fatalf("precondition: transition bundle is %d bytes, want > %d", len(transPEM), MaxBundleBytes)
+	}
+
+	// The endpoint serves [leaf signed by bigCA, bigCA]; the state points at it.
+	addr := serveChain(t, bigCA, bigCA.der)
+	host, port, _ := net.SplitHostPort(addr)
+	keyB, _ := os.ReadFile(filepath.Join(dir, KeyFile))
+	leafB, _ := os.ReadFile(filepath.Join(dir, LeafFile))
+	eps := []Endpoint{{Host: host, Port: mustPort(t, port)}}
+	if err := save(dir, before.Pin, append(iss.srv.pem(), iss.ca.pem()...), derOf(leafB), mustKeyDER(t, keyB), eps); err != nil {
+		t.Fatal(err)
+	}
+	snap := snapshotDir(t, dir)
+
+	var events []RepinEvent
+	err = Repin(context.Background(), dir, bigCA.pin().String(), func(e RepinEvent) { events = append(events, e) })
+	if !errors.Is(err, ErrRepin) {
+		t.Fatalf("err = %v, want ErrRepin", err)
+	}
+	if !strings.Contains(err.Error(), "transition bundle") {
+		t.Fatalf("refused for the wrong reason: %v", err)
+	}
+	if len(events) != 1 || events[0].Err == nil || events[0].OldPin != before.Pin || events[0].NewPin != bigCA.pin() {
+		t.Fatalf("audit = %+v, want exactly one failure event", events)
+	}
+	after := snapshotDir(t, dir)
+	if len(after) != len(snap) {
+		t.Fatalf("files changed: %d -> %d", len(snap), len(after))
+	}
+	for name, b := range snap {
+		if got, ok := after[name]; !ok || got != b {
+			t.Errorf("%s changed by a refused repin", name)
+		}
+	}
+	st, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load after refused repin: %v", err)
+	}
+	if st.Pin != before.Pin {
+		t.Fatal("pin moved by a refused repin")
+	}
+}
+
 func pemOf(der []byte) []byte { return authority{der: der}.pem() }
 
 func derOf(pemBytes []byte) []byte {
