@@ -118,7 +118,7 @@ func setupEnroll(t *testing.T, s *storetest.Server) *enrollEnv {
 
 func (e *enrollEnv) issue(t *testing.T, tid tenant.ID, kind fleetsql.Kind) fleetsql.Issued {
 	t.Helper()
-	iss, err := e.svc.Issue(context.Background(), tid, admin, fleetsql.NewComponent{Kind: kind, Name: "host-1"})
+	iss, err := e.svc.Issue(context.Background(), tid, adminIn(tid), fleetsql.NewComponent{Kind: kind, Name: "host-1"})
 	if err != nil {
 		t.Fatal(err)
 	}

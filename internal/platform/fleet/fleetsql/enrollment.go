@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
+	"github.com/skenzeriq/activediq/internal/platform/authn/tenantref"
 	"github.com/skenzeriq/activediq/internal/platform/fleet"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tablekind"
@@ -116,6 +117,11 @@ func (e *Enrollment) Issue(ctx context.Context, tid tenant.ID, p apihost.Princip
 		return Issued{}, err
 	}
 	if p.ID == "" || utf8.RuneCountInString(p.ID) > 200 {
+		return Issued{}, ErrForbidden
+	}
+	// The permission is evaluated in the principal's own tenant, so tid must be exactly that tenant;
+	// a platform principal (empty Tenant) is refused too.
+	if pt, perr := tenantref.TenantFromText(p.Tenant); perr != nil || pt != tid {
 		return Issued{}, ErrForbidden
 	}
 	ok, err := e.Authz.Allow(ctx, p, PermissionIssue, "tenant")

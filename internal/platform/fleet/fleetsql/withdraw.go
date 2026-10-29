@@ -11,6 +11,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
+	"github.com/skenzeriq/activediq/internal/platform/authn/tenantref"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/fleet"
 	"github.com/skenzeriq/activediq/internal/platform/store"
@@ -89,7 +90,7 @@ func (a *CAAdmin) Withdraw(ctx context.Context, tid tenant.ID, p apihost.Princip
 	}
 	// The permission is evaluated in the principal's own tenant, so the target tenant must be exactly
 	// that tenant: no cross-tenant withdrawal, and a platform principal (empty Tenant) is refused too.
-	if pt, perr := tenant.Parse(p.Tenant); perr != nil || pt != tid {
+	if pt, perr := tenantref.TenantFromText(p.Tenant); perr != nil || pt != tid {
 		return Withdrawn{}, ErrWithdrawForbidden
 	}
 	ok, err := a.Authz.Allow(ctx, p, PermissionCAWithdraw, "tenant")
