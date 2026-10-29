@@ -6,7 +6,7 @@ status: proposed
 owner: solution-architect
 kind: technical
 ticket: T-0142
-fitness: fitness-agent-host (to be built, follow-up ticket)
+fitness: fitness-agent-host (built, T-0554: `make fitness-agent-host`, tools/fitness/agenthost; checks needing the agent proto or MSI print inactive until they land)
 ---
 
 # ADR-0007: Agent policy is a signed, sequenced, bounded document; the policy key rotates through a keyset chain anchored at first contact

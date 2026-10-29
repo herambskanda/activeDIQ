@@ -12,6 +12,17 @@
         },
         "x-activediq-tag": "connections"
       },
+      "DestinationId": {
+        "description": "The destination.",
+        "in": "path",
+        "name": "destinationId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "x-activediq-tag": "platform.notify"
+      },
       "IdempotencyKey": {
         "description": "Makes a mutating bulk call safe to retry. The same key with a different body is refused.",
         "in": "header",
@@ -54,6 +65,19 @@
           "minimum": 1,
           "type": "integer"
         }
+      },
+      "RequiredIdempotencyKey": {
+        "description": "The request ID. It names the audit events of the change and makes a retry of a create safe.",
+        "in": "header",
+        "name": "Idempotency-Key",
+        "required": true,
+        "schema": {
+          "maxLength": 128,
+          "minLength": 8,
+          "pattern": "^[A-Za-z0-9._~-]+$",
+          "type": "string"
+        },
+        "x-activediq-tag": "platform.notify"
       }
     },
     "responses": {
@@ -327,6 +351,21 @@
         },
         "description": "Too many requests"
       },
+      "SetupRefused": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 401,
+              "title": "Setup was refused",
+              "type": "/problems/setup-refused"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "First-run setup was not claimed. One answer for every cause (wrong secret, expired secret, secret already used, install not in first-run state), so the response teaches a caller nothing. It never carries a detail."
+      },
       "SignInFailed": {
         "content": {
           "application/problem+json": {
@@ -583,6 +622,55 @@
         "minItems": 1,
         "type": "array",
         "x-activediq-tag": "delegation"
+      },
+      "DirectoryUser": {
+        "description": "A user as search shows it. Only these fields; the objectGuid is the key.",
+        "properties": {
+          "displayName": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "objectGuid": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "samAccountName": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "userPrincipalName": {
+            "maxLength": 1024,
+            "type": "string"
+          }
+        },
+        "required": [
+          "objectGuid",
+          "displayName",
+          "samAccountName",
+          "userPrincipalName",
+          "enabled"
+        ],
+        "type": "object",
+        "x-activediq-tag": "directory"
+      },
+      "DirectoryUserList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DirectoryUser"
+            },
+            "maxItems": 100,
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "x-activediq-tag": "directory"
       },
       "GUIDRef": {
         "additionalProperties": false,
@@ -996,6 +1084,128 @@
         "type": "string",
         "writeOnly": true,
         "x-activediq-secret": true
+      },
+      "SetupClaimRequest": {
+        "additionalProperties": false,
+        "description": "The one-time setup secret.",
+        "properties": {
+          "secret": {
+            "$ref": "#/components/schemas/SecretInput"
+          }
+        },
+        "required": [
+          "secret"
+        ],
+        "type": "object",
+        "x-activediq-tag": "platform.setup"
+      },
+      "SiemDestination": {
+        "description": "A destination as stored. It never carries a credential.",
+        "properties": {
+          "host": {
+            "maxLength": 253,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "plaintextOptIn": {
+            "type": "boolean"
+          },
+          "port": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "tlsVerified": {
+            "description": "True when the server certificate is verified (transport tls).",
+            "type": "boolean"
+          },
+          "transport": {
+            "$ref": "#/components/schemas/SiemTransport"
+          },
+          "warning": {
+            "description": "Present for a plaintext destination.",
+            "maxLength": 256,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "host",
+          "port",
+          "transport",
+          "tlsVerified",
+          "plaintextOptIn"
+        ],
+        "type": "object",
+        "x-activediq-tag": "platform.notify"
+      },
+      "SiemDestinationList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SiemDestination"
+            },
+            "maxItems": 1000,
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "x-activediq-tag": "platform.notify"
+      },
+      "SiemDestinationWrite": {
+        "additionalProperties": false,
+        "description": "The writable settings of a destination.",
+        "properties": {
+          "host": {
+            "description": "A plain host name or IP address. No scheme, port or path.",
+            "maxLength": 253,
+            "minLength": 1,
+            "type": "string"
+          },
+          "plaintextOptIn": {
+            "description": "Must be true with transport tcp and false or absent with tls.",
+            "type": "boolean"
+          },
+          "port": {
+            "description": "Absent takes 6514 for tls and 514 for tcp.",
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "transport": {
+            "$ref": "#/components/schemas/SiemTransportSetting"
+          }
+        },
+        "required": [
+          "host"
+        ],
+        "type": "object",
+        "x-activediq-tag": "platform.notify"
+      },
+      "SiemTransport": {
+        "description": "The transport of a stored destination. Clients ignore values they do not know.",
+        "enum": [
+          "tls",
+          "tcp"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "platform.notify"
+      },
+      "SiemTransportSetting": {
+        "description": "tls is RFC 5425 with certificate verification and is the default; tcp is plaintext and needs the opt-in. UDP is not offered.",
+        "enum": [
+          "tls",
+          "tcp"
+        ],
+        "type": "string",
+        "x-activediq-tag": "platform.notify"
       },
       "SubjectAccount": {
         "additionalProperties": false,
@@ -1818,6 +2028,73 @@
         "x-permission": "connections.takeover.attest"
       }
     },
+    "/directory/users": {
+      "get": {
+        "description": "Answers the users of the caller's tenant whose display name, sAMAccountName or userPrincipalName contains q, in a stable order, at most limit of them. q is plain text: the characters ( ) * \\ & | = ! < > ~ and control characters are refused with a 400, as is a q longer than 256 characters. Nothing from q is ever placed in a directory query as syntax.",
+        "operationId": "searchDirectoryUsers",
+        "parameters": [
+          {
+            "description": "Text to find. Plain text only; no filter syntax.",
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^[^()*\\\\&|=!<>~\\x00-\\x1f\\x7f]+$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The most users to answer. Defaults to 25.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectoryUserList"
+                }
+              }
+            },
+            "description": "The matching users"
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Search users",
+        "tags": [
+          "directory"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-stability": "preview",
+        "x-permission": "directory.read"
+      }
+    },
     "/health/live": {
       "get": {
         "description": "Answers 200 while the process can serve a request. Status only; it never reports a version, a configuration value or a dependency.",
@@ -1892,6 +2169,279 @@
         "x-activediq-stability": "stable",
         "x-permission": "anonymous"
       }
+    },
+    "/notify/siem-destinations": {
+      "get": {
+        "description": "Answers every destination of the tenant, oldest first. A tenant has a handful of destinations, so the list is not paged.",
+        "operationId": "listSiemDestinations",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiemDestinationList"
+                }
+              }
+            },
+            "description": "The destinations"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "List the SIEM syslog destinations",
+        "tags": [
+          "platform.notify"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-stability": "preview",
+        "x-permission": "siem.destination.read"
+      },
+      "post": {
+        "description": "Creates a destination. The default transport is TLS with certificate verification; plaintext TCP needs transport tcp together with plaintextOptIn true, and the opt-in is audited. The Idempotency-Key is the request ID of the audit events and names the destination: a retry with the same key and body answers the destination already created and changes nothing, and the same key with a different body is refused.",
+        "operationId": "createSiemDestination",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequiredIdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SiemDestinationWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiemDestination"
+                }
+              }
+            },
+            "description": "The destination is created"
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyKeyReuse"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Create a SIEM syslog destination",
+        "tags": [
+          "platform.notify"
+        ],
+        "x-activediq-limits": {
+          "class": "write",
+          "maxBodyBytes": 2048
+        },
+        "x-activediq-stability": "preview",
+        "x-permission": "siem.destination.manage"
+      }
+    },
+    "/notify/siem-destinations/{destinationId}": {
+      "get": {
+        "operationId": "getSiemDestination",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DestinationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiemDestination"
+                }
+              }
+            },
+            "description": "The destination"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Get a SIEM syslog destination",
+        "tags": [
+          "platform.notify"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-stability": "preview",
+        "x-permission": "siem.destination.read"
+      },
+      "put": {
+        "description": "Replaces the writable fields. The change redirects the SIEM stream, so it is audited with the previous and the new target. The Idempotency-Key is the request ID of the audit events; use a new key for each intended change. A key that already recorded an update is never applied twice: a replay with the same settings returns the current destination, with different settings it is a 422.",
+        "operationId": "updateSiemDestination",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DestinationId"
+          },
+          {
+            "$ref": "#/components/parameters/RequiredIdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SiemDestinationWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiemDestination"
+                }
+              }
+            },
+            "description": "The destination as stored"
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyKeyReuse"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Replace the settings of a SIEM syslog destination",
+        "tags": [
+          "platform.notify"
+        ],
+        "x-activediq-limits": {
+          "class": "write",
+          "maxBodyBytes": 2048
+        },
+        "x-activediq-stability": "preview",
+        "x-permission": "siem.destination.manage"
+      }
+    },
+    "/setup/claim": {
+      "post": {
+        "description": "The first-run setup gate (TM-TB16-T7). A fresh install writes a one-time setup secret where only the installing administrator can read it (`activediq-server setup show`). Presenting it here claims setup: the secret is consumed on the first correct use and never works again. Success answers 204 and no body. Every failure has one shape, 401 /problems/setup-refused: wrong secret, expired secret, already-used secret, and an install that is not in first-run state are indistinguishable. The source-IP limiter may answer 429. No default account exists before or after.",
+        "operationId": "claimFirstRunSetup",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetupClaimRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Setup was claimed and the secret is consumed."
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/SetupRefused"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "security": [],
+        "summary": "Claim first-run setup with the one-time setup secret (AN-4)",
+        "tags": [
+          "platform.setup"
+        ],
+        "x-activediq-anonymous": "AN-4",
+        "x-activediq-limits": {
+          "class": "auth",
+          "maxBodyBytes": 4096
+        },
+        "x-activediq-scope": "platform",
+        "x-activediq-stability": "preview",
+        "x-permission": "anonymous"
+      }
     }
   },
   "security": [
@@ -1918,12 +2468,24 @@
       "name": "delegation"
     },
     {
+      "description": "Read-only directory queries. User search by plain text, tenant-scoped, permission directory.read.",
+      "name": "directory"
+    },
+    {
       "description": "Sign-in, second factor and sign-out for the console. A first factor yields a pending sign-in; only the second factor creates a session.",
       "name": "platform.authn"
     },
     {
       "description": "Liveness and readiness of the service, for load balancers and orchestrators. Status only; no version or configuration detail.",
       "name": "platform.health"
+    },
+    {
+      "description": "Notification sinks. SIEM syslog destinations; TLS by default, plaintext only by an audited opt-in. No destination can be deleted.",
+      "name": "platform.notify"
+    },
+    {
+      "description": "First-run setup. The one-time setup secret claims setup once; it expires and is consumed on first use.",
+      "name": "platform.setup"
     }
   ]
 }

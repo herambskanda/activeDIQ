@@ -24,6 +24,7 @@ type fobj struct {
 	raw   map[string][]byte
 	multi map[string][][]byte
 	guid  guid.GUID
+	bare  bool // a denied Read on Windows: the entry comes back with no attributes at all
 }
 
 // fakeDir is an in-memory ADDirectory. It implements the directory's semantics (subtree scope,
@@ -109,6 +110,9 @@ func (f *fakeDir) find(text string) *fobj {
 }
 
 func (o *fobj) entry() *ad.Entry {
+	if o.bare {
+		return ad.NewEntry(o.dn, nil)
+	}
 	m := map[string][][]byte{"objectGUID": {o.guid.Bytes()}}
 	for _, c := range o.cls {
 		m["objectClass"] = append(m["objectClass"], []byte(c))

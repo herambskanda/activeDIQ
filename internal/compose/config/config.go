@@ -56,17 +56,6 @@ const (
 	// this origin plus the callback path, and must be registered on the app registration. Required with
 	// EnvAttestClientID.
 	EnvPublicURL = "ACTIVEDIQ_PUBLIC_URL"
-	// EnvKEKFile selects the KEK profile (the interim linux-oci/dev key-provider profile, until the
-	// passphrase keystore or the OS/KMS adapters of ADR-0002 land; threat model TM-TB5-T7): the path of a file holding the platform key-encryption key as 64
-	// hex characters (0600 on Unix). With it the API TLS private key is sealed at rest under that KEK; the
-	// server refuses to start if the file is missing or unusable, or if it cannot unseal what is on disk.
-	// Requires EnvAPITLSDir, and the file must live outside it (a copied directory must not carry its own
-	// key). Unset keeps the legacy plaintext 0600 key file, and a directory already sealed
-	// then fails startup instead of downgrading.
-	EnvKEKFile = "ACTIVEDIQ_KEK_FILE"
-	// EnvKEKID names the KEK in the sealed envelope (default DefaultKEKID); rotate by changing it together
-	// with the file.
-	EnvKEKID = "ACTIVEDIQ_KEK_ID"
 	// EnvOpsAddr is the bind address of the operator (ops) listener that serves /metrics (T-0533). Unset
 	// means no ops listener and no metrics endpoint. It must differ from EnvAPIAddr: metrics list every
 	// tenant, so they are never served on the API listener. Same TLS rules as the API listener.
@@ -75,10 +64,10 @@ const (
 	// that scrapes must present. Required with EnvOpsAddr; it is a separate credential from every
 	// tenant session and API key.
 	EnvOpsTokenFile = "ACTIVEDIQ_OPS_TOKEN_FILE"
+	// EnvSetupTTL is how long the one-time first-run setup secret works (a Go duration, default 1h, at most
+	// 24h). A restart of an unclaimed install after expiry issues a new secret.
+	EnvSetupTTL = "ACTIVEDIQ_SETUP_TTL"
 )
-
-// DefaultKEKID is the KEK reference name when EnvKEKID is unset.
-const DefaultKEKID = "platform"
 
 // Values of EnvPrincipalStore.
 const (
@@ -90,6 +79,9 @@ const (
 const (
 	DefaultShutdownGrace = 30 * time.Second
 	DefaultStopTimeout   = 90 * time.Second
+	// DefaultSetupTTL and MaxSetupTTL bound the first-run setup secret's life (TM-TB16-T7).
+	DefaultSetupTTL = time.Hour
+	MaxSetupTTL     = 24 * time.Hour
 	// DefaultAPIAddr binds loopback only. A non-loopback bind needs EnvAPITLSDir (the listener is TLS-only).
 	DefaultAPIAddr = "127.0.0.1:8080"
 	// DefaultAPIBodyBudget is 64 MiB, the same default as apihost.DefaultBodyBudget.
@@ -121,19 +113,18 @@ type Config struct {
 	// AttestClientID and PublicURL configure the TM-D17 attestation; both empty means it is not offered.
 	AttestClientID string
 	PublicURL      string
-	// KEKFile is the KEK profile's key file (empty: no KEK profile); KEKID names the key.
-	KEKFile string
-	KEKID   string
 	// OpsAddr and OpsTokenFile configure the operator metrics listener; both empty means it is off.
 	OpsAddr      string
 	OpsTokenFile string
+	// SetupTTL is the life of the one-time first-run setup secret.
+	SetupTTL time.Duration
 }
 
 // Load reads the configuration through getenv (os.Getenv in the binaries, a map in tests).
 // An invalid value is an error; it is never silently replaced by a default.
 func Load(getenv func(string) string) (Config, error) {
 	c := Config{LogLevel: slog.LevelInfo, ShutdownGrace: DefaultShutdownGrace, StopTimeout: DefaultStopTimeout,
-		APIAddr: DefaultAPIAddr, APIBodyBudget: DefaultAPIBodyBudget, Nodes: 1, PrincipalStore: PrincipalStorePostgres}
+		APIAddr: DefaultAPIAddr, APIBodyBudget: DefaultAPIBodyBudget, SetupTTL: DefaultSetupTTL, Nodes: 1, PrincipalStore: PrincipalStorePostgres}
 	if v := getenv(EnvLogLevel); v != "" {
 		if err := c.LogLevel.UnmarshalText([]byte(v)); err != nil {
 			return Config{}, fmt.Errorf("%s: %w", EnvLogLevel, err)
@@ -147,6 +138,12 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if c.StopTimeout, err = duration(getenv, EnvStopTimeout, c.StopTimeout); err != nil {
 		return Config{}, err
+	}
+	if c.SetupTTL, err = duration(getenv, EnvSetupTTL, c.SetupTTL); err != nil {
+		return Config{}, err
+	}
+	if c.SetupTTL > MaxSetupTTL {
+		return Config{}, fmt.Errorf("%s: at most %s, got %s", EnvSetupTTL, MaxSetupTTL, c.SetupTTL)
 	}
 	if v := getenv(EnvAPIAddr); v != "" {
 		c.APIAddr = v
@@ -199,18 +196,8 @@ func Load(getenv func(string) string) (Config, error) {
 	if err := c.ValidateAttestation(); err != nil {
 		return Config{}, err
 	}
-	c.KEKFile, c.KEKID = getenv(EnvKEKFile), getenv(EnvKEKID)
-	if c.KEKID == "" {
-		c.KEKID = DefaultKEKID
-	}
 	c.OpsAddr, c.OpsTokenFile = getenv(EnvOpsAddr), getenv(EnvOpsTokenFile)
 	if err := c.ValidateOps(); err != nil {
-		return Config{}, err
-	}
-	if c.KEKFile != "" && c.APITLSDir == "" {
-		return Config{}, fmt.Errorf("%s: needs %s, there is no persisted API key to seal without it", EnvKEKFile, EnvAPITLSDir)
-	}
-	if err := c.validateKEKPlacement(); err != nil {
 		return Config{}, err
 	}
 	if 2*c.ShutdownGrace >= c.StopTimeout {
@@ -266,8 +253,6 @@ func (c Config) LogValue() slog.Value {
 		slog.Duration("stop_timeout", r.StopTimeout),
 		slog.String("api_addr", r.APIAddr),
 		slog.String("api_tls_dir", r.APITLSDir),
-		slog.String("kek_file", r.KEKFile),
-		slog.String("kek_id", r.KEKID),
 		slog.Int64("api_body_budget", r.APIBodyBudget),
 		slog.Any("trusted_proxies", r.TrustedProxies),
 		slog.Int("nodes", r.Nodes),

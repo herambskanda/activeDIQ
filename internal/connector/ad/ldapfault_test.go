@@ -204,8 +204,9 @@ func selfSigned(t *testing.T) (tls.Certificate, *x509.CertPool) {
 // fakeUpstream answers bind, the rootDSE and schema reads Open makes, and any "<GUID=...>" search
 // with `entries` user entries. Everything else gets an empty, successful result.
 type fakeUpstream struct {
-	ln      net.Listener
-	entries int
+	ln       net.Listener
+	entries  int
+	noSchema bool // answer the schema search with no entries, as a GC does for searchFlags (T-0619)
 }
 
 func startFakeUpstream(t *testing.T, entries int) *fakeUpstream {
@@ -255,6 +256,7 @@ func (f *fakeUpstream) serve(c net.Conn) {
 				out = append(out, entryMsg(id, "", map[string][][]byte{
 					"schemaNamingContext": {[]byte(fakeSchemaNC)}, "defaultNamingContext": {[]byte("DC=lab,DC=test")},
 				}))
+			case base == fakeSchemaNC && f.noSchema:
 			case base == fakeSchemaNC: // the secret-flagged attribute Open insists on finding
 				out = append(out, entryMsg(id, "CN=unicodePwd,"+fakeSchemaNC, map[string][][]byte{
 					"lDAPDisplayName": {[]byte("unicodePwd")}, "attributeID": {[]byte("1.2.840.113556.1.4.90")},

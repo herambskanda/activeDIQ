@@ -18,16 +18,34 @@ func kekFileSupported(goos string) error {
 	return nil
 }
 
-// openKEKFile opens path once, refusing a symlink at the final component, and checks the opened handle
-// (regular file, owned by the effective uid, 0600) so nothing can be swapped between check and use.
-func openKEKFile(path string) (*os.File, error) { return openSecretFile("KEK file", path) }
+// checkKEKDir refuses a keystore directory that exists but is not a directory owned by the server user, or is
+// writable by group or others: anyone who can write there can replace the keystore. A directory that does not
+// exist yet is accepted here (kek init creates it 0700; the server then finds no keystore).
+func checkKEKDir(dir string) error {
+	fi, err := os.Stat(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil || !fi.IsDir() {
+		return kekErr(KEKDirUnsafe, EnvKEKDir)
+	}
+	if st, ok := fi.Sys().(*syscall.Stat_t); !ok || int(st.Uid) != os.Geteuid() || fi.Mode().Perm()&0o022 != 0 {
+		return kekErr(KEKDirUnsafe, EnvKEKDir)
+	}
+	return nil
+}
 
-// openSecretFile is openKEKFile for any owner-only secret file; what names it in errors.
+// openSecretFile opens path once, refusing a symlink at the final component, and checks the opened handle
+// (regular file, owned by the effective uid, 0600) so nothing can be swapped between check and use. what names
+// the file in errors.
 func openSecretFile(what, path string) (*os.File, error) {
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		if errors.Is(err, syscall.ELOOP) {
 			return nil, fmt.Errorf("%s %s must be a regular file, not a link", what, path)
+		}
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("%s %s: %w", what, path, errNotExist)
 		}
 		return nil, fmt.Errorf("%s %s: %w", what, path, errors.Unwrap(err))
 	}

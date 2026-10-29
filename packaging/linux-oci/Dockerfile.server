@@ -1,0 +1,9 @@
+# The linux-oci server image (T-0136). FROM scratch: no base-image licence, no shell, no package manager.
+# The build context is assembled by tools/fitness/host (static cmd/server binary + an empty tls/ directory);
+# a release build supplies the same layout. The service is a numeric non-root uid (TM-TB16-T2) and the API TLS
+# directory is created owned by it at mode 0700 (TM-TB16-T3, T-0104), so a fresh named volume inherits both.
+FROM scratch
+COPY --chown=10001:10001 --chmod=0755 server /activediq-server
+COPY --chown=10001:10001 --chmod=0700 tls/ /var/lib/activediq/tls/
+USER 10001:10001
+ENTRYPOINT ["/activediq-server"]

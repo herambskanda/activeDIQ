@@ -58,3 +58,15 @@ lab/windows/.win-lab-ca.pem
 
 # stray go build output of tools/fitness/profiles
 /profiles
+
+# Stray `go build` output of the fitness tools (make uses go run)
+/tools/fitness/*/*
+!/tools/fitness/*/*.go
+!/tools/fitness/*/*.txt
+!/tools/fitness/*/testdata/
+!/tools/fitness/update/offline.sh
+# stray `go build ./tools/fitness/audit` output
+/audit
+
+# built fitness binary (build into $TMPDIR instead)
+/agenthost

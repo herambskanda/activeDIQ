@@ -402,3 +402,6 @@ func StartServers(ctx context.Context, versions []string, supplied map[string]*S
 	}
 	return servers, release, nil
 }
+
+// AppDSN is the runtime role's DSN for this database, as a URL a server container can take.
+func (d *Database) AppDSN() string { return d.s.dsn(d.s.appRole, d.s.appPass, d.Name) }

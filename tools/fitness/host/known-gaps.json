@@ -1,0 +1,10 @@
+{
+  "gaps": [
+    {
+      "case": "HOST-NO-DUMPS",
+      "profile": "linux-oci",
+      "ticket": "T-0634",
+      "reason": "cmd/server sets neither RLIMIT_CORE=0 nor PR_SET_DUMPABLE=0 yet; measured on the booted container (/proc/<pid>/limits, /proc/<pid> owner)"
+    }
+  ]
+}

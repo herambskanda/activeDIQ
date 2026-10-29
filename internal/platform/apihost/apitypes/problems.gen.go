@@ -24,6 +24,7 @@ const (
 	ProblemTypePreconditionFailed      = "/problems/precondition-failed"
 	ProblemTypePreconditionRequired    = "/problems/precondition-required"
 	ProblemTypeRateLimited             = "/problems/rate-limited"
+	ProblemTypeSetupRefused            = "/problems/setup-refused"
 	ProblemTypeSignInFailed            = "/problems/sign-in-failed"
 	ProblemTypeStepUpRequired          = "/problems/step-up-required"
 	ProblemTypeUnauthenticated         = "/problems/unauthenticated"
@@ -119,6 +120,11 @@ func PreconditionRequired(detail string) *Problem {
 // RateLimited builds a 429 /problems/rate-limited problem.
 func RateLimited(detail string) *Problem {
 	return newProblem(ProblemTypeRateLimited, "Too many requests", 429, detail)
+}
+
+// SetupRefused builds a 401 /problems/setup-refused problem.
+func SetupRefused(detail string) *Problem {
+	return newProblem(ProblemTypeSetupRefused, "Setup was refused", 401, detail)
 }
 
 // SignInFailed builds a 401 /problems/sign-in-failed problem.

@@ -37,6 +37,7 @@ type dirFake struct {
 	pwdSet  map[string]time.Time
 	applies map[string]int
 	mode    map[string]string // guid -> behaviour of Apply
+	touch   map[string]string // guid -> a second object the step's change touches (the Toucher hook)
 	secret  string
 	noNC    bool          // plan AD targets without a naming context
 	badNC   string        // set by Apply when the Step's NC/pin disagree with the plan
@@ -44,7 +45,7 @@ type dirFake struct {
 }
 
 func newDir() *dirFake {
-	return &dirFake{val: map[string]string{}, pwdSet: map[string]time.Time{}, applies: map[string]int{}, mode: map[string]string{}}
+	return &dirFake{val: map[string]string{}, pwdSet: map[string]time.Time{}, applies: map[string]int{}, mode: map[string]string{}, touch: map[string]string{}}
 }
 
 func (d *dirFake) get(g string) string { d.mu.Lock(); defer d.mu.Unlock(); return d.val[g] }
@@ -58,7 +59,10 @@ type itemIn struct {
 }
 type dirIn struct{ Items []itemIn }
 type dirPayload struct{ GUID, Before, Want string }
-type dirOut struct{ GUID string }
+type dirOut struct {
+	GUID   string
+	Report []step.Tier0Finding
+}
 
 func (d *dirFake) action(t *testing.T, id ActionID, stepUp, secretIn bool, class Reversibility) Action {
 	a, err := Define(Typed[dirIn, dirPayload, dirOut]{
@@ -121,6 +125,12 @@ func (d *dirFake) action(t *testing.T, id ActionID, stepUp, secretIn bool, class
 			case "defer":
 				d.val[g] = p.Payload.Want
 				return dirOut{GUID: g}, nil
+			case "report", "report_verr":
+				d.val[g] = p.Payload.Want
+				return dirOut{GUID: g, Report: []step.Tier0Finding{{Object: "x-guid", Bases: []string{"C2"}}}}, nil
+			case "report_unclassified":
+				d.val[g] = p.Payload.Want
+				return dirOut{GUID: g, Report: []step.Tier0Finding{{Object: "x-guid"}}}, nil
 			}
 			d.val[g] = p.Payload.Want
 			d.pwdSet[g] = time.Now()
@@ -130,6 +140,12 @@ func (d *dirFake) action(t *testing.T, id ActionID, stepUp, secretIn bool, class
 			if d.mode[p.Payload.GUID] == "defer" && d.mode["verified"] != "yes" {
 				return Verdict{}, ErrDeferVerify
 			}
+			if d.mode[p.Payload.GUID] == "report_verr" {
+				return Verdict{}, errors.New("read-back failed")
+			}
+			if d.mode[p.Payload.GUID] == "verr" {
+				return Verdict{}, errors.New("read-back failed")
+			}
 			if d.mode[p.Payload.GUID] == "tier0" {
 				return Verdict{Reason: ReasonTier0AfterWrite}, nil
 			}
@@ -138,6 +154,13 @@ func (d *dirFake) action(t *testing.T, id ActionID, stepUp, secretIn bool, class
 			}
 			return Verdict{OK: true}, nil
 		},
+		Touched: func(p TypedStep[dirPayload]) []authority.TargetRef {
+			if g := d.touch[p.Payload.GUID]; g != "" {
+				return []authority.TargetRef{{Connection: "c1", GUID: g, Class: "user", NC: "dc=example"}}
+			}
+			return nil
+		},
+		Tier0:   func(o dirOut) []step.Tier0Finding { return o.Report },
 		Inverse: func(TypedStep[dirPayload], dirOut) (dirIn, error) { return dirIn{}, ErrIrreversible },
 		Observe: func(_ context.Context, _ authority.Pins, p TypedStep[dirPayload], claimedAt time.Time) (Observation, error) {
 			d.mu.Lock()
@@ -1314,6 +1337,30 @@ func TestTier0AfterWriteFromSupersededDeferredVerify(t *testing.T) {
 		}
 		if got := p.owner(tier0Count)[0]; got != "1" {
 			t.Fatalf("tier0 audit events = %s", got)
+		}
+	})
+}
+
+// tenantPin records the tenant the runner puts on the ctx it hands to Pin.
+type tenantPin struct{ got string }
+
+func (t *tenantPin) Pin(ctx context.Context, _ string, _ authority.NamingContextID, _ string) (DCPin, error) {
+	t.got, _ = authority.TenantFrom(ctx)
+	return DCPin{Host: "dc1.example.test", DSAGUID: "11111111-2222-3333-4444-555555555555"}, nil
+}
+
+// The pinner always sees the operation's own tenant, even when the caller's ctx carries another one.
+func TestPinnerReceivesOperationTenant(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		tp := &tenantPin{}
+		p := newPRig(t, s, rigOpt{pinner: tp})
+		p.dir.set("g1", "old")
+		ctx := authority.WithTenant(context.Background(), "99999999-9999-9999-9999-999999999999")
+		if _, err := p.r.SubmitDirectory(ctx, p.req(itemIn{GUID: "g1", Want: "new"})); err != nil {
+			t.Fatal(err)
+		}
+		if tp.got != p.tn.String() {
+			t.Fatalf("pinner saw tenant %q, want the operation's %q", tp.got, p.tn.String())
 		}
 	})
 }

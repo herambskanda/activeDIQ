@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/skenzeriq/activediq/internal/connector/write"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,8 +52,25 @@ func (w *world) handler(t *testing.T, ep *EpochState, dir ADDirectory) *VerifyHa
 	}
 	snapshotHook = func(context.Context) (*tier0.ADSet, error) { return w.set, nil }
 	t.Cleanup(func() { snapshotHook = nil })
-	return &VerifyHandler{Dir: dir, Epoch: ep, Identity: ref, Directory: testDirectory()}
+	if ep == nil {
+		d := t.TempDir()
+		ep = NewEpochState(FileBaselineStore{filepath.Join(d, "baseline.json")}, FileRecordSink{filepath.Join(d, "records.log")}, nil)
+	}
+	gate, err := write.NewGateBook(nopBaseline{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := NewVerifyHandler(VerifyConfig{Dir: dir, Epoch: ep, Identity: ref, Directory: testDirectory(),
+		Gate: gate, OnLocalRecordFailed: gate.CloseLocalRecordFailed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h
 }
+
+type nopBaseline struct{}
+
+func (nopBaseline) Append(string, []write.Mark) error { return nil }
 
 func connErr(t *testing.T, err error) *v1.ConnectorError {
 	t.Helper()
@@ -156,7 +175,7 @@ func TestVerifyLocalRecordFailedMapsToLOCAL_RECORD_FAILED(t *testing.T) {
 	ep := NewEpochState(FileBaselineStore{filepath.Join(d, "baseline.json")}, FileRecordSink{filepath.Join(d, "no-such-dir", "records.log")}, nil)
 	h := w.handler(t, ep, nil)
 	closed := false
-	h.OnLocalRecordFailed = func() { closed = true }
+	h.onLRF = func(string) { closed = true }
 	st := &fakeStream{}
 	err := h.VerifyConnection(context.Background(), request(w), st)
 	if ce := connErr(t, err); ce.Code != v1.ErrorCode_ERROR_CODE_LOCAL_RECORD_FAILED || ce.Retry != v1.RetryAdvice_RETRY_ADVICE_NEVER {
@@ -180,5 +199,86 @@ func TestVerifyHappyPath(t *testing.T) {
 	}
 	if len(st.sent) == 0 || st.sent[len(st.sent)-1].GetCompleted() == nil {
 		t.Fatal("no completed")
+	}
+}
+
+func TestNewVerifyHandlerFailsClosedWithoutHook(t *testing.T) {
+	w := newWorld(t)
+	h := w.handler(t, nil, nil)
+	gate, _ := write.NewGateBook(nopBaseline{}, nil)
+	base := VerifyConfig{Dir: h.dir, Epoch: h.epoch, Identity: h.identity, Directory: h.directory, Gate: gate,
+		OnLocalRecordFailed: gate.CloseLocalRecordFailed}
+	for name, mut := range map[string]func(*VerifyConfig){
+		"hook":  func(c *VerifyConfig) { c.OnLocalRecordFailed = nil },
+		"gate":  func(c *VerifyConfig) { c.Gate = nil },
+		"dir":   func(c *VerifyConfig) { c.Dir = nil },
+		"epoch": func(c *VerifyConfig) { c.Epoch = nil },
+	} {
+		c := base
+		mut(&c)
+		if got, err := NewVerifyHandler(c); err == nil || got != nil {
+			t.Fatalf("%s nil: constructed", name)
+		}
+	}
+	// A zero-value handler refuses calls instead of streaming without a gate feed.
+	err := (&VerifyHandler{}).VerifyConnection(context.Background(), request(w), &fakeStream{})
+	if ce := connErr(t, err); ce.Code != v1.ErrorCode_ERROR_CODE_PROVIDER_FAILURE {
+		t.Fatalf("%v", ce)
+	}
+}
+
+func TestVerifyFeedsGateBookAndLRFClosesIt(t *testing.T) {
+	w := newWorld(t)
+	h := w.handler(t, nil, nil)
+	st := &fakeStream{}
+	if err := h.VerifyConnection(context.Background(), request(w), st); err != nil {
+		t.Fatal(err)
+	}
+	if d := h.gate.Check("conn-1", true, nil); !d.Open || len(d.VerificationID) == 0 {
+		t.Fatalf("Complete was not fed or gate not open on PASS: %+v", d)
+	}
+	if d := h.gate.Check("other", true, nil); len(d.VerificationID) != 0 {
+		t.Fatal("another connection got the run")
+	}
+	// A later LOCAL_RECORD_FAILED closes the prior epoch's gate through the mandatory hook.
+	d := t.TempDir()
+	h.epoch = NewEpochState(FileBaselineStore{filepath.Join(d, "baseline.json")}, FileRecordSink{filepath.Join(d, "no-dir", "records.log")}, nil)
+	err := h.VerifyConnection(context.Background(), request(w), &fakeStream{})
+	if ce := connErr(t, err); ce.Code != v1.ErrorCode_ERROR_CODE_LOCAL_RECORD_FAILED {
+		t.Fatalf("%v", ce)
+	}
+	after := h.gate.Check("conn-1", true, nil)
+	if after.Open || after.State != v1.WriteGateState_WRITE_GATE_STATE_LOCAL_RECORD_FAILED {
+		t.Fatalf("gate still open after LOCAL_RECORD_FAILED: %+v", after)
+	}
+}
+
+func TestVerifyRequiresConnectionID(t *testing.T) {
+	w := newWorld(t)
+	req := request(w)
+	req.Connection = nil
+	err := w.handler(t, nil, nil).VerifyConnection(context.Background(), req, &fakeStream{})
+	if ce := connErr(t, err); ce.Code != v1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT {
+		t.Fatalf("%v", ce)
+	}
+}
+
+func TestVerifyLogsCodeOnly(t *testing.T) {
+	w := newWorld(t)
+	raw := fmt.Errorf("LDAP Result Code 50: %s: %w", secretDN, ad.NewError(ad.CodeInsufficientRights))
+	h := w.handler(t, nil, failingDir{w.f, raw})
+	var buf strings.Builder
+	h.log = slog.New(slog.NewTextHandler(&buf, nil))
+	if err := h.VerifyConnection(context.Background(), request(w), &fakeStream{}); err == nil {
+		t.Fatal("expected an error")
+	}
+	out := buf.String()
+	if !strings.Contains(out, string(ad.CodeInsufficientRights)) {
+		t.Fatalf("code not logged: %q", out)
+	}
+	for _, bad := range []string{secretDN, "Secret Admin", "LDAP Result", "00002098"} {
+		if strings.Contains(out, bad) {
+			t.Fatalf("log leaks %q: %q", bad, out)
+		}
 	}
 }

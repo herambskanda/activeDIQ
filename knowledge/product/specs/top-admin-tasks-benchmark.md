@@ -1,7 +1,7 @@
 ---
 title: "Top 20 admin tasks: ManageEngine benchmark and activeDIQ targets"
 date: 2026-10-02
-updated: 2026-10-02
+updated: 2026-10-29
 status: draft
 owner: heramb
 ticket: T-0008
@@ -284,6 +284,47 @@ How to read the table:
 - **T15:** 12.5 s vs 12.4 s, which is parity.
 
 On these tasks we win on waits, safety, defaults, previews and audit, not on clicks. Each task section says which.
+
+## 2.1 Interaction budgets (E1.7, T-0672)
+
+The interaction budget is the aDIQ **I** count of §2: a hard limit that design, the prototype and QA are measured against. This table repeats it next to the ME count so each budget can be read on one line. It is generated from [`klm.py`](top-admin-tasks-benchmark-evidence/klm.py), so it cannot drift from §2.
+
+| ID | Task | ME interactions | aDIQ budget (interactions) | Δ vs ME |
+|---|---|---|---|---|
+| T01 | Reset password + unlock for a caller | 8 | **7** | -1 (-12%) |
+| T02 | Find a repeated lockout's source, then unlock | 10 | **5** | -5 (-50%) |
+| T03 | Look up a caller's account status | 8 | **3** | -5 (-62%) |
+| T04 | Retrieve a BitLocker recovery key | 7 | **6** | -1 (-14%) |
+| T05 | Retrieve a LAPS password | 5 | **6** | +1 (+20%) |
+| T06 | Add a user to a group | 11 | **7** | -4 (-36%) |
+| T07 | Create one joiner (manager, mailbox, licence, groups) | 13 | **6** | -7 (-54%) |
+| T08 | Bulk-create 200 users from CSV | 12 | **6** | -6 (-50%) |
+| T09 | Offboard a leaver | 17 | **5** | -12 (-71%) |
+| T10 | Process a mover (title, department, manager, groups, OU) | 36 | **11** | -25 (-69%) |
+| T11 | Add 50 users to one group | 11 | **8** | -3 (-27%) |
+| T12 | Change one attribute on 300 users | 11 | **9** | -2 (-18%) |
+| T13 | Set or extend a contractor's expiry | 13 | **6** | -7 (-54%) |
+| T14 | Assign an M365 licence | 12 | **6** | -6 (-50%) |
+| T15 | Restore a user deleted by mistake | 6 | **5** | -1 (-17%) |
+| T16 | Who removed X from Domain Admins, and when | 9 | **5** | -4 (-44%) |
+| T17 | Clean up stale computers (90 d → disable → quarantine → delete) | 26 | **11** | -15 (-58%) |
+| T18 | Clean up inactive users, excluding service accounts | 34 | **13** | -21 (-62%) |
+| T19 | Export Domain Admins membership, nested, for an auditor | 11 | **6** | -5 (-45%) |
+| T20 | Schedule a monthly compliance report by e-mail | 14 | **7** | -7 (-50%) |
+| | **Total** | **274** | **138** | **-136 (-50%)** |
+
+**T05 is the one task where the budget is higher than ME's** (6 vs 5): we add a reason and step-up MFA to a secret reveal (§3 T05).
+
+**Prototype check (T-0672).** The Storybook prototype ([`web/src/prototype/`](../../../web/src/prototype/), design note [`console-prototype.md`](../design-system/console-prototype.md)) runs two tasks at the counting rules of §1.2 and shows a live counter:
+
+| Task | Route in the prototype | Interactions | Budget | Within budget |
+|---|---|---|---|---|
+| T01 reset + unlock, keyboard | `/`, type name, Enter, `R`, type code, Enter | **6** | 7 | yes |
+| T01, from the Home tile | tile, type name, Enter (opens the sheet), type code, Enter | **5** | 7 | yes |
+| T01, **from the user page only** | `R`, type code, Enter | **3** | 3 (E1.7 criterion) | yes |
+| T03 look up status | `/`, type name, Enter | **3** (status chips already show in the search results) | 3 | yes |
+
+The prototype is one interaction under the §3 T01 table (7) because the code is sent when the sheet opens: opening it with `R` is the deliberate act, so a separate "Send code" step is dropped. The security-architect must confirm that rule before the build (the code is rate-limited, and a wrong-user open sends one message to the account's own enrolled phone). The 7 stays as the hard budget until they do.
 
 ## 3. Task detail
 
@@ -1531,3 +1572,4 @@ These patterns are inputs to T-0009 (IA) and the design system (T-0043). If a pa
   - **T04 / P4:** the incident-mode batch export is withdrawn, because it broke SP §3.7, TM §7.4 and TM-A7. It is now an open question for the security-architect (§6). P4 no longer lists T04 and excludes secret reveals. The T04 justification now cites SP §3.7 for the reason and TM §7.4 for the step-up.
   - **T16:** the example row drops the workstation and "via ADUC", because event 4729 records neither. The tool is shown only for changes made through activeDIQ. The source machine needs Logon-ID correlation with 4624, which is listed under the dependency.
   - **Totals:** ME is now 274 I / 25 F / 76 S, ≈506 s (was 278 / 25 / 77, ≈513 s). activeDIQ is unchanged at 138 / 36 / 56, ≈323 s. The cuts are now interactions −50%, screens −26% and time −36%, all wait-free.
+- 2026-10-29 · product-designer (T-0672) · Added §2.1 interaction budgets for all 20 tasks (generated from `klm.py`) and the prototype check for T01 and T03. No counts changed. Open: the security-architect confirms "code sent when the reset sheet opens" (T01 prototype is 6, budget stays 7).
