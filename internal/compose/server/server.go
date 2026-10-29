@@ -91,7 +91,14 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	if err != nil {
 		return fmt.Errorf("server: connector source: %w", err)
 	}
-	reads, err := directoryReads(conns, src)
+	// Lab builds only (T-0684): an env-configured lab seeds an active connection served by an in-process
+	// connector; the production build's labBootstrap returns src unchanged.
+	csrc, labClose, err := labBootstrap(ctx, db, conns, getenv, src)
+	if err != nil {
+		return err
+	}
+	defer labClose()
+	reads, err := directoryReads(conns, csrc)
 	if err != nil {
 		return err
 	}
@@ -105,7 +112,7 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	if err != nil {
 		return err
 	}
-	dcs, err := client.NewDCDirectory(conns, src)
+	dcs, err := client.NewDCDirectory(conns, csrc)
 	if err != nil {
 		return fmt.Errorf("server: DC directory: %w", err)
 	}
