@@ -1955,7 +1955,7 @@ security-architect reviews every change here.
   library (licence-register row first), the algorithm pinned, signed assertions required, and a
   signature-wrapping fuzz corpus. The lesson is the competitor's pre-auth RCE through an outdated
   XML-DSig library in SAML handling, CVE-2022-47966 (ME-SEC §4.1, §4.3 "third-party components").
-- **MFA for every console user.** WebAuthn/passkeys are preferred; TOTP is allowed. MFA claims from
+- **MFA for every console user.** WebAuthn/passkeys are preferred; TOTP is allowed. **Once an account owns a passkey, or holds an owner/control-plane role, TOTP no longer completes AN-10 (factor policy, `factor-policy-phishing-resistant-mfa.md`, T-0574).** MFA claims from
   the IdP are accepted only when the tenant configures that IdP as MFA-asserting `[OPEN → ADM-143
   spec]`. Local accounts exist only for break-glass, always require MFA (DM-30.I1, ADM-142), and
   every use raises an alert to all `tenant-owner` accounts. AD-side grants that reach an `sso`
