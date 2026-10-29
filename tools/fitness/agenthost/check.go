@@ -232,8 +232,12 @@ var r3AllowedStd = setOf(
 	"bytes", "bufio", "context", "errors", "fmt", "io", "log/slog", "maps", "math", "math/big", "math/bits",
 	"path", "path/filepath", "regexp", "slices", "sort", "strconv", "strings", "sync", "sync/atomic",
 	"time", "unicode", "unicode/utf16", "unicode/utf8", "encoding/binary", "encoding/hex", "encoding/json",
-	"encoding/base64", "crypto/sha256", "crypto/subtle", "hash", "hash/fnv", "iter", "cmp",
+	"encoding/base64", "encoding/xml", "crypto/sha256", "crypto/subtle", "hash", "hash/fnv", "iter", "cmp",
 )
+
+// r3AllowedExt: the third-party packages an agent module may import (T-0688 ruling 1): pure text
+// computation, no I/O, no process, no socket. Exact paths only; a new line is a security-architect review.
+var r3AllowedExt = setOf("golang.org/x/text/cases", "golang.org/x/text/unicode/norm")
 
 // r3AllowedOS: the only selectors of package os an agent module may use (environment and error values).
 var r3AllowedOS = setOf("os.Getenv", "os.LookupEnv", "os.ErrNotExist", "os.ErrExist", "os.ErrPermission",
@@ -247,7 +251,10 @@ var r3FilepathBanned = setOf("filepath.WalkDir", "filepath.Walk", "filepath.Glob
 // policy and dependency-struct packages), as paths under the module path read from go.mod.
 var (
 	r3OwnPrefix = []string{"/internal/agentmodules"}
-	r3OwnExact  = []string{"/internal/platform/agentpolicy", "/internal/agenthost/api"}
+	// internal/agenthost/api is the module boundary (T-0688 ruling 1): ModuleDeps, the event source and
+	// sink, aliases for the wire data types and for grpc.ServiceRegistrar. internal/proto/activediq/addc/v1
+	// is the module's own contract (typed data; a module gets its own, never skenzeriq/agent/v1 or fleet).
+	r3OwnExact = []string{"/internal/platform/agentpolicy", "/internal/agenthost/api", "/internal/proto/activediq/addc/v1"}
 )
 
 const defaultModulePath = "github.com/skenzeriq/activediq"
@@ -313,6 +320,16 @@ func checkModuleCapabilities(root string) Result {
 		r.Violations = append(r.Violations, f+": only .go files (and testdata/) may sit in an agent module directory; assembly, objects and C sources link code the import scan cannot see")
 	}
 	mod := modulePath(root)
+	// The module boundary itself (T-0688 ruling 1): it hands modules capabilities, so it may import only
+	// pure standard-library packages, the wire data types it aliases, and grpc for ServiceRegistrar. It
+	// can never be the way a module reaches os/exec, net, syscall or x/sys.
+	for _, f := range goFiles(root, []string{"internal/agenthost/api"}) {
+		scanGo(root, f, func(rel, imp, name string, line int) {
+			if msg := judgeAPIImport(mod, imp, name); msg != "" {
+				r.Violations = append(r.Violations, fmt.Sprintf("%s:%d %s", rel, line, msg))
+			}
+		}, func(string, string, int) {})
+	}
 	for _, f := range files {
 		scanGo(root, f, func(rel, imp, name string, line int) {
 			if msg := judgeModuleImport(mod, imp, name); msg != "" {
@@ -329,6 +346,18 @@ func checkModuleCapabilities(root string) Result {
 		})
 	}
 	return r
+}
+
+// judgeAPIImport: what internal/agenthost/api may import. Strictly the standard library the modules
+// themselves may use, the agent wire types it aliases, and grpc (ServiceRegistrar). Not os, net, syscall.
+func judgeAPIImport(mod, imp, name string) string {
+	if name == "." || name == "_" {
+		return fmt.Sprintf("dot or blank import of %s in the module boundary package", imp)
+	}
+	if r3AllowedStd[imp] || imp == mod+"/internal/proto/skenzeriq/agent/v1" || imp == "google.golang.org/grpc" {
+		return ""
+	}
+	return fmt.Sprintf("the module boundary package internal/agenthost/api imports %s: it may import only the pure standard library, skenzeriq/agent/v1 and grpc (T-0688 ruling 1)", imp)
 }
 
 // foreignModuleFiles lists files under the agent-module directories that are not .go sources and not in
@@ -371,7 +400,7 @@ func judgeModuleImport(mod, imp, name string) string {
 	if why, bad := r3Named[imp]; bad {
 		return fmt.Sprintf("imports %s: %s", imp, why)
 	}
-	if r3AllowedStd[imp] || imp == "os" {
+	if r3AllowedStd[imp] || r3AllowedExt[imp] || imp == "os" {
 		return ""
 	}
 	for _, o := range r3OwnPrefix {
@@ -423,6 +452,8 @@ func checkNoListener(root string) Result {
 				add(fmt.Sprintf("%s:%d imports net/http/httptest, a listener in a shipped binary", rel, line))
 			case name == ".":
 				add(fmt.Sprintf("%s:%d dot-imports %s: dot imports hide the listener calls this check looks for", rel, line, imp))
+			case imp == "google.golang.org/grpc/credentials/insecure":
+				add(fmt.Sprintf("%s:%d imports grpc/credentials/insecure: the agent's only network use is outbound mTLS (C5, T-0688 ruling 2)", rel, line))
 			}
 		}, func(rel, call string, line int) {
 			i := strings.LastIndex(call, ".")
@@ -1209,6 +1240,23 @@ var registryEls = setOf("RegistryKey", "RegistryValue", "RemoveRegistryKey", "Re
 // actionEls run code at install time; each needs a reviewed allowlist entry by Id.
 var actionEls = setOf("CustomAction", "Binary")
 
+// pinnedActions: the CustomActions approved in T-0688 ruling 4, with the exact attributes reviewed. Each
+// runs agentsetup.exe from the private directory AgentDir (mixed case: not a public property, so it cannot
+// be redirected from the msiexec command line), as SYSTEM, deferred, with a fixed command line.
+var pinnedActions = func() map[string]map[string]string {
+	cmd := func(sub string) string { return `"[AgentDir]agentsetup.exe" ` + sub }
+	a := func(exec, ret, sub string) map[string]string {
+		return map[string]string{"execute": exec, "impersonate": "no", "return": ret, "directory": "AgentDir", "execommand": cmd(sub)}
+	}
+	return map[string]map[string]string{
+		"WriteConfig":          a("deferred", "check", "write-config"),
+		"PrepareDataDir":       a("deferred", "check", "prepare-datadir"),
+		"GrantChannel":         a("deferred", "check", "grant-channel"),
+		"RollbackGrantChannel": a("rollback", "ignore", "revoke-channel"),
+		"RevokeChannel":        a("deferred", "ignore", "revoke-channel"),
+	}
+}()
+
 func isAgentName(s string) bool { return agentBodyRe.MatchString(s) }
 
 // judgeInstallerXML reads one WiX file. The ServiceInstall for the agent service, every ServiceSid and
@@ -1309,6 +1357,19 @@ func judgeInstallerXML(rel string, b []byte, allow []string, agentFile bool) ins
 			id := e.Attrs["id"]
 			if id == "" || dynamicRe.MatchString(id) || !allowed(id, allow) {
 				fail("%s %q runs code at install time: the account, SID type and privileges may not be computed there; list the Id in installer-allow.txt after a security-architect review", e.Name, id)
+			} else if want, pinned := pinnedActions[id]; pinned && e.Name == "CustomAction" {
+				// T-0688 ruling 4: an approved Id is approved with exactly these attributes; a changed
+				// command line, sequence type or identity is a new action and needs a new review.
+				for _, k := range []string{"execute", "impersonate", "return", "directory", "execommand"} {
+					if got := e.Attrs[k]; got != want[k] {
+						fail("CustomAction %q attribute %s is %q, the reviewed value is %q (T-0688 ruling 4)", id, k, got, want[k])
+					}
+				}
+				for k := range e.Attrs {
+					if k != "id" && want[k] == "" {
+						fail("CustomAction %q has attribute %s, which the reviewed action does not have (T-0688 ruling 4)", id, k)
+					}
+				}
 			}
 		case registryEls[e.Name]:
 			root, key := registryRootKey(els, i)
@@ -1378,6 +1439,17 @@ func judgeInstallerXML(rel string, b []byte, allow []string, agentFile bool) ins
 		for _, k := range orphans {
 			if strings.EqualFold(els[k].Attrs["servicename"], name) {
 				take(els[k])
+				// A RequiredPrivilege child of a ServiceConfig that sits beside the ServiceInstall
+				// counts too (T-0688: the privilege must be readable wherever WiX lets it be written).
+				for c, ce := range els {
+					for j := c; j >= 0; j = els[j].Parent {
+						if j == k && c != k && (ce.Name == "RequiredPrivilege" || ce.Name == "Privilege") {
+							if v := ce.Attrs["name"]; v != "" {
+								privs = append(privs, v)
+							}
+						}
+					}
+				}
 			}
 		}
 		if id := e.Attrs["id"]; id != "" && !isAgentName(name) && allowed(id, allow) {
