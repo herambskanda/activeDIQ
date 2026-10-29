@@ -1263,29 +1263,68 @@ var pinnedActions = func() map[string]map[string]string {
 // source grants no ACL through WiX. Adding an entry is a security-architect review (T-0725).
 var pinnedPermissions = map[string]map[string]string{}
 
+// isDirEl: the elements that define or reference a directory.
+func isDirEl(n string) bool {
+	return n == "Directory" || n == "StandardDirectory" || n == "DirectoryRef"
+}
+
+// dirChain returns the pin string for the directory defined by element k: the chain of Directory and
+// StandardDirectory elements from the outermost down, each as "Element:Id:Name". A DirectoryRef never ends
+// the chain: it is resolved to the single element in this file that defines its Id. ok is false when an Id
+// has no definition, or more than one, in this file (it may live in another fragment), or on a cycle.
+func dirChain(els []xmlEl, k, depth int) (string, bool) {
+	if depth > 32 {
+		return "", false
+	}
+	var parts []string
+	for ; k >= 0; k = els[k].Parent {
+		switch els[k].Name {
+		case "Directory", "StandardDirectory":
+			parts = append([]string{els[k].Name + ":" + els[k].Attrs["id"] + ":" + els[k].Attrs["name"]}, parts...)
+		case "DirectoryRef":
+			d, ok := dirByID(els, els[k].Attrs["id"], depth+1)
+			if !ok {
+				return "", false
+			}
+			return strings.Join(append([]string{d}, parts...), "/"), true
+		}
+	}
+	return strings.Join(parts, "/"), len(parts) > 0
+}
+
+// dirByID resolves a directory Id to its one defining Directory/StandardDirectory element in the file.
+func dirByID(els []xmlEl, id string, depth int) (string, bool) {
+	def := -1
+	for i, e := range els {
+		if (e.Name == "Directory" || e.Name == "StandardDirectory") && id != "" && e.Attrs["id"] == id {
+			if def >= 0 {
+				return "", false
+			}
+			def = i
+		}
+	}
+	if def < 0 {
+		return "", false
+	}
+	return dirChain(els, def, depth)
+}
+
 // effectiveDirectory resolves the directory a CreateFolder or File acts on, walking up from element i:
 // the element's own Directory attribute, else the nearest Component (or ComponentGroup) Directory
-// attribute, else the chain of enclosing Directory/StandardDirectory/DirectoryRef elements
-// (outermost first, as "id:name" so a re-parented or renamed Directory changes the pin).
+// attribute, else the nearest enclosing Directory/StandardDirectory/DirectoryRef. Every Id is resolved to
+// its defining element and the whole chain is pinned, so renaming or re-parenting it changes the pin.
 func effectiveDirectory(els []xmlEl, i int) (string, bool) {
 	if d := els[i].Attrs["directory"]; d != "" {
-		return d, true
+		return dirByID(els, d, 0)
 	}
 	for j := els[i].Parent; j >= 0; j = els[j].Parent {
 		switch els[j].Name {
 		case "Component", "ComponentGroup":
 			if d := els[j].Attrs["directory"]; d != "" {
-				return d, true
+				return dirByID(els, d, 0)
 			}
 		case "Directory", "StandardDirectory", "DirectoryRef":
-			var chain []string
-			for k := j; k >= 0; k = els[k].Parent {
-				switch els[k].Name {
-				case "Directory", "StandardDirectory", "DirectoryRef":
-					chain = append([]string{els[k].Name + ":" + els[k].Attrs["id"] + ":" + els[k].Attrs["name"]}, chain...)
-				}
-			}
-			return strings.Join(chain, "/"), true
+			return dirChain(els, j, 0)
 		}
 	}
 	return "", false

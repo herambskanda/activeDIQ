@@ -823,10 +823,30 @@ func TestA1Installer(t *testing.T) {
 	defer pinKey("CreateFolder/CF", map[string]string{"parent.directory": "Directory:LogDir:Logs"})()
 	wantClean(t, eff(`<Directory Id="LogDir" Name="Logs"><Component Id="C"><CreateFolder Id="CF">`+px+`</CreateFolder></Component></Directory>`))
 	wantViolation(t, eff(`<Directory Id="AgentBinDir" Name="Logs"><Component Id="C"><CreateFolder Id="CF">`+px+`</CreateFolder></Component></Directory>`), "differs from the reviewed pin")
-	wantViolation(t, eff(`<Directory Id="LogDir" Name="Logs"><Component Id="C" Directory="AgentBinDir"><CreateFolder Id="CF">`+px+`</CreateFolder></Component></Directory>`), "differs from the reviewed pin")
+	wantViolation(t, eff(`<Directory Id="AgentBinDir" Name="b"/><Directory Id="LogDir" Name="Logs"><Component Id="C" Directory="AgentBinDir"><CreateFolder Id="CF">`+px+`</CreateFolder></Component></Directory>`), "differs from the reviewed pin")
 	wantViolation(t, eff(`<Directory Id="Outer" Name="x"><Directory Id="LogDir" Name="Logs"><Component Id="C"><CreateFolder Id="CF">`+px+`</CreateFolder></Component></Directory></Directory>`), "differs from the reviewed pin")
 	// Unresolvable target (Component comes from a ComponentRef/another fragment): fail closed.
 	wantViolation(t, eff(`<Component Id="C"><CreateFolder Id="CF">`+px+`</CreateFolder></Component>`), "cannot be resolved")
+	// T-0730 (Id-named directories): the pin follows the Directory definition, not just its Id.
+	byID := func(def, comp, cf string) string {
+		return def + `<Component Id="C"` + comp + `><CreateFolder Id="CF"` + cf + `>` + px + `</CreateFolder></Component>`
+	}
+	logDef := `<Directory Id="LogDir" Name="Logs"/>`
+	wantClean(t, eff(byID(logDef, ` Directory="LogDir"`, ``)))
+	wantClean(t, eff(byID(logDef, ``, ` Directory="LogDir"`)))
+	for _, def := range []string{
+		`<Directory Id="LogDir" Name="."/>`,
+		`<Directory Id="AgentBinDir" Name="b"><Directory Id="LogDir" Name="Logs"/></Directory>`,
+		`<StandardDirectory Id="System64Folder"><Directory Id="LogDir" Name="Logs"/></StandardDirectory>`,
+	} {
+		wantViolation(t, eff(byID(def, ` Directory="LogDir"`, ``)), "differs from the reviewed pin")
+		wantViolation(t, eff(byID(def, ``, ` Directory="LogDir"`)), "differs from the reviewed pin")
+	}
+	wantViolation(t, eff(byID(``, ` Directory="X"`, ``)), "cannot be resolved")
+	wantViolation(t, eff(byID(logDef+logDef, ` Directory="LogDir"`, ``)), "cannot be resolved")
+	wantViolation(t, eff(`<DirectoryRef Id="LogDir"><Component Id="C"><CreateFolder Id="CF">`+px+`</CreateFolder></Component></DirectoryRef>`), "cannot be resolved")
+	wantClean(t, eff(logDef+`<DirectoryRef Id="LogDir"><Component Id="C"><CreateFolder Id="CF">`+px+`</CreateFolder></Component></DirectoryRef>`))
+	wantViolation(t, eff(`<Directory Id="LogDir" Name="Other"/><DirectoryRef Id="LogDir"><Component Id="C"><CreateFolder Id="CF">`+px+`</CreateFolder></Component></DirectoryRef>`), "differs from the reviewed pin")
 	defer pinKey("File/F", map[string]string{"parent.directory": "Directory:LogDir:Logs", "parent.name": "readme.txt"})()
 	fileFrag := func(dir, attrs string) string {
 		return `<Directory Id="` + dir + `" Name="Logs"><Component Id="C"><File Id="F" ` + attrs + `>` + px + `</File></Component></Directory>`
