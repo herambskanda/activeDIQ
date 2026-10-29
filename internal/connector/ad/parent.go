@@ -41,7 +41,7 @@ func (s *Session) parentOf(ctx context.Context, e *Entry, cache map[string]guid.
 	pd := d.Parent()
 	key := ""
 	if cache != nil {
-		key = strings.ToLower(pd.String())
+		key = strings.ToLower(pd.CanonicalString())
 		if g, ok := cache[key]; ok {
 			return g, true, false, nil
 		}
