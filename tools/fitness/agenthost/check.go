@@ -667,10 +667,25 @@ func agentInstallerFiles(root string) []instFile {
 			return nil
 		}
 		if e.Type()&fs.ModeSymlink != 0 {
-			// T-0677: WalkDir does not follow symlinks, MSBuild globs may. Under packaging/ or named like WiX
-			// a symlink is a violation (not resolved), so nothing is reachable that was not scanned.
-			if strings.HasPrefix(relp, "packaging/") || isRepoWix(p) {
-				out = append(out, instFile{path: p, rel: relp, problem: "is a symbolic link in the installer sources: the scan does not follow it, the build might; copy the content in instead"})
+			// T-0677: WalkDir does not follow symlinks, MSBuild globs and Includes may. A link anywhere in the
+			// repo that resolves to a directory or a WiX file is a violation (not followed), so nothing the
+			// build reaches through a link was left unscanned. Plain file links (node_modules/.bin) pass.
+			if isRepoWix(p) {
+				out = append(out, instFile{path: p, rel: relp, problem: "is a symbolic link named like a WiX source: the scan does not follow it, the build might; copy the content in instead"})
+				return nil
+			}
+			st, serr := os.Stat(p)
+			switch {
+			case serr != nil:
+				if tgt, lerr := os.Readlink(p); lerr == nil && isRepoWix(tgt) {
+					out = append(out, instFile{path: p, rel: relp, problem: "is a symbolic link to a WiX-named path that cannot be resolved"})
+				}
+			case st.IsDir():
+				out = append(out, instFile{path: p, rel: relp, problem: "is a symbolic link to a directory: the scan does not follow it, an MSBuild glob or Include might; copy the content in instead"})
+			default:
+				if real, rerr := filepath.EvalSymlinks(p); rerr != nil || isRepoWix(real) {
+					out = append(out, instFile{path: p, rel: relp, problem: "is a symbolic link to a WiX-named file (or one that cannot be resolved): the scan does not follow it; copy the content in instead"})
+				}
 			}
 			return nil
 		}
@@ -681,10 +696,8 @@ func agentInstallerFiles(root string) []instFile {
 			}
 			// testdata/ and node_modules/ are deliberately NOT skipped (T-0664): the WiX SDK compiles
 			// **/*.wxs and a .wixproj can Compile-Include any path, so reachability cannot be guessed;
-			// every WiX file outside tools/fitness is scanned or fails A1.
-			if relp == "tools/fitness" {
-				return filepath.SkipDir
-			}
+			// every WiX-named file in the repo, tools/fitness included, is scanned or fails A1. Test
+			// fixtures therefore must not have WiX names on disk (they are Go strings in t.TempDir()).
 			return nil
 		}
 		inPack := strings.HasPrefix(relp, "packaging/")
@@ -742,9 +755,6 @@ func isRepoWix(p string) bool {
 	}
 	return wixTemplateRe.MatchString(strings.ToLower(filepath.Base(p)))
 }
-
-// fitnessRefRe matches any mention of the fitness tree or a wildcard over tools/ in WiX text.
-var fitnessRefRe = regexp.MustCompile(`(?i)(fitness|tools[\\/]+[^"'<>\s]*\*)`)
 
 var wixTemplateRe = regexp.MustCompile(`\.(wxs|wxi|wxl|wixproj)\.[a-z0-9]+$`)
 
@@ -813,16 +823,6 @@ func checkInstallerAllow(root string, allow []string) Result {
 		}
 		if m := localSystemRe.FindString(f.text); m != "" {
 			r.Violations = append(r.Violations, fmt.Sprintf("%s names %q: the agent never runs as LocalSystem or a shared service identity (ADR-0006 rule 1)", rel, m))
-		}
-		// T-0677: tools/fitness holds deliberately bad fixtures and is not scanned, so nothing in the
-		// installer sources may reach into it (Compile/Include/<?include?>, a path property, a glob).
-		if (isWixXML(f.path) || isTemplate(f.path)) && fitnessRefRe.MatchString(f.text) {
-			r.Violations = append(r.Violations, fmt.Sprintf("%s references tools/fitness, which is not scanned for LocalSystem: installer sources must not include fixtures", rel))
-		}
-		if strings.HasSuffix(strings.ToLower(f.path), ".wixproj") {
-			if d := filepath.ToSlash(filepath.Dir(rel)); d == "." || d == "tools" {
-				r.Violations = append(r.Violations, fmt.Sprintf("%s sits above tools/fitness: its default **/*.wxs glob reaches the unscanned fixtures; move the project down", rel))
-			}
 		}
 		if isTemplate(f.path) && !allowed(rel, allow) {
 			r.Violations = append(r.Violations, fmt.Sprintf("%s is a template or transform under packaging/: it is not parsed, so it could emit a ServiceInstall, ServiceSid or ACL the check never sees; list it in installer-allow.txt after a security-architect review", rel))

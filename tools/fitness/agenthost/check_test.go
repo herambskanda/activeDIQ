@@ -381,16 +381,45 @@ func TestA1Installer(t *testing.T) {
 		wantViolation(t, checkInstaller(r), "LocalSystem")
 	}
 	// T-0677: the walker fails closed.
-	{
-		r := t.TempDir() // (1) a .wixproj Compile-Includes a fixture under tools/fitness
-		write(t, r, "packaging/windows/A.wixproj", `<Project><ItemGroup><Compile Include="..\..\tools\fitness\agenthost\testdata\evil.wxs"/></ItemGroup></Project>`)
+	// Security-architect review of T-0677: no reachability guessing. Every WiX-named file in the repo is
+	// scanned (tools/fitness included), so an include, escape, glob, property or import cannot hide one.
+	bypass := func(rel, body string) {
+		t.Helper()
+		r := t.TempDir()
 		write(t, r, "tools/fitness/agenthost/testdata/evil.wxs", lsys)
-		wantViolation(t, checkInstaller(r), "references tools/fitness")
+		write(t, r, rel, body)
+		wantViolation(t, checkInstaller(r), "LocalSystem")
+	}
+	bypass("packaging/windows/A.wixproj", `<Project><ItemGroup><Compile Include="..\..\tools\fitness\agenthost\testdata\evil.wxs"/></ItemGroup></Project>`)
+	bypass("packaging/windows/A.wixproj", `<Project><ItemGroup><Compile Include="..\..\tools\%66itness\agenthost\testdata\evil.wxs"/></ItemGroup></Project>`)
+	bypass("packaging/windows/A.wixproj", `<Project><ItemGroup><Compile Include="..\..\**\*.wxs"/></ItemGroup></Project>`)
+	bypass("packaging/windows/A.wixproj", `<Project><PropertyGroup><F>fit</F><N>ness</N></PropertyGroup><ItemGroup><Compile Include="..\..\tools\$(F)$(N)\agenthost\testdata\evil.wxs"/></ItemGroup></Project>`)
+	bypass("packaging/windows/Directory.Build.props", `<Project><ItemGroup><Compile Include="..\..\tools\fitness\agenthost\testdata\evil.wxs"/></ItemGroup></Project>`)
+	{
+		r := t.TempDir() // a WiX-named file under tools/fitness on disk fails A1 by itself
+		write(t, r, "tools/fitness/agenthost/testdata/evil.wxs", lsys)
+		wantViolation(t, checkInstaller(r), "LocalSystem")
 	}
 	{
-		r := t.TempDir() // a root-level project globs tools/fitness
-		write(t, r, "Evil.wixproj", `<Project/>`)
-		wantViolation(t, checkInstaller(r), "sits above tools/fitness")
+		r := t.TempDir() // a non-WiX-named directory link outside packaging/ reaches the fixtures
+		write(t, r, "packaging/windows/A.wixproj", `<Project><ItemGroup><Compile Include="..\..\tools\fx\evil.wxs"/></ItemGroup></Project>`)
+		write(t, r, "tools/fitness/agenthost/testdata/evil.wxs", lsys)
+		if err := os.Symlink(filepath.Join(r, "tools/fitness/agenthost/testdata"), filepath.Join(r, "tools/fx")); err != nil {
+			t.Skip("symlinks unavailable:", err)
+		}
+		wantViolation(t, checkInstaller(r), "symbolic link to a directory")
+	}
+	{
+		r := t.TempDir() // a plain file link (node_modules/.bin style) stays clean
+		write(t, r, "web/node_modules/x/cli.js", "x")
+		write(t, r, "packaging/windows/agent.wxs", goodWxs)
+		if err := os.MkdirAll(filepath.Join(r, "web/node_modules/.bin"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(r, "web/node_modules/x/cli.js"), filepath.Join(r, "web/node_modules/.bin/x")); err != nil {
+			t.Skip("symlinks unavailable:", err)
+		}
+		wantClean(t, checkInstaller(r))
 	}
 	{
 		r := t.TempDir() // (2) a symlinked directory holding a LocalSystem file

@@ -1071,11 +1071,21 @@ for d in packaging/windows/testdata packaging/windows/node_modules testdata "src
   must_fail_with "fitness-agent-host on a LocalSystem service in $d (A1)" 'LocalSystem' agenthost "$ah"
   rm -rf "$ah/$d" "$ah/src[" "$ah/src" "$ah/packaging/windows/A.wixproj"
 done
-# T-0677: the A1 walker fails closed on a tools/fitness include, a symlinked dir and an unreadable dir.
+# T-0677 (+ security review): the A1 walker scans every WiX-named file in the repo, tools/fitness included,
+# so no include, escape, glob, property or Directory.Build.props can reach an unscanned fixture.
 mkdir -p "$ah/tools/fitness/x/testdata"; printf '%s\n' "$lsys" >"$ah/tools/fitness/x/testdata/evil.wxs"
-printf '<Project><ItemGroup><Compile Include="..\\..\\tools\\fitness\\x\\testdata\\evil.wxs"/></ItemGroup></Project>\n' >"$ah/packaging/windows/A.wixproj"
-must_fail_with "fitness-agent-host on a Compile Include of a tools/fitness fixture (A1)" 'references tools/fitness' agenthost "$ah"
-rm -rf "$ah/tools/fitness/x" "$ah/packaging/windows/A.wixproj"; rmdir "$ah/tools/fitness" "$ah/tools" 2>/dev/null || true
+must_fail_with "fitness-agent-host on a WiX file under tools/fitness (A1)" 'LocalSystem' agenthost "$ah"
+for inc in '..\\..\\tools\\fitness\\x\\testdata\\evil.wxs' '..\\..\\tools\\%66itness\\x\\testdata\\evil.wxs' '..\\..\\**\\*.wxs' '..\\..\\tools\\$(F)$(N)\\x\\testdata\\evil.wxs'; do
+  printf '<Project><PropertyGroup><F>fit</F><N>ness</N></PropertyGroup><ItemGroup><Compile Include="%s"/></ItemGroup></Project>\n' "$inc" >"$ah/packaging/windows/A.wixproj"
+  must_fail_with "fitness-agent-host on Compile Include $inc (A1)" 'LocalSystem' agenthost "$ah"
+done
+rm -f "$ah/packaging/windows/A.wixproj"
+printf '<Project><ItemGroup><Compile Include="..\\..\\tools\\fitness\\x\\testdata\\evil.wxs"/></ItemGroup></Project>\n' >"$ah/packaging/windows/Directory.Build.props"
+must_fail_with "fitness-agent-host on a Directory.Build.props include (A1)" 'LocalSystem' agenthost "$ah"
+rm -f "$ah/packaging/windows/Directory.Build.props"
+ln -s "$ah/tools/fitness/x/testdata" "$ah/tools/fx"
+must_fail_with "fitness-agent-host on a non-WiX-named directory link outside packaging/ (A1)" 'symbolic link to a directory' agenthost "$ah"
+rm -rf "$ah/tools"
 mkdir -p "$ah/elsewhere"; printf '%s\n' "$lsys" >"$ah/elsewhere/x.wxs"; ln -s "$ah/elsewhere" "$ah/packaging/windows/testdata"
 must_fail_with "fitness-agent-host on a symlinked directory under packaging/ (A1)" 'symbolic link' agenthost "$ah"
 rm -rf "$ah/packaging/windows/testdata" "$ah/elsewhere"
