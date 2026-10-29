@@ -780,7 +780,7 @@ func TestA1Installer(t *testing.T) {
 		return strings.Replace(goodWxs, `<ServiceConfig ServiceSid`, p+`<ServiceConfig ServiceSid`, 1)
 	}
 	wantViolation(t, mk(svcWith(`<PermissionEx Sddl="D:(A;;GA;;;WD)"/>`)), "grants an ACL")
-	wantViolation(t, mk(svcWith(`<util:PermissionEx xmlns:util="u" User="Everyone" GenericAll="yes"/>`)), "grants an ACL")
+	wantViolation(t, mk(svcWith(`<util:PermissionEx xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util" User="Everyone" GenericAll="yes"/>`)), "grants an ACL")
 	wantViolation(t, mk(strings.Replace(goodWxs, `</Package>`, `<CreateFolder Directory="D"><Permission User="Users" GenericAll="yes"/></CreateFolder></Package>`, 1)), "grants an ACL")
 	// T-0725: a parent Id that equals a reviewed CustomAction Id (installer-allow.txt) buys nothing.
 	svcColl := strings.Replace(goodWxs, `<ServiceInstall Name=`, `<ServiceInstall Id="GrantChannel" Name=`, 1)

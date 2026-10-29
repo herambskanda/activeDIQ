@@ -1227,6 +1227,7 @@ func anyAgentSource(files []instFile) bool {
 
 type xmlEl struct {
 	Name   string
+	NS     string // element namespace URI; empty when undeclared
 	Attrs  map[string]string
 	Text   string
 	Parent int // index of the parent element, -1 at the root
@@ -1243,6 +1244,12 @@ type installerFacts struct {
 }
 
 // dynamicRe: a WiX value that is resolved at build or install time, so the text cannot be judged.
+// wixCoreNS and reviewedNS: the only element namespaces an installer source may use (T-0742). The WixUI
+// namespace (http://wixtoolset.org/schemas/v4/wxs/ui) must never be listed.
+const wixCoreNS = "http://wixtoolset.org/schemas/v4/wxs"
+
+var reviewedNS = map[string]bool{"http://wixtoolset.org/schemas/v4/wxs/util": true}
+
 var dynamicRe = regexp.MustCompile(`\$\(|\[|!\(`)
 
 // serviceEls are the WiX elements that name a service; the name must be a literal.
@@ -1453,7 +1460,7 @@ func judgeInstallerXML(rel string, b []byte, allow []string, agentFile bool) ins
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
-			e := xmlEl{Name: t.Name.Local, Attrs: map[string]string{}, Parent: -1}
+			e := xmlEl{Name: t.Name.Local, NS: t.Name.Space, Attrs: map[string]string{}, Parent: -1}
 			if len(stack) > 0 {
 				e.Parent = stack[len(stack)-1]
 			}
@@ -1596,6 +1603,29 @@ func judgeInstallerXML(rel string, b []byte, allow []string, agentFile bool) ins
 		}
 	}
 	for _, e := range els {
+		// T-0742: fail closed on namespaces. Extension elements (ui:WixUI, ...) bring dialogs and actions
+		// that set directories; denying by element name misses every new extension. Only the core namespace
+		// and the reviewed list may appear, and installer-allow.txt cannot approve anything else.
+		if e.NS != "" && e.NS != wixCoreNS && !reviewedNS[e.NS] {
+			f.violations = append(f.violations, fmt.Sprintf("%s: element %s is in namespace %q, which is not the WiX core namespace or a reviewed extension: an extension can set directories or add UI behind the reviewed permission pins; installer-allow.txt cannot approve one (T-0742)", rel, e.Name, e.NS))
+		}
+		// T-0742: a retarget Id hidden in a preprocessor/WiX variable cannot be compared with the pins.
+		var rid string
+		switch e.Name {
+		case "Directory", "StandardDirectory", "Property", "SetProperty", "SetDirectory":
+			rid = e.Attrs["id"]
+		case "CustomAction":
+			rid = e.Attrs["property"]
+			if _, hasValue := e.Attrs["value"]; hasValue && rid == "" {
+				rid = e.Attrs["directory"]
+			}
+			if _, hasValue := e.Attrs["value"]; hasValue && dynamicRe.MatchString(e.Attrs["directory"]) {
+				rid = e.Attrs["directory"]
+			}
+		}
+		if rid != "" && dynamicRe.MatchString(rid) {
+			f.violations = append(f.violations, fmt.Sprintf("%s: %s names %q through a variable or property: a directory/property Id must be a literal so retargets can be judged against the reviewed permission pins; installer-allow.txt cannot approve one (T-0742)", rel, e.Name, rid))
+		}
 		switch e.Name {
 		case "Directory", "StandardDirectory":
 			f.dirIDs = append(f.dirIDs, e.Attrs["id"])

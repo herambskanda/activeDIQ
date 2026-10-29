@@ -81,4 +81,30 @@ func TestT0742DirectoryRetarget(t *testing.T) {
 		wantViolation(t, run([]string{"Ret", "D", "B", "E", "P"}, pinned+el), "installer-allow.txt cannot approve one")
 		wantViolation(t, run([]string{"Ret", "D", "B", "E", "P"}, pinned, el), "installer-allow.txt cannot approve one")
 	}
+
+	// Fail closed on namespaces: the WiX UI extension and unknown namespaces, even when allow-listed.
+	for _, el := range []string{
+		`<ui:WixUI xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui" Id="WixUI_InstallDir" InstallDirectory="LogDir"/>`,
+		`<x:Foo xmlns:x="urn:x"/>`,
+	} {
+		wantViolation(t, run([]string{"Ret", "WixUI_InstallDir"}, pinned+el), "not the WiX core namespace or a reviewed extension")
+		wantViolation(t, run([]string{"Ret", "WixUI_InstallDir"}, pinned, el), "not the WiX core namespace or a reviewed extension")
+	}
+	wantClean(t, run(nil, pinned+`<util:Foo xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"/>`))
+
+	// Variables hide the retarget Id: fail even when allow-listed.
+	for _, el := range []string{
+		`<?define T = "LogDir" ?><Property Id="$(var.T)" Value="C:\Windows\System32"/>`,
+		`<Property Id="!(wix.T)" Value="x"/>`,
+		`<SetProperty Id="$(var.T)" Value="x" Before="CostFinalize"/>`,
+		`<SetDirectory Id="$(var.T)" Value="x"/>`,
+		`<CustomAction Id="Ret" Property="$(var.T)" Value="x"/>`,
+		`<CustomAction Id="Ret" Property="!(wix.T)" Value="x"/>`,
+		`<CustomAction Id="Ret" Directory="$(var.T)" Value="x"/>`,
+		`<Directory Id="$(var.T)" Name="n"/>`,
+		`<StandardDirectory Id="$(var.T)"/>`,
+	} {
+		wantViolation(t, run([]string{"Ret", "$(var.T)", "!(wix.T)"}, pinned+el), "through a variable or property: a directory/property Id must be a literal")
+		wantViolation(t, run([]string{"Ret", "$(var.T)", "!(wix.T)"}, pinned, el), "through a variable or property: a directory/property Id must be a literal")
+	}
 }
