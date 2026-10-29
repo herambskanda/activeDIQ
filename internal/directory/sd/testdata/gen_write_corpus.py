@@ -242,7 +242,7 @@ def inh(id_, base, op, expect, hostile, source, opts=None):
     rec(id_, "PlanInheritance", {"sd": hx(base), "op": {"utf8": op}, "opts": js(o)}, {"error": expect} if isinstance(expect, str) else {"value": expect}, hostile, source)
 unflag = lambda a: a[:1] + bytes([a[1] & ~0x10]) + a[2:]
 inh("SD-W10", IBASE, "block_keep", outcome(written([IB[0], IB[1], unflag(IB[2]), unflag(IB[3])], 2, 0x8004 | 0x1000 | 0x0400), control=0x8004 | 0x1000 | 0x0400, noncanon=[(2, 3)]), False,
-    "SD-R7 break inheritance and keep copies: INHERITED cleared, order kept (the inherited deny now sits after an allow: reported), DI copied from the base")
+    "SD-R7 break inheritance and keep copies: INHERITED cleared, plan order kept (the inherited deny now sits after an allow: reported), DI copied from the base. The order is what the PLANNER writes: a Windows DC re-sorts on write (T-0606/T-0627), so verify-after-write compares with DACLWrite.VerifyAfter, never by position")
 inh("SD-W11", IBASE, "block_remove", outcome(written(IB[:2], 2, 0x8004 | 0x1000 | 0x0400), removed=[2, 3], control=0x8004 | 0x1000 | 0x0400), False,
     "SD-R7 break inheritance and remove the inherited ACEs")
 PIB = sd(dacl=acl(IB, 2), owner=sid(SYS), control=0x8000 | 0x1000 | 0x0400)
