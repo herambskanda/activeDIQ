@@ -34,11 +34,6 @@ const (
 	connectorDir = "internal/connector"
 	composeConn  = "internal/compose/connector"
 	composeSrv   = "internal/compose/server"
-	// labBootDir is the one declared tier-L exception (T-0550): the lab bootstrap hosts an IN-PROCESS
-	// connector and serves it to the server as a ConnectorClient. It is the lab binary's connector
-	// source, issues no write RPC, and only tools/labserver imports it (cmd/server does not; the module DAG
-	// check keeps tools/ out of shipped binaries). Any other tools/ path referencing the client is still a violation.
-	labBootDir   = "tools/labserver/labboot"
 	connectorPkg = "/internal/proto/activediq/connector/v1"
 )
 
@@ -119,7 +114,7 @@ func o2File(path, rel, modPath string) ([]Violation, error) {
 			}
 		}
 	}
-	if connLocal != "" && connLocal != "_" && !under(rel, clientDir) && !under(rel, protoDir) && !under(rel, labBootDir) && !(isTest && (under(rel, connectorDir) || under(rel, composeConn) || under(rel, composeSrv))) {
+	if connLocal != "" && connLocal != "_" && !under(rel, clientDir) && !under(rel, protoDir) && !(isTest && (under(rel, connectorDir) || under(rel, composeConn) || under(rel, composeSrv))) {
 		ast.Inspect(f, func(n ast.Node) bool {
 			if s, ok := n.(*ast.SelectorExpr); ok {
 				if id, ok := s.X.(*ast.Ident); ok && id.Name == connLocal && generatedClientNames[s.Sel.Name] {

@@ -228,5 +228,3 @@ belongs to the CI ticket (T-0015).
 - Snapshots live in a Docker volume. CI caching of snapshots by seed version (playbook §4) is part
   of the CI integration ticket.
 - Lab ages drift with real time (§2); `make lab-rebuild` refreshes.
-
-**Lab server (T-0684, moved by T-0550):** the in-process lab connector bootstrap is no longer a `lab`-tagged file in the shipped server package (ADR-0001 F2 allows test tags in `_test.go` only). Build the lab server with `go build -o labserver ./tools/labserver`; it is `cmd/server`'s `server.Run` plus `server.WithLabBootstrap(labboot.Bootstrap)` (`tools/labserver/labboot`; env `LAB_*` / `WIN_LAB_*` as documented there). The shipped `cmd/server` never imports it. Tests: `go test -tags lab ./tools/labserver/labboot ./internal/compose/server -run LabBootstrap`.

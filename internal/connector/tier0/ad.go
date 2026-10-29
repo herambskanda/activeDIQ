@@ -150,6 +150,11 @@ type UnresolvedSIDHistory struct {
 // Finding codes reported by a snapshot. A finding never changes the set.
 const FindingDnsAdminsMissing = "DNSADMINS_MISSING"
 
+// FindingDnsAdminsUndetermined is raised instead of DNSADMINS_MISSING when the connector was denied
+// the read that tells whether the domain hosts AD-integrated DNS zones: silence there would hide a
+// missing DnsAdmins group, so the observation says it could not be made.
+const FindingDnsAdminsUndetermined = "DNSADMINS_UNDETERMINED"
+
 // Finding is an onboarding or health observation of a snapshot.
 type Finding struct {
 	Code   string
@@ -1434,9 +1439,13 @@ func (b *builder) c13() error {
 		}
 	}
 	if !dnsAdmins {
-		hosts, err := b.hostsDNS()
+		hosts, undetermined, err := b.hostsDNS()
 		if err != nil {
 			return err
+		}
+		if undetermined && !hosts {
+			b.s.findings = append(b.s.findings, Finding{Code: FindingDnsAdminsUndetermined,
+				Detail: "no DnsAdmins group can be found and the connector cannot read the DNS zone containers to tell whether the domain hosts AD-integrated DNS"})
 		}
 		if hosts {
 			b.s.findings = append(b.s.findings, Finding{Code: FindingDnsAdminsMissing,
@@ -1459,17 +1468,17 @@ func isC13Name(names []string) bool {
 }
 
 // hostsDNS reports whether the domain holds an AD-integrated DNS zone (application partition
-// DomainDnsZones, or the legacy CN=System location). A partition that does not exist or that the
-// connector cannot read counts as no zones: the finding is advice, it never gates classification.
-func (b *builder) hostsDNS() (bool, error) {
+// DomainDnsZones, or the legacy CN=System location). A partition that does not exist counts as no
+// zones; one the connector may not read sets undetermined (it is not "no zones"). The finding is
+// advice, it never gates classification.
+func (b *builder) hostsDNS() (hosts, undetermined bool, err error) {
 	// parent first: child() appends one RDN below the previous
 	bases := [][]string{{"DC=DomainDnsZones", "CN=MicrosoftDNS"}, {"CN=System", "CN=MicrosoftDNS"}}
 	for _, rd := range bases {
 		base := b.nm.Domain
 		for i := 0; i < len(rd); i++ {
-			var err error
 			if base, err = b.child(base, rd[i]); err != nil {
-				return false, err
+				return false, false, err
 			}
 		}
 		hit := false
@@ -1479,16 +1488,19 @@ func (b *builder) hostsDNS() (bool, error) {
 		})
 		if err != nil && !errors.Is(err, errStopFind) {
 			switch ad.CodeOf(err) {
-			case ad.CodeObjectNotFound, ad.CodeInsufficientRights:
+			case ad.CodeObjectNotFound:
+				continue
+			case ad.CodeInsufficientRights:
+				undetermined = true
 				continue
 			}
-			return false, fmt.Errorf("tier0: DNS zones: %w", err)
+			return false, false, fmt.Errorf("tier0: DNS zones: %w", err)
 		}
 		if hit {
-			return true, nil
+			return true, false, nil
 		}
 	}
-	return false, nil
+	return false, undetermined, nil
 }
 
 var errStopFind = errors.New("stop")
@@ -1564,7 +1576,7 @@ func (b *builder) c9() error {
 			// gPLink is a plain string, so a dangling link is possible, but a GPO the connector may not
 			// read looks identical, and a GPO linked at a Tier-0 SOM controls Tier-0. Fail closed;
 			// the operator removes the dangling link or grants read.
-			return fmt.Errorf("tier0: GPO %s linked at a Tier-0 start of authority cannot be read", g.String())
+			return fmt.Errorf("tier0: GPO %s linked at a Tier-0 start of authority cannot be read", g.CanonicalString())
 		}
 		if _, err := b.mark(ge, C9); err != nil {
 			return err

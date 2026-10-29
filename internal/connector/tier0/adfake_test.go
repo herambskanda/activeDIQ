@@ -33,6 +33,7 @@ type fakeDir struct {
 	nm          Naming
 	objs        []*fobj
 	failDN      string // any Get/Find touching a DN containing this fails
+	denyDN      string // any Find under a DN containing this is refused (InsufficientRights)
 	failHas     string // any Find presence-testing this attribute fails
 	nextGID     byte
 	failSIDFind bool    // any Find by objectSid fails
@@ -148,6 +149,9 @@ func (o *fobj) is(class string) bool {
 }
 
 func (f *fakeDir) guard(d string) error {
+	if f.denyDN != "" && strings.Contains(strings.ToLower(d), strings.ToLower(f.denyDN)) {
+		return &ad.Error{Code: ad.CodeInsufficientRights, Detail: "injected"}
+	}
 	if f.failDN != "" && strings.Contains(strings.ToLower(d), strings.ToLower(f.failDN)) {
 		return &ad.Error{Code: ad.CodeUnreachable, Detail: "injected"}
 	}
