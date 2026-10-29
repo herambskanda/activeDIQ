@@ -71,6 +71,9 @@ func TestLabWriteDACL(t *testing.T) {
 		t.Fatalf("WriteDACL: %v", err)
 	}
 	after := readDACL()
+	if rg, rd, err := s.ReadDACL(ctx, ref); err != nil || rg != g || sd.DigestDACL(rd) != sd.DigestDACL(after) {
+		t.Fatalf("ReadDACL (the SD-R10 read-back): guid=%v err=%v", rg == g, err)
+	}
 	if _, err := w.VerifyAfter(after); err != nil {
 		t.Fatalf("read-back differs from plan: %v", err)
 	}
