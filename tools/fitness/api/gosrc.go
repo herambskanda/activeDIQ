@@ -80,7 +80,11 @@ func goHTTPStatusWrites(root string) []Violation {
 // statusFakeDirs are in-process fakes of EXTERNAL services (not shipped; tests import them). They
 // must emit the status codes the real service emits, which is not an activeDIQ API response, so
 // ADR-0004 rule 8 (only apihost writes our API's statuses) does not apply. Keep this list explicit.
-var statusFakeDirs = []string{"internal/connector/graph/graphtest/"}
+//
+// internal/platform/opsmetrics/ is the operator /metrics endpoint (T-0533) on its own ops listener:
+// it is not part of the OpenAPI document and not an API response (a Prometheus scrape target with a
+// bearer credential and plain-text bodies), so there is no problem+json contract for it to meet.
+var statusFakeDirs = []string{"internal/connector/graph/graphtest/", "internal/platform/opsmetrics/"}
 
 func isStatusFake(rel string) bool {
 	for _, d := range statusFakeDirs {

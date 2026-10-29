@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -105,12 +106,13 @@ type input struct {
 	failBind bool
 	invalid  bool
 	cookies  map[string][]string
+	header   http.Header
 	peerIP   string
 }
 
 func (i *input) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
 	i.upload = r.Upload
-	i.cookies, i.peerIP = r.Cookies, r.PeerIP
+	i.cookies, i.peerIP, i.header = r.Cookies, r.PeerIP, r.Header
 	if i.failBind {
 		errs.Add(apitypes.InQuery, "limit", apitypes.CodeType, "bad")
 	}
@@ -1049,6 +1051,44 @@ func TestUndeclaredCookiesNeverReachRoute(t *testing.T) {
 	}
 	if len(r.in.cookies) != 0 {
 		t.Fatalf("a route declaring no cookie got %v", r.in.cookies)
+	}
+}
+
+func TestUndeclaredHeadersNeverReachRoute(t *testing.T) {
+	pol := apihost.Policy{Anonymous: []apihost.AnonymousRow{{Operation: "plain"}}}
+	cases := []struct {
+		name     string
+		declared []string
+		want     []string
+	}{
+		{"none declared", nil, nil},
+		{"only Idempotency-Key", []string{"idempotency-key"}, []string{"Idempotency-Key"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := meta("plain", "GET", "/widgets", "anonymous")
+			m.Class = "anonymous"
+			m.Headers = c.declared
+			r := &row{meta: m, call: func(context.Context, apihost.Input) (apihost.Response, error) { return resp{status: 204}, nil }}
+			req := get("/widgets")
+			req.Header.Set("Cookie", "__Host-adiq_session=SESSION-CANARY")
+			req.Header.Set("Authorization", "Bearer TOKEN-CANARY")
+			req.Header.Set("X-CSRF-Token", "csrf")
+			req.Header.Set("Idempotency-Key", "k1")
+			if rec := serve(t, r, newPorts(), pol, req); rec.Code != 204 {
+				t.Fatalf("status %d", rec.Code)
+			}
+			if r.in.header == nil {
+				t.Fatal("Request.Header is nil")
+			}
+			var got []string
+			for k := range r.in.header {
+				got = append(got, k)
+			}
+			if !slices.Equal(got, c.want) {
+				t.Fatalf("Request.Header keys = %v, want %v", got, c.want)
+			}
+		})
 	}
 }
 

@@ -16,10 +16,19 @@ type Authorised struct{ p *pass }
 
 type pass struct {
 	evaluated []guid.GUID
+	dc        guid.GUID // DSA GUID of the DC the guard's live re-read ran on (AD); zero otherwise
 }
 
 // Valid reports whether the guard issued this token.
 func (a Authorised) Valid() bool { return a.p != nil }
+
+// DC is the DSA GUID of the DC the guard re-read on at step 7; zero for a token not bound to a DC.
+func (a Authorised) DC() guid.GUID {
+	if a.p == nil {
+		return guid.GUID{}
+	}
+	return a.p.dc
+}
 
 // Evaluated are the touched objects the guard classified, target first.
 func (a Authorised) Evaluated() []guid.GUID {

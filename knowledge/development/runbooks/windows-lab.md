@@ -122,7 +122,7 @@ this runbook `reviewed`.
 | Symptom | Cause / fix |
 | --- | --- |
 | `missing: virsh …` / `/dev/kvm` | install §1 packages; enable virtualisation in firmware; `sudo usermod -aG libvirt,kvm $USER` and re-login |
-| `up` times out on dc1:636 | `virsh -c qemu:///system console diq-win-dc1` is disabled (no serial); use `virt-viewer`; read `C:\lab\provision.log` in the guest |
+| `up` times out on dc1:636 | `virsh -c qemu:///system console diq-win-dc1` is disabled (no serial); use `virt-viewer`; read `C:\lab\provision.log` in the guest. A failed stage logs `FAILED stage=…: <exception>` there (T-0496); a pending role-install restart reboots once and resumes at stage `start`; ADCS is installed only in stage `promoted` (it blocks Install-ADDSForest) |
 | Setup stops at "select image" | wrong `/IMAGE/INDEX` (§4) |
 | Net clash with `192.168.77.0/24` | change `SUBNET` in `windows-lab` and `winBind`/`WIN_LAB_DC_ADDR` |
 | Disk pressure | `windows-lab-destroy` frees the disks; the ISO is kept, delete it by hand if needed |

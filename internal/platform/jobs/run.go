@@ -192,7 +192,7 @@ func (r *Runner) runManaged(ctx context.Context, k Kind, c Claimed) error {
 					return
 				case err != nil && bctx.Err() == nil:
 					// Transient: the next tick retries, well inside the remaining half lease.
-					slog.WarnContext(bctx, "jobs: renewing a claim failed", "job", c.ID, "attempt", c.Attempt)
+					slog.WarnContext(bctx, "jobs: renewing a claim failed", "tenant_id", c.Tenant.String(), "job", c.ID, "attempt", c.Attempt)
 				}
 			}
 		}

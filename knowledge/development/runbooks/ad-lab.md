@@ -61,6 +61,8 @@ LDAPTLS_CACERT=lab/.lab-ca.pem ldapsearch -H ldaps://localhost:636 -x \
   -b OU=Managed,DC=lab,DC=activediq,DC=test -s one dn      # after: . lab/.lab.env
 ```
 
+**Rule 5 end-to-end (T-0421):** `go test -tags lab ./internal/compose/server -run TestLabRule5` needs the lab up and Docker for Postgres. It makes its own OUs and users with the lab admin (cleaned up after) and drives the real rbac authorizer, root resolver and `client.ConnectorReads` over a real `read.Handler` on the lab DC; it records which DC (DSA GUID) served each pinned and unpinned read. Samba has one DC, so the unpinned-vs-pinned consistency residual (two replicas of one NC) is a Windows-lab case. `TestLabRule5ResetOfBackingObjectIsRefusedThroughTheRunner` is expected-to-fail while T-0465 and T-0466 are open and fails when it starts passing.
+
 ## 2. What is seeded (tier `standard`, seed `20261002`)
 
 Everything is synthetic: names come from fixed lists, mail is `@example.com`, and the company is
@@ -123,6 +125,11 @@ tier (50k users) and a second DC (`2dc`) are not built yet — see §8.
 - Tests may not edit the seed to make a test pass: change `generate.py` (this changes the seed
   version) and add a unit test.
 - Tests needing Windows are tagged (`windowslab`) so CI on Samba skips them loudly (§6).
+- ScopedSearch RPC over a real session (T-0695): `go test -tags lab ./internal/connector/read -run TestLabScopedSearch`
+  (`internal/connector/read/search_lab_test.go`). It seeds `OU=t0695*` trees (nested OUs, hostile RDNs, 1600 users plus a
+  1600-member group, a deleted root), compares the bufconn RPC with an admin LDAP query and deletes its OUs.
+  The 1600-user test takes ~5 min on a loaded host (`-short` skips it). Samba does not range `member`; the
+  first-range `complete=false` it asserts is the handler's 1500 cap. DC-side ranging needs the Windows lab.
 
 ## 5. Entra lab (Microsoft 365 Developer sandbox) — T-0183
 

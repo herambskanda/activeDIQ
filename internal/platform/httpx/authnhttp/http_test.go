@@ -139,9 +139,9 @@ func TestAuthenticateMapsEveryFailureToUnauthenticated(t *testing.T) {
 	}
 	// Success.
 	acct := tenant.New().String()
-	a, _ = NewAuthenticator(&fakeResolver{sess: authn.Session{Account: acct, Tenant: ten}}, nil)
+	a, _ = NewAuthenticator(&fakeResolver{sess: authn.Session{ID: "sess-1", Account: acct, Tenant: ten}}, nil)
 	p, err := a.Authenticate(req(tok.Reveal()))
-	if err != nil || p.ID != acct || p.Tenant != ten.String() || p.Kind != apihost.KindSession {
+	if err != nil || p.ID != acct || p.Tenant != ten.String() || p.Kind != apihost.KindSession || p.SessionID != "sess-1" {
 		t.Fatalf("principal = %+v, %v", p, err)
 	}
 }

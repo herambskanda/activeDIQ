@@ -8,6 +8,7 @@ import (
 
 	dirinv "github.com/skenzeriq/activediq/internal/directory/inventory"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
+	"github.com/skenzeriq/activediq/internal/platform/authn/tenantref"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
@@ -67,7 +68,7 @@ func ReconfirmCorrelation(owners OwnerSource) (operation.Action, error) {
 		Descriptor: operation.Descriptor{
 			ID: ReconfirmActionID, Version: 1, Permission: ReconfirmPermission,
 			Input:  "#/components/schemas/CorrelationReconfirm",
-			Target: operation.TargetStore, Reversibility: operation.Irreversible, AuditKind: AuditCorrelationReconfirmed, StepUp: true,
+			Target: operation.TargetStore, Reversibility: operation.Irreversible, AuditKind: AuditCorrelationReconfirmed, StepUp: true, ControlPlane: true,
 		},
 		Plan: func(ctx context.Context, pc operation.PlanContext, in ReconfirmInput) ([]operation.TypedStep[reconfirmPayload], error) {
 			p, err := w.PendingReconfirmation(ctx, pc.Tx, in.CorrelationID)
@@ -109,7 +110,7 @@ func ReconfirmCorrelation(owners OwnerSource) (operation.Action, error) {
 			if tx == nil {
 				return ReconfirmOutcome{}, errors.New("connections: a re-confirmation needs the runner's transaction")
 			}
-			tid, err := tenant.Parse(p.Payload.Tenant)
+			tid, err := tenantref.TenantFromText(p.Payload.Tenant)
 			if err != nil {
 				return ReconfirmOutcome{}, fmt.Errorf("%w: tenant", operation.ErrInvalid)
 			}

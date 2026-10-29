@@ -1,0 +1,10 @@
+{
+ "id": "S-R05a",
+ "class": "replayed",
+ "cites": [
+  "SAML-15"
+ ],
+ "build": "conditions_expired",
+ "expect": "refuse",
+ "reason": "saml.time"
+}

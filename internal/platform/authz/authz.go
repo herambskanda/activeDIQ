@@ -186,7 +186,24 @@ type Role struct {
 	TenantOwner bool
 }
 
-func (r Role) has(p Permission) bool { return slices.Contains(r.Permissions, p) }
+// has: the tenant-owner role holds every permission (DM-34.I1); its reach is still its scope's.
+// A platform-only permission (platformOnly) is never held by a Role: not by listing, not by the
+// tenant-owner role. Platform scope is not a delegation scope, so no tenant or delegation assignment
+// reaches it (TM-D1, T-0250).
+func (r Role) has(p Permission) bool {
+	if IsPlatformOnly(p) {
+		return false
+	}
+	return r.TenantOwner || slices.Contains(r.Permissions, p)
+}
+
+// platformOnly lists the permissions exercised at platform scope only (installation operator, ADR-0002
+// "Configuration scope"). Delegation and tenant scopes cannot hold them, so no role listing one can
+// be granted and the tenant-owner role does not imply them.
+var platformOnly = []Permission{"connections.tier0_override.acknowledge"}
+
+// IsPlatformOnly reports whether p is a platform-scope-only permission.
+func IsPlatformOnly(p Permission) bool { return slices.Contains(platformOnly, p) }
 
 // Assignment is role × scope for one principal.
 type Assignment struct {
@@ -202,6 +219,10 @@ type Principal struct {
 	ID          string
 	Disabled    bool
 	Assignments []Assignment
+	// AuthorityFactor is true when the session being evaluated holds a current activeDIQ authority
+	// factor (TM-D19 rule 1). Correlation-derived assignments apply only when it is true; the zero
+	// value denies them.
+	AuthorityFactor bool
 }
 
 // Token is an API token's constraint. Effective permission is the owner's current authority
@@ -289,7 +310,7 @@ func (e Evaluator) Authorize(p *Principal, tok *Token, perm Permission, target T
 			continue
 		}
 		if a.Via != nil {
-			r, ok := hybridCheck(a, perm)
+			r, ok := hybridCheck(a, perm, p.AuthorityFactor)
 			if ok && target.CorrelatedTier0 {
 				r, ok = HybridRefusal{Reason: ReasonHybridTier0}, false
 			}
@@ -377,7 +398,7 @@ func (e Evaluator) CheckToken(owner *Principal, tok *Token) error {
 // grantor acts through a token, the token must carry every permission too. Containment is
 // conservative: a scope split across several of the grantor's assignments is refused.
 func (e Evaluator) CheckGrant(grantor *Principal, tok *Token, role Role, scope Scope) error {
-	if len(role.Permissions) == 0 || len(scope.Include) == 0 {
+	if len(role.Permissions) == 0 || len(scope.Include) == 0 || slices.ContainsFunc(role.Permissions, IsPlatformOnly) {
 		return ErrInvalidGrant
 	}
 	if _, ok := ownerAlive(grantor); !ok {

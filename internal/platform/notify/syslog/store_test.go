@@ -284,3 +284,65 @@ func TestTenantIsolation(t *testing.T) {
 		}
 	})
 }
+
+// A replayed update must not re-point the destination without a new audit event (security review of
+// T-0423): with the real chain, K1 (A->X), K2 (X->A), replay K1 is refused and every row change has its
+// own audit event.
+func TestReplayedUpdateCannotChangeRowWithoutAuditEvent(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, srv *storetest.Server) {
+		d := srv.NewDatabase(t)
+		d.Migrate(t)
+		ctx := context.Background()
+		ten := tenanttest.Seed(t, d.ExecOwner, "t1")
+		db, err := store.Open(ctx, store.Config{DSN: d.AppDSN()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(db.Close)
+		ch := audit.NewChainer(db)
+		cp := audit.NewCheckpointer(ch, fixedKeys{}, noAnchor{})
+		if err := db.WithTenant(ctx, ten, func(ctx context.Context, tx store.Tx) error { return cp.InitTenant(ctx, tx, ten) }); err != nil {
+			t.Fatal(err)
+		}
+		s, _ := NewStore(db, ch)
+		a := Spec{Host: "siem.example.com"}
+		x := Spec{Host: "attacker.example.com"}
+		v, err := s.Create(ctx, ten, a, human, "req-create")
+		if err != nil {
+			t.Fatal(err)
+		}
+		events := func() (n int) {
+			if err := db.WithTenant(ctx, ten, func(ctx context.Context, tx store.Tx) error {
+				return tx.QueryRow(ctx, `SELECT count(*) FROM public.audit_event WHERE tenant_id = $1`, ten.String()).Scan(&n)
+			}); err != nil {
+				t.Fatal(err)
+			}
+			return n
+		}
+		if _, err := s.Update(ctx, ten, v.ID, x, human, "K1"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Update(ctx, ten, v.ID, a, human, "K2"); err != nil {
+			t.Fatal(err)
+		}
+		before := events()
+		if _, err := s.Update(ctx, ten, v.ID, x, human, "K1"); !errors.Is(err, ErrIdempotencyConflict) {
+			t.Fatalf("replay of K1 with the old body: err = %v; want ErrIdempotencyConflict", err)
+		}
+		// K2 reused with another body is a conflict, not an internal error.
+		if _, err := s.Update(ctx, ten, v.ID, Spec{Host: "other.example.com"}, human, "K2"); !errors.Is(err, ErrIdempotencyConflict) {
+			t.Fatalf("K2 with another body: err = %v; want ErrIdempotencyConflict", err)
+		}
+		// Replaying K2 with its own body is a no-op that returns the current row.
+		got, err := s.Update(ctx, ten, v.ID, a, human, "K2")
+		if err != nil || got.Host != "siem.example.com" {
+			t.Fatalf("replay of K2: %+v, %v", got, err)
+		}
+		if cur, _ := s.Get(ctx, ten, v.ID); cur.Host != "siem.example.com" {
+			t.Fatalf("host = %q; the replay changed the destination", cur.Host)
+		}
+		if after := events(); after != before {
+			t.Fatalf("audit events %d -> %d; refused replays must write nothing", before, after)
+		}
+	})
+}

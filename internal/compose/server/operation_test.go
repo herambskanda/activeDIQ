@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/directory/client"
+	"github.com/skenzeriq/activediq/internal/modules/connections"
 	"github.com/skenzeriq/activediq/internal/modules/inventory"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
@@ -15,7 +16,7 @@ import (
 
 func TestBuildOperationRefusesWithoutMinter(t *testing.T) {
 	reg, _ := operation.NewRegistry()
-	_, err := buildOperation(func() bool { return false }, nil, directoryFacts(nil), allowAuthz{}, reg)
+	_, err := buildOperation(func() bool { return false }, nil, directoryFacts(nil), allowAuthz{}, reg, nil)
 	if !errors.Is(err, ErrNoMinter) {
 		t.Fatalf("err = %v, want ErrNoMinter", err)
 	}
@@ -23,7 +24,7 @@ func TestBuildOperationRefusesWithoutMinter(t *testing.T) {
 
 func TestBuildOperationRefusesWithoutFacts(t *testing.T) {
 	reg, _ := operation.NewRegistry()
-	_, err := buildOperation(operation.HoldsMinter, nil, nil, allowAuthz{}, reg)
+	_, err := buildOperation(operation.HoldsMinter, nil, nil, allowAuthz{}, reg, nil)
 	if !errors.Is(err, ErrNoFacts) {
 		t.Fatalf("err = %v, want ErrNoFacts", err)
 	}
@@ -72,5 +73,16 @@ func TestDirectoryReadsIsNilUntilBothSourcesExist(t *testing.T) {
 	r, err := directoryReads(nil, nil)
 	if err != nil || r != nil {
 		t.Fatalf("%v, %v", r, err)
+	}
+}
+
+// T-0453: the permission the connections Action asks for is in the built-in tenant-owner role, and
+// in no role below it.
+func TestTenantOwnerCatalogueGrantsTheReconfirmPermission(t *testing.T) {
+	for _, r := range rbac.BuiltInRoles() {
+		has := slices.Contains(r.Permissions, connections.ReconfirmPermission)
+		if want := r.Name == rbac.TenantOwnerRole; has != want {
+			t.Errorf("role %q holds %s = %v, want %v", r.Name, connections.ReconfirmPermission, has, want)
+		}
 	}
 }

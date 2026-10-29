@@ -73,7 +73,17 @@ paths:
       x-activediq-parity: [ADM-142]
       x-activediq-limits:
         class: auth
+      x-activediq-peer-ip: true
       security: []
+      parameters:
+        - name: __Host-adiq_pending
+          in: cookie
+          required: true
+          description: >-
+            The pending-sign-in handle set by the first factor. It is read from this cookie only; a missing
+            or repeated cookie answers the same 401 as any other sign-in failure.
+          schema:
+            type: string
       responses:
         "200":
           description: The WebAuthn request options for this pending sign-in.
@@ -108,7 +118,17 @@ paths:
       x-activediq-limits:
         class: auth
         maxBodyBytes: 16384
+      x-activediq-peer-ip: true
       security: []
+      parameters:
+        - name: __Host-adiq_pending
+          in: cookie
+          required: true
+          description: >-
+            The pending-sign-in handle set by the first factor. It is read from this cookie only; a missing
+            or repeated cookie answers the same 401 as any other sign-in failure.
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -120,10 +140,14 @@ paths:
           description: The second factor passed and a session exists.
           headers:
             Set-Cookie:
-              description: The new session cookie, __Host-adiq_session; the pending cookie is cleared.
+              description: >-
+                Two lines: the new session cookie, __Host-adiq_session, and a clearing
+                __Host-adiq_pending.
               required: true
               schema:
-                type: string
+                type: array
+                items:
+                  type: string
         "400":
           $ref: shared/problems.yaml#/components/responses/Validation
         "401":

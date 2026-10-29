@@ -9,3 +9,7 @@
 - [inventory writer lessons](inventory-writer-lessons.md) — Action inverse shape, FK probe with two keys, pre-existing red list
 - [sd primitive lessons](sd-primitive-lessons.md) — P6 read half: generated corpus, decode phase order, SELF semantics, pre-existing red
 - [C19 lessons](c19-lessons.md) — filter-schema attrs, fixture SDs, hand-edited pb.go
+- [attestation wiring lessons](attestation-wiring-lessons.md) — apihost path-param fix, A6/A7 rules, AN allow-list, fake Microsoft TLS server
+- [AN-9 negotiate lessons](an9-negotiate-lessons.md) — A11 bans http.Error/WriteHeader outside apihost (use ServeNonAPI), zero SID Bytes() is a bare header, inventory fixture `sid` is malformed
+- [sd write lessons](sd-write-lessons.md) — gate runs one named test per impl, per-unit fuzz entry, whole-object ACE position
+- [connector.Run lab test](connector-run-lab-lessons.md) — Samba Kerberos recipe, run calls inside serve seam, lab-up takes ~6 min

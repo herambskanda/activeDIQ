@@ -273,7 +273,7 @@ func TestEnvelopeRoundTrip(t *testing.T) {
 	e := Envelope{Tenant: [16]byte{1}, Seq: 7, At: t0, EventID: "e1", Kind: "k", KindVersion: 1,
 		Requester: Principal{"p", "human"}, Via: []Principal{{"t", "api_token"}}, Connection: "c", TargetGUID: "g", TargetClass: "user",
 		Operation: "op", Item: 0, Step: 0, HasStep: true, Outcome: "success", PlanHash: "ph",
-		Changes: []Change{{"mail", false, 1, 1}, {"unicodePwd", true, 0, 0}}, Details: []Detail{{"a", "1"}, {"b", "2"}}}
+		Changes: []Change{{Attribute: "mail", BeforeCount: 1, AfterCount: 1}, {Attribute: "unicodePwd", Secret: true}}, Details: []Detail{{"a", "1"}, {"b", "2"}}}
 	raw, err := e.Marshal()
 	if err != nil {
 		t.Fatal(err)

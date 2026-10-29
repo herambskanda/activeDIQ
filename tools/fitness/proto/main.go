@@ -134,16 +134,17 @@ func RequireFleet(files linker.Files) []Violation {
 	return []Violation{{"F11", "proto", "the proto tree has no package activediq.fleet.v1; the fleet contract must exist (its rules F1-F10 would otherwise pass vacuously)"}}
 }
 
-// Lint applies P2 to P8 to compiled files.
+// Lint applies P2 to P8, F1 to F10 and AG1 to AG8 to compiled files.
 func Lint(files linker.Files) []Violation {
 	var vs []Violation
 	requests := map[protoreflect.FullName]protoreflect.MessageDescriptor{}
 	vs = append(vs, lintFleet(files)...)
+	vs = append(vs, lintAgent(files)...)
 	for _, f := range files {
 		svcs := f.Services()
 		for i := 0; i < svcs.Len(); i++ {
 			svc := svcs.Get(i)
-			if isFleet(f.Package()) {
+			if isFleet(f.Package()) || isAgent(f.Package()) {
 				for j := 0; j < svc.Methods().Len(); j++ {
 					requests[svc.Methods().Get(j).Input().FullName()] = svc.Methods().Get(j).Input()
 				}
@@ -321,6 +322,11 @@ func main() {
 	}
 	if len(vs) == 0 {
 		fmt.Printf("fitness-proto: ok (%d files)\n", len(files))
+		if have := AgentContractsPresent(files); len(have) == 0 {
+			fmt.Println("fitness-proto: AG1-AG8 inactive (no agent contract yet: T-0555 addc/host, T-0559 fileserver)")
+		} else {
+			fmt.Printf("fitness-proto: AG1-AG8 active on %s\n", strings.Join(have, ", "))
+		}
 		return
 	}
 	for _, v := range vs {

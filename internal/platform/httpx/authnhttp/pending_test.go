@@ -81,3 +81,34 @@ func Test_pending_cookie_only(t *testing.T) {
 		t.Fatalf("pending cookie = %+v", pc)
 	}
 }
+
+func Test_TOTPCookies_adapter_renders_set_cookie_lines(t *testing.T) {
+	h := pendingHandle(t)
+	tok, _ := mustToken(t)
+	f := &fakeFactor{res: authn.CreateResult{Token: tok}}
+	f.res.Session.AbsoluteExpiry = time.Now().Add(time.Hour)
+	c := TOTPCookies{Factor: f}
+	ctx := context.Background()
+
+	if _, _, err := c.VerifyTOTPCookie(ctx, "junk", "123456", netip.Addr{}); !errors.Is(err, authn.ErrPendingInvalid) {
+		t.Fatalf("malformed: %v", err)
+	}
+	if _, _, err := c.VerifyTOTPCookie(ctx, "", "123456", netip.Addr{}); !errors.Is(err, authn.ErrPendingInvalid) {
+		t.Fatalf("empty: %v", err)
+	}
+	if f.calls != 0 {
+		t.Fatalf("verifier called %d times for refused cookies", f.calls)
+	}
+	_, lines, err := c.VerifyTOTPCookie(ctx, h.Reveal(), "123456", netip.Addr{})
+	if err != nil || len(lines) != 2 {
+		t.Fatalf("lines = %q, err = %v", lines, err)
+	}
+	sess, _ := http.ParseSetCookie(lines[0])
+	clr, _ := http.ParseSetCookie(lines[1])
+	if sess.Name != CookieName || sess.Value != tok.Reveal() || !sess.Secure || !sess.HttpOnly || sess.SameSite != http.SameSiteStrictMode || sess.Path != "/" || sess.Domain != "" {
+		t.Fatalf("session cookie = %+v", sess)
+	}
+	if clr.Name != authn.PendingCookieName || clr.Value != "" || clr.MaxAge >= 0 || !clr.Secure || clr.Path != "/" || clr.Domain != "" {
+		t.Fatalf("clearing cookie = %+v", clr)
+	}
+}

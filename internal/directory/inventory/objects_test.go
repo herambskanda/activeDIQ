@@ -268,6 +268,55 @@ func TestAnchorMatchesAcrossADConnections(t *testing.T) {
 	})
 }
 
+func TestAnchorMatchesCountsOnlyUserKinds(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		anchor, _ := guid.Parse(usr1)
+		others := []struct {
+			kind  inventory.Kind
+			class string
+		}{{inventory.KindComputer, "computer"}, {inventory.KindGMSA, "msDS-GroupManagedServiceAccount"},
+			{inventory.KindGroup, "group"}, {inventory.KindContact, "contact"}}
+		var obs []inventory.Observation
+		for i, o := range others {
+			x := adUser(guidN(0x100+i), nc1) // matches by ms-DS-ConsistencyGuid
+			x.Kind, x.Class, x.SID = o.kind, o.class, nil
+			x.ConsistencyGUID = anchor.Bytes()
+			obs = append(obs, x)
+		}
+		c := adUser(anchor.String(), nc1) // a computer whose objectGUID is the anchor
+		c.Kind, c.Class, c.SID = inventory.KindComputer, "computer", nil
+		obs = append(obs, c)
+		if _, err := e.populate(t, e.adA, t1, obs...); err != nil {
+			t.Fatal(err)
+		}
+		count := func(v []byte) (n int) {
+			if err := e.tx(t, e.a, func(ctx context.Context, tx store.Tx) (err error) {
+				n, err = w.AnchorMatches(ctx, tx, []inventory.ConnectionID{e.adA}, v)
+				return
+			}); err != nil {
+				t.Fatal(err)
+			}
+			return
+		}
+		if n := count(anchor.Bytes()); n != 0 {
+			t.Fatalf("non-user kinds: %d", n)
+		}
+		// user and inetOrgPerson still count.
+		u := adUser(guidN(0x300), nc1)
+		u.ConsistencyGUID = anchor.Bytes()
+		ip := adUser(guidN(0x301), nc1)
+		ip.Kind, ip.Class = inventory.KindInetOrgPerson, "inetOrgPerson"
+		ip.ConsistencyGUID = anchor.Bytes()
+		if _, err := e.populate(t, e.adA, t1, u, ip); err != nil {
+			t.Fatal(err)
+		}
+		if n := count(anchor.Bytes()); n != 2 {
+			t.Fatalf("user+inetOrgPerson: %d", n)
+		}
+	})
+}
+
 func guidN(i int) string {
 	return "dddddddd-0000-4000-8000-" + hex12(i)
 }

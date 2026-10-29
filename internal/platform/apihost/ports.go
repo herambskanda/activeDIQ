@@ -27,6 +27,9 @@ type Principal struct {
 	// SessionID is the console session's handle (not its token) for a KindSession principal; empty for a
 	// token. The step-up check reads the session's mfa_at through it.
 	SessionID string
+	// AuthorityFactor is true when the session holds a current activeDIQ authority factor (TM-D19
+	// rule 1): verified, and not older than the session's latest step-up. Set by the Authenticator.
+	AuthorityFactor bool
 }
 
 // ErrUnauthenticated is what an Authenticator returns for a missing or invalid credential. Any
@@ -90,6 +93,7 @@ type ctxKey int
 const (
 	principalKey ctxKey = iota
 	traceKey
+	sourceIPKey
 )
 
 // PrincipalFrom returns the authenticated principal of the request, or false for an anonymous one.
@@ -110,4 +114,15 @@ func withTrace(ctx context.Context, id string) context.Context {
 
 func withPrincipal(ctx context.Context, p Principal) context.Context {
 	return context.WithValue(ctx, principalKey, p)
+}
+
+// SourceIPFrom returns the request's client address as the rate limiter saw it (the TCP peer, or the
+// forwarded hop behind a trusted proxy). It is "" outside a request. Handlers use it for audit only.
+func SourceIPFrom(ctx context.Context) string {
+	s, _ := ctx.Value(sourceIPKey).(string)
+	return s
+}
+
+func withSourceIP(ctx context.Context, ip string) context.Context {
+	return context.WithValue(ctx, sourceIPKey, ip)
 }

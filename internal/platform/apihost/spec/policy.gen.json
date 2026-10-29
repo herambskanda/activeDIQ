@@ -62,10 +62,23 @@
       "ref": "AN-3"
     },
     {
+      "gate": "a Kerberos AP-REQ for the console's HTTP service principal, verified by the acceptor; NTLM is refused, success yields only a pending sign-in (AN-10), never a session",
+      "method": "GET",
+      "path": "/auth/negotiate",
+      "reason": "Integrated Windows sign-in (ADM-143); Kerberos only (TM §7.6 rules 5-7, console-sso.md §9). Off until an administrator enables it (NEG-1).",
+      "ref": "AN-9"
+    },
+    {
       "gate": "the local account's password; success yields only a pending sign-in (AN-10), never a session",
       "operation": "signInBreakGlassPassword",
       "reason": "Break-glass first factor when SSO is down (ADM-142); one uniform failure shape, throttled and never locked (TM §7.6 rules 1-4).",
       "ref": "AN-8"
+    },
+    {
+      "gate": "the one-time setup secret (256-bit random, only its hash stored, expires, consumed on first correct use, readable only by the installing administrator)",
+      "operation": "claimFirstRunSetup",
+      "reason": "First-run setup must be reachable before any account exists (TM-TB16-T7); no default account is ever created.",
+      "ref": "AN-4"
     },
     {
       "gate": "the pending-sign-in cookie",
@@ -84,6 +97,12 @@
       "operation": "verifyTotpSignIn",
       "reason": "The only way a TOTP pending sign-in becomes a session (TM §7.6 rule 1).",
       "ref": "AN-10"
+    },
+    {
+      "gate": "the single-use state issued by the start (random, only its hash stored, ten minutes, consumed on first use) plus PKCE; the tenant is read from the state and used only to look it up",
+      "operation": "completeTakeoverAttestation",
+      "reason": "The browser's return from the Global Administrator's sign-in at the IdP (TM-D17). The console session cookie is SameSite=Strict and is not sent on this cross-site redirect.",
+      "ref": "AN-11"
     }
   ],
   "authenticated": [
@@ -141,8 +160,25 @@
       "path": "/auth/sso/{idpId}/callback",
       "reason": "SAML ACS form post from the IdP; not JSON.",
       "ref": "AN-3"
+    },
+    {
+      "method": "GET",
+      "path": "/auth/negotiate",
+      "reason": "HTTP Negotiate (RFC 4559) is a header exchange, not JSON.",
+      "ref": "AN-9"
     }
   ],
   "secretResponses": [],
-  "stepUp": []
+  "stepUp": [
+    {
+      "permission": "connections.takeover.attest",
+      "reason": "Starting an attestation, and changing how long it stays valid, decide whether hard and soft match blocking count as attested (TM §7.4).",
+      "ref": "TM-D17"
+    },
+    {
+      "permission": "siem.destination.manage",
+      "reason": "Creating or changing a SIEM destination can redirect or blind the tenant's audit stream, so it needs a fresh MFA (TM §7.4, AG-8). Reads do not.",
+      "ref": "TM-D16"
+    }
+  ]
 }

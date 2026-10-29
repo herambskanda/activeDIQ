@@ -18,6 +18,15 @@ var connectionsTable = tablekind.Declare(tablekind.Table{
 	Kind:   tablekind.Tenant,
 })
 
+// attestationAttemptsTable declares public.connection_attestation_attempts for fitness-domain-keys:
+// a started takeover-attestation attempt of a DM-10 connection. Tenant-scoped and mutable (an
+// attempt is deleted when consumed or expired), so not append-only (X5).
+var attestationAttemptsTable = tablekind.Declare(tablekind.Table{
+	Name:   "public.connection_attestation_attempts",
+	Entity: "DM-10",
+	Kind:   tablekind.Tenant,
+})
+
 // Kind is what a connection connects to.
 type Kind string
 

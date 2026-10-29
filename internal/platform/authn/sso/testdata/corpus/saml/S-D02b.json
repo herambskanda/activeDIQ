@@ -1,0 +1,10 @@
+{
+ "id": "S-D02b",
+ "class": "malformed",
+ "cites": [
+  "SAML-2"
+ ],
+ "build": "doctype_billion_laughs",
+ "expect": "refuse",
+ "reason": "saml.xml"
+}

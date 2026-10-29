@@ -15,9 +15,10 @@ import (
 )
 
 const (
-	vConn = "11111111-2222-4333-8444-555555555555"
-	vRun  = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
-	vDom  = "01020304-0506-4708-890a-0b0c0d0e0f10"
+	vConn     = "11111111-2222-4333-8444-555555555555"
+	vRun      = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+	vIdentity = connection.DirectoryIdentity("01020304-0506-0708-090a-0b0c0d0e0f05")
+	vDom      = "01020304-0506-4708-890a-0b0c0d0e0f10"
 )
 
 type fakeStream struct {
@@ -82,7 +83,12 @@ func findings(fs ...*connectorv1.RightsFinding) *connectorv1.VerifyConnectionRes
 
 func completed(v connectorv1.VerificationVerdict, nf, nt uint32, cs ...*connectorv1.CheckResult) *connectorv1.VerifyConnectionResponse {
 	return &connectorv1.VerifyConnectionResponse{Event: &connectorv1.VerifyConnectionResponse_Completed{
-		Completed: &connectorv1.VerificationCompleted{Verdict: v, Checks: cs, FindingCount: nf, Tier0MemberCount: nt}}}
+		Completed: &connectorv1.VerificationCompleted{Verdict: v, Checks: cs, FindingCount: nf, Tier0MemberCount: nt,
+			DirectoryIdentity: adIdentity()}}}
+}
+
+func adIdentity() *connectorv1.DirectoryIdentity {
+	return &connectorv1.DirectoryIdentity{Identity: &connectorv1.DirectoryIdentity_AdForest{AdForest: &connectorv1.AdForestIdentity{ForestRootNcGuid: g16(5)}}}
 }
 
 func tier0(n int) *connectorv1.VerifyConnectionResponse {
@@ -145,6 +151,9 @@ func TestVerifyConnectionFoldsStreamAndSendsScope(t *testing.T) {
 	}
 	if res.Outcomes[connection.CheckV7OverPrivilege] != connection.OutcomeFail || res.Outcomes["V5"] != connection.OutcomePass {
 		t.Fatalf("outcomes: %v", res.Outcomes)
+	}
+	if res.DirectoryIdentity != vIdentity {
+		t.Fatalf("directory identity = %q", res.DirectoryIdentity)
 	}
 	if len(res.Findings) != 1 {
 		t.Fatalf("findings: %v", res.Findings)
@@ -267,5 +276,39 @@ func TestVerifyQualifiers(t *testing.T) {
 		if err != nil || got.Qualifier != c.want {
 			t.Errorf("%v: qualifier %q err %v, want %q", c.f.Kind, got.Qualifier, err, c.want)
 		}
+	}
+}
+
+// T-0358: the connection's pins go out as pinned_c13; a malformed pin never reaches the wire; the C13
+// groups of the streamed tier0_set come back for the onboarding caller to pin.
+func TestVerifyConnectionSendsPinsAndFoldsC13Groups(t *testing.T) {
+	pin := "01020304-0506-4708-890a-0b0c0d0e0f10"
+	grp := g16(0x33)
+	set := &connectorv1.VerifyConnectionResponse{Event: &connectorv1.VerifyConnectionResponse_Tier0Set{
+		Tier0Set: &connectorv1.Tier0SetChunk{Members: []*connectorv1.Tier0Member{
+			{Object: grp, Basis: []connectorv1.Tier0Basis{connectorv1.Tier0Basis_TIER0_BASIS_C13_DEFAULT_PRIVILEGED_GROUP}},
+			{Object: g16(0x34), Basis: []connectorv1.Tier0Basis{connectorv1.Tier0Basis_TIER0_BASIS_C1_PROTECTED_GROUP}},
+		}}}}
+	st := &fakeStream{msgs: []*connectorv1.VerifyConnectionResponse{header(), set,
+		completed(connectorv1.VerificationVerdict_VERIFICATION_VERDICT_PASS, 0, 2,
+			chk(connectorv1.VerificationCheck_VERIFICATION_CHECK_V5_IDENTITY, connectorv1.CheckOutcome_CHECK_OUTCOME_PASS))}}
+	cl, fv := newVerifyClient(st, fixedScope{})
+	req := vreq()
+	req.PinnedC13 = []string{pin}
+	res, err := cl.VerifyConnection(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fv.got.GetPinnedC13(); len(got) != 1 || len(got[0].GetValue()) != 16 || got[0].GetValue()[0] != 1 {
+		t.Fatalf("pinned_c13 on the wire: %v", got)
+	}
+	if len(res.C13Groups) != 1 || res.C13Groups[0] != "01020304-0506-0708-090a-0b0c0d0e0f33" {
+		t.Fatalf("C13Groups = %v", res.C13Groups)
+	}
+	cl, fv = newVerifyClient(&fakeStream{}, fixedScope{})
+	bad := vreq()
+	bad.PinnedC13 = []string{"not-a-guid"}
+	if _, err := cl.VerifyConnection(context.Background(), bad); !errors.Is(err, ErrVerifyInput) || fv.got != nil {
+		t.Fatalf("malformed pin: %v", err)
 	}
 }

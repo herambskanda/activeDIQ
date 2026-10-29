@@ -1,0 +1,10 @@
+{
+ "id": "S-F04",
+ "class": "forged",
+ "cites": [
+  "SAML-6"
+ ],
+ "build": "nameid_changed",
+ "expect": "refuse",
+ "reason": "saml.unsigned"
+}

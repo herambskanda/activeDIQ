@@ -24,6 +24,7 @@ type fobj struct {
 	raw   map[string][]byte
 	multi map[string][][]byte
 	guid  guid.GUID
+	bare  bool // a denied Read on Windows: the entry comes back with no attributes at all
 }
 
 // fakeDir is an in-memory ADDirectory. It implements the directory's semantics (subtree scope,
@@ -32,6 +33,7 @@ type fakeDir struct {
 	nm          Naming
 	objs        []*fobj
 	failDN      string // any Get/Find touching a DN containing this fails
+	denyDN      string // any Find under a DN containing this is refused (InsufficientRights)
 	failHas     string // any Find presence-testing this attribute fails
 	nextGID     byte
 	failSIDFind bool    // any Find by objectSid fails
@@ -109,6 +111,9 @@ func (f *fakeDir) find(text string) *fobj {
 }
 
 func (o *fobj) entry() *ad.Entry {
+	if o.bare {
+		return ad.NewEntry(o.dn, nil)
+	}
 	m := map[string][][]byte{"objectGUID": {o.guid.Bytes()}}
 	for _, c := range o.cls {
 		m["objectClass"] = append(m["objectClass"], []byte(c))
@@ -144,6 +149,9 @@ func (o *fobj) is(class string) bool {
 }
 
 func (f *fakeDir) guard(d string) error {
+	if f.denyDN != "" && strings.Contains(strings.ToLower(d), strings.ToLower(f.denyDN)) {
+		return &ad.Error{Code: ad.CodeInsufficientRights, Detail: "injected"}
+	}
 	if f.failDN != "" && strings.Contains(strings.ToLower(d), strings.ToLower(f.failDN)) {
 		return &ad.Error{Code: ad.CodeUnreachable, Detail: "injected"}
 	}

@@ -20,6 +20,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
+	"github.com/skenzeriq/activediq/internal/platform/personal"
 	"github.com/skenzeriq/activediq/internal/platform/secret"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
@@ -346,7 +347,7 @@ func (u *run) applyOne(ctx context.Context, tx store.Tx, idx int, sp StepPlan) (
 		return StepResult{}, u.failed("verify_failed", fmt.Errorf("%w: %s", ErrVerify, v.Reason))
 	}
 	ev := u.event(audit.Success, "applied", key, sp.Target)
-	ev.Changes = changesOf(sp.Diff)
+	ev.Changes = changesOf(sp.Target, sp.Diff)
 	if idx > 0 {
 		ev.ID = u.eventID + fmt.Sprintf("-%d", idx)
 	}
@@ -421,6 +422,9 @@ func (u *run) checkPlan(steps []StepPlan) error {
 		if sp.Kind == "" || sp.Reversibility.rank() < 0 || sp.Reversibility.rank() > u.d.Reversibility.rank() {
 			return fmt.Errorf("%w: step %d of %q has no kind or a reversibility class beyond the descriptor's", ErrInvalid, i, u.d.ID)
 		}
+		if u.d.TargetClass != "" && sp.Target.Class != u.d.TargetClass {
+			return fmt.Errorf("%w: step %d of %q targets class %q, the descriptor declares %q", ErrInvalid, i, u.d.ID, sp.Target.Class, u.d.TargetClass)
+		}
 		for j := range sp.Diff {
 			if sp.Diff[j].Secret { // a secret value is never held in a plan, diff or event
 				sp.Diff[j].Before, sp.Diff[j].After = nil, nil
@@ -460,10 +464,11 @@ func stepDigest(sp StepPlan) step.Digest {
 	return step.Compute(sp.Kind, sp.Target, attrs)
 }
 
-func changesOf(cs []Change) []audit.Change {
+func changesOf(t authority.TargetRef, cs []Change) []audit.Change {
+	subject, _ := personal.DirSubject(t.Connection, t.GUID) // empty when the target is not a directory object
 	out := make([]audit.Change, len(cs))
 	for i, c := range cs {
-		out[i] = audit.Change{Attribute: c.Attribute, Before: c.Before, After: c.After, Secret: c.Secret}
+		out[i] = audit.Change{Subject: subject, Attribute: c.Attribute, Before: c.Before, After: c.After, Secret: c.Secret}
 	}
 	return out
 }

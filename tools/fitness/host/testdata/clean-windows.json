@@ -1,0 +1,13 @@
+{
+  "profile": "windows",
+  "installer": {"on_domain_controller": true, "refused": true, "installed": false},
+  "service": {"account": "CORP\\activediq$"},
+  "files": [
+    {"path": "C:\\Program Files\\activeDIQ", "kind": "binary", "readable_by_others": false, "writable_by_others": false},
+    {"path": "C:\\ProgramData\\activeDIQ\\tls", "kind": "tls-dir", "readable_by_others": false, "writable_by_others": false}
+  ],
+  "first_run": {"listeners": [{"addr": "0.0.0.0:8443", "plaintext_responds": false, "tls": true}], "default_credentials": []},
+  "setup": {"used_once": true, "accepted_again": false, "expired_accepted": false, "readable_by_others": false},
+  "dumps": {"wer_local_dumps": false, "traceback_crash": false, "pprof_listens": false},
+  "dsn": [{"mode": "disable", "remote": true, "accepted": false, "contacted": false}, {"mode": "loopback", "accepted": true, "must_accept": true}]
+}

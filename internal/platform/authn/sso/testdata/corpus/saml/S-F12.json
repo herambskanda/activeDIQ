@@ -1,0 +1,10 @@
+{
+ "id": "S-F12",
+ "class": "forged",
+ "cites": [
+  "SAML-3"
+ ],
+ "build": "encrypted_assertion",
+ "expect": "refuse",
+ "reason": "saml.structure"
+}

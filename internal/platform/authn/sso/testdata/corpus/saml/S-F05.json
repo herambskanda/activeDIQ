@@ -1,0 +1,10 @@
+{
+ "id": "S-F05",
+ "class": "forged",
+ "cites": [
+  "SAML-4"
+ ],
+ "build": "sigvalue_bitflip",
+ "expect": "refuse",
+ "reason": "saml.unsigned"
+}

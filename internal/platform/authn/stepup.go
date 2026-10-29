@@ -9,7 +9,6 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
-	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
@@ -67,8 +66,21 @@ type StepUp struct {
 
 var _ apihost.StepUpChecker = (*StepUp)(nil)
 
+// readyCheck is what the freshness check needs: the session store only. It reads mfa_at and verifies
+// nothing, so a composition without a TOTP key source can still answer Fresh (and refuse Reverify).
+func (u *StepUp) readyCheck() error {
+	if u == nil || u.Sessions == nil {
+		return errors.New("authn: StepUp is not fully configured")
+	}
+	return nil
+}
+
+// ready is what Reverify needs: the session store and the TOTP factor.
 func (u *StepUp) ready() error {
-	if u == nil || u.Sessions == nil || u.TOTP == nil {
+	if err := u.readyCheck(); err != nil {
+		return err
+	}
+	if u.TOTP == nil {
 		return errors.New("authn: StepUp is not fully configured")
 	}
 	return nil
@@ -97,14 +109,29 @@ func (u *StepUp) window(ctx context.Context, t tenant.ID) (time.Duration, error)
 // session, ended, no mfa_at, a timestamp in the future) is false. An error is an infrastructure fault
 // and the caller refuses the request.
 func (u *StepUp) Fresh(ctx context.Context, p apihost.Principal) (bool, error) {
-	if err := u.ready(); err != nil {
-		return false, err
-	}
-	if p.Kind != apihost.KindSession || p.SessionID == "" {
+	if p.Kind != apihost.KindSession || p.SessionID == "" || p.ID == "" {
 		return false, nil
 	}
 	t, err := tenant.Parse(p.Tenant)
-	if err != nil || t.IsZero() || !validAccount(p.SessionID) {
+	if err != nil {
+		return false, nil
+	}
+	return u.fresh(ctx, t, p.SessionID, p.ID)
+}
+
+// FreshSession answers the same question for a caller that holds only the tenant and the session handle
+// of an already authenticated request (the connections attestation, which has authorised the requester
+// itself). The session must be active and its MFA inside the window; any doubt is false.
+func (u *StepUp) FreshSession(ctx context.Context, t tenant.ID, sessionID string) (bool, error) {
+	return u.fresh(ctx, t, sessionID, "")
+}
+
+// fresh is the shared check. account, when not empty, must own the session.
+func (u *StepUp) fresh(ctx context.Context, t tenant.ID, sessionID, account string) (bool, error) {
+	if err := u.readyCheck(); err != nil {
+		return false, err
+	}
+	if t.IsZero() || !validAccount(sessionID) {
 		return false, nil
 	}
 	w, err := u.window(ctx, t)
@@ -121,14 +148,14 @@ func (u *StepUp) Fresh(ctx context.Context, p apihost.Principal) (bool, error) {
 		var acct string
 		err = tx.QueryRow(ctx, `SELECT mfa_at, account_id::text FROM public.authn_sessions
 WHERE tenant_id = $1 AND id = $2::uuid AND state = 'active' AND idle_expiry > $3 AND absolute_expiry > $3`,
-			t.String(), p.SessionID, now).Scan(&mfa, &acct)
+			t.String(), sessionID, now).Scan(&mfa, &acct)
 		if store.IsNoRows(err) {
 			return nil
 		}
 		if err != nil {
 			return err
 		}
-		fresh = acct == p.ID && mfa != nil && !mfa.After(now) && now.Sub(*mfa) < w
+		fresh = (account == "" || acct == account) && mfa != nil && !mfa.After(now) && now.Sub(*mfa) < w
 		return nil
 	})
 	if err != nil {
@@ -224,7 +251,7 @@ func (u *StepUp) emit(ctx context.Context, tx store.Tx, now time.Time, kind audi
 		// One event per attempt: the nanosecond makes the ID unique, a retried tx rewrites the same one.
 		ID: "authn.session." + s.ID + ".stepup." + strconv.FormatInt(now.UnixNano(), 10), Kind: kind, At: now,
 		Actor: accountChain(s.Account), Target: authority.TargetRef{GUID: s.ID, Class: "session"},
-		Component: "authn", Outcome: out, Details: []chain.Detail{{Key: "account", Value: s.Account}},
+		Component: "authn", Outcome: out, Details: []audit.Detail{{Key: "account", Value: s.Account}},
 	}
 	if err := u.Sessions.audit.Append(ctx, tx, ev); err != nil {
 		return fmt.Errorf("authn: audit step-up: %w", err)

@@ -48,6 +48,13 @@ func (i inactive) CountActive(_ context.Context, _ store.Tx, _ tenant.ID, ids []
 	return n, nil
 }
 
+// noRevoke is a SessionRevoker that ends nothing; the real one is exercised in the authn tests.
+type noRevoke struct{}
+
+func (noRevoke) OnRoleChanged(context.Context, store.Tx, tenant.ID, string, authority.Chain) (int, error) {
+	return 0, nil
+}
+
 const (
 	owner1 = "11111111-1111-4111-8111-111111111111"
 	owner2 = "22222222-2222-4222-8222-222222222222"
@@ -62,7 +69,7 @@ func ownerSetup(t *testing.T, s *storetest.Server, act ActiveAccounts) (*env, *O
 		t.Fatal(err)
 	}
 	snk := &ownerSink{}
-	oa, err := NewOwnerAssignments(e.db, snk, act)
+	oa, err := NewOwnerAssignments(e.db, snk, act, noRevoke{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +88,7 @@ func (e *env) owners(t *testing.T) []string {
 	return out
 }
 
-// Acceptance 1: seeding creates a read-only built-in tenant-owner role.
+// Acceptance 1: seeding creates a read-only built-in tenant-owner role holding only the named grants.
 func TestSeedCreatesReadOnlyTenantOwnerRole(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		e, _, _ := ownerSetup(t, s, inactive{})
@@ -92,7 +99,7 @@ func TestSeedCreatesReadOnlyTenantOwnerRole(t *testing.T) {
 				return err
 			}
 			return tx.QueryRow(ctx, `SELECT count(*) FROM public.authz_role_permissions p JOIN public.authz_roles r ON r.tenant_id = p.tenant_id AND r.id = p.role_id WHERE r.role_name = 'tenant-owner'`).Scan(&perms)
-		}); err != nil || !builtIn || perms != 0 {
+		}); err != nil || !builtIn || perms != 1 {
 			t.Fatalf("role: builtIn=%v perms=%d err=%v", builtIn, perms, err)
 		}
 		// Read-only: no rename, no new permission, and the name is reserved.
@@ -276,7 +283,34 @@ func TestConcurrentRevokesLeaveOneOwner(t *testing.T) {
 }
 
 func TestNewOwnerAssignmentsRequiresCollaborators(t *testing.T) {
-	if _, err := NewOwnerAssignments(nil, &ownerSink{}, inactive{}); err == nil {
+	e := &store.DB{}
+	if _, err := NewOwnerAssignments(nil, &ownerSink{}, inactive{}, noRevoke{}); err == nil {
 		t.Error("nil db accepted")
 	}
+	if _, err := NewOwnerAssignments(e, nil, inactive{}, noRevoke{}); err == nil {
+		t.Error("nil sink accepted")
+	}
+	if _, err := NewOwnerAssignments(e, &ownerSink{}, nil, noRevoke{}); err == nil {
+		t.Error("nil active-account port accepted")
+	}
+	if _, err := NewOwnerAssignments(e, &ownerSink{}, inactive{}, nil); err == nil {
+		t.Error("nil session revoker accepted")
+	}
+}
+
+// A granted owner holds the tenant-wide root, so it is covered on the store targets of the access Actions.
+func TestGrantedOwnerHoldsTheTenantRoot(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e, oa, _ := ownerSetup(t, s, inactive{})
+		id, err := oa.Grant(context.Background(), e.a, ownerAcct, human(adminAcct))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var kind, guid string
+		if err := e.do(t, func(ctx context.Context, tx store.Tx) error {
+			return tx.QueryRow(ctx, `SELECT root_kind, root_guid::text FROM public.authz_assignment_roots WHERE tenant_id = $1::uuid AND assignment_id = $2::uuid`, e.a.String(), id).Scan(&kind, &guid)
+		}); err != nil || kind != "tenant" || guid != e.a.String() {
+			t.Fatalf("root %q %q: %v", kind, guid, err)
+		}
+	})
 }

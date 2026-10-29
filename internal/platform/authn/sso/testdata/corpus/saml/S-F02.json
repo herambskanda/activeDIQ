@@ -1,0 +1,10 @@
+{
+ "id": "S-F02",
+ "class": "forged",
+ "cites": [
+  "SAML-4"
+ ],
+ "build": "response_signed_only",
+ "expect": "refuse",
+ "reason": "saml.unsigned"
+}

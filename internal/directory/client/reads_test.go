@@ -41,6 +41,10 @@ func guidOf(s string) *connectorv1.Guid { b, _ := parseUUID(s); return &connecto
 
 func (f *fakeConnector) Read(req *connectorv1.ReadRequest, s grpc.ServerStreamingServer[connectorv1.ReadResponse]) error {
 	f.got = append(f.got, req)
+	// Like read.Handler: a read without the served directory's identity is refused.
+	if want := guidOf(tNC).GetValue(); string(req.GetConnection().GetDirectoryIdentity().GetAdForest().GetForestRootNcGuid().GetValue()) != string(want) {
+		return status.Error(3, "directory identity")
+	}
 	g := formatUUID(req.GetGuid().GetValue())
 	if f.mutate != nil {
 		for _, m := range f.mutate(g) {
@@ -112,7 +116,7 @@ func setup(t *testing.T, f *fakeConnector) *ConnectorReads {
 	t.Cleanup(func() { _ = cc.Close() })
 	tr, _ := NewGRPCReadTransport(connSrc{connectorv1.NewConnectorClient(cc)})
 	tid, _ := tenant.Parse(tTenant)
-	cs := conns{tid.String() + "|c1": {ID: "c1"}}
+	cs := conns{tid.String() + "|c1": {ID: "c1", Kind: connection.KindADForest, DirectoryIdentity: tNC}, tid.String() + "|unv": {ID: "unv", Kind: connection.KindADForest}}
 	r, err := NewConnectorReads(cs, tr)
 	if err != nil {
 		t.Fatal(err)
@@ -257,5 +261,17 @@ func TestAskedVerdictMissingIsAnError(t *testing.T) {
 	r := setup(t, &fakeConnector{parents: map[string]string{tUser: ""}, noT0: true})
 	if _, err := r.Object(ctxFor(tTenant, authority.DSAPins{tNC: tDSA}), authority.Pins{tNC: "dc1"}, tgt, tUser, true); !errors.Is(err, ErrNoTier0Verdict) {
 		t.Fatalf("err %v", err)
+	}
+}
+
+func TestUnverifiedConnectionReadIsRefusedBeforeTheConnector(t *testing.T) {
+	f := &fakeConnector{parents: map[string]string{tUser: ""}}
+	r := setup(t, f)
+	u := authority.TargetRef{Connection: "unv", GUID: tUser, Class: "user"}
+	if _, err := r.Object(ctxFor(tTenant, nil), nil, u, tUser, false); !errors.Is(err, ErrReadDirectory) {
+		t.Fatalf("err %v", err)
+	}
+	if len(f.got) != 0 {
+		t.Fatal("connector reached")
 	}
 }

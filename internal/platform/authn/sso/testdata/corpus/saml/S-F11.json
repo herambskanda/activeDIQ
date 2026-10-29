@@ -1,0 +1,10 @@
+{
+ "id": "S-F11",
+ "class": "forged",
+ "cites": [
+  "SAML-8"
+ ],
+ "build": "xpath_transform",
+ "expect": "refuse",
+ "reason": "saml.transform"
+}

@@ -111,6 +111,11 @@
       "package": "./cmd/agent"
     },
     {
+      "name": "agentsetup",
+      "tier": "A",
+      "package": "./cmd/agentsetup"
+    },
+    {
       "name": "auditverify",
       "tier": "A",
       "package": "./cmd/auditverify"
@@ -284,6 +289,26 @@
   "exceptions": {
     "platformAdapters": [
       {
+        "path": "cmd/agent",
+        "adr": "0001-technology-stack.md",
+        "reason": "Windows service wrapper (run_windows.go, SCM) versus a console stub elsewhere (run_other.go); the SCM API has no portable form"
+      },
+      {
+        "path": "cmd/agentsetup",
+        "adr": "0001-technology-stack.md",
+        "reason": "MSI custom actions that edit the event-log channel ACE and the data-dir DACL through typed Windows ACL APIs (run_windows.go); run_other.go is the non-Windows stub"
+      },
+      {
+        "path": "internal/platform/agent",
+        "adr": "0001-technology-stack.md",
+        "reason": "agent token/privilege pin, job-object confinement, event-log writer and data-dir DACL (*_windows.go) with *_other.go stubs; Windows-only OS APIs with no portable form"
+      },
+      {
+        "path": "internal/platform/updateverify",
+        "adr": "0001-technology-stack.md",
+        "reason": "quarantine directory-ownership checks differ by OS: quarantine_unix.go (unix, syscall owner/mode) and quarantine_other.go (!unix, no portable owner check; returns a typed unsupported error) (T-0645)"
+      },
+      {
         "path": "internal/platform/apitls",
         "adr": "0001-technology-stack.md",
         "reason": "identity-directory permission checks differ by OS: perm_unix.go (unix) and perm_other.go (!unix, Windows/OCI ACL checks are T-0104)"
@@ -292,6 +317,26 @@
         "path": "internal/platform/fleet/dial",
         "adr": "0001-technology-stack.md",
         "reason": "unix-socket versus other-OS dial of the fleet transport: files_unix.go (unix) and files_other.go (!unix); no shared portable form exists"
+      },
+      {
+        "path": "internal/platform/updateverify",
+        "adr": "0001-technology-stack.md",
+        "reason": "update-quarantine file handling differs by OS: quarantine_unix.go (unix) and quarantine_other.go (!unix); no portable form exists"
+      },
+      {
+        "path": "internal/platform/prochardening",
+        "adr": "0001-technology-stack.md",
+        "reason": "process dump hardening (RLIMIT_CORE, PR_SET_DUMPABLE) is Linux-only syscalls: hardening_linux.go and hardening_other.go; no portable form exists"
+      },
+      {
+        "path": "internal/compose/agent",
+        "adr": "0001-technology-stack.md",
+        "reason": "agent config path resolution: configpath_windows.go (MSI writes the config beside the executable) and configpath_other.go (!windows stub); no portable form exists"
+      },
+      {
+        "path": "internal/compose/server",
+        "adr": "0001-technology-stack.md",
+        "reason": "KEK provider file open differs by OS: kekopen_unix.go and kekopen_windows.go; no portable form exists"
       },
       {
         "path": "internal/testlab/harnessdocker",
@@ -326,6 +371,11 @@
         "reason": "independent Python oracle that generates the sd.read.jsonl corpus the Go decoder is checked against; a test fixture generator, never shipped"
       },
       {
+        "path": "internal/directory/sd/testdata/gen_write_corpus.py",
+        "adr": "0001-technology-stack.md",
+        "reason": "independent Python oracle that generates the sd.write.jsonl corpus the Go DACL planner is checked against; a test fixture generator, never shipped"
+      },
+      {
         "path": "packaging/linux-oci/prepare-tls-dir.sh",
         "adr": "0001-technology-stack.md",
         "reason": "packaging-time script that prepares the API TLS directory permissions in the OCI image; build-time, runs no product input"
@@ -339,6 +389,11 @@
         "path": "packaging/windows/Test-ApiTlsDirAcl.ps1",
         "adr": "0001-technology-stack.md",
         "reason": "packaging verification script that checks the API TLS directory ACL on Windows"
+      },
+      {
+        "path": "packaging/windows/Get-HostObservation.ps1",
+        "adr": "0001-technology-stack.md",
+        "reason": "read-only Windows lab collector for the TM-F-HOST proof (T-0136): prints an observation JSON, changes nothing, takes no product input"
       }
     ],
     "devNodeTools": [
@@ -348,7 +403,19 @@
         "reason": "Playwright screenshot, record and E2E tooling (T-0011): Node, dev-time only, never shipped. ADR-0001 rule 1 does not name it; the solution-architect is asked to record it in the ADR"
       }
     ],
-    "nativeComponents": []
+    "nativeComponents": [],
+    "labBuilds": [
+      {
+        "path": "internal/compose/server/labbootstrap_lab.go",
+        "adr": "0001-technology-stack.md",
+        "reason": "lab bootstrap (T-0684): seeds lab AD connections served by an in-process connector when the server is built with -tags lab; compiled out of every production binary (T-0792)"
+      },
+      {
+        "path": "internal/compose/server/labbootstrap_off.go",
+        "adr": "0001-technology-stack.md",
+        "reason": "the production (!lab) counterpart of labbootstrap_lab.go: an inert labBootstrap that ignores WIN_LAB_* and LAB_* (T-0684, T-0792)"
+      }
+    ]
   },
   "licenceExceptions": []
 }

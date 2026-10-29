@@ -22,6 +22,9 @@
 //   - NewRootResolver(FactsReader): a scope root's ancestor chain read live through the directory
 //     client, unpinned (a read of a container); an unreadable or partial chain is not Complete.
 //
-// Only a human requester acting directly is authorised for now: group, automation and API-token
-// subjects have no persistence yet, so a chain with one in it is refused (fail closed).
+// Subjects (T-0367): an account, a directory group (resolved through authz.Membership, DM-36.I2) or an
+// automation policy (DM-60.I2). Control-plane authority is personal (DM-36.I4): never granted to a
+// group or automation subject, in Go or by trigger. A token narrows its owner (WithTokens, DM-32).
+// A target with no connection is a row in activeDIQ's own store, covered only by a tenant root.
+// Grants writes roles and assignments under the no-escalation rule (DM-36.I1).
 package rbac

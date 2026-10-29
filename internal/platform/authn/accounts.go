@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/audit"
-	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tablekind"
@@ -146,7 +145,7 @@ func NewAccounts(db *store.DB, sessions *Store, owners OwnerSource) (*Accounts, 
 	return &Accounts{db: db, sessions: sessions, owners: owners}, nil
 }
 
-func (s *Accounts) emit(ctx context.Context, tx store.Tx, now time.Time, id string, kind audit.Kind, eid string, by authority.Chain, reason string, details []chain.Detail, outcome ...audit.Outcome) error {
+func (s *Accounts) emit(ctx context.Context, tx store.Tx, now time.Time, id string, kind audit.Kind, eid string, by authority.Chain, reason string, details []audit.Detail, outcome ...audit.Outcome) error {
 	oc := audit.Success
 	if len(outcome) > 0 {
 		oc = outcome[0]
@@ -246,29 +245,47 @@ func (s *Accounts) Create(ctx context.Context, in NewAccount) (Account, error) {
 	if err := in.validate(); err != nil {
 		return Account{}, err
 	}
+	var out Account
+	err := s.db.WithTenant(ctx, in.Tenant, func(ctx context.Context, tx store.Tx) error {
+		a, err := CreateIn(ctx, tx, in)
+		out = a
+		return err
+	})
+	if err != nil {
+		if errors.Is(err, ErrAccountExists) || errors.Is(err, ErrInvalidInput) {
+			return Account{}, err
+		}
+		return Account{}, fmt.Errorf("authn: create account: %w", err)
+	}
+	return out, nil
+}
+
+// CreateIn is Create inside the caller's tenant transaction, for a caller that must make the account and
+// something else (the first-run owner grant) commit or roll back together. tx must be a tenant-scoped
+// transaction of in.Tenant. Errors are as for Create; a duplicate aborts tx's statement, so the caller
+// must return the error to roll back.
+func CreateIn(ctx context.Context, tx store.Tx, in NewAccount) (Account, error) {
+	if err := in.validate(); err != nil {
+		return Account{}, err
+	}
 	mfa := in.MFARequired || in.Kind == KindLocal
 	var conn, guid *string
 	if in.Ref != nil {
 		conn, guid = &in.Ref.ConnectionID, &in.Ref.ObjectGUID
 	}
-	var out Account
-	err := s.db.WithTenant(ctx, in.Tenant, func(ctx context.Context, tx store.Tx) error {
-		row := tx.QueryRow(ctx, `INSERT INTO public.authn_accounts
-			(tenant_id, kind, display_name, email, mfa_required, created_by, sso_issuer, sso_subject, directory_connection_id, directory_object_guid)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::uuid, $10::uuid) RETURNING `+accountCols,
-			in.Tenant.String(), string(in.Kind), in.DisplayName, nilIfEmpty(in.Email), mfa, in.CreatedBy,
-			nilIfEmpty(in.SSOIssuer), nilIfEmpty(in.SSOSubject), conn, guid)
-		a, err := scanAccount(in.Tenant, row)
-		out = a
-		return err
-	})
+	row := tx.QueryRow(ctx, `INSERT INTO public.authn_accounts
+		(tenant_id, kind, display_name, email, mfa_required, created_by, sso_issuer, sso_subject, directory_connection_id, directory_object_guid)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::uuid, $10::uuid) RETURNING `+accountCols,
+		in.Tenant.String(), string(in.Kind), in.DisplayName, nilIfEmpty(in.Email), mfa, in.CreatedBy,
+		nilIfEmpty(in.SSOIssuer), nilIfEmpty(in.SSOSubject), conn, guid)
+	a, err := scanAccount(in.Tenant, row)
 	if err != nil {
 		if store.SQLState(err) == "23505" {
 			return Account{}, ErrAccountExists
 		}
-		return Account{}, fmt.Errorf("authn: create account: %w", err)
+		return Account{}, err
 	}
-	return out, nil
+	return a, nil
 }
 
 // Get reads one account by ID.
@@ -333,7 +350,7 @@ func (s *Accounts) Bind(ctx context.Context, t tenant.ID, id string, an Anchor, 
 		}
 		out = a
 		// Keys are in increasing order, as the envelope requires.
-		return s.emit(ctx, tx, now, id, KindAccountBound, "bound", by, string(an.Kind), []chain.Detail{
+		return s.emit(ctx, tx, now, id, KindAccountBound, "bound", by, string(an.Kind), []audit.Detail{
 			{Key: "anchor_kind", Value: string(an.Kind)},
 			{Key: "connection_id", Value: ref.ConnectionID},
 			{Key: "object_guid", Value: ref.ObjectGUID},
@@ -399,7 +416,7 @@ func (s *Accounts) SetState(ctx context.Context, t tenant.ID, id string, to Acco
 			if last {
 				// Commit only the refusal's audit event; the state change is not made.
 				refused = true
-				return s.emit(ctx, tx, now, id, KindAccountStateRefused, fmt.Sprintf("state-refused.%s.%s.%d", cur.State, to, now.UnixNano()), by, "last_tenant_owner", []chain.Detail{
+				return s.emit(ctx, tx, now, id, KindAccountStateRefused, fmt.Sprintf("state-refused.%s.%s.%d", cur.State, to, now.UnixNano()), by, "last_tenant_owner", []audit.Detail{
 					{Key: "from", Value: string(cur.State)},
 					{Key: "to", Value: string(to)},
 				}, audit.Denied)
@@ -414,7 +431,7 @@ func (s *Accounts) SetState(ctx context.Context, t tenant.ID, id string, to Acco
 				return err
 			}
 		}
-		return s.emit(ctx, tx, now, id, KindAccountStateChanged, fmt.Sprintf("state.%s.%s.%d", cur.State, to, now.UnixNano()), by, string(to), []chain.Detail{
+		return s.emit(ctx, tx, now, id, KindAccountStateChanged, fmt.Sprintf("state.%s.%s.%d", cur.State, to, now.UnixNano()), by, string(to), []audit.Detail{
 			{Key: "from", Value: string(cur.State)},
 			{Key: "to", Value: string(to)},
 		})
@@ -430,6 +447,27 @@ func (s *Accounts) SetState(ctx context.Context, t tenant.ID, id string, to Acco
 		return Account{}, fmt.Errorf("authn: set account state: %w", err)
 	}
 	return out, nil
+}
+
+// CountActive returns how many of ids are active accounts of t. Ids of other tenants, unknown ids and
+// accounts in any other state are not counted. It reads in tx, so it sees the caller's own changes and
+// honours the locks it holds (rbac.ActiveAccounts).
+func (s *Accounts) CountActive(ctx context.Context, tx store.Tx, t tenant.ID, ids []string) (int, error) {
+	if tx == nil || t.IsZero() {
+		return 0, ErrInvalid
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	return countActiveAccounts(ctx, tx, t, ids)
+}
+
+func countActiveAccounts(ctx context.Context, tx store.Tx, t tenant.ID, ids []string) (int, error) {
+	var n int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM public.authn_accounts WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND state = 'active'`, t.String(), ids).Scan(&n); err != nil {
+		return 0, fmt.Errorf("authn: counting active accounts: %w", err)
+	}
+	return n, nil
 }
 
 // isLastOwner reports whether id is an active tenant-owner and no other active account is. It takes the
@@ -454,8 +492,8 @@ func (s *Accounts) isLastOwner(ctx context.Context, tx store.Tx, t tenant.ID, id
 	}
 	var n int
 	if len(others) > 0 {
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM public.authn_accounts WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND state = 'active'`, t.String(), others).Scan(&n); err != nil {
-			return false, fmt.Errorf("authn: counting active owners: %w", err)
+		if n, err = countActiveAccounts(ctx, tx, t, others); err != nil {
+			return false, err
 		}
 	}
 	return n == 0, nil

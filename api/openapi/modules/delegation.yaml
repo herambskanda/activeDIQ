@@ -1,0 +1,160 @@
+# Input contracts of the four delegation.* control-plane Actions (T-0472; DM-34, DM-35, DM-36, rbac.md).
+# Each Action's Descriptor.Input points at one schema here. The shapes are the JSON the Action decodes
+# (internal/modules/delegation/actions.go), so the field names are camelCase as the Action reads them (ADR-0004 rule 2).
+# All four permissions are control_plane: personal to an account, never carried by a group, API token,
+# automation policy or hybrid correlation (authz.NeverCrosses), and every one needs a fresh step-up
+# (TM section 7.4). No HTTP operation exposes them yet; paths arrive with the Action endpoints.
+paths: {}
+components:
+  schemas:
+    RoleCreate:
+      description: >-
+        Input of delegation.role.create. The caller chooses roleId, so a retry is the same role.
+        A role is never deleted; empty it with delegation.role.update.
+      type: object
+      required: [roleId, name, tier, permissions]
+      additionalProperties: false
+      properties:
+        roleId:
+          $ref: "#/components/schemas/DelegationId"
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        tier:
+          description: 0 administers Tier-0 scope, 1 platform administration, 2 help desk.
+          type: integer
+          minimum: 0
+          maximum: 2
+        permissions:
+          $ref: "#/components/schemas/DelegationPermissions"
+    RoleUpdate:
+      description: Input of delegation.role.update. Replaces a custom role's permissions; a built-in role is refused.
+      type: object
+      required: [roleId, permissions]
+      additionalProperties: false
+      properties:
+        roleId:
+          $ref: "#/components/schemas/DelegationId"
+        permissions:
+          $ref: "#/components/schemas/DelegationPermissions"
+    AssignmentGrant:
+      description: >-
+        Input of delegation.assignment.grant. The caller chooses assignmentId, so a retry is the same
+        grant. A role holding a control_plane permission is granted to an account only.
+      type: object
+      required: [assignmentId, roleId, subject, roots]
+      additionalProperties: false
+      properties:
+        assignmentId:
+          $ref: "#/components/schemas/DelegationId"
+        roleId:
+          $ref: "#/components/schemas/DelegationId"
+        subject:
+          $ref: "#/components/schemas/AssignmentSubject"
+        roots:
+          type: array
+          minItems: 1
+          maxItems: 256
+          items:
+            $ref: "#/components/schemas/AssignmentRoot"
+        validFrom:
+          type: string
+          format: date-time
+        validUntil:
+          type: string
+          format: date-time
+    AssignmentRevoke:
+      description: Input of delegation.assignment.revoke. Ends one assignment; a revoked assignment is not restored.
+      type: object
+      required: [assignmentId]
+      additionalProperties: false
+      properties:
+        assignmentId:
+          $ref: "#/components/schemas/DelegationId"
+    DelegationId:
+      description: A caller-chosen identifier of a role or an assignment, a canonical UUID.
+      type: string
+      format: uuid
+    DelegationPermissions:
+      description: Permission names, each of the form family.noun.verb. Duplicates are collapsed.
+      type: array
+      minItems: 1
+      maxItems: 512
+      items:
+        type: string
+        minLength: 1
+        maxLength: 128
+        pattern: "^[a-z0-9_]+(\\.[a-z0-9_]+)+$"
+    AssignmentSubject:
+      description: Who holds the assignment, by kind. Exactly the members of its kind are accepted.
+      oneOf:
+        - $ref: "#/components/schemas/SubjectAccount"
+        - $ref: "#/components/schemas/SubjectGroup"
+        - $ref: "#/components/schemas/SubjectAutomation"
+      discriminator:
+        propertyName: kind
+        mapping:
+          account: "#/components/schemas/SubjectAccount"
+          group: "#/components/schemas/SubjectGroup"
+          automation: "#/components/schemas/SubjectAutomation"
+    SubjectAccount:
+      description: A console account. The only kind that may hold a control_plane role.
+      type: object
+      required: [kind, accountId]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          const: account
+        accountId:
+          type: string
+          format: uuid
+    SubjectGroup:
+      description: A directory group, by connection and objectGUID. Never holds a control_plane role.
+      type: object
+      required: [kind, connectionId, groupGuid]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          const: group
+        connectionId:
+          type: string
+          format: uuid
+        groupGuid:
+          type: string
+          format: uuid
+    SubjectAutomation:
+      description: An automation policy. Never holds a control_plane role.
+      type: object
+      required: [kind, policyId]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          const: automation
+        policyId:
+          type: string
+          format: uuid
+    AssignmentRoot:
+      description: One scope root of an assignment (DM-35). exclude subtracts the subtree from the scope.
+      type: object
+      required: [kind, connectionId, guid]
+      additionalProperties: false
+      properties:
+        kind:
+          $ref: "#/components/schemas/AssignmentRootKind"
+        connectionId:
+          type: string
+          format: uuid
+        guid:
+          type: string
+          format: uuid
+        exclude:
+          type: boolean
+    AssignmentRootKind:
+      description: What the root's guid names. The server refuses a kind it does not know.
+      type: string
+      x-activediq-enum: open
+      enum: [naming_context, ou_subtree, entra_tenant, tier0_scope, tenant]

@@ -9,6 +9,7 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
+	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
 type stepEnv struct {
@@ -183,6 +184,46 @@ func Test_stepup_window_bounds(t *testing.T) {
 		e.now = e.now.Add(2 * time.Minute)
 		if ok, err := u.Fresh(context.Background(), e.principal()); err != nil || ok {
 			t.Errorf("1 minute tenant window, 2 minutes old: fresh=%v err=%v", ok, err)
+		}
+	})
+}
+
+func Test_stepup_fresh_by_session(t *testing.T) {
+	eachStepUp(t, func(t *testing.T, e *stepEnv) {
+		ctx := context.Background()
+		ok, err := e.su.FreshSession(ctx, e.ten, e.res.Session.ID)
+		if err != nil || !ok {
+			t.Fatalf("a session that just passed MFA: %v %v", ok, err)
+		}
+		if ok, _ := e.su.FreshSession(ctx, e.ten, "not-a-session"); ok {
+			t.Fatal("a malformed session handle is fresh")
+		}
+		if ok, _ := e.su.FreshSession(ctx, tenant.ID{}, e.res.Session.ID); ok {
+			t.Fatal("the zero tenant is fresh")
+		}
+		e.now = e.now.Add(DefaultStepUpWindow)
+		if ok, _ := e.su.FreshSession(ctx, e.ten, e.res.Session.ID); ok {
+			t.Fatal("a session whose mfa_at is as old as the window is fresh")
+		}
+	})
+}
+
+// T-0475: the freshness check needs only the session store, so a composition with no TOTP key source can
+// answer it; Reverify still needs the factor and refuses.
+func Test_stepup_fresh_without_totp_factor(t *testing.T) {
+	eachStepUp(t, func(t *testing.T, e *stepEnv) {
+		su := &StepUp{Sessions: e.sess}
+		if ok, err := su.FreshSession(context.Background(), e.ten, e.res.Session.ID); err != nil || !ok {
+			t.Fatalf("FreshSession without TOTP = %v, %v", ok, err)
+		}
+		if ok, err := su.Fresh(context.Background(), e.principal()); err != nil || !ok {
+			t.Fatalf("Fresh without TOTP = %v, %v", ok, err)
+		}
+		if _, err := su.Reverify(context.Background(), e.res.Token, "000000"); err == nil {
+			t.Fatal("Reverify without a TOTP factor succeeded")
+		}
+		if ok, err := (&StepUp{}).FreshSession(context.Background(), e.ten, e.res.Session.ID); ok || err == nil {
+			t.Fatalf("StepUp with no store = %v, %v", ok, err)
 		}
 	})
 }

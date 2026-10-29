@@ -3,6 +3,7 @@ package connection_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -300,4 +301,28 @@ func TestFakeHybridLinksInputValidation(t *testing.T) {
 	if ok, err := f.Confirmed(ctx, tid, connection.ID(up(string(idA))), connection.NCGUID(up(string(ncA))), connection.ID(up(string(idB)))); err != nil || !ok {
 		t.Fatal(ok, err)
 	}
+}
+
+func TestHybridLinkListsAboveTheBoundAreErrTooMany(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		ctx := context.Background()
+		ad, en := e.ad(t, e.a, "corp"), e.entra(t, e.a, "tenant")
+		for i := 0; i < 1001; i++ {
+			n := connection.NewHybridLink{ADConnectionID: ad.ID, NCGUID: connection.NCGUID(fmt.Sprintf("cccccccc-cccc-4ccc-8ccc-%012x", i)), EntraConnectionID: en.ID}
+			if _, err := e.reg.DiscoverHybridLink(ctx, e.a, n); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if ls, err := e.reg.ListHybridLinks(ctx, e.a, ad.ID, false); !errors.Is(err, connection.ErrTooMany) || ls != nil {
+			t.Fatalf("AD side: %d links, %v", len(ls), err)
+		}
+		err := e.db.WithTenant(ctx, e.a, func(ctx context.Context, tx store.Tx) error {
+			_, err := connection.Store{}.ListHybridLinksForEntra(ctx, tx, en.ID)
+			return err
+		})
+		if !errors.Is(err, connection.ErrTooMany) {
+			t.Fatalf("Entra side: %v", err)
+		}
+	})
 }

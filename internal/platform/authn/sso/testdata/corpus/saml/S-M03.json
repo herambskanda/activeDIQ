@@ -1,0 +1,10 @@
+{
+ "id": "S-M03",
+ "class": "misaddressed",
+ "cites": [
+  "SAML-12"
+ ],
+ "build": "recipient_other",
+ "expect": "refuse",
+ "reason": "saml.recipient"
+}

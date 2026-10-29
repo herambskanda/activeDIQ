@@ -332,7 +332,11 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 			return nil, r
 		}
 	}
-	return &passed{op: op, touched: touched, designated: designated, dec: dec, dc: bound, auth: Authorised{p: &pass{evaluated: touched}}}, nil
+	var boundDSA guid.GUID
+	if bound != nil {
+		boundDSA, _ = fromWire(bound.GetDsaGuid()) // verified equal to the pin at step 2b
+	}
+	return &passed{op: op, touched: touched, designated: designated, dec: dec, dc: bound, auth: Authorised{p: &pass{evaluated: touched, dc: boundDSA}}}, nil
 }
 
 // Refusal reasons recorded for a property-write refusal that is not a rule verdict.

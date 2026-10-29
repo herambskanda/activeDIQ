@@ -1,0 +1,10 @@
+{
+ "id": "S-R04b",
+ "class": "replayed",
+ "cites": [
+  "SAML-13"
+ ],
+ "build": "stale_transaction",
+ "expect": "refuse",
+ "reason": "saml.inresponseto"
+}

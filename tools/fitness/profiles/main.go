@@ -1,4 +1,4 @@
-// Command profiles is the fitness-profiles job of ADR-0002 (checks P1, P7, U1, U2 and the
+// Command profiles is the fitness-profiles job of ADR-0002 (checks P1, P4 telemetry, P7, U1, U2 and the
 // activation table for P2–P6, U3 and U4), run by `make ci`. It fails the build when a deployment
 // profile or the UEM boundary is broken: domain code that imports the compose package, reads a
 // profile-selecting environment variable, names a profile or declares a profile-named capability;
@@ -32,7 +32,7 @@ type Options struct {
 func main() {
 	root := flag.String("root", ".", "repository root (the directory holding go.mod)")
 	manifest := flag.String("manifest", defaultManifest, "manifest path, relative to -root")
-	checks := flag.String("checks", "P1,P7,U1,U2,ACT", "comma-separated checks to run (ACT is the activation table)")
+	checks := flag.String("checks", "P1,P4,P7,U1,U2,ACT", "comma-separated checks to run (ACT is the activation table)")
 	flag.Parse()
 
 	vs, rows, err := Run(*root, *manifest, strings.Split(*checks, ","), Options{})
@@ -54,7 +54,7 @@ func main() {
 	os.Exit(1)
 }
 
-var known = map[string]bool{"P1": true, "P7": true, "U1": true, "U2": true, "ACT": true}
+var known = map[string]bool{"P1": true, "P7": true, "U1": true, "U2": true, "ACT": true, "P4": true}
 
 // Run executes the selected checks against the tree at root. rows is the evaluated activation
 // table when ACT ran.
@@ -67,7 +67,7 @@ func Run(root, manifestPath string, checks []string, opt Options) ([]Violation, 
 	for _, k := range checks {
 		k = strings.ToUpper(strings.TrimSpace(k))
 		if !known[k] {
-			return nil, nil, fmt.Errorf("unknown check %q (want P1, P7, U1, U2 or ACT)", k)
+			return nil, nil, fmt.Errorf("unknown check %q (want P1, P4, P7, U1, U2 or ACT)", k)
 		}
 		want[k] = true
 	}
@@ -81,6 +81,9 @@ func Run(root, manifestPath string, checks []string, opt Options) ([]Violation, 
 	if want["P1"] {
 		vs = append(vs, c.checkP1Domain()...)
 		vs = append(vs, c.checkP1Manifests()...)
+	}
+	if want["P4"] {
+		vs = append(vs, c.checkP4()...)
 	}
 	if want["P7"] {
 		branches := opt.Branches

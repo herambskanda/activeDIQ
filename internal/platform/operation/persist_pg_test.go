@@ -6,10 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"encoding/hex"
+	"encoding/json/v2"
 
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
@@ -33,6 +37,7 @@ type dirFake struct {
 	pwdSet  map[string]time.Time
 	applies map[string]int
 	mode    map[string]string // guid -> behaviour of Apply
+	touch   map[string]string // guid -> a second object the step's change touches (the Toucher hook)
 	secret  string
 	noNC    bool          // plan AD targets without a naming context
 	badNC   string        // set by Apply when the Step's NC/pin disagree with the plan
@@ -40,7 +45,7 @@ type dirFake struct {
 }
 
 func newDir() *dirFake {
-	return &dirFake{val: map[string]string{}, pwdSet: map[string]time.Time{}, applies: map[string]int{}, mode: map[string]string{}}
+	return &dirFake{val: map[string]string{}, pwdSet: map[string]time.Time{}, applies: map[string]int{}, mode: map[string]string{}, touch: map[string]string{}}
 }
 
 func (d *dirFake) get(g string) string { d.mu.Lock(); defer d.mu.Unlock(); return d.val[g] }
@@ -54,7 +59,10 @@ type itemIn struct {
 }
 type dirIn struct{ Items []itemIn }
 type dirPayload struct{ GUID, Before, Want string }
-type dirOut struct{ GUID string }
+type dirOut struct {
+	GUID   string
+	Report []step.Tier0Finding
+}
 
 func (d *dirFake) action(t *testing.T, id ActionID, stepUp, secretIn bool, class Reversibility) Action {
 	a, err := Define(Typed[dirIn, dirPayload, dirOut]{
@@ -117,6 +125,12 @@ func (d *dirFake) action(t *testing.T, id ActionID, stepUp, secretIn bool, class
 			case "defer":
 				d.val[g] = p.Payload.Want
 				return dirOut{GUID: g}, nil
+			case "report", "report_verr":
+				d.val[g] = p.Payload.Want
+				return dirOut{GUID: g, Report: []step.Tier0Finding{{Object: "x-guid", Bases: []string{"C2"}}}}, nil
+			case "report_unclassified":
+				d.val[g] = p.Payload.Want
+				return dirOut{GUID: g, Report: []step.Tier0Finding{{Object: "x-guid"}}}, nil
 			}
 			d.val[g] = p.Payload.Want
 			d.pwdSet[g] = time.Now()
@@ -126,11 +140,27 @@ func (d *dirFake) action(t *testing.T, id ActionID, stepUp, secretIn bool, class
 			if d.mode[p.Payload.GUID] == "defer" && d.mode["verified"] != "yes" {
 				return Verdict{}, ErrDeferVerify
 			}
+			if d.mode[p.Payload.GUID] == "report_verr" {
+				return Verdict{}, errors.New("read-back failed")
+			}
+			if d.mode[p.Payload.GUID] == "verr" {
+				return Verdict{}, errors.New("read-back failed")
+			}
+			if d.mode[p.Payload.GUID] == "tier0" {
+				return Verdict{Reason: ReasonTier0AfterWrite}, nil
+			}
 			if d.get(p.Payload.GUID) != p.Payload.Want {
 				return Verdict{Reason: "mismatch"}, nil
 			}
 			return Verdict{OK: true}, nil
 		},
+		Touched: func(p TypedStep[dirPayload]) []authority.TargetRef {
+			if g := d.touch[p.Payload.GUID]; g != "" {
+				return []authority.TargetRef{{Connection: "c1", GUID: g, Class: "user", NC: "dc=example"}}
+			}
+			return nil
+		},
+		Tier0:   func(o dirOut) []step.Tier0Finding { return o.Report },
 		Inverse: func(TypedStep[dirPayload], dirOut) (dirIn, error) { return dirIn{}, ErrIrreversible },
 		Observe: func(_ context.Context, _ authority.Pins, p TypedStep[dirPayload], claimedAt time.Time) (Observation, error) {
 			d.mu.Lock()
@@ -559,6 +589,9 @@ func TestSupersededAttemptChangesNothing(t *testing.T) {
 		if got := p.stepRow(sub.Operation, 0); got != before || !strings.HasPrefix(got, "verified") {
 			t.Fatalf("a superseded attempt changed the step: %s -> %s", before, got)
 		}
+		if got := p.alerts.reasons(); len(got) != 0 {
+			t.Fatalf("a non-tier0 late result raised alerts: %v", got)
+		}
 	})
 }
 
@@ -695,6 +728,128 @@ func TestADTargetWithoutNCIsBlockedAtPlan(t *testing.T) {
 			t.Fatal("an unpinned AD target was applied")
 		}
 	})
+}
+
+// completedEnvelope returns the operation's single operation.completed envelope.
+func (p *prig) completedEnvelope(id step.OperationID) audit.Envelope {
+	p.t.Helper()
+	rows := p.owner(`SELECT encode(envelope, 'hex') FROM public.audit_event WHERE kind = 'operation.completed' AND event_id LIKE $1`, "op-"+string(id)+"-%")
+	if len(rows) != 1 {
+		p.t.Fatalf("operation.completed events for %s = %d, want exactly 1", id, len(rows))
+	}
+	raw, err := hex.DecodeString(rows[0])
+	if err != nil {
+		p.t.Fatal(err)
+	}
+	env, err := audit.ParseEnvelope(raw)
+	if err != nil {
+		p.t.Fatal(err)
+	}
+	return env
+}
+
+// T-0477: a plan whose every item is refused by authorisation is a denied attempt; a technical block
+// (facts, pinning) stays a failure.
+func TestPlanRefusalAuditOutcome(t *testing.T) {
+	cases := []struct {
+		name        string
+		setup       func(p *prig)
+		wantOutcome string
+		wantReason  string
+		wantTarget  string
+	}{
+		{"scope denied", func(p *prig) {
+			p.r.cfg.Authz.(*authzFake).deny = map[authority.PrincipalID]bool{"alice": true}
+		}, "denied", "denied", "a"},
+		{"tier0", func(p *prig) { p.r.cfg.Facts = factsFake{tier0: true} }, "denied", "tier0", "a"},
+		{"facts unavailable", func(p *prig) { p.r.cfg.Facts = factsFake{errOn: map[string]bool{"a": true}} }, "failure", "plan_failed", ""},
+		{"no pin", func(p *prig) { p.dir.noNC = true }, "failure", "plan_failed", ""},
+	}
+	for _, c := range cases {
+		storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+			p := newPRig(t, s, rigOpt{})
+			c.setup(p)
+			sub, err := p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "a", Want: "n"}))
+			if err != nil {
+				t.Fatalf("%s: %v", c.name, err)
+			}
+			if sub.State != OpPlanFailed || sub.Blocked != 1 {
+				t.Fatalf("%s: sub = %+v", c.name, sub)
+			}
+			env := p.completedEnvelope(sub.Operation)
+			if env.Outcome != c.wantOutcome || env.Reason != c.wantReason || env.TargetGUID != c.wantTarget {
+				t.Fatalf("%s: outcome/reason/target = %s/%s/%s, want %s/%s/%s", c.name, env.Outcome, env.Reason, env.TargetGUID, c.wantOutcome, c.wantReason, c.wantTarget)
+			}
+			if env.Requester.ID == "" {
+				t.Fatalf("%s: no actor on the event", c.name)
+			}
+		})
+	}
+}
+
+// refusedEvents returns "guid/reason/outcome" of each operation.refused event of the operation.
+func (p *prig) refusedEvents(id step.OperationID) []string {
+	p.t.Helper()
+	rows := p.owner(`SELECT encode(envelope, 'hex') FROM public.audit_event WHERE kind = 'operation.refused' AND event_id LIKE $1 ORDER BY event_id`, "op-"+string(id)+"-%")
+	var out []string
+	for _, h := range rows {
+		raw, err := hex.DecodeString(h)
+		if err != nil {
+			p.t.Fatal(err)
+		}
+		env, err := audit.ParseEnvelope(raw)
+		if err != nil {
+			p.t.Fatal(err)
+		}
+		if env.Requester.ID == "" {
+			p.t.Fatal("refused event without an actor")
+		}
+		out = append(out, env.TargetGUID+"/"+env.Reason+"/"+env.Outcome)
+	}
+	return out
+}
+
+// T-0482: every item refused by authorisation at plan has its own denied event, however the rest of
+// the plan went, and the target named by operation.completed is not repeated.
+func TestPlanRefusalsAreAudited(t *testing.T) {
+	cases := []struct {
+		name      string
+		facts     factsFake
+		items     []itemIn
+		wantState string
+		wantOut   string
+		wantRsn   string
+		want      []string
+	}{
+		{"tier0 mixed with facts unavailable", factsFake{tier0On: map[string]bool{"a": true}, errOn: map[string]bool{"b": true}},
+			[]itemIn{{GUID: "a", Want: "n"}, {GUID: "b", Want: "n"}}, "plan_failed", "failure", "plan_failed", []string{"a/tier0/denied"}},
+		{"tier0 alongside a planned item", factsFake{tier0On: map[string]bool{"b": true}},
+			[]itemIn{{GUID: "a", Want: "n"}, {GUID: "b", Want: "n"}}, "queued", "", "", []string{"b/tier0/denied"}},
+		{"all refused: one event per target", factsFake{tier0On: map[string]bool{"a": true, "b": true}},
+			[]itemIn{{GUID: "a", Want: "n"}, {GUID: "b", Want: "n"}}, "plan_failed", "denied", "tier0", []string{"b/tier0/denied"}},
+	}
+	for _, c := range cases {
+		storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+			p := newPRig(t, s, rigOpt{})
+			p.r.cfg.Facts = c.facts
+			sub, err := p.r.SubmitDirectory(context.Background(), p.req(c.items...))
+			if err != nil {
+				t.Fatalf("%s: %v", c.name, err)
+			}
+			if string(sub.State) != c.wantState {
+				t.Fatalf("%s: state %s", c.name, sub.State)
+			}
+			if got := p.refusedEvents(sub.Operation); !slices.Equal(got, c.want) {
+				t.Fatalf("%s: refused events = %v, want %v", c.name, got, c.want)
+			}
+			if c.wantOut != "" {
+				env := p.completedEnvelope(sub.Operation)
+				if env.Outcome != c.wantOut || env.Reason != c.wantRsn {
+					t.Fatalf("%s: completed = %s/%s", c.name, env.Outcome, env.Reason)
+				}
+			}
+		})
+	}
 }
 
 func TestSlotLimit(t *testing.T) {
@@ -976,6 +1131,236 @@ func TestDeferredVerifyIsDrivenLater(t *testing.T) {
 		}
 		if p.stepRow(sub.Operation, 0) != "verified||1|false" || p.opState(sub.Operation) != "succeeded" {
 			t.Fatalf("step %s op %s", p.stepRow(sub.Operation, 0), p.opState(sub.Operation))
+		}
+	})
+}
+
+// T-0482 security review: refusals with different reasons in one plan each reach the chain exactly
+// once with their own reason, whichever order the items come in.
+func TestPlanRefusalsKeepEachReason(t *testing.T) {
+	for _, order := range [][]string{{"a", "b"}, {"b", "a"}} {
+		storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+			p := newPRig(t, s, rigOpt{})
+			p.r.cfg.Facts = factsFake{tier0On: map[string]bool{"a": true}}
+			p.r.cfg.Authz.(*authzFake).denyAt2 = map[[2]string]bool{{"alice", "b"}: true}
+			var items []itemIn
+			for _, g := range order {
+				items = append(items, itemIn{GUID: g, Want: "n"})
+			}
+			sub, err := p.r.SubmitDirectory(context.Background(), p.req(items...))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if sub.State != OpPlanFailed {
+				t.Fatalf("order %v: state %s", order, sub.State)
+			}
+			seen := map[string][]string{}
+			env := p.completedEnvelope(sub.Operation)
+			if env.Outcome != "denied" {
+				t.Fatalf("order %v: completed outcome %s", order, env.Outcome)
+			}
+			if env.TargetGUID != "" {
+				seen[env.TargetGUID] = append(seen[env.TargetGUID], env.Reason)
+			}
+			for _, e := range p.refusedEvents(sub.Operation) {
+				parts := strings.Split(e, "/")
+				seen[parts[0]] = append(seen[parts[0]], parts[1])
+			}
+			if !slices.Equal(seen["a"], []string{"tier0"}) || !slices.Equal(seen["b"], []string{"denied"}) || len(seen) != 2 {
+				t.Fatalf("order %v: events by target = %v", order, seen)
+			}
+		})
+	}
+}
+
+// T-0319: the Verify reason tier0_after_write moves a running operation to cancelling in the recording
+// transaction, so no later item is started, and raises the critical alert.
+func TestTier0AfterWriteCancelsRunningOperation(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		p := newPRig(t, s, rigOpt{})
+		p.dir.mode["a"] = "tier0"
+		sub, _ := p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "a", Want: "n"}, itemIn{GUID: "b", Want: "n"}))
+		p.runChunks(sub.Operation)
+		if got := p.stepRow(sub.Operation, 0); got != "verify_failed|tier0_after_write|1|false" {
+			t.Fatalf("step a = %s", got)
+		}
+		if p.dir.get("b") != "" {
+			t.Fatal("an item was executed after the tier0_after_write signal")
+		}
+		if got := p.stepRow(sub.Operation, 1); !strings.HasPrefix(got, "not_run|") {
+			t.Fatalf("step b = %s", got)
+		}
+		if st := p.opState(sub.Operation); st != "cancelled" {
+			t.Fatalf("operation = %s", st)
+		}
+		if got := p.alerts.reasons(); len(got) != 1 || got[0] != ReasonTier0AfterWrite || p.alerts.got[0].Severity != "critical" || p.alerts.got[0].Operation != string(sub.Operation) {
+			t.Fatalf("alerts = %+v", p.alerts.got)
+		}
+		if n := p.events("operation.cancelled"); n != 2 { // the tier0 signal and the completed cancel
+			t.Fatalf("operation.cancelled events = %d", n)
+		}
+		if got := p.owner(`SELECT count(*) FROM public.audit_event WHERE kind = 'operation.cancelled' AND event_id LIKE '%-tier0'`)[0]; got != "1" {
+			t.Fatalf("tier0 audit events = %s", got)
+		}
+	})
+}
+
+// The deferred read-back path does the same.
+func TestTier0AfterWriteFromDeferredVerify(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		p := newPRig(t, s, rigOpt{})
+		p.dir.mode["a"] = "defer"
+		sub, _ := p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "a", Want: "n"}))
+		p.runChunks(sub.Operation)
+		p.dir.mode["verified"] = "yes"
+		p.dir.mode["a"] = "tier0"
+		if err := p.r.Verify(context.Background(), p.tn, p.r.txFor(p.tn), string(sub.Operation)); err != nil {
+			t.Fatal(err)
+		}
+		if got := p.stepRow(sub.Operation, 0); got != "verify_failed|tier0_after_write|1|false" || p.opState(sub.Operation) != "cancelled" {
+			t.Fatalf("step %s op %s", got, p.opState(sub.Operation))
+		}
+		if got := p.alerts.reasons(); len(got) != 1 || got[0] != ReasonTier0AfterWrite {
+			t.Fatalf("alerts = %v", got)
+		}
+	})
+}
+
+// A signal that arrives once the operation has settled is only audited; the operation is not
+// retroactively cancelled.
+func TestTier0AfterWriteOnSettledOperationIsOnlyAudited(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		p := newPRig(t, s, rigOpt{})
+		sub, _ := p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "a", Want: "n"}))
+		p.runChunks(sub.Operation)
+		if st := p.opState(sub.Operation); st != "succeeded" {
+			t.Fatalf("operation = %s", st)
+		}
+		c := &claimed{key: step.Key{Operation: sub.Operation}}
+		err := p.r.txFor(p.tn)(context.Background(), func(ctx context.Context, q store.Tx) error {
+			return p.r.cancelOnTier0(ctx, q, p.tn, c, false)
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st := p.opState(sub.Operation); st != "succeeded" {
+			t.Fatalf("settled operation moved to %s", st)
+		}
+		if got := p.owner(`SELECT count(*) FROM public.audit_event WHERE kind = 'operation.cancelled' AND event_id LIKE '%-tier0'`)[0]; got != "1" {
+			t.Fatalf("tier0 audit events = %s", got)
+		}
+	})
+}
+
+const tier0Count = `SELECT count(*) FROM public.audit_event WHERE kind = 'operation.cancelled' AND event_id LIKE '%-tier0'`
+
+// A tier0_after_write verdict from a superseded attempt must not fail open: the step stays as the
+// owning attempt recorded it, but the signal is audited, the running operation is cancelled and the
+// critical alert is raised (immediate path).
+func TestTier0AfterWriteFromSupersededAttempt(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		p := newPRig(t, s, rigOpt{})
+		p.dir.set("a", "old")
+		sub, _ := p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "a", Want: "new"}, itemIn{GUID: "b", Want: "new"}))
+		old := p.claimOnly(sub.Operation)
+		p.lapse(sub.Operation)
+		p.dir.set("a", "old")
+		if _, err := p.r.Reconcile(context.Background(), p.tn, p.r.txFor(p.tn), 10); err != nil {
+			t.Fatal(err)
+		}
+		before := p.stepRow(sub.Operation, 0)
+		if st := p.opState(sub.Operation); st != "running" {
+			t.Fatalf("precondition: operation = %s", st)
+		}
+		spec := recordSpec{applied: true, verifyFailed: ReasonTier0AfterWrite}
+		if err := p.r.record(context.Background(), p.tn, p.r.txFor(p.tn), old, spec); err != nil {
+			t.Fatal(err)
+		}
+		if got := p.stepRow(sub.Operation, 0); got != before {
+			t.Fatalf("superseded attempt changed the step: %s -> %s", before, got)
+		}
+		if st := p.opState(sub.Operation); st != "cancelling" {
+			t.Fatalf("operation = %s", st)
+		}
+		if got := p.alerts.reasons(); len(got) != 1 || got[0] != ReasonTier0AfterWrite || p.alerts.got[0].Severity != "critical" {
+			t.Fatalf("alerts = %+v", p.alerts.got)
+		}
+		if got := p.owner(tier0Count)[0]; got != "1" {
+			t.Fatalf("tier0 audit events = %s", got)
+		}
+		if got := p.owner(`SELECT count(*) FROM public.audit_event WHERE event_id LIKE '%-a1-tier0'`)[0]; got != "1" {
+			t.Fatalf("per-attempt event id missing: %s", got)
+		}
+	})
+}
+
+// The same for the deferred read-back path (verifyApplied) when the attempt no longer owns the step.
+func TestTier0AfterWriteFromSupersededDeferredVerify(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		p := newPRig(t, s, rigOpt{})
+		p.dir.mode["a"] = "defer"
+		sub, _ := p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "a", Want: "n"}))
+		p.runChunks(sub.Operation)
+		c := &claimed{key: step.Key{Operation: sub.Operation}, attempt: 1}
+		err := p.r.txFor(p.tn)(context.Background(), func(ctx context.Context, q store.Tx) error {
+			op, err := loadOp(ctx, q, p.tn, string(sub.Operation), false)
+			if err != nil {
+				return err
+			}
+			act, _ := p.r.cfg.Registry.Lookup(op.Action)
+			c.op, c.act, c.d = op, act, act.Describe()
+			var plan []byte
+			if err := q.QueryRow(ctx, `SELECT plan FROM public.operation_steps WHERE operation_id = $1::uuid`, string(sub.Operation)).Scan(&plan); err != nil {
+				return err
+			}
+			return json.Unmarshal(plan, &c.plan)
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// A reconciler attempt took the step over; this stale one sees Tier-0 on its read-back.
+		p.exec(`UPDATE public.operation_steps SET attempt = 2 WHERE operation_id = $1::uuid`, string(sub.Operation))
+		before := p.stepRow(sub.Operation, 0)
+		p.dir.mode["verified"] = "yes"
+		p.dir.mode["a"] = "tier0"
+		if err := p.r.verifyApplied(context.Background(), p.tn, p.r.txFor(p.tn), c); err != nil {
+			t.Fatal(err)
+		}
+		if got := p.stepRow(sub.Operation, 0); got != before {
+			t.Fatalf("superseded attempt changed the step: %s -> %s", before, got)
+		}
+		if st := p.opState(sub.Operation); st != "cancelling" {
+			t.Fatalf("operation = %s", st)
+		}
+		if got := p.alerts.reasons(); len(got) != 1 || got[0] != ReasonTier0AfterWrite {
+			t.Fatalf("alerts = %v", got)
+		}
+		if got := p.owner(tier0Count)[0]; got != "1" {
+			t.Fatalf("tier0 audit events = %s", got)
+		}
+	})
+}
+
+// tenantPin records the tenant the runner puts on the ctx it hands to Pin.
+type tenantPin struct{ got string }
+
+func (t *tenantPin) Pin(ctx context.Context, _ string, _ authority.NamingContextID, _ string) (DCPin, error) {
+	t.got, _ = authority.TenantFrom(ctx)
+	return DCPin{Host: "dc1.example.test", DSAGUID: "11111111-2222-3333-4444-555555555555"}, nil
+}
+
+// The pinner always sees the operation's own tenant, even when the caller's ctx carries another one.
+func TestPinnerReceivesOperationTenant(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		tp := &tenantPin{}
+		p := newPRig(t, s, rigOpt{pinner: tp})
+		p.dir.set("g1", "old")
+		ctx := authority.WithTenant(context.Background(), "99999999-9999-9999-9999-999999999999")
+		if _, err := p.r.SubmitDirectory(ctx, p.req(itemIn{GUID: "g1", Want: "new"})); err != nil {
+			t.Fatal(err)
+		}
+		if tp.got != p.tn.String() {
+			t.Fatalf("pinner saw tenant %q, want the operation's %q", tp.got, p.tn.String())
 		}
 	})
 }

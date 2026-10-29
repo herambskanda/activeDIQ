@@ -1,0 +1,10 @@
+{
+ "id": "S-M02b",
+ "class": "misaddressed",
+ "cites": [
+  "SAML-14"
+ ],
+ "build": "audience_none",
+ "expect": "refuse",
+ "reason": "saml.audience"
+}

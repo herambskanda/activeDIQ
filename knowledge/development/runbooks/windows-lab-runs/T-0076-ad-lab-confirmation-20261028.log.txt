@@ -1,0 +1,155 @@
+# T-0076 raw lab output, dc1 (Windows Server 2025, forest/domain level 2025), 2026-10-28. Throwaway lab passwords only; SIDs/GUIDs are lab values.
+
+===== t1
+bound as u:WINLAB\lab-user-01
+telephoneNumber                    OK 0 success
+mobile                             OK 0 success
+l                                  OK 0 success
+info                               OK 0 success
+description                        DENIED 50 insufficientAccessRights
+mail                               DENIED 50 insufficientAccessRights
+displayName                        DENIED 50 insufficientAccessRights
+homeDirectory                      DENIED 50 insufficientAccessRights
+profilePath                        DENIED 50 insufficientAccessRights
+scriptPath                         DENIED 50 insufficientAccessRights
+wWWHomePage                        OK 0 success
+url                                OK 0 success
+msDS-SupportedEncryptionTypes      OK 0 success
+msDS-cloudExtensionAttribute1      OK 0 success
+msDS-ExternalDirectoryObjectId     OK 0 success
+userPrincipalName                  DENIED 50 insufficientAccessRights
+proxyAddresses                     DENIED 50 insufficientAccessRights
+manager                            DENIED 50 insufficientAccessRights
+department                         DENIED 50 insufficientAccessRights
+title                              DENIED 50 insufficientAccessRights
+sAMAccountName                     DENIED 50 insufficientAccessRights
+userAccountControl                 DENIED 50 insufficientAccessRights
+servicePrincipalName               DENIED 50 insufficientAccessRights
+adminCount                         DENIED 50 insufficientAccessRights
+msDS-AllowedToDelegateTo           DENIED 50 insufficientAccessRights
+homePhone                          OK 0 success
+company                            DENIED 50 insufficientAccessRights
+givenName                          DENIED 50 insufficientAccessRights
+
+===== t2
+delegate (Reset Password only) bound as u:WINLAB\adq76-del
+  reset T76-Victim-A-1!aZ          hint=False -> OK 0 success 
+  reset T76-Victim-B-2!aZ          hint=False -> OK 0 success 
+  reset T76-Victim-A-1!aZ          hint=False -> OK 0 success 
+  reset T76-Victim-C-3!aZ          hint=True  -> FAIL 53 unwillingToPerform 0000052D: SvcErr: DSID-031A12C5, problem 5003 (WILL_NOT_PERFORM), data
+  reset T76-Victim-B-2!aZ          hint=True  -> FAIL 53 unwillingToPerform 0000052D: SvcErr: DSID-031A12C5, problem 5003 (WILL_NOT_PERFORM), data
+Traceback (most recent call last):
+  File "/tmp/claude-1000/-home-khushi-AD-activeDIQ/9e05c2e2-480b-4bc8-98b9-ab7a88da652b/scratchpad/t2.py", line 18, in <module>
+    c2=ldap3.Connection(c.server,c.user,pw0,auto_bind=True,read_server_info=True)
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: Connection.__init__() got an unexpected keyword argument 'read_server_info'
+
+===== t3
+1) no-rights principal: list CN=Deleted Objects (show-deleted):
+   False 0 0 success 
+2) no-rights principal: base read by <GUID=> with show-deleted:
+   False [] 32 noSuchObject 0000208D: NameErr: DSID-0315307D, problem 2001 (NO_OBJECT), data 0, best match o
+3) restorer (Reanimate@root, CC user@OU, WP): list Deleted Objects:
+   False 0 0 success 
+4) restorer base read by <GUID=>:
+   False [] 32 noSuchObject 0000208D: NameErr: DSID-0315307D, problem 2001 (NO_OBJECT), data 0, best match o
+5) restorer undelete by GUID DN (isDeleted delete + distinguishedName replace), show-deleted control:
+   True 0 success 
+   admin sees restored: [('CN=adq76-del1,OU=T0076,DC=win,DC=activediq,DC=test', "b'-x\\xa18\\xae~\\xf1N\\x91\\xf5\\x11\\x8e\\xec\\xac\\xeb['")]
+
+===== t4
+A) no Reanimate right, target OU=T0076: (False, '32 noSuchObject 0000208D: NameErr: DSID-0315307D, problem 2001 (NO_OBJECT), data 0, be')
+B) Reanimate but no CC on target (CN=Users): (False, '50 insufficientAccessRights 00000005: SecErr: DSID-03152F72, problem 4003 (INSUFF_ACCESS_RIGHTS), ')
+C) admin lists Deleted Objects:
+   201 entries; del2 present: True
+Traceback (most recent call last):
+  File "/tmp/claude-1000/-home-khushi-AD-activeDIQ/9e05c2e2-480b-4bc8-98b9-ab7a88da652b/scratchpad/t4.py", line 18, in <module>
+    for e in a.entries: print('  SD owner/dacl via ldap3:', e.nTSecurityDescriptor.raw_values[0].hex()[:60])
+                                                            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+IndexError: list index out of range
+
+===== t5
+LDAPS read as allowed principal: True success
+ blob version 1 length 290 current pwd len(bytes) 258 previous offset 0
+non-listed principal gets value: False
+389 simple bind: automatic bind not successful - strongerAuthRequired
+pwdLastSet initial b'134377009743420256'
+set 0: True b'0'
+set -1: True success b'134377010751025896'
+set 0 then bind as victim w/ must-change: True
+ bind fails: automatic bind not successful - invalidCredentials
+ after -1: bind ok (pwd still the known one? )
+admin (Administrator) gmsa value: False
+
+===== t6
+pw chars 128 lone surrogates: True
+gMSA simple bind fail: SASLprep error: private character present
+
+===== s5
+Get-ADObject : A positional parameter cannot be found that accepts argument 'CN=Inter-Site 
+Transports,CN=Sites,CN=Configuration,DC=win,DC=activediq,DC=test'.
+At line:11 char:5
++  $s=Get-ADObject "CN=Inter-Site Transports,CN=Sites,$cfg" -SearchBase ...
++     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidArgument: (:) [Get-ADObject], ParameterBindingException
+    + FullyQualifiedErrorId : PositionalParameterNotFound,Microsoft.ActiveDirectory.Management.Commands.GetADObject
+Name     : adq76gmsa
+interval : 30
+etype    : 16
+default replInterval(min)= cost= options=
+
+===== s6
+replInterval raw present: False; value=; cost=
+cleanup done
+
+===== p1
+--- gPLink schemaIDGUID
+f30e3bbe-9ff0-11d1-b603-0000f80367c1
+--- user class defaultSecurityDescriptor (SELF ACEs)
+D:(A;;RPWPCRCCDCLCLORCWOWDSDDTSW;;;DA)(A;;RPWPCRCCDCLCLORCWOWDSDDTSW;;;SY)(A;;RPWPCRCCDCLCLORCWOWDSDDTSW;;;AO)(A;;RPLCLORC;;;PS)(OA;;CR;ab721a53-1e2f-11d0-9819-00aa0040529b;;PS)(OA;;CR;ab721a54-1e2f-11d0-9819-00aa0040529b;;PS)(OA;;CR;ab721a56-1e2f-11d0-9819-00aa0040529b;;PS)(OA;;RPWP;77B5B886-944A-11d1-AEBD-0000F80367C1;;PS)(OA;;RPWP;E45795B2-9455-11d1-AEBD-0000F80367C1;;PS)(OA;;RPWP;E45795B3-9455-11d1-AEBD-0000F80367C1;;PS)(OA;;RP;037088f8-0ae1-11d2-b422-00a0c968f939;;RS)(OA;;RP;4c164200-20c0-11d0-a768-00aa006e0529;;RS)(OA;;RP;bc0ac240-79a9-11d0-9020-00c04fc2d4cf;;RS)(A;;RC;;;AU)(OA;;RP;59ba2f42-79a2-11d0-9020-00c04fc2d3cf;;AU)(OA;;RP;77B5B886-944A-11d1-AEBD-0000F80367C1;;AU)(OA;;RP;E45795B
+--- Personal-Information rightsGuid
+77B5B886-944A-11d1-AEBD-0000F80367C1
+--- attrs in Personal-Information set (attributeSecurityGUID)
+--- MAQ
+10
+--- KDS root key
+CreationTime KeyId
+------------ -----
+--- Users
+SamAccountName  DistinguishedName                                                  
+--------------  -----------------                                                  
+Administrator   CN=Administrator,CN=Users,DC=win,DC=activediq,DC=test              
+Guest           CN=Guest,CN=Users,DC=win,DC=activediq,DC=test                      
+krbtgt          CN=krbtgt,CN=Users,DC=win,DC=activediq,DC=test                     
+svc-activediq   CN=svc-activediq,OU=ServiceAccounts,DC=win,DC=activediq,DC=test    
+lab-user-01     CN=lab-user-01,OU=Managed,DC=win,DC=activediq,DC=test              
+g9-standard     CN=g9-standard,OU=EntraSync,OU=Managed,DC=win,DC=activediq,DC=test 
+g9-protected    CN=g9-protected,OU=EntraSync,OU=Managed,DC=win,DC=activediq,DC=test
+ntlmplant063118 CN=ntlmplant063118,CN=Users,DC=win,DC=activediq,DC=test            
+ntlmplant063354 CN=ntlmplant063354,CN=Users,DC=win,DC=activediq,DC=test            
+ntlmplant063520 CN=ntlmplant063520,CN=Users,DC=win,DC=activediq,DC=test            
+ntlmplant063548 CN=ntlmplant063548,CN=Users,DC=win,DC=activediq,DC=test            
+ntlmplant081001 CN=ntlmplant081001,CN=Users,DC=win,DC=activediq,DC=test            
+adq76-del       CN=adq76-del,OU=T0076,DC=win,DC=activediq,DC=test                  
+adq76-victim    CN=adq76-victim,OU=T0076,DC=win,DC=activediq,DC=test               
+adq76-rs        CN=adq76-rs,OU=T0076,DC=win,DC=activediq,DC=test                   
+adq76-del1      CN=adq76-del1,OU=T0076,DC=win,DC=activediq,DC=test                 
+DistinguishedName                                  
+-----------------                                  
+OU=Domain Controllers,DC=win,DC=activediq,DC=test  
+OU=Managed,DC=win,DC=activediq,DC=test             
+OU=ServiceAccounts,DC=win,DC=activediq,DC=test     
+OU=EntraSync,OU=Managed,DC=win,DC=activediq,DC=test
+OU=T0076,DC=win,DC=activediq,DC=test               
+
+===== p2
+Personal-Information 77b5b886-944a-11d1-aebd-0000f80367c1 : assistant,c,facsimileTelephoneNumber,homePhone,homePostalAddress,info,internationalISDNNumber,ipPhone,l,mobile,msDS-cloudExtensionAttribute1,msDS-cloudExtensionAttribute10,msDS-cloudExtensionAttribute11,msDS-cloudExtensionAttribute12,msDS-cloudExtensionAttribute13,msDS-cloudExtensionAttribute14,msDS-cloudExtensionAttribute15,msDS-cloudExtensionAttribute16,msDS-cloudExtensionAttribute17,msDS-cloudExtensionAttribute18,msDS-cloudExtensionAttribute19,msDS-cloudExtensionAttribute2,msDS-cloudExtensionAttribute20,msDS-cloudExtensionAttribute3,msDS-cloudExtensionAttribute4,msDS-cloudExtensionAttribute5,msDS-cloudExtensionAttribute6,msDS-clo
+Web-Information e45795b3-9455-11d1-aebd-0000f80367c1 : url,wWWHomePage
+Public-Information e48d0154-bcf8-11d1-8702-00c04fb96050 : allowedAttributes,allowedAttributesEffective,allowedChildClasses,allowedChildClassesEffective,altSecurityIdentities,cn,co,company,department,description,directReports,displayNamePrintable,distinguishedName,division,givenName,initials,legacyExchangeDN,mail,manager,msDS-AllowedToDelegateTo,msDS-Approx-Immed-Subordinates,msDS-Auxiliary-Classes,msDS-HABSeniorityIndex,msDS-PhoneticCompanyName,msDS-PhoneticDepartment,msDS-PhoneticDisplayName,msDS-PhoneticFirstName,msDS-PhoneticLastName,msDS-SourceObjectDN,name,notes,o,objectCategory,objectClass,objectGUID,otherMailbox,ou,proxyAddresses,servicePrincipalName,showInAddressBook,sn,systemFlags,t
+E45795B2:
+Email-Information
+E45795B3:
+Web-Information
+--- lab-user-01 + create gmsa prereqs
+UserPrincipalName : 
+pwdLastSet        : 134376425818241211
