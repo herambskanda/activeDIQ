@@ -943,7 +943,14 @@ cp "$root/SECURITY.md" "$dc/SECURITY.md"
 sed -E 's/^Expires: .*/Expires: 2020-01-01T00:00:00Z/' "$root/.well-known/security.txt" >"$dc/.well-known/security.txt"
 must_fail_with "fitness-disclosure on an expired security.txt" 'Expires .* has passed' go run ./tools/fitness/disclosure "$dc"
 cp "$root/.well-known/security.txt" "$dc/.well-known/security.txt"
+mkdir -p "$dc/security/advisories"; cp -R "$root/security/advisories/TEMPLATE" "$dc/security/advisories/TEMPLATE"
 must_pass "fitness-disclosure" go run ./tools/fitness/disclosure "$dc"
+# T-0260: an advisory whose CVE record carries a different vector (the ME-SEC §4.3 failure) is rejected.
+# The worked example is the filled template (advisory_test.go keeps it in step).
+adv="$dc/security/advisories/CVE-1900-0001"; cp -R "$root/tools/fitness/disclosure/testdata/CVE-1900-0001" "$adv"
+sed -i.bak 's|"vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/|"vectorString": "CVSS:3.1/AV:N/AC:L/PR:L/|' "$adv/record.json"
+must_fail_with "fitness-disclosure on an advisory whose CVE record carries another score" 'vectorString .* differs from the advisory' go run ./tools/fitness/disclosure "$dc"
+rm -rf "$adv"
 
 # --- fitness-packaging (T-0104) -----------------------------------------------------------------
 pk="$tmp/packaging"; mkdir -p "$pk"; cp -r "$root/packaging" "$pk/packaging"

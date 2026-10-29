@@ -174,6 +174,10 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
   Renew by setting `Expires` to a date 9–12 months ahead (RFC 3339, UTC), and change `Contact` only
   together with the channel named in `SECURITY.md` (the check requires both to match). Do not move
   the date without reading `SECURITY.md` for anything stale. Owner: security-architect.
+  It also checks advisories (T-0260): the message names `security/advisories/<CVE-ID>/advisory.md` or
+  `record.json` and what differs. Fix the advisory or the record so that both say the same thing; never
+  change the score to make the files agree without the second scorer
+  (`security-disclosure.md` §3.2). If the gate says `target_met` is wrong, the advisory must admit the miss.
 - **`fitness-audit`** (A1–A9 of ADR-0005, TM-F-AUDIT; T-0133): `make fitness-audit` (needs Docker).
   - **A1** runs the real migrations in PostgreSQL 16 and 18 containers and prints
     `A1 <rule> [<table>]: …` for a runtime-role privilege (UPDATE/DELETE/TRUNCATE on the audit tables,
