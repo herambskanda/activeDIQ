@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"errors"
-	"os"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -16,9 +15,9 @@ import (
 // caller (the CLI reads it from stdin, never argv) and is not retained. The state lands in the
 // enrolment directory named by the local configuration.
 func Enroll(ctx context.Context, m dial.Material) error {
-	path := os.Getenv(ConfigEnv)
-	if path == "" {
-		return ErrNoConfig
+	path, err := configPath()
+	if err != nil {
+		return err
 	}
 	loc, err := LoadLocal(path)
 	if err != nil {

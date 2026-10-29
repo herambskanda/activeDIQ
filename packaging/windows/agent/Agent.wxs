@@ -5,7 +5,7 @@
   and the Windows lab items of the ticket run. The A1 check (tools/fitness/agenthost) reads this file.
 
   Identity: the service runs as the virtual account NT SERVICE\activeDIQAgent with a RESTRICTED service
-  SID and RequiredPrivileges = SeChangeNotifyPrivilege only. Never LocalSystem, never a domain
+  SID and one privilege, SeChangeNotifyPrivilege. Never a shared service identity, never a domain
   account. Read access to the Security channel is a channel ACE written by agentsetup (fail-closed);
   no Active Directory object is created or changed.
   No inbound firewall exception is installed: the agent has no listener and only dials out.
@@ -19,27 +19,27 @@
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="VendorDir" Name="skenzeriq">
-        <Directory Id="INSTALLFOLDER" Name="agent" />
+        <Directory Id="AgentDir" Name="agent" />
       </Directory>
     </StandardDirectory>
 
-    <ComponentGroup Id="AgentFiles" Directory="INSTALLFOLDER">
+    <ComponentGroup Id="AgentFiles" Directory="AgentDir">
       <Component Id="AgentExe" Guid="*">
         <File Id="AgentExeFile" Source="$(var.AgentExe)" Name="activediq-agent.exe" KeyPath="yes" />
         <ServiceInstall Id="AgentService" Name="activeDIQAgent" DisplayName="activeDIQ Agent"
                         Description="Collects domain controller audit events and applies signed activeDIQ policy."
                         Type="ownProcess" Start="auto" ErrorControl="normal" Vital="yes"
-                        Account="NT SERVICE\activeDIQAgent" />
+                        Account="NT SERVICE\activeDIQAgent">
+          <!-- Restricted service SID and exactly one privilege, declared here and never through the
+               registry (T-0688 ruling 4b). Whether WiX writes the privilege list is [UNVERIFIED - lab]:
+               T-0648 reads it back (sc qprivs, running token). -->
+          <ServiceConfig ServiceSid="restricted" OnInstall="yes" OnReinstall="yes">
+            <RequiredPrivilege Name="SeChangeNotifyPrivilege" />
+          </ServiceConfig>
+        </ServiceInstall>
         <ServiceControl Id="AgentServiceControl" Name="activeDIQAgent" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
-        <!-- The SCM reads these from the service key: a restricted SID, exactly one privilege, and the
-             path of the local configuration. -->
-        <ServiceConfig ServiceName="activeDIQAgent" ServiceSid="restricted" OnInstall="yes" OnReinstall="yes" />
         <util:ServiceConfig ServiceName="activeDIQAgent" FirstFailureActionType="restart" SecondFailureActionType="restart"
                             ThirdFailureActionType="restart" RestartServiceDelayInSeconds="30" ResetPeriodInDays="1" />
-        <RegistryValue Root="HKLM" Key="SYSTEM\CurrentControlSet\Services\activeDIQAgent" Name="RequiredPrivileges"
-                       Type="multiString" Value="SeChangeNotifyPrivilege" />
-        <RegistryValue Root="HKLM" Key="SYSTEM\CurrentControlSet\Services\activeDIQAgent" Name="Environment"
-                       Type="multiString" Value="ACTIVEDIQ_AGENT_CONFIG=[INSTALLFOLDER]agent.json" />
         <util:EventSource Log="Application" Name="activeDIQ Agent" EventMessageFile="[SystemFolder]EventCreate.exe"
                           SupportsErrors="yes" SupportsInformationals="yes" SupportsWarnings="yes" />
       </Component>
@@ -50,18 +50,21 @@
 
     <!-- Custom actions run agentsetup with fixed arguments; nothing is interpolated and no PowerShell
          is involved. Install-time actions fail closed (Return="check"). -->
-    <CustomAction Id="WriteConfig" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="check"
-                  ExeCommand="&quot;[INSTALLFOLDER]agentsetup.exe&quot; write-config" />
-    <CustomAction Id="PrepareDataDir" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="check"
-                  ExeCommand="&quot;[INSTALLFOLDER]agentsetup.exe&quot; prepare-datadir --data-dir &quot;[CommonAppDataFolder]skenzeriq\agent&quot;" />
-    <CustomAction Id="GrantChannel" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="check"
-                  ExeCommand="&quot;[INSTALLFOLDER]agentsetup.exe&quot; grant-channel" />
-    <CustomAction Id="RevokeChannel" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="ignore"
-                  ExeCommand="&quot;[INSTALLFOLDER]agentsetup.exe&quot; revoke-channel" />
+    <CustomAction Id="WriteConfig" Directory="AgentDir" Execute="deferred" Impersonate="no" Return="check"
+                  ExeCommand="&quot;[AgentDir]agentsetup.exe&quot; write-config" />
+    <CustomAction Id="PrepareDataDir" Directory="AgentDir" Execute="deferred" Impersonate="no" Return="check"
+                  ExeCommand="&quot;[AgentDir]agentsetup.exe&quot; prepare-datadir" />
+    <CustomAction Id="GrantChannel" Directory="AgentDir" Execute="deferred" Impersonate="no" Return="check"
+                  ExeCommand="&quot;[AgentDir]agentsetup.exe&quot; grant-channel" />
+    <CustomAction Id="RollbackGrantChannel" Directory="AgentDir" Execute="rollback" Impersonate="no" Return="ignore"
+                  ExeCommand="&quot;[AgentDir]agentsetup.exe&quot; revoke-channel" />
+    <CustomAction Id="RevokeChannel" Directory="AgentDir" Execute="deferred" Impersonate="no" Return="ignore"
+                  ExeCommand="&quot;[AgentDir]agentsetup.exe&quot; revoke-channel" />
 
     <InstallExecuteSequence>
       <Custom Action="WriteConfig" After="InstallFiles" Condition="NOT REMOVE" />
       <Custom Action="PrepareDataDir" After="WriteConfig" Condition="NOT REMOVE" />
+      <Custom Action="RollbackGrantChannel" Before="GrantChannel" Condition="NOT REMOVE" />
       <Custom Action="GrantChannel" After="InstallServices" Condition="NOT REMOVE" />
       <Custom Action="RevokeChannel" Before="StopServices" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     </InstallExecuteSequence>

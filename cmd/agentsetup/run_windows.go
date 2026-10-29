@@ -5,7 +5,6 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,11 +22,12 @@ const serviceAccount = `NT SERVICE\activeDIQAgent`
 const channelReadAccess = 0x1
 
 func run(args []string) int {
-	if len(args) == 0 {
+	verb, ok := parseVerb(args)
+	if !ok {
 		return usage()
 	}
 	var err error
-	switch args[0] {
+	switch verb {
 	case "grant-channel":
 		err = changeChannel(true)
 	case "revoke-channel":
@@ -35,23 +35,29 @@ func run(args []string) int {
 	case "write-config":
 		err = writeConfig()
 	case "prepare-datadir":
-		fs := flag.NewFlagSet("prepare-datadir", flag.ContinueOnError)
-		dir := fs.String("data-dir", "", "absolute data directory")
-		if fs.Parse(args[1:]) != nil || !filepath.IsAbs(*dir) {
-			return usage()
+		var dir string
+		if dir, err = dataRoot(); err == nil {
+			err = prepareDataDir(dir)
 		}
-		err = prepareDataDir(*dir)
-	default:
-		return usage()
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "agentsetup:", err)
-		if args[0] == "revoke-channel" {
+		if verb == "revoke-channel" {
 			warnRevokeFailed(err)
 		}
 		return 1
 	}
 	return 0
+}
+
+// dataRoot is %ProgramData%\skenzeriq\agent from the known folder: not an argument and not an
+// environment variable, so nothing a caller supplies can redirect a SYSTEM action (T-0688 ruling 4a).
+func dataRoot() (string, error) {
+	pd, err := windows.KnownFolderPath(windows.FOLDERID_ProgramData, 0)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(pd, "skenzeriq", "agent"), nil
 }
 
 func serviceSID() (*windows.SID, error) {
@@ -293,11 +299,10 @@ func writeConfig() error {
 	if err != nil {
 		return err
 	}
-	pd, err := windows.KnownFolderPath(windows.FOLDERID_ProgramData, 0)
+	root, err := dataRoot()
 	if err != nil {
 		return err
 	}
-	root := filepath.Join(pd, "skenzeriq", "agent")
 	b, err := json.MarshalIndent(map[string]any{
 		"data_dir":              filepath.Join(root, "data"),
 		"enrollment_dir":        filepath.Join(root, "enrol"),

@@ -1,4 +1,4 @@
-package fleet_test
+package gateway_test
 
 import (
 	"context"
@@ -25,6 +25,7 @@ import (
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	"github.com/skenzeriq/activediq/internal/platform/fleet"
+	"github.com/skenzeriq/activediq/internal/platform/fleet/gateway"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
@@ -166,7 +167,7 @@ func (f *fakeFleet) unary(_ any, ctx context.Context, dec func(any) error, ic gr
 	if ic == nil {
 		return h(ctx, in)
 	}
-	return ic(ctx, in, &grpc.UnaryServerInfo{FullMethod: fleet.EnrollMethod}, h)
+	return ic(ctx, in, &grpc.UnaryServerInfo{FullMethod: gateway.EnrollMethod}, h)
 }
 
 func (f *fakeFleet) stream(_ any, ss grpc.ServerStream) error {
@@ -199,7 +200,7 @@ func (f *fakeFleet) stream(_ any, ss grpc.ServerStream) error {
 	return nil
 }
 
-var allMethods = map[string]fleet.AuthClass{fleet.EnrollMethod: fleet.ClassPublic, tunnelMethod: fleet.ClassClientCert}
+var allMethods = map[string]gateway.AuthClass{gateway.EnrollMethod: gateway.ClassPublic, tunnelMethod: gateway.ClassClientCert}
 
 type rig struct {
 	addr  string
@@ -207,18 +208,18 @@ type rig struct {
 	pool  *x509.CertPool
 	srv   *grpc.Server
 	comps *fakeComps
-	gw    *fleet.Gateway
+	gw    *gateway.Gateway
 	roots *x509.CertPool // trusts the rig's server certificate
 }
 
-func start(t *testing.T, cas fleet.TenantCAs, pool *x509.CertPool, now func() time.Time, opts ...func(*fleet.Config)) *rig {
+func start(t *testing.T, cas gateway.TenantCAs, pool *x509.CertPool, now func() time.Time, opts ...func(*gateway.Config)) *rig {
 	t.Helper()
 	comps := &fakeComps{}
-	cfg := fleet.Config{Methods: allMethods, CAs: cas, Components: comps, Recheck: 50 * time.Millisecond, Clock: now}
+	cfg := gateway.Config{Methods: allMethods, CAs: cas, Components: comps, Recheck: 50 * time.Millisecond, Clock: now}
 	for _, o := range opts {
 		o(&cfg)
 	}
-	g, err := fleet.NewGateway(cfg)
+	g, err := gateway.NewGateway(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +273,7 @@ func (r *rig) dialRoots(t *testing.T, client *tls.Certificate, roots *x509.CertP
 func callEnroll(cc *grpc.ClientConn) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	return cc.Invoke(ctx, fleet.EnrollMethod, &emptypb.Empty{}, &emptypb.Empty{})
+	return cc.Invoke(ctx, gateway.EnrollMethod, &emptypb.Empty{}, &emptypb.Empty{})
 }
 
 func callTunnel(cc *grpc.ClientConn) error {
@@ -405,23 +406,23 @@ func TestNoServerAuthOnlyLeafAndCALookupFailureRefused(t *testing.T) {
 
 func TestStartupFailsClosed(t *testing.T) {
 	cas := casByTenant{}
-	if _, err := fleet.NewGateway(fleet.Config{Methods: map[string]fleet.AuthClass{"/activediq.fleet.v1.Fleet/Other": fleet.ClassPublic}, CAs: cas, Components: &fakeComps{}}); !errors.Is(err, fleet.ErrPublicMethod) {
+	if _, err := gateway.NewGateway(gateway.Config{Methods: map[string]gateway.AuthClass{"/activediq.fleet.v1.Fleet/Other": gateway.ClassPublic}, CAs: cas, Components: &fakeComps{}}); !errors.Is(err, gateway.ErrPublicMethod) {
 		t.Fatalf("public non-Enroll: %v", err)
 	}
-	if _, err := fleet.NewGateway(fleet.Config{Methods: map[string]fleet.AuthClass{tunnelMethod: 0}, CAs: cas, Components: &fakeComps{}}); !errors.Is(err, fleet.ErrUnclassified) {
+	if _, err := gateway.NewGateway(gateway.Config{Methods: map[string]gateway.AuthClass{tunnelMethod: 0}, CAs: cas, Components: &fakeComps{}}); !errors.Is(err, gateway.ErrUnclassified) {
 		t.Fatalf("zero class: %v", err)
 	}
 
 	ff := &fakeFleet{}
 	// Tunnel not classified.
-	g, _ := fleet.NewGateway(fleet.Config{Methods: map[string]fleet.AuthClass{fleet.EnrollMethod: fleet.ClassPublic}, CAs: cas, Components: &fakeComps{}})
-	if _, err := g.NewServer(tls.Certificate{Certificate: [][]byte{{1}}}, func() *x509.CertPool { return nil }, func(r grpc.ServiceRegistrar) { r.RegisterService(ff.desc("activediq.fleet.v1.Fleet"), ff) }); !errors.Is(err, fleet.ErrUnclassified) {
+	g, _ := gateway.NewGateway(gateway.Config{Methods: map[string]gateway.AuthClass{gateway.EnrollMethod: gateway.ClassPublic}, CAs: cas, Components: &fakeComps{}})
+	if _, err := g.NewServer(tls.Certificate{Certificate: [][]byte{{1}}}, func() *x509.CertPool { return nil }, func(r grpc.ServiceRegistrar) { r.RegisterService(ff.desc("activediq.fleet.v1.Fleet"), ff) }); !errors.Is(err, gateway.ErrUnclassified) {
 		t.Fatalf("unclassified method: %v", err)
 	}
 	// A non-fleet service on the fleet listener.
-	g, _ = fleet.NewGateway(fleet.Config{Methods: map[string]fleet.AuthClass{fleet.EnrollMethod: fleet.ClassPublic, tunnelMethod: fleet.ClassClientCert,
-		"/activediq.console.v1.Console/Enroll": fleet.ClassClientCert, "/activediq.console.v1.Console/Tunnel": fleet.ClassClientCert}, CAs: cas, Components: &fakeComps{}})
-	if _, err := g.NewServer(tls.Certificate{Certificate: [][]byte{{1}}}, func() *x509.CertPool { return nil }, func(r grpc.ServiceRegistrar) { r.RegisterService(ff.desc("activediq.console.v1.Console"), ff) }); !errors.Is(err, fleet.ErrForeignMount) {
+	g, _ = gateway.NewGateway(gateway.Config{Methods: map[string]gateway.AuthClass{gateway.EnrollMethod: gateway.ClassPublic, tunnelMethod: gateway.ClassClientCert,
+		"/activediq.console.v1.Console/Enroll": gateway.ClassClientCert, "/activediq.console.v1.Console/Tunnel": gateway.ClassClientCert}, CAs: cas, Components: &fakeComps{}})
+	if _, err := g.NewServer(tls.Certificate{Certificate: [][]byte{{1}}}, func() *x509.CertPool { return nil }, func(r grpc.ServiceRegistrar) { r.RegisterService(ff.desc("activediq.console.v1.Console"), ff) }); !errors.Is(err, gateway.ErrForeignMount) {
 		t.Fatalf("foreign service: %v", err)
 	}
 }
@@ -431,15 +432,15 @@ func TestRoutesListOnlyFleet(t *testing.T) {
 	pool := x509.NewCertPool()
 	pool.AddCert(ca.cert)
 	r := start(t, casByTenant{}, pool, nil)
-	got := fleet.Routes(r.srv)
-	want := []string{fleet.EnrollMethod, tunnelMethod}
+	got := gateway.Routes(r.srv)
+	want := []string{gateway.EnrollMethod, tunnelMethod}
 	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("routes = %v", got)
 	}
 }
 
 func TestUnaryClientCertMethodRefusedWithoutPeer(t *testing.T) {
-	g, err := fleet.NewGateway(fleet.Config{Methods: map[string]fleet.AuthClass{"/activediq.fleet.v1.Fleet/Other": fleet.ClassClientCert}, CAs: casByTenant{}, Components: &fakeComps{}})
+	g, err := gateway.NewGateway(gateway.Config{Methods: map[string]gateway.AuthClass{"/activediq.fleet.v1.Fleet/Other": gateway.ClassClientCert}, CAs: casByTenant{}, Components: &fakeComps{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -460,7 +461,7 @@ func TestUnaryClientCertMethodRefusedWithoutPeer(t *testing.T) {
 // A caller-supplied Creds option must not replace the gateway's mTLS (Enroll would be served in
 // plaintext): a plaintext client cannot reach Enroll.
 func TestCallerCredsCannotReplaceTLS(t *testing.T) {
-	g, err := fleet.NewGateway(fleet.Config{Methods: allMethods, CAs: casByTenant{}, Components: &fakeComps{}})
+	g, err := gateway.NewGateway(gateway.Config{Methods: allMethods, CAs: casByTenant{}, Components: &fakeComps{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -485,7 +486,7 @@ func TestCallerCredsCannotReplaceTLS(t *testing.T) {
 	defer conn.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	if err := conn.Invoke(ctx, fleet.EnrollMethod, &emptypb.Empty{}, &emptypb.Empty{}); err == nil {
+	if err := conn.Invoke(ctx, gateway.EnrollMethod, &emptypb.Empty{}, &emptypb.Empty{}); err == nil {
 		t.Fatal("plaintext client reached Enroll")
 	}
 	if ff.calls.Load() != 0 {
@@ -751,7 +752,7 @@ func TestSupersededCertificateIsReportedOncePerWindow(t *testing.T) {
 	var mu sync.Mutex
 	clock := time.Now()
 	now := func() time.Time { mu.Lock(); defer mu.Unlock(); return clock }
-	r := start(t, casByTenant{tidA: {ca.cert}}, pool, now, func(c *fleet.Config) {
+	r := start(t, casByTenant{tidA: {ca.cert}}, pool, now, func(c *gateway.Config) {
 		c.Superseded, c.SupersededWindow = rep, time.Minute
 	})
 	oldLeaf := ca.leaf(t, tidA, nb, na, eku)
@@ -817,7 +818,7 @@ func TestSupersededReportSurvivesHangUp(t *testing.T) {
 	pool.AddCert(ca.cert)
 	nb, na, eku := time.Now().Add(-time.Minute), time.Now().Add(time.Hour), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
 	rep := &ctxReport{delay: 150 * time.Millisecond}
-	r := start(t, casByTenant{tidA: {ca.cert}}, pool, time.Now, func(c *fleet.Config) {
+	r := start(t, casByTenant{tidA: {ca.cert}}, pool, time.Now, func(c *gateway.Config) {
 		c.Superseded, c.SupersededWindow = rep, time.Hour
 	})
 	oldLeaf := ca.leaf(t, tidA, nb, na, eku)

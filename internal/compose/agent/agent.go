@@ -20,7 +20,7 @@ import (
 )
 
 // ConfigEnv names the environment variable that holds the path of the local configuration file. The
-// MSI sets it on the service; it points into the install directory.
+// variable is honoured off Windows only; on Windows the file is agent.json beside the executable.
 const ConfigEnv = "ACTIVEDIQ_AGENT_CONFIG"
 
 // Errors the caller can tell apart: a missing enrolment is an operator action, not a crash loop.
@@ -50,9 +50,9 @@ func Run(ctx context.Context, cfg config.Config) error { return RunWith(ctx, cfg
 // RunWith is Run with the platform hooks. Order matters: the privilege check comes first and refuses
 // to run before any subscription or network use (ADR-0006 decision 3).
 func RunWith(ctx context.Context, cfg config.Config, hk Hooks) error {
-	path := os.Getenv(ConfigEnv)
-	if path == "" {
-		return ErrNoConfig
+	path, err := configPath()
+	if err != nil {
+		return err
 	}
 	loc, err := LoadLocal(path)
 	if err != nil {

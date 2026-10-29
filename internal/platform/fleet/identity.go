@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"context"
 	"crypto/x509"
 	"errors"
 	"net/url"
@@ -105,4 +106,19 @@ func isCanonicalUUID(s string) bool {
 		}
 	}
 	return true
+}
+
+type ctxKey struct{}
+
+// WithIdentity returns ctx carrying the authenticated identity of the calling component. Only the
+// fleet gateway (server side) and the Mux (which sets it for handlers) call it.
+func WithIdentity(ctx context.Context, id Identity) context.Context {
+	return context.WithValue(ctx, ctxKey{}, id)
+}
+
+// IdentityFrom returns the authenticated identity of the calling component. It exists only for
+// methods that required a client certificate; tenant and component never come from a message.
+func IdentityFrom(ctx context.Context) (Identity, bool) {
+	id, ok := ctx.Value(ctxKey{}).(Identity)
+	return id, ok
 }

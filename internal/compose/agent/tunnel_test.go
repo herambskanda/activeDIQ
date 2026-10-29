@@ -71,12 +71,12 @@ func TestContractOverTunnel(t *testing.T) {
 	a, b := make(chan fleet.Frame, 64), make(chan fleet.Frame, 64)
 	ing := &ingest{}
 	srv, err := fleet.NewMux(fleet.MuxConfig{Role: fleet.RoleServer, Identity: id, Reporter: noRep{}, Transport: pipeEnd{in: a, out: b},
-		Binding: fleet.Binding{Contract: c, Serve: func(_ fleet.Identity, reg grpc.ServiceRegistrar) { agentv1.RegisterEventIngestServer(reg, ing) }}})
+		Binding: fleet.Binding{Contract: c, Register: func(_ fleet.Identity, reg grpc.ServiceRegistrar) { agentv1.RegisterEventIngestServer(reg, ing) }}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	comp, err := fleet.NewMux(fleet.MuxConfig{Role: fleet.RoleComponent, Identity: id, Transport: pipeEnd{in: b, out: a},
-		Binding: fleet.Binding{Contract: c, Serve: func(_ fleet.Identity, reg grpc.ServiceRegistrar) { h.Register(reg) }}})
+		Binding: fleet.Binding{Contract: c, Register: func(_ fleet.Identity, reg grpc.ServiceRegistrar) { h.Register(reg) }}})
 	if err != nil {
 		t.Fatal(err)
 	}

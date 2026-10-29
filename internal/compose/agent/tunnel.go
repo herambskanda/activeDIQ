@@ -151,7 +151,7 @@ func serveConn(ctx context.Context, conn *grpc.ClientConn, h *kernel.Host, id fl
 		return err
 	}
 	m, err := fleet.NewMux(fleet.MuxConfig{Role: fleet.RoleComponent, Identity: id,
-		Binding: fleet.Binding{Contract: c, Serve: func(_ fleet.Identity, reg grpc.ServiceRegistrar) { h.Register(reg) }}, Transport: clientTransport{stream}})
+		Binding: fleet.Binding{Contract: c, Register: func(_ fleet.Identity, reg grpc.ServiceRegistrar) { h.Register(reg) }}, Transport: clientTransport{stream}})
 	if err != nil {
 		return err
 	}

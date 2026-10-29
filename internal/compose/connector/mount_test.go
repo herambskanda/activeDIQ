@@ -332,7 +332,7 @@ func TestBindingServesNothingForAnIdentityThatIsNotATenantConnector(t *testing.T
 		"no component":          {fleet.Identity{Tenant: good.Tenant, Kind: fleet.KindConnector}, 0},
 	} {
 		var r regCount
-		bd.Serve(c.id, &r)
+		bd.Register(c.id, &r)
 		if r.n != c.want {
 			t.Errorf("%s: %d registrations, want %d", name, r.n, c.want)
 		}
