@@ -1361,6 +1361,10 @@ mk_msi dacl 'NT SERVICE\activeDIQAgent' 3 SeChangeNotifyPrivilege
 add_idt dacl MsiLockPermissionsEx 'MsiLockPermissionsEx\tLockObject\tTable\tSDDLText\r\ns72\ts72\ts32\tL0\r\nMsiLockPermissionsEx\tMsiLockPermissionsEx\r\nL1\tSvc\tServiceInstall\tD:(A;;GA;;;WD)\r\n'
 mk_msi neverapplies 'NT SERVICE\activeDIQAgent' 3 SeChangeNotifyPrivilege
 add_idt neverapplies MsiServiceConfig 'MsiServiceConfig\tName\tEvent\tConfigType\tArgument\tComponent_\r\ns72\ts255\ti2\ti2\tL255\ts72\r\nMsiServiceConfig\tMsiServiceConfig\r\nc1\tactiveDIQAgent\t2\t3\t3\tC1\r\nc2\tactiveDIQAgent\t2\t4\tSeChangeNotifyPrivilege\tC1\r\n'
+mk_msi selfreg 'NT SERVICE\activeDIQAgent' 3 SeChangeNotifyPrivilege
+add_idt selfreg SelfReg 'File_\tCost\r\ns72\tI2\r\nSelfReg\tFile_\r\nF1\t0\r\n'
+mk_msi critical 'NT SERVICE\activeDIQAgent' 3 SeChangeNotifyPrivilege
+add_idt critical ServiceInstall 'ServiceInstall\tName\tDisplayName\tServiceType\tStartType\tErrorControl\tLoadOrderGroup\tDependencies\tStartName\tPassword\tArguments\tComponent_\tDescription\r\ns72\tl255\tL255\ti4\ti4\ti4\tS255\tS255\tS255\tS255\tS255\ts72\tL255\r\nServiceInstall\tServiceInstall\r\nSvc\tactiveDIQAgent\t\t16\t2\t3\t\t\tNT SERVICE\\activeDIQAgent\t\t\tC1\t\r\n'
 must_pass "fitness-built-msi on a clean built agent MSI" builtmsi -glob "$bm/clean/clean.msi"
 must_fail_with "fitness-built-msi on a build-time-generated LocalSystem ServiceInstall (the source scan cannot see it)" 'ServiceInstall row "Svc".*LocalSystem' builtmsi -glob "$bm/system/system.msi"
 must_fail_with "fitness-built-msi on an unrestricted service SID" 'SID type is "1"' builtmsi -glob "$bm/unrestricted/unrestricted.msi"
@@ -1368,6 +1372,8 @@ must_fail_with "fitness-built-msi on an extra privilege" 'RequiredPrivileges are
 must_fail_with "fitness-built-msi on an unreviewed custom action" 'CustomAction row "Sneaky"' builtmsi -glob "$bm/action/action.msi"
 must_fail_with "fitness-built-msi on a DACL row keyed to the service (service-control bypass)" 'MsiLockPermissionsEx row "L1"' builtmsi -glob "$bm/dacl/dacl.msi"
 must_fail_with "fitness-built-msi on settings that only apply on uninstall" 'does not apply on install' builtmsi -glob "$bm/neverapplies/neverapplies.msi"
+must_fail_with "fitness-built-msi on a SelfReg row (code run at install)" 'SelfReg row "F1"' builtmsi -glob "$bm/selfreg/selfreg.msi"
+must_fail_with "fitness-built-msi on a critical ErrorControl" 'ErrorControl' builtmsi -glob "$bm/critical/critical.msi"
 must_fail_with "fitness-built-msi when no MSI exists and one is required (release job)" 'no built MSI found' builtmsi -require -glob "$bm/none/*.msi"
 must_pass "fitness-built-msi prints inactive, not a pass, when no MSI exists" bash -c "go run ./tools/fitness/builtmsi -glob '$bm/none/*.msi' | grep -q '^fitness-built-msi: inactive'"
 

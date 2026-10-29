@@ -194,6 +194,12 @@ func Judge(t map[string]*Table, o Options) []string {
 			case !strings.EqualFold(acct, want):
 				fail("ServiceInstall row %q (service %s): StartName is %q, not the pinned %q", key, name, acct, want)
 			}
+			if st, err := strconv.Atoi(si.Col(r, "ServiceType")); err != nil || st != 16 {
+				fail("ServiceInstall row %q (service %s): ServiceType is %q, must be 16 (own process); shared-process or interactive services leave the reviewed model", key, name, si.Col(r, "ServiceType"))
+			}
+			if ec, err := strconv.Atoi(si.Col(r, "ErrorControl")); err != nil || ec&0xff > 1 {
+				fail("ServiceInstall row %q (service %s): ErrorControl is %q, must be 0 or 1 (optionally with the 0x8000 vital bit); critical (3) can stop a domain controller booting", key, name, si.Col(r, "ErrorControl"))
+			}
 			if p := si.Col(r, "Password"); p != "" {
 				fail("ServiceInstall row %q (service %s): has a Password; a virtual service account has none", key, name)
 			}
@@ -352,6 +358,11 @@ func componentCondition(t map[string]*Table, id string) string {
 // ServiceInstall/MsiServiceConfig model: deny by default, with the agent's own ServiceControl the only
 // exception and failure actions limited to none/restart-service.
 func judgeBehaviourTables(t map[string]*Table, fail func(string, ...any)) {
+	if tb := t["SelfReg"]; tb != nil {
+		for _, r := range tb.Rows {
+			fail("SelfReg row %q: SelfRegModules calls DllRegisterServer in the elevated installer, an unreviewed custom action by another name", tb.Key(r))
+		}
+	}
 	for _, name := range []string{"MsiEmbeddedChainer", "MsiEmbeddedUI"} {
 		if tb := t[name]; tb != nil {
 			for _, r := range tb.Rows {

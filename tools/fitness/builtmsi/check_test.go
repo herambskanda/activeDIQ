@@ -27,7 +27,7 @@ func idt(t *testing.T, dir, table string, cols []string, keys []string, rows ...
 	}
 }
 
-var siCols = []string{"ServiceInstall", "Name", "StartName", "Password", "Component_"}
+var siCols = []string{"ServiceInstall", "Name", "StartName", "Password", "Component_", "ServiceType", "ErrorControl"}
 var mcCols = []string{"MsiServiceConfig", "Name", "Event", "ConfigType", "Argument", "Component_"}
 var caCols = []string{"Action", "Type", "Source", "Target"}
 
@@ -37,7 +37,7 @@ type fx struct {
 
 func goodFx() fx {
 	return fx{
-		si: [][]string{{"Svc", "activeDIQAgent", `NT SERVICE\activeDIQAgent`, "", "C1"}},
+		si: [][]string{{"Svc", "activeDIQAgent", `NT SERVICE\activeDIQAgent`, "", "C1", "16", "1"}},
 		mc: [][]string{
 			{"c1", "activeDIQAgent", "1", "3", "3", "C1"},
 			{"c2", "activeDIQAgent", "1", "4", "SeChangeNotifyPrivilege", "C1"},
@@ -223,6 +223,7 @@ func TestBehaviourTables(t *testing.T) {
 		{"MsiEmbeddedUI", []string{"MsiEmbeddedUI", "FileName", "Attributes", "MessageFilter", "Data"}, []string{"MsiEmbeddedUI"}, []string{"ui", "x.dll", "1", "0", "x"}, `MsiEmbeddedUI row "ui"`},
 		{"MsiServiceConfigFailureActions", []string{"MsiServiceConfigFailureActions", "Name", "Event", "Actions", "Command"}, []string{"MsiServiceConfigFailureActions"}, []string{"fa", "activeDIQAgent", "1", "1[~]2", ""}, "reboots the host"},
 		{"MsiServiceConfigFailureActions", []string{"MsiServiceConfigFailureActions", "Name", "Event", "Actions", "Command"}, []string{"MsiServiceConfigFailureActions"}, []string{"fa", "activeDIQAgent", "1", "0", "calc.exe"}, "would run on service failure"},
+		{"SelfReg", []string{"File_", "Cost"}, []string{"File_"}, []string{"F1", "0"}, `SelfReg row "F1"`},
 		{"ServiceControl", []string{"ServiceControl", "Name", "Event"}, []string{"ServiceControl"}, []string{"sc", "NTDS", "160"}, `ServiceControl row "sc"`},
 	}
 	for _, c := range cases {
@@ -287,3 +288,19 @@ const realWXS = `<?xml version="1.0"?>
   <Feature Id="F" Level="1"><ComponentRef Id="C1"/></Feature>
  </Product></Wix>
 `
+
+// security-architect round 2 finding 2: ServiceType and ErrorControl are pinned.
+func TestServiceTypeAndErrorControl(t *testing.T) {
+	for _, c := range []struct{ typ, ec, want string }{
+		{"32", "1", "ServiceType"}, {"272", "1", "ServiceType"}, {"16", "3", "ErrorControl"}, {"16", "32771", "ErrorControl"},
+	} {
+		f := goodFx()
+		f.si[0][5], f.si[0][6] = c.typ, c.ec
+		wantFail(t, f, c.want)
+	}
+	f := goodFx()
+	f.si[0][6] = "32769" // normal + vital bit
+	if v := run(t, f); len(v) != 0 {
+		t.Fatalf("vital bit flagged: %q", v)
+	}
+}

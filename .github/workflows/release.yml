@@ -39,7 +39,7 @@ jobs:
         # "inactive" while no MSI is built; the packaging ticket that builds one adds -require here.
         run: |
           set -euo pipefail
-          sudo apt-get install -y --no-install-recommends msitools
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends msitools
           go run ./tools/fitness/builtmsi -glob 'dist/*.msi'
       - name: Publish
         env:
