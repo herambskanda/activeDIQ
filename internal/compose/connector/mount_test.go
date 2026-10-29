@@ -170,6 +170,12 @@ func newTunnel(t *testing.T) (tunnel, context.Context) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return tunnelFor(t, bd, 20*time.Second)
+}
+
+// tunnelFor runs a RoleServer mux against a RoleComponent mux that carries bd.
+func tunnelFor(t *testing.T, bd fleet.Binding, timeout time.Duration) (tunnel, context.Context) {
+	t.Helper()
 	a, b := newWires()
 	id := fleet.Identity{Tenant: tenant.New(), Kind: fleet.KindConnector, ComponentID: "11111111-1111-4111-8111-111111111111"}
 	srv, err := fleet.NewMux(fleet.MuxConfig{Role: fleet.RoleServer, Identity: id, Transport: a, Reporter: rep{},
@@ -181,7 +187,7 @@ func newTunnel(t *testing.T) (tunnel, context.Context) {
 	if err != nil {
 		t.Fatalf("component mux with the connector binding: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	var wg sync.WaitGroup
 	for _, m := range []*fleet.Mux{srv, comp} {
 		wg.Add(1)

@@ -25,3 +25,15 @@ func RunWith(ctx context.Context, cfg config.Config,
 	serve func(context.Context, tunnelclient.Config)) error {
 	return run(ctx, cfg, env{load: load, open: open, serve: serve})
 }
+
+// OpenBackend is the real AD-session assembly, for the lab-tagged end-to-end test.
+func OpenBackend(ctx context.Context, loc Local, log *slog.Logger) (*Backend, error) {
+	return openBackend(ctx, loc, log)
+}
+
+// Handlers exposes the bound handlers of a backend to external tests.
+func (b *Backend) Handlers() (*rights.VerifyHandler, *read.Handler, *write.Handler) {
+	return b.verify, b.read, b.write
+}
+
+func (b *Backend) Close() { b.close() }
