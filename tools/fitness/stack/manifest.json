@@ -408,7 +408,19 @@
         "reason": "Playwright screenshot, record and E2E tooling (T-0011): Node, dev-time only, never shipped. ADR-0001 rule 1 does not name it; the solution-architect is asked to record it in the ADR"
       }
     ],
-    "nativeComponents": []
+    "nativeComponents": [],
+    "labBuilds": [
+      {
+        "path": "internal/compose/server/labbootstrap_lab.go",
+        "adr": "0001-technology-stack.md",
+        "reason": "lab bootstrap (T-0684): seeds lab AD connections served by an in-process connector when the server is built with -tags lab; compiled out of every production binary (T-0792)"
+      },
+      {
+        "path": "internal/compose/server/labbootstrap_off.go",
+        "adr": "0001-technology-stack.md",
+        "reason": "the production (!lab) counterpart of labbootstrap_lab.go: an inert labBootstrap that ignores WIN_LAB_* and LAB_* (T-0684, T-0792)"
+      }
+    ]
   },
   "licenceExceptions": []
 }
