@@ -1192,6 +1192,15 @@ must_fail_with "fitness-audit A2 when a bound test is renamed away" 'A2 \./inter
 write_a2 ''
 must_pass "fitness-audit A2" "$aubin" -root "$au" -checks A2
 
+# --- fitness-update (T-0139) -------------------------------------------------------------------
+upd="$tmp/update-bin"
+go build -o "$upd" ./tools/fitness/update
+must_pass "fitness-update (both couriers)" "$upd"
+must_fail_with "fitness-update against a verifier that accepts bad updates" 'accepted a bad update; want refusal "tamper"' "$upd" -sabotage accept-all
+must_fail_with "fitness-update against a verifier that refuses for the wrong reason" 'refused with "tamper", want "rollback"' "$upd" -sabotage mislabel
+must_fail_with "fitness-update against a verifier that extracts before it decides" 'extraction before verification' "$upd" -sabotage leak
+must_pass "make fitness-update-offline is wired into make ci" bash -c "make -n ci | grep -q 'tools/fitness/update/offline.sh'"
+
 # --- fuzz-target / fuzz-saml (T-0490) -----------------------------------------------------------
 fz="$tmp/fuzz"
 mkdir -p "$fz"
