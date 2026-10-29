@@ -10,10 +10,11 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/compose/config"
 	"github.com/skenzeriq/activediq/internal/compose/server"
+	"github.com/skenzeriq/activediq/internal/platform/prochardening"
 )
 
 func main() {
-	if err := hardenProcess(os.Getenv); err != nil {
+	if err := prochardening.Apply(os.Getenv); err != nil {
 		fmt.Fprintln(os.Stderr, "server:", err)
 		os.Exit(2)
 	}

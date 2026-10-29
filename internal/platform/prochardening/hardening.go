@@ -1,4 +1,6 @@
-package main
+// Package prochardening disables core dumps and ptrace for every product process (TM-TB16-T6):
+// RLIMIT_CORE=0, PR_SET_DUMPABLE=0, and refusal of GOTRACEBACK=crash. Every cmd/* main calls Apply first.
+package prochardening
 
 import (
 	"fmt"
@@ -18,8 +20,8 @@ func refuseCrashTraceback(getenv func(string) string) error {
 	return nil
 }
 
-// hardenProcess applies the dump-suppression settings before any secret is loaded.
-func hardenProcess(getenv func(string) string) error {
+// Apply applies the dump-suppression settings before any secret is loaded.
+func Apply(getenv func(string) string) error {
 	if err := refuseCrashTraceback(getenv); err != nil {
 		return err
 	}
