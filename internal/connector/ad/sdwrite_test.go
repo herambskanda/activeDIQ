@@ -15,7 +15,7 @@ func TestWriteDACLRefusesZeroWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = s.WriteDACL(context.Background(), dn.DNRef(d), sd.DACLWrite{})
+	err = s.WriteDACL(context.Background(), dn.DNRef(d), sd.DACLWrite{}, nil)
 	if CodeOf(err) != CodeInvalidArgument {
 		t.Fatalf("zero DACLWrite: %v", err)
 	}

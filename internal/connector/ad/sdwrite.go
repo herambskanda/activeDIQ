@@ -11,6 +11,15 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory/sd"
 )
 
+// Modifier is the one LDAP method a ReplaceSDFunc may use. The session lends its connection for the
+// duration of one WriteDACL call only.
+type Modifier interface{ Modify(*ldap.ModifyRequest) error }
+
+// ReplaceSDFunc sends the single replace of nTSecurityDescriptor with the given controls. The LDAP
+// Modify itself lives in internal/connector/write/ops, the only place the write fitness function
+// (TM-F-T0GUARD) allows one; this package holds the read, the checks and the error mapping.
+type ReplaceSDFunc func(m Modifier, dn string, value []byte, controls []ldap.Control) error
+
 // WriteDACL is the only write the connector makes to nTSecurityDescriptor (T-0743). Under one hold of
 // the session lock, so on the one DC this session is bound to over LDAPS, it:
 //
@@ -28,7 +37,7 @@ import (
 //
 // Errors are the sd package's stable codes (sd.stale_base, sd.not_editable, ...) or *Error. A returned
 // error after the Modify was sent leaves the outcome unknown; the caller must re-read before retrying.
-func (s *Session) WriteDACL(ctx context.Context, ref dn.ObjectRef, w sd.DACLWrite) error {
+func (s *Session) WriteDACL(ctx context.Context, ref dn.ObjectRef, w sd.DACLWrite, send ReplaceSDFunc) error {
 	if !w.Valid() {
 		return fail(CodeInvalidArgument, "dacl write not from a planner", nil)
 	}
@@ -84,9 +93,10 @@ func (s *Session) WriteDACL(ctx context.Context, ref dn.ObjectRef, w sd.DACLWrit
 		return err // sd.stale_base: nothing was sent
 	}
 
-	req := ldap.NewModifyRequest(res.Entries[0].DN, []ldap.Control{want.control()})
-	req.Replace("nTSecurityDescriptor", []string{string(val)})
-	if err := s.conn.Modify(req); err != nil {
+	if send == nil {
+		return fail(CodeInvalidArgument, "no sender", nil)
+	}
+	if err := send(s.conn, res.Entries[0].DN, val, []ldap.Control{want.control()}); err != nil {
 		if ctx.Err() != nil {
 			return fail(CodeCanceled, "", ctx.Err())
 		}

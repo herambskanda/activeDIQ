@@ -64,10 +64,10 @@ func TestLabWriteDACL(t *testing.T) {
 		t.Fatalf("plan: %v", err)
 	}
 	ctx := context.Background()
-	if err := s.WriteDACL(ctx, ref, sd.DACLWrite{}); CodeOf(err) != CodeInvalidArgument {
+	if err := s.WriteDACL(ctx, ref, sd.DACLWrite{}, labReplaceSD); CodeOf(err) != CodeInvalidArgument {
 		t.Fatalf("zero write: %v", err)
 	}
-	if err := s.WriteDACL(ctx, ref, w); err != nil {
+	if err := s.WriteDACL(ctx, ref, w, labReplaceSD); err != nil {
 		t.Fatalf("WriteDACL: %v", err)
 	}
 	after := readDACL()
@@ -78,7 +78,7 @@ func TestLabWriteDACL(t *testing.T) {
 		t.Fatalf("ACE count %d -> %d", len(before.DACL.ACEs), len(after.DACL.ACEs))
 	}
 	// The base moved: the same plan is stale and nothing is sent.
-	err = s.WriteDACL(ctx, ref, w)
+	err = s.WriteDACL(ctx, ref, w, labReplaceSD)
 	if codec.Code(err) != sd.ErrStaleBase {
 		t.Fatalf("replay: want %s, got %v", sd.ErrStaleBase, err)
 	}
@@ -107,4 +107,11 @@ func adminSIDOf(t *testing.T, adm *ldap.Conn, d string) sid.SID {
 		t.Fatal(err)
 	}
 	return v
+}
+
+// labReplaceSD stands in for write/ops.ReplaceSD (which this package cannot import: ops imports ad).
+func labReplaceSD(m Modifier, dn string, value []byte, controls []ldap.Control) error {
+	req := ldap.NewModifyRequest(dn, controls)
+	req.Replace("nTSecurityDescriptor", []string{string(value)})
+	return m.Modify(req)
 }
