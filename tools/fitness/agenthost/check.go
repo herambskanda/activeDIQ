@@ -1601,6 +1601,32 @@ func judgeInstallerXML(rel string, b []byte, allow []string, agentFile bool) ins
 			f.dirIDs = append(f.dirIDs, e.Attrs["id"])
 		case "Property":
 			f.propIDs = append(f.propIDs, e.Attrs["id"])
+		case "CustomAction":
+			// T-0742: Property=X Value=... is a Type 51 and Directory=X Value=... a Type 35 action; both
+			// compile to the same row as SetProperty/SetDirectory. Directory without Value is only a
+			// working directory (the pinned actions) and is not a retarget.
+			if p := e.Attrs["property"]; p != "" {
+				f.propIDs = append(f.propIDs, p)
+			}
+			if _, hasValue := e.Attrs["value"]; hasValue && e.Attrs["directory"] != "" {
+				f.propIDs = append(f.propIDs, e.Attrs["directory"])
+			}
+		case "Publish":
+			// T-0742: the SetProperty ControlEvent ([Property] / Property=X Value=...) and SetTargetPath.
+			if p := e.Attrs["property"]; p != "" {
+				f.propIDs = append(f.propIDs, p)
+			}
+			if strings.EqualFold(e.Attrs["event"], "SetTargetPath") && e.Attrs["value"] != "" {
+				f.propIDs = append(f.propIDs, strings.Trim(e.Attrs["value"], "[]"))
+			}
+		case "Control":
+			// T-0742: a path-entry control writes its Property from user input; a hidden default does the same.
+			switch strings.ToLower(e.Attrs["type"]) {
+			case "pathedit", "directorycombo", "directorylist":
+				if p := e.Attrs["property"]; p != "" {
+					f.propIDs = append(f.propIDs, p)
+				}
+			}
 		}
 	}
 	// Rule 3 for EVERY service: the SID type and privileges of each ServiceInstall (its own attributes, its
