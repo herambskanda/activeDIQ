@@ -4,7 +4,7 @@
 //   ADIQ_E2E_SESSION      the session cookie value (__Host-adiq_session) of a signed-in administrator
 //   ADIQ_E2E_USER_NAME    a seeded user's display name (or a fragment of it)
 //   ADIQ_E2E_USER_SAM     that user's sAMAccountName, shown in the row
-// The console has no sign-in screen yet; the session is minted through the sign-in API (see README).
+// The cookie is minted through the sign-in API (see README).
 import { expect, test } from "@playwright/test";
 
 const base = process.env["ADIQ_BASE_URL"];

@@ -7,4 +7,5 @@ fixtures declared in the spec; with it they run against that server. Screenshots
 `factory/demos/evidence/<ticket>/`.
 
 - `user-search.spec.ts`: user search (T-0670): default, results, empty, loading, capped, error and retry, 403, refused characters, keyboard path, deep link and back/forward, axe check.
+- `sign-in.spec.ts`: console sign-in (T-0764): no session shows the sign-in screen, a wrong password gives the generic error, password plus code lands on the requested page; axe check.
 - `live-user-search.spec.ts`: user search against a live lab server (T-0686). Skipped unless `ADIQ_BASE_URL`, `ADIQ_E2E_SESSION`, `ADIQ_E2E_USER_NAME` and `ADIQ_E2E_USER_SAM` are set. Build the server with the console (`make web-embed`, then `go build -tags lab ./cmd/server`), start it on a lab seed, mint a session through the sign-in API, then (TLS is verified: trust the lab certificate with `NODE_EXTRA_CA_CERTS=ca.pem`, or opt out on a lab with `ADIQ_E2E_INSECURE=1`) `ADIQ_BASE_URL=https://127.0.0.1:8080 … npm run e2e`.
