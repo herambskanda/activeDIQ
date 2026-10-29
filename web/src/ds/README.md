@@ -12,7 +12,7 @@ enforced by `make fitness`).
 | `base.css`       | Global rules: focus ring, `.diq-mono`, sort-header buttons inherit case, reduced motion                                                                         |
 | `brand.css`      | `.diq-wordmark` and `.diq-ruler` (the ledger rule)                                                                                                              |
 | `brand/icon.svg` | The app icon master (512 px)                                                                                                                                    |
-| `components/`    | `Button`, `TextInput`, `Chip`, `Table`, `Skeleton`, `StatePanel` + `components.css` (T-0685). Usage: `knowledge/product/design-system/components.md` |
+| `components/`    | `Button`, `TextInput`, `Chip`, `Table`, `Skeleton`, `StatePanel` + `components.css` (T-0685). Usage: `knowledge/product/design-system/components.md`            |
 | `fonts/`         | IBM Plex Sans and Mono `.woff2`, the two OFL texts and `NOTICE.md`                                                                                              |
 
 `src/app/main.tsx` imports `tokens.css`, `base.css` and `brand.css`. Themes: dark follows the OS; force one with
