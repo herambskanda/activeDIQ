@@ -136,7 +136,12 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	if err != nil {
 		return err
 	}
-	if _, err := buildOwnerAssignments(db, ok.Chainer, console.Sessions); err != nil {
+	ownerWriter, err := buildOwnerAssignments(db, ok.Chainer, console.Sessions)
+	if err != nil {
+		return err
+	}
+	firstOwner, err := newFirstOwners(db, ok.Chainer, ownerWriter)
+	if err != nil {
 		return err
 	}
 	// The TM-D17 attestation routes, when the install is configured for them. Built after the
@@ -153,7 +158,7 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	tags = append(tags, syslog.Handlers{Store: siem}.Bind())
 	// First-run setup (TM-TB16-T7, AN-4): an unclaimed install holds a one-time secret the installing
 	// administrator reads from the setup directory; the claim route consumes it. Needs the TLS directory.
-	setupTags, err := buildSetup(cfg, time.Now)
+	setupTags, err := buildSetup(cfg, time.Now, firstOwner)
 	if err != nil {
 		return err
 	}
@@ -173,6 +178,7 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	if err != nil {
 		return err
 	}
+	firstOwner.SetTenant(tid) // the claim route can now create the first owner
 	// Lab builds only (T-0684): create and activate the lab connections through the real activation path.
 	if err := labSeed(ctx, conns, connKernel.Service, tid); err != nil {
 		return err

@@ -245,29 +245,47 @@ func (s *Accounts) Create(ctx context.Context, in NewAccount) (Account, error) {
 	if err := in.validate(); err != nil {
 		return Account{}, err
 	}
+	var out Account
+	err := s.db.WithTenant(ctx, in.Tenant, func(ctx context.Context, tx store.Tx) error {
+		a, err := CreateIn(ctx, tx, in)
+		out = a
+		return err
+	})
+	if err != nil {
+		if errors.Is(err, ErrAccountExists) || errors.Is(err, ErrInvalidInput) {
+			return Account{}, err
+		}
+		return Account{}, fmt.Errorf("authn: create account: %w", err)
+	}
+	return out, nil
+}
+
+// CreateIn is Create inside the caller's tenant transaction, for a caller that must make the account and
+// something else (the first-run owner grant) commit or roll back together. tx must be a tenant-scoped
+// transaction of in.Tenant. Errors are as for Create; a duplicate aborts tx's statement, so the caller
+// must return the error to roll back.
+func CreateIn(ctx context.Context, tx store.Tx, in NewAccount) (Account, error) {
+	if err := in.validate(); err != nil {
+		return Account{}, err
+	}
 	mfa := in.MFARequired || in.Kind == KindLocal
 	var conn, guid *string
 	if in.Ref != nil {
 		conn, guid = &in.Ref.ConnectionID, &in.Ref.ObjectGUID
 	}
-	var out Account
-	err := s.db.WithTenant(ctx, in.Tenant, func(ctx context.Context, tx store.Tx) error {
-		row := tx.QueryRow(ctx, `INSERT INTO public.authn_accounts
-			(tenant_id, kind, display_name, email, mfa_required, created_by, sso_issuer, sso_subject, directory_connection_id, directory_object_guid)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::uuid, $10::uuid) RETURNING `+accountCols,
-			in.Tenant.String(), string(in.Kind), in.DisplayName, nilIfEmpty(in.Email), mfa, in.CreatedBy,
-			nilIfEmpty(in.SSOIssuer), nilIfEmpty(in.SSOSubject), conn, guid)
-		a, err := scanAccount(in.Tenant, row)
-		out = a
-		return err
-	})
+	row := tx.QueryRow(ctx, `INSERT INTO public.authn_accounts
+		(tenant_id, kind, display_name, email, mfa_required, created_by, sso_issuer, sso_subject, directory_connection_id, directory_object_guid)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::uuid, $10::uuid) RETURNING `+accountCols,
+		in.Tenant.String(), string(in.Kind), in.DisplayName, nilIfEmpty(in.Email), mfa, in.CreatedBy,
+		nilIfEmpty(in.SSOIssuer), nilIfEmpty(in.SSOSubject), conn, guid)
+	a, err := scanAccount(in.Tenant, row)
 	if err != nil {
 		if store.SQLState(err) == "23505" {
 			return Account{}, ErrAccountExists
 		}
-		return Account{}, fmt.Errorf("authn: create account: %w", err)
+		return Account{}, err
 	}
-	return out, nil
+	return a, nil
 }
 
 // Get reads one account by ID.
