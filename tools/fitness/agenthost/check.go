@@ -21,6 +21,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf16"
 	"unicode/utf8"
 )
@@ -1143,6 +1144,7 @@ func checkInstallerAllow(root string, allow []string) Result {
 	services := 0
 	namedAgent := false
 	dirsAt, propsAt, pinAt := map[string][]string{}, map[string][]string{}, map[string][]string{}
+	pinPrivAt, secureAt := map[string][]string{}, map[string][]string{}
 	for _, f := range files {
 		rel := f.rel
 		if f.problem != "" {
@@ -1201,10 +1203,17 @@ func checkInstallerAllow(root string, allow []string) Result {
 		for _, id := range x.pinDirs {
 			pinAt[id] = append(pinAt[id], rel)
 		}
+		for _, id := range x.pinPrivDirs {
+			pinPrivAt[id] = append(pinPrivAt[id], rel)
+		}
+		for _, id := range x.secureIDs {
+			secureAt[id] = append(secureAt[id], rel)
+		}
 		services += x.services
 		r.Violations = append(r.Violations, x.violations...)
 	}
 	r.Violations = append(r.Violations, judgeRetargets(dirsAt, propsAt, pinAt)...)
+	r.Violations = append(r.Violations, judgeSecureProps(pinPrivAt, secureAt)...)
 	switch {
 	case !anyAgentSource(files) && !namedAgent:
 		// Only WiX sources that never name the agent (a core MSI): their LocalSystem, registry, action and
@@ -1237,13 +1246,15 @@ type xmlEl struct {
 }
 
 type installerFacts struct {
-	services   int
-	namesAgent bool     // a parsed (entity-decoded) element names the agent service
-	dirIDs     []string // Ids of Directory/StandardDirectory elements defined here (T-0742)
-	propIDs    []string // Ids of Property, SetProperty and SetDirectory elements: each can set a path (T-0742)
-	pinDirs    []string // directory Ids in the chain of every Permission parent's resolved directory (T-0742)
-	attrText   string   // every decoded attribute value and text node, for the string rules
-	violations []string
+	services    int
+	namesAgent  bool     // a parsed (entity-decoded) element names the agent service
+	dirIDs      []string // Ids of Directory/StandardDirectory elements defined here (T-0742)
+	propIDs     []string // Ids of Property, SetProperty and SetDirectory elements: each can set a path (T-0742)
+	pinDirs     []string // directory Ids in the chain of every Permission parent's resolved directory (T-0742)
+	pinPrivDirs []string // pinDirs minus a TARGETDIR root that a standard folder follows (T-0756)
+	secureIDs   []string // property names listed in SecureCustomProperties or declared Secure="yes" (T-0756)
+	attrText    string   // every decoded attribute value and text node, for the string rules
+	violations  []string
 }
 
 // dynamicRe: a WiX value that is resolved at build or install time, so the text cannot be judged.
@@ -1415,6 +1426,36 @@ func chainIDs(chain string) []string {
 	return ids
 }
 
+// standardFolders: the Windows Installer standard directory properties. MSI resolves each from its own
+// property, so overriding TARGETDIR does not move a child that sits under one (T-0756).
+var standardFolders = setOf("ProgramFilesFolder", "ProgramFiles64Folder", "ProgramFiles6432Folder",
+	"CommonFilesFolder", "CommonFiles64Folder", "CommonFiles6432Folder", "CommonAppDataFolder", "AppDataFolder",
+	"LocalAppDataFolder", "System64Folder", "SystemFolder", "WindowsFolder", "ProgramMenuFolder",
+	"StartMenuFolder", "DesktopFolder", "TempFolder", "WindowsVolume")
+
+func hasLower(s string) bool {
+	for _, r := range s {
+		if unicode.IsLower(r) {
+			return true
+		}
+	}
+	return false
+}
+
+// judgeSecureProps (T-0756): a directory in a Permission's pinned chain may not be listed in
+// SecureCustomProperties (or Secure="yes") in any installer source: that is what lets a managed install pass
+// it on the msiexec command line.
+func judgeSecureProps(pinned, secure map[string][]string) []string {
+	var v []string
+	for id, pIn := range pinned {
+		if sIn, ok := secure[id]; ok {
+			v = append(v, fmt.Sprintf("%s: %q is listed in SecureCustomProperties (or Secure=\"yes\") and is a directory in a pinned Permission chain (Permission in %s): an unprivileged caller of a managed install could set it and retarget the reviewed ACL (T-0756)", strings.Join(sIn, ", "), id, strings.Join(pIn, ", ")))
+		}
+	}
+	sort.Strings(v)
+	return v
+}
+
 // judgeRetargets is the cross-file half of T-0742: a Property that shares an Id with a Directory or
 // StandardDirectory presets (or overwrites) that directory's path, and a SetDirectory, SetProperty or
 // Property naming a directory in a Permission's resolved parent chain moves the reviewed ACL onto another
@@ -1559,7 +1600,17 @@ func judgeInstallerXML(rel string, b []byte, allow []string, agentFile bool) ins
 				// carry a reviewed ACL onto another object. Pin keys: "parent.<attr>".
 				tgt, resolved := parentTarget(els, e.Parent)
 				if resolved {
-					f.pinDirs = append(f.pinDirs, chainIDs(tgt["parent.directory"])...)
+					ids := chainIDs(tgt["parent.directory"])
+					f.pinDirs = append(f.pinDirs, ids...)
+					for n, id := range ids {
+						if n == 0 && id == "TARGETDIR" && len(ids) > 1 && standardFolders[ids[1]] {
+							continue
+						}
+						f.pinPrivDirs = append(f.pinPrivDirs, id)
+						if !hasLower(id) {
+							fail("%s under %s %q: directory Id %q in the pinned parent chain has no lowercase letter, so it is a public property: msiexec %s=<path> (and SecureCustomProperties in managed installs) retargets the reviewed ACL at install time; use a private (mixed-case) Id, like AgentDir (T-0756)", e.Name, ptype, pid, id, id)
+						}
+					}
 				}
 				if !resolved {
 					fail("%s under %s %q: the parent's effective target cannot be resolved (unknown parent type, or its directory/registry root comes from a ComponentRef or another fragment); an unresolved target cannot be pinned (T-0730)", e.Name, ptype, pid)
@@ -1632,8 +1683,24 @@ func judgeInstallerXML(rel string, b []byte, allow []string, agentFile bool) ins
 		switch e.Name {
 		case "Directory", "StandardDirectory":
 			f.dirIDs = append(f.dirIDs, e.Attrs["id"])
-		case "Property":
-			f.propIDs = append(f.propIDs, e.Attrs["id"])
+		case "Property", "SetProperty":
+			if e.Name == "Property" {
+				f.propIDs = append(f.propIDs, e.Attrs["id"])
+			}
+			if strings.EqualFold(e.Attrs["id"], "SecureCustomProperties") {
+				v := e.Attrs["value"] + ";" + e.Text
+				if dynamicRe.MatchString(v) {
+					f.violations = append(f.violations, fmt.Sprintf("%s: SecureCustomProperties is built through a variable or property: it must be a literal list so it can be judged against the Permission pins (T-0756)", rel))
+				}
+				for _, p := range strings.Split(v, ";") {
+					if p = strings.TrimSpace(p); p != "" {
+						f.secureIDs = append(f.secureIDs, p)
+					}
+				}
+			}
+			if e.Name == "Property" && (strings.EqualFold(e.Attrs["secure"], "yes") || strings.EqualFold(e.Attrs["secure"], "true")) {
+				f.secureIDs = append(f.secureIDs, e.Attrs["id"])
+			}
 		case "CustomAction":
 			// T-0742: Property=X Value=... is a Type 51 and Directory=X Value=... a Type 35 action; both
 			// compile to the same row as SetProperty/SetDirectory. Directory without Value is only a
