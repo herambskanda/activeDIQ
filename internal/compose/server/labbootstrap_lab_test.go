@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/compose/config"
-	"github.com/skenzeriq/activediq/tools/labserver/labboot"
 	"github.com/skenzeriq/activediq/internal/connector/labadmin"
 	"github.com/skenzeriq/activediq/internal/connector/write"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
@@ -27,6 +26,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 	"github.com/skenzeriq/activediq/internal/testlab"
+	"github.com/skenzeriq/activediq/tools/labserver/labboot"
 )
 
 func envOf(m map[string]string) func(string) string { return func(k string) string { return m[k] } }

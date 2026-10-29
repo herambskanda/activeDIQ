@@ -12,8 +12,8 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/compose/config"
 	"github.com/skenzeriq/activediq/internal/compose/server"
-	"github.com/skenzeriq/activediq/tools/labserver/labboot"
 	"github.com/skenzeriq/activediq/internal/platform/prochardening"
+	"github.com/skenzeriq/activediq/tools/labserver/labboot"
 )
 
 func main() {
