@@ -1329,6 +1329,20 @@ CC-WRITE-16 to -22 in TM-F-T0GUARD and TM-F-RIGHTS).
 - v1.2 (T-0122): [Binding to well-known objects using WKGUID (wellKnownObjects, Domain Controllers)](https://learn.microsoft.com/en-us/windows/win32/ad/binding-to-well-known-objects-using-wkguid) · [gPLink](https://learn.microsoft.com/en-us/windows/win32/adschema/a-gplink) · [MS-GPOL Domain SOM Search (gPLink format and options)](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-gpol/08090b22-bc16-49f4-8e10-f27a8fb16d18) · [passwordCredential (endDateTime, startDateTime)](https://learn.microsoft.com/en-us/graph/api/resources/passwordcredential?view=graph-rest-1.0). Internal: threat-model §6.2 TM-D23 rules 7 to 11 and the `ENTRA_PASSWORD_CREDENTIAL` severity, §6.4, §16.1 TM-R14 to TM-R17; domain-model DM-23.I1, DM-26; forest-connection spec FR-25.
 - Internal: `knowledge/development/domain/ad-change-notifications.md` (T-0018), `knowledge/development/runbooks/ad-lab.md` §6, and the ad-expert consult recorded in the T-0064 notes. The Samba statements in the consult (no `MoreResults`, `;range=0-0`, skipped removed links) come from a reading of the source, not a run, and are `[UNVERIFIED lab]` until CC-FEED-04 and CC-FEED-21 run.
 
+## User search path (T-0669, walking skeleton 2/4)
+
+`GET /api/v1/directory/users` (`internal/modules/directory`) -> `client.UserSearch` -> gRPC
+`Connector.ScopedSearch` -> `read.Handler.ScopedSearch` (`internal/connector/read/search.go`) ->
+`ad.Session.ScopedSearch` over LDAPS. The server sends a typed `Filter` tree (the user's text is only
+a `Substring.Any` value); the connector validates it with `ldapfilter.ParseFilterAST` and renders it
+with RFC 4515 escaping. Root is the forest-root NC GUID of the connection; attributes are the closed
+list displayName, sAMAccountName, userPrincipalName, userAccountControl. Before searching, the handler
+refuses (503 `directory_unavailable`, fixed reason text) a connection whose newest rights check is not a
+clean pass, is stale, or reports `tier0_group_membership` / a Tier-0 installation. The server reads at
+most `MaxSearchMatches` (1000), sorts, and truncates to `limit`. Transport is the `ConnectorSource` seam
+(tunnel in production, in-process in lab tests). Gap: the connector binary does not yet mount Read /
+ScopedSearch on the tunnel (follow-up T-0683).
+
 ## Lab fixture seam: `internal/connector/labadmin` (T-0519)
 
 Lab-test support only. It holds an administrator LDAPS session that creates and deletes throw-away
