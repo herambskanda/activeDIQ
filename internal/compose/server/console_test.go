@@ -90,7 +90,7 @@ func TestSessionStepUpRefusesWithoutAStack(t *testing.T) {
 
 // The console stack is assembled with real authn types and mounts every port.
 func TestBuildConsolePorts(t *testing.T) {
-	c, err := buildConsole(&store.DB{}, nopSink{}, nil)
+	c, err := buildConsole(&store.DB{}, nopSink{}, testKeys(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestBuildConsolePorts(t *testing.T) {
 	if p.Authn == nil || p.Authz == nil || p.Limits == nil || p.StepUp == nil {
 		t.Fatalf("ports = %+v", p)
 	}
-	if _, err := buildConsole(nil, nopSink{}, nil); err == nil {
+	if _, err := buildConsole(nil, nopSink{}, testKeys(), nil); err == nil {
 		t.Error("nil database accepted")
 	}
 }

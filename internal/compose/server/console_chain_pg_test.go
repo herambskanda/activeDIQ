@@ -54,7 +54,7 @@ func chainSetup(t *testing.T, s *storetest.Server) *chainEnv {
 	}
 	t.Cleanup(db.Close)
 	e := &chainEnv{db: db, ten: tenanttest.Seed(t, d.ExecOwner, "A")}
-	console, err := buildConsole(db, nopSink{}, nil)
+	console, err := buildConsole(db, nopSink{}, testKeys(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
