@@ -10,8 +10,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tablekind"
 	"github.com/skenzeriq/activediq/internal/platform/updateverify"
@@ -65,7 +63,7 @@ func (s *Store) Load(ctx context.Context) (updateverify.Floor, error) {
 		var r, ts, sn, tg int64
 		var signed *time.Time
 		err := tx.QueryRow(ctx, load).Scan(&r, &ts, &sn, &tg, &signed, &out.Committed)
-		if errors.Is(err, pgx.ErrNoRows) {
+		if store.IsNoRows(err) {
 			return nil
 		}
 		if err != nil {
