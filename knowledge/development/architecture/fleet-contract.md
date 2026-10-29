@@ -2,7 +2,7 @@
 title: fleet.v1 contract
 status: draft
 date: 2026-10-22
-updated: 2026-10-28
+updated: 2026-10-29
 owner: api-engineer
 author: api-engineer
 ticket: T-0152
@@ -154,6 +154,52 @@ Decision: replacing the fleet CA key is **a new `fleet_ca` row, never an in-plac
 7. **Fitness (TM-F-SEAL, extended).** (a) After rollover the old row has `sealed_key IS NULL`, and writing the saved old blob back as the application role is refused by the CHECK. (b) Setting the old row `active`, or changing any column of a retired row, is refused by the trigger. (c) Two concurrent rollovers leave exactly one `active` row. (d) A component with the old pin accepts the new CA only with a valid cross-signature and refuses a bundle without its pinned SPKI. (e) On the compromise path a leaf signed by the old CA gets `Unauthenticated` at once.
 
 Wire shape: no change to `fleet.v1`. `EnrollResponse.ca_bundle_pem` already carries the CA certificates, F4's allowlist is untouched, and the cross-certificate travels as one more `CERTIFICATE` block in the bundle. Follow-ups: migration and `Enroller.RotateCA`, `dial` pin-set handling, the fitness tests above.
+
+## Gateway client-CA pool: the cross-tenant read of `fleet_ca` (T-0712)
+
+**Problem.** The gateway's `serverTLS` needs one `ClientCAs` pool holding every tenant's CA certificates (`clientCAs func() *x509.CertPool`, read per handshake), so a leaf from a forged or unknown CA is refused in memory before any identity or database work. `fleet_ca` is a Tenant table under `FORCE` RLS; `WithPlatform` reads it as empty and reaches only registered-global tables. BYPASSRLS is excluded ([ADR-0002](../decisions/0002-deployment-model.md) rule 4).
+
+**Decision (option b, hardened): a registered `SECURITY DEFINER` reader owned by a dedicated, column-limited role.**
+
+1. **Role.** `activediq_catrust`: `NOLOGIN NOSUPERUSER NOBYPASSRLS`, owns nothing but the one function, created by the installer beside `activediq_owner` and `activediq_app` (the owner has no CREATEROLE, migration `0001`). Migration `00NN_fleet_ca_trust` fails loudly if it is missing, as `0001` does for the other two.
+2. **Privileges, enforced by the database.** `GRANT SELECT (tenant_id, id, state, cert_der, spki_sha256, not_after) ON public.fleet_ca TO activediq_catrust`. No grant on `sealed_key`, `key_version`, `created_at`; no INSERT, UPDATE, DELETE. One added permissive policy `fleet_ca_trust_read ON public.fleet_ca FOR SELECT TO activediq_catrust USING (state IN ('active','retired'))`. `fleet_ca_tenant` is untouched, so the runtime role still reads `fleet_ca` as empty under `WithPlatform` and the tenancy probe stays true.
+3. **Function.** `public.fleet_ca_trust_anchors() RETURNS TABLE (tenant_id uuid, spki_sha256 bytea, cert_der bytea, not_after timestamptz)`, `LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp`, owned by `activediq_catrust`, `REVOKE ALL FROM PUBLIC`, `EXECUTE` to `activediq_app`. It raises `42501` when `app.tenant_id` is set: the opposite guard to `audit_wipe_retired_key`, so a tenant transaction can never call it and only a platform-scope transaction can. The return type has no key column; the role has no privilege on one. A bug in the function body therefore cannot reach `sealed_key` (the privilege error is the control, not review).
+4. **One call site.** `internal/platform/fleet/fleetsql` `TrustAnchors.Load` calls it under `store.WithPlatform(ctx, "fleet: load every tenant's CA certificates for the gateway client-CA pool")`. It is registered in `exempt/registry.json`: one `securityDefiner` entry (`public.fleet_ca_trust_anchors()`) and one `platformPaths` entry (`withPlatform: true`, `mintsTenantID: false`). The reader returns `[]Anchor{Tenant tenant.ID; Cert *x509.Certificate}`, parsed with `parseStoredCert` (strict: DER, `IsCA`, `KeyUsageCertSign`, no PEM, no private-key marker); a row that fails does not enter the pool, raises `fleet.ca.material_invalid` and the refresh keeps the previous pool for the other tenants (a single bad tenant must not take the fleet down, unlike the per-tenant bundle, which fails whole).
+5. **What does not change.** `fleet_ca` stays `Kind: Tenant`. No new table, no `tablekind` change, no domain-model kind change, so `fitness-domain-keys` REG (kind vs heading vs exemption registry) is unchanged. X1 gets one sentence (below); X4 is unaffected (`sealed_key` is not selectable on this path).
+
+**Options considered**
+
+| Option | Verdict | Why |
+| --- | --- | --- |
+| (a) Registered-global `fleet_ca_trust` table kept beside `fleet_ca` | Rejected | A global table is readable by every tenant transaction (no RLS), so tenant code or an injected query reads the whole install's CA list and tenant ids; the registry already carries that caveat for `jobs`. It is a second copy that can drift from `fleet_ca`, and a removed CA lingering in it is a trust failure. Keeping it honest needs definer triggers and revoked write grants: the machinery of (b) plus a table. It also needs a new `P` entity in the domain model. |
+| (b) `SECURITY DEFINER` function | **Chosen**, with the dedicated role | No copy, nothing to drift, no new kind. A plain owner-owned definer does not work: the owner is bound by `FORCE` RLS and holds every column, so `sealed_key` would be unreachable only by code review. The dedicated role makes it unreachable by privilege. |
+| (c) `tablekind`/registry extension (a "platform-readable tenant table") | Rejected | RLS is row-level: a platform-scope policy for the runtime role exposes every column including `sealed_key`, and breaks the invariant that every `T` table reads empty under `WithPlatform`, which `fitness-tenancy` probes. It would need a column-level mechanism that is (b) again. |
+| (d) No pool: `RequestClientCert` + `VerifyPeerCertificate` verifying against `TenantCAs(SAN tenant)` | Rejected as the primary design | It removes the cross-tenant read, but it moves a database read before authentication: any unauthenticated peer can force one per handshake by naming a tenant. The pool rejects forged chains in memory. Kept as the fallback if the pool cannot meet the scale budget below. |
+| BYPASSRLS on any role | Excluded | ADR-0002 rule 4 and the `roleRisk` startup guard. |
+
+**The pool is a first gate, not the authority.** After the handshake the interceptor still runs `TenantCAs(ctx, id.Tenant)` (a live per-tenant read) and requires the leaf to be signed by *that tenant's own* CA (TM-Q8), on every RPC. A tenant-A CA in the pool therefore can never authenticate a leaf whose SAN names tenant B. That per-tenant check is not optional and not cacheable beyond the DB read; removing it is a ticket-level regression (fitness F-POOL-3).
+
+**Freshness.**
+- `PoolProvider.Pool()` returns an immutable `*x509.CertPool` swapped atomically; it never blocks a handshake on the database.
+- Refresh every **10 s** per gateway node (jittered ±20 %), query timeout 5 s, plus an immediate `Invalidate()` when the same process commits a rollover, withdrawal or tenant provision.
+- **Bound.** A CA that is withdrawn (below) leaves the pool of every node within **15 s** of the commit (one interval plus one query timeout). A new tenant's CA enters within the same bound; an `Enroll` needs no pool, so first enrolment is unaffected, and a new component's first mTLS connect can retry (the dial layer retries with the same pin, no fallback).
+- **Fail closed.** If no refresh has succeeded for **60 s**, `Pool()` returns an empty pool: client certificates are refused until the database answers. Enroll is unaffected (no client certificate). Staleness is a metric and an alert.
+- Whatever the pool says, the per-RPC `TenantCAs` check refuses a withdrawn CA's leaf **at once**, which is what makes the compromise path ("refuse every leaf it signed", step 5 above) immediate; the 15 s bound limits only how long a stale pool could complete a handshake that the first RPC then refuses.
+
+**Removal needs a state.** Today `fleet_ca` has `active` and `retired`, `DELETE` is revoked, and step 3 and 5 of "CA key rollover" speak of "removed from the bundle" with no representation. Decision: add terminal state **`withdrawn`** (CHECK extended; `fleet_ca_guard` allows `retired → withdrawn` and, on the compromise path only, `active → withdrawn` in the transaction that also inserts the replacement; no other change). `TenantCAs`, the bundle and `fleet_ca_trust_anchors()` take `active` and `retired` only. `withdrawn` rows keep `cert_der` for audit. Folded into the T-0563 migration ticket's `sealed_key` change.
+
+**Data exposure of the new path.** It returns public certificates plus the `tenant_id` that owns each; a platform-scope caller learns the tenant list. That is the same knowledge the platform already has (`tenants` is global; `Claim` sees every tenant's jobs). All CA subjects are the constant `activeDIQ fleet CA` (no tenant data), so the TLS `certificate_authorities` list Go sends to a client reveals nothing per tenant; fitness F-POOL-6 pins that. Scale: identical subjects force Go to try candidate issuers by key id first; chain building cost with thousands of CAs is [UNVERIFIED] and gets a benchmark gate (F-POOL-7) before SaaS use; failing it triggers option (d).
+
+**Fitness functions (T-0714 adds them; the ADR is `accepted` when green in CI).**
+- F-POOL-1 `fitness-tenancy` registry: exactly one `securityDefiner` entry for `fleet_ca_trust_anchors` and one `WithPlatform` site naming it; the function is named in SQL nowhere else (`global-table-sql`-style scan).
+- F-POOL-2 catalog (real PostgreSQL 16 and 18): `activediq_catrust` is `NOBYPASSRLS`, `NOLOGIN`; holds no privilege on `fleet_ca.sealed_key`, `key_version`, `created_at` and no write privilege on any table; the function's result columns equal the four above; `activediq_app` has no BYPASSRLS membership (existing `roleRisk` unchanged).
+- F-POOL-3 behaviour: with tenants A and B seeded, the pool holds both tenants' active and retired CAs and nothing else; a leaf signed by A's CA but with B's SAN is refused by the interceptor; a `withdrawn` CA's leaf is refused at once and absent from the pool after one refresh.
+- F-POOL-4 the function called inside `WithTenant` fails `42501`; the runtime role `SELECT sealed_key FROM fleet_ca` under `WithPlatform` returns zero rows and under any context cannot read other tenants' rows (existing probe).
+- F-POOL-5 freshness: injected clock; the withdrawn CA is out within 15 s; no successful refresh for 60 s yields an empty pool.
+- F-POOL-6 every generated CA subject equals the constant; no tenant id in any CA certificate field.
+- F-POOL-7 handshake benchmark at 1,000 tenants (8,000 CAs worst case) within the budget set in T-0714.
+
+Threat-model links: TM-A11 (key never leaves the sealed column; unreachable here by privilege), TM-D24 rule D (strict parse), TM-D29 (`withdrawn` is terminal), TM-Q8 (per-tenant issuer check retained). Reviewed by security-architect on T-0712.
 
 ## Component side: `fleet/dial` (T-0158)
 
