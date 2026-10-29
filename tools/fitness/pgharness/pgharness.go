@@ -185,6 +185,16 @@ func (s *Server) createRoles(ctx context.Context) error {
 			return fmt.Errorf("create role %s: %w", r.name, err)
 		}
 	}
+	// The installer also creates the NOLOGIN role that owns fleet_ca_trust_anchors() and makes the owner
+	// a member of it (ALTER FUNCTION ... OWNER TO needs the membership). Constant DDL, no parameters.
+	for _, stmt := range []string{
+		`CREATE ROLE activediq_catrust NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS`,
+		`GRANT activediq_catrust TO activediq_owner`,
+	} {
+		if _, err := c.Exec(ctx, stmt); err != nil {
+			return fmt.Errorf("%s: %w", stmt, err)
+		}
+	}
 	return nil
 }
 

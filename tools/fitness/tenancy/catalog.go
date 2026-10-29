@@ -257,10 +257,12 @@ func checkT2(ctx context.Context, d *Database, reg *registry.Registry) ([]Violat
 		cmd         string
 		permissive  bool
 		qual, check *string
+		roles       []string // named roles the policy is TO; empty means PUBLIC
 	}
 	pols := map[uint32][]pol{}
 	rows, err = c.Query(ctx, `SELECT p.polrelid, p.polname, p.polcmd::text, p.polpermissive,
-		pg_get_expr(p.polqual, p.polrelid), pg_get_expr(p.polwithcheck, p.polrelid)
+		pg_get_expr(p.polqual, p.polrelid), pg_get_expr(p.polwithcheck, p.polrelid),
+		ARRAY(SELECT r.rolname::text FROM pg_roles r WHERE r.oid = ANY(p.polroles) ORDER BY 1)
 		FROM pg_policy p WHERE p.polrelid = ANY($1)`, allOIDs)
 	if err != nil {
 		return nil, nil, err
@@ -268,7 +270,7 @@ func checkT2(ctx context.Context, d *Database, reg *registry.Registry) ([]Violat
 	for rows.Next() {
 		var oid uint32
 		var p pol
-		if err := rows.Scan(&oid, &p.name, &p.cmd, &p.permissive, &p.qual, &p.check); err != nil {
+		if err := rows.Scan(&oid, &p.name, &p.cmd, &p.permissive, &p.qual, &p.check, &p.roles); err != nil {
 			rows.Close()
 			return nil, nil, err
 		}
@@ -280,6 +282,7 @@ func checkT2(ctx context.Context, d *Database, reg *registry.Registry) ([]Violat
 	}
 
 	// ---- per tenant table ----
+	const trustReaderRole = "activediq_catrust"
 	for _, r := range m.tenants {
 		q := r.qname()
 		what := "table"
@@ -314,6 +317,12 @@ func checkT2(ctx context.Context, d *Database, reg *registry.Registry) ([]Violat
 		for _, p := range ps {
 			canonQual := p.qual != nil && *p.qual == canon
 			canonCheck := p.check != nil && *p.check == canon
+			if p.permissive && p.cmd == "r" && slices.Equal(p.roles, []string{trustReaderRole}) {
+				// The one policy that is not the tenant shape: SELECT only, TO the dedicated reader role
+				// and no one else, so it never applies to the runtime role (T-0712). Its column grants and
+				// function are judged by the roles and catalog checks.
+				continue
+			}
 			if p.permissive {
 				if (p.qual != nil && !canonQual) || (p.check != nil && !canonCheck) {
 					add("policy-shape", q, fmt.Sprintf("policy %q is permissive and not the fail-closed shape; want USING and WITH CHECK (%s), got USING %s WITH CHECK %s",
