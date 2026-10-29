@@ -12,6 +12,9 @@ import (
 // Event IDs written to the Windows Application log by source "activeDIQ Agent" (documented in the
 // agent runbook). The source's message file is .NET's EventLogMessages.dll (registered by the MSI),
 // whose message table is a bare "%1" for every ID, so each event renders its insertion string.
+// [UNVERIFIED-lab] The EventLogMessages.dll path and bare-%1 behaviour are from Microsoft's EventLog
+// documentation (https://learn.microsoft.com/dotnet/api/system.diagnostics.eventlog) and common practice;
+// T-0648 re-run must read an event back in Event Viewer to confirm no empty description.
 const (
 	EventApplied       = 100 // a policy or keyset was applied (what, sequence; never content)
 	EventStartRefused  = 101 // the agent refused to start (reason class only)

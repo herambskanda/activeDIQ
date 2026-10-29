@@ -39,6 +39,9 @@ type Hooks struct {
 	// Confine puts the process in its job-object limits; nil off Windows.
 	Confine func() error
 	Version string
+	// NotEnrolledCheck, if set, is called after every RunServing attempt that found the agent not yet
+	// enrolled (tests use it to observe re-checks without sleeping).
+	NotEnrolledCheck func()
 }
 
 // Run runs the agent role until ctx is done.
@@ -130,6 +133,9 @@ func RunServing(ctx context.Context, cfg config.Config, hk Hooks, interval time.
 		err := RunWith(ctx, cfg, hk)
 		if !errors.Is(err, ErrNotEnrolled) {
 			return err
+		}
+		if hk.NotEnrolledCheck != nil {
+			hk.NotEnrolledCheck()
 		}
 		if !announced {
 			announced = true

@@ -74,11 +74,15 @@ func TestRunServingIdlesWhenNotEnrolled(t *testing.T) {
 	t.Setenv(agent.ConfigEnv, cfg)
 	ctx, cancel := context.WithCancel(context.Background())
 	waits := 0
+	checks := make(chan struct{}, 8)
+	hk := agent.Hooks{NotEnrolledCheck: func() { checks <- struct{}{} }}
 	done := make(chan error, 1)
 	go func() {
-		done <- agent.RunServing(ctx, config.Config{}, agent.Hooks{}, 5*time.Millisecond, func() { waits++ })
+		done <- agent.RunServing(ctx, config.Config{}, hk, time.Millisecond, func() { waits++ })
 	}()
-	time.Sleep(60 * time.Millisecond)
+	// Wait for the first check and at least one re-check: the service must still be running.
+	<-checks
+	<-checks
 	select {
 	case err := <-done:
 		t.Fatalf("exited while unenrolled: %v", err)

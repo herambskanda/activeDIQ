@@ -35,6 +35,9 @@
           <!-- Restricted service SID and exactly one privilege, declared here and never through the
                registry (T-0688 ruling 4b). Whether WiX writes the privilege list is [UNVERIFIED - lab]:
                T-0648 reads it back (sc qprivs, running token). -->
+          <!-- Failure actions live on the core ServiceConfig (util:ServiceConfig is deprecated, WIX1149):
+               https://docs.firegiant.com/wix/schema/wxs/serviceconfig/ [UNVERIFIED-lab: attribute names read
+               back by T-0648 with `sc qfailure activeDIQAgent`]. -->
           <ServiceConfig ServiceSid="restricted" OnInstall="yes" OnReinstall="yes"
                          FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="restart"
                          RestartServiceDelayInSeconds="30" ResetPeriodInDays="1">
