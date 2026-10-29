@@ -1139,6 +1139,20 @@ for enc in utf-32-le utf-32-be; do
 done
 python3 -c 'import sys;s=sys.argv[1];open(sys.argv[2],"wb").write(("<?xml version=\"1.0\"?><!--"+"\u4e01"*40000+"-->"+s).encode("utf-16-le"))' "$lsys" "$ah/x/evil.xml"
 must_fail_with "fitness-agent-host on a BOM-less UTF-16LE LocalSystem WiX document with a NUL-free pad (A1)" 'LocalSystem' agenthost "$ah"
+# T-0677 attempt 6: first-two-byte detection like .NET DetectEncoding, and 3412/2143 UCS-4 BOMs fail closed.
+for c in 'np16le|utf-16-le|<Wix><Fragment><!--' 'np16be|utf-16-be|<Wix><Fragment><!--' 'cm16le|utf-16-le|<!--'; do
+  IFS='|' read -r nm enc head <<<"$c"
+  python3 -c 'import sys;open(sys.argv[4],"wb").write((sys.argv[1]+"\u4e01"*40000+"-->"+sys.argv[2]+"</Fragment></Wix>").encode(sys.argv[3]))' "$head" "$lsys" "$enc" "$ah/x/evil.xml"
+  must_fail_with "fitness-agent-host on a BOM-less $nm WiX document with a NUL-free pad (A1)" 'LocalSystem' agenthost "$ah"
+done
+printf '<Project><ItemGroup><Compile Include="evil.dat"/></ItemGroup></Project>\n' >"$ah/packaging/windows/A.wixproj"
+python3 -c 'import sys;open(sys.argv[3],"wb").write((sys.argv[1]+"\u4e01"*40000+"-->"+sys.argv[2]+"</Fragment></Wix>").encode("utf-16-le"))' "<Wix><Fragment><!--" "$lsys" "$ah/packaging/windows/evil.dat"
+must_fail_with "fitness-agent-host on a BOM-less UTF-16LE WiX file named .dat under packaging/ (A1)" 'LocalSystem' agenthost "$ah"
+rm -f "$ah/packaging/windows/evil.dat"
+for bom in '\xfe\xff\0\0' '\0\0\xff\xfe'; do
+  printf "$bom"'rest' >"$ah/x/evil.xml"
+  must_fail_with "fitness-agent-host on a UCS-4 BOM in an unusual order (A1, fail closed)" 'cannot decode' agenthost "$ah"
+done
 rm -f "$ah/packaging/windows/A.wixproj"
 for sig in '\0\0\x3c\0' '\0\x3c\0\0' '\x4c\x6f\xa7\x94'; do
   printf "$sig"'rest' >"$ah/x/evil.xml"

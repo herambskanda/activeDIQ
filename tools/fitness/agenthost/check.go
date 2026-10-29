@@ -622,17 +622,22 @@ func decodeText(b []byte) (string, bool) {
 	case bytes.HasPrefix(b, []byte{0xFE, 0xFF}):
 		return utf16Text(b[2:], true), true
 	}
-	// T-0677: XML 1.0 Appendix F guesses the encoding of a BOM-less document from its first four bytes
-	// (<?xm in UCS-4 or UTF-16), whatever the NUL share of the rest.
+	// T-0677: mirror .NET XmlTextReaderImpl.DetectEncoding, which switches on the first two bytes of a
+	// BOM-less document (XML 1.0 Appendix F is only the example): 3C00 is UTF-16LE (UCS-4LE when the next
+	// two bytes are 0000) and 003C is UTF-16BE (the 3412 UCS-4 order, exotic, when they are 0000).
 	if len(b) >= 4 {
 		switch {
 		case b[0] == 0x3C && b[1] == 0 && b[2] == 0 && b[3] == 0:
 			return utf32Text(b, false), true
 		case b[0] == 0 && b[1] == 0 && b[2] == 0 && b[3] == 0x3C:
 			return utf32Text(b, true), true
-		case b[0] == 0x3C && b[1] == 0 && b[2] == 0x3F && b[3] == 0:
+		}
+	}
+	if len(b) >= 2 {
+		switch {
+		case b[0] == 0x3C && b[1] == 0:
 			return utf16Text(b, false), true
-		case b[0] == 0 && b[1] == 0x3C && b[2] == 0 && b[3] == 0x3F:
+		case b[0] == 0 && b[1] == 0x3C:
 			return utf16Text(b, true), true
 		}
 	}
@@ -665,7 +670,9 @@ func exoticXMLEncoding(b []byte) bool {
 		return false
 	}
 	h := [4]byte{b[0], b[1], b[2], b[3]}
-	return h == [4]byte{0, 0, 0x3C, 0} || h == [4]byte{0, 0x3C, 0, 0} || h == [4]byte{0x4C, 0x6F, 0xA7, 0x94}
+	// 2143 and 3412 orders (BOM and bare '<'), and EBCDIC '<?xm'.
+	return h == [4]byte{0, 0, 0x3C, 0} || h == [4]byte{0, 0x3C, 0, 0} || h == [4]byte{0x4C, 0x6F, 0xA7, 0x94} ||
+		h == [4]byte{0xFE, 0xFF, 0, 0} || h == [4]byte{0, 0, 0xFF, 0xFE}
 }
 
 const exoticProblem = "starts with an XML byte-order signature this check cannot decode (unusual UCS-4 order or EBCDIC): it could be a WiX document, so it is not classifiable"
@@ -703,8 +710,8 @@ func utf16Text(b []byte, bigEndian bool) string {
 // through a variable) and the other files that name the agent in their relative path or body:
 // also install scripts, custom actions and anything else a service account can be set in
 // (ADR-0006 A1 covers any LocalSystem string in the MSI source). UTF-16 files are decoded. A file whose
-// path names the agent that cannot be read as text, or is too large, fails closed unless it has a known
-// binary extension.
+// path names the agent that cannot be read as text, or is too large, fails closed (no extension
+// exempts a file from the content check).
 func agentInstallerFiles(root string) []instFile {
 	var out []instFile
 	rootReal, rerr := filepath.EvalSymlinks(root)
@@ -759,6 +766,7 @@ func agentInstallerFiles(root string) []instFile {
 			// T-0677: an extension never exempts a file from the content check (WiX compiles whatever the
 			// file is called). A real binary has NULs and is not text, so it passes cheaply.
 			if ierr != nil {
+				out = append(out, instFile{path: p, rel: relp, problem: "cannot be inspected: " + ierr.Error()})
 				return nil
 			}
 			text, wix, prob := sniffWix(p, info.Size())
@@ -775,6 +783,7 @@ func agentInstallerFiles(root string) []instFile {
 			// file is classified by CONTENT: a well-formed XML document rooted at Wix, Include or
 			// WixLocalization is WiX wherever it sits.
 			if ierr != nil {
+				out = append(out, instFile{path: p, rel: relp, problem: "cannot be inspected: " + ierr.Error()})
 				return nil
 			}
 			text, wix, prob := sniffWix(p, info.Size())
@@ -1035,7 +1044,7 @@ func checkInstallerAllow(root string, allow []string) Result {
 			continue
 		}
 		if f.unreadable != "" {
-			r.Violations = append(r.Violations, fmt.Sprintf("%s %s: a WiX source or agent packaging file must be readable text (or have a known binary extension)", rel, f.unreadable))
+			r.Violations = append(r.Violations, fmt.Sprintf("%s %s: a WiX source or agent packaging file must be readable text", rel, f.unreadable))
 			continue
 		}
 		// Every file here is WiX or names the agent: LocalSystem and the Services registry key are

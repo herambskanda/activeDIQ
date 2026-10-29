@@ -538,6 +538,38 @@ func TestA1Installer(t *testing.T) {
 				wantViolation(t, checkInstaller(r), "cannot decode")
 			}
 		}
+		{ // T-0677 attempt 6: mirror .NET DetectEncoding on the first two bytes; 3412/2143 BOMs fail closed
+			enc := func(be bool, s string) string {
+				var b []byte
+				for _, c := range s {
+					if be {
+						b = append(b, 0, byte(c))
+					} else {
+						b = append(b, byte(c), 0)
+					}
+				}
+				return string(b)
+			}
+			pad := strings.Repeat("\x01\x4e", 40000)
+			wixHead := "<Wix><Fragment><!--"
+			cases := map[string][2]string{
+				"np16le":    {"tools/x/evil.xml", enc(false, wixHead) + pad + enc(false, "-->"+lsys+"</Fragment></Wix>")},
+				"np16be":    {"tools/x/evil.xml", enc(true, wixHead) + pad[:0] + enc(true, "-->"+lsys+"</Fragment></Wix>")},
+				"cm16le":    {"tools/x/evil.xml", enc(false, "<!--") + pad + enc(false, "-->"+lsys)},
+				"pk16le":    {"packaging/windows/evil.dat", enc(false, wixHead) + pad + enc(false, "-->"+lsys+"</Fragment></Wix>")},
+				"bom3412":   {"tools/x/evil.xml", "\xfe\xff\x00\x00" + lsys},
+				"bom2143":   {"tools/x/evil.xml", "\x00\x00\xff\xfe" + lsys},
+				"bom3412pk": {"packaging/windows/evil.dat", "\xfe\xff\x00\x00" + lsys},
+			}
+			for name, c := range cases {
+				r := t.TempDir()
+				write(t, r, "packaging/windows/A.wixproj", inc(`..\..\`+strings.ReplaceAll(c[0], "/", `\`)))
+				write(t, r, c[0], c[1])
+				if v := checkInstaller(r).Violations; len(v) == 0 {
+					t.Errorf("%s: want a violation, got none", name)
+				}
+			}
+		}
 		{ // a long prolog does not hide the root element
 			r := t.TempDir()
 			write(t, r, "docs/evil.txt", "<!--"+strings.Repeat("x", 100<<10)+"-->"+lsys)
