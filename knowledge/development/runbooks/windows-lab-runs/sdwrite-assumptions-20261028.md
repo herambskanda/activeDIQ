@@ -29,7 +29,7 @@ Fixtures are created under `OU=Managed` and deleted as Administrator, so a re-ru
 
 ## Not covered / limits
 - One DC, one OS build (WS2025). Samba not rerun. SDProp interval (60 min) and PDC-emulator-only behaviour unverified.
-- The `RESULT KNOWN DIVERGENCE T-0627` lines are an expected-to-fail marker: the test fails when the DC stops re-sorting.
+- T-0627 fixed: the expected-to-fail marker is now a strict `DACLWrite.VerifyAfter` assertion (`verifyAfter` in the test). Not re-run on the Windows lab by this ticket (no lab access); a Windows run must confirm it passes.
 
 ## Proof the tests bite
 Temporarily breaking `PlanInheritance` (no PD set/cleared) made `TestWindowsLabSDWriteInheritance` fail in three

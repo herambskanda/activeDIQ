@@ -25,6 +25,7 @@ const (
 	ErrACEIndexOutOfRange    = "sd.ace_index_out_of_range"
 	ErrDuplicateRemove       = "sd.duplicate_remove"
 	ErrStaleBase             = "sd.stale_base"
+	ErrWriteDiverged         = "sd.write_diverged"
 	ErrSDPropWillRevert      = "sd.sdprop_will_revert"
 	ErrSelfLockout           = "sd.self_lockout"
 	ErrProtectFlagChange     = "sd.protect_flag_change"
@@ -218,4 +219,76 @@ func (w DACLWrite) VerifyBase(current SD) error {
 		return fail(ErrStaleBase)
 	}
 	return nil
+}
+
+// Verified is the outcome of a successful VerifyAfter.
+type Verified struct {
+	// Reordered is set when the DC stored the same ACEs in a different order than the plan wrote
+	// (a Windows DC re-sorts a DACL on write, T-0627). Effective rights were checked equal.
+	Reordered bool
+}
+
+// VerifyAfter is SD-R10: called with a re-read (DACL-only) of the object after the modify. It accepts
+// the DC's canonical re-ordering and flags only real differences:
+//
+//   - the stored ACEs are the planned ACEs as a multiset (every ACE's bytes, so type, flags, mask,
+//     trustee and object GUIDs);
+//   - the stored DACL's PD bit is the planned one (DI is the DC's to recompute and is not compared);
+//   - every pair of ACEs the DC put in the opposite order from the plan is harmless: two allows or two
+//     denies, or an allow and a deny that cannot meet (disjoint masks, or object GUIDs that differ).
+//     Reordering an interacting allow/deny pair, or any conditional or unknown ACE, changes what the DACL
+//     grants and fails. No catalog is needed, so the check cannot fail open on an unknown GUID kind.
+//
+// Position is never compared. A mismatch is sd.write_diverged: the caller audits the actual state
+// and does not retry.
+func (w DACLWrite) VerifyAfter(stored SD) (Verified, error) {
+	var v Verified
+	if !w.ok {
+		return v, fail(ErrNotEditable)
+	}
+	planned, err := Decode(Raw(w.value))
+	if err != nil || stored.DACL.Kind != planned.DACL.Kind ||
+		stored.Control.Protected() != planned.Control.Protected() ||
+		len(stored.DACL.ACEs) != len(planned.DACL.ACEs) {
+		return v, fail(ErrWriteDiverged)
+	}
+	// Match each stored ACE to a planned one by bytes; the k-th duplicate to the k-th duplicate.
+	slots := map[string][]int{}
+	for i, a := range planned.DACL.ACEs {
+		slots[string(a.Raw)] = append(slots[string(a.Raw)], i)
+	}
+	perm := make([]int, len(stored.DACL.ACEs)) // stored position -> planned position
+	for pos, a := range stored.DACL.ACEs {
+		q := slots[string(a.Raw)]
+		if len(q) == 0 {
+			return v, fail(ErrWriteDiverged)
+		}
+		perm[pos], slots[string(a.Raw)] = q[0], q[1:]
+	}
+	for p := range perm {
+		for q := p + 1; q < len(perm); q++ {
+			if perm[p] < perm[q] {
+				continue
+			}
+			v.Reordered = true
+			if interacts(stored.DACL.ACEs[p], stored.DACL.ACEs[q]) {
+				return v, fail(ErrWriteDiverged)
+			}
+		}
+	}
+	return v, nil
+}
+
+// interacts reports whether swapping two ACEs can change what a DACL grants.
+func interacts(a, b ACE) bool {
+	if !(a.allow() || a.deny()) || !(b.allow() || b.deny()) {
+		return true // conditional, unknown or non-decision ACE: never prove it harmless
+	}
+	if a.allow() == b.allow() || a.Mask&b.Mask == 0 {
+		return false
+	}
+	if a.ObjectType != nil && b.ObjectType != nil && *a.ObjectType != *b.ObjectType {
+		return false
+	}
+	return true
 }
