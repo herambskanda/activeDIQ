@@ -1263,27 +1263,68 @@ var pinnedActions = func() map[string]map[string]string {
 // source grants no ACL through WiX. Adding an entry is a security-architect review (T-0725).
 var pinnedPermissions = map[string]map[string]string{}
 
-// parentTargetAttrs: the attributes that say which object a Permission's parent acts on. An unknown
-// parent type pins every attribute but Id (fail closed).
-func parentTargetAttrs(p xmlEl) []string {
-	switch p.Name {
-	case "ServiceInstall":
-		return []string{"name"}
-	case "CreateFolder":
-		return []string{"directory"}
-	case "RegistryKey":
-		return []string{"root", "key"}
-	case "File":
-		return []string{"source"}
+// effectiveDirectory resolves the directory a CreateFolder or File acts on, walking up from element i:
+// the element's own Directory attribute, else the nearest Component (or ComponentGroup) Directory
+// attribute, else the chain of enclosing Directory/StandardDirectory/DirectoryRef elements
+// (outermost first, as "id:name" so a re-parented or renamed Directory changes the pin).
+func effectiveDirectory(els []xmlEl, i int) (string, bool) {
+	if d := els[i].Attrs["directory"]; d != "" {
+		return d, true
 	}
-	var ks []string
-	for k := range p.Attrs {
-		if k != "id" {
-			ks = append(ks, k)
+	for j := els[i].Parent; j >= 0; j = els[j].Parent {
+		switch els[j].Name {
+		case "Component", "ComponentGroup":
+			if d := els[j].Attrs["directory"]; d != "" {
+				return d, true
+			}
+		case "Directory", "StandardDirectory", "DirectoryRef":
+			var chain []string
+			for k := j; k >= 0; k = els[k].Parent {
+				switch els[k].Name {
+				case "Directory", "StandardDirectory", "DirectoryRef":
+					chain = append([]string{els[k].Name + ":" + els[k].Attrs["id"] + ":" + els[k].Attrs["name"]}, chain...)
+				}
+			}
+			return strings.Join(chain, "/"), true
 		}
 	}
-	sort.Strings(ks)
-	return ks
+	return "", false
+}
+
+// parentTarget returns the pin keys ("parent.<attr>") naming the object a Permission's parent acts on,
+// resolved through its ancestors; ok is false when the target cannot be resolved or the parent type is
+// unknown, which fails closed (T-0730).
+func parentTarget(els []xmlEl, p int) (map[string]string, bool) {
+	e := els[p]
+	t := map[string]string{}
+	switch e.Name {
+	case "ServiceInstall":
+		t["parent.name"] = e.Attrs["name"]
+		return t, e.Attrs["name"] != ""
+	case "CreateFolder":
+		d, ok := effectiveDirectory(els, p)
+		t["parent.directory"] = d
+		return t, ok
+	case "File":
+		d, ok := effectiveDirectory(els, p)
+		name := e.Attrs["name"]
+		if name == "" {
+			name = e.Attrs["source"]
+			if n := strings.LastIndexAny(name, `\/`); n >= 0 {
+				name = name[n+1:]
+			}
+		}
+		t["parent.directory"], t["parent.name"] = d, name
+		return t, ok && name != ""
+	case "RegistryKey", "RegistryValue":
+		root, key := registryRootKey(els, p)
+		t["parent.root"], t["parent.key"] = root, key
+		if e.Name == "RegistryValue" {
+			t["parent.name"] = e.Attrs["name"]
+		}
+		return t, root != ""
+	}
+	return nil, false
 }
 
 func samePermission(got, want map[string]string) bool {
@@ -1415,8 +1456,13 @@ func judgeInstallerXML(rel string, b []byte, allow []string, agentFile bool) ins
 				}
 				// T-0730: the pin also fixes the parent's target, so retargeting the parent cannot
 				// carry a reviewed ACL onto another object. Pin keys: "parent.<attr>".
-				for _, k := range parentTargetAttrs(els[e.Parent]) {
-					got["parent."+k] = els[e.Parent].Attrs[k]
+				tgt, resolved := parentTarget(els, e.Parent)
+				if !resolved {
+					fail("%s under %s %q: the parent's effective target cannot be resolved (unknown parent type, or its directory/registry root comes from a ComponentRef or another fragment); an unresolved target cannot be pinned (T-0730)", e.Name, ptype, pid)
+					break
+				}
+				for k, v := range tgt {
+					got[k] = v
 				}
 				if !samePermission(got, want) {
 					fail("%s under %s %q differs from the reviewed pin (attributes %v, reviewed %v): a changed SDDL or grant is a new ACL and needs a new review (T-0725)", e.Name, ptype, pid, got, want)
