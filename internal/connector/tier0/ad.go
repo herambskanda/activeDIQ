@@ -1269,6 +1269,12 @@ func broadForeignRID(s sid.SID) bool {
 	return rid < 1000 && rid != 500 && rid != 501 && rid != 502
 }
 
+// isLocalDomainSID is true for a SID in this builder's own domain.
+func (b *builder) isLocalDomainSID(s sid.SID) bool {
+	d, ok := s.DomainSID()
+	return ok && d.String() == b.domSID.String()
+}
+
 // trustResolvedRID is true for a foreign domain account SID whose RID is 1000 or more: a custom user,
 // computer or group of the trusted domain, which its FSP does not distinguish (T-0435).
 func trustResolvedRID(s sid.SID) bool {
@@ -1353,6 +1359,22 @@ func (b *builder) markPrincipalsSkip(sids []sid.SID, basis Basis, skip func(*ad.
 		// holds for a trusted domain's broad well-known RID (Domain Users 513, ...): its tokens carry it
 		// with or without an FSP, so a holder cannot stand in for the principals it reaches.
 		if found && hasClass(e, "foreignSecurityPrincipal") && trustResolvedRID(s) {
+			ms, err := b.foreignGroupMembers(s)
+			if err != nil {
+				return err
+			}
+			for _, m := range ms {
+				if err := take(m); err != nil {
+					return err
+				}
+			}
+		}
+		// T-0819: after an ADMT group migration the source group often still exists in the trusted domain
+		// and its members carry its SID across the trust, so a holder alone under-reports who holds the
+		// right. A foreign custom-RID SID with no FSP but a holder is resolved through the trust exactly
+		// like one with an FSP: a user marks only the holders, a group also its members' FSPs, and no
+		// seam, error or unknown fails closed. A SID of this domain is not foreign and is left alone.
+		if !found && len(holders) > 0 && isDomainAccountSID(s) && trustResolvedRID(s) && !b.isLocalDomainSID(s) {
 			ms, err := b.foreignGroupMembers(s)
 			if err != nil {
 				return err

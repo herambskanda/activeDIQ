@@ -288,11 +288,13 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 	// the override (D11): c.ov was consulted at step 2 only. A kind that is not wired has no
 	// PropertyWrite and writes nothing.
 	var op *WriteOp
+	var declared []string
 	if w, ok := h.ops[c.kind]; ok && c.kind != connectorv1.WriteKind_WRITE_KIND_UNSPECIFIED {
 		op = &w
 		if r := h.propertyGuard(ctx, w, c, target, ev); r != nil {
 			return nil, r
 		}
+		declared = append(declared, ev.PropertyKeys...)
 	}
 
 	// Step 5: the kind. A kind that is not wired is answered after the target's live checks.
@@ -336,7 +338,7 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 	if bound != nil {
 		boundDSA, _ = fromWire(bound.GetDsaGuid()) // verified equal to the pin at step 2b
 	}
-	return &passed{op: op, touched: touched, designated: designated, dec: dec, dc: bound, auth: Authorised{p: &pass{evaluated: touched, dc: boundDSA}}}, nil
+	return &passed{op: op, touched: touched, designated: designated, dec: dec, dc: bound, auth: Authorised{p: &pass{evaluated: touched, dc: boundDSA, props: declared}}}, nil
 }
 
 // Refusal reasons recorded for a property-write refusal that is not a rule verdict.
