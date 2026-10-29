@@ -786,6 +786,8 @@ as the connector identity and streams:
 - exactly one `completed` (verdict, each check's outcome, counts, `write_gate_openable`, and from
   v1.2 `tier0_inputs_dropped`, §8.3a, and from v1.3 (T-0412) `directory_identity`).
 
+**Check list on the wire (T-0684).** `header.check_list_version` is the decimal text of a positive integer (the client parses it; the verification row stores an integer). The AD stream's `completed.checks` always carries V5 (pass: the stream starts only once the connector's own account is read) besides V7–V9; the server accepts a pass only when V5, V7 and V8 are answered.
+
 **`completed.directory_identity` (v1.3, T-0412).** The directory the run was answered against, as V5
 (AD: objectGUID of the forest root domain NC head) or EV2 (Entra: the tenant id) read it. The
 connector sets it on every run (the AD stream refuses to start without a bound directory). The
