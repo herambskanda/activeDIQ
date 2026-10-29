@@ -10,7 +10,8 @@ in your domain. We want to hear about every one, and we will treat your report t
 <https://github.com/herambskanda/activeDIQ/security/advisories/new>
 (or the **Security** tab of this repository → **Report a vulnerability**).
 
-Only you and the maintainers can see the report. Please include:
+You need to be signed in to GitHub. Only you and the maintainers can see the report, and it stays
+private until the advisory is published. Please include:
 
 - the component (server, API, console, self-service portal, connector, DC-side component,
   installer or update channel) and the commit or version;
@@ -18,7 +19,7 @@ Only you and the maintainers can see the report. Please include:
 - whether you believe it is already known or exploited.
 
 **Do not open a public issue, pull request or discussion about a vulnerability.**
-If the private form is unavailable to you, open a public issue titled exactly
+If you cannot use the private form (for example, you have no GitHub account), open a public issue titled exactly
 `Security contact request` with **no technical details**. We will reply in that issue with a private
 channel and then close it.
 
