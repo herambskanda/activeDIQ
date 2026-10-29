@@ -205,10 +205,33 @@ func Judge(t map[string]*Table, o Options) []string {
 
 	// MsiServiceConfig: SID type and privileges, per installed service and for any other service named.
 	type cfg struct{ sid, priv []string }
+	siComps := map[string]map[string]bool{} // service -> Component_ ids that install it
+	if si != nil {
+		for _, r := range si.Rows {
+			n, c := strings.ToLower(si.Col(r, "Name")), si.Col(r, "Component_")
+			if siComps[n] == nil {
+				siComps[n] = map[string]bool{}
+			}
+			siComps[n][c] = true
+			if cond := componentCondition(t, c); cond != "" {
+				fail("ServiceInstall row %q (service %s): component %q has Condition %q; a conditional install cannot be judged", si.Key(r), si.Col(r, "Name"), c, cond)
+			}
+		}
+	}
 	got := map[string]*cfg{}
 	if mc := t["MsiServiceConfig"]; mc != nil {
 		for _, r := range mc.Rows {
 			key, name, typ, arg := mc.Key(r), mc.Col(r, "Name"), mc.Col(r, "ConfigType"), mc.Col(r, "Argument")
+			if typ == cfgSID || typ == cfgPrivs {
+				if ev, err := strconv.Atoi(mc.Col(r, "Event")); err != nil || ev&1 == 0 {
+					fail("MsiServiceConfig row %q (service %s): Event %q does not apply on install (bit 1), so the setting never takes effect", key, name, mc.Col(r, "Event"))
+					continue
+				}
+				if !siComps[strings.ToLower(name)][mc.Col(r, "Component_")] {
+					fail("MsiServiceConfig row %q (service %s): Component_ %q is not the component that installs the service, so the setting may never apply", key, name, mc.Col(r, "Component_"))
+					continue
+				}
+			}
 			if dynamic(name) {
 				fail("MsiServiceConfig row %q: service Name %q is formatted at install time and cannot be judged", key, name)
 			}
@@ -271,16 +294,18 @@ func Judge(t map[string]*Table, o Options) []string {
 			fail("Binary row %q: the installer embeds no binary (a custom action DLL or script payload would run in the install)", b.Key(r))
 		}
 	}
+	// No permission row is reviewed today. installer-allow.txt holds CustomAction Ids and must never vouch
+	// for a DACL: MSI keys are per table, so a generated ServiceInstall with a reviewed action's Id would
+	// otherwise pass. A future reviewed DACL needs its own pin keyed by (Table, LockObject) with the exact
+	// SDDL pinned (security-architect, T-0697).
 	for _, name := range []string{"MsiLockPermissionsEx", "LockPermissions"} {
 		if lp := t[name]; lp != nil {
 			for _, r := range lp.Rows {
-				obj := lp.Col(r, "LockObject")
-				if !allowed(o.Allow, obj) {
-					fail("%s row %q: DACL on %q is not a reviewed item (list the object Id in installer-allow.txt after a security-architect review)", name, lp.Key(r), obj)
-				}
+				fail("%s row %q: DACL on %s %q (%s) is not reviewed; the installer sets no permissions (a ServiceInstall DACL is the service-control bypass)", name, lp.Key(r), lp.Col(r, "Table"), lp.Col(r, "LockObject"), lp.Col(r, "SDDLText"))
 			}
 		}
 	}
+	judgeBehaviourTables(t, fail)
 	for _, name := range []string{"Registry", "RemoveRegistry"} {
 		if rg := t[name]; rg != nil {
 			for _, r := range rg.Rows {
@@ -307,4 +332,55 @@ func splitPrivs(arg string) []string {
 		}
 	}
 	return out
+}
+
+// componentCondition returns the Component.Condition of component id ("" when none or no Component table).
+func componentCondition(t map[string]*Table, id string) string {
+	ct := t["Component"]
+	if ct == nil {
+		return ""
+	}
+	for _, r := range ct.Rows {
+		if ct.Col(r, "Component") == id {
+			return strings.TrimSpace(ct.Col(r, "Condition"))
+		}
+	}
+	return ""
+}
+
+// judgeBehaviourTables fails rows in tables that run code or change service behaviour outside the
+// ServiceInstall/MsiServiceConfig model: deny by default, with the agent's own ServiceControl the only
+// exception and failure actions limited to none/restart-service.
+func judgeBehaviourTables(t map[string]*Table, fail func(string, ...any)) {
+	for _, name := range []string{"MsiEmbeddedChainer", "MsiEmbeddedUI"} {
+		if tb := t[name]; tb != nil {
+			for _, r := range tb.Rows {
+				fail("%s row %q: runs an executable or DLL during install, an unreviewed custom action by another name", name, tb.Key(r))
+			}
+		}
+	}
+	if fa := t["MsiServiceConfigFailureActions"]; fa != nil {
+		for _, r := range fa.Rows {
+			key, cmd, acts := fa.Key(r), fa.Col(r, "Command"), fa.Col(r, "Actions")
+			if cmd != "" {
+				fail("MsiServiceConfigFailureActions row %q: Command %q would run on service failure", key, cmd)
+			}
+			if dynamic(strings.ReplaceAll(acts, "[~]", "")) {
+				fail("MsiServiceConfigFailureActions row %q: Actions %q is formatted at install time", key, acts)
+				continue
+			}
+			for _, a := range strings.Split(acts, "[~]") {
+				if a = strings.TrimSpace(a); a != "" && a != "0" && a != "1" {
+					fail("MsiServiceConfigFailureActions row %q: failure action %q (2 reboots the host, 3 runs a command); only none(0) and restart-service(1) are allowed", key, a)
+				}
+			}
+		}
+	}
+	if sc := t["ServiceControl"]; sc != nil {
+		for _, r := range sc.Rows {
+			if n := sc.Col(r, "Name"); n != AgentService {
+				fail("ServiceControl row %q: controls service %q; only %s may be started, stopped or deleted by this installer", sc.Key(r), n, AgentService)
+			}
+		}
+	}
 }

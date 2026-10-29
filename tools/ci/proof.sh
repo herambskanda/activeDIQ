@@ -1344,17 +1344,30 @@ mk_msi() {
     ( cd "$d" && printf 'Action\tType\tSource\tTarget\r\ns72\ti2\tS64\tS255\r\nCustomAction\tAction\r\n%s\r\n' "$ca" >CustomAction.idt && msibuild "$n.msi" -i CustomAction.idt ) >>"$d/build.log" 2>&1 || { echo "PROOF FAILED: adding a CustomAction to $n.msi"; fails=$((fails + 1)); }
   fi
 }
+# add_idt <name> <table> <idt-text>: append a table to an already built MSI (msibuild).
+add_idt() {
+  local n=$1 t=$2 d="$bm/$1"
+  ( cd "$d" && printf '%b' "$3" >"$t.idt" && msibuild "$n.msi" -i "$t.idt" ) >>"$d/build.log" 2>&1 || { echo "PROOF FAILED: adding $t to $n.msi"; fails=$((fails + 1)); }
+}
 builtmsi() { go run ./tools/fitness/builtmsi "$@"; }
 mk_msi clean 'NT SERVICE\activeDIQAgent' 3 SeChangeNotifyPrivilege
 mk_msi system 'LocalSystem' 3 SeChangeNotifyPrivilege
 mk_msi unrestricted 'NT SERVICE\activeDIQAgent' 1 SeChangeNotifyPrivilege
 mk_msi privs 'NT SERVICE\activeDIQAgent' 3 'SeChangeNotifyPrivilege[~]SeBackupPrivilege'
 mk_msi action 'NT SERVICE\activeDIQAgent' 3 SeChangeNotifyPrivilege "$(printf 'Sneaky\t3106\tAgentDir\t"[AgentDir]agentsetup.exe" --run-anything')"
+# security-architect bypasses: a ServiceInstall whose Id is a reviewed action Id plus a world-writable DACL on it;
+# a setting row that never applies (uninstall only); a reboot failure action.
+mk_msi dacl 'NT SERVICE\activeDIQAgent' 3 SeChangeNotifyPrivilege
+add_idt dacl MsiLockPermissionsEx 'MsiLockPermissionsEx\tLockObject\tTable\tSDDLText\r\ns72\ts72\ts32\tL0\r\nMsiLockPermissionsEx\tMsiLockPermissionsEx\r\nL1\tSvc\tServiceInstall\tD:(A;;GA;;;WD)\r\n'
+mk_msi neverapplies 'NT SERVICE\activeDIQAgent' 3 SeChangeNotifyPrivilege
+add_idt neverapplies MsiServiceConfig 'MsiServiceConfig\tName\tEvent\tConfigType\tArgument\tComponent_\r\ns72\ts255\ti2\ti2\tL255\ts72\r\nMsiServiceConfig\tMsiServiceConfig\r\nc1\tactiveDIQAgent\t2\t3\t3\tC1\r\nc2\tactiveDIQAgent\t2\t4\tSeChangeNotifyPrivilege\tC1\r\n'
 must_pass "fitness-built-msi on a clean built agent MSI" builtmsi -glob "$bm/clean/clean.msi"
 must_fail_with "fitness-built-msi on a build-time-generated LocalSystem ServiceInstall (the source scan cannot see it)" 'ServiceInstall row "Svc".*LocalSystem' builtmsi -glob "$bm/system/system.msi"
 must_fail_with "fitness-built-msi on an unrestricted service SID" 'SID type is "1"' builtmsi -glob "$bm/unrestricted/unrestricted.msi"
 must_fail_with "fitness-built-msi on an extra privilege" 'RequiredPrivileges are .*SeBackupPrivilege' builtmsi -glob "$bm/privs/privs.msi"
 must_fail_with "fitness-built-msi on an unreviewed custom action" 'CustomAction row "Sneaky"' builtmsi -glob "$bm/action/action.msi"
+must_fail_with "fitness-built-msi on a DACL row keyed to the service (service-control bypass)" 'MsiLockPermissionsEx row "L1"' builtmsi -glob "$bm/dacl/dacl.msi"
+must_fail_with "fitness-built-msi on settings that only apply on uninstall" 'does not apply on install' builtmsi -glob "$bm/neverapplies/neverapplies.msi"
 must_fail_with "fitness-built-msi when no MSI exists and one is required (release job)" 'no built MSI found' builtmsi -require -glob "$bm/none/*.msi"
 must_pass "fitness-built-msi prints inactive, not a pass, when no MSI exists" bash -c "go run ./tools/fitness/builtmsi -glob '$bm/none/*.msi' | grep -q '^fitness-built-msi: inactive'"
 

@@ -159,6 +159,86 @@ func TestOtherTables(t *testing.T) {
 	}
 }
 
+func judgeWith(t *testing.T, f fx, extra func(dir string)) string {
+	t.Helper()
+	dir := t.TempDir()
+	idt(t, dir, "ServiceInstall", siCols, []string{"ServiceInstall"}, f.si...)
+	idt(t, dir, "MsiServiceConfig", mcCols, []string{"MsiServiceConfig"}, f.mc...)
+	extra(dir)
+	tabs, err := LoadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Join(Judge(tabs, opts()), "\n")
+}
+
+func mustContain(t *testing.T, got, sub string) {
+	t.Helper()
+	if !strings.Contains(got, sub) {
+		t.Fatalf("want %q in %q", sub, got)
+	}
+}
+
+// security-architect finding 1: a permission row must not be vouched for by a CustomAction Id.
+func TestLockPermissionsNeverAllowedByActionId(t *testing.T) {
+	f := goodFx()
+	f.si = append(f.si, []string{"GrantChannel", "Other", `NT SERVICE\Other`, "", "C1"})
+	got := judgeWith(t, f, func(d string) {
+		idt(t, d, "MsiLockPermissionsEx", []string{"MsiLockPermissionsEx", "LockObject", "Table", "SDDLText"}, []string{"MsiLockPermissionsEx"}, []string{"L1", "GrantChannel", "ServiceInstall", "D:(A;;GA;;;WD)"})
+	})
+	mustContain(t, got, `MsiLockPermissionsEx row "L1"`)
+	got = judgeWith(t, goodFx(), func(d string) {
+		idt(t, d, "LockPermissions", []string{"LockObject", "Table", "Domain", "User", "Permission"}, []string{"LockObject", "Table", "Domain", "User"}, []string{"WriteConfig", "CreateFolder", "", "Everyone", "2048"})
+	})
+	mustContain(t, got, "LockPermissions row")
+}
+
+// security-architect finding 2: a setting row that never applies must not count.
+func TestServiceConfigMustApplyOnInstall(t *testing.T) {
+	f := goodFx()
+	f.mc[0][2] = "2" // uninstall only
+	wantFail(t, f, "does not apply on install")
+	f = goodFx()
+	f.mc[1][2] = "8"
+	wantFail(t, f, "does not apply on install")
+	f = goodFx()
+	f.mc[0][5] = "C2"
+	wantFail(t, f, "not the component that installs the service")
+	got := judgeWith(t, goodFx(), func(d string) {
+		idt(t, d, "Component", []string{"Component", "Condition"}, []string{"Component"}, []string{"C1", "0"})
+	})
+	mustContain(t, got, "has Condition")
+}
+
+// security-architect finding 3: tables that run code or change service behaviour are deny by default.
+func TestBehaviourTables(t *testing.T) {
+	cases := []struct {
+		table string
+		cols  []string
+		keys  []string
+		row   []string
+		want  string
+	}{
+		{"MsiEmbeddedChainer", []string{"MsiEmbeddedChainer", "Condition", "CommandLine", "Source", "Type"}, []string{"MsiEmbeddedChainer"}, []string{"ch", "", "", "Bin", "2"}, `MsiEmbeddedChainer row "ch"`},
+		{"MsiEmbeddedUI", []string{"MsiEmbeddedUI", "FileName", "Attributes", "MessageFilter", "Data"}, []string{"MsiEmbeddedUI"}, []string{"ui", "x.dll", "1", "0", "x"}, `MsiEmbeddedUI row "ui"`},
+		{"MsiServiceConfigFailureActions", []string{"MsiServiceConfigFailureActions", "Name", "Event", "Actions", "Command"}, []string{"MsiServiceConfigFailureActions"}, []string{"fa", "activeDIQAgent", "1", "1[~]2", ""}, "reboots the host"},
+		{"MsiServiceConfigFailureActions", []string{"MsiServiceConfigFailureActions", "Name", "Event", "Actions", "Command"}, []string{"MsiServiceConfigFailureActions"}, []string{"fa", "activeDIQAgent", "1", "0", "calc.exe"}, "would run on service failure"},
+		{"ServiceControl", []string{"ServiceControl", "Name", "Event"}, []string{"ServiceControl"}, []string{"sc", "NTDS", "160"}, `ServiceControl row "sc"`},
+	}
+	for _, c := range cases {
+		got := judgeWith(t, goodFx(), func(d string) { idt(t, d, c.table, c.cols, c.keys, c.row) })
+		mustContain(t, got, c.want)
+	}
+	// the agent's own ServiceControl and a restart-only failure action stay allowed
+	got := judgeWith(t, goodFx(), func(d string) {
+		idt(t, d, "ServiceControl", []string{"ServiceControl", "Name", "Event"}, []string{"ServiceControl"}, []string{"sc", "activeDIQAgent", "160"})
+		idt(t, d, "MsiServiceConfigFailureActions", []string{"MsiServiceConfigFailureActions", "Name", "Event", "Actions", "Command"}, []string{"MsiServiceConfigFailureActions"}, []string{"fa", "activeDIQAgent", "1", "1[~]1[~]0", ""})
+	})
+	if got != "" {
+		t.Fatalf("allowed rows flagged: %s", got)
+	}
+}
+
 // End to end: a real MSI built by wixl (msitools), dumped by msidump. Skipped without msitools; the proof
 // script (make ci-proof) requires them and runs the same cases.
 func TestRealMSI(t *testing.T) {
