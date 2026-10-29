@@ -90,6 +90,11 @@ func StreamAD(ctx context.Context, d ADDirectory, epoch *EpochState, req *v1.Ver
 	if err != nil {
 		return err
 	}
+	root, err := ParseGUID(directory.GetAdForest().GetForestRootNcGuid())
+	if err != nil {
+		return errNoDirectoryIdentity
+	}
+	in.RootNC = &root
 	started := now()
 	res, err := VerifyAD(ctx, d, in)
 	if err != nil {

@@ -94,6 +94,10 @@ type ADInput struct {
 	EnabledFamilies []v1.RightsFamily
 	// ManagedDomains are the domain NC heads (V8) and ManagedRoots the delegation roots (V9).
 	ManagedDomains, ManagedRoots []adguid.GUID
+	// RootNC is the head of the NC the connector is bound to (the forest root NC). V8 reads it when
+	// ManagedDomains is empty, which is every first run: V5 has not yet recorded the identity, so
+	// the server has no managed domain to send. Nil with no ManagedDomains is COULD_NOT_VERIFY.
+	RootNC *adguid.GUID
 	// Designated and Correlated add to the computed tier0 set (customer designations, C16).
 	Designated, Correlated []adguid.GUID
 	// PinnedC13 are the C13 group GUIDs pinned for the connection (TM-D26 rule 10). The default
