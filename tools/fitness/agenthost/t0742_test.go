@@ -52,30 +52,33 @@ func TestT0742DirectoryRetarget(t *testing.T) {
 	// An unrelated Property is fine.
 	wantClean(t, run(nil, pinned+`<Property Id="SomeFlag" Value="1"/>`))
 
-	// T-0742 review: Type 35/51 CustomActions and UI Publish/Control paths retarget too, even when allow-listed.
-	ui := func(el string) string { return `<UI><Dialog Id="D">` + el + `</Dialog></UI>` }
+	// Type 35/51 CustomActions retarget too, even when allow-listed.
 	for _, el := range []string{
 		`<CustomAction Id="Ret" Directory="LogDir" Value="[System64Folder]"/>`,
 		`<CustomAction Id="Ret" Property="LogDir" Value="C:\Windows\System32"/>`,
-		ui(`<Control Id="P" Type="PathEdit" Property="LogDir"/>`),
-		ui(`<Control Id="P" Type="DirectoryCombo" Property="LogDir"/>`),
-		ui(`<Control Id="P" Type="DirectoryList" Property="LogDir"/>`),
-		ui(`<Control Id="B" Type="PushButton"><Publish Property="LogDir" Value="C:\x"/></Control>`),
-		ui(`<Control Id="B" Type="PushButton"><Publish Event="SetTargetPath" Value="[LogDir]"/></Control>`),
-		ui(`<Control Id="B" Type="PushButton"><Publish Event="settargetpath" Value="LogDir"/></Control>`),
 	} {
 		wantViolation(t, run([]string{"Ret"}, pinned+el), "retargets a directory that a Permission acts on")
 		wantViolation(t, run([]string{"Ret"}, pinned, el), "retargets a directory that a Permission acts on")
 	}
-	// Against an unpinned Directory they fail rule 2.
-	for _, el := range []string{
-		`<CustomAction Id="Ret" Directory="DataDir" Value="[System64Folder]"/>`,
-		ui(`<Control Id="P" Type="PathEdit" Property="DataDir"/>`),
-		ui(`<Control Id="B" Type="PushButton"><Publish Event="SetTargetPath" Value="[DataDir]"/></Control>`),
-	} {
-		wantViolation(t, run([]string{"Ret"}, pinned+other+el), "also the Id of a Directory")
-	}
+	wantViolation(t, run([]string{"Ret"}, pinned+other+`<CustomAction Id="Ret" Directory="DataDir" Value="[System64Folder]"/>`), "also the Id of a Directory")
 	// Directory without Value (working directory) and unrelated properties stay clean.
 	wantClean(t, run([]string{"Ret"}, pinned+`<CustomAction Id="Ret" Directory="LogDir" ExeCommand="x"/>`))
-	wantClean(t, run([]string{"Ret"}, pinned+`<CustomAction Id="Ret" Property="Flag" Value="1"/>`+ui(`<Control Id="P" Type="Edit" Property="Flag"/>`)))
+	wantClean(t, run([]string{"Ret"}, pinned+`<CustomAction Id="Ret" Property="Flag" Value="1"/>`))
+
+	// Fail closed on installer UI: formatted and indirect properties make every per-type rule bypassable.
+	ui := func(el string) string { return `<UI><Dialog Id="D">` + el + `</Dialog></UI>` }
+	for _, el := range []string{
+		`<UI/>`,
+		`<UIRef Id="WixUI_InstallDir"/>`,
+		ui(`<Control Id="B" Type="PushButton"><Publish Event="[LogDir]" Value="C:\Windows\System32"/></Control>`),
+		`<Property Id="P" Value="LogDir"/>` + ui(`<Control Id="B" Type="PushButton"><Publish Event="SetTargetPath" Value="[P]"/></Control>`),
+		`<Property Id="P" Value="LogDir"/>` + ui(`<Control Id="E" Type="PathEdit" Property="P" Indirect="yes"/>`),
+		ui(`<Control Id="E" Type="Edit" Property="LogDir"/>`),
+		ui(`<Control Id="E" Type="ComboBox" Property="LogDir"/>`),
+		ui(`<Control Id="E" Type="RadioButtonGroup" Property="LogDir"/>`),
+		ui(`<Control Id="B" Type="PushButton"><Publish Event="SetTargetPath" Value=" LogDir "/></Control>`),
+	} {
+		wantViolation(t, run([]string{"Ret", "D", "B", "E", "P"}, pinned+el), "installer-allow.txt cannot approve one")
+		wantViolation(t, run([]string{"Ret", "D", "B", "E", "P"}, pinned, el), "installer-allow.txt cannot approve one")
+	}
 }

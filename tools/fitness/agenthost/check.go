@@ -1611,22 +1611,11 @@ func judgeInstallerXML(rel string, b []byte, allow []string, agentFile bool) ins
 			if _, hasValue := e.Attrs["value"]; hasValue && e.Attrs["directory"] != "" {
 				f.propIDs = append(f.propIDs, e.Attrs["directory"])
 			}
-		case "Publish":
-			// T-0742: the SetProperty ControlEvent ([Property] / Property=X Value=...) and SetTargetPath.
-			if p := e.Attrs["property"]; p != "" {
-				f.propIDs = append(f.propIDs, p)
-			}
-			if strings.EqualFold(e.Attrs["event"], "SetTargetPath") && e.Attrs["value"] != "" {
-				f.propIDs = append(f.propIDs, strings.Trim(e.Attrs["value"], "[]"))
-			}
-		case "Control":
-			// T-0742: a path-entry control writes its Property from user input; a hidden default does the same.
-			switch strings.ToLower(e.Attrs["type"]) {
-			case "pathedit", "directorycombo", "directorylist":
-				if p := e.Attrs["property"]; p != "" {
-					f.propIDs = append(f.propIDs, p)
-				}
-			}
+		case "UI", "UIRef", "Dialog", "DialogRef", "Control", "Publish", "Subscribe", "ProgressText", "TextStyle":
+			// T-0742: fail closed. UI properties and events are Formatted and indirect ([Prop], Indirect=yes,
+			// WIXUI_INSTALLDIR), so enumerating spellings that set a directory will keep missing variants. The
+			// agent installer has no UI; installer-allow.txt cannot approve one. Lift only with a UI threat model.
+			f.violations = append(f.violations, fmt.Sprintf("%s: %s element in an installer source: UI can set any directory through formatted or indirect properties, so the reviewed permission pins cannot be trusted; the agent installer has no UI and installer-allow.txt cannot approve one (T-0742)", rel, e.Name))
 		}
 	}
 	// Rule 3 for EVERY service: the SID type and privileges of each ServiceInstall (its own attributes, its
