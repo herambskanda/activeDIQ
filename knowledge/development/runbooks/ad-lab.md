@@ -228,3 +228,13 @@ belongs to the CI ticket (T-0015).
 - Snapshots live in a Docker volume. CI caching of snapshots by seed version (playbook §4) is part
   of the CI integration ticket.
 - Lab ages drift with real time (§2); `make lab-rebuild` refreshes.
+
+## O8 pipeline suite (T-0788)
+
+ADR-0005 fitness row O8 is pinned by `internal/platform/operation/o8_manifest_test.go`, which maps each
+clause to named tests and fails if a named test disappears. Postgres tests run in
+`go test ./internal/platform/operation/...` (both PG versions); the Samba arm is
+`go test -tags lab ./internal/compose/server -run TestLabO8` (needs `make lab-up`; it moves a user out of
+the delegated OU with `labadmin.Admin.Move`). Entra root kinds can only be driven against a fake; those
+cases are expected failures until T-0824 (they fail loudly once the product is fixed). Open gaps: T-0830
+(undo of a failed item), T-0831 (Provenance implementation).
