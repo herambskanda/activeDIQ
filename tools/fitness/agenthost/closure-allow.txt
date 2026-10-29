@@ -12,7 +12,7 @@
 github.com/skenzeriq/activediq/cmd/agent
 github.com/skenzeriq/activediq/internal/compose/agent
 github.com/skenzeriq/activediq/internal/compose/config
-github.com/skenzeriq/activediq/internal/agenthost/api
+github.com/skenzeriq/activediq/internal/agenthost/hostapi
 github.com/skenzeriq/activediq/internal/agentmodules/...
 github.com/skenzeriq/activediq/internal/platform/agent
 github.com/skenzeriq/activediq/internal/platform/agentpolicy

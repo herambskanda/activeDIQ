@@ -24,9 +24,14 @@ import (
 	"os"
 
 	"github.com/skenzeriq/activediq/internal/platform/fleet/dial"
+	"github.com/skenzeriq/activediq/internal/platform/prochardening"
 )
 
 func main() {
+	if err := prochardening.Apply(os.Getenv); err != nil {
+		fmt.Fprintln(os.Stderr, "agentsetup:", err)
+		os.Exit(2)
+	}
 	os.Exit(run(os.Args[1:]))
 }
 
