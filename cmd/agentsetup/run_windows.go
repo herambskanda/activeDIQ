@@ -28,7 +28,7 @@ func run(args []string) int {
 			fmt.Fprintln(os.Stderr, "agentsetup:", err)
 			return 1
 		}
-		return repin(filepath.Join(root, "enrol"), pin, auditRepin)
+		return runRepin(filepath.Join(root, "enrol"), pin, invokingActor(), openRepinAudit)
 	}
 	verb, ok := parseVerb(args)
 	if !ok {
@@ -336,18 +336,34 @@ func warnRevokeFailed(cause error) {
 	_ = l.Warning(4101, "uninstall could not remove the Security event log read permission for NT SERVICE\\activeDIQAgent; remove it with wevtutil sl Security or by repeating the uninstall. Cause: "+cause.Error())
 }
 
-// auditRepin records a use of repin in the Application log (event 4102: success, 4103: failure) and
-// on stderr. Pins are public values; no key material is involved.
-func auditRepin(msg string, failed bool) {
-	fmt.Fprintln(os.Stderr, "agentsetup:", msg)
-	l, err := eventlog.Open("activeDIQAgent")
+// invokingActor names the account (SID and, when resolvable, DOMAIN\name) running this process and
+// the host. The event log itself records no user for a source-written event, so it goes in the text.
+func invokingActor() string {
+	host, _ := os.Hostname()
+	tu, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil {
-		return
+		return "unknown account on " + host
 	}
-	defer l.Close()
-	if failed {
-		_ = l.Error(4103, msg)
-		return
+	who := tu.User.Sid.String()
+	if name, domain, _, err := tu.User.Sid.LookupAccount(""); err == nil {
+		who = domain + `\` + name + " (" + who + ")"
 	}
-	_ = l.Info(4102, msg)
+	return who + " on " + host
+}
+
+// openRepinAudit opens the registered agent event source. Events: 4102 success, 4103 failure. The
+// message is also echoed on stderr. Pins are public values; no key material is involved.
+func openRepinAudit() (auditSink, func(), error) {
+	l, err := eventlog.Open(agentEventSource)
+	if err != nil {
+		return nil, nil, err
+	}
+	return func(msg string, failed bool) {
+		fmt.Fprintln(os.Stderr, "agentsetup:", msg)
+		if failed {
+			_ = l.Error(4103, msg)
+			return
+		}
+		_ = l.Info(4102, msg)
+	}, func() { l.Close() }, nil
 }

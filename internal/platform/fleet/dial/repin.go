@@ -83,6 +83,14 @@ func repin(ctx context.Context, dir string, st *State, np Pin) error {
 		{PinFile, []byte(np.String() + "\n")},
 		{CAFile, toPEM(final...)},
 	}
+	// Every intermediate state must load: prove each bundle parses under the pin in force when it is
+	// written (the transition under the old pin, the last under the new one) before anything is written.
+	if _, err := ParseBundle(steps[0].data, st.Pin); err != nil {
+		return fmt.Errorf("%w: transition bundle would not load: %v", ErrRepin, err)
+	}
+	if _, err := ParseBundle(steps[2].data, np); err != nil {
+		return fmt.Errorf("%w: final bundle would not load: %v", ErrRepin, err)
+	}
 	for _, s := range steps {
 		if err := writeFile(filepath.Join(dir, s.name), s.data); err != nil {
 			return fmt.Errorf("%w: persisting: %v", ErrRepin, err)
