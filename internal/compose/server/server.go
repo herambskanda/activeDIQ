@@ -100,7 +100,11 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	if err != nil {
 		return err
 	}
-	dirClient := directoryFacts(reads, client.WithTier0Builder(t0))
+	vopts, err := verifyOptions(src)
+	if err != nil {
+		return err
+	}
+	dirClient := directoryFacts(reads, append(vopts, client.WithTier0Builder(t0))...)
 	authzr, err := rbacAuthorizer(db, dirClient)
 	if err != nil {
 		return err
@@ -152,6 +156,10 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	// Modules and platform packages contribute job kinds to this registry; the worker runs it.
 	jreg := jobs.NewRegistry()
 	if _, err := buildConnections(db, ok.Chainer, dirClient, jreg); err != nil {
+		return err
+	}
+	// The tenant, its data key and its audit genesis exist before anything listens or the worker claims.
+	if _, err := bootstrapTenant(ctx, cfg, db, ok.Chainer, kekp, jreg); err != nil {
 		return err
 	}
 	ln, err := net.Listen("tcp", cfg.APIAddr)
