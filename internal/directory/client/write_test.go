@@ -29,11 +29,12 @@ const (
 	objGUID = "6f1c2a40-0000-4000-8000-0000000000bb"
 	ncGUID  = "6f1c2a40-0000-4000-8000-0000000000cc"
 
+	otherNC  = authority.NamingContextID("6f1c2a40-0000-4000-8000-0000000000dd")
 	testKind = connectorv1.WriteKind(7)
 )
 
 var (
-	testTarget = authority.TargetRef{Connection: "c1", GUID: objGUID, Class: "user"}
+	testTarget = authority.TargetRef{Connection: "c1", GUID: objGUID, Class: "user", NC: ncGUID}
 	testAttrs  = []step.Attr{{Name: "description", Values: []string{"new"}}}
 )
 
@@ -70,12 +71,34 @@ func (f *facts) Facts(context.Context, authority.Pins, authority.FactsQuery) (au
 // withStep runs fn inside the Apply of a runner-minted Step whose digest covers testTarget/testAttrs.
 func withStep(t *testing.T, fn func(ctx context.Context, s step.Step)) {
 	t.Helper()
+	withStepOf(t, testTarget, authority.Pins{ncGUID: "dc1.corp.example"}, fn)
+}
+
+const dsaGUID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+func dsasFor(pins authority.Pins) authority.DSAPins {
+	d := authority.DSAPins{}
+	for nc := range pins {
+		d[nc] = dsaGUID
+	}
+	return d
+}
+
+// withStepOf is withStep for a chosen digested target and DC pin set.
+func withStepOf(t *testing.T, target authority.TargetRef, pins authority.Pins, fn func(ctx context.Context, s step.Step)) {
+	t.Helper()
+	withStepDSA(t, target, pins, dsasFor(pins), fn)
+}
+
+// withStepDSA is withStepOf with an explicit DSA pin set.
+func withStepDSA(t *testing.T, target authority.TargetRef, pins authority.Pins, dsas authority.DSAPins, fn func(ctx context.Context, s step.Step)) {
+	t.Helper()
 	type none struct{}
 	a, err := operation.Define(operation.Typed[none, none, none]{
 		Descriptor: operation.Descriptor{ID: "settings.thing.set", Version: 1, Permission: "settings.thing.set",
 			Input: "#/components/schemas/Thing", Target: operation.TargetStore, Reversibility: operation.Irreversible, AuditKind: "settings.thing.changed"},
 		Plan: func(context.Context, operation.PlanContext, none) ([]operation.TypedStep[none], error) {
-			return []operation.TypedStep[none]{{Plan: operation.StepPlan{Target: testTarget, Kind: "user.set", Reversibility: operation.Reversible,
+			return []operation.TypedStep[none]{{Plan: operation.StepPlan{Target: target, Kind: "user.set", Reversibility: operation.Reversible,
 				Diff: []operation.Change{{Attribute: "description", Before: []string{"old"}, After: []string{"new"}}}}}}, nil
 		},
 		Apply: func(ctx context.Context, s step.Step, _ operation.TypedStep[none]) (none, error) {
@@ -100,7 +123,7 @@ func withStep(t *testing.T, fn func(ctx context.Context, s step.Step)) {
 		t.Fatal(err)
 	}
 	_, err = r.RunStore(context.Background(), operation.Request{Tenant: tenant.New(), Operation: opID, Action: "settings.thing.set",
-		Input: operation.Input(`{}`), Actor: authority.Chain{Requester: authority.Principal{ID: account, Kind: authority.Human}}})
+		Input: operation.Input(`{}`), Pins: pins, DSAs: dsas, Actor: authority.Chain{Requester: authority.Principal{ID: account, Kind: authority.Human}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +154,9 @@ type transport struct {
 	noOp           bool
 	planErr        error
 	planReq        *connectorv1.PlanRequest
-	applyReq       *connectorv1.ApplyRequest
+	// otherDC makes the connector answer with a precondition from a different DC.
+	otherDC  bool
+	applyReq *connectorv1.ApplyRequest
 }
 
 func (tr *transport) Plan(_ context.Context, r *connectorv1.PlanRequest) (*connectorv1.PlanResponse, error) {
@@ -140,7 +165,12 @@ func (tr *transport) Plan(_ context.Context, r *connectorv1.PlanRequest) (*conne
 	if tr.planErr != nil {
 		return nil, tr.planErr
 	}
-	return &connectorv1.PlanResponse{NoOp: tr.noOp, Precondition: &connectorv1.TargetPrecondition{StateDigest: []byte{1}}}, nil
+	dsa := r.GetDc().GetPinnedDsaGuid()
+	if tr.otherDC {
+		dsa = &connectorv1.Guid{Value: []byte("0123456789abcdef")}
+	}
+	return &connectorv1.PlanResponse{NoOp: tr.noOp, Precondition: &connectorv1.TargetPrecondition{
+		Dc: &connectorv1.DcIdentity{DsaGuid: dsa}, StateDigest: []byte{1}}}, nil
 }
 func (tr *transport) Apply(_ context.Context, r *connectorv1.ApplyRequest) (*connectorv1.ApplyResponse, error) {
 	tr.applies++
@@ -163,6 +193,7 @@ func TestZeroStepRefusedBeforeTransport(t *testing.T) {
 func TestRevokedStepRefused(t *testing.T) {
 	var kept step.Step
 	tr := &transport{}
+	//fitness:allow-step-escape proves a smuggled copy is refused after the runner revokes it (O1 is the static half)
 	withStep(t, func(_ context.Context, s step.Step) { kept = s })
 	c := New(WithTransport(tr), WithFacts(&facts{}), WithTier0Builder(&builder{}))
 	if _, err := c.Write(context.Background(), kept, goodOp()); !errors.Is(err, step.ErrRevoked) {
@@ -293,7 +324,8 @@ func TestMismatchedOpRefusedBeforeTransport(t *testing.T) {
 		"other object":     {func(o *WriteOp) { o.Target.GUID = ncGUID }, ErrDigest},
 		"unknown kind":     {func(o *WriteOp) { o.DigestKind = "user.unknown" }, ErrUnknownKind},
 		"no connection":    {func(o *WriteOp) { o.Target.Connection = "" }, ErrInvalidOp},
-		"bad nc":           {func(o *WriteOp) { o.NC = "not-a-guid" }, ErrInvalidOp},
+		"other nc":         {func(o *WriteOp) { o.Target.NC = otherNC }, ErrDigest},
+		"empty nc":         {func(o *WriteOp) { o.Target.NC = "" }, ErrDigest},
 	}
 	for name, tc := range cases {
 		tr := &transport{}
@@ -314,9 +346,8 @@ func TestMismatchedOpRefusedBeforeTransport(t *testing.T) {
 func TestADOpWithoutDCPinRefused(t *testing.T) {
 	tr, f := &transport{}, &facts{}
 	c := New(WithTransport(tr), WithFacts(f), WithTier0Builder(&builder{}))
-	withStep(t, func(ctx context.Context, s step.Step) {
+	withStepOf(t, testTarget, nil, func(ctx context.Context, s step.Step) {
 		op := goodOp()
-		op.NC = ncGUID
 		if _, err := c.Write(ctx, s, op); !errors.Is(err, ErrNoDCPin) {
 			t.Errorf("got %v, want ErrNoDCPin", err)
 		}
@@ -362,5 +393,170 @@ func TestTransportErrorTextNeverLeaks(t *testing.T) {
 				t.Errorf("%s: outcome %+v", name, o)
 			}
 		})
+	}
+}
+
+// A Step built over a target with no NC cannot be written: the empty NC never means "unpinned".
+func TestStepWithoutNCRefused(t *testing.T) {
+	tr, f := &transport{}, &facts{}
+	c := New(WithTransport(tr), WithFacts(f), WithTier0Builder(&builder{}))
+	noNC := testTarget
+	noNC.NC = ""
+	withStepOf(t, noNC, authority.Pins{ncGUID: "dc1.corp.example"}, func(ctx context.Context, s step.Step) {
+		op := goodOp()
+		op.Target.NC = ""
+		if _, err := c.Write(ctx, s, op); !errors.Is(err, ErrNoNC) {
+			t.Errorf("got %v, want ErrNoNC", err)
+		}
+	})
+	if tr.plans != 0 || f.n != 0 {
+		t.Fatal("facts or transport reached with no NC")
+	}
+}
+
+// An NC the Step also happens to pin is still refused when it is not the NC the Step was minted for.
+func TestOpNCOtherThanStepNCRefused(t *testing.T) {
+	tr, f := &transport{}, &facts{}
+	c := New(WithTransport(tr), WithFacts(f), WithTier0Builder(&builder{}))
+	withStepOf(t, testTarget, authority.Pins{ncGUID: "dc1.corp.example", otherNC: "dc2.corp.example"}, func(ctx context.Context, s step.Step) {
+		op := goodOp()
+		op.Target.NC = otherNC
+		if _, err := c.Write(ctx, s, op); !errors.Is(err, ErrDigest) {
+			t.Errorf("got %v, want ErrDigest", err)
+		}
+	})
+	if tr.plans != 0 || f.n != 0 {
+		t.Fatal("facts or transport reached with a foreign NC")
+	}
+}
+
+func TestPinReadsFactsOnStepNC(t *testing.T) {
+	tr := &transport{}
+	var got authority.Pins
+	c := New(WithTransport(tr), WithFacts(factsFunc(func(p authority.Pins) { got = p })), WithTier0Builder(&builder{}))
+	withStep(t, func(ctx context.Context, s step.Step) {
+		if _, err := c.Write(ctx, s, goodOp()); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if len(got) != 1 || got[ncGUID] != "dc1.corp.example" {
+		t.Errorf("facts read on pins %v", got)
+	}
+	if nc, _ := parseUUID(ncGUID); string(tr.planReq.GetTarget().GetNcGuid().GetValue()) != string(nc) {
+		t.Error("wire nc_guid is not the step's NC")
+	}
+}
+
+type factsFunc func(authority.Pins)
+
+func (f factsFunc) Facts(_ context.Context, p authority.Pins, _ authority.FactsQuery) (authority.Facts, error) {
+	f(p)
+	return authority.Facts{Exists: true}, nil
+}
+
+func TestPinsMutatedAfterMintDoNotRepointStep(t *testing.T) {
+	tr := &transport{}
+	var got authority.Pins
+	c := New(WithTransport(tr), WithFacts(factsFunc(func(p authority.Pins) { got = p })), WithTier0Builder(&builder{}))
+	pins := authority.Pins{ncGUID: "dc1.corp.example"}
+	withStepOf(t, testTarget, pins, func(ctx context.Context, s step.Step) {
+		pins[ncGUID] = "rogue.attacker.example"
+		if h, _ := s.DC(ncGUID); h != "dc1.corp.example" {
+			t.Errorf("step DC re-pointed to %q", h)
+		}
+		if _, err := c.Write(ctx, s, goodOp()); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if got[ncGUID] != "dc1.corp.example" {
+		t.Errorf("facts read on pins %v", got)
+	}
+}
+
+func TestPlanSendsPinnedDSAGUID(t *testing.T) {
+	tr := &transport{}
+	c := New(WithTransport(tr), WithFacts(&facts{}), WithTier0Builder(&builder{}))
+	withStep(t, func(ctx context.Context, s step.Step) {
+		if _, err := c.Write(ctx, s, goodOp()); err != nil {
+			t.Fatal(err)
+		}
+	})
+	want, _ := parseUUID(dsaGUID)
+	if got := tr.planReq.GetDc().GetPinnedDsaGuid().GetValue(); string(got) != string(want) {
+		t.Errorf("PlanRequest.Dc.PinnedDsaGuid = %x, want %x", got, want)
+	}
+}
+
+func TestApplyRefusedWhenPlanPreconditionNamesAnotherDC(t *testing.T) {
+	tr := &transport{otherDC: true}
+	c := New(WithTransport(tr), WithFacts(&facts{}), WithTier0Builder(&builder{}))
+	withStep(t, func(ctx context.Context, s step.Step) {
+		if _, err := c.Write(ctx, s, goodOp()); !errors.Is(err, ErrDCMismatch) {
+			t.Fatalf("got %v, want ErrDCMismatch", err)
+		}
+	})
+	if tr.plans != 1 || tr.applies != 0 {
+		t.Fatalf("plans %d applies %d, want 1 and 0", tr.plans, tr.applies)
+	}
+}
+
+func TestApplyRefusedWhenPlanPreconditionHasNoDC(t *testing.T) {
+	tr := &noDCTransport{}
+	c := New(WithTransport(tr), WithFacts(&facts{}), WithTier0Builder(&builder{}))
+	withStep(t, func(ctx context.Context, s step.Step) {
+		if _, err := c.Write(ctx, s, goodOp()); !errors.Is(err, ErrDCMismatch) {
+			t.Fatalf("got %v, want ErrDCMismatch", err)
+		}
+	})
+	if tr.applies != 0 {
+		t.Fatalf("applies %d, want 0", tr.applies)
+	}
+}
+
+type noDCTransport struct {
+	transport
+}
+
+func (tr *noDCTransport) Plan(context.Context, *connectorv1.PlanRequest) (*connectorv1.PlanResponse, error) {
+	return &connectorv1.PlanResponse{Precondition: &connectorv1.TargetPrecondition{StateDigest: []byte{1}}}, nil
+}
+
+func TestPlanWithoutDSAGUIDRefusedBeforeTransport(t *testing.T) {
+	for name, dsas := range map[string]authority.DSAPins{
+		"absent":    nil,
+		"empty":     {ncGUID: ""},
+		"malformed": {ncGUID: "not-a-guid"},
+		"nil":       {ncGUID: "00000000-0000-0000-0000-000000000000"},
+	} {
+		tr, f := &transport{}, &facts{}
+		c := New(WithTransport(tr), WithFacts(f), WithTier0Builder(&builder{}))
+		withStepDSA(t, testTarget, authority.Pins{ncGUID: "dc1.corp.example"}, dsas, func(ctx context.Context, s step.Step) {
+			if _, err := c.Write(ctx, s, goodOp()); !errors.Is(err, ErrNoDSAPin) {
+				t.Errorf("%s: got %v, want ErrNoDSAPin", name, err)
+			}
+		})
+		if tr.plans != 0 || tr.applies != 0 || f.n != 0 {
+			t.Errorf("%s: facts or transport reached without a DSA pin", name)
+		}
+	}
+}
+
+func TestDSAPinMutatedAfterMintDoesNotRepointStep(t *testing.T) {
+	tr := &transport{}
+	c := New(WithTransport(tr), WithFacts(&facts{}), WithTier0Builder(&builder{}))
+	pins := authority.Pins{ncGUID: "dc1.corp.example"}
+	dsas := authority.DSAPins{ncGUID: dsaGUID}
+	withStepDSA(t, testTarget, pins, dsas, func(ctx context.Context, s step.Step) {
+		dsas[ncGUID] = "11111111-1111-1111-1111-111111111111"
+		if g, _ := s.DSA(ncGUID); g != dsaGUID {
+			t.Errorf("step DSA re-pointed to %q", g)
+		}
+		if _, err := c.Write(ctx, s, goodOp()); err != nil {
+			t.Fatal(err)
+		}
+	})
+	want, _ := parseUUID(dsaGUID)
+	if got := tr.planReq.GetDc().GetPinnedDsaGuid().GetValue(); string(got) != string(want) {
+		t.Errorf("wire DSA GUID %x, want original %x", got, want)
 	}
 }

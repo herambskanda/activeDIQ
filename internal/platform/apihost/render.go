@@ -43,6 +43,11 @@ func newTraceID() string {
 // built; a validation error set becomes a validation problem; everything else is /problems/internal
 // with only the trace ID, and the real error goes to the log.
 func writeProblem(w http.ResponseWriter, r *http.Request, err error, log *slog.Logger) {
+	writeProblemChallenge(w, r, err, log, "Bearer")
+}
+
+// writeProblemChallenge is writeProblem with the WWW-Authenticate scheme a 401 carries.
+func writeProblemChallenge(w http.ResponseWriter, r *http.Request, err error, log *slog.Logger, challenge string) {
 	var p *apitypes.Problem
 	if !errors.As(err, &p) || p == nil {
 		trace := TraceID(r.Context())
@@ -65,7 +70,7 @@ func writeProblem(w http.ResponseWriter, r *http.Request, err error, log *slog.L
 	h.Set("Cache-Control", "no-store")
 	h.Set("X-Content-Type-Options", "nosniff")
 	if p.Status == http.StatusUnauthorized {
-		h.Add("WWW-Authenticate", "Bearer")
+		h.Add("WWW-Authenticate", challenge)
 	}
 	w.WriteHeader(int(p.Status))
 	_, _ = w.Write(body)
@@ -94,6 +99,15 @@ func writeResponse(w http.ResponseWriter, r *http.Request, meta RouteMeta, resp 
 	h := w.Header()
 	for k, v := range resp.ResponseHeaders() {
 		h.Set(k, v)
+	}
+	if hl, ok := resp.(HeaderLists); ok {
+		for k, vs := range hl.ResponseHeaderLists() {
+			for _, v := range vs {
+				if v != "" {
+					h.Add(k, v)
+				}
+			}
+		}
 	}
 	h.Set("Cache-Control", "no-store")
 	h.Set("X-Content-Type-Options", "nosniff")

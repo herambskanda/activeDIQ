@@ -3,9 +3,11 @@ package server
 import (
 	"context"
 	"net/http"
-	"time"
 
+	"github.com/skenzeriq/activediq/internal/modules/connections"
+	"github.com/skenzeriq/activediq/internal/modules/directory"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
+	"github.com/skenzeriq/activediq/internal/platform/notify/syslog"
 )
 
 // APIPolicy is the policy the server passes to apihost.Build: policy.yaml as embedded in the binary
@@ -20,14 +22,16 @@ func APIPolicy() apihost.Policy {
 	return p
 }
 
-// apiCatalogue is the EP-6 permission set; it is empty until the permission catalogue lands, so any
-// operation with a real permission fails Build rather than being served unguarded.
-var apiCatalogue = apihost.Permissions{}
+// apiCatalogue is the EP-6 permission set as far as mounted operations use it: Build fails an operation
+// whose permission is missing here rather than serving it unguarded.
+var apiCatalogue = apihost.Permissions{string(connections.TakeoverAttestPermission), syslog.ManagePermission, syslog.ReadPermission, string(directory.ReadPermission)}
 
-// failClosedPorts are the ports until the auth, RBAC, rate-limit and step-up kernels exist. They
-// refuse everything, so a route mounted before the real ports are injected cannot be reached.
-func failClosedPorts() apihost.Ports {
-	return apihost.Ports{Authn: denyAuthn{}, Authz: denyAuthz{}, Limits: denyLimits{}, StepUp: denyStepUp{}}
+// failClosedPorts are the ports with no console stack behind them: authentication, RBAC and step-up
+// refuse everything, so a route mounted on them cannot be reached. Tests use them; Run mounts
+// consoleStack.ports instead. Limits is the real limiter (per-IP in memory, per-principal in the shared
+// store).
+func failClosedPorts(lim apihost.Limiter) apihost.Ports {
+	return apihost.Ports{Authn: denyAuthn{}, Authz: denyAuthz{}, Limits: lim, StepUp: denyStepUp{}}
 }
 
 type denyAuthn struct{}
@@ -41,15 +45,6 @@ type denyAuthz struct{}
 
 func (denyAuthz) Allow(context.Context, apihost.Principal, string, string) (bool, error) {
 	return false, nil
-}
-
-type denyLimits struct{}
-
-func (denyLimits) AllowIP(context.Context, string, string) (apihost.Decision, error) {
-	return apihost.Decision{RetryAfter: time.Second}, nil
-}
-func (denyLimits) AllowPrincipal(context.Context, string, apihost.Principal) (apihost.Decision, error) {
-	return apihost.Decision{RetryAfter: time.Second}, nil
 }
 
 type denyStepUp struct{}

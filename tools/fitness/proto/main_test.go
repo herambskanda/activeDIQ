@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/bufbuild/protocompile/linker"
 )
 
 // base is a clean contract: one RPC, its Operation value, APPLY and the two reserved names.
@@ -56,9 +58,40 @@ func TestRepositoryContractPasses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if vs := Lint(files); len(vs) != 0 {
+	if vs := append(Lint(files), RequireFleet(files)...); len(vs) != 0 {
 		t.Fatalf("proto/ violates its own rules: %v", vs)
 	}
+}
+
+// TestRequireFleet: a tree without activediq.fleet.v1 fails F11 (T-0185 criterion 3).
+func TestRequireFleet(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "t.proto"), []byte(base), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	files, err := Compile(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rules(RequireFleet(files)); got != "F11" {
+		t.Fatalf("want F11, got %q", got)
+	}
+	if vs, err := lint(t, fleetBase); err != nil || len(RequireFleet(mustCompile(t, fleetBase))) != 0 || len(vs) != 0 {
+		t.Fatalf("fleet tree must satisfy F11: %v %v", vs, err)
+	}
+}
+
+func mustCompile(t *testing.T, src string) linker.Files {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "t.proto"), []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	files, err := Compile(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return files
 }
 
 func TestViolations(t *testing.T) {
@@ -144,6 +177,11 @@ func TestFleetViolations(t *testing.T) {
 		{"F1 tunnel not bidirectional", "F1", r(fleetBase, "rpc Tunnel(stream TunnelFrame) returns (stream TunnelFrame)", "rpc Tunnel(TunnelFrame) returns (stream TunnelFrame)", 1)},
 		{"F1 tunnel missing", "F1", r(fleetBase, "  rpc Tunnel(stream TunnelFrame) returns (stream TunnelFrame);\n", "", 1)},
 		{"F1 second service", "F1", fleetBase + "service Other { rpc X(EnrollRequest) returns (EnrollResponse); }\n"},
+		{"F1 tunnel input is EnrollRequest", "F1", r(fleetBase, "rpc Tunnel(stream TunnelFrame)", "rpc Tunnel(stream EnrollRequest)", 1)},
+		{"F1 tunnel output is EnrollRequest", "F1", r(fleetBase, "returns (stream TunnelFrame)", "returns (stream EnrollRequest)", 1)},
+		{"F1 tunnel on another message", "F1", r(r(fleetBase, "rpc Tunnel(stream TunnelFrame) returns (stream TunnelFrame)", "rpc Tunnel(stream Other) returns (stream Other)", 1), "service Fleet {", "message Other { bytes b = 1; }\nservice Fleet {", 1)},
+		{"F1 EnrollRequest used by a second rpc", "F1", r(fleetBase, "service Fleet {", "service Fleet { rpc Ping(EnrollRequest) returns (EnrollResponse);", 1)},
+		{"F1 EnrollRequest as another rpc output", "F1", r(fleetBase, "service Fleet {", "message PingRequest {}\nservice Fleet { rpc Ping(PingRequest) returns (EnrollRequest);", 1)},
 		{"F5 streaming enroll", "F5", r(fleetBase, "rpc Enroll(EnrollRequest)", "rpc Enroll(stream EnrollRequest)", 1)},
 		{"F2 tenant in a request", "F2", r(fleetBase, "bytes csr_der = 2;", "bytes csr_der = 2; string tenant_id = 3;", 1)},
 		{"F2 tenant in a response", "F2", r(fleetBase, "bytes ca_bundle_pem = 2;", "bytes ca_bundle_pem = 2; string tenant = 3;", 1)},

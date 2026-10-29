@@ -64,16 +64,20 @@ func (s sink) Append(_ context.Context, tx store.Tx, ev audit.Event) error {
 }
 
 type authzFake struct {
-	deny   map[authority.PrincipalID]bool // principals refused
-	denyAt atomic.Int32                   // refuse starting at the nth Authorize call (1-based), 0 = never
-	calls  atomic.Int32
+	deny    map[authority.PrincipalID]bool // principals refused
+	denyAt2 map[[2]string]bool             // (principal, target GUID) pairs refused
+	denyAt  atomic.Int32                   // refuse starting at the nth Authorize call (1-based), 0 = never
+	calls   atomic.Int32
 }
 
 func (*authzFake) FactsQuery(_ authority.Chain, _ authz.Permission, t authority.TargetRef) authority.FactsQuery {
 	return authority.FactsQuery{Target: t}
 }
-func (a *authzFake) Authorize(_ context.Context, c authority.Chain, _ authz.Permission, _ authority.TargetRef, _ authority.Facts) error {
+func (a *authzFake) Authorize(_ context.Context, c authority.Chain, _ authz.Permission, tr authority.TargetRef, _ authority.Facts) error {
 	n := a.calls.Add(1)
+	if a.denyAt2[[2]string{string(c.Requester.ID), tr.GUID}] {
+		return errors.New("not in scope")
+	}
 	if a.deny[c.Requester.ID] || (a.denyAt.Load() > 0 && n >= a.denyAt.Load()) {
 		return errors.New("not in scope")
 	}
@@ -81,12 +85,17 @@ func (a *authzFake) Authorize(_ context.Context, c authority.Chain, _ authz.Perm
 }
 
 type factsFake struct {
-	tier0 bool
-	err   error
+	tier0   bool
+	err     error
+	errOn   map[string]bool // target GUIDs whose facts are unavailable
+	tier0On map[string]bool // target GUIDs that are Tier-0
 }
 
-func (f factsFake) Facts(context.Context, authority.Pins, authority.FactsQuery) (authority.Facts, error) {
-	return authority.Facts{Exists: true, Tier0: f.tier0}, f.err
+func (f factsFake) Facts(_ context.Context, _ authority.Pins, q authority.FactsQuery) (authority.Facts, error) {
+	if f.errOn[q.Target.GUID] {
+		return authority.Facts{}, errors.New("facts down")
+	}
+	return authority.Facts{Exists: true, Tier0: f.tier0 || f.tier0On[q.Target.GUID]}, f.err
 }
 
 type in struct{ Name string }
@@ -100,6 +109,7 @@ type behaviour struct {
 	onApply  func(step.Step)
 	plan     func() []TypedStep[payload]
 	class    Reversibility
+	onPlan   func(PlanContext)
 }
 
 func (b behaviour) action(t *testing.T, db *fakeDB) Action {
@@ -109,7 +119,10 @@ func (b behaviour) action(t *testing.T, db *fakeDB) Action {
 	a, err := Define(Typed[in, payload, out]{
 		Descriptor: Descriptor{ID: "settings.thing.set", Version: 1, Permission: "settings.thing.set",
 			Input: "#/components/schemas/Thing", Target: TargetStore, Reversibility: Irreversible, AuditKind: "settings.thing.changed"},
-		Plan: func(_ context.Context, _ PlanContext, i in) ([]TypedStep[payload], error) {
+		Plan: func(_ context.Context, pc PlanContext, i in) ([]TypedStep[payload], error) {
+			if b.onPlan != nil {
+				b.onPlan(pc)
+			}
 			if b.plan != nil {
 				return b.plan(), nil
 			}
@@ -279,6 +292,7 @@ func TestTier0AndUnreadableFactsAreRefused(t *testing.T) {
 
 func TestSmuggledStepIsDeadAfterApply(t *testing.T) {
 	var kept step.Step
+	//fitness:allow-step-escape proves a smuggled copy is dead after Apply (O1 is the static half)
 	r, _ := newRunner(t, behaviour{verifyOK: true, onApply: func(s step.Step) { kept = s }}, nil, factsFake{}, sink{})
 	if _, err := r.RunStore(context.Background(), req()); err != nil {
 		t.Fatal(err)
@@ -443,7 +457,10 @@ func TestRequestAndTargetValidation(t *testing.T) {
 		Verify: func(context.Context, step.Step, TypedStep[payload], out) (Verdict, error) {
 			return Verdict{OK: true}, nil
 		},
-		Inverse: func(TypedStep[payload], out) (in, error) { return in{}, nil }})
+		Inverse: func(TypedStep[payload], out) (in, error) { return in{}, nil },
+		Observe: func(context.Context, authority.Pins, TypedStep[payload], time.Time) (Observation, error) {
+			return ObservedBefore, nil
+		}})
 	reg, _ := NewRegistry(a)
 	r2, _ := NewRunner(Config{DB: db, Audit: sink{}, Authz: &authzFake{}, Registry: reg})
 	rq := req()
@@ -484,5 +501,234 @@ func TestRegistry(t *testing.T) {
 	}
 	if _, err := Define(Typed[in, payload, out]{Descriptor: bad}); !errors.Is(err, ErrInvalid) {
 		t.Errorf("Define without functions: %v", err)
+	}
+}
+
+// pinsFacts records the pins every Facts call was made with.
+type pinsFacts struct{ got *[]authority.Pins }
+
+func (p pinsFacts) Facts(_ context.Context, pins authority.Pins, _ authority.FactsQuery) (authority.Facts, error) {
+	*p.got = append(*p.got, pins)
+	return authority.Facts{Exists: true}, nil
+}
+
+func TestPlanAndGateReadFactsOnTheRequestPins(t *testing.T) {
+	pins := authority.Pins{"nc-1": "dc1.example"}
+	var got []authority.Pins
+	var planPins authority.Pins
+	b := behaviour{verifyOK: true, onPlan: func(pc PlanContext) {
+		planPins = pc.Pins
+		pc.Pins["nc-1"] = "mutated" // Plan's copy must not alias the request's
+	}}
+	r, _ := newRunner(t, b, nil, pinsFacts{&got}, sink{})
+	rq := req()
+	rq.Pins = pins
+	if _, err := r.RunStore(context.Background(), rq); err != nil {
+		t.Fatal(err)
+	}
+	if planPins["nc-1"] != "mutated" || pins["nc-1"] != "dc1.example" {
+		t.Fatalf("PlanContext.Pins missing or aliases the request: plan=%v req=%v", planPins, pins)
+	}
+	if len(got) == 0 {
+		t.Fatal("facts were never read")
+	}
+	for i, p := range got {
+		if p["nc-1"] != "dc1.example" {
+			t.Errorf("facts read %d on pins %v, want the request's pins", i, p)
+		}
+	}
+}
+
+func TestDirectoryGateRefusesAnNCWithoutAPin(t *testing.T) {
+	for name, tc := range map[string]struct {
+		nc   authority.NamingContextID
+		pins authority.Pins
+		ok   bool
+	}{
+		"pinned":      {"nc-1", authority.Pins{"nc-1": "dc1"}, true},
+		"unpinned NC": {"nc-1", authority.Pins{"nc-2": "dc2"}, false},
+		"nil pins":    {"nc-1", nil, false},
+		"empty NC":    {"", authority.Pins{"nc-1": "dc1"}, false},
+	} {
+		var got []authority.Pins
+		r, _ := newRunner(t, behaviour{verifyOK: true}, nil, pinsFacts{&got}, sink{})
+		u := &run{r: r, d: Descriptor{Target: TargetAD, Permission: "p"}, req: Request{Pins: tc.pins}}
+		_, err := u.authorise(context.Background(), authority.TargetRef{GUID: "g", Class: "user", NC: tc.nc})
+		if tc.ok {
+			if err != nil || len(got) != 1 || got[0]["nc-1"] != "dc1" {
+				t.Errorf("%s: err=%v got=%v", name, err, got)
+			}
+			continue
+		}
+		if !errors.Is(err, ErrDenied) || len(got) != 0 {
+			t.Errorf("%s: err=%v facts reads=%d, want a denial before any read", name, err, len(got))
+		}
+	}
+}
+
+func TestPlanContextFactsAreBoundToTheRequestPins(t *testing.T) {
+	pins := authority.Pins{"nc-1": "dc1.example"}
+	var got []authority.Pins
+	var planErr error
+	b := behaviour{verifyOK: true, onPlan: func(pc PlanContext) {
+		_, planErr = pc.Facts.Facts(context.Background(), authority.FactsQuery{Target: authority.TargetRef{GUID: "g", NC: "nc-1"}})
+	}}
+	r, _ := newRunner(t, b, nil, pinsFacts{&got}, sink{})
+	rq := req()
+	rq.Pins = pins
+	if _, err := r.RunStore(context.Background(), rq); err != nil {
+		t.Fatal(err)
+	}
+	if planErr != nil {
+		t.Fatal(planErr)
+	}
+	if len(got) < 2 { // gate read plus Plan's read
+		t.Fatalf("expected Plan's read to reach the port, got %d reads", len(got))
+	}
+	got[len(got)-1]["nc-1"] = "mutated"
+	if pins["nc-1"] != "dc1.example" {
+		t.Fatal("Plan's read aliased the request pins")
+	}
+	for i, p := range got[:len(got)-1] {
+		if p["nc-1"] != "dc1.example" {
+			t.Errorf("read %d on pins %v", i, p)
+		}
+	}
+}
+
+func TestPinnedReaderRefusesUnpinnedADTargetBeforeThePort(t *testing.T) {
+	var got []authority.Pins
+	pr := pinnedReader{port: pinsFacts{&got}, ad: true, pins: authority.Pins{"nc-1": "dc1.example"}}
+	for name, nc := range map[string]authority.NamingContextID{"empty NC": "", "unpinned NC": "nc-2"} {
+		_, err := pr.Facts(context.Background(), authority.FactsQuery{Target: authority.TargetRef{GUID: "g", NC: nc}})
+		if !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: err = %v, want ErrInvalid", name, err)
+		}
+	}
+	if len(got) != 0 {
+		t.Fatalf("port called %d times for refused targets", len(got))
+	}
+	if _, err := pr.Facts(context.Background(), authority.FactsQuery{Target: authority.TargetRef{GUID: "g", NC: "nc-1"}}); err != nil || len(got) != 1 {
+		t.Fatalf("pinned target: err=%v reads=%d", err, len(got))
+	}
+}
+
+// dirStub is a directory-target Action that records whether Plan was ever reached.
+type dirStub struct {
+	target  TargetKind
+	planned *int
+}
+
+func (d dirStub) Describe() Descriptor {
+	return Descriptor{ID: "dir.thing.set", Version: 1, Permission: "dir.thing.set", Input: "#/components/schemas/Thing",
+		Target: d.target, Reversibility: Reversible, AuditKind: "dir.thing.changed"}
+}
+func (d dirStub) Plan(context.Context, PlanContext, Input) ([]StepPlan, error) {
+	*d.planned++
+	return nil, nil
+}
+func (dirStub) Apply(context.Context, step.Step, StepPlan) (Outcome, error) { return Outcome{}, nil }
+func (dirStub) Verify(context.Context, step.Step, StepPlan, Outcome) (Verdict, error) {
+	return Verdict{}, nil
+}
+func (dirStub) Inverse(StepPlan, Outcome) (Input, error) { return nil, ErrIrreversible }
+func (dirStub) Observe(context.Context, authority.Pins, StepPlan, time.Time) (Observation, error) {
+	return "", nil
+}
+
+func TestDirectoryActionWithNoFactsPortIsRefusedBeforePlan(t *testing.T) {
+	for _, target := range []TargetKind{TargetAD, TargetEntra} {
+		planned := 0
+		reg, err := NewRegistry(dirStub{target: target, planned: &planned})
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, err := NewRunner(Config{DB: &fakeDB{}, Audit: sink{}, Authz: &authzFake{}, Registry: reg})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rq := req()
+		rq.Action = "dir.thing.set"
+		if _, err := r.SubmitDirectory(context.Background(), rq); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: err = %v, want ErrInvalid", target, err)
+		}
+		if planned != 0 {
+			t.Errorf("%s: Plan ran %d times, want 0", target, planned)
+		}
+	}
+}
+
+func TestPinnedReaderNilPortFailsClosedForDirectoryTargetsOnly(t *testing.T) {
+	q := authority.FactsQuery{Target: authority.TargetRef{GUID: "g", NC: "nc-1"}}
+	for _, pr := range []pinnedReader{
+		{ad: true, pins: authority.Pins{"nc-1": "dc1"}},
+		{pins: authority.Pins{"nc-1": "dc1"}}, // Entra
+	} {
+		if f, err := pr.Facts(context.Background(), q); !errors.Is(err, ErrInvalid) || f.Tier0 || f.Exists {
+			t.Errorf("directory reader: facts=%+v err=%v, want ErrInvalid", f, err)
+		}
+	}
+	if _, err := (pinnedReader{store: true}).Facts(context.Background(), q); err != nil {
+		t.Errorf("store reader with nil port: %v, want unchanged (no error)", err)
+	}
+}
+
+// Compile-time guard (T-0338): PlanContext.Facts takes PinnedFacts, which pinnedReader satisfies and
+// the raw LiveFacts port must not, so no code path can plan against unpinned reads.
+var _ PinnedFacts = pinnedReader{}
+
+func TestLiveFactsIsNotPinnedFacts(t *testing.T) {
+	var lf any = LiveFacts(pinsFacts{})
+	if _, ok := lf.(PinnedFacts); ok {
+		t.Fatal("LiveFacts port satisfies PinnedFacts: Plan could read without the operation's pins")
+	}
+}
+
+// ctxFacts is a LiveFacts that, like client.ConnectorReads, fails without the tenant and a DSA pin
+// for the target's naming context in the context (T-0466).
+type ctxFacts struct{}
+
+func (ctxFacts) Facts(ctx context.Context, _ authority.Pins, q authority.FactsQuery) (authority.Facts, error) {
+	if _, ok := authority.TenantFrom(ctx); !ok {
+		return authority.Facts{}, errors.New("read: no tenant in context")
+	}
+	if authority.DSAPinsFrom(ctx)[q.Target.NC] == "" {
+		return authority.Facts{}, errors.New("read: no DSA pin for the naming context")
+	}
+	return authority.Facts{Exists: true}, nil
+}
+
+func TestAuthoriseTargetAppliesTenantAndDSAPins(t *testing.T) {
+	r, _ := newRunner(t, behaviour{verifyOK: true}, nil, ctxFacts{}, sink{})
+	chain := authority.Chain{Requester: authority.Principal{ID: "alice", Kind: authority.Human}}
+	tr := authority.TargetRef{GUID: "g1", NC: "nc-1"}
+	pins := authority.Pins{"nc-1": "dc1.example"}
+	if got := r.authoriseTarget(context.Background(), tenant.New(), chain, "p", tr, pins, authority.DSAPins{"nc-1": "guid"}); got != "" {
+		t.Fatalf("pinned read blocked: %q", got)
+	}
+	if got := r.authoriseTarget(context.Background(), tenant.New(), chain, "p", tr, pins, nil); got != "facts_unavailable" {
+		t.Fatalf("unpinned read: %q, want facts_unavailable (the fake must really require the pins)", got)
+	}
+}
+
+func TestPlanReaderCarriesTenantAndDSAPins(t *testing.T) {
+	pr := pinnedReader{port: ctxFacts{}, ad: true, pins: authority.Pins{"nc-1": "dc1"}, dsas: authority.DSAPins{"nc-1": "guid"}, tenant: tenant.New()}
+	if _, err := pr.Facts(context.Background(), authority.FactsQuery{Target: authority.TargetRef{NC: "nc-1"}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A Descriptor.TargetClass binds every planned step: an Action declaring "group" cannot plan a step
+// aimed at the member (TM-D18).
+func TestCheckPlanEnforcesTargetClass(t *testing.T) {
+	u := &run{d: Descriptor{ID: "x.group.add", Reversibility: Reversible, TargetClass: "group"}}
+	step := func(class string) []StepPlan {
+		return []StepPlan{{Kind: "k", Reversibility: Reversible, Target: authority.TargetRef{Class: class}}}
+	}
+	if err := u.checkPlan(step("user")); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("member-targeted step: %v", err)
+	}
+	if err := u.checkPlan(step("group")); err != nil {
+		t.Fatalf("group step: %v", err)
 	}
 }

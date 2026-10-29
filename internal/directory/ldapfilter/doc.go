@@ -10,6 +10,7 @@
 // secret-adjacent. Constructors never fail; every check runs in Render, so a Filter that rendered once
 // against a schema is known good and a Filter that did not has said why.
 //
-// Not in this package yet: the admin-filter parser (ParseAdminFilter, ParseFilterAST) and the scope
-// package (ScopedSearch, ReadSecret). They build on the AST here.
+// ParseAdminFilter and ParseFilterAST turn untrusted input (admin text, the wire AST) into this AST
+// under the same rules; callers render the AST, never the input. Not in this package yet: the scope
+// package (ScopedSearch, ReadSecret).
 package ldapfilter

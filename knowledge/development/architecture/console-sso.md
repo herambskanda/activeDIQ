@@ -1,11 +1,11 @@
 ---
 title: "Console SSO (ADM-143): OIDC and SAML verifier contract, MFA-asserting IdPs, forced SSO, SPNEGO"
 date: 2026-10-23
-updated: 2026-10-23
+updated: 2026-10-27
 status: review
 owner: heramb
 author: solution-architect
-ticket: T-0191
+ticket: T-0191, T-0495
 parity: ADM-143, ADM-142
 binding_sources: ADR-0001, ADR-0002, ADR-0003, ADR-0004, ADR-0005 (all ratified); threat-model.md (review) §5.8, §6.9, §7; domain-model.md DM-30, DM-31, DM-36, DM-37
 sources_last_checked: 2026-10-23
@@ -181,6 +181,16 @@ algorithm, and the redirect URI `https://<console-host>/auth/sso/{idpId}/callbac
 | OIDC-16 | **Claims come from the ID token only.** The UserInfo endpoint is not called and the access token is not used, so `at_hash` is not needed; group overage (`_claim_names`, `hasgroups`) yields no group claims and an audit warning, never a Graph call from `authn` (§7.1) | `oidc.claims` |
 | OIDC-17 | **Discovery is pinned at setup.** Its `issuer` must equal the configured issuer, every endpoint is HTTPS, and changes to issuer, client, algorithm or endpoints are an IdP configuration change: step-up, audited, all `tenant-owner` accounts alerted (TM-TB8-T3, TM §7.4). Only the JWKS refreshes on its own | `oidc.config` |
 
+**Implementation note (T-0201).** `sso/oidc` verifies the ID token with go-jose directly and does not import
+go-oidc. go-oidc's `IDTokenVerifier` returns unstructured errors (no stable reason per check), applies a
+fixed 5-minute `nbf` leeway against OIDC-13's 120 s, and its `RemoteKeySet` refreshes without OIDC-8's
+one-per-minute bound; the checks it would have done (signature first, `iss`, `aud`, `exp`) are the
+package's own and each has a `TestOIDC_Refuses*` test. go-oidc is therefore not in `go.mod`; its register
+row stays Candidate and is unused. Discovery is fetched once at setup (`oidc.Discover`) and pinned
+(`sso.OIDCConfig.Discovery`); `oidc.ValidateConfig` runs at setup and again on every `Start` and `Complete`.
+Transaction persistence and consume-first (SSO-1), IdP lookup (SSO-2), account lookup (SSO-3) and audit
+(SSO-4) belong to the callback handler, T-0203.
+
 ## 5. SAML checks (T-0202)
 
 Configuration fixes, per IdP: IdP `entityID`, one or two signing certificates (two only during a
@@ -210,6 +220,35 @@ the stored values, not a metadata URL, are what verification uses.
 | SAML-17 | **AuthnStatement** present; `AuthnInstant` gives `AuthTime`; for `intent=stepup` it is within 120 s of now; `SessionNotOnOrAfter`, if present, caps the session's absolute expiry | `saml.authn` |
 | SAML-18 | **Subject**: the account subject comes from the configured source (§7.2). A `transient` NameID, or an `emailAddress`-format NameID, cannot be the subject source and is refused at config and at verify | `saml.subject` |
 | SAML-19 | **No SAML logout in v1**: the ACS and every other route refuse `LogoutRequest` and `LogoutResponse` documents (§11). Our sign-out ends our session only | `saml.logout` |
+
+### 5.1 As built (T-0202)
+
+`internal/platform/authn/sso/saml` implements SAML-1..19; the test IdP is `sso/saml/samltest` (it imports
+the XML libraries, so it sits inside the FIT-SSO-1 fence) and the corpus records are in
+`sso/testdata/corpus/saml/`. Decisions the build fixed:
+
+- **Libraries.** goxmldsig v1.6.1 (signature, canonicalisation), etree and the round-trip validator. gosaml2
+  is not imported: its decoder folds several checks into one error and accepts a Response-level signature
+  alone, which would leave SAML-4 and the per-check reason codes to the library. The register row stays
+  (the transitive closure is the same); SAML-7 is enforced by our shape rules, since goxmldsig exposes no
+  algorithm allow-list.
+- **Order.** SAML-1/2/3 on the raw bytes, then SAML-4/5/7/8 shape rules, then the library's cryptography
+  against each configured certificate alone, then SAML-6, then claims. A signature that fails
+  cryptography is `saml.unsigned`; a KeyInfo naming a certificate that is not configured is `saml.key`.
+- **Comments.** Any XML comment is refused as `saml.xml` (defence in depth for the CVE-2017-11427 class).
+- **Reasons beyond the table.** `sso.idp` (SSO-2), `saml.config`, `saml.anchor`. `InResponseTo` missing or
+  different anywhere (Response or SubjectConfirmationData) is `saml.inresponseto`; wrong Recipient,
+  method or SubjectConfirmationData expiry is `saml.recipient`.
+- **Replay cache.** The verifier takes a `ReplayCache`; the in-memory one is single-node. The shared
+  `saml.PGReplayCache` (T-0489, table `authn_saml_replay`, migration 0044, tenant table with RLS) uses the
+  primary key (tenant, IdP, Assertion ID) as the check and the database clock for expiry (a CHECK caps
+  `expires_at` at 24 h). It is insert-only; the runtime role may delete only expired rows, which each call
+  trims. `saml.RememberTx(ctx, tx, …)` records inside the caller's tenant transaction; T-0203 calls it in
+  the transaction that consumes the Transaction (SAML-16). **Trim-safety invariant (T-0524):** the expiry
+  passed in must derive from signed fields only (`replayUntil()+skew`), never from the clock, so a replay
+  after its row is trimmed recomputes the same past expiry and fails the CHECK (`ErrReplayInput`). The trim
+  is taken under a per-tenant `pg_try_advisory_xact_lock`: one transaction trims, concurrent ones skip, so
+  long callback transactions never queue on each other's row locks.
 
 ## 6. Shared checks and MFA-asserting IdPs (SSO-D3, SSO-D4)
 
@@ -293,6 +332,20 @@ is verified at every step-up as TM-D19 rule 1 says; the IdP round trip does not 
 
 ---
 
+### 7.3 As built (T-0203)
+
+The start and callback routes, `GET /auth/sso/{idpId}/start` and `GET|POST /auth/sso/{idpId}/callback`.
+
+- **Layers.** `authn/sso/signin` is the core (no `net/http`, ADR-0004 A6): `Service.Start` and `Service.Callback` over the ports `IdPs`, `Accounts`, `Epochs`, `Sessions`, `Pending`, `Transactions`, `Privileges` and `Recorder`. `httpx/ssohttp` binds it as nonApiRoutes through `apihost.ServeNonAPI`. `signin/signintest` holds the fakes.
+- **Transaction store (SSO-1).** Migration `0046` adds `authn_sso_transactions` (tenant table, RLS forced; only the SHA-256 of the 256-bit handle is stored; `expires_at - created_at` is CHECKed at most 5 minutes). `TxStore.Consume` is one `DELETE ... RETURNING` in its own committed transaction, so the Transaction is gone before the verifier runs and whatever happens after. A Transaction at or past 5 minutes is removed and refused. Browser binding is the cookie `__Host-adq-sso` (HttpOnly, Secure, Path=/, no Domain; SameSite Lax for OIDC, None for SAML); a callback without it, or with it repeated, cannot consume anything.
+- **Order in `Callback`.** consume, IdP and intent match, verifier `Complete`, account by (issuer, subject) (admission is by invitation only), account active, anchor rule, epoch read, then MFA decision.
+- **Anchor (7.2).** Only claims `oid` (with `tid`) and `onprem_sid` bind; UPN, email and every other claim bind nothing. An unbound account is bound once through `authn.DirectoryAnchors.Resolve` and `Accounts.Bind`; a no-match leaves it unbound with warning `sso.anchor_unresolved`. A bound account must present an anchor that resolves to the same object: no anchor is `sso.anchor_missing`, another object is `sso.anchor_changed`; nothing is rebound.
+- **MFA (MFA-1..5).** A session is created only when the IdP is marked MFA-asserting and this response carries the proof (`Verified.MFAAsserted`) and the account holds neither tenant-owner nor any control_plane permission (`Privileges`; an error counts as holding). Everything else begins a pending sign-in (AN-10) and the browser goes to the second-factor page. Test `sso_non_mfa_pending_only`.
+- **Hand-off.** Both outcomes answer a small same-origin page (`NonAPIResult.Handoff`, meta refresh) so the Strict session cookie rides the next navigation.
+- **Refusals.** Every refusal is the same 401 `sign-in-failed` problem and clears the binding cookie (X-13); the reason is only in the audit event `auth.sso.refused` (`auth.sso.succeeded` on success; ids and methods only, no claim values).
+- **Residual risk: success audit fails open.** If writing `auth.sso.succeeded` fails, the session is still issued and the failure is logged; `authn.session.created` still records the account, but the IdP-asserted MFA evidence (amr methods, response ID, TM-TB8-T4) for that session is lost. Chosen because the `Sessions` port has no revoke and a store outage would otherwise lock every SSO user out. Pinned by `Test_sso_success_audit_failure_keeps_session`; alerting on the log line is for operations.
+- **Not in this change** (follow-up tickets): the IdP configuration store and its admin Actions, the step-up round trip with the (iss, sub) equals bound-account check, mapped admission and claim-to-role mapping, the `rbac` `Privileges` implementation, the `inventory` implementation of `DirectoryAnchors` and the compose wiring, `SessionCap` in session creation, the HTML refusal page, and the SSO-5 rate class on these routes.
+
 ## 8. Forced SSO (SSO-D6)
 
 ADManager Plus calls it "Force SAML login". activeDIQ has a tenant setting `signin.mode`:
@@ -328,9 +381,54 @@ The route, gate and rules are TM §7.6 AN-9 and rules 2, 5, 6 and 7, unchanged. 
 | NEG-7 | Channel binding to the TLS session is requested where the browser offers it; its absence is not a refusal in v1, because browser support varies `[UNVERIFIED — lab]` |
 | NEG-8 | The Negotiate header cap (64 KiB, 431) and the FF-SP5 fuzz target of rule 6 stand |
 | NEG-9 | **Gate per adapter.** AN-9 is enabled on a profile only when its lab cases pass (NEG-6 replay, rule 5 NTLM refusal, NEG-2 mapping). If the krb5 adapter cannot refuse replays, `linux-oci` serves AN-9 through a Windows-hosted remote connector, never through a profile conditional (BP §4) |
+| NEG-10 | **A disabled, expired or locked-out principal is refused (T-0495, TM §7.6 rule 10).** After NEG-2 maps the SID, `Service.SignIn` (a) pre-checks inventory `enabled` and `account_expires` (fail closed on unknown), then (b) makes one live connector read of the mapped object by GUID (base scope, typed attribute selection, 2 s) for `userAccountControl`, `accountExpires`, `objectSid`, `msDS-User-Account-Control-Computed`, and refuses on `ACCOUNTDISABLE`, a passed `accountExpires`, `LOCKOUT`, a missing object or a SID that differs from the PAC SID. A connector error is a refusal (`directory_unavailable`), never a fallback to inventory. `PASSWORD_EXPIRED` is not a refusal. Ticket `authtime`/`starttime` are not used: `authtime` is the TGT logon time, so any useful bound rejects ordinary users. All refusals are the one `ErrSignInFailed`; audit reasons `principal_disabled`, `principal_expired`, `principal_locked_out`, `principal_gone`, `principal_sid_mismatch`, `principal_state_unknown`, `directory_unavailable`. Residual: DC replication lag between the disabling DC and the connector's DC (TM R-AN9-1) |
 
 When T-0206 lands, AN-9's `GET /auth/negotiate` enters `api/openapi/policy.yaml` `nonApiRoutes`
 (TM §7.6, "Which rows are in policy.yaml today").
+
+**Built (T-0206).** `internal/platform/authn/negotiate` is the core: `RequireKerberos` refuses by structure
+anything but a SPNEGO NegTokenInit that offers Kerberos first with a krb5 AP-REQ (NTLM never reaches an
+acceptor), `Service.SignIn` maps the acceptor's verified PAC user SID through `inventory.Reader.ObjectsBySID`
+and `authn.AccountIndex.BackedBy` to exactly one active account (NEG-2) and begins a `kerberos` pending
+sign-in; every refusal is one `ErrSignInFailed` with the reason going to a `Recorder`. `httpx/negotiatehttp`
+is the header binding (64 KiB cap, 431) and renders through `apihost.ServeNonAPI`, the only place a route
+outside the document writes status. The `Acceptor`, route mounting, audit kinds and NEG-1 switch are T-0492;
+NEG-4 and the sso-correlation mapping route are T-0493. AN-9 is therefore not reachable yet (NEG-9).
+
+**NEG-10 build spec (T-0495, for the T-0492 builder).** `negotiate.Directory` gains a method
+`PrincipalState(ctx, t, ref inventory.Ref) (State, error)` where `State` carries `Enabled *bool`,
+`ExpiresAt *time.Time` (nil = never or unknown-as-never is **not** allowed: the reader returns
+`ExpiresKnown`) and is read from `directory_objects` (extend `internal/directory/inventory`, parameterised
+SQL; do not widen `ObjectsBySID`). A second interface `Live` (`Check(ctx, t, ref, wantSID sid.SID)
+(LiveState, error)`) is implemented in `directory/client` over the connector read RPC, with the
+`filetime` and `attr/flags` codecs (`UAC`, `UACComputed`), never raw integer compares. `Service` runs
+inventory then live, and the two run **after** `mapAccount` and **before** `Pending.Begin`. A nil `Live`
+is a construction error (the service refuses to start with AN-9 enabled), not a skip.
+
+Test **`an9_refuses_ad_disabled`** (`TestAN9RefusesADDisabled`, one subtest per row; each uses a
+valid acceptor result and asserts `ErrSignInFailed`, no pending sign-in created, exactly one audit
+record with the reason, and an identical HTTP response to the unmapped case):
+
+| Row | Inventory | Live read | Expected reason |
+| --- | --- | --- | --- |
+| disabled-in-inventory | `enabled=false` | not called (assert zero calls) | `principal_disabled` |
+| expired-in-inventory | `account_expires` past | not called | `principal_expired` |
+| unknown-inventory | `enabled` NULL | not called | `principal_state_unknown` |
+| stale-inventory | `enabled=true` | `ACCOUNTDISABLE` | `principal_disabled` (the leaver case) |
+| expired-live | enabled | `accountExpires` past | `principal_expired` |
+| never-expires | enabled | `0` and `0x7FFFFFFFFFFFFFFF` | **accepted** (pending sign-in begins) |
+| locked-out | enabled | computed `LOCKOUT` | `principal_locked_out` |
+| password-expired | enabled | computed `PASSWORD_EXPIRED` only | **accepted** |
+| deleted | enabled | not found | `principal_gone` |
+| sid-reused | enabled | different `objectSid` | `principal_sid_mismatch` |
+| connector-down | enabled | error / 2 s timeout | `directory_unavailable`, no inventory fallback |
+| clock-edge | expires == now | | refused (`<=` now) |
+| healthy | enabled | clean | accepted; `Live` called once with the GUID |
+
+Plus a fitness check that the live read builds no filter string (base-scope read by DN/GUID through the
+builders) and that `Live == nil` fails construction. The Samba lab case (disable via `samba-tool user
+disable`, replay a ticket obtained before) is added to the NEG-9 gate list; Windows replication timing
+stays `[UNVERIFIED — lab]`.
 
 ---
 

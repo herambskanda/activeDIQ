@@ -1,0 +1,10 @@
+{
+ "id": "S-F07a",
+ "class": "forged",
+ "cites": [
+  "SAML-7"
+ ],
+ "build": "rsa_sha1",
+ "expect": "refuse",
+ "reason": "saml.alg"
+}

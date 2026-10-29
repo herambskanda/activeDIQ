@@ -35,6 +35,11 @@ type importRule struct {
 var importRules = []importRule{
 	{Rule: "ldap-library", Prefixes: []string{"github.com/go-ldap/"}, Home: []string{policy.Connector},
 		Msg: "the LDAP library is imported only by internal/connector (" + refP1 + ")"},
+	// T-0313: the AD connector package is a directory client. Only other connectors and the
+	// authorisation layer import it; a feature module reaches AD through the connector contract.
+	{Rule: "ad-connector-import", Exact: []string{"github.com/skenzeriq/activediq/internal/connector/ad"},
+		Home: []string{policy.Connector, policy.Authz}, TestsExempt: true,
+		Msg: "internal/connector/ad is imported only by internal/connector and the authorisation layer internal/platform/authz (" + refP3 + ", T-0313)"},
 	{Rule: "sql-driver", Exact: []string{"database/sql", "github.com/lib/pq", "github.com/jmoiron/sqlx", "github.com/jackc/pgx/v5/pgxpool", "github.com/jackc/pgx/v5/stdlib"},
 		Prefixes: []string{"gorm.io/", "github.com/jackc/pgx/v4", "entgo.io/", "github.com/uptrace/bun", "github.com/go-pg/pg"},
 		Home:     []string{policy.Store},
@@ -86,6 +91,10 @@ var symbolRules = []symbolRule{
 	{Rule: "ldap-raw-attribute-access", MethodNames: []string{"GetAttributeValue", "GetAttributeValues", "GetRawAttributeValue", "GetRawAttributeValues"},
 		RequireImport: []string{"github.com/go-ldap/ldap"}, Home: []string{policy.Connector, policy.Attr}, TestsExempt: true,
 		Msg: "raw entry attribute accessors are banned outside the connector and attr (" + refP3 + ")"},
+	// T-0313: a SecretReadGrant is a capability only while minting is restricted to the authorisation layer.
+	{Rule: "secret-grant-mint", Pkg: "github.com/skenzeriq/activediq/internal/connector/ad", Names: []string{"MintSecretReadGrant"},
+		Home: []string{policy.Authz}, TestsExempt: true,
+		Msg: "ad.MintSecretReadGrant is called only from internal/platform/authz: a grant is a capability only if minting is restricted (" + refP3 + ")"},
 	{Rule: "process-start", Pkg: "os/exec", Names: []string{"Command", "CommandContext"}, Home: []string{policy.Proc}, TestsExempt: true,
 		Msg: "exec.Command is banned outside internal/platform/proc (" + refPr + ")"},
 	{Rule: "process-start", Pkg: "os", Names: []string{"StartProcess"}, Home: []string{policy.Proc}, TestsExempt: true,
@@ -102,11 +111,12 @@ var symbolRules = []symbolRule{
 	// above: its LDAPS dial to a domain controller is the server-to-DC boundary (TB2), not TB9. DCs are
 	// private by design and the targets come only from Config.Servers, set by the customer, so routing
 	// them through egress (which refuses private ranges) would be wrong. It still may not build an
-	// http.Client.
+	// http.Client. fleet/dial is a Home for the same two raw dials: a component dials the one server it
+	// was enrolled to (TB6), verified against the pinned installation CA, so egress vetting does not apply.
 	{Rule: "outbound-http", Pkg: "net", Names: []string{"Dial", "DialTimeout", "Dialer", "DialTCP", "DialUDP", "DialIP", "DialUnix"},
-		Home: []string{policy.Egress, policy.Graph, policy.ADConn}, TestsExempt: true, Msg: egressMsg},
+		Home: []string{policy.Egress, policy.Graph, policy.ADConn, policy.FleetDial}, TestsExempt: true, Msg: egressMsg},
 	{Rule: "outbound-http", Pkg: "crypto/tls", Names: []string{"Dial", "DialWithDialer", "Dialer"},
-		Home: []string{policy.Egress, policy.Graph, policy.ADConn}, TestsExempt: true, Msg: egressMsg},
+		Home: []string{policy.Egress, policy.Graph, policy.ADConn, policy.FleetDial}, TestsExempt: true, Msg: egressMsg},
 	{Rule: "pgx-simple-protocol", Pkg: "github.com/jackc/pgx/v5", Names: []string{"QueryExecModeSimpleProtocol"}, Home: []string{policy.Store},
 		Msg: "pgx simple protocol interpolates client-side (CVE-2024-27289); only the store's pool-construction assertion may name it (" + refP5 + " rule 6)"},
 	{Rule: "pgx-connection", Pkg: "github.com/jackc/pgx/v5", Names: []string{"Connect", "ConnectConfig", "ParseConfig", "ConnConfig"}, Home: []string{policy.Store},

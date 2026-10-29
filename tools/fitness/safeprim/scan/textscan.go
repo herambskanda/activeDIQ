@@ -3,6 +3,7 @@ package scan
 import (
 	"encoding/json"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -181,9 +182,33 @@ func scanWebPackage(root, rel string, checks Checks, out *[]Finding) error {
 	return nil
 }
 
+// isBuildOrEnvFile: files that set build flags or environment without a scannable extension:
+// make and just files, and dotenv/direnv/go.env files (GOFLAGS=-ldflags=-checklinkname=0, T-0221).
+func isBuildOrEnvFile(base string) bool {
+	l := strings.ToLower(base)
+	return l == "makefile" || l == "gnumakefile" || l == "justfile" || l == ".justfile" || l == "go.env" ||
+		l == ".envrc" || strings.HasPrefix(l, ".envrc.") || l == ".env" || strings.HasPrefix(l, ".env.") || strings.HasSuffix(l, ".env")
+}
+
+// scanGoCheckLinkname flags any checklinkname mention in a .go file (a tier L release tool passing
+// -ldflags=-checklinkname=0 to exec go build). The safeprim scanner's own sources name the flag to
+// detect it and are exempt (only that directory, not its subdirectories; other .go under
+// tools/fitness/safeprim/ are scanned, T-0275, T-0286).
+func scanGoCheckLinkname(rel string, src []byte, checks Checks, out *[]Finding) {
+	if !checks["FF-SP2"] || path.Dir(rel) == "tools/fitness/safeprim/scan" {
+		return
+	}
+	for i, ln := range strings.Split(string(src), "\n") {
+		if reCheckLinkname.MatchString(ln) {
+			*out = append(*out, Finding{FF: "FF-SP2", Rule: "checklinkname-off", File: rel, Line: i + 1,
+				Msg: "any -checklinkname flag disables the linker's block on pull-linkname into the standard library; no Go source (tools included) may pass it (T-0221)"})
+		}
+	}
+}
+
 var reCheckLinkname = regexp.MustCompile(`(?i)checklinkname`)
 
-var serviceExts = map[string]bool{".yml": true, ".yaml": true, ".service": true, ".wxs": true, ".wxi": true, ".sh": true, ".ps1": true, ".toml": true, ".mk": true, ".conf": true, ".ini": true, ".cfg": true, ".plist": true, ".env": false, ".tmpl": true, ".json": true, ".xml": true, ".props": true}
+var serviceExts = map[string]bool{".yml": true, ".yaml": true, ".service": true, ".wxs": true, ".wxi": true, ".sh": true, ".ps1": true, ".psm1": true, ".psd1": true, ".bat": true, ".cmd": true, ".py": true, ".bash": true, ".zsh": true, ".toml": true, ".mk": true, ".conf": true, ".ini": true, ".cfg": true, ".plist": true, ".env": false, ".tmpl": true, ".json": true, ".xml": true, ".props": true, ".fish": true, ".vbs": true, ".nu": true, ".pyw": true}
 
 // scanServiceDefinition is FF-SP2's GOTRACEBACK rule on everything that can define a service's
 // environment: unit files, compose files, Dockerfiles, MSI sources, scripts.
@@ -191,7 +216,7 @@ func scanServiceDefinition(root, rel, ext, base string, checks Checks, out *[]Fi
 	if !checks["FF-SP2"] {
 		return nil
 	}
-	isDocker := strings.HasPrefix(base, "Dockerfile") || strings.HasPrefix(base, "Containerfile") || base == "Makefile"
+	isDocker := strings.HasPrefix(base, "Dockerfile") || strings.HasPrefix(base, "Containerfile") || isBuildOrEnvFile(base)
 	if !serviceExts[ext] && !isDocker {
 		return nil
 	}

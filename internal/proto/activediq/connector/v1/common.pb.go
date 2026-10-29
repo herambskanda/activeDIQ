@@ -1245,8 +1245,9 @@ func (x *Attribute) GetRange() *ValueRange {
 	return nil
 }
 
-// An object as read. `object_guid` is the identity (DM-16.I1). `parent_guid` is empty when the
-// source did not supply it.
+// An object as read. `object_guid` is the identity (DM-16.I1). `parent_guid` is empty only for the
+// head of a naming context (the directory says so); a source that cannot determine the parent
+// fails the read instead of leaving it empty, because consumers treat empty as "top of the tree".
 type DirectoryEntry struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ObjectGuid    *Guid                  `protobuf:"bytes,1,opt,name=object_guid,json=objectGuid,proto3" json:"object_guid,omitempty"`

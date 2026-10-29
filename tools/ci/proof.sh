@@ -190,7 +190,8 @@ op_put authz/actions audit
 must_pass "fitness-operation O9 (store -> tenant, authz/actions -> audit)" "$opbin" -root "$opt"
 sed -i.bak 's/^store  *-> tenant$/store -> (none)/' "$opt/$adr"; rm -f "$opt/$adr.bak"
 must_fail_with "fitness-operation O9 follows an edit of the ADR block (store -> (none))" 'store imports tenant' "$opbin" -root "$opt"
-mkdir -p "$opt/internal/modules/a"
+mkdir -p "$opt/internal/modules/a" "$opt/internal/platform/operation/step"
+printf 'package step\n\ntype Step struct{ s *int }\ntype Clearance struct{ s *int }\ntype Minter struct{ s *int }\n\nfunc (Step) Valid() error { return nil }\nfunc TakeMinter() (*Minter, error) { return nil, nil }\n' >"$opt/internal/platform/operation/step/step.go"
 printf 'package a\n\nimport "op.test/internal/platform/operation/step"\n\nvar kept step.Step\n' >"$opt/internal/modules/a/a.go"
 must_fail_with "fitness-operation O1 on a step.Step held in a global" 'internal/modules/a/a.go:5: O1 \[rule 2\] a step.Step is held in a package-level variable' "$opbin" -root "$opt"
 printf 'package a\n\nimport "op.test/internal/platform/operation/step"\n\nvar _, _ = step.TakeMinter()\n' >"$opt/internal/modules/a/a.go"
@@ -199,6 +200,24 @@ printf 'package a\n\nimport "op.test/internal/platform/operation/step"\n\nfunc f
 must_fail_with "fitness-operation O1 on var m step.Minter outside platform/operation" 'step.Minter is referenced outside internal/platform/operation' "$opbin" -root "$opt"
 printf 'package a\n\nimport "op.test/internal/platform/operation/step"\n\nfunc f() { _ = new(step.Minter) }\n' >"$opt/internal/modules/a/a.go"
 must_fail_with "fitness-operation O1 on new(step.Minter) outside platform/operation" 'step.Minter is referenced outside internal/platform/operation' "$opbin" -root "$opt"
+# O1 type-aware half (tools/analyzers/stepescape): closure capture and a Step passed to a non-step function.
+cp "$adr" "$opt/$adr"; printf 'package p\n' >"$opt/internal/platform/store/p.go"
+printf 'package a\n\nimport "op.test/internal/platform/operation/step"\n\nfunc f(s step.Step) {\n\tgo func() { _ = s.Valid() }()\n}\n' >"$opt/internal/modules/a/a.go"
+must_fail_with "fitness-operation O1 on a step.Step captured by a closure" 'internal/modules/a/a.go:6: O1 \[rule 2\] a step.Step \(s\) is captured by a closure' "$opbin" -root "$opt"
+printf 'package a\n\nimport (\n\t"fmt"\n\n\t"op.test/internal/platform/operation/step"\n)\n\nfunc f(s step.Step) {\n\tfmt.Println(s)\n}\n' >"$opt/internal/modules/a/a.go"
+must_fail_with "fitness-operation O1 on a step.Step passed to a function with no step.Step parameter" 'internal/modules/a/a.go:10: O1 \[rule 2\] a step.Step is passed to a function with no step.Step parameter' "$opbin" -root "$opt"
+printf 'package a\n\nimport "op.test/internal/platform/operation/step"\n\nfunc f(s step.Step) { g(s) }\n\nfunc g(s step.Step) { _ = s.Valid() }\n' >"$opt/internal/modules/a/a.go"
+must_pass "fitness-operation O1 on a step.Step passed to a helper that takes one" "$opbin" -root "$opt"
+# O2 (write surface) and O4 (state column SQL), both syntactic.
+printf 'package a\n\nimport _ "github.com/go-ldap/ldap/v3"\n' >"$opt/internal/modules/a/a.go"
+must_fail_with "fitness-operation O2 on an LDAP library imported outside the connector root" 'internal/modules/a/a.go:3: O2 \[rule 2\] directory protocol library' "$opbin" -root "$opt"
+printf 'package a\n\nconst q = `UPDATE public.operations SET state = $1 WHERE id = $2`\n' >"$opt/internal/modules/a/a.go"
+must_fail_with "fitness-operation O4 on SQL updating a state column outside the transition functions" 'internal/modules/a/a.go:3: O4 \[rule 3\] SQL updates a state column' "$opbin" -root "$opt"
+mkdir -p "$opt/internal/directory/client"
+printf 'package client\n\ntype C struct{}\n\nfunc (c *C) Send() { c.sendApply() }\nfunc (c *C) sendApply() {}\n' >"$opt/internal/directory/client/c.go"
+rm -f "$opt/internal/modules/a/a.go"
+must_fail_with "fitness-operation O2 on an exported client method issuing a write RPC without a step.Step" 'O2 \[rule 2\] exported Send issues a connector-contract write RPC but has no step.Step parameter' "$opbin" -root "$opt"
+rm -rf "$opt/internal/directory"
 rm -rf "$opt/internal/modules"
 must_pass "fitness-operation O9 on the repository itself" "$opbin" -root "$root"
 
@@ -206,11 +225,23 @@ must_pass "fitness-operation O9 on the repository itself" "$opbin" -root "$root"
 pr="$tmp/proto"
 mkdir -p "$pr"
 printf 'syntax = "proto3";\npackage t.v1;\nenum Operation { OPERATION_UNSPECIFIED = 0; OPERATION_GET = 1; OPERATION_APPLY = 100; OPERATION_READ_SECRET = 101; OPERATION_VERIFY_USER = 102; }\nmessage GetRequest { string dn = 1; }\nmessage GetResponse {}\nservice S { rpc Get(GetRequest) returns (GetResponse); }\n' >"$pr/t.proto"
-must_fail_with "fitness-proto on a request carrying a DN string" "\\[P2\\]" go run ./tools/fitness/proto "$pr"
+must_fail_with "fitness-proto on a request carrying a DN string" "\\[P2\\]" go run ./tools/fitness/proto -optional-fleet "$pr"
 printf 'syntax = "proto3";\npackage t.v1;\nmessage {\n' >"$pr/t.proto"
-must_fail_with "fitness-proto on a file that does not compile" "\\[P1\\]" go run ./tools/fitness/proto "$pr"
+must_fail_with "fitness-proto on a file that does not compile" "\\[P1\\]" go run ./tools/fitness/proto -optional-fleet "$pr"
 printf 'syntax = "proto3";\npackage t.v1;\nenum Operation { OPERATION_UNSPECIFIED = 0; OPERATION_GET = 1; OPERATION_APPLY = 100; OPERATION_READ_SECRET = 101; OPERATION_VERIFY_USER = 102; }\nmessage Guid { bytes value = 1; }\nmessage GetRequest { Guid guid = 1; }\nmessage GetResponse {}\nservice S { rpc Get(GetRequest) returns (GetResponse); }\n' >"$pr/t.proto"
-must_pass "fitness-proto" go run ./tools/fitness/proto "$pr"
+must_fail_with "fitness-proto on a tree without the fleet package" "\\[F11\\]" go run ./tools/fitness/proto "$pr"
+must_pass "fitness-proto" go run ./tools/fitness/proto -optional-fleet "$pr"
+# TM-F-AGENTCMD (T-0144), contract half: a denied verb, an RPC off the golden list and a free-form
+# policy string are each refused by the real CLI; the clean addc contract passes.
+ac='syntax = "proto3";\npackage activediq.addc.v1;\nmessage Empty {}\nmessage CollectionState { uint64 last_event_record_id = 1; }\n'
+printf "${ac}service Addc { rpc GetCollectionState(Empty) returns (CollectionState); }\n" >"$pr/t.proto"
+must_pass "fitness-proto on the clean addc contract" go run ./tools/fitness/proto -optional-fleet "$pr"
+printf "${ac}service Addc { rpc GetCollectionState(Empty) returns (CollectionState); rpc RunScript(Empty) returns (Empty); }\n" >"$pr/t.proto"
+must_fail_with "fitness-proto on an addc contract carrying an exec verb" "\\[AG2\\]" go run ./tools/fitness/proto -optional-fleet "$pr"
+printf "${ac}service Addc { rpc GetCollectionState(Empty) returns (CollectionState); rpc Ping(Empty) returns (Empty); }\n" >"$pr/t.proto"
+must_fail_with "fitness-proto on an addc RPC off the golden list" "\\[AG1\\]" go run ./tools/fitness/proto -optional-fleet "$pr"
+printf 'syntax = "proto3";\npackage activediq.fileserver.v1;\nmessage R { string root_id = 1; string path = 2; }\nmessage O {}\nservice Fileserver { rpc ReadAcl(R) returns (O); }\n' >"$pr/t.proto"
+must_fail_with "fitness-proto on a fileserver request carrying an absolute path" "\\[AG4\\]" go run ./tools/fitness/proto -optional-fleet "$pr"
 
 # --- gen-check (T-0157): generated connector code must match a fresh generation ------------------
 # Generate into a throw-away tree, then stale / orphan / delete a file and require the real
@@ -393,6 +424,23 @@ import "os/exec"
 var _ = exec.Command
 GO
 must_fail_with "FF-SP1 on os/exec imported outside proc" 'internal/modules/users/u.go:3: FF-SP1 \[process-api\]' safeprim -no-analyzers
+fresh_sp_tree; sp_put internal/modules/users/u.go <<'GO'
+package users
+
+import "github.com/skenzeriq/activediq/internal/connector/ad"
+
+var _ = ad.MintSecretReadGrant
+GO
+must_fail_with "FF-SP2 on ad.MintSecretReadGrant outside the authorisation layer" 'internal/modules/users/u.go:5: FF-SP2 \[secret-grant-mint\]' safeprim -no-analyzers
+must_fail_with "FF-SP1 on the AD connector imported by a feature module" 'internal/modules/users/u.go:3: FF-SP1 \[ad-connector-import\]' safeprim -no-analyzers
+fresh_sp_tree; sp_put internal/platform/authz/g.go <<'GO'
+package authz
+
+import "github.com/skenzeriq/activediq/internal/connector/ad"
+
+var _ = ad.MintSecretReadGrant
+GO
+must_pass "fitness-safeprim: authz may mint a SecretReadGrant" safeprim -no-analyzers
 fresh_sp_tree
 sp_put internal/connector/ldap/c.go <<'GO'
 package ldap
@@ -760,7 +808,7 @@ must_pass "FF-SP6 ldapfilter oracle on an escaped injection" "$orbin" ldapfilter
 printf '%s\n' '{"id":"LF-01","primitive":"ldapfilter","call":"Eq","args":{"attr":"cn","value":{"utf8":"*)(uid=*"}},"expect":{"render":"(cn=*)(uid=*)"},"hostile":true,"verified":"doc"}' >"$orc/testdata/safe-primitives/ldapfilter.jsonl"
 must_fail_with "FF-SP6 ldapfilter oracle on an unescaped injection" 'LF-01: .*go-ldap rejects the rendered filter' "$orbin" ldapfilter -root "$orc"
 
-# --- fitness-profiles (ADR-0002 P1, P7, U1, U2, activation table), the real CLI on throw-away trees
+# --- fitness-profiles (ADR-0002 P1, P4 telemetry, P7, U1, U2, activation table), the real CLI on throw-away trees
 pf="$tmp/pf"
 fresh_pf_tree() {
   rm -rf "$pf"; mkdir -p "$pf/internal/platform/capability" "$pf/internal/platform/tenant" "$pf/internal/directory/dn" \
@@ -768,7 +816,14 @@ fresh_pf_tree() {
     "$pf/knowledge/development/decisions"
   printf 'module pf.test\n\ngo 1.27.0\n' >"$pf/go.mod"
   printf -- '---\nstatus: ratified\n---\n' >"$pf/knowledge/development/decisions/0002-deployment-model.md"
-  cp tools/fitness/profiles/manifest.json tools/fitness/profiles/uem-denylist.json "$pf/tools/fitness/profiles/"
+  cp tools/fitness/profiles/uem-denylist.json "$pf/tools/fitness/profiles/"
+  # The real manifest, minus its p4.exempt entries (they name files this throw-away tree does not have).
+  python3 - tools/fitness/profiles/manifest.json "$pf/tools/fitness/profiles/manifest.json" <<'PY'
+import json, sys
+m = json.load(open(sys.argv[1]))
+m["p4"]["exempt"] = []
+json.dump(m, open(sys.argv[2], "w"), indent=2)
+PY
   printf '{"denylistExtends": ["tools/fitness/profiles/uem-denylist.json"]}\n' >"$pf/tools/fitness/stack/manifest.json"
   printf 'package capability\n\ntype ID string\n\nconst (\n\tDirectoryAD ID = "directory.ad"\n\tDirectoryEntra ID = "directory.entra"\n)\n' >"$pf/internal/platform/capability/c.go"
   printf 'package tenant\n' >"$pf/internal/platform/tenant/t.go"
@@ -839,6 +894,20 @@ fresh_pf_tree; printf '{"denylistExtends": []}\n' >"$pf/tools/fitness/stack/mani
 must_fail_with "fitness-profiles U1 on a stack manifest that does not extend the UEM denylist" 'U1 .*denylistExtends' profiles -checks U1
 fresh_pf_tree; printf 'package tenant\n\nimport _ "pf.test/internal/directory/dn"\n' >"$pf/internal/platform/tenant/t.go"
 must_fail_with "fitness-profiles U2 on a platform package importing the directory domain" 'internal/platform/tenant/t.go:3: U2 ' profiles -checks U2
+P4HDR='package svc\n\nimport (\n\t"log/slog"\n\n\t"pf.test/internal/platform/tenant"\n)\n\nvar _ = slog.Info\n\n'
+fresh_pf_tree; printf 'package tenant\n\ntype ID struct{ b [16]byte }\n' >"$pf/internal/platform/tenant/t.go"; mkdir -p "$pf/internal/modules/svc"
+printf "$P4HDR"'func Work(t tenant.ID) { slog.Info("synced") }\n' >"$pf/internal/modules/svc/s.go"
+must_fail_with "fitness-profiles P4 on a log line without the tenant ID" 'internal/modules/svc/s.go:11: P4 .*does not carry "tenant_id"' profiles -checks P4
+printf "$P4HDR"'func Work(t tenant.ID) { slog.Info("synced", "tenant_id", "x") }\n' >"$pf/internal/modules/svc/s.go"
+must_pass "fitness-profiles P4 on a log line with the tenant ID" profiles -checks P4
+printf 'package svc\n\nimport "github.com/prometheus/client_golang/prometheus"\n\nvar m = prometheus.NewCounterVec(prometheus.CounterOpts{}, []string{"result"})\n' >"$pf/internal/modules/svc/s.go"
+must_fail_with "fitness-profiles P4 on a metric without the tenant label" 'internal/modules/svc/s.go:5: P4 .*does not list the label "tenant_id"' profiles -checks P4
+printf 'package svc\n\nimport "github.com/prometheus/client_golang/prometheus"\n\nvar m = prometheus.NewCounterVec(prometheus.CounterOpts{}, []string{"tenant_id", "result"})\n' >"$pf/internal/modules/svc/s.go"
+must_pass "fitness-profiles P4 on a metric with the tenant label" profiles -checks P4
+printf 'package svc\n\ntype S struct{ cache map[string]int }\n' >"$pf/internal/modules/svc/s.go"
+must_fail_with "fitness-profiles P4 on a cache not keyed by tenant" 'internal/modules/svc/s.go:3: P4 .*cache S.cache is not keyed by tenant' profiles -checks P4
+printf 'package svc\n\nimport "pf.test/internal/platform/tenant"\n\ntype S struct{ cache map[tenant.ID]int }\n' >"$pf/internal/modules/svc/s.go"
+must_pass "fitness-profiles P4 on a cache keyed by tenant" profiles -checks P4
 fresh_pf_tree; mkdir -p "$pf/packaging/windows"; : >"$pf/packaging/windows/product.wxs"
 must_fail_with "fitness-profiles activation: an installer without its P2 check" 'ACT .*packaging/windows exists, which activates P2.*not implemented' profiles -checks ACT
 fresh_pf_tree; mkdir -p "$pf/internal/connector/ldap"
@@ -882,6 +951,385 @@ adv="$dc/security/advisories/CVE-1900-0001"; cp -R "$root/tools/fitness/disclosu
 sed -i.bak 's|"vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/|"vectorString": "CVSS:3.1/AV:N/AC:L/PR:L/|' "$adv/record.json"
 must_fail_with "fitness-disclosure on an advisory whose CVE record carries another score" 'vectorString .* differs from the advisory' go run ./tools/fitness/disclosure "$dc"
 rm -rf "$adv"
+
+# --- fitness-packaging (T-0104) -----------------------------------------------------------------
+pk="$tmp/packaging"; mkdir -p "$pk"; cp -r "$root/packaging" "$pk/packaging"
+sed -i 's/SetAccessRuleProtection(\$true, \$false)/SetAccessRuleProtection($false, $false)/' "$pk/packaging/windows/Set-ApiTlsDirAcl.ps1"
+must_fail_with "fitness-packaging on an ACL script that leaves inheritance on" 'inheritance must be disabled' go run ./tools/fitness/packaging "$pk"
+cp "$root/packaging/windows/Set-ApiTlsDirAcl.ps1" "$pk/packaging/windows/"
+sed -i 's/chmod 0700/chmod 0755/' "$pk/packaging/linux-oci/prepare-tls-dir.sh"
+must_fail_with "fitness-packaging on a prepare script that loosens the mode" 'mode 0700' go run ./tools/fitness/packaging "$pk"
+cp "$root/packaging/linux-oci/prepare-tls-dir.sh" "$pk/packaging/linux-oci/"
+must_pass "fitness-packaging" go run ./tools/fitness/packaging "$pk"
+
+# --- fitness-host (T-0136, TM-F-HOST) -----------------------------------------------------------
+ht="$tmp/host"; mkdir -p "$ht"; hf="$root/tools/fitness/host/testdata/clean-windows.json"
+must_pass "fitness-host on a compliant Windows observation" go run ./tools/fitness/host evaluate -repo "$root" "$hf"
+host_case() { # <label> <expected case> <sed expression>
+  sed -e "$3" "$hf" >"$ht/o.json"
+  must_fail_with "fitness-host: $1" "FAIL   $2" go run ./tools/fitness/host evaluate -repo "$root" "$ht/o.json"
+}
+host_case "installer accepts a domain controller" HOST-DC-REFUSED 's/"refused": true/"refused": false/'
+host_case "service runs as LocalSystem" HOST-SERVICE-NOT-PRIVILEGED 's/CORP\\\\activediq\$/LocalSystem/'
+host_case "config readable by others" HOST-FILE-PERMISSIONS '0,/"tls-dir", "readable_by_others": false/s//"tls-dir", "readable_by_others": true/'
+host_case "default credential works" HOST-NO-DEFAULT-CREDENTIAL 's/"default_credentials": \[\]/"default_credentials": ["admin"]/'
+host_case "plaintext listener" HOST-NO-PLAINTEXT-LISTENER 's/"plaintext_responds": false/"plaintext_responds": true/'
+host_case "setup secret reusable" HOST-SETUP-SECRET-SINGLE-USE 's/"accepted_again": false/"accepted_again": true/'
+host_case "WER LocalDumps configured" HOST-NO-DUMPS 's/"wer_local_dumps": false/"wer_local_dumps": true/'
+host_case "remote DSN without TLS accepted" HOST-REMOTE-DSN-FULL-TLS 's/"mode": "disable", "remote": true, "accepted": false/"mode": "disable", "remote": true, "accepted": true/'
+
+# --- release tooling and workflows (T-0261) -----------------------------------------------------
+rt="$tmp/release"; mkdir -p "$rt"
+printf 'Contact: https://example.test/r\nExpires: 2020-01-01T00:00:00Z\n' >"$rt/security.txt"
+must_pass "renewsecuritytxt reports a stale file as due" bash -c "go run ./tools/release/renewsecuritytxt -file '$rt/security.txt' | grep -qx renew"
+go run ./tools/release/renewsecuritytxt -file "$rt/security.txt" -write >/dev/null
+must_pass "renewsecuritytxt rewrote Expires away from the stale date" bash -c "! grep -q 2020-01-01 '$rt/security.txt'"
+must_pass "renewsecuritytxt reports the renewed file as current" bash -c "go run ./tools/release/renewsecuritytxt -file '$rt/security.txt' | grep -qx current"
+printf 'Contact: x\n' >"$rt/none.txt"
+must_fail_with "renewsecuritytxt on a file without Expires" 'want exactly 1' go run ./tools/release/renewsecuritytxt -file "$rt/none.txt"
+must_fail_with "sbom without SOURCE_DATE_EPOCH (not reproducible)" 'SOURCE_DATE_EPOCH must be set' env -u SOURCE_DATE_EPOCH go run ./tools/release/sbom -version v0 -o "$rt/s.json"
+must_pass "sbom of this repository" env SOURCE_DATE_EPOCH=1790000000 go run ./tools/release/sbom -version v0.0.0-proof -o "$rt/s.json"
+seeds=$(go run ./tools/release/sign keygen); seed=$(echo "$seeds" | awk '$1=="seed"{print $2}'); pubkey=$(echo "$seeds" | awk '$1=="public"{print $2}')
+echo "$pubkey" >"$rt/k.pub"
+must_fail_with "sign without a key (never an unsigned release)" 'RELEASE_SIGNING_KEY' env -u RELEASE_SIGNING_KEY go run ./tools/release/sign sign -sig "$rt/s.sig" "$rt/s.json"
+must_pass "sign" env RELEASE_SIGNING_KEY="$seed" go run ./tools/release/sign sign -sig "$rt/s.sig" "$rt/s.json"
+must_pass "verify of the signed SBOM" go run ./tools/release/sign verify -pub "$rt/k.pub" -sig "$rt/s.sig" "$rt/s.json"
+echo tampered >>"$rt/s.json"
+must_fail_with "verify of a tampered SBOM" 'does not match' go run ./tools/release/sign verify -pub "$rt/k.pub" -sig "$rt/s.sig" "$rt/s.json"
+wf="$tmp/wf"; mkdir -p "$wf"; cp "$root"/.github/workflows/*.yml "$wf/"
+must_pass "workflows-check" tools/ci/workflows-check.sh "$wf"
+sed -i '0,/steps:/s//continue-on-error: true\n    steps:/' "$wf/release.yml"
+must_fail_with "workflows-check on continue-on-error" 'continue-on-error' tools/ci/workflows-check.sh "$wf"
+cp "$root/.github/workflows/release.yml" "$wf/"; sed -i -E 's/(uses: actions\/checkout)@[0-9a-f]{40}/\1@v4/' "$wf/release.yml"
+must_fail_with "workflows-check on an unpinned action" 'not pinned' tools/ci/workflows-check.sh "$wf"
+cp "$root/.github/workflows/release.yml" "$wf/"; sed -i 's/sign verify/sign noop/' "$wf/release.yml"
+must_fail_with "workflows-check on a release that does not verify" 'without verifying' tools/ci/workflows-check.sh "$wf"
+
+# --- fitness-agent-host (T-0554) ----------------------------------------------------------------
+# The Go-test half (P1-P8, F1) is judged from `go test -json`; judgeTests' cases fail on a failed,
+# skipped or deleted test (tools/fitness/agenthost/check_test.go). The CLI cases below use -skip-tests.
+ah="$tmp/agenthost"; mkdir -p "$ah/proto/skenzeriq/agent/v1" "$ah/proto/activediq/addc/v1" "$ah/proto/activediq/fleet/v1"
+cp "$root/proto/activediq/fleet/v1/fleet.proto" "$ah/proto/activediq/fleet/v1/"
+cat >"$ah/proto/skenzeriq/agent/v1/agent.proto" <<'PROTO'
+syntax = "proto3";
+package skenzeriq.agent.v1;
+message Empty {}
+message SignedPolicy { bytes payload = 1; bytes signature = 2; }
+message SignedKeyset { bytes payload = 1; bytes signature = 2; }
+message StageRequest { bytes tuf_metadata = 1; bytes artefact_digest = 2; }
+message AckRequest { uint64 through_agent_seq = 1; }
+message Status { uint64 policy_seq = 1; }
+service Host {
+  rpc GetStatus(Empty) returns (Status);
+  rpc ApplyPolicy(SignedPolicy) returns (Status);
+  rpc ApplyKeyset(SignedKeyset) returns (Status);
+  rpc StageUpdate(StageRequest) returns (Status);
+  rpc AckEvents(AckRequest) returns (Status);
+}
+PROTO
+cat >"$ah/proto/activediq/addc/v1/addc.proto" <<'PROTO'
+syntax = "proto3";
+package activediq.addc.v1;
+message Empty {}
+message CollectionState { uint64 last_event_record_id = 1; }
+message PasswordPolicy { uint32 min_length = 1; repeated string banned_terms = 2; }
+message AddcPolicy { PasswordPolicy password = 1; bool collection_enabled = 2; }
+service Addc { rpc GetCollectionState(Empty) returns (CollectionState); }
+PROTO
+mkdir -p "$ah/packaging/windows" "$ah/cmd/agent" "$ah/internal/agentmodules/addc" "$ah/internal/directory/client"
+cat >"$ah/packaging/windows/agent.wxs" <<'WXS'
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"><Package Name="agent">
+<ServiceInstall Name="activediq-agent" Account="NT SERVICE\activeDIQAgent" Start="auto">
+<ServiceConfig ServiceSid="restricted" RequiredPrivileges="SeChangeNotifyPrivilege" /></ServiceInstall></Package></Wix>
+WXS
+printf 'module fx.test\n\ngo 1.22\n' >"$ah/go.mod"
+printf 'package client\n' >"$ah/internal/directory/client/c.go"
+printf 'package main\n\nfunc main() {}\n' >"$ah/cmd/agent/main.go"
+printf 'package addc\n' >"$ah/internal/agentmodules/addc/a.go"
+printf 'fx.test/cmd/agent\n' >"$tmp/agenthost-allow.txt"
+agenthost() { go run ./tools/fitness/agenthost -skip-tests -closure-allow "$tmp/agenthost-allow.txt" -root "$@"; }
+must_pass "fitness-agent-host on a clean agent tree" agenthost "$ah"
+cp "$ah/proto/skenzeriq/agent/v1/agent.proto" "$tmp/agent.proto.clean"
+sed -i 's/service Host {/service Host { rpc RunCommand(Empty) returns (Status);/' "$ah/proto/skenzeriq/agent/v1/agent.proto"
+must_fail_with "fitness-agent-host on a denied verb (exec) in the agent proto (R1)" '\[AG2\].*contains .run.' agenthost "$ah"
+cp "$tmp/agent.proto.clean" "$ah/proto/skenzeriq/agent/v1/agent.proto"
+cp "$ah/proto/activediq/addc/v1/addc.proto" "$tmp/addc.proto.clean"
+sed -i 's/bool collection_enabled = 2;/bool collection_enabled = 2; string log_path = 3;/' "$ah/proto/activediq/addc/v1/addc.proto"
+must_fail_with "fitness-agent-host on a path field in the policy (R2)" '\[AG4\]' agenthost "$ah"
+sed -i 's/string log_path = 3;/uint32 password_hash = 3;/' "$ah/proto/activediq/addc/v1/addc.proto"
+must_fail_with "fitness-agent-host on a password field in the addc surface (R5)" 'AG6' agenthost "$ah"
+cp "$tmp/addc.proto.clean" "$ah/proto/activediq/addc/v1/addc.proto"
+cp "$ah/packaging/windows/agent.wxs" "$tmp/agent.wxs.clean"
+sed -i 's/NT SERVICE\\activeDIQAgent/LocalSystem/' "$ah/packaging/windows/agent.wxs"
+must_fail_with "fitness-agent-host on LocalSystem in the MSI source (A1)" 'LocalSystem' agenthost "$ah"
+cp "$tmp/agent.wxs.clean" "$ah/packaging/windows/agent.wxs"
+sed -i 's/SeChangeNotifyPrivilege/SeChangeNotifyPrivilege SeBackupPrivilege/' "$ah/packaging/windows/agent.wxs"
+must_fail_with "fitness-agent-host on an extra privilege in the MSI source (A1)" 'RequiredPrivileges of .*are' agenthost "$ah"
+cp "$tmp/agent.wxs.clean" "$ah/packaging/windows/agent.wxs"
+# T-0664: the WiX SDK compiles **/*.wxs, so testdata/ and node_modules/ under packaging/ are scanned.
+# Fourth review: no reachability heuristic; WiX files in testdata/ or node_modules/ anywhere are scanned.
+lsys='<Wix><Package><ServiceInstall Name="skzHelper" Account="LocalSystem"/></Package></Wix>'
+for d in packaging/windows/testdata packaging/windows/node_modules testdata "src[/testdata" src/testdata; do
+  mkdir -p "$ah/$d"
+  printf '%s\n' "$lsys" >"$ah/$d/x.wxs"
+  [ "$d" = "src/testdata" ] && printf '<Project/>\n' >"$ah/$d/Evil.wixproj"
+  [ "$d" = "src[/testdata" ] && printf '<Project/>\n' >"$ah/src[/Evil.wixproj"
+  [ "$d" = "testdata" ] && printf '<Project><ItemGroup><Compile Include="..\\..\\testdata\\x.wxs"/></ItemGroup></Project>\n' >"$ah/packaging/windows/A.wixproj"
+  must_fail_with "fitness-agent-host on a LocalSystem service in $d (A1)" 'LocalSystem' agenthost "$ah"
+  rm -rf "$ah/$d" "$ah/src[" "$ah/src" "$ah/packaging/windows/A.wixproj"
+done
+# T-0677 (+ security review): the A1 walker scans every WiX-named file in the repo, tools/fitness included,
+# so no include, escape, glob, property or Directory.Build.props can reach an unscanned fixture.
+mkdir -p "$ah/tools/fitness/x/testdata"; printf '%s\n' "$lsys" >"$ah/tools/fitness/x/testdata/evil.wxs"
+must_fail_with "fitness-agent-host on a WiX file under tools/fitness (A1)" 'LocalSystem' agenthost "$ah"
+for inc in '..\\..\\tools\\fitness\\x\\testdata\\evil.wxs' '..\\..\\tools\\%66itness\\x\\testdata\\evil.wxs' '..\\..\\**\\*.wxs' '..\\..\\tools\\$(F)$(N)\\x\\testdata\\evil.wxs'; do
+  printf '<Project><PropertyGroup><F>fit</F><N>ness</N></PropertyGroup><ItemGroup><Compile Include="%s"/></ItemGroup></Project>\n' "$inc" >"$ah/packaging/windows/A.wixproj"
+  must_fail_with "fitness-agent-host on Compile Include $inc (A1)" 'LocalSystem' agenthost "$ah"
+done
+rm -f "$ah/packaging/windows/A.wixproj"
+printf '<Project><ItemGroup><Compile Include="..\\..\\tools\\fitness\\x\\testdata\\evil.wxs"/></ItemGroup></Project>\n' >"$ah/packaging/windows/Directory.Build.props"
+must_fail_with "fitness-agent-host on a Directory.Build.props include (A1)" 'LocalSystem' agenthost "$ah"
+rm -f "$ah/packaging/windows/Directory.Build.props"
+ln -s "$ah/tools/fitness/x/testdata" "$ah/tools/fx"
+must_fail_with "fitness-agent-host on a non-WiX-named directory link outside packaging/ (A1)" 'symbolic link to a directory' agenthost "$ah"
+rm -rf "$ah/tools"
+mkdir -p "$ah/elsewhere"; printf '%s\n' "$lsys" >"$ah/elsewhere/x.wxs"; ln -s "$ah/elsewhere" "$ah/packaging/windows/testdata"
+must_fail_with "fitness-agent-host on a symlinked directory under packaging/ (A1)" 'symbolic link' agenthost "$ah"
+rm -rf "$ah/packaging/windows/testdata" "$ah/elsewhere"
+if [ "$(id -u)" != 0 ]; then
+  mkdir -p "$ah/packaging/windows/testdata"; printf '%s\n' "$lsys" >"$ah/packaging/windows/testdata/x.wxs"; chmod 000 "$ah/packaging/windows/testdata"
+  must_fail_with "fitness-agent-host on an unreadable directory under packaging/ (A1)" 'cannot be walked' agenthost "$ah"
+  chmod 755 "$ah/packaging/windows/testdata"; rm -rf "$ah/packaging/windows/testdata"
+fi
+# T-0677 security review, attempt 2: WiX is classified by content, intermediates and odd links fail closed.
+mkdir -p "$ah/x"
+for n in evil.xml evil.golden; do
+  printf '%s\n' "$lsys" >"$ah/x/$n"
+  printf '<Project><ItemGroup><Compile Include="..\\..\\x\\%s"/></ItemGroup></Project>\n' "$n" >"$ah/packaging/windows/A.wixproj"
+  must_fail_with "fitness-agent-host on a LocalSystem WiX document named $n (A1, by content)" 'LocalSystem' agenthost "$ah"
+  rm -f "$ah/x/$n" "$ah/packaging/windows/A.wixproj"
+done
+printf '<Include><ServiceInstall Name="x" Account="LocalSystem"/></Include>\n' >"$ah/x/evil.txt"
+printf '<Wix><?include ../../x/evil.txt ?></Wix>\n' >"$ah/packaging/windows/core.wxs"
+must_fail_with "fitness-agent-host on a LocalSystem <?include?> of a .txt file (A1, by content)" 'LocalSystem' agenthost "$ah"
+rm -f "$ah/x/evil.txt" "$ah/packaging/windows/core.wxs"
+printf 'PK' >"$ah/x/core.wixlib"
+must_fail_with "fitness-agent-host on a prebuilt .wixlib (A1)" 'prebuilt WiX intermediate' agenthost "$ah"
+rm -f "$ah/x/core.wixlib"
+mkdir -p "$tmp/wixir"; printf '{}' >"$tmp/wixir/wix-ir.json"
+(cd "$tmp/wixir" && rm -f ../blob.dat.zip && python3 -c 'import zipfile;zipfile.ZipFile("../blob.dat.zip","w").write("wix-ir.json")') && mv "$tmp/blob.dat.zip" "$ah/x/blob.dat"
+must_fail_with "fitness-agent-host on a renamed zip holding wix-ir.json (A1)" 'wix-ir.json' agenthost "$ah"
+rm -f "$ah/x/blob.dat"
+ln -s /nonexistent/agent-src "$ah/packaging/windows/src"
+must_fail_with "fitness-agent-host on a dangling symlink under packaging/ (A1)" 'cannot be resolved' agenthost "$ah"
+rm -f "$ah/packaging/windows/src"
+mkdir -p "$tmp/outside"; printf '%s\n' "$lsys" >"$tmp/outside/evil.xml"; ln -s "$tmp/outside/evil.xml" "$ah/x/fx.dat"
+must_fail_with "fitness-agent-host on a file symlink leaving the repo (A1)" 'leaves the repository' agenthost "$ah"
+rm -f "$ah/x/fx.dat"
+for n in evil.bin evil.png; do
+  printf '%s\n' "$lsys" >"$ah/x/$n"
+  printf '<Project><ItemGroup><Compile Include="..\\..\\x\\%s"/></ItemGroup></Project>\n' "$n" >"$ah/packaging/windows/A.wixproj"
+  must_fail_with "fitness-agent-host on a LocalSystem WiX document saved as $n (A1, extension never exempts)" 'LocalSystem' agenthost "$ah"
+  rm -f "$ah/x/$n" "$ah/packaging/windows/A.wixproj"
+done
+printf '%s\n' "$lsys" >"$ah/packaging/windows/evil.bin"
+must_fail_with "fitness-agent-host on a LocalSystem WiX document saved as packaging/windows/evil.bin (A1)" 'LocalSystem' agenthost "$ah"
+rm -f "$ah/packaging/windows/evil.bin"
+python3 -c 'import sys;s=sys.argv[1];open(sys.argv[2],"wb").write(b"\xff\xfe\0\0"+s.encode("utf-32-le"))' "$lsys" "$ah/x/evil.xml"
+must_fail_with "fitness-agent-host on a UTF-32LE LocalSystem WiX document (A1)" 'LocalSystem' agenthost "$ah"
+rm -f "$ah/x/evil.xml"
+# T-0677 attempt 5: BOM-less encodings detected from the first four bytes (XML 1.0 Appendix F).
+printf '<Project><ItemGroup><Compile Include="..\\..\\x\\evil.xml"/></ItemGroup></Project>\n' >"$ah/packaging/windows/A.wixproj"
+for enc in utf-32-le utf-32-be; do
+  python3 -c 'import sys;open(sys.argv[3],"wb").write(sys.argv[1].encode(sys.argv[2]))' "$lsys" "$enc" "$ah/x/evil.xml"
+  must_fail_with "fitness-agent-host on a BOM-less $enc LocalSystem WiX document (A1)" 'LocalSystem' agenthost "$ah"
+done
+python3 -c 'import sys;s=sys.argv[1];open(sys.argv[2],"wb").write(("<?xml version=\"1.0\"?><!--"+"\u4e01"*40000+"-->"+s).encode("utf-16-le"))' "$lsys" "$ah/x/evil.xml"
+must_fail_with "fitness-agent-host on a BOM-less UTF-16LE LocalSystem WiX document with a NUL-free pad (A1)" 'LocalSystem' agenthost "$ah"
+# T-0677 attempt 6: first-two-byte detection like .NET DetectEncoding, and 3412/2143 UCS-4 BOMs fail closed.
+for c in 'np16le|utf-16-le|<Wix><Fragment><!--' 'np16be|utf-16-be|<Wix><Fragment><!--' 'cm16le|utf-16-le|<!--'; do
+  IFS='|' read -r nm enc head <<<"$c"
+  python3 -c 'import sys;open(sys.argv[4],"wb").write((sys.argv[1]+"\u4e01"*40000+"-->"+sys.argv[2]+"</Fragment></Wix>").encode(sys.argv[3]))' "$head" "$lsys" "$enc" "$ah/x/evil.xml"
+  must_fail_with "fitness-agent-host on a BOM-less $nm WiX document with a NUL-free pad (A1)" 'LocalSystem' agenthost "$ah"
+done
+printf '<Project><ItemGroup><Compile Include="evil.dat"/></ItemGroup></Project>\n' >"$ah/packaging/windows/A.wixproj"
+python3 -c 'import sys;open(sys.argv[3],"wb").write((sys.argv[1]+"\u4e01"*40000+"-->"+sys.argv[2]+"</Fragment></Wix>").encode("utf-16-le"))' "<Wix><Fragment><!--" "$lsys" "$ah/packaging/windows/evil.dat"
+must_fail_with "fitness-agent-host on a BOM-less UTF-16LE WiX file named .dat under packaging/ (A1)" 'LocalSystem' agenthost "$ah"
+rm -f "$ah/packaging/windows/evil.dat"
+for bom in '\xfe\xff\0\0' '\0\0\xff\xfe'; do
+  printf "$bom"'rest' >"$ah/x/evil.xml"
+  must_fail_with "fitness-agent-host on a UCS-4 BOM in an unusual order (A1, fail closed)" 'cannot decode' agenthost "$ah"
+done
+# T-0677 attempt 7: the declared encoding name (.NET CheckEncoding/SwitchEncoding) is mirrored, fail closed.
+printf '<Project><ItemGroup><Compile Include="..\\..\\x\\evil.xml"/></ItemGroup></Project>\n' >"$ah/packaging/windows/A.wixproj"
+for c in 'dc32|utf-32|utf-32-le|' 'dc16be|utf-16BE|utf-16-be|\u4e01' 'dcunifffe|unicodeFFFE|utf-16-be|\u4e01' 'dcutf7|utf-7|utf-8|'; do
+  IFS='|' read -r nm decl body pad <<<"$c"
+  python3 -c 'import sys;d,b,p,s=sys.argv[1:5];pad=(chr(0x4e01)*40000) if p else "";open(sys.argv[5],"wb").write(("<?xml version=\"1.0\" encoding=\""+d+"\"?>").encode("ascii")+("<Wix><Fragment><!--"+pad+"-->"+s+"</Fragment></Wix>").encode(b))' "$decl" "$body" "$pad" "$lsys" "$ah/x/evil.xml"
+  must_fail_with "fitness-agent-host on a WiX document declaring encoding $decl (A1, fail closed)" 'declares an encoding' agenthost "$ah"
+done
+cp "$ah/x/evil.xml" "$ah/packaging/windows/evil.dat"
+must_fail_with "fitness-agent-host on a utf-7 declaring file named .dat under packaging/ (A1)" 'declares an encoding' agenthost "$ah"
+rm -f "$ah/packaging/windows/evil.dat"
+# T-0677 attempt 9: us-ascii/iso-8859-1/windows-1252 are accepted only for pure-ASCII files (.NET turns bytes >= 0x80 into '?').
+python3 -c 'import sys;open(sys.argv[2],"wb").write(b"<?xml version=\"1.0\" encoding=\"us-ascii\"?><?x \x80>"+sys.argv[1].encode()+b"<?y ?>")' "<Wix><Fragment>$lsys</Fragment></Wix>" "$ah/x/evil.xml"
+must_fail_with "fitness-agent-host on a us-ascii declaring file hiding a WiX body behind a 0x80 byte (A1)" 'declares an encoding' agenthost "$ah"
+# T-0677 attempt 10: the same hole past the 64 KiB head (full re-read must run the encoding rule too).
+python3 -c 'import sys;open(sys.argv[2],"wb").write(b"<?xml version=\"1.0\" encoding=\"us-ascii\"?><!--"+b"a"*70000+b"--><?x \x80>"+sys.argv[1].encode()+b"<?y ?>")' "<Wix><Fragment>$lsys</Fragment></Wix>" "$ah/x/evil.xml"
+must_fail_with "fitness-agent-host on a us-ascii file with 0x80 hidden past the 64 KiB head (A1)" 'declares an encoding' agenthost "$ah"
+rm -f "$ah/packaging/windows/A.wixproj"
+for sig in '\0\0\x3c\0' '\0\x3c\0\0' '\x4c\x6f\xa7\x94'; do
+  printf "$sig"'rest' >"$ah/x/evil.xml"
+  must_fail_with "fitness-agent-host on an undecodable XML signature (A1, fail closed)" 'cannot decode' agenthost "$ah"
+done
+rm -f "$ah/x/evil.xml"
+printf '\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\20' >"$ah/packaging/windows/logo.png"
+must_pass "fitness-agent-host on a real PNG under packaging/ (A1 negative)" agenthost "$ah"
+rm -f "$ah/packaging/windows/logo.png"
+printf 'package x\n\nconst S = `%s`\n' "$lsys" >"$ah/x/fix.go"
+must_pass "fitness-agent-host on a Go file holding a WiX snippet in a string (A1 negative)" agenthost "$ah"
+rm -rf "$ah/x"
+printf 'package main\n\nimport _ "fx.test/internal/directory/client"\n\nfunc main() {}\n' >"$ah/cmd/agent/main.go"
+must_fail_with "fitness-agent-host on a directory client in the agent binary (A4)" 'internal/directory/client' agenthost "$ah"
+printf 'package main\n\nfunc main() {}\n' >"$ah/cmd/agent/main.go"
+printf 'package addc\n\nimport "os/exec"\n\nvar _ = exec.Command\n' >"$ah/internal/agentmodules/addc/a.go"
+must_fail_with "fitness-agent-host on os/exec in an agent module (R3)" 'imports os/exec' agenthost "$ah"
+printf 'package addc\n' >"$ah/internal/agentmodules/addc/a.go"
+printf 'package main\n\nimport "net"\n\nfunc main() { _, _ = net.Listen("tcp", ":1") }\n' >"$ah/cmd/agent/main.go"
+must_fail_with "fitness-agent-host on a listener in the agent (R4)" 'calls net.Listen' agenthost "$ah"
+printf 'package main\n\nfunc main() {}\n' >"$ah/cmd/agent/main.go"
+# Bypasses the security review found in the first version of R3/R4/A1/A4: each must fail now.
+printf 'package addc\n\nimport "golang.org/x/sys/windows"\n\nvar _ = windows.CreateProcess\n' >"$ah/internal/agentmodules/addc/a.go"
+must_fail_with "fitness-agent-host on windows.CreateProcess in an agent module (R3 allowlist)" 'x/sys/windows' agenthost "$ah"
+printf 'package addc\n\nimport . "os"\n\nfunc f() { _ = WriteFile("x", nil, 0) }\n' >"$ah/internal/agentmodules/addc/a.go"
+must_fail_with "fitness-agent-host on a dot-import in an agent module (R3)" 'dot-imports' agenthost "$ah"
+printf 'package addc\n' >"$ah/internal/agentmodules/addc/a.go"
+printf 'package main\n\nimport "net"\n\nfunc main() { var lc net.ListenConfig; _ = lc }\n' >"$ah/cmd/agent/main.go"
+must_fail_with "fitness-agent-host on net.ListenConfig in the agent (R4)" 'ListenConfig' agenthost "$ah"
+mkdir -p "$ah/internal/other"; printf 'package other\n' >"$ah/internal/other/o.go"
+printf 'package main\n\nimport _ "fx.test/internal/other"\n\nfunc main() {}\n' >"$ah/cmd/agent/main.go"
+must_fail_with "fitness-agent-host on a package outside the closure allowlist (A4)" 'not on the allowlist' agenthost "$ah"
+printf 'package main\n\nfunc main() {}\n' >"$ah/cmd/agent/main.go"
+sed -i 's|<ServiceConfig ServiceSid="restricted"|<ServiceConfig ServiceSid="unrestricted" /><ServiceConfig ServiceSid="restricted"|' "$ah/packaging/windows/agent.wxs"
+must_fail_with "fitness-agent-host on an unrestricted ServiceSid followed by a restricted one (A1)" 'service SID type of .* is .unrestricted' agenthost "$ah"
+cp "$tmp/agent.wxs.clean" "$ah/packaging/windows/agent.wxs"
+printf 'sc.exe config activeDIQAgent obj= LocalSystem\n' >"$ah/packaging/windows/Install-Agent.ps1"
+must_fail_with "fitness-agent-host on LocalSystem in an install script (A1)" 'Install-Agent.ps1 names' agenthost "$ah"
+rm "$ah/packaging/windows/Install-Agent.ps1"
+# Second security review: os.OpenRoot, assembly, service registry key, WMI, UTF-16 script.
+printf 'package addc\n\nimport "os"\n\nvar _ = os.OpenRoot\n' >"$ah/internal/agentmodules/addc/a.go"
+must_fail_with "fitness-agent-host on os.OpenRoot in an agent module (R3 os allowlist)" 'uses os.OpenRoot' agenthost "$ah"
+printf 'package addc\n' >"$ah/internal/agentmodules/addc/a.go"
+printf 'TEXT sys(SB),0,$0\n\tSYSCALL\n' >"$ah/internal/agentmodules/addc/a_linux_amd64.s"
+must_fail_with "fitness-agent-host on an assembly file in an agent module (R3)" 'only .go files' agenthost "$ah"
+rm "$ah/internal/agentmodules/addc/a_linux_amd64.s"
+printf '<Wix><RegistryValue Key="SYSTEM\\CurrentControlSet\\Services\\activeDIQAgent" Name="ObjectName" Value=".\\svc-admin" /></Wix>\n' >"$ah/packaging/windows/agent-reg.wxs"
+must_fail_with "fitness-agent-host on a service registry key in the MSI source (A1)" 'Services registry key' agenthost "$ah"
+rm "$ah/packaging/windows/agent-reg.wxs"
+printf 'Invoke-CimMethod -Query "SELECT * FROM Win32_Service WHERE Name=%sactiveDIQAgent%s" -MethodName Change -Arguments @{StartName=%s.\\svc-admin%s}\n' "'" "'" "'" "'" >"$ah/packaging/windows/Install-Agent.ps1"
+must_fail_with "fitness-agent-host on a WMI service account change (A1)" 'other than' agenthost "$ah"
+printf 'sc.exe config activeDIQAgent obj= LocalSystem\n' | iconv -f UTF-8 -t UTF-16 >"$ah/packaging/windows/Install-Agent.ps1"
+must_fail_with "fitness-agent-host on LocalSystem in a UTF-16 install script (A1)" 'Install-Agent.ps1 names' agenthost "$ah"
+rm "$ah/packaging/windows/Install-Agent.ps1"
+# Third security review: an allow-by-exception installer. Unselected WiX files, custom actions, scripts, HKLM\SYSTEM.
+mkdir -p "$ah/packaging/windows/core"
+printf '<?define P="activeDIQ"?><Wix><Package><ServiceConfig ServiceName="$(var.P)Agent" ServiceSid="unrestricted"/></Package></Wix>\n' >"$ah/packaging/windows/core/Product.wxs"
+must_fail_with "fitness-agent-host on a variable service name in a WiX file that never names the agent (A1)" 'through a variable' agenthost "$ah"
+printf '<Wix><Package><CustomAction Id="CA_Acct" ExeCommand=%s"[SystemFolder]sc.exe" config activeDIQAgent obj= [ACCT]%s/></Package></Wix>\n' "'" "'" >"$ah/packaging/windows/core/Product.wxs"
+must_fail_with "fitness-agent-host on a quoted sc.exe custom action (A1 deny-by-default)" 'runs code at install time' agenthost "$ah"
+printf '<Wix><Package><RegistryValue Root="HKLM" Key="SYSTEM\\CurrentControlSet\\[K]" Name="ObjectName" Value="x"/></Package></Wix>\n' >"$ah/packaging/windows/core/Product.wxs"
+must_fail_with "fitness-agent-host on a property-split HKLM\\SYSTEM registry key (A1)" 'HKLM key' agenthost "$ah"
+rm "$ah/packaging/windows/core/Product.wxs"
+printf 'sc.exe config activeDIQAgent obj= "NT SERVICE\\activeDIQAgent"\n' >"$ah/packaging/windows/Install-Agent.ps1"
+must_fail_with "fitness-agent-host on an unreviewed script in the agent packaging (A1)" 'is a script in the agent packaging' agenthost "$ah"
+rm "$ah/packaging/windows/Install-Agent.ps1"
+printf 'package addc\n\nimport _x "fx.test/internal/agenthost/apix/exec"\n\nvar _ = _x.Y\n' >"$ah/internal/agentmodules/addc/a.go"
+must_fail_with "fitness-agent-host on a look-alike own package path in an agent module (R3 exact match)" 'allowlist' agenthost "$ah"
+printf 'package addc\n\nimport "path/filepath"\n\nvar _ = filepath.WalkDir\n' >"$ah/internal/agentmodules/addc/a.go"
+must_fail_with "fitness-agent-host on filepath.WalkDir in an agent module (R3)" 'filepath.WalkDir' agenthost "$ah"
+# Fourth security review: parsed, entity-decoded structure; services, ACLs and file types denied by default.
+printf '<Wix><Package><ServiceInstall Name="activeDIQ&#65;gent" Account="NT SERVICE\\activeDIQ&#65;gent"><ServiceConfig ServiceName="activeDIQ&#65;gent" ServiceSid="unrestricted" RequiredPrivileges="SeDebugPrivilege"/></ServiceInstall></Package></Wix>\n' >"$ah/packaging/windows/core/Product.wxs"
+must_fail_with "fitness-agent-host on an entity-encoded agent service name with an unrestricted SID (A1)" 'character reference' agenthost "$ah"
+printf '<Wix><Package><ServiceInstall Name="skzHelper" Type="ownProcess" Start="auto"/></Package></Wix>\n' >"$ah/packaging/windows/core/Product.wxs"
+must_fail_with "fitness-agent-host on a ServiceInstall with no Account, i.e. implicit LocalSystem (A1)" 'no Account' agenthost "$ah"
+printf '<Wix><Package><Component Id="C"><ServiceInstall Name="activediq-agent" Account="NT SERVICE\\activeDIQAgent"/><ServiceInstall Name="x" Account="NT SERVICE\\x"/></Component></Package></Wix>\n' >"$ah/packaging/windows/core/Product.wxs"
+must_fail_with "fitness-agent-host on a second service in the agent Component (A1)" 'exactly one' agenthost "$ah"
+printf '<Wix><Package><ServiceInstall Name="Other" Account="NT SERVICE\\Other"><PermissionEx Sddl="D:(A;;GA;;;WD)"/></ServiceInstall></Package></Wix>\n' >"$ah/packaging/windows/core/Product.wxs"
+must_fail_with "fitness-agent-host on a PermissionEx ACL (A1 deny-by-default)" 'grants an ACL' agenthost "$ah"
+# Fifth security review: DTD entities, WiX outside packaging/, every service pinned.
+printf '<!DOCTYPE Wix [<!ENTITY g "Agent">]><Wix><Package><ServiceInstall Name="activeDIQ&g;" Account="NT SERVICE\\activeDIQ&g;"><ServiceConfig ServiceName="activeDIQ&g;" ServiceSid="unrestricted" RequiredPrivileges="SeDebugPrivilege"/></ServiceInstall></Package></Wix>\n' >"$ah/packaging/windows/core/Product.wxs"
+must_fail_with "fitness-agent-host on a DOCTYPE/ENTITY-built agent service name (A1)" 'DOCTYPE or ENTITY' agenthost "$ah"
+printf '<Wix><Package><Component><ServiceInstall Name="skzHelper" Account="NT SERVICE\\skzHelper"><ServiceConfig ServiceSid="unrestricted" RequiredPrivileges="SeDebugPrivilege,SeBackupPrivilege"/></ServiceInstall></Component></Package></Wix>\n' >"$ah/packaging/windows/core/Product.wxs"
+must_fail_with "fitness-agent-host on a second service with an unrestricted SID and extra privileges (A1)" 'service SID type of' agenthost "$ah"
+rm "$ah/packaging/windows/core/Product.wxs"
+mkdir -p "$ah/installer"
+printf '<Wix><Package><ServiceInstall Name="activeDIQAgent" Account="LocalSystem"/></Package></Wix>\n' >"$ah/installer/agent.wxs"
+must_fail_with "fitness-agent-host on LocalSystem in WiX outside packaging/ (A1)" 'LocalSystem' agenthost "$ah"
+rm -rf "$ah/installer"
+printf '<Wix><Package><ServiceInstall Name="x" Account="NT SERVICE\\x" ServiceSid="restricted" RequiredPrivileges="SeChangeNotifyPrivilege"/></Package></Wix>\n' >"$ah/packaging/windows/core/Product.wxs"
+rm "$ah/packaging/windows/core/Product.wxs"
+mkdir -p "$ah/packaging/windows/agent"
+printf '<ServiceInstall Name="activeDIQAgent" Account="NT SERVICE\\activeDIQAgent"><ServiceConfig ServiceSid="unrestricted"/></ServiceInstall>\n' >"$ah/packaging/windows/agent/Product.wxs.in"
+must_fail_with "fitness-agent-host on an unparsed WiX template in the agent packaging (A1)" 'template or transform' agenthost "$ah"
+rm -rf "$ah/packaging/windows/agent"
+printf 'package addc\n' >"$ah/internal/agentmodules/addc/a.go"
+must_pass "fitness-agent-host after the violations are removed" agenthost "$ah"
+must_pass "fitness-agent-host is wired into make fitness" bash -c "make -n fitness | grep -q 'tools/fitness/agenthost'"
+
+# --- fitness-audit (ADR-0005 A1-A9, TM-F-AUDIT), the real CLI ------------------------------------
+# The per-rule proofs of A1 are the tool's own tests (go test ./tools/fitness/audit/...). Here: A1 on a
+# real migration sequence with one extra migration that lets the runtime role DELETE audit rows (needs
+# Docker), and the test bindings of A2-A9 on a throw-away module whose bound tests fail, are skipped or
+# are missing.
+aubin="$tmp/fitness-audit"
+go build -o "$aubin" ./tools/fitness/audit
+au="$tmp/au"
+mkdir -p "$au/migrations" "$au/internal/platform/audit"
+cp migrations/*.sql "$au/migrations/"
+printf 'module au.test\n\ngo 1.27.0\n' >"$au/go.mod"
+printf 'GRANT DELETE ON public.audit_event TO activediq_app;\n' >"$au/migrations/9999_audit_proof.sql"
+must_fail_with "fitness-audit A1 when the runtime role can DELETE audit events" 'A1 audit_event \[runtime-privilege\]: .*holds DELETE' "$aubin" -root "$au" -pg 18 -checks A1
+rm "$au/migrations/9999_audit_proof.sql"
+printf 'GRANT TRUNCATE ON public.audit_checkpoint TO activediq_app;\n' >"$au/migrations/9999_audit_proof.sql"
+must_fail_with "fitness-audit A1 when the runtime role can TRUNCATE the checkpoints" 'A1 audit_checkpoint \[runtime-privilege\]: .*holds TRUNCATE' "$aubin" -root "$au" -pg 18 -checks A1
+rm "$au/migrations/9999_audit_proof.sql"
+must_pass "fitness-audit A1" "$aubin" -root "$au" -pg 18 -checks A1
+a2tests="TestRolledBackAppendLeavesNothingAndTheChainStaysGapless TestA2NonReadCommittedAppendIsRefusedAndChainStaysGapless TestFailsClosedWhenMiswired TestHeadGuards"
+write_a2() { # $1 = body of TestHeadGuards
+  { printf 'package audit_test\n\nimport "testing"\n\n'
+    for n in $a2tests; do [ "$n" = TestHeadGuards ] || printf 'func %s(t *testing.T) {}\n' "$n"; done
+    printf 'func TestHeadGuards(t *testing.T) { %s }\n' "$1"; } >"$au/internal/platform/audit/a_test.go"
+}
+write_a2 't.Fatal("an edited event verified")'
+must_fail_with "fitness-audit A2 when a bound test fails" 'A2 \./internal/platform/audit TestHeadGuards \[test-failed\]' "$aubin" -root "$au" -checks A2
+write_a2 't.Skip("no docker")'
+must_fail_with "fitness-audit A2 when a bound test is skipped" 'A2 \./internal/platform/audit TestHeadGuards \[test-skipped\]' "$aubin" -root "$au" -checks A2
+write_a2 ''
+sed -i 's/TestHeadGuards/TestHeadGuardsRenamed/' "$au/internal/platform/audit/a_test.go"
+must_fail_with "fitness-audit A2 when a bound test is renamed away" 'A2 \./internal/platform/audit TestHeadGuards \[test-missing\]' "$aubin" -root "$au" -checks A2
+write_a2 ''
+must_pass "fitness-audit A2" "$aubin" -root "$au" -checks A2
+
+# --- fitness-update (T-0139) -------------------------------------------------------------------
+upd="$tmp/update-bin"
+go build -o "$upd" ./tools/fitness/update
+must_pass "fitness-update (both couriers)" "$upd"
+must_fail_with "fitness-update against a verifier that accepts bad updates" 'accepted a bad update; want refusal "tamper"' "$upd" -sabotage accept-all
+must_fail_with "fitness-update against a verifier that refuses for the wrong reason" 'refused with "tamper", want "rollback"' "$upd" -sabotage mislabel
+must_fail_with "fitness-update against a verifier that extracts before it decides" 'extraction before verification' "$upd" -sabotage leak
+must_pass "make fitness-update-offline is wired into make ci" bash -c "make -n ci | grep -q 'tools/fitness/update/offline.sh'"
+must_pass "offline.sh is tracked by git and executable" bash -c "git ls-files --error-unmatch tools/fitness/update/offline.sh >/dev/null && test -x tools/fitness/update/offline.sh"
+
+# --- fuzz-target / fuzz-saml (T-0490) -----------------------------------------------------------
+fz="$tmp/fuzz"
+mkdir -p "$fz"
+printf 'module fuzz.test\n\ngo 1.27.0\n' >"$fz/go.mod"
+printf 'package x\n\nimport "testing"\n\nfunc FuzzT(f *testing.F) {\n\tf.Add([]byte("a"))\n\tf.Fuzz(func(t *testing.T, b []byte) {\n\t\tif len(b) > 0 && b[0] != 0 {\n\t\t\tt.Fatal("oracle violated")\n\t\t}\n\t})\n}\n' >"$fz/x_test.go"
+must_fail_with "fuzz-target on a target whose oracle is violated" "oracle violated" tools/ci/fuzz-target.sh "$fz" FuzzT 5s
+must_fail_with "fuzz-target on a target that does not exist (a silent no-op)" "did not fuzz" tools/ci/fuzz-target.sh "$fz" FuzzMissing 5s
+rm -rf "$fz/testdata"
+printf 'package x\n\nimport "testing"\n\nfunc FuzzT(f *testing.F) {\n\tf.Add([]byte("a"))\n\tf.Fuzz(func(t *testing.T, b []byte) {})\n}\n' >"$fz/x_test.go"
+must_pass "fuzz-target" tools/ci/fuzz-target.sh "$fz" FuzzT 3s
+must_pass "make fuzz-saml is wired into make ci" bash -c "make -n ci | grep -q 'fuzz-target.sh internal/platform/authn/sso/saml FuzzSAMLComplete 60s'"
 
 if [ "$fails" -ne 0 ]; then echo "ci-proof: $fails proof(s) failed" >&2; exit 1; fi
 echo "ci-proof: every gate rejects its violation and accepts clean input"

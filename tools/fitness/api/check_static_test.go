@@ -218,6 +218,35 @@ var staticFixtures = []fixture{
 	{"secret operation with a binary body", "A12", func(f map[string]string) {
 		secretOp(f, "{class: secret, maxBodyBytes: 4096}", "application/octet-stream")
 	}, jobs, "a secret body is JSON, never binary"},
+	{"AN-8 per-account 429 response", "A12", func(f map[string]string) {
+		an8Op(f, "Too many requests from this source-IP.", "        \"429\":\n          description: Too many attempts for this account\n")
+	}, jobs, "AN-8 answers 429 only from the source-IP limiter"},
+	{"AN-8 429 not described as the source-IP limiter", "A12", func(f map[string]string) {
+		an8Op(f, "Rate limited.", "        \"429\":\n          $ref: shared/problems.yaml#/components/responses/RateLimited\n")
+	}, jobs, "does not say it is the source-IP limiter"},
+	{"AN-8 4XX response describing a per-account limit", "A12", func(f map[string]string) {
+		an8Op(f, "Source-IP only.", "        \"4XX\":\n          description: Too many attempts for this account\n")
+	}, jobs, "AN-8 may declare only"},
+	{"AN-8 default response", "A12", func(f map[string]string) {
+		an8Op(f, "Source-IP only.", "        default:\n          description: Account throttled\n")
+	}, jobs, "AN-8 may declare only"},
+}
+
+// an8Op turns listJobs into an AN-8 operation with the given description and a responses block.
+func an8Op(f map[string]string, desc, responses string) {
+	repl(f, jobs, "x-permission: authenticated\n", "description: "+desc+"\n      x-permission: anonymous\n      x-activediq-anonymous: AN-8\n      x-activediq-limits: {class: auth}\n")
+	repl(f, jobs, "x-activediq-stability: stable\n", "x-activediq-stability: stable\n      responses:\n"+responses)
+}
+
+// The compliant AN-8 shape (shared RateLimited, described as the source-IP limiter) raises no AN-8 violation.
+func TestA12AcceptsAN8SourceIPRateLimit(t *testing.T) {
+	f := base()
+	an8Op(f, "A 429 here is the source-IP limiter.", "        \"429\":\n          $ref: shared/problems.yaml#/components/responses/RateLimited\n")
+	for _, v := range run(t, f) {
+		if v.Check == "A12" && strings.Contains(v.Msg, "AN-8") {
+			t.Errorf("compliant AN-8 429 refused: %s", v)
+		}
+	}
 }
 
 // secretOp makes listJobs accept a SecretInput body with the given limits (and media type).
@@ -261,10 +290,21 @@ func TestA11IgnoresTestsAndApihost(t *testing.T) {
 	src := "package x\n\nimport \"net/http\"\n\nfunc H(w http.ResponseWriter) { http.Error(w, \"x\", 400); w.WriteHeader(500) }\n"
 	f["internal/platform/apihost/h.go"] = src
 	f["internal/modules/users/h_test.go"] = src
+	f["internal/connector/graph/graphtest/fake.go"] = src // fake of an external service, not our API
+	f["internal/connector/graph/other/fake.go"] = "package other\n\nimport \"net/http\"\n\nfunc H(w http.ResponseWriter) { w.WriteHeader(500) }\n"
+	sibling := false
 	for _, v := range run(t, f) {
-		if v.Check == "A11" {
-			t.Errorf("apihost and tests may write statuses: %s", v)
+		if v.Check != "A11" {
+			continue
 		}
+		if strings.Contains(v.Pos, "graph/other/") {
+			sibling = true // control: a sibling package is still checked
+			continue
+		}
+		t.Errorf("apihost, tests and external-service fakes may write statuses: %s", v)
+	}
+	if !sibling {
+		t.Error("a package next to graphtest must still be checked")
 	}
 }
 

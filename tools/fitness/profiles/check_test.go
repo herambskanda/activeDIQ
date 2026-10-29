@@ -27,7 +27,7 @@ const (
 	Provisioning   ID = "tenant-provisioning"
 )
 `,
-	"internal/platform/tenant/tenant.go": "package tenant\n\nfunc New() int { return 1 }\n",
+	"internal/platform/tenant/tenant.go": "package tenant\n\ntype ID struct{ b [16]byte }\n\nfunc New() ID { return ID{} }\n\nfunc (ID) String() string { return \"t\" }\n",
 	"internal/compose/config/config.go": `package config
 
 import "os"

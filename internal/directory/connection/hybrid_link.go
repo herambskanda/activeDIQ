@@ -113,7 +113,8 @@ type NewHybridLink struct {
 	EntraConnectionID ID
 }
 
-func (n NewHybridLink) validate() (NewHybridLink, error) {
+// Validate checks and canonicalises the three IDs; errors wrap ErrInvalid.
+func (n NewHybridLink) Validate() (NewHybridLink, error) {
 	ad, err := ParseID(string(n.ADConnectionID))
 	if err != nil {
 		return n, err

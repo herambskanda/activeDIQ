@@ -241,6 +241,12 @@ func (p *parser) opaque(r RDN) (RDN, bool, error) {
 	return r, false, nil
 }
 
+// knownOIDs maps the numeric attribute types AD resolves to a typed RDN.
+var knownOIDs = map[string]RDNType{
+	"2.5.4.3": CN, "2.5.4.11": OU, "0.9.2342.19200300.100.1.25": DC, "2.5.4.10": O,
+	"2.5.4.7": L, "2.5.4.8": ST, "2.5.4.6": C, "2.5.4.9": STREET, "0.9.2342.19200300.100.1.1": UID,
+}
+
 func setType(r *RDN, text string, pos int) error {
 	if text == "" {
 		return fail(EmptyRDN, pos)
@@ -256,6 +262,9 @@ func setType(r *RDN, text string, pos int) error {
 				}
 				arcStart = true
 			case c >= '0' && c <= '9':
+				if arcStart && c == '0' && i+1 < len(text) && text[i+1] != '.' {
+					return fail(UnknownRDNType, pos) // RFC 4512 numericoid: no leading zeros
+				}
 				arcStart = false
 			default:
 				return fail(UnknownRDNType, pos)
@@ -263,6 +272,12 @@ func setType(r *RDN, text string, pos int) error {
 		}
 		if arcStart {
 			return fail(UnknownRDNType, pos)
+		}
+		if t, ok := knownOIDs[text]; ok {
+			// AD resolves these to the same attribute as the short name, so they must compare
+			// equal to it (scope/readability checks rely on Equal/IsDescendantOf).
+			r.typ = t
+			return nil
 		}
 		r.typ, r.oid = OID, text
 		return nil

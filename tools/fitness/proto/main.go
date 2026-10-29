@@ -49,6 +49,10 @@
 //	F9  no message type in the package has a secret-shaped name (same fragments as F3), so a
 //	    message such as PasswordPush or SecretEnvelope fails even if its fields are innocuous.
 //	    A new RPC fails F1 with a pointer to the ADR and review it needs.
+//	F10 (reported as F1) Tunnel's input and output are both activediq.fleet.v1.TunnelFrame, and
+//	    EnrollRequest is the input or output of no RPC other than Enroll (T-0185).
+//	F11 the repository's proto tree must define package activediq.fleet.v1 (RequireFleet, on by
+//	    default in the CLI; `-optional-fleet` is for throw-away trees in the CI proof).
 //	F7  no map fields anywhere in the fleet contract or reachable from an Enroll or Tunnel input or
 //	    output: a map is an unchecked free-form side channel.
 package main
@@ -119,16 +123,28 @@ func Compile(dir string) (linker.Files, error) {
 	return c.Compile(context.Background(), names...)
 }
 
-// Lint applies P2 to P8 to compiled files.
+// RequireFleet reports F11 when no file declares the fleet package: deleting fleet.proto must not
+// leave the gate green because every F rule is vacuous without it.
+func RequireFleet(files linker.Files) []Violation {
+	for _, f := range files {
+		if isFleet(f.Package()) {
+			return nil
+		}
+	}
+	return []Violation{{"F11", "proto", "the proto tree has no package activediq.fleet.v1; the fleet contract must exist (its rules F1-F10 would otherwise pass vacuously)"}}
+}
+
+// Lint applies P2 to P8, F1 to F10 and AG1 to AG8 to compiled files.
 func Lint(files linker.Files) []Violation {
 	var vs []Violation
 	requests := map[protoreflect.FullName]protoreflect.MessageDescriptor{}
 	vs = append(vs, lintFleet(files)...)
+	vs = append(vs, lintAgent(files)...)
 	for _, f := range files {
 		svcs := f.Services()
 		for i := 0; i < svcs.Len(); i++ {
 			svc := svcs.Get(i)
-			if isFleet(f.Package()) {
+			if isFleet(f.Package()) || isAgent(f.Package()) {
 				for j := 0; j < svc.Methods().Len(); j++ {
 					requests[svc.Methods().Get(j).Input().FullName()] = svc.Methods().Get(j).Input()
 				}
@@ -287,8 +303,13 @@ func screamingSnake(s string) string {
 
 func main() {
 	dir := "proto"
-	if len(os.Args) > 1 {
-		dir = os.Args[1]
+	optionalFleet := false
+	for _, a := range os.Args[1:] {
+		if a == "-optional-fleet" {
+			optionalFleet = true
+		} else {
+			dir = a
+		}
 	}
 	files, err := Compile(dir)
 	if err != nil {
@@ -296,8 +317,16 @@ func main() {
 		os.Exit(1)
 	}
 	vs := Lint(files)
+	if !optionalFleet {
+		vs = append(vs, RequireFleet(files)...)
+	}
 	if len(vs) == 0 {
 		fmt.Printf("fitness-proto: ok (%d files)\n", len(files))
+		if have := AgentContractsPresent(files); len(have) == 0 {
+			fmt.Println("fitness-proto: AG1-AG8 inactive (no agent contract yet: T-0555 addc/host, T-0559 fileserver)")
+		} else {
+			fmt.Printf("fitness-proto: AG1-AG8 active on %s\n", strings.Join(have, ", "))
+		}
 		return
 	}
 	for _, v := range vs {
@@ -417,8 +446,28 @@ func lintFleet(files linker.Files) []Violation {
 			}
 			if m := got["Tunnel"]; m == nil {
 				vs = append(vs, Violation{"F1", pos, "missing RPC Tunnel"})
-			} else if !m.IsStreamingClient() || !m.IsStreamingServer() {
-				vs = append(vs, Violation{"F1", string(m.FullName()), "Tunnel must be bidirectional streaming (component-initiated)"})
+			} else {
+				if !m.IsStreamingClient() || !m.IsStreamingServer() {
+					vs = append(vs, Violation{"F1", string(m.FullName()), "Tunnel must be bidirectional streaming (component-initiated)"})
+				}
+				// F10: the Tunnel carries TunnelFrame both ways, so the single-use enrollment
+				// token (EnrollRequest) cannot ride on the long-lived stream.
+				want := pkg + ".TunnelFrame"
+				if m.Input().FullName() != want || m.Output().FullName() != want {
+					vs = append(vs, Violation{"F1", string(m.FullName()), "Tunnel must take and return " + string(want) + " (input " + string(m.Input().FullName()) + ", output " + string(m.Output().FullName()) + "); the enrollment token must not ride on the tunnel"})
+				}
+			}
+			// EnrollRequest is the input or output of Enroll only.
+			for j := 0; j < svc.Methods().Len(); j++ {
+				m := svc.Methods().Get(j)
+				if m.Name() == "Enroll" {
+					continue
+				}
+				for _, t := range []protoreflect.MessageDescriptor{m.Input(), m.Output()} {
+					if t.FullName() == pkg+".EnrollRequest" {
+						vs = append(vs, Violation{"F1", string(m.FullName()), string(t.FullName()) + " carries the single-use enrollment token and may be used only by Enroll"})
+					}
+				}
 			}
 		}
 		var enroll protoreflect.MethodDescriptor

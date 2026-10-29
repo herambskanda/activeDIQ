@@ -472,3 +472,56 @@ func TestConcurrentTenantsStayIsolated(t *testing.T) {
 		}
 	})
 }
+
+func TestNestedWithTenantIsRefused(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s, Config{})
+		ran := false
+		for _, inner := range []tenant.ID{e.a, e.b} { // same tenant and another tenant
+			err := e.db.WithTenant(context.Background(), e.a, func(ctx context.Context, tx Tx) error {
+				return e.db.WithTenant(ctx, inner, func(context.Context, Tx) error { ran = true; return nil })
+			})
+			if !errors.Is(err, ErrNestedTenant) {
+				t.Fatalf("nested WithTenant = %v; want ErrNestedTenant", err)
+			}
+		}
+		if ran {
+			t.Fatal("the nested function ran")
+		}
+		// sequential use is still fine
+		for i := 0; i < 2; i++ {
+			if err := e.db.WithTenant(context.Background(), e.a, func(context.Context, Tx) error { return nil }); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+}
+
+// WithTenantSeparate commits although the surrounding transaction rolls back, sets the lock timeout
+// itself, and refuses a missing or oversized lock wait before any SQL runs.
+func TestWithTenantSeparateCommitsBesideRolledBackOuter(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s, Config{})
+		for _, w := range []time.Duration{0, -time.Second, time.Minute} {
+			if err := e.db.WithTenantSeparate(context.Background(), e.a, w, func(context.Context, Tx) error { return nil }); !errors.Is(err, ErrLockWait) {
+				t.Fatalf("lock wait %v = %v; want ErrLockWait", w, err)
+			}
+		}
+		var got string
+		outer := errors.New("outer rolls back")
+		err := e.db.WithTenant(context.Background(), e.a, func(ctx context.Context, _ Tx) error {
+			if err := e.db.WithTenantSeparate(ctx, e.a, 1500*time.Millisecond, func(ctx context.Context, tx Tx) error {
+				return tx.QueryRow(ctx, `SELECT current_setting('lock_timeout')`).Scan(&got)
+			}); err != nil {
+				return err
+			}
+			return outer
+		})
+		if !errors.Is(err, outer) {
+			t.Fatalf("outer = %v", err)
+		}
+		if got != "1500ms" && got != "1.5s" {
+			t.Fatalf("lock_timeout = %q", got)
+		}
+	})
+}

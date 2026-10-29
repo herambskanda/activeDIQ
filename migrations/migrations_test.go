@@ -2,6 +2,7 @@ package migrations_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"regexp"
 	"strings"
@@ -134,4 +135,229 @@ func TestMigration0001RefusesABrokenRoleSplit(t *testing.T) {
 			})
 		})
 	}
+}
+
+// A migration number is used once: two files sharing a number leave the apply order to the file
+// name alone, and a security migration (row security, authz) could then land in a different order
+// on different installs (T-0501).
+func TestMigrationNumbersAreUniqueAndContiguous(t *testing.T) {
+	ents, err := migrations.FS.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := 1
+	for _, e := range ents { // ReadDir is sorted by file name
+		if !strings.HasSuffix(e.Name(), ".sql") {
+			continue
+		}
+		var n int
+		if _, err := fmt.Sscanf(e.Name()[:4], "%d", &n); err != nil {
+			t.Fatalf("%s: %v", e.Name(), err)
+		}
+		if n != next {
+			t.Errorf("%s: expected number %04d (numbers are unique and have no gap)", e.Name(), next)
+		}
+		next = n + 1
+	}
+}
+
+// Upgrade proof for 0051 (T-0562): a database that already holds revoked and expired enrolments, in two
+// tenants, upgrades cleanly. The backfill must reach every tenant's rows although the owner is bound by FORCE
+// ROW LEVEL SECURITY, and the controls it lifted for that statement must be back afterwards.
+func TestMigration0051UpgradeErasesTerminalSeedsInEveryTenant(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		d := s.NewDatabase(t)
+		ctx := context.Background()
+		before := fstest.MapFS{}
+		ents, err := migrations.FS.ReadDir(".")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range ents {
+			if strings.HasSuffix(e.Name(), ".sql") && e.Name() < "0051" {
+				b, err := migrations.FS.ReadFile(e.Name())
+				if err != nil {
+					t.Fatal(err)
+				}
+				before[e.Name()] = &fstest.MapFile{Data: b}
+			}
+		}
+		if err := d.Apply(ctx, before); err != nil {
+			t.Fatal(err)
+		}
+
+		tenants := []string{"00000000-0000-4000-8000-0000000000a1", "00000000-0000-4000-8000-0000000000b2"}
+		c, err := d.Owner(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close(ctx)
+		seed := make([]byte, 40)
+		for i, tid := range tenants {
+			tx, err := c.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			steps := []string{
+				`INSERT INTO public.tenants (id, name) VALUES ($1::uuid, 'upgrade')`,
+				`SELECT set_config('app.tenant_id', $1, true)`,
+			}
+			for _, q := range steps {
+				if _, err := tx.Exec(ctx, q, tid); err != nil {
+					t.Fatal(err)
+				}
+			}
+			acct := fmt.Sprintf("00000000-0000-4000-8000-00000000010%d", i)
+			for j, final := range []string{"revoked", "expired", "active"} {
+				id := fmt.Sprintf("00000000-0000-4000-8000-00000000%02d%02d", i+1, j+1)
+				if _, err := tx.Exec(ctx, `INSERT INTO public.authn_authenticator_enrollments
+					(tenant_id, id, account_id, method, sealed_secret, key_version, label, expires_at)
+					VALUES ($1::uuid, $2::uuid, $3::uuid, 'totp', $4, 1, 'x', now() + interval '10 minutes')`, tid, id, acct, seed); err != nil {
+					t.Fatal(err)
+				}
+				var q string
+				switch final {
+				case "revoked":
+					q = `UPDATE public.authn_authenticator_enrollments SET state = 'active' WHERE id = $1::uuid`
+					if _, err := tx.Exec(ctx, q, id); err != nil {
+						t.Fatal(err)
+					}
+					q = `UPDATE public.authn_authenticator_enrollments SET state = 'revoked' WHERE id = $1::uuid`
+				case "expired":
+					q = `UPDATE public.authn_authenticator_enrollments SET state = 'expired' WHERE id = $1::uuid`
+				default:
+					q = `UPDATE public.authn_authenticator_enrollments SET state = 'active' WHERE id = $1::uuid`
+				}
+				if _, err := tx.Exec(ctx, q, id); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := tx.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		// Apply 0051 on its own, over the seeded database.
+		b, err := migrations.FS.ReadFile("0051_authn_enrollment_terminal_no_secret.sql")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := d.Apply(ctx, fstest.MapFS{"0051_authn_enrollment_terminal_no_secret.sql": {Data: b}}); err != nil {
+			t.Fatalf("0051 over a database with terminal rows: %v", err)
+		}
+
+		// The admin role bypasses RLS, so it sees every tenant's rows.
+		a, err := d.Admin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer a.Close(ctx)
+		for state, wantNull := range map[string]bool{"revoked": true, "expired": true, "active": false} {
+			var total, nulls int
+			if err := a.QueryRow(ctx, `SELECT count(*), count(*) FILTER (WHERE sealed_secret IS NULL)
+				FROM public.authn_authenticator_enrollments WHERE state = $1`, state).Scan(&total, &nulls); err != nil {
+				t.Fatal(err)
+			}
+			if total != 2 || (wantNull && nulls != 2) || (!wantNull && nulls != 0) {
+				t.Errorf("state %s: %d rows, %d without a seed; want 2 rows, seed erased=%v", state, total, nulls, wantNull)
+			}
+		}
+		var force, validated bool
+		var trig string
+		if err := a.QueryRow(ctx, `SELECT relforcerowsecurity FROM pg_class WHERE oid = 'public.authn_authenticator_enrollments'::regclass`).Scan(&force); err != nil || !force {
+			t.Errorf("FORCE ROW LEVEL SECURITY is not back: %v %v", force, err)
+		}
+		if err := a.QueryRow(ctx, `SELECT tgenabled::text FROM pg_trigger WHERE tgname = 'authn_enrollments_guard' AND tgrelid = 'public.authn_authenticator_enrollments'::regclass`).Scan(&trig); err != nil || trig != "A" {
+			t.Errorf("guard trigger tgenabled = %q (%v); want A (ENABLE ALWAYS)", trig, err)
+		}
+		if err := a.QueryRow(ctx, `SELECT convalidated FROM pg_constraint WHERE conname = 'authn_enrollments_terminal_no_secret'`).Scan(&validated); err != nil || !validated {
+			t.Errorf("terminal_no_secret CHECK validated = %v (%v)", validated, err)
+		}
+	})
+}
+
+// Upgrade proof for 0021 (T-0580): a database at 0020 holding pending enrolments in two tenants upgrades through
+// every later migration. The expiry backfill must reach every tenant's rows although the owner is bound by FORCE
+// ROW LEVEL SECURITY, and FORCE must be back afterwards.
+func TestMigration0021UpgradeBackfillsPendingExpiryInEveryTenant(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		d := s.NewDatabase(t)
+		ctx := context.Background()
+		before, after := fstest.MapFS{}, fstest.MapFS{}
+		ents, err := migrations.FS.ReadDir(".")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range ents {
+			if !strings.HasSuffix(e.Name(), ".sql") {
+				continue
+			}
+			b, err := migrations.FS.ReadFile(e.Name())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if e.Name() < "0021" {
+				before[e.Name()] = &fstest.MapFile{Data: b}
+			} else {
+				after[e.Name()] = &fstest.MapFile{Data: b}
+			}
+		}
+		if err := d.Apply(ctx, before); err != nil {
+			t.Fatal(err)
+		}
+
+		tenants := []string{"00000000-0000-4000-8000-0000000000a1", "00000000-0000-4000-8000-0000000000b2"}
+		c, err := d.Owner(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close(ctx)
+		seed := make([]byte, 40)
+		for i, tid := range tenants {
+			tx, err := c.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, q := range []string{
+				`INSERT INTO public.tenants (id, name) VALUES ($1::uuid, 'upgrade')`,
+				`SELECT set_config('app.tenant_id', $1, true)`,
+			} {
+				if _, err := tx.Exec(ctx, q, tid); err != nil {
+					t.Fatal(err)
+				}
+			}
+			id := fmt.Sprintf("00000000-0000-4000-8000-00000000%02d01", i+1)
+			acct := fmt.Sprintf("00000000-0000-4000-8000-00000000010%d", i)
+			if _, err := tx.Exec(ctx, `INSERT INTO public.authn_authenticator_enrollments
+				(tenant_id, id, account_id, method, sealed_secret, key_version, label)
+				VALUES ($1::uuid, $2::uuid, $3::uuid, 'totp', $4, 1, 'x')`, tid, id, acct, seed); err != nil {
+				t.Fatal(err)
+			}
+			if err := tx.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		if err := d.Apply(ctx, after); err != nil {
+			t.Fatalf("migrations from 0021 over a database with pending rows: %v", err)
+		}
+
+		a, err := d.Admin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer a.Close(ctx)
+		var total, set int
+		if err := a.QueryRow(ctx, `SELECT count(*), count(*) FILTER (WHERE expires_at IS NOT NULL)
+			FROM public.authn_authenticator_enrollments WHERE state = 'pending'`).Scan(&total, &set); err != nil {
+			t.Fatal(err)
+		}
+		if total != 2 || set != 2 {
+			t.Errorf("pending rows: %d, with expires_at: %d; want 2 and 2", total, set)
+		}
+		var force bool
+		if err := a.QueryRow(ctx, `SELECT relforcerowsecurity FROM pg_class WHERE oid = 'public.authn_authenticator_enrollments'::regclass`).Scan(&force); err != nil || !force {
+			t.Errorf("FORCE ROW LEVEL SECURITY is not back: %v %v", force, err)
+		}
+	})
 }

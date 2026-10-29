@@ -9,7 +9,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 . lab/.lab.env
-COMPOSE="docker compose -f lab/docker-compose.yml"
+COMPOSE="docker compose -p $COMPOSE_PROJECT_NAME -f lab/docker-compose.yml"
 PORT="${LAB_LDAPS_PORT:-636}"
 RESET_CMD="${RESET_CMD:-make lab-reset}"   # overridden only to prove the reset check can fail (RESET_CMD=true)
 fails=0; passes=0

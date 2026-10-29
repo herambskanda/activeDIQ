@@ -1,0 +1,10 @@
+{
+ "id": "S-F10",
+ "class": "forged",
+ "cites": [
+  "SAML-7"
+ ],
+ "build": "alg_mismatch",
+ "expect": "refuse",
+ "reason": "saml.alg"
+}

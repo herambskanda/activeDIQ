@@ -111,6 +111,11 @@
       "package": "./cmd/agent"
     },
     {
+      "name": "agentsetup",
+      "tier": "A",
+      "package": "./cmd/agentsetup"
+    },
+    {
       "name": "auditverify",
       "tier": "A",
       "package": "./cmd/auditverify"
@@ -284,9 +289,44 @@
   "exceptions": {
     "platformAdapters": [
       {
+        "path": "cmd/agent",
+        "adr": "0001-technology-stack.md",
+        "reason": "Windows service wrapper (run_windows.go, SCM) versus a console stub elsewhere (run_other.go); the SCM API has no portable form"
+      },
+      {
+        "path": "cmd/agentsetup",
+        "adr": "0001-technology-stack.md",
+        "reason": "MSI custom actions that edit the event-log channel ACE and the data-dir DACL through typed Windows ACL APIs (run_windows.go); run_other.go is the non-Windows stub"
+      },
+      {
+        "path": "internal/agentmodules/addc",
+        "adr": "0001-technology-stack.md",
+        "reason": "Security event-log reader: source_windows.go uses wevtapi, source_other.go is the non-Windows stub; no portable form exists"
+      },
+      {
+        "path": "internal/platform/agent",
+        "adr": "0001-technology-stack.md",
+        "reason": "agent token/privilege pin, job-object confinement, event-log writer and data-dir DACL (*_windows.go) with *_other.go stubs; Windows-only OS APIs with no portable form"
+      },
+      {
+        "path": "internal/platform/updateverify",
+        "adr": "0001-technology-stack.md",
+        "reason": "quarantine directory-ownership checks differ by OS: quarantine_unix.go (unix, syscall owner/mode) and quarantine_other.go (!unix, no portable owner check; returns a typed unsupported error) (T-0645)"
+      },
+      {
         "path": "internal/platform/apitls",
         "adr": "0001-technology-stack.md",
         "reason": "identity-directory permission checks differ by OS: perm_unix.go (unix) and perm_other.go (!unix, Windows/OCI ACL checks are T-0104)"
+      },
+      {
+        "path": "internal/platform/fleet/dial",
+        "adr": "0001-technology-stack.md",
+        "reason": "unix-socket versus other-OS dial of the fleet transport: files_unix.go (unix) and files_other.go (!unix); no shared portable form exists"
+      },
+      {
+        "path": "internal/testlab/harnessdocker",
+        "adr": "0001-technology-stack.md",
+        "reason": "test-lab Docker harness file-ownership handling differs by OS: owner_unix.go and owner_windows.go; test tooling, never shipped"
       }
     ],
     "sidecars": [],
@@ -309,6 +349,36 @@
         "path": ".githooks/pre-commit",
         "adr": "0001-technology-stack.md",
         "reason": "git hook that refuses a commit containing a secret (T-0013); a git hook must live at a fixed path outside lab/ and tools/"
+      },
+      {
+        "path": "internal/directory/sd/testdata/gen_corpus.py",
+        "adr": "0001-technology-stack.md",
+        "reason": "independent Python oracle that generates the sd.read.jsonl corpus the Go decoder is checked against; a test fixture generator, never shipped"
+      },
+      {
+        "path": "internal/directory/sd/testdata/gen_write_corpus.py",
+        "adr": "0001-technology-stack.md",
+        "reason": "independent Python oracle that generates the sd.write.jsonl corpus the Go DACL planner is checked against; a test fixture generator, never shipped"
+      },
+      {
+        "path": "packaging/linux-oci/prepare-tls-dir.sh",
+        "adr": "0001-technology-stack.md",
+        "reason": "packaging-time script that prepares the API TLS directory permissions in the OCI image; build-time, runs no product input"
+      },
+      {
+        "path": "packaging/windows/Set-ApiTlsDirAcl.ps1",
+        "adr": "0001-technology-stack.md",
+        "reason": "installer-time script that sets the API TLS directory ACL on Windows; fixed arguments, no constructed security descriptors from input"
+      },
+      {
+        "path": "packaging/windows/Test-ApiTlsDirAcl.ps1",
+        "adr": "0001-technology-stack.md",
+        "reason": "packaging verification script that checks the API TLS directory ACL on Windows"
+      },
+      {
+        "path": "packaging/windows/Get-HostObservation.ps1",
+        "adr": "0001-technology-stack.md",
+        "reason": "read-only Windows lab collector for the TM-F-HOST proof (T-0136): prints an observation JSON, changes nothing, takes no product input"
       }
     ],
     "devNodeTools": [

@@ -2,6 +2,7 @@ package fleetsql
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -176,5 +177,41 @@ func TestMemoryLimiterSucceededRefunds(t *testing.T) {
 	l.Succeeded(ctx, "198.51.100.1") // no bucket: must not create one
 	if len(l.m) != 1 {
 		t.Fatalf("refund created a bucket: %d", len(l.m))
+	}
+}
+
+func TestMemoryLimiterSweepIsRateLimitedWhenFull(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	sweeps := 0
+	l := NewMemoryLimiter(MemoryLimiterConfig{Burst: 2, Refill: time.Hour, MaxSources: 10, SweepEvery: time.Second,
+		OnSweep: func() { sweeps++ }, Now: func() time.Time { return now }})
+	for i := 0; i < 10; i++ { // fill with live sources
+		if _, ok, err := l.Admit(context.Background(), fmt.Sprintf("10.0.0.%d", i)); err != nil || !ok {
+			t.Fatalf("fill %d: ok=%v err=%v", i, ok, err)
+		}
+	}
+	sweeps = 0
+	admitted := 0
+	for i := 0; i < 10000; i++ {
+		if i%1000 == 0 {
+			now = now.Add(time.Second) // 10 intervals over the run
+		}
+		_, ok, err := l.Admit(context.Background(), fmt.Sprintf("10.1.%d.%d", i/250, i%250))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ok {
+			admitted++
+		}
+	}
+	if sweeps > 10 {
+		t.Fatalf("sweeps = %d, want <= 10 (one per interval)", sweeps)
+	}
+	// Every new source is metered by the one overflow bucket: only Burst tries pass in total.
+	if admitted != 2 {
+		t.Fatalf("overflow admitted %d, want 2", admitted)
+	}
+	if len(l.m) > 11 {
+		t.Fatalf("table grew to %d", len(l.m))
 	}
 }

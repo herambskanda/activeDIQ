@@ -275,4 +275,31 @@ func TestOpenRefusals(t *testing.T) {
 			t.Errorf("%s: %v", gc, err)
 		}
 	}
+	// OpenGC is the only door to the GC, and only on 3269 (LDAPS).
+	for _, srv := range []string{"dc1:3268", "dc1:636", "dc1"} {
+		if _, err := OpenGC(context.Background(), Config{Servers: []string{srv}, Credential: cred}); CodeOf(err) != CodeInvalidArgument {
+			t.Errorf("OpenGC %s: %v", srv, err)
+		}
+	}
+}
+
+// TestSchemaOIDsMatchMSADA3 pins attribute OIDs to the values published in MS-ADA1..3 /
+// learn.microsoft.com "Attributes" so a mistyped OID cannot silently disable a hold.
+func TestSchemaOIDsMatchMSADA3(t *testing.T) {
+	s := newOffline()
+	for name, oid := range map[string]string{
+		"nTSecurityDescriptor":       "1.2.840.113556.1.2.281",
+		"msDS-SecondaryKrbTgtNumber": "1.2.840.113556.1.4.1929",
+		"objectSid":                  "1.2.840.113556.1.4.146",
+		"uSNChanged":                 "1.2.840.113556.1.2.120",
+	} {
+		got, err := s.CanonicalAttr(oid)
+		if err != nil || got != name {
+			t.Errorf("CanonicalAttr(%s) = %q, %v; want %s", oid, got, err, name)
+		}
+	}
+	// oEMInformation is not in the allowlist, and must not alias the SD.
+	if got, err := s.CanonicalAttr("1.2.840.113556.1.4.151"); err == nil && got == "nTSecurityDescriptor" {
+		t.Errorf("1.4.151 resolves to the SD")
+	}
 }

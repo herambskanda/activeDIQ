@@ -36,7 +36,8 @@ package jobs
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"regexp"
@@ -131,7 +132,7 @@ func (r *Registry) Enqueue(ctx context.Context, tx store.Tx, j Job) (Enqueued, e
 		return Enqueued{}, err
 	}
 	if kind.ValidateArgs != nil {
-		if err := kind.ValidateArgs(json.RawMessage(args)); err != nil {
+		if err := kind.ValidateArgs(jsontext.Value(args)); err != nil {
 			return Enqueued{}, fmt.Errorf("%w: args of kind %q refused: %w", ErrInvalid, kind.Name, err)
 		}
 	}
@@ -169,7 +170,7 @@ func (j Job) encodeArgs() (string, error) {
 	case len(j.UniqueKey) > maxUniqueKeyLen:
 		return "", invalid("unique key longer than %d bytes", maxUniqueKeyLen)
 	}
-	obj := map[string]json.RawMessage{}
+	obj := map[string]jsontext.Value{}
 	if j.Args != nil {
 		b, err := json.Marshal(j.Args)
 		if err != nil {
@@ -190,7 +191,7 @@ func (j Job) encodeArgs() (string, error) {
 		}
 		obj["tenant_id"] = want
 	}
-	b, err := json.Marshal(obj)
+	b, err := json.Marshal(obj, json.Deterministic(true))
 	if err != nil {
 		return "", invalid("args cannot be encoded: %v", err)
 	}

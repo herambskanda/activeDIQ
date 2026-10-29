@@ -53,11 +53,31 @@ type fakeProv struct {
 	// member of any designated group it is passed, and records what it was passed.
 	members map[guid.GUID][]guid.GUID
 	seenDes [][]guid.GUID
+	// guard is what PropertyGuard returns; nil means the refuse-everything guard.
+	guard    PropertyGuard
+	guardErr error
+	// bound is the DC identity BoundDC answers; boundErr makes it unreadable. dcReads counts the
+	// reads (kept out of calls: it is not a read of an object).
+	bound    *connectorv1.DcIdentity
+	boundErr error
+	dcReads  int
 }
 
 func newFake() *fakeProv {
 	return &fakeProv{kind: connectorv1.ProviderKind_PROVIDER_KIND_AD, tier0: map[guid.GUID][]Basis{},
-		classErr: map[guid.GUID]error{}, anchors: map[guid.GUID]Anchors{}}
+		classErr: map[guid.GUID]error{}, anchors: map[guid.GUID]Anchors{}, bound: testDC()}
+}
+
+// testDC is the DC every AD fixture is bound to and pins.
+func testDC() *connectorv1.DcIdentity {
+	return &connectorv1.DcIdentity{DsaGuid: toWire(mk(240)), InvocationId: toWire(mk(241)), DnsHostname: "dc1.corp.example", Site: "Default-First-Site-Name"}
+}
+
+func (f *fakeProv) BoundDC(context.Context) (*connectorv1.DcIdentity, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.dcReads++
+	return f.bound, f.boundErr
 }
 
 func (f *fakeProv) Kind() connectorv1.ProviderKind { return f.kind }
@@ -92,6 +112,18 @@ func (f *fakeProv) Anchors(_ context.Context, id guid.GUID) (Anchors, error) {
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, "anchors")
 	return f.anchors[id], f.anchErr
+}
+func (f *fakeProv) PropertyGuard(context.Context) (PropertyGuard, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "propguard")
+	if f.guardErr != nil {
+		return nil, f.guardErr
+	}
+	if f.guard == nil {
+		return (*tier0.Set)(nil), nil
+	}
+	return f.guard, nil
 }
 func (f *fakeProv) n() int { f.mu.Lock(); defer f.mu.Unlock(); return len(f.calls) }
 
@@ -188,6 +220,7 @@ func planReq(target guid.GUID, c *connectorv1.Tier0Context) *connectorv1.PlanReq
 		Connection: &connectorv1.ConnectionRef{ConnectionId: connID, DirectoryIdentity: adIdentity()},
 		Step:       &connectorv1.StepKey{OperationId: toWire(mk(50)), Item: 1, Step: 2},
 		Target:     &connectorv1.WriteTarget{Object: toWire(target)}, Tier0: c,
+		Dc:              &connectorv1.DcSelection{PinnedDsaGuid: testDC().GetDsaGuid()},
 		ActingPrincipal: &connectorv1.ActingPrincipal{AccountId: toWire(mk(51))}}
 }
 
@@ -196,7 +229,7 @@ func applyReq(target guid.GUID, c *connectorv1.Tier0Context) *connectorv1.ApplyR
 		Connection: &connectorv1.ConnectionRef{ConnectionId: connID, DirectoryIdentity: adIdentity()},
 		Step:       &connectorv1.StepKey{OperationId: toWire(mk(50)), Item: 1, Step: 2}, Attempt: 1,
 		Target: &connectorv1.WriteTarget{Object: toWire(target)}, Tier0: c,
-		Precondition: &connectorv1.TargetPrecondition{StateDigest: []byte("d")}, PlanDigest: []byte("digest"),
+		Precondition: &connectorv1.TargetPrecondition{Dc: testDC(), StateDigest: []byte("d")}, PlanDigest: []byte("digest"),
 		ActingPrincipal: &connectorv1.ActingPrincipal{AccountId: toWire(mk(51))}}
 }
 

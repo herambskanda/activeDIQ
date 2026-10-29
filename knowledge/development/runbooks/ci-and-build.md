@@ -1,7 +1,7 @@
 ---
 title: "Runbook: CI, build and the repository scaffold"
 date: 2026-10-02
-updated: 2026-10-21
+updated: 2026-10-28
 status: draft
 owner: devops-engineer
 ticket: T-0014
@@ -42,6 +42,9 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
 - **`go mod tidy -diff`**: run `go mod tidy` and commit `go.mod`/`go.sum`.
 - **`gen-api-check`** (stale or missing generated file): run `make gen-api` and commit the result; never edit a `*.gen.*` file.
   **`lint-api`**: vacuum findings on the bundled contract. Both: `runbooks/api-contract-workflow.md`.
+- **`fuzz-saml`** (T-0490; `tools/ci/fuzz-target.sh`): `FuzzSAMLComplete` found a forged or replayed login. Go writes the crasher to
+  `internal/platform/authn/sso/saml/testdata/fuzz/FuzzSAMLComplete/`; reproduce with `go test ./internal/platform/authn/sso/saml -run FuzzSAMLComplete`,
+  fix the verifier (never the oracle), and commit the crasher file as a regression seed. Runs 60s; `make fuzz-saml SAML_FUZZ_TIME=5s` for a quick local run.
 - **`vuln-scan`** (T-0010; `go run ./tools/vulnscan`, govulncheck pinned in `tools/vulntools`): each line names an OSV
   id, the vulnerable symbol your code reaches, the module and the fixed version.
   - *Called vulnerability*: upgrade the module (`go get <module>@<fixed>`, `go mod tidy`) or, for a standard-library
@@ -124,18 +127,27 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
     `maxBodyBytes` only; anonymous operations use `anonymous` or `auth`; a non-JSON or binary body needs
     `maxBodyBytes`; above 16 MiB needs a `policy.largeBodies` entry; an operation taking `SecretInput`
     is class `secret`, declares `maxBodyBytes` of at most 65536 and has a JSON body.
+    An operation with no request body takes none at all: the generator emits `MaxBody: 0` and apihost answers
+    `413 /problems/payload-too-large` to any `Content-Length > 0` or `Transfer-Encoding` before authentication (TM §7.6 AN-1).
   - `[ADR-0004 self-test]`: the check read fewer operations or entries than a plain text count or
     the committed bundle shows. Fix the reader (`tools/fitness/api/tree.go`), never the assertion.
   - An inactive line ending `[INPUT NOW PRESENT: ... overdue]` means a subject landed (operations,
     `apihost.Build`) and its check has not; it does not fail the job but the ADR cannot be accepted.
     Implement the check, with a failing fixture (`check_test.go`, `check_static_test.go`) and a `tools/ci/proof.sh` case, and remove its `needs` text in `inactive.go`.
-- **`fitness-profiles`** (P1, P7, U1, U2 and the activation table, ADR-0002): `make fitness-profiles`
+- **`fitness-profiles`** (P1, P4 telemetry, P7, U1, U2 and the activation table, ADR-0002): `make fitness-profiles`
   re-runs it alone and prints the activation table first. `-checks P1,U2` runs a subset.
   - P1 domain code: take the compose import, environment read or profile-named identifier out of
     domain code; pass a value in from the composition root instead, or name the *capability*
     (`directory.ad`), never the profile. Profile logic belongs in `internal/compose/**`.
   - P1 capability asymmetry: both self-hosted manifests get the capability, or the solution-architect
     adds an ADR-cited `Exceptions` entry to the manifest first.
+  - P4 telemetry (T-0135, TM-TB17-T8): a log line in a function that has a tenant in scope (a `tenant.ID`
+    parameter, variable or receiver field) must pass `"tenant_id"` or log through `With("tenant_id", ...)`;
+    a Prometheus-style metric constructor must list the label `tenant_id` in a `[]string` literal; a map in a
+    struct field or package variable named `*cache*` (or in a `*Cache` type) is keyed by `tenant.ID` or a struct
+    with a `tenant.ID` field. Fix the code. A platform-scope or one-tenant-per-instance case is a
+    `p4.exempt` entry in the manifest (`path` = `file`, `file#Func` or `file#Name`, a ratified ADR, a reason);
+    a stale entry fails. The check is syntactic: it cannot see a log line whose tenant is only in a context.
   - P7: delete the branch (`git branch -D <name>`, and the remote copy); only `main` and
     `factory/T-NNNN` exist.
   - U1: remove the module. Ported UEM or PatchIQ code is copied with its source named in the commit
@@ -156,6 +168,7 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
   with `authz.ObjectIDFromOctets` (raw objectGUID bytes) or `authz.ParseObjectID` (text); `guid.GUID`
   is also `[16]byte` but its byte order differs. Type errors in other packages are printed as
   warnings (the build gate owns them). Proof: `go test ./tools/fitness/objectid` (positive and negative fixtures).
+- **`fitness-update`** (T-0139): TM-F-UPDATE, see `tm-f-update.md`.
 - **`fitness-disclosure`** (T-0258): checks `SECURITY.md` and `.well-known/security.txt`
   (RFC 9116). It fails **30 days before `Expires`** on purpose: that failure is the renewal job.
   Renew by setting `Expires` to a date 9–12 months ahead (RFC 3339, UTC), and change `Contact` only
@@ -165,6 +178,20 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
   `record.json` and what differs. Fix the advisory or the record so that both say the same thing; never
   change the score to make the files agree without the second scorer
   (`security-disclosure.md` §3.2). If the gate says `target_met` is wrong, the advisory must admit the miss.
+- **`fitness-audit`** (A1–A9 of ADR-0005, TM-F-AUDIT; T-0133): `make fitness-audit` (needs Docker).
+  - **A1** runs the real migrations in PostgreSQL 16 and 18 containers and prints
+    `A1 <rule> [<table>]: …` for a runtime-role privilege (UPDATE/DELETE/TRUNCATE on the audit tables,
+    UPDATE on the personal and secret side tables, anything beyond SELECT/INSERT/UPDATE on
+    `audit_head`), a missing or disabled genesis trigger, a trigger that accepts a head other than
+    `seq 0` with the tenant's `hash_0` or keeps a caller-supplied `at`, and a runtime role that owns
+    `audit_head`, is a superuser or can `SET session_replication_role`. Fix the migration or the role
+    bootstrap, never the check.
+  - **A2, A3, A5, A6, A9** run the tests listed in `tools/fitness/audit/bindings.go` and fail with
+    `test-failed`, `test-skipped` (no Docker is a failure, not a pass) or `test-missing` (renamed or
+    deleted: update the binding in the same change, with the reviewer's eyes on it).
+  - **A4, A7, A8** and the alerting half of A6 are printed `pending` with the owning ticket (T-0638,
+    T-0639, T-0640) on every run. Whoever lands the guarded code lands the check and deletes the line.
+  - Proof: `tools/fitness/audit` tests (one mutation per A1 rule) and `tools/ci/proof.sh`.
 - **`fitness-operation`** (O9 of ADR-0005, the kernel import DAG): `make fitness-operation` prints every
   package of the `dag` block as `existing` or `pending`, then the violations as
   `file:line: O9 [rule 13] <importer> imports <imported>; …` with what the importer may import.
@@ -175,7 +202,7 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
     import)` means the row of `operation` itself.
   - `pending` packages are not checked until they exist; a `self-test` finding means the
     `internal/platform/<name>` mapping found none of the listed packages while the tree has them
-    elsewhere. O1–O8 are added by the tickets that land the code they inspect.
+    elsewhere. O1 (step escape) also runs `tools/analyzers/stepescape` type-aware: the module must build first. To exempt a deliberate smuggle in a test, put `//fitness:allow-step-escape <reason>` on or above the line (test files only). O2 (write surface) and the SQL half of O4 (state column) run on every invocation; violations read `file:line: O2 [rule 2] …` / `O4 [rule 3] …`. O3, O5–O7 and O8 print `pending <id> … (owner T-…)` until their code lands (T-0391, T-0392, T-0393); the owner replaces the pending entry in `pendingChecks` (tools/fitness/operation/main.go) with the check. A pending line is not a pass.
 - **`fitness-safeprim`** (FF-SP1 to FF-SP3, safe-primitives §8): each finding reads
   `file:line: FF-SPn [rule] message`. `make fitness-safeprim` re-runs it alone;
   `go run ./tools/fitness/safeprim -checks FF-SP1,FF-SP3 -no-analyzers` runs a subset without the
@@ -214,3 +241,85 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
 - A new dependency needs a row in `knowledge/business/licensing/open-source-license-register.md`
   first, with its exact package path in backticks.
 - Go dependencies: `go get <path>@<exact version>` then `go mod tidy`. Web: `npm --prefix web i -E`.
+
+## Test Postgres containers: labels, `rm -f -v`, reaping (T-0377)
+
+`storetest` and `tools/fitness/pgharness` start throw-away Postgres containers through
+`internal/testlab/harnessdocker`. The postgres image declares an anonymous data volume (~74 MB), so:
+
+- containers carry `activediq.harness=1` and `activediq.harness.pid=<owner pid>`;
+- they are removed with `docker rm -f -v` (never without `-v`);
+- every start first reaps harness containers whose owner pid is dead (a killed test run). Containers
+  of live sibling test processes are left alone.
+
+Proofs: `internal/testlab/harnessdocker` (remove + reap, fails if `-v` is dropped) and
+`storetest.TestStopRemovesContainerAndAnonymousVolume`. Manual sweep of old leaks:
+`docker ps -aq --filter label=activediq.harness=1 | xargs -r docker rm -f -v`.
+
+## API TLS directory permissions (T-0104, TM-TB16-T3)
+
+Go's 0600/0700 modes do nothing on Windows, so packaging sets the access control itself. Files in `packaging/`:
+
+- **Windows** `windows/Set-ApiTlsDirAcl.ps1 -Path <ACTIVEDIQ_API_TLS_DIR> -ServiceIdentity 'DOMAIN\svc$'`: the MSI custom action (and the upgrade path) runs it after the gMSA exists. Inheritance off, owner Administrators, FullControl for Administrators and the service identity only; existing files get owner Administrators and lose explicit entries. Idempotent. Never recurses (flat layout). Refuses: a broad group, a non-directory, a reparse point, a subdirectory/junction/symlink/hard-linked file inside, a pre-existing directory not owned by Administrators/SYSTEM/the service, and a parent that grants write to anyone but Administrators/SYSTEM/TrustedInstaller/CREATOR OWNER (create a protected parent first).
+- **Windows lab test** `windows/Test-ApiTlsDirAcl.ps1 -Path … -ServiceIdentity … -ProbeCredential (Get-Credential)`: run as Administrator on the lab member (`windows-lab.md`). It asserts the ACL and, with a non-administrator local user's credential, that listing the directory and reading a file inside are denied (exit 5); the path reaches the probe via `ADIQ_PROBE_PATH`, never string-built. T-0409 adds the lab cases: directory pre-created by a non-admin is refused; a junction child is refused and its target ACL unchanged; an Administrators-owned directory granting Users Modify is refused; a parent pre-created by a non-admin with an Administrators-only DACL is refused (ancestor owner walk); a parent that is a junction created by a non-admin pointing at an Administrators-owned directory is refused and the target's ACL unchanged. Installs must use a real path: any ancestor that is a reparse point (junction, symlink, mounted-folder volume root) is refused. Use a throwaway local user created for the run; never commit its password. Save the output under `windows-lab-runs/`.
+- **linux-oci** `linux-oci/prepare-tls-dir.sh <host-dir> [10001 [10001]]` (root) then merge `linux-oci/compose.tls.yaml`: directory owned by the numeric non-root service uid:gid, mode 0700, the container runs as that user. Root never chowns/chmods by path inside the directory (the container can swap paths for symlinks): the script refuses non-regular entries, hard-linked files and files owned by another uid (exit 2), and tightens modes as the service uid via `setpriv`. The server itself also refuses a directory it does not own or that is group/other-writable.
+
+`make fitness-packaging` checks the files statically and runs the prepare script for real, parses every `packaging/**/*.ps1` with PowerShell's own parser (needs pwsh or Docker); `make ci-proof` shows it failing on a violation.
+
+## Release tooling (T-0261)
+
+`workflows-check` guards `.github/workflows/`; the security.txt renewal job, the per-release SBOM and the
+signed publication are in `release-and-security-txt.md`. The renewal PR is the job `fitness-disclosure`
+above refers to, opened 60+ days before that gate fails.
+
+## TM-F-HOST proof (`make fitness-host`, T-0136)
+
+What it enforces: a booted install is judged on eight named cases (threat-model §15, TM-F-HOST):
+`HOST-DC-REFUSED`, `HOST-SERVICE-NOT-PRIVILEGED`, `HOST-FILE-PERMISSIONS`, `HOST-NO-DEFAULT-CREDENTIAL`,
+`HOST-NO-PLAINTEXT-LISTENER`, `HOST-SETUP-SECRET-SINGLE-USE`, `HOST-NO-DUMPS`, `HOST-REMOTE-DSN-FULL-TLS`.
+
+- **linux-oci (needs Docker):** `go run ./tools/fitness/host oci` builds `cmd/server` (static) into
+  `packaging/linux-oci/Dockerfile.server` (`FROM scratch`, uid 10001, TLS dir 0700), boots it against PostgreSQL 16
+  and observes the live process: kernel uid, `/proc/<pid>/limits`, the TLS directory's tar headers, a plaintext
+  request and well-known logins against the TLS listener, and five remote-DSN boots (`disable`, `allow`, `prefer`,
+  `require`, `verify-ca` without a root) that must each be refused before any dial.
+- **windows (lab):** on a lab host run `packaging/windows/Get-HostObservation.ps1 -ServiceName … -InstallDir …
+  -ConfigPaths … -InstallerResult refused|installed > obs.json`, then `go run ./tools/fitness/host evaluate obs.json`.
+  Run it on dc1 with the MSI once it exists (T-0635) to prove the DC refusal. The script has not yet been run on a
+  Windows host (no MSI to observe); first run must be logged in `windows-lab-runs/`.
+- **Results:** `ok`, `FAIL` (build fails), `INACTIVE` (the collector could not observe it: the subject does not exist
+  yet), `GAP` (fails today, tolerated until the named ticket lands). `tools/fitness/host/known-gaps.json` is a
+  ratchet: a gap that passes fails the build until its entry is deleted. Never add a gap without a ticket.
+- **Proof it fails:** `hostcheck_test.go` has one violating fixture per case (and asserts no other case trips);
+  `make ci-proof` runs `host evaluate` on a compliant observation and on eight mutated ones.
+- **Setup secret (T-0636):** on linux-oci `HOST-SETUP-SECRET-SINGLE-USE` is active: the harness reads the
+  secret file's tar header (mode/owner), POSTs it twice to `/api/v1/setup/claim` over verified TLS (first 204,
+  second must be 401), and boots a second server with `ACTIVEDIQ_SETUP_TTL=2s` to present an expired secret
+  (must be 401). The harness also provisions the KEK (`kek init` into a volume) because the server has no
+  default custody model; without it no boot gets past start-up. Windows stays INACTIVE for this case until the
+  MSI exists (T-0635) and the lab collector grows the same probe.
+- **Open gaps:** `HOST-NO-DUMPS` on linux-oci (T-0634); `HOST-DC-REFUSED` (T-0635) and the Windows half of
+  `HOST-SETUP-SECRET-SINGLE-USE` are INACTIVE until their product subject exists. The positive verify-full DSN control needs a TLS
+  PostgreSQL and is covered by `store.CheckTransport`'s own tests.
+
+## `fitness-agent-host` (T-0554: ADR-0006 A1/A4, ADR-0007 P1-P8, contract R1-R5, F1)
+
+`make fitness-agent-host` (part of `make fitness` and `make ci`). Run a subset: `go run ./tools/fitness/agenthost -checks A1,P`. It prints one line per check; `inactive (<missing input>)` means the subject does not exist yet and the check did not run (exit 0). **ADR-0006 and ADR-0007 become `accepted` only when no line is inactive** and the lab items in ADR-0006 "Verification owed" are confirmed.
+
+| Check | Inactive until | Who lands it |
+| --- | --- | --- |
+| R1, R2, R5 | `proto/skenzeriq/agent/v1/*.proto` and `proto/activediq/addc/v1/*.proto` exist | T-0600 (the proto) |
+| A1 | any WiX source under `packaging/`, or a file there that names the agent (path contains `agent`, or body mentions `activediq-agent`/`activeDIQAgent`) | the agent MSI ticket (windows-engineer) |
+| R3, R4, A4, P1-P8, F1 | always active | — |
+
+**What the installer author must write for A1 (allow by exception).** A1 judges **every WiX source under `packaging/`** (`.wxs .wxi .wixproj .xml`), whether or not it names the agent, plus every other file whose path or body names the agent (`activediq-agent`/`activeDIQAgent`). In a WiX source: (1) exactly one `ServiceInstall` naming the agent service with `Account="NT SERVICE\activeDIQAgent"` and no `Password`; every `ServiceSid` on it or on a `ServiceConfig` for it must be `restricted` (an `unrestricted` anywhere fails, whatever order) and the privileges must be exactly `SeChangeNotifyPrivilege`; (2) every `ServiceInstall`, `ServiceConfig` and `ServiceControl` names its service as a **literal**: a name containing `$(var.`, `[Property]` or `!(bind.` fails, because the service cannot then be judged; (3) **no `CustomAction` or `Binary` at all** unless its `Id` is in `tools/fitness/agenthost/installer-allow.txt` (empty today): nothing may compute the account, SID type or privileges at install time, however it spells `sc.exe`; (4) no `RegistryKey`/`RegistryValue`/`RemoveRegistryKey`/`RemoveRegistryValue` under HKLM/HKMU whose key (joined through nested `RegistryKey` elements) starts with `SYSTEM\`, or is built from a property or variable; HKCU/HKCR/HKU and `HKLM\SOFTWARE\...` are fine. The channel ACE (ADR-0006 rule 2) therefore needs its own reviewed element or custom action, listed in `installer-allow.txt` after a security-architect review. In every judged file: any `LocalSystem`, `LocalService`, `NetworkService`, `NT AUTHORITY\SYSTEM` or SID S-1-5-18/19/20 text fails, comments included (write "never the system account"), and any reference to `CurrentControlSet\Services` / `ControlSet001\Services` (any backslash count) fails. In files that name the agent: a **script-type file** (`.ps1 .psm1 .cmd .bat .vbs .js .wsf .sh .py ...`) fails unless its repo-relative path is in `installer-allow.txt`; and an `sc.exe config|create`, `Set-Service`, `New-Service` line with `obj=`/`-Credential`, or any line with `StartName`, `Win32_Service` Change/Create, `ChangeServiceConfig` or `CreateService`, must name the pin on that line (the message layer; the allowlist is what makes the check complete). UTF-16 files (BOM or NUL pattern) are decoded; a WiX or agent-path file that is not text, or over 4 MiB, fails closed unless it has a binary extension (`.ico .png .dll .exe .cab .msi ...`). If WiX spells something differently, extend `judgeInstallerXML` and its fixture together; do not loosen the pin. **Round-4 additions (parsed structure).** The agent pin is driven by the *parsed, entity-decoded* XML, not raw text: an element that decodes to the agent name (`activeDIQ&#65;gent`) gets the full pin wherever it sits, `&#...;` references in WiX fail, and `LocalSystem` text is also searched in decoded attribute values. A `ServiceInstall` with no `Account` fails everywhere (implicit LocalSystem); every non-agent `ServiceInstall` must use `NT SERVICE\<its own Name>` or be listed by `Id`; a Component holding the agent service, and any file naming the agent, may hold exactly one `ServiceInstall`. Any `Permission`, `PermissionEx` or `util:PermissionEx` fails unless its parent element `Id` is in `installer-allow.txt` (the service DACL and data-directory DACL are reviewed items). Templates and transforms (`.in .tmpl .xsl .xslt .j2 ...`) under `packaging/` fail unless listed, and any non-WiX, non-script, non-binary file naming the agent fails unless listed. **Round-5 additions.** (a) Any `<!DOCTYPE`, `<!ENTITY` or named entity other than `amp lt gt quot apos` in a WiX file fails (a DTD entity can build a name the check never sees decoded). (b) Scope is the whole repo, not only `packaging/`: every `.wxs .wxi .wxl .wixproj` (and `Name.wxs.in`-style templates) anywhere is MSI source; only `.git`, `node_modules`, `testdata` and `tools/fitness` are skipped. (c) **Every** `ServiceInstall` (not only the agent's) must carry `ServiceSid="restricted"` and RequiredPrivileges exactly `SeChangeNotifyPrivilege`, from the element, its children, or a `ServiceConfig` naming it in the same file, unless its `Id` is in `installer-allow.txt` (the agent's own service is never exempt); an unmatched `ServiceConfig` may not set any other SID type or privileges.
+
+A core MSI with no agent in it is still judged by rules 2-4 and the LocalSystem/registry text rules, so its own custom actions and system-account services need an `installer-allow.txt` line or a different packaging path: raise it in the MSI ticket.
+
+**R3 and A4 are allowlists.** R3: an agent module (`internal/agentmodules/**`) may import only the standard-library packages in `r3AllowedStd` plus our `<module>/internal/agentmodules/...`, exactly `<module>/internal/platform/agentpolicy` and exactly `<module>/internal/agenthost/api` (module path read from `go.mod`; a look-alike path under another module or a longer name fails); `syscall`, `unsafe`, `import "C"`, `io/ioutil`, `golang.org/x/sys/*`, `plugin`, `os/exec` and every dot or blank import fail by name, and `filepath.WalkDir/Walk/Glob/EvalSymlinks` fail (reads go through the host's dependency struct); package `os` is allowed only as `os.Getenv`, `os.LookupEnv`, `os.Err*` and `os.Is*` (everything else, including `OpenRoot`, `CopyFS`, `FindProcess`, `*os.File`, fails: methods on values cannot be told apart by name); the file-mutating call denylist is a second layer; and any non-`.go` file in a module directory (`.s`, `.syso`, `.c`, `.h`, ...; `testdata/` excepted) fails because it links code the scan cannot see. To give modules another package, add it to `r3AllowedStd`/`r3OwnPrefix`/`r3OwnExact` with a security-architect review. R4: every own-module package in `go list -deps ./cmd/agent` (windows and linux), not a fixed directory list, is scanned; any selector named `Listen*`, `Serve*`, `ListenConfig`, `NewServer`, or `Bind` on `syscall`/`windows`/`unix` fails whatever it is called on. A4: the agent closure may hold only the non-stdlib packages in `tools/fitness/agenthost/closure-allow.txt` (today our own `cmd/agent`, `internal/compose/agent`, `internal/compose/config`); anything else fails, and the named LDAP/SMB/RPC/Kerberos/SSPI bans stay as messages and win over the allowlist. Adding a line to `closure-allow.txt` needs a security-architect review. The tool also fails when ADR-0006/0007 front-matter says `status: accepted` while any check is inactive.
+
+**A1 walker fails closed (T-0677).** A1 does not guess what MSBuild evaluates (`%XX` escapes, properties, globs, `Directory.Build.props`/imports), and it does not trust file names: WiX compiles any file and `<?include?>` takes any name. It scans every WiX-named file (`.wxs/.wxi/.wxl/.wixproj` and their templates) **and, by content, every other text file in the repo (except `.git`; **no extension, binary ones included, exempts a file**, a real binary has NULs and is not text; UTF-16 and UTF-32 are decoded) that is an XML document rooted at `Wix`, `Include` or `WixLocalization`**, wherever it sits; Go/shell files holding a snippet in a string are not XML documents and pass. Consequence: test fixtures must never be WiX on disk (keep them as Go strings written to `t.TempDir()`); WiX under `tools/fitness` fails A1. Prebuilt WiX intermediates (`.wixlib/.wixipl/.wixobj`, or any zip holding `wix-ir.json`) anywhere are violations: we build from source only. A path the walk cannot read (e.g. a mode-000 directory) is a violation. A symbolic link anywhere (except `.git`) is a violation if it is WiX-named, dangling or looping, leaves the repo root, resolves to a directory, or targets a WiX file (by name or content); plain in-repo file links (`node_modules/.bin/*`) pass. Proofs: `TestA1Installer` and `tools/ci/proof.sh` (one fixture per bypass; the unreadable-directory case is skipped as root). **Residual risk:** a Compile Include of an absolute path or one leaving the repo root cannot be checked statically; and so is WiX generated at build time (MSBuild `Exec`/`UsingTask` inline tasks, `WixExtension`/`PackageReference`); that belongs to the built-MSI table inspection, **T-0697**.
+
+**If it fails.** The line names the rule and the file. A4: the import path is in the message; the agent has no directory or network-identity client, so remove the import, never the ban. P/F1: the test name is printed; fix the verifier or the bound, never the test. A missing test means a rename: P1-P8 are found by the prefixes `TestP1`…`TestP8`, `TestF1`, `FuzzF1`. A `FuzzF1` crasher is written to `internal/platform/agentpolicy/testdata/fuzz/`: commit it as a regression seed. `make fitness-agent-host AGENT_POLICY_FUZZ_TIME=2s` for a quick local run.
+
+**Not covered here (lab or other tickets).** The contract §3 bound "event_ids in the compiled-in catalogue" and the local-ceiling clamp are not enforced by `agentpolicy.Validate` (they need the module catalogue and the host's local config) and so are not in F1: owning ticket T-0555 (agent host and addc module). ADR-0006 A2/A3 (token privilege refusal, channel ACE read, write-denied outside the data directory) run in the Windows lab; F2/F3 (hostile in-bounds policy has no side effect beyond verdicts, applying a policy writes the local entry) need the agent host and rule engine; S1 is T-0556's ingest test.

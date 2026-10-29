@@ -196,7 +196,7 @@ func synth(tm *tableModel, c *colInfo) (string, error) {
 // prober holds what row generation needs: every probed table, and the registry's value overrides.
 type prober struct {
 	models    map[uint32]*tableModel
-	overrides map[string]string
+	overrides map[string]any
 }
 
 // include says whether a column gets a value in the probe row. A column is left to its default (or
@@ -303,4 +303,113 @@ func insertSQL(tm *tableModel, cols []string) string {
 	}
 	b.WriteString(") VALUES (" + strings.Join(ph, ", ") + ")")
 	return b.String()
+}
+
+// nullInKey reports whether a probeValues entry binds NULL to a column of the foreign key: the table's
+// own insert guard demands NULL there, so a row referencing another tenant's parent cannot be built.
+func (p *prober) nullInKey(tm *tableModel, f fkInfo) bool {
+	for _, k := range f.conkey {
+		if c := tm.col(k); c != nil {
+			if v, ok := p.overrides[tm.rel.qname()+"."+c.name]; ok && v == nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// siblingRow is an extra parent row the foreign-key probe inserts before the row under test.
+type siblingRow struct {
+	sql  string
+	args []any
+}
+
+// altValue is a second, deterministic value for a key column, for a parent row that is not the one
+// every other probe row points at. Only uuid and text keys have one.
+func altValue(c *colInfo) (any, bool) {
+	switch c.base {
+	case "uuid":
+		return uuidFor("alt/" + c.name), true
+	case "text", "varchar", "bpchar":
+		return "probe_alt_" + c.name, true
+	}
+	return nil, false
+}
+
+// rowWithSiblingFKs builds tenant's row of tm for the probe of foreign key f. When tm has other
+// foreign keys to non-global tables (two keys to one parent, for example both connection references of
+// correlations), those are pointed at an alternate parent row of the same tenant, returned as
+// siblings (inserted by the caller with foreign keys off), so that only f is violated. If a sibling
+// key's columns have no alternate value (an unsupported type) the row is left as p.row builds it.
+func (p *prober) rowWithSiblingFKs(tm *tableModel, f fkInfo, tenant string) (string, []any, []siblingRow, error) {
+	cols, args, err := p.row(tm, tenant)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	var siblings []siblingRow
+	for _, g := range tm.fks {
+		if g.name == f.name {
+			continue
+		}
+		parent := p.models[g.parent]
+		if parent == nil || parent.rel.global != nil || parent == tm || p.nullInKey(tm, g) || p.sharesKeyColumn(tm, f.conkey, g.conkey) {
+			continue
+		}
+		alt := map[string]any{} // parent column name -> alternate value
+		ok := true
+		for i := range g.conkey {
+			pc := parent.col(g.confkey[i])
+			if pc == nil || p.isTenantCol(parent, pc) {
+				continue
+			}
+			v, has := altValue(pc)
+			if !has {
+				ok = false
+				break
+			}
+			alt[pc.name] = v
+		}
+		if !ok || len(alt) == 0 {
+			continue
+		}
+		pcols, pargs, err := p.row(parent, tenant)
+		if err != nil {
+			return "", nil, nil, err
+		}
+		for i, n := range pcols {
+			if v, in := alt[n]; in {
+				pargs[i] = v
+			}
+		}
+		siblings = append(siblings, siblingRow{insertSQL(parent, pcols), pargs})
+		for i, k := range g.conkey {
+			pc := parent.col(g.confkey[i])
+			cc := tm.col(k)
+			if pc == nil || cc == nil || p.isTenantCol(parent, pc) {
+				continue
+			}
+			for ai, n := range cols {
+				if n == cc.name {
+					args[ai] = alt[pc.name]
+				}
+			}
+		}
+	}
+	return insertSQL(tm, cols), args, siblings, nil
+}
+
+// sharesKeyColumn reports whether two foreign keys share a column other than the tenant column, which
+// every tenant-paired key shares.
+func (p *prober) sharesKeyColumn(tm *tableModel, a, b []int16) bool {
+	for _, x := range a {
+		if c := tm.col(x); c == nil || p.isTenantCol(tm, c) {
+			continue
+		}
+		for _, y := range b {
+			if x == y {
+				return true
+			}
+		}
+	}
+	return false
 }

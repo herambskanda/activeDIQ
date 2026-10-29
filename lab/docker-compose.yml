@@ -1,12 +1,12 @@
 # activeDIQ AD lab — Samba 4 AD DC (TEST INFRASTRUCTURE ONLY; Samba is GPL-3.0, never shipped).
 # Use through the Makefile (`make lab-up`), which generates credentials into lab/.lab.env.
-name: activediq-lab
+# No fixed project name: the Makefile passes -p (per-worktree, recorded in lab/.lab.env as
+# COMPOSE_PROJECT_NAME) so concurrent worktrees get separate volumes, containers and ports (T-0373).
 services:
   dc:
     build:
       context: .
       dockerfile: samba/Dockerfile
-    image: activediq-lab-dc:local
     hostname: dc1.lab.activediq.test
     domainname: lab.activediq.test
     cap_add: [SYS_ADMIN]          # xattrs/ACLs on sysvol; escalate to privileged only if proven necessary

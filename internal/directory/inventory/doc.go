@@ -14,5 +14,5 @@
 // "no correlation" as "not tier0" would unprotect an object (TM §6.4, contract §8.3 F1 and F6).
 // Nothing is truncated either: a result over the bound is ErrTooMany.
 //
-// Writers (sync, the DM-20.I4/I5 gate evaluation) are not here yet; tests seed rows as the owner role.
+// The writers (the gate, the correlation writer, designations) are in writer.go and gate.go.
 package inventory

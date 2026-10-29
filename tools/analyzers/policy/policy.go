@@ -25,6 +25,9 @@ const (
 	GraphSchema = "internal/directory/odata/graphschema" // P8 property declarations
 	Graph       = "internal/connector/graph"             // the Microsoft Graph connector
 	ADConn      = "internal/connector/ad"                // AD connector: LDAPS dial to domain controllers (TB2, not TB9)
+	FleetDial   = "internal/platform/fleet/dial"         // component to server dial, pinned to the installation CA (TB6, not TB9)
+	Authz       = "internal/platform/authz"              // the authorisation layer: the only minter of SecretReadGrant (T-0313)
+	SD          = "internal/directory/sd"                // P6
 	Attr        = "internal/directory/attr"              // P3
 	Secret      = "internal/platform/secret"             // Secret and secretjson
 	Store       = "internal/platform/store"              // data-access package: pgx, set_config, reportsql
@@ -50,8 +53,7 @@ const (
 // UnitHomes maps each FF-SP4 corpus unit to the home package patterns of its implementation. The
 // corpus gate (tools/fitness/corpus) fails when Go code exists in a home but no implementation entry
 // in testdata/safe-primitives/implementations.json declares the unit, so an implementation cannot
-// exist without running the corpus. P6 (sd.read, sd.write) has no home here yet: its packages are
-// named by the build tickets T-0118 and T-0135.
+// exist without running the corpus. sd.read (T-0149) and sd.write (T-0583) live in the sd package.
 var UnitHomes = map[string][]string{
 	"ldapfilter":      {LDAPFilter},
 	"dn":              {DN},
@@ -72,6 +74,8 @@ var UnitHomes = map[string][]string{
 	"html":            {Htmlx},
 	"mail":            {Mail},
 	"pdf":             {ExportPDF},
+	"sd.read":         {SD},
+	"sd.write":        {SD},
 }
 
 // TokenURLSite names one function or method of the Graph connector that is exempt from one

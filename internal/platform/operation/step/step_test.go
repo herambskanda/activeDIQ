@@ -143,6 +143,7 @@ func TestDigest(t *testing.T) {
 		"other value":  Compute("modify", tg, []Attr{{Name: "mail", Values: []string{"b@x"}}, {Name: "title", Values: []string{"t"}}}),
 		"other target": Compute("modify", authority.TargetRef{Connection: "c", GUID: "h", Class: "user"}, []Attr{{Name: "mail", Values: []string{"a@x"}}, {Name: "title", Values: []string{"t"}}}),
 		"other kind":   Compute("delete", tg, []Attr{{Name: "mail", Values: []string{"a@x"}}, {Name: "title", Values: []string{"t"}}}),
+		"other nc":     Compute("modify", authority.TargetRef{Connection: "c", GUID: "g", Class: "user", NC: "nc2"}, []Attr{{Name: "mail", Values: []string{"a@x"}}, {Name: "title", Values: []string{"t"}}}),
 		"missing attr": Compute("modify", tg, []Attr{{Name: "mail", Values: []string{"a@x"}}}),
 	} {
 		if d == a {
@@ -161,5 +162,35 @@ func TestDigest(t *testing.T) {
 	}
 	if s1 == Compute("k", tg, nil) {
 		t.Fatal("secret presence not in the digest")
+	}
+}
+
+func TestMintCopiesPins(t *testing.T) {
+	pins := authority.Pins{"nc1": "dc1.example"}
+	s, _, err := testMinter().Mint(Spec{Key: Key{Operation: "o"}, Actor: chain(), Recheck: ok, Pins: pins, NC: "nc1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pins["nc1"] = "rogue.example"
+	if h, _ := s.DC("nc1"); h != "dc1.example" {
+		t.Errorf("DC = %q after caller mutated its map", h)
+	}
+}
+
+func TestMintCopiesDSAPins(t *testing.T) {
+	dsas := authority.DSAPins{"nc1": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}
+	s, _, err := testMinter().Mint(Spec{Key: Key{Operation: "o"}, Actor: chain(), Recheck: ok, DSAs: dsas, NC: "nc1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dsas["nc1"] = "rogue"
+	if g, found := s.DSA("nc1"); !found || g != "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" {
+		t.Fatalf("DSA = %q, %v after mutating the caller's map", g, found)
+	}
+	if _, found := s.DSA("other"); found {
+		t.Fatal("DSA for an unpinned NC")
+	}
+	if _, found := (Step{}).DSA("nc1"); found {
+		t.Fatal("zero Step exposes a DSA")
 	}
 }

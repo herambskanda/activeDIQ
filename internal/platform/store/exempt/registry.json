@@ -14,15 +14,32 @@
       "table": "public.platform_leases",
       "reason": "Platform leases give exclusive, expiring ownership of singleton work that runs over every tenant (the job rescuer and cleaner, later schedulers), so a lease row has no tenant_id and no RLS (ADR-0002 Jobs row, DM-06). Any tenant transaction can read it, so only its owning package may name it in SQL.",
       "owner": "internal/platform/jobs"
+    },
+    {
+      "table": "public.platform_rate_buckets",
+      "reason": "The rate limiter meters a principal at chain step 10, before any tenant transaction exists, and the budget must hold across every node, so a bucket row has no RLS policy; the tenant is part of its key text (ADR-0002 rule 6, DM-07, TM-TB2-T7). Any tenant transaction can read it, so only its owning package may name it in SQL.",
+      "owner": "internal/platform/limiter"
     }
   ],
-  "securityDefiner": [],
+  "securityDefiner": [
+    {
+      "function": "public.audit_wipe_retired_key(text)",
+      "reason": "Destroys a retired audit checkpoint key's sealed private key. The runtime role has no UPDATE on audit_checkpoint_key (append-only, DM-80.I2), so the one allowed change runs with the owner's rights; the function takes the tenant only from app.tenant_id (row-level security still applies), refuses the newest key and a key without a committed retirement event, and the table's update trigger refuses any other change (ADR-0005 rule 11, T-0305)."
+    }
+  ],
   "platformPaths": [
     {
       "package": "internal/platform/tenant/provision",
       "function": "FirstRun",
       "reason": "First-run bootstrap creates the install's first tenant before any tenant exists, so it runs outside a tenant context under WithPlatform and mints the tenant ID (ADR-0002 rules 4 and 5).",
       "withPlatform": true,
+      "mintsTenantID": true
+    },
+    {
+      "package": "internal/modules/connections",
+      "function": "StateTenant",
+      "reason": "The Entra attestation callback is an unauthenticated redirect from the IdP, so no principal carries a tenant. The state the start step issued begins with the tenant it was issued for; the callback parses that prefix only to choose whose attempt table to read. The lookup is by the SHA-256 of the whole state under that tenant's RLS, so a forged or other-tenant prefix finds nothing and grants nothing. The ID is never used as an identity or authorisation input (ADR-0002 rule 5; T-0504; needs security-architect review).",
+      "withPlatform": false,
       "mintsTenantID": true
     },
     {
@@ -68,6 +85,13 @@
       "mintsTenantID": false
     },
     {
+      "package": "internal/platform/limiter",
+      "function": "PGStore.Take",
+      "reason": "The limiter meters a principal before any tenant transaction exists, and its shared bucket table is registered global, so the single upsert runs under WithPlatform (ADR-0002 rule 6, DM-07).",
+      "withPlatform": true,
+      "mintsTenantID": false
+    },
+    {
       "package": "internal/platform/jobs",
       "function": "env.platform",
       "reason": "Test helper: opens a platform-scope transaction so the queue's tests can prove what a no-context transaction may and may not do (cross-tenant enqueue, fenced recording, SKIP LOCKED). It is in a _test.go file and ships in no binary.",
@@ -80,10 +104,92 @@
       "reason": "Test helper: runs a transaction with no tenant context to prove that connection queries outside WithTenant fail with ErrNoTenant (DM-10, T-0099 acceptance 4).",
       "withPlatform": true,
       "mintsTenantID": false
+    },
+    {
+      "package": "internal/directory/client",
+      "function": "ConnectorReads.Object",
+      "reason": "The tenant is read from the request context that the authority chain set (authority.TenantFrom), never from a request field; the parse only converts that server-set value to the typed ID for the connection lookup and fails closed (ADR-0002 rule 5).",
+      "withPlatform": false,
+      "mintsTenantID": true
+    },
+    {
+      "package": "internal/directory/inventory",
+      "function": "Membership.GroupsOf",
+      "reason": "authz.Membership receives the tenant as a string from the authorizer, which took it from the authenticated principal set by the authority chain, never from a request field; the parse only converts that server-set value to the typed ID and fails closed with ErrNoTenant (ADR-0002 rule 5).",
+      "withPlatform": false,
+      "mintsTenantID": true
+    },
+    {
+      "package": "internal/platform/rbac",
+      "function": "Authorizer.Authorize",
+      "reason": "The tenant is read from the request context that the authority chain's authentication step set (authority.TenantFrom), never from a request field; the parse only converts that server-set value to the typed ID and fails closed (ADR-0002 rule 5).",
+      "withPlatform": false,
+      "mintsTenantID": true
+    },
+    {
+      "package": "internal/platform/fleet",
+      "function": "IdentityOf",
+      "reason": "The tenant is read from the SAN of a leaf certificate the server's own CA issued and that the TLS handshake has already verified; a client cannot choose it, and the value must round-trip to its canonical form (ADR-0002 rule 5, DM-12).",
+      "withPlatform": false,
+      "mintsTenantID": true
+    },
+    {
+      "package": "internal/platform/fleet/fleetsql",
+      "function": "tenantOf",
+      "reason": "Enrollment-token redemption runs before any identity exists, so the routing tenant is the prefix of the presented token. It is a request value, but it is only a lookup hint and grants nothing: the token is accepted only if the SHA-256 of the whole token (tenant prefix included) matches an unused row visible under that tenant's row-level security, and every failure is the same ErrTokenInvalid. Registered for security-architect review (ADR-0002 rule 5, DM-12.I2).",
+      "withPlatform": false,
+      "mintsTenantID": true
+    },
+    {
+      "package": "internal/platform/audit",
+      "function": "TestRetiredKeyIsWipedThroughSecurityDefiner",
+      "reason": "Test: proves the registered SECURITY DEFINER audit_wipe_retired_key refuses a call made with no tenant context (SQLSTATE 42501), which needs a transaction under WithPlatform. It is in a _test.go file and ships in no binary (ADR-0005 rule 11, T-0305).",
+      "withPlatform": true,
+      "mintsTenantID": false
     }
   ],
   "platformJobs": [],
   "probeValues": [
+    {
+      "column": "public.personal_subject.salt",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: a subject salt is exactly 32 bytes (personal_subject_salt_check, ADR-0005 rule 12); the probe row carries a 32-byte placeholder, not a real salt."
+    },
+    {
+      "column": "public.authn_saml_replay.created_at",
+      "value": "2000-01-01 00:00:00+00",
+      "reason": "CHECK: authn_saml_replay_life ties expires_at to created_at (later, within 24 hours); the probe row pins both to fixed instants so the check holds whatever the clock says."
+    },
+    {
+      "column": "public.authn_saml_replay.expires_at",
+      "value": "2000-01-01 12:00:00+00",
+      "reason": "CHECK: authn_saml_replay_life, see created_at; 12 hours after the pinned created_at."
+    },
+    {
+      "column": "public.directory_objects.kind",
+      "value": "other",
+      "reason": "CHECK: a kind is one of the DM-16 kinds; the probe row is an object of kind other."
+    },
+    {
+      "column": "public.authn_authenticator_enrollments.method",
+      "value": "totp",
+      "reason": "CHECK: a method is totp, the sealed seed is at least 32 bytes and a subject is a console account or a directory user (DM-37); the probe row is a TOTP enrolment of an account."
+    },
+    {
+      "column": "public.authn_authenticator_enrollments.sealed_secret",
+      "value": "\\x70707070707070707070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: a method is totp, the sealed seed is at least 32 bytes and a subject is a console account or a directory user (DM-37); the probe row is a TOTP enrolment of an account."
+    },
+    {
+      "column": "public.authn_authenticator_enrollments.account_id",
+      "value": "0b3f2f9e-6a1c-4c53-9a53-3a7a3f5f1c01",
+      "reason": "CHECK: a method is totp, the sealed seed is at least 32 bytes and a subject is a console account or a directory user (DM-37); the probe row is a TOTP enrolment of an account."
+    },
+    {
+      "column": "public.authn_authenticator_enrollments.expires_at",
+      "value": "2030-01-01T00:00:00Z",
+      "reason": "INSERT trigger: an enrolment starts pending with an expiry (DM-37, ENH-09 \u00a75); the probe row is a pending enrolment."
+    },
     {
       "column": "public.correlations.match",
       "value": "sid",
@@ -100,6 +206,16 @@
       "reason": "CHECK: a sid-matched correlation carries the AD objectSid evidence (DM-20.I1b); a 12-byte binary SID."
     },
     {
+      "column": "public.correlations.entra_connection_id",
+      "value": "00000000-0000-4000-8000-0000000000e1",
+      "reason": "CHECK: the AD and Entra connection of a correlation differ (DM-20); every other column of the probe row is the generated value, so this one needs a second value. The foreign-key probe points the sibling key at an alternate parent row."
+    },
+    {
+      "column": "public.links.link_attr",
+      "value": "member",
+      "reason": "CHECK: link_attr is one of the stored linked attributes, currently member (DM-17)."
+    },
+    {
       "column": "public.connections.directory_identity",
       "value": "",
       "reason": "A connection is born draft with no identity: the insert guard refuses anything else (DM-10 L1, I1)."
@@ -112,7 +228,7 @@
     {
       "column": "public.components.kind",
       "value": "connector",
-      "reason": "CHECK: kind is connector or agent (DM-12)."
+      "reason": "CHECK: kind is connector, addc or fileserver (DM-12); legacy agent is kept only so old rows stay revocable."
     },
     {
       "column": "public.enrollment_tokens.token_hash",
@@ -128,6 +244,61 @@
       "column": "public.enrollment_tokens.expires_at",
       "value": "2030-01-01T01:00:00Z",
       "reason": "CHECK: one hour after the fixed created_at above (DM-12.I2)."
+    },
+    {
+      "column": "public.connections.last_verification_id",
+      "null": true,
+      "reason": "A connection is born with no verification: the insert guard refuses a pointer (DM-10 L1); the foreign key to DM-24 would otherwise fill it from the parent."
+    },
+    {
+      "column": "public.connection_verifications.kind",
+      "value": "scheduled",
+      "reason": "CHECK: kind is one of the run kinds; scheduled needs no requested_by, which the probe row leaves empty (DM-24)."
+    },
+    {
+      "column": "public.connection_verifications.verdict",
+      "value": "pass",
+      "reason": "CHECK: verdict is one of pass, refused, could_not_verify, failed (DM-24)."
+    },
+    {
+      "column": "public.connection_verifications.credential_id",
+      "value": "00000000-0000-4000-8000-0000000000c1",
+      "reason": "The override probe row must name a run of the same credential (DM-25.I1 insert guard); both tables use one constant."
+    },
+    {
+      "column": "public.connection_verifications.digest_salt",
+      "value": "\\xabababababababababababababababab",
+      "reason": "CHECK: the salt is 16 bytes (DM-24.I5)."
+    },
+    {
+      "column": "public.connection_verifications.findings_digest",
+      "value": "\\xabababababababababababababababababababababababababababababababab",
+      "reason": "CHECK: the digest is 32 bytes, SHA-256 (DM-24.I5)."
+    },
+    {
+      "column": "public.connection_verification_findings.check_name",
+      "value": "V1",
+      "reason": "CHECK: check_name is V1..V9 or EV1..EV5 (DM-24)."
+    },
+    {
+      "column": "public.connection_verification_findings.severity",
+      "value": "info",
+      "reason": "CHECK: severity is block, warn or info (DM-24)."
+    },
+    {
+      "column": "public.connection_verification_findings.fingerprint",
+      "value": "abababababababababababababababababababababababababababababababab",
+      "reason": "CHECK: the fingerprint is 64 lower-case hex characters (DM-24.I4)."
+    },
+    {
+      "column": "public.connection_tier0_overrides.credential_id",
+      "value": "00000000-0000-4000-8000-0000000000c1",
+      "reason": "Must equal the evidence run's credential (DM-25.I1 insert guard)."
+    },
+    {
+      "column": "public.connection_tier0_overrides.acknowledged_fingerprints",
+      "value": "{probe}",
+      "reason": "CHECK: an override acknowledges at least one finding (DM-25.I3); the default empty array is refused."
     },
     {
       "column": "public.audit_head.hash",
@@ -178,6 +349,313 @@
       "column": "public.audit_checkpoint_key.public_key",
       "value": "\\x0101010101010101010101010101010101010101010101010101010101010101",
       "reason": "CHECK: an Ed25519 public key is 32 bytes."
+    },
+    {
+      "column": "public.authn_accounts.created_by",
+      "value": "system",
+      "reason": "CHECK: created_by is 'system' or the id of the creating human (ADR-0005 sock-puppet rule); the probe row is system-created."
+    },
+    {
+      "column": "public.authn_sessions.created_at",
+      "value": "2030-01-01T00:00:00Z",
+      "reason": "CHECK/insert order: absolute_expiry is after created_at and idle_expiry is not after absolute_expiry; the seed fixes one ordered set of timestamps (the clock-relative insert guard is switched off for the seed by the probe)."
+    },
+    {
+      "column": "public.authn_sessions.last_seen_at",
+      "value": "2030-01-01T00:00:00Z",
+      "reason": "Same ordered timestamp set as created_at."
+    },
+    {
+      "column": "public.authn_sessions.idle_expiry",
+      "value": "2030-01-01T01:00:00Z",
+      "reason": "CHECK: idle_expiry <= absolute_expiry and absolute_expiry > created_at."
+    },
+    {
+      "column": "public.authn_sessions.absolute_expiry",
+      "value": "2030-01-01T02:00:00Z",
+      "reason": "CHECK: idle_expiry <= absolute_expiry and absolute_expiry > created_at."
+    },
+    {
+      "column": "public.authz_assignment_roots.root_kind",
+      "value": "naming_context",
+      "reason": "CHECK: root_kind is one of four kinds; naming_context needs no root_guid = connection_id rule."
+    },
+    {
+      "column": "public.connection_c13_pins.group_guid",
+      "value": "00000000-0000-4000-8000-0000000000a1",
+      "reason": "CHECK: group_guid is a canonical lower-case UUID text."
+    },
+    {
+      "column": "public.fleet_ca.cert_der",
+      "value": "\\x70707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: cert_der is 64..16384 bytes; the probe row is not parsed as a certificate."
+    },
+    {
+      "column": "public.connection_attestation_attempts.code_verifier",
+      "value": "probe-code-verifier-0123456789-0123456789-0123",
+      "reason": "CHECK: a PKCE code_verifier is 43..128 characters (RFC 7636 \u00a74.1)."
+    },
+    {
+      "column": "public.connection_attestation_attempts.state_hash",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: state_hash is a 32-byte SHA-256 of the attempt's state value."
+    },
+    {
+      "column": "public.hybrid_links.nc_guid",
+      "value": "00000000-0000-4000-8000-0000000000a1",
+      "reason": "CHECK: nc_guid is a canonical lower-case UUID text."
+    },
+    {
+      "column": "public.operation_items.state",
+      "value": "pending",
+      "reason": "CHECK: state is one of the item states; pending is the birth state."
+    },
+    {
+      "column": "public.operation_steps.digest",
+      "value": "\\x0000000000000000000000000000000000000000000000000000000000000000",
+      "reason": "CHECK: digest is exactly 32 bytes."
+    },
+    {
+      "column": "public.operations.origin",
+      "value": "api",
+      "reason": "CHECK: origin is one of console, api, csv, workflow, automation, report_results, undo, migration."
+    },
+    {
+      "column": "public.authn_accounts.kind",
+      "value": "local",
+      "reason": "CHECK: kind is local, sso or directory; a local account carries no SSO or directory fields, which are the probe row's NULLs (DM-36)."
+    },
+    {
+      "column": "public.authn_sessions.id_hash",
+      "value": "\\x0000000000000000000000000000000000000000000000000000000000000000",
+      "reason": "CHECK: id_hash is exactly 32 bytes, the SHA-256 of the session id."
+    },
+    {
+      "column": "public.fleet_ca.sealed_key",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: sealed_key is 32..16384 bytes; the probe row holds no real key material."
+    },
+    {
+      "column": "public.hybrid_links.origin",
+      "value": "declared",
+      "reason": "CHECK: origin is declared or discovered; a link is born declared+confirmed or discovered+proposed (DM-21.I2)."
+    },
+    {
+      "column": "public.authn_pending_signins.created_at",
+      "value": "2030-01-01T00:00:00Z",
+      "reason": "CHECK: expires_at is after created_at and within 5 minutes of it (authn_pending_life); a fixed pair satisfies it."
+    },
+    {
+      "column": "public.authn_pending_signins.expires_at",
+      "value": "2030-01-01T00:04:00Z",
+      "reason": "CHECK: four minutes after the fixed created_at above (authn_pending_life)."
+    },
+    {
+      "column": "public.connector_bindings.target",
+      "value": "embedded",
+      "reason": "CHECK: target is embedded or component, and a component target needs component_id; the probe row is the embedded binding, which has none (DM-13)."
+    },
+    {
+      "column": "public.notify_syslog_destinations.transport",
+      "value": "tls",
+      "reason": "CHECK: transport is tls or tcp, and plaintext_opt_in is true exactly for tcp (notify_syslog_destinations_optin); the probe row is a TLS destination."
+    },
+    {
+      "column": "public.notify_syslog_destinations.plaintext_opt_in",
+      "value": "false",
+      "reason": "CHECK: false for tls (notify_syslog_destinations_optin); the generated boolean may be true."
+    },
+    {
+      "column": "public.authn_pending_signins.first_factor",
+      "value": "password",
+      "reason": "CHECK: first_factor is password, sso or kerberos; the probe row is a password first factor."
+    },
+    {
+      "column": "public.authn_pending_signins.handle_hash",
+      "value": "\\x0000000000000000000000000000000000000000000000000000000000000000",
+      "reason": "CHECK: handle_hash is exactly 32 bytes, the SHA-256 of the handle."
+    },
+    {
+      "column": "public.authn_pending_signins.attempts",
+      "value": "0",
+      "reason": "CHECK: attempts is 0..5; a fresh sign-in has made none."
+    },
+    {
+      "column": "public.connector_bindings.component_id",
+      "null": true,
+      "reason": "CHECK: an embedded target carries no component_id and a component target needs one (DM-13); the probe row is embedded, so NULL."
+    },
+    {
+      "column": "public.hybrid_links.state",
+      "value": "confirmed",
+      "reason": "CHECK: state is proposed, confirmed or removed; pairs with origin declared (DM-21.I2)."
+    },
+    {
+      "column": "public.operation_steps.state",
+      "value": "planned",
+      "reason": "CHECK: state is one of the step states; planned is the birth state."
+    },
+    {
+      "column": "public.operations.requester_kind",
+      "value": "human",
+      "reason": "CHECK: requester_kind is human, api_token, automation or system."
+    },
+    {
+      "column": "public.authn_accounts.mfa_required",
+      "value": "true",
+      "reason": "CHECK: a local account requires MFA (authn_accounts_local); the generated boolean may be false."
+    },
+    {
+      "column": "public.authn_sessions.methods",
+      "value": "{password}",
+      "reason": "CHECK: methods holds 1..8 entries; the probe session was authenticated by a password."
+    },
+    {
+      "column": "public.fleet_ca.spki_sha256",
+      "value": "\\x0000000000000000000000000000000000000000000000000000000000000000",
+      "reason": "CHECK: spki_sha256 is exactly 32 bytes."
+    },
+    {
+      "column": "public.operations.state",
+      "value": "draft",
+      "reason": "CHECK: state is one of the operation states; draft is the birth state."
+    },
+    {
+      "column": "public.authn_accounts.sso_issuer",
+      "value": "",
+      "null": true,
+      "reason": "CHECK: a local account carries no SSO, directory or anchor field (authn_accounts_local, DM-36), so the probe row binds NULL."
+    },
+    {
+      "column": "public.authn_accounts.sso_subject",
+      "value": "",
+      "null": true,
+      "reason": "CHECK: a local account carries no SSO, directory or anchor field (authn_accounts_local, DM-36), so the probe row binds NULL."
+    },
+    {
+      "column": "public.authn_accounts.directory_connection_id",
+      "value": "",
+      "null": true,
+      "reason": "CHECK: a local account carries no SSO, directory or anchor field (authn_accounts_local, DM-36), so the probe row binds NULL."
+    },
+    {
+      "column": "public.authn_accounts.directory_object_guid",
+      "value": "",
+      "null": true,
+      "reason": "CHECK: a local account carries no SSO, directory or anchor field (authn_accounts_local, DM-36), so the probe row binds NULL."
+    },
+    {
+      "column": "public.authn_accounts.anchor_kind",
+      "value": "",
+      "null": true,
+      "reason": "CHECK: a local account carries no SSO, directory or anchor field (authn_accounts_local, DM-36), so the probe row binds NULL."
+    },
+    {
+      "column": "public.authn_accounts.anchor_value",
+      "value": "",
+      "null": true,
+      "reason": "CHECK: a local account carries no SSO, directory or anchor field (authn_accounts_local, DM-36), so the probe row binds NULL."
+    },
+    {
+      "column": "public.authn_accounts.anchor_tid",
+      "value": "",
+      "null": true,
+      "reason": "CHECK: a local account carries no SSO, directory or anchor field (authn_accounts_local, DM-36), so the probe row binds NULL."
+    },
+    {
+      "column": "public.authz_assignments.account_id",
+      "value": "0b3f2f9e-6a1c-4c53-9a53-3a7a3f5f1c02",
+      "reason": "CHECK: authz_assignments_subject_shape ties each subject_kind to its columns; the probe row is the default account subject, so account_id is set (DM-36)."
+    },
+    {
+      "column": "public.authn_webauthn_credentials.credential_id",
+      "value": "\\x70707070707070707070707070707070",
+      "reason": "CHECK: a credential ID is 16 to 1023 bytes (authn_webauthn_credentials_credential_id_check); the probe row carries a 16-byte placeholder (T-0207)."
+    },
+    {
+      "column": "public.authn_webauthn_credentials.public_key",
+      "value": "\\x70707070707070707070707070707070",
+      "reason": "CHECK: a stored COSE key is 16 to 2048 bytes; the probe row carries a 16-byte placeholder, not a real key (T-0207)."
+    },
+    {
+      "column": "public.authn_webauthn_credentials.user_handle",
+      "value": "\\x70707070707070707070707070707070",
+      "reason": "CHECK: a user handle is 16 to 64 bytes; the probe row carries a 16-byte placeholder (T-0207)."
+    },
+    {
+      "column": "public.authn_webauthn_challenges.challenge",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: a challenge is 32 to 64 bytes (authn_webauthn_challenges_challenge_check); the probe row carries a 32-byte placeholder (T-0207)."
+    },
+    {
+      "column": "public.authn_webauthn_challenges.created_at",
+      "value": "2000-01-01 00:00:00+00",
+      "reason": "CHECK: authn_webauthn_challenges_life ties expires_at to created_at (later, within 5 minutes); the probe row pins both to fixed instants (T-0207)."
+    },
+    {
+      "column": "public.authn_webauthn_challenges.expires_at",
+      "value": "2000-01-01 00:03:00+00",
+      "reason": "CHECK: authn_webauthn_challenges_life, see created_at; 3 minutes after the pinned created_at (T-0207)."
+    },
+    {
+      "column": "public.agent_policy_key.key_id",
+      "value": "k-0123456789abcdef",
+      "reason": "CHECK: a policy key ID is k- and 16 hex digits (agent_policy_key key_id check) (T-0556)"
+    },
+    {
+      "column": "public.agent_policy_key.public_key",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: an Ed25519 public key is exactly 32 bytes; the probe row carries a placeholder (T-0556)"
+    },
+    {
+      "column": "public.agent_policy_key.state",
+      "value": "dropped",
+      "reason": "CHECK: state is one of active/retiring/dropped and agent_policy_key_sealed_iff_live ties it to the sealed key; a dropped probe row needs no key material (T-0556)"
+    },
+    {
+      "column": "public.agent_policy_key.dropped_at",
+      "value": "2000-01-01 00:00:00+00",
+      "reason": "CHECK: agent_policy_key_dropped requires dropped_at exactly when state is dropped (T-0556)"
+    },
+    {
+      "column": "public.agent_policy_keyset.keyset_seq",
+      "value": "1",
+      "reason": "CHECK: keyset_seq > 0 (T-0556)"
+    },
+    {
+      "column": "public.agent_policy_keyset.signed",
+      "value": "\\x70707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: a signed keyset is 64 to 4096 bytes; the probe row carries a 64-byte placeholder (T-0556)"
+    },
+    {
+      "column": "public.agent_policy_head.agent_kind",
+      "value": "addc",
+      "reason": "CHECK: agent_kind is addc or fileserver (T-0556)"
+    },
+    {
+      "column": "public.agent_policy_head.policy_seq",
+      "value": "1",
+      "reason": "CHECK: policy_seq > 0 (T-0556)"
+    },
+    {
+      "column": "public.agent_policy_head.signed",
+      "value": "\\x70707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: a signed policy is 64 bytes to 1.5 MB; the probe row carries a 64-byte placeholder (T-0556)"
+    },
+    {
+      "column": "public.agent_event.agent_seq",
+      "value": "1",
+      "reason": "CHECK: agent_seq > 0 (T-0556)"
+    },
+    {
+      "column": "public.agent_event.record_type",
+      "value": "event",
+      "reason": "CHECK: record_type is event, gap or dropped (T-0556)"
+    },
+    {
+      "column": "public.tenant_keys.state",
+      "value": "active",
+      "reason": "CHECK: state is active, retired or shredded; the probe row is an active key with a non-empty wrapped_dek (T-0520)"
     }
   ]
 }

@@ -2,6 +2,7 @@ package connection
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/skenzeriq/activediq/internal/platform/store"
@@ -22,7 +23,7 @@ func scanLink(r scanner) (HybridLink, error) {
 }
 
 func (s Store) createLink(ctx context.Context, tx store.Tx, n NewHybridLink, origin LinkOrigin) (HybridLink, error) {
-	n, err := n.validate()
+	n, err := n.Validate()
 	if err != nil {
 		return HybridLink{}, err
 	}
@@ -104,10 +105,14 @@ func (Store) TransitionHybridLink(ctx context.Context, tx store.Tx, id HybridLin
 	return l, nil
 }
 
+// ErrTooMany: a list exceeded its bound; nothing is returned.
+var ErrTooMany = errors.New("connection: result exceeds the bound")
+
 // maxLinks bounds ListHybridLinks.
 const maxLinks = 1000
 
-// ListHybridLinks returns the links of one AD connection, oldest first, removed ones only if asked.
+// ListHybridLinks returns the links of one AD connection, oldest first, removed ones only if asked. More
+// than maxLinks is ErrTooMany, never a truncated list.
 func (Store) ListHybridLinks(ctx context.Context, tx store.Tx, adConn ID, includeRemoved bool) ([]HybridLink, error) {
 	if err := requireTenant(ctx, tx); err != nil {
 		return nil, err
@@ -117,7 +122,7 @@ func (Store) ListHybridLinks(ctx context.Context, tx store.Tx, adConn ID, includ
 	}
 	rows, err := tx.Query(ctx, `SELECT `+linkColumns+` FROM public.hybrid_links
 		WHERE ad_connection_id = $1::uuid AND ($2 OR state <> 'removed') ORDER BY created_at, id LIMIT $3`,
-		string(adConn), includeRemoved, maxLinks)
+		string(adConn), includeRemoved, maxLinks+1)
 	if err != nil {
 		return nil, fmt.Errorf("connection: list hybrid links: %w", err)
 	}
@@ -132,6 +137,9 @@ func (Store) ListHybridLinks(ctx context.Context, tx store.Tx, adConn ID, includ
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("connection: list hybrid links: %w", err)
+	}
+	if len(out) > maxLinks {
+		return nil, ErrTooMany
 	}
 	return out, nil
 }
@@ -160,6 +168,40 @@ func (Store) ConfirmedLink(ctx context.Context, tx store.Tx, adConn ID, nc NCGUI
 		return false, fmt.Errorf("connection: confirmed hybrid link: %w", err)
 	}
 	return ok, nil
+}
+
+// ListHybridLinksForEntra returns the links of one Entra connection that are not removed, in every AD
+// domain, oldest first (the sync ingester asks which domains feed this tenant). More than maxLinks is
+// ErrTooMany, never a truncated list: a missing link would turn into a silent link_unconfirmed.
+func (Store) ListHybridLinksForEntra(ctx context.Context, tx store.Tx, entraConn ID) ([]HybridLink, error) {
+	if err := requireTenant(ctx, tx); err != nil {
+		return nil, err
+	}
+	if _, err := ParseID(string(entraConn)); err != nil {
+		return nil, err
+	}
+	rows, err := tx.Query(ctx, `SELECT `+linkColumns+` FROM public.hybrid_links
+		WHERE entra_connection_id = $1::uuid AND state <> 'removed' ORDER BY created_at, id LIMIT $2`,
+		string(entraConn), maxLinks+1)
+	if err != nil {
+		return nil, fmt.Errorf("connection: list hybrid links for entra: %w", err)
+	}
+	defer rows.Close()
+	var out []HybridLink
+	for rows.Next() {
+		l, err := scanLink(rows)
+		if err != nil {
+			return nil, fmt.Errorf("connection: list hybrid links for entra: %w", err)
+		}
+		out = append(out, l)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("connection: list hybrid links for entra: %w", err)
+	}
+	if len(out) > maxLinks {
+		return nil, ErrTooMany
+	}
+	return out, nil
 }
 
 // HasLink reports whether the AD connection has a link that is not removed.

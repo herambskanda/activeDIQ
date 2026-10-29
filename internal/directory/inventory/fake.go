@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
@@ -17,17 +18,20 @@ type Fake struct {
 	links  map[tenant.ID][]Link
 	desig  map[tenant.ID]map[ConnectionID]map[GUID]bool
 	groups map[tenant.ID]map[Ref][]GUID
+	rows   map[tenant.ID]map[Ref]bool
+	evals  map[tenant.ID]map[ConnectionID]time.Time
 }
 
 var (
 	_ CorrelationSource = (*Fake)(nil)
 	_ Designations      = (*Fake)(nil)
 	_ GroupSource       = (*Fake)(nil)
+	_ GroupRows         = (*Fake)(nil)
 )
 
 // NewFake returns an empty fake.
 func NewFake() *Fake {
-	return &Fake{links: map[tenant.ID][]Link{}, desig: map[tenant.ID]map[ConnectionID]map[GUID]bool{}, groups: map[tenant.ID]map[Ref][]GUID{}}
+	return &Fake{links: map[tenant.ID][]Link{}, desig: map[tenant.ID]map[ConnectionID]map[GUID]bool{}, groups: map[tenant.ID]map[Ref][]GUID{}, rows: map[tenant.ID]map[Ref]bool{}, evals: map[tenant.ID]map[ConnectionID]time.Time{}}
 }
 
 // AddLink stores l, a link seen from l.Self; it is returned from either side. The fake stores the
@@ -72,16 +76,27 @@ func (f *Fake) AddMembership(tid tenant.ID, c ConnectionID, member, group GUID) 
 	f.groups[tid][k] = append(f.groups[tid][k], group)
 }
 
+// SetEvaluated records that the correlation job completed an evaluation of the connection at t.
+// Without it CorrelationsFor reports a zero EvaluatedAt, as the reader does before any run.
+func (f *Fake) SetEvaluated(tid tenant.ID, c ConnectionID, t time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.evals[tid] == nil {
+		f.evals[tid] = map[ConnectionID]time.Time{}
+	}
+	f.evals[tid][c] = t.UTC()
+}
+
 // CorrelationsFor implements CorrelationSource.
-func (f *Fake) CorrelationsFor(_ context.Context, tid tenant.ID, ref Ref) ([]Link, error) {
+func (f *Fake) CorrelationsFor(_ context.Context, tid tenant.ID, ref Ref) (Correlations, error) {
 	if f.Err != nil {
-		return nil, f.Err
+		return Correlations{}, f.Err
 	}
 	if tid.IsZero() {
-		return nil, ErrNoTenant
+		return Correlations{}, ErrNoTenant
 	}
 	if !ref.Valid() {
-		return nil, ErrInvalid
+		return Correlations{}, ErrInvalid
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -92,7 +107,7 @@ func (f *Fake) CorrelationsFor(_ context.Context, tid tenant.ID, ref Ref) ([]Lin
 		}
 	}
 	sortLinks(out)
-	return out, nil
+	return Correlations{Links: out, EvaluatedAt: f.evals[tid][ref.Connection]}, nil
 }
 
 // GroupsOf implements GroupSource.
@@ -145,4 +160,31 @@ func (f *Fake) DesignationsFor(ctx context.Context, tid tenant.ID, c ConnectionI
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
 	return out, nil
+}
+
+// Undesignate removes a designation, as the soft delete of the Postgres writer hides it from reads.
+func (f *Fake) Undesignate(tid tenant.ID, c ConnectionID, object GUID) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.desig[tid][c], object)
+}
+
+// AddGroup records an active group row, which GroupExists reports.
+func (f *Fake) AddGroup(tid tenant.ID, c ConnectionID, group GUID) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.rows[tid] == nil {
+		f.rows[tid] = map[Ref]bool{}
+	}
+	f.rows[tid][Ref{c, group}] = true
+}
+
+// GroupExists implements GroupRows.
+func (f *Fake) GroupExists(_ context.Context, tid tenant.ID, c ConnectionID, group GUID) (bool, error) {
+	if f.Err != nil {
+		return false, f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.rows[tid][Ref{c, group}], nil
 }

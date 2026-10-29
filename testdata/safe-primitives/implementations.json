@@ -96,6 +96,16 @@
         "html"
       ],
       "package": "internal/platform/httpx"
+    },
+    {
+      "name": "go/sd",
+      "language": "go",
+      "tier": "S",
+      "units": [
+        "sd.read",
+        "sd.write"
+      ],
+      "package": "internal/directory/sd"
     }
   ],
   "fuzz": [
@@ -188,6 +198,26 @@
       "target": "FuzzAttachment",
       "properties": [
         "independentParse"
+      ]
+    },
+    {
+      "implementation": "go/sd",
+      "unit": "sd.read",
+      "target": "FuzzDecode",
+      "properties": [
+        "aceBytesInsideInput",
+        "deterministic",
+        "noPanic"
+      ]
+    },
+    {
+      "implementation": "go/sd",
+      "unit": "sd.write",
+      "target": "FuzzPlan",
+      "properties": [
+        "decodeRoundTrip",
+        "daclOnly",
+        "noPanic"
       ]
     }
   ]

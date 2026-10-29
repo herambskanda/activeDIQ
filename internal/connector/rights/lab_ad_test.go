@@ -6,9 +6,7 @@ import (
 	"context"
 	"crypto/x509"
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +16,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/platform/secret"
 	v1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
+	"github.com/skenzeriq/activediq/internal/testlab"
 )
 
 // Lab tests (Samba AD): `make lab-up && go test -tags lab ./internal/connector/rights -run TestLabAD`.
@@ -43,29 +42,12 @@ type lab struct {
 
 func newLab(t *testing.T) *lab {
 	t.Helper()
-	ctr := os.Getenv("LAB_CONTAINER")
-	if ctr == "" {
-		ctr = "activediq-lab-dc-1"
+	// Same source as the tier0 lab tests: lab/.lab.env + lab/.lab-ca.pem. A missing lab FAILS (T-0373).
+	e := testlab.Load(t)
+	if out, err := exec.Command("docker", "exec", e.Container, "true").CombinedOutput(); err != nil {
+		t.Fatalf("lab container %s not available (run `make lab-up`): %v %s", e.Container, err, out)
 	}
-	if out, err := exec.Command("docker", "exec", ctr, "true").CombinedOutput(); err != nil {
-		t.Skipf("lab container not available: %v %s", err, out)
-	}
-	dir := t.TempDir()
-	ca := filepath.Join(dir, "ca.pem")
-	if out, err := exec.Command("docker", "cp", ctr+":/var/lib/samba/lab-tls/ca.pem", ca).CombinedOutput(); err != nil {
-		t.Fatalf("copy CA: %v %s", err, out)
-	}
-	pem, err := os.ReadFile(ca)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pool := x509.NewCertPool()
-	pool.AppendCertsFromPEM(pem)
-	port := os.Getenv("LAB_LDAPS_PORT")
-	if port == "" {
-		port = "636"
-	}
-	return &lab{t: t, ctr: ctr, pool: pool, port: port}
+	return &lab{t: t, ctr: e.Container, pool: e.Pool, port: e.Port}
 }
 
 func (l *lab) tool(args ...string) string {
@@ -296,5 +278,102 @@ func TestLabADRefusals(t *testing.T) {
 				t.Fatalf("no %s finding:%s", tc.code, dump(r.res))
 			}
 		})
+	}
+}
+
+// T-0237 AC1: Authenticated Users holding Reset-Password on a tier0 object is a WARN exposure
+// naming the object, right and trustee; the verdict stays PASS (broad-principal exposure is WARN).
+// The ACE sits on AdminSDHolder (C3): a broad right on a C19 object fails the snapshot closed (TM-D27 rule 4).
+func TestLabADBroadPrincipalExposure(t *testing.T) {
+	l := newLab(t)
+	ctx := labCtx(t)
+	name, userDN, _ := l.user()
+	l.ace("CN=AdminSDHolder,CN=System,"+labDom, "(OA;;CR;00299570-246d-11d0-a768-00aa006e0529;;AU)")
+	r := l.verify(ctx, name, userDN, ADInput{})
+	got := r.find(CodeTier0BroadPrincipal)
+	if len(got) != 1 {
+		t.Fatalf("want 1 broad-principal finding:%s", dump(r.res))
+	}
+	if got[0].Object == nil || got[0].Severity != v1.FindingSeverity_FINDING_SEVERITY_WARN {
+		t.Fatalf("finding lacks object or is not WARN:%s", dump(r.res))
+	}
+	if r.res.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_PASS {
+		t.Fatalf("verdict %v:%s", r.res.Verdict, dump(r.res))
+	}
+}
+
+// T-0381 AC2: the real tokenGroups of a freshly made user lacks the implicit network-logon SIDs the
+// checker adds from implicitNetworkLogonSIDs. Samba proves the LDAP side; Windows is the same by MS-ADTS.
+func TestLabADTokenGroupsLackImplicitSIDs(t *testing.T) {
+	l := newLab(t)
+	ctx := labCtx(t)
+	name, userDN, _ := l.user()
+	sess := l.open(ctx, name)
+	ref, err := dn.ParseObjectRef(userDN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := sess.Read(ctx, ref, []string{"tokenGroups"}, ad.ReadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	groups, err := e.SIDs("tokenGroups")
+	if err != nil || len(groups) == 0 {
+		t.Fatalf("tokenGroups: %v %v", groups, err)
+	}
+	for _, g := range groups {
+		for _, s := range implicitNetworkLogonSIDs {
+			if g.String() == s {
+				t.Errorf("real tokenGroups contains implicit SID %s", s)
+			}
+		}
+	}
+}
+
+// T-0362 / T0-RIGHTS-C19 (TM-D27 rule 8): the identity holding a rule-2 right on a C19 object is
+// refused with the C19 finding naming the object. Samba proves the LDAP and DACL semantics only;
+// owner-of-DC-object and SDProp cases need the Windows lab (T-0226).
+func TestLabADC19Refusals(t *testing.T) {
+	l := newLab(t)
+	ctx := labCtx(t)
+	for _, tc := range []struct {
+		name  string
+		setup func(sid string)
+	}{
+		{"reset password on krbtgt", func(s string) {
+			l.ace("CN=krbtgt,CN=Users,"+labDom, fmt.Sprintf("(OA;;CR;00299570-246d-11d0-a768-00aa006e0529;;%s)", s))
+		}},
+		{"write member on a C1 group", func(s string) {
+			l.ace("CN=Domain Admins,CN=Users,"+labDom, fmt.Sprintf("(OA;;WP;%s;;%s)", attrMember, s))
+		}},
+		{"write gPLink on the DC OU", func(s string) {
+			l.ace("OU=Domain Controllers,"+labDom, fmt.Sprintf("(OA;;WP;f30e3bbe-9ff0-11d1-b603-0000f80367c1;;%s)", s))
+		}},
+		{"write DACL on a DC object", func(s string) { l.ace("CN=DC1,OU=Domain Controllers,"+labDom, fmt.Sprintf("(A;;WD;;;%s)", s)) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l.t = t
+			name, userDN, sidText := l.user()
+			tc.setup(sidText)
+			r := l.verify(ctx, name, userDN, ADInput{})
+			r.refused(t)
+			got := r.find(CodeTier0C19)
+			if len(got) == 0 || got[0].Object == nil {
+				t.Fatalf("no %s finding naming the object:%s", CodeTier0C19, dump(r.res))
+			}
+		})
+	}
+}
+
+// A C19 right granted to Authenticated Users (held by every identity's token) must never pass: it
+// refuses, or the snapshot fails closed (TM-D27 rules 4 and 8).
+func TestLabADC19AuthenticatedUsers(t *testing.T) {
+	l := newLab(t)
+	ctx := labCtx(t)
+	l.ace("CN=Domain Admins,CN=Users,"+labDom, fmt.Sprintf("(OA;;WP;%s;;AU)", attrMember))
+	name, userDN, _ := l.user()
+	r := l.verify(ctx, name, userDN, ADInput{})
+	if r.res.Verdict == v1.VerificationVerdict_VERIFICATION_VERDICT_PASS || r.res.WriteGateOpenable {
+		t.Fatalf("passed with AU WP member on Domain Admins:%s", dump(r.res))
 	}
 }

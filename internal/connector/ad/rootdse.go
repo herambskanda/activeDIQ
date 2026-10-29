@@ -11,6 +11,7 @@ import (
 type RootDSE struct {
 	DNSHostName                   string
 	ServerName                    string
+	DSServiceName                 string
 	DefaultNamingContext          string
 	RootDomainNamingContext       string
 	ConfigurationNamingContext    string
@@ -37,7 +38,7 @@ func (r RootDSE) SupportsControl(oid string) bool {
 }
 
 var rootDSEAttrs = []string{
-	"dnsHostName", "serverName", "defaultNamingContext", "rootDomainNamingContext",
+	"dnsHostName", "serverName", "dsServiceName", "defaultNamingContext", "rootDomainNamingContext",
 	"configurationNamingContext", "schemaNamingContext", "namingContexts", "supportedControl",
 	"supportedCapabilities", "domainFunctionality", "forestFunctionality",
 	"domainControllerFunctionality", "highestCommittedUSN", "isSynchronized", "isGlobalCatalogReady",
@@ -60,6 +61,7 @@ func (s *Session) RootDSE(ctx context.Context) (*RootDSE, error) {
 	return &RootDSE{
 		DNSHostName:                   one("dnsHostName"),
 		ServerName:                    one("serverName"),
+		DSServiceName:                 one("dsServiceName"),
 		DefaultNamingContext:          one("defaultNamingContext"),
 		RootDomainNamingContext:       one("rootDomainNamingContext"),
 		ConfigurationNamingContext:    one("configurationNamingContext"),

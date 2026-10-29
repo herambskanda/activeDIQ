@@ -13,6 +13,7 @@ import (
 	adguid "github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 	v1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 func guidN(n byte) adguid.GUID {
@@ -22,7 +23,7 @@ func guidN(n byte) adguid.GUID {
 }
 
 func request(w *world, correlated ...*v1.Tier0Member) *v1.VerifyConnectionRequest {
-	return &v1.VerifyConnectionRequest{VerificationId: pbGuid(guidN(99)), CorrelatedTier0: correlated}
+	return &v1.VerifyConnectionRequest{Connection: &v1.ConnectionRef{ConnectionId: "conn-1"}, VerificationId: pbGuid(guidN(99)), CorrelatedTier0: correlated}
 }
 
 func (w *world) stream(t *testing.T, ep *EpochState, req *v1.VerifyConnectionRequest) ([]*v1.VerifyConnectionResponse, error) {
@@ -36,7 +37,7 @@ func (w *world) stream(t *testing.T, ep *EpochState, req *v1.VerifyConnectionReq
 	prev := snapshotHook
 	snapshotHook = func(context.Context) (*tier0.ADSet, error) { return w.set, nil }
 	defer func() { snapshotHook = prev }()
-	err := StreamAD(context.Background(), w.f, ep, req, ref, func(m *v1.VerifyConnectionResponse) error {
+	err := StreamAD(context.Background(), w.f, ep, req, ref, testDirectory(), func(m *v1.VerifyConnectionResponse) error {
 		out = append(out, m)
 		return nil
 	}, func() time.Time { return time.Unix(1_700_000_000, 0) })
@@ -346,5 +347,33 @@ func TestStreamEndsWithoutCompletedOnLocalRecordFailure(t *testing.T) {
 		if m.GetCompleted() != nil {
 			t.Fatal("completed sent although the record could not be made durable")
 		}
+	}
+}
+
+func testDirectory() *v1.DirectoryIdentity {
+	return &v1.DirectoryIdentity{Identity: &v1.DirectoryIdentity_AdForest{AdForest: &v1.AdForestIdentity{
+		ForestRootNcGuid: pbGuid(guidN(7))}}}
+}
+
+func TestStreamCompletedCarriesDirectoryIdentity(t *testing.T) {
+	w := newWorld(t)
+	msgs, err := w.stream(t, nil, request(w))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := msgs[len(msgs)-1].GetCompleted().GetDirectoryIdentity()
+	if !proto.Equal(got, testDirectory()) {
+		t.Fatalf("completed directory identity = %v", got)
+	}
+}
+
+func TestStreamRefusesWithoutDirectoryIdentity(t *testing.T) {
+	w := newWorld(t)
+	w.setTokens()
+	ref, _ := dn.ParseObjectRef(w.id.DN)
+	sent := 0
+	err := StreamAD(context.Background(), w.f, nil, request(w), ref, nil, func(*v1.VerifyConnectionResponse) error { sent++; return nil }, nil)
+	if err == nil || sent != 0 {
+		t.Fatalf("err=%v sent=%d: a run with no bound directory must stream nothing", err, sent)
 	}
 }

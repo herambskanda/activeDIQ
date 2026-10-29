@@ -2,6 +2,8 @@ package write
 
 import (
 	"context"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -435,7 +437,9 @@ type recordedOp struct {
 func withTestOp(r *rig, touched ...byte) *recordedOp {
 	rec := &recordedOp{}
 	k := connectorv1.WriteKind(1)
+	r.prov.guard = &stubGuard{} // allows; the guard's own tests are in propwrite_test.go
 	r.h.ops = map[connectorv1.WriteKind]WriteOp{k: {
+		PropertyWrite: declare(adUpdateTitle, nil),
 		Touched: func(target guidT, _ *connectorv1.WriteChange) ([]guidT, error) {
 			out := []guidT{target}
 			for _, b := range touched {
@@ -616,5 +620,21 @@ func TestStep9UsesDesignatedSet(t *testing.T) {
 	m := resp.GetTier0AfterWrite()
 	if len(m) != 1 || len(m[0].GetBasis()) != 1 || m[0].GetBasis()[0] != tier0.Designated {
 		t.Fatalf("after-write: %v", m)
+	}
+}
+
+// json/v2 omitempty keeps numeric 0; the baseline line must still omit a zero revision (v1 bytes).
+func TestFileBaselineOmitsZeroRevision(t *testing.T) {
+	fb := &FileBaseline{Path: t.TempDir() + "/baseline.jsonl"}
+	if err := fb.Append(connID, []Mark{{Object: mk(1), Basis: tier0.C16, Source: "run"}, {Object: mk(2), Basis: tier0.C16, Source: "request", Revision: 3}}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(fb.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if len(lines) != 2 || strings.Contains(lines[0], "tier0_revision") || !strings.Contains(lines[1], `"tier0_revision":3`) {
+		t.Fatalf("unexpected baseline lines: %q", lines)
 	}
 }

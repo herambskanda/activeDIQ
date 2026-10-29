@@ -211,10 +211,10 @@ func (w *Worker) execute(ctx context.Context, c Claimed) {
 	res, err := w.run.Execute(ctx, c)
 	if err != nil {
 		// The claim lapses and Rescue requeues it. Only identifiers are logged, never arguments.
-		slog.Error("jobs: running a claimed job failed", "job", c.ID, "kind", c.Kind, "attempt", c.Attempt, "err", err)
+		slog.Error("jobs: running a claimed job failed", "tenant_id", c.Tenant.String(), "job", c.ID, "kind", c.Kind, "attempt", c.Attempt, "err", err)
 		return
 	}
-	slog.Debug("jobs: job finished", "job", c.ID, "kind", c.Kind, "attempt", c.Attempt, "result", string(res))
+	slog.Debug("jobs: job finished", "tenant_id", c.Tenant.String(), "job", c.ID, "kind", c.Kind, "attempt", c.Attempt, "result", string(res))
 }
 
 // backoff is PollMin doubled per empty poll up to PollMax, with equal jitter (half fixed, half random) so

@@ -91,8 +91,8 @@ func TestIssue(t *testing.T) {
 		}
 
 		for _, bad := range []fleetsql.NewComponent{
-			{Kind: "x", Name: "c"}, {Kind: fleetsql.KindAgent, Name: " "}, {Kind: fleetsql.KindAgent, Name: "a", TTL: 48 * time.Hour},
-			{Kind: fleetsql.KindAgent, Name: "a", TTL: time.Second}, {Kind: fleetsql.KindAgent, Name: "a\nb"},
+			{Kind: "x", Name: "c"}, {Kind: fleetsql.KindADDC, Name: " "}, {Kind: fleetsql.KindADDC, Name: "a", TTL: 48 * time.Hour},
+			{Kind: fleetsql.KindADDC, Name: "a", TTL: time.Second}, {Kind: fleetsql.KindADDC, Name: "a\nb"},
 		} {
 			if _, err := e.svc(true, true, nil).Issue(ctx, e.a, admin, bad); !errors.Is(err, fleetsql.ErrInvalid) {
 				t.Fatalf("%+v: %v", bad, err)
@@ -132,7 +132,7 @@ func TestRedeem(t *testing.T) {
 		// This test is about redeem semantics, not the limiter: a generous budget for its many failures from one source.
 		svc := e.svc(true, true, fleetsql.NewMemoryLimiter(fleetsql.MemoryLimiterConfig{Burst: 1000}))
 		issue := func(tid tenant.ID) fleetsql.Issued {
-			iss, err := svc.Issue(ctx, tid, admin, fleetsql.NewComponent{Kind: fleetsql.KindAgent, Name: "dc1"})
+			iss, err := svc.Issue(ctx, tid, admin, fleetsql.NewComponent{Kind: fleetsql.KindADDC, Name: "dc1"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -150,7 +150,7 @@ func TestRedeem(t *testing.T) {
 
 		// AC2: sequential double redeem.
 		got, err := svc.Redeem(ctx, "192.0.2.1", iss.Token)
-		if err != nil || got.TenantID != e.a || got.ComponentID != iss.ComponentID || got.Kind != fleetsql.KindAgent || got.Name != "dc1" {
+		if err != nil || got.TenantID != e.a || got.ComponentID != iss.ComponentID || got.Kind != fleetsql.KindADDC || got.Name != "dc1" {
 			t.Fatalf("first redeem: %+v %v", got, err)
 		}
 		if _, err := svc.Redeem(ctx, "192.0.2.1", iss.Token); !errors.Is(err, fleetsql.ErrTokenInvalid) {
@@ -276,7 +276,7 @@ func TestDatabaseGuards(t *testing.T) {
 			"delete token":        `DELETE FROM public.enrollment_tokens`,
 			"delete component":    `DELETE FROM public.components`,
 			"skip a transition":   `UPDATE public.components SET state = 'active'`,
-			"insert past pending": `INSERT INTO public.components (tenant_id, kind, name, state) VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, 'agent', 'x', 'active')`,
+			"insert past pending": `INSERT INTO public.components (tenant_id, kind, name, state) VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, 'addc', 'x', 'active')`,
 			"insert used token": `INSERT INTO public.enrollment_tokens (tenant_id, component_id, token_hash, issued_by, expires_at, used_at)
 				SELECT tenant_id, id, '\x0000000000000000000000000000000000000000000000000000000000000001'::bytea, 'h', now() + interval '1 hour', now() FROM public.components LIMIT 1`,
 			"24h cap": `INSERT INTO public.enrollment_tokens (tenant_id, component_id, token_hash, issued_by, expires_at)

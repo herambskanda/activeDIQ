@@ -16,6 +16,9 @@ const (
 	CodeInsufficientRights  Code = "INSUFFICIENT_RIGHTS"
 	CodeUnexpectedReferral  Code = "UNEXPECTED_REFERRAL"
 	CodeGlobalCatalog       Code = "GLOBAL_CATALOG_NOT_ALLOWED"
+	CodeDelegationRootGone  Code = "DELEGATION_ROOT_GONE"
+	CodeControlNotAllowed   Code = "CONTROL_NOT_ALLOWED"
+	CodeSecretNotSet        Code = "SECRET_NOT_SET"
 	CodeProtocol            Code = "PROTOCOL_ERROR"
 	CodeCanceled            Code = "CANCELED"
 )
@@ -49,3 +52,7 @@ func CodeOf(err error) Code {
 	}
 	return ""
 }
+
+// NewError returns the package error for a code, for adapters and test doubles of the directory
+// seams that consumers define over Session.
+func NewError(c Code) error { return fail(c, "", nil) }

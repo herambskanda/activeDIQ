@@ -11,10 +11,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"sync"
 	"sync/atomic"
 
 	"github.com/skenzeriq/activediq/internal/platform/authority"
+	"github.com/skenzeriq/activediq/internal/platform/secret"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 )
 
@@ -38,6 +40,14 @@ var (
 	ErrDenied      = errors.New("step: authorisation re-check refused the write")
 )
 
+// Tier0Finding is one object found tier0 after a write: its objectGUID (canonical text) and the bases
+// the report gave. Empty Bases means unclassified: the source could not classify the object, and it
+// counts as tier0 exactly like one with a basis (ADR-0005 rule 7).
+type Tier0Finding struct {
+	Object string
+	Bases  []string
+}
+
 // RecheckFunc is the runner's authorisation check, installed at mint. It receives facts read live
 // immediately before the write and returns nil only when the initiator chain is still allowed.
 type RecheckFunc func(ctx context.Context, f authority.Facts) error
@@ -47,10 +57,13 @@ type state struct {
 	attempt int
 	actor   authority.Chain
 	pins    authority.Pins
+	dsas    authority.DSAPins
+	nc      authority.NamingContextID
 	tx      store.Tx
 	query   authority.FactsQuery
 	digest  Digest
 	recheck RecheckFunc
+	secret  secret.Secret
 	revoked atomic.Bool
 }
 
@@ -105,6 +118,26 @@ func (s Step) DC(nc authority.NamingContextID) (string, bool) {
 	return h, ok
 }
 
+// DSA returns the pinned DC's DSA GUID (NTDS Settings objectGUID) for a naming context, and false for
+// none. A write API sends it as the connector's DcSelection.pinned_dsa_guid.
+func (s Step) DSA(nc authority.NamingContextID) (string, bool) {
+	if s.Valid() != nil {
+		return "", false
+	}
+	g, ok := s.s.dsas[nc]
+	return g, ok && g != ""
+}
+
+// NC returns the naming context the runner bound into this Step (the planned target's NC, covered by
+// the digest), empty for a step with none. A write API derives AD-ness and the pin key from it, never
+// from the operation it is handed.
+func (s Step) NC() authority.NamingContextID {
+	if s.Valid() != nil {
+		return ""
+	}
+	return s.s.nc
+}
+
 // Tx returns the recording transaction of a Store Action. It is nil for a zero or revoked Step and
 // for a Directory step.
 func (s Step) Tx() store.Tx {
@@ -112,6 +145,16 @@ func (s Step) Tx() store.Tx {
 		return nil
 	}
 	return s.s.tx
+}
+
+// Secret returns the transient secret input of this step (rule 9), unsealed by the runner for this
+// claim only. It is the zero Secret for a step with none, and for a zero or revoked Step. The write
+// path hands it to the connector inside the Apply RPC and never persists it.
+func (s Step) Secret() secret.Secret {
+	if s.Valid() != nil {
+		return secret.Secret{}
+	}
+	return s.s.secret
 }
 
 // Digest returns the digest of the planned write this Step authorises.
@@ -169,10 +212,16 @@ type Spec struct {
 	Attempt int
 	Actor   authority.Chain
 	Pins    authority.Pins
+	// DSAs are the pinned DCs' DSA GUIDs, copied at mint like Pins.
+	DSAs authority.DSAPins
+	// NC is the target naming context; it must equal the NC in the digested TargetRef.
+	NC      authority.NamingContextID
 	Tx      store.Tx
 	Query   authority.FactsQuery
 	Digest  Digest
 	Recheck RecheckFunc
+	// Secret is the step's transient secret input, if any (rule 9).
+	Secret secret.Secret
 }
 
 // issued is the package-private proof that a Minter came from TakeMinter.
@@ -225,7 +274,8 @@ func (m *Minter) Mint(sp Spec) (Step, func(), error) {
 	if sp.Key.Operation == "" {
 		return Step{}, nil, errors.New("step: a step needs an operation")
 	}
-	st := &state{key: sp.Key, attempt: sp.Attempt, actor: sp.Actor, pins: sp.Pins, tx: sp.Tx,
-		query: sp.Query, digest: sp.Digest, recheck: sp.Recheck}
+	// The pin is copied: a caller-held map (e.g. a DC-locator cache) must not re-point a minted Step.
+	st := &state{key: sp.Key, attempt: sp.Attempt, actor: sp.Actor, pins: maps.Clone(sp.Pins), dsas: maps.Clone(sp.DSAs), nc: sp.NC, tx: sp.Tx,
+		query: sp.Query, digest: sp.Digest, recheck: sp.Recheck, secret: sp.Secret}
 	return Step{s: st}, func() { st.revoked.Store(true) }, nil
 }

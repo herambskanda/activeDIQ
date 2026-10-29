@@ -18,8 +18,18 @@ const (
 // Principal is who a request acts as. apihost passes it to the ports and to the handler's context;
 // it never inspects an identity beyond this.
 type Principal struct {
-	ID   string
-	Kind PrincipalKind
+	ID string
+	// Tenant is the tenant the principal belongs to, as derived by the Authenticator (ADR-0002 rule 5).
+	// The rate limiter keys on it, so the same ID in two tenants has two budgets. Empty only for a
+	// platform principal.
+	Tenant string
+	Kind   PrincipalKind
+	// SessionID is the console session's handle (not its token) for a KindSession principal; empty for a
+	// token. The step-up check reads the session's mfa_at through it.
+	SessionID string
+	// AuthorityFactor is true when the session holds a current activeDIQ authority factor (TM-D19
+	// rule 1): verified, and not older than the session's latest step-up. Set by the Authenticator.
+	AuthorityFactor bool
 }
 
 // ErrUnauthenticated is what an Authenticator returns for a missing or invalid credential. Any

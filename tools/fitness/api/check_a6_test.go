@@ -26,6 +26,10 @@ var a6Fixtures = []fixture{
 	{"module imports net/http", "A6", func(f map[string]string) {
 		f["internal/modules/users/h.go"] = "package users\n\nimport \"net/http\"\n\nvar _ http.Handler\n"
 	}, "internal/modules/users/h.go", "imports net/http"},
+	{"kernel package that serves API imports net/http", "A6", func(f map[string]string) {
+		f["internal/platform/authn/api/a.gen.go"] = genFile
+		f["internal/platform/authn/sso/oidc/c.go"] = "package oidc\n\nimport \"net/http\"\n\nvar _ http.Handler\n"
+	}, "internal/platform/authn/sso/oidc/c.go", "imports net/http"},
 	{"apihost imports a kernel package that serves API", "A6", func(f map[string]string) {
 		f["internal/platform/jobs/api/a.gen.go"] = genFile
 		f["internal/platform/apihost/x.go"] = "package apihost\n\nimport _ \"github.com/skenzeriq/activediq/internal/platform/jobs\"\n"

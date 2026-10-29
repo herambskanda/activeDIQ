@@ -1,7 +1,8 @@
 package corpus
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,10 +15,10 @@ const ReportDirEnv = "SAFEPRIM_REPORT_DIR"
 
 // Result is what one implementation produced for one record: the same four shapes as "expect".
 type Result struct {
-	Render   *string         `json:"render,omitempty"`
-	BytesHex *string         `json:"bytes_hex,omitempty"`
-	Value    json.RawMessage `json:"value,omitempty"`
-	Error    *string         `json:"error,omitempty"`
+	Render   *string        `json:"render,omitempty"`
+	BytesHex *string        `json:"bytes_hex,omitempty"`
+	Value    jsontext.Value `json:"value,omitempty"`
+	Error    *string        `json:"error,omitempty"`
 }
 
 // Ran is one record an implementation ran.
@@ -63,7 +64,7 @@ func WriteReport(path string, v any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(v, "", "  ")
+	b, err := json.Marshal(v, jsontext.Multiline(true), jsontext.WithIndent("  "))
 	if err != nil {
 		return err
 	}

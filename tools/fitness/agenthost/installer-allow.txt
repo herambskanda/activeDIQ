@@ -1,0 +1,20 @@
+# Reviewed exceptions to fitness-agent-host A1's deny-by-default for the installer source (ADR-0006 rules 1, 3).
+# Under packaging/ every WiX CustomAction (or Binary), and every script-type file (.ps1 .psm1 .cmd .bat
+# .vbs .js .wsf ...) that names the agent, fails unless it is listed here: the account, SID type and
+# privileges are declared by ServiceInstall/ServiceConfig, so nothing may compute them in a script.
+# One entry per line: a CustomAction/Binary Id, or a repo-relative path (`dir/...` for a subtree).
+# Ids here cover CustomAction/Binary/ServiceInstall-account exceptions only. They never approve a
+# Permission/PermissionEx: those are pinned by parent element type + Id + exact attributes in check.go
+# (pinnedPermissions, T-0725), because WiX Ids are per table and can collide.
+# Adding a line is a security-architect review: say what the action runs and as whom in the commit message.
+#
+# T-0688 ruling 4 (knowledge/development/decisions/agent-host-fitness-rulings.md). Each action below runs
+# `agentsetup.exe <one fixed verb>` from the private directory [AgentDir], as SYSTEM, deferred or rollback,
+# no impersonation, no argument. The attributes are pinned in check.go (pinnedActions): changing the
+# command line, Execute, Impersonate, Return or Directory of any of them fails A1 until re-reviewed.
+# No Binary, no script, no PowerShell, no immediate-sequence action.
+WriteConfig
+PrepareDataDir
+GrantChannel
+RollbackGrantChannel
+RevokeChannel

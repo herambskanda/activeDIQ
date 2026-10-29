@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/store"
+	"github.com/skenzeriq/activediq/internal/platform/tablekind"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
@@ -38,16 +39,23 @@ func (r *Reader) with(ctx context.Context, tid tenant.ID, fn func(ctx context.Co
 
 const linkColumns = `c.id::text, c.ad_connection_id::text, c.ad_object_guid::text, c.entra_connection_id::text, c.entra_object_guid::text,
 	c.match, c.anchor_attr, c.anchor_value, c.ad_sid, c.state, c.candidate_reason, c.gate_checked_at, c.eligible_since, c.eligibility_class,
-	COALESCE(c.reconfirmed_by::text, ''), c.reconfirmed_at, c.ad_tier0, c.ad_tier0_bases, c.entra_tier0, c.entra_tier0_bases, c.facts_as_of,
+	COALESCE(c.reconfirmed_by::text, ''), c.reconfirmed_at, c.ad_tier0, c.ad_tier0_bases, c.entra_tier0, c.entra_tier0_bases,
+	LEAST(COALESCE(c.ad_facts_as_of, c.facts_as_of), COALESCE(c.entra_facts_as_of, c.facts_as_of)),
 	ac.kind, ec.kind`
 
 // CorrelationsFor implements CorrelationSource.
-func (r *Reader) CorrelationsFor(ctx context.Context, tid tenant.ID, ref Ref) ([]Link, error) {
+func (r *Reader) CorrelationsFor(ctx context.Context, tid tenant.ID, ref Ref) (Correlations, error) {
 	if !ref.Valid() {
-		return nil, ErrInvalid
+		return Correlations{}, ErrInvalid
 	}
 	var out []Link
+	var evaluated *time.Time
 	err := r.with(ctx, tid, func(ctx context.Context, tx store.Tx) error {
+		// Same transaction as the links, so the as-of cannot be newer than the links it vouches for.
+		if err := tx.QueryRow(ctx, `SELECT max(evaluated_at) FROM public.correlation_evaluations
+			WHERE tenant_id = $1::uuid AND connection_id = $2::uuid`, tid.String(), string(ref.Connection)).Scan(&evaluated); err != nil {
+			return fmt.Errorf("inventory: evaluation as-of: %w", err)
+		}
 		rows, err := tx.Query(ctx, `SELECT `+linkColumns+` FROM public.correlations c
 			LEFT JOIN public.connections ac ON ac.tenant_id = $1::uuid AND ac.id = c.ad_connection_id
 			LEFT JOIN public.connections ec ON ec.tenant_id = $1::uuid AND ec.id = c.entra_connection_id
@@ -91,13 +99,13 @@ func (r *Reader) CorrelationsFor(ctx context.Context, tid tenant.ID, ref Ref) ([
 		return rows.Err()
 	})
 	if err != nil {
-		return nil, err
+		return Correlations{}, err
 	}
 	if len(out) > MaxLinks {
-		return nil, ErrTooMany
+		return Correlations{}, ErrTooMany
 	}
 	sortLinks(out)
-	return out, nil
+	return Correlations{Links: out, EvaluatedAt: val(evaluated)}, nil
 }
 
 func val(t *time.Time) time.Time {
@@ -188,7 +196,7 @@ func (r *Reader) DesignationsFor(ctx context.Context, tid tenant.ID, connection 
 	var out []GUID
 	err := r.with(ctx, tid, func(ctx context.Context, tx store.Tx) error {
 		rows, err := tx.Query(ctx, `SELECT object_guid::text FROM public.tier0_designations
-			WHERE tenant_id = $1::uuid AND connection_id = $2::uuid AND object_guid = ANY($3::uuid[])`,
+			WHERE tenant_id = $1::uuid AND connection_id = $2::uuid AND removed_at IS NULL AND object_guid = ANY($3::uuid[])`,
 			tid.String(), string(connection), ids)
 		if err != nil {
 			return fmt.Errorf("inventory: designations: %w", err)
@@ -211,4 +219,48 @@ func (r *Reader) DesignationsFor(ctx context.Context, tid tenant.ID, connection 
 		out = []GUID{}
 	}
 	return out, nil
+}
+
+// Facts is the transaction-owning form of Writer.RecordLiveFacts, for the live refresher
+// (directory/client.LiveRefresher), which has no transaction of its own.
+type Facts struct{ db *store.DB }
+
+// NewFacts binds the live-facts writer to a database.
+func NewFacts(db *store.DB) *Facts { return &Facts{db: db} }
+
+// RecordLiveFacts runs Writer.RecordLiveFacts in tid's transaction.
+func (f *Facts) RecordLiveFacts(ctx context.Context, tid tenant.ID, ref Ref, tier0 bool, readAt time.Time) error {
+	if f == nil || f.db == nil {
+		return ErrNotConfigured
+	}
+	if tid.IsZero() {
+		return ErrNoTenant
+	}
+	return f.db.WithTenant(ctx, tid, func(ctx context.Context, tx store.Tx) error {
+		_, err := Writer{}.RecordLiveFacts(ctx, tx, ref, tier0, readAt)
+		return err
+	})
+}
+
+var _ = tablekind.Declare(tablekind.Table{Name: "public.inventory_tier0_revisions", Entity: "DM-20", Kind: tablekind.Directory})
+
+// Tier0Revision implements client.RevisionSource: a per-tenant counter that the database bumps in the
+// same transaction as every change to the designations or to the tier0 facts of a correlation
+// (migration 0038). It never decreases; a tenant whose tier0 set was never written reads 0.
+func (r *Reader) Tier0Revision(ctx context.Context, tid tenant.ID) (uint64, error) {
+	var rev int64
+	err := r.with(ctx, tid, func(ctx context.Context, tx store.Tx) error {
+		err := tx.QueryRow(ctx, `SELECT revision FROM public.inventory_tier0_revisions WHERE tenant_id = $1::uuid`, tid.String()).Scan(&rev)
+		if store.IsNoRows(err) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("inventory: tier0 revision: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return uint64(rev), nil
 }

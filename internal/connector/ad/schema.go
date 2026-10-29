@@ -30,6 +30,7 @@ func DefaultSchema() *ldapfilter.Schema {
 	defaultSchemaOnce.Do(func() {
 		s, c := ldapfilter.SynString, true
 		defaultSchema = ldapfilter.NewSchema(
+			ldapfilter.AttrInfo{Name: "attributeID", OID: "1.2.840.113556.1.2.30", Syntax: s},
 			ldapfilter.AttrInfo{Name: "objectClass", OID: "2.5.4.0", Syntax: s},
 			ldapfilter.AttrInfo{Name: "objectCategory", OID: "1.2.840.113556.1.4.782", Syntax: ldapfilter.SynDN},
 			ldapfilter.AttrInfo{Name: "objectGUID", OID: "1.2.840.113556.1.4.2", Syntax: ldapfilter.SynGUID},
@@ -46,17 +47,30 @@ func DefaultSchema() *ldapfilter.Schema {
 			ldapfilter.AttrInfo{Name: "memberOf", OID: "1.2.840.113556.1.2.102", Syntax: ldapfilter.SynDN},
 			ldapfilter.AttrInfo{Name: "primaryGroupID", OID: "1.2.840.113556.1.4.98", Syntax: ldapfilter.SynInt32},
 			ldapfilter.AttrInfo{Name: "userAccountControl", OID: "1.2.840.113556.1.4.8", Syntax: ldapfilter.SynInt32},
+			ldapfilter.AttrInfo{Name: "instanceType", OID: "1.2.840.113556.1.2.1", Syntax: ldapfilter.SynInt32},
 			ldapfilter.AttrInfo{Name: "groupType", OID: "1.2.840.113556.1.4.750", Syntax: ldapfilter.SynInt32},
 			ldapfilter.AttrInfo{Name: "adminCount", OID: "1.2.840.113556.1.4.150", Syntax: ldapfilter.SynInt32},
 			ldapfilter.AttrInfo{Name: "whenCreated", OID: "1.2.840.113556.1.2.2", Syntax: ldapfilter.SynGenTime},
 			ldapfilter.AttrInfo{Name: "whenChanged", OID: "1.2.840.113556.1.2.3", Syntax: ldapfilter.SynGenTime},
 			ldapfilter.AttrInfo{Name: "uSNChanged", OID: "1.2.840.113556.1.2.120", Syntax: ldapfilter.SynInt64},
 			ldapfilter.AttrInfo{Name: "gPLink", OID: "1.2.840.113556.1.4.891", Syntax: s},
+			ldapfilter.AttrInfo{Name: "sIDHistory", OID: "1.2.840.113556.1.4.609", Syntax: ldapfilter.SynSID},
+			ldapfilter.AttrInfo{Name: "dSHeuristics", OID: "1.2.840.113556.1.2.212", Syntax: s},
 			ldapfilter.AttrInfo{Name: "gPOptions", OID: "1.2.840.113556.1.4.892", Syntax: ldapfilter.SynInt32},
 			ldapfilter.AttrInfo{Name: "wellKnownObjects", OID: "1.2.840.113556.1.4.618", Syntax: s},
-			ldapfilter.AttrInfo{Name: "msDS-SecondaryKrbTgtNumber", OID: "1.2.840.113556.1.4.1926", Syntax: ldapfilter.SynInt32},
+			ldapfilter.AttrInfo{Name: "msDS-Behavior-Version", OID: "1.2.840.113556.1.4.1459", Syntax: ldapfilter.SynInt32},
+			ldapfilter.AttrInfo{Name: "msDS-SecondaryKrbTgtNumber", OID: "1.2.840.113556.1.4.1929", Syntax: ldapfilter.SynInt32},
 			ldapfilter.AttrInfo{Name: "msDS-AllowedToDelegateTo", OID: "1.2.840.113556.1.4.1787", Syntax: s},
 			ldapfilter.AttrInfo{Name: "msDS-AllowedToActOnBehalfOfOtherIdentity", OID: "1.2.840.113556.1.4.2182", Syntax: ldapfilter.SynOctet},
+			// Path-valued user attributes: read as inert strings only (TM-F-NTLM, T-0256) — the connector
+			// never opens, resolves or dials them.
+			ldapfilter.AttrInfo{Name: "homeDirectory", OID: "1.2.840.113556.1.4.44", Syntax: s},
+			ldapfilter.AttrInfo{Name: "homeDrive", OID: "1.2.840.113556.1.4.45", Syntax: s},
+			ldapfilter.AttrInfo{Name: "profilePath", OID: "1.2.840.113556.1.4.139", Syntax: s},
+			ldapfilter.AttrInfo{Name: "scriptPath", OID: "1.2.840.113556.1.4.62", Syntax: s},
+			// PDC emulator lookup for the Key Admins presence rule (T-0631, TM-R25).
+			ldapfilter.AttrInfo{Name: "fSMORoleOwner", OID: "1.2.840.113556.1.4.369", Syntax: ldapfilter.SynDN},
+			ldapfilter.AttrInfo{Name: "operatingSystemVersion", OID: "1.2.840.113556.1.4.364", Syntax: s},
 			ldapfilter.AttrInfo{Name: "serverReference", OID: "1.2.840.113556.1.4.515", Syntax: ldapfilter.SynDN},
 			// dNSHostName: name-only. Its attributeID is also the lazy-commit control OID, which FF-SP2 lets
 			// only scope name; an OID-form descriptor for it stays unknown and fails closed.
@@ -65,8 +79,10 @@ func DefaultSchema() *ldapfilter.Schema {
 			ldapfilter.AttrInfo{Name: "msDS-AdditionalDnsHostName", OID: "1.2.840.113556.1.4.1717", Syntax: s},
 			ldapfilter.AttrInfo{Name: "lDAPDisplayName", OID: "1.2.840.113556.1.2.460", Syntax: s},
 			ldapfilter.AttrInfo{Name: "schemaIDGUID", OID: "1.2.840.113556.1.4.148", Syntax: ldapfilter.SynOctet},
+			ldapfilter.AttrInfo{Name: "attributeSecurityGUID", OID: "1.2.840.113556.1.4.149", Syntax: ldapfilter.SynOctet},
+			ldapfilter.AttrInfo{Name: "rightsGuid", OID: "1.2.840.113556.1.4.340", Syntax: s},
 			ldapfilter.AttrInfo{Name: "searchFlags", OID: "1.2.840.113556.1.2.334", Syntax: ldapfilter.SynInt32},
-			ldapfilter.AttrInfo{Name: "nTSecurityDescriptor", OID: "1.2.840.113556.1.4.151", Syntax: ldapfilter.SynOctet, Constructed: c},
+			ldapfilter.AttrInfo{Name: "nTSecurityDescriptor", OID: "1.2.840.113556.1.2.281", Syntax: ldapfilter.SynOctet, Constructed: c},
 			ldapfilter.AttrInfo{Name: "tokenGroups", OID: "1.2.840.113556.1.4.1301", Syntax: ldapfilter.SynSID, Constructed: c},
 			ldapfilter.AttrInfo{Name: "allowedAttributesEffective", OID: "1.2.840.113556.1.4.914", Syntax: s, Constructed: c},
 			ldapfilter.AttrInfo{Name: "allowedChildClassesEffective", OID: "1.2.840.113556.1.4.912", Syntax: s, Constructed: c},

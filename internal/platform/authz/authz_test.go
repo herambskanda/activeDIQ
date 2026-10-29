@@ -407,3 +407,18 @@ func TestZeroExcludeDeniesInAuthorize(t *testing.T) {
 		t.Errorf("zero exclude in token scope widened scope: %+v", d)
 	}
 }
+
+// DM-34.I1: tenant-owner holds every permission, over its scope and no further.
+func TestTenantOwnerHoldsEveryPermissionInItsScope(t *testing.T) {
+	p := &Principal{ID: "owner", Assignments: []Assignment{{Role: Role{TenantOwner: true}, Scope: Scope{Include: []ScopeRoot{root("ouA", "dom")}}}}}
+	if d := ev().Authorize(p, nil, pDelete, target("u1", "ouA", "dom")); !d.Allowed {
+		t.Errorf("owner in scope: %+v", d)
+	}
+	if d := ev().Authorize(p, nil, pDelete, target("u2", "ouB", "dom")); d.Allowed {
+		t.Errorf("owner outside scope: %+v", d)
+	}
+	// A token still narrows the owner to its subset.
+	if d := ev().Authorize(p, tokenFor(pReset), pDelete, target("u1", "ouA", "dom")); d.Allowed {
+		t.Errorf("owner's token reached beyond its subset: %+v", d)
+	}
+}

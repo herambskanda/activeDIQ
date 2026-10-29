@@ -1,0 +1,10 @@
+{
+ "id": "S-F03b",
+ "class": "forged",
+ "cites": [
+  "SAML-5"
+ ],
+ "build": "attacker_key_nokeyinfo",
+ "expect": "refuse",
+ "reason": "saml.unsigned"
+}
