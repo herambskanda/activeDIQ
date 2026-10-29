@@ -50,6 +50,19 @@ unchanged there:
 
 - Two roles, both `LOGIN NOSUPERUSER NOBYPASSRLS`: **`activediq_owner`** (runs migrations, owns every
   object) and **`activediq_app`** (the runtime role; owns nothing).
+- A third role, **`activediq_catrust`** (T-0734; fleet-contract "Gateway client-CA pool"): `NOLOGIN NOSUPERUSER
+  NOBYPASSRLS NOCREATEROLE NOCREATEDB`, no password, created before the first migration. `activediq_owner` is its
+  only member (`ALTER FUNCTION ... OWNER TO` needs it); `activediq_app` never is, and the `0001` guard and
+  `store.roleRisk` refuse that membership. It owns exactly one object, `fleet_ca_trust_anchors()`, and holds
+  `SELECT` on six public columns of `fleet_ca` only. `pgharness`, `storetest` and the installer create it the same way.
+  T3 runs F-POOL-1/2/4 against it (`tools/fitness/tenancy/catrust.go`, rules `pool-*`): role attributes, members and
+  memberships against `pgharness.CatrustMemberships`, no `CREATE` on a schema, no write privilege, no privilege on
+  `sealed_key`/`key_version`/`created_at`, exactly one owned object, the function's `prosecdef`, `proconfig`, owner, ACL
+  (never `PUBLIC`) and result columns, the `42501` refusal in a tenant context, and `SET ROLE activediq_catrust` then
+  `SELECT sealed_key` failing with permission denied. The function checks activate when the function exists; the
+  role checks run from the first migration. The one extra permissive `fleet_ca` policy for this role is the only
+  exception to the T2 policy shape. The static scan (T5, rule `pool-function-sql`) refuses the function's name in SQL outside
+  `internal/platform/fleet/fleetsql`.
 - The owner owns the database and schema `public`; `PUBLIC` has no rights on the schema; the runtime role
   has `USAGE` on it.
 - The runtime role does not own the database and holds no `CREATE` on it, directly, through `PUBLIC` or
