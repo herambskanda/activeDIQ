@@ -42,8 +42,9 @@ Code: `internal/platform/keys/`; fake KMS: `internal/platform/keys/keystest/`.
   tenant's (`OpenFailed` / `UnwrapFailed`). `InstallationKeys.DEK(ctx, tx, version, reason)` (run in `WithPlatform`; 0 = active)
   creates version 1 on first use (partial unique index ⇒ concurrent creators end with one active row), unwraps through the
   boot-unlocked provider on every call (no cache; KEK down ⇒ `ProviderUnavailable`), and audits every access through the
-  `InstallationAuditor` port the composition root adapts to the platform audit sink; an unauditable unseal is withheld
-  (`AuditFailed`). Table `installation_keys` is registered-global, runtime role SELECT+INSERT only. Not built: rotation,
+  `InstallationAuditor` port the composition root adapts to the platform audit sink. The port is durable: each record commits
+  on its own, independent of the caller's tx (failure records survive a rollback; the success record commits before the DEK is
+  handed out, else `AuditFailed`); only the creator whose INSERT took effect records `create`. Table `installation_keys` is registered-global, runtime role SELECT+INSERT only. Not built: rotation,
   the audit-sink adapter and the `fleet_server_ca` consumer (T-0716 line of work).
 - Not here: re-seal job (TM-D15). Callers call these inside the tenant's `WithTenantTx`.
 - Limit: random nonces under one DEK are safe to ~2^32 seals; the rotation job bounds this.

@@ -2,6 +2,7 @@ package keys
 
 import (
 	"context"
+	"errors"
 
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tablekind"
@@ -104,11 +105,13 @@ const (
 	ActionCreate = "keys.installation_dek.create"
 )
 
-// InstallationAuditor records installation-key events inside the caller's transaction. keys cannot import
-// the audit package (which imports keys), so the composition root adapts its platform audit sink to this
-// port. A nil auditor is refused by NewInstallationKeys: there is no unaudited path.
+// InstallationAuditor records installation-key events DURABLY: each call commits on its own, independent of
+// the caller's transaction, so a failure record survives the caller rolling back (which callers do on every
+// error) and a success record is committed before the DEK is handed out. keys cannot import the audit package
+// (which imports keys), so the composition root adapts its platform audit sink to this port. A nil auditor is
+// refused by NewInstallationKeys: there is no unaudited path.
 type InstallationAuditor interface {
-	RecordInstallationKey(ctx context.Context, tx store.Tx, ev InstallationEvent) error
+	RecordInstallationKey(ctx context.Context, ev InstallationEvent) error
 }
 
 // InstallationKeys creates and reads the installation DEK. It holds no key material: every DEK call asks the
@@ -131,30 +134,40 @@ func NewInstallationKeys(p Provider, a InstallationAuditor) (*InstallationKeys, 
 // DEK returns the installation DEK of version v (0 = active) for reason, which the audit event records. When
 // v is 0 and the installation has no key yet, one is created (version 1, wrapped by the provider, active):
 // concurrent callers end with exactly one active key, because the loser's INSERT conflicts on the partial
-// unique index and it reads the winner's row. Run it in a transaction (store.DB.WithPlatform); the caller
-// destroys the returned key. Failures are *Error: ProviderUnavailable, UnwrapFailed, KeyNotFound, InvalidKey,
-// StoreFailed, AuditFailed. Every call, success or failure, is audited; if the success cannot be audited the
-// key is destroyed and AuditFailed returned.
+// unique index and it reads the winner's row; only the winner records a create. Run it in a transaction
+// (store.DB.WithPlatform); the caller destroys the returned key. Failures are *Error: ProviderUnavailable,
+// UnwrapFailed, KeyNotFound, InvalidKey, StoreFailed, AuditFailed.
+//
+// Audit durability: the auditor commits each record independently of tx. A failed access is recorded before
+// the error is returned (if that record cannot be committed the primary error is still returned, with the
+// audit error joined so it stays visible to errors.Is/As). A successful access is recorded and committed
+// before the key is handed out; if that fails the key is destroyed and AuditFailed returned. The create
+// record is written before the caller's tx commits, so a caller that rolls back after a first-use creation
+// leaves a create record for a key that was not stored; the next call creates and records again.
 func (k *InstallationKeys) DEK(ctx context.Context, tx store.Tx, version uint32, reason string) (DEK, error) {
 	if reason == "" || len(reason) > maxComponent {
 		return DEK{}, newErr(InvalidContext)
 	}
 	d, created, err := k.load(ctx, tx, version)
 	if err != nil {
-		// A failed access is audited best-effort: the caller already gets the primary error, and a
-		// rolled-back transaction would not keep the row anyway.
-		_ = k.audit.RecordInstallationKey(ctx, tx, InstallationEvent{Action: ActionUnseal, Reason: reason,
-			Version: version, Outcome: UnsealFailed, Code: Code(err)})
+		if aerr := k.audit.RecordInstallationKey(ctx, InstallationEvent{Action: ActionUnseal, Reason: reason,
+			Version: version, Outcome: UnsealFailed, Code: Code(err)}); aerr != nil {
+			var e *Error
+			if errors.As(err, &e) {
+				return DEK{}, &Error{Code: e.Code, err: errors.Join(e.err, aerr)}
+			}
+			return DEK{}, errors.Join(err, aerr)
+		}
 		return DEK{}, err
 	}
 	if created {
-		if aerr := k.audit.RecordInstallationKey(ctx, tx, InstallationEvent{Action: ActionCreate, Reason: reason,
+		if aerr := k.audit.RecordInstallationKey(ctx, InstallationEvent{Action: ActionCreate, Reason: reason,
 			Version: d.Version, Outcome: UnsealOK}); aerr != nil {
 			d.Destroy()
 			return DEK{}, &Error{Code: AuditFailed, err: aerr}
 		}
 	}
-	if aerr := k.audit.RecordInstallationKey(ctx, tx, InstallationEvent{Action: ActionUnseal, Reason: reason,
+	if aerr := k.audit.RecordInstallationKey(ctx, InstallationEvent{Action: ActionUnseal, Reason: reason,
 		Version: d.Version, Outcome: UnsealOK}); aerr != nil {
 		d.Destroy()
 		return DEK{}, &Error{Code: AuditFailed, err: aerr}
@@ -162,6 +175,7 @@ func (k *InstallationKeys) DEK(ctx context.Context, tx store.Tx, version uint32,
 	return d, nil
 }
 
+// load returns the DEK and whether THIS call created it (lost races read the winner's row, created=false).
 func (k *InstallationKeys) load(ctx context.Context, tx store.Tx, version uint32) (DEK, bool, error) {
 	d, err := k.read(ctx, tx, version)
 	if err == nil {
@@ -170,7 +184,8 @@ func (k *InstallationKeys) load(ctx context.Context, tx store.Tx, version uint32
 	if version != 0 || Code(err) != NoActiveKey {
 		return DEK{}, false, err
 	}
-	if err := k.create(ctx, tx); err != nil {
+	won, err := k.create(ctx, tx)
+	if err != nil {
 		return DEK{}, false, err
 	}
 	// Whoever won the race, the active row now exists; read it back through the provider.
@@ -178,25 +193,27 @@ func (k *InstallationKeys) load(ctx context.Context, tx store.Tx, version uint32
 	if err != nil {
 		return DEK{}, false, err
 	}
-	return d, true, nil
+	return d, won, nil
 }
 
-func (k *InstallationKeys) create(ctx context.Context, tx store.Tx) error {
+// create inserts version 1 and reports whether this call's INSERT is the one that took effect.
+func (k *InstallationKeys) create(ctx context.Context, tx store.Tx) (bool, error) {
 	dek, err := NewDEK(1)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer dek.Destroy()
 	wrapped, ref, err := wrapInstallation(k.provider, dek)
 	if err != nil {
-		return err
+		return false, err
 	}
 	// Serialise creators: the second waits for the first's commit, then conflicts and does nothing.
-	if _, err := tx.Exec(ctx, `INSERT INTO public.installation_keys (version, state, wrapped_dek, kek_provider, kek_key_id)
-		VALUES (1, 'active', $1, $2, $3) ON CONFLICT DO NOTHING`, wrapped, ref.Provider, ref.KeyID); err != nil {
-		return &Error{Code: StoreFailed, err: err}
+	tag, err := tx.Exec(ctx, `INSERT INTO public.installation_keys (version, state, wrapped_dek, kek_provider, kek_key_id)
+		VALUES (1, 'active', $1, $2, $3) ON CONFLICT DO NOTHING`, wrapped, ref.Provider, ref.KeyID)
+	if err != nil {
+		return false, &Error{Code: StoreFailed, err: err}
 	}
-	return nil
+	return tag.RowsAffected() == 1, nil
 }
 
 func (k *InstallationKeys) read(ctx context.Context, tx store.Tx, version uint32) (DEK, error) {
