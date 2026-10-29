@@ -53,6 +53,10 @@ func (wAuthz) Allow(_ context.Context, _ apihost.Principal, perm, scope string) 
 	return perm == fleetsql.PermissionCAWithdraw && scope == "tenant", nil
 }
 
+type wStepUp struct{}
+
+func (wStepUp) Fresh(context.Context, apihost.Principal) (bool, error) { return true, nil }
+
 type wAlerts struct{}
 
 func (wAlerts) Raise(context.Context, fleetsql.Alert) {}
@@ -73,7 +77,7 @@ func TestCAAdminWithdrawEndsTenantStreams(t *testing.T) {
 		}
 		t.Cleanup(db.Close)
 		ks := &wKeys{}
-		enr := &fleetsql.Enroller{Enrollment: &fleetsql.Enrollment{DB: db}, Keys: ks, Alerts: wAlerts{}, Audit: wSink{}}
+		enr := &fleetsql.Enroller{Enrollment: &fleetsql.Enrollment{DB: db, Authz: wAuthz{}, StepUp: wStepUp{}, Limiter: fleetsql.NewMemoryLimiter(fleetsql.MemoryLimiterConfig{})}, Keys: ks, Alerts: wAlerts{}, Audit: wSink{}}
 		for _, tid := range []tenant.ID{tidA, tidB} {
 			tid := tid
 			if err := db.WithTenant(ctx, tid, func(ctx context.Context, tx store.Tx) error { return enr.InitTenant(ctx, tx, tid) }); err != nil {
