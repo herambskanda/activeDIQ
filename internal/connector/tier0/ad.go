@@ -1576,7 +1576,7 @@ func (b *builder) c9() error {
 			// gPLink is a plain string, so a dangling link is possible, but a GPO the connector may not
 			// read looks identical, and a GPO linked at a Tier-0 SOM controls Tier-0. Fail closed;
 			// the operator removes the dangling link or grants read.
-			return fmt.Errorf("tier0: GPO %s linked at a Tier-0 start of authority cannot be read", g.String())
+			return fmt.Errorf("tier0: GPO %s linked at a Tier-0 start of authority cannot be read", g.CanonicalString())
 		}
 		if _, err := b.mark(ge, C9); err != nil {
 			return err

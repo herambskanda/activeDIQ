@@ -115,17 +115,24 @@ const (
 	lockUpdate          // permission edit: waits for in-flight grants, blocks new ones
 )
 
+const (
+	sqlRole       = `SELECT role_name, built_in, tier FROM public.authz_roles WHERE tenant_id = $1::uuid AND id = $2::uuid`
+	sqlRoleShare  = sqlRole + ` FOR SHARE`
+	sqlRoleUpdate = sqlRole + ` FOR UPDATE`
+)
+
 func readRole(ctx context.Context, tx store.Tx, tn tenant.ID, id string, lock roleLock) (roleRow, error) {
 	var r roleRow
-	q := `SELECT role_name, built_in, tier FROM public.authz_roles WHERE tenant_id = $1::uuid AND id = $2::uuid`
-	switch lock { // fixed clauses only; nothing from the caller reaches the statement text
+	var row interface{ Scan(...any) error }
+	switch lock { // three whole constants; nothing from the caller reaches the statement text
 	case lockShare:
-		q += ` FOR SHARE`
+		row = tx.QueryRow(ctx, sqlRoleShare, tn.String(), id)
 	case lockUpdate:
-		q += ` FOR UPDATE`
+		row = tx.QueryRow(ctx, sqlRoleUpdate, tn.String(), id)
+	default:
+		row = tx.QueryRow(ctx, sqlRole, tn.String(), id)
 	}
-	err := tx.QueryRow(ctx, q,
-		tn.String(), id).Scan(&r.name, &r.builtIn, &r.tier)
+	err := row.Scan(&r.name, &r.builtIn, &r.tier)
 	if store.IsNoRows(err) {
 		return r, ErrNotFound
 	} else if err != nil {
