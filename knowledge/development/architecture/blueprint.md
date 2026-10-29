@@ -266,7 +266,9 @@ service.
 3. **`connector` imports only** kernel packages, directory primitives, its own packages and
    protos (ADR-0003 rule 1). Outside `internal/connector/`, exactly three packages import it:
    - `internal/compose/server`, for the embedded transport and the sealed-credential source;
-   - `internal/compose/connector`, for the remote role and local credentials;
+   - `internal/compose/connector`, for the remote role and local credentials (T-0665: `connector.Run`
+     serves one composite ConnectorServer on the dial-out tunnel, with no listener; the tunnel client
+     is the shared `internal/platform/fleet/tunnelclient`, also used by `compose/agent`);
    - `internal/compose/t0connector` [post-v1].
 
    `tools: inspect` may also import it. `compose/server` hands the embedded transport to

@@ -133,6 +133,31 @@ func readHandler(t *testing.T) *read.Handler {
 	return h
 }
 
+// fakeProv is the write handler's provider; the tunnel tests never reach a write.
+type fakeProv struct{}
+
+func (fakeProv) Kind() v1.ProviderKind           { return v1.ProviderKind_PROVIDER_KIND_AD }
+func (fakeProv) Identity() *v1.DirectoryIdentity { return dirIdent }
+func (fakeProv) Classify(context.Context, guid.GUID, []guid.GUID) (write.Verdict, error) {
+	return write.Verdict{}, nil
+}
+func (fakeProv) Anchors(context.Context, guid.GUID) (write.Anchors, error) {
+	return write.Anchors{}, nil
+}
+func (fakeProv) PropertyGuard(context.Context) (write.PropertyGuard, error) {
+	return nil, errors.New("none")
+}
+
+func writeHandler(t *testing.T) *write.Handler {
+	t.Helper()
+	gate, _ := write.NewGateBook(nopBase{}, nil)
+	h, err := write.New(fakeProv{}, gate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h
+}
+
 type tunnel struct {
 	srv *fleet.Mux
 	bd  fleet.Binding
@@ -141,7 +166,7 @@ type tunnel struct {
 // newTunnel runs a RoleServer mux against a RoleComponent mux that carries the connector's binding.
 func newTunnel(t *testing.T) (tunnel, context.Context) {
 	t.Helper()
-	bd, err := connector.TunnelBinding(handler(t), readHandler(t))
+	bd, err := connector.TunnelBinding(handler(t), readHandler(t), writeHandler(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,11 +194,14 @@ func newTunnel(t *testing.T) (tunnel, context.Context) {
 // The server (RoleServer) opens VerifyConnection over a tunnel whose component side is the
 // connector's TunnelBinding; a method outside the contract is refused at registration.
 func TestTunnelBindingServesVerifyOverTunnel(t *testing.T) {
-	if _, err := connector.TunnelBinding(nil, readHandler(t)); err == nil {
+	if _, err := connector.TunnelBinding(nil, readHandler(t), writeHandler(t)); err == nil {
 		t.Fatal("nil verify handler accepted")
 	}
-	if _, err := connector.TunnelBinding(handler(t), nil); err == nil {
+	if _, err := connector.TunnelBinding(handler(t), nil, writeHandler(t)); err == nil {
 		t.Fatal("nil read handler accepted")
+	}
+	if _, err := connector.TunnelBinding(handler(t), readHandler(t), nil); err == nil {
+		t.Fatal("nil write handler accepted")
 	}
 	tn, ctx := newTunnel(t)
 	st, err := v1.NewConnectorClient(tn.srv.Conn()).VerifyConnection(ctx, &v1.VerifyConnectionRequest{})
@@ -188,6 +216,16 @@ func TestTunnelBindingServesVerifyOverTunnel(t *testing.T) {
 	err = tn.srv.Conn().Invoke(ctx, "/grpc.health.v1.Health/Check", &v1.VerifyConnectionRequest{}, &v1.VerifyConnectionRequest{})
 	if status.Code(err) == codes.OK || status.Code(err) == codes.InvalidArgument {
 		t.Fatalf("method outside the contract was served: %v", err)
+	}
+}
+
+// The write group is served over the same tunnel by the same composite server: Plan reaches the
+// write guard (an empty request is refused INVALID_ARGUMENT by it), not UNIMPLEMENTED.
+func TestPlanOverTunnelReachesTheWriteGuard(t *testing.T) {
+	tn, ctx := newTunnel(t)
+	_, err := v1.NewConnectorClient(tn.srv.Conn()).Plan(ctx, &v1.PlanRequest{})
+	if err == nil || status.Code(err) == codes.Unimplemented || status.Code(err) == codes.Unavailable {
+		t.Fatalf("Plan over tunnel = %v, want the guard's refusal", err)
 	}
 }
 
@@ -317,7 +355,7 @@ func (r *regCount) RegisterService(*grpc.ServiceDesc, any) { r.n++ }
 
 // AC3: a tunnel whose identity is not a tenant's connector gets no handlers at all.
 func TestBindingServesNothingForAnIdentityThatIsNotATenantConnector(t *testing.T) {
-	bd, err := connector.TunnelBinding(handler(t), readHandler(t))
+	bd, err := connector.TunnelBinding(handler(t), readHandler(t), writeHandler(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -342,7 +380,7 @@ func TestBindingServesNothingForAnIdentityThatIsNotATenantConnector(t *testing.T
 // AC4: the golden list of Connector RPCs the tunnel serves. Adding a group to the mount means
 // adding it here; every other method stays Unimplemented over the tunnel.
 func TestTunnelServedRPCsAreTheGoldenList(t *testing.T) {
-	golden := map[string]bool{"VerifyConnection": true, "Read": true, "ScopedSearch": true}
+	golden := map[string]bool{"VerifyConnection": true, "Read": true, "ScopedSearch": true, "Plan": true, "Apply": true}
 	tn, ctx := newTunnel(t)
 	svc := v1.File_activediq_connector_v1_connector_proto.Services().ByName("Connector")
 	for i := 0; i < svc.Methods().Len(); i++ {
@@ -370,7 +408,7 @@ func TestTunnelServedRPCsAreTheGoldenList(t *testing.T) {
 			t.Errorf("%s: served=%v (err %v), golden=%v", name, served, err, golden[name])
 		}
 	}
-	if len(golden) != 3 {
+	if len(golden) != 5 {
 		t.Fatal("golden list changed without this test")
 	}
 }

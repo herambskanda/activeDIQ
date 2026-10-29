@@ -173,9 +173,23 @@ again. The fingerprint in `Describe` tells a caller when to re-fetch.
   attributes decoded by the codecs (§5.4). A multi-valued attribute beyond one range returns the
   first range with `complete = false`; **a search never follows ranges** (it would turn one page
   into N reads). Completion is `Read`'s job.
-- **Served over the tunnel (T-0683).** The connector binary serves `VerifyConnection`, `Read` and
-  `ScopedSearch` on the fleet tunnel (`compose/connector.TunnelBinding`); every other method is
-  Unimplemented until its group is mounted, and a golden-list test pins the served set.
+- **Served over the tunnel (T-0683, T-0665).** `connector.Run` (`compose/connector`) loads the
+  connector's local JSON config (`ACTIVEDIQ_CONNECTOR_CONFIG`: `connection_id`, enrolment and data
+  directories, DC list, customer CA, Kerberos principal/realm/keytab; unknown keys refused, no password
+  field), loads the enrolled mTLS leaf (`dial.Load`; it must carry a `connector` component identity),
+  opens the AD session (Kerberos GSSAPI over LDAPS with channel binding, trusting only the customer CA),
+  reloads the durable baseline, then dials out with `platform/fleet/tunnelclient` and serves ONE composite
+  `ConnectorServer` (`compose/connector.TunnelBinding`) on the RoleComponent mux. `rights.Register` and
+  `write.Register` each register the whole Connector service, so the composite is registered once per
+  tunnel registrar. It serves `VerifyConnection`, `Read`, `ScopedSearch`, `Plan` and `Apply`; every
+  other method is Unimplemented until its group is mounted, and a golden-list test pins the served set.
+  The binary opens no listener (`TestNoListenerInConnectorComposition`).
+- **Connection binding (T-0665).** `VerifyConfig.ConnectionID` is the connection the config names;
+  a `VerifyConnection` for any other `connection_id` is refused `INVALID_ARGUMENT` before the directory
+  is touched. `Run` always sets it (it is optional only for in-process lab callers).
+- **Connector data directory.** `baseline.json` (reported tier-0 set; reloaded on restart so the epoch
+  continues), `records.log` (shrink / baseline-missing records), `gate-ratchet.log` (write gate
+  ratchet), `c13-pins.json` (C13 group pins). Directory 0700, files 0600, atomic replace.
 - **`parent_guid` on search entries (T-0694).** Every entry except a naming-context head carries the
   same `parent_guid` `Read` reports. `ad.Session.ScopedSearch` runs on `SearchPages`, which holds the
   session lock only around each page request, never while the page is processed; after each page it
