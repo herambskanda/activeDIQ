@@ -109,3 +109,29 @@ func (a *ADSource) Classify(ctx context.Context, id guid.GUID) (write.Verdict, e
 	}
 	return a.prov.Classify(ctx, id, nil)
 }
+
+// Searcher is the optional search half of a Source. A Source without it answers ScopedSearch with
+// CAPABILITY_UNSUPPORTED.
+type Searcher interface {
+	// ParseFilter validates the request's filter AST against the session schema. The caller-rights
+	// check of LF-36 is not available on the connector, so a filter that names a DN is refused.
+	ParseFilter(f *connectorv1.Filter) (ldapfilter.Filter, error)
+	// ScopedSearch streams the matches under each root (ad.Session.ScopedSearch semantics).
+	ScopedSearch(ctx context.Context, req ad.ScopedRequest, fn func(*ad.Entry) error) (ad.ScopedResult, error)
+}
+
+var _ Searcher = (*ADSource)(nil)
+
+func (a *ADSource) ParseFilter(f *connectorv1.Filter) (ldapfilter.Filter, error) {
+	if !a.ok() {
+		return nil, write.ErrNoBoundDC
+	}
+	return ldapfilter.ParseFilterAST(f, a.sess.FilterSchema(), nil, ldapfilter.Limits{})
+}
+
+func (a *ADSource) ScopedSearch(ctx context.Context, req ad.ScopedRequest, fn func(*ad.Entry) error) (ad.ScopedResult, error) {
+	if !a.ok() {
+		return ad.ScopedResult{}, write.ErrNoBoundDC
+	}
+	return a.sess.ScopedSearch(ctx, req, fn)
+}
