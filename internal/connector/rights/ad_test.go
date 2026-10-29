@@ -35,6 +35,7 @@ type fakeAD struct {
 	findErr error
 	attrs   map[string]SchemaObject // by lower name
 	reads   []readCall
+	read    map[string]bool // keys Read was asked for
 	next    uint16
 }
 
@@ -119,6 +120,10 @@ func (f *fakeAD) Read(_ context.Context, ref dn.ObjectRef, attrs []string, opts 
 		key = strings.ToLower(d.CanonicalString())
 		e = f.byDN[key]
 	}
+	if f.read == nil {
+		f.read = map[string]bool{}
+	}
+	f.read[key] = true
 	if err := f.fail[key]; err != nil {
 		return nil, err
 	}
@@ -246,6 +251,9 @@ func newWorld(t *testing.T) *world {
 	w.tokens = []string{dusSID}
 	w.id, w.idG = f.obj("CN=svc,CN=Users,DC=lab,DC=test", idSIDt, map[string][]string{"userAccountControl": {"512"}, "primaryGroupID": {"513"}}, nil)
 	f.obj("CN=Domain Users,CN=Users,DC=lab,DC=test", dusSID, nil, nil)
+	// The bound root NC head (guidN(7), the testDirectory() forest root): V8's first-run default.
+	root := guidN(7)
+	f.byGUID[root.String()] = ad.NewEntry("DC=lab,DC=test", map[string][][]byte{"objectGUID": {root.Bytes()}})
 	w.set = tier0.NewADSet()
 	w.set.Add(w.daG, tier0.C1)
 	w.set.Add(w.t0G, tier0.C3)
@@ -286,6 +294,10 @@ func (w *world) run(t *testing.T, in ADInput) *ADResult {
 	w.setTokens()
 	ref, _ := dn.ParseObjectRef(w.id.DN)
 	in.Identity = ref
+	if len(in.ManagedDomains) == 0 && in.RootNC == nil {
+		root := guidN(7)
+		in.RootNC = &root
+	}
 	set := w.set
 	in.Snapshot = func(context.Context) (*tier0.ADSet, error) { return set, nil }
 	res, err := VerifyAD(context.Background(), w.f, in)
@@ -902,4 +914,51 @@ func TestExpectedRightGrantedToUniversalSIDIsCovered(t *testing.T) {
 	if n := count(r, CodeMissingFamily); n != 2 {
 		t.Errorf("control: missing x%d: %v", n, codes(r))
 	}
+}
+
+func TestV8EmptyManagedDomainsReadsBoundRoot(t *testing.T) {
+	root := guidN(7)
+	t.Run("unreadable root blocks", func(t *testing.T) {
+		w := newWorld(t)
+		w.f.fail[root.String()] = &ad.Error{Code: ad.CodeInsufficientRights}
+		r := w.run(t, ADInput{})
+		if r.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_REFUSED || count(r, CodeMissingRead) != 1 || r.Checks[1].Outcome != v1.CheckOutcome_CHECK_OUTCOME_FAIL {
+			t.Fatalf("%v %v", r.Verdict, codes(r))
+		}
+		for _, f := range r.Findings {
+			if f.Code == CodeMissingRead && (f.Check != v8 || f.Severity != v1.FindingSeverity_FINDING_SEVERITY_BLOCK || f.Kind != v1.FindingKind_FINDING_KIND_MISSING_RIGHT) {
+				t.Errorf("wrong finding shape: %v", f.RightsFinding)
+			}
+		}
+	})
+	t.Run("readable root is read, not vacuous", func(t *testing.T) {
+		w := newWorld(t)
+		r := w.run(t, ADInput{})
+		if r.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_PASS || count(r, CodeMissingRead) != 0 {
+			t.Fatalf("%v %v", r.Verdict, codes(r))
+		}
+		if !w.f.read[root.String()] {
+			t.Fatal("V8 did not read the bound root NC head")
+		}
+	})
+	t.Run("non-empty list leaves the root alone", func(t *testing.T) {
+		w := newWorld(t)
+		w.f.fail[root.String()] = &ad.Error{Code: ad.CodeInsufficientRights}
+		_, g := w.f.obj("DC=other,DC=test", domS, nil, nil)
+		r := w.run(t, ADInput{ManagedDomains: []adguid.GUID{g}, RootNC: &root})
+		if r.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_PASS || w.f.read[root.String()] {
+			t.Fatalf("root must not be added: %v %v", r.Verdict, codes(r))
+		}
+	})
+	t.Run("no root and no domains cannot verify", func(t *testing.T) {
+		w := newWorld(t)
+		w.setTokens()
+		ref, _ := dn.ParseObjectRef(w.id.DN)
+		set := w.set
+		r, err := VerifyAD(context.Background(), w.f, ADInput{Identity: ref,
+			Snapshot: func(context.Context) (*tier0.ADSet, error) { return set, nil }})
+		if err != nil || r.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_COULD_NOT_VERIFY || r.WriteGateOpenable || count(r, CodeUnverifiedAD) == 0 {
+			t.Fatalf("%v %v %v", r.Verdict, codes(r), err)
+		}
+	})
 }
