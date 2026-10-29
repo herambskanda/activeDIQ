@@ -4,8 +4,8 @@ package agent
 
 import (
 	"context"
-	"errors"
 	"encoding/binary"
+	"errors"
 	"flag"
 	"os"
 	"os/exec"
@@ -37,7 +37,7 @@ func labSID(t *testing.T, k windows.WELL_KNOWN_SID_TYPE) *windows.SID {
 	return s
 }
 
-// aclOf builds an ACL from plain allow entries (typed API).
+// allowACL builds an ACL from plain allow entries (typed API).
 func allowACL(t *testing.T, sids ...*windows.SID) *windows.ACL {
 	t.Helper()
 	var ea []windows.EXPLICIT_ACCESS
@@ -161,7 +161,7 @@ func TestLabCheckDataDir(t *testing.T) {
 var recRe = regexp.MustCompile(`(?i)oldestRecordNumber:\s*(\d+)`)
 
 // TestLabOldestRecord checks EVT_LOG_PROPERTY_ID 6 and the EVT_VARIANT layout against the number the
-// OS reports for the Security log, and that wiping the log with 1102 moves it forward.
+// OS reports for the Security log, and that it still tracks the OS after the log is wiped (a 1102 is written; numbering restarts).
 func TestLabOldestRecord(t *testing.T) {
 	want := func() uint64 {
 		out, err := exec.Command("wevtutil", "gli", "Security").CombinedOutput()
@@ -190,8 +190,11 @@ func TestLabOldestRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if after <= before-1 && after == before {
-		t.Fatalf("oldest record did not move after clearing the log: %d -> %d", before, after)
+	// Lab finding (T-0648): clearing Security restarts record numbering, so the oldest record is the
+	// new 1102 and is NOT larger than before (1 -> 1 on a fresh lab DC). The property that can fail
+	// is that we track the OS value and never report 0 for a log that now holds the 1102.
+	if after == 0 {
+		t.Fatalf("OldestRecord = 0 after clearing the log, which holds the 1102 event (was %d)", before)
 	}
 	if w := want(); after != w {
 		t.Fatalf("after clear: OldestRecord = %d, wevtutil says %d", after, w)
