@@ -67,7 +67,8 @@ func TestStreamShape(t *testing.T) {
 	if completed != 1 || findings != 1 || int(c.FindingCount) != findings || int(c.Tier0MemberCount) != members || members != 2 {
 		t.Fatalf("counts: completed=%d findings=%d members=%d %v", completed, findings, members, c)
 	}
-	if c.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_REFUSED || c.WriteGateOpenable || c.Checks[0].Check != v7 {
+	if c.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_REFUSED || c.WriteGateOpenable || len(c.Checks) != 4 || c.Checks[0].Check != v1.VerificationCheck_VERIFICATION_CHECK_V5_IDENTITY ||
+		c.Checks[0].Outcome != v1.CheckOutcome_CHECK_OUTCOME_PASS || c.Checks[1].Check != v7 {
 		t.Fatalf("%v", c)
 	}
 	if msgs[0].GetHeader().CheckListVersion != CheckListVersionAD || msgs[0].GetHeader().Identity.GetAd() == nil {

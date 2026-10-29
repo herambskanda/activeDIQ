@@ -66,8 +66,10 @@ const (
 	v9 = v1.VerificationCheck_VERIFICATION_CHECK_V9_EXCESS_IN_MANAGED_OUS
 )
 
-// CheckListVersionAD pins the AD check list a run executes (DM-24 `check_list_version`).
-const CheckListVersionAD = "ad-1"
+// CheckListVersionAD pins the AD check list a run executes (DM-24 `check_list_version`). It is the
+// decimal text of a positive integer: the client parses it and the verification row stores it as an
+// integer (a non-numeric version made every real run an interrupted one, T-0684).
+const CheckListVersionAD = "1"
 
 const (
 	uacTrustedForDelegation   = 0x80000

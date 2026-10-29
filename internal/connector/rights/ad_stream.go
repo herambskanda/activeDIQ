@@ -133,8 +133,13 @@ func StreamAD(ctx context.Context, d ADDirectory, epoch *EpochState, req *v1.Ver
 		}
 		dropped = uint32(n)
 	}
+	// V5 (identity) is answered by reaching this point: VerifyAD refuses the run when the connector's
+	// own account cannot be read, so a completed stream means the identity was read. The server needs
+	// the outcome to accept a pass (a pass that does not answer V5 is an incomplete answer).
+	checks := append([]*v1.CheckResult{{Check: v1.VerificationCheck_VERIFICATION_CHECK_V5_IDENTITY,
+		Outcome: v1.CheckOutcome_CHECK_OUTCOME_PASS}}, res.Checks...)
 	return send(&v1.VerifyConnectionResponse{Event: &v1.VerifyConnectionResponse_Completed{Completed: &v1.VerificationCompleted{
-		Verdict: res.Verdict, Checks: res.Checks, CompletedAt: timestamppb.New(now()),
+		Verdict: res.Verdict, Checks: checks, CompletedAt: timestamppb.New(now()),
 		FindingCount: uint32(len(res.Findings)), Tier0MemberCount: uint32(len(res.Tier0Set)),
 		WriteGateOpenable: res.WriteGateOpenable, Tier0InputsDropped: dropped,
 		DirectoryIdentity: proto.Clone(directory).(*v1.DirectoryIdentity)}}})
