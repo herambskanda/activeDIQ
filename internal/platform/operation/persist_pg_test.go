@@ -37,6 +37,7 @@ type dirFake struct {
 	pwdSet  map[string]time.Time
 	applies map[string]int
 	mode    map[string]string // guid -> behaviour of Apply
+	touch   map[string]string // guid -> a second object the step's change touches (the Toucher hook)
 	secret  string
 	noNC    bool          // plan AD targets without a naming context
 	badNC   string        // set by Apply when the Step's NC/pin disagree with the plan
@@ -44,7 +45,7 @@ type dirFake struct {
 }
 
 func newDir() *dirFake {
-	return &dirFake{val: map[string]string{}, pwdSet: map[string]time.Time{}, applies: map[string]int{}, mode: map[string]string{}}
+	return &dirFake{val: map[string]string{}, pwdSet: map[string]time.Time{}, applies: map[string]int{}, mode: map[string]string{}, touch: map[string]string{}}
 }
 
 func (d *dirFake) get(g string) string { d.mu.Lock(); defer d.mu.Unlock(); return d.val[g] }
@@ -152,6 +153,12 @@ func (d *dirFake) action(t *testing.T, id ActionID, stepUp, secretIn bool, class
 				return Verdict{Reason: "mismatch"}, nil
 			}
 			return Verdict{OK: true}, nil
+		},
+		Touched: func(p TypedStep[dirPayload]) []authority.TargetRef {
+			if g := d.touch[p.Payload.GUID]; g != "" {
+				return []authority.TargetRef{{Connection: "c1", GUID: g, Class: "user", NC: "dc=example"}}
+			}
+			return nil
 		},
 		Tier0:   func(o dirOut) []step.Tier0Finding { return o.Report },
 		Inverse: func(TypedStep[dirPayload], dirOut) (dirIn, error) { return dirIn{}, ErrIrreversible },
