@@ -1,7 +1,8 @@
 package agent
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
@@ -31,10 +32,10 @@ const (
 var ErrStateCorrupt = errors.New("agent: stored policy state is unreadable and was set aside")
 
 type stateDoc struct {
-	Version   int             `json:"version"`
-	Tenant    string          `json:"tenant"`
-	Component string          `json:"component"`
-	Verifier  json.RawMessage `json:"verifier"`
+	Version   int            `json:"version"`
+	Tenant    string         `json:"tenant"`
+	Component string         `json:"component"`
+	Verifier  jsontext.Value `json:"verifier"`
 }
 
 // StateStore is the policy store for one data directory.
@@ -60,7 +61,7 @@ func (s *StateStore) Load(id fleet.Identity) (*agentpolicy.Verifier, error) {
 		return fresh, s.setAside(path)
 	}
 	var d stateDoc
-	if json.Unmarshal(b, &d) != nil || d.Version != stateVer {
+	if json.Unmarshal(b, &d, json.RejectUnknownMembers(true)) != nil || d.Version != stateVer {
 		return fresh, s.setAside(path)
 	}
 	if d.Tenant != id.Tenant.String() {

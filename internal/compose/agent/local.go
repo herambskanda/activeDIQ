@@ -1,8 +1,7 @@
 package agent
 
 import (
-	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -40,13 +39,9 @@ func ParseLocal(b []byte) (Local, error) {
 	if len(b) == 0 || len(b) > maxLocalBytes {
 		return l, errors.New("agent: local configuration has an invalid size")
 	}
-	d := json.NewDecoder(bytes.NewReader(b))
-	d.DisallowUnknownFields()
-	if err := d.Decode(&l); err != nil {
+	// v2 Unmarshal rejects trailing data, invalid UTF-8 and duplicate names by itself.
+	if err := json.Unmarshal(b, &l, json.RejectUnknownMembers(true)); err != nil {
 		return Local{}, fmt.Errorf("agent: local configuration: %w", err)
-	}
-	if _, err := d.Token(); !errors.Is(err, io.EOF) {
-		return Local{}, errors.New("agent: local configuration has trailing data")
 	}
 	if l.OutboxMaxBytes == 0 {
 		l.OutboxMaxBytes = DefaultOutboxMaxBytes

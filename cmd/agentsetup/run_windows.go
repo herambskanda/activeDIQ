@@ -3,7 +3,8 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
@@ -311,13 +312,13 @@ func writeConfig() error {
 	if err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(map[string]any{
+	b, err := json.Marshal(map[string]any{
 		"data_dir":              filepath.Join(root, "data"),
 		"enrollment_dir":        filepath.Join(root, "enrol"),
 		"outbox_max_bytes":      256 << 20,
 		"batch_max_bytes":       256 << 10,
 		"max_events_per_second": 2000,
-	}, "", "  ")
+	}, jsontext.WithIndent("  "))
 	if err != nil {
 		return err
 	}

@@ -42,7 +42,9 @@ func checkA6(t *tree) []Violation {
 		dir := filepath.ToSlash(filepath.Dir(rel))
 		generated := strings.HasPrefix(string(b), genHeader)
 		inApihost := dir == "internal/platform/apihost" || strings.HasPrefix(dir, "internal/platform/apihost/")
-		inAPIPkg := filepath.Base(dir) == "api" && !inApihost
+		// The REST handler packages are the api dirs under modules and platform (apiPackageDirs);
+		// internal/agenthost/api is the agent host/module interface (ADR-0006), not a REST package.
+		inAPIPkg := filepath.Base(dir) == "api" && !inApihost && servesAPI[dir]
 
 		if inAPIPkg && !generated {
 			add(rel, "a file in an api package without the generated header (%q): an api package is generated code only, handlers live in the module (ADR-0004 A6)", genHeader)
