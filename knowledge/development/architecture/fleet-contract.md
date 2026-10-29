@@ -91,6 +91,9 @@ old peers ignore); a removed or renumbered field needs `fleet.v2`.
 `internal/platform/fleet/fleetsql` is the server-only SQL of DM-12 (migration `0007_fleet_components`).
 `cmd/connector` and `cmd/agent` cannot link it: it imports `platform/store`, which rule 7 bans for both.
 
+- **Tenant binding** (Issue, Revoke, Reenrol, Withdraw): the permission is evaluated in the principal's own
+  tenant, so each refuses (its forbidden error, before any write) unless `p.Tenant` parses to the target
+  `tid`. A platform principal (empty Tenant) is refused too; platform-wide fleet actions need their own op.
 - **Issue** (`Enrollment.Issue`) needs `fleet.enrollment.issue` and a fresh step-up, both checked before
   any write. It creates a `pending` Component and one token, stores only the SHA-256, and returns the
   plaintext once. Lifetime defaults to 1 h, at most 24 h (a database CHECK too).
