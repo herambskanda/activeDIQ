@@ -301,11 +301,13 @@ func uuidString(u [16]byte) string {
 // SetHold takes the tenant lock shared (holds do not block each other) and LockHolds, the retention
 // purge's read, takes it exclusive, so a hold is either committed before the purge reads or waits for it.
 func lockTenantHolds(ctx context.Context, tx store.Tx, tid tenant.ID, exclusive bool) error {
-	q := `SELECT pg_advisory_xact_lock_shared(hashtextextended('personal_hold:' || $1, 0))`
+	var err error
 	if exclusive {
-		q = `SELECT pg_advisory_xact_lock(hashtextextended('personal_hold:' || $1, 0))`
+		_, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('personal_hold:' || $1, 0))`, tid.String())
+	} else {
+		_, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock_shared(hashtextextended('personal_hold:' || $1, 0))`, tid.String())
 	}
-	if _, err := tx.Exec(ctx, q, tid.String()); err != nil {
+	if err != nil {
 		return fmt.Errorf("personal: lock holds: %w", err)
 	}
 	return nil

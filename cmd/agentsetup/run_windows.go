@@ -3,7 +3,8 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
@@ -22,6 +23,14 @@ const serviceAccount = `NT SERVICE\activeDIQAgent`
 const channelReadAccess = 0x1
 
 func run(args []string) int {
+	if pin, ok := parseRepin(args); ok {
+		root, err := dataRoot()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "agentsetup:", err)
+			return 1
+		}
+		return runRepin(filepath.Join(root, "enrol"), pin, invokingActor(), openRepinAudit)
+	}
 	verb, ok := parseVerb(args)
 	if !ok {
 		return usage()
@@ -70,14 +79,11 @@ func serviceSID() (*windows.SID, error) {
 // EvtSaveChannelConfig: https://learn.microsoft.com/en-us/windows/win32/api/winevt/
 // The property id of EvtChannelConfigAccess is 5 [UNVERIFIED — lab].
 
-var (
-	wevtapi   = windows.NewLazySystemDLL("wevtapi.dll")
-	pOpenCfg  = wevtapi.NewProc("EvtOpenChannelConfig")
-	pGetCfg   = wevtapi.NewProc("EvtGetChannelConfigProperty")
-	pSetCfg   = wevtapi.NewProc("EvtSetChannelConfigProperty")
-	pSaveCfg  = wevtapi.NewProc("EvtSaveChannelConfig")
-	pCloseEvt = wevtapi.NewProc("EvtClose")
-)
+// evtProc resolves a wevtapi export lazily. It is a function, not package-level variables with call
+// initialisers, so nothing runs before main hardening (prochardening, TM-TB16-T6).
+func evtProc(name string) *windows.LazyProc {
+	return windows.NewLazySystemDLL("wevtapi.dll").NewProc(name)
+}
 
 const (
 	evtChannelConfigAccess = 5
@@ -97,15 +103,15 @@ func changeChannel(grant bool) error {
 		return fmt.Errorf("service account is not resolvable (install the service first): %w", err)
 	}
 	name, _ := windows.UTF16PtrFromString("Security")
-	h, _, e := pOpenCfg.Call(0, uintptr(unsafe.Pointer(name)), 0)
+	h, _, e := evtProc("EvtOpenChannelConfig").Call(0, uintptr(unsafe.Pointer(name)), 0)
 	if h == 0 {
 		return e
 	}
-	defer pCloseEvt.Call(h)
+	defer evtProc("EvtClose").Call(h)
 
 	buf := make([]byte, 16<<10)
 	var used uint32
-	if r, _, e := pGetCfg.Call(h, evtChannelConfigAccess, 0, uintptr(len(buf)), uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&used))); r == 0 {
+	if r, _, e := evtProc("EvtGetChannelConfigProperty").Call(h, evtChannelConfigAccess, 0, uintptr(len(buf)), uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&used))); r == 0 {
 		return e
 	}
 	v := (*evtVariant)(unsafe.Pointer(&buf[0]))
@@ -124,10 +130,10 @@ func changeChannel(grant bool) error {
 	}
 	nv := evtVariant{Type: evtVarTypeString}
 	*(**uint16)(unsafe.Pointer(&nv.Value)) = np
-	if r, _, e := pSetCfg.Call(h, evtChannelConfigAccess, 0, uintptr(unsafe.Pointer(&nv))); r == 0 {
+	if r, _, e := evtProc("EvtSetChannelConfigProperty").Call(h, evtChannelConfigAccess, 0, uintptr(unsafe.Pointer(&nv))); r == 0 {
 		return e
 	}
-	if r, _, e := pSaveCfg.Call(h, 0); r == 0 {
+	if r, _, e := evtProc("EvtSaveChannelConfig").Call(h, 0); r == 0 {
 		return e
 	}
 	return nil
@@ -303,13 +309,13 @@ func writeConfig() error {
 	if err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(map[string]any{
+	b, err := json.Marshal(map[string]any{
 		"data_dir":              filepath.Join(root, "data"),
 		"enrollment_dir":        filepath.Join(root, "enrol"),
 		"outbox_max_bytes":      256 << 20,
 		"batch_max_bytes":       256 << 10,
 		"max_events_per_second": 2000,
-	}, "", "  ")
+	}, jsontext.Multiline(true), json.Deterministic(true))
 	if err != nil {
 		return err
 	}
@@ -320,10 +326,42 @@ func writeConfig() error {
 // SID was not removed at uninstall (the custom action is Return=ignore so uninstall still
 // completes). Best effort: a failure to log is itself ignored.
 func warnRevokeFailed(cause error) {
-	l, err := eventlog.Open("activeDIQAgent")
+	l, err := eventlog.Open(agentEventSource)
 	if err != nil {
 		return
 	}
 	defer l.Close()
 	_ = l.Warning(4101, "uninstall could not remove the Security event log read permission for NT SERVICE\\activeDIQAgent; remove it with wevtutil sl Security or by repeating the uninstall. Cause: "+cause.Error())
+}
+
+// invokingActor names the account (SID and, when resolvable, DOMAIN\name) running this process and
+// the host. The event log itself records no user for a source-written event, so it goes in the text.
+func invokingActor() string {
+	host, _ := os.Hostname()
+	tu, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		return "unknown account on " + host
+	}
+	who := tu.User.Sid.String()
+	if name, domain, _, err := tu.User.Sid.LookupAccount(""); err == nil {
+		who = domain + `\` + name + " (" + who + ")"
+	}
+	return who + " on " + host
+}
+
+// openRepinAudit opens the registered agent event source. Events: 4102 success, 4103 failure. The
+// message is also echoed on stderr. Pins are public values; no key material is involved.
+func openRepinAudit() (auditSink, func(), error) {
+	l, err := eventlog.Open(agentEventSource)
+	if err != nil {
+		return nil, nil, err
+	}
+	return func(msg string, failed bool) {
+		fmt.Fprintln(os.Stderr, "agentsetup:", msg)
+		if failed {
+			_ = l.Error(4103, msg)
+			return
+		}
+		_ = l.Info(4102, msg)
+	}, func() { l.Close() }, nil
 }

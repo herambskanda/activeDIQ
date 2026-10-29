@@ -16,6 +16,7 @@ Design: [ADR-0006](../decisions/0006-dc-agent-runs-as-a-virtual-service-account.
 - Service `activeDIQAgent` runs as `NT SERVICE\activeDIQAgent`, restricted service SID, `SeChangeNotifyPrivilege` only. It listens on nothing; there is **no inbound firewall rule**, by design. Outbound: the one mTLS endpoint given at enrolment.
 - Data directory (`%ProgramData%\skenzeriq\agent`): DACL service SID, SYSTEM, Administrators. **Kept on uninstall** (outbox, policy anchor); remove by hand only when decommissioning the DC.
 - The `Security` channel ACE (read, `0x1`) is written by the MSI via `agentsetup grant-channel` and removed by `revoke-channel`. A failure aborts the install; it never falls back to LocalSystem.
+- **Known residual (T-0732):** `RollbackGrantChannel` runs `revoke-channel`, which removes the service-SID ACE without knowing whether it existed before this install. On a repair, or a major upgrade that fails and rolls back over an installed agent, the previously granted Security read ACE is therefore removed and the still-installed agent reports `CHANNEL_UNREADABLE` until `agentsetup grant-channel` is re-run (or the MSI repair is repeated). Fail-safe direction: reads stop, nothing is over-granted. To be reproduced in the lab under T-0648.
 - Local ceilings (outbox bytes, batch bytes, events/s) live in `agent.json` beside the executable, writable by Administrators only. A signed policy can narrow them, never widen.
 
 ## Application-log events (source "activeDIQ Agent")

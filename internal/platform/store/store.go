@@ -194,6 +194,7 @@ func checkConnConfig(cc *pgx.ConnConfig) error {
 // used to gain superuser-level access. migrations/0001 repeats
 // this logic in plpgsql for the role named activediq_app; keep the two in step.
 const roleRisk = `SELECT x.rolname, CASE
+		WHEN x.rolname = 'activediq_catrust' THEN 'trust-anchor reader (column-limited reader of fleet_ca; the runtime role may only EXECUTE its function)'
 		WHEN x.rolsuper THEN 'superuser'
 		WHEN x.rolbypassrls THEN 'BYPASSRLS'
 		WHEN x.rolname IN ('pg_execute_server_program', 'pg_read_server_files', 'pg_write_server_files') THEN 'predefined role that is superuser-equivalent'

@@ -35,7 +35,7 @@ Code: `internal/platform/keys/`; fake KMS: `internal/platform/keys/keystest/`.
   is the read-only port authn/audit/fleetsql consume (version 0 = active); its only failure texts are `keys: <Code>`
   (`NoActiveKey`, `KeyNotFound`, `KeyShredded`, `ProviderUnavailable`, `UnwrapFailed`, `StoreFailed`). It has no INSERT path
   (AST test). Not yet built: `Rotate`, `ShredTenant`, `installation_kek` and the boot self-test, `keys provision --missing`, the DEK cache (follow-up tickets).
-- Installation scope (T-0715, `installation.go`; migration `0054_keys_installation_keys.sql`; ADR-0008): one DEK for the
+- Installation scope (T-0715, `installation.go`; migration `0056_keys_installation_keys.sql`; ADR-0008): one DEK for the
   installation, sealing the fleet SERVER CA key only (per-tenant client CAs stay under tenant DEKs). `SealInstallation` /
   `OpenInstallation` use `InstallationContext{Table,Row,Column,Version}` (no tenant; AAD tag `diq.seal.installation.v1`), the
   DEK is wrapped as platform purpose `installation-dek`, so a tenant blob/wrap never opens as it and it never opens as a

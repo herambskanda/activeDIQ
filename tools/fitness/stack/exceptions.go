@@ -40,6 +40,8 @@ func (c *Ctx) checkExceptions() []Violation {
 				add(fmt.Sprintf("%s: the path does not exist; remove the stale entry", e.label))
 			case e.kind == "buildScripts" && fi.IsDir():
 				add(fmt.Sprintf("%s: a build script entry names one file, not a directory", e.label))
+			case e.kind == "labBuilds" && (fi.IsDir() || !strings.HasSuffix(e.path, ".go") || strings.HasSuffix(e.path, "_test.go")):
+				add(fmt.Sprintf("%s: a lab build entry names one non-test .go file, not a directory or a _test.go file", e.label))
 			}
 		}
 	}

@@ -1,4 +1,4 @@
--- 0054_keys_installation_keys: DM-02 installation-scope DEK (T-0715; ADR-0008, TM-D7, TM-TB5-T2).
+-- 0056_keys_installation_keys: DM-02 installation-scope DEK (T-0715; ADR-0008, TM-D7, TM-TB5-T2).
 -- Owner: internal/platform/keys. One registered-global table (no tenant_id, no RLS: ADR-0002 rule 4).
 -- It holds the installation's data-encryption key only as the AEAD blob the key provider returned
 -- (wrapped_dek), with the KEK reference that wrapped it, pinned per version. No column holds a plaintext
