@@ -21,6 +21,13 @@ func TestT0776WixEnvReference(t *testing.T) {
 		"bang":         `<Include xmlns="http://wixtoolset.org/schemas/v4/wxs"><Property Id="X" Value="!(env.X)"/></Include>`,
 		"mixed case":   `<Include xmlns="http://wixtoolset.org/schemas/v4/wxs"><Property Id="X" Value="$(Env.X)"/></Include>`,
 		"spaced":       `<Include xmlns="http://wixtoolset.org/schemas/v4/wxs"><Property Id="X" Value="$( ENV . X)"/></Include>`,
+		"dec ref":      `<Include xmlns="http://wixtoolset.org/schemas/v4/wxs"><Property Id="X" Value="&#36;(env.X)"/></Include>`,
+		"hex ref":      `<Include xmlns="http://wixtoolset.org/schemas/v4/wxs"><Property Id="X" Value="&#x24;(env.X)"/></Include>`,
+		"paren ref":    `<Include xmlns="http://wixtoolset.org/schemas/v4/wxs"><Property Id="X" Value="$&#40;env.X)"/></Include>`,
+		"letter ref":   `<Include xmlns="http://wixtoolset.org/schemas/v4/wxs"><Property Id="X" Value="$(&#101;nv.X)"/></Include>`,
+		"nested amp":   `<Include xmlns="http://wixtoolset.org/schemas/v4/wxs"><Property Id="X" Value="&amp;#36;(env.X)"/></Include>`,
+		"ifdef":        `<Include xmlns="http://wixtoolset.org/schemas/v4/wxs"><?ifdef env.CI_SIGNING_PASSWORD?><Property Id="X" Value="1"/><?endif?></Include>`,
+		"ifndef":       `<Include xmlns="http://wixtoolset.org/schemas/v4/wxs"><?IfNDef ENV.X ?><Property Id="X" Value="1"/><?endif?></Include>`,
 	}
 	for _, body := range bad {
 		for _, f := range []string{"packaging/windows/extra.wxi", "packaging/windows/extra.wxs"} {

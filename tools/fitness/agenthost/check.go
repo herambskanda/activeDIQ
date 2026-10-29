@@ -1166,7 +1166,7 @@ func checkInstallerAllow(root string, allow []string) Result {
 		// T-0776: the WiX preprocessor reads any environment variable ($(env.X), !(env.X)) into the MSI, in
 		// attributes, text, <?define?> and other processing instructions. Scanned over the raw text so no
 		// XML position can hide it; never approvable via installer-allow.txt.
-		if (isWixXML(f.path) || f.xml) && !strings.EqualFold(filepath.Ext(f.path), ".wixproj") && wixEnvRe.MatchString(f.text) {
+		if (isWixXML(f.path) || f.xml) && !strings.EqualFold(filepath.Ext(f.path), ".wixproj") && wixEnvRefs(f.text) {
 			r.Violations = append(r.Violations, fmt.Sprintf("%s reads an environment variable through the WiX preprocessor ($(env.NAME) or !(env.NAME)): a CI secret would be compiled into the MSI; installer-allow.txt cannot approve it (T-0776)", rel))
 		}
 		if isTemplate(f.path) && !allowed(rel, allow) {
@@ -1270,7 +1270,48 @@ const wixCoreNS = "http://wixtoolset.org/schemas/v4/wxs"
 
 var reviewedNS = map[string]bool{"http://wixtoolset.org/schemas/v4/wxs/util": true}
 
-var wixEnvRe = regexp.MustCompile(`(?i)[$!]\(\s*env\s*\.`)
+var wixEnvRe = regexp.MustCompile(`(?i)[$!]\(\s*env\s*\.|<\?\s*(?:ifdef|ifndef)\s+env\s*\.`)
+
+var xmlCharRefRe = regexp.MustCompile(`&(?:#[0-9]+|#[xX][0-9a-fA-F]+|amp|lt|gt|quot|apos);`)
+
+// wixEnvRefs reports an env reference in the raw text or in the text as the XML reader sees it: numeric
+// character references and predefined entities are decoded first (to a fixed point, so nested escapes
+// cannot hide it), because the WiX preprocessor runs on the decoded attribute and text values (T-0776).
+func wixEnvRefs(text string) bool {
+	for i := 0; i < 8; i++ {
+		if wixEnvRe.MatchString(text) {
+			return true
+		}
+		next := xmlCharRefRe.ReplaceAllStringFunc(text, func(m string) string {
+			switch m {
+			case "&amp;":
+				return "&"
+			case "&lt;":
+				return "<"
+			case "&gt;":
+				return ">"
+			case "&quot;":
+				return `"`
+			case "&apos;":
+				return "'"
+			}
+			digits, base := strings.TrimSuffix(strings.TrimPrefix(m, "&#"), ";"), 10
+			if digits[0] == 'x' || digits[0] == 'X' {
+				digits, base = digits[1:], 16
+			}
+			n, err := strconv.ParseInt(digits, base, 32)
+			if err != nil || n < 0 || n > 0x10FFFF {
+				return m
+			}
+			return string(rune(n))
+		})
+		if next == text {
+			return false
+		}
+		text = next
+	}
+	return true // still decoding after 8 rounds: refuse rather than guess
+}
 
 var dynamicRe = regexp.MustCompile(`\$\(|\[|!\(`)
 
