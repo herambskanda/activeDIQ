@@ -796,10 +796,25 @@ func TestA1Installer(t *testing.T) {
 		write(t, r, "packaging/windows/agent.wxs", src)
 		return checkInstallerAllow(r, nil)
 	}
-	pinnedPermissions["ServiceInstall/AgentSvc"] = map[string]string{"": "PermissionEx", "sddl": "D:(A;;GA;;;SY)"}
+	pinnedPermissions["ServiceInstall/AgentSvc"] = map[string]string{"": "PermissionEx", "sddl": "D:(A;;GA;;;SY)", "parent.name": "activediq-agent"}
 	defer delete(pinnedPermissions, "ServiceInstall/AgentSvc")
 	wantClean(t, pinSvc("D:(A;;GA;;;SY)"))
 	wantViolation(t, pinSvc("D:(A;;GA;;;WD)"), "differs from the reviewed pin")
+	// T-0730: retargeting the pinned parent fails.
+	rr := t.TempDir()
+	rs := strings.Replace(goodWxs, `<ServiceInstall Name=`, `<ServiceInstall Id="AgentSvc" Name=`, 1)
+	rs = strings.Replace(rs, `<ServiceConfig ServiceSid`, `<PermissionEx Sddl="D:(A;;GA;;;SY)"/><ServiceConfig ServiceSid`, 1)
+	write(t, rr, "packaging/windows/agent.wxs", strings.Replace(rs, `Name="activediq-agent"`, `Name="activediq-agent2"`, 1))
+	wantViolation(t, checkInstallerAllow(rr, nil), "differs from the reviewed pin")
+	// T-0730: case-variant, namespaced and duplicated attributes are rejected, not collapsed.
+	dupe := func(el string) Result {
+		r := t.TempDir()
+		write(t, r, "packaging/windows/agent.wxs", strings.Replace(goodWxs, `<ServiceConfig ServiceSid`, el+`<ServiceConfig ServiceSid`, 1))
+		return checkInstallerAllow(r, nil)
+	}
+	wantViolation(t, dupe(`<PermissionEx Sddl="D:(A;;GA;;;WD)" SDDL="D:(A;;GA;;;SY)"/>`), `element PermissionEx has attribute "sddl" more than once`)
+	wantViolation(t, dupe(`<PermissionEx Sddl="a" Sddl="b"/>`), `element PermissionEx has attribute "sddl" more than once`)
+	wantViolation(t, dupe(`<PermissionEx xmlns:x="u" Sddl="a" x:Sddl="b"/>`), `more than once`)
 	// The pin is keyed by parent type: the same Id on another element type is not reviewed.
 	rt := t.TempDir()
 	write(t, rt, "packaging/windows/agent.wxs", strings.Replace(goodWxs, `</Package>`, `<CreateFolder Id="AgentSvc" Directory="D"><PermissionEx Sddl="D:(A;;GA;;;SY)"/></CreateFolder></Package>`, 1))

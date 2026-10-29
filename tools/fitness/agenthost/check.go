@@ -1263,6 +1263,29 @@ var pinnedActions = func() map[string]map[string]string {
 // source grants no ACL through WiX. Adding an entry is a security-architect review (T-0725).
 var pinnedPermissions = map[string]map[string]string{}
 
+// parentTargetAttrs: the attributes that say which object a Permission's parent acts on. An unknown
+// parent type pins every attribute but Id (fail closed).
+func parentTargetAttrs(p xmlEl) []string {
+	switch p.Name {
+	case "ServiceInstall":
+		return []string{"name"}
+	case "CreateFolder":
+		return []string{"directory"}
+	case "RegistryKey":
+		return []string{"root", "key"}
+	case "File":
+		return []string{"source"}
+	}
+	var ks []string
+	for k := range p.Attrs {
+		if k != "id" {
+			ks = append(ks, k)
+		}
+	}
+	sort.Strings(ks)
+	return ks
+}
+
 func samePermission(got, want map[string]string) bool {
 	if len(got) != len(want) {
 		return false
@@ -1287,6 +1310,7 @@ func judgeInstallerXML(rel string, b []byte, allow []string, agentFile bool) ins
 	var els []xmlEl
 	var stack []int
 	var attrText strings.Builder
+	var attrDups []string
 	for {
 		tok, err := dec.Token()
 		if err == io.EOF {
@@ -1302,7 +1326,15 @@ func judgeInstallerXML(rel string, b []byte, allow []string, agentFile bool) ins
 				e.Parent = stack[len(stack)-1]
 			}
 			for _, a := range t.Attr {
-				e.Attrs[strings.ToLower(a.Name.Local)] = a.Value
+				if a.Name.Space == "xmlns" || a.Name.Local == "xmlns" {
+					continue // namespace declarations are not WiX attributes
+				}
+				k := strings.ToLower(a.Name.Local)
+				if _, dup := e.Attrs[k]; dup {
+					// T-0730: last-wins would let a second spelling hide the value that is judged.
+					attrDups = append(attrDups, fmt.Sprintf("%s: element %s has attribute %q more than once (duplicate, or names differing only by case or namespace): the judged value would be ambiguous", rel, t.Name.Local, k))
+				}
+				e.Attrs[k] = a.Value
 				attrText.WriteString(a.Value + "\n")
 			}
 			els = append(els, e)
@@ -1319,6 +1351,7 @@ func judgeInstallerXML(rel string, b []byte, allow []string, agentFile bool) ins
 		}
 	}
 	var f installerFacts
+	f.violations = append(f.violations, attrDups...)
 	f.attrText = attrText.String()
 	fail := func(format string, a ...any) { f.violations = append(f.violations, rel+": "+fmt.Sprintf(format, a...)) }
 	// agentSvc: the element is the agent's ServiceInstall, or sits under it.
@@ -1378,9 +1411,12 @@ func judgeInstallerXML(rel string, b []byte, allow []string, agentFile bool) ins
 			default:
 				got := map[string]string{"": e.Name}
 				for k, v := range e.Attrs {
-					if !strings.HasPrefix(k, "xmlns") {
-						got[k] = v
-					}
+					got[k] = v
+				}
+				// T-0730: the pin also fixes the parent's target, so retargeting the parent cannot
+				// carry a reviewed ACL onto another object. Pin keys: "parent.<attr>".
+				for _, k := range parentTargetAttrs(els[e.Parent]) {
+					got["parent."+k] = els[e.Parent].Attrs[k]
 				}
 				if !samePermission(got, want) {
 					fail("%s under %s %q differs from the reviewed pin (attributes %v, reviewed %v): a changed SDDL or grant is a new ACL and needs a new review (T-0725)", e.Name, ptype, pid, got, want)
