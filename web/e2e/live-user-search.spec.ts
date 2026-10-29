@@ -17,7 +17,9 @@ test.skip(
   !base || !session || !name || !sam,
   "set ADIQ_BASE_URL, ADIQ_E2E_SESSION, ADIQ_E2E_USER_NAME, ADIQ_E2E_USER_SAM",
 );
-test.use({ ignoreHTTPSErrors: true }); // the lab server's per-install certificate
+// TLS stays verified. Trust the lab server's per-install certificate with NODE_EXTRA_CA_CERTS=<ca.pem>;
+// ADIQ_E2E_INSECURE=1 is an explicit, lab-only opt-out for a self-signed certificate.
+test.use({ ignoreHTTPSErrors: process.env["ADIQ_E2E_INSECURE"] === "1" });
 
 test("typing a seeded name lists the real user", async ({ page, context }) => {
   await context.addCookies([

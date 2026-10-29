@@ -1,6 +1,7 @@
 package apihost
 
 import (
+	"io"
 	"io/fs"
 	"net/http"
 	"path"
@@ -47,7 +48,7 @@ func (s *Server) serveConsole(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	}
 	defer f.Close()
-	rs, ok := f.(readSeeker)
+	rs, ok := f.(io.ReadSeeker)
 	if !ok {
 		writeProblem(w, r, apitypes.Internal(""), s.log)
 		return true
@@ -63,9 +64,4 @@ func (s *Server) serveConsole(w http.ResponseWriter, r *http.Request) bool {
 	}
 	http.ServeContent(w, r, name, time.Time{}, rs)
 	return true
-}
-
-type readSeeker interface {
-	Read([]byte) (int, error)
-	Seek(int64, int) (int64, error)
 }
