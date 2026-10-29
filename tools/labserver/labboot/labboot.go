@@ -1,6 +1,6 @@
-//go:build lab
-
-package server
+// Package labboot is the lab bootstrap (T-0684, T-0550): linked only by tools/labserver, never by the
+// shipped server, so no build tag appears in non-test code (ADR-0001 F2).
+package labboot
 
 import (
 	"context"
@@ -35,13 +35,13 @@ import (
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
-// Lab bootstrap (T-0684), compiled only under the `lab` build tag. A server built with -tags lab and
+// Lab bootstrap (T-0684), compiled only into this lab binary (tools/labserver). A server built with -tags lab and
 // started with a lab's environment seeds one ACTIVE AD connection per configured lab in the install's
 // tenant and serves each from an IN-PROCESS connector (read and scoped search over a real LDAPS session
 // to the lab DC, behind a real gRPC hop on an in-memory pipe), so a booted server can search VM 119 and
 // the Samba lab with no fleet tunnel. It does not run the verification: the connection is activated by
 // the lab seed (identity read from the DC, then draft → verifying → active), which is why it exists
-// only in lab builds. Production builds compile labbootstrap_off.go instead.
+// only in lab builds. The production server never links this package.
 //
 // Environment (nothing configured = nothing seeded):
 //
@@ -153,8 +153,8 @@ func (s *labSource) add(id string, c connectorv1.ConnectorClient) {
 	s.mu.Unlock()
 }
 
-// labSeeder seeds the opened labs' connections once the tenant and the connection service exist.
-type labSeeder func(ctx context.Context, conns *connection.Registry, svc *connection.Service, tid tenant.ID) error
+// Seeder seeds the opened labs' connections once the tenant and the connection service exist.
+type Seeder = func(ctx context.Context, conns *connection.Registry, svc *connection.Service, tid tenant.ID) error
 
 // openedLab is one lab session with its in-process connector, ready to be bound to a connection.
 type openedLab struct {
@@ -163,11 +163,11 @@ type openedLab struct {
 	stop func()
 }
 
-// labBootstrap opens the configured labs' directory sessions and in-process connectors (no database
+// Bootstrap opens the configured labs' directory sessions and in-process connectors (no database
 // yet) and returns the source that serves them over next, the seeder that creates and activates each
 // lab's connection, and a closer for the sessions. With no lab configured it returns next unchanged
 // and a no-op seeder.
-func labBootstrap(ctx context.Context, getenv func(string) string, next client.ConnectorSource) (client.ConnectorSource, labSeeder, func(), error) {
+func Bootstrap(ctx context.Context, getenv func(string) string, next client.ConnectorSource) (client.ConnectorSource, Seeder, func(), error) {
 	specs, err := labSpecs(getenv)
 	if err != nil {
 		return nil, nil, nil, err

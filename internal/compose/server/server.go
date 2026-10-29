@@ -30,6 +30,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/module"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 	"github.com/skenzeriq/activediq/internal/platform/store"
+	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
 // ErrNoDatabase is returned by Run when no database DSN is configured. The server has nothing to do
@@ -40,7 +41,16 @@ var ErrNoDatabase = errors.New("server: no database configured (" + config.EnvDa
 // worker. getenv (os.Getenv in the binary) reads the KEK settings, which are named and validated only
 // in this package (LoadKEKConfig). When ctx ends the worker stops claiming and drains; Run returns jobs.ErrDrainTimeout (wrapped)
 // if running bodies ignored the forced cancellation, which the binary turns into a non-zero exit.
-func Run(ctx context.Context, cfg config.Config, getenv func(string) string) error {
+func Run(ctx context.Context, cfg config.Config, getenv func(string) string, opts ...Option) error {
+	var o runOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+	if o.lab == nil {
+		o.lab = func(_ context.Context, _ func(string) string, next client.ConnectorSource) (client.ConnectorSource, LabSeeder, func(), error) {
+			return next, func(context.Context, *connection.Registry, *connection.Service, tenant.ID) error { return nil }, func() {}, nil
+		}
+	}
 	if cfg.DatabaseDSN == "" {
 		return ErrNoDatabase
 	}
@@ -93,9 +103,9 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	if err != nil {
 		return fmt.Errorf("server: connector source: %w", err)
 	}
-	// Lab builds only (T-0684): an env-configured lab seeds an active connection served by an in-process
-	// connector; the production build's labBootstrap returns src unchanged.
-	csrc, labSeed, labClose, err := labBootstrap(ctx, getenv, src)
+	// Lab binary only (T-0684, tools/labserver): an env-configured lab seeds an active connection served
+	// by an in-process connector; the production binary passes no bootstrap and src is used unchanged.
+	csrc, labSeed, labClose, err := o.lab(ctx, getenv, src)
 	if err != nil {
 		return err
 	}

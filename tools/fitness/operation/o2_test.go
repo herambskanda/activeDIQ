@@ -27,6 +27,7 @@ func TestO2Violations(t *testing.T) {
 		"generated client in compose/server non-test":      {"internal/compose/server/x.go", "package x\n" + connImport + "var _ connectorv1.ConnectorClient\n", "generated connector-contract client"},
 		"generated client in compose test of another root": {"internal/compose/agent/x_test.go", "package x\n" + connImport + "var _ connectorv1.ConnectorClient\n", "generated connector-contract client"},
 		"generated client in connector non-test":           {"internal/connector/x/x.go", "package x\n" + connImport + "var _ connectorv1.ConnectorClient\n", "generated connector-contract client"},
+		"generated client in another tools path":           {"tools/other/x.go", "package x\n" + connImport + "var _ connectorv1.ConnectorClient\n", "generated connector-contract client"},
 		"ldap outside connector":                           {"internal/modules/a/a.go", "package a\nimport _ \"github.com/go-ldap/ldap/v3\"\n", "directory protocol library"},
 		"graph outside connector":                          {"internal/directory/x/x.go", "package x\nimport _ \"github.com/microsoftgraph/msgraph-sdk-go\"\n", "directory protocol library"},
 	}
@@ -46,6 +47,7 @@ func TestO2Allowed(t *testing.T) {
 		"internal/connector/x/x_test.go":       "package x\n" + connImport + "var _ connectorv1.ConnectorClient\n",
 		"internal/compose/connector/m_test.go": "package x\n" + connImport + "var _ connectorv1.ConnectorClient\n",
 		"internal/compose/server/p_test.go":    "package x\n" + connImport + "var _ connectorv1.ConnectorClient\n",
+		"tools/labserver/labboot/l.go":         "package labboot\n" + connImport + "var _ connectorv1.ConnectorClient\n",
 		"internal/connector/ldap/l.go":         "package ldap\nimport _ \"github.com/go-ldap/ldap/v3\"\n",
 		"internal/modules/a/a.go":              "package a\ntype C struct{}\nfunc (C) Apply() {}\nfunc (C) Do(c C) { c.Apply() }\n",
 	})
