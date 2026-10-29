@@ -1331,6 +1331,30 @@ printf 'package x\n\nimport "testing"\n\nfunc FuzzT(f *testing.F) {\n\tf.Add([]b
 must_pass "fuzz-target" tools/ci/fuzz-target.sh "$fz" FuzzT 3s
 must_pass "make fuzz-saml is wired into make ci" bash -c "make -n ci | grep -q 'fuzz-target.sh internal/platform/authn/sso/saml FuzzSAMLComplete 60s'"
 
+# --- fitness-keys (keys-custody-design §7), the real CLI on throw-away trees (-static-only: the schema
+# and bound-test halves are the tool's own tests, go test ./tools/fitness/keycustody, with Docker) ----
+kcbin="$tmp/fitness-keys"; go build -o "$kcbin" ./tools/fitness/keycustody
+kct="$tmp/kc"
+fresh_kc() {
+  rm -rf "$kct"; mkdir -p "$kct/internal/platform/keys" "$kct/internal/a"
+  printf 'module kc.test\n\ngo 1.27.0\n' >"$kct/go.mod"
+  printf 'package keys\n\nvar _ = tablekind.Declare(tablekind.Table{Name: "public.tenant_keys", Entity: "DM-02", Kind: tablekind.Tenant, Sealed: []string{"wrapped_dek"}})\n\nfunc Provision() { _ = `INSERT INTO public.tenant_keys (tenant_id) VALUES ($1)` }\n' >"$kct/internal/platform/keys/store.go"
+}
+fresh_kc
+must_pass "fitness-keys (clean tree)" "$kcbin" -root "$kct" -static-only
+fresh_kc; printf 'package a\n\nvar q = `SELECT * FROM tenant_keys`\n' >"$kct/internal/a/a.go"
+must_fail_with "fitness-keys FF-KEY-2 on a package reading tenant_keys" 'internal/a/a.go:3 FF-KEY-2 \[tenant_keys-owner\]' "$kcbin" -root "$kct" -static-only
+fresh_kc; printf 'package a\n\nimport "github.com/skenzeriq/activediq/internal/platform/keys"\n\nfunc f() { keys.NewDEK() }\n' >"$kct/internal/a/a.go"
+must_fail_with "fitness-keys FF-KEY-2 on keys.NewDEK outside the keys package" 'FF-KEY-2 \[dek-calls\]' "$kcbin" -root "$kct" -static-only
+fresh_kc; printf 'package a\n\nvar e = "ACTIVEDIQ_KEK_DIR"\n' >"$kct/internal/a/a.go"
+must_fail_with "fitness-keys FF-KEY-3 on ACTIVEDIQ_KEK_* read outside the composition root" 'FF-KEY-3 \[env-owner\]' "$kcbin" -root "$kct" -static-only
+fresh_kc; mkdir -p "$kct/packaging"; printf 'environment:\n  ACTIVEDIQ_KEK_PROVIDER: passphrase\n' >"$kct/packaging/compose.yaml"
+must_fail_with "fitness-keys FF-KEY-3 on a default ACTIVEDIQ_KEK_PROVIDER" 'FF-KEY-3 \[provider-default\]' "$kcbin" -root "$kct" -static-only
+fresh_kc; printf 'package keys\n\nfunc (k *KeySource) Lazy() { _ = `insert into tenant_keys (a) values (1)` }\n' >"$kct/internal/platform/keys/lazy.go"
+must_fail_with "fitness-keys FF-KEY-5 on an INSERT reachable from the KeySource" 'FF-KEY-5 \[insert-site\]' "$kcbin" -root "$kct" -static-only
+fresh_kc; printf 'package keys\n\nvar _ = tablekind.Declare(tablekind.Table{Name: "public.tenant_keys", Entity: "DM-02", Kind: tablekind.Tenant})\n\nfunc Provision() { _ = `INSERT INTO tenant_keys` }\n' >"$kct/internal/platform/keys/store.go"
+must_fail_with "fitness-keys FF-KEY-1 on a tenant_keys declaration without Sealed: wrapped_dek" 'FF-KEY-1 \[sealed-declaration\]' "$kcbin" -root "$kct" -static-only
+
 # --- fitness-built-msi (T-0697, ADR-0006 A1 on the built artefact) ---------------------------------
 # Real MSIs: wixl builds them, msibuild adds MsiServiceConfig/CustomAction rows, msidump (inside the gate)
 # reads them. msitools is a CI prerequisite (runbook ci-and-build.md): a missing tool fails the proof.
