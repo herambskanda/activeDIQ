@@ -44,13 +44,13 @@ func BuiltInRoles() []Role {
 	return []Role{
 		{Name: "tier0-administrator", Tier: Tier0, Permissions: []authz.Permission{"inventory.tier0_designation.manage"}},
 		{Name: "platform-administrator", Tier: Tier1, Permissions: []authz.Permission{
-			"connections.hybrid_link.confirm", "connections.takeover.attest", "operation.approve", "objects.user.reset_password", "objects.user.delete", "siem.destination.manage", "siem.destination.read"}},
+			"connections.hybrid_link.confirm", "connections.takeover.attest", "operation.approve", "objects.user.reset_password", "objects.user.delete", "siem.destination.manage", "siem.destination.read", "directory.read"}},
 		// The tenant owner (ADM-126, DM-30.I4). Read-only, personal assignments only, never time-bounded
 		// (migration 0034). Beyond the DM-34.I1 rule that an owner holds every permission, it lists only
 		// what the operation catalogue has granted by name; migration 0043 allow-lists the same set in
 		// the database, so a permission added here without it is refused at seed.
 		{Name: TenantOwnerRole, Tier: Tier1, Permissions: []authz.Permission{"connections.correlation.reconfirm"}},
-		{Name: "helpdesk-operator", Tier: Tier2, Permissions: []authz.Permission{"objects.user.reset_password"}},
+		{Name: "helpdesk-operator", Tier: Tier2, Permissions: []authz.Permission{"objects.user.reset_password", "directory.read"}},
 	}
 }
 

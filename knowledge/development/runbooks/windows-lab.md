@@ -191,3 +191,11 @@ Reset = `qm rollback 112 clean` by a human. Certificate verification is never di
 (`TestWindowsLab…` untrusted-CA test). `make lab-test-windows-unit` proves the mode offline (stub `go`/`virsh`,
 checks refusals, misconfiguration errors and that the password never appears in argv, logs or stdout).
 Status: **untested against VM 112 until a human completes the steps above** (the PowerShell is as untested as §8 says).
+
+## 11. Searching VM 119 through the server (T-0669)
+
+`internal/connector/read/search_lab_test.go` (`-tags lab`) runs the whole search path against a real LDAPS
+session; point it at the Windows lab with the `WIN_LAB_*` variables of section 10. It has been compiled
+and vetted but **not run against VM 119 or Samba from the T-0669 session** (neither lab was reachable).
+A booted server cannot yet search VM 119: the active-connection seed and in-process source are T-0684;
+the end-to-end Windows proof is T-0671.
