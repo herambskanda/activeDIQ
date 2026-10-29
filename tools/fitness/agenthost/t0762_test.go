@@ -124,3 +124,28 @@ func TestT0762MSBuildAndTransforms(t *testing.T) {
 		wantViolation(t, mk([]string{f}, map[string]string{f: "x"}), "MSI transform")
 	}
 }
+
+// T-0771: a plain $(Name) may only name a reviewed or reserved MSBuild property; env vars are properties too.
+func TestT0771EnvVarRefs(t *testing.T) {
+	const sdk = `<Project Sdk="WixToolset.Sdk/5.0.0">`
+	mk := func(allow []string, f, body string) Result {
+		r := t.TempDir()
+		write(t, r, "packaging/windows/agent.wxs", goodWxs)
+		write(t, r, f, body)
+		return checkInstallerAllow(r, allow)
+	}
+	const f = "packaging/windows/agent.wixproj"
+	bad := map[string]string{
+		"defineconstants": sdk + `<PropertyGroup><DefineConstants>X=$(CI_SIGNING_PASSWORD)</DefineConstants></PropertyGroup></Project>`,
+		"outputname":      sdk + `<PropertyGroup><OutputName>$(HOME)</OutputName></PropertyGroup></Project>`,
+		"condition":       sdk + `<PropertyGroup Condition="'$(GITHUB_TOKEN)' != ''"><OutputName>a</OutputName></PropertyGroup></Project>`,
+		"include":         sdk + `<ItemGroup><Compile Include="$(SECRET).wxs"/></ItemGroup></Project>`,
+		"mixed case":      sdk + `<PropertyGroup><DefineConstants>$(Configuration);$(Ci_Secret)</DefineConstants></PropertyGroup></Project>`,
+	}
+	for name, body := range bad {
+		wantViolation(t, mk(nil, f, body), "T-0771")
+		wantViolation(t, mk([]string{f, "agent.wixproj", "CI_SIGNING_PASSWORD"}, f, body), "T-0771")
+		_ = name
+	}
+	wantClean(t, mk(nil, f, sdk+`<PropertyGroup Condition="'$(Configuration)' == 'Release'"><OutputName>$(MSBuildProjectName)</OutputName></PropertyGroup></Project>`))
+}

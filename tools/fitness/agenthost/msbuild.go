@@ -174,6 +174,37 @@ func (msbuildExpr) MatchString(s string) bool {
 
 var msbuildPropFunc = msbuildExpr{}
 
+// msbuildReservedRefs are reserved/well-known MSBuild properties that may be referenced with $(Name) but are
+// never environment variables (MSBuild exposes every environment variable as a property, so an unlisted
+// $(CI_SIGNING_PASSWORD) would read a CI secret into DefineConstants/OutputName and from there into the MSI
+// or the build log, T-0771). Lowercase. A reference to any other name, including a msbuildAllowedProps name
+// that this file does not set, is judged by the first rule below.
+var msbuildReservedRefs = setOf("msbuildprojectname", "msbuildprojectfile", "msbuildprojectextension",
+	"msbuildprojectdirectory", "msbuildprojectfullpath", "msbuildthisfile", "msbuildthisfiledirectory",
+	"msbuildthisfileextension", "msbuildthisfilename", "msbuildthisfilefullpath", "projectdir", "projectname",
+	"projectfilename", "projectext", "projectpath", "targetpath", "targetdir", "targetname", "targetfilename",
+	"targetext", "intermediateoutputpath", "baseintermediateoutputpath", "msbuildprojectextensionspath")
+
+// msbuildUnreviewedRefs returns every plain $(Name) in s whose name is neither a reviewed property nor a
+// reserved/well-known one. Names are case-insensitive in MSBuild. Non-plain "$(" forms are msbuildExpr's job.
+func msbuildUnreviewedRefs(s string) []string {
+	var out []string
+	for {
+		i := strings.Index(s, "$(")
+		if i < 0 {
+			return out
+		}
+		s = s[i:]
+		if m := msbuildPlainRef.FindString(s); m != "" {
+			n := strings.ToLower(m[2 : len(m)-1])
+			if !msbuildAllowedProps[n] && !msbuildReservedRefs[n] {
+				out = append(out, m)
+			}
+		}
+		s = s[2:]
+	}
+}
+
 func judgeMSBuild(rel string, b []byte) []string {
 	var out []string
 	add := func(s string) {
@@ -196,7 +227,13 @@ func judgeMSBuild(rel string, b []byte) []string {
 	depth := 0
 	var stackKind []string
 	var chars strings.Builder
+	checkRefs := func(where, v string) {
+		for _, r := range msbuildUnreviewedRefs(v) {
+			add(fmt.Sprintf("%s references %s, which is not a reviewed or reserved MSBuild property (every environment variable, so every CI secret, is an MSBuild property; T-0771)", where, r))
+		}
+	}
 	flushChars := func() {
+		checkRefs("element text", chars.String())
 		if msbuildPropFunc.MatchString(chars.String()) {
 			add("uses an MSBuild property function $([...]) or Registry: lookup (found in decoded element text, comments ignored)")
 		}
@@ -233,6 +270,7 @@ func judgeMSBuild(rel string, b []byte) []string {
 		case xml.StartElement:
 			flushChars()
 			for _, a := range t.Attr {
+				checkRefs(t.Name.Local+" attribute "+a.Name.Local, a.Value)
 				if msbuildPropFunc.MatchString(a.Value) {
 					add(fmt.Sprintf("%s attribute %s uses an MSBuild property function $([...]) or Registry: lookup", t.Name.Local, a.Name.Local))
 				}
