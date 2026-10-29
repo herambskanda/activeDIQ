@@ -163,7 +163,11 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 		return err
 	}
 	tags = append(tags, setupTags...)
-	api, err := buildAPIPorts(cfg, console.ports(lim, authzr), tags...)
+	cat := permissionCatalogue()
+	if err := checkCatalogue(cat); err != nil {
+		return err
+	}
+	api, err := buildAPIPorts(cfg, cat, console.ports(lim, authzr, cat), tags...)
 	if err != nil {
 		return err
 	}
@@ -270,20 +274,20 @@ func apiIdentityProvider(cfg config.Config, kc KEKConfig, now time.Time) (apitls
 }
 
 // buildAPIPorts makes the API handler over the given ports: Run mounts the console stack's.
-func buildAPIPorts(cfg config.Config, ports apihost.Ports, tags ...apihost.TagHandlers) (http.Handler, error) {
+func buildAPIPorts(cfg config.Config, cat apihost.Permissions, ports apihost.Ports, tags ...apihost.TagHandlers) (http.Handler, error) {
 	policy, err := apihost.LoadPolicy()
 	if err != nil {
 		return nil, fmt.Errorf("server: api policy: %w", err)
 	}
-	return buildAPIPortsWith(cfg, policy, ports, tags...)
+	return buildAPIPortsWith(cfg, policy, cat, ports, tags...)
 }
 
-func buildAPIPortsWith(cfg config.Config, policy apihost.Policy, ports apihost.Ports, tags ...apihost.TagHandlers) (http.Handler, error) {
+func buildAPIPortsWith(cfg config.Config, policy apihost.Policy, cat apihost.Permissions, ports apihost.Ports, tags ...apihost.TagHandlers) (http.Handler, error) {
 	doc, err := apihost.LoadDocument()
 	if err != nil {
 		return nil, fmt.Errorf("server: api contract: %w", err)
 	}
-	s, err := apihost.Build(doc, tags, policy, apiCatalogue, ports, apihost.WithBodyBudget(cfg.APIBodyBudget), apihost.WithTrustedProxies(cfg.TrustedProxies), apihost.WithConsole(webui.Console()))
+	s, err := apihost.Build(doc, tags, policy, cat, ports, apihost.WithBodyBudget(cfg.APIBodyBudget), apihost.WithTrustedProxies(cfg.TrustedProxies), apihost.WithConsole(webui.Console()))
 	if err != nil {
 		return nil, fmt.Errorf("server: build api: %w", err)
 	}

@@ -1730,3 +1730,5 @@ There are 83 rows with `phase = P1` and `importance = must` in
 Rows marked "done" run in `make ci` today; the others do not yet, or run only in part. This
 blueprint moves to `accepted` when a human has read it end to end. The rules it states become
 *enforced* only as each row's check goes green in `make ci`.
+
+**Permission catalogue, T-0063.** `compose/server/catalogue.go` replaces the hand-listed `apiCatalogue`: `permissionCatalogue()` is the union of every `rbac.BuiltInRoles` permission and the module-declared operation permissions (`moduleOperationPermissions`, named by the owners' constants), sorted and unique. It is passed to `apihost.Build` (an operation whose `x-permission` is missing fails Build) and to `consoleAuthz`, which denies a permission outside it before RBAC is asked. The policy comes from the embedded `policy.yaml` (`apihost.LoadPolicy`); a malformed file fails boot with an `apihost: policy` error. `failClosedPorts` and the deny stubs moved to `failclosed_test.go` (tests only).
