@@ -191,3 +191,31 @@ Reset = `qm rollback 112 clean` by a human. Certificate verification is never di
 (`TestWindowsLab…` untrusted-CA test). `make lab-test-windows-unit` proves the mode offline (stub `go`/`virsh`,
 checks refusals, misconfiguration errors and that the password never appears in argv, logs or stdout).
 Status: **untested against VM 112 until a human completes the steps above** (the PowerShell is as untested as §8 says).
+
+## 11. DC agent MSI verification (T-0648)
+
+Builds the agent MSI with WiX on the lab DC and runs the ADR-0006 cases against it: install, restricted
+token, Security channel ACE and read, GPO reset and re-grant, corrupt `agent.json`, repair, forced failed
+major upgrade, `agentsetup` refusals, `CheckDataDir`, `EvtLogOldestRecordNumber`, uninstall cleanliness.
+
+```bash
+pip install pywinrm requests-ntlm                      # operator tooling; licence register row
+export WIN_LAB_ENV=<path to the main checkout's lab/windows/.win-lab.env>   # gitignored; DC address defaults to 192.168.1.9
+export WIN_LAB_DC_ADDR=<dc ip>                         # optional override
+lab/windows/bin/agent-verify --log knowledge/development/runbooks/windows-lab-runs/T-0648-agent-<date>.log
+```
+
+- It cross-builds `activediq-agent.exe`, `agentsetup.exe` and the `windowslab` Go tests, copies them and
+  `Agent.wxs` to `C:\lab\build` over WinRM (HTTP 5985, NTLM, lab network), installs the .NET 8 SDK and WiX
+  5.0.2 to `C:\lab\tools` on first use (the DC needs internet; nothing is installed system-wide), builds the
+  MSI there, and runs `lab/windows/guest/agent-verify.ps1`. Exit status is the number of failed cases.
+- **It installs, upgrades and removes the agent and clears the Security log. Lab DC only.** It leaves the
+  DC with the agent uninstalled and `ProgramData\skenzeriq` removed. The lab user it creates for two cases
+  has a per-run random password that is never printed, and is deleted at the end.
+- Reading the service token needs no enrolment: the script points the service image at a 25 s stub for
+  a few seconds (SCM builds the token from the service configuration, not the binary), reads that process's
+  token with `OpenProcessToken`, and restores `ImagePath`. If a run dies in that window, check
+  `HKLM\SYSTEM\CurrentControlSet\Services\activeDIQAgent\ImagePath` is the quoted `activediq-agent.exe` path.
+- Reset: `qm rollback <vmid> clean` (human) if a run leaves the DC odd; the script is otherwise idempotent.
+- Not covered (needs an enrolled agent talking to a server; T-0814): killing the server connection,
+  filling the data disk, and the U+0001 `Data` value reaching the server.
