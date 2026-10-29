@@ -1,10 +1,12 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
 	_ "embed"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -13,12 +15,14 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf16"
+	"unicode/utf8"
 )
 
 const pTestsWhat = "P1-P8 (ADR-0007) and F1 (out-of-bounds policy) tests exist, run and pass"
@@ -597,6 +601,8 @@ type instFile struct {
 	path, rel, text string
 	agent           bool   // the path or body names the agent (a WiX file is judged either way)
 	unreadable      string // why it could not be read as text; empty when text is valid
+	xml             bool   // WiX by content (root element Wix/Include/WixLocalization) whatever the file is called (T-0677)
+	problem         string // a walk error or symlink: reported as an A1 violation as it is (fail closed, T-0677)
 }
 
 var binaryExts = setOf(".ico", ".bmp", ".png", ".jpg", ".gif", ".dll", ".exe", ".cab", ".msi", ".cer", ".pfx", ".zip", ".gz", ".bin")
@@ -607,10 +613,33 @@ func decodeText(b []byte) (string, bool) {
 	switch {
 	case bytes.HasPrefix(b, []byte{0xEF, 0xBB, 0xBF}):
 		return string(b[3:]), bytes.IndexByte(b, 0) < 0
+	case bytes.HasPrefix(b, []byte{0xFF, 0xFE, 0, 0}):
+		return utf32Text(b[4:], false), true // T-0677: UTF-32LE BOM before the UTF-16LE case it prefixes
+	case bytes.HasPrefix(b, []byte{0, 0, 0xFE, 0xFF}):
+		return utf32Text(b[4:], true), true
 	case bytes.HasPrefix(b, []byte{0xFF, 0xFE}):
 		return utf16Text(b[2:], false), true
 	case bytes.HasPrefix(b, []byte{0xFE, 0xFF}):
 		return utf16Text(b[2:], true), true
+	}
+	// T-0677: mirror .NET XmlTextReaderImpl.DetectEncoding, which switches on the first two bytes of a
+	// BOM-less document (XML 1.0 Appendix F is only the example): 3C00 is UTF-16LE (UCS-4LE when the next
+	// two bytes are 0000) and 003C is UTF-16BE (the 3412 UCS-4 order, exotic, when they are 0000).
+	if len(b) >= 4 {
+		switch {
+		case b[0] == 0x3C && b[1] == 0 && b[2] == 0 && b[3] == 0:
+			return utf32Text(b, false), true
+		case b[0] == 0 && b[1] == 0 && b[2] == 0 && b[3] == 0x3C:
+			return utf32Text(b, true), true
+		}
+	}
+	if len(b) >= 2 {
+		switch {
+		case b[0] == 0x3C && b[1] == 0:
+			return utf16Text(b, false), true
+		case b[0] == 0 && b[1] == 0x3C:
+			return utf16Text(b, true), true
+		}
 	}
 	if bytes.IndexByte(b, 0) < 0 {
 		return string(b), true
@@ -634,6 +663,96 @@ func decodeText(b []byte) (string, bool) {
 	return "", false
 }
 
+// exoticXMLEncoding reports the Appendix F signatures this check does not decode (unusual UCS-4 byte
+// orders, EBCDIC): a file starting so is not classifiable and fails closed.
+func exoticXMLEncoding(b []byte) bool {
+	if len(b) < 4 {
+		return false
+	}
+	h := [4]byte{b[0], b[1], b[2], b[3]}
+	// 2143 and 3412 orders (BOM and bare '<'), and EBCDIC '<?xm'.
+	return h == [4]byte{0, 0, 0x3C, 0} || h == [4]byte{0, 0x3C, 0, 0} || h == [4]byte{0x4C, 0x6F, 0xA7, 0x94} ||
+		h == [4]byte{0xFE, 0xFF, 0, 0} || h == [4]byte{0, 0, 0xFF, 0xFE}
+}
+
+const exoticProblem = "starts with an XML byte-order signature this check cannot decode (unusual UCS-4 order or EBCDIC): it could be a WiX document, so it is not classifiable"
+
+// declEncodingRe matches the encoding pseudo-attribute of a leading XML declaration.
+var declEncodingRe = regexp.MustCompile(`(?is)^\s*<\?xml\s[^>]*?\bencoding\s*=\s*["']([^"']*)["']`)
+
+// wideEncoded reports whether decodeText decodes b as UTF-16 or UTF-32 (the detection .NET keeps for the
+// utf-16, ucs-2 and ucs-4 declarations).
+func wideEncoded(b []byte) bool {
+	if bytes.HasPrefix(b, []byte{0xEF, 0xBB, 0xBF}) {
+		return false
+	}
+	return bytes.IndexByte(b, 0) >= 0 || bytes.HasPrefix(b, []byte{0xFF, 0xFE}) || bytes.HasPrefix(b, []byte{0xFE, 0xFF})
+}
+
+// encodingProblem mirrors the two ways .NET's XmlTextReaderImpl picks an encoding (T-0677): DetectEncoding on
+// the first bytes (exoticXMLEncoding fails closed on what is not decoded) and CheckEncoding/SwitchEncoding on
+// the declaration's encoding name. Only names whose bytes this check decodes the same way are accepted; any
+// other name could make the parser re-decode the rest of the file into WiX this check never saw.
+func encodingProblem(b []byte) string {
+	if exoticXMLEncoding(b) {
+		return exoticProblem
+	}
+	t, _ := decodeText(b) // undecodable: the raw bytes below still carry an ASCII declaration
+	wide := wideEncoded(b)
+	// The declaration is read from the decoded text and from the raw bytes: a document whose prolog is ASCII
+	// and whose body is another encoding (utf-32 declared in an ASCII prolog) decodes as garbage as a whole.
+	for _, src := range []string{strings.TrimPrefix(t, "\uFEFF"), string(b)} {
+		m := declEncodingRe.FindStringSubmatch(src)
+		if m == nil {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(m[1])) {
+		case "utf-16", "ucs-2", "iso-10646-ucs-2", "ucs-4":
+			if wide {
+				continue
+			}
+		case "utf-8":
+			if !wide {
+				continue
+			}
+		case "us-ascii", "iso-8859-1", "windows-1252":
+			// .NET's ASCII decoder turns every byte >= 0x80 into '?', which can hide a document boundary
+			// from this check; only pure-ASCII files decode identically under these names.
+			if !wide && isPureASCII(b) {
+				continue
+			}
+		}
+		return "declares an encoding this check does not decode (" + m[1] + "): it could be a WiX document the build reads differently, so it is not classifiable"
+	}
+	return ""
+}
+
+func isPureASCII(b []byte) bool {
+	for _, c := range b {
+		if c >= 0x80 {
+			return false
+		}
+	}
+	return true
+}
+
+func utf32Text(b []byte, bigEndian bool) string {
+	r := make([]rune, 0, len(b)/4)
+	for i := 0; i+3 < len(b); i += 4 {
+		var v uint32
+		if bigEndian {
+			v = uint32(b[i])<<24 | uint32(b[i+1])<<16 | uint32(b[i+2])<<8 | uint32(b[i+3])
+		} else {
+			v = uint32(b[i+3])<<24 | uint32(b[i+2])<<16 | uint32(b[i+1])<<8 | uint32(b[i])
+		}
+		if v > utf8.MaxRune {
+			v = utf8.RuneError
+		}
+		r = append(r, rune(v))
+	}
+	return string(r)
+}
+
 func utf16Text(b []byte, bigEndian bool) string {
 	u := make([]uint16, 0, len(b)/2)
 	for i := 0; i+1 < len(b); i += 2 {
@@ -650,16 +769,35 @@ func utf16Text(b []byte, bigEndian bool) string {
 // through a variable) and the other files that name the agent in their relative path or body:
 // also install scripts, custom actions and anything else a service account can be set in
 // (ADR-0006 A1 covers any LocalSystem string in the MSI source). UTF-16 files are decoded. A file whose
-// path names the agent that cannot be read as text, or is too large, fails closed unless it has a known
-// binary extension.
+// path names the agent that cannot be read as text, or is too large, fails closed (no extension
+// exempts a file from the content check).
 func agentInstallerFiles(root string) []instFile {
 	var out []instFile
+	rootReal, rerr := filepath.EvalSymlinks(root)
+	if rerr != nil {
+		rootReal = root
+	}
 	_ = filepath.WalkDir(root, func(p string, e fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
 		relp, _ := filepath.Rel(root, p)
 		relp = filepath.ToSlash(relp)
+		if err != nil {
+			// T-0677: a directory or file the walk cannot read hides WiX the SDK may still compile; fail closed.
+			out = append(out, instFile{path: p, rel: relp, problem: "cannot be walked (" + err.Error() + "): an unreadable path under the repo could hide a WiX source the build compiles"})
+			if e != nil && e.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if e.Type()&fs.ModeSymlink != 0 {
+			// T-0677: WalkDir does not follow symlinks, MSBuild globs and Includes may. A link anywhere in the
+			// repo that is WiX-named, dangling, resolves to a directory, leaves the repo, or whose target is
+			// WiX (by name or content) is a violation, so nothing the build reaches through a link was left
+			// unscanned. Plain file links that stay inside the repo (node_modules/.bin) pass.
+			if prob := linkProblem(rootReal, p); prob != "" {
+				out = append(out, instFile{path: p, rel: relp, problem: prob})
+			}
+			return nil
+		}
 		if e.IsDir() {
 			switch e.Name() {
 			case ".git":
@@ -667,23 +805,59 @@ func agentInstallerFiles(root string) []instFile {
 			}
 			// testdata/ and node_modules/ are deliberately NOT skipped (T-0664): the WiX SDK compiles
 			// **/*.wxs and a .wixproj can Compile-Include any path, so reachability cannot be guessed;
-			// every WiX file outside tools/fitness is scanned or fails A1.
-			if relp == "tools/fitness" {
-				return filepath.SkipDir
-			}
+			// every WiX-named file in the repo, tools/fitness included, is scanned or fails A1. Test
+			// fixtures therefore must not have WiX names on disk (they are Go strings in t.TempDir()).
+			return nil
+		}
+		ext := strings.ToLower(filepath.Ext(p))
+		if wixIntermediateExts[ext] {
+			out = append(out, instFile{path: p, rel: relp, problem: "is a prebuilt WiX intermediate (" + ext + "): it is opaque and can carry a compiled ServiceInstall; the installer is built from reviewed source only"})
+			return nil
+		}
+		if hasWixIR(p) {
+			out = append(out, instFile{path: p, rel: relp, problem: "is an archive holding wix-ir.json (a prebuilt WiX intermediate under another name): the installer is built from reviewed source only"})
 			return nil
 		}
 		inPack := strings.HasPrefix(relp, "packaging/")
-		if !inPack && !isRepoWix(p) {
+		named := isRepoWix(p)
+		info, ierr := e.Info()
+		if binaryExts[ext] && !named {
+			// T-0677: an extension never exempts a file from the content check (WiX compiles whatever the
+			// file is called). A real binary has NULs and is not text, so it passes cheaply.
+			if ierr != nil {
+				out = append(out, instFile{path: p, rel: relp, problem: "cannot be inspected: " + ierr.Error()})
+				return nil
+			}
+			text, wix, prob := sniffWix(p, info.Size())
+			switch {
+			case prob != "":
+				out = append(out, instFile{path: p, rel: relp, problem: prob})
+			case wix:
+				out = append(out, instFile{path: p, rel: relp, text: text, agent: agentBodyRe.MatchString(text), xml: true})
+			}
+			return nil
+		}
+		if !inPack && !named {
+			// T-0677: WiX compiles whatever the file is called and <?include?> takes any name, so every text
+			// file is classified by CONTENT: a well-formed XML document rooted at Wix, Include or
+			// WixLocalization is WiX wherever it sits.
+			if ierr != nil {
+				out = append(out, instFile{path: p, rel: relp, problem: "cannot be inspected: " + ierr.Error()})
+				return nil
+			}
+			text, wix, prob := sniffWix(p, info.Size())
+			switch {
+			case prob != "":
+				out = append(out, instFile{path: p, rel: relp, problem: prob})
+			case wix:
+				out = append(out, instFile{path: p, rel: relp, text: text, agent: agentBodyRe.MatchString(text), xml: true})
+			}
 			return nil
 		}
 		rel := relp
 		inPath := inPack && agentFileRe.MatchString(strings.TrimPrefix(rel, "packaging/"))
 		wix := isWixXML(p) || isTemplate(p) || !inPack
-		if binaryExts[strings.ToLower(filepath.Ext(p))] {
-			return nil
-		}
-		if info, err := e.Info(); err != nil || info.Size() > 4<<20 {
+		if ierr != nil || info.Size() > 4<<20 {
 			if inPath || wix {
 				out = append(out, instFile{path: p, rel: rel, unreadable: "is too large to scan"})
 			}
@@ -696,6 +870,10 @@ func agentInstallerFiles(root string) []instFile {
 			}
 			return nil
 		}
+		if prob := encodingProblem(b); prob != "" {
+			out = append(out, instFile{path: p, rel: rel, problem: prob})
+			return nil
+		}
 		text, ok := decodeText(b)
 		if !ok {
 			if inPath || wix {
@@ -703,14 +881,165 @@ func agentInstallerFiles(root string) []instFile {
 			}
 			return nil
 		}
+		content := false
+		if !isWixXML(p) && !isTemplate(p) {
+			content, _ = wixByContent(text)
+		}
 		isAgent := inPath || agentBodyRe.MatchString(text)
-		if isAgent || wix {
-			out = append(out, instFile{path: p, rel: rel, text: text, agent: isAgent})
+		if isAgent || wix || content {
+			out = append(out, instFile{path: p, rel: rel, text: text, agent: isAgent, xml: content})
 		}
 		return nil
 	})
 	sort.Slice(out, func(i, j int) bool { return out[i].rel < out[j].rel })
 	return out
+}
+
+// wixIntermediateExts are prebuilt WiX intermediates (zips holding wix-ir.json): opaque to this check.
+var wixIntermediateExts = setOf(".wixlib", ".wixipl", ".wixobj")
+
+// wixRoots are the root elements of a WiX compiler input (any namespace).
+var wixRoots = setOf("Wix", "Include", "WixLocalization")
+
+// wixByContent reports whether text is a well-formed-at-the-start XML document whose root element is a WiX
+// one. undecided is true when only a prolog (comments, PIs, whitespace) was seen before the text ended.
+func wixByContent(text string) (wix, undecided bool) {
+	d := xml.NewDecoder(strings.NewReader(text))
+	d.Strict = false
+	d.CharsetReader = func(_ string, r io.Reader) (io.Reader, error) { return r, nil }
+	for {
+		tok, err := d.RawToken()
+		if err != nil {
+			// Only a text that ends inside its prolog is undecided; a syntax error is not an XML document.
+			var se *xml.SyntaxError
+			return false, err == io.EOF || (errors.As(err, &se) && strings.Contains(se.Msg, "unexpected EOF"))
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			return wixRoots[t.Name.Local], false
+		case xml.CharData:
+			if strings.TrimSpace(string(t)) != "" {
+				return false, false // not an XML document (a Go or shell file holding a snippet)
+			}
+		}
+	}
+}
+
+// sniffWix classifies an unnamed file by content: the head first, the whole file (up to 4 MiB) when the head
+// is only a prolog. A file that stays undecided and is too large to read fails closed.
+func sniffWix(p string, size int64) (text string, wix bool, problem string) {
+	const head = 64 << 10
+	f, err := os.Open(p)
+	if err != nil {
+		return "", false, "cannot be read (" + err.Error() + "): an unreadable file could be WiX the build compiles"
+	}
+	buf := make([]byte, head)
+	n, _ := io.ReadFull(f, buf)
+	f.Close()
+	if prob := encodingProblem(buf[:n]); prob != "" {
+		return "", false, prob
+	}
+	t, ok := decodeText(buf[:n])
+	if !ok {
+		return "", false, ""
+	}
+	w, undecided := wixByContent(t)
+	if w {
+		if size > 4<<20 {
+			return "", false, "is a WiX document too large to scan"
+		}
+		full, ok, prob := readCheckedText(p)
+		if prob != "" {
+			return "", false, prob
+		}
+		if !ok {
+			return "", false, "is a WiX document that cannot be read as text"
+		}
+		return full, true, ""
+	}
+	if undecided && size > int64(n) {
+		if size > 4<<20 {
+			return "", false, "starts with a long XML prolog and is too large to classify: it could be a WiX document"
+		}
+		full, ok, prob := readCheckedText(p)
+		if prob != "" {
+			return "", false, prob
+		}
+		if !ok {
+			return "", false, ""
+		}
+		if w, _ := wixByContent(full); w {
+			return full, true, ""
+		}
+	}
+	return "", false, ""
+}
+
+// readCheckedText reads the whole file, runs encodingProblem on every byte, then decodes. Every full read
+// goes through here so no path can skip the encoding rule.
+func readCheckedText(p string) (text string, ok bool, problem string) {
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return "", false, "cannot be read (" + err.Error() + ")"
+	}
+	if prob := encodingProblem(b); prob != "" {
+		return "", false, prob
+	}
+	text, ok = decodeText(b)
+	return text, ok, ""
+}
+
+// hasWixIR: a zip (PK\x03\x04) holding a wix-ir.json entry is a WiX intermediate whatever its name.
+func hasWixIR(p string) bool {
+	f, err := os.Open(p)
+	if err != nil {
+		return false
+	}
+	var m [4]byte
+	_, rerr := io.ReadFull(f, m[:])
+	f.Close()
+	if rerr != nil || m != [4]byte{'P', 'K', 3, 4} {
+		return false
+	}
+	z, err := zip.OpenReader(p)
+	if err != nil {
+		return false
+	}
+	defer z.Close()
+	for _, zf := range z.File {
+		if path.Base(zf.Name) == "wix-ir.json" {
+			return true
+		}
+	}
+	return false
+}
+
+// linkProblem judges a symlink: empty means it is a harmless in-repo link to a non-WiX file.
+func linkProblem(rootReal, p string) string {
+	if isRepoWix(p) {
+		return "is a symbolic link named like a WiX source: the scan does not follow it, the build might; copy the content in instead"
+	}
+	real, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		return "is a symbolic link that cannot be resolved (dangling or looping): the build agent may resolve it to WiX the scan never saw"
+	}
+	if rel, rerr := filepath.Rel(rootReal, real); rerr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "is a symbolic link that leaves the repository: its target is outside the scan"
+	}
+	st, err := os.Stat(real)
+	if err != nil {
+		return "is a symbolic link whose target cannot be read"
+	}
+	if st.IsDir() {
+		return "is a symbolic link to a directory: the scan does not follow it, an MSBuild glob or Include might; copy the content in instead"
+	}
+	if isRepoWix(real) || wixIntermediateExts[strings.ToLower(filepath.Ext(real))] || hasWixIR(real) {
+		return "is a symbolic link to a WiX file: the scan does not follow it; copy the content in instead"
+	}
+	if _, wix, prob := sniffWix(real, st.Size()); wix || prob != "" {
+		return "is a symbolic link to a WiX document (by content) or to a file that cannot be classified: copy the content in instead"
+	}
+	return ""
 }
 
 // templateExts are generators of WiX (heat/xslt transforms, preprocessed templates): they are not parsed,
@@ -781,8 +1110,12 @@ func checkInstallerAllow(root string, allow []string) Result {
 	namedAgent := false
 	for _, f := range files {
 		rel := f.rel
+		if f.problem != "" {
+			r.Violations = append(r.Violations, fmt.Sprintf("%s %s (ADR-0006 A1 fails closed)", rel, f.problem))
+			continue
+		}
 		if f.unreadable != "" {
-			r.Violations = append(r.Violations, fmt.Sprintf("%s %s: a WiX source or agent packaging file must be readable text (or have a known binary extension)", rel, f.unreadable))
+			r.Violations = append(r.Violations, fmt.Sprintf("%s %s: a WiX source or agent packaging file must be readable text", rel, f.unreadable))
 			continue
 		}
 		// Every file here is WiX or names the agent: LocalSystem and the Services registry key are
@@ -796,10 +1129,10 @@ func checkInstallerAllow(root string, allow []string) Result {
 		if isTemplate(f.path) && !allowed(rel, allow) {
 			r.Violations = append(r.Violations, fmt.Sprintf("%s is a template or transform under packaging/: it is not parsed, so it could emit a ServiceInstall, ServiceSid or ACL the check never sees; list it in installer-allow.txt after a security-architect review", rel))
 		}
-		if isWixXML(f.path) && (docTypeRe.MatchString(f.text) || hasNamedEntity(f.text)) && !allowed(rel, allow) {
+		if (isWixXML(f.path) || f.xml) && (docTypeRe.MatchString(f.text) || hasNamedEntity(f.text)) && !allowed(rel, allow) {
 			r.Violations = append(r.Violations, fmt.Sprintf("%s declares a DOCTYPE or ENTITY, or uses a named entity other than amp, lt, gt, quot, apos: a name, account or SID built from an entity cannot be read", rel))
 		}
-		if isWixXML(f.path) && strings.Contains(f.text, "&#") && !allowed(rel, allow) {
+		if (isWixXML(f.path) || f.xml) && strings.Contains(f.text, "&#") && !allowed(rel, allow) {
 			r.Violations = append(r.Violations, fmt.Sprintf("%s contains a numeric character reference (&#...): names, accounts and SIDs must be plain text so they can be read", rel))
 		}
 		if f.agent {
@@ -810,11 +1143,11 @@ func checkInstallerAllow(root string, allow []string) Result {
 			}
 			if scriptExts[strings.ToLower(filepath.Ext(f.path))] && !allowed(rel, allow) {
 				r.Violations = append(r.Violations, fmt.Sprintf("%s is a script in the agent packaging: nothing may compute the service account, SID type or privileges in a script; list it in installer-allow.txt after a security-architect review", rel))
-			} else if !isWixXML(f.path) && !isTemplate(f.path) && !scriptExts[strings.ToLower(filepath.Ext(f.path))] && !allowed(rel, allow) {
+			} else if !isWixXML(f.path) && !f.xml && !isTemplate(f.path) && !scriptExts[strings.ToLower(filepath.Ext(f.path))] && !allowed(rel, allow) {
 				r.Violations = append(r.Violations, fmt.Sprintf("%s is an unknown file type in the agent packaging: only WiX (parsed), known binaries and files listed in installer-allow.txt are allowed", rel))
 			}
 		}
-		if !isWixXML(f.path) {
+		if !isWixXML(f.path) && !f.xml {
 			continue
 		}
 		x := judgeInstallerXML(rel, []byte(f.text), allow, f.agent)
