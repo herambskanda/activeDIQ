@@ -94,7 +94,7 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	}
 	// Lab builds only (T-0684): an env-configured lab seeds an active connection served by an in-process
 	// connector; the production build's labBootstrap returns src unchanged.
-	csrc, labClose, err := labBootstrap(ctx, db, conns, getenv, src)
+	csrc, labSeed, labClose, err := labBootstrap(ctx, getenv, src)
 	if err != nil {
 		return err
 	}
@@ -108,7 +108,7 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	if err != nil {
 		return err
 	}
-	vopts, err := verifyOptions(src)
+	vopts, err := verifyOptions(csrc)
 	if err != nil {
 		return err
 	}
@@ -163,11 +163,17 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	}
 	// Modules and platform packages contribute job kinds to this registry; the worker runs it.
 	jreg := jobs.NewRegistry()
-	if _, err := buildConnections(db, ok.Chainer, dirClient, jreg); err != nil {
+	connKernel, err := buildConnections(db, ok.Chainer, dirClient, jreg)
+	if err != nil {
 		return err
 	}
 	// The tenant, its data key and its audit genesis exist before anything listens or the worker claims.
-	if _, err := bootstrapTenant(ctx, cfg, db, ok.Chainer, kekp, jreg); err != nil {
+	tid, err := bootstrapTenant(ctx, cfg, db, ok.Chainer, kekp, jreg)
+	if err != nil {
+		return err
+	}
+	// Lab builds only (T-0684): create and activate the lab connections through the real activation path.
+	if err := labSeed(ctx, conns, connKernel.Service, tid); err != nil {
 		return err
 	}
 	ln, err := net.Listen("tcp", cfg.APIAddr)

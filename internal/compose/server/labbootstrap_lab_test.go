@@ -11,15 +11,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/skenzeriq/activediq/internal/compose/config"
 	"github.com/skenzeriq/activediq/internal/connector/labadmin"
 	"github.com/skenzeriq/activediq/internal/connector/write"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
+	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
+	"github.com/skenzeriq/activediq/internal/platform/jobs"
+	"github.com/skenzeriq/activediq/internal/platform/keys"
+	"github.com/skenzeriq/activediq/internal/platform/secret"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
-	"github.com/skenzeriq/activediq/internal/platform/tenant/provision"
+	"github.com/skenzeriq/activediq/internal/platform/tenant"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 	"github.com/skenzeriq/activediq/internal/testlab"
 )
@@ -66,7 +71,7 @@ func TestLabSpecsPartialConfigFailsWithoutLeaking(t *testing.T) {
 // touches neither database nor registry (both nil).
 func TestLabBootstrapWithoutEnvIsInert(t *testing.T) {
 	var next client.ConnectorSource = &client.TunnelSource{}
-	got, closeFn, err := labBootstrap(context.Background(), nil, nil, envOf(nil), next)
+	got, _, closeFn, err := labBootstrap(context.Background(), envOf(nil), next)
 	if err != nil || got != next {
 		t.Fatalf("labBootstrap(no env) = (%v, %v)", got, err)
 	}
@@ -117,16 +122,35 @@ func TestLabBootstrapSeedsActiveConnectionAndServesReads(t *testing.T) {
 		env := envOf(map[string]string{"LAB_LDAPS_PORT": le.Port, "LAB_SVC_PASSWORD": pw, "LAB_CA": le.CAPath})
 		conns := connection.NewRegistry(db)
 		var next client.ConnectorSource
-		src, closeFn, err := labBootstrap(ctx, db, conns, env, next)
+		src, seed, closeFn, err := labBootstrap(ctx, env, next)
 		if err != nil {
 			t.Fatalf("labBootstrap: %v", err)
 		}
 		defer closeFn()
 
-		res, err := provision.FirstRun(ctx, db, "lab")
+		// What Run does around the bootstrap: the tenant with its keys and audit genesis, the verify
+		// transport over the lab source, the connection service.
+		kek, err := keys.NewLocalProvider("test-kek", secret.FromBytes(bytes.Repeat([]byte{7}, 32)))
 		if err != nil {
 			t.Fatal(err)
 		}
+		ch := audit.NewChainer(db)
+		tid, err := bootstrapTenant(ctx, config.Config{InstanceID: "node-1"}, db, ch, kek, jobs.NewRegistry())
+		if err != nil {
+			t.Fatal(err)
+		}
+		vopts, err := verifyOptions(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		svc, err := connection.NewService(conns, client.New(vopts...), ch)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := seed(ctx, conns, svc, tid); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		res := struct{ Tenant tenant.ID }{tid}
 		all, err := conns.List(ctx, res.Tenant, false)
 		if err != nil || len(all) != 1 || all[0].State != connection.StateActive || all[0].Kind != connection.KindADForest || all[0].DirectoryIdentity == "" {
 			t.Fatalf("connections = %+v, %v; want exactly one active AD forest connection with an identity", all, err)
@@ -161,11 +185,17 @@ func TestLabBootstrapSeedsActiveConnectionAndServesReads(t *testing.T) {
 		}
 
 		// A second boot reuses the connection rather than adding another.
-		_, close2, err := labBootstrap(ctx, db, conns, env, next)
+		src2, seed2, close2, err := labBootstrap(ctx, env, next)
 		if err != nil {
 			t.Fatalf("second labBootstrap: %v", err)
 		}
-		close2()
+		defer close2()
+		if err := seed2(ctx, conns, svc, tid); err != nil {
+			t.Fatalf("second seed: %v", err)
+		}
+		if _, err := src2.Connector(ctx, string(conn.ID)); err != nil {
+			t.Errorf("second boot does not serve the existing connection: %v", err)
+		}
 		if again, _ := conns.List(ctx, res.Tenant, false); len(again) != 1 {
 			t.Errorf("second boot left %d connections, want 1", len(again))
 		}

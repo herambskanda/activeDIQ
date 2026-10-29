@@ -11,6 +11,8 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -20,15 +22,16 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
 	"github.com/skenzeriq/activediq/internal/connector/read"
+	"github.com/skenzeriq/activediq/internal/connector/rights"
 	"github.com/skenzeriq/activediq/internal/connector/write"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
+	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
+	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/secret"
-	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
-	"github.com/skenzeriq/activediq/internal/platform/tenant/provision"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
@@ -150,57 +153,73 @@ func (s *labSource) add(id string, c connectorv1.ConnectorClient) {
 	s.mu.Unlock()
 }
 
-// labBootstrap seeds the configured labs and returns the source that serves them (over next), and a
-// closer for the sessions. With no lab configured it returns next unchanged and seeds nothing.
-func labBootstrap(ctx context.Context, db *store.DB, conns *connection.Registry, getenv func(string) string, next client.ConnectorSource) (client.ConnectorSource, func(), error) {
+// labSeeder seeds the opened labs' connections once the tenant and the connection service exist.
+type labSeeder func(ctx context.Context, conns *connection.Registry, svc *connection.Service, tid tenant.ID) error
+
+// openedLab is one lab session with its in-process connector, ready to be bound to a connection.
+type openedLab struct {
+	spec labSpec
+	cl   connectorv1.ConnectorClient
+	stop func()
+}
+
+// labBootstrap opens the configured labs' directory sessions and in-process connectors (no database
+// yet) and returns the source that serves them over next, the seeder that creates and activates each
+// lab's connection, and a closer for the sessions. With no lab configured it returns next unchanged
+// and a no-op seeder.
+func labBootstrap(ctx context.Context, getenv func(string) string, next client.ConnectorSource) (client.ConnectorSource, labSeeder, func(), error) {
 	specs, err := labSpecs(getenv)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if len(specs) == 0 {
-		return next, func() {}, nil
-	}
-	res, err := provision.FirstRun(ctx, db, "lab")
-	if err != nil {
-		return nil, nil, fmt.Errorf("server: lab bootstrap: tenant: %w", err)
+		return next, func(context.Context, *connection.Registry, *connection.Service, tenant.ID) error { return nil }, func() {}, nil
 	}
 	src := &labSource{by: map[string]connectorv1.ConnectorClient{}, next: next}
-	var closers []func()
+	var opened []openedLab
 	closeAll := func() {
-		for i := len(closers) - 1; i >= 0; i-- {
-			closers[i]()
+		for i := len(opened) - 1; i >= 0; i-- {
+			opened[i].stop()
 		}
 	}
 	for _, sp := range specs {
-		id, cl, closeFn, err := openLab(ctx, db, conns, res.Tenant, sp)
+		cl, stop, err := openLab(ctx, sp)
 		if err != nil {
 			closeAll()
-			return nil, nil, fmt.Errorf("server: lab bootstrap (%s): %w", sp.Name, err)
+			return nil, nil, nil, fmt.Errorf("server: lab bootstrap (%s): %w", sp.Name, err)
 		}
-		closers = append(closers, closeFn)
-		src.add(id, cl)
-		slog.Info("server: lab connection active (in-process connector)", "lab", sp.Name, "connection_id", id, "tenant_id", res.Tenant.String())
+		opened = append(opened, openedLab{spec: sp, cl: cl, stop: stop})
 	}
-	return src, closeAll, nil
+	seed := func(ctx context.Context, conns *connection.Registry, svc *connection.Service, tid tenant.ID) error {
+		for _, o := range opened {
+			id, err := ensureActive(ctx, conns, svc, src, tid, labDisplayName(o.spec), o.cl)
+			if err != nil {
+				return fmt.Errorf("server: lab bootstrap (%s): %w", o.spec.Name, err)
+			}
+			slog.Info("server: lab connection active (in-process connector)", "lab", o.spec.Name, "connection_id", id, "tenant_id", tid.String())
+		}
+		return nil
+	}
+	return src, seed, closeAll, nil
 }
 
 // labDisplayName is the stable name by which a re-boot finds its connection again.
 func labDisplayName(sp labSpec) string { return "lab: " + sp.Name }
 
-// openLab opens the lab session, ensures the active connection and serves it in process.
-func openLab(ctx context.Context, db *store.DB, conns *connection.Registry, tid tenant.ID, sp labSpec) (string, connectorv1.ConnectorClient, func(), error) {
+// openLab opens the lab session and serves it, verification and reads, from an in-process connector.
+func openLab(ctx context.Context, sp labSpec) (connectorv1.ConnectorClient, func(), error) {
 	pem, err := os.ReadFile(sp.CAPath)
 	if err != nil {
-		return "", nil, nil, errors.New("CA file unreadable")
+		return nil, nil, errors.New("CA file unreadable")
 	}
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(pem) {
-		return "", nil, nil, errors.New("CA file is not valid PEM")
+		return nil, nil, errors.New("CA file is not valid PEM")
 	}
 	sess, err := ad.Open(ctx, ad.Config{Servers: []string{sp.Server}, ServerName: sp.ServerName, RootCAs: pool, PageSize: 500,
 		Credential: ad.Credential{BindName: sp.BindName, Password: sp.Password}})
 	if err != nil {
-		return "", nil, nil, fmt.Errorf("open directory session: code %s", ad.CodeOf(err))
+		return nil, nil, fmt.Errorf("open directory session: code %s", ad.CodeOf(err))
 	}
 	ok := false
 	defer func() {
@@ -211,83 +230,151 @@ func openLab(ctx context.Context, db *store.DB, conns *connection.Registry, tid 
 	// The directory identity is the forest root NC head's objectGUID, read from the DC.
 	rd, err := sess.RootDSE(ctx)
 	if err != nil {
-		return "", nil, nil, fmt.Errorf("rootDSE: code %s", ad.CodeOf(err))
+		return nil, nil, fmt.Errorf("rootDSE: code %s", ad.CodeOf(err))
 	}
 	ref, err := dn.ParseObjectRef(rd.RootDomainNamingContext)
 	if err != nil {
-		return "", nil, nil, errors.New("root naming context is not a DN")
+		return nil, nil, errors.New("root naming context is not a DN")
 	}
 	head, err := sess.Read(ctx, ref, []string{"objectGUID"}, ad.ReadOptions{})
 	if err != nil {
-		return "", nil, nil, fmt.Errorf("read forest root: code %s", ad.CodeOf(err))
+		return nil, nil, fmt.Errorf("read forest root: code %s", ad.CodeOf(err))
 	}
 	g, err := head.GUID()
 	if err != nil {
-		return "", nil, nil, errors.New("forest root has no objectGUID")
+		return nil, nil, errors.New("forest root has no objectGUID")
 	}
-	wire := write.GUIDToWire(g)
-	ident := &connectorv1.DirectoryIdentity{Identity: &connectorv1.DirectoryIdentity_AdForest{AdForest: &connectorv1.AdForestIdentity{ForestRootNcGuid: wire}}}
-	v := wire.GetValue()
-	identText := fmt.Sprintf("%x-%x-%x-%x-%x", v[0:4], v[4:6], v[6:8], v[8:10], v[10:16])
+	ident := &connectorv1.DirectoryIdentity{Identity: &connectorv1.DirectoryIdentity_AdForest{AdForest: &connectorv1.AdForestIdentity{ForestRootNcGuid: write.GUIDToWire(g)}}}
 
-	cid, err := ensureActive(ctx, conns, tid, labDisplayName(sp), connection.DirectoryIdentity(identText))
+	self, err := selfRef(ctx, sess, ref, sp.BindName)
 	if err != nil {
-		return "", nil, nil, err
+		return nil, nil, err
 	}
-
 	prov := write.NewADProvider(sess, nil, ident, &labPinStore{})
 	src, err := read.NewADSource(sess, prov)
 	if err != nil {
-		return "", nil, nil, errors.New("read source")
+		return nil, nil, errors.New("read source")
 	}
 	h, err := read.New(src)
 	if err != nil {
-		return "", nil, nil, errors.New("read handler")
+		return nil, nil, errors.New("read handler")
 	}
-	cl, stop, err := inProcessConnector(h)
+	// The verification handler: the real rights check over this session. Its epoch baseline and records
+	// live in a private directory that goes with the process (a lab connector has no host to keep them).
+	dir, err := os.MkdirTemp("", "activediq-lab-connector-")
 	if err != nil {
-		return "", nil, nil, err
+		return nil, nil, errors.New("lab connector state directory")
+	}
+	gate, err := write.NewGateBook(labBaseline{}, nil)
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		return nil, nil, errors.New("lab write gate")
+	}
+	epoch := rights.NewEpochState(rights.FileBaselineStore{Path: filepath.Join(dir, "baseline.json")},
+		rights.FileRecordSink{Path: filepath.Join(dir, "records.log")}, nil)
+	vh, err := rights.NewVerifyHandler(rights.VerifyConfig{Dir: rights.NewSessionDirectory(sess), Epoch: epoch, Identity: self,
+		Directory: ident, Gate: gate, OnLocalRecordFailed: gate.CloseLocalRecordFailed})
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		return nil, nil, errors.New("verify handler")
+	}
+	cl, stop, err := inProcessConnector(vh, h)
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		return nil, nil, err
 	}
 	ok = true
-	return cid, cl, func() { stop(); sess.Close() }, nil
+	return cl, func() { stop(); sess.Close(); _ = os.RemoveAll(dir) }, nil
 }
 
-// ensureActive returns the active connection named name, creating it (draft → verifying → active) when
-// the tenant has none. A connection that exists in another state is an error: the lab seed does not
-// reshape a connection an operator has touched.
-func ensureActive(ctx context.Context, conns *connection.Registry, tid tenant.ID, name string, identity connection.DirectoryIdentity) (string, error) {
+// labBaseline is the in-memory write.Baseline of a lab connector: the ratchet needs no durability
+// across a process that holds its own temp state.
+type labBaseline struct{}
+
+func (labBaseline) Append(string, []write.Mark) error { return nil }
+
+// selfRef resolves the service account the session is bound as (its objectGUID) by its UPN.
+func selfRef(ctx context.Context, sess *ad.Session, root dn.ObjectRef, bindName string) (dn.ObjectRef, error) {
+	sc := ad.DefaultSchema()
+	an, err := ldapfilter.ParseAttrName("userPrincipalName", sc)
+	if err != nil {
+		return dn.ObjectRef{}, errors.New("identity filter")
+	}
+	var found *guid.GUID
+	err = sess.Search(ctx, ad.SearchRequest{Base: root, Scope: ad.ScopeSubtree,
+		Filter: ldapfilter.Eq(an, ldapfilter.String(bindName)), Attributes: []string{"objectGUID"}}, func(e *ad.Entry) error {
+		g, gerr := e.GUID()
+		if gerr != nil {
+			return gerr
+		}
+		if found == nil {
+			found = &g
+		}
+		return nil
+	})
+	if err != nil {
+		return dn.ObjectRef{}, fmt.Errorf("resolve service account: code %s", ad.CodeOf(err))
+	}
+	if found == nil {
+		return dn.ObjectRef{}, errors.New("service account not found by its user principal name")
+	}
+	return dn.GUIDRef(*found), nil
+}
+
+// ensureActive returns the active connection named name, creating it and running the product's real
+// activation (a VerifyConnection against the lab DC through the in-process connector) when the tenant
+// has none or it is still a draft. Any other state is an error: the lab seed does not reshape a
+// connection an operator has touched. The activation's verdict is the evidence; nothing is fabricated.
+func ensureActive(ctx context.Context, conns *connection.Registry, svc *connection.Service, src *labSource, tid tenant.ID, name string, cl connectorv1.ConnectorClient) (string, error) {
 	all, err := conns.List(ctx, tid, false)
 	if err != nil {
 		return "", errors.New("list connections")
 	}
+	var id connection.ID
 	for _, c := range all {
 		if c.DisplayName != name {
 			continue
 		}
-		if c.State != connection.StateActive || c.DirectoryIdentity != identity {
-			return "", fmt.Errorf("connection %q exists in state %s or with another identity", name, c.State)
+		switch c.State {
+		case connection.StateActive:
+			src.add(string(c.ID), cl)
+			return string(c.ID), nil
+		case connection.StateDraft:
+			id = c.ID
+		default:
+			return "", fmt.Errorf("connection %q exists in state %s", name, c.State)
 		}
-		return string(c.ID), nil
 	}
-	cred, err := newUUID()
+	if id == "" {
+		cred, err := newUUID()
+		if err != nil {
+			return "", err
+		}
+		c, err := conns.Create(ctx, tid, connection.New{Kind: connection.KindADForest, DisplayName: name,
+			CredentialID: connection.CredentialID(cred), Transport: connection.TransportLDAPS})
+		if err != nil {
+			return "", errors.New("create connection")
+		}
+		id = c.ID
+	}
+	src.add(string(id), cl)
+	actor := authority.Chain{Requester: authority.Principal{ID: "lab-bootstrap", Kind: authority.System}}
+	out, err := svc.Activate(ctx, tid, id, actor)
 	if err != nil {
-		return "", err
+		// Check names and outcomes only: no finding text, which can carry directory names.
+		var bad []string
+		for c, o := range out.Verification.Outcomes {
+			if o != connection.OutcomePass {
+				bad = append(bad, fmt.Sprintf("%s=%s", c, o))
+			}
+		}
+		sort.Strings(bad)
+		return "", fmt.Errorf("activation refused (verdict %s; %s): %w", out.Verification.Verdict, strings.Join(bad, ","), err)
 	}
-	c, err := conns.Create(ctx, tid, connection.New{Kind: connection.KindADForest, DisplayName: name,
-		CredentialID: connection.CredentialID(cred), Transport: connection.TransportLDAPS})
-	if err != nil {
-		return "", errors.New("create connection")
+	if out.Connection.State != connection.StateActive {
+		return "", fmt.Errorf("connection is %s after activation", out.Connection.State)
 	}
-	if _, err := conns.Transition(ctx, tid, c.ID, connection.StateDraft, connection.StateVerifying); err != nil {
-		return "", errors.New("connection to verifying")
-	}
-	if _, err := conns.SetDirectoryIdentity(ctx, tid, c.ID, identity); err != nil {
-		return "", errors.New("connection identity")
-	}
-	if _, err := conns.Transition(ctx, tid, c.ID, connection.StateVerifying, connection.StateActive); err != nil {
-		return "", errors.New("connection to active")
-	}
-	return string(c.ID), nil
+	return string(id), nil
 }
 
 func newUUID() (string, error) {
@@ -300,12 +387,31 @@ func newUUID() (string, error) {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:]), nil
 }
 
-// inProcessConnector serves the read handler on an in-memory gRPC pipe and returns its client. The
-// hop is real gRPC (marshalling, status errors, streaming) but never leaves the process.
-func inProcessConnector(h *read.Handler) (connectorv1.ConnectorClient, func(), error) {
+// labServer routes each served RPC to its group's server, as the tunnel binding does.
+type labServer struct {
+	connectorv1.UnimplementedConnectorServer
+	verify *rights.Server
+	read   *read.Server
+}
+
+func (s *labServer) VerifyConnection(req *connectorv1.VerifyConnectionRequest, st grpc.ServerStreamingServer[connectorv1.VerifyConnectionResponse]) error {
+	return s.verify.VerifyConnection(req, st)
+}
+
+func (s *labServer) Read(req *connectorv1.ReadRequest, st grpc.ServerStreamingServer[connectorv1.ReadResponse]) error {
+	return s.read.Read(req, st)
+}
+
+func (s *labServer) ScopedSearch(req *connectorv1.ScopedSearchRequest, st grpc.ServerStreamingServer[connectorv1.ScopedSearchResponse]) error {
+	return s.read.ScopedSearch(req, st)
+}
+
+// inProcessConnector serves the verify and read groups on an in-memory gRPC pipe and returns its
+// client. The hop is real gRPC (marshalling, status errors, streaming) but never leaves the process.
+func inProcessConnector(v *rights.VerifyHandler, h *read.Handler) (connectorv1.ConnectorClient, func(), error) {
 	lis := bufconn.Listen(1 << 20)
 	srv := grpc.NewServer()
-	read.Register(srv, h)
+	connectorv1.RegisterConnectorServer(srv, &labServer{verify: rights.NewServer(v), read: read.NewServer(h)})
 	go func() { _ = srv.Serve(lis) }()
 	cc, err := grpc.NewClient("passthrough:///lab-connector",
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
