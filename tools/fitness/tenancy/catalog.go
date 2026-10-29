@@ -93,11 +93,47 @@ func canonicalPolicyExpr(ctx context.Context, d *Database) (string, error) {
 	return qual, nil
 }
 
+// trustReadQual is the USING expression of the one policy exempt from the tenant shape.
+const trustReadQual = `state IN ('active', 'retired')`
+
+// canonicalTrustQual deparses trustReadQual the way pg_get_expr will print the migrated policy.
+func canonicalTrustQual(ctx context.Context, d *Database) (string, error) {
+	c, err := catalogConn(ctx, d)
+	if err != nil {
+		return "", err
+	}
+	defer c.Close(ctx)
+	tx, err := c.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback(ctx)
+	for _, s := range []string{
+		`CREATE SCHEMA fitness_canon`,
+		`CREATE TABLE fitness_canon.t (state text)`,
+		`ALTER TABLE fitness_canon.t ENABLE ROW LEVEL SECURITY`,
+		`CREATE POLICY p ON fitness_canon.t FOR SELECT USING (` + trustReadQual + `)`,
+	} {
+		if _, err := tx.Exec(ctx, s); err != nil {
+			return "", err
+		}
+	}
+	var qual string
+	if err := tx.QueryRow(ctx, `SELECT pg_get_expr(polqual, polrelid) FROM pg_policy WHERE polname = 'p'`).Scan(&qual); err != nil {
+		return "", err
+	}
+	return qual, nil
+}
+
 // checkT2 is the catalog check (ADR-0002 T2, safe-primitives FF-SP7 rules 2, 9, 10).
 func checkT2(ctx context.Context, d *Database, reg *registry.Registry) ([]Violation, *catalogModel, error) {
 	canon, err := canonicalPolicyExpr(ctx, d)
 	if err != nil {
 		return nil, nil, fmt.Errorf("computing the canonical policy: %w", err)
+	}
+	trustQual, err := canonicalTrustQual(ctx, d)
+	if err != nil {
+		return nil, nil, fmt.Errorf("computing the canonical trust-reader policy: %w", err)
 	}
 	c, err := catalogConn(ctx, d)
 	if err != nil {
@@ -317,10 +353,10 @@ func checkT2(ctx context.Context, d *Database, reg *registry.Registry) ([]Violat
 		for _, p := range ps {
 			canonQual := p.qual != nil && *p.qual == canon
 			canonCheck := p.check != nil && *p.check == canon
-			if p.permissive && p.cmd == "r" && slices.Equal(p.roles, []string{trustReaderRole}) {
-				// The one policy that is not the tenant shape: SELECT only, TO the dedicated reader role
-				// and no one else, so it never applies to the runtime role (T-0712). Its column grants and
-				// function are judged by the roles and catalog checks.
+			if p.permissive && p.cmd == "r" && slices.Equal(p.roles, []string{trustReaderRole}) &&
+				q == "public.fleet_ca" && p.name == "fleet_ca_trust_read" && p.check == nil && p.qual != nil && *p.qual == trustQual {
+				// The one policy that is not the tenant shape (T-0712): exactly this name, table, role,
+				// command and condition. Any other policy TO the reader role is judged like the rest.
 				continue
 			}
 			if p.permissive {

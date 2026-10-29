@@ -32,6 +32,8 @@ $guard$;
 -- Rows retired before this migration still hold theirs; clear them first. The owner is bound by FORCE
 -- row security and the guard refuses a key change, so both are lifted for this one statement and put back.
 -- ---------------------------------------------------------------------------------------------------
+-- This migration MUST apply atomically (one transaction): if it stopped between NO FORCE and FORCE,
+-- fleet_ca would stay unforced and its guard disabled.
 ALTER TABLE public.fleet_ca NO FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.fleet_ca DISABLE TRIGGER fleet_ca_guard;
 UPDATE public.fleet_ca SET sealed_key = NULL WHERE state = 'retired';
