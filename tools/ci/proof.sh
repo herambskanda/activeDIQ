@@ -1153,6 +1153,16 @@ for bom in '\xfe\xff\0\0' '\0\0\xff\xfe'; do
   printf "$bom"'rest' >"$ah/x/evil.xml"
   must_fail_with "fitness-agent-host on a UCS-4 BOM in an unusual order (A1, fail closed)" 'cannot decode' agenthost "$ah"
 done
+# T-0677 attempt 7: the declared encoding name (.NET CheckEncoding/SwitchEncoding) is mirrored, fail closed.
+printf '<Project><ItemGroup><Compile Include="..\\..\\x\\evil.xml"/></ItemGroup></Project>\n' >"$ah/packaging/windows/A.wixproj"
+for c in 'dc32|utf-32|utf-32-le|' 'dc16be|utf-16BE|utf-16-be|\u4e01' 'dcunifffe|unicodeFFFE|utf-16-be|\u4e01' 'dcutf7|utf-7|utf-8|'; do
+  IFS='|' read -r nm decl body pad <<<"$c"
+  python3 -c 'import sys;d,b,p,s=sys.argv[1:5];pad=(chr(0x4e01)*40000) if p else "";open(sys.argv[5],"wb").write(("<?xml version=\"1.0\" encoding=\""+d+"\"?>").encode("ascii")+("<Wix><Fragment><!--"+pad+"-->"+s+"</Fragment></Wix>").encode(b))' "$decl" "$body" "$pad" "$lsys" "$ah/x/evil.xml"
+  must_fail_with "fitness-agent-host on a WiX document declaring encoding $decl (A1, fail closed)" 'declares an encoding' agenthost "$ah"
+done
+cp "$ah/x/evil.xml" "$ah/packaging/windows/evil.dat"
+must_fail_with "fitness-agent-host on a utf-7 declaring file named .dat under packaging/ (A1)" 'declares an encoding' agenthost "$ah"
+rm -f "$ah/packaging/windows/evil.dat"
 rm -f "$ah/packaging/windows/A.wixproj"
 for sig in '\0\0\x3c\0' '\0\x3c\0\0' '\x4c\x6f\xa7\x94'; do
   printf "$sig"'rest' >"$ah/x/evil.xml"

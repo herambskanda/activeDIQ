@@ -677,6 +677,50 @@ func exoticXMLEncoding(b []byte) bool {
 
 const exoticProblem = "starts with an XML byte-order signature this check cannot decode (unusual UCS-4 order or EBCDIC): it could be a WiX document, so it is not classifiable"
 
+// declEncodingRe matches the encoding pseudo-attribute of a leading XML declaration.
+var declEncodingRe = regexp.MustCompile(`(?is)^\s*<\?xml\s[^>]*?\bencoding\s*=\s*["']([^"']*)["']`)
+
+// wideEncoded reports whether decodeText decodes b as UTF-16 or UTF-32 (the detection .NET keeps for the
+// utf-16, ucs-2 and ucs-4 declarations).
+func wideEncoded(b []byte) bool {
+	if bytes.HasPrefix(b, []byte{0xEF, 0xBB, 0xBF}) {
+		return false
+	}
+	return bytes.IndexByte(b, 0) >= 0 || bytes.HasPrefix(b, []byte{0xFF, 0xFE}) || bytes.HasPrefix(b, []byte{0xFE, 0xFF})
+}
+
+// encodingProblem mirrors the two ways .NET's XmlTextReaderImpl picks an encoding (T-0677): DetectEncoding on
+// the first bytes (exoticXMLEncoding fails closed on what is not decoded) and CheckEncoding/SwitchEncoding on
+// the declaration's encoding name. Only names whose bytes this check decodes the same way are accepted; any
+// other name could make the parser re-decode the rest of the file into WiX this check never saw.
+func encodingProblem(b []byte) string {
+	if exoticXMLEncoding(b) {
+		return exoticProblem
+	}
+	t, _ := decodeText(b) // undecodable: the raw bytes below still carry an ASCII declaration
+	wide := wideEncoded(b)
+	// The declaration is read from the decoded text and from the raw bytes: a document whose prolog is ASCII
+	// and whose body is another encoding (utf-32 declared in an ASCII prolog) decodes as garbage as a whole.
+	for _, src := range []string{strings.TrimPrefix(t, "\uFEFF"), string(b)} {
+		m := declEncodingRe.FindStringSubmatch(src)
+		if m == nil {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(m[1])) {
+		case "utf-16", "ucs-2", "iso-10646-ucs-2", "ucs-4":
+			if wide {
+				continue
+			}
+		case "utf-8", "us-ascii", "iso-8859-1", "windows-1252":
+			if !wide {
+				continue
+			}
+		}
+		return "declares an encoding this check does not decode (" + m[1] + "): it could be a WiX document the build reads differently, so it is not classifiable"
+	}
+	return ""
+}
+
 func utf32Text(b []byte, bigEndian bool) string {
 	r := make([]rune, 0, len(b)/4)
 	for i := 0; i+3 < len(b); i += 4 {
@@ -811,8 +855,8 @@ func agentInstallerFiles(root string) []instFile {
 			}
 			return nil
 		}
-		if exoticXMLEncoding(b) {
-			out = append(out, instFile{path: p, rel: rel, problem: exoticProblem})
+		if prob := encodingProblem(b); prob != "" {
+			out = append(out, instFile{path: p, rel: rel, problem: prob})
 			return nil
 		}
 		text, ok := decodeText(b)
@@ -877,8 +921,8 @@ func sniffWix(p string, size int64) (text string, wix bool, problem string) {
 	buf := make([]byte, head)
 	n, _ := io.ReadFull(f, buf)
 	f.Close()
-	if exoticXMLEncoding(buf[:n]) {
-		return "", false, exoticProblem
+	if prob := encodingProblem(buf[:n]); prob != "" {
+		return "", false, prob
 	}
 	t, ok := decodeText(buf[:n])
 	if !ok {

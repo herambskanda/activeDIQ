@@ -570,6 +570,55 @@ func TestA1Installer(t *testing.T) {
 				}
 			}
 		}
+		{ // T-0677 attempt 7: the declared encoding name is mirrored (CheckEncoding/SwitchEncoding)
+			u16 := func(be bool, s string) string {
+				var b []byte
+				for _, c := range s {
+					if be {
+						b = append(b, byte(c>>8), byte(c))
+					} else {
+						b = append(b, byte(c), byte(c>>8))
+					}
+				}
+				return string(b)
+			}
+			u32 := func(s string) string {
+				var b []byte
+				for _, c := range s {
+					b = append(b, byte(c), byte(c>>8), 0, 0)
+				}
+				return string(b)
+			}
+			pad := strings.Repeat("\u4e01", 40000)
+			decl := func(n string) string { return `<?xml version="1.0" encoding="` + n + `"?>` }
+			body := "<Wix><Fragment><!--" + pad + "-->" + lsys + "</Fragment></Wix>"
+			cases := map[string]string{
+				"utf-32":      decl("utf-32") + u32("<Wix><Fragment>"+lsys+"</Fragment></Wix>"),
+				"utf-16BE":    decl("utf-16BE") + u16(true, body),
+				"unicodeFFFE": decl("unicodeFFFE") + u16(true, body),
+				"utf-7":       decl("utf-7") + lsys,
+			}
+			for name, content := range cases {
+				for _, where := range []string{"tools/x/evil.xml", "packaging/windows/evil.dat"} {
+					r := t.TempDir()
+					write(t, r, "packaging/windows/A.wixproj", inc(`..\..\`+strings.ReplaceAll(where, "/", `\`)))
+					write(t, r, where, content)
+					wantViolation(t, checkInstaller(r), "declares an encoding")
+					_ = name
+				}
+			}
+			// negatives: utf-8 declared good WiX, BOM'd UTF-16 declaring utf-16
+			for name, content := range map[string]string{
+				"utf-8":  decl("utf-8") + goodWxs,
+				"utf-16": "\xff\xfe" + u16(false, decl("utf-16")+goodWxs),
+			} {
+				r := t.TempDir()
+				write(t, r, "packaging/windows/agent.wxs", content)
+				if v := checkInstaller(r).Violations; len(v) != 0 {
+					t.Errorf("%s: good WiX flagged: %v", name, v)
+				}
+			}
+		}
 		{ // a long prolog does not hide the root element
 			r := t.TempDir()
 			write(t, r, "docs/evil.txt", "<!--"+strings.Repeat("x", 100<<10)+"-->"+lsys)
