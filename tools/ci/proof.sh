@@ -1331,5 +1331,58 @@ printf 'package x\n\nimport "testing"\n\nfunc FuzzT(f *testing.F) {\n\tf.Add([]b
 must_pass "fuzz-target" tools/ci/fuzz-target.sh "$fz" FuzzT 3s
 must_pass "make fuzz-saml is wired into make ci" bash -c "make -n ci | grep -q 'fuzz-target.sh internal/platform/authn/sso/saml FuzzSAMLComplete 60s'"
 
+# --- fitness-built-msi (T-0697, ADR-0006 A1 on the built artefact) ---------------------------------
+# Real MSIs: wixl builds them, msibuild adds MsiServiceConfig/CustomAction rows, msidump (inside the gate)
+# reads them. msitools is a CI prerequisite (runbook ci-and-build.md): a missing tool fails the proof.
+for tool in wixl msibuild msidump; do
+  command -v "$tool" >/dev/null || { echo "PROOF FAILED: fitness-built-msi needs $tool (apt-get install msitools wixl)"; fails=$((fails + 1)); }
+done
+bm="$tmp/builtmsi"; mkdir -p "$bm"
+# mk_msi <name> <account> <sid> <privs> [extra CustomAction row]: the .wxs is *generated at build time*
+# into obj/, as an MSBuild inline task would; no WiX source for it exists in the tree.
+mk_msi() {
+  local n=$1 acct=$2 sid=$3 privs=$4 ca=${5:-} d="$bm/$1"
+  mkdir -p "$d/obj"
+  ( cd "$d" && printf '<?xml version="1.0"?>\n<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"><Product Id="*" Name="x" Language="1033" Version="1.0.0" Manufacturer="m" UpgradeCode="11111111-2222-3333-4444-555555555555"><Package Compressed="yes" InstallerVersion="500"/><Media Id="1" Cabinet="a.cab" EmbedCab="yes"/><Directory Id="TARGETDIR" Name="SourceDir"><Directory Id="AgentDir" Name="agent"><Component Id="C1" Guid="11111111-2222-3333-4444-555555555556"><File Id="F1" Source="obj/gen.wxs" KeyPath="yes"/><ServiceInstall Id="Svc" Name="activeDIQAgent" Type="ownProcess" Start="auto" ErrorControl="normal" Account="%s"/></Component></Directory></Directory><Feature Id="F" Level="1"><ComponentRef Id="C1"/></Feature></Product></Wix>\n' "$acct" >obj/gen.wxs \
+    && wixl -o "$n.msi" obj/gen.wxs \
+    && printf 'MsiServiceConfig\tName\tEvent\tConfigType\tArgument\tComponent_\r\ns72\ts255\ti2\ti2\tL255\ts72\r\nMsiServiceConfig\tMsiServiceConfig\r\nc1\tactiveDIQAgent\t1\t3\t%s\tC1\r\nc2\tactiveDIQAgent\t1\t4\t%s\tC1\r\n' "$sid" "$privs" >MsiServiceConfig.idt \
+    && msibuild "$n.msi" -i MsiServiceConfig.idt ) >"$d/build.log" 2>&1 || { echo "PROOF FAILED: building $n.msi"; cat "$d/build.log"; fails=$((fails + 1)); }
+  if [ -n "$ca" ]; then
+    ( cd "$d" && printf 'Action\tType\tSource\tTarget\r\ns72\ti2\tS64\tS255\r\nCustomAction\tAction\r\n%s\r\n' "$ca" >CustomAction.idt && msibuild "$n.msi" -i CustomAction.idt ) >>"$d/build.log" 2>&1 || { echo "PROOF FAILED: adding a CustomAction to $n.msi"; fails=$((fails + 1)); }
+  fi
+}
+# add_idt <name> <table> <idt-text>: append a table to an already built MSI (msibuild).
+add_idt() {
+  local n=$1 t=$2 d="$bm/$1"
+  ( cd "$d" && printf '%b' "$3" >"$t.idt" && msibuild "$n.msi" -i "$t.idt" ) >>"$d/build.log" 2>&1 || { echo "PROOF FAILED: adding $t to $n.msi"; fails=$((fails + 1)); }
+}
+builtmsi() { go run ./tools/fitness/builtmsi "$@"; }
+mk_msi clean 'NT SERVICE\activeDIQAgent' 3 SeChangeNotifyPrivilege
+mk_msi system 'LocalSystem' 3 SeChangeNotifyPrivilege
+mk_msi unrestricted 'NT SERVICE\activeDIQAgent' 1 SeChangeNotifyPrivilege
+mk_msi privs 'NT SERVICE\activeDIQAgent' 3 'SeChangeNotifyPrivilege[~]SeBackupPrivilege'
+mk_msi action 'NT SERVICE\activeDIQAgent' 3 SeChangeNotifyPrivilege "$(printf 'Sneaky\t3106\tAgentDir\t"[AgentDir]agentsetup.exe" --run-anything')"
+# security-architect bypasses: a ServiceInstall whose Id is a reviewed action Id plus a world-writable DACL on it;
+# a setting row that never applies (uninstall only); a reboot failure action.
+mk_msi dacl 'NT SERVICE\activeDIQAgent' 3 SeChangeNotifyPrivilege
+add_idt dacl MsiLockPermissionsEx 'MsiLockPermissionsEx\tLockObject\tTable\tSDDLText\r\ns72\ts72\ts32\tL0\r\nMsiLockPermissionsEx\tMsiLockPermissionsEx\r\nL1\tSvc\tServiceInstall\tD:(A;;GA;;;WD)\r\n'
+mk_msi neverapplies 'NT SERVICE\activeDIQAgent' 3 SeChangeNotifyPrivilege
+add_idt neverapplies MsiServiceConfig 'MsiServiceConfig\tName\tEvent\tConfigType\tArgument\tComponent_\r\ns72\ts255\ti2\ti2\tL255\ts72\r\nMsiServiceConfig\tMsiServiceConfig\r\nc1\tactiveDIQAgent\t2\t3\t3\tC1\r\nc2\tactiveDIQAgent\t2\t4\tSeChangeNotifyPrivilege\tC1\r\n'
+mk_msi selfreg 'NT SERVICE\activeDIQAgent' 3 SeChangeNotifyPrivilege
+add_idt selfreg SelfReg 'File_\tCost\r\ns72\tI2\r\nSelfReg\tFile_\r\nF1\t0\r\n'
+mk_msi critical 'NT SERVICE\activeDIQAgent' 3 SeChangeNotifyPrivilege
+add_idt critical ServiceInstall 'ServiceInstall\tName\tDisplayName\tServiceType\tStartType\tErrorControl\tLoadOrderGroup\tDependencies\tStartName\tPassword\tArguments\tComponent_\tDescription\r\ns72\tl255\tL255\ti4\ti4\ti4\tS255\tS255\tS255\tS255\tS255\ts72\tL255\r\nServiceInstall\tServiceInstall\r\nSvc\tactiveDIQAgent\t\t16\t2\t3\t\t\tNT SERVICE\\activeDIQAgent\t\t\tC1\t\r\n'
+must_pass "fitness-built-msi on a clean built agent MSI" builtmsi -glob "$bm/clean/clean.msi"
+must_fail_with "fitness-built-msi on a build-time-generated LocalSystem ServiceInstall (the source scan cannot see it)" 'ServiceInstall row "Svc".*LocalSystem' builtmsi -glob "$bm/system/system.msi"
+must_fail_with "fitness-built-msi on an unrestricted service SID" 'SID type is "1"' builtmsi -glob "$bm/unrestricted/unrestricted.msi"
+must_fail_with "fitness-built-msi on an extra privilege" 'RequiredPrivileges are .*SeBackupPrivilege' builtmsi -glob "$bm/privs/privs.msi"
+must_fail_with "fitness-built-msi on an unreviewed custom action" 'CustomAction row "Sneaky"' builtmsi -glob "$bm/action/action.msi"
+must_fail_with "fitness-built-msi on a DACL row keyed to the service (service-control bypass)" 'MsiLockPermissionsEx row "L1"' builtmsi -glob "$bm/dacl/dacl.msi"
+must_fail_with "fitness-built-msi on settings that only apply on uninstall" 'does not apply on install' builtmsi -glob "$bm/neverapplies/neverapplies.msi"
+must_fail_with "fitness-built-msi on a SelfReg row (code run at install)" 'SelfReg row "F1"' builtmsi -glob "$bm/selfreg/selfreg.msi"
+must_fail_with "fitness-built-msi on a critical ErrorControl" 'ErrorControl' builtmsi -glob "$bm/critical/critical.msi"
+must_fail_with "fitness-built-msi when no MSI exists and one is required (release job)" 'no built MSI found' builtmsi -require -glob "$bm/none/*.msi"
+must_pass "fitness-built-msi prints inactive, not a pass, when no MSI exists" bash -c "go run ./tools/fitness/builtmsi -glob '$bm/none/*.msi' | grep -q '^fitness-built-msi: inactive'"
+
 if [ "$fails" -ne 0 ]; then echo "ci-proof: $fails proof(s) failed" >&2; exit 1; fi
 echo "ci-proof: every gate rejects its violation and accepts clean input"
