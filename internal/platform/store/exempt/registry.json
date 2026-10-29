@@ -218,7 +218,7 @@
     {
       "column": "public.authn_authenticator_enrollments.expires_at",
       "value": "2030-01-01T00:00:00Z",
-      "reason": "INSERT trigger: an enrolment starts pending with an expiry (DM-37, ENH-09 \u00a75); the probe row is a pending enrolment."
+      "reason": "INSERT trigger: an enrolment starts pending with an expiry (DM-37, ENH-09 §5); the probe row is a pending enrolment."
     },
     {
       "column": "public.correlations.match",
@@ -423,7 +423,7 @@
     {
       "column": "public.connection_attestation_attempts.code_verifier",
       "value": "probe-code-verifier-0123456789-0123456789-0123",
-      "reason": "CHECK: a PKCE code_verifier is 43..128 characters (RFC 7636 \u00a74.1)."
+      "reason": "CHECK: a PKCE code_verifier is 43..128 characters (RFC 7636 §4.1)."
     },
     {
       "column": "public.connection_attestation_attempts.state_hash",
@@ -686,6 +686,81 @@
       "column": "public.tenant_keys.state",
       "value": "active",
       "reason": "CHECK: state is active, retired or shredded; the probe row is an active key with a non-empty wrapped_dek (T-0520)"
+    },
+    {
+      "column": "public.agent_event.content_sha256",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: a content hash is exactly 32 bytes (agent_event_content_sha256_check); the probe row carries a 32-byte placeholder, not a real digest (T-0766)"
+    },
+    {
+      "column": "public.authn_authority_approvals.created_at",
+      "value": "2000-01-01 00:00:00+00",
+      "reason": "CHECK: authn_authority_approvals_life ties expires_at to created_at (later, within 1 hour); the probe row pins both to fixed instants (T-0766)"
+    },
+    {
+      "column": "public.authn_authority_approvals.expires_at",
+      "value": "2000-01-01 00:30:00+00",
+      "reason": "CHECK: authn_authority_approvals_life, see created_at; 30 minutes after the pinned created_at (T-0766)"
+    },
+    {
+      "column": "public.authn_authority_challenges.challenge",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: a challenge is 32 to 64 bytes; the probe row carries a 32-byte placeholder (T-0766)"
+    },
+    {
+      "column": "public.authn_authority_challenges.user_handle",
+      "value": "\\x70707070707070707070707070707070",
+      "reason": "CHECK: a user handle is 16 to 64 bytes; the probe row carries a 16-byte placeholder (T-0766)"
+    },
+    {
+      "column": "public.authn_authority_challenges.created_at",
+      "value": "2000-01-01 00:00:00+00",
+      "reason": "CHECK: authn_authority_challenges_life ties expires_at to created_at (later, within 5 minutes); pinned instants (T-0766)"
+    },
+    {
+      "column": "public.authn_authority_challenges.expires_at",
+      "value": "2000-01-01 00:02:00+00",
+      "reason": "CHECK: authn_authority_challenges_life, see created_at; 2 minutes after the pinned created_at (T-0766)"
+    },
+    {
+      "column": "public.authn_authority_challenges.kind",
+      "value": "assert",
+      "reason": "CHECK: kind is register or assert, and authn_authority_challenges_proof requires proof NULL unless kind is register; the probe row is an assert challenge (T-0766)"
+    },
+    {
+      "column": "public.authn_authority_notices.event",
+      "value": "enrolled",
+      "reason": "CHECK: event is enrolled, reset or removed (T-0766)"
+    },
+    {
+      "column": "public.authn_sso_transactions.handle_hash",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: a handle hash is exactly 32 bytes; the probe row carries a 32-byte placeholder (T-0766)"
+    },
+    {
+      "column": "public.authn_sso_transactions.intent",
+      "value": "signin",
+      "reason": "CHECK: intent is signin (T-0766)"
+    },
+    {
+      "column": "public.authn_sso_transactions.created_at",
+      "value": "2000-01-01 00:00:00+00",
+      "reason": "CHECK: authn_sso_transactions_life ties expires_at to created_at (later, within 5 minutes); pinned instants (T-0766)"
+    },
+    {
+      "column": "public.authn_sso_transactions.expires_at",
+      "value": "2000-01-01 00:02:00+00",
+      "reason": "CHECK: authn_sso_transactions_life, see created_at; 2 minutes after the pinned created_at (T-0766)"
+    },
+    {
+      "column": "public.inventory_servers.fqdn",
+      "value": "probe.example.test",
+      "reason": "CHECK: fqdn is a lower-case dotted DNS name of 3 to 253 characters (T-0766)"
+    },
+    {
+      "column": "public.authn_authority_approvals.approver_id",
+      "value": "00000000-0000-4000-8000-0000000000a9",
+      "reason": "CHECK: authn_authority_approvals_not_self requires approver_id <> account_id, but the generator resolves both foreign keys to the same account row; the probe row names a distinct approver (seeded with foreign keys off, as every probe row is) (T-0766)"
     }
   ]
 }
