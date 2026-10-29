@@ -8,6 +8,8 @@ package ports
 // and CI has Docker.
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"os"
@@ -19,8 +21,37 @@ import (
 	"testing"
 	"time"
 
+	"github.com/skenzeriq/activediq/internal/compose/server"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
 )
+
+// kekEnv provisions the installation KEK the way an installer does (the product's own `kek init`, with a
+// passphrase generated for this run and never committed) and returns the settings that make the server
+// boot. The server refuses to start without a custody model, so every boot below needs them.
+func kekEnv(t *testing.T, bin string) []string {
+	t.Helper()
+	dir := t.TempDir()
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		t.Fatal(err)
+	}
+	pass := filepath.Join(dir, "kek-passphrase")
+	if err := os.WriteFile(pass, []byte(hex.EncodeToString(raw)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	kekDir := filepath.Join(dir, "kek")
+	env := []string{
+		server.EnvKEKProvider + "=" + server.ProviderPassphrase,
+		server.EnvKEKDir + "=" + kekDir,
+		server.EnvKEKPassphraseFile + "=" + pass,
+	}
+	cmd := exec.Command(bin, "kek", "init")
+	cmd.Env = append([]string{"PATH=" + os.Getenv("PATH")}, env...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("kek init: %v\n%s", err, out)
+	}
+	return env
+}
 
 func TestMain(m *testing.M) { os.Exit(storetest.Main(m)) }
 
@@ -66,12 +97,15 @@ func boot(t *testing.T, bin, dsn string, env []string, wantPorts int) (pid int) 
 			<-done
 		}
 	})
+	var lastErr error
 	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
-		if ss, err := Listening(cmd.Process.Pid); err == nil && len(ss) >= wantPorts {
+		ss, err := Listening(cmd.Process.Pid)
+		if err == nil && len(ss) >= wantPorts {
 			return cmd.Process.Pid
 		}
+		lastErr = err
 	}
-	t.Fatalf("server did not open %d listener(s) in 30s; stderr:\n%s", wantPorts, stderr.String())
+	t.Fatalf("server did not open %d listener(s) in 30s (last socket-enumeration error: %v); stderr:\n%s", wantPorts, lastErr, stderr.String())
 	return 0
 }
 
@@ -89,7 +123,7 @@ func TestBootedServerListensOnlyOnSection81(t *testing.T) {
 		if err := os.WriteFile(tok, []byte(strings.Repeat("t", 40)+"\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		base := []string{fmt.Sprintf("ACTIVEDIQ_API_ADDR=127.0.0.1:%d", api)}
+		base := append(kekEnv(t, bin), fmt.Sprintf("ACTIVEDIQ_API_ADDR=127.0.0.1:%d", api))
 		withOps := append(base, fmt.Sprintf("ACTIVEDIQ_OPS_ADDR=127.0.0.1:%d", ops), "ACTIVEDIQ_OPS_TOKEN_FILE="+tok)
 		l1 := Allowed{Row: "L1", Proto: "tcp", Port: api}
 		l4 := Allowed{Row: "L4", Proto: "tcp", Port: ops, Loopback: true}
