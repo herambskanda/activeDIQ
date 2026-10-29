@@ -64,6 +64,9 @@ const (
 	// that scrapes must present. Required with EnvOpsAddr; it is a separate credential from every
 	// tenant session and API key.
 	EnvOpsTokenFile = "ACTIVEDIQ_OPS_TOKEN_FILE"
+	// EnvSetupTTL is how long the one-time first-run setup secret works (a Go duration, default 1h, at most
+	// 24h). A restart of an unclaimed install after expiry issues a new secret.
+	EnvSetupTTL = "ACTIVEDIQ_SETUP_TTL"
 )
 
 // Values of EnvPrincipalStore.
@@ -76,6 +79,9 @@ const (
 const (
 	DefaultShutdownGrace = 30 * time.Second
 	DefaultStopTimeout   = 90 * time.Second
+	// DefaultSetupTTL and MaxSetupTTL bound the first-run setup secret's life (TM-TB16-T7).
+	DefaultSetupTTL = time.Hour
+	MaxSetupTTL     = 24 * time.Hour
 	// DefaultAPIAddr binds loopback only. A non-loopback bind needs EnvAPITLSDir (the listener is TLS-only).
 	DefaultAPIAddr = "127.0.0.1:8080"
 	// DefaultAPIBodyBudget is 64 MiB, the same default as apihost.DefaultBodyBudget.
@@ -110,13 +116,15 @@ type Config struct {
 	// OpsAddr and OpsTokenFile configure the operator metrics listener; both empty means it is off.
 	OpsAddr      string
 	OpsTokenFile string
+	// SetupTTL is the life of the one-time first-run setup secret.
+	SetupTTL time.Duration
 }
 
 // Load reads the configuration through getenv (os.Getenv in the binaries, a map in tests).
 // An invalid value is an error; it is never silently replaced by a default.
 func Load(getenv func(string) string) (Config, error) {
 	c := Config{LogLevel: slog.LevelInfo, ShutdownGrace: DefaultShutdownGrace, StopTimeout: DefaultStopTimeout,
-		APIAddr: DefaultAPIAddr, APIBodyBudget: DefaultAPIBodyBudget, Nodes: 1, PrincipalStore: PrincipalStorePostgres}
+		APIAddr: DefaultAPIAddr, APIBodyBudget: DefaultAPIBodyBudget, SetupTTL: DefaultSetupTTL, Nodes: 1, PrincipalStore: PrincipalStorePostgres}
 	if v := getenv(EnvLogLevel); v != "" {
 		if err := c.LogLevel.UnmarshalText([]byte(v)); err != nil {
 			return Config{}, fmt.Errorf("%s: %w", EnvLogLevel, err)
@@ -130,6 +138,12 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if c.StopTimeout, err = duration(getenv, EnvStopTimeout, c.StopTimeout); err != nil {
 		return Config{}, err
+	}
+	if c.SetupTTL, err = duration(getenv, EnvSetupTTL, c.SetupTTL); err != nil {
+		return Config{}, err
+	}
+	if c.SetupTTL > MaxSetupTTL {
+		return Config{}, fmt.Errorf("%s: at most %s, got %s", EnvSetupTTL, MaxSetupTTL, c.SetupTTL)
 	}
 	if v := getenv(EnvAPIAddr); v != "" {
 		c.APIAddr = v

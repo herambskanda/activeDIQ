@@ -203,3 +203,18 @@ func TestOpsListenerSettings(t *testing.T) {
 		t.Errorf("non-loopback with TLS dir refused: %v", err)
 	}
 }
+
+func TestSetupTTL(t *testing.T) {
+	c, err := config.Load(env(nil))
+	if err != nil || c.SetupTTL != config.DefaultSetupTTL {
+		t.Fatalf("default: %v %v", c.SetupTTL, err)
+	}
+	if c, err = config.Load(env(map[string]string{config.EnvSetupTTL: "2s"})); err != nil || c.SetupTTL.Seconds() != 2 {
+		t.Fatalf("2s: %v %v", c.SetupTTL, err)
+	}
+	for _, bad := range []string{"0s", "-1m", "soon", "25h"} {
+		if _, err := config.Load(env(map[string]string{config.EnvSetupTTL: bad})); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}
