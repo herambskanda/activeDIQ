@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,7 +16,7 @@ import (
 func TestBuildSetupIssuesOnceAndShowPrintsIt(t *testing.T) {
 	dir := t.TempDir()
 	cfg := config.Config{APITLSDir: dir, SetupTTL: time.Hour}
-	tags, err := buildSetup(cfg, time.Now)
+	tags, err := buildSetup(cfg, time.Now, stubOwners{})
 	if err != nil || len(tags) != 1 {
 		t.Fatalf("buildSetup: %v %d", err, len(tags))
 	}
@@ -30,7 +31,7 @@ func TestBuildSetupIssuesOnceAndShowPrintsIt(t *testing.T) {
 		t.Fatalf("show: %v %q", err, out.String())
 	}
 	first := out.String()
-	if _, err := buildSetup(cfg, time.Now); err != nil { // a restart
+	if _, err := buildSetup(cfg, time.Now, stubOwners{}); err != nil { // a restart
 		t.Fatal(err)
 	}
 	out.Reset()
@@ -39,13 +40,17 @@ func TestBuildSetupIssuesOnceAndShowPrintsIt(t *testing.T) {
 		t.Fatal("a restart rotated a live secret")
 	}
 	st, _ := setupStore(cfg, time.Now)
-	if err := st.Claim(first); err != nil {
+	res, err := st.Reserve(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := res.Done(); err != nil {
 		t.Fatal(err)
 	}
 	if err := SetupShow(env, &out); err == nil {
 		t.Fatal("show works after the secret was consumed")
 	}
-	if _, err := buildSetup(cfg, time.Now); err != nil { // claimed install still boots
+	if _, err := buildSetup(cfg, time.Now, stubOwners{}); err != nil { // claimed install still boots
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, setupsecret.DirName, setupsecret.SecretFile)); !os.IsNotExist(err) {
@@ -54,8 +59,20 @@ func TestBuildSetupIssuesOnceAndShowPrintsIt(t *testing.T) {
 }
 
 func TestBuildSetupWithoutDirIsOff(t *testing.T) {
-	tags, err := buildSetup(config.Config{}, time.Now)
+	tags, err := buildSetup(config.Config{}, time.Now, stubOwners{})
 	if err != nil || tags != nil {
 		t.Fatalf("%v %v", tags, err)
+	}
+}
+
+type stubOwners struct{}
+
+func (stubOwners) CreateFirstOwner(context.Context, setupsecret.OwnerDetails, string) error {
+	return nil
+}
+
+func TestBuildSetupRefusesNoOwnerCreator(t *testing.T) {
+	if _, err := buildSetup(config.Config{APITLSDir: t.TempDir()}, time.Now, nil); err == nil {
+		t.Fatal("a claim route with no owner creator was built")
 	}
 }
