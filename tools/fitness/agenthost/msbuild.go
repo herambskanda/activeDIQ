@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -148,6 +149,10 @@ func msbuildWildcardImported(rel, dir string, projDirs, projNames []string) bool
 	return false
 }
 
+// msbuildPropFunc matches a property function or registry lookup after XML decoding: MSBuild tolerates
+// whitespace and (removed-before-expansion) XML comments between "$(" and "[" or "registry:".
+var msbuildPropFunc = regexp.MustCompile(`(?i)\$\(\s*(\[|registry:)`)
+
 func judgeMSBuild(rel string, b []byte) []string {
 	var out []string
 	add := func(s string) {
@@ -169,6 +174,13 @@ func judgeMSBuild(rel string, b []byte) []string {
 	d.CharsetReader = func(_ string, r io.Reader) (io.Reader, error) { return r, nil }
 	depth := 0
 	var stackKind []string
+	var chars strings.Builder
+	flushChars := func() {
+		if msbuildPropFunc.MatchString(chars.String()) {
+			add("uses an MSBuild property function $([...]) or Registry: lookup (found in decoded element text, comments ignored)")
+		}
+		chars.Reset()
+	}
 	onlyAttrs := func(t xml.StartElement, names ...string) {
 		for _, a := range t.Attr {
 			n := strings.ToLower(a.Name.Local)
@@ -193,9 +205,17 @@ func judgeMSBuild(rel string, b []byte) []string {
 			break
 		}
 		switch t := tok.(type) {
+		case xml.CharData:
+			chars.Write([]byte(t))
 		case xml.Directive:
 			add("has a DOCTYPE or ENTITY declaration")
 		case xml.StartElement:
+			flushChars()
+			for _, a := range t.Attr {
+				if msbuildPropFunc.MatchString(a.Value) {
+					add(fmt.Sprintf("%s attribute %s uses an MSBuild property function $([...]) or Registry: lookup", t.Name.Local, a.Name.Local))
+				}
+			}
 			depth++
 			n := strings.ToLower(t.Name.Local)
 			switch {
@@ -245,6 +265,7 @@ func judgeMSBuild(rel string, b []byte) []string {
 			}
 			stackKind = append(stackKind, n)
 		case xml.EndElement:
+			flushChars()
 			depth--
 			if len(stackKind) > 0 {
 				stackKind = stackKind[:len(stackKind)-1]

@@ -34,6 +34,13 @@ func TestT0762MSBuildAndTransforms(t *testing.T) {
 		"unknown property":   sdk + `<PropertyGroup><SomethingNew>x</SomethingNew></PropertyGroup></Project>`,
 		"item metadata":      sdk + `<ItemGroup><Compile Include="a.wxs"><Foo>x</Foo></Compile></ItemGroup></Project>`,
 		"charref propfunc":   sdk + `<PropertyGroup><OutputName>$(&#91;System.IO.File]::ReadAllText('x'))</OutputName></PropertyGroup></Project>`,
+		"pf space":           sdk + `<PropertyGroup><DefineConstants>X=$( [System.IO.File]::ReadAllText(` + "`s.txt`" + `))</DefineConstants></PropertyGroup></Project>`,
+		"pf newline":         sdk + "<PropertyGroup><DefineConstants>X=$(\n[System.Environment]::GetEnvironmentVariable(`HOME`))</DefineConstants></PropertyGroup></Project>",
+		"pf comment":         sdk + `<PropertyGroup><DefineConstants>X=$(<!--x-->[System.IO.File]::ReadAllText(` + "`s.txt`" + `))</DefineConstants></PropertyGroup></Project>`,
+		"pf cdata":           sdk + `<PropertyGroup><OutputName><![CDATA[$(]]><!--x--><![CDATA[ [System.IO.File]::ReadAllText('s')]]></OutputName></PropertyGroup></Project>`,
+		"pf registry space":  sdk + `<PropertyGroup><OutputName>$( Registry:HKEY_LOCAL_MACHINE\x)</OutputName></PropertyGroup></Project>`,
+		"pf condition":       sdk + `<PropertyGroup Condition="'$(<!--x-->[System.IO.File]::Exists(` + "`a`" + `))' == 'true'"/></Project>`,
+		"pf include":         sdk + `<ItemGroup><Compile Include="$( [System.IO.File]::ReadAllText(` + "`a`" + `))"/></ItemGroup></Project>`,
 		"doctype":            `<!DOCTYPE x [<!ENTITY e "y">]>` + sdk + `</Project>`,
 	}
 	for _, body := range bad {
