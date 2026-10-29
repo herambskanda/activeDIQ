@@ -46,6 +46,10 @@ type ScopedRequest struct {
 	// Authorize is the per-object authorisation (LF-39). Entries it denies are withheld and counted
 	// in ScopedResult.Denied; nil means the caller authorises later on what it receives.
 	Authorize func(*Entry) (bool, error)
+	// ResolveParents sets Entry.Parent on every delivered entry (T-0694). Parents are resolved after
+	// each page, outside the session lock, with one Read per distinct parent DN for the whole
+	// search; entries the caller is not given (duplicates, denied) cost no read.
+	ResolveParents bool
 }
 
 // ScopedResult counts what the caller was handed. There is no DC-side estimate anywhere in it.
@@ -73,30 +77,50 @@ func (s *Session) ScopedSearch(ctx context.Context, req ScopedRequest, fn func(*
 		}
 	}
 	attrs := append([]string{"objectGUID"}, req.Attributes...)
+	if req.ResolveParents {
+		attrs = append(attrs, "instanceType") // the NC-head decision; the caller need not ask for it
+	}
 	seen := map[guid.GUID]struct{}{}
+	parents := map[string]guid.GUID{} // normalised parent DN -> objectGUID, for the whole call
 	for _, root := range req.Roots {
-		err := s.Search(ctx, SearchRequest{Base: root, Scope: req.Depth, Filter: req.Filter, Attributes: attrs, PageSize: req.PageSize},
-			func(e *Entry) error {
-				g, err := e.GUID()
-				if err != nil {
-					return err
-				}
-				if _, dup := seen[g]; dup {
-					return nil
-				}
-				seen[g] = struct{}{}
-				if req.Authorize != nil {
-					ok, err := req.Authorize(e)
+		err := s.SearchPages(ctx, SearchRequest{Base: root, Scope: req.Depth, Filter: req.Filter, Attributes: attrs, PageSize: req.PageSize},
+			func(page []*Entry) error {
+				keep := page[:0:0]
+				for _, e := range page {
+					g, err := e.GUID()
 					if err != nil {
 						return err
 					}
-					if !ok {
-						res.Denied++
-						return nil
+					if _, dup := seen[g]; dup {
+						continue
+					}
+					seen[g] = struct{}{}
+					if req.Authorize != nil {
+						ok, err := req.Authorize(e)
+						if err != nil {
+							return err
+						}
+						if !ok {
+							res.Denied++
+							continue
+						}
+					}
+					keep = append(keep, e)
+				}
+				for _, e := range keep {
+					if req.ResolveParents {
+						pg, has, _, err := s.parentOf(ctx, e, parents)
+						if err != nil {
+							return err
+						}
+						e.WithParent(pg, has)
+					}
+					res.Returned++
+					if err := fn(e); err != nil {
+						return err
 					}
 				}
-				res.Returned++
-				return fn(e)
+				return nil
 			})
 		if err != nil {
 			if CodeOf(err) == CodeObjectNotFound {

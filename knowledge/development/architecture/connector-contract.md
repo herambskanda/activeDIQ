@@ -175,9 +175,13 @@ again. The fingerprint in `Describe` tells a caller when to re-fetch.
   into N reads). Completion is `Read`'s job.
 - **Served over the tunnel (T-0683).** The connector binary serves `VerifyConnection`, `Read` and
   `ScopedSearch` on the fleet tunnel (`compose/connector.TunnelBinding`); every other method is
-  Unimplemented until its group is mounted, and a golden-list test pins the served set. **Current
-  gap:** search entries do not yet carry `parent_guid` (the session is locked for the whole search,
-  so a parent read cannot run inside it); callers needing ancestry use `Read`.
+  Unimplemented until its group is mounted, and a golden-list test pins the served set.
+- **`parent_guid` on search entries (T-0694).** Every entry except a naming-context head carries the
+  same `parent_guid` `Read` reports. `ad.Session.ScopedSearch` runs on `SearchPages`, which holds the
+  session lock only around each page request, never while the page is processed; after each page it
+  resolves parents there (one `Read` per distinct parent DN for the whole call, cached; entries
+  withheld as duplicates or by authorisation cost no read) and sets them on the entries. A parent that
+  cannot be resolved fails the stream, never "no parent".
 
 ### 5.2 Initial inventory and the reconcile pass
 
