@@ -26,6 +26,9 @@ type VerifyRequest struct {
 	Connection     Connection
 	Kind           VerificationKind
 	VerificationID VerificationID
+	// PinnedC13 are the C13 group GUIDs (canonical text) pinned for the connection (TM-D26 rule 10).
+	// The server reads them from its own store and sends them so a renamed pinned group stays tier0.
+	PinnedC13 []string
 }
 
 // VerifyResult is a completed run as the connector reported it, in domain types. Findings are the
@@ -38,6 +41,9 @@ type VerifyResult struct {
 	Outcomes          map[Check]Outcome
 	Verdict           Verdict
 	Findings          []Finding
+	// C13Groups are the C13 groups (canonical GUID text) the run's tier0_set reported. The service
+	// pins them at onboarding (TM-D26 rule 10).
+	C13Groups []string
 }
 
 // HybridLinks is the read port over DM-21 that other packages depend on: the write gate decides
