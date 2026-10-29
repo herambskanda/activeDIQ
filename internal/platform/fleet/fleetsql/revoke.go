@@ -68,6 +68,11 @@ func (l *Lifecycle) Revoke(ctx context.Context, tid tenant.ID, p apihost.Princip
 	if tid.IsZero() || !fleet.IsComponentID(componentID) {
 		return 0, ErrNotRevocable
 	}
+	// The permission is evaluated in the principal's own tenant, so tid must be exactly that tenant;
+	// a platform principal (empty Tenant) is refused too. Fails closed before any write.
+	if pt, perr := tenant.Parse(p.Tenant); perr != nil || pt != tid {
+		return 0, ErrRevokeForbidden
+	}
 	ok, err := l.Authz.Allow(ctx, p, PermissionRevoke, "tenant")
 	if err != nil {
 		return 0, fmt.Errorf("fleetsql: authorize: %w", err)

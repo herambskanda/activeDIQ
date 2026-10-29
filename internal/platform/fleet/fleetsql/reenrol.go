@@ -120,6 +120,10 @@ func (r *Reenroller) ReenrolAddc(ctx context.Context, tid tenant.ID, p apihost.P
 	if tid.IsZero() || p.ID == "" || utf8.RuneCountInString(p.ID) > 200 {
 		return ReenrolResult{}, ErrReenrolForbidden
 	}
+	// Permissions are evaluated in the principal's own tenant: tid must be that tenant (platform refused).
+	if pt, perr := tenant.Parse(p.Tenant); perr != nil || pt != tid {
+		return ReenrolResult{}, ErrReenrolForbidden
+	}
 	for _, perm := range []string{PermissionRevoke, PermissionIssue} {
 		ok, err := r.Authz.Allow(ctx, p, perm, "tenant")
 		if err != nil {
