@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/skenzeriq/activediq/internal/agenthost/api"
+	"github.com/skenzeriq/activediq/internal/agenthost/hostapi"
 	"github.com/skenzeriq/activediq/internal/platform/agentpolicy"
 )
 
@@ -25,8 +25,8 @@ type RawEvent struct {
 
 // ErrUnreadable and ErrUnsupported are the host's typed errors (internal/agenthost/api).
 var (
-	ErrUnreadable  = api.ErrUnreadable
-	ErrUnsupported = api.ErrUnsupported
+	ErrUnreadable  = hostapi.ErrUnreadable
+	ErrUnsupported = hostapi.ErrUnsupported
 )
 
 // Source reads one channel. Subscribe delivers events with RecordID greater than after, in order, and
@@ -42,12 +42,12 @@ type Source interface {
 // FromAPI adapts the host's read-only event source to Source. The host builds the query from the typed
 // arguments; this side only decodes the rendered XML (DecodeEvent, pure and fuzzable). An event the
 // host could not render arrives as nil and becomes an explicit unparsable record, never a skip.
-func FromAPI(es api.EventSource) Source { return apiSource{es} }
+func FromAPI(es hostapi.EventSource) Source { return apiSource{es} }
 
-type apiSource struct{ es api.EventSource }
+type apiSource struct{ es hostapi.EventSource }
 
 func (a apiSource) OldestRecord(ch agentpolicy.Channel) (uint64, error) {
-	return a.es.OldestRecord(api.Channel(ch))
+	return a.es.OldestRecord(hostapi.Channel(ch))
 }
 
 func (a apiSource) Subscribe(ctx context.Context, ch agentpolicy.Channel, after uint64, ids []uint32, emit func(RawEvent)) error {
@@ -58,7 +58,7 @@ func (a apiSource) Subscribe(ctx context.Context, ch agentpolicy.Channel, after 
 		}
 		u = append(u, uint16(id))
 	}
-	return a.es.Subscribe(ctx, api.Channel(ch), after, u, func(xml []byte) {
+	return a.es.Subscribe(ctx, hostapi.Channel(ch), after, u, func(xml []byte) {
 		if xml == nil {
 			emit(RawEvent{Unparsable: true})
 			return

@@ -4,18 +4,18 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/skenzeriq/activediq/internal/agenthost/api"
+	"github.com/skenzeriq/activediq/internal/agenthost/hostapi"
 )
 
 // channelPath maps the closed channel enum to the Windows channel path. Anything else is refused.
-func channelPath(ch api.Channel) (string, error) {
+func channelPath(ch hostapi.Channel) (string, error) {
 	switch ch {
-	case api.ChannelSecurity:
+	case hostapi.ChannelSecurity:
 		return "Security", nil
-	case api.ChannelDirectoryService:
+	case hostapi.ChannelDirectoryService:
 		return "Directory Service", nil
 	}
-	return "", api.ErrBadChannel
+	return "", hostapi.ErrBadChannel
 }
 
 // eventQuery builds the XPath filter from typed numbers only: nothing from a message, a document or a

@@ -3,7 +3,8 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
@@ -70,14 +71,11 @@ func serviceSID() (*windows.SID, error) {
 // EvtSaveChannelConfig: https://learn.microsoft.com/en-us/windows/win32/api/winevt/
 // The property id of EvtChannelConfigAccess is 5 [UNVERIFIED — lab].
 
-var (
-	wevtapi   = windows.NewLazySystemDLL("wevtapi.dll")
-	pOpenCfg  = wevtapi.NewProc("EvtOpenChannelConfig")
-	pGetCfg   = wevtapi.NewProc("EvtGetChannelConfigProperty")
-	pSetCfg   = wevtapi.NewProc("EvtSetChannelConfigProperty")
-	pSaveCfg  = wevtapi.NewProc("EvtSaveChannelConfig")
-	pCloseEvt = wevtapi.NewProc("EvtClose")
-)
+// evtProc resolves a wevtapi export lazily. It is a function, not package-level variables with call
+// initialisers, so nothing runs before main hardening (prochardening, TM-TB16-T6).
+func evtProc(name string) *windows.LazyProc {
+	return windows.NewLazySystemDLL("wevtapi.dll").NewProc(name)
+}
 
 const (
 	evtChannelConfigAccess = 5
@@ -97,15 +95,15 @@ func changeChannel(grant bool) error {
 		return fmt.Errorf("service account is not resolvable (install the service first): %w", err)
 	}
 	name, _ := windows.UTF16PtrFromString("Security")
-	h, _, e := pOpenCfg.Call(0, uintptr(unsafe.Pointer(name)), 0)
+	h, _, e := evtProc("EvtOpenChannelConfig").Call(0, uintptr(unsafe.Pointer(name)), 0)
 	if h == 0 {
 		return e
 	}
-	defer pCloseEvt.Call(h)
+	defer evtProc("EvtClose").Call(h)
 
 	buf := make([]byte, 16<<10)
 	var used uint32
-	if r, _, e := pGetCfg.Call(h, evtChannelConfigAccess, 0, uintptr(len(buf)), uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&used))); r == 0 {
+	if r, _, e := evtProc("EvtGetChannelConfigProperty").Call(h, evtChannelConfigAccess, 0, uintptr(len(buf)), uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&used))); r == 0 {
 		return e
 	}
 	v := (*evtVariant)(unsafe.Pointer(&buf[0]))
@@ -124,10 +122,10 @@ func changeChannel(grant bool) error {
 	}
 	nv := evtVariant{Type: evtVarTypeString}
 	*(**uint16)(unsafe.Pointer(&nv.Value)) = np
-	if r, _, e := pSetCfg.Call(h, evtChannelConfigAccess, 0, uintptr(unsafe.Pointer(&nv))); r == 0 {
+	if r, _, e := evtProc("EvtSetChannelConfigProperty").Call(h, evtChannelConfigAccess, 0, uintptr(unsafe.Pointer(&nv))); r == 0 {
 		return e
 	}
-	if r, _, e := pSaveCfg.Call(h, 0); r == 0 {
+	if r, _, e := evtProc("EvtSaveChannelConfig").Call(h, 0); r == 0 {
 		return e
 	}
 	return nil
@@ -303,13 +301,13 @@ func writeConfig() error {
 	if err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(map[string]any{
+	b, err := json.Marshal(map[string]any{
 		"data_dir":              filepath.Join(root, "data"),
 		"enrollment_dir":        filepath.Join(root, "enrol"),
 		"outbox_max_bytes":      256 << 20,
 		"batch_max_bytes":       256 << 10,
 		"max_events_per_second": 2000,
-	}, "", "  ")
+	}, jsontext.Multiline(true), json.Deterministic(true))
 	if err != nil {
 		return err
 	}

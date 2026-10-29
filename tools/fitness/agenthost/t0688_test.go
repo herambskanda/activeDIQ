@@ -83,7 +83,7 @@ func TestT0688R3Boundary(t *testing.T) {
 		"encoding/xml":                             true,
 		"golang.org/x/text/cases":                  true,
 		"golang.org/x/text/unicode/norm":           true,
-		mod + "/internal/agenthost/api":            true,
+		mod + "/internal/agenthost/hostapi":        true,
 		mod + "/internal/proto/activediq/addc/v1":  true,
 		mod + "/internal/platform/agentpolicy":     true,
 		mod + "/internal/platform/agent":           false, // the host: modules get api only
@@ -128,12 +128,12 @@ func TestT0688ClosureAllowlist(t *testing.T) {
 func TestT0688APIBoundaryAndInsecure(t *testing.T) {
 	root := t.TempDir()
 	write(t, root, "internal/agentmodules/addc/ok.go", "package addc\n")
-	write(t, root, "internal/agenthost/api/api.go", "package api\n\nimport (\n\t\"context\"\n\t\"google.golang.org/grpc\"\n)\n\nvar _ context.Context\nvar _ grpc.ServiceRegistrar\n")
+	write(t, root, "internal/agenthost/hostapi/api.go", "package hostapi\n\nimport (\n\t\"context\"\n\t\"google.golang.org/grpc\"\n)\n\nvar _ context.Context\nvar _ grpc.ServiceRegistrar\n")
 	wantClean(t, checkModuleCapabilities(root))
 	for _, imp := range []string{"os/exec", "net", "syscall", "golang.org/x/sys/windows", "os", "unsafe"} {
 		bad := t.TempDir()
 		write(t, bad, "internal/agentmodules/addc/ok.go", "package addc\n")
-		write(t, bad, "internal/agenthost/api/api.go", "package api\n\nimport _ \""+imp+"\"\n")
+		write(t, bad, "internal/agenthost/hostapi/api.go", "package hostapi\n\nimport _ \""+imp+"\"\n")
 		if len(checkModuleCapabilities(bad).Violations) == 0 {
 			t.Errorf("api package importing %s accepted", imp)
 		}

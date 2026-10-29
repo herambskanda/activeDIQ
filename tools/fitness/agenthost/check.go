@@ -251,10 +251,10 @@ var r3FilepathBanned = setOf("filepath.WalkDir", "filepath.Walk", "filepath.Glob
 // policy and dependency-struct packages), as paths under the module path read from go.mod.
 var (
 	r3OwnPrefix = []string{"/internal/agentmodules"}
-	// internal/agenthost/api is the module boundary (T-0688 ruling 1): ModuleDeps, the event source and
+	// internal/agenthost/hostapi is the module boundary (T-0688 ruling 1): ModuleDeps, the event source and
 	// sink, aliases for the wire data types and for grpc.ServiceRegistrar. internal/proto/activediq/addc/v1
 	// is the module's own contract (typed data; a module gets its own, never skenzeriq/agent/v1 or fleet).
-	r3OwnExact = []string{"/internal/platform/agentpolicy", "/internal/agenthost/api", "/internal/proto/activediq/addc/v1"}
+	r3OwnExact = []string{"/internal/platform/agentpolicy", "/internal/agenthost/hostapi", "/internal/proto/activediq/addc/v1"}
 )
 
 const defaultModulePath = "github.com/skenzeriq/activediq"
@@ -323,7 +323,7 @@ func checkModuleCapabilities(root string) Result {
 	// The module boundary itself (T-0688 ruling 1): it hands modules capabilities, so it may import only
 	// pure standard-library packages, the wire data types it aliases, and grpc for ServiceRegistrar. It
 	// can never be the way a module reaches os/exec, net, syscall or x/sys.
-	for _, f := range goFiles(root, []string{"internal/agenthost/api"}) {
+	for _, f := range goFiles(root, []string{"internal/agenthost/hostapi"}) {
 		scanGo(root, f, func(rel, imp, name string, line int) {
 			if msg := judgeAPIImport(mod, imp, name); msg != "" {
 				r.Violations = append(r.Violations, fmt.Sprintf("%s:%d %s", rel, line, msg))
@@ -348,7 +348,7 @@ func checkModuleCapabilities(root string) Result {
 	return r
 }
 
-// judgeAPIImport: what internal/agenthost/api may import. Strictly the standard library the modules
+// judgeAPIImport: what internal/agenthost/hostapi may import. Strictly the standard library the modules
 // themselves may use, the agent wire types it aliases, and grpc (ServiceRegistrar). Not os, net, syscall.
 func judgeAPIImport(mod, imp, name string) string {
 	if name == "." || name == "_" {
@@ -357,7 +357,7 @@ func judgeAPIImport(mod, imp, name string) string {
 	if r3AllowedStd[imp] || imp == mod+"/internal/proto/skenzeriq/agent/v1" || imp == "google.golang.org/grpc" {
 		return ""
 	}
-	return fmt.Sprintf("the module boundary package internal/agenthost/api imports %s: it may import only the pure standard library, skenzeriq/agent/v1 and grpc (T-0688 ruling 1)", imp)
+	return fmt.Sprintf("the module boundary package internal/agenthost/hostapi imports %s: it may import only the pure standard library, skenzeriq/agent/v1 and grpc (T-0688 ruling 1)", imp)
 }
 
 // foreignModuleFiles lists files under the agent-module directories that are not .go sources and not in
