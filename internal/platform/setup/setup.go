@@ -16,12 +16,13 @@ import (
 	"crypto/subtle"
 	"encoding/base32"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -221,6 +222,20 @@ func writeExclusive(path string, b []byte) error {
 	if err := f.Close(); err != nil {
 		_ = os.Remove(path)
 		return fmt.Errorf("setup: %w", err)
+	}
+	return nil
+}
+
+// checkDirMode refuses a setup directory any other local user could read or enter: the secret file's own
+// 0600 is not enough if the directory lets someone replace it. On Windows access is the ACL the directory
+// inherits from the API TLS directory (packaging/windows/Set-ApiTlsDirAcl.ps1); POSIX mode bits carry no
+// meaning there, so the check is skipped.
+func checkDirMode(fi fs.FileInfo) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	if fi.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("setup: directory has unsafe permissions (mode %04o); use 0700", fi.Mode().Perm())
 	}
 	return nil
 }
