@@ -13,7 +13,9 @@ import (
 
 // Modifier is the one LDAP method a ReplaceSDFunc may use. The session lends its connection for the
 // duration of one WriteDACL call only.
-type Modifier interface{ Modify(*ldap.ModifyRequest) error }
+type Modifier interface {
+	Modify(*ldap.ModifyRequest) error
+}
 
 // ReplaceSDFunc sends the single replace of nTSecurityDescriptor with the given controls. The LDAP
 // Modify itself lives in internal/connector/write/ops, the only place the write fitness function
@@ -96,7 +98,13 @@ func (s *Session) WriteDACL(ctx context.Context, ref dn.ObjectRef, w sd.DACLWrit
 	if send == nil {
 		return fail(CodeInvalidArgument, "no sender", nil)
 	}
-	if err := send(s.conn, res.Entries[0].DN, val, []ldap.Control{want.control()}); err != nil {
+	// The modify is addressed by the GUID that was just checked, not by the DN the read returned, so a
+	// rename or replace by another writer between the read and the modify cannot redirect it.
+	target, err := dn.GUIDRef(g).ForRequest()
+	if err != nil {
+		return fail(CodeInvalidArgument, "object reference", err)
+	}
+	if err := send(s.conn, target, val, []ldap.Control{want.control()}); err != nil {
 		if ctx.Err() != nil {
 			return fail(CodeCanceled, "", ctx.Err())
 		}

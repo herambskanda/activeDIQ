@@ -642,7 +642,7 @@ func TestFileBaselineOmitsZeroRevision(t *testing.T) {
 }
 
 func TestApplyDACLRefusesWithoutGuardToken(t *testing.T) {
-	if err := ApplyDACL(context.Background(), Authorised{}, nil, dn.ObjectRef{}, sd.DACLWrite{}); err == nil {
+	if err := ApplyDACL(context.Background(), Authorised{}, &fakeSDSession{}, dn.ObjectRef{}, sd.DACLWrite{}); err == nil {
 		t.Fatal("zero Authorised must be refused")
 	}
 }
