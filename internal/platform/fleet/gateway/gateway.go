@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"sort"
 	"strings"
 	"sync"
@@ -96,6 +97,9 @@ type Config struct {
 	Components ComponentStatus
 	// Recheck is the open-stream re-check period; 0 means DefaultRecheck.
 	Recheck time.Duration
+	// CAStale is how long an open stream survives continuous failures of the per-tenant CA lookup on
+	// re-check; 0 means DefaultPoolStale (60 s), the same rule as the client-CA pool.
+	CAStale time.Duration
 	// Superseded, when set, is told about superseded-certificate presentations (TM-TB6-T14), at most
 	// once per component per SupersededWindow (0 means DefaultSupersededWindow).
 	Superseded       SupersededReporter
@@ -128,6 +132,7 @@ type Gateway struct {
 	cas     TenantCAs
 	comps   ComponentStatus
 	recheck time.Duration
+	caStale time.Duration
 	now     func() time.Time
 	streams streamRegistry
 
@@ -161,6 +166,10 @@ func NewGateway(cfg Config) (*Gateway, error) {
 	if recheck <= 0 {
 		recheck = DefaultRecheck
 	}
+	caStale := cfg.CAStale
+	if caStale <= 0 {
+		caStale = DefaultPoolStale
+	}
 	window := cfg.SupersededWindow
 	if window <= 0 {
 		window = DefaultSupersededWindow
@@ -169,7 +178,7 @@ func NewGateway(cfg Config) (*Gateway, error) {
 	if lg == nil {
 		lg = slog.Default()
 	}
-	return &Gateway{methods: m, cas: cfg.CAs, comps: cfg.Components, recheck: recheck, now: now, streams: newStreamRegistry(),
+	return &Gateway{methods: m, cas: cfg.CAs, comps: cfg.Components, recheck: recheck, caStale: caStale, now: now, streams: newStreamRegistry(),
 		superseded: cfg.Superseded, window: window, log: lg, reported: map[streamKey]time.Time{}}, nil
 }
 
@@ -179,12 +188,12 @@ func NewGateway(cfg Config) (*Gateway, error) {
 // whatever register mounts. It fails closed if register mounts a method without an explicit class, a
 // public method other than Enroll, or a service outside the fleet package. Nothing is served until
 // the caller calls Serve on the result.
-func (g *Gateway) NewServer(server tls.Certificate, clientCAs func() *x509.CertPool, register func(grpc.ServiceRegistrar), opts ...grpc.ServerOption) (*grpc.Server, error) {
+func (g *Gateway) NewServer(server tls.Certificate, clientCAs func() *CAIndex, register func(grpc.ServiceRegistrar), opts ...grpc.ServerOption) (*grpc.Server, error) {
 	if len(server.Certificate) == 0 || clientCAs == nil || register == nil {
 		return nil, ErrGatewayConfig
 	}
 	base := []grpc.ServerOption{
-		grpc.Creds(credentials.NewTLS(serverTLS(server, clientCAs))),
+		grpc.Creds(verifiedCreds{credentials.NewTLS(serverTLS(server)), clientCAs, time.Now}),
 		grpc.ChainUnaryInterceptor(g.Unary),
 		grpc.ChainStreamInterceptor(g.Stream),
 	}
@@ -227,7 +236,7 @@ func (g *Gateway) checkMounted(srv *grpc.Server) error {
 
 // Unary is the unary interceptor.
 func (g *Gateway) Unary(ctx context.Context, req any, info *grpc.UnaryServerInfo, h grpc.UnaryHandler) (any, error) {
-	ctx, err := g.authenticate(ctx, info.FullMethod)
+	ctx, _, err := g.authenticate(ctx, info.FullMethod)
 	if err != nil {
 		return nil, err
 	}
@@ -236,7 +245,7 @@ func (g *Gateway) Unary(ctx context.Context, req any, info *grpc.UnaryServerInfo
 
 // Stream is the stream interceptor.
 func (g *Gateway) Stream(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, h grpc.StreamHandler) error {
-	ctx, err := g.authenticate(ss.Context(), info.FullMethod)
+	ctx, leaf, err := g.authenticate(ss.Context(), info.FullMethod)
 	if err != nil {
 		return err
 	}
@@ -252,7 +261,7 @@ func (g *Gateway) Stream(srv any, ss grpc.ServerStream, info *grpc.StreamServerI
 	st := &identityStream{ServerStream: ss, ctx: ctx}
 	unreg := g.streams.add(id, cancel)
 	defer unreg()
-	go g.watch(ctx, id, cancel)
+	go g.watch(ctx, id, leaf, cancel)
 	// The handler runs on its own goroutine so that revocation ends the RPC whether or not the
 	// handler cooperates: a handler blocked in RecvMsg or SendMsg on the underlying transport never
 	// observes our derived context. Returning from this interceptor makes grpc finish the
@@ -279,13 +288,23 @@ func (g *Gateway) CloseComponent(tid tenant.ID, componentID string) int {
 	return g.streams.close(tid, componentID)
 }
 
+// CloseTenant closes every open stream of the tenant and reports how many it closed. The process that
+// commits a CA withdrawal calls it in the same step as the pool's Invalidate (F-POOL-8); other
+// processes drop the tenant's withdrawn-CA streams on their next re-check.
+func (g *Gateway) CloseTenant(tid tenant.ID) int {
+	return g.streams.closeTenant(tid)
+}
+
 // watch re-checks the component while its stream is open (it ends when ctx does, which the stream's
-// deferred cancel guarantees). A component that is no longer usable ends the stream. A failure to
-// tell (store unavailable) leaves it open: new RPCs are refused meanwhile, and a database blip must
-// not drop the whole fleet.
-func (g *Gateway) watch(ctx context.Context, id fleet.Identity, cancel context.CancelCauseFunc) {
+// deferred cancel guarantees). Each tick asks two things: is the component still usable, and is the
+// stream's leaf still signed by one of its tenant's own current CAs (a withdrawn CA's leaf loses its
+// stream here on every node, TM-Q8, F-POOL-8). Either answering "no" ends the stream. A failure to
+// tell leaves it open, so a database blip does not drop the whole fleet, but the CA question fails
+// closed once it has gone unanswered for CAStale, as the pool does.
+func (g *Gateway) watch(ctx context.Context, id fleet.Identity, leaf *x509.Certificate, cancel context.CancelCauseFunc) {
 	t := time.NewTicker(g.recheck)
 	defer t.Stop()
+	lastCA := g.now()
 	for {
 		select {
 		case <-ctx.Done():
@@ -293,13 +312,41 @@ func (g *Gateway) watch(ctx context.Context, id fleet.Identity, cancel context.C
 		case <-t.C:
 			cctx, c := context.WithTimeout(ctx, g.recheck)
 			ok, err := g.comps.Usable(cctx, id)
+			var cas []*x509.Certificate
+			var caErr error
+			if err == nil && ok {
+				cas, caErr = g.cas.TenantCAs(cctx, id.Tenant)
+			}
 			c()
 			if err == nil && !ok {
 				cancel(errRevoked)
 				return
 			}
+			switch {
+			case err != nil || caErr != nil:
+				if g.now().Sub(lastCA) > g.caStale {
+					cancel(errRevoked)
+					return
+				}
+			case !g.signedByAny(leaf, cas):
+				cancel(errRevoked)
+				return
+			default:
+				lastCA = g.now()
+			}
 		}
 	}
+}
+
+// signedByAny reports whether one of cas, valid now, signed leaf.
+func (g *Gateway) signedByAny(leaf *x509.Certificate, cas []*x509.Certificate) bool {
+	now := g.now()
+	for _, c := range cas {
+		if c != nil && !now.Before(c.NotBefore) && !now.After(c.NotAfter) && leaf.CheckSignatureFrom(c) == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // identityStream carries the authenticated context and refuses traffic once that context has ended,
@@ -369,6 +416,24 @@ func (r *streamRegistry) add(id fleet.Identity, cancel context.CancelCauseFunc) 
 	}
 }
 
+func (r *streamRegistry) closeTenant(tid tenant.ID) int {
+	r.mu.Lock()
+	var cancels []context.CancelCauseFunc
+	for k, set := range r.m {
+		if k.tenant != tid {
+			continue
+		}
+		for p := range set {
+			cancels = append(cancels, *p)
+		}
+	}
+	r.mu.Unlock()
+	for _, c := range cancels {
+		c(errRevoked)
+	}
+	return len(cancels)
+}
+
 func (r *streamRegistry) close(tid tenant.ID, comp string) int {
 	k := streamKey{tid, comp}
 	r.mu.Lock()
@@ -385,40 +450,40 @@ func (r *streamRegistry) close(tid tenant.ID, comp string) int {
 
 // authenticate runs before any handler. A method the gateway does not know is refused, whatever the
 // caller presents.
-func (g *Gateway) authenticate(ctx context.Context, method string) (context.Context, error) {
+func (g *Gateway) authenticate(ctx context.Context, method string) (context.Context, *x509.Certificate, error) {
 	switch g.methods[method] {
 	case ClassPublic:
-		return ctx, nil
+		return ctx, nil, nil
 	case ClassClientCert:
 	default:
-		return nil, errDenied
+		return nil, nil, errDenied
 	}
 	p, ok := peer.FromContext(ctx)
 	if !ok {
-		return nil, errNoCert
+		return nil, nil, errNoCert
 	}
 	ti, ok := p.AuthInfo.(credentials.TLSInfo)
 	if !ok || len(ti.State.PeerCertificates) == 0 {
-		return nil, errNoCert
+		return nil, nil, errNoCert
 	}
 	if len(ti.State.VerifiedChains) == 0 || len(ti.State.VerifiedChains[0]) == 0 {
-		return nil, errBadCert
+		return nil, nil, errBadCert
 	}
 	leaf := ti.State.VerifiedChains[0][0]
 	now := g.now()
 	if now.Before(leaf.NotBefore) || now.After(leaf.NotAfter) || !hasClientAuth(leaf) {
-		return nil, errBadCert
+		return nil, nil, errBadCert
 	}
 	id, err := fleet.IdentityOf(leaf)
 	if err != nil || id.Tenant.IsZero() {
-		return nil, errBadCert
+		return nil, nil, errBadCert
 	}
 	// A verified chain only proves that some tenant's CA signed the leaf (every tenant's CA is in
 	// the listener's pool). The SAN names the tenant, so the signer must be that tenant's own CA
 	// (TM-Q8): otherwise one tenant's CA could mint an identity in another.
 	cas, err := g.cas.TenantCAs(ctx, id.Tenant)
 	if err != nil {
-		return nil, errUnavail
+		return nil, nil, errUnavail
 	}
 	for _, c := range cas {
 		if c != nil && !now.Before(c.NotBefore) && !now.After(c.NotAfter) && leaf.CheckSignatureFrom(c) == nil {
@@ -428,16 +493,16 @@ func (g *Gateway) authenticate(ctx context.Context, method string) (context.Cont
 			// Establishment needs the current certificate (TM-TB6-T14); the stream re-check does not.
 			usable, err := g.comps.Current(ctx, id)
 			if err != nil {
-				return nil, errUnavail
+				return nil, nil, errUnavail
 			}
 			if !usable {
 				g.reportSuperseded(ctx, id)
-				return nil, errBadCert
+				return nil, nil, errBadCert
 			}
-			return fleet.WithIdentity(ctx, id), nil
+			return fleet.WithIdentity(ctx, id), leaf, nil
 		}
 	}
-	return nil, errBadCert
+	return nil, nil, errBadCert
 }
 
 // reportSuperseded is called for a CA-verified, unexpired leaf that is not the component's current
@@ -515,22 +580,56 @@ func hasClientAuth(c *x509.Certificate) bool {
 }
 
 // serverTLS returns the fleet listener's TLS configuration: TLS 1.3, a client certificate requested
-// and verified when presented (Enroll must work without one; the interceptor refuses its absence for
-// every other method). clientCAs is read per handshake so CA changes take effect without a restart.
-func serverTLS(server tls.Certificate, clientCAs func() *x509.CertPool) *tls.Config {
-	conf := &tls.Config{
-		MinVersion:   tls.VersionTLS13,
-		Certificates: []tls.Certificate{server},
-		ClientAuth:   tls.VerifyClientCertIfGiven,
-		ClientCAs:    x509.NewCertPool(),
+// when the peer has one (Enroll must work without; the interceptor refuses its absence for every other
+// method).
+//
+// The client chain is not verified by Go's ClientAuth: with ClientCAs set Go announces every CA
+// subject in the CertificateRequest, and the extension's length field is 16 bits, so a pool of roughly
+// a thousand same-subject CAs cannot complete any handshake (T-0714, F-POOL-7). The pool is never
+// given to the tls.Config. verifiedCreds verifies the chain once, after the handshake and before any
+// RPC or database work, against the CAIndex read at that moment (so CA changes take effect without a
+// restart and a resumed session is checked against the current CAs).
+func serverTLS(server tls.Certificate) *tls.Config {
+	return &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{server}, ClientAuth: tls.RequestClientCert}
+}
+
+// verifyClientChain verifies the peer's client certificate against idx. No certificate is not an
+// error: the interceptor decides whether the method needs one. Only the leaf's issuer key id selects
+// CAs; a leaf with none, or an unknown one, is refused before any signature check.
+func verifyClientChain(cs tls.ConnectionState, idx *CAIndex, at time.Time) ([][]*x509.Certificate, error) {
+	if len(cs.PeerCertificates) == 0 {
+		return nil, nil
 	}
-	conf.GetConfigForClient = func(*tls.ClientHelloInfo) (*tls.Config, error) {
-		c := conf.Clone()
-		c.GetConfigForClient = nil
-		if p := clientCAs(); p != nil {
-			c.ClientCAs = p
-		}
-		return c, nil
+	return idx.verify(cs.PeerCertificates[0], at)
+}
+
+// verifiedCreds wraps the TLS credentials so a connection's TLSInfo carries VerifiedChains, which Go
+// only fills when it does the client verification itself, and refuses the connection otherwise.
+type verifiedCreds struct {
+	credentials.TransportCredentials
+	clientCAs func() *CAIndex
+	now       func() time.Time
+}
+
+func (c verifiedCreds) ServerHandshake(raw net.Conn) (net.Conn, credentials.AuthInfo, error) {
+	conn, info, err := c.TransportCredentials.ServerHandshake(raw)
+	if err != nil {
+		return nil, nil, err
 	}
-	return conf
+	ti, ok := info.(credentials.TLSInfo)
+	if !ok {
+		_ = conn.Close()
+		return nil, nil, errors.New("fleet: unexpected transport credentials")
+	}
+	chains, err := verifyClientChain(ti.State, c.clientCAs(), c.now())
+	if err != nil {
+		_ = conn.Close()
+		return nil, nil, err
+	}
+	ti.State.VerifiedChains = chains
+	return conn, ti, nil
+}
+
+func (c verifiedCreds) Clone() credentials.TransportCredentials {
+	return verifiedCreds{c.TransportCredentials.Clone(), c.clientCAs, c.now}
 }

@@ -137,10 +137,9 @@ func start(t *testing.T) *rig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pool := x509.NewCertPool()
-	pool.AddCert(ca.cert)
+	pool := gateway.NewCAIndex([]*x509.Certificate{ca.cert})
 	s := &server{ca: ca, srvCA: srvCA, tid: tid}
-	gs, err := gw.NewServer(srvCA.serverCert(t), func() *x509.CertPool { return pool }, func(r grpc.ServiceRegistrar) {
+	gs, err := gw.NewServer(srvCA.serverCert(t), func() *gateway.CAIndex { return pool }, func(r grpc.ServiceRegistrar) {
 		fleetv1.RegisterFleetServer(r, s)
 	})
 	if err != nil {
@@ -250,7 +249,7 @@ func TestGatewayRefusesToStartWithAPublicMethodOtherThanEnroll(t *testing.T) {
 		t.Fatal(err)
 	}
 	ca := newAuthority(t, "ca")
-	if _, err := g.NewServer(ca.serverCert(t), func() *x509.CertPool { return x509.NewCertPool() }, func(r grpc.ServiceRegistrar) {
+	if _, err := g.NewServer(ca.serverCert(t), func() *gateway.CAIndex { return gateway.NewCAIndex(nil) }, func(r grpc.ServiceRegistrar) {
 		fleetv1.RegisterFleetServer(r, &server{})
 	}); !errors.Is(err, gateway.ErrUnclassified) {
 		t.Fatalf("unclassified Tunnel mounted: %v", err)
