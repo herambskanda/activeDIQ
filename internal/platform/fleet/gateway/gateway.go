@@ -188,12 +188,12 @@ func NewGateway(cfg Config) (*Gateway, error) {
 // whatever register mounts. It fails closed if register mounts a method without an explicit class, a
 // public method other than Enroll, or a service outside the fleet package. Nothing is served until
 // the caller calls Serve on the result.
-func (g *Gateway) NewServer(server tls.Certificate, clientCAs func() *x509.CertPool, register func(grpc.ServiceRegistrar), opts ...grpc.ServerOption) (*grpc.Server, error) {
+func (g *Gateway) NewServer(server tls.Certificate, clientCAs func() *CAIndex, register func(grpc.ServiceRegistrar), opts ...grpc.ServerOption) (*grpc.Server, error) {
 	if len(server.Certificate) == 0 || clientCAs == nil || register == nil {
 		return nil, ErrGatewayConfig
 	}
 	base := []grpc.ServerOption{
-		grpc.Creds(verifiedCreds{credentials.NewTLS(serverTLS(server, clientCAs)), clientCAs}),
+		grpc.Creds(verifiedCreds{credentials.NewTLS(serverTLS(server)), clientCAs, time.Now}),
 		grpc.ChainUnaryInterceptor(g.Unary),
 		grpc.ChainStreamInterceptor(g.Stream),
 	}
@@ -581,49 +581,34 @@ func hasClientAuth(c *x509.Certificate) bool {
 
 // serverTLS returns the fleet listener's TLS configuration: TLS 1.3, a client certificate requested
 // when the peer has one (Enroll must work without; the interceptor refuses its absence for every other
-// method). clientCAs is read per handshake so CA changes take effect without a restart.
+// method).
 //
-// The client chain is verified against that pool by VerifyConnection, not by Go's ClientAuth: with
-// ClientCAs set Go announces every CA subject in the CertificateRequest, and the extension's length
-// field is 16 bits, so a pool of roughly a thousand same-subject CAs cannot complete any handshake
-// (T-0714, F-POOL-7). The pool is therefore never given to the tls.Config; the forged-chain refusal
-// stays in memory and before any database work, and verifiedCreds puts the chain it built into the
-// connection's TLSInfo.VerifiedChains for the interceptors.
-func serverTLS(server tls.Certificate, clientCAs func() *x509.CertPool) *tls.Config {
-	return &tls.Config{
-		MinVersion:   tls.VersionTLS13,
-		Certificates: []tls.Certificate{server},
-		ClientAuth:   tls.RequestClientCert,
-		VerifyConnection: func(cs tls.ConnectionState) error {
-			_, err := verifyClientChain(cs, clientCAs())
-			return err
-		},
-	}
+// The client chain is not verified by Go's ClientAuth: with ClientCAs set Go announces every CA
+// subject in the CertificateRequest, and the extension's length field is 16 bits, so a pool of roughly
+// a thousand same-subject CAs cannot complete any handshake (T-0714, F-POOL-7). The pool is never
+// given to the tls.Config. verifiedCreds verifies the chain once, after the handshake and before any
+// RPC or database work, against the CAIndex read at that moment (so CA changes take effect without a
+// restart and a resumed session is checked against the current CAs).
+func serverTLS(server tls.Certificate) *tls.Config {
+	return &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{server}, ClientAuth: tls.RequestClientCert}
 }
 
-// verifyClientChain verifies the peer's client certificate chain against pool (nil: refuse). No
-// certificate is not an error: the interceptor decides whether the method needs one.
-func verifyClientChain(cs tls.ConnectionState, pool *x509.CertPool) ([][]*x509.Certificate, error) {
+// verifyClientChain verifies the peer's client certificate against idx. No certificate is not an
+// error: the interceptor decides whether the method needs one. Only the leaf's issuer key id selects
+// CAs; a leaf with none, or an unknown one, is refused before any signature check.
+func verifyClientChain(cs tls.ConnectionState, idx *CAIndex, at time.Time) ([][]*x509.Certificate, error) {
 	if len(cs.PeerCertificates) == 0 {
 		return nil, nil
 	}
-	if pool == nil {
-		return nil, errors.New("fleet: no client CAs")
-	}
-	inter := x509.NewCertPool()
-	for _, c := range cs.PeerCertificates[1:] {
-		inter.AddCert(c)
-	}
-	return cs.PeerCertificates[0].Verify(x509.VerifyOptions{
-		Roots: pool, Intermediates: inter, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-	})
+	return idx.verify(cs.PeerCertificates[0], at)
 }
 
 // verifiedCreds wraps the TLS credentials so a connection's TLSInfo carries VerifiedChains, which Go
-// only fills when it does the client verification itself.
+// only fills when it does the client verification itself, and refuses the connection otherwise.
 type verifiedCreds struct {
 	credentials.TransportCredentials
-	clientCAs func() *x509.CertPool
+	clientCAs func() *CAIndex
+	now       func() time.Time
 }
 
 func (c verifiedCreds) ServerHandshake(raw net.Conn) (net.Conn, credentials.AuthInfo, error) {
@@ -636,7 +621,7 @@ func (c verifiedCreds) ServerHandshake(raw net.Conn) (net.Conn, credentials.Auth
 		_ = conn.Close()
 		return nil, nil, errors.New("fleet: unexpected transport credentials")
 	}
-	chains, err := verifyClientChain(ti.State, c.clientCAs())
+	chains, err := verifyClientChain(ti.State, c.clientCAs(), c.now())
 	if err != nil {
 		_ = conn.Close()
 		return nil, nil, err
@@ -646,5 +631,5 @@ func (c verifiedCreds) ServerHandshake(raw net.Conn) (net.Conn, credentials.Auth
 }
 
 func (c verifiedCreds) Clone() credentials.TransportCredentials {
-	return verifiedCreds{c.TransportCredentials.Clone(), c.clientCAs}
+	return verifiedCreds{c.TransportCredentials.Clone(), c.clientCAs, c.now}
 }

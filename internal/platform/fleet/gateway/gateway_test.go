@@ -205,14 +205,14 @@ var allMethods = map[string]gateway.AuthClass{gateway.EnrollMethod: gateway.Clas
 type rig struct {
 	addr  string
 	fleet *fakeFleet
-	pool  *x509.CertPool
+	pool  *certSet
 	srv   *grpc.Server
 	comps *fakeComps
 	gw    *gateway.Gateway
 	roots *x509.CertPool // trusts the rig's server certificate
 }
 
-func start(t testing.TB, cas gateway.TenantCAs, pool *x509.CertPool, now func() time.Time, opts ...func(*gateway.Config)) *rig {
+func start(t testing.TB, cas gateway.TenantCAs, pool *certSet, now func() time.Time, opts ...func(*gateway.Config)) *rig {
 	t.Helper()
 	comps := &fakeComps{}
 	cfg := gateway.Config{Methods: allMethods, CAs: cas, Components: comps, Recheck: 50 * time.Millisecond, Clock: now}
@@ -235,7 +235,7 @@ func start(t testing.TB, cas gateway.TenantCAs, pool *x509.CertPool, now func() 
 	roots := x509.NewCertPool()
 	roots.AddCert(srvLeaf)
 	ff := &fakeFleet{}
-	srv, err := g.NewServer(srvCert, func() *x509.CertPool { return pool }, func(r grpc.ServiceRegistrar) {
+	srv, err := g.NewServer(srvCert, func() *gateway.CAIndex { return pool.index() }, func(r grpc.ServiceRegistrar) {
 		r.RegisterService(ff.desc("activediq.fleet.v1.Fleet"), ff)
 	})
 	if err != nil {
@@ -292,7 +292,7 @@ func code(err error) codes.Code { return status.Code(err) }
 func TestNoCertificateOnlyEnrollWorks(t *testing.T) {
 	ca := newCA(t, time.Now().Add(time.Hour))
 	tid := tenant.New()
-	pool := x509.NewCertPool()
+	pool := &certSet{}
 	pool.AddCert(ca.cert)
 	r := start(t, casByTenant{tid: {ca.cert}}, pool, nil)
 	cc := r.dial(t, nil)
@@ -314,7 +314,7 @@ func TestNoCertificateOnlyEnrollWorks(t *testing.T) {
 func TestValidCertificateGivesIdentityFromSAN(t *testing.T) {
 	ca := newCA(t, time.Now().Add(time.Hour))
 	tid := tenant.New()
-	pool := x509.NewCertPool()
+	pool := &certSet{}
 	pool.AddCert(ca.cert)
 	r := start(t, casByTenant{tid: {ca.cert}}, pool, nil)
 	leaf := ca.leaf(t, tid, time.Now().Add(-time.Minute), time.Now().Add(time.Hour), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
@@ -331,7 +331,7 @@ func TestForeignOrExpiredCertificateRefused(t *testing.T) {
 	ca := newCA(t, time.Now().Add(time.Hour))
 	other := newCA(t, time.Now().Add(time.Hour))
 	tid := tenant.New()
-	pool := x509.NewCertPool()
+	pool := &certSet{}
 	pool.AddCert(ca.cert)
 	r := start(t, casByTenant{tid: {ca.cert}}, pool, nil)
 	eku := []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
@@ -354,7 +354,7 @@ func TestCertificateOutsideValidityRefusedByInterceptor(t *testing.T) {
 	// The TLS layer would accept this chain; the interceptor's own clock check is the second wall.
 	ca := newCA(t, time.Now().Add(3*time.Hour))
 	tid := tenant.New()
-	pool := x509.NewCertPool()
+	pool := &certSet{}
 	pool.AddCert(ca.cert)
 	r := start(t, casByTenant{tid: {ca.cert}}, pool, func() time.Time { return time.Now().Add(2 * time.Hour) })
 	leaf := ca.leaf(t, tid, time.Now().Add(-time.Minute), time.Now().Add(time.Hour), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
@@ -366,7 +366,7 @@ func TestCertificateOutsideValidityRefusedByInterceptor(t *testing.T) {
 func TestTenantBoundToIssuer(t *testing.T) {
 	caA, caB := newCA(t, time.Now().Add(time.Hour)), newCA(t, time.Now().Add(time.Hour))
 	tidA, tidB := tenant.New(), tenant.New()
-	pool := x509.NewCertPool() // the listener trusts every tenant's CA
+	pool := &certSet{} // the listener trusts every tenant's CA
 	pool.AddCert(caA.cert)
 	pool.AddCert(caB.cert)
 	r := start(t, casByTenant{tidA: {caA.cert}, tidB: {caB.cert}}, pool, nil)
@@ -389,7 +389,7 @@ func TestTenantBoundToIssuer(t *testing.T) {
 func TestNoServerAuthOnlyLeafAndCALookupFailureRefused(t *testing.T) {
 	ca := newCA(t, time.Now().Add(time.Hour))
 	tid := tenant.New()
-	pool := x509.NewCertPool()
+	pool := &certSet{}
 	pool.AddCert(ca.cert)
 	r := start(t, casByTenant{tid: {ca.cert}}, pool, nil)
 	srvOnly := ca.leaf(t, tid, time.Now().Add(-time.Minute), time.Now().Add(time.Hour), []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
@@ -416,20 +416,20 @@ func TestStartupFailsClosed(t *testing.T) {
 	ff := &fakeFleet{}
 	// Tunnel not classified.
 	g, _ := gateway.NewGateway(gateway.Config{Methods: map[string]gateway.AuthClass{gateway.EnrollMethod: gateway.ClassPublic}, CAs: cas, Components: &fakeComps{}})
-	if _, err := g.NewServer(tls.Certificate{Certificate: [][]byte{{1}}}, func() *x509.CertPool { return nil }, func(r grpc.ServiceRegistrar) { r.RegisterService(ff.desc("activediq.fleet.v1.Fleet"), ff) }); !errors.Is(err, gateway.ErrUnclassified) {
+	if _, err := g.NewServer(tls.Certificate{Certificate: [][]byte{{1}}}, func() *gateway.CAIndex { return nil }, func(r grpc.ServiceRegistrar) { r.RegisterService(ff.desc("activediq.fleet.v1.Fleet"), ff) }); !errors.Is(err, gateway.ErrUnclassified) {
 		t.Fatalf("unclassified method: %v", err)
 	}
 	// A non-fleet service on the fleet listener.
 	g, _ = gateway.NewGateway(gateway.Config{Methods: map[string]gateway.AuthClass{gateway.EnrollMethod: gateway.ClassPublic, tunnelMethod: gateway.ClassClientCert,
 		"/activediq.console.v1.Console/Enroll": gateway.ClassClientCert, "/activediq.console.v1.Console/Tunnel": gateway.ClassClientCert}, CAs: cas, Components: &fakeComps{}})
-	if _, err := g.NewServer(tls.Certificate{Certificate: [][]byte{{1}}}, func() *x509.CertPool { return nil }, func(r grpc.ServiceRegistrar) { r.RegisterService(ff.desc("activediq.console.v1.Console"), ff) }); !errors.Is(err, gateway.ErrForeignMount) {
+	if _, err := g.NewServer(tls.Certificate{Certificate: [][]byte{{1}}}, func() *gateway.CAIndex { return nil }, func(r grpc.ServiceRegistrar) { r.RegisterService(ff.desc("activediq.console.v1.Console"), ff) }); !errors.Is(err, gateway.ErrForeignMount) {
 		t.Fatalf("foreign service: %v", err)
 	}
 }
 
 func TestRoutesListOnlyFleet(t *testing.T) {
 	ca := newCA(t, time.Now().Add(time.Hour))
-	pool := x509.NewCertPool()
+	pool := &certSet{}
 	pool.AddCert(ca.cert)
 	r := start(t, casByTenant{}, pool, nil)
 	got := gateway.Routes(r.srv)
@@ -470,7 +470,7 @@ func TestCallerCredsCannotReplaceTLS(t *testing.T) {
 		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour)}
 	der, _ := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &sk.PublicKey, sk)
 	ff := &fakeFleet{}
-	srv, err := g.NewServer(tls.Certificate{Certificate: [][]byte{der}, PrivateKey: sk}, func() *x509.CertPool { return nil },
+	srv, err := g.NewServer(tls.Certificate{Certificate: [][]byte{der}, PrivateKey: sk}, func() *gateway.CAIndex { return nil },
 		func(r grpc.ServiceRegistrar) { r.RegisterService(ff.desc("activediq.fleet.v1.Fleet"), ff) },
 		grpc.Creds(insecure.NewCredentials()))
 	if err != nil {
@@ -527,7 +527,7 @@ func TestRevokedComponentRefusedAndStreamClosed(t *testing.T) {
 	const other = "66666666-7777-4888-8999-aaaaaaaaaaaa"
 	ca := newCA(t, time.Now().Add(time.Hour))
 	tidA := tenant.New()
-	pool := x509.NewCertPool()
+	pool := &certSet{}
 	pool.AddCert(ca.cert)
 	nb, na, eku := time.Now().Add(-time.Minute), time.Now().Add(time.Hour), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
 
@@ -577,7 +577,7 @@ func TestRevokedComponentRefusedAndStreamClosed(t *testing.T) {
 func TestCloseComponentIsTenantScoped(t *testing.T) {
 	ca := newCA(t, time.Now().Add(time.Hour))
 	tidA, tidB := tenant.New(), tenant.New()
-	pool := x509.NewCertPool()
+	pool := &certSet{}
 	pool.AddCert(ca.cert)
 	r := start(t, casByTenant{tidA: {ca.cert}, tidB: {ca.cert}}, pool, nil)
 	r.fleet.hold.Store(true)
@@ -604,7 +604,7 @@ func TestCloseComponentIsTenantScoped(t *testing.T) {
 func TestStatusLookupFailureRefused(t *testing.T) {
 	ca := newCA(t, time.Now().Add(time.Hour))
 	tid := tenant.New()
-	pool := x509.NewCertPool()
+	pool := &certSet{}
 	pool.AddCert(ca.cert)
 	r := start(t, casByTenant{tid: {ca.cert}}, pool, nil)
 	r.comps.err = errors.New("db down")
@@ -621,7 +621,7 @@ func TestUncooperativeHandlerIsTornDown(t *testing.T) {
 	const other = "66666666-7777-4888-8999-aaaaaaaaaaaa"
 	ca := newCA(t, time.Now().Add(time.Hour))
 	tid := tenant.New()
-	pool := x509.NewCertPool()
+	pool := &certSet{}
 	pool.AddCert(ca.cert)
 	nb, na, eku := time.Now().Add(-time.Minute), time.Now().Add(time.Hour), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
 	for _, mode := range []struct {
@@ -661,7 +661,7 @@ func TestUncooperativeHandlerIsTornDown(t *testing.T) {
 }
 
 func TestDialRejectsUntrustedServerCert(t *testing.T) {
-	r := start(t, casByTenant{}, x509.NewCertPool(), time.Now)
+	r := start(t, casByTenant{}, &certSet{}, time.Now)
 	other := newCA(t, time.Now().Add(time.Hour))
 	wrong := x509.NewCertPool()
 	wrong.AddCert(other.cert)
@@ -692,7 +692,7 @@ func serialOf(t *testing.T, c tls.Certificate) string {
 func TestSupersededCertificateRefusedAtEstablishment(t *testing.T) {
 	ca := newCA(t, time.Now().Add(time.Hour))
 	tidA := tenant.New()
-	pool := x509.NewCertPool()
+	pool := &certSet{}
 	pool.AddCert(ca.cert)
 	nb, na, eku := time.Now().Add(-time.Minute), time.Now().Add(time.Hour), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
 	r := start(t, casByTenant{tidA: {ca.cert}}, pool, nil)
@@ -745,7 +745,7 @@ func (s *supReport) got() []fleet.Identity {
 func TestSupersededCertificateIsReportedOncePerWindow(t *testing.T) {
 	ca := newCA(t, time.Now().Add(time.Hour))
 	tidA := tenant.New()
-	pool := x509.NewCertPool()
+	pool := &certSet{}
 	pool.AddCert(ca.cert)
 	nb, na, eku := time.Now().Add(-time.Minute), time.Now().Add(time.Hour), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
 	rep := &supReport{}
@@ -814,7 +814,7 @@ func (c *ctxReport) Superseded(ctx context.Context, _ fleet.Identity) error {
 func TestSupersededReportSurvivesHangUp(t *testing.T) {
 	ca := newCA(t, time.Now().Add(time.Hour))
 	tidA := tenant.New()
-	pool := x509.NewCertPool()
+	pool := &certSet{}
 	pool.AddCert(ca.cert)
 	nb, na, eku := time.Now().Add(-time.Minute), time.Now().Add(time.Hour), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
 	rep := &ctxReport{delay: 150 * time.Millisecond}
@@ -846,3 +846,9 @@ func TestSupersededReportSurvivesHangUp(t *testing.T) {
 	cancel()
 	waitFor(t, "report completes after the caller hung up", func() bool { return rep.ok.Load() == 1 })
 }
+
+// certSet collects CA certificates for a test rig and indexes them as the gateway does.
+type certSet struct{ cs []*x509.Certificate }
+
+func (s *certSet) AddCert(c *x509.Certificate) { s.cs = append(s.cs, c) }
+func (s *certSet) index() *gateway.CAIndex     { return gateway.NewCAIndex(s.cs) }

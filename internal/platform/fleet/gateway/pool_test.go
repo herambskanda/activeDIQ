@@ -21,6 +21,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 
+	"github.com/skenzeriq/activediq/internal/platform/fleet"
 	"github.com/skenzeriq/activediq/internal/platform/fleet/gateway"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
@@ -58,10 +59,7 @@ func (l *loader) load(context.Context) ([]*x509.Certificate, error) {
 	return l.certs, l.err
 }
 
-func inPool(p *x509.CertPool, c *x509.Certificate) bool {
-	_, err := c.Verify(x509.VerifyOptions{Roots: p, CurrentTime: time.Now()})
-	return err == nil
-}
+func inPool(p *gateway.CAIndex, c *x509.Certificate) bool { return p.Contains(c) }
 
 // F-POOL-5: freshness bound, fail-closed staleness, recovery without a restart.
 func TestPoolProviderFreshnessAndStaleness(t *testing.T) {
@@ -185,7 +183,7 @@ func TestWithdrawnCAEndsStreams(t *testing.T) {
 	nb, na, eku := time.Now().Add(-time.Minute), time.Now().Add(time.Hour), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
 	caA, caB, caA2 := newCA(t, na), newCA(t, na), newCA(t, na)
 	tidA, tidB := tenant.New(), tenant.New()
-	pool := x509.NewCertPool()
+	pool := &certSet{}
 	pool.AddCert(caA.cert)
 	pool.AddCert(caB.cert)
 	pool.AddCert(caA2.cert)
@@ -254,10 +252,10 @@ func TestWithdrawnCAEndsStreams(t *testing.T) {
 
 // largePool builds a pool of tenants x perTenant CAs that all carry the one subject, and returns
 // one CA from the middle of it (the one that signs the test leaf).
-func largePool(tb testing.TB, n int) (*x509.CertPool, testCA) {
+func largePool(tb testing.TB, n int) (*certSet, testCA) {
 	tb.Helper()
 	subj := pkix.Name{CommonName: "activeDIQ fleet CA", Organization: []string{"activeDIQ"}}
-	pool := x509.NewCertPool()
+	pool := &certSet{}
 	var real testCA
 	for i := 0; i < n; i++ {
 		k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -297,10 +295,56 @@ func TestPoolHandshakeAtScale(t *testing.T) {
 	}
 }
 
+// forgedLeaf is signed by an attacker key but claims the constant fleet CA subject and akid as its
+// authority key id (nil: none).
+func forgedLeaf(t *testing.T, akid []byte) tls.Certificate {
+	t.Helper()
+	subj := pkix.Name{CommonName: "activeDIQ fleet CA", Organization: []string{"activeDIQ"}}
+	ak, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	parent := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: subj, SubjectKeyId: akid}
+	lk, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "x"},
+		NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Hour),
+		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, URIs: fleet.URIs(tenant.New(), "connector", compID)}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, parent, &lk.PublicKey, ak)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: lk}
+}
+
+// Pre-auth cost (security review of T-0714): a forged leaf naming the public constant subject must
+// not make the gateway try the pool's same-subject CAs. Without an authority key id, or with an
+// unknown one, nothing is tried; with a real CA's id exactly that CA is, and its signature check fails.
+func TestForgedLeafCostsAtMostOneSignatureCheck(t *testing.T) {
+	set, real := largePool(t, 8000)
+	idx := set.index()
+	random := make([]byte, 20)
+	_, _ = rand.Read(random)
+	for _, tc := range []struct {
+		name string
+		akid []byte
+		want int
+	}{{"no AKID", nil, 0}, {"random AKID", random, 0}, {"AKID of a real CA", real.cert.SubjectKeyId, 1}} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := forgedLeaf(t, tc.akid)
+			c, _ := x509.ParseCertificate(f.Certificate[0])
+			if n := idx.CandidatesForTest(c); n != tc.want {
+				t.Fatalf("candidates = %d, want %d", n, tc.want)
+			}
+			tid := tenant.New()
+			r := start(t, casByTenant{tid: {real.cert}}, set, nil)
+			if err := callTunnel(r.dial(t, &f)); err == nil || errors.Is(err, io.EOF) {
+				t.Fatalf("forged leaf was not refused: %v", err)
+			}
+		})
+	}
+}
+
 // BenchmarkPoolHandshake is the F-POOL-7 latency gate, run by `go test -run '^$' -bench
 // PoolHandshake ./internal/platform/fleet/gateway`, and enforced by TestPoolHandshakeBudget when
 // FLEET_POOL_BUDGET=1. The budget is relative to the same handshake against a one-CA pool: the
-// 8,000-CA pool must stay within 15x of baseline (measured 6-9x, 4-5 ms vs 33 ms). Failure
+// 8,000-CA pool must stay within 3x of baseline. Failure
 // triggers fallback option (d) in fleet-contract.md.
 func BenchmarkPoolHandshake(b *testing.B) {
 	for _, n := range []int{1, 8000} {
@@ -323,7 +367,7 @@ func BenchmarkPoolHandshake(b *testing.B) {
 // in the ordinary suite) and takes the best of three runs to shed machine noise.
 func TestPoolHandshakeBudget(t *testing.T) {
 	if os.Getenv("FLEET_POOL_BUDGET") != "1" {
-		t.Skip("set FLEET_POOL_BUDGET=1 to run the F-POOL-7 latency gate")
+		t.Skip("opt-in: run with FLEET_POOL_BUDGET=1 for the F-POOL-7 latency gate")
 	}
 	best := func(n int) float64 {
 		b := math.MaxFloat64
@@ -346,7 +390,7 @@ func TestPoolHandshakeBudget(t *testing.T) {
 	}
 	base, big := best(1), best(8000)
 	t.Logf("baseline %.1f ms, 8,000 CAs %.1f ms, ratio %.1f", base/1e6, big/1e6, big/base)
-	if big > 15*base {
-		t.Fatalf("handshake against 8,000 CAs is %.1fx the one-CA baseline, budget 15x (F-POOL-7): fallback option (d)", big/base)
+	if big > 3*base {
+		t.Fatalf("handshake against 8,000 CAs is %.1fx the one-CA baseline, budget 3x (F-POOL-7): fallback option (d)", big/base)
 	}
 }

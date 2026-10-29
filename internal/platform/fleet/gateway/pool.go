@@ -56,11 +56,11 @@ type PoolProvider struct {
 }
 
 type poolState struct {
-	pool *x509.CertPool
+	pool *CAIndex
 	at   time.Time // when the load that produced it succeeded
 }
 
-var emptyPool = x509.NewCertPool()
+var emptyPool = NewCAIndex(nil)
 
 // ErrPoolConfig is returned by NewPoolProvider when there is no loader.
 var ErrPoolConfig = errors.New("fleet: client CA pool provider is not configured")
@@ -95,7 +95,7 @@ func NewPoolProvider(cfg PoolConfig) (*PoolProvider, error) {
 
 // Pool returns the current pool. It never blocks and never touches the database. Without a successful
 // refresh in the last Stale period it is empty.
-func (p *PoolProvider) Pool() *x509.CertPool {
+func (p *PoolProvider) Pool() *CAIndex {
 	s := p.cur.Load()
 	if s == nil || p.now().Sub(s.at) > p.stale {
 		return emptyPool
@@ -122,13 +122,7 @@ func (p *PoolProvider) Refresh(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	np := x509.NewCertPool()
-	for _, c := range certs {
-		if c != nil {
-			np.AddCert(c)
-		}
-	}
-	p.cur.Store(&poolState{pool: np, at: p.now()})
+	p.cur.Store(&poolState{pool: NewCAIndex(certs), at: p.now()})
 	return nil
 }
 
@@ -175,4 +169,57 @@ func errKind(err error) string {
 	default:
 		return "load"
 	}
+}
+
+// CAIndex is the immutable set of client CAs, indexed by SubjectKeyId. Every fleet CA carries the one
+// constant subject (F-POOL-6), so the subject cannot select a candidate and a flat x509.CertPool would
+// try up to 100 same-subject CAs per chain, each a signature check, for an attacker-supplied leaf.
+// Selecting by the leaf's AuthorityKeyId bounds that to the CAs that really share a key id.
+type CAIndex struct {
+	bySKID map[string][]*x509.Certificate
+}
+
+// NewCAIndex indexes certs. A CA without a SubjectKeyId cannot be selected and so never verifies a leaf.
+func NewCAIndex(certs []*x509.Certificate) *CAIndex {
+	ix := &CAIndex{bySKID: make(map[string][]*x509.Certificate, len(certs))}
+	for _, c := range certs {
+		if c != nil && len(c.SubjectKeyId) > 0 {
+			ix.bySKID[string(c.SubjectKeyId)] = append(ix.bySKID[string(c.SubjectKeyId)], c)
+		}
+	}
+	return ix
+}
+
+// candidates are the CAs whose SubjectKeyId equals the leaf's AuthorityKeyId; none if the leaf names none.
+func (ix *CAIndex) candidates(leaf *x509.Certificate) []*x509.Certificate {
+	if ix == nil || len(leaf.AuthorityKeyId) == 0 {
+		return nil
+	}
+	return ix.bySKID[string(leaf.AuthorityKeyId)]
+}
+
+// errNoIssuer is returned, without any signature check, for a leaf whose issuer key id is absent or unknown.
+var errNoIssuer = errors.New("fleet: client certificate issuer is not a known CA")
+
+// verify builds the chain for a client leaf: directly under an indexed CA, ClientAuth EKU, valid now.
+func (ix *CAIndex) verify(leaf *x509.Certificate, at time.Time) ([][]*x509.Certificate, error) {
+	cands := ix.candidates(leaf)
+	if len(cands) == 0 {
+		return nil, errNoIssuer
+	}
+	roots := x509.NewCertPool()
+	for _, c := range cands {
+		roots.AddCert(c)
+	}
+	return leaf.Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, CurrentTime: at})
+}
+
+// Contains reports whether c is in the index.
+func (ix *CAIndex) Contains(c *x509.Certificate) bool {
+	for _, k := range ix.bySKID[string(c.SubjectKeyId)] {
+		if k.Equal(c) {
+			return true
+		}
+	}
+	return false
 }
