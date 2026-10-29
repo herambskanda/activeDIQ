@@ -220,7 +220,10 @@ func (l *sdvLab) planAdd(t *testing.T, dn string, trustee sid.SID, mask uint32, 
 
 func (l *sdvLab) planInh(t *testing.T, dn string, op sd.InheritanceOp) sd.DACLWrite {
 	t.Helper()
-	w, _, err := sd.PlanInheritance(l.readSD(t, dn, 4), op, sd.ObjectCtx{ObjectGUID: l.objectGUID(t, dn), Connector: l.adminPrincipal(t)})
+	// Normalize: a non-canonical keep-inherited list is refused otherwise (T-0728); the planned order is
+	// then the canonical order the DC is expected to store, which planned-vs-stored checks assert.
+	w, p, err := sd.PlanInheritance(l.readSD(t, dn, 4), op, sd.ObjectCtx{ObjectGUID: l.objectGUID(t, dn), Connector: l.adminPrincipal(t)}, sd.PlanOpts{Normalize: true})
+	t.Logf("RESULT PlanInheritance %s: moves=%d rights-changes=%d", dn, len(p.Moves), len(p.Changes))
 	if err != nil {
 		t.Fatalf("PlanInheritance %s: %v", dn, err)
 	}
@@ -397,6 +400,13 @@ func TestWindowsLabSDWriteInheritance(t *testing.T) {
 	k := l.readSD(t, c3, 4)
 	// SD-W10 records the plan order; the DC re-sorts (T-0627), so verify as the DC canonicalises.
 	verifyAfter(t, "BlockKeepInherited", keepPlan, k)
+	// T-0728: the planner's order is the DC's canonical order, so the stored rule-1/2 order is the planned one.
+	if v := k.DACL.Order().Outcome; len(v) != 0 {
+		t.Errorf("BlockKeepInherited: DC stored a non-canonical DACL %v", v)
+	}
+	if d := firstDiff(orderOf(plannedSD(t, keepPlan)), orderOf(k)); d != "" {
+		t.Logf("RESULT BlockKeepInherited: planned canonical order differs from the DC's (rules 3/4 or tie order): %s", d)
+	}
 	t.Logf("RESULT BlockKeepInherited before: %s\nRESULT BlockKeepInherited after:  %s", summary(pre), summary(k))
 	if !k.Control.Protected() {
 		t.Error("BlockKeepInherited: PD not set")

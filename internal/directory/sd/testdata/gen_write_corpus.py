@@ -241,8 +241,13 @@ def inh(id_, base, op, expect, hostile, source, opts=None):
     o = {"connector": CONN}; o.update(opts or {})
     rec(id_, "PlanInheritance", {"sd": hx(base), "op": {"utf8": op}, "opts": js(o)}, {"error": expect} if isinstance(expect, str) else {"value": expect}, hostile, source)
 unflag = lambda a: a[:1] + bytes([a[1] & ~0x10]) + a[2:]
-inh("SD-W10", IBASE, "block_keep", outcome(written([IB[0], IB[1], unflag(IB[2]), unflag(IB[3])], 2, 0x8004 | 0x1000 | 0x0400), control=0x8004 | 0x1000 | 0x0400, noncanon=[(2, 3)]), False,
-    "SD-R7 break inheritance and keep copies: INHERITED cleared, plan order kept (the inherited deny now sits after an allow: reported), DI copied from the base. The order is what the PLANNER writes: a Windows DC re-sorts on write (T-0606/T-0627), so verify-after-write compares with DACLWrite.VerifyAfter, never by position")
+W10_LIST = [IB[0], IB[1], unflag(IB[2]), unflag(IB[3])]
+inh("SD-W10", IBASE, "block_keep", "sd.plan_non_canonical", True,
+    "SD-R7 break inheritance and keep copies: the inherited deny would sit after an explicit allow, a Windows DC re-sorts on write (T-0606/T-0727) so the preview would not be what is stored (T-0728): refused before any write, no plan order is ever sent")
+inh("SD-W10N", IBASE, "block_keep",
+    outcome(written([W10_LIST[3], W10_LIST[0], W10_LIST[1], W10_LIST[2]], 2, 0x8004 | 0x1000 | 0x0400), control=0x8004 | 0x1000 | 0x0400,
+            moves=[(3, 0), (0, 1), (1, 2), (2, 3)]), False,
+    "SD-R7 with Normalize: the plan holds the canonical order the DC stores (denies first, T-0728); no trustee in isolation changes rights here", opts={"normalize": True})
 inh("SD-W11", IBASE, "block_remove", outcome(written(IB[:2], 2, 0x8004 | 0x1000 | 0x0400), removed=[2, 3], control=0x8004 | 0x1000 | 0x0400), False,
     "SD-R7 break inheritance and remove the inherited ACEs")
 PIB = sd(dacl=acl(IB, 2), owner=sid(SYS), control=0x8000 | 0x1000 | 0x0400)
@@ -253,10 +258,14 @@ inh("SD-W15", IBASE, "bogus", "sd.bad_inheritance_op", True, "unknown operation"
 inh("SD-W16", IBASE, "block_keep", "sd.sdprop_will_revert", True, "SD-E11 applies to PlanInheritance too", opts={"sdprop": True})
 LB = [ace(0, 0, 0xF01FF, SYS), ace(0, 0x10, 0x60000, G1)]
 inh("SD-W17", sd(dacl=acl(LB, 2), owner=sid(SYS), control=0x8000 | 0x0400), "block_remove", "sd.self_lockout", True, "SD-E13 the connector's WRITE_DAC route was inherited and is dropped")
-inh("SD-W18", sd(dacl=acl([ace(1, 0, 0x20, GUESTS), ace(0, 0, 0x60000, G1), ace(0, 0x10, 0x20, ADMINS), ace(1, 0x10, 0x20, ADMINS)], 2), owner=sid(SYS)), "block_keep",
-    outcome(written([ace(1, 0, 0x20, GUESTS), ace(0, 0, 0x60000, G1), ace(0, 0, 0x20, ADMINS), ace(1, 0, 0x20, ADMINS)], 2, 0x8004 | 0x1000), control=0x8004 | 0x1000,
-            noncanon=[(2, 3)]), False,
-    "converting inherited ACEs to explicit ones keeps their order (rights unchanged) and reports the rule-2 violation it leaves")
+W18_BASE = sd(dacl=acl([ace(1, 0, 0x20, GUESTS), ace(0, 0, 0x60000, G1), ace(0, 0x10, 0x20, ADMINS), ace(1, 0x10, 0x20, ADMINS)], 2), owner=sid(SYS))
+inh("SD-W18", W18_BASE, "block_keep", "sd.plan_non_canonical", True,
+    "converting inherited ACEs to explicit ones puts the inherited ADMINS deny after the ADMINS allow: the DC would re-sort and ADMINS would lose WP (T-0728), refused")
+inh("SD-W18N", W18_BASE, "block_keep",
+    outcome(written([ace(1, 0, 0x20, GUESTS), ace(1, 0, 0x20, ADMINS), ace(0, 0, 0x60000, G1), ace(0, 0, 0x20, ADMINS)], 2, 0x8004 | 0x1000), control=0x8004 | 0x1000,
+            moves=[(3, 1), (1, 2), (2, 3)],
+            changes=[{"trustee": ADMINS, "mask": 0x20, "before": "yes", "after": "no"}]), False,
+    "with Normalize the plan is the DC's canonical order and reports that ADMINS loses WP", opts={"normalize": True})
 
 with open("testdata/safe-primitives/sd.write.jsonl", "w") as f:
     for r in recs:

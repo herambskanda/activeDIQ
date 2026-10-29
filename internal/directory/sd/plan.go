@@ -160,8 +160,18 @@ func PlanDACL(in SD, d ACEDiff, cat RightsCatalog, o ObjectCtx, opt PlanOpts) (D
 }
 
 // PlanInheritance changes the DACL-protected flag. It is the only function that does.
-func PlanInheritance(in SD, op InheritanceOp, o ObjectCtx) (DACLWrite, Plan, error) {
+//
+// BlockKeepInherited turns inherited ACEs into explicit ones in their old order. That list can be
+// non-canonical (an inherited deny now sits after an explicit allow), and a Windows DC re-sorts a DACL
+// on write (T-0606, T-0727), so the stored order, and with it the effective rights, would differ from the
+// preview. Such a plan is refused with sd.plan_non_canonical (Plan.NonCanonicalResult names the
+// violations) unless the caller passes PlanOpts{Normalize: true}: the plan then holds the canonical
+// order the DC will store (explicit before inherited, denies before allows) and reports the
+// effective-rights change of the reorder in Plan.Moves/Changes, for the admin to confirm. Only
+// Normalize is read from opt.
+func PlanInheritance(in SD, op InheritanceOp, o ObjectCtx, opt ...PlanOpts) (DACLWrite, Plan, error) {
 	var plan Plan
+	normalize := len(opt) > 0 && opt[0].Normalize
 	base, err := in.trusted()
 	if err != nil {
 		return DACLWrite{}, plan, err
@@ -209,6 +219,13 @@ func PlanInheritance(in SD, op InheritanceOp, o ObjectCtx) (DACLWrite, Plan, err
 	default:
 		return DACLWrite{}, plan, fail(ErrBadInheritanceOp)
 	}
+	if normalize && len(ACL{Kind: List, ACEs: out}.Order().Outcome) > 0 {
+		sorted, moves := normalizeOrder(out)
+		plan.Moves = moves
+		plan.Changes, plan.ChangesIncomplete = rightsChanges(
+			withDACL(base, base.DACL.Revision, out), withDACL(base, base.DACL.Revision, sorted), moves, nil)
+		out = sorted
+	}
 	return finish(base, o, DigestDACL(base), base.DACL.Revision, out, ctl, plan)
 }
 
@@ -222,6 +239,11 @@ func finish(base SD, o ObjectCtx, baseDigest Digest, rev uint8, aces []ACE, ctl 
 		return DACLWrite{}, plan, fail(ErrACLTooLarge)
 	}
 	plan.NonCanonicalResult = ACL{Kind: List, ACEs: aces}.Order().Outcome
+	if len(plan.NonCanonicalResult) > 0 {
+		// A DC stores a DACL in canonical order (T-0727): an outcome-changing violation here means the
+		// preview would not be what is stored. Refuse before any write.
+		return DACLWrite{}, plan, fail(ErrPlanNonCanonical)
+	}
 	// The connector must still be able to write the DACL afterwards. Owners keep an implicit right
 	// (Grants answers Unknown for them), so only a definite No refuses.
 	right := Right{Mask: MaskWriteDACL}
