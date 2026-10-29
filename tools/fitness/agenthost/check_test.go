@@ -506,6 +506,38 @@ func TestA1Installer(t *testing.T) {
 			write(t, r, "packaging/windows/Product.wxs", goodWxs)
 			wantClean(t, checkInstaller(r))
 		}
+		{ // T-0677 attempt 5: BOM-less UTF-32/UTF-16 detected from the first four bytes (XML Appendix F)
+			enc := func(unit int, be bool, s string) string {
+				var b []byte
+				for _, c := range s {
+					z := make([]byte, unit-1)
+					if be {
+						b = append(append(b, z...), byte(c))
+					} else {
+						b = append(append(b, byte(c)), z...)
+					}
+				}
+				return string(b)
+			}
+			pad := strings.Repeat("\x01\x4e", 40000) // U+4E01 code units: no NUL bytes
+			for name, content := range map[string]string{
+				"utf32le":     enc(4, false, lsys),
+				"utf32be":     enc(4, true, lsys),
+				"utf16le-pad": enc(2, false, "<?xml version=\"1.0\"?><!--") + pad + enc(2, false, "-->"+lsys),
+			} {
+				r := t.TempDir()
+				write(t, r, "packaging/windows/A.wixproj", inc(`..\..\tools\x\evil.xml`))
+				write(t, r, "tools/x/evil.xml", content)
+				if v := checkInstaller(r).Violations; len(v) == 0 {
+					t.Errorf("%s: want a violation, got none", name)
+				}
+			}
+			for _, sig := range []string{"\x00\x00\x3c\x00", "\x00\x3c\x00\x00", "\x4c\x6f\xa7\x94"} {
+				r := t.TempDir()
+				write(t, r, "tools/x/evil.xml", sig+"rest")
+				wantViolation(t, checkInstaller(r), "cannot decode")
+			}
+		}
 		{ // a long prolog does not hide the root element
 			r := t.TempDir()
 			write(t, r, "docs/evil.txt", "<!--"+strings.Repeat("x", 100<<10)+"-->"+lsys)

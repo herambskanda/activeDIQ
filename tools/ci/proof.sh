@@ -1131,6 +1131,20 @@ rm -f "$ah/packaging/windows/evil.bin"
 python3 -c 'import sys;s=sys.argv[1];open(sys.argv[2],"wb").write(b"\xff\xfe\0\0"+s.encode("utf-32-le"))' "$lsys" "$ah/x/evil.xml"
 must_fail_with "fitness-agent-host on a UTF-32LE LocalSystem WiX document (A1)" 'LocalSystem' agenthost "$ah"
 rm -f "$ah/x/evil.xml"
+# T-0677 attempt 5: BOM-less encodings detected from the first four bytes (XML 1.0 Appendix F).
+printf '<Project><ItemGroup><Compile Include="..\\..\\x\\evil.xml"/></ItemGroup></Project>\n' >"$ah/packaging/windows/A.wixproj"
+for enc in utf-32-le utf-32-be; do
+  python3 -c 'import sys;open(sys.argv[3],"wb").write(sys.argv[1].encode(sys.argv[2]))' "$lsys" "$enc" "$ah/x/evil.xml"
+  must_fail_with "fitness-agent-host on a BOM-less $enc LocalSystem WiX document (A1)" 'LocalSystem' agenthost "$ah"
+done
+python3 -c 'import sys;s=sys.argv[1];open(sys.argv[2],"wb").write(("<?xml version=\"1.0\"?><!--"+"\u4e01"*40000+"-->"+s).encode("utf-16-le"))' "$lsys" "$ah/x/evil.xml"
+must_fail_with "fitness-agent-host on a BOM-less UTF-16LE LocalSystem WiX document with a NUL-free pad (A1)" 'LocalSystem' agenthost "$ah"
+rm -f "$ah/packaging/windows/A.wixproj"
+for sig in '\0\0\x3c\0' '\0\x3c\0\0' '\x4c\x6f\xa7\x94'; do
+  printf "$sig"'rest' >"$ah/x/evil.xml"
+  must_fail_with "fitness-agent-host on an undecodable XML signature (A1, fail closed)" 'cannot decode' agenthost "$ah"
+done
+rm -f "$ah/x/evil.xml"
 printf '\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\20' >"$ah/packaging/windows/logo.png"
 must_pass "fitness-agent-host on a real PNG under packaging/ (A1 negative)" agenthost "$ah"
 rm -f "$ah/packaging/windows/logo.png"

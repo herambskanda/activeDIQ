@@ -622,6 +622,20 @@ func decodeText(b []byte) (string, bool) {
 	case bytes.HasPrefix(b, []byte{0xFE, 0xFF}):
 		return utf16Text(b[2:], true), true
 	}
+	// T-0677: XML 1.0 Appendix F guesses the encoding of a BOM-less document from its first four bytes
+	// (<?xm in UCS-4 or UTF-16), whatever the NUL share of the rest.
+	if len(b) >= 4 {
+		switch {
+		case b[0] == 0x3C && b[1] == 0 && b[2] == 0 && b[3] == 0:
+			return utf32Text(b, false), true
+		case b[0] == 0 && b[1] == 0 && b[2] == 0 && b[3] == 0x3C:
+			return utf32Text(b, true), true
+		case b[0] == 0x3C && b[1] == 0 && b[2] == 0x3F && b[3] == 0:
+			return utf16Text(b, false), true
+		case b[0] == 0 && b[1] == 0x3C && b[2] == 0 && b[3] == 0x3F:
+			return utf16Text(b, true), true
+		}
+	}
 	if bytes.IndexByte(b, 0) < 0 {
 		return string(b), true
 	}
@@ -643,6 +657,18 @@ func decodeText(b []byte) (string, bool) {
 	}
 	return "", false
 }
+
+// exoticXMLEncoding reports the Appendix F signatures this check does not decode (unusual UCS-4 byte
+// orders, EBCDIC): a file starting so is not classifiable and fails closed.
+func exoticXMLEncoding(b []byte) bool {
+	if len(b) < 4 {
+		return false
+	}
+	h := [4]byte{b[0], b[1], b[2], b[3]}
+	return h == [4]byte{0, 0, 0x3C, 0} || h == [4]byte{0, 0x3C, 0, 0} || h == [4]byte{0x4C, 0x6F, 0xA7, 0x94}
+}
+
+const exoticProblem = "starts with an XML byte-order signature this check cannot decode (unusual UCS-4 order or EBCDIC): it could be a WiX document, so it is not classifiable"
 
 func utf32Text(b []byte, bigEndian bool) string {
 	r := make([]rune, 0, len(b)/4)
@@ -776,6 +802,10 @@ func agentInstallerFiles(root string) []instFile {
 			}
 			return nil
 		}
+		if exoticXMLEncoding(b) {
+			out = append(out, instFile{path: p, rel: rel, problem: exoticProblem})
+			return nil
+		}
 		text, ok := decodeText(b)
 		if !ok {
 			if inPath || wix {
@@ -838,6 +868,9 @@ func sniffWix(p string, size int64) (text string, wix bool, problem string) {
 	buf := make([]byte, head)
 	n, _ := io.ReadFull(f, buf)
 	f.Close()
+	if exoticXMLEncoding(buf[:n]) {
+		return "", false, exoticProblem
+	}
 	t, ok := decodeText(buf[:n])
 	if !ok {
 		return "", false, ""
