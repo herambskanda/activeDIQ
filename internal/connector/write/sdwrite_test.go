@@ -177,6 +177,22 @@ func TestApplyDACLReadBack(t *testing.T) {
 		au.got[0].PlannedBase != w.BaseDigest() || au.got[0].ActualACEs != len(base.DACL.ACEs) {
 		t.Fatalf("audit = %+v", au.got)
 	}
+	planned, derr := sd.Decode(w.Value())
+	if derr != nil {
+		t.Fatal(derr)
+	}
+	if au.got[0].Planned != sd.DigestDACL(planned) || au.got[0].Planned == au.got[0].Actual {
+		t.Fatalf("Planned digest = %x, want digest of planned DACL", au.got[0].Planned)
+	}
+	if au.got[0].Truncated || len(au.got[0].ACEs) != len(base.DACL.ACEs) || len(base.DACL.ACEs) == 0 {
+		t.Fatalf("audited %d ACEs of %d (truncated=%v)", len(au.got[0].ACEs), len(base.DACL.ACEs), au.got[0].Truncated)
+	}
+	for i, e := range base.DACL.ACEs {
+		g := au.got[0].ACEs[i]
+		if g.Type != e.Type || g.Mask != e.Mask || g.Flags != e.Flags || g.Inherited != e.Inherited() || g.Trustee.String() != e.Trustee.String() {
+			t.Fatalf("ACE %d audited as %+v, stored %+v", i, g, e)
+		}
+	}
 
 	for name, s := range map[string]*fakeSDSession{
 		"read fails":   {id: ad.DCIdentity{DSAGUID: dc1}, readErr: errors.New("boom")},

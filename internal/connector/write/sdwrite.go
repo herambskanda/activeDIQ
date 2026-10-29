@@ -8,6 +8,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/connector/write/ops"
 	"github.com/skenzeriq/activediq/internal/directory/attr/codec"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
+	"github.com/skenzeriq/activediq/internal/directory/attr/sid"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/directory/sd"
 )
@@ -19,16 +20,33 @@ type SDSession interface {
 	ReadDACL(ctx context.Context, ref dn.ObjectRef) (guid.GUID, sd.SD, error)
 }
 
+// MaxAuditedACEs bounds the ACE list of a DACLDiverged record so a huge DACL cannot flood the audit sink.
+const MaxAuditedACEs = 256
+
+// AuditedACE is one stored ACE as typed fields (no SDDL, no raw bytes).
+type AuditedACE struct {
+	Type                uint8
+	Flags               uint8
+	Mask                uint32
+	Trustee             sid.SID
+	ObjectType          *guid.GUID
+	InheritedObjectType *guid.GUID
+	Inherited           bool
+}
+
 // DACLDiverged is the audit record of sd.write_diverged (SD-R10): the DC accepted the Modify but the
-// DACL it now stores is not the planned one. It carries the actual state as digests and counts, never
-// ACE bytes or SDDL.
+// DACL it now stores is not the planned one. It carries the expected state (Planned) and the actual
+// state (Actual digest plus the stored ACEs as typed fields, bounded by MaxAuditedACEs).
 type DACLDiverged struct {
 	Object        guid.GUID
 	DC            guid.GUID
 	PlannedBase   sd.Digest // digest of the DACL the plan was made on
+	Planned       sd.Digest // digest of the DACL the plan wrote
 	Actual        sd.Digest // digest of the DACL read back from the same DC
-	ActualACEs    int
+	ActualACEs    int       // total ACE count in the stored DACL
 	ActualProtect bool
+	ACEs          []AuditedACE // the stored ACEs in stored order, first MaxAuditedACEs
+	Truncated     bool         // ACEs holds fewer than ActualACEs
 }
 
 // DACLAuditor receives the audit records of a DACL write. It must not block for long.
@@ -83,8 +101,20 @@ func ApplyDACL(ctx context.Context, a Authorised, s SDSession, audit DACLAuditor
 	}
 	if _, err := w.VerifyAfter(stored); err != nil {
 		if codec.Code(err) == sd.ErrWriteDiverged {
-			audit.WriteDiverged(DACLDiverged{Object: g, DC: a.DC(), PlannedBase: w.BaseDigest(),
-				Actual: sd.DigestDACL(stored), ActualACEs: len(stored.DACL.ACEs), ActualProtect: stored.Control.Protected()})
+			d := DACLDiverged{Object: g, DC: a.DC(), PlannedBase: w.BaseDigest(),
+				Actual: sd.DigestDACL(stored), ActualACEs: len(stored.DACL.ACEs), ActualProtect: stored.Control.Protected()}
+			if planned, derr := sd.Decode(w.Value()); derr == nil {
+				d.Planned = sd.DigestDACL(planned)
+			}
+			for i, e := range stored.DACL.ACEs {
+				if i == MaxAuditedACEs {
+					d.Truncated = true
+					break
+				}
+				d.ACEs = append(d.ACEs, AuditedACE{Type: e.Type, Flags: e.Flags, Mask: e.Mask, Trustee: e.Trustee,
+					ObjectType: e.ObjectType, InheritedObjectType: e.InheritedObjectType, Inherited: e.Inherited()})
+			}
+			audit.WriteDiverged(d)
 		}
 		return err
 	}
