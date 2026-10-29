@@ -484,19 +484,36 @@ func changePrincipal(t sid.SID) Principal {
 	return PrincipalFromSIDs(t, sidEveryone, sidAuthUsers)
 }
 
-// rightsOverlap reports whether two ACEs can speak about the same right.
-func rightsOverlap(a, b ACE) bool {
-	if a.Mask&b.Mask&storedMaskBits == 0 {
+// rightsOverlap reports whether two ACEs can speak about the same right. Two different object
+// types overlap on read/write-property bits unless the catalogue proves both are exact-match
+// kinds: a property set covers its member attributes (grants.go), and without a catalogue, or
+// for a GUID it does not know, that cannot be ruled out.
+func rightsOverlap(a, b ACE, cat RightsCatalog) bool {
+	common := a.Mask & b.Mask & storedMaskBits
+	if common == 0 {
 		return false
 	}
-	return a.ObjectType == nil || b.ObjectType == nil || *a.ObjectType == *b.ObjectType
+	if a.ObjectType == nil || b.ObjectType == nil || *a.ObjectType == *b.ObjectType {
+		return true
+	}
+	if common&(MaskReadProp|MaskWriteProp) == 0 {
+		return false
+	}
+	exact := func(g guid.GUID) bool {
+		if cat == nil {
+			return false
+		}
+		k, _ := cat.Kind(g)
+		return k == Attribute || k == ControlAccess || k == ValidatedWrite || k == Class
+	}
+	return !(exact(*a.ObjectType) && exact(*b.ObjectType))
 }
 
 // groupOrderMatters reports whether a moved ACE changed its relative order against an ACE of the
 // opposite decision type, for a different trustee, on an overlapping right. If the moved trustee
 // is a group holding that other trustee, the reorder changes its rights, and group membership is
 // not known here.
-func groupOrderMatters(after SD, moves []Move) bool {
+func groupOrderMatters(after SD, moves []Move, cat RightsCatalog) bool {
 	n := len(after.DACL.ACEs)
 	from := make([]int, n) // after index -> before index
 	for i := range from {
@@ -512,7 +529,7 @@ func groupOrderMatters(after SD, moves []Move) bool {
 		}
 		for j := 0; j < n; j++ {
 			o := after.DACL.ACEs[j]
-			if j == mv.To || o.Kind == Opaque || o.Kind == Callback || o.Trustee == m.Trustee || o.deny() == m.deny() || !rightsOverlap(m, o) {
+			if j == mv.To || o.Kind == Opaque || o.Kind == Callback || o.Trustee == m.Trustee || o.deny() == m.deny() || !rightsOverlap(m, o, cat) {
 				continue
 			}
 			if (mv.To < j) != (from[mv.To] < from[j]) {
@@ -544,6 +561,8 @@ func rightsChanges(before, after SD, moves []Move, cat RightsCatalog) ([]RightsC
 			trustees = append(trustees, a.Trustee)
 		}
 	}
+	capped := false
+build:
 	for _, mv := range moves {
 		a := after.DACL.ACEs[mv.To]
 		if a.Kind == Opaque || a.Kind == Callback {
@@ -559,6 +578,11 @@ func rightsChanges(before, after SD, moves []Move, cat RightsCatalog) ([]RightsC
 					k.o, k.h = *a.ObjectType, true
 				}
 				if !seen[k] {
+					// The DACL is untrusted input: bound the keys before allocating them.
+					if len(keys) >= maxChangeEvals {
+						capped = true
+						break build
+					}
 					seen[k] = true
 					keys = append(keys, k)
 				}
@@ -566,12 +590,8 @@ func rightsChanges(before, after SD, moves []Move, cat RightsCatalog) ([]RightsC
 		}
 	}
 	var out []RightsChange
-	incomplete := groupOrderMatters(after, moves)
-	for i, k := range keys {
-		if i >= maxChangeEvals {
-			incomplete = true
-			break
-		}
+	incomplete := capped || groupOrderMatters(after, moves, cat)
+	for _, k := range keys {
 		r := Right{Mask: k.m}
 		var objp *guid.GUID
 		if k.h {
@@ -592,6 +612,8 @@ func rightsChanges(before, after SD, moves []Move, cat RightsCatalog) ([]RightsC
 		b, a := Grants(p, r, before).Decision, Grants(p, r, after).Decision
 		if b != a {
 			out = append(out, RightsChange{Trustee: k.t, Mask: k.m, Object: objp, Before: b, After: a})
+		} else if b == Unknown {
+			incomplete = true // cannot tell whether the reorder changed this right
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool {
