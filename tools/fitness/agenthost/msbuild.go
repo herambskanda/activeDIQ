@@ -26,7 +26,7 @@ var msbuildExts = setOf(".props", ".targets", ".proj", ".wixproj")
 // fails, because every unknown thing in a build file is a way to run code on the built MSI.
 var msbuildAllowedProps = setOf("outputname", "outputtype", "platform", "platforms", "configuration", "configurations",
 	"defineconstants", "installerplatform", "suppressvalidation", "suppressices", "cultures", "treatwarningsaserrors",
-	"warningsaserrors", "nowarn", "outputpath", "intermediateoutputpath", "baseintermediateoutputpath", "deterministic",
+	"warningsaserrors", "nowarn", "outputpath", "deterministic",
 	"productversion", "version", "assemblyname", "rootnamespace", "nologo", "debugtype", "signoutput")
 
 var msbuildAllowedItems = setOf("compile", "bindpath", "content", "none")
@@ -59,6 +59,7 @@ func isDirectoryBuild(p string) bool {
 func msbuildProblems(root string) []string {
 	var out []string
 	var wixDirs []string
+	var projDirs, projNames []string
 	var cands []string
 	_ = filepath.WalkDir(root, func(p string, e fs.DirEntry, err error) error {
 		if err != nil || e == nil {
@@ -77,6 +78,10 @@ func msbuildProblems(root string) []string {
 			out = append(out, fmt.Sprintf("%s is an MSI transform, patch or patch-creation file (%s): it is an opaque database that adds or changes CustomAction, ServiceInstall and sequence rows in the built MSI after every rule has run; installer-allow.txt cannot approve one (T-0762)", rel, ext))
 			return nil
 		}
+		if strings.HasSuffix(strings.ToLower(rel), ".wixproj") {
+			projDirs = append(projDirs, filepath.ToSlash(filepath.Dir(rel)))
+			projNames = append(projNames, strings.ToLower(filepath.Base(rel)))
+		}
 		if isRepoWix(p) {
 			wixDirs = append(wixDirs, filepath.ToSlash(filepath.Dir(rel)))
 		}
@@ -87,7 +92,7 @@ func msbuildProblems(root string) []string {
 	})
 	for _, rel := range cands {
 		dir := filepath.ToSlash(filepath.Dir(rel))
-		if !msbuildReachesWix(rel, dir, wixDirs) {
+		if !msbuildReachesWix(rel, dir, wixDirs) && !msbuildWildcardImported(rel, dir, projDirs, projNames) {
 			continue
 		}
 		b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
@@ -123,6 +128,26 @@ func msbuildReachesWix(rel, dir string, wixDirs []string) bool {
 	return false
 }
 
+// msbuildWildcardImported: MSBuild wildcard-imports $(MSBuildProjectExtensionsPath)$(MSBuildProjectFile).*.props|targets
+// (default obj/, redirectable), so any file named <wixproj>.*.props|targets is judged wherever it sits, and so is
+// any .props/.targets in or below a directory holding a .wixproj (that is where obj/ lives).
+func msbuildWildcardImported(rel, dir string, projDirs, projNames []string) bool {
+	l := strings.ToLower(rel)
+	if !strings.HasSuffix(l, ".props") && !strings.HasSuffix(l, ".targets") {
+		return false
+	}
+	base := strings.ToLower(filepath.Base(rel))
+	for i, n := range projNames {
+		if strings.HasPrefix(base, n+".") {
+			return true
+		}
+		if d := projDirs[i]; d == "." || dir == d || strings.HasPrefix(dir, d+"/") {
+			return true
+		}
+	}
+	return false
+}
+
 func judgeMSBuild(rel string, b []byte) []string {
 	var out []string
 	add := func(s string) {
@@ -132,6 +157,9 @@ func judgeMSBuild(rel string, b []byte) []string {
 	if !ok {
 		add("cannot be read as text")
 		return out
+	}
+	if strings.Contains(text, "&#") {
+		add("uses a numeric character reference (&#...), which can hide a $([...]) property function from a text check")
 	}
 	if strings.Contains(text, "$([") || strings.Contains(strings.ToLower(text), "$(registry:") {
 		add("uses an MSBuild property function $([...]) or Registry: lookup")

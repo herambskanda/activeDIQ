@@ -33,6 +33,7 @@ func TestT0762MSBuildAndTransforms(t *testing.T) {
 		"sdk traversal":      sdk + `<Import Project="Sdk.\..\..\..\x.targets" Sdk="WixToolset.Sdk/5.0.0"/></Project>`,
 		"unknown property":   sdk + `<PropertyGroup><SomethingNew>x</SomethingNew></PropertyGroup></Project>`,
 		"item metadata":      sdk + `<ItemGroup><Compile Include="a.wxs"><Foo>x</Foo></Compile></ItemGroup></Project>`,
+		"charref propfunc":   sdk + `<PropertyGroup><OutputName>$(&#91;System.IO.File]::ReadAllText('x'))</OutputName></PropertyGroup></Project>`,
 		"doctype":            `<!DOCTYPE x [<!ENTITY e "y">]>` + sdk + `</Project>`,
 	}
 	for _, body := range bad {
@@ -42,6 +43,28 @@ func TestT0762MSBuildAndTransforms(t *testing.T) {
 			wantViolation(t, mk([]string{f, "agent.wixproj", "Directory.Build.targets"}, files), "T-0762")
 		}
 	}
+
+	// Wildcard-imported project extension files (obj/ or a redirected BaseIntermediateOutputPath).
+	evil := `<Project><Target Name="P" AfterTargets="Build"><Exec Command="msitran"/></Target></Project>`
+	for f, body := range map[string]string{
+		"docs/cache/agent.wixproj.evil.targets": evil,
+		"src/x/obj/A.wixproj.evil.targets":      evil,
+		"src/x/obj/other.targets":               evil,
+		"src/x/sub/deep.props":                  evil,
+	} {
+		proj := "packaging/windows/agent.wixproj"
+		if f[0] == 's' {
+			proj = "src/x/A.wixproj"
+		}
+		files := map[string]string{proj: sdk + `</Project>`, f: body}
+		if f[0] == 'd' {
+			files["packaging/windows/agent.wixproj"] = sdk + `</Project>`
+		}
+		wantViolation(t, mk(nil, files), "T-0762")
+		wantViolation(t, mk([]string{f}, files), "T-0762")
+	}
+	wantViolation(t, mk([]string{"packaging/Directory.Build.props"}, map[string]string{"packaging/windows/agent.wixproj": sdk + `</Project>`,
+		"packaging/Directory.Build.props": `<Project><PropertyGroup><BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)../docs/cache/</BaseIntermediateOutputPath></PropertyGroup></Project>`}), "T-0762")
 
 	// Auto-imported side files: .wixproj.user, response files, NuGet feeds and global.json SDK swaps.
 	side := map[string]string{
