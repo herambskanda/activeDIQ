@@ -288,8 +288,14 @@ What it enforces: a booted install is judged on eight named cases (threat-model 
   ratchet: a gap that passes fails the build until its entry is deleted. Never add a gap without a ticket.
 - **Proof it fails:** `hostcheck_test.go` has one violating fixture per case (and asserts no other case trips);
   `make ci-proof` runs `host evaluate` on a compliant observation and on eight mutated ones.
-- **Open gaps:** `HOST-NO-DUMPS` on linux-oci (T-0634); `HOST-DC-REFUSED` (T-0635) and `HOST-SETUP-SECRET-SINGLE-USE`
-  (T-0636) are INACTIVE until their product subject exists. The positive verify-full DSN control needs a TLS
+- **Setup secret (T-0636):** on linux-oci `HOST-SETUP-SECRET-SINGLE-USE` is active: the harness reads the
+  secret file's tar header (mode/owner), POSTs it twice to `/api/v1/setup/claim` over verified TLS (first 204,
+  second must be 401), and boots a second server with `ACTIVEDIQ_SETUP_TTL=2s` to present an expired secret
+  (must be 401). The harness also provisions the KEK (`kek init` into a volume) because the server has no
+  default custody model; without it no boot gets past start-up. Windows stays INACTIVE for this case until the
+  MSI exists (T-0635) and the lab collector grows the same probe.
+- **Open gaps:** `HOST-NO-DUMPS` on linux-oci (T-0634); `HOST-DC-REFUSED` (T-0635) and the Windows half of
+  `HOST-SETUP-SECRET-SINGLE-USE` are INACTIVE until their product subject exists. The positive verify-full DSN control needs a TLS
   PostgreSQL and is covered by `store.CheckTransport`'s own tests.
 
 ## `fitness-agent-host` (T-0554: ADR-0006 A1/A4, ADR-0007 P1-P8, contract R1-R5, F1)

@@ -75,6 +75,12 @@
       "ref": "AN-8"
     },
     {
+      "gate": "the one-time setup secret (256-bit random, only its hash stored, expires, consumed on first correct use, readable only by the installing administrator)",
+      "operation": "claimFirstRunSetup",
+      "reason": "First-run setup must be reachable before any account exists (TM-TB16-T7); no default account is ever created.",
+      "ref": "AN-4"
+    },
+    {
       "gate": "the pending-sign-in cookie",
       "operation": "createWebAuthnSignInChallenge",
       "reason": "Starts the WebAuthn second factor for a pending sign-in from AN-3, AN-8 or AN-9.",
