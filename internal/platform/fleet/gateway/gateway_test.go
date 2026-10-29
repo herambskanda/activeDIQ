@@ -55,12 +55,12 @@ func newCA(t *testing.T, notAfter time.Time) testCA {
 	return testCA{c, k}
 }
 
-func (ca testCA) leaf(t *testing.T, tid tenant.ID, notBefore, notAfter time.Time, eku []x509.ExtKeyUsage) tls.Certificate {
+func (ca testCA) leaf(t testing.TB, tid tenant.ID, notBefore, notAfter time.Time, eku []x509.ExtKeyUsage) tls.Certificate {
 	t.Helper()
 	return ca.leafFor(t, tid, compID, notBefore, notAfter, eku)
 }
 
-func (ca testCA) leafFor(t *testing.T, tid tenant.ID, comp string, notBefore, notAfter time.Time, eku []x509.ExtKeyUsage) tls.Certificate {
+func (ca testCA) leafFor(t testing.TB, tid tenant.ID, comp string, notBefore, notAfter time.Time, eku []x509.ExtKeyUsage) tls.Certificate {
 	t.Helper()
 	k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	tmpl := &x509.Certificate{
@@ -212,7 +212,7 @@ type rig struct {
 	roots *x509.CertPool // trusts the rig's server certificate
 }
 
-func start(t *testing.T, cas gateway.TenantCAs, pool *x509.CertPool, now func() time.Time, opts ...func(*gateway.Config)) *rig {
+func start(t testing.TB, cas gateway.TenantCAs, pool *x509.CertPool, now func() time.Time, opts ...func(*gateway.Config)) *rig {
 	t.Helper()
 	comps := &fakeComps{}
 	cfg := gateway.Config{Methods: allMethods, CAs: cas, Components: comps, Recheck: 50 * time.Millisecond, Clock: now}
@@ -250,13 +250,13 @@ func start(t *testing.T, cas gateway.TenantCAs, pool *x509.CertPool, now func() 
 	return &rig{addr: l.Addr().String(), fleet: ff, pool: pool, srv: srv, comps: comps, gw: g, roots: roots}
 }
 
-func (r *rig) dial(t *testing.T, client *tls.Certificate) *grpc.ClientConn {
+func (r *rig) dial(t testing.TB, client *tls.Certificate) *grpc.ClientConn {
 	t.Helper()
 	return r.dialRoots(t, client, r.roots)
 }
 
 // dialRoots dials verifying the server certificate against roots.
-func (r *rig) dialRoots(t *testing.T, client *tls.Certificate, roots *x509.CertPool) *grpc.ClientConn {
+func (r *rig) dialRoots(t testing.TB, client *tls.Certificate, roots *x509.CertPool) *grpc.ClientConn {
 	t.Helper()
 	conf := &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots, ServerName: "localhost"}
 	if client != nil {
