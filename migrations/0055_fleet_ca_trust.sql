@@ -1,4 +1,4 @@
--- 0054_fleet_ca_trust: the cross-tenant reader of fleet_ca public certificates for the gateway client-CA
+-- 0055_fleet_ca_trust: the cross-tenant reader of fleet_ca public certificates for the gateway client-CA
 -- pool, and the terminal 'withdrawn' CA state (T-0733; design T-0712, fleet-contract.md 'Gateway
 -- client-CA pool'; TM-A11, TM-D24, TM-D29, TM-Q8). Owner: internal/platform/fleet (SQL in fleet/fleetsql).
 --

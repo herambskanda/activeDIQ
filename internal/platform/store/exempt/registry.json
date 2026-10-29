@@ -19,6 +19,11 @@
       "table": "public.platform_rate_buckets",
       "reason": "The rate limiter meters a principal at chain step 10, before any tenant transaction exists, and the budget must hold across every node, so a bucket row has no RLS policy; the tenant is part of its key text (ADR-0002 rule 6, DM-07, TM-TB2-T7). Any tenant transaction can read it, so only its owning package may name it in SQL.",
       "owner": "internal/platform/limiter"
+    },
+    {
+      "table": "public.update_verifier_floor",
+      "reason": "The update verifier's rollback floor is install-level: one monotone row shared by the server, connector and agent update paths, read before and outside any tenant transaction, so it has no tenant_id and no RLS. The guard trigger refuses any lowering and the runtime role cannot DELETE or TRUNCATE it (ENH-07, TM-D12 rule 2). Any tenant transaction can read it, so only its owning package may name it in SQL.",
+      "owner": "internal/platform/updateverify/floorpg"
     }
   ],
   "securityDefiner": [
@@ -155,6 +160,20 @@
       "package": "internal/platform/audit",
       "function": "TestRetiredKeyIsWipedThroughSecurityDefiner",
       "reason": "Test: proves the registered SECURITY DEFINER audit_wipe_retired_key refuses a call made with no tenant context (SQLSTATE 42501), which needs a transaction under WithPlatform. It is in a _test.go file and ships in no binary (ADR-0005 rule 11, T-0305).",
+      "withPlatform": true,
+      "mintsTenantID": false
+    },
+    {
+      "package": "internal/platform/updateverify/floorpg",
+      "function": "Store.Load",
+      "reason": "The update verifier floor is install-level and its table is registered global, so the statement that reads it runs under WithPlatform (ENH-07, TM-D12 rule 2).",
+      "withPlatform": true,
+      "mintsTenantID": false
+    },
+    {
+      "package": "internal/platform/updateverify/floorpg",
+      "function": "Store.Raise",
+      "reason": "The update verifier floor is install-level and its table is registered global, so the statement that raises it runs under WithPlatform (ENH-07, TM-D12 rule 2).",
       "withPlatform": true,
       "mintsTenantID": false
     }

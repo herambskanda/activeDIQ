@@ -17,7 +17,7 @@ type Anchor struct {
 }
 
 // TrustAnchors reads every tenant's active and retired, unexpired CA certificates in one platform-scope
-// call to fleet_ca_trust_anchors() (migration 0054; fleet-contract 'Gateway client-CA pool'). That
+// call to fleet_ca_trust_anchors() (migration 0055; fleet-contract 'Gateway client-CA pool'). That
 // SECURITY DEFINER function is the only path to those rows and its owner role cannot read sealed_key, so
 // no key material is reachable from here. This is the one WithPlatform site of that function.
 type TrustAnchors struct {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/skenzeriq/activediq/tools/fitness/pgharness"
 	"github.com/skenzeriq/activediq/tools/fitness/tenancy/registry"
 )
 
@@ -93,47 +94,11 @@ func canonicalPolicyExpr(ctx context.Context, d *Database) (string, error) {
 	return qual, nil
 }
 
-// trustReadQual is the USING expression of the one policy exempt from the tenant shape.
-const trustReadQual = `state IN ('active', 'retired')`
-
-// canonicalTrustQual deparses trustReadQual the way pg_get_expr will print the migrated policy.
-func canonicalTrustQual(ctx context.Context, d *Database) (string, error) {
-	c, err := catalogConn(ctx, d)
-	if err != nil {
-		return "", err
-	}
-	defer c.Close(ctx)
-	tx, err := c.Begin(ctx)
-	if err != nil {
-		return "", err
-	}
-	defer tx.Rollback(ctx)
-	for _, s := range []string{
-		`CREATE SCHEMA fitness_canon`,
-		`CREATE TABLE fitness_canon.t (state text)`,
-		`ALTER TABLE fitness_canon.t ENABLE ROW LEVEL SECURITY`,
-		`CREATE POLICY p ON fitness_canon.t FOR SELECT USING (` + trustReadQual + `)`,
-	} {
-		if _, err := tx.Exec(ctx, s); err != nil {
-			return "", err
-		}
-	}
-	var qual string
-	if err := tx.QueryRow(ctx, `SELECT pg_get_expr(polqual, polrelid) FROM pg_policy WHERE polname = 'p'`).Scan(&qual); err != nil {
-		return "", err
-	}
-	return qual, nil
-}
-
 // checkT2 is the catalog check (ADR-0002 T2, safe-primitives FF-SP7 rules 2, 9, 10).
 func checkT2(ctx context.Context, d *Database, reg *registry.Registry) ([]Violation, *catalogModel, error) {
 	canon, err := canonicalPolicyExpr(ctx, d)
 	if err != nil {
 		return nil, nil, fmt.Errorf("computing the canonical policy: %w", err)
-	}
-	trustQual, err := canonicalTrustQual(ctx, d)
-	if err != nil {
-		return nil, nil, fmt.Errorf("computing the canonical trust-reader policy: %w", err)
 	}
 	c, err := catalogConn(ctx, d)
 	if err != nil {
@@ -293,12 +258,12 @@ func checkT2(ctx context.Context, d *Database, reg *registry.Registry) ([]Violat
 		cmd         string
 		permissive  bool
 		qual, check *string
-		roles       []string // named roles the policy is TO; empty means PUBLIC
+		roles       []string
 	}
 	pols := map[uint32][]pol{}
 	rows, err = c.Query(ctx, `SELECT p.polrelid, p.polname, p.polcmd::text, p.polpermissive,
 		pg_get_expr(p.polqual, p.polrelid), pg_get_expr(p.polwithcheck, p.polrelid),
-		ARRAY(SELECT r.rolname::text FROM pg_roles r WHERE r.oid = ANY(p.polroles) ORDER BY 1)
+		COALESCE(array(SELECT rolname::text FROM pg_roles WHERE oid = ANY(p.polroles)), '{}')
 		FROM pg_policy p WHERE p.polrelid = ANY($1)`, allOIDs)
 	if err != nil {
 		return nil, nil, err
@@ -318,7 +283,6 @@ func checkT2(ctx context.Context, d *Database, reg *registry.Registry) ([]Violat
 	}
 
 	// ---- per tenant table ----
-	const trustReaderRole = "activediq_catrust"
 	for _, r := range m.tenants {
 		q := r.qname()
 		what := "table"
@@ -353,11 +317,8 @@ func checkT2(ctx context.Context, d *Database, reg *registry.Registry) ([]Violat
 		for _, p := range ps {
 			canonQual := p.qual != nil && *p.qual == canon
 			canonCheck := p.check != nil && *p.check == canon
-			if p.permissive && p.cmd == "r" && slices.Equal(p.roles, []string{trustReaderRole}) &&
-				q == "public.fleet_ca" && p.name == "fleet_ca_trust_read" && p.check == nil && p.qual != nil && *p.qual == trustQual {
-				// The one policy that is not the tenant shape (T-0712): exactly this name, table, role,
-				// command and condition. Any other policy TO the reader role is judged like the rest.
-				continue
+			if p.permissive && r.qname() == poolTable && isTrustReadPolicy(p.cmd, p.roles, p.qual, p.check) {
+				continue // the one policy the pool design adds (F-POOL-2); it applies to the reader role only
 			}
 			if p.permissive {
 				if (p.qual != nil && !canonQual) || (p.check != nil && !canonCheck) {
@@ -559,4 +520,15 @@ func hasBoolOption(opts []string, name string) bool {
 		}
 	}
 	return false
+}
+
+// isTrustReadPolicy is the single extra permissive policy the gateway client-CA pool adds to fleet_ca:
+// FOR SELECT, TO activediq_catrust only, USING (state IN ('active','retired')), no WITH CHECK. It leaves
+// fleet_ca_tenant untouched, so the runtime role still reads the table as empty without a tenant.
+func isTrustReadPolicy(cmd string, roles []string, qual, check *string) bool {
+	if cmd != "r" || check != nil || qual == nil || !slices.Equal(roles, []string{pgharness.CatrustRole}) {
+		return false
+	}
+	norm := strings.NewReplacer("(", "", ")", "", " ", "").Replace(*qual)
+	return norm == "state=ANYARRAY['active'::text,'retired'::text]"
 }
