@@ -289,7 +289,7 @@ func corpusWrite(t *testing.T) {
 			}
 			op, _ := r.Arg("op")
 			ops := map[string]InheritanceOp{"block_keep": BlockKeepInherited, "block_remove": BlockRemoveInherited, "restore": RestoreInheritance, "bogus": 99}
-			w, p, err := PlanInheritance(f.base, ops[op.Text()], f.octx)
+			w, p, err := PlanInheritance(f.base, ops[op.Text()], f.octx, f.opt)
 			return writeOutcome(w, p, err)
 		}
 		return corpus.Result{}, corpustest.Skip("unknown call " + r.Call)
