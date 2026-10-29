@@ -23,7 +23,9 @@ var permitted = map[string]string{
 	"internal/compose/server/tier0.go":            "authority.TenantFrom (set by the runner)",
 	"internal/directory/client/reads_tunnel.go":   "authority context set by the runner",
 	"internal/modules/connections/attest_http.go": "p.Tenant (session principal)",
+	"internal/modules/compliance/hold.go":         "app.tenant_id of the runner transaction in Plan; payload tenant set in Plan",
 	"internal/modules/connections/reconfirm.go":   "runner payload tenant, set in Plan from app.tenant_id",
+	"internal/platform/notify/syslog/http.go":     "p.Tenant (session principal)",
 	"internal/platform/rbac/grants.go":            "app.tenant_id set by store.WithTenant",
 }
 
