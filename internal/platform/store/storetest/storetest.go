@@ -26,6 +26,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -37,6 +38,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/skenzeriq/activediq/internal/testlab/harnessdocker"
 	"github.com/skenzeriq/activediq/migrations"
@@ -441,4 +443,52 @@ func (d *Database) Break(t testing.TB, b Breach) {
 	if err := run(b.Setup); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// ProbeAsRole runs each statement as role (SET LOCAL ROLE, from the superuser connection, so a NOLOGIN
+// role can be exercised) in one transaction that is rolled back at the end, every statement behind its
+// own savepoint. It returns the SQLSTATE each statement ended with, "" for success. The statements are
+// test fixture text, never input.
+func (d *Database) ProbeAsRole(ctx context.Context, role string, stmts ...string) ([]string, error) {
+	c, err := d.Admin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer c.Close(ctx)
+	tx, err := c.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	var set string
+	if err := tx.QueryRow(ctx, `SELECT format('SET LOCAL ROLE %I', $1::text)`, role).Scan(&set); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, set); err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(stmts))
+	for _, q := range stmts {
+		if _, err := tx.Exec(ctx, `SAVEPOINT probe`); err != nil {
+			return nil, err
+		}
+		rows, err := tx.Query(ctx, q)
+		if err == nil {
+			rows.Close()
+			err = rows.Err()
+		}
+		code := ""
+		if err != nil {
+			var pe *pgconn.PgError
+			if !errors.As(err, &pe) {
+				return nil, err
+			}
+			code = pe.Code
+		}
+		out = append(out, code)
+		if _, err := tx.Exec(ctx, `ROLLBACK TO SAVEPOINT probe`); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
