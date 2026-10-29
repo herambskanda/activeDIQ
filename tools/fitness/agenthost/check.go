@@ -927,7 +927,8 @@ func agentInstallerFiles(root string) []instFile {
 }
 
 // wixIntermediateExts are prebuilt WiX intermediates (zips holding wix-ir.json): opaque to this check.
-var wixIntermediateExts = setOf(".wixlib", ".wixipl", ".wixobj")
+// .msm is a compiled merge module: an MSI database whose CustomAction and sequence rows merge into the agent MSI (T-0759).
+var wixIntermediateExts = setOf(".wixlib", ".wixipl", ".wixobj", ".msm")
 
 // wixRoots are the root elements of a WiX compiler input (any namespace).
 var wixRoots = setOf("Wix", "Include", "WixLocalization")
@@ -1641,6 +1642,11 @@ func judgeInstallerXML(rel string, b []byte, allow []string, agentFile bool) ins
 			if _, hasValue := e.Attrs["value"]; hasValue && e.Attrs["directory"] != "" {
 				f.propIDs = append(f.propIDs, e.Attrs["directory"])
 			}
+		case "Merge", "MergeRef":
+			// T-0759: a merge module is an opaque MSI database; its CustomAction, SetDirectory-style and
+			// Directory rows and its ModuleInstallExecuteSequence merge into the agent MSI, bypassing every
+			// custom-action rule above. Not approvable via installer-allow.txt until a reviewed merge-module path exists.
+			f.violations = append(f.violations, fmt.Sprintf("%s: %s element in an installer source: a merge module (.msm) is opaque and merges its own CustomAction, Directory and sequence rows into the MSI, bypassing the custom-action gate; installer-allow.txt cannot approve one (T-0759)", rel, e.Name))
 		case "UI", "UIRef", "Dialog", "DialogRef", "Control", "Publish", "Subscribe", "ProgressText", "TextStyle":
 			// T-0742: fail closed. UI properties and events are Formatted and indirect ([Prop], Indirect=yes,
 			// WIXUI_INSTALLDIR), so enumerating spellings that set a directory will keep missing variants. The
