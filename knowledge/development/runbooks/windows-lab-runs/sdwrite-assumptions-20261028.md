@@ -29,7 +29,7 @@ Fixtures are created under `OU=Managed` and deleted as Administrator, so a re-ru
 
 ## Not covered / limits
 - One DC, one OS build (WS2025). Samba not rerun. SDProp interval (60 min) and PDC-emulator-only behaviour unverified.
-- T-0627 fixed: the expected-to-fail marker is now a strict `DACLWrite.VerifyAfter` assertion (`verifyAfter` in the test). Not re-run on the Windows lab by this ticket (no lab access); a Windows run must confirm it passes.
+- T-0627: the expected-to-fail marker is now a strict `DACLWrite.VerifyAfter` assertion (`verifyAfter` in the test). **Not yet run on the Windows lab**; T-0727 owns the run. VerifyAfter fails closed on any inverted allow/deny pair with overlapping masks, so it may reject a real BlockKeepInherited re-sort that moves a deny ahead of an allow — T-0727 must record that output.
 
 ## Proof the tests bite
 Temporarily breaking `PlanInheritance` (no PD set/cleared) made `TestWindowsLabSDWriteInheritance` fail in three

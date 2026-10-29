@@ -7,6 +7,12 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory/attr/sid"
 )
 
+// verifyCat classifies the two GUIDs the tests use: A is a property set, B a member attribute of it.
+var verifyCat = mapCatalog{
+	*mustGUID("aaaaaaaa-0000-0000-0000-00000000000a"): PropertySet,
+	*mustGUID("bbbbbbbb-0000-0000-0000-00000000000b"): Attribute,
+}
+
 // verifyPlan plans adding allow(X1) and deny(X2) on a base of two allows, returns the plan and its decoded value.
 func verifyPlan(t *testing.T, adds ...NewACE) (DACLWrite, SD) {
 	t.Helper()
@@ -16,7 +22,7 @@ func verifyPlan(t *testing.T, adds ...NewACE) (DACLWrite, SD) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w, _, err := PlanDACL(s, ACEDiff{Add: adds}, nil,
+	w, _, err := PlanDACL(s, ACEDiff{Add: adds}, verifyCat,
 		ObjectCtx{ObjectGUID: *mustGUID("11111111-0000-0000-0000-000000000001"), Connector: PrincipalFromToken(user, []sid.SID{mustSID("S-1-1-0")})}, PlanOpts{})
 	if err != nil {
 		t.Fatal(err)
@@ -37,7 +43,7 @@ func stored(t *testing.T, p SD, order []int, ctl Control) SD {
 		l = append(l, p.DACL.ACEs[i])
 		size += len(p.DACL.ACEs[i].Raw)
 	}
-	s, err := Decode(Raw(encodeDACLSD(ctl, 2, l, size)))
+	s, err := Decode(Raw(encodeDACLSD(ctl, p.DACL.Revision, l, size)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,31 +91,60 @@ func TestVerifyAfter(t *testing.T) {
 	}
 }
 
-// A re-order that flips an effective decision (deny moved behind an allow for the same trustee) is a real difference.
+// moveFront returns the stored read-back of p with ACE i moved to position 0.
+func moveFront(t *testing.T, p SD, i int) SD {
+	t.Helper()
+	o := []int{i}
+	for k := range p.DACL.ACEs {
+		if k != i {
+			o = append(o, k)
+		}
+	}
+	return stored(t, p, o, p.Control)
+}
+
+// Re-orders that change (or may change) what the DACL grants are real differences; harmless ones are accepted.
 func TestVerifyAfterRightsChange(t *testing.T) {
-	x := mustSID("S-1-5-21-1-2-3-2001")
-	w, p := verifyPlan(t, NewACE{Trustee: x, Mask: MaskReadProp, Deny: true}, NewACE{Trustee: x, Mask: MaskReadProp})
-	n := len(p.DACL.ACEs)
-	ident := make([]int, n)
-	for i := range ident {
-		ident[i] = i
+	x, y := mustSID("S-1-5-21-1-2-3-2001"), mustSID("S-1-5-21-1-2-3-2002")
+	ga, gb := mustGUID("aaaaaaaa-0000-0000-0000-00000000000a"), mustGUID("bbbbbbbb-0000-0000-0000-00000000000b")
+	const wp, rp = MaskWriteProp, MaskReadProp
+	cases := []struct {
+		name    string
+		adds    []NewACE
+		opaque  bool
+		wantErr bool
+	}{
+		{"same trustee deny/allow, same mask", []NewACE{{Trustee: x, Mask: rp, Deny: true}, {Trustee: x, Mask: rp}}, false, true},
+		{"different trustees deny/allow, same mask", []NewACE{{Trustee: x, Mask: rp, Deny: true}, {Trustee: y, Mask: rp}}, false, true},
+		{"deny/allow, disjoint masks", []NewACE{{Trustee: x, Mask: wp, Deny: true}, {Trustee: x, Mask: rp}}, false, false},
+		{"allow(GUID A)/deny(GUID B), overlapping mask (propset vs attribute)",
+			[]NewACE{{Trustee: x, Mask: rp, ObjectType: ga}, {Trustee: x, Mask: rp, Deny: true, ObjectType: gb}}, false, true},
+		{"allow(GUID A)/deny(no GUID), overlapping mask",
+			[]NewACE{{Trustee: x, Mask: rp, ObjectType: ga}, {Trustee: x, Mask: rp, Deny: true}}, false, true},
+		{"two allows with different GUIDs", []NewACE{{Trustee: x, Mask: rp, ObjectType: ga}, {Trustee: x, Mask: rp, ObjectType: gb}}, false, false},
+		{"decision ACE that is not understood", []NewACE{{Trustee: x, Mask: rp}, {Trustee: y, Mask: rp}}, true, true},
 	}
-	// find the deny and the allow for x and put the allow first
-	di, ai := -1, -1
-	for i, e := range p.DACL.ACEs {
-		if e.Trustee == x && e.deny() {
-			di = i
+	for _, c := range cases {
+		w, p := verifyPlan(t, c.adds...)
+		// the two added ACEs are the last two distinct ACEs of the planned DACL that carry our trustees
+		var idx []int
+		for k, e := range p.DACL.ACEs {
+			if e.Trustee == x || e.Trustee == y {
+				idx = append(idx, k)
+			}
 		}
-		if e.Trustee == x && e.allow() {
-			ai = i
+		if len(idx) != 2 {
+			t.Fatalf("%s: planner produced %d candidate ACEs, want 2", c.name, len(idx))
 		}
-	}
-	if di < 0 || ai < 0 || di > ai {
-		t.Skipf("planner order unexpected (deny %d allow %d)", di, ai)
-	}
-	re := append([]int(nil), ident...)
-	re[di], re[ai] = ai, di
-	if _, err := w.VerifyAfter(stored(t, p, re, p.Control)); err == nil {
-		t.Error("deny/allow swap accepted")
+		s := moveFront(t, p, idx[1]) // the DC puts the later of our two ACEs first
+		if c.opaque {
+			s.DACL.ACEs[0].Kind = Opaque // an ACE type we cannot evaluate is never proven harmless
+		}
+		_, err := w.VerifyAfter(s)
+		if (err != nil) != c.wantErr {
+			t.Errorf("%s: err=%v wantErr=%v", c.name, err, c.wantErr)
+		} else if err != nil && codec.Code(err) != ErrWriteDiverged {
+			t.Errorf("%s: code %q", c.name, codec.Code(err))
+		}
 	}
 }

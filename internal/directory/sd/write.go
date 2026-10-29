@@ -235,9 +235,10 @@ type Verified struct {
 //     trustee and object GUIDs);
 //   - the stored DACL's PD bit is the planned one (DI is the DC's to recompute and is not compared);
 //   - every pair of ACEs the DC put in the opposite order from the plan is harmless: two allows or two
-//     denies, or an allow and a deny that cannot meet (disjoint masks, or object GUIDs that differ).
-//     Reordering an interacting allow/deny pair, or any conditional or unknown ACE, changes what the DACL
-//     grants and fails. No catalog is needed, so the check cannot fail open on an unknown GUID kind.
+//     denies, or an allow and a deny that cannot meet (disjoint masks).
+//     Reordering an allow/deny pair with overlapping masks (whatever their trustees or object GUIDs: no
+//     catalog is available to prove them disjoint), or any conditional or unknown ACE, may change what the
+//     DACL grants and fails. This is conservative: it fails closed, never open.
 //
 // Position is never compared. A mismatch is sd.write_diverged: the caller audits the actual state
 // and does not retry.
@@ -287,8 +288,9 @@ func interacts(a, b ACE) bool {
 	if a.allow() == b.allow() || a.Mask&b.Mask == 0 {
 		return false
 	}
-	if a.ObjectType != nil && b.ObjectType != nil && *a.ObjectType != *b.ObjectType {
-		return false
-	}
+	// Object GUIDs are deliberately not used to prove two ACEs disjoint: a property-set GUID and a
+	// member-attribute GUID interact (SD-R11), and without a RightsCatalog we cannot tell. Trustees are
+	// not compared either: two different trustees can both be in one token. Overlapping masks of an
+	// allow and a deny therefore always count as interacting (fail closed).
 	return true
 }
