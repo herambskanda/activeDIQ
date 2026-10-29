@@ -173,6 +173,11 @@ again. The fingerprint in `Describe` tells a caller when to re-fetch.
   attributes decoded by the codecs (§5.4). A multi-valued attribute beyond one range returns the
   first range with `complete = false`; **a search never follows ranges** (it would turn one page
   into N reads). Completion is `Read`'s job.
+- **Served over the tunnel (T-0683).** The connector binary serves `VerifyConnection`, `Read` and
+  `ScopedSearch` on the fleet tunnel (`compose/connector.TunnelBinding`); every other method is
+  Unimplemented until its group is mounted, and a golden-list test pins the served set. **Current
+  gap:** search entries do not yet carry `parent_guid` (the session is locked for the whole search,
+  so a parent read cannot run inside it); callers needing ancestry use `Read`.
 
 ### 5.2 Initial inventory and the reconcile pass
 
