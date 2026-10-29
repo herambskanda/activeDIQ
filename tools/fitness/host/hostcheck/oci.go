@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/skenzeriq/activediq/internal/compose/server"
 	"github.com/skenzeriq/activediq/tools/fitness/pgharness"
 )
 
@@ -49,9 +50,9 @@ func provisionKEK(ctx context.Context, tag string) (kekKit, func(), error) {
 	k.vol = "host-proof-kek-" + strconv.FormatInt(time.Now().UnixNano(), 36)
 	cleanup := func() { _, _ = docker(context.Background(), nil, "volume", "rm", "-f", k.vol) }
 	k.env = []string{
-		"ACTIVEDIQ_KEK_PROVIDER=passphrase",
-		"ACTIVEDIQ_KEK_DIR=" + kekState + "/kek",
-		"ACTIVEDIQ_KEK_PASSPHRASE_FILE=" + kekState + "/pass",
+		server.EnvKEKProvider + "=passphrase",
+		server.EnvKEKDir + "=" + kekState + "/kek",
+		server.EnvKEKPassphraseFile + "=" + kekState + "/pass",
 	}
 	pass := make([]byte, 24)
 	if _, err := rand.Read(pass); err != nil {
@@ -292,7 +293,7 @@ func CollectOCI(ctx context.Context, repo string, pg *pgharness.Server, log func
 	o.Dumps = dumpPosture(ctx, c, pid)
 
 	// Setup secret: the file the server wrote, claimed twice over TLS, then an expired one.
-	su, err := setupProbe(ctx, c, addr, roots, uid, "")
+	su, err := setupProbe(ctx, c, addr, roots, uid)
 	if err != nil {
 		return o, fmt.Errorf("setup secret probe: %v", err)
 	}
@@ -339,7 +340,7 @@ func claimSetup(addr string, roots *x509.CertPool, secret string) (int, error) {
 
 // setupProbe reads the secret as the file system shows it, then uses it twice. A status that is neither
 // the success (204) nor the uniform refusal (401) is a broken probe, not a verdict.
-func setupProbe(ctx context.Context, c *container, addr string, roots *x509.CertPool, svcUID int, _ string) (*Setup, error) {
+func setupProbe(ctx context.Context, c *container, addr string, roots *x509.CertPool, svcUID int) (*Setup, error) {
 	h, secret, err := readSetupSecret(ctx, c)
 	if err != nil {
 		return nil, err
