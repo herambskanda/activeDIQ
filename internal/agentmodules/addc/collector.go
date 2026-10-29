@@ -11,10 +11,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/skenzeriq/activediq/internal/platform/agent"
+	"github.com/skenzeriq/activediq/internal/agenthost/api"
 	"github.com/skenzeriq/activediq/internal/platform/agentpolicy"
 	addcv1 "github.com/skenzeriq/activediq/internal/proto/activediq/addc/v1"
-	agentv1 "github.com/skenzeriq/activediq/internal/proto/skenzeriq/agent/v1"
 )
 
 // chanState is the live state of one channel's collection.
@@ -51,8 +50,8 @@ type run struct {
 	ch    agentpolicy.Channel
 	name  string
 	st    *chanState
-	sink  agent.EventSink
-	blobs *agent.Blobs
+	sink  api.EventSink
+	blobs api.Blobs
 	log   *slog.Logger
 	now   func() time.Time
 	bk    bucket
@@ -65,7 +64,7 @@ type run struct {
 }
 
 func blobName(c agentpolicy.Channel) string { return "bookmark-" + channelName(c) }
-func loadBookmark(b *agent.Blobs, c agentpolicy.Channel) uint64 {
+func loadBookmark(b api.Blobs, c agentpolicy.Channel) uint64 {
 	d, err := b.Load(blobName(c))
 	if err != nil || len(d) != 8 {
 		return 0
@@ -73,7 +72,7 @@ func loadBookmark(b *agent.Blobs, c agentpolicy.Channel) uint64 {
 	return binary.BigEndian.Uint64(d)
 }
 
-func (r *run) append(e *agentv1.AgentEvent) bool {
+func (r *run) append(e *api.Event) bool {
 	e.ObservedAtUnixNanos = r.now().UnixNano()
 	e.ReportedDcGuid = r.dc
 	if _, err := r.sink.Append(e); err != nil {
@@ -83,8 +82,8 @@ func (r *run) append(e *agentv1.AgentEvent) bool {
 	return true
 }
 
-func (r *run) gapRecord(reason string, first, last uint64) *agentv1.AgentEvent {
-	return &agentv1.AgentEvent{Kind: agentv1.EventKind_EVENT_KIND_GAP, Channel: r.name, Fields: []*agentv1.EventField{
+func (r *run) gapRecord(reason string, first, last uint64) *api.Event {
+	return &api.Event{Kind: api.EventKindGap, Channel: r.name, Fields: []*api.EventField{
 		{Name: "reason", Value: reason},
 		{Name: "first_record_id", Value: strconv.FormatUint(first, 10)},
 		{Name: "last_record_id", Value: strconv.FormatUint(last, 10)},
@@ -129,12 +128,12 @@ func (r *run) handle(ev RawEvent) {
 		return
 	}
 	r.closeThrottle()
-	fields := make([]*agentv1.EventField, 0, len(ev.Fields)+1)
-	fields = append(fields, &agentv1.EventField{Name: "event_id", Value: strconv.FormatUint(uint64(ev.EventID), 10)})
+	fields := make([]*api.EventField, 0, len(ev.Fields)+1)
+	fields = append(fields, &api.EventField{Name: "event_id", Value: strconv.FormatUint(uint64(ev.EventID), 10)})
 	for _, f := range ev.Fields {
-		fields = append(fields, &agentv1.EventField{Name: f.Name, Value: f.Value})
+		fields = append(fields, &api.EventField{Name: f.Name, Value: f.Value})
 	}
-	if !r.append(&agentv1.AgentEvent{Kind: agentv1.EventKind_EVENT_KIND_EVENT, Channel: r.name, EventRecordId: ev.RecordID, Fields: fields}) {
+	if !r.append(&api.Event{Kind: api.EventKindEvent, Channel: r.name, EventRecordId: ev.RecordID, Fields: fields}) {
 		return
 	}
 	r.st.collected.Add(1)
@@ -178,7 +177,7 @@ func (r *run) persist() {
 // Collector owns the per-channel subscriptions of one module instance.
 type Collector struct {
 	src   Source
-	deps  agent.ModuleDeps
+	deps  api.ModuleDeps
 	dc    string
 	mu    sync.Mutex
 	state map[agentpolicy.Channel]*chanState
@@ -188,7 +187,7 @@ type Collector struct {
 }
 
 // NewCollector returns a collector that is idle until Apply is called.
-func NewCollector(src Source, deps agent.ModuleDeps, dcGUID string) *Collector {
+func NewCollector(src Source, deps api.ModuleDeps, dcGUID string) *Collector {
 	return &Collector{src: src, deps: deps, dc: dcGUID, state: map[agentpolicy.Channel]*chanState{
 		agentpolicy.ChannelSecurity: {}, agentpolicy.ChannelDirectoryService: {}}}
 }

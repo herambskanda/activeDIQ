@@ -5,15 +5,12 @@ import (
 	"errors"
 	"sync"
 
-	"google.golang.org/grpc"
-
-	"github.com/skenzeriq/activediq/internal/platform/agent"
+	"github.com/skenzeriq/activediq/internal/agenthost/api"
 	"github.com/skenzeriq/activediq/internal/platform/agentpolicy"
 	addcv1 "github.com/skenzeriq/activediq/internal/proto/activediq/addc/v1"
-	agentv1 "github.com/skenzeriq/activediq/internal/proto/skenzeriq/agent/v1"
 )
 
-// Module implements agent.Module for domain controllers and serves activediq.addc.v1.Addc.
+// Module implements host module for domain controllers and serves activediq.addc.v1.Addc.
 type Module struct {
 	addcv1.UnimplementedAddcServer
 	src  Source
@@ -25,14 +22,15 @@ type Module struct {
 	have bool
 }
 
-// New returns the module. src is the platform event source; dcGUID is what the agent reports about
+// New returns the module. src is an event source for tests; nil (production) selects the host's read-only
+// api.EventSource from ModuleDeps; dcGUID is what the agent reports about
 // its host (data to cross-check on the server, never identity).
 func New(src Source, dcGUID string) *Module { return &Module{src: src, dc: dcGUID} }
 
-// Validate implements agent.Module: only the catalogue is module-specific.
+// Validate implements host module: only the catalogue is module-specific.
 func (m *Module) Validate(p agentpolicy.AddcPolicy) error { return checkCatalogue(p.Events) }
 
-// Activate implements agent.Module.
+// Activate implements host module.
 func (m *Module) Activate(p agentpolicy.AddcPolicy) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -51,14 +49,21 @@ func (m *Module) Rules() *Engine {
 	return m.eng
 }
 
-// Start implements agent.Module.
-func (m *Module) Start(ctx context.Context, d agent.ModuleDeps) error {
+// Start implements host module.
+func (m *Module) Start(ctx context.Context, d api.ModuleDeps) error {
 	if d.Events == nil || d.Blobs == nil || d.Log == nil || d.Now == nil {
 		return errors.New("addc: incomplete dependencies")
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.col = NewCollector(m.src, d, m.dc)
+	src := m.src
+	if src == nil {
+		if d.Source == nil {
+			return errors.New("addc: no event source")
+		}
+		src = FromAPI(d.Source)
+	}
+	m.col = NewCollector(src, d, m.dc)
 	m.col.setRoot(ctx)
 	if m.pol != nil {
 		m.col.Apply(m.pol.Events)
@@ -66,7 +71,7 @@ func (m *Module) Start(ctx context.Context, d agent.ModuleDeps) error {
 	return nil
 }
 
-// Stop implements agent.Module.
+// Stop implements host module.
 func (m *Module) Stop(context.Context) error {
 	m.mu.Lock()
 	c := m.col
@@ -77,28 +82,28 @@ func (m *Module) Stop(context.Context) error {
 	return nil
 }
 
-// Collection implements agent.Module.
-func (m *Module) Collection() agentv1.CollectionState {
+// Collection implements host module.
+func (m *Module) Collection() api.CollectionState {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	switch {
 	case !m.have:
-		return agentv1.CollectionState_COLLECTION_STATE_NO_POLICY
+		return api.CollectionNoPolicy
 	case !m.pol.Events.CollectionEnabled:
-		return agentv1.CollectionState_COLLECTION_STATE_STOPPED_BY_POLICY
+		return api.CollectionStoppedByPolicy
 	case m.col == nil:
-		return agentv1.CollectionState_COLLECTION_STATE_UNSPECIFIED
+		return api.CollectionUnspecified
 	}
 	for _, s := range m.col.Snapshot() {
 		if s.Status == addcv1.ChannelStatus_CHANNEL_STATUS_UNREADABLE {
-			return agentv1.CollectionState_COLLECTION_STATE_CHANNEL_UNREADABLE
+			return api.CollectionChannelUnreadable
 		}
 	}
-	return agentv1.CollectionState_COLLECTION_STATE_RUNNING
+	return api.CollectionRunning
 }
 
-// Register implements agent.Module.
-func (m *Module) Register(reg grpc.ServiceRegistrar) { addcv1.RegisterAddcServer(reg, m) }
+// Register implements host module.
+func (m *Module) Register(reg api.ServiceRegistrar) { addcv1.RegisterAddcServer(reg, m) }
 
 // GetCollectionState implements Addc.
 func (m *Module) GetCollectionState(context.Context, *addcv1.GetCollectionStateRequest) (*addcv1.GetCollectionStateResponse, error) {
@@ -110,5 +115,3 @@ func (m *Module) GetCollectionState(context.Context, *addcv1.GetCollectionStateR
 	}
 	return &addcv1.GetCollectionStateResponse{Channels: c.Snapshot()}, nil
 }
-
-var _ agent.Module = (*Module)(nil)

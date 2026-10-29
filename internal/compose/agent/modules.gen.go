@@ -13,7 +13,7 @@ import (
 func buildModule(kind string, dcGUID string) (kernel.Module, bool) {
 	switch kind {
 	case fleet.KindADDC:
-		return addc.New(addc.NewSource(), dcGUID), true
+		return addc.New(nil, dcGUID), true
 	}
 	return nil, false
 }

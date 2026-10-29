@@ -10,10 +10,10 @@ import (
 	"sync"
 	"time"
 
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/skenzeriq/activediq/internal/agenthost/api"
 	"github.com/skenzeriq/activediq/internal/platform/agentpolicy"
 	"github.com/skenzeriq/activediq/internal/platform/fleet"
 	agentv1 "github.com/skenzeriq/activediq/internal/proto/skenzeriq/agent/v1"
@@ -32,31 +32,20 @@ func (c Ceilings) Valid() bool {
 	return c.OutboxMaxBytes >= 4*DefaultSegmentBytes && c.BatchMaxBytes >= 4096 && c.BatchMaxBytes <= c.OutboxMaxBytes && c.MaxEventsPerSecond >= 1
 }
 
-// EventSink is how a module hands the host an observed event. It is the module's only way out.
-type EventSink interface {
-	// Append stores the record and returns its sequence. It never blocks on the network and never
-	// waits; on a full or failing disk it returns an error and the caller carries on.
-	Append(*agentv1.AgentEvent) (uint64, error)
-	// Flush makes everything appended so far durable.
-	Flush() error
-}
-
-// ModuleDeps is the whole of what a module is given: the fixed dependency struct of the contract
-// (§1). There is no path, file, process, registry, network or service-control capability in it.
-type ModuleDeps struct {
-	Events EventSink
-	Blobs  *Blobs
-	Log    *slog.Logger
-	Now    func() time.Time
-}
+// EventSink and ModuleDeps are the module boundary, defined in internal/agenthost/api so a module
+// imports the boundary and not the host (T-0688 ruling 1).
+type (
+	EventSink  = api.EventSink
+	ModuleDeps = api.ModuleDeps
+)
 
 // sinkOnly is the only view of the outbox a module gets. A module that type-asserts its EventSink
 // finds a struct with Append and Flush and nothing else: no Next, Ack, Close, and no reachable
 // file. The host never hands a module a concrete *os.File, net.Conn or *Outbox.
 type sinkOnly struct{ o *Outbox }
 
-func (s sinkOnly) Append(ev *agentv1.AgentEvent) (uint64, error) { return s.o.Append(ev) }
-func (s sinkOnly) Flush() error                                  { return s.o.Flush() }
+func (s sinkOnly) Append(ev *api.Event) (uint64, error) { return s.o.Append(ev) }
+func (s sinkOnly) Flush() error                         { return s.o.Flush() }
 
 // Module is an agent module (addc today). The host owns its lifecycle and its policy.
 type Module interface {
@@ -66,12 +55,12 @@ type Module interface {
 	// Activate puts a policy that passed Validate in force. It must not block.
 	Activate(agentpolicy.AddcPolicy) error
 	// Start begins work; Stop ends it. Both are bounded by ctx.
-	Start(ctx context.Context, d ModuleDeps) error
+	Start(ctx context.Context, d api.ModuleDeps) error
 	Stop(ctx context.Context) error
 	// Collection reports what the module is doing, for GetStatus.
 	Collection() agentv1.CollectionState
 	// Register adds the module's own server-callable service to reg (the tunnel's registrar).
-	Register(reg grpc.ServiceRegistrar)
+	Register(reg api.ServiceRegistrar)
 }
 
 // UpdateStager verifies and stages an update. The one TUF verifier (TM-D12) implements it. Until it
@@ -95,6 +84,8 @@ type Config struct {
 	TokenCheckPassed bool
 	Updates          UpdateStager
 	Now              func() time.Time
+	// Source is the read-only event log the module may use. Nil selects the platform source.
+	Source api.EventSource
 }
 
 // Host is the agent host. It implements skenzeriq.agent.v1.Host.
@@ -121,6 +112,9 @@ type Host struct {
 func Open(cfg Config) (*Host, error) {
 	if cfg.Module == nil || !cfg.Ceilings.Valid() || cfg.DataDir == "" || cfg.Identity.Tenant.IsZero() || !fleet.ValidKind(cfg.Identity.Kind) {
 		return nil, errors.New("agent: incomplete host configuration")
+	}
+	if cfg.Source == nil {
+		cfg.Source = NewEventSource()
 	}
 	log, now := cfg.Logger, cfg.Now
 	if log == nil {
@@ -168,7 +162,7 @@ func (h *Host) Outbox() *Outbox { return h.outbox }
 
 // Register adds Host and the module's service to reg. The tunnel's registrar refuses a method outside
 // the bound contract, so registering more than the contract names fails closed.
-func (h *Host) Register(reg grpc.ServiceRegistrar) {
+func (h *Host) Register(reg api.ServiceRegistrar) {
 	agentv1.RegisterHostServer(reg, h)
 	h.cfg.Module.Register(reg)
 }
@@ -192,7 +186,7 @@ func (h *Host) poke() {
 // Run starts the module with the installed policy (if any) and the sender, and blocks until ctx is
 // done. It returns after the module has stopped and the outbox is closed.
 func (h *Host) Run(ctx context.Context) error {
-	d := ModuleDeps{Events: sinkOnly{h.outbox}, Blobs: h.blobs, Log: h.log, Now: h.now}
+	d := ModuleDeps{Events: sinkOnly{h.outbox}, Blobs: h.blobs, Log: h.log, Now: h.now, Source: h.cfg.Source}
 	h.mu.Lock()
 	if h.policy != nil {
 		if err := h.cfg.Module.Activate(*h.policy); err != nil {

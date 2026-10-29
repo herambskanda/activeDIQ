@@ -2,9 +2,9 @@ package addc
 
 import (
 	"context"
-	"errors"
 	"time"
 
+	"github.com/skenzeriq/activediq/internal/agenthost/api"
 	"github.com/skenzeriq/activediq/internal/platform/agentpolicy"
 )
 
@@ -23,12 +23,11 @@ type RawEvent struct {
 	Unparsable bool
 }
 
-// ErrUnreadable means the service identity may not read the channel (channel ACE missing or reset by
-// GPO). It is reported in health, never worked around (ADR-0006 decision 2).
-var ErrUnreadable = errors.New("addc: channel is not readable by the service identity")
-
-// ErrUnsupported is returned on a platform with no event log API.
-var ErrUnsupported = errors.New("addc: event log is not available on this platform")
+// ErrUnreadable and ErrUnsupported are the host's typed errors (internal/agenthost/api).
+var (
+	ErrUnreadable  = api.ErrUnreadable
+	ErrUnsupported = api.ErrUnsupported
+)
 
 // Source reads one channel. Subscribe delivers events with RecordID greater than after, in order, and
 // blocks until ctx is done or the subscription fails. emit must be fast; it never performs I/O other
@@ -38,4 +37,32 @@ type Source interface {
 	// collector compares it with the bookmark to tell a wrapped or cleared log from a filtered one.
 	OldestRecord(ch agentpolicy.Channel) (uint64, error)
 	Subscribe(ctx context.Context, ch agentpolicy.Channel, after uint64, ids []uint32, emit func(RawEvent)) error
+}
+
+// FromAPI adapts the host's read-only event source to Source. The host builds the query from the typed
+// arguments; this side only decodes the rendered XML (DecodeEvent, pure and fuzzable). An event the
+// host could not render arrives as nil and becomes an explicit unparsable record, never a skip.
+func FromAPI(es api.EventSource) Source { return apiSource{es} }
+
+type apiSource struct{ es api.EventSource }
+
+func (a apiSource) OldestRecord(ch agentpolicy.Channel) (uint64, error) {
+	return a.es.OldestRecord(api.Channel(ch))
+}
+
+func (a apiSource) Subscribe(ctx context.Context, ch agentpolicy.Channel, after uint64, ids []uint32, emit func(RawEvent)) error {
+	u := make([]uint16, 0, len(ids))
+	for _, id := range ids {
+		if id > 0xFFFF {
+			continue // not a valid event id; the catalogue holds none
+		}
+		u = append(u, uint16(id))
+	}
+	return a.es.Subscribe(ctx, api.Channel(ch), after, u, func(xml []byte) {
+		if xml == nil {
+			emit(RawEvent{Unparsable: true})
+			return
+		}
+		emit(DecodeEvent(xml))
+	})
 }

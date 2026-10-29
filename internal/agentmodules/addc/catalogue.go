@@ -57,14 +57,6 @@ func channelName(c agentpolicy.Channel) string {
 	return "security"
 }
 
-// logName is the Windows channel path wevtapi subscribes to.
-func logName(c agentpolicy.Channel) string {
-	if c == agentpolicy.ChannelDirectoryService {
-		return "Directory Service"
-	}
-	return "Security"
-}
-
 // alwaysIDs are subscribed on a channel whatever the policy selects: losing them hides tampering.
 func alwaysIDs(c agentpolicy.Channel) []uint32 {
 	if c == agentpolicy.ChannelSecurity {
