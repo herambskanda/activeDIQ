@@ -1,111 +1,216 @@
 package prochardening
 
 import (
+	"errors"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 )
 
-// TestEveryMainHardensFirst is the fitness check for TM-TB16-T6: every cmd/*/main.go must make
-// prochardening.Apply the first statement of main (as `if err := prochardening.Apply(...); err != nil`),
-// so no secret is loaded before dumps are disabled. A new cmd/* that skips it fails here.
-// exempt lists cmd/* programs that hold no secrets. Adding one needs a reason and a security review.
+// exempt lists cmd programs that hold no secrets. Adding one needs a reason and a security review.
 var exempt = map[string]string{
 	"auditverify": "offline auditor tool, stdlib-only by ADR-0005 rule 11, runs on the auditor's machine with no secrets",
 }
 
+const (
+	pkgPath = `"github.com/skenzeriq/activediq/internal/platform/prochardening"`
+	errForm = "main must start with `if err := prochardening.Apply(os.Getenv); err != nil { ...; os.Exit(non-zero) }` (TM-TB16-T6)"
+)
+
+// TestEveryMainHardensFirst is the fitness check for TM-TB16-T6: every main package under cmd/...
+// (any depth, main declared in any file) must make prochardening.Apply(os.Getenv) the first statement
+// of main, failing closed with os.Exit(non-zero), so no secret is loaded before dumps are disabled.
 func TestEveryMainHardensFirst(t *testing.T) {
-	mains, err := filepath.Glob("../../../cmd/*/main.go")
-	if err != nil || len(mains) < 4 {
-		t.Fatalf("found %d cmd mains (err %v); expected at least server, connector, edge, agent", len(mains), err)
+	found, err := checkTree("../../../cmd", func(dir string) {
+		if reason, ok := exempt[filepath.Base(dir)]; ok {
+			t.Logf("exempt: %s: %s", dir, reason)
+		}
+	})
+	if len(found) < 5 { // server, connector, edge, agent, auditverify
+		t.Fatalf("found only %d main packages %v; expected at least 5", len(found), found)
 	}
-	for _, path := range mains {
-		if reason, ok := exempt[filepath.Base(filepath.Dir(path))]; ok {
-			_ = reason
-			continue
-		}
-		if err := checkMain(path); err != nil {
-			t.Errorf("%s: %v", path, err)
-		}
+	if err != nil {
+		t.Error(err)
 	}
 }
 
-func checkMain(path string) error {
-	src, err := os.ReadFile(path)
-	if err != nil {
-		return err
+// checkTree walks root, and for every directory holding a non-test `package main` it finds the file that
+// declares func main and checks it. A main package without func main is a failure, not a skip.
+// onExempt is called for exempt directories. It returns the main package dirs found.
+func checkTree(root string, onExempt func(dir string)) ([]string, error) {
+	var found []string
+	var errs []error
+	werr := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		fset := token.NewFileSet()
+		pkgs, perr := parser.ParseDir(fset, p, func(fi fs.FileInfo) bool { return !strings.HasSuffix(fi.Name(), "_test.go") }, 0)
+		if perr != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", p, perr))
+			return nil
+		}
+		pkg, ok := pkgs["main"]
+		if !ok {
+			return nil
+		}
+		found = append(found, p)
+		if _, ex := exempt[filepath.Base(p)]; ex {
+			if onExempt != nil {
+				onExempt(p)
+			}
+			return nil
+		}
+		checked := false
+		for name, f := range pkg.Files {
+			if !declaresMain(f) {
+				continue
+			}
+			checked = true
+			src, rerr := os.ReadFile(name)
+			if rerr != nil {
+				errs = append(errs, rerr)
+				continue
+			}
+			if cerr := checkSource(name, src); cerr != nil {
+				errs = append(errs, fmt.Errorf("%s: %w", name, cerr))
+			}
+		}
+		if !checked {
+			errs = append(errs, fmt.Errorf("%s: package main without func main", p))
+		}
+		return nil
+	})
+	if werr != nil {
+		errs = append(errs, werr)
 	}
-	return checkSource(path, src)
+	return found, errors.Join(errs...)
+}
+
+func declaresMain(f *ast.File) bool {
+	for _, d := range f.Decls {
+		if fn, ok := d.(*ast.FuncDecl); ok && fn.Name.Name == "main" && fn.Recv == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func importName(f *ast.File, path, def string) string {
+	for _, imp := range f.Imports {
+		if imp.Path.Value == path {
+			if imp.Name != nil {
+				return imp.Name.Name
+			}
+			return def
+		}
+	}
+	return ""
+}
+
+func isSel(e ast.Expr, x, sel string) bool {
+	s, ok := e.(*ast.SelectorExpr)
+	if !ok || s.Sel.Name != sel {
+		return false
+	}
+	id, ok := s.X.(*ast.Ident)
+	return ok && id.Name == x
 }
 
 func checkSource(name string, src []byte) error {
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, name, src, 0)
+	f, err := parser.ParseFile(token.NewFileSet(), name, src, 0)
 	if err != nil {
 		return err
 	}
-	// local name of the prochardening import
-	local := ""
-	for _, imp := range f.Imports {
-		if imp.Path.Value == `"github.com/skenzeriq/activediq/internal/platform/prochardening"` {
-			local = "prochardening"
-			if imp.Name != nil {
-				local = imp.Name.Name
-			}
-		}
-	}
-	if local == "" {
-		return errMissing
+	ph := importName(f, pkgPath, "prochardening")
+	osName := importName(f, `"os"`, "os")
+	if ph == "" || osName == "" || ph == "_" || ph == "." || osName == "_" || osName == "." {
+		return errors.New(errForm)
 	}
 	for _, d := range f.Decls {
 		fn, ok := d.(*ast.FuncDecl)
-		if !ok || fn.Name.Name != "main" || fn.Recv != nil {
+		if !ok || fn.Name.Name != "main" || fn.Recv != nil || fn.Body == nil || len(fn.Body.List) == 0 {
 			continue
 		}
-		if len(fn.Body.List) == 0 {
-			return errMissing
-		}
 		ifs, ok := fn.Body.List[0].(*ast.IfStmt)
-		if !ok {
-			return errMissing
+		if !ok || ifs.Else != nil {
+			return errors.New(errForm)
 		}
 		as, ok := ifs.Init.(*ast.AssignStmt)
-		if !ok || len(as.Rhs) != 1 {
-			return errMissing
+		if !ok || as.Tok != token.DEFINE || len(as.Lhs) != 1 || len(as.Rhs) != 1 {
+			return errors.New(errForm)
+		}
+		lhs, ok := as.Lhs[0].(*ast.Ident)
+		if !ok || lhs.Name == "_" {
+			return errors.New(errForm)
 		}
 		call, ok := as.Rhs[0].(*ast.CallExpr)
+		if !ok || !isSel(call.Fun, ph, "Apply") || len(call.Args) != 1 || !isSel(call.Args[0], osName, "Getenv") {
+			return errors.New(errForm)
+		}
+		// condition: lhs != nil
+		cond, ok := ifs.Cond.(*ast.BinaryExpr)
+		if !ok || cond.Op != token.NEQ {
+			return errors.New(errForm)
+		}
+		x, xok := cond.X.(*ast.Ident)
+		y, yok := cond.Y.(*ast.Ident)
+		if !xok || !yok || x.Name != lhs.Name || y.Name != "nil" {
+			return errors.New(errForm)
+		}
+		// body must end in os.Exit(non-zero literal)
+		if len(ifs.Body.List) == 0 {
+			return errors.New(errForm)
+		}
+		last, ok := ifs.Body.List[len(ifs.Body.List)-1].(*ast.ExprStmt)
 		if !ok {
-			return errMissing
+			return errors.New(errForm)
 		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok || sel.Sel.Name != "Apply" {
-			return errMissing
+		exit, ok := last.X.(*ast.CallExpr)
+		if !ok || !isSel(exit.Fun, osName, "Exit") || len(exit.Args) != 1 {
+			return errors.New(errForm)
 		}
-		if id, ok := sel.X.(*ast.Ident); !ok || id.Name != local {
-			return errMissing
+		lit, ok := exit.Args[0].(*ast.BasicLit)
+		if !ok || lit.Kind != token.INT {
+			return errors.New(errForm)
+		}
+		if n, cerr := strconv.Atoi(lit.Value); cerr != nil || n == 0 {
+			return errors.New(errForm)
 		}
 		return nil
 	}
-	return errMissing
+	return errors.New(errForm)
 }
 
-type fitnessError string
-
-func (e fitnessError) Error() string { return string(e) }
-
-const errMissing = fitnessError("main must start with `if err := prochardening.Apply(os.Getenv); err != nil { ... }` (TM-TB16-T6)")
-
 func TestCheckSourceRejects(t *testing.T) {
-	const imp = "package main\nimport \"github.com/skenzeriq/activediq/internal/platform/prochardening\"\n"
-	good := imp + "func main() { if err := prochardening.Apply(nil); err != nil { return } ; _ = 1 }"
+	const imp = "package main\nimport (\"os\"\n\"github.com/skenzeriq/activediq/internal/platform/prochardening\")\n"
+	body := func(init, cond, inner string) string {
+		return imp + "func main() { if " + init + "; " + cond + " { " + inner + " }; _ = 1 }"
+	}
+	const ap = "err := prochardening.Apply(os.Getenv)"
+	good := body(ap, "err != nil", "println(err); os.Exit(2)")
 	bad := map[string]string{
-		"no import":  "package main\nfunc main() {}",
-		"not first":  imp + "func main() { _ = 1; if err := prochardening.Apply(nil); err != nil { return } }",
-		"empty main": imp + "func main() {}",
-		"wrong func": imp + "func main() { if err := prochardening.Other(nil); err != nil { return } }",
+		"no import":      "package main\nfunc main() {}",
+		"not first":      imp + "func main() { _ = 1; if err := prochardening.Apply(os.Getenv); err != nil { os.Exit(2) } }",
+		"empty main":     imp + "func main() {}",
+		"wrong func":     body("err := prochardening.Other(os.Getenv)", "err != nil", "os.Exit(2)"),
+		"fail-open body": body(ap, "err != nil", "println(err)"),
+		"empty body":     body(ap, "err != nil", ""),
+		"getenv stub":    body("err := prochardening.Apply(func(string) string { return \"\" })", "err != nil", "os.Exit(2)"),
+		"err == nil":     body(ap, "err == nil", "os.Exit(2)"),
+		"exit zero":      body(ap, "err != nil", "os.Exit(0)"),
+		"other variable": body(ap, "other != nil", "os.Exit(2)"),
+		"exit not last":  body(ap, "err != nil", "os.Exit(2); println(err)"),
 	}
 	if err := checkSource("good.go", []byte(good)); err != nil {
 		t.Fatalf("good rejected: %v", err)
@@ -114,5 +219,41 @@ func TestCheckSourceRejects(t *testing.T) {
 		if checkSource(n, []byte(s)) == nil {
 			t.Errorf("%s: accepted", n)
 		}
+	}
+}
+
+func TestCheckTreeFindsMainInAnyFileAndDepth(t *testing.T) {
+	const imp = "package main\nimport (\"os\"\n\"github.com/skenzeriq/activediq/internal/platform/prochardening\")\n"
+	goodMain := imp + "func main() { if err := prochardening.Apply(os.Getenv); err != nil { os.Exit(2) } }"
+	write := func(root, rel, s string) {
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(s), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	root := t.TempDir()
+	write(root, "ok/run.go", goodMain)
+	if _, err := checkTree(root, nil); err != nil {
+		t.Fatalf("good tree rejected: %v", err)
+	}
+	// main in run.go (not main.go), unhardened
+	write(root, "foo/run.go", "package main\nfunc main() {}")
+	if _, err := checkTree(root, nil); err == nil {
+		t.Error("unhardened main in run.go accepted")
+	}
+	os.RemoveAll(filepath.Join(root, "foo"))
+	// nested
+	write(root, "tools/bar/main.go", "package main\nfunc main() {}")
+	if _, err := checkTree(root, nil); err == nil {
+		t.Error("unhardened nested main accepted")
+	}
+	os.RemoveAll(filepath.Join(root, "tools"))
+	// package main without func main
+	write(root, "nomain/x.go", "package main\nfunc helper() {}")
+	if _, err := checkTree(root, nil); err == nil {
+		t.Error("package main without func main accepted")
 	}
 }
