@@ -23,6 +23,8 @@ tags:
     description: Liveness and readiness of the service, for load balancers and orchestrators. Status only; no version or configuration detail.
   - name: platform.authn
     description: Sign-in, second factor and sign-out for the console. A first factor yields a pending sign-in; only the second factor creates a session.
+  - name: platform.setup
+    description: First-run setup. The one-time setup secret claims setup once; it expires and is consumed on first use.
   - name: connections
     description: Directory connections. Attestation of an Entra connection's takeover protection (TM-D17), its maximum age, and the IdP callback.
   - name: platform.notify

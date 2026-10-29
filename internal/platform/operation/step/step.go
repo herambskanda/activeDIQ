@@ -40,6 +40,14 @@ var (
 	ErrDenied      = errors.New("step: authorisation re-check refused the write")
 )
 
+// Tier0Finding is one object found tier0 after a write: its objectGUID (canonical text) and the bases
+// the report gave. Empty Bases means unclassified: the source could not classify the object, and it
+// counts as tier0 exactly like one with a basis (ADR-0005 rule 7).
+type Tier0Finding struct {
+	Object string
+	Bases  []string
+}
+
 // RecheckFunc is the runner's authorisation check, installed at mint. It receives facts read live
 // immediately before the write and returns nil only when the initiator chain is still allowed.
 type RecheckFunc func(ctx context.Context, f authority.Facts) error

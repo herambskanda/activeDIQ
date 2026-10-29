@@ -121,7 +121,7 @@ func (fakeSrc) ParseFilter(f *v1.Filter) (ldapfilter.Filter, error) {
 	return ldapfilter.ParseFilterAST(f, ldapfilter.NewSchema(ldapfilter.AttrInfo{Name: "cn", Syntax: ldapfilter.SynString}), nil, ldapfilter.Limits{})
 }
 func (f fakeSrc) ScopedSearch(_ context.Context, _ ad.ScopedRequest, fn func(*ad.Entry) error) (ad.ScopedResult, error) {
-	return ad.ScopedResult{Returned: 1}, fn(f.entry())
+	return ad.ScopedResult{Returned: 1}, fn(f.entry().WithParent(rootGUID, true)) // ResolveParents: the real source resolves the parent (T-0694)
 }
 
 func readHandler(t *testing.T) *read.Handler {
@@ -332,7 +332,7 @@ func TestBindingServesNothingForAnIdentityThatIsNotATenantConnector(t *testing.T
 		"no component":          {fleet.Identity{Tenant: good.Tenant, Kind: fleet.KindConnector}, 0},
 	} {
 		var r regCount
-		bd.Serve(c.id, &r)
+		bd.Register(c.id, &r)
 		if r.n != c.want {
 			t.Errorf("%s: %d registrations, want %d", name, r.n, c.want)
 		}

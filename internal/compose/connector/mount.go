@@ -38,7 +38,7 @@ func TunnelBinding(v *rights.VerifyHandler, r *read.Handler) (fleet.Binding, err
 		return fleet.Binding{}, err
 	}
 	srv := &tunnelServer{verify: rights.NewServer(v), read: read.NewServer(r)}
-	return fleet.Binding{Contract: c, Serve: func(id fleet.Identity, reg grpc.ServiceRegistrar) {
+	return fleet.Binding{Contract: c, Register: func(id fleet.Identity, reg grpc.ServiceRegistrar) {
 		if id.Kind != fleet.KindConnector || id.Tenant.IsZero() || id.ComponentID == "" {
 			return
 		}

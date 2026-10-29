@@ -19,15 +19,31 @@
       "table": "public.platform_rate_buckets",
       "reason": "The rate limiter meters a principal at chain step 10, before any tenant transaction exists, and the budget must hold across every node, so a bucket row has no RLS policy; the tenant is part of its key text (ADR-0002 rule 6, DM-07, TM-TB2-T7). Any tenant transaction can read it, so only its owning package may name it in SQL.",
       "owner": "internal/platform/limiter"
+    },
+    {
+      "table": "public.update_verifier_floor",
+      "reason": "The update verifier's rollback floor is install-level: one monotone row shared by the server, connector and agent update paths, read before and outside any tenant transaction, so it has no tenant_id and no RLS. The guard trigger refuses any lowering and the runtime role cannot DELETE or TRUNCATE it (ENH-07, TM-D12 rule 2). Any tenant transaction can read it, so only its owning package may name it in SQL.",
+      "owner": "internal/platform/updateverify/floorpg"
     }
   ],
   "securityDefiner": [
+    {
+      "function": "public.fleet_ca_trust_anchors()",
+      "reason": "Reads every tenant's public CA certificates for the gateway client-CA pool, which fleet_ca's FORCE row-level security would show a platform-scope caller as empty. Owned by the dedicated NOLOGIN NOBYPASSRLS role activediq_catrust, which holds SELECT on tenant_id, id, state, cert_der, spki_sha256 and not_after only (never sealed_key) and one policy limited to active and retired rows; the function refuses any tenant context (42501), returns no key column, and EXECUTE is granted to activediq_app alone (T-0712, T-0733; TM-A11, TM-D24)."
+    },
     {
       "function": "public.audit_wipe_retired_key(text)",
       "reason": "Destroys a retired audit checkpoint key's sealed private key. The runtime role has no UPDATE on audit_checkpoint_key (append-only, DM-80.I2), so the one allowed change runs with the owner's rights; the function takes the tenant only from app.tenant_id (row-level security still applies), refuses the newest key and a key without a committed retirement event, and the table's update trigger refuses any other change (ADR-0005 rule 11, T-0305)."
     }
   ],
   "platformPaths": [
+    {
+      "package": "internal/platform/fleet/fleetsql",
+      "function": "TrustAnchors.Load",
+      "reason": "The gateway's client-CA pool holds every tenant's CA certificates, so one read runs in platform scope and calls the SECURITY DEFINER function fleet_ca_trust_anchors(), the only path to those rows: its owner role can read public certificate columns only, never sealed_key, and the function refuses a tenant context (T-0712, T-0733; TM-A11, TM-D24). It parses the tenant IDs the function returns from fleet_ca rows into typed IDs; it grants no access with them and a per-tenant check of the leaf's issuer still runs on every RPC (TM-Q8).",
+      "withPlatform": true,
+      "mintsTenantID": true
+    },
     {
       "package": "internal/platform/tenant/provision",
       "function": "FirstRun",
@@ -144,6 +160,20 @@
       "package": "internal/platform/audit",
       "function": "TestRetiredKeyIsWipedThroughSecurityDefiner",
       "reason": "Test: proves the registered SECURITY DEFINER audit_wipe_retired_key refuses a call made with no tenant context (SQLSTATE 42501), which needs a transaction under WithPlatform. It is in a _test.go file and ships in no binary (ADR-0005 rule 11, T-0305).",
+      "withPlatform": true,
+      "mintsTenantID": false
+    },
+    {
+      "package": "internal/platform/updateverify/floorpg",
+      "function": "Store.Load",
+      "reason": "The update verifier floor is install-level and its table is registered global, so the statement that reads it runs under WithPlatform (ENH-07, TM-D12 rule 2).",
+      "withPlatform": true,
+      "mintsTenantID": false
+    },
+    {
+      "package": "internal/platform/updateverify/floorpg",
+      "function": "Store.Raise",
+      "reason": "The update verifier floor is install-level and its table is registered global, so the statement that raises it runs under WithPlatform (ENH-07, TM-D12 rule 2).",
       "withPlatform": true,
       "mintsTenantID": false
     }

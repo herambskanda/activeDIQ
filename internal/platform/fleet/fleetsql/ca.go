@@ -99,6 +99,8 @@ func PinOf(c *x509.Certificate) string {
 	return "sha256:" + hex.EncodeToString(h[:])
 }
 
+func pinBytes(c *x509.Certificate) [32]byte { return sha256.Sum256(c.RawSubjectPublicKeyInfo) }
+
 func validCACert(c *x509.Certificate) bool {
 	return c.BasicConstraintsValid && c.IsCA && c.KeyUsage&x509.KeyUsageCertSign != 0
 }
@@ -126,11 +128,12 @@ func hasPEMMarker(b []byte) bool {
 
 func containsPrivateKeyMarker(b []byte) bool { return bytes.Contains(b, []byte("PRIVATE KEY")) }
 
-// loadCAs reads and validates every CA row of the tenant, active one first. Any row that does not
+// loadCAs reads and validates every active and retired CA row of the tenant (withdrawn rows are out of
+// the bundle for good), active one first. Any row that does not
 // validate fails the whole read: a bundle is never served with the bad entry dropped (TM-D24 D2).
 func loadCAs(ctx context.Context, tx store.Tx, alert func(AlertKind)) ([]ca, error) {
 	rows, err := tx.Query(ctx, `SELECT id::text, cert_der, spki_sha256, sealed_key, key_version, state
-		FROM public.fleet_ca ORDER BY (state = 'active') DESC, created_at, id`)
+		FROM public.fleet_ca WHERE state IN ('active', 'retired') ORDER BY (state = 'active') DESC, created_at, id`)
 	if err != nil {
 		return nil, fmt.Errorf("fleetsql: read CA: %w", err)
 	}

@@ -286,6 +286,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/setup/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Claim first-run setup with the one-time setup secret (AN-4)
+         * @description The first-run setup gate (TM-TB16-T7). A fresh install writes a one-time setup secret where only the installing administrator can read it (`activediq-server setup show`). Presenting it here claims setup: the secret is consumed on the first correct use and never works again. Success answers 204 and no body. Every failure has one shape, 401 /problems/setup-refused: wrong secret, expired secret, already-used secret, and an install that is not in first-run state are indistinguishable. The source-IP limiter may answer 429. No default account exists before or after.
+         */
+        post: operations["claimFirstRunSetup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -470,6 +490,10 @@ export interface components {
         };
         /** @description A secret a client sends: a password, a token. It is write-only, never appears in a response, and is held in memory only as a secret.Secret that is destroyed after the request. */
         SecretInput: string;
+        /** @description The one-time setup secret. */
+        SetupClaimRequest: {
+            secret: components["schemas"]["SecretInput"];
+        };
         /** @description A destination as stored. It never carries a credential. */
         SiemDestination: {
             host: string;
@@ -866,6 +890,22 @@ export interface components {
                  *       "status": 429,
                  *       "title": "Too many requests",
                  *       "type": "/problems/rate-limited"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description First-run setup was not claimed. One answer for every cause (wrong secret, expired secret, secret already used, install not in first-run state), so the response teaches a caller nothing. It never carries a detail. */
+        SetupRefused: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "status": 401,
+                 *       "title": "Setup was refused",
+                 *       "type": "/problems/setup-refused"
                  *     }
                  */
                 "application/problem+json": components["schemas"]["Problem"];
@@ -1438,6 +1478,34 @@ export interface operations {
             413: components["responses"]["PayloadTooLarge"];
             415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["IdempotencyKeyReuse"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    claimFirstRunSetup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetupClaimRequest"];
+            };
+        };
+        responses: {
+            /** @description Setup was claimed and the secret is consumed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["SetupRefused"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
         };

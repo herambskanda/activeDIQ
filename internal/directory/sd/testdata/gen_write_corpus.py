@@ -206,8 +206,8 @@ plan("SD-W24", OWN_ROUTE, add=[new("S-1-3-4", 0x20000)], hostile=False, source="
 GRP_OWN = sd(dacl=acl([ace(0, 0, 0xF01FF, SYS), ace(0, 0, 0x10, G1)], 4), owner=sid(G1))
 plan("SD-W25", GRP_OWN, add=[new("S-1-3-4", 0x20000)], expect="sd.self_lockout", source="SD-E13 the connector reaches the owner through a group SID in its token")
 # SD-E13: an inherit-only ACE still counts for the owner clause of MS-DTYP 2.5.3.2 (only the DACL walk skips it); fail closed
-plan("SD-W26", OWN_ONLY, add=[new("S-1-3-4", 0x20000, flags=0x0A)], expect="sd.self_lockout", source="SD-E13 CI|IO OWNER RIGHTS (the usual creator-owner strip) still drops implicit owner rights")
-plan("SD-W27", OWN_ONLY, add=[new(X1, 0x20000, flags=0x0A)], expect="sd.self_lockout", source="SD-E13 CI|IO owner-SID ACE still drops implicit owner rights")
+plan("SD-W26", OWN_ONLY, add=[new("S-1-3-4", 0x20000, flags=0x0A)], expect="sd.self_lockout", source="SD-E13 CI|IO OWNER RIGHTS (the usual creator-owner strip) still drops implicit owner rights; deliberately conservative: WS2025 lab (T-0606) shows the owner can still write the DACL, kept fail-closed (T-0628)")
+plan("SD-W27", OWN_ONLY, add=[new(X1, 0x20000, flags=0x0A)], expect="sd.self_lockout", source="SD-E13 CI|IO owner-SID ACE still drops implicit owner rights; deliberately conservative: WS2025 lab (T-0606) shows the owner can still write the DACL, kept fail-closed (T-0628)")
 plan("SD-W28", OWN_ROUTE, add=[new("S-1-3-4", 0x20000, flags=0x0A)], hostile=False, source="SD-E13 CI|IO OWNER RIGHTS with an explicit WRITE_DAC route through a group",
      expect=outcome(written([ace(0, 0, 0xF01FF, SYS), ace(0, 0, 0x10, X1), ace(0, 0, 0x40000, G1), ace(0, 0x0A, 0x20000, "S-1-3-4")], 4), inserted=[3]))
 plan("SD-W22", OWN_ONLY, add=[RC], opts={"no_object": True}, expect="sd.object_required", source="a write bound to no object")
@@ -242,7 +242,7 @@ def inh(id_, base, op, expect, hostile, source, opts=None):
     rec(id_, "PlanInheritance", {"sd": hx(base), "op": {"utf8": op}, "opts": js(o)}, {"error": expect} if isinstance(expect, str) else {"value": expect}, hostile, source)
 unflag = lambda a: a[:1] + bytes([a[1] & ~0x10]) + a[2:]
 inh("SD-W10", IBASE, "block_keep", outcome(written([IB[0], IB[1], unflag(IB[2]), unflag(IB[3])], 2, 0x8004 | 0x1000 | 0x0400), control=0x8004 | 0x1000 | 0x0400, noncanon=[(2, 3)]), False,
-    "SD-R7 break inheritance and keep copies: INHERITED cleared, order kept (the inherited deny now sits after an allow: reported), DI copied from the base")
+    "SD-R7 break inheritance and keep copies: INHERITED cleared, plan order kept (the inherited deny now sits after an allow: reported), DI copied from the base. The order is what the PLANNER writes: a Windows DC re-sorts on write (T-0606/T-0627), so verify-after-write compares with DACLWrite.VerifyAfter, never by position")
 inh("SD-W11", IBASE, "block_remove", outcome(written(IB[:2], 2, 0x8004 | 0x1000 | 0x0400), removed=[2, 3], control=0x8004 | 0x1000 | 0x0400), False,
     "SD-R7 break inheritance and remove the inherited ACEs")
 PIB = sd(dacl=acl(IB, 2), owner=sid(SYS), control=0x8000 | 0x1000 | 0x0400)

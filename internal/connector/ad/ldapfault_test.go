@@ -19,6 +19,7 @@ import (
 	"io"
 	"math/big"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -207,6 +208,28 @@ type fakeUpstream struct {
 	ln       net.Listener
 	entries  int
 	noSchema bool // answer the schema search with no entries, as a GC does for searchFlags (T-0619)
+	// parents > 0 spreads the entries over that many parent OUs, gives each an instanceType, and
+	// answers a base-scope read of "OU=p<k>,..." with the parent's GUID, counting the reads (T-0694).
+	parents int
+	mu      sync.Mutex
+	reads   map[string]int
+}
+
+// parentGUID is the GUID the fake reports for parent OU k.
+func parentGUID(k int) []byte {
+	g := make([]byte, 16)
+	g[0], g[15] = 0xB0, byte(k+1)
+	return g
+}
+
+func (f *fakeUpstream) parentReads() map[string]int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := map[string]int{}
+	for k, v := range f.reads {
+		out[k] = v
+	}
+	return out
 }
 
 func startFakeUpstream(t *testing.T, entries int) *fakeUpstream {
@@ -261,6 +284,22 @@ func (f *fakeUpstream) serve(c net.Conn) {
 				out = append(out, entryMsg(id, "CN=unicodePwd,"+fakeSchemaNC, map[string][][]byte{
 					"lDAPDisplayName": {[]byte("unicodePwd")}, "attributeID": {[]byte("1.2.840.113556.1.4.90")},
 				}))
+			case f.parents > 0 && strings.HasPrefix(base, "OU=p"):
+				k, _ := strconv.Atoi(strings.TrimPrefix(strings.SplitN(base, ",", 2)[0], "OU=p"))
+				f.mu.Lock()
+				if f.reads == nil {
+					f.reads = map[string]int{}
+				}
+				f.reads[base]++
+				f.mu.Unlock()
+				out = append(out, entryMsg(id, base, map[string][][]byte{"objectGUID": {parentGUID(k)}}))
+			case strings.HasPrefix(base, "<GUID=") && f.parents > 0:
+				for i := 0; i < f.entries; i++ {
+					g := make([]byte, 16)
+					g[0], g[14], g[15] = 0xA0, byte((i+1)>>8), byte(i+1)
+					out = append(out, entryMsg(id, "CN=u"+strconv.Itoa(i)+",OU=p"+strconv.Itoa(i%f.parents)+",DC=lab,DC=test",
+						map[string][][]byte{"objectGUID": {g}, "instanceType": {[]byte("4")}}))
+				}
 			case strings.HasPrefix(base, "<GUID="):
 				for i := 0; i < f.entries; i++ {
 					g := make([]byte, 16)
