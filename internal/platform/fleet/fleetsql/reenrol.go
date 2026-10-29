@@ -12,6 +12,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
+	"github.com/skenzeriq/activediq/internal/platform/authn/tenantref"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
@@ -121,7 +122,7 @@ func (r *Reenroller) ReenrolAddc(ctx context.Context, tid tenant.ID, p apihost.P
 		return ReenrolResult{}, ErrReenrolForbidden
 	}
 	// Permissions are evaluated in the principal's own tenant: tid must be that tenant (platform refused).
-	if pt, perr := tenant.Parse(p.Tenant); perr != nil || pt != tid {
+	if pt, perr := tenantref.TenantFromText(p.Tenant); perr != nil || pt != tid {
 		return ReenrolResult{}, ErrReenrolForbidden
 	}
 	for _, perm := range []string{PermissionRevoke, PermissionIssue} {
