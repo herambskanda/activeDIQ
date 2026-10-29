@@ -1200,6 +1200,7 @@ must_fail_with "fitness-update against a verifier that accepts bad updates" 'acc
 must_fail_with "fitness-update against a verifier that refuses for the wrong reason" 'refused with "tamper", want "rollback"' "$upd" -sabotage mislabel
 must_fail_with "fitness-update against a verifier that extracts before it decides" 'extraction before verification' "$upd" -sabotage leak
 must_pass "make fitness-update-offline is wired into make ci" bash -c "make -n ci | grep -q 'tools/fitness/update/offline.sh'"
+must_pass "offline.sh is tracked by git and executable" bash -c "git ls-files --error-unmatch tools/fitness/update/offline.sh >/dev/null && test -x tools/fitness/update/offline.sh"
 
 # --- fuzz-target / fuzz-saml (T-0490) -----------------------------------------------------------
 fz="$tmp/fuzz"
