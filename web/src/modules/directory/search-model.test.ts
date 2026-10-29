@@ -34,9 +34,9 @@ describe("failureOf", () => {
     expect(failureOf(problem(429)).kind).toBe("rate-limited");
     expect(failureOf(problem(500)).kind).toBe("error");
   });
-  it("carries the request id when the problem has one", () => {
-    expect(failureOf(problem(500, { requestId: "req-1" })).requestId).toBe("req-1");
-    expect(failureOf(problem(500)).requestId).toBeUndefined();
+  it("carries the trace ID when the problem has one", () => {
+    expect(failureOf(problem(500, { traceId: "trace-1" })).traceId).toBe("trace-1");
+    expect(failureOf(problem(500)).traceId).toBeUndefined();
   });
   it("treats a non-API failure as unreachable and never echoes it", () => {
     const f = failureOf(new TypeError("Failed to fetch at https://secret/stack"));

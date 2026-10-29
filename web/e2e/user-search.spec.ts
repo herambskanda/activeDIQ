@@ -24,7 +24,7 @@ const users = [
 const problem = (status: number, title: string) => ({
   status,
   contentType: "application/problem+json",
-  body: JSON.stringify({ type: "about:blank", title, status, requestId: "req-e2e" }),
+  body: JSON.stringify({ type: "about:blank", title, status, traceId: "trace-e2e" }),
 });
 
 async function answerWith(
@@ -84,7 +84,7 @@ test("a server error shows an actionable error, and Retry recovers", async ({ pa
   await page.goto("/directory/users?q=ada");
   const alert = page.getByRole("alert");
   await expect(alert).toContainText("The search failed");
-  await expect(alert).toContainText("req-e2e");
+  await expect(alert).toContainText("trace-e2e");
   await page.screenshot({ path: `${EVIDENCE}/error.png` });
   await noCriticalViolations(page);
   failing = false;

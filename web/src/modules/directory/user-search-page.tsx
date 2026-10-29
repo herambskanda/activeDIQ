@@ -86,9 +86,9 @@ export function UserSearchPage({ client = api }: { readonly client?: ApiClient }
           <div className="diq-state diq-state--error" role="alert">
             <p className="diq-state__title">{state.failure.title}</p>
             <p>{state.failure.detail}</p>
-            {state.failure.requestId !== undefined && (
+            {state.failure.traceId !== undefined && (
               <p>
-                Request ID <span className="diq-mono">{state.failure.requestId}</span>
+                Trace ID <span className="diq-mono">{state.failure.traceId}</span>
               </p>
             )}
             {state.failure.kind !== "denied" && (

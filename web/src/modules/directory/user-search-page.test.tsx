@@ -165,13 +165,13 @@ describe("UserSearchPage", () => {
 
   it("shows an error with a Retry that repeats the search and recovers", async () => {
     respond = () =>
-      json(500, { type: "about:blank", title: "boom", status: 500, requestId: "req-9" });
+      json(500, { type: "about:blank", title: "boom", status: 500, traceId: "trace-9" });
     await mount();
     await type("ann");
     await settle();
     const alert = el('[role="alert"]').textContent ?? "";
     expect(alert).toContain("The search failed");
-    expect(alert).toContain("req-9");
+    expect(alert).toContain("trace-9");
     expect(alert).not.toContain("boom");
     respond = () => json(200, { items: [user(1)] });
     await act(async () => button("Retry").click());

@@ -31,20 +31,20 @@ export interface Failure {
   readonly kind: FailureKind;
   readonly title: string;
   readonly detail: string;
-  /** The server's request id when the problem carries one, so an admin can quote it. */
-  readonly requestId?: string;
+  /** The server trace ID when the problem carries one, so an admin can quote it. */
+  readonly traceId?: string;
 }
 
-function requestIdOf(problem: Problem): string | undefined {
-  const id = (problem as Record<string, unknown>)["requestId"];
+function traceIdOf(problem: Problem): string | undefined {
+  const id = problem.traceId;
   return typeof id === "string" ? id : undefined;
 }
 
 /** Maps an API failure to what the page says. Never exposes a stack trace or an unknown payload. */
 export function failureOf(error: unknown): Failure {
   if (error instanceof ApiError) {
-    const requestId = requestIdOf(error.problem);
-    const withId = requestId === undefined ? {} : { requestId };
+    const traceId = traceIdOf(error.problem);
+    const withId = traceId === undefined ? {} : { traceId };
     switch (error.status) {
       case 403:
         return {
@@ -80,7 +80,7 @@ export function failureOf(error: unknown): Failure {
           kind: "error",
           title: "The search failed",
           detail:
-            "The server could not answer. Retry; if it keeps failing, quote the request ID to your administrator.",
+            "The server could not answer. Retry; if it keeps failing, quote the trace ID to your administrator.",
           ...withId,
         };
     }
