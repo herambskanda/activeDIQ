@@ -5,7 +5,7 @@
 // makes the DC recompute inherited ACEs (RestoreInheritance) and BlockKeep/BlockRemove behave as the plan
 // says; the INHERITED marker survives a DACL write; a DACL-only SD_FLAGS write needs no SeSecurityPrivilege
 // and leaves owner/group/SACL alone; whether an inherit-only OWNER RIGHTS / owner ACE strips the owner's
-// implicit WRITE_DAC (planner SD-W26/W27 fail closed until this is known).
+// implicit WRITE_DAC (planner SD-W26/W27 stay fail-closed on purpose: WS2025 says the owner keeps WRITE_DAC, T-0628 declined to narrow on one DC build).
 //
 // Every test builds its objects under OU=Managed, writes with the product's own planners
 // (sd.PlanDACL / sd.PlanInheritance) over verified LDAPS, reads back with the DACL-only SD_FLAGS control,
