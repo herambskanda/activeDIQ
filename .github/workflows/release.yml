@@ -18,6 +18,14 @@ jobs:
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version-file: go.mod
+      - name: Judge the built installer (ADR-0006 A1 on the artefact, T-0697)
+        # Opens every dist/*.msi with msidump and fails on a LocalSystem or other unpinned service account,
+        # a non-restricted SID, privileges beyond the pinned set, or an unreviewed custom action. Prints
+        # "inactive" while no MSI is built; the packaging ticket that builds one adds -require here.
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y --no-install-recommends msitools
+          go run ./tools/fitness/builtmsi -glob 'dist/*.msi'
       - name: Build, sign and verify
         env:
           RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
