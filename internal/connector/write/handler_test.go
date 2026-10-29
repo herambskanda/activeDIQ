@@ -9,6 +9,8 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/connector/tier0"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
+	"github.com/skenzeriq/activediq/internal/directory/dn"
+	"github.com/skenzeriq/activediq/internal/directory/sd"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
@@ -636,5 +638,11 @@ func TestFileBaselineOmitsZeroRevision(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
 	if len(lines) != 2 || strings.Contains(lines[0], "tier0_revision") || !strings.Contains(lines[1], `"tier0_revision":3`) {
 		t.Fatalf("unexpected baseline lines: %q", lines)
+	}
+}
+
+func TestApplyDACLRefusesWithoutGuardToken(t *testing.T) {
+	if err := ApplyDACL(context.Background(), Authorised{}, &fakeSDSession{}, dn.ObjectRef{}, sd.DACLWrite{}); err == nil {
+		t.Fatal("zero Authorised must be refused")
 	}
 }
