@@ -66,3 +66,6 @@ lab/windows/.win-lab-ca.pem
 !/tools/fitness/*/testdata/
 # stray `go build ./tools/fitness/audit` output
 /audit
+
+# built fitness binary (build into $TMPDIR instead)
+/agenthost
