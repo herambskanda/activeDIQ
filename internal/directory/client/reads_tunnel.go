@@ -24,7 +24,7 @@ type BindingSource interface {
 	Bindings(ctx context.Context, tid tenant.ID, id connection.ID) ([]connection.Binding, error)
 }
 
-// Tunnels gives the client connection of an enrolled component. *fleet.Hub satisfies it. The
+// Tunnels gives the client connection of an enrolled component. *gateway.Hub satisfies it. The
 // component dialled the server over mutual TLS and the fleet gateway verified its certificate against
 // the tenant's CAs and its current serial; this package never dials and has no credentials option, so
 // there is no way to reach a connector without that mutual-TLS tunnel.

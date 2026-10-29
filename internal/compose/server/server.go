@@ -21,7 +21,8 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/apitls"
 	"github.com/skenzeriq/activediq/internal/platform/capability"
-	"github.com/skenzeriq/activediq/internal/platform/fleet"
+
+	"github.com/skenzeriq/activediq/internal/platform/fleet/gateway"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/keys"
 	"github.com/skenzeriq/activediq/internal/platform/limiter"
@@ -87,7 +88,7 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	// component binding's tunnel on the fleet hub (mutual TLS, established by the component). The Tier-0
 	// verdict arrives in the Read header from the connector, so no separate verdict source exists.
 	conns := connection.NewRegistry(db)
-	src, err := client.NewTunnelSource(conns, conns, fleet.NewHub())
+	src, err := client.NewTunnelSource(conns, conns, gateway.NewHub())
 	if err != nil {
 		return fmt.Errorf("server: connector source: %w", err)
 	}
