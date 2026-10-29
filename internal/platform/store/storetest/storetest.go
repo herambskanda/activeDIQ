@@ -46,6 +46,9 @@ import (
 const (
 	OwnerRole   = "activediq_owner" // runs migrations, owns every object
 	RuntimeRole = "activediq_app"   // the application: owns nothing
+	// CatrustRole is the trust-anchor reader (fleet-contract "Gateway client-CA pool"): NOLOGIN, owns only
+	// fleet_ca_trust_anchors(). The owner role is its only member; the runtime role never is.
+	CatrustRole = "activediq_catrust"
 )
 
 var images = map[string]string{
@@ -226,6 +229,20 @@ func (s *Server) createRoles(t *testing.T) {
 			t.Fatalf("storetest: create role %s: %v", r.name, err)
 		}
 	}
+	// Created before the first migration, like the installer: NOLOGIN, no password, the owner its only member.
+	var stmt string
+	if err := c.QueryRow(ctx, `SELECT format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS', $1::text)`, CatrustRole).Scan(&stmt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Exec(ctx, stmt); err != nil {
+		t.Fatalf("storetest: create role %s: %v", CatrustRole, err)
+	}
+	if err := c.QueryRow(ctx, `SELECT format('GRANT %I TO %I', $1::text, $2::text)`, CatrustRole, OwnerRole).Scan(&stmt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Exec(ctx, stmt); err != nil {
+		t.Fatalf("storetest: grant %s to %s: %v", CatrustRole, OwnerRole, err)
+	}
 }
 
 // Database is one empty database owned by the owner role. Nothing is in it until Migrate.
@@ -384,6 +401,8 @@ func Breaches() []Breach {
 			Teardown: []string{`DROP ROLE adq_breach_rls`}, Want: "BYPASSRLS"},
 		{Name: "member of a role that can create in public", Setup: []string{`CREATE ROLE adq_breach_cr NOLOGIN`, `GRANT CREATE ON SCHEMA public TO adq_breach_cr`, `GRANT adq_breach_cr TO activediq_app WITH INHERIT FALSE`},
 			Teardown: []string{`REVOKE CREATE ON SCHEMA public FROM adq_breach_cr`, `DROP ROLE adq_breach_cr`}, Want: "CREATE"},
+		{Name: "member of the trust-anchor reader WITH INHERIT FALSE", Setup: []string{`GRANT activediq_catrust TO activediq_app WITH INHERIT FALSE`},
+			Teardown: []string{`REVOKE activediq_catrust FROM activediq_app`}, Want: "activediq_catrust"},
 		{Name: "owns the database", Setup: []string{`ALTER DATABASE {db} OWNER TO activediq_app`},
 			Teardown: []string{`ALTER DATABASE {db} OWNER TO activediq_owner`}, Want: "database"},
 		{Name: "has CREATE on public", Setup: []string{`GRANT CREATE ON SCHEMA public TO activediq_app`},
