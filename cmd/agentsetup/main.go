@@ -8,6 +8,11 @@
 //	agentsetup revoke-channel    remove it
 //	agentsetup prepare-datadir   create the data directory with the pinned DACL
 //	agentsetup write-config      write agent.json (local ceilings) next to the executable
+//	agentsetup repin <pin>       adopt a new server-CA pin received out of band, keeping the identity
+//
+// repin is the one verb with an argument, and the argument is only ever a pin (sha256:<64 hex>),
+// parsed strictly; it is an operator action after a server-CA compromise (ADR-0008 obligation 5),
+// not an MSI custom action. Each use is audited (event 4102 in the Application log).
 //
 // Any failure exits non-zero and the MSI custom action is marked fail-closed: the install does not
 // continue with a service that cannot read its channel, and LocalSystem is never the fallback
@@ -17,6 +22,8 @@ package main
 import (
 	"fmt"
 	"os"
+
+	"github.com/skenzeriq/activediq/internal/platform/fleet/dial"
 )
 
 func main() {
@@ -24,7 +31,7 @@ func main() {
 }
 
 func usage() int {
-	fmt.Fprintln(os.Stderr, "usage: agentsetup grant-channel | revoke-channel | write-config | prepare-datadir")
+	fmt.Fprintln(os.Stderr, "usage: agentsetup grant-channel | revoke-channel | write-config | prepare-datadir | repin sha256:<hex>")
 	return 2
 }
 
@@ -37,4 +44,16 @@ func parseVerb(args []string) (string, bool) {
 		return "", false
 	}
 	return args[0], true
+}
+
+// parseRepin returns the pin of a command line that is exactly `repin <pin>`. The pin is validated
+// here, so nothing but 64 lower-case hex digits ever reaches the state directory code.
+func parseRepin(args []string) (string, bool) {
+	if len(args) != 2 || args[0] != "repin" {
+		return "", false
+	}
+	if _, err := dial.ParsePin(args[1]); err != nil {
+		return "", false
+	}
+	return args[1], true
 }
