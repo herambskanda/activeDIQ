@@ -133,7 +133,7 @@ created `active`, because the `tenant-provisioning` capability is not composed t
 `suspended`: sign-in is refused, jobs are paused and connectors are refused; data is kept. The
 export window during `deleting` is `[OPEN → E5.6]`.
 
-### DM-02 TenantKey · T · owner `platform/keys`
+### DM-02 TenantKey · P (installation key) and T (tenant keys) · owner `platform/keys`
 **Definition.** A tenant's data-encryption key, wrapped by the installation KEK from the profile's
 key provider. Everything sealed (DM-11, DM-37, DM-63, DM-82, DM-85) is sealed under it.
 **Key attributes:** `version` · `wrapped_dek` · `kek_ref` (provider, key id) · `state` · `created_at`.
@@ -141,6 +141,9 @@ key provider. Everything sealed (DM-11, DM-37, DM-63, DM-82, DM-85) is sealed un
 version that sealed it. I3 The plaintext DEK exists only in memory. I4 Shredding destroys every
 version. The rotation procedure is `[OPEN → T-0007]`.
 **Lifecycle.** `active → retired` (decrypt-only) `→ shredded`.
+**Installation scope (T-0715, ADR-0008).** One further key belongs to the installation (`installation_keys`, no
+`tenant_id`): exactly one `active` version, wrapped under a distinct platform purpose and sealing with its own
+associated-data domain, so it never opens a tenant value nor a tenant key it. First consumer: the fleet server CA key.
 
 ### DM-03 Node · P · owner `platform/update` (registry of server processes)
 **Definition.** One running `server` process of the installation. Nodes are stateless, and HA is

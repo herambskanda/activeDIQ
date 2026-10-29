@@ -19,6 +19,11 @@
       "table": "public.platform_rate_buckets",
       "reason": "The rate limiter meters a principal at chain step 10, before any tenant transaction exists, and the budget must hold across every node, so a bucket row has no RLS policy; the tenant is part of its key text (ADR-0002 rule 6, DM-07, TM-TB2-T7). Any tenant transaction can read it, so only its owning package may name it in SQL.",
       "owner": "internal/platform/limiter"
+    },
+    {
+      "table": "public.installation_keys",
+      "reason": "The installation-scope data key (T-0715, ADR-0008) seals installation secrets that belong to no tenant, such as the fleet server CA's private key, so its row has no tenant_id and no RLS (ADR-0002 rule 4). wrapped_dek is the AEAD blob a key provider returned; the runtime role can only SELECT and INSERT. Any tenant transaction can read it, so only its owning package may name it in SQL.",
+      "owner": "internal/platform/keys"
     }
   ],
   "securityDefiner": [
