@@ -1263,6 +1263,109 @@ var pinnedActions = func() map[string]map[string]string {
 // source grants no ACL through WiX. Adding an entry is a security-architect review (T-0725).
 var pinnedPermissions = map[string]map[string]string{}
 
+// isDirEl: the elements that define or reference a directory.
+func isDirEl(n string) bool {
+	return n == "Directory" || n == "StandardDirectory" || n == "DirectoryRef"
+}
+
+// dirChain returns the pin string for the directory defined by element k: the chain of Directory and
+// StandardDirectory elements from the outermost down, each as "Element:Id:Name". A DirectoryRef never ends
+// the chain: it is resolved to the single element in this file that defines its Id. ok is false when an Id
+// has no definition, or more than one, in this file (it may live in another fragment), or on a cycle.
+func dirChain(els []xmlEl, k, depth int) (string, bool) {
+	if depth > 32 {
+		return "", false
+	}
+	var parts []string
+	for ; k >= 0; k = els[k].Parent {
+		switch els[k].Name {
+		case "Directory", "StandardDirectory":
+			parts = append([]string{els[k].Name + ":" + els[k].Attrs["id"] + ":" + els[k].Attrs["name"]}, parts...)
+		case "DirectoryRef":
+			d, ok := dirByID(els, els[k].Attrs["id"], depth+1)
+			if !ok {
+				return "", false
+			}
+			return strings.Join(append([]string{d}, parts...), "/"), true
+		}
+	}
+	return strings.Join(parts, "/"), len(parts) > 0
+}
+
+// dirByID resolves a directory Id to its one defining Directory/StandardDirectory element in the file.
+func dirByID(els []xmlEl, id string, depth int) (string, bool) {
+	def := -1
+	for i, e := range els {
+		if (e.Name == "Directory" || e.Name == "StandardDirectory") && id != "" && e.Attrs["id"] == id {
+			if def >= 0 {
+				return "", false
+			}
+			def = i
+		}
+	}
+	if def < 0 {
+		return "", false
+	}
+	return dirChain(els, def, depth)
+}
+
+// effectiveDirectory resolves the directory a CreateFolder or File acts on, walking up from element i:
+// the element's own Directory attribute, else the nearest Component (or ComponentGroup) Directory
+// attribute, else the nearest enclosing Directory/StandardDirectory/DirectoryRef. Every Id is resolved to
+// its defining element and the whole chain is pinned, so renaming or re-parenting it changes the pin.
+func effectiveDirectory(els []xmlEl, i int) (string, bool) {
+	if d := els[i].Attrs["directory"]; d != "" {
+		return dirByID(els, d, 0)
+	}
+	for j := els[i].Parent; j >= 0; j = els[j].Parent {
+		switch els[j].Name {
+		case "Component", "ComponentGroup":
+			if d := els[j].Attrs["directory"]; d != "" {
+				return dirByID(els, d, 0)
+			}
+		case "Directory", "StandardDirectory", "DirectoryRef":
+			return dirChain(els, j, 0)
+		}
+	}
+	return "", false
+}
+
+// parentTarget returns the pin keys ("parent.<attr>") naming the object a Permission's parent acts on,
+// resolved through its ancestors; ok is false when the target cannot be resolved or the parent type is
+// unknown, which fails closed (T-0730).
+func parentTarget(els []xmlEl, p int) (map[string]string, bool) {
+	e := els[p]
+	t := map[string]string{}
+	switch e.Name {
+	case "ServiceInstall":
+		t["parent.name"] = e.Attrs["name"]
+		return t, e.Attrs["name"] != ""
+	case "CreateFolder":
+		d, ok := effectiveDirectory(els, p)
+		t["parent.directory"] = d
+		return t, ok
+	case "File":
+		d, ok := effectiveDirectory(els, p)
+		name := e.Attrs["name"]
+		if name == "" {
+			name = e.Attrs["source"]
+			if n := strings.LastIndexAny(name, `\/`); n >= 0 {
+				name = name[n+1:]
+			}
+		}
+		t["parent.directory"], t["parent.name"] = d, name
+		return t, ok && name != ""
+	case "RegistryKey", "RegistryValue":
+		root, key := registryRootKey(els, p)
+		t["parent.root"], t["parent.key"] = root, key
+		if e.Name == "RegistryValue" {
+			t["parent.name"] = e.Attrs["name"]
+		}
+		return t, root != ""
+	}
+	return nil, false
+}
+
 func samePermission(got, want map[string]string) bool {
 	if len(got) != len(want) {
 		return false
@@ -1287,6 +1390,7 @@ func judgeInstallerXML(rel string, b []byte, allow []string, agentFile bool) ins
 	var els []xmlEl
 	var stack []int
 	var attrText strings.Builder
+	var attrDups []string
 	for {
 		tok, err := dec.Token()
 		if err == io.EOF {
@@ -1302,7 +1406,15 @@ func judgeInstallerXML(rel string, b []byte, allow []string, agentFile bool) ins
 				e.Parent = stack[len(stack)-1]
 			}
 			for _, a := range t.Attr {
-				e.Attrs[strings.ToLower(a.Name.Local)] = a.Value
+				if a.Name.Space == "xmlns" || a.Name.Local == "xmlns" {
+					continue // namespace declarations are not WiX attributes
+				}
+				k := strings.ToLower(a.Name.Local)
+				if _, dup := e.Attrs[k]; dup {
+					// T-0730: last-wins would let a second spelling hide the value that is judged.
+					attrDups = append(attrDups, fmt.Sprintf("%s: element %s has attribute %q more than once (duplicate, or names differing only by case or namespace): the judged value would be ambiguous", rel, t.Name.Local, k))
+				}
+				e.Attrs[k] = a.Value
 				attrText.WriteString(a.Value + "\n")
 			}
 			els = append(els, e)
@@ -1319,6 +1431,7 @@ func judgeInstallerXML(rel string, b []byte, allow []string, agentFile bool) ins
 		}
 	}
 	var f installerFacts
+	f.violations = append(f.violations, attrDups...)
 	f.attrText = attrText.String()
 	fail := func(format string, a ...any) { f.violations = append(f.violations, rel+": "+fmt.Sprintf(format, a...)) }
 	// agentSvc: the element is the agent's ServiceInstall, or sits under it.
@@ -1378,9 +1491,17 @@ func judgeInstallerXML(rel string, b []byte, allow []string, agentFile bool) ins
 			default:
 				got := map[string]string{"": e.Name}
 				for k, v := range e.Attrs {
-					if !strings.HasPrefix(k, "xmlns") {
-						got[k] = v
-					}
+					got[k] = v
+				}
+				// T-0730: the pin also fixes the parent's target, so retargeting the parent cannot
+				// carry a reviewed ACL onto another object. Pin keys: "parent.<attr>".
+				tgt, resolved := parentTarget(els, e.Parent)
+				if !resolved {
+					fail("%s under %s %q: the parent's effective target cannot be resolved (unknown parent type, or its directory/registry root comes from a ComponentRef or another fragment); an unresolved target cannot be pinned (T-0730)", e.Name, ptype, pid)
+					break
+				}
+				for k, v := range tgt {
+					got[k] = v
 				}
 				if !samePermission(got, want) {
 					fail("%s under %s %q differs from the reviewed pin (attributes %v, reviewed %v): a changed SDDL or grant is a new ACL and needs a new review (T-0725)", e.Name, ptype, pid, got, want)

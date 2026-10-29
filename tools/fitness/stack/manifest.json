@@ -324,6 +324,21 @@
         "reason": "unix-socket versus other-OS dial of the fleet transport: files_unix.go (unix) and files_other.go (!unix); no shared portable form exists"
       },
       {
+        "path": "internal/platform/updateverify",
+        "adr": "0001-technology-stack.md",
+        "reason": "update-quarantine file handling differs by OS: quarantine_unix.go (unix) and quarantine_other.go (!unix); no portable form exists"
+      },
+      {
+        "path": "internal/platform/prochardening",
+        "adr": "0001-technology-stack.md",
+        "reason": "process dump hardening (RLIMIT_CORE, PR_SET_DUMPABLE) is Linux-only syscalls: hardening_linux.go and hardening_other.go; no portable form exists"
+      },
+      {
+        "path": "internal/compose/server",
+        "adr": "0001-technology-stack.md",
+        "reason": "KEK provider file open differs by OS: kekopen_unix.go and kekopen_windows.go; no portable form exists"
+      },
+      {
         "path": "internal/testlab/harnessdocker",
         "adr": "0001-technology-stack.md",
         "reason": "test-lab Docker harness file-ownership handling differs by OS: owner_unix.go and owner_windows.go; test tooling, never shipped"
