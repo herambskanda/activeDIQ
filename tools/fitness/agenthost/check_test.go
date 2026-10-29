@@ -635,6 +635,13 @@ func TestA1Installer(t *testing.T) {
 				t.Errorf("pure-ASCII us-ascii good WiX flagged: %v", v)
 			}
 		}
+		{ // T-0677 attempt 10: the rule also applies to the full re-read past the 64 KiB head
+			for where, enc := range map[string]string{"tools/x/evil.xml": "us-ascii", "tools/x/evil.png": "windows-1252"} {
+				r := t.TempDir()
+				write(t, r, where, `<?xml version="1.0" encoding="`+enc+`"?><!--`+strings.Repeat("a", 70000)+"--><?x \x80>"+"<Wix><Fragment>"+lsys+"</Fragment></Wix><?y ?>")
+				wantViolation(t, checkInstaller(r), "declares an encoding")
+			}
+		}
 		{ // a long prolog does not hide the root element
 			r := t.TempDir()
 			write(t, r, "docs/evil.txt", "<!--"+strings.Repeat("x", 100<<10)+"-->"+lsys)

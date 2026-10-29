@@ -1166,6 +1166,9 @@ rm -f "$ah/packaging/windows/evil.dat"
 # T-0677 attempt 9: us-ascii/iso-8859-1/windows-1252 are accepted only for pure-ASCII files (.NET turns bytes >= 0x80 into '?').
 python3 -c 'import sys;open(sys.argv[2],"wb").write(b"<?xml version=\"1.0\" encoding=\"us-ascii\"?><?x \x80>"+sys.argv[1].encode()+b"<?y ?>")' "<Wix><Fragment>$lsys</Fragment></Wix>" "$ah/x/evil.xml"
 must_fail_with "fitness-agent-host on a us-ascii declaring file hiding a WiX body behind a 0x80 byte (A1)" 'declares an encoding' agenthost "$ah"
+# T-0677 attempt 10: the same hole past the 64 KiB head (full re-read must run the encoding rule too).
+python3 -c 'import sys;open(sys.argv[2],"wb").write(b"<?xml version=\"1.0\" encoding=\"us-ascii\"?><!--"+b"a"*70000+b"--><?x \x80>"+sys.argv[1].encode()+b"<?y ?>")' "<Wix><Fragment>$lsys</Fragment></Wix>" "$ah/x/evil.xml"
+must_fail_with "fitness-agent-host on a us-ascii file with 0x80 hidden past the 64 KiB head (A1)" 'declares an encoding' agenthost "$ah"
 rm -f "$ah/packaging/windows/A.wixproj"
 for sig in '\0\0\x3c\0' '\0\x3c\0\0' '\x4c\x6f\xa7\x94'; do
   printf "$sig"'rest' >"$ah/x/evil.xml"

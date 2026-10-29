@@ -948,11 +948,10 @@ func sniffWix(p string, size int64) (text string, wix bool, problem string) {
 		if size > 4<<20 {
 			return "", false, "is a WiX document too large to scan"
 		}
-		b, err := os.ReadFile(p)
-		if err != nil {
-			return "", false, "cannot be read (" + err.Error() + ")"
+		full, ok, prob := readCheckedText(p)
+		if prob != "" {
+			return "", false, prob
 		}
-		full, ok := decodeText(b)
 		if !ok {
 			return "", false, "is a WiX document that cannot be read as text"
 		}
@@ -962,11 +961,10 @@ func sniffWix(p string, size int64) (text string, wix bool, problem string) {
 		if size > 4<<20 {
 			return "", false, "starts with a long XML prolog and is too large to classify: it could be a WiX document"
 		}
-		b, err := os.ReadFile(p)
-		if err != nil {
-			return "", false, "cannot be read (" + err.Error() + ")"
+		full, ok, prob := readCheckedText(p)
+		if prob != "" {
+			return "", false, prob
 		}
-		full, ok := decodeText(b)
 		if !ok {
 			return "", false, ""
 		}
@@ -975,6 +973,20 @@ func sniffWix(p string, size int64) (text string, wix bool, problem string) {
 		}
 	}
 	return "", false, ""
+}
+
+// readCheckedText reads the whole file, runs encodingProblem on every byte, then decodes. Every full read
+// goes through here so no path can skip the encoding rule.
+func readCheckedText(p string) (text string, ok bool, problem string) {
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return "", false, "cannot be read (" + err.Error() + ")"
+	}
+	if prob := encodingProblem(b); prob != "" {
+		return "", false, prob
+	}
+	text, ok = decodeText(b)
+	return text, ok, ""
 }
 
 // hasWixIR: a zip (PK\x03\x04) holding a wix-ir.json entry is a WiX intermediate whatever its name.
