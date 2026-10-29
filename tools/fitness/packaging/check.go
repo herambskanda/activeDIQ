@@ -13,6 +13,8 @@ import (
 const (
 	winACL     = "packaging/windows/Set-ApiTlsDirAcl.ps1"
 	winTest    = "packaging/windows/Test-ApiTlsDirAcl.ps1"
+	winMsi     = "packaging/windows/msi/Server.wxs"
+	winDC      = "packaging/windows/Test-MsiRefusesDc.ps1"
 	linPrep    = "packaging/linux-oci/prepare-tls-dir.sh"
 	linCompose = "packaging/linux-oci/compose.tls.yaml"
 )
@@ -70,6 +72,25 @@ func Check(root string) []string {
 	forbid(&v, winTest, t, "'$Path'", "the probe script must not be built by interpolating the path")
 	need(&v, winTest, t, "ADIQ_PROBE_PATH", "the path must reach the probe as data")
 	need(&v, winTest, t, "read a file inside", "the probe must read a file, not only list")
+
+	// T-0635, TM-TB16-T1: the MSI refuses a domain controller before it changes anything.
+	m := read(root, winMsi, &v)
+	need(&v, winMsi, m, `Condition="Installed OR (MsiNTProductType &lt;&gt; 2)"`, "the server MSI must refuse a domain controller (ProductType 2) with a LaunchCondition; Installed stays exempt so uninstall works")
+	need(&v, winMsi, m, "cannot be installed on a domain controller", "the refusal message is the contract the lab proof matches")
+	forbid(&v, winMsi, m, "<CustomAction", "the refusal is a LaunchCondition: a custom action runs after costing and could leave state")
+	forbid(&v, winMsi, m, "LocalSystem", "the server never runs as LocalSystem")
+	n := read(root, "packaging/windows/New-SetupSecret.ps1", &v)
+	need(&v, "New-SetupSecret.ps1", n, "SetAccessRuleProtection($true, $false)", "the setup secret file must not inherit access")
+	need(&v, "New-SetupSecret.ps1", n, "FileMode]::CreateNew", "the file is created with its final DACL, never overwritten")
+	need(&v, "New-SetupSecret.ps1", n, "S-1-5-32-544", "the installing administrator must be a user SID, not the Administrators group")
+	need(&v, "New-SetupSecret.ps1", n, "RandomNumberGenerator", "the secret must come from a CSPRNG")
+	forbid(&v, "New-SetupSecret.ps1", n, "Write-Host $secret", "the secret must never be printed")
+	forbid(&v, "New-SetupSecret.ps1", n, "Get-Random", "Get-Random is not a CSPRNG")
+	d := read(root, winDC, &v)
+	need(&v, winDC, d, "-ArgumentList $args", "msiexec arguments must be an array, never one interpolated string")
+	need(&v, winDC, d, "1603", "the lab driver must assert the launch-condition exit code")
+	need(&v, winDC, d, "Get-HostObservation.ps1", "the lab driver must feed the TM-F-HOST evaluator")
+	need(&v, winDC, d, "DomainRole", "ProductType and DomainRole must agree on dc1")
 
 	p := read(root, linPrep, &v)
 	need(&v, linPrep, p, "! -type f", "non-regular entries must be refused")

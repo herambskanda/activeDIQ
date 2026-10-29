@@ -20,7 +20,7 @@ func repoRoot(t *testing.T) string {
 func fixture(t *testing.T, file string, mutate func(string) string) string {
 	t.Helper()
 	root := t.TempDir()
-	for _, f := range []string{winACL, winTest, linPrep, linCompose} {
+	for _, f := range []string{winACL, winTest, winMsi, winDC, "packaging/windows/New-SetupSecret.ps1", linPrep, linCompose} {
 		b, err := os.ReadFile(filepath.Join(repoRoot(t), f))
 		if err != nil {
 			t.Fatal(err)
@@ -67,6 +67,13 @@ func TestViolationsAreCaught(t *testing.T) {
 		}},
 		{"no behavioural probe", winTest, "probe as a non-administrator", func(s string) string {
 			return strings.ReplaceAll(s, "ProbeCredential", "Nothing")
+		}},
+		{"DC no longer refused", winMsi, "refuse a domain controller", func(s string) string {
+			return strings.ReplaceAll(s, "MsiNTProductType &lt;&gt; 2", "MsiNTProductType &lt;&gt; 9")
+		}},
+		{"refusal as custom action", winMsi, "LaunchCondition", func(s string) string { return s + "\n<CustomAction Id=\"X\" />\n" }},
+		{"msiexec line interpolated", winDC, "msiexec arguments", func(s string) string {
+			return strings.ReplaceAll(s, "-ArgumentList $args", "-ArgumentList \"/i $MsiPath\"")
 		}},
 		{"recursion added", winACL, "must not recurse", func(s string) string { return s + "\nGet-ChildItem -Recurse $Path\n" }},
 		{"owner check dropped", winACL, "refuse", func(s string) string { return strings.ReplaceAll(s, "refusing to adopt", "adopting") }},

@@ -281,8 +281,16 @@ What it enforces: a booted install is judged on eight named cases (threat-model 
   `require`, `verify-ca` without a root) that must each be refused before any dial.
 - **windows (lab):** on a lab host run `packaging/windows/Get-HostObservation.ps1 -ServiceName … -InstallDir …
   -ConfigPaths … -InstallerResult refused|installed > obs.json`, then `go run ./tools/fitness/host evaluate obs.json`.
-  Run it on dc1 with the MSI once it exists (T-0635) to prove the DC refusal. The script has not yet been run on a
-  Windows host (no MSI to observe); first run must be logged in `windows-lab-runs/`.
+  For the DC refusal run the driver instead: `packaging/windows/Test-MsiRefusesDc.ps1 -MsiPath … -LogPath … > obs.json`
+  on dc1 (expects msiexec exit 1603 and the sentence "cannot be installed on a domain controller" in the log) and on
+  fs1 as the control (must install). It runs msiexec, then `Get-HostObservation.ps1` observes the leftovers itself
+  (install directory, service), so `installed` is measured, not taken from the driver. The MSI source is
+  `packaging/windows/msi/Server.wxs` (a LaunchCondition on `MsiNTProductType`, which runs before any change).
+  `make fitness-packaging` checks the sources statically. **Neither script nor MSI has run on Windows yet** (T-0635
+  was written without a lab VM or WiX); the first run must be logged in `windows-lab-runs/` and is what turns
+  HOST-DC-REFUSED from INACTIVE to ok. `packaging/windows/New-SetupSecret.ps1` writes the first-run secret file
+  (owner and only ACE the installing admin's SID, created with its final DACL, 60 min expiry); the server side that
+  consumes it once is T-0636.
 - **Results:** `ok`, `FAIL` (build fails), `INACTIVE` (the collector could not observe it: the subject does not exist
   yet), `GAP` (fails today, tolerated until the named ticket lands). `tools/fitness/host/known-gaps.json` is a
   ratchet: a gap that passes fails the build until its entry is deleted. Never add a gap without a ticket.
