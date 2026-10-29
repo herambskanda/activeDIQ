@@ -2,7 +2,7 @@
 # Standard: knowledge/development/standards/ci-gates.md · Runbook: knowledge/development/runbooks/ci-and-build.md
 # Every gate below has a failing run proving it catches a violation: `make ci-proof` (part of `make ci`).
 
-.PHONY: fitness-objectid ci gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-oracles-windows fitness-oracles-lab fitness-fuzz-nightly fitness-nightly fuzz-saml build build-web web-install ci-proof fitness-operation fitness-audit fitness-disclosure fitness-packaging fitness-host fitness-agent-host fitness-built-msi fitness-update fitness-update-offline workflows-check
+.PHONY: fitness-objectid ci gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-oracles-windows fitness-oracles-lab fitness-fuzz-nightly fitness-nightly fuzz-saml build build-web web-install ci-proof fitness-operation fitness-audit fitness-disclosure fitness-packaging fitness-host fitness-agent-host fitness-built-msi fitness-built-msi-release fitness-update fitness-update-offline workflows-check
 
 ci: lint gen-check gen-api-check lint-api test fitness workflows-check build secrets-scan vuln-scan fuzz-saml lab-test-unit lab-test-windows-unit ci-proof ## Everything a merge needs: lint, generated-code freshness (connector proto and the API contract), API lint, tests, fitness functions (incl. the ADR-0001 build matrix), web build, secret scan, dependency vulnerability scan, gate proofs
 	@echo "make ci: passed"
@@ -93,6 +93,9 @@ BUILT_MSI ?= dist/*.msi
 
 fitness-built-msi: ## T-0697: ADR-0006 A1 on the built artefact: every MSI matching $(BUILT_MSI) is dumped with msidump (msitools) and its service account (NT SERVICE\\activeDIQAgent), restricted SID, pinned privileges, custom actions, binaries, DACLs and HKLM\\SYSTEM writes are judged; prints inactive when none exists. The release job passes -require once the packaging ticket builds the MSI
 	go run ./tools/fitness/builtmsi -glob '$(BUILT_MSI)'
+
+fitness-built-msi-release: ## T-0724: the release gate: as fitness-built-msi but -require (fails when no MSI exists); release.yml runs the same command on the MSI the Windows job built. Not in `make ci`: WiX needs Windows
+	go run ./tools/fitness/builtmsi -require -glob '$(BUILT_MSI)'
 
 AGENT_POLICY_FUZZ_TIME ?= 20s
 

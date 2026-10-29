@@ -11,13 +11,51 @@ on:
 permissions:
   contents: write
 jobs:
+  # T-0724: WiX only supports Windows (building on Linux fails with WIX0389 on every Directory/@Name, checked
+  # with WiX 4.0.5 and 5.0.2), so the agent MSI is built on a Windows runner and handed to the publish job.
+  # Unsigned here: Authenticode signing needs the code-signing certificate (CEO action, key-custody §9) and
+  # the publish job refuses an MSI that carries no Authenticode signature.
+  build-msi:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+      - name: Build the agent MSI
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          bash packaging/windows/agent/build-msi.sh "$TAG" out
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: agent-msi
+          path: out/*.msi
+          if-no-files-found: error
   publish:
+    needs: build-msi
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version-file: go.mod
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: agent-msi
+          path: dist
+      - name: Judge the built installer (ADR-0006 A1 on the artefact, T-0697)
+        # Runs after the build and before Publish, so it gates what is uploaded. Opens every dist/*.msi with msidump and fails on a LocalSystem or other unpinned service account,
+        # a non-restricted SID, privileges beyond the pinned set, or an unreviewed custom action. Prints
+        # -require: the release fails when the build job produced no MSI (T-0724).
+        run: |
+          set -euo pipefail
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends msitools osslsigncode
+          go run ./tools/fitness/builtmsi -require -glob 'dist/*.msi'
+          # Fail closed: no unsigned installer reaches a release. Needs the Authenticode step (CEO: certificate).
+          for m in dist/*.msi; do osslsigncode verify -in "$m" || { echo "unsigned MSI refused: $m" >&2; exit 1; }; done
       - name: Build, sign and verify
         env:
           RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
@@ -28,19 +66,11 @@ jobs:
           export SOURCE_DATE_EPOCH
           mkdir -p dist
           go run ./tools/release/sbom -version "$TAG" -o "dist/activediq-$TAG.cdx.json"
-          (cd dist && sha256sum ./*.json > SHA256SUMS)
+          (cd dist && sha256sum ./*.json ./*.msi > SHA256SUMS)
           go run ./tools/release/sign sign -sig dist/SHA256SUMS.sig dist/SHA256SUMS
           go run ./tools/release/sign sign -sig "dist/activediq-$TAG.cdx.json.sig" "dist/activediq-$TAG.cdx.json"
           go run ./tools/release/sign verify -pub packaging/release/release-signing.pub -sig dist/SHA256SUMS.sig dist/SHA256SUMS
           go run ./tools/release/sign verify -pub packaging/release/release-signing.pub -sig "dist/activediq-$TAG.cdx.json.sig" "dist/activediq-$TAG.cdx.json"
-      - name: Judge the built installer (ADR-0006 A1 on the artefact, T-0697)
-        # Runs after the build and before Publish, so it gates what is uploaded. Opens every dist/*.msi with msidump and fails on a LocalSystem or other unpinned service account,
-        # a non-restricted SID, privileges beyond the pinned set, or an unreviewed custom action. Prints
-        # "inactive" while no MSI is built; the packaging ticket that builds one adds -require here.
-        run: |
-          set -euo pipefail
-          sudo apt-get update && sudo apt-get install -y --no-install-recommends msitools
-          go run ./tools/fitness/builtmsi -glob 'dist/*.msi'
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
