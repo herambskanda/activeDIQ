@@ -130,7 +130,7 @@ func (a *CAAdmin) Withdraw(ctx context.Context, tid tenant.ID, p apihost.Princip
 			{Key: "reason", Value: reason},
 		}
 		if state == "active" {
-			nc, err := insertCA(ctx, tx, a.Keys, tid, a.now())
+			nc, err := createCA(ctx, tx, a.Keys, tid, a.now())
 			if err != nil {
 				return err
 			}

@@ -207,17 +207,17 @@ func (e *Enroller) ensureCA(ctx context.Context, tx store.Tx, tid tenant.ID) ([]
 	if err != nil || len(cas) > 0 {
 		return cas, err
 	}
-	if _, err := insertCA(ctx, tx, e.Keys, tid, e.now()); err != nil {
+	if _, err := createCA(ctx, tx, e.Keys, tid, e.now()); err != nil {
 		return nil, err
 	}
 	return loadCAs(ctx, tx, alert)
 }
 
-// insertCA generates a CA key and certificate, seals the key under the tenant's data key and inserts
+// createCA generates a CA key and certificate, seals the key under the tenant's data key and inserts
 // the row as the tenant's active CA. It returns the new certificate. The insert is ON CONFLICT DO
 // NOTHING: a concurrent creator wins, and callers that need the row verify it (Withdraw does, by the
 // commit-time guard of migration 0055).
-func insertCA(ctx context.Context, tx store.Tx, ks KeySource, tid tenant.ID, now time.Time) (*x509.Certificate, error) {
+func createCA(ctx context.Context, tx store.Tx, ks KeySource, tid tenant.ID, now time.Time) (*x509.Certificate, error) {
 	priv, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("fleetsql: generate CA key: %w", err)
