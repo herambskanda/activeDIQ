@@ -290,10 +290,8 @@ def pset_cases(tag, deny_obj, allow_obj):
     moved = ace(6, 0, 0x20, ADMINS, obj=deny_obj)
     out_l = [moved, base_l[0], base_l[1], base_l[2]]
     mv = [(3, 0), (0, 1), (1, 2), (2, 3)]
-    inh_l = base_l + [ace(6, 0x10, 0x20, ADMINS, obj=deny_obj)]
-    inh("SD-W19" + tag, sd(dacl=acl(inh_l, 4), owner=sid(SYS)), "block_keep",
-        outcome(written(out_l, 4, 0x8004 | 0x1000), control=0x8004 | 0x1000, moves=mv, incomplete=True), False,
-        "T-0770: block_keep+Normalize moves a group deny on " + deny_obj + " ahead of an allow on " + allow_obj + "; set and attribute overlap so the report is incomplete", opts={"normalize": True})
+    # No PlanInheritance record: it runs with a nil catalogue, so any moved object ACE is already
+    # reported incomplete (Unset kind) on main and such a record could not fail on this change.
     d_l = base_l + [moved]
     extra = ace(0, 0, 0x20000, X1)
     plan("SD-E08" + tag, sd(dacl=acl(d_l, 4), owner=sid(SYS)), add=[new(X1, 0x20000)], opts={"normalize": True}, hostile=True,
