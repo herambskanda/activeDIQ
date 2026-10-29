@@ -169,6 +169,20 @@
       "mintsTenantID": false
     },
     {
+      "package": "internal/platform/keys",
+      "function": "rig.instDEK",
+      "reason": "Test helper: fetches the installation DEK under WithPlatform, because the installation key has no tenant context. It is in a _test.go file and ships in no binary (T-0715, ADR-0008).",
+      "withPlatform": true,
+      "mintsTenantID": false
+    },
+    {
+      "package": "internal/platform/keys",
+      "function": "rig.rolledBack",
+      "reason": "Test helper: runs the installation-key call in a transaction the test rolls back under WithPlatform, because the installation key has no tenant context. It is in a _test.go file and ships in no binary (T-0715, ADR-0008).",
+      "withPlatform": true,
+      "mintsTenantID": false
+    },
+    {
       "package": "internal/platform/updateverify/floorpg",
       "function": "Store.Load",
       "reason": "The update verifier floor is install-level and its table is registered global, so the statement that reads it runs under WithPlatform (ENH-07, TM-D12 rule 2).",
