@@ -12,9 +12,6 @@ import (
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
-// instanceTypeNCHead is IT_NC_HEAD in instanceType: the object is the head of a naming context.
-const instanceTypeNCHead = 0x1
-
 // ADSource is the Source over an AD session. The reads, the classification and the DC identity
 // must all come from one DC, so the only way to build one is NewADSource, which refuses a provider
 // that is not over the very session it reads on. The fields are unexported: a struct literal
@@ -63,30 +60,10 @@ func (a *ADSource) Read(ctx context.Context, id guid.GUID, attrs []string, maxVa
 // directory says about itself (instanceType, requested with the entry); an unreadable or
 // undecodable parent is an error, never "no parent", because the ancestry feeds authorisation.
 func (a *ADSource) Parent(ctx context.Context, e *ad.Entry) (guid.GUID, bool, error) {
-	it, present, err := e.Int32("instanceType")
-	if err != nil || !present {
-		return guid.GUID{}, false, errors.New("read: instanceType unavailable")
+	if !a.ok() {
+		return guid.GUID{}, false, write.ErrNoBoundDC
 	}
-	if it&instanceTypeNCHead != 0 {
-		return guid.GUID{}, false, nil
-	}
-	ref, err := dn.ParseObjectRef(e.DN)
-	if err != nil {
-		return guid.GUID{}, false, errors.New("read: object DN does not parse")
-	}
-	d, found := ref.DN()
-	if !found || d.Len() < 2 {
-		return guid.GUID{}, false, errors.New("read: object has no parent DN")
-	}
-	pe, err := a.sess.Read(ctx, dn.DNRef(d.Parent()), []string{"objectGUID"}, ad.ReadOptions{})
-	if err != nil {
-		return guid.GUID{}, false, err
-	}
-	g, err := pe.GUID()
-	if err != nil {
-		return guid.GUID{}, false, errors.New("read: parent GUID does not decode")
-	}
-	return g, true, nil
+	return a.sess.Parent(ctx, e)
 }
 
 func (a *ADSource) Syntax(name string) (ldapfilter.Syntax, bool) {

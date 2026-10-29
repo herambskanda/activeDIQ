@@ -1,4 +1,4 @@
-package fleet
+package gateway
 
 import (
 	"context"
@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
+	"github.com/skenzeriq/activediq/internal/platform/fleet"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
@@ -59,12 +60,12 @@ type TenantCAs interface {
 // establishment, so a revoked component whose certificate is still valid is refused (TM-TB6-T9). An
 // error means "could not tell" and the caller fails closed.
 type ComponentStatus interface {
-	Usable(ctx context.Context, id Identity) (bool, error)
+	Usable(ctx context.Context, id fleet.Identity) (bool, error)
 	// Current is Usable and the identity's certificate serial is the component's current one
 	// (components.cert_serial). A certificate superseded by a rotation is not current, whatever its
 	// validity (TM-TB6-T14). It is asked when a connection or RPC is established, never for an open
 	// stream: Usable is the open-stream re-check, so a rotation does not drop the stream it was made on.
-	Current(ctx context.Context, id Identity) (bool, error)
+	Current(ctx context.Context, id fleet.Identity) (bool, error)
 }
 
 // SupersededReporter makes a theft signal visible outside the RPC: a genuine, unexpired certificate of
@@ -73,7 +74,7 @@ type ComponentStatus interface {
 // and appends an audit event naming the component and both serials. The gateway calls it at most once
 // per component per Config.SupersededWindow, and an error is logged; it never changes the refusal.
 type SupersededReporter interface {
-	Superseded(ctx context.Context, presented Identity) error
+	Superseded(ctx context.Context, presented fleet.Identity) error
 }
 
 // DefaultSupersededWindow is the minimum time between two reports for one component.
@@ -120,15 +121,6 @@ var (
 	// errRevoked ends an open stream. It is also the cause the stream's context carries.
 	errRevoked = status.Error(codes.Unauthenticated, "client certificate not accepted")
 )
-
-type ctxKey struct{}
-
-// IdentityFrom returns the authenticated identity of the calling component. It exists only for
-// methods that required a client certificate; tenant and component never come from a message.
-func IdentityFrom(ctx context.Context) (Identity, bool) {
-	id, ok := ctx.Value(ctxKey{}).(Identity)
-	return id, ok
-}
 
 // Gateway holds the per-RPC authentication.
 type Gateway struct {
@@ -248,7 +240,7 @@ func (g *Gateway) Stream(srv any, ss grpc.ServerStream, info *grpc.StreamServerI
 	if err != nil {
 		return err
 	}
-	id, ok := IdentityFrom(ctx)
+	id, ok := fleet.IdentityFrom(ctx)
 	if !ok { // a public method: no component to revoke
 		return h(srv, &identityStream{ServerStream: ss, ctx: ctx})
 	}
@@ -291,7 +283,7 @@ func (g *Gateway) CloseComponent(tid tenant.ID, componentID string) int {
 // deferred cancel guarantees). A component that is no longer usable ends the stream. A failure to
 // tell (store unavailable) leaves it open: new RPCs are refused meanwhile, and a database blip must
 // not drop the whole fleet.
-func (g *Gateway) watch(ctx context.Context, id Identity, cancel context.CancelCauseFunc) {
+func (g *Gateway) watch(ctx context.Context, id fleet.Identity, cancel context.CancelCauseFunc) {
 	t := time.NewTicker(g.recheck)
 	defer t.Stop()
 	for {
@@ -358,7 +350,7 @@ func newStreamRegistry() streamRegistry {
 	return streamRegistry{m: map[streamKey]map[*context.CancelCauseFunc]struct{}{}}
 }
 
-func (r *streamRegistry) add(id Identity, cancel context.CancelCauseFunc) (remove func()) {
+func (r *streamRegistry) add(id fleet.Identity, cancel context.CancelCauseFunc) (remove func()) {
 	k := streamKey{id.Tenant, id.ComponentID}
 	p := &cancel
 	r.mu.Lock()
@@ -417,7 +409,7 @@ func (g *Gateway) authenticate(ctx context.Context, method string) (context.Cont
 	if now.Before(leaf.NotBefore) || now.After(leaf.NotAfter) || !hasClientAuth(leaf) {
 		return nil, errBadCert
 	}
-	id, err := IdentityOf(leaf)
+	id, err := fleet.IdentityOf(leaf)
 	if err != nil || id.Tenant.IsZero() {
 		return nil, errBadCert
 	}
@@ -442,7 +434,7 @@ func (g *Gateway) authenticate(ctx context.Context, method string) (context.Cont
 				g.reportSuperseded(ctx, id)
 				return nil, errBadCert
 			}
-			return context.WithValue(ctx, ctxKey{}, id), nil
+			return fleet.WithIdentity(ctx, id), nil
 		}
 	}
 	return nil, errBadCert
@@ -451,7 +443,7 @@ func (g *Gateway) authenticate(ctx context.Context, method string) (context.Cont
 // reportSuperseded is called for a CA-verified, unexpired leaf that is not the component's current
 // certificate. If the component is still usable, the presentation is a theft signal (TM-TB6-T14) and
 // is reported, rate-limited per component. The caller refuses with errBadCert whatever happens here.
-func (g *Gateway) reportSuperseded(ctx context.Context, id Identity) {
+func (g *Gateway) reportSuperseded(ctx context.Context, id fleet.Identity) {
 	if g.superseded == nil {
 		return
 	}
@@ -480,7 +472,7 @@ func (g *Gateway) reportSuperseded(ctx context.Context, id Identity) {
 
 // reserveReport claims the component's report window. The returned func releases the claim (restoring
 // the previous window) so a failed report never silences the next one.
-func (g *Gateway) reserveReport(id Identity) (rollback func(), ok bool) {
+func (g *Gateway) reserveReport(id fleet.Identity) (rollback func(), ok bool) {
 	now, k := g.now(), streamKey{id.Tenant, id.ComponentID}
 	g.smu.Lock()
 	defer g.smu.Unlock()

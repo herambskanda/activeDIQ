@@ -12,6 +12,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/fleet"
+	"github.com/skenzeriq/activediq/internal/platform/fleet/gateway"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
@@ -28,7 +29,7 @@ var (
 	ErrNotRevocable = errors.New("fleetsql: component cannot be revoked")
 )
 
-// StreamCloser closes the open streams of a component. *fleet.Gateway implements it.
+// StreamCloser closes the open streams of a component. *gateway.Gateway implements it.
 type StreamCloser interface {
 	CloseComponent(tid tenant.ID, componentID string) int
 }
@@ -43,7 +44,7 @@ type Lifecycle struct {
 	Clock   func() time.Time // tests only
 }
 
-var _ fleet.ComponentStatus = (*Lifecycle)(nil)
+var _ gateway.ComponentStatus = (*Lifecycle)(nil)
 
 func (l *Lifecycle) now() time.Time {
 	if l.Clock != nil {

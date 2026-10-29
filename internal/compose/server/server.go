@@ -21,7 +21,8 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/apitls"
 	"github.com/skenzeriq/activediq/internal/platform/capability"
-	"github.com/skenzeriq/activediq/internal/platform/fleet"
+
+	"github.com/skenzeriq/activediq/internal/platform/fleet/gateway"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/keys"
 	"github.com/skenzeriq/activediq/internal/platform/limiter"
@@ -87,7 +88,7 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	// component binding's tunnel on the fleet hub (mutual TLS, established by the component). The Tier-0
 	// verdict arrives in the Read header from the connector, so no separate verdict source exists.
 	conns := connection.NewRegistry(db)
-	src, err := client.NewTunnelSource(conns, conns, fleet.NewHub())
+	src, err := client.NewTunnelSource(conns, conns, gateway.NewHub())
 	if err != nil {
 		return fmt.Errorf("server: connector source: %w", err)
 	}
@@ -100,7 +101,11 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	if err != nil {
 		return err
 	}
-	dirClient := directoryFacts(reads, client.WithTier0Builder(t0))
+	vopts, err := verifyOptions(src)
+	if err != nil {
+		return err
+	}
+	dirClient := directoryFacts(reads, append(vopts, client.WithTier0Builder(t0))...)
 	authzr, err := rbacAuthorizer(db, dirClient)
 	if err != nil {
 		return err
@@ -152,6 +157,10 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	// Modules and platform packages contribute job kinds to this registry; the worker runs it.
 	jreg := jobs.NewRegistry()
 	if _, err := buildConnections(db, ok.Chainer, dirClient, jreg); err != nil {
+		return err
+	}
+	// The tenant, its data key and its audit genesis exist before anything listens or the worker claims.
+	if _, err := bootstrapTenant(ctx, cfg, db, ok.Chainer, kekp, jreg); err != nil {
 		return err
 	}
 	ln, err := net.Listen("tcp", cfg.APIAddr)

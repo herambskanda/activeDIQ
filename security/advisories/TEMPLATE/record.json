@@ -1,0 +1,87 @@
+{
+  "dataType": "CVE_RECORD",
+  "dataVersion": "5.1",
+  "cveMetadata": {
+    "cveId": "{{CVE_ID}}",
+    "assignerShortName": "{{ASSIGNER}}",
+    "state": "PUBLISHED",
+    "datePublished": "{{FIX_DAY}}T{{PUBLISH_TIME}}Z"
+  },
+  "containers": {
+    "cna": {
+      "title": "{{TITLE}}",
+      "descriptions": [
+        {
+          "lang": "en",
+          "value": "{{CVE_DESCRIPTION}}"
+        }
+      ],
+      "affected": [
+        {
+          "vendor": "skenzeriq",
+          "product": "activeDIQ",
+          "collectionURL": "https://github.com/herambskanda/activeDIQ",
+          "defaultStatus": "unaffected",
+          "versions": [
+            {
+              "version": "{{FIRST_AFFECTED}}",
+              "lessThan": "{{FIXED_IN}}",
+              "status": "affected",
+              "versionType": "semver"
+            }
+          ]
+        }
+      ],
+      "problemTypes": [
+        {
+          "descriptions": [
+            {
+              "lang": "en",
+              "type": "CWE",
+              "cweId": "{{CWE_ID}}",
+              "description": "{{CWE_ID}} {{CWE_NAME}}"
+            }
+          ]
+        }
+      ],
+      "metrics": [
+        {
+          "format": "CVSS",
+          "scenarios": [
+            {
+              "lang": "en",
+              "value": "GENERAL"
+            }
+          ],
+          "cvssV3_1": {
+            "version": "3.1",
+            "vectorString": "{{CVSS_VECTOR}}",
+            "baseScore": {{CVSS_SCORE}},
+            "baseSeverity": "{{SEVERITY_UPPER}}"
+          }
+        }
+      ],
+      "references": [
+        {
+          "url": "https://github.com/herambskanda/activeDIQ/security/advisories/{{GHSA_ID}}",
+          "tags": ["vendor-advisory"]
+        },
+        {
+          "url": "{{FIX_COMMIT_URL}}",
+          "tags": ["patch"]
+        }
+      ],
+      "credits": [
+        {
+          "lang": "en",
+          "type": "finder",
+          "value": "{{CREDIT}}"
+        }
+      ],
+      "source": {
+        "advisory": "{{GHSA_ID}}",
+        "discovery": "{{DISCOVERY}}"
+      }
+    }
+  }
+}

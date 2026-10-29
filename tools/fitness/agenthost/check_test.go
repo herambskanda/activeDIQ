@@ -782,11 +782,28 @@ func TestA1Installer(t *testing.T) {
 	wantViolation(t, mk(svcWith(`<PermissionEx Sddl="D:(A;;GA;;;WD)"/>`)), "grants an ACL")
 	wantViolation(t, mk(svcWith(`<util:PermissionEx xmlns:util="u" User="Everyone" GenericAll="yes"/>`)), "grants an ACL")
 	wantViolation(t, mk(strings.Replace(goodWxs, `</Package>`, `<CreateFolder Directory="D"><Permission User="Users" GenericAll="yes"/></CreateFolder></Package>`, 1)), "grants an ACL")
-	wantClean(t, func() Result {
+	// T-0725: a parent Id that equals a reviewed CustomAction Id (installer-allow.txt) buys nothing.
+	svcColl := strings.Replace(goodWxs, `<ServiceInstall Name=`, `<ServiceInstall Id="GrantChannel" Name=`, 1)
+	svcColl = strings.Replace(svcColl, `<ServiceConfig ServiceSid`, `<PermissionEx Sddl="D:(A;;GA;;;WD)"/><ServiceConfig ServiceSid`, 1)
+	r1 := t.TempDir()
+	write(t, r1, "packaging/windows/agent.wxs", svcColl)
+	wantViolation(t, checkInstallerAllow(r1, []string{"GrantChannel", "WriteConfig"}), `PermissionEx under ServiceInstall "GrantChannel"`)
+	// Pinned permissions: exact parent type, Id and attributes; a changed SDDL fails.
+	pinSvc := func(sddl string) Result {
 		r := t.TempDir()
-		write(t, r, "packaging/windows/agent.wxs", strings.Replace(goodWxs, `</Package>`, `<CreateFolder Id="DataDir" Directory="D"><PermissionEx Sddl="x"/></CreateFolder></Package>`, 1))
-		return checkInstallerAllow(r, []string{"DataDir"})
-	}())
+		src := strings.Replace(goodWxs, `<ServiceInstall Name=`, `<ServiceInstall Id="AgentSvc" Name=`, 1)
+		src = strings.Replace(src, `<ServiceConfig ServiceSid`, `<PermissionEx Sddl="`+sddl+`"/><ServiceConfig ServiceSid`, 1)
+		write(t, r, "packaging/windows/agent.wxs", src)
+		return checkInstallerAllow(r, nil)
+	}
+	pinnedPermissions["ServiceInstall/AgentSvc"] = map[string]string{"": "PermissionEx", "sddl": "D:(A;;GA;;;SY)"}
+	defer delete(pinnedPermissions, "ServiceInstall/AgentSvc")
+	wantClean(t, pinSvc("D:(A;;GA;;;SY)"))
+	wantViolation(t, pinSvc("D:(A;;GA;;;WD)"), "differs from the reviewed pin")
+	// The pin is keyed by parent type: the same Id on another element type is not reviewed.
+	rt := t.TempDir()
+	write(t, rt, "packaging/windows/agent.wxs", strings.Replace(goodWxs, `</Package>`, `<CreateFolder Id="AgentSvc" Directory="D"><PermissionEx Sddl="D:(A;;GA;;;SY)"/></CreateFolder></Package>`, 1))
+	wantViolation(t, checkInstallerAllow(rt, nil), "not in the reviewed permission pins")
 	// 4. Templates and unknown file types in the agent packaging are denied unless reviewed.
 	tmpl := func(allow []string, rel, body string) Result {
 		r := t.TempDir()

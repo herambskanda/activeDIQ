@@ -23,6 +23,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/fleet"
 	"github.com/skenzeriq/activediq/internal/platform/fleet/dial"
 	"github.com/skenzeriq/activediq/internal/platform/fleet/fleetsql"
+	"github.com/skenzeriq/activediq/internal/platform/fleet/gateway"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 	fleetv1 "github.com/skenzeriq/activediq/internal/proto/activediq/fleet/v1"
 )
@@ -30,15 +31,15 @@ import (
 // classes is the auth class of every method of the generated contract: Enroll public, everything
 // else a client certificate. It is derived from the descriptor, so an RPC added to fleet.proto is
 // covered by every test below without being listed.
-func classes() map[string]fleet.AuthClass {
-	m := map[string]fleet.AuthClass{}
+func classes() map[string]gateway.AuthClass {
+	m := map[string]gateway.AuthClass{}
 	for _, md := range fleetv1.Fleet_ServiceDesc.Methods {
-		m["/"+fleetv1.Fleet_ServiceDesc.ServiceName+"/"+md.MethodName] = fleet.ClassClientCert
+		m["/"+fleetv1.Fleet_ServiceDesc.ServiceName+"/"+md.MethodName] = gateway.ClassClientCert
 	}
 	for _, sd := range fleetv1.Fleet_ServiceDesc.Streams {
-		m["/"+fleetv1.Fleet_ServiceDesc.ServiceName+"/"+sd.StreamName] = fleet.ClassClientCert
+		m["/"+fleetv1.Fleet_ServiceDesc.ServiceName+"/"+sd.StreamName] = gateway.ClassClientCert
 	}
-	m[fleet.EnrollMethod] = fleet.ClassPublic
+	m[gateway.EnrollMethod] = gateway.ClassPublic
 	return m
 }
 
@@ -115,7 +116,7 @@ type rig struct {
 	addr  string
 	srv   *server
 	comps *comps
-	gw    *fleet.Gateway
+	gw    *gateway.Gateway
 	ca    authority
 	tid   tenant.ID
 	grpc  *grpc.Server
@@ -127,7 +128,7 @@ func start(t *testing.T) *rig {
 	ca := newAuthority(t, "installation CA")
 	tid := tenant.New()
 	cm := &comps{}
-	gw, err := fleet.NewGateway(fleet.Config{
+	gw, err := gateway.NewGateway(gateway.Config{
 		Methods: classes(), CAs: cas{tid: {ca.cert}}, Components: cm, Recheck: 50 * time.Millisecond,
 	})
 	if err != nil {
@@ -180,7 +181,7 @@ func TestOnlyEnrollWorksWithoutAClientCertificate(t *testing.T) {
 	r := start(t)
 	cc := r.conn(t, nil)
 
-	if err := cc.Invoke(ctx5(t), fleet.EnrollMethod, &fleetv1.EnrollRequest{}, &fleetv1.EnrollResponse{}); status.Code(err) == codes.Unauthenticated || status.Code(err) == codes.PermissionDenied {
+	if err := cc.Invoke(ctx5(t), gateway.EnrollMethod, &fleetv1.EnrollRequest{}, &fleetv1.EnrollResponse{}); status.Code(err) == codes.Unauthenticated || status.Code(err) == codes.PermissionDenied {
 		t.Fatalf("Enroll must work without a certificate, got %v", err)
 	}
 	if r.srv.enroll.Load() != 1 {
@@ -188,7 +189,7 @@ func TestOnlyEnrollWorksWithoutAClientCertificate(t *testing.T) {
 	}
 
 	for name, class := range classes() {
-		if class == fleet.ClassPublic {
+		if class == gateway.ClassPublic {
 			continue
 		}
 		var err error
@@ -235,20 +236,20 @@ func TestCertificateFromAnotherCAOrTenantIsRefused(t *testing.T) {
 // TestGatewayRefusesToStartWithAPublicMethodOtherThanEnroll: deny by default is a startup rule.
 func TestGatewayRefusesToStartWithAPublicMethodOtherThanEnroll(t *testing.T) {
 	m := classes()
-	m["/activediq.fleet.v1.Fleet/Tunnel"] = fleet.ClassPublic
-	if _, err := fleet.NewGateway(fleet.Config{Methods: m, CAs: cas{}, Components: &comps{}}); !errors.Is(err, fleet.ErrPublicMethod) {
+	m["/activediq.fleet.v1.Fleet/Tunnel"] = gateway.ClassPublic
+	if _, err := gateway.NewGateway(gateway.Config{Methods: m, CAs: cas{}, Components: &comps{}}); !errors.Is(err, gateway.ErrPublicMethod) {
 		t.Fatalf("public Tunnel: %v", err)
 	}
 	m = classes()
 	delete(m, "/activediq.fleet.v1.Fleet/Tunnel")
-	g, err := fleet.NewGateway(fleet.Config{Methods: m, CAs: cas{}, Components: &comps{}})
+	g, err := gateway.NewGateway(gateway.Config{Methods: m, CAs: cas{}, Components: &comps{}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ca := newAuthority(t, "ca")
 	if _, err := g.NewServer(ca.serverCert(t), func() *x509.CertPool { return x509.NewCertPool() }, func(r grpc.ServiceRegistrar) {
 		fleetv1.RegisterFleetServer(r, &server{})
-	}); !errors.Is(err, fleet.ErrUnclassified) {
+	}); !errors.Is(err, gateway.ErrUnclassified) {
 		t.Fatalf("unclassified Tunnel mounted: %v", err)
 	}
 }
