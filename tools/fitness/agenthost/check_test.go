@@ -471,6 +471,41 @@ func TestA1Installer(t *testing.T) {
 			write(t, r, "docs/evil.txt", `<Include><ServiceInstall Name="x" Account="LocalSystem"/></Include>`)
 			wantViolation(t, checkInstaller(r), "LocalSystem")
 		}
+		{ // T-0677 attempt 3: an extension never exempts a file from the content check
+			for _, rel := range []string{"tools/x/evil.bin", "tools/x/evil.png", "tools/x/evil.dll", "tools/x/evil.gz"} {
+				r := t.TempDir()
+				write(t, r, "packaging/windows/A.wixproj", inc(`..\..\`+strings.ReplaceAll(rel, "/", `\`)))
+				write(t, r, rel, lsys)
+				wantViolation(t, checkInstaller(r), "LocalSystem")
+			}
+			r := t.TempDir()
+			write(t, r, "packaging/windows/evil.bin", lsys)
+			wantViolation(t, checkInstaller(r), "LocalSystem")
+			// UTF-32LE and BE evil.xml
+			for _, le := range []bool{true, false} {
+				r := t.TempDir()
+				var b []byte
+				if le {
+					b = []byte{0xFF, 0xFE, 0, 0}
+				} else {
+					b = []byte{0, 0, 0xFE, 0xFF}
+				}
+				for _, c := range lsys {
+					if le {
+						b = append(b, byte(c), 0, 0, 0)
+					} else {
+						b = append(b, 0, 0, 0, byte(c))
+					}
+				}
+				write(t, r, "tools/x/evil.xml", string(b))
+				wantViolation(t, checkInstaller(r), "LocalSystem")
+			}
+			// negative: a real PNG (NULs) under packaging/ passes
+			r = t.TempDir()
+			write(t, r, "packaging/windows/logo.png", "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x10"+lsys[:0])
+			write(t, r, "packaging/windows/Product.wxs", goodWxs)
+			wantClean(t, checkInstaller(r))
+		}
 		{ // a long prolog does not hide the root element
 			r := t.TempDir()
 			write(t, r, "docs/evil.txt", "<!--"+strings.Repeat("x", 100<<10)+"-->"+lsys)

@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf16"
+	"unicode/utf8"
 )
 
 const pTestsWhat = "P1-P8 (ADR-0007) and F1 (out-of-bounds policy) tests exist, run and pass"
@@ -612,6 +613,10 @@ func decodeText(b []byte) (string, bool) {
 	switch {
 	case bytes.HasPrefix(b, []byte{0xEF, 0xBB, 0xBF}):
 		return string(b[3:]), bytes.IndexByte(b, 0) < 0
+	case bytes.HasPrefix(b, []byte{0xFF, 0xFE, 0, 0}):
+		return utf32Text(b[4:], false), true // T-0677: UTF-32LE BOM before the UTF-16LE case it prefixes
+	case bytes.HasPrefix(b, []byte{0, 0, 0xFE, 0xFF}):
+		return utf32Text(b[4:], true), true
 	case bytes.HasPrefix(b, []byte{0xFF, 0xFE}):
 		return utf16Text(b[2:], false), true
 	case bytes.HasPrefix(b, []byte{0xFE, 0xFF}):
@@ -637,6 +642,23 @@ func decodeText(b []byte) (string, bool) {
 		return utf16Text(b, true), true
 	}
 	return "", false
+}
+
+func utf32Text(b []byte, bigEndian bool) string {
+	r := make([]rune, 0, len(b)/4)
+	for i := 0; i+3 < len(b); i += 4 {
+		var v uint32
+		if bigEndian {
+			v = uint32(b[i])<<24 | uint32(b[i+1])<<16 | uint32(b[i+2])<<8 | uint32(b[i+3])
+		} else {
+			v = uint32(b[i+3])<<24 | uint32(b[i+2])<<16 | uint32(b[i+1])<<8 | uint32(b[i])
+		}
+		if v > utf8.MaxRune {
+			v = utf8.RuneError
+		}
+		r = append(r, rune(v))
+	}
+	return string(r)
 }
 
 func utf16Text(b []byte, bigEndian bool) string {
@@ -707,11 +729,26 @@ func agentInstallerFiles(root string) []instFile {
 		inPack := strings.HasPrefix(relp, "packaging/")
 		named := isRepoWix(p)
 		info, ierr := e.Info()
+		if binaryExts[ext] && !named {
+			// T-0677: an extension never exempts a file from the content check (WiX compiles whatever the
+			// file is called). A real binary has NULs and is not text, so it passes cheaply.
+			if ierr != nil {
+				return nil
+			}
+			text, wix, prob := sniffWix(p, info.Size())
+			switch {
+			case prob != "":
+				out = append(out, instFile{path: p, rel: relp, problem: prob})
+			case wix:
+				out = append(out, instFile{path: p, rel: relp, text: text, agent: agentBodyRe.MatchString(text), xml: true})
+			}
+			return nil
+		}
 		if !inPack && !named {
 			// T-0677: WiX compiles whatever the file is called and <?include?> takes any name, so every text
 			// file is classified by CONTENT: a well-formed XML document rooted at Wix, Include or
 			// WixLocalization is WiX wherever it sits.
-			if binaryExts[ext] || ierr != nil {
+			if ierr != nil {
 				return nil
 			}
 			text, wix, prob := sniffWix(p, info.Size())
@@ -726,9 +763,6 @@ func agentInstallerFiles(root string) []instFile {
 		rel := relp
 		inPath := inPack && agentFileRe.MatchString(strings.TrimPrefix(rel, "packaging/"))
 		wix := isWixXML(p) || isTemplate(p) || !inPack
-		if binaryExts[ext] {
-			return nil
-		}
 		if ierr != nil || info.Size() > 4<<20 {
 			if inPath || wix {
 				out = append(out, instFile{path: p, rel: rel, unreadable: "is too large to scan"})
@@ -889,10 +923,8 @@ func linkProblem(rootReal, p string) string {
 	if isRepoWix(real) || wixIntermediateExts[strings.ToLower(filepath.Ext(real))] || hasWixIR(real) {
 		return "is a symbolic link to a WiX file: the scan does not follow it; copy the content in instead"
 	}
-	if !binaryExts[strings.ToLower(filepath.Ext(real))] {
-		if _, wix, prob := sniffWix(real, st.Size()); wix || prob != "" {
-			return "is a symbolic link to a WiX document (by content) or to a file that cannot be classified: copy the content in instead"
-		}
+	if _, wix, prob := sniffWix(real, st.Size()); wix || prob != "" {
+		return "is a symbolic link to a WiX document (by content) or to a file that cannot be classified: copy the content in instead"
 	}
 	return ""
 }
