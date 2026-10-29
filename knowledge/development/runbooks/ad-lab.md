@@ -125,6 +125,11 @@ tier (50k users) and a second DC (`2dc`) are not built yet — see §8.
 - Tests may not edit the seed to make a test pass: change `generate.py` (this changes the seed
   version) and add a unit test.
 - Tests needing Windows are tagged (`windowslab`) so CI on Samba skips them loudly (§6).
+- ScopedSearch RPC over a real session (T-0695): `go test -tags lab ./internal/connector/read -run TestLabScopedSearch`
+  (`internal/connector/read/search_lab_test.go`). It seeds `OU=t0695*` trees (nested OUs, hostile RDNs, 1600 users plus a
+  1600-member group, a deleted root), compares the bufconn RPC with an admin LDAP query and deletes its OUs.
+  The 1600-user test takes ~5 min on a loaded host (`-short` skips it). Samba does not range `member`; the
+  first-range `complete=false` it asserts is the handler's 1500 cap. DC-side ranging needs the Windows lab.
 
 ## 5. Entra lab (Microsoft 365 Developer sandbox) — T-0183
 
