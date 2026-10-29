@@ -29,7 +29,7 @@ const (
 // of main, failing closed with os.Exit(non-zero), so no secret is loaded before dumps are disabled.
 func TestEveryMainHardensFirst(t *testing.T) {
 	found, err := checkTree("../../../cmd", func(dir string) {
-		if reason, ok := exempt[filepath.Base(dir)]; ok {
+		if reason, ok := exempt[exemptKey("../../../cmd", dir)]; ok {
 			t.Logf("exempt: %s: %s", dir, reason)
 		}
 	})
@@ -65,11 +65,16 @@ func checkTree(root string, onExempt func(dir string)) ([]string, error) {
 			return nil
 		}
 		found = append(found, p)
-		if _, ex := exempt[filepath.Base(p)]; ex {
+		if _, ex := exempt[exemptKey(root, p)]; ex {
 			if onExempt != nil {
 				onExempt(p)
 			}
 			return nil
+		}
+		for name, f := range pkg.Files {
+			if ierr := checkPreMain(f); ierr != nil {
+				errs = append(errs, fmt.Errorf("%s: %w", name, ierr))
+			}
 		}
 		checked := false
 		for name, f := range pkg.Files {
@@ -95,6 +100,49 @@ func checkTree(root string, onExempt func(dir string)) ([]string, error) {
 		errs = append(errs, werr)
 	}
 	return found, errors.Join(errs...)
+}
+
+// exemptKey is the slash path of dir relative to the cmd root, so only cmd/<key> itself is exempt, never a
+// nested directory that happens to share the name.
+func exemptKey(root, dir string) string {
+	rel, err := filepath.Rel(root, dir)
+	if err != nil {
+		return dir
+	}
+	return filepath.ToSlash(rel)
+}
+
+// checkPreMain rejects code that runs before main: any func init, and any package-level var whose
+// initialiser contains a call (including conversions; use a literal or set it inside main after Apply).
+func checkPreMain(f *ast.File) error {
+	for _, d := range f.Decls {
+		switch d := d.(type) {
+		case *ast.FuncDecl:
+			if d.Name.Name == "init" && d.Recv == nil {
+				return errors.New("func init runs before main hardening (TM-TB16-T6); move it into main after Apply")
+			}
+		case *ast.GenDecl:
+			if d.Tok != token.VAR {
+				continue
+			}
+			for _, sp := range d.Specs {
+				vs := sp.(*ast.ValueSpec)
+				for _, v := range vs.Values {
+					var call bool
+					ast.Inspect(v, func(n ast.Node) bool {
+						if _, ok := n.(*ast.CallExpr); ok {
+							call = true
+						}
+						return !call
+					})
+					if call {
+						return errors.New("package-level var with a call initialiser runs before main hardening (TM-TB16-T6)")
+					}
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func declaresMain(f *ast.File) bool {
@@ -255,5 +303,61 @@ func TestCheckTreeFindsMainInAnyFileAndDepth(t *testing.T) {
 	write(root, "nomain/x.go", "package main\nfunc helper() {}")
 	if _, err := checkTree(root, nil); err == nil {
 		t.Error("package main without func main accepted")
+	}
+}
+
+func TestCheckPreMainAndExemptKey(t *testing.T) {
+	good := "package main\nvar a = 1\nvar b = []string{\"x\"}\nfunc main() {}"
+	bad := map[string]string{
+		"init func":     "package main\nfunc init() { println() }\nfunc main() {}",
+		"call var init": "package main\nvar s = load()\nfunc load() string { return \"\" }\nfunc main() {}",
+		"nested call":   "package main\nvar s = []string{load()}\nfunc load() string { return \"\" }\nfunc main() {}",
+	}
+	parse := func(src string) *ast.File {
+		f, err := parser.ParseFile(token.NewFileSet(), "x.go", src, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return f
+	}
+	if err := checkPreMain(parse(good)); err != nil {
+		t.Fatalf("good rejected: %v", err)
+	}
+	for n, s := range bad {
+		if checkPreMain(parse(s)) == nil {
+			t.Errorf("%s: accepted", n)
+		}
+	}
+	if exemptKey("cmd", filepath.Join("cmd", "tools", "auditverify")) == "auditverify" {
+		t.Error("nested auditverify keyed as exempt")
+	}
+	if exemptKey("cmd", filepath.Join("cmd", "auditverify")) != "auditverify" {
+		t.Error("top-level auditverify not keyed")
+	}
+}
+
+func TestCheckTreeRejectsPreMainAndNestedExempt(t *testing.T) {
+	const imp = "package main\nimport (\"os\"\n\"github.com/skenzeriq/activediq/internal/platform/prochardening\")\n"
+	goodMain := imp + "func main() { if err := prochardening.Apply(os.Getenv); err != nil { os.Exit(2) } }"
+	cases := map[string]map[string]string{
+		"init in main file":    {"a/main.go": goodMain + "\nfunc init() { println() }"},
+		"init in sibling file": {"a/main.go": goodMain, "a/b.go": "package main\nfunc init() { println() }"},
+		"var call initialiser": {"a/main.go": goodMain + "\nvar s = os.Getenv(\"X\")"},
+		"nested auditverify":   {"tools/auditverify/main.go": "package main\nfunc main() {}"},
+	}
+	for n, files := range cases {
+		root := t.TempDir()
+		for rel, s := range files {
+			p := filepath.Join(root, rel)
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte(s), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := checkTree(root, nil); err == nil {
+			t.Errorf("%s: accepted", n)
+		}
 	}
 }
