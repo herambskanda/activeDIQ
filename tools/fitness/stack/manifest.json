@@ -414,6 +414,11 @@
         "path": "internal/compose/server/labbootstrap_off.go",
         "adr": "0001-technology-stack.md",
         "reason": "the production (!lab) counterpart of labbootstrap_lab.go: an inert labBootstrap that ignores WIN_LAB_* and LAB_* (T-0684, T-0792)"
+      },
+      {
+        "path": "internal/directory/client/labsource_lab.go",
+        "adr": "0001-technology-stack.md",
+        "reason": "lab connector plumbing (T-0795): the in-process connector dial and the lab ConnectorSource, kept in the package that owns the generated connector client (ADR-0005 O2); compiled out of every production binary"
       }
     ]
   },
