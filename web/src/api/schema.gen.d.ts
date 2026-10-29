@@ -364,6 +364,7 @@ export interface components {
         DirectoryUser: {
             displayName: string;
             enabled: boolean;
+            hybrid: components["schemas"]["HybridClassification"];
             /** Format: uuid */
             objectGuid: string;
             samAccountName: string;
@@ -386,6 +387,15 @@ export interface components {
         HealthStatus: {
             status: components["schemas"]["HealthState"];
         };
+        /** @description How the user stands in the cross-directory correlation (DM-20) under TM-D17, computed from the stored correlation and the Entra connection's takeover protection. not_hybrid: no correlation is recorded. candidate, matched, broken: the strongest recorded state (matched over candidate over broken). unknown: the facts could not be read; treat as no authority. Only a matched correlation can carry authority, and only while takeover protection is attested and neither side is Tier 0. */
+        HybridClassification: {
+            carriesAuthority: boolean;
+            /** @description Why the correlation is not matched, or why a matched one carries no authority. A stable code, never a directory value. */
+            reason?: string;
+            state: components["schemas"]["HybridState"];
+        };
+        /** @enum {string} */
+        HybridState: "not_hybrid" | "candidate" | "matched" | "broken" | "unknown" | (string & {});
         /**
          * @description A 64-bit integer carried as a string, for values outside JavaScript's safe integer range.
          * @example 9007199254740993
@@ -1309,6 +1319,7 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
+            503: components["responses"]["DirectoryUnavailable"];
         };
     };
     getLiveness: {
