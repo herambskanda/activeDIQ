@@ -3,14 +3,18 @@ package write
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
+	"github.com/skenzeriq/activediq/internal/connector/tier0"
+	"github.com/skenzeriq/activediq/internal/directory/attr/codec"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/attr/sid"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/directory/sd"
+	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
 // fakeSDSession counts what reaches the directory: ApplyDACL's refusals must leave both at zero.
@@ -18,6 +22,19 @@ type fakeSDSession struct {
 	id         ad.DCIdentity
 	idCalls    int
 	writeCalls int
+	readCalls  int
+	stored     sd.SD
+	storedGUID guid.GUID
+	readErr    error
+}
+
+type fakeAudit struct{ got []DACLDiverged }
+
+func (f *fakeAudit) WriteDiverged(d DACLDiverged) { f.got = append(f.got, d) }
+
+func (f *fakeSDSession) ReadDACL(context.Context, dn.ObjectRef) (guid.GUID, sd.SD, error) {
+	f.readCalls++
+	return f.storedGUID, f.stored, f.readErr
 }
 
 func (f *fakeSDSession) DCIdentity(context.Context) (ad.DCIdentity, error) {
@@ -41,6 +58,13 @@ func testGUID(t *testing.T, s string) guid.GUID {
 
 // testDACLWrite plans a valid DACLWrite for object g over a hand-built base DACL.
 func testDACLWrite(t *testing.T, g guid.GUID) sd.DACLWrite {
+	t.Helper()
+	w, _ := testDACLPlan(t, g)
+	return w
+}
+
+// testDACLPlan also returns the base SD the plan was made on.
+func testDACLPlan(t *testing.T, g guid.GUID) (sd.DACLWrite, sd.SD) {
 	t.Helper()
 	conn, err := sid.Parse("S-1-5-21-1-2-3-1105")
 	if err != nil {
@@ -73,7 +97,7 @@ func testDACLWrite(t *testing.T, g guid.GUID) sd.DACLWrite {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return w
+	return w, base
 }
 
 func TestApplyDACLRefusals(t *testing.T) {
@@ -82,7 +106,7 @@ func TestApplyDACLRefusals(t *testing.T) {
 	dc1 := testGUID(t, "33333333-0000-0000-0000-000000000001")
 	dc2 := testGUID(t, "33333333-0000-0000-0000-000000000002")
 	tok := func(target, dc guid.GUID) Authorised {
-		return Authorised{p: &pass{evaluated: []guid.GUID{target}, dc: dc}}
+		return Authorised{p: &pass{evaluated: []guid.GUID{target}, dc: dc, props: []string{"nTSecurityDescriptor"}}}
 	}
 	ref := dn.GUIDRef(b)
 
@@ -94,6 +118,7 @@ func TestApplyDACLRefusals(t *testing.T) {
 		want string
 	}{
 		{"zero token", Authorised{}, testDACLWrite(t, b), &fakeSDSession{}, "not authorised"},
+		{"token for another kind", Authorised{p: &pass{evaluated: []guid.GUID{b}, dc: dc1, props: []string{"member"}}}, testDACLWrite(t, b), &fakeSDSession{id: ad.DCIdentity{DSAGUID: dc1}}, "declares nTSecurityDescriptor"},
 		{"zero write", tok(b, dc1), sd.DACLWrite{}, &fakeSDSession{}, "not from a planner"},
 		{"token for another object", tok(a, dc1), testDACLWrite(t, b), &fakeSDSession{id: ad.DCIdentity{DSAGUID: dc1}}, "did not evaluate"},
 		{"token not bound to a DC", tok(b, guid.GUID{}), testDACLWrite(t, b), &fakeSDSession{}, "not bound to a DC"},
@@ -101,7 +126,7 @@ func TestApplyDACLRefusals(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			err := ApplyDACL(context.Background(), c.tok, c.sess, ref, c.w)
+			err := ApplyDACL(context.Background(), c.tok, c.sess, &fakeAudit{}, ref, c.w)
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("err = %v, want %q", err, c.want)
 			}
@@ -114,8 +139,89 @@ func TestApplyDACLRefusals(t *testing.T) {
 		})
 	}
 
-	ok := &fakeSDSession{id: ad.DCIdentity{DSAGUID: dc1}}
-	if err := ApplyDACL(context.Background(), tok(b, dc1), ok, ref, testDACLWrite(t, b)); err != nil || ok.writeCalls != 1 {
-		t.Fatalf("matching token, object and DC: err=%v writes=%d", err, ok.writeCalls)
+	// A matching token writes once and reads back once from the session.
+	w, _ := testDACLPlan(t, b)
+	stored, err := sd.Decode(w.Value())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ok := &fakeSDSession{id: ad.DCIdentity{DSAGUID: dc1}, stored: stored, storedGUID: b}
+	au := &fakeAudit{}
+	if err := ApplyDACL(context.Background(), tok(b, dc1), ok, au, ref, w); err != nil || ok.writeCalls != 1 || ok.readCalls != 1 || len(au.got) != 0 {
+		t.Fatalf("matching token: err=%v writes=%d reads=%d audits=%d", err, ok.writeCalls, ok.readCalls, len(au.got))
+	}
+	if err := ApplyDACL(context.Background(), tok(b, dc1), &fakeSDSession{id: ad.DCIdentity{DSAGUID: dc1}}, nil, ref, w); err == nil {
+		t.Fatal("a nil auditor must be refused")
+	}
+}
+
+// TestApplyDACLReadBack covers SD-R10: a divergent read-back is audited with the actual state, returned
+// as sd.write_diverged and not retried; an unreadable read-back is an unknown-state error.
+func TestApplyDACLReadBack(t *testing.T) {
+	b := testGUID(t, "22222222-0000-0000-0000-00000000000b")
+	dc1 := testGUID(t, "33333333-0000-0000-0000-000000000001")
+	tok := Authorised{p: &pass{evaluated: []guid.GUID{b}, dc: dc1, props: []string{"nTSecurityDescriptor"}}}
+	w, base := testDACLPlan(t, b)
+	ref := dn.GUIDRef(b)
+
+	div := &fakeSDSession{id: ad.DCIdentity{DSAGUID: dc1}, stored: base, storedGUID: b} // the DC kept the old DACL
+	au := &fakeAudit{}
+	err := ApplyDACL(context.Background(), tok, div, au, ref, w)
+	if codec.Code(err) != sd.ErrWriteDiverged {
+		t.Fatalf("err = %v, want %s", err, sd.ErrWriteDiverged)
+	}
+	if div.writeCalls != 1 || div.readCalls != 1 {
+		t.Fatalf("no retry: writes=%d reads=%d", div.writeCalls, div.readCalls)
+	}
+	if len(au.got) != 1 || au.got[0].Object != b || au.got[0].DC != dc1 || au.got[0].Actual != sd.DigestDACL(base) ||
+		au.got[0].PlannedBase != w.BaseDigest() || au.got[0].ActualACEs != len(base.DACL.ACEs) {
+		t.Fatalf("audit = %+v", au.got)
+	}
+
+	for name, s := range map[string]*fakeSDSession{
+		"read fails":   {id: ad.DCIdentity{DSAGUID: dc1}, readErr: errors.New("boom")},
+		"other object": {id: ad.DCIdentity{DSAGUID: dc1}, stored: base, storedGUID: dc1},
+	} {
+		au := &fakeAudit{}
+		if err := ApplyDACL(context.Background(), tok, s, au, ref, w); !errors.Is(err, ErrReadBack) || len(au.got) != 0 || s.writeCalls != 1 {
+			t.Fatalf("%s: err=%v audits=%d writes=%d", name, err, len(au.got), s.writeCalls)
+		}
+	}
+}
+
+// TestApplyDACLTokenBindsDeclaredProperty drives the real guard: the token a kind receives records what
+// that kind's PropertyWrite declared, so a token issued for another kind (here: a title update) cannot
+// reach ApplyDACL, and one issued for a kind that declares nTSecurityDescriptor can.
+func TestApplyDACLTokenBindsDeclaredProperty(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		pw   tier0.PropertyWrite
+		ok   bool
+	}{
+		{"title kind", adUpdateTitle, false},
+		{"DACL kind", tier0.PropertyWrite{Plane: tier0.PlaneAD, Kind: tier0.WriteUser, Op: tier0.OpUpdate, Keys: []string{"nTSecurityDescriptor"}}, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			run := passRun(nil)
+			r := newRig(t, &run)
+			withTestOp(r)
+			var tok Authorised
+			op := r.h.ops[connectorv1.WriteKind(1)]
+			op.PropertyWrite = declare(c.pw, nil)
+			op.Apply = func(_ context.Context, a Authorised, _ *connectorv1.ApplyRequest) (*connectorv1.ApplyResponse, error) {
+				tok = a
+				return &connectorv1.ApplyResponse{Outcome: connectorv1.ApplyOutcome_APPLY_OUTCOME_APPLIED}, nil
+			}
+			r.h.ops[connectorv1.WriteKind(1)] = op
+			tgt := mk(40)
+			q := applyReq(tgt, ctxFor(tgt))
+			q.Kind = 1
+			if _, err := r.h.Apply(context.Background(), q); err != nil {
+				t.Fatal(err)
+			}
+			if got := tok.DeclaresProperty("ntsecuritydescriptor"); got != c.ok {
+				t.Fatalf("DeclaresProperty = %v, want %v", got, c.ok)
+			}
+		})
 	}
 }

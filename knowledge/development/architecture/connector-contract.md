@@ -1329,6 +1329,20 @@ CC-WRITE-16 to -22 in TM-F-T0GUARD and TM-F-RIGHTS).
 - v1.2 (T-0122): [Binding to well-known objects using WKGUID (wellKnownObjects, Domain Controllers)](https://learn.microsoft.com/en-us/windows/win32/ad/binding-to-well-known-objects-using-wkguid) · [gPLink](https://learn.microsoft.com/en-us/windows/win32/adschema/a-gplink) · [MS-GPOL Domain SOM Search (gPLink format and options)](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-gpol/08090b22-bc16-49f4-8e10-f27a8fb16d18) · [passwordCredential (endDateTime, startDateTime)](https://learn.microsoft.com/en-us/graph/api/resources/passwordcredential?view=graph-rest-1.0). Internal: threat-model §6.2 TM-D23 rules 7 to 11 and the `ENTRA_PASSWORD_CREDENTIAL` severity, §6.4, §16.1 TM-R14 to TM-R17; domain-model DM-23.I1, DM-26; forest-connection spec FR-25.
 - Internal: `knowledge/development/domain/ad-change-notifications.md` (T-0018), `knowledge/development/runbooks/ad-lab.md` §6, and the ad-expert consult recorded in the T-0064 notes. The Samba statements in the consult (no `MoreResults`, `;range=0-0`, skipped removed links) come from a reading of the source, not a run, and are `[UNVERIFIED lab]` until CC-FEED-04 and CC-FEED-21 run.
 
+## DACL write path (T-0743, T-0726)
+
+The AD connector has one directory write, the `nTSecurityDescriptor` DACL replace:
+`write.ApplyDACL` → `ad.Session.WriteDACL` → `write/ops.ReplaceSD`. `ApplyDACL` refuses unless the guard's
+token (a) is valid, (b) was issued for a kind whose `PropertyWrite` declared `nTSecurityDescriptor`
+(`Authorised.DeclaresProperty`; the token records the declared keys at step 4, so a token for another kind
+cannot reach it), (c) targets the object the plan was made for, and (d) is bound to the DC the session is on.
+`WriteDACL` re-reads the DACL-only SD, runs `VerifyBase` (`sd.stale_base` sends nothing), then sends one
+Modify. After a successful Modify `ApplyDACL` re-reads the DACL-only SD through `Session.ReadDACL` (same
+session, same DC) and calls `DACLWrite.VerifyAfter` (SD-R10). A mismatch is `sd.write_diverged`: the
+`DACLAuditor` receives a `DACLDiverged` record (object, DC, base and actual digests, ACE count, PD bit; no ACE
+bytes), the error is returned and the write is **not** retried. A read-back that fails is `ErrReadBack`
+(stored state unknown, no retry). Samba proves the mechanics; Windows re-sorting and SDProp are windows-lab.
+
 ## Lab fixture seam: `internal/connector/labadmin` (T-0519)
 
 Lab-test support only. It holds an administrator LDAPS session that creates and deletes throw-away

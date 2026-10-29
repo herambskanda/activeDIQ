@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-ldap/ldap/v3"
 
+	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/directory/sd"
 )
@@ -34,8 +35,8 @@ type ReplaceSDFunc func(m Modifier, dn string, value []byte, controls []ldap.Con
 //     control the plan carries, no other attribute.
 //
 // VerifyBase narrows the lost-update window, it does not close it: LDAP has no compare-and-swap. The
-// post-write read-back and sd.write_diverged are DACLWrite.VerifyAfter's, called by the caller (T-0726)
-// on this same session, so the read is against the same DC.
+// post-write read-back and sd.write_diverged are DACLWrite.VerifyAfter's, called by the caller
+// (write.ApplyDACL, T-0726) through ReadDACL on this same session, so the read is against the same DC.
 //
 // Errors are the sd package's stable codes (sd.stale_base, sd.not_editable, ...) or *Error. A returned
 // error after the Modify was sent leaves the outcome unknown; the caller must re-read before retrying.
@@ -66,30 +67,12 @@ func (s *Session) WriteDACL(ctx context.Context, ref dn.ObjectRef, w sd.DACLWrit
 	stop := s.watch(ctx, s.conn)
 	defer stop()
 
-	res, err := s.searchOnceLocked(ctx, base, ldap.ScopeBaseObject, objectClassPresent,
-		[]string{"objectGUID", "nTSecurityDescriptor"}, []ldap.Control{want.control()})
-	if err != nil {
-		return err
-	}
-	if len(res.Entries) != 1 {
-		return fail(CodeObjectNotFound, "", nil)
-	}
-	ent := newEntry(res.Entries[0].DN)
-	absorbEntry(ent, map[string]int{}, map[string]struct{}{"objectguid": {}, "ntsecuritydescriptor": {}}, res.Entries[0])
-	g, err := ent.GUID()
+	g, cur, err := s.readDACLLocked(ctx, base, want)
 	if err != nil {
 		return err
 	}
 	if g != w.ObjectGUID() {
 		return fail(CodeInvalidArgument, "object is not the one the plan was made for", nil)
-	}
-	raw := ent.Raw("nTSecurityDescriptor")
-	if len(raw) != 1 || sdHasSACL(raw[0]) {
-		return fail(CodeProtocol, "security descriptor missing or has a SACL", nil)
-	}
-	cur, err := sd.Decode(sd.Raw(raw[0]))
-	if err != nil {
-		return err
 	}
 	if err := w.VerifyBase(cur); err != nil {
 		return err // sd.stale_base: nothing was sent
@@ -123,4 +106,54 @@ func (s *Session) WriteDACL(ctx context.Context, ref dn.ObjectRef, w sd.DACLWrit
 		return fail(CodeUnreachable, ldapCode(err), nil)
 	}
 	return nil
+}
+
+// readDACLLocked reads the object's objectGUID and DACL-only security descriptor (the SD_FLAGS control
+// carries no SACL; a response that has one anyway is refused). The caller holds s.mu.
+func (s *Session) readDACLLocked(ctx context.Context, base string, want SDFlags) (guid.GUID, sd.SD, error) {
+	res, err := s.searchOnceLocked(ctx, base, ldap.ScopeBaseObject, objectClassPresent,
+		[]string{"objectGUID", "nTSecurityDescriptor"}, []ldap.Control{want.control()})
+	if err != nil {
+		return guid.GUID{}, sd.SD{}, err
+	}
+	if len(res.Entries) != 1 {
+		return guid.GUID{}, sd.SD{}, fail(CodeObjectNotFound, "", nil)
+	}
+	ent := newEntry(res.Entries[0].DN)
+	absorbEntry(ent, map[string]int{}, map[string]struct{}{"objectguid": {}, "ntsecuritydescriptor": {}}, res.Entries[0])
+	g, err := ent.GUID()
+	if err != nil {
+		return guid.GUID{}, sd.SD{}, err
+	}
+	raw := ent.Raw("nTSecurityDescriptor")
+	if len(raw) != 1 || sdHasSACL(raw[0]) {
+		return guid.GUID{}, sd.SD{}, fail(CodeProtocol, "security descriptor missing or has a SACL", nil)
+	}
+	cur, err := sd.Decode(sd.Raw(raw[0]))
+	if err != nil {
+		return guid.GUID{}, sd.SD{}, err
+	}
+	return g, cur, nil
+}
+
+// ReadDACL re-reads the DACL-only security descriptor of the object and returns it with its objectGUID.
+// It is the read-back half of a DACL write: the session is bound to one DC, so the read is against the
+// DC the Modify went to.
+func (s *Session) ReadDACL(ctx context.Context, ref dn.ObjectRef) (guid.GUID, sd.SD, error) {
+	want, err := NewSDFlags(SDDACL)
+	if err != nil {
+		return guid.GUID{}, sd.SD{}, err
+	}
+	base, err := ref.ForRequest()
+	if err != nil {
+		return guid.GUID{}, sd.SD{}, fail(CodeInvalidArgument, "object reference", err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.conn == nil {
+		return guid.GUID{}, sd.SD{}, fail(CodeUnreachable, "session closed", nil)
+	}
+	stop := s.watch(ctx, s.conn)
+	defer stop()
+	return s.readDACLLocked(ctx, base, want)
 }
