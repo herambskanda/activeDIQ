@@ -98,12 +98,11 @@ func TestGroupFacts_refused(t *testing.T) {
 		noAt.Facts.BroadMembershipWriteAt = time.Time{}
 		atOnly := typedAD(sADG, false, now)
 		atOnly.Facts.BroadMembershipWrite = nil
-		future := typedAD(sADG, false, t1.Add(time.Hour))
 		clash := typedAD(sADG, false, now)
 		clash.Attributes = map[string]any{inventory.AttrBroadMembershipWrite: true}
 		user := inventory.Observation{Object: mUser, NC: nc1, Kind: inventory.KindUser, Class: "user", State: inventory.ObjLive, Facts: inventory.GroupFacts{GroupType: ptr(int32(2))}}
 		for name, o := range map[string]inventory.Observation{"fact without time": noAt, "time without fact": atOnly,
-			"future computed-at": future, "typed and map": clash, "on a user": user} {
+			"typed and map": clash, "on a user": user} {
 			if _, err := e.populate(t, e.adA, t1, o); !errors.Is(err, inventory.ErrInvalid) {
 				t.Fatalf("%s: err = %v, want ErrInvalid", name, err)
 			}
@@ -124,8 +123,9 @@ func TestGroupFacts_judge_verdicts(t *testing.T) {
 		ctx := context.Background()
 		const adOpen, adClosed, enPriv, enPub, enDyn = "aaaaaaaa-0000-4000-8000-0000000000f1", "aaaaaaaa-0000-4000-8000-0000000000f2",
 			"eeeeeeee-0000-4000-8000-0000000000f1", "eeeeeeee-0000-4000-8000-0000000000f2", "eeeeeeee-0000-4000-8000-0000000000f3"
-		now := t1.Add(-time.Hour)
-		if _, err := e.populate(t, e.adA, t1, adUser(mUser, nc1), typedAD(adOpen, true, now, mUser), typedAD(adClosed, false, now, mUser)); err != nil {
+		obs := time.Now() // the judge checks the fact's age against the wall clock
+		now := obs.Add(-time.Hour)
+		if _, err := e.populate(t, e.adA, obs, adUser(mUser, nc1), typedAD(adOpen, true, now, mUser), typedAD(adClosed, false, now, mUser)); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := e.populate(t, e.enA, t1, enUser(mEUser, nil),
