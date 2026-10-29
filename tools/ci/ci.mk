@@ -35,8 +35,8 @@ fmt: ## Format Go and web sources in place
 
 test: test-go test-web ## Go and web unit tests
 
-test-go:
-	go test -count=1 ./...
+test-go: web-install ## Go tests; package parallelism bounded (-p 3) because PG-backed packages each start an embedded PostgreSQL and starve under full parallelism (T-0550)
+	go test -count=1 -p 3 -timeout 30m ./...
 
 test-web: web-install
 	npm --prefix web run --silent test
