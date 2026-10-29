@@ -1134,7 +1134,9 @@ func checkInstaller(root string) Result {
 func checkInstallerAllow(root string, allow []string) Result {
 	r := Result{ID: "A1", What: "agent installer names " + pinnedAccount + ", service SID type " + pinnedSidType + ", the pinned RequiredPrivileges, no LocalSystem, and no custom action or script unless reviewed (ADR-0006 rules 1, 3)"}
 	files := agentInstallerFiles(root)
-	if len(files) == 0 {
+	// T-0762: opaque MSI transforms/patches and MSBuild post-processing; never approvable via installer-allow.txt.
+	r.Violations = append(r.Violations, msbuildProblems(root)...)
+	if len(files) == 0 && len(r.Violations) == 0 {
 		r.Inactive = "no agent installer source under packaging/ (windows-engineer's MSI ticket)"
 		return r
 	}
