@@ -1339,7 +1339,7 @@ cannot reach it), (c) targets the object the plan was made for, and (d) is bound
 `WriteDACL` re-reads the DACL-only SD, runs `VerifyBase` (`sd.stale_base` sends nothing), then sends one
 Modify. After a successful Modify `ApplyDACL` re-reads the DACL-only SD through `Session.ReadDACL` (same
 session, same DC) and calls `DACLWrite.VerifyAfter` (SD-R10). A mismatch is `sd.write_diverged`: the
-`DACLAuditor` receives a `DACLDiverged` record (object, DC, base, planned and actual digests, ACE count, PD bit, and the stored ACEs as typed fields — type, flags, mask, trustee SID, object GUIDs — bounded to 256 with a `Truncated` flag; no SDDL, no raw bytes), the error is returned and the write is **not** retried. A read-back that fails is `ErrReadBack`
+`DACLAuditor` receives a `DACLDiverged` record (object, DC, base, planned and actual digests, ACE count, PD bit, the planned and actual DACL kind (Null = everyone full access, distinct from an empty List = nobody), and the stored ACEs as typed fields — type, flags, mask, trustee SID, object GUIDs — bounded to 256 with a `Truncated` flag; no SDDL, no raw bytes), the error is returned and the write is **not** retried. A read-back that fails is `ErrReadBack`
 (stored state unknown, no retry). Samba proves the mechanics; Windows re-sorting and SDProp are windows-lab.
 
 ## Lab fixture seam: `internal/connector/labadmin` (T-0519)

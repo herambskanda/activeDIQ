@@ -40,10 +40,12 @@ type AuditedACE struct {
 type DACLDiverged struct {
 	Object        guid.GUID
 	DC            guid.GUID
-	PlannedBase   sd.Digest // digest of the DACL the plan was made on
-	Planned       sd.Digest // digest of the DACL the plan wrote
-	Actual        sd.Digest // digest of the DACL read back from the same DC
-	ActualACEs    int       // total ACE count in the stored DACL
+	PlannedBase   sd.Digest  // digest of the DACL the plan was made on
+	Planned       sd.Digest  // digest of the DACL the plan wrote
+	Actual        sd.Digest  // digest of the DACL read back from the same DC
+	PlannedKind   sd.ACLKind // Absent / Null / List of the planned DACL (Null = everyone full access, List with 0 ACEs = nobody)
+	ActualKind    sd.ACLKind // the same for the stored DACL: ACEs empty is ambiguous without it
+	ActualACEs    int        // total ACE count in the stored DACL
 	ActualProtect bool
 	ACEs          []AuditedACE // the stored ACEs in stored order, first MaxAuditedACEs
 	Truncated     bool         // ACEs holds fewer than ActualACEs
@@ -102,9 +104,11 @@ func ApplyDACL(ctx context.Context, a Authorised, s SDSession, audit DACLAuditor
 	if _, err := w.VerifyAfter(stored); err != nil {
 		if codec.Code(err) == sd.ErrWriteDiverged {
 			d := DACLDiverged{Object: g, DC: a.DC(), PlannedBase: w.BaseDigest(),
-				Actual: sd.DigestDACL(stored), ActualACEs: len(stored.DACL.ACEs), ActualProtect: stored.Control.Protected()}
+				Actual: sd.DigestDACL(stored), ActualKind: stored.DACL.Kind, ActualACEs: len(stored.DACL.ACEs), ActualProtect: stored.Control.Protected()}
+			// Decode cannot fail for a plan the planner built; if it did, Planned stays zero.
 			if planned, derr := sd.Decode(w.Value()); derr == nil {
 				d.Planned = sd.DigestDACL(planned)
+				d.PlannedKind = planned.DACL.Kind
 			}
 			for i, e := range stored.DACL.ACEs {
 				if i == MaxAuditedACEs {

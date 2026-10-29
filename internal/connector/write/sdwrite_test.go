@@ -194,6 +194,29 @@ func TestApplyDACLReadBack(t *testing.T) {
 		}
 	}
 
+	// A NULL DACL read back (everyone full control) must be told apart from an empty one (nobody).
+	nullSD, emptySD := base, base
+	nullSD.DACL = sd.ACL{Kind: sd.Null}
+	emptySD.DACL = sd.ACL{Kind: sd.List, Revision: base.DACL.Revision}
+	var recs [2]DACLDiverged
+	for i, st := range []sd.SD{nullSD, emptySD} {
+		au := &fakeAudit{}
+		s := &fakeSDSession{id: ad.DCIdentity{DSAGUID: dc1}, stored: st, storedGUID: b}
+		if err := ApplyDACL(context.Background(), tok, s, au, ref, w); codec.Code(err) != sd.ErrWriteDiverged || len(au.got) != 1 || s.writeCalls != 1 {
+			t.Fatalf("kind case %d: err=%v audits=%d", i, err, len(au.got))
+		}
+		recs[i] = au.got[0]
+		if len(recs[i].ACEs) != 0 || recs[i].ActualACEs != 0 {
+			t.Fatalf("kind case %d: ACEs=%d", i, len(recs[i].ACEs))
+		}
+	}
+	if recs[0].ActualKind != sd.Null || recs[1].ActualKind != sd.List || recs[0].PlannedKind != sd.List {
+		t.Fatalf("kinds: null=%v empty=%v planned=%v", recs[0].ActualKind, recs[1].ActualKind, recs[0].PlannedKind)
+	}
+	if recs[0].Actual == recs[1].Actual {
+		t.Fatal("NULL and empty DACL digests must differ")
+	}
+
 	for name, s := range map[string]*fakeSDSession{
 		"read fails":   {id: ad.DCIdentity{DSAGUID: dc1}, readErr: errors.New("boom")},
 		"other object": {id: ad.DCIdentity{DSAGUID: dc1}, stored: base, storedGUID: dc1},
