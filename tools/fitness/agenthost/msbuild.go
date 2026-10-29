@@ -133,11 +133,13 @@ func judgeMSBuild(rel string, b []byte) []string {
 			case n == "import":
 				if attrOf(t, "sdk") == "" || !strings.HasPrefix(attrOf(t, "project"), "Sdk.") {
 					add("has an Import of a non-SDK file")
+				} else if !sdkListAllowed(attrOf(t, "sdk")) {
+					add(fmt.Sprintf("has an Import from SDK %q: only the pinned WiX SDK is reviewed", attrOf(t, "sdk")))
 				}
 			case n == "project" || n == "sdk":
 				for _, a := range t.Attr {
 					if strings.EqualFold(a.Name.Local, "sdk") || n == "sdk" && strings.EqualFold(a.Name.Local, "name") {
-						if !strings.HasPrefix(a.Value, "WixToolset.Sdk/") && !strings.HasPrefix(a.Value, "Microsoft.Build.NoTargets/") {
+						if !sdkListAllowed(a.Value) {
 							add(fmt.Sprintf("uses SDK %q: only the pinned WiX SDK is reviewed", a.Value))
 						}
 					}
@@ -167,4 +169,21 @@ func attrOf(t xml.StartElement, name string) string {
 		}
 	}
 	return ""
+}
+
+// sdkListAllowed reports whether every entry of a (possibly semicolon-separated) SDK list is a reviewed,
+// version-pinned SDK. A single foreign entry brings its targets in, so all entries must pass.
+func sdkListAllowed(list string) bool {
+	n := 0
+	for _, e := range strings.Split(list, ";") {
+		e = strings.TrimSpace(e)
+		if e == "" {
+			continue
+		}
+		n++
+		if !strings.HasPrefix(e, "WixToolset.Sdk/") && !strings.HasPrefix(e, "Microsoft.Build.NoTargets/") {
+			return false
+		}
+	}
+	return n > 0
 }
