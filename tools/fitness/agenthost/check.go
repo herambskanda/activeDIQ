@@ -1139,6 +1139,7 @@ func checkInstallerAllow(root string, allow []string) Result {
 	}
 	services := 0
 	namedAgent := false
+	dirsAt, propsAt, pinAt := map[string][]string{}, map[string][]string{}, map[string][]string{}
 	for _, f := range files {
 		rel := f.rel
 		if f.problem != "" {
@@ -1188,9 +1189,19 @@ func checkInstallerAllow(root string, allow []string) Result {
 		if m := localSystemRe.FindString(x.attrText); m != "" && !localSystemRe.MatchString(f.text) {
 			r.Violations = append(r.Violations, fmt.Sprintf("%s names %q once its XML is decoded: the agent never runs as LocalSystem or a shared service identity (ADR-0006 rule 1)", rel, m))
 		}
+		for _, id := range x.dirIDs {
+			dirsAt[id] = append(dirsAt[id], rel)
+		}
+		for _, id := range x.propIDs {
+			propsAt[id] = append(propsAt[id], rel)
+		}
+		for _, id := range x.pinDirs {
+			pinAt[id] = append(pinAt[id], rel)
+		}
 		services += x.services
 		r.Violations = append(r.Violations, x.violations...)
 	}
+	r.Violations = append(r.Violations, judgeRetargets(dirsAt, propsAt, pinAt)...)
 	switch {
 	case !anyAgentSource(files) && !namedAgent:
 		// Only WiX sources that never name the agent (a core MSI): their LocalSystem, registry, action and
@@ -1223,8 +1234,11 @@ type xmlEl struct {
 
 type installerFacts struct {
 	services   int
-	namesAgent bool   // a parsed (entity-decoded) element names the agent service
-	attrText   string // every decoded attribute value and text node, for the string rules
+	namesAgent bool     // a parsed (entity-decoded) element names the agent service
+	dirIDs     []string // Ids of Directory/StandardDirectory elements defined here (T-0742)
+	propIDs    []string // Ids of Property, SetProperty and SetDirectory elements: each can set a path (T-0742)
+	pinDirs    []string // directory Ids in the chain of every Permission parent's resolved directory (T-0742)
+	attrText   string   // every decoded attribute value and text node, for the string rules
 	violations []string
 }
 
@@ -1238,7 +1252,9 @@ var serviceEls = setOf("ServiceInstall", "ServiceConfig", "ServiceControl")
 var registryEls = setOf("RegistryKey", "RegistryValue", "RemoveRegistryKey", "RemoveRegistryValue")
 
 // actionEls run code at install time; each needs a reviewed allowlist entry by Id.
-var actionEls = setOf("CustomAction", "Binary")
+// SetDirectory and SetProperty compile to Type 51 custom actions (a directory path or property set at
+// install time), so they are gated like CustomAction (T-0742).
+var actionEls = setOf("CustomAction", "Binary", "SetDirectory", "SetProperty")
 
 // pinnedActions: the CustomActions approved in T-0688 ruling 4, with the exact attributes reviewed. Each
 // runs agentsetup.exe from the private directory AgentDir (mixed case: not a public property, so it cannot
@@ -1378,6 +1394,42 @@ func samePermission(got, want map[string]string) bool {
 	return true
 }
 
+// chainIDs returns the directory Ids in a pin string "Element:Id:Name/Element:Id:Name".
+func chainIDs(chain string) []string {
+	var ids []string
+	for _, part := range strings.Split(chain, "/") {
+		if p := strings.SplitN(part, ":", 3); len(p) == 3 && p[1] != "" {
+			ids = append(ids, p[1])
+		}
+	}
+	return ids
+}
+
+// judgeRetargets is the cross-file half of T-0742: a Property that shares an Id with a Directory or
+// StandardDirectory presets (or overwrites) that directory's path, and a SetDirectory, SetProperty or
+// Property naming a directory in a Permission's resolved parent chain moves the reviewed ACL onto another
+// object without touching any pinned element. Neither is approvable through installer-allow.txt.
+func judgeRetargets(dirs, props, pinned map[string][]string) []string {
+	var v []string
+	for id, in := range props {
+		if id == "" {
+			continue
+		}
+		for d, dIn := range dirs {
+			if strings.EqualFold(d, id) {
+				v = append(v, fmt.Sprintf("%s: %q is also the Id of a Directory/StandardDirectory (in %s): a Property, SetProperty or SetDirectory with a directory's Id sets where it points at install time (T-0742)", strings.Join(in, ", "), id, strings.Join(dIn, ", ")))
+			}
+		}
+		for d, pIn := range pinned {
+			if strings.EqualFold(d, id) {
+				v = append(v, fmt.Sprintf("%s: %q retargets a directory that a Permission acts on (Permission in %s): the reviewed ACL would land on whatever path is set here; the pin cannot see this (T-0742)", strings.Join(in, ", "), id, strings.Join(pIn, ", ")))
+			}
+		}
+	}
+	sort.Strings(v)
+	return v
+}
+
 func isAgentName(s string) bool { return agentBodyRe.MatchString(s) }
 
 // judgeInstallerXML reads one WiX file. The ServiceInstall for the agent service, every ServiceSid and
@@ -1496,6 +1548,9 @@ func judgeInstallerXML(rel string, b []byte, allow []string, agentFile bool) ins
 				// T-0730: the pin also fixes the parent's target, so retargeting the parent cannot
 				// carry a reviewed ACL onto another object. Pin keys: "parent.<attr>".
 				tgt, resolved := parentTarget(els, e.Parent)
+				if resolved {
+					f.pinDirs = append(f.pinDirs, chainIDs(tgt["parent.directory"])...)
+				}
 				if !resolved {
 					fail("%s under %s %q: the parent's effective target cannot be resolved (unknown parent type, or its directory/registry root comes from a ComponentRef or another fragment); an unresolved target cannot be pinned (T-0730)", e.Name, ptype, pid)
 					break
@@ -1509,6 +1564,9 @@ func judgeInstallerXML(rel string, b []byte, allow []string, agentFile bool) ins
 			}
 		case actionEls[e.Name]:
 			id := e.Attrs["id"]
+			if e.Name == "SetDirectory" || e.Name == "SetProperty" {
+				f.propIDs = append(f.propIDs, id)
+			}
 			if id == "" || dynamicRe.MatchString(id) || !allowed(id, allow) {
 				fail("%s %q runs code at install time: the account, SID type and privileges may not be computed there; list the Id in installer-allow.txt after a security-architect review", e.Name, id)
 			} else if want, pinned := pinnedActions[id]; pinned && e.Name == "CustomAction" {
@@ -1535,6 +1593,14 @@ func judgeInstallerXML(rel string, b []byte, allow []string, agentFile bool) ins
 			if strings.HasPrefix(trim, `system\`) || trim == "system" || dynamicRe.MatchString(key) || dynamicRe.MatchString(root) {
 				fail("%s writes HKLM key %q: the installer has no business under HKLM\\SYSTEM (the service account, SID type and privileges live there) and a key built from a property or variable cannot be judged", e.Name, key)
 			}
+		}
+	}
+	for _, e := range els {
+		switch e.Name {
+		case "Directory", "StandardDirectory":
+			f.dirIDs = append(f.dirIDs, e.Attrs["id"])
+		case "Property":
+			f.propIDs = append(f.propIDs, e.Attrs["id"])
 		}
 	}
 	// Rule 3 for EVERY service: the SID type and privileges of each ServiceInstall (its own attributes, its
