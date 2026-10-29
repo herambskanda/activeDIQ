@@ -4,8 +4,10 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -18,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/skenzeriq/activediq/internal/compose/server"
 	"github.com/skenzeriq/activediq/tools/fitness/pgharness"
 )
 
@@ -25,7 +28,67 @@ const (
 	imageDockerfile = "packaging/linux-oci/Dockerfile.server"
 	tlsMount        = "/var/lib/activediq/tls"
 	serviceUID      = 10001
+	// kekState holds the passphrase keystore (kek/, 0700) and the passphrase file (pass, 0600) the booted
+	// server needs: it has no default custody model, so a boot without them exits before it opens anything.
+	kekState = "/var/lib/activediq/kekstate"
 )
+
+// kekKit is the KEK volume and the settings that point a server at it.
+type kekKit struct {
+	vol string
+	env []string
+}
+
+// mounts returns the docker arguments that attach the KEK volume.
+func (k kekKit) mounts() []string { return []string{"-v", k.vol + ":" + kekState} }
+
+// provisionKEK creates the volume, places the passphrase file and keystore directory with the service's
+// ownership and modes (a tar stream copied into a created container keeps the header's uid and mode), and
+// runs the product's own `kek init`. Nothing here is a fixture of the product: it is what an installer does.
+func provisionKEK(ctx context.Context, tag string) (kekKit, func(), error) {
+	var k kekKit
+	k.vol = "host-proof-kek-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	cleanup := func() { _, _ = docker(context.Background(), nil, "volume", "rm", "-f", k.vol) }
+	k.env = []string{
+		server.EnvKEKProvider + "=passphrase",
+		server.EnvKEKDir + "=" + kekState + "/kek",
+		server.EnvKEKPassphraseFile + "=" + kekState + "/pass",
+	}
+	pass := make([]byte, 24)
+	if _, err := rand.Read(pass); err != nil {
+		return k, cleanup, err
+	}
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	_ = tw.WriteHeader(&tar.Header{Name: "kek/", Typeflag: tar.TypeDir, Mode: 0o700, Uid: serviceUID, Gid: serviceUID})
+	body := []byte(hex.EncodeToString(pass))
+	_ = tw.WriteHeader(&tar.Header{Name: "pass", Typeflag: tar.TypeReg, Mode: 0o600, Size: int64(len(body)), Uid: serviceUID, Gid: serviceUID})
+	_, _ = tw.Write(body)
+	if err := tw.Close(); err != nil {
+		return k, cleanup, err
+	}
+	if _, err := docker(ctx, nil, "volume", "create", k.vol); err != nil {
+		return k, cleanup, err
+	}
+	id, err := docker(ctx, nil, "create", "-v", k.vol+":"+kekState, tag)
+	if err != nil {
+		return k, cleanup, err
+	}
+	id = strings.TrimSpace(id)
+	defer func() { _, _ = docker(context.Background(), nil, "rm", "-f", "-v", id) }()
+	if _, err := docker(ctx, &buf, "cp", "-", id+":"+kekState); err != nil {
+		return k, cleanup, err
+	}
+	args := []string{"run", "--rm", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true", "--user", fmt.Sprintf("%d:%d", serviceUID, serviceUID), "-v", k.vol + ":" + kekState}
+	for _, e := range k.env {
+		args = append(args, "-e", e)
+	}
+	args = append(args, tag, "kek", "init")
+	if _, err := docker(ctx, nil, args...); err != nil {
+		return k, cleanup, fmt.Errorf("kek init: %v", err)
+	}
+	return k, cleanup, nil
+}
 
 func docker(ctx context.Context, stdin io.Reader, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "docker", args...)
@@ -137,15 +200,20 @@ func CollectOCI(ctx context.Context, repo string, pg *pgharness.Server, log func
 		{"require", "sslmode=require"},
 		{"verify-ca (no sslrootcert)", "sslmode=verify-ca"},
 	}
+	kek, kekDone, err := provisionKEK(ctx, tag)
+	defer kekDone()
+	if err != nil {
+		return o, fmt.Errorf("provision the KEK: %v", err)
+	}
 	for _, b := range bad {
 		p, err := freePort()
 		if err != nil {
 			return o, err
 		}
-		c, err := runServer(ctx, tag, []string{
+		c, err := runServer(ctx, tag, append([]string{
 			"ACTIVEDIQ_DATABASE_DSN=postgres://u:p@192.0.2.1:5432/d?" + b.extra,
 			fmt.Sprintf("ACTIVEDIQ_API_ADDR=127.0.0.1:%d", p),
-		}, "--user", fmt.Sprintf("%d:%d", serviceUID, serviceUID), "--tmpfs", tlsMount+":uid=10001,gid=10001,mode=0700")
+		}, kek.env...), append([]string{"--user", fmt.Sprintf("%d:%d", serviceUID, serviceUID), "--tmpfs", tlsMount + ":uid=10001,gid=10001,mode=0700"}, kek.mounts()...)...)
 		if err != nil {
 			return o, err
 		}
@@ -178,11 +246,11 @@ func CollectOCI(ctx context.Context, repo string, pg *pgharness.Server, log func
 	}
 	vol := "host-proof-tls-" + strconv.Itoa(port)
 	defer func() { _, _ = docker(context.Background(), nil, "volume", "rm", "-f", vol) }()
-	c, err := runServer(ctx, tag, []string{
+	c, err := runServer(ctx, tag, append([]string{
 		"ACTIVEDIQ_DATABASE_DSN=" + db.AppDSN(),
 		fmt.Sprintf("ACTIVEDIQ_API_ADDR=127.0.0.1:%d", port),
 		"ACTIVEDIQ_API_TLS_DIR=" + tlsMount,
-	}, "--user", fmt.Sprintf("%d:%d", serviceUID, serviceUID), "-v", vol+":"+tlsMount)
+	}, kek.env...), append([]string{"--user", fmt.Sprintf("%d:%d", serviceUID, serviceUID), "-v", vol + ":" + tlsMount}, kek.mounts()...)...)
 	if err != nil {
 		return o, err
 	}
@@ -223,7 +291,122 @@ func CollectOCI(ctx context.Context, repo string, pg *pgharness.Server, log func
 
 	// Dump posture: kernel view of the live process.
 	o.Dumps = dumpPosture(ctx, c, pid)
+
+	// Setup secret: the file the server wrote, claimed twice over TLS, then an expired one.
+	su, err := setupProbe(ctx, c, addr, roots, uid)
+	if err != nil {
+		return o, fmt.Errorf("setup secret probe: %v", err)
+	}
+	exp, err := expiredSetupProbe(ctx, tag, db.AppDSN(), kek, log)
+	if err != nil {
+		return o, fmt.Errorf("expired setup secret probe: %v", err)
+	}
+	su.ExpiredAccepted = exp
+	o.Setup = su
+	log("setup secret: used_once=%v accepted_again=%v expired_accepted=%v readable_by_others=%v", su.UsedOnce, su.AcceptedAgain, su.ExpiredAccepted, su.ReadableByOthers)
 	return o, nil
+}
+
+const setupSecretPath = tlsMount + "/setup/setup-secret"
+
+// readSetupSecret copies the setup secret file out of the container and returns its tar header and text.
+func readSetupSecret(ctx context.Context, c *container) (*tar.Header, string, error) {
+	b, err := exec.CommandContext(ctx, "docker", "cp", c.id+":"+setupSecretPath, "-").Output()
+	if err != nil {
+		return nil, "", fmt.Errorf("docker cp %s: %v", setupSecretPath, err)
+	}
+	tr := tar.NewReader(bytes.NewReader(b))
+	h, err := tr.Next()
+	if err != nil {
+		return nil, "", err
+	}
+	data, err := io.ReadAll(tr)
+	return h, strings.TrimSpace(string(data)), err
+}
+
+// claimSetup posts the secret to the claim route over verified TLS and returns the HTTP status.
+func claimSetup(addr string, roots *x509.CertPool, secret string) (int, error) {
+	cl := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}}}
+	body := strings.NewReader(`{"secret":` + strconv.Quote(secret) + `}`)
+	req, _ := http.NewRequest(http.MethodPost, "https://"+addr+"/api/v1/setup/claim", body)
+	req.Header.Set("Content-Type", "application/json")
+	r, err := cl.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	_ = r.Body.Close()
+	return r.StatusCode, nil
+}
+
+// setupProbe reads the secret as the file system shows it, then uses it twice. A status that is neither
+// the success (204) nor the uniform refusal (401) is a broken probe, not a verdict.
+func setupProbe(ctx context.Context, c *container, addr string, roots *x509.CertPool, svcUID int) (*Setup, error) {
+	h, secret, err := readSetupSecret(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	mode := h.FileInfo().Mode().Perm()
+	su := &Setup{ReadableByOthers: mode&0o077 != 0 || (h.Uid != svcUID && h.Uid != 0)}
+	first, err := claimSetup(addr, roots, secret)
+	if err != nil {
+		return nil, err
+	}
+	again, err := claimSetup(addr, roots, secret)
+	if err != nil {
+		return nil, err
+	}
+	if first != http.StatusNoContent && first != http.StatusUnauthorized || again != http.StatusNoContent && again != http.StatusUnauthorized {
+		return nil, fmt.Errorf("unexpected claim statuses %d then %d", first, again)
+	}
+	su.UsedOnce = first == http.StatusNoContent
+	su.AcceptedAgain = again == http.StatusNoContent
+	return su, nil
+}
+
+// expiredSetupProbe boots a second server with a 2 s setup lifetime, waits past it and presents the
+// secret. It reports whether the expired secret was accepted.
+func expiredSetupProbe(ctx context.Context, tag, dsn string, kek kekKit, log func(string, ...any)) (bool, error) {
+	port, err := freePort()
+	if err != nil {
+		return false, err
+	}
+	vol := "host-proof-tls-exp-" + strconv.Itoa(port)
+	defer func() { _, _ = docker(context.Background(), nil, "volume", "rm", "-f", vol) }()
+	c, err := runServer(ctx, tag, append([]string{
+		"ACTIVEDIQ_DATABASE_DSN=" + dsn,
+		fmt.Sprintf("ACTIVEDIQ_API_ADDR=127.0.0.1:%d", port),
+		"ACTIVEDIQ_API_TLS_DIR=" + tlsMount,
+		"ACTIVEDIQ_SETUP_TTL=2s",
+	}, kek.env...), append([]string{"--user", fmt.Sprintf("%d:%d", serviceUID, serviceUID), "-v", vol + ":" + tlsMount}, kek.mounts()...)...)
+	if err != nil {
+		return false, err
+	}
+	defer c.rm()
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	if err := waitListen(ctx, c, addr, 30*time.Second); err != nil {
+		return false, fmt.Errorf("the short-lived install did not boot: %v\n%s", err, combinedLogs(ctx, c))
+	}
+	roots, err := serverRoots(ctx, c)
+	if err != nil {
+		return false, err
+	}
+	_, secret, err := readSetupSecret(ctx, c)
+	if err != nil {
+		return false, err
+	}
+	time.Sleep(3 * time.Second)
+	st, err := claimSetup(addr, roots, secret)
+	if err != nil {
+		return false, err
+	}
+	log("expired setup secret presented: status %d", st)
+	switch st {
+	case http.StatusNoContent:
+		return true, nil
+	case http.StatusUnauthorized:
+		return false, nil
+	}
+	return false, fmt.Errorf("unexpected status %d for an expired secret", st)
 }
 
 func waitListen(ctx context.Context, c *container, addr string, d time.Duration) error {

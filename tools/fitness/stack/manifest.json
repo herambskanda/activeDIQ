@@ -309,6 +309,11 @@
         "reason": "agent token/privilege pin, job-object confinement, event-log writer and data-dir DACL (*_windows.go) with *_other.go stubs; Windows-only OS APIs with no portable form"
       },
       {
+        "path": "internal/platform/updateverify",
+        "adr": "0001-technology-stack.md",
+        "reason": "quarantine directory-ownership checks differ by OS: quarantine_unix.go (unix, syscall owner/mode) and quarantine_other.go (!unix, no portable owner check; returns a typed unsupported error) (T-0645)"
+      },
+      {
         "path": "internal/platform/apitls",
         "adr": "0001-technology-stack.md",
         "reason": "identity-directory permission checks differ by OS: perm_unix.go (unix) and perm_other.go (!unix, Windows/OCI ACL checks are T-0104)"

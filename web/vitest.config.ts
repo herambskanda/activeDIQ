@@ -5,6 +5,7 @@ import { defineConfig } from "vitest/config";
 // (by default Vitest stubs CSS imports with an empty string), so tokens.test.ts can check every colour pair.
 export default defineConfig({
   test: {
+    // Component tests opt in to a DOM with `// @vitest-environment jsdom` at the top of the file.
     environment: "node",
     include: ["src/**/*.test.ts", "src/**/*.test.tsx", "eslint/**/*.test.js"],
     css: { include: [/src\/ds\/tokens\.css/] },

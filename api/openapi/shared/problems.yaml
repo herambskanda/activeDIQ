@@ -131,6 +131,19 @@ components:
             type: /problems/sign-in-failed
             title: Sign-in failed
             status: 401
+    SetupRefused:
+      description: >-
+        First-run setup was not claimed. One answer for every cause (wrong secret, expired secret, secret
+        already used, install not in first-run state), so the response teaches a caller nothing. It never
+        carries a detail.
+      content:
+        application/problem+json:
+          schema:
+            $ref: shared/problems.yaml#/components/schemas/Problem
+          example:
+            type: /problems/setup-refused
+            title: Setup was refused
+            status: 401
     Forbidden:
       description: You are not allowed to do this
       content:

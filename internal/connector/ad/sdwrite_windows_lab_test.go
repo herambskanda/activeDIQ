@@ -306,16 +306,16 @@ func firstDiff(a, b []string) string {
 	return ""
 }
 
-// knownOrderDivergence is the expected-to-fail marker (the framework has none): the DC's re-ordering is a
-// documented product bug, so the test logs it; it fails when the divergence stops reproducing, forcing the
-// bug's owner to turn this into a strict assertion.
-func knownOrderDivergence(t *testing.T, bug, what string, planned, stored []string) {
+// verifyAfter asserts SD-R10 on a DC read-back: the product's VerifyAfter must accept the DC's canonical
+// re-ordering (T-0627) and the order difference, if any, is logged.
+func verifyAfter(t *testing.T, what string, w sd.DACLWrite, stored sd.SD) {
 	t.Helper()
-	if d := firstDiff(planned, stored); d != "" {
-		t.Logf("RESULT KNOWN DIVERGENCE %s, %s: the DC re-ordered the DACL: %s", bug, what, d)
-	} else {
-		t.Errorf("%s: %s no longer re-ordered by the DC; replace knownOrderDivergence with a strict equality check", bug, what)
+	v, err := w.VerifyAfter(stored)
+	if err != nil {
+		t.Errorf("%s: VerifyAfter rejected the DC's stored DACL: %v (planned %v, stored %v)", what, err, orderOf(plannedSD(t, w)), orderOf(stored))
+		return
 	}
+	t.Logf("RESULT %s: VerifyAfter accepted; DC re-ordered=%v %s", what, v.Reordered, firstDiff(orderOf(plannedSD(t, w)), orderOf(stored)))
 }
 
 func eq(a, b []string) bool { return strings.Join(a, "|") == strings.Join(b, "|") }
@@ -357,7 +357,7 @@ func TestWindowsLabSDWriteInheritance(t *testing.T) {
 		t.Fatalf("explicit add on child: %v", err)
 	}
 	a := l.readSD(t, c1, 4)
-	knownOrderDivergence(t, "T-0627", "explicit add", orderOf(plannedSD(t, addPlan)), orderOf(a))
+	verifyAfter(t, "explicit add", addPlan, a)
 	t.Logf("RESULT after explicit add (marker): %s", summary(a))
 	if has(a, t1, true) != 1 || has(a, t1, false) != 0 {
 		t.Errorf("INHERITED marker lost or duplicated by a DACL write: %s", summary(a))
@@ -395,8 +395,8 @@ func TestWindowsLabSDWriteInheritance(t *testing.T) {
 		t.Fatalf("BlockKeepInherited write: %v", err)
 	}
 	k := l.readSD(t, c3, 4)
-	// SD-W10 records "order kept". Observation: does the DC keep the order the plan wrote?
-	knownOrderDivergence(t, "T-0627", "BlockKeepInherited (SD-W10 says order kept)", orderOf(plannedSD(t, keepPlan)), orderOf(k))
+	// SD-W10 records the plan order; the DC re-sorts (T-0627), so verify as the DC canonicalises.
+	verifyAfter(t, "BlockKeepInherited", keepPlan, k)
 	t.Logf("RESULT BlockKeepInherited before: %s\nRESULT BlockKeepInherited after:  %s", summary(pre), summary(k))
 	if !k.Control.Protected() {
 		t.Error("BlockKeepInherited: PD not set")

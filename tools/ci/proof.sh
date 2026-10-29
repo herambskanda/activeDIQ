@@ -1059,6 +1059,128 @@ cp "$tmp/agent.wxs.clean" "$ah/packaging/windows/agent.wxs"
 sed -i 's/SeChangeNotifyPrivilege/SeChangeNotifyPrivilege SeBackupPrivilege/' "$ah/packaging/windows/agent.wxs"
 must_fail_with "fitness-agent-host on an extra privilege in the MSI source (A1)" 'RequiredPrivileges of .*are' agenthost "$ah"
 cp "$tmp/agent.wxs.clean" "$ah/packaging/windows/agent.wxs"
+# T-0664: the WiX SDK compiles **/*.wxs, so testdata/ and node_modules/ under packaging/ are scanned.
+# Fourth review: no reachability heuristic; WiX files in testdata/ or node_modules/ anywhere are scanned.
+lsys='<Wix><Package><ServiceInstall Name="skzHelper" Account="LocalSystem"/></Package></Wix>'
+for d in packaging/windows/testdata packaging/windows/node_modules testdata "src[/testdata" src/testdata; do
+  mkdir -p "$ah/$d"
+  printf '%s\n' "$lsys" >"$ah/$d/x.wxs"
+  [ "$d" = "src/testdata" ] && printf '<Project/>\n' >"$ah/$d/Evil.wixproj"
+  [ "$d" = "src[/testdata" ] && printf '<Project/>\n' >"$ah/src[/Evil.wixproj"
+  [ "$d" = "testdata" ] && printf '<Project><ItemGroup><Compile Include="..\\..\\testdata\\x.wxs"/></ItemGroup></Project>\n' >"$ah/packaging/windows/A.wixproj"
+  must_fail_with "fitness-agent-host on a LocalSystem service in $d (A1)" 'LocalSystem' agenthost "$ah"
+  rm -rf "$ah/$d" "$ah/src[" "$ah/src" "$ah/packaging/windows/A.wixproj"
+done
+# T-0677 (+ security review): the A1 walker scans every WiX-named file in the repo, tools/fitness included,
+# so no include, escape, glob, property or Directory.Build.props can reach an unscanned fixture.
+mkdir -p "$ah/tools/fitness/x/testdata"; printf '%s\n' "$lsys" >"$ah/tools/fitness/x/testdata/evil.wxs"
+must_fail_with "fitness-agent-host on a WiX file under tools/fitness (A1)" 'LocalSystem' agenthost "$ah"
+for inc in '..\\..\\tools\\fitness\\x\\testdata\\evil.wxs' '..\\..\\tools\\%66itness\\x\\testdata\\evil.wxs' '..\\..\\**\\*.wxs' '..\\..\\tools\\$(F)$(N)\\x\\testdata\\evil.wxs'; do
+  printf '<Project><PropertyGroup><F>fit</F><N>ness</N></PropertyGroup><ItemGroup><Compile Include="%s"/></ItemGroup></Project>\n' "$inc" >"$ah/packaging/windows/A.wixproj"
+  must_fail_with "fitness-agent-host on Compile Include $inc (A1)" 'LocalSystem' agenthost "$ah"
+done
+rm -f "$ah/packaging/windows/A.wixproj"
+printf '<Project><ItemGroup><Compile Include="..\\..\\tools\\fitness\\x\\testdata\\evil.wxs"/></ItemGroup></Project>\n' >"$ah/packaging/windows/Directory.Build.props"
+must_fail_with "fitness-agent-host on a Directory.Build.props include (A1)" 'LocalSystem' agenthost "$ah"
+rm -f "$ah/packaging/windows/Directory.Build.props"
+ln -s "$ah/tools/fitness/x/testdata" "$ah/tools/fx"
+must_fail_with "fitness-agent-host on a non-WiX-named directory link outside packaging/ (A1)" 'symbolic link to a directory' agenthost "$ah"
+rm -rf "$ah/tools"
+mkdir -p "$ah/elsewhere"; printf '%s\n' "$lsys" >"$ah/elsewhere/x.wxs"; ln -s "$ah/elsewhere" "$ah/packaging/windows/testdata"
+must_fail_with "fitness-agent-host on a symlinked directory under packaging/ (A1)" 'symbolic link' agenthost "$ah"
+rm -rf "$ah/packaging/windows/testdata" "$ah/elsewhere"
+if [ "$(id -u)" != 0 ]; then
+  mkdir -p "$ah/packaging/windows/testdata"; printf '%s\n' "$lsys" >"$ah/packaging/windows/testdata/x.wxs"; chmod 000 "$ah/packaging/windows/testdata"
+  must_fail_with "fitness-agent-host on an unreadable directory under packaging/ (A1)" 'cannot be walked' agenthost "$ah"
+  chmod 755 "$ah/packaging/windows/testdata"; rm -rf "$ah/packaging/windows/testdata"
+fi
+# T-0677 security review, attempt 2: WiX is classified by content, intermediates and odd links fail closed.
+mkdir -p "$ah/x"
+for n in evil.xml evil.golden; do
+  printf '%s\n' "$lsys" >"$ah/x/$n"
+  printf '<Project><ItemGroup><Compile Include="..\\..\\x\\%s"/></ItemGroup></Project>\n' "$n" >"$ah/packaging/windows/A.wixproj"
+  must_fail_with "fitness-agent-host on a LocalSystem WiX document named $n (A1, by content)" 'LocalSystem' agenthost "$ah"
+  rm -f "$ah/x/$n" "$ah/packaging/windows/A.wixproj"
+done
+printf '<Include><ServiceInstall Name="x" Account="LocalSystem"/></Include>\n' >"$ah/x/evil.txt"
+printf '<Wix><?include ../../x/evil.txt ?></Wix>\n' >"$ah/packaging/windows/core.wxs"
+must_fail_with "fitness-agent-host on a LocalSystem <?include?> of a .txt file (A1, by content)" 'LocalSystem' agenthost "$ah"
+rm -f "$ah/x/evil.txt" "$ah/packaging/windows/core.wxs"
+printf 'PK' >"$ah/x/core.wixlib"
+must_fail_with "fitness-agent-host on a prebuilt .wixlib (A1)" 'prebuilt WiX intermediate' agenthost "$ah"
+rm -f "$ah/x/core.wixlib"
+mkdir -p "$tmp/wixir"; printf '{}' >"$tmp/wixir/wix-ir.json"
+(cd "$tmp/wixir" && rm -f ../blob.dat.zip && python3 -c 'import zipfile;zipfile.ZipFile("../blob.dat.zip","w").write("wix-ir.json")') && mv "$tmp/blob.dat.zip" "$ah/x/blob.dat"
+must_fail_with "fitness-agent-host on a renamed zip holding wix-ir.json (A1)" 'wix-ir.json' agenthost "$ah"
+rm -f "$ah/x/blob.dat"
+ln -s /nonexistent/agent-src "$ah/packaging/windows/src"
+must_fail_with "fitness-agent-host on a dangling symlink under packaging/ (A1)" 'cannot be resolved' agenthost "$ah"
+rm -f "$ah/packaging/windows/src"
+mkdir -p "$tmp/outside"; printf '%s\n' "$lsys" >"$tmp/outside/evil.xml"; ln -s "$tmp/outside/evil.xml" "$ah/x/fx.dat"
+must_fail_with "fitness-agent-host on a file symlink leaving the repo (A1)" 'leaves the repository' agenthost "$ah"
+rm -f "$ah/x/fx.dat"
+for n in evil.bin evil.png; do
+  printf '%s\n' "$lsys" >"$ah/x/$n"
+  printf '<Project><ItemGroup><Compile Include="..\\..\\x\\%s"/></ItemGroup></Project>\n' "$n" >"$ah/packaging/windows/A.wixproj"
+  must_fail_with "fitness-agent-host on a LocalSystem WiX document saved as $n (A1, extension never exempts)" 'LocalSystem' agenthost "$ah"
+  rm -f "$ah/x/$n" "$ah/packaging/windows/A.wixproj"
+done
+printf '%s\n' "$lsys" >"$ah/packaging/windows/evil.bin"
+must_fail_with "fitness-agent-host on a LocalSystem WiX document saved as packaging/windows/evil.bin (A1)" 'LocalSystem' agenthost "$ah"
+rm -f "$ah/packaging/windows/evil.bin"
+python3 -c 'import sys;s=sys.argv[1];open(sys.argv[2],"wb").write(b"\xff\xfe\0\0"+s.encode("utf-32-le"))' "$lsys" "$ah/x/evil.xml"
+must_fail_with "fitness-agent-host on a UTF-32LE LocalSystem WiX document (A1)" 'LocalSystem' agenthost "$ah"
+rm -f "$ah/x/evil.xml"
+# T-0677 attempt 5: BOM-less encodings detected from the first four bytes (XML 1.0 Appendix F).
+printf '<Project><ItemGroup><Compile Include="..\\..\\x\\evil.xml"/></ItemGroup></Project>\n' >"$ah/packaging/windows/A.wixproj"
+for enc in utf-32-le utf-32-be; do
+  python3 -c 'import sys;open(sys.argv[3],"wb").write(sys.argv[1].encode(sys.argv[2]))' "$lsys" "$enc" "$ah/x/evil.xml"
+  must_fail_with "fitness-agent-host on a BOM-less $enc LocalSystem WiX document (A1)" 'LocalSystem' agenthost "$ah"
+done
+python3 -c 'import sys;s=sys.argv[1];open(sys.argv[2],"wb").write(("<?xml version=\"1.0\"?><!--"+"\u4e01"*40000+"-->"+s).encode("utf-16-le"))' "$lsys" "$ah/x/evil.xml"
+must_fail_with "fitness-agent-host on a BOM-less UTF-16LE LocalSystem WiX document with a NUL-free pad (A1)" 'LocalSystem' agenthost "$ah"
+# T-0677 attempt 6: first-two-byte detection like .NET DetectEncoding, and 3412/2143 UCS-4 BOMs fail closed.
+for c in 'np16le|utf-16-le|<Wix><Fragment><!--' 'np16be|utf-16-be|<Wix><Fragment><!--' 'cm16le|utf-16-le|<!--'; do
+  IFS='|' read -r nm enc head <<<"$c"
+  python3 -c 'import sys;open(sys.argv[4],"wb").write((sys.argv[1]+"\u4e01"*40000+"-->"+sys.argv[2]+"</Fragment></Wix>").encode(sys.argv[3]))' "$head" "$lsys" "$enc" "$ah/x/evil.xml"
+  must_fail_with "fitness-agent-host on a BOM-less $nm WiX document with a NUL-free pad (A1)" 'LocalSystem' agenthost "$ah"
+done
+printf '<Project><ItemGroup><Compile Include="evil.dat"/></ItemGroup></Project>\n' >"$ah/packaging/windows/A.wixproj"
+python3 -c 'import sys;open(sys.argv[3],"wb").write((sys.argv[1]+"\u4e01"*40000+"-->"+sys.argv[2]+"</Fragment></Wix>").encode("utf-16-le"))' "<Wix><Fragment><!--" "$lsys" "$ah/packaging/windows/evil.dat"
+must_fail_with "fitness-agent-host on a BOM-less UTF-16LE WiX file named .dat under packaging/ (A1)" 'LocalSystem' agenthost "$ah"
+rm -f "$ah/packaging/windows/evil.dat"
+for bom in '\xfe\xff\0\0' '\0\0\xff\xfe'; do
+  printf "$bom"'rest' >"$ah/x/evil.xml"
+  must_fail_with "fitness-agent-host on a UCS-4 BOM in an unusual order (A1, fail closed)" 'cannot decode' agenthost "$ah"
+done
+# T-0677 attempt 7: the declared encoding name (.NET CheckEncoding/SwitchEncoding) is mirrored, fail closed.
+printf '<Project><ItemGroup><Compile Include="..\\..\\x\\evil.xml"/></ItemGroup></Project>\n' >"$ah/packaging/windows/A.wixproj"
+for c in 'dc32|utf-32|utf-32-le|' 'dc16be|utf-16BE|utf-16-be|\u4e01' 'dcunifffe|unicodeFFFE|utf-16-be|\u4e01' 'dcutf7|utf-7|utf-8|'; do
+  IFS='|' read -r nm decl body pad <<<"$c"
+  python3 -c 'import sys;d,b,p,s=sys.argv[1:5];pad=(chr(0x4e01)*40000) if p else "";open(sys.argv[5],"wb").write(("<?xml version=\"1.0\" encoding=\""+d+"\"?>").encode("ascii")+("<Wix><Fragment><!--"+pad+"-->"+s+"</Fragment></Wix>").encode(b))' "$decl" "$body" "$pad" "$lsys" "$ah/x/evil.xml"
+  must_fail_with "fitness-agent-host on a WiX document declaring encoding $decl (A1, fail closed)" 'declares an encoding' agenthost "$ah"
+done
+cp "$ah/x/evil.xml" "$ah/packaging/windows/evil.dat"
+must_fail_with "fitness-agent-host on a utf-7 declaring file named .dat under packaging/ (A1)" 'declares an encoding' agenthost "$ah"
+rm -f "$ah/packaging/windows/evil.dat"
+# T-0677 attempt 9: us-ascii/iso-8859-1/windows-1252 are accepted only for pure-ASCII files (.NET turns bytes >= 0x80 into '?').
+python3 -c 'import sys;open(sys.argv[2],"wb").write(b"<?xml version=\"1.0\" encoding=\"us-ascii\"?><?x \x80>"+sys.argv[1].encode()+b"<?y ?>")' "<Wix><Fragment>$lsys</Fragment></Wix>" "$ah/x/evil.xml"
+must_fail_with "fitness-agent-host on a us-ascii declaring file hiding a WiX body behind a 0x80 byte (A1)" 'declares an encoding' agenthost "$ah"
+# T-0677 attempt 10: the same hole past the 64 KiB head (full re-read must run the encoding rule too).
+python3 -c 'import sys;open(sys.argv[2],"wb").write(b"<?xml version=\"1.0\" encoding=\"us-ascii\"?><!--"+b"a"*70000+b"--><?x \x80>"+sys.argv[1].encode()+b"<?y ?>")' "<Wix><Fragment>$lsys</Fragment></Wix>" "$ah/x/evil.xml"
+must_fail_with "fitness-agent-host on a us-ascii file with 0x80 hidden past the 64 KiB head (A1)" 'declares an encoding' agenthost "$ah"
+rm -f "$ah/packaging/windows/A.wixproj"
+for sig in '\0\0\x3c\0' '\0\x3c\0\0' '\x4c\x6f\xa7\x94'; do
+  printf "$sig"'rest' >"$ah/x/evil.xml"
+  must_fail_with "fitness-agent-host on an undecodable XML signature (A1, fail closed)" 'cannot decode' agenthost "$ah"
+done
+rm -f "$ah/x/evil.xml"
+printf '\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\20' >"$ah/packaging/windows/logo.png"
+must_pass "fitness-agent-host on a real PNG under packaging/ (A1 negative)" agenthost "$ah"
+rm -f "$ah/packaging/windows/logo.png"
+printf 'package x\n\nconst S = `%s`\n' "$lsys" >"$ah/x/fix.go"
+must_pass "fitness-agent-host on a Go file holding a WiX snippet in a string (A1 negative)" agenthost "$ah"
+rm -rf "$ah/x"
 printf 'package main\n\nimport _ "fx.test/internal/directory/client"\n\nfunc main() {}\n' >"$ah/cmd/agent/main.go"
 must_fail_with "fitness-agent-host on a directory client in the agent binary (A4)" 'internal/directory/client' agenthost "$ah"
 printf 'package main\n\nfunc main() {}\n' >"$ah/cmd/agent/main.go"
@@ -1179,6 +1301,16 @@ sed -i 's/TestHeadGuards/TestHeadGuardsRenamed/' "$au/internal/platform/audit/a_
 must_fail_with "fitness-audit A2 when a bound test is renamed away" 'A2 \./internal/platform/audit TestHeadGuards \[test-missing\]' "$aubin" -root "$au" -checks A2
 write_a2 ''
 must_pass "fitness-audit A2" "$aubin" -root "$au" -checks A2
+
+# --- fitness-update (T-0139) -------------------------------------------------------------------
+upd="$tmp/update-bin"
+go build -o "$upd" ./tools/fitness/update
+must_pass "fitness-update (both couriers)" "$upd"
+must_fail_with "fitness-update against a verifier that accepts bad updates" 'accepted a bad update; want refusal "tamper"' "$upd" -sabotage accept-all
+must_fail_with "fitness-update against a verifier that refuses for the wrong reason" 'refused with "tamper", want "rollback"' "$upd" -sabotage mislabel
+must_fail_with "fitness-update against a verifier that extracts before it decides" 'extraction before verification' "$upd" -sabotage leak
+must_pass "make fitness-update-offline is wired into make ci" bash -c "make -n ci | grep -q 'tools/fitness/update/offline.sh'"
+must_pass "offline.sh is tracked by git and executable" bash -c "git ls-files --error-unmatch tools/fitness/update/offline.sh >/dev/null && test -x tools/fitness/update/offline.sh"
 
 # --- fuzz-target / fuzz-saml (T-0490) -----------------------------------------------------------
 fz="$tmp/fuzz"

@@ -64,5 +64,9 @@ lab/windows/.win-lab-ca.pem
 !/tools/fitness/*/*.go
 !/tools/fitness/*/*.txt
 !/tools/fitness/*/testdata/
+!/tools/fitness/update/offline.sh
 # stray `go build ./tools/fitness/audit` output
 /audit
+
+# built fitness binary (build into $TMPDIR instead)
+/agenthost

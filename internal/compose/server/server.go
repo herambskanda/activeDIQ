@@ -23,6 +23,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/capability"
 	"github.com/skenzeriq/activediq/internal/platform/fleet"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
+	"github.com/skenzeriq/activediq/internal/platform/keys"
 	"github.com/skenzeriq/activediq/internal/platform/limiter"
 	"github.com/skenzeriq/activediq/internal/platform/module"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
@@ -34,15 +35,20 @@ import (
 var ErrNoDatabase = errors.New("server: no database configured (" + config.EnvDatabaseDSN + ")")
 
 // Run runs the server role until ctx is done: it boots the modules, opens the store and runs the job
-// worker. When ctx ends the worker stops claiming and drains; Run returns jobs.ErrDrainTimeout (wrapped)
+// worker. getenv (os.Getenv in the binary) reads the KEK settings, which are named and validated only
+// in this package (LoadKEKConfig). When ctx ends the worker stops claiming and drains; Run returns jobs.ErrDrainTimeout (wrapped)
 // if running bodies ignored the forced cancellation, which the binary turns into a non-zero exit.
-func Run(ctx context.Context, cfg config.Config) error {
+func Run(ctx context.Context, cfg config.Config, getenv func(string) string) error {
 	if cfg.DatabaseDSN == "" {
 		return ErrNoDatabase
 	}
 	// The identity is settled before anything is opened too: a non-loopback bind without a TLS
 	// directory, or an unwritable one, fails startup here.
-	id, err := apiIdentity(cfg, time.Now())
+	kc, err := LoadKEKConfig(getenv)
+	if err != nil {
+		return fmt.Errorf("server: %w", err)
+	}
+	id, kekp, err := apiIdentityProvider(cfg, kc, time.Now())
 	if err != nil {
 		return err
 	}
@@ -94,7 +100,11 @@ func Run(ctx context.Context, cfg config.Config) error {
 	if err != nil {
 		return err
 	}
-	dirClient := directoryFacts(reads, client.WithTier0Builder(t0))
+	vopts, err := verifyOptions(src)
+	if err != nil {
+		return err
+	}
+	dirClient := directoryFacts(reads, append(vopts, client.WithTier0Builder(t0))...)
 	authzr, err := rbacAuthorizer(db, dirClient)
 	if err != nil {
 		return err
@@ -113,7 +123,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 	}
 	// The console authentication stack: sessions, the cookie Authenticator and the step-up check. The
 	// tenant-owner writer shares its session store (it ends a changed owner's sessions).
-	console, err := buildConsole(db, ok.Chainer, slog.Default())
+	console, err := buildConsole(db, ok.Chainer, keys.NewStore(kekp).KeySource(), slog.Default())
 	if err != nil {
 		return err
 	}
@@ -132,6 +142,13 @@ func Run(ctx context.Context, cfg config.Config) error {
 		return err
 	}
 	tags = append(tags, syslog.Handlers{Store: siem}.Bind())
+	// First-run setup (TM-TB16-T7, AN-4): an unclaimed install holds a one-time secret the installing
+	// administrator reads from the setup directory; the claim route consumes it. Needs the TLS directory.
+	setupTags, err := buildSetup(cfg, time.Now)
+	if err != nil {
+		return err
+	}
+	tags = append(tags, setupTags...)
 	api, err := buildAPIPorts(cfg, console.ports(lim, authzr), tags...)
 	if err != nil {
 		return err
@@ -139,6 +156,10 @@ func Run(ctx context.Context, cfg config.Config) error {
 	// Modules and platform packages contribute job kinds to this registry; the worker runs it.
 	jreg := jobs.NewRegistry()
 	if _, err := buildConnections(db, ok.Chainer, dirClient, jreg); err != nil {
+		return err
+	}
+	// The tenant, its data key and its audit genesis exist before anything listens or the worker claims.
+	if _, err := bootstrapTenant(ctx, cfg, db, ok.Chainer, kekp, jreg); err != nil {
 		return err
 	}
 	ln, err := net.Listen("tcp", cfg.APIAddr)
@@ -200,21 +221,31 @@ func Run(ctx context.Context, cfg config.Config) error {
 
 // apiIdentity validates the listen address against the TLS configuration and loads or generates the
 // per-install certificate.
-func apiIdentity(cfg config.Config, now time.Time) (apitls.Identity, error) {
+func apiIdentity(cfg config.Config, kc KEKConfig, now time.Time) (apitls.Identity, error) {
+	id, _, err := apiIdentityProvider(cfg, kc, now)
+	return id, err
+}
+
+// apiIdentityProvider is apiIdentity that also returns the unlocked KEK provider, so the keystore is opened
+// (and its passphrase stretched) once per boot and the same provider serves the tenant DEK source.
+func apiIdentityProvider(cfg config.Config, kc KEKConfig, now time.Time) (apitls.Identity, keys.Provider, error) {
 	if err := cfg.ValidateAPIListen(); err != nil {
-		return apitls.Identity{}, fmt.Errorf("server: %w", err)
+		return apitls.Identity{}, nil, fmt.Errorf("server: %w", err)
 	}
-	// With the KEK profile configured the provider is built first and any failure (missing, unreadable
-	// or malformed KEK) stops startup: there is no fallback to an unsealed key.
-	p, err := platformKeyProvider(cfg)
+	// The KEK provider is unlocked first and any failure (no keystore, wrong passphrase, corrupt file) stops
+	// startup: there is no fallback to an unsealed key and nothing is generated here.
+	if err := kc.checkPlacement(cfg.APITLSDir); err != nil {
+		return apitls.Identity{}, nil, fmt.Errorf("server: %w", err)
+	}
+	p, err := platformKeyProvider(kc)
 	if err != nil {
-		return apitls.Identity{}, fmt.Errorf("server: key provider: %w", err)
+		return apitls.Identity{}, nil, fmt.Errorf("server: key provider: %w", err)
 	}
 	id, err := apitls.LoadOrGenerateSealed(cfg.APITLSDir, cfg.APIAddr, now, p)
 	if err != nil {
-		return apitls.Identity{}, fmt.Errorf("server: api tls: %w", err)
+		return apitls.Identity{}, nil, fmt.Errorf("server: api tls: %w", err)
 	}
-	return id, nil
+	return id, p, nil
 }
 
 // buildAPIPorts makes the API handler over the given ports: Run mounts the console stack's.

@@ -18,12 +18,17 @@ import (
 	"github.com/skenzeriq/activediq/internal/compose/agent"
 	"github.com/skenzeriq/activediq/internal/compose/config"
 	"github.com/skenzeriq/activediq/internal/platform/fleet/dial"
+	"github.com/skenzeriq/activediq/internal/platform/prochardening"
 )
 
 // version is set by the release pipeline (-ldflags -X main.version=...).
 var version = "dev"
 
 func main() {
+	if err := prochardening.Apply(os.Getenv); err != nil {
+		fmt.Fprintln(os.Stderr, "agent:", err)
+		os.Exit(2)
+	}
 	if len(os.Args) > 1 && os.Args[1] == "enroll" {
 		os.Exit(enroll(os.Args[2:], os.Stdin, os.Stderr))
 	}
