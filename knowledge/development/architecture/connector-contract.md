@@ -805,6 +805,14 @@ on an AD connection or E5 on an Entra connection. Another basis, an empty basis 
 `object` is `INVALID_ARGUMENT` before any directory call; no run starts and the gate keeps its
 previous run. On an AD-only deployment the list is empty, which is correct (C16 needs a HybridLink).
 
+**`pinned_c13` (T-0358, TM-D26 rule 10).** The C13 group GUIDs the server has pinned for the AD
+connection (`connection_c13_pins`). The connector passes them to the classifier, so a pinned group
+that was renamed stays C13 and stays in `tier0_set`. A malformed GUID is `INVALID_ARGUMENT` before
+any directory call. The server pins at first discovery: on an onboarding run it persists the groups
+whose `tier0_set` basis is C13; the pin set is add-only and a pin store that cannot be read or
+written interrupts the run. The classifier raises `DNSADMINS_UNDETERMINED` (not silence) when no
+DnsAdmins group is found and the DNS zone containers are unreadable (`InsufficientRights`).
+
 A stream without `completed` is an interrupted run: the verdict is `FAILED` with `run_interrupted`
 (DM-10.I10). The run is **read-only**. It never requests the SACL; step 3 uses the SD-flags control
 for DACL, owner and group only, through the typed security-descriptor primitive (T-0028, T-0118).

@@ -48,6 +48,9 @@ func ADInputFromRequest(req *v1.VerifyConnectionRequest, identity dn.ObjectRef) 
 	if in.Designated, err = conv("designated_tier0", req.GetDesignatedTier0()); err != nil {
 		return in, err
 	}
+	if in.PinnedC13, err = conv("pinned_c13", req.GetPinnedC13()); err != nil {
+		return in, err
+	}
 	for _, m := range req.GetCorrelatedTier0() {
 		g, gerr := ParseGUID(m.GetObject())
 		if gerr != nil {

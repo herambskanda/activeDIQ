@@ -378,3 +378,62 @@ func TestStreamRefusesWithoutDirectoryIdentity(t *testing.T) {
 		t.Fatalf("err=%v sent=%d: a run with no bound directory must stream nothing", err, sent)
 	}
 }
+
+// T-0358 / TM-D26 rule 10: pinned_c13 on the request reaches the snapshot, so over the stream path a
+// renamed pinned group stays in the streamed tier0 set; without the pin it drops out.
+func TestStreamPinnedC13KeepsRenamedGroupInTier0Set(t *testing.T) {
+	pin := guidN(41)
+	run := func(pins ...*v1.Guid) map[string]bool {
+		w := newWorld(t)
+		w.setTokens()
+		ref, _ := dn.ParseObjectRef(w.id.DN)
+		prev := snapshotWith
+		// A stand-in for the classifier's rule: a pinned GUID is C13 whatever its name now is.
+		snapshotWith = func(_ context.Context, _ ADDirectory, pinned, _ []adguid.GUID) (*tier0.ADSet, error) {
+			s := tier0.NewADSet()
+			for _, p := range pinned {
+				s.AddC13(p)
+			}
+			return s, nil
+		}
+		defer func() { snapshotWith = prev }()
+		req := request(w)
+		req.PinnedC13 = pins
+		var members = map[string]bool{}
+		err := StreamAD(context.Background(), w.f, nil, req, ref, testDirectory(), func(m *v1.VerifyConnectionResponse) error {
+			for _, x := range m.GetTier0Set().GetMembers() {
+				g, _ := ParseGUID(x.GetObject())
+				members[g.String()] = true
+			}
+			return nil
+		}, func() time.Time { return time.Unix(1_700_000_000, 0) })
+		if err != nil {
+			t.Fatal(err)
+		}
+		return members
+	}
+	if got := run(pbGuid(pin)); !got[pin.String()] {
+		t.Errorf("pinned renamed group missing from tier0 set: %v", got)
+	}
+	if got := run(); got[pin.String()] {
+		t.Errorf("unpinned group in tier0 set: %v", got)
+	}
+}
+
+func TestMalformedPinnedC13IsInvalidArgument(t *testing.T) {
+	for name, g := range map[string]*v1.Guid{
+		"short": {Value: []byte{1, 2, 3}},
+		"nil":   nil,
+		"empty": {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newWorld(t)
+			req := request(w)
+			req.PinnedC13 = []*v1.Guid{g}
+			msgs, err := w.stream(t, nil, req)
+			if !IsInvalidArgument(err) || len(msgs) != 0 || len(w.f.reads) != 0 {
+				t.Fatalf("err=%v sent=%d reads=%d", err, len(msgs), len(w.f.reads))
+			}
+		})
+	}
+}
