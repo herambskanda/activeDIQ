@@ -45,7 +45,8 @@ type Exchange func(ctx context.Context, creds credentials.TransportCredentials, 
 //     root; the token is sent only over a connection verified against it (no skip option, no retry
 //     and no fallback on failure);
 //  3. the returned bundle is parsed strictly (rule D3) and must contain the pinned CA;
-//  4. the returned leaf must match our key, verify to that bundle and carry a component identity.
+//  4. the returned leaf must match our key, verify for ClientAuth to a tenant client CA of the bundle
+//     (never to the pinned server CA, which is the only TLS root) and carry a component identity.
 //
 // Any failure persists nothing. The key and token never appear in an error.
 func Enroll(ctx context.Context, m Material, dir string, ex Exchange) (*State, error) {
@@ -87,7 +88,7 @@ func Enroll(ctx context.Context, m Material, dir string, ex Exchange) (*State, e
 	if err != nil {
 		return nil, ErrLeaf
 	}
-	if err := checkLeaf(leaf, key, ca); err != nil {
+	if err := checkLeaf(leaf, key, ca.ClientCAs); err != nil {
 		return nil, err
 	}
 	eps, err := checkEndpoints(resp.Endpoints)
@@ -107,7 +108,9 @@ func Enroll(ctx context.Context, m Material, dir string, ex Exchange) (*State, e
 // ErrLeaf: the returned leaf is not ours, not from the pinned CA, or carries no component identity.
 var ErrLeaf = errors.New("dial: server returned an unusable component certificate")
 
-func checkLeaf(leaf *x509.Certificate, key *ecdsa.PrivateKey, ca []*x509.Certificate) error {
+// checkLeaf verifies the issued leaf for ClientAuth against the tenant client CAs of the bundle. The
+// pinned server CA is not among them: it never signs identities.
+func checkLeaf(leaf *x509.Certificate, key *ecdsa.PrivateKey, clientCAs []*x509.Certificate) error {
 	pub, ok := leaf.PublicKey.(*ecdsa.PublicKey)
 	if !ok || !pub.Equal(key.Public()) {
 		return ErrLeaf
@@ -115,7 +118,7 @@ func checkLeaf(leaf *x509.Certificate, key *ecdsa.PrivateKey, ca []*x509.Certifi
 	if _, err := fleet.IdentityOf(leaf); err != nil {
 		return ErrLeaf
 	}
-	opts := x509.VerifyOptions{Roots: Pool(ca), KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, CurrentTime: time.Now()}
+	opts := x509.VerifyOptions{Roots: Pool(clientCAs), KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, CurrentTime: time.Now()}
 	if _, err := leaf.Verify(opts); err != nil {
 		return ErrLeaf
 	}

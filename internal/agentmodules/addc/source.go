@@ -23,7 +23,7 @@ type RawEvent struct {
 	Unparsable bool
 }
 
-// ErrUnreadable and ErrUnsupported are the host's typed errors (internal/agenthost/api).
+// ErrUnreadable and ErrUnsupported are the host's typed errors (internal/agenthost/hostapi).
 var (
 	ErrUnreadable  = hostapi.ErrUnreadable
 	ErrUnsupported = hostapi.ErrUnsupported

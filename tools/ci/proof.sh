@@ -1355,6 +1355,33 @@ must_fail_with "fitness-keys FF-KEY-5 on an INSERT reachable from the KeySource"
 fresh_kc; printf 'package keys\n\nvar _ = tablekind.Declare(tablekind.Table{Name: "public.tenant_keys", Entity: "DM-02", Kind: tablekind.Tenant})\n\nfunc Provision() { _ = `INSERT INTO tenant_keys` }\n' >"$kct/internal/platform/keys/store.go"
 must_fail_with "fitness-keys FF-KEY-1 on a tenant_keys declaration without Sealed: wrapped_dek" 'FF-KEY-1 \[sealed-declaration\]' "$kcbin" -root "$kct" -static-only
 
+# --- fitness-fleet-ca-scope (ADR-0008 fitness items 1-6, T-0738), the real CLI on throw-away trees ----
+# (-static-only: the bound integration tests are listed pending until their tickets land; the rules'
+# own failing fixtures are go test ./tools/fitness/fleetca)
+fcbin="$tmp/fitness-fleet-ca-scope"; go build -o "$fcbin" ./tools/fitness/fleetca
+fct="$tmp/fc"
+fleetsql=internal/platform/fleet/fleetsql
+fresh_fc() {
+  rm -rf "$fct"; mkdir -p "$fct/$fleetsql" "$fct/migrations" "$fct/internal/a"
+  printf 'module fc.test\n\ngo 1.27.0\n' >"$fct/go.mod"
+  printf 'package fleetsql\n\nfunc (e *Enroller) SignServerLeaf(names []string) { e.serverSigner() }\nfunc (e *Enroller) serverSigner() int { return 0 }\n' >"$fct/$fleetsql/s.go"
+  printf 'CREATE TABLE public.fleet_server_ca (id uuid, sealed_key bytea CHECK (octet_length(sealed_key) > 31));\n' >"$fct/migrations/0001_x.sql"
+}
+fresh_fc
+must_pass "fitness-fleet-ca-scope (clean tree)" "$fcbin" -root "$fct" -static-only
+fresh_fc; printf 'package fleetsql\n\nfunc (e *Enroller) Sneak() { e.serverSigner() }\n' >"$fct/$fleetsql/x.go"
+must_fail_with "fitness-fleet-ca-scope FCS-1 on a second user of the server CA key" 'FCS-1 \[signer-callers\]' "$fcbin" -root "$fct" -static-only
+fresh_fc; printf 'package fleetsql\n\nfunc (e *Enroller) SignServerLeaf(csr *x509.CertificateRequest) {}\n' >"$fct/$fleetsql/s.go"
+must_fail_with "fitness-fleet-ca-scope FCS-2 on SignServerLeaf accepting a CSR" 'FCS-2 \[caller-key\]' "$fcbin" -root "$fct" -static-only
+fresh_fc; mkdir -p "$fct/internal/platform/fleet/gateway"; printf 'package gateway\n\nfunc f() { pool.AddCert(serverCA) }\n' >"$fct/internal/platform/fleet/gateway/g.go"
+must_fail_with "fitness-fleet-ca-scope FCS-3 on the server CA in the client pool" 'FCS-3 \[client-pool\]' "$fcbin" -root "$fct" -static-only
+fresh_fc; mkdir -p "$fct/internal/platform/fleet/dial"; printf 'package dial\n\nfunc PinnedRoots() {}\nfunc f() { clientTLS(Pool(ca), h, nil) }\n' >"$fct/internal/platform/fleet/dial/d.go"
+must_fail_with "fitness-fleet-ca-scope FCS-4 on a tenant CA as the dial root" 'FCS-4 \[dial-roots\]' "$fcbin" -root "$fct" -static-only
+fresh_fc; printf 'CREATE TABLE public.fleet_server_ca (tenant_id uuid, id uuid, sealed_key bytea CHECK (true));\n' >"$fct/migrations/0001_x.sql"
+must_fail_with "fitness-fleet-ca-scope FCS-5 on a tenant_id column" 'FCS-5 \[tenant-id\]' "$fcbin" -root "$fct" -static-only
+fresh_fc; mkdir -p "$fct/internal/compose/server"; printf 'package server\n\nvar c = tls.Certificate{Certificate: [][]byte{leaf, ca, tenantCA}}\n' >"$fct/internal/compose/server/f.go"
+must_fail_with "fitness-fleet-ca-scope FCS-6 on a three-certificate chain" 'FCS-6 \[chain-length\]' "$fcbin" -root "$fct" -static-only
+
 # --- fitness-built-msi (T-0697, ADR-0006 A1 on the built artefact) ---------------------------------
 # Real MSIs: wixl builds them, msibuild adds MsiServiceConfig/CustomAction rows, msidump (inside the gate)
 # reads them. msitools is a CI prerequisite (runbook ci-and-build.md): a missing tool fails the proof.

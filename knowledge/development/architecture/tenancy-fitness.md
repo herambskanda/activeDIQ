@@ -75,6 +75,11 @@ unchanged there:
 - `ALTER DEFAULT PRIVILEGES FOR ROLE activediq_owner IN SCHEMA public` grants the runtime role
   `SELECT, INSERT, UPDATE, DELETE` on tables (never `TRUNCATE`) and `USAGE, SELECT` on sequences.
 - Any other schema, and any non-default grant (a function, `EXECUTE`), is explicit SQL in a migration.
+- **Third role (migration 0055, T-0733).** The installer also creates `activediq_catrust` (`NOLOGIN NOSUPERUSER
+  NOBYPASSRLS`) and makes `activediq_owner` a member of it; 0054 fails loudly if the role is missing, is not
+  `NOLOGIN`/`NOBYPASSRLS`, the migration role is not a member, or `activediq_app` is. `storetest` and `pgharness`
+  provision it the same way. T2 accepts exactly one non-tenant-shaped permissive policy: `FOR SELECT TO
+  activediq_catrust` (`fleet_ca_trust_read`).
 - `tenants` lives in `public`. Migration 0001 itself re-states the default privileges and the schema
   grant, so an installer that created only the two roles and a database the owner owns is enough: the
   script fails loudly if the split is missing or broken (roles absent, either one a superuser or
