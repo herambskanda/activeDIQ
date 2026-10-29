@@ -328,7 +328,7 @@ func writeConfig() error {
 // SID was not removed at uninstall (the custom action is Return=ignore so uninstall still
 // completes). Best effort: a failure to log is itself ignored.
 func warnRevokeFailed(cause error) {
-	l, err := eventlog.Open("activeDIQAgent")
+	l, err := eventlog.Open(agentEventSource)
 	if err != nil {
 		return
 	}

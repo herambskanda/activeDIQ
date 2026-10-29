@@ -3,6 +3,8 @@ package main
 import (
 	"errors"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -86,5 +88,34 @@ func TestEventSourceMatchesMSI(t *testing.T) {
 	}
 	if !strings.Contains(string(ag), `OpenEventLog("`+agentEventSource+`")`) {
 		t.Fatalf("agent logs under a different source than %q", agentEventSource)
+	}
+}
+
+// Every Application-log write in agentsetup must use the shared agentEventSource constant, never a
+// string literal (T-0751: warnRevokeFailed used "activeDIQAgent", an unregistered source).
+func TestAgentsetupEventSourceIsSharedConstant(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	re := regexp.MustCompile(`eventlog\.(Open|InstallAsEventCreate|Install)\(\s*([^,)]*)`)
+	n := 0
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range re.FindAllStringSubmatch(string(b), -1) {
+			n++
+			if m[1] != "Open" || strings.TrimSpace(m[2]) != "agentEventSource" {
+				t.Errorf("%s: %s uses source %q; must be eventlog.Open(agentEventSource)", f, m[1], m[2])
+			}
+		}
+	}
+	if n == 0 {
+		t.Fatal("no eventlog.Open call found; test is stale")
 	}
 }
