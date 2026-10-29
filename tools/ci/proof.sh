@@ -323,6 +323,15 @@ fresh_stack_tree; mkdir -p "$fs/internal/c"
 printf 'package c\n\n// int one(void) { return 1; }\nimport "C"\n\nfunc One() int { return int(C.one()) }\n' >"$fs/internal/c/c.go"
 printf 'package main\n\nimport _ "fs.test/internal/c"\n\nfunc main() {}\n' >"$fs/cmd/server/main.go"
 must_fail_with "F2 on a package that needs cgo (CGO_ENABLED=0 build)" 'CGO_ENABLED=0 go build \./\.\.\. fails for linux/amd64' stack -checks F2
+fresh_stack_tree; mkdir -p "$fs/internal/x"
+printf '//go:build lab\n\npackage x\n' >"$fs/internal/x/x.go"
+must_fail_with "F2 on the lab test tag in an undeclared non-test file" 'internal/x/x.go: F2 \(ADR-0001 rule 2\): line 1: test tag "lab" is only allowed in _test.go' stack -checks F2 -skip-build
+# ADR-0001 amendment A1 (T-0792): a declared lab build file whose lab half does not compile fails the -tags lab leg.
+fresh_stack_tree; mkdir -p "$fs/internal/x"
+printf '//go:build lab\n\npackage x\n\nconst Lab = undefinedName\n' >"$fs/internal/x/boot_lab.go"
+printf '//go:build !lab\n\npackage x\n\nconst Lab = false\n' >"$fs/internal/x/boot_off.go"
+sed -i 's#"exceptions": {"platformAdapters": \[\]}#"exceptions": {"platformAdapters": [], "labBuilds": [{"path": "internal/x/boot_lab.go", "adr": "0001-stack.md"}, {"path": "internal/x/boot_off.go", "adr": "0001-stack.md"}]}#' "$fs/manifest.json"
+must_fail_with "F2 on a declared lab build file whose lab half does not compile" 'CGO_ENABLED=0 go build -tags lab \./\.\.\. fails for linux/amd64' stack -checks F2
 
 fresh_stack_tree
 printf 'module fs.test\n\ngo 1.27.0\n\nrequire github.com/redis/go-redis/v9 v9.0.0\n\nreplace github.com/redis/go-redis/v9 => ./garage/redis\n' >"$fs/go.mod"
