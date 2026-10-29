@@ -17,7 +17,10 @@ type lateFacts struct {
 	err bool // reads fail after the write
 }
 
-func (f lateFacts) Facts(_ context.Context, _ authority.Pins, q authority.FactsQuery) (authority.Facts, error) {
+func (f lateFacts) Facts(ctx context.Context, pins authority.Pins, q authority.FactsQuery) (authority.Facts, error) {
+	if err := readCtxOK(ctx, pins, q); err != nil {
+		return authority.Facts{}, err
+	}
 	f.d.mu.Lock()
 	wrote := f.d.applies[q.Target.GUID] > 0
 	f.d.mu.Unlock()
@@ -25,6 +28,18 @@ func (f lateFacts) Facts(_ context.Context, _ authority.Pins, q authority.FactsQ
 		return authority.Facts{}, errors.New("pin down")
 	}
 	return authority.Facts{Exists: true, Tier0: wrote}, nil
+}
+
+// readCtxOK refuses a read the way the production ConnectorReads does: no tenant or no DSA pin for the
+// naming context in ctx.
+func readCtxOK(ctx context.Context, _ authority.Pins, q authority.FactsQuery) error {
+	if _, ok := authority.TenantFrom(ctx); !ok {
+		return errors.New("read: no tenant in ctx")
+	}
+	if authority.DSAPinsFrom(ctx)[q.Target.NC] == "" {
+		return errors.New("read: no DSA pin in ctx")
+	}
+	return nil
 }
 
 func (p *prig) tier0Run(mode string) runOut {
@@ -117,9 +132,13 @@ type hostFacts struct {
 	t0    map[string]bool // guid -> tier0 after the write, on any DC that answers
 	down  map[string]bool // host -> reads fail after the write
 	hosts []string        // every host a post-write read was made on
+	dsas  []string        // the DSA GUID pinned in ctx of each of those reads
 }
 
-func (f *hostFacts) Facts(_ context.Context, pins authority.Pins, q authority.FactsQuery) (authority.Facts, error) {
+func (f *hostFacts) Facts(ctx context.Context, pins authority.Pins, q authority.FactsQuery) (authority.Facts, error) {
+	if err := readCtxOK(ctx, pins, q); err != nil {
+		return authority.Facts{}, err
+	}
 	f.d.mu.Lock()
 	wrote := false
 	for _, n := range f.d.applies {
@@ -131,30 +150,52 @@ func (f *hostFacts) Facts(_ context.Context, pins authority.Pins, q authority.Fa
 	}
 	h := pins[q.Target.NC]
 	f.hosts = append(f.hosts, h)
+	f.dsas = append(f.dsas, authority.DSAPinsFrom(ctx)[q.Target.NC])
 	if f.down[h] {
 		return authority.Facts{}, errors.New("dc down")
 	}
 	return authority.Facts{Exists: true, Tier0: f.t0[q.Target.GUID]}, nil
 }
 
-// afterWritePinner hands out the first DC until the step wrote, then another one.
-type afterWritePinner struct {
-	d    *dirFake
-	fail bool // the pinner errors once the step wrote
+// otherPinner honours the real contract: Pin returns the first DC (the pin); PinOther one that is not
+// excluded; it errors when fail is set.
+type otherPinner struct{ fail bool }
+
+const (
+	dsaDC1 = "11111111-2222-3333-4444-555555555555"
+	dsaDC2 = "66666666-2222-3333-4444-555555555555"
+)
+
+func (otherPinner) Pin(context.Context, string, authority.NamingContextID, string) (DCPin, error) {
+	return DCPin{Host: "dc1.example.test", DSAGUID: dsaDC1}, nil
 }
 
-func (p afterWritePinner) Pin(context.Context, string, authority.NamingContextID, string) (DCPin, error) {
-	p.d.mu.Lock()
-	defer p.d.mu.Unlock()
-	for _, n := range p.d.applies {
-		if n > 0 {
-			if p.fail {
-				return DCPin{}, errors.New("no other DC")
-			}
-			return DCPin{Host: "dc2.example.test", DSAGUID: "66666666-2222-3333-4444-555555555555"}, nil
+func (p otherPinner) PinOther(_ context.Context, _ string, _ authority.NamingContextID, ex DCPin) (DCPin, error) {
+	if p.fail {
+		return DCPin{}, errors.New("no other DC")
+	}
+	for _, d := range []DCPin{{Host: "DC1.example.test", DSAGUID: dsaDC1}, {Host: "dc2.example.test", DSAGUID: dsaDC2}} {
+		if !strings.EqualFold(d.Host, ex.Host) && d.DSAGUID != ex.DSAGUID {
+			return d, nil
 		}
 	}
-	return DCPin{Host: "dc1.example.test", DSAGUID: "11111111-2222-3333-4444-555555555555"}, nil
+	return DCPin{}, errors.New("none")
+}
+
+// A clean step is verified with no alert when the reads carry what production reads need.
+func TestServerRereadCleanVerifies(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		p := newPRig(t, s, rigOpt{})
+		hf := &hostFacts{d: p.dir}
+		p.r.cfg.Facts = hf
+		r := p.tier0Run("")
+		if r.row != "verified||1|false" || len(p.alerts.got) != 0 {
+			t.Fatalf("step %s alerts %+v", r.row, p.alerts.got)
+		}
+		if len(hf.dsas) == 0 || hf.dsas[0] != dsaDC1 {
+			t.Fatalf("re-read DSA pins = %v", hf.dsas)
+		}
+	})
 }
 
 // ADR-0005 rule 7: the re-read covers every touched object, not only the target (the O8 shape: X is
@@ -175,38 +216,46 @@ func TestServerRereadCoversTouchedObject(t *testing.T) {
 	})
 }
 
-// Fallback DC: a pin outage alone is not a finding; a tier0 answer from the fallback is, naming that DC.
+// Fallback DC: a pin outage alone is not a finding; a tier0 answer from the fallback is, naming the DC
+// whose DSA was actually read.
 func TestServerRereadFallbackDC(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		tier0  bool
-		pinner func(*dirFake) Pinner
-		finds  bool
-		dc     string
+		name    string
+		tier0   bool
+		pinner  Pinner
+		dc2Down bool
+		finds   bool
+		dc      string
 	}{
-		{"fallback clean", false, func(d *dirFake) Pinner { return afterWritePinner{d: d} }, false, ""},
-		{"fallback tier0", true, func(d *dirFake) Pinner { return afterWritePinner{d: d} }, true, "dc2.example.test"},
-		{"no other DC", false, func(d *dirFake) Pinner { return afterWritePinner{d: d, fail: true} }, true, "dc1.example.test"},
-		{"fallback fails too", false, func(*dirFake) Pinner { return pinFake{} }, true, "dc1.example.test"},
+		{"fallback clean", false, otherPinner{}, false, false, ""},
+		{"fallback tier0", true, otherPinner{}, false, true, "dc2.example.test"},
+		{"no other DC", false, otherPinner{fail: true}, false, true, "dc1.example.test"},
+		{"fallback fails too", false, otherPinner{}, true, true, "dc1.example.test"},
+		{"pinner without fallback", false, pinFake{}, false, true, "dc1.example.test"},
 	} {
 		storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 			p := newPRig(t, s, rigOpt{attempts: 2})
-			hf := &hostFacts{d: p.dir, t0: map[string]bool{"a": tc.tier0}, down: map[string]bool{"dc1.example.test": true}}
-			if tc.name == "fallback fails too" {
-				hf.down["dc2.example.test"] = true
-			}
+			hf := &hostFacts{d: p.dir, t0: map[string]bool{"a": tc.tier0}, down: map[string]bool{"dc1.example.test": true, "dc2.example.test": tc.dc2Down}}
 			p.r.cfg.Facts = hf
-			p.r.cfg.Pinner = tc.pinner(p.dir)
+			p.r.cfg.Pinner = tc.pinner
 			r := p.tier0Run("")
 			a := p.alerts.got
 			if !tc.finds {
 				if r.row != "verified||1|false" || len(a) != 0 {
 					t.Fatalf("%s: step %s alerts %+v", tc.name, r.row, a)
 				}
-				return
-			}
-			if r.row != "verify_failed|tier0_after_write|1|false" || len(a) != 1 || a[0].DC != tc.dc || a[0].Source != Tier0SourceServer {
+			} else if r.row != "verify_failed|tier0_after_write|1|false" || len(a) != 1 || a[0].DC != tc.dc || a[0].Source != Tier0SourceServer {
 				t.Fatalf("%s: step %s alerts %+v", tc.name, r.row, a)
+			}
+			// Host and DSA of every read agree: a read of dc2 pins dc2's DSA.
+			for i, h := range hf.hosts {
+				want := dsaDC1
+				if h == "dc2.example.test" {
+					want = dsaDC2
+				}
+				if hf.dsas[i] != want {
+					t.Fatalf("%s: read on %s pinned DSA %s", tc.name, h, hf.dsas[i])
+				}
 			}
 		})
 	}

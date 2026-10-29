@@ -10,6 +10,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
+	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
 // The two sources of a tier0_after_write finding (ADR-0005 rule 7), and the Action's own Verify.
@@ -129,7 +130,7 @@ func (r *Runner) readTier0(ctx context.Context, c *claimed, tg authority.TargetR
 	q := authority.FactsQuery{Target: tg, Tier0: true}
 	pin := c.op.Pins[tg.NC]
 	for try := 1; ; try++ {
-		f, err := r.cfg.Facts.Facts(ctx, c.op.Pins, q)
+		f, err := r.cfg.Facts.Facts(rereadCtx(ctx, c.op.Tenant, c.op.DSAs), c.op.Pins, q)
 		if err == nil {
 			return f.Tier0, pin
 		}
@@ -138,16 +139,29 @@ func (r *Runner) readTier0(ctx context.Context, c *claimed, tg authority.TargetR
 		}
 		r.sleep(r.backoffFor(try))
 	}
-	if r.cfg.Pinner != nil {
-		if p, err := r.cfg.Pinner.Pin(ctx, tg.Connection, tg.NC, ""); err == nil && p.Host != "" && p.Host != pin {
+	// One other DC: chosen explicitly (never the pinned one), and read by its host and its DSA GUID.
+	if fp, ok := r.cfg.Pinner.(FallbackPinner); ok {
+		pctx := authority.WithTenant(ctx, c.op.Tenant.String())
+		if p, err := fp.PinOther(pctx, tg.Connection, tg.NC, DCPin{Host: pin, DSAGUID: c.op.DSAs[tg.NC]}); err == nil &&
+			p.Host != "" && validDSAGUID(p.DSAGUID) && !strings.EqualFold(p.Host, pin) && !strings.EqualFold(p.DSAGUID, c.op.DSAs[tg.NC]) {
 			pins := cloneMap(c.op.Pins)
 			pins[tg.NC] = p.Host
-			if f, err := r.cfg.Facts.Facts(ctx, pins, q); err == nil {
+			dsas := maps.Clone(c.op.DSAs)
+			if dsas == nil {
+				dsas = authority.DSAPins{}
+			}
+			dsas[tg.NC] = p.DSAGUID
+			if f, err := r.cfg.Facts.Facts(rereadCtx(ctx, c.op.Tenant, dsas), pins, q); err == nil {
 				return f.Tier0, p.Host
 			}
 		}
 	}
 	return true, pin // still unknown on every DC tried: counts as tier0
+}
+
+// rereadCtx carries what every live read needs: the tenant and the DSA GUID pins (as liveFacts does).
+func rereadCtx(ctx context.Context, tn tenant.ID, dsas authority.DSAPins) context.Context {
+	return authority.WithDSAPins(authority.WithTenant(ctx, tn.String()), maps.Clone(dsas))
 }
 
 func cloneMap(m authority.Pins) authority.Pins { return maps.Clone(m) }
