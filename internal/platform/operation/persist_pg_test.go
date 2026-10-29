@@ -58,7 +58,10 @@ type itemIn struct {
 }
 type dirIn struct{ Items []itemIn }
 type dirPayload struct{ GUID, Before, Want string }
-type dirOut struct{ GUID string }
+type dirOut struct {
+	GUID   string
+	Report []step.Tier0Finding
+}
 
 func (d *dirFake) action(t *testing.T, id ActionID, stepUp, secretIn bool, class Reversibility) Action {
 	a, err := Define(Typed[dirIn, dirPayload, dirOut]{
@@ -121,6 +124,12 @@ func (d *dirFake) action(t *testing.T, id ActionID, stepUp, secretIn bool, class
 			case "defer":
 				d.val[g] = p.Payload.Want
 				return dirOut{GUID: g}, nil
+			case "report", "report_verr":
+				d.val[g] = p.Payload.Want
+				return dirOut{GUID: g, Report: []step.Tier0Finding{{Object: "x-guid", Bases: []string{"C2"}}}}, nil
+			case "report_unclassified":
+				d.val[g] = p.Payload.Want
+				return dirOut{GUID: g, Report: []step.Tier0Finding{{Object: "x-guid"}}}, nil
 			}
 			d.val[g] = p.Payload.Want
 			d.pwdSet[g] = time.Now()
@@ -130,6 +139,12 @@ func (d *dirFake) action(t *testing.T, id ActionID, stepUp, secretIn bool, class
 			if d.mode[p.Payload.GUID] == "defer" && d.mode["verified"] != "yes" {
 				return Verdict{}, ErrDeferVerify
 			}
+			if d.mode[p.Payload.GUID] == "report_verr" {
+				return Verdict{}, errors.New("read-back failed")
+			}
+			if d.mode[p.Payload.GUID] == "verr" {
+				return Verdict{}, errors.New("read-back failed")
+			}
 			if d.mode[p.Payload.GUID] == "tier0" {
 				return Verdict{Reason: ReasonTier0AfterWrite}, nil
 			}
@@ -138,6 +153,7 @@ func (d *dirFake) action(t *testing.T, id ActionID, stepUp, secretIn bool, class
 			}
 			return Verdict{OK: true}, nil
 		},
+		Tier0:   func(o dirOut) []step.Tier0Finding { return o.Report },
 		Inverse: func(TypedStep[dirPayload], dirOut) (dirIn, error) { return dirIn{}, ErrIrreversible },
 		Observe: func(_ context.Context, _ authority.Pins, p TypedStep[dirPayload], claimedAt time.Time) (Observation, error) {
 			d.mu.Lock()
