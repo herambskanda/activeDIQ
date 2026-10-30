@@ -286,6 +286,346 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/reports/definitions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the report library
+         * @description Answers the report definitions the caller may run, in the order the library shows them (category, then name), a page at a time. q finds a report by its name, its description or any ManageEngine report name it answers (spec 6.2, "Also known as"); it is plain text and is never a filter. The 2a library is AD only, and objects in state deleted or purged are in no report.
+         */
+        get: operations["listReportDefinitions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/definitions/{definitionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a report definition
+         * @description Answers one definition with its presets, ManageEngine crosswalk, columns and the export formats this installation can produce. version selects an older published version; absent answers the current one. Definitions are immutable; a change publishes a new version (X7).
+         */
+        get: operations["getReportDefinition"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/exports/{exportId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get an export's record
+         * @description Answers the export job: state, format, row count, size, file name, digest and expiry. Poll while the state is queued or running.
+         */
+        get: operations["getReportExport"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete an export early
+         * @description Deletes the stored file before it expires (FR-20). Only the account that created it may (modules/reports.md 7.1); a recipient of a delivery of it may not, because other recipients were sent the same file. Anyone else gets 404. Deleting is bookkeeping, not an Action; it is audited as export deleted.
+         */
+        delete: operations["deleteReportExport"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/exports/{exportId}/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download an export's file
+         * @description Streams the stored file, only to an authenticated request that holds reports.export, by export ID; the server resolves the ID to the export record and only the record names the blob. Two paths (modules/reports.md 7.1, 7.2). Creator path: the caller is the account that created the export, and the run-read gate passes for its run (runner is the caller, current read scope equals the stored one), so a scope change stops downloads too; a changed scope answers 409 with errors[].code scope_changed_rerun. Delivery-link path: the caller is not the creator and is the recipient of a delivery link. The right comes from the delivery record (DM-84 Delivery) written when the schedule fired, whose source is this export and whose recipient is the caller's account. It never comes from the schedule's current recipient list, so a recipient removed from the schedule can still open what that fire sent them and nothing later. The server also re-checks that the caller currently holds reports.export and that the account is enabled. The recipient gets the stored owner-scope artefact byte for byte; the run-read gate (runner and scope) does not apply to the recipient, because the delivery record is the authority. Anyone else, with or without reports.export, gets 404 (401 when signed out). The bytes are exactly the owner-scope artefact an attachment would carry, so the digest matches. The content type and file name are those of the format; the name is built by the download-header encoder. Every download is audited with the downloading account. An expired file answers 410 report-result-expired.
+         */
+        get: operations["downloadReportExport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the caller's report runs
+         * @description Answers the runs the caller started, newest first (createdAt, then id as the tie-break, so the order is stable), a page at a time. This is the run history. A scheduled run belongs to the schedule's owner, so the owner sees it here and nobody else does. Another account's runs are not in the list and are not counted: a run is readable only by its runner (modules/reports.md 6.6 check 2), and reports.schedule.manage_all never lists or opens a run. state and definitionId narrow the list; both are typed values, never a filter string. An item is the run header without the parameters, the digest and the scope text; getReportRun answers those. The list does not apply the scope check of getReportRun (check 4), because one item out of date must not fail the page. Instead each item says scopeCurrent: true when the caller's read scope now equals the scope the run was trimmed with (6.6 check 4, evaluated once for the page). When scopeCurrent is false the item's rowCount is null, because a count taken under a scope the caller no longer holds is not shown; opening that run answers 409 scope_changed_rerun, and retryReportRun makes a new run under the current scope. An expired run is listed with state expired and no row count to open. After retention deletes a run record (6.2) it is in no list. Listing is a read of the caller's own bookkeeping; it is not audited per item.
+         */
+        get: operations["listReportRuns"];
+        put?: never;
+        /**
+         * Create a report run
+         * @description Starts one run of a definition over one frozen set of inputs, as a job. A change of preset, filter, period, scope or columns is a new run; paging and sorting read the stored result of one run and never re-execute (spec 8.1). The runner's scope is applied inside the query, and counts are computed after trimming. A run is not an Action (ADR-0005 rule 10): it is system bookkeeping, audited as an event with row count and digest, never values. A scope that grants nothing, or uses a kind reports cannot evaluate (group_members, Entra kinds), is not an error: the run succeeds with no rows and the run header's emptyReason names why (spec 5, unhappy paths). Exporting from such a run is allowed (a record of what was found); only creating, updating or resuming a schedule from such a scope is refused, with report-scope-empty or report-scope-unsupported. Fields that are absent take the preset's value, then the definition's default. Reuse window (modules/reports.md 6.1 step 3, ADR-0010): when the same runner already started a run with the same query and the same applied-scope fingerprint in the last 60 seconds, and it is queued, running or succeeded, that run is returned instead of a new one, still 202 with the same shape. Reuse is a read and passes the same run-read gate as getReportRun. Job limit (step 5): a tenant with 4 runs and exports not yet finished answers 429 with errors[].code too_many_report_jobs (spec 8.3); retry when one finishes.
+         */
+        post: operations["createReportRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/runs/{runId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a run's header
+         * @description Answers the run record: state, as_of, the freshness label, row count, digest, scope applied, parameters and any failure. Poll this while the state is queued or running. Run-read gate (modules/reports.md 6.6, run.ReadAccess), in order: the run must belong to the caller (runner account equals the caller; the schedule's owner for a scheduled run), otherwise 404, which does not say whether the run exists; and the caller's current read scope must equal the scope the run was trimmed with, otherwise 409 with errors[].code scope_changed_rerun and the client creates a new run. A scope revoke or a narrower token therefore stops reads at once. reports.schedule.manage_all never opens a run. An expired run stays readable as a record with state expired; its rows are gone (ADR-0010). A failed run answers 200 with its state and failure.
+         */
+        get: operations["getReportRun"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/runs/{runId}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel a run
+         * @description Cancels a queued or running run (FR-11). Only the account that started the run may cancel it; anyone else gets 404. A run that already finished is answered unchanged. Cancelling is bookkeeping, not an Action.
+         */
+        post: operations["cancelReportRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/runs/{runId}/exports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Export a run
+         * @description Serialises the run's stored result (never a fresh query) into a file as an asynchronous job: the columns of the run, its filters, and all rows up to the format's cap (spec 8.3). Needs reports.export, bound as this operation's permission, and also reports.run, checked inside the operation before the run is looked up (403 if either is missing; modules/reports.md 6.6 check 1 and 7.1). Run-read gate (6.6, run.ReadAccess), in order: runner account equals the caller, otherwise 404; the caller's current read scope fingerprint equals the one stored with the run, otherwise 409 with errors[].code scope_changed_rerun (create a new run); the run has succeeded, otherwise 409 with run_not_ready or run_failed. An expired run is not refused here (see below). The three 409 codes are separate. Rows over a format's cap are refused with report-row-cap-exceeded, never truncated. A format this installation cannot produce is a 400 with code format_unavailable. If the run's result has expired, a new run is created first and the export says so (rerun true, rerunOfRunId); its file carries the new run's as_of. A run whose scope grants nothing or uses an unsupported kind is exported as a record of what was found, not refused (only schedules refuse such a scope). Exports and runs count together toward the tenant job limit: with 4 not yet finished the answer is 429 with errors[].code too_many_report_jobs. Exports are audited with actor and row count; an export is not an Action.
+         */
+        post: operations["createReportExport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/runs/{runId}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run a past run again
+         * @description Creates a new run with the definition, version, preset and parameters stored with this one, and answers it as createReportRun does (202, ReportRun, rerunOf set to this run). The new run is computed under the caller's current read scope, not the old one, so a retry is how a run that answers 409 scope_changed_rerun, or whose result has expired, is made readable again. Relative periods are evaluated again against the new run's own now (FR-09); the stored result of this run is untouched. Only the account that started the run may retry it; anyone else, and a run that does not exist, get 404 without saying which (6.6 check 2). Allowed from succeeded, failed, cancelled and expired. A run that is queued or running is refused with 409 and errors[].code run_in_progress; poll it or cancel it instead. A retry goes through the same create path as createReportRun, so the 60 second reuse window applies (a second retry while the first is queued or running answers the first new run) and so does the tenant job limit (429 with errors[].code too_many_report_jobs). If the definition version was retired meanwhile, the new run fails with reason definition_retired, as it would for any run. A retry is not an Action (ADR-0005 rule 10): it is system bookkeeping, audited as a run event with row count and digest and the rerunOf run id. It carries no request body, so it has nothing to carry a client idempotency key for; a double submit is absorbed by the reuse window.
+         */
+        post: operations["retryReportRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/runs/{runId}/rows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Page a run's stored result
+         * @description Reads a page of the run's stored rows. Order is the run order, or sortBy with order, then the run order as the tie-break; the cursor is bound to the sort it was issued for and a cursor used with another sort is a 400. The total is the run's rowCount and is never a count over the rows. The result is stored and frozen (ADR-0010 rule 3): a page never reflects newer data. Cells of a derived state show unknown, never an inferred value (FR-09). Run-read gate (modules/reports.md 6.6, run.ReadAccess), in order: runner account equals the caller, otherwise 404; the run is not expired, otherwise 410 report-result-expired; the caller's current read scope fingerprint equals the one stored with the run, otherwise 409 with errors[].code scope_changed_rerun (the client creates a new run); the run has succeeded, otherwise 409 with errors[].code run_not_ready (queued or running) or run_failed (failed or cancelled, with the reason). The three 409 codes are separate and a client must branch on the code, not the status.
+         */
+        get: operations["listReportRunRows"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List schedules
+         * @description Answers the caller's own schedules. owner=any lists every schedule of the tenant and additionally needs reports.schedule.manage_all; without it the answer is 403.
+         */
+        get: operations["listReportSchedules"];
+        put?: never;
+        /**
+         * Create a schedule
+         * @description Creates a recurring run plus delivery, pinned to the definition version (spec 8.4). Creating a schedule is an Action (ADR-0005 rule 10, reports.schedule.create): it runs inline, has a preview diff, the gate, audit and undo, and the external-recipient confirmation is part of its preview. Operation permission: reports.schedule. Any recipient outside the tenant's allowed recipient domains is external; delivering to one additionally needs reports.deliver.external, and the addresses must be listed in confirmedExternal ("Data leaves your organisation"), or the answer is 403 (with errors[].code external_not_permitted) or 400 (code external_not_confirmed). That second permission guards the external case only. Scheduled data is what the owner can see, not what a recipient can see. The owner's scope is checked now: report-scope-empty or report-scope-unsupported refuses a schedule that could never deliver. The name is unique per owner, so a retried create is a 400 with code name_taken and changes nothing.
+         */
+        post: operations["createReportSchedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/schedules/{scheduleId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a schedule
+         * @description Answers one schedule with its recurrence, recipients and the delivery state of each recipient (E4), next run and last run. The ETag is the version to send as If-Match when changing it. Another owner's schedule is answered only with reports.schedule.manage_all (otherwise 404).
+         */
+        get: operations["getReportSchedule"];
+        /**
+         * Replace a schedule's settings
+         * @description Replaces every writable setting, as the Action reports.schedule.update (ADR-0005 rule 10): preview diff against the current version, gate, audit, and undo that restores the previous version. Needs If-Match with the ETag read. The same external-recipient rule as create applies: reports.deliver.external guards the external case only, and the confirmation covers every external address that is new or changed. Changing another owner's schedule additionally needs reports.schedule.manage_all. The scope refusals of create apply.
+         */
+        put: operations["updateReportSchedule"];
+        post?: never;
+        /**
+         * Delete a schedule
+         * @description Deletes the schedule, as the Action reports.schedule.delete (ADR-0005 rule 10), with undo that restores it. Needs If-Match. Stored artefacts of earlier runs are kept until they expire.
+         */
+        delete: operations["deleteReportSchedule"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/schedules/{scheduleId}/owner": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Reassign a schedule's owner
+         * @description Hands the schedule to another account, as the Action reports.schedule.reassign (ADR-0005 rule 10). This is the one schedule operation bound to reports.schedule.manage_all. The schedule pauses until the new owner resumes it, so a reassignment cannot widen what recipients receive without the new owner's act. The new owner must hold reports.run, reports.export and reports.schedule (400 with code owner_lacks_permission otherwise). Needs If-Match.
+         */
+        put: operations["reassignReportSchedule"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/schedules/{scheduleId}/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pause a schedule
+         * @description Pauses the schedule, as the Action reports.schedule.pause (ADR-0005 rule 10). A paused schedule fires nothing until it is resumed. Pausing another owner's schedule additionally needs reports.schedule.manage_all. A pause the system makes under the owner-authority rule is not this operation; it is audited as an event and shows as pausedReason.
+         */
+        post: operations["pauseReportSchedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/schedules/{scheduleId}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume a schedule
+         * @description Resumes a paused schedule, as the Action reports.schedule.resume (ADR-0005 rule 10). Only the owner may, after seeing the recipient list; resuming re-checks the owner's scope, with the refusals of create. A reassigned schedule stays paused until its new owner does this.
+         */
+        post: operations["resumeReportSchedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/schedules/{scheduleId}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run a schedule now
+         * @description Fires the schedule once now, exactly as a scheduled fire: a run of the pinned definition under the owner's current scope and permissions, then delivery to each recipient, every external address re-evaluated against the current allowed domains. Answers the run. Only the schedule's owner may call this, because the run is the owner's and reports.schedule.manage_all never opens another owner's runs (modules/reports.md 6.6); anyone else, a manage_all holder included, gets 404. It is bookkeeping, not an Action. A per-DC schedule cannot be run now more often than daily (409). A schedule whose owner is disabled or has lost a permission is paused instead (409).
+         */
+        post: operations["runReportScheduleNow"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/setup/claim": {
         parameters: {
             query?: never;
@@ -483,6 +823,806 @@ export interface components {
         /** @description One relative distinguished name component, unescaped, for breadcrumbs. */
         Rdn: {
             type: string;
+            value: string;
+        };
+        /**
+         * @description The six categories of the 2a library (spec 6.1).
+         * @enum {string}
+         */
+        ReportCategory: "users" | "passwords" | "groups" | "computers" | "contacts" | "organizational_units";
+        /**
+         * @description A library category. Clients accept values they do not know.
+         * @enum {string}
+         */
+        ReportCategoryValue: "users" | "passwords" | "groups" | "computers" | "contacts" | "organizational_units" | (string & {});
+        /** @description One typed cell; the kinds map one to one onto report.Cell in modules/reports.md 6.2 (text s, integer i, boolean b, time t, enum e, guid g, textList l, absent a, never n). unknown is shown rather than an inferred value when an input is missing (FR-09). absent is a missing value, distinct from empty text; never is a value that cannot occur, such as a last logon of an account that has never logged on. */
+        ReportCell: components["schemas"]["ReportCellText"] | components["schemas"]["ReportCellInteger"] | components["schemas"]["ReportCellGuid"] | components["schemas"]["ReportCellTextList"] | components["schemas"]["ReportCellNever"] | components["schemas"]["ReportValueBoolean"] | components["schemas"]["ReportValueTime"] | components["schemas"]["ReportValueEnum"] | components["schemas"]["ReportCellAbsent"] | components["schemas"]["ReportCellUnknown"];
+        /** @description No value. */
+        ReportCellAbsent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportCellAbsent";
+        };
+        /** @description An object GUID or other GUID attribute, canonical lower-case. */
+        ReportCellGuid: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportCellGuid";
+            /** Format: uuid */
+            value: string;
+        };
+        /** @description A whole number as a decimal string, so 64-bit directory values stay exact. */
+        ReportCellInteger: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportCellInteger";
+            value: string;
+        };
+        /** @description The value can never exist for this object, as distinct from absent (not yet set). */
+        ReportCellNever: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportCellNever";
+        };
+        /** @description Text as stored in the directory, which may hold any character. Encoders neutralise it on export. */
+        ReportCellText: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportCellText";
+            value: string;
+        };
+        /** @description A multi-valued text attribute, in stored order. */
+        ReportCellTextList: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportCellTextList";
+            value: string[];
+        };
+        /** @description A derived state whose input is missing (Unknown (input missing)). */
+        ReportCellUnknown: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportCellUnknown";
+        };
+        /** @description One value of an enum column: a stable ID and its label. */
+        ReportChoice: {
+            id: string;
+            label: string;
+        };
+        /**
+         * @description A column of the dataset registry (DM-70) that a 2a report carries. Closed: a column name that is not listed is refused, and a column the chosen definition does not carry is a 400 with code column_not_available. The registry holds no secret attribute (D8).
+         * @enum {string}
+         */
+        ReportColumnId: "name" | "logon_name" | "upn" | "status" | "domain" | "ou_path" | "manager" | "created" | "account_expires" | "days_to_expiry" | "last_logon" | "days_since" | "probable_service_account" | "real_last_logon" | "from_dc" | "dc_coverage" | "locked_out_since" | "lockout_ends" | "policy_source" | "data_as_of" | "password_last_set" | "password_expires" | "password_state" | "last_failed_logon" | "failures_on_dc" | "group_type" | "group_scope" | "direct_members" | "effective_members" | "managed_by" | "group" | "member" | "member_type" | "membership_kind" | "via" | "user" | "primary_group" | "dns_name" | "computer_type" | "operating_system" | "os_version" | "delegation" | "last_activity" | "activity_source" | "path" | "users" | "computers" | "groups" | "other_objects" | "objects_in_subtree" | "email";
+        /** @description A column of a definition, or of one run (a label can change with the run, such as Last logon (at least)). filterOperators are the operators the column takes. */
+        ReportColumnInfo: {
+            choices: components["schemas"]["ReportChoice"][];
+            defaultVisible: boolean;
+            filterable: boolean;
+            filterOperators: components["schemas"]["ReportFilterOperatorValue"][];
+            id: string;
+            label: string;
+            sortable: boolean;
+            type: components["schemas"]["ReportColumnTypeValue"];
+        };
+        /**
+         * @description What a column holds, which decides the operators it takes.
+         * @enum {string}
+         */
+        ReportColumnTypeValue: "text" | "integer" | "boolean" | "time" | "enum" | (string & {});
+        /**
+         * @description A comparison of one column with one typed value. contains and starts_with are literal text matches: no wildcard or pattern character has a meaning.
+         * @enum {string}
+         */
+        ReportCompareOperator: "equals" | "not_equals" | "less_than" | "less_or_equal" | "greater_than" | "greater_or_equal" | "contains" | "starts_with";
+        /** @description How many DCs answered a per-DC report. A partial coverage makes the maximum a lower bound (spec 6.5). */
+        ReportDcCoverage: {
+            complete: boolean;
+            dcsAnswered: number;
+            dcsInScope: number;
+        };
+        /** @description A report definition: an immutable AST over one registered dataset (FR-03, FR-05), shown as its presets, crosswalk and columns. exportFormats are the formats this installation can produce, and the console offers no others. subjectKind says whether the report requires groups or users (GRP-02, GRP-03). minScheduleIntervalHours is 24 for per-DC reports. */
+        ReportDefinition: {
+            alsoKnownAs: components["schemas"]["ReportMeName"][];
+            category: components["schemas"]["ReportCategoryValue"];
+            columns: components["schemas"]["ReportColumnInfo"][];
+            dataset: string;
+            description: string;
+            exportFormats: components["schemas"]["ReportExportFormatValue"][];
+            freshnessKind: string;
+            id: string;
+            minScheduleIntervalHours: number;
+            name: string;
+            perDc: boolean;
+            presets: components["schemas"]["ReportPreset"][];
+            subjectKind: string;
+            version: number;
+        };
+        /** @description A page of the library. */
+        ReportDefinitionList: {
+            items: components["schemas"]["ReportDefinitionSummary"][];
+            page: components["schemas"]["PageInfo"];
+        };
+        /** @description A library entry. */
+        ReportDefinitionSummary: {
+            alsoKnownAs: components["schemas"]["ReportMeName"][];
+            category: components["schemas"]["ReportCategoryValue"];
+            dataset: string;
+            description: string;
+            freshnessKind: string;
+            id: string;
+            name: string;
+            version: number;
+        };
+        /**
+         * @description Why a delivery failed. external_not_permitted: the owner no longer holds reports.deliver.external. address_no_longer_allowed: the address left the allowed domains.
+         * @enum {string}
+         */
+        ReportDeliveryReason: "external_not_permitted" | "address_no_longer_allowed" | "attachment_too_large" | "mail_rejected" | "internal" | (string & {});
+        /** @description The delivery of the latest fire to one recipient. */
+        ReportDeliveryState: {
+            reason?: components["schemas"]["ReportDeliveryReason"];
+            state: components["schemas"]["ReportDeliveryStateValue"];
+            /** Format: date-time */
+            updatedAt: string | null;
+        };
+        /**
+         * @description Per-recipient delivery state (DM-84).
+         * @enum {string}
+         */
+        ReportDeliveryStateValue: "none_yet" | "queued" | "sent" | "failed" | "given_up" | (string & {});
+        /**
+         * @description Why a succeeded run has no rows because of scope, as opposed to its filters. scope_grants_nothing: the runner's role covers no directory objects. unsupported_scope_kind: the role's scope uses a kind 2a reports cannot evaluate, so it grants nothing (fail closed).
+         * @enum {string}
+         */
+        ReportEmptyReason: "scope_grants_nothing" | "unsupported_scope_kind" | (string & {});
+        /** @description An export job and its stored file (DM-72.I3). When the run's result had expired, rerun is true, runId is the new run and rerunOfRunId the expired one; the file carries the new run's as_of. */
+        ReportExport: {
+            byteSize: number | null;
+            /** Format: date-time */
+            createdAt: string;
+            createdBy: components["schemas"]["JobActor"];
+            digest: string | null;
+            /** Format: date-time */
+            expiresAt: string | null;
+            failure?: components["schemas"]["ReportFailure"];
+            fileName: string | null;
+            /** Format: date-time */
+            finishedAt: string | null;
+            format: components["schemas"]["ReportExportFormatValue"];
+            /** Format: uuid */
+            id: string;
+            rerun: boolean;
+            /** Format: uuid */
+            rerunOfRunId?: string;
+            rowCount: number | null;
+            /** Format: uuid */
+            runId: string;
+            state: components["schemas"]["ReportExportState"];
+        };
+        /** @description Starts an export of the run in the path. */
+        ReportExportCreate: {
+            format: components["schemas"]["ReportExportFormat"];
+        };
+        /**
+         * @description An export format. csv and xlsx exist at the 2a demo; pdf and html arrive by M2 exit. A definition lists the formats this installation can produce.
+         * @enum {string}
+         */
+        ReportExportFormat: "csv" | "xlsx" | "pdf" | "html";
+        /**
+         * @description An export format.
+         * @enum {string}
+         */
+        ReportExportFormatValue: "csv" | "xlsx" | "pdf" | "html" | (string & {});
+        /**
+         * @description Export states.
+         * @enum {string}
+         */
+        ReportExportState: "queued" | "running" | "succeeded" | "failed" | "expired" | "deleted" | (string & {});
+        /** @description A typed failure. message is fixed text; it names no object. */
+        ReportFailure: {
+            message: string;
+            reason: components["schemas"]["ReportFailureReason"];
+        };
+        /**
+         * @description A typed reason for a failed run or export, the set of run.FailureReason in modules/reports.md 6.2. runner_inactive: the runner's account is disabled or gone. token_refused: the token behind the run was revoked or expired. row_cap_exceeded: the result is over the row cap. per_dc_read_cap_exceeded: the per-DC read cap would be passed (spec 6.5). scope_too_large: the scope cannot be rendered within limits. query_timeout: the run passed its time limit. connection_unavailable: a connection could not be read (per-DC reads only). definition_retired: the definition was retired before the run started. interrupted: the run job was interrupted. internal: anything else.
+         * @enum {string}
+         */
+        ReportFailureReason: "runner_inactive" | "token_refused" | "row_cap_exceeded" | "per_dc_read_cap_exceeded" | "scope_too_large" | "query_timeout" | "connection_unavailable" | "definition_retired" | "interrupted" | "internal" | (string & {});
+        /** @description A typed filter tree over registry columns. A node names a column from the closed list and a typed value; there is no expression, no raw LDAP, no SQL. The tree is at most four levels deep and 64 nodes; deeper is a 400 with code filter_too_complex. The server checks each operator and value against the column's type. */
+        ReportFilter: components["schemas"]["ReportFilterGroup"] | components["schemas"]["ReportFilterCompare"] | components["schemas"]["ReportFilterIn"] | components["schemas"]["ReportFilterPresence"] | components["schemas"]["ReportFilterRelative"];
+        /** @description One column compared with one value. */
+        ReportFilterCompare: {
+            column: components["schemas"]["ReportColumnId"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportFilterCompare";
+            operator: components["schemas"]["ReportCompareOperator"];
+            value: components["schemas"]["ReportValue"];
+        };
+        /** @description One column, an operator and its values (none for has_value and empty). */
+        ReportFilterConditionView: {
+            column: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportFilterConditionView";
+            operator: components["schemas"]["ReportFilterOperatorValue"];
+            values: components["schemas"]["ReportValue"][];
+        };
+        /** @description Filters combined by match. */
+        ReportFilterGroup: {
+            filters: components["schemas"]["ReportFilter"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportFilterGroup";
+            match: components["schemas"]["ReportFilterMatch"];
+        };
+        /** @description Filters combined by match. */
+        ReportFilterGroupView: {
+            filters: components["schemas"]["ReportFilterView"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportFilterGroupView";
+            match: components["schemas"]["ReportFilterMatchValue"];
+        };
+        /** @description One column equal to any of up to 50 values. */
+        ReportFilterIn: {
+            column: components["schemas"]["ReportColumnId"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportFilterIn";
+            values: components["schemas"]["ReportValue"][];
+        };
+        /**
+         * @description How a group of filters combines: all (AND), any (OR) or none (NOT any).
+         * @enum {string}
+         */
+        ReportFilterMatch: "all" | "any" | "none";
+        /**
+         * @description How a group of filters combines.
+         * @enum {string}
+         */
+        ReportFilterMatchValue: "all" | "any" | "none" | (string & {});
+        /**
+         * @description An operator a column takes, or one a preset's filter uses. within_last, within_next and older_than carry the number of days as one integer value.
+         * @enum {string}
+         */
+        ReportFilterOperatorValue: "equals" | "not_equals" | "less_than" | "less_or_equal" | "greater_than" | "greater_or_equal" | "contains" | "starts_with" | "in" | "has_value" | "empty" | "within_last" | "within_next" | "older_than" | (string & {});
+        /** @description A column has a value or is empty. */
+        ReportFilterPresence: {
+            column: components["schemas"]["ReportColumnId"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportFilterPresence";
+            presence: components["schemas"]["ReportPresence"];
+        };
+        /** @description A time column relative to the start of the run. */
+        ReportFilterRelative: {
+            column: components["schemas"]["ReportColumnId"];
+            days: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportFilterRelative";
+            relation: components["schemas"]["ReportRelativeTime"];
+        };
+        /** @description A filter as the server stores it. A condition's column is a registry column ID. */
+        ReportFilterView: components["schemas"]["ReportFilterGroupView"] | components["schemas"]["ReportFilterConditionView"];
+        /** @description The freshness label of spec 8.2. label is the text to show, such as Synced 09:41. */
+        ReportFreshness: {
+            label: string;
+            state: components["schemas"]["ReportFreshnessState"];
+        };
+        /**
+         * @description The freshness label of spec 8.2. per_dc_read is the only state that may be called live.
+         * @enum {string}
+         */
+        ReportFreshnessState: "synced" | "stale" | "not_synced_yet" | "per_dc_read" | (string & {});
+        /** @description The latest fire. */
+        ReportLastRun: {
+            outcome: components["schemas"]["ReportLastRunOutcome"];
+            /** Format: uuid */
+            runId: string;
+            /** Format: date-time */
+            startedAt: string;
+        };
+        /**
+         * @description How the last fire ended. nothing_to_send is a run with no rows under notify-only-if-data.
+         * @enum {string}
+         */
+        ReportLastRunOutcome: "sent" | "nothing_to_send" | "partly_failed" | "failed" | (string & {});
+        /** @description An exact ManageEngine report name and the preset that answers it (spec 6.2). */
+        ReportMeName: {
+            meName: string;
+            presetId: string;
+        };
+        /** @description An organizational unit by connection and objectGUID, never by DN. oneLevel false includes the whole subtree. */
+        ReportOuRef: {
+            /** Format: uuid */
+            connectionId: string;
+            /** Format: uuid */
+            guid: string;
+            oneLevel: boolean;
+        };
+        /** @description What a run or schedule is over, as stored. Period, OU and subject references and values are the request shapes; columns and filters are shown as IDs. */
+        ReportParametersView: {
+            columns: string[];
+            connectionIds: string[];
+            filters: components["schemas"]["ReportFilterView"][];
+            includeReadOnlyDcs: boolean;
+            ouExclude: components["schemas"]["ReportOuRef"][];
+            ouInclude: components["schemas"]["ReportOuRef"][];
+            period?: components["schemas"]["ReportPeriod"];
+            subjects: components["schemas"]["ReportSubjectRef"][];
+        };
+        /**
+         * @description Why a schedule is paused. owner_disabled and owner_lost_permission are the owner-authority pauses of spec 8.4; reassigned waits for the new owner.
+         * @enum {string}
+         */
+        ReportPausedReason: "by_user" | "owner_disabled" | "owner_lost_permission" | "reassigned" | (string & {});
+        /** @description The period a report looks at. The server refuses a range whose to is not after from, or longer than ten years. */
+        ReportPeriod: components["schemas"]["ReportPeriodLastDays"] | components["schemas"]["ReportPeriodRange"];
+        /** @description The last n days, ending when the run starts. The presets offer 7, 30, 90, 180 and 365. */
+        ReportPeriodLastDays: {
+            days: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportPeriodLastDays";
+        };
+        /** @description A custom range. */
+        ReportPeriodRange: {
+            /** Format: date-time */
+            from: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportPeriodRange";
+            /** Format: date-time */
+            to: string;
+        };
+        /**
+         * @description Whether a column has a value.
+         * @enum {string}
+         */
+        ReportPresence: "has_value" | "empty";
+        /** @description A named set of filters, a period and a column set over a report (spec 6.1 rule 2). Each ManageEngine name is a preset. */
+        ReportPreset: {
+            columns: string[];
+            filters: components["schemas"]["ReportFilterView"][];
+            id: string;
+            meName: string | null;
+            name: string;
+            periodDays: number | null;
+        };
+        /** @description Who receives the schedule's files. */
+        ReportRecipient: components["schemas"]["ReportRecipientAccount"] | components["schemas"]["ReportRecipientEmail"];
+        /** @description An activeDIQ account. asLink delivers a link only that account can download while signed in and holding reports.export; otherwise the file is attached. */
+        ReportRecipientAccount: {
+            /** Format: uuid */
+            accountId: string;
+            asLink: boolean;
+            formats: components["schemas"]["ReportExportFormat"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportRecipientAccount";
+        };
+        /** @description An account recipient. */
+        ReportRecipientAccountView: {
+            /** Format: uuid */
+            accountId: string;
+            asLink: boolean;
+            delivery: components["schemas"]["ReportDeliveryState"];
+            formats: components["schemas"]["ReportExportFormatValue"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportRecipientAccountView";
+        };
+        /** @description An e-mail address. Attachment only; a link is never offered for an address. An address outside the tenant's allowed recipient domains is external. */
+        ReportRecipientEmail: {
+            /** Format: email */
+            address: string;
+            formats: components["schemas"]["ReportExportFormat"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportRecipientEmail";
+        };
+        /** @description An e-mail recipient. external is judged against the allowed recipient domains now. */
+        ReportRecipientEmailView: {
+            /** Format: email */
+            address: string;
+            delivery: components["schemas"]["ReportDeliveryState"];
+            external: boolean;
+            formats: components["schemas"]["ReportExportFormatValue"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportRecipientEmailView";
+        };
+        /** @description A recipient as stored. */
+        ReportRecipientView: components["schemas"]["ReportRecipientAccountView"] | components["schemas"]["ReportRecipientEmailView"];
+        /** @description When a schedule fires, in the schedule's time zone. The minimum interval is one hour (spec 8.4). */
+        ReportRecurrence: components["schemas"]["ReportRecurrenceHourly"] | components["schemas"]["ReportRecurrenceDaily"] | components["schemas"]["ReportRecurrenceWeekly"] | components["schemas"]["ReportRecurrenceMonthlyDay"] | components["schemas"]["ReportRecurrenceMonthlyLastDay"] | components["schemas"]["ReportRecurrenceCustomHours"] | components["schemas"]["ReportRecurrenceCustomDays"] | components["schemas"]["ReportRecurrenceCustomWeeks"] | components["schemas"]["ReportRecurrenceCustomMonths"];
+        /** @description From a start, repeating every n days. */
+        ReportRecurrenceCustomDays: {
+            every: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportRecurrenceCustomDays";
+            /** Format: date-time */
+            start: string;
+        };
+        /** @description From a start, repeating every n hours. */
+        ReportRecurrenceCustomHours: {
+            every: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportRecurrenceCustomHours";
+            /** Format: date-time */
+            start: string;
+        };
+        /** @description From a start, repeating every n months. */
+        ReportRecurrenceCustomMonths: {
+            every: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportRecurrenceCustomMonths";
+            /** Format: date-time */
+            start: string;
+        };
+        /** @description From a start, repeating every n weeks. */
+        ReportRecurrenceCustomWeeks: {
+            every: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportRecurrenceCustomWeeks";
+            /** Format: date-time */
+            start: string;
+        };
+        /** @description Every day at a local time, HH:MM. */
+        ReportRecurrenceDaily: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportRecurrenceDaily";
+            time: string;
+        };
+        /** @description Every n hours at the given minute. */
+        ReportRecurrenceHourly: {
+            everyHours: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportRecurrenceHourly";
+            minute: number;
+        };
+        /** @description On a day of the month at a local time. A month without the day runs on its last day. */
+        ReportRecurrenceMonthlyDay: {
+            dayOfMonth: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportRecurrenceMonthlyDay";
+            time: string;
+        };
+        /** @description On the last day of every month at a local time. */
+        ReportRecurrenceMonthlyLastDay: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportRecurrenceMonthlyLastDay";
+            time: string;
+        };
+        /** @description On weekdays (1 Monday to 7 Sunday) at a local time. */
+        ReportRecurrenceWeekly: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportRecurrenceWeekly";
+            time: string;
+            weekdays: number[];
+        };
+        /**
+         * @description A time column relative to the time the run starts: within the last or next n days, or older than n days.
+         * @enum {string}
+         */
+        ReportRelativeTime: "within_last" | "within_next" | "older_than";
+        /** @description One row of a stored result. rowKey is the object GUID or edge key; cells follow the page's columns. */
+        ReportRow: {
+            cells: components["schemas"]["ReportCell"][];
+            rowKey: string;
+        };
+        /** @description A page of a stored result. rowCount is the run's total after trimming. */
+        ReportRowPage: {
+            columns: components["schemas"]["ReportColumnInfo"][];
+            page: components["schemas"]["PageInfo"];
+            rowCount: number;
+            rows: components["schemas"]["ReportRow"][];
+            /** Format: uuid */
+            runId: string;
+        };
+        /** @description The run record (DM-72). asOf is the oldest sync watermark among the covered naming contexts. rowCount, objectsChecked and digest are set when the run succeeds; both counts are after scope trimming. digest is the SHA-256 over the canonical form of the stored rows (spec 8.3). scopeApplied is the human-readable summary shown in the header. */
+        ReportRun: {
+            /** Format: date-time */
+            asOf: string | null;
+            coverage?: components["schemas"]["ReportDcCoverage"];
+            /** Format: date-time */
+            createdAt: string;
+            createdBy: components["schemas"]["JobActor"];
+            definitionId: string;
+            definitionVersion: number;
+            digest: string | null;
+            emptyReason?: components["schemas"]["ReportEmptyReason"];
+            /** Format: date-time */
+            expiresAt: string | null;
+            failure?: components["schemas"]["ReportFailure"];
+            /** Format: date-time */
+            finishedAt: string | null;
+            freshness: components["schemas"]["ReportFreshness"];
+            /** Format: uuid */
+            id: string;
+            objectsChecked: number | null;
+            parameters: components["schemas"]["ReportParametersView"];
+            presetId: string | null;
+            progress: components["schemas"]["ReportRunProgress"];
+            /** Format: uuid */
+            rerunOf?: string;
+            rowCount: number | null;
+            scopeApplied: string | null;
+            skippedConnections: components["schemas"]["ReportSkippedConnection"][];
+            /** Format: date-time */
+            startedAt: string | null;
+            state: components["schemas"]["ReportRunState"];
+        };
+        /** @description Starts a run. definitionVersion absent means the current version, which the run record then pins. */
+        ReportRunCreate: {
+            definitionId: string;
+            definitionVersion?: number;
+            parameters?: components["schemas"]["ReportRunParameters"];
+            presetId?: string;
+        };
+        /** @description A page of the caller's runs, newest first. */
+        ReportRunList: {
+            items: components["schemas"]["ReportRunSummary"][];
+            page: components["schemas"]["PageInfo"];
+        };
+        /** @description What a run is over. Every member is optional; an absent one takes the preset's value, then the definition's default. connectionIds default to every connection the runner's scope reaches. The runner's scope always applies and can only narrow what is asked. */
+        ReportRunParameters: {
+            /** @description The columns shown and exported, in order. Replaces the preset's columns when present. */
+            columns?: components["schemas"]["ReportColumnId"][];
+            connectionIds?: string[];
+            /** @description Combined with AND. Replaces the preset's filters when present. */
+            filters?: components["schemas"]["ReportFilter"][];
+            /** @description Per-DC reports only (USR-04, PWD-03). Absent includes read-only DCs. */
+            includeReadOnlyDcs?: boolean;
+            ouExclude?: components["schemas"]["ReportOuRef"][];
+            ouInclude?: components["schemas"]["ReportOuRef"][];
+            period?: components["schemas"]["ReportPeriod"];
+            subjects?: components["schemas"]["ReportSubjectRef"][];
+        };
+        /** @description Visible progress (FR-11). */
+        ReportRunProgress: {
+            percent: number;
+            stage: components["schemas"]["ReportRunStage"];
+        };
+        /**
+         * @description Where a running run is.
+         * @enum {string}
+         */
+        ReportRunStage: "queued" | "compiling" | "reading_directory" | "reading_dcs" | "storing" | "done" | (string & {});
+        /**
+         * @description Run states (spec 8.1): queued, running, then succeeded, failed or cancelled; a succeeded run becomes expired when its result is removed.
+         * @enum {string}
+         */
+        ReportRunState: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "expired" | (string & {});
+        /**
+         * @description The run states a history list can be narrowed to. The request twin of ReportRunState (ADR-0004 rule 2: a request enum is closed, its response twin is open).
+         * @enum {string}
+         */
+        ReportRunStateFilter: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "expired";
+        /** @description A run in the history list: the header fields that answer "what ran, when, how did it end". asOf is the oldest sync watermark among the covered naming contexts. rowCount is the count after scope trimming and is null while the run has not succeeded and whenever scopeCurrent is false. scopeCurrent is true when the caller's read scope now equals the scope the run was trimmed with; when false, opening the run answers 409 scope_changed_rerun and retryReportRun makes a new one. */
+        ReportRunSummary: {
+            /** Format: date-time */
+            asOf: string | null;
+            /** Format: date-time */
+            createdAt: string;
+            definitionId: string;
+            definitionVersion: number;
+            emptyReason?: components["schemas"]["ReportEmptyReason"];
+            /** Format: date-time */
+            expiresAt: string | null;
+            failure?: components["schemas"]["ReportFailure"];
+            /** Format: date-time */
+            finishedAt: string | null;
+            freshness: components["schemas"]["ReportFreshness"];
+            /** Format: uuid */
+            id: string;
+            presetId: string | null;
+            /** Format: uuid */
+            rerunOf?: string;
+            rowCount: number | null;
+            scopeCurrent: boolean;
+            /** Format: date-time */
+            startedAt: string | null;
+            state: components["schemas"]["ReportRunState"];
+        };
+        /** @description A schedule (DM-73). Recipients receive what the owner can see, not what they can see. The ETag header is the version for If-Match. */
+        ReportSchedule: {
+            /** Format: date-time */
+            createdAt: string;
+            definitionId: string;
+            definitionVersion: number;
+            /** Format: uuid */
+            id: string;
+            lastRun?: components["schemas"]["ReportLastRun"];
+            name: string;
+            /** Format: date-time */
+            nextRunAt: string | null;
+            notifyOnlyIfData: boolean;
+            /** Format: uuid */
+            ownerAccountId: string;
+            parameters: components["schemas"]["ReportParametersView"];
+            pausedReason?: components["schemas"]["ReportPausedReason"];
+            presetId: string | null;
+            recipients: components["schemas"]["ReportRecipientView"][];
+            recurrence: components["schemas"]["ReportRecurrence"];
+            state: components["schemas"]["ReportScheduleState"];
+            timeZone: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        /** @description A page of schedules. */
+        ReportScheduleList: {
+            items: components["schemas"]["ReportSchedule"][];
+            page: components["schemas"]["PageInfo"];
+        };
+        /**
+         * @description Whose schedules to list.
+         * @enum {string}
+         */
+        ReportScheduleOwner: "me" | "any";
+        /** @description Hands a schedule to another account. */
+        ReportScheduleReassign: {
+            /** Format: uuid */
+            ownerAccountId: string;
+        };
+        /**
+         * @description active fires on its recurrence; paused does not.
+         * @enum {string}
+         */
+        ReportScheduleState: "active" | "paused" | (string & {});
+        /** @description The writable settings of a schedule. It runs the report, preset, filters, columns and scope as saved, pinned to the definition version. confirmedExternal lists the external addresses the caller confirmed in the preview (Data leaves your organisation); it must equal the set of external recipients that are new or changed. */
+        ReportScheduleWrite: {
+            confirmedExternal?: string[];
+            definitionId: string;
+            definitionVersion?: number;
+            name: string;
+            notifyOnlyIfData: boolean;
+            parameters?: components["schemas"]["ReportRunParameters"];
+            presetId?: string;
+            recipients: components["schemas"]["ReportRecipient"][];
+            recurrence: components["schemas"]["ReportRecurrence"];
+            /** @description An IANA time zone name, such as Europe/Berlin. */
+            timeZone: string;
+        };
+        /** @description A connection the run skipped. */
+        ReportSkippedConnection: {
+            /** Format: uuid */
+            connectionId: string;
+            reason: components["schemas"]["ReportSkipReason"];
+        };
+        /**
+         * @description Why a connection was left out of a run.
+         * @enum {string}
+         */
+        ReportSkipReason: "not_synced_yet" | (string & {});
+        /**
+         * @description Sort direction.
+         * @enum {string}
+         */
+        ReportSortOrder: "asc" | "desc";
+        /** @description A group or user a report is about (GRP-02, GRP-03), by connection and objectGUID. */
+        ReportSubjectRef: {
+            /** Format: uuid */
+            connectionId: string;
+            /** Format: uuid */
+            guid: string;
+        };
+        /** @description A typed filter value. Never an expression. */
+        ReportValue: components["schemas"]["ReportValueText"] | components["schemas"]["ReportValueInteger"] | components["schemas"]["ReportValueBoolean"] | components["schemas"]["ReportValueTime"] | components["schemas"]["ReportValueEnum"];
+        /** @description A flag. */
+        ReportValueBoolean: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportValueBoolean";
+            value: boolean;
+        };
+        /** @description A stable ID from the column's choices, such as enabled or never_account_flag. The server checks it against the column. */
+        ReportValueEnum: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportValueEnum";
+            value: string;
+        };
+        /** @description A whole number. */
+        ReportValueInteger: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportValueInteger";
+            value: number;
+        };
+        /** @description Text compared literally. Control characters are refused. */
+        ReportValueText: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportValueText";
+            value: string;
+        };
+        /** @description An instant, RFC 3339. */
+        ReportValueTime: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportValueTime";
+            /** Format: date-time */
             value: string;
         };
         /** @description Input of delegation.role.create. The caller chooses roleId, so a retry is the same role. A role is never deleted; empty it with delegation.role.update. */
@@ -911,6 +2051,70 @@ export interface components {
                 "application/problem+json": components["schemas"]["Problem"];
             };
         };
+        /** @description The stored result or file has expired */
+        ReportResultExpired: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "status": 410,
+                 *       "title": "The stored result has expired",
+                 *       "type": "/problems/report-result-expired"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description The result is over the row cap of the format */
+        ReportRowCapExceeded: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "status": 422,
+                 *       "title": "The result is over the row cap of the format",
+                 *       "type": "/problems/report-row-cap-exceeded"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description The scope covers no directory objects */
+        ReportScopeEmpty: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "status": 422,
+                 *       "title": "The scope covers no directory objects",
+                 *       "type": "/problems/report-scope-empty"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description The scope uses a kind that reports cannot evaluate */
+        ReportScopeUnsupported: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "status": 409,
+                 *       "title": "The scope uses a kind that reports cannot evaluate",
+                 *       "type": "/problems/report-scope-unsupported"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
         /** @description First-run setup was not claimed. One answer for every cause (wrong secret, expired secret, secret already used, install not in first-run state), so the response teaches a caller nothing. It never carries a detail. */
         SetupRefused: {
             headers: {
@@ -1011,8 +2215,18 @@ export interface components {
     parameters: {
         /** @description The Entra connection. */
         ConnectionId: string;
+        /** @description Only reports of this category. */
+        DefinitionCategory: components["schemas"]["ReportCategory"];
+        /** @description The report definition. */
+        DefinitionId: string;
+        /** @description Text to find in a report name, description or ManageEngine name. Plain text only; no filter syntax. */
+        DefinitionQuery: string;
+        /** @description A published version of the definition. Absent answers the current one. */
+        DefinitionVersion: number;
         /** @description The destination. */
         DestinationId: string;
+        /** @description The export. */
+        ExportId: string;
         /** @description Makes a mutating bulk call safe to retry. The same key with a different body is refused. */
         IdempotencyKey: string;
         /** @description The ETag of the version being changed; a stale value answers precondition-failed. */
@@ -1023,6 +2237,22 @@ export interface components {
         PageLimit: number;
         /** @description The request ID. It names the audit events of the change and makes a retry of a create safe. */
         RequiredIdempotencyKey: string;
+        /** @description The ETag of the schedule version being changed. A stale value answers precondition-failed; an absent one precondition-required. */
+        RequiredIfMatch: string;
+        /** @description Only runs of this report definition. */
+        RunDefinitionFilter: string;
+        /** @description The run. */
+        RunId: string;
+        /** @description Only runs in this state. */
+        RunStateFilter: components["schemas"]["ReportRunStateFilter"];
+        /** @description The schedule. */
+        ScheduleId: string;
+        /** @description me lists the caller's schedules. any lists every schedule of the tenant and needs reports.schedule.manage_all. */
+        ScheduleOwner: components["schemas"]["ReportScheduleOwner"];
+        /** @description A column of the run to sort the stored result by. Absent keeps the run order. */
+        SortBy: components["schemas"]["ReportColumnId"];
+        /** @description The sort direction. Absent is ascending. */
+        SortOrder: components["schemas"]["ReportSortOrder"];
     };
     requestBodies: never;
     headers: never;
@@ -1495,6 +2725,690 @@ export interface operations {
             413: components["responses"]["PayloadTooLarge"];
             415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["IdempotencyKeyReuse"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    listReportDefinitions: {
+        parameters: {
+            query?: {
+                /** @description Only reports of this category. */
+                category?: components["parameters"]["DefinitionCategory"];
+                /** @description The nextCursor of the previous page. */
+                cursor?: components["parameters"]["PageCursor"];
+                /** @description The page size. */
+                limit?: components["parameters"]["PageLimit"];
+                /** @description Text to find in a report name, description or ManageEngine name. Plain text only; no filter syntax. */
+                q?: components["parameters"]["DefinitionQuery"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of report definitions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportDefinitionList"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    getReportDefinition: {
+        parameters: {
+            query?: {
+                /** @description A published version of the definition. Absent answers the current one. */
+                version?: components["parameters"]["DefinitionVersion"];
+            };
+            header?: never;
+            path: {
+                /** @description The report definition. */
+                definitionId: components["parameters"]["DefinitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The definition */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportDefinition"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    getReportExport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The export. */
+                exportId: components["parameters"]["ExportId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The export */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportExport"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    deleteReportExport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The export. */
+                exportId: components["parameters"]["ExportId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The file is deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    downloadReportExport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The export. */
+                exportId: components["parameters"]["ExportId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The file */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            410: components["responses"]["ReportResultExpired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    listReportRuns: {
+        parameters: {
+            query?: {
+                /** @description The nextCursor of the previous page. */
+                cursor?: components["parameters"]["PageCursor"];
+                /** @description Only runs of this report definition. */
+                definitionId?: components["parameters"]["RunDefinitionFilter"];
+                /** @description The page size. */
+                limit?: components["parameters"]["PageLimit"];
+                /** @description Only runs in this state. */
+                state?: components["parameters"]["RunStateFilter"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of the caller's runs, newest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportRunList"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    createReportRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportRunCreate"];
+            };
+        };
+        responses: {
+            /** @description The run is accepted and queued */
+            202: {
+                headers: {
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportRun"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    getReportRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The run. */
+                runId: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The run */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportRun"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    cancelReportRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The run. */
+                runId: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The run after the cancel */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportRun"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    createReportExport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The run. */
+                runId: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportExportCreate"];
+            };
+        };
+        responses: {
+            /** @description The export is accepted and queued */
+            202: {
+                headers: {
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportExport"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["ReportRowCapExceeded"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    retryReportRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The run. */
+                runId: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The new run is accepted and queued */
+            202: {
+                headers: {
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportRun"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    listReportRunRows: {
+        parameters: {
+            query?: {
+                /** @description The nextCursor of the previous page. */
+                cursor?: components["parameters"]["PageCursor"];
+                /** @description The page size. */
+                limit?: components["parameters"]["PageLimit"];
+                /** @description The sort direction. Absent is ascending. */
+                order?: components["parameters"]["SortOrder"];
+                /** @description A column of the run to sort the stored result by. Absent keeps the run order. */
+                sortBy?: components["parameters"]["SortBy"];
+            };
+            header?: never;
+            path: {
+                /** @description The run. */
+                runId: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of rows */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportRowPage"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            410: components["responses"]["ReportResultExpired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    listReportSchedules: {
+        parameters: {
+            query?: {
+                /** @description The nextCursor of the previous page. */
+                cursor?: components["parameters"]["PageCursor"];
+                /** @description The page size. */
+                limit?: components["parameters"]["PageLimit"];
+                /** @description me lists the caller's schedules. any lists every schedule of the tenant and needs reports.schedule.manage_all. */
+                owner?: components["parameters"]["ScheduleOwner"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of schedules */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportScheduleList"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    createReportSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportScheduleWrite"];
+            };
+        };
+        responses: {
+            /** @description The schedule is created */
+            201: {
+                headers: {
+                    ETag: string;
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportSchedule"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["ReportScopeUnsupported"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["ReportScopeEmpty"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    getReportSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The schedule. */
+                scheduleId: components["parameters"]["ScheduleId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The schedule */
+            200: {
+                headers: {
+                    ETag: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportSchedule"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    updateReportSchedule: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the schedule version being changed. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["RequiredIfMatch"];
+            };
+            path: {
+                /** @description The schedule. */
+                scheduleId: components["parameters"]["ScheduleId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportScheduleWrite"];
+            };
+        };
+        responses: {
+            /** @description The schedule as stored */
+            200: {
+                headers: {
+                    ETag: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportSchedule"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["ReportScopeUnsupported"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["ReportScopeEmpty"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    deleteReportSchedule: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the schedule version being changed. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["RequiredIfMatch"];
+            };
+            path: {
+                /** @description The schedule. */
+                scheduleId: components["parameters"]["ScheduleId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The schedule is deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    reassignReportSchedule: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the schedule version being changed. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["RequiredIfMatch"];
+            };
+            path: {
+                /** @description The schedule. */
+                scheduleId: components["parameters"]["ScheduleId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportScheduleReassign"];
+            };
+        };
+        responses: {
+            /** @description The schedule, paused under its new owner */
+            200: {
+                headers: {
+                    ETag: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportSchedule"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    pauseReportSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The schedule. */
+                scheduleId: components["parameters"]["ScheduleId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The schedule, paused */
+            200: {
+                headers: {
+                    ETag: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportSchedule"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    resumeReportSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The schedule. */
+                scheduleId: components["parameters"]["ScheduleId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The schedule, active */
+            200: {
+                headers: {
+                    ETag: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportSchedule"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["ReportScopeUnsupported"];
+            422: components["responses"]["ReportScopeEmpty"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    runReportScheduleNow: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The schedule. */
+                scheduleId: components["parameters"]["ScheduleId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The run is accepted and queued */
+            202: {
+                headers: {
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportRun"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
         };
