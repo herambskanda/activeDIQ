@@ -1,5 +1,5 @@
 # SASL GSSAPI + channel binding readiness for dc1 (T-0566). Idempotent; run on dc1 as Administrator.
-# Effects are [UNVERIFIED] until the first real lab run (runbook windows-lab.md section 11).
+# Effects confirmed on WS2025 dc1 (T-0566 run log, runbook windows-lab.md section 14).
 #  1. LDAP signing required (LDAPServerIntegrity=2) and channel binding always (LdapEnforceChannelBindingTokens=2)
 #     on the DC (https://support.microsoft.com/en-us/topic/2020-ldap-channel-binding-and-ldap-signing-requirements-for-windows-ef185fb8-00f7-167d-744c-f299a66fc00a).
 #  2. svc-t0566-gssapi: a user account, AES-only, with an AES keytab from ktpass.

@@ -27,10 +27,10 @@ import (
 )
 
 // T-0566: the equivalents of kerberos_lab_test.go against the Windows lab DC. Precondition (runbook
-// windows-lab.md section 11): guest/gssapi-ready.ps1 ran on dc1 (LDAPServerIntegrity=2,
+// windows-lab.md section 14): guest/gssapi-ready.ps1 ran on dc1 (LDAPServerIntegrity=2,
 // LdapEnforceChannelBindingTokens=2, dc1 rebooted) and its output sits beside the lab env file.
 // Like the rest of the Windows lab tests nothing is skipped: a missing lab or keytab fails loudly.
-// Two deliberately untested-until-first-run assumptions are marked [UNVERIFIED] below.
+// The gMSA key derivation below was confirmed on WS2025 dc1 (T-0566 run log).
 const (
 	winKrbRealm   = "WIN.ACTIVEDIQ.TEST"
 	winKrbAccount = "svc-t0566-gssapi"
@@ -98,8 +98,8 @@ func gmsaCurrentPassword(blob []byte) ([]uint16, error) {
 	return u, nil
 }
 
-// winGMSAIdentity derives the AES keytab for the gMSA from its managed password. [UNVERIFIED]
-// assumption 1: the string-to-key password is the UTF-16 password re-encoded to UTF-8 (invalid
+// winGMSAIdentity derives the AES keytab for the gMSA from its managed password. Confirmed on WS2025 dc1
+// (T-0566 run log): the string-to-key password is the UTF-16 password re-encoded to UTF-8 (invalid
 // surrogates become U+FFFD, which is what utf16.Decode does) with the host-style salt
 // REALM+"host"+<name without $>+"."+<dns domain>; the entry is then filed under "name$".
 func winGMSAIdentity(t *testing.T) Kerberos {
