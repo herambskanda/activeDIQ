@@ -10,6 +10,15 @@
       "package": "internal/directory/ldapfilter"
     },
     {
+      "name": "go/dn",
+      "language": "go",
+      "tier": "S",
+      "units": [
+        "dn"
+      ],
+      "package": "internal/directory/dn"
+    },
+    {
       "name": "go/odata",
       "language": "go",
       "tier": "S",
@@ -124,6 +133,15 @@
         "xlsx"
       ],
       "package": "internal/platform/export/xlsx"
+    },
+    {
+      "name": "go/cellsafe",
+      "language": "go",
+      "tier": "S",
+      "units": [
+        "cellsafe"
+      ],
+      "package": "internal/platform/export/cellsafe"
     }
   ],
   "fuzz": [
@@ -131,6 +149,15 @@
       "implementation": "go/ldapfilter",
       "unit": "ldapfilter",
       "target": "FuzzFilter",
+      "properties": [
+        "roundtrip",
+        "noUnescapedSpecial"
+      ]
+    },
+    {
+      "implementation": "go/dn",
+      "unit": "dn",
+      "target": "FuzzDN",
       "properties": [
         "roundtrip",
         "noUnescapedSpecial"
@@ -253,6 +280,14 @@
       "target": "FuzzAnyTextIsInertString",
       "properties": [
         "independentParse"
+      ]
+    },
+    {
+      "implementation": "go/cellsafe",
+      "unit": "cellsafe",
+      "target": "FuzzClassify",
+      "properties": [
+        "noFormulaLead"
       ]
     }
   ]
