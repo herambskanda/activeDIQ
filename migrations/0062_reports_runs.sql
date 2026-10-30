@@ -64,7 +64,7 @@ CREATE INDEX report_runs_expiry ON public.report_runs (tenant_id, expires_at) WH
 CREATE INDEX report_runs_reuse ON public.report_runs (tenant_id, runner_account, query_hash, created_at DESC);
 
 CREATE TABLE public.report_run_rows (
-  tenant_id uuid NOT NULL,
+  tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   run_id uuid NOT NULL,
   row_key text NOT NULL CHECK (octet_length(row_key) BETWEEN 1 AND 200),
   ordinal bigint NOT NULL CHECK (ordinal >= 0),
@@ -118,7 +118,8 @@ BEGIN
   END IF;
   RETURN NEW;
 END $$;
-CREATE TRIGGER report_runs_guard BEFORE UPDATE OR DELETE ON public.report_runs
+-- AFTER, for the same reason as report_run_rows_guard below: row security refuses a cross-tenant write first.
+CREATE TRIGGER report_runs_guard AFTER UPDATE OR DELETE ON public.report_runs
   FOR EACH ROW EXECUTE FUNCTION public.report_runs_guard();
 
 CREATE FUNCTION public.report_run_rows_guard() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -143,7 +144,9 @@ BEGIN
   END IF;
   RETURN NEW;
 END $$;
-CREATE TRIGGER report_run_rows_guard BEFORE INSERT OR UPDATE OR DELETE ON public.report_run_rows
+-- AFTER, not BEFORE: row security rejects a write into another tenant before the guard looks at the run,
+-- so the guard never has to read a run record it cannot see (and the isolation probes see RLS's refusal).
+CREATE TRIGGER report_run_rows_guard AFTER INSERT OR UPDATE OR DELETE ON public.report_run_rows
   FOR EACH ROW EXECUTE FUNCTION public.report_run_rows_guard();
 
 ALTER TABLE public.report_runs ENABLE ROW LEVEL SECURITY;
