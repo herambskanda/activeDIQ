@@ -561,6 +561,35 @@ and `Via` grants contribute nothing. A target is built from the inventory row wi
 - **Assertion:** the rows the compiled SQL returns equal the objects the oracle admits. A scope
   that renders `FALSE` yields zero rows and the expected reason.
 
+### 4.7 Search consumes the same scope (T-0875, m2-plan decision 4)
+
+`GET /directory/users` (`modules/directory`) trims to the caller's `ReadScope` for `directory.read`. The
+design choice (directory-engineer): **push the include roots to the directory, then decide each result
+in memory** rather than filter through inventory.
+
+- **Producer.** `directory.ReadScopes` is a one-method port (`ReadScope(ctx, tenant, chain, perm)`); the
+  composition root implements it over `rbac.ReadScopes.For` and a transaction (T-0916). The handler
+  names the chain from the console session only: a token principal does not carry its token, so it is
+  refused (403) rather than read with its owner's wider scope. No producer, `ErrOwnerDead`,
+  `ErrTokenRefused`, `ErrUnsupportedChain` and `ErrDenied` are 403 and search nothing.
+- **Roots.** `ReadScope.SearchRoots(connection)` gives the include roots of the grants that can admit
+  anything (naming context and subtree become `SUBTREE`, one-level `ONE_LEVEL`). `client.UserSearch`
+  sends them as the `ScopedSearch` roots, so the directory returns nothing outside every include. A
+  scope with no roots in the connection answers empty without a directory call.
+- **Decision.** Excludes, the token layer and chain completeness are not roots. `ReadScope.Admits(ObjectView)`
+  decides each result from its live parent chain (the entry's `parent_guid`, then one container read per
+  distinct parent per search, memoised, budget 2000 reads). Chains come from the directory, never from
+  inventory ancestry, which is stale until P2. An incomplete chain, a loop, a vanished parent or a spent
+  budget is not admitted. `Admits` is a second renderer of the terms (beside the SQL one) and lives in
+  `authz`, the only package besides `reportsql` that may read `Terms`/`Token` (RP2); the rbac property test
+  `Test_ReadScope_matches_read_oracle` holds it to `AuthorizeRead` for every object.
+- **Counts after trimming (LF-39).** The 1,000-match cap and the limit count admitted users only; the
+  response has no count and no truncation mark.
+- **Known limits.** An OU root is sent with the forest root as `nc_guid` (a scope term carries no NC), so
+  a child-domain OU root relies on the connector resolving the GUID on the bound DC. The token layer is
+  applied after the query, not pushed into the roots, so a narrow token on a broad grant reads more
+  candidates than it returns.
+
 ## 5. The compiler: `store/reportsql`
 
 ```go
