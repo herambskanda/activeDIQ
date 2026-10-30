@@ -32,12 +32,13 @@ const (
 )
 
 type chainEnv struct {
-	db    *store.DB
-	ten   tenant.ID
-	conn  connection.Connection
-	sess  *authn.Store
-	acct  string
-	build func(t *testing.T, as ...rbac.Assignment) http.Handler
+	db      *store.DB
+	ten     tenant.ID
+	conn    connection.Connection
+	sess    *authn.Store
+	console *consoleStack
+	acct    string
+	build   func(t *testing.T, as ...rbac.Assignment) http.Handler
 }
 
 // chainSetup is a real database, a real session store and account, and an active Entra connection. The
@@ -59,6 +60,7 @@ func chainSetup(t *testing.T, s *storetest.Server) *chainEnv {
 		t.Fatal(err)
 	}
 	e.sess = console.Sessions
+	e.console = console
 
 	accts, err := authn.NewAccounts(db, e.sess, rbac.Owners{})
 	if err != nil {
@@ -117,7 +119,7 @@ func chainSetup(t *testing.T, s *storetest.Server) *chainEnv {
 		if err != nil || len(tags) != 1 {
 			t.Fatalf("attestation: %d tags, %v", len(tags), err)
 		}
-		h, err := buildAPIPorts(cfg, permissionCatalogue(), console.ports(testLimiter(t), az, permissionCatalogue()), tags...)
+		h, err := buildAPIPorts(cfg, permissionCatalogue(), console.ports(testLimiter(t), az, permissionCatalogue()), append(tags, console.Tags())...)
 		if err != nil {
 			t.Fatal(err)
 		}

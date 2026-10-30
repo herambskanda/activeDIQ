@@ -51,8 +51,8 @@ func (c *consoleStack) installTenant() (tenant.ID, bool) {
 	return tenant.ID{}, false
 }
 
-// Tags is the sign-in plane (/auth/*): AN-8 for a local account and AN-10 with TOTP. WebAuthn, sign-out and
-// the CSRF value answer 501 until their tickets land.
+// Tags is the sign-in plane (/auth/*): AN-8 for a local account, AN-10 with TOTP and the session's CSRF
+// value. WebAuthn and sign-out answer 501 until their tickets land.
 func (c *consoleStack) Tags() apihost.TagHandlers {
 	return authn.Handlers{
 		Password:     authnhttp.PasswordCookies{Factor: c.Local},
