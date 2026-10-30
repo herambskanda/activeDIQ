@@ -28,6 +28,14 @@ type PageQuery struct {
 	Cursor string
 }
 
+// rowSet is the part of a pgx result set the page reader uses.
+type rowSet interface {
+	Next() bool
+	Scan(dest ...any) error
+	Err() error
+	Close()
+}
+
 // StoredRow is one stored row.
 type StoredRow struct {
 	Key     string
@@ -114,18 +122,22 @@ func (s *Service) Page(ctx context.Context, tid tenant.ID, chain authority.Chain
 			}
 			out.Columns = append(out.Columns, col)
 		}
-		sql, args := pageByOrdinal, []any{id.String(), limit + 1, off}
-		if pq.SortBy != "" {
+		var rows rowSet
+		var err error
+		switch {
+		case pq.SortBy == "":
+			rows, err = tx.Query(ctx, pageByOrdinal, id.String(), limit+1, off)
+		default:
 			i := slices.IndexFunc(out.Columns, func(c report.Column) bool { return string(c.ID) == pq.SortBy })
 			if i < 0 || !out.Columns[i].Sortable {
 				return ErrBadSort
 			}
-			sql, args = pageSortAsc, append(args, pq.SortBy)
 			if pq.Desc {
-				sql = pageSortDesc
+				rows, err = tx.Query(ctx, pageSortDesc, id.String(), limit+1, off, pq.SortBy)
+			} else {
+				rows, err = tx.Query(ctx, pageSortAsc, id.String(), limit+1, off, pq.SortBy)
 			}
 		}
-		rows, err := tx.Query(ctx, sql, args...)
 		if err != nil {
 			return err
 		}

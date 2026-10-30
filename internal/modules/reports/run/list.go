@@ -31,7 +31,10 @@ type listCursor struct {
 	ID string    `json:"i"`
 }
 
-const listRuns = `SELECT ` + runCols + ` FROM public.report_runs
+const listRuns = `SELECT id::text, definition_id, definition_version, definition_sha256, preset, params, query_hash,
+  scope_fingerprint, runner_account::text, chain, schedule_id::text, rerun_of::text, state, failure_reason, attempt,
+  scope_applied, freshness, as_of, row_count, objects_checked, hidden_counts, digest, columns,
+  created_at, started_at, finished_at, expires_at FROM public.report_runs
 WHERE runner_account = $1::uuid
   AND ($2::text = '' OR state = $2) AND ($3::text = '' OR definition_id = $3)
   AND ($4::timestamptz IS NULL OR (created_at, id) < ($4::timestamptz, $5::uuid))

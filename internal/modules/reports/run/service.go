@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strconv"
 	"time"
 
@@ -21,14 +20,14 @@ import (
 
 // Errors the handlers map to Problems. None carries a request value.
 var (
-	ErrRunNotFound       = errors.New("run: no such run")                      // 404 run_not_found
-	ErrRunExpired        = errors.New("run: the result has expired")           // 410 report-result-expired
-	ErrScopeChanged      = errors.New("run: read scope changed since the run") // 409 scope_changed_rerun
-	ErrRunNotReady       = errors.New("run: the run has not finished")         // 409 run_not_ready
-	ErrRunInProgress     = errors.New("run: the run is queued or running")     // 409 run_in_progress
-	ErrTooManyJobs       = errors.New("run: too many report jobs")             // 429 too_many_report_jobs
-	ErrDefinitionUnknown = errors.New("run: unknown report definition")        // 404
-	ErrNotCancellable    = errors.New("run: the run is already finished")      // 409
+	ErrRunNotFound       = errors.New("run: no such run")                          // 404 run_not_found
+	ErrRunExpired        = errors.New("run: the result has expired")               // 410 report-result-expired
+	ErrScopeChanged      = errors.New("run: read scope changed since the run")     // 409 scope_changed_rerun
+	ErrRunNotReady       = errors.New("run: the run has not finished")             // 409 run_not_ready
+	ErrRunInProgress     = errors.New("run: the run is queued or running")         // 409 run_in_progress
+	ErrTooManyJobs       = errors.New("run: too many report jobs")                 // 429 too_many_report_jobs
+	ErrDefinitionUnknown = errors.New("run: unknown report definition")            // 404
+	ErrNotCancellable    = errors.New("run: the run is already finished")          // 409
 	ErrScopesUnavailable = errors.New("run: no read-scope producer is configured") // 503 not-ready
 	ErrOwnerDead         = authz.ErrOwnerDead
 	ErrTokenRefused      = authz.ErrTokenRefused
@@ -437,5 +436,3 @@ func (s *Service) finish(ctx context.Context, tx store.Tx, r Run, to State, reas
 		Target: authority.TargetRef{GUID: r.ID.String(), Class: "report_run"}, Component: Component, Outcome: audit.Failure,
 		Reason: why, Details: sortDetails(det)})
 }
-
-func (s *Service) String() string { return fmt.Sprintf("run.Service(cap=%d)", s.rowCap()) }

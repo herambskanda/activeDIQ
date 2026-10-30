@@ -5,11 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
-
-	"github.com/jackc/pgx/v5"
 
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/store"
@@ -138,12 +135,19 @@ func decodeChain(b []byte) (authority.Chain, error) {
 	return c, nil
 }
 
-const runCols = `id::text, definition_id, definition_version, definition_sha256, preset, params, query_hash,
+// scanner is the one method scanRun needs of a pgx row.
+type scanner interface{ Scan(dest ...any) error }
+
+// selectRun and lockRun are whole constants (no assembled SQL text): lockRun takes the row lock, which
+// load then follows with selectRun so a locked read sees the committed latest version.
+const selectRun = `SELECT id::text, definition_id, definition_version, definition_sha256, preset, params, query_hash,
   scope_fingerprint, runner_account::text, chain, schedule_id::text, rerun_of::text, state, failure_reason, attempt,
   scope_applied, freshness, as_of, row_count, objects_checked, hidden_counts, digest, columns,
-  created_at, started_at, finished_at, expires_at`
+  created_at, started_at, finished_at, expires_at FROM public.report_runs WHERE id = $1::uuid`
 
-func scanRun(row pgx.Row) (Run, error) {
+const lockRun = `SELECT id FROM public.report_runs WHERE id = $1::uuid FOR UPDATE`
+
+func scanRun(row scanner) (Run, error) {
 	var (
 		r                                 Run
 		id, runner                        string
@@ -208,12 +212,17 @@ func scanRun(row pgx.Row) (Run, error) {
 
 // load reads a run by ID in the transaction's tenant (RLS), optionally locking it.
 func load(ctx context.Context, tx store.Tx, id ID, lock bool) (Run, error) {
-	q := `SELECT ` + runCols + ` FROM public.report_runs WHERE id = $1::uuid`
 	if lock {
-		q += ` FOR UPDATE`
+		var locked string
+		if err := tx.QueryRow(ctx, lockRun, id.String()).Scan(&locked); err != nil {
+			if store.IsNoRows(err) {
+				return Run{}, ErrRunNotFound
+			}
+			return Run{}, err
+		}
 	}
-	r, err := scanRun(tx.QueryRow(ctx, q, id.String()))
-	if errors.Is(err, pgx.ErrNoRows) {
+	r, err := scanRun(tx.QueryRow(ctx, selectRun, id.String()))
+	if store.IsNoRows(err) {
 		return Run{}, ErrRunNotFound
 	}
 	return r, err
@@ -237,7 +246,7 @@ const countOpen = `SELECT count(*) FROM public.report_runs WHERE state IN ('queu
 
 const lockTenantJobs = `SELECT pg_advisory_xact_lock(hashtextextended('reports.jobs:' || current_setting('app.tenant_id', true), 0))`
 
-func isNoRows(err error) bool { return errors.Is(err, pgx.ErrNoRows) }
+func isNoRows(err error) bool { return store.IsNoRows(err) }
 
 func randomSuffix() string {
 	var b [6]byte

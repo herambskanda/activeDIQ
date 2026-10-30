@@ -790,6 +790,16 @@
       "column": "public.authn_authority_approvals.approver_id",
       "value": "00000000-0000-4000-8000-0000000000a9",
       "reason": "CHECK: authn_authority_approvals_not_self requires approver_id <> account_id, but the generator resolves both foreign keys to the same account row; the probe row names a distinct approver (seeded with foreign keys off, as every probe row is) (T-0766)"
+    },
+    {
+      "column": "public.report_runs.columns",
+      "value": "[]",
+      "reason": "CHECK: report_runs_columns_check requires a JSON array (the resolved column IDs); the probe row carries an empty array."
+    },
+    {
+      "column": "public.report_run_rows.cells",
+      "value": "[]",
+      "reason": "CHECK: report_run_rows_cells_check requires a JSON array (one cell per column); the probe row carries an empty array."
     }
   ]
 }

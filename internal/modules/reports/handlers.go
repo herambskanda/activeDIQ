@@ -54,23 +54,24 @@ func (h *Handlers) log() *slog.Logger {
 // to the token (reports.md 6.6 check 4), which the authenticator does not yet hand a handler. Refusing
 // is the safe side: a token can neither start a run nor read one.
 func (h *Handlers) caller(ctx context.Context) (tenant.ID, authority.Chain, error) {
+	var none tenant.ID // the zero tenant accompanies every refusal
 	p, ok := apihost.PrincipalFrom(ctx)
 	if !ok || p.ID == "" {
-		return tenant.ID{}, authority.Chain{}, apitypes.Forbidden("")
+		return none, authority.Chain{}, apitypes.Forbidden("")
 	}
 	if p.Kind == apihost.KindToken {
-		return tenant.ID{}, authority.Chain{}, apitypes.Forbidden("API tokens cannot use report runs yet; sign in to the console")
+		return none, authority.Chain{}, apitypes.Forbidden("API tokens cannot use report runs yet; sign in to the console")
 	}
 	tid, err := tenantref.TenantFromText(p.Tenant)
 	if err != nil {
-		return tenant.ID{}, authority.Chain{}, apitypes.Forbidden("")
+		return none, authority.Chain{}, apitypes.Forbidden("")
 	}
 	if _, err := apitypes.ParseUUID(p.ID); err != nil {
-		return tenant.ID{}, authority.Chain{}, apitypes.Forbidden("")
+		return none, authority.Chain{}, apitypes.Forbidden("")
 	}
 	c := authority.Chain{Requester: authority.Principal{ID: authority.PrincipalID(p.ID), Kind: authority.Human}}
 	if err := c.Validate(); err != nil {
-		return tenant.ID{}, authority.Chain{}, apitypes.Forbidden("")
+		return none, authority.Chain{}, apitypes.Forbidden("")
 	}
 	return tid, c, nil
 }
