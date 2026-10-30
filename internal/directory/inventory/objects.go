@@ -300,6 +300,27 @@ func nullTime(t time.Time) any {
 
 func validGUID(g GUID) bool { c, ok := canon(string(g)); return ok && c == string(g) }
 
+// lockConnection makes the writers of one (tenant, connection) take turns, until the transaction ends
+// (DM-16.I10). ancestry_complete is checked against the parent row and rewriteDescendants and
+// repairCompleteness see committed rows only, so two overlapping writers (a delta and a full pass, or
+// two batches) could store a child under a parent's old chain as complete while a move commits beside
+// it, which widens an OU-delegated read scope. Under the lock the second writer waits for the first to
+// commit and then reads its result. READ COMMITTED is required: a snapshot taken before the lock would
+// still show the pre-move rows, so any other level is refused before anything is read.
+func lockConnection(ctx context.Context, tx store.Tx, connection ConnectionID) error {
+	var iso string
+	if err := tx.QueryRow(ctx, `SELECT current_setting('transaction_isolation')`).Scan(&iso); err != nil {
+		return fmt.Errorf("inventory: read isolation: %w", err)
+	}
+	if iso != "read committed" {
+		return ErrIsolation
+	}
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('inventory.populate:' || current_setting('app.tenant_id', true) || '|' || $1::text, 0))`, string(connection)); err != nil {
+		return fmt.Errorf("inventory: lock connection: %w", err)
+	}
+	return nil
+}
+
 // Populate upserts the observations of connection observed at the given time (the cycle's as-of) and
 // writes their edges. All or nothing: any invalid observation fails the call before the first write, so a
 // caller's transaction never holds half a batch. An observation older than the stored row is counted
@@ -313,6 +334,9 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 		return out, ErrTooMany
 	}
 	if err := requireTenant(ctx, tx); err != nil {
+		return out, err
+	}
+	if err := lockConnection(ctx, tx, connection); err != nil {
 		return out, err
 	}
 	var ck string

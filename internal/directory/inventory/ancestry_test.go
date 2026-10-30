@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
@@ -506,4 +507,124 @@ func TestMoveIsTenantScoped(t *testing.T) {
 			t.Error("tenant A's other connection changed")
 		}
 	})
+}
+
+// F1 (security review): two transactions write one connection at once. The mover holds its transaction
+// open; the other Populate (a child under the pre-move chain) must wait for the lock, then see the
+// committed move and so store the child incomplete, never complete under a stale chain.
+func TestConcurrentMoveAndChildInsert(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		f := newForest()
+		if _, err := e.populate(t, e.adA, t1, head(), f.at(ouA, inventory.KindOU, nc1), f.at(ouB, inventory.KindOU, nc1), f.at(ouX, inventory.KindOU, ouA)); err != nil {
+			t.Fatal(err)
+		}
+		child := f.at(uX, inventory.KindUser, ouX) // chain [X, A, nc1], as read before the move
+		g := newForest()
+		g.chains = map[string][]string{nc1: nil, ouB: {nc1}, ouA: {nc1}}
+		e.raceWithMove(t, g.at(ouX, inventory.KindOU, ouB), child)
+
+		r := e.rows(t, e.a, e.adA)
+		if want := []string{ouB, nc1}; !reflect.DeepEqual(r[ouX].Ancestry, want) || !r[ouX].Complete {
+			t.Fatalf("moved OU = %+v, want chain %v complete", r[ouX], want)
+		}
+		if r[uX].Complete {
+			t.Fatalf("uX stored complete with chain %v while X is under %v", r[uX].Ancestry, r[ouX].Ancestry)
+		}
+	})
+}
+
+// The same race for a descendant already present: the stale-snapshot writer re-observes it under the old
+// chain while the move commits. It must not end complete with a chain that disagrees with its parent's.
+func TestConcurrentMoveAndKnownDescendant(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		f := newForest()
+		obs := []inventory.Observation{head(), f.at(ouA, inventory.KindOU, nc1), f.at(ouB, inventory.KindOU, nc1)}
+		obs = append(obs, f.subtree(ouA)...)
+		if _, err := e.populate(t, e.adA, t1, obs...); err != nil {
+			t.Fatal(err)
+		}
+		g := newForest()
+		g.chains = map[string][]string{nc1: nil, ouB: {nc1}, ouA: {nc1}}
+		e.raceWithMove(t, g.at(ouX, inventory.KindOU, ouB), f.at(uX, inventory.KindUser, ouX))
+
+		r := e.rows(t, e.a, e.adA)
+		if r[uX].Complete && !reflect.DeepEqual(r[uX].Ancestry, append([]string{ouX}, r[ouX].Ancestry...)) {
+			t.Fatalf("uX complete with chain %v, but X's chain is %v", r[uX].Ancestry, r[ouX].Ancestry)
+		}
+		if r[uZ].Complete && !reflect.DeepEqual(r[uZ].Ancestry, append([]string{ouZ}, r[ouZ].Ancestry...)) {
+			t.Fatalf("uZ complete with chain %v, but Z's chain is %v", r[uZ].Ancestry, r[ouZ].Ancestry)
+		}
+	})
+}
+
+// raceWithMove commits move while the other Populate (of late, started once the mover's transaction has
+// written but not committed) is in flight.
+func (e *env) raceWithMove(t *testing.T, move, late inventory.Observation) {
+	t.Helper()
+	moved, release, moverDone, lateDone := make(chan struct{}), make(chan struct{}), make(chan error, 1), make(chan error, 1)
+	go func() {
+		moverDone <- e.db.WithTenant(context.Background(), e.a, func(ctx context.Context, tx store.Tx) error {
+			if _, err := pop.Populate(ctx, tx, e.adA, t2, []inventory.Observation{move}); err != nil {
+				return err
+			}
+			close(moved)
+			<-release
+			return nil
+		})
+	}()
+	select {
+	case <-moved:
+	case err := <-moverDone:
+		t.Fatalf("mover ended before writing: %v", err)
+	}
+	go func() { _, err := e.populate(t, e.adA, t1, late); lateDone <- err }()
+	// Without the lock the second writer finishes at once. Record that, but still release and drain both
+	// goroutines, or a failing run leaves the mover's transaction open and hangs the test.
+	var lateErr error
+	lateEnded := false
+	select {
+	case lateErr = <-lateDone:
+		lateEnded = true
+		t.Errorf("a second writer of the connection ran while the first transaction was open (err %v)", lateErr)
+	case <-time.After(500 * time.Millisecond): // it is waiting on the lock
+	}
+	close(release)
+	if err := <-moverDone; err != nil {
+		t.Fatal(err)
+	}
+	if !lateEnded {
+		lateErr = <-lateDone
+	}
+	if lateErr != nil {
+		t.Fatal(lateErr)
+	}
+}
+
+// Populate refuses any isolation level but READ COMMITTED: a snapshot fixed before the lock would still
+// show the pre-move rows.
+func TestPopulateRefusesNonReadCommitted(t *testing.T) {
+	for _, level := range []string{"repeatable read", "serializable"} {
+		t.Run(level, func(t *testing.T) {
+			storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+				e := setup(t, s)
+				iso, err := store.Open(context.Background(), store.Config{DSN: e.d.AppDSN() + " default_transaction_isolation='" + level + "'"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(iso.Close)
+				err = iso.WithTenant(context.Background(), e.a, func(ctx context.Context, tx store.Tx) error {
+					_, err := pop.Populate(ctx, tx, e.adA, t1, []inventory.Observation{head()})
+					return err
+				})
+				if !errors.Is(err, inventory.ErrIsolation) {
+					t.Fatalf("err = %v, want ErrIsolation", err)
+				}
+				if n := e.count(t, `SELECT count(*) FROM directory_objects`); n != 0 {
+					t.Fatalf("%d rows written by a refused Populate", n)
+				}
+			})
+		})
+	}
 }
