@@ -68,6 +68,11 @@ Rules:
      the run is `failed`, `cancelled` or `expired`.
    - Page queries join `report_runs` on `state = 'succeeded'`, so a reader never sees a partial
      result, and nothing changes a row of a succeeded run.
+   - A stored run is read only by its runner, and only while the runner's current read-scope
+     fingerprint equals the one the rows were trimmed with (modules/reports.md §6.6). Stored rows
+     are one account's view, never a shared cache.
+   - A job retry that finds its run `running` fails it as `interrupted` and deletes its rows; it
+     never resumes into the same run (modules/reports.md §6.3).
 3. **Pages are static SQL.** Paging and re-sorting a stored result are sqlc queries over
    `report_run_rows`. They order by `ordinal`, or by `sort_keys->>@column COLLATE "C"` with two
    static variants (ascending and descending), then by `ordinal`. The column key is a bound
@@ -152,7 +157,10 @@ of the following checks run green in `make ci`:
   - a page read of an expired run fails with `ErrRunExpired`;
   - an export request for it creates a new run;
   - the retention job leaves no `report_run_rows` for it;
-  - `report_runs.expires_at` and `report_run_rows` are `NOT NULL` where rule 1 says so.
+  - a `succeeded` run has a non-null `expires_at` (the table's `CHECK` refuses one without it);
+  - the row trigger refuses an insert into, or an update of, `report_run_rows` once the run is
+    `succeeded`, and refuses a delete while it is `succeeded` (rule 2);
+  - the state trigger refuses every state edge not listed in modules/reports.md §6.2.
 - **RP5 (integration).** `Test_export_digest_equals_run_digest`: the digest stored on the run equals
   the digest recomputed from the rows through the API, the digest in the XLSX About block, and the
   digest recomputed from the CSV after parsing it back (reports-2a AC-50).
