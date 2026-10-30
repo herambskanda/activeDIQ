@@ -73,6 +73,27 @@ export async function ensureWorktree(ctx, ticketId) {
 }
 
 /**
+ * Ticket branches (`factory/<id>`) that exist and have commits ahead of the main branch, as
+ * `ticketId → commits ahead`. One `for-each-ref` plus one `rev-list` per existing branch, so a
+ * pass over many done tickets costs nothing when no branches are left behind.
+ * @param {object} ctx
+ * @returns {Promise<Map<string, number>>}
+ */
+export async function branchesAheadOfMain(ctx) {
+  const prefix = branchName('');
+  const refs = await git(ctx.root, ['for-each-ref', '--format=%(refname:short)', `refs/heads/${prefix}`]);
+  const ahead = new Map();
+  if (refs.code !== 0) return ahead;
+  const main = ctx.config.dispatcher.main_branch;
+  for (const name of refs.stdout.split('\n').map((l) => l.trim()).filter(Boolean)) {
+    const count = await git(ctx.root, ['rev-list', '--count', `${main}..${name}`]);
+    const n = count.code === 0 ? Number.parseInt(count.stdout, 10) : 0;
+    if (n > 0) ahead.set(name.slice(prefix.length), n);
+  }
+  return ahead;
+}
+
+/**
  * Merge a finished ticket's branch into the main branch of the main checkout with `--no-ff`.
  * A conflict is aborted cleanly and reported as such.
  * @param {object} ctx

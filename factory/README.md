@@ -313,6 +313,12 @@ claude -p "<rendered templates/worker-prompt.md>" \
   `git merge --no-ff factory/<id>` in the main checkout. On conflict: `git merge --abort`, the
   ticket returns to `in_progress` with a note, owner unchanged. On success: remove the worktree,
   delete the branch, append an event.
+- **Nothing is stranded at `done` (T-0986).** The merge is not limited to code-bearing types: on
+  every pass the dispatcher also merges any `done` ticket of another type (spec, docs, research…)
+  whose `factory/<id>` branch has commits ahead of `main`, with the same `--no-ff` merge, embargo
+  hold and cleanup. A conflict reopens the ticket for its owner with a note naming the branch (and,
+  for a type that works in the main checkout, how to resolve it in a temporary worktree). A `done`
+  ticket with no branch, or a branch with nothing ahead of `main`, is left as it is.
 - If the repository has no commits, or `isolation` is `none`, workers run in the main checkout and
   `max_parallel` is forced to 1 for code-bearing types.
 
