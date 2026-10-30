@@ -62,6 +62,10 @@ func (c Classifier) Classify(ctx context.Context, tid tenant.ID, conn connection
 		return unknown(reasonNotEvaluated)
 	}
 	if len(cs.Links) == 0 {
+		// No links proves "not hybrid" only when an evaluation covered this user; otherwise nobody checked.
+		if cs.EvaluatedAt.IsZero() {
+			return unknown(reasonNotEvaluated)
+		}
 		return hybrid(api.HybridStateNotHybrid, false, "")
 	}
 	// The strongest recorded state wins: matched, then candidate, then broken.

@@ -83,7 +83,8 @@ func TestClassifier(t *testing.T) {
 		auth  bool
 		why   string
 	}{
-		{"no correlation", directory.Classifier{Corr: corrFake{}, Takeovers: attested}, api.HybridStateNotHybrid, false, ""},
+		{"no links, never evaluated", directory.Classifier{Corr: corrFake{}, Takeovers: attested}, api.HybridStateUnknown, false, "hybrid_not_evaluated"},
+		{"no links, evaluated", directory.Classifier{Corr: corrFake{cs: inventory.Correlations{EvaluatedAt: time.Now()}}, Takeovers: attested}, api.HybridStateNotHybrid, false, ""},
 		{"matched and attested", directory.Classifier{Corr: corrFake{cs: matchedLinks()}, Takeovers: attested}, api.HybridStateMatched, true, ""},
 		{"matched from the entra side's link", directory.Classifier{Corr: corrFake{cs: adSide}, Takeovers: attested}, api.HybridStateMatched, true, ""},
 		{"strongest wins", directory.Classifier{Corr: corrFake{cs: mixed}, Takeovers: attested}, api.HybridStateMatched, true, ""},
