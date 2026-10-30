@@ -72,11 +72,15 @@ export interface Initial {
   readonly forbidden?: boolean;
   readonly unsupportedKind?: string;
 }
+export interface ExportCaps {
+  readonly CSV: number;
+  readonly XLSX: number;
+}
 export interface ReportsProps {
   readonly initial?: Initial;
   readonly perms?: Perms;
-  /** Row cap a tenant has lowered CSV and XLSX to (spec §8.3). Default is the 1,000,000 hard value. */
-  readonly exportCap?: number;
+  /** Row caps a tenant has lowered per format (spec §8.3). Default is the 1,000,000 hard value. */
+  readonly exportCaps?: ExportCaps;
   readonly latencyMs?: number;
 }
 
@@ -150,7 +154,7 @@ function isTyping(t: EventTarget | null): boolean {
 export function Reports({
   initial = {},
   perms = ALL_PERMS,
-  exportCap = 1_000_000,
+  exportCaps = { CSV: 1_000_000, XLSX: 1_000_000 },
   latencyMs = 220,
 }: ReportsProps) {
   const [view, setView] = useState(initial.view ?? "library");
@@ -259,6 +263,9 @@ export function Reports({
     const onKey = (e: KeyboardEvent) => {
       if (isTyping(e.target) || e.ctrlKey || e.metaKey || e.altKey || searchOpen || sheet) return;
       const k = e.key.toLowerCase();
+      // E and S follow their buttons: a disabled button means the key does nothing.
+      const btn = document.querySelector<HTMLButtonElement>(`button[aria-keyshortcuts="${k}"]`);
+      if (btn?.disabled) return;
       if (k === "/" && perms.run) {
         e.preventDefault();
         tick("/ search");
@@ -368,7 +375,7 @@ export function Reports({
             setScenario={setScenario}
             busy={busy}
             perms={perms}
-            exportCap={exportCap}
+            exportCaps={exportCaps}
             menu={menu}
             setMenu={setMenu}
             details={details}
@@ -512,7 +519,7 @@ function LibTabs(props: {
 function Forbidden() {
   return (
     <div className="diq-state diq-state--error" role="alert">
-      <p className="diq-state__title">You don’t have access to reports</p>
+      <h1 className="diq-state__title rp__h1">You don’t have access to reports</h1>
       <p>
         Your role does not include running reports (<span className="diq-mono">reports.run</span>
         ). Ask an administrator to add it to your role. Nothing here was changed.
@@ -777,7 +784,7 @@ interface ViewProps {
   readonly setScenario: (s: Scenario) => void;
   readonly busy: boolean;
   readonly perms: Perms;
-  readonly exportCap: number;
+  readonly exportCaps: ExportCaps;
   readonly menu: "export" | "columns" | "scope" | null;
   readonly setMenu: (m: "export" | "columns" | "scope" | null) => void;
   readonly details: boolean;
@@ -804,7 +811,7 @@ function ReportView(props: ViewProps) {
     setScenario,
     busy,
     perms,
-    exportCap,
+    exportCaps,
     menu,
     setMenu,
     details,
@@ -889,7 +896,6 @@ function ReportView(props: ViewProps) {
   const canSchedule = perms.schedule && !limited;
   const exportName = (ext: string) =>
     `${slugName(report.name)}-${slugName(preset?.name ?? "")}-20261030-0943Z.${ext}`;
-  const over = rows.length > exportCap;
 
   const doExport = (fmt: "CSV" | "XLSX") => {
     tick(fmt);
@@ -968,59 +974,59 @@ function ReportView(props: ViewProps) {
             <p className="pt__sub">{report.desc}</p>
           )}
         </div>
-        <div className="pt__actions" role="toolbar" aria-label="Report actions">
-          <div className="rp__pop">
+        <div className="rp__actwrap">
+          <div className="pt__actions" role="toolbar" aria-label="Report actions">
+            <div className="rp__pop">
+              <button
+                type="button"
+                className="btn btn--primary"
+                aria-haspopup="menu"
+                aria-expanded={menu === "export"}
+                aria-keyshortcuts="e"
+                disabled={!canExport}
+                aria-describedby={!perms.exportFiles ? "rp-perm-note" : undefined}
+                onClick={() => {
+                  tick("click Export");
+                  setMenu(menu === "export" ? null : "export");
+                }}
+              >
+                Export <span className="pt__kbd">E</span>
+              </button>
+              {menu === "export" ? (
+                <ExportMenu
+                  rows={rows.length}
+                  columns={columns.length}
+                  caps={exportCaps}
+                  ext={report.id === "GRP-02" && params.preset === "detailed"}
+                  expired={scenario === "expired"}
+                  onPick={doExport}
+                  onClose={() => setMenu(null)}
+                />
+              ) : null}
+            </div>
             <button
               type="button"
-              className="btn btn--primary"
-              aria-haspopup="menu"
-              aria-expanded={menu === "export"}
-              aria-keyshortcuts="e"
-              disabled={!canExport && perms.exportFiles}
-              aria-disabled={!perms.exportFiles ? true : undefined}
-              onClick={() => {
-                if (!perms.exportFiles) return;
-                tick("click Export");
-                setMenu(menu === "export" ? null : "export");
-              }}
+              className="btn"
+              aria-keyshortcuts="s"
+              disabled={!canSchedule}
+              aria-describedby={!perms.schedule ? "rp-perm-note" : undefined}
+              onClick={onSchedule}
             >
-              Export <span className="pt__kbd">E</span>
+              Schedule <span className="pt__kbd">S</span>
             </button>
-            {menu === "export" ? (
-              <ExportMenu
-                rows={rows.length}
-                columns={columns.length}
-                cap={exportCap}
-                over={over}
-                ext={report.id === "GRP-02" && params.preset === "detailed"}
-                expired={scenario === "expired"}
-                onPick={doExport}
-                onClose={() => setMenu(null)}
-              />
-            ) : null}
+            <CopyLink />
           </div>
-          <button
-            type="button"
-            className="btn"
-            aria-keyshortcuts="s"
-            disabled={!canSchedule && perms.schedule}
-            aria-disabled={!perms.schedule ? true : undefined}
-            onClick={() => perms.schedule && onSchedule()}
-          >
-            Schedule <span className="pt__kbd">S</span>
-          </button>
-          <CopyLink />
+          {!perms.exportFiles || !perms.schedule ? (
+            <p id="rp-perm-note" className="pt__sub rp__perm" role="note">
+              {!perms.exportFiles && !perms.schedule
+                ? "You can run this report but not export or schedule it. Ask an administrator for “export reports” and “schedule reports”."
+                : !perms.exportFiles
+                  ? "You can run this report but not export it. Ask an administrator for “export reports” (reports.export)."
+                  : "You can run and export this report but not schedule it. Ask an administrator for “schedule reports” (reports.schedule)."}
+            </p>
+          ) : null}
         </div>
       </div>
-      {!perms.exportFiles || !perms.schedule ? (
-        <p className="pt__sub rp__perm" role="note">
-          {!perms.exportFiles && !perms.schedule
-            ? "You can run this report but not export or schedule it. Ask an administrator for “export reports” and “schedule reports”."
-            : !perms.exportFiles
-              ? "You can run this report but not export it. Ask an administrator for “export reports” (reports.export)."
-              : "You can run and export this report but not schedule it. Ask an administrator for “schedule reports” (reports.schedule)."}
-        </p>
-      ) : null}
 
       <dl className="rp__strip" aria-label="This run">
         <div>
@@ -1264,17 +1270,16 @@ function Banners(props: {
 function ExportMenu(props: {
   readonly rows: number;
   readonly columns: number;
-  readonly cap: number;
-  readonly over: boolean;
+  readonly caps: ExportCaps;
   readonly ext: boolean;
   readonly expired: boolean;
   readonly onPick: (f: "CSV" | "XLSX") => void;
   readonly onClose: () => void;
 }) {
-  const { rows, columns, cap, over, ext, expired, onPick, onClose } = props;
+  const { rows, columns, caps, ext, expired, onPick, onClose } = props;
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    ref.current?.querySelector<HTMLElement>("[role=menuitem]")?.focus();
+    ref.current?.querySelector<HTMLElement>("[role=menuitem]:not([aria-disabled])")?.focus();
     const away = (e: MouseEvent) => {
       if (ref.current && !ref.current.parentElement?.contains(e.target as Node)) onClose();
     };
@@ -1291,16 +1296,18 @@ function ExportMenu(props: {
     },
     { f: "CSV" as const, key: "C", note: "table only, opens in any spreadsheet" },
   ];
+  const fmt = (n: number) => n.toLocaleString("en");
+  const overOf = (f: "CSV" | "XLSX") => rows > caps[f];
   const pick = (f: "CSV" | "XLSX") => {
-    if (over) return;
+    if (overOf(f)) return;
     onPick(f);
   };
+  const overFormats = items.filter((it) => overOf(it.f));
+  const okFormats = items.filter((it) => !overOf(it.f));
   return (
     <div
       ref={ref}
       className="rp__menu"
-      role="menu"
-      aria-label="Export format"
       onKeyDown={(e) => {
         const k = e.key.toLowerCase();
         if (e.key === "Escape") {
@@ -1327,30 +1334,38 @@ function ExportMenu(props: {
           This result has expired. Exporting runs the report again first and says so.
         </div>
       ) : null}
-      {items.map((it) => (
-        <button
-          key={it.f}
-          type="button"
-          role="menuitem"
-          className="rp__item"
-          aria-disabled={over ? true : undefined}
-          onClick={() => pick(it.f)}
-        >
-          <span>
-            <b>{it.f}</b>
-            <span className="pt__sub">
-              {" "}
-              {over ? `limit ${cap.toLocaleString("en")} rows` : it.note}
+      <div role="menu" aria-label="Export format">
+        {items.map((it) => (
+          <button
+            key={it.f}
+            type="button"
+            role="menuitem"
+            className="rp__item"
+            aria-disabled={overOf(it.f) ? true : undefined}
+            onClick={() => pick(it.f)}
+          >
+            <span>
+              <b>{it.f}</b>
+              <span className="pt__sub">
+                {" "}
+                {overOf(it.f) ? `limit ${fmt(caps[it.f])} rows` : it.note}
+              </span>
             </span>
-          </span>
-          <span className="pt__kbd">{it.key}</span>
-        </button>
-      ))}
-      {over ? (
+            <span className="pt__kbd">{it.key}</span>
+          </button>
+        ))}
+      </div>
+      {overFormats.length > 0 ? (
         <div className="rp__menunote rp__err" role="alert">
-          This export has {rows.toLocaleString("en")} rows. Your organisation limits CSV and XLSX to{" "}
-          {cap.toLocaleString("en")}. No file was created. Narrow the filters (period, domain or
-          column filter) and export again.
+          This export has {fmt(rows)} rows.{" "}
+          {overFormats.length === items.length
+            ? caps.CSV === caps.XLSX
+              ? `Your organisation limits CSV and XLSX to ${fmt(caps.CSV)}. `
+              : `Your organisation limits CSV to ${fmt(caps.CSV)} and XLSX to ${fmt(caps.XLSX)}. `
+            : `Your organisation limits ${overFormats[0]?.f} to ${fmt(caps[overFormats[0]?.f ?? "CSV"])}. `}
+          {overFormats.length === items.length
+            ? "No file was created. Narrow the filters (period, domain or column filter) and export again."
+            : `No file was created. ${okFormats[0]?.f} allows ${fmt(caps[okFormats[0]?.f ?? "CSV"])} rows: choose ${okFormats[0]?.f} (${okFormats[0]?.key}), or narrow the filters (period, domain or column filter).`}
         </div>
       ) : null}
     </div>

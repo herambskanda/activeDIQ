@@ -53,8 +53,16 @@
 .rp__foot {
   margin: var(--diq-space-2) 0 0;
 }
+.rp__actwrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--diq-space-2);
+  max-width: 48ch;
+}
 .rp__perm {
-  margin: var(--diq-space-2) 0 0;
+  margin: 0;
+  text-align: right;
 }
 .rp__copymsg {
   max-width: 28ch;
@@ -479,4 +487,8 @@
 }
 .rp__toast--ok {
   border-left-color: var(--diq-ok);
+}
+
+.rp__h1 {
+  margin: 0 0 var(--diq-space-2);
 }

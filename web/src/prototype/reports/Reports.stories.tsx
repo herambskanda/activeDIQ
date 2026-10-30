@@ -164,8 +164,14 @@ export const ExportMenuEvidencePack: Story = {
 };
 export const ExportOverTenantLimit: Story = {
   args: {
-    exportCap: 10_000,
-    initial: { view: "report", report: "USR-03", preset: "recent", menu: "export" },
+    exportCaps: { CSV: 10_000, XLSX: 10_000 },
+    initial: { view: "report", report: "USR-01", preset: "all", menu: "export" },
+  },
+};
+export const ExportOverOneFormatLimit: Story = {
+  args: {
+    exportCaps: { CSV: 1_000_000, XLSX: 10_000 },
+    initial: { view: "report", report: "USR-01", preset: "all", menu: "export" },
   },
 };
 export const RunDetailsFiles: Story = {
