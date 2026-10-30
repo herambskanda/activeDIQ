@@ -16,16 +16,16 @@ the contract ([agent-host-addc-contract.md](../architecture/agent-host-addc-cont
 They weaken no check: where the code was wrong the code changes; where the allowlist was too thin it
 grows by reviewed, exact entries. Measured on `factory/T-0555` at dce3e5ed with `go run ./tools/fitness/agenthost -skip-tests`.
 
-## Ruling 1: R3. Create `internal/agenthost/api`; do not widen R3 to the host
+## Ruling 1: R3. Create `internal/agenthost/hostapi`; do not widen R3 to the host
 
 **Decision.** R3 stays allow-by-exception. `addc` may not import `internal/platform/agent`, the generated
 `skenzeriq/agent/v1` package, `grpc`, `syscall`, `unsafe` or `x/sys/windows`. The module boundary becomes
-a real package, `internal/agenthost/api`, imported by both sides: the host implements it, modules consume
+a real package, `internal/agenthost/hostapi`, imported by both sides: the host implements it, modules consume
 it (module -> api <- host). Amended R3 allowlist (check.go):
 
 | Admitted | Why it is safe |
 | --- | --- |
-| `internal/agenthost/api` | the boundary: capability interfaces only |
+| `internal/agenthost/hostapi` | the boundary: capability interfaces only |
 | `internal/proto/activediq/addc/v1` | the module's own contract: typed data (R1, R2, R5 already lint it) |
 | `encoding/xml` | pure parsing of event XML; Go's decoder does not fetch external entities |
 | `golang.org/x/text/cases`, `.../unicode/norm` | pure text tables; no I/O |
@@ -51,7 +51,7 @@ already owns it) behind `api.EventSource`:
 
 `DecodeEvent` (XML to typed event, `encoding/xml`) stays in `addc`, pure and fuzzable.
 
-**Boundary guard (new, in check.go).** `internal/agenthost/api` may itself import only the pure stdlib
+**Boundary guard (new, in check.go).** `internal/agenthost/hostapi` may itself import only the pure stdlib
 set, `skenzeriq/agent/v1` and `grpc`; anything else (`os`, `net`, `syscall`, `x/sys`) fails R3. Otherwise
 the boundary could be used to smuggle a capability in.
 
@@ -182,7 +182,7 @@ Windows proofs (identity, privileges, ACE, rollback leaves nothing) stay lab ite
 
 ## Work for T-0555 (windows-engineer), in order
 
-1. Create `internal/agenthost/api`; move host-side types; move wevtapi into the host behind `EventSource`; strip `addc` of `syscall`, `unsafe`, `x/sys/windows`, `grpc`, `platform/agent`, `skenzeriq/agent/v1`.
+1. Create `internal/agenthost/hostapi`; move host-side types; move wevtapi into the host behind `EventSource`; strip `addc` of `syscall`, `unsafe`, `x/sys/windows`, `grpc`, `platform/agent`, `skenzeriq/agent/v1`.
 2. Rename `Binding.Serve` to `Register`; move the gateway and hub out of the agent closure.
 3. Rework `Agent.wxs` per 4a-4d; drop `--data-dir` from `agentsetup`; Windows config path.
 4. `make fitness-agent-host` must print R3, R4, A1, A4 `ok` (A2/A3 remain T-0648).

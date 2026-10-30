@@ -211,3 +211,7 @@ func (s *serverStream) RecvMsg(msg any) error {
 	}
 	return nil
 }
+
+// FixedError returns the CallError carrying only the fixed text of code c (FixedText): what a caller
+// sees when no tunnel is up, with nothing a peer could influence.
+func FixedError(c codes.Code) *CallError { return fixedErr(c) }

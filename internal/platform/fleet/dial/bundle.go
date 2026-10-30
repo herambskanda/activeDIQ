@@ -70,41 +70,65 @@ func isCA(c *x509.Certificate) bool {
 	return c.BasicConstraintsValid && c.IsCA && c.KeyUsage&x509.KeyUsageCertSign != 0
 }
 
+// isServerRoot is the shape ADR-0008 obligation 6 demands of the pinned root: a CA that may sign
+// leaves only (MaxPathLen 0) and has KeyUsageCertSign. A pinned certificate of any other shape is
+// never a root.
+func isServerRoot(c *x509.Certificate) bool {
+	return isCA(c) && c.MaxPathLen == 0 && c.MaxPathLenZero
+}
+
+// Bundle is a parsed ca_bundle_pem, split by role (ADR-0008 decision 5).
+//
+// Roots are exactly the certificates whose SPKI matches the pin: the only TLS roots of any dial-out.
+// ClientCAs are every other certificate (the tenant's client CAs and cross-certificates): they are
+// used only to check that our issued leaf verifies for ClientAuth, and never join a RootCAs pool.
+type Bundle struct {
+	Roots     []*x509.Certificate
+	ClientCAs []*x509.Certificate
+}
+
 var pemBegin = []byte("-----BEGIN ")
 
 // ParseBundle reads ca_bundle_pem strictly (TM-D24 rule D3): CERTIFICATE blocks only, no headers,
 // nothing but whitespace around or between them, 1 to MaxBundleCerts of them, at most MaxBundleBytes
-// in all, each a CA, one matching the pin. x509.CertPool.AppendCertsFromPEM is deliberately not used
+// in all, each a CA, one matching the pin (and then shaped as a server root, see isServerRoot). x509.CertPool.AppendCertsFromPEM is deliberately not used
 // on the raw bytes: it silently skips blocks it does not like.
-func ParseBundle(bundle []byte, pin Pin) ([]*x509.Certificate, error) {
+func ParseBundle(bundle []byte, pin Pin) (Bundle, error) {
 	if len(bundle) == 0 || len(bundle) > MaxBundleBytes {
-		return nil, ErrBundle
+		return Bundle{}, ErrBundle
 	}
-	var certs []*x509.Certificate
-	pinned := false
+	var out Bundle
+	n := 0
 	rest := bytes.TrimSpace(bundle)
 	for len(rest) > 0 {
 		// pem.Decode skips any text before the next BEGIN line, so require the block to start here.
 		if !bytes.HasPrefix(rest, pemBegin) {
-			return nil, ErrBundle
+			return Bundle{}, ErrBundle
 		}
 		var blk *pem.Block
 		blk, rest = pem.Decode(rest)
-		if blk == nil || blk.Type != "CERTIFICATE" || len(blk.Headers) != 0 || len(certs) == MaxBundleCerts {
-			return nil, ErrBundle
+		if blk == nil || blk.Type != "CERTIFICATE" || len(blk.Headers) != 0 || n == MaxBundleCerts {
+			return Bundle{}, ErrBundle
 		}
 		c, err := x509.ParseCertificate(blk.Bytes)
 		if err != nil || !isCA(c) {
-			return nil, ErrBundle
+			return Bundle{}, ErrBundle
 		}
-		pinned = pinned || pin.Matches(c)
-		certs = append(certs, c)
+		n++
+		if pin.Matches(c) {
+			if !isServerRoot(c) {
+				return Bundle{}, ErrBundle
+			}
+			out.Roots = append(out.Roots, c)
+		} else {
+			out.ClientCAs = append(out.ClientCAs, c)
+		}
 		rest = bytes.TrimSpace(rest)
 	}
-	if len(certs) == 0 || !pinned {
-		return nil, ErrBundle
+	if len(out.Roots) == 0 {
+		return Bundle{}, ErrBundle
 	}
-	return certs, nil
+	return out, nil
 }
 
 // Pool returns a non-nil pool holding exactly certs.

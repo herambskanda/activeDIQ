@@ -110,6 +110,8 @@ func (s *Server) routeHandler(rt Route, boundHost string) http.Handler {
 
 		// 3. per-source-IP rate limit, before any authentication work.
 		clientIP := s.sourceIP(r)
+		ctx = withSourceIP(ctx, clientIP)
+		r = r.WithContext(ctx)
 		if d, err := s.ports.Limits.AllowIP(ctx, meta.Class, clientIP); err != nil {
 			fail(err)
 			return

@@ -2,6 +2,7 @@ package authn
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -31,12 +32,48 @@ func accountChain(account string) authority.Chain {
 	return authority.Chain{Requester: authority.Principal{ID: authority.PrincipalID(account), Kind: authority.Human}}
 }
 
+// endStmt names one of the constant UPDATE ... RETURNING statements that end sessions. The statement
+// text is chosen here and never passed in, so every query is a constant (safe-primitives §7).
+type endStmt int
+
+const (
+	endExpireDue endStmt = iota
+	endEvict
+	endRevokeAccount
+	endRevokeSession
+	endRevokeToken
+)
+
+// sessionRows is what endRows reads from a statement's result.
+type sessionRows interface {
+	Next() bool
+	Scan(dest ...any) error
+	Err() error
+	Close()
+}
+
+func (e endStmt) query(ctx context.Context, tx store.Tx, args []any) (sessionRows, error) {
+	switch e {
+	case endExpireDue:
+		return tx.Query(ctx, expireDue, args...)
+	case endEvict:
+		return tx.Query(ctx, evict, args...)
+	case endRevokeAccount:
+		return tx.Query(ctx, sqlRevokeAccount, args...)
+	case endRevokeSession:
+		return tx.Query(ctx, sqlRevokeSession, args...)
+	case endRevokeToken:
+		return tx.Query(ctx, sqlRevokeToken, args...)
+	}
+	return nil, errors.New("authn: unknown session statement")
+}
+
 // endRows runs an UPDATE ... RETURNING id, account_id, end_reason that ends sessions, and records one
 // event of kind per ended session in the same transaction. by is nil for the system.
-func (s *Store) endRows(ctx context.Context, tx store.Tx, now time.Time, sql string, args []any, kind audit.Kind, by func(account string) authority.Chain) (int, error) {
+func (s *Store) endRows(ctx context.Context, tx store.Tx, now time.Time, stmt endStmt, args []any, kind audit.Kind, by func(account string) authority.Chain) (int, error) {
 	type ended struct{ id, account, reason string }
 	var out []ended
-	rows, err := tx.Query(ctx, sql, args...)
+	rows, err := stmt.query(ctx, tx, args)
 	if err != nil {
 		return 0, err
 	}

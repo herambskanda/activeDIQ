@@ -296,8 +296,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Claim first-run setup with the one-time setup secret (AN-4)
-         * @description The first-run setup gate (TM-TB16-T7). A fresh install writes a one-time setup secret where only the installing administrator can read it (`activediq-server setup show`). Presenting it here claims setup: the secret is consumed on the first correct use and never works again. Success answers 204 and no body. Every failure has one shape, 401 /problems/setup-refused: wrong secret, expired secret, already-used secret, and an install that is not in first-run state are indistinguishable. The source-IP limiter may answer 429. No default account exists before or after.
+         * Claim first-run setup and create the first tenant owner (AN-4)
+         * @description The first-run setup gate (TM-TB16-T7). A fresh install writes a one-time setup secret where only the installing administrator can read it (`activediq-server setup show`). Presenting it here claims setup: in one step the secret is consumed and the first tenant-owner account is created and granted the tenant-owner role (a failure creating the owner leaves the secret unconsumed). The secret never works again. The new account has no credential yet and cannot sign in until one is enrolled. Success answers 204 and no body. A second claim is refused like any other failure. Every failure has one shape, 401 /problems/setup-refused: wrong secret, expired secret, already-used secret, and an install that is not in first-run state are indistinguishable. The source-IP limiter may answer 429. No default account exists before or after.
          */
         post: operations["claimFirstRunSetup"];
         delete?: never;
@@ -500,9 +500,15 @@ export interface components {
         };
         /** @description A secret a client sends: a password, a token. It is write-only, never appears in a response, and is held in memory only as a secret.Secret that is destroyed after the request. */
         SecretInput: string;
-        /** @description The one-time setup secret. */
+        /** @description The one-time setup secret and the details of the first tenant owner. */
         SetupClaimRequest: {
+            owner: components["schemas"]["SetupOwner"];
             secret: components["schemas"]["SecretInput"];
+        };
+        /** @description The first tenant owner's account details. */
+        SetupOwner: {
+            displayName: string;
+            email: string;
         };
         /** @description A destination as stored. It never carries a credential. */
         SiemDestination: {
@@ -1506,7 +1512,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Setup was claimed and the secret is consumed. */
+            /** @description Setup was claimed, the secret is consumed and the first tenant owner exists. */
             204: {
                 headers: {
                     [name: string]: unknown;

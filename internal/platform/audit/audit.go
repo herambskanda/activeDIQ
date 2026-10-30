@@ -106,7 +106,9 @@ func (e Event) Validate() error {
 	// An event about a directory object carries that object's subject on every value it records, so a
 	// legal hold finds it (ADR-0005 rule 11, A9). A change with values and no Subject would be kept as
 	// counts only and fall outside every hold.
-	if _, person := personal.DirSubject(e.Target.Connection, e.Target.GUID); person {
+	// A connection or Entra tenant is the top of its own chain, not a directory object: its Connection and
+	// GUID are both its own ID, which DirSubject would read as a personal subject.
+	if _, person := personal.DirSubject(e.Target.Connection, e.Target.GUID); person && !nonDirectoryClass(e.Target.Class) {
 		for _, c := range e.Changes {
 			if c.Subject == "" && !c.Secret && (len(c.Before) > 0 || len(c.After) > 0) {
 				return ErrInvalidEvent
@@ -119,6 +121,10 @@ func (e Event) Validate() error {
 	}
 	return ErrInvalidEvent
 }
+
+// nonDirectoryClass reports a target class that names a connection-level object rather than a directory
+// object, so it never carries a personal subject.
+func nonDirectoryClass(c string) bool { return c == "connection" || c == "entra_tenant" }
 
 // Sink appends an event inside tx, the caller's transaction. Implementations chain the event at
 // commit; they never open a transaction of their own.

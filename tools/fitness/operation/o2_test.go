@@ -21,12 +21,14 @@ func runCheck(t *testing.T, f func(string) ([]Violation, error), files map[strin
 
 func TestO2Violations(t *testing.T) {
 	cases := map[string]struct{ file, src, want string }{
-		"exported write without Step":             {clientPath, "package client\ntype C struct{ transport T }\nfunc (c *C) Do() { c.sendApply() }\nfunc (c *C) sendApply() {}\n", "no step.Step parameter"},
-		"direct transport call without Clearance": {clientPath, "package client\n" + stepImport + "type C struct{ transport T }\nfunc (c *C) send(s step.Step) { c.transport.Apply() }\n", "no step.Clearance parameter"},
-		"generated client outside client":         {"internal/modules/a/a.go", "package a\n" + connImport + "var _ = connectorv1.NewConnectorClient\n", "generated connector-contract client"},
-		"generated client in connector non-test":  {"internal/connector/x/x.go", "package x\n" + connImport + "var _ connectorv1.ConnectorClient\n", "generated connector-contract client"},
-		"ldap outside connector":                  {"internal/modules/a/a.go", "package a\nimport _ \"github.com/go-ldap/ldap/v3\"\n", "directory protocol library"},
-		"graph outside connector":                 {"internal/directory/x/x.go", "package x\nimport _ \"github.com/microsoftgraph/msgraph-sdk-go\"\n", "directory protocol library"},
+		"exported write without Step":                      {clientPath, "package client\ntype C struct{ transport T }\nfunc (c *C) Do() { c.sendApply() }\nfunc (c *C) sendApply() {}\n", "no step.Step parameter"},
+		"direct transport call without Clearance":          {clientPath, "package client\n" + stepImport + "type C struct{ transport T }\nfunc (c *C) send(s step.Step) { c.transport.Apply() }\n", "no step.Clearance parameter"},
+		"generated client outside client":                  {"internal/modules/a/a.go", "package a\n" + connImport + "var _ = connectorv1.NewConnectorClient\n", "generated connector-contract client"},
+		"generated client in compose/server non-test":      {"internal/compose/server/x.go", "package x\n" + connImport + "var _ connectorv1.ConnectorClient\n", "generated connector-contract client"},
+		"generated client in compose test of another root": {"internal/compose/agent/x_test.go", "package x\n" + connImport + "var _ connectorv1.ConnectorClient\n", "generated connector-contract client"},
+		"generated client in connector non-test":           {"internal/connector/x/x.go", "package x\n" + connImport + "var _ connectorv1.ConnectorClient\n", "generated connector-contract client"},
+		"ldap outside connector":                           {"internal/modules/a/a.go", "package a\nimport _ \"github.com/go-ldap/ldap/v3\"\n", "directory protocol library"},
+		"graph outside connector":                          {"internal/directory/x/x.go", "package x\nimport _ \"github.com/microsoftgraph/msgraph-sdk-go\"\n", "directory protocol library"},
 	}
 	for name, c := range cases {
 		vs := runCheck(t, CheckO2, map[string]string{c.file: c.src})
@@ -41,9 +43,11 @@ func TestO2Allowed(t *testing.T) {
 		clientPath: "package client\n" + stepImport + "type C struct{ transport T }\n" +
 			"func (c *C) Write(s step.Step) { c.sendApply(s) }\n" +
 			"func (c *C) sendApply(s step.Step, clr step.Clearance) { c.transport.Apply() }\nfunc (c *C) Facts() {}\n",
-		"internal/connector/x/x_test.go": "package x\n" + connImport + "var _ connectorv1.ConnectorClient\n",
-		"internal/connector/ldap/l.go":   "package ldap\nimport _ \"github.com/go-ldap/ldap/v3\"\n",
-		"internal/modules/a/a.go":        "package a\ntype C struct{}\nfunc (C) Apply() {}\nfunc (C) Do(c C) { c.Apply() }\n",
+		"internal/connector/x/x_test.go":       "package x\n" + connImport + "var _ connectorv1.ConnectorClient\n",
+		"internal/compose/connector/m_test.go": "package x\n" + connImport + "var _ connectorv1.ConnectorClient\n",
+		"internal/compose/server/p_test.go":    "package x\n" + connImport + "var _ connectorv1.ConnectorClient\n",
+		"internal/connector/ldap/l.go":         "package ldap\nimport _ \"github.com/go-ldap/ldap/v3\"\n",
+		"internal/modules/a/a.go":              "package a\ntype C struct{}\nfunc (C) Apply() {}\nfunc (C) Do(c C) { c.Apply() }\n",
 	})
 	if len(vs) != 0 {
 		t.Fatalf("violations = %v", vs)

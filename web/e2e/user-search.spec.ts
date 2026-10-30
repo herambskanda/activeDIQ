@@ -40,6 +40,13 @@ async function answerWith(
   });
 }
 
+// The console checks for a session before it shows any screen; these tests are signed in.
+test.beforeEach(async ({ page }) => {
+  await page.route("**/api/v1/auth/csrf", (route) =>
+    route.fulfill({ json: { header: "X-CSRF-Token", value: "csrf-e2e" } }),
+  );
+});
+
 async function noCriticalViolations(page: Page) {
   const { violations } = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"])
@@ -118,6 +125,7 @@ test("refused characters are explained beside the box and nothing is sent", asyn
 test("the whole screen works from the keyboard", async ({ page }) => {
   await answerWith(page, () => undefined);
   await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Users" })).toBeVisible();
   await page.keyboard.press("Tab");
   await expect(page.getByRole("searchbox", { name: "Search users" })).toBeFocused();
   await page.keyboard.type("ada");

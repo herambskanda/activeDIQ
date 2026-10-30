@@ -36,7 +36,7 @@ func TestConsoleAuthzAllowsATenantSessionOnlyWhenRBACGrants(t *testing.T) {
 	tn := tenant.New().String()
 	p := apihost.Principal{ID: tenant.New().String(), Tenant: tn, Kind: apihost.KindSession, SessionID: "s"}
 	ra := &recAuthz{}
-	ok, err := consoleAuthz{ra}.Allow(context.Background(), p, "connections.takeover.attest", "tenant")
+	ok, err := consoleAuthz{ra, testCatalogue()}.Allow(context.Background(), p, "connections.takeover.attest", "tenant")
 	if err != nil || !ok {
 		t.Fatalf("allow = %v, %v", ok, err)
 	}
@@ -45,11 +45,11 @@ func TestConsoleAuthzAllowsATenantSessionOnlyWhenRBACGrants(t *testing.T) {
 		t.Fatalf("authorizer saw %+v", ra)
 	}
 	// RBAC refusal is a clean "no"; any other error is a fault and propagates.
-	if ok, err := (consoleAuthz{&recAuthz{err: rbac.ErrDenied}}).Allow(context.Background(), p, "x", "tenant"); ok || err != nil {
+	if ok, err := (consoleAuthz{&recAuthz{err: rbac.ErrDenied}, testCatalogue()}).Allow(context.Background(), p, "x", "tenant"); ok || err != nil {
 		t.Errorf("denied = %v, %v", ok, err)
 	}
 	boom := errors.New("db down")
-	if ok, err := (consoleAuthz{&recAuthz{err: boom}}).Allow(context.Background(), p, "x", "tenant"); ok || !errors.Is(err, boom) {
+	if ok, err := (consoleAuthz{&recAuthz{err: boom}, testCatalogue()}).Allow(context.Background(), p, "x", "tenant"); ok || !errors.Is(err, boom) {
 		t.Errorf("fault = %v, %v", ok, err)
 	}
 }
@@ -67,11 +67,11 @@ func TestConsoleAuthzDeniesByDefault(t *testing.T) {
 		p     apihost.Principal
 		scope string
 	}{
-		"platform scope": {consoleAuthz{&recAuthz{}}, good, "platform"},
-		"api token":      {consoleAuthz{&recAuthz{}}, tok, "tenant"},
-		"no account":     {consoleAuthz{&recAuthz{}}, noID, "tenant"},
-		"bad tenant":     {consoleAuthz{&recAuthz{}}, badTenant, "tenant"},
-		"no authorizer":  {consoleAuthz{}, good, "tenant"},
+		"platform scope": {consoleAuthz{&recAuthz{}, testCatalogue()}, good, "platform"},
+		"api token":      {consoleAuthz{&recAuthz{}, testCatalogue()}, tok, "tenant"},
+		"no account":     {consoleAuthz{&recAuthz{}, testCatalogue()}, noID, "tenant"},
+		"bad tenant":     {consoleAuthz{&recAuthz{}, testCatalogue()}, badTenant, "tenant"},
+		"no authorizer":  {consoleAuthz{cat: testCatalogue()}, good, "tenant"},
 	} {
 		if ok, err := c.a.Allow(context.Background(), c.p, "x", c.scope); ok || err != nil {
 			t.Errorf("%s: allowed (%v, %v)", name, ok, err)
@@ -94,7 +94,7 @@ func TestBuildConsolePorts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := c.ports(testLimiter(t), &recAuthz{})
+	p := c.ports(testLimiter(t), &recAuthz{}, testCatalogue())
 	if p.Authn == nil || p.Authz == nil || p.Limits == nil || p.StepUp == nil {
 		t.Fatalf("ports = %+v", p)
 	}
@@ -143,9 +143,12 @@ func TestConsoleAuthzOverRealRBAC(t *testing.T) {
 			t.Fatal(err)
 		}
 		p := apihost.Principal{ID: tenant.New().String(), Tenant: tn.String(), Kind: apihost.KindSession, SessionID: "s"}
-		ok, err := consoleAuthz{az}.Allow(context.Background(), p, perm, "tenant")
+		ok, err := consoleAuthz{az, testCatalogue()}.Allow(context.Background(), p, perm, "tenant")
 		if err != nil || ok != c.want {
 			t.Errorf("%s: allow = %v, %v; want %v", name, ok, err, c.want)
 		}
 	}
 }
+
+// testCatalogue is the real catalogue plus "x", the placeholder permission some cases ask for.
+func testCatalogue() apihost.Permissions { return append(permissionCatalogue(), "x") }
