@@ -335,24 +335,30 @@ lab/windows/bin/agent-verify --log knowledge/development/runbooks/windows-lab-ru
 
 `kerberos_windows_lab_test.go` (`-tags 'lab windowslab'`) is the Windows twin of the Samba `kerberos_lab_test.go`
 (T-0560). It needs dc1 enforcing **LDAP signing required** (`LDAPServerIntegrity=2`) and **channel binding always**
-(`LdapEnforceChannelBindingTokens=2`), plus a keytab identity.
+(`LdapEnforceChannelBindingTokens=2`, read at boot), plus a keytab identity. `lab/windows/bin/gssapi-lab` drives it over WinRM
+(5985, NTLM, lab only; `pip install pywinrm requests-ntlm`; wrap every call in `flock -w 3600 /tmp/claude-1000/activediq-dc1.lock`):
 
-1. On dc1 run `C:\guest\gssapi-ready.ps1` (source: `lab/windows/guest/gssapi-ready.ps1`). It sets both registry values
-   under `HKLM\SYSTEM\CurrentControlSet\Services\NTDS\Parameters` (**reboot dc1 afterwards**), creates the AES-only
-   account `svc-t0566-gssapi` with an AES256 keytab (`ktpass`), and creates the AES-only gMSA `gmsa-t0566$` and exports its
-   managed-password blob. Output: `C:\lab\gssapi\svc.keytab`, `C:\lab\gssapi\gmsa.json`.
-2. `scp` them to the lab host as `lab/windows/.win-lab-gssapi.keytab` and `lab/windows/.win-lab-gmsa.json` (gitignored,
-   mode 0600; override with `WIN_LAB_GSSAPI_KEYTAB`, `WIN_LAB_GMSA`), then delete them from the VM. Snapshot `clean` again.
-3. `make lab-test-connector-windows` (or `go test -tags 'lab windowslab' -run WindowsLabKerberos -v ./internal/connector/ad/`).
+1. `export WIN_LAB_ENV=<main checkout>/lab/windows/.win-lab.env WIN_LAB_CA=<main checkout>/lab/windows/.win-lab-ca.pem`, then
+   `gssapi-lab prepare` (once per DC): runs `guest/gssapi-ready.ps1` on dc1 (both registry values, AES-only account
+   `svc-t0566-gssapi` with an AES256 `ktpass` keytab, AES-only gMSA `gmsa-t0566$` readable by Administrator and the DC), copies
+   `svc.keytab` and `gmsa.json` to `.win-lab-gssapi.keytab` and `.win-lab-gmsa.json` beside the env file (gitignored, 0600;
+   override with `WIN_LAB_GSSAPI_KEYTAB`, `WIN_LAB_GMSA`), deletes them on the VM and reboots dc1.
+2. `gssapi-lab run [go test args]` (default: the whole suite). It puts dc1's clock in step with the host for the run
+   (**dc1 is +12h30m, bug T-0850; Kerberos allows 5 min**), turns on `16 LDAP Interface Events`=2 so the DC logs event 3039, runs
+   `go test`, prints the DC's channel-binding events and restores the clock offset and the diagnostics value in a `finally`.
+   Do not run the Go tests against dc1 without it: they fail with KRB_AP_ERR_SKEW.
 
 | Test | Pins |
 | --- | --- |
-| `…KeytabBindWithChannelBinding` | keytab identity binds over LDAPS, SPN `ldap/<fqdn>`, layer none, whoami + rootDSE work |
-| `…GMSAKeytabBind` | keytab derived from the gMSA managed password binds |
-| `…WrongChannelBindingRejected` | control with the DC's own cert binds; a binding of another cert is refused with ldap 49 |
+| `…KeytabBindWithChannelBinding` | keytab identity binds over verified LDAPS, SPN `ldap/<fqdn>`, layer none, whoami + rootDSE work |
+| `…GMSAKeytabBind` | keytab derived from the gMSA managed password binds (derivation confirmed) |
+| `…WrongChannelBindingRejected` | control with the DC's own cert binds; a binding of another cert is refused with ldap 49 and logged as event 3039 |
 | `…MissingChannelBindingRefusedClientSide` | no request without a binding (the server-side "absent" case cannot be produced by this client) |
-| `…WrongSPNFails`, `…BadKeytabFailsBind` | SPN for another host and a foreign key are both refused |
+| `…WrongSPNFails`, `…BadKeytabFailsBind` | each has a control with the real SPN / key that binds; SPN for another host and a foreign key are refused |
+| `…OpenKeytabBind`, `…OpenGMSABind` | the same binds through `ad.Open`. **Red on purpose until bug T-0846** (go-krb5 rejects the WS2025 AS-REP, PA-REQ-ENC-PA-REP) |
 
-Untested assumptions to confirm on the first run (fix the script or test, do not skip): the `ktpass` flags in
-`gssapi-ready.ps1`, and the gMSA string-to-key derivation (UTF-16 password re-encoded to UTF-8, host-style salt) in
-`winGMSAIdentity`. Status: **written and compiled, not yet run against a Windows DC** (no lab on the build host).
+All other tests drive the handshake with `client.DisablePAFXFAST(true)` so the DC-side behaviour is pinned independently of T-0846.
+Run log, dc1 before/after state and the broken-run proof: `windows-lab-runs/T-0566-gssapi-2026-10-30.md`.
+`LdapEnforceChannelBindingTokens` is not re-read at runtime (setting 0 left enforcement on), so the "CBT off accepts a wrong binding"
+proof needs a reboot cycle and was not run. The test accounts stay on dc1 for the T-0846 fix; remove with `Remove-ADUser svc-t0566-gssapi`
+and `Remove-ADServiceAccount gmsa-t0566`.

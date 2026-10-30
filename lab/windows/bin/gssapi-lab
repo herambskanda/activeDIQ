@@ -1,0 +1,148 @@
+#!/usr/bin/env python3
+"""Drive the T-0566 Windows-lab GSSAPI proof against the lab DC over WinRM (HTTP 5985, NTLM, lab only).
+
+  gssapi-lab prepare   run guest/gssapi-ready.ps1 on dc1 (LDAP signing + channel binding = 2, accounts, keytab and
+                       gMSA export), fetch the two artifacts into lab/windows/ of the MAIN checkout (gitignored,
+                       0600), delete them on the VM, reboot dc1 and wait for it.
+  gssapi-lab run ARGS  put dc1's clock in step with this host for the duration (the lab DC's clock is hours off and
+                       Kerberos allows 5 minutes), turn on LDAP interface diagnostics, run
+                       `go test -tags 'lab windowslab' -v ARGS`, print the DC's channel-binding events, then restore the
+                       clock offset and the diagnostics value in a finally block. Default ARGS: the whole T-0566 suite.
+
+Wrap every call in the shared lock:  flock -w 3600 /tmp/claude-1000/activediq-dc1.lock lab/windows/bin/gssapi-lab run
+Needs: pip install pywinrm requests-ntlm. Credentials come from WIN_LAB_ENV (never printed). Runbook section 14.
+"""
+import base64, datetime as dt, os, re, subprocess, sys, time
+
+try:
+    from winrm.protocol import Protocol
+except ImportError:
+    sys.exit("gssapi-lab: pip install pywinrm requests-ntlm")
+
+REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+NTDS = r"HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters"
+DIAG = r"HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Diagnostics"
+env = {}
+path = os.environ.get("WIN_LAB_ENV") or os.path.join(REPO, "lab", "windows", ".win-lab.env")
+if not os.path.exists(path):
+    sys.exit(f"gssapi-lab: lab env file not found: {path} (set WIN_LAB_ENV)")
+for line in open(path):
+    line = line.strip()
+    if line and not line.startswith("#") and "=" in line:
+        k, v = line.split("=", 1)
+        env[k] = v.strip().strip('"')
+ADDR = os.environ.get("WIN_LAB_DC_ADDR") or env.get("WIN_LAB_DC_ADDR", "192.168.1.9")
+OUT = os.path.dirname(path)  # artifacts sit beside the lab env file (main checkout lab/windows/)
+
+
+def ps(script):
+    p = Protocol(endpoint=f"http://{ADDR}:5985/wsman", transport="ntlm", username="Administrator",
+                 password=env["WIN_LAB_ADMIN_PASSWORD"], read_timeout_sec=900, operation_timeout_sec=800)
+    sh = p.open_shell()
+    enc = base64.b64encode(script.encode("utf-16le")).decode()
+    cid = p.run_command(sh, "powershell", ["-NoProfile", "-NonInteractive", "-EncodedCommand", enc])
+    out, err, rc = p.get_command_output(sh, cid)
+    try:  # a clock change can break the session teardown; the command already ran
+        p.cleanup_command(sh, cid)
+        p.close_shell(sh)
+    except Exception:
+        pass
+    return rc, strip(out.decode(errors="replace"))
+
+
+def strip(o):  # drop the CLIXML progress noise PowerShell writes on stderr/stdout
+    return "\n".join(l for l in o.splitlines() if not l.startswith(("#< CLIXML", "<Objs")))
+
+
+def put(src, dst):
+    data = open(src, "rb").read()
+    p = Protocol(endpoint=f"http://{ADDR}:5985/wsman", transport="ntlm", username="Administrator",
+                 password=env["WIN_LAB_ADMIN_PASSWORD"], read_timeout_sec=900, operation_timeout_sec=800)
+    sh = p.open_shell()
+    s = (f"$o=[IO.File]::Create('{dst}');$i=[Console]::OpenStandardInput();$b=New-Object byte[] 65536;"
+         "while(($n=$i.Read($b,0,$b.Length)) -gt 0){$o.Write($b,0,$n)};$o.Close()")
+    cid = p.run_command(sh, "powershell", ["-NoProfile", "-NonInteractive", "-EncodedCommand",
+                                           base64.b64encode(s.encode("utf-16le")).decode()])
+    for i in range(0, len(data), 32000):
+        p.send_command_input(sh, cid, data[i:i + 32000])
+    p.send_command_input(sh, cid, b"", end=True)
+    p.get_command_output(sh, cid)
+    p.cleanup_command(sh, cid)
+    p.close_shell(sh)
+
+
+def policy():
+    return ps(f"foreach($k in 'LDAPServerIntegrity','LdapEnforceChannelBindingTokens'){{ $k+' = '+((Get-Item '{NTDS}').GetValue($k)) }}")[1]
+
+
+def dc_utc():
+    m = re.search(r"\d{4}-\d\d-\d\dT[\d:.]+", ps('[DateTime]::UtcNow.ToString("o")')[1])
+    return dt.datetime.fromisoformat(m.group(0)[:26]).replace(tzinfo=dt.timezone.utc)
+
+
+def set_dc_clock(when):
+    ps('Set-Date ([DateTime]::SpecifyKind([DateTime]::Parse("%s"),"Utc").ToLocalTime()) | Out-Null' % when.strftime("%Y-%m-%dT%H:%M:%S"))
+    time.sleep(3)
+
+
+def prepare():
+    print("POLICY before:\n" + policy())
+    put(os.path.join(REPO, "lab/windows/guest/gssapi-ready.ps1"), r"C:\lab\gssapi-ready.ps1")
+    rc, out = ps(r"& C:\lab\gssapi-ready.ps1; 'script-exit ' + $?")
+    print(out)
+    if "script-exit True" not in out:
+        sys.exit("gssapi-lab: gssapi-ready.ps1 failed; not rebooting")
+    for name, local in (("svc.keytab", ".win-lab-gssapi.keytab"), ("gmsa.json", ".win-lab-gmsa.json")):
+        b = base64.b64decode(ps(rf"[Convert]::ToBase64String([IO.File]::ReadAllBytes('C:\lab\gssapi\{name}'))")[1].strip())
+        fd = os.open(os.path.join(OUT, local), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        os.write(fd, b)
+        os.close(fd)
+        print("fetched", name, len(b), "bytes ->", local)
+    ps(r"Remove-Item C:\lab\gssapi\svc.keytab,C:\lab\gssapi\gmsa.json,C:\lab\gssapi-ready.ps1 -Force; Remove-Item C:\lab\gssapi -Force")
+    ps(r"Start-Process shutdown -ArgumentList '/r','/t','5','/c','T-0566 apply LDAP signing and channel binding policy'")
+    print("reboot issued")
+    time.sleep(60)
+    for _ in range(90):
+        try:
+            if "NTDS Running" in ps("Get-Service NTDS,KDC | % { $_.Name+' '+$_.Status }")[1]:
+                break
+        except Exception:
+            pass
+        time.sleep(10)
+    else:
+        sys.exit("gssapi-lab: dc1 did not come back")
+    print("POLICY after reboot:\n" + policy())
+
+
+def run(args):
+    args = args or ["-run", "WindowsLabKerberos", "./internal/connector/ad/"]
+    offset = dc_utc() - dt.datetime.now(dt.timezone.utc)
+    print("CLOCK before: dc minus host =", offset)
+    prior = ps(f"(Get-ItemProperty '{DIAG}' -Name '16 LDAP Interface Events').'16 LDAP Interface Events'")[1].strip() or "0"
+    print("DIAG prior 16 LDAP Interface Events =", prior)
+    rc = 1
+    try:
+        set_dc_clock(dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=1))
+        print("CLOCK during run: dc minus host =", dc_utc() - dt.datetime.now(dt.timezone.utc))
+        ps(f"Set-ItemProperty '{DIAG}' -Name '16 LDAP Interface Events' -Type DWord -Value 2")
+        genv = dict(os.environ, WIN_LAB_MODE="external", WIN_LAB_DC_ADDR=ADDR, WIN_LAB_ENV=path,
+                    WIN_LAB_TLS_NAME=env.get("WIN_LAB_TLS_NAME", "dc1.win.activediq.test"),
+                    WIN_LAB_CA=os.environ.get("WIN_LAB_CA", os.path.join(OUT, ".win-lab-ca.pem")),
+                    WIN_LAB_GSSAPI_KEYTAB=os.path.join(OUT, ".win-lab-gssapi.keytab"),
+                    WIN_LAB_GMSA=os.path.join(OUT, ".win-lab-gmsa.json"))
+        r = subprocess.run(["go", "test", "-count=1", "-tags", "lab windowslab", "-v"] + args, cwd=REPO, env=genv)
+        rc = r.returncode
+        print("DC events (Directory Service, last 5 min; 3039 = channel binding token validation failed):")
+        print(ps(r'''Get-WinEvent -FilterHashtable @{LogName='Directory Service'; StartTime=(Get-Date).AddMinutes(-5)} -EA SilentlyContinue | ? { $_.Id -in 3039,3040,3041,3074,3075 } | % { "$($_.TimeCreated.ToString("o")) id=$($_.Id) $($_.Message -replace '\s+',' ')".Substring(0,260) }''')[1])
+    finally:
+        ps(f"Set-ItemProperty '{DIAG}' -Name '16 LDAP Interface Events' -Type DWord -Value {prior}")
+        set_dc_clock(dt.datetime.now(dt.timezone.utc) + offset + dt.timedelta(seconds=1))
+        print("DIAG restored; CLOCK restored: dc minus host =", dc_utc() - dt.datetime.now(dt.timezone.utc))
+        print("POLICY after:\n" + policy())
+    sys.exit(rc)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2 or sys.argv[1] not in ("prepare", "run"):
+        sys.exit(__doc__)
+    prepare() if sys.argv[1] == "prepare" else run(sys.argv[2:])
