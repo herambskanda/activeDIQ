@@ -8,7 +8,7 @@
 // internal/compose/server calls Boot. Module unit tests use module/moduletest.
 //
 // Registrar methods for the other contribution kinds (API, Job, Permission,
-// AuditKind, Dataset, Sink, AuthMethod, ApprovalGate) are added by the ticket that builds the
+// AuditKind, Sink, AuthMethod, ApprovalGate) are added by the ticket that builds the
 // extension point they hook into (EP-2 to EP-10), so the Registrar never names a type that does
 // not exist yet. Each new method attributes, namespaces and de-duplicates its contribution here.
 package module
@@ -26,6 +26,8 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/capability"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
+	"github.com/skenzeriq/activediq/internal/platform/report"
+	"github.com/skenzeriq/activediq/internal/platform/store/owners"
 )
 
 // ID is a module's stable identifier. It is also its OpenAPI tag and its web module ID.
@@ -72,6 +74,7 @@ type Registrar struct {
 	open    bool
 	actions []operation.Action
 	scopes  []scopeEntry
+	sets    []report.Dataset
 	seen    map[string]struct{}
 }
 
@@ -107,6 +110,21 @@ func (r *Registrar) ScopeEvaluator(e authz.ScopeEvaluator) error {
 	}
 	r.seen[key] = struct{}{}
 	r.scopes = append(r.scopes, scopeEntry{kind, e})
+	return nil
+}
+
+// Dataset registers a report dataset (EP-8). Its ID must start with "<moduleID>." and be unique, and
+// its structure must validate. Boot then checks that every table it names is owned by this module.
+func (r *Registrar) Dataset(d report.Dataset) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.claim("dataset", string(d.ID)); err != nil {
+		return err
+	}
+	if err := d.Validate(); err != nil {
+		return fmt.Errorf("%w: module %q dataset %q: %w", ErrInvalid, r.owner, d.ID, err)
+	}
+	r.sets = append(r.sets, d)
 	return nil
 }
 
@@ -157,6 +175,13 @@ type Contributions struct {
 	actions []operation.Action
 	scopes  map[string]authz.ScopeEvaluator
 	scopeBy map[string]ID
+	sets    []report.OwnedDatasets
+}
+
+// Datasets lists the datasets modules registered, grouped by the module that owns them, in boot
+// order. compose/server adds them to the report host. Boot has already checked their tables.
+func (c *Contributions) Datasets() []report.OwnedDatasets {
+	return append([]report.OwnedDatasets(nil), c.sets...)
 }
 
 // ScopeEvaluator returns the evaluator registered for an assignment root kind, or false when no
@@ -182,10 +207,27 @@ func (c *Contributions) Actions() []operation.Action {
 	return append([]operation.Action(nil), c.actions...)
 }
 
+// BootOption configures Boot.
+type BootOption func(*bootConfig)
+
+type bootConfig struct{ tableOwners report.TableOwners }
+
+// WithTableOwners replaces the ownership map the dataset table check reads. Tests use it; the
+// server uses the default, store/owners.Lookup.
+func WithTableOwners(o report.TableOwners) BootOption {
+	return func(c *bootConfig) { c.tableOwners = o }
+}
+
 // Boot builds one Registrar per module, calls Register on each module whose required capabilities
 // are all enabled, closes every Registrar and returns the validated contributions. Any error fails
 // start-up: no partial result is returned. Only internal/compose/server calls it (ADR-0003 rule 5).
-func Boot(ctx context.Context, mods []Entry, enabled capability.Set) (*Contributions, error) {
+//
+// A dataset that names a table its module does not own fails Boot and names the table.
+func Boot(ctx context.Context, mods []Entry, enabled capability.Set, opts ...BootOption) (*Contributions, error) {
+	cfg := bootConfig{tableOwners: owners.Lookup}
+	for _, o := range opts {
+		o(&cfg)
+	}
 	out := &Contributions{scopes: map[string]authz.ScopeEvaluator{}, scopeBy: map[string]ID{}}
 	ids := make(map[ID]struct{}, len(mods))
 	for _, e := range mods {
@@ -215,8 +257,16 @@ func Boot(ctx context.Context, mods []Entry, enabled capability.Set) (*Contribut
 		if err != nil {
 			return nil, fmt.Errorf("module %q: register: %w", e.ID, err)
 		}
+		for _, d := range r.sets {
+			if err := report.CheckTables(string(e.ID), d, cfg.tableOwners); err != nil {
+				return nil, fmt.Errorf("module %q: dataset: %w", e.ID, err)
+			}
+		}
 		out.loaded = append(out.loaded, e.ID)
 		out.actions = append(out.actions, r.actions...)
+		if len(r.sets) > 0 {
+			out.sets = append(out.sets, report.OwnedDatasets{Owner: string(e.ID), Datasets: slices.Clone(r.sets)})
+		}
 		for _, se := range r.scopes {
 			kind, ev := se.kind, se.ev
 			if prev, dup := out.scopeBy[kind]; dup {
