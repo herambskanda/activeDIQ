@@ -1,6 +1,6 @@
 ---
 title: Decisions log
-updated: 2026-10-23
+updated: 2026-10-30
 budget: 120 lines
 ---
 
@@ -10,6 +10,7 @@ Newest first. `date · who · decision · why/source`. CEO decisions also live o
 architecture decisions as ADRs in knowledge/development/decisions/. Roll entries older than the
 current milestone into archive/ when this file nears its budget.
 
+- 2026-10-30 · CEO · **Hold: M1 stopped; the factory runs M2a (Find & Report, target 2026-11-01) only.** The director blocked M1/M2 tickets outside M2a at 08:24 with "Unblock when M1/M2 work resumes". Triage T-0859 kept all 13 it was given on hold (none is a dependency of an M2a ticket). Resume order when lifted: T-0856 (P1 security, RC4 steering), T-0846 (P1, in QA, needs dc1), T-0850 (dc1 clock) before T-0833/T-0846, then the rest. Security bugs are not exempt from this hold unless the CEO says so. (T-0859)
 - 2026-10-29 · factory · **ADR-0008 ratified (notice D-0009): fleet gateway uses one installation server CA (pin + chain [leaf, server CA]); per-tenant client CAs and ClientCAs pool unchanged.** Security review: approve with 7 obligations. T-0253/T-0657 cancelled; build T-0715, T-0717, T-0735–T-0738. (T-0713)
 - 2026-10-28 · CEO · **Windows lab VM changed: Proxmox VM 119, not VM 112 (T-0428/A-0018).** Same external-host mode, same runbook §10 steps; only the VM number changes — nothing in `WIN_LAB_MODE=external` tooling is keyed to a VM id, only to the DC's IP/TLS name/CA/env file. Doc/comment references to "VM 112" renamed to "VM 119" in `windows-lab.md`, `lab/windows/bin/windows-lab`, `external-init.ps1`, `test_windows_lab.py`. A-0018 was closed 2026-10-28 with no evidence pasted (leftover `.win-lab.env`/`.win-lab-ca.pem` are from the VM 112 attempt and are stale); T-0337 stays blocked until a new action is done with real `make lab-test-connector-windows` evidence against VM 119. (T-0428, A-0018, T-0337)
 - 2026-10-23 · security-architect · **Disclosure under D-0004 (a)**: the one score is the **CVSS v3.1 base** (GitHub's CNA accepts 3.1; no second version in any record); severity = its rating, no vendor labels. Internal fix targets are medium 90 days and low 180 days (public: critical 14, high 30). The CNA Root is the **MITRE TL-Root** (BSL is not open source). The `fitness-disclosure` gate compares advisory and CVE record (ID, vector, score, fix day, honest `target_met`). CEO actions: A-0005 (security-manager role) and A-0006 (CNA submission); A-0003 private reporting is still off per the API. (knowledge/development/runbooks/security-disclosure.md, cna-application.md; T-0260)
