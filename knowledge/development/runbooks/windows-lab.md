@@ -186,11 +186,11 @@ make lab-test-connector-windows   # go test -tags 'lab windowslab' against <DC_I
 ```
 
 In external mode `up`, `reset`, `down` and `destroy` refuse (they manage libvirt VMs); nothing calls `virsh`.
-Reset = `qm rollback 112 clean` by a human. Certificate verification is never disabled: the Go tests dial
+Reset = `qm rollback <vmid> clean` by a human (VM 119 for the first build). Certificate verification is never disabled: the Go tests dial
 `<DC_IP>:636` with `ServerName=$WIN_LAB_TLS_NAME` and the CA pool from `$WIN_LAB_CA`; a wrong CA fails
 (`TestWindowsLab…` untrusted-CA test). `make lab-test-windows-unit` proves the mode offline (stub `go`/`virsh`,
 checks refusals, misconfiguration errors and that the password never appears in argv, logs or stdout).
-Status: **untested against VM 112 until a human completes the steps above** (the PowerShell is as untested as §8 says).
+Status: first build done 2026-10-28 on Proxmox VM 119 (log and notes in `windows-lab-runs/first-build.md`); `TestWindowsLab*` pass over verified LDAPS.
 
 ## Tier0 classifier on the Windows lab (T-0226)
 
