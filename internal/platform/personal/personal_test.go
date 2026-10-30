@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
 	"github.com/skenzeriq/activediq/internal/platform/store"
@@ -139,7 +140,7 @@ func TestHoldTamperAndRuntimeRoleCannotUpdate(t *testing.T) {
 			return nil
 		})
 		// Legal hold blocks erasure and deletes nothing.
-		if err := r.owner("personal_subject", `UPDATE public.personal_subject SET hold = true`); err != nil {
+		if err := r.owner("personal_hold", `ALTER TABLE public.personal_subject NO FORCE ROW LEVEL SECURITY; INSERT INTO public.personal_hold (tenant_id, subject_ref) SELECT tenant_id, subject_ref FROM public.personal_subject`); err != nil {
 			t.Fatal(err)
 		}
 		_ = r.in(r.id, func(ctx context.Context, tx store.Tx) error {
@@ -164,6 +165,12 @@ func TestPutRefusesBadInput(t *testing.T) {
 	if _, err := p.Erase(context.Background(), zero, id, subj); !errors.Is(err, step.ErrZeroStep) {
 		t.Errorf("zero step erase = %v", err)
 	}
+	if err := p.SetHold(context.Background(), zero, id, subj); !errors.Is(err, step.ErrZeroStep) {
+		t.Errorf("zero step set hold = %v", err)
+	}
+	if err := p.ReleaseHold(context.Background(), zero, id, subj); !errors.Is(err, step.ErrZeroStep) {
+		t.Errorf("zero step release hold = %v", err)
+	}
 }
 
 func TestCommitmentBindsAllFields(t *testing.T) {
@@ -180,4 +187,125 @@ func TestCommitmentBindsAllFields(t *testing.T) {
 			t.Errorf("commitment ignores %s", name)
 		}
 	}
+}
+
+func (r *rig) held(subject string) bool {
+	r.t.Helper()
+	var held bool
+	if err := r.in(r.id, func(ctx context.Context, tx store.Tx) (err error) {
+		held, err = New().Held(ctx, tx, r.id, subject)
+		return
+	}); err != nil {
+		r.t.Fatal(err)
+	}
+	return held
+}
+
+func TestSetReleaseHoldIdempotent(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		r := setup(t, s)
+		run := func(name string, f func(context.Context, store.Tx, tenant.ID, string) error, subject string, want bool) {
+			t.Helper()
+			if err := r.in(r.id, func(ctx context.Context, tx store.Tx) error { return f(ctx, tx, r.id, subject) }); err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			if got := r.held(subject); got != want {
+				t.Fatalf("after %s held = %v, want %v", name, got, want)
+			}
+		}
+		run("release of a subject never held", releaseHold, subj, false)
+		run("set", setHold, subj, true)
+		run("set again", setHold, subj, true)
+		var rows int
+		_ = r.in(r.id, func(ctx context.Context, tx store.Tx) error {
+			return tx.QueryRow(ctx, `SELECT count(*) FROM public.personal_hold`).Scan(&rows)
+		})
+		if rows != 1 {
+			t.Fatalf("personal_hold has %d rows after two sets, want 1", rows)
+		}
+		acct := "acct:33333333-3333-4333-8333-333333333333"
+		run("set second subject", setHold, acct, true)
+		run("release", releaseHold, subj, false)
+		run("release again", releaseHold, subj, false)
+		if !r.held(acct) {
+			t.Fatal("releasing one subject released another")
+		}
+	})
+}
+
+func TestHoldRefusesInvalidSubjectAndTenant(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		r := setup(t, s)
+		for _, bad := range []string{"", "bad", "dir:x:y", "acct:nope", subj + "x", "DIR:" + subj[4:], "acct:33333333-3333-4333-8333-333333333333 "} {
+			for name, f := range map[string]func(context.Context, store.Tx, tenant.ID, string) error{"set": setHold, "release": releaseHold} {
+				err := r.in(r.id, func(ctx context.Context, tx store.Tx) error { return f(ctx, tx, r.id, bad) })
+				if !errors.Is(err, ErrInvalid) {
+					t.Errorf("%s %q = %v, want ErrInvalid", name, bad, err)
+				}
+			}
+			if err := r.in(r.id, func(ctx context.Context, tx store.Tx) error { _, err := New().Held(ctx, tx, r.id, bad); return err }); !errors.Is(err, ErrInvalid) {
+				t.Errorf("held %q = %v, want ErrInvalid", bad, err)
+			}
+		}
+		var zero tenant.ID
+		if err := r.in(r.id, func(ctx context.Context, tx store.Tx) error { return setHold(ctx, tx, zero, subj) }); !errors.Is(err, ErrInvalid) {
+			t.Errorf("zero tenant = %v", err)
+		}
+		// Nothing was written by the refused calls.
+		if r.held(subj) {
+			t.Fatal("a refused call placed a hold")
+		}
+	})
+}
+
+// SetHold takes the tenant lock shared, then the subject lock; LockHolds (the purge) takes the tenant lock
+// exclusive, so it must wait for an open hold transaction and see the hold once that commits.
+func TestSetHoldLocksAndSerialisesWithPurge(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		r := setup(t, s)
+		held, release := make(chan struct{}), make(chan struct{})
+		done := make(chan error, 1)
+		go func() {
+			done <- r.in(r.id, func(ctx context.Context, tx store.Tx) error {
+				if err := setHold(ctx, tx, r.id, subj); err != nil {
+					return err
+				}
+				var shared, excl int
+				if err := tx.QueryRow(ctx, `SELECT count(*) FILTER (WHERE mode = 'ShareLock'), count(*) FILTER (WHERE mode = 'ExclusiveLock')
+FROM pg_locks WHERE locktype = 'advisory' AND pid = pg_backend_pid() AND granted`).Scan(&shared, &excl); err != nil {
+					return err
+				}
+				if shared != 1 || excl != 1 {
+					return errors.New("setHold must hold the tenant lock shared and the subject lock exclusive")
+				}
+				close(held)
+				<-release
+				return nil
+			})
+		}()
+		<-held
+		short, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		err := r.in(r.id, func(_ context.Context, tx store.Tx) error {
+			_, err := New().LockHolds(short, tx, r.id)
+			return err
+		})
+		cancel()
+		if err == nil {
+			t.Error("LockHolds did not wait for an uncommitted SetHold")
+		}
+		close(release)
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		var got map[string]struct{}
+		if err := r.in(r.id, func(ctx context.Context, tx store.Tx) (err error) {
+			got, err = New().LockHolds(ctx, tx, r.id)
+			return
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := got[subj]; !ok || len(got) != 1 {
+			t.Fatalf("LockHolds = %v, want the committed hold", got)
+		}
+	})
 }

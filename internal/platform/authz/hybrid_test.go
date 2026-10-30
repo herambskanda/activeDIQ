@@ -13,7 +13,7 @@ func matched() *authz.Correlation {
 }
 
 func derived(c *authz.Correlation, perms ...authz.Permission) *authz.Principal {
-	return &authz.Principal{ID: "sso", Assignments: []authz.Assignment{{
+	return &authz.Principal{ID: "sso", AuthorityFactor: true, Assignments: []authz.Assignment{{
 		Role: authz.Role{Permissions: perms}, Scope: scope(root("ou-sales", domain)),
 		Via: &authz.Derivation{Correlation: c},
 	}}}
@@ -161,5 +161,27 @@ func TestHybridGateCheckGrantNeverCross(t *testing.T) {
 func TestHybridGateNeverCrossesTier0Designation(t *testing.T) {
 	if !authz.NeverCrosses("inventory.tier0_designation.manage") {
 		t.Fatal("tier0 designation must never cross")
+	}
+}
+
+// TM-D19 rule 1 (T-0283): a matched, attested correlation grants nothing AD-side until the session's
+// authority factor is current; direct grants are untouched.
+func Test_authority_factor_gates_correlation_grants(t *testing.T) {
+	tgt := obj("u1", "ou-sales", domain)
+	p := derived(matched(), reset)
+	p.AuthorityFactor = false
+	d := evaluator().Authorize(p, nil, reset, tgt)
+	if d.Allowed || d.Reason != authz.ReasonAuthorityFactorMissing || len(d.HybridRefusals) != 1 ||
+		d.HybridRefusals[0].Reason != authz.ReasonAuthorityFactorMissing {
+		t.Fatalf("no factor must refuse with authority_factor_missing: %+v", d)
+	}
+	p.AuthorityFactor = true
+	if d := evaluator().Authorize(p, nil, reset, tgt); !d.Allowed {
+		t.Fatalf("current factor must apply the grant: %+v", d)
+	}
+	// A direct grant on the same session never needs the factor.
+	direct := &authz.Principal{ID: "sso", Assignments: []authz.Assignment{{Role: authz.Role{Permissions: []authz.Permission{reset}}, Scope: scope(root("ou-sales", domain))}}}
+	if d := evaluator().Authorize(direct, nil, reset, tgt); !d.Allowed {
+		t.Fatalf("direct grant without factor: %+v", d)
 	}
 }

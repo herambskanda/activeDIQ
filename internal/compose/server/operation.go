@@ -30,8 +30,8 @@ type operationKernel struct {
 // buildOperation wires the operation runner to the audit chain (ADR-0005 rules 2, 7 and 11). It
 // asserts the minter first, installs the chainer's commit hook on db (once, as the store opens), and
 // hands the runner the chainer as its audit.Sink, the directory client as its LiveFacts and the
-// authorizer. Any missing piece fails boot.
-func buildOperation(holdsMinter func() bool, db *store.DB, facts operation.LiveFacts, authzr operation.Authorizer, reg *operation.Registry) (*operationKernel, error) {
+// authorizer, and the DC pinner (nil: an AD-target plan then fails closed, no DC is pinned). Any missing piece fails boot.
+func buildOperation(holdsMinter func() bool, db *store.DB, facts operation.LiveFacts, authzr operation.Authorizer, reg *operation.Registry, pinner operation.Pinner) (*operationKernel, error) {
 	if !holdsMinter() {
 		return nil, ErrNoMinter
 	}
@@ -39,7 +39,7 @@ func buildOperation(holdsMinter func() bool, db *store.DB, facts operation.LiveF
 		return nil, ErrNoFacts
 	}
 	ch := audit.NewChainer(db)
-	r, err := operation.NewRunner(operation.Config{DB: db, Audit: ch, Authz: authzr, Registry: reg, Facts: facts, Component: "server"})
+	r, err := operation.NewRunner(operation.Config{DB: db, Audit: ch, Authz: authzr, Registry: reg, Facts: facts, Pinner: pinner, Component: "server"})
 	if err != nil {
 		return nil, fmt.Errorf("server: operation runner: %w", err)
 	}
@@ -76,7 +76,8 @@ func directoryFacts(reads client.Reads, opts ...client.Option) *client.Client {
 
 // rbacAuthorizer is the operation Authorizer: RBAC persistence read through authz.Evaluator, with the
 // TM-D19 rule 5 backing-object guard wired to the account and correlation stores and a live root
-// resolver over facts. Without the guard every backing-object permission is refused.
+// resolver over facts, and the TM-D18 group-membership guard over inventory's group edges. Without a
+// guard its permissions are refused.
 func rbacAuthorizer(db *store.DB, facts rbac.FactsReader) (operation.Authorizer, error) {
 	src, err := rbac.NewStore(db)
 	if err != nil {
@@ -94,7 +95,7 @@ func rbacAuthorizer(db *store.DB, facts rbac.FactsReader) (operation.Authorizer,
 	if err != nil {
 		return nil, fmt.Errorf("server: rbac root resolver: %w", err)
 	}
-	az, err := rbac.New(src, rbac.WithBackingGuard(backing, roots))
+	az, err := rbac.New(src, rbac.WithBackingGuard(backing, roots), rbac.WithGroupGuard(inventory.NewReach(inventory.NewGroups(db))))
 	if err != nil {
 		return nil, fmt.Errorf("server: rbac authorizer: %w", err)
 	}

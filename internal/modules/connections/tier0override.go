@@ -12,6 +12,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
+	"github.com/skenzeriq/activediq/internal/platform/rbac"
 )
 
 // Tier0OverrideActionID is the configuration Action of DM-25.I1 (ADR-0005 rule 10).
@@ -61,7 +62,7 @@ func Tier0OverrideAcknowledge() (operation.Action, error) {
 			ID: Tier0OverrideActionID, Version: 1, Permission: Tier0OverridePermission,
 			Input: "#/components/schemas/Tier0OverrideAcknowledge", Target: operation.TargetStore,
 			Reversibility: operation.Irreversible, // an acknowledgement is evidence: no undo (DM-25.I5)
-			AuditKind:     AuditTier0OverrideAcknowledged, StepUp: true,
+			AuditKind:     AuditTier0OverrideAcknowledged, StepUp: true, ControlPlane: true,
 		},
 		Plan: func(ctx context.Context, pc operation.PlanContext, in Tier0OverrideInput) ([]operation.TypedStep[overridePayload], error) {
 			if in.Acknowledgment != TypedAcknowledgement {
@@ -74,6 +75,13 @@ func Tier0OverrideAcknowledge() (operation.Action, error) {
 			vid, err := connection.ParseVerificationID(in.VerificationID)
 			if err != nil {
 				return nil, err
+			}
+			// The permission is platform-scope (tenant-wide), so the target is the tenant store root: a
+			// connection-class target would be authorised as a directory object, which no tenant-wide
+			// grant covers, and the override could never be acknowledged. The connection is in the diff.
+			var tid string
+			if err := pc.Tx.QueryRow(ctx, `SELECT coalesce(current_setting('app.tenant_id', true), '')`).Scan(&tid); err != nil || tid == "" {
+				return nil, errors.New("connections: no tenant context")
 			}
 			c, err := store.Get(ctx, pc.Tx, cid)
 			if err != nil {
@@ -90,9 +98,9 @@ func Tier0OverrideAcknowledge() (operation.Action, error) {
 			}
 			return []operation.TypedStep[overridePayload]{{
 				Plan: operation.StepPlan{
-					Target: authority.TargetRef{Connection: string(cid), GUID: string(cid), Class: "connection"},
+					Target: authority.TargetRef{GUID: tid, Class: rbac.TargetClassTenant},
 					Kind:   "connection.tier0_override.acknowledge",
-					Diff: []operation.Change{{Attribute: "tier0_installation", Before: []string{"false"}, After: []string{"true"}}, {Attribute: "verification_id", After: []string{string(vid)}},
+					Diff: []operation.Change{{Attribute: "connection_id", After: []string{string(cid)}}, {Attribute: "tier0_installation", Before: []string{"false"}, After: []string{"true"}}, {Attribute: "verification_id", After: []string{string(vid)}},
 						{Attribute: "acknowledged_count", After: []string{strconv.Itoa(ev.Count)}},
 						{Attribute: "override_digest", After: []string{hex.EncodeToString(ev.Digest)}}},
 					Reversibility:       operation.Irreversible,

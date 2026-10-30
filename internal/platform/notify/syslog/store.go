@@ -2,6 +2,7 @@ package syslog
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"regexp"
@@ -22,6 +23,9 @@ var _ = tablekind.Declare(tablekind.Table{Name: "public.notify_syslog_destinatio
 var (
 	ErrNotFound     = errors.New("syslog: no such destination")
 	ErrInvalidInput = errors.New("syslog: invalid input")
+	// ErrIdempotencyConflict is returned by Create when the request ID already created a destination
+	// with a different spec.
+	ErrIdempotencyConflict = errors.New("syslog: request id already used for a different destination")
 )
 
 var requestIDRe = regexp.MustCompile(`^[\x21-\x7e]{1,128}$`)
@@ -65,8 +69,9 @@ func scan(row interface{ Scan(dest ...any) error }) (Destination, error) {
 }
 
 // Create stores a new destination and returns its View. requestID names the audit events of the
-// request. Create draws a fresh destination id per call, so a caller that retries after an ambiguous
-// commit may create two destinations, each with its own events; Update is safe to retry.
+// request and is the idempotency key: the destination id is derived from the tenant and requestID, so a
+// retry with the same spec returns the stored destination and appends nothing, and a retry with a
+// different spec is refused with ErrIdempotencyConflict. Update is safe to retry.
 func (s *Store) Create(ctx context.Context, t tenant.ID, sp Spec, by authority.Chain, requestID string) (View, error) {
 	return s.write(ctx, t, "", sp, by, requestID)
 }
@@ -93,8 +98,19 @@ func (s *Store) write(ctx context.Context, t tenant.ID, id string, sp Spec, by a
 			return err
 		}
 		if creating {
-			if err := tx.QueryRow(ctx, `SELECT gen_random_uuid()::text`).Scan(&id); err != nil {
+			id = createID(t, requestID)
+			if prior, found, err := s.existing(ctx, tx, t, id); err != nil {
 				return err
+			} else if found {
+				n, err := Destination{ID: id, Host: sp.Host, Port: sp.Port, Transport: sp.Transport, PlaintextOptIn: sp.PlaintextOptIn}.Normalize()
+				if err != nil {
+					return err
+				}
+				if n != prior {
+					return ErrIdempotencyConflict
+				}
+				out = prior
+				return nil
 			}
 		}
 		var prev Destination
@@ -109,6 +125,22 @@ func (s *Store) write(ctx context.Context, t tenant.ID, id string, sp Spec, by a
 		d, err := Destination{ID: id, Host: sp.Host, Port: sp.Port, Transport: sp.Transport, PlaintextOptIn: sp.PlaintextOptIn}.Normalize()
 		if err != nil {
 			return err
+		}
+		if !creating {
+			// A key that already recorded an update must never change the row again: the audit chain
+			// treats a repeated event as a retry and would skip it, leaving a change with no event.
+			var seen bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM public.audit_event WHERE tenant_id = $1::uuid AND event_id = $2)`,
+				t.String(), "siem.destination."+id+".updated."+requestID).Scan(&seen); err != nil {
+				return err
+			}
+			if seen {
+				if d != prev {
+					return ErrIdempotencyConflict
+				}
+				out = prev
+				return nil
+			}
 		}
 		var row interface{ Scan(dest ...any) error }
 		if creating {
@@ -141,12 +173,33 @@ func (s *Store) write(ctx context.Context, t tenant.ID, id string, sp Spec, by a
 		return View{}, ErrNotFound
 	}
 	if err != nil {
-		if errors.Is(err, ErrBadDestination) || errors.Is(err, ErrPlaintextNotOptedIn) {
+		if errors.Is(err, ErrBadDestination) || errors.Is(err, ErrPlaintextNotOptedIn) || errors.Is(err, ErrIdempotencyConflict) {
 			return View{}, err
+		}
+		if errors.Is(err, audit.ErrEventIDReused) {
+			return View{}, ErrIdempotencyConflict
 		}
 		return View{}, fmt.Errorf("syslog: store destination: %w", err)
 	}
 	return out.View(), nil
+}
+
+// createID is the destination id a create with requestID gets: a version-8 style UUID taken from a
+// SHA-256 of the tenant and the request ID, so the same request names the same destination.
+func createID(t tenant.ID, requestID string) string {
+	h := sha256.Sum256([]byte("siem.destination.create\x00" + t.String() + "\x00" + requestID))
+	b := h[:16]
+	b[6] = b[6]&0x0f | 0x80
+	b[8] = b[8]&0x3f | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
+func (s *Store) existing(ctx context.Context, tx store.Tx, t tenant.ID, id string) (Destination, bool, error) {
+	d, err := scan(tx.QueryRow(ctx, `SELECT `+cols+` FROM public.notify_syslog_destinations WHERE tenant_id = $1 AND id = $2::uuid`, t.String(), id))
+	if store.IsNoRows(err) {
+		return Destination{}, false, nil
+	}
+	return d, err == nil, err
 }
 
 // Audit kinds of a destination's lifecycle. Any change of target redirects the SIEM stream, so every

@@ -25,6 +25,10 @@ const (
 	// ReasonHybridNeverCrosses: tenant-owner, or a permission administering RBAC, delegation
 	// scopes or connections, is never effective across a correlation (rule 5 (h)).
 	ReasonHybridNeverCrosses Reason = "hybrid_authority_never_crosses"
+	// ReasonAuthorityFactorMissing: the session has not verified its activeDIQ-held authority factor
+	// (or has not since its last step-up), so correlation-derived grants do not apply (TM-D19 rule 1,
+	// DM-30.I6). Entra-side and direct grants still do.
+	ReasonAuthorityFactorMissing Reason = "authority_factor_missing"
 )
 
 // Takeover protection states (DM-10.I7), as read through the connections port.
@@ -59,7 +63,10 @@ type Derivation struct {
 // connections. Rule 5 (h): they are assigned only to the console account itself.
 var neverCrossPrefixes = []string{"rbac.", "authz.", "delegation.", "scope.", "connections.", "tenant.",
 	// inventory.tier0_ administers the Tier-0 designation itself (TM-D2, rule 5 (h)).
-	"inventory.tier0_"}
+	"inventory.tier0_",
+	// siem. redirects where the tenant's notifications are sent (TM-TB15-T7): configuration of the platform
+	// itself, assigned only to the console account.
+	"siem."}
 
 // NeverCrosses reports whether permission p is one that never carries across a correlation.
 func NeverCrosses(p Permission) bool {
@@ -79,7 +86,7 @@ type HybridRefusal struct {
 }
 
 // hybridCheck decides whether a derived assignment may apply for perm. ok is false with the refusal.
-func hybridCheck(a Assignment, perm Permission) (HybridRefusal, bool) {
+func hybridCheck(a Assignment, perm Permission, authorityFactor bool) (HybridRefusal, bool) {
 	c := a.Via.Correlation
 	if c == nil {
 		return HybridRefusal{Reason: ReasonHybridNotMatched, CorrelationReason: "facts_missing"}, false
@@ -95,6 +102,11 @@ func hybridCheck(a Assignment, perm Permission) (HybridRefusal, bool) {
 	}
 	if a.Role.TenantOwner || NeverCrosses(perm) {
 		return HybridRefusal{Reason: ReasonHybridNeverCrosses}, false
+	}
+	if !authorityFactor {
+		// Last, so the more specific refusals above keep their reasons; the session may be missing
+		// the factor and the correlation unusable at once.
+		return HybridRefusal{Reason: ReasonAuthorityFactorMissing}, false
 	}
 	return HybridRefusal{}, true
 }

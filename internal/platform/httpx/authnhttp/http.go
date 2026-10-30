@@ -119,7 +119,7 @@ func (a *Authenticator) Authenticate(r *http.Request) (apihost.Principal, error)
 	default:
 		return apihost.Principal{}, err // an infrastructure failure: the chain refuses, fail closed
 	}
-	return apihost.Principal{ID: sess.Account, Tenant: sess.Tenant.String(), Kind: apihost.KindSession, SessionID: sess.ID}, nil
+	return apihost.Principal{ID: sess.Account, Tenant: sess.Tenant.String(), Kind: apihost.KindSession, SessionID: sess.ID, AuthorityFactor: sess.AuthorityCurrent()}, nil
 }
 
 // CheckCSRF compares the X-CSRF-Token header with the value derived from the request's own session
@@ -221,4 +221,41 @@ func (c TOTPCookies) VerifyTOTPCookie(ctx context.Context, pendingCookie, code s
 		lines = append(lines, ck.String())
 	}
 	return res, lines, nil
+}
+
+// WebAuthnVerifier is what WebAuthnCookies needs of authn.WebAuthnFactor.
+type WebAuthnVerifier interface {
+	Begin(ctx context.Context, h authn.PendingHandle) (authn.WebAuthnOptions, error)
+	Verify(ctx context.Context, h authn.PendingHandle, in authn.WebAuthnAssertion, from netip.Addr) (authn.CreateResult, error)
+}
+
+var _ WebAuthnVerifier = (*authn.WebAuthnFactor)(nil)
+
+// WebAuthnCookies adapts a WebAuthnVerifier to authn.WebAuthnCookieVerifier, as TOTPCookies does for TOTP:
+// the handle comes from the pending cookie's value only, and a malformed one is ErrPendingInvalid.
+type WebAuthnCookies struct{ Factor WebAuthnVerifier }
+
+var _ authn.WebAuthnCookieVerifier = WebAuthnCookies{}
+
+// BeginWebAuthnCookie issues the challenge for the pending sign-in the cookie value names.
+func (c WebAuthnCookies) BeginWebAuthnCookie(ctx context.Context, pendingCookie string) (authn.WebAuthnOptions, error) {
+	h, err := authn.ParsePendingHandle(pendingCookie)
+	if err != nil {
+		return authn.WebAuthnOptions{}, authn.ErrPendingInvalid
+	}
+	return c.Factor.Begin(ctx, h)
+}
+
+// VerifyWebAuthnCookie verifies the assertion and returns the Set-Cookie lines: the new session cookie,
+// then the clearing pending cookie.
+func (c WebAuthnCookies) VerifyWebAuthnCookie(ctx context.Context, pendingCookie string, in authn.WebAuthnAssertion, from netip.Addr) (authn.CreateResult, []string, error) {
+	h, err := authn.ParsePendingHandle(pendingCookie)
+	if err != nil {
+		return authn.CreateResult{}, nil, authn.ErrPendingInvalid
+	}
+	res, err := c.Factor.Verify(ctx, h, in, from)
+	if err != nil {
+		return authn.CreateResult{}, nil, err
+	}
+	return res, []string{SessionCookie(res.Token, time.Until(res.Session.AbsoluteExpiry)).String(), ClearPendingCookie().String()}, nil
 }

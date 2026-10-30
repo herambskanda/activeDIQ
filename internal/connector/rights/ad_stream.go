@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/skenzeriq/activediq/internal/connector/tier0"
@@ -47,6 +48,9 @@ func ADInputFromRequest(req *v1.VerifyConnectionRequest, identity dn.ObjectRef) 
 	if in.Designated, err = conv("designated_tier0", req.GetDesignatedTier0()); err != nil {
 		return in, err
 	}
+	if in.PinnedC13, err = conv("pinned_c13", req.GetPinnedC13()); err != nil {
+		return in, err
+	}
 	for _, m := range req.GetCorrelatedTier0() {
 		g, gerr := ParseGUID(m.GetObject())
 		if gerr != nil {
@@ -60,6 +64,8 @@ func ADInputFromRequest(req *v1.VerifyConnectionRequest, identity dn.ObjectRef) 
 	return in, nil
 }
 
+var errNoDirectoryIdentity = errors.New("rights: connector has no bound directory identity")
+
 const (
 	findingsPerChunk = 200
 	membersPerChunk  = 1000
@@ -68,18 +74,30 @@ const (
 // StreamAD is the body of the AD VerifyConnection server stream: header, findings, tier0_set, then
 // completed (contract §8.4). It is read-only. send is the transport's Send.
 //
+// directory is the directory the connector is bound to (the forest root NC); it is returned in
+// `completed.directory_identity` (V5, contract v1.3). A nil directory is a wiring defect: the run
+// is refused before any directory call rather than streamed without the identity the server needs.
+//
 // A directory failure that prevents naming the identity returns an error before `completed` (the
 // caller records FAILED). ErrLocalRecordFailed means the shrink record or the baseline could not be
 // made durable: the stream carries no `completed`, no epoch starts and the caller closes the gate.
-func StreamAD(ctx context.Context, d ADDirectory, epoch *EpochState, req *v1.VerifyConnectionRequest, identity dn.ObjectRef,
+func StreamAD(ctx context.Context, d ADDirectory, epoch *EpochState, req *v1.VerifyConnectionRequest, identity dn.ObjectRef, directory *v1.DirectoryIdentity,
 	send func(*v1.VerifyConnectionResponse) error, now func() time.Time) error {
 	if now == nil {
 		now = time.Now
+	}
+	if directory.GetAdForest().GetForestRootNcGuid() == nil {
+		return errNoDirectoryIdentity
 	}
 	in, err := ADInputFromRequest(req, identity)
 	if err != nil {
 		return err
 	}
+	root, err := ParseGUID(directory.GetAdForest().GetForestRootNcGuid())
+	if err != nil {
+		return errNoDirectoryIdentity
+	}
+	in.RootNC = &root
 	started := now()
 	res, err := VerifyAD(ctx, d, in)
 	if err != nil {
@@ -123,10 +141,16 @@ func StreamAD(ctx context.Context, d ADDirectory, epoch *EpochState, req *v1.Ver
 		}
 		dropped = uint32(n)
 	}
+	// V5 (identity) is answered by reaching this point: VerifyAD refuses the run when the connector's
+	// own account cannot be read, so a completed stream means the identity was read. The server needs
+	// the outcome to accept a pass (a pass that does not answer V5 is an incomplete answer).
+	checks := append([]*v1.CheckResult{{Check: v1.VerificationCheck_VERIFICATION_CHECK_V5_IDENTITY,
+		Outcome: v1.CheckOutcome_CHECK_OUTCOME_PASS}}, res.Checks...)
 	return send(&v1.VerifyConnectionResponse{Event: &v1.VerifyConnectionResponse_Completed{Completed: &v1.VerificationCompleted{
-		Verdict: res.Verdict, Checks: res.Checks, CompletedAt: timestamppb.New(now()),
+		Verdict: res.Verdict, Checks: checks, CompletedAt: timestamppb.New(now()),
 		FindingCount: uint32(len(res.Findings)), Tier0MemberCount: uint32(len(res.Tier0Set)),
-		WriteGateOpenable: res.WriteGateOpenable, Tier0InputsDropped: dropped}}})
+		WriteGateOpenable: res.WriteGateOpenable, Tier0InputsDropped: dropped,
+		DirectoryIdentity: proto.Clone(directory).(*v1.DirectoryIdentity)}}})
 }
 
 func guidText(g *v1.Guid) string {

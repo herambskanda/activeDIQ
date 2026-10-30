@@ -60,6 +60,7 @@ func SetDesignation() (operation.Action, error) {
 			ID: SetDesignationActionID, Version: 1, Permission: DesignationPermission,
 			Input:  "#/components/schemas/Tier0Designation",
 			Target: operation.TargetStore, Reversibility: operation.Reversible, AuditKind: AuditDesignationChanged, StepUp: true,
+			ControlPlane: true,
 		},
 		Plan: func(ctx context.Context, pc operation.PlanContext, in DesignationInput) ([]operation.TypedStep[designationPayload], error) {
 			ref := dirinv.Ref{Connection: dirinv.ConnectionID(in.ConnectionID), Object: dirinv.GUID(in.ObjectGUID)}

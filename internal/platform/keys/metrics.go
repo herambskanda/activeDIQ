@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
@@ -65,9 +66,15 @@ func WriteMetrics(w io.Writer) error {
 		return err
 	}
 	for _, k := range rows {
-		if _, err := fmt.Fprintf(w, "%s{tenant=%q,outcome=%q} %d\n", UnwrapMetricName, k.tenant.String(), k.outcome, vals[k]); err != nil {
+		if _, err := fmt.Fprintf(w, "%s{tenant=\"%s\",outcome=\"%s\"} %d\n", UnwrapMetricName, escapeLabel(k.tenant.String()), escapeLabel(k.outcome), vals[k]); err != nil {
 			return err
 		}
 	}
 	return nil
 }
+
+// labelEscaper applies the Prometheus text-format label-value escapes: backslash, double quote and
+// line feed. Go's %q is not the same format (it also escapes non-ASCII and control bytes as \x.. or \u....).
+var labelEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`)
+
+func escapeLabel(v string) string { return labelEscaper.Replace(v) }

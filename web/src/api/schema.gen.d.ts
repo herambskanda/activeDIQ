@@ -181,6 +181,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/directory/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search users
+         * @description Answers the users of the caller's tenant whose display name, sAMAccountName or userPrincipalName contains q, in a stable order, at most limit of them. q is plain text: the characters ( ) * \ & | = ! < > ~ and control characters are refused with a 400, as is a q longer than 256 characters. Nothing from q is ever placed in a directory query as syntax.
+         */
+        get: operations["searchDirectoryUsers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health/live": {
         parameters: {
             query?: never;
@@ -221,10 +241,106 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/notify/siem-destinations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the SIEM syslog destinations
+         * @description Answers every destination of the tenant, oldest first. A tenant has a handful of destinations, so the list is not paged.
+         */
+        get: operations["listSiemDestinations"];
+        put?: never;
+        /**
+         * Create a SIEM syslog destination
+         * @description Creates a destination. The default transport is TLS with certificate verification; plaintext TCP needs transport tcp together with plaintextOptIn true, and the opt-in is audited. The Idempotency-Key is the request ID of the audit events and names the destination: a retry with the same key and body answers the destination already created and changes nothing, and the same key with a different body is refused.
+         */
+        post: operations["createSiemDestination"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notify/siem-destinations/{destinationId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a SIEM syslog destination */
+        get: operations["getSiemDestination"];
+        /**
+         * Replace the settings of a SIEM syslog destination
+         * @description Replaces the writable fields. The change redirects the SIEM stream, so it is audited with the previous and the new target. The Idempotency-Key is the request ID of the audit events; use a new key for each intended change. A key that already recorded an update is never applied twice: a replay with the same settings returns the current destination, with different settings it is a 422.
+         */
+        put: operations["updateSiemDestination"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/setup/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Claim first-run setup and create the first tenant owner (AN-4)
+         * @description The first-run setup gate (TM-TB16-T7). A fresh install writes a one-time setup secret where only the installing administrator can read it (`activediq-server setup show`). Presenting it here claims setup: in one step the secret is consumed and the first tenant-owner account is created and granted the tenant-owner role (a failure creating the owner leaves the secret unconsumed). The secret never works again. The new account has no credential yet and cannot sign in until one is enrolled. Success answers 204 and no body. A second claim is refused like any other failure. Every failure has one shape, 401 /problems/setup-refused: wrong secret, expired secret, already-used secret, and an install that is not in first-run state are indistinguishable. The source-IP limiter may answer 429. No default account exists before or after.
+         */
+        post: operations["claimFirstRunSetup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description Input of delegation.assignment.grant. The caller chooses assignmentId, so a retry is the same grant. A role holding a control_plane permission is granted to an account only. */
+        AssignmentGrant: {
+            assignmentId: components["schemas"]["DelegationId"];
+            roleId: components["schemas"]["DelegationId"];
+            roots: components["schemas"]["AssignmentRoot"][];
+            subject: components["schemas"]["AssignmentSubject"];
+            /** Format: date-time */
+            validFrom?: string;
+            /** Format: date-time */
+            validUntil?: string;
+        };
+        /** @description Input of delegation.assignment.revoke. Ends one assignment; a revoked assignment is not restored. */
+        AssignmentRevoke: {
+            assignmentId: components["schemas"]["DelegationId"];
+        };
+        /** @description One scope root of an assignment (DM-35). exclude subtracts the subtree from the scope. */
+        AssignmentRoot: {
+            /** Format: uuid */
+            connectionId: string;
+            exclude?: boolean;
+            /** Format: uuid */
+            guid: string;
+            kind: components["schemas"]["AssignmentRootKind"];
+        };
+        /**
+         * @description What the root's guid names. The server refuses a kind it does not know.
+         * @enum {string}
+         */
+        AssignmentRootKind: "naming_context" | "ou_subtree" | "entra_tenant" | "tier0_scope" | "tenant" | (string & {});
+        /** @description Who holds the assignment, by kind. Exactly the members of its kind are accepted. */
+        AssignmentSubject: components["schemas"]["SubjectAccount"] | components["schemas"]["SubjectGroup"] | components["schemas"]["SubjectAutomation"];
         /** @description The local break-glass account and its password. */
         BreakGlassPasswordRequest: {
             password: components["schemas"]["SecretInput"];
@@ -237,6 +353,25 @@ export interface components {
         };
         /** @description An opaque page cursor. Clients pass it back unchanged. */
         Cursor: string;
+        /**
+         * Format: uuid
+         * @description A caller-chosen identifier of a role or an assignment, a canonical UUID.
+         */
+        DelegationId: string;
+        /** @description Permission names, each of the form family.noun.verb. Duplicates are collapsed. */
+        DelegationPermissions: string[];
+        /** @description A user as search shows it. Only these fields; the objectGuid is the key. */
+        DirectoryUser: {
+            displayName: string;
+            enabled: boolean;
+            /** Format: uuid */
+            objectGuid: string;
+            samAccountName: string;
+            userPrincipalName: string;
+        };
+        DirectoryUserList: {
+            items: components["schemas"]["DirectoryUser"][];
+        };
         /** @description A reference to a directory object by objectGUID. A DN is never a key. */
         GUIDRef: {
             /** Format: uuid */
@@ -340,8 +475,99 @@ export interface components {
             type: string;
             value: string;
         };
+        /** @description Input of delegation.role.create. The caller chooses roleId, so a retry is the same role. A role is never deleted; empty it with delegation.role.update. */
+        RoleCreate: {
+            name: string;
+            permissions: components["schemas"]["DelegationPermissions"];
+            roleId: components["schemas"]["DelegationId"];
+            /** @description 0 administers Tier-0 scope, 1 platform administration, 2 help desk. */
+            tier: number;
+        };
+        /** @description Input of delegation.role.update. Replaces a custom role's permissions; a built-in role is refused. */
+        RoleUpdate: {
+            permissions: components["schemas"]["DelegationPermissions"];
+            roleId: components["schemas"]["DelegationId"];
+        };
         /** @description A secret a client sends: a password, a token. It is write-only, never appears in a response, and is held in memory only as a secret.Secret that is destroyed after the request. */
         SecretInput: string;
+        /** @description The one-time setup secret and the details of the first tenant owner. */
+        SetupClaimRequest: {
+            owner: components["schemas"]["SetupOwner"];
+            secret: components["schemas"]["SecretInput"];
+        };
+        /** @description The first tenant owner's account details. */
+        SetupOwner: {
+            displayName: string;
+            email: string;
+        };
+        /** @description A destination as stored. It never carries a credential. */
+        SiemDestination: {
+            host: string;
+            /** Format: uuid */
+            id: string;
+            plaintextOptIn: boolean;
+            port: number;
+            /** @description True when the server certificate is verified (transport tls). */
+            tlsVerified: boolean;
+            transport: components["schemas"]["SiemTransport"];
+            /** @description Present for a plaintext destination. */
+            warning?: string;
+        };
+        SiemDestinationList: {
+            items: components["schemas"]["SiemDestination"][];
+        };
+        /** @description The writable settings of a destination. */
+        SiemDestinationWrite: {
+            /** @description A plain host name or IP address. No scheme, port or path. */
+            host: string;
+            /** @description Must be true with transport tcp and false or absent with tls. */
+            plaintextOptIn?: boolean;
+            /** @description Absent takes 6514 for tls and 514 for tcp. */
+            port?: number;
+            transport?: components["schemas"]["SiemTransportSetting"];
+        };
+        /**
+         * @description The transport of a stored destination. Clients ignore values they do not know.
+         * @enum {string}
+         */
+        SiemTransport: "tls" | "tcp" | (string & {});
+        /**
+         * @description tls is RFC 5425 with certificate verification and is the default; tcp is plaintext and needs the opt-in. UDP is not offered.
+         * @enum {string}
+         */
+        SiemTransportSetting: "tls" | "tcp";
+        /** @description A console account. The only kind that may hold a control_plane role. */
+        SubjectAccount: {
+            /** Format: uuid */
+            accountId: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "account";
+        };
+        /** @description An automation policy. Never holds a control_plane role. */
+        SubjectAutomation: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "automation";
+            /** Format: uuid */
+            policyId: string;
+        };
+        /** @description A directory group, by connection and objectGUID. Never holds a control_plane role. */
+        SubjectGroup: {
+            /** Format: uuid */
+            connectionId: string;
+            /** Format: uuid */
+            groupGuid: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "group";
+        };
         /** @description The new attestation_max_age. */
         TakeoverAttestationMaxAge: {
             maxAgeSeconds: number;
@@ -675,6 +901,22 @@ export interface components {
                 "application/problem+json": components["schemas"]["Problem"];
             };
         };
+        /** @description First-run setup was not claimed. One answer for every cause (wrong secret, expired secret, secret already used, install not in first-run state), so the response teaches a caller nothing. It never carries a detail. */
+        SetupRefused: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "status": 401,
+                 *       "title": "Setup was refused",
+                 *       "type": "/problems/setup-refused"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
         /** @description The sign-in did not succeed. One answer for every cause (unknown account, wrong secret, non-local account, disabled account, throttled account, expired or exhausted pending sign-in), so the response teaches a caller nothing (TM section 7.6 rule 2). It never carries a detail. */
         SignInFailed: {
             headers: {
@@ -759,6 +1001,8 @@ export interface components {
     parameters: {
         /** @description The Entra connection. */
         ConnectionId: string;
+        /** @description The destination. */
+        DestinationId: string;
         /** @description Makes a mutating bulk call safe to retry. The same key with a different body is refused. */
         IdempotencyKey: string;
         /** @description The ETag of the version being changed; a stale value answers precondition-failed. */
@@ -767,6 +1011,8 @@ export interface components {
         PageCursor: components["schemas"]["Cursor"];
         /** @description The page size. */
         PageLimit: number;
+        /** @description The request ID. It names the audit events of the change and makes a retry of a create safe. */
+        RequiredIdempotencyKey: string;
     };
     requestBodies: never;
     headers: never;
@@ -893,7 +1139,10 @@ export interface operations {
             query?: never;
             header?: never;
             path?: never;
-            cookie?: never;
+            cookie: {
+                /** @description The pending-sign-in handle set by the first factor. It is read from this cookie only; a missing or repeated cookie answers the same 401 as any other sign-in failure. */
+                "__Host-adiq_pending": string;
+            };
         };
         requestBody?: never;
         responses: {
@@ -918,7 +1167,10 @@ export interface operations {
             query?: never;
             header?: never;
             path?: never;
-            cookie?: never;
+            cookie: {
+                /** @description The pending-sign-in handle set by the first factor. It is read from this cookie only; a missing or repeated cookie answers the same 401 as any other sign-in failure. */
+                "__Host-adiq_pending": string;
+            };
         };
         requestBody: {
             content: {
@@ -1035,6 +1287,36 @@ export interface operations {
             500: components["responses"]["Internal"];
         };
     };
+    searchDirectoryUsers: {
+        parameters: {
+            query: {
+                /** @description The most users to answer. Defaults to 25. */
+                limit?: number;
+                /** @description Text to find. Plain text only; no filter syntax. */
+                q: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The matching users */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DirectoryUserList"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
     getLiveness: {
         parameters: {
             query?: never;
@@ -1078,6 +1360,160 @@ export interface operations {
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
             503: components["responses"]["NotReady"];
+        };
+    };
+    listSiemDestinations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The destinations */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SiemDestinationList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    createSiemDestination: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The request ID. It names the audit events of the change and makes a retry of a create safe. */
+                "Idempotency-Key": components["parameters"]["RequiredIdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SiemDestinationWrite"];
+            };
+        };
+        responses: {
+            /** @description The destination is created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SiemDestination"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["IdempotencyKeyReuse"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    getSiemDestination: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The destination. */
+                destinationId: components["parameters"]["DestinationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The destination */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SiemDestination"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    updateSiemDestination: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The request ID. It names the audit events of the change and makes a retry of a create safe. */
+                "Idempotency-Key": components["parameters"]["RequiredIdempotencyKey"];
+            };
+            path: {
+                /** @description The destination. */
+                destinationId: components["parameters"]["DestinationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SiemDestinationWrite"];
+            };
+        };
+        responses: {
+            /** @description The destination as stored */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SiemDestination"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["IdempotencyKeyReuse"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    claimFirstRunSetup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetupClaimRequest"];
+            };
+        };
+        responses: {
+            /** @description Setup was claimed, the secret is consumed and the first tenant owner exists. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["SetupRefused"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
         };
     };
 }

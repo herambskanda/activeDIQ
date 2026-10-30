@@ -53,6 +53,10 @@ type embed struct {
 
 type holder struct{ D dn.DN }
 
+// keeper holds a DN privately, as a request handler does; formatting or passing it as an interface
+// cannot reach DN.String because reflection cannot call a method on an unexported field.
+type keeper struct{ d dn.DN }
+
 func stringify[T fmt.Stringer](t T) string { return t.String() }
 func show[T any](t T) string               { return fmt.Sprint(t) }
 
@@ -64,4 +68,5 @@ func more(d dn.DN, ds []dn.DN) {
 	send(show(d))                  // want `converted to an interface`
 	send(fmt.Sprint(ds))           // want `converted to an interface`
 	send(fmt.Sprint(holder{D: d})) // want `converted to an interface`
+	send(fmt.Sprint(keeper{d: d})) // an unexported field is not formatted: no finding
 }

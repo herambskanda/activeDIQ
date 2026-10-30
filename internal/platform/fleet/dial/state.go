@@ -36,11 +36,13 @@ type Endpoint struct {
 	Port uint16
 }
 
-// State is a complete, validated enrollment: the pinned CA bundle, the component's leaf and key, and
-// the server endpoints.
+// State is a complete, validated enrollment: the pinned server CA (Roots, the only TLS roots), the
+// tenant client CAs (ClientCAs, used only to check our leaf), the component's leaf and key, and the
+// server endpoints.
 type State struct {
 	Pin       Pin
-	CA        []*x509.Certificate
+	Roots     []*x509.Certificate
+	ClientCAs []*x509.Certificate
 	Leaf      tls.Certificate
 	Endpoints []Endpoint
 }
@@ -100,7 +102,7 @@ func Load(dir string) (*State, error) {
 	if err != nil {
 		return nil, err
 	}
-	ca, err := ParseBundle(bundle, pin)
+	bun, err := ParseBundle(bundle, pin)
 	if err != nil {
 		return nil, ErrState
 	}
@@ -120,7 +122,7 @@ func Load(dir string) (*State, error) {
 	if err != nil || len(pair.Certificate) != 1 {
 		return nil, ErrState
 	}
-	if _, err := pair.Leaf.Verify(x509.VerifyOptions{Roots: Pool(ca), KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, CurrentTime: time.Now()}); err != nil {
+	if _, err := pair.Leaf.Verify(x509.VerifyOptions{Roots: Pool(bun.ClientCAs), KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, CurrentTime: time.Now()}); err != nil {
 		var ci x509.CertificateInvalidError
 		if errors.As(err, &ci) && ci.Reason == x509.Expired {
 			return nil, ErrExpired // the renewal flow re-enrols; never dial with it
@@ -135,5 +137,5 @@ func Load(dir string) (*State, error) {
 	if err != nil {
 		return nil, ErrState
 	}
-	return &State{Pin: pin, CA: ca, Leaf: pair, Endpoints: eps}, nil
+	return &State{Pin: pin, Roots: bun.Roots, ClientCAs: bun.ClientCAs, Leaf: pair, Endpoints: eps}, nil
 }

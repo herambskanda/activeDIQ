@@ -363,7 +363,7 @@ func (s *Service) charge(ctx context.Context, tid tenant.ID, id string, want Sta
 		if want == StatePending {
 			if expires == nil || !now.Before(*expires) || attempts >= MaxConfirmAttempts {
 				refusal = ErrCodeRejected
-				_, e = tx.Exec(ctx, `UPDATE public.authn_authenticator_enrollments SET state = 'expired' WHERE id = $1::uuid AND state = 'pending'`, id)
+				_, e = tx.Exec(ctx, `UPDATE public.authn_authenticator_enrollments SET state = 'expired', sealed_secret = NULL WHERE id = $1::uuid AND state = 'pending'`, id)
 				return e
 			}
 			_, e = tx.Exec(ctx, `UPDATE public.authn_authenticator_enrollments SET confirm_attempts = confirm_attempts + 1 WHERE id = $1::uuid`, id)
@@ -417,7 +417,7 @@ func (s *Service) settleFailure(ctx context.Context, tid tenant.ID, id string, w
 			return nil // changed under us (activated, revoked, expired): nothing left to settle
 		}
 		if want == StatePending {
-			_, err := tx.Exec(ctx, `UPDATE public.authn_authenticator_enrollments SET state = 'expired'
+			_, err := tx.Exec(ctx, `UPDATE public.authn_authenticator_enrollments SET state = 'expired', sealed_secret = NULL
 				WHERE id = $1::uuid AND state = 'pending' AND confirm_attempts >= $2`, id, MaxConfirmAttempts)
 			return err
 		}

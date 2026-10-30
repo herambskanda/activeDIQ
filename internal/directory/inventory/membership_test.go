@@ -43,11 +43,12 @@ func (s tkSrc) TakeoverProtection(context.Context, tenant.ID, inventory.Connecti
 
 // adGroup is an AD group row. groupType -2147483646 is a global security group, 2 a global distribution group.
 func adGroup(g string, groupType int, broad any, members ...string) inventory.Observation {
-	attrs := map[string]any{inventory.AttrGroupType: groupType}
-	if broad != nil {
-		attrs[inventory.AttrBroadMembershipWrite] = broad
+	gt, no := int32(groupType), false
+	f := inventory.GroupFacts{GroupType: &gt, WrittenBack: &no}
+	if b, ok := broad.(bool); ok {
+		f.BroadMembershipWrite, f.BroadMembershipWriteAt = &b, time.Now()
 	}
-	o := inventory.Observation{Object: inventory.GUID(g), NC: nc1, Kind: inventory.KindGroup, Class: "group", State: inventory.ObjLive, Attributes: attrs}
+	o := inventory.Observation{Object: inventory.GUID(g), NC: nc1, Kind: inventory.KindGroup, Class: "group", State: inventory.ObjLive, Facts: f}
 	for _, m := range members {
 		o.Members = append(o.Members, inventory.GUID(m))
 	}
@@ -55,14 +56,10 @@ func adGroup(g string, groupType int, broad any, members ...string) inventory.Ob
 	return o
 }
 
+// enGroup is an Entra group the sync read as cloud-managed (onPremisesSyncEnabled null) with groupTypes [].
 func enGroup(g string, sec bool, vis string, members ...string) inventory.Observation {
-	attrs := map[string]any{inventory.AttrSecurityEnabled: sec}
-	if vis != "" {
-		attrs[inventory.AttrVisibility] = vis
-	} else {
-		attrs[inventory.AttrGroupTypes] = []string{} // a plain security group
-	}
-	o := inventory.Observation{Object: inventory.GUID(g), Kind: inventory.KindGroup, Class: "group", State: inventory.ObjActive, Attributes: attrs}
+	o := inventory.Observation{Object: inventory.GUID(g), Kind: inventory.KindGroup, Class: "group", State: inventory.ObjActive,
+		Facts: inventory.GroupFacts{SecurityEnabled: &sec, GroupTypes: []string{}, Visibility: vis}, OnPremisesSyncRead: true}
 	for _, m := range members {
 		o.Members = append(o.Members, inventory.GUID(m))
 	}
@@ -118,7 +115,7 @@ func TestMembership_eligible_groups(t *testing.T) {
 		// A securityEnabled Unified group with no stored visibility may be Public: not granted, incomplete.
 		const mEUni = "eeeeeeee-0000-4000-8000-0000000000c5"
 		uni := enGroup(mEUni, true, "", mEUser)
-		uni.Attributes[inventory.AttrGroupTypes] = []string{"Unified"}
+		uni.Facts.GroupTypes = []string{"Unified"}
 		if _, err := e.populate(t, e.enA, t2, enUser(mEUser, nil), uni); err != nil {
 			t.Fatal(err)
 		}
@@ -128,6 +125,36 @@ func TestMembership_eligible_groups(t *testing.T) {
 		}
 		if g.Complete || slices.Contains(guids(g), mEUni) {
 			t.Fatalf("Unified group without visibility: got %v complete=%v, want omitted and incomplete", guids(g), g.Complete)
+		}
+	})
+}
+
+// TM-D18 D18-1 rule 6: a written-back AD copy, or one whose marker was not read, is unknown.
+func TestMembership_writtenBackADGroup(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		ctx := context.Background()
+		const mWB, mNoMark = "aaaaaaaa-0000-4000-8000-0000000000d1", "aaaaaaaa-0000-4000-8000-0000000000d2"
+		wb := adGroup(mWB, -2147483646, false, mUser)
+		yes := true
+		wb.Facts.WrittenBack = &yes
+		nomark := adGroup(mNoMark, -2147483646, false, mUser)
+		nomark.Facts.WrittenBack = nil
+		for _, tc := range []struct {
+			name string
+			grp  inventory.Observation
+			id   string
+		}{{"marker present", wb, mWB}, {"marker unread", nomark, mNoMark}} {
+			if _, err := e.populate(t, e.adA, t1, adUser(mUser, nc1), tc.grp); err != nil {
+				t.Fatal(err)
+			}
+			g, err := e.membership(inventory.Ref{Connection: e.adA, Object: mUser}, authn.KindDirectory, "").GroupsOf(ctx, e.a.String(), mAcct)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if g.Complete || slices.Contains(guids(g), tc.id) {
+				t.Fatalf("%s: got %v complete=%v, want omitted and incomplete", tc.name, guids(g), g.Complete)
+			}
 		}
 	})
 }

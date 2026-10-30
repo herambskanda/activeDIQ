@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -181,40 +179,54 @@ func TestAttestationSettings(t *testing.T) {
 	}
 }
 
-func TestKEKProfileNeedsTLSDir(t *testing.T) {
-	if _, err := config.Load(env(map[string]string{config.EnvKEKFile: "/k"})); err == nil || !strings.Contains(err.Error(), config.EnvAPITLSDir) {
-		t.Fatalf("KEK file without TLS dir must fail naming both, got %v", err)
+func TestOpsListenerSettings(t *testing.T) {
+	ok := map[string]string{config.EnvOpsAddr: "127.0.0.1:9100", config.EnvOpsTokenFile: "/x/tok"}
+	c, err := config.Load(env(ok))
+	if err != nil || c.OpsAddr != "127.0.0.1:9100" || c.OpsTokenFile != "/x/tok" {
+		t.Fatalf("valid: %+v, %v", c, err)
 	}
-	c, err := config.Load(env(map[string]string{config.EnvKEKFile: "/k", config.EnvAPITLSDir: "/d"}))
-	if err != nil || c.KEKFile != "/k" || c.KEKID != config.DefaultKEKID {
-		t.Fatalf("got %v %+v", err, c)
+	if c, err = config.Load(env(nil)); err != nil || c.OpsAddr != "" {
+		t.Fatalf("default must be off: %+v, %v", c, err)
+	}
+	for name, m := range map[string]map[string]string{
+		"addr without token":  {config.EnvOpsAddr: "127.0.0.1:9100"},
+		"token without addr":  {config.EnvOpsTokenFile: "/x/tok"},
+		"same as API":         {config.EnvOpsAddr: config.DefaultAPIAddr, config.EnvOpsTokenFile: "/x/tok"},
+		"non-loopback no TLS": {config.EnvOpsAddr: "0.0.0.0:9100", config.EnvOpsTokenFile: "/x/tok"},
+		"not host:port":       {config.EnvOpsAddr: "9100", config.EnvOpsTokenFile: "/x/tok"},
+	} {
+		if _, err := config.Load(env(m)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	if _, err := config.Load(env(map[string]string{config.EnvOpsAddr: "0.0.0.0:9100", config.EnvOpsTokenFile: "/x/tok", config.EnvAPITLSDir: t.TempDir()})); err != nil {
+		t.Errorf("non-loopback with TLS dir refused: %v", err)
 	}
 }
 
-func TestKEKFileInsideTLSDirRefused(t *testing.T) {
-	root := t.TempDir()
-	tls := filepath.Join(root, "tls")
-	if err := os.MkdirAll(tls, 0o700); err != nil {
-		t.Fatal(err)
+func TestSetupTTL(t *testing.T) {
+	c, err := config.Load(env(nil))
+	if err != nil || c.SetupTTL != config.DefaultSetupTTL {
+		t.Fatalf("default: %v %v", c.SetupTTL, err)
 	}
-	link := filepath.Join(root, "link")
-	if err := os.Symlink(tls, link); err != nil {
-		t.Fatal(err)
+	if c, err = config.Load(env(map[string]string{config.EnvSetupTTL: "2s"})); err != nil || c.SetupTTL.Seconds() != 2 {
+		t.Fatalf("2s: %v %v", c.SetupTTL, err)
 	}
-	for name, kek := range map[string]string{
-		"inside":         filepath.Join(tls, "kek"),
-		"nested missing": filepath.Join(tls, "sub", "kek"),
-		"via symlink":    filepath.Join(link, "kek"),
-	} {
-		_, err := config.Load(env(map[string]string{config.EnvKEKFile: kek, config.EnvAPITLSDir: tls}))
-		if err == nil || !strings.Contains(err.Error(), config.EnvKEKFile) || !strings.Contains(err.Error(), config.EnvAPITLSDir) {
-			t.Errorf("%s: must fail naming both env vars, got %v", name, err)
+	for _, bad := range []string{"0s", "-1m", "soon", "25h"} {
+		if _, err := config.Load(env(map[string]string{config.EnvSetupTTL: bad})); err == nil {
+			t.Errorf("%q accepted", bad)
 		}
 	}
-	// A symlinked TLS dir with the KEK in a sibling is fine; so is a sibling whose name shares a prefix.
-	for _, kek := range []string{filepath.Join(root, "kek"), filepath.Join(root, "tls-kek")} {
-		if _, err := config.Load(env(map[string]string{config.EnvKEKFile: kek, config.EnvAPITLSDir: link})); err != nil {
-			t.Errorf("%s outside the dir must load: %v", kek, err)
-		}
+}
+
+// T-0665: the connector's local configuration file path is carried from its variable, unset by default.
+func TestConnectorConfigPathFromEnv(t *testing.T) {
+	c, err := config.Load(env(map[string]string{}))
+	if err != nil || c.ConnectorConfigPath != "" {
+		t.Fatalf("default: %q %v", c.ConnectorConfigPath, err)
+	}
+	c, err = config.Load(env(map[string]string{config.EnvConnectorConfig: "/etc/diq/connector.json"}))
+	if err != nil || c.ConnectorConfigPath != "/etc/diq/connector.json" {
+		t.Fatalf("set: %q %v", c.ConnectorConfigPath, err)
 	}
 }

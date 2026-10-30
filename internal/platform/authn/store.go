@@ -162,6 +162,17 @@ type Session struct {
 	State             SessionState
 }
 
+// AuthorityCurrent reports whether the session holds a current authority factor (TM-D19 rule 1): one was
+// verified, and no step-up has moved mfa_at past it since. A TOTP step-up refreshes mfa_at only, so it
+// makes the factor stale until the WebAuthn authority factor is verified again (T-0199 review note).
+func (s Session) AuthorityCurrent() bool {
+	return authorityCurrent(s.AuthorityFactorAt, s.MFAAt)
+}
+
+func authorityCurrent(authorityAt, mfaAt *time.Time) bool {
+	return authorityAt != nil && (mfaAt == nil || !authorityAt.Before(*mfaAt))
+}
+
 // Epoch is the account's session epoch as read BEFORE a sign-in verified anything (password, MFA secret,
 // roles). It is bumped by every password reset, MFA reset and role change, and createTx refuses a session
 // minted from an older one (ErrCredentialsChanged). It is obtained only from Store.Epoch / EpochTx; the
@@ -394,7 +405,7 @@ func (s *Store) createTx(ctx context.Context, tx store.Tx, in CreateInput, pol P
 	if _, err := tx.Exec(ctx, sqlAcctLk, in.Tenant.String()+"/"+in.Account); err != nil {
 		return CreateResult{}, err
 	}
-	if _, err := s.endRows(ctx, tx, now, expireDue, []any{in.Tenant.String(), in.Account, now}, KindSessionExpired, nil); err != nil {
+	if _, err := s.endRows(ctx, tx, now, endExpireDue, []any{in.Tenant.String(), in.Account, now}, KindSessionExpired, nil); err != nil {
 		return CreateResult{}, err
 	}
 	var active int
@@ -402,7 +413,7 @@ func (s *Store) createTx(ctx context.Context, tx store.Tx, in CreateInput, pol P
 		return CreateResult{}, err
 	}
 	if over := active - (pol.MaxConcurrent - 1); over > 0 {
-		n, err := s.endRows(ctx, tx, now, evict, []any{in.Tenant.String(), in.Account, string(pol.Eviction), over, now}, KindSessionEvicted, nil)
+		n, err := s.endRows(ctx, tx, now, endEvict, []any{in.Tenant.String(), in.Account, string(pol.Eviction), over, now}, KindSessionEvicted, nil)
 		if err != nil {
 			return CreateResult{}, err
 		}
@@ -543,7 +554,7 @@ func (s *Store) Revoke(ctx context.Context, t tenant.ID, sessionID string, why R
 	if t.IsZero() || !validAccount(sessionID) || !why.valid() || by.Validate() != nil {
 		return false, ErrInvalid
 	}
-	n, err := s.revokeN(ctx, t, sqlRevokeSession, sessionID, why, func(string) authority.Chain { return by })
+	n, err := s.revokeN(ctx, t, endRevokeSession, sessionID, why, func(string) authority.Chain { return by })
 	return n > 0, err
 }
 
@@ -563,7 +574,7 @@ func (s *Store) RevokeAccount(ctx context.Context, t tenant.ID, account string, 
 		})
 		return n, err
 	}
-	return s.revokeN(ctx, t, sqlRevokeAccount, account, why, func(string) authority.Chain { return by })
+	return s.revokeN(ctx, t, endRevokeAccount, account, why, func(string) authority.Chain { return by })
 }
 
 // RevokeAccountTx is RevokeAccount inside the caller's tenant transaction, the one that disables the
@@ -594,7 +605,7 @@ func (s *Store) RevokeAccountTx(ctx context.Context, tx store.Tx, t tenant.ID, a
 			return 0, fmt.Errorf("authn: revoke: bump session epoch: %w", err)
 		}
 	}
-	n, err := s.endRows(ctx, tx, now, sqlRevokeAccount, []any{t.String(), account, string(why), now}, KindSessionRevoked, func(string) authority.Chain { return by })
+	n, err := s.endRows(ctx, tx, now, endRevokeAccount, []any{t.String(), account, string(why), now}, KindSessionRevoked, func(string) authority.Chain { return by })
 	if err != nil {
 		return 0, fmt.Errorf("authn: revoke: %w", err)
 	}
@@ -636,7 +647,7 @@ func (s *Store) Rotate(ctx context.Context, old Token, why Reason) (CreateResult
 		if err != nil {
 			return err
 		}
-		n, err := s.endRows(ctx, tx, now, sqlRevokeSession, []any{sess.Tenant.String(), sess.ID, string(why), now}, KindSessionRevoked, func(string) authority.Chain { return accountChain(sess.Account) })
+		n, err := s.endRows(ctx, tx, now, endRevokeSession, []any{sess.Tenant.String(), sess.ID, string(why), now}, KindSessionRevoked, func(string) authority.Chain { return accountChain(sess.Account) })
 		if err != nil {
 			return err
 		}
@@ -666,7 +677,7 @@ func (s *Store) Logout(ctx context.Context, tok Token) error {
 	if err != nil {
 		return ErrSessionNotFound
 	}
-	n, err := s.revokeN(ctx, t, sqlRevokeToken, tok.hash(), ReasonLogout, accountChain)
+	n, err := s.revokeN(ctx, t, endRevokeToken, tok.hash(), ReasonLogout, accountChain)
 	if err != nil {
 		return err
 	}
@@ -685,14 +696,14 @@ WHERE tenant_id = $1 AND account_id = $2::uuid AND state = 'active' RETURNING id
 WHERE tenant_id = $1 AND id_hash = $2 AND state = 'active' RETURNING id, account_id::text, end_reason`
 )
 
-func (s *Store) revokeN(ctx context.Context, t tenant.ID, sql string, key any, why Reason, by func(account string) authority.Chain) (int, error) {
+func (s *Store) revokeN(ctx context.Context, t tenant.ID, stmt endStmt, key any, why Reason, by func(account string) authority.Chain) (int, error) {
 	var n int
 	err := s.db.WithTenant(ctx, t, func(ctx context.Context, tx store.Tx) error {
 		now, err := s.now(ctx, tx)
 		if err != nil {
 			return err
 		}
-		n, err = s.endRows(ctx, tx, now, sql, []any{t.String(), key, string(why), now}, KindSessionRevoked, by)
+		n, err = s.endRows(ctx, tx, now, stmt, []any{t.String(), key, string(why), now}, KindSessionRevoked, by)
 		return err
 	})
 	if err != nil {
@@ -747,7 +758,7 @@ func (s *Store) ExpireDue(ctx context.Context, t tenant.ID) (int, error) {
 		if err != nil {
 			return err
 		}
-		n, err = s.endRows(ctx, tx, now, expireDue, []any{t.String(), nil, now}, KindSessionExpired, nil)
+		n, err = s.endRows(ctx, tx, now, endExpireDue, []any{t.String(), nil, now}, KindSessionExpired, nil)
 		return err
 	})
 	if err != nil {

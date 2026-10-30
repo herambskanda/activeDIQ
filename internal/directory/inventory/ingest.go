@@ -398,34 +398,30 @@ func (g Ingester) resolve(ctx context.Context, tx store.Tx, eo entraRow, ads []C
 	for i, a := range ads {
 		ids[i] = string(a)
 	}
-	var q string
-	var args []any
+	var rows interface {
+		Next() bool
+		Scan(...any) error
+		Err() error
+		Close()
+	}
+	var err error
 	switch eo.kind {
 	case KindGroup:
 		if len(eo.sid) < 8 {
 			return nil, p, nil
 		}
 		p.match = MatchSID
-		q = `SELECT connection_id::text, object_guid::text, false FROM public.directory_objects
-			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = ANY($1::uuid[])
-			AND nc_guid IS NOT NULL AND kind = 'group' AND state <> 'purged' AND sid = $2
-			ORDER BY connection_id, object_guid LIMIT $3`
-		args = []any{ids, eo.sid, maxCandidate}
+		rows, err = tx.Query(ctx, sqlResolveGroup, ids, eo.sid, maxCandidate)
 	case KindUser:
-		gd, err := guid.FromBytes(eo.immutable)
-		if err != nil {
+		gd, gerr := guid.FromBytes(eo.immutable)
+		if gerr != nil {
 			return nil, p, nil // not a GUID anchor: it matches nothing here (string anchors are separate)
 		}
 		p.match, p.anchor = MatchAnchor, eo.immutable
-		q = `SELECT connection_id::text, object_guid::text, COALESCE(consistency_guid = $2, false) FROM public.directory_objects
-			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = ANY($1::uuid[])
-			AND nc_guid IS NOT NULL AND kind IN ('user','inetorgperson') AND state <> 'purged' AND (consistency_guid = $2 OR object_guid = $3::uuid)
-			ORDER BY connection_id, object_guid LIMIT $4`
-		args = []any{ids, gd.Bytes(), gd.String(), maxCandidate}
+		rows, err = tx.Query(ctx, sqlResolveUser, ids, gd.Bytes(), gd.String(), maxCandidate)
 	default:
 		return nil, p, nil
 	}
-	rows, err := tx.Query(ctx, q, args...)
 	if err != nil {
 		return nil, p, fmt.Errorf("inventory: resolve: %w", err)
 	}
@@ -584,3 +580,14 @@ func dnsName(dnText string) string {
 	}
 	return out
 }
+
+const (
+	sqlResolveGroup = `SELECT connection_id::text, object_guid::text, false FROM public.directory_objects
+			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = ANY($1::uuid[])
+			AND nc_guid IS NOT NULL AND kind = 'group' AND state <> 'purged' AND sid = $2
+			ORDER BY connection_id, object_guid LIMIT $3`
+	sqlResolveUser = `SELECT connection_id::text, object_guid::text, COALESCE(consistency_guid = $2, false) FROM public.directory_objects
+			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = ANY($1::uuid[])
+			AND nc_guid IS NOT NULL AND kind IN ('user','inetorgperson') AND state <> 'purged' AND (consistency_guid = $2 OR object_guid = $3::uuid)
+			ORDER BY connection_id, object_guid LIMIT $4`
+)

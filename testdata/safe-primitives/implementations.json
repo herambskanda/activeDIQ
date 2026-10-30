@@ -102,7 +102,8 @@
       "language": "go",
       "tier": "S",
       "units": [
-        "sd.read"
+        "sd.read",
+        "sd.write"
       ],
       "package": "internal/directory/sd"
     }
@@ -206,6 +207,16 @@
       "properties": [
         "aceBytesInsideInput",
         "deterministic",
+        "noPanic"
+      ]
+    },
+    {
+      "implementation": "go/sd",
+      "unit": "sd.write",
+      "target": "FuzzPlan",
+      "properties": [
+        "decodeRoundTrip",
+        "daclOnly",
         "noPanic"
       ]
     }

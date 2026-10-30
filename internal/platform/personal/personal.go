@@ -46,12 +46,24 @@ var (
 var (
 	_ = tablekind.Declare(tablekind.Table{Name: "public.personal_subject", Entity: "DM-80", Kind: tablekind.Tenant, Bookkeeping: true})
 	_ = tablekind.Declare(tablekind.Table{Name: "public.personal_value", Entity: "DM-80", Kind: tablekind.Tenant, Bookkeeping: true})
+	_ = tablekind.Declare(tablekind.Table{Name: "public.personal_hold", Entity: "DM-80", Kind: tablekind.Tenant, Bookkeeping: true})
 )
 
 var (
 	subjectRe = regexp.MustCompile(`^(dir:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|acct:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$`)
 	labelRe   = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,63}$`)
 )
+
+// AcctSubject returns the subject string for an account (the ID of a human principal in an actor chain), and
+// false when the ID is not a UUID. An admin's own events reference them as Requester or Via, so a hold on the
+// admin must match them.
+func AcctSubject(accountID string) (string, bool) {
+	s := "acct:" + accountID
+	if accountID == "" || !subjectRe.MatchString(s) {
+		return "", false
+	}
+	return s, true
+}
 
 // DirSubject returns the subject string for a directory object, and false when the connection or objectGUID
 // is not a UUID (the object cannot be a personal subject).
@@ -185,13 +197,14 @@ func erase(ctx context.Context, tx store.Tx, tid tenant.ID, subject string) (int
 	if tid.IsZero() || !subjectRe.MatchString(subject) {
 		return 0, ErrInvalid
 	}
-	var hold bool
-	err := tx.QueryRow(ctx, `SELECT hold FROM public.personal_subject WHERE tenant_id = $1::uuid AND subject_ref = $2`,
-		tid.String(), subject).Scan(&hold)
-	if store.IsNoRows(err) {
-		return 0, nil
+	// Serialise with a hold being set on this subject: a hold that commits first is seen here; one that
+	// starts afterwards waits for this transaction.
+	if err := lockSubject(ctx, tx, tid, subject); err != nil {
+		return 0, err
 	}
-	if err != nil {
+	var hold bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM public.personal_hold WHERE tenant_id = $1::uuid AND subject_ref = $2)`,
+		tid.String(), subject).Scan(&hold); err != nil {
 		return 0, fmt.Errorf("personal: erase: %w", err)
 	}
 	if hold {
@@ -260,7 +273,8 @@ func (*Store) PurgeValues(ctx context.Context, tx store.Tx, tid tenant.ID, ids [
 		refs = append(refs, s)
 	}
 	tag, err := tx.Exec(ctx, `DELETE FROM public.personal_subject s WHERE s.tenant_id = $1::uuid AND s.subject_ref = ANY($2::text[])
-		AND NOT s.hold AND NOT EXISTS (SELECT 1 FROM public.personal_value v WHERE v.tenant_id = s.tenant_id AND v.subject_ref = s.subject_ref)`,
+		AND NOT EXISTS (SELECT 1 FROM public.personal_hold h WHERE h.tenant_id = s.tenant_id AND h.subject_ref = s.subject_ref)
+		AND NOT EXISTS (SELECT 1 FROM public.personal_value v WHERE v.tenant_id = s.tenant_id AND v.subject_ref = s.subject_ref)`,
 		tid.String(), refs)
 	if err != nil {
 		return out, fmt.Errorf("personal: purge subjects: %w", err)
@@ -279,4 +293,124 @@ func uuidString(u [16]byte) string {
 		b = append(b, hex[x>>4], hex[x&15])
 	}
 	return string(b)
+}
+
+// lockTenantHolds and lockSubject take transaction-scoped advisory locks keyed by a hash of a fixed label
+// and the tenant (and subject). A hash collision only makes two unrelated callers wait for each other.
+// The hold registry has no row to lock for a subject not yet held, so these are the lock both sides take:
+// SetHold takes the tenant lock shared (holds do not block each other) and LockHolds, the retention
+// purge's read, takes it exclusive, so a hold is either committed before the purge reads or waits for it.
+func lockTenantHolds(ctx context.Context, tx store.Tx, tid tenant.ID, exclusive bool) error {
+	var err error
+	if exclusive {
+		_, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('personal_hold:' || $1, 0))`, tid.String())
+	} else {
+		_, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock_shared(hashtextextended('personal_hold:' || $1, 0))`, tid.String())
+	}
+	if err != nil {
+		return fmt.Errorf("personal: lock holds: %w", err)
+	}
+	return nil
+}
+
+func lockSubject(ctx context.Context, tx store.Tx, tid tenant.ID, subject string) error {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('personal_subject:' || $1 || ':' || $2, 0))`, tid.String(), subject); err != nil {
+		return fmt.Errorf("personal: lock subject: %w", err)
+	}
+	return nil
+}
+
+// SetHold places a legal hold on a subject (dir:... or acct:...) whether or not it has a salt row. It runs
+// in the transaction of the compliance Action that authorises it (step.Tx()). Holding a held subject
+// succeeds. It serialises with the retention purge: it waits for a running purge, and a purge that starts
+// while this transaction is uncommitted waits for it.
+func (*Store) SetHold(ctx context.Context, s step.Step, tid tenant.ID, subject string) error {
+	if err := s.Valid(); err != nil {
+		return err
+	}
+	return setHold(ctx, s.Tx(), tid, subject)
+}
+
+// setHold is SetHold's body, split out so tests can drive it without a runner-minted step. The database
+// also takes both locks on every INSERT into personal_hold (migration 0049), so a writer that bypasses
+// this function is serialised with the purge all the same.
+func setHold(ctx context.Context, tx store.Tx, tid tenant.ID, subject string) error {
+	if tid.IsZero() || !subjectRe.MatchString(subject) {
+		return ErrInvalid
+	}
+	if err := lockTenantHolds(ctx, tx, tid, false); err != nil {
+		return err
+	}
+	if err := lockSubject(ctx, tx, tid, subject); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO public.personal_hold (tenant_id, subject_ref) VALUES ($1::uuid, $2) ON CONFLICT DO NOTHING`, tid.String(), subject); err != nil {
+		return fmt.Errorf("personal: set hold: %w", err)
+	}
+	return nil
+}
+
+// ReleaseHold lifts a legal hold; releasing a subject that is not held succeeds.
+// It takes the step of the authorising compliance Action, like SetHold: lifting a hold is what lets the next
+// purge destroy evidence, so it never runs outside an authorised, audited Action.
+func (*Store) ReleaseHold(ctx context.Context, s step.Step, tid tenant.ID, subject string) error {
+	if err := s.Valid(); err != nil {
+		return err
+	}
+	return releaseHold(ctx, s.Tx(), tid, subject)
+}
+
+func releaseHold(ctx context.Context, tx store.Tx, tid tenant.ID, subject string) error {
+	if tid.IsZero() || !subjectRe.MatchString(subject) {
+		return ErrInvalid
+	}
+	if err := lockTenantHolds(ctx, tx, tid, false); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM public.personal_hold WHERE tenant_id = $1::uuid AND subject_ref = $2`, tid.String(), subject); err != nil {
+		return fmt.Errorf("personal: release hold: %w", err)
+	}
+	return nil
+}
+
+// Held reports whether the subject is under legal hold. The compliance Actions read it at Plan to show the
+// before state and to refuse a no-op; it takes no lock, so it decides nothing about erasure or the purge.
+func (*Store) Held(ctx context.Context, tx store.Tx, tid tenant.ID, subject string) (bool, error) {
+	if tid.IsZero() || !subjectRe.MatchString(subject) {
+		return false, ErrInvalid
+	}
+	var n int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM public.personal_hold WHERE tenant_id = $1::uuid AND subject_ref = $2`, tid.String(), subject).Scan(&n); err != nil {
+		return false, fmt.Errorf("personal: read hold: %w", err)
+	}
+	return n > 0, nil
+}
+
+// LockHolds returns the tenant's held subjects after taking the hold lock exclusively until tx ends: a
+// SetHold whose transaction is still open is waited for and then seen, and one that starts later waits for
+// tx. The retention purge calls it in its maintenance transaction before deciding what it may delete.
+func (*Store) LockHolds(ctx context.Context, tx store.Tx, tid tenant.ID) (map[string]struct{}, error) {
+	if tid.IsZero() {
+		return nil, ErrInvalid
+	}
+	if err := lockTenantHolds(ctx, tx, tid, true); err != nil {
+		return nil, err
+	}
+	rows, err := tx.Query(ctx, `SELECT subject_ref FROM public.personal_hold WHERE tenant_id = $1::uuid`, tid.String())
+	if err != nil {
+		return nil, fmt.Errorf("personal: read holds: %w", err)
+	}
+	defer rows.Close()
+	held := map[string]struct{}{}
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, fmt.Errorf("personal: read hold: %w", err)
+		}
+		held[s] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("personal: read holds: %w", err)
+	}
+	return held, nil
 }

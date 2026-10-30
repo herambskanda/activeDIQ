@@ -422,6 +422,9 @@ func (u *run) checkPlan(steps []StepPlan) error {
 		if sp.Kind == "" || sp.Reversibility.rank() < 0 || sp.Reversibility.rank() > u.d.Reversibility.rank() {
 			return fmt.Errorf("%w: step %d of %q has no kind or a reversibility class beyond the descriptor's", ErrInvalid, i, u.d.ID)
 		}
+		if u.d.TargetClass != "" && sp.Target.Class != u.d.TargetClass {
+			return fmt.Errorf("%w: step %d of %q targets class %q, the descriptor declares %q", ErrInvalid, i, u.d.ID, sp.Target.Class, u.d.TargetClass)
+		}
 		for j := range sp.Diff {
 			if sp.Diff[j].Secret { // a secret value is never held in a plan, diff or event
 				sp.Diff[j].Before, sp.Diff[j].After = nil, nil

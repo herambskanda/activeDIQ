@@ -68,3 +68,28 @@ func (g *Groups) GroupsOf(ctx context.Context, tid tenant.ID, connection Connect
 	}
 	return out, nil
 }
+
+var _ GroupRows = (*Groups)(nil)
+
+// GroupExists implements GroupRows: a group row in an active state (AD live, Entra active) of the connection.
+func (g *Groups) GroupExists(ctx context.Context, tid tenant.ID, connection ConnectionID, group GUID) (bool, error) {
+	if g == nil || g.db == nil {
+		return false, ErrNotConfigured
+	}
+	if tid.IsZero() {
+		return false, ErrNoTenant
+	}
+	if !(Ref{connection, group}).Valid() {
+		return false, ErrInvalid
+	}
+	var ok bool
+	err := g.db.WithTenant(ctx, tid, func(ctx context.Context, tx store.Tx) error {
+		return tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM public.directory_objects
+			WHERE tenant_id = $1::uuid AND connection_id = $2::uuid AND object_guid = $3::uuid AND kind = 'group' AND state IN ($4, $5))`,
+			tid.String(), string(connection), string(group), string(ObjLive), string(ObjActive)).Scan(&ok)
+	})
+	if err != nil {
+		return false, fmt.Errorf("inventory: group row: %w", err)
+	}
+	return ok, nil
+}

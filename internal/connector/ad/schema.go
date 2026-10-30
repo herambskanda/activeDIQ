@@ -68,6 +68,9 @@ func DefaultSchema() *ldapfilter.Schema {
 			ldapfilter.AttrInfo{Name: "homeDrive", OID: "1.2.840.113556.1.4.45", Syntax: s},
 			ldapfilter.AttrInfo{Name: "profilePath", OID: "1.2.840.113556.1.4.139", Syntax: s},
 			ldapfilter.AttrInfo{Name: "scriptPath", OID: "1.2.840.113556.1.4.62", Syntax: s},
+			// PDC emulator lookup for the Key Admins presence rule (T-0631, TM-R25).
+			ldapfilter.AttrInfo{Name: "fSMORoleOwner", OID: "1.2.840.113556.1.4.369", Syntax: ldapfilter.SynDN},
+			ldapfilter.AttrInfo{Name: "operatingSystemVersion", OID: "1.2.840.113556.1.4.364", Syntax: s},
 			ldapfilter.AttrInfo{Name: "serverReference", OID: "1.2.840.113556.1.4.515", Syntax: ldapfilter.SynDN},
 			// dNSHostName: name-only. Its attributeID is also the lazy-commit control OID, which FF-SP2 lets
 			// only scope name; an OID-form descriptor for it stays unknown and fails closed.

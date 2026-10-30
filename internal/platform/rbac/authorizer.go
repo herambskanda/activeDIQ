@@ -144,7 +144,7 @@ func (a *Authorizer) Authorize(ctx context.Context, chain authority.Chain, perm 
 	if err != nil {
 		return err
 	}
-	p := &authz.Principal{ID: string(chain.Requester.ID), Assignments: ev}
+	p := &authz.Principal{ID: string(chain.Requester.ID), Assignments: ev, AuthorityFactor: authority.AuthorityFactorFrom(ctx)}
 	if d := a.eval.Authorize(p, tok, perm, tgt); !d.Allowed {
 		return denied(d.Reason)
 	}

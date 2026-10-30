@@ -59,3 +59,20 @@ lab/windows/.win-lab-ca.pem
 # stray go build output of tools/fitness/profiles
 /profiles
 !knowledge/development/runbooks/windows-lab-runs/*.log
+
+# Stray `go build` output of the fitness tools (make uses go run)
+/tools/fitness/*/*
+!/tools/fitness/*/*.go
+!/tools/fitness/*/*.txt
+!/tools/fitness/*/testdata/
+!/tools/fitness/update/offline.sh
+# stray `go build ./tools/fitness/audit` output
+/audit
+
+# built fitness binary (build into $TMPDIR instead)
+/agenthost
+
+# The built console is copied into internal/webui/dist by `make web-embed` for go:embed (T-0686)
+!/internal/webui/dist/
+/internal/webui/dist/*
+!/internal/webui/dist/.gitkeep
