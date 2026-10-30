@@ -269,7 +269,9 @@ the default is `mfa.mode = off`.
 | # | Rule |
 | --- | --- |
 | MFA-1 | **OIDC evidence**: the ID token's `amr` array contains at least one configured value. The default set is `{"mfa"}` ([RFC 8176](https://www.rfc-editor.org/rfc/rfc8176)); the administrator may add `hwk`, `otp`, `fpt`, `face`, `sc`. `pwd`, `kba`, `sms`, `tel` and `user` cannot be added, because each names one factor at most. `acr` is recorded but is not evidence on its own, because its values are IdP-defined |
+| MFA-1a | **The OIDC evidence set is an allow-list**: exactly `{mfa, hwk, otp, fpt, face, sc}`, matched case-sensitively, enforced at save, Start and Complete (`oidc.config`). `wia`, `rba`, `geo`, `swk`, `pin`, `mca`, `PWD`, `Mfa` and any other string are refused: they are ambient signals or one factor, and a deny-list would let an admin (or an attacker holding step-up) turn Windows-integrated sign-in into "MFA" |
 | MFA-2 | **SAML evidence**: the verified Assertion's `AuthnContextClassRef`, or a named attribute, contains a configured value. Presets: Entra ID and AD FS, attribute `http://schemas.microsoft.com/claims/authnmethodsreferences` containing `http://schemas.microsoft.com/claims/multipleauthn` `[UNVERIFIED — lab G9]`; others are configured by the administrator, and the setup screen shows the last verified response's values so the rule is chosen from evidence |
+| MFA-2a | **No OASIS class is SAML evidence**: any value with prefix `urn:oasis:names:tc:SAML:2.0:ac:classes:` (`Password`, `PasswordProtectedTransport`, `Kerberos`, `X509`, `unspecified`, …) is refused at save, Start and Complete (`saml.config`). Evidence is an IdP-specific class or an attribute value |
 | MFA-3 | `Verified.MFAAsserted` is true only when `mfa.mode = claim` **and** the response carries the evidence. With the mode on and the evidence absent, sign-in proceeds as non-MFA (a pending sign-in, AN-10) and audit records `sso.mfa_evidence_absent`; it is never a silent session |
 | MFA-4 | Switching `mfa.mode` on, or changing the evidence rule, is an IdP configuration change: step-up, audited, every `tenant-owner` alerted (TM-TB8-T3) |
 | MFA-5 | **What MFA-asserting buys**: an account whose sign-in has `MFAAsserted` gets a session directly from AN-3, **unless** the account holds `tenant-owner` or any `control_plane` permission (DM-33.I3; both are held only by assignment to the account itself, DM-36.I4); such an account always completes AN-10 with an activeDIQ-held factor. A compromised IdP (TM-X12) then reaches console access within RBAC but never the control plane (TM-TB8-T7, TM-O1) |
@@ -546,6 +548,8 @@ stays `[UNVERIFIED — lab]`.
 | X-11 | `forced` on; `/signin/break-glass` | AN-8 still served | FSSO-3 |
 | X-12 | Callback return path is absolute, `//host` or not a console route | ignored; console root | §3 |
 | X-13 | Refusal page body is identical for every SAML-n / OIDC-n reason | same body and status | §3 |
+| X-14 | OIDC MFA evidence is any value outside `{mfa,hwk,otp,fpt,face,sc}` (`wia`, `rba`, `geo`, `swk`, `pin`, `mca`, `PWD`, `Mfa`, `x`) | save, Start and Complete refused, `oidc.config` | MFA-1a |
+| X-15 | SAML MFA evidence is a `urn:oasis:names:tc:SAML:2.0:ac:classes:` value (`Password`, `PasswordProtectedTransport`, `unspecified`, `Kerberos`, `X509`) | save, Start and Complete refused, `saml.config` | MFA-2a |
 
 ---
 

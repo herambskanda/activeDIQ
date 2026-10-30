@@ -224,10 +224,12 @@ func TestSAML_ClaimsAnchorMFA(t *testing.T) {
 	r := newRig(t)
 	c := &r.env.Config
 	c.AnchorClaim, c.AnchorAttribute, c.TenantAttribute = "oid", "oid", "tid"
-	c.MFAMode, c.MFAEvidence = sso.MFAClaim, []string{"urn:oasis:names:tc:SAML:2.0:ac:classes:MobileTwoFactorContract"}
+	// An OASIS class cannot be evidence (MFA-2a); the IdP-specific class below can.
+	const idpMFAClass = "https://idp.example.test/ac/mfa"
+	c.MFAMode, c.MFAEvidence = sso.MFAClaim, []string{idpMFAClass}
 	s := r.env.Good(r.tx)
 	s.Attributes = map[string][]string{"oid": {"o-1"}, "tid": {"t-1"}, "groups": {"g"}}
-	s.ClassRef = c.MFAEvidence[0]
+	s.ClassRef = idpMFAClass
 	v, err := r.complete(samltest.Form(r.env.Render(s)), r.tx)
 	if err != nil || !v.MFAAsserted || v.Anchor == nil || v.Anchor.Value != "o-1" || v.Anchor.TID != "t-1" {
 		t.Fatalf("%+v %v", v, err)
@@ -267,5 +269,41 @@ func TestSAML_ValidateConfig(t *testing.T) {
 	c.ACSURL = "http://console.example.test/cb"
 	if sso.ReasonOf(saml.ValidateConfig(&c)) != saml.ReasonConfig {
 		t.Fatal("http ACS accepted")
+	}
+}
+
+// MFA-2a (X-15): no urn:oasis:names:tc:SAML:2.0:ac:classes: value is MFA evidence. Save, Start and Complete
+// refuse with saml.config, alone or beside an acceptable value.
+func TestSAMLConfig_RefusesOASISClassAsMFAEvidence(t *testing.T) {
+	const ns = "urn:oasis:names:tc:SAML:2.0:ac:classes:"
+	for _, class := range []string{"Password", "PasswordProtectedTransport", "unspecified", "Kerberos", "X509", "MobileTwoFactorContract"} {
+		for name, evidence := range map[string][]string{
+			"alone":          {ns + class},
+			"beside allowed": {"https://idp.example.test/ac/mfa", ns + class},
+		} {
+			r := newRig(t)
+			r.env.Config.MFAMode, r.env.Config.MFAEvidence = sso.MFAClaim, evidence
+			c := r.env.Config
+			if got := sso.ReasonOf(saml.ValidateConfig(&c)); got != saml.ReasonConfig {
+				t.Errorf("%s %s: ValidateConfig reason = %q", class, name, got)
+			}
+			if _, _, err := r.v.Start(context.Background(), tenant.ID{}, r.env.IdP(), sso.IntentSignin); sso.ReasonOf(err) != saml.ReasonConfig {
+				t.Errorf("%s %s: Start reason = %q", class, name, sso.ReasonOf(err))
+			}
+			if _, err := r.complete(samltest.Form(r.env.Render(r.env.Good(r.tx))), r.tx); sso.ReasonOf(err) != saml.ReasonConfig {
+				t.Errorf("%s %s: Complete reason = %q", class, name, sso.ReasonOf(err))
+			}
+		}
+	}
+}
+
+func TestSAMLConfig_AcceptsNonOASISMFAEvidence(t *testing.T) {
+	r := newRig(t)
+	r.env.Config.MFAMode = sso.MFAClaim
+	r.env.Config.MFAAttribute = "http://schemas.microsoft.com/claims/authnmethodsreferences"
+	r.env.Config.MFAEvidence = []string{"http://schemas.microsoft.com/claims/multipleauthn"}
+	c := r.env.Config
+	if err := saml.ValidateConfig(&c); err != nil {
+		t.Fatal(err)
 	}
 }
