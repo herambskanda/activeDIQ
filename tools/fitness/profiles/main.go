@@ -22,6 +22,8 @@ type Ctx struct {
 	Root string
 	Cfg  *Config
 	Tree *Tree
+
+	extTerms *[]string // cache of externalTerms
 }
 
 // Options tune a run; the zero value is what `make ci` uses.
@@ -80,6 +82,7 @@ func Run(root, manifestPath string, checks []string, opt Options) ([]Violation, 
 	var rows []Row
 	if want["P1"] {
 		vs = append(vs, c.checkP1Domain()...)
+		vs = append(vs, c.checkExternalVocabulary()...)
 		vs = append(vs, c.checkP1Manifests()...)
 	}
 	if want["P4"] {
