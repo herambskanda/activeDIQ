@@ -55,6 +55,8 @@ CREATE TABLE public.notify_deliveries (
   -- source_ref: what the message is about, for example ('report_export', <export id>).
   source_kind text NOT NULL CHECK (source_kind ~ '^[a-z][a-z0-9_]{0,47}$'),
   source_id text NOT NULL CHECK (source_id ~ '^[\x21-\x7e]{1,128}$'),
+  -- The principal that caused the message (the real human, or the system job), for the audit trail.
+  requested_by text NOT NULL CHECK (char_length(requested_by) BETWEEN 1 AND 128),
   -- The caller's rule for this message: an attachment never goes to an address outside the allowed domains.
   require_internal boolean NOT NULL DEFAULT false,
   state text NOT NULL CHECK (state IN ('queued', 'sent', 'failed', 'given_up')),
@@ -107,7 +109,7 @@ BEGIN
      OR NEW.variables IS DISTINCT FROM OLD.variables OR NEW.recipient_kind IS DISTINCT FROM OLD.recipient_kind
      OR NEW.recipient_account IS DISTINCT FROM OLD.recipient_account OR NEW.recipient_address IS DISTINCT FROM OLD.recipient_address
      OR NEW.source_kind IS DISTINCT FROM OLD.source_kind OR NEW.source_id IS DISTINCT FROM OLD.source_id
-     OR NEW.require_internal IS DISTINCT FROM OLD.require_internal OR NEW.max_attempts IS DISTINCT FROM OLD.max_attempts
+     OR NEW.requested_by IS DISTINCT FROM OLD.requested_by OR NEW.require_internal IS DISTINCT FROM OLD.require_internal OR NEW.max_attempts IS DISTINCT FROM OLD.max_attempts
      OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
     RAISE EXCEPTION 'notify_deliveries: identity columns are immutable' USING ERRCODE = 'integrity_constraint_violation';
   END IF;
