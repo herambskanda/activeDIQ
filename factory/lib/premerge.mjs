@@ -238,6 +238,7 @@ export async function runPreMergeGate(ctx, ticket, { signal, argv } = {}) {
     const head = extractFindings(readLog(log), [fs.realpathSync(dir), dir]);
     const base = await baseline(ctx, settings, mainSha, { signal });
     const fresh = newFindings(base.code === 0 ? new Map() : base.findings, head);
+    const total = (m) => [...m.values()].reduce((a, b) => a + b, 0);
     const lines = fresh.map((f) => (f.known ? `${f.key}  (${f.extra} more than the ${f.known} on ${main})` : f.extra > 1 ? `${f.key}  (${f.extra} times)` : f.key));
     if (base.code === 0) {
       return {
@@ -254,12 +255,12 @@ export async function runPreMergeGate(ctx, ticket, { signal, argv } = {}) {
     if (fresh.length) {
       return {
         status: 'blocked', mode: 'new-findings', findings: lines, log, baseLog: base.log,
-        summary: `${main} is red (${base.findings.size} known findings) and the merge result adds ${lines.length} that ${main} does not have`,
+        summary: `${main} is red (${total(base.findings)} known findings) and the merge result adds ${lines.length} that ${main} does not have`,
       };
     }
     return {
       status: 'pass', mode: 'ratchet', findings: [], log, baseLog: base.log,
-      summary: `${main} is red (${base.findings.size} known findings); the merge result adds none (${head.size} finding keys, all on ${main})`,
+      summary: `${main} is red (${total(base.findings)} known findings); the merge result adds none (${total(head)} findings, all already on ${main})`,
     };
   } finally {
     await dropWorktree(ctx, dir);
