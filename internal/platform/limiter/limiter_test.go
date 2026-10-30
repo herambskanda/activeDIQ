@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -250,5 +251,33 @@ func TestPrincipalBucketsPerClassAndPrincipal(t *testing.T) {
 	}
 	if d, _ := l.AllowPrincipal(ctx, "bulk", apihost.Principal{ID: "bob"}); !d.Allowed {
 		t.Fatal("principals share a budget")
+	}
+}
+
+// SourcePrefix is the one definition of "source" (§7.8 rules 1-3) the AN-8 gate shares with ipKey.
+func TestSourcePrefixCanonicalForms(t *testing.T) {
+	cases := []struct {
+		addr   string
+		v4, v6 int
+		want   string
+	}{
+		{"192.0.2.1", 32, 64, "192.0.2.1/32"},
+		{"::ffff:192.0.2.1", 32, 64, "192.0.2.1/32"},
+		{"64:ff9b::c000:201", 32, 64, "192.0.2.1/32"},
+		{"64:ff9b::c000:201", 24, 64, "192.0.2.0/24"},
+		{"2001:db8:aa:bb:1::1%eth0", 32, 64, "2001:db8:aa:bb::/64"},
+		{"2001:db8:aa:bb::1", 32, 48, "2001:db8:aa::/48"},
+	}
+	for _, c := range cases {
+		p, ok := SourcePrefix(netip.MustParseAddr(c.addr), c.v4, c.v6)
+		if !ok || p.String() != c.want {
+			t.Errorf("SourcePrefix(%s,/%d,/%d) = %v,%v; want %s", c.addr, c.v4, c.v6, p, ok, c.want)
+		}
+	}
+	if _, ok := SourcePrefix(netip.Addr{}, 32, 64); ok {
+		t.Error("an invalid address produced a prefix")
+	}
+	if _, ok := SourcePrefix(netip.MustParseAddr("192.0.2.1"), 33, 64); ok {
+		t.Error("an out-of-range prefix length produced a prefix")
 	}
 }

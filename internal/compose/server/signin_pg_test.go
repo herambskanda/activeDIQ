@@ -51,9 +51,14 @@ var traceID = regexp.MustCompile(`"traceId":"[0-9a-f]+",?`)
 const signInPassword = "correct horse battery staple"
 
 func postJSON(h http.Handler, path, body string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
+	return postJSONFrom(h, "203.0.113.7:1", path, body, cookies...)
+}
+
+// postJSONFrom is postJSON from the given TCP peer ("ip:port").
+func postJSONFrom(h http.Handler, peer, path, body string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
-	r.RemoteAddr = "203.0.113.7:1"
+	r.RemoteAddr = peer
 	for _, c := range cookies {
 		r.AddCookie(c)
 	}
