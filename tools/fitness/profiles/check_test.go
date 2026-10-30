@@ -687,18 +687,20 @@ func TestP1EnvironForwarding(t *testing.T) {
 		})
 	}
 	for name, c := range map[string]struct{ body, why string }{
-		"range":          {"func F() { for range os.Environ() {} }\n", "other than as the right side"},
-		"index":          {"func F() string { return os.Environ()[0] }\n", "other than as the right side"},
-		"argument":       {"func F(f func([]string)) { f(os.Environ()) }\n", "passed on or consumed"},
-		"range method":   {"func F(cmd *exec.Cmd) { for range cmd.Environ() {} }\n", "other than as the right side"},
-		"profile name":   {"func F(cmd *exec.Cmd) { cmd.Env = append(os.Environ(), \"ACTIVEDIQ_PROFILE=saas\") }\n", "profile-selecting"},
-		"profile method": {"func F(cmd *exec.Cmd) { cmd.Env = append(cmd.Environ(), \"DIQ_SAAS=1\") }\n", "profile-selecting"},
-		"variable arg":   {"func F(cmd *exec.Cmd, v string) { cmd.Env = append(os.Environ(), v) }\n", "not a constant string"},
-		"prefix arg":     {"func F(cmd *exec.Cmd, v string) { cmd.Env = append(os.Environ(), \"X=\"+v) }\n", "not a constant string"},
-		"spread":         {"func F(cmd *exec.Cmd, v []string) { cmd.Env = append(os.Environ(), v...) }\n", "passed on or consumed"},
-		"not Env field":  {"func F(cmd *exec.Cmd) { x := os.Environ(); _ = x }\n", "other than as the right side"},
-		"other field":    {"type T struct{ Vars []string }\n\nfunc F(t *T) { t.Vars = os.Environ() }\n", "other than a child's Env"},
-		"append first":   {"func F(cmd *exec.Cmd) { cmd.Env = append([]string{\"X=1\"}, os.Environ()...) }\n", "passed on or consumed"},
+		"range":             {"func F() { for range os.Environ() {} }\n", "other than as the right side"},
+		"index":             {"func F() string { return os.Environ()[0] }\n", "other than as the right side"},
+		"argument":          {"func F(f func([]string)) { f(os.Environ()) }\n", "passed on or consumed"},
+		"range method":      {"func F(cmd *exec.Cmd) { for range cmd.Environ() {} }\n", "other than as the right side"},
+		"profile name":      {"func F(cmd *exec.Cmd) { cmd.Env = append(os.Environ(), \"ACTIVEDIQ_PROFILE=saas\") }\n", "profile-selecting"},
+		"profile method":    {"func F(cmd *exec.Cmd) { cmd.Env = append(cmd.Environ(), \"DIQ_SAAS=1\") }\n", "profile-selecting"},
+		"variable arg":      {"func F(cmd *exec.Cmd, v string) { cmd.Env = append(os.Environ(), v) }\n", "not a constant string"},
+		"function call arg": {"func mk(s string) string { return \"ACTIVEDIQ_PROFILE=saas\" }\nfunc F(cmd *exec.Cmd) { cmd.Env = append(os.Environ(), mk(\"A=1\")) }\n", "not a constant string"},
+		"conversion arg":    {"func F(cmd *exec.Cmd) { cmd.Env = append(os.Environ(), string(\"A=1\")) }\n", "not a constant string"},
+		"prefix arg":        {"func F(cmd *exec.Cmd, v string) { cmd.Env = append(os.Environ(), \"X=\"+v) }\n", "not a constant string"},
+		"spread":            {"func F(cmd *exec.Cmd, v []string) { cmd.Env = append(os.Environ(), v...) }\n", "passed on or consumed"},
+		"not Env field":     {"func F(cmd *exec.Cmd) { x := os.Environ(); _ = x }\n", "other than as the right side"},
+		"other field":       {"type T struct{ Vars []string }\n\nfunc F(t *T) { t.Vars = os.Environ() }\n", "other than a child's Env"},
+		"append first":      {"func F(cmd *exec.Cmd) { cmd.Env = append([]string{\"X=1\"}, os.Environ()...) }\n", "passed on or consumed"},
 	} {
 		t.Run("fails/"+name, func(t *testing.T) {
 			root := repo(t, map[string]string{"internal/directory/dn/dn.go": head + c.body})

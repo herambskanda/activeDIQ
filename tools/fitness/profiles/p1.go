@@ -288,6 +288,18 @@ func environText(x *ast.SelectorExpr) string {
 	return "(…).Environ"
 }
 
+// hasCall reports whether the expression contains a call, which is never part of a constant string.
+func hasCall(e ast.Expr) bool {
+	found := false
+	ast.Inspect(e, func(n ast.Node) bool {
+		if _, ok := n.(*ast.CallExpr); ok {
+			found = true
+		}
+		return !found
+	})
+	return found
+}
+
 // environForwarded decides erratum E-2 for one os.Environ / cmd.Environ selector. The environment
 // may be handed to a child process in exactly two forms, and nothing else is allowed:
 //
@@ -295,8 +307,8 @@ func environText(x *ast.SelectorExpr) string {
 //	X.Env = append(os.Environ(), a, b…)   every a constant string whose name part (before "=")
 //	                                      does not match profileEnvRegexp
 //
-// A constant string is a constant expression (a literal, a package constant, a conversion of one,
-// a concatenation of those), not only a literal. The tree is parsed, not type-checked, so a
+// A constant string is a constant expression (a literal, a package constant, a concatenation of
+// those), not only a literal. Any function call or conversion inside the argument disqualifies it. The tree is parsed, not type-checked, so a
 // function-local constant is not recognised and fails: declare it at package level.
 func (c *Ctx) environForwarded(f *File, sel *ast.SelectorExpr, parents map[ast.Node]ast.Node, profEnv *regexp.Regexp) (bool, string) {
 	const hint = "allowed only as X.Env = os.Environ() or X.Env = append(os.Environ(), constant strings); read configuration through compose/config"
@@ -320,8 +332,10 @@ func (c *Ctx) environForwarded(f *File, sel *ast.SelectorExpr, parents map[ast.N
 		return false, "the environment is assigned to something other than a child's Env field; " + hint
 	}
 	for _, a := range appended {
+		// EvalString reads a one-argument call as a conversion, which is right for its other callers
+		// but would let mk("A=1") through here; a constant expression contains no call at all.
 		s, prefix, ok := c.Tree.EvalString(f, a)
-		if !ok || prefix {
+		if hasCall(a) || !ok || prefix {
 			return false, "an appended argument is not a constant string, so it cannot be shown not to set a profile-selecting variable; " + hint
 		}
 		name, _, _ := strings.Cut(s, "=")

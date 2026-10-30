@@ -15,8 +15,12 @@ func TestNoStoreOrSQL(t *testing.T) {
 	linux.Env = append(linux.Environ(), "GOOS=linux")
 	windows := exec.Command("go", "list", "-deps", ".")
 	windows.Env = append(windows.Environ(), "GOOS=windows")
-	for goos, cmd := range map[string]*exec.Cmd{"linux": linux, "windows": windows} {
-		out, err := cmd.Output()
+	for _, tc := range []struct {
+		goos string
+		cmd  *exec.Cmd
+	}{{"linux", linux}, {"windows", windows}} {
+		goos := tc.goos
+		out, err := tc.cmd.Output()
 		if err != nil {
 			t.Fatalf("go list (%s): %v", goos, err)
 		}
