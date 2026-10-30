@@ -24,6 +24,10 @@ const (
 	ProblemTypePreconditionFailed      = "/problems/precondition-failed"
 	ProblemTypePreconditionRequired    = "/problems/precondition-required"
 	ProblemTypeRateLimited             = "/problems/rate-limited"
+	ProblemTypeReportResultExpired     = "/problems/report-result-expired"
+	ProblemTypeReportRowCapExceeded    = "/problems/report-row-cap-exceeded"
+	ProblemTypeReportScopeEmpty        = "/problems/report-scope-empty"
+	ProblemTypeReportScopeUnsupported  = "/problems/report-scope-unsupported"
 	ProblemTypeSetupRefused            = "/problems/setup-refused"
 	ProblemTypeSignInFailed            = "/problems/sign-in-failed"
 	ProblemTypeStepUpRequired          = "/problems/step-up-required"
@@ -120,6 +124,26 @@ func PreconditionRequired(detail string) *Problem {
 // RateLimited builds a 429 /problems/rate-limited problem.
 func RateLimited(detail string) *Problem {
 	return newProblem(ProblemTypeRateLimited, "Too many requests", 429, detail)
+}
+
+// ReportResultExpired builds a 410 /problems/report-result-expired problem.
+func ReportResultExpired(detail string) *Problem {
+	return newProblem(ProblemTypeReportResultExpired, "The stored result has expired", 410, detail)
+}
+
+// ReportRowCapExceeded builds a 422 /problems/report-row-cap-exceeded problem.
+func ReportRowCapExceeded(detail string) *Problem {
+	return newProblem(ProblemTypeReportRowCapExceeded, "The result is over the row cap of the format", 422, detail)
+}
+
+// ReportScopeEmpty builds a 422 /problems/report-scope-empty problem.
+func ReportScopeEmpty(detail string) *Problem {
+	return newProblem(ProblemTypeReportScopeEmpty, "The scope covers no directory objects", 422, detail)
+}
+
+// ReportScopeUnsupported builds a 409 /problems/report-scope-unsupported problem.
+func ReportScopeUnsupported(detail string) *Problem {
+	return newProblem(ProblemTypeReportScopeUnsupported, "The scope uses a kind that reports cannot evaluate", 409, detail)
 }
 
 // SetupRefused builds a 401 /problems/setup-refused problem.

@@ -660,6 +660,7 @@ report_runs (DM-72)
   runner_account uuid NOT NULL                       -- chain.Requester: the account whose authority the run uses
   chain jsonb NOT NULL                               -- the full authority.Chain (typed refs: token id, schedule id)
   schedule_id uuid NULL
+  rerun_of uuid NULL                                 -- the run a retry or an expired-export re-run was made from (API rerunOf)
   state text NOT NULL CHECK (state IN run.State values)
   failure_reason text NULL CHECK (failure_reason IN run.FailureReason values)
   attempt int NOT NULL DEFAULT 0                     -- the job attempt that owns the run (§6.3)
@@ -672,6 +673,7 @@ report_runs (DM-72)
   CHECK (state <> 'succeeded' OR (row_count, digest, as_of, expires_at) all NOT NULL)
   CHECK ((state IN ('failed')) = (failure_reason IS NOT NULL))
   trigger report_runs_state_edge: BEFORE UPDATE OF state, refuses any edge not in the table below
+  INDEX (tenant_id, runner_account, created_at DESC, id DESC)   -- the history list (§6.6), keyset on (created_at, id)
 
 report_run_rows (ADR-0010)
   tenant_id, run_id, row_key text (<= 200), ordinal bigint, cells jsonb, sort_keys jsonb
@@ -910,6 +912,17 @@ A stored run holds rows trimmed to one account's scope at one moment. Holding `r
 - **`reports.schedule.manage_all`** shows schedule metadata (definition, preset, owner, recipients,
   state, last fire, last run state and row count). It never opens a run's rows or files.
 - Every refusal at checks 2, 3 and 4 appends `reports.run.read_denied {run_id, check}` (§10).
+- **History list** (`GET /reports/runs`, `listReportRuns`, T-0891) is not a run read, so it does not go
+  through `run.ReadAccess`. It selects `WHERE runner_account = chain.Requester` ordered by
+  `(created_at DESC, id DESC)` and takes no parameter that names another runner. It makes **one**
+  `ReadScopes.For` call per request and sets each item's `scopeCurrent` to "fingerprint equals the
+  stored one" (check 4 as data, not as a 409). Where it is false the item's `rowCount` is null. No
+  refusal here, so no `read_denied` event.
+- **Retry** (`POST /reports/runs/{id}/retry`, `retryReportRun`, T-0891) passes checks 1 and 2 only. It
+  is not blocked by 3 or 4, which is its purpose. It resolves the stored `definition_id`, version,
+  preset and `params` again under the caller's current scope, then takes the §6.1 create path
+  (reuse window, job limit) with `rerun_of` = the source run. A source in `queued` or `running` is a 409
+  `run_in_progress`.
 
 **Test RP9** (row B4, listed by T-0873): `Test_run_read_bound_to_runner_and_scope`:
 - a second account holding `reports.run` and `reports.export` gets 404 on GET, page and export
