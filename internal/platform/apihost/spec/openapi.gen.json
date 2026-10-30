@@ -12,6 +12,54 @@
         },
         "x-activediq-tag": "connections"
       },
+      "DefinitionCategory": {
+        "description": "Only reports of this category.",
+        "in": "query",
+        "name": "category",
+        "required": false,
+        "schema": {
+          "$ref": "#/components/schemas/ReportCategory"
+        },
+        "x-activediq-tag": "reports"
+      },
+      "DefinitionId": {
+        "description": "The report definition.",
+        "in": "path",
+        "name": "definitionId",
+        "required": true,
+        "schema": {
+          "maxLength": 64,
+          "minLength": 2,
+          "pattern": "^[A-Za-z][A-Za-z0-9-]{1,63}$",
+          "type": "string"
+        },
+        "x-activediq-tag": "reports"
+      },
+      "DefinitionQuery": {
+        "description": "Text to find in a report name, description or ManageEngine name. Plain text only; no filter syntax.",
+        "in": "query",
+        "name": "q",
+        "required": false,
+        "schema": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^()*\\\\&|=!<>~\\x00-\\x1f\\x7f]+$",
+          "type": "string"
+        },
+        "x-activediq-tag": "reports"
+      },
+      "DefinitionVersion": {
+        "description": "A published version of the definition. Absent answers the current one.",
+        "in": "query",
+        "name": "version",
+        "required": false,
+        "schema": {
+          "maximum": 1000000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "x-activediq-tag": "reports"
+      },
       "DestinationId": {
         "description": "The destination.",
         "in": "path",
@@ -22,6 +70,17 @@
           "type": "string"
         },
         "x-activediq-tag": "platform.notify"
+      },
+      "ExportId": {
+        "description": "The export.",
+        "in": "path",
+        "name": "exportId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "x-activediq-tag": "reports"
       },
       "IdempotencyKey": {
         "description": "Makes a mutating bulk call safe to retry. The same key with a different body is refused.",
@@ -78,6 +137,70 @@
           "type": "string"
         },
         "x-activediq-tag": "platform.notify"
+      },
+      "RequiredIfMatch": {
+        "description": "The ETag of the schedule version being changed. A stale value answers precondition-failed; an absent one precondition-required.",
+        "in": "header",
+        "name": "If-Match",
+        "required": true,
+        "schema": {
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        },
+        "x-activediq-tag": "reports"
+      },
+      "RunId": {
+        "description": "The run.",
+        "in": "path",
+        "name": "runId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "x-activediq-tag": "reports"
+      },
+      "ScheduleId": {
+        "description": "The schedule.",
+        "in": "path",
+        "name": "scheduleId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "x-activediq-tag": "reports"
+      },
+      "ScheduleOwner": {
+        "description": "me lists the caller's schedules. any lists every schedule of the tenant and needs reports.schedule.manage_all.",
+        "in": "query",
+        "name": "owner",
+        "required": false,
+        "schema": {
+          "$ref": "#/components/schemas/ReportScheduleOwner"
+        },
+        "x-activediq-tag": "reports"
+      },
+      "SortBy": {
+        "description": "A column of the run to sort the stored result by. Absent keeps the run order.",
+        "in": "query",
+        "name": "sortBy",
+        "required": false,
+        "schema": {
+          "$ref": "#/components/schemas/ReportColumnId"
+        },
+        "x-activediq-tag": "reports"
+      },
+      "SortOrder": {
+        "description": "The sort direction. Absent is ascending.",
+        "in": "query",
+        "name": "order",
+        "required": false,
+        "schema": {
+          "$ref": "#/components/schemas/ReportSortOrder"
+        },
+        "x-activediq-tag": "reports"
       }
     },
     "responses": {
@@ -350,6 +473,66 @@
           }
         },
         "description": "Too many requests"
+      },
+      "ReportResultExpired": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 410,
+              "title": "The stored result has expired",
+              "type": "/problems/report-result-expired"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The stored result or file has expired"
+      },
+      "ReportRowCapExceeded": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 422,
+              "title": "The result is over the row cap of the format",
+              "type": "/problems/report-row-cap-exceeded"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The result is over the row cap of the format"
+      },
+      "ReportScopeEmpty": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 422,
+              "title": "The scope covers no directory objects",
+              "type": "/problems/report-scope-empty"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The scope covers no directory objects"
+      },
+      "ReportScopeUnsupported": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 409,
+              "title": "The scope uses a kind that reports cannot evaluate",
+              "type": "/problems/report-scope-unsupported"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The scope uses a kind that reports cannot evaluate"
       },
       "SetupRefused": {
         "content": {
@@ -1067,6 +1250,2587 @@
           "value"
         ],
         "type": "object"
+      },
+      "ReportCategory": {
+        "description": "The six categories of the 2a library (spec 6.1).",
+        "enum": [
+          "users",
+          "passwords",
+          "groups",
+          "computers",
+          "contacts",
+          "organizational_units"
+        ],
+        "type": "string",
+        "x-activediq-tag": "reports"
+      },
+      "ReportCategoryValue": {
+        "description": "A library category. Clients accept values they do not know.",
+        "enum": [
+          "users",
+          "passwords",
+          "groups",
+          "computers",
+          "contacts",
+          "organizational_units"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "reports"
+      },
+      "ReportCell": {
+        "description": "One typed cell; the kinds map one to one onto report.Cell in modules/reports.md 6.2 (text s, integer i, boolean b, time t, enum e, guid g, textList l, absent a, never n). unknown is shown rather than an inferred value when an input is missing (FR-09). absent is a missing value, distinct from empty text; never is a value that cannot occur, such as a last logon of an account that has never logged on.",
+        "discriminator": {
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReportCellText"
+          },
+          {
+            "$ref": "#/components/schemas/ReportCellInteger"
+          },
+          {
+            "$ref": "#/components/schemas/ReportCellGuid"
+          },
+          {
+            "$ref": "#/components/schemas/ReportCellTextList"
+          },
+          {
+            "$ref": "#/components/schemas/ReportCellNever"
+          },
+          {
+            "$ref": "#/components/schemas/ReportValueBoolean"
+          },
+          {
+            "$ref": "#/components/schemas/ReportValueTime"
+          },
+          {
+            "$ref": "#/components/schemas/ReportValueEnum"
+          },
+          {
+            "$ref": "#/components/schemas/ReportCellAbsent"
+          },
+          {
+            "$ref": "#/components/schemas/ReportCellUnknown"
+          }
+        ],
+        "x-activediq-tag": "reports"
+      },
+      "ReportCellAbsent": {
+        "description": "No value.",
+        "properties": {
+          "kind": {
+            "const": "absent",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportCellGuid": {
+        "additionalProperties": false,
+        "description": "An object GUID or other GUID attribute, canonical lower-case.",
+        "properties": {
+          "kind": {
+            "const": "guid",
+            "type": "string"
+          },
+          "value": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "value"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportCellInteger": {
+        "additionalProperties": false,
+        "description": "A whole number as a decimal string, so 64-bit directory values stay exact.",
+        "properties": {
+          "kind": {
+            "const": "integer",
+            "type": "string"
+          },
+          "value": {
+            "maxLength": 20,
+            "pattern": "^-?[0-9]{1,19}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "value"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportCellNever": {
+        "additionalProperties": false,
+        "description": "The value can never exist for this object, as distinct from absent (not yet set).",
+        "properties": {
+          "kind": {
+            "const": "never",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportCellText": {
+        "description": "Text as stored in the directory, which may hold any character. Encoders neutralise it on export.",
+        "properties": {
+          "kind": {
+            "const": "text",
+            "type": "string"
+          },
+          "value": {
+            "maxLength": 4096,
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "value"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportCellTextList": {
+        "additionalProperties": false,
+        "description": "A multi-valued text attribute, in stored order.",
+        "properties": {
+          "kind": {
+            "const": "textList",
+            "type": "string"
+          },
+          "value": {
+            "items": {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            "maxItems": 1000,
+            "type": "array"
+          }
+        },
+        "required": [
+          "kind",
+          "value"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportCellUnknown": {
+        "description": "A derived state whose input is missing (Unknown (input missing)).",
+        "properties": {
+          "kind": {
+            "const": "unknown",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportChoice": {
+        "description": "One value of an enum column: a stable ID and its label.",
+        "properties": {
+          "id": {
+            "maxLength": 64,
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 128,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportColumnId": {
+        "description": "A column of the dataset registry (DM-70) that a 2a report carries. Closed: a column name that is not listed is refused, and a column the chosen definition does not carry is a 400 with code column_not_available. The registry holds no secret attribute (D8).",
+        "enum": [
+          "name",
+          "logon_name",
+          "upn",
+          "status",
+          "domain",
+          "ou_path",
+          "manager",
+          "created",
+          "account_expires",
+          "days_to_expiry",
+          "last_logon",
+          "days_since",
+          "probable_service_account",
+          "real_last_logon",
+          "from_dc",
+          "dc_coverage",
+          "locked_out_since",
+          "lockout_ends",
+          "policy_source",
+          "data_as_of",
+          "password_last_set",
+          "password_expires",
+          "password_state",
+          "last_failed_logon",
+          "failures_on_dc",
+          "group_type",
+          "group_scope",
+          "direct_members",
+          "effective_members",
+          "managed_by",
+          "group",
+          "member",
+          "member_type",
+          "membership_kind",
+          "via",
+          "user",
+          "primary_group",
+          "dns_name",
+          "computer_type",
+          "operating_system",
+          "os_version",
+          "delegation",
+          "last_activity",
+          "activity_source",
+          "path",
+          "users",
+          "computers",
+          "groups",
+          "other_objects",
+          "objects_in_subtree",
+          "email"
+        ],
+        "type": "string",
+        "x-activediq-tag": "reports"
+      },
+      "ReportColumnInfo": {
+        "description": "A column of a definition, or of one run (a label can change with the run, such as Last logon (at least)). filterOperators are the operators the column takes.",
+        "properties": {
+          "choices": {
+            "items": {
+              "$ref": "#/components/schemas/ReportChoice"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "defaultVisible": {
+            "type": "boolean"
+          },
+          "filterOperators": {
+            "items": {
+              "$ref": "#/components/schemas/ReportFilterOperatorValue"
+            },
+            "maxItems": 16,
+            "type": "array"
+          },
+          "filterable": {
+            "type": "boolean"
+          },
+          "id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 128,
+            "type": "string"
+          },
+          "sortable": {
+            "type": "boolean"
+          },
+          "type": {
+            "$ref": "#/components/schemas/ReportColumnTypeValue"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "type",
+          "sortable",
+          "filterable",
+          "defaultVisible",
+          "filterOperators",
+          "choices"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportColumnTypeValue": {
+        "description": "What a column holds, which decides the operators it takes.",
+        "enum": [
+          "text",
+          "integer",
+          "boolean",
+          "time",
+          "enum"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "reports"
+      },
+      "ReportCompareOperator": {
+        "description": "A comparison of one column with one typed value. contains and starts_with are literal text matches: no wildcard or pattern character has a meaning.",
+        "enum": [
+          "equals",
+          "not_equals",
+          "less_than",
+          "less_or_equal",
+          "greater_than",
+          "greater_or_equal",
+          "contains",
+          "starts_with"
+        ],
+        "type": "string",
+        "x-activediq-tag": "reports"
+      },
+      "ReportDcCoverage": {
+        "description": "How many DCs answered a per-DC report. A partial coverage makes the maximum a lower bound (spec 6.5).",
+        "properties": {
+          "complete": {
+            "type": "boolean"
+          },
+          "dcsAnswered": {
+            "maximum": 100000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "dcsInScope": {
+            "maximum": 100000,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "dcsInScope",
+          "dcsAnswered",
+          "complete"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportDefinition": {
+        "description": "A report definition: an immutable AST over one registered dataset (FR-03, FR-05), shown as its presets, crosswalk and columns. exportFormats are the formats this installation can produce, and the console offers no others. subjectKind says whether the report requires groups or users (GRP-02, GRP-03). minScheduleIntervalHours is 24 for per-DC reports.",
+        "properties": {
+          "alsoKnownAs": {
+            "items": {
+              "$ref": "#/components/schemas/ReportMeName"
+            },
+            "maxItems": 32,
+            "type": "array"
+          },
+          "category": {
+            "$ref": "#/components/schemas/ReportCategoryValue"
+          },
+          "columns": {
+            "items": {
+              "$ref": "#/components/schemas/ReportColumnInfo"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "dataset": {
+            "maxLength": 64,
+            "type": "string"
+          },
+          "description": {
+            "maxLength": 1024,
+            "type": "string"
+          },
+          "exportFormats": {
+            "items": {
+              "$ref": "#/components/schemas/ReportExportFormatValue"
+            },
+            "maxItems": 4,
+            "type": "array"
+          },
+          "freshnessKind": {
+            "maxLength": 32,
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 64,
+            "minLength": 2,
+            "type": "string"
+          },
+          "minScheduleIntervalHours": {
+            "maximum": 720,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "name": {
+            "maxLength": 128,
+            "type": "string"
+          },
+          "perDc": {
+            "type": "boolean"
+          },
+          "presets": {
+            "items": {
+              "$ref": "#/components/schemas/ReportPreset"
+            },
+            "maxItems": 32,
+            "type": "array"
+          },
+          "subjectKind": {
+            "maxLength": 16,
+            "type": "string"
+          },
+          "version": {
+            "maximum": 1000000,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "name",
+          "description",
+          "category",
+          "dataset",
+          "freshnessKind",
+          "alsoKnownAs",
+          "presets",
+          "columns",
+          "exportFormats",
+          "subjectKind",
+          "perDc",
+          "minScheduleIntervalHours"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportDefinitionList": {
+        "description": "A page of the library.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ReportDefinitionSummary"
+            },
+            "maxItems": 1000,
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageInfo"
+          }
+        },
+        "required": [
+          "items",
+          "page"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportDefinitionSummary": {
+        "description": "A library entry.",
+        "properties": {
+          "alsoKnownAs": {
+            "items": {
+              "$ref": "#/components/schemas/ReportMeName"
+            },
+            "maxItems": 32,
+            "type": "array"
+          },
+          "category": {
+            "$ref": "#/components/schemas/ReportCategoryValue"
+          },
+          "dataset": {
+            "maxLength": 64,
+            "type": "string"
+          },
+          "description": {
+            "maxLength": 1024,
+            "type": "string"
+          },
+          "freshnessKind": {
+            "maxLength": 32,
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 64,
+            "minLength": 2,
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 128,
+            "type": "string"
+          },
+          "version": {
+            "maximum": 1000000,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "name",
+          "description",
+          "category",
+          "dataset",
+          "freshnessKind",
+          "alsoKnownAs"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportDeliveryReason": {
+        "description": "Why a delivery failed. external_not_permitted: the owner no longer holds reports.deliver.external. address_no_longer_allowed: the address left the allowed domains.",
+        "enum": [
+          "external_not_permitted",
+          "address_no_longer_allowed",
+          "attachment_too_large",
+          "mail_rejected",
+          "internal"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "reports"
+      },
+      "ReportDeliveryState": {
+        "description": "The delivery of the latest fire to one recipient.",
+        "properties": {
+          "reason": {
+            "$ref": "#/components/schemas/ReportDeliveryReason"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ReportDeliveryStateValue"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "state",
+          "updatedAt"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportDeliveryStateValue": {
+        "description": "Per-recipient delivery state (DM-84).",
+        "enum": [
+          "none_yet",
+          "queued",
+          "sent",
+          "failed",
+          "given_up"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "reports"
+      },
+      "ReportEmptyReason": {
+        "description": "Why a succeeded run has no rows because of scope, as opposed to its filters. scope_grants_nothing: the runner's role covers no directory objects. unsupported_scope_kind: the role's scope uses a kind 2a reports cannot evaluate, so it grants nothing (fail closed).",
+        "enum": [
+          "scope_grants_nothing",
+          "unsupported_scope_kind"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "reports"
+      },
+      "ReportExport": {
+        "description": "An export job and its stored file (DM-72.I3). When the run's result had expired, rerun is true, runId is the new run and rerunOfRunId the expired one; the file carries the new run's as_of.",
+        "properties": {
+          "byteSize": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "createdBy": {
+            "$ref": "#/components/schemas/JobActor"
+          },
+          "digest": {
+            "maxLength": 64,
+            "pattern": "^[0-9a-f]{64}$",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expiresAt": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "failure": {
+            "$ref": "#/components/schemas/ReportFailure"
+          },
+          "fileName": {
+            "maxLength": 256,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "finishedAt": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "format": {
+            "$ref": "#/components/schemas/ReportExportFormatValue"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "rerun": {
+            "type": "boolean"
+          },
+          "rerunOfRunId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "rowCount": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "runId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ReportExportState"
+          }
+        },
+        "required": [
+          "id",
+          "runId",
+          "format",
+          "state",
+          "createdBy",
+          "createdAt",
+          "finishedAt",
+          "expiresAt",
+          "rowCount",
+          "byteSize",
+          "digest",
+          "fileName",
+          "rerun"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportExportCreate": {
+        "additionalProperties": false,
+        "description": "Starts an export of the run in the path.",
+        "properties": {
+          "format": {
+            "$ref": "#/components/schemas/ReportExportFormat"
+          }
+        },
+        "required": [
+          "format"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportExportFormat": {
+        "description": "An export format. csv and xlsx exist at the 2a demo; pdf and html arrive by M2 exit. A definition lists the formats this installation can produce.",
+        "enum": [
+          "csv",
+          "xlsx",
+          "pdf",
+          "html"
+        ],
+        "type": "string",
+        "x-activediq-tag": "reports"
+      },
+      "ReportExportFormatValue": {
+        "description": "An export format.",
+        "enum": [
+          "csv",
+          "xlsx",
+          "pdf",
+          "html"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "reports"
+      },
+      "ReportExportState": {
+        "description": "Export states.",
+        "enum": [
+          "queued",
+          "running",
+          "succeeded",
+          "failed",
+          "expired",
+          "deleted"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "reports"
+      },
+      "ReportFailure": {
+        "description": "A typed failure. message is fixed text; it names no object.",
+        "properties": {
+          "message": {
+            "maxLength": 512,
+            "type": "string"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/ReportFailureReason"
+          }
+        },
+        "required": [
+          "reason",
+          "message"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportFailureReason": {
+        "description": "A typed reason for a failed run or export, the set of run.FailureReason in modules/reports.md 6.2. runner_inactive: the runner's account is disabled or gone. token_refused: the token behind the run was revoked or expired. row_cap_exceeded: the result is over the row cap. per_dc_read_cap_exceeded: the per-DC read cap would be passed (spec 6.5). scope_too_large: the scope cannot be rendered within limits. query_timeout: the run passed its time limit. connection_unavailable: a connection could not be read (per-DC reads only). definition_retired: the definition was retired before the run started. interrupted: the run job was interrupted. internal: anything else.",
+        "enum": [
+          "runner_inactive",
+          "token_refused",
+          "row_cap_exceeded",
+          "per_dc_read_cap_exceeded",
+          "scope_too_large",
+          "query_timeout",
+          "connection_unavailable",
+          "definition_retired",
+          "interrupted",
+          "internal"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "reports"
+      },
+      "ReportFilter": {
+        "description": "A typed filter tree over registry columns. A node names a column from the closed list and a typed value; there is no expression, no raw LDAP, no SQL. The tree is at most four levels deep and 64 nodes; deeper is a 400 with code filter_too_complex. The server checks each operator and value against the column's type.",
+        "discriminator": {
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReportFilterGroup"
+          },
+          {
+            "$ref": "#/components/schemas/ReportFilterCompare"
+          },
+          {
+            "$ref": "#/components/schemas/ReportFilterIn"
+          },
+          {
+            "$ref": "#/components/schemas/ReportFilterPresence"
+          },
+          {
+            "$ref": "#/components/schemas/ReportFilterRelative"
+          }
+        ],
+        "x-activediq-tag": "reports"
+      },
+      "ReportFilterCompare": {
+        "additionalProperties": false,
+        "description": "One column compared with one value.",
+        "properties": {
+          "column": {
+            "$ref": "#/components/schemas/ReportColumnId"
+          },
+          "kind": {
+            "const": "compare",
+            "type": "string"
+          },
+          "operator": {
+            "$ref": "#/components/schemas/ReportCompareOperator"
+          },
+          "value": {
+            "$ref": "#/components/schemas/ReportValue"
+          }
+        },
+        "required": [
+          "kind",
+          "column",
+          "operator",
+          "value"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportFilterConditionView": {
+        "description": "One column, an operator and its values (none for has_value and empty).",
+        "properties": {
+          "column": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "kind": {
+            "const": "condition",
+            "type": "string"
+          },
+          "operator": {
+            "$ref": "#/components/schemas/ReportFilterOperatorValue"
+          },
+          "values": {
+            "items": {
+              "$ref": "#/components/schemas/ReportValue"
+            },
+            "maxItems": 50,
+            "type": "array"
+          }
+        },
+        "required": [
+          "kind",
+          "column",
+          "operator",
+          "values"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportFilterGroup": {
+        "additionalProperties": false,
+        "description": "Filters combined by match.",
+        "properties": {
+          "filters": {
+            "items": {
+              "$ref": "#/components/schemas/ReportFilter"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "type": "array"
+          },
+          "kind": {
+            "const": "group",
+            "type": "string"
+          },
+          "match": {
+            "$ref": "#/components/schemas/ReportFilterMatch"
+          }
+        },
+        "required": [
+          "kind",
+          "match",
+          "filters"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportFilterGroupView": {
+        "description": "Filters combined by match.",
+        "properties": {
+          "filters": {
+            "items": {
+              "$ref": "#/components/schemas/ReportFilterView"
+            },
+            "maxItems": 16,
+            "type": "array"
+          },
+          "kind": {
+            "const": "group",
+            "type": "string"
+          },
+          "match": {
+            "$ref": "#/components/schemas/ReportFilterMatchValue"
+          }
+        },
+        "required": [
+          "kind",
+          "match",
+          "filters"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportFilterIn": {
+        "additionalProperties": false,
+        "description": "One column equal to any of up to 50 values.",
+        "properties": {
+          "column": {
+            "$ref": "#/components/schemas/ReportColumnId"
+          },
+          "kind": {
+            "const": "in",
+            "type": "string"
+          },
+          "values": {
+            "items": {
+              "$ref": "#/components/schemas/ReportValue"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "kind",
+          "column",
+          "values"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportFilterMatch": {
+        "description": "How a group of filters combines: all (AND), any (OR) or none (NOT any).",
+        "enum": [
+          "all",
+          "any",
+          "none"
+        ],
+        "type": "string",
+        "x-activediq-tag": "reports"
+      },
+      "ReportFilterMatchValue": {
+        "description": "How a group of filters combines.",
+        "enum": [
+          "all",
+          "any",
+          "none"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "reports"
+      },
+      "ReportFilterOperatorValue": {
+        "description": "An operator a column takes, or one a preset's filter uses. within_last, within_next and older_than carry the number of days as one integer value.",
+        "enum": [
+          "equals",
+          "not_equals",
+          "less_than",
+          "less_or_equal",
+          "greater_than",
+          "greater_or_equal",
+          "contains",
+          "starts_with",
+          "in",
+          "has_value",
+          "empty",
+          "within_last",
+          "within_next",
+          "older_than"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "reports"
+      },
+      "ReportFilterPresence": {
+        "additionalProperties": false,
+        "description": "A column has a value or is empty.",
+        "properties": {
+          "column": {
+            "$ref": "#/components/schemas/ReportColumnId"
+          },
+          "kind": {
+            "const": "presence",
+            "type": "string"
+          },
+          "presence": {
+            "$ref": "#/components/schemas/ReportPresence"
+          }
+        },
+        "required": [
+          "kind",
+          "column",
+          "presence"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportFilterRelative": {
+        "additionalProperties": false,
+        "description": "A time column relative to the start of the run.",
+        "properties": {
+          "column": {
+            "$ref": "#/components/schemas/ReportColumnId"
+          },
+          "days": {
+            "maximum": 3660,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "kind": {
+            "const": "relative_time",
+            "type": "string"
+          },
+          "relation": {
+            "$ref": "#/components/schemas/ReportRelativeTime"
+          }
+        },
+        "required": [
+          "kind",
+          "column",
+          "relation",
+          "days"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportFilterView": {
+        "description": "A filter as the server stores it. A condition's column is a registry column ID.",
+        "discriminator": {
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReportFilterGroupView"
+          },
+          {
+            "$ref": "#/components/schemas/ReportFilterConditionView"
+          }
+        ],
+        "x-activediq-tag": "reports"
+      },
+      "ReportFreshness": {
+        "description": "The freshness label of spec 8.2. label is the text to show, such as Synced 09:41.",
+        "properties": {
+          "label": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ReportFreshnessState"
+          }
+        },
+        "required": [
+          "state",
+          "label"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportFreshnessState": {
+        "description": "The freshness label of spec 8.2. per_dc_read is the only state that may be called live.",
+        "enum": [
+          "synced",
+          "stale",
+          "not_synced_yet",
+          "per_dc_read"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "reports"
+      },
+      "ReportLastRun": {
+        "description": "The latest fire.",
+        "properties": {
+          "outcome": {
+            "$ref": "#/components/schemas/ReportLastRunOutcome"
+          },
+          "runId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "startedAt": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runId",
+          "startedAt",
+          "outcome"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportLastRunOutcome": {
+        "description": "How the last fire ended. nothing_to_send is a run with no rows under notify-only-if-data.",
+        "enum": [
+          "sent",
+          "nothing_to_send",
+          "partly_failed",
+          "failed"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "reports"
+      },
+      "ReportMeName": {
+        "description": "An exact ManageEngine report name and the preset that answers it (spec 6.2).",
+        "properties": {
+          "meName": {
+            "maxLength": 128,
+            "type": "string"
+          },
+          "presetId": {
+            "maxLength": 64,
+            "type": "string"
+          }
+        },
+        "required": [
+          "meName",
+          "presetId"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportOuRef": {
+        "additionalProperties": false,
+        "description": "An organizational unit by connection and objectGUID, never by DN. oneLevel false includes the whole subtree.",
+        "properties": {
+          "connectionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "guid": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "oneLevel": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "connectionId",
+          "guid",
+          "oneLevel"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportParametersView": {
+        "description": "What a run or schedule is over, as stored. Period, OU and subject references and values are the request shapes; columns and filters are shown as IDs.",
+        "properties": {
+          "columns": {
+            "items": {
+              "maxLength": 64,
+              "type": "string"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "connectionIds": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "filters": {
+            "items": {
+              "$ref": "#/components/schemas/ReportFilterView"
+            },
+            "maxItems": 16,
+            "type": "array"
+          },
+          "includeReadOnlyDcs": {
+            "type": "boolean"
+          },
+          "ouExclude": {
+            "items": {
+              "$ref": "#/components/schemas/ReportOuRef"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "ouInclude": {
+            "items": {
+              "$ref": "#/components/schemas/ReportOuRef"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "period": {
+            "$ref": "#/components/schemas/ReportPeriod"
+          },
+          "subjects": {
+            "items": {
+              "$ref": "#/components/schemas/ReportSubjectRef"
+            },
+            "maxItems": 100,
+            "type": "array"
+          }
+        },
+        "required": [
+          "connectionIds",
+          "ouInclude",
+          "ouExclude",
+          "filters",
+          "columns",
+          "subjects",
+          "includeReadOnlyDcs"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportPausedReason": {
+        "description": "Why a schedule is paused. owner_disabled and owner_lost_permission are the owner-authority pauses of spec 8.4; reassigned waits for the new owner.",
+        "enum": [
+          "by_user",
+          "owner_disabled",
+          "owner_lost_permission",
+          "reassigned"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "reports"
+      },
+      "ReportPeriod": {
+        "description": "The period a report looks at. The server refuses a range whose to is not after from, or longer than ten years.",
+        "discriminator": {
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReportPeriodLastDays"
+          },
+          {
+            "$ref": "#/components/schemas/ReportPeriodRange"
+          }
+        ],
+        "x-activediq-tag": "reports"
+      },
+      "ReportPeriodLastDays": {
+        "additionalProperties": false,
+        "description": "The last n days, ending when the run starts. The presets offer 7, 30, 90, 180 and 365.",
+        "properties": {
+          "days": {
+            "maximum": 3660,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "kind": {
+            "const": "last_days",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "days"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportPeriodRange": {
+        "additionalProperties": false,
+        "description": "A custom range.",
+        "properties": {
+          "from": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "kind": {
+            "const": "range",
+            "type": "string"
+          },
+          "to": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "from",
+          "to"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportPresence": {
+        "description": "Whether a column has a value.",
+        "enum": [
+          "has_value",
+          "empty"
+        ],
+        "type": "string",
+        "x-activediq-tag": "reports"
+      },
+      "ReportPreset": {
+        "description": "A named set of filters, a period and a column set over a report (spec 6.1 rule 2). Each ManageEngine name is a preset.",
+        "properties": {
+          "columns": {
+            "items": {
+              "maxLength": 64,
+              "type": "string"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "filters": {
+            "items": {
+              "$ref": "#/components/schemas/ReportFilterView"
+            },
+            "maxItems": 16,
+            "type": "array"
+          },
+          "id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "meName": {
+            "maxLength": 128,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "maxLength": 128,
+            "type": "string"
+          },
+          "periodDays": {
+            "maximum": 3660,
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "meName",
+          "filters",
+          "periodDays",
+          "columns"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportRecipient": {
+        "description": "Who receives the schedule's files.",
+        "discriminator": {
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReportRecipientAccount"
+          },
+          {
+            "$ref": "#/components/schemas/ReportRecipientEmail"
+          }
+        ],
+        "x-activediq-tag": "reports"
+      },
+      "ReportRecipientAccount": {
+        "additionalProperties": false,
+        "description": "An activeDIQ account. asLink delivers a link only that account can download while signed in and holding reports.export; otherwise the file is attached.",
+        "properties": {
+          "accountId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "asLink": {
+            "type": "boolean"
+          },
+          "formats": {
+            "items": {
+              "$ref": "#/components/schemas/ReportExportFormat"
+            },
+            "maxItems": 4,
+            "minItems": 1,
+            "type": "array"
+          },
+          "kind": {
+            "const": "account",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "accountId",
+          "formats",
+          "asLink"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportRecipientAccountView": {
+        "description": "An account recipient.",
+        "properties": {
+          "accountId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "asLink": {
+            "type": "boolean"
+          },
+          "delivery": {
+            "$ref": "#/components/schemas/ReportDeliveryState"
+          },
+          "formats": {
+            "items": {
+              "$ref": "#/components/schemas/ReportExportFormatValue"
+            },
+            "maxItems": 4,
+            "type": "array"
+          },
+          "kind": {
+            "const": "account",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "accountId",
+          "formats",
+          "asLink",
+          "delivery"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportRecipientEmail": {
+        "additionalProperties": false,
+        "description": "An e-mail address. Attachment only; a link is never offered for an address. An address outside the tenant's allowed recipient domains is external.",
+        "properties": {
+          "address": {
+            "format": "email",
+            "maxLength": 254,
+            "type": "string"
+          },
+          "formats": {
+            "items": {
+              "$ref": "#/components/schemas/ReportExportFormat"
+            },
+            "maxItems": 4,
+            "minItems": 1,
+            "type": "array"
+          },
+          "kind": {
+            "const": "email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "address",
+          "formats"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportRecipientEmailView": {
+        "description": "An e-mail recipient. external is judged against the allowed recipient domains now.",
+        "properties": {
+          "address": {
+            "format": "email",
+            "maxLength": 254,
+            "type": "string"
+          },
+          "delivery": {
+            "$ref": "#/components/schemas/ReportDeliveryState"
+          },
+          "external": {
+            "type": "boolean"
+          },
+          "formats": {
+            "items": {
+              "$ref": "#/components/schemas/ReportExportFormatValue"
+            },
+            "maxItems": 4,
+            "type": "array"
+          },
+          "kind": {
+            "const": "email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "address",
+          "formats",
+          "external",
+          "delivery"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportRecipientView": {
+        "description": "A recipient as stored.",
+        "discriminator": {
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReportRecipientAccountView"
+          },
+          {
+            "$ref": "#/components/schemas/ReportRecipientEmailView"
+          }
+        ],
+        "x-activediq-tag": "reports"
+      },
+      "ReportRecurrence": {
+        "description": "When a schedule fires, in the schedule's time zone. The minimum interval is one hour (spec 8.4).",
+        "discriminator": {
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReportRecurrenceHourly"
+          },
+          {
+            "$ref": "#/components/schemas/ReportRecurrenceDaily"
+          },
+          {
+            "$ref": "#/components/schemas/ReportRecurrenceWeekly"
+          },
+          {
+            "$ref": "#/components/schemas/ReportRecurrenceMonthlyDay"
+          },
+          {
+            "$ref": "#/components/schemas/ReportRecurrenceMonthlyLastDay"
+          },
+          {
+            "$ref": "#/components/schemas/ReportRecurrenceCustomHours"
+          },
+          {
+            "$ref": "#/components/schemas/ReportRecurrenceCustomDays"
+          },
+          {
+            "$ref": "#/components/schemas/ReportRecurrenceCustomWeeks"
+          },
+          {
+            "$ref": "#/components/schemas/ReportRecurrenceCustomMonths"
+          }
+        ],
+        "x-activediq-tag": "reports"
+      },
+      "ReportRecurrenceCustomDays": {
+        "additionalProperties": false,
+        "description": "From a start, repeating every n days.",
+        "properties": {
+          "every": {
+            "maximum": 1000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "kind": {
+            "const": "custom_days",
+            "type": "string"
+          },
+          "start": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "start",
+          "every"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportRecurrenceCustomHours": {
+        "additionalProperties": false,
+        "description": "From a start, repeating every n hours.",
+        "properties": {
+          "every": {
+            "maximum": 1000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "kind": {
+            "const": "custom_hours",
+            "type": "string"
+          },
+          "start": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "start",
+          "every"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportRecurrenceCustomMonths": {
+        "additionalProperties": false,
+        "description": "From a start, repeating every n months.",
+        "properties": {
+          "every": {
+            "maximum": 120,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "kind": {
+            "const": "custom_months",
+            "type": "string"
+          },
+          "start": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "start",
+          "every"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportRecurrenceCustomWeeks": {
+        "additionalProperties": false,
+        "description": "From a start, repeating every n weeks.",
+        "properties": {
+          "every": {
+            "maximum": 1000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "kind": {
+            "const": "custom_weeks",
+            "type": "string"
+          },
+          "start": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "start",
+          "every"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportRecurrenceDaily": {
+        "additionalProperties": false,
+        "description": "Every day at a local time, HH:MM.",
+        "properties": {
+          "kind": {
+            "const": "daily",
+            "type": "string"
+          },
+          "time": {
+            "maxLength": 5,
+            "minLength": 5,
+            "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "time"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportRecurrenceHourly": {
+        "additionalProperties": false,
+        "description": "Every n hours at the given minute.",
+        "properties": {
+          "everyHours": {
+            "maximum": 168,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "kind": {
+            "const": "hourly",
+            "type": "string"
+          },
+          "minute": {
+            "maximum": 59,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "everyHours",
+          "minute"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportRecurrenceMonthlyDay": {
+        "additionalProperties": false,
+        "description": "On a day of the month at a local time. A month without the day runs on its last day.",
+        "properties": {
+          "dayOfMonth": {
+            "maximum": 31,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "kind": {
+            "const": "monthly_day",
+            "type": "string"
+          },
+          "time": {
+            "maxLength": 5,
+            "minLength": 5,
+            "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "dayOfMonth",
+          "time"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportRecurrenceMonthlyLastDay": {
+        "additionalProperties": false,
+        "description": "On the last day of every month at a local time.",
+        "properties": {
+          "kind": {
+            "const": "monthly_last_day",
+            "type": "string"
+          },
+          "time": {
+            "maxLength": 5,
+            "minLength": 5,
+            "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "time"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportRecurrenceWeekly": {
+        "additionalProperties": false,
+        "description": "On weekdays (1 Monday to 7 Sunday) at a local time.",
+        "properties": {
+          "kind": {
+            "const": "weekly",
+            "type": "string"
+          },
+          "time": {
+            "maxLength": 5,
+            "minLength": 5,
+            "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+            "type": "string"
+          },
+          "weekdays": {
+            "items": {
+              "maximum": 7,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "maxItems": 7,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "kind",
+          "weekdays",
+          "time"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportRelativeTime": {
+        "description": "A time column relative to the time the run starts: within the last or next n days, or older than n days.",
+        "enum": [
+          "within_last",
+          "within_next",
+          "older_than"
+        ],
+        "type": "string",
+        "x-activediq-tag": "reports"
+      },
+      "ReportRow": {
+        "description": "One row of a stored result. rowKey is the object GUID or edge key; cells follow the page's columns.",
+        "properties": {
+          "cells": {
+            "items": {
+              "$ref": "#/components/schemas/ReportCell"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "rowKey": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "rowKey",
+          "cells"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportRowPage": {
+        "description": "A page of a stored result. rowCount is the run's total after trimming.",
+        "properties": {
+          "columns": {
+            "items": {
+              "$ref": "#/components/schemas/ReportColumnInfo"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageInfo"
+          },
+          "rowCount": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/ReportRow"
+            },
+            "maxItems": 1000,
+            "type": "array"
+          },
+          "runId": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runId",
+          "columns",
+          "rows",
+          "rowCount",
+          "page"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportRun": {
+        "description": "The run record (DM-72). asOf is the oldest sync watermark among the covered naming contexts. rowCount, objectsChecked and digest are set when the run succeeds; both counts are after scope trimming. digest is the SHA-256 over the canonical form of the stored rows (spec 8.3). scopeApplied is the human-readable summary shown in the header.",
+        "properties": {
+          "asOf": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "coverage": {
+            "$ref": "#/components/schemas/ReportDcCoverage"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "createdBy": {
+            "$ref": "#/components/schemas/JobActor"
+          },
+          "definitionId": {
+            "maxLength": 64,
+            "minLength": 2,
+            "type": "string"
+          },
+          "definitionVersion": {
+            "maximum": 1000000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "digest": {
+            "maxLength": 64,
+            "pattern": "^[0-9a-f]{64}$",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "emptyReason": {
+            "$ref": "#/components/schemas/ReportEmptyReason"
+          },
+          "expiresAt": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "failure": {
+            "$ref": "#/components/schemas/ReportFailure"
+          },
+          "finishedAt": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "freshness": {
+            "$ref": "#/components/schemas/ReportFreshness"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "objectsChecked": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "parameters": {
+            "$ref": "#/components/schemas/ReportParametersView"
+          },
+          "presetId": {
+            "maxLength": 64,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "progress": {
+            "$ref": "#/components/schemas/ReportRunProgress"
+          },
+          "rerunOf": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "rowCount": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "scopeApplied": {
+            "maxLength": 1024,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "skippedConnections": {
+            "items": {
+              "$ref": "#/components/schemas/ReportSkippedConnection"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "startedAt": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/ReportRunState"
+          }
+        },
+        "required": [
+          "id",
+          "definitionId",
+          "definitionVersion",
+          "presetId",
+          "state",
+          "createdBy",
+          "createdAt",
+          "startedAt",
+          "finishedAt",
+          "expiresAt",
+          "asOf",
+          "freshness",
+          "rowCount",
+          "objectsChecked",
+          "digest",
+          "scopeApplied",
+          "skippedConnections",
+          "progress",
+          "parameters"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportRunCreate": {
+        "additionalProperties": false,
+        "description": "Starts a run. definitionVersion absent means the current version, which the run record then pins.",
+        "properties": {
+          "definitionId": {
+            "maxLength": 64,
+            "minLength": 2,
+            "pattern": "^[A-Za-z][A-Za-z0-9-]{1,63}$",
+            "type": "string"
+          },
+          "definitionVersion": {
+            "maximum": 1000000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "parameters": {
+            "$ref": "#/components/schemas/ReportRunParameters"
+          },
+          "presetId": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "definitionId"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportRunParameters": {
+        "additionalProperties": false,
+        "description": "What a run is over. Every member is optional; an absent one takes the preset's value, then the definition's default. connectionIds default to every connection the runner's scope reaches. The runner's scope always applies and can only narrow what is asked.",
+        "properties": {
+          "columns": {
+            "description": "The columns shown and exported, in order. Replaces the preset's columns when present.",
+            "items": {
+              "$ref": "#/components/schemas/ReportColumnId"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "type": "array"
+          },
+          "connectionIds": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "type": "array"
+          },
+          "filters": {
+            "description": "Combined with AND. Replaces the preset's filters when present.",
+            "items": {
+              "$ref": "#/components/schemas/ReportFilter"
+            },
+            "maxItems": 16,
+            "type": "array"
+          },
+          "includeReadOnlyDcs": {
+            "description": "Per-DC reports only (USR-04, PWD-03). Absent includes read-only DCs.",
+            "type": "boolean"
+          },
+          "ouExclude": {
+            "items": {
+              "$ref": "#/components/schemas/ReportOuRef"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "type": "array"
+          },
+          "ouInclude": {
+            "items": {
+              "$ref": "#/components/schemas/ReportOuRef"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "type": "array"
+          },
+          "period": {
+            "$ref": "#/components/schemas/ReportPeriod"
+          },
+          "subjects": {
+            "items": {
+              "$ref": "#/components/schemas/ReportSubjectRef"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportRunProgress": {
+        "description": "Visible progress (FR-11).",
+        "properties": {
+          "percent": {
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/ReportRunStage"
+          }
+        },
+        "required": [
+          "stage",
+          "percent"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportRunStage": {
+        "description": "Where a running run is.",
+        "enum": [
+          "queued",
+          "compiling",
+          "reading_directory",
+          "reading_dcs",
+          "storing",
+          "done"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "reports"
+      },
+      "ReportRunState": {
+        "description": "Run states (spec 8.1): queued, running, then succeeded, failed or cancelled; a succeeded run becomes expired when its result is removed.",
+        "enum": [
+          "queued",
+          "running",
+          "succeeded",
+          "failed",
+          "cancelled",
+          "expired"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "reports"
+      },
+      "ReportSchedule": {
+        "description": "A schedule (DM-73). Recipients receive what the owner can see, not what they can see. The ETag header is the version for If-Match.",
+        "properties": {
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "definitionId": {
+            "maxLength": 64,
+            "minLength": 2,
+            "type": "string"
+          },
+          "definitionVersion": {
+            "maximum": 1000000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "lastRun": {
+            "$ref": "#/components/schemas/ReportLastRun"
+          },
+          "name": {
+            "maxLength": 128,
+            "type": "string"
+          },
+          "nextRunAt": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "notifyOnlyIfData": {
+            "type": "boolean"
+          },
+          "ownerAccountId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "parameters": {
+            "$ref": "#/components/schemas/ReportParametersView"
+          },
+          "pausedReason": {
+            "$ref": "#/components/schemas/ReportPausedReason"
+          },
+          "presetId": {
+            "maxLength": 64,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recipients": {
+            "items": {
+              "$ref": "#/components/schemas/ReportRecipientView"
+            },
+            "maxItems": 50,
+            "type": "array"
+          },
+          "recurrence": {
+            "$ref": "#/components/schemas/ReportRecurrence"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ReportScheduleState"
+          },
+          "timeZone": {
+            "maxLength": 64,
+            "type": "string"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "ownerAccountId",
+          "definitionId",
+          "definitionVersion",
+          "presetId",
+          "parameters",
+          "recurrence",
+          "timeZone",
+          "recipients",
+          "notifyOnlyIfData",
+          "state",
+          "nextRunAt",
+          "createdAt",
+          "updatedAt"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportScheduleList": {
+        "description": "A page of schedules.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ReportSchedule"
+            },
+            "maxItems": 1000,
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageInfo"
+          }
+        },
+        "required": [
+          "items",
+          "page"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportScheduleOwner": {
+        "description": "Whose schedules to list.",
+        "enum": [
+          "me",
+          "any"
+        ],
+        "type": "string",
+        "x-activediq-tag": "reports"
+      },
+      "ReportScheduleReassign": {
+        "additionalProperties": false,
+        "description": "Hands a schedule to another account.",
+        "properties": {
+          "ownerAccountId": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ownerAccountId"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportScheduleState": {
+        "description": "active fires on its recurrence; paused does not.",
+        "enum": [
+          "active",
+          "paused"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "reports"
+      },
+      "ReportScheduleWrite": {
+        "additionalProperties": false,
+        "description": "The writable settings of a schedule. It runs the report, preset, filters, columns and scope as saved, pinned to the definition version. confirmedExternal lists the external addresses the caller confirmed in the preview (Data leaves your organisation); it must equal the set of external recipients that are new or changed.",
+        "properties": {
+          "confirmedExternal": {
+            "items": {
+              "format": "email",
+              "maxLength": 254,
+              "type": "string"
+            },
+            "maxItems": 50,
+            "type": "array"
+          },
+          "definitionId": {
+            "maxLength": 64,
+            "minLength": 2,
+            "pattern": "^[A-Za-z][A-Za-z0-9-]{1,63}$",
+            "type": "string"
+          },
+          "definitionVersion": {
+            "maximum": 1000000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+            "type": "string"
+          },
+          "notifyOnlyIfData": {
+            "type": "boolean"
+          },
+          "parameters": {
+            "$ref": "#/components/schemas/ReportRunParameters"
+          },
+          "presetId": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "recipients": {
+            "items": {
+              "$ref": "#/components/schemas/ReportRecipient"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "type": "array"
+          },
+          "recurrence": {
+            "$ref": "#/components/schemas/ReportRecurrence"
+          },
+          "timeZone": {
+            "description": "An IANA time zone name, such as Europe/Berlin.",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "definitionId",
+          "recurrence",
+          "timeZone",
+          "recipients",
+          "notifyOnlyIfData"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportSkipReason": {
+        "description": "Why a connection was left out of a run.",
+        "enum": [
+          "not_synced_yet"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "reports"
+      },
+      "ReportSkippedConnection": {
+        "description": "A connection the run skipped.",
+        "properties": {
+          "connectionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/ReportSkipReason"
+          }
+        },
+        "required": [
+          "connectionId",
+          "reason"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportSortOrder": {
+        "description": "Sort direction.",
+        "enum": [
+          "asc",
+          "desc"
+        ],
+        "type": "string",
+        "x-activediq-tag": "reports"
+      },
+      "ReportSubjectRef": {
+        "additionalProperties": false,
+        "description": "A group or user a report is about (GRP-02, GRP-03), by connection and objectGUID.",
+        "properties": {
+          "connectionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "guid": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "connectionId",
+          "guid"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportValue": {
+        "description": "A typed filter value. Never an expression.",
+        "discriminator": {
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReportValueText"
+          },
+          {
+            "$ref": "#/components/schemas/ReportValueInteger"
+          },
+          {
+            "$ref": "#/components/schemas/ReportValueBoolean"
+          },
+          {
+            "$ref": "#/components/schemas/ReportValueTime"
+          },
+          {
+            "$ref": "#/components/schemas/ReportValueEnum"
+          }
+        ],
+        "x-activediq-tag": "reports"
+      },
+      "ReportValueBoolean": {
+        "additionalProperties": false,
+        "description": "A flag.",
+        "properties": {
+          "kind": {
+            "const": "boolean",
+            "type": "string"
+          },
+          "value": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind",
+          "value"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportValueEnum": {
+        "additionalProperties": false,
+        "description": "A stable ID from the column's choices, such as enabled or never_account_flag. The server checks it against the column.",
+        "properties": {
+          "kind": {
+            "const": "enum",
+            "type": "string"
+          },
+          "value": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "value"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportValueInteger": {
+        "additionalProperties": false,
+        "description": "A whole number.",
+        "properties": {
+          "kind": {
+            "const": "integer",
+            "type": "string"
+          },
+          "value": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "value"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportValueText": {
+        "additionalProperties": false,
+        "description": "Text compared literally. Control characters are refused.",
+        "properties": {
+          "kind": {
+            "const": "text",
+            "type": "string"
+          },
+          "value": {
+            "maxLength": 256,
+            "pattern": "^[^\\x00-\\x1f\\x7f]*$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "value"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportValueTime": {
+        "additionalProperties": false,
+        "description": "An instant, RFC 3339.",
+        "properties": {
+          "kind": {
+            "const": "time",
+            "type": "string"
+          },
+          "value": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "value"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
       },
       "RoleCreate": {
         "additionalProperties": false,
@@ -2465,6 +5229,1214 @@
         "x-permission": "siem.destination.manage"
       }
     },
+    "/reports/definitions": {
+      "get": {
+        "description": "Answers the report definitions the caller may run, in the order the library shows them (category, then name), a page at a time. q finds a report by its name, its description or any ManageEngine report name it answers (spec 6.2, \"Also known as\"); it is plain text and is never a filter. The 2a library is AD only, and objects in state deleted or purged are in no report.",
+        "operationId": "listReportDefinitions",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DefinitionQuery"
+          },
+          {
+            "$ref": "#/components/parameters/DefinitionCategory"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
+          },
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportDefinitionList"
+                }
+              }
+            },
+            "description": "A page of report definitions"
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "List the report library",
+        "tags": [
+          "reports"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-parity": [
+          "ADM-083"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "reports.run"
+      }
+    },
+    "/reports/definitions/{definitionId}": {
+      "get": {
+        "description": "Answers one definition with its presets, ManageEngine crosswalk, columns and the export formats this installation can produce. version selects an older published version; absent answers the current one. Definitions are immutable; a change publishes a new version (X7).",
+        "operationId": "getReportDefinition",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DefinitionId"
+          },
+          {
+            "$ref": "#/components/parameters/DefinitionVersion"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportDefinition"
+                }
+              }
+            },
+            "description": "The definition"
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Get a report definition",
+        "tags": [
+          "reports"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-parity": [
+          "ADM-083"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "reports.run"
+      }
+    },
+    "/reports/exports/{exportId}": {
+      "delete": {
+        "description": "Deletes the stored file before it expires (FR-20). Only the account that created it may (modules/reports.md 7.1); a recipient of a delivery of it may not, because other recipients were sent the same file. Anyone else gets 404. Deleting is bookkeeping, not an Action; it is audited as export deleted.",
+        "operationId": "deleteReportExport",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ExportId"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The file is deleted"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Delete an export early",
+        "tags": [
+          "reports"
+        ],
+        "x-activediq-limits": {
+          "class": "write"
+        },
+        "x-activediq-parity": [
+          "ADM-100"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "reports.export"
+      },
+      "get": {
+        "description": "Answers the export job: state, format, row count, size, file name, digest and expiry. Poll while the state is queued or running.",
+        "operationId": "getReportExport",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ExportId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportExport"
+                }
+              }
+            },
+            "description": "The export"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Get an export's record",
+        "tags": [
+          "reports"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-parity": [
+          "ADM-100"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "reports.export"
+      }
+    },
+    "/reports/exports/{exportId}/file": {
+      "get": {
+        "description": "Streams the stored file, only to an authenticated request that holds reports.export, by export ID; the server resolves the ID to the export record and only the record names the blob. Two paths (modules/reports.md 7.1, 7.2). Creator path: the caller is the account that created the export, and the run-read gate passes for its run (runner is the caller, current read scope equals the stored one), so a scope change stops downloads too; a changed scope answers 409 with errors[].code scope_changed_rerun. Delivery-link path: the caller is not the creator and is the recipient of a delivery link. The right comes from the delivery record (DM-84 Delivery) written when the schedule fired, whose source is this export and whose recipient is the caller's account. It never comes from the schedule's current recipient list, so a recipient removed from the schedule can still open what that fire sent them and nothing later. The server also re-checks that the caller currently holds reports.export and that the account is enabled. The recipient gets the stored owner-scope artefact byte for byte; the run-read gate (runner and scope) does not apply to the recipient, because the delivery record is the authority. Anyone else, with or without reports.export, gets 404 (401 when signed out). The bytes are exactly the owner-scope artefact an attachment would carry, so the digest matches. The content type and file name are those of the format; the name is built by the download-header encoder. Every download is audited with the downloading account. An expired file answers 410 report-result-expired.",
+        "operationId": "downloadReportExport",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ExportId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The file"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "410": {
+            "$ref": "#/components/responses/ReportResultExpired"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Download an export's file",
+        "tags": [
+          "reports"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-parity": [
+          "ADM-100"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "reports.export"
+      }
+    },
+    "/reports/runs": {
+      "post": {
+        "description": "Starts one run of a definition over one frozen set of inputs, as a job. A change of preset, filter, period, scope or columns is a new run; paging and sorting read the stored result of one run and never re-execute (spec 8.1). The runner's scope is applied inside the query, and counts are computed after trimming. A run is not an Action (ADR-0005 rule 10): it is system bookkeeping, audited as an event with row count and digest, never values. A scope that grants nothing, or uses a kind reports cannot evaluate (group_members, Entra kinds), is not an error: the run succeeds with no rows and the run header's emptyReason names why (spec 5, unhappy paths). Exporting from such a run is allowed (a record of what was found); only creating, updating or resuming a schedule from such a scope is refused, with report-scope-empty or report-scope-unsupported. Fields that are absent take the preset's value, then the definition's default. Reuse window (modules/reports.md 6.1 step 3, ADR-0010): when the same runner already started a run with the same query and the same applied-scope fingerprint in the last 60 seconds, and it is queued, running or succeeded, that run is returned instead of a new one, still 202 with the same shape. Reuse is a read and passes the same run-read gate as getReportRun. Job limit (step 5): a tenant with 4 runs and exports not yet finished answers 429 with errors[].code too_many_report_jobs (spec 8.3); retry when one finishes.",
+        "operationId": "createReportRun",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportRunCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportRun"
+                }
+              }
+            },
+            "description": "The run is accepted and queued",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "maxLength": 256,
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Create a report run",
+        "tags": [
+          "reports"
+        ],
+        "x-activediq-limits": {
+          "class": "write",
+          "maxBodyBytes": 32768
+        },
+        "x-activediq-parity": [
+          "ADM-083",
+          "ADM-084",
+          "ADM-085",
+          "ADM-099"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "reports.run"
+      }
+    },
+    "/reports/runs/{runId}": {
+      "get": {
+        "description": "Answers the run record: state, as_of, the freshness label, row count, digest, scope applied, parameters and any failure. Poll this while the state is queued or running. Run-read gate (modules/reports.md 6.6, run.ReadAccess), in order: the run must belong to the caller (runner account equals the caller; the schedule's owner for a scheduled run), otherwise 404, which does not say whether the run exists; and the caller's current read scope must equal the scope the run was trimmed with, otherwise 409 with errors[].code scope_changed_rerun and the client creates a new run. A scope revoke or a narrower token therefore stops reads at once. reports.schedule.manage_all never opens a run. An expired run stays readable as a record with state expired; its rows are gone (ADR-0010). A failed run answers 200 with its state and failure.",
+        "operationId": "getReportRun",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RunId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportRun"
+                }
+              }
+            },
+            "description": "The run"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Get a run's header",
+        "tags": [
+          "reports"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-parity": [
+          "ADM-099"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "reports.run"
+      }
+    },
+    "/reports/runs/{runId}/cancel": {
+      "post": {
+        "description": "Cancels a queued or running run (FR-11). Only the account that started the run may cancel it; anyone else gets 404. A run that already finished is answered unchanged. Cancelling is bookkeeping, not an Action.",
+        "operationId": "cancelReportRun",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RunId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportRun"
+                }
+              }
+            },
+            "description": "The run after the cancel"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Cancel a run",
+        "tags": [
+          "reports"
+        ],
+        "x-activediq-limits": {
+          "class": "write"
+        },
+        "x-activediq-stability": "preview",
+        "x-permission": "reports.run"
+      }
+    },
+    "/reports/runs/{runId}/exports": {
+      "post": {
+        "description": "Serialises the run's stored result (never a fresh query) into a file as an asynchronous job: the columns of the run, its filters, and all rows up to the format's cap (spec 8.3). Needs reports.export, bound as this operation's permission, and also reports.run, checked inside the operation before the run is looked up (403 if either is missing; modules/reports.md 6.6 check 1 and 7.1). Run-read gate (6.6, run.ReadAccess), in order: runner account equals the caller, otherwise 404; the caller's current read scope fingerprint equals the one stored with the run, otherwise 409 with errors[].code scope_changed_rerun (create a new run); the run has succeeded, otherwise 409 with run_not_ready or run_failed. An expired run is not refused here (see below). The three 409 codes are separate. Rows over a format's cap are refused with report-row-cap-exceeded, never truncated. A format this installation cannot produce is a 400 with code format_unavailable. If the run's result has expired, a new run is created first and the export says so (rerun true, rerunOfRunId); its file carries the new run's as_of. A run whose scope grants nothing or uses an unsupported kind is exported as a record of what was found, not refused (only schedules refuse such a scope). Exports and runs count together toward the tenant job limit: with 4 not yet finished the answer is 429 with errors[].code too_many_report_jobs. Exports are audited with actor and row count; an export is not an Action.",
+        "operationId": "createReportExport",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RunId"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportExportCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportExport"
+                }
+              }
+            },
+            "description": "The export is accepted and queued",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "maxLength": 256,
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/ReportRowCapExceeded"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Export a run",
+        "tags": [
+          "reports"
+        ],
+        "x-activediq-limits": {
+          "class": "bulk",
+          "maxBodyBytes": 1024
+        },
+        "x-activediq-parity": [
+          "ADM-100"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "reports.export"
+      }
+    },
+    "/reports/runs/{runId}/rows": {
+      "get": {
+        "description": "Reads a page of the run's stored rows. Order is the run order, or sortBy with order, then the run order as the tie-break; the cursor is bound to the sort it was issued for and a cursor used with another sort is a 400. The total is the run's rowCount and is never a count over the rows. The result is stored and frozen (ADR-0010 rule 3): a page never reflects newer data. Cells of a derived state show unknown, never an inferred value (FR-09). Run-read gate (modules/reports.md 6.6, run.ReadAccess), in order: runner account equals the caller, otherwise 404; the run is not expired, otherwise 410 report-result-expired; the caller's current read scope fingerprint equals the one stored with the run, otherwise 409 with errors[].code scope_changed_rerun (the client creates a new run); the run has succeeded, otherwise 409 with errors[].code run_not_ready (queued or running) or run_failed (failed or cancelled, with the reason). The three 409 codes are separate and a client must branch on the code, not the status.",
+        "operationId": "listReportRunRows",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RunId"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
+          },
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          },
+          {
+            "$ref": "#/components/parameters/SortBy"
+          },
+          {
+            "$ref": "#/components/parameters/SortOrder"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportRowPage"
+                }
+              }
+            },
+            "description": "A page of rows"
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "410": {
+            "$ref": "#/components/responses/ReportResultExpired"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Page a run's stored result",
+        "tags": [
+          "reports"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-parity": [
+          "ADM-099"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "reports.run"
+      }
+    },
+    "/reports/schedules": {
+      "get": {
+        "description": "Answers the caller's own schedules. owner=any lists every schedule of the tenant and additionally needs reports.schedule.manage_all; without it the answer is 403.",
+        "operationId": "listReportSchedules",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ScheduleOwner"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
+          },
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportScheduleList"
+                }
+              }
+            },
+            "description": "A page of schedules"
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "List schedules",
+        "tags": [
+          "reports"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-parity": [
+          "ADM-101"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "reports.schedule"
+      },
+      "post": {
+        "description": "Creates a recurring run plus delivery, pinned to the definition version (spec 8.4). Creating a schedule is an Action (ADR-0005 rule 10, reports.schedule.create): it runs inline, has a preview diff, the gate, audit and undo, and the external-recipient confirmation is part of its preview. Operation permission: reports.schedule. Any recipient outside the tenant's allowed recipient domains is external; delivering to one additionally needs reports.deliver.external, and the addresses must be listed in confirmedExternal (\"Data leaves your organisation\"), or the answer is 403 (with errors[].code external_not_permitted) or 400 (code external_not_confirmed). That second permission guards the external case only. Scheduled data is what the owner can see, not what a recipient can see. The owner's scope is checked now: report-scope-empty or report-scope-unsupported refuses a schedule that could never deliver. The name is unique per owner, so a retried create is a 400 with code name_taken and changes nothing.",
+        "operationId": "createReportSchedule",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportScheduleWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportSchedule"
+                }
+              }
+            },
+            "description": "The schedule is created",
+            "headers": {
+              "ETag": {
+                "required": true,
+                "schema": {
+                  "maxLength": 256,
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "schema": {
+                  "maxLength": 256,
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/ReportScopeUnsupported"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/ReportScopeEmpty"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Create a schedule",
+        "tags": [
+          "reports"
+        ],
+        "x-activediq-limits": {
+          "class": "write",
+          "maxBodyBytes": 32768
+        },
+        "x-activediq-parity": [
+          "ADM-101"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "reports.schedule"
+      }
+    },
+    "/reports/schedules/{scheduleId}": {
+      "delete": {
+        "description": "Deletes the schedule, as the Action reports.schedule.delete (ADR-0005 rule 10), with undo that restores it. Needs If-Match. Stored artefacts of earlier runs are kept until they expire.",
+        "operationId": "deleteReportSchedule",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ScheduleId"
+          },
+          {
+            "$ref": "#/components/parameters/RequiredIfMatch"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The schedule is deleted"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Delete a schedule",
+        "tags": [
+          "reports"
+        ],
+        "x-activediq-limits": {
+          "class": "write"
+        },
+        "x-activediq-parity": [
+          "ADM-101"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "reports.schedule"
+      },
+      "get": {
+        "description": "Answers one schedule with its recurrence, recipients and the delivery state of each recipient (E4), next run and last run. The ETag is the version to send as If-Match when changing it. Another owner's schedule is answered only with reports.schedule.manage_all (otherwise 404).",
+        "operationId": "getReportSchedule",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ScheduleId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportSchedule"
+                }
+              }
+            },
+            "description": "The schedule",
+            "headers": {
+              "ETag": {
+                "required": true,
+                "schema": {
+                  "maxLength": 256,
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Get a schedule",
+        "tags": [
+          "reports"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-parity": [
+          "ADM-101"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "reports.schedule"
+      },
+      "put": {
+        "description": "Replaces every writable setting, as the Action reports.schedule.update (ADR-0005 rule 10): preview diff against the current version, gate, audit, and undo that restores the previous version. Needs If-Match with the ETag read. The same external-recipient rule as create applies: reports.deliver.external guards the external case only, and the confirmation covers every external address that is new or changed. Changing another owner's schedule additionally needs reports.schedule.manage_all. The scope refusals of create apply.",
+        "operationId": "updateReportSchedule",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ScheduleId"
+          },
+          {
+            "$ref": "#/components/parameters/RequiredIfMatch"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportScheduleWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportSchedule"
+                }
+              }
+            },
+            "description": "The schedule as stored",
+            "headers": {
+              "ETag": {
+                "required": true,
+                "schema": {
+                  "maxLength": 256,
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/ReportScopeUnsupported"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/ReportScopeEmpty"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Replace a schedule's settings",
+        "tags": [
+          "reports"
+        ],
+        "x-activediq-limits": {
+          "class": "write",
+          "maxBodyBytes": 32768
+        },
+        "x-activediq-parity": [
+          "ADM-101"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "reports.schedule"
+      }
+    },
+    "/reports/schedules/{scheduleId}/owner": {
+      "put": {
+        "description": "Hands the schedule to another account, as the Action reports.schedule.reassign (ADR-0005 rule 10). This is the one schedule operation bound to reports.schedule.manage_all. The schedule pauses until the new owner resumes it, so a reassignment cannot widen what recipients receive without the new owner's act. The new owner must hold reports.run, reports.export and reports.schedule (400 with code owner_lacks_permission otherwise). Needs If-Match.",
+        "operationId": "reassignReportSchedule",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ScheduleId"
+          },
+          {
+            "$ref": "#/components/parameters/RequiredIfMatch"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportScheduleReassign"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportSchedule"
+                }
+              }
+            },
+            "description": "The schedule, paused under its new owner",
+            "headers": {
+              "ETag": {
+                "required": true,
+                "schema": {
+                  "maxLength": 256,
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Reassign a schedule's owner",
+        "tags": [
+          "reports"
+        ],
+        "x-activediq-limits": {
+          "class": "write",
+          "maxBodyBytes": 1024
+        },
+        "x-activediq-parity": [
+          "ADM-101"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "reports.schedule.manage_all"
+      }
+    },
+    "/reports/schedules/{scheduleId}/pause": {
+      "post": {
+        "description": "Pauses the schedule, as the Action reports.schedule.pause (ADR-0005 rule 10). A paused schedule fires nothing until it is resumed. Pausing another owner's schedule additionally needs reports.schedule.manage_all. A pause the system makes under the owner-authority rule is not this operation; it is audited as an event and shows as pausedReason.",
+        "operationId": "pauseReportSchedule",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ScheduleId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportSchedule"
+                }
+              }
+            },
+            "description": "The schedule, paused",
+            "headers": {
+              "ETag": {
+                "required": true,
+                "schema": {
+                  "maxLength": 256,
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Pause a schedule",
+        "tags": [
+          "reports"
+        ],
+        "x-activediq-limits": {
+          "class": "write"
+        },
+        "x-activediq-parity": [
+          "ADM-101"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "reports.schedule"
+      }
+    },
+    "/reports/schedules/{scheduleId}/resume": {
+      "post": {
+        "description": "Resumes a paused schedule, as the Action reports.schedule.resume (ADR-0005 rule 10). Only the owner may, after seeing the recipient list; resuming re-checks the owner's scope, with the refusals of create. A reassigned schedule stays paused until its new owner does this.",
+        "operationId": "resumeReportSchedule",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ScheduleId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportSchedule"
+                }
+              }
+            },
+            "description": "The schedule, active",
+            "headers": {
+              "ETag": {
+                "required": true,
+                "schema": {
+                  "maxLength": 256,
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/ReportScopeUnsupported"
+          },
+          "422": {
+            "$ref": "#/components/responses/ReportScopeEmpty"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Resume a schedule",
+        "tags": [
+          "reports"
+        ],
+        "x-activediq-limits": {
+          "class": "write"
+        },
+        "x-activediq-parity": [
+          "ADM-101"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "reports.schedule"
+      }
+    },
+    "/reports/schedules/{scheduleId}/runs": {
+      "post": {
+        "description": "Fires the schedule once now, exactly as a scheduled fire: a run of the pinned definition under the owner's current scope and permissions, then delivery to each recipient, every external address re-evaluated against the current allowed domains. Answers the run. Only the schedule's owner may call this, because the run is the owner's and reports.schedule.manage_all never opens another owner's runs (modules/reports.md 6.6); anyone else, a manage_all holder included, gets 404. It is bookkeeping, not an Action. A per-DC schedule cannot be run now more often than daily (409). A schedule whose owner is disabled or has lost a permission is paused instead (409).",
+        "operationId": "runReportScheduleNow",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ScheduleId"
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportRun"
+                }
+              }
+            },
+            "description": "The run is accepted and queued",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "maxLength": 256,
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Run a schedule now",
+        "tags": [
+          "reports"
+        ],
+        "x-activediq-limits": {
+          "class": "write"
+        },
+        "x-activediq-parity": [
+          "ADM-101"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "reports.schedule"
+      }
+    },
     "/setup/claim": {
       "post": {
         "description": "The first-run setup gate (TM-TB16-T7). A fresh install writes a one-time setup secret where only the installing administrator can read it (`activediq-server setup show`). Presenting it here claims setup: in one step the secret is consumed and the first tenant-owner account is created and granted the tenant-owner role (a failure creating the owner leaves the secret unconsumed). The secret never works again. The new account has no credential yet and cannot sign in until one is enrolled. Success answers 204 and no body. A second claim is refused like any other failure. Every failure has one shape, 401 /problems/setup-refused: wrong secret, expired secret, already-used secret, and an install that is not in first-run state are indistinguishable. The source-IP limiter may answer 429. No default account exists before or after.",
@@ -2560,6 +6532,10 @@
     {
       "description": "First-run setup. The one-time setup secret claims setup once; it expires and is consumed on first use.",
       "name": "platform.setup"
+    },
+    {
+      "description": "Canned reports. The library, runs over a frozen result, paging and export of a stored run, and schedules with delivery. Permissions reports.run, reports.export, reports.schedule and reports.schedule.manage_all.",
+      "name": "reports"
     }
   ]
 }
