@@ -2,6 +2,7 @@ package inventory_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"testing"
@@ -33,8 +34,10 @@ var sidG = []byte{1, 1, 0, 0, 0, 0, 0, 5, 21, 0, 0, 0, 9, 9, 0, 0}
 func adSrc(g string, broad any, computed time.Time) inventory.Observation {
 	o := adGroup(g, -2147483646, broad)
 	o.SID = sidG
-	if !computed.IsZero() {
-		o.Attributes[inventory.AttrBroadMembershipWriteAt] = computed.UTC().Format(time.RFC3339)
+	// Populate refuses a fact without its age, so "no age" and "no fact" are the same observation.
+	o.Facts.BroadMembershipWriteAt = computed
+	if computed.IsZero() || o.Facts.BroadMembershipWrite == nil {
+		o.Facts.BroadMembershipWrite, o.Facts.BroadMembershipWriteAt = nil, time.Time{}
 	}
 	return o
 }
@@ -43,7 +46,6 @@ func adSrc(g string, broad any, computed time.Time) inventory.Observation {
 func syncedGroup(g string, members ...string) inventory.Observation {
 	o := enGroup(g, true, "", members...)
 	yes := true
-	o.Attributes[inventory.AttrOnPremisesSyncEnabled] = true
 	o.OnPremisesSyncEnabled = &yes
 	o.OnPremisesSID = sidG
 	return o
@@ -169,13 +171,14 @@ func TestMembership_synced_tier0(t *testing.T) { // case 4
 func TestMembership_sync_flag(t *testing.T) { // case 5
 	run(t, func(s synced) {
 		g := enGroup(sEG, true, "", sUser)
-		delete(g.Attributes, inventory.AttrOnPremisesSyncEnabled) // not read
+		g.OnPremisesSyncRead = false // not read
 		s.populate_(s.enA, t1, enUser(sUser, nil), g)
 		s.want("absent", s.groups("attested"), false)
-		g.Attributes[inventory.AttrOnPremisesSyncEnabled] = nil
+		g.OnPremisesSyncRead, g.OnPremisesSyncEnabled = true, nil
 		s.populate_(s.enA, t2, g)
 		s.want("null", s.groups("attested"), true, sEG)
-		g.Attributes[inventory.AttrOnPremisesSyncEnabled] = false
+		no := false
+		g.OnPremisesSyncEnabled = &no
 		s.populate_(s.enA, t3, g)
 		s.want("false", s.groups("attested"), true, sEG)
 	})
@@ -221,7 +224,10 @@ func TestMembership_dynamic(t *testing.T) { // cases 8 and 9
 	run(t, func(s synced) {
 		dyn := func(g string, extra map[string]any, members ...string) inventory.Observation {
 			o := enGroup(g, true, "Private", members...)
-			o.Attributes[inventory.AttrGroupTypes] = []string{"DynamicMembership"}
+			o.Facts.GroupTypes = []string{"DynamicMembership"}
+			if o.Attributes == nil {
+				o.Attributes = map[string]any{}
+			}
 			o.Attributes["membershipRule"] = `user.department -eq "IT"`
 			for k, v := range extra {
 				o.Attributes[k] = v
@@ -240,7 +246,7 @@ func TestMembership_dynamic(t *testing.T) { // cases 8 and 9
 		}
 		// groupTypes unreadable: unknown.
 		bad := enGroup(sEG, true, "Private", sUser)
-		delete(bad.Attributes, inventory.AttrGroupTypes)
+		bad.Facts.GroupTypes = nil
 		s.populate_(s.enA, t4, enUser(sUser, nil), bad)
 		if g := s.groups("attested"); g.Complete || slices.Contains(guids(g), sEG) {
 			t.Fatalf("groupTypes absent: %v complete=%v", guids(g), g.Complete)
@@ -267,6 +273,20 @@ func (s synced) pairWith(corr []byte, entraTier0 bool, asOf time.Time) {
 
 // Guard tests (security review of T-0549): each pins one check of judgeSynced / judgeEntra.
 
+// setAttr forges one stored attribute value, as a corrupt row or an older writer could leave it.
+func (s synced) setAttr(obj string, c inventory.ConnectionID, key string, v any) {
+	s.t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	if err := s.exec(s.a, `UPDATE public.directory_objects SET attributes = jsonb_set(attributes, ARRAY[$3::text], $4::jsonb)
+		WHERE tenant_id = $1::uuid AND connection_id = $2::uuid AND object_guid = $5::uuid`,
+		s.a.String(), string(c), key, string(b), obj); err != nil {
+		s.t.Fatal(err)
+	}
+}
+
 func TestMembership_sync_flag_column_precedence(t *testing.T) {
 	now := time.Now()
 	yes, no := true, false
@@ -274,9 +294,11 @@ func TestMembership_sync_flag_column_precedence(t *testing.T) {
 		t.Run(fmt.Sprintf("attr %v, column true", attr), func(t *testing.T) {
 			run(t, func(s synced) {
 				g := syncedGroup(sEG, sUser)
-				g.Attributes[inventory.AttrOnPremisesSyncEnabled] = attr
 				g.OnPremisesSyncEnabled = &yes
 				s.populate_(s.enA, t1, enUser(sUser, nil), g)
+				// The attribute key and the column cannot disagree through Populate (it refuses them), so
+				// forge the disagreement in the stored row.
+				s.setAttr(sEG, s.enA, inventory.AttrOnPremisesSyncEnabled, attr)
 				s.populate_(s.adA, t1, adSrc(sADG, true, now)) // weak AD source
 				s.pair("matched", "", false, now)
 				s.want("column true, attr cloud", s.groups("attested"), true)
@@ -288,6 +310,7 @@ func TestMembership_sync_flag_column_precedence(t *testing.T) {
 			g := syncedGroup(sEG, sUser)
 			g.OnPremisesSyncEnabled = &no
 			s.populate_(s.enA, t1, enUser(sUser, nil), g)
+			s.setAttr(sEG, s.enA, inventory.AttrOnPremisesSyncEnabled, true) // forged: Populate keeps them in step
 			s.populate_(s.adA, t1, adSrc(sADG, true, now))
 			s.pair("matched", "", false, now)
 			s.want("weak source", s.groups("attested"), true)
@@ -300,8 +323,8 @@ func TestMembership_sync_flag_column_precedence(t *testing.T) {
 func TestMembership_sync_flag_not_boolean(t *testing.T) {
 	run(t, func(s synced) {
 		g := enGroup(sEG, true, "", sUser)
-		g.Attributes[inventory.AttrOnPremisesSyncEnabled] = "true"
 		s.populate_(s.enA, t1, enUser(sUser, nil), g)
+		s.setAttr(sEG, s.enA, inventory.AttrOnPremisesSyncEnabled, "true")
 		s.want("string flag", s.groups("attested"), false)
 	})
 }

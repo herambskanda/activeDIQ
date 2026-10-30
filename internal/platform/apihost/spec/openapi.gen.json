@@ -351,6 +351,21 @@
         },
         "description": "Too many requests"
       },
+      "SetupRefused": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 401,
+              "title": "Setup was refused",
+              "type": "/problems/setup-refused"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "First-run setup was not claimed. One answer for every cause (wrong secret, expired secret, secret already used, install not in first-run state), so the response teaches a caller nothing. It never carries a detail."
+      },
       "SignInFailed": {
         "content": {
           "application/problem+json": {
@@ -1069,6 +1084,46 @@
         "type": "string",
         "writeOnly": true,
         "x-activediq-secret": true
+      },
+      "SetupClaimRequest": {
+        "additionalProperties": false,
+        "description": "The one-time setup secret and the details of the first tenant owner.",
+        "properties": {
+          "owner": {
+            "$ref": "#/components/schemas/SetupOwner"
+          },
+          "secret": {
+            "$ref": "#/components/schemas/SecretInput"
+          }
+        },
+        "required": [
+          "secret",
+          "owner"
+        ],
+        "type": "object",
+        "x-activediq-tag": "platform.setup"
+      },
+      "SetupOwner": {
+        "additionalProperties": false,
+        "description": "The first tenant owner's account details.",
+        "properties": {
+          "displayName": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "email": {
+            "maxLength": 320,
+            "minLength": 3,
+            "type": "string"
+          }
+        },
+        "required": [
+          "displayName",
+          "email"
+        ],
+        "type": "object",
+        "x-activediq-tag": "platform.setup"
       },
       "SiemDestination": {
         "description": "A destination as stored. It never carries a credential.",
@@ -2364,6 +2419,58 @@
         "x-activediq-stability": "preview",
         "x-permission": "siem.destination.manage"
       }
+    },
+    "/setup/claim": {
+      "post": {
+        "description": "The first-run setup gate (TM-TB16-T7). A fresh install writes a one-time setup secret where only the installing administrator can read it (`activediq-server setup show`). Presenting it here claims setup: in one step the secret is consumed and the first tenant-owner account is created and granted the tenant-owner role (a failure creating the owner leaves the secret unconsumed). The secret never works again. The new account has no credential yet and cannot sign in until one is enrolled. Success answers 204 and no body. A second claim is refused like any other failure. Every failure has one shape, 401 /problems/setup-refused: wrong secret, expired secret, already-used secret, and an install that is not in first-run state are indistinguishable. The source-IP limiter may answer 429. No default account exists before or after.",
+        "operationId": "claimFirstRunSetup",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetupClaimRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Setup was claimed, the secret is consumed and the first tenant owner exists."
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/SetupRefused"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "security": [],
+        "summary": "Claim first-run setup and create the first tenant owner (AN-4)",
+        "tags": [
+          "platform.setup"
+        ],
+        "x-activediq-anonymous": "AN-4",
+        "x-activediq-limits": {
+          "class": "auth",
+          "maxBodyBytes": 4096
+        },
+        "x-activediq-scope": "platform",
+        "x-activediq-stability": "preview",
+        "x-permission": "anonymous"
+      }
     }
   },
   "security": [
@@ -2404,6 +2511,10 @@
     {
       "description": "Notification sinks. SIEM syslog destinations; TLS by default, plaintext only by an audited opt-in. No destination can be deleted.",
       "name": "platform.notify"
+    },
+    {
+      "description": "First-run setup. The one-time setup secret claims setup once; it expires and is consumed on first use.",
+      "name": "platform.setup"
     }
   ]
 }

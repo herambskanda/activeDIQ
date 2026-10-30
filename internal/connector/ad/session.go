@@ -276,12 +276,12 @@ func ldapCode(err error) string {
 	return "transport error"
 }
 
+// FilterSchema is the schema allowlist the session renders filters against; a caller parses a
+// request's filter AST with it (ldapfilter.ParseFilterAST) so the parse and the render agree.
+func (s *Session) FilterSchema() *ldapfilter.Schema { return s.schema }
+
 // AttrSyntax returns the value syntax the session's schema allowlist records for an attribute.
 func (s *Session) AttrSyntax(name string) (ldapfilter.Syntax, bool) { return s.schema.Syntax(name) }
-
-// FilterSchema is the session's filter and attribute allowlist, for validating a wire filter before
-// it is rendered for this DC.
-func (s *Session) FilterSchema() *ldapfilter.Schema { return s.schema }
 
 // CanonicalAttr resolves a requested attribute name (descr in any case, or numeric OID). A numeric
 // OID comes back as the schema's ldapDisplayName; a descr comes back in the case it was typed in,

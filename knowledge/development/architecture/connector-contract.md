@@ -173,6 +173,29 @@ again. The fingerprint in `Describe` tells a caller when to re-fetch.
   attributes decoded by the codecs (§5.4). A multi-valued attribute beyond one range returns the
   first range with `complete = false`; **a search never follows ranges** (it would turn one page
   into N reads). Completion is `Read`'s job.
+- **Served over the tunnel (T-0683, T-0665).** `connector.Run` (`compose/connector`) loads the
+  connector's local JSON config (`ACTIVEDIQ_CONNECTOR_CONFIG`: `connection_id`, enrolment and data
+  directories, DC list, customer CA, Kerberos principal/realm/keytab; unknown keys refused, no password
+  field), loads the enrolled mTLS leaf (`dial.Load`; it must carry a `connector` component identity),
+  opens the AD session (Kerberos GSSAPI over LDAPS with channel binding, trusting only the customer CA),
+  reloads the durable baseline, then dials out with `platform/fleet/tunnelclient` and serves ONE composite
+  `ConnectorServer` (`compose/connector.TunnelBinding`) on the RoleComponent mux. `rights.Register` and
+  `write.Register` each register the whole Connector service, so the composite is registered once per
+  tunnel registrar. It serves `VerifyConnection`, `Read`, `ScopedSearch`, `Plan` and `Apply`; every
+  other method is Unimplemented until its group is mounted, and a golden-list test pins the served set.
+  The binary opens no listener (`TestNoListenerInConnectorComposition`).
+- **Connection binding (T-0665).** `VerifyConfig.ConnectionID` is the connection the config names;
+  a `VerifyConnection` for any other `connection_id` is refused `INVALID_ARGUMENT` before the directory
+  is touched. `Run` always sets it (it is optional only for in-process lab callers).
+- **Connector data directory.** `baseline.json` (reported tier-0 set; reloaded on restart so the epoch
+  continues), `records.log` (shrink / baseline-missing records), `gate-ratchet.log` (write gate
+  ratchet), `c13-pins.json` (C13 group pins). Directory 0700, files 0600, atomic replace.
+- **`parent_guid` on search entries (T-0694).** Every entry except a naming-context head carries the
+  same `parent_guid` `Read` reports. `ad.Session.ScopedSearch` runs on `SearchPages`, which holds the
+  session lock only around each page request, never while the page is processed; after each page it
+  resolves parents there (one `Read` per distinct parent DN for the whole call, cached; entries
+  withheld as duplicates or by authorisation cost no read) and sets them on the entries. A parent that
+  cannot be resolved fails the stream, never "no parent".
 
 ### 5.2 Initial inventory and the reconcile pass
 
@@ -777,6 +800,8 @@ as the connector identity and streams:
 - exactly one `completed` (verdict, each check's outcome, counts, `write_gate_openable`, and from
   v1.2 `tier0_inputs_dropped`, §8.3a, and from v1.3 (T-0412) `directory_identity`).
 
+**Check list on the wire (T-0684).** `header.check_list_version` is the decimal text of a positive integer (the client parses it; the verification row stores an integer). The AD stream's `completed.checks` always carries V5 (pass: the stream starts only once the connector's own account is read) besides V7–V9; the server accepts a pass only when V5, V7 and V8 are answered.
+
 **`completed.directory_identity` (v1.3, T-0412).** The directory the run was answered against, as V5
 (AD: objectGUID of the forest root domain NC head) or EV2 (Entra: the tenant id) read it. The
 connector sets it on every run (the AD stream refuses to start without a bound directory). The
@@ -793,6 +818,14 @@ correlated object are excessive like rights on any `tier0` object. Each entry's 
 on an AD connection or E5 on an Entra connection. Another basis, an empty basis or an unset
 `object` is `INVALID_ARGUMENT` before any directory call; no run starts and the gate keeps its
 previous run. On an AD-only deployment the list is empty, which is correct (C16 needs a HybridLink).
+
+**`pinned_c13` (T-0358, TM-D26 rule 10).** The C13 group GUIDs the server has pinned for the AD
+connection (`connection_c13_pins`). The connector passes them to the classifier, so a pinned group
+that was renamed stays C13 and stays in `tier0_set`. A malformed GUID is `INVALID_ARGUMENT` before
+any directory call. The server pins at first discovery: on an onboarding run it persists the groups
+whose `tier0_set` basis is C13; the pin set is add-only and a pin store that cannot be read or
+written interrupts the run. The classifier raises `DNSADMINS_UNDETERMINED` (not silence) when no
+DnsAdmins group is found and the DNS zone containers are unreadable (`InsufficientRights`).
 
 A stream without `completed` is an interrupted run: the verdict is `FAILED` with `run_interrupted`
 (DM-10.I10). The run is **read-only**. It never requests the SACL; step 3 uses the SD-flags control
@@ -1296,6 +1329,19 @@ CC-WRITE-16 to -22 in TM-F-T0GUARD and TM-F-RIGHTS).
 - v1.2 (T-0122): [Binding to well-known objects using WKGUID (wellKnownObjects, Domain Controllers)](https://learn.microsoft.com/en-us/windows/win32/ad/binding-to-well-known-objects-using-wkguid) · [gPLink](https://learn.microsoft.com/en-us/windows/win32/adschema/a-gplink) · [MS-GPOL Domain SOM Search (gPLink format and options)](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-gpol/08090b22-bc16-49f4-8e10-f27a8fb16d18) · [passwordCredential (endDateTime, startDateTime)](https://learn.microsoft.com/en-us/graph/api/resources/passwordcredential?view=graph-rest-1.0). Internal: threat-model §6.2 TM-D23 rules 7 to 11 and the `ENTRA_PASSWORD_CREDENTIAL` severity, §6.4, §16.1 TM-R14 to TM-R17; domain-model DM-23.I1, DM-26; forest-connection spec FR-25.
 - Internal: `knowledge/development/domain/ad-change-notifications.md` (T-0018), `knowledge/development/runbooks/ad-lab.md` §6, and the ad-expert consult recorded in the T-0064 notes. The Samba statements in the consult (no `MoreResults`, `;range=0-0`, skipped removed links) come from a reading of the source, not a run, and are `[UNVERIFIED lab]` until CC-FEED-04 and CC-FEED-21 run.
 
+## DACL write path (T-0743, T-0726)
+
+The AD connector has one directory write, the `nTSecurityDescriptor` DACL replace:
+`write.ApplyDACL` → `ad.Session.WriteDACL` → `write/ops.ReplaceSD`. `ApplyDACL` refuses unless the guard's
+token (a) is valid, (b) was issued for a kind whose `PropertyWrite` declared `nTSecurityDescriptor`
+(`Authorised.DeclaresProperty`; the token records the declared keys at step 4, so a token for another kind
+cannot reach it), (c) targets the object the plan was made for, and (d) is bound to the DC the session is on.
+`WriteDACL` re-reads the DACL-only SD, runs `VerifyBase` (`sd.stale_base` sends nothing), then sends one
+Modify. After a successful Modify `ApplyDACL` re-reads the DACL-only SD through `Session.ReadDACL` (same
+session, same DC) and calls `DACLWrite.VerifyAfter` (SD-R10). A mismatch is `sd.write_diverged`: the
+`DACLAuditor` receives a `DACLDiverged` record (object, DC, base, planned and actual digests, ACE count, PD bit, the planned and actual DACL kind (Null = everyone full access, distinct from an empty List = nobody), and the stored ACEs as typed fields — type, flags, mask, trustee SID, object GUIDs — bounded to 256 with a `Truncated` flag; no SDDL, no raw bytes), the error is returned and the write is **not** retried. A read-back that fails is `ErrReadBack`
+(stored state unknown, no retry). Samba proves the mechanics; Windows re-sorting and SDProp are windows-lab.
+
 ## User search path (T-0669, walking skeleton 2/4)
 
 `GET /api/v1/directory/users` (`internal/modules/directory`) -> `client.UserSearch` -> gRPC
@@ -1307,8 +1353,8 @@ list displayName, sAMAccountName, userPrincipalName, userAccountControl. Before 
 refuses (503 `directory_unavailable`, fixed reason text) a connection whose newest rights check is not a
 clean pass, is stale, or reports `tier0_group_membership` / a Tier-0 installation. The server reads at
 most `MaxSearchMatches` (1000), sorts, and truncates to `limit`. Transport is the `ConnectorSource` seam
-(tunnel in production, in-process in lab tests). Gap: the connector binary does not yet mount Read /
-ScopedSearch on the tunnel (follow-up T-0683).
+(tunnel in production; the in-process lab connector of the lab bootstrap, T-0684, in lab builds).
+The connector serves Read and ScopedSearch on the tunnel (T-0683).
 
 ## Lab fixture seam: `internal/connector/labadmin` (T-0519)
 

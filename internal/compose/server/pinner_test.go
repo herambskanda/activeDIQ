@@ -7,6 +7,7 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
+	"github.com/skenzeriq/activediq/internal/platform/operation"
 )
 
 const (
@@ -91,5 +92,18 @@ func TestPinNeverPartial(t *testing.T) {
 func TestNewDCPinnerRequiresLister(t *testing.T) {
 	if _, err := newDCPinner(nil); err == nil {
 		t.Fatal("nil lister accepted")
+	}
+}
+
+// PinOther never returns the excluded DC, by host (any case) or by DSA GUID.
+func TestPinOtherExcludesPinnedDC(t *testing.T) {
+	p := pinnerOver(t, &fakeDCs{list: []client.WritableDC{{Host: "dc1.example.test", DSAGUID: dsaA}, {Host: "dc2.example.test", DSAGUID: dsaB}}})
+	got, err := p.PinOther(context.Background(), "c1", "nc1", operation.DCPin{Host: "DC1.example.test", DSAGUID: dsaA})
+	if err != nil || got.Host != "dc2.example.test" || got.DSAGUID != dsaB {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+	only := pinnerOver(t, &fakeDCs{list: []client.WritableDC{{Host: "dc1.example.test", DSAGUID: dsaA}}})
+	if _, err := only.PinOther(context.Background(), "c1", "nc1", operation.DCPin{Host: "dc1.example.test"}); !errors.Is(err, ErrNoPinnableDC) {
+		t.Fatalf("err = %v", err)
 	}
 }

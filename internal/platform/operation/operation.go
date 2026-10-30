@@ -110,12 +110,17 @@ type StepPlan struct {
 type Outcome struct {
 	AlreadyApplied bool
 	Payload        []byte
+	// Tier0 is the connector's step-9 report: objects it found tier0 after the write, with or without
+	// a basis (ADR-0005 rule 7). It counts at once and outranks every other Verify reason.
+	Tier0 []step.Tier0Finding
 }
 
 // Verdict is the result of Verify.
 type Verdict struct {
 	OK     bool
 	Reason string // machine reason code when !OK
+	// Tier0 lists the objects an Action's own Verify found tier0, when Reason is tier0_after_write.
+	Tier0 []step.Tier0Finding
 }
 
 // Errors of the pipeline. None carries a secret or a directory response.

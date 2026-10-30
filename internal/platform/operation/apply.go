@@ -280,25 +280,49 @@ func (r *Runner) afterRetries(ctx context.Context, t tenant.ID, tx txFunc, c *cl
 // verifyAndRecord runs Verify and records applied -> verified / verify_failed, or applied alone when
 // the read-back must wait (Entra, a lost DC).
 func (r *Runner) verifyAndRecord(ctx context.Context, t tenant.ID, tx txFunc, c *claimed, out Outcome, recovered bool) error {
-	stp, revoke, err := r.mintFor(c, c.attempt, secret.Secret{})
-	if err != nil {
-		return r.record(ctx, t, tx, c, recordSpec{applied: true, recovered: recovered, out: out, verifyFailed: "mint_failed"})
+	base := recordSpec{applied: true, recovered: recovered, out: out}
+	var v Verdict
+	var verr error
+	stp, revoke, merr := r.mintFor(c, c.attempt, secret.Secret{})
+	if merr == nil {
+		v, verr = c.act.Verify(ctx, stp, c.plan, out)
+		revoke()
 	}
-	v, verr := c.act.Verify(ctx, stp, c.plan, out)
-	revoke()
+	// Source 1, the connector's step-9 report: it counts at once and outranks every other reason,
+	// whatever Verify or the mint said (ADR-0005 rule 7).
+	if len(out.Tier0) > 0 {
+		base.verifyFailed = ReasonTier0AfterWrite
+		base.t0 = &tier0Report{findings: out.Tier0, source: Tier0SourceConnector, dc: c.op.Pins[c.plan.Target.NC], also: otherReason(merr, verr, v)}
+		return r.record(ctx, t, tx, c, base)
+	}
+	if merr == nil && errors.Is(verr, ErrDeferVerify) {
+		base.deferred = true
+		return r.record(ctx, t, tx, c, base)
+	}
+	// Source 2, the server's own re-read of every touched object; it does not depend on the connector.
+	if rep := r.rereadTier0(ctx, c); rep != nil {
+		base.verifyFailed = ReasonTier0AfterWrite
+		rep.also = otherReason(merr, verr, v)
+		base.t0 = rep
+		return r.record(ctx, t, tx, c, base)
+	}
 	switch {
-	case errors.Is(verr, ErrDeferVerify):
-		return r.record(ctx, t, tx, c, recordSpec{applied: true, recovered: recovered, out: out, deferred: true})
+	case merr != nil:
+		base.verifyFailed = "mint_failed"
 	case verr != nil:
-		return r.record(ctx, t, tx, c, recordSpec{applied: true, recovered: recovered, out: out, verifyFailed: "verify_error"})
+		base.verifyFailed = "verify_error"
 	case !v.OK:
-		reason := v.Reason
-		if reason == "" {
-			reason = "verify_failed"
+		base.verifyFailed = v.Reason
+		if v.Reason == "" {
+			base.verifyFailed = "verify_failed"
 		}
-		return r.record(ctx, t, tx, c, recordSpec{applied: true, recovered: recovered, out: out, verifyFailed: reason})
+		if v.Reason == ReasonTier0AfterWrite { // the Action's own finding
+			base.t0 = &tier0Report{findings: v.Tier0, source: Tier0SourceAction, dc: c.op.Pins[c.plan.Target.NC]}
+		}
+	default:
+		base.verified = true
 	}
-	return r.record(ctx, t, tx, c, recordSpec{applied: true, recovered: recovered, out: out, verified: true})
+	return r.record(ctx, t, tx, c, base)
 }
 
 // recordSpec says what to record for a step.
@@ -312,6 +336,7 @@ type recordSpec struct {
 	deferred     bool
 	recovered    bool
 	out          Outcome
+	t0           *tier0Report // set with verifyFailed == ReasonTier0AfterWrite
 }
 
 // record is the second short transaction: state, item, event and secret deletion commit together,
@@ -325,12 +350,12 @@ func (r *Runner) record(ctx context.Context, t tenant.ID, tx txFunc, c *claimed,
 		// A superseded attempt changes no step or item state, but a Tier-0 signal it saw is the
 		// protective control's input: audit it, request cancel and alert regardless.
 		if s.verifyFailed == ReasonTier0AfterWrite {
-			return r.tier0Superseded(rctx, t, tx, c)
+			return r.tier0Superseded(rctx, t, tx, c, s.t0)
 		}
 		return nil
 	}
 	if err == nil && s.verifyFailed == ReasonTier0AfterWrite {
-		r.tier0Alert(rctx, string(c.key.Operation))
+		r.tier0Alert(rctx, c, s.t0)
 	}
 	return err
 }
@@ -383,6 +408,7 @@ func (r *Runner) recordIn(ctx context.Context, q store.Tx, t tenant.ID, c *claim
 				return err
 			}
 			item, ev = ItemFailed, c.event(r, audit.Failure, s.verifyFailed, s.recovered)
+			ev.Details = append(ev.Details, s.t0.details(c)...)
 		default: // deferred: the write is done; the read-back is driven later
 			ev = c.event(r, audit.Success, "applied_verification_pending", s.recovered)
 			ev.ID += "-pending"
@@ -445,19 +471,14 @@ func (r *Runner) cancelOnTier0(ctx context.Context, q store.Tx, t tenant.ID, c *
 // the step and item are left exactly as the owning attempt recorded them, but the signal is audited
 // (event id distinct per attempt, superseded=true), a running operation is moved to cancelling and the
 // critical alert is raised. Detection must not fail open on the attempt that happened to be superseded.
-func (r *Runner) tier0Superseded(ctx context.Context, t tenant.ID, tx txFunc, c *claimed) error {
+func (r *Runner) tier0Superseded(ctx context.Context, t tenant.ID, tx txFunc, c *claimed, rep *tier0Report) error {
 	if err := tx(ctx, func(ctx context.Context, q store.Tx) error {
 		return r.cancelOnTier0(ctx, q, t, c, true)
 	}); err != nil {
 		return err
 	}
-	r.tier0Alert(ctx, string(c.key.Operation))
+	r.tier0Alert(ctx, c, rep)
 	return nil
-}
-
-// tier0Alert raises the critical alert after the recording transaction committed.
-func (r *Runner) tier0Alert(ctx context.Context, opID string) {
-	r.alert(ctx, Alert{Severity: "critical", Reason: ReasonTier0AfterWrite, Operation: opID})
 }
 
 // settle looks at the whole operation in the recording transaction and, when nothing is left to do,

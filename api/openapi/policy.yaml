@@ -79,6 +79,10 @@ anonymous:
     gate: the local account's password; success yields only a pending sign-in (AN-10), never a session
     reason: Break-glass first factor when SSO is down (ADM-142); one uniform failure shape, throttled and never locked (TM §7.6 rules 1-4).
     ref: AN-8
+  - operation: claimFirstRunSetup
+    gate: the one-time setup secret (256-bit random, only its hash stored, expires, consumed on first correct use, readable only by the installing administrator)
+    reason: First-run setup must be reachable before any account exists (TM-TB16-T7); no default account is ever created.
+    ref: AN-4
   - operation: createWebAuthnSignInChallenge
     gate: the pending-sign-in cookie
     reason: Starts the WebAuthn second factor for a pending sign-in from AN-3, AN-8 or AN-9.

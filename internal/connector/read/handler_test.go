@@ -106,18 +106,7 @@ func entry(attrs map[string][][]byte) *ad.Entry {
 	return ad.NewEntry("CN=Smith\\, Ann,OU=Ü,DC=lab,DC=test", attrs)
 }
 
-func start(t *testing.T, s *src) connectorv1.ConnectorClient {
-	t.Helper()
-	return startSource(t, s)
-}
-
-// startS serves a SearchSource (ScopedSearch and Read) on a bufconn.
-func startS(t *testing.T, s *ssrc) connectorv1.ConnectorClient {
-	t.Helper()
-	return startSource(t, s)
-}
-
-func startSource(t *testing.T, s read.Source) connectorv1.ConnectorClient {
+func start(t *testing.T, s read.Source) connectorv1.ConnectorClient {
 	t.Helper()
 	h, err := read.New(s)
 	if err != nil {
