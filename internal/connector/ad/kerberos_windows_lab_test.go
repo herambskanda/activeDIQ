@@ -36,9 +36,6 @@ const (
 	winKrbAccount = "svc-t0566-gssapi"
 )
 
-// winKrbFile returns a file named by envVar or the default beside lab/windows.
-func winKrbFile(envVar, def string) string { return winLabPath(envVar, def) }
-
 func winKDC() string {
 	h := os.Getenv("WIN_LAB_DC_ADDR")
 	if h == "" {
@@ -64,7 +61,7 @@ func aesOnly(t *testing.T, kt *keytab.Keytab) {
 
 func winKeytabIdentity(t *testing.T) Kerberos {
 	t.Helper()
-	p := winKrbFile("WIN_LAB_GSSAPI_KEYTAB", ".win-lab-gssapi.keytab")
+	p := labFile(os.Getenv("WIN_LAB_GSSAPI_KEYTAB"), ".win-lab-gssapi.keytab")
 	kt, err := keytab.Load(p)
 	if err != nil {
 		t.Fatalf("service keytab %s (run guest/gssapi-ready.ps1 and copy svc.keytab): %v", p, err)
@@ -104,7 +101,7 @@ func gmsaCurrentPassword(blob []byte) ([]uint16, error) {
 // REALM+"host"+<name without $>+"."+<dns domain>; the entry is then filed under "name$".
 func winGMSAIdentity(t *testing.T) Kerberos {
 	t.Helper()
-	p := winKrbFile("WIN_LAB_GMSA", ".win-lab-gmsa.json")
+	p := labFile(os.Getenv("WIN_LAB_GMSA"), ".win-lab-gmsa.json")
 	raw, err := os.ReadFile(p)
 	if err != nil {
 		t.Fatalf("gMSA export %s (run guest/gssapi-ready.ps1 and copy gmsa.json): %v", p, err)
@@ -274,7 +271,7 @@ func TestWindowsLabKerberosWrongChannelBindingRejected(t *testing.T) {
 		t.Fatalf("control (correct binding) failed, the wrong-binding result below proves nothing: %v", err)
 	}
 
-	caPEM, err := os.ReadFile(winLabPath("WIN_LAB_CA", ".win-lab-ca.pem"))
+	caPEM, err := os.ReadFile(labFile(os.Getenv("WIN_LAB_CA"), ".win-lab-ca.pem"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -33,12 +33,12 @@ scope decision, not a platform asymmetry.
 
 | Piece | State today | Where this page fixes it |
 | --- | --- | --- |
-| `internal/platform/report` (EP-8 host), `Registrar.Dataset` | **Missing.** Blueprint §4.1 names `Dataset(d report.Dataset)`, but `module.Registrar` has no such method and `platform.Deps` has only `Access` | §2, §3, row B1 |
+| `internal/platform/report` (EP-8 host), `Registrar.Dataset` | **Built (T-0956, row B1).** Pure types and `Resolve` (no SQL driver), `Registrar.Dataset`, `Contributions.Datasets()`, `platform.Deps.Report`, and the Boot table-ownership check (`report.CheckTables`). Deviations below | §2, §3, row B1 |
 | `internal/platform/store/reportsql` | **Missing.** `sqlconst` (FF-SP2) already lets values of type `reportsql.CompiledSQL` through, and `tools/gen/api` holds a pending `ReportAst → reportsql.Report` binding | §5, rows B1 and B2, RP1 |
-| Directory read-scope producer | **Missing.** `platform/rbac` loads assignments with roots of kind `naming_context`, `ou_subtree`, `entra_tenant`, `tier0_scope` and `tenant`. `platform/authz` has per-target `Authorize` and `FilterForOwner` (a post-filter over candidates, with no callers). `modules/delegation` registers only its four `delegation.*` Actions. There is no `ScopePredicate`, no `ReadScope`, no `Registrar.ScopeEvaluator` and no `ou_one_level` kind. Per-target `Authorize` ANDs a token's `Scope` separately from the assignment union (`authz.go`, `tok.Scope.covers`) | §4; **T-0880** (types, EP-6 host), **T-0881** (`ou_one_level`), **T-0882** (producer) |
+| Directory read-scope producer | **Built (T-0880, T-0881, T-0882).** `authz.ReadScope` and the EP-6 `ScopeEvaluator` host (T-0880), the `ou_one_level` root kind (T-0881), and the one producer `rbac.ReadScopes.For` with the read oracle `authz.Evaluator.AuthorizeRead` (T-0882). The old per-object post-filter over candidates, which had no callers, is deleted. Two adapters are still to be wired in `compose/server`: `rbac.OwnerStatus` (over the account store) and `rbac.ObjectConnections` (over inventory) | §4 |
 | Inventory rows | `directory_objects` (migration 0033) holds `connection_id`, `object_guid`, `nc_guid`, `parent_guid`, `ancestry uuid[]`, `kind`, `state`, `lockout_time`, `pwd_last_set`, `account_expires`, `attributes jsonb`, `observed_at`. Links are in `links` (0012). There is no GIN index on `ancestry`, no per-NC sync-pass watermark (spec D6), no policy-input tables (D4) and no group closure. Row P2 (T-0948, migration 0059) is built: `Populate` takes a per-(tenant, connection) advisory lock and refuses non-READ COMMITTED transactions (DM-16.I10); `ancestry_complete` is derived by the writer on every upsert (`objects.go`, `upsertObjectSQL`), a move rewrites every descendant's `ancestry` in the same transaction (`rewriteDescendants`, found by `ancestry @>` until B3's GIN index) and `repairCompleteness` walks `parent_guid` to set or clear the flag below a row that arrived or changed | §3.4, §4.5, rows P1, **P2**, B3, B6 |
 | `platform/export` | CSV and XLSX encoders, `export.Cell`, `Source`, `Run`, `RunToBlob` (T-0150). **No canonical digest** (spec §8.3) | §7, row B9 |
-| `platform/jobs` | Kinds, `ModeDefault` and `ModeManagedTx`, queue, leases. **No DM-44 recurring schedule** | §8, row P4 |
+| `platform/jobs` | Kinds, `ModeDefault` and `ModeManagedTx`, queue, leases, and the DM-44 `Schedule` value (T-0951: recurrence, IANA zone, DST rules, `Check` fires a missed run once). **The stored schedule table and the tick loop are not built** (T-0951 follow-up) | §8, row P4 |
 | `platform/notify` | `notify/api` and `notify/syslog` only. **No SMTP, no DM-84 Delivery** | §7.2, §8, row P3 |
 | Per-DC read | `ReadPerDC` exists in the connector proto (`read.proto`). There is **no Go client method** in `directory/client` | §6.5, row P5 |
 | `platform/store` | Entry points `WithTenant`, `WithTenantSeparate` and `WithPlatform`. `store.Tx` exposes `Exec`, `Query` and `QueryRow` | §6.3 uses them as they are |
@@ -155,6 +155,7 @@ type Column struct {
     Sortable bool
     Default  bool            // shown when a definition names no columns (definitions normally do)
     Count    bool            // Derived only: counts other objects (member, subtree counts); RP11 compares it
+    UnknownWhen ColumnID     // Derived non-enum only: the state column whose unknown_input_missing makes this cell "u" (§3.3, §6.2)
 }
 
 type ValueType uint8 // TypeText, TypeInt, TypeBool, TypeTime, TypeEnum, TypeGUID, TypeTextList
@@ -283,6 +284,23 @@ by precedence through a lateral join over `{rel.pso}` (a `MaskAnchor`) and `{rel
 as arguments is not possible for PSOs. A PSO that cannot be resolved gives
 `unknown_input_missing`, never a fallback to the domain policy.
 
+**Unknown cells (FR-09; the API's `unknown` cell kind).** A derived value whose input is missing is
+stored as the cell `["u"]` (§6.2), never as an inferred or absent value:
+- A derived **state** column (`TypeEnum` whose `Enum` holds the reserved ID
+  `unknown_input_missing`) is stored as `u` when its value is that ID. The enum value stays in
+  `Enum`, so a filter `locked_out = unknown_input_missing` still works in SQL.
+- A derived **non-enum** column that depends on a state names it in `Column.UnknownWhen`, and is
+  stored as `u` when that state is `unknown_input_missing`. At 2a: `lockout_ends_at` →
+  `locked_out`; `password_expires_at` and `days_to_password_expiry` → `password_state`. Absent
+  still means "the rule gives no value" (not locked, or the state is not `expires` or `expired`).
+- `NewRegistry` refuses an `UnknownWhen` that is not a `Derived` `TypeEnum` column of the same
+  dataset holding `unknown_input_missing`, and an enum column that is not `Derived` but holds that ID.
+- **The compiler never lets a filter infer.** When an `UnknownWhen` column is requested, it selects
+  the state column as well. Every predicate on that column renders as
+  `CASE WHEN <state> = 'unknown_input_missing' THEN NULL ELSE (<predicate>) END`, so an unknown row
+  is selected by neither the predicate nor its negation (`OpNe`, `OpAbsent` included). RP8 covers the
+  encoding and these filters.
+
 **Test RP8** (row B3, listed by T-0873): `Test_derived_columns_match_reference`. It is a
 table-driven test over the spec §6.4 rows. For every row, the column the compiled query returns
 equals a pure-Go reference function `inventory.DeriveUserState(inputs, now)`. The Go function is a
@@ -387,15 +405,14 @@ replicated-logon thresholds (spec §6.4) is `Min: 30` on USR-03's `days` paramet
 ### 4.1 Who produces it today: nobody
 
 Plainly: **no package produces a directory read-scope predicate today**. `modules/delegation` has
-no scope evaluator. `authz.FilterForOwner` is a per-object post-filter with no callers. It is the
-opposite of "in the query", and T-0882 deletes it. Three filed tickets build the producer (split
-from T-0872 by T-0877):
+no scope evaluator. A per-object post-filter over candidates, with no callers, was the opposite of
+"in the query"; T-0882 deleted it. Three tickets built the producer (split from T-0872 by T-0877):
 
 | Ticket | Delivers | Unblocks |
 | --- | --- | --- |
 | **T-0880** | `authz.ReadScope` types (§4.2), `authztest.ReadScope`, EP-6 `ScopeEvaluator` host, `delegation` evaluators | B2 (compiler) |
 | **T-0881** | the `ou_one_level` assignment root kind (migration, per-target `Authorize`) | T-0882 |
-| **T-0882** | the producer `rbac.ReadScopes.For`, the read oracle `authz.Evaluator.AuthorizeRead` (§4.6), deletion of `FilterForOwner` and `ReportRows` | B4 (run path), T-0875 (search) |
+| **T-0882** | the producer `rbac.ReadScopes.For`, the read oracle `authz.Evaluator.AuthorizeRead` (§4.6), deletion of the old per-object post-filter | B4 (run path), T-0875 (search) |
 
 ### 4.2 The type (built in T-0880; the fields are fixed here)
 
@@ -562,6 +579,35 @@ and `Via` grants contribute nothing. A target is built from the inventory row wi
 - **Assertion:** the rows the compiled SQL returns equal the objects the oracle admits. A scope
   that renders `FALSE` yields zero rows and the expected reason.
 
+### 4.7 Search consumes the same scope (T-0875, m2-plan decision 4)
+
+`GET /directory/users` (`modules/directory`) trims to the caller's `ReadScope` for `directory.read`. The
+design choice (directory-engineer): **push the include roots to the directory, then decide each result
+in memory** rather than filter through inventory.
+
+- **Producer.** `directory.ReadScopes` is a one-method port (`ReadScope(ctx, tenant, chain, perm)`); the
+  composition root implements it over `rbac.ReadScopes.For` and a transaction (T-0916). The handler
+  names the chain from the console session only: a token principal does not carry its token, so it is
+  refused (403) rather than read with its owner's wider scope. No producer, `ErrOwnerDead`,
+  `ErrTokenRefused`, `ErrUnsupportedChain` and `ErrDenied` are 403 and search nothing.
+- **Roots.** `ReadScope.SearchRoots(connection)` gives the include roots of the grants that can admit
+  anything (naming context and subtree become `SUBTREE`, one-level `ONE_LEVEL`). `client.UserSearch`
+  sends them as the `ScopedSearch` roots, so the directory returns nothing outside every include. A
+  scope with no roots in the connection answers empty without a directory call.
+- **Decision.** Excludes, the token layer and chain completeness are not roots. `ReadScope.Admits(ObjectView)`
+  decides each result from its live parent chain (the entry's `parent_guid`, then one container read per
+  distinct parent per search, memoised, budget 2000 reads). Chains come from the directory, never from
+  inventory ancestry, which is stale until P2. An incomplete chain, a loop, a vanished parent or a spent
+  budget is not admitted. `Admits` is a second renderer of the terms (beside the SQL one) and lives in
+  `authz`, the only package besides `reportsql` that may read `Terms`/`Token` (RP2); the rbac property test
+  `Test_ReadScope_matches_read_oracle` holds it to `AuthorizeRead` for every object.
+- **Counts after trimming (LF-39).** The 1,000-match cap and the limit count admitted users only; the
+  response has no count and no truncation mark.
+- **Known limits.** An OU root is sent with the forest root as `nc_guid` (a scope term carries no NC), so
+  a child-domain OU root relies on the connector resolving the GUID on the bound DC. The token layer is
+  applied after the query, not pushed into the roots, so a narrow token on a broad grant reads more
+  candidates than it returns.
+
 ## 5. The compiler: `store/reportsql`
 
 ```go
@@ -643,6 +689,7 @@ report_runs (DM-72)
   runner_account uuid NOT NULL                       -- chain.Requester: the account whose authority the run uses
   chain jsonb NOT NULL                               -- the full authority.Chain (typed refs: token id, schedule id)
   schedule_id uuid NULL
+  rerun_of uuid NULL                                 -- the run a retry or an expired-export re-run was made from (API rerunOf)
   state text NOT NULL CHECK (state IN run.State values)
   failure_reason text NULL CHECK (failure_reason IN run.FailureReason values)
   attempt int NOT NULL DEFAULT 0                     -- the job attempt that owns the run (§6.3)
@@ -655,6 +702,7 @@ report_runs (DM-72)
   CHECK (state <> 'succeeded' OR (row_count, digest, as_of, expires_at) all NOT NULL)
   CHECK ((state IN ('failed')) = (failure_reason IS NOT NULL))
   trigger report_runs_state_edge: BEFORE UPDATE OF state, refuses any edge not in the table below
+  INDEX (tenant_id, runner_account, created_at DESC, id DESC)   -- the history list (§6.6), keyset on (created_at, id)
 
 report_run_rows (ADR-0010)
   tenant_id, run_id, row_key text (<= 200), ordinal bigint, cells jsonb, sort_keys jsonb
@@ -712,26 +760,42 @@ that the Go constants and the two `CHECK` lists are the same sets.
 - `failed`, `cancelled` and `expired` are final. **Failed and cancelled records do not become
   `expired`**: they hold no rows. Their `expires_at` is set like any other (`finished_at` + 7 days).
 - `reports.retention` **deletes run records** in any final state 30 days after `expires_at`
-  (`[PROPOSED]`). Until then, a read of an expired run answers 410 and of a failed or cancelled run
-  409 with the reason. After that, it answers 404. Audit events keep the run ID for ever.
+  (`[PROPOSED]`). Until then the **record** stays readable (`GET /reports/runs/{id}`, §6.6): an
+  expired run answers 200 with state `expired` and its header (`as_of`, row count, digest, scope
+  applied), and a failed or cancelled run answers 200 with its state and reason. The **rows and
+  files** are what is gone: a page read or file download of an expired run answers 410
+  `report-result-expired`, and a page read of a failed or cancelled run answers 409 `run_failed`
+  with the reason. Export create of an expired run re-runs instead (§7.1). After the record is
+  deleted, every read answers 404. Audit events keep the run ID for ever.
 
 **Cells (`report.Cell`).** `cells` is a JSON array in `columns` order. Each cell is
 `[tag, value]`:
 
-| Tag | Meaning | Value |
-| --- | --- | --- |
-| `"a"` | absent | none |
-| `"s"` | text | UTF-8 string |
-| `"i"` | integer | decimal string, so 64-bit values stay exact |
-| `"b"` | boolean | `true` / `false` |
-| `"t"` | time | RFC 3339 UTC, whole seconds |
-| `"e"` | enum | the enum value's stable ID |
-| `"g"` | GUID | canonical lower-case string |
-| `"l"` | text list | array of strings |
-| `"n"` | never | none |
+| Tag | Meaning | Value | API `ReportCell` kind |
+| --- | --- | --- | --- |
+| `"a"` | absent | none | `absent` |
+| `"s"` | text | UTF-8 string | `text` |
+| `"i"` | integer | decimal string, so 64-bit values stay exact | `integer` |
+| `"b"` | boolean | `true` / `false` | `boolean` |
+| `"t"` | time | RFC 3339 UTC, whole seconds | `time` |
+| `"e"` | enum | the enum value's stable ID | `enum` |
+| `"g"` | GUID | canonical lower-case string | `guid` |
+| `"l"` | text list | array of strings | `textList` |
+| `"n"` | never | none | `never` |
+| `"u"` | unknown (input missing, FR-09; §3.3) | none | `unknown` |
 
-The tags map one-to-one onto the canonical digest tags of spec §8.3 (row B9 fixes the byte values)
-and onto `export.Cell` (`"n"` maps to `export.Never()`, `"l"` to `export.Multi`).
+The tags map one-to-one onto:
+- the **canonical digest tags** of spec §8.3. Row B9 fixes the byte values. `u` has its own digest
+  tag with length 0, distinct from `a` and `n`, so a run whose inputs were missing never has the
+  digest of one where the value was absent;
+- **`export.Cell`**: `"n"` maps to `export.Never()`, `"l"` to `export.Multi`, and `"u"` to
+  `export.Unknown()`. Row B9 adds that constructor; it resolves to the fixed text
+  `Unknown (input missing)`, as `Never()` resolves to `Never`;
+- the **API `ReportCell` kinds** in the last column (`api/openapi/modules/reports.yaml`, T-0866).
+  A test in B4 asserts the three sets are equal.
+
+`u` has no sort key, like `a`, so unknown rows sort `NULLS LAST`. That is where
+`unknown_input_missing` sits in every state enum's `SortRank` anyway.
 
 **Sort keys.** `sort_keys` holds, for each sortable stored column, an order-preserving text:
 - text is NFC and case-folded;
@@ -856,10 +920,15 @@ A stored run holds rows trimmed to one account's scope at one moment. Holding `r
 | --- | --- | --- |
 | 1 | The caller holds the operation's permission: `reports.run` for GET, pages and reuse; `reports.run` and `reports.export` for export create (route-level, before any run is looked up) | 403, as for any operation (FR-30) |
 | 2 | The run exists in the tenant (RLS) **and** `runner_account = chain.Requester` | **404** `run_not_found` (it does not say that the run exists) |
-| 3 | The run is not expired | **410** `run_expired` (export create: §7 re-runs instead) |
+| 3 | The run's rows still exist (not `expired`). **Pages only.** Run GET of an expired run answers 200 with the record and state `expired`, and export create re-runs instead (§7.1) | **410** `report-result-expired` |
 | 4 | `rbac.ReadScopes.For(chain, reports.run).Fingerprint()` **equals** the stored `scope_fingerprint`, the scope applied in T2 | **409** `scope_changed_rerun`: the caller's scope (or token) differs from the one the rows were trimmed with |
 | 5 | The run is `succeeded` (pages, export create) | 409 `run_not_ready` or `run_failed` with the reason |
 
+- **Which checks each read runs**, as the contract declares them: run GET runs 1, 2 and 4. Pages
+  run 1 to 5. Export create runs 1, 2, 4 and 5, and an expired run there starts a re-run rather
+  than failing check 5. The creator's file download needs its route permission `reports.export`, runs 2
+  and 4 on the export's run (§7.1), and answers 410 `report-result-expired` once the file has
+  expired.
 - Check 4 runs on every request, so a scope revoke or a narrower token stops reads at once, not 7
   days later. It costs one producer call per request; the result is not cached across requests.
 - A token request carries the token layer in its fingerprint. A run created in a session is
@@ -872,6 +941,17 @@ A stored run holds rows trimmed to one account's scope at one moment. Holding `r
 - **`reports.schedule.manage_all`** shows schedule metadata (definition, preset, owner, recipients,
   state, last fire, last run state and row count). It never opens a run's rows or files.
 - Every refusal at checks 2, 3 and 4 appends `reports.run.read_denied {run_id, check}` (§10).
+- **History list** (`GET /reports/runs`, `listReportRuns`, T-0891) is not a run read, so it does not go
+  through `run.ReadAccess`. It selects `WHERE runner_account = chain.Requester` ordered by
+  `(created_at DESC, id DESC)` and takes no parameter that names another runner. It makes **one**
+  `ReadScopes.For` call per request and sets each item's `scopeCurrent` to "fingerprint equals the
+  stored one" (check 4 as data, not as a 409). Where it is false the item's `rowCount` is null. No
+  refusal here, so no `read_denied` event.
+- **Retry** (`POST /reports/runs/{id}/retry`, `retryReportRun`, T-0891) passes checks 1 and 2 only. It
+  is not blocked by 3 or 4, which is its purpose. It resolves the stored `definition_id`, version,
+  preset and `params` again under the caller's current scope, then takes the §6.1 create path
+  (reuse window, job limit) with `rerun_of` = the source run. A source in `queued` or `running` is a 409
+  `run_in_progress`.
 
 **Test RP9** (row B4, listed by T-0873): `Test_run_read_bound_to_runner_and_scope`:
 - a second account holding `reports.run` and `reports.export` gets 404 on GET, page and export
@@ -887,8 +967,9 @@ A stored run holds rows trimmed to one account's scope at one moment. Holding `r
 
 - **Request.** `POST /reports/runs/{id}/exports {format}` passes `run.ReadAccess` (§6.6) first:
   same runner, `reports.run` and `reports.export`, same scope fingerprint, run `succeeded`.
-  - For an expired run, the handler creates a new run as the caller (§6.6), returns
-    `{new_run_id, reason: "expired"}`, and the export follows that run.
+  - For an expired run, the handler creates a new run as the caller (§6.6). The export follows
+    that run and says so: `ReportExport.rerun = true`, `runId` = the new run, `rerunOfRunId` = the
+    expired one. Its file carries the new run's `as_of`.
   - The format's cap is checked against `row_count` **before** the job is enqueued. Above the cap
     the request is refused and explained (AC-24); at the cap it succeeds (AC-25).
 - **Job.** `reports.export` (`ModeManagedTx`) streams `report_run_rows` in `ordinal` order through
@@ -966,6 +1047,21 @@ Consequences:
   - The external-recipient confirmation is part of the preview.
   - `Plan` refuses a per-DC report more often than daily (AC-38) and an interval below 1 hour.
   - `reassign` needs `reports.schedule.manage_all` and leaves the schedule paused.
+- **Preview and undo over HTTP** (ADR-0004 rule 14, ADR-0005 rule 10 as amended by T-0892).
+  - Each of the six writes has a preview twin under `…/previews/<verb>`. A plan refusal is a `200` with `outcome: refused` and the codes below. The external-recipient confirmation is `requiredConfirmations` of kind `external_recipients`, and the write carries it as `confirmedExternal`.
+  - Every write answers `ActiveDIQ-Operation-Id`. The family's undo pair is `POST /reports/schedules/operations/{operationId}/undo` and `…/previews/undo`, bound to `reports.schedule`.
+  - Every inverse is **`reports.schedule.restore`** `{scheduleId, version}`. It is planned for the principal undoing, and is refused as `superseded` when the schedule's current version is not the one the operation wrote:
+
+    | Undo of | Restores | Class | Checks for the undoing principal (blocked code) |
+    | --- | --- | --- | --- |
+    | `create` | archives the schedule ("Schedule removed. Nothing was sent." when it has not fired) | `Reversible` | owner, or `manage_all` |
+    | `update` | the previous version | `Reversible` | the checks of `update` for the restored content: `reports.deliver.external` and the confirmation for every external recipient it restores (`external_not_permitted`), and the scope refusals when the result is active (`report_scope_empty`, `report_scope_unsupported`) |
+    | `delete` | the schedule as it was, active or paused | `Reversible` | as for `update`, over the whole restored version |
+    | `pause` | active | `Reversible` | only the owner, as for `resume` (`owner_only`), plus the scope refusals |
+    | `resume` | paused | `Reversible` | owner, or `manage_all` |
+    | `reassign` | the previous owner, **still paused** | `Lossy`: the earlier active state is not restored, and the previous owner resumes it | `reports.schedule.manage_all` (`manage_all_required`) |
+
+  - An undo never sends anything. A fire that ran between the change and its undo stays sent and is not recalled.
 - **Fire.** A DM-44 tick enqueues `reports.schedule.fire`, which runs the owner-authority checks
   of spec §8.4 in order:
   1. Owner state and permissions. A failure gives a system pause plus `reports.schedule.paused`
@@ -1065,7 +1161,7 @@ with the same owners. Existing tickets are named by ID. "AC" means reports-2a §
 | --- | --- | --- | --- | --- |
 | T-0880 | `authz.ReadScope` types with the token layer and `Fingerprint` (§4.2), `authztest.ReadScope`, EP-6 `ScopeEvaluator` host, `delegation` evaluators (filed) | backend-engineer | — | FR-07; AC-06 |
 | T-0881 | `ou_one_level` assignment root kind: migration and per-target `Authorize` (filed) | backend-engineer | — | FR-07; AC-06 |
-| T-0882 | `rbac.ReadScopes.For` producer, read oracle `authz.Evaluator.AuthorizeRead` (§4.6), delete `FilterForOwner` and `ReportRows` (filed) | backend-engineer | T-0880, T-0881 | FR-07; AC-06, AC-07 |
+| T-0882 | `rbac.ReadScopes.For` producer, read oracle `authz.Evaluator.AuthorizeRead` (§4.6), delete the old per-object post-filter (done) | backend-engineer | T-0880, T-0881 | FR-07; AC-06, AC-07 |
 | T-0873 | `fitness-reports` RP1 to RP11 and the FF-SP2 amendment (filed) | devops-engineer | B1, B2 stubs | FR-03, FR-05, FR-19 (guards) |
 | T-0866 | OpenAPI contract for the 2a report operations (exists) | api-engineer | this page | FR-31; AC-43 |
 | P1 | inventory: per-NC sync passes and the **last-successful-pass watermark** (D6); `inventory.Freshness`; staleness threshold | directory-engineer | — | FR-08; AC-09, AC-10, AC-11 |
@@ -1073,15 +1169,15 @@ with the same owners. Existing tickets are named by ID. "AC" means reports-2a §
 | P3 | `platform/notify`: SMTP delivery through egress, DM-84 Delivery with per-recipient state and retries, `source_ref` and account `recipient` for links, `Deliveries.ForSource` lookup (§7.2), allowed-recipient-domains setting (`notify.settings.update` Action) | backend-engineer | EP-3 (exists) | FR-24, FR-27; AC-36, AC-47 |
 | P4 | `platform/jobs`: DM-44 Schedule (recurrence, IANA zone, DST skip and repeat, missed run fires once, 1 h floor) | backend-engineer | — | FR-23, FR-28; AC-37 |
 | P5 | `directory/client.ReadPerDC` plus `report.PerDCReader` implementation (bounded concurrency, coverage) | directory-engineer | B1; live connector reads (fleet tunnel mount) | FR-10; AC-39, AC-40 |
-| **B1** | `platform/report`: EP-8 host (`Dataset`, `Column`, `Fragment`, `Definition`, `Query`, `Resolve`, `Cell`, `SortKey`, `Label`, `PerDCReader`), `Registrar.Dataset`, Boot table-ownership check, `Deps.Report`, flip the `ReportAst` gen binding | reporting-engineer | — | FR-03 (version fields), FR-05; AC-05 |
-| **B2** | `store/reportsql`: `NewRegistry` (pre-quoting, table-name and rel checks), `Compile`, `CompileCount`, `Exec` (cursor), anchor and rel expansion (§3.3), scope with token layer and narrowing rendering (§4.3, §4.4), SQL vectors, **RP6** | reporting-engineer (security-architect reviews) | B1, T-0880; RP6 also needs T-0882 (oracle) and P2 | FR-05, FR-07, FR-12; AC-05, AC-06, AC-07 |
+| **B1** | `platform/report`: EP-8 host (`Dataset`, `Column`, `Fragment`, `Definition`, `Query`, `Resolve`, `Cell` with the `u` tag, `Column.UnknownWhen`, `SortKey`, `Label`, `PerDCReader`), `Registrar.Dataset`, Boot table-ownership check, `Deps.Report`, flip the `ReportAst` gen binding | reporting-engineer | — | FR-03 (version fields), FR-05; AC-05 |
+| **B2** | `store/reportsql`: `NewRegistry` (pre-quoting, table-name and rel checks), `Compile`, `CompileCount`, `Exec` (cursor), anchor and rel expansion (§3.3), the `UnknownWhen` checks and filter guard (§3.3), scope with token layer and narrowing rendering (§4.3, §4.4), SQL vectors, **RP6** | reporting-engineer (security-architect reviews) | B1, T-0880; RP6 also needs T-0882 (oracle) and P2 | FR-05, FR-07, FR-12; AC-05, AC-06, AC-07 |
 | **B3** | inventory: `inventory.users` and `inventory.computers` datasets, D4 policy-input tables and sync, D7 inputs, GIN index on `ancestry`, derived-state fragments, PSO `MaskAnchor` for `policy_source`, service-account signal, secret-key refusal, **RP8**, **RP11** for its datasets | directory-engineer (ad-expert consult) | B1, B2, P2 | FR-09, FR-14, FR-21; AC-12, AC-13, AC-14, AC-15, AC-29, AC-49 |
 | **B4** | `modules/reports` run path: module skeleton and page, `report_runs`/`report_run_rows` migrations and both triggers, `run.State`/`run.FailureReason`, `reports.run` job with row lock, `attempt` and interrupted rule, reuse window, concurrency cap, `run.ReadAccess` (§6.6), page queries, freshness label, permissions, run audit kinds with the full chain, retention job, run API handlers, **RP4**, **RP9** | reporting-engineer (backend-engineer reviews) | B1, B2, T-0882, P1, P2, T-0866 | FR-06, FR-07, FR-08, FR-11, FR-12, FR-13 (server-side sort and filter), FR-22 (run), FR-30, FR-31; AC-06–AC-11, AC-42, AC-48 |
 | **B5** | Library batch 1: loader, `LOCK`, crosswalk search index, USR-01, USR-02, USR-03, USR-05 with presets and hidden groups, sync-interval-0 narrowing | reporting-engineer | B3, B4 | FR-01, FR-02, FR-03, FR-04, FR-06, FR-09, FR-14; AC-01–AC-04, AC-12, AC-16, AC-17, AC-18, AC-49 |
 | **B6** | inventory: `inventory.groups`, `.group_members` (`grp` and `mbr` row anchors, primary-group edges, effective closure, cycle findings, FSP rows, `Via` hop as `MaskAnchor`), `.ous` (in-scope subtree counts over a `FilterAnchor`), `.contacts`, **RP11** for its datasets | directory-engineer | B1, B2, P2 | FR-15, FR-06; AC-19, AC-20, AC-21 |
 | **B7** | Library batch 2: PWD-01, PWD-02, GRP-01–GRP-04, CMP-01, CMP-02, OU-01, CTC-01 | reporting-engineer | B5, B6 | FR-01, FR-02, FR-09, FR-14, FR-15; AC-13, AC-19, AC-20, AC-22, AC-23 |
 | **B8** | Per-DC runs: the §6.5 stages, read cap, coverage labels, `EvalPerDC`; USR-04, PWD-03 | reporting-engineer | B4, B5, P5 | FR-10; AC-39, AC-40, AC-41 |
-| **B9** | Export: `export.Digest` (canonical form and vectors), `run.StoredSource`, About block, CSV and XLSX export jobs, `report_exports`, creator download through `run.ReadAccess` (§7.1), 410, delete, caps, export audit kinds, **RP5** | reporting-engineer | B4 | FR-16, FR-17, FR-18, FR-19, FR-20, FR-21, FR-22 (export), FR-31; AC-24–AC-28, AC-50 |
+| **B9** | Export: `export.Digest` (canonical form and vectors, `u` tag included), `export.Unknown()`, `run.StoredSource`, About block, CSV and XLSX export jobs, `report_exports`, creator download through `run.ReadAccess` (§7.1), 410, delete, caps, export audit kinds, **RP5** | reporting-engineer | B4 | FR-16, FR-17, FR-18, FR-19, FR-20, FR-21, FR-22 (export), FR-31; AC-24–AC-28, AC-50 |
 | **B10** | PDF and HTML encoders and export formats (before M2 exit) | reporting-engineer | B9 | FR-16, FR-19 |
 | **B11** | Schedules: DM-73 tables, `reports.schedule.*` Actions, fire job, owner-authority checks, delivery links authorised by the Delivery row (§7.2), ZIP, notify-only-if-data, `manage_all` metadata view, delivery audit kinds, **RP10** | reporting-engineer (backend-engineer reviews) | B4, B9, P3, P4 | FR-22 (delivery), FR-23–FR-29, FR-31; AC-30–AC-38, AC-45, AC-46, AC-47 |
 | **B12** | Screens: library and `/` search, run and results grid (sort, column filters, column chooser, row count, freshness, coverage, hidden-group banner), export dialog, schedule sheet; empty, error, stale and loading states | frontend-engineer | T-0866, T-0867, B4 (then B9, B11 per screen) | FR-01, FR-02, FR-04, FR-13, FR-32; AC-44 |
@@ -1125,6 +1221,9 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
 9. **A run found `running` by a job retry is failed `interrupted`**, never resumed (§6.3).
 10. **Result storage** is rows in PostgreSQL ([ADR-0010](../../decisions/0010-report-results-stored-as-rows-in-postgres.md),
    `proposed`).
+11. **Unknown is its own cell, never absent or inferred** (`"u"`, §6.2). State enums keep
+   `unknown_input_missing` for filtering, and dependent columns name their state in `UnknownWhen`, so
+   one stored shape, one digest tag and one API kind say "input missing" (§3.3).
 
 ## Changelog
 
@@ -1135,3 +1234,23 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
   and RP11 (§3.3); delivery-row authorisation and RP10 (§7.2); RP6 oracle `AuthorizeRead` (§4.6);
   `run.State`, `run.FailureReason`, transitions and the interrupted rule (§6.2, §6.3); T-0872
   replaced by T-0880, T-0881, T-0882; audit records the full chain and denied reads (§10).
+- 2026-10-30 · T-0894 · aligned with the T-0866 OpenAPI contract: `report.Cell` gains `"u"`
+  (unknown, FR-09) with its own digest tag, `export.Unknown()` and an API-kind column (§6.2);
+  `Column.UnknownWhen` and the no-inference filter guard (§3.1, §3.3); an expired run's record stays
+  readable (200, state `expired`) while pages and downloads answer 410 `report-result-expired`
+  (§6.2, §6.6 check 3 and the per-read check list); export re-run fields `rerun`/`rerunOfRunId` (§7.1);
+  rows B1, B2, B9.
+- 2026-10-30 · T-0956 · row B1 built: `internal/platform/report` (types, `Resolve`, strict `DecodeRunParams`,
+  `Cell` with the `u` tag, `Label`, `PerDCReader` port, `Host`, `CheckTables`), `Registrar.Dataset`,
+  `module.WithTableOwners`, `platform.Deps.Report`, `compose/server.bootReport`; the `ReportAst` gen
+  binding now points at `report.Query`. As built, against §3:
+  - `Cmp` carries `Values []Value` for `OpIn`; `RunParams.Filters` takes any `Expr` (wire filters
+    have groups); there is no `Period` field (the API adapter maps it to the `days` Param).
+  - `DecodeRunParams(data, def)` returns `(RunParams, preset, error)` and refuses an undeclared name
+    before reading its value (`unknown_parameter`).
+  - Per-DC terms are split from top-level conjuncts; a mixed term is `per_dc_misplaced`.
+  - `report.SortKey` is the type; the page sort-key encoder is `CellSortKey`, built in B4.
+  - Fragment validation rejects `;`, `--`, `/*`, `$`, `\`, quoted identifiers, unknown slots and
+    unbalanced parentheses. The check that a fragment names no table is B2 (needs the ownership map).
+  - `store/owners.Lookup` is an **empty** map: no generator exists yet, so any dataset fails Boot
+    (fail closed, ADR-0003 rule 6). A `tools/gen/modules` ticket fills it; B3 needs it.

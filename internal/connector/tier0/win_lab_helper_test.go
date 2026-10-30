@@ -54,8 +54,11 @@ type winLab struct {
 	prefix string // domain SID text
 }
 
-func winPath(env, def string) string {
-	if p := os.Getenv(env); p != "" {
+// labFile returns p, the value of a WIN_LAB_* variable the caller read by its constant name, or the
+// default file beside lab/windows when p is empty. It takes the value, not the name, so
+// fitness-profiles P1 can see which variable each call site reads (T-0889, T-0942).
+func labFile(p, def string) string {
+	if p != "" {
 		return p
 	}
 	return filepath.Join("..", "..", "..", "lab", "windows", def)
@@ -63,7 +66,7 @@ func winPath(env, def string) string {
 
 func winCreds(t *testing.T) map[string]string {
 	t.Helper()
-	f, err := os.Open(winPath("WIN_LAB_ENV", ".win-lab.env"))
+	f, err := os.Open(labFile(os.Getenv("WIN_LAB_ENV"), ".win-lab.env"))
 	if err != nil {
 		t.Fatalf("windows lab not up or credentials missing (make windows-lab-up; runbook windows-lab.md §10): %v", err)
 	}
@@ -92,7 +95,7 @@ func newWinLab(t *testing.T) *winLab {
 		host = winHostIP
 	}
 	env := winCreds(t)
-	pem, err := os.ReadFile(winPath("WIN_LAB_CA", ".win-lab-ca.pem"))
+	pem, err := os.ReadFile(labFile(os.Getenv("WIN_LAB_CA"), ".win-lab-ca.pem"))
 	if err != nil {
 		t.Fatal(err)
 	}

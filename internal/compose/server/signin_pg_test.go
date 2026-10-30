@@ -15,6 +15,9 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/modules/directory"
 	"github.com/skenzeriq/activediq/internal/platform/authn"
+	"github.com/skenzeriq/activediq/internal/platform/authority"
+	"github.com/skenzeriq/activediq/internal/platform/authz"
+	"github.com/skenzeriq/activediq/internal/platform/authz/authztest"
 	"github.com/skenzeriq/activediq/internal/platform/keys"
 	"github.com/skenzeriq/activediq/internal/platform/keys/keystest"
 	"github.com/skenzeriq/activediq/internal/platform/rbac"
@@ -41,7 +44,15 @@ func (activeConns) Health(context.Context, tenant.ID, connection.ID, bool, time.
 
 type oneUser struct{ tid tenant.ID }
 
-func (o *oneUser) Users(_ context.Context, tid tenant.ID, _ connection.ID, _ string, _ int) (client.UserSearchResult, error) {
+// consoleScopes is the producer behind the fake search: it never narrows (one naming-context grant),
+// so these tests keep exercising the sign-in plane, not the trimming (that is modules/directory's).
+type consoleScopes struct{}
+
+func (consoleScopes) ReadScope(context.Context, tenant.ID, authority.Chain, authz.Permission) (authz.ReadScope, error) {
+	return authztest.ReadScope(authz.ScopeGrant{Include: []authz.ScopeTerm{{Kind: authz.TermNamingContext, Connection: authz.ObjectID{15: 1}, Root: authz.ObjectID{15: 2}}}}), nil
+}
+
+func (o *oneUser) Users(_ context.Context, tid tenant.ID, _ connection.ID, _ string, _ int, _ authz.ReadScope) (client.UserSearchResult, error) {
 	o.tid = tid
 	return client.UserSearchResult{Users: []client.FoundUser{{ObjectGUID: "aaaaaaaa-0000-4000-8000-00000000000a", DisplayName: "Ada Bianchi", SAMAccountName: "ada.bianchi", Enabled: true}}}, nil
 }
@@ -115,7 +126,7 @@ func TestLocalAccountSignInThroughTheMountedRoutes(t *testing.T) {
 		}
 		found := &oneUser{}
 		cfg := config.Config{APIBodyBudget: config.DefaultAPIBodyBudget, PublicURL: chainOrigin}
-		h, err := buildAPIPorts(cfg, permissionCatalogue(), console.ports(testLimiter(t), az, permissionCatalogue()), console.Tags(), directory.Handlers{Connections: activeConns{}, Search: found}.Bind())
+		h, err := buildAPIPorts(cfg, permissionCatalogue(), console.ports(testLimiter(t), az, permissionCatalogue()), console.Tags(), directory.Handlers{Connections: activeConns{}, Search: found, Scopes: consoleScopes{}}.Bind())
 		if err != nil {
 			t.Fatal(err)
 		}

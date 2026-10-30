@@ -7,8 +7,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/skenzeriq/activediq/internal/directory/attr/sid"
-	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	"github.com/skenzeriq/activediq/internal/platform/authn"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
@@ -29,20 +27,11 @@ var tid = func() tenant.ID {
 	return id
 }()
 
-func mustSID(t *testing.T, s string) sid.SID {
-	t.Helper()
-	v, err := sid.Parse(s)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return v
-}
-
 // rig records the call order so the tests can compare paths.
 type rig struct {
 	mu        sync.Mutex
 	calls     []string
-	objs      map[string][]inventory.Ref
+	objs      map[string][]authn.DirectoryRef
 	backed    map[string][]string
 	states    map[string]authn.AccountState
 	principal Principal
@@ -57,9 +46,9 @@ func (r *rig) Accept(context.Context, []byte) (Principal, error) {
 	r.note("accept")
 	return r.principal, r.acceptErr
 }
-func (r *rig) ObjectsBySID(_ context.Context, _ tenant.ID, s sid.SID) ([]inventory.Ref, error) {
+func (r *rig) ObjectsBySID(_ context.Context, _ tenant.ID, s string) ([]authn.DirectoryRef, error) {
 	r.note("sid")
-	return r.objs[s.String()], nil
+	return r.objs[s], nil
 }
 func (r *rig) BackedBy(_ context.Context, _ tenant.ID, ref authn.DirectoryRef) ([]string, error) {
 	r.note("backed")
@@ -93,10 +82,10 @@ func (r *rig) Refused(_ context.Context, _ tenant.ID, reason string, _ netip.Add
 
 func newRig(t *testing.T) (*rig, *Service) {
 	r := &rig{
-		objs: map[string][]inventory.Ref{
-			"S-1-5-21-1-2-3-1001": {{Connection: conn, Object: objA}},
-			"S-1-5-21-1-2-3-1002": {{Connection: conn, Object: objA}},
-			"S-1-5-21-1-2-3-1003": {{Connection: conn, Object: objA}, {Connection: conn, Object: "aaaaaaaa-0000-4000-8000-0000000000a2"}},
+		objs: map[string][]authn.DirectoryRef{
+			"S-1-5-21-1-2-3-1001": {{ConnectionID: conn, ObjectGUID: objA}},
+			"S-1-5-21-1-2-3-1002": {{ConnectionID: conn, ObjectGUID: objA}},
+			"S-1-5-21-1-2-3-1003": {{ConnectionID: conn, ObjectGUID: objA}, {ConnectionID: conn, ObjectGUID: "aaaaaaaa-0000-4000-8000-0000000000a2"}},
 		},
 		backed: map[string][]string{objA: {acctOK}},
 		states: map[string]authn.AccountState{acctOK: authn.AccountActive, acctOff: authn.AccountDisabled},
@@ -110,17 +99,17 @@ var krbReq = func() []byte { return negInit([][]byte{oidKerberos}, krbToken()) }
 // produce a pending sign-in: the response cannot tell the caller which one it was.
 func Test_an9_uniform(t *testing.T) {
 	cases := map[string]func(r *rig){
-		"unmapped sid":      func(r *rig) { r.principal = Principal{SID: mustSID(t, "S-1-5-21-9-9-9-500")} },
-		"ambiguous objects": func(r *rig) { r.principal = Principal{SID: mustSID(t, "S-1-5-21-1-2-3-1003")} },
+		"unmapped sid":      func(r *rig) { r.principal = Principal{SID: "S-1-5-21-9-9-9-500"} },
+		"ambiguous objects": func(r *rig) { r.principal = Principal{SID: "S-1-5-21-1-2-3-1003"} },
 		"ambiguous accounts": func(r *rig) {
-			r.principal = Principal{SID: mustSID(t, "S-1-5-21-1-2-3-1001")}
+			r.principal = Principal{SID: "S-1-5-21-1-2-3-1001"}
 			r.backed[objA] = []string{acctOK, acctDup}
 		},
 		"disabled account": func(r *rig) {
-			r.principal = Principal{SID: mustSID(t, "S-1-5-21-1-2-3-1001")}
+			r.principal = Principal{SID: "S-1-5-21-1-2-3-1001"}
 			r.backed[objA] = []string{acctOff}
 		},
-		"no console account": func(r *rig) { r.principal = Principal{SID: mustSID(t, "S-1-5-21-1-2-3-1002")}; r.backed[objA] = nil },
+		"no console account": func(r *rig) { r.principal = Principal{SID: "S-1-5-21-1-2-3-1002"}; r.backed[objA] = nil },
 		"ticket rejected":    func(r *rig) { r.acceptErr = errors.New("replay") },
 	}
 	var wantReasons = map[string]string{"unmapped sid": ReasonUnmapped, "ambiguous objects": ReasonAmbiguous,
@@ -156,9 +145,9 @@ func Test_an9_unmapped_and_disabled_do_the_same_work(t *testing.T) {
 		_, _ = svc.SignIn(context.Background(), Request{Tenant: tid, Token: krbReq()})
 		return r.calls
 	}
-	unmapped := shape(func(r *rig) { r.principal = Principal{SID: mustSID(t, "S-1-5-21-9-9-9-500")} })
+	unmapped := shape(func(r *rig) { r.principal = Principal{SID: "S-1-5-21-9-9-9-500"} })
 	disabled := shape(func(r *rig) {
-		r.principal = Principal{SID: mustSID(t, "S-1-5-21-1-2-3-1001")}
+		r.principal = Principal{SID: "S-1-5-21-1-2-3-1001"}
 		r.backed[objA] = []string{acctOff}
 	})
 	if len(unmapped) != len(disabled) {
@@ -173,7 +162,7 @@ func Test_an9_unmapped_and_disabled_do_the_same_work(t *testing.T) {
 
 func Test_an9_success_begins_a_kerberos_pending_sign_in_after_reading_the_epoch(t *testing.T) {
 	r, svc := newRig(t)
-	r.principal = Principal{SID: mustSID(t, "S-1-5-21-1-2-3-1001")}
+	r.principal = Principal{SID: "S-1-5-21-1-2-3-1001"}
 	h, err := svc.SignIn(context.Background(), Request{Tenant: tid, Token: krbReq(), ClientIP: netip.MustParseAddr("192.0.2.7")})
 	if err != nil {
 		t.Fatal(err)
@@ -194,7 +183,7 @@ func Test_an9_success_begins_a_kerberos_pending_sign_in_after_reading_the_epoch(
 func Test_an9_infrastructure_failure_is_not_a_sign_in_refusal(t *testing.T) {
 	_, svc := newRig(t)
 	svc.Directory = failingDir{}
-	svc.Acceptor = acceptAll{mustSID(t, "S-1-5-21-1-2-3-1001")}
+	svc.Acceptor = acceptAll{"S-1-5-21-1-2-3-1001"}
 	if _, err := svc.SignIn(context.Background(), Request{Tenant: tid, Token: krbReq()}); err == nil || errors.Is(err, ErrSignInFailed) {
 		t.Fatalf("got %v", err)
 	}
@@ -202,11 +191,11 @@ func Test_an9_infrastructure_failure_is_not_a_sign_in_refusal(t *testing.T) {
 
 type failingDir struct{}
 
-func (failingDir) ObjectsBySID(context.Context, tenant.ID, sid.SID) ([]inventory.Ref, error) {
+func (failingDir) ObjectsBySID(context.Context, tenant.ID, string) ([]authn.DirectoryRef, error) {
 	return nil, errors.New("db down")
 }
 
-type acceptAll struct{ s sid.SID }
+type acceptAll struct{ s string }
 
 func (a acceptAll) Accept(context.Context, []byte) (Principal, error) {
 	return Principal{SID: a.s}, nil

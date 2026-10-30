@@ -54,17 +54,27 @@
   },
   "activation": [
     {
-      "check": "P2",
-      "subject": "MSI + multi-arch OCI build and install/boot smoke for every profile (with TM-F-HOST and TM-F-PORTS from threat-model §15)",
-      "paths": ["packaging/windows/", "packaging/oci/"],
+      "check": "P2-oci",
+      "subject": "multi-arch (amd64, arm64) OCI server images and the boot smoke of linux-oci and saas (with TM-F-HOST and TM-F-PORTS from threat-model §15)",
+      "paths": ["packaging/linux-oci/"],
       "command": [],
-      "reason": "blueprint §1: packaging/ holds windows/ (MSI) and oci/ (Dockerfiles, Compose); the first of them is the first artefact a profile must build and boot"
+      "deferral": {"ticket": "T-0927", "expires": "2026-12-15", "adr": "0002-deployment-model.md"},
+      "reason": "ADR-0002 erratum E-3: packaging/linux-oci/ holds the Dockerfiles and Compose files; the first of them is the first OCI artefact a profile must build and boot"
+    },
+    {
+      "check": "P2-msi",
+      "subject": "MSI build, install, upgrade and uninstall of every MSI on the Windows lab (with TM-F-HOST and TM-F-PORTS from threat-model §15)",
+      "paths": ["packaging/windows/"],
+      "command": [],
+      "deferral": {"ticket": "T-0928", "expires": "2027-01-30", "adr": "0002-deployment-model.md"},
+      "reason": "ADR-0002 erratum E-3: packaging/windows/ holds the MSI sources; the first of them is the first MSI a profile must build and install"
     },
     {
       "check": "P3",
       "subject": "connector conformance under the embedded and the remote transport against the Samba lab; directory/Kerberos/Graph libraries and credential unsealing stay inside the connector root",
       "paths": ["internal/connector/*/"],
       "command": [],
+      "deferral": {"ticket": "T-0929", "expires": "2026-11-30", "adr": "0002-deployment-model.md"},
       "reason": "internal/connector/ is doc-only today; the first package under it is the connector implementation the conformance suite runs against"
     },
     {
@@ -72,6 +82,7 @@
       "subject": "multi-tenant saas composition: tenant A's connector certificate and Entra certificate cannot touch tenant B",
       "paths": ["internal/connector/*/"],
       "command": [],
+      "deferral": {"ticket": "T-0931", "expires": "2026-11-30", "adr": "0002-deployment-model.md"},
       "reason": "ADR-0002 Fitness function: P3 and P4 need the connector; P4 additionally composes the saas manifest with two remote connectors, so it activates with the first connector package"
     },
     {
@@ -84,15 +95,17 @@
     {
       "check": "P6",
       "subject": "self-hosted boot smoke with outbound traffic denied (except lab DC and PostgreSQL): boot, sign-in, directory read",
-      "paths": ["packaging/windows/", "packaging/oci/"],
+      "paths": ["packaging/linux-oci/"],
       "command": [],
-      "reason": "P6 runs the boot smoke test of P2 with egress denied, so it activates with the first packaging directory"
+      "deferral": {"ticket": "T-0932", "expires": "2026-12-15", "adr": "0002-deployment-model.md"},
+      "reason": "ADR-0002 erratum E-4: P6 runs on every merge against linux-oci (the boot smoke of P2-oci with egress denied), so it activates with packaging/linux-oci/"
     },
     {
       "check": "U3",
       "subject": "agent contract namespace: skenzeriq.agent.v1 references no activediq.* type; breaking-change check on both namespaces",
       "paths": ["proto/skenzeriq/"],
       "command": [],
+      "deferral": {"ticket": "T-0933", "expires": "2026-11-30", "adr": "0002-deployment-model.md"},
       "reason": "blueprint §1: proto/skenzeriq/agent/v1 is the shared host contract (T-0040)"
     },
     {
@@ -100,6 +113,7 @@
       "subject": "contract-freeze gate: skenzeriq/agent/v1 is not frozen while agent-contract-review.md is absent or not accepted",
       "paths": ["proto/skenzeriq/agent/"],
       "command": [],
+      "deferral": {"ticket": "T-0934", "expires": "2026-11-20", "adr": "0002-deployment-model.md"},
       "reason": "U4 guards the same protos as U3: it activates with proto/skenzeriq/agent/"
     }
   ]
