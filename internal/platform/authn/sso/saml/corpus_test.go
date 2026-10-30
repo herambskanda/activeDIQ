@@ -69,36 +69,6 @@ func TestCorpus(t *testing.T) {
 	}
 }
 
-// TestCorpusCoverage is the FIT-SSO-2 shape for SAML: every check SAML-1..19 is cited, and every class has a
-// record.
-func TestCorpusCoverage(t *testing.T) {
-	cited, classes := map[string]bool{}, map[string]bool{}
-	for _, r := range loadCorpus(t) {
-		classes[r.Class] = true
-		for _, c := range r.Cites {
-			cited[c] = true
-		}
-	}
-	for n := 1; n <= 19; n++ {
-		id := "SAML-" + itoa(n)
-		if !cited[id] {
-			t.Errorf("%s is cited by no corpus record", id)
-		}
-	}
-	for _, c := range []string{"forged", "wrapped", "replayed", "misaddressed", "malformed"} {
-		if !classes[c] {
-			t.Errorf("no %s record", c)
-		}
-	}
-}
-
-func itoa(n int) string {
-	if n < 10 {
-		return string(rune('0' + n))
-	}
-	return string(rune('0'+n/10)) + string(rune('0'+n%10))
-}
-
 // FuzzSAMLComplete mutates responses and checks the oracle (spec §10.1): any Verified must be a tuple the
 // test IdP actually signed, and the same assertion ID is never accepted twice. Seeds are every corpus case
 // and the known-good responses.

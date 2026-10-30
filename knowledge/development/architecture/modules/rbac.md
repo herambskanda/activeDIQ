@@ -1,7 +1,7 @@
 ---
 title: "platform/rbac: RBAC persistence and the operation Authorizer"
 date: 2026-10-26
-updated: 2026-10-27
+updated: 2026-10-30
 status: draft
 owner: backend-engineer
 ticket: T-0367
@@ -9,7 +9,7 @@ ticket: T-0367
 
 # platform/rbac (DM-34, DM-35, DM-36; threat model §7.7)
 
-Code: `internal/platform/rbac/`, `internal/modules/delegation/`; migrations `0018_authz_rbac.sql`, `0037_authz_subjects.sql`.
+Code: `internal/platform/rbac/`, `internal/modules/delegation/`; migrations `0018_authz_rbac.sql`, `0037_authz_subjects.sql`, `0058_authz_ou_one_level_root.sql`.
 
 - **Tables** (tenant, RLS): `authz_roles`, `authz_role_permissions`, `authz_assignments`,
   `authz_assignment_roots`. Subjects are an account, a directory group
@@ -23,6 +23,17 @@ Code: `internal/platform/rbac/`, `internal/modules/delegation/`; migrations `001
 - **Tier-0 scope (T-0173):** a target of class `tier0_scope` (GUID = connection ID) is covered only by
   a `tier0_scope` root for that connection. OU, naming-context and connection-wide roots never cover it;
   a `tier0_scope` root covers nothing else; the Tier-0 scope permission is refused on any other class.
+- **Root kinds (DM-35):** `naming_context`, `ou_subtree`, `ou_one_level`, `entra_tenant`, `tier0_scope`, `tenant`.
+  `ou_one_level` (T-0881, migration 0058) reaches the **direct children of an OU only**: a target is covered
+  when its nearest parent (`Target.Ancestors[0]`) is the root; the OU itself and anything deeper are not.
+  It is an include root only (the schema and `validRoots` refuse it as an exclude) and its GUID is an OU's,
+  never the connection's (the target chain ends in the connection). `authz.ScopeRoot.OneLevel` carries the
+  narrowing: `Scope.covers` honours it, and `CheckGrant` containment lets a one-level grantor root contain only
+  the identical one-level root (never a subtree below it), while a subtree grantor root contains a one-level
+  root beneath it. `Authorizer.resolve` sets `OneLevel` from the kind whatever a `RootResolver` returns. Excludes
+  of such an assignment are ordinary subtree excludes and beat the include. The object view fails closed on a
+  root kind it does not know (a zero root: the scope covers nothing), so a new kind is never read as a subtree.
+  The OpenAPI `AssignmentRootKind` enum does not list `ou_one_level` yet (the API follows the store).
 - **Catalog:** `BuiltInRoles()` (tier 0/1/2). No Tier-2 role holds a Tier-0 scope permission: checked in
   `ValidateRoles`, and by a trigger in the schema.
 - **Tenant owner (T-0436, DM-30.I4, DM-36.I4, ADM-126):** `BuiltInRoles()` seeds `tenant-owner` (tier 1, no
