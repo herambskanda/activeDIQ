@@ -29,22 +29,14 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
-// The tables of the password step (migration 0057, T-0783). The domain model has no entity of its own
-// for them, so each is filed under the entity whose data it holds (T-0884):
-//   - authn_local_credentials is DM-30 Account's local credential (kind `local`). Not append-only: a
-//     password change UPDATEs the row (SetPassword); the runtime role has no DELETE, which is a removal
-//     being a state change of the account, not an append-only claim.
-//   - authn_signin_throttle is DM-31 sign-in state beside authn_pending_signins. Not append-only: the
-//     counter is INSERT ... ON CONFLICT DO UPDATE'd, reset and raised by UPDATE, and the purge job
-//     DELETEs dead rows (throttle_purge.go).
-//   - authn_signin_pepper is the per-tenant HMAC key of that throttle, sealed under the tenant data key.
-//     It is only ever inserted (the runtime role has neither UPDATE nor DELETE), but DM-31 is not an
-//     append-only entity, and the check refuses an append-only claim the model does not make, so the
-//     table is not declared append-only; the grants hold the property.
+// The three tables of migration 0057 (T-0783). All store DM-30 (the local account's credential and its
+// sign-in guard) and are tenant tables: none is append-only, because a password change updates the
+// credential in place and the throttle row is operational state. The pepper is insert-only for the app
+// role by grant (no UPDATE, no DELETE), but DM-30 is not an append-only entity, so it is not declared so.
 var (
 	_ = tablekind.Declare(tablekind.Table{Name: "public.authn_local_credentials", Entity: "DM-30", Kind: tablekind.Tenant})
-	_ = tablekind.Declare(tablekind.Table{Name: "public.authn_signin_throttle", Entity: "DM-31", Kind: tablekind.Tenant})
-	_ = tablekind.Declare(tablekind.Table{Name: "public.authn_signin_pepper", Entity: "DM-31", Kind: tablekind.Tenant, Sealed: []string{"sealed_secret"}})
+	_ = tablekind.Declare(tablekind.Table{Name: "public.authn_signin_throttle", Entity: "DM-30", Kind: tablekind.Tenant})
+	_ = tablekind.Declare(tablekind.Table{Name: "public.authn_signin_pepper", Entity: "DM-30", Kind: tablekind.Tenant, Sealed: []string{"sealed_secret"}})
 )
 
 // AN-8, the break-glass password step (threat model §7.6 rules 2 and 3). It turns a right username and

@@ -1006,6 +1006,14 @@ FF-SP4 (report-AST vectors) and FF-SP10 (output structure) already exist in safe
 when one is missing or skipped. RP11 must run once per dataset that `report.Host` registers, so
 the job compares the dataset list with the test's subtests.
 
+**As built (T-0873, runbook `reports-fitness.md`):** RP1 lives in the `sqlconst` analyzer and also
+rejects the address of a `CompiledSQL` (an unmarshal target). RP2 also allows `authz/authztest`
+(the test double must call `NewReadScope`) and fails non-test code that imports it. `library/LOCK`
+is `sha256sum` format, covers every `*.json` under `library/`, and is append-only against the base
+ref. The dataset list is every `report.Dataset` literal in non-test code, whose `ID` must be a
+string constant; the RP11 subtest for a dataset is named by that ID. A check whose code has not
+landed prints `pending`; the owning build ticket flips `Landed` in `tools/fitness/reports/bindings.go`.
+
 ## 10. Contributions (what `Register` registers)
 
 | Kind | ID | Notes |

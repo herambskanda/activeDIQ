@@ -19,12 +19,14 @@ const importSuffix = "internal/platform/authn/tenantref"
 // Adding a file here is a security review item: the text must never come from a request body, path or
 // query (the unauthenticated attestation callback is a registry-listed mint instead).
 var permitted = map[string]string{
+	"internal/compose/server/authzaudit.go":          "p.Tenant (authenticated principal handed to Authorizer.Allow by the apihost chain)",
 	"internal/compose/server/console.go":             "p.Tenant (authenticated session)",
 	"internal/compose/server/tier0.go":               "authority.TenantFrom (set by the runner)",
 	"internal/directory/client/reads_tunnel.go":      "authority context set by the runner",
 	"internal/modules/connections/attest_http.go":    "p.Tenant (session principal)",
 	"internal/modules/compliance/hold.go":            "app.tenant_id of the runner transaction in Plan; payload tenant set in Plan",
 	"internal/modules/connections/reconfirm.go":      "runner payload tenant, set in Plan from app.tenant_id",
+	"internal/modules/directory/handlers.go":         "p.Tenant (authenticated principal from apihost.PrincipalFrom)",
 	"internal/platform/fleet/fleetsql/enrollment.go": "p.Tenant (authenticated principal) compared to the tid argument",
 	"internal/platform/fleet/fleetsql/reenrol.go":    "p.Tenant (authenticated principal) compared to the tid argument",
 	"internal/platform/fleet/fleetsql/revoke.go":     "p.Tenant (authenticated principal) compared to the tid argument",
