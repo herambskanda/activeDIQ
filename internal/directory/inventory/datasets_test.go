@@ -9,9 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
-
 	"github.com/skenzeriq/activediq/internal/directory/attr/filetime"
 	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
@@ -205,23 +202,6 @@ func (e *env) scopeOU(c inventory.ConnectionID) authz.ReadScope {
 	return authztest.ReadScope(authz.ScopeGrant{Include: []authz.ScopeTerm{{Kind: authz.TermSubtree, Connection: rpID(string(c)), Root: rpID(hOU)}}})
 }
 
-// recTx records the SQL and the bound arguments of every statement it forwards.
-type recTx struct {
-	store.Tx
-	sql  []string
-	args [][]any
-}
-
-func (r *recTx) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
-	r.sql, r.args = append(r.sql, sql), append(r.args, args)
-	return r.Tx.Exec(ctx, sql, args...)
-}
-
-func (r *recTx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
-	r.sql, r.args = append(r.sql, sql), append(r.args, args)
-	return r.Tx.QueryRow(ctx, sql, args...)
-}
-
 // hQuery describes one report run.
 type hQuery struct {
 	dataset report.DatasetID
@@ -265,9 +245,12 @@ func (e *env) run(t *testing.T, reg *reportsql.Registry, q hQuery) hResult {
 		t.Fatalf("CompileCount: %v", err)
 	}
 	res := hResult{rows: map[string]map[report.ColumnID]report.Cell{}}
+	for _, q := range []reportsql.Query{rowsQ, cntQ} {
+		sql, args := q.Statement()
+		res.sql, res.args = append(res.sql, sql), append(res.args, args)
+	}
 	err = e.tx(t, e.a, func(ctx context.Context, tx store.Tx) error {
-		rec := &recTx{Tx: tx}
-		_, err := reportsql.Exec(ctx, rec, rowsQ, 500, func(_ context.Context, rows []report.Row) error {
+		_, err := reportsql.Exec(ctx, tx, rowsQ, 500, func(_ context.Context, rows []report.Row) error {
 			for _, row := range rows {
 				k := strings.ToLower(row.Key)
 				m := map[report.ColumnID]report.Cell{}
@@ -282,8 +265,7 @@ func (e *env) run(t *testing.T, reg *reportsql.Registry, q hQuery) hResult {
 		if err != nil {
 			return err
 		}
-		res.count, err = reportsql.Count(ctx, rec, cntQ)
-		res.sql, res.args = rec.sql, rec.args
+		res.count, err = reportsql.Count(ctx, tx, cntQ)
 		return err
 	})
 	if err != nil {

@@ -43,6 +43,13 @@ type Query struct {
 // "scope_term_unsupported:<kind>"). A scope that renders FALSE is not an error (contract §4.3).
 func (q Query) ScopeReasons() []string { return append([]string(nil), q.reasons...) }
 
+// Statement returns the statement text and the bound arguments, so a dataset's test can assert that a
+// predicate is in the SQL and its values are bound (T-0958, AC-49). The arguments hold GUIDs and
+// filter values: callers must not log them. Nothing on the run path calls it.
+func (q Query) Statement() (sql string, args []any) {
+	return string(q.sql), append([]any(nil), q.args...)
+}
+
 type argKey struct {
 	cast string
 	v    any
