@@ -1,7 +1,7 @@
 # Lab cases for the DC agent MSI (T-0648, ADR-0006). Runs ON the lab DC as an elevated Administrator,
 # normally through lab/windows/bin/agent-verify. Prints "CASE <id> PASS|FAIL <detail>" lines and exits
 # non-zero if any case failed. It installs, repairs, upgrades and uninstalls the agent: run it on the
-# lab DC only, never on a real domain controller. Runbook: knowledge/development/runbooks/windows-lab.md §11.
+# lab DC only, never on a real domain controller. Runbook: knowledge/development/runbooks/windows-lab.md §13.
 #
 # Inputs (C:\lab\build): activediq-agent-<ver>.msi (built from packaging/windows/agent/Agent.wxs),
 # agentsetup.exe, and the Go test binaries agent.test.exe. No credential is committed or logged: the

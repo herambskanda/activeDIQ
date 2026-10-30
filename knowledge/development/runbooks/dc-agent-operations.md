@@ -9,7 +9,7 @@ ticket: T-0555
 
 # Runbook: operating the DC agent
 
-Design: [ADR-0006](../decisions/0006-dc-agent-runs-as-a-virtual-service-account.md), [contract](../architecture/agent-host-addc-contract.md). Rehearsed on a Windows Server DC lab under T-0648 (evidence: [windows-lab-runs/T-0648-agent-20261029.log](windows-lab-runs/T-0648-agent-20261029.log), method in [windows-lab.md](windows-lab.md) §11). Enrolled-agent fault tests remain open (see "Still owed").
+Design: [ADR-0006](../decisions/0006-dc-agent-runs-as-a-virtual-service-account.md), [contract](../architecture/agent-host-addc-contract.md). Rehearsed on a Windows Server DC lab under T-0648 (evidence: [windows-lab-runs/T-0648-agent-20261029.log](windows-lab-runs/T-0648-agent-20261029.log), method in [windows-lab.md](windows-lab.md) §13). Enrolled-agent fault tests remain open (see "Still owed").
 
 ## Identity and footprint
 

@@ -707,6 +707,17 @@ func (b *builder) membersOf(roots []*ad.Entry, basis Basis) error {
 			if !isDomainAccountSID(ss[0]) {
 				return fmt.Errorf("tier0: group %s has the broad SID %s as a (nested) member; every principal would be in its closure", parent[k], ss[0])
 			}
+			if trustResolvedRID(ss[0]) {
+				ms, err := b.foreignGroupMembers(ss[0])
+				if err != nil {
+					return err
+				}
+				for _, m := range ms {
+					if _, err := b.mark(m, basis); err != nil {
+						return err
+					}
+				}
+			}
 		}
 		if !isRoot[k] {
 			if _, err := b.mark(e, basis); err != nil {
@@ -1258,6 +1269,52 @@ func broadForeignRID(s sid.SID) bool {
 	return rid < 1000 && rid != 500 && rid != 501 && rid != 502
 }
 
+// isLocalDomainSID is true for a SID in this builder's own domain.
+func (b *builder) isLocalDomainSID(s sid.SID) bool {
+	d, ok := s.DomainSID()
+	return ok && d.String() == b.domSID.String()
+}
+
+// trustResolvedRID is true for a foreign domain account SID whose RID is 1000 or more: a custom user,
+// computer or group of the trusted domain, which its FSP does not distinguish (T-0435).
+func trustResolvedRID(s sid.SID) bool {
+	p := strings.Split(s.String(), "-")
+	rid, err := strconv.ParseUint(p[len(p)-1], 10, 32)
+	return err == nil && rid >= 1000
+}
+
+// foreignGroupMembers resolves a foreign account FSP (RID >= 1000) through the trust. A user returns
+// nil; a group returns the FSP objects of its members (a member with no FSP here holds no right in
+// this domain and has no object to mark). When the directory cannot resolve through a trust, or the
+// trust cannot say what the SID is, it fails closed: the SID may be a group whose members hold the right.
+func (b *builder) foreignGroupMembers(s sid.SID) ([]*ad.Entry, error) {
+	td, ok := b.d.(TrustDirectory)
+	if !ok {
+		return nil, fmt.Errorf("tier0: grant to %s, an account of another domain that may be a group; no trust lookup can show it is a user", s)
+	}
+	tp, err := td.ResolveTrusted(b.ctx, s)
+	if err != nil {
+		return nil, fmt.Errorf("tier0: grant to %s, an account of another domain that may be a group; trust lookup failed: %w", s, err)
+	}
+	switch tp.Kind {
+	case TrustUser:
+		return nil, nil
+	case TrustGroup:
+		var out []*ad.Entry
+		for _, m := range tp.Members {
+			e, found, err := b.get(dn.SIDRef(m), idAttrs)
+			if err != nil {
+				return nil, err
+			}
+			if found && hasClass(e, "foreignSecurityPrincipal") {
+				out = append(out, e)
+			}
+		}
+		return out, nil
+	}
+	return nil, fmt.Errorf("tier0: grant to %s, an account of another domain that the trust could not identify as a user", s)
+}
+
 // markPrincipalsSkip is markPrincipals except that an object for which skip is true is not marked and
 // its members are not walked.
 func (b *builder) markPrincipalsSkip(sids []sid.SID, basis Basis, skip func(*ad.Entry) bool) error {
@@ -1301,6 +1358,33 @@ func (b *builder) markPrincipalsSkip(sids []sid.SID, basis Basis, skip func(*ad.
 		// the fail-closed (a planted well-known SID in sIDHistory would otherwise hide the grant). The same
 		// holds for a trusted domain's broad well-known RID (Domain Users 513, ...): its tokens carry it
 		// with or without an FSP, so a holder cannot stand in for the principals it reaches.
+		if found && hasClass(e, "foreignSecurityPrincipal") && trustResolvedRID(s) {
+			ms, err := b.foreignGroupMembers(s)
+			if err != nil {
+				return err
+			}
+			for _, m := range ms {
+				if err := take(m); err != nil {
+					return err
+				}
+			}
+		}
+		// T-0819: after an ADMT group migration the source group often still exists in the trusted domain
+		// and its members carry its SID across the trust, so a holder alone under-reports who holds the
+		// right. A foreign custom-RID SID with no FSP but a holder is resolved through the trust exactly
+		// like one with an FSP: a user marks only the holders, a group also its members' FSPs, and no
+		// seam, error or unknown fails closed. A SID of this domain is not foreign and is left alone.
+		if !found && len(holders) > 0 && isDomainAccountSID(s) && trustResolvedRID(s) && !b.isLocalDomainSID(s) {
+			ms, err := b.foreignGroupMembers(s)
+			if err != nil {
+				return err
+			}
+			for _, m := range ms {
+				if err := take(m); err != nil {
+					return err
+				}
+			}
+		}
 		if !found && (len(holders) == 0 || !isDomainAccountSID(s) || broadForeignRID(s)) {
 			if b.ignorableSID(s) {
 				// Ignorable SIDs name no principal; a holder (SYSTEM planted in sIDHistory) is
@@ -1576,7 +1660,7 @@ func (b *builder) c9() error {
 			// gPLink is a plain string, so a dangling link is possible, but a GPO the connector may not
 			// read looks identical, and a GPO linked at a Tier-0 SOM controls Tier-0. Fail closed;
 			// the operator removes the dangling link or grants read.
-			return fmt.Errorf("tier0: GPO %s linked at a Tier-0 start of authority cannot be read", g.String())
+			return fmt.Errorf("tier0: GPO %s linked at a Tier-0 start of authority cannot be read", g.CanonicalString())
 		}
 		if _, err := b.mark(ge, C9); err != nil {
 			return err

@@ -58,6 +58,7 @@ lab/windows/.win-lab-ca.pem
 
 # stray go build output of tools/fitness/profiles
 /profiles
+!knowledge/development/runbooks/windows-lab-runs/*.log
 
 # Stray `go build` output of the fitness tools (make uses go run)
 /tools/fitness/*/*

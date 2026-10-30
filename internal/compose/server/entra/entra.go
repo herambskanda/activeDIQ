@@ -7,6 +7,8 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"github.com/skenzeriq/activediq/internal/directory/odata"
+	gs "github.com/skenzeriq/activediq/internal/directory/odata/graphschema"
 	"github.com/skenzeriq/activediq/internal/modules/connections"
 	"io"
 	"net/http"
@@ -215,7 +217,17 @@ func (g *GraphReader) ReadSyncFeatures(ctx context.Context, token connections.Be
 		if len(b) == 0 {
 			return ErrGraphRefused
 		}
-		hr, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/directory/onPremisesSynchronization?$select=features", nil)
+		bu, err := url.Parse(base)
+		if err != nil {
+			return ErrGraphRefused
+		}
+		// The URL is built by the odata primitive, never by concatenation (safe-primitives-odata §6).
+		u, err := odata.Get(odata.Seg(gs.SegDirectory), odata.Seg(gs.SegOnPremisesSync)).
+			With(odata.Query{}.Select(gs.SyncFeatures)).URL(bu)
+		if err != nil {
+			return ErrGraphRefused
+		}
+		hr, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 		if err != nil {
 			return ErrGraphRefused
 		}

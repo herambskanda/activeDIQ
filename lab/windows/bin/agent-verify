@@ -6,7 +6,7 @@ Cross-builds activediq-agent.exe and agentsetup.exe with the pinned Go toolchain
 builds the MSI there with WiX, runs the cases, and writes the CASE lines to the log path given with
 --log. Needs: pip install pywinrm requests-ntlm. Credentials come from the gitignored lab env file
 (WIN_LAB_ENV, default lab/windows/.win-lab.env in the main checkout) and are never printed.
-Runbook: knowledge/development/runbooks/windows-lab.md section 11.
+Runbook: knowledge/development/runbooks/windows-lab.md section 13.
 """
 import argparse, base64, hashlib, os, subprocess, sys, tempfile, time
 
