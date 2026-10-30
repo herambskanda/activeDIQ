@@ -116,12 +116,29 @@ const stripTemp = (s) => s.replace(/\/tmp\/[\w.-]+/g, '<tmp>');
  */
 export function extractFindings(text, roots = []) {
   const found = new Map();
+  const add = (key) => { if (key !== null) found.set(key, (found.get(key) ?? 0) + 1); };
+  let block = null; // the id of a `<id> … : FAIL` header whose indented lines are its violations
   for (const raw of text.split('\n')) {
-    const key = findingKey(raw, roots);
-    if (key !== null) found.set(key, (found.get(key) ?? 0) + 1);
+    const line = raw.replace(ANSI, '').replace(/\r$/, '');
+    if (block !== null) {
+      if (/^\s{2,}\S/.test(line)) {
+        let body = line.trim().replace(/^[-*]\s+/, '');
+        for (const root of roots) body = body.split(root).join('<root>');
+        add(stripTemp(`FAIL ${block}: ${stripTimes(body)}`));
+        continue;
+      }
+      block = null;
+    }
+    const header = FAIL_BLOCK.map((re) => re.exec(line.trim())).find(Boolean);
+    if (header && !/^\s/.test(line)) { block = header[1]; continue; }
+    add(findingKey(raw, roots));
   }
   return found;
 }
+
+// A result that lists its violations indented under a heading: agent-host prints
+// `A4  <what>: FAIL` and host prints `FAIL   <case>`, each then one indented line per violation.
+const FAIL_BLOCK = [/^(\S+)\s+.*: FAIL$/, /^FAIL\s+(\S+)$/];
 
 /**
  * The findings in `head` that `base` does not account for (multiset difference).

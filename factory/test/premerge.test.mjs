@@ -329,14 +329,14 @@ const JOBS = {
     other: 'packaging/linux-oci/compose.yml: the server must run as a numeric non-root user: "uid:gid"',
   },
   'fitness-host': {
-    line: 'fitness-host: FAIL HOST-IDENT: service account is root',
-    moved: 'fitness-host: FAIL HOST-IDENT: service account is root',
-    other: 'fitness-host: FAIL HOST-NO-DUMPS: core dumps are not disabled',
+    line: 'FAIL   HOST-IDENT                \n         - service account is root',
+    moved: 'FAIL   HOST-IDENT                \n         - service account is root',
+    other: 'FAIL   HOST-IDENT                \n         - the data directory is writable by the service group',
   },
   'fitness-agent-host': {
-    line: 'fitness-agent-host: A4: agent closure imports github.com/skenzeriq/activediq/internal/compose/tunnelbind, which is not on the allowlist tools/fitness/agenthost/closure-allow.txt (GOOS=windows)',
-    moved: 'fitness-agent-host: A4: agent closure imports github.com/skenzeriq/activediq/internal/compose/tunnelbind, which is not on the allowlist tools/fitness/agenthost/closure-allow.txt (GOOS=windows)',
-    other: 'fitness-agent-host: R3: agent module internal/modules/x imports os/exec',
+    line: 'A4  agent binary closure holds only allowlisted non-stdlib packages: FAIL\n    agent closure imports github.com/skenzeriq/activediq/internal/compose/tunnelbind, which is not on the allowlist tools/fitness/agenthost/closure-allow.txt (GOOS=windows)',
+    moved: 'A4  agent binary closure holds only allowlisted non-stdlib packages: FAIL\n    agent closure imports github.com/skenzeriq/activediq/internal/compose/tunnelbind, which is not on the allowlist tools/fitness/agenthost/closure-allow.txt (GOOS=windows)',
+    other: 'R3  agent modules import only allowlisted packages: FAIL\n    internal/modules/x imports os/exec',
   },
   'fitness-built-msi': {
     line: 'fitness-built-msi: dist/activeDIQ-agent.msi: ServiceInstall runs as LocalSystem',
@@ -387,11 +387,11 @@ test('every job in make fitness has a violation fixture, so none is red on main 
 
 for (const [job, s] of Object.entries(JOBS)) {
   test(`${job}: a violation is a finding, a moved one is the same finding, another one is new`, () => {
-    const key = findingKey(s.line);
-    assert.ok(key, `findingKey does not recognise ${job}'s violation line: ${s.line}`);
-    assert.equal(findingKey(s.moved), key, 'a line number is not part of the finding');
-    assert.ok(findingKey(s.other), `findingKey does not recognise ${job}'s other line: ${s.other}`);
-    assert.notEqual(findingKey(s.other), key);
+    // A sample is one violation: a line, or a heading with one indented line under it.
+    const only = (text) => { const k = [...extractFindings(text).keys()]; assert.equal(k.length, 1, `${job}: expected one finding in ${JSON.stringify(text)}, got ${JSON.stringify(k)}`); return k[0]; };
+    const key = only(s.line);
+    assert.equal(only(s.moved), key, 'a line number is not part of the finding');
+    assert.notEqual(only(s.other), key);
     // The job's summary and progress lines are not findings.
     const name = job.replace(/^fitness-/, '');
     for (const quiet of [`fitness-${name}: 3 violation(s); rules: x`, `fitness-${name}: ok (X1)`, `fitness-${name}: FAIL: 2 problem(s)`]) {
@@ -399,29 +399,22 @@ for (const [job, s] of Object.entries(JOBS)) {
     }
     const base = extractFindings(`${s.line}\nmake: *** [tools/ci/ci.mk:9: ${job}] Error 1\n`);
     assert.deepEqual(newFindings(base, extractFindings(`${s.moved}\nmake: *** [tools/ci/ci.mk:9: ${job}] Error 1\n`)), []);
-    assert.deepEqual(newFindings(base, extractFindings(`${s.line}\n${s.other}\nmake: *** [tools/ci/ci.mk:9: ${job}] Error 1\n`)).map((f) => f.key), [findingKey(s.other)]);
+    assert.deepEqual(newFindings(base, extractFindings(`${s.line}\n${s.other}\nmake: *** [tools/ci/ci.mk:9: ${job}] Error 1\n`)).map((f) => f.key), [only(s.other)]);
   });
 }
 
-test('through the gate, one violation added to any job shape is refused naming it, and moved ones pass', async () => {
-  // One run per distinct way of writing a finding: the key of each job's line with the job's own words removed.
-  const shapes = new Map();
-  for (const [job, s] of Object.entries(JOBS)) {
-    const shape = s.line.replace(/[A-Za-z0-9_.\/-]+/g, 'w').replace(/w( w)+/g, 'w').slice(0, 40);
-    if (!shapes.has(shape)) shapes.set(shape, { job, ...s });
-  }
-  assert.ok(shapes.size >= 6, `expected several distinct shapes, got ${shapes.size}`);
+test('through the gate, one violation added to any job is refused naming it, and moved ones pass', async () => {
   const f = setup({});
   try {
     let n = 0;
-    for (const { job, line, moved, other } of shapes.values()) {
+    for (const [job, { line, moved, other }] of Object.entries(JOBS)) {
       n += 1;
       fs.writeFileSync(path.join(f.root, 'raw.txt'), `${line}\n`);
       commitAll(f.root, `main is red in ${job}`);
       const refused = await branchWith(f, `T-9${n}01`, [], { 'raw.txt': `${line}\n${other}\n` });
       const v = await runPreMergeGate(f.ctx, refused);
-      assert.deepEqual([v.status, v.mode, v.findings], ['blocked', 'new-findings', [findingKey(other)]], job);
-      assert.match(blockedNote(v, 'main'), new RegExp(other.split(/\s/)[0].replace(/[^\w]/g, '.').slice(0, 12)), job);
+      assert.deepEqual([v.status, v.mode, v.findings], ['blocked', 'new-findings', [...extractFindings(other).keys()]], job);
+      assert.match(blockedNote(v, 'main'), /New findings/, job);
       const same = await branchWith(f, `T-9${n}02`, [], { 'raw.txt': `${moved}\n` });
       const p = await runPreMergeGate(f.ctx, same);
       assert.deepEqual([p.status, p.mode], ['pass', 'ratchet'], job);

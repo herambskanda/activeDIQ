@@ -95,9 +95,6 @@ func report(o host.Observation, repo string) int {
 	failed := false
 	for _, r := range host.Judge(host.Evaluate(o), gaps) {
 		fmt.Println(r.Line())
-		for _, f := range r.Findings() {
-			fmt.Fprintln(os.Stderr, "fitness-host: "+f)
-		}
 		failed = failed || r.Fails()
 	}
 	if failed {
