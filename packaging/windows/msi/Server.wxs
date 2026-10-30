@@ -11,9 +11,11 @@
   packaging/windows/Test-MsiRefusesDc.ps1 asserts both agree on dc1.
 
   The service, gMSA, TLS-directory ACL and setup-secret components land with the rest of the server
-  installer (this file carries only what T-0635 owns). NOT YET COMPILED: no WiX toolchain is adopted
-  (licence register entry "WiX Toolset" is Check) and the Windows lab was not available to the
-  author; the first build and run on dc1 and fs1 is logged in knowledge/development/runbooks/windows-lab-runs/.
+  installer (this file carries only what T-0635 owns). Compiled by T-0702 with the pinned WiX 5.0.2
+  (MS-RL, no fee; tools/wix/build-msi.sh, which runs WiX under Wine in a container): the schema compiled
+  unchanged. ICE validation needs Windows and is not run there. The refusal ran on dc1 (exit 1603, no
+  leftovers): knowledge/development/runbooks/windows-lab-runs/T-0635-msi-refuses-dc-20261030.md. The
+  install on a member server (fs1) has not run yet.
   Authoring: WiX v4 schema.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">

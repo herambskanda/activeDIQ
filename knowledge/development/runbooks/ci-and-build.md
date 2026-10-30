@@ -292,9 +292,7 @@ What it enforces: a booted install is judged on eight named cases (threat-model 
   fs1 as the control (must install). It runs msiexec, then `Get-HostObservation.ps1` observes the leftovers itself
   (install directory, service), so `installed` is measured, not taken from the driver. The MSI source is
   `packaging/windows/msi/Server.wxs` (a LaunchCondition on `MsiNTProductType`, which runs before any change).
-  `make fitness-packaging` checks the sources statically. **Neither script nor MSI has run on Windows yet** (T-0635
-  was written without a lab VM or WiX); the first run must be logged in `windows-lab-runs/` and is what turns
-  HOST-DC-REFUSED from INACTIVE to ok. `packaging/windows/New-SetupSecret.ps1` writes the first-run secret file
+  `make fitness-packaging` checks the sources statically. The driver ran on dc1 on 2026-10-30 (Windows Server 2025): the MSI exited 1603 with the DC message, left nothing, and HOST-DC-REFUSED is ok there ([run log](windows-lab-runs/T-0635-msi-refuses-dc-20261030.md)). The fs1 control install and `New-SetupSecret.ps1` have not run on Windows yet. `packaging/windows/New-SetupSecret.ps1` writes the first-run secret file
   (owner and only ACE the installing admin's SID, created with its final DACL, 60 min expiry); the server side that
   consumes it once is T-0636.
 - **Results:** `ok`, `FAIL` (build fails), `INACTIVE` (the collector could not observe it: the subject does not exist
