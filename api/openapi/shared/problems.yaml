@@ -324,3 +324,43 @@ components:
             type: /problems/not-ready
             title: The service is not ready
             status: 503
+    ReportResultExpired:
+      description: The stored result or file has expired
+      content:
+        application/problem+json:
+          schema:
+            $ref: shared/problems.yaml#/components/schemas/Problem
+          example:
+            type: /problems/report-result-expired
+            title: The stored result has expired
+            status: 410
+    ReportScopeEmpty:
+      description: The scope covers no directory objects
+      content:
+        application/problem+json:
+          schema:
+            $ref: shared/problems.yaml#/components/schemas/Problem
+          example:
+            type: /problems/report-scope-empty
+            title: The scope covers no directory objects
+            status: 422
+    ReportScopeUnsupported:
+      description: The scope uses a kind that reports cannot evaluate
+      content:
+        application/problem+json:
+          schema:
+            $ref: shared/problems.yaml#/components/schemas/Problem
+          example:
+            type: /problems/report-scope-unsupported
+            title: The scope uses a kind that reports cannot evaluate
+            status: 409
+    ReportRowCapExceeded:
+      description: The result is over the row cap of the format
+      content:
+        application/problem+json:
+          schema:
+            $ref: shared/problems.yaml#/components/schemas/Problem
+          example:
+            type: /problems/report-row-cap-exceeded
+            title: The result is over the row cap of the format
+            status: 422
