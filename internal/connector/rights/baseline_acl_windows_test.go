@@ -3,6 +3,7 @@
 package rights
 
 import (
+	"errors"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -79,7 +80,17 @@ func TestWindowsBaselineAndRecordDACL(t *testing.T) {
 			}
 		}
 	}
-	if _, err := (FileBaselineStore{bp}).Load(); err != nil {
-		t.Fatal(err)
+	// Positive path (T-0577 QA): a file the store just wrote loads and round-trips.
+	got, err := (FileBaselineStore{bp}).Load()
+	if err != nil {
+		t.Fatalf("Load of own baseline: %v", err)
+	}
+	if got.VerificationID != "v1" {
+		t.Fatalf("Load round-trip: VerificationID %q, want v1", got.VerificationID)
+	}
+	// Negative path: widened DACL is refused with the typed error.
+	widenForTest(t, bp)
+	if _, err := (FileBaselineStore{bp}).Load(); !errors.Is(err, ErrBaselineUnsafe) {
+		t.Fatalf("Load of widened baseline: got %v, want ErrBaselineUnsafe", err)
 	}
 }

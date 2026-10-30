@@ -181,8 +181,10 @@ func verifySD(sd *windows.SECURITY_DESCRIPTOR, bad error) error {
 	if ctrl&windows.SE_DACL_PROTECTED == 0 {
 		return bad
 	}
-	acl, present, err := sd.DACL()
-	if err != nil || !present || acl == nil { // a NULL DACL grants everyone full access
+	// The second return value of DACL() is "defaulted" (SE_DACL_DEFAULTED), NOT "present": it is
+	// false for every explicit DACL. A NULL/absent DACL comes back as a nil acl.
+	acl, _, err := sd.DACL()
+	if err != nil || acl == nil { // a NULL DACL grants everyone full access
 		return bad
 	}
 	for i := uint32(0); i < uint32(acl.AceCount); i++ {
