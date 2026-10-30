@@ -548,8 +548,8 @@ stays `[UNVERIFIED — lab]`.
 | X-11 | `forced` on; `/signin/break-glass` | AN-8 still served | FSSO-3 |
 | X-12 | Callback return path is absolute, `//host` or not a console route | ignored; console root | §3 |
 | X-13 | Refusal page body is identical for every SAML-n / OIDC-n reason | same body and status | §3 |
-| X-14 | OIDC MFA evidence `wia`, `rba`, `geo`, `swk`, `pin`, `mca`, `PWD` or an unknown string | IdP save refused (`oidc.config`), and Start/Complete refuse a stored one | MFA-1a |
-| X-15 | SAML MFA evidence `urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport` (and `Password`, `unspecified`, `Kerberos`, `X509`) | IdP save refused (`saml.config`) | MFA-2a |
+| X-14 | OIDC MFA evidence is any value outside `{mfa,hwk,otp,fpt,face,sc}` (`wia`, `rba`, `geo`, `swk`, `pin`, `mca`, `PWD`, `Mfa`, `x`) | save, Start and Complete refused, `oidc.config` | MFA-1a |
+| X-15 | SAML MFA evidence is a `urn:oasis:names:tc:SAML:2.0:ac:classes:` value (`Password`, `PasswordProtectedTransport`, `unspecified`, `Kerberos`, `X509`) | save, Start and Complete refused, `saml.config` | MFA-2a |
 | X-16 | A role held by claim on a live session gains a `control_plane` permission | mappings dropped, that session revoked (`role_changed`) in the same transaction; evaluator grants no `control_plane` permission through any claim-derived role | MAP-2a |
 | X-17 | Kerberos first factor of a correlated account, then TOTP AN-10; later a TOTP step-up | authority current after AN-10; stale after the TOTP step-up; current again after a fresh AN-9 of the same principal | NEG-4, NEG-4a |
 

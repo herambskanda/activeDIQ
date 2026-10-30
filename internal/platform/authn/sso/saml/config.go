@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"net/url"
 	"slices"
+	"strings"
 
 	"github.com/skenzeriq/activediq/internal/platform/authn/sso"
 )
@@ -67,6 +68,11 @@ const (
 	AlgECDSASHA384 = algECDSASHA384
 )
 
+// oasisClassPrefix is the namespace of the SAML 2.0 authentication context classes. None of them proves a
+// second factor (PasswordProtectedTransport is a password over TLS), so none can be configured as MFA
+// evidence (spec MFA-2a); evidence is an IdP-specific class or an attribute value.
+const oasisClassPrefix = "urn:oasis:names:tc:SAML:2.0:ac:classes:"
+
 var (
 	pinnable      = []string{algRSASHA256, algRSASHA384, algRSASHA512, algECDSASHA256, algECDSASHA384}
 	digestAllowed = []string{digestSHA256, digestSHA384, digestSHA512}
@@ -97,6 +103,11 @@ func ValidateConfig(c *sso.SAMLConfig) error {
 	case sso.MFAClaim:
 		if len(c.MFAEvidence) == 0 {
 			return sso.Refuse(ReasonConfig)
+		}
+		for _, e := range c.MFAEvidence {
+			if e == "" || strings.HasPrefix(e, oasisClassPrefix) {
+				return sso.Refuse(ReasonConfig)
+			}
 		}
 	default:
 		return sso.Refuse(ReasonConfig)
