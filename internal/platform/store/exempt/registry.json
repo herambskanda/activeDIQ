@@ -260,6 +260,16 @@
       "reason": "CHECK: the AD and Entra connection of a correlation differ (DM-20); every other column of the probe row is the generated value, so this one needs a second value. The foreign-key probe points the sibling key at an alternate parent row."
     },
     {
+      "column": "public.authn_local_credentials.password_hash",
+      "value": "$argon2id$probe",
+      "reason": "CHECK: a password hash is an argon2id PHC string (authn_local_credentials, T-0783); the probe row carries a placeholder with the prefix, not a real hash."
+    },
+    {
+      "column": "public.authn_signin_throttle.key_hash",
+      "value": "\\x0000000000000000000000000000000000000000000000000000000000000000",
+      "reason": "CHECK: a throttle key is exactly 32 bytes, the HMAC of the tenant and normalised name (authn_signin_throttle, T-0783); the probe row carries 32 placeholder bytes."
+    },
+    {
       "column": "public.links.link_attr",
       "value": "member",
       "reason": "CHECK: link_attr is one of the stored linked attributes, currently member (DM-17)."

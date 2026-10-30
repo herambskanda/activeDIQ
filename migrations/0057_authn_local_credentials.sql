@@ -1,4 +1,4 @@
--- 0056_authn_local_credentials: the password of a local console account and the AN-8 throttle state
+-- 0057_authn_local_credentials: the password of a local console account and the AN-8 throttle state
 -- (T-0783; threat model §7.6 rules 2-3). Owner: internal/platform/authn. Three tenant tables.
 --
 --   authn_local_credentials  one row per local account: the normalised username (trim, NFC, case-fold;
