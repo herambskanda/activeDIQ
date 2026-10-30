@@ -1,0 +1,10 @@
+{
+ "id": "O-R06",
+ "class": "replayed",
+ "cites": [
+  "OIDC-2"
+ ],
+ "build": "pkce_s256_only",
+ "expect": "refuse",
+ "reason": "oidc.pkce"
+}

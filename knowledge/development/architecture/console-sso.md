@@ -526,8 +526,10 @@ stays `[UNVERIFIED — lab]`.
 | O-M03 | misaddressed | `aud` is another client; `aud` has an extra value; `azp` mismatch | OIDC-11 |
 | O-M04 | misaddressed | Valid token for tenant A on tenant B's hostname | SSO-2 |
 | O-M05 | misaddressed | Discovery `issuer` differs from the configured issuer; an HTTP endpoint | OIDC-17 |
-| O-D01 | malformed | ID token over 32 KiB; three or more dots; token response over 64 KiB | OIDC-5, OIDC-6 |
+| O-D01 | malformed | ID token over 32 KiB; three or more dots | OIDC-6 |
+| O-D01b | malformed | Token response over 64 KiB (split from O-D01: a record carries one reason code, and this one is `oidc.token`) | OIDC-5 |
 | O-D02 | malformed | `sub` missing, empty, over 255 bytes | OIDC-14 |
+| O-D03 | malformed | A claim the configuration needs (`oid` and `tid`, `onprem_sid`) absent from the ID token: refused, never fetched from UserInfo, the access token or Graph | OIDC-16 |
 
 ### 10.4 Sign-in outcome cases (TM-F-SSO with TM-F-SESSION and TM-F-HYBRID)
 
@@ -594,9 +596,14 @@ first line that parses SAML.
 too). FIT-SSO-2 reads the check numbers from the §4 and §5 tables of this file, so a new row fails CI until
 a record cites it, then runs `TestCorpus` of each protocol's package and requires a passing subtest named
 after every record. Class coverage is per protocol: SAML needs all five classes, OIDC the four without
-`wrapped` (XML signature wrapping has no JWS analogue; §10.3 has none). Until T-0911 lands
-`testdata/corpus/oidc/` and an `oidc` `TestCorpus`, the OIDC half is printed `PENDING` and enforced from the
-day either appears. The SAML-only `TestCorpusCoverage` in `sso/saml` is removed: this check supersedes it.
+`wrapped` (XML signature wrapping has no JWS analogue; §10.3 has none). The OIDC corpus
+(T-0911) is `testdata/corpus/oidc/` and `TestCorpus` in `sso/oidc/corpus_test.go`; it is enforced like the SAML one, and a
+missing corpus for either protocol fails. Each record's `build` names a Go builder in that test file that drives
+`Start` and `Complete` against the stub IdP once per variant of the §10.3 row; every variant must be refused with the
+record's reason, and a builder no record names fails the run. O-R02 asserts the single-use code at the IdP and
+SSO-1's consume-once on the Transaction store's in-memory twin; O-M04 asserts that tenant A's token is refused by
+tenant B's pinned IdP (the hostname-to-tenant binding itself is `signin`'s, T-0203).
+The SAML-only `TestCorpusCoverage` in `sso/saml` is removed: this check supersedes it.
 
 ## 14. Follow-ups filed by this spec
 
