@@ -88,6 +88,19 @@ func isCompiledSQL(pass *analysis.Pass, t types.Type) bool {
 	return policy.Match(util.TypesPkgDir(pass, n.Obj().Pkg()), policy.Store+"/reportsql")
 }
 
+// readsCompiledSQL reports whether arg is string(x) with x a CompiledSQL: the one read-back the store's
+// pgx signature needs (it takes a string). Reading is not minting; the opposite conversion stays RP1.
+func readsCompiledSQL(pass *analysis.Pass, arg ast.Expr) bool {
+	call, ok := ast.Unparen(arg).(*ast.CallExpr)
+	if !ok || len(call.Args) != 1 {
+		return false
+	}
+	if tv, ok := pass.TypesInfo.Types[call.Fun]; !ok || !tv.IsType() || types.Unalias(tv.Type) != types.Typ[types.String] {
+		return false
+	}
+	return isCompiledSQL(pass, pass.TypesInfo.Types[call.Args[0]].Type)
+}
+
 // reportPkg is the EP-8 host whose SQL(text) builds a Fragment from a constant.
 const reportPkg = "internal/platform/report"
 
@@ -207,7 +220,7 @@ func run(pass *analysis.Pass) (any, error) {
 					}
 					arg := call.Args[i]
 					tv := pass.TypesInfo.Types[arg]
-					if tv.Value != nil || isCompiledSQL(pass, tv.Type) || forwards(pass, fd, fn, arg) {
+					if tv.Value != nil || isCompiledSQL(pass, tv.Type) || readsCompiledSQL(pass, arg) || forwards(pass, fd, fn, arg) {
 						break
 					}
 					pass.Report(analysis.Diagnostic{Pos: arg.Pos(), Category: Name,
