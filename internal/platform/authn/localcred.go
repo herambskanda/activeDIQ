@@ -65,6 +65,9 @@ const (
 	DefaultThrottleKeys = 100000
 	// DefaultMaxConcurrent bounds in-flight attempts: 4 x 64 MiB of hash memory at most.
 	DefaultMaxConcurrent = 4
+	// DefaultMaxPerSource is the in-flight attempts one source may hold: with the cap above, a client
+	// saturating its own share still leaves the other slots for other sources.
+	DefaultMaxPerSource = 1
 	// DefaultLatencyFloor is the least time every answer of the password step takes.
 	DefaultLatencyFloor = 300 * time.Millisecond
 
@@ -157,13 +160,17 @@ type LocalCredentials struct {
 
 	// MaxConcurrent caps attempts in flight (DefaultMaxConcurrent when 0): each holds a 64 MiB hash.
 	MaxConcurrent int
+	// MaxPerSource caps the attempts in flight from one source (DefaultMaxPerSource when 0), so one client
+	// cannot hold every slot. A source is an IPv4 address or an IPv6 /64 (sourceKey).
+	MaxPerSource int
 
 	hashes   int // verifications run (tests)
 	inflight int
 	peak     int
 	mu       sync.Mutex
-	gate     chan struct{}
-	gateOnce sync.Once
+	gateMu   sync.Mutex // guards held and bySource; separate from mu, which the hash bookkeeping takes
+	held     int
+	bySource map[netip.Prefix]int // only sources holding a slot are present, so it never outgrows the cap
 }
 
 func (l *LocalCredentials) now() time.Time {
@@ -288,8 +295,9 @@ func (l *LocalCredentials) BeginPassword(ctx context.Context, username string, p
 func (l *LocalCredentials) begin(ctx context.Context, username string, password secret.Secret, from netip.Addr) (PendingHandle, error) {
 	// A process-wide cap on in-flight attempts, taken before any name-dependent work: a verification costs
 	// 64 MiB and ~260 ms, so an unbounded burst would exhaust memory. A full gate refuses with the
-	// name-independent ErrSignInBusy; it never queues (threat model §7.6 rule 2d).
-	release, ok := l.acquire()
+	// name-independent ErrSignInBusy; it never queues (threat model §7.6 rule 2d). The refusal also
+	// covers a source already holding its share; it is decided by the source address alone.
+	release, ok := l.acquire(from)
 	if !ok {
 		return PendingHandle{}, ErrSignInBusy
 	}
@@ -392,21 +400,58 @@ WHERE c.tenant_id = $1::uuid AND c.username_norm = $2`, t.String(), name).Scan(&
 	return l.Pending.Begin(ctx, BeginInput{Tenant: t, Account: acct, FirstFactor: FirstPassword, ClientIP: from, Epoch: epoch})
 }
 
-// acquire takes one in-flight slot without waiting; ok is false when all are taken.
-func (l *LocalCredentials) acquire() (release func(), ok bool) {
-	l.gateOnce.Do(func() {
-		n := l.MaxConcurrent
-		if n <= 0 {
-			n = DefaultMaxConcurrent
-		}
-		l.gate = make(chan struct{}, n)
-	})
-	select {
-	case l.gate <- struct{}{}:
-		return func() { <-l.gate }, true
-	default:
+// sourceKey is the unit of fair share: an IPv4 address (/32) or the /64 of an IPv6 address, since a
+// single IPv6 host or site controls its whole /64. An IPv4-mapped IPv6 address counts as the IPv4
+// address. An address that did not parse is one shared source, so it cannot hold more than its share.
+func sourceKey(a netip.Addr) netip.Prefix {
+	if !a.IsValid() {
+		return netip.Prefix{}
+	}
+	a = a.Unmap().WithZone("")
+	bits := 64
+	if a.Is4() {
+		bits = 32
+	}
+	p, err := a.Prefix(bits)
+	if err != nil {
+		return netip.Prefix{}
+	}
+	return p
+}
+
+// acquire takes one in-flight slot for the source without waiting; ok is false when all slots are taken
+// or the source already holds its share. The decision never depends on the submitted name.
+func (l *LocalCredentials) acquire(from netip.Addr) (release func(), ok bool) {
+	limit := l.MaxConcurrent
+	if limit <= 0 {
+		limit = DefaultMaxConcurrent
+	}
+	share := l.MaxPerSource
+	if share <= 0 {
+		share = DefaultMaxPerSource
+	}
+	key := sourceKey(from)
+	l.gateMu.Lock()
+	defer l.gateMu.Unlock()
+	if l.held >= limit || l.bySource[key] >= share {
 		return nil, false
 	}
+	if l.bySource == nil {
+		l.bySource = make(map[netip.Prefix]int, limit)
+	}
+	l.held++
+	l.bySource[key]++
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			l.gateMu.Lock()
+			defer l.gateMu.Unlock()
+			l.held--
+			if l.bySource[key]--; l.bySource[key] <= 0 {
+				delete(l.bySource, key)
+			}
+		})
+	}, true
 }
 
 func secretBytes(s secret.Secret) []byte {

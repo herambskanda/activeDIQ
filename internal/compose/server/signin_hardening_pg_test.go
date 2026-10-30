@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/base32"
 	"net/http"
 	"strings"
 	"sync"
@@ -125,6 +126,73 @@ func TestSignInBurstIsCappedAndHoldsNoConnection(t *testing.T) {
 		}
 		if other.Load() != 0 || busy429.Load() == 0 || ok401.Load() == 0 {
 			t.Errorf("answers: 401=%d 429=%d other=%d; want some of each of the first two and no other", ok401.Load(), busy429.Load(), other.Load())
+		}
+	})
+}
+
+// T-0809: one source saturating AN-8 cannot hold every in-flight slot. While a burst of distinct names from
+// one address keeps its share busy, a second address that signs in with the right password gets its
+// pending cookie every time, and the burst's own overflow is refused (429) without queueing.
+func TestSignInFairShareLetsASecondSourceIn(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		ctx := context.Background()
+		db, ten, ks := hardeningDB(t, s, 0)
+		deps := localAccountDeps{DB: db, Sink: nopSink{}, Keys: ks.KeySource()}
+		la, err := createLocalAccount(ctx, deps, LocalAccountSpec{Username: "break.glass", Password: secret.FromBytes([]byte(signInPassword))})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var seedText string
+		la.Seed.Expose(func(b []byte) { seedText = string(b) })
+		seed, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(strings.ToUpper(seedText))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := confirmTOTP(ctx, deps, la, totpCode(seed, time.Now())); err != nil { // the account is active only now
+			t.Fatal(err)
+		}
+		h, console := hardeningHandler(t, db, ten, ks)
+		console.Local.MaxConcurrent = 2 // MaxPerSource stays at its default of 1
+
+		const path = "/api/v1/auth/break-glass/password"
+		stop := make(chan struct{})
+		var wg sync.WaitGroup
+		var hogBusy, hogOther atomic.Int32
+		for i := 0; i < 8; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for n := 0; ; n++ {
+					select {
+					case <-stop:
+						return
+					default:
+					}
+					body := `{"username":"hog` + string(rune('a'+i)) + string(rune('a'+n%26)) + `","password":"not the password at all"}`
+					switch postJSONFrom(h, "198.51.100.7:4000", path, body).Code {
+					case http.StatusTooManyRequests:
+						hogBusy.Add(1)
+					case http.StatusUnauthorized:
+					default:
+						hogOther.Add(1)
+					}
+				}
+			}()
+		}
+		login := `{"username":"break.glass","password":"` + signInPassword + `"}`
+		for i := 0; i < 5; i++ {
+			w := postJSONFrom(h, "203.0.113.50:5000", path, login)
+			if w.Code != http.StatusNoContent || len(w.Result().Cookies()) != 1 {
+				t.Errorf("second source, try %d: %d %s (want 204 and the pending cookie)", i, w.Code, w.Body)
+			}
+		}
+		close(stop)
+		wg.Wait()
+		if hogBusy.Load() == 0 || hogOther.Load() != 0 {
+			t.Errorf("saturating source: 429=%d other=%d; want its overflow refused and nothing unexpected", hogBusy.Load(), hogOther.Load())
+		}
+		if p := console.Local.PeakVerifications(); p > 2 {
+			t.Errorf("peak concurrent verifications %d exceeds the cap 2", p)
 		}
 	})
 }

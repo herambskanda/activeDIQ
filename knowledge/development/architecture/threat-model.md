@@ -2069,6 +2069,13 @@ operation of the document (`x-permission: anonymous`, ADR-0004 rule 5) or a non-
       step 3, before the body is read) and the global limits below. They are decided before the
       submitted name is known or by values that do not depend on it. A failure of the shared
       store refuses the request with the same `401` (fail closed, no evaluation).
+      **In-flight gate with per-source fair share (T-0783, T-0809).** At most 4 password
+      verifications run at once (64 MiB of hash memory each), and one source (an IPv4 address, or
+      the /64 of an IPv6 address; an IPv4-mapped address counts as its IPv4) holds at most 1 of
+      them. Above either limit the answer is the name-independent `429`; it never queues. A client
+      saturating AN-8 therefore cannot lock the break-glass admin on another address out; a host
+      cannot widen its share by rotating addresses inside its /64. Residual: sources sharing one
+      NAT address share one slot, which costs them a retry, not a lockout.
    e. **Bounded state.** The key table has a cap. When it is full, a *new* key falls into one
       shared overflow bucket for all new keys; the answer is still the uniform `401`, so the cap
       is not observable per name. The delay window uses no waiting goroutine, so a flood of
