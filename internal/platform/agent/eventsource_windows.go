@@ -91,10 +91,18 @@ func (winSource) Subscribe(ctx context.Context, ch hostapi.Channel, after uint64
 				closeHandle(evs[i])
 			}
 		}
-		if ctx.Err() != nil {
-			return ctx.Err()
+		// After ERROR_NO_MORE_ITEMS, EvtNext may only be called again once the subscription's signal
+		// event is set; calling it earlier fails with ERROR_INVALID_OPERATION (4317). Found in the
+		// Windows lab (T-0648): the old single 1 s wait fell through on timeout and the next EvtNext
+		// returned 4317 whenever no new event arrived in that second.
+		for {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if ev, _ := windows.WaitForSingleObject(sig, waitSliceMs); ev == windows.WAIT_OBJECT_0 {
+				break
+			}
 		}
-		_, _ = windows.WaitForSingleObject(sig, waitSliceMs)
 	}
 }
 

@@ -156,13 +156,6 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 		return err
 	}
 	tags = append(tags, syslog.Handlers{Store: siem}.Bind())
-	// directory.users.search: the connection registry for the active connection and its service-account
-	// gate, the connector source for the ScopedSearch RPC (over the tunnel the connector dialled).
-	dirTag, err := buildDirectory(db, conns, src)
-	if err != nil {
-		return err
-	}
-	tags = append(tags, dirTag)
 	// First-run setup (TM-TB16-T7, AN-4): an unclaimed install holds a one-time secret the installing
 	// administrator reads from the setup directory; the claim route consumes it. Needs the TLS directory.
 	setupTags, err := buildSetup(cfg, time.Now, firstOwner)
@@ -170,6 +163,13 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 		return err
 	}
 	tags = append(tags, setupTags...)
+	// directory.users.search: the connection registry for the active connection and its service-account
+	// gate, the connector source for the ScopedSearch RPC (over the tunnel the connector dialled).
+	dirTag, err := buildDirectory(db, conns, src)
+	if err != nil {
+		return err
+	}
+	tags = append(tags, dirTag)
 	cat := permissionCatalogue()
 	if err := checkCatalogue(cat); err != nil {
 		return err

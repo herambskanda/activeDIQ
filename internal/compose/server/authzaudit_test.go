@@ -33,9 +33,9 @@ func (f *fakeTx) WithTenant(ctx context.Context, id tenant.ID, fn func(context.C
 	return fn(ctx, nil)
 }
 
-type auditSink struct{ evs []audit.Event }
+type authzRecSink struct{ evs []audit.Event }
 
-func (r *auditSink) Append(_ context.Context, _ store.Tx, ev audit.Event) error {
+func (r *authzRecSink) Append(_ context.Context, _ store.Tx, ev audit.Event) error {
 	if err := ev.Validate(); err != nil {
 		return err
 	}
@@ -54,7 +54,7 @@ func (f fixedAuthz) Allow(context.Context, apihost.Principal, string, string) (b
 
 const auditTenant = "00000000-0000-4000-8000-000000000001"
 
-func newAudited(next apihost.Authorizer, tx *fakeTx, sink *auditSink) auditedAuthz {
+func newAudited(next apihost.Authorizer, tx *fakeTx, sink *authzRecSink) auditedAuthz {
 	return auditedAuthz{next: next, db: tx, sink: sink, now: func() time.Time { return time.Unix(1700000000, 0).UTC() },
 		log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 }
@@ -62,7 +62,7 @@ func newAudited(next apihost.Authorizer, tx *fakeTx, sink *auditSink) auditedAut
 // Acceptance 2: a caller without the permission is refused and the refusal is in the tenant's audit trail
 // with who asked, which permission, and the outcome.
 func TestPermissionRefusalIsAudited(t *testing.T) {
-	tx, sink := &fakeTx{}, &auditSink{}
+	tx, sink := &fakeTx{}, &authzRecSink{}
 	a := newAudited(fixedAuthz{ok: false}, tx, sink)
 	p := apihost.Principal{ID: "acct-1", Tenant: auditTenant, Kind: apihost.KindSession, SessionID: "s"}
 	ok, err := a.Allow(context.Background(), p, "directory.read", "tenant")
@@ -85,7 +85,7 @@ func TestPermissionRefusalIsAudited(t *testing.T) {
 func TestGrantAndInfrastructureFaultAreNotRecordedAsRefusals(t *testing.T) {
 	p := apihost.Principal{ID: "acct-1", Tenant: auditTenant, Kind: apihost.KindSession}
 	for name, next := range map[string]fixedAuthz{"allowed": {ok: true}, "fault": {err: errors.New("db down")}} {
-		tx, sink := &fakeTx{}, &auditSink{}
+		tx, sink := &fakeTx{}, &authzRecSink{}
 		_, _ = newAudited(next, tx, sink).Allow(context.Background(), p, "directory.read", "tenant")
 		if tx.runs != 0 || len(sink.evs) != 0 {
 			t.Errorf("%s: recorded %d events", name, len(sink.evs))
@@ -95,7 +95,7 @@ func TestGrantAndInfrastructureFaultAreNotRecordedAsRefusals(t *testing.T) {
 
 // An audit fault never turns a refusal into an approval.
 func TestAuditFaultStillRefuses(t *testing.T) {
-	tx, sink := &fakeTx{err: errors.New("audit store down")}, &auditSink{}
+	tx, sink := &fakeTx{err: errors.New("audit store down")}, &authzRecSink{}
 	p := apihost.Principal{ID: "acct-1", Tenant: auditTenant, Kind: apihost.KindSession}
 	ok, err := newAudited(fixedAuthz{}, tx, sink).Allow(context.Background(), p, "directory.read", "tenant")
 	if ok || err != nil {
@@ -104,7 +104,7 @@ func TestAuditFaultStillRefuses(t *testing.T) {
 }
 
 func TestPrincipalWithoutATenantIsRefusedButNotChained(t *testing.T) {
-	tx, sink := &fakeTx{}, &auditSink{}
+	tx, sink := &fakeTx{}, &authzRecSink{}
 	ok, _ := newAudited(fixedAuthz{}, tx, sink).Allow(context.Background(), apihost.Principal{ID: "x"}, "directory.read", "tenant")
 	if ok || tx.runs != 0 {
 		t.Fatalf("ok=%v runs=%d", ok, tx.runs)
@@ -122,7 +122,7 @@ func TestSearchWithoutDirectoryReadIs403AndAudited(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tx, sink := &fakeTx{}, &auditSink{}
+	tx, sink := &fakeTx{}, &authzRecSink{}
 	pr := apihost.Principal{ID: "acct-1", Tenant: auditTenant, Kind: apihost.KindSession, SessionID: "s"}
 	base := failClosedPorts(openLimiter{})
 	ports := apihost.Ports{Authn: sessionAuthn{pr}, Authz: newAudited(fixedAuthz{}, tx, sink), Limits: base.Limits, StepUp: base.StepUp}
