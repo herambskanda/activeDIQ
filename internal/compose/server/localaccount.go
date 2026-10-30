@@ -166,7 +166,7 @@ func grantDirectoryReader(ctx context.Context, d localAccountDeps, t tenant.ID, 
 		}
 		if n == 0 {
 			if err := g.CreateRole(ctx, tx, cliActor, rid, directoryReaderRole, rbac.Tier2, []authz.Permission{"directory.read"}); err != nil {
-				return fmt.Errorf("server: create role: %w", err)
+				return fmt.Errorf("server: create the reader role: %w", err)
 			}
 		}
 		var aid string
