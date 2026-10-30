@@ -64,7 +64,7 @@ func TestGetCSRFTokenThroughTheMountedRoutes(t *testing.T) {
 		if out.Header != "X-CSRF-Token" || out.Value == "" {
 			t.Fatalf("body = %s", w.Body)
 		}
-		if strings.Contains(w.Body.String(), tok.Reveal()[37:]) || strings.Contains(w.Header().Get("Set-Cookie"), "adiq") {
+		if strings.Contains(w.Body.String(), tokenSecret(tok.Reveal())) || strings.Contains(w.Header().Get("Set-Cookie"), "adiq") {
 			t.Errorf("the response carries the session secret: %s %v", w.Body, w.Header())
 		}
 
@@ -87,10 +87,12 @@ func TestGetCSRFTokenRefusesWithoutSession(t *testing.T) {
 		live := e.signIn(t, &now)
 
 		tampered := []byte(live.Reveal())
-		if tampered[40] == 'A' {
-			tampered[40] = 'B'
+		// Flip the first character of the secret part (after the tenant prefix), wherever it starts.
+		at := strings.IndexByte(live.Reveal(), '.') + 1
+		if tampered[at] == 'A' {
+			tampered[at] = 'B'
 		} else {
-			tampered[40] = 'A'
+			tampered[at] = 'A'
 		}
 		bad, err := authn.ParseToken(string(tampered))
 		if err != nil {
@@ -146,4 +148,10 @@ func TestCSRFValueIsBoundToTheSession(t *testing.T) {
 			t.Errorf("B's own value: %d %s", w.Code, w.Body)
 		}
 	})
+}
+
+// tokenSecret returns the secret part of a session token (`<tenant>.<secret>`), split at the first '.'.
+func tokenSecret(tok string) string {
+	_, secret, _ := strings.Cut(tok, ".")
+	return secret
 }
