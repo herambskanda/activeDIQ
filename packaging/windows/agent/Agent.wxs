@@ -13,7 +13,10 @@
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
   <Package Name="activeDIQ Agent" Manufacturer="skenzeriq" Version="$(var.Version)" UpgradeCode="6f3b8c1e-5d1a-4f6e-9a57-3c2b7d0e4a11" Scope="perMachine" InstallerVersion="500">
-    <MajorUpgrade DowngradeErrorMessage="A newer activeDIQ Agent is already installed." />
+    <!-- afterInstallInitialize puts removal of the old product inside the install transaction, so a failed
+         upgrade rolls back to the old version. The default (afterInstallValidate) removes it first and
+         leaves a failed upgrade with no agent installed (T-0648, lab: forced failure -> no product). -->
+    <MajorUpgrade Schedule="afterInstallInitialize" DowngradeErrorMessage="A newer activeDIQ Agent is already installed." />
     <MediaTemplate EmbedCab="yes" />
     <Property Id="REBOOT" Value="ReallySuppress" />
 
@@ -37,7 +40,10 @@
             <RequiredPrivilege Name="SeChangeNotifyPrivilege" />
           </ServiceConfig>
         </ServiceInstall>
-        <ServiceControl Id="AgentServiceControl" Name="activeDIQAgent" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+        <!-- No Start="install": at install time the agent is not enrolled, so it reaches Running and then exits.
+             Windows Installer treats that race as "service failed to start" (error 1920) and rolls the install
+             back (T-0648, lab). The service is start=auto and is started once, after `agent enroll`. -->
+        <ServiceControl Id="AgentServiceControl" Name="activeDIQAgent" Stop="both" Remove="uninstall" Wait="yes" />
         <util:ServiceConfig ServiceName="activeDIQAgent" FirstFailureActionType="restart" SecondFailureActionType="restart"
                             ThirdFailureActionType="restart" RestartServiceDelayInSeconds="30" ResetPeriodInDays="1" />
         <util:EventSource Log="Application" Name="activeDIQ Agent" EventMessageFile="[SystemFolder]EventCreate.exe"
@@ -45,6 +51,12 @@
       </Component>
       <Component Id="SetupExe" Guid="*">
         <File Id="SetupExeFile" Source="$(var.SetupExe)" Name="agentsetup.exe" KeyPath="yes" />
+        <!-- agent.json is written by the WriteConfig custom action, so Windows Installer does not know it;
+             without these the uninstall leaves it and both folders behind (T-0648, lab). It is always
+             rewritten at install, so removing it on upgrade loses nothing. -->
+        <RemoveFile Id="RemoveAgentJson" Directory="AgentDir" Name="agent.json" On="uninstall" />
+        <RemoveFolder Id="RemoveAgentDir" Directory="AgentDir" On="uninstall" />
+        <RemoveFolder Id="RemoveVendorDir" Directory="VendorDir" On="uninstall" />
       </Component>
     </ComponentGroup>
 
@@ -63,9 +75,12 @@
 
     <InstallExecuteSequence>
       <Custom Action="WriteConfig" After="InstallFiles" Condition="NOT REMOVE" />
-      <Custom Action="PrepareDataDir" After="WriteConfig" Condition="NOT REMOVE" />
       <Custom Action="RollbackGrantChannel" Before="GrantChannel" Condition="NOT REMOVE" />
-      <Custom Action="GrantChannel" After="InstallServices" Condition="NOT REMOVE" />
+      <!-- PrepareDataDir and GrantChannel resolve NT SERVICE\activeDIQAgent to a SID, which Windows only
+           does once the service exists, so both run after InstallServices (T-0648: before it,
+           PrepareDataDir failed with "No mapping between account names and security IDs"). -->
+      <Custom Action="PrepareDataDir" After="InstallServices" Condition="NOT REMOVE" />
+      <Custom Action="GrantChannel" After="PrepareDataDir" Condition="NOT REMOVE" />
       <Custom Action="RevokeChannel" Before="StopServices" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     </InstallExecuteSequence>
 
