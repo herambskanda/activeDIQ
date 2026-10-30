@@ -15,7 +15,8 @@ New-Item -ItemType Directory -Force $out | Out-Null
 $ntds = 'HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters'
 $changed = $false
 foreach ($kv in @(@('LDAPServerIntegrity', 2), @('LdapEnforceChannelBindingTokens', 2))) {
-  $cur = (Get-ItemProperty $ntds -Name $kv[0] -ErrorAction SilentlyContinue).($kv[0])
+  # common.ps1 sets StrictMode Latest: a missing value must be probed through PSObject, not read as a property
+  $cur = (Get-Item $ntds).GetValue($kv[0])
   if ($cur -ne $kv[1]) { Set-ItemProperty $ntds -Name $kv[0] -Type DWord -Value $kv[1]; $changed = $true }
 }
 if ($changed) { Write-LabLog 'gssapi: LDAP signing/channel binding policy set; REBOOT dc1 (or restart NTDS) before testing' }
@@ -27,18 +28,20 @@ if (-not (Get-ADUser -Filter "SamAccountName -eq '$name'")) {
   New-ADUser -Name $name -SamAccountName $name -Path "OU=ServiceAccounts,$($d.DistinguishedName)" `
     -AccountPassword (ConvertTo-SecureString $pw -AsPlainText -Force) -Enabled $true -PasswordNeverExpires $true
 }
-Set-ADUser $name -KerberosEncryptionType AES128, AES256 -Replace @{ 'msDS-SupportedEncryptionTypes' = 24 }
+Set-ADUser $name -KerberosEncryptionType AES128, AES256
 Remove-Item "$out\svc.keytab" -ErrorAction SilentlyContinue
 # ktpass resets the account password to $pw and writes AES256 keys; -ptype NT_PRINCIPAL so the principal is the plain account name
-& ktpass /princ "$name@$realm" /mapuser "$($d.NetBIOSName)\$name" /pass $pw /crypto AES256-SHA1 /ptype KRB5_NT_PRINCIPAL /out "$out\svc.keytab" +setupn | Out-Null
-if (-not (Test-Path "$out\svc.keytab")) { throw 'ktpass produced no keytab' }
+$ErrorActionPreference = 'Continue'
+$kp = & ktpass /princ "$name@$realm" /mapuser "$($d.NetBIOSName)\$name" /pass $pw /crypto AES256-SHA1 /ptype KRB5_NT_PRINCIPAL /out "$out\svc.keytab" +setupn 2>&1
+$ErrorActionPreference = 'Stop'
+if (-not (Test-Path "$out\svc.keytab")) { throw "ktpass produced no keytab: $($kp -join ' ')" }
 
 # gMSA (KDS root key backdated 10 h so it is usable at once in a lab)
 if (-not (Get-KdsRootKey)) { Add-KdsRootKey -EffectiveTime (Get-Date).AddHours(-10) | Out-Null }
 $g = 'gmsa-t0566'
 if (-not (Get-ADServiceAccount -Filter "Name -eq '$g'")) {
   New-ADServiceAccount -Name $g -DNSHostName "$g.$($d.DNSRoot)" -KerberosEncryptionType AES128, AES256 `
-    -PrincipalsAllowedToRetrieveManagedPassword "$env:COMPUTERNAME$" -Path "OU=ServiceAccounts,$($d.DistinguishedName)"
+    -PrincipalsAllowedToRetrieveManagedPassword "$env:COMPUTERNAME$", 'Administrator' -Path "OU=ServiceAccounts,$($d.DistinguishedName)"
 }
 $acct = Get-ADServiceAccount $g -Properties 'msDS-ManagedPassword', 'msDS-KeyVersionNumber'
 [pscustomobject]@{
