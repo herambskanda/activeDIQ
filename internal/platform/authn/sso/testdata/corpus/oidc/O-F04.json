@@ -1,0 +1,10 @@
+{
+ "id": "O-F04",
+ "class": "forged",
+ "cites": [
+  "OIDC-8"
+ ],
+ "build": "key_from_header",
+ "expect": "refuse",
+ "reason": "oidc.key"
+}

@@ -1,0 +1,10 @@
+{
+ "id": "O-F10",
+ "class": "forged",
+ "cites": [
+  "OIDC-1"
+ ],
+ "build": "implicit_response",
+ "expect": "refuse",
+ "reason": "oidc.flow"
+}

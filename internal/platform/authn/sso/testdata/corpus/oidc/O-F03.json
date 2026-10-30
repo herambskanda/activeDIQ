@@ -1,0 +1,10 @@
+{
+ "id": "O-F03",
+ "class": "forged",
+ "cites": [
+  "OIDC-7"
+ ],
+ "build": "alg_not_pinned",
+ "expect": "refuse",
+ "reason": "oidc.alg"
+}

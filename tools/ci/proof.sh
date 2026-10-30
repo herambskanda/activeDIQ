@@ -959,13 +959,16 @@ fresh_pf_tree() {
     "$pf/internal/compose/profile" "$pf/internal/compose/config" "$pf/tools/fitness/profiles" "$pf/tools/fitness/stack" \
     "$pf/knowledge/development/decisions"
   printf 'module pf.test\n\ngo 1.27.0\n' >"$pf/go.mod"
-  printf -- '---\nstatus: ratified\n---\n' >"$pf/knowledge/development/decisions/0002-deployment-model.md"
+  # The real ADR: its "Activation deferrals" table is what approves the manifest's deferrals (ADR-0002 E-3).
+  cp knowledge/development/decisions/0002-deployment-model.md "$pf/knowledge/development/decisions/0002-deployment-model.md"
   cp tools/fitness/profiles/uem-denylist.json "$pf/tools/fitness/profiles/"
-  # The real manifest, minus its p4.exempt entries (they name files this throw-away tree does not have).
+  # The real manifest, minus its p4.exempt and externalVocabulary entries (they name files and identifiers
+  # this throw-away tree does not have, and P1 reports a vocabulary entry that matches nothing as stale).
   python3 - tools/fitness/profiles/manifest.json "$pf/tools/fitness/profiles/manifest.json" <<'PY'
 import json, sys
 m = json.load(open(sys.argv[1]))
 m["p4"]["exempt"] = []
+m["externalVocabulary"] = []
 json.dump(m, open(sys.argv[2], "w"), indent=2)
 PY
   printf '{"denylistExtends": ["tools/fitness/profiles/uem-denylist.json"]}\n' >"$pf/tools/fitness/stack/manifest.json"
@@ -1002,6 +1005,16 @@ GO
   git -C "$pf" init -q -b main && git -C "$pf" -c user.name=proof -c user.email=proof@example.test commit -q --allow-empty -m proof
 }
 profiles() { go run ./tools/fitness/profiles -root "$pf" "$@"; }
+# manifest_edit PYTHON-STATEMENTS: edit the activation rows of the throw-away tree's manifest (variable m).
+manifest_edit() {
+  python3 - "$pf/tools/fitness/profiles/manifest.json" "$1" <<'PY'
+import json, sys
+p, code = sys.argv[1], sys.argv[2]
+m = json.load(open(p))
+exec(code)
+json.dump(m, open(p, "w"), indent=2)
+PY
+}
 fresh_pf_tree
 must_pass "fitness-profiles on a clean composition" profiles
 fresh_pf_tree; printf 'package dn\n\nimport _ "pf.test/internal/compose/profile"\n' >"$pf/internal/directory/dn/d.go"
@@ -1052,12 +1065,23 @@ printf 'package svc\n\ntype S struct{ cache map[string]int }\n' >"$pf/internal/m
 must_fail_with "fitness-profiles P4 on a cache not keyed by tenant" 'internal/modules/svc/s.go:3: P4 .*cache S.cache is not keyed by tenant' profiles -checks P4
 printf 'package svc\n\nimport "pf.test/internal/platform/tenant"\n\ntype S struct{ cache map[tenant.ID]int }\n' >"$pf/internal/modules/svc/s.go"
 must_pass "fitness-profiles P4 on a cache keyed by tenant" profiles -checks P4
-fresh_pf_tree; mkdir -p "$pf/packaging/windows"; : >"$pf/packaging/windows/product.wxs"
-must_fail_with "fitness-profiles activation: an installer without its P2 check" 'ACT .*packaging/windows exists, which activates P2.*not implemented' profiles -checks ACT
-fresh_pf_tree; mkdir -p "$pf/internal/connector/ldap"
+# Without its deferral a row's path activates the check, and the check is not implemented: a violation.
+DROP_DEFERRALS='for r in m["activation"]: r.pop("deferral", None)'
+fresh_pf_tree; manifest_edit "$DROP_DEFERRALS"; mkdir -p "$pf/packaging/windows"; : >"$pf/packaging/windows/product.wxs"
+must_fail_with "fitness-profiles activation: an installer without its P2-msi check" 'ACT .*packaging/windows exists, which activates P2-msi.*not implemented' profiles -checks ACT
+fresh_pf_tree; manifest_edit "$DROP_DEFERRALS"; mkdir -p "$pf/packaging/linux-oci"; : >"$pf/packaging/linux-oci/Dockerfile"
+must_fail_with "fitness-profiles activation: an image without its P2-oci and P6 checks" 'ACT .*packaging/linux-oci exists, which activates P2-oci.*not implemented' profiles -checks ACT
+fresh_pf_tree; manifest_edit "$DROP_DEFERRALS"; mkdir -p "$pf/internal/connector/ldap"
 must_fail_with "fitness-profiles activation: a connector without its P3 check" 'ACT .*internal/connector/ldap exists, which activates P3.*not implemented' profiles -checks ACT
+# A deferral listed in ADR-0002's Activation deferrals table (check, ticket, expiry) turns the violation into ACTIVE, DEFERRED.
+fresh_pf_tree; mkdir -p "$pf/packaging/windows"; : >"$pf/packaging/windows/product.wxs"
+must_pass "fitness-profiles activation: a deferral the ADR table approves" bash -c "go run ./tools/fitness/profiles -root '$pf' -checks ACT | grep -q 'P2-msi *ACTIVE, DEFERRED (T-0928 until 2027-01-30)'"
+# Editing the date in the manifest alone extends nothing: the ADR table has no such row.
+fresh_pf_tree; manifest_edit 'for r in m["activation"]:
+    if r["check"] == "P2-msi": r["deferral"]["expires"] = "2027-06-30"'
+must_fail_with "fitness-profiles activation: a deferral only the manifest approves" 'P2-msi: ACT .*deferral \(P2-msi, T-0928, 2027-06-30\) has no row in the "Activation deferrals" table' profiles -checks ACT
 fresh_pf_tree
-must_pass "fitness-profiles prints the pending table" bash -c "go run ./tools/fitness/profiles -root '$pf' -checks ACT | grep -q 'P2 .*pending'"
+must_pass "fitness-profiles prints the pending table" bash -c "go run ./tools/fitness/profiles -root '$pf' -checks ACT | grep -q 'P2-oci .*pending'"
 
 # --- vuln-scan (T-0010) -----------------------------------------------------------------------
 # A throw-away module that calls golang.org/x/text/language.ParseAcceptLanguage at v0.3.7
@@ -1603,8 +1627,8 @@ mk_sso() {
 ss="$tmp/sso"
 mk_sso "$ss/clean" with-oidc
 must_pass "fitness-sso on a fenced tree with a complete corpus" sso -root "$ss/clean" -static
-mk_sso "$ss/pend"
-must_pass "fitness-sso lists the missing OIDC corpus as pending" bash -c "go run ./tools/fitness/sso -root '$ss/pend' -static | grep -q 'PENDING: oidc corpus'"
+mk_sso "$ss/absent"
+must_fail_with "fitness-sso on a tree with no OIDC corpus" 'oidc: no corpus records' sso -root "$ss/absent" -static
 # FIT-SSO-1 imports (acceptance 1)
 mk_sso "$ss/imp" with-oidc; mkdir -p "$ss/imp/internal/platform/other"
 printf 'package other\n\nimport _ "github.com/russellhaering/goxmldsig"\n' >"$ss/imp/internal/platform/other/x.go"
@@ -1646,13 +1670,21 @@ must_fail_with "fitness-sso on a record citing a check the spec does not have" '
 mk_sso "$ss/c6" with-oidc; sed -i 's/"id":"S-1"/"id":"S-one"/' "$ss/c6/internal/platform/authn/sso/testdata/corpus/saml/S-1.json"
 must_fail_with "fitness-sso on a record whose id is not its file name" 'id "S-one" must equal the file name' sso -root "$ss/c6" -static
 mk_sso "$ss/c7"; mkdir -p "$ss/c7/internal/platform/authn/sso/testdata/corpus/oidc"
-must_fail_with "fitness-sso on an empty OIDC corpus directory (pending only while it is absent)" 'oidc: no corpus records' sso -root "$ss/c7" -static
+must_fail_with "fitness-sso on an empty OIDC corpus directory " 'oidc: no corpus records' sso -root "$ss/c7" -static
 mk_sso "$ss/c8"; printf 'package oidc\n\nimport "testing"\n\nfunc TestCorpus(t *testing.T) {}\n' >"$ss/c8/internal/platform/authn/sso/oidc/c_test.go"
 must_fail_with "fitness-sso when oidc declares TestCorpus but has no records" 'oidc: no corpus records' sso -root "$ss/c8" -static
-# FIT-SSO-2 bound subtests, through go test in a throw-away module (SAML only; OIDC pending)
-mk_sso "$ss/b"; printf "package saml\n" >"$ss/b/internal/platform/authn/sso/saml/s.go"
+# FIT-SSO-2 bound subtests, through go test in a throw-away module
+mk_sso "$ss/b" with-oidc; printf "package saml\n" >"$ss/b/internal/platform/authn/sso/saml/s.go"
 printf 'package saml\n\nimport "testing"\n\nfunc TestCorpus(t *testing.T) {\n\tfor _, id := range []string{"S-1", "S-2", "S-3", "S-4", "S-5"} {\n\t\tt.Run(id, func(t *testing.T) {})\n\t}\n}\n' >"$ss/b/internal/platform/authn/sso/saml/c_test.go"
+printf 'package oidc\n\nimport "testing"\n\nfunc TestCorpus(t *testing.T) {\n\tfor _, id := range []string{"O-1", "O-2", "O-3", "O-4"} {\n\t\tt.Run(id, func(t *testing.T) {})\n\t}\n}\n' >"$ss/b/internal/platform/authn/sso/oidc/c_test.go"
 must_pass "fitness-sso runs every corpus record as a passing subtest" sso -root "$ss/b"
+rm "$ss/b/internal/platform/authn/sso/oidc/c_test.go"
+must_fail_with "fitness-sso on an OIDC corpus whose TestCorpus is missing" 'FIT-SSO-2' sso -root "$ss/b"
+printf 'package oidc\n\nimport "testing"\n\nfunc TestCorpus(t *testing.T) {\n\tfor _, id := range []string{"O-1", "O-2", "O-3"} {\n\t\tt.Run(id, func(t *testing.T) {})\n\t}\n}\n' >"$ss/b/internal/platform/authn/sso/oidc/c_test.go"
+must_fail_with "fitness-sso on an OIDC corpus record with no subtest" 'subtest-missing.*O-4' sso -root "$ss/b"
+printf 'package oidc\n\nimport "testing"\n\nfunc TestCorpus(t *testing.T) {\n\tfor _, id := range []string{"O-1", "O-2", "O-3", "O-4"} {\n\t\tt.Run(id, func(t *testing.T) { if id == "O-2" { t.Skip("x") } })\n\t}\n}\n' >"$ss/b/internal/platform/authn/sso/oidc/c_test.go"
+must_fail_with "fitness-sso on a skipped OIDC corpus subtest" 'TestCorpus/O-2 .*subtest-skip' sso -root "$ss/b"
+printf 'package oidc\n\nimport "testing"\n\nfunc TestCorpus(t *testing.T) {\n\tfor _, id := range []string{"O-1", "O-2", "O-3", "O-4"} {\n\t\tt.Run(id, func(t *testing.T) {})\n\t}\n}\n' >"$ss/b/internal/platform/authn/sso/oidc/c_test.go"
 sed -i 's/"S-5"/"S-6"/' "$ss/b/internal/platform/authn/sso/saml/c_test.go"
 must_fail_with "fitness-sso on a corpus record with no subtest" 'subtest-missing.*S-5' sso -root "$ss/b"
 sed -i 's/"S-6"/"S-5"/; s/t.Run(id, func(t \*testing.T) {})/t.Run(id, func(t *testing.T) { if id == "S-3" { t.Skip("x") } })/' "$ss/b/internal/platform/authn/sso/saml/c_test.go"
