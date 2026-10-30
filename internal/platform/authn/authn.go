@@ -155,6 +155,17 @@ func (Handlers) SignOut(context.Context, api.SignOutInput) (api.SignOutOutput, e
 	return nil, apitypes.NotImplemented("")
 }
 
-func (Handlers) GetCSRFToken(context.Context, api.GetCSRFTokenInput) (api.GetCSRFTokenOutput, error) {
-	return nil, apitypes.NotImplemented("")
+// CSRFHeader is the request header the console sends the CSRF value in; it names the header in the
+// GET /auth/csrf answer and is the one authnhttp.CSRFHeader checks.
+const CSRFHeader = "X-CSRF-Token"
+
+// GetCSRFToken answers the calling session's CSRF value. The Authenticator derived it from the session
+// token, which never reaches a handler. Only a cookie session has one: any other principal, or none, is
+// the same 401 as a missing session, with no value.
+func (Handlers) GetCSRFToken(ctx context.Context, _ api.GetCSRFTokenInput) (api.GetCSRFTokenOutput, error) {
+	p, ok := apihost.PrincipalFrom(ctx)
+	if !ok || p.Kind != apihost.KindSession || p.CSRF == "" {
+		return nil, apitypes.Unauthenticated("")
+	}
+	return api.GetCSRFToken200{Body: api.CsrfValue{Header: CSRFHeader, Value: p.CSRF}}, nil
 }

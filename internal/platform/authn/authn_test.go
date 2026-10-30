@@ -136,8 +136,7 @@ func TestStubsAnswerNotImplemented(t *testing.T) {
 	_, e3 := h.VerifyWebAuthnSignIn(ctx, api.VerifyWebAuthnSignInInput{})
 	_, e4 := h.VerifyTOTPSignIn(ctx, api.VerifyTOTPSignInInput{}) // unwired: no SecondFactor
 	_, e5 := h.SignOut(ctx, api.SignOutInput{})
-	_, e6 := h.GetCSRFToken(ctx, api.GetCSRFTokenInput{})
-	for i, err := range []error{e1, e2, e3, e4, e5, e6} {
+	for i, err := range []error{e1, e2, e3, e4, e5} {
 		var p *apitypes.Problem
 		if !errors.As(err, &p) || p.Status != 501 || p.Type != apitypes.ProblemTypeNotImplemented || p.Detail != nil {
 			t.Errorf("stub %d: %v", i, err)
@@ -145,5 +144,15 @@ func TestStubsAnswerNotImplemented(t *testing.T) {
 	}
 	if (Handlers{}).Bind().Tag() == "" {
 		t.Error("API() has no tag")
+	}
+}
+
+// Without a principal in the context GET /auth/csrf is a 401 and never a value. (The 200 path, which
+// needs the chain to put the principal in the context, is TestGetCSRFTokenThroughTheMountedRoutes.)
+func TestGetCSRFTokenWithoutAPrincipalIs401(t *testing.T) {
+	_, err := Handlers{}.GetCSRFToken(context.Background(), api.GetCSRFTokenInput{})
+	var p *apitypes.Problem
+	if !errors.As(err, &p) || p.Status != 401 {
+		t.Errorf("err = %v", err)
 	}
 }
