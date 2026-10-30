@@ -396,11 +396,6 @@
         "reason": "read-only Windows lab collector for the TM-F-HOST proof (T-0136): prints an observation JSON, changes nothing, takes no product input"
       },
       {
-        "path": "packaging/windows/New-SetupSecret.ps1",
-        "adr": "0001-technology-stack.md",
-        "reason": "installer-time script that writes the first-run setup secret file with its final DACL (T-0635, TM-TB16-T7); fixed arguments, no constructed security descriptors from input; consumption is server-side (T-0636)"
-      },
-      {
         "path": "packaging/windows/Test-MsiRefusesDc.ps1",
         "adr": "0001-technology-stack.md",
         "reason": "Windows lab driver for HOST-DC-REFUSED (T-0635): runs msiexec with a fixed argument array against a built MSI and then calls Get-HostObservation.ps1; lab only, never shipped, takes no product input"

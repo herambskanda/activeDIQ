@@ -20,7 +20,7 @@ func repoRoot(t *testing.T) string {
 func fixture(t *testing.T, file string, mutate func(string) string) string {
 	t.Helper()
 	root := t.TempDir()
-	for _, f := range []string{winACL, winTest, winMsi, winDC, "packaging/windows/New-SetupSecret.ps1", linPrep, linCompose} {
+	for _, f := range []string{winACL, winTest, winMsi, winDC, linPrep, linCompose} {
 		b, err := os.ReadFile(filepath.Join(repoRoot(t), f))
 		if err != nil {
 			t.Fatal(err)
@@ -72,6 +72,11 @@ func TestViolationsAreCaught(t *testing.T) {
 			return strings.ReplaceAll(s, "MsiNTProductType &lt;&gt; 2", "MsiNTProductType &lt;&gt; 9")
 		}},
 		{"refusal as custom action", winMsi, "LaunchCondition", func(s string) string { return s + "\n<CustomAction Id=\"X\" />\n" }},
+		{"product type overridden by SetProperty", winMsi, "type-51 set-property", func(s string) string {
+			return s + "\n<SetProperty Id=\"MsiNTProductType\" Value=\"3\" Before=\"LaunchConditions\" Sequence=\"both\" />\n"
+		}},
+		{"product type authored as Property", winMsi, "read from the OS", func(s string) string { return s + "\n<Property Id=\"MsiNTProductType\" Value=\"3\" />\n" }},
+		{"Installed authored as Property", winMsi, "uninstall exemption", func(s string) string { return s + "\n<Property Id=\"Installed\" Value=\"\" />\n" }},
 		{"msiexec line interpolated", winDC, "msiexec arguments", func(s string) string {
 			return strings.ReplaceAll(s, "-ArgumentList $args", "-ArgumentList \"/i $MsiPath\"")
 		}},
