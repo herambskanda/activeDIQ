@@ -440,6 +440,20 @@ func TestExec_subjects(t *testing.T) {
 // SQL-22: a statement timeout is a typed error, not a driver error that echoes SQL; a cancelled
 // context stays the context's error.
 func TestExec_statement_timeout_is_ErrQueryTimeout(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		err := execUnderTimeout(t, s)
+		if !errors.Is(err, reportsql.ErrQueryTimeout) {
+			t.Fatalf("err = %v, want ErrQueryTimeout", err)
+		}
+		if strings.Contains(err.Error(), "SELECT") || strings.Contains(err.Error(), "generate_series") {
+			t.Fatalf("the error carries SQL: %v", err)
+		}
+	})
+}
+
+// execUnderTimeout runs a deliberately slow query under a 30ms statement timeout and returns Exec's error.
+func execUnderTimeout(t *testing.T, s *storetest.Server) error {
+	t.Helper()
 	ds := usersDataset()
 	ds.Columns = append(ds.Columns, report.Column{ID: "slow", Label: "Slow", Type: report.TypeInt,
 		Source: report.Derived{SQL: report.SQL("(SELECT count(*) FROM generate_series(1, 30000000))")}, Sortable: true})
@@ -456,20 +470,14 @@ func TestExec_statement_timeout_is_ErrQueryTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
-		withDB(t, s, func(ctx context.Context, tx pgx.Tx) error {
-			_, err := tx.Exec(ctx, `SET LOCAL statement_timeout = '30ms'`)
-			return err
-		}, func(ctx context.Context, tx pgx.Tx) {
-			_, err := reportsql.Exec(ctx, tx, c, 10, func(context.Context, []report.Row) error { return nil })
-			if !errors.Is(err, reportsql.ErrQueryTimeout) {
-				t.Fatalf("err = %v, want ErrQueryTimeout", err)
-			}
-			if strings.Contains(err.Error(), "SELECT") || strings.Contains(err.Error(), "generate_series") {
-				t.Fatalf("the error carries SQL: %v", err)
-			}
-		})
+	var got error
+	withDB(t, s, func(ctx context.Context, tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `SET LOCAL statement_timeout = '30ms'`)
+		return err
+	}, func(ctx context.Context, tx pgx.Tx) {
+		_, got = reportsql.Exec(ctx, tx, c, 10, func(context.Context, []report.Row) error { return nil })
 	})
+	return got
 }
 
 func TestExec_a_cancelled_context_is_not_a_timeout(t *testing.T) {
