@@ -132,7 +132,7 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	}
 	// The console authentication stack: sessions, the cookie Authenticator and the step-up check. The
 	// tenant-owner writer shares its session store (it ends a changed owner's sessions).
-	console, err := buildConsole(db, ok.Chainer, keys.NewStore(kekp).KeySource(), slog.Default())
+	console, err := buildConsole(db, ok.Chainer, keys.NewStore(kekp).KeySource(), slog.Default(), withPublicURL(cfg.PublicURL))
 	if err != nil {
 		return err
 	}
@@ -170,8 +170,8 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 		return err
 	}
 	tags = append(tags, dirTag)
-	// The sign-in plane: AN-8 for a local account, then AN-10 TOTP, which is the only way a console session
-	// is created.
+	// The sign-in plane: AN-8 for a local account, then AN-10 (TOTP, and WebAuthn when the public URL is
+	// set), which is the only way a console session is created.
 	tags = append(tags, console.Tags())
 	cat := permissionCatalogue()
 	if err := checkCatalogue(cat); err != nil {

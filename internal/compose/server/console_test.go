@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
+	"github.com/skenzeriq/activediq/internal/platform/authn"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/rbac"
@@ -152,3 +153,38 @@ func TestConsoleAuthzOverRealRBAC(t *testing.T) {
 
 // testCatalogue is the real catalogue plus "x", the placeholder permission some cases ask for.
 func testCatalogue() apihost.Permissions { return append(permissionCatalogue(), "x") }
+
+// The relying party is the public URL's origin: RP ID without the port, exactly one origin, nothing else.
+func TestWebAuthnRelyingPartyFromPublicURL(t *testing.T) {
+	for in, want := range map[string]authn.WebAuthnConfig{
+		"https://diq.example.com":      {RPID: "diq.example.com", RPDisplayName: "activeDIQ", Origins: []string{"https://diq.example.com"}},
+		"https://diq.example.com/":     {RPID: "diq.example.com", RPDisplayName: "activeDIQ", Origins: []string{"https://diq.example.com"}},
+		"https://diq.example.com:8443": {RPID: "diq.example.com", RPDisplayName: "activeDIQ", Origins: []string{"https://diq.example.com:8443"}},
+	} {
+		got, err := webAuthnRelyingParty(in)
+		if err != nil || got.RPID != want.RPID || len(got.Origins) != 1 || got.Origins[0] != want.Origins[0] {
+			t.Errorf("%s: %+v, %v", in, got, err)
+		}
+	}
+	for _, bad := range []string{"", "http://diq.example.com", "https://diq.example.com/x", "https://u:p@diq.example.com", "https://diq.example.com/?a=b", "diq.example.com", "https://"} {
+		if _, err := webAuthnRelyingParty(bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}
+
+// Without a public URL the stack has no WebAuthn factor, so Tags leaves the interface nil (a typed nil
+// would turn the 501 into a panic); with one it is built over the shared stores.
+func TestBuildConsoleWebAuthnOnlyWithPublicURL(t *testing.T) {
+	off, err := buildConsole(&store.DB{}, nopSink{}, testKeys(), nil)
+	if err != nil || off.WebAuthn != nil {
+		t.Fatalf("off: %v %v", off.WebAuthn, err)
+	}
+	on, err := buildConsole(&store.DB{}, nopSink{}, testKeys(), nil, withPublicURL("https://diq.example.com"))
+	if err != nil || on.WebAuthn == nil {
+		t.Fatalf("on: %v %v", on.WebAuthn, err)
+	}
+	if _, err := buildConsole(&store.DB{}, nopSink{}, testKeys(), nil, withPublicURL("http://diq.example.com")); err == nil {
+		t.Error("a non-https public URL built a relying party")
+	}
+}
