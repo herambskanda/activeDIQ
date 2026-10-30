@@ -10,6 +10,15 @@
       "package": "internal/directory/ldapfilter"
     },
     {
+      "name": "go/dn",
+      "language": "go",
+      "tier": "S",
+      "units": [
+        "dn"
+      ],
+      "package": "internal/directory/dn"
+    },
+    {
       "name": "go/odata",
       "language": "go",
       "tier": "S",
@@ -113,6 +122,15 @@
       "implementation": "go/ldapfilter",
       "unit": "ldapfilter",
       "target": "FuzzFilter",
+      "properties": [
+        "roundtrip",
+        "noUnescapedSpecial"
+      ]
+    },
+    {
+      "implementation": "go/dn",
+      "unit": "dn",
+      "target": "FuzzDN",
       "properties": [
         "roundtrip",
         "noUnescapedSpecial"
