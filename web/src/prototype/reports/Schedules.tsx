@@ -1,5 +1,6 @@
-import { useId, useState } from "react";
+import { useId, useMemo, useState } from "react";
 
+import { type Column, DataGrid, type DataGridColumn, Table } from "../../ds/components";
 import type { RecipientState, SchedRecipient, Schedule } from "./fixtures";
 
 const STATE_LABEL: Record<RecipientState, string> = {
@@ -15,6 +16,55 @@ const STATE_TONE: Record<RecipientState, string> = {
   "gave-up": "crit",
 };
 const TONE_GLYPH = { ok: "✓", muted: "○", warn: "⏸", crit: "⚠" } as const;
+
+function failedCount(s: Schedule): number {
+  return s.recipients.filter((r) => r.state === "failed").length;
+}
+
+const scheduleColumns = (onOpen: (id: string) => void): DataGridColumn<Schedule>[] => [
+  {
+    key: "schedule",
+    header: "Schedule",
+    width: 44,
+    title: (s) => `${s.name}: ${s.report}`,
+    cell: (s) => (
+      <>
+        <button type="button" className="rp__link" onClick={() => onOpen(s.id)}>
+          {s.name}
+        </button>
+        <span className="rp__subinline">{s.report}</span>
+      </>
+    ),
+  },
+  { key: "when", header: "When", width: 24, cell: (s) => s.when },
+  { key: "next", header: "Next run", width: 24, cell: (s) => s.next },
+  { key: "owner", header: "Owner", width: 16, cell: (s) => s.owner },
+  {
+    key: "recipients",
+    header: "Recipients",
+    width: 20,
+    title: (s) => `${s.recipients.length} recipients, ${failedCount(s)} failed`,
+    cell: (s) => (
+      <>
+        {s.recipients.length}
+        {failedCount(s) > 0 ? (
+          <span className="chip chip--crit">⚠ {failedCount(s)} failed</span>
+        ) : null}
+      </>
+    ),
+  },
+  {
+    key: "last",
+    header: "Last run",
+    width: 26,
+    title: (s) => s.last,
+    cell: (s) => (
+      <span className={`chip chip--${s.lastTone}`}>
+        {TONE_GLYPH[s.lastTone]} {s.last}
+      </span>
+    ),
+  },
+];
 
 export function needsAttention(s: Schedule): boolean {
   return s.lastTone === "crit" || s.lastTone === "warn" || s.state === "paused";
@@ -35,6 +85,8 @@ export function Schedules(props: {
   const shown = schedules.filter((s) =>
     filter === "all" ? true : filter === "paused" ? s.state === "paused" : needsAttention(s),
   );
+  const columns = useMemo(() => scheduleColumns(onOpen), [onOpen]);
+  const pickedSet = useMemo(() => new Set(picked), [picked]);
   const attention = schedules.filter(needsAttention).length;
   const pickedSchedules = schedules.filter((s) => picked.includes(s.id));
   const detail = schedules.find((s) => s.id === open) ?? null;
@@ -144,75 +196,14 @@ export function Schedules(props: {
           </p>
         </div>
       ) : (
-        <div
-          className="rp__scroll rp__scroll--auto"
-          role="region"
-          aria-label="Schedules"
-          tabIndex={0}
-        >
-          <table className="rp__grid rp__grid--auto">
-            <caption className="rp__sr">Schedules</caption>
-            <thead>
-              <tr>
-                <th scope="col" className="rp__chk">
-                  <input
-                    type="checkbox"
-                    aria-label="Select all schedules shown"
-                    checked={picked.length === shown.length}
-                    onChange={(e) => setPicked(e.target.checked ? shown.map((s) => s.id) : [])}
-                  />
-                </th>
-                <th scope="col">Schedule</th>
-                <th scope="col">When</th>
-                <th scope="col">Next run</th>
-                <th scope="col">Owner</th>
-                <th scope="col">Recipients</th>
-                <th scope="col">Last run</th>
-              </tr>
-            </thead>
-            <tbody>
-              {shown.map((s) => {
-                const failed = s.recipients.filter((r) => r.state === "failed").length;
-                return (
-                  <tr key={s.id}>
-                    <td className="rp__chk">
-                      <input
-                        type="checkbox"
-                        aria-label={`Select ${s.name}`}
-                        checked={picked.includes(s.id)}
-                        onChange={(e) =>
-                          setPicked(
-                            e.target.checked ? [...picked, s.id] : picked.filter((x) => x !== s.id),
-                          )
-                        }
-                      />
-                    </td>
-                    <th scope="row" className="rp__cell rp__rowhead">
-                      <button type="button" className="rp__link" onClick={() => onOpen(s.id)}>
-                        {s.name}
-                      </button>
-                      <div className="pt__sub">{s.report}</div>
-                    </th>
-                    <td>{s.when}</td>
-                    <td>{s.next}</td>
-                    <td>{s.owner}</td>
-                    <td>
-                      {s.recipients.length}
-                      {failed > 0 ? (
-                        <span className="chip chip--crit">⚠ {failed} failed</span>
-                      ) : null}
-                    </td>
-                    <td>
-                      <span className={`chip chip--${s.lastTone}`}>
-                        {TONE_GLYPH[s.lastTone]} {s.last}
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <DataGrid
+          caption={`Schedules, ${shown.length} shown`}
+          columns={columns}
+          rows={shown}
+          rowKey={(s) => s.id}
+          selected={pickedSet}
+          onSelectedChange={(next) => setPicked([...next])}
+        />
       )}
 
       {detail ? (
@@ -259,23 +250,36 @@ export function Schedules(props: {
   );
 }
 
-function RecipientRow({ r }: { readonly r: SchedRecipient }) {
-  return (
-    <tr>
-      <th scope="row" className="rp__cell rp__rowhead">
+const RECIPIENT_COLUMNS: Column<SchedRecipient>[] = [
+  {
+    key: "who",
+    header: "Recipient",
+    rowHeader: true,
+    wrap: true,
+    cell: (r) => (
+      <>
         {r.who}
         {r.external ? <span className="chip chip--warn">↗ Outside</span> : null}
-      </th>
-      <td>
-        {r.format} · {r.method}
-      </td>
-      <td>
-        <span className={`chip chip--${STATE_TONE[r.state]}`}>{STATE_LABEL[r.state]}</span>
-      </td>
-      <td className="rp__wrap">{r.detail}</td>
-    </tr>
-  );
-}
+      </>
+    ),
+  },
+  { key: "format", header: "Format", wrap: true, cell: (r) => `${r.format} · ${r.method}` },
+  {
+    key: "state",
+    header: "State",
+    cell: (r) => (
+      <span className={`chip chip--${STATE_TONE[r.state]}`}>{STATE_LABEL[r.state]}</span>
+    ),
+  },
+  { key: "detail", header: "Detail", wrap: true, cell: (r) => r.detail },
+];
+
+const RUN_COLUMNS: Column<Schedule["runs"][number]>[] = [
+  { key: "at", header: "When", rowHeader: true, cell: (r) => r.at },
+  { key: "rows", header: "Rows", cell: (r) => r.rows.toLocaleString("en") },
+  { key: "outcome", header: "Outcome", wrap: true, cell: (r) => r.outcome },
+  { key: "scope", header: "Scope applied", wrap: true, cell: (r) => r.scope },
+];
 
 function Detail(props: {
   readonly s: Schedule;
@@ -309,49 +313,19 @@ function Detail(props: {
           </div>
         ) : null}
         <h3 className="rp__h3">Delivery, per recipient (last run)</h3>
-        <table className="rp__grid rp__grid--auto">
-          <thead>
-            <tr>
-              <th scope="col">Recipient</th>
-              <th scope="col">Format</th>
-              <th scope="col">State</th>
-              <th scope="col">Detail</th>
-            </tr>
-          </thead>
-          <tbody>
-            {s.recipients.map((r) => (
-              <RecipientRow key={r.who} r={r} />
-            ))}
-          </tbody>
-        </table>
+        <Table
+          caption="Delivery, per recipient (last run)"
+          rows={s.recipients}
+          rowKey={(r) => r.who}
+          columns={RECIPIENT_COLUMNS}
+        />
         <h3 className="rp__h3">Runs</h3>
         {s.runs.length === 0 ? (
           <p className="pt__sub">
             Not run yet. The first run is {s.next}. Each run is listed here with the scope it used.
           </p>
         ) : (
-          <table className="rp__grid rp__grid--auto">
-            <thead>
-              <tr>
-                <th scope="col">When</th>
-                <th scope="col">Rows</th>
-                <th scope="col">Outcome</th>
-                <th scope="col">Scope applied</th>
-              </tr>
-            </thead>
-            <tbody>
-              {s.runs.map((r) => (
-                <tr key={r.at}>
-                  <th scope="row" className="rp__cell rp__rowhead">
-                    {r.at}
-                  </th>
-                  <td>{r.rows.toLocaleString("en")}</td>
-                  <td>{r.outcome}</td>
-                  <td>{r.scope}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <Table caption="Runs" rows={s.runs} rowKey={(r) => r.at} columns={RUN_COLUMNS} />
         )}
         {s.notifyOnlyIfData ? <p className="pt__sub">“Only send if there is data” is on.</p> : null}
         <div className="pt__actions rp__sticky">
