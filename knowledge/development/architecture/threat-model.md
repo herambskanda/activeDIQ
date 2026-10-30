@@ -2043,9 +2043,12 @@ the two differ (console-sso.md header rule).
   A probe against `ValidateConfig` at d47c30bc8 accepted that configuration, and the
   `identityprovider` claim works the same way. Rule: `MFAAttribute` is either empty
   (AuthnContextClassRef) or exactly `http://schemas.microsoft.com/claims/authnmethodsreferences`.
-  Anything else is refused with `saml.config` at save, Start and Complete. Until T-0974 merges,
-  MFA-5 bounds the impact: the bypass reaches console access within RBAC, never the control plane,
-  and MFA-4 alerts every `tenant-owner` to the change.
+  Anything else, including a case or whitespace variant, is refused with `saml.config` at save, Start and
+  Complete. Built in `sso/saml/config.go` (`mfaAttributeAllowed`) and tested by
+  `TestSAMLConfig_RefusesNonMethodMFAAttribute` (corpus X-19). MFA-2b also refuses the namespace
+  `http://schemas.microsoft.com/ws/2008/06/identity/claims/authenticationmethod/` `[UNVERIFIED that any IdP
+  emits it]`. MFA-5 still bounds any future bypass: it reaches console access within RBAC, never the
+  control plane, and MFA-4 alerts every `tenant-owner` to the change.
 - **MAP-2a. A role that gains `control_plane` ends the claim sessions that hold it.** MAP-2 drops
   the role's claim mappings, but MAP-3 holds claim-derived roles on live sessions. Without more, a
   session that entered through a compromised MFA-asserting IdP (TM-X12), without an

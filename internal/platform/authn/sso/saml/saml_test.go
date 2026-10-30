@@ -317,6 +317,8 @@ func TestSAMLConfig_RefusesSingleFactorMicrosoftURIsAsMFAEvidence(t *testing.T) 
 		"URN:Federation:Authentication:Windows",
 		"http://schemas.microsoft.com/ws/2008/06/identity/authenticationmethod/password",
 		"http://schemas.microsoft.com/ws/2008/06/identity/authenticationmethod/windows",
+		"http://schemas.microsoft.com/ws/2008/06/identity/claims/authenticationmethod/password",
+		"HTTP://Schemas.Microsoft.com/ws/2008/06/identity/claims/AuthenticationMethod/Windows",
 		"HTTP://Schemas.Microsoft.com/ws/2008/06/identity/authenticationmethod/Password",
 		"urn:oasis:names:tc:SAML:1.0:am:password",
 		"URN:OASIS:names:tc:SAML:1.0:am:X509-PKI",
@@ -367,6 +369,45 @@ func TestSAMLConfig_AcceptsMultipleAuthnAndIdPClasses(t *testing.T) {
 	} {
 		r := newRig(t)
 		r.env.Config.MFAMode, r.env.Config.MFAEvidence = sso.MFAClaim, []string{ok}
+		c := r.env.Config
+		if err := saml.ValidateConfig(&c); err != nil {
+			t.Errorf("%q refused: %v", ok, err)
+		}
+	}
+}
+
+// MFA-2c (X-19): the evidence attribute is an allow-list. A constant claim must not be able to make every
+// sign-in "MFA". Save, Start and Complete refuse with saml.config; "" and the preset attribute validate.
+func TestSAMLConfig_RefusesNonMethodMFAAttribute(t *testing.T) {
+	for _, bad := range []string{
+		"http://schemas.microsoft.com/identity/claims/tenantid",
+		"http://schemas.microsoft.com/identity/claims/identityprovider",
+		"http://schemas.microsoft.com/ws/2008/06/identity/claims/groups",
+		"http://schemas.microsoft.com/claims/authnmethodsreferences ",
+		" http://schemas.microsoft.com/claims/authnmethodsreferences",
+		"http://schemas.microsoft.com/claims/AuthnMethodsReferences",
+		"HTTP://schemas.microsoft.com/claims/authnmethodsreferences",
+		"authnmethodsreferences",
+	} {
+		r := newRig(t)
+		r.env.Config.MFAMode = sso.MFAClaim
+		r.env.Config.MFAAttribute = bad
+		r.env.Config.MFAEvidence = []string{"https://idp.example.test/ac/mfa"}
+		c := r.env.Config
+		if got := sso.ReasonOf(saml.ValidateConfig(&c)); got != saml.ReasonConfig {
+			t.Errorf("%q: ValidateConfig reason = %q", bad, got)
+		}
+		if _, _, err := r.v.Start(context.Background(), tenant.ID{}, r.env.IdP(), sso.IntentSignin); sso.ReasonOf(err) != saml.ReasonConfig {
+			t.Errorf("%q: Start reason = %q", bad, sso.ReasonOf(err))
+		}
+		if _, err := r.complete(samltest.Form(r.env.Render(r.env.Good(r.tx))), r.tx); sso.ReasonOf(err) != saml.ReasonConfig {
+			t.Errorf("%q: Complete reason = %q", bad, sso.ReasonOf(err))
+		}
+	}
+	for _, ok := range []string{"", "http://schemas.microsoft.com/claims/authnmethodsreferences"} {
+		r := newRig(t)
+		r.env.Config.MFAMode, r.env.Config.MFAAttribute = sso.MFAClaim, ok
+		r.env.Config.MFAEvidence = []string{"https://idp.example.test/ac/mfa"}
 		c := r.env.Config
 		if err := saml.ValidateConfig(&c); err != nil {
 			t.Errorf("%q refused: %v", ok, err)
