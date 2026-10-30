@@ -965,6 +965,21 @@ Consequences:
   - The external-recipient confirmation is part of the preview.
   - `Plan` refuses a per-DC report more often than daily (AC-38) and an interval below 1 hour.
   - `reassign` needs `reports.schedule.manage_all` and leaves the schedule paused.
+- **Preview and undo over HTTP** (ADR-0004 rule 14, ADR-0005 rule 10 as amended by T-0892).
+  - Each of the six writes has a preview twin under `…/previews/<verb>`. A plan refusal is a `200` with `outcome: refused` and the codes below. The external-recipient confirmation is `requiredConfirmations` of kind `external_recipients`, and the write carries it as `confirmedExternal`.
+  - Every write answers `ActiveDIQ-Operation-Id`. The family's undo pair is `POST /reports/schedules/operations/{operationId}/undo` and `…/previews/undo`, bound to `reports.schedule`.
+  - Every inverse is **`reports.schedule.restore`** `{scheduleId, version}`. It is planned for the principal undoing, and is refused as `superseded` when the schedule's current version is not the one the operation wrote:
+
+    | Undo of | Restores | Class | Checks for the undoing principal (blocked code) |
+    | --- | --- | --- | --- |
+    | `create` | archives the schedule ("Schedule removed. Nothing was sent." when it has not fired) | `Reversible` | owner, or `manage_all` |
+    | `update` | the previous version | `Reversible` | the checks of `update` for the restored content: `reports.deliver.external` and the confirmation for every external recipient it restores (`external_not_permitted`), and the scope refusals when the result is active (`report_scope_empty`, `report_scope_unsupported`) |
+    | `delete` | the schedule as it was, active or paused | `Reversible` | as for `update`, over the whole restored version |
+    | `pause` | active | `Reversible` | only the owner, as for `resume` (`owner_only`), plus the scope refusals |
+    | `resume` | paused | `Reversible` | owner, or `manage_all` |
+    | `reassign` | the previous owner, **still paused** | `Lossy`: the earlier active state is not restored, and the previous owner resumes it | `reports.schedule.manage_all` (`manage_all_required`) |
+
+  - An undo never sends anything. A fire that ran between the change and its undo stays sent and is not recalled.
 - **Fire.** A DM-44 tick enqueues `reports.schedule.fire`, which runs the owner-authority checks
   of spec §8.4 in order:
   1. Owner state and permissions. A failure gives a system pause plus `reports.schedule.paused`
