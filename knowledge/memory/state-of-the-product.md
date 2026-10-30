@@ -1,6 +1,6 @@
 ---
 title: State of the product
-updated: 2026-10-07
+updated: 2026-10-30
 budget: 120 lines
 ---
 
@@ -8,6 +8,7 @@ budget: 120 lines
 
 Newest first. One dated line per material change; link the source.
 
+- 2026-10-30 · **`fitness-profiles` (red, 93 findings) ruled: ADR-0002 errata E-1 to E-4 ratified** (notice D-0013, current board). Graph/Entra names go in a sourced registry, while invented profile words still fail. Seven activation deferrals expire by 2027-01-30. ADR-0002 is accepted only when they clear. Fixes: T-0919–T-0935. (T-0889)
 - 2026-10-07 · **Job queue settled: our own `SKIP LOCKED` table in `platform/jobs`, River not adopted** (T-0209; ADR-0001 E3 and ADR-0002/0003/0005 amendments ratified, notice D-0017). The DB refuses cross-tenant enqueue; no pool leaves `store`. T-0084 re-cut and building; T-0153 (operation pipeline) follows it.
 
 - 2026-10-02 · **Brand and UI direction chosen: A · Ledger** (D-0012). It is light and dense, with cobalt, IBM Plex and a labelled left rail. activeDIQ's own tokens (`web/src/ds/tokens.css`, `--diq-*`, light and dark, AA-tested), brand guidelines and the rebased design skills and agents landed with T-0043. Design and UI work now uses them. (factory/demos/evidence/T-0043/)
