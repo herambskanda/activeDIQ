@@ -2,10 +2,15 @@ package cellsafe
 
 import (
 	"slices"
+	"strings"
 	"testing"
+	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/text/unicode/norm"
+
+	"github.com/skenzeriq/activediq/internal/platform/corpus"
+	"github.com/skenzeriq/activediq/internal/platform/corpus/corpustest"
 )
 
 func TestTableMatchesNFKC(t *testing.T) {
@@ -32,43 +37,63 @@ func TestTableMatchesNFKC(t *testing.T) {
 	}
 }
 
-// The corpus of §12.2 (CS-01 … CS-22).
-var corpus = []struct {
-	id, in string
-	want   Class
-}{
-	{"CS-01", "=1+1", FormulaLead}, {"CS-02", "+1+1", FormulaLead}, {"CS-03", "-1+1", FormulaLead},
-	{"CS-04", "@SUM(1,1)", FormulaLead}, {"CS-05", "\t=1+1", FormulaLead},
-	{"CS-06a", "\r=1+1", FormulaLead}, {"CS-06b", "\n=1+1", FormulaLead},
-	{"CS-06c", "\rabc", FormulaLead}, {"CS-06d", "\tabc", FormulaLead}, {"CS-06e", "\nabc", FormulaLead},
-	{"CS-07", "＝1+1", FormulaLead},
-	{"CS-08a", "＋1+1", FormulaLead}, {"CS-08b", "－1+1", FormulaLead}, {"CS-08c", "＠SUM(1,1)", FormulaLead},
-	{"CS-09a", "﹦1+1", FormulaLead}, {"CS-09b", "﹢1", FormulaLead}, {"CS-09c", "﹣1", FormulaLead}, {"CS-09d", "﹫A1", FormulaLead},
-	{"CS-10a", "⁼1", FormulaLead}, {"CS-10b", "₌1", FormulaLead}, {"CS-10c", "⁺1", FormulaLead},
-	{"CS-10d", "₊1", FormulaLead}, {"CS-10e", "⁻1", FormulaLead}, {"CS-10f", "₋1", FormulaLead},
-	{"CS-11", "−1+1", FormulaLead},
-	{"CS-12a", " =1+1", FormulaLead}, {"CS-12b", "\u00a0=1+1", FormulaLead}, {"CS-12c", "\u3000=1+1", FormulaLead},
-	{"CS-13a", "\u200b=1+1", FormulaLead}, {"CS-13b", "\ufeff=1+1", FormulaLead}, {"CS-13c", "\u202e=1+1", FormulaLead},
-	{"CS-13d", "\u00ad=1+1", FormulaLead}, {"CS-13e", "\u2060=1+1", FormulaLead},
-	{"CS-14a", "\x01=1+1", FormulaLead}, {"CS-14b", "\x1f+1", FormulaLead},
-	{"CS-15", "=", FormulaLead},
-	{"CS-16a", "⩵1", FormulaLead}, {"CS-16b", "﬩1", FormulaLead},
-	{"CS-17", "x=1+1", Plain}, {"CS-18", "'=1+1", Plain}, {"CS-19", "１２３", Plain}, {"CS-20", "", Plain},
-	{"CS-21a", "|calc", Plain}, {"CS-21b", "%1", Plain}, {"CS-22", "🙂=1", Plain},
-	{"ctrl-only", "\x01abc", Plain}, {"spaces-only", "   ", Plain}, {"bad-utf8", "\xff=1", Plain},
+// TestCorpus runs CS-01 to CS-22 (testdata/safe-primitives/cellsafe.jsonl, safe-primitives §12.2,
+// FF-SP4): 42 inputs, 35 hostile.
+func TestCorpus(t *testing.T) {
+	names := map[Class]string{Plain: "Plain", FormulaLead: "FormulaLead"}
+	corpustest.Run(t, "go/cellsafe", "cellsafe", func(r corpus.Record) (corpus.Result, error) {
+		if r.Call != "Classify" {
+			return corpus.Result{}, corpustest.Skip("unknown call " + r.Call)
+		}
+		v, err := r.Arg("value")
+		if err != nil {
+			return corpus.Result{}, err
+		}
+		return corpustest.Render(names[Classify(v.Text())]), nil
+	})
 }
 
-func TestCorpus(t *testing.T) {
-	for _, c := range corpus {
+// Cases beyond the §12.2 table: a lone CR, TAB or LF lead (rule 1 needs no following lead), a
+// control-only or space-only cell, and invalid UTF-8 before a lead.
+func TestClassifyEdges(t *testing.T) {
+	for _, c := range []struct {
+		name, in string
+		want     Class
+	}{
+		{"cr-then-text", "\rabc", FormulaLead}, {"tab-then-text", "\tabc", FormulaLead}, {"lf-then-text", "\nabc", FormulaLead},
+		{"ctrl-only", "\x01abc", Plain}, {"spaces-only", "   ", Plain}, {"bad-utf8", "\xff=1", Plain},
+	} {
 		if got := Classify(c.in); got != c.want {
-			t.Errorf("%s: Classify(%q) = %d, want %d", c.id, c.in, got, c.want)
+			t.Errorf("%s: Classify(%q) = %d, want %d", c.name, c.in, got, c.want)
 		}
 	}
 }
 
-func FuzzClassifyNeverPanics(f *testing.F) {
-	for _, c := range corpus {
-		f.Add(c.in)
-	}
-	f.Fuzz(func(t *testing.T, s string) { _ = Classify(s) })
+// FuzzClassify checks the noFormulaLead property against an independent oracle: when Classify
+// says Plain, the value, with its leading White_Space / Cc / Cf scalars skipped, does not NFKC-
+// normalise to something that starts with a formula operator, and it does not start with TAB, CR
+// or LF. (The oracle normalises a copy; Classify never normalises the value, R4.)
+func FuzzClassify(f *testing.F) {
+	corpustest.Seed(f, "cellsafe")
+	f.Fuzz(func(t *testing.T, in []byte) {
+		s := string(in)
+		if Classify(s) == FormulaLead {
+			return
+		}
+		if s != "" && (s[0] == '\t' || s[0] == '\r' || s[0] == '\n') {
+			t.Fatalf("Classify(%q) = Plain for a TAB/CR/LF lead", s)
+		}
+		rest := strings.TrimLeftFunc(s, func(r rune) bool {
+			return r != utf8.RuneError && (unicode.IsSpace(r) || unicode.Is(unicode.Cc, r) || unicode.Is(unicode.Cf, r))
+		})
+		if rest == "" || !utf8.ValidString(rest[:min(len(rest), utf8.UTFMax)]) {
+			return
+		}
+		first, _ := utf8.DecodeRuneInString(rest)
+		n, _ := utf8.DecodeRuneInString(norm.NFKC.String(string(first)))
+		switch n {
+		case '=', '+', '-', '@', 0x2212:
+			t.Fatalf("Classify(%q) = Plain but %U normalises to a formula lead %q", s, first, n)
+		}
+	})
 }
