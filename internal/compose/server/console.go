@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"sync/atomic"
 	"time"
 
@@ -35,6 +36,9 @@ type consoleStack struct {
 	// tenant through SetTenant, which Run calls once the tenant exists.
 	Local  *authn.LocalCredentials
 	Second *authn.SecondFactor
+	// WebAuthn is AN-10 with a security key. It is nil unless the install has a public URL (the relying
+	// party), and while nil its two routes answer 501.
+	WebAuthn *authn.WebAuthnFactor
 	// Denials, when set, records every refused permission check in the audit trail.
 	Denials *deniedAudit
 	log     *slog.Logger
@@ -51,15 +55,40 @@ func (c *consoleStack) installTenant() (tenant.ID, bool) {
 	return tenant.ID{}, false
 }
 
-// Tags is the sign-in plane (/auth/*): AN-8 for a local account and AN-10 with TOTP. WebAuthn, sign-out and
-// the CSRF value answer 501 until their tickets land.
+// Tags is the sign-in plane (/auth/*): AN-8 for a local account and AN-10 with TOTP, and with WebAuthn when
+// the install has a public URL. Without one the WebAuthn routes stay 501 (the field is left a nil interface,
+// not a wrapper around a nil factor). Sign-out and the CSRF value answer 501 until their tickets land.
 func (c *consoleStack) Tags() apihost.TagHandlers {
-	return authn.Handlers{
+	h := authn.Handlers{
 		Password:     authnhttp.PasswordCookies{Factor: c.Local},
 		SecondFactor: authnhttp.TOTPCookies{Factor: c.Second},
 		Log:          c.log,
-	}.Bind()
+	}
+	if c.WebAuthn != nil {
+		h.WebAuthn = authnhttp.WebAuthnCookies{Factor: c.WebAuthn}
+	}
+	return h.Bind()
 }
+
+// webAuthnRelyingParty derives the relying party from the install's public URL, the https origin browsers
+// use: the RP ID is the origin's hostname without port and the one allowed origin is the origin itself
+// (scheme, host and port, no path). config validates the shape; a value that is not an https origin is
+// refused here too, because this is the binding that decides which pages may sign a user in.
+func webAuthnRelyingParty(publicURL string) (authn.WebAuthnConfig, error) {
+	u, err := url.Parse(publicURL)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+		return authn.WebAuthnConfig{}, errors.New("server: WebAuthn: the public URL is not an https origin")
+	}
+	return authn.WebAuthnConfig{RPID: u.Hostname(), RPDisplayName: "activeDIQ", Origins: []string{"https://" + u.Host}}, nil
+}
+
+// consoleOption adjusts buildConsole.
+type consoleOption func(*consoleOptions)
+
+type consoleOptions struct{ publicURL string }
+
+// withPublicURL is the install's ACTIVEDIQ_PUBLIC_URL; with it the console offers WebAuthn sign-in.
+func withPublicURL(u string) consoleOption { return func(o *consoleOptions) { o.publicURL = u } }
 
 // deniedAudit is what ports needs to record refusals: the store and the audit sink.
 type deniedAudit struct {
@@ -67,7 +96,11 @@ type deniedAudit struct {
 	Sink audit.Sink
 }
 
-func buildConsole(db *store.DB, sink audit.Sink, ks authn.KeySource, log *slog.Logger) (*consoleStack, error) {
+func buildConsole(db *store.DB, sink audit.Sink, ks authn.KeySource, log *slog.Logger, opts ...consoleOption) (*consoleStack, error) {
+	var o consoleOptions
+	for _, f := range opts {
+		f(&o)
+	}
 	sessions, err := authn.New(authn.Config{DB: db, Audit: sink})
 	if err != nil {
 		return nil, fmt.Errorf("server: session store: %w", err)
@@ -88,6 +121,20 @@ func buildConsole(db *store.DB, sink audit.Sink, ks authn.KeySource, log *slog.L
 		Denials: &deniedAudit{DB: db, Sink: sink}}
 	c.Local = &authn.LocalCredentials{DB: db, Sessions: sessions, Pending: pending, Keys: ks, Audit: sink, Tenant: c.installTenant}
 	c.Second = &authn.SecondFactor{DB: db, Pending: pending, Sessions: sessions, TOTP: totp, Audit: sink}
+	if o.publicURL == "" {
+		// One line at start-up, so an operator who expected security-key sign-in is told it is off.
+		if log != nil {
+			log.Info("WebAuthn sign-in is off: ACTIVEDIQ_PUBLIC_URL is not set")
+		}
+		return c, nil
+	}
+	rp, err := webAuthnRelyingParty(o.publicURL)
+	if err != nil {
+		return nil, err
+	}
+	if c.WebAuthn, err = authn.NewWebAuthnFactor(rp, db, pending, sessions, sink); err != nil {
+		return nil, fmt.Errorf("server: WebAuthn factor: %w", err)
+	}
 	return c, nil
 }
 
