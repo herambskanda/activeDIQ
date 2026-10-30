@@ -24,7 +24,18 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/keys"
 	"github.com/skenzeriq/activediq/internal/platform/secret"
 	"github.com/skenzeriq/activediq/internal/platform/store"
+	"github.com/skenzeriq/activediq/internal/platform/tablekind"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
+)
+
+// The three tables of migration 0057 (T-0783). All store DM-30 (the local account's credential and its
+// sign-in guard) and are tenant tables: none is append-only, because a password change updates the
+// credential in place and the throttle row is operational state. The pepper is insert-only for the app
+// role by grant (no UPDATE, no DELETE), but DM-30 is not an append-only entity, so it is not declared so.
+var (
+	_ = tablekind.Declare(tablekind.Table{Name: "public.authn_local_credentials", Entity: "DM-30", Kind: tablekind.Tenant})
+	_ = tablekind.Declare(tablekind.Table{Name: "public.authn_signin_throttle", Entity: "DM-30", Kind: tablekind.Tenant})
+	_ = tablekind.Declare(tablekind.Table{Name: "public.authn_signin_pepper", Entity: "DM-30", Kind: tablekind.Tenant, Sealed: []string{"sealed_secret"}})
 )
 
 // AN-8, the break-glass password step (threat model §7.6 rules 2 and 3). It turns a right username and
