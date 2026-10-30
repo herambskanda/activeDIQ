@@ -168,6 +168,12 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
   with `authz.ObjectIDFromOctets` (raw objectGUID bytes) or `authz.ParseObjectID` (text); `guid.GUID`
   is also `[16]byte` but its byte order differs. Type errors in other packages are printed as
   warnings (the build gate owns them). Proof: `go test ./tools/fitness/objectid` (positive and negative fixtures).
+- **`fitness-grantbootstrap`** (T-0808): fails on any identifier or string mention of `GrantBootstrap`
+  outside `internal/compose/server/localaccount.go`, the method declaration in
+  `internal/platform/rbac/grants.go` and `_test.go` files, as `file:line:col`. `GrantBootstrap`
+  skips the grantor's own-authority check, so only the first-account CLI may call it (and the method
+  itself accepts only `rbac.BootstrapPrincipal`). Fix: use `rbac.Grants.Grant`, which requires the
+  actor to hold what it grants. Proof: `go test ./tools/fitness/grantbootstrap` (a new reference fails).
 - **`fitness-update`** (T-0139): TM-F-UPDATE, see `tm-f-update.md`.
 - **`fitness-disclosure`** (T-0258): checks `SECURITY.md` and `.well-known/security.txt`
   (RFC 9116). It fails **30 days before `Expires`** on purpose: that failure is the renewal job.
