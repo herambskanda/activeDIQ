@@ -173,8 +173,11 @@ func checkACL(path string, needProtected bool) error {
 	if needProtected && ctrl&windows.SE_DACL_PROTECTED == 0 {
 		return bad
 	}
-	acl, present, err := sd.DACL()
-	if err != nil || !present || acl == nil { // a NULL DACL grants everyone full access
+	// DACL()'s second result is "defaulted", NOT "present": ignoring it is deliberate. A missing DACL
+	// is reported through err (ERROR_OBJECT_NOT_FOUND); a nil acl is a NULL DACL, which grants everyone
+	// full access, so both are refused.
+	acl, _, err := sd.DACL()
+	if err != nil || acl == nil {
 		return bad
 	}
 	for i := uint32(0); i < uint32(acl.AceCount); i++ {

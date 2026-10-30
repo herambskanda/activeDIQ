@@ -86,6 +86,23 @@ func ownerOnlyDir(t *testing.T, dir string) {
 	}
 }
 
+// positiveControl proves checkDir/Enroll/Load accept a correctly built owner-only directory, so the
+// refusal tests below fail if checkACL is wrong in either direction (never vacuously pass).
+func positiveControl(t *testing.T, m Material, iss *issuer) {
+	t.Helper()
+	good := filepath.Join(t.TempDir(), "control")
+	ownerOnlyDir(t, good)
+	if err := checkDir(good); err != nil {
+		t.Fatalf("positive control: checkDir refused a correct owner-only dir: %v", err)
+	}
+	if _, err := Enroll(context.Background(), m, good, iss.exchange); err != nil {
+		t.Fatalf("positive control: Enroll refused a correct owner-only dir: %v", err)
+	}
+	if _, err := Load(good); err != nil {
+		t.Fatalf("positive control: Load refused a correct owner-only dir: %v", err)
+	}
+}
+
 func refuseBoth(t *testing.T, m Material, iss *issuer, dir string) {
 	t.Helper()
 	if err := checkDir(dir); err == nil {
@@ -103,7 +120,11 @@ func refuseBoth(t *testing.T, m Material, iss *issuer, dir string) {
 // Acceptance 2 (a): protected DACL but owned by another principal (BUILTIN\Users), isolating the owner check.
 func TestWindowsRefusesDirOwnedByAnother(t *testing.T) {
 	iss, m, dir := setup(t)
+	positiveControl(t, m, iss)
 	ownerOnlyDir(t, dir)
+	if err := checkDir(dir); err != nil { // accepted before the owner changes
+		t.Fatalf("checkDir refused the unmodified owner-only dir: %v", err)
+	}
 	users, err := windows.CreateWellKnownSid(windows.WinBuiltinUsersSid)
 	if err != nil {
 		t.Fatal(err)
@@ -121,7 +142,11 @@ func TestWindowsRefusesDirOwnedByAnother(t *testing.T) {
 // Acceptance 2 (b): protected, owned by self, plus exactly one extra Users allow ACE.
 func TestWindowsRefusesDirWithExtraACE(t *testing.T) {
 	iss, m, dir := setup(t)
+	positiveControl(t, m, iss)
 	ownerOnlyDir(t, dir)
+	if err := checkDir(dir); err != nil { // accepted before the extra ACE
+		t.Fatalf("checkDir refused the unmodified owner-only dir: %v", err)
+	}
 	widenKeepProtected(t, dir)
 	refuseBoth(t, m, iss, dir)
 }
@@ -130,8 +155,12 @@ func TestWindowsRefusesDirWithExtraACE(t *testing.T) {
 // directly (independent of Go's winsymlink mapping).
 func TestWindowsRefusesJunction(t *testing.T) {
 	iss, m, dir := setup(t)
+	positiveControl(t, m, iss)
 	target := filepath.Join(t.TempDir(), "target")
 	ownerOnlyDir(t, target)
+	if err := checkDir(target); err != nil { // the target itself is fine; only the junction is refused
+		t.Fatalf("checkDir refused the owner-only junction target: %v", err)
+	}
 	if out, err := exec.Command("cmd", "/c", "mklink", "/J", dir, target).CombinedOutput(); err != nil {
 		t.Fatalf("mklink /J: %v: %s", err, out)
 	}
