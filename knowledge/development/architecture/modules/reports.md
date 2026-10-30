@@ -35,7 +35,7 @@ scope decision, not a platform asymmetry.
 | --- | --- | --- |
 | `internal/platform/report` (EP-8 host), `Registrar.Dataset` | **Missing.** Blueprint §4.1 names `Dataset(d report.Dataset)`, but `module.Registrar` has no such method and `platform.Deps` has only `Access` | §2, §3, row B1 |
 | `internal/platform/store/reportsql` | **Missing.** `sqlconst` (FF-SP2) already lets values of type `reportsql.CompiledSQL` through, and `tools/gen/api` holds a pending `ReportAst → reportsql.Report` binding | §5, rows B1 and B2, RP1 |
-| Directory read-scope producer | **Missing.** `platform/rbac` loads assignments with roots of kind `naming_context`, `ou_subtree`, `entra_tenant`, `tier0_scope` and `tenant`. `platform/authz` has per-target `Authorize` and `FilterForOwner` (a post-filter over candidates, with no callers). `modules/delegation` registers only its four `delegation.*` Actions. There is no `ScopePredicate`, no `ReadScope`, no `Registrar.ScopeEvaluator` and no `ou_one_level` kind. Per-target `Authorize` ANDs a token's `Scope` separately from the assignment union (`authz.go`, `tok.Scope.covers`) | §4; **T-0880** (types, EP-6 host), **T-0881** (`ou_one_level`), **T-0882** (producer) |
+| Directory read-scope producer | **Built (T-0880, T-0881, T-0882).** `authz.ReadScope` and the EP-6 `ScopeEvaluator` host (T-0880), the `ou_one_level` root kind (T-0881), and the one producer `rbac.ReadScopes.For` with the read oracle `authz.Evaluator.AuthorizeRead` (T-0882). The old per-object post-filter over candidates, which had no callers, is deleted. Two adapters are still to be wired in `compose/server`: `rbac.OwnerStatus` (over the account store) and `rbac.ObjectConnections` (over inventory) | §4 |
 | Inventory rows | `directory_objects` (migration 0033) holds `connection_id`, `object_guid`, `nc_guid`, `parent_guid`, `ancestry uuid[]`, `kind`, `state`, `lockout_time`, `pwd_last_set`, `account_expires`, `attributes jsonb`, `observed_at`. Links are in `links` (0012). There is no GIN index on `ancestry`, no per-NC sync-pass watermark (spec D6), no policy-input tables (D4) and no group closure. **`ancestry` is upserted as given** (`objects.go`, `ON CONFLICT … ancestry = EXCLUDED.ancestry`): moving an OU does not rewrite its descendants' `ancestry`, and no column says whether a row's chain is complete | §3.4, §4.5, rows P1, **P2**, B3, B6 |
 | `platform/export` | CSV and XLSX encoders, `export.Cell`, `Source`, `Run`, `RunToBlob` (T-0150). **No canonical digest** (spec §8.3) | §7, row B9 |
 | `platform/jobs` | Kinds, `ModeDefault` and `ModeManagedTx`, queue, leases. **No DM-44 recurring schedule** | §8, row P4 |
@@ -387,15 +387,14 @@ replicated-logon thresholds (spec §6.4) is `Min: 30` on USR-03's `days` paramet
 ### 4.1 Who produces it today: nobody
 
 Plainly: **no package produces a directory read-scope predicate today**. `modules/delegation` has
-no scope evaluator. `authz.FilterForOwner` is a per-object post-filter with no callers. It is the
-opposite of "in the query", and T-0882 deletes it. Three filed tickets build the producer (split
-from T-0872 by T-0877):
+no scope evaluator. A per-object post-filter over candidates, with no callers, was the opposite of
+"in the query"; T-0882 deleted it. Three tickets built the producer (split from T-0872 by T-0877):
 
 | Ticket | Delivers | Unblocks |
 | --- | --- | --- |
 | **T-0880** | `authz.ReadScope` types (§4.2), `authztest.ReadScope`, EP-6 `ScopeEvaluator` host, `delegation` evaluators | B2 (compiler) |
 | **T-0881** | the `ou_one_level` assignment root kind (migration, per-target `Authorize`) | T-0882 |
-| **T-0882** | the producer `rbac.ReadScopes.For`, the read oracle `authz.Evaluator.AuthorizeRead` (§4.6), deletion of `FilterForOwner` and `ReportRows` | B4 (run path), T-0875 (search) |
+| **T-0882** | the producer `rbac.ReadScopes.For`, the read oracle `authz.Evaluator.AuthorizeRead` (§4.6), deletion of the old per-object post-filter | B4 (run path), T-0875 (search) |
 
 ### 4.2 The type (built in T-0880; the fields are fixed here)
 
@@ -1065,7 +1064,7 @@ with the same owners. Existing tickets are named by ID. "AC" means reports-2a §
 | --- | --- | --- | --- | --- |
 | T-0880 | `authz.ReadScope` types with the token layer and `Fingerprint` (§4.2), `authztest.ReadScope`, EP-6 `ScopeEvaluator` host, `delegation` evaluators (filed) | backend-engineer | — | FR-07; AC-06 |
 | T-0881 | `ou_one_level` assignment root kind: migration and per-target `Authorize` (filed) | backend-engineer | — | FR-07; AC-06 |
-| T-0882 | `rbac.ReadScopes.For` producer, read oracle `authz.Evaluator.AuthorizeRead` (§4.6), delete `FilterForOwner` and `ReportRows` (filed) | backend-engineer | T-0880, T-0881 | FR-07; AC-06, AC-07 |
+| T-0882 | `rbac.ReadScopes.For` producer, read oracle `authz.Evaluator.AuthorizeRead` (§4.6), delete the old per-object post-filter (done) | backend-engineer | T-0880, T-0881 | FR-07; AC-06, AC-07 |
 | T-0873 | `fitness-reports` RP1 to RP11 and the FF-SP2 amendment (filed) | devops-engineer | B1, B2 stubs | FR-03, FR-05, FR-19 (guards) |
 | T-0866 | OpenAPI contract for the 2a report operations (exists) | api-engineer | this page | FR-31; AC-43 |
 | P1 | inventory: per-NC sync passes and the **last-successful-pass watermark** (D6); `inventory.Freshness`; staleness threshold | directory-engineer | — | FR-08; AC-09, AC-10, AC-11 |

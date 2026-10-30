@@ -1580,7 +1580,7 @@ they differ, the module page wins, and this section is corrected in the same cha
     nothing at 2a.
   - **One producer, one renderer.** Only `rbac` and `authz` may construct a read scope
     (`authz.NewReadScope`, RP2). The scope is rendered into SQL only by `store/reportsql` (§10).
-    The per-object post-filter `authz.FilterForOwner` is deleted (T-0882). The per-target oracle is
+    The old per-object post-filter over candidates is deleted (T-0882). The per-target oracle is
     `authz.Evaluator.AuthorizeRead`, and RP6 checks the compiled SQL against it.
   - The full rules are in [modules/reports.md §4](modules/reports.md).
 - **Delegation scopes for writes.** The pipeline evaluates them at Plan and again
