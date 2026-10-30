@@ -43,10 +43,10 @@ func (h Handlers) log() *slog.Logger {
 
 // caller derives the tenant and the authority chain from the authenticated principal, never from the
 // request.
-func caller(ctx context.Context) (tenant.ID, authority.Chain, error) {
+func caller(ctx context.Context) (t tenant.ID, _ authority.Chain, _ error) {
 	p, ok := apihost.PrincipalFrom(ctx)
 	if !ok || p.ID == "" {
-		return tenant.ID{}, authority.Chain{}, apitypes.Forbidden("")
+		return t, authority.Chain{}, apitypes.Forbidden("")
 	}
 	t, err := tenantref.TenantFromText(p.Tenant)
 	if err != nil {

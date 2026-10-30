@@ -2,11 +2,13 @@ package tier0
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
+	"github.com/skenzeriq/activediq/internal/directory/attr/sid"
 )
 
 // TM-D27 test table (threat-model §6.4 proof TM-F-T0GUARD, T-0235 additions). Every positive case has
@@ -354,8 +356,9 @@ func TestForeignDomainAccountFSPStaysPrincipal(t *testing.T) {
 	fsp := "S-1-5-21-111-222-333-1105"
 	f.add("CN="+fsp+",CN=ForeignSecurityPrincipals,"+dom, fsp, cls("top", "foreignSecurityPrincipal"))
 	f.find(daDN).raw["nTSecurityDescriptor"] = sdBytes(aceSpec{sid: fsp, mask: wProp, objType: &memberID})
-	wantBasis(t, f, "CN=S-1-5-21-111-222-333-1105,CN=ForeignSecurityPrincipals,"+dom, C19, true)
-	wantBasis(t, f, "CN=carol,OU=Staff,"+dom, C19, false)
+	f.trust = map[string]TrustedPrincipal{fsp: {Kind: TrustUser}}
+	wantBasisTrust(t, f, "CN=S-1-5-21-111-222-333-1105,CN=ForeignSecurityPrincipals,"+dom, C19, true)
+	wantBasisTrust(t, f, "CN=carol,OU=Staff,"+dom, C19, false)
 }
 
 // TM-D27 rule 8 input: the snapshot exposes each rule-2 right and each owner with the C19 object it
@@ -467,8 +470,9 @@ func TestNestedForeignAccountFSPInTrusteeClosureIsMarked(t *testing.T) {
 	f.add(fspDN, fsp, cls("top", "foreignSecurityPrincipal"))
 	f.add("CN=ops382,CN=Builtin,"+dom, "S-1-5-32-901", group, "member", fspDN)
 	f.find(daDN).raw["nTSecurityDescriptor"] = sdBytes(aceSpec{sid: "S-1-5-32-901", mask: wProp, objType: &memberID})
-	wantBasis(t, f, fspDN, C19, true)
-	wantBasis(t, f, "CN=carol,OU=Staff,"+dom, C19, false)
+	f.trust = map[string]TrustedPrincipal{fsp: {Kind: TrustUser}}
+	wantBasisTrust(t, f, fspDN, C19, true)
+	wantBasisTrust(t, f, "CN=carol,OU=Staff,"+dom, C19, false)
 }
 
 // T-0384: a foreign-domain FSP for a well-known group RID (Domain Users/Guests/Computers, ...) stands
@@ -501,11 +505,144 @@ func TestForeignBroadRIDFSPFailsClosed(t *testing.T) {
 }
 
 func TestForeignWellKnownAccountFSPStaysPrincipal(t *testing.T) {
-	for _, rid := range []string{"500", "501", "502", "1000"} {
+	for _, rid := range []string{"500", "501", "502"} {
 		f := forest()
 		fsp := "S-1-5-21-111-222-333-" + rid
 		f.add("CN="+fsp+",CN=ForeignSecurityPrincipals,"+dom, fsp, cls("top", "foreignSecurityPrincipal"))
 		f.find(daDN).raw["nTSecurityDescriptor"] = sdBytes(aceSpec{sid: fsp, mask: wProp, objType: &memberID})
 		wantBasis(t, f, "CN="+fsp+",CN=ForeignSecurityPrincipals,"+dom, C19, true)
 	}
+}
+
+func classifyTrust(t *testing.T, f *fakeDir, target string) (ADResult, error) {
+	t.Helper()
+	return NewAD(trustFakeDir{f}).Classify(context.Background(), ref(t, target), known())
+}
+
+func wantBasisTrust(t *testing.T, f *fakeDir, target string, b Basis, want bool) {
+	t.Helper()
+	r, err := classifyTrust(t, f, target)
+	if err != nil {
+		t.Fatalf("%s: %v", target, err)
+	}
+	if has(r, b) != want {
+		t.Errorf("%s: basis %v = %v, want %v (bases %v)", target, b, has(r, b), want, r.Bases)
+	}
+}
+
+// T-0435: a foreign FSP with RID >= 1000 may be a custom group of the trusted domain. Without a trust
+// lookup, with a failing one, or when the trust cannot identify it, a right it holds fails closed.
+func TestForeignCustomRIDFSPFailsClosedWithoutTrustAnswer(t *testing.T) {
+	fsp := "S-1-5-21-111-222-333-1105"
+	for _, tc := range []string{"no-seam", "error", "unknown"} {
+		for _, c := range []string{"C19", "C17", "nested"} {
+			t.Run(tc+"/"+c, func(t *testing.T) {
+				f := forest()
+				fspDN := "CN=" + fsp + ",CN=ForeignSecurityPrincipals," + dom
+				f.add(fspDN, fsp, cls("top", "foreignSecurityPrincipal"))
+				switch c {
+				case "C19":
+					f.find(daDN).raw["nTSecurityDescriptor"] = sdBytes(aceSpec{sid: fsp, mask: wProp, objType: &memberID})
+				case "C17":
+					setSD(f, dom, aceSpec{sid: fsp, mask: wDACL})
+				default:
+					f.add("CN=ops435,CN=Builtin,"+dom, "S-1-5-32-903", group, "member", fspDN)
+					f.find(daDN).raw["nTSecurityDescriptor"] = sdBytes(aceSpec{sid: "S-1-5-32-903", mask: wProp, objType: &memberID})
+				}
+				var r ADResult
+				var err error
+				switch tc {
+				case "no-seam":
+					r, err = classify(t, f, "CN=carol,OU=Staff,"+dom)
+				case "error":
+					f.trustErr = errors.New("trust unreachable")
+					r, err = classifyTrust(t, f, "CN=carol,OU=Staff,"+dom)
+				default:
+					r, err = classifyTrust(t, f, "CN=carol,OU=Staff,"+dom)
+				}
+				if err == nil || !r.Tier0 || !r.Unknown || !strings.Contains(err.Error(), fsp) {
+					t.Errorf("%+v %v", r, err)
+				}
+			})
+		}
+	}
+}
+
+// T-0435: resolved through the trust as a group, the FSPs of its members are marked too.
+func TestForeignCustomGroupFSPMembersAreMarked(t *testing.T) {
+	for _, c := range []string{"C19", "nested"} {
+		t.Run(c, func(t *testing.T) {
+			f := forest()
+			grp, mem, other := "S-1-5-21-111-222-333-1200", "S-1-5-21-111-222-333-1201", "S-1-5-21-111-222-333-1202"
+			dnOf := func(s string) string { return "CN=" + s + ",CN=ForeignSecurityPrincipals," + dom }
+			for _, s := range []string{grp, mem, other} {
+				f.add(dnOf(s), s, cls("top", "foreignSecurityPrincipal"))
+			}
+			f.trust = map[string]TrustedPrincipal{grp: {Kind: TrustGroup, Members: []sid.SID{mustSID(t, mem)}}}
+			trustee := grp
+			if c == "nested" {
+				f.add("CN=ops435b,CN=Builtin,"+dom, "S-1-5-32-904", group, "member", dnOf(grp))
+				trustee = "S-1-5-32-904"
+			}
+			f.find(daDN).raw["nTSecurityDescriptor"] = sdBytes(aceSpec{sid: trustee, mask: wProp, objType: &memberID})
+			wantBasisTrust(t, f, dnOf(mem), C19, true)
+			wantBasisTrust(t, f, dnOf(other), C19, false)
+		})
+	}
+}
+
+func mustSID(t *testing.T, s string) sid.SID {
+	t.Helper()
+	v, err := sid.Parse(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+// T-0819: a foreign RID>=1000 SID with a sIDHistory holder but no FSP here is resolved through the trust
+// too: after a group migration the source group's members hold the right.
+func TestForeignCustomRIDHolderNoFSPResolvesThroughTrust(t *testing.T) {
+	src := "S-1-5-21-111-222-333-1300"
+	dnOf := func(s string) string { return "CN=" + s + ",CN=ForeignSecurityPrincipals," + dom }
+	setup := func(t *testing.T) *fakeDir {
+		f := forest()
+		f.find("CN=carol,OU=Staff," + dom).history(src)
+		f.find(daDN).raw["nTSecurityDescriptor"] = sdBytes(aceSpec{sid: src, mask: wProp, objType: &memberID})
+		return f
+	}
+	for _, tc := range []string{"no-seam", "error", "unknown"} {
+		t.Run("failclosed/"+tc, func(t *testing.T) {
+			f := setup(t)
+			var r ADResult
+			var err error
+			if tc == "no-seam" {
+				r, err = classify(t, f, "CN=carol,OU=Staff,"+dom)
+			} else {
+				if tc == "error" {
+					f.trustErr = errors.New("trust unreachable")
+				}
+				r, err = classifyTrust(t, f, "CN=carol,OU=Staff,"+dom)
+			}
+			if err == nil || !r.Tier0 || !r.Unknown || !strings.Contains(err.Error(), src) {
+				t.Errorf("%+v %v", r, err)
+			}
+		})
+	}
+	t.Run("group", func(t *testing.T) {
+		f := setup(t)
+		mem := "S-1-5-21-111-222-333-1301"
+		f.add(dnOf(mem), mem, cls("top", "foreignSecurityPrincipal"))
+		f.trust = map[string]TrustedPrincipal{src: {Kind: TrustGroup, Members: []sid.SID{mustSID(t, mem)}}}
+		wantBasisTrust(t, f, dnOf(mem), C19, true)
+		wantBasisTrust(t, f, "CN=carol,OU=Staff,"+dom, C19, true)
+	})
+	t.Run("user", func(t *testing.T) {
+		f := setup(t)
+		mem := "S-1-5-21-111-222-333-1301"
+		f.add(dnOf(mem), mem, cls("top", "foreignSecurityPrincipal"))
+		f.trust = map[string]TrustedPrincipal{src: {Kind: TrustUser}}
+		wantBasisTrust(t, f, dnOf(mem), C19, false)
+		wantBasisTrust(t, f, "CN=carol,OU=Staff,"+dom, C19, true)
+	})
 }

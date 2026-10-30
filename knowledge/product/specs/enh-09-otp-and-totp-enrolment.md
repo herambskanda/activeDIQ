@@ -91,6 +91,49 @@ Delivered to the caller; the technician types in what the caller reads back.
 | 4.17 | Delivery failure | If email/SMS transport rejects the message, the challenge is `cancelled` with a reason, does not count towards 4.6, and the technician is told delivery failed. No code is shown on screen as a fallback | Break SMTP → no code on screen |
 | 4.18 | Enumeration | An unknown, disabled, out-of-scope or no-destination target gets one generic "cannot verify this caller" state in the API; the console shows the reason only to a technician whose scope already includes the target (TM-TB11-T1 class) | Same API body for the four cases |
 
+### 4a. Issue on sheet open — confirmed with conditions (T-0719, security-architect, 2026-10-29)
+
+**Rule under review:** the code is issued and sent when the technician opens the "Reset & unlock"
+sheet (`R`), with no separate "Send code" step (benchmark §2.1 prototype check; console-prototype
+decision 1). This is what makes the user-page stage 3 interactions (`R`, type code, Enter).
+
+**Verdict: confirmed, with conditions C1–C8.** Opening the sheet is a deliberate technician act
+with the same effect as pressing "Send code", so it is an issue under 4.5–4.7. It adds no new
+disclosure: the technician sees only the masked destination (4.14), and the code goes to the
+target's own held destination (4.12), never one the technician supplies. It does not weaken the
+guess bound of 4.8: guesses are capped per challenge (4.3) and issues per target-hour (4.6), and
+NIST requires that re-issuing does not reset the failed count
+([SP 800-63B-4 §3.1.3.2](https://pages.nist.gov/800-63-4/sp800-63b/authenticators/)), which 4.6 meets.
+The brute-force class behind CVE-2022-36413 is OTP guessing, not issuing
+([ME-SEC §4.1](../../business/market-research/manageengine-ad-customer-voice-and-security.md));
+issue-on-open does not touch the guess limits.
+
+What it does change is that a mistake now costs a message and quota. A wrong-user open sends one
+code to that account's own enrolled phone or mailbox, and spends one of the target's 3 hourly
+issues. The conditions below bound that.
+
+| # | Condition | Test |
+| --- | --- | --- |
+| C1 | **Issue only on a user act, never on route render.** The send is a `POST` from the `R` key or a click, with CSRF protection and an idempotency key. Loading the sheet's URL, a reload, back/forward, prefetch or a deep link opens the sheet in the "not yet sent" state and sends nothing | `GET` of the sheet route → 0 messages; reload → 0 messages |
+| C2 | **Re-open reuses.** If the same technician has an open (unexpired, unused) challenge for the same target, opening the sheet again attaches to it, shows the remaining lifetime and sends nothing. Key auto-repeat, double click and Esc-then-`R` cause one issue. "Send a new code" is the only way to a second one and follows 4.5 | `R`, Esc, `R` within 5 min → 1 message; 20 rapid `R` → 1 message |
+| C3 | **All pre-issue checks run before sending**, in this order, and any failure sends nothing: technician authorised on the target's OU for reset (P8); technician not paused (4.7); target not a protected account (no code shortcut, decision 5; P6); destination exists and passes 4.13; target ≠ technician (4.15); 4.6 and 4.7 counters | Each failure → 0 messages and the matching sheet state |
+| C4 | **Refusals use the existing states**, shown in the sheet at open: no factor → manager-approval fallback; quota reached → reason, no AD change; delivery failed → 4.17. 4.18 applies: the API body is identical for the four non-eligible target cases | AC-OTP-12 on the open route |
+| C5 | **Cancel does not refund.** Leaving the sheet without verifying cancels the challenge (4.5) but the issue still counts toward 4.6 and 4.7. The sheet says "Wrong person? Close this sheet; a code has already been sent." Quota is deliberately not refunded: a refund would let a malicious technician cycle codes to a victim's phone | Open, close ×3 → 4th open refused |
+| C6 | **Message text names the purpose.** The SMS/email says the IT help desk is verifying a request and to share the code only with the person who asked for it, and carries no link. Content is fixed by the rule set, with no technician free text (anti-vishing; CISA [AA23-320A](https://www.cisa.gov/news-events/cybersecurity-advisories/aa23-320a)) | Template test; no free-text field in the API |
+| C7 | **Audit at open.** Each issue writes `authenticator.challenge.issued` with technician, target, channel, masked destination, challenge ID and the trigger (`sheet_open` or `resend`); the verified-by line of the final audit event stays as AC-OTP-13 | Audit row present after open, before any code is typed |
+| C8 | **The 5-minute lifetime (4.2) runs from the open.** The sheet shows a countdown and moves to "expired — send a new code" without a reload. Technicians are trained to open the sheet with the caller on the line | Sheet at 301 s shows the expired state |
+
+**Residual risk.** (1) A technician, or an attacker with a technician session, can spend a
+target's 3 hourly issues by opening sheets, which blocks code verification for that target for up
+to an hour and sends up to 3 unwanted messages; the manager-approval fallback keeps the reset
+possible, and 4.7 plus the alert catches repeated use. This was already possible with a "Send
+code" button; issue-on-open only makes accidental use easier, which C2 and C5 limit. (2) SIM swap
+or mailbox takeover (TM-TB9-T10) is unchanged.
+
+**Effect on budgets.** The 3-interaction user-page claim stands. T01 from search is 6 by the
+prototype's count, so the §3 T01 table drops step 5 and its budget can move from 7 to 6 once
+the build implements C1–C8; the owning product-manager makes that edit with the build ticket.
+
 ## 5. TOTP rules
 
 - **Parameters.** RFC 6238 TOTP, **HMAC-SHA-1, 6 digits, 30-second step**, the common
@@ -338,6 +381,10 @@ row). IDs are for traceability.
     run at 301 s, Then it is refused and a new challenge is needed.
 14. **AC-OTP-14** Given any test run, When logs, DB rows and audit are searched for the code,
     Then it is found nowhere in clear.
+14a. **AC-OTP-15** (§4a) Given the reset sheet, When its URL is loaded or reloaded, Then no message
+    is sent; When `R` is pressed, Then exactly one is sent; When `R` is pressed again within 5
+    minutes by the same technician, Then none is sent; When the sheet is opened and closed three
+    times for one target in an hour, Then the fourth open is refused with no message.
 
 **TOTP and enrolment (TM-TB1-T13)**
 15. **AC-ENR-1** Given an unauthenticated visitor on the enrolment hostname, When they call the

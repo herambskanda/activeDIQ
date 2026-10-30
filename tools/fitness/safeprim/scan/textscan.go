@@ -22,7 +22,10 @@ type textRule struct {
 	Home     []string // directories where the construct is allowed
 	Combined bool     // the line must also combine the match with data (concatenation, interpolation, formatting)
 	Whole    bool     // match across lines
-	Msg      string
+	// Keep, when set on a Whole rule, decides per match (given the text and the match start) whether it
+	// is a violation; it lets a rule see structure a regexp cannot, such as which argument holds a ||.
+	Keep func(text string, at int) bool
+	Msg  string
 }
 
 var (
@@ -66,7 +69,7 @@ var rustRules = append([]textRule{
 }, shapeRules(reRustCombined)...)
 
 var sqlRules = []textRule{
-	{FF: "FF-SP2", Rule: "plpgsql-execute-concat", Re: regexp.MustCompile(`(?is)\bexecute\b[^;]*\|\|`), Whole: true,
+	{FF: "FF-SP2", Rule: "plpgsql-execute-concat", Re: regexp.MustCompile(`(?i)\bexecute\b`), Whole: true, Keep: executeConcatUnsafe,
 		Msg: "PL/pgSQL EXECUTE with || builds SQL from text; use format('%I'/'%L', …) or USING (" + refP5 + " rule 8)"},
 }
 
@@ -95,6 +98,9 @@ func scanText(root, rel string, rules []textRule, checks Checks, out *[]Finding)
 		}
 		if r.Whole {
 			for _, m := range r.Re.FindAllStringIndex(text, -1) {
+				if r.Keep != nil && !r.Keep(text, m[0]) {
+					continue
+				}
 				*out = append(*out, Finding{FF: r.FF, Rule: r.Rule, File: rel, Line: 1 + strings.Count(text[:m[0]], "\n"), Msg: r.Msg})
 			}
 			continue
@@ -241,4 +247,78 @@ func scanServiceDefinition(root, rel, ext, base string, checks Checks, out *[]Fi
 		}
 	}
 	return nil
+}
+
+// executeConcatUnsafe decides one regexp hit of plpgsql-execute-concat. A || in the arguments after
+// the template of EXECUTE format(...) is a value that %I or %L quotes, so it is not building SQL from
+// text; a || in the template, after the call, or in any EXECUTE that is not a format() call is. The
+// regexp only finds the keyword (a ; inside a quoted template would hide a || from a pattern); this
+// scans to the statement end honouring quotes.
+func executeConcatUnsafe(text string, at int) bool {
+	i := at + len("execute")
+	for i < len(text) && (text[i] == ' ' || text[i] == '\t' || text[i] == '\n' || text[i] == '\r') {
+		i++
+	}
+	depth, arg := 0, 0 // outside a format() call every || is unsafe; inside, only one in the template (argument 0)
+	if strings.HasPrefix(strings.ToLower(text[i:min(i+6, len(text))]), "format") {
+		j := i + len("format")
+		for j < len(text) && (text[j] == ' ' || text[j] == '\t' || text[j] == '\n' || text[j] == '\r') {
+			j++
+		}
+		if j < len(text) && text[j] == '(' {
+			i, depth = j+1, 1
+		}
+	}
+	for i < len(text) {
+		switch c := text[i]; {
+		case c == '\'':
+			i++
+			for i < len(text) {
+				if text[i] == '\'' {
+					if i+1 < len(text) && text[i+1] == '\'' {
+						i += 2
+						continue
+					}
+					break
+				}
+				i++
+			}
+		case c == '$':
+			if end := dollarTagEnd(text, i); end > 0 {
+				tag := text[i:end]
+				if j := strings.Index(text[end:], tag); j >= 0 {
+					i = end + j + len(tag) - 1
+				}
+			}
+		case c == '(':
+			depth++
+		case c == ')':
+			depth--
+		case c == ',' && depth == 1:
+			arg++
+		case c == ';' && depth <= 0:
+			return false
+		case c == '|' && i+1 < len(text) && text[i+1] == '|':
+			if depth <= 0 || arg == 0 {
+				return true
+			}
+			i++
+		}
+		i++
+	}
+	return false
+}
+
+// dollarTagEnd returns the index after a dollar-quote opener ($$ or $tag$) at i, or 0 when there is none.
+func dollarTagEnd(text string, i int) int {
+	for j := i + 1; j < len(text); j++ {
+		c := text[j]
+		if c == '$' {
+			return j + 1
+		}
+		if !(c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9') {
+			return 0
+		}
+	}
+	return 0
 }

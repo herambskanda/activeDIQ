@@ -35,9 +35,9 @@ func invalidSearch(field string) error {
 
 // ScopedSearch implements the ScopedSearch RPC: one search per delegation root on the bound DC,
 // streamed in bounded batches, never buffered. The stream is complete only if it ends with
-// SearchCompleted. parent_guid is not set: resolving it needs a second read per parent, which cannot
-// run inside the session's search (the session is locked for the whole search); a caller that needs
-// ancestry uses Read.
+// SearchCompleted. parent_guid is set on every entry that has a parent (connector-contract §5.1): the
+// connector resolves parents after each page, outside the session lock, with one read per distinct
+// parent DN, and the value equals Read's. A naming-context head has none.
 func (h *Handler) ScopedSearch(ctx context.Context, req *connectorv1.ScopedSearchRequest, out SearchSender) error {
 	srch, ok := h.src.(Searcher)
 	if !ok {
@@ -120,13 +120,21 @@ func (h *Handler) ScopedSearch(ctx context.Context, req *connectorv1.ScopedSearc
 		return out.Send(m)
 	}
 	_, err = srch.ScopedSearch(ctx, ad.ScopedRequest{Roots: roots, Depth: depth, Filter: flt, Attributes: canon,
-		PageSize: req.GetPageSize()}, func(e *ad.Entry) error {
+		PageSize: req.GetPageSize(), ResolveParents: true}, func(e *ad.Entry) error {
 		id, err := e.GUID()
 		if err != nil {
 			return err
 		}
 		// A search never follows ranges: the tails build returns are dropped, the head says complete = false.
-		entry, _, err := h.build(e, id, nil, canon)
+		pg, has, resolved := e.Parent()
+		if !resolved { // "no parent" is an authoritative claim: an unresolved entry is a failure
+			return errUndecodable
+		}
+		var parent *connectorv1.Guid
+		if has {
+			parent = write.GUIDToWire(pg)
+		}
+		entry, _, err := h.build(e, id, parent, canon)
 		if err != nil {
 			return errUndecodable
 		}

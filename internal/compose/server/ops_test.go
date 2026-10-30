@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -40,8 +41,10 @@ func TestAPIListenerDoesNotServeMetrics(t *testing.T) {
 		}
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, r)
-		if rec.Code == http.StatusOK || strings.Contains(rec.Body.String(), "activediq_keys_dek_unwraps_total") {
-			t.Fatalf("API listener served /metrics: %d", rec.Code)
+		// With a console embedded the listener answers the console shell for any non-API path (T-0686); what
+		// must never be served is the exposition.
+		if strings.Contains(rec.Body.String(), "activediq_keys_dek_unwraps_total") || strings.HasPrefix(rec.Header().Get("Content-Type"), "text/plain") {
+			t.Fatalf("API listener served /metrics: %d %s", rec.Code, rec.Header().Get("Content-Type"))
 		}
 	}
 }
@@ -59,9 +62,15 @@ func TestOpsListenerEndToEnd(t *testing.T) {
 	}
 	defer o.shutdown(context.Background())
 
-	// The client does not verify the self-signed install certificate (pinning is the admin's job);
-	// this test is about the credential.
-	c := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}, Timeout: 5 * time.Second}
+	// The client trusts exactly the self-signed install certificate (the admin's pin); this test is
+	// about the credential, and verification stays on.
+	leaf, err := x509.ParseCertificate(id.Certificate.Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := x509.NewCertPool()
+	pool.AddCert(leaf)
+	c := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}}, Timeout: 5 * time.Second}
 	get := func(auth string, hdr ...string) (int, string) {
 		req, _ := http.NewRequest(http.MethodGet, "https://"+o.addr+"/metrics", nil)
 		if auth != "" {

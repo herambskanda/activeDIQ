@@ -3,6 +3,7 @@ package apihost
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/netip"
@@ -58,6 +59,7 @@ type Server struct {
 	unmounted  []string
 	budget     *bodyBudget // authenticated routes: total minus the anonymous slice
 	anonBudget *bodyBudget // anonymous routes only
+	console    fs.FS       // the built console, or nil (WithConsole)
 
 	trustedProxies []netip.Prefix
 
@@ -273,6 +275,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	probe := &statusProbe{header: http.Header{}}
 	h.ServeHTTP(probe, r)
+	if probe.status == http.StatusNotFound && s.serveConsole(w, r) {
+		return
+	}
 	if probe.status == http.StatusMethodNotAllowed {
 		if allow := probe.header.Get("Allow"); allow != "" {
 			w.Header().Set("Allow", allow)

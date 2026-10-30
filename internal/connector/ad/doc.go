@@ -6,7 +6,9 @@
 // Everything a caller can influence is typed. Filters are ldapfilter.Filter values rendered against a
 // schema, bases are dn.ObjectRef values, attribute names pass ldapfilter.ParseAttrName, and the SD
 // flags control is built from SDPart values that have no SACL member. Certificate validation is
-// always on and there is no plaintext or StartTLS path. Out of scope here: change feeds, writes, DC
+// always on and there is no plaintext or StartTLS path. The one write is Session.WriteDACL (sdwrite.go):
+// a VerifyBase-gated replace of nTSecurityDescriptor with the DACL-only SD_FLAGS control, on the bound
+// DC. Out of scope here: change feeds, other writes, DC
 // discovery (the caller supplies the DC list) and the gRPC servers.
 //
 // Authentication is one of two, never both: SASL GSSAPI (Config.Kerberos, the primary mechanism: a
