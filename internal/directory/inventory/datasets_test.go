@@ -194,6 +194,7 @@ type hQuery struct {
 	where   report.Expr
 	sort    []report.SortKey
 	top     int
+	limit   int
 	scope   authz.ReadScope
 	now     time.Time
 }
@@ -219,7 +220,7 @@ func (e *env) run(t *testing.T, reg *reportsql.Registry, q hQuery) hResult {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	in := reportsql.Inputs{Now: q.now}
+	in := reportsql.Inputs{Now: q.now, Limit: q.limit}
 	rowsQ, err := reportsql.Compile(rq, ds, q.scope, in)
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
