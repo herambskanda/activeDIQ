@@ -7,7 +7,7 @@
 // per module, calls Register once, closes it and returns the validated Contributions. Only
 // internal/compose/server calls Boot. Module unit tests use module/moduletest.
 //
-// Registrar methods for the other contribution kinds (API, Job, Permission, ScopeEvaluator,
+// Registrar methods for the other contribution kinds (API, Job, Permission,
 // AuditKind, Dataset, Sink, AuthMethod, ApprovalGate) are added by the ticket that builds the
 // extension point they hook into (EP-2 to EP-10), so the Registrar never names a type that does
 // not exist yet. Each new method attributes, namespaces and de-duplicates its contribution here.
@@ -17,10 +17,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 
+	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/capability"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 )
@@ -68,7 +71,43 @@ type Registrar struct {
 	owner   ID
 	open    bool
 	actions []operation.Action
+	scopes  []scopeEntry
 	seen    map[string]struct{}
+}
+
+// scopeEntry pins the kind read once at registration, so an evaluator cannot answer differently later.
+type scopeEntry struct {
+	kind string
+	ev   authz.ScopeEvaluator
+}
+
+// scopeKindPattern is the shape of an assignment root kind ("ou_subtree"). Root kinds belong to
+// the product's scope vocabulary, not to a module, so they are not namespaced by the module ID.
+var scopeKindPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{1,40}$`)
+
+// ScopeEvaluator registers the evaluator for one assignment root kind (EP-6). At most one module
+// may own a kind: a second registration, in this module or another, fails Boot and names the kind.
+func (r *Registrar) ScopeEvaluator(e authz.ScopeEvaluator) error {
+	if e == nil {
+		return fmt.Errorf("%w: nil scope evaluator", ErrInvalid)
+	}
+	kind := e.RootKind()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.open {
+		return fmt.Errorf("%w: scope evaluator %q", ErrClosed, kind)
+	}
+	if !scopeKindPattern.MatchString(kind) {
+		return fmt.Errorf("%w: module %q registered a scope evaluator with root kind %q; it must match %s",
+			ErrInvalid, r.owner, kind, scopeKindPattern)
+	}
+	key := "scope_evaluator\x00" + kind
+	if _, dup := r.seen[key]; dup {
+		return fmt.Errorf("%w: module %q registered a scope evaluator for root kind %q twice", ErrDuplicate, r.owner, kind)
+	}
+	r.seen[key] = struct{}{}
+	r.scopes = append(r.scopes, scopeEntry{kind, e})
+	return nil
 }
 
 // Action registers an Action (EP-3). Its ID must start with "<moduleID>." and be unique.
@@ -116,6 +155,20 @@ type Contributions struct {
 	loaded  []ID
 	skipped []ID
 	actions []operation.Action
+	scopes  map[string]authz.ScopeEvaluator
+	scopeBy map[string]ID
+}
+
+// ScopeEvaluator returns the evaluator registered for an assignment root kind, or false when no
+// loaded module owns that kind. A kind with no evaluator has no read scope: callers contribute nothing.
+func (c *Contributions) ScopeEvaluator(kind string) (authz.ScopeEvaluator, bool) {
+	e, ok := c.scopes[kind]
+	return e, ok
+}
+
+// ScopeKinds lists the root kinds that have an evaluator, sorted.
+func (c *Contributions) ScopeKinds() []string {
+	return slices.Sorted(maps.Keys(c.scopes))
 }
 
 // Loaded lists the modules that were registered, in boot order.
@@ -133,7 +186,7 @@ func (c *Contributions) Actions() []operation.Action {
 // are all enabled, closes every Registrar and returns the validated contributions. Any error fails
 // start-up: no partial result is returned. Only internal/compose/server calls it (ADR-0003 rule 5).
 func Boot(ctx context.Context, mods []Entry, enabled capability.Set) (*Contributions, error) {
-	out := &Contributions{}
+	out := &Contributions{scopes: map[string]authz.ScopeEvaluator{}, scopeBy: map[string]ID{}}
 	ids := make(map[ID]struct{}, len(mods))
 	for _, e := range mods {
 		if err := ctx.Err(); err != nil {
@@ -164,6 +217,15 @@ func Boot(ctx context.Context, mods []Entry, enabled capability.Set) (*Contribut
 		}
 		out.loaded = append(out.loaded, e.ID)
 		out.actions = append(out.actions, r.actions...)
+		for _, se := range r.scopes {
+			kind, ev := se.kind, se.ev
+			if prev, dup := out.scopeBy[kind]; dup {
+				return nil, fmt.Errorf("%w: root kind %q has a scope evaluator from module %q and from module %q; at most one per kind",
+					ErrDuplicate, kind, prev, e.ID)
+			}
+			out.scopes[kind] = ev
+			out.scopeBy[kind] = e.ID
+		}
 	}
 	return out, nil
 }

@@ -86,7 +86,7 @@ connector needs the data, it belongs below and this module writes it through the
 | API (EP-2) | tag `<id>` | OpenAPI file `api/openapi/<id>.yaml` |
 | Action (EP-3) | `<id>.<class>.<verb>` | permission; reversibility; named secret ops if any |
 | Permission (EP-6) | `<id>.<…>` | scope kinds it applies over |
-| ScopeEvaluator (EP-6) | scope kind | at most one per scope kind |
+| ScopeEvaluator (EP-6) | assignment root kind (not namespaced, e.g. `ou_subtree`) | at most one per root kind, across all modules; Boot names the kind |
 | AuditKind (EP-7) | `<id>.<…>` | including setting changes |
 | Dataset (EP-8) | `<id>.<…>` | tables, all owned by this module |
 | Job (EP-5) | `<id>.<…>` | schedule; lease; idempotency |
