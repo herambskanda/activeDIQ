@@ -17,6 +17,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory"
 	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
+	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	"github.com/skenzeriq/activediq/internal/platform"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/apitls"
@@ -174,6 +175,15 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 		return err
 	}
 	tags = append(tags, dirTag)
+	// The report run path (T-0959): the run service, its job kinds and its API. The job registry exists
+	// before the API is built so the kinds register with the handlers; the retention cadence is seeded
+	// once the tenant exists.
+	jreg := jobs.NewRegistry()
+	reportRuns, reportTag, err := buildReports(db, jreg, ok.Chainer, inventory.NewReader(db, nil), nil)
+	if err != nil {
+		return err
+	}
+	tags = append(tags, reportTag)
 	// The sign-in plane: AN-8 for a local account, then AN-10 (TOTP, and WebAuthn when the public URL is
 	// set), which is the only way a console session is created.
 	tags = append(tags, console.Tags())
@@ -185,8 +195,7 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	if err != nil {
 		return err
 	}
-	// Modules and platform packages contribute job kinds to this registry; the worker runs it.
-	jreg := jobs.NewRegistry()
+	// Modules and platform packages contribute job kinds to this registry (created above); the worker runs it.
 	connKernel, err := buildConnections(db, ok.Chainer, dirClient, jreg)
 	if err != nil {
 		return err
@@ -200,6 +209,10 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	console.SetTenant(tid)    // and the sign-in plane knows whose accounts it checks
 	// Dead AN-8 throttle rows are purged on a cadence so one-off submitted names cannot grow the table (T-0868).
 	if err := startThrottlePurge(ctx, db, jreg, console.Local, tid); err != nil {
+		return err
+	}
+	// The report retention cadence is seeded for the install tenant, like the throttle purge.
+	if err := startReportRetention(ctx, db, reportRuns, tid); err != nil {
 		return err
 	}
 	// Lab builds only (T-0684): create and activate the lab connections through the real activation path.

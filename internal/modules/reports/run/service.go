@@ -29,6 +29,7 @@ var (
 	ErrTooManyJobs       = errors.New("run: too many report jobs")             // 429 too_many_report_jobs
 	ErrDefinitionUnknown = errors.New("run: unknown report definition")        // 404
 	ErrNotCancellable    = errors.New("run: the run is already finished")      // 409
+	ErrScopesUnavailable = errors.New("run: no read-scope producer is configured") // 503 not-ready
 	ErrOwnerDead         = authz.ErrOwnerDead
 	ErrTokenRefused      = authz.ErrTokenRefused
 )

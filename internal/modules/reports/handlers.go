@@ -264,6 +264,8 @@ func (h *Handlers) problem(err error) error {
 		return coded(apitypes.Validation("the result cannot be sorted by that column"), apitypes.InQuery, "sortBy", "bad_sort", "")
 	case errors.Is(err, run.ErrBadLimit):
 		return coded(apitypes.Validation("the page size is out of range"), apitypes.InQuery, "limit", "bad_limit", "")
+	case errors.Is(err, run.ErrScopesUnavailable):
+		return apitypes.NotReady("reports are not available until access scopes are configured for this installation")
 	case errors.Is(err, run.ErrOwnerDead), errors.Is(err, run.ErrTokenRefused):
 		return apitypes.Forbidden("")
 	}
