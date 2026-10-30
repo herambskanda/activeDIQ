@@ -44,11 +44,11 @@ type consoleStack struct {
 // SetTenant tells the sign-in plane which tenant the install has; until then AN-8 answers a server fault.
 func (c *consoleStack) SetTenant(t tenant.ID) { c.tenant.Store(&t) }
 
-func (c *consoleStack) installTenant() (tenant.ID, bool) {
+func (c *consoleStack) installTenant() (id tenant.ID, ok bool) {
 	if p := c.tenant.Load(); p != nil {
 		return *p, true
 	}
-	return tenant.ID{}, false
+	return id, false // the zero value, named: compose never composes a tenant.ID (ADR-0002 rule 5)
 }
 
 // Tags is the sign-in plane (/auth/*): AN-8 for a local account and AN-10 with TOTP. WebAuthn, sign-out and
