@@ -143,7 +143,7 @@ What exists in `web/src/ds/components`: Button, TextInput, Chip (`ok`, `muted` o
 |---|---|---|
 | (a) T-0897 → T-0952 DataGrid (**done**: `web/src/ds/components/data-grid.tsx`; the local grid CSS is deleted) | Virtualised rows, sticky header, sortable columns, column sizing, row-header, truncation with `title`; row selection as an option (2b, schedules) | Results grid, schedules list, library |
 | (b) T-0898 Overlays | Popover menu with accelerator keys, SideSheet (focus trap/restore), Toast with action | Export menu, columns and domains popovers, schedule sheet, schedule detail, run-details, toasts |
-| (c) T-0899 Form controls | Select, Checkbox, RadioCard, SegmentedControl (preset chips), TokenInput with typeahead | Filter bar, schedule sheet (preset, recipients, format, external confirm) |
+| (c) T-0899 → T-0954 Form controls (**done**: `web/src/ds/components/{select,checkbox,radio-card,segmented-control,token-input}.tsx`; the prototype's local selects, checkboxes, radio cards, preset chips and recipient field are deleted) | Select, Checkbox, RadioCard, SegmentedControl (preset chips), TokenInput with typeahead | Filter bar, schedule sheet (preset, recipients, format, external confirm) |
 | (d) T-0900 Feedback | Banner (warn / crit / info, with glyph), Chip tones `warn` and `crit`, Progress, Kbd hint, StatePanel with actions | Every state banner, per-DC running, header freshness chips |
 
 Frontend tickets: (e) T-0901 library, search hits, run and results screens; (f) T-0902 export and schedule screens and the schedules list. They depend on the report API contract (T-0866) and on the component tickets. T-0869 (breakdown of the reports module) should fold them in, not duplicate them.

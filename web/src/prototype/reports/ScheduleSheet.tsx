@@ -1,5 +1,6 @@
 import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 
+import { Checkbox, RadioCardGroup, Select, type Token, TokenInput } from "../../ds/components";
 import { ACCOUNTS, ALLOWED_DOMAINS, ZONE, type SchedRecipient, type Schedule } from "./fixtures";
 
 export interface Perms {
@@ -47,6 +48,17 @@ type PresetId = (typeof PRESETS)[number]["id"] | "custom";
 const MAX_RECIPIENTS = 50;
 const MAIL = /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/;
 
+/** A recipient as a token: outside addresses say so in words, and a malformed one is flagged for review. */
+function toToken(addr: string): Token {
+  const mail = MAIL.test(addr);
+  return {
+    id: addr,
+    label: addr,
+    badge: !mail ? "Check" : isExternal(addr) ? "Outside" : "Inside",
+    invalid: !mail,
+  };
+}
+
 function isExternal(addr: string): boolean {
   const domain = addr.split("@")[1]?.toLowerCase() ?? "";
   return !ALLOWED_DOMAINS.some((d) => d === domain);
@@ -83,10 +95,10 @@ export function ScheduleSheet(props: {
   const [errors, setErrors] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const typedOnce = useRef(false);
-  const first = useRef<HTMLInputElement>(null);
+  const form = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
-    first.current?.focus();
+    form.current?.querySelector<HTMLInputElement>("input[type=radio]")?.focus();
   }, []);
 
   // The saved name follows the chosen cadence until the admin edits it (it is prefilled, 0 interactions).
@@ -188,7 +200,7 @@ export function ScheduleSheet(props: {
         aria-labelledby={`${uid}-h`}
         onKeyDown={(e) => e.key === "Escape" && onClose()}
       >
-        <form className="pt__form" onSubmit={submit} noValidate>
+        <form ref={form} className="pt__form" onSubmit={submit} noValidate>
           <div>
             <h2 id={`${uid}-h`}>Schedule this report</h2>
             <p className="pt__sub">
@@ -199,50 +211,32 @@ export function ScheduleSheet(props: {
 
           <fieldset className="rp__fs">
             <legend>When</legend>
-            <div className="rp__radios" role="radiogroup" aria-label="When it runs">
-              {PRESETS.map((p, i) => (
-                <label key={p.id} className={`rp__radio${preset === p.id ? " rp__radio--on" : ""}`}>
-                  <input
-                    ref={i === 0 ? first : undefined}
-                    type="radio"
-                    name={`${uid}-when`}
-                    checked={preset === p.id}
-                    onChange={() => {
-                      setPreset(p.id);
-                      onTick(`preset: ${p.label} ${p.when}`);
-                    }}
-                  />
-                  <b>{p.label}</b>
-                  <span>{p.when}</span>
-                </label>
-              ))}
-              <label className={`rp__radio${preset === "custom" ? " rp__radio--on" : ""}`}>
-                <input
-                  type="radio"
-                  name={`${uid}-when`}
-                  checked={preset === "custom"}
-                  onChange={() => {
-                    setPreset("custom");
-                    onTick("preset: Custom");
-                  }}
-                />
-                <b>Custom</b>
-                <span>every n hours, days…</span>
-              </label>
-            </div>
+            <RadioCardGroup
+              label="When it runs"
+              value={preset}
+              options={[
+                ...PRESETS.map((p) => ({ value: p.id, label: p.label, description: p.when })),
+                { value: "custom", label: "Custom", description: "every n hours, days…" },
+              ]}
+              onChange={(id) => {
+                if (id === null) return;
+                setPreset(id as PresetId);
+                onTick(
+                  `preset: ${id === "custom" ? "Custom" : `${PRESETS.find((p) => p.id === id)?.label ?? ""} ${PRESETS.find((p) => p.id === id)?.when ?? ""}`}`,
+                );
+              }}
+            />
             {preset === "custom" ? (
               <div className="rp__row">
-                <label className="pt__field">
-                  <span>Repeat every</span>
-                  <select
-                    className="rp__select"
-                    value={hourly ? "hours" : "days"}
-                    onChange={(e) => setHourly(e.target.value === "hours")}
-                  >
-                    <option value="hours">1 hour</option>
-                    <option value="days">1 day</option>
-                  </select>
-                </label>
+                <Select
+                  label="Repeat every"
+                  value={hourly ? "hours" : "days"}
+                  onChange={(v) => setHourly(v === "hours")}
+                  options={[
+                    { value: "hours", label: "1 hour" },
+                    { value: "days", label: "1 day" },
+                  ]}
+                />
                 <p className="pt__sub">
                   Shortest allowed: 1 hour. Time zone: Europe/London ({ZONE}).
                 </p>
@@ -255,72 +249,28 @@ export function ScheduleSheet(props: {
             </p>
           </fieldset>
 
-          <div className="pt__field">
-            <label htmlFor={`${uid}-to`}>To</label>
-            <div className="rp__tokens">
-              {list.map((a) => (
-                <span key={a} className={`chip ${isExternal(a) ? "chip--warn" : "chip--muted"}`}>
-                  {isExternal(a) ? "↗ Outside " : "● Inside "}
-                  {a}
-                  <button
-                    type="button"
-                    className="rp__x"
-                    aria-label={`Remove ${a}`}
-                    onClick={() => setList(list.filter((x) => x !== a))}
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
-              <input
-                id={`${uid}-to`}
-                className="rp__tokeninput"
-                value={typed}
-                autoComplete="off"
-                spellCheck={false}
-                placeholder="Name or e-mail address"
-                aria-describedby={`${uid}-to-help`}
-                onChange={(e) => {
-                  if (!typedOnce.current) {
-                    typedOnce.current = true;
-                    onTick("type recipient");
-                  }
-                  setTyped(e.target.value);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === ",") {
-                    e.preventDefault();
-                    commit();
-                  }
-                }}
-                onBlur={commit}
-              />
-            </div>
-            {accountMatches.length > 0 ? (
-              <ul className="pt__list" aria-label="Matching accounts">
-                {accountMatches.map((a) => (
-                  <li key={a.mail}>
-                    <button
-                      type="button"
-                      className="pt__row"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => {
-                        setList([...list, a.mail]);
-                        setTyped("");
-                      }}
-                    >
-                      <span className="pt__name">{a.name}</span>
-                      <span className="diq-mono pt__sub">{a.mail}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-            <p id={`${uid}-to-help`} className="pt__sub">
-              Enter or comma adds an address; Save adds what you typed. Organisation domains:{" "}
-              {ALLOWED_DOMAINS.join(", ")}.
-            </p>
-          </div>
+          <TokenInput
+            label="To"
+            value={list.map(toToken)}
+            onChange={(tokens) => setList(tokens.map((t) => t.id))}
+            query={typed}
+            onQueryChange={(q) => {
+              if (!typedOnce.current && q !== "") {
+                typedOnce.current = true;
+                onTick("type recipient");
+              }
+              setTyped(q);
+            }}
+            parse={(text) => (text === "" ? null : toToken(text))}
+            suggestions={accountMatches.map((a) => ({
+              id: a.mail,
+              label: a.name,
+              detail: a.mail,
+            }))}
+            placeholder="Name or e-mail address"
+            tokensLabel="Recipients"
+            hint={`Enter or comma adds an address; Save adds what you typed. Organisation domains: ${ALLOWED_DOMAINS.join(", ")}.`}
+          />
 
           <div className="pt__box" role="note">
             <strong>Recipients receive what you can see:</strong> {subject.scope}. If your access
@@ -329,48 +279,43 @@ export function ScheduleSheet(props: {
 
           {needsConfirm ? (
             <div className="pt__banner rp__ext" role="alert">
-              <label className="pt__check">
-                <input
-                  type="checkbox"
-                  checked={confirmed}
-                  onChange={(e) => {
-                    setConfirmed(e.target.checked);
-                    onTick("confirm: data leaves organisation");
-                  }}
-                />
-                <span>
-                  <strong>Data leaves your organisation:</strong> {external.join(", ")}. I confirm
-                  these addresses may receive this report.
-                </span>
-              </label>
+              <Checkbox
+                checked={confirmed}
+                onChange={(on) => {
+                  setConfirmed(on);
+                  onTick("confirm: data leaves organisation");
+                }}
+                label={
+                  <>
+                    <strong>Data leaves your organisation:</strong> {external.join(", ")}. I confirm
+                    these addresses may receive this report.
+                  </>
+                }
+              />
             </div>
           ) : null}
 
           <fieldset className="rp__fs">
             <legend>Delivery</legend>
             <div className="rp__row">
-              <label className="pt__field">
-                <span>Format</span>
-                <select
-                  className="rp__select"
-                  value={format}
-                  onChange={(e) => setFormat(e.target.value as "XLSX" | "CSV")}
-                >
-                  <option value="XLSX">XLSX (with About sheet)</option>
-                  <option value="CSV">CSV (table only)</option>
-                </select>
-              </label>
-              <label className="pt__field">
-                <span>Send as</span>
-                <select
-                  className="rp__select"
-                  value={method}
-                  onChange={(e) => setMethod(e.target.value as "Attachment" | "Link")}
-                >
-                  <option value="Attachment">Attachment</option>
-                  <option value="Link">Link (accounts only)</option>
-                </select>
-              </label>
+              <Select
+                label="Format"
+                value={format}
+                onChange={(v) => setFormat(v as "XLSX" | "CSV")}
+                options={[
+                  { value: "XLSX", label: "XLSX (with About sheet)" },
+                  { value: "CSV", label: "CSV (table only)" },
+                ]}
+              />
+              <Select
+                label="Send as"
+                value={method}
+                onChange={(v) => setMethod(v as "Attachment" | "Link")}
+                options={[
+                  { value: "Attachment", label: "Attachment" },
+                  { value: "Link", label: "Link (accounts only)" },
+                ]}
+              />
             </div>
             {method === "Link" && external.length > 0 ? (
               <p className="pt__sub">
@@ -378,14 +323,11 @@ export function ScheduleSheet(props: {
                 attachment.
               </p>
             ) : null}
-            <label className="pt__check">
-              <input
-                type="checkbox"
-                checked={onlyIfData}
-                onChange={(e) => setOnlyIfData(e.target.checked)}
-              />
-              <span>Only send if there is data (a run with 0 rows sends nothing)</span>
-            </label>
+            <Checkbox
+              checked={onlyIfData}
+              onChange={setOnlyIfData}
+              label="Only send if there is data (a run with 0 rows sends nothing)"
+            />
             <p className="pt__sub">
               Files over 10 MB go as a link to account recipients; for outside addresses that
               delivery fails and says why.

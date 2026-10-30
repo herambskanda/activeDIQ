@@ -53,6 +53,7 @@ const PAIRS: ReadonlyArray<readonly [string, string, string, number]> = [
   ["Secondary text on page", "text-2", "bg", 4.5],
   ["Muted text on surface", "text-3", "surface", 4.5],
   ["Muted text on page", "text-3", "bg", 4.5],
+  ["Body text on sunken surface (hovered option, card or chip)", "text", "surface-2", 4.5],
   ["Muted text on sunken surface (table header)", "text-3", "surface-2", 4.5],
   ["Secondary text on sunken surface", "text-2", "surface-2", 4.5],
   ["Body text on selected row", "text", "signal-soft", 4.5],

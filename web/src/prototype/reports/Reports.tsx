@@ -7,6 +7,7 @@ import {
   type Column,
   Table,
 } from "../../ds/components";
+import { Checkbox, SegmentedControl, Select } from "../../ds/components";
 import "../../ds/components/components.css";
 import "../prototype.css";
 import "./reports.css";
@@ -1406,43 +1407,32 @@ function Controls(props: {
   const extra = extraColumns(report);
   return (
     <div className="rp__controls">
-      <div className="rp__chips" role="radiogroup" aria-label="Preset">
-        {report.presets.map((p) => (
-          <button
-            key={p.id}
-            type="button"
-            role="radio"
-            aria-checked={params.preset === p.id}
-            className={`rp__seg${params.preset === p.id ? " rp__seg--on" : ""}`}
-            disabled={disabled}
-            onClick={() =>
-              params.preset !== p.id &&
-              newRun({ preset: p.id, days: p.period, filter: "", alias: null })
-            }
-          >
-            {p.name}
-          </button>
-        ))}
-      </div>
+      <SegmentedControl
+        label="Preset"
+        options={report.presets.map((p) => ({ value: p.id, label: p.name }))}
+        value={params.preset}
+        disabled={disabled}
+        onChange={(id) => {
+          const p = report.presets.find((x) => x.id === id);
+          if (p && params.preset !== p.id)
+            newRun({ preset: p.id, days: p.period, filter: "", alias: null });
+        }}
+      />
       <div className="rp__row">
         {params.days !== null ? (
-          <label className="pt__field">
-            <span>Period</span>
-            <select
-              className="rp__select"
-              value={params.days}
-              disabled={disabled}
-              onChange={(e) => newRun({ days: Number(e.target.value) })}
-            >
-              {periods.map((d) => (
-                <option key={d} value={d}>
-                  {report.id === "USR-03" || report.id === "CMP-02"
-                    ? `Inactive ${d} days`
-                    : `Last ${d} days`}
-                </option>
-              ))}
-            </select>
-          </label>
+          <Select
+            label="Period"
+            value={String(params.days)}
+            disabled={disabled}
+            onChange={(v) => newRun({ days: Number(v) })}
+            options={periods.map((d) => ({
+              value: String(d),
+              label:
+                report.id === "USR-03" || report.id === "CMP-02"
+                  ? `Inactive ${d} days`
+                  : `Last ${d} days`,
+            }))}
+          />
         ) : null}
         <div className="rp__pop" hidden={report.kind === "member"}>
           <button
@@ -1458,22 +1448,22 @@ function Controls(props: {
           {scopeOpen ? (
             <div className="rp__menu rp__menu--form" role="group" aria-label="Domains">
               {domainNames.map((d) => (
-                <label key={d} className="pt__check">
-                  <input
-                    type="checkbox"
-                    checked={params.domains.includes(d)}
-                    onChange={(e) => {
-                      const next = e.target.checked
-                        ? [...params.domains, d]
-                        : params.domains.filter((x) => x !== d);
-                      if (next.length === 0) return;
-                      newRun({ domains: next });
-                    }}
-                  />
-                  <span>
-                    {d} <span className="pt__sub">{DOMAIN_COUNT[d].toLocaleString("en")}</span>
-                  </span>
-                </label>
+                <Checkbox
+                  key={d}
+                  label={
+                    <>
+                      {d} <span className="pt__sub">{DOMAIN_COUNT[d].toLocaleString("en")}</span>
+                    </>
+                  }
+                  checked={params.domains.includes(d)}
+                  onChange={(on) => {
+                    const next = on
+                      ? [...params.domains, d]
+                      : params.domains.filter((x) => x !== d);
+                    if (next.length === 0) return;
+                    newRun({ domains: next });
+                  }}
+                />
               ))}
               <p className="pt__sub">At least one domain stays selected.</p>
             </div>
@@ -1507,55 +1497,45 @@ function Controls(props: {
               aria-label="Columns"
             >
               {report.columns.map((c) => (
-                <label key={c} className="pt__check">
-                  <input
-                    type="checkbox"
-                    checked={!params.hidden.includes(c)}
-                    disabled={c === report.columns[0]}
-                    onChange={(e) =>
-                      newRun({
-                        hidden: e.target.checked
-                          ? params.hidden.filter((x) => x !== c)
-                          : [...params.hidden, c],
-                      })
-                    }
-                  />
-                  <span>{c}</span>
-                </label>
+                <Checkbox
+                  key={c}
+                  label={c}
+                  checked={!params.hidden.includes(c)}
+                  disabled={c === report.columns[0]}
+                  onChange={(on) =>
+                    newRun({
+                      hidden: on ? params.hidden.filter((x) => x !== c) : [...params.hidden, c],
+                    })
+                  }
+                />
               ))}
               {extra.length > 0 ? <div className="rp__menuhead pt__sub">More columns</div> : null}
               {extra.map((c) => (
-                <label key={c} className="pt__check">
-                  <input
-                    type="checkbox"
-                    checked={params.added.includes(c)}
-                    onChange={(e) =>
-                      newRun({
-                        added: e.target.checked
-                          ? [...params.added, c]
-                          : params.added.filter((x) => x !== c),
-                      })
-                    }
-                  />
-                  <span>{c}</span>
-                </label>
+                <Checkbox
+                  key={c}
+                  label={c}
+                  checked={params.added.includes(c)}
+                  onChange={(on) =>
+                    newRun({
+                      added: on ? [...params.added, c] : params.added.filter((x) => x !== c),
+                    })
+                  }
+                />
               ))}
             </div>
           ) : null}
         </div>
         {report.svcHidden && svcHidden > 0 ? (
-          <label className="pt__check rp__svc">
-            <input
-              type="checkbox"
-              checked={params.showSvc}
-              onChange={(e) => newRun({ showSvc: e.target.checked })}
-            />
-            <span>
-              {params.showSvc
+          <Checkbox
+            className="rp__svc"
+            checked={params.showSvc}
+            onChange={(on) => newRun({ showSvc: on })}
+            label={
+              params.showSvc
                 ? `Showing ${svcHidden} probable service accounts, each with its reason`
-                : `${svcHidden} probable service accounts hidden`}
-            </span>
-          </label>
+                : `${svcHidden} probable service accounts hidden`
+            }
+          />
         ) : null}
       </div>
     </div>
