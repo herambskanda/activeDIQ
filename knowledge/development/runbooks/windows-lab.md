@@ -354,9 +354,9 @@ session (VM 119 unreachable).
 | `…WrongChannelBindingRejected` | control with the DC's own cert binds; a binding of another cert is refused with ldap 49 and logged as event 3039 |
 | `…MissingChannelBindingRefusedClientSide` | no request without a binding (the server-side "absent" case cannot be produced by this client) |
 | `…WrongSPNFails`, `…BadKeytabFailsBind` | each has a control with the real SPN / key that binds; SPN for another host and a foreign key are refused |
-| `…OpenKeytabBind`, `…OpenGMSABind` | the same binds through `ad.Open`. **Red on purpose until bug T-0846** (go-krb5 rejects the WS2025 AS-REP, PA-REQ-ENC-PA-REP) |
+| `…OpenKeytabBind`, `…OpenGMSABind` | the same binds through `ad.Open`. Were red until bug T-0846 (go-krb5 rejects the WS2025 AS-REP, PA-REQ-ENC-PA-REP); the connector now builds its client with `client.DisablePAFXFAST(true)` (`newKerberosClient`), so they must pass on dc1. |
 
-All other tests drive the handshake with `client.DisablePAFXFAST(true)` so the DC-side behaviour is pinned independently of T-0846.
+All other tests drive the handshake with `client.DisablePAFXFAST(true)` so the DC-side behaviour is pinned independently of the Open path. `TestKerberosClientOmitsPAReqEncPARep` (no lab) pins that the product client never sends PA-REQ-ENC-PA-REP.
 Run log, dc1 before/after state and the broken-run proof: `windows-lab-runs/T-0566-gssapi-2026-10-30.md`.
 `LdapEnforceChannelBindingTokens` is not re-read at runtime (setting 0 left enforcement on), so the "CBT off accepts a wrong binding"
 proof needs a reboot cycle and was not run. The test accounts stay on dc1 for the T-0846 fix; remove with `Remove-ADUser svc-t0566-gssapi`
