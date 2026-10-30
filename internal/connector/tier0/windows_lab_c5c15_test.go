@@ -202,8 +202,8 @@ func aceAllow(sidRaw []byte, mask uint32) []byte {
 	return append(a, sidRaw...)
 }
 
-// sdWithDACL builds a self-relative SD holding only a DACL of the given ACEs.
-func sdWithDACL(aces ...[]byte) []byte {
+// lSDWithDACL builds a self-relative SD holding only a DACL of the given ACEs.
+func lSDWithDACL(aces ...[]byte) []byte {
 	acl := []byte{2, 0, 0, 0, 0, 0, 0, 0}
 	for _, a := range aces {
 		acl = append(acl, a...)
@@ -225,8 +225,8 @@ func daclControl() ldap.Control {
 	return ldap.NewControlString("1.2.840.113556.1.4.801", true, "\x30\x03\x02\x01\x04")
 }
 
-// appendACE appends ace to the DACL of obj and returns the original SD for restoring.
-func appendACE(t *testing.T, c *ldap.Conn, obj string, ace []byte) {
+// lAppendACE appends ace to the DACL of obj and returns the original SD for restoring.
+func lAppendACE(t *testing.T, c *ldap.Conn, obj string, ace []byte) {
 	t.Helper()
 	r, err := c.Search(ldap.NewSearchRequest(obj, ldap.ScopeBaseObject, ldap.NeverDerefAliases, 0, 0, false, "(objectClass=*)", []string{"nTSecurityDescriptor"}, []ldap.Control{daclControl()}))
 	if err != nil || len(r.Entries) != 1 {
@@ -339,9 +339,9 @@ func TestWindowsLabC11(t *testing.T) {
 	half, halfSID := wAddUser(t, adm, ou, "t0226-halfsync")
 	getChanges := guidBytes(t, "1131f6aa-9c07-11d1-f79f-00c04fc2dcd2")
 	getAll := guidBytes(t, "1131f6ad-9c07-11d1-f79f-00c04fc2dcd2")
-	appendACE(t, adm, lDomDN, aceObject(getChanges, bothSID, 0x100))
-	appendACE(t, adm, lDomDN, aceObject(getAll, bothSID, 0x100))
-	appendACE(t, adm, lDomDN, aceObject(getChanges, halfSID, 0x100))
+	lAppendACE(t, adm, lDomDN, aceObject(getChanges, bothSID, 0x100))
+	lAppendACE(t, adm, lDomDN, aceObject(getAll, bothSID, 0x100))
+	lAppendACE(t, adm, lDomDN, aceObject(getChanges, halfSID, 0x100))
 	c := wClassifier(t, ctx)
 	wWant(t, ctx, c, both, C11)
 	wWantPlain(t, ctx, c, half)
@@ -361,7 +361,7 @@ func TestWindowsLabC12(t *testing.T) {
 	}
 	dc := dcs[0].DN
 	m := ldap.NewModifyRequest(dc, nil)
-	m.Replace("msDS-AllowedToActOnBehalfOfOtherIdentity", []string{string(sdWithDACL(aceAllow(tSID, 0xF01FF)))})
+	m.Replace("msDS-AllowedToActOnBehalfOfOtherIdentity", []string{string(lSDWithDACL(aceAllow(tSID, 0xF01FF)))})
 	if err := adm.Modify(m); err != nil {
 		t.Fatalf("set RBCD on %s: %v", dc, err)
 	}

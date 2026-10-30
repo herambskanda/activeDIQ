@@ -194,7 +194,7 @@ Status: **untested against VM 112 until a human completes the steps above** (the
 
 ## Tier0 classifier on the Windows lab (T-0226)
 
-`internal/connector/tier0/windows_lab_test.go` (tags `lab windowslab`; not run by `make lab-test-connector-windows`, which
+`internal/connector/tier0/windows_lab_c5c15_test.go` (tags `lab windowslab`; not run by `make lab-test-connector-windows`, which
 targets `./internal/connector/ad/` only). Run it with the same env as above:
 
 ```bash
@@ -208,4 +208,15 @@ C8 (KDS container + a child, CN=System, RID Manager$, Directory Service; the Pas
 service account and fails closed), C9 (GPO linked at the DC OU is tier0, an unlinked one is not), C11 (Get-Changes +
 Get-Changes-All ⇒ tier0; Get-Changes alone ⇒ not), C12 (RBCD trustee on a DC). Not coverable on this lab (single DC, single
 domain, no RODC): RODC corroboration, cross-domain GPO links, gPLink option/order edge cases, >1500-member ranged groups
-(Samba covers ranged retrieval); the ad-expert review of `c8Domain`/`c8SystemClasses` is separate.
+(Samba covers ranged retrieval); the ad-expert review of `c8Domain`/`c8SystemClasses` is separate (T-0620).
+From a git worktree the credentials live in the main checkout: set `WIN_LAB_ENV` and `WIN_LAB_CA` to its `lab/windows/` files.
+
+### TM-D26 on the Windows lab (T-0346)
+
+`win_lab_tm26_test.go` (`TestWinLabTM26*`) plants state on the live domain head and restores it in `t.Cleanup`
+(DACL and owner bytes read first). If a run is killed mid-test the head may be dirty: `qm rollback 112 clean`.
+Run: `go test -tags 'lab windowslab' -run TestWinLabTM26 -v ./internal/connector/tier0`.
+Results 2026-10-28 (dc1, WS2025): DACL (WRITE_DAC vs read-only twin), owner and callback ACEs 0x09/0x0B (allow) vs 0x0A
+(deny) all classify as TM-D26 rules 2–4 expect. Windows refuses an LDAP write of `sIDHistory` (INSUFF_ACCESS_RIGHTS), so a
+cross-domain Tier-0 `sIDHistory` cannot be planted in a one-domain lab: needs a second domain + trust (M2 follow-up).
+`TestWinLabTM26GCOpens` is red on purpose until bug T-0619 (OpenGC fails on a real GC) is fixed.

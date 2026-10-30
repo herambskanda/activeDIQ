@@ -323,6 +323,15 @@ fresh_stack_tree; mkdir -p "$fs/internal/c"
 printf 'package c\n\n// int one(void) { return 1; }\nimport "C"\n\nfunc One() int { return int(C.one()) }\n' >"$fs/internal/c/c.go"
 printf 'package main\n\nimport _ "fs.test/internal/c"\n\nfunc main() {}\n' >"$fs/cmd/server/main.go"
 must_fail_with "F2 on a package that needs cgo (CGO_ENABLED=0 build)" 'CGO_ENABLED=0 go build \./\.\.\. fails for linux/amd64' stack -checks F2
+fresh_stack_tree; mkdir -p "$fs/internal/x"
+printf '//go:build lab\n\npackage x\n' >"$fs/internal/x/x.go"
+must_fail_with "F2 on the lab test tag in an undeclared non-test file" 'internal/x/x.go: F2 \(ADR-0001 rule 2\): line 1: test tag "lab" is only allowed in _test.go' stack -checks F2 -skip-build
+# ADR-0001 amendment A1 (T-0792): a declared lab build file whose lab half does not compile fails the -tags lab leg.
+fresh_stack_tree; mkdir -p "$fs/internal/x"
+printf '//go:build lab\n\npackage x\n\nconst Lab = undefinedName\n' >"$fs/internal/x/boot_lab.go"
+printf '//go:build !lab\n\npackage x\n\nconst Lab = false\n' >"$fs/internal/x/boot_off.go"
+sed -i 's#"exceptions": {"platformAdapters": \[\]}#"exceptions": {"platformAdapters": [], "labBuilds": [{"path": "internal/x/boot_lab.go", "adr": "0001-stack.md"}, {"path": "internal/x/boot_off.go", "adr": "0001-stack.md"}]}#' "$fs/manifest.json"
+must_fail_with "F2 on a declared lab build file whose lab half does not compile" 'CGO_ENABLED=0 go build -tags lab \./\.\.\. fails for linux/amd64' stack -checks F2
 
 fresh_stack_tree
 printf 'module fs.test\n\ngo 1.27.0\n\nrequire github.com/redis/go-redis/v9 v9.0.0\n\nreplace github.com/redis/go-redis/v9 => ./garage/redis\n' >"$fs/go.mod"
@@ -943,7 +952,14 @@ cp "$root/SECURITY.md" "$dc/SECURITY.md"
 sed -E 's/^Expires: .*/Expires: 2020-01-01T00:00:00Z/' "$root/.well-known/security.txt" >"$dc/.well-known/security.txt"
 must_fail_with "fitness-disclosure on an expired security.txt" 'Expires .* has passed' go run ./tools/fitness/disclosure "$dc"
 cp "$root/.well-known/security.txt" "$dc/.well-known/security.txt"
+mkdir -p "$dc/security/advisories"; cp -R "$root/security/advisories/TEMPLATE" "$dc/security/advisories/TEMPLATE"
 must_pass "fitness-disclosure" go run ./tools/fitness/disclosure "$dc"
+# T-0260: an advisory whose CVE record carries a different vector (the ME-SEC §4.3 failure) is rejected.
+# The worked example is the filled template (advisory_test.go keeps it in step).
+adv="$dc/security/advisories/CVE-1900-0001"; cp -R "$root/tools/fitness/disclosure/testdata/CVE-1900-0001" "$adv"
+sed -i.bak 's|"vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/|"vectorString": "CVSS:3.1/AV:N/AC:L/PR:L/|' "$adv/record.json"
+must_fail_with "fitness-disclosure on an advisory whose CVE record carries another score" 'vectorString .* differs from the advisory' go run ./tools/fitness/disclosure "$dc"
+rm -rf "$adv"
 
 # --- fitness-packaging (T-0104) -----------------------------------------------------------------
 pk="$tmp/packaging"; mkdir -p "$pk"; cp -r "$root/packaging" "$pk/packaging"
@@ -1323,6 +1339,110 @@ rm -rf "$fz/testdata"
 printf 'package x\n\nimport "testing"\n\nfunc FuzzT(f *testing.F) {\n\tf.Add([]byte("a"))\n\tf.Fuzz(func(t *testing.T, b []byte) {})\n}\n' >"$fz/x_test.go"
 must_pass "fuzz-target" tools/ci/fuzz-target.sh "$fz" FuzzT 3s
 must_pass "make fuzz-saml is wired into make ci" bash -c "make -n ci | grep -q 'fuzz-target.sh internal/platform/authn/sso/saml FuzzSAMLComplete 60s'"
+
+# --- fitness-keys (keys-custody-design §7), the real CLI on throw-away trees (-static-only: the schema
+# and bound-test halves are the tool's own tests, go test ./tools/fitness/keycustody, with Docker) ----
+kcbin="$tmp/fitness-keys"; go build -o "$kcbin" ./tools/fitness/keycustody
+kct="$tmp/kc"
+fresh_kc() {
+  rm -rf "$kct"; mkdir -p "$kct/internal/platform/keys" "$kct/internal/a"
+  printf 'module kc.test\n\ngo 1.27.0\n' >"$kct/go.mod"
+  printf 'package keys\n\nvar _ = tablekind.Declare(tablekind.Table{Name: "public.tenant_keys", Entity: "DM-02", Kind: tablekind.Tenant, Sealed: []string{"wrapped_dek"}})\n\nfunc Provision() { _ = `INSERT INTO public.tenant_keys (tenant_id) VALUES ($1)` }\n' >"$kct/internal/platform/keys/store.go"
+}
+fresh_kc
+must_pass "fitness-keys (clean tree)" "$kcbin" -root "$kct" -static-only
+fresh_kc; printf 'package a\n\nvar q = `SELECT * FROM tenant_keys`\n' >"$kct/internal/a/a.go"
+must_fail_with "fitness-keys FF-KEY-2 on a package reading tenant_keys" 'internal/a/a.go:3 FF-KEY-2 \[tenant_keys-owner\]' "$kcbin" -root "$kct" -static-only
+fresh_kc; printf 'package a\n\nimport "github.com/skenzeriq/activediq/internal/platform/keys"\n\nfunc f() { keys.NewDEK() }\n' >"$kct/internal/a/a.go"
+must_fail_with "fitness-keys FF-KEY-2 on keys.NewDEK outside the keys package" 'FF-KEY-2 \[dek-calls\]' "$kcbin" -root "$kct" -static-only
+fresh_kc; printf 'package a\n\nvar e = "ACTIVEDIQ_KEK_DIR"\n' >"$kct/internal/a/a.go"
+must_fail_with "fitness-keys FF-KEY-3 on ACTIVEDIQ_KEK_* read outside the composition root" 'FF-KEY-3 \[env-owner\]' "$kcbin" -root "$kct" -static-only
+fresh_kc; mkdir -p "$kct/packaging"; printf 'environment:\n  ACTIVEDIQ_KEK_PROVIDER: passphrase\n' >"$kct/packaging/compose.yaml"
+must_fail_with "fitness-keys FF-KEY-3 on a default ACTIVEDIQ_KEK_PROVIDER" 'FF-KEY-3 \[provider-default\]' "$kcbin" -root "$kct" -static-only
+fresh_kc; printf 'package keys\n\nfunc (k *KeySource) Lazy() { _ = `insert into tenant_keys (a) values (1)` }\n' >"$kct/internal/platform/keys/lazy.go"
+must_fail_with "fitness-keys FF-KEY-5 on an INSERT reachable from the KeySource" 'FF-KEY-5 \[insert-site\]' "$kcbin" -root "$kct" -static-only
+fresh_kc; printf 'package keys\n\nvar _ = tablekind.Declare(tablekind.Table{Name: "public.tenant_keys", Entity: "DM-02", Kind: tablekind.Tenant})\n\nfunc Provision() { _ = `INSERT INTO tenant_keys` }\n' >"$kct/internal/platform/keys/store.go"
+must_fail_with "fitness-keys FF-KEY-1 on a tenant_keys declaration without Sealed: wrapped_dek" 'FF-KEY-1 \[sealed-declaration\]' "$kcbin" -root "$kct" -static-only
+
+# --- fitness-fleet-ca-scope (ADR-0008 fitness items 1-6, T-0738), the real CLI on throw-away trees ----
+# (-static-only: the bound integration tests are listed pending until their tickets land; the rules'
+# own failing fixtures are go test ./tools/fitness/fleetca)
+fcbin="$tmp/fitness-fleet-ca-scope"; go build -o "$fcbin" ./tools/fitness/fleetca
+fct="$tmp/fc"
+fleetsql=internal/platform/fleet/fleetsql
+fresh_fc() {
+  rm -rf "$fct"; mkdir -p "$fct/$fleetsql" "$fct/migrations" "$fct/internal/a"
+  printf 'module fc.test\n\ngo 1.27.0\n' >"$fct/go.mod"
+  printf 'package fleetsql\n\nfunc (e *Enroller) SignServerLeaf(names []string) { e.serverSigner() }\nfunc (e *Enroller) serverSigner() int { return 0 }\n' >"$fct/$fleetsql/s.go"
+  printf 'CREATE TABLE public.fleet_server_ca (id uuid, sealed_key bytea CHECK (octet_length(sealed_key) > 31));\n' >"$fct/migrations/0001_x.sql"
+}
+fresh_fc
+must_pass "fitness-fleet-ca-scope (clean tree)" "$fcbin" -root "$fct" -static-only
+fresh_fc; printf 'package fleetsql\n\nfunc (e *Enroller) Sneak() { e.serverSigner() }\n' >"$fct/$fleetsql/x.go"
+must_fail_with "fitness-fleet-ca-scope FCS-1 on a second user of the server CA key" 'FCS-1 \[signer-callers\]' "$fcbin" -root "$fct" -static-only
+fresh_fc; printf 'package fleetsql\n\nfunc (e *Enroller) SignServerLeaf(csr *x509.CertificateRequest) {}\n' >"$fct/$fleetsql/s.go"
+must_fail_with "fitness-fleet-ca-scope FCS-2 on SignServerLeaf accepting a CSR" 'FCS-2 \[caller-key\]' "$fcbin" -root "$fct" -static-only
+fresh_fc; mkdir -p "$fct/internal/platform/fleet/gateway"; printf 'package gateway\n\nfunc f() { pool.AddCert(serverCA) }\n' >"$fct/internal/platform/fleet/gateway/g.go"
+must_fail_with "fitness-fleet-ca-scope FCS-3 on the server CA in the client pool" 'FCS-3 \[client-pool\]' "$fcbin" -root "$fct" -static-only
+fresh_fc; mkdir -p "$fct/internal/platform/fleet/dial"; printf 'package dial\n\nfunc PinnedRoots() {}\nfunc f() { clientTLS(Pool(ca), h, nil) }\n' >"$fct/internal/platform/fleet/dial/d.go"
+must_fail_with "fitness-fleet-ca-scope FCS-4 on a tenant CA as the dial root" 'FCS-4 \[dial-roots\]' "$fcbin" -root "$fct" -static-only
+fresh_fc; printf 'CREATE TABLE public.fleet_server_ca (tenant_id uuid, id uuid, sealed_key bytea CHECK (true));\n' >"$fct/migrations/0001_x.sql"
+must_fail_with "fitness-fleet-ca-scope FCS-5 on a tenant_id column" 'FCS-5 \[tenant-id\]' "$fcbin" -root "$fct" -static-only
+fresh_fc; mkdir -p "$fct/internal/compose/server"; printf 'package server\n\nvar c = tls.Certificate{Certificate: [][]byte{leaf, ca, tenantCA}}\n' >"$fct/internal/compose/server/f.go"
+must_fail_with "fitness-fleet-ca-scope FCS-6 on a three-certificate chain" 'FCS-6 \[chain-length\]' "$fcbin" -root "$fct" -static-only
+
+# --- fitness-built-msi (T-0697, ADR-0006 A1 on the built artefact) ---------------------------------
+# Real MSIs: wixl builds them, msibuild adds MsiServiceConfig/CustomAction rows, msidump (inside the gate)
+# reads them. msitools is a CI prerequisite (runbook ci-and-build.md): a missing tool fails the proof.
+for tool in wixl msibuild msidump; do
+  command -v "$tool" >/dev/null || { echo "PROOF FAILED: fitness-built-msi needs $tool (apt-get install msitools wixl)"; fails=$((fails + 1)); }
+done
+bm="$tmp/builtmsi"; mkdir -p "$bm"
+# mk_msi <name> <account> <sid> <privs> [extra CustomAction row]: the .wxs is *generated at build time*
+# into obj/, as an MSBuild inline task would; no WiX source for it exists in the tree.
+mk_msi() {
+  local n=$1 acct=$2 sid=$3 privs=$4 ca=${5:-} d="$bm/$1"
+  mkdir -p "$d/obj"
+  ( cd "$d" && printf '<?xml version="1.0"?>\n<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"><Product Id="*" Name="x" Language="1033" Version="1.0.0" Manufacturer="m" UpgradeCode="11111111-2222-3333-4444-555555555555"><Package Compressed="yes" InstallerVersion="500"/><Media Id="1" Cabinet="a.cab" EmbedCab="yes"/><Directory Id="TARGETDIR" Name="SourceDir"><Directory Id="AgentDir" Name="agent"><Component Id="C1" Guid="11111111-2222-3333-4444-555555555556"><File Id="F1" Source="obj/gen.wxs" KeyPath="yes"/><ServiceInstall Id="Svc" Name="activeDIQAgent" Type="ownProcess" Start="auto" ErrorControl="normal" Account="%s"/></Component></Directory></Directory><Feature Id="F" Level="1"><ComponentRef Id="C1"/></Feature></Product></Wix>\n' "$acct" >obj/gen.wxs \
+    && wixl -o "$n.msi" obj/gen.wxs \
+    && printf 'MsiServiceConfig\tName\tEvent\tConfigType\tArgument\tComponent_\r\ns72\ts255\ti2\ti2\tL255\ts72\r\nMsiServiceConfig\tMsiServiceConfig\r\nc1\tactiveDIQAgent\t1\t3\t%s\tC1\r\nc2\tactiveDIQAgent\t1\t4\t%s\tC1\r\n' "$sid" "$privs" >MsiServiceConfig.idt \
+    && msibuild "$n.msi" -i MsiServiceConfig.idt ) >"$d/build.log" 2>&1 || { echo "PROOF FAILED: building $n.msi"; cat "$d/build.log"; fails=$((fails + 1)); }
+  if [ -n "$ca" ]; then
+    ( cd "$d" && printf 'Action\tType\tSource\tTarget\r\ns72\ti2\tS64\tS255\r\nCustomAction\tAction\r\n%s\r\n' "$ca" >CustomAction.idt && msibuild "$n.msi" -i CustomAction.idt ) >>"$d/build.log" 2>&1 || { echo "PROOF FAILED: adding a CustomAction to $n.msi"; fails=$((fails + 1)); }
+  fi
+}
+# add_idt <name> <table> <idt-text>: append a table to an already built MSI (msibuild).
+add_idt() {
+  local n=$1 t=$2 d="$bm/$1"
+  ( cd "$d" && printf '%b' "$3" >"$t.idt" && msibuild "$n.msi" -i "$t.idt" ) >>"$d/build.log" 2>&1 || { echo "PROOF FAILED: adding $t to $n.msi"; fails=$((fails + 1)); }
+}
+builtmsi() { go run ./tools/fitness/builtmsi "$@"; }
+mk_msi clean 'NT SERVICE\activeDIQAgent' 3 SeChangeNotifyPrivilege
+mk_msi system 'LocalSystem' 3 SeChangeNotifyPrivilege
+mk_msi unrestricted 'NT SERVICE\activeDIQAgent' 1 SeChangeNotifyPrivilege
+mk_msi privs 'NT SERVICE\activeDIQAgent' 3 'SeChangeNotifyPrivilege[~]SeBackupPrivilege'
+mk_msi action 'NT SERVICE\activeDIQAgent' 3 SeChangeNotifyPrivilege "$(printf 'Sneaky\t3106\tAgentDir\t"[AgentDir]agentsetup.exe" --run-anything')"
+# security-architect bypasses: a ServiceInstall whose Id is a reviewed action Id plus a world-writable DACL on it;
+# a setting row that never applies (uninstall only); a reboot failure action.
+mk_msi dacl 'NT SERVICE\activeDIQAgent' 3 SeChangeNotifyPrivilege
+add_idt dacl MsiLockPermissionsEx 'MsiLockPermissionsEx\tLockObject\tTable\tSDDLText\r\ns72\ts72\ts32\tL0\r\nMsiLockPermissionsEx\tMsiLockPermissionsEx\r\nL1\tSvc\tServiceInstall\tD:(A;;GA;;;WD)\r\n'
+mk_msi neverapplies 'NT SERVICE\activeDIQAgent' 3 SeChangeNotifyPrivilege
+add_idt neverapplies MsiServiceConfig 'MsiServiceConfig\tName\tEvent\tConfigType\tArgument\tComponent_\r\ns72\ts255\ti2\ti2\tL255\ts72\r\nMsiServiceConfig\tMsiServiceConfig\r\nc1\tactiveDIQAgent\t2\t3\t3\tC1\r\nc2\tactiveDIQAgent\t2\t4\tSeChangeNotifyPrivilege\tC1\r\n'
+mk_msi selfreg 'NT SERVICE\activeDIQAgent' 3 SeChangeNotifyPrivilege
+add_idt selfreg SelfReg 'File_\tCost\r\ns72\tI2\r\nSelfReg\tFile_\r\nF1\t0\r\n'
+mk_msi critical 'NT SERVICE\activeDIQAgent' 3 SeChangeNotifyPrivilege
+add_idt critical ServiceInstall 'ServiceInstall\tName\tDisplayName\tServiceType\tStartType\tErrorControl\tLoadOrderGroup\tDependencies\tStartName\tPassword\tArguments\tComponent_\tDescription\r\ns72\tl255\tL255\ti4\ti4\ti4\tS255\tS255\tS255\tS255\tS255\ts72\tL255\r\nServiceInstall\tServiceInstall\r\nSvc\tactiveDIQAgent\t\t16\t2\t3\t\t\tNT SERVICE\\activeDIQAgent\t\t\tC1\t\r\n'
+must_pass "fitness-built-msi on a clean built agent MSI" builtmsi -glob "$bm/clean/clean.msi"
+must_fail_with "fitness-built-msi on a build-time-generated LocalSystem ServiceInstall (the source scan cannot see it)" 'ServiceInstall row "Svc".*LocalSystem' builtmsi -glob "$bm/system/system.msi"
+must_fail_with "fitness-built-msi on an unrestricted service SID" 'SID type is "1"' builtmsi -glob "$bm/unrestricted/unrestricted.msi"
+must_fail_with "fitness-built-msi on an extra privilege" 'RequiredPrivileges are .*SeBackupPrivilege' builtmsi -glob "$bm/privs/privs.msi"
+must_fail_with "fitness-built-msi on an unreviewed custom action" 'CustomAction row "Sneaky"' builtmsi -glob "$bm/action/action.msi"
+must_fail_with "fitness-built-msi on a DACL row keyed to the service (service-control bypass)" 'MsiLockPermissionsEx row "L1"' builtmsi -glob "$bm/dacl/dacl.msi"
+must_fail_with "fitness-built-msi on settings that only apply on uninstall" 'does not apply on install' builtmsi -glob "$bm/neverapplies/neverapplies.msi"
+must_fail_with "fitness-built-msi on a SelfReg row (code run at install)" 'SelfReg row "F1"' builtmsi -glob "$bm/selfreg/selfreg.msi"
+must_fail_with "fitness-built-msi on a critical ErrorControl" 'ErrorControl' builtmsi -glob "$bm/critical/critical.msi"
+must_fail_with "fitness-built-msi when no MSI exists and one is required (release job)" 'no built MSI found' builtmsi -require -glob "$bm/none/*.msi"
+must_pass "fitness-built-msi prints inactive, not a pass, when no MSI exists" bash -c "go run ./tools/fitness/builtmsi -glob '$bm/none/*.msi' | grep -q '^fitness-built-msi: inactive'"
 
 if [ "$fails" -ne 0 ]; then echo "ci-proof: $fails proof(s) failed" >&2; exit 1; fi
 echo "ci-proof: every gate rejects its violation and accepts clean input"

@@ -19,15 +19,31 @@
       "table": "public.platform_rate_buckets",
       "reason": "The rate limiter meters a principal at chain step 10, before any tenant transaction exists, and the budget must hold across every node, so a bucket row has no RLS policy; the tenant is part of its key text (ADR-0002 rule 6, DM-07, TM-TB2-T7). Any tenant transaction can read it, so only its owning package may name it in SQL.",
       "owner": "internal/platform/limiter"
+    },
+    {
+      "table": "public.update_verifier_floor",
+      "reason": "The update verifier's rollback floor is install-level: one monotone row shared by the server, connector and agent update paths, read before and outside any tenant transaction, so it has no tenant_id and no RLS. The guard trigger refuses any lowering and the runtime role cannot DELETE or TRUNCATE it (ENH-07, TM-D12 rule 2). Any tenant transaction can read it, so only its owning package may name it in SQL.",
+      "owner": "internal/platform/updateverify/floorpg"
     }
   ],
   "securityDefiner": [
+    {
+      "function": "public.fleet_ca_trust_anchors()",
+      "reason": "Reads every tenant's public CA certificates for the gateway client-CA pool, which fleet_ca's FORCE row-level security would show a platform-scope caller as empty. Owned by the dedicated NOLOGIN NOBYPASSRLS role activediq_catrust, which holds SELECT on tenant_id, id, state, cert_der, spki_sha256 and not_after only (never sealed_key) and one policy limited to active and retired rows; the function refuses any tenant context (42501), returns no key column, and EXECUTE is granted to activediq_app alone (T-0712, T-0733; TM-A11, TM-D24)."
+    },
     {
       "function": "public.audit_wipe_retired_key(text)",
       "reason": "Destroys a retired audit checkpoint key's sealed private key. The runtime role has no UPDATE on audit_checkpoint_key (append-only, DM-80.I2), so the one allowed change runs with the owner's rights; the function takes the tenant only from app.tenant_id (row-level security still applies), refuses the newest key and a key without a committed retirement event, and the table's update trigger refuses any other change (ADR-0005 rule 11, T-0305)."
     }
   ],
   "platformPaths": [
+    {
+      "package": "internal/platform/fleet/fleetsql",
+      "function": "TrustAnchors.Load",
+      "reason": "The gateway's client-CA pool holds every tenant's CA certificates, so one read runs in platform scope and calls the SECURITY DEFINER function fleet_ca_trust_anchors(), the only path to those rows: its owner role can read public certificate columns only, never sealed_key, and the function refuses a tenant context (T-0712, T-0733; TM-A11, TM-D24). It parses the tenant IDs the function returns from fleet_ca rows into typed IDs; it grants no access with them and a per-tenant check of the leaf's issuer still runs on every RPC (TM-Q8).",
+      "withPlatform": true,
+      "mintsTenantID": true
+    },
     {
       "package": "internal/platform/tenant/provision",
       "function": "FirstRun",
@@ -146,6 +162,20 @@
       "reason": "Test: proves the registered SECURITY DEFINER audit_wipe_retired_key refuses a call made with no tenant context (SQLSTATE 42501), which needs a transaction under WithPlatform. It is in a _test.go file and ships in no binary (ADR-0005 rule 11, T-0305).",
       "withPlatform": true,
       "mintsTenantID": false
+    },
+    {
+      "package": "internal/platform/updateverify/floorpg",
+      "function": "Store.Load",
+      "reason": "The update verifier floor is install-level and its table is registered global, so the statement that reads it runs under WithPlatform (ENH-07, TM-D12 rule 2).",
+      "withPlatform": true,
+      "mintsTenantID": false
+    },
+    {
+      "package": "internal/platform/updateverify/floorpg",
+      "function": "Store.Raise",
+      "reason": "The update verifier floor is install-level and its table is registered global, so the statement that raises it runs under WithPlatform (ENH-07, TM-D12 rule 2).",
+      "withPlatform": true,
+      "mintsTenantID": false
     }
   ],
   "platformJobs": [],
@@ -188,7 +218,7 @@
     {
       "column": "public.authn_authenticator_enrollments.expires_at",
       "value": "2030-01-01T00:00:00Z",
-      "reason": "INSERT trigger: an enrolment starts pending with an expiry (DM-37, ENH-09 \u00a75); the probe row is a pending enrolment."
+      "reason": "INSERT trigger: an enrolment starts pending with an expiry (DM-37, ENH-09 §5); the probe row is a pending enrolment."
     },
     {
       "column": "public.correlations.match",
@@ -393,7 +423,7 @@
     {
       "column": "public.connection_attestation_attempts.code_verifier",
       "value": "probe-code-verifier-0123456789-0123456789-0123",
-      "reason": "CHECK: a PKCE code_verifier is 43..128 characters (RFC 7636 \u00a74.1)."
+      "reason": "CHECK: a PKCE code_verifier is 43..128 characters (RFC 7636 §4.1)."
     },
     {
       "column": "public.connection_attestation_attempts.state_hash",
@@ -656,6 +686,81 @@
       "column": "public.tenant_keys.state",
       "value": "active",
       "reason": "CHECK: state is active, retired or shredded; the probe row is an active key with a non-empty wrapped_dek (T-0520)"
+    },
+    {
+      "column": "public.agent_event.content_sha256",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: a content hash is exactly 32 bytes (agent_event_content_sha256_check); the probe row carries a 32-byte placeholder, not a real digest (T-0766)"
+    },
+    {
+      "column": "public.authn_authority_approvals.created_at",
+      "value": "2000-01-01 00:00:00+00",
+      "reason": "CHECK: authn_authority_approvals_life ties expires_at to created_at (later, within 1 hour); the probe row pins both to fixed instants (T-0766)"
+    },
+    {
+      "column": "public.authn_authority_approvals.expires_at",
+      "value": "2000-01-01 00:30:00+00",
+      "reason": "CHECK: authn_authority_approvals_life, see created_at; 30 minutes after the pinned created_at (T-0766)"
+    },
+    {
+      "column": "public.authn_authority_challenges.challenge",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: a challenge is 32 to 64 bytes; the probe row carries a 32-byte placeholder (T-0766)"
+    },
+    {
+      "column": "public.authn_authority_challenges.user_handle",
+      "value": "\\x70707070707070707070707070707070",
+      "reason": "CHECK: a user handle is 16 to 64 bytes; the probe row carries a 16-byte placeholder (T-0766)"
+    },
+    {
+      "column": "public.authn_authority_challenges.created_at",
+      "value": "2000-01-01 00:00:00+00",
+      "reason": "CHECK: authn_authority_challenges_life ties expires_at to created_at (later, within 5 minutes); pinned instants (T-0766)"
+    },
+    {
+      "column": "public.authn_authority_challenges.expires_at",
+      "value": "2000-01-01 00:02:00+00",
+      "reason": "CHECK: authn_authority_challenges_life, see created_at; 2 minutes after the pinned created_at (T-0766)"
+    },
+    {
+      "column": "public.authn_authority_challenges.kind",
+      "value": "assert",
+      "reason": "CHECK: kind is register or assert, and authn_authority_challenges_proof requires proof NULL unless kind is register; the probe row is an assert challenge (T-0766)"
+    },
+    {
+      "column": "public.authn_authority_notices.event",
+      "value": "enrolled",
+      "reason": "CHECK: event is enrolled, reset or removed (T-0766)"
+    },
+    {
+      "column": "public.authn_sso_transactions.handle_hash",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: a handle hash is exactly 32 bytes; the probe row carries a 32-byte placeholder (T-0766)"
+    },
+    {
+      "column": "public.authn_sso_transactions.intent",
+      "value": "signin",
+      "reason": "CHECK: intent is signin (T-0766)"
+    },
+    {
+      "column": "public.authn_sso_transactions.created_at",
+      "value": "2000-01-01 00:00:00+00",
+      "reason": "CHECK: authn_sso_transactions_life ties expires_at to created_at (later, within 5 minutes); pinned instants (T-0766)"
+    },
+    {
+      "column": "public.authn_sso_transactions.expires_at",
+      "value": "2000-01-01 00:02:00+00",
+      "reason": "CHECK: authn_sso_transactions_life, see created_at; 2 minutes after the pinned created_at (T-0766)"
+    },
+    {
+      "column": "public.inventory_servers.fqdn",
+      "value": "probe.example.test",
+      "reason": "CHECK: fqdn is a lower-case dotted DNS name of 3 to 253 characters (T-0766)"
+    },
+    {
+      "column": "public.authn_authority_approvals.approver_id",
+      "value": "00000000-0000-4000-8000-0000000000a9",
+      "reason": "CHECK: authn_authority_approvals_not_self requires approver_id <> account_id, but the generator resolves both foreign keys to the same account row; the probe row names a distinct approver (seeded with foreign keys off, as every probe row is) (T-0766)"
     }
   ]
 }

@@ -10,6 +10,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 
 	"github.com/skenzeriq/activediq/internal/platform/fleet"
+	"github.com/skenzeriq/activediq/internal/platform/fleet/gateway"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 	fleetv1 "github.com/skenzeriq/activediq/internal/proto/activediq/fleet/v1"
 )
@@ -20,7 +21,7 @@ import (
 
 // TunnelDeps is what serving Fleet.Tunnel needs. Every field is required.
 type TunnelDeps struct {
-	Hub      *fleet.Hub
+	Hub      *gateway.Hub
 	Bindings fleet.Bindings
 	Reporter fleet.Reporter // audits a protocol violation against the component (TM-D24 B5)
 	Logger   *slog.Logger
