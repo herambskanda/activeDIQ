@@ -10,7 +10,7 @@
                        clock offset and the diagnostics value in a finally block. Default ARGS: the whole T-0566 suite.
 
 Wrap every call in the shared lock:  flock -w 3600 /tmp/claude-1000/activediq-dc1.lock lab/windows/bin/gssapi-lab run
-Needs: pip install pywinrm requests-ntlm. Credentials come from WIN_LAB_ENV (never printed). Runbook section 14.
+Needs: pip install pywinrm requests-ntlm. Credentials come from WIN_LAB_ENV (never printed). Runbook section 15.
 """
 import base64, datetime as dt, os, re, subprocess, sys, time
 

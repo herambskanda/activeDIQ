@@ -1587,6 +1587,7 @@
           "ADM-142",
           "ADM-145"
         ],
+        "x-activediq-peer-ip": true,
         "x-activediq-scope": "platform",
         "x-activediq-stability": "preview",
         "x-permission": "anonymous"
@@ -1629,6 +1630,9 @@
         "tags": [
           "platform.authn"
         ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
         "x-activediq-stability": "preview",
         "x-permission": "authenticated"
       }
@@ -1676,6 +1680,9 @@
         "tags": [
           "platform.authn"
         ],
+        "x-activediq-limits": {
+          "class": "write"
+        },
         "x-activediq-parity": [
           "ADM-145"
         ],

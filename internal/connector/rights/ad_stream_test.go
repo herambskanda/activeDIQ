@@ -139,6 +139,11 @@ func TestCorrelatedGroupBlocksAndIsReported(t *testing.T) {
 			}
 		}
 		for _, f := range m.GetFindings().GetFindings() {
+			// Every streamed finding carries the connector's DM-24.I4 fingerprint: the server
+			// refuses the run ("verify stream violates the contract") without it.
+			if len(f.Fingerprint) != 32 {
+				t.Fatalf("finding %s has a %d-byte fingerprint", f.Code, len(f.Fingerprint))
+			}
 			if f.Kind == v1.FindingKind_FINDING_KIND_TIER0_GROUP_MEMBERSHIP && f.ObjectTier0Basis[0] == tier0.C16 {
 				blocked = true
 			}

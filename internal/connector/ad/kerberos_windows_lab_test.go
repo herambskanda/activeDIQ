@@ -27,7 +27,7 @@ import (
 )
 
 // T-0566: the equivalents of kerberos_lab_test.go against the Windows lab DC. Precondition (runbook
-// windows-lab.md section 14): guest/gssapi-ready.ps1 ran on dc1 (LDAPServerIntegrity=2,
+// windows-lab.md section 15): guest/gssapi-ready.ps1 ran on dc1 (LDAPServerIntegrity=2,
 // LdapEnforceChannelBindingTokens=2, dc1 rebooted) and its output sits beside the lab env file.
 // Like the rest of the Windows lab tests nothing is skipped: a missing lab or keytab fails loudly.
 // The gMSA key derivation below was confirmed on WS2025 dc1 (T-0566 run log).

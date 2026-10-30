@@ -13,6 +13,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitypes"
 	"github.com/skenzeriq/activediq/internal/platform/authn/api"
+	"github.com/skenzeriq/activediq/internal/platform/secret"
 )
 
 // TOTPCookieVerifier is the HTTP-facing shape of the AN-10 TOTP step: it takes the pending cookie's value
@@ -25,6 +26,8 @@ type TOTPCookieVerifier interface {
 // Handlers implements api.Handlers. AN-10 TOTP is real once a SecondFactor is supplied; the other
 // operations stay 501 stubs until their build tickets land.
 type Handlers struct {
+	// Password is AN-8. While nil the operation answers 501, so no behaviour is faked.
+	Password     PasswordCookieBeginner
 	SecondFactor TOTPCookieVerifier
 	WebAuthn     WebAuthnCookieVerifier
 	Log          *slog.Logger
@@ -32,11 +35,40 @@ type Handlers struct {
 
 var _ api.Handlers = Handlers{}
 
-// API returns the tag's routes for compose/server to mount.
-func API(h Handlers) apihost.TagHandlers { return api.Bind(h) }
+// Bind returns the tag's routes for compose/server to mount (the ADR-0004 A6 shape: h.Bind()).
+func (h Handlers) Bind() apihost.TagHandlers { return api.Bind(h) }
 
-func (Handlers) SignInBreakGlassPassword(context.Context, api.SignInBreakGlassPasswordInput) (api.SignInBreakGlassPasswordOutput, error) {
-	return nil, apitypes.NotImplemented("")
+// PasswordCookieBeginner is the HTTP-facing shape of AN-8: it takes the submitted credentials and returns
+// the Set-Cookie line of the pending sign-in. httpx/authnhttp implements it over LocalCredentials.
+type PasswordCookieBeginner interface {
+	BeginPasswordCookie(ctx context.Context, username string, password secret.Secret, from netip.Addr) (string, error)
+}
+
+// SignInBreakGlassPassword is AN-8. Success sets only the pending cookie (AN-10 follows); every refusal is
+// the one 401 of the sign-in plane, with no hint of why.
+func (h Handlers) SignInBreakGlassPassword(ctx context.Context, in api.SignInBreakGlassPasswordInput) (api.SignInBreakGlassPasswordOutput, error) {
+	if h.Password == nil {
+		return nil, apitypes.NotImplemented("")
+	}
+	from, _ := netip.ParseAddr(in.PeerIP)
+	line, err := h.Password.BeginPasswordCookie(ctx, in.Body.Username, in.Body.Password, from)
+	if err != nil {
+		if errors.Is(err, ErrSignInRefused) {
+			if h.Log != nil {
+				h.Log.Info("password step refused", "peer_ip", in.PeerIP, "trace_id", apihost.TraceID(ctx))
+			}
+			return nil, apitypes.SignInFailed("")
+		}
+		if errors.Is(err, ErrSignInBusy) {
+			return nil, apitypes.RateLimited("")
+		}
+		// A store or key fault fails closed with the same 401 (threat model §7.6 rule 2d).
+		if h.Log != nil {
+			h.Log.Error("password step failed", "error", err.Error(), "peer_ip", in.PeerIP, "trace_id", apihost.TraceID(ctx))
+		}
+		return nil, apitypes.SignInFailed("")
+	}
+	return api.SignInBreakGlassPassword204{SetCookie: line}, nil
 }
 
 // WebAuthnCookieVerifier is the HTTP-facing shape of the AN-10 WebAuthn step, like TOTPCookieVerifier:
