@@ -75,7 +75,19 @@ type Activation struct {
 	Subject string   `json:"subject"` // what the check guards, for the printed table
 	Paths   []string `json:"paths"`   // any existing path (a glob; "dir/*" matches a sub-directory) activates the check
 	Command []string `json:"command"` // the implemented check, run from the repository root; empty = not implemented
-	Reason  string   `json:"reason"`  // why these paths are the subject
+	// Deferral is a time-boxed, ADR-approved gap between the subject landing and its check (ADR-0002
+	// erratum E-3). It is valid only while the row has no command, the ticket is well formed, the
+	// expiry has not passed and the ADR's "Activation deferrals" table lists the same check, ticket
+	// and expiry. Editing the manifest alone therefore extends nothing.
+	Deferral *Deferral `json:"deferral,omitempty"`
+	Reason   string    `json:"reason"` // why these paths are the subject
+}
+
+// Deferral is the manifest half of an activation deferral.
+type Deferral struct {
+	Ticket  string `json:"ticket"`  // T- and four or more digits: the ticket that brings the check
+	Expires string `json:"expires"` // YYYY-MM-DD, UTC; the deferral is a violation after this date
+	ADR     string `json:"adr"`     // file in decisionsDir whose "Activation deferrals" table approves it
 }
 
 // uemDeny is the denylist file shared with fitness-stack F3 (same shape as its denylistExtends files).
