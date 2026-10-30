@@ -44,7 +44,7 @@ func TestCellSortKeyOrdersLikeTheValues(t *testing.T) {
 
 func TestCellSortKeyTextIsCaseFoldedAndNormalised(t *testing.T) {
 	col := report.Column{ID: "s", Type: report.TypeText, Sortable: true}
-	a, _ := report.CellSortKey(report.TextCell("Ünal"), col)       // precomposed
+	a, _ := report.CellSortKey(report.TextCell("Ünal"), col)  // precomposed
 	b, _ := report.CellSortKey(report.TextCell("ÜNAL"), col) // decomposed, upper case
 	if a != b {
 		t.Fatalf("NFC and case fold must agree: %q vs %q", a, b)
