@@ -241,3 +241,7 @@ but skipped with that ticket id (`TestO8RemovedFromScopeNonAncestryRoots`, `Test
 delete the `t.Skip` lines when it is fixed) and the manifest lists those clauses as Gaps, not coverage; the
 Entra arm then also needs a Graph fake. Open gaps: T-0830
 (undo of a failed item), T-0831 (Provenance implementation).
+
+`make fitness-operation` (T-0393) runs every manifest test on each invocation (Docker needed) and fails if one is
+missing, failed or skipped; add `-o8-lab` (`go run ./tools/fitness/operation -o8-lab`, lab up) to run the Samba
+arm too. See ci-and-build.md, `fitness-operation`.
