@@ -35,5 +35,16 @@ Code: `internal/platform/keys/`; fake KMS: `internal/platform/keys/keystest/`.
   is the read-only port authn/audit/fleetsql consume (version 0 = active); its only failure texts are `keys: <Code>`
   (`NoActiveKey`, `KeyNotFound`, `KeyShredded`, `ProviderUnavailable`, `UnwrapFailed`, `StoreFailed`). It has no INSERT path
   (AST test). Not yet built: `Rotate`, `ShredTenant`, `installation_kek` and the boot self-test, `keys provision --missing`, the DEK cache (follow-up tickets).
+- Installation scope (T-0715, `installation.go`; migration `0056_keys_installation_keys.sql`; ADR-0008): one DEK for the
+  installation, sealing the fleet SERVER CA key only (per-tenant client CAs stay under tenant DEKs). `SealInstallation` /
+  `OpenInstallation` use `InstallationContext{Table,Row,Column,Version}` (no tenant; AAD tag `diq.seal.installation.v1`), the
+  DEK is wrapped as platform purpose `installation-dek`, so a tenant blob/wrap never opens as it and it never opens as a
+  tenant's (`OpenFailed` / `UnwrapFailed`). `InstallationKeys.DEK(ctx, tx, version, reason)` (run in `WithPlatform`; 0 = active)
+  creates version 1 on first use (partial unique index ⇒ concurrent creators end with one active row), unwraps through the
+  boot-unlocked provider on every call (no cache; KEK down ⇒ `ProviderUnavailable`), and audits every access through the
+  `InstallationAuditor` port the composition root adapts to the platform audit sink. The port is durable: each record commits
+  on its own, independent of the caller's tx (failure records survive a rollback; the success record commits before the DEK is
+  handed out, else `AuditFailed`); only the creator whose INSERT took effect records `create`. Table `installation_keys` is registered-global, runtime role SELECT+INSERT only. Not built: rotation,
+  the audit-sink adapter and the `fleet_server_ca` consumer (T-0716 line of work).
 - Not here: re-seal job (TM-D15). Callers call these inside the tenant's `WithTenantTx`.
 - Limit: random nonces under one DEK are safe to ~2^32 seals; the rotation job bounds this.

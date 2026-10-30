@@ -106,3 +106,29 @@ func (a *Admin) baseDN() string {
 	}
 	return r.Entries[0].GetAttributeValue("defaultNamingContext")
 }
+
+// Move renames dn's parent to newParent (an LDAP ModifyDN keeping the RDN) and deletes the object at its
+// new DN when the test ends. The objectGUID is unchanged. It returns the new DN.
+func (a *Admin) Move(dn, newParent string) string {
+	a.tb.Helper()
+	rdn := dn[:indexUnescapedComma(dn)]
+	if err := a.conn.ModifyDN(ldap.NewModifyDNRequest(dn, rdn, true, newParent)); err != nil {
+		a.tb.Fatal(err)
+	}
+	newDN := rdn + "," + newParent
+	a.tb.Cleanup(func() { _ = a.conn.Del(ldap.NewDelRequest(newDN, nil)) })
+	return newDN
+}
+
+// indexUnescapedComma is the offset of the first comma of dn not preceded by a backslash.
+func indexUnescapedComma(dn string) int {
+	for i := 0; i < len(dn); i++ {
+		switch dn[i] {
+		case '\\':
+			i++
+		case ',':
+			return i
+		}
+	}
+	return len(dn)
+}

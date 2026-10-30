@@ -128,7 +128,7 @@ func openBackend(ctx context.Context, loc Local, log *slog.Logger) (*backend, er
 	if err != nil {
 		return nil, errors.New("connector: read handler")
 	}
-	gate, err := write.NewGateBook(&write.FileBaseline{Path: filepath.Join(loc.DataDir, ratchetFile)}, nil)
+	gate, err := newGate(filepath.Join(loc.DataDir, ratchetFile), log)
 	if err != nil {
 		return nil, errors.New("connector: write gate")
 	}
@@ -145,6 +145,17 @@ func openBackend(ctx context.Context, loc Local, log *slog.Logger) (*backend, er
 	}
 	ok = true
 	return &backend{verify: vh, read: rh, write: wh, close: func() { _ = sess.Close() }}, nil
+}
+
+// newGate builds the write gate over the ratchet baseline file. The baseline reports an access
+// correction (contract §8.3a "baseline_acl_corrected") to the connector's local log, so a widened
+// file is never narrowed silently.
+func newGate(path string, log *slog.Logger) (*write.GateBook, error) {
+	fb, err := write.NewFileBaseline(path, write.SlogRecorder{L: log})
+	if err != nil {
+		return nil, err
+	}
+	return write.NewGateBook(fb, nil)
 }
 
 // selfRef resolves the service account the session is bound as (its objectGUID) by sAMAccountName,

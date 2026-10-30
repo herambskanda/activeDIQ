@@ -50,6 +50,7 @@ type UserSearcher interface {
 type Handlers struct {
 	Connections Connections
 	Search      UserSearcher
+	Hybrid      Classifier
 	Now         func() time.Time
 	Log         *slog.Logger
 }
@@ -103,7 +104,8 @@ func (h Handlers) SearchDirectoryUsers(ctx context.Context, in api.SearchDirecto
 			return nil, apitypes.Internal("")
 		}
 		items = append(items, api.DirectoryUser{ObjectGUID: g, DisplayName: u.DisplayName,
-			SamAccountName: u.SAMAccountName, UserPrincipalName: u.UserPrincipalName, Enabled: u.Enabled})
+			SamAccountName: u.SAMAccountName, UserPrincipalName: u.UserPrincipalName, Enabled: u.Enabled,
+			Hybrid: h.Hybrid.Classify(ctx, tid, id, u.ObjectGUID)})
 	}
 	return api.SearchDirectoryUsers200{Body: api.DirectoryUserList{Items: items}}, nil
 }

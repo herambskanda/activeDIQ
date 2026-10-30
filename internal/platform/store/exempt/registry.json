@@ -21,6 +21,11 @@
       "owner": "internal/platform/limiter"
     },
     {
+      "table": "public.installation_keys",
+      "reason": "The installation-scope data key (T-0715, ADR-0008) seals installation secrets that belong to no tenant, such as the fleet server CA's private key, so its row has no tenant_id and no RLS (ADR-0002 rule 4). wrapped_dek is the AEAD blob a key provider returned; the runtime role can only SELECT and INSERT. Any tenant transaction can read it, so only its owning package may name it in SQL.",
+      "owner": "internal/platform/keys"
+    },
+    {
       "table": "public.update_verifier_floor",
       "reason": "The update verifier's rollback floor is install-level: one monotone row shared by the server, connector and agent update paths, read before and outside any tenant transaction, so it has no tenant_id and no RLS. The guard trigger refuses any lowering and the runtime role cannot DELETE or TRUNCATE it (ENH-07, TM-D12 rule 2). Any tenant transaction can read it, so only its owning package may name it in SQL.",
       "owner": "internal/platform/updateverify/floorpg"
@@ -160,6 +165,20 @@
       "package": "internal/platform/audit",
       "function": "TestRetiredKeyIsWipedThroughSecurityDefiner",
       "reason": "Test: proves the registered SECURITY DEFINER audit_wipe_retired_key refuses a call made with no tenant context (SQLSTATE 42501), which needs a transaction under WithPlatform. It is in a _test.go file and ships in no binary (ADR-0005 rule 11, T-0305).",
+      "withPlatform": true,
+      "mintsTenantID": false
+    },
+    {
+      "package": "internal/platform/keys",
+      "function": "rig.instDEK",
+      "reason": "Test helper: fetches the installation DEK under WithPlatform, because the installation key has no tenant context. It is in a _test.go file and ships in no binary (T-0715, ADR-0008).",
+      "withPlatform": true,
+      "mintsTenantID": false
+    },
+    {
+      "package": "internal/platform/keys",
+      "function": "rig.rolledBack",
+      "reason": "Test helper: runs the installation-key call in a transaction the test rolls back under WithPlatform, because the installation key has no tenant context. It is in a _test.go file and ships in no binary (T-0715, ADR-0008).",
       "withPlatform": true,
       "mintsTenantID": false
     },

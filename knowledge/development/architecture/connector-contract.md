@@ -757,7 +757,35 @@ nothing against a compromised server there (TM §6.2 "Who this defends against")
 **The baseline survives a restart.** The reported set, as `(GUID, basis, source)` entries plus the
 `verification_id` of the epoch's run, is persisted on the connector host after each completed run
 and appended to when the ratchet adds an entry. It is not a secret and holds identifiers only; it
-is readable and writable by the connector's service identity only. After a restart, the first
+must be readable and writable by the connector's service identity only. **Two files, two states of
+implementation (T-0242):**
+
+- **The ratchet append file** (`gate-ratchet.log`, `write.FileBaseline`) has the full control:
+  mode 0600 on POSIX; on Windows an explicit, protected (non-inheriting) DACL granting full access
+  to the service's token SID and SYSTEM only (`internal/platform/ownerfile`, typed
+  security-descriptor API). An existing file is trusted only if it is a regular file (no symlink
+  or reparse point) **owned by the service identity** (Windows: or SYSTEM or
+  `BUILTIN\Administrators`; POSIX: the effective uid), because an owner can rewrite its own DACL
+  at will. A file owned by anyone else is **refused**, never corrected in place:
+  `LOCAL_RECORD_FAILED`, and the operator removes it. A trusted-owner file with a wider DACL is
+  **corrected** at open and the correction is **recorded** (`baseline_acl_corrected`): its content
+  may have been written by someone else. A failure to correct or to record is
+  `LOCAL_RECORD_FAILED`. The recorder is a required part of the baseline
+  (`write.NewFileBaseline` refuses a nil one) and is checked **before** the file is touched: a
+  recorder-less append fails and leaves the file as found, so the finding is never lost by
+  narrowing the file first. The connector composition wires the slog recorder (local log). The
+  Windows event-log sink for this event is **not yet implemented** (T-0837), so only the local-log
+  half runs today.
+- **The persisted reported set** (`baseline.json`, the file compared after a restart) has **only
+  its writes** owner-only: the rewrite goes through `ownerfile.CreateTemp` (created owner-only
+  atomically, no window under an inherited ACL) and a rename. The owner/DACL check **before
+  `Load` trusts the file**, the refusal of a foreign-owned file and a recorded
+  `baseline_acl_corrected` for it are **not implemented yet**: `rights.FileBaselineStore.Load`
+  reads any content, and the next `Save` narrows a widened file without a record. Until that lands
+  (T-0329, T-0537) a local writer of `baseline.json` can still make a post-restart shrink
+  comparison pass silently, and this section must not be read as a control for that file.
+
+After a restart, the first
 completed run compares against the persisted baseline, so a smaller verification issued right
 after a restart still leaves its record. A missing or unreadable baseline file is itself recorded
 (`tier0_baseline_missing`) in the local log and, on Windows hosts, the Windows event log. If the

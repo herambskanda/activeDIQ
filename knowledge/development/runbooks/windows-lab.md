@@ -186,11 +186,30 @@ make lab-test-connector-windows   # go test -tags 'lab windowslab' against <DC_I
 ```
 
 In external mode `up`, `reset`, `down` and `destroy` refuse (they manage libvirt VMs); nothing calls `virsh`.
-Reset = `qm rollback 112 clean` by a human. Certificate verification is never disabled: the Go tests dial
+Reset = `qm rollback <vmid> clean` by a human (VM 119 for the first build). Certificate verification is never disabled: the Go tests dial
 `<DC_IP>:636` with `ServerName=$WIN_LAB_TLS_NAME` and the CA pool from `$WIN_LAB_CA`; a wrong CA fails
 (`TestWindowsLab…` untrusted-CA test). `make lab-test-windows-unit` proves the mode offline (stub `go`/`virsh`,
 checks refusals, misconfiguration errors and that the password never appears in argv, logs or stdout).
-Status: **untested against VM 112 until a human completes the steps above** (the PowerShell is as untested as §8 says).
+Status: first build done 2026-10-28 on Proxmox VM 119 (log and notes in `windows-lab-runs/first-build.md`); `TestWindowsLab*` pass over verified LDAPS.
+
+## Tier0 classifier on the Windows lab (T-0226)
+
+`internal/connector/tier0/windows_lab_c5c15_test.go` (tags `lab windowslab`; not run by `make lab-test-connector-windows`, which
+targets `./internal/connector/ad/` only). Run it with the same env as above:
+
+```bash
+go test -count=1 -v -tags 'lab windowslab' ./internal/connector/tier0 -run TestWindowsLab
+```
+
+Fixtures are created as Administrator (`WIN_LAB_ADMIN_PASSWORD`) under a throwaway `OU=t0226-*`; the DC-root DACL, the RBCD
+attribute on a DC and `gPLink` of the Domain Controllers OU are changed and restored by cleanups (a failed restore says
+`RESTORE … FAILED`: `qm rollback`). Classification runs as `svc-activediq`. Pinned: C5 (all DC computers), C15 (DC site),
+C8 (KDS container + a child, CN=System, RID Manager$, Directory Service; the Password Settings Container is unreadable to the
+service account and fails closed), C9 (GPO linked at the DC OU is tier0, an unlinked one is not), C11 (Get-Changes +
+Get-Changes-All ⇒ tier0; Get-Changes alone ⇒ not), C12 (RBCD trustee on a DC). Not coverable on this lab (single DC, single
+domain, no RODC): RODC corroboration, cross-domain GPO links, gPLink option/order edge cases, >1500-member ranged groups
+(Samba covers ranged retrieval); the ad-expert review of `c8Domain`/`c8SystemClasses` is separate (T-0620).
+From a git worktree the credentials live in the main checkout: set `WIN_LAB_ENV` and `WIN_LAB_CA` to its `lab/windows/` files.
 
 ### TM-D26 on the Windows lab (T-0346)
 
@@ -202,7 +221,106 @@ Results 2026-10-28 (dc1, WS2025): DACL (WRITE_DAC vs read-only twin), owner and 
 cross-domain Tier-0 `sIDHistory` cannot be planted in a one-domain lab: needs a second domain + trust (M2 follow-up).
 `TestWinLabTM26GCOpens` is red on purpose until bug T-0619 (OpenGC fails on a real GC) is fixed.
 
-## 11. Searching VM 119 through the server (T-0669)
+## 11. Server MSI: build and the "refuses a domain controller" lab run (T-0702, T-0635)
+
+**Toolchain.** WiX **5.0.2**, pinned in `tools/wix/Dockerfile` (MS-RL, no fee; WiX 6 and 7 carry the Open
+Source Maintenance Fee, see the licence register; never bump past 5.x without a money decision). WiX needs
+a real `msi.dll`, and the factory host is Linux, so the image runs it under Wine with the Windows .NET 8
+runtime (archives pinned by SHA-256). The first `docker build` takes a few minutes. Native Linux `wix` does
+not work: it fails with WIX0389 and a missing `msi.dll`. ICE validation needs Windows and does not run here;
+run `wix msi validate <msi>` on a Windows host if you need it.
+
+```bash
+# from the repo root, with Server.wxs checked out (branch factory/T-0635, or main once it merged)
+tools/wix/build-msi.sh packaging/windows/msi/Server.wxs lab/windows/.state/msi/ActiveDIQ-Server.msi   # prints the sha256
+tools/wix/build-msi.sh tools/wix/testdata/broken.wxs /tmp/broken.msi    # must FAIL (WIX0094): proof the build catches defects
+```
+
+The build is not byte-reproducible yet (two builds of one source give different sha256), so record the
+sha256 of the file you actually copy to the VMs. T-0702 build, from `factory/T-0635` at `ec3720e0`:
+`ActiveDIQ-Server-0.1.0.0.msi`, sha256 `9863587114158c48f853a9ee631863ba7e22743d6f4c24e0843ed36ca77e17e3`,
+in `lab/windows/.state/msi/` of the T-0702 worktree (gitignored; rebuild if it is gone).
+
+**Run on dc1 (Proxmox VM 119, must refuse) and fs1 (control, must install).** Elevated PowerShell on each.
+Copy the MSI plus `packaging/windows/Get-HostObservation.ps1` and `Test-MsiRefusesDc.ps1` to `C:\lab\`
+(same folder; the driver calls the sibling script).
+
+```powershell
+Get-FileHash C:\lab\ActiveDIQ-Server.msi -Algorithm SHA256        # compare with the sha256 you recorded
+cd C:\lab
+.\Test-MsiRefusesDc.ps1 -MsiPath C:\lab\ActiveDIQ-Server.msi -LogPath C:\lab\msi.log > obs.json
+```
+
+- dc1: expect msiexec exit 1603, the log contains `cannot be installed on a domain controller`, no
+  `C:\Program Files\activeDIQ`, no `activeDIQServer` service, no Uninstall entry, and `obs.json` says `refused`.
+- fs1: expect exit 0, the install folder exists, `obs.json` says `installed`. Then clean up:
+  `msiexec /x C:\lab\ActiveDIQ-Server.msi /qn`.
+- Snapshot-revert dc1 if it shows leftovers (`qm rollback 119 clean`).
+
+**Judge it on the repo host** (copy `obs.json` back, one per host: `obs-dc1.json`, `obs-fs1.json`):
+
+```bash
+go run ./tools/fitness/host evaluate obs-dc1.json
+go run ./tools/fitness/host evaluate obs-fs1.json
+```
+
+Then add `windows-lab-runs/T-0635-msi-refuses-dc-<date>.md` with both sha256s, both `obs.json`, the
+`msi.log` line holding the DC message, and the evaluate output. `tools/fitness/host` is on `factory/T-0635`
+until that branch merges. Status: **the MSI has never been run on a Windows host.** This host has no route
+to VM 119 (no SSH or WinRM), so a human runs the block above.
+
+## 12. Agent identity harness (T-0613, for T-0557)
+
+Creates `NT SERVICE\activeDIQAgent` with the ADR-0006 token (service SID `restricted`, `RequiredPrivileges` =
+`SeChangeNotifyPrivilege`, data dir DACL service SID + SYSTEM + Administrators) on any Windows host (dc1 for
+T-0557). No agent MSI or service host exists, so the service binary is a lab-only stub that records `whoami`
+output from inside the service token. This is not the installer.
+
+```bash
+make windows-agent-harness-build          # -> lab/windows/.state/agent-harness/svcstub.exe
+# copy svcstub.exe and lab/windows/agent-harness/Install-AgentLabHarness.ps1 to the host (e.g. C:\lab\agent-harness\)
+```
+Elevated PowerShell on the host:
+`powershell -ExecutionPolicy Bypass -File C:\lab\agent-harness\Install-AgentLabHarness.ps1`
+Evidence (sc qc/qprivs/qsidtype, `whoami /priv|/user|/groups` as the service, data-dir SDDL, OS build) goes to
+`C:\lab\agent-harness-evidence`; copy it to `windows-lab-runs/agent-harness-<UTC>/`. Exit 0 = every check
+passed. Remove with `-Uninstall` (service, key and data dir). Offline guard: `make lab-test-windows-unit`.
+
+Status: **not yet run on a Windows host** (no VM in the implementing session; same state as §8). Things to
+watch on the first run: the restricted SID type adds restricting SIDs, so the stub's read of
+`System32\whoami.exe` or the binary directory may need an ACE for the service SID. Record what fails; that is
+an input to the MSI design and the A3 fitness item of ADR-0006.
+
+
+## 13. DC agent MSI verification (T-0648)
+
+Builds the agent MSI with WiX on the lab DC and runs the ADR-0006 cases against it: install, restricted
+token, Security channel ACE and read, GPO reset and re-grant, corrupt `agent.json`, repair, forced failed
+major upgrade, `agentsetup` refusals, `CheckDataDir`, `EvtLogOldestRecordNumber`, uninstall cleanliness.
+
+```bash
+pip install pywinrm requests-ntlm                      # operator tooling; licence register row
+export WIN_LAB_ENV=<path to the main checkout's lab/windows/.win-lab.env>   # gitignored; DC address defaults to 192.168.1.9
+export WIN_LAB_DC_ADDR=<dc ip>                         # optional override
+lab/windows/bin/agent-verify --log knowledge/development/runbooks/windows-lab-runs/T-0648-agent-<date>.log
+```
+
+- It cross-builds `activediq-agent.exe`, `agentsetup.exe` and the `windowslab` Go tests, copies them and
+  `Agent.wxs` to `C:\lab\build` over WinRM (HTTP 5985, NTLM, lab network), installs the .NET 8 SDK and WiX
+  5.0.2 to `C:\lab\tools` on first use (the DC needs internet; nothing is installed system-wide), builds the
+  MSI there, and runs `lab/windows/guest/agent-verify.ps1`. Exit status is the number of failed cases.
+- **It installs, upgrades and removes the agent and clears the Security log. Lab DC only.** It leaves the
+  DC with the agent uninstalled and `ProgramData\skenzeriq` removed. The lab user it creates for two cases
+  has a per-run random password that is never printed, and is deleted at the end.
+- Reading the service token needs no enrolment: the script points the service image at a 25 s stub for
+  a few seconds (SCM builds the token from the service configuration, not the binary), reads that process's
+  token with `OpenProcessToken`, and restores `ImagePath`. If a run dies in that window, check
+  `HKLM\SYSTEM\CurrentControlSet\Services\activeDIQAgent\ImagePath` is the quoted `activediq-agent.exe` path.
+- Reset: `qm rollback <vmid> clean` (human) if a run leaves the DC odd; the script is otherwise idempotent.
+- Not covered (needs an enrolled agent talking to a server; T-0814): killing the server connection,
+  filling the data disk, and the U+0001 `Data` value reaching the server.
+
+## 14. Searching VM 119 through the server (T-0669)
 
 A server built with `-tags lab` and started with the `WIN_LAB_*` variables of section 10 seeds an active
 connection to VM 119 (lab bootstrap, T-0684) and answers `GET /api/v1/directory/users?q=lab-user-01`

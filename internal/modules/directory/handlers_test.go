@@ -58,10 +58,13 @@ type searcher struct {
 	calls int
 	text  string
 	limit int
+	tid   tenant.ID
+	conn  connection.ID
 }
 
-func (s *searcher) Users(_ context.Context, _ tenant.ID, _ connection.ID, text string, limit int) (client.UserSearchResult, error) {
+func (s *searcher) Users(_ context.Context, tid tenant.ID, id connection.ID, text string, limit int) (client.UserSearchResult, error) {
 	s.calls++
+	s.tid, s.conn = tid, id
 	s.text, s.limit = text, limit
 	return s.res, s.err
 }
@@ -77,6 +80,11 @@ func passing() connection.Health {
 
 func serve(t *testing.T, c conns, s *searcher, logs *bytes.Buffer, target string) *httptest.ResponseRecorder {
 	t.Helper()
+	return serveWith(t, directory.Handlers{Connections: c, Search: s, Log: slog.New(slog.NewTextHandler(logs, nil))}, target)
+}
+
+func serveWith(t *testing.T, h directory.Handlers, target string) *httptest.ResponseRecorder {
+	t.Helper()
 	doc, err := apihost.LoadDocument()
 	if err != nil {
 		t.Fatal(err)
@@ -85,7 +93,6 @@ func serve(t *testing.T, c conns, s *searcher, logs *bytes.Buffer, target string
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := directory.Handlers{Connections: c, Search: s, Log: slog.New(slog.NewTextHandler(logs, nil))}
 	srv, err := apihost.Build(doc, []apihost.TagHandlers{h.Bind()}, pol, apihost.Permissions{string(directory.ReadPermission), "connections.takeover.attest", "siem.destination.manage", "siem.destination.read"}, apihost.Ports{Authn: ports{}, Authz: ports{}, Limits: ports{}, StepUp: ports{}})
 	if err != nil {
 		t.Fatal(err)
@@ -184,5 +191,38 @@ func TestConnectorErrorsBecomeProblemsWithoutDetail(t *testing.T) {
 				t.Errorf("%s: %q leaked (body=%s logs=%s)", name, leak, w.Body, logs.String())
 			}
 		}
+	}
+}
+
+// Acceptance 1: the search runs for the tenant of the authenticated principal, on that tenant's active
+// connection, and nothing in the request can name another tenant.
+func TestSearchIsScopedToThePrincipalsTenant(t *testing.T) {
+	s := &searcher{}
+	var logs bytes.Buffer
+	w := serve(t, conns{active(), passing()}, s, &logs, "/api/v1/directory/users?q=ann&tenant="+"00000000-0000-4000-8000-0000000000ff")
+	if w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if s.tid.String() != tenantText || s.conn != "c1" {
+		t.Fatalf("searched tenant %s connection %s", s.tid, s.conn)
+	}
+}
+
+// Acceptance 4: a hybrid-synced user carries its TM-D17 classification in the response; a user the
+// classifier could not check is never reported as not hybrid.
+func TestSearchCarriesTheHybridClassification(t *testing.T) {
+	s := &searcher{res: client.UserSearchResult{Users: []client.FoundUser{{ObjectGUID: "aaaaaaaa-0000-4000-8000-00000000000a", DisplayName: "Ann"}}}}
+	var logs bytes.Buffer
+	ad := []connection.Connection{{ID: adConn, Kind: connection.KindADForest, State: connection.StateActive}}
+	h := directory.Handlers{Connections: conns{ad, passing()}, Search: s, Log: slog.New(slog.NewTextHandler(&logs, nil)),
+		Hybrid: directory.Classifier{Corr: corrFake{cs: matchedLinks()}, Takeovers: takeFake{state: connection.TakeoverAttested}}}
+	w := serveWith(t, h, "/api/v1/directory/users?q=ann")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"hybrid":{"carriesAuthority":true,"state":"matched"}`) {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	h.Hybrid = directory.Classifier{}
+	w = serveWith(t, h, "/api/v1/directory/users?q=ann")
+	if !strings.Contains(w.Body.String(), `"state":"unknown"`) || strings.Contains(w.Body.String(), `"carriesAuthority":true`) {
+		t.Fatalf("an unchecked user must be unknown with no authority: %s", w.Body)
 	}
 }
