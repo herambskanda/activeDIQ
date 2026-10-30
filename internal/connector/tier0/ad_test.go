@@ -65,7 +65,7 @@ const (
 // forest builds the lab: every C row has at least one object, plus plain objects that must stay out.
 func forest() *fakeDir {
 	f := newFake()
-	f.add(dom, dsid, cls("top", "domain", "domainDNS"), "wellKnownObjects", "B:32:A361B2FFFFD211D1AA4B00C04FD7D83A:OU=Domain Controllers,"+dom,
+	f.add(dom, dsid, cls("top", "domain", "domainDNS"), "msDS-Behavior-Version", "7", "fSMORoleOwner", "CN=NTDS Settings,CN=DC1,CN=Servers,CN=Default-First-Site-Name,CN=Sites,"+cfg, "wellKnownObjects", "B:32:A361B2FFFFD211D1AA4B00C04FD7D83A:OU=Domain Controllers,"+dom,
 		"gPLink", link(gDom, "0"))
 	f.add(cfg, "", cls("top", "configuration"))
 	f.add("CN=Schema,"+cfg, "", cls("top", "dMD"))
@@ -103,6 +103,13 @@ func forest() *fakeDir {
 	f.add("CN=Domain Controllers,CN=Users,"+dom, dsid+"-516", group)
 	f.add("CN=Administrators,CN=Builtin,"+dom, "S-1-5-32-544", group, "member", "CN=Domain Admins,CN=Users,"+dom)
 	f.add("CN=Enterprise Admins,CN=Users,"+dom, dsid+"-519", group)
+	f.add("CN=Schema Admins,CN=Users,"+dom, dsid+"-518", group)
+	f.add("CN=Read-only Domain Controllers,CN=Users,"+dom, dsid+"-521", group)
+	f.add("CN=Key Admins,CN=Users,"+dom, dsid+"-526", group)
+	f.add("CN=Enterprise Key Admins,CN=Users,"+dom, dsid+"-527", group)
+	for _, bi := range [][2]string{{"548", "Account Operators"}, {"549", "Server Operators"}, {"550", "Print Operators"}, {"551", "Backup Operators"}, {"552", "Replicator"}} {
+		f.add("CN="+bi[1]+",CN=Builtin,"+dom, "S-1-5-32-"+bi[0], group)
+	}
 	f.add("CN=Nested,OU=Staff,"+dom, dsid+"-2001", group, "member", "CN=dave\\, Dev,OU=Staff,"+dom, "member", "CN=Domain Admins,CN=Users,"+dom) // circular
 	f.add("CN=Administrator,CN=Users,"+dom, dsid+"-500", user)
 	f.add("CN=krbtgt,CN=Users,"+dom, dsid+"-502", user, "adminCount", "1")
@@ -137,7 +144,7 @@ func forest() *fakeDir {
 
 	// C5, C6, C15: DC1 in the default OU, DC2 moved out; two sites, one holding DCs.
 	f.add("OU=Domain Controllers,"+dom, "", ou, "gPLink", link(gDCOU, "0"))
-	f.add("CN=DC1,OU=Domain Controllers,"+dom, dsid+"-1000", comp, "userAccountControl", "532480", "dNSHostName", "dc1.lab.test", "sAMAccountName", "DC1$")
+	f.add("CN=DC1,OU=Domain Controllers,"+dom, dsid+"-1000", comp, "userAccountControl", "532480", "dNSHostName", "dc1.lab.test", "sAMAccountName", "DC1$", "operatingSystemVersion", "10.0 (17763)")
 	rb := f.add("CN=DC2,OU=Servers,"+dom, dsid+"-1001", comp, "userAccountControl", "8192", "dNSHostName", "dc2.lab.test", "sAMAccountName", "DC2$")
 	rb.raw["msDS-AllowedToActOnBehalfOfOtherIdentity"] = sdBytes(aceSpec{sid: dsid + "-1301", mask: 0x10})
 	f.add("OU=Servers,"+dom, "", ou, "gPLink", link(gServ, "0"))
@@ -332,6 +339,22 @@ func TestADReadErrorFailsClosed(t *testing.T) {
 	r, err := NewAD(forest()).Classify(context.Background(), ref(t, "CN=ghost,"+dom), known())
 	if err == nil || !r.Tier0 || !r.Unknown || ad.CodeOf(errors.Unwrap(err)) != ad.CodeObjectNotFound {
 		t.Errorf("ghost: %+v %v", r, err)
+	}
+}
+
+// T-0626: a deny-read ACE makes Windows return the entry with no attributes; the refusal still fails
+// closed and now names the protected SID and the DN.
+func TestADAttributelessProtectedEntryNamesSIDAndDN(t *testing.T) {
+	f := forest()
+	f.find("CN=Backup Operators,CN=Builtin," + dom).bare = true
+	_, err := NewAD(f).Snapshot(context.Background())
+	if err == nil {
+		t.Fatal("snapshot succeeded over an unreadable protected group")
+	}
+	for _, want := range []string{"S-1-5-32-551", "CN=Backup Operators,CN=Builtin", "without objectGUID"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err, want)
+		}
 	}
 }
 
@@ -558,5 +581,148 @@ func TestMembershipWalkUnrequestableDNFailsClosed(t *testing.T) {
 				t.Errorf("want error wrapping dn %s, got %v", c.kind, err)
 			}
 		})
+	}
+}
+
+// T-0397: a member value naming an object the connector cannot read (deny-read ACE: the Read returns
+// not-found) must fail the walk closed and name the listing group, never drop out of the closure.
+func TestMembershipWalkUnreadableMemberFailsClosed(t *testing.T) {
+	f := forest()
+	da := f.find("CN=Domain Admins,CN=Users," + dom)
+	da.attrs["member"] = append(da.attrs["member"], "CN=hidden,OU=Staff,"+dom) // not in the fake dir
+	r, err := classify(t, f, "CN=carol,OU=Staff,"+dom)
+	if err == nil || !r.Tier0 || !r.Unknown {
+		t.Fatalf("want Tier0+Unknown+error, got %+v %v", r, err)
+	}
+	if !strings.Contains(err.Error(), "Domain Admins") {
+		t.Errorf("error must name the listing group: %v", err)
+	}
+}
+
+func (f *fakeDir) drop(text string) {
+	for i, o := range f.objs {
+		if strings.EqualFold(o.dn, text) {
+			f.objs = append(f.objs[:i], f.objs[i+1:]...)
+			return
+		}
+	}
+	panic("no fake object " + text)
+}
+
+func TestUnreadableDCServerObjectFailsClosed(t *testing.T) {
+	f := forest()
+	f.drop("CN=DC1,CN=Servers,CN=Default-First-Site-Name,CN=Sites," + cfg)
+	r, err := classify(t, f, "CN=carol,OU=Staff,"+dom)
+	if err == nil || !r.Tier0 || !r.Unknown || !strings.Contains(err.Error(), "server object") {
+		t.Fatalf("want Tier0+Unknown+server-object error, got %+v %v", r, err)
+	}
+}
+
+func TestUnreadableLinkedGPOFailsClosed(t *testing.T) {
+	f := forest()
+	f.drop(gpoDN(gDom)) // linked at the domain head, which reaches tier0
+	r, err := classify(t, f, "CN=carol,OU=Staff,"+dom)
+	if err == nil || !r.Tier0 || !r.Unknown || !strings.Contains(err.Error(), "GPO") {
+		t.Fatalf("want Tier0+Unknown+GPO error, got %+v %v", r, err)
+	}
+}
+
+// T-0397: a protected group that must exist but cannot be read fails closed instead of dropping its
+// members from Tier 0 (a deny-read ACE on CN=Builtin or the group is enough to hide it).
+func TestHiddenProtectedGroupFailsClosed(t *testing.T) {
+	for _, g := range []string{"CN=Backup Operators,CN=Builtin," + dom, "CN=Domain Admins,CN=Users," + dom, "CN=Schema Admins,CN=Users," + dom} {
+		f := forest()
+		f.drop(g)
+		r, err := classify(t, f, "CN=carol,OU=Staff,"+dom)
+		if err == nil || !r.Tier0 || !r.Unknown || !strings.Contains(err.Error(), "protected group") {
+			t.Errorf("%s dropped: want Tier0+Unknown+protected-group error, got %+v %v", g, r, err)
+		}
+	}
+}
+
+func keyAdminsGroups() []string {
+	return []string{"CN=Key Admins,CN=Users," + dom, "CN=Enterprise Key Admins,CN=Users," + dom}
+}
+
+const dc1Comp = "CN=DC1,OU=Domain Controllers," + dom
+
+// T-0631 (TM-R25): below functional level 7 the groups exist when the PDC emulator is 2016+.
+func TestKeyAdminsHiddenWith2016PDCFailsClosed(t *testing.T) {
+	for i, g := range keyAdminsGroups() {
+		f := forest()
+		f.find(dom).attrs["msds-behavior-version"] = []string{"6"}
+		f.drop(g)
+		r, err := classify(t, f, "CN=carol,OU=Staff,"+dom)
+		want := []string{"-526", "-527"}[i]
+		if err == nil || !r.Unknown || !strings.Contains(err.Error(), "S-1-5-21-") || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: want Unknown naming %s, got %+v %v", g, want, r, err)
+		}
+	}
+}
+
+func TestKeyAdminsAbsentWith2012R2PDCSucceeds(t *testing.T) {
+	for _, g := range keyAdminsGroups() {
+		f := forest()
+		f.find(dom).attrs["msds-behavior-version"] = []string{"6"}
+		f.find(dc1Comp).attrs["operatingsystemversion"] = []string{"6.3 (9600)"}
+		f.drop(g)
+		if r, err := classify(t, f, "CN=carol,OU=Staff,"+dom); err != nil || r.Unknown {
+			t.Errorf("%s absent with 2012R2 PDC must succeed: %+v %v", g, r, err)
+		}
+	}
+}
+
+func TestKeyAdminsAbsentAtLevel2016FailsClosedRegardlessOfPDC(t *testing.T) {
+	for _, g := range keyAdminsGroups() {
+		f := forest()
+		f.find(dc1Comp).attrs["operatingsystemversion"] = []string{"6.3 (9600)"}
+		f.drop(g)
+		if r, err := classify(t, f, "CN=carol,OU=Staff,"+dom); err == nil || !r.Unknown {
+			t.Errorf("%s absent at level 7 must fail closed: %+v %v", g, r, err)
+		}
+	}
+}
+
+func TestKeyAdminsUnreadablePDCFailsClosed(t *testing.T) {
+	cuts := map[string]func(f *fakeDir){
+		"no fSMORoleOwner":      func(f *fakeDir) { delete(f.find(dom).attrs, "fsmoroleowner") },
+		"bad fSMORoleOwner":     func(f *fakeDir) { f.find(dom).attrs["fsmoroleowner"] = []string{"not a dn"} },
+		"server object missing": func(f *fakeDir) { f.drop("CN=DC1,CN=Servers,CN=Default-First-Site-Name,CN=Sites," + cfg) },
+		"no serverReference": func(f *fakeDir) {
+			delete(f.find("CN=DC1,CN=Servers,CN=Default-First-Site-Name,CN=Sites,"+cfg).attrs, "serverreference")
+		},
+		"computer missing":          func(f *fakeDir) { f.drop(dc1Comp) },
+		"no operatingSystemVersion": func(f *fakeDir) { delete(f.find(dc1Comp).attrs, "operatingsystemversion") },
+		"garbled version":           func(f *fakeDir) { f.find(dc1Comp).attrs["operatingsystemversion"] = []string{"junk"} },
+	}
+	for name, cut := range cuts {
+		f := forest()
+		f.find(dom).attrs["msds-behavior-version"] = []string{"6"}
+		f.drop(keyAdminsGroups()[0])
+		cut(f)
+		if r, err := classify(t, f, "CN=carol,OU=Staff,"+dom); err == nil || !r.Unknown {
+			t.Errorf("%s: want fail closed, got %+v %v", name, r, err)
+		}
+	}
+}
+
+func TestUnreadableFunctionalLevelFailsClosed(t *testing.T) {
+	f := forest()
+	delete(f.find(dom).attrs, "msds-behavior-version")
+	if r, err := classify(t, f, "CN=carol,OU=Staff,"+dom); err == nil || !r.Unknown {
+		t.Errorf("want fail closed, got %+v %v", r, err)
+	}
+}
+
+// In a child domain the forest-root groups are not readable by SID from a non-GC DC: not an error.
+func TestChildDomainRootGroupsMayBeAbsent(t *testing.T) {
+	f := forest()
+	f.nm.RootDomain = mustDN("DC=root,DC=test")
+	f.add("DC=root,DC=test", "S-1-5-21-9-9-9", cls("top", "domain", "domainDNS")).raw["nTSecurityDescriptor"] = f.find(cfg).raw["nTSecurityDescriptor"]
+	for _, g := range []string{"Schema Admins", "Enterprise Admins", "Enterprise Key Admins"} {
+		f.drop("CN=" + g + ",CN=Users," + dom)
+	}
+	if r, err := classify(t, f, "CN=carol,OU=Staff,"+dom); err != nil || r.Unknown {
+		t.Errorf("child domain without root groups must succeed: %+v %v", r, err)
 	}
 }

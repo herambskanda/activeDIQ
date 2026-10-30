@@ -2,7 +2,8 @@ package audit
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"regexp"
@@ -114,10 +115,10 @@ func RegisterJobs(cfg JobsConfig) (*Jobs, error) {
 	j := &Jobs{cfg: cfg}
 	kinds := []jobs.Kind{
 		{Name: JobCheckpoint, Timeout: 2 * time.Minute, Mode: jobs.ModeManagedTx,
-			ValidateArgs: func(a json.RawMessage) error { _, err := decodeJobArgs(a); return err },
+			ValidateArgs: func(a jsontext.Value) error { _, err := decodeJobArgs(a); return err },
 			RunManaged:   j.runCheckpoint},
 		{Name: JobForward, Timeout: 5 * time.Minute, Mode: jobs.ModeManagedTx,
-			ValidateArgs: func(a json.RawMessage) error {
+			ValidateArgs: func(a jsontext.Value) error {
 				v, err := decodeJobArgs(a)
 				if err == nil && !sinkPattern.MatchString(v.Sink) {
 					err = errors.New("args name no valid sink")
@@ -139,17 +140,15 @@ type jobArgs struct {
 }
 
 // decodeJobArgs decodes typed references and refuses unknown fields.
-func decodeJobArgs(raw json.RawMessage) (jobArgs, error) {
-	var m map[string]json.RawMessage
+func decodeJobArgs(raw jsontext.Value) (jobArgs, error) {
+	var m map[string]jsontext.Value
 	if err := json.Unmarshal(raw, &m); err != nil {
 		return jobArgs{}, errors.New("args are not an object")
 	}
 	delete(m, "tenant_id") // recorded by Enqueue
 	b, _ := json.Marshal(m)
 	var a jobArgs
-	dec := json.NewDecoder(strings.NewReader(string(b)))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&a); err != nil {
+	if err := json.Unmarshal(b, &a, json.RejectUnknownMembers(true)); err != nil {
 		return jobArgs{}, errors.New("args do not match the kind")
 	}
 	return a, nil
@@ -380,11 +379,13 @@ const advanceCheckpoints = `UPDATE audit_forward_cursor SET checkpoint_seq = GRE
 WHERE tenant_id = $1::uuid AND sink_id = $2`
 
 func advanceCursor(ctx context.Context, tx store.Tx, id tenant.ID, sink string, kind RecordKind, seq uint64) error {
-	q := advanceEvents
+	var err error
 	if kind == RecordCheckpoint {
-		q = advanceCheckpoints
+		_, err = tx.Exec(ctx, advanceCheckpoints, id.String(), sink, seq)
+	} else {
+		_, err = tx.Exec(ctx, advanceEvents, id.String(), sink, seq)
 	}
-	if _, err := tx.Exec(ctx, q, id.String(), sink, seq); err != nil {
+	if err != nil {
 		return fmt.Errorf("audit: advance forward cursor: %w", err)
 	}
 	return nil

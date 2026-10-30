@@ -1,9 +1,11 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
@@ -22,6 +24,7 @@ var (
 	ErrUnknownKind    = errors.New("client: write kind is not registered; write refused")
 	ErrNoNC           = errors.New("client: step binds no naming context; write refused")
 	ErrNoDCPin        = errors.New("client: step has no DC pin for the naming context; write refused")
+	ErrDCMismatch     = errors.New("client: plan precondition names a DC other than the pinned one; apply refused")
 	ErrNoDSAPin       = errors.New("client: step pins no DSA GUID for the naming context; write refused")
 	ErrTransport      = errors.New("client: connector call failed")
 )
@@ -58,11 +61,40 @@ type Result struct {
 	Apply *connectorv1.ApplyResponse
 }
 
+// Tier0AfterWrite returns the connector's step-9 report as findings: each object by canonical GUID
+// text with its bases (C1..C11 and so on), an empty Bases meaning unclassified. An object whose GUID
+// is unusable is still reported, by an empty Object, because the report counts whatever it lists.
+func (r Result) Tier0AfterWrite() []step.Tier0Finding {
+	var out []step.Tier0Finding
+	for _, m := range r.Apply.GetTier0AfterWrite() {
+		f := step.Tier0Finding{}
+		if v := m.GetObject().GetValue(); len(v) == 16 {
+			f.Object = formatUUID(v)
+		}
+		for _, b := range m.GetBasis() {
+			f.Bases = append(f.Bases, basisName(b))
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+// basisName is "C2" for TIER0_BASIS_C2_PROTECTED_GROUP_MEMBER.
+func basisName(b connectorv1.Tier0Basis) string {
+	n := strings.TrimPrefix(b.String(), "TIER0_BASIS_")
+	if i := strings.IndexByte(n, '_'); i > 0 {
+		return n[:i]
+	}
+	return n
+}
+
 // Client is the write path. Build it with New; the zero Client refuses every write.
 type Client struct {
 	transport Transport
 	facts     FactsReader
 	tier0     Tier0Builder
+	verify    VerifyTransport
+	scope     VerifyScopeSource
 }
 
 // Option wires one dependency of the Client.
@@ -177,6 +209,12 @@ func (c *Client) Write(ctx context.Context, s step.Step, op WriteOp) (Result, er
 	}
 	if plan.GetNoOp() {
 		return Result{NoOp: true}, nil
+	}
+
+	// Rule 5: Apply goes only to the DC Plan read from, and that is the pinned one. A connector that
+	// planned elsewhere is refused here, before anything is sent.
+	if !bytes.Equal(plan.GetPrecondition().GetDc().GetDsaGuid().GetValue(), dsaID) {
+		return Result{}, ErrDCMismatch
 	}
 
 	t0, err = c.buildTier0(ctx, StageApply, op)

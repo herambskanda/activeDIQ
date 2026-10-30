@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"errors"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
@@ -30,11 +31,30 @@ type enrollBackend interface {
 	Rotate(ctx context.Context, leaf *x509.Certificate, csrDER []byte) (fleetsql.Enrolled, error)
 }
 
-// fleetEnrollService serves Fleet.Enroll. It embeds the unimplemented server, so Tunnel answers
-// UNIMPLEMENTED until the gateway's multiplexer is registered in its place.
+// fleetEnrollService serves Fleet.Enroll. It embeds the unimplemented server, and Tunnel when
+// tunnel dependencies are given; otherwise Tunnel answers UNIMPLEMENTED.
 type fleetEnrollService struct {
 	fleetv1.UnimplementedFleetServer
 	backend enrollBackend
+	tunnel  *TunnelDeps // nil: Tunnel answers UNIMPLEMENTED
+}
+
+// NewFleetService builds the Fleet service the gateway mounts: Enroll over enroll and Tunnel over the
+// multiplexer. Both are required; a missing one is a composition error, not a service that answers
+// UNIMPLEMENTED. The gateway listener in server.Run registers the result (follow-up).
+func NewFleetService(enroll *fleetsql.Enroller, tunnel TunnelDeps) (fleetv1.FleetServer, error) {
+	if enroll == nil || tunnel.Hub == nil || tunnel.Reporter == nil || len(tunnel.Bindings) == 0 {
+		return nil, errors.New("server: fleet service needs an enroller, a hub, bindings and a reporter")
+	}
+	return &fleetEnrollService{backend: enroll, tunnel: &tunnel}, nil
+}
+
+// Tunnel serves Fleet.Tunnel through the multiplexer (T-0287).
+func (s *fleetEnrollService) Tunnel(st grpc.BidiStreamingServer[fleetv1.TunnelFrame, fleetv1.TunnelFrame]) error {
+	if s.tunnel == nil {
+		return s.UnimplementedFleetServer.Tunnel(st)
+	}
+	return ServeTunnel(*s.tunnel, st)
 }
 
 // The fixed answers. Nothing here repeats the request, the token or an internal error.

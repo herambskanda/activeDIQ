@@ -35,8 +35,10 @@ type RouteMeta struct {
 	Class       string // rate class (rule 10)
 	MaxBody     int64  // maxBodyBytes
 	Body        BodyKind
-	MediaType   string // the request media type, empty without a body
-	Secret      bool   // the Input type closure reaches SecretInput (rule 6)
+	MediaType   string   // the request media type, empty without a body
+	Secret      bool     // the Input type closure reaches SecretInput (rule 6)
+	Cookies     []string // the cookie parameters the operation declares; no other cookie reaches a handler
+	Headers     []string // the header parameters the operation declares; no other request header reaches a handler
 }
 
 // Request is what apihost hands a route after the middleware chain has run: the parts of the HTTP
@@ -45,7 +47,14 @@ type Request struct {
 	PathValue func(name string) string
 	Query     url.Values
 	Header    http.Header
-	Upload    Upload // set for a binary request body
+	Cookies   map[string][]string // cookie values by name, for cookie parameters
+	PeerIP    string              // the client address: the TCP peer, or the right-most untrusted X-Forwarded-For hop when the peer is a configured trusted proxy, for x-activediq-peer-ip operations
+	Upload    Upload              // set for a binary request body
+}
+
+// HeaderLists is implemented by a Response that sends a header once per value (Set-Cookie).
+type HeaderLists interface {
+	ResponseHeaderLists() map[string][]string
 }
 
 // Upload is a binary request body, read through a cap apihost enforces. It is never secret-bearing.

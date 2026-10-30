@@ -85,16 +85,17 @@ func (a *authzFake) Authorize(_ context.Context, c authority.Chain, _ authz.Perm
 }
 
 type factsFake struct {
-	tier0 bool
-	err   error
-	errOn map[string]bool // target GUIDs whose facts are unavailable
+	tier0   bool
+	err     error
+	errOn   map[string]bool // target GUIDs whose facts are unavailable
+	tier0On map[string]bool // target GUIDs that are Tier-0
 }
 
 func (f factsFake) Facts(_ context.Context, _ authority.Pins, q authority.FactsQuery) (authority.Facts, error) {
 	if f.errOn[q.Target.GUID] {
 		return authority.Facts{}, errors.New("facts down")
 	}
-	return authority.Facts{Exists: true, Tier0: f.tier0}, f.err
+	return authority.Facts{Exists: true, Tier0: f.tier0 || f.tier0On[q.Target.GUID]}, f.err
 }
 
 type in struct{ Name string }
@@ -669,5 +670,65 @@ func TestPinnedReaderNilPortFailsClosedForDirectoryTargetsOnly(t *testing.T) {
 	}
 	if _, err := (pinnedReader{store: true}).Facts(context.Background(), q); err != nil {
 		t.Errorf("store reader with nil port: %v, want unchanged (no error)", err)
+	}
+}
+
+// Compile-time guard (T-0338): PlanContext.Facts takes PinnedFacts, which pinnedReader satisfies and
+// the raw LiveFacts port must not, so no code path can plan against unpinned reads.
+var _ PinnedFacts = pinnedReader{}
+
+func TestLiveFactsIsNotPinnedFacts(t *testing.T) {
+	var lf any = LiveFacts(pinsFacts{})
+	if _, ok := lf.(PinnedFacts); ok {
+		t.Fatal("LiveFacts port satisfies PinnedFacts: Plan could read without the operation's pins")
+	}
+}
+
+// ctxFacts is a LiveFacts that, like client.ConnectorReads, fails without the tenant and a DSA pin
+// for the target's naming context in the context (T-0466).
+type ctxFacts struct{}
+
+func (ctxFacts) Facts(ctx context.Context, _ authority.Pins, q authority.FactsQuery) (authority.Facts, error) {
+	if _, ok := authority.TenantFrom(ctx); !ok {
+		return authority.Facts{}, errors.New("read: no tenant in context")
+	}
+	if authority.DSAPinsFrom(ctx)[q.Target.NC] == "" {
+		return authority.Facts{}, errors.New("read: no DSA pin for the naming context")
+	}
+	return authority.Facts{Exists: true}, nil
+}
+
+func TestAuthoriseTargetAppliesTenantAndDSAPins(t *testing.T) {
+	r, _ := newRunner(t, behaviour{verifyOK: true}, nil, ctxFacts{}, sink{})
+	chain := authority.Chain{Requester: authority.Principal{ID: "alice", Kind: authority.Human}}
+	tr := authority.TargetRef{GUID: "g1", NC: "nc-1"}
+	pins := authority.Pins{"nc-1": "dc1.example"}
+	if got := r.authoriseTarget(context.Background(), tenant.New(), chain, "p", tr, pins, authority.DSAPins{"nc-1": "guid"}); got != "" {
+		t.Fatalf("pinned read blocked: %q", got)
+	}
+	if got := r.authoriseTarget(context.Background(), tenant.New(), chain, "p", tr, pins, nil); got != "facts_unavailable" {
+		t.Fatalf("unpinned read: %q, want facts_unavailable (the fake must really require the pins)", got)
+	}
+}
+
+func TestPlanReaderCarriesTenantAndDSAPins(t *testing.T) {
+	pr := pinnedReader{port: ctxFacts{}, ad: true, pins: authority.Pins{"nc-1": "dc1"}, dsas: authority.DSAPins{"nc-1": "guid"}, tenant: tenant.New()}
+	if _, err := pr.Facts(context.Background(), authority.FactsQuery{Target: authority.TargetRef{NC: "nc-1"}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A Descriptor.TargetClass binds every planned step: an Action declaring "group" cannot plan a step
+// aimed at the member (TM-D18).
+func TestCheckPlanEnforcesTargetClass(t *testing.T) {
+	u := &run{d: Descriptor{ID: "x.group.add", Reversibility: Reversible, TargetClass: "group"}}
+	step := func(class string) []StepPlan {
+		return []StepPlan{{Kind: "k", Reversibility: Reversible, Target: authority.TargetRef{Class: class}}}
+	}
+	if err := u.checkPlan(step("user")); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("member-targeted step: %v", err)
+	}
+	if err := u.checkPlan(step("group")); err != nil {
+		t.Fatalf("group step: %v", err)
 	}
 }

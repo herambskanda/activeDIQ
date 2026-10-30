@@ -30,6 +30,22 @@
   "stackManifest": "tools/fitness/stack/manifest.json",
   "replaceExceptions": [],
   "branchAllow": ["main", "factory/T-[0-9]{4,}"],
+  "p4": {
+    "scope": ["internal", "cmd"],
+    "tenantPackage": "internal/platform/tenant",
+    "tenantAttr": "tenant_id",
+    "metricPackages": ["github.com/prometheus/client_golang/prometheus", "github.com/prometheus/client_golang/prometheus/promauto", "expvar"],
+    "logMethods": ["Debug", "Info", "Warn", "Error", "Log", "LogAttrs", "DebugContext", "InfoContext", "WarnContext", "ErrorContext"],
+    "labelledMetrics": ["NewCounterVec", "NewGaugeVec", "NewHistogramVec", "NewSummaryVec"],
+    "flatMetrics": ["NewCounter", "NewGauge", "NewHistogram", "NewSummary", "NewInt", "NewFloat", "NewMap"],
+    "exempt": [
+      {
+        "path": "internal/connector/tier0/ad.go#cache",
+        "adr": "0002-deployment-model.md",
+        "reason": "the builder lives for one Snapshot of one ADClassifier, which reads one directory connection of one tenant; the cache is discarded with the snapshot and is never shared between tenants"
+      }
+    ]
+  },
   "activation": [
     {
       "check": "P2",

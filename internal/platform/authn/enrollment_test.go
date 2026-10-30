@@ -222,10 +222,11 @@ func Test_totp_pending_cannot_login_and_revoked_cannot_verify(t *testing.T) {
 		if err := e.verify(t, e.a, id, hotp(seed, stepAt(e.now))); !errors.Is(err, ErrCodeRejected) {
 			t.Fatalf("pending enrollment verified a login: %v", err)
 		}
-		for _, st := range []string{"active", "revoked"} {
-			if n, err := e.exec(t, e.a, `UPDATE public.authn_authenticator_enrollments SET state = $2 WHERE id = $1::uuid`, id, st); err != nil || n != 1 {
-				t.Fatalf("-> %s: %d rows, %v", st, n, err)
-			}
+		if n, err := e.exec(t, e.a, `UPDATE public.authn_authenticator_enrollments SET state = 'active' WHERE id = $1::uuid`, id); err != nil || n != 1 {
+			t.Fatalf("-> active: %d rows, %v", n, err)
+		}
+		if n, err := e.exec(t, e.a, `UPDATE public.authn_authenticator_enrollments SET state = 'revoked', sealed_secret = NULL WHERE id = $1::uuid`, id); err != nil || n != 1 {
+			t.Fatalf("-> revoked: %d rows, %v", n, err)
 		}
 		if err := e.verify(t, e.a, id, hotp(seed, stepAt(e.now))); !errors.Is(err, ErrCodeRejected) {
 			t.Fatalf("revoked enrollment verified: %v", err)
@@ -337,6 +338,59 @@ func Test_totp_enroll_input(t *testing.T) {
 		})
 		if err != nil {
 			t.Fatal(err)
+		}
+	})
+}
+
+// TM-F-SEAL rollback cases (a)-(c) for DM-37 (threat model §9.2.1, TM-D29): the application role holds a
+// saved copy of a retired seed's blob; neither writing it back nor reviving the row works, and
+// re-enrolment is a new row whose seed is not the retired one.
+func Test_totp_terminal_rows_hold_no_secret(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		id, seed := e.enrol(t, e.a)
+		var saved []byte
+		if err := e.tx(t, e.a, func(ctx context.Context, tx store.Tx) error {
+			return tx.QueryRow(ctx, `SELECT sealed_secret FROM public.authn_authenticator_enrollments WHERE id = $1::uuid`, id).Scan(&saved)
+		}); err != nil || len(saved) == 0 {
+			t.Fatalf("saving the blob: %v", err)
+		}
+		const upd = `UPDATE public.authn_authenticator_enrollments SET `
+		// Revoking without erasing the seed is refused by the CHECK.
+		if _, err := e.exec(t, e.a, upd+`state = 'revoked' WHERE id = $1::uuid`, id); store.SQLState(err) != "23514" {
+			t.Fatalf("revoke keeping the seed = %v, want check violation", err)
+		}
+		if _, err := e.exec(t, e.a, upd+`state = 'revoked', sealed_secret = NULL WHERE id = $1::uuid`, id); err != nil {
+			t.Fatal(err)
+		}
+		// (a) the saved blob written back into the revoked row.
+		if _, err := e.exec(t, e.a, upd+`sealed_secret = $2 WHERE id = $1::uuid`, id, saved); err == nil {
+			t.Fatal("(a) a saved blob was written back into a revoked row")
+		}
+		// (a') the blob together with a live state.
+		if _, err := e.exec(t, e.a, upd+`state = 'active', sealed_secret = $2 WHERE id = $1::uuid`, id, saved); err == nil {
+			t.Fatal("(a) a saved blob revived a revoked row")
+		}
+		// (b) the state back to active.
+		if _, err := e.exec(t, e.a, upd+`state = 'active' WHERE id = $1::uuid`, id); err == nil {
+			t.Fatal("(b) revoked -> active was allowed")
+		}
+		// A live row never loses its seed, and a seed is never replaced in place.
+		id2, _ := e.enrol(t, e.a)
+		if _, err := e.exec(t, e.a, upd+`sealed_secret = NULL WHERE id = $1::uuid`, id2); err == nil {
+			t.Fatal("an active row lost its seed")
+		}
+		if _, err := e.exec(t, e.a, upd+`sealed_secret = $2 WHERE id = $1::uuid`, id2, saved); err == nil {
+			t.Fatal("a live row's seed was replaced in place")
+		}
+		// (c) the retired seed verifies nothing, on the old row or the new one.
+		e.now = e.now.Add(time.Minute)
+		code := hotp(seed, stepAt(e.now))
+		if err := e.verify(t, e.a, id, code); !errors.Is(err, ErrCodeRejected) {
+			t.Fatalf("(c) retired row verified: %v", err)
+		}
+		if err := e.verify(t, e.a, id2, code); !errors.Is(err, ErrCodeRejected) {
+			t.Fatalf("(c) the re-enrolled row accepted the retired seed: %v", err)
 		}
 	})
 }

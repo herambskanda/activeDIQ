@@ -118,7 +118,7 @@ func setupEnroll(t *testing.T, s *storetest.Server) *enrollEnv {
 
 func (e *enrollEnv) issue(t *testing.T, tid tenant.ID, kind fleetsql.Kind) fleetsql.Issued {
 	t.Helper()
-	iss, err := e.svc.Issue(context.Background(), tid, admin, fleetsql.NewComponent{Kind: kind, Name: "host-1"})
+	iss, err := e.svc.Issue(context.Background(), tid, adminIn(tid), fleetsql.NewComponent{Kind: kind, Name: "host-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestEnroll(t *testing.T) {
 
 		// The request tries to name another tenant and component, and to add DNS/IP/e-mail names and a
 		// subject: none of it reaches the certificate (AC3).
-		other := e.issue(t, e.b, fleetsql.KindAgent)
+		other := e.issue(t, e.b, fleetsql.KindADDC)
 		u, _ := url.Parse("urn:activediq:tenant:" + e.b.String())
 		csr, key := csrFor(t, &x509.CertificateRequest{
 			Subject:        pkix.Name{CommonName: "tenant " + e.b.String(), Organization: []string{other.ComponentID}},
@@ -267,9 +267,9 @@ func TestEnrollRefusals(t *testing.T) {
 		ctx := context.Background()
 		csr, _ := csrFor(t, nil)
 
-		unknown := e.issue(t, e.a, fleetsql.KindAgent)
+		unknown := e.issue(t, e.a, fleetsql.KindADDC)
 		forged := unknown.Token.String()[:len(unknown.Token.String())-2] + "AA"
-		expired := e.issue(t, e.a, fleetsql.KindAgent)
+		expired := e.issue(t, e.a, fleetsql.KindADDC)
 		// Test-only: superuser with the guard trigger off ages the row (the database is this test's own).
 		adm, err := e.d.Admin(ctx)
 		if err != nil {
@@ -282,7 +282,7 @@ func TestEnrollRefusals(t *testing.T) {
 		if tag, err := adm.Exec(ctx, `UPDATE public.enrollment_tokens SET created_at = now() - interval '2 hours', expires_at = now() - interval '1 hour' WHERE id = $1::uuid`, expired.TokenID); err != nil || tag.RowsAffected() != 1 {
 			t.Fatalf("age token: %v %v", tag, err)
 		}
-		used := e.issue(t, e.a, fleetsql.KindAgent)
+		used := e.issue(t, e.a, fleetsql.KindADDC)
 		if _, err := e.enr.Enroll(ctx, peerIP, used.Token.String(), csr); err != nil {
 			t.Fatal(err)
 		}
@@ -301,7 +301,7 @@ func TestEnrollRefusals(t *testing.T) {
 		}
 
 		// A bad CSR: refused with ErrCSR, the token is not burned.
-		fresh := e.issue(t, e.a, fleetsql.KindAgent)
+		fresh := e.issue(t, e.a, fleetsql.KindADDC)
 		small, _ := rsa.GenerateKey(rand.Reader, 2048)
 		weak, _ := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, small)
 		bad := map[string][]byte{"empty": nil, "garbage": []byte("nope"), "trailing": append(append([]byte{}, csr...), 0), "rsa2048": weak, "huge": make([]byte, 9<<10)}
@@ -316,7 +316,7 @@ func TestEnrollRefusals(t *testing.T) {
 		// Ed25519 is accepted.
 		_, edk, _ := ed25519.GenerateKey(rand.Reader)
 		edcsr, _ := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, edk)
-		if _, err := e.enr.Enroll(ctx, peerIP, e.issue(t, e.a, fleetsql.KindAgent).Token.String(), edcsr); err != nil {
+		if _, err := e.enr.Enroll(ctx, peerIP, e.issue(t, e.a, fleetsql.KindADDC).Token.String(), edcsr); err != nil {
 			t.Fatalf("ed25519: %v", err)
 		}
 	})
@@ -480,8 +480,8 @@ func TestBundleIsNeverServedFromBadMaterial(t *testing.T) {
 				}
 				// The runtime role under the tenant's own context: the only way a row gets in.
 				if _, err := e.raw(e.a, `INSERT INTO public.fleet_ca (tenant_id, cert_der, spki_sha256, sealed_key, key_version, not_after, state)
-					VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1, $2, $3, 1, now() + interval '1 year', 'retired')`,
-					c.der, bytes.Repeat([]byte{9}, 32), bytes.Repeat([]byte{3}, 40)); err != nil {
+					VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1, $2, NULL, 1, now() + interval '1 year', 'retired')`,
+					c.der, bytes.Repeat([]byte{9}, 32)); err != nil {
 					t.Fatal(err)
 				}
 				resp, err := e.enr.Enroll(ctx, peerIP, tok.Token.String(), csr)
@@ -505,7 +505,7 @@ func TestRotateKeepsIdentity(t *testing.T) {
 		e := setupEnroll(t, s)
 		ctx := context.Background()
 		csr, _ := csrFor(t, nil)
-		iss := e.issue(t, e.a, fleetsql.KindAgent)
+		iss := e.issue(t, e.a, fleetsql.KindADDC)
 		first, err := e.enr.Enroll(ctx, peerIP, iss.Token.String(), csr)
 		if err != nil {
 			t.Fatal(err)

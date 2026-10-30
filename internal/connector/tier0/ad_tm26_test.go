@@ -230,7 +230,13 @@ func TestC18InsideACE(t *testing.T) { // T0-C18-ACE
 	us := u(f, "heir", 4100)
 	f.find(us).history(foreignID + "-1105")
 	setSD(f, dom, aceSpec{sid: foreignID + "-1105", mask: wDACL})
-	wantBasis(t, f, us, C17, true)
+	// T-0819: the holder stands in only once the trust says the SID is a user; with no trust lookup the
+	// SID may be a surviving source group, so the snapshot fails closed.
+	if _, err := classify(t, f, "CN=carol,OU=Staff,"+dom); err == nil || !strings.Contains(err.Error(), foreignID+"-1105") {
+		t.Errorf("holder with no trust answer: %v", err)
+	}
+	f.trust = map[string]TrustedPrincipal{foreignID + "-1105": {Kind: TrustUser}}
+	wantBasisTrust(t, f, us, C17, true)
 	// Twin: nobody holds that SID in sIDHistory, so the foreign trustee fails the snapshot naming it.
 	f = forest()
 	setSD(f, dom, aceSpec{sid: foreignID + "-1105", mask: wDACL})
@@ -537,5 +543,45 @@ func TestC18DesignationClosure(t *testing.T) {
 	in.Designated = []dn.ObjectRef{ref(t, "CN=nobody,"+dom)}
 	if r, err := NewAD(f).Classify(t.Context(), ref(t, us), in); err != nil || r.Tier0 {
 		t.Errorf("missing designation: %+v %v", r, err)
+	}
+}
+
+// T-0387 (TM-D27 rule 4): a well-known SID planted in a sIDHistory must not suppress the fail-closed
+// for a grant to that SID; the holder covers one object, the grant reaches every authenticated principal.
+func TestC18WellKnownHistoryFailsClosed(t *testing.T) {
+	for _, wk := range []string{"S-1-5-11", "S-1-1-0", foreignID + "-513", foreignID + "-515", foreignID + "-512"} {
+		f := forest()
+		us := u(f, "heir", 4100)
+		f.find(us).history(wk)
+		setSD(f, dom, aceSpec{sid: wk, mask: wDACL})
+		if _, err := classify(t, f, "CN=carol,OU=Staff,"+dom); err == nil || !strings.Contains(err.Error(), wk) {
+			t.Errorf("%s in sIDHistory with a grant: %v", wk, err)
+		}
+	}
+}
+
+// T-0358: a connector that may not read the DNS zone containers cannot tell whether the domain hosts
+// AD-integrated DNS. DNSADMINS_MISSING must not be suppressed silently: a distinct finding says so.
+func TestDnsAdminsUndeterminedWhenZonesUnreadable(t *testing.T) {
+	f := forest()
+	f.add("DC=DomainDnsZones,"+dom, "", cls("top", "domainDNS"))
+	f.add("CN=MicrosoftDNS,DC=DomainDnsZones,"+dom, "", cls("container"))
+	f.add("DC=lab.test,CN=MicrosoftDNS,DC=DomainDnsZones,"+dom, "", cls("dnsZone"))
+	dropObj(f, "CN=DnsAdmins,CN=Users,"+dom)
+	f.denyDN = "CN=MicrosoftDNS"
+	if c := findingCodes(t, f); len(c) != 1 || c[0] != FindingDnsAdminsUndetermined {
+		t.Errorf("zones unreadable: %v", c)
+	}
+	// Twin: DnsAdmins present, nothing to say even when the zones are unreadable.
+	f = forest()
+	f.denyDN = "CN=MicrosoftDNS"
+	if c := findingCodes(t, f); len(c) != 0 {
+		t.Errorf("DnsAdmins present: %v", c)
+	}
+	// Twin: a missing container (no DNS role) is still "no zones", not undetermined.
+	f = forest()
+	dropObj(f, "CN=DnsAdmins,CN=Users,"+dom)
+	if c := findingCodes(t, f); len(c) != 0 {
+		t.Errorf("no DNS: %v", c)
 	}
 }

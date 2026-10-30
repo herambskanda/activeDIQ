@@ -2,14 +2,17 @@ package connections
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
+	"github.com/skenzeriq/activediq/internal/platform/rbac"
 )
 
 // Tier0OverrideActionID is the configuration Action of DM-25.I1 (ADR-0005 rule 10).
@@ -39,6 +42,8 @@ type Tier0OverrideInput struct {
 type overridePayload struct {
 	ConnectionID   string `json:"connection_id"`
 	VerificationID string `json:"verification_id"`
+	Count          int    `json:"acknowledged_count"`
+	Digest         []byte `json:"override_digest"` // adq-override-digest/1 (DM-25.I7); Apply re-checks it against the stored row
 }
 
 // Tier0OverrideOutcome is what Apply did.
@@ -57,7 +62,7 @@ func Tier0OverrideAcknowledge() (operation.Action, error) {
 			ID: Tier0OverrideActionID, Version: 1, Permission: Tier0OverridePermission,
 			Input: "#/components/schemas/Tier0OverrideAcknowledge", Target: operation.TargetStore,
 			Reversibility: operation.Irreversible, // an acknowledgement is evidence: no undo (DM-25.I5)
-			AuditKind:     AuditTier0OverrideAcknowledged, StepUp: true,
+			AuditKind:     AuditTier0OverrideAcknowledged, StepUp: true, ControlPlane: true,
 		},
 		Plan: func(ctx context.Context, pc operation.PlanContext, in Tier0OverrideInput) ([]operation.TypedStep[overridePayload], error) {
 			if in.Acknowledgment != TypedAcknowledgement {
@@ -71,6 +76,13 @@ func Tier0OverrideAcknowledge() (operation.Action, error) {
 			if err != nil {
 				return nil, err
 			}
+			// The permission is platform-scope (tenant-wide), so the target is the tenant store root: a
+			// connection-class target would be authorised as a directory object, which no tenant-wide
+			// grant covers, and the override could never be acknowledged. The connection is in the diff.
+			var tid string
+			if err := pc.Tx.QueryRow(ctx, `SELECT coalesce(current_setting('app.tenant_id', true), '')`).Scan(&tid); err != nil || tid == "" {
+				return nil, errors.New("connections: no tenant context")
+			}
 			c, err := store.Get(ctx, pc.Tx, cid)
 			if err != nil {
 				return nil, err
@@ -78,15 +90,23 @@ func Tier0OverrideAcknowledge() (operation.Action, error) {
 			if string(vid) != c.LastVerificationID {
 				return nil, &connection.OverrideError{Code: connection.ReasonNotLatestRun}
 			}
+			// DM-25.I7: the event commits to the acknowledged set by count and salted digest, never by
+			// fingerprint. The plan carries it, so the plan hash binds it.
+			ev, err := store.OverrideEvidenceFor(ctx, pc.Tx, cid, vid)
+			if err != nil {
+				return nil, err
+			}
 			return []operation.TypedStep[overridePayload]{{
 				Plan: operation.StepPlan{
-					Target:              authority.TargetRef{Connection: string(cid), GUID: string(cid), Class: "connection"},
-					Kind:                "connection.tier0_override.acknowledge",
-					Diff:                []operation.Change{{Attribute: "tier0_installation", Before: []string{"false"}, After: []string{"true"}}, {Attribute: "verification_id", After: []string{string(vid)}}},
+					Target: authority.TargetRef{GUID: tid, Class: rbac.TargetClassTenant},
+					Kind:   "connection.tier0_override.acknowledge",
+					Diff: []operation.Change{{Attribute: "connection_id", After: []string{string(cid)}}, {Attribute: "tier0_installation", Before: []string{"false"}, After: []string{"true"}}, {Attribute: "verification_id", After: []string{string(vid)}},
+						{Attribute: "acknowledged_count", After: []string{strconv.Itoa(ev.Count)}},
+						{Attribute: "override_digest", After: []string{hex.EncodeToString(ev.Digest)}}},
 					Reversibility:       operation.Irreversible,
 					ReversibilityReason: "an acknowledgement is evidence; the next passing run clears it",
 				},
-				Payload: overridePayload{ConnectionID: string(cid), VerificationID: string(vid)},
+				Payload: overridePayload{ConnectionID: string(cid), VerificationID: string(vid), Count: ev.Count, Digest: ev.Digest},
 			}}, nil
 		},
 		Apply: func(ctx context.Context, s step.Step, p operation.TypedStep[overridePayload]) (Tier0OverrideOutcome, error) {
@@ -110,6 +130,9 @@ func Tier0OverrideAcknowledge() (operation.Action, error) {
 				ConnectionID: cid, VerificationID: vid, By: string(s.Actor().Requester.ID),
 			})
 			if err != nil {
+				return Tier0OverrideOutcome{}, err
+			}
+			if err := store.VerifyOverrideEvidence(ctx, tx, o, connection.OverrideEvidence{Count: p.Payload.Count, Digest: p.Payload.Digest}); err != nil {
 				return Tier0OverrideOutcome{}, err
 			}
 			out := Tier0OverrideOutcome{OverrideID: string(o.ID)}

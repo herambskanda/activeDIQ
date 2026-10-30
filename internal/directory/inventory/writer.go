@@ -145,7 +145,8 @@ func (Writer) Form(ctx context.Context, tx store.Tx, f Formation) (Formed, error
 		_, err = tx.Exec(ctx, `UPDATE public.correlations SET match = $2, anchor_attr = $3, anchor_value = $4, ad_sid = $5,
 			state = $6, candidate_reason = $7, gate_checked_at = $8,
 			eligible_since = COALESCE(eligible_since, $9::timestamptz), eligibility_class = COALESCE(NULLIF(eligibility_class, ''), $10),
-			ad_tier0 = $11, ad_tier0_bases = $12, entra_tier0 = $13, entra_tier0_bases = $14, facts_as_of = $15, updated_at = now()
+			ad_tier0 = $11, ad_tier0_bases = $12, entra_tier0 = $13, entra_tier0_bases = $14, facts_as_of = $15,
+			ad_facts_as_of = NULL, entra_facts_as_of = NULL, updated_at = now()
 			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND id = $1::uuid`,
 			p.id, string(f.Match), f.AnchorAttr, anchor, sid, string(v.State), string(v.Reason), f.Now.UTC(),
 			since, v.EligibilityClass, len(adB) > 0, adB, len(enB) > 0, enB, asOf)
@@ -373,3 +374,95 @@ func removeEdge(ctx context.Context, tx store.Tx, attr string, connection Connec
 	}
 	return nil
 }
+
+// ErrBasisUnknown: a live read says the object is tier0 but the stored correlation names no basis for
+// it, and a live read yields a verdict, not a basis (the flag and the bases agree exactly). The
+// correlation job names the basis; until it has, the fact is not advanced.
+var ErrBasisUnknown = errors.New("inventory: live read found the object tier0 with no recorded basis")
+
+// RecordLiveFacts stores the tier0 verdict of a live read of ref, taken at readAt, on every live
+// correlation ref is a side of (DM-20.I5; contract §8.3 F3), and moves that side's as-of
+// (ad_facts_as_of / entra_facts_as_of) to readAt if that is later. It returns how many correlations it updated (zero is valid: ref has none).
+//
+// Only ref's own side changes, and only the tier0 fact of it: the peer's fact, the gate verdict, the
+// state and gate_checked_at are not touched, because a read of one object cannot vouch for them. The
+// as-of of the pair (Link.FactsAsOf) is the older of the two sides' as-ofs, so it moves only once the
+// peer's side has been refreshed too. A verdict of not-tier0 clears
+// the bases. A verdict of tier0 keeps the stored bases; with none stored it is ErrBasisUnknown and
+// nothing is written. The time never moves back, and one later than the database's now() plus five
+// minutes is ErrInvalid. Runs in the caller's tenant transaction; the caller rolls back on error.
+func (Writer) RecordLiveFacts(ctx context.Context, tx store.Tx, ref Ref, tier0 bool, readAt time.Time) (int, error) {
+	if !ref.Valid() || readAt.IsZero() {
+		return 0, ErrInvalid
+	}
+	if err := requireTenant(ctx, tx); err != nil {
+		return 0, err
+	}
+	var future bool
+	if err := tx.QueryRow(ctx, `SELECT $1::timestamptz > now() + interval '5 minutes'`, readAt.UTC()).Scan(&future); err != nil {
+		return 0, writeErr("record live facts", err)
+	}
+	if future {
+		return 0, fmt.Errorf("%w: read time is in the future", ErrInvalid)
+	}
+	conn, obj := string(ref.Connection), string(ref.Object)
+	type rowScanner interface{ Scan(dest ...any) error }
+	sides := []struct {
+		missing func() rowScanner
+		update  func() (int64, error)
+	}{
+		{
+			func() rowScanner { return tx.QueryRow(ctx, adLiveFactsMissing, conn, obj) },
+			func() (int64, error) {
+				tag, err := tx.Exec(ctx, adLiveFactsUpdate, conn, obj, tier0, readAt.UTC())
+				return tag.RowsAffected(), err
+			},
+		},
+		{
+			func() rowScanner { return tx.QueryRow(ctx, entraLiveFactsMissing, conn, obj) },
+			func() (int64, error) {
+				tag, err := tx.Exec(ctx, entraLiveFactsUpdate, conn, obj, tier0, readAt.UTC())
+				return tag.RowsAffected(), err
+			},
+		},
+	}
+	n := 0
+	for _, side := range sides {
+		if tier0 { // checked first so that nothing is written when a basis is missing
+			var missing int
+			if err := side.missing().Scan(&missing); err != nil {
+				return 0, writeErr("record live facts", err)
+			}
+			if missing > 0 {
+				return 0, ErrBasisUnknown
+			}
+		}
+		rows, err := side.update()
+		if err != nil {
+			return 0, writeErr("record live facts", err)
+		}
+		n += int(rows)
+	}
+	return n, nil
+}
+
+// The four statements of RecordLiveFacts are constants (safe-primitives §7): the AD and Entra sides differ
+// only in column names, so each is written out rather than assembled.
+const (
+	adLiveFactsUpdate = `UPDATE public.correlations SET ad_tier0 = $3, ad_tier0_bases = CASE WHEN $3 THEN ad_tier0_bases ELSE '{}' END,
+			ad_facts_as_of = GREATEST(COALESCE(ad_facts_as_of, facts_as_of, $4), $4), updated_at = now()
+			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
+			AND ad_connection_id = $1::uuid AND ad_object_guid = $2::uuid AND state <> 'removed'
+			AND (NOT $3 OR cardinality(ad_tier0_bases) > 0)`
+	adLiveFactsMissing = `SELECT count(*) FROM public.correlations
+			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
+			AND ad_connection_id = $1::uuid AND ad_object_guid = $2::uuid AND state <> 'removed' AND cardinality(ad_tier0_bases) = 0`
+	entraLiveFactsUpdate = `UPDATE public.correlations SET entra_tier0 = $3, entra_tier0_bases = CASE WHEN $3 THEN entra_tier0_bases ELSE '{}' END,
+			entra_facts_as_of = GREATEST(COALESCE(entra_facts_as_of, facts_as_of, $4), $4), updated_at = now()
+			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
+			AND entra_connection_id = $1::uuid AND entra_object_guid = $2::uuid AND state <> 'removed'
+			AND (NOT $3 OR cardinality(entra_tier0_bases) > 0)`
+	entraLiveFactsMissing = `SELECT count(*) FROM public.correlations
+			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
+			AND entra_connection_id = $1::uuid AND entra_object_guid = $2::uuid AND state <> 'removed' AND cardinality(entra_tier0_bases) = 0`
+)

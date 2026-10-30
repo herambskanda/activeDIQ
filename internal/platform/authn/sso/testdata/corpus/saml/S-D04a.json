@@ -1,0 +1,10 @@
+{
+ "id": "S-D04a",
+ "class": "malformed",
+ "cites": [
+  "SAML-1"
+ ],
+ "build": "invalid_base64",
+ "expect": "refuse",
+ "reason": "saml.binding"
+}

@@ -1,0 +1,10 @@
+{
+ "id": "S-D04c",
+ "class": "malformed",
+ "cites": [
+  "SAML-1"
+ ],
+ "build": "no_samlresponse",
+ "expect": "refuse",
+ "reason": "saml.binding"
+}

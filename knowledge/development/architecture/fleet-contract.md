@@ -2,7 +2,7 @@
 title: fleet.v1 contract
 status: draft
 date: 2026-10-22
-updated: 2026-10-22
+updated: 2026-10-29
 owner: api-engineer
 author: api-engineer
 ticket: T-0152
@@ -55,8 +55,19 @@ The service has no other RPC (TM-TB6-T8). The server mounts it alone on the flee
 - **Contract-agnostic.** `CallOpen.method` is the full gRPC method of the bound contract
   (for example `/activediq.connector.v1.Connector/Describe`); payloads are the bound contract's
   serialised messages. Call ids: odd = server-opened, even = component-opened.
-- **Flow control** (TM-TB6-T7): `FlowCredit` grants the peer N more `CallData` messages on a call
-  (`call_id` 0: on the whole tunnel). Numeric limits are the gateway's, in T-0069's ticket.
+- **Flow control** (TM-TB6-T7, T-0288): `FlowCredit` grants the peer N more `CallData` messages on a call
+  (`call_id` 0: on the whole tunnel). Each side starts with the same fixed window, so there is no
+  handshake: 16 messages per call (`DefaultCallWindow`), 64 per tunnel (`DefaultTunnelWindow`), plus
+  256 concurrent calls and 4 MiB per message. Credit is granted back only when the local handler has
+  consumed a message (batched at half a window). A call that ends with messages still buffered returns
+  them to the tunnel window only when they are released: discarded at once if nobody will read them
+  (local cancel or close, peer cancel), or as the reader consumes them (peer close of a call we opened;
+  the reader abandoning the call discards the rest). Pending credit is retried by the writer after
+  each frame it sends. Data beyond either window, or a grant of 0 or one that would lift the sender above
+  its window, is a protocol violation (`data_exceeds_credit`, `credit_invalid`): the tunnel closes and
+  is audited, so the read loop never waits on a slow handler. A sender with no credit blocks (until
+  credit, the call's context, the call's end or the tunnel's end). Worst case buffered per tunnel is
+  64 x 4 MiB; one slow call can hold tunnel credit and so slows its siblings (accepted).
 - The connector contract's rule P4 (no bidirectional streams) does not apply to this package:
   `Tunnel` is the transport the connector contract rides on, not an operation of it.
   P4, P5, P6 and P8 apply to operation contracts only; fleet has F1 to F11 instead.
@@ -77,9 +88,12 @@ old peers ignore); a removed or renumbered field needs `fleet.v2`.
 
 ## Enrollment tokens and the Component store (T-0153)
 
-`internal/platform/fleet/fleetsql` is the server-only SQL of DM-12 (migration `0006_fleet_components`).
+`internal/platform/fleet/fleetsql` is the server-only SQL of DM-12 (migration `0007_fleet_components`).
 `cmd/connector` and `cmd/agent` cannot link it: it imports `platform/store`, which rule 7 bans for both.
 
+- **Tenant binding** (Issue, Revoke, Reenrol, Withdraw): the permission is evaluated in the principal's own
+  tenant, so each refuses (its forbidden error, before any write) unless `p.Tenant` parses to the target
+  `tid`. A platform principal (empty Tenant) is refused too; platform-wide fleet actions need their own op.
 - **Issue** (`Enrollment.Issue`) needs `fleet.enrollment.issue` and a fresh step-up, both checked before
   any write. It creates a `pending` Component and one token, stores only the SHA-256, and returns the
   plaintext once. Lifetime defaults to 1 h, at most 24 h (a database CHECK too).
@@ -96,7 +110,7 @@ old peers ignore); a removed or renumbered field needs `fleet.v2`.
 
 ## Enroll handler and the installation CA (T-0155)
 
-Core: `fleetsql.Enroller` (`fleet/fleetsql/enroll.go`, `ca.go`; migration `0008_fleet_ca`). Adapter:
+Core: `fleetsql.Enroller` (`fleet/fleetsql/enroll.go`, `ca.go`; migration `0010_fleet_ca`). Adapter:
 `internal/compose/server/fleetenroll.go` turns `fleetv1.Enroll` into `Enroller` calls, because the platform
 root never imports generated protos. The listener that mounts it is T-0156.
 
@@ -107,7 +121,10 @@ root never imports generated protos. The listener that mounts it is T-0156.
 - **SAN.** Exactly two URIs, `urn:activediq:tenant:<uuid>` and `urn:activediq:component:<kind>:<uuid>`
   (`fleet.URIs`, read back by `fleet.IdentityOf`, which refuses any extra name). The values come from the
   token's own row; `EnrollRequest` carries no tenant or component and the CSR's subject and SAN are ignored.
-  Empty subject, ClientAuth only, 90-day default lifetime, clamped to the CA's.
+  The `<kind>` is a closed vocabulary: `connector`, `addc`, `fileserver` (`fleet.ValidKind`, `identity.go`). It
+  selects the `fleet.Binding`, so one module's certificate reaches only its own contract; any other kind, including
+  the bare legacy `agent`, is `ErrIdentity`. A new module adds its kind in `identity.go`, the `components.kind`
+  CHECK and its Binding together. Empty subject, ClientAuth only, 90-day default lifetime, clamped to the CA's.
 - **CA.** One per tenant (`fleet_ca`), ECDSA P-384, created on first need or by `InitTenant`. The private key
   is PKCS#8 sealed with `keys.Seal` under the tenant DEK, bound to tenant, table, row, column and version
   (TM-A11, AC4); no column holds it in clear and nothing logs it. Per-tenant, not installation-wide, because
@@ -127,6 +144,72 @@ root never imports generated protos. The listener that mounts it is T-0156.
 - Not here: the listener and mTLS interceptor (T-0156), revocation (T-0157), the issuing handler with its audited Operation and principal-derived tenant (T-0153
   obligations 1 and 4).
 
+## CA key rollover (T-0563, TM-D29)
+
+Decision: replacing the fleet CA key is **a new `fleet_ca` row, never an in-place change**, and the **old key is erased when its row retires**. Components **pin the CA by certificate** (SPKI hash), not by row, position or "the latest". This closes the TM-D29 "Fleet CA key" row ([threat-model §9.2.1](threat-model.md)).
+
+1. **New row.** Rollover generates a new ECDSA P-384 key and CA certificate and inserts a new row (new `id`, new `spki_sha256`). The key is sealed with the row id in the AAD (`keys.Seal`, TM-A11), so a blob from another row cannot be replayed into it. Nothing updates `cert_der`, `spki_sha256`, `sealed_key` or `key_version` of an existing row (the `fleet_ca_guard` trigger already refuses it). The new row becomes `active` and the previous `active` row becomes `retired` **in the same transaction** (the partial unique index `fleet_ca_one_active` stays satisfied).
+2. **Old key erased.** The `active → retired` transition sets `sealed_key` to NULL in that same transaction. A `retired` row holds only the public certificate. Migration (follow-up): `sealed_key` becomes nullable, with `CHECK (state = 'active' OR sealed_key IS NULL)` and `CHECK (state <> 'active' OR sealed_key IS NOT NULL)`; `fleet_ca_guard` allows `sealed_key` to change only on `active → retired`, and only to NULL. `retired` stays terminal (the trigger already refuses leaving it). Replaying the saved blob into the retired row fails at the CHECK; making the row `active` again fails at the trigger; both hold against the application role (TM-D29 controls 1 + 2). Signing (`Enroller`, `Rotate`) loads only the `active` row, so no path needs a retired key. Cryptographic erasure alone (DEK shredding, TM-D15) is not the control: the DEK is shared by the tenant's other values.
+3. **Retired certificates stay as trust anchors.** The retired row's `cert_der` remains in `TenantCAs` and the bundle, so leaves it signed keep verifying until they expire (90 days at most, clamped to the CA's `not_after`). A retired row is removed from the bundle only when no unexpired, non-superseded leaf chains to it, or at once on the compromise path below. Bundle limits are unchanged (at most 8 rows, 64 KiB).
+4. **Clients pin by certificate.** `ca-pin.txt` is the SHA-256 of the SPKI of a CA certificate, and `dial.ParseBundle` accepts a bundle only if it contains a certificate with that SPKI (D3). The pin identifies a key, so it never "follows" the active row. After a rollover the old pin still validates every certificate chaining to the old CA. A component adopts the new CA only from a bundle delivered over a connection it already verified against its pinned CA (a leaf `Rotate`/`Enroll` answer carrying `ca_bundle_pem`), and only if the new CA certificate is **cross-signed by the old CA key** at rollover (the one use of the old key, before step 2 erases it; the cross-certificate is public and stored with the new row). The client then pins both SPKIs, and drops the old pin when the old CA leaves the bundle.
+5. **Planned versus compromise.** *Planned* (expiry approaching, yearly): steps 1 to 4, no re-enrolment; the cross-signature carries the fleet over. *Suspected key exposure* (`fleet.ca.suspected_key_exposure`, TM-D24): a cross-signature from a possibly stolen key proves nothing, so the old row is retired and erased **and removed from the bundle and `TenantCAs` at once**, which makes the gateway refuse every leaf it signed (TM-Q8); every component re-enrols with a new single-use token against the new pin, which an admin reads from the console out of band. This is a deliberate availability cost and is audited as one operation.
+6. **Authorisation and audit.** Rollover is an admin Action behind a fresh step-up and its own permission (`fleet.ca.rotate`), one transaction, with an audit event `fleet.ca.rotated` naming old and new SPKI hashes and the path (planned or compromise). The key itself never appears in any event or log.
+7. **Fitness (TM-F-SEAL, extended).** (a) After rollover the old row has `sealed_key IS NULL`, and writing the saved old blob back as the application role is refused by the CHECK. (b) Setting the old row `active`, or changing any column of a retired row, is refused by the trigger. (c) Two concurrent rollovers leave exactly one `active` row. (d) A component with the old pin accepts the new CA only with a valid cross-signature and refuses a bundle without its pinned SPKI. (e) On the compromise path a leaf signed by the old CA gets `Unauthenticated` at once.
+
+Wire shape: no change to `fleet.v1`. `EnrollResponse.ca_bundle_pem` already carries the CA certificates, F4's allowlist is untouched, and the cross-certificate travels as one more `CERTIFICATE` block in the bundle. Follow-ups: migration and `Enroller.RotateCA`, `dial` pin-set handling, the fitness tests above.
+
+## Gateway client-CA pool: the cross-tenant read of `fleet_ca` (T-0712)
+
+**Problem.** The gateway's `serverTLS` needs one `ClientCAs` pool holding every tenant's CA certificates (`clientCAs func() *x509.CertPool`, read per handshake), so a leaf from a forged or unknown CA is refused in memory before any identity or database work. `fleet_ca` is a Tenant table under `FORCE` RLS; `WithPlatform` reads it as empty and reaches only registered-global tables. BYPASSRLS is excluded ([ADR-0002](../decisions/0002-deployment-model.md) rule 4).
+
+**Decision (option b, hardened): a registered `SECURITY DEFINER` reader owned by a dedicated, column-limited role.**
+
+1. **Role.** `activediq_catrust`: `NOLOGIN NOSUPERUSER NOBYPASSRLS`, owns nothing but the one function, created by the installer beside `activediq_owner` and `activediq_app` (the owner has no CREATEROLE, migration `0001`). Migration `0055_fleet_ca_trust` (T-0733) fails loudly if it is missing, as `0001` does for the other two. **Migration prerequisites (security review MF2):** (i) the installer makes `activediq_owner` a member of `activediq_catrust` (`ALTER FUNCTION ... OWNER TO` needs it); (ii) the migration runs `GRANT USAGE ON SCHEMA public TO activediq_catrust` (it must resolve the table and function); (iii) PostgreSQL 15+ gives `public` no `CREATE` for ordinary roles and the new owner needs `CREATE` on the schema to receive ownership, so the migration does `GRANT CREATE ON SCHEMA public TO activediq_catrust`, creates the function as `activediq_owner`, runs `ALTER FUNCTION ... OWNER TO activediq_catrust`, then `REVOKE CREATE ON SCHEMA public FROM activediq_catrust`, all in the same migration. (iv) `activediq_app` must not be a member of `activediq_catrust` (it holds `EXECUTE` only); the `0001` `roleRisk` guard is extended to refuse that membership. The installer spec lists exactly these memberships and no others.
+2. **Privileges, enforced by the database.** `GRANT SELECT (tenant_id, id, state, cert_der, spki_sha256, not_after) ON public.fleet_ca TO activediq_catrust`. No grant on `sealed_key`, `key_version`, `created_at`; no INSERT, UPDATE, DELETE. One added permissive policy `fleet_ca_trust_read ON public.fleet_ca FOR SELECT TO activediq_catrust USING (state IN ('active','retired'))`. `fleet_ca_tenant` is untouched, so the runtime role still reads `fleet_ca` as empty under `WithPlatform` and the tenancy probe stays true.
+3. **Function.** `public.fleet_ca_trust_anchors() RETURNS TABLE (tenant_id uuid, spki_sha256 bytea, cert_der bytea, not_after timestamptz)`, `LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp` (plpgsql, not sql: a SQL function cannot `RAISE`; security review MF1), owned by `activediq_catrust`, `REVOKE ALL FROM PUBLIC`, `EXECUTE` to `activediq_app` only. The body begins `IF NULLIF(current_setting('app.tenant_id', true), '') IS NOT NULL THEN RAISE EXCEPTION ... USING ERRCODE = '42501'; END IF;` then `RETURN QUERY SELECT ... WHERE state IN ('active','retired') AND not_after > now()`. This is the inverse of the guard in `audit_wipe_retired_key` (migration `0020`), so a tenant transaction can never call it and only a platform-scope transaction can. The return type has no key column; the role has no privilege on one. A bug in the function body therefore cannot reach `sealed_key` (the privilege error is the control, not review).
+4. **One call site.** `internal/platform/fleet/fleetsql` `TrustAnchors.Load` calls it under `store.WithPlatform(ctx, "fleet: load every tenant's CA certificates for the gateway client-CA pool")`. It is registered in `exempt/registry.json`: one `securityDefiner` entry (`public.fleet_ca_trust_anchors()`) and one `platformPaths` entry (`withPlatform: true`, `mintsTenantID: true`, because `Load` parses tenant ids out of the rows it reads). The reader returns `[]Anchor{Tenant tenant.ID; Cert *x509.Certificate}`, parsed with `parseStoredCert` (strict: DER, `IsCA`, `KeyUsageCertSign`, no PEM, no private-key marker); a row that fails does not enter the pool, raises `fleet.ca.material_invalid` and the refresh keeps the previous pool for the other tenants (a single bad tenant must not take the fleet down, unlike the per-tenant bundle, which fails whole).
+5. **What does not change.** `fleet_ca` stays `Kind: Tenant`. No new table, no `tablekind` change, no domain-model kind change, so `fitness-domain-keys` REG (kind vs heading vs exemption registry) is unchanged. X1 gets one sentence (below); X4 is unaffected (`sealed_key` is not selectable on this path).
+
+**Options considered**
+
+| Option | Verdict | Why |
+| --- | --- | --- |
+| (a) Registered-global `fleet_ca_trust` table kept beside `fleet_ca` | Rejected | A global table is readable by every tenant transaction (no RLS), so tenant code or an injected query reads the whole install's CA list and tenant ids; the registry already carries that caveat for `jobs`. It is a second copy that can drift from `fleet_ca`, and a removed CA lingering in it is a trust failure. Keeping it honest needs definer triggers and revoked write grants: the machinery of (b) plus a table. It also needs a new `P` entity in the domain model. |
+| (b) `SECURITY DEFINER` function | **Chosen**, with the dedicated role | No copy, nothing to drift, no new kind. A plain owner-owned definer does not work: the owner is bound by `FORCE` RLS and holds every column, so `sealed_key` would be unreachable only by code review. The dedicated role makes it unreachable by privilege. |
+| (c) `tablekind`/registry extension (a "platform-readable tenant table") | Rejected | RLS is row-level: a platform-scope policy for the runtime role exposes every column including `sealed_key`, and breaks the invariant that every `T` table reads empty under `WithPlatform`, which `fitness-tenancy` probes. It would need a column-level mechanism that is (b) again. |
+| (d) No pool: `RequestClientCert` + `VerifyPeerCertificate` verifying against `TenantCAs(SAN tenant)` | Rejected as the primary design | It removes the cross-tenant read, but it moves a database read before authentication: any unauthenticated peer can force one per handshake by naming a tenant. The pool rejects forged chains in memory. Kept as the fallback if the pool cannot meet the scale budget below. |
+| BYPASSRLS on any role | Excluded | ADR-0002 rule 4 and the `roleRisk` startup guard. |
+
+**The pool is a first gate, not the authority.** After the handshake the interceptor still runs `TenantCAs(ctx, id.Tenant)` (a live per-tenant read) and requires the leaf to be signed by *that tenant's own* CA (TM-Q8), on every RPC. A tenant-A CA in the pool therefore can never authenticate a leaf whose SAN names tenant B. That per-tenant check is not optional and not cacheable beyond the DB read; removing it is a ticket-level regression (fitness F-POOL-3).
+
+**Freshness.**
+- `PoolProvider.Pool()` returns an immutable `*x509.CertPool` swapped atomically; it never blocks a handshake on the database.
+- Refresh every **10 s** per gateway node, jitter only downward (interval uniform in 8 to 10 s, so it never exceeds 10 s), query timeout 5 s, plus an immediate `Invalidate()` when the same process commits a rollover, withdrawal or tenant provision.
+- **Bound.** A CA that is withdrawn (below) leaves the pool of every node within **15 s** of the commit (10 s maximum interval + 5 s query timeout; a refresh whose query started before the commit is the worst case). A new tenant's CA enters within the same bound; an `Enroll` needs no pool, so first enrolment is unaffected, and a new component's first mTLS connect can retry (the dial layer retries with the same pin, no fallback).
+- **Fail closed.** If no refresh has succeeded for **60 s**, `Pool()` returns an empty pool: client certificates are refused until the database answers. Enroll is unaffected (no client certificate). Staleness is a metric and an alert.
+- Whatever the pool says, the per-RPC `TenantCAs` check refuses a withdrawn CA's leaf on **every new RPC at once**; the 15 s bound limits only how long a stale pool could complete a handshake that the first RPC then refuses.
+- **Open streams (security review MF3).** The per-RPC check does not cover a stream already open: today the stream recheck (`gateway.go` ~287 to 295) calls `Components.Usable` only. Required changes, carried into T-0714: (i) the process that commits a withdrawal calls `Gateway.CloseTenant(tenant)` (cancels every registered stream of that tenant, as `CloseComponent` does for one component) in the same step as `Invalidate()`; (ii) every stream's `Config.Recheck` tick (default 5 s) also re-runs the per-tenant CA check (`TenantCAs` for the stream's tenant, leaf signed by one of them), so on every other node a leaf from a withdrawn CA loses its stream within one Recheck (**5 s** plus the lookup timeout; the lookup is a live read, independent of the pool). A lookup failure on recheck keeps the stream until the next tick but fails closed after the same 60 s staleness rule as the pool. The compromise-path bound is therefore: new RPCs at once, open streams 5 s plus lookup timeout (10 s worst case), new handshakes 15 s.
+
+**Removal needs a state.** Today `fleet_ca` has `active` and `retired`, `DELETE` is revoked, and step 3 and 5 of "CA key rollover" speak of "removed from the bundle" with no representation. Decision: add terminal state **`withdrawn`** (the `state` CHECK extended). `fleet_ca_guard` becomes an **explicit allow-list of state transitions** (security review MF4): `active → retired` (existing; sets `sealed_key` NULL), `retired → withdrawn`, `active → withdrawn` (compromise path; also sets `sealed_key` NULL). Everything else, including `withdrawn → anything` and `retired → active`, raises `AD403`; `cert_der`, `spki_sha256`, `tenant_id` and `id` stay immutable. A `BEFORE` row trigger cannot enforce "the same transaction inserts the replacement" (and `fleet_ca_one_active` allows the replacement only after the old active row has left `active`), so the guarantee that a tenant is never left without an active CA is a **`DEFERRABLE INITIALLY DEFERRED` constraint trigger** on `fleet_ca` that, at commit, requires every tenant touched by a transition to `withdrawn` to have exactly one `active` row, else `AD403`. The compromise-path order inside one transaction is: `active → withdrawn`, then insert the new `active` row. `TenantCAs`, the bundle and `fleet_ca_trust_anchors()` take `active` and `retired` only. `withdrawn` rows keep `cert_der` for audit. Folded into the T-0563 migration ticket's `sealed_key` change (T-0733 owns the DDL).
+
+**Data exposure of the new path.** It returns public certificates plus the `tenant_id` that owns each; a platform-scope caller learns the tenant list. That is the same knowledge the platform already has (`tenants` is global; `Claim` sees every tenant's jobs). All CA subjects are the constant `activeDIQ fleet CA` (no tenant data), so the TLS `certificate_authorities` list Go sends to a client reveals nothing per tenant; fitness F-POOL-6 pins that. Scale: identical subjects force Go to try candidate issuers by key id first; chain building cost with thousands of CAs is [UNVERIFIED] and gets a benchmark gate (F-POOL-7) before SaaS use; failing it triggers option (d).
+
+**Fitness functions (T-0714 adds them; the ADR is `accepted` when green in CI).**
+- F-POOL-1 `fitness-tenancy` registry: exactly one `securityDefiner` entry for `fleet_ca_trust_anchors` and one `WithPlatform` site naming it; the function is named in SQL nowhere else (`global-table-sql`-style scan).
+- F-POOL-2 catalog (real PostgreSQL 16 and 18): `activediq_catrust` is `NOBYPASSRLS`, `NOLOGIN`; holds no privilege on `fleet_ca.sealed_key`, `key_version`, `created_at` and no write privilege on any table; has no `CREATE` on any schema; owns exactly one object (the function); its memberships (and members) equal the installer spec (`activediq_owner` is a member; `activediq_app` is not); the function's result columns equal the four above; `activediq_app` has no BYPASSRLS membership (existing `roleRisk` unchanged, extended per point 1 (iv)).
+- F-POOL-3 behaviour: with tenants A and B seeded, the pool holds both tenants' active and retired CAs and nothing else; it excludes `withdrawn` rows and rows past `not_after`; a leaf signed by A's CA but with B's SAN is refused by the interceptor; a `withdrawn` CA's leaf is refused at once on a new RPC and absent from the pool after one refresh; one tenant with an unparseable row leaves every other tenant in the pool.
+- F-POOL-4 the function called inside `WithTenant` fails `42501`; the runtime role `SELECT sealed_key FROM fleet_ca` under `WithPlatform` returns zero rows and under any context cannot read other tenants' rows (existing probe); as `activediq_catrust` (test-only `SET ROLE`), `SELECT sealed_key FROM fleet_ca` fails with a privilege error (`42501` permission denied, not an empty result) while `SELECT cert_der` works. The catalog also asserts `pg_proc`: `prosecdef`, `proconfig = {search_path=pg_catalog,pg_temp}`, `proowner = activediq_catrust`, and `proacl` grants `EXECUTE` to `activediq_app` and the owner only, never `PUBLIC`.
+- F-POOL-5 freshness: injected clock; the withdrawn CA is out within 15 s; no successful refresh for 60 s yields an empty pool; the pool recovers on the next successful refresh without a restart.
+- F-POOL-6 every generated CA subject equals the constant; no tenant id in any CA certificate field.
+- F-POOL-7 handshake benchmark at 1,000 tenants (8,000 CAs worst case) within the budget set in T-0714.
+- **Implementation (T-0714).** `gateway.PoolProvider` (`gateway/pool.go`; `Pool()` returns a `CAIndex` keyed by SubjectKeyId, `Refresh`, `Invalidate`, `Run`, `Staleness`) takes a loader; `fleetsql.TrustAnchors.Certificates` is that loader. `Gateway.CloseTenant` and the stream re-check (`Config.Recheck`, `Config.CAStale` default 60 s) are in `gateway.go`. **Benchmark finding (F-POOL-7):** passing the pool as `tls.Config.ClientCAs` cannot work at scale. Go announces every CA subject in the CertificateRequest and the `certificate_authorities` extension has a 16-bit length, so about a thousand same-subject CAs (even one per tenant at 1,000 tenants) fail every handshake with EOF. Fallback (d) was not needed: `serverTLS` leaves `ClientCAs` unset, requests (does not require) a client certificate, and verifies the chain once, in `verifiedCreds`, against a `CAIndex`; `verifiedCreds` records the chain it built into `TLSInfo.VerifiedChains`, which `authenticate` and the enrol handler read. The forged-chain refusal is still in memory before any database work. Budget (relative, so machine speed cancels): a dial plus call against 1,000 tenants x 8 CAs within 3x of the same call against a one-CA pool (the index makes chain building independent of pool size). `TestPoolHandshakeAtScale` is the always-on correctness half (the handshake completes); `BenchmarkPoolHandshake` reports the numbers and `FLEET_POOL_BUDGET=1 go test -run PoolHandshakeBudget ./internal/platform/fleet/gateway` enforces the ratio (opt-in; a timing assertion does not belong in `make test`).
+
+**Decision record (T-0714 addendum to T-0712 / ADR-0008): verify against a key-id index in the credentials, not `ClientCAs`.** *Context:* the T-0712 design handed the platform pool to `tls.Config.ClientCAs`, with fallback (d) reserved for slow chain building. *Alternatives:* (1) `ClientCAs` = pool: rejected, Go lists every CA subject in CertificateRequest and the 16-bit `certificate_authorities` length overflows near 1,000 same-subject CAs, so every handshake fails (measured: EOF). (2) A flat `x509.CertPool` verified in `VerifyConnection`: rejected in security review. The CA subject is a public constant (F-POOL-6), so any unauthenticated peer can present a self-made leaf naming it, and x509 then tries up to 100 same-subject candidates (a signature check each) per chain, measured 11-16 ms per verify against 8,000 CAs, twice per handshake: attacker-driven CPU, the cost T-0712 rejected option (d) for. (3) Fallback (d): not needed. (4) **Chosen:** `ClientAuth = RequestClientCert`, `ClientCAs` unset; `PoolProvider` publishes a `CAIndex` keyed by CA SubjectKeyId; `verifiedCreds` verifies the leaf once, after the handshake and before any RPC or database work, against only the CAs whose SubjectKeyId equals the leaf's AuthorityKeyId (same ClientAuth EKU and validity rules). A leaf with no AuthorityKeyId or an unknown one is refused with no signature check; a known one costs one. `verifiedCreds` copies the built chain to `TLSInfo.VerifiedChains`, which every downstream reader (`authenticate`, the enrol handler) sees as `RequireAndVerifyClientCert` would have given it; it also re-checks resumed sessions against the current index. *Consequences:* a client sending no certificate passes the transport (Enroll needs that) and the interceptor refuses it for every other method; the connection is closed after the TLS handshake, not alerted during it; leaves must be issued directly by an indexed CA (fleet leaves are) and CA certificates must carry a SubjectKeyId (Go generates one; a CA without it never verifies a leaf); the per-RPC `TenantCAs` issuer check is unchanged; any new `tls.Config` for the gateway must go through `verifiedCreds`. *Residual:* a peer can still cost one signature check per handshake by naming a real key id (public in the leaf of any component), the same cost as the T-0712 baseline of an unknown-CA handshake.
+- F-POOL-8 open streams: a tenant's streams are cancelled by `CloseTenant` on withdrawal in the committing process, and on a second gateway node (separate process, shared database) a stream whose leaf is from the withdrawn CA ends within `Recheck` + lookup timeout; streams of tenant B are untouched.
+- F-POOL-9 transitions: a table-driven test over every (from, to) pair of states proves only `active→retired`, `retired→withdrawn`, `active→withdrawn` succeed; `withdrawn→*` and `retired→active` raise `AD403` (TM-D29); `cert_der` update refused; `active→withdrawn` committed without a replacement `active` row is refused at commit, and with the replacement inserted in the same transaction succeeds.
+
+Threat-model links: TM-A11 (key never leaves the sealed column; unreachable here by privilege), TM-D24 rule D (strict parse), TM-D29 (`withdrawn` is terminal), TM-Q8 (per-tenant issuer check retained). Reviewed by security-architect on T-0712.
+
 ## Component side: `fleet/dial` (T-0158)
 
 - **Enrol.** `dial.Enroll(ctx, Material{Address, Token, Pin}, dir, Exchange)`. The pin is mandatory (D1).
@@ -136,18 +219,26 @@ root never imports generated protos. The listener that mounts it is T-0156.
   No `InsecureSkipVerify`, no verify callback. **Obligation on the gateway (T-0156):** the Enroll listener
   must include the installation CA in its presented chain, or enrolment is refused (`ErrUntrustedServer`).
 - **Bundle (D3).** `dial.ParseBundle`: CERTIFICATE blocks only, no headers, whitespace-only around, 1 to 8
-  CAs, at most 64 KiB, one matching the pin; `AppendCertsFromPEM` never touches raw bytes.
-- **Leaf.** Must carry our public key, verify to the bundle for client auth, and have a component identity.
+  CAs, at most 64 KiB, one matching the pin; `AppendCertsFromPEM` never touches raw bytes. The result is a
+  `Bundle{Roots, ClientCAs}` (ADR-0008 decision 5): **Roots** are exactly the certificates matching the pin and
+  must have the server-root shape (`IsCA`, `MaxPathLen 0`, `KeyUsageCertSign`); **ClientCAs** are all others
+  (the tenant's client CAs and cross-certificates) and never become a TLS root.
+- **Leaf.** Must carry our public key, verify for ClientAuth to a **ClientCA** of the bundle (never to the pinned
+  server CA), and have a component identity.
+- **Repin (ADR-0008 obligation 5).** `dial.Repin(ctx, dir, newPin, audit)` / `agentsetup repin <pin>`: the new
+  pin arrives out of band; the new root is taken from a configured endpoint's chain (SPKI match + full
+  verification), key and leaf are untouched, and the state is rewritten in three loadable steps (bundle with
+  both roots, new pin, bundle without the old root). One audit event per use (Application log 4102/4103).
 - **Persistence.** `ca-bundle.pem`, `ca-pin.txt`, `endpoints.txt`, `key.pem` (0600, PKCS#8), `leaf.pem`
   in a 0700 directory, each by temp+rename, leaf last; `Load` re-validates everything. Nothing is written on
   any failure. On Windows the directory is created atomically with a protected DACL (SYSTEM, Administrators, the service identity; typed ACL API, no SDDL), a pre-existing directory is never adopted unless already owner-only, and Load re-checks owner and DACL of the directory and every file (T-0291). Reparse points (junctions, symlinks) are refused via the file attributes, not Go's FileInfo mapping. **Enrol identity:** the directory is owned by, and grants, the token user at enrol time, so enrol as the identity the service runs as (gMSA/virtual account); enrolling as an interactive admin and running as another account fails closed on Load. The installer should own the parent directory. Load returns ErrExpired for an expired leaf or CA.
-- **Dial-out.** `dial.DialOut(addr, state)` uses `Credentials`: TLS 1.3, roots exactly the pinned CAs.
+- **Dial-out.** `dial.DialOut(addr, state)` uses `Credentials`: TLS 1.3, roots exactly `State.Roots` (the pinned server CA); a leaf signed by a tenant CA is refused as a server.
   Nothing retries or falls back; retry policy is the caller's and must reuse the same pin.
 - **Seam.** `dial` imports no generated proto; the role package supplies `Exchange` (fleetv1 Enroll call).
 
 ## Gateway transport and per-RPC authentication (T-0156)
 
-`internal/platform/fleet/gateway.go`. Contract-agnostic (no generated-stub import): the composer
+`internal/platform/fleet/gateway/gateway.go (package gateway; moved out of the agent closure by T-0688 ruling 3, with hub.go)`. Contract-agnostic (no generated-stub import): the composer
 mounts the `Fleet` service on the server `Gateway.NewServer` builds and states every method's auth class.
 
 - **Listener**: `NewServer` builds its own TLS (no caller `tls.Config`; the gateway's credentials and interceptors are applied after caller options so they cannot be replaced): TLS 1.3 with `VerifyClientCertIfGiven` (Enroll must work without a
@@ -172,6 +263,12 @@ mounts the `Fleet` service on the server `Gateway.NewServer` builds and states e
   which is `Usable` plus "presented serial == `components.cert_serial`". After `Rotate` the old leaf gets
   `Unauthenticated` until it expires. The open-stream re-check calls `Usable`, which ignores the serial,
   so a rotation does not drop the stream it was made on.
+- **Superseded certificate is a theft signal (T-0300)**: when a CA-verified, unexpired leaf is not
+  `Current` but the component is still `Usable`, the gateway calls the optional `Config.Superseded`
+  (`fleet.SupersededReporter`, implemented by `fleetsql.SupersededReporter`): a fleet alert plus an audit
+  event naming the component, the presented serial and the current serial. At most once per component per
+  `Config.SupersededWindow` (default 10 min). The refusal stays `Unauthenticated`; a reporter error is
+  logged. The response is Revoke.
 - **Open streams are closed**: authenticated streams are registered by (tenant, component).
   `Gateway.CloseComponent` cancels them at once. The interceptor runs the handler on its own goroutine
   and returns `Unauthenticated` as soon as the stream is revoked, so grpc ends the transport stream and
@@ -183,6 +280,14 @@ mounts the `Fleet` service on the server `Gateway.NewServer` builds and states e
   enrolled/active to revoked, appends `fleet.component.revoked` (actor = the human or token principal,
   target = component GUID, cert serial) in the same transaction, then calls `StreamCloser`. Revoking an
   unused enrollment token is T-0153's.
+- **CA withdrawal (T-0777)**: `fleetsql.CAAdmin.Withdraw` (`withdraw.go`) is the committing process of the
+  F-POOL-8 bound. It requires the principal's tenant to equal the target tenant, checks `fleet.ca.withdraw` server-side, requires a fresh step-up (`StepUp`, `ErrStepUpRequired`), moves an active or retired `fleet_ca` row to
+  `withdrawn` (sealed key destroyed), inserts the replacement active CA in the same transaction when the
+  withdrawn row was the active one (a retired row's withdrawal keeps the existing active CA), and appends
+  `fleet.ca.withdrawn` (human actor, CA GUID, tenant, CA serial and SPKI, previous state, reason,
+  replacement SPKI) in that transaction. After the commit it calls `PoolInvalidator.Invalidate` and
+  `TenantCloser.CloseTenant` (both required ports; `*gateway.PoolProvider`, `*gateway.Gateway`). No API route yet:
+  the composer and API tickets wire it.
 - **Not yet wired**: the composer must pass the same `Lifecycle` as `Config.Components` and `Streams`
   (the gateway), and expose Revoke on the API; both belong to the compose/API tickets.
 
@@ -217,5 +322,19 @@ the generated stubs: the compose adapter that serves `Fleet.Tunnel` translates `
   metacharacters as `\uXXXX`) and reachable only through `ComponentReported(err)`, for a typed
   `component_reported` field. It is logged only as the structured `component_reported` attribute and is
   never in an error string or an audit summary. What the server sends is `FixedText(code)`.
-- **Not here.** Credit accounting and the numeric flow-control limits (TM-TB6-T7); the compose adapter
-  that serves `Fleet.Tunnel`, the audit `Reporter` and the connector `Bindings`; the `fleet/dial` wiring.
+- **Late frames.** A frame for an id this side certainly used (its own below `nextID`, the peer's at or
+  below the highest open seen) that has aged out of the tombstone window is dropped like a tombstone's;
+  its data is returned to the tunnel window. A peer id it skipped is indistinguishable, so it is also dropped.
+- **Compose adapter (T-0287).** `internal/compose/server/fleettunnel.go`: `ServeTunnel(TunnelDeps, stream)`
+  translates `TunnelFrame` to `fleet.Frame`, resolves `Bindings.For(identity)` (only `connector` is bound,
+  server opens every `Connector` method), builds a server-role `Mux`, `Hub.Attach`es it and runs
+  `Mux.Run(stream.Context())` on the gateway's derived context, so `CloseComponent` or the re-check fails
+  the Mux and the Hub refuses the component. `fleetsql.TunnelReporter` implements `Reporter` over the audit
+  port: `fleet.tunnel.protocol_error`, outcome denied, reason and `violation` detail = the fixed violation,
+  target = the component GUID, no peer text. The peer's `CallClose` text stays a structured log attribute
+  (`component_reported`); the `Reporter` interface carries none, so no audit consumer exists for it yet.
+  `server.NewFleetService(enroller, TunnelDeps)` builds the `Fleet` service (Enroll + Tunnel) the gateway mounts.
+  Proof: `compose/fleetproof/tunnel_test.go` serves that real service under the real gateway with the real
+  `TunnelReporter` over a seeded database: revoke, pending call outcome unknown, hub refuses, sibling
+  unaffected; a violation lands as an audit event targeting the component.
+- **Not here.** Building the gateway, Hub and listener in `server.Run` (no fleet listener is composed yet); the `fleet/dial` wiring.

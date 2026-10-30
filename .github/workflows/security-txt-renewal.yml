@@ -1,0 +1,39 @@
+# T-0261: renewal job for .well-known/security.txt (RFC 9116 Expires).
+# Weekly: when Expires is under 90 days away, bump it (tools/release/renewsecuritytxt) and propose the
+# change as a pull request. `make fitness-disclosure` fails 30 days before Expires, so a PR is open at
+# least 60 days before CI turns red. Runbook: knowledge/development/runbooks/release-and-security-txt.md
+name: security-txt-renewal
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch: {}
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  renew:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+      - name: Renew Expires when due
+        id: renew
+        run: echo "state=$(go run ./tools/release/renewsecuritytxt -write)" >> "$GITHUB_OUTPUT"
+      - name: Propose the renewal
+        if: steps.renew.outputs.state == 'renew'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          branch="chore/security-txt-renewal-$(date -u +%Y%m%d)"
+          git config user.name "activeDIQ release bot"
+          git config user.email "noreply@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add .well-known/security.txt
+          git commit -m "chore: renew security.txt Expires"
+          git push origin "$branch"
+          gh pr create --base main --head "$branch" \
+            --title "chore: renew security.txt Expires" \
+            --body "Automated by security-txt-renewal (T-0261). Expires was under 90 days away. Read SECURITY.md for anything stale, then merge; run make fitness-disclosure."

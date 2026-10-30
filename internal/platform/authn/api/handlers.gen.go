@@ -13,10 +13,19 @@ import (
 
 // CreateWebAuthnSignInChallengeInput is the decoded input of createWebAuthnSignInChallenge: path, query and header parameters, then the body.
 type CreateWebAuthnSignInChallengeInput struct {
+	HostAdiqPending apitypes.CookieValue // cookie "__Host-adiq_pending"
+	PeerIP          string               // the client address: the TCP peer, or the right-most untrusted X-Forwarded-For hop when the peer is a configured trusted proxy (ACTIVEDIQ_TRUSTED_PROXIES)
 }
 
 func (in *CreateWebAuthnSignInChallengeInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
 	_ = r
+	{
+		vs := r.Cookies["__Host-adiq_pending"]
+		if len(vs) == 1 {
+			in.HostAdiqPending = apitypes.NewCookieValue(vs[0])
+		}
+	}
+	in.PeerIP = r.PeerIP
 }
 
 func (in *CreateWebAuthnSignInChallengeInput) BodyTarget() any { return nil }
@@ -157,11 +166,20 @@ func (SignOut204) isSignOutOutput() {}
 
 // VerifyTOTPSignInInput is the decoded input of verifyTotpSignIn: path, query and header parameters, then the body.
 type VerifyTOTPSignInInput struct {
-	Body TotpCodeRequest
+	HostAdiqPending apitypes.CookieValue // cookie "__Host-adiq_pending"
+	PeerIP          string               // the client address: the TCP peer, or the right-most untrusted X-Forwarded-For hop when the peer is a configured trusted proxy (ACTIVEDIQ_TRUSTED_PROXIES)
+	Body            TotpCodeRequest
 }
 
 func (in *VerifyTOTPSignInInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
 	_ = r
+	{
+		vs := r.Cookies["__Host-adiq_pending"]
+		if len(vs) == 1 {
+			in.HostAdiqPending = apitypes.NewCookieValue(vs[0])
+		}
+	}
+	in.PeerIP = r.PeerIP
 }
 
 func (in *VerifyTOTPSignInInput) BodyTarget() any { return &in.Body }
@@ -183,27 +201,38 @@ type VerifyTOTPSignInOutput interface {
 
 // VerifyTOTPSignIn204 is the 204 response.
 type VerifyTOTPSignIn204 struct {
-	SetCookie string // header Set-Cookie
+	SetCookie []string // header Set-Cookie, one line per value
 }
 
 func (VerifyTOTPSignIn204) StatusCode() int   { return 204 }
 func (VerifyTOTPSignIn204) ResponseBody() any { return nil }
 func (o VerifyTOTPSignIn204) ResponseHeaders() map[string]string {
 	h := map[string]string{}
-	if o.SetCookie != "" {
-		h["Set-Cookie"] = o.SetCookie
-	}
 	return h
+}
+func (o VerifyTOTPSignIn204) ResponseHeaderLists() map[string][]string {
+	return map[string][]string{
+		"Set-Cookie": o.SetCookie,
+	}
 }
 func (VerifyTOTPSignIn204) isVerifyTOTPSignInOutput() {}
 
 // VerifyWebAuthnSignInInput is the decoded input of verifyWebAuthnSignIn: path, query and header parameters, then the body.
 type VerifyWebAuthnSignInInput struct {
-	Body WebAuthnAssertion
+	HostAdiqPending apitypes.CookieValue // cookie "__Host-adiq_pending"
+	PeerIP          string               // the client address: the TCP peer, or the right-most untrusted X-Forwarded-For hop when the peer is a configured trusted proxy (ACTIVEDIQ_TRUSTED_PROXIES)
+	Body            WebAuthnAssertion
 }
 
 func (in *VerifyWebAuthnSignInInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
 	_ = r
+	{
+		vs := r.Cookies["__Host-adiq_pending"]
+		if len(vs) == 1 {
+			in.HostAdiqPending = apitypes.NewCookieValue(vs[0])
+		}
+	}
+	in.PeerIP = r.PeerIP
 }
 
 func (in *VerifyWebAuthnSignInInput) BodyTarget() any { return &in.Body }
@@ -223,17 +252,19 @@ type VerifyWebAuthnSignInOutput interface {
 
 // VerifyWebAuthnSignIn204 is the 204 response.
 type VerifyWebAuthnSignIn204 struct {
-	SetCookie string // header Set-Cookie
+	SetCookie []string // header Set-Cookie, one line per value
 }
 
 func (VerifyWebAuthnSignIn204) StatusCode() int   { return 204 }
 func (VerifyWebAuthnSignIn204) ResponseBody() any { return nil }
 func (o VerifyWebAuthnSignIn204) ResponseHeaders() map[string]string {
 	h := map[string]string{}
-	if o.SetCookie != "" {
-		h["Set-Cookie"] = o.SetCookie
-	}
 	return h
+}
+func (o VerifyWebAuthnSignIn204) ResponseHeaderLists() map[string][]string {
+	return map[string][]string{
+		"Set-Cookie": o.SetCookie,
+	}
 }
 func (VerifyWebAuthnSignIn204) isVerifyWebAuthnSignInOutput() {}
 
@@ -256,6 +287,7 @@ func Bind(h Handlers) apihost.TagHandlers {
 			OperationID: "createWebAuthnSignInChallenge", Tag: "platform.authn", Method: "POST", Path: "/auth/second-factor/webauthn/challenge",
 			Permission: "anonymous", Anonymous: "AN-10", Scope: "platform", Stability: "preview", Deprecated: false, Sunset: "",
 			Class: "auth", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
+			Cookies: []string{"__Host-adiq_pending"},
 		},
 			func() apihost.Input { return new(CreateWebAuthnSignInChallengeInput) },
 			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
@@ -320,6 +352,7 @@ func Bind(h Handlers) apihost.TagHandlers {
 			OperationID: "verifyTotpSignIn", Tag: "platform.authn", Method: "POST", Path: "/auth/second-factor/totp/verify",
 			Permission: "anonymous", Anonymous: "AN-10", Scope: "platform", Stability: "preview", Deprecated: false, Sunset: "",
 			Class: "auth", MaxBody: 1024, Body: apihost.BodyJSON, MediaType: "application/json", Secret: true,
+			Cookies: []string{"__Host-adiq_pending"},
 		},
 			func() apihost.Input { return new(VerifyTOTPSignInInput) },
 			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
@@ -336,6 +369,7 @@ func Bind(h Handlers) apihost.TagHandlers {
 			OperationID: "verifyWebAuthnSignIn", Tag: "platform.authn", Method: "POST", Path: "/auth/second-factor/webauthn/verify",
 			Permission: "anonymous", Anonymous: "AN-10", Scope: "platform", Stability: "preview", Deprecated: false, Sunset: "",
 			Class: "auth", MaxBody: 16384, Body: apihost.BodyJSON, MediaType: "application/json", Secret: false,
+			Cookies: []string{"__Host-adiq_pending"},
 		},
 			func() apihost.Input { return new(VerifyWebAuthnSignInInput) },
 			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {

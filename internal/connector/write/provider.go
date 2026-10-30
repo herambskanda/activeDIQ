@@ -56,6 +56,87 @@ type PropertyGuard interface {
 
 var _ PropertyGuard = (*tier0.Set)(nil)
 
+// DCBinder is what an AD provider needs for rule 5: the identity of the DC its binding uses, read
+// live on that binding. An AD provider that is not a DCBinder refuses every write.
+type DCBinder interface {
+	BoundDC(ctx context.Context) (*connectorv1.DcIdentity, error)
+}
+
+// SessionDC reads the bound DC from an *ad.Session.
+type SessionDC struct{ S *ad.Session }
+
+func (d SessionDC) BoundDC(ctx context.Context) (*connectorv1.DcIdentity, error) {
+	id, err := d.S.DCIdentity(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &connectorv1.DcIdentity{DsaGuid: toWire(id.DSAGUID), InvocationId: toWire(id.InvocationID), DnsHostname: id.DNSHostName, Site: id.Site}, nil
+}
+
+// NewADProvider is the production constructor. Dir, Bound (and, through the caller, the write ops)
+// are all built over the one sess, so the DC whose identity rule 5 checks is the DC the reads and
+// writes reach. A binder on another session would re-open the TOCTOU rule 5 closes.
+func NewADProvider(sess *ad.Session, gc *ad.GCResolver, id *connectorv1.DirectoryIdentity, pins PinStore) *ADProvider {
+	return &ADProvider{
+		Dir:   tier0.SessionDirectory{S: sess, GC: gc},
+		ID:    id,
+		Pins:  pins,
+		Bound: SessionDC{S: sess},
+	}
+}
+
+// sameSession is false when Dir and Bound are both session-backed but over different sessions.
+// Anything else (a test double on either side) is not a session mismatch.
+func (p *ADProvider) sameSession() bool {
+	var ds *ad.Session
+	switch d := p.Dir.(type) {
+	case tier0.SessionDirectory:
+		ds = d.S
+	case *tier0.SessionDirectory:
+		if d != nil {
+			ds = d.S
+		}
+	}
+	var bs *ad.Session
+	switch b := p.Bound.(type) {
+	case SessionDC:
+		bs = b.S
+	case *SessionDC:
+		if b != nil {
+			bs = b.S
+		}
+	}
+	return ds == nil || bs == nil || ds == bs
+}
+
+// OverSession is true only when the provider's directory and its bound-DC binder are both
+// session-backed and both over s. A test double on either side is false: a caller that needs the
+// reads, the classification and the DC identity to come from one DC (the Read pin) must not accept
+// anything it cannot prove.
+func (p *ADProvider) OverSession(s *ad.Session) bool {
+	if p == nil || s == nil {
+		return false
+	}
+	var ds, bs *ad.Session
+	switch d := p.Dir.(type) {
+	case tier0.SessionDirectory:
+		ds = d.S
+	case *tier0.SessionDirectory:
+		if d != nil {
+			ds = d.S
+		}
+	}
+	switch b := p.Bound.(type) {
+	case SessionDC:
+		bs = b.S
+	case *SessionDC:
+		if b != nil {
+			bs = b.S
+		}
+	}
+	return ds == s && bs == s
+}
+
 // ADProvider classifies through the AD classifier of T-0093 over an ADDirectory.
 type ADProvider struct {
 	Dir tier0.ADDirectory
@@ -71,6 +152,8 @@ type ADProvider struct {
 	// checked against (the synced AD user is matched by rules on the Entra side, TM-D25 7f). Nil
 	// refuses every property write.
 	Dynamic PropertyGuard
+	// Bound reports the DC the connector is bound to (rule 5). Nil refuses every write.
+	Bound DCBinder
 }
 
 var _ Provider = (*ADProvider)(nil)
@@ -91,6 +174,20 @@ var ErrNoPins = errors.New("write: C13 pin store not configured")
 func (p *ADProvider) Kind() connectorv1.ProviderKind {
 	return connectorv1.ProviderKind_PROVIDER_KIND_AD
 }
+
+// BoundDC implements DCBinder; with no Bound configured it fails closed.
+func (p *ADProvider) BoundDC(ctx context.Context) (*connectorv1.DcIdentity, error) {
+	if p.Bound == nil {
+		return nil, ErrNoBoundDC
+	}
+	if !p.sameSession() {
+		return nil, ErrNoBoundDC // binder and directory on different sessions: not the DC the writes reach
+	}
+	return p.Bound.BoundDC(ctx)
+}
+
+// ErrNoBoundDC is returned when the provider cannot say which DC it is bound to.
+var ErrNoBoundDC = errors.New("write: bound DC identity not available")
 
 func (p *ADProvider) Identity() *connectorv1.DirectoryIdentity { return p.ID }
 

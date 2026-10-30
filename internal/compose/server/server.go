@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/skenzeriq/activediq/internal/platform/notify/syslog"
 	"log/slog"
 	"net"
 	"net/http"
@@ -14,12 +15,17 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/compose/config"
 	"github.com/skenzeriq/activediq/internal/directory"
+	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/platform"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/apitls"
 	"github.com/skenzeriq/activediq/internal/platform/capability"
+	"github.com/skenzeriq/activediq/internal/webui"
+
+	"github.com/skenzeriq/activediq/internal/platform/fleet/gateway"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
+	"github.com/skenzeriq/activediq/internal/platform/keys"
 	"github.com/skenzeriq/activediq/internal/platform/limiter"
 	"github.com/skenzeriq/activediq/internal/platform/module"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
@@ -31,15 +37,20 @@ import (
 var ErrNoDatabase = errors.New("server: no database configured (" + config.EnvDatabaseDSN + ")")
 
 // Run runs the server role until ctx is done: it boots the modules, opens the store and runs the job
-// worker. When ctx ends the worker stops claiming and drains; Run returns jobs.ErrDrainTimeout (wrapped)
+// worker. getenv (os.Getenv in the binary) reads the KEK settings, which are named and validated only
+// in this package (LoadKEKConfig). When ctx ends the worker stops claiming and drains; Run returns jobs.ErrDrainTimeout (wrapped)
 // if running bodies ignored the forced cancellation, which the binary turns into a non-zero exit.
-func Run(ctx context.Context, cfg config.Config) error {
+func Run(ctx context.Context, cfg config.Config, getenv func(string) string) error {
 	if cfg.DatabaseDSN == "" {
 		return ErrNoDatabase
 	}
 	// The identity is settled before anything is opened too: a non-loopback bind without a TLS
 	// directory, or an unwritable one, fails startup here.
-	id, err := apiIdentity(cfg, time.Now())
+	kc, err := LoadKEKConfig(getenv)
+	if err != nil {
+		return fmt.Errorf("server: %w", err)
+	}
+	id, kekp, err := apiIdentityProvider(cfg, kc, time.Now())
 	if err != nil {
 		return err
 	}
@@ -68,21 +79,119 @@ func Run(ctx context.Context, cfg config.Config) error {
 	if err != nil {
 		return fmt.Errorf("server: rate limiter: %w", err)
 	}
-	api, err := buildAPI(cfg, lim)
-	if err != nil {
-		return err
-	}
 	// The operation runner, its audit chainer and live facts. The registry is empty until modules
 	// contribute Actions; boot still asserts the minter and the wiring.
 	reg, err := operation.NewRegistry()
 	if err != nil {
 		return fmt.Errorf("server: operation registry: %w", err)
 	}
-	authzr, err := rbacAuthorizer(db)
+	// The connector endpoint source: a connection resolves, under the context's tenant, to its active
+	// component binding's tunnel on the fleet hub (mutual TLS, established by the component). The Tier-0
+	// verdict arrives in the Read header from the connector, so no separate verdict source exists.
+	conns := connection.NewRegistry(db)
+	src, err := client.NewTunnelSource(conns, conns, gateway.NewHub())
+	if err != nil {
+		return fmt.Errorf("server: connector source: %w", err)
+	}
+	// Lab builds only (T-0684): an env-configured lab seeds an active connection served by an in-process
+	// connector; the production build's labBootstrap returns src unchanged.
+	csrc, labSeed, labClose, err := labBootstrap(ctx, getenv, src)
 	if err != nil {
 		return err
 	}
-	if _, err := buildOperation(operation.HoldsMinter, db, directoryFacts(nil), authzr, reg); err != nil {
+	defer labClose()
+	reads, err := directoryReads(conns, csrc)
+	if err != nil {
+		return err
+	}
+	// The Tier0Context builder every write Plan and Apply carries; a missing source fails startup.
+	t0, err := buildTier0(db, reads)
+	if err != nil {
+		return err
+	}
+	vopts, err := verifyOptions(csrc)
+	if err != nil {
+		return err
+	}
+	dirClient := directoryFacts(reads, append(vopts, client.WithTier0Builder(t0))...)
+	authzr, err := rbacAuthorizer(db, dirClient)
+	if err != nil {
+		return err
+	}
+	dcs, err := client.NewDCDirectory(conns, csrc)
+	if err != nil {
+		return fmt.Errorf("server: DC directory: %w", err)
+	}
+	pinner, err := newDCPinner(dcs)
+	if err != nil {
+		return err
+	}
+	ok, err := buildOperation(operation.HoldsMinter, db, dirClient, authzr, reg, pinner)
+	if err != nil {
+		return err
+	}
+	// The console authentication stack: sessions, the cookie Authenticator and the step-up check. The
+	// tenant-owner writer shares its session store (it ends a changed owner's sessions).
+	console, err := buildConsole(db, ok.Chainer, keys.NewStore(kekp).KeySource(), slog.Default())
+	if err != nil {
+		return err
+	}
+	ownerWriter, err := buildOwnerAssignments(db, ok.Chainer, console.Sessions)
+	if err != nil {
+		return err
+	}
+	firstOwner, err := newFirstOwners(db, ok.Chainer, ownerWriter)
+	if err != nil {
+		return err
+	}
+	// The TM-D17 attestation routes, when the install is configured for them. Built after the
+	// authorizer, which they share with the operation runner.
+	tags, err := buildAttestation(cfg, db, ok.Chainer, authzr, sessionStepUp{console.StepUp})
+	if err != nil {
+		return err
+	}
+	// The SIEM destination routes (siem.destination.manage). The audit chainer is the store's sink.
+	siem, err := syslog.NewStore(db, ok.Chainer)
+	if err != nil {
+		return err
+	}
+	tags = append(tags, syslog.Handlers{Store: siem}.Bind())
+	// First-run setup (TM-TB16-T7, AN-4): an unclaimed install holds a one-time secret the installing
+	// administrator reads from the setup directory; the claim route consumes it. Needs the TLS directory.
+	setupTags, err := buildSetup(cfg, time.Now, firstOwner)
+	if err != nil {
+		return err
+	}
+	tags = append(tags, setupTags...)
+	// directory.users.search: the connection registry for the active connection and its service-account
+	// gate, the connector source for the ScopedSearch RPC (over the tunnel the connector dialled).
+	dirTag, err := buildDirectory(db, conns, csrc)
+	if err != nil {
+		return err
+	}
+	tags = append(tags, dirTag)
+	cat := permissionCatalogue()
+	if err := checkCatalogue(cat); err != nil {
+		return err
+	}
+	api, err := buildAPIPorts(cfg, cat, console.ports(lim, authzr, cat), tags...)
+	if err != nil {
+		return err
+	}
+	// Modules and platform packages contribute job kinds to this registry; the worker runs it.
+	jreg := jobs.NewRegistry()
+	connKernel, err := buildConnections(db, ok.Chainer, dirClient, jreg)
+	if err != nil {
+		return err
+	}
+	// The tenant, its data key and its audit genesis exist before anything listens or the worker claims.
+	tid, err := bootstrapTenant(ctx, cfg, db, ok.Chainer, kekp, jreg)
+	if err != nil {
+		return err
+	}
+	firstOwner.SetTenant(tid) // the claim route can now create the first owner
+	// Lab builds only (T-0684): create and activate the lab connections through the real activation path.
+	if err := labSeed(ctx, conns, connKernel.Service, tid); err != nil {
 		return err
 	}
 	ln, err := net.Listen("tcp", cfg.APIAddr)
@@ -95,13 +204,17 @@ func Run(ctx context.Context, cfg config.Config) error {
 	go func() { serveErr <- srv.ServeTLS(ln, "", "") }()
 	slog.Info("server: api listening (TLS)", "addr", ln.Addr().String(), "tls_cert_sha256", id.Fingerprint)
 
-	// Modules contribute job kinds to this registry once the Registrar grows a Job method; until then
-	// it is empty and the worker only runs its maintenance timers.
+	ops, err := startOps(cfg, id.TLSConfig())
+	if err != nil {
+		_ = srv.Close()
+		return err
+	}
+
 	wctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	workerErr := make(chan error, 1)
 	go func() {
-		workerErr <- runWorker(wctx, db, jobs.NewRegistry(), jobs.WorkerConfig{Holder: cfg.InstanceID, ShutdownGrace: cfg.ShutdownGrace})
+		workerErr <- runWorker(wctx, db, jreg, jobs.WorkerConfig{Holder: cfg.InstanceID, ShutdownGrace: cfg.ShutdownGrace})
 	}()
 
 	var firstErr error
@@ -111,6 +224,8 @@ func Run(ctx context.Context, cfg config.Config) error {
 	case err := <-serveErr:
 		firstErr = fmt.Errorf("server: api listener: %w", err)
 		serveErr = nil
+	case err := <-ops.err():
+		firstErr = fmt.Errorf("server: ops listener: %w", err)
 	}
 	cancel()
 	// The listener stops accepting and in-flight requests get the shutdown grace.
@@ -125,6 +240,9 @@ func Run(ctx context.Context, cfg config.Config) error {
 	if serveErr != nil {
 		<-serveErr
 	}
+	if err := ops.shutdown(sctx); err != nil && firstErr == nil {
+		firstErr = err
+	}
 	if workerErr != nil {
 		if err := <-workerErr; err != nil && firstErr == nil {
 			firstErr = err
@@ -135,35 +253,48 @@ func Run(ctx context.Context, cfg config.Config) error {
 
 // apiIdentity validates the listen address against the TLS configuration and loads or generates the
 // per-install certificate.
-func apiIdentity(cfg config.Config, now time.Time) (apitls.Identity, error) {
-	if err := cfg.ValidateAPIListen(); err != nil {
-		return apitls.Identity{}, fmt.Errorf("server: %w", err)
-	}
-	id, err := apitls.LoadOrGenerate(cfg.APITLSDir, cfg.APIAddr, now)
-	if err != nil {
-		return apitls.Identity{}, fmt.Errorf("server: api tls: %w", err)
-	}
-	return id, nil
+func apiIdentity(cfg config.Config, kc KEKConfig, now time.Time) (apitls.Identity, error) {
+	id, _, err := apiIdentityProvider(cfg, kc, now)
+	return id, err
 }
 
-// buildAPI makes the API handler: apihost.Build over the embedded contract and the embedded
-// policy.yaml, with the body budget from configuration. No module contributes routes yet, so every
-// tag is unmounted and answers a problem.
-func buildAPI(cfg config.Config, lim apihost.Limiter) (http.Handler, error) {
+// apiIdentityProvider is apiIdentity that also returns the unlocked KEK provider, so the keystore is opened
+// (and its passphrase stretched) once per boot and the same provider serves the tenant DEK source.
+func apiIdentityProvider(cfg config.Config, kc KEKConfig, now time.Time) (apitls.Identity, keys.Provider, error) {
+	if err := cfg.ValidateAPIListen(); err != nil {
+		return apitls.Identity{}, nil, fmt.Errorf("server: %w", err)
+	}
+	// The KEK provider is unlocked first and any failure (no keystore, wrong passphrase, corrupt file) stops
+	// startup: there is no fallback to an unsealed key and nothing is generated here.
+	if err := kc.checkPlacement(cfg.APITLSDir); err != nil {
+		return apitls.Identity{}, nil, fmt.Errorf("server: %w", err)
+	}
+	p, err := platformKeyProvider(kc)
+	if err != nil {
+		return apitls.Identity{}, nil, fmt.Errorf("server: key provider: %w", err)
+	}
+	id, err := apitls.LoadOrGenerateSealed(cfg.APITLSDir, cfg.APIAddr, now, p)
+	if err != nil {
+		return apitls.Identity{}, nil, fmt.Errorf("server: api tls: %w", err)
+	}
+	return id, p, nil
+}
+
+// buildAPIPorts makes the API handler over the given ports: Run mounts the console stack's.
+func buildAPIPorts(cfg config.Config, cat apihost.Permissions, ports apihost.Ports, tags ...apihost.TagHandlers) (http.Handler, error) {
 	policy, err := apihost.LoadPolicy()
 	if err != nil {
 		return nil, fmt.Errorf("server: api policy: %w", err)
 	}
-	return buildAPIWith(cfg, policy, lim)
+	return buildAPIPortsWith(cfg, policy, cat, ports, tags...)
 }
 
-// buildAPIWith is buildAPI over a given policy; tests use it to prove the router follows policy.yaml.
-func buildAPIWith(cfg config.Config, policy apihost.Policy, lim apihost.Limiter) (http.Handler, error) {
+func buildAPIPortsWith(cfg config.Config, policy apihost.Policy, cat apihost.Permissions, ports apihost.Ports, tags ...apihost.TagHandlers) (http.Handler, error) {
 	doc, err := apihost.LoadDocument()
 	if err != nil {
 		return nil, fmt.Errorf("server: api contract: %w", err)
 	}
-	s, err := apihost.Build(doc, nil, policy, apiCatalogue, failClosedPorts(lim), apihost.WithBodyBudget(cfg.APIBodyBudget))
+	s, err := apihost.Build(doc, tags, policy, cat, ports, apihost.WithBodyBudget(cfg.APIBodyBudget), apihost.WithTrustedProxies(cfg.TrustedProxies), apihost.WithConsole(webui.Console()))
 	if err != nil {
 		return nil, fmt.Errorf("server: build api: %w", err)
 	}

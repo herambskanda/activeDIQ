@@ -28,6 +28,9 @@ type OverrideSource interface {
 	Tier0OverrideInForce(ctx context.Context, tid tenant.ID, id connection.ID) (*connection.Tier0Override, error)
 }
 
+var _ OverrideSource = (*connection.Registry)(nil)
+var _ RevisionSource = (*inventory.Reader)(nil)
+
 // ConnectionSource reads a connection's kind and directory identity (DM-10).
 type ConnectionSource interface {
 	Get(ctx context.Context, tid tenant.ID, id connection.ID) (connection.Connection, error)

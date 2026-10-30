@@ -3,8 +3,10 @@ package apihost
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"path"
 	"slices"
 	"sort"
@@ -39,6 +41,13 @@ func WithAnonymousBodyBudget(bytes int64) Option {
 	return func(s *Server) { s.anonBudgetTotal, s.anonSet = bytes, true }
 }
 
+// WithTrustedProxies sets the CIDRs of the reverse proxies / load balancers allowed to assert a client
+// address in X-Forwarded-For. With none (the default) forwarded headers are ignored entirely and the
+// TCP peer is the client for rate limits, audit and Request.PeerIP.
+func WithTrustedProxies(p []netip.Prefix) Option {
+	return func(s *Server) { s.trustedProxies = slices.Clone(p) }
+}
+
 // Server is the built API router. It is an http.Handler that answers every path with either a
 // route of the document or a problem.
 type Server struct {
@@ -50,6 +59,9 @@ type Server struct {
 	unmounted  []string
 	budget     *bodyBudget // authenticated routes: total minus the anonymous slice
 	anonBudget *bodyBudget // anonymous routes only
+	console    fs.FS       // the built console, or nil (WithConsole)
+
+	trustedProxies []netip.Prefix
 
 	budgetTotal, anonBudgetTotal int64
 	budgetSet, anonSet           bool
@@ -256,11 +268,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	h, pattern := s.mux.Handler(r)
 	if pattern != "" {
-		h.ServeHTTP(w, r)
+		// ServeHTTP, not h.ServeHTTP: only the mux's own dispatch records the matched wildcards that
+		// r.PathValue reads, so calling the handler directly left every path parameter empty.
+		s.mux.ServeHTTP(w, r)
 		return
 	}
 	probe := &statusProbe{header: http.Header{}}
 	h.ServeHTTP(probe, r)
+	if probe.status == http.StatusNotFound && s.serveConsole(w, r) {
+		return
+	}
 	if probe.status == http.StatusMethodNotAllowed {
 		if allow := probe.header.Get("Allow"); allow != "" {
 			w.Header().Set("Allow", allow)

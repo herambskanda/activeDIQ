@@ -439,7 +439,7 @@ func (c *refusingConnector) Plan(_ context.Context, r *connectorv1.PlanRequest) 
 	if err := c.check(r.GetTier0()); err != nil {
 		return nil, err
 	}
-	return &connectorv1.PlanResponse{}, nil
+	return &connectorv1.PlanResponse{Precondition: &connectorv1.TargetPrecondition{Dc: &connectorv1.DcIdentity{DsaGuid: r.GetDc().GetPinnedDsaGuid()}}}, nil
 }
 func (c *refusingConnector) Apply(_ context.Context, r *connectorv1.ApplyRequest) (*connectorv1.ApplyResponse, error) {
 	c.applies = append(c.applies, r.GetTier0())

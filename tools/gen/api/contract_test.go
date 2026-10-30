@@ -252,3 +252,19 @@ func TestAnonymousOperationMustBePlatformScope(t *testing.T) {
 		mustFail(t, contract(t, append(addGadgets(""), edit{"modules/gadgets.yaml", at, anon})...), "anonymous operation has no tenant source", "x-activediq-scope: platform")
 	})
 }
+
+func TestSessionCookieIsNeverAParameter(t *testing.T) {
+	err := contract(t, edit{"modules/widgets.yaml", "- name: claim_ticket\n          in: cookie", "- name: __Host-adiq_session\n          in: cookie"})
+	mustFail(t, err, "session cookie", "authenticator")
+}
+
+// TestCredentialHeadersAreNeverParameters pins T-0443: Request.Header is the full r.Header, so a
+// header parameter named for a credential would give a handler the raw session token.
+func TestCredentialHeadersAreNeverParameters(t *testing.T) {
+	for _, name := range []string{"Cookie", "cookie", "Authorization", "AUTHORIZATION", "Proxy-Authorization", "X-Forwarded-For", "x-forwarded-host", "Forwarded", "X-Real-IP", "x-csrf-token", "X-CSRF-Token", "True-Client-IP"} {
+		t.Run(name, func(t *testing.T) {
+			err := contract(t, edit{"modules/widgets.yaml", "- name: claim_ticket\n          in: cookie", "- name: " + name + "\n          in: header"})
+			mustFail(t, err, "authenticator", name)
+		})
+	}
+}

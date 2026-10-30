@@ -1,0 +1,10 @@
+{
+ "id": "S-F08",
+ "class": "forged",
+ "cites": [
+  "SAML-7"
+ ],
+ "build": "hmac_method",
+ "expect": "refuse",
+ "reason": "saml.alg"
+}

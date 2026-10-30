@@ -35,7 +35,7 @@ air-gapped runner). A violation names the table (or file:line) and the rule: `T2
 | T1 | Migration 1 does not create `public.tenants` with uuid `id` and `parent_tenant_id`; an object has a lower OID than `tenants`; files are not `NNNN_<owner>_<what>.sql`; the sequence does not start at 0001; a migration does not apply | `migration-1`, `tenants-first`, `tenants-columns`, `migration-name`, `migrations-apply` |
 | T2 | A tenant table (partitions included) lacks `tenant_id uuid NOT NULL` with an FK to `tenants`; RLS not ENABLE and FORCE; policy not exactly `tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid` for USING and WITH CHECK (no coalesce, no OR, no `true`, no extra permissive policy); `tenant_id` not first in the PK, every unique index (`pg_index.indisunique`: partial and expression indexes too) and every exclusion constraint; an FK into a tenant table that does not pair `tenant_id`; a view without `security_invoker`; a materialized view over a tenant table; a SECURITY DEFINER function not in the registry; registry entries that are reasonless, ownerless or stale; a registered-global table with an FK to a tenant table | `tenant-id`, `tenant-fk`, `rls-enable`, `rls-force`, `policy-shape`, `policy-missing`, `key-leading-tenant-id`, `fk-pairs-tenant-id`, `view-security-invoker`, `matview-over-tenant-table`, `security-definer`, `global-references-tenant`, `registry`, `registry-stale` |
 | T3 | The runtime role is a superuser, has BYPASSRLS, has REPLICATION (logical decoding streams every tenant's rows from the WAL past RLS) or owns an object (the product database itself included: a database owner can CREATE SCHEMA and `ALTER DATABASE SET search_path` for every session); it has TRUNCATE on a tenant table, CREATE on a product schema, CREATE on the product database or TEMPORARY on the database, directly, through `PUBLIC` or through any role it is a member of, with or without INHERIT (`SET ROLE` escapes it); it is a member (any option, `WITH INHERIT FALSE` and indirect included: same rule) of a superuser, a BYPASSRLS role, a REPLICATION role, the owner role, a role that owns objects or the database, or `pg_execute_server_program` / `pg_read_server_files` / `pg_write_server_files`; the owner (migration) role is a superuser, has BYPASSRLS or REPLICATION, or is a member (same reach) of a superuser, BYPASSRLS or REPLICATION role | `role-superuser`, `role-bypassrls`, `role-replication`, `role-membership`, `runtime-owns-object`, `runtime-truncate`, `runtime-create-schema`, `runtime-create-database`, `runtime-temporary` |
-| T4 | Generated probes with tenants A and B and rows identical except `tenant_id`: cross-tenant read, insert, update and delete as the runtime role; no-context read and write on a fresh connection; B's value blocks A (a global unique key); a cross-tenant foreign key; `app.tenant_id` still set on the same connection after commit or rollback (SQL-14); the data-access package carries a passing `TestPoolRefusesSimpleProtocol` once it has Go files (SQL-20) | `read-cross-tenant`, `write-cross-tenant`, `write-no-context`, `unique-global`, `fk-cross-tenant`, `session-leak`, `sql-20`, `probe-seed`, `probe-error` |
+| T4 | Generated probes with tenants A and B and rows identical except `tenant_id`: cross-tenant read, insert, update and delete as the runtime role; no-context read and write on a fresh connection; B's value blocks A (a global unique key); a cross-tenant foreign key; `app.tenant_id` still set on the same connection after commit or rollback (SQL-14); the data-access package carries a passing `TestPoolRefusesSimpleProtocol` once it has Go files (SQL-20); the blob isolation probe (TM-Q9, TM-TB4-T8, no database needed): with two tenants and the same key on `platform/blob`, B cannot read, overwrite or delete A's object, B's miss is `blob.ErrNotFound`, and every object on disk sits under its own tenant's prefix (`Options.Blob` injects a leaky store in tests) | `blob-read-cross-tenant`, `blob-write-cross-tenant`, `blob-delete-cross-tenant`, `blob-prefix`, `read-cross-tenant`, `write-cross-tenant`, `write-no-context`, `unique-global`, `fk-cross-tenant`, `session-leak`, `sql-20`, `probe-seed`, `probe-error` |
 | T5 | pgx imported outside `internal/platform/store`; River outside `internal/platform/jobs` (retired by the ADR-0002 amendment of 2026-10-02: River is **Rejected** in the licence register, so ADR-0001 F4 fails any import; T-0213 deletes this rule and adds `job-args-reference`); `set_config`/`SET` text outside `store`; SQL naming a registered-global table outside its owning package (Go strings and `.sql` query files), or in the report compiler's identifier registry; a `tenant.ID` minted (literal, conversion, a function returning one, index, slice) outside `tenant`, `authn`, `jobs`, registered functions and tests; `WithPlatform` called from an unregistered function; a type with `Kind() string` and no `tenant.ID` field that is not a registered platform job; `tenant.ID` with an Unmarshal/Scan/Set method; a tenant-scope OpenAPI operation with a `tenant_id` or `X-Tenant-*` parameter or body field | `pgx-boundary`, `river-boundary`, `set-config-text`, `global-table-sql`, `tenant-id-minting`, `with-platform-site`, `job-carries-tenant`, `tenant-id-decoder`, `openapi-tenant-param`, `registry-stale` |
 
 Checks that depend on something absent activate when it appears: T1 with the first migration, the SQL-20
@@ -50,6 +50,19 @@ unchanged there:
 
 - Two roles, both `LOGIN NOSUPERUSER NOBYPASSRLS`: **`activediq_owner`** (runs migrations, owns every
   object) and **`activediq_app`** (the runtime role; owns nothing).
+- A third role, **`activediq_catrust`** (T-0734; fleet-contract "Gateway client-CA pool"): `NOLOGIN NOSUPERUSER
+  NOBYPASSRLS NOCREATEROLE NOCREATEDB`, no password, created before the first migration. `activediq_owner` is its
+  only member (`ALTER FUNCTION ... OWNER TO` needs it); `activediq_app` never is, and the `0001` guard and
+  `store.roleRisk` refuse that membership. It owns exactly one object, `fleet_ca_trust_anchors()`, and holds
+  `SELECT` on six public columns of `fleet_ca` only. `pgharness`, `storetest` and the installer create it the same way.
+  T3 runs F-POOL-1/2/4 against it (`tools/fitness/tenancy/catrust.go`, rules `pool-*`): role attributes, members and
+  memberships against `pgharness.CatrustMemberships`, no `CREATE` on a schema, no write privilege, no privilege on
+  `sealed_key`/`key_version`/`created_at`, exactly one owned object, the function's `prosecdef`, `proconfig`, owner, ACL
+  (never `PUBLIC`) and result columns, the `42501` refusal in a tenant context, and `SET ROLE activediq_catrust` then
+  `SELECT sealed_key` failing with permission denied. The function checks activate when the function exists; the
+  role checks run from the first migration. The one extra permissive `fleet_ca` policy for this role is the only
+  exception to the T2 policy shape. The static scan (T5, rule `pool-function-sql`) refuses the function's name in SQL outside
+  `internal/platform/fleet/fleetsql`.
 - The owner owns the database and schema `public`; `PUBLIC` has no rights on the schema; the runtime role
   has `USAGE` on it.
 - The runtime role does not own the database and holds no `CREATE` on it, directly, through `PUBLIC` or
@@ -62,6 +75,11 @@ unchanged there:
 - `ALTER DEFAULT PRIVILEGES FOR ROLE activediq_owner IN SCHEMA public` grants the runtime role
   `SELECT, INSERT, UPDATE, DELETE` on tables (never `TRUNCATE`) and `USAGE, SELECT` on sequences.
 - Any other schema, and any non-default grant (a function, `EXECUTE`), is explicit SQL in a migration.
+- **Third role (migration 0055, T-0733).** The installer also creates `activediq_catrust` (`NOLOGIN NOSUPERUSER
+  NOBYPASSRLS`) and makes `activediq_owner` a member of it; 0054 fails loudly if the role is missing, is not
+  `NOLOGIN`/`NOBYPASSRLS`, the migration role is not a member, or `activediq_app` is. `storetest` and `pgharness`
+  provision it the same way. T2 accepts exactly one non-tenant-shaped permissive policy: `FOR SELECT TO
+  activediq_catrust` (`fleet_ca_trust_read`).
 - `tenants` lives in `public`. Migration 0001 itself re-states the default privileges and the schema
   grant, so an installer that created only the two roles and a database the owner owns is enough: the
   script fails loudly if the split is missing or broken (roles absent, either one a superuser or
@@ -122,3 +140,16 @@ column whose CHECK or domain the generated value cannot satisfy.
 
 Still to come from other tickets: job argument types expose `Kind() string` and the job wrapper (T-0084);
 platform-scope OpenAPI operations carry `x-activediq-scope: platform` (API tickets).
+
+## Reading a tenant back from authenticated text (T-0504, ADR-0002 rule 5)
+
+`internal/platform/authn/tenantref` is the one sanctioned way for code outside `authn`, `jobs` and `tenant` to
+turn tenant text into a `tenant.ID`. It sits under `authn` (so T5 admits it) and imports no authn code (no
+cycle). Contract: callers pass only text that authentication or the runner already put on the principal
+(`p.Tenant`), the authority context (`authority.TenantFrom`), the runner payload, or the transaction's
+`app.tenant_id`, never text from a request body, path or query. The zero tenant is refused.
+`tenantref/callers_test.go` pins the permitted callers by file (it parses import paths, so aliased, dot and blank imports are caught, and a new file in a permitted package is flagged); adding one is a security review item.
+
+Unauthenticated input is not routed through it. The only such site, `connections.StateTenant` (the Entra
+attestation callback, which has no principal), is a registry-listed `mintsTenantID` platform path with a written
+reason: the parsed ID only chooses whose RLS-scoped attempt table is read, by the hash of the whole state.

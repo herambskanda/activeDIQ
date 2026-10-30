@@ -41,8 +41,16 @@ func grpcCode(c connectorv1.ErrorCode) codes.Code {
 		return codes.PermissionDenied
 	case connectorv1.ErrorCode_ERROR_CODE_ACTIVATION_REFUSED_OVERPRIVILEGED:
 		return codes.FailedPrecondition
+	case connectorv1.ErrorCode_ERROR_CODE_UNREACHABLE_DC:
+		return codes.Unavailable
 	case connectorv1.ErrorCode_ERROR_CODE_TARGET_CHANGED:
 		return codes.Aborted
+	case connectorv1.ErrorCode_ERROR_CODE_OBJECT_NOT_FOUND:
+		return codes.NotFound
+	case connectorv1.ErrorCode_ERROR_CODE_INSUFFICIENT_RIGHTS:
+		return codes.PermissionDenied
+	case connectorv1.ErrorCode_ERROR_CODE_ATTRIBUTE_NOT_ALLOWED, connectorv1.ErrorCode_ERROR_CODE_SECRET_ATTRIBUTE:
+		return codes.InvalidArgument
 	}
 	return codes.Internal
 }
@@ -55,6 +63,12 @@ func invalid(stage, rule, field string) *Refusal {
 	r := newRefusal(connectorv1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, stage, "invalid request")
 	r.Err.Details = &connectorv1.ConnectorError_RejectedInput{RejectedInput: &connectorv1.RejectedInputDetails{RuleId: rule, Field: field}}
 	return r
+}
+
+// pinRefusal is ADR-0005 rule 5: the DC this connector is bound to is not the DC the caller pinned.
+// The message carries no hostname or GUID.
+func pinRefusal(stage string) *Refusal {
+	return newRefusal(connectorv1.ErrorCode_ERROR_CODE_UNREACHABLE_DC, connectorv1.RetryAdvice_RETRY_ADVICE_AFTER_REPLAN, stage, "pinned domain controller is not the bound one")
 }
 
 func mismatch() *Refusal {
@@ -87,4 +101,10 @@ func gateRefusal(state connectorv1.WriteGateState, vid *connectorv1.Guid, unack 
 	r.Err.Details = &connectorv1.ConnectorError_ActivationRefused{ActivationRefused: &connectorv1.ActivationRefusedDetails{
 		State: state, VerificationId: vid, UnacknowledgedFindings: unack}}
 	return r
+}
+
+// NewRefusal builds a refusal for another handler of the connector service (the read group), so
+// both transports and both groups end a call the same way. The message must be a fixed text.
+func NewRefusal(code connectorv1.ErrorCode, retry connectorv1.RetryAdvice, msg string) *Refusal {
+	return newRefusal(code, retry, "", msg)
 }

@@ -27,6 +27,13 @@ type Pinner interface {
 	Pin(ctx context.Context, connection string, nc authority.NamingContextID, previous string) (DCPin, error)
 }
 
+// FallbackPinner is an optional Pinner capability: a writable DC other than exclude (matched by host,
+// case-insensitively, and by DSA GUID), for the server's Tier-0 re-read when the pinned DC cannot answer
+// (ADR-0005 rule 7). A Pinner without it has no fallback, and an unanswered re-read counts as tier0.
+type FallbackPinner interface {
+	PinOther(ctx context.Context, connection string, nc authority.NamingContextID, exclude DCPin) (DCPin, error)
+}
+
 // DCPin is one pinned DC: its host and its DSA GUID (the NTDS Settings objectGUID in canonical form).
 type DCPin struct {
 	Host    string
@@ -210,7 +217,7 @@ func (r *Runner) planAndRoute(ctx context.Context, t tenant.ID, opID string, inp
 			return fmt.Errorf("plan transaction: %w", err)
 		}
 		var err error
-		steps, err = act.Plan(ctx, PlanContext{Tx: tx, Facts: pinnedReader{port: r.cfg.Facts, ad: d.Target == TargetAD, pins: maps.Clone(op.Pins)}, Pins: op.Pins}, input)
+		steps, err = act.Plan(ctx, PlanContext{Tx: tx, Facts: pinnedReader{port: r.cfg.Facts, ad: d.Target == TargetAD, store: d.Target == TargetStore, pins: maps.Clone(op.Pins), dsas: maps.Clone(op.DSAs), tenant: t}, Pins: op.Pins}, input)
 		return err
 	})
 	if perr == nil {
@@ -242,7 +249,8 @@ func (r *Runner) planAndRoute(ctx context.Context, t tenant.ID, opID string, inp
 			if r.cfg.Pinner == nil {
 				return r.failPlan(ctx, t, op, fmt.Errorf("%w: no DC pinner wired", ErrInvalid))
 			}
-			pin, err := r.cfg.Pinner.Pin(ctx, sp.Target.Connection, sp.Target.NC, pins[sp.Target.NC])
+			// The operation's own tenant always wins over whatever the caller's ctx carries.
+			pin, err := r.cfg.Pinner.Pin(authority.WithTenant(ctx, t.String()), sp.Target.Connection, sp.Target.NC, pins[sp.Target.NC])
 			if err != nil {
 				return r.failPlan(ctx, t, op, fmt.Errorf("pinning a DC: %w", err))
 			}
@@ -251,7 +259,7 @@ func (r *Runner) planAndRoute(ctx context.Context, t tenant.ID, opID string, inp
 			}
 			pins[sp.Target.NC], dsas[sp.Target.NC] = pin.Host, pin.DSAGUID
 		}
-		if reason := r.authoriseTarget(ctx, t, op.Chain, d.Permission, sp.Target, pins); reason != "" {
+		if reason := r.authoriseTarget(ctx, t, op.Chain, d.Permission, sp.Target, pins, dsas); reason != "" {
 			items[i].blocked = reason
 		}
 	}
@@ -297,21 +305,58 @@ func (r *Runner) failPlan(ctx context.Context, t tenant.ID, op opRecord, cause e
 	return Submission{Operation: step.OperationID(op.ID), State: OpPlanFailed}, fmt.Errorf("plan_failed: %w", cause)
 }
 
+// planRefusal classifies a plan where no item was planned and at least one was blocked. When every
+// blocked item was refused by authorisation (tier0, denied) the operation is a refused privilege
+// attempt: outcome denied, with the block reason (the common one, else "denied") and the first
+// refused target. When the refusals carry different reasons no single target is named: each refused
+// item then reaches the audit trail through its own operation.refused event with its own reason. Any technical block (facts_unavailable, no_pin, anything else) keeps it a failure
+// with reason plan_failed, so a SIEM rule can tell a refusal from an outage.
+func planRefusal(items []planItem) (audit.Outcome, string, authority.TargetRef) {
+	var reason string
+	var tgt authority.TargetRef
+	for _, it := range items {
+		if it.blocked == "" {
+			continue
+		}
+		if it.blocked != blockTier0 && it.blocked != blockDenied {
+			return audit.Failure, "plan_failed", authority.TargetRef{}
+		}
+		switch {
+		case reason == "":
+			reason, tgt = it.blocked, it.sp.Target
+		case reason != it.blocked:
+			reason, tgt = blockDenied, authority.TargetRef{}
+		}
+	}
+	if reason == "" {
+		return audit.Failure, "plan_failed", authority.TargetRef{}
+	}
+	return audit.Denied, reason, tgt
+}
+
+// Block reasons that are authorisation refusals, as opposed to technical ones.
+const (
+	blockTier0  = "tier0"
+	blockDenied = "denied"
+)
+
 // authoriseTarget authorises the initiator chain over live facts and returns a block reason, or "".
-func (r *Runner) authoriseTarget(ctx context.Context, tn tenant.ID, chain authority.Chain, perm authz.Permission, t authority.TargetRef, pins authority.Pins) string {
+func (r *Runner) authoriseTarget(ctx context.Context, tn tenant.ID, chain authority.Chain, perm authz.Permission, t authority.TargetRef, pins authority.Pins, dsas authority.DSAPins) string {
 	q := r.cfg.Authz.FactsQuery(chain, perm, t)
 	if r.cfg.Facts == nil {
 		return "facts_unavailable"
 	}
-	f, err := r.cfg.Facts.Facts(ctx, pins, q)
+	// The read adapter resolves the connection under the tenant and pins the DC by DSA GUID.
+	rctx := authority.WithDSAPins(authority.WithTenant(ctx, tn.String()), maps.Clone(dsas))
+	f, err := r.cfg.Facts.Facts(rctx, pins, q)
 	if err != nil {
 		return "facts_unavailable"
 	}
 	if f.Tier0 {
-		return "tier0"
+		return blockTier0
 	}
 	if err := r.recheck(ctx, tn, chain, perm, t, f); err != nil {
-		return "denied"
+		return blockDenied
 	}
 	return ""
 }
@@ -416,16 +461,39 @@ WHERE tenant_id = $1::uuid AND id = $2::uuid`, t.String(), opID, hash, string(pi
 		return sub, err
 	}
 	sub.State = next
+	// Every item refused by authorisation is an audited denied attempt, whatever else the plan holds
+	// (the block reason on operation_items is mutable and outside the hash chain). The one target the
+	// operation.completed denied event already names is not repeated.
+	covered := authority.TargetRef{}
+	if result == "plan_failed" {
+		if o, _, tgt := planRefusal(items); o == audit.Denied {
+			covered = tgt
+		}
+	}
+	for i, it := range items {
+		if it.blocked != blockTier0 && it.blocked != blockDenied {
+			continue
+		}
+		if covered.GUID != "" && it.sp.Target == covered {
+			covered = authority.TargetRef{} // only the first refused item is the named one
+			continue
+		}
+		if err := r.emit(ctx, tx, audit.Event{ID: fmt.Sprintf("op-%s-refused-%d-%d", opID, cur.Revision, i), Kind: KindOperationRefused,
+			Actor: cur.Chain, Key: step.Key{Operation: step.OperationID(opID), Item: i}, Target: it.sp.Target,
+			Outcome: audit.Denied, Reason: it.blocked, PlanHash: hash, Details: detail("phase", "plan")}); err != nil {
+			return sub, err
+		}
+	}
 	if result != "" {
-		out := audit.Success
+		out, reason, tgt := audit.Success, result, authority.TargetRef{}
 		if result == "plan_failed" {
-			out = audit.Failure
+			out, reason, tgt = planRefusal(items)
 		}
 		if err := deleteOperationSecrets(ctx, tx, t, opID); err != nil {
 			return sub, err
 		}
 		if err := r.emit(ctx, tx, audit.Event{ID: "op-" + opID + "-" + result, Kind: KindOperationCompleted, Actor: cur.Chain,
-			Key: step.Key{Operation: step.OperationID(opID)}, Outcome: out, Reason: result, PlanHash: hash,
+			Key: step.Key{Operation: step.OperationID(opID)}, Target: tgt, Outcome: out, Reason: reason, PlanHash: hash,
 			Details: detail("blocked", sub.Blocked, "result", result, "skipped", sub.Skipped)}); err != nil {
 			return sub, err
 		}

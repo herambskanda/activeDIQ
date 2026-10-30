@@ -173,11 +173,14 @@ func (r *Runner) verifyApplied(ctx context.Context, t tenant.ID, tx txFunc, c *c
 			reason = "verify_failed"
 		}
 	}
-	return tx(context.WithoutCancel(ctx), func(ctx context.Context, q store.Tx) error {
+	recorded := false
+	err = tx(context.WithoutCancel(ctx), func(ctx context.Context, q store.Tx) error {
+		recorded = false
 		ok, err := recordStep(ctx, q, t, c.key, c.attempt, StepApplied, to, reason, false, nil)
 		if err != nil || !ok {
 			return err
 		}
+		recorded = true
 		item, o := ItemSucceeded, audit.Success
 		if to != StepVerified {
 			item, o = ItemFailed, audit.Failure
@@ -192,8 +195,21 @@ func (r *Runner) verifyApplied(ctx context.Context, t tenant.ID, tx txFunc, c *c
 		if err := r.emit(ctx, q, ev); err != nil {
 			return err
 		}
+		if reason == ReasonTier0AfterWrite {
+			if err := r.cancelOnTier0(ctx, q, t, c, false); err != nil {
+				return err
+			}
+		}
 		return r.settle(ctx, q, t, string(c.key.Operation))
 	})
+	if err == nil && recorded && reason == ReasonTier0AfterWrite {
+		r.tier0Alert(context.WithoutCancel(ctx), c, nil)
+	}
+	if err == nil && !recorded && reason == ReasonTier0AfterWrite {
+		// Not the owner any more: state is untouched, but the signal is still acted on.
+		return r.tier0Superseded(context.WithoutCancel(ctx), t, tx, c, nil)
+	}
+	return err
 }
 
 // Sweep is the backstop for everything a lost job or a crash can leave behind, for one tenant:

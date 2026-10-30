@@ -2,7 +2,8 @@
 # Effects are [UNVERIFIED] until the first real lab run records the events in the runbook.
 . C:\lab\common.ps1
 Import-Module GroupPolicy
-$c = Get-LabConfig
+Import-Module ActiveDirectory
+$c = Get-LabContext   # works with or without lab.json (deleted after provisioning)
 $gpo = 'Lab - DC audit and NTLM'
 if (-not (Get-GPO -Name $gpo -ErrorAction SilentlyContinue)) { New-GPO -Name $gpo | Out-Null }
 New-GPLink -Name $gpo -Target "OU=Domain Controllers,$($c.baseDn)" -ErrorAction SilentlyContinue | Out-Null

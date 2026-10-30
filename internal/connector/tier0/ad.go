@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
@@ -78,16 +79,29 @@ func mustGUID(s string) guid.GUID {
 
 // protected is one C1 principal by well-known RID (Appendix C). Builtin groups live under
 // S-1-5-32; forest-wide groups (Enterprise/Schema/Enterprise Key Admins) under the root domain.
+//
+// Absence is only legitimate where the group cannot exist: minLevel is the functional level
+// (msDS-Behavior-Version of the domain head) from which the group exists; 0 means it always does.
+// A root-domain group is only readable by SID from a non-GC DC of the root domain itself.
 type protected struct {
-	rid     uint32
-	builtin bool
-	root    bool
+	rid      uint32
+	builtin  bool
+	root     bool
+	minLevel int32
+	// pdcOS: below minLevel the group still exists when the PDC emulator runs Windows Server 2016+
+	// (it is created at PDC-emulator promotion, not by the functional level; TM-R25 narrowing).
+	pdcOS bool
 }
+
+const (
+	levelWin2008 = 3 // Protected Users / RODC groups appear with 2008 (521) ...
+	levelWin2016 = 7 // ... Key Admins, Enterprise Key Admins with 2016
+)
 
 var protectedList = []protected{
 	{rid: 500}, {rid: 502}, // Administrator, krbtgt (accounts; krbtgt is also C4)
-	{rid: 512}, {rid: 516}, {rid: 521}, {rid: 526}, // Domain Admins, Domain Controllers, RODCs, Key Admins
-	{rid: 518, root: true}, {rid: 519, root: true}, {rid: 527, root: true}, // Schema, Enterprise, Enterprise Key Admins
+	{rid: 512}, {rid: 516}, {rid: 521, minLevel: levelWin2008}, {rid: 526, minLevel: levelWin2016, pdcOS: true}, // Domain Admins, Domain Controllers, RODCs, Key Admins
+	{rid: 518, root: true}, {rid: 519, root: true}, {rid: 527, root: true, minLevel: levelWin2016, pdcOS: true}, // Schema, Enterprise, Enterprise Key Admins
 	{rid: 544, builtin: true}, {rid: 548, builtin: true}, {rid: 549, builtin: true}, // Administrators, Account/Server Operators
 	{rid: 550, builtin: true}, {rid: 551, builtin: true}, {rid: 552, builtin: true}, // Print/Backup Operators, Replicator
 }
@@ -135,6 +149,11 @@ type UnresolvedSIDHistory struct {
 
 // Finding codes reported by a snapshot. A finding never changes the set.
 const FindingDnsAdminsMissing = "DNSADMINS_MISSING"
+
+// FindingDnsAdminsUndetermined is raised instead of DNSADMINS_MISSING when the connector was denied
+// the read that tells whether the domain hosts AD-integrated DNS zones: silence there would hide a
+// missing DnsAdmins group, so the observation says it could not be made.
+const FindingDnsAdminsUndetermined = "DNSADMINS_UNDETERMINED"
 
 // Finding is an onboarding or health observation of a snapshot.
 type Finding struct {
@@ -294,14 +313,17 @@ type builder struct {
 	nm  Naming
 	s   *ADSet
 
-	domSID, rootSID sid.SID
-	domHead         *ad.Entry
-	pinnedC13       []guid.GUID
-	desig           map[string]bool // customer-designated objects, by GUID (closure applied in C18)
-	gpLink          *guid.GUID      // schemaIDGUID of gPLink, read from the schema (C17)
-	hist            []histEntry     // objects with a sIDHistory, read once per snapshot
-	histRead        bool
-	forest          map[sid.SID]bool // domain SIDs of the forest, read once from the GC when first needed
+	domSID, rootSID       sid.SID
+	domLevel              int32 // msDS-Behavior-Version of the domain head
+	domHead               *ad.Entry
+	pdcRead, pdcKeyAdmins bool // pdcHasKeyAdmins cache
+	pdcErr                error
+	pinnedC13             []guid.GUID
+	desig                 map[string]bool // customer-designated objects, by GUID (closure applied in C18)
+	gpLink                *guid.GUID      // schemaIDGUID of gPLink, read from the schema (C17)
+	hist                  []histEntry     // objects with a sIDHistory, read once per snapshot
+	histRead              bool
+	forest                map[sid.SID]bool // domain SIDs of the forest, read once from the GC when first needed
 
 	accountAnc map[string]bool      // lower-case DN of every strict ancestor of a tier0 account (C2/C4/C5)
 	dcDNs      []dn.DN              // DC computer objects (C5)
@@ -350,7 +372,9 @@ func (c *ADClassifier) snapshot(ctx context.Context, pinnedC13, designated []gui
 func (b *builder) mark(e *ad.Entry, basis Basis) (guid.GUID, error) {
 	g, err := e.GUID()
 	if err != nil {
-		return g, fmt.Errorf("tier0: entry without objectGUID: %w", err)
+		// Windows answers a denied Read with an entry that has no attributes at all, so the DN is
+		// the only thing left to name; callers that know the SID being classified add it.
+		return g, fmt.Errorf("tier0: entry %q without objectGUID (unreadable by the connector?): %w", e.DN, err)
 	}
 	b.s.add(g, basis)
 	return g, nil
@@ -453,7 +477,7 @@ func (b *builder) noteAccount(e *ad.Entry) error {
 func (b *builder) c7() error {
 	var err error
 	for _, h := range []dn.DN{b.nm.Domain, b.nm.RootDomain, b.nm.Config, b.nm.Schema} {
-		e, found, gerr := b.get(dn.DNRef(h), []string{"objectGUID", "objectSid", "wellKnownObjects", "gPLink"})
+		e, found, gerr := b.get(dn.DNRef(h), []string{"objectGUID", "objectSid", "wellKnownObjects", "gPLink", "msDS-Behavior-Version", "fSMORoleOwner"})
 		if gerr != nil {
 			return gerr
 		}
@@ -466,6 +490,12 @@ func (b *builder) c7() error {
 		switch {
 		case h.Equal(b.nm.Domain):
 			b.domHead = e
+			lvl, ok, lerr := e.Int32("msDS-Behavior-Version")
+			if lerr != nil || !ok {
+				// Without the level, an absent Key Admins cannot be told from a hidden one.
+				return errors.New("tier0: domain functional level (msDS-Behavior-Version) unreadable")
+			}
+			b.domLevel = lvl
 			if b.domSID, err = oneSID(e); err != nil {
 				return err
 			}
@@ -499,6 +529,11 @@ func (b *builder) c1c2() error {
 	for _, p := range protectedList {
 		var s sid.SID
 		var err error
+		// A root-domain group read from a child domain's DC is legitimately not found (no GC); the
+		// forest root's own snapshot covers it. The forest-wide groups are only required at the root.
+		if p.root && b.domSID != b.rootSID {
+			continue
+		}
 		switch {
 		case p.builtin:
 			s, err = sid.Parse(fmt.Sprintf("S-1-5-32-%d", p.rid))
@@ -515,10 +550,25 @@ func (b *builder) c1c2() error {
 			return err
 		}
 		if !found {
-			continue // not every group exists in every forest (Key Admins before 2016, ...)
+			// A hidden group is indistinguishable from an absent one (and a group never found never
+			// reaches the C19 rights check), so absence is accepted only below the functional level
+			// at which the group exists.
+			if b.domLevel < p.minLevel {
+				if p.pdcOS {
+					req, perr := b.pdcHasKeyAdmins()
+					if perr != nil {
+						return fmt.Errorf("tier0: protected group %s not found and the PDC emulator's version is unreadable: refusing to classify without it: %w", s, perr)
+					}
+					if req {
+						return fmt.Errorf("tier0: protected group %s not found (unreadable, or deleted) and the PDC emulator is Windows Server 2016+: refusing to classify without it", s)
+					}
+				}
+				continue
+			}
+			return fmt.Errorf("tier0: protected group %s not found (unreadable, or deleted): refusing to classify without it", s)
 		}
 		if _, err := b.mark(e, C1); err != nil {
-			return err
+			return fmt.Errorf("tier0: protected object %s: %w", s, err)
 		}
 		if err := b.noteAccount(e); err != nil { // Administrator, krbtgt
 			return err
@@ -531,6 +581,62 @@ func (b *builder) c1c2() error {
 		}
 	}
 	return b.membersOf(groups, C2)
+}
+
+// pdcHasKeyAdmins reports whether the domain's PDC emulator runs Windows Server 2016 or later
+// (operatingSystemVersion >= 10.0), which creates Key Admins and Enterprise Key Admins whatever the
+// functional level. Domain head fSMORoleOwner -> NTDS Settings -> server -> serverReference -> computer.
+// Any unreadable link fails closed (an error). The answer is cached for the snapshot.
+func (b *builder) pdcHasKeyAdmins() (bool, error) {
+	if b.pdcRead {
+		return b.pdcKeyAdmins, b.pdcErr
+	}
+	b.pdcRead = true
+	b.pdcKeyAdmins, b.pdcErr = b.readPDCKeyAdmins()
+	return b.pdcKeyAdmins, b.pdcErr
+}
+
+func (b *builder) readPDCKeyAdmins() (bool, error) {
+	errUnreadable := errors.New("PDC emulator operatingSystemVersion unreadable")
+	if b.domHead == nil {
+		return false, errUnreadable
+	}
+	owner := b.domHead.Strings("fSMORoleOwner")
+	if len(owner) != 1 {
+		return false, errUnreadable
+	}
+	ntds, err := dn.Parse(owner[0], dn.Strict)
+	if err != nil || ntds.Len() < 2 {
+		return false, errUnreadable
+	}
+	srv, found, err := b.get(dn.DNRef(ntds.Parent()), []string{"serverReference"})
+	if err != nil || !found {
+		return false, errUnreadable
+	}
+	ref := srv.Strings("serverReference")
+	if len(ref) != 1 {
+		return false, errUnreadable
+	}
+	cd, err := dn.Parse(ref[0], dn.Strict)
+	if err != nil {
+		return false, errUnreadable
+	}
+	comp, found, err := b.get(dn.DNRef(cd), []string{"operatingSystemVersion"})
+	if err != nil || !found {
+		return false, errUnreadable
+	}
+	v := comp.Strings("operatingSystemVersion")
+	if len(v) != 1 {
+		return false, errUnreadable
+	}
+	// "10.0 (14393)": major.minor, then the build in brackets.
+	ver, _, _ := strings.Cut(strings.TrimSpace(v[0]), " ")
+	maj, _, ok := strings.Cut(ver, ".")
+	n, cerr := strconv.Atoi(maj)
+	if !ok || cerr != nil || n < 1 {
+		return false, errUnreadable
+	}
+	return n >= 10, nil
 }
 
 // walkAttrs are read for every node of a membership walk. `member` is ranged by Read to the
@@ -560,6 +666,7 @@ func (b *builder) membersOf(roots []*ad.Entry, basis Basis) error {
 		seen[k] = true
 		queue = append(queue, d)
 	}
+	parent := map[string]string{} // member DN key -> DN of the group that listed it (for the error)
 	isRoot := map[string]bool{}
 	for k := range seen {
 		isRoot[k] = true
@@ -571,12 +678,46 @@ func (b *builder) membersOf(roots []*ad.Entry, basis Basis) error {
 		if err != nil {
 			return err
 		}
-		if !found {
-			continue // a member link to an object that no longer exists
-		}
 		k, err := dnKey(d)
 		if err != nil {
 			return err
+		}
+		if !found {
+			// member is a linked attribute: its value always names an existing object, so a Read
+			// that finds nothing means the connector cannot see it (a deny-read ACE on the object or
+			// its container). Skipping would drop a hidden nested group's subtree, or a hidden broad
+			// FSP, out of the closure: fail closed, naming the group that lists it.
+			if isRoot[k] {
+				return errors.New("tier0: a membership-walk group cannot be read")
+			}
+			return fmt.Errorf("tier0: group %s has a member the connector cannot read; its closure is unknowable", parent[k])
+		}
+		if !isRoot[k] && hasClass(e, "foreignSecurityPrincipal") {
+			// A universal/broad FSP (Everyone, Authenticated Users, Interactive, ...) is a member of
+			// the group: every authenticated principal, the connector included, is then transitively
+			// a member, yet tokenGroups never lists the group, so no later token match can see it.
+			// Only a domain account SID FSP is a real (foreign) principal. Allow-list: fail closed.
+			ss, err := e.SIDs("objectSid")
+			if err != nil || len(ss) != 1 {
+				return fmt.Errorf("tier0: group %s has a foreignSecurityPrincipal member with no readable SID", parent[k])
+			}
+			if isDomainAccountSID(ss[0]) && broadForeignRID(ss[0]) {
+				return fmt.Errorf("tier0: group %s has %s, a well-known group of another domain, as a (nested) member; every principal of that domain would be in its closure", parent[k], ss[0])
+			}
+			if !isDomainAccountSID(ss[0]) {
+				return fmt.Errorf("tier0: group %s has the broad SID %s as a (nested) member; every principal would be in its closure", parent[k], ss[0])
+			}
+			if trustResolvedRID(ss[0]) {
+				ms, err := b.foreignGroupMembers(ss[0])
+				if err != nil {
+					return err
+				}
+				for _, m := range ms {
+					if _, err := b.mark(m, basis); err != nil {
+						return err
+					}
+				}
+			}
 		}
 		if !isRoot[k] {
 			if _, err := b.mark(e, basis); err != nil {
@@ -603,6 +744,7 @@ func (b *builder) membersOf(roots []*ad.Entry, basis Basis) error {
 			}
 			if !seen[mk] {
 				seen[mk] = true
+				parent[mk] = e.DN
 				queue = append(queue, md)
 			}
 		}
@@ -767,7 +909,9 @@ func (b *builder) c5c6c15() error {
 			return err
 		}
 		if !found {
-			continue
+			// The server object is the parent of an nTDSDSA the Find just returned, so it exists:
+			// not-found means unreadable, and skipping it would drop that DC's computer from Tier-0.
+			return errors.New("tier0: a domain controller's server object cannot be read")
 		}
 		for _, ref := range srv.Strings("serverReference") {
 			r, err := dn.Parse(ref, dn.Strict)
@@ -778,10 +922,13 @@ func (b *builder) c5c6c15() error {
 			if err != nil {
 				return err
 			}
-			if found {
-				if err := addDC(ce); err != nil {
-					return err
-				}
+			if !found {
+				// serverReference is a linked attribute (serverReferenceBL): it names an existing
+				// computer, so not-found means unreadable. A DC we cannot see is a DC we cannot protect.
+				return errors.New("tier0: a domain controller's computer object cannot be read")
+			}
+			if err := addDC(ce); err != nil {
+				return err
 			}
 		}
 	}
@@ -914,6 +1061,8 @@ func (b *builder) markDN(d dn.DN, basis Basis, required bool) error {
 		if required {
 			return errors.New("tier0: expected object not found")
 		}
+		// Optional containers are named by well-known path, not linked: they exist only on some
+		// functional levels (markTree sweeps below them), so absence is legitimate.
 		return nil
 	}
 	if _, gerr := e.GUID(); gerr != nil && !required {
@@ -1106,6 +1255,66 @@ func isDomainAccountSID(s sid.SID) bool {
 	return ok
 }
 
+// broadForeignRID is true for a domain account SID whose RID is below 1000 and is not one of the three
+// well-known single accounts (500 Administrator, 501 Guest, 502 krbtgt). Such a RID is a well-known
+// group (Domain Users 513, Domain Guests 514, Domain Computers 515, Domain Admins 512, ...) whose
+// membership in a trusted domain we cannot enumerate, so an FSP for it stands for every principal of
+// that domain. Allow-list of single accounts: new well-known group RIDs must fail closed (T-0384).
+func broadForeignRID(s sid.SID) bool {
+	p := strings.Split(s.String(), "-")
+	rid, err := strconv.ParseUint(p[len(p)-1], 10, 32)
+	if err != nil {
+		return true
+	}
+	return rid < 1000 && rid != 500 && rid != 501 && rid != 502
+}
+
+// isLocalDomainSID is true for a SID in this builder's own domain.
+func (b *builder) isLocalDomainSID(s sid.SID) bool {
+	d, ok := s.DomainSID()
+	return ok && d.String() == b.domSID.String()
+}
+
+// trustResolvedRID is true for a foreign domain account SID whose RID is 1000 or more: a custom user,
+// computer or group of the trusted domain, which its FSP does not distinguish (T-0435).
+func trustResolvedRID(s sid.SID) bool {
+	p := strings.Split(s.String(), "-")
+	rid, err := strconv.ParseUint(p[len(p)-1], 10, 32)
+	return err == nil && rid >= 1000
+}
+
+// foreignGroupMembers resolves a foreign account FSP (RID >= 1000) through the trust. A user returns
+// nil; a group returns the FSP objects of its members (a member with no FSP here holds no right in
+// this domain and has no object to mark). When the directory cannot resolve through a trust, or the
+// trust cannot say what the SID is, it fails closed: the SID may be a group whose members hold the right.
+func (b *builder) foreignGroupMembers(s sid.SID) ([]*ad.Entry, error) {
+	td, ok := b.d.(TrustDirectory)
+	if !ok {
+		return nil, fmt.Errorf("tier0: grant to %s, an account of another domain that may be a group; no trust lookup can show it is a user", s)
+	}
+	tp, err := td.ResolveTrusted(b.ctx, s)
+	if err != nil {
+		return nil, fmt.Errorf("tier0: grant to %s, an account of another domain that may be a group; trust lookup failed: %w", s, err)
+	}
+	switch tp.Kind {
+	case TrustUser:
+		return nil, nil
+	case TrustGroup:
+		var out []*ad.Entry
+		for _, m := range tp.Members {
+			e, found, err := b.get(dn.SIDRef(m), idAttrs)
+			if err != nil {
+				return nil, err
+			}
+			if found && hasClass(e, "foreignSecurityPrincipal") {
+				out = append(out, e)
+			}
+		}
+		return out, nil
+	}
+	return nil, fmt.Errorf("tier0: grant to %s, an account of another domain that the trust could not identify as a user", s)
+}
+
 // markPrincipalsSkip is markPrincipals except that an object for which skip is true is not marked and
 // its members are not walked.
 func (b *builder) markPrincipalsSkip(sids []sid.SID, basis Basis, skip func(*ad.Entry) bool) error {
@@ -1140,11 +1349,52 @@ func (b *builder) markPrincipalsSkip(sids []sid.SID, basis Basis, skip func(*ad.
 		if err != nil {
 			return err
 		}
-		if !found && len(holders) == 0 {
-			if b.ignorableSID(s) {
-				continue
+		if found && hasClass(e, "foreignSecurityPrincipal") && broadForeignRID(s) {
+			return fmt.Errorf("tier0: grant to %s, a well-known group of another domain, covers every principal of that domain", s)
+		}
+		// A sIDHistory holder stands in for a foreign-domain account SID (migration), but a SID that
+		// is not a domain account SID (Everyone, Authenticated Users, ...) is in every token: a holder
+		// of it covers one object, not the principals the grant really reaches, so it cannot suppress
+		// the fail-closed (a planted well-known SID in sIDHistory would otherwise hide the grant). The same
+		// holds for a trusted domain's broad well-known RID (Domain Users 513, ...): its tokens carry it
+		// with or without an FSP, so a holder cannot stand in for the principals it reaches.
+		if found && hasClass(e, "foreignSecurityPrincipal") && trustResolvedRID(s) {
+			ms, err := b.foreignGroupMembers(s)
+			if err != nil {
+				return err
 			}
-			return fmt.Errorf("tier0: grant to unresolvable SID %s may cover every principal", s)
+			for _, m := range ms {
+				if err := take(m); err != nil {
+					return err
+				}
+			}
+		}
+		// T-0819: after an ADMT group migration the source group often still exists in the trusted domain
+		// and its members carry its SID across the trust, so a holder alone under-reports who holds the
+		// right. A foreign custom-RID SID with no FSP but a holder is resolved through the trust exactly
+		// like one with an FSP: a user marks only the holders, a group also its members' FSPs, and no
+		// seam, error or unknown fails closed. A SID of this domain is not foreign and is left alone.
+		if !found && len(holders) > 0 && isDomainAccountSID(s) && trustResolvedRID(s) && !b.isLocalDomainSID(s) {
+			ms, err := b.foreignGroupMembers(s)
+			if err != nil {
+				return err
+			}
+			for _, m := range ms {
+				if err := take(m); err != nil {
+					return err
+				}
+			}
+		}
+		if !found && (len(holders) == 0 || !isDomainAccountSID(s) || broadForeignRID(s)) {
+			if b.ignorableSID(s) {
+				// Ignorable SIDs name no principal; a holder (SYSTEM planted in sIDHistory) is
+				// still marked below.
+				if len(holders) == 0 {
+					continue
+				}
+			} else {
+				return fmt.Errorf("tier0: grant to unresolvable SID %s may cover every principal", s)
+			}
 		}
 		if found {
 			if err := take(e); err != nil {
@@ -1231,6 +1481,9 @@ func (b *builder) c13() error {
 	if err != nil {
 		return err
 	}
+	// Cert Publishers is looked up by well-known RID: it is absent in a domain without AD CS, which is
+	// legitimate, so not-found is not a link to an unreadable object here (and the name lookup below
+	// also runs).
 	if e, found, err := b.get(dn.SIDRef(cp), idAttrs); err != nil {
 		return err
 	} else if found {
@@ -1247,6 +1500,8 @@ func (b *builder) c13() error {
 		if err != nil {
 			return err
 		}
+		// A pin is a GUID remembered from an earlier snapshot, not a link: not-found means the group was
+		// deleted since (a deleted group has no members to protect), and the name lookup still runs.
 		if found {
 			if err := add(e); err != nil {
 				return err
@@ -1268,9 +1523,13 @@ func (b *builder) c13() error {
 		}
 	}
 	if !dnsAdmins {
-		hosts, err := b.hostsDNS()
+		hosts, undetermined, err := b.hostsDNS()
 		if err != nil {
 			return err
+		}
+		if undetermined && !hosts {
+			b.s.findings = append(b.s.findings, Finding{Code: FindingDnsAdminsUndetermined,
+				Detail: "no DnsAdmins group can be found and the connector cannot read the DNS zone containers to tell whether the domain hosts AD-integrated DNS"})
 		}
 		if hosts {
 			b.s.findings = append(b.s.findings, Finding{Code: FindingDnsAdminsMissing,
@@ -1293,17 +1552,17 @@ func isC13Name(names []string) bool {
 }
 
 // hostsDNS reports whether the domain holds an AD-integrated DNS zone (application partition
-// DomainDnsZones, or the legacy CN=System location). A partition that does not exist or that the
-// connector cannot read counts as no zones: the finding is advice, it never gates classification.
-func (b *builder) hostsDNS() (bool, error) {
+// DomainDnsZones, or the legacy CN=System location). A partition that does not exist counts as no
+// zones; one the connector may not read sets undetermined (it is not "no zones"). The finding is
+// advice, it never gates classification.
+func (b *builder) hostsDNS() (hosts, undetermined bool, err error) {
 	// parent first: child() appends one RDN below the previous
 	bases := [][]string{{"DC=DomainDnsZones", "CN=MicrosoftDNS"}, {"CN=System", "CN=MicrosoftDNS"}}
 	for _, rd := range bases {
 		base := b.nm.Domain
 		for i := 0; i < len(rd); i++ {
-			var err error
 			if base, err = b.child(base, rd[i]); err != nil {
-				return false, err
+				return false, false, err
 			}
 		}
 		hit := false
@@ -1313,16 +1572,19 @@ func (b *builder) hostsDNS() (bool, error) {
 		})
 		if err != nil && !errors.Is(err, errStopFind) {
 			switch ad.CodeOf(err) {
-			case ad.CodeObjectNotFound, ad.CodeInsufficientRights:
+			case ad.CodeObjectNotFound:
+				continue
+			case ad.CodeInsufficientRights:
+				undetermined = true
 				continue
 			}
-			return false, fmt.Errorf("tier0: DNS zones: %w", err)
+			return false, false, fmt.Errorf("tier0: DNS zones: %w", err)
 		}
 		if hit {
-			return true, nil
+			return true, false, nil
 		}
 	}
-	return false, nil
+	return false, undetermined, nil
 }
 
 var errStopFind = errors.New("stop")
@@ -1395,7 +1657,10 @@ func (b *builder) c9() error {
 			return err
 		}
 		if !found {
-			continue // dangling link: no GPO object to protect
+			// gPLink is a plain string, so a dangling link is possible, but a GPO the connector may not
+			// read looks identical, and a GPO linked at a Tier-0 SOM controls Tier-0. Fail closed;
+			// the operator removes the dangling link or grants read.
+			return fmt.Errorf("tier0: GPO %s linked at a Tier-0 start of authority cannot be read", g.CanonicalString())
 		}
 		if _, err := b.mark(ge, C9); err != nil {
 			return err

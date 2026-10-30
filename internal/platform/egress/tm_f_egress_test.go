@@ -403,7 +403,10 @@ func TestTMFEgress_RebindingIsNotUsable(t *testing.T) {
 	// one a connection ever uses.
 	r := newResolver("rebind.example", []string{"127.0.0.1"}, []string{"169.254.169.254"})
 	c := mustClient(t, egress.Config{AllowHTTP: true, Allow: pfx("127.0.0.1/32"), Resolver: r})
-	resp, err := get(t, c, "http://rebind.example:"+port+"/", nil)
+	// Connection: close keeps the first connection out of the idle pool. Without it, the connection
+	// is returned to the pool asynchronously after Body.Close and can land after CloseIdleConnections
+	// below, so the second request reuses it (already vetted at dial time) and never dials.
+	resp, err := get(t, c, "http://rebind.example:"+port+"/", map[string]string{"Connection": "close"})
 	if err != nil {
 		t.Fatalf("first request: %v", err)
 	}

@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
+	"github.com/skenzeriq/activediq/internal/platform/personal"
 	"github.com/skenzeriq/activediq/internal/platform/store"
+	tenantpkg "github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
 // Errors of the chain.
@@ -84,8 +86,8 @@ func toEnvelope(ev Event) (chain.Envelope, error) {
 		}
 		e.Operation, e.Item, e.Step, e.HasStep = string(ev.Key.Operation), uint64(ev.Key.Item), uint64(ev.Key.Step), true
 	}
-	// Attribute values are personal data: they go to the personal side store, not into the chain. The
-	// chain records which attributes changed and how many values moved.
+	// Attribute values are personal data: toEnvelope records which attributes changed and how many values
+	// moved; the commit hook (withRefs) stores the values and adds their personal references.
 	for _, ch := range ev.Changes {
 		e.Changes = append(e.Changes, chain.Change{Attribute: ch.Attribute, Secret: ch.Secret,
 			BeforeCount: uint64(len(ch.Before)), AfterCount: uint64(len(ch.After))})
@@ -101,14 +103,15 @@ func toEnvelope(ev Event) (chain.Envelope, error) {
 }
 
 // beforeCommit chains the transaction's buffered events (ADR-0005 rule 11, steps 1 to 4).
-func (c *Chainer) beforeCommit(ctx context.Context, tx store.Tx, tenantID string) error {
+func (c *Chainer) beforeCommit(ctx context.Context, tx store.Tx, tid tenantpkg.ID) error {
 	p, ok := c.slot.Take(tx)
 	if !ok || len(p.events) == 0 {
 		return nil
 	}
-	if tenantID == "" {
+	if tid.IsZero() {
 		return ErrNoTenantTx
 	}
+	tenantID := tid.String()
 	tenant, err := chain.ParseUUID(tenantID)
 	if err != nil {
 		return ErrNoTenantTx
@@ -137,7 +140,7 @@ func (c *Chainer) beforeCommit(ctx context.Context, tx store.Tx, tenantID string
 	seen := map[string][]byte{}
 	for _, ev := range p.events {
 		// The event's identity is its content without the fields the chain assigns (tenant, seq, at).
-		env, _ := toEnvelope(ev)
+		env, _ := toEnvelope(ev) // refs are minted per attempt (random value IDs), so identity excludes them
 		ident, err := env.Marshal()
 		if err != nil {
 			return fmt.Errorf("audit: encode event: %w", err)
@@ -160,6 +163,10 @@ func (c *Chainer) beforeCommit(ctx context.Context, tx store.Tx, tenantID string
 				return fmt.Errorf("audit: stored event %q: %w", ev.ID, perr)
 			}
 			old.Tenant, old.Seq, old.At = [16]byte{}, 0, time.Time{}
+			old.Snapshots = nil
+			for i := range old.Changes {
+				old.Changes[i].Before, old.Changes[i].After = nil, nil
+			}
 			oldIdent, merr := old.Marshal()
 			if merr != nil {
 				return fmt.Errorf("audit: stored event %q: %w", ev.ID, merr)
@@ -175,6 +182,9 @@ func (c *Chainer) beforeCommit(ctx context.Context, tx store.Tx, tenantID string
 			return fmt.Errorf("audit: read clock: %w", err)
 		}
 		at = at.UTC().Truncate(time.Microsecond)
+		if err := withRefs(ctx, tx, tid, ev, &env); err != nil {
+			return err
+		}
 		env.Tenant, env.Seq, env.At = tenant, seq+1, at
 		raw, err := env.Marshal()
 		if err != nil {
@@ -196,6 +206,53 @@ func (c *Chainer) beforeCommit(ctx context.Context, tx store.Tx, tenantID string
 	}
 	if tag.RowsAffected() != 1 {
 		return ErrStaleHead
+	}
+	return nil
+}
+
+// Record kinds under which the Chainer files values in the personal side store.
+const (
+	kindBefore   = "audit.before"
+	kindAfter    = "audit.after"
+	kindSnapshot = "audit.snapshot"
+)
+
+// withRefs stores ev's personal values in the personal side store, inside the commit transaction, and puts
+// a reference for each into env. Secret changes carry no values (AG-9) and a change with no subject is not personal; neither gets refs.
+func withRefs(ctx context.Context, tx store.Tx, tid tenantpkg.ID, ev Event, env *chain.Envelope) error {
+	ps := personal.New()
+	put := func(subject, kind, field, value string) (chain.Ref, error) {
+		r, err := ps.Put(ctx, tx, tid, subject, kind, field, value)
+		if err != nil {
+			return chain.Ref{}, fmt.Errorf("audit: keep personal value of %q: %w", field, err)
+		}
+		return chain.Ref{Subject: r.Subject, ValueID: r.ValueID, Field: r.Field, Commitment: r.Commitment}, nil
+	}
+	for i, ch := range ev.Changes {
+		if ch.Secret || ch.Subject == "" {
+			continue
+		}
+		for _, v := range ch.Before {
+			r, err := put(ch.Subject, kindBefore, ch.Attribute, v)
+			if err != nil {
+				return err
+			}
+			env.Changes[i].Before = append(env.Changes[i].Before, r)
+		}
+		for _, v := range ch.After {
+			r, err := put(ch.Subject, kindAfter, ch.Attribute, v)
+			if err != nil {
+				return err
+			}
+			env.Changes[i].After = append(env.Changes[i].After, r)
+		}
+	}
+	for _, s := range ev.Snapshots {
+		r, err := put(s.Subject, kindSnapshot, s.Field, s.Value)
+		if err != nil {
+			return err
+		}
+		env.Snapshots = append(env.Snapshots, r)
 	}
 	return nil
 }

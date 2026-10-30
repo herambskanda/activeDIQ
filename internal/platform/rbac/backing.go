@@ -83,7 +83,7 @@ func (a *Authorizer) checkBacking(ctx context.Context, tn tenant.ID, actor []Ass
 		if acct == who {
 			continue // holds exactly its own privileges
 		}
-		theirs, err := a.src.PendingOrActive(ctx, tn, acct, a.now())
+		theirs, err := a.effective(ctx, tn, acct, true)
 		if err != nil {
 			return fmt.Errorf("rbac: loading backed account assignments: %w", err)
 		}
@@ -96,27 +96,11 @@ func (a *Authorizer) checkBacking(ctx context.Context, tn tenant.ID, actor []Ass
 				// platform-wide grant could be represented this way). Fail closed.
 				return denied(ReasonBackingIncomplete)
 			}
-			scopes, err := a.scopesOf(ctx, tn, as)
-			if err != nil {
-				return denied(ReasonBackingIncomplete)
-			}
-			for _, sc := range scopes {
-				// Only the actor's roots of the same connection and kind can contain this scope: an
-				// entra_tenant root whose GUID equals a connection never covers its Tier-0 scope.
-				grantor, err := a.principalFor(ctx, tn, who, actor, sc.conn, sc.t0)
-				if err != nil {
-					return denied(ReasonBackingIncomplete)
-				}
-				if len(grantor.Assignments) == 0 {
-					return denied(ReasonBackingObject) // holds nothing there
-				}
-				err = a.eval.CheckGrant(grantor, nil, authz.Role{Permissions: as.Permissions}, sc.Scope)
-				if err == nil {
-					continue
-				}
-				if errors.Is(err, authz.ErrEscalation) {
-					return denied(ReasonBackingObject)
-				}
+			switch err := a.holdsOver(ctx, tn, actor, who, as.Permissions, as.Roots); {
+			case err == nil:
+			case errors.Is(err, authz.ErrEscalation):
+				return denied(ReasonBackingObject)
+			default:
 				return denied(ReasonBackingIncomplete) // invalid, incomplete or dead owner: fail closed
 			}
 		}
@@ -124,13 +108,43 @@ func (a *Authorizer) checkBacking(ctx context.Context, tn tenant.ID, actor []Ass
 	return nil
 }
 
+// holdsOver is the DM-36.I1 test: the actor, whose effective assignments are actor, holds every
+// permission in perms over every scope in roots (one scope per connection and root family). nil
+// means yes, authz.ErrEscalation means no, any other error means the proof could not be made and the
+// caller fails closed. Roots are resolved live. Correlation-derived assignments never count.
+func (a *Authorizer) holdsOver(ctx context.Context, tn tenant.ID, actor []Assignment, who string, perms []authz.Permission, roots []Root) error {
+	scopes, err := a.scopesOf(ctx, tn, Assignment{Roots: roots})
+	if err != nil {
+		return fmt.Errorf("rbac: resolving scope: %w", err)
+	}
+	// An exclude-only scope reaches nothing, so there is nothing to hold. A grant refuses it earlier.
+	for _, sc := range scopes {
+		// Only the actor's roots of the same connection and family can contain this scope: an
+		// entra_tenant root whose GUID equals a connection never covers its Tier-0 scope.
+		grantor, err := a.principalFor(ctx, tn, who, actor, sc.conn, sc.class)
+		if err != nil {
+			return fmt.Errorf("rbac: resolving grantor scope: %w", err)
+		}
+		if len(grantor.Assignments) == 0 {
+			return authz.ErrEscalation // holds nothing there
+		}
+		if err := a.eval.CheckGrant(grantor, nil, authz.Role{Permissions: perms}, sc.Scope); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // principalFor builds the actor's evaluator view for one connection and root kind.
-func (a *Authorizer) principalFor(ctx context.Context, tn tenant.ID, who string, as []Assignment, conn string, t0 bool) (*authz.Principal, error) {
+func (a *Authorizer) principalFor(ctx context.Context, tn tenant.ID, who string, as []Assignment, conn, class string) (*authz.Principal, error) {
 	p := &authz.Principal{ID: who}
 	for _, x := range as {
+		if x.Via != nil {
+			continue // a correlation-derived grant never backs a grant (TM-D17 rule 5)
+		}
 		var s authz.Scope
 		for _, r := range x.Roots {
-			if r.Connection != conn || (r.Kind == Tier0Scope) != t0 {
+			if r.Connection != conn || rootClass(r) != class {
 				continue
 			}
 			// Resolved live like the backed side: an exclusion is compared by ancestry, so a
@@ -156,14 +170,11 @@ func (a *Authorizer) principalFor(ctx context.Context, tn tenant.ID, who string,
 // spanning two connections is held per connection, and a Tier-0 scope root is never mixed with object
 // roots.
 func splitScopes(roots []Root) [][]Root {
-	type key struct {
-		conn string
-		t0   bool
-	}
+	type key struct{ conn, class string }
 	idx := map[key]int{}
 	var out [][]Root
 	for _, r := range roots {
-		k := key{r.Connection, r.Kind == Tier0Scope}
+		k := key{r.Connection, rootClass(r)}
 		i, ok := idx[k]
 		if !ok {
 			i = len(out)
@@ -177,8 +188,20 @@ func splitScopes(roots []Root) [][]Root {
 
 type keyedScope struct {
 	authz.Scope
-	conn string
-	t0   bool
+	conn, class string
+}
+
+// rootClass separates the root families that never cover each other: a connection's Tier-0 scope,
+// the tenant's own store, and directory objects.
+func rootClass(r Root) string {
+	switch r.Kind {
+	case Tier0Scope:
+		return "tier0_scope"
+	case TenantStore:
+		return "tenant_store"
+	default:
+		return "directory"
+	}
 }
 
 // scopesOf returns the backed account's assignment as live-resolved scopes, one per connection.
@@ -200,7 +223,7 @@ func (a *Authorizer) scopesOf(ctx context.Context, tn tenant.ID, as Assignment) 
 		if len(s.Include) == 0 {
 			continue // an exclude-only scope reaches nothing
 		}
-		out = append(out, keyedScope{Scope: s, conn: rs[0].Connection, t0: rs[0].Kind == Tier0Scope})
+		out = append(out, keyedScope{Scope: s, conn: rs[0].Connection, class: rootClass(rs[0])})
 	}
 	return out, nil
 }
@@ -210,8 +233,8 @@ func (a *Authorizer) resolve(ctx context.Context, tn tenant.ID, r Root) (authz.S
 	if err != nil {
 		return authz.ScopeRoot{}, err
 	}
-	if r.Kind == Tier0Scope {
-		return authz.ScopeRoot{ID: id, Complete: true}, nil // a connection: no ancestors
+	if r.Kind == Tier0Scope || r.Kind == TenantStore {
+		return authz.ScopeRoot{ID: id, Complete: true}, nil // a connection or the tenant: no ancestors
 	}
 	if a.roots == nil {
 		return authz.ScopeRoot{}, errors.New("rbac: no root resolver")

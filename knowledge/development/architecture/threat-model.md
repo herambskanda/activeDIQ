@@ -1,11 +1,11 @@
 ---
 title: "Threat model v0 — activeDIQ security architecture"
 date: 2026-10-02
-updated: 2026-10-26
+updated: 2026-10-29
 status: review
 owner: heramb
 author: security-architect
-ticket: old T-0007, T-0032, T-0044, T-0051, T-0055, T-0108, T-0179, T-0111, T-0227, T-0230, T-0235, T-0240, T-0395
+ticket: T-0544, T-0495, T-0388, T-0359, old T-0007, T-0032, T-0044, T-0051, T-0055, T-0108, T-0179, T-0111, T-0227, T-0230, T-0235, T-0240, T-0395, T-0178, T-0623, T-0633, T-0631, T-0738
 binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), blueprint v0 (review), safe-primitives.md (review)
 sources_last_checked: 2026-10-02
 ---
@@ -59,7 +59,7 @@ written next to it. `[M3]` / `[M4]` marks a later milestone; it is drawn now so 
 block it. `[UNVERIFIED]` marks an external claim not yet confirmed; `[LAB]` marks a behaviour that
 needs the Windows or Samba lab. Proof names that exist already: `FF-SP1`–`FF-SP9` (SP §8,
 `tools/fitness/safeprim`), `fitness-tenancy` T1–T5 (ADR-0002; `tools/fitness/tenancy`), `fitness-profiles` P1–P7 (ADR-0002,
-`tools/fitness/profiles`), `fitness-api` A1–A14 (ADR-0004; T-0011, T-0017, T-0018) and the operation/audit fitness of ADR-0005 (T-0130 for O1–O8, T-0133 for A1–A9; O9 is live in T-0013).
+`tools/fitness/profiles`), `fitness-api` A1–A14 (ADR-0004; T-0011, T-0017, T-0018) and the operation/audit fitness of ADR-0005 (`make fitness-operation`: O1, O2, O4 and O9 are live with `tools/ci/proof.sh` cases; O3 → T-0391, O5–O7 → T-0392, O8 → T-0393; T-0133 for A1–A9).
 
 **Ticket IDs.** The board was re-cut on 2026-10-21 (T-0031). A bare `T-xxxx` names a live
 ticket whose title matches the purpose given here (each checked against the board by T-0055).
@@ -122,7 +122,7 @@ a customer grants more than §6.3 allows.
 | TM-A8 | **Release-signing keys and the update channel** | skenzeriq CI and HSM/KMS (T-0140/T-0141); public keys pinned in every install | skenzeriq supply chain | Code execution in every customer, including on DCs [M3] — the SolarWinds pattern ([AA20-352A](https://www.cisa.gov/news-events/cybersecurity-advisories/aa20-352a)) |
 | TM-A9 | **DC-resident code** [M3/M4] — `cmd/agent` + `addc`, `native/passfilt` in LSASS, `native/credprov` in LogonUI | DCs; endpoints | Tier 0 (DCs); endpoint tier (credprov) | Code on a DC is the forest; a crash in LSASS reboots the DC (SB checklist D) |
 | TM-A10 | **Agent-policy signing key** [M3] | Management plane, sealed under the tenant DEK (BP §12) | Mgmt, bounded by TM-D14 | Sign policies DC agents accept; bounded to policy *data* within schema (§12) |
-| TM-A11 | **Fleet enrollment CA key and enrollment tokens** | Server (sealed); tokens hashed (DM-12.I2) | Mgmt | Mint connector/agent identities for a tenant; impersonate a connector to receive operations |
+| TM-A11 | **Fleet enrollment CA keys and enrollment tokens.** Two kinds ([ADR-0008](../decisions/0008-fleet-gateway-server-ca-installation-scope.md)): the per-tenant **client CA** key (`fleet_ca`) and the installation **server CA** key (`fleet_server_ca`) | Server (sealed); tokens hashed (DM-12.I2) | Mgmt | Client CA key: mint connector/agent identities for one tenant; impersonate a connector to receive operations. Server CA key: impersonate the gateway to every component of every tenant (token capture, tunnel plaintext, commands) but mint no identity (TM-TB6-T15) |
 | TM-A12 | **End-user verification and SSPR enrolment data** — v1 TOTP seeds (FD-05, DM-37); [M4] SSPR factors | Sealed in PostgreSQL | Mgmt | Pass caller verification (ENH-09) or SSPR as the victim → password reset → account takeover |
 | TM-A13 | **Platform configuration** — hostname bindings (DM-04), IdP metadata and signing certificates, trust anchors (DC CAs, fleet CA), listen addresses, update ring | Config file and platform tables | Mgmt | Re-point SSO to an attacker IdP; accept a rogue DC certificate; expose a listener |
 
@@ -134,7 +134,7 @@ a customer grants more than §6.3 allows.
 | --- | --- | --- | --- | --- |
 | TM-X1 | **Internet, unauthenticated** | Reaches whatever is published: `edge` [M4], and the server only if the customer publishes it against our guidance | Pre-auth RCE or auth bypass (the CVE-2021-40539 class, ME-SEC §4.1) | TB11, TB1, TB10 |
 | TM-X2 | **LAN, unauthenticated** | On the network path: MITM, NTLM relay, authentication coercion, rogue DHCP/DNS, spoofed DCs or RADIUS clients | Capture or relay our service identity; downgrade transport; forge RADIUS answers | TB1, TB3, TB6, TB12, TB19 |
-| TM-X3 | **Low-privilege AD user** | Writes the attributes the estate lets users write on their own object (by default part of the Personal-Information property set `[UNVERIFIED — lab]`); can create computer accounts while `ms-DS-MachineAccountQuota` allows `[UNVERIFIED — estate]`; can trigger failed logons | Stored XSS or CSV formula injection in admin views and exports; a UNC `homeDirectory`/`profilePath` that coerces our identity; lock other users out through our flows | TB1, TB3, TB15 |
+| TM-X3 | **Low-privilege AD user** | Writes the attributes the estate lets users write on their own object (by default SELF write on the Personal-Information, Email-Information and Web-Information property sets, confirmed on Windows Server 2025: `telephoneNumber`, `mobile`, `l`, `wWWHomePage`, `msDS-SupportedEncryptionTypes` and `msDS-ExternalDirectoryObjectId` write; `homeDirectory`, `profilePath`, `scriptPath`, `userPrincipalName`, `mail`, `description` are denied, so a UNC attribute is writable only where an estate delegation allows it — [T-0076 lab log](../runbooks/windows-lab-runs/T-0076-ad-lab-confirmation-20261028.md)); can create computer accounts while `ms-DS-MachineAccountQuota` allows `[UNVERIFIED — estate]`; can trigger failed logons | Stored XSS or CSV formula injection in admin views and exports; a UNC `homeDirectory`/`profilePath` that coerces our identity; lock other users out through our flows | TB1, TB3, TB15 |
 | TM-X4 | **Malicious or compromised technician** | Valid console account with a role and a delegation scope | Escape the scope; escalate their own RBAC; harvest LAPS/BitLocker secrets; act without trace | TB1, TB2 |
 | TM-X5 | **Compromised activeDIQ administrator** (`tenant-owner`) | Full tenant-scope RBAC through the API | Use activeDIQ to reach Tier 0. **Goal of this model: they still cannot** (TM-O1) | TB1, TB2, TB3, TB7 |
 | TM-X6 | **Code execution on the server host** (or a host administrator) | Process memory, config, keytab, KEK provider access as the service | Directory credentials, DEKs, audit tampering | TB4, TB5, TB16 |
@@ -265,7 +265,7 @@ proof is direction, not a control; the proof table says which ticket builds each
 | TM-TB2-T6 | I | Token in a URL, query string or log line | `Authorization` header only; query-string credentials rejected; log redaction | TM-F-SECRETOUT | — |
 | TM-TB2-T7 | D | X4 floods the API or the DCs through automation | Per-principal rate limits by class, tokens counting against their owner (TM-D22, §7.8); bulk caps; per-DC concurrency | `fitness-api` A12 (T-0017), limiter T-0054, TM-F-SESSION | — |
 | TM-TB2-T8 | E | A token outlives or exceeds its owner's authority | Effective = owner's current authority ∩ token subset; a disabled owner kills the token (DM-32.I1) | TM-F-AUTHZ | Within sync freshness for directory-group-based roles (DM-36.I2) |
-| TM-TB2-T9 | E | X12 (ITSM) creates a direct directory write | An inbound ticket creates only a Request, which goes through approval (DM-85.I1); writes only via `Action.Apply` | T-0130 operation fitness | — |
+| TM-TB2-T9 | E | X12 (ITSM) creates a direct directory write | An inbound ticket creates only a Request, which goes through approval (DM-85.I1); writes only via `Action.Apply` | `make fitness-operation` O1/O2 (landed); O8 T-0393 | — |
 | TM-TB2-T10 | E | [M3] PowerShell module or MCP server adds a second auth path | They are clients of the same OpenAPI operations with the same token model; no private endpoint `[OPEN → M3 specs]` | TM-F-ANON (route set unchanged) | — |
 
 ### 5.3 TB3 — Connector ↔ domain controllers
@@ -296,8 +296,8 @@ proof is direction, not a control; the proof table says which ticket builds each
 | TM-TB4-T5 | I | X11 reads another tenant's rows (RLS bypass) → A6 | "Where tenancy lives" rules: RLS + FORCE, composite FKs, tenant-led unique indexes, no `SECURITY DEFINER`, `security_invoker` views | T1–T5 | — |
 | TM-TB4-T6 | I | X6 steals a dump or backup → A2, A12 | Only ciphertext of secrets in the database; KEK never in the database; AEAD with associated data (TM-D7) | TM-F-SEAL | PII in inventory is readable (TM-TB15-T4) |
 | TM-TB4-T7 | T | X6 with DB write copies a sealed Entra key from tenant A's row into tenant B's → B's jobs sign as A | Associated data binds tenant, table, row, column and key version (TM-D7) | TM-F-SEAL | — |
-| TM-TB4-T8 | I | Blob objects read across tenants | Keys prefixed by tenant through `platform/blob` only | Blob isolation probe `[OPEN → T-0134 adds it to T4]` | — |
-| TM-TB4-T9 | D | Database unavailable mid-operation | Writes fail closed: no directory write without its audit row in the same transaction (§11); leases expire | T-0130 operation fitness | Availability |
+| TM-TB4-T8 | I | Blob objects read across tenants | Keys prefixed by tenant through `platform/blob` only | T4 blob isolation probe (`tools/fitness/tenancy/blobprobe.go`, T-0134) | — |
+| TM-TB4-T9 | D | Database unavailable mid-operation | Writes fail closed: no directory write without its audit row in the same transaction (§11); leases expire | O8 pipeline behaviour, T-0393 | Availability |
 | TM-TB4-T10 | E | The runtime role owns objects or has `BYPASSRLS` | Separate owner role for migrations | T3, FF-SP7 | — |
 
 ### 5.5 TB5 — Server ↔ key provider
@@ -310,6 +310,7 @@ proof is direction, not a control; the proof table says which ticket builds each
 | TM-TB5-T4 | I | Passphrase or KEK material written beside the data | Passphrase keystore unlocks from operator input or the OS secret store, never from the config file or database | TM-F-HOST | — |
 | TM-TB5-T5 | D | Provider unavailable or TPM cleared → nothing can be unsealed | Fail closed (no directory operations); documented KEK recovery path `[OPEN → E2.12 PRD]` | P2 boot test (missing provider = clear error, no plaintext fallback) | Availability; lost KEK means re-entering credentials |
 | TM-TB5-T6 | E | Code outside the connector unseals a directory credential | Only `credential/sealed` under the connector root unseals directory credentials | P3 | — |
+| TM-TB5-T7 | I | **Passphrase keystore** (`ACTIVEDIQ_KEK_PROVIDER=passphrase`; T-0655 replaced the interim plaintext `ACTIVEDIQ_KEK_FILE` profile, which is now refused) | KEK random and sealed under Argon2id of the passphrase (floor m 19 MiB, t 2, p 1; AEAD binds format, KDF, salt, key id); passphrase only from `ACTIVEDIQ_KEK_PASSPHRASE_FILE` (never env, flag or config; owner-only, outside `ACTIVEDIQ_KEK_DIR`); keystore dir owner-only and not group/other-writable; keystore 0600; wrong passphrase = corrupt file = `UnwrapFailed`; errors name a setting, never a value | TM-F-SEAL; `keyprovider_test.go`, `keystore_test.go`, `kekscope_test.go` | Root or the service user reading both files yields the KEK (passphrase custody is only as strong as the host); backups must not cover both |
 
 ### 5.6 TB6 — Remote connector ↔ server `fleet`
 
@@ -321,14 +322,18 @@ proof is direction, not a control; the proof table says which ticket builds each
 | TM-TB6-T4 | T/E | A compromised server sends hostile operations to an on-site connector | Typed contract only, no query or script verb (ADR-0002 rule 3); connector-side tier-0 guard (TM-D2) | P3, TM-F-T0GUARD | A compromised server can still do what the delegated rights allow (TM-R1); it can omit C16 or a designation it never reported (TM-R14) or forge an override that opens TM-D1 only (TM-R15) |
 | TM-TB6-T5 | R | A connector acts with no server-side record | Every `Apply` carries the operation ID and acting principal; connector logs them locally; server audit (§11) | TM-F-AUDIT | — |
 | TM-TB6-T6 | I | Secrets pushed over fleet to a remote host | Nothing secret is ever pushed; remote credentials are created on the host (TM-D8); the fleet contract has no secret-bearing message type except `SetPassword`/`ReadSecret` payloads of an operation | TM-F-FLEET (contract lint) | — |
-| TM-TB6-T7 | D | Flood in either direction | Per-component stream limits and backpressure `[OPEN → connector spec]` | Conformance suite (P3) | — |
+| TM-TB6-T7 | D | Flood in either direction | Per-call (16) and per-tunnel (64) message credit, consumption-driven grants, overrun closes the tunnel (fleet-contract.md, T-0288) | Conformance suite (P3); fleet mux_test flow-control tests | Worst case buffered per tunnel is tunnel window x MaxPayload (64 x 4 MiB); one slow call can hold tunnel credit and slow its siblings |
 | TM-TB6-T8 | E | A connector certificate reaches non-fleet APIs | The fleet listener mounts only fleet services; console/API routes are not on it; every RPC except `Enroll` requires a client certificate | TM-F-FLEET, TM-F-PORTS | — |
 | TM-TB6-T9 | E | A revoked connector keeps working | Revocation is checked on every stream (re)establishment and kills open streams (DM-12 lifecycle) | TM-F-FLEET | — |
 | TM-TB6-T10 | E | **Method confusion.** X9 sends a `CallOpen.method` that is not a component→server method of its bound contract: a server→component method, another contract's method (an agent's, say), `grpc.health.v1`, `grpc.reflection.v1`, channelz, or a case, slash or suffix variant of an allowed name. If the gateway hands it to a general gRPC server, TM-TB6-T8 is bypassed through the tunnel. The mirror case: a compromised server (X6) opens a non-contract service on the component | TM-D24 rule A: the server picks the bound contract from the component kind in the SAN. Each tunnel has its own dispatch table built from that contract's descriptor, split by direction, and matched byte for byte. The registrar is per tunnel and is never the process's `grpc.Server`. Every refusal is one fixed `PERMISSION_DENIED`. `fleet/dial` does the same on the component | TM-F-FLEET (method corpus) | X9 can still call every component→server method of its own contract, for its own tenant and component. That is the contract's surface, and contract review bounds it (P3) |
 | TM-TB6-T11 | T/D | **call_id hijack.** X9, or a buggy peer, opens a call with the other side's parity, reuses a live or finished id, sends a frame its role may not send, or sends on `call_id` 0. Goal: deliver a response to the wrong waiting call (operation X records Y's outcome, which corrupts the audit trail, §11) or kill the server's calls. Or a component with a cloned identity opens a second tunnel and receives responses to calls made on the first | TM-D24 rule B: call state is keyed by (tunnel instance, `call_id`) and dies with the tunnel. Each side opens only its own parity, with strictly increasing ids. A per-role, per-state frame table applies. `call_id` 0 carries `FlowCredit` only. A violation closes the tunnel and is audited. A pending call on a dead tunnel fails `UNAVAILABLE` with an unknown outcome, never success, and is never rebound | TM-F-FLEET (frame-sequence corpus) | A compromised component can still lie in its responses (as TM-TB12-T8). It can close its own tunnel, which denies service only to itself |
 | TM-TB6-T12 | T/I | **Untrusted `CallClose` text.** X9 puts CR/LF, ANSI escapes, bidi overrides, invalid UTF-8, HTML or megabytes into `status_message`. Goals: forge log lines, inject into the console or a SIEM, mislead an administrator in an audit event, or exhaust memory. The reverse direction: the server leaks internal error text to a component host | TM-D24 rule C: the gateway bounds the text to 1 KiB on a rune boundary, repairs invalid UTF-8, and escapes control, C1 and bidi characters. It is never a format string, never HTML, and never part of an audit summary; it is kept only as a typed `component_reported` field. An out-of-range `status_code` becomes `UNKNOWN`. Server-sent text is a fixed string per code | TM-F-FLEET (hostile-text corpus), TM-F-SECRETOUT | The text can still be false. The console labels it as reported by the component |
 | TM-TB6-T13 | S/I | **CA-bundle content.** (a) The stored installation-CA material has the CA private key concatenated into it, so `EnrollResponse.ca_bundle_pem` hands TM-A11 to every enrolling host. That host can then mint identities and impersonate the server. (b) A bundle with extra or malformed blocks is accepted silently: Go's `AppendCertsFromPEM` skips non-`CERTIFICATE` blocks and certificates it cannot parse ([doc](https://pkg.go.dev/crypto/x509#CertPool.AppendCertsFromPEM); source read at go1.27.0). An empty pool left as `nil` means the host root set ([`tls.Config.RootCAs`](https://pkg.go.dev/crypto/tls#Config)). (c) X2 sits in the path of the first `Enroll`, before anything is pinned, and returns its own CA, which the component then pins for good | TM-D24 rule D: the enrolment material carries a `sha256` pin of the installation CA's SubjectPublicKeyInfo. The component checks the `Enroll` server against the pin before it sends the token. The server re-encodes parsed CA certificates and never passes stored bytes through. The component parses the bundle strictly and requires the pinned CA in it. Any violation fails enrolment and persists nothing | TM-F-FLEET (bundle corpus, pin-mismatch MITM) | Enrolment material copied through a channel the attacker controls (pin and token replaced together). Same exposure as TM-TB6-T1 |
-| TM-TB6-T14 | E | **Superseded certificate.** X9 steals a connector's key. The operator rotates because they suspect theft, but the old leaf is still signed by the tenant CA and in its validity period (up to the 90-day `DefaultLeafTTL`), so it keeps opening tunnels as that component until a full revoke | The gateway requires the presented serial to equal the component's current `cert_serial` at every RPC and stream establishment (`ComponentStatus.Current`). The open-stream re-check stays serial-agnostic (`Usable`), so a rotation does not drop the stream it was made on. `Rotate` already refuses a superseded certificate | TM-F-FLEET (`TestSupersededCertificateRefusedAtEstablishment`, `TestCurrentRefusesSupersededSerial`) | A stream opened with the stolen certificate before the rotation lives on until it ends or the component is revoked; rotate-on-suspicion is not a substitute for Revoke |
+| TM-TB6-T14 | E | **Superseded certificate.** X9 steals a connector's key. The operator rotates because they suspect theft, but the old leaf is still signed by the tenant CA and in its validity period (up to the 90-day `DefaultLeafTTL`), so it keeps opening tunnels as that component until a full revoke | The gateway requires the presented serial to equal the component's current `cert_serial` at every RPC and stream establishment (`ComponentStatus.Current`). The open-stream re-check stays serial-agnostic (`Usable`), so a rotation does not drop the stream it was made on. `Rotate` already refuses a superseded certificate | TM-F-FLEET (`TestSupersededCertificateRefusedAtEstablishment`, `TestCurrentRefusesSupersededSerial`, `TestSupersededCertificateIsReportedOncePerWindow`, `TestSupersededReporterAlertsAndAuditsBothSerials`) | A stream opened with the stolen certificate before the rotation lives on until it ends or the component is revoked; rotate-on-suspicion is not a substitute for Revoke. **A thief can also rotate first**: `Rotate` is self-service by whoever holds the current leaf, so X9 with a stolen key can rotate before the operator and the real component's certificate becomes the superseded one. The refusal is `Unauthenticated`, and a genuine, unexpired superseded leaf presented for a usable component raises a fleet alert (`fleet.component.superseded_certificate`) and an audit event (`fleet.component.superseded_certificate`, with `presented_serial` and `current_serial`), once per component per window (T-0300). The alert cannot say whether the component is stale or the thief rotated; the response to either is **Revoke** and re-enrol, not a second rotation |
+| TM-TB6-T15 | S/I/E | **Server CA compromise** ([ADR-0008](../decisions/0008-fleet-gateway-server-ca-installation-scope.md)). X9 or an insider obtains the installation server CA key (`fleet_server_ca`, sealed under the installation DEK) and sits on the network path. Goal: present a chain that satisfies every component's pin, capture enrolment tokens and redeem them (yielding a tenant identity), read tunnel plaintext, and send server→component commands to every tenant's agents | The server CA signs ServerAuth leaves only: its certificate carries `ExtKeyUsage = ServerAuth`, `MaxPathLen 0`, `KeyUsageCertSign`, and it is never in the gateway client pool, so it cannot mint a component identity (fitness `fitness-fleet-ca-scope` items 3 and 4). Key custody per ADR-0008 review obligation 2 (installation KEK not beside the database, distinct purpose and AAD, unsealed only inside the signing call and zeroised, every unseal audited). Commands stay separately signed (ADR-0007 for policy; each contract confirms it). Rollover per ADR-0008 item 8; on compromise `agentsetup repin` keeps the component identity and takes a new pin out of band | TM-F-FLEET (two tenants, one pin, one chain), `fitness-fleet-ca-scope` | **The blast radius is installation-wide.** Until components re-pin, an attacker with the key and a network position wins first contact for every tenant; the re-pin is a deliberate, audited cost |
+| TM-TB6-T16 | E/R | **Key use without key theft.** A compromised edge node (or a bug) calls `SignServerLeaf` to mint server leaves for names it should not serve, or in a loop, using the server CA through the legitimate code path | `SignServerLeaf` takes no principal and is reachable from no RPC. Names come only from the configured endpoint set (installation config changed by step-up and audit), at most 8, no wildcard, no loopback, link-local or unspecified IP, lowercased and IDNA-normalised. The leaf key is generated inside the method (never a CSR or caller key). Lifetime at most 30 days and at most the CA's `not_after`. Every issuance is audited (`fleet.server_cert.issued`). Issuance is capped per node per hour. Minting prefers a management-role process; if every node mints, the DB grant on `fleet_server_ca` is SELECT-only and the node-count residual is documented | `fitness-fleet-ca-scope` items 1 and 2 | A node that holds the DB grant and the installation DEK can mint within the allow-list and the cap; the audit trail and the per-node cap bound and expose it, they do not prevent it |
+| TM-TB6-T17 | T | **Tampering with the endpoint set or the pin material.** X9 edits the configured fleet endpoint list so a leaf is issued for an attacker-chosen name, or replaces the pin in enrolment material or in the console so that components pin a different CA | The endpoint set is installation config changed only by step-up with an audit event, and `SignServerLeaf` re-checks every name against it. Every tenant's enrolment material carries the same `ServerPin`; the pin is derived from the `fleet_server_ca` row, never from request input. A pin mismatch fails enrolment before the token is sent (TM-D24 rule D) | `fitness-fleet-ca-scope` item 4 (two tenants, same pin), TM-F-FLEET (D) | Enrolment material copied through a channel the attacker controls (pin and token replaced together); same exposure as TM-TB6-T1 |
+| TM-TB6-T18 | S/E | **Chain and EKU confusion.** (a) The server CA lands in a client-verification pool (or `TenantCAs`), so a ClientAuth leaf signed by it is accepted as a component. (b) A tenant client CA is used as a TLS root when dialling out, so a leaf signed by a tenant CA (or one a thief holds) is accepted as the server. (c) The presented chain carries more than `[leaf, server CA]`, such as a tenant CA, which discloses which tenants exist | The server CA certificate has ServerAuth EKU only, so Go's EKU chaining refuses ClientAuth even if it reached a pool; the pool and `TenantCAs` never contain it. `dial` roots are exactly the certificates matching a pinned SPKI; tenant CAs are used only to check our own issued leaf for ClientAuth. The presented `Certificate[]` is exactly `[leaf, server CA]`, plus the cross-certificate only during a bounded rollover overlap | `fitness-fleet-ca-scope` items 3, 4 and 6 | None known beyond the rollover overlap, where the chain has a third element by design |
 
 ### 5.7 TB7 — Connector ↔ Graph and the Entra token endpoint
 
@@ -342,6 +347,7 @@ proof is direction, not a control; the proof table says which ticket builds each
 | TM-TB7-T6 | D | Graph throttling stalls jobs | Honour `Retry-After`, backoff, per-tenant concurrency | P3 conformance (fake Graph) | — |
 | TM-TB7-T7 | S | [SaaS] a job of tenant A authenticates with tenant B's certificate | Unseal only inside the tenant's own `WithTenantTx` | P4 | — |
 | TM-TB7-T8 | S/E | An Entra admin stamps an AD admin's `objectGUID` as `onPremisesImmutableId` on a cloud-only user, signs in by SSO and inherits that admin's AD-side grants (forged anchor) → A1 | Only `matched` correlations authorise; the gate needs `onPremisesSyncEnabled = true` (read-only in Graph) and the SID to equal `objectSid` (DM-20.I4 a–e; TM-D17) | TM-F-HYBRID | — |
+| TM-F-BACKING | A guarded attribute (`guarded v1`, §6.9 rule 5) is written by an Action that does not declare its class's permission, or two classes in one Action; a hand-built, non-constant, differently cased or OID-named guarded `step.Attr`; a `denied` attribute written; a write path outside `internal/connector/write` and `internal/directory/graphwrite`; a `kindTable` row with no class; the table and the `guarded-v1` block differ (§6.9a, TM-D28 B1–B9) | CI, `tools/fitness/backing` + analyser; failing fixtures; lab G17 for the `[UNVERIFIED]` bits | T-0284 follow-on (directory-engineer, devops-engineer) | TB8-T8 (console-backing) |
 | TM-TB7-T9 | S/E | Takeover through hard or soft match: a pre-created cloud user is taken over when its target enters sync scope, and keeps the attacker's sign-in methods → A1 | (f): both tenant blocking flags, attested by a Global Administrator and watched in the directory audit; eligibility only goes down (g); `tenant-owner` and RBAC administration never cross a correlation (h) (TM-D17) | TM-F-HYBRID | Takeovers before install or in the install-time population (TM-R11) |
 | TM-TB7-T10 | T/E | After an SOA transfer (`isCloudManaged`) the on-premises attributes, the SID included, become admin-writable → a forged match | Gate (b) and (a); the object is once-cloud-managed, so it needs re-confirmation (g) | TM-F-HYBRID | — |
 | TM-TB7-T11 | E | A technician resets the AD password of a synced user who holds an Entra role, and password hash sync hands over that role | C16: an AD object correlated to an Entra `tier0` principal is `tier0`, whatever the correlation state; ENH-08 reports synced role holders | TM-F-T0GUARD, TM-F-HYBRID | — |
@@ -368,8 +374,8 @@ proof is direction, not a control; the proof table says which ticket builds each
 | --- | --- | --- | --- | --- | --- |
 | TM-TB9-T1 | I/E | X5 points an integration URL at loopback, link-local, a cloud metadata endpoint or an internal service (SSRF) | One egress client for every integration: resolve, then refuse loopback, link-local, metadata and private ranges unless the installation operator allow-lists them; connect to the resolved IP (no DNS rebinding); no redirect to a disallowed host (SB checklist F) | TM-F-EGRESS | Allow-listed internal ranges remain reachable by design |
 | TM-TB9-T2 | I | Our identity authenticates to an attacker-chosen HTTP endpoint (NTLM via HTTP) | No HTTP client does integrated Windows authentication (TM-D10) | TM-F-NTLM | — |
-| TM-TB9-T3 | S | X12 spoofs an HR feed or ITSM callback | Inbound ITSM authenticated by API token or signature and only creates Requests (DM-85.I1); HR/DB pulled by us over verified TLS | TM-F-EGRESS, T-0130 | — |
-| TM-TB9-T4 | T | X12 (HR) drives mass leaver actions | Lifecycle policies run through Plan, approvals and per-run change-volume limits `[OPEN → E2.9 lifecycle spec]` | T-0130 operation fitness | A believable HR change still flows if within limits |
+| TM-TB9-T3 | S | X12 spoofs an HR feed or ITSM callback | Inbound ITSM authenticated by API token or signature and only creates Requests (DM-85.I1); HR/DB pulled by us over verified TLS | TM-F-EGRESS, `make fitness-operation` O1/O2 (landed) | — |
+| TM-TB9-T4 | T | X12 (HR) drives mass leaver actions | Lifecycle policies run through Plan, approvals and per-run change-volume limits `[OPEN → E2.9 lifecycle spec]` | O8 pipeline behaviour (`max_objects` hold), T-0393 | A believable HR change still flows if within limits |
 | TM-TB9-T5 | I | Integration credentials returned or logged | Sealed, write-only, never returned (DM-82.I1, DM-63, DM-85) | TM-F-SECRETOUT, TM-F-SEAL | — |
 | TM-TB9-T6 | I | A new password travels in a notification | Default: no password in any notification; any "deliver initial password" feature needs its own security review `[OPEN → E2.5 helpdesk spec]` | TM-F-SECRETOUT | OTP codes are sent by design (they are the factor) |
 | TM-TB9-T7 | R | Deliveries cannot be proven | Delivery outcome recorded and audited (BP §14 flow 4) | TM-F-AUDIT | — |
@@ -491,7 +497,7 @@ both kinds of agent, so both command sets are closed (TM-D13).
 | TM-TB17-T5 | E | A compromised cell uses every tenant's Entra certificate | One certificate per tenant; KMS encryption context per tenant; KMS audit log; permission limits (§6.6); a regulated tenant binds Entra on-site (ADR-0002 amendment path) | §13 | **Accepted for design** (TM-R10) |
 | TM-TB17-T6 | R | Unwraps are not independently recorded | KMS audit log (e.g. CloudTrail) is an independent record of every unwrap | §13 | — |
 | TM-TB17-T7 | D | A noisy neighbour starves other tenants | Per-tenant quotas `[OPEN → E5.6]` | — | — |
-| TM-TB17-T8 | I | Logs, metrics or caches mix tenants | Tenant ID on every log line and metric; caches keyed by tenant (ADR-0002) | P4 (extended to logs and caches) `[OPEN → T-0135]` | — |
+| TM-TB17-T8 | I | Logs, metrics or caches mix tenants | Tenant ID on every log line and metric; caches keyed by tenant (ADR-0002) | P4 (extended to logs, metrics and caches: `tools/fitness/profiles/p4.go`, T-0135) | — |
 
 ### 5.18 TB18 — ManageEngine source ↔ migration importer, discovery scanner, parallel-run comparator [M2]
 
@@ -512,7 +518,7 @@ values that any user can write on their own object (TM-X3).
 | TM-TB18-T4 | I | ADMP's own stored AD credentials or technician passwords are read or imported. Horizon3 found "highly privileged" AD credentials in a competitor product's database (ME-SEC §4.4) | Adapters read an **allow-list** of tables and columns per ADMP build. A CI-checked deny list covers every credential, key and password table or column. A database dump or backup is read as a stream, only allow-listed tables are extracted, and the upload is deleted when the job ends; it never enters the blob store. Technicians are re-created by invitation or SSO, never with imported passwords | TM-F-MIGRATE | ADMP's service account keeps its rights until the customer removes it (playbook phase 6) |
 | TM-TB18-T5 | I | The credential for the ADMP database or API leaks; that database holds ADMP's AD credentials | Sealed per-integration credential (TM-D7), write-only, never returned (TM-TB9-T5). Read-only by contract: a read-only database login or a read-only technician token, read-only transactions, no write statement in adapter code (FF-SP7 scope). Windows authentication to SQL Server is Kerberos only (TM-D10). The credential is deleted when the migration project closes | TM-F-MIGRATE, TM-F-SECRETOUT | The customer grants a login that can write; the adapter still never writes |
 | TM-TB18-T6 | S/I | A scanner or comparator target is used for SSRF or NTLM coercion | ManageEngine servers are registered explicitly. They are reached only through the egress client (TM-TB9-T1); AD only through the connector and `InventoryHost`. Kerberos only, no NTLM (TM-D10) | TM-F-EGRESS, TM-F-NTLM | — |
-| TM-TB18-T7 | E | Parallel run executes imported automations for real (a leaver deleted twice; MIG-14) | Comparator runs are Plan-only operations with no Apply path. activeDIQ refuses to run a job whose owner is ManageEngine (MIG-14). Switching ownership is an audited Action with step-up | TM-F-MIGRATE, T-0130 operation fitness | — |
+| TM-TB18-T7 | E | Parallel run executes imported automations for real (a leaver deleted twice; MIG-14) | Comparator runs are Plan-only operations with no Apply path. activeDIQ refuses to run a job whose owner is ManageEngine (MIG-14). Switching ownership is an audited Action with step-up | TM-F-MIGRATE, O7 contract behaviour (Plan writes nothing), T-0392 | — |
 | TM-TB18-T8 | T | X13 feeds false results so the comparator reports parity | Comparator output is advisory and never triggers a write. The fidelity report shows the source of each row | — | A wrong parity sign-off; the customer's review is the control |
 | TM-TB18-T9 | S/I | An imported scheduled report or notification delivers to an attacker-chosen recipient (MIG-06) | Imported schedules land disabled, with recipients shown for review. Recipients outside the tenant's allowed domains are flagged. Delivery runs with the owner's scope (TM-TB15-T2) | TM-F-MIGRATE | — |
 | TM-TB18-T10 | I | Discovery output (privileged accounts, delegations) becomes a reconnaissance map (A6) | The scanner needs its own permission and uses only R1 read rights (§6.3). Its output is inventory under RBAC trimming; exports go through the TB15 encoders and are audited | TM-F-AUTHZ | — |
@@ -561,13 +567,13 @@ M4 RADIUS spec proposes:
 
 | Identity | Profile / where | What it is | Holds |
 | --- | --- | --- | --- |
-| Connector AD identity | `windows`: **gMSA** (no stored secret). `linux-oci`: dedicated account with an **AES-only keytab** (`msDS-SupportedEncryptionTypes` 0x18, FEAS §2.4); gMSA retrieval on Linux is `[LAB]` | The only directory identity (ADR-0002 rule 3) | Exactly the rights of §6.3 for the enabled features |
+| Connector AD identity | `windows`: **gMSA** (no stored secret). `linux-oci`: dedicated account with an **AES-only keytab** (`msDS-SupportedEncryptionTypes` 0x18, FEAS §2.4); reading `msDS-ManagedPassword` over LDAPS from Linux works for a listed principal (Windows lab, T-0076), but the password holds lone UTF-16 surrogates, so using a gMSA as a Linux identity is `[UNVERIFIED]` and not planned | The only directory identity (ADR-0002 rule 3) | Exactly the rights of §6.3 for the enabled features |
 | gMSA retrieval list | `msDS-GroupMSAMembership` (PrincipalsAllowedToRetrieveManagedPassword) | Who may read `msDS-ManagedPassword` | Exactly the connector host computer account(s); the password is returned only over a sealed connection ([msDS-ManagedPassword](https://learn.microsoft.com/en-us/windows/win32/adschema/a-msds-managedpassword)) |
 | Entra app | The customer's **own** app registration, one per Entra tenant; certificate credential | App-only Graph access (ADR-0002 rule 3) | §6.6 permissions; **no Entra directory role**; **no owners** |
 | PostgreSQL roles | Owner role (migrations) ≠ runtime role (ADR-0002 rule 4) | Data access | Runtime: no ownership, no `BYPASSRLS`, no `TRUNCATE`, INSERT-only on audit (§11) |
 | Server process | `windows`: the gMSA (embedded transport); `linux-oci`: non-root container, keytab mounted read-only | Runs `server` + embedded `connector` | Host-level only what the service needs (TM-F-HOST) |
 | Sidecars [M3] | Inherit the launcher's identity | Typed operations | No credentials of their own |
-| DC agent [M3] | A virtual service account in Event Log Readers preferred over LocalSystem ([WEF Appendix D](https://learn.microsoft.com/en-us/windows/security/operating-system-security/device-management/use-windows-event-forwarding-to-assist-in-intrusion-detection); FEAS §2.3) | Event collection, filter IPC | Final choice in T-0142 |
+| DC agent [M3] | A virtual service account in Event Log Readers preferred over LocalSystem ([WEF Appendix D](https://learn.microsoft.com/en-us/windows/security/operating-system-security/device-management/use-windows-event-forwarding-to-assist-in-intrusion-detection); FEAS §2.3) | Event collection, filter IPC | ADR-0006 |
 | Edge [M4] | Own host | Public front | **No directory identity** |
 
 ### 6.2 Never Domain Admin — DECISIONS TM-D1 and TM-D2
@@ -678,11 +684,11 @@ SW validated write. GUIDs shortened with "…" are taken **from the forest's sch
 | R2 | Change tracking (DirSync) | **None extra:** `LDAP_DIRSYNC_OBJECT_SECURITY` (0x1) returns only what the identity can already read | NC roots | Plain **DS-Replication-Get-Changes** (`1131f6aa-…`) via DirSync **bypasses object and attribute ACLs and reads confidential attributes** (not hashes) — Tier-0-adjacent; **not used in v1**. **Get-Changes-All** (`1131f6ad-…`) is DCSync — forbidden |
 | R3 | User create, delete, modify (ADM-008…024) | CC/DC for class `user` on target OUs; **per-attribute WP**, inheritedObjectType `user` | Target OUs | **Never the User-Account-Restrictions property set** (`4c164200-20c0-11d0-a768-00aa006e0529`): from WS2012 it includes `msDS-AllowedToActOnBehalfOfOtherIdentity`, i.e. RBCD configuration → takeover ([property set](https://learn.microsoft.com/en-us/windows/win32/adschema/r-user-account-restrictions)) |
 | R4 | Enable/disable, expiry, unlock, must-change | WP `userAccountControl`, `accountExpires`, `lockoutTime` (unlock = 0), `pwdLastSet` (0 / -1) | `user`, delegated OUs | Not covered by Reset-Password; write to the PDC emulator; displayed state from `msDS-User-Account-Control-Computed` |
-| R5 | Password reset (ADM-136) | **Reset-Password** extended right (CA, `00299570-246d-11d0-a768-00aa006e0529`), inheritedObjectType `user` | `user`, delegated OUs | Send `LDAP_SERVER_POLICY_HINTS_OID` (`1.2.840.113556.1.4.2239`, flag 0x1) so history and minimum age apply; it needs no extra right (doc-only `[UNVERIFIED — lab]`). `unicodePwd` over LDAPS only (SP §5.6) |
+| R5 | Password reset (ADM-136) | **Reset-Password** extended right (CA, `00299570-246d-11d0-a768-00aa006e0529`), inheritedObjectType `user` | `user`, delegated OUs | Send `LDAP_SERVER_POLICY_HINTS_OID` (`1.2.840.113556.1.4.2239`, flag 0x1) so history and minimum age apply; it needs no extra right (confirmed on Windows Server 2025 with a principal holding only Reset-Password: accepted, history and minimum age enforced, `unwillingToPerform` on reuse; [T-0076 lab log](../runbooks/windows-lab-runs/T-0076-ad-lab-confirmation-20261028.md)). `unicodePwd` over LDAPS only (SP §5.6) |
 | R6 | Group management | CC/DC class `group`; WP `member` | Delegated groups/OUs | Protected groups reset their ACL hourly (SDProp), so delegation there does not stick — and they are `tier0` anyway |
 | R7 | Computers: create, reset (ADM-057) | CC/DC class `computer` (**object-specific**, never "Create all child objects"); Reset-Password for machine reset; WP on benign attributes only | Delegated computer OUs | **Never delegate:** `msDS-AllowedToActOnBehalfOfOtherIdentity` (RBCD), `msDS-KeyCredentialLink` (shadow credentials), `servicePrincipalName` and Validated-SPN, `dNSHostName` and Validated-DNS-Host-Name, the `userAccountControl` delegation bits (TRUSTED_FOR_DELEGATION also needs SeEnableDelegationPrivilege on DCs — never requested). On WS2025, "Create all child objects" or "Create msDS-DelegatedManagedServiceAccount" on an OU is the **BadSuccessor** dMSA escalation ([Akamai](https://www.akamai.com/blog/security-research/abusing-dmsa-for-privilege-escalation-in-active-directory)) |
 | R8 | Contacts and OUs; move; rename | CC/DC class `contact` / `organizationalUnit`; move = DC on source + CC on target + WP RDN/`name` | Parent containers | **Withhold Delete-Tree** (0x40, control `1.2.840.113556.1.4.805`): it deletes a subtree ignoring child protections, including accidental-deletion deny ACEs. Delete non-empty OUs by recursion so each child is access-checked |
-| R9 | Recycle Bin restore (ADM-038) | **Reanimate-Tombstones** (`45ec5156-db7e-47bb-b53f-dbeb2d03c40f`) on the NC root + WP on mandatory attributes and RDN + CC of the class on the target container | Reanimate is **NC-root-wide** (cannot be scoped); effective restore bounded by CC on target OUs | **Tier-0-adjacent: JIT only**, never standing (FEAS §2.3 `adq-restore`). Works only for objects deleted after the delegation was set. Samba deleted-object behaviour can false-pass (before the [CVE-2018-14628](https://www.samba.org/samba/security/CVE-2018-14628.html) fix, tombstones were readable over LDAP): **Windows lab required**. **Finding the object:** by default "only the System account and members of the Administrators group can view" `CN=Deleted Objects`, and letting anyone else list it needs a Domain Admin to take ownership of the container and grant List + Read Property ([KB 892806](https://learn.microsoft.com/en-us/troubleshoot/windows-server/active-directory/non-administrators-view-deleted-object-container)). v1 restore requests **no list right**: it addresses the object by the `objectGUID` inventory recorded before deletion (`<GUID=…>` DN with the Show-Deleted control). Whether a DC resolves that GUID for an identity without list rights on the container is `[UNVERIFIED — lab]` (T-0076, T-0077). If it does not, the container change is needed; it stays JIT like Reanimate and needs a security-architect review (TM-Q27) |
+| R9 | Recycle Bin restore (ADM-038) | **Reanimate-Tombstones** (`45ec5156-db7e-47bb-b53f-dbeb2d03c40f`) on the NC root + WP on mandatory attributes and RDN + CC of the class on the target container | Reanimate is **NC-root-wide** (cannot be scoped); effective restore bounded by CC on target OUs | **Tier-0-adjacent: JIT only**, never standing (FEAS §2.3 `adq-restore`). Works only for objects deleted after the delegation was set. Samba deleted-object behaviour can false-pass (before the [CVE-2018-14628](https://www.samba.org/samba/security/CVE-2018-14628.html) fix, tombstones were readable over LDAP): **Windows lab required**. **Finding the object:** by default "only the System account and members of the Administrators group can view" `CN=Deleted Objects`, and letting anyone else list it needs a Domain Admin to take ownership of the container and grant List + Read Property ([KB 892806](https://learn.microsoft.com/en-us/troubleshoot/windows-server/active-directory/non-administrators-view-deleted-object-container)). v1 restore requests **no list right**: it addresses the object by the `objectGUID` inventory recorded before deletion (`<GUID=…>` DN with the Show-Deleted control). **Confirmed on Windows Server 2025 (T-0076):** a principal with only Reanimate-Tombstones at the root, Create-Child on the target OU and Write-Property on the class restored a tombstone with one modify on `<GUID=…>` and no list right on the container; the container change is not needed. That principal cannot list `CN=Deleted Objects` or read the GUID beforehand (`noSuchObject`), and without Reanimate the DC also answers `noSuchObject`, so treat `noSuchObject` as "missing or not permitted", never as proof the tombstone expired; without Create-Child on the target it is `insufficientAccessRights` ([T-0076 lab log](../runbooks/windows-lab-runs/T-0076-ad-lab-confirmation-20261028.md)) |
 | R10 | LAPS read (ADM-060) | Legacy: CA on `ms-Mcs-AdmPwd` + read expiration. Windows LAPS: RP + CA on `msLAPS-Password` / `msLAPS-EncryptedPassword` (confidential), via `Set-LapsADReadPasswordPermission` per OU ([LAPS technical reference](https://learn.microsoft.com/en-us/windows-server/identity/laps/laps-technical-reference)) | Computer OUs, **excluding the Domain Controllers OU** | `msLAPS-EncryptedDSRMPassword` on DC objects is the DSRM password = Tier 0. The connector is **never** a member of the decryptor principal of a policy covering DCs, and never through Domain Admins (the default decryptor). A dedicated decryptor group for non-DC policies is the security-architect reading, `[UNVERIFIED — lab]`, `[OPEN → ADM-060 spec]` |
 | R11 | BitLocker key read | CA on child `msFVE-RecoveryInformation` objects (keys are confidential, `searchFlags` 0x298, SP §3.7) | Computer OUs | Granted on the whole recovery object |
 | R12 | Home and profile folders (ADM-023) | AD: WP `homeDirectory`, `homeDrive`, `profilePath`. File server: "Create Folders / Append Data" + Read on the share root; the **user** owns their folder with Modify | File server (an `InventoryHost`) + user attributes | No standing Full Control over all home folders; implementation with windows-engineer |
@@ -1047,7 +1053,7 @@ raised from T-0227), the server guard and connector contract §8.1.
 2. **C17 rights.** A principal is `tier0` if its token holds, on any C17 object, an allow ACE whose
    mask includes `WRITE_DAC`, `WRITE_OWNER`, `GENERIC_ALL` or `GENERIC_WRITE` (generic bits and the
    mapped specific bits both count); a `WriteProperty` ACE with no `ObjectType` (all properties) or
-   with the `gPLink` GUID (`[UNVERIFIED — lab]` for the GUID; the classifier takes it from the
+   with the `gPLink` GUID (the GUID is `f30e3bbe-9ff0-11d1-b603-0000f80367c1` on Windows Server 2025, confirmed in T-0076; the classifier still takes it from the
    schema, never a constant); or all extended rights. Any **one** is enough: unlike C11, these do not
    combine. The rights come from the typed security-descriptor primitive (T-0149), through the
    effective-rights helper of SD-R11. The hand-rolled ACE reader in `ad_sd.go` is not extended; T-0149
@@ -1248,6 +1254,17 @@ non-takeover right is not `tier0`):
 | T0-RIGHTS-C19 | TM-F-RIGHTS: connector identity holding Reset Password on `krbtgt`, WP `msDS-KeyCredentialLink` on a DC, WP `member` on a C1 group, owner of a DC object, WP `gPLink` on the DC OU | each refuses activation; a correctly delegated identity passes |
 
 SDProp, `adminCount` on DC objects and the owner reset need the Windows lab (T-0226) `[UNVERIFIED — Windows lab]`.
+
+**Deny-read on a member or protected group — observed on Windows (T-0404, 2026-10-28, Windows Server 2025 lab, `dc1`, functional level 10).** With a deny ACE (LCRPLO) for the connector on a group nested in Domain Admins, and on `CN=Backup Operators,CN=Builtin`, a Read returns **the entry with no attributes** (`attributes=[]`), not no-such-object. Classification therefore fails closed in `builder.mark` with `tier0: entry without objectGUID`, the same path the Samba lab exercises. The no-such-object branch remains covered by the unit fake only; Windows did not produce it. Gap: that error names neither the group nor `S-1-5-32-551` (bug T-0626). Pinned by `TestWindowsLabTier0DenyReadNestedGroupFailsClosed` and `…BackupOperatorsFailsClosed` (`internal/connector/tier0/windows_lab_test.go`, tags `lab windowslab`). Key Admins / Enterprise Key Admins exist at level 10; the pre-2016-domain-with-2016+-DCs residual is T-0623.
+
+**Signed note — Key Admins (526) and Enterprise Key Admins (527) hidden on a domain below functional level 2016 that has 2016+ DCs: ACCEPTED RESIDUAL TM-R25 (T-0623, security-architect, 2026-10-28).**
+*AD semantics.* These groups are not created by raising the functional level. They are created when a Windows Server 2016 DC is promoted and takes the PDC Emulator role, or when `adprep` for 2016 runs ([Microsoft: domain-wide updates](https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/deploy/domain-wide-updates); [KB 4033233](https://mskb.pkisolutions.com/kb/4033233)) `[UNVERIFIED — Windows lab: confirmed from search summaries of those pages, not a full read or a lab run]`. A domain at level < 7 with a 2016+ PDC emulator therefore has both groups, yet `protectedList` (`internal/connector/tier0/ad.go`, `minLevel: levelWin2016`) tolerates their absence. Level ≥ 7 implies a 2016+ PDC, so the rule is exact there and wrong only in the mixed state. The Windows lab is a fresh WS2025 forest at level 10 and cannot reproduce the mixed state.
+*Attack.* The attacker needs WRITE_DAC or WRITE_OWNER on `CN=Key Admins` (an ordinary `CN=Users` object; I have not verified that SDProp covers it `[UNVERIFIED — Windows lab]`) or on its container, and the domain must be in that transitional state. They add a deny-read for the connector. Members of Key Admins drop out of `tier0` and activeDIQ lets a delegated role act on them. Key Admins can write `msDS-KeyCredentialLink` on accounts (shadow credentials), so the end state is takeover of any account.
+*Why accepted for M1, not fail-closed now.* (1) The precondition is control of a group in the Tier-0 neighbourhood, held by someone already close to Tier 0. (2) The mixed state is a transient migration state, not a steady one. (3) A correct fail-closed rule needs the PDC emulator's OS version: read `fSMORoleOwner` of the domain head, then that DC's `operatingSystemVersion`. "Any 2016+ DC exists" would be wrong, because a non-PDC 2016 DC does not create the groups and the snapshot would then fail forever. That is new connector code with its own lab matrix, not worth blocking M1 for a P2 residual.
+*Compensating controls today.* (a) The ratchet (§6.2 TM-D23 rule 8): if Key Admins was read earlier in the verification epoch, its members stay in the connector's set after it is hidden, and a shrinking run leaves a `tier0_set_shrink` record on the connector host. (b) An unreadable functional level and every other hidden protected group still fail closed. (c) Customer designations (C16) can add Key Admins by hand.
+*Follow-up.* Narrowing to fail-closed when the PDC emulator is 2016+ is ticket T-0631 (P3). Revisit this note if the Windows lab gains a mixed-level forest, or a customer reports a pre-2016-level domain with a 2016+ PDC.
+*Narrowed by T-0631 (security-architect review, 2026-10-28).* Below level 7, `c1c2` now follows the domain head's `fSMORoleOwner` → NTDS Settings parent → `serverReference` → `operatingSystemVersion` (`pdcHasKeyAdmins`, `internal/connector/tier0/ad.go`). Major version ≥ 10 with 526/527 not found fails closed naming the SID; every unreadable or multi-valued link, or an unparsable version, fails closed; a pre-2016 PDC still accepts absence. 527 is only checked at the forest root, so the root's PDC is the one read. Pinned by `TestKeyAdmins*` in `ad_test.go` (fake directory only). **Remaining residual:** the groups persist after the PDC role moves from a 2016+ DC back to an older DC (role transfer or demotion), and that state still accepts their absence; spoofing the PDC's `operatingSystemVersion` downwards needs write on a DC computer object (C5, already Tier 0) and only restores the pre-T-0631 behaviour. Not yet run against a mixed-level Windows lab `[UNVERIFIED — Windows lab]`.
+
 
 ### 6.5 Verification at onboarding and on every health check
 
@@ -1724,10 +1741,54 @@ authority through activeDIQ.
    - the object an `sso` account is bound to;
    - any object correlated to either.
 
-   Through activeDIQ, these changes to such an object need an actor who holds every privilege the
-   backed account holds (DM-36.I1): resetting its password, unlocking or enabling it, changing its
-   UPN or sign-in name, and moving it. Otherwise the change is refused. The Entra app never writes
-   authentication methods (§6.6 deny list).
+   Through activeDIQ, a **sign-in-granting change** to such an object needs an actor who holds
+   every privilege the backed account holds (DM-36.I1). Otherwise the change is refused. A change
+   is sign-in-granting when it gives the actor, or anyone they choose, a way to authenticate as
+   the account, or keeps a known credential usable, or exposes the account's key to offline
+   cracking. TM-D28 below fixes the list as a closed table (`guarded v1`); it replaces the
+   five-item list this rule had (reset, unlock, enable, UPN or sign-in name, move). The Entra app
+   never writes authentication methods (§6.6 deny list).
+
+   **Guarded v1.** One class per permission. Every class needs its permission declared in the
+   Action's Descriptor (`internal/platform/rbac/backing.go`, `BackingObjectPermissions`).
+   Attribute names compare case-insensitively and also by OID; the `;binary` and other options
+   are stripped first. "Source" is where the attack or the semantics are documented; `doc` is
+   Microsoft documentation, `ext` a security-research source, `[UNVERIFIED]` not yet run in the lab.
+
+   | Class → permission | AD writes (attribute / bit / operation) | Why it grants sign-in | Source |
+   | --- | --- | --- | --- |
+   | `reset_password` → `objects.user.reset_password` | `unicodePwd`; `userPassword` (a password write on LDS-style and Samba back ends); `pwdLastSet` set to `-1` | A known password. `-1` removes a pending must-change, so a password the actor knows stays usable | §6.3 R4 (internal); `pwdLastSet` `-1` clears must-change and stamps the current time (confirmed on Windows, T-0076); the Entra SSPR half stays `[UNVERIFIED — lab G17]` |
+   | `unlock` → `objects.user.unlock` | `lockoutTime` set to `0`; UAC `LOCKOUT` 0x0010 cleared | Lifts the brute-force throttle on a guessed password | [KB 305144](https://support.microsoft.com/kb/305144) (doc) |
+   | `enable` → `objects.user.enable` | UAC `ACCOUNTDISABLE` 0x0002 cleared | Re-opens a disabled account (disabling is not guarded) | [KB 305144](https://support.microsoft.com/kb/305144) (doc) |
+   | `rename_logon` → `objects.user.rename_logon` | `userPrincipalName`, `sAMAccountName`; on computers `dNSHostName` | Implicit certificate mapping and SSO matching use these names: pointing a name at an account with a matching certificate or IdP claim signs in as it | [KB5014754](https://support.microsoft.com/kb/5014754) (doc: weak name-based mappings); `dNSHostName` `[UNVERIFIED]` |
+   | `move` → `objects.user.move` | `modifyDN` (rename or move), any `newSuperior` | Moves the object under an OU whose ACL, GPO or delegation the actor controls (TM-D18 analogue) | §6.3 and TM-D18 (internal) |
+   | `map_credential` → `objects.user.map_credential` | `msDS-KeyCredentialLink` (shadow credentials); `altSecurityIdentities` (certificate mapping); Entra `authorizationInfo.certificateUserIds`; Entra `onPremisesImmutableId` | A key pair, or a certificate the actor holds, authenticates as the account without its password. In Entra, a value that binds a certificate or a sync anchor to the user | [Shadow credentials](https://specterops.io/blog/2021/06/17/shadow-credentials-abusing-key-trust-account-mapping-for-account-takeover/) (ext); [KB5014754](https://support.microsoft.com/kb/5014754) (doc: the attribute and its weak and strong formats); [certificateUserIds](https://learn.microsoft.com/en-us/entra/identity/authentication/concept-certificate-based-authentication-certificateuserids) (doc: the value lives in `authorizationInfo`; AD admins can change it for any synced account); `onPremisesImmutableId`: TM-D17 (§6.8) hard and soft match |
+   | `set_spn` → `objects.user.set_spn` | `servicePrincipalName` | An SPN on a user account makes its service ticket requestable, which is encrypted with the account key and can be cracked offline (targeted Kerberoasting). On a computer or service it can also hijack the service identity | [Targeted Kerberoasting](https://thehacker.recipes/ad/movement/dacl/targeted-kerberoasting) (ext); §6.3 R7 "never delegate" (internal) |
+   | `signin_flags` → `objects.user.signin_flags` | UAC bits **set**: `PASSWD_NOTREQD` 0x0020, `ENCRYPTED_TEXT_PWD_ALLOWED` 0x0080, `DONT_EXPIRE_PASSWORD` 0x10000, `USE_DES_KEY_ONLY` 0x200000, `DONT_REQ_PREAUTH` 0x400000; UAC bits **cleared**: `SMARTCARD_REQUIRED` 0x40000, `NOT_DELEGATED` 0x100000; `msDS-SupportedEncryptionTypes` any change | Empty or reversible password, a password that never ages, weak keys, or an AS-REP the actor can crack offline; dropping smart-card or delegation protection returns the account to a guessable password path | [KB 305144](https://support.microsoft.com/kb/305144) (doc for names and meaning; hex values from the same KB `[UNVERIFIED]`, check against MS-ADTS in the lab); [AS-REP roasting](https://thehacker.recipes/ad/movement/kerberos/asreproast) `[UNVERIFIED]` not re-read |
+   | `signin_limits` → `objects.user.signin_limits` | `accountExpires` set to anything but "now or earlier"; `logonHours` replaced by anything not provably a subset of the current value; `userWorkstations` widened or cleared | Re-opens an expired account, or opens hours or hosts that were closed | [accountExpires](https://learn.microsoft.com/windows/win32/adschema/a-accountexpires) (doc: `0` and `0x7FFFFFFFFFFFFFFF` mean never); `logonHours`, `userWorkstations`: [User security attributes](https://learn.microsoft.com/en-gb/windows/win32/ad/security-properties) (doc) |
+   | Entra `reset_password`, `enable`, `rename_logon` | Graph `PATCH /users/{id}`: `passwordProfile`, `mobilePhone`, `otherMails` → `reset_password` (SSPR contact points let the actor reset the password `[UNVERIFIED]`); `accountEnabled` set true → `enable` (false is tightening); `userPrincipalName` → `rename_logon` | Same as the AD rows | [Graph user resource](https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0) (not re-read, `[UNVERIFIED]`); the property-to-permission mapping joins the TM-D25 7g table |
+   | Entra `map_credential` (deny) | `authenticationMethods`, Temporary Access Pass, `phoneMethods`, federation settings | Directly a sign-in method | Already a §6.6 deny-list item; B8 below proves no Action reaches them |
+
+   **Tightening is not guarded.** Setting `ACCOUNTDISABLE`, setting `accountExpires` to a time at or
+   before now, and a `revokeSignInSessions` call remove sign-in. They need only the Action's own
+   permission. The classifier calls a change tightening only when it can prove it from the typed
+   value; anything it cannot prove is relaxing and is guarded (fail closed).
+
+   **Never offered in v1 (denied, not guarded).** No Action may write these. Adding one needs a
+   security review that edits this table: `msDS-AllowedToActOnBehalfOfOtherIdentity` (RBCD),
+   `msDS-AllowedToDelegateTo`, UAC `TRUSTED_FOR_DELEGATION` 0x80000 and
+   `TRUSTED_TO_AUTH_FOR_DELEGATION` 0x1000000, `sIDHistory`, `primaryGroupID`. The first four are
+   already "never delegate" in §6.3 R7; `sIDHistory` is C18; `primaryGroupID` changes grants and
+   belongs to TM-D18. B3 fails any Action that writes one.
+
+   **Considered, not guarded (and why).** `scriptPath`, `profilePath`, `homeDirectory`: they run
+   code or mount a share at the account's own sign-in; they do not let the actor sign in as it
+   (code execution as the user is a different threat, TM-D18 neighbour; left to the OU/GPO
+   guards). `msDS-AdditionalDnsHostName`: no known sign-in effect `[UNVERIFIED]`. `mail`,
+   `otherMails`, `mobilePhone` in Entra can feed self-service password reset contact data
+   `[UNVERIFIED — lab G17, Entra tenant with SSPR]`; until G17 reports, they are written only
+   through the same Entra constructor path and are guarded as `reset_password` (conservative).
+   `userCertificate`: no AD sign-in effect on users; computers and ADCS are C10.
 6. **These roles are not added to E4.** With rules 1 and 2 they reach no AD-side authority through
    activeDIQ. They stay in E1, where every role holder is write-protected.
    - **Recommended customer hardening** (setup guide and a health hint): put hybrid technicians'
@@ -1767,6 +1828,111 @@ for the CEO (factory-director files it), like D-0009.
 - a technician resetting, through activeDIQ, the AD password of a console account that holds more
   privileges than they do is refused (rule 5).
 
+
+### 6.9a Every write of a guarded attribute declares its permission — DECISION TM-D28 (T-0388)
+
+**The gap.** The T-0284 guard (`internal/platform/rbac/backing.go`) keys on the Action's declared
+`Descriptor.Permission`. Nothing stopped an Action from writing `msDS-KeyCredentialLink` while
+declaring `objects.user.update`, or from flipping `DONT_REQ_PREAUTH` inside a generic
+`userAccountControl` write. The guard would never run, so rule 5 would hold only for the five
+changes someone remembered to label. TM-D28 makes the guarded table the single source and proves
+it at four layers, so a missing declaration fails in CI and, if CI is bypassed, at runtime.
+
+**TM-D28 — rules.**
+1. **One closed table.** `guarded v1` (rule 5 above) is a Go table in `internal/directory/guarded`:
+   `(attribute names and OIDs, bit mask or operation) → class → permission`, plus the `denied` set.
+   It is the only place a class is decided. The permission list `BackingObjectPermissions` is
+   generated from it, not typed beside it. New permissions
+   (`objects.user.map_credential`, `.set_spn`, `.signin_flags`, `.signin_limits`) enter the RBAC
+   catalogue (DM-36) as ordinary object permissions with no default grant, step-up required
+   (§7.4), and `tier0` objects stay refused whatever the grant (TM-D2).
+2. **Typed constructors only.** A `step.Attr` or Graph property for a guarded attribute is built only by
+   a constructor in `internal/directory/guarded` (`guarded.SetUACBits(mask)`,
+   `guarded.ClearUACBits(mask)`, `guarded.KeyCredentialLink(...)`, `guarded.AltSecurityIdentities(...)`,
+   `guarded.SPN(...)`, `guarded.AccountExpires(t)`, `guarded.LogonHours(h)`, …). Each returns the
+   attribute and its class. A bitfield such as `userAccountControl` is never a raw `Values`
+   string: the constructor takes named bits, so the class follows the bits, not the attribute.
+   Attribute names must be compile-time constants everywhere else.
+3. **One class per Action.** An Action's Descriptor carries one `Permission`. An Action may touch
+   one guarded class and declare that class's permission; an Action that needs two (for example
+   reset and enable) is two Actions, or a Workflow of two (ADR-0005), each gated on its own.
+   A tightening-only Action (disable, expire now) touches no class.
+   **Creating a new object is outside the classes.** A create-user Action (`DigestKind`
+   `user.create`) sets `unicodePwd`, clears `ACCOUNTDISABLE` and sets a name on an object that
+   did not exist, so no one is backed by it yet. It declares its own create permission, not a
+   class permission, and may use only the dedicated `guarded.NewUser(...)` constructor, which
+   emits exactly `unicodePwd`, `ACCOUNTDISABLE` cleared, `userPrincipalName` and `sAMAccountName`
+   on an `add` operation. It cannot emit any other guarded attribute (B3 still applies) and the
+   constructor refuses a modify of an existing object; the runtime check treats `add` through
+   `NewUser` as class `none`, and any modify of the new object afterwards is a normal classed
+   write. B4 treats `NewUser` as touching no class; B5 includes `NewUser` as a fixture.
+4. **Runtime backstop in the write layer.** `client.Write` derives the classes from the `WriteOp`'s
+   `Attrs` and `DigestKind` through the table (never from a caller field), reads the permission the
+   Step was planned under, and refuses with `ErrGuardedUndeclared` if the permission is not the
+   class's. A `denied` attribute is `ErrGuardedDenied`. Every `kindTable` row carries an explicit
+   class or `none`; an unclassified kind is refused at init. The check runs in both Plan and
+   Apply, like T-0284. The connector's own write gate (§8.2) remains the second line for `tier0`
+   (TM-D1); it does not know RBAC, so this check lives on the server, in the same trust domain as
+   the guard.
+
+**Fitness function `fitness-backing` (TM-F-BACKING).** Code: `tools/fitness/backing`, with a
+type-aware analyser in `tools/analyzers/guardedattr`. It runs in `make fitness` and `make ci`, like
+`fitness-operation`. It is a separate job from O1–O9; until it runs green on `main` the T-0284 guard is not
+accepted as covering rule 5. Each rule has a failing case in `tools/ci/proof.sh`.
+
+| Rule | Fails CI when … | How it is found |
+| --- | --- | --- |
+| B1 table ↔ document | the `guarded v1` Go table and the machine-readable block in this section differ in any attribute, bit, OID, class or permission, or a permission in `BackingObjectPermissions` is not generated from the table | the check parses the fenced `guarded-v1` block below, like O9 parses the ADR DAG |
+| B2 constant names | a `step.Attr{Name: …}`, Graph property key or `WriteOp.DigestKind` outside `internal/directory/guarded` is not a compile-time constant | type-aware; a string built with `+`, `fmt`, a variable, or read from input fails |
+| B3 no hand-built guarded attribute | a composite literal of `step.Attr` (or a Graph property) names a guarded or denied attribute, in any case, OID form or with options; or a `denied` constructor is called by any Action | constants are resolved and normalised exactly as the runtime table does; one normaliser serves both |
+| B4 declared permission | for any type implementing `operation.Action`, the guarded constructors reachable from its `Plan` and `Apply` (SSA call graph) name a class whose permission differs from `Descriptor.Permission`, or name two classes. An interface call or reflection that could reach a `WriteOp` with no resolved target counts as touching every class | SSA over `internal/...`; unresolved dispatch fails closed |
+| B5 runtime matrix | for every row of the table (generated, so new rows are covered), `client.Write` does not give these results for the four cases: (1) no permission → `ErrGuardedUndeclared`; (2) another class's permission → `ErrGuardedUndeclared`; (3) a `tier0`-style permission (for example `objects.tier0.update`) → `ErrGuardedUndeclared`; (4) the class's own permission → success (tier0 targets are still refused by the connector gate, TM-D1). It also fails if a `NewUser` add with the create permission is refused, or a `NewUser` carrying any other guarded attribute succeeds; and the same for the name variants (upper case, OID, `;binary`) | table-driven unit test against a fake `Transport` |
+| B6 registry replay | an Action registered with the operation registry, planned against corpus inputs with a recording fake connector, emits a `WriteOp` whose classes differ from its Descriptor | one test iterating the registry (`internal/platform/operation`), so an Action that is not in the registry cannot ship (an unregistered Action cannot be run by the pipeline, ADR-0005 rule 1) |
+| B7 no other writer | `ldap.NewModifyRequest`, `ModifyDNRequest`, `PasswordModifyRequest` or a Graph `PATCH`/`POST` call is reachable from outside `internal/connector/write` and `internal/directory/graphwrite`; or a kind added to `kindTable` has no class or `none` | import and call-graph check; init-time check on `kindTable` |
+| B8 Entra | an Action reaches an `authenticationMethods`, TAP, phone-method or federation endpoint; the Graph property → class map (`ruleprops` extension) lacks `passwordProfile`, `accountEnabled`, `userPrincipalName`, `authorizationInfo`, `onPremisesImmutableId`, `mobilePhone`, `otherMails` | static; the deny-list half reuses TM-F-RIGHTS' list |
+| B9 twins (no theatre) | the negative controls fail: writing `description`, or `ACCOUNTDISABLE` set, or `accountExpires` ≤ now, is refused for lack of a permission; or writing `DONT_REQ_PREAUTH` with the `objects.user.update` permission succeeds | in B5 and B6 as fixtures |
+
+Deliberately failing fixtures ship with the checker (a bad Action per rule), as with `safeprim`
+(`go test ./tools/fitness/backing/...`), so the checker itself cannot rot into a no-op.
+
+```guarded-v1
+reset_password: unicodePwd, userPassword, pwdLastSet=-1, entra:passwordProfile, entra:mobilePhone, entra:otherMails
+unlock: lockoutTime=0, uac.clear(LOCKOUT 0x0010)
+enable: uac.clear(ACCOUNTDISABLE 0x0002), entra:accountEnabled=true
+rename_logon: userPrincipalName, sAMAccountName, dNSHostName, entra:userPrincipalName
+move: modifyDN
+map_credential: msDS-KeyCredentialLink, altSecurityIdentities, entra:authorizationInfo.certificateUserIds, entra:onPremisesImmutableId
+set_spn: servicePrincipalName
+signin_flags: uac.set(PASSWD_NOTREQD 0x0020, ENCRYPTED_TEXT_PWD_ALLOWED 0x0080, DONT_EXPIRE_PASSWORD 0x10000, USE_DES_KEY_ONLY 0x200000, DONT_REQ_PREAUTH 0x400000), uac.clear(SMARTCARD_REQUIRED 0x40000, NOT_DELEGATED 0x100000), msDS-SupportedEncryptionTypes
+signin_limits: accountExpires>now, logonHours (not provably a subset), userWorkstations (widened or cleared)
+denied: msDS-AllowedToActOnBehalfOfOtherIdentity, msDS-AllowedToDelegateTo, uac.set(TRUSTED_FOR_DELEGATION 0x80000, TRUSTED_TO_AUTH_FOR_DELEGATION 0x1000000), sIDHistory, primaryGroupID, entra:authenticationMethods, entra:temporaryAccessPass
+```
+
+Hex values are `[UNVERIFIED]` against MS-ADTS until lab G17 reads each bit on Samba and
+Windows; B1 pins them so a lab correction changes table and block together.
+
+**Alternatives rejected.**
+- **A review checklist or a naming convention** ("generic update Actions must not write
+  credentials"). This is how PatchIQ hid 18 RLS bypasses (postmortem §8): a label nobody tests.
+- **Guard at the connector only.** The connector does not know RBAC or the backed accounts, and a
+  compromised server does not care; the server-side guard needs the declaration.
+- **Classify by `DigestKind` only** (`user.setAttribute` stays one kind). A generic setter would
+  carry every class; the class must come from the typed attribute, not the kind label.
+- **Guard every write of every attribute.** Makes ordinary `description` and `department` edits
+  need all the backed account's privileges; the guarded population is small and the table is
+  where it grows, with B1 forcing the doc to change with it.
+
+**Residual (TM-R23).** The table is only as complete as our knowledge of sign-in-granting
+attributes. Schema extensions, a future Windows attribute, and ADCS template changes (C10) can
+add one. Mitigation: B1 makes every addition a reviewed diff; `Describe` (connector contract §4)
+reports the DC's schema version, and the lab job G17 greps the live schema for attributes with
+credential-like syntax (`msDS-*Key*`, `*Identities`, `*Password*`) not present in the table, and
+fails the nightly job on an unexplained one. The Entra and SSPR rows rest on lab G17.
+
+**Routed.** Build: T-0284 follow-on (extend `BackingObjectPermissions` and the RBAC catalogue,
+generate from the table), `internal/directory/guarded` and the `client.Write` check
+(directory-engineer), `fitness-backing` (devops-engineer). Lab G17 → T-0075.
+
 ---
 
 ## 7. Console authentication, sessions and RBAC
@@ -1789,7 +1955,7 @@ security-architect reviews every change here.
   library (licence-register row first), the algorithm pinned, signed assertions required, and a
   signature-wrapping fuzz corpus. The lesson is the competitor's pre-auth RCE through an outdated
   XML-DSig library in SAML handling, CVE-2022-47966 (ME-SEC §4.1, §4.3 "third-party components").
-- **MFA for every console user.** WebAuthn/passkeys are preferred; TOTP is allowed. MFA claims from
+- **MFA for every console user.** WebAuthn/passkeys are preferred; TOTP is allowed. **Once an account owns a passkey, or holds an owner/control-plane role, TOTP no longer completes AN-10 (factor policy, `factor-policy-phishing-resistant-mfa.md`, T-0574).** MFA claims from
   the IdP are accepted only when the tenant configures that IdP as MFA-asserting `[OPEN → ADM-143
   spec]`. Local accounts exist only for break-glass, always require MFA (DM-30.I1, ADM-142), and
   every use raises an alert to all `tenant-owner` accounts. AD-side grants that reach an `sso`
@@ -1810,8 +1976,9 @@ security-architect reviews every change here.
 | Cookie | `__Host-` prefix, `HttpOnly`, `Secure`, `SameSite=Strict`, no `Domain` attribute |
 | CSRF | Token on every mutation; JSON-only request bodies |
 | Timeouts | Idle and absolute, tenant-configurable within platform bounds; concurrent-session limit (ADM-145) |
-| Revocation | On account disable (DM-31.I2), on role change of the account, on password/MFA reset, and on demand |
+| Revocation | On account disable (DM-31.I2), on role change of the account, on password/MFA reset, and on demand. Implemented in `authn` (T-0363): `OnAccountDisabled`/`OnRoleChanged`/`OnPasswordReset`/`OnMFAReset` revoke in the caller's transaction; callers are wired in T-0403 |
 | Transport | HSTS on the console; no plaintext listener |
+| Runtime-role compromise (T-0390) | A session row **is** the authentication result: arbitrary SQL as `activediq_app` can INSERT a well-formed session for any account with a chosen token hash, bypassing password and TOTP. Mitigation chosen: an INSERT trigger (`0025_authn_sessions_insert_guard`) so a minted row starts active, is not already expired or backdated, and lives at most 24 h (the platform ceiling); UPDATE is guarded and DELETE revoked (`0013`). **Accepted residual:** the database cannot prove a factor was verified, so an in-bounds forged session is possible. Containment is the audit trail, on-demand revocation and the 24 h cap; the T-0361 enrolment guards are defence in depth, not a barrier against this role |
 
 ### 7.4 Step-up re-authentication — DECISION TM-D16 (part 1)
 
@@ -1862,6 +2029,7 @@ operation of the document (`x-permission: anonymous`, ADR-0004 rule 5) or a non-
 | AN-8 | Local break-glass sign-in, password step (ADM-142, DM-30.I1) | L1 console/API; never on an AN-5/AN-7 hostname | Operation, rate class `auth` | The local account's password. Success yields **only** a pending sign-in (AN-10), never a session |
 | AN-9 | AD-identity sign-in by SPNEGO (Kerberos), if the PRD offers it (BP §11; ADR-0002 rule 3) | L1 console/API; never on an AN-5/AN-7 hostname | Non-API: `GET /auth/negotiate` (HTTP Negotiate, [RFC 4559](https://www.rfc-editor.org/rfc/rfc4559), is a header exchange, not JSON), rate class `auth` | A Kerberos AP-REQ for our HTTP service principal, verified by the connector's SPNEGO acceptor. Success yields **only** a pending sign-in (AN-10), never a session |
 | AN-10 | Sign-in second factor (WebAuthn challenge and assertion, TOTP) for a pending sign-in from AN-3 (when the IdP is not MFA-asserting), AN-8 or AN-9 | L1 console/API | Operations, rate class `auth` | The pending-sign-in handle plus the account's enrolled factor |
+| AN-11 | Return from the IdP sign-in of a TM-D17 takeover-protection attestation (§6.8) | L1 console/API | Operation `completeTakeoverAttestation` (`GET /api/v1/connections/takeover-attestation/callback`): `x-activediq-scope: platform`, rate class `auth`, plus the in-handler per-source and per-tenant limit below | The single-use `state` issued by an authorised, step-up-fresh start (random, only its SHA-256 stored, ten minutes, consumed first), with the PKCE verifier. The tenant is read from the state and used only to look it up. Every failure answers one 303 and is audited under `system:attestation-callback` |
 
 **Rules for AN-8 to AN-10** (RT-7 review by T-0032). Rules 8 and 9 cover AN-1 (T-0044).
 
@@ -1876,6 +2044,46 @@ operation of the document (`x-permission: anonymous`, ADR-0004 rule 5) or a non-
    for an unknown account, a wrong password, a non-local account, a disabled account and a
    throttled account. An unknown account still costs one password-hash verification against a
    fixed dummy hash. AN-9 answers the same for an unmapped principal and a disabled account.
+   **Per-account limit on AN-8 (DECISION TM-D22 amendment, T-0359).** The per-account `auth` bucket
+   of §7.8 is a *throttle*, never a status code. A `429` that appears only for a name that has
+   been tried is an oracle for "this name was tried", and a `429` that appears only for existing
+   accounts is an oracle for existence, so AN-8 never answers a per-account `429`. The rules:
+   a. **Key.** The bucket and the rule-3 failure counter share one key: tenant plus the
+      *normalised submitted username*, using the same normalisation function the account lookup
+      uses (trim, Unicode NFC, case-fold), so a spelling variant cannot reach a fresh bucket. The
+      key is created for **every** submitted name, whether or not the account exists, is local,
+      or is disabled. The store holds `HMAC-SHA256(server key, tenant ‖ normalised name)`, never the
+      name, and rows expire after the 15-minute window. A key that exists only for real accounts
+      would be the oracle, so there is no code path "account not found, skip the throttle".
+   b. **Effect.** When the bucket is empty, or the rule-3 delay window has not passed, the request
+      is **not evaluated**: the password is not checked, even if it is right. It does the same
+      work as an unknown account (one hash verification against the fixed dummy hash) and answers
+      the one `401 /problems/sign-in-failed`. The delay is a not-before time, so the server holds
+      no connection open for it; every answer leaves after the same fixed latency floor
+      (the dummy-hash cost), whichever branch ran.
+   c. **Identical on the wire.** Throttled-known, throttled-unknown, wrong-password and
+      unknown-account answers have the same status, body bytes and header names and values:
+      no `Retry-After` (the T-0193 contract allows one only if common to all failures, and AN-8
+      gives none), no `Set-Cookie`, no rate-limit headers, the same `Content-Length`.
+   d. **`429` that remains.** Only the *source-IP* `429` (§7.8 floor and per-IP `auth` rows, chain
+      step 3, before the body is read) and the global limits below. They are decided before the
+      submitted name is known or by values that do not depend on it. A failure of the shared
+      store refuses the request with the same `401` (fail closed, no evaluation).
+   e. **Bounded state.** The key table has a cap. When it is full, a *new* key falls into one
+      shared overflow bucket for all new keys; the answer is still the uniform `401`, so the cap
+      is not observable per name. The delay window uses no waiting goroutine, so a flood of
+      names does not exhaust connections.
+   f. **Counting.** A non-evaluated attempt counts as a failure for rule 3 (otherwise
+      hammering during the window would be free), capped at the rule-3 ceiling of 15 minutes.
+      Residual R-AN8-1: anyone on L1 can push a known break-glass name into the delay window with
+      5 bad guesses. That is the cost of "throttled, never locked" (rule 3), alerts reach every
+      `tenant-owner` at 10 failures in an hour, and the CIDR allow-list (rule 4) bounds who can.
+   g. **Never logged by name.** The audit event for an AN-8 failure records the key hash, tenant
+      and client IP. The raw submitted name is recorded only when it matches an existing account,
+      because a mistyped password in the username field must not reach the log.
+   **AN-10** may keep `429` for its pending-handle bucket: the handle is a 256-bit random value,
+   not an account name, and an unknown, expired and live handle all consume the same bucket keyed
+   on the hash of the submitted handle, so the status leaks nothing about accounts.
 3. **Break-glass is throttled, never locked.** A hard lockout of a break-glass account would let
    anyone on L1 disable the emergency path, which is a denial of service on recovery. Instead, after
    5 failures in 15 minutes the account is delayed exponentially (1 s doubling to a 15-minute cap,
@@ -1891,7 +2099,8 @@ operation of the document (`x-permission: anonymous`, ADR-0004 rule 5) or a non-
 5. **SPNEGO is Kerberos only.** The acceptor refuses NTLM (TM-D10's `"!ntlm"` package list on
    Windows; the krb5 adapter has none). A Negotiate token that offers only NTLM gets the generic
    failure, so an attacker cannot downgrade to relayable NTLM (TM-X2). The client principal maps to
-   a console account by the `objectSid` of a `directory`-linked identity, never by name. Our server
+   a console account by the `objectSid` of a `directory`-linked identity, never by name, and only if
+   AD still lets that principal sign in (rule 10). Our server
    never runs code from the ticket beyond the acceptor. The acceptor's replay detection and TLS
    channel binding are `[UNVERIFIED — lab]` for the krb5 adapter; the windows profile uses SSPI's.
    Registering the `HTTP/` service principal is an installer or administrator step: activeDIQ never
@@ -1918,6 +2127,47 @@ operation of the document (`x-permission: anonymous`, ADR-0004 rule 5) or a non-
    Content in a GET "has no generally defined semantics" and may be rejected for "its potential as
    a request smuggling attack" ([RFC 9110 §9.3.1](https://www.rfc-editor.org/rfc/rfc9110#section-9.3.1)).
    The rule applies to every `BodyNone` operation, not only AN-1. `Content-Length: 0` is allowed.
+10. **AN-9 refuses a principal AD no longer lets sign in (T-0495, NEG-2, TM-F-SSO).** A Kerberos
+    service ticket stays cryptographically valid until its `endtime` (default 10 hours) after the
+    account is disabled or expires, and the acceptor proves only the ticket. So, after the SID maps to
+    exactly one console account and **before** the pending sign-in begins:
+    a. **Inventory pre-check.** Refuse when `directory_objects.enabled` is false or not known (NULL),
+       or `account_expires` is set, non-zero and not after now. Reasons `principal_disabled`,
+       `principal_expired`, `principal_state_unknown`. This is cheap and removes the common case, but
+       it is only as fresh as the last sync (up to 60 minutes, forest-connection FR-25), so it is
+       **not** the control.
+    b. **Live check (the control).** One connector read of the mapped object, **by objectGUID,
+       base scope, no filter string**, for `userAccountControl`, `accountExpires`, `objectSid` and
+       `msDS-User-Account-Control-Computed`. Refuse when `ACCOUNTDISABLE` (0x2) is set, `accountExpires`
+       is set (neither 0 nor 0x7FFFFFFFFFFFFFFF) and has passed, `LOCKOUT` (0x10) is set, the object is
+       gone, or the returned `objectSid` differs from the ticket's PAC SID (`principal_disabled`,
+       `principal_expired`, `principal_locked_out`, `principal_gone`, `principal_sid_mismatch`).
+       `PASSWORD_EXPIRED` does not refuse: it stops the KDC issuing *new* tickets, the ticket in hand is
+       still a valid proof, and AN-10 still follows.
+    c. **Fail closed.** A connector error, timeout (2 s) or missing attribute is the generic failure
+       with reason `directory_unavailable` or `principal_state_unknown`. There is no fallback to the
+       inventory answer: a leaver must not get in because the DC is slow. The break-glass path (AN-8)
+       and OIDC/SAML cover a directory outage. This is a fail-mode choice inside the existing
+       "AN-9 is a convenience first factor" scope, not a customer risk acceptance.
+    d. **No ticket-age bound.** `authtime` is the time of the original TGT logon and survives
+       TGS requests and renewals, so a morning logon makes every legitimate afternoon ticket "old";
+       `starttime` is optional and normally absent. Any bound short enough to matter locks out
+       ordinary users, and one long enough to be harmless adds nothing over `endtime`. The acceptor
+       is not asked for either. (Principle: [RFC 4120 §5.3](https://www.rfc-editor.org/rfc/rfc4120#section-5.3)
+       defines `authtime` as the initial authentication time, carried unchanged into derived tickets.)
+    e. **Response and audit.** Every refusal is the one `ErrSignInFailed` (rule 2); body and status do
+       not differ by reason. Audit records the reason code, the connection and object GUID, tenant and
+       client IP, never the ticket. Timing differs between unmapped and mapped-but-disabled (one
+       connector read); only a holder of a valid ticket for that principal reaches the read, and learns
+       nothing but their own account's state, so this is accepted (residual R-AN9-2).
+    f. **Abuse bound.** The live read happens only after the acceptor succeeds (a valid, unreplayed
+       ticket) and under the `auth` rate class, so unauthenticated traffic cannot drive connector load.
+    **Residual (R-AN9-1).** The live read asks the DC the connector is bound to. Between a disable on
+    another DC and its replication there, the old state is read: intra-site replication is seconds,
+    inter-site is the site link's `replInterval`: a multiple of 15 minutes, 15 to 10 080 ([Repl-Interval](https://learn.microsoft.com/en-us/windows/win32/adschema/a-replinterval)); the default is not set on a link made by `New-ADReplicationSiteLink` in the lab and 180 is `[UNVERIFIED]`. After that the window is zero, not
+    "up to the ticket lifetime". AN-10 still needs the account's own enrolled factor, and
+    `directory`-backed accounts of an AD-disabled user are for offboarding (§7.3) to disable. **Test**
+    `an9_refuses_ad_disabled` (T-0492): see console-sso.md §9 NEG-10.
    Enforcement and both tests are T-0050.
 
 Other AD-password sign-in (a username and password checked by connector `VerifyUser` on the console)
@@ -1936,7 +2186,7 @@ appears in the body, and that the 200 body is exactly `{"status":"ok"}` (rule 8)
 1 MiB `Content-Length` and with a chunked body to a `BodyNone` operation, and asserts 413 with the
 handler never called, and that `Content-Length: 0` reaches the handler (rule 9). Adding a
 row to the table above is a §14 trigger (RT-7). TM-F-SESSION adds cases for rules 1 to 4, and
-TM-F-ABUSE for rules 2 and 3. Rows AN-8 to AN-10 were added under RT-7 by T-0032 (2026-10-21).
+TM-F-ABUSE for rules 2 and 3. **TM-F-ABUSE AN-8 tests (T-0359; package `internal/platform/authn`, each run against the real handler with the store faked only at its port):** `TestAN8ThrottledKnownEqualsUnknown` (a known local account and an unknown name, each driven past burst 5 and past the rule-3 window, give byte-identical status, body and header sets, and no `Retry-After`), `TestAN8NeverAnswersPerAccount429` (100 requests for one name spread over 10 source IPs, each under the per-IP `auth` burst of 30, and none is `429`), `TestAN8ThrottledCorrectPasswordRefused` (the right password sent while the bucket is empty answers the `401` and creates no pending sign-in), `TestAN8ThrottleKeyIgnoresExistence` (the store sees one key per submitted name for existing, unknown, non-local and disabled accounts, and a case or Unicode-normalisation variant maps to the same key) and `TestAN8TableFullIsNameIndependent` (with the key table full, a new existing and a new unknown name both get the uniform `401`). `fitness-api` A12 additionally refuses an AN-8 operation that declares a `429` response outside the source-IP form. Rows AN-8 to AN-10 were added under RT-7 by T-0032 (2026-10-21).
 
 **Which rows are in `policy.yaml` today.** An entry that names an operation absent from the
 contract is stale and fails A13, and an entry with a `host` fails until T-0018 lands the
@@ -1944,7 +2194,7 @@ hostname-binding table. So the seed carries the non-API routes of AN-1 to AN-3, 
 operations entered with their contract (T-0034). AN-8 and AN-10
 (`signInBreakGlassPassword`, `createWebAuthnSignInChallenge`, `verifyWebAuthnSignIn`, `verifyTotpSignIn`)
 and the `authenticated` rows `signOut` and `getCsrfToken` entered with theirs (T-0193); their handlers
-answer 501 until the build tickets land. The AN-8 failure is one `401 /problems/sign-in-failed` for
+answer 501 until the build tickets land (`createWebAuthnSignInChallenge` and `verifyWebAuthnSignIn` are real once a `WebAuthnCookieVerifier` is supplied, T-0207: the challenge is consumed by the first assertion naming the pending sign-in, `webauthn_replay`; user verification is required; the signature counter must advance when the authenticator counts). The AN-8 failure is one `401 /problems/sign-in-failed` for
 every cause (rule 2). AN-4, AN-5 and AN-7 enter with their operations. AN-5 and AN-7 also need their hostname binding
 from T-0018. AN-9 enters when the PRD offers SPNEGO. The file's header lists each pending row.
 
@@ -1977,13 +2227,93 @@ from T-0018. AN-9 enters when the PRD offers SPNEGO. The file's header lists eac
   The no-escalation rule covers membership: changing the membership of a role-granting group
   through activeDIQ requires the actor to hold every privilege that group grants (DM-36.I1).
 
+  **TM-D18 extension (T-0544): the fact crosses planes by correlation, and dynamic groups grant
+  nothing in v1.** The first wording judged a group by its own plane's facts. Two Entra group kinds
+  have their membership set somewhere else, so their own Entra attributes prove nothing.
+
+  *Verdicts.* Every group gets one of three: `eligible`, `ineligible` (grants nothing, flagged on
+  the role page) or `unknown`. `unknown` is omitted from the answer and makes `Complete` false, so
+  no grant is derived from it (as T-0469 already does). Only `eligible` grants.
+
+  **D18-1. Synced Entra groups follow their AD source.** A group is *synced* when Graph reports
+  `onPremisesSyncEnabled = true`. Graph: true if synced from on-premises, null if never synced,
+  false if previously synced and now cloud-managed
+  ([group](https://learn.microsoft.com/en-us/graph/api/resources/group?view=graph-rest-1.0)).
+  Membership of a synced group is written by the sync client from the AD group, so whoever can
+  change the AD `member` attribute (the Self-Membership ACE of the rule above included) can change
+  who holds the Entra copy's roles. Rules:
+  1. `onPremisesSyncEnabled` absent from inventory is `unknown`. `null` or `false` means the group
+     is cloud-managed and is judged by the ordinary Entra rules (security-enabled, not Public,
+     `groupTypes` present and not Unified, DM-36.I2). `true` goes through rules 2 to 6.
+  2. The Entra copy is `eligible` only when **all** hold: (a) it has a **matched** correlation
+     (DM-20, TM-D17 gate: anchor `onPremisesSecurityIdentifier` equal to the AD group's `objectSid`
+     in the connection's forest, `takeover_protection = attested`, not `candidate`) to exactly one
+     AD group; (b) that AD group's `diq_broadMembershipWrite` is known and `false`; (c) the AD
+     group is not `tier0` (§6.4, C16) and the Entra group is not `tier0` (E5); (d) the AD group
+     itself passes the AD-plane eligibility (security-enabled, active). A missing correlation, a
+     `candidate`, an AD group not in inventory, or an AD fact that is absent is `unknown`. An AD
+     fact that is `true` is `ineligible`, **and so is the Entra copy.**
+  3. **Freshness.** The pair's as-of is the older of the correlation's evaluation time and the AD
+     fact's `computed_at`. If it is older than the verification age of TM-D23 (26 hours), the
+     verdict is `unknown`. Never the cached last good value.
+  4. **One read, two rows.** The verdict is computed inside the same inventory read transaction
+     that walks membership, from the Entra row and the AD row it is correlated to. It is never
+     stored as an Entra attribute, so there is no second copy to go stale or be forged by an
+     Entra-side writer. The producer (T-0541) writes `diq_broadMembershipWrite` on AD groups only.
+  5. **Nesting.** The walk judges every hop. A synced Entra group nested in an eligible group
+     is judged again by this rule, and an `unknown` or `ineligible` hop is not walked through.
+  6. **Written-back groups.** For a group that Entra writes back to AD (cloud-origin), the AD copy
+     is derived from Entra. It is judged by rule 2(b) only if it is also reachable as a synced group;
+     otherwise the AD copy is `unknown` until the lab (G18) shows which side wins on a conflicting
+     write `[UNVERIFIED — lab G18]`.
+     Implemented (T-0572): the producer (T-0541) writes the boolean `diq_writtenBack` on every AD
+     group it reads; the judge returns `unknown` when it is `true` **or absent** (marker unread). The
+     exact AD-side writeback marker it is derived from is confirmed in lab G18 / T-0075.
+
+  **D18-2. Dynamic-membership groups never grant in v1.** A group whose `groupTypes` contains
+  `DynamicMembership` is `ineligible`, whatever its rule, its `membershipRuleProcessingState`
+  (a paused group resumes and applies the rule to values written meanwhile, §6.4 rule 7a) or its
+  place in a nest. Reason: the rule reads user or device properties
+  ([dynamic membership rules](https://learn.microsoft.com/en-us/entra/identity/users/groups-dynamic-membership)),
+  and the closed table `ruleprops v1` (§6.4 rule 7g) shows who writes them: the user themself
+  for some properties, a help-desk or HR delegate for others, a guest's inviter for `userType` and
+  `displayName`, and any delegated AD OU administrator for every property that sync copies from
+  AD. None of these writers is `tier0`, so a rule is only as strong as its weakest writable
+  property, and proving a rule safe needs a policy for who may write each property. We do not
+  have that policy. The lexer of §6.4 rule 7b is reused only to *flag* the rule's properties on
+  the role page. An unreadable `groupTypes` is `unknown`. Lifting this (an allow-list of properties
+  held only by `tier0`) needs its own decision; it is not an option the implementer may add.
+  Customers lose "role by department" through dynamic groups in v1 and are told so on the role
+  page; the workaround is a static or synced group.
+
+  **Residual R-D18-1.** Between an AD DACL change and the next fact computation (up to the
+  26-hour bound, less if a change feed triggers it) a newly broad group is still `eligible`. The
+  health check flags it on the next run. Nothing smaller is claimed `[UNVERIFIED — whether
+  `ntSecurityDescriptor` changes arrive in the uSNChanged feed; lab G18]`.
+
 **Proof TM-F-AUTHZ.** Lab tests: a technician acts on a user just outside the delegated OU
 (refused); an object moved out of scope between Plan and Apply (refused); a bulk job with one
 out-of-scope item (that item refused, others reported per row); a grant of a role the grantor does
 not fully hold (refused); a token whose owner was disabled (dead); a scheduled report whose owner
 lost scope (delivers only the new scope or stops); a role-granting AD group whose DACL gives Domain
 Users Self-Membership (grants nothing, flagged); a technician adding themselves to a role-granting
-group whose privileges they do not hold (refused).
+group whose privileges they do not hold (refused). **Cross-plane and dynamic cases (T-0544, TM-D18
+extension):** (1) *synced-weak:* an Entra group with `onPremisesSyncEnabled=true` whose matched AD
+source gives Domain Users Self-Membership is not returned, whatever its own Entra attributes say;
+(2) *synced-unknown:* the same Entra group with no AD fact, with the AD group absent from
+inventory, with a `candidate` correlation, with `takeover_protection` not `attested`, or with the
+pair older than 26 hours is omitted and `Complete` is false; (3) *synced-good:* the matched AD
+source with fact `false` yields the group, and flipping the AD fact to `true` in the same
+transaction removes it; (4) *synced-tier0:* an AD source in `tier0` makes the Entra copy
+ineligible; (5) *sync-flag:* `onPremisesSyncEnabled` absent is omitted with `Complete` false,
+`null` or `false` is judged as a cloud group; (6) *synced-nest:* an eligible group containing a
+weak synced group is not walked through the weak one; (7) *forged-peer:* an Entra group whose
+`onPremisesSecurityIdentifier` names an AD group of another forest, or two Entra groups sharing
+one SID, does not inherit the AD group's `false`; (8) *dynamic-attr:* a security group with
+`DynamicMembership` and rule `user.department -eq "IT"` is not returned and is flagged, also when
+paused, when nested in an eligible group, and when a user adds themselves by writing `department`;
+(9) *dynamic-unknown:* `groupTypes` absent is omitted with `Complete` false. Each case runs on the
+inventory tables with PG16 and PG18; (1), (3), (7) also run against the Samba lab for the AD fact.
 
 **Proof TM-F-SESSION.** Cookie attributes; CSRF rejection; idle and absolute expiry; revocation on
 disable; every operation in the §7.4 list refuses without fresh MFA; API token entropy, prefix,
@@ -1997,7 +2327,8 @@ expired, replayed assertion ID, algorithm substitution, XML external entities �
 
 ADR-0004 rule 10 gives every operation a rate class. These are the default numbers `apihost` ships
 with. Each limit is a token bucket: **rate** is the refill per minute and **burst** is the bucket
-size. A limited request gets `429 /problems/rate-limited` with `Retry-After`. There is no daily
+size. A limited request gets `429 /problems/rate-limited` with `Retry-After`, **except** the AN-8
+per-account row, which answers the uniform `401` (§7.6 rule 2, T-0359). There is no daily
 quota and no metering, which keeps the ADM-190 lead. The competitor's ADManager Plus allows 50 API
 calls per technician per day, then charges per extra call (parity matrix row 18,
 `knowledge/business/competitive-analysis/feature-parity-matrix.md`).
@@ -2006,8 +2337,9 @@ calls per technician per day, then charges per extra call (parity matrix row 18,
 | --- | --- | --- | --- | --- | --- |
 | *(all)* | Every request, chain step 3, before authentication | Source IP | 1200 | 300 | A floor against unauthenticated floods that still fits about 50 technicians behind one NAT or proxy at about 20 requests a minute each. The non-API health probes (`/healthz`, `/readyz`) and static assets (AN-1, AN-2) are limited only by this |
 | `anonymous` | AN-1 operations (`getLiveness`, `getReadiness`), AN-4, AN-5, AN-7 operations | Source IP | 60 | 20 | End users enrol from shared office IPs. The flow's own per-account gate (TM-TB1-T9 counter, TB11 rules) is the real control; this bounds cost. For AN-1 the class is the whole control. A monitor polling both operations every 10 seconds uses 12 a minute. Orchestrators probe `/healthz` and `/readyz`, which only the floor limits |
-| `auth` | AN-3, AN-8, AN-9, AN-10 | Source IP | 60 | 30 | A morning sign-in rush through one NAT takes 2 to 4 requests per person. Password guessing is stopped per account (§7.6 rule 3, TM-TB1-T9), not by this |
-| `auth` | AN-8, AN-10 | Target account or pending handle | 10 | 5 | Per-account guessing. AN-10 is further capped by 5 attempts per pending sign-in |
+| `auth` | AN-3, AN-8, AN-9, AN-10, AN-11 | Source IP | 60 | 30 | A morning sign-in rush through one NAT takes 2 to 4 requests per person. Password guessing is stopped per account (§7.6 rule 3, TM-TB1-T9), not by this |
+| `auth` | AN-8 | Normalised submitted username (per tenant, any name, existing or not), **uniform 401, never 429** | 10 | 5 | Per-account guessing. Enforced as the §7.6 rule 2 throttle (no evaluation, dummy-hash work, uniform `401 /problems/sign-in-failed`) plus the rule 3 delay, because a `429` here is an enumeration oracle (T-0359) |
+| `auth` | AN-10 | Pending handle (hash of the submitted value) | 10 | 5 | Per-handle guessing. A limited request gets `429` (the handle is not an account name, §7.6 rule 2). Further capped by 5 attempts per pending sign-in |
 | `read` | GET and HEAD by default | Principal (session or token) | 600 | 120 | A console page fans out to 10 to 20 calls. A script paging through 100,000 users at 1,000 per page needs 100 calls. Generous because reads are scope-trimmed and cheap |
 | `write` | Other methods by default | Principal | 120 | 30 | Two single-object writes a second sustained. Mass change goes through `bulk`, so it gets Plan, approvals and per-DC concurrency |
 | `bulk` | Bulk-job submission | Principal | 10 | 3 | Each call starts a job of many items. The job queue and per-DC concurrency meter the directory load, not HTTP |
@@ -2106,6 +2438,7 @@ listener supports a source-CIDR allow-list (ADM-145). Internet-facing self-servi
 | L1 | HTTPS console + public API | Browsers, scripts, ITSM | Session or API token; anonymous only for §7.6 AN-1 to AN-5 and AN-7 to AN-10 | Internal network; source-CIDR allow-list |
 | L2 | Fleet gRPC | Remote connectors, [M3] agents | Client certificate required for every RPC except `Enroll` (token-gated, single-use, short-lived, rate-limited) | Internal network, or reachable by on-site connectors (SaaS) |
 | L3 [M4] | RADIUS (UDP) | Customer NAS / VPN devices | Per-client shared secret; `Message-Authenticator` required in every request and response; bounded by §5.19 (TB19) and TM-D20 | Internal networks only |
+| L4 (optional) | Operator metrics (HTTPS, `GET /metrics` only) | The operator's Prometheus scraper | One operator bearer token (`ACTIVEDIQ_OPS_TOKEN_FILE`, ≥ 32 bytes, 0600 file), constant-time compare; no tenant session or API key is accepted (T-0533) | Off unless `ACTIVEDIQ_OPS_ADDR` is set; loopback unless a TLS directory is configured; never on L1 |
 | — | Edge tunnel [M4] | — | Not a listener: the server dials **out** to edge | — |
 | — | Bundled PostgreSQL | The server | Loopback only by default; TLS + SCRAM and a host allow-list when nodes are added | Not exposed |
 
@@ -2113,6 +2446,10 @@ L3 is UDP only. RADIUS over TLS (RadSec, TM-Q18) runs "over TCP", by default on 
 ([RFC 6614](https://www.rfc-editor.org/rfc/rfc6614)), so it would be a **second listener**. If the
 M4 RADIUS spec adopts it, it gets its own L-row through an RT-6 review (§14) before it ships, and
 TM-F-PORTS checks it like any other row.
+
+The L4 socket is covered by the same proof (it appears only when `ACTIVEDIQ_OPS_ADDR` is set). The
+proof is `tools/fitness/ports` (T-0137; runbook `tm-f-ports.md`): it boots `cmd/server` and enumerates L1 and L4.
+L2 and L3 join its case table when they are built.
 
 Through M4, no other listener exists: no debug or profiling port (FF-SP2 bans `pprof`), no
 sidecar port, no unauthenticated metrics. **Proof TM-F-PORTS:** on a booted install of each
@@ -2181,7 +2518,9 @@ hygiene); request decoders are fuzzed (FF-SP5).
 | Keytab | File on the connector host (Linux) | File ACL 0400, read-only mount | Connector only | Host CLI re-key (new key version) | Reset the account's keys; revoke |
 | AD password fallback | Sealed in PostgreSQL (embedded) or by the host key provider (remote, TM-D8) | DEK + associated data (TM-D7) | Connector only | Customer-driven; age surfaced, alert on age | Reset the AD password |
 | Entra certificate private key | Sealed in PostgreSQL (embedded); generated on the host, non-exportable where possible (remote, TM-D8) | DEK + associated data; or host key store | Connector only | Before `not_after`: new key, upload public cert, remove old | Remove the credential from the app registration |
-| Fleet CA key | Server, sealed | DEK (per-tenant issuing CA preferred in SaaS) `[OPEN → connector spec]` | `fleet` only | CA rollover with overlap | Re-enroll every component |
+| API TLS private key | `ACTIVEDIQ_API_TLS_DIR/api-key.sealed.json` (wrapped by the key provider in the platform domain, purpose `api-tls`, key version 1; domain-separated from tenant DEKs, so it never unwraps as one); legacy `api-key.pem` 0600 only where no provider is configured, and sealed and removed on the first start with one | KEK: file is ciphertext only, so a copied directory or backup cannot be loaded on another host (the file KEK profile must live outside that directory, TM-TB5-T7); a sealed key with no or a different provider fails startup (never regenerates or downgrades) | The API listener only (`apitls`) | Cert renewal within 30 days of expiry generates a new key; KEK rotation: with a KMS-style provider that still unwraps the old key id, the next start re-wraps under the current KEK; the single-KEK local provider cannot follow a KEK change, so then the start fails (files untouched) and the operator restores the old KEK or takes the recovery step. A leftover plaintext `api-key.pem` is removed at every start and failure to remove fails startup | Delete the directory files and restart (new identity, WARN with both fingerprints); admins re-pin; rotate the KEK if the KEK was exposed |
+| Fleet client CA key (`fleet_ca`, one per tenant) | Server, sealed | Tenant DEK | `fleet` only | CA rollover with overlap; a component's pin is unaffected ([ADR-0008](../decisions/0008-fleet-gateway-server-ca-installation-scope.md)) | Revoke and re-enrol that tenant's components |
+| Fleet server CA key (`fleet_server_ca`, installation scope) | Server, sealed | Installation DEK (T-0715); distinct key purpose and AAD, so it never opens tenant values | `fleet` only, inside `SignServerLeaf` | CA rollover with bounded overlap; the leaf renews every 30 days | Remove the CA at once; client identities stay valid; every component re-pins (`agentsetup repin`) (TM-TB6-T15) |
 | Enrollment tokens | Hashed (DM-12) | Single use, short life | Issuer (step-up) | n/a | Revoke the token or the component |
 | API tokens | Hashed (DM-32) | — | Owner | Mandatory expiry | Revoke |
 | Session IDs | Hashed (DM-31) | — | — | Idle/absolute expiry | Revoke sessions |
@@ -2189,7 +2528,7 @@ hygiene); request decoders are fuzzed (FF-SP5).
 | SMTP / SMS / ITSM / SIEM / HR credentials | Sealed (DM-82, DM-85, DM-63) | DEK + associated data | `notify`, `itsm`, `lifecycle` | In the UI; never returned | Rotate at the peer |
 | Audit checkpoint signing key | Sealed | DEK; public key exported with checkpoints | `audit` | Rotation recorded in the chain `[mechanics → T-0132]` | Re-anchor; earlier anchored checkpoints stay valid |
 | Edge tunnel key [M4] | Edge host | Host ACL | Edge | Certificate rollover | Revoke the tunnel certificate at the server |
-| Agent-policy signing key [M3] | Sealed (BP §12) | DEK | Policy signer in the management plane | `[OPEN → T-0142]` | Bounded by TM-D14: policy is data |
+| Agent-policy signing key [M3] | Sealed (BP §12) | DEK | Policy signer in the management plane | Per ADR-0007: keyset chain, 180-day schedule, emergency = re-enrolment | Bounded by TM-D14: policy is data |
 | Release-signing keys | **skenzeriq only**: offline root, HSM/KMS (T-0140/T-0141) | HSM/KMS | CI release job | TUF root rotation | §10 |
 | First-run setup secret | Installer output | OS ACL | Installing administrator | One use | Reinstall |
 
@@ -2213,6 +2552,61 @@ the tenant ID as encryption context, so a wrapped DEK moved between tenants fail
 **Proof TM-F-SEAL.** Copy a sealed value to another tenant's row, another row and another column:
 each open fails with a typed error and no plaintext; a DEK wrapped for tenant A fails to unwrap as
 B (KMS profile, fake KMS); tampering with one byte fails.
+
+### 9.2.1 Rollback of a sealed value — DECISION TM-D29 (T-0178)
+
+**Gap in TM-D7.** The associated data binds *where* a blob lives and *which key version*, not *when*.
+An attacker with database write (TM-X-class SQL injection, a stolen application role) who holds an
+older blob that was sealed for the same cell and the same DEK version can write it back, and `Open`
+accepts it. They need no key: the blob is a copy of what was legitimately stored earlier (a backup
+read, a replica, an earlier read of the table). The gain is **resurrecting a secret the owner
+replaced**, for example a TOTP seed the user retired because the phone was lost.
+
+**What does not work: a seal counter in the AAD.** The counter would live in the same row, so the
+attacker who rolls the blob back rolls the counter back with it, and `Open` still succeeds. A counter
+gives freshness only if it is held where the attacker cannot write (a KMS-side counter, or the
+signed audit chain). Neither is worth building for the values below, so **no per-row seal counter**.
+
+**Rule.** A sealed cell never changes meaning in place. The three controls, in order of preference:
+
+1. **New row on change** (the DM-11 I5 pattern). The old row's blob goes into a different cell
+   (the row id is in the AAD), so it cannot be replayed into the live row.
+2. **Terminal rows hold no secret.** A row that is `rotated`, `revoked` or `expired` has
+   `sealed_* IS NULL`, enforced by a `CHECK` constraint, and its state cannot leave a terminal value,
+   enforced by a trigger. Replaying the old blob into the old row then fails at the database, and
+   making the old row live again needs a state change the trigger refuses. Both survive an
+   application-role attacker. A database owner or superuser can drop them; that attacker is TM-R4's
+   host administrator, not this threat.
+3. **Accepted residual** only where an older value gives the attacker nothing the owner has not
+   already revoked at the source, and the replay shows up as a failed use.
+
+DEK rotation (TM-D15) bounds the rest: a retired DEK version is shredded once nothing references it,
+so a blob sealed under it can no longer be opened, whatever is written back.
+
+| Sealed column (§9.2 list) | What an older blob would restore | Control | Residual |
+| --- | --- | --- | --- |
+| DM-11 `sealed_secret` (AD password fallback, Entra private key) | A replaced service-account password or Entra key | **1 + 2.** Already new-row (DM-11.I5). Add: `CHECK (state NOT IN ('rotated','revoked') OR sealed_secret IS NULL)` and a state trigger (terminal states are final) | None for the application role. Re-wrap under a new version keeps the same plaintext, so an older wrap of the same secret is harmless |
+| DM-37 `sealed_secret` (TOTP seed; MFA seeds) | A seed the user retired after losing a device or being compromised, giving the holder a valid second factor again | **1 + 2.** Re-enrolment creates a new enrollment row; the old row moves to `revoked` with its seed erased; same `CHECK` and trigger. **No in-place seed edit exists** | None for the application role |
+| DM-39 IdP `credential` (OIDC client secret or key) | An IdP client secret the admin replaced | **1 + 2** for a secret change (new credential row, old one terminal). Any change is already a step-up Action (DM-39.I1) | None for the application role |
+| DM-63 DataSource, DM-82 NotificationChannel, DM-85 ItsmConnection `sealed_credentials` (and M4 RADIUS client secrets) | An older integration token or shared secret | **3** for DM-63/82/85: edited in place by design, because the connections are referenced by rules, runs and schedules. A rotated token is revoked at the source, so the replay fails on the next use and `last_test` and the failed-use audit event show it. M4 RADIUS client secrets: the M4 spec must make a secret change a new secret row (control 1), because an old shared secret still accepted by the NAS is exactly the PAP exposure of TM-TB19-T4 | **TM-R24** (accepted) |
+| Audit checkpoint key | A checkpoint key from before a rotation | **Detective.** Rotation is recorded in the chain (§9.1); a checkpoint signed by a key the chain shows as superseded fails verification (TM-F-AUDIT) | The key stays valid for checkpoints already anchored |
+| Agent-policy signing key | A superseded policy key | **Bounded by ADR-0007.** Agents hold the keyset chain and refuse a `key_id` not in the keyset and any `policy_seq` at or below the highest seen; a key dropped from the keyset signs nothing agents accept. Rotation makes a new key row (control 1) | A key still in the `retiring` overlap (≤30 days) is accepted by design (TM-R7) |
+| Fleet client CA key | A CA key replaced after compromise | **1 + 2.** The fleet-contract owner makes CA rollover a new CA row with the old key erased, and clients pin the CA by certificate, not by position in a table. Specified in `fleet-contract.md` (CA key rollover, T-0563); implementation tracked by follow-ups | None for the application role once built |
+| Fleet server CA key | A server CA key replaced after compromise ([ADR-0008](../decisions/0008-fleet-gateway-server-ca-installation-scope.md)) | **1 + 2**, as the fleet client CA key at installation scope: new row, old key erased on retire, `sealed_key` CHECK and trigger as `fleet_ca`, TM-D29 (a) and (b) rollback tests at installation scope, cross-certificate carried in the bundle during the bounded overlap | None for the application role once built |
+| Step secret input (password being set) | A password from an earlier step | Deleted at the step's terminal state (domain model, ADR-0005 rule 9); steps are one-shot and cannot return to `running` (control 2 applies to the step row) | None |
+| DM-02 `wrapped_dek` | An older wrap of the same DEK version | Versions are immutable: the same plaintext, so a replay changes nothing. A DEK wrapped under a previous KEK is covered by KEK rotation (§9.3 step 5) | None |
+
+**Restoring a whole database backup** is a rollback of everything at once. It is a host and backup
+access problem (TM-TB15-T4, TM-R4), not a cell-level one; ADR-0007 rule 6 already makes it a
+policy-key rotation trigger.
+
+**Proof TM-F-SEAL (rollback cases).** (a) Seal v1, replace the credential or enrolment, write the
+saved v1 blob back into the old row as the application role: the `CHECK` refuses it. (b) Set the old
+row's state back to `active` as the application role: the trigger refuses it. (c) For DM-37, a
+retired seed never verifies a code after re-enrolment. (d) After DEK rotation and shredding of
+version *n*, a saved version-*n* blob returns `KeyVersionMismatch`. (e) A DM-63/82/85 rollback test
+is **not** claimed: it documents TM-R24 by asserting the failed-use audit event and `last_test`
+change.
 
 ### 9.3 DEK rotation — DECISION TM-D15 (answers DM Q2)
 
@@ -2350,7 +2744,7 @@ side that sent the frame.
 
 **D. Enrolment trust and the CA bundle (TM-TB6-T13, TM-TB12-T2).**
 1. **Pin before token.** The enrolment material shown once to the administrator carries, next to
-   the token, `sha256:<hex>` of the installation CA's SubjectPublicKeyInfo. The pin is not
+   the token, `sha256:<hex>` of the installation **server CA's** SubjectPublicKeyInfo (ADR-0008; one pin for every tenant). The pin is not
    secret. This is the pattern of kubeadm's `--discovery-token-ca-cert-hash`, "calculated over
    the bytes of the Subject Public Key Info (SPKI) object (as in RFC7469)"
    ([kubeadm join](https://kubernetes.io/docs/reference/setup-tools/kubeadm/kubeadm-join/);
@@ -2438,7 +2832,7 @@ change, including ours (BP §9).
 tables (with T3). Chain test: edit, delete or reorder one event → the verifier fails at that `seq`.
 Anchor test: a checkpoint hash appears in the SIEM stream and in the export; rewriting events
 before it is detected by the offline verifier. Coverage: every Action kind emits success, failure
-and denial events (T-0130 operation fitness).
+and denial events (ADR-0005 O7 contract behaviour, T-0392).
 
 ---
 
@@ -2474,7 +2868,7 @@ and T-0147 (credential provider). These constraints are binding on those tickets
   works offline; can never block normal logon. This designs out the competitor's recurring
   "logon-screen client" class (ME-SEC §4.3: CVE-2020-11552, CVE-2026-74849).
 - **DC agent identity.** A virtual service account in Event Log Readers is preferred over
-  LocalSystem (FEAS §2.3; SB checklist D); final choice in T-0142 (§6.1).
+  LocalSystem (FEAS §2.3; SB checklist D); decided in [ADR-0006](../decisions/0006-dc-agent-runs-as-a-virtual-service-account.md) (virtual account, restricted token, channel ACE; never LocalSystem), contract in [agent-host-addc-contract](./agent-host-addc-contract.md).
 
 **Proof TM-F-AGENTCMD.** The `activediq.addc.v1` and `activediq.fileserver.v1` contract lints
 fail on any verb in a denied category (exec, arbitrary file write, delete, service/registry change,
@@ -2483,6 +2877,8 @@ policy changes only password-rule outcomes. For `fileserver`, the agent refuses:
 by a test server; a path outside its local roots; a junction, symbolic-link, `..`, 8.3, device-path
 or stream escape (escape corpus); a `SYSVOL` or `NETLOGON` root; starting on a DC; starting while
 its token holds SeBackupPrivilege. Owner: T-0142 (`addc`) and the M3 `fileserver` spec.
+
+*Status (T-0144).* Contract half live: `fitness-proto` rules AG1-AG8 (`tools/fitness/proto/agent.go`) lint `skenzeriq.agent.v1`, `activediq.addc.v1` and `activediq.fileserver.v1` the moment they exist (closed golden RPC list, denied-verb words, unary only, no `Any`/map/free-form path, URL, command or SDDL field, policy messages data-only, no password/hash field, no fail-mode field) and are proved failing by `make ci-proof`. Still owed, because the code does not exist: out-of-bounds policy rejection and the hostile-policy fuzz (agent runtime, T-0555), and the `fileserver` refusals (denied verb sent, path outside roots, escape corpus, SYSVOL/NETLOGON root, start on a DC, start holding SeBackupPrivilege), which need the module and a Windows lab (follow-up ticket from T-0144).
 
 **Proof TM-F-CREDPROV.** The credential-provider binary imports no web-rendering or shell-dialog
 component (import scan); logon works with the server unreachable; a server with an unpinned
@@ -2540,8 +2936,8 @@ change is a review reject.**
 ## 15. Proofs summary
 
 Existing proofs this document relies on: FF-SP1–SP9 (`tools/fitness/safeprim`), `fitness-tenancy` T1–T5
-(`tools/fitness/tenancy`), `fitness-profiles` P1–P7 (`tools/fitness/profiles`), `fitness-api` (T-0011, T-0017, T-0018), operation and audit fitness
-(T-0130, T-0133), CBT acceptance (T-0148), SD golden tests (T-0149), encoder corpus (T-0150). New proofs:
+(`tools/fitness/tenancy`), `fitness-profiles` P1–P7 (`tools/fitness/profiles`), `fitness-api` (T-0011, T-0017, T-0018), operation fitness
+(`make fitness-operation` O1/O2/O4/O9 live; O3 T-0391, O5–O7 T-0392, O8 incl. TM-F-T0GUARD rule 11 T-0393), audit fitness (T-0133), CBT acceptance (T-0148), SD golden tests (T-0149), encoder corpus (T-0150). New proofs:
 
 | Proof | What it proves (fails when …) | Kind | Owner ticket | Threats |
 | --- | --- | --- | --- | --- |
@@ -2549,17 +2945,17 @@ Existing proofs this document relies on: FF-SP1–SP9 (`tools/fitness/safeprim`)
 | TM-F-T0GUARD | The connector refuses `Apply` on a `tier0` target even when the server asks; Plan refuses too; Entra `tier0` (E1–E5) is refused, as are AD objects correlated to it (C16) (§6.2). **TM-D25:** a PIM-for-Groups eligible-only or future-scheduled member or owner of a role-assignable group, a member of a group that is itself eligible there, a transitive member or owner of a designated group, and a user whose write sets a property in the rule of **any dynamic group in a designated closure** (nested at any depth; Direct Reports, create, invite, licence and AD-side synced writes included, **T-0230**) is refused; a failed or unlicensed-but-uncorroborated schedule read refuses every Entra write; a classifier given a designated group refuses its nested member  **TM-D27 (T-0235):** C19 table after TM-D27. **TM-D26 (T-0227):** see the test table after TM-D26 (C17, C18, callback ACEs, C8 `dSHeuristics`, C13 rename) | Lab, both transports | T-0066 (directory-engineer) | TB3-T10, TB6-T4, TB7-T4, TB7-T11, TB17-T4 |
 | TM-F-HYBRID | A forged, SOA-transferred, SID-mismatched, unattested or once-cloud-only correlation authorises anything; a correlation first eligible during a post-attestation `open`/`stale` lapse becomes `matched` without re-confirmation; an install-time correlation (present before the first attestation, not once cloud-only) fails to become `matched` on that attestation; `tenant-owner` crosses a correlation; the attestation flow keeps a token (§6.8). TM-D19 (§6.9): an Entra-only session holds a correlation-derived AD grant; an authority factor enrols without AD-plane proof or owner approval; an Entra-side method reset touches the activeDIQ factor; a less-privileged technician resets a console-backing object | CI, fake Graph + fake IdP + Samba | T-0067 (directory-engineer, with `authz`) | TB7-T8 to T13, TB8-T8 |
 | TM-F-ANON | Anonymous routes of the built router ≠ the reviewed allow-list (§7.6) | CI | `fitness-api` A4 (T-0018) | TB2-T2, TB2-T10 |
-| TM-F-FLEET | Any RPC but `Enroll` succeeds without a client certificate; an enrollment token works twice or after expiry; a connector accepts an unpinned server; a revoked component keeps a stream; the fleet contract gains a secret-bearing message type outside operation payloads. **Tunnel (TM-D24, §9.8).** (A) Some `CallOpen.method` reaches a handler although it is outside the opener's direction set of the bound contract. The corpus: another contract's method (including the cross-kind cases connector↔`addc`↔`fileserver`), a server→component method opened by the component, `grpc.health.v1`, `grpc.reflection.v1`, channelz, case, slash and suffix variants of an allowed name, and a name over 256 bytes or not valid UTF-8. Or the refusals differ in code or text, or `fleet/dial` serves a method outside its contract. (B) Some violation leaves the tunnel open, or no audit event names the component. The corpus: a wrong-parity `open`, a reused or non-increasing id, a frame on an id never opened, a frame the sender's role or the call's state forbids, and a non-`FlowCredit` body on `call_id` 0. Also fails: an in-flight frame after this side's cancel or close closes the tunnel; a response reaches a call on another tunnel; a pending call is rebound after its tunnel drops; or it completes with any outcome but unknown. (C) A component `status_message` with CR/LF, ANSI escapes, bidi controls, invalid UTF-8, HTML or 1 MiB of text reaches a log line, audit summary, API response or console view unbounded or unescaped, or outside a `component_reported` field. Or a `status_code` outside 0–16 maps to anything but `UNKNOWN`. (D) The gateway serves an `Enroll` whose `ca_bundle_pem` holds anything but header-free `CERTIFICATE` blocks of CA certificates that include the pinned CA. The corpus: a `PRIVATE KEY` or `RSA PRIVATE KEY` block, PEM headers, trailing bytes, a non-CA certificate, zero certificates, more than 8 certificates or more than 64 KiB. Or a component accepts such a bundle, or a bundle without the pinned CA. Or a component sends its token to an `Enroll` server whose CA SPKI does not match the pin (MITM fixture). Or a pinned dial ever uses the host root set | CI (P3 harness) | T-0069 (backend-engineer); subjects T-0155, T-0158, T-0209 | TB6, TB12-T1/T2, TB12-T16 |
+| TM-F-FLEET | Any RPC but `Enroll` succeeds without a client certificate; an enrollment token works twice or after expiry; a connector accepts an unpinned server; a revoked component keeps a stream; the fleet contract gains a secret-bearing message type outside operation payloads. **Tunnel (TM-D24, §9.8).** (A) Some `CallOpen.method` reaches a handler although it is outside the opener's direction set of the bound contract. The corpus: another contract's method (including the cross-kind cases connector↔`addc`↔`fileserver`), a server→component method opened by the component, `grpc.health.v1`, `grpc.reflection.v1`, channelz, case, slash and suffix variants of an allowed name, and a name over 256 bytes or not valid UTF-8. Or the refusals differ in code or text, or `fleet/dial` serves a method outside its contract. (B) Some violation leaves the tunnel open, or no audit event names the component. The corpus: a wrong-parity `open`, a reused or non-increasing id, a frame on an id never opened, a frame the sender's role or the call's state forbids, and a non-`FlowCredit` body on `call_id` 0. Also fails: an in-flight frame after this side's cancel or close closes the tunnel; a response reaches a call on another tunnel; a pending call is rebound after its tunnel drops; or it completes with any outcome but unknown. (C) A component `status_message` with CR/LF, ANSI escapes, bidi controls, invalid UTF-8, HTML or 1 MiB of text reaches a log line, audit summary, API response or console view unbounded or unescaped, or outside a `component_reported` field. Or a `status_code` outside 0–16 maps to anything but `UNKNOWN`. (D) Two tenants' enrolment material carries different pins, or the gateway presents a chain other than `[leaf, server CA]`. Or the gateway serves an `Enroll` whose `ca_bundle_pem` holds anything but header-free `CERTIFICATE` blocks of CA certificates that include the pinned CA. The corpus: a `PRIVATE KEY` or `RSA PRIVATE KEY` block, PEM headers, trailing bytes, a non-CA certificate, zero certificates, more than 8 certificates or more than 64 KiB. Or a component accepts such a bundle, or a bundle without the pinned CA. Or a component sends its token to an `Enroll` server whose CA SPKI does not match the pin (MITM fixture). Or a pinned dial ever uses the host root set | CI (P3 harness) | T-0069 (backend-engineer); subjects T-0155, T-0158, T-0209 | TB6, TB12-T1/T2, TB12-T16 |
 | TM-F-NTLM | Any outbound NTLM attempt from the activeDIQ host, with NTLM blocked domain-wide or a planted UNC `homeDirectory` (§9.6) | Windows lab | T-0068 (directory-engineer) | TB3-T2, TB9-T2 |
-| TM-F-SEAL | A sealed value opens after being moved to another tenant, row or column; a DEK unwraps under another tenant's context (§9.2) | CI | T-0070 (backend-engineer) | TB4-T6/T7, TB5-T2, TB7-T1 |
+| TM-F-SEAL | A sealed value opens after being moved to another tenant, row or column; a DEK unwraps under another tenant's context (§9.2); a retired DM-11/DM-37 secret is written back into a terminal row or the row leaves its terminal state, or a blob of a shredded DEK version opens (§9.2.1) | CI | T-0070 (backend-engineer) | TB4-T6/T7, TB5-T2, TB7-T1 |
 | TM-F-AUDIT | Runtime role can UPDATE/DELETE/TRUNCATE audit; an edited, deleted or reordered event verifies; a checkpoint is not anchored in SIEM and export (§11) | CI + catalog | T-0133 (fitness-audit; needs T-0132 chain) | TB1-T5, TB4-T3/T4, TB15-T5 |
 | TM-F-UPDATE | A tampered, rolled-back, frozen, revoked-key or server-signed update is accepted, on either courier (§10) | CI, extends P5 | T-0138 (ENH-07 spec) + T-0139 (proof) | TB10 |
-| TM-F-AUTHZ | Scope escape, move-between-check-and-write, bulk item out of scope, self-escalation, dead-owner token or a report beyond its owner's scope succeeds (§7.7) | CI + Samba lab | T-0072 (backend-engineer) | TB1-T8/T11/T12, TB2-T8, TB15-T2 |
+| TM-F-AUTHZ | Scope escape, move-between-check-and-write, bulk item out of scope, self-escalation, dead-owner token, a report beyond its owner's scope, a synced Entra group with a weak or unknown AD source, or a dynamic-membership group grants (§7.7, TM-D18 extension) | CI + Samba lab | T-0072 (backend-engineer) | TB1-T8/T11/T12, TB2-T8, TB15-T2 |
 | TM-F-SESSION | Cookie, CSRF, timeout, revocation, step-up or token rules of §7.3–§7.5 do not hold; a session exists without a completed AN-10 second factor, or a pending sign-in outlives 5 minutes or 5 attempts (§7.6 rules 1, 4); a rate class admits burst + 1 (§7.8) | CI | T-0073 (backend-engineer) | TB1, TB2-T1, TB2-T7, TB8-T3/T6 |
 | TM-F-SSO | A forged, wrapped, replayed or mis-addressed SAML/OIDC response is accepted (§7.7) | CI fuzz corpus | T-0073 (backend-engineer), with ADM-143 spec | TB8 |
 | TM-F-SECRETOUT | A canary secret appears in any log, error, audit detail, response, metric or export; a response schema carries a secret field (§9.7) | CI | `tools/fitness/safeprim` (FF-SP extension, `secretjson` delivered) + `fitness-api` A8 (T-0017) | TB1-T7, TB2-T6, TB8-T5, TB9-T5/T6 |
 | TM-F-EGRESS | An integration reaches loopback, link-local, metadata or private ranges without an allow-list entry; a redirect escapes; DNS rebinding works; TLS is unverified; webhooks are unsigned | CI | T-0071 (backend-engineer) | TB9, TB15-T7 |
-| TM-F-ABUSE | Responses differ for existing vs non-existing accounts (body, status, timing class), including AN-8 and AN-9 (§7.6 rule 2); a break-glass account locks rather than throttles (§7.6 rule 3); our counter lets the domain lockout threshold be reached; an OTP works twice or late; enrolment proceeds without the user's own authentication | CI + Samba lab | T-0073 (backend-engineer); ENH-09 spec; M4 SSPR spec | TB1-T9/T13, TB3-T8, TB11, TB13-T5 |
+| TM-F-ABUSE | Responses differ for existing vs non-existing accounts (body, status, timing class), including AN-8 and AN-9 (§7.6 rule 2); AN-8 answers a per-account `429` or any status, body or header difference between a throttled known name and a throttled unknown name (rule 2 a to g, T-0359); a break-glass account locks rather than throttles (§7.6 rule 3); our counter lets the domain lockout threshold be reached; an OTP works twice or late; enrolment proceeds without the user's own authentication | CI + Samba lab | T-0073 (backend-engineer); ENH-09 spec; M4 SSPR spec | TB1-T9/T13, TB3-T8, TB11, TB13-T5 |
 | TM-F-HOST | Installer runs on a DC; service runs as LocalSystem/root; config, keytab or keystore readable by others; a default credential or plaintext listener exists at first run; setup secret reusable; dumps enabled; a remote DB DSN without full TLS verification is accepted | Windows lab + OCI CI, extends P2 | T-0136 (devops-engineer), T-0104 | TB1-T2, TB4-T1, TB5, TB14-T3, TB16 |
 | TM-F-PORTS | A booted install listens on anything not in §8.1 | CI, extends P2 | T-0137 | TB6-T8, TB14-T6, TB16-T10 |
 | TM-F-EDGE [M4] | An admin/API route is reachable through the tunnel; an unpinned tunnel peer is accepted; edge links credential or store code (§8.2) | CI | M4 SSPR spec | TB11 |
@@ -2604,6 +3000,10 @@ control.
 | TM-R20 | **R-EXO-1, accepted.** An Exchange role-group (or Exchange RBAC for Applications) assignment to the connector's service principal is made in Exchange, not Entra, so `appRoleAssignments` does not show it. With `Exchange.ManageAsApp` denied, the connector holds no way to reach Exchange, but a customer admin could still assign the role to the service principal | Microsoft: RBAC for Applications grants "are independent of the unscoped grants in Microsoft Entra ID" ([Application RBAC](https://learn.microsoft.com/en-us/exchange/permissions-exo/application-rbac)). Without the Entra-side `Exchange.ManageAsApp` consent the token cannot call Exchange PowerShell; Graph-side Exchange roles (`Application Mail.ReadWrite` and similar) do not need it and are not visible to us. Documented at onboarding: do not assign Exchange roles to this service principal (`Test-ServicePrincipalAuthorization` lists them). Lab G15 checks visibility | security-architect | An Exchange-side read for roles of our service principal, if Microsoft exposes one to Graph |
 | TM-R21 | **R-C19-DEPTH, accepted (T-0235).** C19 is depth 1. A principal that controls only a *controller* of a Domain Admins group (for example WriteDACL on a help-desk user who holds WP `member` on Domain Admins) is not `tier0`; the controller is | A transitive closure over ACL edges makes most of a real directory `tier0` and the guard unusable; BloodHound's Tier Zero is likewise a curated set, not a closure `[UNVERIFIED — current definition]`. Two hops of control still need one compromised hop first, and the first hop is `tier0` and refused | security-architect | an exposure-path view (TM-Q30); a customer asking for depth 2 |
 | TM-R22 | **R-C19-SYSVOL, accepted (T-0235).** Control of a `tier0` GPO's SYSVOL folder is not read by the classifier | It is an SMB ACL on every DC; reading it needs a second channel and more rights than the connector may hold. The GPO object ACL and the links are covered | security-architect | TM-Q30 scan |
+| TM-R23 | The guarded table is only as complete as our knowledge: a schema extension, a new Windows attribute or an ADCS change can add a sign-in-granting write we do not list. Entra SSPR contact rows are conservative until lab G17 | Closed tables cannot know the future; B1 makes every addition a reviewed diff and the nightly schema grep flags credential-like attributes (§6.9a) | security-architect | Lab G17 (T-0075) |
+| TM-R24 | **In-place rollback of integration credentials, accepted (T-0178).** An attacker with application-role database write can replace a DM-63 / DM-82 / DM-85 `sealed_credentials` blob with an older one for the same cell and DEK version, and `Open` accepts it (TM-D29) | Edited in place by design because rules, runs and schedules reference the connection. The older token was revoked at its source when the admin rotated it, so the likely effect is a failed use that audit and `last_test` show; a source that did not revoke it gives the attacker an older credential, not a new one. A counter in the same row would not help (rolled back with the blob) | security-architect | If a source is found that cannot revoke a replaced credential, or the integrations move to new-row-on-change |
+| TM-R25 | **R-KEYADM-1, accepted (T-0623).** A hidden Key Admins (526) or Enterprise Key Admins (527) on a domain below functional level 2016 that has a 2016+ PDC emulator is not detected: `protectedList` accepts their absence below level 7, but they exist from the first 2016 PDC | Level ≥ 7 implies a 2016+ PDC, so only the mixed migration state is affected; the attacker needs WRITE_DAC/WRITE_OWNER on the group; the exact fail-closed rule needs the PDC emulator OS version (new connector code and lab matrix); the ratchet (TM-D23 rule 8) covers a group read earlier in the epoch (§6.4 signed note) | security-architect | **Narrowed by T-0631:** a 2016+ PDC emulator now fails closed; remaining residual is a domain whose PDC role moved back to a pre-2016 DC after the groups were created (§6.4). Revisit when the Windows lab gains a mixed-level forest or a customer reports the state |
+| R-AN8-1 | Anyone who reaches AN-8 on L1 can push a known break-glass name into the rule 3 delay window with 5 bad guesses, delaying the legitimate operator (T-0359, §7.6 rule 2f) | "Throttled, never locked" (rule 3) trades lockout for delay; a hard lock would let L1 disable recovery | security-architect | alerts at 10 failures/hour, CIDR allow-list (rule 4); a customer asking for a second recovery path |
 
 ### 16.2 Decisions owed to the CEO (not asked now)
 
@@ -2613,7 +3013,7 @@ Each goes through the `ceo-decisions` skill in business terms when its trigger a
 | --- | --- | --- |
 | Password-filter fail mode: fail-open (passwords allowed if our check cannot run) or fail-closed (password changes refused) | Customer-affecting risk acceptance | The M4 password-filter build (T-0145/T-0146 follow-up) |
 | Code-signing certificates and HSM/KMS for release keys | Money | Signing work in T-0140/T-0141 |
-| External security commitments: `SECURITY.md`, disclosure address and policy, advisory SLA (same-day advisories with CVSS matching the CNA record), independent pentest attestation | They leave the building (SB §10); ME-SEC §4.4 lists what buyers will ask for | First customer release (prepared in T-0079). **Disclosure half decided** (option a, as targets) and published in T-0258: `SECURITY.md`, `.well-known/security.txt`, gate `fitness-disclosure`. Still open: CNA application, advisory template, pentest |
+| External security commitments: `SECURITY.md`, disclosure address and policy, advisory SLA (same-day advisories with CVSS matching the CNA record), independent pentest attestation | They leave the building (SB §10); ME-SEC §4.4 lists what buyers will ask for | First customer release (prepared in T-0079). **Disclosure half decided** (option a, as targets) and published in T-0258: `SECURITY.md`, `.well-known/security.txt`, gate `fitness-disclosure`. T-0260: severity-to-deadline table, advisory template and the advisory-equals-record gate (`runbooks/security-disclosure.md`), CNA application ready (`runbooks/cna-application.md`; the CEO submits it, Board actions). GitHub private vulnerability reporting enabled (D-0006 a), verified 2026-10-29 in T-0265. Still open: CNA submission, pentest (Decision 2) |
 
 ---
 ## 17. Open items
@@ -2628,8 +3028,8 @@ Each goes through the `ceo-decisions` skill in business terms when its trigger a
 | TM-Q6 | Change-volume limits for HR-driven lifecycle | Through Plan and approvals | E2.9 lifecycle spec |
 | TM-Q7 | KEK recovery path; backup encryption; bundled DB backup | No plaintext fallback | E2.12 PRD |
 | TM-Q8 | Fleet stream limits; per-tenant issuing CA in SaaS | No secret pushed over fleet (TM-D8) | Connector spec |
-| TM-Q9 | Blob isolation probe | Tenant-prefixed keys only | T-0134 (adds it to T4) |
-| TM-Q10 | Log/metric/cache tenant isolation probe | Tenant ID on every line | T-0135 (extends P4) |
+| TM-Q9 | Blob isolation probe | Tenant-prefixed keys only | T-0134: T4 `blob-*` rules, done |
+| TM-Q10 | Log/metric/cache tenant isolation probe | Tenant ID on every line | T-0135 (extends P4; `tools/fitness/profiles/p4.go`) |
 | TM-Q11 | Update protocol details; courier telemetry; OCI apply without Docker socket | §10 rules | T-0138 (ENH-07 spec) |
 | TM-Q12 | Hardening wizard delegation plan; "remove delegation" plan on uninstall | Never holds WRITE_DAC (TM-D3) | ENH-08 spec |
 | TM-Q13 | LAPS decryptor group for non-DC policies | Never DCs, never via Domain Admins (§6.3 R10) | ADM-060 spec + Windows lab |
@@ -2642,11 +3042,11 @@ Each goes through the `ceo-decisions` skill in business terms when its trigger a
 | TM-Q20 | Password-filter fail mode | CEO decision (§16.2) | ceo-decisions, before the M4 build |
 | TM-Q21 | SaaS quotas, operations break-glass, launch revision of this model | §13 | E5.6 |
 | TM-Q22 | Feed the ad-expert corrections back into FEAS §2.3 (Get-Changes over-reads; property-set over-grant; Delete-Tree; Reanimate JIT; LAPS/DSRM; GPCO not Tier 0) | §6.3, §6.4 | T-0077 (ad-expert) |
-| TM-Q23 | Windows-lab confirmation of every `[UNVERIFIED — lab]` / `[LAB]` item here | — | T-0076 (lab confirmation) |
+| TM-Q23 | Windows-lab confirmation of every `[UNVERIFIED — lab]` / `[LAB]` item here | **AD half done (T-0076):** the AD items are confirmed or corrected in place. Left: Entra items (G6–G18, Connect flows, E5, Graph rows) → T-0075; Samba-runtime `[LAB]`; krb5 acceptor replay/channel binding | T-0075 (Entra lab) |
 | TM-Q24 | Hybrid-trust attestation UX, monitor poll interval, directory-audit activity names | Delegated, single scope, token discarded, at most 90 days; an open tenant is reason `tenant_takeover_open` (TM-D17, DM-10.I7) | Hybrid/ADM-169 spec + lab G8, G10; G8, G10 in T-0075; DM alignment done (T-0078) |
 | TM-Q25 | The `sidecars/exchange` leg to Exchange [M3] (TB14 covers only launcher ↔ sidecar) | **Exchange Online:** app-only through `Exchange.ManageAsApp`, authorised by a **custom Exchange role group assigned to the service principal, with a write scope** — never an Entra directory role, which TM-D5 forbids ("Option 2: Assign custom role groups to the application using service principals", [EXO app-only](https://learn.microsoft.com/en-us/powershell/exchange/app-only-auth-powershell-v2)). The page says the custom group lets you "use a Write scope to limit which recipients can be modified". EXO app-only needs "an exportable and available private key (.pfx)" from a CSP provider ("CNG certificates aren't supported"), so TM-D8's "non-exportable" cannot hold for it: a separate certificate, ideally a separate app registration, never the Graph credential. **On-premises Exchange:** the connector identity is never in Organization Management, nor in Exchange Windows Permissions or Exchange Trusted Subsystem (both C13); a scoped management role assignment instead. PowerShell only through `psx` (SP) | M3 Exchange spec |
 | TM-Q26 | Whether `radius` runs in `cmd/server` or `cmd/radius` | TM-D20 triggers: an EAP method, a non-Go TLS stack or a missed fuzz or flood budget forces `cmd/radius` and an ADR-0002 amendment | M4 RADIUS spec |
-| TM-Q27 | Whether restore (§6.3 R9) needs to list `CN=Deleted Objects` or can address the tombstone by the GUID inventory holds | Never take ownership of the container by default; `[UNVERIFIED — lab]` | T-0076 lab; T-0077 FEAS correction |
+| TM-Q27 | Whether restore (§6.3 R9) needs to list `CN=Deleted Objects` or can address the tombstone by the GUID inventory holds | Never take ownership of the container by default; **Answered (T-0076): GUID addressing works, no list right needed** ([T-0076 lab log](../runbooks/windows-lab-runs/T-0076-ad-lab-confirmation-20261028.md)) | T-0077 FEAS correction |
 | TM-Q28 | Migration database-adapter mode (customer dump vs live read-only connection) and the ADMP table allow-list per build | TM-D21; TM-TB18-T4/T5: allow-list plus CI deny list, read-only, sealed credential, upload deleted at job end | E2.11 migration spec + lab |
 | TM-Q29 | **Answered (T-0235): C19 and TM-D27.** Residual scope left open as TM-Q30 | §6.4 TM-D27 | closed |
 | TM-Q30 | Optional SYSVOL folder-ACL scan of `tier0` GPOs (TM-R22) and an optional multi-hop "exposure path" view with a hop cap and a truncated flag (TM-R21) | §6.4 TM-D27 rules 6 and 9 | reporting / ENH spec (security-architect, with ad-expert) |
@@ -2746,15 +3146,29 @@ External, in order of first use:
 83. https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-server-2003/cc772633(v=ws.10) (not re-read, `[UNVERIFIED]`)
 84. https://learn.microsoft.com/en-us/windows/win32/adschema/extended-rights (T-0235)
 85. https://bloodhound.specterops.io/ (T-0235; Tier Zero definition not re-read, `[UNVERIFIED]`)
+86. https://specterops.io/blog/2021/06/17/shadow-credentials-abusing-key-trust-account-mapping-for-account-takeover/ (T-0388; `msDS-KeyCredentialLink`)
+87. https://support.microsoft.com/kb/5014754 (T-0388; `altSecurityIdentities` formats, weak and strong)
+88. https://support.microsoft.com/kb/305144 (T-0388; UAC flag names; hex values `[UNVERIFIED]`)
+89. https://thehacker.recipes/ad/movement/dacl/targeted-kerberoasting (T-0388; SPN write)
+90. https://learn.microsoft.com/en-us/entra/identity/authentication/concept-certificate-based-authentication-certificateuserids (T-0388; `certificateUserIds` in `authorizationInfo`, who can update)
+91. https://learn.microsoft.com/windows/win32/adschema/a-accountexpires (T-0388)
+92. https://learn.microsoft.com/en-gb/windows/win32/ad/security-properties (T-0388; `logonHours`, `userWorkstations`)
+93. https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0 (T-0388; not re-read, `[UNVERIFIED]`)
+94. https://thehacker.recipes/ad/movement/kerberos/asreproast (T-0388; not re-read, `[UNVERIFIED]`)
 
 ## Changelog
 
+- 2026-10-28 · T-0544 (from the T-0469 review). §7.7 TM-D18 extension: D18-1 synced Entra groups are judged from their matched AD source's `diq_broadMembershipWrite` (unknown unless the pair is matched, attested, fresh within 26 h and the fact is known and false; computed in one read, never stored on the Entra row); D18-2 dynamic-membership groups never grant in v1. Nine cases added to TM-F-AUTHZ. Residual R-D18-1; lab G18 routed to T-0075. Build changes routed to T-0541 and a new judge ticket.
+- 2026-10-27 · T-0495 (from the T-0206 review). §7.6 rule 10: AN-9 refuses AD-disabled, expired, locked-out, deleted or SID-changed principals by an inventory pre-check plus an authoritative live connector read at sign-in, failing closed; no ticket-age bound (authtime is the TGT logon time). Residual R-AN9-1 (DC replication lag), R-AN9-2 (timing). TM-F-SSO adds `an9_refuses_ad_disabled`.
+- 2026-10-27 · T-0388. §6.9 rule 5 rewritten from five changes to the closed `guarded v1` table (AD and Entra classes, a `denied` set, a tightening exemption), each with a source. New §6.9a DECISION TM-D28: typed constructors, one class per Action, a runtime check in `client.Write`, and fitness function `fitness-backing` rules B1 to B9 with a machine-readable `guarded-v1` block. New proof TM-F-BACKING, residual TM-R23, lab G17 (routed to T-0075), sources 86 to 94. DM-30.I7 updated to match.
 - 2026-10-26 · T-0395 (D-0007 follow-up). §6.6 adds lab G16. It reads Graph's live `appRoles` to confirm the name and role id of `Sites.Manage.All` (expected `0c0bf378-…`, from Microsoft's permissions reference). It asserts EV3 `ENTRA_DENY_LIST_PERMISSION`, with role ids, for the seven T-0369 values in a real tenant, and EV5 for the read-only counterparts. `Sites.Manage.All` now waits for G16, not G15 (G15 covers only the non-Graph grants). Routed to T-0075.
+- 2026-10-27 · T-0359 (from the T-0193 review). §7.6 rule 2 gains sub-rules a to g and §7.8 splits the `auth` per-account row: AN-8 is throttled by no-evaluation plus the rule 3 delay and the uniform `401`, keyed on the normalised submitted name (HMAC, every name, bounded table, fail closed); AN-10 keeps `429` on the pending handle. New residual R-AN8-1. TM-F-ABUSE names the five tests below (§7.6 proof note). Build ticket T-0200 must pass them.
 - 2026-10-26 · T-0369 (from T-0303). §6.6 deny list adds `Mail.ReadWrite`, `Mail.Send`, `Mail-Advanced.ReadWrite.All`, `MailboxItem.ReadWrite.All`, `MailboxItem.ImportExport.All`, `Files.ReadWrite.All`, `Sites.ReadWrite.All` (any resource, EV3 block); the T-0303 gap sentence is replaced; TM-F-RIGHTS row updated; onboarding guidance: dedicated registration, Exchange RBAC for Applications. `Sites.Manage.All` waits for lab G15.
 - 2026-10-23 · T-0240 (from the T-0238 review). TM-D25 7e: group-membership writes are licence writes (refused under `assignedPlans`, `mail`, `proxyAddresses` or any RefuseAll); `ASSIGN_LICENSE` also refused on `mail` and `proxyAddresses`. 7g: `preferredLanguage`, `countryCode` and device OS rows fixed (the earlier "none for preferredLanguage" was wrong); canonical-key rule added. New proofs T0-DYN-LIC-GROUPMEMBER and T0-DYN-KEY; lab G14 added to T-0075.
 - 2026-10-23 · T-0230 (from the T-0225 review). TM-D25 rule 7 rewritten as 7a to 7h: it covers every dynamic group in a designated closure (nested at any depth, not only designated seeds); `Direct Reports for` rules depend on `user.manager`; create and invite are writes of every property (the new object matches rules by absence), so they are refused while a closure dynamic group exists; licence assignment (user and group) writes `assignedPlans`; synced AD writes, moves and `userAccountControl` are Entra property writes and go through the same `CheckPropertyWrite`; closed mapping table `ruleprops v1` from rule property to Graph write path and AD attribute. New TM-R19; TM-F-T0GUARD extended with the T-0230 proof table. Connector contract §8.9 and T-0098 guard contract updated. Sources: dynamic membership rules, Entra Connect synchronized attributes, Graph user resource, device update.
 - 2026-10-23 · T-0227 (from the T-0093 review). §6.4: new C17 (WriteDACL, WriteOwner, GenericAll, GenericWrite, all-property or `gPLink` WriteProperty, ownership, on the domain, Configuration and Schema heads and AdminSDHolder) and C18 (privileged `sIDHistory`, by RID); C8 gains `dSHeuristics`; C13 is matched by RID, SID or pinned GUID, never by name. New DECISION TM-D26: ten rules (callback ACEs 0x09 and 0x0B count as unconditional allows; the owner is `tier0` whatever OWNER RIGHTS says; ACE trustees match on `sIDHistory`; fail closed; live bases) and sixteen named tests added to TM-F-T0GUARD. Build ticket raised for `internal/connector/tier0`.
 - 2026-10-23 · T-0111 (from the T-0095 review). §6.4: E2 now counts PIM-for-Groups eligible and scheduled members and owners. New DECISION TM-D25 adds nine rules: the reach closure, including group-type eligible principals; which schedules count; the reads, with a live per-target check; fail mode, where a failed read refuses every Entra write and the members-only option is rejected; the unlicensed tenant, empty only when the lab-pinned response and `subscribedSkus` agree; designated groups, whose transitive members and owners are `tier0` (Entra and AD); dynamic designated groups, guarded by a rule lexer; the hybrid reach in C16 and E5; Conditional Access candidates. §6.6: new required RT-4 row `PrivilegedEligibilitySchedule.Read.AzureADGroup` + `PrivilegedAssignmentSchedule.Read.AzureADGroup`; new optional row `Policy.Read.ConditionalAccess`; the deny list gains `RoleManagementPolicy.ReadWrite.*`; lab tests G11 to G13. TM-F-T0GUARD extended. TM-R16 extended; new TM-R18 (foreign app owners). Sources 73 to 79. Build ticket T-0225 (directory-engineer); G11 to G13 routed to T-0075.
+- 2026-10-29 · T-0738 (from ADR-0008, T-0713). New rows TM-TB6-T15 (server CA compromise), T16 (key use without key theft), T17 (endpoint set or pin tampering), T18 (chain and EKU confusion). §9.1 lists both fleet CAs, §9.2.1 gains the fleet server CA key row, TM-D24 rule D pins the server CA, TM-A11 splits into client-CA and server-CA keys, TM-F-FLEET (D) gains the two-tenant same-pin case. Proof: `make fitness-fleet-ca-scope`.
 - 2026-10-23 · T-0179 (from the T-0152 review). New tunnel-level rows TM-TB6-T10 to T13: `CallOpen.method` confusion, `call_id` hijack, untrusted `CallClose` text, and CA-bundle content (including first-`Enroll` MITM). New row TM-TB12-T16: agents on the same tunnel, cross-kind methods. New §9.8 DECISION TM-D24: rules A (dispatch), B (call identity), C (status text) and D (CA pin before token; CA bundle built and parsed strictly). TM-F-FLEET gains failing conditions (A) to (D). New subject ticket T-0209, the tunnel multiplexer; D goes to T-0155 and T-0158.
 - 2026-10-24 · T-0116. §6.6 adds TM-D5a: `full_access_as_app`, `Exchange.ManageAsApp` and `Sites.FullControl.All` join the deny list (value match, any resource); other non-Graph roles stay EV5 warn; tenant-wide Graph data permissions are a gap routed to T-0303; code in T-0302. Lab cases for G6 (service principal in a role-assignable group), G7 (`key` via alternate-key addressing) and new G15. Residual TM-R20 (Exchange role-group membership is invisible to Graph) is recorded in §6.6; it is in §16.1.
 - 2026-10-22 · T-0108. §6.2 adds TM-D23. It confirms connector contract v1.1 D10 (the Tier-0 context, F1 to F6), D11 (the write gate and override), and D16 (statement age 15 minutes, verification age 26 hours). It adds tightenings 7 to 11: `computed_at` is an as-of time; the connector's set ratchets, with `correlated_tier0` and a `tier0_set_shrink` record; override admissions are logged; direct C9 links are read live; `tier0_after_write` raises an alert. An unexpired `ENTRA_PASSWORD_CREDENTIAL` becomes EV3 block. §6.4 states how C16, E5 and designations are enforced. TM-TB6-T4's residual names TM-R14 and TM-R15. §16.1 adds TM-R14 (R-T0CTX-1), TM-R15 (D11), TM-R16 (R-T0SET-1) and TM-R17 (R-T0RACE-1). Contract changes are routed to T-0122. Sources 67 and 68 added.
@@ -2769,3 +3183,8 @@ External, in order of first use:
 - 2026-10-02 · v0.1 (old T-0007 rework after the solution-architect review). New boundaries TB18 (ManageEngine source ↔ migration importer, scanner, comparator; TM-D21) and TB19 (RADIUS; TM-D20, co-location bounded). `fileserver` agent rows TM-TB12-T10…T15 and TM-D13 extended to it; `fpolicy` and `t0-connector` out of scope with an RT-6 trigger. Authentication-plane residual closed by TM-D19 (activeDIQ-held authority factor anchored in the AD plane; TM-TB8-T8, TM-R12). TM-D17 aligned to DM-10.I7 and D-0009: 90 days, optional monitor, DM vocabulary and permissions, old T-0061. §6.3 R9 Deleted Objects finding (TM-Q27). §6.4 C rows reordered. New proofs TM-F-MIGRATE and TM-F-RADIUS; RT-18; TM-R13; TM-Q25 (Exchange leg) to TM-Q28. §18 regenerated (65 URLs).
 - 2026-10-02 · v0 (old T-0007). 17 trust boundaries with STRIDE tables; minimum AD rights R1–R13 and Graph allow and deny lists; the `tier0` set for AD (C1–C16) and Entra (E1–E5), answering DM Q1 and confirming DM-23.I5; the hybrid correlation gate (TM-D17), which confirms DM-20.I4 and tightens it, with (f) attested because Graph has no app-only read; role-granting groups as escalation objects (TM-D18, the DM-36.I2 referral); decisions TM-D1–D18; follow-up tickets old T-0053 to old T-0060. Status `review`.
 - 2026-10-24 · T-0235 (answers TM-Q29, ad-expert consult). §6.4: new C19 (control of a C1 or C13 group, `krbtgt`, a DC computer object, the Domain Controllers OU and DC-holding containers, and `tier0` GPOs) and DECISION TM-D27: eleven rules (per-class takeover rights, SDProp not trusted and live DACL read, ownership, ignore list, depth 1, live basis, connector self-check, Samba cannot prove SDProp) and 19 named T0-C19-* / T0-RIGHTS-C19 tests added to TM-F-T0GUARD. New TM-R21 (depth 1) and TM-R22 (SYSVOL ACL) accepted; TM-Q30 opened. Windows-lab items stay `[UNVERIFIED]`.
+- 2026-10-28 · T-0178: §9.2.1 and TM-D29 (rollback of sealed values): no seal counter in the AAD (it rolls back with the blob); per column new-row-on-change plus terminal rows hold no secret (CHECK and trigger), detective or ADR-bounded for key material, TM-R24 accepted for DM-63/82/85. TM-F-SEAL extended.
+- 2026-10-28 · T-0404: §6.4 records what a Windows DC returns for a denied Read (an attribute-less entry, not no-such-object); fail-closed confirmed on the lab; naming gap filed as T-0626.
+- 2026-10-28 · T-0623: §6.4 carries the security-architect-signed note accepting the Key Admins / Enterprise Key Admins residual on a pre-2016-level domain with a 2016+ PDC emulator; new TM-R25 in §16.1; narrowing ticket T-0631 (P3).
+- 2026-10-28 · T-0631: §6.4 note and TM-R25 narrowed — 526/527 absence below level 7 now fails closed when the PDC emulator is 2016+ or unreadable; residual is a PDC role moved back to a pre-2016 DC.
+- 2026-10-28 · T-0633: T-0130 cancelled as superseded; operation-fitness proof cells repointed to the live `make fitness-operation` checks (O1/O2/O4/O9) or the ticket that lands each pending check (O3 T-0391, O5–O7 T-0392, O8 T-0393).

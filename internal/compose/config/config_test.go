@@ -130,3 +130,103 @@ func TestLoadPrincipalStore(t *testing.T) {
 		}
 	}
 }
+
+func TestTrustedProxies(t *testing.T) {
+	c, err := config.Load(func(k string) string {
+		if k == config.EnvTrustedProxies {
+			return "10.0.0.0/8, 192.0.2.1"
+		}
+		return ""
+	})
+	if err != nil || len(c.TrustedProxies) != 2 || c.TrustedProxies[1].String() != "192.0.2.1/32" {
+		t.Fatalf("got %v, %v", c.TrustedProxies, err)
+	}
+	if c, _ := config.Load(func(string) string { return "" }); len(c.TrustedProxies) != 0 {
+		t.Fatal("default must trust nothing")
+	}
+	for _, bad := range []string{"nope", "0.0.0.0/0", "::/0", "10.0.0.0/8, 0.0.0.0/0"} {
+		if _, err := config.Load(func(k string) string {
+			if k == config.EnvTrustedProxies {
+				return bad
+			}
+			return ""
+		}); err == nil {
+			t.Fatalf("%q must fail startup", bad)
+		}
+	}
+}
+
+func TestAttestationSettings(t *testing.T) {
+	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+	if c, err := config.Load(env(nil)); err != nil || c.AttestClientID != "" {
+		t.Fatalf("default: %+v %v", c, err)
+	}
+	ok := map[string]string{config.EnvAttestClientID: "app", config.EnvPublicURL: "https://diq.example.com"}
+	if c, err := config.Load(env(ok)); err != nil || c.AttestClientID != "app" {
+		t.Fatalf("configured: %v", err)
+	}
+	for name, m := range map[string]map[string]string{
+		"client without url": {config.EnvAttestClientID: "app"},
+		"url without client": {config.EnvPublicURL: "https://diq.example.com"},
+		"http":               {config.EnvAttestClientID: "app", config.EnvPublicURL: "http://diq.example.com"},
+		"path":               {config.EnvAttestClientID: "app", config.EnvPublicURL: "https://diq.example.com/x"},
+		"userinfo":           {config.EnvAttestClientID: "app", config.EnvPublicURL: "https://u:p@diq.example.com"},
+		"query":              {config.EnvAttestClientID: "app", config.EnvPublicURL: "https://diq.example.com/?a=b"},
+	} {
+		if _, err := config.Load(env(m)); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}
+
+func TestOpsListenerSettings(t *testing.T) {
+	ok := map[string]string{config.EnvOpsAddr: "127.0.0.1:9100", config.EnvOpsTokenFile: "/x/tok"}
+	c, err := config.Load(env(ok))
+	if err != nil || c.OpsAddr != "127.0.0.1:9100" || c.OpsTokenFile != "/x/tok" {
+		t.Fatalf("valid: %+v, %v", c, err)
+	}
+	if c, err = config.Load(env(nil)); err != nil || c.OpsAddr != "" {
+		t.Fatalf("default must be off: %+v, %v", c, err)
+	}
+	for name, m := range map[string]map[string]string{
+		"addr without token":  {config.EnvOpsAddr: "127.0.0.1:9100"},
+		"token without addr":  {config.EnvOpsTokenFile: "/x/tok"},
+		"same as API":         {config.EnvOpsAddr: config.DefaultAPIAddr, config.EnvOpsTokenFile: "/x/tok"},
+		"non-loopback no TLS": {config.EnvOpsAddr: "0.0.0.0:9100", config.EnvOpsTokenFile: "/x/tok"},
+		"not host:port":       {config.EnvOpsAddr: "9100", config.EnvOpsTokenFile: "/x/tok"},
+	} {
+		if _, err := config.Load(env(m)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	if _, err := config.Load(env(map[string]string{config.EnvOpsAddr: "0.0.0.0:9100", config.EnvOpsTokenFile: "/x/tok", config.EnvAPITLSDir: t.TempDir()})); err != nil {
+		t.Errorf("non-loopback with TLS dir refused: %v", err)
+	}
+}
+
+func TestSetupTTL(t *testing.T) {
+	c, err := config.Load(env(nil))
+	if err != nil || c.SetupTTL != config.DefaultSetupTTL {
+		t.Fatalf("default: %v %v", c.SetupTTL, err)
+	}
+	if c, err = config.Load(env(map[string]string{config.EnvSetupTTL: "2s"})); err != nil || c.SetupTTL.Seconds() != 2 {
+		t.Fatalf("2s: %v %v", c.SetupTTL, err)
+	}
+	for _, bad := range []string{"0s", "-1m", "soon", "25h"} {
+		if _, err := config.Load(env(map[string]string{config.EnvSetupTTL: bad})); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}
+
+// T-0665: the connector's local configuration file path is carried from its variable, unset by default.
+func TestConnectorConfigPathFromEnv(t *testing.T) {
+	c, err := config.Load(env(map[string]string{}))
+	if err != nil || c.ConnectorConfigPath != "" {
+		t.Fatalf("default: %q %v", c.ConnectorConfigPath, err)
+	}
+	c, err = config.Load(env(map[string]string{config.EnvConnectorConfig: "/etc/diq/connector.json"}))
+	if err != nil || c.ConnectorConfigPath != "/etc/diq/connector.json" {
+		t.Fatalf("set: %q %v", c.ConnectorConfigPath, err)
+	}
+}

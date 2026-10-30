@@ -1,0 +1,8 @@
+# fix commit: f9c7a4a2
+=== RUN   TestT0619WindowsGCOpensAndLooksUpAdministrator
+    zz_t0619_gc_windows_lab_test.go:24: OpenGC on 192.168.1.9:3269 OK
+    zz_t0619_gc_windows_lab_test.go:29: forest domain SIDs: [S-1-5-21-3048684280-3061665338-2348266937]
+    zz_t0619_gc_windows_lab_test.go:35: LookupSID S-1-5-21-3048684280-3061665338-2348266937-500 -> &{DN:CN=Administrator,CN=Users,DC=win,DC=activediq,DC=test attrs:map[samaccountname:[[65 100 109 105 110 105 115 116 114 97 116 111 114]]] Truncated:[]}
+--- PASS: TestT0619WindowsGCOpensAndLooksUpAdministrator (0.06s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/connector/ad	0.069s

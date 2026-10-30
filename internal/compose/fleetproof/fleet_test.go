@@ -23,6 +23,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/fleet"
 	"github.com/skenzeriq/activediq/internal/platform/fleet/dial"
 	"github.com/skenzeriq/activediq/internal/platform/fleet/fleetsql"
+	"github.com/skenzeriq/activediq/internal/platform/fleet/gateway"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 	fleetv1 "github.com/skenzeriq/activediq/internal/proto/activediq/fleet/v1"
 )
@@ -30,15 +31,15 @@ import (
 // classes is the auth class of every method of the generated contract: Enroll public, everything
 // else a client certificate. It is derived from the descriptor, so an RPC added to fleet.proto is
 // covered by every test below without being listed.
-func classes() map[string]fleet.AuthClass {
-	m := map[string]fleet.AuthClass{}
+func classes() map[string]gateway.AuthClass {
+	m := map[string]gateway.AuthClass{}
 	for _, md := range fleetv1.Fleet_ServiceDesc.Methods {
-		m["/"+fleetv1.Fleet_ServiceDesc.ServiceName+"/"+md.MethodName] = fleet.ClassClientCert
+		m["/"+fleetv1.Fleet_ServiceDesc.ServiceName+"/"+md.MethodName] = gateway.ClassClientCert
 	}
 	for _, sd := range fleetv1.Fleet_ServiceDesc.Streams {
-		m["/"+fleetv1.Fleet_ServiceDesc.ServiceName+"/"+sd.StreamName] = fleet.ClassClientCert
+		m["/"+fleetv1.Fleet_ServiceDesc.ServiceName+"/"+sd.StreamName] = gateway.ClassClientCert
 	}
-	m[fleet.EnrollMethod] = fleet.ClassPublic
+	m[gateway.EnrollMethod] = gateway.ClassPublic
 	return m
 }
 
@@ -76,7 +77,8 @@ func (c *comps) Current(ctx context.Context, id fleet.Identity) (bool, error) {
 // way the real Enroller does; Tunnel holds the stream open until its context ends.
 type server struct {
 	fleetv1.UnimplementedFleetServer
-	ca      authority
+	ca      authority // the tenant client CA
+	srvCA   authority // the installation server CA: the pin, and the CA of the presented chain
 	tid     tenant.ID
 	enroll  atomic.Int32
 	tunnel  atomic.Int32
@@ -94,7 +96,7 @@ func (s *server) Enroll(_ context.Context, r *fleetv1.EnrollRequest) (*fleetv1.E
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, KeyUsage: x509.KeyUsageDigitalSignature,
 	}, csr.PublicKey)
 	return &fleetv1.EnrollResponse{
-		LeafCertificateDer: der, CaBundlePem: pemOf(s.ca.cert),
+		LeafCertificateDer: der, CaBundlePem: append(pemOf(s.srvCA.cert), pemOf(s.ca.cert)...),
 		Endpoints:    []*fleetv1.Endpoint{{Host: "fleet.example", Port: 8443}},
 		LeafNotAfter: timestamppb.New(time.Now().Add(time.Hour)),
 	}, nil
@@ -115,8 +117,9 @@ type rig struct {
 	addr  string
 	srv   *server
 	comps *comps
-	gw    *fleet.Gateway
-	ca    authority
+	gw    *gateway.Gateway
+	ca    authority // tenant client CA
+	srvCA authority // installation server CA (ADR-0008)
 	tid   tenant.ID
 	grpc  *grpc.Server
 }
@@ -124,19 +127,19 @@ type rig struct {
 func start(t *testing.T) *rig {
 	t.Helper()
 	nil2t = t
-	ca := newAuthority(t, "installation CA")
+	ca := newAuthority(t, "tenant client CA")
+	srvCA := newAuthority(t, "installation server CA")
 	tid := tenant.New()
 	cm := &comps{}
-	gw, err := fleet.NewGateway(fleet.Config{
+	gw, err := gateway.NewGateway(gateway.Config{
 		Methods: classes(), CAs: cas{tid: {ca.cert}}, Components: cm, Recheck: 50 * time.Millisecond,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pool := x509.NewCertPool()
-	pool.AddCert(ca.cert)
-	s := &server{ca: ca, tid: tid}
-	gs, err := gw.NewServer(ca.serverCert(t), func() *x509.CertPool { return pool }, func(r grpc.ServiceRegistrar) {
+	pool := gateway.NewCAIndex([]*x509.Certificate{ca.cert})
+	s := &server{ca: ca, srvCA: srvCA, tid: tid}
+	gs, err := gw.NewServer(srvCA.serverCert(t), func() *gateway.CAIndex { return pool }, func(r grpc.ServiceRegistrar) {
 		fleetv1.RegisterFleetServer(r, s)
 	})
 	if err != nil {
@@ -148,13 +151,13 @@ func start(t *testing.T) *rig {
 	}
 	go func() { _ = gs.Serve(l) }()
 	t.Cleanup(gs.Stop)
-	return &rig{addr: l.Addr().String(), srv: s, comps: cm, gw: gw, ca: ca, tid: tid, grpc: gs}
+	return &rig{addr: l.Addr().String(), srv: s, comps: cm, gw: gw, ca: ca, srvCA: srvCA, tid: tid, grpc: gs}
 }
 
 func (r *rig) conn(t *testing.T, client *tls.Certificate) *grpc.ClientConn {
 	t.Helper()
 	roots := x509.NewCertPool()
-	roots.AddCert(r.ca.cert)
+	roots.AddCert(r.srvCA.cert)
 	conf := &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots, ServerName: "localhost"}
 	if client != nil {
 		conf.Certificates = []tls.Certificate{*client}
@@ -180,7 +183,7 @@ func TestOnlyEnrollWorksWithoutAClientCertificate(t *testing.T) {
 	r := start(t)
 	cc := r.conn(t, nil)
 
-	if err := cc.Invoke(ctx5(t), fleet.EnrollMethod, &fleetv1.EnrollRequest{}, &fleetv1.EnrollResponse{}); status.Code(err) == codes.Unauthenticated || status.Code(err) == codes.PermissionDenied {
+	if err := cc.Invoke(ctx5(t), gateway.EnrollMethod, &fleetv1.EnrollRequest{}, &fleetv1.EnrollResponse{}); status.Code(err) == codes.Unauthenticated || status.Code(err) == codes.PermissionDenied {
 		t.Fatalf("Enroll must work without a certificate, got %v", err)
 	}
 	if r.srv.enroll.Load() != 1 {
@@ -188,7 +191,7 @@ func TestOnlyEnrollWorksWithoutAClientCertificate(t *testing.T) {
 	}
 
 	for name, class := range classes() {
-		if class == fleet.ClassPublic {
+		if class == gateway.ClassPublic {
 			continue
 		}
 		var err error
@@ -235,20 +238,20 @@ func TestCertificateFromAnotherCAOrTenantIsRefused(t *testing.T) {
 // TestGatewayRefusesToStartWithAPublicMethodOtherThanEnroll: deny by default is a startup rule.
 func TestGatewayRefusesToStartWithAPublicMethodOtherThanEnroll(t *testing.T) {
 	m := classes()
-	m["/activediq.fleet.v1.Fleet/Tunnel"] = fleet.ClassPublic
-	if _, err := fleet.NewGateway(fleet.Config{Methods: m, CAs: cas{}, Components: &comps{}}); !errors.Is(err, fleet.ErrPublicMethod) {
+	m["/activediq.fleet.v1.Fleet/Tunnel"] = gateway.ClassPublic
+	if _, err := gateway.NewGateway(gateway.Config{Methods: m, CAs: cas{}, Components: &comps{}}); !errors.Is(err, gateway.ErrPublicMethod) {
 		t.Fatalf("public Tunnel: %v", err)
 	}
 	m = classes()
 	delete(m, "/activediq.fleet.v1.Fleet/Tunnel")
-	g, err := fleet.NewGateway(fleet.Config{Methods: m, CAs: cas{}, Components: &comps{}})
+	g, err := gateway.NewGateway(gateway.Config{Methods: m, CAs: cas{}, Components: &comps{}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ca := newAuthority(t, "ca")
-	if _, err := g.NewServer(ca.serverCert(t), func() *x509.CertPool { return x509.NewCertPool() }, func(r grpc.ServiceRegistrar) {
+	if _, err := g.NewServer(ca.serverCert(t), func() *gateway.CAIndex { return gateway.NewCAIndex(nil) }, func(r grpc.ServiceRegistrar) {
 		fleetv1.RegisterFleetServer(r, &server{})
-	}); !errors.Is(err, fleet.ErrUnclassified) {
+	}); !errors.Is(err, gateway.ErrUnclassified) {
 		t.Fatalf("unclassified Tunnel mounted: %v", err)
 	}
 }
@@ -276,7 +279,7 @@ func exchange(ctx context.Context, creds credentials.TransportCredentials, addr,
 // new one.
 func TestEnrollEndToEndThenRevocationKillsTheStream(t *testing.T) {
 	r := start(t)
-	mat := dial.Material{Address: r.addr, Token: "tok", Pin: fleetsql.PinOf(r.ca.cert)}
+	mat := dial.Material{Address: r.addr, Token: "tok", Pin: fleetsql.PinOf(r.srvCA.cert)}
 	st, err := dial.Enroll(ctx5(t), mat, filepath.Join(t.TempDir(), "state"), exchange)
 	if err != nil {
 		t.Fatalf("enrol with the right pin: %v", err)
@@ -381,7 +384,7 @@ func TestComponentRefusesUnpinnedServers(t *testing.T) {
 
 	// The imposter has a certificate chain that verifies against its own CA but not the pin.
 	dir := filepath.Join(t.TempDir(), "state")
-	mat := dial.Material{Address: imposter.addr, Token: "secret-token", Pin: fleetsql.PinOf(good.ca.cert)}
+	mat := dial.Material{Address: imposter.addr, Token: "secret-token", Pin: fleetsql.PinOf(good.srvCA.cert)}
 	_, err := dial.Enroll(ctx5(t), mat, dir, exchange)
 	if !errors.Is(err, dial.ErrUntrustedServer) {
 		t.Fatalf("enrol against an unpinned server: %v, want ErrUntrustedServer", err)
@@ -404,7 +407,7 @@ func TestComponentRefusesUnpinnedServers(t *testing.T) {
 	}
 
 	// After enrolment the connector dials out only to the installation CA's servers.
-	st, err := dial.Enroll(ctx5(t), dial.Material{Address: good.addr, Token: "tok", Pin: fleetsql.PinOf(good.ca.cert)}, filepath.Join(t.TempDir(), "ok"), exchange)
+	st, err := dial.Enroll(ctx5(t), dial.Material{Address: good.addr, Token: "tok", Pin: fleetsql.PinOf(good.srvCA.cert)}, filepath.Join(t.TempDir(), "ok"), exchange)
 	if err != nil {
 		t.Fatal(err)
 	}

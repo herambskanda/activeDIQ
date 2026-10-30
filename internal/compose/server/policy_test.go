@@ -23,7 +23,7 @@ func TestBuildAPIFollowsPolicyFile(t *testing.T) {
 	row := func(op, extra string) string {
 		return `{"operation": "` + op + `", ` + extra + `"gate": "none", "reason": "r", "ref": "AN-1"}`
 	}
-	signIn := row("signInBreakGlassPassword", "") + `, ` + row("createWebAuthnSignInChallenge", "") + `, ` + row("verifyWebAuthnSignIn", "") + `, ` + row("verifyTotpSignIn", "")
+	signIn := row("signInBreakGlassPassword", "") + `, ` + row("createWebAuthnSignInChallenge", "") + `, ` + row("verifyWebAuthnSignIn", "") + `, ` + row("verifyTotpSignIn", "") + `, ` + row("completeTakeoverAttestation", "") + `, ` + row("claimFirstRunSetup", "")
 	authed := `"authenticated": [{"operation": "signOut", "reason": "r", "ref": "TM-F-SESSION"}, {"operation": "getCsrfToken", "reason": "r", "ref": "TM-F-SESSION"}]`
 	both := `{` + authed + `, "anonymous": [` + row("getLiveness", "") + `, ` + row("getReadiness", "") + `, ` + signIn + `]}`
 	if err := build(both); err != nil {

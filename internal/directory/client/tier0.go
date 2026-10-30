@@ -64,13 +64,28 @@ type Tier0Sources struct {
 	Now func() time.Time
 }
 
+var errTier0Sources = errors.New("client: Tier0 builder needs a tenant and every source except the live refresher")
+
+// CheckTier0Sources applies NewTier0Builder's source check without a tenant, so a caller that builds one
+// builder per tenant can validate its sources at startup without minting a tenant ID. NewTier0Builder
+// calls it, so the two cannot drift.
+func CheckTier0Sources(s Tier0Sources) error {
+	switch {
+	case s.Connections == nil, s.Correlations == nil, s.Designations == nil,
+		s.HybridLinks == nil, s.Overrides == nil, s.Revision == nil:
+		return errTier0Sources
+	}
+	return nil
+}
+
 // NewTier0Builder returns the Tier0Builder of the write path: one per tenant, reading inventory (DM-20),
 // the designations (DM-16.I8), the hybrid links (DM-21), the override store (DM-25) and the revision.
 func NewTier0Builder(s Tier0Sources) (Tier0Builder, error) {
-	switch {
-	case s.Tenant.IsZero(), s.Connections == nil, s.Correlations == nil, s.Designations == nil,
-		s.HybridLinks == nil, s.Overrides == nil, s.Revision == nil:
-		return nil, errors.New("client: Tier0 builder needs a tenant and every source except the live refresher")
+	if s.Tenant.IsZero() {
+		return nil, errTier0Sources
+	}
+	if err := CheckTier0Sources(s); err != nil {
+		return nil, err
 	}
 	if s.Now == nil {
 		s.Now = time.Now

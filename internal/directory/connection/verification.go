@@ -3,7 +3,6 @@ package connection
 import (
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"regexp"
@@ -11,6 +10,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/skenzeriq/activediq/internal/platform/audit/canon"
 	"github.com/skenzeriq/activediq/internal/platform/tablekind"
 )
 
@@ -326,29 +326,44 @@ func newSalt() []byte {
 	return b
 }
 
-// findingsDigest is DM-24.I5: SHA-256 over a length-prefixed encoding of
-// ("adq-findings-digest/1", salt, the run's fingerprints sorted bytewise). The salt keeps an unkeyed
-// reader from brute-forcing the enumerable inputs. The shared audit/canon encoder (ADR-0005 rule 11)
-// has not landed; this encoding is the same shape and moves there with it.
+// Digest domain tags (DM-24.I5, DM-25.I7). Each digest has its own tag, so two digests of different
+// meaning never compare equal by construction.
+const (
+	findingsDigestTag = "adq-findings-digest/1"
+	overrideDigestTag = "adq-override-digest/1"
+)
+
+// findingsDigest is DM-24.I5: SHA-256 over the adq-canon/1 encoding (ADR-0005 rule 11) of
+// (tag, salt, the run's fingerprints sorted bytewise). The salt keeps an unkeyed reader from
+// brute-forcing the enumerable inputs.
 func findingsDigest(salt []byte, fingerprints []string) []byte {
+	return saltedDigest(findingsDigestTag, salt, fingerprints)
+}
+
+// OverrideDigest is DM-25.I7: the same construction under adq-override-digest/1, over the
+// fingerprints an override acknowledged, salted with its evidence run's digest_salt.
+func OverrideDigest(salt []byte, fingerprints []string) []byte {
+	return saltedDigest(overrideDigestTag, salt, fingerprints)
+}
+
+func saltedDigest(tag string, salt []byte, fingerprints []string) []byte {
 	fps := slices.Clone(fingerprints)
 	sort.Strings(fps)
-	h := sha256.New()
-	put := func(b []byte) {
-		var n [8]byte
-		binary.BigEndian.PutUint64(n[:], uint64(len(b)))
-		h.Write(n[:])
-		h.Write(b)
+	items := make([][]byte, len(fps))
+	for i, fp := range fps {
+		items[i] = []byte(fp)
 	}
-	put([]byte("adq-findings-digest/1"))
-	put(salt)
-	var n [8]byte
-	binary.BigEndian.PutUint64(n[:], uint64(len(fps)))
-	h.Write(n[:])
-	for _, fp := range fps {
-		put([]byte(fp))
+	var e canon.Encoder
+	e.String(1, tag)
+	e.Bytes(2, salt)
+	e.List(3, items)
+	enc, err := e.Result()
+	if err != nil {
+		// Unreachable: tags ascend and the tag constant is valid UTF-8. A fingerprint is hex text.
+		panic("connection: digest encoding: " + err.Error())
 	}
-	return h.Sum(nil)
+	sum := sha256.Sum256(enc)
+	return sum[:]
 }
 
 // Errors of the verification and override paths. None carries a finding, an object identifier or a

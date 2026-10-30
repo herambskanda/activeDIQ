@@ -24,6 +24,7 @@ const (
 	KindOperationStarted   audit.Kind = "operation.started"
 	KindOperationCompleted audit.Kind = "operation.completed"
 	KindOperationHeld      audit.Kind = "operation.held"
+	KindOperationRefused   audit.Kind = "operation.refused" // one item refused by authorisation at plan (tier0, denied)
 	KindOperationApproved  audit.Kind = "operation.approved"
 	KindOperationRejected  audit.Kind = "operation.rejected"
 	KindOperationCancelled audit.Kind = "operation.cancelled"
@@ -101,11 +102,13 @@ func scanOp(row interface{ Scan(...any) error }) (opRecord, error) {
 }
 
 func loadOp(ctx context.Context, tx store.Tx, t tenant.ID, id string, lock bool) (opRecord, error) {
-	q := selectOp
+	var row interface{ Scan(...any) error }
 	if lock {
-		q = selectOpLocked
+		row = tx.QueryRow(ctx, selectOpLocked, t.String(), id)
+	} else {
+		row = tx.QueryRow(ctx, selectOp, t.String(), id)
 	}
-	rec, err := scanOp(tx.QueryRow(ctx, q, t.String(), id))
+	rec, err := scanOp(row)
 	rec.Tenant = t
 	return rec, err
 }

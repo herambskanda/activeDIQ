@@ -70,6 +70,33 @@ type ForestDirectory interface {
 	GCLookup(ctx context.Context, s sid.SID, attrs []string) (e *ad.Entry, found bool, err error)
 }
 
+// TrustKind is what a trusted domain says a foreign account SID is.
+type TrustKind int
+
+const (
+	// TrustUnknown: the trust could not show what the SID is. The classifier fails closed.
+	TrustUnknown TrustKind = iota
+	// TrustUser: a user or computer account, one principal.
+	TrustUser
+	// TrustGroup: a group; TrustedPrincipal.Members are its transitive account members.
+	TrustGroup
+)
+
+// TrustedPrincipal is the answer of a trusted domain for one account SID.
+type TrustedPrincipal struct {
+	Kind TrustKind
+	// Members are the transitive non-group members of a TrustGroup, enumerated completely (ranged).
+	Members []sid.SID
+}
+
+// TrustDirectory is the third seam: resolve a foreign-domain account SID with RID >= 1000 through the
+// trust. An FSP carries no object class, so the SID alone cannot say user or group (T-0435). An
+// ADDirectory that does not implement it cannot tell, and the classifier fails closed. Windows-lab
+// only: Samba has no trust to a Windows domain to prove an implementation against.
+type TrustDirectory interface {
+	ResolveTrusted(ctx context.Context, s sid.SID) (TrustedPrincipal, error)
+}
+
 // ErrNoGC is returned by SessionDirectory when a foreign-domain SID must be resolved and no Global
 // Catalog resolver is configured.
 var ErrNoGC = errors.New("tier0: a Global Catalog is required to resolve a sIDHistory value from another domain")

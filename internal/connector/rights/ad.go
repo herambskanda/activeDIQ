@@ -66,8 +66,10 @@ const (
 	v9 = v1.VerificationCheck_VERIFICATION_CHECK_V9_EXCESS_IN_MANAGED_OUS
 )
 
-// CheckListVersionAD pins the AD check list a run executes (DM-24 `check_list_version`).
-const CheckListVersionAD = "ad-1"
+// CheckListVersionAD pins the AD check list a run executes (DM-24 `check_list_version`). It is the
+// decimal text of a positive integer: the client parses it and the verification row stores it as an
+// integer (a non-numeric version made every real run an interrupted one, T-0684).
+const CheckListVersionAD = "1"
 
 const (
 	uacTrustedForDelegation   = 0x80000
@@ -92,6 +94,10 @@ type ADInput struct {
 	EnabledFamilies []v1.RightsFamily
 	// ManagedDomains are the domain NC heads (V8) and ManagedRoots the delegation roots (V9).
 	ManagedDomains, ManagedRoots []adguid.GUID
+	// RootNC is the head of the NC the connector is bound to (the forest root NC). V8 reads it when
+	// ManagedDomains is empty, which is every first run: V5 has not yet recorded the identity, so
+	// the server has no managed domain to send. Nil with no ManagedDomains is COULD_NOT_VERIFY.
+	RootNC *adguid.GUID
 	// Designated and Correlated add to the computed tier0 set (customer designations, C16).
 	Designated, Correlated []adguid.GUID
 	// PinnedC13 are the C13 group GUIDs pinned for the connection (TM-D26 rule 10). The default
@@ -153,6 +159,7 @@ type adCheck struct {
 
 	set     map[string]*member
 	out     []Finding
+	seenFP  map[string]bool // DM-24.I4 fingerprints already in out
 	errs    map[v1.VerificationCheck]error
 	famSet  map[v1.RightsFamily]bool
 	schName map[string]*SchemaObject // by lower-case name+kind; nil = not found
@@ -183,10 +190,10 @@ func VerifyAD(ctx context.Context, d ADDirectory, in ADInput) (*ADResult, error)
 	}
 	id, err := d.Read(ctx, in.Identity, []string{"objectSid", "tokenGroups", "userAccountControl", attrAllowedToDelegateTo, "primaryGroupID", "memberOf"}, ad.ReadOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", errNoIdentity, err)
+		return nil, fmt.Errorf("%w: %w", errNoIdentity, err)
 	}
 	if c.idGUID, err = id.GUID(); err != nil {
-		return nil, fmt.Errorf("%w: %v", errNoIdentity, err)
+		return nil, fmt.Errorf("%w: %w", errNoIdentity, err)
 	}
 	sids, err := id.SIDs("objectSid")
 	if err != nil || len(sids) != 1 {
@@ -371,6 +378,21 @@ func (c *adCheck) domainSid() *v1.Sid {
 func (c *adCheck) add(f *v1.RightsFinding, obj adguid.GUID, qualifier string) {
 	f.Object = pbGuid(obj)
 	f.ObjectDomainSid = c.domainSid()
+	// The fingerprint names the exposure (check, code, object, qualifier). Two ACEs that give the same
+	// trustee the same right on the same Tier-0 object (inheritance variants, say) are one exposure
+	// and one finding: the server stores one finding per fingerprint per run (DM-24.I4). MISSING
+	// findings are not collapsed here: their qualifier does not tell two rights on one object type
+	// apart (create-child and delete-child of users), which is a recipe question, not a duplicate.
+	f.Fingerprint = Fingerprint(f, qualifier)
+	if f.Kind == v1.FindingKind_FINDING_KIND_EXCESSIVE_RIGHT || f.Kind == v1.FindingKind_FINDING_KIND_TIER0_GROUP_MEMBERSHIP {
+		if c.seenFP == nil {
+			c.seenFP = map[string]bool{}
+		}
+		if c.seenFP[string(f.Fingerprint)] {
+			return
+		}
+		c.seenFP[string(f.Fingerprint)] = true
+	}
 	c.out = append(c.out, Finding{RightsFinding: f, Qualifier: qualifier})
 }
 

@@ -4,6 +4,13 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:LabDir = 'C:\lab'
 function Get-LabConfig { Get-Content "$script:LabDir\lab.json" -Raw | ConvertFrom-Json }
+# Re-runnable scripts (audit-gpo, entra-ready) must work after Remove-LabSecrets deleted lab.json: fall back to
+# the directory itself. userPassword is $null then; only needed when a missing account has to be created.
+function Get-LabContext {
+  if (Test-Path "$script:LabDir\lab.json") { return Get-LabConfig }
+  $d = Get-ADDomain
+  [pscustomobject]@{ baseDn = $d.DistinguishedName; domain = $d.DNSRoot; userPassword = $null }
+}
 function Write-LabLog([string]$m) { "$(Get-Date -Format o) $m" | Add-Content "$script:LabDir\provision.log" }
 function Get-Stage { if (Test-Path "$script:LabDir\stage") { (Get-Content "$script:LabDir\stage").Trim() } else { 'start' } }
 function Set-Stage([string]$s) { Set-Content "$script:LabDir\stage" $s; Write-LabLog "stage -> $s" }

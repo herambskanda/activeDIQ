@@ -11,6 +11,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
+	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
 func (e *svcEnv) ack(t *testing.T, id connection.ID, ver connection.VerificationID) (connection.Tier0Override, error) {
@@ -326,5 +327,70 @@ func TestProperty_DM25_I6(t *testing.T) {
 			t.Fatalf("cleared state changed by retention:\nbefore %+v\nafter  %+v", before, after)
 		}
 		_ = clearing
+	})
+}
+
+// Registry.Tier0OverrideInForce is the tenant-explicit provider for client.OverrideSource (DM-25, TM-R15).
+func TestRegistryTier0OverrideInForce(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := newSvc(t, s)
+		ctx := context.Background()
+		c := e.draft(t)
+		if o, err := e.reg.Tier0OverrideInForce(ctx, e.a, c.ID); err != nil || o != nil {
+			t.Fatalf("no override row: %+v %v", o, err)
+		}
+		e.cl.set(overPriv("a"), nil)
+		out, _ := e.svc.Activate(ctx, e.a, c.ID, human("alice"))
+		want, err := e.ack(t, c.ID, out.Verification.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := e.activate(t, c.ID); err != nil {
+			t.Fatal(err)
+		}
+		got, err := e.reg.Tier0OverrideInForce(ctx, e.a, c.ID)
+		if err != nil || got == nil || got.ID != want.ID || got.AcknowledgedBy != "alice" {
+			t.Fatalf("in force: %+v %v", got, err)
+		}
+		// Another tenant never sees it: not found, no override.
+		if o, err := e.reg.Tier0OverrideInForce(ctx, e.b, c.ID); o != nil || err == nil {
+			t.Fatalf("cross-tenant: %+v %v", o, err)
+		}
+		if _, err := e.reg.Tier0OverrideInForce(ctx, tenant.ID{}, c.ID); err == nil {
+			t.Fatal("zero tenant accepted")
+		}
+		// A replaced credential ends it.
+		e.cl.set(passing(), nil)
+		if _, err := e.svc.ChangeCredential(ctx, e.a, c.ID, cred2, human("alice")); err != nil {
+			t.Fatal(err)
+		}
+		if cur, _ := e.reg.Get(ctx, e.a, c.ID); cur.CredentialID != cred2 {
+			t.Fatalf("credential not swapped: %+v", cur)
+		}
+		if o, err := e.reg.Tier0OverrideInForce(ctx, e.a, c.ID); err != nil || o != nil {
+			t.Fatalf("replaced credential: %+v %v", o, err)
+		}
+	})
+}
+
+func TestRegistryTier0OverrideRetiredIsNil(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := newSvc(t, s)
+		ctx := context.Background()
+		c := e.draft(t)
+		e.cl.set(overPriv("a"), nil)
+		out, _ := e.svc.Activate(ctx, e.a, c.ID, human("alice"))
+		if _, err := e.ack(t, c.ID, out.Verification.ID); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.activate(t, c.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.reg.Transition(ctx, e.a, c.ID, connection.StateActive, connection.StateDecommissioning); err != nil {
+			t.Fatal(err)
+		}
+		if o, err := e.reg.Tier0OverrideInForce(ctx, e.a, c.ID); err != nil || o != nil {
+			t.Fatalf("retired: %+v %v", o, err)
+		}
 	})
 }

@@ -45,7 +45,7 @@ func goHTTPStatusWrites(root string) []Violation {
 	var vs []Violation
 	fset := token.NewFileSet()
 	for _, rel := range goFiles(root, "internal") {
-		if strings.HasPrefix(rel, "internal/platform/apihost/") {
+		if strings.HasPrefix(rel, "internal/platform/apihost/") || isStatusFake(rel) {
 			continue
 		}
 		f, err := parser.ParseFile(fset, filepath.Join(root, filepath.FromSlash(rel)), nil, parser.SkipObjectResolution)
@@ -75,6 +75,24 @@ func goHTTPStatusWrites(root string) []Violation {
 		})
 	}
 	return vs
+}
+
+// statusFakeDirs are in-process fakes of EXTERNAL services (not shipped; tests import them). They
+// must emit the status codes the real service emits, which is not an activeDIQ API response, so
+// ADR-0004 rule 8 (only apihost writes our API's statuses) does not apply. Keep this list explicit.
+//
+// internal/platform/opsmetrics/ is the operator /metrics endpoint (T-0533) on its own ops listener:
+// it is not part of the OpenAPI document and not an API response (a Prometheus scrape target with a
+// bearer credential and plain-text bodies), so there is no problem+json contract for it to meet.
+var statusFakeDirs = []string{"internal/connector/graph/graphtest/", "internal/platform/opsmetrics/"}
+
+func isStatusFake(rel string) bool {
+	for _, d := range statusFakeDirs {
+		if strings.HasPrefix(rel, d) {
+			return true
+		}
+	}
+	return false
 }
 
 // importName is the local name a file gives an import path ("" when not imported).

@@ -112,6 +112,34 @@ func (Store) List(ctx context.Context, tx store.Tx, includeDiscarded bool) ([]Co
 	return out, nil
 }
 
+// ListStranded returns the connections that have been verifying since before the cutoff, oldest
+// first. A verifying connection has a run in flight only for the length of one connector call, so one
+// that has been in the state longer than any run can last has lost its run (a crash between the
+// claim and the record). Bounded like List.
+func (Store) ListStranded(ctx context.Context, tx store.Tx, before time.Time) ([]Connection, error) {
+	if err := requireTenant(ctx, tx); err != nil {
+		return nil, err
+	}
+	rows, err := tx.Query(ctx, `SELECT `+columns+` FROM public.connections
+		WHERE state = 'verifying' AND updated_at < $1 ORDER BY updated_at, id LIMIT $2`, before, maxList)
+	if err != nil {
+		return nil, fmt.Errorf("connection: list stranded: %w", err)
+	}
+	defer rows.Close()
+	var out []Connection
+	for rows.Next() {
+		c, err := scan(rows)
+		if err != nil {
+			return nil, fmt.Errorf("connection: list stranded: %w", err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("connection: list stranded: %w", err)
+	}
+	return out, nil
+}
+
 // lock reads the row FOR UPDATE with the next ordering stamp (I13): greatest(clock_timestamp(),
 // last_stamp_at + 1µs), never now(), so stamps of one connection strictly increase in commit order.
 func lock(ctx context.Context, tx store.Tx, id ID) (c Connection, stamp time.Time, err error) {
@@ -244,6 +272,12 @@ func (r *Registry) Create(ctx context.Context, tid tenant.ID, n New) (c Connecti
 func (r *Registry) Get(ctx context.Context, tid tenant.ID, id ID) (c Connection, err error) {
 	err = r.with(ctx, tid, func(ctx context.Context, tx store.Tx) (e error) { c, e = r.s.Get(ctx, tx, id); return })
 	return c, err
+}
+
+// Bindings returns the connection's bindings that are not removed, in routing order, for the tenant.
+func (r *Registry) Bindings(ctx context.Context, tid tenant.ID, id ID) (bs []Binding, err error) {
+	err = r.with(ctx, tid, func(ctx context.Context, tx store.Tx) (e error) { bs, e = r.s.Bindings(ctx, tx, id); return })
+	return bs, err
 }
 
 // List returns the tenant's connections.
