@@ -59,7 +59,7 @@ const (
 	hSys = "dddddddd-0000-4000-8000-000000000003" // the Password Settings Container (outside hOU)
 )
 
-var hBase = time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+var hBase = time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 
 // hGUID makes a deterministic GUID from a class byte and an index.
 func hGUID(class byte, i int) string {
