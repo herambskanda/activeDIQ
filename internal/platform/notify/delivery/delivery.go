@@ -282,7 +282,8 @@ func sameRequest(d Delivery, n NewDelivery) bool {
 // authority (reports §7.2). It runs under row-level security in the caller's tenant, so another
 // tenant's delivery is invisible. It answers false for another account, for an address recipient
 // and for a Delivery that was given up (that account was never sent the link). When one account was
-// sent the same source twice the latest Delivery is returned.
+// sent the same source twice the latest Delivery is returned. A queued or failed (still retrying)
+// Delivery is returned too, not only a sent one: the link is authorised from the moment it is queued.
 func (s *Deliveries) ForSource(ctx context.Context, tx store.Tx, source SourceRef, recipient Recipient) (Delivery, bool, error) {
 	if recipient.Account == "" || recipient.Address != "" || !uuidRe.MatchString(recipient.Account) ||
 		!kindRe.MatchString(source.Kind) || !idRe.MatchString(source.ID) {
