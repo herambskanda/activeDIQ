@@ -19,6 +19,7 @@ import (
 	"io"
 	"math/big"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -204,8 +205,41 @@ func selfSigned(t *testing.T) (tls.Certificate, *x509.CertPool) {
 // fakeUpstream answers bind, the rootDSE and schema reads Open makes, and any "<GUID=...>" search
 // with `entries` user entries. Everything else gets an empty, successful result.
 type fakeUpstream struct {
-	ln      net.Listener
-	entries int
+	ln       net.Listener
+	entries  int
+	noSchema bool // answer the schema search with no entries, as a GC does for searchFlags (T-0619)
+	// parents > 0 spreads the entries over that many parent OUs, gives each an instanceType, and
+	// answers a base-scope read of "OU=p<k>,..." with the parent's GUID, counting the reads (T-0694).
+	parents int
+	mu      sync.Mutex
+	reads   map[string]int
+	// sdAttrs, when set, is the entry served for every "<GUID=" base-scope read (an SD read), and
+	// modifies counts the Modify requests the upstream received (T-0726).
+	sdAttrs  map[string][][]byte
+	modifies int
+}
+
+func (f *fakeUpstream) modifyCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.modifies
+}
+
+// parentGUID is the GUID the fake reports for parent OU k.
+func parentGUID(k int) []byte {
+	g := make([]byte, 16)
+	g[0], g[15] = 0xB0, byte(k+1)
+	return g
+}
+
+func (f *fakeUpstream) parentReads() map[string]int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := map[string]int{}
+	for k, v := range f.reads {
+		out[k] = v
+	}
+	return out
 }
 
 func startFakeUpstream(t *testing.T, entries int) *fakeUpstream {
@@ -255,10 +289,29 @@ func (f *fakeUpstream) serve(c net.Conn) {
 				out = append(out, entryMsg(id, "", map[string][][]byte{
 					"schemaNamingContext": {[]byte(fakeSchemaNC)}, "defaultNamingContext": {[]byte("DC=lab,DC=test")},
 				}))
+			case base == fakeSchemaNC && f.noSchema:
 			case base == fakeSchemaNC: // the secret-flagged attribute Open insists on finding
 				out = append(out, entryMsg(id, "CN=unicodePwd,"+fakeSchemaNC, map[string][][]byte{
 					"lDAPDisplayName": {[]byte("unicodePwd")}, "attributeID": {[]byte("1.2.840.113556.1.4.90")},
 				}))
+			case f.parents > 0 && strings.HasPrefix(base, "OU=p"):
+				k, _ := strconv.Atoi(strings.TrimPrefix(strings.SplitN(base, ",", 2)[0], "OU=p"))
+				f.mu.Lock()
+				if f.reads == nil {
+					f.reads = map[string]int{}
+				}
+				f.reads[base]++
+				f.mu.Unlock()
+				out = append(out, entryMsg(id, base, map[string][][]byte{"objectGUID": {parentGUID(k)}}))
+			case f.sdAttrs != nil && strings.HasPrefix(base, "<GUID="):
+				out = append(out, entryMsg(id, "CN=x,DC=lab,DC=test", f.sdAttrs))
+			case strings.HasPrefix(base, "<GUID=") && f.parents > 0:
+				for i := 0; i < f.entries; i++ {
+					g := make([]byte, 16)
+					g[0], g[14], g[15] = 0xA0, byte((i+1)>>8), byte(i+1)
+					out = append(out, entryMsg(id, "CN=u"+strconv.Itoa(i)+",OU=p"+strconv.Itoa(i%f.parents)+",DC=lab,DC=test",
+						map[string][][]byte{"objectGUID": {g}, "instanceType": {[]byte("4")}}))
+				}
 			case strings.HasPrefix(base, "<GUID="):
 				for i := 0; i < f.entries; i++ {
 					g := make([]byte, 16)
@@ -267,6 +320,11 @@ func (f *fakeUpstream) serve(c net.Conn) {
 				}
 			}
 			out = append(out, resultMsg(id, opSearchDone))
+		case 6: // ModifyRequest: counted and acknowledged, never applied
+			f.mu.Lock()
+			f.modifies++
+			f.mu.Unlock()
+			out = append(out, resultMsg(id, 7))
 		default:
 			return
 		}

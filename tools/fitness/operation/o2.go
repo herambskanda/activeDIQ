@@ -21,8 +21,10 @@ import (
 //   - any function there that calls the transport's Plan or Apply directly has no step.Clearance
 //     parameter (only sendPlan and sendApply may, and each takes the Clearance);
 //   - the generated connector client (connectorv1.ConnectorClient, NewConnectorClient) is referenced
-//     outside internal/directory/client and internal/proto (test files under internal/connector may
-//     drive it);
+//     outside internal/directory/client and internal/proto (test files under internal/connector, and
+//     under the connector and server composition roots internal/compose/connector and
+//     internal/compose/server, may drive it: they exercise the mounted connector listener and a
+//     fake connector, and ship nothing);
 //   - a directory protocol library (LDAP, Microsoft Graph) is imported outside the connector root
 //     internal/connector (and tier L: tools/, lab/).
 
@@ -30,6 +32,8 @@ const (
 	clientDir    = "internal/directory/client"
 	protoDir     = "internal/proto"
 	connectorDir = "internal/connector"
+	composeConn  = "internal/compose/connector"
+	composeSrv   = "internal/compose/server"
 	connectorPkg = "/internal/proto/activediq/connector/v1"
 )
 
@@ -110,7 +114,7 @@ func o2File(path, rel, modPath string) ([]Violation, error) {
 			}
 		}
 	}
-	if connLocal != "" && connLocal != "_" && !under(rel, clientDir) && !under(rel, protoDir) && !(isTest && under(rel, connectorDir)) {
+	if connLocal != "" && connLocal != "_" && !under(rel, clientDir) && !under(rel, protoDir) && !(isTest && (under(rel, connectorDir) || under(rel, composeConn) || under(rel, composeSrv))) {
 		ast.Inspect(f, func(n ast.Node) bool {
 			if s, ok := n.(*ast.SelectorExpr); ok {
 				if id, ok := s.X.(*ast.Ident); ok && id.Name == connLocal && generatedClientNames[s.Sel.Name] {

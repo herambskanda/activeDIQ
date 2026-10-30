@@ -1,8 +1,8 @@
 package oidc
 
 import (
-	"context"
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"

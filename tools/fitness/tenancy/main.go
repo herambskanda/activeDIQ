@@ -216,7 +216,11 @@ func checkVersion(ctx context.Context, s *Server, o Options, reg *registry.Regis
 		if err != nil {
 			return nil, err
 		}
-		report("T3", "roles", t3)
+		pool, err := checkPool(ctx, d, reg)
+		if err != nil {
+			return nil, err
+		}
+		report("T3", "roles", append(t3, pool...))
 	}
 	if o.Checks["T4"] {
 		t4, n, err := checkT4(ctx, d, model, reg, out)

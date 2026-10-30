@@ -16,7 +16,7 @@ import (
 
 func TestBuildOperationRefusesWithoutMinter(t *testing.T) {
 	reg, _ := operation.NewRegistry()
-	_, err := buildOperation(func() bool { return false }, nil, directoryFacts(nil), allowAuthz{}, reg)
+	_, err := buildOperation(func() bool { return false }, nil, directoryFacts(nil), allowAuthz{}, reg, nil)
 	if !errors.Is(err, ErrNoMinter) {
 		t.Fatalf("err = %v, want ErrNoMinter", err)
 	}
@@ -24,7 +24,7 @@ func TestBuildOperationRefusesWithoutMinter(t *testing.T) {
 
 func TestBuildOperationRefusesWithoutFacts(t *testing.T) {
 	reg, _ := operation.NewRegistry()
-	_, err := buildOperation(operation.HoldsMinter, nil, nil, allowAuthz{}, reg)
+	_, err := buildOperation(operation.HoldsMinter, nil, nil, allowAuthz{}, reg, nil)
 	if !errors.Is(err, ErrNoFacts) {
 		t.Fatalf("err = %v, want ErrNoFacts", err)
 	}

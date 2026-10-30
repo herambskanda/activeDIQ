@@ -99,6 +99,8 @@ func PinOf(c *x509.Certificate) string {
 	return "sha256:" + hex.EncodeToString(h[:])
 }
 
+func pinBytes(c *x509.Certificate) [32]byte { return sha256.Sum256(c.RawSubjectPublicKeyInfo) }
+
 func validCACert(c *x509.Certificate) bool {
 	return c.BasicConstraintsValid && c.IsCA && c.KeyUsage&x509.KeyUsageCertSign != 0
 }
@@ -126,11 +128,12 @@ func hasPEMMarker(b []byte) bool {
 
 func containsPrivateKeyMarker(b []byte) bool { return bytes.Contains(b, []byte("PRIVATE KEY")) }
 
-// loadCAs reads and validates every CA row of the tenant, active one first. Any row that does not
+// loadCAs reads and validates every active and retired CA row of the tenant (withdrawn rows are out of
+// the bundle for good), active one first. Any row that does not
 // validate fails the whole read: a bundle is never served with the bad entry dropped (TM-D24 D2).
 func loadCAs(ctx context.Context, tx store.Tx, alert func(AlertKind)) ([]ca, error) {
 	rows, err := tx.Query(ctx, `SELECT id::text, cert_der, spki_sha256, sealed_key, key_version, state
-		FROM public.fleet_ca ORDER BY (state = 'active') DESC, created_at, id`)
+		FROM public.fleet_ca WHERE state IN ('active', 'retired') ORDER BY (state = 'active') DESC, created_at, id`)
 	if err != nil {
 		return nil, fmt.Errorf("fleetsql: read CA: %w", err)
 	}
@@ -204,22 +207,25 @@ func (e *Enroller) ensureCA(ctx context.Context, tx store.Tx, tid tenant.ID) ([]
 	if err != nil || len(cas) > 0 {
 		return cas, err
 	}
-	if err := e.createCA(ctx, tx, tid); err != nil {
+	if _, err := createCA(ctx, tx, e.Keys, tid, e.now()); err != nil {
 		return nil, err
 	}
 	return loadCAs(ctx, tx, alert)
 }
 
-func (e *Enroller) createCA(ctx context.Context, tx store.Tx, tid tenant.ID) error {
+// createCA generates a CA key and certificate, seals the key under the tenant's data key and inserts
+// the row as the tenant's active CA. It returns the new certificate. The insert is ON CONFLICT DO
+// NOTHING: a concurrent creator wins, and callers that need the row verify it (Withdraw does, by the
+// commit-time guard of migration 0055).
+func createCA(ctx context.Context, tx store.Tx, ks KeySource, tid tenant.ID, now time.Time) (*x509.Certificate, error) {
 	priv, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 	if err != nil {
-		return fmt.Errorf("fleetsql: generate CA key: %w", err)
+		return nil, fmt.Errorf("fleetsql: generate CA key: %w", err)
 	}
 	serial, err := newSerial()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	now := e.now()
 	tmpl := &x509.Certificate{
 		SerialNumber:          serial,
 		Subject:               pkix.Name{CommonName: "activeDIQ fleet CA", Organization: []string{"activeDIQ"}},
@@ -233,38 +239,38 @@ func (e *Enroller) createCA(ctx context.Context, tx store.Tx, tid tenant.ID) err
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
 	if err != nil {
-		return fmt.Errorf("fleetsql: create CA certificate: %w", err)
+		return nil, fmt.Errorf("fleetsql: create CA certificate: %w", err)
 	}
 	cert, err := x509.ParseCertificate(der)
 	if err != nil {
-		return fmt.Errorf("fleetsql: create CA certificate: %w", err)
+		return nil, fmt.Errorf("fleetsql: create CA certificate: %w", err)
 	}
 	pkcs8, err := x509.MarshalPKCS8PrivateKey(priv)
 	if err != nil {
-		return fmt.Errorf("fleetsql: encode CA key: %w", err)
+		return nil, fmt.Errorf("fleetsql: encode CA key: %w", err)
 	}
 	defer clear(pkcs8)
-	dek, err := e.Keys.DEK(ctx, tx, tid, 0)
+	dek, err := ks.DEK(ctx, tx, tid, 0)
 	if err != nil {
-		return fmt.Errorf("%w: tenant data key: %w", errCAUnusable, err)
+		return nil, fmt.Errorf("%w: tenant data key: %w", errCAUnusable, err)
 	}
 	defer dek.Destroy()
 	var rowID string
 	if err := tx.QueryRow(ctx, `SELECT gen_random_uuid()::text`).Scan(&rowID); err != nil {
-		return fmt.Errorf("fleetsql: create CA: %w", err)
+		return nil, fmt.Errorf("fleetsql: create CA: %w", err)
 	}
 	sealed, err := keys.Seal(dek, caContext(tid, rowID, dek.Version), pkcs8)
 	if err != nil {
-		return fmt.Errorf("fleetsql: seal CA key: %w", err)
+		return nil, fmt.Errorf("fleetsql: seal CA key: %w", err)
 	}
 	pin := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
 	_, err = tx.Exec(ctx, `INSERT INTO public.fleet_ca (tenant_id, id, cert_der, spki_sha256, sealed_key, key_version, not_after)
 		VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, $2, $3, $4, $5, $6)
 		ON CONFLICT DO NOTHING`, rowID, der, pin[:], sealed, int32(dek.Version), cert.NotAfter)
 	if err != nil {
-		return fmt.Errorf("fleetsql: store CA: %w", err)
+		return nil, fmt.Errorf("fleetsql: store CA: %w", err)
 	}
-	return nil
+	return cert, nil
 }
 
 // signer unseals the CA's private key. The key lives only for the signature that needs it.

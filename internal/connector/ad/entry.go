@@ -15,6 +15,28 @@ type Entry struct {
 	DN        string // display only; identity is the objectGUID (rule 9)
 	attrs     map[string][][]byte
 	Truncated []string // attributes cut at the value ceiling (Read only)
+
+	parent parentInfo // set by ScopedSearch when ScopedRequest.ResolveParents is true
+}
+
+type parentInfo struct {
+	resolved bool
+	has      bool // false for a naming-context head
+	guid     guid.GUID
+}
+
+// Parent returns the parent's objectGUID as resolved by the search that produced the entry.
+// resolved is false when the entry did not come from a search that resolves parents; hasParent is
+// false only for a naming-context head.
+func (e *Entry) Parent() (g guid.GUID, hasParent, resolved bool) {
+	return e.parent.guid, e.parent.has, e.parent.resolved
+}
+
+// WithParent records the resolved parent (hasParent false = naming-context head). For adapters and
+// test doubles of the search seam.
+func (e *Entry) WithParent(g guid.GUID, hasParent bool) *Entry {
+	e.parent = parentInfo{resolved: true, has: hasParent, guid: g}
+	return e
 }
 
 func newEntry(dn string) *Entry { return &Entry{DN: dn, attrs: map[string][][]byte{}} }

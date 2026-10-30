@@ -146,7 +146,28 @@ func (g *goFile) importAllowed(r importRule) bool {
 	if r.GeneratedHome && g.sqlcGen && policy.IsSQLCPackageDir(g.dir) {
 		return true
 	}
+	if r.LabExempt && g.isLabBuild() {
+		return true
+	}
 	return r.TestsExempt && g.isTest
+}
+
+// isLabBuild reports a policy.LabBuilds file that still carries a `//go:build lab` constraint.
+func (g *goFile) isLabBuild() bool {
+	if !contains(policy.LabBuilds, g.rel) {
+		return false
+	}
+	for _, cg := range g.file.Comments {
+		if cg.Pos() >= g.file.Package {
+			break
+		}
+		for _, c := range cg.List {
+			if strings.TrimSpace(c.Text) == "//go:build lab" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (g *goFile) checkImports() {
@@ -401,6 +422,13 @@ func (g *goFile) checkCgo() {
 // unsafeHomes may import "unsafe", and only in files carrying the generated-code header.
 var unsafeHomes = []string{"internal/proto"}
 
+// unsafeWindowsHomes may import "unsafe" in their *_windows.go files: the Windows host and its
+// installer call Win32 (wevtapi, token, job object, security descriptors) through x/sys/windows
+// LazyProc.Call, which takes uintptr(unsafe.Pointer(...)). The agent-host fitness rulings put that
+// reach in the host, never in a module (knowledge/development/decisions/agent-host-fitness-rulings.md,
+// Ruling 1; fitness-agent-host R3 keeps unsafe out of addc and the other modules). T-0800.
+var unsafeWindowsHomes = []string{"internal/platform/agent", "cmd/agentsetup"}
+
 // checkUnsafe bans importing "unsafe" in product code outside generated protobuf packages: linkname
 // needs it, and so does every memory-safety escape. Tests and tier L are exempt.
 func (g *goFile) checkUnsafe() {
@@ -419,6 +447,9 @@ func (g *goFile) checkUnsafe() {
 		}
 	}
 	if generated && policy.MatchAny(g.dir, unsafeHomes) {
+		return
+	}
+	if strings.HasSuffix(g.rel, "_windows.go") && policy.MatchAny(g.dir, unsafeWindowsHomes) {
 		return
 	}
 	for _, is := range g.file.Imports {

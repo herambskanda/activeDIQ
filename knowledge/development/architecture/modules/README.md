@@ -30,13 +30,12 @@ information a reviewer needs to answer "does this change belong here, and does i
 
 ## Index
 
-No module exists yet. The planned server modules are in [blueprint §5.4](../blueprint.md#54-server-feature-modules-internalmodulesid)
-and the agent modules in §5.5. `connections` and `objects` come first (ADR-0003 rule 8). Add a row
-here when a page is created.
+The planned server modules are in [blueprint §5.4](../blueprint.md#54-server-feature-modules-internalmodulesid)
+and the agent modules in §5.5. Add a row here when a page is created.
 
 | Module | Tier | Owner | Page | Spec |
 | --- | --- | --- | --- | --- |
-| — | — | — | — | — |
+| `agentfleet` | server | backend-engineer | [agentfleet.md](agentfleet.md) | [agent-host-addc-contract](../agent-host-addc-contract.md) |
 
 ## Template
 

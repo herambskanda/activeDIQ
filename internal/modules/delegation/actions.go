@@ -53,7 +53,7 @@ var errUnavailable = errors.New("delegation: the access service is not wired")
 
 // RoleCreateInput creates a custom role. RoleID is chosen by the caller, so a retry is the same role.
 type RoleCreateInput struct {
-	RoleID      string   `json:"role_id"`
+	RoleID      string   `json:"roleId"`
 	Name        string   `json:"name"`
 	Tier        int      `json:"tier"`
 	Permissions []string `json:"permissions"`
@@ -61,40 +61,40 @@ type RoleCreateInput struct {
 
 // RoleUpdateInput replaces a custom role's permissions.
 type RoleUpdateInput struct {
-	RoleID      string   `json:"role_id"`
+	RoleID      string   `json:"roleId"`
 	Permissions []string `json:"permissions"`
 }
 
 // SubjectInput names the subject: exactly the fields of its kind.
 type SubjectInput struct {
 	Kind         string `json:"kind"` // account | group | automation
-	AccountID    string `json:"account_id,omitempty"`
-	ConnectionID string `json:"connection_id,omitempty"` // group
-	GroupGUID    string `json:"group_guid,omitempty"`    // group
-	PolicyID     string `json:"policy_id,omitempty"`     // automation
+	AccountID    string `json:"accountId,omitempty"`
+	ConnectionID string `json:"connectionId,omitempty"` // group
+	GroupGUID    string `json:"groupGuid,omitempty"`    // group
+	PolicyID     string `json:"policyId,omitempty"`     // automation
 }
 
 // RootInput is one scope root of an assignment (DM-35).
 type RootInput struct {
 	Kind         string `json:"kind"` // naming_context | ou_subtree | entra_tenant | tier0_scope | tenant
-	ConnectionID string `json:"connection_id"`
+	ConnectionID string `json:"connectionId"`
 	GUID         string `json:"guid"`
 	Exclude      bool   `json:"exclude,omitempty"`
 }
 
 // GrantInput creates one assignment. AssignmentID is chosen by the caller, so a retry is the same grant.
 type GrantInput struct {
-	AssignmentID string       `json:"assignment_id"`
-	RoleID       string       `json:"role_id"`
+	AssignmentID string       `json:"assignmentId"`
+	RoleID       string       `json:"roleId"`
 	Subject      SubjectInput `json:"subject"`
 	Roots        []RootInput  `json:"roots"`
-	ValidFrom    *time.Time   `json:"valid_from,omitempty"`
-	ValidUntil   *time.Time   `json:"valid_until,omitempty"`
+	ValidFrom    *time.Time   `json:"validFrom,omitempty"`
+	ValidUntil   *time.Time   `json:"validUntil,omitempty"`
 }
 
 // RevokeInput ends one assignment.
 type RevokeInput struct {
-	AssignmentID string `json:"assignment_id"`
+	AssignmentID string `json:"assignmentId"`
 }
 
 // Outcome is what Apply did.
@@ -178,14 +178,14 @@ func roleCreate(g *rbac.Grants) (operation.Action, error) {
 		Descriptor: operation.Descriptor{
 			ID: RoleCreateID, Version: 1, Permission: PermRoleCreate,
 			Input:  "#/components/schemas/RoleCreate",
-			Target: operation.TargetStore, Reversibility: operation.Irreversible, AuditKind: AuditRoleCreated, StepUp: true,
+			Target: operation.TargetStore, Reversibility: operation.Irreversible, AuditKind: AuditRoleCreated, StepUp: true, ControlPlane: true,
 		},
 		Plan: func(ctx context.Context, pc operation.PlanContext, in RoleCreateInput) ([]operation.TypedStep[RoleCreateInput], error) {
 			if g == nil {
 				return nil, errUnavailable
 			}
 			if !rbac.ValidID(in.RoleID) || in.Name == "" || len(in.Permissions) == 0 {
-				return nil, fmt.Errorf("%w: role_id, name and permissions are required", operation.ErrInvalid)
+				return nil, fmt.Errorf("%w: roleId, name and permissions are required", operation.ErrInvalid)
 			}
 			if _, err := g.Role(ctx, pc.Tx, in.RoleID); err == nil {
 				return nil, fmt.Errorf("%w: already exists", operation.ErrInvalid)
@@ -231,7 +231,7 @@ func roleCreate(g *rbac.Grants) (operation.Action, error) {
 }
 
 type roleUpdatePayload struct {
-	RoleID string   `json:"role_id"`
+	RoleID string   `json:"roleId"`
 	Before []string `json:"before"`
 	After  []string `json:"after"`
 }
@@ -241,14 +241,14 @@ func roleUpdate(g *rbac.Grants) (operation.Action, error) {
 		Descriptor: operation.Descriptor{
 			ID: RoleUpdateID, Version: 1, Permission: PermRoleUpdate,
 			Input:  "#/components/schemas/RoleUpdate",
-			Target: operation.TargetStore, Reversibility: operation.Reversible, AuditKind: AuditRoleUpdated, StepUp: true,
+			Target: operation.TargetStore, Reversibility: operation.Reversible, AuditKind: AuditRoleUpdated, StepUp: true, ControlPlane: true,
 		},
 		Plan: func(ctx context.Context, pc operation.PlanContext, in RoleUpdateInput) ([]operation.TypedStep[roleUpdatePayload], error) {
 			if g == nil {
 				return nil, errUnavailable
 			}
 			if !rbac.ValidID(in.RoleID) || len(in.Permissions) == 0 {
-				return nil, fmt.Errorf("%w: role_id and permissions are required", operation.ErrInvalid)
+				return nil, fmt.Errorf("%w: roleId and permissions are required", operation.ErrInvalid)
 			}
 			r, err := g.Role(ctx, pc.Tx, in.RoleID)
 			if err != nil {
@@ -329,14 +329,14 @@ func grant(g *rbac.Grants) (operation.Action, error) {
 		Descriptor: operation.Descriptor{
 			ID: GrantID, Version: 1, Permission: PermGrant,
 			Input:  "#/components/schemas/AssignmentGrant",
-			Target: operation.TargetStore, Reversibility: operation.Irreversible, AuditKind: AuditGranted, StepUp: true,
+			Target: operation.TargetStore, Reversibility: operation.Irreversible, AuditKind: AuditGranted, StepUp: true, ControlPlane: true,
 		},
 		Plan: func(ctx context.Context, pc operation.PlanContext, in GrantInput) ([]operation.TypedStep[GrantInput], error) {
 			if g == nil {
 				return nil, errUnavailable
 			}
 			if !rbac.ValidID(in.AssignmentID) || !rbac.ValidID(in.RoleID) || !in.Subject.ref().Valid() || len(in.Roots) == 0 {
-				return nil, fmt.Errorf("%w: assignment_id, role_id, subject and roots are required", operation.ErrInvalid)
+				return nil, fmt.Errorf("%w: assignmentId, roleId, subject and roots are required", operation.ErrInvalid)
 			}
 			role, err := g.Role(ctx, pc.Tx, in.RoleID)
 			if err != nil {
@@ -398,7 +398,7 @@ func revoke(g *rbac.Grants) (operation.Action, error) {
 		Descriptor: operation.Descriptor{
 			ID: RevokeID, Version: 1, Permission: PermRevoke,
 			Input:  "#/components/schemas/AssignmentRevoke",
-			Target: operation.TargetStore, Reversibility: operation.Irreversible, AuditKind: AuditRevoked, StepUp: true,
+			Target: operation.TargetStore, Reversibility: operation.Irreversible, AuditKind: AuditRevoked, StepUp: true, ControlPlane: true,
 		},
 		Plan: func(ctx context.Context, pc operation.PlanContext, in RevokeInput) ([]operation.TypedStep[RevokeInput], error) {
 			if g == nil {

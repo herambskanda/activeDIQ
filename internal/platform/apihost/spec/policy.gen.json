@@ -75,6 +75,12 @@
       "ref": "AN-8"
     },
     {
+      "gate": "the one-time setup secret (256-bit random, only its hash stored, expires, consumed on first correct use, readable only by the installing administrator)",
+      "operation": "claimFirstRunSetup",
+      "reason": "First-run setup must be reachable before any account exists (TM-TB16-T7); no default account is ever created.",
+      "ref": "AN-4"
+    },
+    {
       "gate": "the pending-sign-in cookie",
       "operation": "createWebAuthnSignInChallenge",
       "reason": "Starts the WebAuthn second factor for a pending sign-in from AN-3, AN-8 or AN-9.",
@@ -168,6 +174,11 @@
       "permission": "connections.takeover.attest",
       "reason": "Starting an attestation, and changing how long it stays valid, decide whether hard and soft match blocking count as attested (TM §7.4).",
       "ref": "TM-D17"
+    },
+    {
+      "permission": "siem.destination.manage",
+      "reason": "Creating or changing a SIEM destination can redirect or blind the tenant's audit stream, so it needs a fresh MFA (TM §7.4, AG-8). Reads do not.",
+      "ref": "TM-D16"
     }
   ]
 }

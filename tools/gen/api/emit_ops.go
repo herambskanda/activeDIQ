@@ -10,12 +10,15 @@ import (
 func (u *unit) emitHandlers() ([]byte, error) {
 	f := u.newFile()
 	ah := strings.TrimSuffix(f.use(u.cfg.ApihostImport), ".")
-	ctx := strings.TrimSuffix(f.use("context"), ".")
 	var ops []*Operation
 	for _, op := range u.m.Ops {
 		if op.Tag == u.tag {
 			ops = append(ops, op)
 		}
+	}
+	ctx := ""
+	if len(ops) > 0 { // a tag with no operation yet (schemas only) must not import context unused
+		ctx = strings.TrimSuffix(f.use("context"), ".")
 	}
 	for _, op := range ops {
 		u.emitOperation(f, op)

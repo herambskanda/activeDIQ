@@ -231,6 +231,9 @@ epic set ID field=value … [--by ROLE]  title, goal, milestone, parity_refs=A,B
 handoff new ID --by ROLE             create factory/handoffs/<ID>/<ts>.md from the template; print path; set handoff.pending
 handoff latest ID                    print the latest handoff path for a ticket (or session id)
 event --actor A --kind K [--ticket T] "text"
+security poll [--repo O/N]           open an embargoed security-architect ticket per new private advisory
+                                     (needs the security-manager role; fails loudly otherwise; config `security_intake`;
+                                     runbook security-advisory-poll.md)
 digest                               print today's machine summary (for project-manager to narrate)
 ```
 

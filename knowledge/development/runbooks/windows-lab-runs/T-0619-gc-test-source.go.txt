@@ -1,0 +1,40 @@
+//go:build lab && windowslab
+
+package ad
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/skenzeriq/activediq/internal/directory/attr/sid"
+)
+
+func TestT0619WindowsGCOpensAndLooksUpAdministrator(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	cfg := winConfig(t, winEnv(t)["WIN_LAB_SVC_PASSWORD"], true)
+	host := cfg.Servers[0][:len(cfg.Servers[0])-len(":636")]
+	cfg.Servers = []string{host + ":3269"}
+	gc, err := OpenGC(ctx, cfg)
+	if err != nil {
+		t.Fatalf("OpenGC dc1:3269: %v", err)
+	}
+	defer gc.Close()
+	t.Logf("OpenGC on %s OK", cfg.Servers[0])
+	doms, err := gc.DomainSIDs(ctx)
+	if err != nil || len(doms) == 0 {
+		t.Fatalf("DomainSIDs: %v %v", doms, err)
+	}
+	t.Logf("forest domain SIDs: %v", doms)
+	adm, _ := sid.Parse(doms[0].String() + "-500")
+	e, found, err := gc.LookupSID(ctx, adm, []string{"sAMAccountName"})
+	if err != nil || !found || e == nil {
+		t.Fatalf("LookupSID %s: found=%v err=%v", adm, found, err)
+	}
+	t.Logf("LookupSID %s -> %+v", adm, e)
+	foreign, _ := sid.Parse("S-1-5-21-111111111-222222222-333333333-512")
+	if _, found, err := gc.LookupSID(ctx, foreign, []string{"sAMAccountName"}); err != nil || found {
+		t.Errorf("foreign SID: found=%v err=%v", found, err)
+	}
+}

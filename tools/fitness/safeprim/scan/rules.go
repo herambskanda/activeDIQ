@@ -29,6 +29,7 @@ type importRule struct {
 	// GeneratedHome lets a sqlc-generated sqlcdb package (every file carrying the sqlc header) import it too.
 	GeneratedHome bool
 	TestsExempt   bool
+	LabExempt     bool // a policy.LabBuilds file (build tag lab, never in a production binary) may import it
 	Msg           string
 }
 
@@ -38,8 +39,8 @@ var importRules = []importRule{
 	// T-0313: the AD connector package is a directory client. Only other connectors and the
 	// authorisation layer import it; a feature module reaches AD through the connector contract.
 	{Rule: "ad-connector-import", Exact: []string{"github.com/skenzeriq/activediq/internal/connector/ad"},
-		Home: []string{policy.Connector, policy.Authz}, TestsExempt: true,
-		Msg: "internal/connector/ad is imported only by internal/connector and the authorisation layer internal/platform/authz (" + refP3 + ", T-0313)"},
+		Home: []string{policy.Connector, policy.ComposeConn, policy.Authz}, TestsExempt: true, LabExempt: true,
+		Msg: "internal/connector/ad is imported only by internal/connector, the connector composition root internal/compose/connector and the authorisation layer internal/platform/authz (" + refP3 + ", T-0313)"},
 	{Rule: "sql-driver", Exact: []string{"database/sql", "github.com/lib/pq", "github.com/jmoiron/sqlx", "github.com/jackc/pgx/v5/pgxpool", "github.com/jackc/pgx/v5/stdlib"},
 		Prefixes: []string{"gorm.io/", "github.com/jackc/pgx/v4", "entgo.io/", "github.com/uptrace/bun", "github.com/go-pg/pg"},
 		Home:     []string{policy.Store},

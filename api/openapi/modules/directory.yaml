@@ -1,0 +1,111 @@
+# Directory reads (T-0668, walking skeleton 1/4, roadmap M1 demo criterion 2). One read-only operation:
+# search users of the caller's tenant. The query is typed text, never a filter: the server builds the
+# directory query with the safe filter builder, so no LDAP syntax is accepted from a client (ADR-0004
+# rule 4). Needs directory.read. Objects are addressed by objectGUID; a DN is never returned as a key.
+paths:
+  /directory/users:
+    get:
+      tags: [directory]
+      operationId: searchDirectoryUsers
+      summary: Search users
+      description: >-
+        Answers the users of the caller's tenant whose display name, sAMAccountName or
+        userPrincipalName contains q, in a stable order, at most limit of them. q is plain text:
+        the characters ( ) * \ & | = ! < > ~ and control characters are refused with a 400, as is a
+        q longer than 256 characters. Nothing from q is ever placed in a directory query as syntax.
+      x-permission: directory.read
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: read
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Text to find. Plain text only; no filter syntax.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+            pattern: "^[^()*\\\\&|=!<>~\\x00-\\x1f\\x7f]+$"
+        - name: limit
+          in: query
+          required: false
+          description: The most users to answer. Defaults to 25.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: The matching users
+          content:
+            application/json:
+              schema:
+                $ref: modules/directory.yaml#/components/schemas/DirectoryUserList
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+        "503":
+          $ref: shared/problems.yaml#/components/responses/DirectoryUnavailable
+components:
+  schemas:
+    DirectoryUser:
+      description: A user as search shows it. Only these fields; the objectGuid is the key.
+      type: object
+      required: [objectGuid, displayName, samAccountName, userPrincipalName, enabled, hybrid]
+      properties:
+        objectGuid:
+          type: string
+          format: uuid
+        displayName:
+          type: string
+          maxLength: 256
+        samAccountName:
+          type: string
+          maxLength: 256
+        userPrincipalName:
+          type: string
+          maxLength: 1024
+        enabled:
+          type: boolean
+        hybrid:
+          $ref: modules/directory.yaml#/components/schemas/HybridClassification
+    HybridState:
+      type: string
+      x-activediq-enum: open
+      enum: [not_hybrid, candidate, matched, broken, unknown]
+    HybridClassification:
+      description: >-
+        How the user stands in the cross-directory correlation (DM-20) under TM-D17, computed from the
+        stored correlation and the Entra connection's takeover protection. not_hybrid: no correlation
+        is recorded. candidate, matched, broken: the strongest recorded state (matched over candidate
+        over broken). unknown: the facts could not be read; treat as no authority. Only a matched
+        correlation can carry authority, and only while takeover protection is attested and neither
+        side is Tier 0.
+      type: object
+      required: [state, carriesAuthority]
+      properties:
+        state:
+          $ref: modules/directory.yaml#/components/schemas/HybridState
+        carriesAuthority:
+          type: boolean
+        reason:
+          type: string
+          maxLength: 128
+          description: Why the correlation is not matched, or why a matched one carries no authority. A stable code, never a directory value.
+    DirectoryUserList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: modules/directory.yaml#/components/schemas/DirectoryUser

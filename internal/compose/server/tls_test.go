@@ -18,7 +18,8 @@ import (
 // is the one that would be logged.
 func TestAPIListenerSpeaksOnlyTLSWithPerInstallCertificate(t *testing.T) {
 	cfg := config.Config{APIAddr: "127.0.0.1:0", APITLSDir: t.TempDir() + "/tls"}
-	id, err := apiIdentity(cfg, time.Now())
+	kc := testKEK(t)
+	id, err := apiIdentity(cfg, kc, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +71,7 @@ func TestAPIListenerSpeaksOnlyTLSWithPerInstallCertificate(t *testing.T) {
 	}
 
 	// Restart reuses the certificate.
-	again, err := apiIdentity(cfg, time.Now())
+	again, err := apiIdentity(cfg, kc, time.Now())
 	if err != nil || again.Fingerprint != id.Fingerprint {
 		t.Fatalf("restart changed the certificate: %v", err)
 	}
@@ -79,10 +80,10 @@ func TestAPIListenerSpeaksOnlyTLSWithPerInstallCertificate(t *testing.T) {
 // Acceptance 2: no TLS configured and a non-loopback address fails startup.
 func TestNonLoopbackWithoutTLSFailsStartup(t *testing.T) {
 	for _, a := range []string{"0.0.0.0:8443", "10.0.0.5:8443", ":8443"} {
-		if _, err := apiIdentity(config.Config{APIAddr: a}, time.Now()); err == nil {
+		if _, err := apiIdentity(config.Config{APIAddr: a}, testKEK(t), time.Now()); err == nil {
 			t.Errorf("%s without TLS must fail", a)
 		}
-		if _, err := apiIdentity(config.Config{APIAddr: a, APITLSDir: t.TempDir() + "/id"}, time.Now()); err != nil {
+		if _, err := apiIdentity(config.Config{APIAddr: a, APITLSDir: t.TempDir() + "/id"}, testKEK(t), time.Now()); err != nil {
 			t.Errorf("%s with TLS: %v", a, err)
 		}
 	}

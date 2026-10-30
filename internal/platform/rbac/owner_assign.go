@@ -101,47 +101,61 @@ func (o *OwnerAssignments) Grant(ctx context.Context, t tenant.ID, account strin
 	}
 	var id string
 	err := o.db.WithTenant(ctx, t, func(ctx context.Context, tx store.Tx) error {
-		var roleID string
-		err := tx.QueryRow(ctx, `SELECT id::text FROM public.authz_roles WHERE tenant_id = $1::uuid AND role_name = $2 AND built_in`,
-			t.String(), TenantOwnerRole).Scan(&roleID)
-		if store.IsNoRows(err) {
-			return ErrNoOwnerRole
-		} else if err != nil {
-			return fmt.Errorf("rbac: reading owner role: %w", err)
-		}
-		// Two grants of one account must not both insert. Same lock as revoke: grants are rare.
-		if _, err := o.owners.TenantOwners(ctx, tx, t); err != nil {
-			return err
-		}
-		var n int
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM public.authz_assignments WHERE tenant_id = $1::uuid AND role_id = $2::uuid AND account_id = $3::uuid AND assignment_state = 'active'`,
-			t.String(), roleID, account).Scan(&n); err != nil {
-			return fmt.Errorf("rbac: reading owner assignments: %w", err)
-		}
-		if n > 0 {
-			return ErrAlreadyOwner
-		}
-		if err := tx.QueryRow(ctx, `INSERT INTO public.authz_assignments (tenant_id, account_id, role_id, granted_by)
-VALUES ($1::uuid, $2::uuid, $3::uuid, $4) RETURNING id::text`, t.String(), account, roleID, string(by.Requester.ID)).Scan(&id); err != nil {
-			return fmt.Errorf("rbac: granting tenant-owner: %w", err)
-		}
-		// An owner holds the tenant-wide root, which is what covers the store targets of the access
-		// Actions (delegation.*); directory targets stay unscoped for an owner.
-		if _, err := tx.Exec(ctx, `INSERT INTO public.authz_assignment_roots (tenant_id, assignment_id, ordinal, is_exclude, root_kind, connection_id, root_guid)
-VALUES ($1::uuid, $2::uuid, 0, false, 'tenant', $1::uuid, $1::uuid)`, t.String(), id); err != nil {
-			return fmt.Errorf("rbac: granting tenant-owner root: %w", err)
-		}
-		now, err := clock(ctx, tx)
-		if err != nil {
-			return err
-		}
-		if _, err := o.roles.OnRoleChanged(ctx, tx, t, account, by); err != nil {
-			return fmt.Errorf("rbac: ending sessions after owner grant: %w", err)
-		}
-		return o.emit(ctx, tx, now, KindOwnerGranted, id+".granted", account, by, audit.Success, "granted",
-			[]audit.Detail{{Key: "assignment", Value: id}})
+		var err error
+		id, err = o.GrantIn(ctx, tx, t, account, by)
+		return err
 	})
 	if err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+// GrantIn is Grant inside the caller's tenant transaction, for the first-run owner creation, which
+// commits the account, its grant and their audit together. tx must be scoped to t.
+func (o *OwnerAssignments) GrantIn(ctx context.Context, tx store.Tx, t tenant.ID, account string, by authority.Chain) (string, error) {
+	if t.IsZero() || !accountIDRe.MatchString(account) || by.Validate() != nil {
+		return "", ErrBadOwnerInput
+	}
+	var roleID, id string
+	err := tx.QueryRow(ctx, `SELECT id::text FROM public.authz_roles WHERE tenant_id = $1::uuid AND role_name = $2 AND built_in`,
+		t.String(), TenantOwnerRole).Scan(&roleID)
+	if store.IsNoRows(err) {
+		return "", ErrNoOwnerRole
+	} else if err != nil {
+		return "", fmt.Errorf("rbac: reading owner role: %w", err)
+	}
+	// Two grants of one account must not both insert. Same lock as revoke: grants are rare.
+	if _, err := o.owners.TenantOwners(ctx, tx, t); err != nil {
+		return "", err
+	}
+	var n int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM public.authz_assignments WHERE tenant_id = $1::uuid AND role_id = $2::uuid AND account_id = $3::uuid AND assignment_state = 'active'`,
+		t.String(), roleID, account).Scan(&n); err != nil {
+		return "", fmt.Errorf("rbac: reading owner assignments: %w", err)
+	}
+	if n > 0 {
+		return "", ErrAlreadyOwner
+	}
+	if err := tx.QueryRow(ctx, `INSERT INTO public.authz_assignments (tenant_id, account_id, role_id, granted_by)
+VALUES ($1::uuid, $2::uuid, $3::uuid, $4) RETURNING id::text`, t.String(), account, roleID, string(by.Requester.ID)).Scan(&id); err != nil {
+		return "", fmt.Errorf("rbac: granting tenant-owner: %w", err)
+	}
+	// An owner holds the tenant-wide root, which is what covers the store targets of the access
+	// Actions (delegation.*); directory targets stay unscoped for an owner.
+	if _, err := tx.Exec(ctx, `INSERT INTO public.authz_assignment_roots (tenant_id, assignment_id, ordinal, is_exclude, root_kind, connection_id, root_guid)
+VALUES ($1::uuid, $2::uuid, 0, false, 'tenant', $1::uuid, $1::uuid)`, t.String(), id); err != nil {
+		return "", fmt.Errorf("rbac: granting tenant-owner root: %w", err)
+	}
+	now, err := clock(ctx, tx)
+	if err != nil {
+		return "", err
+	}
+	if _, err := o.roles.OnRoleChanged(ctx, tx, t, account, by); err != nil {
+		return "", fmt.Errorf("rbac: ending sessions after owner grant: %w", err)
+	}
+	if err := o.emit(ctx, tx, now, KindOwnerGranted, id+".granted", account, by, audit.Success, "granted",
+		[]audit.Detail{{Key: "assignment", Value: id}}); err != nil {
 		return "", err
 	}
 	return id, nil

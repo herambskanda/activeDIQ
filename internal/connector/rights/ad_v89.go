@@ -10,6 +10,8 @@ import (
 	v1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
+var errNoRootNC = errors.New("rights: no managed domain and no bound root NC to verify read access on")
+
 func isDeniedRead(err error) bool {
 	return notFound(err) || ad.CodeOf(err) == ad.CodeInsufficientRights
 }
@@ -18,8 +20,19 @@ func isDeniedRead(err error) bool {
 // read right every feature needs (block, never overridable). Other errors are COULD_NOT_VERIFY.
 // Not checked here (Windows lab, T-0096 note): tokenGroupsGlobalAndUniversal readability via the
 // Windows Authorization Access Group.
+//
+// With no managed domain (first run, before V5 records the identity) V8 judges the connector's
+// bound root NC instead of passing vacuously; with none resolvable it is COULD_NOT_VERIFY.
 func (c *adCheck) v8() {
-	for _, dg := range c.in.ManagedDomains {
+	doms := c.in.ManagedDomains
+	if len(doms) == 0 {
+		if c.in.RootNC == nil {
+			c.cannot(v8, nil, errNoRootNC)
+			return
+		}
+		doms = []adguid.GUID{*c.in.RootNC}
+	}
+	for _, dg := range doms {
 		_, err := c.d.Read(c.ctx, dn.GUIDRef(dg), []string{"objectSid"}, ad.ReadOptions{})
 		switch {
 		case err == nil:
