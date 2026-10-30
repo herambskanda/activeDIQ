@@ -4,7 +4,7 @@ date: 2026-10-02
 updated: 2026-10-30
 status: review
 owner: heramb
-ticket: T-0035, T-0041, T-0107, T-0212, T-0874, T-0915
+ticket: T-0035, T-0041, T-0107, T-0212, T-0874, T-0915, T-0993
 binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), ADR-0003 (ratified), ADR-0004 (ratified), ADR-0005 (ratified), ADR-0010 (proposed), safe-primitives.md (review), modules/reports.md (draft)
 ---
 
@@ -61,7 +61,7 @@ board. Work an old ID delivered is marked delivered. ADR-0004's old-to-new table
 |  +--------------------------------------|--+  | blob pslit fleet(gateway) update telemetry module|
 |   embedded transport (compose/server)   |     +---------------------------------------------------+
 |  +--------------------------------------v-- connector role  internal/connector/ ----------------+
-|  | contract service | providers: ad (ldap, kerberos, scope, psx) | entra (graph) | custody      |
+|  | service | read write rights tier0 | EP-11 provider: ad, entra | ad gssapi graph psx | custody|
 |  +-----+---------------------------------------------+------------------------------------------+
 +--------|---------------------------------------------|--------------^-------------^-------------+
          | LDAPS / Kerberos + CBT (signed, sealed)     | HTTPS Graph  | gRPC mTLS    | SQL (pgx)
@@ -139,7 +139,7 @@ skills and the safe-primitives spec to match.
 | `ldapfilter`, `dn`, `attr` (safe-primitives P1–P3) | `internal/directory/ldapfilter`, `internal/directory/dn` (incl. `ObjectRef`, `GUIDRef`), and `internal/directory/attr/{guid,sid,filetime,gentime,flags,unicodepwd}`; P6 `internal/directory/sd` (read half: decoder, SD_FLAGS control, `Grants`) |
 | `odata` (safe-primitives P8, [safe-primitives-odata.md](safe-primitives-odata.md)) | `internal/directory/odata`, with `graphschema` (Graph property declarations) and `odatatest` (strict parser: round-trip oracle and the fake Graph's request parser) beneath it |
 | `Secret` (P3 §5.6) | `internal/platform/secret`. The platform needs it for key material and MFA seeds; the corpus unit stays `attr.unicodepwd` |
-| `scope` and `SecureConn` (P1 §3.6, P3 §5.6) | `internal/connector/ad/scope` and `internal/connector/ldap`. Both attach controls or touch the LDAP library, so they sit under the connector root |
+| `scope` and `SecureConn` (P1 §3.6, P3 §5.6) | **Amended by T-0993 to match the tree.** Raw search, the closed general-search control set (`ad.CheckControls`), scoped search and GC resolution: `internal/connector/ad` (`search.go`, `scoped.go`, `gc.go`). The escape-control named-operation table (LF-30, ASQ, show-deleted, phantom root): `internal/connector/ad/scope`, **planned**, created by the first named operation that sets one (ADM-038 `RestoreDeleted`); `tools/analyzers/policy.Scope` already confines the escape OIDs to it. `SecureConn`: `internal/directory/attr/unicodepwd` (built; it proves TLS state through a `Link` interface and imports no LDAP library). The planned `internal/connector/ldap` package is withdrawn: the AD session layer is `connector/ad`. safe-primitives.md follows in T-1007 |
 | `psx` / `pslit` / `proc` (P4) | `psx` client: `internal/connector/psx` (the connector drives sidecars, ADR-0002 rule 3). `pslit`: `internal/platform/pslit`. `proc`: `internal/platform/proc` |
 | Corpus root `testdata/safe-primitives/` (P §8) | **Kept** |
 | Exemption registry `internal/platform/tenancy/exempt.go` (adr skill) | `internal/platform/store/exempt` |
@@ -537,8 +537,8 @@ each tier ship through it (UEM ADR-0002 rules 1–2). These are the first two:
 | EP-8 | **Report dataset** | `platform/report` | `directory/inventory` (`inventory.Datasets()`: users, computers, groups, group members, OUs, contacts), `platform/audit`. Per-DC values are not a dataset: they are read live through the port `report.PerDCReader` (§10) | DC events [M3] | first report |
 | EP-9 | **Notification sink** | `platform/notify` | email, SMS gateway, SIEM (syslog/CEF/HTTP) | webhooks, Teams/Slack [M3] | first notification |
 | EP-10 | **Authentication method** (enroll, verify) | `platform/authn` | password + TOTP, WebAuthn, email/SMS OTP (ENH-09), SAML/OIDC SP | push [M4], RADIUS | first sign-in |
-| EP-11 | **Directory provider** (typed ops + capabilities) | `connector/provider` | `ad`, `entra` | generic LDAP, Google | first directory call |
-| EP-12 | **Platform adapters** (key provider, secret source, blob, service host, update courier, Kerberos) | `platform/keys`, `platform/blob`, …; `connector/kerberos` | per manifest (§3.3) | HSM | M1 skeleton |
+| EP-11 | **Directory provider**: the per-binding adapter every connector handler reaches a directory through (core: identity and the guard's live facts; optional facets per contract group; capabilities derived from the facets). Write kinds are rows of `write`'s operation table, not provider methods (§4.3) | `connector/provider` (extraction T-1005; until it merges the guard's port is `write.Provider`, an acknowledged bypass) | `ad`, `entra` | generic LDAP, Google | the second provider on any handler (T-0993: missed for the first; T-0615, T-0929 depend on T-1005) |
+| EP-12 | **Platform adapters** (key provider, secret source, blob, service host, update courier, Kerberos) | `platform/keys`, `platform/blob`, …; Kerberos: `connector/ad/gssapi` (krb5 built; `sspi` planned as a `GOOS=windows` file there, T-0993) | per manifest (§3.3) | HSM | M1 skeleton |
 | EP-13 | **Agent module** (`skenzeriq.agent.v1`) | `platform/agent` | `addc`, `fileserver` | `mgmthelper` (only if the M3 GPO spec chooses it, §13), UEM modules | first agent feature (old T-0040) |
 | EP-14 | **Event source** and **detection rule** | `platform/events` [M3] | `addc`, `fileserver` | WEF, FPolicy | first M3 audit feature |
 | EP-15 | **Web screen module** | `web/src/app` | `objects`, `helpdesk` | — | first screen |
@@ -747,6 +747,89 @@ func (s Step) Recheck(ctx context.Context, f authority.Facts) (Clearance, error)
 - **Named secret reads** (LAPS, BitLocker) are reads with their own audit kind and take no Step. A
   LAPS *reset* is a write, so it is an Action.
 
+### 4.3 EP-11: the directory provider (decided in T-0993)
+
+**What happened.** EP-11 was drawn as `connector/provider`: "`Describe() Capabilities` plus the typed
+operations `service` dispatches to", to be built before the first directory call. It was not built.
+The first features were built beside it instead. Each connector handler declared its own port over
+the one `ad.Session`: the Tier-0 guard's `write.Provider` (with `ADProvider`, `EntraProvider` and
+`SessionDC`), `read.Source`/`read.ADSource`, and `rights.ADDirectory`. The two composition roots
+(`compose/connector/backend.go` and `compose/server/labbootstrap_lab.go`) each wire the handlers by
+hand. This is the PatchIQ pattern (postmortem §5–§6): one shape per consumer, and assembly cloned per
+binary.
+
+**Options considered.**
+- **(1) Amend: EP-11's home is `connector/write.Provider`. Rejected.** That interface is the guard's
+  port (`Kind`, `Identity`, `Classify`, `Anchors`, `PropertyGuard`). It is not a directory provider.
+  If it were declared EP-11, `read`, `rights` and every future handler would import `write` to reach
+  a directory (`read` already does). The guard package would become everyone's dependency, and the
+  other two per-handler ports would remain.
+- **(2) Extract `connector/provider` exactly as first drawn, with typed operations on the provider.
+  Rejected in part.** Typed write bodies cannot live in a provider. TM-F-T0GUARD (enforced by
+  `write/fitness_test.go`) puts every directory write call in `write/ops`, behind an `Authorised`
+  token that only the guard mints. Write operations on `provider/ad` would either break that rule or
+  need a second guard.
+- **(3) Extract `connector/provider` with an amended shape. Chosen.** The provider is the
+  per-binding *adapter*. Policy stays where it is: the Tier-0 classifiers in `tier0`, the rights
+  checks in `rights` and the guard in `write`. The transport-neutral protocol logic stays in the
+  handlers.
+
+**The contract (`internal/connector/provider`, built by T-1005).**
+- **Core, which every provider implements:** `Kind()`, `Identity()`, and the guard's live facts
+  `Classify`, `Anchors` and `PropertyGuard`. These are the methods of today's `write.Provider`,
+  moved here with their value types (`Verdict`, `Anchors`, `PropertyGuard`, `PinStore`) and their
+  fail-closed errors. Every Read header and every write passes the guard, so a provider without the
+  core cannot serve anything.
+- **Facets, one interface per contract group, all declared in `provider`:** `DCBound` (`BoundDC`;
+  a directory with DCs implements it, and the handlers pin on it), `ObjectReader` (Read and
+  ScopedSearch), `RightsSource` (what `VerifyConnection` reads). Later groups add their facet here:
+  `ChangeFeed`, `NamedSecrets`, `UserVerifier`. A handler asserts the facet it needs at
+  construction. A missing facet means the group answers `CAPABILITY_UNSUPPORTED`; it never causes a
+  nil dereference.
+- **Capabilities are derived, never declared.** `provider.Supports(p)` builds the provider's
+  Describe rows from the facets it implements. The write group's rows come from `write`'s operation
+  table. No other code constructs an `OperationSupport` (M13d). A provider therefore cannot claim
+  a group it does not implement.
+- **Behaviour differs by facet, not by kind.** Handlers never branch on `ProviderKind`. Today's
+  `isAD` branches in `write/handler.go` become `DCBound` checks (M13c).
+- **Write kinds are rows, keyed by `(ProviderKind, WriteKind)`,** in `write`'s operation table, with
+  bodies only in `write/ops`. A provider variant gains a write kind by adding rows there, through
+  the guard, and by nothing else.
+- **Policy keeps its per-kind halves.** `tier0` (C1–C19, E1–E5) and `rights` (V1–V9, EV1–EV5)
+  hold the AD and Entra rules as security policy, which security-architect owns. A provider wires
+  live reads into them and holds no policy of its own.
+- **Variants:** `provider/ad` (over one `*ad.Session`: the core, `DCBound`, `ObjectReader` and
+  `RightsSource` are all built from the same session, so the rule 5 / Read-pin same-DC invariant is
+  enforced by the single constructor) and `provider/entra` (over `graph`). Only the composition
+  roots import a variant (M13a).
+- **One assembly:** `connector/service.New(p, deps)` builds the handlers over `p` and returns the
+  one composite `ConnectorServer`. `compose/connector` (remote) and `compose/server` (embedded) both
+  call it with different parameters. Neither assembles the handlers itself.
+
+**Matrix: contract group × provider** (asymmetry is stated, not accidental; §3.4):
+
+| Group | `ad` | `entra` | Note |
+| --- | --- | --- | --- |
+| Guard core (Classify, Anchors, PropertyGuard) | built (`write.ADProvider`) | built (`write.EntraProvider`, not yet mounted) | moves to `provider/*` in T-1005 |
+| `DCBound` (pin, rule 5) | built (`write.SessionDC`) | never: Entra has no DC (§8, per-provider verify window) | — |
+| `ObjectReader` (Read, ScopedSearch) | built (`read.ADSource`) | planned; its spec fixes a provider-neutral entry type first (the facet returns `*ad.Entry` until then) | — |
+| `RightsSource` (VerifyConnection) | built (`rights.ADDirectory`) | rules built (`rights.VerifyEntra`), not mounted: T-0615 (depends on T-1005) | — |
+| Write kinds | none registered yet (`operations` is empty) | none | each kind has its own spec ticket |
+| Describe | not served yet | not served yet | derived via `provider.Supports`; conformance CC-DESC in T-0929 (depends on T-1005) |
+
+**Fitness (M13 in `fitness-modules`, T-1006):** (a) only `internal/compose/**`,
+`connector/conformance` and tests import `provider/<variant>`; (b) no interface outside `provider`
+declares the core pair `Kind() ProviderKind` + `Identity() *DirectoryIdentity`; (c) no
+`ProviderKind` comparison in `read`, `write`, `rights` or `service` (keys of the write operation
+table are allowed); (d) `OperationSupport` is constructed only in `provider` and `write`. Until T-1005
+merges, M13 prints `pending` and lists today's violations. `pending` is not a pass.
+
+**Consequences.** The interim shape (`write.Provider`) stays on main until T-1005. No new handler,
+provider variant or Entra group may be added before then: T-0615 and T-0929 depend on T-1005. The
+withdrawn planned packages are `ldap` (its content is `connector/ad`; StartTLS is refused by
+design) and `kerberos` (`connector/ad/gssapi` holds the GSSAPI client; `sspi` will be a
+`GOOS=windows` file there). §5.3 lists only built and still-planned packages.
+
 ---
 
 ## 5. Component catalogue
@@ -855,22 +938,22 @@ API, the `client`, and the `connection` registry with its credential port. Only 
 
 ### 5.3 Connector root (`internal/connector/`)
 
+Rows marked **planned** have no directory yet. Every other row describes code on main. The EP-11 shape and the order in which the planned rows land are fixed in §4.3 (T-0993). `service`, `provider`, `provider/ad` and `provider/entra` arrive together in T-1005.
+
 | Package | Owner | Interface | EPs |
 | --- | --- | --- | --- |
-| `service` | directory-engineer | implements `activediq.connector.v1` for both transports (§7.1). `service.New(providers, credentialSources)` is one constructor; the two role packages call it with different parameters | — |
-| `read` | directory-engineer | The connector's `Read` RPC for both transports (T-0433): one object by GUID, ranged attributes streamed to the end, and the Tier-0 verdict on its header from `write`'s classifier over the same session. Pinned to the serving DC (`DcSelection.pinned_dsa_guid`, ADR-0005 rule 5) and re-checked after the read and the classification; undecidable is an error, never `false`. Wired by `compose/server` and `compose/connector` | — |
-| `write` (+`write/ops`) | directory-engineer; security-architect reviews | Plan and Apply of contract §8 for both transports (T-0098): `Handler.Plan`/`Apply` satisfy `directory/client.Transport`, and `Register` serves them over gRPC. Every write passes the independent Tier-0 guard (TM-D2, TM-F-T0GUARD): operation bodies live only in `write/ops` and take an `Authorised` token that only the guard mints; `fitness_test.go` fails on a write call anywhere else in `internal/connector`. Declares the guard-local `Provider` and `NewADProvider`, which is the shape EP-11 describes; its home is being reconciled in T-0993 | EP-11, interim (T-0993) |
-| `provider` | directory-engineer (contract: solution-architect) | the `Provider` interface: `Describe() Capabilities` plus the typed operations `service` dispatches to. A provider declares which contract operations and named secret ops it supports, and `directory/client` checks them before `Plan` | hosts EP-11 |
-| `provider/ad` | directory-engineer | AD ops over `ldap`, `kerberos`, `ad/scope`; later SMB (`go-smb2`) and MS-RPC (`go-msrpc`), each with a register row first | implements EP-11 |
-| `provider/entra` | directory-engineer | Graph ops, including delta queries ([user: delta](https://learn.microsoft.com/en-us/graph/api/user-delta)). SDK or thin client `[OPEN]` (ADR-0001) | implements EP-11 |
-| `ad` (+`ad/gssapi`) | directory-engineer; security-architect reviews | The AD session layer (contract §5.1, §5.3, TM §6.5; T-0092, T-0560): LDAPS only to a configured DC (no plaintext, no StartTLS); SASL GSSAPI bind with tls-server-end-point channel binding (`ad/gssapi`, the krb5 adapter) or the simple-bind fallback; rootDSE; typed paged search and `Read` with the constructed effective-rights attributes; scoped search; GC resolution; and the one write, `Session.WriteDACL`. Takes `ldapfilter.Filter`, `dn.ObjectRef` and `sd` types only. Today it holds what the planned `ldap`, `kerberos` (krb5 half) and `ad/scope` rows describe; reconciliation T-0993 | — |
-| `ldap` | directory-engineer | DC locator, LDAPS/StartTLS, `SecureConn`, paging, ranged reads, DC affinity | — |
+| `service` | directory-engineer | **Planned (T-1005).** The one assembly of the connector: `service.New(p provider.Provider, deps)` builds the verify, read and write handlers over `p` and returns the one composite `activediq.connector.v1` `ConnectorServer` (§7.1). The remote role mounts it on the fleet tunnel registrar. The embedded role hands it to `directory/client` in-process. `compose/connector` and `compose/server` call it with different parameters. Today `compose/connector/mount.go` (`tunnelServer`) and `backend.go` do this by hand, and `compose/server/labbootstrap_lab.go` repeats the wiring; both move into `service` | consumes EP-11 |
+| `read` | directory-engineer | The connector's `Read` RPC for both transports (T-0433): one object by GUID, ranged attributes streamed to the end, and the Tier-0 verdict on its header from `write`'s classifier over the same session. Pinned to the serving DC (`DcSelection.pinned_dsa_guid`, ADR-0005 rule 5) and re-checked after the read and the classification; undecidable is an error, never `false`. Wired by `compose/server` and `compose/connector`. Today it reaches AD through its own `Source` port and `ADSource`, and imports `write` for the verdict type. In T-1005 it takes `provider.Provider` and asserts the `ObjectReader` facet | consumes EP-11 |
+| `write` (+`write/ops`) | directory-engineer; security-architect reviews | Plan and Apply of contract §8 for both transports (T-0098): `Handler.Plan`/`Apply` satisfy `directory/client.Transport`, and `Register` serves them over gRPC. Every write passes the independent Tier-0 guard (TM-D2, TM-F-T0GUARD): operation bodies live only in `write/ops` and take an `Authorised` token that only the guard mints; `fitness_test.go` fails on a write call anywhere else in `internal/connector`. Owns the write operation table, keyed by `(ProviderKind, WriteKind)` (§4.3); bodies live in `write/ops`. **Interim:** it still declares the guard's port `Provider` with `ADProvider`, `EntraProvider`, `SessionDC` and `NewADProvider`. These are the EP-11 core and move to `provider` and `provider/*` in T-1005 (§4.3). Its `isAD` branches become `DCBound` checks there | consumes EP-11 |
+| `provider` | directory-engineer (contract: solution-architect) | **Planned (T-1005). Hosts EP-11 (§4.3).** The core interface `Provider` (`Kind`, `Identity`, `Classify`, `Anchors`, `PropertyGuard`) and its value types; the facets `DCBound`, `ObjectReader` and `RightsSource`, with one more per later contract group; `Supports(p)`, which derives the Describe rows from the facets. It holds no protocol code and no policy. `directory/client` checks the derived capabilities before `Plan` | hosts EP-11 |
+| `provider/ad` | directory-engineer; security-architect reviews | **Planned (T-1005).** The AD provider over one `*ad.Session`. One constructor builds the core (the classifier over `tier0.SessionDirectory`, with C13 pins), `DCBound`, `ObjectReader` and `RightsSource` from that session, which holds the rule 5 / Read-pin same-DC invariant. Later, SMB (`go-smb2`) and MS-RPC (`go-msrpc`) facets, each with a register row first. Imported only by composition roots and conformance (M13a) | implements EP-11 |
+| `provider/entra` | directory-engineer; security-architect reviews | **Planned (T-1005).** The Entra provider over `graph`. Today it has the core (`write.EntraProvider`); `RightsSource` comes with T-0615, and Read and delta ([user: delta](https://learn.microsoft.com/en-us/graph/api/user-delta)) facets come with their specs. Imported only by composition roots and conformance (M13a) | implements EP-11 |
+| `ad` (+`ad/gssapi`) | directory-engineer; security-architect reviews | The AD session layer (contract §5.1, §5.3, TM §6.5; T-0092, T-0560): LDAPS only to a configured DC (no plaintext, no StartTLS); SASL GSSAPI bind with tls-server-end-point channel binding (`ad/gssapi`, the krb5 adapter) or the simple-bind fallback; rootDSE; typed paged search and `Read` with the constructed effective-rights attributes; scoped search; GC resolution; and the one write, `Session.WriteDACL`. Takes `ldapfilter.Filter`, `dn.ObjectRef` and `sd` types only. **This is the AD session layer, not a provider** (T-0993). The withdrawn `ldap` and `kerberos` rows and the general half of scope are built here. Planned additions here are the DC locator and DC affinity (ADM-212). The planned subpackage `ad/scope` holds only the escape-control named-operation table (§1.1, LF-30). `provider/ad` adapts this layer to EP-11 | — |
 | `graph` (+ `graph/graphtest`) | directory-engineer; security-architect reviews | stdlib Microsoft Graph client for the customer's own app registration: client-credentials with a PS256 certificate assertion, tenant-GUID pinned (`tid` checked), same-origin paging, Retry-After retry, typed errors. Reads own app/SP, appRoleAssignments, keyCredentials and passwordCredentials (metadata only, never secretText or hint) of both, owners, directory roles (active + PIM eligible), role-assignable groups. Read-only. `graphtest` is the in-process fake Graph for other tickets' tests (fake-only: real Entra behaviour needs the Entra lab) | — |
-| `rights` | directory-engineer; security-architect reviews | The connector's rights check behind `VerifyConnection` (contract §8.4). Entra half (`VerifyEntra`, T-0097): reads the app's own grants through `graph` and compares them with the threat-model §6.6 policy held as data in `policy_entra.go` (allow rows per family, deny list): EV3 deny-list permission or any directory role (active or PIM-eligible) refuses; EV4 missing permissions; EV5 extra permissions, extra key credentials and client secrets on the application or its service principal, owners. An unanswerable read is COULD_NOT_VERIFY, never PASS. Emits `RightsFinding`s without fingerprint (computed where `audit/canon` exists). Read-only, identifiers only. AD half lands with its own ticket | — |
+| `rights` | directory-engineer; security-architect reviews | The connector's rights check behind `VerifyConnection` (contract §8.4). Entra half (`VerifyEntra`, T-0097): reads the app's own grants through `graph` and compares them with the threat-model §6.6 policy held as data in `policy_entra.go` (allow rows per family, deny list): EV3 deny-list permission or any directory role (active or PIM-eligible) refuses; EV4 missing permissions; EV5 extra permissions, extra key credentials and client secrets on the application or its service principal, owners. An unanswerable read is COULD_NOT_VERIFY, never PASS. Emits `RightsFinding`s without fingerprint (computed where `audit/canon` exists). Read-only, identifiers only. AD half (`VerifyAD`, threat-model §6.5, V7–V9) is built and served by `VerifyHandler` over `rights.ADDirectory`, its own port. In T-1005 that port becomes the `RightsSource` facet; the Entra stream (T-0615) arrives through the same facet | consumes EP-11 |
 | `tier0` | directory-engineer; security-architect reviews | The connector's own Tier-0 set (TM §6.4, TM-D2 check 2): the AD classifier C1–C19 over live reads and designations (T-0093), and Entra E1–E5 over the read-only `graph` client. Fails closed: any read error or unknown answer is `tier0, unknown`. Called by `write` (the guard, and through it `read`'s header verdict) and `rights` | — |
-| `kerberos` | directory-engineer | `GSSAPIClient` with adapters `sspi` (GOOS=windows platform adapter) and `krb5` (go-krb5, old T-0023). **T-0560:** the `krb5` adapter and the session bind (SASL GSSAPI over LDAPS, tls-server-end-point CBT on every bind, layer `none`) are built in `internal/connector/ad/gssapi` and `ad.Config.Kerberos`; the `sspi` adapter and the interface split remain EP-12 | EP-12 |
-| `credential` | directory-engineer; security-architect reviews | **Owns DM-11 DirectoryCredential** alone, with its SQL only in `credential/sealed` (§2 rule 6). The credential types and a `Source` interface. Its types are nameable only here (P3). Two sources: `credential/local` (gMSA through the process identity, keytab file, OS-protected certificate), used by both roles; and `credential/sealed` (Entra certificate and AD password fallback, unsealed with `keys` inside the caller's `WithTenantTx`), used **only** by the embedded connector, wired by `compose/server`. `credential/sealed` also implements `directory/connection`'s credential port (§7.3) | — |
-| `psx` | backend-engineer | typed sidecar client over `proc` (safe-primitives §6.1) | — |
+| `credential` | directory-engineer; security-architect reviews | **Owns DM-11 DirectoryCredential** alone, with its SQL only in `credential/sealed` (§2 rule 6). The credential types and a `Source` interface. Its types are nameable only here (P3). Two sources: `credential/local` (gMSA through the process identity, keytab file, OS-protected certificate), used by both roles; and `credential/sealed` (Entra certificate and AD password fallback, unsealed with `keys` inside the caller's `WithTenantTx`), used **only** by the embedded connector, wired by `compose/server`. `credential/sealed` also implements `directory/connection`'s credential port (§7.3). **Planned.** Until it lands, the remote connector's keytab is read by `compose/connector` (`adConfig`, `local.go`) and handed to `ad.Config` as a `secret.Secret`; that code moves to `credential/local` | — |
+| `psx` | backend-engineer | **Planned** (first sidecar feature, FD-04 Exchange or M3 GPMC; `tools/analyzers/policy.Psx` already reserves the home). Typed sidecar client over `proc` (safe-primitives §6.1) | — |
 | `labadmin` | test-engineer | **Test support, not product.** The lab fixture connection: an admin LDAPS session that creates and deletes lab OUs and users and reads their GUIDs. It sits under the connector root only because only that root talks LDAP (ADR-0005 rule 2, O2), so lab tests elsewhere (`compose/server`) use this seam. Only `_test.go` files may import it: `connector/write/fitness_test.go` and `tools/analyzers/policy` enforce that, and no `cmd/*` links it (`go list -deps`, T-0915) | — |
 
 ### 5.4 Server feature modules (`internal/modules/<id>/`)
@@ -1030,6 +1113,11 @@ safe-primitives §3.6 requires.
         +-------------- connector/service ---+---> provider/ad | provider/entra
 ```
 
+`connector/service` and `provider/*` are planned (T-1005, §4.3). Today `compose/connector` assembles
+the verify, read and write handlers over one `ad.Session` and mounts them with `tunnelServer`, and
+the embedded transport exists only in lab builds (`compose/server/labbootstrap_lab.go`), which repeats
+that wiring. T-1005 replaces both with one `service.New` call.
+
 - **Same contract, same conformance suite.** Both transports run the provider conformance suite
   against the Samba lab on every merge (P3).
 - **Redundancy (ADM-210).** A connection may bind several connectors. `client` picks a healthy
@@ -1090,8 +1178,9 @@ fallback on a remote host) is `[OPEN → old T-0007]`.
 | P3 codecs | `directory/attr/*` | `connector` (decode), `inventory`, modules | `web` |
 | P6 security descriptors | `directory/sd` | `connector` (rights, tier0: not yet wired), modules | `web` |
 | `Secret` | `platform/secret` | `helpdesk`, `connector`, `keys`, `authn` | logs, audit details, errors, JSON |
-| Scoped search, controls | `connector/ad/scope` | `provider/ad` only | feature code (it gets `ScopedSearch` via the contract) |
-| P4 `psx` / `proc` / `pslit` | `connector/psx`, `platform/proc`, `platform/pslit` | connector (sidecars), update client, API (display) | agents call `proc` only |
+| Scoped search, general-search controls (closed set, `ad.CheckControls`), GC resolution | `connector/ad` (`scoped.go`, `search.go`, `gc.go`) | `read` (the `ScopedSearch` and `Read` RPCs, through `read.ADSource` today and the `ObjectReader` facet of `provider/ad` after T-1005), `tier0`, `rights` | feature code (it gets `ScopedSearch` via the contract) |
+| Escape controls (ASQ, show-deleted, phantom root), in named operations only | `connector/ad/scope` (**planned**; the first named op creates it, LF-30) | `provider/ad` named-operation facets (`RestoreDeleted`, `GroupMembersExpand`, `ForestWideLookup`, `ChangeTracking`) | everything else; the OIDs are banned outside it (`escape-control-oid`, FF-SP2) |
+| P4 `psx` / `proc` / `pslit` | `connector/psx` (planned), `platform/proc`, `platform/pslit` | connector (sidecars), update client, API (display) | agents call `proc` only |
 | P5 SQL | `platform/store`, `store/reportsql` | everyone through sqlc + `WithTenantTx` | hand-written SQL text (FF-SP2 `sqlconst`) |
 | Tier N subset | `native/shared` | `passfilt`, `credprov` | — (it runs the same corpus) |
 
@@ -1761,7 +1850,7 @@ There are 83 rows with `phase = P1` and `importance = must` in
 | ADM-205 | `platform/notify` (mail, SMS gateway, egress proxy) | — |
 | ADM-209, RMP-046 | `platform/update` + `packaging/` release train | ENH-07 spec, old T-0027 signing |
 | ADM-210 | `compose/server` (stateless nodes) + `directory/client` (redundant connector bindings) | leases (`jobs`), PostgreSQL HA (customer) |
-| ADM-212 | `connections` + `connector/ldap` (LDAPS, signing, CBT, DC affinity) | old T-0023 |
+| ADM-212 | `connections` + `connector/ad` (LDAPS, CBT and GSSAPI bind built in T-0092/T-0560; DC locator and DC affinity planned there) | old T-0023 |
 
 **v1 pulls (FD-02, ADMP must rows from P2):**
 - ADM-039, 041, 042, 043, 044, 104, 105, 107, 147 → `lifecycle`.
@@ -1831,7 +1920,7 @@ There are 83 rows with `phase = P1` and `importance = must` in
 | Tenancy from migration 1, RLS, roles, isolation, static tenancy checks (incl. FF-SP7) | `fitness-tenancy` T1–T5 (`tools/fitness/tenancy/`, in `make ci`; rules: [tenancy-fitness.md](tenancy-fitness.md)) | old T-0036 (done) |
 | Domain-model keying and append-only (domain-model §0): directory tables keyed by GUID never DN/SID/name (X3), no secret-attribute columns outside sealed ones (X4), append-only tables never UPDATE-able, no state column (X5), table kinds declared in code | `fitness-domain-keys` X3–X5, REG (`tools/fitness/domainkeys/`, in `make ci`; rules: [domain-keys-fitness.md](domain-keys-fitness.md)) | old T-0050 |
 | Profiles by composition, planes, both transports, UEM boundary, platform root extractable | `fitness-profiles` (`tools/fitness/profiles/`, in `make ci`): P1, P7, U1, U2 run today; P2-oci, P2-msi, P3–P6, U3 and U4 are in its activation table and become mandatory when their subject lands, or print `ACTIVE, DEFERRED` while an ADR-approved, expiring deferral covers the gap (ADR-0002 E-3) | old T-0038 (done) |
-| Module system (ADR-0003): import graph, module islands, generated lists and module pages, Registrar only, constructor bound, composition root, closed catalogue, table ownership (static and catalog), binary hygiene, web mirror, exemptions, self-test (§2, §4.1, §5) | `fitness-modules` M1–M12 (`tools/fitness/modules/`, in `make ci`; the old T-0014 subset of §2 rules 1–5, 7, 8 runs today) | T-0991 (M7), T-0990 (the rest; old T-0141) (ADR-0003 becomes `accepted` when it is green) |
+| Module system (ADR-0003): import graph, module islands, generated lists and module pages, Registrar only, constructor bound, composition root, closed catalogue, table ownership (static and catalog), binary hygiene, web mirror, exemptions, self-test (§2, §4.1, §5) | `fitness-modules` M1–M13 (`tools/fitness/modules/`, in `make ci`; the old T-0014 subset of §2 rules 1–5, 7, 8 runs today; M13 is EP-11 the only provider on-ramp, §4.3) | T-0991 (M7), T-0990 (the rest; old T-0141), T-1006 (M13) (ADR-0003 becomes `accepted` when it is green) |
 | Public API (ADR-0004): layout and bundle, dialect, one permission per operation, route set per profile and hostname with an HTTP probe, generated client and server, strict JSON (static, type closure, corpus, ajv cross-check), secrets out, versioning, problems, limits, policy hygiene, responses conform (§1, §6) | `fitness-api` A1–A14 (`tools/fitness/api/`, in `make ci`; A9 is T5 in `fitness-tenancy`). A1 and A13 run today; every other check prints `inactive` until its input exists ([ci-gates](../standards/ci-gates.md)) | A1, A13: T-0011 (done); static half: T-0017; runtime half: T-0018 (ADR-0004 becomes `accepted` when none is inactive and all are green) |
 | Operation pipeline (ADR-0005): step escape, write surface, configuration writes and table write classes, state machine, registry and contract coverage, contract and pipeline behaviour, kernel DAG (§2.3, §4.2, §8) | `fitness-operation` O1–O9 (`tools/fitness/operation/`) | old T-0154 (ADR-0005 becomes `accepted` when both rows are green) |
 | Audit trail (ADR-0005; threat-model TM-F-AUDIT): role grants and the genesis trigger, AG-1/AG-2 and hook wiring, concurrency, seeded-tenant verify, tamper corpus, anchoring, classification, AG-8 coverage, retention (§9) | `fitness-audit` A1–A9 (`tools/fitness/audit/`) | old T-0154 |
