@@ -1,6 +1,8 @@
 // Package main is the fitness-modules job: it enforces the layering and import rules of
-// blueprint §2 (rules 1 to 5, 7 and 8) by reading import statements. It needs no network and no
-// build, so it runs the same everywhere `make ci` runs. It is deliberately conservative: build
+// blueprint §2 (rules 1 to 5, 7 and 8) by reading import statements, and ADR-0003 M7 (closed
+// catalogue, catalogue.go): every top-level package under internal/platform, internal/directory and
+// internal/connector has exactly one row in its own blueprint §5.1, §5.2 or §5.3 table. It needs no
+// network and no build, so it runs the same everywhere `make ci` runs. It is deliberately conservative: build
 // constraints are ignored, so a file that no target compiles is still checked.
 //
 // ADR-0001 gives `tools/fitness/stack` to T-0022 and the module-system ADR (T-0045) will own the
@@ -31,6 +33,9 @@ type Violation struct {
 }
 
 func (v Violation) String() string {
+	if strings.HasPrefix(v.Rule, "M") {
+		return fmt.Sprintf("%s: [ADR-0003 %s] %s", v.Pos, v.Rule, v.Msg)
+	}
 	return fmt.Sprintf("%s: [blueprint §%s] %s", v.Pos, v.Rule, v.Msg)
 }
 
@@ -66,6 +71,11 @@ func Check(root string) ([]Violation, error) {
 		return nil, err
 	}
 	vs = append(vs, web...)
+	cat, err := checkCatalogue(root)
+	if err != nil {
+		return nil, err
+	}
+	vs = append(vs, cat...)
 	sort.Slice(vs, func(i, j int) bool {
 		if vs[i].Pos != vs[j].Pos {
 			return vs[i].Pos < vs[j].Pos

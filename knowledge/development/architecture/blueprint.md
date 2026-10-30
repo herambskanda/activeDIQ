@@ -151,8 +151,8 @@ skills and the safe-primitives spec to match.
 This section restates [ADR-0003](../decisions/0003-module-system-extension-points-only-on-ramp.md)
 (ratified 2026-10-02) and keeps the rule numbers other documents cite ("§2 rule 7"). The ADR
 numbers its own rules differently, so each rule below names its ADR rule. If the two disagree, the
-ADR wins and this section is the bug. `fitness-modules` M1–M12 enforce the rules (old T-0141, lost in renumbering; now T-0991 for M7 and
-T-0990 for the rest). Until they land, the old T-0014 job in `tools/fitness/modules/` enforces a subset, and code review the rest.
+ADR wins and this section is the bug. `fitness-modules` M1–M12 enforce the rules (old T-0141, lost in renumbering; T-0991 landed M7, T-0990 owns
+the rest). Until they land, the job in `tools/fitness/modules/` enforces a subset (rules 1–5, 7, 8 and M7), and code review the rest.
 
 ```
  cmd/<role> --> compose/<role> (+ compose/config; profile is data)      every cmd/<role>: own role pkg only
@@ -760,7 +760,7 @@ first column once parenthesised text is removed; a name containing `/` (`store/r
 `fleet/dial`, `attr/*`) is a subpackage row and does not count; a `(+sub)` mention does not count;
 a name with no directory yet is a planned package and is allowed. Test support that must live under
 a product root (only `labadmin` today) still gets a row, marked as such, with the check that keeps it
-out of shipping binaries. M7 is built by T-0991; until it lands this rule is held by review. When a ticket adds a server or agent module, it also writes
+out of shipping binaries. `fitness-modules` enforces M7 (T-0991, `tools/fitness/modules/catalogue.go`): a missing, duplicated or wrong-section row fails `make fitness`, naming the package and the section it needs. When a ticket adds a server or agent module, it also writes
 `architecture/modules/<id>.md` from the [module page template](modules/README.md). M3 fails a
 module without a page and a page without a module. Table ownership follows §2 rule 6; the findings
 that placed each table are in §5.6.
