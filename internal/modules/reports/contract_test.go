@@ -16,7 +16,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 )
 
-const wantOperations = 19
+const wantOperations = 21
 
 var fivePermissions = map[string]bool{
 	string(reports.RunPermission):               true,
@@ -143,6 +143,19 @@ func TestScopeAndExpiryProblemTypesAreDistinctAndSayNoNames(t *testing.T) {
 		}
 	}
 	t.Logf("slug -> operations: %v", reached)
+}
+
+func bundle(t *testing.T) map[string]any {
+	t.Helper()
+	raw, err := os.ReadFile("../../platform/apihost/spec/openapi.gen.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d map[string]any
+	if err := jsonv2.Unmarshal(raw, &d); err != nil {
+		t.Fatal(err)
+	}
+	return d
 }
 
 func at(t *testing.T, m map[string]any, path ...string) map[string]any {

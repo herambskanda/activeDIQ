@@ -7859,6 +7859,93 @@ func (v *ReportRunCreate) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	}
 }
 
+// ReportRunList: A page of the caller's runs, newest first.
+type ReportRunList struct {
+	Items []ReportRunSummary `json:"items"`
+	Page  apitypes.PageInfo  `json:"page"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportRunList) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportRunList{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "items":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := apitypes.DecodeArray(d, &v.Items); err != nil {
+				return err
+			}
+		case "page":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Page); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportRunList) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// items
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "items")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "items")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("items"), len(v.Items), 0, 1000, apitypes.CodeMaxItems)
+		for i := range v.Items {
+			v.Items[i].Validate(apitypes.Index(at.AppendToken("items"), i), errs)
+		}
+	}
+	// page
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "page")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "page")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		v.Page.Validate(at.AppendToken("page"), errs)
+	}
+}
+
 // ReportRunParameters: What a run is over. Every member is optional; an absent one takes the preset's value, then the definition's default. connectionIds default to every connection the runner's scope reaches. The runner's scope always applies and can only narrow what is asked.
 type ReportRunParameters struct {
 	// The columns shown and exported, in order. Replaces the preset's columns when present.
@@ -8193,6 +8280,351 @@ func (v ReportRunState) Valid() bool {
 		return true
 	}
 	return false
+}
+
+// ReportRunStateFilter: The run states a history list can be narrowed to. The request twin of ReportRunState (ADR-0004 rule 2: a request enum is closed, its response twin is open).
+type ReportRunStateFilter string
+
+const (
+	ReportRunStateFilterQueued    ReportRunStateFilter = "queued"
+	ReportRunStateFilterRunning   ReportRunStateFilter = "running"
+	ReportRunStateFilterSucceeded ReportRunStateFilter = "succeeded"
+	ReportRunStateFilterFailed    ReportRunStateFilter = "failed"
+	ReportRunStateFilterCancelled ReportRunStateFilter = "cancelled"
+	ReportRunStateFilterExpired   ReportRunStateFilter = "expired"
+)
+
+// Valid reports whether v is one of the closed set of values.
+func (v ReportRunStateFilter) Valid() bool {
+	switch v {
+	case ReportRunStateFilterQueued, ReportRunStateFilterRunning, ReportRunStateFilterSucceeded, ReportRunStateFilterFailed, ReportRunStateFilterCancelled, ReportRunStateFilterExpired:
+		return true
+	}
+	return false
+}
+
+// Validate records a violation when v is not in the set.
+func (v ReportRunStateFilter) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	if !v.Valid() {
+		errs.AddBody(at, apitypes.CodeEnum, "value is not one of the allowed values")
+	}
+}
+
+// ReportRunSummary: A run in the history list: the header fields that answer "what ran, when, how did it end". asOf is the oldest sync watermark among the covered naming contexts. rowCount is the count after scope trimming and is null while the run has not succeeded and whenever scopeCurrent is false. scopeCurrent is true when the caller's read scope now equals the scope the run was trimmed with; when false, opening the run answers 409 scope_changed_rerun and retryReportRun makes a new one.
+type ReportRunSummary struct {
+	AsOf              *apitypes.Timestamp `json:"asOf"`
+	CreatedAt         apitypes.Timestamp  `json:"createdAt"`
+	DefinitionID      string              `json:"definitionId"`
+	DefinitionVersion int64               `json:"definitionVersion"`
+	EmptyReason       *ReportEmptyReason  `json:"emptyReason,omitzero"`
+	ExpiresAt         *apitypes.Timestamp `json:"expiresAt"`
+	Failure           *ReportFailure      `json:"failure,omitzero"`
+	FinishedAt        *apitypes.Timestamp `json:"finishedAt"`
+	Freshness         ReportFreshness     `json:"freshness"`
+	ID                apitypes.UUID       `json:"id"`
+	PresetID          *string             `json:"presetId"`
+	RerunOf           *apitypes.UUID      `json:"rerunOf,omitzero"`
+	RowCount          *int64              `json:"rowCount"`
+	ScopeCurrent      bool                `json:"scopeCurrent"`
+	StartedAt         *apitypes.Timestamp `json:"startedAt"`
+	State             ReportRunState      `json:"state"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportRunSummary) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportRunSummary{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "asOf":
+			v.p.Mark(0, false)
+			if err := json.UnmarshalDecode(d, &v.AsOf); err != nil {
+				return err
+			}
+		case "createdAt":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.CreatedAt); err != nil {
+				return err
+			}
+		case "definitionId":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.DefinitionID); err != nil {
+				return err
+			}
+		case "definitionVersion":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.DefinitionVersion); err != nil {
+				return err
+			}
+		case "emptyReason":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(4, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.EmptyReason); err != nil {
+				return err
+			}
+		case "expiresAt":
+			v.p.Mark(5, false)
+			if err := json.UnmarshalDecode(d, &v.ExpiresAt); err != nil {
+				return err
+			}
+		case "failure":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(6, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Failure); err != nil {
+				return err
+			}
+		case "finishedAt":
+			v.p.Mark(7, false)
+			if err := json.UnmarshalDecode(d, &v.FinishedAt); err != nil {
+				return err
+			}
+		case "freshness":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(8, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Freshness); err != nil {
+				return err
+			}
+		case "id":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(9, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ID); err != nil {
+				return err
+			}
+		case "presetId":
+			v.p.Mark(10, false)
+			if err := json.UnmarshalDecode(d, &v.PresetID); err != nil {
+				return err
+			}
+		case "rerunOf":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(11, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.RerunOf); err != nil {
+				return err
+			}
+		case "rowCount":
+			v.p.Mark(12, false)
+			if err := json.UnmarshalDecode(d, &v.RowCount); err != nil {
+				return err
+			}
+		case "scopeCurrent":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(13, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ScopeCurrent); err != nil {
+				return err
+			}
+		case "startedAt":
+			v.p.Mark(14, false)
+			if err := json.UnmarshalDecode(d, &v.StartedAt); err != nil {
+				return err
+			}
+		case "state":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(15, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.State); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportRunSummary) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// asOf
+	if v.p.Decoded() && !v.p.Has(0) {
+		errs.Required(at, "asOf")
+	}
+	// createdAt
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "createdAt")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "createdAt")
+		}
+	}
+	// definitionId
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "definitionId")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "definitionId")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("definitionId"), string(v.DefinitionID), 2, 64)
+	}
+	// definitionVersion
+	if v.p.Decoded() {
+		if !v.p.Has(3) {
+			errs.Required(at, "definitionVersion")
+		}
+		if v.p.IsNull(3) {
+			errs.NullNotAllowed(at, "definitionVersion")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(3) && !v.p.IsNull(3)) {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("definitionVersion"), int64(v.DefinitionVersion), 1, 1000000)
+	}
+	// emptyReason
+	if v.p.Decoded() && v.p.IsNull(4) {
+		errs.NullNotAllowed(at, "emptyReason")
+	}
+	// expiresAt
+	if v.p.Decoded() && !v.p.Has(5) {
+		errs.Required(at, "expiresAt")
+	}
+	// failure
+	if v.p.Decoded() && v.p.IsNull(6) {
+		errs.NullNotAllowed(at, "failure")
+	}
+	if v.Failure != nil {
+		(*v.Failure).Validate(at.AppendToken("failure"), errs)
+	}
+	// finishedAt
+	if v.p.Decoded() && !v.p.Has(7) {
+		errs.Required(at, "finishedAt")
+	}
+	// freshness
+	if v.p.Decoded() {
+		if !v.p.Has(8) {
+			errs.Required(at, "freshness")
+		}
+		if v.p.IsNull(8) {
+			errs.NullNotAllowed(at, "freshness")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(8) && !v.p.IsNull(8)) {
+		v.Freshness.Validate(at.AppendToken("freshness"), errs)
+	}
+	// id
+	if v.p.Decoded() {
+		if !v.p.Has(9) {
+			errs.Required(at, "id")
+		}
+		if v.p.IsNull(9) {
+			errs.NullNotAllowed(at, "id")
+		}
+	}
+	// presetId
+	if v.p.Decoded() && !v.p.Has(10) {
+		errs.Required(at, "presetId")
+	}
+	if v.PresetID != nil {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("presetId"), string((*v.PresetID)), 0, 64)
+	}
+	// rerunOf
+	if v.p.Decoded() && v.p.IsNull(11) {
+		errs.NullNotAllowed(at, "rerunOf")
+	}
+	// rowCount
+	if v.p.Decoded() && !v.p.Has(12) {
+		errs.Required(at, "rowCount")
+	}
+	if v.RowCount != nil {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("rowCount"), int64((*v.RowCount)), 0, 9007199254740991)
+	}
+	// scopeCurrent
+	if v.p.Decoded() {
+		if !v.p.Has(13) {
+			errs.Required(at, "scopeCurrent")
+		}
+		if v.p.IsNull(13) {
+			errs.NullNotAllowed(at, "scopeCurrent")
+		}
+	}
+	// startedAt
+	if v.p.Decoded() && !v.p.Has(14) {
+		errs.Required(at, "startedAt")
+	}
+	// state
+	if v.p.Decoded() {
+		if !v.p.Has(15) {
+			errs.Required(at, "state")
+		}
+		if v.p.IsNull(15) {
+			errs.NullNotAllowed(at, "state")
+		}
+	}
 }
 
 // ReportSchedule: A schedule (DM-73). Recipients receive what the owner can see, not what they can see. The ETag header is the version for If-Match.

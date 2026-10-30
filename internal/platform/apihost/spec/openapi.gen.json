@@ -150,6 +150,19 @@
         },
         "x-activediq-tag": "reports"
       },
+      "RunDefinitionFilter": {
+        "description": "Only runs of this report definition.",
+        "in": "query",
+        "name": "definitionId",
+        "required": false,
+        "schema": {
+          "maxLength": 64,
+          "minLength": 2,
+          "pattern": "^[A-Za-z][A-Za-z0-9-]{1,63}$",
+          "type": "string"
+        },
+        "x-activediq-tag": "reports"
+      },
       "RunId": {
         "description": "The run.",
         "in": "path",
@@ -158,6 +171,16 @@
         "schema": {
           "format": "uuid",
           "type": "string"
+        },
+        "x-activediq-tag": "reports"
+      },
+      "RunStateFilter": {
+        "description": "Only runs in this state.",
+        "in": "query",
+        "name": "state",
+        "required": false,
+        "schema": {
+          "$ref": "#/components/schemas/ReportRunStateFilter"
         },
         "x-activediq-tag": "reports"
       },
@@ -3312,6 +3335,27 @@
         "type": "object",
         "x-activediq-tag": "reports"
       },
+      "ReportRunList": {
+        "description": "A page of the caller's runs, newest first.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ReportRunSummary"
+            },
+            "maxItems": 1000,
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageInfo"
+          }
+        },
+        "required": [
+          "items",
+          "page"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
       "ReportRunParameters": {
         "additionalProperties": false,
         "description": "What a run is over. Every member is optional; an absent one takes the preset's value, then the definition's default. connectionIds default to every connection the runner's scope reaches. The runner's scope always applies and can only narrow what is asked.",
@@ -3423,6 +3467,121 @@
         ],
         "type": "string",
         "x-activediq-enum": "open",
+        "x-activediq-tag": "reports"
+      },
+      "ReportRunStateFilter": {
+        "description": "The run states a history list can be narrowed to. The request twin of ReportRunState (ADR-0004 rule 2: a request enum is closed, its response twin is open).",
+        "enum": [
+          "queued",
+          "running",
+          "succeeded",
+          "failed",
+          "cancelled",
+          "expired"
+        ],
+        "type": "string",
+        "x-activediq-tag": "reports"
+      },
+      "ReportRunSummary": {
+        "description": "A run in the history list: the header fields that answer \"what ran, when, how did it end\". asOf is the oldest sync watermark among the covered naming contexts. rowCount is the count after scope trimming and is null while the run has not succeeded and whenever scopeCurrent is false. scopeCurrent is true when the caller's read scope now equals the scope the run was trimmed with; when false, opening the run answers 409 scope_changed_rerun and retryReportRun makes a new one.",
+        "properties": {
+          "asOf": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "definitionId": {
+            "maxLength": 64,
+            "minLength": 2,
+            "type": "string"
+          },
+          "definitionVersion": {
+            "maximum": 1000000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "emptyReason": {
+            "$ref": "#/components/schemas/ReportEmptyReason"
+          },
+          "expiresAt": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "failure": {
+            "$ref": "#/components/schemas/ReportFailure"
+          },
+          "finishedAt": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "freshness": {
+            "$ref": "#/components/schemas/ReportFreshness"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "presetId": {
+            "maxLength": 64,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rerunOf": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "rowCount": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "scopeCurrent": {
+            "type": "boolean"
+          },
+          "startedAt": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/ReportRunState"
+          }
+        },
+        "required": [
+          "id",
+          "definitionId",
+          "definitionVersion",
+          "presetId",
+          "state",
+          "createdAt",
+          "startedAt",
+          "finishedAt",
+          "expiresAt",
+          "asOf",
+          "freshness",
+          "rowCount",
+          "scopeCurrent"
+        ],
+        "type": "object",
         "x-activediq-tag": "reports"
       },
       "ReportSchedule": {
@@ -5493,6 +5652,64 @@
       }
     },
     "/reports/runs": {
+      "get": {
+        "description": "Answers the runs the caller started, newest first (createdAt, then id as the tie-break, so the order is stable), a page at a time. This is the run history. A scheduled run belongs to the schedule's owner, so the owner sees it here and nobody else does. Another account's runs are not in the list and are not counted: a run is readable only by its runner (modules/reports.md 6.6 check 2), and reports.schedule.manage_all never lists or opens a run. state and definitionId narrow the list; both are typed values, never a filter string. An item is the run header without the parameters, the digest and the scope text; getReportRun answers those. The list does not apply the scope check of getReportRun (check 4), because one item out of date must not fail the page. Instead each item says scopeCurrent: true when the caller's read scope now equals the scope the run was trimmed with (6.6 check 4, evaluated once for the page). When scopeCurrent is false the item's rowCount is null, because a count taken under a scope the caller no longer holds is not shown; opening that run answers 409 scope_changed_rerun, and retryReportRun makes a new run under the current scope. An expired run is listed with state expired and no row count to open. After retention deletes a run record (6.2) it is in no list. Listing is a read of the caller's own bookkeeping; it is not audited per item.",
+        "operationId": "listReportRuns",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RunStateFilter"
+          },
+          {
+            "$ref": "#/components/parameters/RunDefinitionFilter"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
+          },
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportRunList"
+                }
+              }
+            },
+            "description": "A page of the caller's runs, newest first"
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "List the caller's report runs",
+        "tags": [
+          "reports"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-parity": [
+          "ADM-085",
+          "ADM-099"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "reports.run"
+      },
       "post": {
         "description": "Starts one run of a definition over one frozen set of inputs, as a job. A change of preset, filter, period, scope or columns is a new run; paging and sorting read the stored result of one run and never re-execute (spec 8.1). The runner's scope is applied inside the query, and counts are computed after trimming. A run is not an Action (ADR-0005 rule 10): it is system bookkeeping, audited as an event with row count and digest, never values. A scope that grants nothing, or uses a kind reports cannot evaluate (group_members, Entra kinds), is not an error: the run succeeds with no rows and the run header's emptyReason names why (spec 5, unhappy paths). Exporting from such a run is allowed (a record of what was found); only creating, updating or resuming a schedule from such a scope is refused, with report-scope-empty or report-scope-unsupported. Fields that are absent take the preset's value, then the definition's default. Reuse window (modules/reports.md 6.1 step 3, ADR-0010): when the same runner already started a run with the same query and the same applied-scope fingerprint in the last 60 seconds, and it is queued, running or succeeded, that run is returned instead of a new one, still 202 with the same shape. Reuse is a read and passes the same run-read gate as getReportRun. Job limit (step 5): a tenant with 4 runs and exports not yet finished answers 429 with errors[].code too_many_report_jobs (spec 8.3); retry when one finishes.",
         "operationId": "createReportRun",
@@ -5750,6 +5967,67 @@
         ],
         "x-activediq-stability": "preview",
         "x-permission": "reports.export"
+      }
+    },
+    "/reports/runs/{runId}/retry": {
+      "post": {
+        "description": "Creates a new run with the definition, version, preset and parameters stored with this one, and answers it as createReportRun does (202, ReportRun, rerunOf set to this run). The new run is computed under the caller's current read scope, not the old one, so a retry is how a run that answers 409 scope_changed_rerun, or whose result has expired, is made readable again. Relative periods are evaluated again against the new run's own now (FR-09); the stored result of this run is untouched. Only the account that started the run may retry it; anyone else, and a run that does not exist, get 404 without saying which (6.6 check 2). Allowed from succeeded, failed, cancelled and expired. A run that is queued or running is refused with 409 and errors[].code run_in_progress; poll it or cancel it instead. A retry goes through the same create path as createReportRun, so the 60 second reuse window applies (a second retry while the first is queued or running answers the first new run) and so does the tenant job limit (429 with errors[].code too_many_report_jobs). If the definition version was retired meanwhile, the new run fails with reason definition_retired, as it would for any run. A retry is not an Action (ADR-0005 rule 10): it is system bookkeeping, audited as a run event with row count and digest and the rerunOf run id. It carries no request body, so it has nothing to carry a client idempotency key for; a double submit is absorbed by the reuse window.",
+        "operationId": "retryReportRun",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RunId"
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportRun"
+                }
+              }
+            },
+            "description": "The new run is accepted and queued",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "maxLength": 256,
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Run a past run again",
+        "tags": [
+          "reports"
+        ],
+        "x-activediq-limits": {
+          "class": "write"
+        },
+        "x-activediq-parity": [
+          "ADM-085"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "reports.run"
       }
     },
     "/reports/runs/{runId}/rows": {

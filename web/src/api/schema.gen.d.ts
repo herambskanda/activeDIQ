@@ -377,7 +377,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * List the caller's report runs
+         * @description Answers the runs the caller started, newest first (createdAt, then id as the tie-break, so the order is stable), a page at a time. This is the run history. A scheduled run belongs to the schedule's owner, so the owner sees it here and nobody else does. Another account's runs are not in the list and are not counted: a run is readable only by its runner (modules/reports.md 6.6 check 2), and reports.schedule.manage_all never lists or opens a run. state and definitionId narrow the list; both are typed values, never a filter string. An item is the run header without the parameters, the digest and the scope text; getReportRun answers those. The list does not apply the scope check of getReportRun (check 4), because one item out of date must not fail the page. Instead each item says scopeCurrent: true when the caller's read scope now equals the scope the run was trimmed with (6.6 check 4, evaluated once for the page). When scopeCurrent is false the item's rowCount is null, because a count taken under a scope the caller no longer holds is not shown; opening that run answers 409 scope_changed_rerun, and retryReportRun makes a new run under the current scope. An expired run is listed with state expired and no row count to open. After retention deletes a run record (6.2) it is in no list. Listing is a read of the caller's own bookkeeping; it is not audited per item.
+         */
+        get: operations["listReportRuns"];
         put?: never;
         /**
          * Create a report run
@@ -444,6 +448,26 @@ export interface paths {
          * @description Serialises the run's stored result (never a fresh query) into a file as an asynchronous job: the columns of the run, its filters, and all rows up to the format's cap (spec 8.3). Needs reports.export, bound as this operation's permission, and also reports.run, checked inside the operation before the run is looked up (403 if either is missing; modules/reports.md 6.6 check 1 and 7.1). Run-read gate (6.6, run.ReadAccess), in order: runner account equals the caller, otherwise 404; the caller's current read scope fingerprint equals the one stored with the run, otherwise 409 with errors[].code scope_changed_rerun (create a new run); the run has succeeded, otherwise 409 with run_not_ready or run_failed. An expired run is not refused here (see below). The three 409 codes are separate. Rows over a format's cap are refused with report-row-cap-exceeded, never truncated. A format this installation cannot produce is a 400 with code format_unavailable. If the run's result has expired, a new run is created first and the export says so (rerun true, rerunOfRunId); its file carries the new run's as_of. A run whose scope grants nothing or uses an unsupported kind is exported as a record of what was found, not refused (only schedules refuse such a scope). Exports and runs count together toward the tenant job limit: with 4 not yet finished the answer is 429 with errors[].code too_many_report_jobs. Exports are audited with actor and row count; an export is not an Action.
          */
         post: operations["createReportExport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/runs/{runId}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run a past run again
+         * @description Creates a new run with the definition, version, preset and parameters stored with this one, and answers it as createReportRun does (202, ReportRun, rerunOf set to this run). The new run is computed under the caller's current read scope, not the old one, so a retry is how a run that answers 409 scope_changed_rerun, or whose result has expired, is made readable again. Relative periods are evaluated again against the new run's own now (FR-09); the stored result of this run is untouched. Only the account that started the run may retry it; anyone else, and a run that does not exist, get 404 without saying which (6.6 check 2). Allowed from succeeded, failed, cancelled and expired. A run that is queued or running is refused with 409 and errors[].code run_in_progress; poll it or cancel it instead. A retry goes through the same create path as createReportRun, so the 60 second reuse window applies (a second retry while the first is queued or running answers the first new run) and so does the tenant job limit (429 with errors[].code too_many_report_jobs). If the definition version was retired meanwhile, the new run fails with reason definition_retired, as it would for any run. A retry is not an Action (ADR-0005 rule 10): it is system bookkeeping, audited as a run event with row count and digest and the rerunOf run id. It carries no request body, so it has nothing to carry a client idempotency key for; a double submit is absorbed by the reuse window.
+         */
+        post: operations["retryReportRun"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1406,6 +1430,11 @@ export interface components {
             parameters?: components["schemas"]["ReportRunParameters"];
             presetId?: string;
         };
+        /** @description A page of the caller's runs, newest first. */
+        ReportRunList: {
+            items: components["schemas"]["ReportRunSummary"][];
+            page: components["schemas"]["PageInfo"];
+        };
         /** @description What a run is over. Every member is optional; an absent one takes the preset's value, then the definition's default. connectionIds default to every connection the runner's scope reaches. The runner's scope always applies and can only narrow what is asked. */
         ReportRunParameters: {
             /** @description The columns shown and exported, in order. Replaces the preset's columns when present. */
@@ -1435,6 +1464,37 @@ export interface components {
          * @enum {string}
          */
         ReportRunState: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "expired" | (string & {});
+        /**
+         * @description The run states a history list can be narrowed to. The request twin of ReportRunState (ADR-0004 rule 2: a request enum is closed, its response twin is open).
+         * @enum {string}
+         */
+        ReportRunStateFilter: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "expired";
+        /** @description A run in the history list: the header fields that answer "what ran, when, how did it end". asOf is the oldest sync watermark among the covered naming contexts. rowCount is the count after scope trimming and is null while the run has not succeeded and whenever scopeCurrent is false. scopeCurrent is true when the caller's read scope now equals the scope the run was trimmed with; when false, opening the run answers 409 scope_changed_rerun and retryReportRun makes a new one. */
+        ReportRunSummary: {
+            /** Format: date-time */
+            asOf: string | null;
+            /** Format: date-time */
+            createdAt: string;
+            definitionId: string;
+            definitionVersion: number;
+            emptyReason?: components["schemas"]["ReportEmptyReason"];
+            /** Format: date-time */
+            expiresAt: string | null;
+            failure?: components["schemas"]["ReportFailure"];
+            /** Format: date-time */
+            finishedAt: string | null;
+            freshness: components["schemas"]["ReportFreshness"];
+            /** Format: uuid */
+            id: string;
+            presetId: string | null;
+            /** Format: uuid */
+            rerunOf?: string;
+            rowCount: number | null;
+            scopeCurrent: boolean;
+            /** Format: date-time */
+            startedAt: string | null;
+            state: components["schemas"]["ReportRunState"];
+        };
         /** @description A schedule (DM-73). Recipients receive what the owner can see, not what they can see. The ETag header is the version for If-Match. */
         ReportSchedule: {
             /** Format: date-time */
@@ -2179,8 +2239,12 @@ export interface components {
         RequiredIdempotencyKey: string;
         /** @description The ETag of the schedule version being changed. A stale value answers precondition-failed; an absent one precondition-required. */
         RequiredIfMatch: string;
+        /** @description Only runs of this report definition. */
+        RunDefinitionFilter: string;
         /** @description The run. */
         RunId: string;
+        /** @description Only runs in this state. */
+        RunStateFilter: components["schemas"]["ReportRunStateFilter"];
         /** @description The schedule. */
         ScheduleId: string;
         /** @description me lists the caller's schedules. any lists every schedule of the tenant and needs reports.schedule.manage_all. */
@@ -2815,6 +2879,40 @@ export interface operations {
             500: components["responses"]["Internal"];
         };
     };
+    listReportRuns: {
+        parameters: {
+            query?: {
+                /** @description The nextCursor of the previous page. */
+                cursor?: components["parameters"]["PageCursor"];
+                /** @description Only runs of this report definition. */
+                definitionId?: components["parameters"]["RunDefinitionFilter"];
+                /** @description The page size. */
+                limit?: components["parameters"]["PageLimit"];
+                /** @description Only runs in this state. */
+                state?: components["parameters"]["RunStateFilter"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of the caller's runs, newest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportRunList"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
     createReportRun: {
         parameters: {
             query?: never;
@@ -2939,6 +3037,36 @@ export interface operations {
             413: components["responses"]["PayloadTooLarge"];
             415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["ReportRowCapExceeded"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    retryReportRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The run. */
+                runId: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The new run is accepted and queued */
+            202: {
+                headers: {
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportRun"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
         };
