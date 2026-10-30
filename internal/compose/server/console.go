@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
@@ -17,6 +18,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 	"github.com/skenzeriq/activediq/internal/platform/rbac"
 	"github.com/skenzeriq/activediq/internal/platform/store"
+	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
 // consoleStack is the console authentication stack the API ports and the attestation share: one session
@@ -29,8 +31,34 @@ type consoleStack struct {
 	Sessions *authn.Store
 	StepUp   *authn.StepUp
 	Authn    *authnhttp.Authenticator
+	// Local is AN-8 and Second is AN-10 TOTP: the sign-in plane Tags mounts. Local resolves the install's
+	// tenant through SetTenant, which Run calls once the tenant exists.
+	Local  *authn.LocalCredentials
+	Second *authn.SecondFactor
 	// Denials, when set, records every refused permission check in the audit trail.
 	Denials *deniedAudit
+	log     *slog.Logger
+	tenant  atomic.Pointer[tenant.ID]
+}
+
+// SetTenant tells the sign-in plane which tenant the install has; until then AN-8 answers a server fault.
+func (c *consoleStack) SetTenant(t tenant.ID) { c.tenant.Store(&t) }
+
+func (c *consoleStack) installTenant() (tenant.ID, bool) {
+	if p := c.tenant.Load(); p != nil {
+		return *p, true
+	}
+	return tenant.ID{}, false
+}
+
+// Tags is the sign-in plane (/auth/*): AN-8 for a local account and AN-10 with TOTP. WebAuthn, sign-out and
+// the CSRF value answer 501 until their tickets land.
+func (c *consoleStack) Tags() apihost.TagHandlers {
+	return authn.Handlers{
+		Password:     authnhttp.PasswordCookies{Factor: c.Local},
+		SecondFactor: authnhttp.TOTPCookies{Factor: c.Second},
+		Log:          c.log,
+	}.Bind()
 }
 
 // deniedAudit is what ports needs to record refusals: the store and the audit sink.
@@ -52,8 +80,15 @@ func buildConsole(db *store.DB, sink audit.Sink, ks authn.KeySource, log *slog.L
 		return nil, errors.New("server: console: no tenant key source for the TOTP factor")
 	}
 	totp := &authn.Service{Keys: ks, Failures: db}
-	return &consoleStack{Sessions: sessions, StepUp: &authn.StepUp{Sessions: sessions, TOTP: totp}, Authn: au,
-		Denials: &deniedAudit{DB: db, Sink: sink}}, nil
+	pending, err := authn.NewPendingStore(db, sink, nil)
+	if err != nil {
+		return nil, fmt.Errorf("server: pending sign-ins: %w", err)
+	}
+	c := &consoleStack{Sessions: sessions, StepUp: &authn.StepUp{Sessions: sessions, TOTP: totp}, Authn: au, log: log,
+		Denials: &deniedAudit{DB: db, Sink: sink}}
+	c.Local = &authn.LocalCredentials{DB: db, Sessions: sessions, Pending: pending, Keys: ks, Audit: sink, Tenant: c.installTenant}
+	c.Second = &authn.SecondFactor{DB: db, Pending: pending, Sessions: sessions, TOTP: totp, Audit: sink}
+	return c, nil
 }
 
 // ports are the API ports with the real authentication, RBAC and step-up behind the given limiter.

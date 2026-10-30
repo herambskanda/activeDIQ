@@ -17,8 +17,9 @@ windows-lab-status: ## VM state and connection details
 	$(WINLAB) status
 lab-test-connector-windows: ## internal/connector/ad against dc1 over LDAPS (tags lab,windowslab); log in knowledge/development/runbooks/windows-lab-runs/
 	$(WINLAB) test-connector
-lab-test-windows-unit: ## Offline proof of the Windows lab tooling (dry run; no KVM needed)
+lab-test-windows-unit: ## Offline proof of the Windows lab tooling and the dc1 lock wrapper (no KVM needed)
 	python3 -m unittest discover -s lab/windows/tests -p 'test_*.py' -v
+	bash lab/windows/tests/test_with_dc1_lock.sh
 
 .PHONY: windows-agent-harness-build
 windows-agent-harness-build: ## Cross-build the lab-only service stub for T-0613 (copy with Install-AgentLabHarness.ps1 to the Windows host)

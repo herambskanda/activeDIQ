@@ -170,6 +170,9 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 		return err
 	}
 	tags = append(tags, dirTag)
+	// The sign-in plane: AN-8 for a local account, then AN-10 TOTP, which is the only way a console session
+	// is created.
+	tags = append(tags, console.Tags())
 	cat := permissionCatalogue()
 	if err := checkCatalogue(cat); err != nil {
 		return err
@@ -190,6 +193,7 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 		return err
 	}
 	firstOwner.SetTenant(tid) // the claim route can now create the first owner
+	console.SetTenant(tid)    // and the sign-in plane knows whose accounts it checks
 	// Lab builds only (T-0684): create and activate the lab connections through the real activation path.
 	if err := labSeed(ctx, conns, connKernel.Service, tid); err != nil {
 		return err

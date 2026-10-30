@@ -6,16 +6,26 @@ Cross-builds activediq-agent.exe and agentsetup.exe with the pinned Go toolchain
 builds the MSI there with WiX, runs the cases, and writes the CASE lines to the log path given with
 --log. Needs: pip install pywinrm requests-ntlm. Credentials come from the gitignored lab env file
 (WIN_LAB_ENV, default lab/windows/.win-lab.env in the main checkout) and are never printed.
-Runbook: knowledge/development/runbooks/windows-lab.md section 13.
+The whole run holds the dc1 lock (lab/windows/bin/with-dc1-lock, T-0839).
+Runbook: knowledge/development/runbooks/windows-lab.md sections 10 and 13.
 """
 import argparse, base64, hashlib, os, subprocess, sys, tempfile, time
+
+REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+
+# dc1 is shared by many tickets and this run reboots/installs/clears logs on it: hold the dc1 lock for the
+# whole run (T-0839, runbook section 10). Re-exec under the wrapper; the nested copy sees DIQ_DC1_LOCK_HELD.
+if not os.environ.get("DIQ_DC1_LOCK_HELD"):
+    os.execv(os.path.join(REPO, "lab", "windows", "bin", "with-dc1-lock"),
+             ["with-dc1-lock", "--", sys.executable, os.path.abspath(__file__), *sys.argv[1:]])
+print(f"agent-verify: dc1 lock held (pid {os.environ['DIQ_DC1_LOCK_HELD']}, waited {os.environ.get('DIQ_DC1_LOCK_WAITED', '0')}s)",
+      file=sys.stderr)
 
 try:
     from winrm.protocol import Protocol
 except ImportError:
     sys.exit("agent-verify: pip install pywinrm requests-ntlm")
 
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 WIX = "5.0.2"  # pinned; licence MS-RL, build tool only (licence register)
 DOTNET_CHANNEL = "8.0"
 
@@ -114,7 +124,8 @@ $env:DOTNET_ROOT='C:\\lab\\tools\\dotnet'; $env:PATH='C:\\lab\\tools\\dotnet;'+$
             break
     rc, out = dc.ps("Get-Content C:\\lab\\out\\run.log -Raw")
     out = "\n".join(l for l in out.splitlines() if not l.startswith("#< CLIXML") and not l.startswith("<Objs"))
-    open(a.log, "w").write(hashes + "\n" + out + "\n")
+    lock = f"dc1 lock held by pid {os.environ['DIQ_DC1_LOCK_HELD']} for the whole run, waited {os.environ.get('DIQ_DC1_LOCK_WAITED', '0')}s"
+    open(a.log, "w").write(lock + "\n" + hashes + "\n" + out + "\n")
     print(out)
     sys.exit(0 if "SUMMARY failures=0" in out else 1)
 
