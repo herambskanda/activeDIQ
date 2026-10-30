@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -106,6 +107,17 @@ import (
 )
 
 func main() { _ = os.Getenv; _ = config.Load; _ = profile.Windows }
+`,
+	"internal/directory/graphnames/names.go": `package graphnames
+
+// Microsoft's own names, registered in manifest.json externalVocabulary (ADR-0002 E-1).
+const (
+	OnPremisesSyncEnabled     = "onPremisesSyncEnabled"
+	AttrOnPremisesSyncEnabled = "onPremisesSyncEnabled"
+	OnPremisesDomainName      = "onPremisesDomainName"
+	OnPremisesImmutableID     = "onPremisesImmutableId"
+	AnchorOnpremSID           = "onprem_sid"
+)
 `,
 	"internal/directory/ldapfilter/f.go": "package ldapfilter\n\nimport \"example.test/diq/internal/platform/tenant\"\n\nvar _ = tenant.New\n",
 }
@@ -556,5 +568,151 @@ func TestActivationRowCannotBeDeleted(t *testing.T) {
 func TestUnknownCheck(t *testing.T) {
 	if _, _, err := Run(repo(t, nil), defaultManifest, []string{"P9"}, onlyMain); err == nil {
 		t.Fatal("unknown check should be an error")
+	}
+}
+
+// --- P1 erratum E-1: registered external vocabulary ------------------------------------------
+
+// withVocab returns the real manifest with its externalVocabulary replaced.
+func withVocab(t *testing.T, entries string) map[string]string {
+	t.Helper()
+	b, err := os.ReadFile("manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	m["externalVocabulary"] = json.RawMessage(entries)
+	out, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return map[string]string{"tools/fitness/profiles/manifest.json": string(out)}
+}
+
+func TestP1ExternalVocabularyIdentifiers(t *testing.T) {
+	for _, id := range []string{"IsOnPremDeployment", "OnPremisesProfile", "OnPremisesSyncEnabledForSaaS", "onPremMode", "SaaSOnPremisesDomainName"} {
+		t.Run("fails/"+id, func(t *testing.T) {
+			root := repo(t, map[string]string{"internal/directory/dn/dn.go": "package dn\n\nvar " + id + " = 1\n"})
+			expect(t, run(t, root, "P1"), "P1", "internal/directory/dn/dn.go:3", id, "names a deployment profile")
+		})
+	}
+	// The registered names pass: graphnames/names.go in the baseline holds four of them, and a
+	// domain package may use them as well.
+	src := "package dn\n\nvar (\n\tOnPremisesSyncEnabled = 1\n\tAttrOnPremisesSyncEnabled = 1\n\tOnPremisesDomainName = 1\n\tAnchorOnpremSID = 1\n\tonPremisesImmutableId = 1\n)\n"
+	root := repo(t, map[string]string{"internal/directory/dn/dn.go": src})
+	if vs := run(t, root, "P1"); len(vs) != 0 {
+		t.Fatalf("registered Graph and token-claim names pass:\n%s", dump(vs))
+	}
+}
+
+func TestP1ExternalVocabularyDoesNotLoosenCapabilityValues(t *testing.T) {
+	root := repo(t, map[string]string{"internal/platform/capability/capability.go": "package capability\n\ntype ID string\n\nconst (\n\tDirectoryAD ID = \"directory.ad\"\n\tDirectoryEntra ID = \"directory.entra\"\n\tProvisioning ID = \"tenant-provisioning\"\n\tHosted ID = \"onprem-mode\"\n)\n"})
+	expect(t, run(t, root, "P1"), "P1", "internal/platform/capability/capability.go:9", "onprem-mode", "named after a profile")
+}
+
+func TestP1ExternalVocabularyEntryRefused(t *testing.T) {
+	const src = "https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0"
+	for name, c := range map[string]struct{ entry, id, why string }{
+		"no source":        {`{"term":"onPremisesSyncEnabled","kind":"graph-property","source":""}`, "OnPremisesSyncEnabled", "no https source"},
+		"http source":      {`{"term":"onPremisesSyncEnabled","kind":"graph-property","source":"http://learn.microsoft.com/x"}`, "OnPremisesSyncEnabled", "no https source"},
+		"unknown kind":     {`{"term":"onPremisesSyncEnabled","kind":"invented","source":"` + src + `"}`, "OnPremisesSyncEnabled", "kind"},
+		"no denylist word": {`{"term":"displayName","kind":"graph-property","source":"` + src + `"}`, "DisplayName", "needs no registration"},
+		"token onprem":     {`{"term":"onprem","kind":"graph-property","source":"` + src + `"}`, "OnPremMode", "a denylist token"},
+		"token on_prem":    {`{"term":"on_prem","kind":"graph-property","source":"` + src + `"}`, "OnPremMode", "a denylist token"},
+		"token saas":       {`{"term":"SaaS","kind":"graph-property","source":"` + src + `"}`, "IsSaaS", "a denylist token"},
+		"stem onPremises":  {`{"term":"onPremises","kind":"graph-property","source":"` + src + `"}`, "OnPremisesProfile", "refused stem"},
+		"stem onPremise":   {`{"term":"onPremise","kind":"graph-property","source":"` + src + `"}`, "OnPremiseProfile", "refused stem"},
+		"stale":            {`{"term":"onPremisesSecurityIdentifier","kind":"graph-property","source":"` + src + `"}`, "Unrelated", "stale"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			files := withVocab(t, "["+c.entry+"]")
+			files["internal/directory/dn/dn.go"] = "package dn\n\nvar " + c.id + " = 1\n"
+			vs := run(t, repo(t, files), "P1")
+			expect(t, vs, "P1", "tools/fitness/profiles/manifest.json", "externalVocabulary entry", c.why)
+		})
+	}
+}
+
+// A refused entry cuts nothing: registering the stem must not exempt the identifier that holds it.
+func TestP1RefusedEntryDoesNotExempt(t *testing.T) {
+	files := withVocab(t, `[{"term":"onPremises","kind":"graph-segment","source":"https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0"}]`)
+	files["internal/directory/dn/dn.go"] = "package dn\n\nvar OnPremisesProfile = 1\n"
+	expect(t, run(t, repo(t, files), "P1"), "P1", "internal/directory/dn/dn.go:3", "names a deployment profile")
+}
+
+func TestP1ExternalVocabularyAcceptsOnpremSID(t *testing.T) {
+	files := withVocab(t, `[{"term":"onprem_sid","kind":"token-claim","source":"https://learn.microsoft.com/en-us/entra/identity-platform/optional-claims-reference"}]`)
+	files["internal/directory/dn/dn.go"] = "package dn\n\nvar AnchorOnpremSID = 1\n"
+	files["internal/directory/graphnames/names.go"] = "package graphnames\n"
+	if vs := run(t, repo(t, files), "P1"); len(vs) != 0 {
+		t.Fatalf("onprem_sid with AnchorOnpremSID in the tree validates:\n%s", dump(vs))
+	}
+}
+
+func TestP1RealRegistryIsSourced(t *testing.T) {
+	cfg, err := LoadConfig("../../..", defaultManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.ExternalVocabulary) == 0 {
+		t.Fatal("the registry registers the terms the tree uses")
+	}
+	for _, e := range cfg.ExternalVocabulary {
+		if !strings.HasPrefix(e.Source, "https://learn.microsoft.com/") {
+			t.Errorf("%s: source %q is not a Microsoft Learn page", e.Term, e.Source)
+		}
+	}
+}
+
+// --- P1 erratum E-2: forwarding the environment ------------------------------------------------
+
+func TestP1EnvironForwarding(t *testing.T) {
+	const head = "package dn\n\nimport (\n\t\"os\"\n\t\"os/exec\"\n)\n\nconst envA = \"X=1\"\n\nvar _ = exec.Command\nvar _ = os.Args\n\n"
+	for name, body := range map[string]string{
+		"plain":            "func F(cmd *exec.Cmd) { cmd.Env = os.Environ() }\n",
+		"append":           "func F(cmd *exec.Cmd) { cmd.Env = append(os.Environ(), \"X=1\") }\n",
+		"append several":   "func F(cmd *exec.Cmd) { cmd.Env = append(os.Environ(), \"X=1\", \"CGO_ENABLED=0\") }\n",
+		"constant concat":  "func F(cmd *exec.Cmd) { cmd.Env = append(os.Environ(), \"GOTRACEBACK=\"+\"crash\") }\n",
+		"package constant": "func F(cmd *exec.Cmd) { cmd.Env = append(os.Environ(), envA) }\n",
+		"method":           "func F(cmd *exec.Cmd) { cmd.Env = append(cmd.Environ(), \"GOOS=linux\") }\n",
+	} {
+		t.Run("allowed/"+name, func(t *testing.T) {
+			root := repo(t, map[string]string{"internal/directory/dn/dn.go": head + body})
+			if vs := run(t, root, "P1"); len(vs) != 0 {
+				t.Fatalf("no finding:\n%s", dump(vs))
+			}
+		})
+	}
+	for name, c := range map[string]struct{ body, why string }{
+		"range":          {"func F() { for range os.Environ() {} }\n", "other than as the right side"},
+		"index":          {"func F() string { return os.Environ()[0] }\n", "other than as the right side"},
+		"argument":       {"func F(f func([]string)) { f(os.Environ()) }\n", "passed on or consumed"},
+		"range method":   {"func F(cmd *exec.Cmd) { for range cmd.Environ() {} }\n", "other than as the right side"},
+		"profile name":   {"func F(cmd *exec.Cmd) { cmd.Env = append(os.Environ(), \"ACTIVEDIQ_PROFILE=saas\") }\n", "profile-selecting"},
+		"profile method": {"func F(cmd *exec.Cmd) { cmd.Env = append(cmd.Environ(), \"DIQ_SAAS=1\") }\n", "profile-selecting"},
+		"variable arg":   {"func F(cmd *exec.Cmd, v string) { cmd.Env = append(os.Environ(), v) }\n", "not a constant string"},
+		"prefix arg":     {"func F(cmd *exec.Cmd, v string) { cmd.Env = append(os.Environ(), \"X=\"+v) }\n", "not a constant string"},
+		"spread":         {"func F(cmd *exec.Cmd, v []string) { cmd.Env = append(os.Environ(), v...) }\n", "passed on or consumed"},
+		"not Env field":  {"func F(cmd *exec.Cmd) { x := os.Environ(); _ = x }\n", "other than as the right side"},
+		"other field":    {"type T struct{ Vars []string }\n\nfunc F(t *T) { t.Vars = os.Environ() }\n", "other than a child's Env"},
+		"append first":   {"func F(cmd *exec.Cmd) { cmd.Env = append([]string{\"X=1\"}, os.Environ()...) }\n", "passed on or consumed"},
+	} {
+		t.Run("fails/"+name, func(t *testing.T) {
+			root := repo(t, map[string]string{"internal/directory/dn/dn.go": head + c.body})
+			expect(t, run(t, root, "P1"), "P1", "internal/directory/dn/dn.go:", "Environ", c.why)
+		})
+	}
+}
+
+func TestP1EnvironInConfigLoaderAndToolsIsExempt(t *testing.T) {
+	root := repo(t, map[string]string{
+		"internal/compose/config/env.go": "package config\n\nimport \"os\"\n\nfunc All() []string { return os.Environ() }\n",
+		"tools/x/x.go":                   "package x\n\nimport \"os\"\n\nfunc All() []string { return os.Environ() }\n",
+	})
+	if vs := run(t, root, "P1"); len(vs) != 0 {
+		t.Fatalf("the config loader and tools may read the environment:\n%s", dump(vs))
 	}
 }
