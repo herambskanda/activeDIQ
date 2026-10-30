@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/skenzeriq/activediq/internal/directory/attr/filetime"
+	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/authz/authztest"
@@ -47,6 +48,40 @@ func Test_inventory_datasets_register(t *testing.T) {
 			if _, ok := reg.Dataset(report.DatasetID(id)); !ok {
 				t.Fatalf("%s not registered", id)
 			}
+		}
+	})
+}
+
+// A dataset column that reads a secret attribute is refused at registration (D8, TM-TB15-T3), for every
+// name the writer refuses; the keys the inventory datasets read pass the same predicate.
+func Test_secret_attribute_keys_are_refused(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		var sc reportsql.Schema
+		if err := e.tx(t, e.a, func(ctx context.Context, tx store.Tx) (err error) { sc, err = reportsql.CatalogSchema(ctx, tx); return }); err != nil {
+			t.Fatal(err)
+		}
+		keys := append(secretattr.Static(), "unicodePwd", "msDS-KeyCredentialLink", "UNICODEPWD", "ms-Mcs-AdmPwd;range=0-1", "1.2.840.113556.1.4.90")
+		for _, k := range keys {
+			ds := inventory.Datasets()[1] // computers
+			ds.Columns = append(slices.Clone(ds.Columns), report.Column{ID: "leak", Label: "Leak", Type: report.TypeText, Filter: []report.Op{report.OpEq},
+				Source: report.JSONAttr{Col: "attributes", Key: k, As: report.TypeText}})
+			_, err := reportsql.NewRegistry(reportsql.Options{Schema: sc, SecretKey: inventory.SecretKey}, ds)
+			if err == nil {
+				t.Errorf("a column reading %q was registered", k)
+			}
+		}
+		// every JSON key the shipped datasets read is not a secret
+		for _, ds := range inventory.Datasets() {
+			for _, c := range ds.Columns {
+				if j, ok := c.Source.(report.JSONAttr); ok && inventory.SecretKey(j.Key) {
+					t.Errorf("%s.%s reads the secret key %q", ds.ID, c.ID, j.Key)
+				}
+			}
+		}
+		// and with no predicate configured, a JSON column is refused outright
+		if _, err := reportsql.NewRegistry(reportsql.Options{Schema: sc}, inventory.Datasets()[1]); err == nil {
+			t.Error("a registry with no SecretKey predicate accepted a JSON column")
 		}
 	})
 }

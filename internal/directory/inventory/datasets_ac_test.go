@@ -283,3 +283,74 @@ func Test_locked_out_filter_count_and_page(t *testing.T) {
 		}
 	})
 }
+
+// The service-account signal (spec §6.7) and the computer activity rule (CMP-02).
+func Test_service_account_signal_and_computer_activity(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		reg := e.registry(t)
+		c := e.adA
+		e.hStructure(t, c)
+		now := hBase.Add(100 * 24 * time.Hour)
+		at := now.Add(-time.Hour)
+		yes, no := true, false
+		mk := func(k int, sam string, rid uint32, spn *bool) inventory.Observation {
+			return hUser{guid: hGUID(1, k), sam: sam, rid: rid, uac: i64(uacNormal), read: 15, spn: spn}.obs()
+		}
+		unread := mk(4, "spn-unread", 1104, nil)
+		unread.InputsRead = 0
+		unread.HasSPN = nil
+		if _, err := e.populate(t, c, at, mk(1, "svc-sql", 1101, &yes), mk(2, "plain", 1102, &no), mk(3, "krbtgt", 502, &yes), unread); err != nil {
+			t.Fatal(err)
+		}
+		res := e.run(t, reg, hQuery{dataset: inventory.DatasetUsers, cols: []report.ColumnID{"sam_account_name", "probable_service_account", "probable_service_account_reason"}, scope: e.scopeNC(c), now: now})
+		for sam, want := range map[string][2]string{
+			"svc-sql": {"b:true", "e:spn_set"}, "plain": {"b:false", "e:none"}, "krbtgt": {"b:false", "e:none"}, "spn-unread": {"a:", "a:"}} {
+			found := false
+			for _, r := range res.rows {
+				if string(r["sam_account_name"].DigestValue()) != sam {
+					continue
+				}
+				found = true
+				if got := [2]string{cellKey(r["probable_service_account"]), cellKey(r["probable_service_account_reason"])}; got != want {
+					t.Errorf("%s: %v, want %v", sam, got, want)
+				}
+			}
+			if !found {
+				t.Errorf("%s: no row", sam)
+			}
+		}
+
+		// computers: the later of the replicated logon and pwdLastSet, whenCreated when neither is set
+		comp := func(k int, sam string, read inventory.InputsRead, logon, pwd time.Time) inventory.Observation {
+			o := hUser{guid: hGUID(4, k), sam: sam, rid: uint32(3000 + k), uac: i64(uacWks), read: read, pwdLastSet: pwd, kind: inventory.KindComputer, class: "computer"}.obs()
+			o.LastLogonTimestamp = logon
+			return o
+		}
+		d := func(n int) time.Time { return now.Add(-time.Duration(n) * 24 * time.Hour) }
+		if _, err := e.populate(t, c, at,
+			comp(1, "logon-later", 15, d(5), d(30)), comp(2, "pwd-later", 15, d(40), d(3)), comp(3, "neither", 15, time.Time{}, time.Time{}),
+			comp(4, "unread", 1|4, time.Time{}, time.Time{})); err != nil {
+			t.Fatal(err)
+		}
+		cres := e.run(t, reg, hQuery{dataset: inventory.DatasetComputers, cols: []report.ColumnID{"sam_account_name", "last_activity", "activity_source"}, scope: e.scopeNC(c), now: now})
+		created := report.TimeCell(hBase.Add(-24 * time.Hour))
+		for sam, want := range map[string][2]string{
+			"logon-later": {cellKey(report.TimeCell(d(5))), "e:logon"}, "pwd-later": {cellKey(report.TimeCell(d(3))), "e:password_set"},
+			"neither": {cellKey(created), "e:created"}, "unread": {cellKey(report.Unknown()), cellKey(report.Unknown())}} {
+			found := false
+			for _, r := range cres.rows {
+				if string(r["sam_account_name"].DigestValue()) != sam {
+					continue
+				}
+				found = true
+				if got := [2]string{cellKey(r["last_activity"]), cellKey(r["activity_source"])}; got != want {
+					t.Errorf("%s: %v, want %v", sam, got, want)
+				}
+			}
+			if !found {
+				t.Errorf("%s: no row", sam)
+			}
+		}
+	})
+}
