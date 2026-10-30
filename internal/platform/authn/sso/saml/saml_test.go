@@ -307,3 +307,69 @@ func TestSAMLConfig_AcceptsNonOASISMFAEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// MFA-2b (X-18): single-factor Microsoft and SAML 1.x URIs, and case or whitespace variants of the OASIS
+// prefix, are not MFA evidence. Save, Start and Complete refuse with saml.config, alone or beside an
+// acceptable value.
+func TestSAMLConfig_RefusesSingleFactorMicrosoftURIsAsMFAEvidence(t *testing.T) {
+	for _, bad := range []string{
+		"urn:federation:authentication:windows",
+		"URN:Federation:Authentication:Windows",
+		"http://schemas.microsoft.com/ws/2008/06/identity/authenticationmethod/password",
+		"http://schemas.microsoft.com/ws/2008/06/identity/authenticationmethod/windows",
+		"HTTP://Schemas.Microsoft.com/ws/2008/06/identity/authenticationmethod/Password",
+		"urn:oasis:names:tc:SAML:1.0:am:password",
+		"URN:OASIS:names:tc:SAML:1.0:am:X509-PKI",
+		"URN:OASIS:names:tc:SAML:2.0:ac:classes:Password",
+		"urn:oasis:names:tc:saml:2.0:ac:classes:passwordprotectedtransport",
+		" urn:oasis:names:tc:SAML:2.0:ac:classes:Password",
+		"urn:oasis:names:tc:SAML:2.0:ac:classes:Password ",
+		"\turn:federation:authentication:windows",
+		" https://idp.example.test/ac/mfa",
+		"https://idp.example.test/ac/mfa\n",
+		"urn:ietf:rfc:1510",
+		"URN:IETF:RFC:1510",
+		"urn:ietf:rfc:2945",
+		"urn:ietf:rfc:2246",
+		"urn:ietf:rfc:3075",
+		"https://refeds.org/profile/sfa",
+		"HTTPS://Refeds.org/profile/SFA",
+		"http://schemas.microsoft.com/claims/wiaormultiauthn",
+	} {
+		for name, evidence := range map[string][]string{
+			"alone":          {bad},
+			"beside allowed": {"https://idp.example.test/ac/mfa", bad},
+		} {
+			r := newRig(t)
+			r.env.Config.MFAMode, r.env.Config.MFAEvidence = sso.MFAClaim, evidence
+			c := r.env.Config
+			if got := sso.ReasonOf(saml.ValidateConfig(&c)); got != saml.ReasonConfig {
+				t.Errorf("%q %s: ValidateConfig reason = %q", bad, name, got)
+			}
+			if _, _, err := r.v.Start(context.Background(), tenant.ID{}, r.env.IdP(), sso.IntentSignin); sso.ReasonOf(err) != saml.ReasonConfig {
+				t.Errorf("%q %s: Start reason = %q", bad, name, sso.ReasonOf(err))
+			}
+			if _, err := r.complete(samltest.Form(r.env.Render(r.env.Good(r.tx))), r.tx); sso.ReasonOf(err) != saml.ReasonConfig {
+				t.Errorf("%q %s: Complete reason = %q", bad, name, sso.ReasonOf(err))
+			}
+		}
+	}
+}
+
+// The refusals above must not catch the evidence the presets use.
+func TestSAMLConfig_AcceptsMultipleAuthnAndIdPClasses(t *testing.T) {
+	for _, ok := range []string{
+		"http://schemas.microsoft.com/claims/multipleauthn",
+		"https://idp.example.test/ac/mfa",
+		"urn:federation:authentication",
+		"https://refeds.org/profile/mfa",
+		"urn:ietf:rfcs:1510",
+	} {
+		r := newRig(t)
+		r.env.Config.MFAMode, r.env.Config.MFAEvidence = sso.MFAClaim, []string{ok}
+		c := r.env.Config
+		if err := saml.ValidateConfig(&c); err != nil {
+			t.Errorf("%q refused: %v", ok, err)
+		}
+	}
+}
