@@ -115,6 +115,15 @@
         "sd.write"
       ],
       "package": "internal/directory/sd"
+    },
+    {
+      "name": "go/cellsafe",
+      "language": "go",
+      "tier": "S",
+      "units": [
+        "cellsafe"
+      ],
+      "package": "internal/platform/export/cellsafe"
     }
   ],
   "fuzz": [
@@ -236,6 +245,14 @@
         "decodeRoundTrip",
         "daclOnly",
         "noPanic"
+      ]
+    },
+    {
+      "implementation": "go/cellsafe",
+      "unit": "cellsafe",
+      "target": "FuzzClassify",
+      "properties": [
+        "noFormulaLead"
       ]
     }
   ]
