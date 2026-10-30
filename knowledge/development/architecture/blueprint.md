@@ -403,7 +403,7 @@ personal           -> audit/canon, authority, operation/step, store, tenant
 notify             -> authority, jobs, operation/step, store, tenant
 audit              -> audit/canon, audit/chain, authority, jobs, notify, operation/step, personal, store, tenant
 authz              -> audit, authority, operation/step, store, tenant
-authn              -> audit, authority, notify, operation/step, store, tenant
+authn              -> audit, authority, jobs, notify, operation/step, store, tenant
 operation          -> audit, audit/canon, authn, authority, authz, jobs, notify, operation/step, personal, store, tenant
 module             -> authz, operation
 authz/actions      -> authz, operation, (anything operation may import)
