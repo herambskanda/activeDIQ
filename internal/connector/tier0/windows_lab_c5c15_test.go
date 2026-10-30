@@ -31,8 +31,8 @@ import (
 )
 
 const (
-	lDomDN  = "DC=win,DC=activediq,DC=test"
-	wConf = "CN=Configuration," + lDomDN
+	lDomDN = "DC=win,DC=activediq,DC=test"
+	wConf  = "CN=Configuration," + lDomDN
 )
 
 func lPath(envVar, def string) string {
