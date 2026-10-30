@@ -116,6 +116,15 @@ func (f *pForest) matches(t authz.ScopeTerm, i int) bool {
 	return false
 }
 
+// view is node i as a search result: its connection, its live parent chain nearest first, complete.
+func (f *pForest) view(i int) authz.ObjectView {
+	v := authz.ObjectView{Connection: mustID2(f.nodes[i].conn), ID: mustID2(f.nodes[i].id), Complete: true}
+	for _, j := range f.chain(i)[1:] {
+		v.Ancestors = append(v.Ancestors, mustID2(f.nodes[j].id))
+	}
+	return v
+}
+
 func mustID2(s string) authz.ObjectID {
 	id, err := authz.ParseObjectID(s)
 	if err != nil {
@@ -270,6 +279,12 @@ func propRun(t *testing.T, supportedOnly bool, seeds int) {
 		}
 		for i := range f.nodes {
 			got, want := f.admits(s, i), oracle(t, as, tok, f, i)
+			// The in-memory matcher search uses (T-0875) must agree with the term reading above, and so
+			// with the oracle, for every object.
+			if view := f.view(i); s.Admits(view) != got {
+				t.Fatalf("seed %d node %d (%+v): ReadScope.Admits=%v but terms say %v\nscope=%+v token=%v",
+					seed, i, f.nodes[i], s.Admits(view), got, s.Terms(), s.Reasons())
+			}
 			if supportedOnly && got != want {
 				t.Fatalf("seed %d node %d (%+v): scope=%v oracle=%v\nassignments=%+v\ntoken=%+v\nscope=%+v token=%v",
 					seed, i, f.nodes[i], got, want, as, tok, s.Terms(), s.Reasons())
