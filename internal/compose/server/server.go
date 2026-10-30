@@ -165,7 +165,7 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	tags = append(tags, setupTags...)
 	// directory.users.search: the connection registry for the active connection and its service-account
 	// gate, the connector source for the ScopedSearch RPC (over the tunnel the connector dialled).
-	dirTag, err := buildDirectory(db, conns, src)
+	dirTag, err := buildDirectory(db, conns, csrc)
 	if err != nil {
 		return err
 	}
