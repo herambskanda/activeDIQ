@@ -268,7 +268,9 @@ service.
    - `internal/compose/server`, for the embedded transport and the sealed-credential source;
    - `internal/compose/connector`, for the remote role and local credentials (T-0665: `connector.Run`
      serves one composite ConnectorServer on the dial-out tunnel, with no listener; the tunnel client
-     is the shared `internal/platform/fleet/tunnelclient`, also used by `compose/agent`);
+     is the contract-agnostic `internal/platform/fleet/tunnelclient` over `fleet.Frame`, also used by
+     `compose/agent`, and the `activediq.fleet.v1` binding (frame conversion, the `Tunnel` stream and
+     call) is the one shared package `internal/compose/tunnelbind`, handed in as `Config.Open`; T-0946);
    - `internal/compose/t0connector` [post-v1].
 
    `tools: inspect` may also import it. `compose/server` hands the embedded transport to
