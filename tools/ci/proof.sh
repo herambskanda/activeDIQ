@@ -1579,5 +1579,84 @@ must_fail_with "fitness-built-msi on a critical ErrorControl" 'ErrorControl' bui
 must_fail_with "fitness-built-msi when no MSI exists and one is required (release job)" 'no built MSI found' builtmsi -require -glob "$bm/none/*.msi"
 must_pass "fitness-built-msi prints inactive, not a pass, when no MSI exists" bash -c "go run ./tools/fitness/builtmsi -glob '$bm/none/*.msi' | grep -q '^fitness-built-msi: inactive'"
 
+# --- fitness-sso (T-0211, console-sso.md §13 FIT-SSO-1/2), the real CLI on throw-away trees ---------
+# mk_sso <dir> [with-oidc]: a small repo with a two-check spec per protocol, complete corpus records, a SAML
+# package that imports the SAML libraries (inside the fence) and a go.mod at the floors.
+sso() { go run ./tools/fitness/sso "$@"; }
+mk_sso() {
+  local d=$1; local c=$d/internal/platform/authn/sso/testdata/corpus
+  mkdir -p "$d/knowledge/development/architecture" "$c/saml" "$d/internal/platform/authn/sso/saml" "$d/internal/platform/authn/sso/oidc"
+  printf 'module github.com/skenzeriq/activediq\n\ngo 1.27.3\n\nrequire (\n\tgithub.com/russellhaering/goxmldsig v1.6.1\n)\n' >"$d/go.mod"
+  printf '## 4. OIDC checks\n\n| # | Check |\n| --- | --- |\n| OIDC-1 | a |\n| OIDC-2 | b |\n\n## 5. SAML checks\n\n| # | Check |\n| --- | --- |\n| SAML-1 | a |\n| SAML-2 | b |\n\n## 6. Shared\n\n| SSO-1 | c |\n' >"$d/knowledge/development/architecture/console-sso.md"
+  printf 'package saml\n\nimport _ "github.com/russellhaering/goxmldsig"\n' >"$d/internal/platform/authn/sso/saml/s.go"
+  local i=0 cls
+  for cls in forged wrapped replayed misaddressed malformed; do
+    i=$((i + 1)); printf '{"id":"S-%s","class":"%s","cites":["SAML-%s","SSO-1"],"build":"b","expect":"refuse","reason":"saml.x"}\n' "$i" "$cls" "$(( (i % 2) + 1 ))" >"$c/saml/S-$i.json"
+  done
+  if [ "${2:-}" = with-oidc ]; then
+    mkdir -p "$c/oidc"; i=0
+    for cls in forged replayed misaddressed malformed; do
+      i=$((i + 1)); printf '{"id":"O-%s","class":"%s","cites":["OIDC-%s"],"build":"b","expect":"refuse","reason":"oidc.x"}\n' "$i" "$cls" "$(( (i % 2) + 1 ))" >"$c/oidc/O-$i.json"
+    done
+  fi
+}
+ss="$tmp/sso"
+mk_sso "$ss/clean" with-oidc
+must_pass "fitness-sso on a fenced tree with a complete corpus" sso -root "$ss/clean" -static
+mk_sso "$ss/pend"
+must_pass "fitness-sso lists the missing OIDC corpus as pending" bash -c "go run ./tools/fitness/sso -root '$ss/pend' -static | grep -q 'PENDING: oidc corpus'"
+# FIT-SSO-1 imports (acceptance 1)
+mk_sso "$ss/imp" with-oidc; mkdir -p "$ss/imp/internal/platform/other"
+printf 'package other\n\nimport _ "github.com/russellhaering/goxmldsig"\n' >"$ss/imp/internal/platform/other/x.go"
+must_fail_with "fitness-sso on goxmldsig imported outside sso/saml, naming the file" 'internal/platform/other/x.go:3: imports github.com/russellhaering/goxmldsig' sso -root "$ss/imp" -static
+for lib in github.com/beevik/etree github.com/mattermost/xml-roundtrip-validator github.com/russellhaering/gosaml2; do
+  mk_sso "$ss/imp2" with-oidc; mkdir -p "$ss/imp2/internal/platform/other"; printf 'package other\n\nimport _ "%s"\n' "$lib" >"$ss/imp2/internal/platform/other/x.go"
+  must_fail_with "fitness-sso on $lib outside sso/saml" "imports $lib" sso -root "$ss/imp2" -static; rm -rf "$ss/imp2"
+done
+for lib in github.com/go-jose/go-jose/v4 github.com/coreos/go-oidc/v3/oidc; do
+  mk_sso "$ss/imp3" with-oidc; printf 'package saml\n\nimport _ "%s"\n' "$lib" >"$ss/imp3/internal/platform/authn/sso/saml/j.go"
+  must_fail_with "fitness-sso on $lib imported from sso/saml" "imports $lib; only internal/platform/authn/sso/oidc" sso -root "$ss/imp3" -static; rm -rf "$ss/imp3"
+done
+mk_sso "$ss/imp4" with-oidc; mkdir -p "$ss/imp4/internal/platform/authn/session"
+printf 'package session\n\nimport _ "encoding/xml"\n' >"$ss/imp4/internal/platform/authn/session/x_test.go"
+must_fail_with "fitness-sso on encoding/xml under platform/authn outside sso/saml (a test file too)" 'authn/session/x_test.go:3: imports encoding/xml' sso -root "$ss/imp4" -static
+rm "$ss/imp4/internal/platform/authn/session/x_test.go"; mkdir -p "$ss/imp4/internal/agentmodules"
+printf 'package agentmodules\n\nimport _ "encoding/xml"\n' >"$ss/imp4/internal/agentmodules/x.go"
+must_pass "fitness-sso allows encoding/xml outside platform/authn" sso -root "$ss/imp4" -static
+# FIT-SSO-1 go.mod floors (acceptance 2)
+mk_sso "$ss/floor" with-oidc; sed -i 's/goxmldsig v1.6.1/goxmldsig v1.5.0/' "$ss/floor/go.mod"
+must_fail_with "fitness-sso on go.mod pinning goxmldsig v1.5.0" 'requires github.com/russellhaering/goxmldsig v1.5.0; the floor is v1.6.0' sso -root "$ss/floor" -static
+mk_sso "$ss/floor2" with-oidc; printf 'require github.com/russellhaering/gosaml2 v0.11.0\n' >>"$ss/floor2/go.mod"
+must_fail_with "fitness-sso on go.mod pinning gosaml2 v0.11.0" 'gosaml2 v0.11.0; the floor is v0.12.0' sso -root "$ss/floor2" -static
+mk_sso "$ss/floor3" with-oidc; printf 'replace github.com/russellhaering/goxmldsig => github.com/russellhaering/goxmldsig v1.5.0\n' >>"$ss/floor3/go.mod"
+must_fail_with "fitness-sso on a replace that lowers goxmldsig" 'replaces github.com/russellhaering/goxmldsig with v1.5.0' sso -root "$ss/floor3" -static
+mk_sso "$ss/floor4" with-oidc; printf 'replace github.com/russellhaering/goxmldsig => ../goxmldsig\n' >>"$ss/floor4/go.mod"
+must_fail_with "fitness-sso on a replace to a local path" 'replaces github.com/russellhaering/goxmldsig with the path' sso -root "$ss/floor4" -static
+# FIT-SSO-2 corpus (acceptance 3)
+mk_sso "$ss/c1" with-oidc; rm "$ss/c1/internal/platform/authn/sso/testdata/corpus/saml/S-1.json" "$ss/c1/internal/platform/authn/sso/testdata/corpus/saml/S-3.json" "$ss/c1/internal/platform/authn/sso/testdata/corpus/saml/S-5.json"
+must_fail_with "fitness-sso on a corpus that cites no record for SAML-2" 'saml: SAML-2 is cited by no corpus record' sso -root "$ss/c1" -static
+mk_sso "$ss/c2" with-oidc; sed -i 's/^| SAML-2 | b |$/| SAML-2 | b |\n| SAML-3 | c |/' "$ss/c2/knowledge/development/architecture/console-sso.md"
+must_fail_with "fitness-sso when the spec gains a check the corpus does not cite" 'saml: SAML-3 is cited by no corpus record' sso -root "$ss/c2" -static
+mk_sso "$ss/c3" with-oidc; sed -i 's/^| OIDC-2 | b |$/| OIDC-2 | b |\n| OIDC-3 | c |/' "$ss/c3/knowledge/development/architecture/console-sso.md"
+must_fail_with "fitness-sso when an OIDC check has no record" 'oidc: OIDC-3 is cited by no corpus record' sso -root "$ss/c3" -static
+mk_sso "$ss/c4" with-oidc; rm "$ss/c4/internal/platform/authn/sso/testdata/corpus/saml/S-2.json"
+must_fail_with "fitness-sso on a protocol with no wrapped record" 'saml: no "wrapped" record' sso -root "$ss/c4" -static
+mk_sso "$ss/c5" with-oidc; sed -i 's/"SAML-1"/"SAML-99"/' "$ss/c5/internal/platform/authn/sso/testdata/corpus/saml/S-2.json"
+must_fail_with "fitness-sso on a record citing a check the spec does not have" 'cites "SAML-99"' sso -root "$ss/c5" -static
+mk_sso "$ss/c6" with-oidc; sed -i 's/"id":"S-1"/"id":"S-one"/' "$ss/c6/internal/platform/authn/sso/testdata/corpus/saml/S-1.json"
+must_fail_with "fitness-sso on a record whose id is not its file name" 'id "S-one" must equal the file name' sso -root "$ss/c6" -static
+mk_sso "$ss/c7"; mkdir -p "$ss/c7/internal/platform/authn/sso/testdata/corpus/oidc"
+must_fail_with "fitness-sso on an empty OIDC corpus directory (pending only while it is absent)" 'oidc: no corpus records' sso -root "$ss/c7" -static
+mk_sso "$ss/c8"; printf 'package oidc\n\nimport "testing"\n\nfunc TestCorpus(t *testing.T) {}\n' >"$ss/c8/internal/platform/authn/sso/oidc/c_test.go"
+must_fail_with "fitness-sso when oidc declares TestCorpus but has no records" 'oidc: no corpus records' sso -root "$ss/c8" -static
+# FIT-SSO-2 bound subtests, through go test in a throw-away module (SAML only; OIDC pending)
+mk_sso "$ss/b"; printf "package saml\n" >"$ss/b/internal/platform/authn/sso/saml/s.go"
+printf 'package saml\n\nimport "testing"\n\nfunc TestCorpus(t *testing.T) {\n\tfor _, id := range []string{"S-1", "S-2", "S-3", "S-4", "S-5"} {\n\t\tt.Run(id, func(t *testing.T) {})\n\t}\n}\n' >"$ss/b/internal/platform/authn/sso/saml/c_test.go"
+must_pass "fitness-sso runs every corpus record as a passing subtest" sso -root "$ss/b"
+sed -i 's/"S-5"/"S-6"/' "$ss/b/internal/platform/authn/sso/saml/c_test.go"
+must_fail_with "fitness-sso on a corpus record with no subtest" 'subtest-missing.*S-5' sso -root "$ss/b"
+sed -i 's/"S-6"/"S-5"/; s/t.Run(id, func(t \*testing.T) {})/t.Run(id, func(t *testing.T) { if id == "S-3" { t.Skip("x") } })/' "$ss/b/internal/platform/authn/sso/saml/c_test.go"
+must_fail_with "fitness-sso on a skipped corpus subtest" 'TestCorpus/S-3 .*subtest-skip' sso -root "$ss/b"
+
 if [ "$fails" -ne 0 ]; then echo "ci-proof: $fails proof(s) failed" >&2; exit 1; fi
 echo "ci-proof: every gate rejects its violation and accepts clean input"
