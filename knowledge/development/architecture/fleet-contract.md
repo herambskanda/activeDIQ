@@ -91,6 +91,9 @@ old peers ignore); a removed or renumbered field needs `fleet.v2`.
 `internal/platform/fleet/fleetsql` is the server-only SQL of DM-12 (migration `0007_fleet_components`).
 `cmd/connector` and `cmd/agent` cannot link it: it imports `platform/store`, which rule 7 bans for both.
 
+- **Tenant binding** (Issue, Revoke, Reenrol, Withdraw): the permission is evaluated in the principal's own
+  tenant, so each refuses (its forbidden error, before any write) unless `p.Tenant` parses to the target
+  `tid`. A platform principal (empty Tenant) is refused too; platform-wide fleet actions need their own op.
 - **Issue** (`Enrollment.Issue`) needs `fleet.enrollment.issue` and a fresh step-up, both checked before
   any write. It creates a `pending` Component and one token, stores only the SHA-256, and returns the
   plaintext once. Lifetime defaults to 1 h, at most 24 h (a database CHECK too).
@@ -277,6 +280,14 @@ mounts the `Fleet` service on the server `Gateway.NewServer` builds and states e
   enrolled/active to revoked, appends `fleet.component.revoked` (actor = the human or token principal,
   target = component GUID, cert serial) in the same transaction, then calls `StreamCloser`. Revoking an
   unused enrollment token is T-0153's.
+- **CA withdrawal (T-0777)**: `fleetsql.CAAdmin.Withdraw` (`withdraw.go`) is the committing process of the
+  F-POOL-8 bound. It requires the principal's tenant to equal the target tenant, checks `fleet.ca.withdraw` server-side, requires a fresh step-up (`StepUp`, `ErrStepUpRequired`), moves an active or retired `fleet_ca` row to
+  `withdrawn` (sealed key destroyed), inserts the replacement active CA in the same transaction when the
+  withdrawn row was the active one (a retired row's withdrawal keeps the existing active CA), and appends
+  `fleet.ca.withdrawn` (human actor, CA GUID, tenant, CA serial and SPKI, previous state, reason,
+  replacement SPKI) in that transaction. After the commit it calls `PoolInvalidator.Invalidate` and
+  `TenantCloser.CloseTenant` (both required ports; `*gateway.PoolProvider`, `*gateway.Gateway`). No API route yet:
+  the composer and API tickets wire it.
 - **Not yet wired**: the composer must pass the same `Lifecycle` as `Config.Components` and `Streams`
   (the gateway), and expose Revoke on the API; both belong to the compose/API tickets.
 

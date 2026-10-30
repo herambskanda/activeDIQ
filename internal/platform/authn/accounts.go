@@ -208,6 +208,11 @@ const accountCols = `id::text, kind, display_name, COALESCE(email, ''), mfa_requ
   COALESCE(sso_issuer, ''), COALESCE(sso_subject, ''), directory_connection_id::text, directory_object_guid::text,
   anchor_kind, anchor_value, anchor_tid::text, created_at, updated_at`
 
+const (
+	sqlAccountByID  = `SELECT ` + accountCols + ` FROM public.authn_accounts WHERE tenant_id = $1 AND id = $2::uuid`
+	sqlAccountBySSO = `SELECT ` + accountCols + ` FROM public.authn_accounts WHERE tenant_id = $1 AND kind = 'sso' AND sso_issuer = $2 AND sso_subject = $3 AND state <> 'deleted'`
+)
+
 func scanAccount(t tenant.ID, row interface{ Scan(dest ...any) error }) (Account, error) {
 	var (
 		a                        = Account{Tenant: t}
@@ -293,7 +298,7 @@ func (s *Accounts) Get(ctx context.Context, t tenant.ID, id string) (Account, er
 	if t.IsZero() || !uuidRe.MatchString(id) {
 		return Account{}, ErrInvalidInput
 	}
-	return s.one(ctx, t, `WHERE tenant_id = $1 AND id = $2::uuid`, t.String(), id)
+	return s.one(ctx, t, false, t.String(), id)
 }
 
 // LookupSSO finds the live account for an IdP issuer and subject.
@@ -301,14 +306,21 @@ func (s *Accounts) LookupSSO(ctx context.Context, t tenant.ID, issuer, subject s
 	if t.IsZero() || issuer == "" || subject == "" {
 		return Account{}, ErrInvalidInput
 	}
-	return s.one(ctx, t, `WHERE tenant_id = $1 AND kind = 'sso' AND sso_issuer = $2 AND sso_subject = $3 AND state <> 'deleted'`,
-		t.String(), issuer, subject)
+	return s.one(ctx, t, true, t.String(), issuer, subject)
 }
 
-func (s *Accounts) one(ctx context.Context, t tenant.ID, where string, args ...any) (Account, error) {
+// one reads one account: by (tenant, id) when bySSO is false, by (tenant, issuer, subject) when true.
+// Both statements are constants (safe-primitives §7).
+func (s *Accounts) one(ctx context.Context, t tenant.ID, bySSO bool, args ...any) (Account, error) {
 	var out Account
 	err := s.db.WithTenant(ctx, t, func(ctx context.Context, tx store.Tx) error {
-		a, err := scanAccount(t, tx.QueryRow(ctx, `SELECT `+accountCols+` FROM public.authn_accounts `+where, args...))
+		var row interface{ Scan(...any) error }
+		if bySSO {
+			row = tx.QueryRow(ctx, sqlAccountBySSO, args...)
+		} else {
+			row = tx.QueryRow(ctx, sqlAccountByID, args...)
+		}
+		a, err := scanAccount(t, row)
 		out = a
 		return err
 	})

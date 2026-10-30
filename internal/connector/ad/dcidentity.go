@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/go-ldap/ldap/v3"
+	"github.com/skenzeriq/activediq/internal/directory/dn"
 
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 )
@@ -50,9 +51,9 @@ func (s *Session) DCIdentity(ctx context.Context) (DCIdentity, error) {
 
 // siteOf extracts the site from CN=NTDS Settings,CN=<server>,CN=Servers,CN=<site>,CN=Sites,...
 func siteOf(dsServiceName string) string {
-	d, err := ldap.ParseDN(dsServiceName)
-	if err != nil || len(d.RDNs) < 4 || len(d.RDNs[3].Attributes) != 1 {
+	d, err := dn.Parse(dsServiceName, dn.Strict) // the DC's own output; a multi-valued RDN is an error here
+	if err != nil || d.Len() < 4 {
 		return ""
 	}
-	return d.RDNs[3].Attributes[0].Value
+	return d.RDNs()[3].Value()
 }

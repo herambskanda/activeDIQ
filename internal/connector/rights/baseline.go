@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/skenzeriq/activediq/internal/platform/ownerfile"
 	v1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
@@ -82,15 +83,13 @@ func (s FileBaselineStore) Save(b *Baseline) error {
 		return err
 	}
 	dir := filepath.Dir(s.Path)
-	tmp, err := os.CreateTemp(dir, ".baseline-*")
+	// Owner-only from creation (no inherited-ACL window on Windows): T-0242.
+	tmp, err := ownerfile.CreateTemp(dir, ".baseline-*")
 	if err != nil {
 		return err
 	}
 	name := tmp.Name()
 	cleanup := func(e error) error { _ = tmp.Close(); _ = os.Remove(name); return e }
-	if err := tmp.Chmod(0o600); err != nil {
-		return cleanup(err)
-	}
 	if _, err := tmp.Write(raw); err != nil {
 		return cleanup(err)
 	}

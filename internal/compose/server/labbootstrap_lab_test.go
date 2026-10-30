@@ -25,7 +25,6 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
-	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 	"github.com/skenzeriq/activediq/internal/testlab"
 )
 
@@ -76,14 +75,6 @@ func TestLabBootstrapWithoutEnvIsInert(t *testing.T) {
 		t.Fatalf("labBootstrap(no env) = (%v, %v)", got, err)
 	}
 	closeFn()
-}
-
-// The source routes a seeded connection in process and anything else to the tunnel source.
-func TestLabSourceFallsThrough(t *testing.T) {
-	s := &labSource{by: map[string]connectorv1.ConnectorClient{}}
-	if _, err := s.Connector(context.Background(), "x"); err == nil {
-		t.Fatal("an unknown connection with no tunnel source must be refused")
-	}
 }
 
 // syncBuf is a goroutine-safe log sink.

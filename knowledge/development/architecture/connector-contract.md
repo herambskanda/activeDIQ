@@ -757,7 +757,35 @@ nothing against a compromised server there (TM §6.2 "Who this defends against")
 **The baseline survives a restart.** The reported set, as `(GUID, basis, source)` entries plus the
 `verification_id` of the epoch's run, is persisted on the connector host after each completed run
 and appended to when the ratchet adds an entry. It is not a secret and holds identifiers only; it
-is readable and writable by the connector's service identity only. After a restart, the first
+must be readable and writable by the connector's service identity only. **Two files, two states of
+implementation (T-0242):**
+
+- **The ratchet append file** (`gate-ratchet.log`, `write.FileBaseline`) has the full control:
+  mode 0600 on POSIX; on Windows an explicit, protected (non-inheriting) DACL granting full access
+  to the service's token SID and SYSTEM only (`internal/platform/ownerfile`, typed
+  security-descriptor API). An existing file is trusted only if it is a regular file (no symlink
+  or reparse point) **owned by the service identity** (Windows: or SYSTEM or
+  `BUILTIN\Administrators`; POSIX: the effective uid), because an owner can rewrite its own DACL
+  at will. A file owned by anyone else is **refused**, never corrected in place:
+  `LOCAL_RECORD_FAILED`, and the operator removes it. A trusted-owner file with a wider DACL is
+  **corrected** at open and the correction is **recorded** (`baseline_acl_corrected`): its content
+  may have been written by someone else. A failure to correct or to record is
+  `LOCAL_RECORD_FAILED`. The recorder is a required part of the baseline
+  (`write.NewFileBaseline` refuses a nil one) and is checked **before** the file is touched: a
+  recorder-less append fails and leaves the file as found, so the finding is never lost by
+  narrowing the file first. The connector composition wires the slog recorder (local log). The
+  Windows event-log sink for this event is **not yet implemented** (T-0837), so only the local-log
+  half runs today.
+- **The persisted reported set** (`baseline.json`, the file compared after a restart) has **only
+  its writes** owner-only: the rewrite goes through `ownerfile.CreateTemp` (created owner-only
+  atomically, no window under an inherited ACL) and a rename. The owner/DACL check **before
+  `Load` trusts the file**, the refusal of a foreign-owned file and a recorded
+  `baseline_acl_corrected` for it are **not implemented yet**: `rights.FileBaselineStore.Load`
+  reads any content, and the next `Save` narrows a widened file without a record. Until that lands
+  (T-0329, T-0537) a local writer of `baseline.json` can still make a post-restart shrink
+  comparison pass silently, and this section must not be read as a control for that file.
+
+After a restart, the first
 completed run compares against the persisted baseline, so a smaller verification issued right
 after a restart still leaves its record. A missing or unreadable baseline file is itself recorded
 (`tier0_baseline_missing`) in the local log and, on Windows hosts, the Windows event log. If the
@@ -1328,6 +1356,33 @@ CC-WRITE-16 to -22 in TM-F-T0GUARD and TM-F-RIGHTS).
 - v1.1, write group and rights check: [allowedAttributesEffective](https://learn.microsoft.com/en-us/windows/win32/adschema/a-allowedattributeseffective) · [sDRightsEffective](https://learn.microsoft.com/en-us/windows/win32/adschema/a-sdrightseffective) · [Entra Connect source anchor design](https://learn.microsoft.com/en-us/entra/identity/hybrid/connect/plan-connect-design-concepts) · [Graph user resource (onPremisesImmutableId, onPremisesSecurityIdentifier, onPremisesSyncEnabled)](https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0) · [application addKey](https://learn.microsoft.com/en-us/graph/api/application-addkey?view=graph-rest-1.0) · [passwordCredential resource (hint, secretText, keyId)](https://learn.microsoft.com/en-us/graph/api/resources/passwordcredential?view=graph-rest-1.0) · [servicePrincipal resource (keyCredentials, passwordCredentials)](https://learn.microsoft.com/en-us/graph/api/resources/serviceprincipal?view=graph-rest-1.0) · [tokenGroups](https://learn.microsoft.com/en-us/windows/win32/adschema/a-tokengroups) · [memberOf is a back-link](https://learn.microsoft.com/en-us/windows/win32/adschema/a-memberof) · [RFC 4511 §4.6 Modify](https://www.rfc-editor.org/rfc/rfc4511#section-4.6). Internal: threat-model §6.2 to §6.6 and §6.8, domain-model DM-10.I8 to I11, DM-20, DM-24, DM-25, ADR-0005 rules 2, 4, 5 and 7, forest-connection spec §7 (V1 to V9, FR-10 to FR-13, FR-35).
 - v1.2 (T-0122): [Binding to well-known objects using WKGUID (wellKnownObjects, Domain Controllers)](https://learn.microsoft.com/en-us/windows/win32/ad/binding-to-well-known-objects-using-wkguid) · [gPLink](https://learn.microsoft.com/en-us/windows/win32/adschema/a-gplink) · [MS-GPOL Domain SOM Search (gPLink format and options)](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-gpol/08090b22-bc16-49f4-8e10-f27a8fb16d18) · [passwordCredential (endDateTime, startDateTime)](https://learn.microsoft.com/en-us/graph/api/resources/passwordcredential?view=graph-rest-1.0). Internal: threat-model §6.2 TM-D23 rules 7 to 11 and the `ENTRA_PASSWORD_CREDENTIAL` severity, §6.4, §16.1 TM-R14 to TM-R17; domain-model DM-23.I1, DM-26; forest-connection spec FR-25.
 - Internal: `knowledge/development/domain/ad-change-notifications.md` (T-0018), `knowledge/development/runbooks/ad-lab.md` §6, and the ad-expert consult recorded in the T-0064 notes. The Samba statements in the consult (no `MoreResults`, `;range=0-0`, skipped removed links) come from a reading of the source, not a run, and are `[UNVERIFIED lab]` until CC-FEED-04 and CC-FEED-21 run.
+
+## User search path (T-0669, walking skeleton 2/4)
+
+`GET /api/v1/directory/users` (`internal/modules/directory`) -> `client.UserSearch` -> gRPC
+`Connector.ScopedSearch` -> `read.Handler.ScopedSearch` (`internal/connector/read/search.go`) ->
+`ad.Session.ScopedSearch` over LDAPS. The server sends a typed `Filter` tree (the user's text is only
+a `Substring.Any` value); the connector validates it with `ldapfilter.ParseFilterAST` and renders it
+with RFC 4515 escaping. Root is the forest-root NC GUID of the connection; attributes are the closed
+list displayName, sAMAccountName, userPrincipalName, userAccountControl. Before searching, the handler
+refuses (503 `directory_unavailable`, fixed reason text) a connection whose newest rights check is not a
+clean pass, is stale, or reports `tier0_group_membership` / a Tier-0 installation. The server reads at
+most `MaxSearchMatches` (1000), sorts, and truncates to `limit`. Transport is the `ConnectorSource` seam
+(tunnel in production, in-process in lab tests). Gap: the connector binary does not yet mount Read /
+ScopedSearch on the tunnel (follow-up T-0683).
+
+## DACL write path (T-0743, T-0726)
+
+The AD connector has one directory write, the `nTSecurityDescriptor` DACL replace:
+`write.ApplyDACL` → `ad.Session.WriteDACL` → `write/ops.ReplaceSD`. `ApplyDACL` refuses unless the guard's
+token (a) is valid, (b) was issued for a kind whose `PropertyWrite` declared `nTSecurityDescriptor`
+(`Authorised.DeclaresProperty`; the token records the declared keys at step 4, so a token for another kind
+cannot reach it), (c) targets the object the plan was made for, and (d) is bound to the DC the session is on.
+`WriteDACL` re-reads the DACL-only SD, runs `VerifyBase` (`sd.stale_base` sends nothing), then sends one
+Modify. After a successful Modify `ApplyDACL` re-reads the DACL-only SD through `Session.ReadDACL` (same
+session, same DC) and calls `DACLWrite.VerifyAfter` (SD-R10). A mismatch is `sd.write_diverged`: the
+`DACLAuditor` receives a `DACLDiverged` record (object, DC, base, planned and actual digests, ACE count, PD bit, the planned and actual DACL kind (Null = everyone full access, distinct from an empty List = nobody), and the stored ACEs as typed fields — type, flags, mask, trustee SID, object GUIDs — bounded to 256 with a `Truncated` flag; no SDDL, no raw bytes), the error is returned and the write is **not** retried. A read-back that fails is `ErrReadBack`
+(stored state unknown, no retry). Samba proves the mechanics; Windows re-sorting and SDProp are windows-lab.
 
 ## Lab fixture seam: `internal/connector/labadmin` (T-0519)
 

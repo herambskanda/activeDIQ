@@ -163,6 +163,13 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 		return err
 	}
 	tags = append(tags, setupTags...)
+	// directory.users.search: the connection registry for the active connection and its service-account
+	// gate, the connector source for the ScopedSearch RPC (over the tunnel the connector dialled).
+	dirTag, err := buildDirectory(db, conns, csrc)
+	if err != nil {
+		return err
+	}
+	tags = append(tags, dirTag)
 	// The sign-in plane: AN-8 for a local account, then AN-10 TOTP, which is the only way a console session
 	// is created.
 	tags = append(tags, console.Tags())

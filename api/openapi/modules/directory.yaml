@@ -52,12 +52,14 @@ paths:
           $ref: shared/problems.yaml#/components/responses/RateLimited
         "500":
           $ref: shared/problems.yaml#/components/responses/Internal
+        "503":
+          $ref: shared/problems.yaml#/components/responses/DirectoryUnavailable
 components:
   schemas:
     DirectoryUser:
       description: A user as search shows it. Only these fields; the objectGuid is the key.
       type: object
-      required: [objectGuid, displayName, samAccountName, userPrincipalName, enabled]
+      required: [objectGuid, displayName, samAccountName, userPrincipalName, enabled, hybrid]
       properties:
         objectGuid:
           type: string
@@ -73,6 +75,31 @@ components:
           maxLength: 1024
         enabled:
           type: boolean
+        hybrid:
+          $ref: modules/directory.yaml#/components/schemas/HybridClassification
+    HybridState:
+      type: string
+      x-activediq-enum: open
+      enum: [not_hybrid, candidate, matched, broken, unknown]
+    HybridClassification:
+      description: >-
+        How the user stands in the cross-directory correlation (DM-20) under TM-D17, computed from the
+        stored correlation and the Entra connection's takeover protection. not_hybrid: no correlation
+        is recorded. candidate, matched, broken: the strongest recorded state (matched over candidate
+        over broken). unknown: the facts could not be read; treat as no authority. Only a matched
+        correlation can carry authority, and only while takeover protection is attested and neither
+        side is Tier 0.
+      type: object
+      required: [state, carriesAuthority]
+      properties:
+        state:
+          $ref: modules/directory.yaml#/components/schemas/HybridState
+        carriesAuthority:
+          type: boolean
+        reason:
+          type: string
+          maxLength: 128
+          description: Why the correlation is not matched, or why a matched one carries no authority. A stable code, never a directory value.
     DirectoryUserList:
       type: object
       required: [items]

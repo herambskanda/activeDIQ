@@ -1,6 +1,6 @@
 ---
 title: Lessons learned
-updated: 2026-10-21
+updated: 2026-10-30
 budget: 120 lines
 ---
 
@@ -9,6 +9,7 @@ budget: 120 lines
 Gotchas that cost time. Newest first. `date · lesson · source`.
 
 ## Tooling and Claude Code (verified on 2.1.287)
+- 2026-10-30 · A CEO action answered with a sanctioned path (A-0025, WinRM on dc1) went unapplied for 24 h. Ten tickets noted "re-ready when A-0025 is answered" stayed blocked, because later triages handled only the newly blocked tickets and nothing flags an answered action the way it flags an answered decision. A re-filed action (A-0030) also contradicted the CEO's deferral in A-0026's done note. → In every triage, check recently done actions against blocked tickets' notes and apply their done notes like decision answers. Read the previous action's done note before re-filing. (T-0838)
 - 2026-10-21 · ADR follow-on lists cite ticket IDs from the old board numbering (ADR-0004: T-0069, T-0086, T-0151), and only some were carried over, so T-0017 blocked on a dependency that did not exist → when an ADR or note names a T-id, `ticket show` it first; if it is missing, the PM re-cuts the chain and maps old IDs to new ones. (T-0017, T-0031)
 - 2026-10-21 · The auto-mode classifier denies `git reset --hard` and `checkout main -- .`, so a worker whose branch commits main had already superseded blocked twice → drop superseded commits with `git revert --no-edit <shas>` then `git merge main` (non-destructive; check that `git diff main HEAD` is empty). (T-0001, T-0021)
 - 2026-10-02 · Ticket ACs, body, summary and parity cannot change after `ticket new`. `ticket set` changes only priority, owner, epic, milestone, effort_override, tags, depends_on and decisions → get the ACs right before creating. Afterwards, amend with a note that starts "AC AMENDMENT (binding…)", or split into a new ticket. (T-0031 rework)

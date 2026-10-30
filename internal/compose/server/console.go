@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync/atomic"
+	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
@@ -34,8 +35,10 @@ type consoleStack struct {
 	// tenant through SetTenant, which Run calls once the tenant exists.
 	Local  *authn.LocalCredentials
 	Second *authn.SecondFactor
-	log    *slog.Logger
-	tenant atomic.Pointer[tenant.ID]
+	// Denials, when set, records every refused permission check in the audit trail.
+	Denials *deniedAudit
+	log     *slog.Logger
+	tenant  atomic.Pointer[tenant.ID]
 }
 
 // SetTenant tells the sign-in plane which tenant the install has; until then AN-8 answers a server fault.
@@ -58,6 +61,12 @@ func (c *consoleStack) Tags() apihost.TagHandlers {
 	}.Bind()
 }
 
+// deniedAudit is what ports needs to record refusals: the store and the audit sink.
+type deniedAudit struct {
+	DB   *store.DB
+	Sink audit.Sink
+}
+
 func buildConsole(db *store.DB, sink audit.Sink, ks authn.KeySource, log *slog.Logger) (*consoleStack, error) {
 	sessions, err := authn.New(authn.Config{DB: db, Audit: sink})
 	if err != nil {
@@ -75,7 +84,8 @@ func buildConsole(db *store.DB, sink audit.Sink, ks authn.KeySource, log *slog.L
 	if err != nil {
 		return nil, fmt.Errorf("server: pending sign-ins: %w", err)
 	}
-	c := &consoleStack{Sessions: sessions, StepUp: &authn.StepUp{Sessions: sessions, TOTP: totp}, Authn: au, log: log}
+	c := &consoleStack{Sessions: sessions, StepUp: &authn.StepUp{Sessions: sessions, TOTP: totp}, Authn: au, log: log,
+		Denials: &deniedAudit{DB: db, Sink: sink}}
 	c.Local = &authn.LocalCredentials{DB: db, Sessions: sessions, Pending: pending, Keys: ks, Audit: sink, Tenant: c.installTenant}
 	c.Second = &authn.SecondFactor{DB: db, Pending: pending, Sessions: sessions, TOTP: totp, Audit: sink}
 	return c, nil
@@ -83,7 +93,11 @@ func buildConsole(db *store.DB, sink audit.Sink, ks authn.KeySource, log *slog.L
 
 // ports are the API ports with the real authentication, RBAC and step-up behind the given limiter.
 func (c *consoleStack) ports(lim apihost.Limiter, az operation.Authorizer, cat apihost.Permissions) apihost.Ports {
-	return apihost.Ports{Authn: c.Authn, Authz: consoleAuthz{az, cat}, Limits: lim, StepUp: c.StepUp}
+	var authz apihost.Authorizer = consoleAuthz{az, cat}
+	if d := c.Denials; d != nil {
+		authz = auditedAuthz{next: authz, db: d.DB, sink: d.Sink, now: time.Now, log: slog.Default()}
+	}
+	return apihost.Ports{Authn: c.Authn, Authz: authz, Limits: lim, StepUp: c.StepUp}
 }
 
 // consoleAuthz is apihost's chain step 12: may this principal hold the operation's permission at all.
