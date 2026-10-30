@@ -21,6 +21,8 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
+	"github.com/skenzeriq/activediq/internal/platform/authz"
+	"github.com/skenzeriq/activediq/internal/platform/authz/authztest"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/keys"
 	"github.com/skenzeriq/activediq/internal/platform/secret"
@@ -47,6 +49,26 @@ func (labPorts) AllowIP(context.Context, string, string) (apihost.Decision, erro
 	return apihost.Decision{Allowed: true}, nil
 }
 func (labPorts) Fresh(context.Context, apihost.Principal) (bool, error) { return true, nil }
+
+// labScopes grants the lab's one connection as a whole (its naming context head), so these tests keep
+// proving the search path; the trimming itself is proved in modules/directory and client.
+type labScopes struct{ conns *connection.Registry }
+
+func (l labScopes) ReadScope(ctx context.Context, tid tenant.ID, _ authority.Chain, _ authz.Permission) (authz.ReadScope, error) {
+	cs, err := l.conns.List(ctx, tid, false)
+	if err != nil || len(cs) == 0 {
+		return authz.ReadScope{}, err // before the seed there is no connection: nothing is granted
+	}
+	conn, err := authz.ParseObjectID(string(cs[0].ID))
+	if err != nil {
+		return authz.ReadScope{}, err
+	}
+	nc, err := authz.ParseObjectID(string(cs[0].DirectoryIdentity))
+	if err != nil {
+		return authz.ReadScope{}, err
+	}
+	return authztest.ReadScope(authz.ScopeGrant{Include: []authz.ScopeTerm{{Kind: authz.TermNamingContext, Connection: conn, Root: nc}}}), nil
+}
 
 // labDirectory is one booted lab server's directory surface: the real apihost pipeline over the real
 // connection registry, served by the in-process connector against the Samba lab.
@@ -109,7 +131,11 @@ func newLabDirectory(t *testing.T, s *storetest.Server) *labDirectory {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tag, err := buildDirectory(db, conns, src)
+	reads, err := directoryReads(conns, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tag, err := buildDirectory(db, conns, src, reads, labScopes{conns: conns})
 	if err != nil {
 		t.Fatal(err)
 	}
