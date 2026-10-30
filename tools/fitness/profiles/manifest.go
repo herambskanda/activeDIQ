@@ -24,13 +24,16 @@ type Config struct {
 	CapabilityPkg    string   `json:"capabilityPackage"`
 	ProfileEnvRegexp string   `json:"profileEnvRegexp"` // env var names that select a profile
 	IdentDenylist    []string `json:"identifierDenylist"`
-	LiteralDenylist  []string `json:"literalDenylist"`
-	Manifests        []string `json:"manifests"`  // profile ids that must be found in ProfilePackage
-	SelfHosted       []string `json:"selfHosted"` // the two profiles that must have equal capabilities
-	SaaSProfile      string   `json:"saasProfile"`
-	IsolatedRoles    []string `json:"isolatedRoles"` // roles that may share a process with no other role (rule 2)
-	ADProvider       string   `json:"adProvider"`
-	ADCapability     string   `json:"adCapability"`
+	// ExternalVocabulary is the registry of Microsoft's own names (ADR-0002 erratum E-1): a P1
+	// identifier may contain a denylist token only inside one of these terms.
+	ExternalVocabulary []ExternalTerm `json:"externalVocabulary"`
+	LiteralDenylist    []string       `json:"literalDenylist"`
+	Manifests          []string       `json:"manifests"`  // profile ids that must be found in ProfilePackage
+	SelfHosted         []string       `json:"selfHosted"` // the two profiles that must have equal capabilities
+	SaaSProfile        string         `json:"saasProfile"`
+	IsolatedRoles      []string       `json:"isolatedRoles"` // roles that may share a process with no other role (rule 2)
+	ADProvider         string         `json:"adProvider"`
+	ADCapability       string         `json:"adCapability"`
 
 	// U2.
 	PlatformRoot      string   `json:"platformRoot"`
@@ -49,6 +52,14 @@ type Config struct {
 
 	// Activation table.
 	Activation []Activation `json:"activation"`
+}
+
+// ExternalTerm is one registered external term: an exact Microsoft Graph property or segment name,
+// or an Entra token-claim name, with the https URL of the page that defines it.
+type ExternalTerm struct {
+	Term   string `json:"term"`
+	Kind   string `json:"kind"` // graph-property, graph-segment or token-claim
+	Source string `json:"source"`
 }
 
 // Exception is one declared exception; it cites an ADR file (F5 mechanism).
