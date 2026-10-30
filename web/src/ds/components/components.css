@@ -100,6 +100,118 @@
   color: var(--diq-muted);
   background: var(--diq-muted-bg);
 }
+.diq-chip--warn {
+  color: var(--diq-warn);
+  background: var(--diq-warn-bg);
+}
+.diq-chip--crit {
+  color: var(--diq-crit);
+  background: var(--diq-crit-bg);
+}
+.diq-chip__glyph {
+  margin-inline-end: var(--diq-space-1);
+}
+
+/* ---- Banner -------------------------------------------------------------- */
+/* Body text stays --diq-text (tested on each tint); the tone is the border, tint and glyph + words. */
+.diq-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--diq-space-2) var(--diq-space-3);
+  align-items: flex-start;
+  margin-block: var(--diq-space-2);
+  padding: var(--diq-space-3);
+  color: var(--diq-text);
+  background: var(--diq-surface);
+  border: var(--diq-border) solid var(--diq-line-strong);
+  border-inline-start-width: var(--diq-space-1);
+  border-radius: var(--diq-radius-2);
+}
+.diq-banner--info {
+  background: var(--diq-signal-soft);
+  border-color: var(--diq-signal);
+}
+.diq-banner--warn {
+  background: var(--diq-warn-bg);
+  border-color: var(--diq-warn);
+}
+.diq-banner--crit {
+  background: var(--diq-crit-bg);
+  border-color: var(--diq-crit);
+}
+.diq-banner__glyph {
+  flex: none;
+  font-weight: var(--diq-weight-semibold);
+}
+.diq-banner--info .diq-banner__glyph {
+  color: var(--diq-signal-text);
+}
+.diq-banner--warn .diq-banner__glyph {
+  color: var(--diq-warn);
+}
+.diq-banner--crit .diq-banner__glyph {
+  color: var(--diq-crit);
+}
+.diq-banner__body {
+  flex: 1 1 24ch;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.diq-banner__title,
+.diq-banner__text {
+  margin: 0;
+}
+.diq-banner__title {
+  font-weight: var(--diq-weight-semibold);
+}
+.diq-banner__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--diq-space-2);
+}
+
+/* ---- Progress ------------------------------------------------------------ */
+.diq-progress {
+  position: relative;
+  block-size: var(--diq-space-2);
+  overflow: hidden;
+  background: var(--diq-surface-2);
+  border: var(--diq-border) solid var(--diq-line-strong);
+  border-radius: var(--diq-radius-2);
+}
+.diq-progress__bar {
+  block-size: 100%;
+  background: var(--diq-signal);
+  transition: inline-size var(--diq-dur) var(--diq-ease);
+}
+/* Indeterminate: a segment sweeps along the track; base.css stops it under reduced motion. */
+.diq-progress--indeterminate .diq-progress__bar {
+  inline-size: 40%;
+  animation: diq-sweep 1.2s var(--diq-ease) infinite alternate;
+}
+@keyframes diq-sweep {
+  from {
+    margin-inline-start: 0;
+  }
+  to {
+    margin-inline-start: 60%;
+  }
+}
+
+/* ---- Kbd ----------------------------------------------------------------- */
+.diq-kbd {
+  padding: 0 var(--diq-space-1);
+  color: var(--diq-text-2);
+  border: var(--diq-border) solid var(--diq-line-strong);
+  border-radius: var(--diq-radius-1);
+  font-family: var(--diq-font-mono);
+  font-size: var(--diq-text-cap);
+}
+
+.diq-btn--primary .diq-kbd {
+  color: inherit;
+  border-color: currentcolor;
+}
 
 /* ---- Table --------------------------------------------------------------- */
 .diq-table-wrap {
@@ -361,6 +473,12 @@
   color: var(--diq-text);
   font-size: var(--diq-text-section);
   font-weight: var(--diq-weight-semibold);
+}
+.diq-state__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--diq-space-2);
+  margin-top: var(--diq-space-3);
 }
 .diq-state--error {
   background: var(--diq-crit-bg);
