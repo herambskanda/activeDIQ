@@ -403,12 +403,18 @@ func (g *Grants) Grant(ctx context.Context, tx store.Tx, by authority.Chain, in 
 	return g.grant(ctx, tx, by, in, false)
 }
 
+// BootstrapPrincipal is the only system principal GrantBootstrap accepts: the install-time CLI that creates
+// the first console account. Any other system chain (jobs, connectors, authn) is refused.
+const BootstrapPrincipal authority.PrincipalID = "cli-account-init-local"
+
 // GrantBootstrap is Grant for a host operator: the one path where the grantor is a system principal, not a
 // person holding the privilege. It exists for the install-time CLI that creates the first console account
 // (T-0783), which has no human to act as; it borrows no human's authority and the assignment's granted_by
-// names the system principal. A chain that is not exactly one system principal is refused.
+// names the system principal. A chain that is not exactly the BootstrapPrincipal system principal is
+// refused. It bypasses the grantor-holds-the-privilege check, so the static half of the guard is the
+// fitness function tools/fitness/grantbootstrap (T-0808): no reference outside the CLI path.
 func (g *Grants) GrantBootstrap(ctx context.Context, tx store.Tx, by authority.Chain, in GrantInput) error {
-	if by.Validate() != nil || by.Requester.Kind != authority.System || len(by.Via) > 0 {
+	if by.Validate() != nil || by.Requester.Kind != authority.System || by.Requester.ID != BootstrapPrincipal || len(by.Via) > 0 {
 		return ErrActorNotDirect
 	}
 	return g.grant(ctx, tx, by, in, true)

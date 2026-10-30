@@ -38,7 +38,7 @@ import (
 // run finds the first one's role.
 const directoryReaderRole = "console-directory-reader"
 
-var cliActor = authority.Chain{Requester: authority.Principal{ID: "cli-account-init-local", Kind: authority.System}}
+var cliActor = authority.Chain{Requester: authority.Principal{ID: rbac.BootstrapPrincipal, Kind: authority.System}}
 
 type localAccountDeps struct {
 	DB   *store.DB
