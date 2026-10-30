@@ -91,4 +91,3 @@ type prefixless struct{ *blob.FS }
 func (p prefixless) Put(ctx context.Context, _ tenant.ID, key string, r io.Reader, o blob.PutOptions) (blob.Info, error) {
 	return p.FS.Put(ctx, tenant.New(), key, r, o) // a fresh random prefix per call: not the caller's tenant
 }
-

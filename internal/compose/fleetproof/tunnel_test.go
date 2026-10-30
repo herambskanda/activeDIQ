@@ -20,6 +20,7 @@ import (
 
 	tunnelserver "github.com/skenzeriq/activediq/internal/compose/server"
 	"github.com/skenzeriq/activediq/internal/platform/fleet"
+	"github.com/skenzeriq/activediq/internal/platform/fleet/gateway"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 	fleetv1 "github.com/skenzeriq/activediq/internal/proto/activediq/fleet/v1"
@@ -51,7 +52,7 @@ func (s *recSink) got() []audit.Event {
 
 // startTunnel serves the real compose Fleet service (NewFleetService) under the real gateway, with
 // the real TunnelReporter over a seeded tenant database.
-func startTunnel(t *testing.T, srv *storetest.Server) (*rig, *fleet.Hub, *recSink) {
+func startTunnel(t *testing.T, srv *storetest.Server) (*rig, *gateway.Hub, *recSink) {
 	t.Helper()
 	d := srv.NewDatabase(t)
 	d.Migrate(t)
@@ -61,9 +62,10 @@ func startTunnel(t *testing.T, srv *storetest.Server) (*rig, *fleet.Hub, *recSin
 		t.Fatal(err)
 	}
 	t.Cleanup(db.Close)
-	ca := newAuthority(t, "installation CA")
+	ca := newAuthority(t, "tenant client CA")
+	srvCA := newAuthority(t, "installation server CA")
 	cm := &comps{}
-	gw, err := fleet.NewGateway(fleet.Config{Methods: classes(), CAs: cas{tid: {ca.cert}}, Components: cm, Recheck: 50 * time.Millisecond})
+	gw, err := gateway.NewGateway(gateway.Config{Methods: classes(), CAs: cas{tid: {ca.cert}}, Components: cm, Recheck: 50 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,15 +73,14 @@ func startTunnel(t *testing.T, srv *storetest.Server) (*rig, *fleet.Hub, *recSin
 	if err != nil {
 		t.Fatal(err)
 	}
-	hub, sink := fleet.NewHub(), &recSink{}
+	hub, sink := gateway.NewHub(), &recSink{}
 	svc, err := tunnelserver.NewFleetService(&fleetsql.Enroller{},
 		tunnelserver.TunnelDeps{Hub: hub, Bindings: b, Reporter: &fleetsql.TunnelReporter{DB: db, Audit: sink}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pool := x509.NewCertPool()
-	pool.AddCert(ca.cert)
-	gs, err := gw.NewServer(ca.serverCert(t), func() *x509.CertPool { return pool }, func(r grpc.ServiceRegistrar) {
+	pool := gateway.NewCAIndex([]*x509.Certificate{ca.cert})
+	gs, err := gw.NewServer(srvCA.serverCert(t), func() *gateway.CAIndex { return pool }, func(r grpc.ServiceRegistrar) {
 		fleetv1.RegisterFleetServer(r, svc)
 	})
 	if err != nil {
@@ -91,7 +92,7 @@ func startTunnel(t *testing.T, srv *storetest.Server) (*rig, *fleet.Hub, *recSin
 	}
 	go func() { _ = gs.Serve(l) }()
 	t.Cleanup(gs.Stop)
-	return &rig{addr: l.Addr().String(), comps: cm, gw: gw, ca: ca, tid: tid, grpc: gs}, hub, sink
+	return &rig{addr: l.Addr().String(), comps: cm, gw: gw, ca: ca, srvCA: srvCA, tid: tid, grpc: gs}, hub, sink
 }
 
 // openTunnel dials as comp and returns the stream and a channel of the frames the server sends.
@@ -127,7 +128,7 @@ func waitFor(t *testing.T, what string, ok func() bool) {
 
 const describe = "/activediq.connector.v1.Connector/Describe"
 
-func invoke(hub *fleet.Hub, tid tenant.ID, comp string) error {
+func invoke(hub *gateway.Hub, tid tenant.ID, comp string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return hub.Conn(tid, comp).Invoke(ctx, describe, &connectorv1.DescribeRequest{}, new(connectorv1.DescribeResponse))

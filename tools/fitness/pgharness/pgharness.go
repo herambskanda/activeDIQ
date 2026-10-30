@@ -30,7 +30,15 @@ import (
 const (
 	DefaultOwnerRole   = "activediq_owner" // runs migrations, owns every object, is neither superuser nor BYPASSRLS
 	DefaultRuntimeRole = "activediq_app"   // the application: owns nothing, has no BYPASSRLS, no TRUNCATE, no CREATE
+	// CatrustRole is the third role (fleet-contract "Gateway client-CA pool", T-0712): NOLOGIN, owns the one
+	// function fleet_ca_trust_anchors() and holds a column-limited SELECT on fleet_ca. The installer makes the
+	// owner role a member of it (ALTER FUNCTION ... OWNER TO needs that); the runtime role is never a member.
+	CatrustRole = "activediq_catrust"
 )
+
+// CatrustMemberships is the installer spec for the trust-anchor reader: the roles that are members of it,
+// and nothing else. fitness-tenancy compares the catalog with this list (F-POOL-2).
+var CatrustMemberships = []string{DefaultOwnerRole}
 
 // defaultImages pins the PostgreSQL images by index digest (multi-arch), so a run is reproducible and
 // a new minor release is an edit that the review sees. FITNESS_TENANCY_IMAGE_<major> overrides one.
@@ -185,6 +193,22 @@ func (s *Server) createRoles(ctx context.Context) error {
 			return fmt.Errorf("create role %s: %w", r.name, err)
 		}
 	}
+	// The trust-anchor reader: no login, no password, created before the first migration, and the owner
+	// role is its only member. The runtime role is deliberately not.
+	var stmt string
+	if err := c.QueryRow(ctx,
+		`SELECT format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS', $1::text)`, CatrustRole).Scan(&stmt); err != nil {
+		return err
+	}
+	if _, err := c.Exec(ctx, stmt); err != nil {
+		return fmt.Errorf("create role %s: %w", CatrustRole, err)
+	}
+	if err := c.QueryRow(ctx, `SELECT format('GRANT %I TO %I', $1::text, $2::text)`, CatrustRole, s.ownerRole).Scan(&stmt); err != nil {
+		return err
+	}
+	if _, err := c.Exec(ctx, stmt); err != nil {
+		return fmt.Errorf("grant %s to %s: %w", CatrustRole, s.ownerRole, err)
+	}
 	return nil
 }
 
@@ -252,6 +276,9 @@ func (s *Server) NewDatabase(ctx context.Context) (*Database, error) {
 // OwnerRole and AppRole are the names of the migration role and the runtime role on this server.
 func (s *Server) OwnerRole() string { return s.ownerRole }
 func (s *Server) AppRole() string   { return s.appRole }
+
+// CatrustRole is the name of the trust-anchor reader role on this server.
+func (s *Server) CatrustRole() string { return CatrustRole }
 
 // Server returns the server the database lives on.
 func (d *Database) Server() *Server { return d.s }
@@ -402,3 +429,6 @@ func StartServers(ctx context.Context, versions []string, supplied map[string]*S
 	}
 	return servers, release, nil
 }
+
+// AppDSN is the runtime role's DSN for this database, as a URL a server container can take.
+func (d *Database) AppDSN() string { return d.s.dsn(d.s.appRole, d.s.appPass, d.Name) }

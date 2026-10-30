@@ -19,7 +19,7 @@ Source files once built: `proto/skenzeriq/agent/v1/agent.proto`, `proto/activedi
 
 - One service, `activediq-agent.exe` (`cmd/agent`), identity per ADR-0006. The `addc` module runs **in-process**; the composition root links only the generated list of agent modules (ADR-0003). No listener: the only network activity is the `fleet` mTLS dial-out and serving the reverse tunnel on that same connection (TM-D13; fleet-contract).
 - The binding contract comes from the certificate SAN component kind (`addc`), never from the method string (TM-TB12-T16). The agent serves the `addc` service and the host service, and nothing else.
-- Host responsibilities (`skenzeriq.agent.v1`): module lifecycle (`Start`/`Stop` with a fixed dependency struct), the **outbox** (durable, bounded, at-least-once), policy store, health, update staging, local logging. A module cannot open its own listener, spawn a process, or write outside the data directory; the dependency struct offers no such capability.
+- Host responsibilities (`skenzeriq.agent.v1`): module lifecycle (`Start`/`Stop` with a fixed dependency struct, `internal/agenthost/hostapi.ModuleDeps`; the Windows event log is reached only through its read-only `EventSource`, implemented by the host), the **outbox** (durable, bounded, at-least-once), policy store, health, update staging, local logging. A module cannot open its own listener, spawn a process, or write outside the data directory; the dependency struct offers no such capability.
 - Update: the host stages only artefacts verified by the one TUF verifier (TM-D12); there is no "run this" and no server-signed code. DC agents never auto-update without customer approval (TM-D12 rule 6).
 
 ## 2. Server-callable surface (closed)
@@ -85,7 +85,7 @@ The service runs in a Windows job object: CPU hard-cap `[EST]` 5% of the DC (con
 | C15 | Candidate-password IPC content (TB12-T7, TM-Q19 first half) | **Not decided here.** Constraint for T-0145: the pipe carries no more than the candidate and verdict; never logged; zeroed at both ends; no field of the `addc` surface or event record may carry a password or hash | R5 lint: no field named or typed as password/credential in `addc.v1`; remainder T-0145 |
 | C16 | Fail-open/closed of the filter (TB12-T6) | **Out of scope**: CEO decision TM-Q20 before M4. The host contract has no setting for it, so a policy cannot choose it | R2 (no such field) |
 
-R-tests run in `fitness-agent-host` (CI) and the proto lint; L/lab tests run in the Windows lab. `fitness-agent-host` is the ADR-0006/0007 fitness function and is the CI half of TM-F-AGENTCMD for `addc`.
+R-tests run in `fitness-agent-host` (CI, `tools/fitness/agenthost`, T-0554: R1/R2/R5 call the AG rules of `fitness-proto`, R3/R4 scan agent-owned Go source, F1 is `internal/platform/agentpolicy/f1_test.go` and its fuzz target) and the proto lint; L/lab tests run in the Windows lab. `fitness-agent-host` is the ADR-0006/0007 fitness function and is the CI half of TM-F-AGENTCMD for `addc`.
 
 ## 7. Open items
 
@@ -93,3 +93,20 @@ R-tests run in `fitness-agent-host` (CI) and the proto lint; L/lab tests run in 
 - The lab confirmations in ADR-0006 "Verification owed" gate `accepted`, not `ratified`.
 - Password-filter IPC content (C15) belongs to T-0145; this file fixes only what the agent surface must never carry.
 - `[UNVERIFIED]` the `[EST]` resource figures in §5.
+
+## 8. Implementation status (T-0555)
+
+Built on Linux, compile-checked for Windows (`GOOS=windows go vet`), **not run on Windows**.
+
+| Piece | Where | State |
+| --- | --- | --- |
+| Protos (`SubmitEvents` replaces `Append`; `EventIngest` in the AG1 golden list) | `proto/skenzeriq/agent/v1`, `proto/activediq/addc/v1` | built; `fitness-proto` green |
+| Host: verifier-before-parse, transactional apply, durable bounded outbox, sender | `internal/platform/agent` | built; unit and fault tests pass (-race) |
+| addc module: rule engine, catalogue, collector with GAP/throttle/bookmark, wevtapi source | `internal/agentmodules/addc` | built; Windows source compile-checked only |
+| Role package, local ceilings file, enrol, tunnel dial | `internal/compose/agent`, `cmd/agent` | built; Windows enrol/load fails closed until T-0291's ACL support is on main |
+| Token privilege refusal, job-object caps, Application event log (IDs 100 applied, 101 start refused, 102 channel unreadable) | `internal/platform/agent/*_windows.go` | compile-checked only (A2 NOT RUN) |
+| MSI source and `agentsetup` custom actions | `packaging/windows/agent/Agent.wxs`, `cmd/agentsetup` | not built (no WiX in the lab) |
+| `StageUpdate` | host | **fails closed** (`FailedPrecondition`): no TUF verifier exists yet |
+| Fitness | `tools/fitness/agenthost` (`fitness-agent-host`) | A1, A4, R3 in CI; A2, A3 print NOT RUN |
+
+The agent sends no "policy applied" audit record: the server's ingest rejects unknown record kinds. The local log and Windows event 100 carry the trace until a kind is added (follow-up).

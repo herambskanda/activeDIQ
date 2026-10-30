@@ -1,5 +1,5 @@
 """Offline guard for the T-0613 agent-identity harness (no Windows needed): the script must pin exactly the
-ADR-0006 identity and must not use unsafe primitives. Real proof is the lab run (runbook windows-lab.md §11)."""
+ADR-0006 identity and must not use unsafe primitives. Real proof is the lab run (runbook windows-lab.md §12)."""
 import re, unittest
 from pathlib import Path
 

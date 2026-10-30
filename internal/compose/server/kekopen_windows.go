@@ -14,9 +14,7 @@ func kekFileSupported(goos string) error {
 	return nil
 }
 
-func openKEKFile(path string) (*os.File, error) {
-	return nil, errors.New("the KEK file profile is not available on Windows")
-}
+func checkKEKDir(dir string) error { return kekErr(KEKDirUnsafe, EnvKEKDir) }
 
 func openSecretFile(what, path string) (*os.File, error) {
 	return nil, errors.New(what + " files are not available on Windows (no DACL check yet)")

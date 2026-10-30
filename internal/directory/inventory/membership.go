@@ -362,7 +362,7 @@ func (m *Membership) eligibility(ctx context.Context, tid tenant.ID, c Connectio
 			if err := rows.Scan(&g, &kind, &state, &raw, &col, &sid); err != nil {
 				return fmt.Errorf("inventory: membership: groups: %w", err)
 			}
-			v, isSynced := judge(connKind, Kind(kind), ObjectState(state), raw, col)
+			v, isSynced := judge(connKind, Kind(kind), ObjectState(state), raw, col, time.Now().UTC())
 			out[GUID(g)] = v
 			if isSynced {
 				synced[GUID(g)] = syncedGroup{sid: sid}
@@ -513,7 +513,7 @@ func judgeSynced(g syncedGroup) verdict {
 	if !bytes.Equal(g.sid, p.corrSID) || !bytes.Equal(g.sid, p.adSID) {
 		return verdictUnknown // the SID the Entra copy claims is not the AD group's
 	}
-	adV, _ := judge(connKindADForest, p.adKind, p.adState, p.adAttrs, nil)
+	adV, _ := judge(connKindADForest, p.adKind, p.adState, p.adAttrs, nil, g.now)
 	if adV == verdictUnknown {
 		return verdictUnknown
 	}
@@ -542,7 +542,7 @@ func judgeSynced(g syncedGroup) verdict {
 // verdictUnknown; a fact that says no is verdictIneligible. synced is true for an Entra group that
 // follows an AD source (D18-1): its verdict is then only a placeholder and judgeSynced decides. col is
 // the on_prem_sync_enabled column (nil for AD).
-func judge(connKind string, kind Kind, state ObjectState, raw []byte, col *bool) (v verdict, synced bool) {
+func judge(connKind string, kind Kind, state ObjectState, raw []byte, col *bool, now time.Time) (v verdict, synced bool) {
 	if kind != KindGroup {
 		return verdictIneligible, false
 	}
@@ -552,14 +552,14 @@ func judge(connKind string, kind Kind, state ObjectState, raw []byte, col *bool)
 	}
 	switch connKind {
 	case connKindADForest:
-		return judgeAD(state, attrs), false
+		return judgeAD(state, attrs, now), false
 	case connKindEntraTenant:
 		return judgeEntra(state, attrs, col)
 	}
 	return verdictUnknown, false
 }
 
-func judgeAD(state ObjectState, attrs map[string]any) verdict {
+func judgeAD(state ObjectState, attrs map[string]any, now time.Time) verdict {
 	if state != ObjLive {
 		return verdictIneligible
 	}
@@ -578,6 +578,13 @@ func judgeAD(state ObjectState, attrs map[string]any) verdict {
 	}
 	broad, ok := attrs[AttrBroadMembershipWrite].(bool)
 	if !ok {
+		return verdictUnknown
+	}
+	// R-D18-1: the fact rests on its age. Absent, unparseable, older than MaxPairAge or from the
+	// future means the computation stopped (or lies): unknown, never the last good value.
+	at, _ := attrs[AttrBroadMembershipWriteAt].(string)
+	computed, err := time.Parse(time.RFC3339, at)
+	if err != nil || now.Sub(computed) > MaxPairAge || computed.Sub(now) > maxFutureSkew {
 		return verdictUnknown
 	}
 	if broad {

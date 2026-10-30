@@ -25,10 +25,12 @@ import (
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	"github.com/skenzeriq/activediq/internal/platform/fleet"
+	"github.com/skenzeriq/activediq/internal/platform/fleet/gateway"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
 const (
+	compID  = "11111111-2222-4333-8444-555555555555"
 	mPing   = "/t.v1.Down/Ping"   // server to component, unary
 	mWatch  = "/t.v1.Down/Watch"  // server to component, server-streaming
 	mReport = "/t.v1.Up/Report"   // component to server, unary
@@ -196,7 +198,7 @@ func newRig(t *testing.T, mut func(*fleet.MuxConfig)) *tunRig {
 	r := &tunRig{peer: peer, rep: &recorder{}, cnt: &counters{}, runErr: make(chan error, 1), logs: &bytes.Buffer{}}
 	cfg := fleet.MuxConfig{
 		Role: fleet.RoleServer, Identity: ident("connector"), Transport: srvW, Reporter: r.rep,
-		Binding: fleet.Binding{Contract: testContract(t), Serve: serverHandlers(r.cnt)},
+		Binding: fleet.Binding{Contract: testContract(t), Register: serverHandlers(r.cnt)},
 		Logger:  slog.New(slog.NewJSONHandler(&syncBuf{b: r.logs}, nil)),
 	}
 	if mut != nil {
@@ -375,7 +377,7 @@ func TestRegistrarRefusesServicesOutsideTheContract(t *testing.T) {
 	for _, svc := range []string{"grpc.health.v1.Health", "grpc.reflection.v1.ServerReflection", "grpc.channelz.v1.Channelz", "t.v1.Other"} {
 		_, err := fleet.NewMux(fleet.MuxConfig{
 			Role: fleet.RoleServer, Identity: ident("connector"), Transport: &wire{}, Reporter: &recorder{},
-			Binding: fleet.Binding{Contract: testContract(t), Serve: func(_ fleet.Identity, reg grpc.ServiceRegistrar) {
+			Binding: fleet.Binding{Contract: testContract(t), Register: func(_ fleet.Identity, reg grpc.ServiceRegistrar) {
 				reg.RegisterService(&grpc.ServiceDesc{ServiceName: svc, Methods: []grpc.MethodDesc{{MethodName: "Check"}}}, struct{}{})
 			}},
 		})
@@ -408,7 +410,7 @@ func TestCrossKindContractsAreIsolated(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		b[k] = fleet.Binding{Contract: c, Serve: func(_ fleet.Identity, reg grpc.ServiceRegistrar) {
+		b[k] = fleet.Binding{Contract: c, Register: func(_ fleet.Identity, reg grpc.ServiceRegistrar) {
 			reg.RegisterService(&grpc.ServiceDesc{ServiceName: "t.v1." + svc, HandlerType: (*any)(nil), Methods: []grpc.MethodDesc{{
 				MethodName: "Report",
 				Handler: func(_ any, _ context.Context, dec func(any) error, _ grpc.UnaryServerInterceptor) (any, error) {
@@ -602,7 +604,7 @@ func TestCreditOnCallZeroReturnsWhatWasSpent(t *testing.T) {
 }
 
 func TestPendingCallsFailUnavailableOutcomeUnknownAndAreNeverRebound(t *testing.T) {
-	hub := fleet.NewHub()
+	hub := gateway.NewHub()
 	id := ident("connector")
 	r1 := newRig(t, func(c *fleet.MuxConfig) { c.Identity = id })
 	detach := hub.Attach(r1.m)
@@ -639,7 +641,7 @@ func TestPendingCallsFailUnavailableOutcomeUnknownAndAreNeverRebound(t *testing.
 }
 
 func TestNewTunnelDisplacesTheOldAndFailsItsPendingCalls(t *testing.T) {
-	hub := fleet.NewHub()
+	hub := gateway.NewHub()
 	id := ident("connector")
 	r1 := newRig(t, func(c *fleet.MuxConfig) { c.Identity = id })
 	hub.Attach(r1.m)
@@ -662,7 +664,7 @@ func TestNewTunnelDisplacesTheOldAndFailsItsPendingCalls(t *testing.T) {
 }
 
 func TestHubWithoutTunnelIsUnavailable(t *testing.T) {
-	err := fleet.NewHub().Conn(tenant.New(), compID).Invoke(context.Background(), mPing, wrapperspb.String("x"), new(wrapperspb.StringValue))
+	err := gateway.NewHub().Conn(tenant.New(), compID).Invoke(context.Background(), mPing, wrapperspb.String("x"), new(wrapperspb.StringValue))
 	if status.Code(err) != codes.Unavailable || fleet.OutcomeUnknown(err) {
 		t.Fatalf("got %v", err)
 	}
@@ -709,7 +711,7 @@ func TestCancelledPeerCallsStillCountUntilHandlerReturns(t *testing.T) {
 			},
 		}}}, struct{}{})
 	}
-	r := newRig(t, func(c *fleet.MuxConfig) { c.MaxCalls = 2; c.Binding.Serve = serve })
+	r := newRig(t, func(c *fleet.MuxConfig) { c.MaxCalls = 2; c.Binding.Register = serve })
 	t.Cleanup(func() { close(release) })
 	for id := uint64(2); id <= 10; id += 2 {
 		r.send(fleet.Frame{CallID: id, Body: fleet.BodyOpen, Method: mReport})
@@ -879,11 +881,11 @@ func e2e(t *testing.T, cancelled chan<- struct{}) (srv, comp *fleet.Mux) {
 	cnt := &counters{}
 	id := ident("connector")
 	var err error
-	srv, err = fleet.NewMux(fleet.MuxConfig{Role: fleet.RoleServer, Identity: id, Transport: a, Reporter: &recorder{}, Binding: fleet.Binding{Contract: ct, Serve: serverHandlers(cnt)}})
+	srv, err = fleet.NewMux(fleet.MuxConfig{Role: fleet.RoleServer, Identity: id, Transport: a, Reporter: &recorder{}, Binding: fleet.Binding{Contract: ct, Register: serverHandlers(cnt)}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	comp, err = fleet.NewMux(fleet.MuxConfig{Role: fleet.RoleComponent, Identity: id, Transport: b, Binding: fleet.Binding{Contract: ct, Serve: componentHandlers(cancelled)}})
+	comp, err = fleet.NewMux(fleet.MuxConfig{Role: fleet.RoleComponent, Identity: id, Transport: b, Binding: fleet.Binding{Contract: ct, Register: componentHandlers(cancelled)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1007,7 +1009,7 @@ func TestSecondDataOnAUnaryCallClosesTheTunnel(t *testing.T) {
 	started := make(chan struct{})
 	var reads atomic.Int32
 	r := newRig(t, func(c *fleet.MuxConfig) {
-		c.Binding.Serve = unaryServe(func(_ context.Context, dec func(any) error) (any, error) {
+		c.Binding.Register = unaryServe(func(_ context.Context, dec func(any) error) (any, error) {
 			close(started)
 			<-release
 			for {
@@ -1043,7 +1045,7 @@ func TestSecondDataOnAUnaryCallClosesTheTunnel(t *testing.T) {
 // Calls that end while the component has over-sent data must not leave the payload retained.
 func TestRetiredCallsRetainNoPayload(t *testing.T) {
 	r := newRig(t, func(c *fleet.MuxConfig) {
-		c.Binding.Serve = unaryServe(func(context.Context, func(any) error) (any, error) {
+		c.Binding.Register = unaryServe(func(context.Context, func(any) error) (any, error) {
 			return wrapperspb.String("ok"), nil // replies without reading the request
 		})
 	})

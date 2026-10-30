@@ -1,0 +1,220 @@
+/* Design-system components (T-0685). Tokens only: no literal colour, size or duration. */
+
+/* ---- Button -------------------------------------------------------------- */
+.diq-btn {
+  min-height: var(--diq-control);
+  padding: 0 var(--diq-space-3);
+  color: var(--diq-text);
+  background: var(--diq-surface);
+  border: var(--diq-border) solid var(--diq-line-strong);
+  border-radius: var(--diq-radius-2);
+  font: inherit;
+  cursor: pointer;
+  transition: background var(--diq-dur-fast) var(--diq-ease);
+}
+.diq-btn:hover:not(:disabled, [aria-disabled="true"]) {
+  background: var(--diq-surface-2);
+}
+.diq-btn:active:not(:disabled, [aria-disabled="true"]) {
+  background: var(--diq-line);
+}
+.diq-btn:disabled,
+.diq-btn[aria-disabled="true"] {
+  color: var(--diq-text-2);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.diq-btn[aria-busy="true"] {
+  cursor: progress;
+}
+.diq-btn--primary {
+  color: var(--diq-signal-ink);
+  background: var(--diq-signal);
+  border-color: var(--diq-signal);
+}
+.diq-btn--primary:hover:not(:disabled, [aria-disabled="true"]) {
+  background: var(--diq-signal-hover);
+}
+.diq-btn--primary:active:not(:disabled, [aria-disabled="true"]) {
+  background: var(--diq-signal-hover);
+}
+
+/* ---- TextInput ----------------------------------------------------------- */
+.diq-field__label {
+  display: block;
+  margin-bottom: var(--diq-space-1);
+  color: var(--diq-text-2);
+  font-size: var(--diq-text-cap);
+  font-weight: var(--diq-weight-medium);
+}
+.diq-input {
+  width: 100%;
+  min-height: var(--diq-control);
+  padding: 0 var(--diq-space-3);
+  color: var(--diq-text);
+  background: var(--diq-surface);
+  border: var(--diq-border) solid var(--diq-line-strong);
+  border-radius: var(--diq-radius-2);
+  font: inherit;
+  text-overflow: ellipsis;
+}
+.diq-input:disabled {
+  color: var(--diq-text-2);
+  background: var(--diq-surface-2);
+  cursor: not-allowed;
+}
+.diq-input[readonly] {
+  background: var(--diq-surface-2);
+}
+.diq-input[aria-invalid="true"] {
+  border-color: var(--diq-crit);
+}
+/* A component that supplies its own Clear control hides the browser's second, unlabelled one. */
+.diq-input[type="search"]::-webkit-search-cancel-button {
+  display: none;
+}
+.diq-field__error {
+  margin: var(--diq-space-1) 0 0;
+  color: var(--diq-crit);
+  font-size: var(--diq-text-cap);
+}
+
+/* ---- Chip ---------------------------------------------------------------- */
+.diq-chip {
+  display: inline-block;
+  max-width: 100%;
+  padding: 0 var(--diq-space-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+  border-radius: var(--diq-radius-1);
+  font-size: var(--diq-text-cap);
+  font-weight: var(--diq-weight-medium);
+}
+.diq-chip--ok {
+  color: var(--diq-ok);
+  background: var(--diq-ok-bg);
+}
+.diq-chip--muted {
+  color: var(--diq-muted);
+  background: var(--diq-muted-bg);
+}
+
+/* ---- Table --------------------------------------------------------------- */
+.diq-table-wrap {
+  overflow: auto;
+}
+.diq-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: var(--diq-surface);
+  font-size: var(--diq-text-table);
+}
+.diq-table th,
+.diq-table td {
+  height: var(--diq-row);
+  max-width: 32ch;
+  padding: 0 var(--diq-space-3);
+  overflow: hidden;
+  text-align: start;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-bottom: var(--diq-border) solid var(--diq-line);
+}
+.diq-table thead th {
+  position: sticky;
+  top: 0;
+  color: var(--diq-text-2);
+  background: var(--diq-surface-2);
+  font-size: var(--diq-text-micro);
+  font-weight: var(--diq-weight-semibold);
+  letter-spacing: var(--diq-tracking-label);
+  text-transform: uppercase;
+}
+.diq-table tbody th {
+  font-weight: var(--diq-weight-medium);
+}
+.diq-table tbody tr:hover {
+  background: var(--diq-surface-2);
+}
+
+/* ---- Skeleton ------------------------------------------------------------ */
+.diq-skeleton {
+  margin-top: var(--diq-space-4);
+}
+.diq-skeleton__row {
+  height: var(--diq-row);
+  margin-bottom: var(--diq-space-1);
+  background: var(--diq-surface-2);
+  animation: diq-pulse 1.2s var(--diq-ease) infinite alternate;
+}
+@keyframes diq-pulse {
+  from {
+    opacity: 0.5;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ---- Screen-reader-only text -------------------------------------------- */
+.diq-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ---- Field row, page frame, state panel --------------------------------- */
+.diq-field__row {
+  display: flex;
+  gap: var(--diq-space-2);
+}
+.diq-field__row > .diq-input {
+  flex: 1;
+}
+.diq-page {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: var(--diq-space-5) var(--diq-space-4);
+}
+.diq-page__title {
+  margin: 0 0 var(--diq-space-4);
+  font-size: var(--diq-text-title);
+  font-weight: var(--diq-weight-semibold);
+  letter-spacing: var(--diq-tracking-title);
+  line-height: var(--diq-leading-tight);
+}
+.diq-hint {
+  margin: var(--diq-space-4) 0 var(--diq-space-2);
+  color: var(--diq-text-2);
+  font-size: var(--diq-text-cap);
+}
+.diq-state {
+  margin-top: var(--diq-space-5);
+  padding: var(--diq-space-5);
+  color: var(--diq-text-2);
+  background: var(--diq-surface);
+  border: var(--diq-border) solid var(--diq-line);
+  border-radius: var(--diq-radius-2);
+}
+.diq-state p {
+  margin: 0 0 var(--diq-space-2);
+}
+.diq-state__title {
+  color: var(--diq-text);
+  font-size: var(--diq-text-section);
+  font-weight: var(--diq-weight-semibold);
+}
+.diq-state--error {
+  background: var(--diq-crit-bg);
+  border-color: var(--diq-crit);
+}
+.diq-state--error .diq-state__title,
+.diq-state--error p {
+  color: var(--diq-text);
+}

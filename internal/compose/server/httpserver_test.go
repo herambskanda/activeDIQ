@@ -55,7 +55,7 @@ func TestBuildAPIRejectsNonPositiveBodyBudget(t *testing.T) {
 		if _, err := buildAPI(config.Config{APIBodyBudget: n}, testLimiter(t)); err == nil {
 			t.Errorf("budget %d must fail startup", n)
 		}
-		err := Run(context.Background(), config.Config{DatabaseDSN: "postgres://unused", APIBodyBudget: n})
+		err := Run(context.Background(), config.Config{DatabaseDSN: "postgres://unused", APIBodyBudget: n}, useKEKEnv(t))
 		if err == nil || errors.Is(err, ErrNoDatabase) {
 			t.Errorf("Run with budget %d = %v; want a build failure before the database is touched", n, err)
 		}

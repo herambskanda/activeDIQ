@@ -68,7 +68,7 @@ func ReconfirmCorrelation(owners OwnerSource) (operation.Action, error) {
 		Descriptor: operation.Descriptor{
 			ID: ReconfirmActionID, Version: 1, Permission: ReconfirmPermission,
 			Input:  "#/components/schemas/CorrelationReconfirm",
-			Target: operation.TargetStore, Reversibility: operation.Irreversible, AuditKind: AuditCorrelationReconfirmed, StepUp: true,
+			Target: operation.TargetStore, Reversibility: operation.Irreversible, AuditKind: AuditCorrelationReconfirmed, StepUp: true, ControlPlane: true,
 		},
 		Plan: func(ctx context.Context, pc operation.PlanContext, in ReconfirmInput) ([]operation.TypedStep[reconfirmPayload], error) {
 			p, err := w.PendingReconfirmation(ctx, pc.Tx, in.CorrelationID)

@@ -181,6 +181,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/directory/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search users
+         * @description Answers the users of the caller's tenant whose display name, sAMAccountName or userPrincipalName contains q, in a stable order, at most limit of them. q is plain text: the characters ( ) * \ & | = ! < > ~ and control characters are refused with a 400, as is a q longer than 256 characters. Nothing from q is ever placed in a directory query as syntax.
+         */
+        get: operations["searchDirectoryUsers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health/live": {
         parameters: {
             query?: never;
@@ -266,6 +286,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/setup/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Claim first-run setup and create the first tenant owner (AN-4)
+         * @description The first-run setup gate (TM-TB16-T7). A fresh install writes a one-time setup secret where only the installing administrator can read it (`activediq-server setup show`). Presenting it here claims setup: in one step the secret is consumed and the first tenant-owner account is created and granted the tenant-owner role (a failure creating the owner leaves the secret unconsumed). The secret never works again. The new account has no credential yet and cannot sign in until one is enrolled. Success answers 204 and no body. A second claim is refused like any other failure. Every failure has one shape, 401 /problems/setup-refused: wrong secret, expired secret, already-used secret, and an install that is not in first-run state are indistinguishable. The source-IP limiter may answer 429. No default account exists before or after.
+         */
+        post: operations["claimFirstRunSetup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -320,6 +360,18 @@ export interface components {
         DelegationId: string;
         /** @description Permission names, each of the form family.noun.verb. Duplicates are collapsed. */
         DelegationPermissions: string[];
+        /** @description A user as search shows it. Only these fields; the objectGuid is the key. */
+        DirectoryUser: {
+            displayName: string;
+            enabled: boolean;
+            /** Format: uuid */
+            objectGuid: string;
+            samAccountName: string;
+            userPrincipalName: string;
+        };
+        DirectoryUserList: {
+            items: components["schemas"]["DirectoryUser"][];
+        };
         /** @description A reference to a directory object by objectGUID. A DN is never a key. */
         GUIDRef: {
             /** Format: uuid */
@@ -438,6 +490,16 @@ export interface components {
         };
         /** @description A secret a client sends: a password, a token. It is write-only, never appears in a response, and is held in memory only as a secret.Secret that is destroyed after the request. */
         SecretInput: string;
+        /** @description The one-time setup secret and the details of the first tenant owner. */
+        SetupClaimRequest: {
+            owner: components["schemas"]["SetupOwner"];
+            secret: components["schemas"]["SecretInput"];
+        };
+        /** @description The first tenant owner's account details. */
+        SetupOwner: {
+            displayName: string;
+            email: string;
+        };
         /** @description A destination as stored. It never carries a credential. */
         SiemDestination: {
             host: string;
@@ -839,6 +901,22 @@ export interface components {
                 "application/problem+json": components["schemas"]["Problem"];
             };
         };
+        /** @description First-run setup was not claimed. One answer for every cause (wrong secret, expired secret, secret already used, install not in first-run state), so the response teaches a caller nothing. It never carries a detail. */
+        SetupRefused: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "status": 401,
+                 *       "title": "Setup was refused",
+                 *       "type": "/problems/setup-refused"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
         /** @description The sign-in did not succeed. One answer for every cause (unknown account, wrong secret, non-local account, disabled account, throttled account, expired or exhausted pending sign-in), so the response teaches a caller nothing (TM section 7.6 rule 2). It never carries a detail. */
         SignInFailed: {
             headers: {
@@ -1209,6 +1287,36 @@ export interface operations {
             500: components["responses"]["Internal"];
         };
     };
+    searchDirectoryUsers: {
+        parameters: {
+            query: {
+                /** @description The most users to answer. Defaults to 25. */
+                limit?: number;
+                /** @description Text to find. Plain text only; no filter syntax. */
+                q: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The matching users */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DirectoryUserList"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
     getLiveness: {
         parameters: {
             query?: never;
@@ -1376,6 +1484,34 @@ export interface operations {
             413: components["responses"]["PayloadTooLarge"];
             415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["IdempotencyKeyReuse"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    claimFirstRunSetup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetupClaimRequest"];
+            };
+        };
+        responses: {
+            /** @description Setup was claimed, the secret is consumed and the first tenant owner exists. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["SetupRefused"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
         };
