@@ -25,6 +25,13 @@ const (
 	CodeAttemptsExhausted = "attempts_exhausted" // reserved for a row found past its last attempt after a crash
 )
 
+// LeaseSlack is the least a Lease must exceed the sender's timeout by, so an outcome is recorded
+// while the attempt still holds its Delivery.
+const LeaseSlack = 30 * time.Second
+
+// ErrLease: the Lease is not longer than the sender's timeout plus LeaseSlack.
+var ErrLease = errors.New("delivery: lease must exceed the sender timeout plus the slack")
+
 // ErrNoAddress is what Accounts.MailAddress returns for an account without a usable address.
 var ErrNoAddress = errors.New("delivery: account has no mail address")
 
@@ -57,8 +64,10 @@ type Dispatcher struct {
 	// Backoff is the wait before attempt n+1 after attempt n failed (n starts at 1). Default 1 m, 5 m,
 	// 30 m, then 2 h.
 	Backoff func(attempt int) time.Duration
-	// Lease is how long a claimed Delivery is reserved for its attempt. Default 5 minutes; it must
-	// exceed the sender's timeout.
+	// Lease is how long a Delivery is reserved for one attempt. Default 5 minutes. It must exceed the
+	// sender's timeout by LeaseSlack, or DispatchDue refuses to run (ErrLease). The claim reserves the
+	// whole batch, so every Delivery renews its own lease right before it is sent and is skipped if
+	// another worker has claimed it meanwhile.
 	Lease time.Duration
 }
 
@@ -86,6 +95,13 @@ func (d *Dispatcher) DispatchDue(ctx context.Context, t tenant.ID, limit int) (S
 	lease := d.Lease
 	if lease <= 0 {
 		lease = 5 * time.Minute
+	}
+	sendTimeout := d.Sender.Timeout
+	if sendTimeout <= 0 {
+		sendTimeout = 60 * time.Second
+	}
+	if lease < sendTimeout+LeaseSlack {
+		return Summary{}, ErrLease
 	}
 	var claimed []Delivery
 	var cfg settings.Settings
@@ -125,11 +141,14 @@ func (d *Dispatcher) DispatchDue(ctx context.Context, t tenant.ID, limit int) (S
 		if ctx.Err() != nil {
 			break
 		}
-		res, code, perm := d.attempt(ctx, t, cfg, del)
-		if ctx.Err() != nil && code != "" {
+		o := d.attempt(ctx, t, lease, del)
+		if o.lost {
+			continue // another worker claimed it after our lease lapsed: it is theirs, nothing is sent
+		}
+		if ctx.Err() != nil && o.code != "" {
 			break // cancelled mid-attempt: the lease returns the Delivery
 		}
-		next, err := d.record(ctx, t, del, res, code, perm)
+		next, err := d.record(ctx, t, del, o.res, o.code, o.perm)
 		if err != nil {
 			return sum, err
 		}
@@ -180,31 +199,54 @@ func (d *Dispatcher) closeExhausted(ctx context.Context, tx store.Tx, t tenant.I
 	return nil
 }
 
-// attempt tries one Delivery. It returns the relay's result and, on failure, the stable code and
-// whether retrying cannot help.
-func (d *Dispatcher) attempt(ctx context.Context, t tenant.ID, cfg settings.Settings, del Delivery) (mail.Result, string, bool) {
-	if cfg.Relay == nil {
-		return mail.Result{}, mail.CodeNoRelay, false
-	}
+// outcome is what one attempt produced: a relay result, or a failure code and whether retrying
+// cannot help, or lost when the Delivery is no longer this worker's.
+type outcome struct {
+	res  mail.Result
+	code string
+	perm bool
+	lost bool
+}
+
+// attempt tries one Delivery. The settings are read in the same transaction that resolves the
+// address, so the classification, the RequireInternal check and the relay are those in force now,
+// not those at claim time (SX-6). Just before the send the same transaction renews the lease for
+// this attempt's claim and finds out whether the Delivery is still ours.
+func (d *Dispatcher) attempt(ctx context.Context, t tenant.ID, lease time.Duration, del Delivery) outcome {
 	r, ok := d.Renderers[del.Purpose]
 	if !ok {
-		return mail.Result{}, CodeNoRenderer, true
+		return outcome{code: CodeNoRenderer, perm: true}
 	}
 	var to mailaddr.Address
 	var content Content
-	var code string
-	var perm bool
+	var relay settings.Relay
+	var from mailaddr.Address
+	var o outcome
 	err := d.DB.WithTenant(ctx, t, func(ctx context.Context, tx store.Tx) error {
+		o = outcome{}
+		cfg, err := (settings.Store{}).Get(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if cfg.Relay == nil {
+			o.code = mail.CodeNoRelay
+			return nil
+		}
+		relay = *cfg.Relay
+		if from, err = mailaddr.Parse(relay.From); err != nil {
+			o.code = mail.CodeNoRelay
+			return nil
+		}
 		raw := del.Recipient.Address
 		if del.Recipient.Account != "" {
 			if d.Accounts == nil {
-				code, perm = CodeNoAddress, true
+				o.code, o.perm = CodeNoAddress, true
 				return nil
 			}
 			a, err := d.Accounts.MailAddress(ctx, tx, del.Recipient.Account)
 			if err != nil {
 				if errors.Is(err, ErrNoAddress) {
-					code, perm = CodeNoAddress, true
+					o.code, o.perm = CodeNoAddress, true
 					return nil
 				}
 				return err
@@ -214,46 +256,51 @@ func (d *Dispatcher) attempt(ctx context.Context, t tenant.ID, cfg settings.Sett
 		// Classify the canonical address that is then sent to: one parse, no second reading (SX-7).
 		addr, class, err := cfg.ClassifyString(raw)
 		if err != nil {
-			code, perm = CodeInvalidAddress, true
+			o.code, o.perm = CodeInvalidAddress, true
 			return nil
 		}
 		if del.RequireInternal && class != settings.Internal {
-			code, perm = CodeRecipientExternal, true
+			o.code, o.perm = CodeRecipientExternal, true
 			return nil
 		}
 		to = addr
 		c, err := r.Render(ctx, tx, del)
 		if err != nil {
-			code = CodeRenderFailed
+			o.code = CodeRenderFailed
 			return nil
 		}
 		content = c
+		// Renew the lease for this claim, last, so the time spent resolving and rendering is not
+		// taken from it. The attempts counter is the claim: a re-claim after expiry has raised it.
+		tag, err := tx.Exec(ctx, `UPDATE public.notify_deliveries SET lease_until = clock_timestamp() + make_interval(secs => $4), updated_at = now()
+			WHERE tenant_id = $1::uuid AND id = $2::uuid AND attempts = $3 AND state IN ('queued', 'failed')`,
+			t.String(), del.ID, del.Attempts, lease.Seconds())
+		if err != nil {
+			return err
+		}
+		o.lost = tag.RowsAffected() != 1
 		return nil
 	})
 	switch {
 	case err != nil && ctx.Err() != nil:
-		return mail.Result{}, "cancelled", false
+		return outcome{code: "cancelled"}
 	case err != nil:
-		return mail.Result{}, CodeRenderFailed, false
-	case code != "":
-		return mail.Result{}, code, perm
+		return outcome{code: CodeRenderFailed}
+	case o.lost || o.code != "":
+		return o
 	}
-	from, err := mailaddr.Parse(cfg.Relay.From)
-	if err != nil {
-		return mail.Result{}, mail.CodeNoRelay, false
-	}
-	res, err := d.Sender.Send(ctx, *cfg.Relay, mail.Message{From: from, To: to, Subject: content.Subject, Text: content.Text, Attachments: content.Attachments})
+	res, err := d.Sender.Send(ctx, relay, mail.Message{From: from, To: to, Subject: content.Subject, Text: content.Text, Attachments: content.Attachments})
 	if err != nil {
 		var me *mail.Error
 		if errors.As(err, &me) {
-			return mail.Result{}, me.Code, me.Permanent
+			return outcome{code: me.Code, perm: me.Permanent}
 		}
 		if ctx.Err() != nil {
-			return mail.Result{}, "cancelled", false
+			return outcome{code: "cancelled"}
 		}
-		return mail.Result{}, mail.CodeConnect, false
+		return outcome{code: mail.CodeConnect}
 	}
-	return res, "", false
+	return outcome{res: res}
 }
 
 // record stores the outcome of a claimed attempt, and the audit event of a final one, in one
@@ -268,20 +315,20 @@ func (d *Dispatcher) record(ctx context.Context, t tenant.ID, del Delivery, res 
 			final = Sent
 			upd, err = scan(tx.QueryRow(ctx, `UPDATE public.notify_deliveries SET state = 'sent', next_attempt_at = NULL, lease_until = NULL,
 				last_error_code = NULL, provider_message_id = $3, sent_at = now(), updated_at = now()
-				WHERE tenant_id = $1::uuid AND id = $2::uuid AND state IN ('queued', 'failed') RETURNING `+cols, t.String(), del.ID, res.MessageID))
+				WHERE tenant_id = $1::uuid AND id = $2::uuid AND attempts = $4 AND state IN ('queued', 'failed') RETURNING `+cols, t.String(), del.ID, res.MessageID, del.Attempts))
 		case permanent || del.Attempts >= del.MaxAttempts:
 			final = GivenUp
 			upd, err = scan(tx.QueryRow(ctx, `UPDATE public.notify_deliveries SET state = 'given_up', next_attempt_at = NULL, lease_until = NULL,
 				last_error_code = $3, updated_at = now()
-				WHERE tenant_id = $1::uuid AND id = $2::uuid AND state IN ('queued', 'failed') RETURNING `+cols, t.String(), del.ID, code))
+				WHERE tenant_id = $1::uuid AND id = $2::uuid AND attempts = $4 AND state IN ('queued', 'failed') RETURNING `+cols, t.String(), del.ID, code, del.Attempts))
 		default:
 			final = Failed
 			upd, err = scan(tx.QueryRow(ctx, `UPDATE public.notify_deliveries SET state = 'failed', lease_until = NULL, last_error_code = $3,
 				next_attempt_at = now() + make_interval(secs => $4), updated_at = now()
-				WHERE tenant_id = $1::uuid AND id = $2::uuid AND state IN ('queued', 'failed') RETURNING `+cols,
-				t.String(), del.ID, code, d.backoff(del.Attempts).Seconds()))
+				WHERE tenant_id = $1::uuid AND id = $2::uuid AND attempts = $5 AND state IN ('queued', 'failed') RETURNING `+cols,
+				t.String(), del.ID, code, d.backoff(del.Attempts).Seconds(), del.Attempts))
 		}
-		if store.IsNoRows(err) { // finished by another worker after a lease expiry: nothing to record
+		if store.IsNoRows(err) { // claimed or finished by another worker after a lease expiry: nothing to record
 			final = ""
 			return nil
 		}

@@ -47,7 +47,7 @@ No API operation yet: the HTTP operation, its OpenAPI schema and the `policy.yam
 | `settings` | `Settings`, `Update.Normalize`, `Classify` (exact match, no subdomains, empty list ⇒ all external), `Store.Get/Set` |
 | `mail` | `Sender.Send` over `egress`: STARTTLS required (no downgrade), implicit TLS, plaintext only with opt-in, one recipient per SMTP transaction, typed `*mail.Error` |
 | `mailtest` | in-process SMTP catcher for tests (plain, STARTTLS, implicit TLS, stripped STARTTLS, rejections, down) |
-| `delivery` | DM-84: `Deliveries.Enqueue/ForSource/Get`, `Dispatcher.DispatchDue` (lease claim, per-recipient outcome, backoff 1m/5m/30m/2h, `given_up` with a reason), audit `notify.delivery.queued|sent|given_up` |
+| `delivery` | DM-84: `Deliveries.Enqueue/ForSource/Get`, `Dispatcher.DispatchDue` (lease claim; each Delivery re-reads the settings and renews its lease just before its send and is skipped if another worker took it; `Lease` must exceed the sender timeout by `LeaseSlack`; per-recipient outcome, backoff 1m/5m/30m/2h, `given_up` with a reason), audit `notify.delivery.queued|sent|given_up` |
 
 ## Dependencies
 

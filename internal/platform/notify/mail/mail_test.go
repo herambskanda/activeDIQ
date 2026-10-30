@@ -238,3 +238,28 @@ func decodeB64(s string) (string, error) {
 	b, err := base64.StdEncoding.DecodeString(strings.NewReplacer("\r", "", "\n", "").Replace(s))
 	return string(b), err
 }
+
+// The sender enforces the transport promise itself: an unknown Security value, or plaintext without
+// the opt-in, is refused before anything is dialled.
+func TestSenderFailsClosedOnTransport(t *testing.T) {
+	srv := mailtest.Start(t, mailtest.Plain)
+	for _, c := range []struct {
+		name string
+		r    settings.Relay
+	}{
+		{"wrong case", func() settings.Relay { r := relay(srv, settings.StartTLS); r.Security = "STARTTLS"; return r }()},
+		{"empty", func() settings.Relay { r := relay(srv, settings.StartTLS); r.Security = ""; return r }()},
+		{"plaintext without opt-in", func() settings.Relay { r := relay(srv, settings.Plaintext); r.PlaintextOptIn = false; return r }()},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := sender(t, srv).Send(context.Background(), c.r, msg(t, "bob@ok.example"))
+			var me *nm.Error
+			if !errors.As(err, &me) || me.Code != nm.CodeBadRelay || !me.Permanent {
+				t.Fatalf("err = %v, want permanent bad_relay", err)
+			}
+		})
+	}
+	if srv.Connections() != 0 {
+		t.Fatalf("relay was dialled %d times", srv.Connections())
+	}
+}

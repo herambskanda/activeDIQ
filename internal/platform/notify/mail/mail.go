@@ -46,6 +46,7 @@ const (
 	CodeServer            = "smtp_error"         // any other SMTP reply
 	CodeBadMessage        = "bad_message"        // the message cannot be built (permanent)
 	CodeNoRelay           = "no_relay"           // the tenant has no relay configured (permanent until configured)
+	CodeBadRelay          = "bad_relay"          // the relay's security value is unknown, or plaintext without the opt-in (permanent)
 )
 
 // Error is a failed send. Permanent says retrying the same message to the same relay cannot help.
@@ -57,8 +58,10 @@ type Error struct {
 
 func (e *Error) Error() string { return "mail: " + e.Code }
 
-// Unwrap returns the underlying error for errors.Is/As (for example egress.ErrDestinationDenied). It
-// is for tests and logs of the operator; it can name the relay host, never an address or a body.
+// Unwrap returns the underlying error for errors.Is/As (for example egress.ErrDestinationDenied) in
+// code and tests. The cause must never be logged, stored or shown: a *textproto.Error carries the
+// relay's reply text, which commonly echoes the recipient address ("550 5.1.1 <bob@x>: unknown"),
+// and a dial error names the relay host. Only Code is for output.
 func (e *Error) Unwrap() error { return e.cause }
 
 func badMessage(string) error { return &Error{Code: CodeBadMessage, Permanent: true} }
@@ -87,6 +90,14 @@ type Result struct {
 // Send delivers m through relay. It returns nil error only after the relay accepted the message for
 // the one recipient (a 250 after DATA).
 func (s *Sender) Send(ctx context.Context, relay settings.Relay, m Message) (Result, error) {
+	// Fail closed on the transport before anything is built or dialled: only the three known values
+	// are sent, and plaintext only with the explicit opt-in (the database CHECK is not the only guard).
+	switch {
+	case relay.Security == settings.StartTLS, relay.Security == settings.ImplicitTLS:
+	case relay.Security == settings.Plaintext && relay.PlaintextOptIn:
+	default:
+		return Result{}, &Error{Code: CodeBadRelay, Permanent: true}
+	}
 	raw, id, err := m.build()
 	if err != nil {
 		var me *Error
