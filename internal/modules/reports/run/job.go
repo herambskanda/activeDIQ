@@ -143,7 +143,7 @@ func (s *Service) execute(ctx context.Context, jt jobs.TenantTx, tid tenant.ID, 
 	if def.Def.PerDC != nil {
 		return &runFailure{reason: FailInternal} // per-DC runs are row B8's
 	}
-	rp, err := s.Codec.Decode(r.Params)
+	rp, err := s.Codec.Decode(r.Params, def.Def)
 	if err != nil {
 		return err
 	}

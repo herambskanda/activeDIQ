@@ -91,7 +91,7 @@ type Catalog interface {
 // ParamsCodec turns the stored request parameters (API shape) into typed run parameters. The module
 // supplies it, so this package never imports the API package.
 type ParamsCodec interface {
-	Decode(raw json.RawMessage) (report.RunParams, error)
+	Decode(raw json.RawMessage, def report.Definition) (report.RunParams, error)
 }
 
 // FreshnessSource reads the sync watermarks of the connections a result covers (§6.4). It runs its own
@@ -152,7 +152,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (run Run, reused b
 	if len(raw) == 0 {
 		raw = json.RawMessage(`{}`)
 	}
-	rp, err := s.Codec.Decode(raw)
+	rp, err := s.Codec.Decode(raw, def.Def)
 	if err != nil {
 		return Run{}, false, err
 	}

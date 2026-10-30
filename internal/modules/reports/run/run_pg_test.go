@@ -110,7 +110,7 @@ func (c catalog) Definition(id string, _ int) (run.Definition, bool) {
 // codec reads {"columns":[...]}.
 type codec struct{}
 
-func (codec) Decode(raw json.RawMessage) (report.RunParams, error) {
+func (codec) Decode(raw json.RawMessage, _ report.Definition) (report.RunParams, error) {
 	var v struct {
 		Columns []string `json:"columns"`
 	}
