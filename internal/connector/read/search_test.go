@@ -23,6 +23,8 @@ type ssrc struct {
 	err     error
 	got     ad.ScopedRequest
 	filtErr error
+	// parentless names the DNs reported as naming-context heads.
+	parentless map[string]bool
 }
 
 func (s *ssrc) ParseFilter(f *connectorv1.Filter) (ldapfilter.Filter, error) {
@@ -35,6 +37,11 @@ func (s *ssrc) ParseFilter(f *connectorv1.Filter) (ldapfilter.Filter, error) {
 func (s *ssrc) ScopedSearch(_ context.Context, r ad.ScopedRequest, fn func(*ad.Entry) error) (ad.ScopedResult, error) {
 	s.got = r
 	for _, e := range s.entries {
+		if r.ResolveParents && s.parentless[e.DN] {
+			e.WithParent(guid.GUID{}, false)
+		} else if r.ResolveParents {
+			e.WithParent(g(parGUID), true)
+		}
 		if err := fn(e); err != nil {
 			return ad.ScopedResult{}, err
 		}
@@ -219,3 +226,44 @@ func TestScopedSearchWithoutSearcherIsUnsupported(t *testing.T) {
 
 var _ = guid.GUID{}
 var _ read.Searcher = (*ssrc)(nil)
+
+// T-0694: parent_guid is set on every entry that has a parent, and absent on a naming-context head;
+// the connector asks the search layer to resolve parents.
+func TestScopedSearchSetsParentGUIDExceptNCHead(t *testing.T) {
+	head := mk(1)
+	s := &ssrc{src: &src{dsa: dsaA}, entries: []*ad.Entry{head, mk(2)}, parentless: map[string]bool{head.DN: true}}
+	ms, err := searchAll(start(t, s), sreq())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !s.got.ResolveParents {
+		t.Fatal("ScopedSearch did not ask for parents to be resolved")
+	}
+	es := ms[0].GetBatch().GetEntries()
+	if len(es) != 2 || es[0].GetParentGuid() != nil {
+		t.Fatalf("NC head must carry no parent_guid: %v", es)
+	}
+	want := write.GUIDToWire(g(parGUID))
+	if es[1].GetParentGuid().String() != want.String() {
+		t.Fatalf("parent_guid = %v, want %v", es[1].GetParentGuid(), want)
+	}
+}
+
+// An entry the search layer did not resolve is a failure, never "no parent" (ancestry feeds authorisation).
+func TestScopedSearchUnresolvedParentIsFailure(t *testing.T) {
+	st := &unresolvedSrc{ssrc: &ssrc{src: &src{dsa: dsaA}, entries: []*ad.Entry{mk(1)}}}
+	if _, err := searchAll(start(t, st), sreq()); err == nil {
+		t.Fatal("stream with an unresolved parent completed")
+	}
+}
+
+type unresolvedSrc struct{ *ssrc }
+
+func (u *unresolvedSrc) ScopedSearch(_ context.Context, _ ad.ScopedRequest, fn func(*ad.Entry) error) (ad.ScopedResult, error) {
+	for _, e := range u.entries {
+		if err := fn(e); err != nil {
+			return ad.ScopedResult{}, err
+		}
+	}
+	return ad.ScopedResult{}, nil
+}

@@ -203,3 +203,30 @@ func TestOpsListenerSettings(t *testing.T) {
 		t.Errorf("non-loopback with TLS dir refused: %v", err)
 	}
 }
+
+func TestSetupTTL(t *testing.T) {
+	c, err := config.Load(env(nil))
+	if err != nil || c.SetupTTL != config.DefaultSetupTTL {
+		t.Fatalf("default: %v %v", c.SetupTTL, err)
+	}
+	if c, err = config.Load(env(map[string]string{config.EnvSetupTTL: "2s"})); err != nil || c.SetupTTL.Seconds() != 2 {
+		t.Fatalf("2s: %v %v", c.SetupTTL, err)
+	}
+	for _, bad := range []string{"0s", "-1m", "soon", "25h"} {
+		if _, err := config.Load(env(map[string]string{config.EnvSetupTTL: bad})); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}
+
+// T-0665: the connector's local configuration file path is carried from its variable, unset by default.
+func TestConnectorConfigPathFromEnv(t *testing.T) {
+	c, err := config.Load(env(map[string]string{}))
+	if err != nil || c.ConnectorConfigPath != "" {
+		t.Fatalf("default: %q %v", c.ConnectorConfigPath, err)
+	}
+	c, err = config.Load(env(map[string]string{config.EnvConnectorConfig: "/etc/diq/connector.json"}))
+	if err != nil || c.ConnectorConfigPath != "/etc/diq/connector.json" {
+		t.Fatalf("set: %q %v", c.ConnectorConfigPath, err)
+	}
+}

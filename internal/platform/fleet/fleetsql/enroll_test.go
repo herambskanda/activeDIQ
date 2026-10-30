@@ -118,7 +118,7 @@ func setupEnroll(t *testing.T, s *storetest.Server) *enrollEnv {
 
 func (e *enrollEnv) issue(t *testing.T, tid tenant.ID, kind fleetsql.Kind) fleetsql.Issued {
 	t.Helper()
-	iss, err := e.svc.Issue(context.Background(), tid, admin, fleetsql.NewComponent{Kind: kind, Name: "host-1"})
+	iss, err := e.svc.Issue(context.Background(), tid, adminIn(tid), fleetsql.NewComponent{Kind: kind, Name: "host-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -480,8 +480,8 @@ func TestBundleIsNeverServedFromBadMaterial(t *testing.T) {
 				}
 				// The runtime role under the tenant's own context: the only way a row gets in.
 				if _, err := e.raw(e.a, `INSERT INTO public.fleet_ca (tenant_id, cert_der, spki_sha256, sealed_key, key_version, not_after, state)
-					VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1, $2, $3, 1, now() + interval '1 year', 'retired')`,
-					c.der, bytes.Repeat([]byte{9}, 32), bytes.Repeat([]byte{3}, 40)); err != nil {
+					VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1, $2, NULL, 1, now() + interval '1 year', 'retired')`,
+					c.der, bytes.Repeat([]byte{9}, 32)); err != nil {
 					t.Fatal(err)
 				}
 				resp, err := e.enr.Enroll(ctx, peerIP, tok.Token.String(), csr)

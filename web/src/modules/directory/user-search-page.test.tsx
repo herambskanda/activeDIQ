@@ -179,6 +179,16 @@ describe("UserSearchPage", () => {
     expect(container.querySelectorAll("tbody tr")).toHaveLength(1);
   });
 
+  it("offers Sign in, not Retry, when the session has ended", async () => {
+    respond = () => json(401, { type: "about:blank", title: "Unauthenticated", status: 401 });
+    await mount();
+    await type("ann");
+    await settle();
+    expect(el('[role="alert"]').textContent).toContain("Your session has ended");
+    expect(findButton("Retry")).toBeUndefined();
+    expect(findButton("Sign in")).toBeDefined();
+  });
+
   it("shows unreachable when the network fails", async () => {
     respond = () => {
       throw new TypeError("Failed to fetch");

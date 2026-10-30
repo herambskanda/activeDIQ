@@ -39,7 +39,8 @@ func totpCode(seed []byte, at time.Time) string {
 }
 
 // The composed server-role console stack verifies a TOTP code in StepUp.Reverify through the store-backed
-// tenant DEK source, and fails closed, with no key detail, for a tenant with no key or a failed unwrap.
+// tenant DEK source, and fails closed, with no key detail, for a failed unwrap. A shredded DEK or an
+// unavailable KEK provider under a live enrolment is pinned by TestReverifyFailsClosedWithoutUsableDEK.
 func TestReverifyInTheServerRoleUsesTheTenantDEK(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		ctx := context.Background()
@@ -158,7 +159,8 @@ func TestReverifyInTheServerRoleUsesTheTenantDEK(t *testing.T) {
 			}
 		}
 
-		// A tenant with no key: nothing can be verified, nothing leaks.
+		// A tenant with no key and therefore no enrolment: Reverify refuses before KeySource.DEK is ever
+		// called, so this case does not exercise key failure (see TestReverifyFailsClosedWithoutUsableDEK).
 		res2, _ := session(noKey)
 		before2 := mfaAt(noKey, res2.Session.ID)
 		if _, err = console.StepUp.Reverify(ctx, res2.Token, "123456"); err == nil {
@@ -166,6 +168,115 @@ func TestReverifyInTheServerRoleUsesTheTenantDEK(t *testing.T) {
 		}
 		if strings.Contains(err.Error(), noKey.String()) || !mfaAt(noKey, res2.Session.ID).Equal(before2) {
 			t.Errorf("no-key tenant: %v", err)
+		}
+	})
+}
+
+// Under a live TOTP enrolment, a shredded tenant_keys row or an unavailable KEK provider makes the composed
+// StepUp.Reverify fail closed with a bare keys code: mfa_at is unchanged and no tenant, enrolment or KEK id leaks.
+func TestReverifyFailsClosedWithoutUsableDEK(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		for _, tc := range []struct {
+			name, code string
+			break_     func(t *testing.T, d *storetest.Database, kms *keystest.KMS)
+		}{
+			{"shredded", keys.KeyShredded, func(t *testing.T, d *storetest.Database, _ *keystest.KMS) {
+				if err := d.ExecOwner(context.Background(), `ALTER TABLE public.tenant_keys NO FORCE ROW LEVEL SECURITY; UPDATE public.tenant_keys SET state = 'shredded', shredded_at = now(), wrapped_dek = '' WHERE true`); err != nil {
+					t.Fatal(err)
+				}
+			}},
+			{"provider down", keys.ProviderUnavailable, func(_ *testing.T, _ *storetest.Database, kms *keystest.KMS) { kms.SetDown(true) }},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				ctx := context.Background()
+				d := s.NewDatabase(t)
+				d.Migrate(t)
+				db, err := store.Open(ctx, store.Config{DSN: d.AppDSN()})
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(db.Close)
+				kms := keystest.New("kek-1")
+				ks := keys.NewStore(kms)
+				console, err := buildConsole(db, nopSink{}, ks.KeySource(), nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				tn := tenanttest.Seed(t, d.ExecOwner, "A")
+				if err := db.WithTenant(ctx, tn, func(ctx context.Context, tx store.Tx) error { return ks.Provision(ctx, tx, tn) }); err != nil {
+					t.Fatal(err)
+				}
+				accts, err := authn.NewAccounts(db, console.Sessions, rbac.Owners{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				a, err := accts.Create(ctx, authn.NewAccount{Tenant: tn, Kind: authn.KindLocal, DisplayName: "u", CreatedBy: "system"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				sys := authority.Chain{Requester: authority.Principal{ID: "system", Kind: authority.System}}
+				if _, err := accts.SetState(ctx, tn, a.ID, authn.AccountActive, sys); err != nil {
+					t.Fatal(err)
+				}
+				ep, err := console.Sessions.Epoch(ctx, tn, a.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				old := time.Now().Add(-time.Hour)
+				res, err := console.Sessions.Create(ctx, authn.CreateInput{Tenant: tn, Account: a.ID, Methods: []string{"password", "totp"},
+					MFAAt: &old, AuthorityFactorAt: &old, ClientIP: netip.MustParseAddr("192.0.2.7"), Epoch: ep})
+				if err != nil {
+					t.Fatal(err)
+				}
+				var seed []byte
+				var eid string
+				if err := db.WithTenant(ctx, tn, func(ctx context.Context, tx store.Tx) error {
+					p, err := console.StepUp.TOTP.Enroll(ctx, tx, tn, authn.Subject{AccountID: a.ID}, "phone")
+					if err != nil {
+						return err
+					}
+					eid = p.ID
+					p.Seed.Expose(func(b []byte) { seed, err = base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(string(b)) })
+					return err
+				}); err != nil {
+					t.Fatal(err)
+				}
+				activation := time.Now()
+				if err := db.WithTenant(ctx, tn, func(ctx context.Context, tx store.Tx) error {
+					return console.StepUp.TOTP.Activate(ctx, tx, tn, eid, totpCode(seed, activation))
+				}); err != nil {
+					t.Fatal(err)
+				}
+				mfaAt := func() (at time.Time) {
+					if err := db.WithTenant(ctx, tn, func(ctx context.Context, tx store.Tx) error {
+						return tx.QueryRow(ctx, `SELECT mfa_at FROM public.authn_sessions WHERE id = $1::uuid`, res.Session.ID).Scan(&at)
+					}); err != nil {
+						t.Fatal(err)
+					}
+					return at
+				}
+
+				tc.break_(t, d, kms)
+				before := mfaAt()
+				_, err = console.StepUp.Reverify(ctx, res.Token, totpCode(seed, activation.Add(30*time.Second)))
+				if err == nil {
+					t.Fatal("Reverify succeeded without a usable DEK")
+				}
+				if errors.Is(err, authn.ErrStepUpRefused) {
+					t.Fatalf("refused as a wrong code, so the key path was never reached: %v", err)
+				}
+				if got := keys.Code(err); got != tc.code {
+					t.Errorf("key code = %q, want %q (err %v)", got, tc.code, err)
+				}
+				if !mfaAt().Equal(before) {
+					t.Error("mfa_at moved although the DEK was unusable")
+				}
+				for _, leak := range []string{tn.String(), eid, a.ID, "kek-1"} {
+					if strings.Contains(err.Error(), leak) {
+						t.Errorf("error leaks %q: %v", leak, err)
+					}
+				}
+			})
 		}
 	})
 }
