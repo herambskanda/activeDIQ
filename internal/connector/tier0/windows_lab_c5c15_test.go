@@ -18,7 +18,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -35,16 +34,9 @@ const (
 	wConf  = "CN=Configuration," + lDomDN
 )
 
-func lPath(envVar, def string) string {
-	if p := os.Getenv(envVar); p != "" {
-		return p
-	}
-	return filepath.Join("..", "..", "..", "lab", "windows", def)
-}
-
 func wEnv(t *testing.T) map[string]string {
 	t.Helper()
-	f, err := os.Open(lPath("WIN_LAB_ENV", ".win-lab.env"))
+	f, err := os.Open(labFile(os.Getenv("WIN_LAB_ENV"), ".win-lab.env"))
 	if err != nil {
 		t.Fatalf("windows lab not configured: %v", err)
 	}
@@ -72,7 +64,7 @@ func wHostName() (host, name string) {
 
 func wPool(t *testing.T) *x509.CertPool {
 	t.Helper()
-	pem, err := os.ReadFile(lPath("WIN_LAB_CA", ".win-lab-ca.pem"))
+	pem, err := os.ReadFile(labFile(os.Getenv("WIN_LAB_CA"), ".win-lab-ca.pem"))
 	if err != nil {
 		t.Fatal(err)
 	}
