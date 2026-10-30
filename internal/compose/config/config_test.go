@@ -251,3 +251,45 @@ func TestConnectorConfigPathFromEnv(t *testing.T) {
 		t.Fatalf("set: %q %v", c.ConnectorConfigPath, err)
 	}
 }
+
+// T-0861: the public URL is canonicalised once, at load; every consumer sees only the canonical origin.
+func TestPublicURLIsCanonicalised(t *testing.T) {
+	for in, want := range map[string]struct{ origin, rp string }{
+		"https://DIQ.Example.com:443":  {"https://diq.example.com", "diq.example.com"},
+		"https://diq.example.com:443/": {"https://diq.example.com", "diq.example.com"},
+		"HTTPS://Diq.Example.COM/":     {"https://diq.example.com", "diq.example.com"},
+		"https://diq.example.com:":     {"https://diq.example.com", "diq.example.com"},
+		"https://diq.example.com:8443": {"https://diq.example.com:8443", "diq.example.com"},
+		"https://DIQ:08443":            {"https://diq:8443", "diq"},
+	} {
+		got, err := config.ParsePublicURL(in)
+		if err != nil || got.Origin != want.origin || got.RPID != want.rp {
+			t.Errorf("%s: %+v, %v", in, got, err)
+		}
+		c, err := config.Load(env(map[string]string{config.EnvPublicURL: in}))
+		if err != nil || c.PublicURL != want.origin {
+			t.Errorf("%s: Load kept %q, %v", in, c.PublicURL, err)
+		}
+	}
+}
+
+// T-0861: a host no browser can satisfy as an RP ID stops start-up, and the error names the variable.
+func TestPublicURLMustBeADomain(t *testing.T) {
+	for _, bad := range []string{
+		"https://10.0.0.5", "https://10.0.0.5:8443", "https://[::1]", "https://[2001:db8::1]:8443", "https://[fe80::1%25eth0]",
+		"https://127.1", "https://0x7f.1", "https://2130706433", "https://diq.example.com.", "https://diq.example.com.:8443",
+		"https://diq..example.com", "https://dïq.example.com", "https://diq.example.com:0", "https://diq.example.com:99999",
+	} {
+		_, err := config.Load(env(map[string]string{config.EnvPublicURL: bad}))
+		if err == nil {
+			t.Errorf("%q accepted", bad)
+			continue
+		}
+		if !strings.Contains(err.Error(), config.EnvPublicURL) {
+			t.Errorf("%q: error does not name %s: %v", bad, config.EnvPublicURL, err)
+		}
+	}
+	if _, err := config.Load(env(map[string]string{config.EnvPublicURL: "https://u:secret@10.0.0.5"})); err == nil || strings.Contains(err.Error(), "secret") {
+		t.Errorf("credentials echoed or accepted: %v", err)
+	}
+}
