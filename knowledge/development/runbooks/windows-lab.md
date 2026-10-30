@@ -220,3 +220,51 @@ Results 2026-10-28 (dc1, WS2025): DACL (WRITE_DAC vs read-only twin), owner and 
 (deny) all classify as TM-D26 rules 2–4 expect. Windows refuses an LDAP write of `sIDHistory` (INSUFF_ACCESS_RIGHTS), so a
 cross-domain Tier-0 `sIDHistory` cannot be planted in a one-domain lab: needs a second domain + trust (M2 follow-up).
 `TestWinLabTM26GCOpens` is red on purpose until bug T-0619 (OpenGC fails on a real GC) is fixed.
+
+## 11. Server MSI: build and the "refuses a domain controller" lab run (T-0702, T-0635)
+
+**Toolchain.** WiX **5.0.2**, pinned in `tools/wix/Dockerfile` (MS-RL, no fee; WiX 6 and 7 carry the Open
+Source Maintenance Fee, see the licence register; never bump past 5.x without a money decision). WiX needs
+a real `msi.dll`, and the factory host is Linux, so the image runs it under Wine with the Windows .NET 8
+runtime (archives pinned by SHA-256). The first `docker build` takes a few minutes. Native Linux `wix` does
+not work: it fails with WIX0389 and a missing `msi.dll`. ICE validation needs Windows and does not run here;
+run `wix msi validate <msi>` on a Windows host if you need it.
+
+```bash
+# from the repo root, with Server.wxs checked out (branch factory/T-0635, or main once it merged)
+tools/wix/build-msi.sh packaging/windows/msi/Server.wxs lab/windows/.state/msi/ActiveDIQ-Server.msi   # prints the sha256
+tools/wix/build-msi.sh tools/wix/testdata/broken.wxs /tmp/broken.msi    # must FAIL (WIX0094): proof the build catches defects
+```
+
+The build is not byte-reproducible yet (two builds of one source give different sha256), so record the
+sha256 of the file you actually copy to the VMs. T-0702 build, from `factory/T-0635` at `ec3720e0`:
+`ActiveDIQ-Server-0.1.0.0.msi`, sha256 `9863587114158c48f853a9ee631863ba7e22743d6f4c24e0843ed36ca77e17e3`,
+in `lab/windows/.state/msi/` of the T-0702 worktree (gitignored; rebuild if it is gone).
+
+**Run on dc1 (Proxmox VM 119, must refuse) and fs1 (control, must install).** Elevated PowerShell on each.
+Copy the MSI plus `packaging/windows/Get-HostObservation.ps1` and `Test-MsiRefusesDc.ps1` to `C:\lab\`
+(same folder; the driver calls the sibling script).
+
+```powershell
+Get-FileHash C:\lab\ActiveDIQ-Server.msi -Algorithm SHA256        # compare with the sha256 you recorded
+cd C:\lab
+.\Test-MsiRefusesDc.ps1 -MsiPath C:\lab\ActiveDIQ-Server.msi -LogPath C:\lab\msi.log > obs.json
+```
+
+- dc1: expect msiexec exit 1603, the log contains `cannot be installed on a domain controller`, no
+  `C:\Program Files\activeDIQ`, no `activeDIQServer` service, no Uninstall entry, and `obs.json` says `refused`.
+- fs1: expect exit 0, the install folder exists, `obs.json` says `installed`. Then clean up:
+  `msiexec /x C:\lab\ActiveDIQ-Server.msi /qn`.
+- Snapshot-revert dc1 if it shows leftovers (`qm rollback 119 clean`).
+
+**Judge it on the repo host** (copy `obs.json` back, one per host: `obs-dc1.json`, `obs-fs1.json`):
+
+```bash
+go run ./tools/fitness/host evaluate obs-dc1.json
+go run ./tools/fitness/host evaluate obs-fs1.json
+```
+
+Then add `windows-lab-runs/T-0635-msi-refuses-dc-<date>.md` with both sha256s, both `obs.json`, the
+`msi.log` line holding the DC message, and the evaluate output. `tools/fitness/host` is on `factory/T-0635`
+until that branch merges. Status: **the MSI has never been run on a Windows host.** This host has no route
+to VM 119 (no SSH or WinRM), so a human runs the block above.
