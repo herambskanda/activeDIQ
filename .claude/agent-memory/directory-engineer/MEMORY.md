@@ -14,3 +14,4 @@
 - [sd write lessons](sd-write-lessons.md) — gate runs one named test per impl, per-unit fuzz entry, whole-object ACE position
 - [connector.Run lab test](connector-run-lab-lessons.md) — Samba Kerberos recipe, run calls inside serve seam, lab-up takes ~6 min
 - [Tier-0/verify stream lessons](tier0-verify-lessons.md) — connector must set fingerprint, duplicate fingerprints refuse the run, lab Tier-0 test recipe
+- [ancestry move lessons](ancestry-move-lessons.md) — CTE FOR UPDATE trap, derive-not-trust completeness, chain order, fault-injection trigger
