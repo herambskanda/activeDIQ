@@ -598,6 +598,141 @@ func f(src string) { template.New("a").Parse(src) }
 GO
 must_fail_with "FF-SP2 analyzer tmplconst on a non-constant template" 'internal/modules/users/u.go:5: FF-SP2 \[tmplconst\]' safeprim -checks FF-SP2
 
+# RP1 (reports contract §9, T-0873): nothing outside store/reportsql mints a CompiledSQL or a Query, and
+# report.SQL takes a constant. The package the user code imports is declared by the tree, so the proof
+# does not depend on the real reportsql having landed.
+rp1_tree() {
+  fresh_sp_tree
+  sp_put internal/platform/store/reportsql/r.go <<'GO'
+package reportsql
+
+type CompiledSQL string
+type Query struct{ text CompiledSQL }
+
+func Compile(ident string) Query { return Query{text: CompiledSQL("SELECT " + ident)} }
+GO
+  sp_put internal/platform/report/r.go <<'GO'
+package report
+
+type Fragment struct{ text string }
+
+func SQL(text string) Fragment { return Fragment{text} }
+GO
+}
+rp1_tree; sp_put internal/modules/users/u.go <<'GO'
+package users
+
+import "sp.test/internal/platform/store/reportsql"
+
+func f(userText string) reportsql.CompiledSQL { return reportsql.CompiledSQL(userText) }
+GO
+must_fail_with "FF-SP2 RP1 on a string converted to reportsql.CompiledSQL outside reportsql" 'internal/modules/users/u.go:5: FF-SP2 \[sqlconst\].*RP1' safeprim -checks FF-SP2
+rp1_tree; sp_put internal/modules/users/u.go <<'GO'
+package users
+
+import "sp.test/internal/platform/store/reportsql"
+
+var q = reportsql.Query{}
+GO
+must_fail_with "FF-SP2 RP1 on a reportsql.Query literal outside reportsql" 'internal/modules/users/u.go:5: FF-SP2 \[sqlconst\].*RP1' safeprim -checks FF-SP2
+rp1_tree; sp_put internal/modules/users/u.go <<'GO'
+package users
+
+import "sp.test/internal/platform/report"
+
+func f(col string) report.Fragment { return report.SQL("{t}." + col) }
+GO
+must_fail_with "FF-SP2 RP1 on report.SQL with a non-constant argument" 'internal/modules/users/u.go:5: FF-SP2 \[sqlconst\].*RP1' safeprim -checks FF-SP2
+rp1_tree; sp_put internal/modules/users/u.go <<'GO'
+package users
+
+import (
+	"sp.test/internal/platform/report"
+	"sp.test/internal/platform/store/reportsql"
+)
+
+var frag = report.SQL("{t}.enabled = true")
+var compiled = reportsql.Compile("users")
+GO
+must_pass "fitness-safeprim FF-SP2 RP1 on a constant fragment and the compiler's own output" safeprim -checks FF-SP2
+
+# --- fitness-reports (ADR-0010, reports contract §9 RP2, RP3, RP7 and the bound tests, T-0873), the real CLI ----
+# (-static-only: the bound tests are listed pending until their rows land; their rules' failing fixtures
+# are go test ./tools/fitness/reports)
+rpbin="$tmp/fitness-reports"; go build -o "$rpbin" ./tools/fitness/reports
+rp="$tmp/rp"
+rp_put() { mkdir -p "$rp/$(dirname "$1")"; cat >"$rp/$1"; }
+fresh_rp() {
+  rm -rf "$rp"; mkdir -p "$rp"; printf 'module rp.test\n\ngo 1.27.0\n' >"$rp/go.mod"
+  rp_put internal/platform/authz/a.go <<'GO'
+package authz
+
+type ReadScope struct{ n int }
+
+func NewReadScope(n int) ReadScope { return ReadScope{n} }
+func (s ReadScope) Terms() []int   { return nil }
+GO
+  rp_put internal/platform/store/reportsql/r.go <<'GO'
+package reportsql
+
+type Registry struct{}
+type Query struct{}
+
+func (r *Registry) Compile() Query { return Query{} }
+func (r *Registry) Exec(Query)     {}
+GO
+  rp_put internal/modules/reports/run/run.go <<'GO'
+package run
+
+import "rp.test/internal/platform/store/reportsql"
+
+func Do(r *reportsql.Registry) { r.Exec(r.Compile()) }
+GO
+  rp_put internal/modules/reports/library/USR-01.v1.json <<'GO'
+{"id":"USR-01","version":1}
+GO
+  printf '%s  USR-01.v1.json\n' "$(sha256sum "$rp/internal/modules/reports/library/USR-01.v1.json" | cut -d' ' -f1)" >"$rp/internal/modules/reports/library/LOCK"
+}
+fresh_rp
+must_pass "fitness-reports (clean tree)" "$rpbin" -root "$rp" -static-only
+fresh_rp; rp_put internal/modules/reports/export/e.go <<'GO'
+package export
+
+import "rp.test/internal/platform/store/reportsql"
+
+func Again(r *reportsql.Registry) { r.Exec(r.Compile()) }
+GO
+must_fail_with "fitness-reports RP3 on an export that calls reportsql.Compile" 'internal/modules/reports/export/e.go:5 RP3 \[export-compiles\]' "$rpbin" -root "$rp" -static-only
+fresh_rp; rp_put internal/modules/reports/export/e.go <<'GO'
+package export
+
+import "rp.test/internal/platform/authz"
+
+func Leak(s authz.ReadScope) []int { return s.Terms() }
+GO
+must_fail_with "fitness-reports RP2 on ReadScope.Terms outside authz and reportsql" 'internal/modules/reports/export/e.go:5 RP2 \[scope-renderer\]' "$rpbin" -root "$rp" -static-only
+fresh_rp; rp_put internal/modules/reports/run/mint.go <<'GO'
+package run
+
+import "rp.test/internal/platform/authz"
+
+var s = authz.NewReadScope(1)
+GO
+must_fail_with "fitness-reports RP2 on authz.NewReadScope outside rbac" 'internal/modules/reports/run/mint.go:5 RP2 \[scope-producer\]' "$rpbin" -root "$rp" -static-only
+fresh_rp; printf '{"id":"USR-01","version":1,"edited":true}\n' >"$rp/internal/modules/reports/library/USR-01.v1.json"
+must_fail_with "fitness-reports RP7 on a changed byte in a locked definition" 'USR-01.v1.json RP7 \[locked-file-changed\]' "$rpbin" -root "$rp" -static-only
+fresh_rp; rp_put internal/modules/reports/library/USR-02.v1.json <<'GO'
+{"id":"USR-02","version":1}
+GO
+must_fail_with "fitness-reports RP7 on a definition missing from LOCK" 'USR-02.v1.json RP7 \[unlisted-file\]' "$rpbin" -root "$rp" -static-only
+fresh_rp
+git -C "$rp" init -q -b main && git -C "$rp" add . && git -C "$rp" -c user.name=proof -c user.email=proof@example.test -c commit.gpgsign=false commit -q -m base
+printf '{"id":"USR-01","version":1,"edited":true}\n' >"$rp/internal/modules/reports/library/USR-01.v1.json"
+printf '%s  USR-01.v1.json\n' "$(sha256sum "$rp/internal/modules/reports/library/USR-01.v1.json" | cut -d' ' -f1)" >"$rp/internal/modules/reports/library/LOCK"
+must_fail_with "fitness-reports RP7 on a definition and its LOCK entry edited together" 'RP7 \[lock-entry-rewritten\]' "$rpbin" -root "$rp" -static-only -lock-base main
+# a bound test that is declared but whose binding is not landed, and one that is absent when landed, are
+# the tool's own tests (TestBoundTest*, TestDeclaredButNotLandedFails, TestRP11* in tools/fitness/reports/check_test.go).
+
 fresh_sp_tree; sp_put internal/modules/users/u.go <<'GO'
 package users
 
