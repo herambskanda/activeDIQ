@@ -35,7 +35,12 @@ $leftovers = @()
 if (Test-Path -LiteralPath $InstallDir) { $leftovers += "directory $InstallDir" }
 if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) { $leftovers += "service $ServiceName" }
 $uninst = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
-if (Get-ChildItem $uninst -ErrorAction SilentlyContinue | Where-Object { (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).DisplayName -eq 'activeDIQ Server' }) { $leftovers += 'Uninstall entry' }
+# Uninstall subkeys without a DisplayName are normal; read the value through the key, not as a strict-mode property.
+$hasEntry = $false
+foreach ($k in Get-ChildItem -LiteralPath $uninst -ErrorAction SilentlyContinue) {
+  if ($k.GetValue('DisplayName') -eq 'activeDIQ Server') { $hasEntry = $true }
+}
+if ($hasEntry) { $leftovers += 'Uninstall entry' }
 foreach ($l in $leftovers) { [Console]::Error.WriteLine("leftover after msiexec: $l") }
 
 $refused = ($p.ExitCode -ne 0) -and $log.Contains($msg)

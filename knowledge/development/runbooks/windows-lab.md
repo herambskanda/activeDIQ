@@ -266,8 +266,9 @@ go run ./tools/fitness/host evaluate obs-fs1.json
 
 Then add `windows-lab-runs/T-0635-msi-refuses-dc-<date>.md` with both sha256s, both `obs.json`, the
 `msi.log` line holding the DC message, and the evaluate output. `tools/fitness/host` is on `factory/T-0635`
-until that branch merges. Status: **the MSI has never been run on a Windows host.** This host has no route
-to VM 119 (no SSH or WinRM), so a human runs the block above.
+until that branch merges. Status: run on dc1 on 2026-10-30 (T-0635): exit 1603, DC message, nothing installed, HOST-DC-REFUSED ok; see
+`windows-lab-runs/T-0635-msi-refuses-dc-20261030.md`. fs1 (the install control) has not been run, so the MSI has
+never installed on a host. Workers reach dc1 over WinRM as section 13 does (A-0025); wrap the session in the dc1 flock.
 
 ## 12. Agent identity harness (T-0613, for T-0557)
 

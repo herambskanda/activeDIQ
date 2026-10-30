@@ -61,7 +61,8 @@ if ($ServiceName) {
   try { $svcSid = (New-Object System.Security.Principal.NTAccount($acct)).Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { }
 }
 $files = @()
-if ($InstallDir) { $files += Get-FileObs $InstallDir 'binary' @($svcSid) }
+# A refused install leaves no directory: that is an unobserved ACL section (INACTIVE), not an error.
+if ($InstallDir -and (Test-Path -LiteralPath $InstallDir)) { $files += Get-FileObs $InstallDir 'binary' @($svcSid) }
 foreach ($p in $ConfigPaths) {
   $kind = if ((Get-Item -LiteralPath $p).PSIsContainer) { 'tls-dir' } else { 'config' }
   $files += Get-FileObs $p $kind @($svcSid)
