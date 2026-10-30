@@ -268,3 +268,25 @@ Then add `windows-lab-runs/T-0635-msi-refuses-dc-<date>.md` with both sha256s, b
 `msi.log` line holding the DC message, and the evaluate output. `tools/fitness/host` is on `factory/T-0635`
 until that branch merges. Status: **the MSI has never been run on a Windows host.** This host has no route
 to VM 119 (no SSH or WinRM), so a human runs the block above.
+
+## 12. Agent identity harness (T-0613, for T-0557)
+
+Creates `NT SERVICE\activeDIQAgent` with the ADR-0006 token (service SID `restricted`, `RequiredPrivileges` =
+`SeChangeNotifyPrivilege`, data dir DACL service SID + SYSTEM + Administrators) on any Windows host (dc1 for
+T-0557). No agent MSI or service host exists, so the service binary is a lab-only stub that records `whoami`
+output from inside the service token. This is not the installer.
+
+```bash
+make windows-agent-harness-build          # -> lab/windows/.state/agent-harness/svcstub.exe
+# copy svcstub.exe and lab/windows/agent-harness/Install-AgentLabHarness.ps1 to the host (e.g. C:\lab\agent-harness\)
+```
+Elevated PowerShell on the host:
+`powershell -ExecutionPolicy Bypass -File C:\lab\agent-harness\Install-AgentLabHarness.ps1`
+Evidence (sc qc/qprivs/qsidtype, `whoami /priv|/user|/groups` as the service, data-dir SDDL, OS build) goes to
+`C:\lab\agent-harness-evidence`; copy it to `windows-lab-runs/agent-harness-<UTC>/`. Exit 0 = every check
+passed. Remove with `-Uninstall` (service, key and data dir). Offline guard: `make lab-test-windows-unit`.
+
+Status: **not yet run on a Windows host** (no VM in the implementing session; same state as §8). Things to
+watch on the first run: the restricted SID type adds restricting SIDs, so the stub's read of
+`System32\whoami.exe` or the binary directory may need an ACE for the service SID. Record what fails; that is
+an input to the MSI design and the A3 fitness item of ADR-0006.
