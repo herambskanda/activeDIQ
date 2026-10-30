@@ -253,3 +253,84 @@ func TestCreateRunRefusesFreeTextColumnsRawFiltersAndSQL(t *testing.T) {
 		t.Fatalf("a valid typed filter did not reach the handler: %d %s", w.Code, w.Body)
 	}
 }
+
+// The run-read gate of modules/reports.md 6.6: the four operations that read a stored run (the run header,
+// its rows, an export of it, and the creator's download of that export) declare 409 and name the
+// scope_changed_rerun code; rows and export also name run_not_ready and run_failed as separate codes.
+// The delivery, delete and run-now rules from 7.1, 7.2 and 6.6 are stated in the operation text.
+func TestRunReadGateIsDeclaredOnEveryRunRead(t *testing.T) {
+	raw, err := os.ReadFile("../../platform/apihost/spec/openapi.gen.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d map[string]any
+	if err := jsonv2.Unmarshal(raw, &d); err != nil {
+		t.Fatal(err)
+	}
+	ops := map[string]map[string]any{}
+	for path, item := range at(t, d, "paths") {
+		if !strings.HasPrefix(path, "/reports/") {
+			continue
+		}
+		for _, o := range item.(map[string]any) {
+			if op, ok := o.(map[string]any); ok {
+				if id, ok := op["operationId"].(string); ok {
+					ops[id] = op
+				}
+			}
+		}
+	}
+	desc := func(id string) string {
+		op, ok := ops[id]
+		if !ok {
+			t.Fatalf("operation %s missing", id)
+		}
+		s, _ := op["description"].(string)
+		return s
+	}
+	for _, id := range []string{"getReportRun", "listReportRunRows", "createReportExport", "downloadReportExport"} {
+		if _, ok := at(t, ops[id], "responses")["409"]; !ok {
+			t.Errorf("%s declares no 409", id)
+		}
+		if !strings.Contains(desc(id), "scope_changed_rerun") {
+			t.Errorf("%s does not name the scope_changed_rerun code", id)
+		}
+	}
+	for _, id := range []string{"listReportRunRows", "createReportExport"} {
+		for _, code := range []string{"run_not_ready", "run_failed"} {
+			if !strings.Contains(desc(id), code) {
+				t.Errorf("%s does not name the %s code", id, code)
+			}
+		}
+	}
+	if d := desc("createReportExport"); !strings.Contains(d, "reports.run") {
+		t.Error("createReportExport must say reports.run is checked inside the operation")
+	}
+	if p := ops["createReportExport"]["x-permission"]; p != string(reports.ExportPermission) {
+		t.Errorf("createReportExport binds %v", p)
+	}
+	dl := desc("downloadReportExport")
+	for _, want := range []string{"delivery record", "never comes from the schedule's current recipient list", "reports.export", "enabled", "byte for byte"} {
+		if !strings.Contains(dl, want) {
+			t.Errorf("downloadReportExport does not say %q", want)
+		}
+	}
+	if del := desc("deleteReportExport"); strings.Contains(del, "account named in a delivery") || !strings.Contains(del, "may not") {
+		t.Errorf("deleteReportExport must refuse recipients: %s", del)
+	}
+	if rn := desc("runReportScheduleNow"); !strings.Contains(rn, "Only the schedule's owner") || !strings.Contains(rn, "404") {
+		t.Error("runReportScheduleNow must say owner only, everyone else 404")
+	}
+	if cr := desc("createReportRun"); !strings.Contains(cr, "too_many_report_jobs") || !strings.Contains(cr, "60 seconds") || strings.Contains(cr, "Exporting or scheduling from such a scope is refused") {
+		t.Error("createReportRun must state the reuse window, the job limit and that exports are allowed")
+	}
+	for _, reason := range []string{"runner_inactive", "token_refused", "row_cap_exceeded", "per_dc_read_cap_exceeded", "scope_too_large", "query_timeout", "connection_unavailable", "definition_retired", "interrupted", "internal"} {
+		found := false
+		for _, v := range at(t, d, "components", "schemas", "ReportFailureReason")["enum"].([]any) {
+			found = found || v == reason
+		}
+		if !found {
+			t.Errorf("ReportFailureReason lacks %s", reason)
+		}
+	}
+}

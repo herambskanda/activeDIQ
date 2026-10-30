@@ -25,7 +25,8 @@
 #                    no step-up, no anonymous or authenticated row, rate class read. No row is stale or missing.
 #   reports.*        the 2a report operations (T-0866, modules/reports.yaml) are ordinary permissioned operations: one x-permission each,
 #                    no step-up row, no anonymous or authenticated row. reports.run: library, runs, run header, result paging.
-#                    reports.export: export, export record, download, delete a file. reports.schedule: own schedules (list, get, create,
+#                    reports.export: export, export record, download, delete a file; createReportExport also checks reports.run inside the
+#                    operation (modules/reports.md 6.6), one x-permission only. reports.schedule: own schedules (list, get, create,
 #                    update, pause, resume, delete, run now). reports.schedule.manage_all: reassignReportSchedule only; it is also checked
 #                    inside schedule operations for owner=any or another owner's schedule. reports.deliver.external is bound to NO operation:
 #                    it guards only the external-recipient case of a schedule write. TM 7.4 has no reports row, so no step-up is declared;

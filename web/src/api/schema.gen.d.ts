@@ -342,7 +342,7 @@ export interface paths {
         post?: never;
         /**
          * Delete an export early
-         * @description Deletes the stored file before it expires (FR-20). Only the account that created it, or the account named in a delivery of it, may. Audited as export deleted.
+         * @description Deletes the stored file before it expires (FR-20). Only the account that created it may (modules/reports.md 7.1); a recipient of a delivery of it may not, because other recipients were sent the same file. Anyone else gets 404. Deleting is bookkeeping, not an Action; it is audited as export deleted.
          */
         delete: operations["deleteReportExport"];
         options?: never;
@@ -359,7 +359,7 @@ export interface paths {
         };
         /**
          * Download an export's file
-         * @description Streams the stored file, only to an authenticated request that holds reports.export. The caller must be the account that created the export or the named account of a delivery link (spec 8.4, one rule); anyone else gets 404. The bytes are exactly the owner-scope artefact an attachment would carry, so the digest matches. The content type and file name are those of the format; the name is built by the download-header encoder. Every download is audited with the downloading account. An expired file answers 410 report-result-expired.
+         * @description Streams the stored file, only to an authenticated request that holds reports.export, by export ID; the server resolves the ID to the export record and only the record names the blob. Two paths (modules/reports.md 7.1, 7.2). Creator path: the caller is the account that created the export, and the run-read gate passes for its run (runner is the caller, current read scope equals the stored one), so a scope change stops downloads too; a changed scope answers 409 with errors[].code scope_changed_rerun. Delivery-link path: the caller is not the creator and is the recipient of a delivery link. The right comes from the delivery record (DM-84 Delivery) written when the schedule fired, whose source is this export and whose recipient is the caller's account. It never comes from the schedule's current recipient list, so a recipient removed from the schedule can still open what that fire sent them and nothing later. The server also re-checks that the caller currently holds reports.export and that the account is enabled. The recipient gets the stored owner-scope artefact byte for byte; the run-read gate (runner and scope) does not apply to the recipient, because the delivery record is the authority. Anyone else, with or without reports.export, gets 404 (401 when signed out). The bytes are exactly the owner-scope artefact an attachment would carry, so the digest matches. The content type and file name are those of the format; the name is built by the download-header encoder. Every download is audited with the downloading account. An expired file answers 410 report-result-expired.
          */
         get: operations["downloadReportExport"];
         put?: never;
@@ -381,7 +381,7 @@ export interface paths {
         put?: never;
         /**
          * Create a report run
-         * @description Starts one run of a definition over one frozen set of inputs, as a job. A change of preset, filter, period, scope or columns is a new run; paging and sorting read the stored result of one run and never re-execute (spec 8.1). The runner's scope is applied inside the query, and counts are computed after trimming. A run is not an Action (ADR-0005 rule 10): it is system bookkeeping, audited as an event with row count and digest, never values. A scope that grants nothing, or uses a kind reports cannot evaluate (group_members, Entra kinds), is not an error: the run succeeds with no rows and the run header's emptyReason names why (spec 5, unhappy paths). Exporting or scheduling from such a scope is refused with report-scope-empty or report-scope-unsupported. Fields that are absent take the preset's value, then the definition's default.
+         * @description Starts one run of a definition over one frozen set of inputs, as a job. A change of preset, filter, period, scope or columns is a new run; paging and sorting read the stored result of one run and never re-execute (spec 8.1). The runner's scope is applied inside the query, and counts are computed after trimming. A run is not an Action (ADR-0005 rule 10): it is system bookkeeping, audited as an event with row count and digest, never values. A scope that grants nothing, or uses a kind reports cannot evaluate (group_members, Entra kinds), is not an error: the run succeeds with no rows and the run header's emptyReason names why (spec 5, unhappy paths). Exporting from such a run is allowed (a record of what was found); only creating, updating or resuming a schedule from such a scope is refused, with report-scope-empty or report-scope-unsupported. Fields that are absent take the preset's value, then the definition's default. Reuse window (modules/reports.md 6.1 step 3, ADR-0010): when the same runner already started a run with the same query and the same applied-scope fingerprint in the last 60 seconds, and it is queued, running or succeeded, that run is returned instead of a new one, still 202 with the same shape. Reuse is a read and passes the same run-read gate as getReportRun. Job limit (step 5): a tenant with 4 runs and exports not yet finished answers 429 with errors[].code too_many_report_jobs (spec 8.3); retry when one finishes.
          */
         post: operations["createReportRun"];
         delete?: never;
@@ -399,7 +399,7 @@ export interface paths {
         };
         /**
          * Get a run's header
-         * @description Answers the run record: state, as_of, the freshness label, row count, digest, scope applied, parameters and any failure. Poll this while the state is queued or running. A run belongs to the principal who started it (or the schedule's owner at that fire); anyone else gets 404. An expired run stays readable as a record with state expired; its rows are gone (ADR-0010).
+         * @description Answers the run record: state, as_of, the freshness label, row count, digest, scope applied, parameters and any failure. Poll this while the state is queued or running. Run-read gate (modules/reports.md 6.6, run.ReadAccess), in order: the run must belong to the caller (runner account equals the caller; the schedule's owner for a scheduled run), otherwise 404, which does not say whether the run exists; and the caller's current read scope must equal the scope the run was trimmed with, otherwise 409 with errors[].code scope_changed_rerun and the client creates a new run. A scope revoke or a narrower token therefore stops reads at once. reports.schedule.manage_all never opens a run. An expired run stays readable as a record with state expired; its rows are gone (ADR-0010). A failed run answers 200 with its state and failure.
          */
         get: operations["getReportRun"];
         put?: never;
@@ -421,7 +421,7 @@ export interface paths {
         put?: never;
         /**
          * Cancel a run
-         * @description Cancels a queued or running run (FR-11). A run that already finished is answered unchanged. Cancelling is bookkeeping, not an Action.
+         * @description Cancels a queued or running run (FR-11). Only the account that started the run may cancel it; anyone else gets 404. A run that already finished is answered unchanged. Cancelling is bookkeeping, not an Action.
          */
         post: operations["cancelReportRun"];
         delete?: never;
@@ -441,7 +441,7 @@ export interface paths {
         put?: never;
         /**
          * Export a run
-         * @description Serialises the run's stored result (never a fresh query) into a file as an asynchronous job: the columns of the run, its filters, and all rows up to the format's cap (spec 8.3). Needs reports.export. Rows over a format's cap are refused with report-row-cap-exceeded, never truncated. A format this installation cannot produce is a 400 with code format_unavailable. If the run's result has expired, a new run is created first and the export says so (rerun true, rerunOfRunId); its file carries the new run's as_of. A run whose scope grants nothing or uses an unsupported kind is exported as a record of what was found, not refused. Exports are audited with actor and row count; an export is not an Action.
+         * @description Serialises the run's stored result (never a fresh query) into a file as an asynchronous job: the columns of the run, its filters, and all rows up to the format's cap (spec 8.3). Needs reports.export, bound as this operation's permission, and also reports.run, checked inside the operation before the run is looked up (403 if either is missing; modules/reports.md 6.6 check 1 and 7.1). Run-read gate (6.6, run.ReadAccess), in order: runner account equals the caller, otherwise 404; the caller's current read scope fingerprint equals the one stored with the run, otherwise 409 with errors[].code scope_changed_rerun (create a new run); the run has succeeded, otherwise 409 with run_not_ready or run_failed. An expired run is not refused here (see below). The three 409 codes are separate. Rows over a format's cap are refused with report-row-cap-exceeded, never truncated. A format this installation cannot produce is a 400 with code format_unavailable. If the run's result has expired, a new run is created first and the export says so (rerun true, rerunOfRunId); its file carries the new run's as_of. A run whose scope grants nothing or uses an unsupported kind is exported as a record of what was found, not refused (only schedules refuse such a scope). Exports and runs count together toward the tenant job limit: with 4 not yet finished the answer is 429 with errors[].code too_many_report_jobs. Exports are audited with actor and row count; an export is not an Action.
          */
         post: operations["createReportExport"];
         delete?: never;
@@ -459,7 +459,7 @@ export interface paths {
         };
         /**
          * Page a run's stored result
-         * @description Reads a page of the run's stored rows. Order is the run order, or sortBy with order, then the run order as the tie-break; the cursor is bound to the sort it was issued for and a cursor used with another sort is a 400. The total is the run's rowCount and is never a count over the rows. The result is stored and frozen (ADR-0010 rule 3): a page never reflects newer data. Cells of a derived state show unknown, never an inferred value (FR-09). A run that has not succeeded answers 409; an expired one 410 report-result-expired, and the client creates a new run.
+         * @description Reads a page of the run's stored rows. Order is the run order, or sortBy with order, then the run order as the tie-break; the cursor is bound to the sort it was issued for and a cursor used with another sort is a 400. The total is the run's rowCount and is never a count over the rows. The result is stored and frozen (ADR-0010 rule 3): a page never reflects newer data. Cells of a derived state show unknown, never an inferred value (FR-09). Run-read gate (modules/reports.md 6.6, run.ReadAccess), in order: runner account equals the caller, otherwise 404; the run is not expired, otherwise 410 report-result-expired; the caller's current read scope fingerprint equals the one stored with the run, otherwise 409 with errors[].code scope_changed_rerun (the client creates a new run); the run has succeeded, otherwise 409 with errors[].code run_not_ready (queued or running) or run_failed (failed or cancelled, with the reason). The three 409 codes are separate and a client must branch on the code, not the status.
          */
         get: operations["listReportRunRows"];
         put?: never;
@@ -593,7 +593,7 @@ export interface paths {
         put?: never;
         /**
          * Run a schedule now
-         * @description Fires the schedule once now, exactly as a scheduled fire: a run of the pinned definition under the owner's current scope and permissions, then delivery to each recipient, every external address re-evaluated against the current allowed domains. Answers the run. It is bookkeeping, not an Action. A per-DC schedule cannot be run now more often than daily (409). A schedule whose owner is disabled or has lost a permission is paused instead (409).
+         * @description Fires the schedule once now, exactly as a scheduled fire: a run of the pinned definition under the owner's current scope and permissions, then delivery to each recipient, every external address re-evaluated against the current allowed domains. Answers the run. Only the schedule's owner may call this, because the run is the owner's and reports.schedule.manage_all never opens another owner's runs (modules/reports.md 6.6); anyone else, a manage_all holder included, gets 404. It is bookkeeping, not an Action. A per-DC schedule cannot be run now more often than daily (409). A schedule whose owner is disabled or has lost a permission is paused instead (409).
          */
         post: operations["runReportScheduleNow"];
         delete?: never;
@@ -811,8 +811,8 @@ export interface components {
          * @enum {string}
          */
         ReportCategoryValue: "users" | "passwords" | "groups" | "computers" | "contacts" | "organizational_units" | (string & {});
-        /** @description One typed cell. unknown is shown rather than an inferred value when an input is missing (FR-09); absent is a missing value, distinct from empty text. */
-        ReportCell: components["schemas"]["ReportCellText"] | components["schemas"]["ReportValueInteger"] | components["schemas"]["ReportValueBoolean"] | components["schemas"]["ReportValueTime"] | components["schemas"]["ReportValueEnum"] | components["schemas"]["ReportCellAbsent"] | components["schemas"]["ReportCellUnknown"];
+        /** @description One typed cell; the kinds map one to one onto report.Cell in modules/reports.md 6.2 (text s, integer i, boolean b, time t, enum e, guid g, textList l, absent a, never n). unknown is shown rather than an inferred value when an input is missing (FR-09). absent is a missing value, distinct from empty text; never is a value that cannot occur, such as a last logon of an account that has never logged on. */
+        ReportCell: components["schemas"]["ReportCellText"] | components["schemas"]["ReportCellInteger"] | components["schemas"]["ReportCellGuid"] | components["schemas"]["ReportCellTextList"] | components["schemas"]["ReportCellNever"] | components["schemas"]["ReportValueBoolean"] | components["schemas"]["ReportValueTime"] | components["schemas"]["ReportValueEnum"] | components["schemas"]["ReportCellAbsent"] | components["schemas"]["ReportCellUnknown"];
         /** @description No value. */
         ReportCellAbsent: {
             /**
@@ -820,6 +820,33 @@ export interface components {
              * @enum {string}
              */
             kind: "ReportCellAbsent";
+        };
+        /** @description An object GUID or other GUID attribute, canonical lower-case. */
+        ReportCellGuid: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportCellGuid";
+            /** Format: uuid */
+            value: string;
+        };
+        /** @description A whole number as a decimal string, so 64-bit directory values stay exact. */
+        ReportCellInteger: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportCellInteger";
+            value: string;
+        };
+        /** @description The value can never exist for this object, as distinct from absent (not yet set). */
+        ReportCellNever: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportCellNever";
         };
         /** @description Text as stored in the directory, which may hold any character. Encoders neutralise it on export. */
         ReportCellText: {
@@ -829,6 +856,15 @@ export interface components {
              */
             kind: "ReportCellText";
             value: string;
+        };
+        /** @description A multi-valued text attribute, in stored order. */
+        ReportCellTextList: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReportCellTextList";
+            value: string[];
         };
         /** @description A derived state whose input is missing (Unknown (input missing)). */
         ReportCellUnknown: {
@@ -979,10 +1015,10 @@ export interface components {
             reason: components["schemas"]["ReportFailureReason"];
         };
         /**
-         * @description A typed reason for a failed run or export. read_cap_exceeded: the per-DC read cap would be passed (spec 6.5). row_cap_exceeded: the result is over the format's cap.
+         * @description A typed reason for a failed run or export, the set of run.FailureReason in modules/reports.md 6.2. runner_inactive: the runner's account is disabled or gone. token_refused: the token behind the run was revoked or expired. row_cap_exceeded: the result is over the row cap. per_dc_read_cap_exceeded: the per-DC read cap would be passed (spec 6.5). scope_too_large: the scope cannot be rendered within limits. query_timeout: the run passed its time limit. connection_unavailable: a connection could not be read (per-DC reads only). definition_retired: the definition was retired before the run started. interrupted: the run job was interrupted. internal: anything else.
          * @enum {string}
          */
-        ReportFailureReason: "read_cap_exceeded" | "source_unavailable" | "row_cap_exceeded" | "internal" | (string & {});
+        ReportFailureReason: "runner_inactive" | "token_refused" | "row_cap_exceeded" | "per_dc_read_cap_exceeded" | "scope_too_large" | "query_timeout" | "connection_unavailable" | "definition_retired" | "interrupted" | "internal" | (string & {});
         /** @description A typed filter tree over registry columns. A node names a column from the closed list and a typed value; there is no expression, no raw LDAP, no SQL. The tree is at most four levels deep and 64 nodes; deeper is a 400 with code filter_too_complex. The server checks each operator and value against the column's type. */
         ReportFilter: components["schemas"]["ReportFilterGroup"] | components["schemas"]["ReportFilterCompare"] | components["schemas"]["ReportFilterIn"] | components["schemas"]["ReportFilterPresence"] | components["schemas"]["ReportFilterRelative"];
         /** @description One column compared with one value. */
@@ -2773,6 +2809,7 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             410: components["responses"]["ReportResultExpired"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
@@ -2835,6 +2872,7 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
         };

@@ -410,7 +410,7 @@ func (in *GetReportDefinitionInput) Validate(errs *apitypes.Errors) {
 	_ = errs
 	{
 		apitypes.CheckLen(errs, apitypes.InPath, jsontext.Pointer("definitionId"), string(in.DefinitionID), 2, 64)
-		if !pattern4.MatchString(string(in.DefinitionID)) {
+		if !pattern5.MatchString(string(in.DefinitionID)) {
 			errs.Add(apitypes.InPath, jsontext.Pointer("definitionId"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -661,7 +661,7 @@ func (in *ListReportDefinitionsInput) Validate(errs *apitypes.Errors) {
 	_ = errs
 	if in.Q != nil {
 		apitypes.CheckLen(errs, apitypes.InQuery, jsontext.Pointer("q"), string((*in.Q)), 1, 256)
-		if !pattern8.MatchString(string((*in.Q))) {
+		if !pattern9.MatchString(string((*in.Q))) {
 			errs.Add(apitypes.InQuery, jsontext.Pointer("q"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -1558,5 +1558,5 @@ func Bind(h Handlers) apihost.TagHandlers {
 }
 
 var (
-	pattern8 = regexp.MustCompile("^[^()*\\\\&|=!<>~\\x00-\\x1f\\x7f]+$")
+	pattern9 = regexp.MustCompile("^[^()*\\\\&|=!<>~\\x00-\\x1f\\x7f]+$")
 )

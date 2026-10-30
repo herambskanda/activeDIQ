@@ -60,17 +60,20 @@ func (v ReportCategoryValue) Valid() bool {
 	return false
 }
 
-// ReportCell: One typed cell. unknown is shown rather than an inferred value when an input is missing (FR-09); absent is a missing value, distinct from empty text.
+// ReportCell: One typed cell; the kinds map one to one onto report.Cell in modules/reports.md 6.2 (text s, integer i, boolean b, time t, enum e, guid g, textList l, absent a, never n). unknown is shown rather than an inferred value when an input is missing (FR-09). absent is a missing value, distinct from empty text; never is a value that cannot occur, such as a last logon of an account that has never logged on.
 type ReportCell struct {
 	// Kind is the discriminator; exactly one variant pointer is set, the one Kind names.
-	Kind    string
-	Absent  *ReportCellAbsent
-	Boolean *ReportValueBoolean
-	Enum    *ReportValueEnum
-	Integer *ReportValueInteger
-	Text    *ReportCellText
-	Time    *ReportValueTime
-	Unknown *ReportCellUnknown
+	Kind     string
+	Absent   *ReportCellAbsent
+	Boolean  *ReportValueBoolean
+	Enum     *ReportValueEnum
+	GUID     *ReportCellGuid
+	Integer  *ReportCellInteger
+	Never    *ReportCellNever
+	Text     *ReportCellText
+	TextList *ReportCellTextList
+	Time     *ReportValueTime
+	Unknown  *ReportCellUnknown
 }
 
 // UnmarshalJSONFrom reads the value, takes its kind, and decodes the variant with the caller's
@@ -105,18 +108,36 @@ func (u *ReportCell) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 			return apitypes.Rebase(prefix, err)
 		}
 		u.Kind, u.Enum = kind, &x
+	case "guid":
+		var x ReportCellGuid
+		if err := json.Unmarshal(val, &x, d.Options()); err != nil {
+			return apitypes.Rebase(prefix, err)
+		}
+		u.Kind, u.GUID = kind, &x
 	case "integer":
-		var x ReportValueInteger
+		var x ReportCellInteger
 		if err := json.Unmarshal(val, &x, d.Options()); err != nil {
 			return apitypes.Rebase(prefix, err)
 		}
 		u.Kind, u.Integer = kind, &x
+	case "never":
+		var x ReportCellNever
+		if err := json.Unmarshal(val, &x, d.Options()); err != nil {
+			return apitypes.Rebase(prefix, err)
+		}
+		u.Kind, u.Never = kind, &x
 	case "text":
 		var x ReportCellText
 		if err := json.Unmarshal(val, &x, d.Options()); err != nil {
 			return apitypes.Rebase(prefix, err)
 		}
 		u.Kind, u.Text = kind, &x
+	case "textList":
+		var x ReportCellTextList
+		if err := json.Unmarshal(val, &x, d.Options()); err != nil {
+			return apitypes.Rebase(prefix, err)
+		}
+		u.Kind, u.TextList = kind, &x
 	case "time":
 		var x ReportValueTime
 		if err := json.Unmarshal(val, &x, d.Options()); err != nil {
@@ -147,10 +168,19 @@ func (u ReportCell) MarshalJSONTo(e *jsontext.Encoder) error {
 	if u.Enum != nil {
 		n++
 	}
+	if u.GUID != nil {
+		n++
+	}
 	if u.Integer != nil {
 		n++
 	}
+	if u.Never != nil {
+		n++
+	}
 	if u.Text != nil {
+		n++
+	}
+	if u.TextList != nil {
 		n++
 	}
 	if u.Time != nil {
@@ -175,13 +205,25 @@ func (u ReportCell) MarshalJSONTo(e *jsontext.Encoder) error {
 		c := *u.Enum
 		c.Kind = "enum"
 		return json.MarshalEncode(e, &c)
+	case u.GUID != nil:
+		c := *u.GUID
+		c.Kind = "guid"
+		return json.MarshalEncode(e, &c)
 	case u.Integer != nil:
 		c := *u.Integer
 		c.Kind = "integer"
 		return json.MarshalEncode(e, &c)
+	case u.Never != nil:
+		c := *u.Never
+		c.Kind = "never"
+		return json.MarshalEncode(e, &c)
 	case u.Text != nil:
 		c := *u.Text
 		c.Kind = "text"
+		return json.MarshalEncode(e, &c)
+	case u.TextList != nil:
+		c := *u.TextList
+		c.Kind = "textList"
 		return json.MarshalEncode(e, &c)
 	case u.Time != nil:
 		c := *u.Time
@@ -216,18 +258,36 @@ func (u *ReportCell) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 			return
 		}
 		u.Enum.Validate(at, errs)
+	case "guid":
+		if u.GUID == nil {
+			errs.AddBody(at, apitypes.CodeKind, "kind names a variant that is not set")
+			return
+		}
+		u.GUID.Validate(at, errs)
 	case "integer":
 		if u.Integer == nil {
 			errs.AddBody(at, apitypes.CodeKind, "kind names a variant that is not set")
 			return
 		}
 		u.Integer.Validate(at, errs)
+	case "never":
+		if u.Never == nil {
+			errs.AddBody(at, apitypes.CodeKind, "kind names a variant that is not set")
+			return
+		}
+		u.Never.Validate(at, errs)
 	case "text":
 		if u.Text == nil {
 			errs.AddBody(at, apitypes.CodeKind, "kind names a variant that is not set")
 			return
 		}
 		u.Text.Validate(at, errs)
+	case "textList":
+		if u.TextList == nil {
+			errs.AddBody(at, apitypes.CodeKind, "kind names a variant that is not set")
+			return
+		}
+		u.TextList.Validate(at, errs)
 	case "time":
 		if u.Time == nil {
 			errs.AddBody(at, apitypes.CodeKind, "kind names a variant that is not set")
@@ -301,6 +361,239 @@ func (v *ReportCellAbsent) Validate(at jsontext.Pointer, errs *apitypes.Errors) 
 	}
 	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
 		if v.Kind != "absent" {
+			errs.Add(apitypes.InBody, at.AppendToken("kind"), apitypes.CodeConst, "wrong value")
+		}
+	}
+}
+
+// ReportCellGuid: An object GUID or other GUID attribute, canonical lower-case.
+type ReportCellGuid struct {
+	Kind  string        `json:"kind"`
+	Value apitypes.UUID `json:"value"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportCellGuid) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportCellGuid{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "kind":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Kind); err != nil {
+				return err
+			}
+		case "value":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Value); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportCellGuid) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// kind
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "kind")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "kind")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		if v.Kind != "guid" {
+			errs.Add(apitypes.InBody, at.AppendToken("kind"), apitypes.CodeConst, "wrong value")
+		}
+	}
+	// value
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "value")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "value")
+		}
+	}
+}
+
+// ReportCellInteger: A whole number as a decimal string, so 64-bit directory values stay exact.
+type ReportCellInteger struct {
+	Kind  string `json:"kind"`
+	Value string `json:"value"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportCellInteger) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportCellInteger{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "kind":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Kind); err != nil {
+				return err
+			}
+		case "value":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Value); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportCellInteger) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// kind
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "kind")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "kind")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		if v.Kind != "integer" {
+			errs.Add(apitypes.InBody, at.AppendToken("kind"), apitypes.CodeConst, "wrong value")
+		}
+	}
+	// value
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "value")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "value")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("value"), string(v.Value), 0, 20)
+		if !pattern1.MatchString(string(v.Value)) {
+			errs.Add(apitypes.InBody, at.AppendToken("value"), apitypes.CodePattern, "value does not match the required pattern")
+		}
+	}
+}
+
+// ReportCellNever: The value can never exist for this object, as distinct from absent (not yet set).
+type ReportCellNever struct {
+	Kind string `json:"kind"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportCellNever) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportCellNever{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "kind":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Kind); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportCellNever) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// kind
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "kind")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "kind")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		if v.Kind != "never" {
 			errs.Add(apitypes.InBody, at.AppendToken("kind"), apitypes.CodeConst, "wrong value")
 		}
 	}
@@ -389,6 +682,95 @@ func (v *ReportCellText) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	}
 	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("value"), string(v.Value), 0, 4096)
+	}
+}
+
+// ReportCellTextList: A multi-valued text attribute, in stored order.
+type ReportCellTextList struct {
+	Kind  string   `json:"kind"`
+	Value []string `json:"value"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportCellTextList) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportCellTextList{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "kind":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Kind); err != nil {
+				return err
+			}
+		case "value":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := apitypes.DecodeArray(d, &v.Value); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportCellTextList) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// kind
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "kind")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "kind")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		if v.Kind != "textList" {
+			errs.Add(apitypes.InBody, at.AppendToken("kind"), apitypes.CodeConst, "wrong value")
+		}
+	}
+	// value
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "value")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "value")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("value"), len(v.Value), 0, 1000, apitypes.CodeMaxItems)
+		for i := range v.Value {
+			apitypes.CheckLen(errs, apitypes.InBody, apitypes.Index(at.AppendToken("value"), i), string(v.Value[i]), 0, 4096)
+		}
 	}
 }
 
@@ -802,7 +1184,7 @@ func (v *ReportColumnInfo) Validate(at jsontext.Pointer, errs *apitypes.Errors) 
 	}
 	if !v.p.Decoded() || (v.p.Has(4) && !v.p.IsNull(4)) {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("id"), string(v.ID), 1, 64)
-		if !pattern1.MatchString(string(v.ID)) {
+		if !pattern2.MatchString(string(v.ID)) {
 			errs.Add(apitypes.InBody, at.AppendToken("id"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -2065,7 +2447,7 @@ func (v *ReportExport) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	}
 	if v.Digest != nil {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("digest"), string((*v.Digest)), 0, 64)
-		if !pattern2.MatchString(string((*v.Digest))) {
+		if !pattern3.MatchString(string((*v.Digest))) {
 			errs.Add(apitypes.InBody, at.AppendToken("digest"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -2359,21 +2741,27 @@ func (v *ReportFailure) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	}
 }
 
-// ReportFailureReason: A typed reason for a failed run or export. read_cap_exceeded: the per-DC read cap would be passed (spec 6.5). row_cap_exceeded: the result is over the format's cap.
+// ReportFailureReason: A typed reason for a failed run or export, the set of run.FailureReason in modules/reports.md 6.2. runner_inactive: the runner's account is disabled or gone. token_refused: the token behind the run was revoked or expired. row_cap_exceeded: the result is over the row cap. per_dc_read_cap_exceeded: the per-DC read cap would be passed (spec 6.5). scope_too_large: the scope cannot be rendered within limits. query_timeout: the run passed its time limit. connection_unavailable: a connection could not be read (per-DC reads only). definition_retired: the definition was retired before the run started. interrupted: the run job was interrupted. internal: anything else.
 type ReportFailureReason string
 
 const (
-	ReportFailureReasonReadCapExceeded   ReportFailureReason = "read_cap_exceeded"
-	ReportFailureReasonSourceUnavailable ReportFailureReason = "source_unavailable"
-	ReportFailureReasonRowCapExceeded    ReportFailureReason = "row_cap_exceeded"
-	ReportFailureReasonInternal          ReportFailureReason = "internal"
+	ReportFailureReasonRunnerInactive        ReportFailureReason = "runner_inactive"
+	ReportFailureReasonTokenRefused          ReportFailureReason = "token_refused"
+	ReportFailureReasonRowCapExceeded        ReportFailureReason = "row_cap_exceeded"
+	ReportFailureReasonPerDcReadCapExceeded  ReportFailureReason = "per_dc_read_cap_exceeded"
+	ReportFailureReasonScopeTooLarge         ReportFailureReason = "scope_too_large"
+	ReportFailureReasonQueryTimeout          ReportFailureReason = "query_timeout"
+	ReportFailureReasonConnectionUnavailable ReportFailureReason = "connection_unavailable"
+	ReportFailureReasonDefinitionRetired     ReportFailureReason = "definition_retired"
+	ReportFailureReasonInterrupted           ReportFailureReason = "interrupted"
+	ReportFailureReasonInternal              ReportFailureReason = "internal"
 )
 
 // Valid reports whether v is a value this build knows. Clients and responses may carry others
 // (the enum is open), so no generated code rejects an unknown value.
 func (v ReportFailureReason) Valid() bool {
 	switch v {
-	case ReportFailureReasonReadCapExceeded, ReportFailureReasonSourceUnavailable, ReportFailureReasonRowCapExceeded, ReportFailureReasonInternal:
+	case ReportFailureReasonRunnerInactive, ReportFailureReasonTokenRefused, ReportFailureReasonRowCapExceeded, ReportFailureReasonPerDcReadCapExceeded, ReportFailureReasonScopeTooLarge, ReportFailureReasonQueryTimeout, ReportFailureReasonConnectionUnavailable, ReportFailureReasonDefinitionRetired, ReportFailureReasonInterrupted, ReportFailureReasonInternal:
 		return true
 	}
 	return false
@@ -2759,7 +3147,7 @@ func (v *ReportFilterConditionView) Validate(at jsontext.Pointer, errs *apitypes
 	}
 	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("column"), string(v.Column), 1, 64)
-		if !pattern1.MatchString(string(v.Column)) {
+		if !pattern2.MatchString(string(v.Column)) {
 			errs.Add(apitypes.InBody, at.AppendToken("column"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -4663,7 +5051,7 @@ func (v *ReportPreset) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	}
 	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("id"), string(v.ID), 1, 64)
-		if !pattern1.MatchString(string(v.ID)) {
+		if !pattern2.MatchString(string(v.ID)) {
 			errs.Add(apitypes.InBody, at.AppendToken("id"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -6175,7 +6563,7 @@ func (v *ReportRecurrenceDaily) Validate(at jsontext.Pointer, errs *apitypes.Err
 	}
 	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("time"), string(v.Time), 5, 5)
-		if !pattern3.MatchString(string(v.Time)) {
+		if !pattern4.MatchString(string(v.Time)) {
 			errs.Add(apitypes.InBody, at.AppendToken("time"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -6400,7 +6788,7 @@ func (v *ReportRecurrenceMonthlyDay) Validate(at jsontext.Pointer, errs *apitype
 	}
 	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("time"), string(v.Time), 5, 5)
-		if !pattern3.MatchString(string(v.Time)) {
+		if !pattern4.MatchString(string(v.Time)) {
 			errs.Add(apitypes.InBody, at.AppendToken("time"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -6489,7 +6877,7 @@ func (v *ReportRecurrenceMonthlyLastDay) Validate(at jsontext.Pointer, errs *api
 	}
 	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("time"), string(v.Time), 5, 5)
-		if !pattern3.MatchString(string(v.Time)) {
+		if !pattern4.MatchString(string(v.Time)) {
 			errs.Add(apitypes.InBody, at.AppendToken("time"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -6591,7 +6979,7 @@ func (v *ReportRecurrenceWeekly) Validate(at jsontext.Pointer, errs *apitypes.Er
 	}
 	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("time"), string(v.Time), 5, 5)
-		if !pattern3.MatchString(string(v.Time)) {
+		if !pattern4.MatchString(string(v.Time)) {
 			errs.Add(apitypes.InBody, at.AppendToken("time"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -7216,7 +7604,7 @@ func (v *ReportRun) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	}
 	if v.Digest != nil {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("digest"), string((*v.Digest)), 0, 64)
-		if !pattern2.MatchString(string((*v.Digest))) {
+		if !pattern3.MatchString(string((*v.Digest))) {
 			errs.Add(apitypes.InBody, at.AppendToken("digest"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -7441,7 +7829,7 @@ func (v *ReportRunCreate) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	}
 	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("definitionId"), string(v.DefinitionID), 2, 64)
-		if !pattern4.MatchString(string(v.DefinitionID)) {
+		if !pattern5.MatchString(string(v.DefinitionID)) {
 			errs.Add(apitypes.InBody, at.AppendToken("definitionId"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -7465,7 +7853,7 @@ func (v *ReportRunCreate) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	}
 	if v.PresetID != nil {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("presetId"), string((*v.PresetID)), 1, 64)
-		if !pattern1.MatchString(string((*v.PresetID))) {
+		if !pattern2.MatchString(string((*v.PresetID))) {
 			errs.Add(apitypes.InBody, at.AppendToken("presetId"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -8583,7 +8971,7 @@ func (v *ReportScheduleWrite) Validate(at jsontext.Pointer, errs *apitypes.Error
 	}
 	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("definitionId"), string(v.DefinitionID), 2, 64)
-		if !pattern4.MatchString(string(v.DefinitionID)) {
+		if !pattern5.MatchString(string(v.DefinitionID)) {
 			errs.Add(apitypes.InBody, at.AppendToken("definitionId"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -8605,7 +8993,7 @@ func (v *ReportScheduleWrite) Validate(at jsontext.Pointer, errs *apitypes.Error
 	}
 	if !v.p.Decoded() || (v.p.Has(3) && !v.p.IsNull(3)) {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("name"), string(v.Name), 1, 128)
-		if !pattern5.MatchString(string(v.Name)) {
+		if !pattern6.MatchString(string(v.Name)) {
 			errs.Add(apitypes.InBody, at.AppendToken("name"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -8631,7 +9019,7 @@ func (v *ReportScheduleWrite) Validate(at jsontext.Pointer, errs *apitypes.Error
 	}
 	if v.PresetID != nil {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("presetId"), string((*v.PresetID)), 1, 64)
-		if !pattern1.MatchString(string((*v.PresetID))) {
+		if !pattern2.MatchString(string((*v.PresetID))) {
 			errs.Add(apitypes.InBody, at.AppendToken("presetId"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -8673,7 +9061,7 @@ func (v *ReportScheduleWrite) Validate(at jsontext.Pointer, errs *apitypes.Error
 	}
 	if !v.p.Decoded() || (v.p.Has(9) && !v.p.IsNull(9)) {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("timeZone"), string(v.TimeZone), 1, 64)
-		if !pattern6.MatchString(string(v.TimeZone)) {
+		if !pattern7.MatchString(string(v.TimeZone)) {
 			errs.Add(apitypes.InBody, at.AppendToken("timeZone"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -9187,7 +9575,7 @@ func (v *ReportValueEnum) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	}
 	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("value"), string(v.Value), 1, 64)
-		if !pattern1.MatchString(string(v.Value)) {
+		if !pattern2.MatchString(string(v.Value)) {
 			errs.Add(apitypes.InBody, at.AppendToken("value"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -9362,7 +9750,7 @@ func (v *ReportValueText) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	}
 	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("value"), string(v.Value), 0, 256)
-		if !pattern7.MatchString(string(v.Value)) {
+		if !pattern8.MatchString(string(v.Value)) {
 			errs.Add(apitypes.InBody, at.AppendToken("value"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -9452,11 +9840,12 @@ func (v *ReportValueTime) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 }
 
 var (
-	pattern1 = regexp.MustCompile("^[a-z][a-z0-9_]{0,63}$")
-	pattern2 = regexp.MustCompile("^[0-9a-f]{64}$")
-	pattern3 = regexp.MustCompile("^([01][0-9]|2[0-3]):[0-5][0-9]$")
-	pattern4 = regexp.MustCompile("^[A-Za-z][A-Za-z0-9-]{1,63}$")
-	pattern5 = regexp.MustCompile("^[^\\x00-\\x1f\\x7f]+$")
-	pattern6 = regexp.MustCompile("^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}$")
-	pattern7 = regexp.MustCompile("^[^\\x00-\\x1f\\x7f]*$")
+	pattern1 = regexp.MustCompile("^-?[0-9]{1,19}$")
+	pattern2 = regexp.MustCompile("^[a-z][a-z0-9_]{0,63}$")
+	pattern3 = regexp.MustCompile("^[0-9a-f]{64}$")
+	pattern4 = regexp.MustCompile("^([01][0-9]|2[0-3]):[0-5][0-9]$")
+	pattern5 = regexp.MustCompile("^[A-Za-z][A-Za-z0-9-]{1,63}$")
+	pattern6 = regexp.MustCompile("^[^\\x00-\\x1f\\x7f]+$")
+	pattern7 = regexp.MustCompile("^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}$")
+	pattern8 = regexp.MustCompile("^[^\\x00-\\x1f\\x7f]*$")
 )
