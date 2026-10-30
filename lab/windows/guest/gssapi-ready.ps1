@@ -25,7 +25,7 @@ $name = 'svc-t0566-gssapi'
 $pw = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 40 | ForEach-Object { [char]$_ }) + 'Aa1!'
 if (-not (Get-ADUser -Filter "SamAccountName -eq '$name'")) {
   New-ADUser -Name $name -SamAccountName $name -Path "OU=ServiceAccounts,$($d.DistinguishedName)" `
-    -AccountPassword (ConvertTo-Secure $pw) -Enabled $true -PasswordNeverExpires $true
+    -AccountPassword (ConvertTo-SecureString $pw -AsPlainText -Force) -Enabled $true -PasswordNeverExpires $true
 }
 Set-ADUser $name -KerberosEncryptionType AES128, AES256 -Replace @{ 'msDS-SupportedEncryptionTypes' = 24 }
 Remove-Item "$out\svc.keytab" -ErrorAction SilentlyContinue
