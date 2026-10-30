@@ -584,6 +584,16 @@ invariants carry SAML-16 (replay rows) and the Transaction (§3) as tenant table
 The verifier build tickets cannot merge without FIT-SSO-1 green, so the fence exists before the
 first line that parses SAML.
 
+**As built (T-0211).** `make fitness-sso` (part of `make fitness` and so of `make ci`) runs
+`tools/fitness/sso`. FIT-SSO-1 parses import clauses of every `.go` file (tests included) and reads
+`go.mod` (a `replace` of goxmldsig or gosaml2 to an older version, another module or a local path fails
+too). FIT-SSO-2 reads the check numbers from the §4 and §5 tables of this file, so a new row fails CI until
+a record cites it, then runs `TestCorpus` of each protocol's package and requires a passing subtest named
+after every record. Class coverage is per protocol: SAML needs all five classes, OIDC the four without
+`wrapped` (XML signature wrapping has no JWS analogue; §10.3 has none). Until T-0911 lands
+`testdata/corpus/oidc/` and an `oidc` `TestCorpus`, the OIDC half is printed `PENDING` and enforced from the
+day either appears. The SAML-only `TestCorpusCoverage` in `sso/saml` is removed: this check supersedes it.
+
 ## 14. Follow-ups filed by this spec
 
 | Ticket | Owner | What |
