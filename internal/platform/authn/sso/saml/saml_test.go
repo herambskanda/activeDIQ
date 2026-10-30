@@ -327,6 +327,14 @@ func TestSAMLConfig_RefusesSingleFactorMicrosoftURIsAsMFAEvidence(t *testing.T) 
 		"\turn:federation:authentication:windows",
 		" https://idp.example.test/ac/mfa",
 		"https://idp.example.test/ac/mfa\n",
+		"urn:ietf:rfc:1510",
+		"URN:IETF:RFC:1510",
+		"urn:ietf:rfc:2945",
+		"urn:ietf:rfc:2246",
+		"urn:ietf:rfc:3075",
+		"https://refeds.org/profile/sfa",
+		"HTTPS://Refeds.org/profile/SFA",
+		"http://schemas.microsoft.com/claims/wiaormultiauthn",
 	} {
 		for name, evidence := range map[string][]string{
 			"alone":          {bad},
@@ -354,6 +362,8 @@ func TestSAMLConfig_AcceptsMultipleAuthnAndIdPClasses(t *testing.T) {
 		"http://schemas.microsoft.com/claims/multipleauthn",
 		"https://idp.example.test/ac/mfa",
 		"urn:federation:authentication",
+		"https://refeds.org/profile/mfa",
+		"urn:ietf:rfcs:1510",
 	} {
 		r := newRig(t)
 		r.env.Config.MFAMode, r.env.Config.MFAEvidence = sso.MFAClaim, []string{ok}

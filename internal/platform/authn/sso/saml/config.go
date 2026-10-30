@@ -76,15 +76,28 @@ const oasisClassPrefix = "urn:oasis:names:tc:SAML:2.0:ac:classes:"
 // singleFactorNamespaces are namespaces whose members name one factor or an ambient sign-in, never a second
 // factor (spec MFA-2b): the OASIS 2.0 classes (MFA-2a), the AD FS classes (`urn:federation:authentication:windows`
 // is Integrated Windows Authentication), the Microsoft authenticationmethod URIs (`.../password`, `.../windows`)
-// and the SAML 1.x authentication methods (`urn:oasis:names:tc:SAML:1.0:am:password`). The Microsoft
+// and the SAML 1.x authentication methods: the `urn:oasis:names:tc:SAML:1.0:am:` namespace and, because SAML 1.1
+// core §7.1 puts four methods outside it, the `urn:ietf:rfc:` namespace (Kerberos 1510, SRP 2945, TLS client 2246,
+// XML-DSig 3075). An RFC number names a generic mechanism, never an IdP's MFA class. The Microsoft
 // `http://schemas.microsoft.com/claims/multipleauthn` value is in none of them and stays acceptable. Matching is
-// case-insensitive: the NID of a URN is case-insensitive (RFC 8141), and a scheme and host are too, so a case
+// case-insensitive (ASCII fold; evidence is compared exact-string against the IdP, so a Unicode lookalike never
+// matches a real value): the NID of a URN is case-insensitive (RFC 8141), and a scheme and host are too, so a case
 // variant must not slip past a rule that only an exact-case IdP would trip.
 var singleFactorNamespaces = []string{
 	oasisClassPrefix,
 	"urn:federation:authentication:",
 	"http://schemas.microsoft.com/ws/2008/06/identity/authenticationmethod/",
 	"urn:oasis:names:tc:SAML:1.0:am:",
+	"urn:ietf:rfc:",
+}
+
+// singleFactorValues are single identifiers, not namespaces, that name one factor: the REFEDS Single Factor
+// Authentication profile (its whole purpose is to tell the relying party that one factor was used; the MFA profile
+// `https://refeds.org/profile/mfa` stays acceptable) and the AD FS `wiaormultiauthn` claim, which Integrated
+// Windows Authentication alone satisfies.
+var singleFactorValues = []string{
+	"https://refeds.org/profile/sfa",
+	"http://schemas.microsoft.com/claims/wiaormultiauthn",
 }
 
 // mfaEvidenceAllowed reports whether v may be configured as SAML MFA evidence. Evidence is compared exact-string
@@ -93,6 +106,11 @@ var singleFactorNamespaces = []string{
 func mfaEvidenceAllowed(v string) bool {
 	if v == "" || v != strings.TrimSpace(v) {
 		return false
+	}
+	for _, sf := range singleFactorValues {
+		if strings.EqualFold(v, sf) {
+			return false
+		}
 	}
 	for _, ns := range singleFactorNamespaces {
 		if len(v) >= len(ns) && strings.EqualFold(v[:len(ns)], ns) {
