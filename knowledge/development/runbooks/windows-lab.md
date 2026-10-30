@@ -199,3 +199,13 @@ session; point it at the Windows lab with the `WIN_LAB_*` variables of section 1
 and vetted but **not run against VM 119 or Samba from the T-0669 session** (neither lab was reachable).
 A booted server cannot yet search VM 119: the active-connection seed and in-process source are T-0684;
 the end-to-end Windows proof is T-0671.
+
+### TM-D26 on the Windows lab (T-0346)
+
+`win_lab_tm26_test.go` (`TestWinLabTM26*`) plants state on the live domain head and restores it in `t.Cleanup`
+(DACL and owner bytes read first). If a run is killed mid-test the head may be dirty: `qm rollback 112 clean`.
+Run: `go test -tags 'lab windowslab' -run TestWinLabTM26 -v ./internal/connector/tier0`.
+Results 2026-10-28 (dc1, WS2025): DACL (WRITE_DAC vs read-only twin), owner and callback ACEs 0x09/0x0B (allow) vs 0x0A
+(deny) all classify as TM-D26 rules 2–4 expect. Windows refuses an LDAP write of `sIDHistory` (INSUFF_ACCESS_RIGHTS), so a
+cross-domain Tier-0 `sIDHistory` cannot be planted in a one-domain lab: needs a second domain + trust (M2 follow-up).
+`TestWinLabTM26GCOpens` is red on purpose until bug T-0619 (OpenGC fails on a real GC) is fixed.

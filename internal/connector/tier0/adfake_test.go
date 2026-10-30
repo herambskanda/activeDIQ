@@ -44,6 +44,20 @@ type fakeDir struct {
 	gc         []*fobj
 	gcErr      error
 	gcCalls    int
+
+	// Trust seam (nil trust = the directory does not implement TrustDirectory semantics: see noTrust).
+	trust    map[string]TrustedPrincipal // by foreign account SID
+	trustErr error
+}
+
+// trustFakeDir adds the TrustDirectory seam to a fakeDir; fakeDir alone does not implement it.
+type trustFakeDir struct{ *fakeDir }
+
+func (t trustFakeDir) ResolveTrusted(_ context.Context, s sid.SID) (TrustedPrincipal, error) {
+	if t.trustErr != nil {
+		return TrustedPrincipal{}, t.trustErr
+	}
+	return t.trust[s.String()], nil // missing = TrustUnknown
 }
 
 func (f *fakeDir) ForestDomains(context.Context) ([]sid.SID, error) {
