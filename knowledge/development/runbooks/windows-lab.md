@@ -192,6 +192,25 @@ Reset = `qm rollback 112 clean` by a human. Certificate verification is never di
 checks refusals, misconfiguration errors and that the password never appears in argv, logs or stdout).
 Status: **untested against VM 112 until a human completes the steps above** (the PowerShell is as untested as §8 says).
 
+## Tier0 classifier on the Windows lab (T-0226)
+
+`internal/connector/tier0/windows_lab_c5c15_test.go` (tags `lab windowslab`; not run by `make lab-test-connector-windows`, which
+targets `./internal/connector/ad/` only). Run it with the same env as above:
+
+```bash
+go test -count=1 -v -tags 'lab windowslab' ./internal/connector/tier0 -run TestWindowsLab
+```
+
+Fixtures are created as Administrator (`WIN_LAB_ADMIN_PASSWORD`) under a throwaway `OU=t0226-*`; the DC-root DACL, the RBCD
+attribute on a DC and `gPLink` of the Domain Controllers OU are changed and restored by cleanups (a failed restore says
+`RESTORE … FAILED`: `qm rollback`). Classification runs as `svc-activediq`. Pinned: C5 (all DC computers), C15 (DC site),
+C8 (KDS container + a child, CN=System, RID Manager$, Directory Service; the Password Settings Container is unreadable to the
+service account and fails closed), C9 (GPO linked at the DC OU is tier0, an unlinked one is not), C11 (Get-Changes +
+Get-Changes-All ⇒ tier0; Get-Changes alone ⇒ not), C12 (RBCD trustee on a DC). Not coverable on this lab (single DC, single
+domain, no RODC): RODC corroboration, cross-domain GPO links, gPLink option/order edge cases, >1500-member ranged groups
+(Samba covers ranged retrieval); the ad-expert review of `c8Domain`/`c8SystemClasses` is separate (T-0620).
+From a git worktree the credentials live in the main checkout: set `WIN_LAB_ENV` and `WIN_LAB_CA` to its `lab/windows/` files.
+
 ### TM-D26 on the Windows lab (T-0346)
 
 `win_lab_tm26_test.go` (`TestWinLabTM26*`) plants state on the live domain head and restores it in `t.Cleanup`
