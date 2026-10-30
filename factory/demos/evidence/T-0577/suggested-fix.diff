@@ -1,0 +1,6 @@
+184,185c184,185
+< 	acl, present, err := sd.DACL()
+< 	if err != nil || !present || acl == nil { // a NULL DACL grants everyone full access
+---
+> 	acl, _, err := sd.DACL()
+> 	if err != nil || acl == nil { // a NULL DACL grants everyone full access

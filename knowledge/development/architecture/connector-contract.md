@@ -757,8 +757,8 @@ nothing against a compromised server there (TM §6.2 "Who this defends against")
 **The baseline survives a restart.** The reported set, as `(GUID, basis, source)` entries plus the
 `verification_id` of the epoch's run, is persisted on the connector host after each completed run
 and appended to when the ratchet adds an entry. It is not a secret and holds identifiers only; it
-must be readable and writable by the connector's service identity only. **Two files, two states of
-implementation (T-0242):**
+must be readable and writable by the connector's service identity only. **Two files, and the directory that holds them (T-0242,
+T-0577):**
 
 - **The ratchet append file** (`gate-ratchet.log`, `write.FileBaseline`) has the full control:
   mode 0600 on POSIX; on Windows an explicit, protected (non-inheriting) DACL granting full access
@@ -776,14 +776,29 @@ implementation (T-0242):**
   narrowing the file first. The connector composition wires the slog recorder (local log). The
   Windows event-log sink for this event is **not yet implemented** (T-0837), so only the local-log
   half runs today.
-- **The persisted reported set** (`baseline.json`, the file compared after a restart) has **only
-  its writes** owner-only: the rewrite goes through `ownerfile.CreateTemp` (created owner-only
-  atomically, no window under an inherited ACL) and a rename. The owner/DACL check **before
-  `Load` trusts the file**, the refusal of a foreign-owned file and a recorded
-  `baseline_acl_corrected` for it are **not implemented yet**: `rights.FileBaselineStore.Load`
-  reads any content, and the next `Save` narrows a widened file without a record. Until that lands
-  (T-0329, T-0537) a local writer of `baseline.json` can still make a post-restart shrink
-  comparison pass silently, and this section must not be read as a control for that file.
+- **The persisted reported set** (`baseline.json`, the file compared after a restart): its writes go
+  through `ownerfile.CreateTemp` (owner-only from creation, no window under an inherited ACL) and a
+  rename. **`Load` goes through `ownerfile.ReadFile` (T-0577):** it opens the path without following
+  a link (`O_NOFOLLOW` / `FILE_FLAG_OPEN_REPARSE_POINT`), checks the kind, owner and access **on the
+  open handle** (`fstat` / `GetSecurityInfo`) and reads from that same handle, so a path swapped for
+  a link after any check is refused with no foreign byte read. Unlike `OpenAppend`, `Load` never
+  corrects a wider file: bytes a wider ACL allowed others to write are not trusted. A link, a
+  non-regular file, a foreign owner (Windows: not the service identity, SYSTEM or
+  `BUILTIN\Administrators`), mode wider than 0600, or a DACL that is unprotected or grants anyone
+  but the service identity and SYSTEM is `ErrBaselineUnsafe`; the run treats it as unreadable
+  (`tier0_baseline_missing`, reason `unsafe_acl`) and the next completed run replaces the file. A
+  recorded `baseline_acl_corrected` for `baseline.json` is not needed (nothing is corrected).
+- **The state directory** (T-0577). The directory holding these files is created or verified at
+  startup with `ownerfile.EnsureDir`: Unix mode 0700 owned by the euid; Windows owner = service
+  identity and a PROTECTED, inheritable DACL of the service identity and SYSTEM only (the
+  ProgramData default would let `BUILTIN\Users` create files in it, so a local user could pre-create
+  `baseline.json` or `records.log` and switch the shrink audit off). A directory that is wider, a
+  link, or owned by anyone else is `ErrDirUnsafe` and the connector refuses to start. The parent must
+  exist and be installer- or root-owned. The startup wiring is T-0596; until it lands nothing calls
+  `EnsureDir`, so the refusal is proven at function level only.
+- **The shrink-record file** (`records.log`, `rights.FileRecordSink`) is opened through
+  `ownerfile.OpenAppend`, so it is owner-only from creation; a trusted-owner file that was wider is
+  corrected and a `records_acl_corrected` line is written before the record.
 
 After a restart, the first
 completed run compares against the persisted baseline, so a smaller verification issued right
