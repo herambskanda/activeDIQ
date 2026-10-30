@@ -54,8 +54,8 @@ func NewPurger(owner *store.DB, sink audit.Sink, retention time.Duration, clock 
 // returns how many rows it deleted.
 func (p *Purger) Purge(ctx context.Context, t tenant.ID, by authority.Chain) (int, error) {
 	return p.purge(ctx, t, by, purgeSpec{
-		sql:  `DELETE FROM public.authn_sessions WHERE tenant_id = $1 AND state <> 'active' AND ended_at < $2`,
-		kind: KindSessionsPurged, idPrefix: "authn.sessions.purged.", countKey: "sessions", what: "sessions",
+		pending: false,
+		kind:    KindSessionsPurged, idPrefix: "authn.sessions.purged.", countKey: "sessions", what: "sessions",
 	})
 }
 
@@ -64,16 +64,16 @@ func (p *Purger) Purge(ctx context.Context, t tenant.ID, by authority.Chain) (in
 // else ever ends them), and records authn.pending.purged (count and cutoff) in the same transaction.
 func (p *Purger) PurgePending(ctx context.Context, t tenant.ID, by authority.Chain) (int, error) {
 	return p.purge(ctx, t, by, purgeSpec{
-		sql: `DELETE FROM public.authn_pending_signins WHERE tenant_id = $1::uuid
-AND ((state <> 'active' AND ended_at < $2) OR (state = 'active' AND expires_at < $2))`,
-		kind: KindPendingPurged, idPrefix: "authn.pending.purged.", countKey: "pending_signins", what: "pending sign-ins",
+		pending: true,
+		kind:    KindPendingPurged, idPrefix: "authn.pending.purged.", countKey: "pending_signins", what: "pending sign-ins",
 	})
 }
 
-// purgeSpec parameterises one retention purge: a constant DELETE taking (tenant, cutoff).
+// purgeSpec parameterises one retention purge: one of two constant DELETEs taking (tenant, cutoff).
 type purgeSpec struct {
-	sql, idPrefix, countKey, what string
-	kind                          audit.Kind
+	pending                  bool // false: ended sessions (sqlPurgeSessions), true: pending sign-ins (sqlPurgePending)
+	idPrefix, countKey, what string
+	kind                     audit.Kind
 }
 
 func (p *Purger) purge(ctx context.Context, t tenant.ID, by authority.Chain, spec purgeSpec) (int, error) {
@@ -89,11 +89,21 @@ func (p *Purger) purge(ctx context.Context, t tenant.ID, by authority.Chain, spe
 			return err
 		}
 		cutoff := now.Add(-p.retention)
-		tag, err := tx.Exec(ctx, spec.sql, t.String(), cutoff)
-		if err != nil {
-			return err
+		var affected int64
+		if spec.pending {
+			tag, err := tx.Exec(ctx, sqlPurgePending, t.String(), cutoff)
+			if err != nil {
+				return err
+			}
+			affected = tag.RowsAffected()
+		} else {
+			tag, err := tx.Exec(ctx, sqlPurgeSessions, t.String(), cutoff)
+			if err != nil {
+				return err
+			}
+			affected = tag.RowsAffected()
 		}
-		n = int(tag.RowsAffected())
+		n = int(affected)
 		if n == 0 {
 			return nil
 		}
@@ -110,3 +120,9 @@ func (p *Purger) purge(ctx context.Context, t tenant.ID, by authority.Chain, spe
 	}
 	return n, nil
 }
+
+const (
+	sqlPurgeSessions = `DELETE FROM public.authn_sessions WHERE tenant_id = $1 AND state <> 'active' AND ended_at < $2`
+	sqlPurgePending  = `DELETE FROM public.authn_pending_signins WHERE tenant_id = $1::uuid
+AND ((state <> 'active' AND ended_at < $2) OR (state = 'active' AND expires_at < $2))`
+)

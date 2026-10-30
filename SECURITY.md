@@ -10,7 +10,8 @@ in your domain. We want to hear about every one, and we will treat your report t
 <https://github.com/herambskanda/activeDIQ/security/advisories/new>
 (or the **Security** tab of this repository → **Report a vulnerability**).
 
-Only you and the maintainers can see the report. Please include:
+You need to be signed in to GitHub. Only you and the maintainers can see the report, and it stays
+private until the advisory is published. Please include:
 
 - the component (server, API, console, self-service portal, connector, DC-side component,
   installer or update channel) and the commit or version;
@@ -18,9 +19,9 @@ Only you and the maintainers can see the report. Please include:
 - whether you believe it is already known or exploited.
 
 **Do not open a public issue, pull request or discussion about a vulnerability.**
-If the private form is unavailable to you, open a public issue titled exactly
-`Security contact request` with **no technical details**. We will reply in that issue with a private
-channel and then close it.
+If you cannot use the private form (for example, you have no GitHub account), open a public issue
+titled exactly `Security contact request` with **no technical details**. We will reply in that issue
+with a private channel and then close it.
 
 ## What we commit to
 
@@ -35,14 +36,26 @@ These are targets we hold ourselves to and publish so you can measure us against
 | Fix released, medium and low severity | in a scheduled release; we tell you which one |
 | Security advisory published | **the same day the fix ships** |
 
-- Severity is scored with CVSS. We publish the score once, and the advisory and the CVE record carry
-  the same score.
-- Until activeDIQ is its own CVE Numbering Authority, CVE IDs are requested through GitHub's
-  CNA from the private advisory. We are working towards our own CNA.
 - If we are going to miss a target, we tell you before it passes, with the reason and a new date.
 - We credit you in the advisory by the name you choose, or not at all if you prefer.
 - Please give us until the fix ships, or 90 days from your report, whichever comes first, before
   you disclose publicly. If that does not work for you, tell us and we will agree on a date.
+
+## CVE IDs and scores
+
+- **One score.** Severity is the CVSS v3.1 base score and its rating (critical 9.0–10.0, high
+  7.0–8.9, medium 4.0–6.9, low 0.1–3.9). We publish it once: the advisory and the CVE record carry
+  the same vector and the same score, and we use no other severity label.
+- **One CVE ID per vulnerability** that can be fixed on its own, including in versions that are no
+  longer supported.
+- **Same day.** The advisory and the CVE record are published on the day the fix ships, advisory first.
+- **Who assigns.** Until activeDIQ is its own CVE Numbering Authority, we request the CVE ID from
+  GitHub's CNA through the private advisory as soon as we confirm the report. Once we are a CNA, we
+  assign it ourselves.
+- **Asking for a CVE ID is never conditional** on accepting the disclosure timeline or the safe-harbour
+  terms below. Ask through the same private report.
+- Advisories are published at <https://github.com/herambskanda/activeDIQ/security/advisories>, with no
+  login required to read them.
 
 ## Safe harbour
 

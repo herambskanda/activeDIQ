@@ -58,7 +58,7 @@ func newAPIWith(t *testing.T, s *Store, ten tenant.ID, px ports) http.Handler {
 		t.Fatal(err)
 	}
 	px.p = apihost.Principal{ID: "admin", Tenant: ten.String(), Kind: apihost.KindSession, SessionID: "s"}
-	srv, err := apihost.Build(doc, []apihost.TagHandlers{Handlers{Store: s}.Bind()}, pol, apihost.Permissions{ManagePermission, ReadPermission, "connections.takeover.attest"},
+	srv, err := apihost.Build(doc, []apihost.TagHandlers{Handlers{Store: s}.Bind()}, pol, apihost.Permissions{ManagePermission, ReadPermission, "connections.takeover.attest", "directory.read"},
 		apihost.Ports{Authn: px, Authz: px, Limits: px, StepUp: px})
 	if err != nil {
 		t.Fatal(err)

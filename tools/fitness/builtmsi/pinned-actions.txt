@@ -1,0 +1,11 @@
+# Built-MSI pin for fitness-built-msi (T-0697): the only CustomAction rows the agent MSI may contain, with the
+# exact Type, Source and Target the T-0688 ruling-4 source pin (tools/fitness/agenthost, pinnedActions)
+# compiles to. An Id must be here AND in tools/fitness/agenthost/installer-allow.txt.
+# Type = 2 (exe) + 32 (directory source) + 1024 (in-script, deferred/rollback) + 2048 (no impersonation)
+#        [+ 256 rollback] [+ 64 continue on failure].
+# Columns: Action <TAB> Type <TAB> Source <TAB> Target. Verify against the first real WiX build (msidump).
+WriteConfig	3106	AgentDir	"[AgentDir]agentsetup.exe" write-config
+PrepareDataDir	3106	AgentDir	"[AgentDir]agentsetup.exe" prepare-datadir
+GrantChannel	3106	AgentDir	"[AgentDir]agentsetup.exe" grant-channel
+RollbackGrantChannel	3426	AgentDir	"[AgentDir]agentsetup.exe" revoke-channel
+RevokeChannel	3170	AgentDir	"[AgentDir]agentsetup.exe" revoke-channel

@@ -117,7 +117,7 @@ func chainSetup(t *testing.T, s *storetest.Server) *chainEnv {
 		if err != nil || len(tags) != 1 {
 			t.Fatalf("attestation: %d tags, %v", len(tags), err)
 		}
-		h, err := buildAPIPorts(cfg, console.ports(testLimiter(t), az), tags...)
+		h, err := buildAPIPorts(cfg, permissionCatalogue(), console.ports(testLimiter(t), az, permissionCatalogue()), tags...)
 		if err != nil {
 			t.Fatal(err)
 		}

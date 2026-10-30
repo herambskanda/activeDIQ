@@ -67,7 +67,8 @@ func TestStreamShape(t *testing.T) {
 	if completed != 1 || findings != 1 || int(c.FindingCount) != findings || int(c.Tier0MemberCount) != members || members != 2 {
 		t.Fatalf("counts: completed=%d findings=%d members=%d %v", completed, findings, members, c)
 	}
-	if c.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_REFUSED || c.WriteGateOpenable || c.Checks[0].Check != v7 {
+	if c.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_REFUSED || c.WriteGateOpenable || len(c.Checks) != 4 || c.Checks[0].Check != v1.VerificationCheck_VERIFICATION_CHECK_V5_IDENTITY ||
+		c.Checks[0].Outcome != v1.CheckOutcome_CHECK_OUTCOME_PASS || c.Checks[1].Check != v7 {
 		t.Fatalf("%v", c)
 	}
 	if msgs[0].GetHeader().CheckListVersion != CheckListVersionAD || msgs[0].GetHeader().Identity.GetAd() == nil {
@@ -138,6 +139,11 @@ func TestCorrelatedGroupBlocksAndIsReported(t *testing.T) {
 			}
 		}
 		for _, f := range m.GetFindings().GetFindings() {
+			// Every streamed finding carries the connector's DM-24.I4 fingerprint: the server
+			// refuses the run ("verify stream violates the contract") without it.
+			if len(f.Fingerprint) != 32 {
+				t.Fatalf("finding %s has a %d-byte fingerprint", f.Code, len(f.Fingerprint))
+			}
 			if f.Kind == v1.FindingKind_FINDING_KIND_TIER0_GROUP_MEMBERSHIP && f.ObjectTier0Basis[0] == tier0.C16 {
 				blocked = true
 			}
@@ -375,5 +381,64 @@ func TestStreamRefusesWithoutDirectoryIdentity(t *testing.T) {
 	err := StreamAD(context.Background(), w.f, nil, request(w), ref, nil, func(*v1.VerifyConnectionResponse) error { sent++; return nil }, nil)
 	if err == nil || sent != 0 {
 		t.Fatalf("err=%v sent=%d: a run with no bound directory must stream nothing", err, sent)
+	}
+}
+
+// T-0358 / TM-D26 rule 10: pinned_c13 on the request reaches the snapshot, so over the stream path a
+// renamed pinned group stays in the streamed tier0 set; without the pin it drops out.
+func TestStreamPinnedC13KeepsRenamedGroupInTier0Set(t *testing.T) {
+	pin := guidN(41)
+	run := func(pins ...*v1.Guid) map[string]bool {
+		w := newWorld(t)
+		w.setTokens()
+		ref, _ := dn.ParseObjectRef(w.id.DN)
+		prev := snapshotWith
+		// A stand-in for the classifier's rule: a pinned GUID is C13 whatever its name now is.
+		snapshotWith = func(_ context.Context, _ ADDirectory, pinned, _ []adguid.GUID) (*tier0.ADSet, error) {
+			s := tier0.NewADSet()
+			for _, p := range pinned {
+				s.AddC13(p)
+			}
+			return s, nil
+		}
+		defer func() { snapshotWith = prev }()
+		req := request(w)
+		req.PinnedC13 = pins
+		var members = map[string]bool{}
+		err := StreamAD(context.Background(), w.f, nil, req, ref, testDirectory(), func(m *v1.VerifyConnectionResponse) error {
+			for _, x := range m.GetTier0Set().GetMembers() {
+				g, _ := ParseGUID(x.GetObject())
+				members[g.String()] = true
+			}
+			return nil
+		}, func() time.Time { return time.Unix(1_700_000_000, 0) })
+		if err != nil {
+			t.Fatal(err)
+		}
+		return members
+	}
+	if got := run(pbGuid(pin)); !got[pin.String()] {
+		t.Errorf("pinned renamed group missing from tier0 set: %v", got)
+	}
+	if got := run(); got[pin.String()] {
+		t.Errorf("unpinned group in tier0 set: %v", got)
+	}
+}
+
+func TestMalformedPinnedC13IsInvalidArgument(t *testing.T) {
+	for name, g := range map[string]*v1.Guid{
+		"short": {Value: []byte{1, 2, 3}},
+		"nil":   nil,
+		"empty": {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newWorld(t)
+			req := request(w)
+			req.PinnedC13 = []*v1.Guid{g}
+			msgs, err := w.stream(t, nil, req)
+			if !IsInvalidArgument(err) || len(msgs) != 0 || len(w.f.reads) != 0 {
+				t.Fatalf("err=%v sent=%d reads=%d", err, len(msgs), len(w.f.reads))
+			}
+		})
 	}
 }

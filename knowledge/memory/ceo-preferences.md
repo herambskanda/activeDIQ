@@ -1,6 +1,6 @@
 ---
 title: CEO preferences
-updated: 2026-10-23
+updated: 2026-10-30
 budget: 120 lines
 ---
 
@@ -10,6 +10,8 @@ Newest first within each section. Every entry: date · preference · source. Use
 CEO unless they state otherwise.
 
 ## Working style
+- 2026-10-29 · Lab access: given the choice, they authorised workers ("workers may use WinRM on dc1 in the lab only") instead of doing the dc1 prep by hand. When a lab step needs a human, offer a scoped authorisation for workers as an option. Keep it lab-only. (A-0025)
+- 2026-10-29 · Deferred the Entra sandbox tenant to after M1 ("can we do it in last after m1 is completed"). Don't file Entra-tenant actions during M1. Re-file once at M1 acceptance (T-0075, T-0441 parked in M2). (A-0026; A-0030 withdrawn 2026-10-30)
 - 2026-10-09 · **Never publish activeDIQ material to the claude.ai Artifact site.** Visuals and docs live in the factory Library (board) in the board's own theme (tokens.css: monochrome + indigo). Source: architecture-diagram request.
 - 2026-10-09 · Prefers transparency and control over the conservative option on public release: chose source-available BSL, publishing all of business/ and a personal owner over the recommended Apache-2.0 / keep-business-private / org. For leaving-the-building questions, offer the options but do not assume the cautious one wins. (D-0018)
 - 2026-10-02 · With three clickable previews and a recommendation, the CEO took the recommended taste option (A · Ledger) on the board about 90 minutes after filing, with no note and no mix. On D-0005, which was option text only, they overrode the recommendation. Previews plus a reasoned recommendation get fast taste answers, so keep that format for T-0016 (docs) and T-0017 (video). (D-0012)

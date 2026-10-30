@@ -2,6 +2,118 @@
 # fitness-agent-host A4 fails on anything else. Adding a line is a security-architect review: say what
 # the package can reach (sockets, processes, files, directory protocols) in the commit message.
 # One import path per line; `path/...` allows a subtree.
+#
+# Reviewed in T-0688 (ruling 2: knowledge/development/decisions/agent-host-fitness-rulings.md).
+# Rule: exact paths, except the `internal/` subtrees of grpc and protobuf, which our code cannot import
+# and which change with every release. No public subtree is allowed, so a new grpc/x-net/x-sys package
+# (credentials/alts, xds, oauth, x/net/proxy, x/sys/windows/registry ...) fails until reviewed.
+#
+# Own packages: the agent, its composition, and what the tunnel dial-out needs.
 github.com/skenzeriq/activediq/cmd/agent
 github.com/skenzeriq/activediq/internal/compose/agent
 github.com/skenzeriq/activediq/internal/compose/config
+github.com/skenzeriq/activediq/internal/agenthost/hostapi
+github.com/skenzeriq/activediq/internal/agentmodules/...
+github.com/skenzeriq/activediq/internal/platform/agent
+github.com/skenzeriq/activediq/internal/platform/agentpolicy
+github.com/skenzeriq/activediq/internal/platform/fleet
+github.com/skenzeriq/activediq/internal/platform/fleet/dial
+# tunnelclient (T-0665): the dial-out client extracted from compose/agent. Imports only fleet, fleet/dial, the fleet proto and grpc (all already allowed); outbound mTLS dial only, no listener, no process, no file access.
+github.com/skenzeriq/activediq/internal/platform/fleet/tunnelclient
+github.com/skenzeriq/activediq/internal/platform/tenant
+# prochardening (T-0644): RLIMIT_CORE=0, PR_SET_DUMPABLE=0, refuses GOTRACEBACK=crash. Reaches only the
+# process's own limits and environment through syscall/os; no socket, no child process, no file write.
+github.com/skenzeriq/activediq/internal/platform/prochardening
+github.com/skenzeriq/activediq/internal/proto/skenzeriq/agent/v1
+github.com/skenzeriq/activediq/internal/proto/activediq/fleet/v1
+github.com/skenzeriq/activediq/internal/proto/activediq/addc/v1
+#
+# Not allowed, on purpose: internal/platform/tablekind and the fleet gateway (the server side of the
+# tunnel: grpc.NewServer, tenant CA lookup) must not be linked into a DC binary (ruling 3).
+#
+# golang.org/x/sys: the Windows API (service control, event log, token and job-object calls) for the host
+# and cmd/agent only; R3 keeps it out of modules. /unix is the linux test build (grpc and the host).
+# Not allowed: x/sys/windows/registry, x/sys/windows/svc/mgr, svc/eventlog (also named in a4Banned).
+golang.org/x/sys/windows
+golang.org/x/sys/windows/svc
+golang.org/x/sys/unix
+#
+# golang.org/x/net: HTTP/2 framing for grpc, IDNA for the resolver, and x/net/trace (grpc's debug
+# tracing; it registers handlers on http.DefaultServeMux but opens no socket, so it is unreachable
+# without a listener, which R4 forbids). No proxy, websocket, dialer or html packages.
+golang.org/x/net/http/httpguts
+golang.org/x/net/http2
+golang.org/x/net/http2/hpack
+golang.org/x/net/idna
+golang.org/x/net/internal/httpcommon
+golang.org/x/net/internal/httpsfv
+golang.org/x/net/internal/timeseries
+golang.org/x/net/trace
+#
+# golang.org/x/text: pure tables and transforms (case folding and normalisation for addc, IDNA for grpc).
+golang.org/x/text/cases
+golang.org/x/text/internal
+golang.org/x/text/internal/language
+golang.org/x/text/internal/language/compact
+golang.org/x/text/internal/tag
+golang.org/x/text/language
+golang.org/x/text/secure/bidirule
+golang.org/x/text/transform
+golang.org/x/text/unicode/bidi
+golang.org/x/text/unicode/norm
+#
+# google.golang.org/grpc: the client (dial-out) and the mux's stream types. grpc/credentials/insecure
+# is linked by grpc itself; the agent's own dial code must use TLS credentials only (test A4b in
+# ruling 2). Not allowed: credentials/alts, credentials/oauth, xds, google, authz, admin, reflection,
+# health, orca, profiling (cloud, auth or debug surfaces).
+google.golang.org/grpc/internal/...
+google.golang.org/grpc
+google.golang.org/grpc/attributes
+google.golang.org/grpc/backoff
+google.golang.org/grpc/balancer
+google.golang.org/grpc/balancer/base
+google.golang.org/grpc/balancer/endpointsharding
+google.golang.org/grpc/balancer/grpclb/state
+google.golang.org/grpc/balancer/pickfirst
+google.golang.org/grpc/balancer/pickfirst/internal
+google.golang.org/grpc/balancer/roundrobin
+google.golang.org/grpc/binarylog/grpc_binarylog_v1
+google.golang.org/grpc/channelz
+google.golang.org/grpc/codes
+google.golang.org/grpc/connectivity
+google.golang.org/grpc/credentials
+google.golang.org/grpc/credentials/insecure
+google.golang.org/grpc/encoding
+google.golang.org/grpc/encoding/internal
+google.golang.org/grpc/encoding/proto
+google.golang.org/grpc/experimental/balancer/weight
+google.golang.org/grpc/experimental/stats
+google.golang.org/grpc/grpclog
+google.golang.org/grpc/grpclog/internal
+google.golang.org/grpc/keepalive
+google.golang.org/grpc/mem
+google.golang.org/grpc/metadata
+google.golang.org/grpc/peer
+google.golang.org/grpc/resolver
+google.golang.org/grpc/resolver/dns
+google.golang.org/grpc/serviceconfig
+google.golang.org/grpc/stats
+google.golang.org/grpc/status
+google.golang.org/grpc/tap
+google.golang.org/grpc/internal
+#
+# google.golang.org/protobuf and genproto: wire encoding and the status detail type.
+google.golang.org/protobuf/internal/...
+google.golang.org/genproto/googleapis/rpc/status
+google.golang.org/protobuf/encoding/protojson
+google.golang.org/protobuf/encoding/prototext
+google.golang.org/protobuf/encoding/protowire
+google.golang.org/protobuf/proto
+google.golang.org/protobuf/protoadapt
+google.golang.org/protobuf/reflect/protoreflect
+google.golang.org/protobuf/reflect/protoregistry
+google.golang.org/protobuf/runtime/protoiface
+google.golang.org/protobuf/runtime/protoimpl
+google.golang.org/protobuf/types/known/anypb
+google.golang.org/protobuf/types/known/durationpb
+google.golang.org/protobuf/types/known/timestamppb

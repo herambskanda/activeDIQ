@@ -1,14 +1,12 @@
 package keys
 
 import (
-	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
-	"errors"
-	"io"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 
 	"golang.org/x/crypto/argon2"
 
@@ -108,7 +106,7 @@ func CreateKeystore(passphrase secret.Secret, kdf KDFParams) (file []byte, keyID
 		return nil, "", &Error{Code: EntropyFailure, err: err}
 	}
 	f.SealedKEK = aead.Seal(nonce, nonce, kek, keystoreAAD(f))
-	out, err := json.MarshalIndent(f, "", "  ")
+	out, err := json.Marshal(f, jsontext.WithIndent("  "))
 	if err != nil {
 		return nil, "", newErr(MalformedBlob)
 	}
@@ -144,13 +142,9 @@ func parseKeystore(file []byte) (keystoreFile, bool) {
 	if len(file) == 0 || len(file) > MaxKeystoreBytes {
 		return f, false
 	}
-	dec := json.NewDecoder(bytes.NewReader(file))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&f); err != nil {
+	// v2 rejects invalid UTF-8, duplicate names and trailing data by default; unknown members are refused too.
+	if err := json.Unmarshal(file, &f, json.RejectUnknownMembers(true)); err != nil {
 		return f, false
-	}
-	if _, err := dec.Token(); err == nil || !errors.Is(err, io.EOF) {
-		return f, false // trailing data
 	}
 	k := KDFParams{M: f.KDF.M, T: f.KDF.T, P: f.KDF.P}
 	switch {

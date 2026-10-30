@@ -21,11 +21,12 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
-func init() {
-	for _, n := range []string{"authn_authority_challenges", "authn_authority_approvals", "authn_authority_notices"} {
-		_ = tablekind.Declare(tablekind.Table{Name: "public." + n, Entity: "DM-37", Kind: tablekind.Tenant})
-	}
-}
+// The fitness job reads these declarations from source, so each Name is a string literal.
+var (
+	_ = tablekind.Declare(tablekind.Table{Name: "public.authn_authority_challenges", Entity: "DM-37", Kind: tablekind.Tenant})
+	_ = tablekind.Declare(tablekind.Table{Name: "public.authn_authority_approvals", Entity: "DM-37", Kind: tablekind.Tenant})
+	_ = tablekind.Declare(tablekind.Table{Name: "public.authn_authority_notices", Entity: "DM-37", Kind: tablekind.Tenant})
+)
 
 // The authority factor (threat model §6.9, TM-D19 rules 1 and 2; DM-37 webauthn, DM-30.I6).
 //

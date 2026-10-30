@@ -14,3 +14,6 @@
 - [Derived state vs retention pins](derived-state-retention-pins.md) — pin every row a derivation reads; no restricted IDs in audit events; spec flow lacks a security stage
 - [Env blockers: measure first](triage-env-blockers.md) — df/docker before deciding; name the worker's own leftovers; outage-window failures still need a root cause
 - [No claude.ai Artifacts for activeDIQ](no-claude-artifacts-for-activediq.md) — visuals go to the factory Library in board theme, never published to the Claude site
+- [Apply done CEO actions in triage](triage-apply-done-actions.md) — sweep done-notes vs blocked tickets; deferrals move milestones; serialise shared-lab runs
+- [Windows lab gate](windows-lab-gate.md) — dc1 VM 119 + WinRM (A-0025, lab only); what still needs a human (fs1, Win11, child DC, ADMP)
+- [CEO action handover](ceo-action-handover.md) — build one-command bootstrap tooling before re-queuing; done-without-note ≠ evidence

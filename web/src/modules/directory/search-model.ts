@@ -58,7 +58,7 @@ export function failureOf(error: unknown): Failure {
         return {
           kind: "unauthenticated",
           title: "Your session has ended",
-          detail: "Sign in again, then retry the search.",
+          detail: "Sign in again; you will come back to this search.",
           ...withId,
         };
       case 400:
