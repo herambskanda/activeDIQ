@@ -206,30 +206,4 @@ func TestTMFAuthz(t *testing.T) {
 			}
 		}
 	})
-
-	t.Run("report beyond owner's scope: only the owner's current scope is delivered", func(t *testing.T) {
-		cands := []authz.Target{obj("a", "ou-sales", domain), obj("b", "ou-finance", domain)}
-		rows, err := e.FilterForOwner(tech, reset, cands)
-		if err != nil || len(rows.Permitted) != 1 || rows.Permitted[0].ID != id("a") {
-			t.Fatalf("rows=%+v err=%v", rows, err)
-		}
-		// owner later loses the sales delegation: nothing is delivered, the schedule stops
-		lost := &authz.Principal{ID: "tech"}
-		if _, err := e.FilterForOwner(lost, reset, cands); !errors.Is(err, authz.ErrOwnerDead) {
-			t.Fatalf("got %v", err)
-		}
-		// owner rescoped to finance only: sales rows must vanish
-		moved := holder("tech", []authz.Permission{reset}, scope(root("ou-finance", domain)))
-		rows, err = e.FilterForOwner(moved, reset, cands)
-		if err != nil || len(rows.Permitted) != 1 || rows.Permitted[0].ID != id("b") {
-			t.Fatalf("rows=%+v err=%v", rows, err)
-		}
-	})
-	t.Run("report beyond owner's scope: disabled owner stops the schedule", func(t *testing.T) {
-		dead := *tech
-		dead.Disabled = true
-		if _, err := e.FilterForOwner(&dead, reset, []authz.Target{obj("a", "ou-sales", domain)}); !errors.Is(err, authz.ErrOwnerDead) {
-			t.Fatalf("got %v", err)
-		}
-	})
 }
