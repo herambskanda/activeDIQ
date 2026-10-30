@@ -71,7 +71,7 @@ type ReadScope struct {
 }
 
 // NewReadScope builds a ReadScope. It is for the rbac producer (and authztest) only; no other
-// package may call it (RP2, enforced by Test_NewReadScope_has_no_other_callers). A nil token adds no
+// package may call it (RP2, enforced by fitness-reports RP2). A nil token adds no
 // narrowing layer; a non-nil token with an empty Include narrows to nothing.
 func NewReadScope(grants []ScopeGrant, token *TokenLayer, reasons []ScopeReason, summary string) ReadScope {
 	s := ReadScope{

@@ -1,11 +1,7 @@
 package authz_test
 
 import (
-	"io/fs"
-	"os"
-	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/platform/authz"
@@ -138,46 +134,5 @@ func TestReadScope_Fingerprint(t *testing.T) {
 	tokB := authz.NewReadScope([]authz.ScopeGrant{{Include: []authz.ScopeTerm{b}}}, &authz.TokenLayer{Include: []authz.ScopeTerm{a}}, nil, "")
 	if tokA.Fingerprint() == tokB.Fingerprint() {
 		t.Error("swapping grant and token terms must change the fingerprint")
-	}
-}
-
-// RP2: only authz, rbac (the producer) and authztest may build a ReadScope.
-func Test_NewReadScope_has_no_other_callers(t *testing.T) {
-	root := "../../.."
-	allowed := []string{
-		filepath.FromSlash("internal/platform/authz/"),
-		filepath.FromSlash("internal/platform/rbac/"),
-	}
-	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			switch d.Name() {
-			case ".git", "node_modules", "web", "garage":
-				return fs.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(p, ".go") {
-			return nil
-		}
-		rel, _ := filepath.Rel(root, p)
-		for _, a := range allowed {
-			if strings.HasPrefix(rel, a) {
-				return nil
-			}
-		}
-		b, err := os.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		if strings.Contains(string(b), "NewReadScope(") {
-			t.Errorf("%s calls NewReadScope; only rbac and authz (and authztest) may (RP2)", rel)
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
 }

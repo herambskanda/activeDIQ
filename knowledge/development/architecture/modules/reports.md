@@ -406,8 +406,8 @@ duplicate and names the kind), and `modules/delegation/scope.go`, which register
 `ou_subtree` and `ou_one_level`. `authz.ScopeEvaluator` is `RootKind() string` plus
 `Term(connection, root ObjectID) (ScopeTerm, error)`; a zero connection or root is
 `ErrInvalidObjectID`. `TermKind`'s zero value is unknown, so a forgotten kind never matches.
-`Test_NewReadScope_has_no_other_callers` enforces that only `authz`, `rbac` and `authztest` call
-`NewReadScope` (RP2). `ou_one_level` is evaluated here but not yet assignable: that is T-0881.
+fitness-reports RP2 (`tools/fitness/reports`, type-aware) enforces that only `authz`, `rbac` and `authztest` call
+`NewReadScope`. `ou_one_level` is evaluated here but not yet assignable: that is T-0881.
 
 A read scope has **two layers**: the union of the account's grants, and an optional token layer
 that is **AND-ed** with that union. This mirrors per-target `Authorize`, which checks
