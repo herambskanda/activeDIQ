@@ -835,7 +835,7 @@ export interface components {
          * @enum {string}
          */
         ReportCategoryValue: "users" | "passwords" | "groups" | "computers" | "contacts" | "organizational_units" | (string & {});
-        /** @description One typed cell; the kinds map one to one onto report.Cell in modules/reports.md 6.2 (text s, integer i, boolean b, time t, enum e, guid g, textList l, absent a, never n). unknown is shown rather than an inferred value when an input is missing (FR-09). absent is a missing value, distinct from empty text; never is a value that cannot occur, such as a last logon of an account that has never logged on. */
+        /** @description One typed cell; the kinds map one to one onto report.Cell in modules/reports.md 6.2 (text s, integer i, boolean b, time t, enum e, guid g, textList l, absent a, never n, unknown u). unknown is shown rather than an inferred value when an input is missing (FR-09). absent is a missing value, distinct from empty text; never is a value that cannot occur, such as a last logon of an account that has never logged on. */
         ReportCell: components["schemas"]["ReportCellText"] | components["schemas"]["ReportCellInteger"] | components["schemas"]["ReportCellGuid"] | components["schemas"]["ReportCellTextList"] | components["schemas"]["ReportCellNever"] | components["schemas"]["ReportValueBoolean"] | components["schemas"]["ReportValueTime"] | components["schemas"]["ReportValueEnum"] | components["schemas"]["ReportCellAbsent"] | components["schemas"]["ReportCellUnknown"];
         /** @description No value. */
         ReportCellAbsent: {

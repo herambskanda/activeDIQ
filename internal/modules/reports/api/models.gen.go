@@ -60,7 +60,7 @@ func (v ReportCategoryValue) Valid() bool {
 	return false
 }
 
-// ReportCell: One typed cell; the kinds map one to one onto report.Cell in modules/reports.md 6.2 (text s, integer i, boolean b, time t, enum e, guid g, textList l, absent a, never n). unknown is shown rather than an inferred value when an input is missing (FR-09). absent is a missing value, distinct from empty text; never is a value that cannot occur, such as a last logon of an account that has never logged on.
+// ReportCell: One typed cell; the kinds map one to one onto report.Cell in modules/reports.md 6.2 (text s, integer i, boolean b, time t, enum e, guid g, textList l, absent a, never n, unknown u). unknown is shown rather than an inferred value when an input is missing (FR-09). absent is a missing value, distinct from empty text; never is a value that cannot occur, such as a last logon of an account that has never logged on.
 type ReportCell struct {
 	// Kind is the discriminator; exactly one variant pointer is set, the one Kind names.
 	Kind     string
