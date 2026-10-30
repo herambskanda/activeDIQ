@@ -29,14 +29,15 @@ const KindPendingPurged audit.Kind = "authn.pending.purged"
 
 // Refused* are the reason codes of KindSecondFactorRefused.
 const (
-	RefusedPendingExpired     = "pending_expired"     // the five minutes ran out; this attempt ended it
-	RefusedAttemptsExhausted  = "attempts_exhausted"  // the fifth wrong code was already spent; this attempt ended it
-	RefusedWrongCode          = "wrong_code"          // live pending sign-in, code did not match
-	RefusedCodeReplayed       = "code_replayed"       // a code already used in its step
-	RefusedFactorPaused       = "factor_paused"       // the TOTP failure budget paused the factor
-	RefusedAccountDisabled    = "account_disabled"    // the account is no longer active
-	RefusedNoEnrolment        = "no_totp_enrolment"   // active account without a console TOTP enrolment
-	RefusedCredentialsChanged = "credentials_changed" // password, MFA or role changed after the first factor
+	RefusedPendingExpired     = "pending_expired"       // the five minutes ran out; this attempt ended it
+	RefusedAttemptsExhausted  = "attempts_exhausted"    // the fifth wrong code was already spent; this attempt ended it
+	RefusedWrongCode          = "wrong_code"            // live pending sign-in, code did not match
+	RefusedCodeReplayed       = "code_replayed"         // a code already used in its step
+	RefusedFactorPaused       = "factor_paused"         // the TOTP failure budget paused the factor
+	RefusedAccountDisabled    = "account_disabled"      // the account is no longer active
+	RefusedNoEnrolment        = "no_totp_enrolment"     // active account without a console TOTP enrolment
+	RefusedCredentialsChanged = "credentials_changed"   // password, MFA or role changed after the first factor
+	RefusedFactorPolicy       = "factor_refused_policy" // the account holds an active passkey; a code is not evaluated (P1)
 )
 
 // refusal is the in-transaction signal that a live attempt must be answered with ErrSecondFactorRefused
