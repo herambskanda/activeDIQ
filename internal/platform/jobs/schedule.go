@@ -260,18 +260,24 @@ func (s Schedule) nextCustomWall(t time.Time, loc *time.Location) time.Time {
 	if t.Before(start) {
 		return start.UTC()
 	}
-	// Estimate n from the elapsed time (a unit is at least 28 days for months), then step forward. The
-	// estimate is low by at most a few units, never high.
+	// Estimate n from the elapsed time using the LONGEST a unit can last (25h for a day, a week plus an hour,
+	// 31 days for a month). n units then span at most n*Every*perUnit, so the estimated occurrence is never
+	// after t and the estimate never overshoots; stepping forward finds the first occurrence after t. (Using
+	// the shortest unit instead would over-count and skip real occurrences.)
 	var perUnit time.Duration
 	switch s.Unit {
 	case UnitDays:
-		perUnit = 23 * time.Hour
+		perUnit = 25 * time.Hour
 	case UnitWeeks:
-		perUnit = 7*24*time.Hour - time.Hour
+		perUnit = 7*24*time.Hour + time.Hour
 	default:
-		perUnit = 27 * 24 * time.Hour
+		perUnit = 31 * 24 * time.Hour
 	}
-	n := max(int(t.Sub(start)/perUnit/time.Duration(s.Every))-1, 1)
+	n := max(int(t.Sub(start)/perUnit/time.Duration(s.Every)), 1)
+	// Belt and braces: occurrences increase with n, so step back while the previous one is already after t.
+	for n > 1 && s.customOccurrence(start, n-1, loc).After(t) {
+		n--
+	}
 	for ; ; n++ {
 		if at := s.customOccurrence(start, n, loc); at.After(t) {
 			return at.UTC()

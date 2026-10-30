@@ -361,3 +361,49 @@ func TestOccurrencesAreMonotoneAndOncePerLocalDay(t *testing.T) {
 		}
 	}
 }
+
+// TestCustomRepeatsFarFromStart compares Next against sequential enumeration of every occurrence, probing
+// years past Start, so an estimate that overshoots (and skips real occurrences) cannot hide.
+func TestCustomRepeatsFarFromStart(t *testing.T) {
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	starts := []time.Time{
+		time.Date(2026, 1, 31, 8, 0, 0, 0, loc), // 31st: month clamping; 08:00 across both DST changes
+		time.Date(2026, 3, 7, 2, 30, 0, 0, loc), // 02:30 falls in the spring-forward gap on Mar 8
+	}
+	for _, start := range starts {
+		for _, unit := range []Unit{UnitDays, UnitWeeks, UnitMonths} {
+			for every := 1; every <= 3; every++ {
+				s := Schedule{Recurrence: Custom, Zone: "America/New_York", Start: start, Every: every, Unit: unit}
+				if err := s.Validate(); err != nil {
+					t.Fatal(err)
+				}
+				// The reference sequence, enumerated from n=0.
+				var seq []time.Time
+				for n := 0; n < 1200; n++ {
+					seq = append(seq, s.customOccurrence(start.In(loc), n, loc))
+				}
+				horizon := start.AddDate(3, 0, 0)
+				for probe := start; probe.Before(horizon); probe = probe.Add(7 * time.Hour) {
+					var want time.Time
+					for _, o := range seq {
+						if o.After(probe) {
+							want = o
+							break
+						}
+					}
+					got, err := s.Next(probe)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if !got.Equal(want) {
+						t.Fatalf("start %s unit %v every %d: Next(%s) = %s, want %s", start, unit, every,
+							probe.UTC().Format(time.RFC3339), got.Format(time.RFC3339), want.Format(time.RFC3339))
+					}
+				}
+			}
+		}
+	}
+}
