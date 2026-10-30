@@ -90,10 +90,26 @@ What the dispatcher does now for a finished code ticket (`factory/lib/premerge.m
    note. If the gate cannot judge (timeout, worktree failure) nothing merges and it is retried after
    10 minutes.
 
-A finding line is recognised by shape: `path:line[:col]: message`, a failed make target, `--- FAIL`,
-`FAIL pkg`, a line ending its rule with `fitness function)`, and `fitness-x: FAIL/[..]`. A fitness
-job that prints violations in another shape is red on `main` but not ratcheted: new findings in it
-pass while it is red. Print violations as `path:line: message` or add the shape to `findingKey`.
+A finding line is recognised by shape (`findingKey` in `factory/lib/premerge.mjs`; line numbers,
+durations, scratch paths and the worktree path are not part of the key):
+
+| Shape | Printed by |
+| --- | --- |
+| `path:line[:col]: message` (also `P1 (ADR-0002 fitness function): …`) | profiles, safeprim, modules, operation, api, proto, objectid, grantbootstrap, disclosure |
+| `<where>:line <check> [<rule>]: message` | fleetca, reports, keycustody, the bound-test failures |
+| `<check> <where> [<rule>]: message` | tenancy, audit, domainkeys |
+| `<where>: <check> [<rule>]: message` | corpus |
+| `<file or dotted name>: message`, no line (`go.mod: F4 (ADR-0001 rule 4): …`, `<scenario>/<case>: …`, `attr.sid: FF-SP6 …`) | stack, api A5, tenancy OpenAPI, packaging, disclosure, update, oracles |
+| `fitness-x: FAIL: …` / `fitness-x: <id>: …` | sso, agent-host (one line per violation, T-0973), host (`FAIL <case>: <failure>`), built-msi, update-offline |
+| a failed make target, `--- FAIL`, `FAIL pkg` | any |
+
+Progress and summary lines (`ok`, counts, `inactive`, `pending`, `PostgreSQL 16 (…)`) are not findings.
+A job that prints violations in none of these shapes is red on `main` but not ratcheted: new
+findings in it pass while it is red. So every job of `make fitness` has a sample violation line in
+`JOBS` in `factory/test/premerge.test.mjs`; a test fails when a job of the target has none, and one
+run through the gate per shape shows a violation added to a red job is refused naming it. A new
+fitness tool adds its line there, and prints one self-contained line per violation (never an
+indented block under a heading). A new shape goes into `findingKey`.
 
 Dry run, changes nothing: `factory/bin/factory premerge T-NNNN` (or `… -- make fitness-profiles` to
 run one job). Tests: `node --test factory/test/premerge.test.mjs`. Runbook: `runbooks/ci-and-build.md`.

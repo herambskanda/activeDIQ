@@ -43,6 +43,11 @@ func main() {
 	fails := 0
 	for _, r := range res {
 		fails += len(r.Violations)
+		// One self-contained line per violation on stderr: the pre-merge gate (factory/lib/premerge.mjs)
+		// compares findings line by line and the indented block above carries no check ID (T-0973).
+		for _, v := range r.Violations {
+			fmt.Fprintf(os.Stderr, "fitness-agent-host: %s: %s\n", r.ID, v)
+		}
 	}
 	if fails > 0 {
 		fmt.Fprintf(os.Stderr, "fitness-agent-host: FAIL: %d violation(s)\n", fails)

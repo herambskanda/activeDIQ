@@ -71,6 +71,23 @@ func Judge(rs []Result, gaps map[string]Gap) []Verdict {
 	return out
 }
 
+// Findings are the verdict's failures as self-contained lines, `FAIL <case>: <failure>`, for the
+// pre-merge gate (factory/lib/premerge.mjs), which compares findings line by line (T-0973). A tolerated
+// gap contributes none.
+func (v Verdict) Findings() []string {
+	if v.Stale {
+		return []string{fmt.Sprintf("FAIL %s: known gap for %s no longer fails: delete it from known-gaps.json", v.Case, v.Gap.Ticket)}
+	}
+	if v.Gap != nil {
+		return nil
+	}
+	var out []string
+	for _, f := range v.Failures {
+		out = append(out, fmt.Sprintf("FAIL %s: %s", v.Case, f))
+	}
+	return out
+}
+
 // Fails reports whether this verdict fails the build.
 func (v Verdict) Fails() bool {
 	if v.Gap != nil {

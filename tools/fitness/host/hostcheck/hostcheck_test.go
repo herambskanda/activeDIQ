@@ -175,6 +175,31 @@ func TestGapRatchet(t *testing.T) {
 	}
 }
 
+// TestFindingsAreOneLinePerFailure: the pre-merge gate compares findings line by line (T-0973), so
+// every untolerated failure is one `FAIL <case>: <failure>` line and a tolerated gap adds none.
+func TestFindingsAreOneLinePerFailure(t *testing.T) {
+	broken := clean("linux-oci")
+	broken.Service = &Service{Account: "root"}
+	var got []string
+	for _, v := range Judge(Evaluate(broken), nil) {
+		got = append(got, v.Findings()...)
+	}
+	if len(got) == 0 {
+		t.Fatal("a root service produced no finding line")
+	}
+	for _, l := range got {
+		if !strings.HasPrefix(l, "FAIL "+CaseIdent+": ") || strings.Contains(l, "\n") {
+			t.Errorf("not a self-contained finding line: %q", l)
+		}
+	}
+	gaps := map[string]Gap{CaseIdent: {Case: CaseIdent, Ticket: "T-1", Reason: "x"}}
+	for _, v := range Judge(Evaluate(broken), gaps) {
+		if v.Case == CaseIdent && len(v.Findings()) != 0 {
+			t.Errorf("a tolerated gap produced findings: %v", v.Findings())
+		}
+	}
+}
+
 func TestPlaintextServes(t *testing.T) {
 	for in, want := range map[string]bool{
 		"":                             false, // connection closed or reset
