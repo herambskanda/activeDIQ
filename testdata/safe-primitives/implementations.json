@@ -106,6 +106,24 @@
         "sd.write"
       ],
       "package": "internal/directory/sd"
+    },
+    {
+      "name": "go/csv",
+      "language": "go",
+      "tier": "S",
+      "units": [
+        "csv"
+      ],
+      "package": "internal/platform/export/csv"
+    },
+    {
+      "name": "go/xlsx",
+      "language": "go",
+      "tier": "S",
+      "units": [
+        "xlsx"
+      ],
+      "package": "internal/platform/export/xlsx"
     }
   ],
   "fuzz": [
@@ -218,6 +236,23 @@
         "decodeRoundTrip",
         "daclOnly",
         "noPanic"
+      ]
+    },
+    {
+      "implementation": "go/csv",
+      "unit": "csv",
+      "target": "FuzzRoundTrip",
+      "properties": [
+        "roundtrip",
+        "noFormulaLead"
+      ]
+    },
+    {
+      "implementation": "go/xlsx",
+      "unit": "xlsx",
+      "target": "FuzzAnyTextIsInertString",
+      "properties": [
+        "independentParse"
       ]
     }
   ]
