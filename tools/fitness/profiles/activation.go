@@ -6,24 +6,31 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
+	"time"
+
+	"github.com/skenzeriq/activediq/tools/fitness/internal/adr"
 )
 
 // requiredActivation are the checks ADR-0002 says cannot run before their subject exists. The
 // table must hold a row for each, so deleting a row cannot switch a check off.
-var requiredActivation = []string{"P2", "P3", "P4", "P5", "P6", "U3", "U4"}
+var requiredActivation = []string{"P2-oci", "P2-msi", "P3", "P4", "P5", "P6", "U3", "U4"}
 
 // Row is the evaluated state of one activation-table row.
 type Row struct {
 	Activation
 	ActivatedBy []string // existing paths that activate it
 	Passed      bool     // the check ran and passed
+	Deferred    bool     // the subject exists, the check does not, and a valid deferral covers the gap
 }
 
 // State renders the row for the printed table.
 func (r Row) State() string {
 	switch {
+	case r.Deferred:
+		return fmt.Sprintf("ACTIVE, DEFERRED (%s until %s)", r.Deferral.Ticket, r.Deferral.Expires)
 	case len(r.ActivatedBy) == 0 && len(r.Command) == 0:
 		return "pending"
 	case len(r.ActivatedBy) == 0:
@@ -74,12 +81,23 @@ func (c *Ctx) checkActivation() ([]Row, []Violation) {
 		for _, p := range a.Paths {
 			r.ActivatedBy = append(r.ActivatedBy, c.matches(p)...)
 		}
+		dok := true
+		if a.Deferral != nil {
+			for _, why := range c.deferralProblems(a) {
+				add(a.Check, "deferral "+why)
+				dok = false
+			}
+		}
 		rows = append(rows, r)
 		last := len(rows) - 1
 		if len(r.ActivatedBy) == 0 {
 			continue
 		}
 		subject := strings.Join(r.ActivatedBy, ", ")
+		if len(a.Command) == 0 && a.Deferral != nil && dok {
+			rows[last].Deferred = true
+			continue
+		}
 		if len(a.Command) == 0 {
 			add(a.Check, fmt.Sprintf("%s exists, which activates %s (%s), but the check is not implemented: the row has no command. A subject cannot merge without its check; implement %s and register its command in %s", subject, a.Check, a.Subject, a.Check, "tools/fitness/profiles/manifest.json"))
 			continue
@@ -104,6 +122,89 @@ func (c *Ctx) checkActivation() ([]Row, []Violation) {
 		}
 	}
 	return rows, vs
+}
+
+var ticketRe = regexp.MustCompile(`^T-[0-9]{4,}$`)
+
+// deferralProblems lists why a row's deferral is not valid; nil means it is. A deferral is a
+// violation when it expires (UTC date), names a malformed ticket, sits on a row that has a command
+// (stale: remove it), or is not listed in the ADR's "Activation deferrals" table.
+func (c *Ctx) deferralProblems(a Activation) []string {
+	d := a.Deferral
+	var out []string
+	today := c.Now.UTC().Format("2006-01-02")
+	if exp, err := time.Parse("2006-01-02", d.Expires); err != nil || exp.Format("2006-01-02") != d.Expires {
+		out = append(out, fmt.Sprintf("expiry %q is not a YYYY-MM-DD date", d.Expires))
+	} else if d.Expires < today {
+		out = append(out, fmt.Sprintf("expired on %s (today is %s, UTC): implement %s and remove the deferral, or file an amendment line in the ADR with its reason", d.Expires, today, a.Check))
+	}
+	if !ticketRe.MatchString(d.Ticket) {
+		out = append(out, fmt.Sprintf("ticket %q is malformed: want T- followed by four or more digits", d.Ticket))
+	}
+	if len(a.Command) > 0 {
+		out = append(out, "is stale: the row has a command, so the check is implemented; remove the deferral")
+	}
+	rows, err := c.deferralTable(d.ADR)
+	if err != nil {
+		return append(out, "cannot be checked against the ADR: "+err.Error())
+	}
+	for _, r := range rows {
+		if r.Check == a.Check && r.Ticket == d.Ticket && r.Expires == d.Expires {
+			return out
+		}
+	}
+	return append(out, fmt.Sprintf("(%s, %s, %s) has no row in the \"Activation deferrals\" table of %s: only the ADR approves a deferral, so the manifest cannot grant one alone", a.Check, d.Ticket, d.Expires, d.ADR))
+}
+
+// deferralRow is one row of the ADR's "Activation deferrals" table; columns 1 to 3 are machine-read.
+type deferralRow struct{ Check, Ticket, Expires string }
+
+const deferralsHeading = "**Activation deferrals**"
+
+// deferralTable parses the table that follows the heading in the ADR file named by the deferral. It
+// never reads a copy: like the dag block of fitness-operation, the ADR is the source. The ADR must
+// sit in decisionsDir and have a status that can grant an exception.
+func (c *Ctx) deferralTable(name string) ([]deferralRow, error) {
+	if name == "" || name != filepath.Base(name) || !strings.HasSuffix(name, ".md") {
+		return nil, fmt.Errorf("adr %q must be the file name of an ADR in %s", name, c.Cfg.DecisionsDir)
+	}
+	file := filepath.Join(c.Root, filepath.FromSlash(c.Cfg.DecisionsDir), name)
+	st, err := adr.Status(file)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", name, err)
+	}
+	if !adr.Grants(st) {
+		return nil, fmt.Errorf("%s has status %q; a deferral needs a ratified or accepted ADR", name, st)
+	}
+	b, err := os.ReadFile(file)
+	if err != nil {
+		return nil, err
+	}
+	var rows []deferralRow
+	in, header := false, 0
+	for _, line := range strings.Split(string(b), "\n") {
+		t := strings.TrimSpace(line)
+		switch {
+		case !in && strings.HasPrefix(t, deferralsHeading):
+			in = true
+		case in && strings.HasPrefix(t, "|"):
+			header++
+			if header <= 2 { // column titles and the separator line
+				continue
+			}
+			cells := strings.Split(strings.Trim(t, "|"), "|")
+			if len(cells) < 3 {
+				return nil, fmt.Errorf("%s: deferral table row %q has fewer than three columns", name, t)
+			}
+			rows = append(rows, deferralRow{strings.TrimSpace(cells[0]), strings.TrimSpace(cells[1]), strings.TrimSpace(cells[2])})
+		case in && header > 0 && t != "":
+			return rows, nil // the table ended
+		}
+	}
+	if !in {
+		return nil, fmt.Errorf("%s has no %s heading", name, deferralsHeading)
+	}
+	return rows, nil
 }
 
 // commandProblem reports why a command cannot be run: an unknown tool, or a local package or
@@ -143,6 +244,6 @@ func PrintTable(w interface{ Write([]byte) (int, error) }, rows []Row) {
 		if len(subject) > 72 {
 			subject = subject[:69] + "..."
 		}
-		fmt.Fprintf(w, "  %-3s %-16s %-52s %s\n", r.Check, r.State(), paths, subject)
+		fmt.Fprintf(w, "  %-6s %-42s %-52s %s\n", r.Check, r.State(), paths, subject)
 	}
 }

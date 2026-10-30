@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 const defaultManifest = "tools/fitness/profiles/manifest.json"
@@ -23,12 +24,15 @@ type Ctx struct {
 	Cfg  *Config
 	Tree *Tree
 
+	Now time.Time // the clock deferrals expire against; always UTC
+
 	extTerms *[]string // cache of externalTerms
 }
 
 // Options tune a run; the zero value is what `make ci` uses.
 type Options struct {
-	Branches []string // when non-nil, P7 checks these instead of asking git
+	Branches []string  // when non-nil, P7 checks these instead of asking git
+	Now      time.Time // when non-zero, the date deferrals expire against instead of the wall clock
 }
 
 func main() {
@@ -77,7 +81,11 @@ func Run(root, manifestPath string, checks []string, opt Options) ([]Violation, 
 	if err != nil {
 		return nil, nil, err
 	}
-	c := &Ctx{Root: root, Cfg: cfg, Tree: tree}
+	now := opt.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	c := &Ctx{Root: root, Cfg: cfg, Tree: tree, Now: now.UTC()}
 	var vs []Violation
 	var rows []Row
 	if want["P1"] {

@@ -73,7 +73,7 @@ fitness-tenancy: ## ADR-0002 T1-T5 (and safe-primitives FF-SP7): migration 1, ca
 fitness-domain-keys: ## T-0050: domain-model X3 (no directory table keyed or joined on a DN, SID, name), X4 (no column for a SecretAttrs attribute outside the declared sealed columns), X5 (append-only tables: no UPDATE, DELETE only by the retention role, no state column; DM-25.I6 property test present), and every table declared through tablekind.Declare; against PostgreSQL 16 and 18 containers (needs Docker)
 	go run ./tools/fitness/domainkeys
 
-fitness-profiles: ## T-0038, T-0135, ADR-0002: P1 composition boundary, P4 tenant ID on every log line, metric and cache key (TM-TB17-T8), P7 branch policy, U1 UEM independence, U2 extractable platform root, and the activation table (P2-P6, U3, U4 become mandatory the moment their subject lands)
+fitness-profiles: ## T-0038, T-0135, ADR-0002: P1 composition boundary, P4 tenant ID on every log line, metric and cache key (TM-TB17-T8), P7 branch policy, U1 UEM independence, U2 extractable platform root, and the activation table (P2-oci, P2-msi, P3-P6, U3, U4 become mandatory the moment their subject lands)
 	go run ./tools/fitness/profiles
 
 fitness-proto: ## T-0064, T-0144: every proto/ file compiles (pure Go, no protoc) and the connector contract keeps its structural rules P1-P8, fleet F1-F11 and the agent contracts (skenzeriq.agent.v1, activediq.addc.v1, activediq.fileserver.v1) AG1-AG8 (closed RPC list, denied verbs, unary, no free-form fields, policy data only; TM-F-AGENTCMD contract half)
