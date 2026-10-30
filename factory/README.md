@@ -202,6 +202,7 @@ with a one-line message; usage errors exit 2.
 up | down | status [--json] | pause [--reason …] | resume | doctor
 board [--port N]                     run the board in the foreground
 run [--once] [--dry-run]             run the dispatcher in the foreground
+premerge ID [-- CMD ARGS…]           dry-run the pre-merge gate on a ticket's branch (changes nothing; CMD overrides pre_merge.argv)
 
 ticket new --title T --type TYPE --owner ROLE [--priority P2] [--epic E] [--milestone M]
            [--depends T-1,T-2] [--decisions D-1] [--tags a,b] [--parity ADM-1,ADM-2]
@@ -309,7 +310,16 @@ claude -p "<rendered templates/worker-prompt.md>" \
 - Branch `factory/<ticket-id>`, worktree at `<dispatcher.worktree_root>/<ticket-id>`, created from
   `main` on first claim and reused for every later stage of the same ticket.
 - A ticket tagged `embargoed` is never merged (security-disclosure runbook §6, public repo): the dispatcher records `links.held` + one event and the board shows "merge held"; removing the tag merges it on the next pass.
-- When a code-bearing ticket reaches `done`, the dispatcher merges with
+- **Pre-merge gate** (`dispatcher.pre_merge`, T-0941): before it merges, the dispatcher builds
+  `main` + the branch in a scratch worktree and runs `pre_merge.argv` (`make -k ci`). Green merges.
+  Red while `main` is green is refused. Red while `main` is also red is refused only if the result
+  has a finding `main` does not (multiset of check-and-message keys, line numbers removed; a newly
+  red make target counts; baseline cached per `main` commit). A refused ticket is reopened for its
+  owner with the findings and log paths (`state/premerge/`). A gate that cannot judge (timeout,
+  worktree error) merges nothing and retries after 10 minutes. One ticket at a time goes through the
+  gate, in the background. `factory premerge ID [-- CMD…]` is the dry run. Details:
+  `knowledge/development/standards/ci-gates.md`.
+- When a code-bearing ticket reaches `done` (and passes the gate), the dispatcher merges with
   `git merge --no-ff factory/<id>` in the main checkout. On conflict: `git merge --abort`, the
   ticket returns to `in_progress` with a note, owner unchanged. On success: remove the worktree,
   delete the branch, append an event.
