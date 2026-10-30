@@ -528,7 +528,9 @@ group, computer, contact, OU, container, gMSA, foreign security principal, or an
 carried as data. **Replaces (ME):** the objects behind every Management tab (ADM-008…062), AD
 Explorer (ADM-004) and the M365 objects (ADM-160…164).
 **Key attributes:** `object_guid` · `connection_id` · `nc_guid` · `object_class` (most specific
-structural class) and `kind` · `parent_guid` · `ancestry` (GUID path to the NC head) · `dn` and
+structural class) and `kind` · `parent_guid` · `ancestry` (GUID path to the NC head, nearest parent first) ·
+`ancestry_complete` (the chain is known to be whole and current; derived by the writer, never taken
+from the producer; false is out of every ancestry scope; an Entra row is always false) · `dn` and
 `rdn` (display snapshot) · `sid` (security principals) · `sam_account_name` · `upn` ·
 `display_name` · `enabled` (from `userAccountControl`) · time-dependent state *inputs*:
 `lockout_time`, `pwd_last_set`, `account_expires`, and the effective password policy (domain

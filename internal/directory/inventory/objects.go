@@ -369,33 +369,14 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 		if len(o.ConsistencyGUID) > 0 {
 			cg = o.ConsistencyGUID
 		}
-		var inserted bool
-		err := tx.QueryRow(ctx, `INSERT INTO public.directory_objects AS d (tenant_id, connection_id, object_guid, nc_guid, kind, object_class,
-				parent_guid, ancestry, dn, rdn, sid, sam_account_name, upn, display_name, enabled, lockout_time, pwd_last_set, account_expires,
-				consistency_guid, attributes, when_created, when_changed, observed_at, observed_dsa, cloud_seen_at, state,
-				on_prem_sync_enabled, on_prem_cloud_managed, on_prem_sid, on_prem_domain_name, on_prem_immutable_id)
-			VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, $2::uuid, $3::uuid, $4, $5,
-				$6::uuid, $7::uuid[], $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb, $20, $21, $22, $23, $24, $25,
-				$26, $27, $28, $29, $30)
-			ON CONFLICT (tenant_id, connection_id, object_guid) DO UPDATE SET
-				nc_guid = EXCLUDED.nc_guid, kind = EXCLUDED.kind, object_class = EXCLUDED.object_class, parent_guid = EXCLUDED.parent_guid,
-				ancestry = EXCLUDED.ancestry, dn = EXCLUDED.dn, rdn = EXCLUDED.rdn, sid = EXCLUDED.sid,
-				sam_account_name = EXCLUDED.sam_account_name, upn = EXCLUDED.upn, display_name = EXCLUDED.display_name,
-				enabled = EXCLUDED.enabled, lockout_time = EXCLUDED.lockout_time, pwd_last_set = EXCLUDED.pwd_last_set,
-				account_expires = EXCLUDED.account_expires, consistency_guid = EXCLUDED.consistency_guid, attributes = EXCLUDED.attributes,
-				when_created = EXCLUDED.when_created, when_changed = EXCLUDED.when_changed, observed_at = EXCLUDED.observed_at,
-				observed_dsa = EXCLUDED.observed_dsa, state = EXCLUDED.state,
-				on_prem_sync_enabled = EXCLUDED.on_prem_sync_enabled, on_prem_cloud_managed = EXCLUDED.on_prem_cloud_managed,
-				on_prem_sid = EXCLUDED.on_prem_sid, on_prem_domain_name = EXCLUDED.on_prem_domain_name,
-				on_prem_immutable_id = EXCLUDED.on_prem_immutable_id,
-				cloud_seen_at = GREATEST(d.cloud_seen_at, EXCLUDED.cloud_seen_at)
-			WHERE d.observed_at <= EXCLUDED.observed_at
-			RETURNING (xmax = 0)`,
+		var w written
+		err := tx.QueryRow(ctx, upsertObjectSQL,
 			string(connection), string(o.Object), nullGUID(o.NC), string(o.Kind), o.Class,
 			nullGUID(o.Parent), anc, o.DN, o.RDN, sid, o.SAMAccountName, o.UPN, o.DisplayName, o.Enabled,
 			nullTime(o.LockoutTime), nullTime(o.PwdLastSet), nullTime(o.AccountExpires),
 			cg, string(attrs[i]), nullTime(o.WhenCreated), nullTime(o.WhenChanged), observed.UTC(), o.ObservedDSA, cloud, string(o.State),
-			onPremSync, onPremCloud, nilIfEmpty(o.OnPremisesSID), o.OnPremisesDomainName, nilIfEmpty(o.OnPremisesImmutableID)).Scan(&inserted)
+			onPremSync, onPremCloud, nilIfEmpty(o.OnPremisesSID), o.OnPremisesDomainName, nilIfEmpty(o.OnPremisesImmutableID)).
+			Scan(&w.inserted, &w.moved, &w.completeChanged)
 		if store.IsNoRows(err) {
 			out.Stale++
 			continue
@@ -403,10 +384,22 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 		if err != nil {
 			return out, writeErr("upsert object", err)
 		}
-		if inserted {
+		if w.inserted {
 			out.Inserted++
 		} else {
 			out.Updated++
+		}
+		// The row moved (its parent or chain changed) or its completeness changed, or it is new and
+		// descendants may be waiting for it: bring the rows below it up to date in this transaction.
+		if w.moved {
+			if err := rewriteDescendants(ctx, tx, connection, o.Object); err != nil {
+				return out, err
+			}
+		}
+		if w.inserted || w.moved || w.completeChanged {
+			if err := repairCompleteness(ctx, tx, connection, o.Object); err != nil {
+				return out, err
+			}
 		}
 		if cloud != nil {
 			out.CloudSeen++
@@ -441,6 +434,119 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 		}
 	}
 	return out, nil
+}
+
+// written is what one upsert reports about the row it wrote.
+type written struct {
+	inserted bool
+	// moved: the row existed and its parent or ancestry changed.
+	moved bool
+	// completeChanged: the row existed and ancestry_complete changed.
+	completeChanged bool
+}
+
+// upsertObjectSQL writes one row and reports what changed against the stored one (read in the same
+// statement, so it is the value before this write; it is read without FOR UPDATE, which would skip the
+// row the same statement then updates). ancestry_complete is derived here from the database,
+// never taken from the observation (reports.md §4.5): true only when
+//   - the row is the NC head itself (no parent, nc_guid = object_guid, empty chain), or
+//   - its parent is its NC head (parent = nc_guid) and the chain is exactly [parent], or
+//   - the parent row exists, is complete, and the chain is the parent plus the parent's chain.
+//
+// A row with no parent and no NC (Entra) has no chain to be complete about, and is false. A stale
+// observation matches no row and returns no rows.
+const upsertObjectSQL = `WITH old AS (
+		SELECT parent_guid, ancestry, ancestry_complete FROM public.directory_objects
+		WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid AND object_guid = $2::uuid),
+	ins AS (
+		INSERT INTO public.directory_objects AS d (tenant_id, connection_id, object_guid, nc_guid, kind, object_class,
+			parent_guid, ancestry, dn, rdn, sid, sam_account_name, upn, display_name, enabled, lockout_time, pwd_last_set, account_expires,
+			consistency_guid, attributes, when_created, when_changed, observed_at, observed_dsa, cloud_seen_at, state,
+			on_prem_sync_enabled, on_prem_cloud_managed, on_prem_sid, on_prem_domain_name, on_prem_immutable_id, ancestry_complete)
+		VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, $2::uuid, $3::uuid, $4, $5,
+			$6::uuid, $7::uuid[], $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb, $20, $21, $22, $23, $24, $25,
+			$26, $27, $28, $29, $30,
+			CASE
+				WHEN $6::uuid IS NULL THEN $3::uuid IS NOT NULL AND $3::uuid = $2::uuid AND cardinality($7::uuid[]) = 0
+				WHEN $3::uuid IS NOT NULL AND $6::uuid = $3::uuid THEN $7::uuid[] = ARRAY[$6::uuid]
+				ELSE COALESCE((SELECT p.ancestry_complete AND $7::uuid[] = ARRAY[p.object_guid] || p.ancestry
+					FROM public.directory_objects p
+					WHERE p.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND p.connection_id = $1::uuid
+					AND p.object_guid = $6::uuid), false)
+			END)
+		ON CONFLICT (tenant_id, connection_id, object_guid) DO UPDATE SET
+			nc_guid = EXCLUDED.nc_guid, kind = EXCLUDED.kind, object_class = EXCLUDED.object_class, parent_guid = EXCLUDED.parent_guid,
+			ancestry = EXCLUDED.ancestry, ancestry_complete = EXCLUDED.ancestry_complete, dn = EXCLUDED.dn, rdn = EXCLUDED.rdn, sid = EXCLUDED.sid,
+			sam_account_name = EXCLUDED.sam_account_name, upn = EXCLUDED.upn, display_name = EXCLUDED.display_name,
+			enabled = EXCLUDED.enabled, lockout_time = EXCLUDED.lockout_time, pwd_last_set = EXCLUDED.pwd_last_set,
+			account_expires = EXCLUDED.account_expires, consistency_guid = EXCLUDED.consistency_guid, attributes = EXCLUDED.attributes,
+			when_created = EXCLUDED.when_created, when_changed = EXCLUDED.when_changed, observed_at = EXCLUDED.observed_at,
+			observed_dsa = EXCLUDED.observed_dsa, state = EXCLUDED.state,
+			on_prem_sync_enabled = EXCLUDED.on_prem_sync_enabled, on_prem_cloud_managed = EXCLUDED.on_prem_cloud_managed,
+			on_prem_sid = EXCLUDED.on_prem_sid, on_prem_domain_name = EXCLUDED.on_prem_domain_name,
+			on_prem_immutable_id = EXCLUDED.on_prem_immutable_id,
+			cloud_seen_at = GREATEST(d.cloud_seen_at, EXCLUDED.cloud_seen_at)
+		WHERE d.observed_at <= EXCLUDED.observed_at
+		RETURNING (xmax = 0) AS inserted, d.parent_guid, d.ancestry, d.ancestry_complete)
+	SELECT ins.inserted,
+		COALESCE((SELECT o.parent_guid IS DISTINCT FROM ins.parent_guid OR o.ancestry <> ins.ancestry FROM old o), false),
+		COALESCE((SELECT o.ancestry_complete <> ins.ancestry_complete FROM old o), false)
+	FROM ins`
+
+// rewriteDescendants rewrites, in the caller's transaction, the chain of every row below moved: the
+// part up to and including moved is kept, and what follows it becomes moved's current chain. The
+// chain is nearest parent first, so a descendant's old chain beyond moved (its old ancestors) is
+// replaced and its own nearer part is untouched. A chain that would pass 128 hops cannot be stored;
+// the row gets an empty chain and ancestry_complete = false, which is "unknown" and out of scope,
+// never a stale chain.
+//
+// Rows are found by ancestry (a grandchild whose parent is not yet synced is still below moved), so
+// this is a scan until the GIN index on ancestry (row B3) lands. It runs only for a row that moved.
+func rewriteDescendants(ctx context.Context, tx store.Tx, connection ConnectionID, moved GUID) error {
+	_, err := tx.Exec(ctx, `UPDATE public.directory_objects d SET
+			ancestry = CASE WHEN array_position(d.ancestry, $2::uuid) + cardinality(m.ancestry) <= 128
+				THEN d.ancestry[1:array_position(d.ancestry, $2::uuid)] || m.ancestry ELSE '{}' END,
+			ancestry_complete = d.ancestry_complete AND array_position(d.ancestry, $2::uuid) + cardinality(m.ancestry) <= 128
+		FROM public.directory_objects m
+		WHERE m.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND m.connection_id = $1::uuid AND m.object_guid = $2::uuid
+		AND d.tenant_id = m.tenant_id AND d.connection_id = m.connection_id AND d.object_guid <> m.object_guid
+		AND d.ancestry @> ARRAY[$2::uuid]`, string(connection), string(moved))
+	if err != nil {
+		return writeErr("rewrite descendants", err)
+	}
+	return nil
+}
+
+// repairCompleteness recomputes ancestry_complete for every row reachable below root through
+// parent_guid, top down: a row is complete when its parent is and its chain is the parent's chain
+// plus the parent. It sets waiting descendants true when a parent arrives and unsets them when a
+// parent stops being complete. root's own flag was set by the upsert. The walk is bounded by the
+// chain limit and never revisits root, so a parent cycle in bad data ends.
+func repairCompleteness(ctx context.Context, tx store.Tx, connection ConnectionID, root GUID) error {
+	_, err := tx.Exec(ctx, `WITH RECURSIVE sub AS (
+			SELECT c.object_guid, c.ancestry, 1 AS depth,
+				r.ancestry_complete AND c.ancestry = ARRAY[r.object_guid] || r.ancestry AS ok
+			FROM public.directory_objects r
+			JOIN public.directory_objects c ON c.tenant_id = r.tenant_id AND c.connection_id = r.connection_id AND c.parent_guid = r.object_guid
+			WHERE r.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND r.connection_id = $1::uuid AND r.object_guid = $2::uuid
+			AND c.object_guid <> r.object_guid
+		UNION ALL
+			SELECT c.object_guid, c.ancestry, s.depth + 1, s.ok AND c.ancestry = ARRAY[s.object_guid] || s.ancestry
+			FROM sub s
+			JOIN public.directory_objects c ON c.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
+				AND c.connection_id = $1::uuid AND c.parent_guid = s.object_guid
+			WHERE s.depth <= 128 AND c.object_guid <> $2::uuid
+		), verdict AS (
+			SELECT object_guid, bool_and(ok) AS ok FROM sub GROUP BY object_guid
+		)
+		UPDATE public.directory_objects d SET ancestry_complete = v.ok
+		FROM verdict v
+		WHERE d.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND d.connection_id = $1::uuid
+		AND d.object_guid = v.object_guid AND d.ancestry_complete <> v.ok`, string(connection), string(root))
+	if err != nil {
+		return writeErr("repair ancestry completeness", err)
+	}
+	return nil
 }
 
 func validateObservation(o *Observation, entra bool) ([]byte, error) {
@@ -481,10 +587,13 @@ func validateObservation(o *Observation, entra bool) ([]byte, error) {
 	if len(o.Ancestry) > maxAncestryHops {
 		return bad("ancestry")
 	}
+	seen := make(map[GUID]bool, len(o.Ancestry))
 	for _, a := range o.Ancestry {
-		if !validGUID(a) {
+		// A chain that holds the object itself or repeats an ancestor is a cycle, not a chain.
+		if !validGUID(a) || a == o.Object || seen[a] {
 			return bad("ancestry")
 		}
+		seen[a] = true
 	}
 	if o.PrimaryGroup != "" && (!validGUID(o.PrimaryGroup) || o.PrimaryGroup == o.Object || o.Kind == KindGroup) {
 		return bad("primary group")
