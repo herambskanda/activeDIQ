@@ -136,6 +136,13 @@ func buildDataset(opt Options, src report.Dataset) (*dataset, error) {
 	for _, t := range src.Tables {
 		tableNames[strings.ToLower(t)] = true
 	}
+	// A joined RowAnchor's {rel.<id>} is a bare alias, not a compiler-built subselect (compile.go).
+	rowAnchors := map[report.AnchorID]bool{}
+	for _, a := range src.Anchors {
+		if a.Mode == report.RowAnchor {
+			rowAnchors[a.ID] = true
+		}
+	}
 	mkFrag := func(path string, f report.Fragment) (*frag, error) {
 		if f.IsZero() {
 			return nil, nil
@@ -144,7 +151,7 @@ func buildDataset(opt Options, src report.Dataset) (*dataset, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", path, err)
 		}
-		if err := checkFragment(parts, tableNames); err != nil {
+		if err := checkFragment(parts, tableNames, rowAnchors); err != nil {
 			return nil, fmt.Errorf("%s: %w", path, err)
 		}
 		return &frag{parts: parts}, nil
@@ -159,6 +166,10 @@ func buildDataset(opt Options, src report.Dataset) (*dataset, error) {
 		aliases = append(aliases, string(r.ID))
 	}
 	for _, id := range aliases {
+		// Defence in depth: no alias may look like a system relation (pg_class, pg_roles, …).
+		if strings.HasPrefix(strings.ToLower(id), "pg_") {
+			return nil, fmt.Errorf("anchor or relation ID %q starts with pg_, which names system relations", id)
+		}
 		if tableNames[strings.ToLower(id)] {
 			return nil, fmt.Errorf("anchor or relation ID %q is also a table name", id)
 		}

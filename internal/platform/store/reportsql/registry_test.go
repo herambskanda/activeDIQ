@@ -156,6 +156,64 @@ func TestNewRegistry_fragments_use_an_allowlist(t *testing.T) {
 	}
 }
 
+// T-1033 review (security): a joined RowAnchor's {rel.<id>} is a bare alias, which FROM would resolve
+// as a table on the search_path (pg_class, pg_roles, …). It may not follow FROM; a Rel, FilterAnchor
+// or MaskAnchor, which expand to compiler-built subselects, may. An ID starting pg_ is refused.
+func TestNewRegistry_RowAnchor_slot_may_not_follow_from(t *testing.T) {
+	joined := func(id report.AnchorID) func(*report.Dataset) {
+		return func(d *report.Dataset) {
+			a := anchorT()
+			a.ID = id
+			d.Anchors = append(d.Anchors, a)
+			d.Base.Joins = append(d.Base.Joins, report.RowJoin{Anchor: id,
+				On: report.SQL("{rel." + string(id) + "}.object_guid = {t}.object_guid")})
+		}
+	}
+	count := func(id string) func(*report.Dataset) {
+		return func(d *report.Dataset) {
+			d.Columns[2].Source = report.Derived{SQL: report.SQL("(SELECT count(*) FROM {rel." + id + "})::text")}
+		}
+	}
+	both := func(fs ...func(*report.Dataset)) func(*report.Dataset) {
+		return func(d *report.Dataset) {
+			for _, f := range fs {
+				f(d)
+			}
+		}
+	}
+	refused(t, both(joined("g"), count("g")), "g", "RowAnchor", "from")
+	refused(t, both(joined("pg_class"), count("pg_class")), "pg_class", "pg_")
+	refused(t, func(d *report.Dataset) {
+		d.Rels = append(d.Rels, report.Rel{ID: "pg_roles", Kind: report.RelEdge, Table: "group_links", Project: []report.Ident{"group_guid"}})
+		d.Tables = append(d.Tables, "group_links")
+	}, "pg_roles", "pg_")
+
+	for name, mut := range map[string]func(*report.Dataset){
+		"rel": func(d *report.Dataset) {
+			d.Rels = append(d.Rels, report.Rel{ID: "p", Kind: report.RelEdge, Table: "group_links", Project: []report.Ident{"group_guid"}})
+			d.Tables = append(d.Tables, "group_links")
+			count("p")(d)
+		},
+		"filter anchor": func(d *report.Dataset) {
+			a := anchorT()
+			a.ID, a.Mode = "f", report.FilterAnchor
+			d.Anchors = append(d.Anchors, a)
+			count("f")(d)
+		},
+		"joined row anchor read as a column": both(joined("g"), func(d *report.Dataset) {
+			d.Columns[2].Source = report.Derived{SQL: report.SQL("{rel.g}.object_guid::text")}
+		}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			ds := usersDataset()
+			mut(&ds)
+			if _, err := reportsql.NewRegistry(opts(), ds); err != nil {
+				t.Fatalf("refused: %v", err)
+			}
+		})
+	}
+}
+
 func TestNewRegistry_fragments_the_allowlist_admits_what_datasets_need(t *testing.T) {
 	for _, sql := range []string{
 		`'not_locked'`,

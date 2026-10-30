@@ -66,6 +66,7 @@ type token struct {
 	text string // lower-cased word, the character, or the number; "" for a literal
 	raw  string // a word as written, for messages
 	slot report.SlotKind
+	id   report.AnchorID // the <id> of a {rel.<id>} slot
 }
 
 // tokenize splits parts into words, numbers, string literals, single punctuation characters and
@@ -78,7 +79,7 @@ func tokenize(parts []report.Part) ([]token, error) {
 			if inLit {
 				return nil, fmt.Errorf("a slot sits inside a string literal")
 			}
-			out = append(out, token{kind: tokSlot, slot: p.Kind})
+			out = append(out, token{kind: tokSlot, slot: p.Kind, id: p.ID})
 			continue
 		}
 		s := p.Text
@@ -145,8 +146,10 @@ func isDigit(c byte) bool     { return c >= '0' && c <= '9' }
 //     literal, or a column name after "{t}." or "{rel.x}.";
 //   - a "." is allowed only after {t} or {rel.x}, so no schema-qualified name exists;
 //   - "from" is followed by {rel.x}, except in IS DISTINCT FROM and EXTRACT(… FROM …), so a
-//     subselect reads only relations the compiler built and scoped.
-func checkFragment(parts []report.Part, tables map[string]bool) error {
+//     subselect reads only relations the compiler built and scoped. A joined RowAnchor is not one:
+//     its slot is a bare alias, which in FROM position PostgreSQL resolves as a relation on the
+//     search_path, so it may not follow FROM; rowAnchors holds those IDs.
+func checkFragment(parts []report.Part, tables map[string]bool, rowAnchors map[report.AnchorID]bool) error {
 	toks, err := tokenize(parts)
 	if err != nil {
 		return err
@@ -212,7 +215,7 @@ func checkFragment(parts []report.Part, tables map[string]bool) error {
 			}
 			if fragKeywords[w] {
 				if w == "from" {
-					if err := checkFrom(p, n, len(extractDepth) > 0 && extractDepth[len(extractDepth)-1] == depth); err != nil {
+					if err := checkFrom(p, n, len(extractDepth) > 0 && extractDepth[len(extractDepth)-1] == depth, rowAnchors); err != nil {
 						return err
 					}
 				}
@@ -233,8 +236,10 @@ func checkFragment(parts []report.Part, tables map[string]bool) error {
 	return nil
 }
 
-// checkFrom allows FROM only before a {rel.x} slot, inside EXTRACT(…), or after DISTINCT.
-func checkFrom(p, n *token, inExtract bool) error {
+// checkFrom allows FROM only before a {rel.x} slot, inside EXTRACT(…), or after DISTINCT. The slot
+// must expand to a subselect the compiler built (Rel, FilterAnchor, MaskAnchor), never to a RowAnchor's
+// bare alias.
+func checkFrom(p, n *token, inExtract bool, rowAnchors map[report.AnchorID]bool) error {
 	if p != nil && p.kind == tokWord && p.text == "distinct" {
 		return nil
 	}
@@ -242,6 +247,9 @@ func checkFrom(p, n *token, inExtract bool) error {
 		return nil
 	}
 	if n != nil && n.kind == tokSlot && n.slot == report.SlotRel {
+		if rowAnchors[n.id] {
+			return fmt.Errorf("{rel.%s} follows from, but %q is a RowAnchor: its slot is a bare alias, which FROM would resolve as a table; read it as {rel.%s}.col outside FROM, or declare a FilterAnchor or Rel", n.id, n.id, n.id)
+		}
 		return nil
 	}
 	if n != nil && n.kind == tokWord {
