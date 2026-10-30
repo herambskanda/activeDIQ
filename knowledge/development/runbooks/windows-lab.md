@@ -325,5 +325,7 @@ lab/windows/bin/agent-verify --log knowledge/development/runbooks/windows-lab-ru
   token with `OpenProcessToken`, and restores `ImagePath`. If a run dies in that window, check
   `HKLM\SYSTEM\CurrentControlSet\Services\activeDIQAgent\ImagePath` is the quoted `activediq-agent.exe` path.
 - Reset: `qm rollback <vmid> clean` (human) if a run leaves the DC odd; the script is otherwise idempotent.
+- `--build-only --msi-out <dir>` builds the MSI on the DC and downloads it (sha256-checked) without running the cases; with `--msi-out` alone the full run also downloads it. T-0724 used this to `msidump` the real MSI and run `fitness-built-msi -require` on it. No WiX extension is installed any more: the MSI needs none (below). Wrap sessions in `flock -w 3600 /tmp/claude-1000/activediq-dc1.lock`.
+- Service recovery (restart x3, 30 s, reset 1 day; case A6) and the `activeDIQ Agent` event source are set by `agentsetup configure-service` and removed by `unconfigure-service` (T-0724): WiX 5.0.2's core `ServiceConfigFailureActions` writes action names where Windows Installer wants integers (install fails, error 1939, lab), and the util extension's equivalents add a DLL custom action, a Binary row and HKLM\SYSTEM rows that `fitness-built-msi` refuses.
 - Not covered (needs an enrolled agent talking to a server; T-0814): killing the server connection,
   filling the data disk, and the U+0001 `Data` value reaching the server.

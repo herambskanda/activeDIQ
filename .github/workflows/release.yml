@@ -28,7 +28,7 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          bash packaging/windows/agent/build-msi.sh "$TAG" out
+          bash tools/release/build-agent-msi.sh "$TAG" out
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: agent-msi

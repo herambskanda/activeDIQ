@@ -43,6 +43,10 @@ func run(args []string) int {
 		err = changeChannel(false)
 	case "write-config":
 		err = writeConfig()
+	case "configure-service":
+		err = configureService()
+	case "unconfigure-service":
+		err = unconfigureService()
 	case "prepare-datadir":
 		var dir string
 		if dir, err = dataRoot(); err == nil {

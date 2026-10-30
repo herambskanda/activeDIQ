@@ -11,7 +11,7 @@
   No inbound firewall exception is installed: the agent has no listener and only dials out.
   No reboot is requested.
 -->
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="activeDIQ Agent" Manufacturer="skenzeriq" Version="$(var.Version)" UpgradeCode="6f3b8c1e-5d1a-4f6e-9a57-3c2b7d0e4a11" Scope="perMachine" InstallerVersion="500">
     <!-- afterInstallInitialize puts removal of the old product inside the install transaction, so a failed
          upgrade rolls back to the old version. The default (afterInstallValidate) removes it first and
@@ -34,8 +34,8 @@
                         Type="ownProcess" Start="auto" ErrorControl="normal" Vital="yes"
                         Account="NT SERVICE\activeDIQAgent">
           <!-- Restricted service SID and exactly one privilege, declared here and never through the
-               registry (T-0688 ruling 4b). Whether WiX writes the privilege list is [UNVERIFIED - lab]:
-               T-0648 reads it back (sc qprivs, running token). -->
+               registry (T-0688 ruling 4b). The built MSI carries MsiServiceConfig ConfigType 5 (SID, 3) and 6
+               (privileges) rows, checked by fitness-built-msi and read back by T-0648. -->
           <ServiceConfig ServiceSid="restricted" OnInstall="yes" OnReinstall="yes">
             <RequiredPrivilege Name="SeChangeNotifyPrivilege" />
           </ServiceConfig>
@@ -44,10 +44,6 @@
              Windows Installer treats that race as "service failed to start" (error 1920) and rolls the install
              back (T-0648, lab). The service is start=auto and is started once, after `agent enroll`. -->
         <ServiceControl Id="AgentServiceControl" Name="activeDIQAgent" Stop="both" Remove="uninstall" Wait="yes" />
-        <util:ServiceConfig ServiceName="activeDIQAgent" FirstFailureActionType="restart" SecondFailureActionType="restart"
-                            ThirdFailureActionType="restart" RestartServiceDelayInSeconds="30" ResetPeriodInDays="1" />
-        <util:EventSource Log="Application" Name="activeDIQ Agent" EventMessageFile="[SystemFolder]EventCreate.exe"
-                          SupportsErrors="yes" SupportsInformationals="yes" SupportsWarnings="yes" />
       </Component>
       <Component Id="SetupExe" Guid="*">
         <File Id="SetupExeFile" Source="$(var.SetupExe)" Name="agentsetup.exe" KeyPath="yes" />
@@ -73,6 +69,17 @@
     <CustomAction Id="RevokeChannel" Directory="AgentDir" Execute="deferred" Impersonate="no" Return="ignore"
                   ExeCommand="&quot;[AgentDir]agentsetup.exe&quot; revoke-channel" />
 
+    <!-- Service recovery (restart x3) and the Application event source are set by agentsetup, not by WiX: the
+         core ServiceConfigFailureActions of WiX 5.0.2 fails the install (error 1939, lab) and the util
+         extension adds a DLL custom action, a Binary row and HKLM\SYSTEM registry rows, all refused by
+         fitness-built-msi (T-0724). Rolling back or uninstalling removes the event source only. -->
+    <CustomAction Id="ConfigureService" Directory="AgentDir" Execute="deferred" Impersonate="no" Return="check"
+                  ExeCommand="&quot;[AgentDir]agentsetup.exe&quot; configure-service" />
+    <CustomAction Id="RollbackConfigureService" Directory="AgentDir" Execute="rollback" Impersonate="no" Return="ignore"
+                  ExeCommand="&quot;[AgentDir]agentsetup.exe&quot; unconfigure-service" />
+    <CustomAction Id="UnconfigureService" Directory="AgentDir" Execute="deferred" Impersonate="no" Return="ignore"
+                  ExeCommand="&quot;[AgentDir]agentsetup.exe&quot; unconfigure-service" />
+
     <InstallExecuteSequence>
       <Custom Action="WriteConfig" After="InstallFiles" Condition="NOT REMOVE" />
       <Custom Action="RollbackGrantChannel" Before="GrantChannel" Condition="NOT REMOVE" />
@@ -81,7 +88,13 @@
            PrepareDataDir failed with "No mapping between account names and security IDs"). -->
       <Custom Action="PrepareDataDir" After="InstallServices" Condition="NOT REMOVE" />
       <Custom Action="GrantChannel" After="PrepareDataDir" Condition="NOT REMOVE" />
+      <!-- The service exists after InstallServices; the rollback entry is skipped on an upgrade so a failed
+           upgrade does not unregister the event source of the version that is kept. -->
+      <Custom Action="RollbackConfigureService" Before="ConfigureService" Condition="NOT REMOVE AND NOT WIX_UPGRADE_DETECTED" />
+      <Custom Action="ConfigureService" After="GrantChannel" Condition="NOT REMOVE" />
       <Custom Action="RevokeChannel" Before="StopServices" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <!-- After RevokeChannel, which logs to the source if the revoke fails. -->
+      <Custom Action="UnconfigureService" After="RevokeChannel" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     </InstallExecuteSequence>
 
     <Feature Id="Main" Title="activeDIQ Agent" Level="1">

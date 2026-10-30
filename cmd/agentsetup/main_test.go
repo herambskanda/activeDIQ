@@ -79,8 +79,17 @@ func TestEventSourceMatchesMSI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(wxs), `EventSource Log="Application" Name="`+agentEventSource+`"`) {
-		t.Fatalf("Agent.wxs does not register source %q", agentEventSource)
+	// T-0724: the MSI no longer writes the source itself (util:EventSource is refused by fitness-built-msi);
+	// it runs `agentsetup configure-service`, which registers agentEventSource.
+	if !strings.Contains(string(wxs), `agentsetup.exe&quot; configure-service`) || strings.Contains(string(wxs), "EventSource") {
+		t.Fatalf("Agent.wxs must register source %q through the configure-service custom action only", agentEventSource)
+	}
+	svc, err := os.ReadFile("service_windows.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(svc), "eventlog.InstallAsEventCreate(agentEventSource,") {
+		t.Fatalf("configure-service does not register %q", agentEventSource)
 	}
 	ag, err := os.ReadFile("../agent/run_windows.go")
 	if err != nil {
@@ -98,7 +107,7 @@ func TestAgentsetupEventSourceIsSharedConstant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	re := regexp.MustCompile(`eventlog\.(Open|InstallAsEventCreate|Install)\(\s*([^,)]*)`)
+	re := regexp.MustCompile(`eventlog\.(Open|InstallAsEventCreate|Install|Remove)\(\s*([^,)]*)`)
 	n := 0
 	for _, f := range files {
 		if strings.HasSuffix(f, "_test.go") {
@@ -110,8 +119,8 @@ func TestAgentsetupEventSourceIsSharedConstant(t *testing.T) {
 		}
 		for _, m := range re.FindAllStringSubmatch(string(b), -1) {
 			n++
-			if m[1] != "Open" || strings.TrimSpace(m[2]) != "agentEventSource" {
-				t.Errorf("%s: %s uses source %q; must be eventlog.Open(agentEventSource)", f, m[1], m[2])
+			if m[1] == "Install" || strings.TrimSpace(m[2]) != "agentEventSource" {
+				t.Errorf("%s: %s uses source %q; must be eventlog.<call>(agentEventSource ...) and Install is not used (EventCreate.exe only)", f, m[1], m[2])
 			}
 		}
 	}

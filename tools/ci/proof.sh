@@ -1405,7 +1405,7 @@ mk_msi() {
   mkdir -p "$d/obj"
   ( cd "$d" && printf '<?xml version="1.0"?>\n<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"><Product Id="*" Name="x" Language="1033" Version="1.0.0" Manufacturer="m" UpgradeCode="11111111-2222-3333-4444-555555555555"><Package Compressed="yes" InstallerVersion="500"/><Media Id="1" Cabinet="a.cab" EmbedCab="yes"/><Directory Id="TARGETDIR" Name="SourceDir"><Directory Id="AgentDir" Name="agent"><Component Id="C1" Guid="11111111-2222-3333-4444-555555555556"><File Id="F1" Source="obj/gen.wxs" KeyPath="yes"/><ServiceInstall Id="Svc" Name="activeDIQAgent" Type="ownProcess" Start="auto" ErrorControl="normal" Account="%s"/></Component></Directory></Directory><Feature Id="F" Level="1"><ComponentRef Id="C1"/></Feature></Product></Wix>\n' "$acct" >obj/gen.wxs \
     && wixl -o "$n.msi" obj/gen.wxs \
-    && printf 'MsiServiceConfig\tName\tEvent\tConfigType\tArgument\tComponent_\r\ns72\ts255\ti2\ti2\tL255\ts72\r\nMsiServiceConfig\tMsiServiceConfig\r\nc1\tactiveDIQAgent\t1\t3\t%s\tC1\r\nc2\tactiveDIQAgent\t1\t4\t%s\tC1\r\n' "$sid" "$privs" >MsiServiceConfig.idt \
+    && printf 'MsiServiceConfig\tName\tEvent\tConfigType\tArgument\tComponent_\r\ns72\ts255\ti2\ti2\tL255\ts72\r\nMsiServiceConfig\tMsiServiceConfig\r\nc1\tactiveDIQAgent\t1\t5\t%s\tC1\r\nc2\tactiveDIQAgent\t1\t6\t%s\tC1\r\n' "$sid" "$privs" >MsiServiceConfig.idt \
     && msibuild "$n.msi" -i MsiServiceConfig.idt ) >"$d/build.log" 2>&1 || { echo "PROOF FAILED: building $n.msi"; cat "$d/build.log"; fails=$((fails + 1)); }
   if [ -n "$ca" ]; then
     ( cd "$d" && printf 'Action\tType\tSource\tTarget\r\ns72\ti2\tS64\tS255\r\nCustomAction\tAction\r\n%s\r\n' "$ca" >CustomAction.idt && msibuild "$n.msi" -i CustomAction.idt ) >>"$d/build.log" 2>&1 || { echo "PROOF FAILED: adding a CustomAction to $n.msi"; fails=$((fails + 1)); }
@@ -1427,7 +1427,7 @@ mk_msi action 'NT SERVICE\activeDIQAgent' 3 SeChangeNotifyPrivilege "$(printf 'S
 mk_msi dacl 'NT SERVICE\activeDIQAgent' 3 SeChangeNotifyPrivilege
 add_idt dacl MsiLockPermissionsEx 'MsiLockPermissionsEx\tLockObject\tTable\tSDDLText\r\ns72\ts72\ts32\tL0\r\nMsiLockPermissionsEx\tMsiLockPermissionsEx\r\nL1\tSvc\tServiceInstall\tD:(A;;GA;;;WD)\r\n'
 mk_msi neverapplies 'NT SERVICE\activeDIQAgent' 3 SeChangeNotifyPrivilege
-add_idt neverapplies MsiServiceConfig 'MsiServiceConfig\tName\tEvent\tConfigType\tArgument\tComponent_\r\ns72\ts255\ti2\ti2\tL255\ts72\r\nMsiServiceConfig\tMsiServiceConfig\r\nc1\tactiveDIQAgent\t2\t3\t3\tC1\r\nc2\tactiveDIQAgent\t2\t4\tSeChangeNotifyPrivilege\tC1\r\n'
+add_idt neverapplies MsiServiceConfig 'MsiServiceConfig\tName\tEvent\tConfigType\tArgument\tComponent_\r\ns72\ts255\ti2\ti2\tL255\ts72\r\nMsiServiceConfig\tMsiServiceConfig\r\nc1\tactiveDIQAgent\t2\t5\t3\tC1\r\nc2\tactiveDIQAgent\t2\t6\tSeChangeNotifyPrivilege\tC1\r\n'
 mk_msi selfreg 'NT SERVICE\activeDIQAgent' 3 SeChangeNotifyPrivilege
 add_idt selfreg SelfReg 'File_\tCost\r\ns72\tI2\r\nSelfReg\tFile_\r\nF1\t0\r\n'
 mk_msi critical 'NT SERVICE\activeDIQAgent' 3 SeChangeNotifyPrivilege

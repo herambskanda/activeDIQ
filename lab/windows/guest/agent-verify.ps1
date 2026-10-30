@@ -136,6 +136,9 @@ Case 'A2-qprivs' (($q -match 'SeChangeNotifyPrivilege') -and ($q -notmatch 'SeIm
 $tok = TokenOfServiceProcess
 Case 'A2-token' (($tok -match 'priv=SeChangeNotifyPrivilege') -and (($tok -split 'priv=').Count -eq 2) -and ($tok -match 'restrictingSids=[1-9]') -and ($tok -match "user=$([regex]::Escape((SvcSidString)))")) $tok
 Case 'A2-startname' ((sc.exe qc $Svc | Out-String) -match [regex]::Escape($SvcAcct)) 'runs as the virtual account, not LocalSystem or a domain account'
+# T-0724: recovery comes from MsiServiceConfigFailureActions (no util DLL custom action): restart x3, 30 s, reset 1 day, no reboot, no command.
+$qf = (sc.exe qfailure $Svc | Out-String)
+Case 'A6-recovery' (([regex]::Matches($qf, 'RESTART -- Delay = 30000')).Count -eq 3 -and $qf -match 'RESET_PERIOD[^:]*:\s*86400' -and $qf -notmatch 'REBOOT --|RUN_PROCESS --|RUN PROCESS --') ($qf -replace '\s+', ' ')
 Case 'A3-ace' (HasAce) 'Security channel carries the service-SID ACE'
 $kept = $baseline -replace '^O:[A-Z]+G:[A-Z]+D:', ''
 $still = ((ChannelSddl) -like "*(A;;0x5;;;BA)*" -or (ChannelSddl) -like '*;;;BA)*') -and ((ChannelSddl) -like '*;;;SY)*')

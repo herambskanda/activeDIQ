@@ -97,7 +97,7 @@ fitness-host: ## T-0136, TM-F-HOST: build cmd/server into packaging/linux-oci/Do
 
 BUILT_MSI ?= dist/*.msi
 
-fitness-built-msi: ## T-0697: ADR-0006 A1 on the built artefact: every MSI matching $(BUILT_MSI) is dumped with msidump (msitools) and its service account (NT SERVICE\\activeDIQAgent), restricted SID, pinned privileges, custom actions, binaries, DACLs and HKLM\\SYSTEM writes are judged; prints inactive when none exists. The release job passes -require once the packaging ticket builds the MSI
+fitness-built-msi: ## T-0697: ADR-0006 A1 on the built artefact: every MSI matching $(BUILT_MSI) is dumped with msidump (msitools) and its service account (NT SERVICE\\activeDIQAgent), restricted SID, pinned privileges, custom actions, binaries, DACLs and HKLM\\SYSTEM writes are judged; prints inactive when none exists. The release job runs it with -require (fitness-built-msi-release, T-0724) on the MSI its Windows job builds
 	go run ./tools/fitness/builtmsi -glob '$(BUILT_MSI)'
 
 fitness-built-msi-release: ## T-0724: the release gate: as fitness-built-msi but -require (fails when no MSI exists); release.yml runs the same command on the MSI the Windows job built. Not in `make ci`: WiX needs Windows

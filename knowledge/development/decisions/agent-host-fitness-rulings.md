@@ -188,3 +188,17 @@ Windows proofs (identity, privileges, ACE, rollback leaves nothing) stay lab ite
 4. `make fitness-agent-host` must print R3, R4, A1, A4 `ok` (A2/A3 remain T-0648).
 
 Every change to an allowlist is a security-architect review; do not add lines to make the check pass.
+
+
+## T-0724 addendum (windows-engineer, pending security-architect confirmation)
+
+The first real MSI (WiX 5.0.2 on the lab DC, `msidump`) showed what T-0688 could not: the core
+`ServiceConfig` does write the restricted SID (MsiServiceConfig ConfigType 5, Argument 3) and the single privilege
+(ConfigType 6) and the lab reads both back; but service recovery and the event source could not be authored
+without something `fitness-built-msi` refuses (core `ServiceConfigFailureActions` fails the install with error
+1939 because WiX writes `restart` where Windows Installer wants `1`; `util:ServiceConfig` adds a DLL custom action
+and a Binary row; `util:EventSource` writes HKLM\SYSTEM registry rows). As the sixth-action fallback above
+anticipated, they are now two fixed verbs of `agentsetup` (`configure-service`, `unconfigure-service`) in
+three pinned custom actions (`ConfigureService`, `RollbackConfigureService`, `UnconfigureService`), same shape as
+the five reviewed ones: SYSTEM, deferred or rollback, no impersonation, no argument. Nothing was loosened in
+`fitness-built-msi`; its ConfigType constants were corrected from 3/4 to 5/6 (they had judged neither).
