@@ -3,8 +3,10 @@ package module_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
+	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/capability"
 	"github.com/skenzeriq/activediq/internal/platform/module"
 	"github.com/skenzeriq/activediq/internal/platform/module/moduletest"
@@ -155,5 +157,91 @@ func TestBootEmptyAndCancelled(t *testing.T) {
 func TestMustRegisterNilModule(t *testing.T) {
 	if _, err := moduletest.Register(nil); !errors.Is(err, module.ErrInvalid) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// kindEval is a ScopeEvaluator for the root kind it is given.
+type kindEval string
+
+func (k kindEval) RootKind() string { return string(k) }
+func (k kindEval) Term(c, r authz.ObjectID) (authz.ScopeTerm, error) {
+	return authz.ScopeTerm{Kind: authz.TermSubtree, Connection: c, Root: r}, nil
+}
+
+func scopeEvals(kinds ...string) func(*module.Registrar) error {
+	return func(r *module.Registrar) error {
+		for _, k := range kinds {
+			if err := r.ScopeEvaluator(kindEval(k)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+}
+
+func TestScopeEvaluatorsAreLookedUpByKind(t *testing.T) {
+	c, err := moduletest.Register(&fake{id: "fake", register: scopeEvals("ou_subtree", "naming_context")})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if e, ok := c.ScopeEvaluator("ou_subtree"); !ok || e.RootKind() != "ou_subtree" {
+		t.Fatalf("ou_subtree evaluator = %v, %v", e, ok)
+	}
+	if _, ok := c.ScopeEvaluator("group_members"); ok {
+		t.Fatal("a kind nobody registered must have no evaluator")
+	}
+	if got := c.ScopeKinds(); len(got) != 2 || got[0] != "naming_context" || got[1] != "ou_subtree" {
+		t.Fatalf("ScopeKinds = %v", got)
+	}
+}
+
+func TestBootRejectsDuplicateScopeKindAcrossModules(t *testing.T) {
+	mods := []module.Entry{
+		{ID: "one", Module: &fake{id: "one", register: scopeEvals("ou_subtree")}},
+		{ID: "two", Module: &fake{id: "two", register: scopeEvals("naming_context", "ou_subtree")}},
+	}
+	c, err := module.Boot(context.Background(), mods, capability.NewSet())
+	if !errors.Is(err, module.ErrDuplicate) {
+		t.Fatalf("err = %v, want ErrDuplicate", err)
+	}
+	if !strings.Contains(err.Error(), "ou_subtree") || !strings.Contains(err.Error(), `"one"`) || !strings.Contains(err.Error(), `"two"`) {
+		t.Fatalf("error must name the kind and both modules: %v", err)
+	}
+	if c != nil {
+		t.Fatal("no partial result on failure")
+	}
+}
+
+func TestRegistrarRejectsDuplicateScopeKindInOneModule(t *testing.T) {
+	_, err := moduletest.Register(&fake{id: "fake", register: scopeEvals("ou_subtree", "ou_subtree")})
+	if !errors.Is(err, module.ErrDuplicate) || !strings.Contains(err.Error(), "ou_subtree") {
+		t.Fatalf("err = %v, want ErrDuplicate naming the kind", err)
+	}
+}
+
+func TestRegistrarRejectsBadScopeEvaluators(t *testing.T) {
+	for _, kind := range []string{"", "OU", "ou subtree", "x", "ou-subtree"} {
+		if _, err := moduletest.Register(&fake{id: "fake", register: scopeEvals(kind)}); !errors.Is(err, module.ErrInvalid) {
+			t.Errorf("kind %q: err = %v, want ErrInvalid", kind, err)
+		}
+	}
+	nilEval := func(r *module.Registrar) error { return r.ScopeEvaluator(nil) }
+	if _, err := moduletest.Register(&fake{id: "fake", register: nilEval}); !errors.Is(err, module.ErrInvalid) {
+		t.Errorf("nil evaluator: err = %v, want ErrInvalid", err)
+	}
+}
+
+func TestScopeEvaluatorRefusedOnClosedRegistrar(t *testing.T) {
+	var stash *module.Registrar
+	m := &fake{id: "fake", register: func(r *module.Registrar) error { stash = r; return nil }}
+	if _, err := moduletest.Register(m); err != nil {
+		t.Fatal(err)
+	}
+	if err := stash.ScopeEvaluator(kindEval("ou_subtree")); !errors.Is(err, module.ErrClosed) {
+		t.Fatalf("after Boot: err = %v, want ErrClosed", err)
+	}
+	var zero module.Registrar
+	if err := zero.ScopeEvaluator(kindEval("ou_subtree")); !errors.Is(err, module.ErrClosed) {
+		t.Fatalf("zero Registrar: err = %v, want ErrClosed", err)
 	}
 }

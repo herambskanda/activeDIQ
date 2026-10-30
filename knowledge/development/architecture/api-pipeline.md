@@ -45,6 +45,7 @@ web/src/api/schema.gen.d.ts                              paths and components (o
 | `internal/platform/secret/secretjson/` | `Decode`, the one decode path for API bodies; only apihost calls it (FF-SP2) | hand |
 | `tools/apitools/` | its own Go module: `tool` directives for vacuum and oasdiff; never linked into a shipped binary (stack manifest exception, ADR-0004) | hand |
 | `web/src/api/client.ts` | the one hand-written client file (openapi-fetch over the generated `paths`); ESLint forbids any other API call (rule 12) | hand |
+| `web/src/api/openapi-typescript-helpers.d.ts` | type-only stand-in for `openapi-typescript-helpers` (tsconfig `paths`): `Readable`/`Writable` pass strings through, so an open enum `(string & {})` survives openapi-fetch's response mapping instead of becoming a `String` copy; guarded by `open-enum.test.ts` | hand |
 
 ## What the generator refuses
 

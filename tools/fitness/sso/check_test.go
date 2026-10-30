@@ -143,7 +143,7 @@ func miniTree(t *testing.T) string {
 func TestCorpusCoverage(t *testing.T) {
 	root := miniTree(t)
 	res, err := CheckCorpus(root)
-	if err != nil || len(res.Violations) != 0 || len(res.Pending) != 0 {
+	if err != nil || len(res.Violations) != 0 {
 		t.Fatalf("clean tree: %+v %v", res, err)
 	}
 	// each cited number is named when its last citing record goes
@@ -157,24 +157,15 @@ func TestCorpusCoverage(t *testing.T) {
 	}
 }
 
-func TestCorpusPendingOnlyWhileAbsent(t *testing.T) {
-	root := miniTree(t)
-	if err := os.RemoveAll(filepath.Join(root, corpusDir, "oidc")); err != nil {
-		t.Fatal(err)
-	}
-	res, _ := CheckCorpus(root)
-	if len(res.Violations) != 0 || len(res.Pending) != 1 || !strings.Contains(res.Pending[0], "T-0911") {
-		t.Fatalf("absent OIDC corpus must be listed pending: %+v", res)
-	}
-	write(t, root, oidcDir+"/c_test.go", "package oidc\nfunc TestCorpus(t *testing.T) {}\n")
-	if res, _ = CheckCorpus(root); !hasLine(res.Violations, "oidc: no corpus records") {
-		t.Fatalf("TestCorpus without records must fail: %+v", res)
-	}
-	// SAML has no pending allowance
-	root = miniTree(t)
-	_ = os.RemoveAll(filepath.Join(root, corpusDir, "saml"))
-	if res, _ = CheckCorpus(root); !hasLine(res.Violations, "saml: no corpus records") {
-		t.Fatalf("absent SAML corpus must fail: %+v", res)
+func TestCorpusAbsentFailsForEveryProtocol(t *testing.T) {
+	for _, proto := range []string{"saml", "oidc"} {
+		root := miniTree(t)
+		if err := os.RemoveAll(filepath.Join(root, corpusDir, proto)); err != nil {
+			t.Fatal(err)
+		}
+		if res, _ := CheckCorpus(root); !hasLine(res.Violations, proto+": no corpus records") {
+			t.Fatalf("absent %s corpus must fail: %+v", proto, res)
+		}
 	}
 }
 

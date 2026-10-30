@@ -7,7 +7,7 @@
 //
 // FIT-SSO-2: every OIDC-n and SAML-n check of the spec's §4/§5 is cited by a corpus record, each
 // protocol has a record of every class, and every record runs as a passing subtest of its package's
-// TestCorpus. The OIDC corpus is listed as pending (never silently) until T-0911 lands it.
+// TestCorpus.
 //
 // -static skips the `go test` half of FIT-SSO-2. It exists for tools/ci/proof.sh, which runs this
 // command on synthetic trees that are not Go modules; `make fitness-sso` never passes it.
@@ -40,9 +40,6 @@ func main() {
 
 	res, err := CheckCorpus(*root)
 	fatal(err)
-	for _, p := range res.Pending {
-		fmt.Println("fitness-sso: PENDING:", p)
-	}
 	all = append(all, res.Violations...)
 	if len(res.Violations) == 0 && !*static {
 		// The subtests are only worth running once the records themselves are sound.

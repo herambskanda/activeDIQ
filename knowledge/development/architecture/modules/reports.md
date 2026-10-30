@@ -399,6 +399,16 @@ from T-0872 by T-0877):
 
 ### 4.2 The type (built in T-0880; the fields are fixed here)
 
+*Landed (T-0880):* `internal/platform/authz/readscope.go` (types, `Fingerprint`), `authz/authztest`
+(`ReadScope`, `ReadScopeWithToken`, `ReadScopeWithReasons`), `module.Registrar.ScopeEvaluator` with
+`Contributions.ScopeEvaluator(kind)` and `ScopeKinds()` (one evaluator per root kind; Boot fails on a
+duplicate and names the kind), and `modules/delegation/scope.go`, which registers `naming_context`,
+`ou_subtree` and `ou_one_level`. `authz.ScopeEvaluator` is `RootKind() string` plus
+`Term(connection, root ObjectID) (ScopeTerm, error)`; a zero connection or root is
+`ErrInvalidObjectID`. `TermKind`'s zero value is unknown, so a forgotten kind never matches.
+fitness-reports RP2 (`tools/fitness/reports`, type-aware) enforces that only `authz`, `rbac` and `authztest` call
+`NewReadScope`. `ou_one_level` is evaluated here but not yet assignable: that is T-0881.
+
 A read scope has **two layers**: the union of the account's grants, and an optional token layer
 that is **AND-ed** with that union. This mirrors per-target `Authorize`, which checks
 `tok.Scope.covers` separately from the assignments (`authz.go`). A token's narrowing can't be

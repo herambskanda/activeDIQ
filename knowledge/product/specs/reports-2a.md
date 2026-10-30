@@ -1,7 +1,7 @@
 ---
 title: "Spec: Canned reports at checkpoint 2a: library slice, run, scope, export, schedule"
 date: 2026-10-02
-updated: 2026-10-02
+updated: 2026-10-30
 status: draft
 owner: heramb
 author: product-manager
@@ -21,8 +21,9 @@ sources_last_checked: 2026-10-02
 > runs as.
 
 This is the **S4** spec of [m2-plan.md](../../business/scoping/m2-plan.md) §5. It is the input to
-T-0099 (run path), T-0100 (remaining definitions), T-0101–T-0103 (export), T-0104 (schedules),
-T-0106 (design), T-0114/T-0115 (screens) and T-0116 (proof). It is reviewed by `solution-architect`.
+the build rows B1–B15 and prerequisite rows P1–P5 of [modules/reports.md](../../development/architecture/modules/reports.md) §12 (B4 run path, B5 and B7 definitions,
+B8 per-DC runs, B9 and B10 export, B11 schedules, B12 screens, B13 proof), T-0866 (OpenAPI) and
+T-0867 (design). It is reviewed by `solution-architect`.
 
 `[DISCOVERY]` marks the choices that were made from research alone because partner discovery has
 not come back (m2-plan §4 risk row, §8 Q1). They are the items to re-weight first when it does.
@@ -84,7 +85,7 @@ all read on 2026-10-02. Edition and category counts are from the
 | ADM-087 | Computer reports (18) (Std+Pro) | CMP-01, CMP-02: 10 ME names | BitLocker reports are not stored data (X4); duplicates and managed/unmanaged deferred (§6.3) |
 | ADM-089 | Contact and OU reports (13) (Std+Pro) | OU-01, CTC-01: 8 ME names | GPO-linked and blocked-inheritance OUs wait for domain-model Q10 |
 | ADM-099 | Scope and filters: several domains, OU scope, period presets, result filters, add or remove columns (Std+Pro) | Fully covered (FR-06, FR-13) | None |
-| ADM-100 | Export: CSV, PDF, XLSX, HTML, CSVDE, optional password protection, logo and serial number (Std+Pro) | CSV and XLSX at the 2a demo. PDF and HTML before M2 exit (T-0102) | CSVDE, password-protected export, logo and serial number are a P2 follow-up (§11) |
+| ADM-100 | Export: CSV, PDF, XLSX, HTML, CSVDE, optional password protection, logo and serial number (Std+Pro) | CSV and XLSX at the 2a demo. PDF and HTML before M2 exit (B10) | CSVDE, password-protected export, logo and serial number are a P2 follow-up (§11) |
 | ADM-101 | Schedules: hourly, daily, weekly, monthly, custom (minutes to years). Delivery as attachment, ZIP, link, mail body or saved to a path. "Notify only if data". **Pro only** | Every tier. Hourly, daily, weekly, monthly, custom with a 1-hour floor. Attachment, ZIP, link. Notify-only-if-data | Mail-body delivery, save-to-path and minute-level custom are decisions in §11 |
 
 **Not in this ticket's parity list, stated so nobody assumes it:** ADM-092 (other reports),
@@ -98,7 +99,7 @@ Four enhancements, each tied to a sourced pain. All four are v1 and in 2a.
 
 | # | Enhancement | ME baseline (sourced) | Target | Proof |
 | --- | --- | --- | --- | --- |
-| E1 | **Freshness is stated, and exact last logon says how exact it is.** Every run shows when its data was last synced. "Real last logon" reads every DC and shows how many answered. A partial answer is labelled a lower bound and never claims "never logged on" | Cache synced every 10 minutes (W6). Cached run served with a six-day-old date (benchmark me-09). Last logon shown as `0` | No run without an `as_of` and a freshness label (AC-08…AC-11). Real Last Logon matches the maximum over all lab DCs (AC-39) | `qa-verifier` on the lab, T-0116 |
+| E1 | **Freshness is stated, and exact last logon says how exact it is.** Every run shows when its data was last synced. "Real last logon" reads every DC and shows how many answered. A partial answer is labelled a lower bound and never claims "never logged on" | Cache synced every 10 minutes (W6). Cached run served with a six-day-old date (benchmark me-09). Last logon shown as `0` | No run without an `as_of` and a freshness label (AC-08…AC-11). Real Last Logon matches the maximum over all lab DCs (AC-39) | `qa-verifier` on the lab, B13 |
 | E2 | **Probable service accounts are excluded by default, each with its reason.** On Inactive Users and the password reports a "Probably service accounts (n)" group is hidden by default and one click shows it | KB: "Explicitly exclude service accounts", no filter documented. Benchmark models 6 manual untick clicks (T18) | 0 manual unticks for the T18 scenario. Every flagged row shows its reason (AC-17, AC-18) | Lab seeded with SPN-bearing and plain users |
 | E3 | **Nested membership with the path, as an evidence pack.** The export names, for each member, the group chain it came through, who generated it, when, the data's freshness and a digest | "The report's name does not say nested", only the help does (benchmark T19). Report titles carry no path | T19 in ≤ 6 interactions and ≤ 16 s (§5). The path column is on every effective-membership row (AC-20, AC-27) | Benchmark task T19 re-run in `ux-review` |
 | E4 | **Scheduling in every tier, from the report on screen, with presets and per-recipient delivery history.** Recipients outside the tenant's allowed domains need a confirmation and a permission | Pro only (matrix ADM-101). 14 interactions, 3 screens (T20) | T20 in ≤ 7 interactions, ≤ 22 s. Delivery state per recipient visible on the schedule (AC-30…AC-37) | Benchmark task T20 re-run |
@@ -110,7 +111,7 @@ promised here.
 
 Budgets are the activeDIQ columns of the [benchmark](../../product/specs/top-admin-tasks-benchmark.md)
 (interactions / typed fields / screens, counted by its §1.2 rules). They are also the interaction
-budget for T-0106 and the `ux-review` targets.
+budget for T-0867 and the `ux-review` targets.
 
 | Task | ME today (benchmark) | Budget | Target time |
 | --- | --- | --- | --- |
@@ -127,7 +128,7 @@ budget for T-0106 and the `ux-review` targets.
 - tick service accounts off one by one;
 - pick a domain before seeing anything (all permitted domains are the default).
 
-**Performance, `[PROPOSED]` defaults for `reporting-engineer` to confirm on the scale tier, T-0116:**
+**Performance, `[PROPOSED]` defaults for `reporting-engineer` to confirm on the scale tier, B13:**
 inventory-backed reports show the first 50 rows within 2 s at p95 and the full count within 5 s on
 100,000 users. Effective membership of a 6,000-member nested group shows its first page within 5 s.
 Per-DC reports run as a visible background job (§6.5) and never block the page.
@@ -235,7 +236,7 @@ The 16 reports above answer **54** ME names: USR 14, PWD 7, GRP 15, CMP 10, OU 5
 
 | ME names | Why not at 2a | Goes to |
 | --- | --- | --- |
-| Recently Modified / Recently Deleted (Users, Groups, Computers, Contacts, OUs) | `whenChanged` is a per-DC value that is not replicated, so "modified" needs the observation history (DM-18.I2). Deleted visibility defaults are T-0065 scope | Second slice (follow-up ticket, §12) |
+| Recently Modified / Recently Deleted (Users, Groups, Computers, Contacts, OUs) | `whenChanged` is a per-DC value that is not replicated, so "modified" needs the observation history (DM-18.I2). Deleted visibility defaults are `directory/inventory` scope (P1, B3) | Second slice (follow-up ticket, §12) |
 | Users with Cannot Change Password | The truth is two deny ACEs on the object, not the `userAccountControl` bit. It needs the security-descriptor read path ([Microsoft](https://learn.microsoft.com/en-us/troubleshoot/windows-server/active-directory/useraccountcontrol-manipulate-account-properties), [reading the ACEs](https://learn.microsoft.com/en-us/windows/win32/adsi/reading-user-cannot-change-password-ldap-provider)) | Second slice, after T-0118 |
 | Bitlocker Recovery Keys, Bitlocker Enabled / Disabled Computers | Recovery values are secrets and are never stored (X4, TM-TB15-T3). Enabled/disabled needs the `msFVE` child objects, which are not in the synced set. A single-key lookup is ENH-01 / benchmark T04 | 2b (AD Explorer and `ReadSecret`) |
 | Photo Based, Dial-in Allow/Deny, Users with/without Logon Script, Skype/Lync Enabled/Disabled, Smart Card Enabled, Logon Hour Based, Terminal Services (2), Users with Empty / Duplicate Attributes, All Managers, Manager Based Users, Users in More than One Group, Users Only Members of Domain Users Group, Computers with Duplicate Attributes | Lower use. They need attributes outside the 2a sync set or grouping logic | Second slice |
@@ -289,7 +290,7 @@ The effective maximum age is the PSO's `msDS-MaximumPasswordAge` if a PSO applie
 with `now` and the resolved policy values bound as arguments. They are never a post-filter or a
 loop in application code. This is what makes filter, sort, total count and paging (FR-12) and the
 post-trim counts (LF-39) correct: a "Locked-out Users: 37" count is the count of rows the
-predicate selects. The registered-column contract is `solution-architect`'s, tracked in T-0182,
+predicate selects. The registered-column contract is `solution-architect`'s, specified in [modules/reports.md §3.3](../../development/architecture/modules/reports.md) and built in B3 (RP8),
 and the build tickets cite it.
 
 **Missing inputs.** If an input was not read, a PSO could not be resolved or read was denied, the
@@ -339,7 +340,8 @@ holds only the replicated values, so these two reports have two stages:
    scope. This gives the candidate objects and an estimate of reads (candidates × DCs in scope).
 2. **Read.** Obtain every in-scope DC's value for each candidate. **How** (a live read per object,
    a batched read, or a stored per-DC dataset refreshed by a sweep) is not decided here: it is
-   the ADR in T-0181. What the report requires is the result: one value per DC, the maximum, the
+   decided in [modules/reports.md §6.5 and §14 item 1](../../development/architecture/modules/reports.md):
+   live per-object `ReadPerDC` behind `report.PerDCReader` (P5, run by B8). What the report requires is the result: one value per DC, the maximum, the
    DC it came from, and `PerDcSummary{dcs_in_scope, dcs_answered, coverage}`, with the freshness
    label of §8.2.
 
@@ -349,7 +351,7 @@ Rules:
 - With `PARTIAL` coverage, the maximum is a **lower bound**. The column becomes "Last logon (at
   least)", and a user with no logon on the answered DCs shows "Not confirmed", never "never".
 - **Read cap.** Before any read, the run estimates candidates × DCs. Above the cap (`[PROPOSED]`
-  250,000 per-object-per-DC reads per run; T-0181 sets the unit if the mechanism changes it) it refuses and says "This run would read 41,200 accounts from 6 DCs.
+  250,000 per-object-per-DC reads per run, the unit decided in modules/reports.md §6.5, calibrated in B13) it refuses and says "This run would read 41,200 accounts from 6 DCs.
   Narrow the scope or filters", naming the cap (TM-TB3-T8 and TM-TB15-T8 bound DC load).
 - Read-only DCs are included by default (`PER_DC_SCOPE_ALL`). A switch excludes them
   (`WRITABLE`).
@@ -398,7 +400,7 @@ T18 list (SPN, never-expires password, naming pattern). Rules:
 ## 7. Datasets the reports need
 
 Datasets are registered on EP-8 by `directory/inventory` (DM-70). This table is the requirement the
-2a reports place on them. The spec for the tables themselves is T-0065 and the build is T-0091. Any
+2a reports place on them. The tables themselves are built in B3 and B6 of modules/reports.md §12, with the watermark in P1. Any
 row marked **new** is not yet in their scope and is sent to them as a note.
 
 | ID | Dataset | Rows | Columns the reports need (registered, typed, pre-quoted) | Scope column | Freshness source |
@@ -409,7 +411,7 @@ row marked **new** is not yet in their scope and is sent to them as a note.
 | D4 | Policy inputs (**new**) | domain password and lockout policy, PSOs, PSO links | `maxPwdAge`, `lockoutDuration`, `msDS-LogonTimeSyncInterval` per domain; PSO values and `msDS-PSOAppliesTo`; precedence rules. Resolved at run time, so a PSO edit or a group change is reflected without any write to the user | n/a | Policy read time |
 | D5 | Per-DC read (**not a stored dataset**) | `ReadPerDC` result for a GUID set | per DC: `lastLogon`, `badPwdCount`, `badPasswordTime`, `Observation` | n/a | Read time, per DC |
 
-**Requirements sent to T-0065 and T-0091** (also recorded as notes on those tickets):
+**Requirements placed on `directory/inventory`** (carried by P1 for D6 and by B3 for D7 and D4, modules/reports.md §12):
 - **D6.** Each covered naming context needs a **last successful sync pass** time distinct from
   `last_change_at`. A quiet directory has no changes, and using `last_change_at` would label a
   healthy, quiet domain "Stale".
@@ -417,8 +419,10 @@ row marked **new** is not yet in their scope and is sent to them as a note.
   `DONT_EXPIRE_PASSWORD` bits), `primaryGroupID` and `whenCreated`, plus D4 (from the `ad-expert`
   consult). A follow-up ticket asks `ad-expert` to amend DM-16 (§12).
 - **D8.** Secret attributes are never in a dataset (X4, LF-38). No report column can name one.
-- **D9.** Scope is applied by the compiler from a T-0089 `ScopePredicate` produced only by T-0094
-  (m2-plan §2 decision 4). Reports never build a scope.
+- **D9.** Scope is applied by the compiler (`store/reportsql`, B2) from an `authz.ReadScope` produced
+  only by `rbac.ReadScopes.For` (T-0882), fed by the EP-6 `ScopeEvaluator`s that `delegation`
+  registers (T-0880). Reports never build a scope (fitness RP2). See
+  [modules/reports.md §4](../../development/architecture/modules/reports.md).
 
 ## 8. Run, scope, freshness and export rules
 
@@ -431,7 +435,7 @@ row marked **new** is not yet in their scope and is sent to them as a note.
 - **Authority the system applies (DM-71.I1).** The runner's scope is applied inside the query.
   Counts, page totals and the "checked n objects" text are computed after trimming (DM-35.I4,
   LF-39). Sharing a view link never shares data.
-- **2a scope kinds.** Only `naming_context`, `ou_subtree` and `ou_one_level` exist (T-0094). A
+- **2a scope kinds.** Only `naming_context`, `ou_subtree` and `ou_one_level` exist (T-0880, T-0881, T-0882). A
   role whose scope uses `group_members` or an Entra kind grants **nothing** in 2a reports, and the
   empty state names the reason. Reports fail closed on any scope kind they do not understand.
 - **What a run is.** A run is one execution of a report over one frozen set of inputs. Changing the
@@ -454,7 +458,7 @@ The header shows one of these. "Live" appears only where a report reads DCs.
 
 | Label | When | What happens |
 | --- | --- | --- |
-| **Synced 09:41** | Every covered NC's last successful sync pass is within the staleness threshold T-0065 sets | Runs |
+| **Synced 09:41** | Every covered NC's last successful sync pass is within the staleness threshold P1 sets | Runs |
 | **Stale: last sync 3 h ago (<connection>)** | A covered NC is older than the threshold, in `resync_required` or paused | Runs, with a banner naming the age and cause. Exports and schedules carry the label |
 | **Not synced yet** | A connection has no completed first sync | Runs for the others. This connection is listed as skipped |
 | **Read from 5 of 6 DCs at 09:43** | USR-04 and PWD-03 | As §6.5 |
@@ -466,8 +470,8 @@ the time it was computed.
 
 | Rule | Value |
 | --- | --- |
-| Formats at the 2a demo | **CSV, XLSX** (T-0101) |
-| Formats by M2 exit | + **PDF, HTML** (T-0102). The UI offers only formats that exist (no dead options) |
+| Formats at the 2a demo | **CSV, XLSX** (B9) |
+| Formats by M2 exit | + **PDF, HTML** (B10). The UI offers only formats that exist (no dead options) |
 | Not in this spec | CSVDE, password protection, logo (§11) |
 | Content | The columns on screen at export time, the filters applied, and the full result, not just the visible page |
 | Encoding | Only the P7 output encoders ([safe-primitives §12](../../development/architecture/safe-primitives.md)). CSV is TAB-in-quotes formula neutralisation, XLSX uses typed string cells and `quotePrefix`. No raw writer (TM-TB15-T1) |
@@ -479,7 +483,7 @@ the time it was computed.
 | Storage | A tenant-prefixed blob that expires (DM-72.I3), downloaded only through an authenticated request. An expired file returns **410 Gone**. The owner can delete one early |
 | Secrets | A column that names a secret attribute cannot exist (D8) |
 
-**Canonical form for the digest.** One definition, implemented once in `platform/export` (T-0101)
+**Canonical form for the digest.** One definition, implemented once in `platform/export` (B9)
 and used by every format and by the run record. Input: the run's rows in **run order** (the run's
 sort, with the row key, the object GUID or edge key, as the final tie-break), restricted to the
 **exported columns in their exported order**. Encoding: first the ordered list of column IDs, then
@@ -607,7 +611,7 @@ failure.
 - **Tier-0.** Reports may list Tier-0 objects (Domain Admins and similar), since `tier0` limits
   writes only (DM-35.I5). GRP-02 on a privileged group is the expected audit use.
 - **Safe primitives.** Report SQL comes only from `store/reportsql` with registry identifiers and
-  bound arguments (FF-SP4). Scope comes only from T-0094. Export bytes only from the P7 encoders.
+  bound arguments (FF-SP4). Scope comes only from `rbac.ReadScopes.For` (T-0882). Export bytes only from the P7 encoders.
   Attribute values are attacker-controlled (TM-X3: users edit their own profile fields), so the
   formula and HTML encoders apply to every cell.
 - **Data leaving (TB15).** Exports and deliveries are audited with actor and row count (T6).
@@ -617,9 +621,10 @@ failure.
   the owner's scope (T2). An imported schedule (MIG-06) lands disabled with recipients shown
   (TM-TB18-T9). A per-DC report cannot be used to hammer DCs (read cap, daily floor). A sharing link
   carries no data. Row counts do not leak out-of-scope objects (post-trim counts).
-- **`security-sensitive` tags.** T-0099, T-0103 and T-0104 already carry the tag. T-0100, T-0101 and
-  T-0102 should carry it too, because T-0100 defines what data a report discloses and T-0101/2 are
-  the data-leaving encoders. A note goes on each (§12).
+- **`security-sensitive` tags.** The rows that apply scope, run reports and send data out carry the tag: T-0880,
+  T-0881, T-0882, B2, B4, B8, B9 and B11. B5 and B7 (they define what data a report discloses) and
+  B10 (a data-leaving encoder) should carry it too. The project-manager sets the tags when
+  the B rows are filed (T-0869).
 
 ## 10. Platform matrix
 
@@ -690,11 +695,11 @@ agents are `n/a` for every FR: reports have no behaviour on them at 2a.
 | # | Question | Owner | Blocks |
 | --- | --- | --- | --- |
 | Q1 | `[DISCOVERY]` Partner discovery has not returned. The 16-report slice, the 90-day default and the delivery set come from research. Re-weight on arrival | product-manager | Nothing now |
-| Q2 | **Per-DC mechanism.** §6.5 states the required result, not the mechanism. Live read versus a stored per-DC dataset refreshed by a sweep, the unit of the read cap and the p95 are decided in the ADR T-0181 | solution-architect, T-0181 | USR-04 and PWD-03 in T-0099/T-0100. The other 14 reports do not wait |
-| Q3 | **Where the allowed recipient domains list lives**, and the attachment size limit (T-0095 SMTP settings or the schedule) | backend-engineer | T-0104 |
-| Q4 | Row cap and concurrency numbers (§8.3) calibrated on the scale tier | reporting-engineer, T-0116 | None, defaults apply |
+| Q2 | **Per-DC mechanism.** *Decided* (modules/reports.md §6.5, §14 item 1): live per-object `ReadPerDC` behind `report.PerDCReader`, reversible behind the port. The read cap is per object per DC, `[PROPOSED]` 250,000, calibrated in B13. Implementation is P5; USR-04 and PWD-03 run in B8 | decided; solution-architect | None. The other 14 reports never waited |
+| Q3 | **Where the allowed recipient domains list lives.** *Decided* (modules/reports.md §14 item 2): a `platform/notify` tenant setting changed by the `notify.settings.update` Action (P3). The attachment size limit stays as in §8.3 and §8.4 (`[PROPOSED]` 10 MB, calibrated in B13) | decided; backend-engineer | None (B11 consumes P3) |
+| Q4 | Row cap and concurrency numbers (§8.3) calibrated on the scale tier | reporting-engineer, B13 | None, defaults apply |
 | Q5 | *Withdrawn: ADR-0005 rule 10 rules that schedule writes are Actions (§8.4). The number is kept so other notes' references to Q6 stay valid* | n/a | n/a |
-| Q6 | The staleness threshold and the per-NC "last successful sync pass" watermark (D6) | directory-engineer in T-0065 | FR-08 freshness labels |
+| Q6 | The staleness threshold and the per-NC "last successful sync pass" watermark (D6) | directory-engineer in P1 | FR-08 freshness labels |
 
 No question here is directional: nothing needs the CEO.
 
@@ -708,10 +713,10 @@ Follow-ups filed from this spec (`backlog`, not scope creep): T-0172 (research),
    logo and serial number, mail-body delivery.
 5. spec · `product-manager` — Entra object reports for the hybrid slice (ADM-094 basics).
 
-Follow-ups filed by the architect review: T-0181 (per-DC read mechanism ADR) and T-0182 (derived dataset columns on EP-8).
+The architect review's two follow-ups are settled in modules/reports.md: the per-DC mechanism in
+§6.5 and §14 item 1, and the derived dataset columns on EP-8 in §3.3 (built in B3, RP8).
 
-Notes also go on T-0065, T-0091 (D6, D7), T-0100/T-0101/T-0102 (`security-sensitive`) and T-0095
-(Q3).
+D6 is carried by P1, and D7 and D4 by B3. Q3's SMTP and recipient-domain settings are P3.
 
 ## 13. Functional requirements
 
@@ -734,7 +739,7 @@ Each FR names a parity ID or `enhancement`. Others cite them as `reports-2a#FR-n
 | FR-06 | The run MUST support scope by domain (multi-select, default all permitted), OU include/exclude, period presets and custom range, typed per-column filters and adding or removing registered columns | ADM-099 |
 | FR-07 | Every run MUST apply the runner's scope inside the query. Counts and pages MUST be computed after trimming. A scope kind the 2a evaluator does not support MUST grant nothing | ADM-099, DM-71.I1 |
 | FR-08 | Every run MUST store and show `as_of` and a freshness label per §8.2, and MUST NOT say "live" except for per-DC reads | enhancement (E1), DM-72.I1 |
-| FR-09 | Locked-out, password-expired, password-expires-at and account-expired states MUST be computed at run time by the rules of §6.4, **as columns evaluated inside the compiled query (now and resolved policy bound as arguments), never a post-filter in application code** (T-0182), and MUST show "Unknown (input missing)" rather than infer | ADM-084, ADM-085 |
+| FR-09 | Locked-out, password-expired, password-expires-at and account-expired states MUST be computed at run time by the rules of §6.4, **as columns evaluated inside the compiled query (now and resolved policy bound as arguments), never a post-filter in application code** (modules/reports.md §3.3, B3), and MUST show "Unknown (input missing)" rather than infer | ADM-084, ADM-085 |
 | FR-10 | USR-04 and PWD-03 MUST follow §6.5: per-DC coverage shown, partial coverage labelled a lower bound with no "never", a read cap that refuses before reading | ADM-084, ADM-085 |
 | FR-11 | A run MUST be a job with the states of §8.1, visible progress and cancel, a typed failure reason and retry. A change of preset, filter, period, scope or columns MUST create a new run. Paging and sorting MUST read the same run | DM-72 |
 | FR-12 | Paging, sorting and filtering MUST be server-side and total counts MUST not load every row | ADM-099 |
@@ -920,13 +925,13 @@ AC-22
 Given a lab of 100,000 users
 When Users runs with the default preset
 Then the first 50 rows and the count return within the §5 budget, with server-side paging, sorting and filtering
-Evidence: T-0116 benchmark output
+Evidence: B13 benchmark output
 
 AC-23
 Given a user report on the lab
 When it runs
 Then its rows equal an LDAP ground-truth query for the same preset
-Evidence: comparison test per report (T-0099, T-0100)
+Evidence: comparison test per report (B5, B7, B8)
 
 AC-24 (T-0067 acceptance 3; TM-TB15-T8)
 Given an export whose rows exceed the cap for its format (CSV above 1,000,000, XLSX above 1,000,000, PDF above 5,000, HTML above 20,000)
@@ -938,7 +943,7 @@ Evidence: test per format using lowered caps
 AC-25 (T-0067 acceptance 3)
 Given an export at exactly the cap
 When it runs
-Then it succeeds with all rows, streamed, and the server's memory stays below the bound set by T-0101
+Then it succeeds with all rows, streamed, and the server's memory stays below the bound set by B9
 Evidence: streaming test with memory sample
 
 AC-26
@@ -969,7 +974,7 @@ AC-30 (T-0067 acceptance 3; DM-73.I1)
 Given a schedule whose owner's scope shrank from two OUs to one
 When the next run fires
 Then the output has only the smaller scope, the run record shows the scope applied, and no cached scope is used
-Evidence: test T-0104 AC1
+Evidence: B11 schedule test (AC-30)
 
 AC-31 (DM-73.I1)
 Given a schedule whose owner is disabled
@@ -1093,7 +1098,7 @@ Then paging and sorting return rows of R with unchanged as_of, the first export'
   export are its own
 Evidence: API test comparing run ids, as_of, row sets and digests
 
-AC-49 (FR-09, T-0182)
+AC-49 (FR-09, modules/reports.md §3.3)
 Given a lab with 40 users of whom 37 are currently locked out by the §6.4 rule and more than one page
   of other users
 When Locked-out Users is filtered, sorted by "Lockout ends" and paged
@@ -1108,23 +1113,41 @@ Given a run and its exported CSV, XLSX and (once shipped) PDF and HTML files, an
 When the digests are compared
 Then they are equal for every format, they change when any value, the column order or the row order
   changes, and a null differs from an empty string
-Evidence: platform/export canonical-form test vectors (T-0101)
+Evidence: platform/export canonical-form test vectors (B9)
 
 ```
 
 ### Traceability: which FR each build ticket consumes
 
-| Ticket | FRs |
+| Row | Spec FRs / ACs consumed |
 | --- | --- |
-| T-0075 | FR-05, FR-07, FR-12 |
-| T-0182 | FR-09 (derived columns evaluated in the query), AC-49 |
-| T-0099 | FR-04, FR-06–FR-14 (USR reports first), AC-48, AC-49 |
-| T-0100 | FR-01, FR-02, FR-09, FR-10, FR-14, FR-15 (remaining reports) |
-| T-0101, T-0102 | FR-16, FR-17, FR-19, FR-21, canonical form and AC-50 |
-| T-0103 | FR-17, FR-18, FR-20–FR-22 |
-| T-0104 | FR-23–FR-29 (AC-30–AC-38, AC-45–AC-47) |
-| T-0106, T-0114, T-0115 | §5, FR-01–FR-04, FR-32 |
-| T-0116 | AC-21, AC-22, AC-23, AC-39 |
+| T-0880 | FR-07; AC-06 |
+| T-0881 | FR-07; AC-06 |
+| T-0882 | FR-07; AC-06, AC-07 |
+| T-0873 | FR-03, FR-05, FR-19 (guards) |
+| T-0866 | FR-31; AC-43 |
+| P1 | FR-08; AC-09, AC-10, AC-11 |
+| P2 | FR-07; AC-06 |
+| P3 | FR-24, FR-27; AC-36, AC-47 |
+| P4 | FR-23, FR-28; AC-37 |
+| P5 | FR-10; AC-39, AC-40 |
+| B1 | FR-03 (version fields), FR-05; AC-05 |
+| B2 | FR-05, FR-07, FR-12; AC-05, AC-06, AC-07 |
+| B3 | FR-09, FR-14, FR-21; AC-12, AC-13, AC-14, AC-15, AC-29, AC-49 |
+| B4 | FR-06, FR-07, FR-08, FR-11, FR-12, FR-13 (server-side sort and filter), FR-22 (run), FR-30, FR-31; AC-06–AC-11, AC-42, AC-48 |
+| B5 | FR-01, FR-02, FR-03, FR-04, FR-06, FR-09, FR-14; AC-01–AC-04, AC-12, AC-16, AC-17, AC-18, AC-49 |
+| B6 | FR-15, FR-06; AC-19, AC-20, AC-21 |
+| B7 | FR-01, FR-02, FR-09, FR-14, FR-15; AC-13, AC-19, AC-20, AC-22, AC-23 |
+| B8 | FR-10; AC-39, AC-40, AC-41 |
+| B9 | FR-16, FR-17, FR-18, FR-19, FR-20, FR-21, FR-22 (export), FR-31; AC-24–AC-28, AC-50 |
+| B10 | FR-16, FR-19 |
+| B11 | FR-22 (delivery), FR-23–FR-29, FR-31; AC-30–AC-38, AC-45, AC-46, AC-47 |
+| B12 | FR-01, FR-02, FR-04, FR-13, FR-32; AC-44 |
+| B13 | FR-12, FR-18; AC-21, AC-22, AC-23, AC-39 |
+| B14 | none (ADR ladder) |
+| B15 | spec §8.1 retention |
+
+Row definitions, owners and dependencies are in [modules/reports.md §12](../../development/architecture/modules/reports.md).
 
 ## Sources
 
@@ -1138,4 +1161,5 @@ cited in §6.4–§6.6 and §10. Items the consult could not source carry `[UNVE
 ## Changelog
 
 - 2026-10-02 · created (T-0067)
-- 2026-10-02 · revised after the solution-architect review: schedule writes are `reports.schedule.*` Actions (ADR-0005 rule 10, §8.4, FR-29, Q5 dropped); run-time checks of every permission and external recipient (FR-25); one delivery-link rule (FR-24); run and snapshot semantics (§8.1, FR-11, FR-17); derived states evaluated in the query (§6.4, FR-09, T-0182); canonical digest form (§8.3); per-DC wording mechanism-neutral (§6.5, Q2 to T-0181). Added AC-45 to AC-50
+- 2026-10-02 · revised after the solution-architect review: schedule writes are `reports.schedule.*` Actions (ADR-0005 rule 10, §8.4, FR-29, Q5 dropped); run-time checks of every permission and external recipient (FR-25); one delivery-link rule (FR-24); run and snapshot semantics (§8.1, FR-11, FR-17); derived states evaluated in the query (§6.4, FR-09); canonical digest form (§8.3); per-DC wording mechanism-neutral (§6.5, Q2). Added AC-45 to AC-50
+- 2026-10-30 · T-0914 · traceability only, no scope, FR or AC change: placeholder tickets replaced by the modules/reports.md §12 rows; D9 names `authz.ReadScope` and `rbac.ReadScopes`; Q2 and Q3 marked decided (modules/reports.md §14 items 1 and 2); §14 table equals the contract's FR/AC column

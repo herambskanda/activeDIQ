@@ -1,0 +1,10 @@
+{
+ "id": "O-R01",
+ "class": "replayed",
+ "cites": [
+  "OIDC-3"
+ ],
+ "build": "state_missing_or_foreign",
+ "expect": "refuse",
+ "reason": "oidc.state"
+}
