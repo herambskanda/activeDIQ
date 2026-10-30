@@ -1,0 +1,12 @@
+uploaded
+--- ProgramData default subfolder ACL (probe, removed after)
+C:\ProgramData\diq-qa-t0577-probe NT AUTHORITY\SYSTEM:(I)(OI)(CI)(F)
+                                  BUILTIN\Administrators:(I)(OI)(CI)(F)
+                                  CREATOR OWNER:(I)(OI)(CI)(IO)(F)
+                                  BUILTIN\Users:(I)(OI)(CI)(RX)
+                                  BUILTIN\Users:(I)(CI)(WD,AD,WEA,WA)
+
+Successfully processed 1 files; Failed processing 0 files
+--- go test: owner tests
+ownerfile.test.exe : flag provided but not defined: -test
+At line:8 char:1
