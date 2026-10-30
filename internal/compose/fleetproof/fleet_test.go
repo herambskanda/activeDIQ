@@ -256,13 +256,6 @@ func TestGatewayRefusesToStartWithAPublicMethodOtherThanEnroll(t *testing.T) {
 	}
 }
 
-func unixOnly(t *testing.T) {
-	t.Helper()
-	if filepath.Separator != '/' {
-		t.Skip("enrolment state is refused on non-unix hosts until T-0291")
-	}
-}
-
 func exchange(ctx context.Context, creds credentials.TransportCredentials, addr, token string, csr []byte) (dial.Response, error) {
 	cc, err := grpc.NewClient(addr, grpc.WithTransportCredentials(creds))
 	if err != nil {
@@ -285,7 +278,6 @@ func exchange(ctx context.Context, creds credentials.TransportCredentials, addr,
 // revoked - at once through CloseComponent, and by recheck when revoked elsewhere - and cannot get a
 // new one.
 func TestEnrollEndToEndThenRevocationKillsTheStream(t *testing.T) {
-	unixOnly(t)
 	r := start(t)
 	mat := dial.Material{Address: r.addr, Token: "tok", Pin: fleetsql.PinOf(r.srvCA.cert)}
 	st, err := dial.Enroll(ctx5(t), mat, filepath.Join(t.TempDir(), "state"), exchange)
@@ -387,7 +379,6 @@ func nothingPersisted(t *testing.T, dir string) {
 // TestComponentRefusesUnpinnedServers: TM-TB6-T2, TB6-T13(c), TB12-T2. A server the pinned CA did not
 // sign never receives the token, and a connector never dials one out either.
 func TestComponentRefusesUnpinnedServers(t *testing.T) {
-	unixOnly(t)
 	good := start(t) // the installation the component belongs to: it supplies the pin
 	imposter := start(t)
 
