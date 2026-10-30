@@ -19,7 +19,7 @@ import { applyNoProgress } from './escalation.mjs';
 import { buildPrompt } from './prompt.mjs';
 import { buildWorkerArgs, launchWorker, runFiles, signalPid } from './launcher.mjs';
 import {
-  branchName, cleanupWorktree, ensureWorktree, mergeTicket, repoState, usesSharedCheckout,
+  branchName, branchesAheadOfMain, cleanupWorktree, ensureWorktree, mergeTicket, repoState, usesSharedCheckout,
 } from './worktree.mjs';
 import { candidateKey, launchGate, selectCandidates } from './candidates.mjs';
 import { setting } from './settings.mjs';
@@ -375,11 +375,17 @@ export class Dispatcher {
 
   // ---- merging ----------------------------------------------------------------------------
 
-  /** Merge every finished code ticket that still has a worktree. */
+  /**
+   * Merge every finished ticket that has work on its branch: code tickets that still have a
+   * worktree, and any other type whose `factory/<id>` branch has commits ahead of main (a spec
+   * or docs ticket must never reach done with its commits stranded on a branch — T-0986).
+   */
   async mergePass() {
     if (this.shared) return;
-    const finished = listEntities(this.ctx, 'tickets')
-      .filter((t) => t.status === 'done' && t.links?.worktree && isCodeType(this.ctx.config, t.type));
+    const done = listEntities(this.ctx, 'tickets').filter((t) => t.status === 'done');
+    const code = (t) => isCodeType(this.ctx.config, t.type);
+    const stranded = done.some((t) => !code(t)) ? await branchesAheadOfMain(this.ctx) : new Map();
+    const finished = done.filter((t) => (code(t) ? t.links?.worktree : stranded.has(t.id)));
     for (const ticket of finished) {
       if (this.stopping) return;
       if (this.holdEmbargoed(ticket)) continue;
@@ -413,7 +419,7 @@ export class Dispatcher {
       setTicketLinks(ctx, ticket.id, { worktree: null, held: null, merged: nowIso(ctx), merge_commit: merged.commit });
       appendEvent(ctx, { actor: 'dispatcher', kind: 'ticket', ticket: ticket.id, text: `${ticket.id} merged into ${ctx.config.dispatcher.main_branch} (${merged.commit.slice(0, 8)})${problems.length ? `; cleanup: ${problems.join('; ')}` : ''}` });
     } else if (merged.status === 'conflict') {
-      reopenTicket(ctx, ticket.id, 'dispatcher', `merging ${branchName(ticket.id)} into ${ctx.config.dispatcher.main_branch} conflicted (${merged.detail}). Merge ${ctx.config.dispatcher.main_branch} into the branch, resolve the conflicts, re-run the tests and advance again.`);
+      reopenTicket(ctx, ticket.id, 'dispatcher', `merging ${branchName(ticket.id)} into ${ctx.config.dispatcher.main_branch} conflicted (${merged.detail}). Merge ${ctx.config.dispatcher.main_branch} into the branch, resolve the conflicts, re-run the tests and advance again.${ticket.links?.worktree ? '' : ` This ${ticket.type} ticket works in the main checkout, so do the merge in a temporary worktree: git worktree add <dir> ${branchName(ticket.id)}.`}`);
     } else {
       throw new FactoryError(`merging ${ticket.id} failed: ${merged.detail}`);
     }
