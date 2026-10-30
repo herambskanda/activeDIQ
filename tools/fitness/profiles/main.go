@@ -1,5 +1,5 @@
 // Command profiles is the fitness-profiles job of ADR-0002 (checks P1, P4 telemetry, P7, U1, U2 and the
-// activation table for P2–P6, U3 and U4), run by `make ci`. It fails the build when a deployment
+// activation table for P2-oci, P2-msi, P3 to P6, U3 and U4), run by `make ci`. It fails the build when a deployment
 // profile or the UEM boundary is broken: domain code that imports the compose package, reads a
 // profile-selecting environment variable, names a profile or declares a profile-named capability;
 // self-hosted manifests that differ in a capability; a Tier-0 role composed beside another role;

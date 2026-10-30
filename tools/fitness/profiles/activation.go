@@ -118,7 +118,7 @@ func (c *Ctx) checkActivation() ([]Row, []Violation) {
 	}
 	for _, id := range requiredActivation {
 		if !seen[id] {
-			add(id, "the table has no row for this check; ADR-0002 requires one for each of P2-P6, U3 and U4 so no profile, transport or contract can merge without its check")
+			add(id, "the table has no row for this check; ADR-0002 requires one for each of P2-oci, P2-msi, P3 to P6, U3 and U4 so no profile, transport or contract can merge without its check")
 		}
 	}
 	return rows, vs
