@@ -2436,6 +2436,10 @@ calls per technician per day, then charges per extra call (parity matrix row 18,
   admitted. A12 (fitness-api) refuses an unknown class, an anonymous operation outside
   `anonymous`/`auth`, a `secretResponses` operation outside `reveal`, and a `SecretInput` request
   outside `secret`.
+  The burst + 1 and /64-sharing cases for every row of the table above run in
+  `internal/platform/limiter/proof_test.go` (`TestLimiter/limiter_burst_plus_one_<class>`,
+  `TestLimiter/limiter_v6_prefix`, T-0208); it pins the §7.8 numbers as literals, so a changed default
+  fails there until this table changes with it.
 
 ---
 
