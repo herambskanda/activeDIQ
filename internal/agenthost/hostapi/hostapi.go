@@ -3,7 +3,7 @@
 // module imports this package and nothing of the host. There is no path, file, process, registry,
 // network or service-control capability here, and fitness-agent-host R3 keeps it that way by limiting
 // what this package itself may import.
-package api
+package hostapi
 
 import (
 	"context"

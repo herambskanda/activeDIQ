@@ -187,5 +187,10 @@
       "factory/demos": "Demos",
       "docs": "Product docs"
     }
+  },
+  "security_intake": {
+    "enabled": false,
+    "repo": "herambskanda/activeDIQ",
+    "interval_hours": 24
   }
 }

@@ -67,6 +67,9 @@ const (
 	// EnvSetupTTL is how long the one-time first-run setup secret works (a Go duration, default 1h, at most
 	// 24h). A restart of an unclaimed install after expiry issues a new secret.
 	EnvSetupTTL = "ACTIVEDIQ_SETUP_TTL"
+	// EnvConnectorConfig is the path of the connector role's local configuration file (connection_id, directory
+	// servers, Kerberos identity, enrolment and data directories). Only cmd/connector reads it.
+	EnvConnectorConfig = "ACTIVEDIQ_CONNECTOR_CONFIG"
 )
 
 // Values of EnvPrincipalStore.
@@ -118,6 +121,9 @@ type Config struct {
 	OpsTokenFile string
 	// SetupTTL is the life of the one-time first-run setup secret.
 	SetupTTL time.Duration
+	// ConnectorConfigPath is the connector role's local configuration file; the connector refuses to run
+	// without it, every other role ignores it.
+	ConnectorConfigPath string
 }
 
 // Load reads the configuration through getenv (os.Getenv in the binaries, a map in tests).
@@ -149,6 +155,7 @@ func Load(getenv func(string) string) (Config, error) {
 		c.APIAddr = v
 	}
 	c.APITLSDir = getenv(EnvAPITLSDir)
+	c.ConnectorConfigPath = getenv(EnvConnectorConfig)
 	if err := c.ValidateAPIListen(); err != nil {
 		return Config{}, err
 	}

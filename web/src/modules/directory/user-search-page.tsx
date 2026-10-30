@@ -78,7 +78,18 @@ export function UserSearchPage({ client = api }: { readonly client?: ApiClient }
                 Trace ID <span className="diq-mono">{state.failure.traceId}</span>
               </p>
             )}
-            {state.failure.kind !== "denied" && (
+            {state.failure.kind === "unauthenticated" && (
+              <Button
+                variant="primary"
+                onClick={() => {
+                  const here = window.location.pathname + window.location.search;
+                  window.location.assign(`/sign-in?next=${encodeURIComponent(here)}`);
+                }}
+              >
+                Sign in
+              </Button>
+            )}
+            {state.failure.kind !== "denied" && state.failure.kind !== "unauthenticated" && (
               <Button variant="primary" onClick={retry}>
                 Retry
               </Button>

@@ -50,10 +50,14 @@ func (c *Ctx) checkGoSource() []Violation {
 	adapters := exceptionPaths(m.Exceptions.PlatformAdapters)
 	testTags := setOf(m.TestTags...)
 	toolTags := setOf(m.ToolchainTags...)
+	labBuilds := map[string]bool{}
+	for _, e := range m.Exceptions.LabBuilds {
+		labBuilds[path.Clean(e.Path)] = true
+	}
 
 	for _, f := range c.Files {
 		if strings.HasSuffix(f, ".go") {
-			vs = append(vs, c.scanGoFile(f, adapters, testTags, toolTags)...)
+			vs = append(vs, c.scanGoFile(f, adapters, testTags, toolTags, labBuilds[f])...)
 		}
 		if !scanForBuildMode(f) {
 			continue
@@ -112,7 +116,9 @@ func scanForBuildMode(f string) bool {
 	return !strings.HasSuffix(f, "package-lock.json")
 }
 
-func (c *Ctx) scanGoFile(f string, adapters []string, testTags, toolTags map[string]bool) []Violation {
+// labBuild marks a file declared in manifest exceptions.labBuilds: its only allowed constraint is
+// exactly `lab` or `!lab` (ADR-0001 rule 2, amendment A1).
+func (c *Ctx) scanGoFile(f string, adapters []string, testTags, toolTags map[string]bool, labBuild bool) []Violation {
 	var vs []Violation
 	add := func(msg string) { vs = append(vs, Violation{"F2", f, msg}) }
 	src, err := c.read(f)
@@ -153,6 +159,7 @@ func (c *Ctx) scanGoFile(f string, adapters []string, testTags, toolTags map[str
 	}
 
 	// build constraints in the header comments
+	labConstrained := false
 	for _, cg := range af.Comments {
 		if cg.Pos() > af.Package {
 			break
@@ -164,6 +171,13 @@ func (c *Ctx) scanGoFile(f string, adapters []string, testTags, toolTags map[str
 			expr, err := constraint.Parse(cm.Text)
 			if err != nil {
 				add(fmt.Sprintf("line %d: unparseable build constraint: %v", fset.Position(cm.Pos()).Line, err))
+				continue
+			}
+			if labBuild && !isTest {
+				if e := expr.String(); e != "lab" && e != "!lab" {
+					add(fmt.Sprintf("line %d: a declared lab build file (manifest exceptions.labBuilds) may carry only //go:build lab or //go:build !lab, not %q", fset.Position(cm.Pos()).Line, e))
+				}
+				labConstrained = true
 				continue
 			}
 			for _, tag := range exprTags(expr) {
@@ -182,6 +196,9 @@ func (c *Ctx) scanGoFile(f string, adapters []string, testTags, toolTags map[str
 				}
 			}
 		}
+	}
+	if labBuild && !isTest && !labConstrained {
+		add("declared in manifest exceptions.labBuilds but carries no //go:build lab or !lab constraint; remove the stale entry")
 	}
 	return vs
 }
@@ -267,13 +284,22 @@ func (c *Ctx) checkCrossBuild() []Violation {
 				vs = append(vs, Violation{"F2", c.ManifestPath, fmt.Sprintf("buildMatrix entry %q is not GOOS/GOARCH", t)})
 				continue
 			}
-			cmd := exec.Command("go", "build", "./...")
-			cmd.Dir = c.abs(dir)
-			cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS="+goos, "GOARCH="+goarch)
-			if out, err := cmd.CombinedOutput(); err != nil {
-				vs = append(vs, Violation{"F2", gomod, fmt.Sprintf("CGO_ENABLED=0 go build ./... fails for %s: %s", t, trimOutput(out))})
-			} else if verbose {
-				fmt.Printf("fitness-stack: F2 CGO_ENABLED=0 go build ./... ok for %s (%s)\n", t, dir)
+			// With lab build files declared (amendment A1), the lab half is built too, so the code the
+			// production build never compiles cannot rot unnoticed.
+			variants := [][]string{{"build", "./..."}}
+			if len(c.M.Exceptions.LabBuilds) > 0 {
+				variants = append(variants, []string{"build", "-tags", "lab", "./..."})
+			}
+			for _, args := range variants {
+				label := "go " + strings.Join(args, " ")
+				cmd := exec.Command("go", args...)
+				cmd.Dir = c.abs(dir)
+				cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS="+goos, "GOARCH="+goarch)
+				if out, err := cmd.CombinedOutput(); err != nil {
+					vs = append(vs, Violation{"F2", gomod, fmt.Sprintf("CGO_ENABLED=0 %s fails for %s: %s", label, t, trimOutput(out))})
+				} else if verbose {
+					fmt.Printf("fitness-stack: F2 CGO_ENABLED=0 %s ok for %s (%s)\n", label, t, dir)
+				}
 			}
 		}
 	}

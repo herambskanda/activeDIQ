@@ -62,7 +62,8 @@ func startTunnel(t *testing.T, srv *storetest.Server) (*rig, *gateway.Hub, *recS
 		t.Fatal(err)
 	}
 	t.Cleanup(db.Close)
-	ca := newAuthority(t, "installation CA")
+	ca := newAuthority(t, "tenant client CA")
+	srvCA := newAuthority(t, "installation server CA")
 	cm := &comps{}
 	gw, err := gateway.NewGateway(gateway.Config{Methods: classes(), CAs: cas{tid: {ca.cert}}, Components: cm, Recheck: 50 * time.Millisecond})
 	if err != nil {
@@ -78,9 +79,8 @@ func startTunnel(t *testing.T, srv *storetest.Server) (*rig, *gateway.Hub, *recS
 	if err != nil {
 		t.Fatal(err)
 	}
-	pool := x509.NewCertPool()
-	pool.AddCert(ca.cert)
-	gs, err := gw.NewServer(ca.serverCert(t), func() *x509.CertPool { return pool }, func(r grpc.ServiceRegistrar) {
+	pool := gateway.NewCAIndex([]*x509.Certificate{ca.cert})
+	gs, err := gw.NewServer(srvCA.serverCert(t), func() *gateway.CAIndex { return pool }, func(r grpc.ServiceRegistrar) {
 		fleetv1.RegisterFleetServer(r, svc)
 	})
 	if err != nil {
@@ -92,7 +92,7 @@ func startTunnel(t *testing.T, srv *storetest.Server) (*rig, *gateway.Hub, *recS
 	}
 	go func() { _ = gs.Serve(l) }()
 	t.Cleanup(gs.Stop)
-	return &rig{addr: l.Addr().String(), comps: cm, gw: gw, ca: ca, tid: tid, grpc: gs}, hub, sink
+	return &rig{addr: l.Addr().String(), comps: cm, gw: gw, ca: ca, srvCA: srvCA, tid: tid, grpc: gs}, hub, sink
 }
 
 // openTunnel dials as comp and returns the stream and a channel of the frames the server sends.

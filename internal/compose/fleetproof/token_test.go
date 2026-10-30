@@ -80,7 +80,7 @@ func setupTokens(t *testing.T, s *storetest.Server) *tokenEnv {
 
 func (e *tokenEnv) issue(t *testing.T) fleetsql.Issued {
 	t.Helper()
-	iss, err := e.svc.Issue(context.Background(), e.tid, apihost.Principal{ID: "human-1", Kind: apihost.KindSession},
+	iss, err := e.svc.Issue(context.Background(), e.tid, apihost.Principal{ID: "human-1", Kind: apihost.KindSession, Tenant: e.tid.String()},
 		fleetsql.NewComponent{Kind: fleetsql.KindConnector, Name: "branch-1"})
 	if err != nil {
 		t.Fatal(err)

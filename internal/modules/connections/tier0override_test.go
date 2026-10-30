@@ -277,8 +277,7 @@ func TestOverrideRefusesNonHumanRequesters(t *testing.T) {
 }
 
 // The override runs through the real rbac.Authorizer and the server's facts reader (ConnectorFacts, no
-// directory reads wired): the connection target is answered without a directory read, the tenant owner is
-// granted, and the acknowledgement commits an audit event whose connection target passes audit.Validate.
+// directory reads wired): the tenant owner is denied, because the permission is platform-scope only.
 func TestOverrideThroughRealAuthorizer(t *testing.T) {
 	const owner = "33333333-3333-4333-8333-333333333333"
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
@@ -310,20 +309,15 @@ VALUES ($1::uuid, $2::uuid, 0, false, 'tenant', $1::uuid, $1::uuid)`, tid.String
 			return az
 		}
 		e := refusedDraftWith(t, s, mk, dirclient.NewConnectorFacts(nil))
-		res, err := e.runner.RunStore(context.Background(), e.request(owner, true, connections.TypedAcknowledgement))
-		if err != nil {
-			t.Fatalf("override through the real authorizer: %v", err)
+		// T-0250 / TM-D1: the override is platform-scope only. A tenant owner holds every tenant
+		// permission, but not this one, so the real authorizer denies at Plan and audits the denial.
+		_, err := e.runner.RunStore(context.Background(), e.request(owner, true, connections.TypedAcknowledgement))
+		if !errors.Is(err, operation.ErrDenied) {
+			t.Fatalf("tenant owner without a platform-scope assignment: %v, want ErrDenied", err)
 		}
-		var out connections.Tier0OverrideOutcome
-		if err := json.Unmarshal(res.Steps[0].Outcome.Payload, &out); err != nil || !out.Activated {
-			t.Fatalf("outcome %+v %v", out, err)
+		if ev := e.rec.last(); ev.Kind != connections.AuditTier0OverrideAcknowledged || ev.Outcome != audit.Denied {
+			t.Fatalf("audit event %+v, want a denied override", ev)
 		}
-		ev := e.rec.last()
-		if ev.Kind != connections.AuditTier0OverrideAcknowledged || ev.Outcome != audit.Success || ev.Target.Class != rbac.TargetClassTenant {
-			t.Fatalf("audit event %+v", ev)
-		}
-		if err := ev.Validate(); err != nil {
-			t.Fatalf("the committed override event must pass audit.Validate: %v", err)
-		}
+		e.assertNoOverride(t)
 	})
 }

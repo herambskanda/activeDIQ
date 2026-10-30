@@ -66,7 +66,8 @@ func isDNNamed(pass *analysis.Pass, n *types.Named) bool {
 
 // isDNType reports a type whose formatting can reach dn.DN.String or Render: dn.DN or *dn.DN, a type
 // whose method set promotes either (an embedded dn.DN), and a slice, array, map, channel, pointer or
-// struct that contains one (fmt formats elements and exported fields with String).
+// struct that contains one in an exported field (fmt formats elements and exported fields with String;
+// it cannot call a method on an unexported field, so a handler that merely holds a DN is not flagged).
 func isDNType(pass *analysis.Pass, t types.Type) bool {
 	if t == nil {
 		return false
@@ -77,7 +78,7 @@ func isDNType(pass *analysis.Pass, t types.Type) bool {
 			return true
 		}
 	}
-	return util.NamedMatches(t, func(n *types.Named) bool { return isDNNamed(pass, n) })
+	return util.NamedMatchesExported(t, func(n *types.Named) bool { return isDNNamed(pass, n) })
 }
 
 // isInterface reports a target type that dispatches dynamically: an interface, or a type parameter

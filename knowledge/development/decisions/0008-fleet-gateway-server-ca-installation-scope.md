@@ -6,7 +6,7 @@ status: proposed
 owner: solution-architect
 kind: technical
 ticket: T-0713
-fitness: fitness-fleet-ca-scope (to be built, follow-up filed; not yet in CI)
+fitness: fitness-fleet-ca-scope (`make fitness-fleet-ca-scope`, in `make ci` since T-0738; parts for code that has not landed are pending, so not yet `accepted`)
 ---
 
 # ADR-0008: The fleet gateway is authenticated by one installation-scope server CA; component identities stay under per-tenant CAs

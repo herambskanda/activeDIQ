@@ -460,3 +460,20 @@ components:
 		t.Error("with no api/openapi directory the check must report not present")
 	}
 }
+
+// F-POOL-1: fleet_ca_trust_anchors is named in SQL only inside fleetsql.
+func TestPoolFunctionSQL(t *testing.T) {
+	root := build(t, map[string]string{
+		"internal/modules/m/m.go":                      "package m\n\nconst q = \"SELECT * FROM public.fleet_ca_trust_anchors()\" // line 3\n",
+		"internal/modules/m/queries.sql":               "-- name: Anchors :many\nSELECT * FROM fleet_ca_trust_anchors();\n",
+		"internal/platform/fleet/fleetsql/anchors.go":  "package fleetsql\n\nconst Q = \"SELECT * FROM public.fleet_ca_trust_anchors()\"\n",
+		"internal/platform/fleet/fleetsql/anchors.sql": "SELECT * FROM fleet_ca_trust_anchors();\n",
+		"internal/modules/m/unrelated.go":              "package m\n\nconst ok = \"SELECT 1\"\n",
+	})
+	fs := runStatic(t, root, nil)
+	wantAt(t, fs, RulePoolSQL, "internal/modules/m/m.go", 3)
+	wantAt(t, fs, RulePoolSQL, "internal/modules/m/queries.sql", 2)
+	if len(fs) != 2 {
+		t.Errorf("fleetsql may name the function; want 2 findings, got:\n%s", dump(fs))
+	}
+}

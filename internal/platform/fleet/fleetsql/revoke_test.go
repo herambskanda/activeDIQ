@@ -54,7 +54,7 @@ func TestRevokeAndUsable(t *testing.T) {
 
 		// AC4 + AC1: the actor and the component are recorded, state is revoked, streams are closed.
 		before := len(e.sink.evs)
-		n, err := lc.Revoke(ctx, e.a, admin, victim.ComponentID)
+		n, err := lc.Revoke(ctx, e.a, adminIn(e.a), victim.ComponentID)
 		if err != nil || n != 2 {
 			t.Fatalf("revoke: n=%d err=%v", n, err)
 		}
@@ -83,7 +83,7 @@ func TestRevokeAndUsable(t *testing.T) {
 			}
 		}
 		// A tenant cannot reach another tenant's component.
-		if _, err := lc.Revoke(ctx, e.a, admin, foreign.ComponentID); !errors.Is(err, fleetsql.ErrNotRevocable) {
+		if _, err := lc.Revoke(ctx, e.a, adminIn(e.a), foreign.ComponentID); !errors.Is(err, fleetsql.ErrNotRevocable) {
 			t.Fatalf("cross-tenant revoke: %v", err)
 		}
 		if ok, _ := lc.Usable(ctx, fleet.Identity{Tenant: e.a, Kind: foreign.Kind, ComponentID: foreign.ComponentID}); ok {
@@ -91,7 +91,7 @@ func TestRevokeAndUsable(t *testing.T) {
 		}
 		// Revoking twice is refused and records nothing more.
 		before = len(e.sink.evs)
-		if _, err := lc.Revoke(ctx, e.a, admin, victim.ComponentID); !errors.Is(err, fleetsql.ErrNotRevocable) {
+		if _, err := lc.Revoke(ctx, e.a, adminIn(e.a), victim.ComponentID); !errors.Is(err, fleetsql.ErrNotRevocable) {
 			t.Fatalf("second revoke: %v", err)
 		}
 		if len(e.sink.evs) != before || len(cl.calls) != 1 {
@@ -112,7 +112,18 @@ func TestRevokeRefusals(t *testing.T) {
 		}
 		victim := first.Identity
 		deny := &fleetsql.Lifecycle{DB: e.db, Authz: revokeAuthz{false}, Audit: e.sink}
-		if _, err := deny.Revoke(ctx, e.a, admin, victim.ComponentID); !errors.Is(err, fleetsql.ErrRevokeForbidden) {
+		// Tenant binding: an allow-all authorizer must not let a tenant-B or platform principal act in A.
+		allow := &fleetsql.Lifecycle{DB: e.db, Authz: revokeAuthz{true}, Audit: e.sink}
+		nEv := len(e.sink.evs)
+		for name, pr := range map[string]apihost.Principal{"other tenant": adminIn(e.b), "platform": admin, "malformed": {ID: "h", Tenant: "x"}} {
+			if _, err := allow.Revoke(ctx, e.a, pr, victim.ComponentID); !errors.Is(err, fleetsql.ErrRevokeForbidden) {
+				t.Fatalf("%s: %v", name, err)
+			}
+		}
+		if st, _ := e.state(t, e.a, victim.ComponentID); st != "enrolled" || len(e.sink.evs) != nEv {
+			t.Fatalf("cross-tenant revoke wrote: state=%s", st)
+		}
+		if _, err := deny.Revoke(ctx, e.a, adminIn(e.a), victim.ComponentID); !errors.Is(err, fleetsql.ErrRevokeForbidden) {
 			t.Fatalf("no permission: %v", err)
 		}
 		if st, _ := e.state(t, e.a, victim.ComponentID); st != "enrolled" {
@@ -121,17 +132,17 @@ func TestRevokeRefusals(t *testing.T) {
 		// A pending component has nothing to revoke.
 		pending := e.issue(t, e.a, fleetsql.KindADDC)
 		lc := &fleetsql.Lifecycle{DB: e.db, Authz: revokeAuthz{true}, Audit: e.sink}
-		if _, err := lc.Revoke(ctx, e.a, admin, pending.ComponentID); !errors.Is(err, fleetsql.ErrNotRevocable) {
+		if _, err := lc.Revoke(ctx, e.a, adminIn(e.a), pending.ComponentID); !errors.Is(err, fleetsql.ErrNotRevocable) {
 			t.Fatalf("pending: %v", err)
 		}
-		if _, err := lc.Revoke(ctx, e.a, admin, "not-a-uuid"); !errors.Is(err, fleetsql.ErrNotRevocable) {
+		if _, err := lc.Revoke(ctx, e.a, adminIn(e.a), "not-a-uuid"); !errors.Is(err, fleetsql.ErrNotRevocable) {
 			t.Fatalf("malformed id: %v", err)
 		}
-		if _, err := (&fleetsql.Lifecycle{}).Revoke(ctx, e.a, admin, victim.ComponentID); !errors.Is(err, fleetsql.ErrNotConfigured) {
+		if _, err := (&fleetsql.Lifecycle{}).Revoke(ctx, e.a, adminIn(e.a), victim.ComponentID); !errors.Is(err, fleetsql.ErrNotConfigured) {
 			t.Fatalf("unconfigured: %v", err)
 		}
 		// A revoked component cannot rotate its certificate either.
-		if _, err := lc.Revoke(ctx, e.a, admin, victim.ComponentID); err != nil {
+		if _, err := lc.Revoke(ctx, e.a, adminIn(e.a), victim.ComponentID); err != nil {
 			t.Fatal(err)
 		}
 		cur, err := x509.ParseCertificate(first.LeafDER)
@@ -181,7 +192,7 @@ func TestCurrentRefusesSupersededSerial(t *testing.T) {
 		if ok, _ := lc.Current(ctx, noSerial); ok {
 			t.Fatal("empty serial matched")
 		}
-		if _, err := lc.Revoke(ctx, e.a, admin, second.Identity.ComponentID); err != nil {
+		if _, err := lc.Revoke(ctx, e.a, adminIn(e.a), second.Identity.ComponentID); err != nil {
 			t.Fatal(err)
 		}
 		if ok, _ := lc.Current(ctx, second.Identity); ok {

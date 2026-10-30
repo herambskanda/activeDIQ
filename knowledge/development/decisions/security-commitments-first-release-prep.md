@@ -24,8 +24,10 @@ CVE-2026-74849.
   A missing `SECURITY.md` means they open a public issue or tell nobody. So **the intake half is needed now**,
   not at first release.
 - A `SECURITY.md` plus a monitored mailbox or GitHub private reporting costs nothing in cash.
-  `[UNVERIFIED]` GitHub's private vulnerability reporting is free on public repositories; confirm in the
-  repo settings before promising it.
+  GitHub's private vulnerability reporting is free on public repositories
+  ([GitHub Docs](https://docs.github.com/en/code-security/security-advisories/working-with-repository-security-advisories/configuring-private-vulnerability-reporting-for-a-repository)).
+  The owner switched it on for this repository (D-0006 option a). On 2026-10-29
+  `gh api repos/herambskanda/activeDIQ/private-vulnerability-reporting` returned `{"enabled":true}` (T-0265).
 - `security.txt` ([RFC 9116](https://www.rfc-editor.org/rfc/rfc9116)) requires `Contact` and `Expires`.
   An expired file is treated as stale, so it needs an annual renewal job (devops).
 - Becoming our own CNA needs a public disclosure policy and a public point of contact, plus the CVE

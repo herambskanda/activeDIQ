@@ -218,3 +218,15 @@ func TestSetupTTL(t *testing.T) {
 		}
 	}
 }
+
+// T-0665: the connector's local configuration file path is carried from its variable, unset by default.
+func TestConnectorConfigPathFromEnv(t *testing.T) {
+	c, err := config.Load(env(map[string]string{}))
+	if err != nil || c.ConnectorConfigPath != "" {
+		t.Fatalf("default: %q %v", c.ConnectorConfigPath, err)
+	}
+	c, err = config.Load(env(map[string]string{config.EnvConnectorConfig: "/etc/diq/connector.json"}))
+	if err != nil || c.ConnectorConfigPath != "/etc/diq/connector.json" {
+		t.Fatalf("set: %q %v", c.ConnectorConfigPath, err)
+	}
+}

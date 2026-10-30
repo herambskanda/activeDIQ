@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/skenzeriq/activediq/tools/analyzers/policy"
 )
 
 // tree writes files (path -> content) into a fresh module and returns its root.
@@ -906,4 +908,53 @@ func TestFFSP_SecretGrantMint(t *testing.T) {
 	want(t, "mint through an alias", map[string]string{"internal/modules/m/m.go": gofile("\tdir \""+adPkg+"\"\n", "var _ = dir.MintSecretReadGrant\n")}, "FF-SP2", "secret-grant-mint", "internal/modules/m/m.go")
 	want(t, "mint from the authorisation layer", map[string]string{"internal/platform/authz/g.go": mint}, "", "", "")
 	want(t, "import of the AD connector from another connector", map[string]string{"internal/connector/tier0/t.go": gofile(imp, "var _ = ad.Config{}\n")}, "", "", "")
+}
+
+// T-0800: the narrow exceptions that cleared the red main. Each has a case that still fails.
+func TestT0800Exceptions(t *testing.T) {
+	const adPkg = "github.com/skenzeriq/activediq/internal/connector/ad"
+	imp := "\t\"" + adPkg + "\"\n"
+	use := "var _ = ad.Config{}\n"
+	want(t, "connector composition root may import the AD connector", map[string]string{"internal/compose/connector/b.go": gofile(imp, use)}, "", "", "")
+	want(t, "server composition root may not", map[string]string{"internal/compose/server/b.go": gofile(imp, use)}, "FF-SP1", "ad-connector-import", "internal/compose/server/b.go")
+	lab := "internal/compose/server/labbootstrap_lab.go"
+	want(t, "declared lab file with the lab tag", map[string]string{lab: "//go:build lab\n\n" + gofile(imp, use)}, "", "", "")
+	want(t, "declared lab file that lost its tag", map[string]string{lab: gofile(imp, use)}, "FF-SP1", "ad-connector-import", lab)
+	want(t, "undeclared file with the lab tag", map[string]string{"internal/compose/server/other_lab.go": "//go:build lab\n\n" + gofile(imp, use)}, "FF-SP1", "ad-connector-import", "internal/compose/server/other_lab.go")
+
+	u := gofile("\t\"unsafe\"\n", "var _ = unsafe.Sizeof(0)")
+	want(t, "unsafe in the windows host", map[string]string{"internal/platform/agent/token_windows.go": u, "cmd/agentsetup/run_windows.go": u}, "", "", "")
+	want(t, "unsafe in a non-windows host file", map[string]string{"internal/platform/agent/token.go": u}, "FF-SP2", "unsafe-import", "internal/platform/agent/token.go")
+	want(t, "unsafe in an agent module", map[string]string{"internal/agentmodules/addc/source_windows.go": u}, "FF-SP2", "unsafe-import", "internal/agentmodules/addc/source_windows.go")
+
+	sqlOK := "DO $$ BEGIN EXECUTE format($p$CREATE POLICY %I ON %I$p$, t || '_x', t); END $$;\n"
+	want(t, "|| in a format argument", map[string]string{"migrations/0003_x.sql": sqlOK}, "", "", "")
+	want(t, "|| in the format template", map[string]string{"migrations/0003_x.sql": "DO $$ BEGIN EXECUTE format('DROP ' || t || ' %I', t); END $$;\n"}, "FF-SP2", "plpgsql-execute-concat", "migrations/0003_x.sql")
+	want(t, "|| after the format call", map[string]string{"migrations/0003_x.sql": "DO $$ BEGIN EXECUTE format('DROP TABLE %I', t) || x; END $$;\n"}, "FF-SP2", "plpgsql-execute-concat", "migrations/0003_x.sql")
+	want(t, "|| with a quoted ; in the template", map[string]string{"migrations/0003_x.sql": "DO $$ BEGIN EXECUTE format('a;b' || t, t); END $$;\n"}, "FF-SP2", "plpgsql-execute-concat", "migrations/0003_x.sql")
+}
+
+// policy.LabBuilds must stay a subset of the stack manifest's exceptions.labBuilds (ADR-0001).
+func TestLabBuildsDeclaredInManifest(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "stack", "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m struct {
+		Exceptions struct {
+			LabBuilds []struct{ Path string } `json:"labBuilds"`
+		} `json:"exceptions"`
+	}
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatal(err)
+	}
+	declared := map[string]bool{}
+	for _, e := range m.Exceptions.LabBuilds {
+		declared[e.Path] = true
+	}
+	for _, p := range policy.LabBuilds {
+		if !declared[p] {
+			t.Errorf("%s is in policy.LabBuilds but not in manifest exceptions.labBuilds", p)
+		}
+	}
 }

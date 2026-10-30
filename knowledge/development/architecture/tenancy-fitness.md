@@ -50,6 +50,19 @@ unchanged there:
 
 - Two roles, both `LOGIN NOSUPERUSER NOBYPASSRLS`: **`activediq_owner`** (runs migrations, owns every
   object) and **`activediq_app`** (the runtime role; owns nothing).
+- A third role, **`activediq_catrust`** (T-0734; fleet-contract "Gateway client-CA pool"): `NOLOGIN NOSUPERUSER
+  NOBYPASSRLS NOCREATEROLE NOCREATEDB`, no password, created before the first migration. `activediq_owner` is its
+  only member (`ALTER FUNCTION ... OWNER TO` needs it); `activediq_app` never is, and the `0001` guard and
+  `store.roleRisk` refuse that membership. It owns exactly one object, `fleet_ca_trust_anchors()`, and holds
+  `SELECT` on six public columns of `fleet_ca` only. `pgharness`, `storetest` and the installer create it the same way.
+  T3 runs F-POOL-1/2/4 against it (`tools/fitness/tenancy/catrust.go`, rules `pool-*`): role attributes, members and
+  memberships against `pgharness.CatrustMemberships`, no `CREATE` on a schema, no write privilege, no privilege on
+  `sealed_key`/`key_version`/`created_at`, exactly one owned object, the function's `prosecdef`, `proconfig`, owner, ACL
+  (never `PUBLIC`) and result columns, the `42501` refusal in a tenant context, and `SET ROLE activediq_catrust` then
+  `SELECT sealed_key` failing with permission denied. The function checks activate when the function exists; the
+  role checks run from the first migration. The one extra permissive `fleet_ca` policy for this role is the only
+  exception to the T2 policy shape. The static scan (T5, rule `pool-function-sql`) refuses the function's name in SQL outside
+  `internal/platform/fleet/fleetsql`.
 - The owner owns the database and schema `public`; `PUBLIC` has no rights on the schema; the runtime role
   has `USAGE` on it.
 - The runtime role does not own the database and holds no `CREATE` on it, directly, through `PUBLIC` or
@@ -62,6 +75,11 @@ unchanged there:
 - `ALTER DEFAULT PRIVILEGES FOR ROLE activediq_owner IN SCHEMA public` grants the runtime role
   `SELECT, INSERT, UPDATE, DELETE` on tables (never `TRUNCATE`) and `USAGE, SELECT` on sequences.
 - Any other schema, and any non-default grant (a function, `EXECUTE`), is explicit SQL in a migration.
+- **Third role (migration 0055, T-0733).** The installer also creates `activediq_catrust` (`NOLOGIN NOSUPERUSER
+  NOBYPASSRLS`) and makes `activediq_owner` a member of it; 0054 fails loudly if the role is missing, is not
+  `NOLOGIN`/`NOBYPASSRLS`, the migration role is not a member, or `activediq_app` is. `storetest` and `pgharness`
+  provision it the same way. T2 accepts exactly one non-tenant-shaped permissive policy: `FOR SELECT TO
+  activediq_catrust` (`fleet_ca_trust_read`).
 - `tenants` lives in `public`. Migration 0001 itself re-states the default privileges and the schema
   grant, so an installer that created only the two roles and a database the owner owns is enough: the
   script fails loudly if the split is missing or broken (roles absent, either one a superuser or

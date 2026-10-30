@@ -55,3 +55,11 @@ ratified ADR disagree, the ADR wins.
 - [Threat model](threat-model.md) and [safe primitives](safe-primitives.md): why the connector is the only path.
 - [Module pages](modules/README.md): one page per feature module.
 - ADRs in `knowledge/development/decisions/`: stack, deployment, module system, API contract, operation pipeline.
+
+## The console in the server binary (T-0686)
+
+`web/dist` is copied to `internal/webui/dist` by `make web-embed` and compiled in with `go:embed`
+(`internal/webui`, the only package that holds it; the directory is git-ignored but for a placeholder).
+`compose/server` passes it to `apihost.WithConsole`: a GET/HEAD outside `/api/` gets the file, or
+`index.html` for an extension-less client route, under a strict CSP; `/api/*` stays problem+json. A
+binary built without the console serves the API alone.

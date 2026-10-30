@@ -22,24 +22,25 @@ func clientTLS(roots *x509.CertPool, host string, leaf *tls.Certificate) *tls.Co
 	return c
 }
 
-// Credentials returns gRPC transport credentials that verify the server against the pinned CAs only.
-// An empty set is refused instead of becoming an empty pool that fails every call late.
-func Credentials(ca []*x509.Certificate, host string, leaf *tls.Certificate) (credentials.TransportCredentials, error) {
-	if len(ca) == 0 || host == "" {
+// Credentials returns gRPC transport credentials that verify the server against the pinned roots
+// only (Bundle.Roots; a tenant client CA is never passed here). An empty set is refused instead of
+// becoming an empty pool that fails every call late.
+func Credentials(roots []*x509.Certificate, host string, leaf *tls.Certificate) (credentials.TransportCredentials, error) {
+	if len(roots) == 0 || host == "" {
 		return nil, ErrBundle
 	}
-	return credentials.NewTLS(clientTLS(Pool(ca), host, leaf)), nil
+	return credentials.NewTLS(clientTLS(Pool(roots), host, leaf)), nil
 }
 
 // DialOut opens the component's client connection to the server (the tunnel's carrier), verifying the
-// server against the persisted installation CA only and presenting the component's leaf. The address
+// server against the persisted pinned server CA only and presenting the component's leaf. The address
 // is "host:port"; the host is the server name that must be in the certificate.
 func DialOut(addr string, st *State) (*grpc.ClientConn, error) {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil || host == "" {
 		return nil, errors.New("dial: address must be host:port")
 	}
-	creds, err := Credentials(st.CA, host, &st.Leaf)
+	creds, err := Credentials(st.Roots, host, &st.Leaf)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +64,7 @@ func pinnedRoot(ctx context.Context, addr, host string, pin Pin) (*x509.Certific
 		return nil, err // network or protocol failure, not a trust decision
 	}
 	for _, c := range ve.UnverifiedCertificates {
-		if isCA(c) && pin.Matches(c) {
+		if isServerRoot(c) && pin.Matches(c) {
 			return c, nil
 		}
 	}

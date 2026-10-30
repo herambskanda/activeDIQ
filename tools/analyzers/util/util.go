@@ -61,10 +61,17 @@ func SkipFile(pass *analysis.Pass, f *ast.File) bool {
 // NamedMatches reports whether t, looking through pointers, slices, arrays, maps, channels and struct
 // fields, contains a named type for which match is true. Cycles are cut.
 func NamedMatches(t types.Type, match func(*types.Named) bool) bool {
-	return namedMatches(t, match, map[types.Type]bool{})
+	return namedMatches(t, match, map[types.Type]bool{}, false)
 }
 
-func namedMatches(t types.Type, match func(*types.Named) bool, seen map[types.Type]bool) bool {
+// NamedMatchesExported is NamedMatches that looks into exported struct fields only. It answers "can
+// fmt, slog or encoding reach a value of this type by formatting t": reflection cannot call a method
+// on an unexported field's value, so a DN held in an unexported field is not formatted.
+func NamedMatchesExported(t types.Type, match func(*types.Named) bool) bool {
+	return namedMatches(t, match, map[types.Type]bool{}, true)
+}
+
+func namedMatches(t types.Type, match func(*types.Named) bool, seen map[types.Type]bool, exportedOnly bool) bool {
 	if t == nil || seen[t] {
 		return false
 	}
@@ -74,22 +81,25 @@ func namedMatches(t types.Type, match func(*types.Named) bool, seen map[types.Ty
 		if match(v) {
 			return true
 		}
-		return namedMatches(v.Underlying(), match, seen)
+		return namedMatches(v.Underlying(), match, seen, exportedOnly)
 	case *types.Alias:
-		return namedMatches(types.Unalias(v), match, seen)
+		return namedMatches(types.Unalias(v), match, seen, exportedOnly)
 	case *types.Pointer:
-		return namedMatches(v.Elem(), match, seen)
+		return namedMatches(v.Elem(), match, seen, exportedOnly)
 	case *types.Slice:
-		return namedMatches(v.Elem(), match, seen)
+		return namedMatches(v.Elem(), match, seen, exportedOnly)
 	case *types.Array:
-		return namedMatches(v.Elem(), match, seen)
+		return namedMatches(v.Elem(), match, seen, exportedOnly)
 	case *types.Map:
-		return namedMatches(v.Key(), match, seen) || namedMatches(v.Elem(), match, seen)
+		return namedMatches(v.Key(), match, seen, exportedOnly) || namedMatches(v.Elem(), match, seen, exportedOnly)
 	case *types.Chan:
-		return namedMatches(v.Elem(), match, seen)
+		return namedMatches(v.Elem(), match, seen, exportedOnly)
 	case *types.Struct:
 		for i := 0; i < v.NumFields(); i++ {
-			if namedMatches(v.Field(i).Type(), match, seen) {
+			if exportedOnly && !v.Field(i).Exported() {
+				continue
+			}
+			if namedMatches(v.Field(i).Type(), match, seen, exportedOnly) {
 				return true
 			}
 		}

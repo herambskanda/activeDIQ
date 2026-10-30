@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"encoding/json/v2"
 	"errors"
-	"os"
 	"sync"
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/connector/tier0"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
+	"github.com/skenzeriq/activediq/internal/platform/ownerfile"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
@@ -292,11 +292,30 @@ func (g *GateBook) Ratchet(connectionID string, marks []Mark) error {
 	return nil
 }
 
+// ReasonBaselineACLCorrected is the Event.Reason recorded when an existing baseline file had wider
+// access than owner-only and was corrected at open (contract §8.3a, T-0242).
+const ReasonBaselineACLCorrected = "baseline_acl_corrected"
+
 // FileBaseline appends marks as JSON lines to one file, readable and writable by the connector's
-// service identity only (mode 0600), and syncs it before returning. It holds identifiers only.
+// service identity only (ownerfile: 0600, or a protected DACL on Windows), and syncs it before
+// returning. It holds identifiers only.
 type FileBaseline struct {
 	mu   sync.Mutex
 	Path string
+	// Recorder receives the "baseline_acl_corrected" event when an existing baseline was found
+	// with wider access than owner-only: its content may have been written by someone else. It is
+	// required: Append refuses before touching the file when it is nil, because correcting the
+	// access first would erase the evidence and the finding could never be raised again.
+	Recorder Recorder
+}
+
+// NewFileBaseline returns a FileBaseline at path that reports an access correction to rec. A nil
+// rec is an error: the tamper signal must have somewhere to go (contract §8.3a, T-0242).
+func NewFileBaseline(path string, rec Recorder) (*FileBaseline, error) {
+	if path == "" || rec == nil {
+		return nil, errors.New("write: file baseline needs a path and a recorder")
+	}
+	return &FileBaseline{Path: path, Recorder: rec}, nil
 }
 
 type baselineLine struct {
@@ -312,9 +331,21 @@ type baselineLine struct {
 func (f *FileBaseline) Append(connectionID string, marks []Mark) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	fh, err := os.OpenFile(f.Path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	// Checked before OpenAppend: that call narrows a wide file, and a narrowed file can no longer
+	// show it was wide. Without a recorder the file is left as found, so the next Append (with one)
+	// still detects it.
+	if f.Recorder == nil {
+		return errors.New("write: baseline has no recorder for an access correction")
+	}
+	// Owner-only on every OS: 0600 on POSIX, an explicit protected DACL (service SID + SYSTEM) on
+	// Windows, where Go ignores mode bits; a wider existing file with a trusted owner is corrected
+	// and the correction recorded; a foreign-owned or non-regular file is refused (T-0242).
+	fh, corrected, err := ownerfile.OpenAppend(f.Path)
 	if err != nil {
 		return err
+	}
+	if corrected {
+		f.Recorder.Record(Event{Op: "baseline", Outcome: "corrected", Stage: "baseline_open", Reason: ReasonBaselineACLCorrected})
 	}
 	for _, m := range marks {
 		line, err := json.Marshal(baselineLine{Connection: connectionID, Object: m.Object.String(), Basis: m.Basis.String(),

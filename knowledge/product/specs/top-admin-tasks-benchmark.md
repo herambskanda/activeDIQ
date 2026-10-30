@@ -324,7 +324,7 @@ The interaction budget is the aDIQ **I** count of §2: a hard limit that design,
 | T01, **from the user page only** | `R`, type code, Enter | **3** | 3 (E1.7 criterion) | yes |
 | T03 look up status | `/`, type name, Enter | **3** (status chips already show in the search results) | 3 | yes |
 
-The prototype is one interaction under the §3 T01 table (7) because the code is sent when the sheet opens: opening it with `R` is the deliberate act, so a separate "Send code" step is dropped. The security-architect must confirm that rule before the build (the code is rate-limited, and a wrong-user open sends one message to the account's own enrolled phone). The 7 stays as the hard budget until they do.
+The prototype is one interaction under the §3 T01 table (7) because the code is sent when the sheet opens: opening it with `R` is the deliberate act, so a separate "Send code" step is dropped. The security-architect confirmed that rule on 2026-10-29 (T-0719) with conditions C1–C8 in [ENH-09 spec §4a](enh-09-otp-and-totp-enrolment.md): a user act triggers the send (never page load), re-open reuses the open code, the pre-issue checks run first, and a wrong-user open still spends one of the target's 3 hourly issues. The 3-interaction user-page claim stands. The 7 stays as the budget until the build implements C1–C8; it can then move to 6.
 
 ## 3. Task detail
 

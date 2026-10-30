@@ -780,7 +780,7 @@ func TestA1Installer(t *testing.T) {
 		return strings.Replace(goodWxs, `<ServiceConfig ServiceSid`, p+`<ServiceConfig ServiceSid`, 1)
 	}
 	wantViolation(t, mk(svcWith(`<PermissionEx Sddl="D:(A;;GA;;;WD)"/>`)), "grants an ACL")
-	wantViolation(t, mk(svcWith(`<util:PermissionEx xmlns:util="u" User="Everyone" GenericAll="yes"/>`)), "grants an ACL")
+	wantViolation(t, mk(svcWith(`<util:PermissionEx xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util" User="Everyone" GenericAll="yes"/>`)), "grants an ACL")
 	wantViolation(t, mk(strings.Replace(goodWxs, `</Package>`, `<CreateFolder Directory="D"><Permission User="Users" GenericAll="yes"/></CreateFolder></Package>`, 1)), "grants an ACL")
 	// T-0725: a parent Id that equals a reviewed CustomAction Id (installer-allow.txt) buys nothing.
 	svcColl := strings.Replace(goodWxs, `<ServiceInstall Name=`, `<ServiceInstall Id="GrantChannel" Name=`, 1)
@@ -796,10 +796,82 @@ func TestA1Installer(t *testing.T) {
 		write(t, r, "packaging/windows/agent.wxs", src)
 		return checkInstallerAllow(r, nil)
 	}
-	pinnedPermissions["ServiceInstall/AgentSvc"] = map[string]string{"": "PermissionEx", "sddl": "D:(A;;GA;;;SY)"}
+	pinnedPermissions["ServiceInstall/AgentSvc"] = map[string]string{"": "PermissionEx", "sddl": "D:(A;;GA;;;SY)", "parent.name": "activediq-agent"}
 	defer delete(pinnedPermissions, "ServiceInstall/AgentSvc")
 	wantClean(t, pinSvc("D:(A;;GA;;;SY)"))
 	wantViolation(t, pinSvc("D:(A;;GA;;;WD)"), "differs from the reviewed pin")
+	// T-0730: retargeting the pinned parent fails; ONLY the Name changes here, so the retarget alone trips.
+	rr := t.TempDir()
+	rs := strings.Replace(goodWxs, `<ServiceInstall Name=`, `<ServiceInstall Id="AgentSvc" Name=`, 1)
+	rs = strings.Replace(rs, `<ServiceConfig ServiceSid`, `<PermissionEx Sddl="D:(A;;GA;;;SY)"/><ServiceConfig ServiceSid`, 1)
+	write(t, rr, "packaging/windows/agent.wxs", strings.Replace(rs, `Name="activediq-agent"`, `Name="activediq-agent2"`, 1))
+	wantViolation(t, checkInstallerAllow(rr, nil), "differs from the reviewed pin")
+	// T-0730: effective targets. Each parent type: a pinned case passes, then only an ancestor changes.
+	const sddl = `D:(A;;GA;;;SY)`
+	pinKey := func(k string, m map[string]string) func() {
+		m[""] = "PermissionEx"
+		m["sddl"] = sddl
+		pinnedPermissions[k] = m
+		return func() { delete(pinnedPermissions, k) }
+	}
+	eff := func(frag string) Result {
+		r := t.TempDir()
+		write(t, r, "packaging/windows/agent.wxs", strings.Replace(goodWxs, `</Package>`, frag+`</Package>`, 1))
+		return checkInstallerAllow(r, nil)
+	}
+	px := `<PermissionEx Sddl="` + sddl + `"/>`
+	defer pinKey("CreateFolder/CF", map[string]string{"parent.directory": "Directory:LogDir:Logs"})()
+	wantClean(t, eff(`<Directory Id="LogDir" Name="Logs"><Component Id="C"><CreateFolder Id="CF">`+px+`</CreateFolder></Component></Directory>`))
+	wantViolation(t, eff(`<Directory Id="AgentBinDir" Name="Logs"><Component Id="C"><CreateFolder Id="CF">`+px+`</CreateFolder></Component></Directory>`), "differs from the reviewed pin")
+	wantViolation(t, eff(`<Directory Id="AgentBinDir" Name="b"/><Directory Id="LogDir" Name="Logs"><Component Id="C" Directory="AgentBinDir"><CreateFolder Id="CF">`+px+`</CreateFolder></Component></Directory>`), "differs from the reviewed pin")
+	wantViolation(t, eff(`<Directory Id="Outer" Name="x"><Directory Id="LogDir" Name="Logs"><Component Id="C"><CreateFolder Id="CF">`+px+`</CreateFolder></Component></Directory></Directory>`), "differs from the reviewed pin")
+	// Unresolvable target (Component comes from a ComponentRef/another fragment): fail closed.
+	wantViolation(t, eff(`<Component Id="C"><CreateFolder Id="CF">`+px+`</CreateFolder></Component>`), "cannot be resolved")
+	// T-0730 (Id-named directories): the pin follows the Directory definition, not just its Id.
+	byID := func(def, comp, cf string) string {
+		return def + `<Component Id="C"` + comp + `><CreateFolder Id="CF"` + cf + `>` + px + `</CreateFolder></Component>`
+	}
+	logDef := `<Directory Id="LogDir" Name="Logs"/>`
+	wantClean(t, eff(byID(logDef, ` Directory="LogDir"`, ``)))
+	wantClean(t, eff(byID(logDef, ``, ` Directory="LogDir"`)))
+	for _, def := range []string{
+		`<Directory Id="LogDir" Name="."/>`,
+		`<Directory Id="AgentBinDir" Name="b"><Directory Id="LogDir" Name="Logs"/></Directory>`,
+		`<StandardDirectory Id="System64Folder"><Directory Id="LogDir" Name="Logs"/></StandardDirectory>`,
+	} {
+		wantViolation(t, eff(byID(def, ` Directory="LogDir"`, ``)), "differs from the reviewed pin")
+		wantViolation(t, eff(byID(def, ``, ` Directory="LogDir"`)), "differs from the reviewed pin")
+	}
+	wantViolation(t, eff(byID(``, ` Directory="X"`, ``)), "cannot be resolved")
+	wantViolation(t, eff(byID(logDef+logDef, ` Directory="LogDir"`, ``)), "cannot be resolved")
+	wantViolation(t, eff(`<DirectoryRef Id="LogDir"><Component Id="C"><CreateFolder Id="CF">`+px+`</CreateFolder></Component></DirectoryRef>`), "cannot be resolved")
+	wantClean(t, eff(logDef+`<DirectoryRef Id="LogDir"><Component Id="C"><CreateFolder Id="CF">`+px+`</CreateFolder></Component></DirectoryRef>`))
+	wantViolation(t, eff(`<Directory Id="LogDir" Name="Other"/><DirectoryRef Id="LogDir"><Component Id="C"><CreateFolder Id="CF">`+px+`</CreateFolder></Component></DirectoryRef>`), "differs from the reviewed pin")
+	defer pinKey("File/F", map[string]string{"parent.directory": "Directory:LogDir:Logs", "parent.name": "readme.txt"})()
+	fileFrag := func(dir, attrs string) string {
+		return `<Directory Id="` + dir + `" Name="Logs"><Component Id="C"><File Id="F" ` + attrs + `>` + px + `</File></Component></Directory>`
+	}
+	wantClean(t, eff(fileFrag("LogDir", `Source="src\readme.txt"`)))
+	wantViolation(t, eff(fileFrag("LogDir", `Source="src\readme.txt" Name="activediq-agent.exe"`)), "differs from the reviewed pin")
+	wantViolation(t, eff(fileFrag("AgentBinDir", `Source="src\readme.txt"`)), "differs from the reviewed pin")
+	defer pinKey("RegistryKey/RK", map[string]string{"parent.root": "HKLM", "parent.key": `Software\activeDIQ\Logs`})()
+	rk := func(outer string) string {
+		return `<Component Id="C"><RegistryKey Root="HKLM" Key="` + outer + `"><RegistryKey Id="RK" Key="Logs">` + px + `</RegistryKey></RegistryKey></Component>`
+	}
+	wantClean(t, eff(rk(`Software\activeDIQ`)))
+	wantViolation(t, eff(rk(`Software\activeDIQ\Agent\Config`)), "differs from the reviewed pin")
+	// Unknown parent types cannot be pinned.
+	defer pinKey("Shortcut/SC", map[string]string{})()
+	wantViolation(t, eff(`<Component Id="C"><Shortcut Id="SC">`+px+`</Shortcut></Component>`), "cannot be resolved")
+	// T-0730: case-variant, namespaced and duplicated attributes are rejected, not collapsed.
+	dupe := func(el string) Result {
+		r := t.TempDir()
+		write(t, r, "packaging/windows/agent.wxs", strings.Replace(goodWxs, `<ServiceConfig ServiceSid`, el+`<ServiceConfig ServiceSid`, 1))
+		return checkInstallerAllow(r, nil)
+	}
+	wantViolation(t, dupe(`<PermissionEx Sddl="D:(A;;GA;;;WD)" SDDL="D:(A;;GA;;;SY)"/>`), `element PermissionEx has attribute "sddl" more than once`)
+	wantViolation(t, dupe(`<PermissionEx Sddl="a" Sddl="b"/>`), `element PermissionEx has attribute "sddl" more than once`)
+	wantViolation(t, dupe(`<PermissionEx xmlns:x="u" Sddl="a" x:Sddl="b"/>`), `more than once`)
 	// The pin is keyed by parent type: the same Id on another element type is not reviewed.
 	rt := t.TempDir()
 	write(t, rt, "packaging/windows/agent.wxs", strings.Replace(goodWxs, `</Package>`, `<CreateFolder Id="AgentSvc" Directory="D"><PermissionEx Sddl="D:(A;;GA;;;SY)"/></CreateFolder></Package>`, 1))

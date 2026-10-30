@@ -30,6 +30,7 @@ type VerifyHandler struct {
 	gate      *write.GateBook
 	onLRF     func(connectionID string)
 	log       *slog.Logger
+	boundConn string
 }
 
 // VerifyConfig is what NewVerifyHandler needs.
@@ -48,6 +49,11 @@ type VerifyConfig struct {
 	OnLocalRecordFailed func(connectionID string)
 	// Log receives one line per failed run carrying ad.CodeOf only; nil means slog.Default.
 	Log *slog.Logger
+	// ConnectionID is the connection this connector is bound to by its configuration. When set, a
+	// request that names any other connection is refused INVALID_ARGUMENT before any directory work, and
+	// OnLocalRecordFailed receives this ID. Empty means the handler serves whatever connection the
+	// request names (in-process lab connectors only; a deployed connector always sets it).
+	ConnectionID string
 }
 
 // ErrVerifyConfig is returned by NewVerifyHandler for an incomplete configuration; it carries no
@@ -61,7 +67,7 @@ func NewVerifyHandler(c VerifyConfig) (*VerifyHandler, error) {
 		return nil, ErrVerifyConfig
 	}
 	return &VerifyHandler{dir: c.Dir, epoch: c.Epoch, identity: c.Identity, directory: c.Directory,
-		now: c.Now, gate: c.Gate, onLRF: c.OnLocalRecordFailed, log: c.Log}, nil
+		now: c.Now, gate: c.Gate, onLRF: c.OnLocalRecordFailed, log: c.Log, boundConn: c.ConnectionID}, nil
 }
 
 // VerifyConnection runs the verification and streams its events.
@@ -70,7 +76,7 @@ func (h *VerifyHandler) VerifyConnection(ctx context.Context, req *v1.VerifyConn
 		return write.NewRefusal(v1.ErrorCode_ERROR_CODE_PROVIDER_FAILURE, v1.RetryAdvice_RETRY_ADVICE_NEVER, "verify handler not configured")
 	}
 	connID := req.GetConnection().GetConnectionId()
-	if connID == "" {
+	if connID == "" || (h.boundConn != "" && connID != h.boundConn) {
 		return write.NewRefusal(v1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, v1.RetryAdvice_RETRY_ADVICE_NEVER, "invalid request")
 	}
 	sendFailed := false

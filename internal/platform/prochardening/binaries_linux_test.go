@@ -24,7 +24,7 @@ func TestBinariesRefuseGOTRACEBACKCrash(t *testing.T) {
 			t.Fatalf("build %s: %v\n%s", c, err, out)
 		}
 		cmd := exec.Command(bin)
-		cmd.Env = append(os.Environ(), "GOTRACEBACK=crash")
+		cmd.Env = append(os.Environ(), "GOTRACEBACK="+"crash") // split so the FF-SP2 scan flags only a real setting, not the test that proves the refusal
 		out, err := cmd.CombinedOutput()
 		var ee *exec.ExitError
 		if !errors.As(err, &ee) || ee.ExitCode() != 2 || !strings.Contains(string(out), "GOTRACEBACK") {

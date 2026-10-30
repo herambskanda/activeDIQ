@@ -422,3 +422,24 @@ func TestTenantOwnerHoldsEveryPermissionInItsScope(t *testing.T) {
 		t.Errorf("owner's token reached beyond its subset: %+v", d)
 	}
 }
+
+// T-0250 (TM-D1): a platform-scope-only permission is never held by a role, never granted by one,
+// and not implied by the tenant-owner role.
+func TestPlatformOnlyPermission(t *testing.T) {
+	const perm Permission = "connections.tier0_override.acknowledge"
+	ev := Evaluator{}
+	root := ScopeRoot{ID: ObjectID{1}, Complete: true}
+	scope := Scope{Include: []ScopeRoot{root}}
+	owner := &Principal{ID: "o", Assignments: []Assignment{{Role: Role{TenantOwner: true}, Scope: scope}}}
+	if err := ev.CheckGrant(owner, nil, Role{Permissions: []Permission{"x.y", perm}}, scope); !errors.Is(err, ErrInvalidGrant) {
+		t.Fatalf("grant of a platform-only role: %v, want ErrInvalidGrant", err)
+	}
+	target := Target{ID: ObjectID{2}, Ancestors: []ObjectID{{1}}, Complete: true}
+	if d := ev.Authorize(owner, nil, perm, target); d.Allowed {
+		t.Fatal("tenant owner holds a platform-only permission")
+	}
+	listed := &Principal{ID: "l", Assignments: []Assignment{{Role: Role{Permissions: []Permission{perm}}, Scope: scope}}}
+	if d := ev.Authorize(listed, nil, perm, target); d.Allowed {
+		t.Fatal("a listed platform-only permission was effective at delegation scope")
+	}
+}

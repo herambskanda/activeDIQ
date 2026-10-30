@@ -47,6 +47,9 @@ var (
 	Mail                = odata.StringProp("mail")
 	GroupTypes          = odata.StringProp("groupTypes")     // collection of String
 	MembershipRule      = odata.StringProp("membershipRule") // dynamic membership rule (TM-D25 rule 7)
+	// onPremisesDirectorySynchronization.features: the hard-match and soft-match takeover blocks.
+	// https://learn.microsoft.com/graph/api/resources/onpremisesdirectorysynchronization
+	SyncFeatures = odata.StringProp("features")
 )
 
 // Navigation properties for $expand.
@@ -63,6 +66,7 @@ const (
 	SetUsers             odata.Name = "users"
 	SetRoleManagement    odata.Name = "roleManagement"
 	SegDirectory         odata.Name = "directory"
+	SegOnPremisesSync    odata.Name = "onPremisesSynchronization"
 	SegRoleAssignments   odata.Name = "roleAssignments"
 	SegRoleEligibility   odata.Name = "roleEligibilitySchedules"
 	SegAppRoleAssignment odata.Name = "appRoleAssignments"

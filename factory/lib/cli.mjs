@@ -18,6 +18,7 @@ import {
 } from './items.mjs';
 import { createHandoff, latestHandoff } from './handoffs.mjs';
 import { Dispatcher, planDryRun } from './dispatcher.mjs';
+import { pollAdvisories } from './advisories.mjs';
 import { runDoctor } from './doctor.mjs';
 import { buildDigest, buildStatus } from './status.mjs';
 import { down, up } from './lifecycle.mjs';
@@ -54,6 +55,7 @@ const USAGE = `usage: factory <command>
   milestone new --name N [--goal G] [--target D] | list | show ID | set ID status=…
   handoff new ID --by ROLE | latest ID
   event --actor A --kind K [--ticket T] "text"
+  security poll [--repo OWNER/NAME]  open an embargoed ticket per new private advisory (needs the security-manager role)
   digest [--json]
 
 Add --json for machine-readable output. FACTORY_HOME overrides home discovery.`;
@@ -214,6 +216,11 @@ const COMMANDS = {
     c.print(d, () => `${d.id} withdrawn`);
   } },
 
+  'security poll': { options: { repo: str }, run: async (c) => {
+    const cfg = c.ctx.config.security_intake ?? {};
+    const r = await pollAdvisories(c.ctx, { repo: c.values.repo ?? cfg.repo });
+    c.print(r, () => `${r.checked} advisor${r.checked === 1 ? 'y' : 'ies'} in triage; ${r.created.length} new ticket(s)${r.created.length ? `: ${r.created.join(', ')}` : ''}`);
+  } },
   'action new': { options: { title: str, detail: str, why: str, by: str }, run: (c) => {
     need(c.values, 'title');
     const a = createAction(c.ctx, { title: c.values.title, detail: c.values.detail ?? '', why: c.values.why ?? '', by: c.values.by ?? c.env.FACTORY_ROLE ?? 'factory-director' });

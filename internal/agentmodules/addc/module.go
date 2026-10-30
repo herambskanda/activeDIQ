@@ -5,7 +5,7 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/skenzeriq/activediq/internal/agenthost/api"
+	"github.com/skenzeriq/activediq/internal/agenthost/hostapi"
 	"github.com/skenzeriq/activediq/internal/platform/agentpolicy"
 	addcv1 "github.com/skenzeriq/activediq/internal/proto/activediq/addc/v1"
 )
@@ -23,7 +23,7 @@ type Module struct {
 }
 
 // New returns the module. src is an event source for tests; nil (production) selects the host's read-only
-// api.EventSource from ModuleDeps; dcGUID is what the agent reports about
+// hostapi.EventSource from ModuleDeps; dcGUID is what the agent reports about
 // its host (data to cross-check on the server, never identity).
 func New(src Source, dcGUID string) *Module { return &Module{src: src, dc: dcGUID} }
 
@@ -50,7 +50,7 @@ func (m *Module) Rules() *Engine {
 }
 
 // Start implements host module.
-func (m *Module) Start(ctx context.Context, d api.ModuleDeps) error {
+func (m *Module) Start(ctx context.Context, d hostapi.ModuleDeps) error {
 	if d.Events == nil || d.Blobs == nil || d.Log == nil || d.Now == nil {
 		return errors.New("addc: incomplete dependencies")
 	}
@@ -83,27 +83,27 @@ func (m *Module) Stop(context.Context) error {
 }
 
 // Collection implements host module.
-func (m *Module) Collection() api.CollectionState {
+func (m *Module) Collection() hostapi.CollectionState {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	switch {
 	case !m.have:
-		return api.CollectionNoPolicy
+		return hostapi.CollectionNoPolicy
 	case !m.pol.Events.CollectionEnabled:
-		return api.CollectionStoppedByPolicy
+		return hostapi.CollectionStoppedByPolicy
 	case m.col == nil:
-		return api.CollectionUnspecified
+		return hostapi.CollectionUnspecified
 	}
 	for _, s := range m.col.Snapshot() {
 		if s.Status == addcv1.ChannelStatus_CHANNEL_STATUS_UNREADABLE {
-			return api.CollectionChannelUnreadable
+			return hostapi.CollectionChannelUnreadable
 		}
 	}
-	return api.CollectionRunning
+	return hostapi.CollectionRunning
 }
 
 // Register implements host module.
-func (m *Module) Register(reg api.ServiceRegistrar) { addcv1.RegisterAddcServer(reg, m) }
+func (m *Module) Register(reg hostapi.ServiceRegistrar) { addcv1.RegisterAddcServer(reg, m) }
 
 // GetCollectionState implements Addc.
 func (m *Module) GetCollectionState(context.Context, *addcv1.GetCollectionStateRequest) (*addcv1.GetCollectionStateResponse, error) {

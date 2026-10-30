@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/skenzeriq/activediq/internal/agenthost/api"
+	"github.com/skenzeriq/activediq/internal/agenthost/hostapi"
 	"github.com/skenzeriq/activediq/internal/platform/agentpolicy"
 	addcv1 "github.com/skenzeriq/activediq/internal/proto/activediq/addc/v1"
 )
@@ -24,20 +24,20 @@ func (b *memBlobs) Save(n string, d []byte) error { b.m[n] = append([]byte(nil),
 
 type memSink struct {
 	mu sync.Mutex
-	ev []*api.Event
+	ev []*hostapi.Event
 }
 
-func (m *memSink) Append(e *api.Event) (uint64, error) {
+func (m *memSink) Append(e *hostapi.Event) (uint64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.ev = append(m.ev, e)
 	return uint64(len(m.ev)), nil
 }
 func (m *memSink) Flush() error { return nil }
-func (m *memSink) kinds() []api.EventKind {
+func (m *memSink) kinds() []hostapi.EventKind {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var k []api.EventKind
+	var k []hostapi.EventKind
 	for _, e := range m.ev {
 		k = append(k, e.Kind)
 	}
@@ -86,8 +86,8 @@ func (s *scripted) Subscribe(ctx context.Context, _ agentpolicy.Channel, after u
 	return ctx.Err()
 }
 
-func deps(t *testing.T, sink *memSink, now func() time.Time) api.ModuleDeps {
-	return api.ModuleDeps{Events: sink, Blobs: &memBlobs{m: map[string][]byte{}}, Log: slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})), Now: now}
+func deps(t *testing.T, sink *memSink, now func() time.Time) hostapi.ModuleDeps {
+	return hostapi.ModuleDeps{Events: sink, Blobs: &memBlobs{m: map[string][]byte{}}, Log: slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})), Now: now}
 }
 
 func rulesEv(rate uint32) agentpolicy.EventRules {
@@ -95,7 +95,7 @@ func rulesEv(rate uint32) agentpolicy.EventRules {
 		EventIDs: []uint32{4624}, MaxEventsPerSecond: rate, BatchMaxBytes: 1024, OutboxMaxBytes: 4096}
 }
 
-func run1(t *testing.T, src Source, d api.ModuleDeps, ev agentpolicy.EventRules) *Collector {
+func run1(t *testing.T, src Source, d hostapi.ModuleDeps, ev agentpolicy.EventRules) *Collector {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	c := NewCollector(src, d, "dc")
@@ -120,7 +120,7 @@ func gapReasons(s *memSink) []string {
 	defer s.mu.Unlock()
 	var out []string
 	for _, e := range s.ev {
-		if e.Kind == api.EventKindGap {
+		if e.Kind == hostapi.EventKindGap {
 			out = append(out, e.Fields[0].Value+":"+e.Fields[1].Value+"-"+e.Fields[2].Value)
 		}
 	}
@@ -191,9 +191,9 @@ func TestCollectorThrottleDropsAreVisibleAsGap(t *testing.T) {
 	c := run1(t, &scripted{ids: []uint64{1, 2, 3, 4, 5}}, deps(t, sink, func() time.Time { return fixed }), rulesEv(2))
 	waitFor(t, func() bool { return c.Snapshot()[0].EventsThrottled == 3 })
 	c.Stop() // closes the open throttled run
-	var gap *api.Event
+	var gap *hostapi.Event
 	for _, e := range sink.ev {
-		if e.Kind == api.EventKindGap {
+		if e.Kind == hostapi.EventKindGap {
 			gap = e
 		}
 	}
@@ -224,7 +224,7 @@ func TestCollectorUnreadableIsReportedNotFatal(t *testing.T) {
 	if err := m.Activate(agentpolicy.AddcPolicy{Events: rulesEv(10), Password: agentpolicy.PasswordRules{MinLength: 8, MaxLength: 64}}); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return m.Collection() == api.CollectionChannelUnreadable })
+	waitFor(t, func() bool { return m.Collection() == hostapi.CollectionChannelUnreadable })
 	r, _ := m.GetCollectionState(context.Background(), &addcv1.GetCollectionStateRequest{})
 	if r.Channels[0].Status != addcv1.ChannelStatus_CHANNEL_STATUS_UNREADABLE {
 		t.Fatalf("%+v", r.Channels)
@@ -235,13 +235,13 @@ func TestDisabledPolicyStopsAndReports(t *testing.T) {
 	m := New(&scripted{}, "dc")
 	_ = m.Start(context.Background(), deps(t, &memSink{}, time.Now))
 	defer m.Stop(context.Background())
-	if m.Collection() != api.CollectionNoPolicy {
+	if m.Collection() != hostapi.CollectionNoPolicy {
 		t.Fatal("expected no policy")
 	}
 	ev := rulesEv(10)
 	ev.CollectionEnabled = false
 	_ = m.Activate(agentpolicy.AddcPolicy{Events: ev})
-	if m.Collection() != api.CollectionStoppedByPolicy {
+	if m.Collection() != hostapi.CollectionStoppedByPolicy {
 		t.Fatal("expected stopped_by_policy")
 	}
 }
@@ -302,8 +302,8 @@ type apiFake struct {
 	xml   [][]byte
 }
 
-func (f *apiFake) OldestRecord(api.Channel) (uint64, error) { return 0, nil }
-func (f *apiFake) Subscribe(_ context.Context, _ api.Channel, _ uint64, ids []uint16, emit func([]byte)) error {
+func (f *apiFake) OldestRecord(hostapi.Channel) (uint64, error) { return 0, nil }
+func (f *apiFake) Subscribe(_ context.Context, _ hostapi.Channel, _ uint64, ids []uint16, emit func([]byte)) error {
 	f.calls++
 	for _, x := range f.xml {
 		emit(x)
@@ -314,7 +314,7 @@ func (f *apiFake) Subscribe(_ context.Context, _ api.Channel, _ uint64, ids []ui
 // An access-denied from the host's EventSource surfaces as ErrUnreadable and is not retried in a loop
 // (ADR-0006 decision 2: fail closed, report in health).
 func TestFromAPIAccessDeniedIsUnreadableNotRetried(t *testing.T) {
-	f := &apiFake{err: api.ErrUnreadable}
+	f := &apiFake{err: hostapi.ErrUnreadable}
 	err := FromAPI(f).Subscribe(context.Background(), agentpolicy.ChannelSecurity, 0, []uint32{4624, 70000}, func(RawEvent) {})
 	if !errors.Is(err, ErrUnreadable) || f.calls != 1 {
 		t.Fatalf("err=%v calls=%d", err, f.calls)
@@ -322,7 +322,7 @@ func TestFromAPIAccessDeniedIsUnreadableNotRetried(t *testing.T) {
 }
 
 func TestFromAPINilXMLIsUnparsableGap(t *testing.T) {
-	f := &apiFake{xml: [][]byte{nil}, err: api.ErrUnsupported}
+	f := &apiFake{xml: [][]byte{nil}, err: hostapi.ErrUnsupported}
 	var got []RawEvent
 	_ = FromAPI(f).Subscribe(context.Background(), agentpolicy.ChannelSecurity, 0, nil, func(e RawEvent) { got = append(got, e) })
 	if len(got) != 1 || !got[0].Unparsable {

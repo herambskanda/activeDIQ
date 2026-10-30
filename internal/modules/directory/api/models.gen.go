@@ -11,11 +11,12 @@ import (
 
 // DirectoryUser: A user as search shows it. Only these fields; the objectGuid is the key.
 type DirectoryUser struct {
-	DisplayName       string        `json:"displayName"`
-	Enabled           bool          `json:"enabled"`
-	ObjectGUID        apitypes.UUID `json:"objectGuid"`
-	SamAccountName    string        `json:"samAccountName"`
-	UserPrincipalName string        `json:"userPrincipalName"`
+	DisplayName       string               `json:"displayName"`
+	Enabled           bool                 `json:"enabled"`
+	Hybrid            HybridClassification `json:"hybrid"`
+	ObjectGUID        apitypes.UUID        `json:"objectGuid"`
+	SamAccountName    string               `json:"samAccountName"`
+	UserPrincipalName string               `json:"userPrincipalName"`
 
 	p apitypes.Presence
 }
@@ -61,12 +62,24 @@ func (v *DirectoryUser) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 			if err := json.UnmarshalDecode(d, &v.Enabled); err != nil {
 				return err
 			}
-		case "objectGuid":
+		case "hybrid":
 			null, err := apitypes.TakeNull(d)
 			if err != nil {
 				return err
 			}
 			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Hybrid); err != nil {
+				return err
+			}
+		case "objectGuid":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
 			if null {
 				continue
 			}
@@ -78,7 +91,7 @@ func (v *DirectoryUser) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 			if err != nil {
 				return err
 			}
-			v.p.Mark(3, null)
+			v.p.Mark(4, null)
 			if null {
 				continue
 			}
@@ -90,7 +103,7 @@ func (v *DirectoryUser) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 			if err != nil {
 				return err
 			}
-			v.p.Mark(4, null)
+			v.p.Mark(5, null)
 			if null {
 				continue
 			}
@@ -127,37 +140,49 @@ func (v *DirectoryUser) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 			errs.NullNotAllowed(at, "enabled")
 		}
 	}
-	// objectGuid
+	// hybrid
 	if v.p.Decoded() {
 		if !v.p.Has(2) {
-			errs.Required(at, "objectGuid")
+			errs.Required(at, "hybrid")
 		}
 		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "hybrid")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
+		v.Hybrid.Validate(at.AppendToken("hybrid"), errs)
+	}
+	// objectGuid
+	if v.p.Decoded() {
+		if !v.p.Has(3) {
+			errs.Required(at, "objectGuid")
+		}
+		if v.p.IsNull(3) {
 			errs.NullNotAllowed(at, "objectGuid")
 		}
 	}
 	// samAccountName
 	if v.p.Decoded() {
-		if !v.p.Has(3) {
+		if !v.p.Has(4) {
 			errs.Required(at, "samAccountName")
 		}
-		if v.p.IsNull(3) {
+		if v.p.IsNull(4) {
 			errs.NullNotAllowed(at, "samAccountName")
 		}
 	}
-	if !v.p.Decoded() || (v.p.Has(3) && !v.p.IsNull(3)) {
+	if !v.p.Decoded() || (v.p.Has(4) && !v.p.IsNull(4)) {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("samAccountName"), string(v.SamAccountName), 0, 256)
 	}
 	// userPrincipalName
 	if v.p.Decoded() {
-		if !v.p.Has(4) {
+		if !v.p.Has(5) {
 			errs.Required(at, "userPrincipalName")
 		}
-		if v.p.IsNull(4) {
+		if v.p.IsNull(5) {
 			errs.NullNotAllowed(at, "userPrincipalName")
 		}
 	}
-	if !v.p.Decoded() || (v.p.Has(4) && !v.p.IsNull(4)) {
+	if !v.p.Decoded() || (v.p.Has(5) && !v.p.IsNull(5)) {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("userPrincipalName"), string(v.UserPrincipalName), 0, 1024)
 	}
 }
@@ -222,4 +247,124 @@ func (v *DirectoryUserList) Validate(at jsontext.Pointer, errs *apitypes.Errors)
 			v.Items[i].Validate(apitypes.Index(at.AppendToken("items"), i), errs)
 		}
 	}
+}
+
+// HybridClassification: How the user stands in the cross-directory correlation (DM-20) under TM-D17, computed from the stored correlation and the Entra connection's takeover protection. not_hybrid: no correlation is recorded. candidate, matched, broken: the strongest recorded state (matched over candidate over broken). unknown: the facts could not be read; treat as no authority. Only a matched correlation can carry authority, and only while takeover protection is attested and neither side is Tier 0.
+type HybridClassification struct {
+	CarriesAuthority bool `json:"carriesAuthority"`
+	// Why the correlation is not matched, or why a matched one carries no authority. A stable code, never a directory value.
+	Reason *string     `json:"reason,omitzero"`
+	State  HybridState `json:"state"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *HybridClassification) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = HybridClassification{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "carriesAuthority":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.CarriesAuthority); err != nil {
+				return err
+			}
+		case "reason":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Reason); err != nil {
+				return err
+			}
+		case "state":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.State); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *HybridClassification) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// carriesAuthority
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "carriesAuthority")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "carriesAuthority")
+		}
+	}
+	// reason
+	if v.p.Decoded() && v.p.IsNull(1) {
+		errs.NullNotAllowed(at, "reason")
+	}
+	if v.Reason != nil {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("reason"), string((*v.Reason)), 0, 128)
+	}
+	// state
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "state")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "state")
+		}
+	}
+}
+
+// HybridState is the HybridState schema.
+type HybridState string
+
+const (
+	HybridStateNotHybrid HybridState = "not_hybrid"
+	HybridStateCandidate HybridState = "candidate"
+	HybridStateMatched   HybridState = "matched"
+	HybridStateBroken    HybridState = "broken"
+	HybridStateUnknown   HybridState = "unknown"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v HybridState) Valid() bool {
+	switch v {
+	case HybridStateNotHybrid, HybridStateCandidate, HybridStateMatched, HybridStateBroken, HybridStateUnknown:
+		return true
+	}
+	return false
 }

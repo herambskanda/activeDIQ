@@ -323,6 +323,15 @@ fresh_stack_tree; mkdir -p "$fs/internal/c"
 printf 'package c\n\n// int one(void) { return 1; }\nimport "C"\n\nfunc One() int { return int(C.one()) }\n' >"$fs/internal/c/c.go"
 printf 'package main\n\nimport _ "fs.test/internal/c"\n\nfunc main() {}\n' >"$fs/cmd/server/main.go"
 must_fail_with "F2 on a package that needs cgo (CGO_ENABLED=0 build)" 'CGO_ENABLED=0 go build \./\.\.\. fails for linux/amd64' stack -checks F2
+fresh_stack_tree; mkdir -p "$fs/internal/x"
+printf '//go:build lab\n\npackage x\n' >"$fs/internal/x/x.go"
+must_fail_with "F2 on the lab test tag in an undeclared non-test file" 'internal/x/x.go: F2 \(ADR-0001 rule 2\): line 1: test tag "lab" is only allowed in _test.go' stack -checks F2 -skip-build
+# ADR-0001 amendment A1 (T-0792): a declared lab build file whose lab half does not compile fails the -tags lab leg.
+fresh_stack_tree; mkdir -p "$fs/internal/x"
+printf '//go:build lab\n\npackage x\n\nconst Lab = undefinedName\n' >"$fs/internal/x/boot_lab.go"
+printf '//go:build !lab\n\npackage x\n\nconst Lab = false\n' >"$fs/internal/x/boot_off.go"
+sed -i 's#"exceptions": {"platformAdapters": \[\]}#"exceptions": {"platformAdapters": [], "labBuilds": [{"path": "internal/x/boot_lab.go", "adr": "0001-stack.md"}, {"path": "internal/x/boot_off.go", "adr": "0001-stack.md"}]}#' "$fs/manifest.json"
+must_fail_with "F2 on a declared lab build file whose lab half does not compile" 'CGO_ENABLED=0 go build -tags lab \./\.\.\. fails for linux/amd64' stack -checks F2
 
 fresh_stack_tree
 printf 'module fs.test\n\ngo 1.27.0\n\nrequire github.com/redis/go-redis/v9 v9.0.0\n\nreplace github.com/redis/go-redis/v9 => ./garage/redis\n' >"$fs/go.mod"
@@ -1330,6 +1339,57 @@ rm -rf "$fz/testdata"
 printf 'package x\n\nimport "testing"\n\nfunc FuzzT(f *testing.F) {\n\tf.Add([]byte("a"))\n\tf.Fuzz(func(t *testing.T, b []byte) {})\n}\n' >"$fz/x_test.go"
 must_pass "fuzz-target" tools/ci/fuzz-target.sh "$fz" FuzzT 3s
 must_pass "make fuzz-saml is wired into make ci" bash -c "make -n ci | grep -q 'fuzz-target.sh internal/platform/authn/sso/saml FuzzSAMLComplete 60s'"
+
+# --- fitness-keys (keys-custody-design §7), the real CLI on throw-away trees (-static-only: the schema
+# and bound-test halves are the tool's own tests, go test ./tools/fitness/keycustody, with Docker) ----
+kcbin="$tmp/fitness-keys"; go build -o "$kcbin" ./tools/fitness/keycustody
+kct="$tmp/kc"
+fresh_kc() {
+  rm -rf "$kct"; mkdir -p "$kct/internal/platform/keys" "$kct/internal/a"
+  printf 'module kc.test\n\ngo 1.27.0\n' >"$kct/go.mod"
+  printf 'package keys\n\nvar _ = tablekind.Declare(tablekind.Table{Name: "public.tenant_keys", Entity: "DM-02", Kind: tablekind.Tenant, Sealed: []string{"wrapped_dek"}})\n\nfunc Provision() { _ = `INSERT INTO public.tenant_keys (tenant_id) VALUES ($1)` }\n' >"$kct/internal/platform/keys/store.go"
+}
+fresh_kc
+must_pass "fitness-keys (clean tree)" "$kcbin" -root "$kct" -static-only
+fresh_kc; printf 'package a\n\nvar q = `SELECT * FROM tenant_keys`\n' >"$kct/internal/a/a.go"
+must_fail_with "fitness-keys FF-KEY-2 on a package reading tenant_keys" 'internal/a/a.go:3 FF-KEY-2 \[tenant_keys-owner\]' "$kcbin" -root "$kct" -static-only
+fresh_kc; printf 'package a\n\nimport "github.com/skenzeriq/activediq/internal/platform/keys"\n\nfunc f() { keys.NewDEK() }\n' >"$kct/internal/a/a.go"
+must_fail_with "fitness-keys FF-KEY-2 on keys.NewDEK outside the keys package" 'FF-KEY-2 \[dek-calls\]' "$kcbin" -root "$kct" -static-only
+fresh_kc; printf 'package a\n\nvar e = "ACTIVEDIQ_KEK_DIR"\n' >"$kct/internal/a/a.go"
+must_fail_with "fitness-keys FF-KEY-3 on ACTIVEDIQ_KEK_* read outside the composition root" 'FF-KEY-3 \[env-owner\]' "$kcbin" -root "$kct" -static-only
+fresh_kc; mkdir -p "$kct/packaging"; printf 'environment:\n  ACTIVEDIQ_KEK_PROVIDER: passphrase\n' >"$kct/packaging/compose.yaml"
+must_fail_with "fitness-keys FF-KEY-3 on a default ACTIVEDIQ_KEK_PROVIDER" 'FF-KEY-3 \[provider-default\]' "$kcbin" -root "$kct" -static-only
+fresh_kc; printf 'package keys\n\nfunc (k *KeySource) Lazy() { _ = `insert into tenant_keys (a) values (1)` }\n' >"$kct/internal/platform/keys/lazy.go"
+must_fail_with "fitness-keys FF-KEY-5 on an INSERT reachable from the KeySource" 'FF-KEY-5 \[insert-site\]' "$kcbin" -root "$kct" -static-only
+fresh_kc; printf 'package keys\n\nvar _ = tablekind.Declare(tablekind.Table{Name: "public.tenant_keys", Entity: "DM-02", Kind: tablekind.Tenant})\n\nfunc Provision() { _ = `INSERT INTO tenant_keys` }\n' >"$kct/internal/platform/keys/store.go"
+must_fail_with "fitness-keys FF-KEY-1 on a tenant_keys declaration without Sealed: wrapped_dek" 'FF-KEY-1 \[sealed-declaration\]' "$kcbin" -root "$kct" -static-only
+
+# --- fitness-fleet-ca-scope (ADR-0008 fitness items 1-6, T-0738), the real CLI on throw-away trees ----
+# (-static-only: the bound integration tests are listed pending until their tickets land; the rules'
+# own failing fixtures are go test ./tools/fitness/fleetca)
+fcbin="$tmp/fitness-fleet-ca-scope"; go build -o "$fcbin" ./tools/fitness/fleetca
+fct="$tmp/fc"
+fleetsql=internal/platform/fleet/fleetsql
+fresh_fc() {
+  rm -rf "$fct"; mkdir -p "$fct/$fleetsql" "$fct/migrations" "$fct/internal/a"
+  printf 'module fc.test\n\ngo 1.27.0\n' >"$fct/go.mod"
+  printf 'package fleetsql\n\nfunc (e *Enroller) SignServerLeaf(names []string) { e.serverSigner() }\nfunc (e *Enroller) serverSigner() int { return 0 }\n' >"$fct/$fleetsql/s.go"
+  printf 'CREATE TABLE public.fleet_server_ca (id uuid, sealed_key bytea CHECK (octet_length(sealed_key) > 31));\n' >"$fct/migrations/0001_x.sql"
+}
+fresh_fc
+must_pass "fitness-fleet-ca-scope (clean tree)" "$fcbin" -root "$fct" -static-only
+fresh_fc; printf 'package fleetsql\n\nfunc (e *Enroller) Sneak() { e.serverSigner() }\n' >"$fct/$fleetsql/x.go"
+must_fail_with "fitness-fleet-ca-scope FCS-1 on a second user of the server CA key" 'FCS-1 \[signer-callers\]' "$fcbin" -root "$fct" -static-only
+fresh_fc; printf 'package fleetsql\n\nfunc (e *Enroller) SignServerLeaf(csr *x509.CertificateRequest) {}\n' >"$fct/$fleetsql/s.go"
+must_fail_with "fitness-fleet-ca-scope FCS-2 on SignServerLeaf accepting a CSR" 'FCS-2 \[caller-key\]' "$fcbin" -root "$fct" -static-only
+fresh_fc; mkdir -p "$fct/internal/platform/fleet/gateway"; printf 'package gateway\n\nfunc f() { pool.AddCert(serverCA) }\n' >"$fct/internal/platform/fleet/gateway/g.go"
+must_fail_with "fitness-fleet-ca-scope FCS-3 on the server CA in the client pool" 'FCS-3 \[client-pool\]' "$fcbin" -root "$fct" -static-only
+fresh_fc; mkdir -p "$fct/internal/platform/fleet/dial"; printf 'package dial\n\nfunc PinnedRoots() {}\nfunc f() { clientTLS(Pool(ca), h, nil) }\n' >"$fct/internal/platform/fleet/dial/d.go"
+must_fail_with "fitness-fleet-ca-scope FCS-4 on a tenant CA as the dial root" 'FCS-4 \[dial-roots\]' "$fcbin" -root "$fct" -static-only
+fresh_fc; printf 'CREATE TABLE public.fleet_server_ca (tenant_id uuid, id uuid, sealed_key bytea CHECK (true));\n' >"$fct/migrations/0001_x.sql"
+must_fail_with "fitness-fleet-ca-scope FCS-5 on a tenant_id column" 'FCS-5 \[tenant-id\]' "$fcbin" -root "$fct" -static-only
+fresh_fc; mkdir -p "$fct/internal/compose/server"; printf 'package server\n\nvar c = tls.Certificate{Certificate: [][]byte{leaf, ca, tenantCA}}\n' >"$fct/internal/compose/server/f.go"
+must_fail_with "fitness-fleet-ca-scope FCS-6 on a three-certificate chain" 'FCS-6 \[chain-length\]' "$fcbin" -root "$fct" -static-only
 
 # --- fitness-built-msi (T-0697, ADR-0006 A1 on the built artefact) ---------------------------------
 # Real MSIs: wixl builds them, msibuild adds MsiServiceConfig/CustomAction rows, msidump (inside the gate)

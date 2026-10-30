@@ -258,9 +258,27 @@ func (s *Service) runCandidate(ctx context.Context, tid tenant.ID, id ID, kind V
 	}
 	vid := newVerificationID()
 	started := s.now()
-	res, verr := s.client.VerifyConnection(ctx, VerifyRequest{Connection: conn, Kind: kind, VerificationID: vid})
+	// TM-D26 rule 10: the run is told the connection's pins, so a renamed pinned group stays tier0.
+	// A pin store that cannot be read fails the run closed: an unknown pin set is not an empty one.
+	var pins []string
+	if conn.Kind == KindADForest {
+		if perr := s.reg.with(ctx, tid, func(ctx context.Context, tx store.Tx) (e error) {
+			pins, e = Store{}.PinnedC13(ctx, tx, conn.ID)
+			return
+		}); perr != nil {
+			return s.interrupted(ctx, tid, conn, kind, vid, started, actor, perr)
+		}
+	}
+	res, verr := s.client.VerifyConnection(ctx, VerifyRequest{Connection: conn, Kind: kind, VerificationID: vid, PinnedC13: pins})
 	if verr == nil {
 		verr = checkResult(conn.Kind, res)
+	}
+	if verr == nil && kind == KindOnboarding && conn.Kind == KindADForest && len(res.C13Groups) > 0 {
+		// First discovery: pin what the run found (TM-D26 rule 10). Add-only and idempotent. A pin that
+		// cannot be made durable interrupts the run: the next press starts again from draft.
+		verr = s.reg.with(ctx, tid, func(ctx context.Context, tx store.Tx) error {
+			return Store{}.PinC13(ctx, tx, conn.ID, res.C13Groups)
+		})
 	}
 	if verr != nil {
 		return s.interrupted(ctx, tid, conn, kind, vid, started, actor, verr)

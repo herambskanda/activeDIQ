@@ -379,11 +379,13 @@ const advanceCheckpoints = `UPDATE audit_forward_cursor SET checkpoint_seq = GRE
 WHERE tenant_id = $1::uuid AND sink_id = $2`
 
 func advanceCursor(ctx context.Context, tx store.Tx, id tenant.ID, sink string, kind RecordKind, seq uint64) error {
-	q := advanceEvents
+	var err error
 	if kind == RecordCheckpoint {
-		q = advanceCheckpoints
+		_, err = tx.Exec(ctx, advanceCheckpoints, id.String(), sink, seq)
+	} else {
+		_, err = tx.Exec(ctx, advanceEvents, id.String(), sink, seq)
 	}
-	if _, err := tx.Exec(ctx, q, id.String(), sink, seq); err != nil {
+	if err != nil {
 		return fmt.Errorf("audit: advance forward cursor: %w", err)
 	}
 	return nil

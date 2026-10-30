@@ -11,6 +11,11 @@ import (
 
 // TestLabUnicodePwdVectors runs PW-04, PW-14 and PW-09 against the Samba AD lab (T-0074).
 func TestLabUnicodePwdVectors(t *testing.T) {
+	// make lab-test-connector-windows sets LAB_TARGET=windows; the Windows twin is
+	// TestWindowsLabUnicodePwdVectors. Unset or "samba" still runs this test.
+	if os.Getenv("LAB_TARGET") == "windows" {
+		t.Skip("Samba-only: LAB_TARGET=windows runs TestWindowsLabUnicodePwdVectors instead (T-0745)")
+	}
 	env := labEnv(t)
 	pem, err := os.ReadFile(filepath.Join("..", "..", "..", "lab", ".lab-ca.pem"))
 	if err != nil {

@@ -40,7 +40,7 @@ func newCA(t *testing.T, cn string) authority {
 	tpl := &x509.Certificate{
 		SerialNumber: big.NewInt(time.Now().UnixNano()), Subject: pkix.Name{CommonName: cn},
 		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
-		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign,
+		IsCA: true, BasicConstraintsValid: true, MaxPathLenZero: true, KeyUsage: x509.KeyUsageCertSign,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tpl, tpl, k.Public(), k)
 	if err != nil {
@@ -95,7 +95,8 @@ func serve(t *testing.T, signer authority, withCA bool) string {
 }
 
 type issuer struct {
-	ca     authority
+	ca     authority // the tenant client CA: signs leaves, is never the pin
+	srv    authority // the installation server CA: the pin and the presented chain's CA
 	calls  atomic.Int32
 	tamper func(*Response)
 	tid    tenant.ID
@@ -123,7 +124,7 @@ func (i *issuer) exchange(ctx context.Context, creds credentials.TransportCreden
 		URIs:        fleet.URIs(i.tid, "connector", "11111111-2222-4333-8444-555555555555"),
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, KeyUsage: x509.KeyUsageDigitalSignature,
 	}, req.PublicKey)
-	r := Response{LeafDER: der, CABundlePEM: i.ca.pem(), Endpoints: []Endpoint{{Host: "fleet.example", Port: 8443}}}
+	r := Response{LeafDER: der, CABundlePEM: append(i.srv.pem(), i.ca.pem()...), Endpoints: []Endpoint{{Host: "fleet.example", Port: 8443}}}
 	if i.tamper != nil {
 		i.tamper(&r)
 	}
@@ -138,9 +139,9 @@ func setup(t *testing.T) (*issuer, Material, string) {
 		t.Skip("enrolment state is refused on non-unix hosts until T-0291")
 	}
 	nil2t = t
-	ca := newCA(t, "installation CA")
-	addr := serve(t, ca, true)
-	return &issuer{ca: ca, tid: tenant.New()}, Material{Address: addr, Token: "tok", Pin: ca.pin().String()}, filepath.Join(t.TempDir(), "state")
+	ca, srv := newCA(t, "tenant client CA"), newCA(t, "installation server CA")
+	addr := serve(t, srv, true)
+	return &issuer{ca: ca, srv: srv, tid: tenant.New()}, Material{Address: addr, Token: "tok", Pin: srv.pin().String()}, filepath.Join(t.TempDir(), "state")
 }
 
 func assertNothingPersisted(t *testing.T, dir string) {
@@ -159,7 +160,7 @@ func TestEnrollPinsAndPersists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(st.CA) != 1 || !st.Pin.Matches(st.CA[0]) || len(st.Endpoints) != 1 {
+	if len(st.Roots) != 1 || !st.Pin.Matches(st.Roots[0]) || len(st.ClientCAs) != 1 || st.Pin.Matches(st.ClientCAs[0]) || len(st.Endpoints) != 1 {
 		t.Fatalf("state = %+v", st)
 	}
 	if runtimeUnix() {
@@ -424,7 +425,7 @@ func TestDialOutRefusesUnpinnedServers(t *testing.T) {
 	good, other := newCA(t, "installation CA"), newCA(t, "attacker CA")
 	leafKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	leafDER := good.sign(t, &x509.Certificate{URIs: fleet.URIs(tenant.New(), "connector", "11111111-2222-4333-8444-555555555555"), ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}, leafKey.Public())
-	st := &State{Pin: good.pin(), CA: []*x509.Certificate{good.cert}, Leaf: tls.Certificate{Certificate: [][]byte{leafDER}, PrivateKey: leafKey}}
+	st := &State{Pin: good.pin(), Roots: []*x509.Certificate{good.cert}, Leaf: tls.Certificate{Certificate: [][]byte{leafDER}, PrivateKey: leafKey}}
 	// A self-signed server certificate.
 	sk, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	tpl := &x509.Certificate{SerialNumber: big.NewInt(1), DNSNames: []string{"localhost"}, IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1)}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}

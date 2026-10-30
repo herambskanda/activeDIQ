@@ -132,7 +132,7 @@ class ExternalMode(unittest.TestCase):
         r = self.ctl("test-connector")
         self.assertEqual(r.returncode, 0, r.stderr)
         log = self.log.read_text()
-        self.assertIn("go test", log); self.assertIn("-tags lab windowslab", log)
+        self.assertIn("go test", log); self.assertIn("-tags lab windowslab", log); self.assertIn("-run ^TestWindowsLab", log)  # Samba-lab TestLab* need make lab-up, not this host
         self.assertIn("WIN_LAB_DC_ADDR=10.9.8.7", log); self.assertIn("WIN_LAB_TLS_NAME=dc1.win.activediq.test", log)
         self.assertIn(f"WIN_LAB_CA={self.ca}", log); self.assertIn(f"WIN_LAB_ENV={self.envf}", log)
         for tool in ("virsh", "virt-install", "qemu-img", "xorriso"):

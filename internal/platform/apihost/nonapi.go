@@ -1,7 +1,7 @@
 package apihost
 
 import (
-	"html"
+	"html/template"
 	"log/slog"
 	"net/http"
 
@@ -65,6 +65,9 @@ func ServeNonAPI(log *slog.Logger, fn func(*http.Request) NonAPIResult) http.Han
 	})
 }
 
+// handoffPage is the navigation page; html/template escapes the target for the attribute (P7).
+var handoffPage = template.Must(template.New("handoff").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url={{.}}"><title>Signing in</title></head><body><p>Signing in&hellip;</p></body></html>`))
+
 // writeHandoff writes the navigation page. to is a relative console path chosen by the server; it is
 // escaped for the attribute all the same.
 func writeHandoff(w http.ResponseWriter, to string) {
@@ -74,6 +77,5 @@ func writeHandoff(w http.ResponseWriter, to string) {
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta http-equiv=\"refresh\" content=\"0;url=" +
-		html.EscapeString(to) + "\"><title>Signing in</title></head><body><p>Signing in&hellip;</p></body></html>"))
+	_ = handoffPage.Execute(w, to)
 }

@@ -117,6 +117,13 @@ func buildVerifyRequest(req connection.VerifyRequest, sc VerifyScope) (*connecto
 		}
 		out.ManagedDomains = append(out.ManagedDomains, &connectorv1.Guid{Value: b})
 	}
+	for _, p := range req.PinnedC13 {
+		b, err := parseUUID(p)
+		if err != nil {
+			return nil, fmt.Errorf("%w: pinned C13 group", ErrVerifyInput)
+		}
+		out.PinnedC13 = append(out.PinnedC13, &connectorv1.Guid{Value: b})
+	}
 	return out, nil
 }
 
@@ -189,6 +196,18 @@ func foldVerify(st VerifyStream, req connection.VerifyRequest) (connection.Verif
 			}
 			// The server compares the set with its inventory elsewhere; here it is only counted.
 			tier0Seen += uint32(len(ev.Tier0Set.GetMembers()))
+			for _, m := range ev.Tier0Set.GetMembers() {
+				for _, b := range m.GetBasis() {
+					if b != connectorv1.Tier0Basis_TIER0_BASIS_C13_DEFAULT_PRIVILEGED_GROUP {
+						continue
+					}
+					g, err := guidText(m.GetObject().GetValue())
+					if err != nil {
+						return connection.VerifyResult{}, protocolErr("tier0 member is not a GUID")
+					}
+					res.C13Groups = append(res.C13Groups, g)
+				}
+			}
 		case *connectorv1.VerifyConnectionResponse_Completed:
 			if !haveHead {
 				return connection.VerifyResult{}, protocolErr("completion before header")

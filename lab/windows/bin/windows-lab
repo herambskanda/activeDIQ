@@ -232,8 +232,8 @@ test_connector() {
   [ -f "$ENVF" ] && [ -f "$CAF" ] || die "lab not up: run make windows-lab-up"
   mkdir -p "$LOGDIR"
   local log; log="$LOGDIR/connector-$(date -u +%Y%m%dT%H%M%SZ).log"
-  echo ">> go test -tags 'lab windowslab' ./internal/connector/ad/ against dc1 over LDAPS; log: $log"
-  ( cd "$HERE/../.." && LAB_TARGET=windows "$GO" test -count=1 -v -tags 'lab windowslab' ./internal/connector/ad/ ) 2>&1 | tee "$log"
+  echo ">> go test -tags 'lab windowslab' -run '^TestWindowsLab' ./internal/connector/ad/ against dc1 over LDAPS; log: $log"
+  ( cd "$HERE/../.." && LAB_TARGET=windows "$GO" test -count=1 -v -tags 'lab windowslab' -run '^TestWindowsLab' ./internal/connector/ad/ ) 2>&1 | tee "$log"
   return "${PIPESTATUS[0]}"
 }
 

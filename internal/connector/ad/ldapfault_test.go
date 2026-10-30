@@ -213,6 +213,16 @@ type fakeUpstream struct {
 	parents int
 	mu      sync.Mutex
 	reads   map[string]int
+	// sdAttrs, when set, is the entry served for every "<GUID=" base-scope read (an SD read), and
+	// modifies counts the Modify requests the upstream received (T-0726).
+	sdAttrs  map[string][][]byte
+	modifies int
+}
+
+func (f *fakeUpstream) modifyCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.modifies
 }
 
 // parentGUID is the GUID the fake reports for parent OU k.
@@ -293,6 +303,8 @@ func (f *fakeUpstream) serve(c net.Conn) {
 				f.reads[base]++
 				f.mu.Unlock()
 				out = append(out, entryMsg(id, base, map[string][][]byte{"objectGUID": {parentGUID(k)}}))
+			case f.sdAttrs != nil && strings.HasPrefix(base, "<GUID="):
+				out = append(out, entryMsg(id, "CN=x,DC=lab,DC=test", f.sdAttrs))
 			case strings.HasPrefix(base, "<GUID=") && f.parents > 0:
 				for i := 0; i < f.entries; i++ {
 					g := make([]byte, 16)
@@ -308,6 +320,11 @@ func (f *fakeUpstream) serve(c net.Conn) {
 				}
 			}
 			out = append(out, resultMsg(id, opSearchDone))
+		case 6: // ModifyRequest: counted and acknowledged, never applied
+			f.mu.Lock()
+			f.modifies++
+			f.mu.Unlock()
+			out = append(out, resultMsg(id, 7))
 		default:
 			return
 		}

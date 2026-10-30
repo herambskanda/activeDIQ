@@ -299,11 +299,6 @@
         "reason": "MSI custom actions that edit the event-log channel ACE and the data-dir DACL through typed Windows ACL APIs (run_windows.go); run_other.go is the non-Windows stub"
       },
       {
-        "path": "internal/agentmodules/addc",
-        "adr": "0001-technology-stack.md",
-        "reason": "Security event-log reader: source_windows.go uses wevtapi, source_other.go is the non-Windows stub; no portable form exists"
-      },
-      {
         "path": "internal/platform/agent",
         "adr": "0001-technology-stack.md",
         "reason": "agent token/privilege pin, job-object confinement, event-log writer and data-dir DACL (*_windows.go) with *_other.go stubs; Windows-only OS APIs with no portable form"
@@ -332,6 +327,11 @@
         "path": "internal/platform/prochardening",
         "adr": "0001-technology-stack.md",
         "reason": "process dump hardening (RLIMIT_CORE, PR_SET_DUMPABLE) is Linux-only syscalls: hardening_linux.go and hardening_other.go; no portable form exists"
+      },
+      {
+        "path": "internal/compose/agent",
+        "adr": "0001-technology-stack.md",
+        "reason": "agent config path resolution: configpath_windows.go (MSI writes the config beside the executable) and configpath_other.go (!windows stub); no portable form exists"
       },
       {
         "path": "internal/compose/server",
@@ -403,7 +403,24 @@
         "reason": "Playwright screenshot, record and E2E tooling (T-0011): Node, dev-time only, never shipped. ADR-0001 rule 1 does not name it; the solution-architect is asked to record it in the ADR"
       }
     ],
-    "nativeComponents": []
+    "nativeComponents": [],
+    "labBuilds": [
+      {
+        "path": "internal/compose/server/labbootstrap_lab.go",
+        "adr": "0001-technology-stack.md",
+        "reason": "lab bootstrap (T-0684): seeds lab AD connections served by an in-process connector when the server is built with -tags lab; compiled out of every production binary (T-0792)"
+      },
+      {
+        "path": "internal/compose/server/labbootstrap_off.go",
+        "adr": "0001-technology-stack.md",
+        "reason": "the production (!lab) counterpart of labbootstrap_lab.go: an inert labBootstrap that ignores WIN_LAB_* and LAB_* (T-0684, T-0792)"
+      },
+      {
+        "path": "internal/directory/client/labsource_lab.go",
+        "adr": "0001-technology-stack.md",
+        "reason": "lab connector plumbing (T-0795): the in-process connector dial and the lab ConnectorSource, kept in the package that owns the generated connector client (ADR-0005 O2); compiled out of every production binary"
+      }
+    ]
   },
   "licenceExceptions": []
 }

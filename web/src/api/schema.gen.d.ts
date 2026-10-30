@@ -296,8 +296,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Claim first-run setup with the one-time setup secret (AN-4)
-         * @description The first-run setup gate (TM-TB16-T7). A fresh install writes a one-time setup secret where only the installing administrator can read it (`activediq-server setup show`). Presenting it here claims setup: the secret is consumed on the first correct use and never works again. Success answers 204 and no body. Every failure has one shape, 401 /problems/setup-refused: wrong secret, expired secret, already-used secret, and an install that is not in first-run state are indistinguishable. The source-IP limiter may answer 429. No default account exists before or after.
+         * Claim first-run setup and create the first tenant owner (AN-4)
+         * @description The first-run setup gate (TM-TB16-T7). A fresh install writes a one-time setup secret where only the installing administrator can read it (`activediq-server setup show`). Presenting it here claims setup: in one step the secret is consumed and the first tenant-owner account is created and granted the tenant-owner role (a failure creating the owner leaves the secret unconsumed). The secret never works again. The new account has no credential yet and cannot sign in until one is enrolled. Success answers 204 and no body. A second claim is refused like any other failure. Every failure has one shape, 401 /problems/setup-refused: wrong secret, expired secret, already-used secret, and an install that is not in first-run state are indistinguishable. The source-IP limiter may answer 429. No default account exists before or after.
          */
         post: operations["claimFirstRunSetup"];
         delete?: never;
@@ -364,6 +364,7 @@ export interface components {
         DirectoryUser: {
             displayName: string;
             enabled: boolean;
+            hybrid: components["schemas"]["HybridClassification"];
             /** Format: uuid */
             objectGuid: string;
             samAccountName: string;
@@ -386,6 +387,15 @@ export interface components {
         HealthStatus: {
             status: components["schemas"]["HealthState"];
         };
+        /** @description How the user stands in the cross-directory correlation (DM-20) under TM-D17, computed from the stored correlation and the Entra connection's takeover protection. not_hybrid: no correlation is recorded. candidate, matched, broken: the strongest recorded state (matched over candidate over broken). unknown: the facts could not be read; treat as no authority. Only a matched correlation can carry authority, and only while takeover protection is attested and neither side is Tier 0. */
+        HybridClassification: {
+            carriesAuthority: boolean;
+            /** @description Why the correlation is not matched, or why a matched one carries no authority. A stable code, never a directory value. */
+            reason?: string;
+            state: components["schemas"]["HybridState"];
+        };
+        /** @enum {string} */
+        HybridState: "not_hybrid" | "candidate" | "matched" | "broken" | "unknown" | (string & {});
         /**
          * @description A 64-bit integer carried as a string, for values outside JavaScript's safe integer range.
          * @example 9007199254740993
@@ -490,9 +500,15 @@ export interface components {
         };
         /** @description A secret a client sends: a password, a token. It is write-only, never appears in a response, and is held in memory only as a secret.Secret that is destroyed after the request. */
         SecretInput: string;
-        /** @description The one-time setup secret. */
+        /** @description The one-time setup secret and the details of the first tenant owner. */
         SetupClaimRequest: {
+            owner: components["schemas"]["SetupOwner"];
             secret: components["schemas"]["SecretInput"];
+        };
+        /** @description The first tenant owner's account details. */
+        SetupOwner: {
+            displayName: string;
+            email: string;
         };
         /** @description A destination as stored. It never carries a credential. */
         SiemDestination: {
@@ -1309,6 +1325,7 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
+            503: components["responses"]["DirectoryUnavailable"];
         };
     };
     getLiveness: {
@@ -1495,7 +1512,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Setup was claimed and the secret is consumed. */
+            /** @description Setup was claimed, the secret is consumed and the first tenant owner exists. */
             204: {
                 headers: {
                     [name: string]: unknown;

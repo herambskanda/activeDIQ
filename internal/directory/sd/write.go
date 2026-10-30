@@ -20,6 +20,7 @@ const (
 	ErrObjectTypeMismatch    = "sd.object_type_mismatch"
 	ErrInertACE              = "sd.inert_ace"
 	ErrBaseNonCanonical      = "sd.base_non_canonical"
+	ErrPlanNonCanonical      = "sd.plan_non_canonical"
 	ErrACLTooLarge           = "sd.acl_too_large"
 	ErrACEDigestMismatch     = "sd.ace_digest_mismatch"
 	ErrACEIndexOutOfRange    = "sd.ace_index_out_of_range"
@@ -164,9 +165,10 @@ type Plan struct {
 	// trustee in isolation). ChangesIncomplete is set when the bound was reached or a GUID has no catalog kind.
 	Changes           []RightsChange
 	ChangesIncomplete bool
-	// NonCanonicalResult lists outcome-changing order violations the new DACL has. Only
-	// PlanInheritance can produce it (converting inherited ACEs to explicit ones keeps their order,
-	// so effective rights do not change).
+	// NonCanonicalResult lists the outcome-changing order violations (rules 1 and 2) the planned DACL
+	// would have. Only PlanInheritance can produce it, and then it is refused (sd.plan_non_canonical)
+	// because the DC would re-sort the list and change effective rights; the violations are returned
+	// with the error so the caller can offer PlanOpts.Normalize.
 	NonCanonicalResult []OrderViolation
 }
 
