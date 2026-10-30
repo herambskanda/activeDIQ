@@ -3,7 +3,7 @@ package run
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/authority"
@@ -55,7 +55,7 @@ func (s *Service) List(ctx context.Context, tid tenant.ID, chain authority.Chain
 	if f.Cursor != "" {
 		b, err := base64.RawURLEncoding.DecodeString(f.Cursor)
 		var c listCursor
-		if err != nil || json.Unmarshal(b, &c) != nil || c.V != 1 {
+		if err != nil || jsonv2.Unmarshal(b, &c) != nil || c.V != 1 {
 			return nil, "", ErrBadCursor
 		}
 		if _, err := ParseID(c.ID); err != nil {
@@ -91,7 +91,7 @@ func (s *Service) List(ctx context.Context, tid tenant.ID, chain authority.Chain
 	if len(items) > limit {
 		items = items[:limit]
 		last := items[len(items)-1].Run
-		b, _ := json.Marshal(listCursor{V: 1, At: last.CreatedAt, ID: last.ID.String()})
+		b, _ := jsonv2.Marshal(listCursor{V: 1, At: last.CreatedAt, ID: last.ID.String()})
 		next = base64.RawURLEncoding.EncodeToString(b)
 	}
 	return items, next, nil

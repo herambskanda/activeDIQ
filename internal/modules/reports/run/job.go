@@ -3,7 +3,7 @@ package run
 import (
 	"context"
 	"encoding/hex"
-	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"slices"
 	"strconv"
@@ -29,7 +29,7 @@ func (s *Service) Kind() jobs.Kind {
 		Name: JobKind, Timeout: JobTimeout, Mode: jobs.ModeManagedTx,
 		ValidateArgs: func(args jsontext.Value) error {
 			var a jobArgs
-			if err := json.Unmarshal(args, &a); err != nil {
+			if err := jsonv2.Unmarshal(args, &a); err != nil {
 				return errors.New("reports.run: bad args")
 			}
 			if _, err := ParseID(a.RunID); err != nil {
@@ -54,7 +54,7 @@ func (f *runFailure) Error() string { return "run failed: " + string(f.reason) }
 
 func (s *Service) runJob(ctx context.Context, tx jobs.TenantTx, c jobs.Claimed) error {
 	var a jobArgs
-	if err := json.Unmarshal(c.Args, &a); err != nil {
+	if err := jsonv2.Unmarshal(c.Args, &a); err != nil {
 		return &jobs.Failure{Code: "bad_args", Permanent: true}
 	}
 	id, err := ParseID(a.RunID)
@@ -273,7 +273,7 @@ func (s *Service) store(ctx context.Context, jt jobs.TenantTx, tid tenant.ID, r 
 					hiddenN++
 					continue
 				}
-				cj, err := json.Marshal(row.Cells)
+				cj, err := jsonv2.Marshal(row.Cells)
 				if err != nil {
 					return err
 				}
@@ -283,7 +283,7 @@ func (s *Service) store(ctx context.Context, jt jobs.TenantTx, tid tenant.ID, r 
 						sk[string(c.ID)] = k
 					}
 				}
-				sj, err := json.Marshal(sk)
+				sj, err := jsonv2.Marshal(sk)
 				if err != nil {
 					return err
 				}
@@ -314,13 +314,13 @@ func (s *Service) store(ctx context.Context, jt jobs.TenantTx, tid tenant.ID, r 
 			return &runFailure{reason: FailRowCapExceeded, detail: map[string]int64{"cap": int64(rowCap), "rows": total}}
 		}
 		// 2.7 finish in the same transaction
-		hj, _ := json.Marshal(hidden)
-		fj, _ := json.Marshal(fr)
+		hj, _ := jsonv2.Marshal(hidden)
+		fj, _ := jsonv2.Marshal(fr)
 		sa := ScopeApplied{Summary: scope.Summary(), Reasons: cq.ScopeReasons()}
 		if stored == 0 {
 			sa.EmptyReason = emptyReason(cq.ScopeReasons())
 		}
-		saj, _ := json.Marshal(sa)
+		saj, _ := jsonv2.Marshal(sa)
 		asOf := now
 		if fr.AsOf != nil {
 			asOf = *fr.AsOf

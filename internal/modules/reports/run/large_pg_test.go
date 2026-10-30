@@ -3,7 +3,7 @@ package run_test
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"os"
 	"strconv"
 	"testing"
@@ -31,7 +31,7 @@ func TestLargeResultPageTimings(t *testing.T) {
 		if err != nil || len(first.Rows) != 1 {
 			t.Fatalf("sample page: %v %+v", err, first)
 		}
-		cells, _ := json.Marshal(first.Rows[0].Cells)
+		cells, _ := jsonv2.Marshal(first.Rows[0].Cells)
 		var sortKeys string
 		if err := e.db.WithTenant(ctx, e.tid, func(ctx context.Context, tx store.Tx) error {
 			return tx.QueryRow(ctx, `SELECT sort_keys::text FROM public.report_run_rows WHERE run_id = $1::uuid LIMIT 1`, sample.ID.String()).Scan(&sortKeys)
@@ -79,7 +79,7 @@ func TestLargeResultPageTimings(t *testing.T) {
 // cursorAt builds a page cursor the way the service does (the cursor is opaque to clients, not to this test).
 func cursorAt(t *testing.T, runID, sort string, desc bool, off int64) string {
 	t.Helper()
-	b, err := json.Marshal(map[string]any{"v": 1, "r": runID, "s": sort, "d": desc, "o": off})
+	b, err := jsonv2.Marshal(map[string]any{"v": 1, "r": runID, "s": sort, "d": desc, "o": off})
 	if err != nil {
 		t.Fatal(err)
 	}

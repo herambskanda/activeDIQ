@@ -2,7 +2,7 @@ package reports_test
 
 import (
 	"context"
-	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -231,7 +231,7 @@ func (e *apiEnv) do(who, method, target, body string, hdr ...string) (int, map[s
 	w := httptest.NewRecorder()
 	e.srv.ServeHTTP(w, r)
 	var out map[string]any
-	_ = json.Unmarshal(w.Body.Bytes(), &out)
+	_ = jsonv2.Unmarshal(w.Body.Bytes(), &out)
 	return w.Code, out
 }
 

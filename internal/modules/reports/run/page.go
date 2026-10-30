@@ -3,7 +3,7 @@ package run
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"slices"
 
@@ -60,14 +60,14 @@ type cursor struct {
 }
 
 func (c cursor) encode() string {
-	b, _ := json.Marshal(c)
+	b, _ := jsonv2.Marshal(c)
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
 func decodeCursor(s string) (cursor, error) {
 	b, err := base64.RawURLEncoding.DecodeString(s)
 	var c cursor
-	if err != nil || json.Unmarshal(b, &c) != nil || c.V != 1 || c.Off < 0 {
+	if err != nil || jsonv2.Unmarshal(b, &c) != nil || c.V != 1 || c.Off < 0 {
 		return cursor{}, ErrBadCursor
 	}
 	return c, nil
@@ -148,7 +148,7 @@ func (s *Service) Page(ctx context.Context, tid tenant.ID, chain authority.Chain
 			if err := rows.Scan(&sr.Key, &sr.Ordinal, &cj); err != nil {
 				return err
 			}
-			if err := json.Unmarshal([]byte(cj), &sr.Cells); err != nil {
+			if err := jsonv2.Unmarshal([]byte(cj), &sr.Cells); err != nil {
 				return err
 			}
 			out.Rows = append(out.Rows, sr)

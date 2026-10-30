@@ -1,7 +1,7 @@
 package reports
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"strconv"
 	"time"
@@ -23,7 +23,7 @@ type Codec struct{}
 var _ run.ParamsCodec = Codec{}
 
 // Decode implements run.ParamsCodec. def names the one Days parameter a period of lastDays sets.
-func (Codec) Decode(raw json.RawMessage, def report.Definition) (report.RunParams, error) {
+func (Codec) Decode(raw jsontext.Value, def report.Definition) (report.RunParams, error) {
 	var p api.ReportRunParameters
 	if err := jsonv2.Unmarshal(raw, &p); err != nil {
 		return report.RunParams{}, bad("parameters")
@@ -461,15 +461,15 @@ func cellView(c report.Cell) (api.ReportCell, error) {
 	if err != nil {
 		return api.ReportCell{}, err
 	}
-	var parts []json.RawMessage
-	if err := json.Unmarshal(b, &parts); err != nil || len(parts) == 0 {
+	var parts []jsontext.Value
+	if err := jsonv2.Unmarshal(b, &parts); err != nil || len(parts) == 0 {
 		return api.ReportCell{}, fmt.Errorf("cell")
 	}
-	var v json.RawMessage
+	var v jsontext.Value
 	if len(parts) > 1 {
 		v = parts[1]
 	}
-	str := func() string { var s string; _ = json.Unmarshal(v, &s); return s }
+	str := func() string { var s string; _ = jsonv2.Unmarshal(v, &s); return s }
 	switch c.Tag() {
 	case "a":
 		return api.ReportCell{Kind: "absent", Absent: &api.ReportCellAbsent{Kind: "absent"}}, nil
@@ -486,7 +486,7 @@ func cellView(c report.Cell) (api.ReportCell, error) {
 		return api.ReportCell{Kind: "integer", Integer: &api.ReportCellInteger{Kind: "integer", Value: str()}}, nil
 	case "b":
 		var x bool
-		_ = json.Unmarshal(v, &x)
+		_ = jsonv2.Unmarshal(v, &x)
 		return api.ReportCell{Kind: "boolean", Boolean: &api.ReportValueBoolean{Kind: "boolean", Value: x}}, nil
 	case "t":
 		t, err := apitypes.ParseTimestamp(str())
@@ -500,7 +500,7 @@ func cellView(c report.Cell) (api.ReportCell, error) {
 		return api.ReportCell{Kind: "guid", GUID: &api.ReportCellGuid{Kind: "guid", Value: uuid(str())}}, nil
 	case "l":
 		var l []string
-		_ = json.Unmarshal(v, &l)
+		_ = jsonv2.Unmarshal(v, &l)
 		if l == nil {
 			l = []string{}
 		}

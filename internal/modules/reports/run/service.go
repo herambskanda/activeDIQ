@@ -2,7 +2,8 @@ package run
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"strconv"
 	"time"
@@ -91,7 +92,7 @@ type Catalog interface {
 // ParamsCodec turns the stored request parameters (API shape) into typed run parameters. The module
 // supplies it, so this package never imports the API package.
 type ParamsCodec interface {
-	Decode(raw json.RawMessage, def report.Definition) (report.RunParams, error)
+	Decode(raw jsontext.Value, def report.Definition) (report.RunParams, error)
 }
 
 // FreshnessSource reads the sync watermarks of the connections a result covers (§6.4). It runs its own
@@ -134,7 +135,7 @@ type CreateInput struct {
 	DefinitionID string
 	Version      int // 0: the newest
 	Preset       string
-	Params       json.RawMessage // API-shape parameters; nil is "none"
+	Params       jsontext.Value // API-shape parameters; nil is "none"
 	RerunOf      *ID
 }
 
@@ -150,7 +151,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (run Run, reused b
 	}
 	raw := in.Params
 	if len(raw) == 0 {
-		raw = json.RawMessage(`{}`)
+		raw = jsontext.Value(`{}`)
 	}
 	rp, err := s.Codec.Decode(raw, def.Def)
 	if err != nil {
@@ -164,7 +165,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (run Run, reused b
 	if err != nil {
 		return Run{}, false, err
 	}
-	cols, _ := json.Marshal(columnIDs(q.Columns))
+	cols, _ := jsonv2.Marshal(columnIDs(q.Columns))
 	qh := q.Hash()
 	err = s.DB.WithTenant(ctx, in.Tenant, func(ctx context.Context, tx store.Tx) error {
 		scope, err := s.Scopes.For(ctx, tx, in.Tenant, in.Chain, Perm)
@@ -409,7 +410,7 @@ func (s *Service) finish(ctx context.Context, tx store.Tx, r Run, to State, reas
 	if len(detail) > 0 {
 		sa := r.ScopeApplied
 		sa.Detail = detail
-		b, _ := json.Marshal(sa)
+		b, _ := jsonv2.Marshal(sa)
 		x := string(b)
 		doc = &x
 	}

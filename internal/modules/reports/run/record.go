@@ -4,7 +4,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	jsonv2 "encoding/json/v2"
 	"fmt"
 	"time"
 
@@ -53,7 +54,7 @@ type Run struct {
 	DefinitionVer    int
 	DefinitionSHA256 [32]byte
 	Preset           string
-	Params           json.RawMessage // the validated request parameters, API shape
+	Params           jsontext.Value // the validated request parameters, API shape
 	QueryHash        [32]byte
 	ScopeFingerprint [32]byte
 	Runner           string
@@ -120,12 +121,12 @@ func encodeChain(c authority.Chain) ([]byte, error) {
 	for _, p := range c.Via {
 		j.Via = append(j.Via, principalJSON{string(p.ID), string(p.Kind)})
 	}
-	return json.Marshal(j)
+	return jsonv2.Marshal(j)
 }
 
 func decodeChain(b []byte) (authority.Chain, error) {
 	var j chainJSON
-	if err := json.Unmarshal(b, &j); err != nil {
+	if err := jsonv2.Unmarshal(b, &j); err != nil {
 		return authority.Chain{}, err
 	}
 	c := authority.Chain{Requester: authority.Principal{ID: authority.PrincipalID(j.Requester.ID), Kind: authority.PrincipalKind(j.Requester.Kind)}}
@@ -189,22 +190,22 @@ func scanRun(row scanner) (Run, error) {
 		return Run{}, err
 	}
 	if scope != nil {
-		if err := json.Unmarshal(scope, &r.ScopeApplied); err != nil {
+		if err := jsonv2.Unmarshal(scope, &r.ScopeApplied); err != nil {
 			return Run{}, err
 		}
 	}
 	if fresh != nil {
 		r.Freshness = new(FreshnessRecord)
-		if err := json.Unmarshal(fresh, r.Freshness); err != nil {
+		if err := jsonv2.Unmarshal(fresh, r.Freshness); err != nil {
 			return Run{}, err
 		}
 	}
 	if hidden != nil {
-		if err := json.Unmarshal(hidden, &r.HiddenCounts); err != nil {
+		if err := jsonv2.Unmarshal(hidden, &r.HiddenCounts); err != nil {
 			return Run{}, err
 		}
 	}
-	if err := json.Unmarshal(cols, &r.Columns); err != nil {
+	if err := jsonv2.Unmarshal(cols, &r.Columns); err != nil {
 		return Run{}, err
 	}
 	return r, nil

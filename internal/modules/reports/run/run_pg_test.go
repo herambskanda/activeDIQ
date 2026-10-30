@@ -2,7 +2,8 @@ package run_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"os"
 	"slices"
@@ -110,11 +111,11 @@ func (c catalog) Definition(id string, _ int) (run.Definition, bool) {
 // codec reads {"columns":[...]}.
 type codec struct{}
 
-func (codec) Decode(raw json.RawMessage, _ report.Definition) (report.RunParams, error) {
+func (codec) Decode(raw jsontext.Value, _ report.Definition) (report.RunParams, error) {
 	var v struct {
 		Columns []string `json:"columns"`
 	}
-	if err := json.Unmarshal(raw, &v); err != nil {
+	if err := jsonv2.Unmarshal(raw, &v); err != nil {
 		return report.RunParams{}, err
 	}
 	var p report.RunParams
@@ -215,7 +216,7 @@ func setup(t *testing.T, s *storetest.Server) *env {
 
 func (e *env) create(who, params string) run.Run {
 	e.t.Helper()
-	r, _, err := e.svc.Create(context.Background(), run.CreateInput{Tenant: e.tid, Chain: chainOf(who), DefinitionID: "tst-01", Params: json.RawMessage(params)})
+	r, _, err := e.svc.Create(context.Background(), run.CreateInput{Tenant: e.tid, Chain: chainOf(who), DefinitionID: "tst-01", Params: jsontext.Value(params)})
 	if err != nil {
 		e.t.Fatalf("Create: %v", err)
 	}
@@ -330,7 +331,7 @@ func TestRunStoresRowsFreshnessAndPages(t *testing.T) {
 		if r2.ID == r.ID {
 			t.Fatal("a changed query must create a new run")
 		}
-		again, reused, err := e.svc.Create(ctx, run.CreateInput{Tenant: e.tid, Chain: chainOf(alice), DefinitionID: "tst-01", Params: json.RawMessage(`{"columns":["sam"]}`)})
+		again, reused, err := e.svc.Create(ctx, run.CreateInput{Tenant: e.tid, Chain: chainOf(alice), DefinitionID: "tst-01", Params: jsontext.Value(`{"columns":["sam"]}`)})
 		if err != nil || !reused || again.ID != r2.ID {
 			t.Fatalf("reuse = %v %v %v", again.ID, reused, err)
 		}
@@ -516,7 +517,7 @@ func TestReuseCapCancelAndRetry(t *testing.T) {
 		for _, p := range []string{`{"columns":["sam"]}`, `{"columns":["enabled"]}`, `{"columns":["display"]}`, `{"columns":["sam","enabled"]}`} {
 			ids = append(ids, e.create(alice, p).ID)
 		}
-		_, _, err := e.svc.Create(ctx, run.CreateInput{Tenant: e.tid, Chain: chainOf(alice), DefinitionID: "tst-01", Params: json.RawMessage(`{"columns":["enabled","sam"]}`)})
+		_, _, err := e.svc.Create(ctx, run.CreateInput{Tenant: e.tid, Chain: chainOf(alice), DefinitionID: "tst-01", Params: jsontext.Value(`{"columns":["enabled","sam"]}`)})
 		if !errors.Is(err, run.ErrTooManyJobs) {
 			t.Fatalf("fifth open run: %v", err)
 		}
