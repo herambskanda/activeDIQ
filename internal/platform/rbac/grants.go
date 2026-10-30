@@ -373,6 +373,12 @@ func validRoots(tn tenant.ID, roots []Root) bool {
 		}
 		switch r.Kind {
 		case NamingContext, OUSubtree:
+		case OUOneLevel:
+			// An include root only, and never a connection or tenant ID: the one-level match reads the
+			// nearest parent, and the chain's last element is the connection.
+			if r.Exclude || r.Connection == r.GUID {
+				return false
+			}
 		case EntraTenant, Tier0Scope:
 			if r.Connection != r.GUID {
 				return false

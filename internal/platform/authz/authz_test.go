@@ -443,3 +443,71 @@ func TestPlatformOnlyPermission(t *testing.T) {
 		t.Fatal("a listed platform-only permission was effective at delegation scope")
 	}
 }
+
+func oneLevel(id string, anc ...string) ScopeRoot {
+	r := root(id, anc...)
+	r.OneLevel = true
+	return r
+}
+
+// T-0881: a OneLevel include root covers a target whose nearest parent is the root, and nothing else.
+func TestOneLevelRootIsNeverASubtree(t *testing.T) {
+	p := tech([]Permission{pReset}, Scope{Include: []ScopeRoot{oneLevel("ouA", "dom")}})
+	allow := func(tg Target) bool { return ev().Authorize(p, nil, pReset, tg).Allowed }
+	if !allow(target("u", "ouA", "dom")) {
+		t.Error("direct child refused")
+	}
+	if allow(target("u", "ouSub", "ouA", "dom")) {
+		t.Error("child of a child OU allowed: one-level read as a subtree")
+	}
+	if allow(target("ouA", "dom")) {
+		t.Error("the root OU itself allowed")
+	}
+	if allow(target("u")) {
+		t.Error("target with no parent allowed")
+	}
+	// An exclude still beats the include for a direct child.
+	px := tech([]Permission{pReset}, Scope{Include: []ScopeRoot{oneLevel("ouA", "dom")}, Exclude: []ScopeRoot{root("ouA", "dom")}})
+	if ev().Authorize(px, nil, pReset, target("u", "ouA", "dom")).Allowed {
+		t.Error("exclude did not beat one-level include")
+	}
+	// A token scope with a one-level root narrows the same way.
+	wide := tech([]Permission{pReset}, Scope{Include: []ScopeRoot{root("dom")}})
+	tok := tokenFor(pReset)
+	tok.Scope = &Scope{Include: []ScopeRoot{oneLevel("ouA", "dom")}}
+	if !ev().Authorize(wide, tok, pReset, target("u", "ouA", "dom")).Allowed {
+		t.Error("direct child refused through a one-level token scope")
+	}
+	if ev().Authorize(wide, tok, pReset, target("u", "ouSub", "ouA", "dom")).Allowed {
+		t.Error("token one-level scope read as a subtree")
+	}
+}
+
+// A one-level grantor root contains only the identical one-level root: a grant of its subtree, a
+// deeper OU or a different level would reach objects the grantor cannot act on.
+func TestOneLevelGrantorContainment(t *testing.T) {
+	role := Role{Permissions: []Permission{pReset}}
+	grantor := func(s Scope) *Principal { return tech([]Permission{pReset}, s) }
+	oneA := grantor(Scope{Include: []ScopeRoot{oneLevel("ouA", "dom")}})
+	if err := ev().CheckGrant(oneA, nil, role, Scope{Include: []ScopeRoot{oneLevel("ouA", "dom")}}); err != nil {
+		t.Errorf("same one-level root refused: %v", err)
+	}
+	for name, s := range map[string]ScopeRoot{
+		"subtree of the same OU":  root("ouA", "dom"),
+		"a child OU as a subtree": root("ouSub", "ouA", "dom"),
+		"a child OU as one level": oneLevel("ouSub", "ouA", "dom"),
+		"the parent as one level": oneLevel("dom"),
+	} {
+		if err := ev().CheckGrant(oneA, nil, role, Scope{Include: []ScopeRoot{s}}); !errors.Is(err, ErrEscalation) {
+			t.Errorf("%s: want escalation, got %v", name, err)
+		}
+	}
+	// A subtree grantor contains a one-level root beneath it.
+	sub := grantor(Scope{Include: []ScopeRoot{root("ouA", "dom")}})
+	if err := ev().CheckGrant(sub, nil, role, Scope{Include: []ScopeRoot{oneLevel("ouSub", "ouA", "dom")}}); err != nil {
+		t.Errorf("one-level inside a held subtree refused: %v", err)
+	}
+	if err := ev().CheckGrant(sub, nil, role, Scope{Include: []ScopeRoot{oneLevel("ouB", "dom")}}); !errors.Is(err, ErrEscalation) {
+		t.Errorf("one-level outside the held subtree: %v", err)
+	}
+}

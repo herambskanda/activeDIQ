@@ -127,10 +127,16 @@ type Scope struct {
 // request input: forged ancestors on a new root would make containment checks pass. Complete is
 // true only when the chain was read live and fully (a domain-root has zero ancestors and is complete).
 // CheckGrant refuses any root it consults that is not Complete.
+//
+// OneLevel narrows an include root (ou_one_level, DM-35) to the direct children of the OU: only a
+// target whose nearest parent is the root is covered, never the root itself or anything deeper.
+// Every consumer treats a OneLevel root as the narrower set; none may read it as a subtree. An
+// exclude root is never OneLevel (the loader and the grant path refuse it).
 type ScopeRoot struct {
 	ID        ObjectID
 	Ancestors []ObjectID
 	Complete  bool
+	OneLevel  bool
 }
 
 // within reports whether id is this root or one of its ancestors. A blank ID never matches.
@@ -172,6 +178,14 @@ func (s Scope) covers(t Target) bool {
 		}
 	}
 	for _, i := range s.Include {
+		if i.OneLevel {
+			// Direct children only: the nearest parent is the root. The root itself and deeper
+			// descendants are not covered.
+			if len(t.Ancestors) > 0 && t.Ancestors[0] == i.ID {
+				return true
+			}
+			continue
+		}
 		if slices.Contains(chain, i.ID) {
 			return true
 		}
@@ -446,6 +460,16 @@ func holdsOverScope(g *Principal, perm Permission, s Scope) bool {
 func assignmentContains(g Scope, root ScopeRoot, newExcl []ScopeRoot) bool {
 	covered := false
 	for _, i := range g.Include {
+		if i.OneLevel {
+			// A one-level grantor root reaches only the direct children of its OU. It contains a
+			// new root only when that is the same one-level root: a subtree below it, or a deeper
+			// one-level root, reaches objects the grantor cannot act on.
+			if root.OneLevel && root.ID == i.ID {
+				covered = true
+				break
+			}
+			continue
+		}
 		if root.within(i.ID) {
 			covered = true
 			break
