@@ -26,6 +26,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -37,7 +38,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/skenzeriq/activediq/internal/testlab/harnessdocker"
 	"github.com/skenzeriq/activediq/migrations"
 )
 
@@ -45,6 +48,9 @@ import (
 const (
 	OwnerRole   = "activediq_owner" // runs migrations, owns every object
 	RuntimeRole = "activediq_app"   // the application: owns nothing
+	// CatrustRole is the trust-anchor reader (fleet-contract "Gateway client-CA pool"): NOLOGIN, owns only
+	// fleet_ca_trust_anchors(). The owner role is its only member; the runtime role never is.
+	CatrustRole = "activediq_catrust"
 )
 
 var images = map[string]string{
@@ -132,8 +138,11 @@ func start(t *testing.T, version string) *Server {
 		t.Fatalf("storetest: no PostgreSQL image known for major version %q (known: 16, 18)", version)
 	}
 	s := &Server{Version: version, Image: image, adminPass: randHex(12), ownerPass: randHex(12), appPass: randHex(12)}
-	out, err := exec.Command("docker", "run", "-d", "--rm", "-e", "POSTGRES_PASSWORD="+s.adminPass, "-p", "127.0.0.1::5432", image,
-		"-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off").CombinedOutput()
+	harnessdocker.Reap() // containers a killed earlier run left behind
+	runArgs := append([]string{"run", "-d", "--rm"}, harnessdocker.RunArgs()...)
+	runArgs = append(runArgs, "-e", "POSTGRES_PASSWORD="+s.adminPass, "-p", "127.0.0.1::5432", image,
+		"-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off")
+	out, err := exec.Command("docker", runArgs...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("storetest: docker run %s: %s", image, strings.TrimSpace(string(out)))
 	}
@@ -162,7 +171,7 @@ func unavailable(t *testing.T, why string) {
 
 func (s *Server) stop() {
 	if s.id != "" {
-		_ = exec.Command("docker", "rm", "-f", s.id).Run()
+		harnessdocker.Remove(s.id) // rm -f -v: the image's anonymous data volume goes too
 		s.id = ""
 	}
 }
@@ -221,6 +230,20 @@ func (s *Server) createRoles(t *testing.T) {
 		if _, err := c.Exec(ctx, stmt); err != nil {
 			t.Fatalf("storetest: create role %s: %v", r.name, err)
 		}
+	}
+	// Created before the first migration, like the installer: NOLOGIN, no password, the owner its only member.
+	var stmt string
+	if err := c.QueryRow(ctx, `SELECT format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS', $1::text)`, CatrustRole).Scan(&stmt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Exec(ctx, stmt); err != nil {
+		t.Fatalf("storetest: create role %s: %v", CatrustRole, err)
+	}
+	if err := c.QueryRow(ctx, `SELECT format('GRANT %I TO %I', $1::text, $2::text)`, CatrustRole, OwnerRole).Scan(&stmt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Exec(ctx, stmt); err != nil {
+		t.Fatalf("storetest: grant %s to %s: %v", CatrustRole, OwnerRole, err)
 	}
 }
 
@@ -380,6 +403,8 @@ func Breaches() []Breach {
 			Teardown: []string{`DROP ROLE adq_breach_rls`}, Want: "BYPASSRLS"},
 		{Name: "member of a role that can create in public", Setup: []string{`CREATE ROLE adq_breach_cr NOLOGIN`, `GRANT CREATE ON SCHEMA public TO adq_breach_cr`, `GRANT adq_breach_cr TO activediq_app WITH INHERIT FALSE`},
 			Teardown: []string{`REVOKE CREATE ON SCHEMA public FROM adq_breach_cr`, `DROP ROLE adq_breach_cr`}, Want: "CREATE"},
+		{Name: "member of the trust-anchor reader WITH INHERIT FALSE", Setup: []string{`GRANT activediq_catrust TO activediq_app WITH INHERIT FALSE`},
+			Teardown: []string{`REVOKE activediq_catrust FROM activediq_app`}, Want: "activediq_catrust"},
 		{Name: "owns the database", Setup: []string{`ALTER DATABASE {db} OWNER TO activediq_app`},
 			Teardown: []string{`ALTER DATABASE {db} OWNER TO activediq_owner`}, Want: "database"},
 		{Name: "has CREATE on public", Setup: []string{`GRANT CREATE ON SCHEMA public TO activediq_app`},
@@ -418,4 +443,52 @@ func (d *Database) Break(t testing.TB, b Breach) {
 	if err := run(b.Setup); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// ProbeAsRole runs each statement as role (SET LOCAL ROLE, from the superuser connection, so a NOLOGIN
+// role can be exercised) in one transaction that is rolled back at the end, every statement behind its
+// own savepoint. It returns the SQLSTATE each statement ended with, "" for success. The statements are
+// test fixture text, never input.
+func (d *Database) ProbeAsRole(ctx context.Context, role string, stmts ...string) ([]string, error) {
+	c, err := d.Admin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer c.Close(ctx)
+	tx, err := c.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	var set string
+	if err := tx.QueryRow(ctx, `SELECT format('SET LOCAL ROLE %I', $1::text)`, role).Scan(&set); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, set); err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(stmts))
+	for _, q := range stmts {
+		if _, err := tx.Exec(ctx, `SAVEPOINT probe`); err != nil {
+			return nil, err
+		}
+		rows, err := tx.Query(ctx, q)
+		if err == nil {
+			rows.Close()
+			err = rows.Err()
+		}
+		code := ""
+		if err != nil {
+			var pe *pgconn.PgError
+			if !errors.As(err, &pe) {
+				return nil, err
+			}
+			code = pe.Code
+		}
+		out = append(out, code)
+		if _, err := tx.Exec(ctx, `ROLLBACK TO SAVEPOINT probe`); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }

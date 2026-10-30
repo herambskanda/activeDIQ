@@ -5,7 +5,9 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitypes"
@@ -20,12 +22,69 @@ func isUnsafe(method string) bool {
 	return true
 }
 
-func sourceIP(r *http.Request) string {
+// sourceIP is the client address for rate limits and audit. It is the TCP peer unless the peer is a
+// configured trusted proxy, in which case it is the right-most X-Forwarded-For hop that is not itself
+// a trusted proxy. Forwarded headers from any other peer are ignored; the left-most entries are
+// client-supplied and never trusted. Any unparsable hop makes the result the peer (fail safe).
+func (s *Server) sourceIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
+	}
+	if len(s.trustedProxies) == 0 {
+		return host
+	}
+	peer, err := netip.ParseAddr(host)
+	if err != nil || !s.isTrusted(peer) {
+		return host
+	}
+	// Walk the header lines last to first and each line's hops right to left, without allocating.
+	// If every hop is a trusted proxy, the left-most one is used.
+	var leftmost netip.Addr
+	vals := r.Header.Values("X-Forwarded-For")
+	for vi := len(vals) - 1; vi >= 0; vi-- {
+		rest := vals[vi]
+		for {
+			var hop string
+			i := strings.LastIndexByte(rest, ',')
+			hop, rest = strings.TrimSpace(rest[i+1:]), rest[:max(i, 0)]
+			a, ok := parseHop(hop)
+			if !ok {
+				return host
+			}
+			if !s.isTrusted(a) {
+				return a.String()
+			}
+			leftmost = a
+			if i < 0 {
+				break
+			}
+		}
+	}
+	if leftmost.IsValid() {
+		return leftmost.String()
 	}
 	return host
+}
+
+// parseHop reads one X-Forwarded-For element: a bare IP, or ip:port / [v6]:port (Azure Application
+// Gateway writes the port). A zoned address is refused so zone text can never enter a rate-limit key.
+func parseHop(h string) (netip.Addr, bool) {
+	var a netip.Addr
+	if ap, err := netip.ParseAddrPort(h); err == nil {
+		a = ap.Addr()
+	} else if a, err = netip.ParseAddr(h); err != nil {
+		return netip.Addr{}, false
+	}
+	if a.Zone() != "" {
+		return netip.Addr{}, false
+	}
+	return a.Unmap(), true
+}
+
+func (s *Server) isTrusted(a netip.Addr) bool {
+	a = a.Unmap()
+	return slices.ContainsFunc(s.trustedProxies, func(p netip.Prefix) bool { return p.Contains(a) })
 }
 
 func hostOnly(h string) string {
@@ -50,7 +109,10 @@ func (s *Server) routeHandler(rt Route, boundHost string) http.Handler {
 		ctx := r.Context()
 
 		// 3. per-source-IP rate limit, before any authentication work.
-		if d, err := s.ports.Limits.AllowIP(ctx, meta.Class, sourceIP(r)); err != nil {
+		clientIP := s.sourceIP(r)
+		ctx = withSourceIP(ctx, clientIP)
+		r = r.WithContext(ctx)
+		if d, err := s.ports.Limits.AllowIP(ctx, meta.Class, clientIP); err != nil {
 			fail(err)
 			return
 		} else if !d.Allowed {
@@ -74,7 +136,14 @@ func (s *Server) routeHandler(rt Route, boundHost string) http.Handler {
 			return
 		}
 		// 6. body cap (declared length; the read enforces it again).
-		if r.ContentLength > meta.MaxBody {
+		// A BodyNone operation takes no body at all (TM §7.6 AN-1): any declared length above zero, an unknown
+		// length (-1) or any Transfer-Encoding is refused here, before authentication and the handler.
+		if meta.Body == BodyNone {
+			if r.ContentLength != 0 || len(r.TransferEncoding) > 0 {
+				fail(apitypes.PayloadTooLarge(""))
+				return
+			}
+		} else if r.ContentLength > meta.MaxBody {
 			fail(apitypes.PayloadTooLarge(""))
 			return
 		}
@@ -162,7 +231,16 @@ func (s *Server) routeHandler(rt Route, boundHost string) http.Handler {
 				pool.release(reserved) // only after the buffer is cleared
 			}
 		}()
-		req := &Request{PathValue: r.PathValue, Query: query, Header: r.Header}
+		req := &Request{PathValue: r.PathValue, Query: query, Header: declaredHeaders(r.Header, meta.Headers), PeerIP: clientIP}
+		for _, c := range r.Cookies() {
+			if !slices.Contains(meta.Cookies, c.Name) {
+				continue // only the cookies the route declares; never the session cookie
+			}
+			if req.Cookies == nil {
+				req.Cookies = map[string][]string{}
+			}
+			req.Cookies[c.Name] = append(req.Cookies[c.Name], c.Value)
+		}
 		var errs apitypes.Errors
 		if meta.Body == BodyBinary {
 			req.Upload = Upload{Reader: http.MaxBytesReader(w, r.Body, meta.MaxBody)}
@@ -236,4 +314,18 @@ func collectDecodeError(errs *apitypes.Errors, err error) {
 		return
 	}
 	errs.AddBody("", apitypes.CodeType, "the body does not match the schema")
+}
+
+// declaredHeaders copies only the request headers an operation declares as parameters, so Cookie,
+// Authorization, X-CSRF-Token and spoofable peer-address headers never reach a handler (T-0456).
+// The result is never nil.
+func declaredHeaders(in http.Header, declared []string) http.Header {
+	out := make(http.Header, len(declared))
+	for _, name := range declared {
+		k := http.CanonicalHeaderKey(name)
+		if vs, ok := in[k]; ok {
+			out[k] = slices.Clone(vs)
+		}
+	}
+	return out
 }

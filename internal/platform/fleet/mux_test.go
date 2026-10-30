@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"runtime"
@@ -24,10 +25,12 @@ import (
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	"github.com/skenzeriq/activediq/internal/platform/fleet"
+	"github.com/skenzeriq/activediq/internal/platform/fleet/gateway"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
 const (
+	compID  = "11111111-2222-4333-8444-555555555555"
 	mPing   = "/t.v1.Down/Ping"   // server to component, unary
 	mWatch  = "/t.v1.Down/Watch"  // server to component, server-streaming
 	mReport = "/t.v1.Up/Report"   // component to server, unary
@@ -195,7 +198,7 @@ func newRig(t *testing.T, mut func(*fleet.MuxConfig)) *tunRig {
 	r := &tunRig{peer: peer, rep: &recorder{}, cnt: &counters{}, runErr: make(chan error, 1), logs: &bytes.Buffer{}}
 	cfg := fleet.MuxConfig{
 		Role: fleet.RoleServer, Identity: ident("connector"), Transport: srvW, Reporter: r.rep,
-		Binding: fleet.Binding{Contract: testContract(t), Serve: serverHandlers(r.cnt)},
+		Binding: fleet.Binding{Contract: testContract(t), Register: serverHandlers(r.cnt)},
 		Logger:  slog.New(slog.NewJSONHandler(&syncBuf{b: r.logs}, nil)),
 	}
 	if mut != nil {
@@ -374,7 +377,7 @@ func TestRegistrarRefusesServicesOutsideTheContract(t *testing.T) {
 	for _, svc := range []string{"grpc.health.v1.Health", "grpc.reflection.v1.ServerReflection", "grpc.channelz.v1.Channelz", "t.v1.Other"} {
 		_, err := fleet.NewMux(fleet.MuxConfig{
 			Role: fleet.RoleServer, Identity: ident("connector"), Transport: &wire{}, Reporter: &recorder{},
-			Binding: fleet.Binding{Contract: testContract(t), Serve: func(_ fleet.Identity, reg grpc.ServiceRegistrar) {
+			Binding: fleet.Binding{Contract: testContract(t), Register: func(_ fleet.Identity, reg grpc.ServiceRegistrar) {
 				reg.RegisterService(&grpc.ServiceDesc{ServiceName: svc, Methods: []grpc.MethodDesc{{MethodName: "Check"}}}, struct{}{})
 			}},
 		})
@@ -389,8 +392,67 @@ func TestBindingComesFromKind(t *testing.T) {
 	if _, err := b.For(ident("connector")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.For(ident("agent")); !errors.Is(err, fleet.ErrNoBinding) {
-		t.Fatalf("agent kind must not get the connector's contract: %v", err)
+	for _, k := range []string{fleet.KindADDC, fleet.KindFileServer, "agent"} {
+		if _, err := b.For(ident(k)); !errors.Is(err, fleet.ErrNoBinding) {
+			t.Fatalf("%s must not get the connector's contract: %v", k, err)
+		}
+	}
+}
+
+// TM-D24 A1 / TM-TB12-T16: one contract per module kind. A tunnel opened by each kind's identity runs
+// its own contract's method and refuses the methods of either other kind with PERMISSION_DENIED.
+func TestCrossKindContractsAreIsolated(t *testing.T) {
+	svcOf := map[string]string{fleet.KindConnector: "UpConnector", fleet.KindADDC: "UpAddc", fleet.KindFileServer: "UpFileserver"}
+	b := fleet.Bindings{}
+	for k, svc := range svcOf {
+		svc := svc
+		c, err := fleet.NewContract("t"+svc, []protoreflect.ServiceDescriptor{svcDesc(t, "Down"+svc, "Ping")}, []protoreflect.ServiceDescriptor{svcDesc(t, svc, "Report")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		b[k] = fleet.Binding{Contract: c, Register: func(_ fleet.Identity, reg grpc.ServiceRegistrar) {
+			reg.RegisterService(&grpc.ServiceDesc{ServiceName: "t.v1." + svc, HandlerType: (*any)(nil), Methods: []grpc.MethodDesc{{
+				MethodName: "Report",
+				Handler: func(_ any, _ context.Context, dec func(any) error, _ grpc.UnaryServerInterceptor) (any, error) {
+					in := new(wrapperspb.StringValue)
+					if err := dec(in); err != nil {
+						return nil, err
+					}
+					return wrapperspb.String("ok"), nil
+				},
+			}}}, struct{}{})
+		}}
+	}
+	for k := range svcOf {
+		bd, err := b.For(ident(k))
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := newRig(t, func(c *fleet.MuxConfig) { c.Identity, c.Binding = ident(k), bd })
+		id := uint64(2)
+		for other, svc := range svcOf {
+			m := "/t.v1." + svc + "/Report"
+			r.send(fleet.Frame{CallID: id, Body: fleet.BodyOpen, Method: m})
+			if other == k {
+				r.send(fleet.Frame{CallID: id, Body: fleet.BodyData, Payload: str("x")})
+				r.send(fleet.Frame{CallID: id, Body: fleet.BodyHalfClose})
+			}
+			var f fleet.Frame
+			for {
+				f = r.next(t)
+				if f.CallID == id && f.Body == fleet.BodyClose {
+					break
+				}
+			}
+			want := int32(codes.PermissionDenied)
+			if other == k {
+				want = 0
+			}
+			if f.Code != want {
+				t.Errorf("%s opening %s's method: code %d, want %d", k, other, f.Code, want)
+			}
+			id += 2
+		}
 	}
 }
 
@@ -534,14 +596,15 @@ func TestInFlightFramesAfterOwnEndAreDropped(t *testing.T) {
 	})
 }
 
-func TestCreditOnCallZeroIsAllowed(t *testing.T) {
+func TestCreditOnCallZeroReturnsWhatWasSpent(t *testing.T) {
 	r := newRig(t, nil)
-	r.send(fleet.Frame{CallID: 0, Body: fleet.BodyCredit, Messages: 10})
-	r.healthy(t, 2)
+	r.healthy(t, 2) // the reply spends one message of the server's tunnel credit
+	r.send(fleet.Frame{CallID: 0, Body: fleet.BodyCredit, Messages: 1})
+	r.healthy(t, 4)
 }
 
 func TestPendingCallsFailUnavailableOutcomeUnknownAndAreNeverRebound(t *testing.T) {
-	hub := fleet.NewHub()
+	hub := gateway.NewHub()
 	id := ident("connector")
 	r1 := newRig(t, func(c *fleet.MuxConfig) { c.Identity = id })
 	detach := hub.Attach(r1.m)
@@ -578,7 +641,7 @@ func TestPendingCallsFailUnavailableOutcomeUnknownAndAreNeverRebound(t *testing.
 }
 
 func TestNewTunnelDisplacesTheOldAndFailsItsPendingCalls(t *testing.T) {
-	hub := fleet.NewHub()
+	hub := gateway.NewHub()
 	id := ident("connector")
 	r1 := newRig(t, func(c *fleet.MuxConfig) { c.Identity = id })
 	hub.Attach(r1.m)
@@ -601,7 +664,7 @@ func TestNewTunnelDisplacesTheOldAndFailsItsPendingCalls(t *testing.T) {
 }
 
 func TestHubWithoutTunnelIsUnavailable(t *testing.T) {
-	err := fleet.NewHub().Conn(tenant.New(), compID).Invoke(context.Background(), mPing, wrapperspb.String("x"), new(wrapperspb.StringValue))
+	err := gateway.NewHub().Conn(tenant.New(), compID).Invoke(context.Background(), mPing, wrapperspb.String("x"), new(wrapperspb.StringValue))
 	if status.Code(err) != codes.Unavailable || fleet.OutcomeUnknown(err) {
 		t.Fatalf("got %v", err)
 	}
@@ -629,6 +692,47 @@ func TestConcurrentCallsAreBounded(t *testing.T) {
 	if status.Code(err) != codes.ResourceExhausted {
 		t.Fatalf("got %v", err)
 	}
+}
+
+// A handler that outlives its cancelled call still counts against MaxCalls (T-0430, TM-TB6-T7).
+func TestCancelledPeerCallsStillCountUntilHandlerReturns(t *testing.T) {
+	release := make(chan struct{})
+	var running, peak atomic.Int32
+	serve := func(_ fleet.Identity, reg grpc.ServiceRegistrar) {
+		reg.RegisterService(&grpc.ServiceDesc{ServiceName: "t.v1.Up", HandlerType: (*any)(nil), Methods: []grpc.MethodDesc{{
+			MethodName: "Report",
+			Handler: func(_ any, _ context.Context, _ func(any) error, _ grpc.UnaryServerInterceptor) (any, error) {
+				n := running.Add(1)
+				for p := peak.Load(); n > p && !peak.CompareAndSwap(p, n); p = peak.Load() {
+				}
+				<-release // ignores cancellation, as a slow handler may
+				running.Add(-1)
+				return wrapperspb.String("late"), nil
+			},
+		}}}, struct{}{})
+	}
+	r := newRig(t, func(c *fleet.MuxConfig) { c.MaxCalls = 2; c.Binding.Register = serve })
+	t.Cleanup(func() { close(release) })
+	for id := uint64(2); id <= 10; id += 2 {
+		r.send(fleet.Frame{CallID: id, Body: fleet.BodyOpen, Method: mReport})
+		r.send(fleet.Frame{CallID: id, Body: fleet.BodyCancel})
+	}
+	refused := 0
+	deadline := time.After(3 * time.Second)
+	for refused < 3 {
+		select {
+		case f := <-r.peer.in:
+			if f.Body == fleet.BodyClose && f.Code == int32(codes.ResourceExhausted) {
+				refused++
+			}
+		case <-deadline:
+			t.Fatalf("only %d opens refused", refused)
+		}
+	}
+	if p := peak.Load(); p > 2 {
+		t.Fatalf("%d handlers ran at once, MaxCalls is 2", p)
+	}
+	r.open(t)
 }
 
 // ---- C: untrusted CallClose text ----
@@ -777,11 +881,11 @@ func e2e(t *testing.T, cancelled chan<- struct{}) (srv, comp *fleet.Mux) {
 	cnt := &counters{}
 	id := ident("connector")
 	var err error
-	srv, err = fleet.NewMux(fleet.MuxConfig{Role: fleet.RoleServer, Identity: id, Transport: a, Reporter: &recorder{}, Binding: fleet.Binding{Contract: ct, Serve: serverHandlers(cnt)}})
+	srv, err = fleet.NewMux(fleet.MuxConfig{Role: fleet.RoleServer, Identity: id, Transport: a, Reporter: &recorder{}, Binding: fleet.Binding{Contract: ct, Register: serverHandlers(cnt)}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	comp, err = fleet.NewMux(fleet.MuxConfig{Role: fleet.RoleComponent, Identity: id, Transport: b, Binding: fleet.Binding{Contract: ct, Serve: componentHandlers(cancelled)}})
+	comp, err = fleet.NewMux(fleet.MuxConfig{Role: fleet.RoleComponent, Identity: id, Transport: b, Binding: fleet.Binding{Contract: ct, Register: componentHandlers(cancelled)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -905,7 +1009,7 @@ func TestSecondDataOnAUnaryCallClosesTheTunnel(t *testing.T) {
 	started := make(chan struct{})
 	var reads atomic.Int32
 	r := newRig(t, func(c *fleet.MuxConfig) {
-		c.Binding.Serve = unaryServe(func(_ context.Context, dec func(any) error) (any, error) {
+		c.Binding.Register = unaryServe(func(_ context.Context, dec func(any) error) (any, error) {
 			close(started)
 			<-release
 			for {
@@ -941,7 +1045,7 @@ func TestSecondDataOnAUnaryCallClosesTheTunnel(t *testing.T) {
 // Calls that end while the component has over-sent data must not leave the payload retained.
 func TestRetiredCallsRetainNoPayload(t *testing.T) {
 	r := newRig(t, func(c *fleet.MuxConfig) {
-		c.Binding.Serve = unaryServe(func(context.Context, func(any) error) (any, error) {
+		c.Binding.Register = unaryServe(func(context.Context, func(any) error) (any, error) {
 			return wrapperspb.String("ok"), nil // replies without reading the request
 		})
 	})
@@ -952,6 +1056,9 @@ func TestRetiredCallsRetainNoPayload(t *testing.T) {
 	big := make([]byte, size)
 	for i := 0; i < calls; i++ {
 		id := uint64(2 + 2*i)
+		if i > 0 {
+			r.send(fleet.Frame{CallID: 0, Body: fleet.BodyCredit, Messages: 1}) // the previous reply
+		}
 		r.send(fleet.Frame{CallID: id, Body: fleet.BodyOpen, Method: mReport})
 		r.send(fleet.Frame{CallID: id, Body: fleet.BodyData, Payload: append([]byte(nil), big...)})
 		for {
@@ -967,5 +1074,420 @@ func TestRetiredCallsRetainNoPayload(t *testing.T) {
 	runtime.ReadMemStats(&after)
 	if grew := int64(after.HeapInuse) - int64(before.HeapInuse); grew > 64<<20 {
 		t.Fatalf("heap grew by %d MiB after %d finished calls", grew>>20, calls)
+	}
+}
+
+// ---- flow control (TM-TB6-T7) ----
+
+// watchRig opens a server-opened streaming call (id 1, then 3, ...) whose responses the test peer
+// sends as data frames. It returns the client stream; nothing reads it until the test does.
+func (r *tunRig) watch(t *testing.T, ctx context.Context, wantID uint64) grpc.ClientStream {
+	t.Helper()
+	cs, err := r.m.Conn().NewStream(ctx, &grpc.StreamDesc{ServerStreams: true}, mWatch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f := r.next(t); f.Body != fleet.BodyOpen || f.CallID != wantID {
+		t.Fatalf("got %+v, want open of %d", f, wantID)
+	}
+	return cs
+}
+
+func (r *tunRig) data(id uint64, n int) {
+	for i := 0; i < n; i++ {
+		r.send(fleet.Frame{CallID: id, Body: fleet.BodyData, Payload: str("m")})
+	}
+}
+
+func (r *tunRig) wantViolation(t *testing.T, v fleet.Violation) {
+	t.Helper()
+	var pe *fleet.ProtocolError
+	if err := r.closed(t); !errors.As(err, &pe) || pe.Violation != v {
+		t.Fatalf("got %v, want %s", err, v)
+	}
+	if vs := r.rep.got(); len(vs) != 1 || vs[0] != v {
+		t.Fatalf("audit: %v", vs)
+	}
+}
+
+func smallWindows(call, tun int) func(*fleet.MuxConfig) {
+	return func(c *fleet.MuxConfig) { c.CallWindow, c.TunnelWindow = call, tun }
+}
+
+func TestDataBeyondCallCreditClosesTheTunnel(t *testing.T) {
+	r := newRig(t, smallWindows(4, 64))
+	r.watch(t, context.Background(), 1) // nobody reads: no credit comes back
+	r.data(1, 4)
+	r.open(t) // exactly the window is fine
+	r.data(1, 1)
+	r.wantViolation(t, fleet.ViolationDataOverCredit)
+}
+
+func TestDataBeyondTunnelCreditClosesTheTunnel(t *testing.T) {
+	r := newRig(t, smallWindows(4, 6))
+	r.watch(t, context.Background(), 1)
+	r.watch(t, context.Background(), 3)
+	r.data(1, 4)
+	r.data(3, 2)
+	r.open(t)
+	r.data(3, 1)
+	r.wantViolation(t, fleet.ViolationDataOverCredit)
+}
+
+func TestConsumingMessagesGrantsCreditBack(t *testing.T) {
+	r := newRig(t, smallWindows(4, 64))
+	cs := r.watch(t, context.Background(), 1)
+	r.data(1, 4)
+	for i := 0; i < 2; i++ {
+		if err := cs.RecvMsg(new(wrapperspb.StringValue)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if f := r.next(t); f.CallID != 1 || f.Body != fleet.BodyCredit || f.Messages != 2 {
+		t.Fatalf("got %+v, want credit 2 on call 1", f)
+	}
+	r.data(1, 2) // inside the regained window
+	r.open(t)
+	r.data(1, 1) // two unread + two unread + ... window is full again
+	r.wantViolation(t, fleet.ViolationDataOverCredit)
+}
+
+func TestSlowHandlerNeverBlocksTheReadLoop(t *testing.T) {
+	r := newRig(t, smallWindows(4, 64))
+	r.watch(t, context.Background(), 1) // never read
+	r.data(1, 4)
+	r.healthy(t, 2) // the read loop is still serving other calls
+}
+
+func TestSenderBlocksWithoutCreditAndResumesOnGrant(t *testing.T) {
+	r := newRig(t, smallWindows(4, 64))
+	cs := r.watch(t, context.Background(), 1)
+	for i := 0; i < 4; i++ {
+		if err := cs.SendMsg(wrapperspb.String("x")); err != nil {
+			t.Fatal(err)
+		}
+		if f := r.next(t); f.Body != fleet.BodyData {
+			t.Fatalf("got %+v", f)
+		}
+	}
+	sent := make(chan error, 1)
+	go func() { sent <- cs.SendMsg(wrapperspb.String("blocked")) }()
+	select {
+	case err := <-sent:
+		t.Fatalf("sent without credit: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	r.send(fleet.Frame{CallID: 1, Body: fleet.BodyCredit, Messages: 1})
+	if err := <-sent; err != nil {
+		t.Fatal(err)
+	}
+	if f := r.next(t); f.Body != fleet.BodyData {
+		t.Fatalf("got %+v", f)
+	}
+}
+
+func TestBlockedSenderEndsWithItsContext(t *testing.T) {
+	r := newRig(t, smallWindows(1, 64))
+	ctx, cancel := context.WithCancel(context.Background())
+	cs := r.watch(t, ctx, 1)
+	if err := cs.SendMsg(wrapperspb.String("x")); err != nil {
+		t.Fatal(err)
+	}
+	sent := make(chan error, 1)
+	go func() { sent <- cs.SendMsg(wrapperspb.String("blocked")) }()
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-sent:
+		if status.Code(err) != codes.Canceled {
+			t.Fatalf("got %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("blocked sender did not return")
+	}
+}
+
+func TestTunnelCreditBoundsSendsAcrossCalls(t *testing.T) {
+	r := newRig(t, smallWindows(4, 2))
+	a := r.watch(t, context.Background(), 1)
+	b := r.watch(t, context.Background(), 3)
+	for _, cs := range []grpc.ClientStream{a, b} {
+		if err := cs.SendMsg(wrapperspb.String("x")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sent := make(chan error, 1)
+	go func() { sent <- a.SendMsg(wrapperspb.String("blocked")) }()
+	select {
+	case err := <-sent:
+		t.Fatalf("sent without tunnel credit: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	r.send(fleet.Frame{CallID: 0, Body: fleet.BodyCredit, Messages: 1})
+	if err := <-sent; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestInvalidCreditClosesTheTunnel(t *testing.T) {
+	for name, f := range map[string]fleet.Frame{
+		"zero on the tunnel":    {CallID: 0, Body: fleet.BodyCredit},
+		"over-grant on tunnel":  {CallID: 0, Body: fleet.BodyCredit, Messages: 1},
+		"zero on a call":        {CallID: 1, Body: fleet.BodyCredit},
+		"over-grant on a call":  {CallID: 1, Body: fleet.BodyCredit, Messages: 1},
+		"overflowing on a call": {CallID: 1, Body: fleet.BodyCredit, Messages: 1<<32 - 1},
+		"overflowing on tunnel": {CallID: 0, Body: fleet.BodyCredit, Messages: 1<<32 - 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newRig(t, smallWindows(4, 8))
+			r.watch(t, context.Background(), 1)
+			r.send(f)
+			r.wantViolation(t, fleet.ViolationCreditInvalid)
+		})
+	}
+}
+
+// A late frame for a call that aged out of the tombstone window is dropped, not a violation.
+func TestLateFrameForAnEvictedTombstoneIsDropped(t *testing.T) {
+	r := newRig(t, nil)
+	r.send(fleet.Frame{CallID: 2, Body: fleet.BodyOpen, Method: mOther}) // refused: ended by us
+	r.next(t)
+	const more = 1100
+	for i := 0; i < more; i += 50 {
+		for j := 0; j < 50; j++ {
+			r.send(fleet.Frame{CallID: uint64(4 + 2*(i+j)), Body: fleet.BodyOpen, Method: mOther})
+		}
+		for j := 0; j < 50; j++ {
+			r.next(t)
+		}
+	}
+	r.send(fleet.Frame{CallID: 2, Body: fleet.BodyData, Payload: str("late")})
+	r.send(fleet.Frame{CallID: 2, Body: fleet.BodyCancel})
+	r.healthy(t, uint64(4+2*more))
+}
+
+// Data dropped for an ended call still returns its tunnel credit, so a stream of late frames cannot
+// wear the window down.
+func TestDroppedDataReturnsTunnelCredit(t *testing.T) {
+	r := newRig(t, smallWindows(4, 4))
+	r.send(fleet.Frame{CallID: 2, Body: fleet.BodyOpen, Method: mOther})
+	r.next(t)
+	for i := 0; i < 10; i++ {
+		r.data(2, 2) // half the tunnel window: the drop must be granted back, which we wait for
+		if f := r.next(t); f.CallID != 0 || f.Body != fleet.BodyCredit || f.Messages != 2 {
+			t.Fatalf("round %d: got %+v, want tunnel credit 2", i, f)
+		}
+	}
+	r.open(t)
+}
+
+// Unread messages of a call this side cancels return to the tunnel window with no further peer frame,
+// or a peer that used the whole window would stay blocked and starve its other calls.
+func TestCancelledCallReturnsUnreadMessagesToTheTunnelWindow(t *testing.T) {
+	r := newRig(t, smallWindows(8, 8))
+	ctx, cancel := context.WithCancel(context.Background())
+	r.watch(t, ctx, 1)
+	r.data(1, 6)    // unread; below the half-window grant threshold, so nothing is granted yet
+	r.healthy(t, 2) // round trip: proves the six data frames were processed before the cancel
+	cancel()
+	var sawCancel, sawCredit bool
+	for !(sawCancel && sawCredit) {
+		f := r.next(t)
+		switch {
+		case f.CallID == 1 && f.Body == fleet.BodyCancel:
+			sawCancel = true
+		case f.CallID == 0 && f.Body == fleet.BodyCredit && f.Messages >= 6:
+			sawCredit = true
+		default:
+			t.Fatalf("unexpected %+v", f)
+		}
+	}
+}
+
+func TestSendsAfterHalfCloseDoNotLeakTunnelCredit(t *testing.T) {
+	r := newRig(t, smallWindows(4, 2))
+	a := r.watch(t, context.Background(), 1)
+	b := r.watch(t, context.Background(), 3)
+	if err := a.CloseSend(); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ { // more than the whole tunnel window
+		if err := a.SendMsg(wrapperspb.String("x")); !errors.Is(err, io.EOF) {
+			t.Fatalf("send %d after half-close: got %v, want EOF", i, err)
+		}
+	}
+	sent := make(chan error, 1)
+	go func() {
+		for i := 0; i < 2; i++ {
+			if err := b.SendMsg(wrapperspb.String("y")); err != nil {
+				sent <- err
+				return
+			}
+		}
+		sent <- nil
+	}()
+	select {
+	case err := <-sent:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("sibling call stalled: tunnel send credit leaked")
+	}
+}
+
+// A peer that answers each call with a full window and closes it must not get tunnel credit back
+// while those messages are still buffered: the tunnel window bounds what it can make us hold.
+func TestClosedCallsKeepUnreadMessagesCountedAgainstTheTunnelWindow(t *testing.T) {
+	r := newRig(t, smallWindows(4, 8))
+	r.watch(t, context.Background(), 1)
+	r.watch(t, context.Background(), 3)
+	for _, id := range []uint64{1, 3} {
+		r.data(id, 4)
+		r.send(fleet.Frame{CallID: id, Body: fleet.BodyClose})
+	}
+	r.watch(t, context.Background(), 5)
+	r.data(5, 1) // nothing was read, so the tunnel window of 8 is still full
+	r.wantViolation(t, fleet.ViolationDataOverCredit)
+	for {
+		select {
+		case f := <-r.peer.in:
+			if f.Body == fleet.BodyCredit {
+				t.Fatalf("tunnel credit %+v returned for unread messages", f)
+			}
+		default:
+			return
+		}
+	}
+}
+
+func TestReadingBufferedMessagesOfAClosedCallReturnsTunnelCredit(t *testing.T) {
+	r := newRig(t, smallWindows(4, 8))
+	cs := r.watch(t, context.Background(), 1)
+	r.data(1, 4)
+	r.send(fleet.Frame{CallID: 1, Body: fleet.BodyClose})
+	r.healthy(t, 2) // round trip: the close was processed before the reader starts
+	for i := 0; i < 4; i++ {
+		if err := cs.RecvMsg(new(wrapperspb.StringValue)); err != nil {
+			t.Fatalf("buffered message %d: %v", i, err)
+		}
+	}
+	if f := r.next(t); f.CallID != 0 || f.Body != fleet.BodyCredit || f.Messages != 4 {
+		t.Fatalf("got %+v, want tunnel credit 4", f)
+	}
+}
+
+func TestAbandonedClosedCallReturnsItsUnreadMessages(t *testing.T) {
+	r := newRig(t, smallWindows(4, 8))
+	cs := r.watch(t, context.Background(), 1)
+	r.send(fleet.Frame{CallID: 1, Body: fleet.BodyData, Payload: []byte{0xff}}) // not a valid message
+	r.data(1, 3)
+	r.send(fleet.Frame{CallID: 1, Body: fleet.BodyClose})
+	r.healthy(t, 2) // round trip: the close was processed before the reader starts
+	if err := cs.RecvMsg(new(wrapperspb.StringValue)); err == nil {
+		t.Fatal("want a decode error")
+	}
+	f := r.next(t)
+	if f.CallID == 1 && f.Body == fleet.BodyCancel { // the close frame may not have been processed yet
+		f = r.next(t)
+	}
+	if f.CallID != 0 || f.Body != fleet.BodyCredit || f.Messages < 4 { // the healthy call's own message may ride along
+		t.Fatalf("got %+v, want tunnel credit 4 (1 read, 3 released)", f)
+	}
+}
+
+// Cancelling the caller's context is a documented way to release a stream. After the peer closed
+// it, the unread buffered messages must go back to the tunnel window, not leak.
+func TestCancellingTheContextOfAClosedStreamReturnsItsUnreadMessages(t *testing.T) {
+	for _, read := range []int{0, 1} {
+		t.Run(fmt.Sprintf("read%d", read), func(t *testing.T) {
+			r := newRig(t, smallWindows(4, 8))
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			cs := r.watch(t, ctx, 1)
+			r.data(1, 4)
+			r.send(fleet.Frame{CallID: 1, Body: fleet.BodyClose})
+			r.healthy(t, 2) // the close was processed
+			for i := 0; i < read; i++ {
+				if err := cs.RecvMsg(new(wrapperspb.StringValue)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cancel()
+			total := 0
+			deadline := time.After(3 * time.Second)
+			for total < 4 {
+				select {
+				case f := <-r.peer.in:
+					if f.CallID == 0 && f.Body == fleet.BodyCredit {
+						total += int(f.Messages)
+					}
+				case <-deadline:
+					t.Fatalf("tunnel credit returned %d of 4 after cancel", total)
+				}
+			}
+		})
+	}
+}
+
+// A call made on a long-lived caller context must leave nothing registered on it once it has ended.
+func TestCallsOnALongLivedContextRetainNothing(t *testing.T) {
+	srv, _ := e2e(t, make(chan struct{}, 1))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	const rounds = 7000 // 3 calls per round: 21k calls
+	out := new(wrapperspb.StringValue)
+	for i := 0; i < rounds; i++ {
+		if err := srv.Conn().Invoke(ctx, mPing, wrapperspb.String("a"), out); err != nil {
+			t.Fatal(err)
+		}
+		for j := 0; j < 2; j++ {
+			st, err := srv.Conn().NewStream(ctx, &grpc.StreamDesc{ServerStreams: true}, mWatch)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := st.SendMsg(wrapperspb.String("w")); err != nil {
+				t.Fatal(err)
+			}
+			_ = st.CloseSend()
+			for {
+				if err := st.RecvMsg(new(wrapperspb.StringValue)); err != nil {
+					if !errors.Is(err, io.EOF) {
+						t.Fatal(err)
+					}
+					break
+				}
+			}
+		}
+	}
+	runtime.GC()
+	runtime.GC()
+	runtime.ReadMemStats(&after)
+	if grew := int64(after.HeapInuse) - int64(before.HeapInuse); grew > 8<<20 {
+		t.Fatalf("heap grew by %d KiB after %d finished calls on one context", grew>>10, rounds*3)
+	}
+}
+
+// Regression (T-0287): a tunnel that ends while the caller is still sending must end the pending call
+// as UNAVAILABLE with an unknown outcome — never a raw transport error, never a known-outcome
+// UNAVAILABLE that a retry loop would take for "not sent".
+func TestCallPendingWhenTunnelEndsAlwaysEndsOutcomeUnknown(t *testing.T) {
+	for i := 0; i < 300; i++ {
+		r := newRig(t, nil)
+		errc := make(chan error, 1)
+		go func() {
+			errc <- r.m.Conn().Invoke(context.Background(), mPing, wrapperspb.String("x"), new(wrapperspb.StringValue))
+		}()
+		if f := r.next(t); f.Body != fleet.BodyOpen {
+			t.Fatalf("got %+v", f)
+		}
+		r.m.Close()
+		err := <-errc
+		if status.Code(err) != codes.Unavailable || !fleet.OutcomeUnknown(err) {
+			t.Fatalf("iteration %d: %v (unknown=%v)", i, err, fleet.OutcomeUnknown(err))
+		}
 	}
 }

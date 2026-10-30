@@ -19,12 +19,14 @@ func mustAD(s string) adguid.GUID {
 }
 
 var (
-	rightResetPassword   = mustAD("00299570-246d-11d0-a768-00aa006e0529")
-	rightReanimate       = mustAD("45ec5156-db7e-47bb-b53f-dbeb2d03c40f")
-	rightGetChanges      = mustAD("1131f6aa-9c07-11d1-f79f-00c04fc2dcd2")
-	rightGetChangesAll   = mustAD("1131f6ad-9c07-11d1-f79f-00c04fc2dcd2")
-	rightValidatedSPN    = mustAD("f3a64788-5306-11d1-a9c5-0000f80367c1")
-	rightValidatedDNSHot = mustAD("72e39547-7b18-11d1-adef-00c04fd8d5cd")
+	rightResetPassword      = mustAD("00299570-246d-11d0-a768-00aa006e0529")
+	rightReanimate          = mustAD("45ec5156-db7e-47bb-b53f-dbeb2d03c40f")
+	rightGetChanges         = mustAD("1131f6aa-9c07-11d1-f79f-00c04fc2dcd2")
+	rightGetChangesAll      = mustAD("1131f6ad-9c07-11d1-f79f-00c04fc2dcd2")
+	rightValidatedSPN       = mustAD("f3a64788-5306-11d1-a9c5-0000f80367c1")
+	rightValidatedDNSHot    = mustAD("72e39547-7b18-11d1-adef-00c04fd8d5cd")
+	rightGetChangesFiltered = mustAD("89e95b76-444d-4c62-991a-0facbeda640c")
+	rightSelfMembership     = mustAD("bf9679c0-0de6-11d0-a285-00aa003049e2")
 	// propSetUserAcctRestrictions includes msDS-AllowedToActOnBehalfOfOtherIdentity (R3).
 	propSetUserAcctRestrictions = mustAD("4c164200-20c0-11d0-a768-00aa006e0529")
 )
@@ -95,3 +97,17 @@ var expectations = map[v1.RightsFamily][]expectation{
 // confidential-attribute reads on child objects whose classes vary by LAPS flavour (TM §6.3 R10,
 // `[OPEN → ADM-060 spec]`). Their absence is not reported as missing, and the follow-up ticket
 // named in T-0096's advance note adds them.
+
+// benignBroadExtended are the typed extended rights a broad principal holds by default and that
+// are not an exposure on a tier0 object. Default-deny: anything not listed is reported.
+// Confirm further domainDNS defaults on Samba / the Windows lab (T-0231) before adding to it.
+var benignBroadExtended = map[adguid.GUID]bool{
+	mustAD("ab721a53-1e2f-11d0-9819-00aa0040529b"): true, // User-Change-Password (Everyone default)
+	// Seen as Everyone/Authenticated Users defaults on Samba 4 tier0 objects in the T-0237 lab run
+	// (schema default SDDL, copied from Windows). Windows-lab confirmation is T-0231 [UNVERIFIED].
+	mustAD("ab721a55-1e2f-11d0-9819-00aa0040529b"): true, // Send-To (messaging only, no directory change)
+	mustAD("edacfd8f-ffb3-11d1-b41d-00a0c968f939"): true, // Apply-Group-Policy (needs GPO read+apply, no write)
+	mustAD("05c74c5e-4deb-43b4-bd9f-86664c2a7fd5"): true, // Enable-Per-User-Reversibly-Encrypted-Password (domainDNS default)
+	mustAD("ccc2dc7d-a6ad-4a7a-8846-c04e3cc53501"): true, // Update-Password-Not-Required-Bit (domainDNS default)
+	mustAD("280f369c-67c7-438e-ae98-1d46f3c6f541"): true, // Unexpire-Password (domainDNS default)
+}

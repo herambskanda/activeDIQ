@@ -255,6 +255,32 @@ paths:
               schema:
                 type: string
                 format: binary
+  /widgets/claim:
+    post:
+      tags: [widgets]
+      operationId: claimWidget
+      summary: A cookie parameter, the peer address and a multi-line Set-Cookie header
+      x-permission: widgets.write
+      x-activediq-stability: stable
+      x-activediq-peer-ip: true
+      parameters:
+        - name: claim_ticket
+          in: cookie
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Claimed
+          headers:
+            Set-Cookie:
+              required: true
+              schema:
+                type: array
+                items:
+                  type: string
+        "404":
+          $ref: shared/problems.yaml#/components/responses/NotFound
 components:
   schemas:
     WidgetSortKey:

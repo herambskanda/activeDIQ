@@ -26,6 +26,9 @@ const (
 	Graph       = "internal/connector/graph"             // the Microsoft Graph connector
 	ADConn      = "internal/connector/ad"                // AD connector: LDAPS dial to domain controllers (TB2, not TB9)
 	FleetDial   = "internal/platform/fleet/dial"         // component to server dial, pinned to the installation CA (TB6, not TB9)
+	ComposeConn = "internal/compose/connector"           // the connector binary's composition root: wires connector/ad into the tunnel (ADR-0003 rule 7, blueprint §1.1, T-0665)
+	Authz       = "internal/platform/authz"              // the authorisation layer: the only minter of SecretReadGrant (T-0313)
+	SD          = "internal/directory/sd"                // P6
 	Attr        = "internal/directory/attr"              // P3
 	Secret      = "internal/platform/secret"             // Secret and secretjson
 	Store       = "internal/platform/store"              // data-access package: pgx, set_config, reportsql
@@ -48,11 +51,18 @@ const (
 	TLSConfig = "**/tlsconfig"
 )
 
+// LabBuilds are the Go files compiled only under the `lab` build tag that may reach past a boundary
+// production code may not. Each must also be declared in tools/fitness/stack/manifest.json
+// exceptions.labBuilds (ADR-0001, T-0792), which a test of the safeprim scanner checks, and must carry
+// a `//go:build lab` constraint, which the scanner checks: a file that lost its tag loses the exemption.
+var LabBuilds = []string{
+	"internal/compose/server/labbootstrap_lab.go", // T-0684: in-process lab AD connector for a booted server
+}
+
 // UnitHomes maps each FF-SP4 corpus unit to the home package patterns of its implementation. The
 // corpus gate (tools/fitness/corpus) fails when Go code exists in a home but no implementation entry
 // in testdata/safe-primitives/implementations.json declares the unit, so an implementation cannot
-// exist without running the corpus. P6 (sd.read, sd.write) has no home here yet: its packages are
-// named by the build tickets T-0118 and T-0135.
+// exist without running the corpus. sd.read (T-0149) and sd.write (T-0583) live in the sd package.
 var UnitHomes = map[string][]string{
 	"ldapfilter":      {LDAPFilter},
 	"dn":              {DN},
@@ -73,6 +83,8 @@ var UnitHomes = map[string][]string{
 	"html":            {Htmlx},
 	"mail":            {Mail},
 	"pdf":             {ExportPDF},
+	"sd.read":         {SD},
+	"sd.write":        {SD},
 }
 
 // TokenURLSite names one function or method of the Graph connector that is exempt from one
@@ -159,6 +171,9 @@ func IsTest(file string) bool { return strings.HasSuffix(file, "_test.go") }
 var TestSupport = []string{
 	"internal/platform/store/storetest",
 	"internal/platform/jobs/jobstest", // fleet-wide claim lapse: a product import could double-run jobs
+	"internal/testlab",                // lab environment discovery (.lab.env, LDAPS dial to the lab DC); imported by *_test.go and storetest only (T-0800)
+	"internal/testlab/harnessdocker",  // docker run/rm/reap of harness Postgres containers, fixed argv (T-0377, T-0800)
+	"internal/connector/labadmin",     // lab-only LDAP admin that builds hostile DNs by hand in lab tests (T-0800)
 }
 
 // SQLForwarder names one access wrapper whose Exec/Query/QueryRow pass their own SQL parameter to the

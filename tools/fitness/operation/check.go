@@ -1,5 +1,6 @@
-// Package main is the fitness-operation job (ADR-0005). It carries check O9 only: the kernel import
-// DAG of rule 13. O1-O8 land with the code they inspect (the step token, Actions, the audit chain).
+// Package main is the fitness-operation job (ADR-0005). It carries O9 (the kernel import DAG of
+// rule 13) and O1 (the step token: syntactic part, plus the type-aware stepescape pass). O2-O8 land
+// with the code they inspect (Actions, the audit chain).
 //
 // O9 parses the ```dag block of the ADR file itself, maps each listed name to
 // internal/platform/<name>, reads the import statements of every .go file (tests included) of each
@@ -40,8 +41,11 @@ type Violation struct {
 }
 
 func (v Violation) String() string {
-	if v.Check == "O1" {
+	switch v.Check {
+	case "O1", "O2":
 		return fmt.Sprintf("%s: %s [rule 2] %s", v.Pos, v.Check, v.Msg)
+	case "O4":
+		return fmt.Sprintf("%s: %s [rule 3] %s", v.Pos, v.Check, v.Msg)
 	}
 	return fmt.Sprintf("%s: %s [rule 13] %s", v.Pos, v.Check, v.Msg)
 }

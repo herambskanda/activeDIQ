@@ -247,3 +247,40 @@ func TestDEKFromBytesZeroesArgument(t *testing.T) {
 		t.Fatal("argument not zeroed on version 0")
 	}
 }
+
+func TestPlatformAndTenantWrapsAreDomainSeparated(t *testing.T) {
+	kek := secret.FromBytes(bytes.Repeat([]byte{7}, 32))
+	p, err := keys.NewLocalProvider("k", kek)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, ref, err := keys.WrapPlatform(p, "api-tls", 1, []byte("platform secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := keys.UnwrapPlatform(p, "api-tls", 1, ref, w); err != nil || string(got) != "platform secret" {
+		t.Fatalf("round trip: %v", err)
+	}
+	if _, err := keys.UnwrapPlatform(p, "other", 1, ref, w); err == nil {
+		t.Fatal("unwrapped under another purpose")
+	}
+	// A platform blob is not a tenant DEK, for any tenant.
+	tn := tenant.New()
+	if _, err := p.Unwrap(keys.WrapRequest{Tenant: tn, Version: 1}, ref, w); err == nil {
+		t.Fatal("platform blob unwrapped as tenant DEK")
+	}
+	// And the reverse: a tenant blob does not unwrap as a platform secret.
+	tw, tref, err := p.Wrap(keys.WrapRequest{Tenant: tn, Version: 1}, []byte("tenant"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := keys.UnwrapPlatform(p, "api-tls", 1, tref, tw); err == nil {
+		t.Fatal("tenant blob unwrapped as platform secret")
+	}
+	// Both or neither is invalid.
+	for _, r := range []keys.WrapRequest{{Tenant: tn, Purpose: "x", Version: 1}, {Version: 1}} {
+		if _, _, err := p.Wrap(r, []byte("x")); keys.Code(err) != keys.InvalidContext {
+			t.Fatalf("%+v: want InvalidContext, got %v", r, err)
+		}
+	}
+}

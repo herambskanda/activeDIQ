@@ -1,0 +1,10 @@
+{
+ "id": "S-R06",
+ "class": "replayed",
+ "cites": [
+  "SAML-15"
+ ],
+ "build": "notbefore_future",
+ "expect": "refuse",
+ "reason": "saml.time"
+}

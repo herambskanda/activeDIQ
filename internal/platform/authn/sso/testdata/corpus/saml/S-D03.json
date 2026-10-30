@@ -1,0 +1,10 @@
+{
+ "id": "S-D03",
+ "class": "malformed",
+ "cites": [
+  "SAML-1"
+ ],
+ "build": "deflate_body",
+ "expect": "refuse",
+ "reason": "saml.binding"
+}

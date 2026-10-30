@@ -2,6 +2,7 @@ package ad
 
 import (
 	"context"
+	"errors"
 	"strconv"
 
 	"github.com/go-ldap/ldap/v3"
@@ -43,11 +44,6 @@ func (s *Session) loadSecretAttrs(ctx context.Context) error {
 		return fail(CodeFilterRejected, ldapfilter.Code(err), err)
 	}
 
-	extra := make([]ldapfilter.AttrInfo, 0, 64)
-	for _, n := range secretattr.Static() {
-		extra = append(extra, ldapfilter.AttrInfo{Name: n, Syntax: ldapfilter.SynOctet, Secret: true})
-	}
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.conn == nil {
@@ -55,27 +51,14 @@ func (s *Session) loadSecretAttrs(ctx context.Context) error {
 	}
 	stop := s.watch(ctx, s.conn)
 	defer stop()
-	var cookie []byte
-	for {
+	extra, err := collectSecretSchema(func(cookie []byte) (*ldap.SearchResult, error) {
 		paging := ldap.NewControlPaging(MaxPageSize)
 		paging.SetCookie(cookie)
-		res, err := s.searchOnceLocked(ctx, rd.SchemaNamingContext, ldap.ScopeSingleLevel, flt.String(),
+		return s.searchOnceLocked(ctx, rd.SchemaNamingContext, ldap.ScopeSingleLevel, flt.String(),
 			[]string{"lDAPDisplayName", "attributeID"}, []ldap.Control{paging})
-		if err != nil {
-			return err
-		}
-		for _, e := range res.Entries {
-			name := e.GetAttributeValue("lDAPDisplayName")
-			if name == "" {
-				continue
-			}
-			extra = append(extra, ldapfilter.AttrInfo{
-				Name: name, OID: e.GetAttributeValue("attributeID"), Syntax: ldapfilter.SynOctet, Secret: true,
-			})
-		}
-		if cookie = pagingCookie(res.Controls); len(cookie) == 0 {
-			break
-		}
+	})
+	if err != nil {
+		return err
 	}
 	s.schema = s.schema.With(extra...)
 	return nil
@@ -148,10 +131,19 @@ func (s *Session) ReadSecret(ctx context.Context, target dn.ObjectRef, attr Secr
 		if err != nil {
 			out = string(CodeOf(err))
 		}
-		if aerr := audit(out); aerr != nil && err == nil {
-			sec.Destroy()
-			sec, err = secret.Secret{}, fail(CodeProtocol, "audit failed", aerr)
+		aerr := audit(out)
+		if aerr == nil {
+			return
 		}
+		auditErr := fail(CodeProtocol, "audit failed", aerr)
+		if err == nil {
+			sec.Destroy()
+			sec, err = secret.Secret{}, auditErr
+			return
+		}
+		// The read failed and so did its audit: the caller sees both, the read's error first so
+		// CodeOf still names the read failure, and the call is visibly unaudited (T-0313).
+		err = errors.Join(err, fail(CodeProtocol, "audit failed (failed read is unaudited)", aerr))
 	}()
 	if !isGUID || attr.name == "" || grant.attr == "" || grant.target != g || grant.attr != attr.name {
 		return secret.Secret{}, fail(CodeInvalidArgument, "grant does not match request", nil)
@@ -221,4 +213,41 @@ func equalFoldASCII(a, b string) bool {
 		}
 	}
 	return true
+}
+
+// collectSecretSchema pages through the schema-flagged attributeSchema objects (page returns one page
+// for a cookie) and returns them unioned with the static list. A real AD always flags some attribute
+// (unicodePwd and friends carry fCONFIDENTIAL or fPARTITIONSECRET), so zero flagged objects means the
+// schema read was filtered, truncated or answered by something that is not the schema: fail closed
+// rather than run on the static list alone (T-0313).
+func collectSecretSchema(page func(cookie []byte) (*ldap.SearchResult, error)) ([]ldapfilter.AttrInfo, error) {
+	extra := make([]ldapfilter.AttrInfo, 0, 64)
+	for _, n := range secretattr.Static() {
+		extra = append(extra, ldapfilter.AttrInfo{Name: n, Syntax: ldapfilter.SynOctet, Secret: true})
+	}
+	flagged := 0
+	var cookie []byte
+	for {
+		res, err := page(cookie)
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range res.Entries {
+			name := e.GetAttributeValue("lDAPDisplayName")
+			if name == "" {
+				continue
+			}
+			flagged++
+			extra = append(extra, ldapfilter.AttrInfo{
+				Name: name, OID: e.GetAttributeValue("attributeID"), Syntax: ldapfilter.SynOctet, Secret: true,
+			})
+		}
+		if cookie = pagingCookie(res.Controls); len(cookie) == 0 {
+			break
+		}
+	}
+	if flagged == 0 {
+		return nil, fail(CodeProtocol, "schema returned no secret-flagged attributes", nil)
+	}
+	return extra, nil
 }

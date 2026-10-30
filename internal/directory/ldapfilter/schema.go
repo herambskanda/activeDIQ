@@ -135,6 +135,12 @@ func ParseSortKey(name string, sc *Schema) (AttrName, error) {
 	return n, nil
 }
 
+// Syntax returns the value syntax of a schema attribute (descr or numericoid, any case).
+func (s *Schema) Syntax(name string) (Syntax, bool) {
+	a, ok := s.lookup(name)
+	return a.Syntax, ok
+}
+
 func (s *Schema) lookup(name string) (AttrInfo, bool) {
 	if s == nil {
 		return AttrInfo{}, false

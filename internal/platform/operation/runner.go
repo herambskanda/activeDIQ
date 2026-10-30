@@ -5,7 +5,8 @@ import (
 	crand "crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -17,7 +18,10 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
+	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
+	"github.com/skenzeriq/activediq/internal/platform/personal"
+	"github.com/skenzeriq/activediq/internal/platform/secret"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
@@ -61,6 +65,25 @@ type Config struct {
 	Now       func() time.Time
 	NewID     func() string
 	Component string
+
+	// The fields below are used by the persisted Directory path. SubmitDirectory needs Jobs, Keys and
+	// Pinner (when an Action writes to AD); the others are optional.
+
+	Jobs       *jobs.Registry // enqueues the chunk jobs at approved -> queued
+	Keys       DEKSource      // seals transient secrets
+	Pinner     Pinner         // pins one writable DC per naming context (rule 5)
+	Settings   Settings       // tenant settings read by the kernel hold rules
+	Provenance Provenance     // the sock-puppet check of rule 8
+	Alerts     Alerter
+	Lease      time.Duration // a step claim's lease; default 2 minutes
+	Slots      int           // concurrent writes per (connection, DC); default 4
+	// Attempts is the transient-error attempt limit of one step; default 5. Backoff is the base delay.
+	Attempts int
+	Backoff  time.Duration
+	// StallWindow is how long an operation with unclaimed work may make no progress before the sweeper
+	// re-drives it; AbandonAfter is how long an unsubmitted plan lives. Defaults 5 minutes and 7 days.
+	StallWindow  time.Duration
+	AbandonAfter time.Duration
 }
 
 // Runner runs Actions through the pipeline. It is safe for concurrent use.
@@ -86,7 +109,31 @@ func NewRunner(cfg Config) (*Runner, error) {
 	if cfg.Component == "" {
 		cfg.Component = "operation"
 	}
-	return &Runner{cfg: cfg, sleep: time.Sleep}, nil
+	if cfg.Lease <= 0 {
+		cfg.Lease = 2 * time.Minute
+	}
+	if cfg.Slots <= 0 {
+		cfg.Slots = 4
+	}
+	if cfg.Attempts <= 0 {
+		cfg.Attempts = 5
+	}
+	if cfg.Backoff <= 0 {
+		cfg.Backoff = 200 * time.Millisecond
+	}
+	if cfg.StallWindow <= 0 {
+		cfg.StallWindow = 5 * time.Minute
+	}
+	if cfg.AbandonAfter <= 0 {
+		cfg.AbandonAfter = 7 * 24 * time.Hour
+	}
+	rn := &Runner{cfg: cfg, sleep: time.Sleep}
+	if cfg.Jobs != nil {
+		if err := rn.registerJobs(cfg.Jobs); err != nil {
+			return nil, err
+		}
+	}
+	return rn, nil
 }
 
 func randomID() string {
@@ -108,6 +155,24 @@ type Request struct {
 	// Pins are the DCs pinned per naming context for this operation (rule 5), chosen by the caller of
 	// the runner, never by an Action.
 	Pins authority.Pins
+	// DSAs are the pinned DCs' DSA GUIDs per naming context, chosen with Pins.
+	DSAs authority.DSAPins
+
+	// The fields below are used by the persisted Directory path (SubmitDirectory).
+
+	// Origin is how the operation started (DM-41); it defaults to "api".
+	Origin string
+	// MaxObjects is an automation policy's blast-radius limit (DM-60.I3); zero means none.
+	MaxObjects int
+	// IdempotencyKey de-duplicates a retried submission per (tenant, requester) for 24 hours (rule 4).
+	IdempotencyKey string
+	// UndoNeededApproval: this is an undo of an operation that itself needed approval (DM-41.I3).
+	UndoNeededApproval bool
+	// Secrets are transient secret inputs by item number (rule 9). They are sealed into
+	// operation_secrets and never appear in the plan, the input, an event or a log.
+	Secrets map[int]secret.Secret
+	// SecretTTL bounds the secrets' life; zero means 24 hours, and the cap is 72 hours.
+	SecretTTL time.Duration
 }
 
 // StepResult is the recorded result of one step.
@@ -191,7 +256,7 @@ func (u *run) exec(ctx context.Context) (Result, error) {
 			return fmt.Errorf("plan transaction: %w", err)
 		}
 		var perr error
-		steps, perr = u.act.Plan(ctx, PlanContext{Tx: tx, Facts: r.cfg.Facts, Pins: maps.Clone(u.req.Pins)}, u.req.Input)
+		steps, perr = u.act.Plan(ctx, PlanContext{Tx: tx, Facts: u.pinnedFacts(), Pins: maps.Clone(u.req.Pins)}, u.req.Input)
 		return perr
 	})
 	if err != nil {
@@ -252,10 +317,10 @@ func (u *run) applyOne(ctx context.Context, tx store.Tx, idx int, sp StepPlan) (
 	u.failKey, u.failTgt = key, sp.Target
 	q := r.cfg.Authz.FactsQuery(u.req.Actor, u.d.Permission, sp.Target)
 	st, revoke, err := minter.Mint(step.Spec{
-		Key: key, Attempt: 1, Actor: u.req.Actor, NC: sp.Target.NC, Pins: u.req.Pins, Tx: tx, Query: q,
+		Key: key, Attempt: 1, Actor: u.req.Actor, NC: sp.Target.NC, Pins: u.req.Pins, DSAs: u.req.DSAs, Tx: tx, Query: q,
 		Digest: stepDigest(sp),
 		Recheck: func(ctx context.Context, f authority.Facts) error {
-			return r.recheck(ctx, u.req.Actor, u.d.Permission, sp.Target, f)
+			return r.recheck(ctx, u.req.Tenant, u.req.Actor, u.d.Permission, sp.Target, f)
 		},
 	})
 	if err != nil {
@@ -282,7 +347,7 @@ func (u *run) applyOne(ctx context.Context, tx store.Tx, idx int, sp StepPlan) (
 		return StepResult{}, u.failed("verify_failed", fmt.Errorf("%w: %s", ErrVerify, v.Reason))
 	}
 	ev := u.event(audit.Success, "applied", key, sp.Target)
-	ev.Changes = changesOf(sp.Diff)
+	ev.Changes = changesOf(sp.Target, sp.Diff)
 	if idx > 0 {
 		ev.ID = u.eventID + fmt.Sprintf("-%d", idx)
 	}
@@ -292,25 +357,50 @@ func (u *run) applyOne(ctx context.Context, tx store.Tx, idx int, sp StepPlan) (
 	return StepResult{Key: key, Outcome: out}, nil
 }
 
-func (r *Runner) recheck(ctx context.Context, chain authority.Chain, perm authz.Permission, t authority.TargetRef, f authority.Facts) error {
+func (r *Runner) recheck(ctx context.Context, t tenant.ID, chain authority.Chain, perm authz.Permission, tr authority.TargetRef, f authority.Facts) error {
 	if f.Tier0 {
 		return errors.New("tier0 target") // no role touches tier0 (rule 7)
 	}
-	return r.cfg.Authz.Authorize(ctx, chain, perm, t, f)
+	return r.cfg.Authz.Authorize(authority.WithTenant(ctx, t.String()), chain, perm, tr, f)
 }
 
 // liveFacts reads the facts for one target on the operation's pins (rule 5), so the gate and the
 // write agree on the DC. An AD target whose NC has no pin is refused rather than read unpinned.
 func (u *run) liveFacts(ctx context.Context, q authority.FactsQuery, t authority.TargetRef) (authority.Facts, error) {
-	if u.r.cfg.Facts == nil {
-		return authority.Facts{}, nil
+	q.Target = t
+	return u.pinnedFacts().Facts(ctx, q)
+}
+
+func (u *run) pinnedFacts() PinnedFacts {
+	return pinnedReader{port: u.r.cfg.Facts, ad: u.d.Target == TargetAD, store: u.d.Target == TargetStore, pins: maps.Clone(u.req.Pins), dsas: maps.Clone(u.req.DSAs), tenant: u.req.Tenant}
+}
+
+// pinnedReader binds a LiveFacts port to one operation's pins.
+type pinnedReader struct {
+	port LiveFacts
+	ad   bool
+	// store: a Store Action, which reads no directory facts, so a nil port is legitimate.
+	store  bool
+	pins   authority.Pins
+	dsas   authority.DSAPins
+	tenant tenant.ID
+}
+
+func (p pinnedReader) Facts(ctx context.Context, q authority.FactsQuery) (authority.Facts, error) {
+	if p.port == nil {
+		if p.store {
+			return authority.Facts{}, nil
+		}
+		return authority.Facts{}, fmt.Errorf("%w: directory target with no Facts port", ErrInvalid)
 	}
-	if u.d.Target == TargetAD {
-		if t.NC == "" || u.req.Pins[t.NC] == "" {
+	if p.ad {
+		if nc := q.Target.NC; nc == "" || p.pins[nc] == "" {
 			return authority.Facts{}, fmt.Errorf("%w: no DC pin for the target's naming context", ErrInvalid)
 		}
 	}
-	return u.r.cfg.Facts.Facts(ctx, maps.Clone(u.req.Pins), q)
+	// The read adapter resolves the connection under the tenant and pins the DC by DSA GUID.
+	ctx = authority.WithDSAPins(authority.WithTenant(ctx, p.tenant.String()), maps.Clone(p.dsas))
+	return p.port.Facts(ctx, maps.Clone(p.pins), q)
 }
 
 func (u *run) authorise(ctx context.Context, t authority.TargetRef) (authority.Facts, error) {
@@ -319,7 +409,7 @@ func (u *run) authorise(ctx context.Context, t authority.TargetRef) (authority.F
 	if err != nil {
 		return f, u.denied("facts_unavailable", err)
 	}
-	if err := u.r.recheck(ctx, u.req.Actor, u.d.Permission, t, f); err != nil {
+	if err := u.r.recheck(ctx, u.req.Tenant, u.req.Actor, u.d.Permission, t, f); err != nil {
 		return f, u.denied("denied", err)
 	}
 	return f, nil
@@ -331,6 +421,9 @@ func (u *run) checkPlan(steps []StepPlan) error {
 		sp := &steps[i]
 		if sp.Kind == "" || sp.Reversibility.rank() < 0 || sp.Reversibility.rank() > u.d.Reversibility.rank() {
 			return fmt.Errorf("%w: step %d of %q has no kind or a reversibility class beyond the descriptor's", ErrInvalid, i, u.d.ID)
+		}
+		if u.d.TargetClass != "" && sp.Target.Class != u.d.TargetClass {
+			return fmt.Errorf("%w: step %d of %q targets class %q, the descriptor declares %q", ErrInvalid, i, u.d.ID, sp.Target.Class, u.d.TargetClass)
 		}
 		for j := range sp.Diff {
 			if sp.Diff[j].Secret { // a secret value is never held in a plan, diff or event
@@ -344,7 +437,7 @@ func (u *run) checkPlan(steps []StepPlan) error {
 		Version int
 		Steps   []StepPlan
 	}
-	b, err := json.Marshal(hashed{u.d.ID, u.d.Version, steps})
+	b, err := json.Marshal(hashed{u.d.ID, u.d.Version, steps}, planHashOpts...)
 	if err != nil {
 		return fmt.Errorf("%w: plan does not encode", ErrInvalid)
 	}
@@ -371,10 +464,11 @@ func stepDigest(sp StepPlan) step.Digest {
 	return step.Compute(sp.Kind, sp.Target, attrs)
 }
 
-func changesOf(cs []Change) []audit.Change {
+func changesOf(t authority.TargetRef, cs []Change) []audit.Change {
+	subject, _ := personal.DirSubject(t.Connection, t.GUID) // empty when the target is not a directory object
 	out := make([]audit.Change, len(cs))
 	for i, c := range cs {
-		out[i] = audit.Change{Attribute: c.Attribute, Before: c.Before, After: c.After, Secret: c.Secret}
+		out[i] = audit.Change{Subject: subject, Attribute: c.Attribute, Before: c.Before, After: c.After, Secret: c.Secret}
 	}
 	return out
 }
@@ -413,3 +507,7 @@ func (u *run) recordFailure(ctx context.Context, cause error) error {
 		"principal", string(u.req.Actor.Requester.ID), "target", u.failTgt.GUID, "outcome", string(u.outcome), "reason", u.reason)
 	return errors.Join(cause, fmt.Errorf("%w: %w", ErrRecord, last))
 }
+
+// planHashOpts keeps the plan-hash bytes those of the v1 encoder (nil slices and maps as null, HTML
+// escaping on) with map keys sorted, so a hash recorded before the json/v2 move still verifies.
+var planHashOpts = []json.Options{json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true)}

@@ -52,3 +52,7 @@ func CodeOf(err error) Code {
 	}
 	return ""
 }
+
+// NewError returns the package error for a code, for adapters and test doubles of the directory
+// seams that consumers define over Session.
+func NewError(c Code) error { return fail(c, "", nil) }

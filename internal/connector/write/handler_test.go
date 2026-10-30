@@ -4,11 +4,14 @@ import (
 	"context"
 	"os"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/connector/tier0"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
+	"github.com/skenzeriq/activediq/internal/directory/dn"
+	"github.com/skenzeriq/activediq/internal/directory/sd"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
@@ -654,5 +657,27 @@ func TestFileBaselineWidenedIsRecorded(t *testing.T) {
 	noRec := &FileBaseline{Path: fb.Path}
 	if noRec.Append(connID, m) == nil {
 		t.Fatal("correction without a recorder must fail the append")
+	}
+}
+
+// json/v2 omitempty keeps numeric 0; the baseline line must still omit a zero revision (v1 bytes).
+func TestFileBaselineOmitsZeroRevision(t *testing.T) {
+	fb := &FileBaseline{Path: t.TempDir() + "/baseline.jsonl"}
+	if err := fb.Append(connID, []Mark{{Object: mk(1), Basis: tier0.C16, Source: "run"}, {Object: mk(2), Basis: tier0.C16, Source: "request", Revision: 3}}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(fb.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if len(lines) != 2 || strings.Contains(lines[0], "tier0_revision") || !strings.Contains(lines[1], `"tier0_revision":3`) {
+		t.Fatalf("unexpected baseline lines: %q", lines)
+	}
+}
+
+func TestApplyDACLRefusesWithoutGuardToken(t *testing.T) {
+	if err := ApplyDACL(context.Background(), Authorised{}, &fakeSDSession{}, &fakeAudit{}, dn.ObjectRef{}, sd.DACLWrite{}); err == nil {
+		t.Fatal("zero Authorised must be refused")
 	}
 }

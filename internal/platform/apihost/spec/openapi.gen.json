@@ -1,6 +1,28 @@
 {
   "components": {
     "parameters": {
+      "ConnectionId": {
+        "description": "The Entra connection.",
+        "in": "path",
+        "name": "connectionId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "x-activediq-tag": "connections"
+      },
+      "DestinationId": {
+        "description": "The destination.",
+        "in": "path",
+        "name": "destinationId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "x-activediq-tag": "platform.notify"
+      },
       "IdempotencyKey": {
         "description": "Makes a mutating bulk call safe to retry. The same key with a different body is refused.",
         "in": "header",
@@ -43,6 +65,19 @@
           "minimum": 1,
           "type": "integer"
         }
+      },
+      "RequiredIdempotencyKey": {
+        "description": "The request ID. It names the audit events of the change and makes a retry of a create safe.",
+        "in": "header",
+        "name": "Idempotency-Key",
+        "required": true,
+        "schema": {
+          "maxLength": 128,
+          "minLength": 8,
+          "pattern": "^[A-Za-z0-9._~-]+$",
+          "type": "string"
+        },
+        "x-activediq-tag": "platform.notify"
       }
     },
     "responses": {
@@ -211,6 +246,21 @@
         },
         "description": "Not found"
       },
+      "NotImplemented": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 501,
+              "title": "Not implemented",
+              "type": "/problems/not-implemented"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The operation is declared but not built yet"
+      },
       "NotReady": {
         "content": {
           "application/problem+json": {
@@ -301,6 +351,36 @@
         },
         "description": "Too many requests"
       },
+      "SetupRefused": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 401,
+              "title": "Setup was refused",
+              "type": "/problems/setup-refused"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "First-run setup was not claimed. One answer for every cause (wrong secret, expired secret, secret already used, install not in first-run state), so the response teaches a caller nothing. It never carries a detail."
+      },
+      "SignInFailed": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 401,
+              "title": "Sign-in failed",
+              "type": "/problems/sign-in-failed"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The sign-in did not succeed. One answer for every cause (unknown account, wrong secret, non-local account, disabled account, throttled account, expired or exhausted pending sign-in), so the response teaches a caller nothing (TM section 7.6 rule 2). It never carries a detail."
+      },
       "StepUpRequired": {
         "content": {
           "application/problem+json": {
@@ -363,11 +443,234 @@
       }
     },
     "schemas": {
+      "AssignmentGrant": {
+        "additionalProperties": false,
+        "description": "Input of delegation.assignment.grant. The caller chooses assignmentId, so a retry is the same grant. A role holding a control_plane permission is granted to an account only.",
+        "properties": {
+          "assignmentId": {
+            "$ref": "#/components/schemas/DelegationId"
+          },
+          "roleId": {
+            "$ref": "#/components/schemas/DelegationId"
+          },
+          "roots": {
+            "items": {
+              "$ref": "#/components/schemas/AssignmentRoot"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "subject": {
+            "$ref": "#/components/schemas/AssignmentSubject"
+          },
+          "validFrom": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "validUntil": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "assignmentId",
+          "roleId",
+          "subject",
+          "roots"
+        ],
+        "type": "object",
+        "x-activediq-tag": "delegation"
+      },
+      "AssignmentRevoke": {
+        "additionalProperties": false,
+        "description": "Input of delegation.assignment.revoke. Ends one assignment; a revoked assignment is not restored.",
+        "properties": {
+          "assignmentId": {
+            "$ref": "#/components/schemas/DelegationId"
+          }
+        },
+        "required": [
+          "assignmentId"
+        ],
+        "type": "object",
+        "x-activediq-tag": "delegation"
+      },
+      "AssignmentRoot": {
+        "additionalProperties": false,
+        "description": "One scope root of an assignment (DM-35). exclude subtracts the subtree from the scope.",
+        "properties": {
+          "connectionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "exclude": {
+            "type": "boolean"
+          },
+          "guid": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AssignmentRootKind"
+          }
+        },
+        "required": [
+          "kind",
+          "connectionId",
+          "guid"
+        ],
+        "type": "object",
+        "x-activediq-tag": "delegation"
+      },
+      "AssignmentRootKind": {
+        "description": "What the root's guid names. The server refuses a kind it does not know.",
+        "enum": [
+          "naming_context",
+          "ou_subtree",
+          "entra_tenant",
+          "tier0_scope",
+          "tenant"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "delegation"
+      },
+      "AssignmentSubject": {
+        "description": "Who holds the assignment, by kind. Exactly the members of its kind are accepted.",
+        "discriminator": {
+          "mapping": {
+            "account": "#/components/schemas/SubjectAccount",
+            "automation": "#/components/schemas/SubjectAutomation",
+            "group": "#/components/schemas/SubjectGroup"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/SubjectAccount"
+          },
+          {
+            "$ref": "#/components/schemas/SubjectGroup"
+          },
+          {
+            "$ref": "#/components/schemas/SubjectAutomation"
+          }
+        ],
+        "x-activediq-tag": "delegation"
+      },
+      "BreakGlassPasswordRequest": {
+        "additionalProperties": false,
+        "description": "The local break-glass account and its password.",
+        "properties": {
+          "password": {
+            "$ref": "#/components/schemas/SecretInput"
+          },
+          "username": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "password"
+        ],
+        "type": "object",
+        "x-activediq-tag": "platform.authn"
+      },
+      "CsrfValue": {
+        "description": "Which header carries the CSRF value and what it is. Named value, not token, because it is not a credential.",
+        "properties": {
+          "header": {
+            "maxLength": 64,
+            "type": "string"
+          },
+          "value": {
+            "maxLength": 256,
+            "type": "string"
+          }
+        },
+        "required": [
+          "header",
+          "value"
+        ],
+        "type": "object",
+        "x-activediq-tag": "platform.authn"
+      },
       "Cursor": {
         "description": "An opaque page cursor. Clients pass it back unchanged.",
         "maxLength": 1024,
         "minLength": 1,
         "type": "string"
+      },
+      "DelegationId": {
+        "description": "A caller-chosen identifier of a role or an assignment, a canonical UUID.",
+        "format": "uuid",
+        "type": "string",
+        "x-activediq-tag": "delegation"
+      },
+      "DelegationPermissions": {
+        "description": "Permission names, each of the form family.noun.verb. Duplicates are collapsed.",
+        "items": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-z0-9_]+(\\.[a-z0-9_]+)+$",
+          "type": "string"
+        },
+        "maxItems": 512,
+        "minItems": 1,
+        "type": "array",
+        "x-activediq-tag": "delegation"
+      },
+      "DirectoryUser": {
+        "description": "A user as search shows it. Only these fields; the objectGuid is the key.",
+        "properties": {
+          "displayName": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "objectGuid": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "samAccountName": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "userPrincipalName": {
+            "maxLength": 1024,
+            "type": "string"
+          }
+        },
+        "required": [
+          "objectGuid",
+          "displayName",
+          "samAccountName",
+          "userPrincipalName",
+          "enabled"
+        ],
+        "type": "object",
+        "x-activediq-tag": "directory"
+      },
+      "DirectoryUserList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DirectoryUser"
+            },
+            "maxItems": 100,
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "x-activediq-tag": "directory"
       },
       "GUIDRef": {
         "additionalProperties": false,
@@ -727,11 +1030,432 @@
         ],
         "type": "object"
       },
+      "RoleCreate": {
+        "additionalProperties": false,
+        "description": "Input of delegation.role.create. The caller chooses roleId, so a retry is the same role. A role is never deleted; empty it with delegation.role.update.",
+        "properties": {
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "permissions": {
+            "$ref": "#/components/schemas/DelegationPermissions"
+          },
+          "roleId": {
+            "$ref": "#/components/schemas/DelegationId"
+          },
+          "tier": {
+            "description": "0 administers Tier-0 scope, 1 platform administration, 2 help desk.",
+            "maximum": 2,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "roleId",
+          "name",
+          "tier",
+          "permissions"
+        ],
+        "type": "object",
+        "x-activediq-tag": "delegation"
+      },
+      "RoleUpdate": {
+        "additionalProperties": false,
+        "description": "Input of delegation.role.update. Replaces a custom role's permissions; a built-in role is refused.",
+        "properties": {
+          "permissions": {
+            "$ref": "#/components/schemas/DelegationPermissions"
+          },
+          "roleId": {
+            "$ref": "#/components/schemas/DelegationId"
+          }
+        },
+        "required": [
+          "roleId",
+          "permissions"
+        ],
+        "type": "object",
+        "x-activediq-tag": "delegation"
+      },
       "SecretInput": {
         "description": "A secret a client sends: a password, a token. It is write-only, never appears in a response, and is held in memory only as a secret.Secret that is destroyed after the request.",
         "type": "string",
         "writeOnly": true,
         "x-activediq-secret": true
+      },
+      "SetupClaimRequest": {
+        "additionalProperties": false,
+        "description": "The one-time setup secret and the details of the first tenant owner.",
+        "properties": {
+          "owner": {
+            "$ref": "#/components/schemas/SetupOwner"
+          },
+          "secret": {
+            "$ref": "#/components/schemas/SecretInput"
+          }
+        },
+        "required": [
+          "secret",
+          "owner"
+        ],
+        "type": "object",
+        "x-activediq-tag": "platform.setup"
+      },
+      "SetupOwner": {
+        "additionalProperties": false,
+        "description": "The first tenant owner's account details.",
+        "properties": {
+          "displayName": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "email": {
+            "maxLength": 320,
+            "minLength": 3,
+            "type": "string"
+          }
+        },
+        "required": [
+          "displayName",
+          "email"
+        ],
+        "type": "object",
+        "x-activediq-tag": "platform.setup"
+      },
+      "SiemDestination": {
+        "description": "A destination as stored. It never carries a credential.",
+        "properties": {
+          "host": {
+            "maxLength": 253,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "plaintextOptIn": {
+            "type": "boolean"
+          },
+          "port": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "tlsVerified": {
+            "description": "True when the server certificate is verified (transport tls).",
+            "type": "boolean"
+          },
+          "transport": {
+            "$ref": "#/components/schemas/SiemTransport"
+          },
+          "warning": {
+            "description": "Present for a plaintext destination.",
+            "maxLength": 256,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "host",
+          "port",
+          "transport",
+          "tlsVerified",
+          "plaintextOptIn"
+        ],
+        "type": "object",
+        "x-activediq-tag": "platform.notify"
+      },
+      "SiemDestinationList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SiemDestination"
+            },
+            "maxItems": 1000,
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "x-activediq-tag": "platform.notify"
+      },
+      "SiemDestinationWrite": {
+        "additionalProperties": false,
+        "description": "The writable settings of a destination.",
+        "properties": {
+          "host": {
+            "description": "A plain host name or IP address. No scheme, port or path.",
+            "maxLength": 253,
+            "minLength": 1,
+            "type": "string"
+          },
+          "plaintextOptIn": {
+            "description": "Must be true with transport tcp and false or absent with tls.",
+            "type": "boolean"
+          },
+          "port": {
+            "description": "Absent takes 6514 for tls and 514 for tcp.",
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "transport": {
+            "$ref": "#/components/schemas/SiemTransportSetting"
+          }
+        },
+        "required": [
+          "host"
+        ],
+        "type": "object",
+        "x-activediq-tag": "platform.notify"
+      },
+      "SiemTransport": {
+        "description": "The transport of a stored destination. Clients ignore values they do not know.",
+        "enum": [
+          "tls",
+          "tcp"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "platform.notify"
+      },
+      "SiemTransportSetting": {
+        "description": "tls is RFC 5425 with certificate verification and is the default; tcp is plaintext and needs the opt-in. UDP is not offered.",
+        "enum": [
+          "tls",
+          "tcp"
+        ],
+        "type": "string",
+        "x-activediq-tag": "platform.notify"
+      },
+      "SubjectAccount": {
+        "additionalProperties": false,
+        "description": "A console account. The only kind that may hold a control_plane role.",
+        "properties": {
+          "accountId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "const": "account",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "accountId"
+        ],
+        "type": "object",
+        "x-activediq-tag": "delegation"
+      },
+      "SubjectAutomation": {
+        "additionalProperties": false,
+        "description": "An automation policy. Never holds a control_plane role.",
+        "properties": {
+          "kind": {
+            "const": "automation",
+            "type": "string"
+          },
+          "policyId": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "policyId"
+        ],
+        "type": "object",
+        "x-activediq-tag": "delegation"
+      },
+      "SubjectGroup": {
+        "additionalProperties": false,
+        "description": "A directory group, by connection and objectGUID. Never holds a control_plane role.",
+        "properties": {
+          "connectionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "groupGuid": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "const": "group",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "connectionId",
+          "groupGuid"
+        ],
+        "type": "object",
+        "x-activediq-tag": "delegation"
+      },
+      "TakeoverAttestationMaxAge": {
+        "additionalProperties": false,
+        "description": "The new attestation_max_age.",
+        "properties": {
+          "maxAgeSeconds": {
+            "maximum": 7776000,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "maxAgeSeconds"
+        ],
+        "type": "object",
+        "x-activediq-tag": "connections"
+      },
+      "TakeoverAttestationStart": {
+        "additionalProperties": false,
+        "description": "Where the Global Administrator signs in.",
+        "properties": {
+          "authorizeUrl": {
+            "maxLength": 2048,
+            "type": "string"
+          }
+        },
+        "required": [
+          "authorizeUrl"
+        ],
+        "type": "object",
+        "x-activediq-tag": "connections"
+      },
+      "TotpCodeRequest": {
+        "additionalProperties": false,
+        "description": "A TOTP code from the account's authenticator.",
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/SecretInput"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "type": "object",
+        "x-activediq-tag": "platform.authn"
+      },
+      "WebAuthnAssertion": {
+        "additionalProperties": false,
+        "description": "The authenticator's assertion, each field base64url (RFC 4648 section 5) without padding.",
+        "properties": {
+          "authenticatorData": {
+            "maxLength": 4096,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "type": "string"
+          },
+          "clientDataJson": {
+            "maxLength": 4096,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "type": "string"
+          },
+          "credentialId": {
+            "maxLength": 1024,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "type": "string"
+          },
+          "signature": {
+            "maxLength": 4096,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "type": "string"
+          },
+          "userHandle": {
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "credentialId",
+          "authenticatorData",
+          "clientDataJson",
+          "signature"
+        ],
+        "type": "object",
+        "x-activediq-tag": "platform.authn"
+      },
+      "WebAuthnChallenge": {
+        "description": "PublicKeyCredentialRequestOptions for navigator.credentials.get, as JSON.",
+        "properties": {
+          "allowCredentials": {
+            "items": {
+              "$ref": "#/components/schemas/WebAuthnCredentialDescriptor"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "challenge": {
+            "maxLength": 512,
+            "type": "string"
+          },
+          "rpId": {
+            "maxLength": 253,
+            "type": "string"
+          },
+          "timeoutMs": {
+            "maximum": 300000,
+            "minimum": 1000,
+            "type": "integer"
+          },
+          "userVerification": {
+            "$ref": "#/components/schemas/WebAuthnUserVerification"
+          }
+        },
+        "required": [
+          "challenge",
+          "rpId",
+          "timeoutMs",
+          "userVerification",
+          "allowCredentials"
+        ],
+        "type": "object",
+        "x-activediq-tag": "platform.authn"
+      },
+      "WebAuthnCredentialDescriptor": {
+        "description": "One credential the account enrolled.",
+        "properties": {
+          "id": {
+            "maxLength": 1024,
+            "type": "string"
+          },
+          "type": {
+            "$ref": "#/components/schemas/WebAuthnCredentialType"
+          }
+        },
+        "required": [
+          "type",
+          "id"
+        ],
+        "type": "object",
+        "x-activediq-tag": "platform.authn"
+      },
+      "WebAuthnCredentialType": {
+        "description": "The credential type; public-key is the only one today.",
+        "enum": [
+          "public-key"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "platform.authn"
+      },
+      "WebAuthnUserVerification": {
+        "description": "Whether the authenticator must verify the user.",
+        "enum": [
+          "required",
+          "preferred",
+          "discouraged"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "platform.authn"
       }
     },
     "securitySchemes": {
@@ -762,6 +1486,641 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/auth/break-glass/password": {
+      "post": {
+        "description": "The first factor of a local break-glass account (ADM-142). Success answers 204 and sets exactly one cookie, the pending-sign-in cookie (__Host-adiq_pending: HttpOnly, Secure, SameSite=Strict, Path=/, at most 5 minutes). The response carries no session, no token and no body. The cookie authorises nothing except the second-factor operations. Every failure has one shape, 401 /problems/sign-in-failed: unknown account, wrong password, non-local account, disabled account and throttled account are indistinguishable by status, body, headers and timing class (an unknown account still costs one password verification). A throttled account is delayed on the server, never locked (rule 3). The source-IP limiter may answer 429 with Retry-After, which does not depend on the account named. Refused on any hostname bound to AN-5 or AN-7, and outside the console source-CIDR allow-list, with the same 401.",
+        "operationId": "signInBreakGlassPassword",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BreakGlassPasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "The password step passed. Only the pending-sign-in cookie is set.",
+            "headers": {
+              "Set-Cookie": {
+                "description": "The pending-sign-in cookie, __Host-adiq_pending, and no other cookie.",
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/SignInFailed"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          }
+        },
+        "security": [],
+        "summary": "Break-glass sign-in, password step (AN-8)",
+        "tags": [
+          "platform.authn"
+        ],
+        "x-activediq-anonymous": "AN-8",
+        "x-activediq-limits": {
+          "class": "auth",
+          "maxBodyBytes": 4096
+        },
+        "x-activediq-parity": [
+          "ADM-142",
+          "ADM-145"
+        ],
+        "x-activediq-scope": "platform",
+        "x-activediq-stability": "preview",
+        "x-permission": "anonymous"
+      }
+    },
+    "/auth/csrf": {
+      "get": {
+        "description": "Returns the value the console sends in the X-CSRF-Token header on every mutation. It is bound to the session, readable only with that session cookie, and not a credential: it authorises nothing alone.",
+        "operationId": "getCsrfToken",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CsrfValue"
+                }
+              }
+            },
+            "description": "The CSRF header name and value for this session."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "The CSRF value for the calling session",
+        "tags": [
+          "platform.authn"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "authenticated"
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "description": "Revokes the calling session on the server and clears the session cookie. It acts only on the caller's own session. Needs the CSRF header like any cookie-session mutation.",
+        "operationId": "signOut",
+        "responses": {
+          "204": {
+            "description": "The session is revoked.",
+            "headers": {
+              "Set-Cookie": {
+                "description": "Clears the session cookie.",
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/CsrfFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          }
+        },
+        "security": [
+          {
+            "csrfToken": [],
+            "sessionCookie": []
+          }
+        ],
+        "summary": "End the current console session",
+        "tags": [
+          "platform.authn"
+        ],
+        "x-activediq-parity": [
+          "ADM-145"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "authenticated"
+      }
+    },
+    "/auth/second-factor/totp/verify": {
+      "post": {
+        "description": "Needs the pending-sign-in cookie. Success and failure behave as for verifyWebAuthnSignIn.",
+        "operationId": "verifyTotpSignIn",
+        "parameters": [
+          {
+            "description": "The pending-sign-in handle set by the first factor. It is read from this cookie only; a missing or repeated cookie answers the same 401 as any other sign-in failure.",
+            "in": "cookie",
+            "name": "__Host-adiq_pending",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TotpCodeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "The second factor passed and a session exists.",
+            "headers": {
+              "Set-Cookie": {
+                "description": "Two lines: the new session cookie, __Host-adiq_session, and a clearing __Host-adiq_pending.",
+                "required": true,
+                "schema": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/SignInFailed"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          }
+        },
+        "security": [],
+        "summary": "Verify a TOTP code and create the session (AN-10)",
+        "tags": [
+          "platform.authn"
+        ],
+        "x-activediq-anonymous": "AN-10",
+        "x-activediq-limits": {
+          "class": "auth",
+          "maxBodyBytes": 1024
+        },
+        "x-activediq-parity": [
+          "ADM-142"
+        ],
+        "x-activediq-peer-ip": true,
+        "x-activediq-scope": "platform",
+        "x-activediq-stability": "preview",
+        "x-permission": "anonymous"
+      }
+    },
+    "/auth/second-factor/webauthn/challenge": {
+      "post": {
+        "description": "Needs the pending-sign-in cookie from a first factor. Answers the WebAuthn request options for the account's enrolled credentials. A missing, expired, consumed or exhausted pending sign-in gets 401 /problems/sign-in-failed, the same as a wrong factor.",
+        "operationId": "createWebAuthnSignInChallenge",
+        "parameters": [
+          {
+            "description": "The pending-sign-in handle set by the first factor. It is read from this cookie only; a missing or repeated cookie answers the same 401 as any other sign-in failure.",
+            "in": "cookie",
+            "name": "__Host-adiq_pending",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebAuthnChallenge"
+                }
+              }
+            },
+            "description": "The WebAuthn request options for this pending sign-in."
+          },
+          "401": {
+            "$ref": "#/components/responses/SignInFailed"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          }
+        },
+        "security": [],
+        "summary": "Start a WebAuthn second factor for a pending sign-in (AN-10)",
+        "tags": [
+          "platform.authn"
+        ],
+        "x-activediq-anonymous": "AN-10",
+        "x-activediq-limits": {
+          "class": "auth"
+        },
+        "x-activediq-parity": [
+          "ADM-142"
+        ],
+        "x-activediq-peer-ip": true,
+        "x-activediq-scope": "platform",
+        "x-activediq-stability": "preview",
+        "x-permission": "anonymous"
+      }
+    },
+    "/auth/second-factor/webauthn/verify": {
+      "post": {
+        "description": "Needs the pending-sign-in cookie. On success the pending sign-in is consumed, a new session is created with a new ID, and the response (204, no body) sets the session cookie and clears the pending cookie. Any failure is 401 /problems/sign-in-failed and counts against the pending sign-in's five attempts.",
+        "operationId": "verifyWebAuthnSignIn",
+        "parameters": [
+          {
+            "description": "The pending-sign-in handle set by the first factor. It is read from this cookie only; a missing or repeated cookie answers the same 401 as any other sign-in failure.",
+            "in": "cookie",
+            "name": "__Host-adiq_pending",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebAuthnAssertion"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "The second factor passed and a session exists.",
+            "headers": {
+              "Set-Cookie": {
+                "description": "Two lines: the new session cookie, __Host-adiq_session, and a clearing __Host-adiq_pending.",
+                "required": true,
+                "schema": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/SignInFailed"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          }
+        },
+        "security": [],
+        "summary": "Verify a WebAuthn assertion and create the session (AN-10)",
+        "tags": [
+          "platform.authn"
+        ],
+        "x-activediq-anonymous": "AN-10",
+        "x-activediq-limits": {
+          "class": "auth",
+          "maxBodyBytes": 16384
+        },
+        "x-activediq-parity": [
+          "ADM-142"
+        ],
+        "x-activediq-peer-ip": true,
+        "x-activediq-scope": "platform",
+        "x-activediq-stability": "preview",
+        "x-permission": "anonymous"
+      }
+    },
+    "/connections/takeover-attestation/callback": {
+      "get": {
+        "description": "The redirect URI of the attestation sign-in. No session or token is read: the single-use state issued by the start is the credential, and the tenant is the one the state names, used only to look the state up. A bad, expired or replayed state, a refused code, a token of another tenant and a failed read all answer the same 303 to the failed page, so the caller learns nothing about the cause (the cause is in the audit). Success answers 303 to the recorded page. The response carries no token and no directory value.",
+        "operationId": "completeTakeoverAttestation",
+        "parameters": [
+          {
+            "description": "The state issued by the start.",
+            "in": "query",
+            "name": "state",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._-]+$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The authorization code. Absent when the IdP reports an error.",
+            "in": "query",
+            "name": "code",
+            "required": false,
+            "schema": {
+              "maxLength": 4096,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The IdP error code, when the administrator declined or the IdP refused. Never echoed.",
+            "in": "query",
+            "name": "error",
+            "required": false,
+            "schema": {
+              "maxLength": 256,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "303": {
+            "description": "Redirect to the console page that shows the outcome",
+            "headers": {
+              "Location": {
+                "description": "/connections?takeover-attestation=recorded or /connections?takeover-attestation=failed",
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "security": [],
+        "summary": "Return from the IdP sign-in of a takeover-protection attestation (AN-11)",
+        "tags": [
+          "connections"
+        ],
+        "x-activediq-anonymous": "AN-11",
+        "x-activediq-limits": {
+          "class": "auth",
+          "maxBodyBytes": 1024
+        },
+        "x-activediq-peer-ip": true,
+        "x-activediq-scope": "platform",
+        "x-activediq-stability": "preview",
+        "x-permission": "anonymous"
+      }
+    },
+    "/connections/{connectionId}/takeover-attestation": {
+      "post": {
+        "description": "Starts the TM-D17 attestation of an Entra connection. The answer is the IdP sign-in URL (authorization code with PKCE, one delegated read-only scope, no offline access) at which a Global Administrator of that tenant signs in. The server then makes the one read of the tenant's sync features itself and discards the token. Needs a fresh step-up.",
+        "operationId": "startTakeoverAttestation",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConnectionId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TakeoverAttestationStart"
+                }
+              }
+            },
+            "description": "The sign-in URL for the Global Administrator"
+          },
+          "401": {
+            "$ref": "#/components/responses/StepUpRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Start a takeover-protection attestation",
+        "tags": [
+          "connections"
+        ],
+        "x-activediq-limits": {
+          "class": "write",
+          "maxBodyBytes": 1024
+        },
+        "x-activediq-stability": "preview",
+        "x-permission": "connections.takeover.attest"
+      }
+    },
+    "/connections/{connectionId}/takeover-attestation/max-age": {
+      "put": {
+        "description": "Sets attestation_max_age. A longer age widens the window in which a missed takeover-flag flip still counts as attested, so it needs the same permission and a fresh step-up as starting an attestation. The value is at most 90 days (7776000 seconds).",
+        "operationId": "setTakeoverAttestationMaxAge",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConnectionId"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TakeoverAttestationMaxAge"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "The age is set"
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/StepUpRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Set how long an attestation stays valid",
+        "tags": [
+          "connections"
+        ],
+        "x-activediq-limits": {
+          "class": "write",
+          "maxBodyBytes": 1024
+        },
+        "x-activediq-stability": "preview",
+        "x-permission": "connections.takeover.attest"
+      }
+    },
+    "/directory/users": {
+      "get": {
+        "description": "Answers the users of the caller's tenant whose display name, sAMAccountName or userPrincipalName contains q, in a stable order, at most limit of them. q is plain text: the characters ( ) * \\ & | = ! < > ~ and control characters are refused with a 400, as is a q longer than 256 characters. Nothing from q is ever placed in a directory query as syntax.",
+        "operationId": "searchDirectoryUsers",
+        "parameters": [
+          {
+            "description": "Text to find. Plain text only; no filter syntax.",
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^[^()*\\\\&|=!<>~\\x00-\\x1f\\x7f]+$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The most users to answer. Defaults to 25.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectoryUserList"
+                }
+              }
+            },
+            "description": "The matching users"
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Search users",
+        "tags": [
+          "directory"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-stability": "preview",
+        "x-permission": "directory.read"
+      }
+    },
     "/health/live": {
       "get": {
         "description": "Answers 200 while the process can serve a request. Status only; it never reports a version, a configuration value or a dependency.",
@@ -836,6 +2195,279 @@
         "x-activediq-stability": "stable",
         "x-permission": "anonymous"
       }
+    },
+    "/notify/siem-destinations": {
+      "get": {
+        "description": "Answers every destination of the tenant, oldest first. A tenant has a handful of destinations, so the list is not paged.",
+        "operationId": "listSiemDestinations",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiemDestinationList"
+                }
+              }
+            },
+            "description": "The destinations"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "List the SIEM syslog destinations",
+        "tags": [
+          "platform.notify"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-stability": "preview",
+        "x-permission": "siem.destination.read"
+      },
+      "post": {
+        "description": "Creates a destination. The default transport is TLS with certificate verification; plaintext TCP needs transport tcp together with plaintextOptIn true, and the opt-in is audited. The Idempotency-Key is the request ID of the audit events and names the destination: a retry with the same key and body answers the destination already created and changes nothing, and the same key with a different body is refused.",
+        "operationId": "createSiemDestination",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequiredIdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SiemDestinationWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiemDestination"
+                }
+              }
+            },
+            "description": "The destination is created"
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyKeyReuse"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Create a SIEM syslog destination",
+        "tags": [
+          "platform.notify"
+        ],
+        "x-activediq-limits": {
+          "class": "write",
+          "maxBodyBytes": 2048
+        },
+        "x-activediq-stability": "preview",
+        "x-permission": "siem.destination.manage"
+      }
+    },
+    "/notify/siem-destinations/{destinationId}": {
+      "get": {
+        "operationId": "getSiemDestination",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DestinationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiemDestination"
+                }
+              }
+            },
+            "description": "The destination"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Get a SIEM syslog destination",
+        "tags": [
+          "platform.notify"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-stability": "preview",
+        "x-permission": "siem.destination.read"
+      },
+      "put": {
+        "description": "Replaces the writable fields. The change redirects the SIEM stream, so it is audited with the previous and the new target. The Idempotency-Key is the request ID of the audit events; use a new key for each intended change. A key that already recorded an update is never applied twice: a replay with the same settings returns the current destination, with different settings it is a 422.",
+        "operationId": "updateSiemDestination",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DestinationId"
+          },
+          {
+            "$ref": "#/components/parameters/RequiredIdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SiemDestinationWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiemDestination"
+                }
+              }
+            },
+            "description": "The destination as stored"
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyKeyReuse"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Replace the settings of a SIEM syslog destination",
+        "tags": [
+          "platform.notify"
+        ],
+        "x-activediq-limits": {
+          "class": "write",
+          "maxBodyBytes": 2048
+        },
+        "x-activediq-stability": "preview",
+        "x-permission": "siem.destination.manage"
+      }
+    },
+    "/setup/claim": {
+      "post": {
+        "description": "The first-run setup gate (TM-TB16-T7). A fresh install writes a one-time setup secret where only the installing administrator can read it (`activediq-server setup show`). Presenting it here claims setup: in one step the secret is consumed and the first tenant-owner account is created and granted the tenant-owner role (a failure creating the owner leaves the secret unconsumed). The secret never works again. The new account has no credential yet and cannot sign in until one is enrolled. Success answers 204 and no body. A second claim is refused like any other failure. Every failure has one shape, 401 /problems/setup-refused: wrong secret, expired secret, already-used secret, and an install that is not in first-run state are indistinguishable. The source-IP limiter may answer 429. No default account exists before or after.",
+        "operationId": "claimFirstRunSetup",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetupClaimRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Setup was claimed, the secret is consumed and the first tenant owner exists."
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/SetupRefused"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "security": [],
+        "summary": "Claim first-run setup and create the first tenant owner (AN-4)",
+        "tags": [
+          "platform.setup"
+        ],
+        "x-activediq-anonymous": "AN-4",
+        "x-activediq-limits": {
+          "class": "auth",
+          "maxBodyBytes": 4096
+        },
+        "x-activediq-scope": "platform",
+        "x-activediq-stability": "preview",
+        "x-permission": "anonymous"
+      }
     }
   },
   "security": [
@@ -854,8 +2486,32 @@
   ],
   "tags": [
     {
+      "description": "Directory connections. Attestation of an Entra connection's takeover protection (TM-D17), its maximum age, and the IdP callback.",
+      "name": "connections"
+    },
+    {
+      "description": "Roles and assignments. The input contracts of the delegation.* control-plane Actions; personal to an account, step-up required.",
+      "name": "delegation"
+    },
+    {
+      "description": "Read-only directory queries. User search by plain text, tenant-scoped, permission directory.read.",
+      "name": "directory"
+    },
+    {
+      "description": "Sign-in, second factor and sign-out for the console. A first factor yields a pending sign-in; only the second factor creates a session.",
+      "name": "platform.authn"
+    },
+    {
       "description": "Liveness and readiness of the service, for load balancers and orchestrators. Status only; no version or configuration detail.",
       "name": "platform.health"
+    },
+    {
+      "description": "Notification sinks. SIEM syslog destinations; TLS by default, plaintext only by an audited opt-in. No destination can be deleted.",
+      "name": "platform.notify"
+    },
+    {
+      "description": "First-run setup. The one-time setup secret claims setup once; it expires and is consumed on first use.",
+      "name": "platform.setup"
     }
   ]
 }

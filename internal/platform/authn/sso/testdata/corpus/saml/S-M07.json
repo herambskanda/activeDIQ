@@ -1,0 +1,10 @@
+{
+ "id": "S-M07",
+ "class": "misaddressed",
+ "cites": [
+  "SAML-9"
+ ],
+ "build": "status_responder",
+ "expect": "refuse",
+ "reason": "saml.status"
+}

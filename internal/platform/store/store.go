@@ -50,6 +50,9 @@ var (
 	// transaction: a second transaction would not see the first's writes, and its tenant could differ.
 	// Do the work through the Tx you were given. No SQL has run.
 	ErrNestedTenant = errors.New("store: nested WithTenant: a transaction is already open on this context; use the Tx fn received")
+	// ErrLockWait is returned by WithTenantSeparate when the lock wait is not positive or exceeds
+	// maxSeparateLockWait.
+	ErrLockWait = errors.New("store: WithTenantSeparate needs a lock wait between 1ms and 10s")
 	// ErrReasonRequired is returned by WithPlatform when the reason is blank, too long or not printable.
 	ErrReasonRequired = errors.New("store: WithPlatform needs a short printable reason")
 	// ErrSimpleProtocolForbidden is returned by Open when the DSN selects pgx's simple protocol, which
@@ -72,6 +75,13 @@ type Config struct {
 	DSN string
 	// MaxConns caps the pool; 0 keeps pgx's default.
 	MaxConns int32
+	// SeparateMaxConns caps the dedicated pool behind WithTenantSeparate; 0 means 4. It is a pool of
+	// its own so a caller that holds a main-pool connection and waits for a second one cannot form a
+	// circular wait with other callers.
+	SeparateMaxConns int32
+	// SeparateAcquireTimeout bounds the wait for a dedicated connection; 0 means 5 s. On timeout
+	// WithTenantSeparate fails (callers fail closed).
+	SeparateAcquireTimeout time.Duration
 	// StatementTimeout bounds each statement in every transaction; 0 means DefaultStatementTimeout.
 	StatementTimeout time.Duration
 	// AllowInsecureTransport is the operator override of the transport policy (safe-primitives §7 rule 14):
@@ -83,6 +93,8 @@ type Config struct {
 // DB is the data-access handle. It holds the pool; nothing returns it.
 type DB struct {
 	pool      *pgxpool.Pool
+	sepPool   *pgxpool.Pool // WithTenantSeparate only; never shared with the main pool
+	sepWait   time.Duration
 	timeout   string // statement_timeout in milliseconds, as set_config wants it
 	transport TransportStatus
 	hook      hookHolder
@@ -91,7 +103,16 @@ type DB struct {
 // Open builds the pool, refuses an unsafe configuration and verifies the role it connects as. It refuses,
 // before any connection is attempted, a DSN that would reach a remote host without verified TLS
 // (ErrInsecureTransport) unless Config.AllowInsecureTransport is set.
-func Open(ctx context.Context, cfg Config) (*DB, error) {
+func Open(ctx context.Context, cfg Config) (*DB, error) { return open(ctx, cfg, false) }
+
+// OpenMaintenance opens a store as the owner role, for the maintenance path only (audit retention purges,
+// ADR-0005 rule 11): work the runtime role is denied by design (DELETE on the audit tables, DM-80.I2).
+// It applies every other refusal of Open, and instead of refusing the owner it refuses a role that could
+// bypass row security (a superuser or BYPASSRLS): FORCE ROW LEVEL SECURITY still binds the owner, and
+// every transaction is still a tenant transaction. It is not for request handling.
+func OpenMaintenance(ctx context.Context, cfg Config) (*DB, error) { return open(ctx, cfg, true) }
+
+func open(ctx context.Context, cfg Config, maintenance bool) (*DB, error) {
 	pc, err := guardParse(func() (*pgxpool.Config, error) { return pgxpool.ParseConfig(cfg.DSN) })
 	if err != nil {
 		return nil, err
@@ -114,13 +135,33 @@ func Open(ctx context.Context, cfg Config) (*DB, error) {
 	if timeout <= 0 {
 		timeout = DefaultStatementTimeout
 	}
+	sc := pc.Copy()
+	sc.MaxConns = 4
+	if cfg.SeparateMaxConns > 0 {
+		sc.MaxConns = cfg.SeparateMaxConns
+	}
+	sc.MinConns = 0
+	sepWait := cfg.SeparateAcquireTimeout
+	if sepWait <= 0 {
+		sepWait = 5 * time.Second
+	}
 	pool, err := pgxpool.NewWithConfig(ctx, pc)
 	if err != nil {
 		return nil, fmt.Errorf("store: open pool: %w", err)
 	}
-	d := &DB{pool: pool, timeout: strconv.FormatInt(timeout.Milliseconds(), 10), transport: ts}
-	if err := d.checkRole(ctx); err != nil {
+	sepPool, err := pgxpool.NewWithConfig(ctx, sc)
+	if err != nil {
 		pool.Close()
+		return nil, fmt.Errorf("store: open pool: %w", err)
+	}
+	d := &DB{pool: pool, sepPool: sepPool, sepWait: sepWait, timeout: strconv.FormatInt(timeout.Milliseconds(), 10), transport: ts}
+	check := d.checkRole
+	if maintenance {
+		check = d.checkMaintenanceRole
+	}
+	if err := check(ctx); err != nil {
+		pool.Close()
+		sepPool.Close()
 		return nil, err
 	}
 	return d, nil
@@ -153,6 +194,7 @@ func checkConnConfig(cc *pgx.ConnConfig) error {
 // used to gain superuser-level access. migrations/0001 repeats
 // this logic in plpgsql for the role named activediq_app; keep the two in step.
 const roleRisk = `SELECT x.rolname, CASE
+		WHEN x.rolname = 'activediq_catrust' THEN 'trust-anchor reader (column-limited reader of fleet_ca; the runtime role may only EXECUTE its function)'
 		WHEN x.rolsuper THEN 'superuser'
 		WHEN x.rolbypassrls THEN 'BYPASSRLS'
 		WHEN x.rolname IN ('pg_execute_server_program', 'pg_read_server_files', 'pg_write_server_files') THEN 'predefined role that is superuser-equivalent'
@@ -176,6 +218,18 @@ const productSchema = `n.nspname NOT IN ('pg_catalog', 'information_schema') AND
 // checkRole refuses a role that could bypass row-level security, directly or through a membership. The
 // fitness job proves the same properties of the provisioned roles (T3); this is the runtime's own
 // refusal to start otherwise.
+// checkMaintenanceRole refuses a login that bypasses row security.
+func (d *DB) checkMaintenanceRole(ctx context.Context) error {
+	var super, bypass bool
+	if err := d.pool.QueryRow(ctx, `SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = session_user`).Scan(&super, &bypass); err != nil {
+		return fmt.Errorf("store: check the maintenance role: %w", err)
+	}
+	if super || bypass {
+		return fmt.Errorf("%w (the maintenance role bypasses row-level security)", ErrPrivilegedRole)
+	}
+	return nil
+}
+
 func (d *DB) checkRole(ctx context.Context) error {
 	var login, running string
 	var switched bool
@@ -220,6 +274,9 @@ func (d *DB) Close() {
 	if d != nil && d.pool != nil {
 		d.pool.Close()
 	}
+	if d != nil && d.sepPool != nil {
+		d.sepPool.Close()
+	}
 }
 
 // Tx is what fn receives: the statement methods of a transaction and nothing else. It has the shape
@@ -228,6 +285,27 @@ type Tx interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+func (d *DB) main() *pgxpool.Pool {
+	if d == nil {
+		return nil
+	}
+	return d.pool
+}
+
+func (d *DB) sepTimeout() time.Duration {
+	if d == nil {
+		return 0
+	}
+	return d.sepWait
+}
+
+func (d *DB) separate() *pgxpool.Pool {
+	if d == nil {
+		return nil
+	}
+	return d.sepPool
 }
 
 // WithTenant runs fn in one transaction scoped to tenant id: row-level security shows fn only that
@@ -240,7 +318,34 @@ func (d *DB) WithTenant(ctx context.Context, id tenant.ID, fn func(ctx context.C
 	if _, nested := ctx.Value(txCtxKey{}).(struct{}); nested {
 		return ErrNestedTenant
 	}
-	return d.run(ctx, id.String(), fn)
+	return d.run(ctx, d.main(), 0, id, fn)
+}
+
+// maxSeparateLockWait caps the lock wait a WithTenantSeparate caller may ask for.
+const maxSeparateLockWait = 10 * time.Second
+
+// WithTenantSeparate is WithTenant for the one case where a second transaction beside a running one
+// is the point: a record that must commit even if the surrounding transaction rolls back (a refused
+// credential attempt counted against its budget). It is allowed on the context of a running
+// transaction; it uses another connection, so it neither sees the outer transaction's uncommitted
+// writes nor can it wait on them for long: lockWait (required, positive, at most maxSeparateLockWait)
+// is set as the transaction's lock_timeout here, with a bound parameter, so a caller holding a row this
+// body needs gets an error after lockWait instead of a hang. Only internal/platform/authn may call it
+// (nestedtx analyzer, FF-SP2; ADR-0005 amendment 2026-10-26).
+func (d *DB) WithTenantSeparate(ctx context.Context, id tenant.ID, lockWait time.Duration, fn func(ctx context.Context, tx Tx) error) error {
+	if id.IsZero() {
+		return ErrNoTenant
+	}
+	if lockWait <= 0 || lockWait > maxSeparateLockWait {
+		return ErrLockWait
+	}
+	ms := strconv.FormatInt(lockWait.Milliseconds(), 10)
+	return d.run(ctx, d.separate(), d.sepTimeout(), id, func(ctx context.Context, tx Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT set_config('lock_timeout', $1, true)`, ms); err != nil {
+			return fmt.Errorf("store: set lock timeout: %w", err)
+		}
+		return fn(ctx, tx)
+	})
 }
 
 // WithPlatform runs fn in one transaction with no tenant context, as the same runtime role: every
@@ -251,7 +356,7 @@ func (d *DB) WithPlatform(ctx context.Context, reason string, fn func(ctx contex
 		return ErrReasonRequired
 	}
 	slog.DebugContext(ctx, "store: platform transaction", "reason", reason)
-	return d.run(ctx, "", fn)
+	return d.run(ctx, d.main(), 0, noTenant, fn)
 }
 
 // txCtxKey marks the context handed to fn, so a nested WithTenant can be recognised.
@@ -266,11 +371,23 @@ func validReason(s string) bool {
 
 // run is the one place a transaction is opened. The first statement sets the tenant ("" means none) and
 // the statement timeout, both local to the transaction.
-func (d *DB) run(ctx context.Context, tenantID string, fn func(ctx context.Context, tx Tx) error) error {
-	if d == nil || d.pool == nil {
+//
+// pool is the main pool, or for WithTenantSeparate the dedicated one; acquire (when positive) bounds the
+// wait for a connection from it.
+func (d *DB) run(ctx context.Context, pool *pgxpool.Pool, acquire time.Duration, tid tenant.ID, fn func(ctx context.Context, tx Tx) error) error {
+	if d == nil || pool == nil {
 		return ErrClosed
 	}
-	pgtx, err := d.pool.BeginTx(ctx, pgx.TxOptions{})
+	tenantID := "" // the zero ID is a platform transaction
+	if !tid.IsZero() {
+		tenantID = tid.String()
+	}
+	bctx, bcancel := ctx, context.CancelFunc(func() {})
+	if acquire > 0 {
+		bctx, bcancel = context.WithTimeout(ctx, acquire)
+	}
+	pgtx, err := pool.BeginTx(bctx, pgx.TxOptions{})
+	bcancel()
 	if err != nil {
 		return fmt.Errorf("store: begin: %w", err)
 	}
@@ -299,7 +416,7 @@ func (d *DB) run(ctx context.Context, tenantID string, fn func(ctx context.Conte
 		if _, err := pgtx.Exec(ctx, `SELECT set_config('lock_timeout', $1, true)`, hookLockTimeout); err != nil {
 			return fmt.Errorf("store: set hook lock timeout: %w", err)
 		}
-		if err := hook(ctx, tx{t: pgtx, st: st}, tenantID); err != nil {
+		if err := hook(ctx, tx{t: pgtx, st: st}, tid); err != nil {
 			return err
 		}
 		if len(st.slots) > 0 {
@@ -341,3 +458,6 @@ func (x tx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
 	}
 	return x.t.QueryRow(ctx, sql, args...)
 }
+
+// noTenant is the zero tenant.ID: the transaction has no tenant (WithPlatform).
+var noTenant tenant.ID

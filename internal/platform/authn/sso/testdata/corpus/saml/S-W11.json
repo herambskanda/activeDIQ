@@ -1,0 +1,10 @@
+{
+ "id": "S-W11",
+ "class": "wrapped",
+ "cites": [
+  "SAML-3"
+ ],
+ "build": "duplicate_id",
+ "expect": "refuse",
+ "reason": "saml.structure"
+}

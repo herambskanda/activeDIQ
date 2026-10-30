@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/skenzeriq/activediq/internal/testlab/harnessdocker"
 )
 
 // Role names of the bootstrap contract. The installer (T-0037) creates the same two roles; the job
@@ -28,7 +30,15 @@ import (
 const (
 	DefaultOwnerRole   = "activediq_owner" // runs migrations, owns every object, is neither superuser nor BYPASSRLS
 	DefaultRuntimeRole = "activediq_app"   // the application: owns nothing, has no BYPASSRLS, no TRUNCATE, no CREATE
+	// CatrustRole is the third role (fleet-contract "Gateway client-CA pool", T-0712): NOLOGIN, owns the one
+	// function fleet_ca_trust_anchors() and holds a column-limited SELECT on fleet_ca. The installer makes the
+	// owner role a member of it (ALTER FUNCTION ... OWNER TO needs that); the runtime role is never a member.
+	CatrustRole = "activediq_catrust"
 )
+
+// CatrustMemberships is the installer spec for the trust-anchor reader: the roles that are members of it,
+// and nothing else. fitness-tenancy compares the catalog with this list (F-POOL-2).
+var CatrustMemberships = []string{DefaultOwnerRole}
 
 // defaultImages pins the PostgreSQL images by index digest (multi-arch), so a run is reproducible and
 // a new minor release is an edit that the review sees. FITNESS_TENANCY_IMAGE_<major> overrides one.
@@ -86,9 +96,11 @@ func StartServer(ctx context.Context, version string, extraBootstrap []string) (
 		ownerRole: DefaultOwnerRole, appRole: DefaultRuntimeRole, extraBoot: extraBootstrap,
 	}
 	// fsync and friends off: the container is thrown away, and the probes write thousands of rows.
-	out, err := exec.CommandContext(ctx, "docker", "run", "-d", "--rm",
-		"-e", "POSTGRES_PASSWORD="+s.adminPass, "-p", "127.0.0.1::5432", image,
-		"-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off").CombinedOutput()
+	harnessdocker.Reap() // containers a killed earlier run left behind
+	runArgs := append([]string{"run", "-d", "--rm"}, harnessdocker.RunArgs()...)
+	runArgs = append(runArgs, "-e", "POSTGRES_PASSWORD="+s.adminPass, "-p", "127.0.0.1::5432", image,
+		"-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off")
+	out, err := exec.CommandContext(ctx, "docker", runArgs...).CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("docker run %s: %s", image, strings.TrimSpace(string(out)))
 	}
@@ -111,12 +123,12 @@ func StartServer(ctx context.Context, version string, extraBootstrap []string) (
 	return s, nil
 }
 
-// Stop removes the container (it was started with --rm).
+// Stop removes the container and its anonymous volume (docker rm -f -v).
 func (s *Server) Stop() {
 	if s.id == "" {
 		return
 	}
-	_ = exec.Command("docker", "rm", "-f", s.id).Run()
+	harnessdocker.Remove(s.id)
 	s.id = ""
 }
 
@@ -180,6 +192,22 @@ func (s *Server) createRoles(ctx context.Context) error {
 		if _, err := c.Exec(ctx, stmt); err != nil {
 			return fmt.Errorf("create role %s: %w", r.name, err)
 		}
+	}
+	// The trust-anchor reader: no login, no password, created before the first migration, and the owner
+	// role is its only member. The runtime role is deliberately not.
+	var stmt string
+	if err := c.QueryRow(ctx,
+		`SELECT format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS', $1::text)`, CatrustRole).Scan(&stmt); err != nil {
+		return err
+	}
+	if _, err := c.Exec(ctx, stmt); err != nil {
+		return fmt.Errorf("create role %s: %w", CatrustRole, err)
+	}
+	if err := c.QueryRow(ctx, `SELECT format('GRANT %I TO %I', $1::text, $2::text)`, CatrustRole, s.ownerRole).Scan(&stmt); err != nil {
+		return err
+	}
+	if _, err := c.Exec(ctx, stmt); err != nil {
+		return fmt.Errorf("grant %s to %s: %w", CatrustRole, s.ownerRole, err)
 	}
 	return nil
 }
@@ -248,6 +276,9 @@ func (s *Server) NewDatabase(ctx context.Context) (*Database, error) {
 // OwnerRole and AppRole are the names of the migration role and the runtime role on this server.
 func (s *Server) OwnerRole() string { return s.ownerRole }
 func (s *Server) AppRole() string   { return s.appRole }
+
+// CatrustRole is the name of the trust-anchor reader role on this server.
+func (s *Server) CatrustRole() string { return CatrustRole }
 
 // Server returns the server the database lives on.
 func (d *Database) Server() *Server { return d.s }
@@ -398,3 +429,6 @@ func StartServers(ctx context.Context, versions []string, supplied map[string]*S
 	}
 	return servers, release, nil
 }
+
+// AppDSN is the runtime role's DSN for this database, as a URL a server container can take.
+func (d *Database) AppDSN() string { return d.s.dsn(d.s.appRole, d.s.appPass, d.Name) }

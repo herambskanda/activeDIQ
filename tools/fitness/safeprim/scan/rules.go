@@ -29,12 +29,18 @@ type importRule struct {
 	// GeneratedHome lets a sqlc-generated sqlcdb package (every file carrying the sqlc header) import it too.
 	GeneratedHome bool
 	TestsExempt   bool
+	LabExempt     bool // a policy.LabBuilds file (build tag lab, never in a production binary) may import it
 	Msg           string
 }
 
 var importRules = []importRule{
 	{Rule: "ldap-library", Prefixes: []string{"github.com/go-ldap/"}, Home: []string{policy.Connector},
 		Msg: "the LDAP library is imported only by internal/connector (" + refP1 + ")"},
+	// T-0313: the AD connector package is a directory client. Only other connectors and the
+	// authorisation layer import it; a feature module reaches AD through the connector contract.
+	{Rule: "ad-connector-import", Exact: []string{"github.com/skenzeriq/activediq/internal/connector/ad"},
+		Home: []string{policy.Connector, policy.ComposeConn, policy.Authz}, TestsExempt: true, LabExempt: true,
+		Msg: "internal/connector/ad is imported only by internal/connector, the connector composition root internal/compose/connector and the authorisation layer internal/platform/authz (" + refP3 + ", T-0313)"},
 	{Rule: "sql-driver", Exact: []string{"database/sql", "github.com/lib/pq", "github.com/jmoiron/sqlx", "github.com/jackc/pgx/v5/pgxpool", "github.com/jackc/pgx/v5/stdlib"},
 		Prefixes: []string{"gorm.io/", "github.com/jackc/pgx/v4", "entgo.io/", "github.com/uptrace/bun", "github.com/go-pg/pg"},
 		Home:     []string{policy.Store},
@@ -86,6 +92,10 @@ var symbolRules = []symbolRule{
 	{Rule: "ldap-raw-attribute-access", MethodNames: []string{"GetAttributeValue", "GetAttributeValues", "GetRawAttributeValue", "GetRawAttributeValues"},
 		RequireImport: []string{"github.com/go-ldap/ldap"}, Home: []string{policy.Connector, policy.Attr}, TestsExempt: true,
 		Msg: "raw entry attribute accessors are banned outside the connector and attr (" + refP3 + ")"},
+	// T-0313: a SecretReadGrant is a capability only while minting is restricted to the authorisation layer.
+	{Rule: "secret-grant-mint", Pkg: "github.com/skenzeriq/activediq/internal/connector/ad", Names: []string{"MintSecretReadGrant"},
+		Home: []string{policy.Authz}, TestsExempt: true,
+		Msg: "ad.MintSecretReadGrant is called only from internal/platform/authz: a grant is a capability only if minting is restricted (" + refP3 + ")"},
 	{Rule: "process-start", Pkg: "os/exec", Names: []string{"Command", "CommandContext"}, Home: []string{policy.Proc}, TestsExempt: true,
 		Msg: "exec.Command is banned outside internal/platform/proc (" + refPr + ")"},
 	{Rule: "process-start", Pkg: "os", Names: []string{"StartProcess"}, Home: []string{policy.Proc}, TestsExempt: true,

@@ -18,6 +18,7 @@ ratified_by: factory-director
 **Deciders:** solution-architect (author). api-engineer was consulted twice on 2026-10-02, both recorded on T-0046. The first consult covered the generator, router, client and tooling evaluation and a local test of `encoding/json/v2` defaults. The second, in the rework, covered in-house type emission, the size estimate and gaps in the construct table. factory-director ratifies. **Ticket:** T-0046. **Parity / scope refs:** ADM-188, ADM-189 (ADM-190 indirectly, through rate classes).
 
 > Amendments (ratified ADRs only):
+> - 2026-10-28 · solution-architect · T-0499, from T-0359 and threat model §7.6 / TM-D22 · **Rule 10, rate-class table.** The `auth` per-account row is split. AN-8 is keyed on the HMAC of the normalised submitted name, applies delay plus a uniform `401`, and never returns `429`; AN-10 keeps `429` on its pending handle. The generic "limited request gets 429" sentence now states the AN-8 exception. Clarification to match the threat model: no fitness check changes.
 > - 2026-10-21 · solution-architect · T-0044, from T-0034 and threat model §7.6 v0.4 · **Rule 5, AN-1 health operations.** T-0034 added `getLiveness` (`GET /api/v1/health/live`) and `getReadiness` (`GET /api/v1/health/ready`) to `api/openapi/platform/health.yaml`, for clients that reach only `/api/v1`. Being JSON on this listener, they are operations, so rule 5 lists them first among the anonymous operations in the contract, and its AN-1 row of non-API routes notes that the same answers under `/api/v1` are those operations. The rule 3 extension table's `x-activediq-anonymous` row lists every operation row in use (AN-1, AN-4, AN-5, AN-7, AN-8, AN-10). The non-API probes `/healthz` and `/readyz` stay. This is a clarification: no rule or fitness check changes, because A3, A4 and A12 already cover these operations.
 >
 > **Rework 1 (before ratification).** The first draft generated Go models with oapi-codegen, but its templates emit `encoding/json` v1 for unions and for objects with additional properties, and its format types come from a package we reject. That would have let v1 decoding into the request path through nested values, including the filter AST. This version emits every Go type in-house from the restricted dialect (rule 4) and fixes the secret-bearing decode path (rule 6). It also closes the director's nits: ports for `apihost`, `authenticated` operations, CSRF and pre-auth limits in the chain, hostname-bound anonymous operations, and the exact-or-suffix secret-name match.
@@ -409,16 +410,18 @@ v2's own error text names Go types, so `apihost` maps it to the `malformed-reque
 - **Rate classes.** `x-activediq-limits.class` is one of `read`, `write`, `bulk`, `auth`, `reveal`, `secret` or `anonymous`.
   - The default is `read` for GET and HEAD, and `write` for everything else.
   - Anonymous operations must declare `anonymous` or `auth`.
+  - An anonymous operation that accepts a `SecretInput` (AN-8 password, AN-10 TOTP code) declares `auth`, which satisfies the `secret` rule below: its body cap is still 64 KiB, and `auth` is the stricter, source-IP and account keyed class (T-0193).
   - Operations in `secretResponses` must declare `reveal`.
   - Operations whose request reaches `SecretInput` (rule 6) must declare `secret`.
-- **How the limits work.** Limits apply per source IP (before authentication, chain step 3) and per principal (chain step 10). A limited request gets `429 /problems/rate-limited` with `Retry-After`. There is **no daily quota and no metering**, which keeps the ADM-190 lead. The numbers per class are `apihost` configuration. Their defaults are threat model TM-D22 (§7.8, T-0032), which also gives the reasoning per row:
+- **How the limits work.** Limits apply per source IP (before authentication, chain step 3) and per principal (chain step 10). A limited request gets `429 /problems/rate-limited` with `Retry-After`, **except AN-8**: its per-account throttle never returns `429` (threat model §7.6 rule 2 a–g, TM-D22 amendment, T-0359). A throttled AN-8 request is not evaluated and gets the same uniform `401 /problems/sign-in-failed` as any failure, with no `Retry-After`; only the source-IP `429` (chain step 3) remains. AN-10 (pending handle) keeps `429`. There is **no daily quota and no metering**, which keeps the ADM-190 lead. The numbers per class are `apihost` configuration. Their defaults are threat model TM-D22 (§7.8, T-0032), which also gives the reasoning per row:
 
   | Class | Key | Rate / min | Burst |
   | --- | --- | --- | --- |
   | *(all requests, chain step 3)* | source IP | 1200 | 300 |
   | `anonymous` | source IP | 60 | 20 |
   | `auth` | source IP | 60 | 30 |
-  | `auth` (AN-8, AN-10) | target account or pending handle | 10 | 5 |
+  | `auth` (AN-8) | HMAC-SHA256 of tenant ‖ normalised submitted name (every name, existing or not); delay plus uniform `401`, **never `429`** | 10 | 5 |
+  | `auth` (AN-10) | pending handle; `429` with `Retry-After` | 10 | 5 |
   | `read` | principal | 600 | 120 |
   | `write` | principal | 120 | 30 |
   | `bulk` | principal | 10 | 3 |

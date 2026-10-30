@@ -5,6 +5,7 @@ package ad
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -152,7 +153,7 @@ func TestLabScopedSearch(t *testing.T) {
 	}
 }
 
-// LF-32 (referral) is not provable on Samba: no referral objectClass, no injectable transport (T-0309).
+// LF-32 (referral) is not provable by data on Samba (no referral objects): see referral_fault_test.go and ldapfault_lab_test.go (T-0309), which inject the reference with a test-only proxy.
 
 // LF-33 on the wire: a GC port is refused before any connection.
 func TestLabGlobalCatalogRefused(t *testing.T) {
@@ -182,10 +183,12 @@ func TestLabSchemaDrivenSecretAttrs(t *testing.T) {
 	} {
 		ad.Attribute(k, v)
 	}
+	// The lab seed (lab/seed/schema-seed.sh, T-0308) carries a custom attribute flagged 0x200 only.
+	const seededCustom = "activediqLabConfidential"
 	addErr := adm.Add(ad)
 	seeded := addErr == nil
 	if !seeded {
-		t.Logf("lab refused the custom 0x200-only attribute (CC-SCH-02 custom case needs a seed addition): %v", addErr)
+		t.Logf("lab refused an LDAP schema add (expected on Samba): %v", addErr)
 	}
 
 	oracle, err := adm.SearchWithPaging(ldap.NewSearchRequest(schemaNC, ldap.ScopeSingleLevel, ldap.NeverDerefAliases, 0, 0, false,
@@ -194,12 +197,18 @@ func TestLabSchemaDrivenSecretAttrs(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := labOpen(t, cfg)
-	flagged, sawCustom := 0, false
+	flagged, sawCustom, sawSeeded := 0, false, false
 	for _, e := range oracle.Entries {
 		name := e.GetAttributeValue("lDAPDisplayName")
 		fl, _ := strconv.Atoi(e.GetAttributeValue("searchFlags"))
 		if name == custom {
 			sawCustom = true
+		}
+		if name == seededCustom {
+			sawSeeded = true
+			if fl != 0x200 {
+				t.Errorf("%s searchFlags = %#x, want exactly 0x200", name, fl)
+			}
 		}
 		if fl&(0x80|0x200|0x1000) == 0 {
 			continue
@@ -219,6 +228,9 @@ func TestLabSchemaDrivenSecretAttrs(t *testing.T) {
 		if _, err := ldapfilter.ParseSortKey(name, s.schema); ldapfilter.Code(err) != ldapfilter.ForbiddenSortKey {
 			t.Errorf("sort %s: %v", name, err)
 		}
+	}
+	if !sawSeeded {
+		t.Errorf("seeded custom attribute %s missing from the lab schema (rebuild: make lab-rebuild)", seededCustom)
 	}
 	t.Logf("%d schema-flagged attributes checked (oracle: %d attributeSchema objects)", flagged, len(oracle.Entries))
 	if flagged == 0 {
@@ -305,3 +317,112 @@ func fmtSprint(v any) string {
 }
 
 var sprintf = fmt.Sprintf
+
+// T-0313 (1): a secret read that succeeded must not outlive a failing audit sink. The value is
+// destroyed and the caller gets an error and a zero Secret.
+func TestLabReadSecretAuditFailureDestroysValue(t *testing.T) {
+	adm, cfg := labAdmin(t)
+	sinkErr := fmt.Errorf("audit sink down")
+	fail := false
+	var events int
+	cfg.SecretAudit = func(SecretReadEvent) error {
+		events++
+		if fail {
+			return sinkErr
+		}
+		return nil
+	}
+	s := labOpen(t, cfg)
+	sam := "t0313aud" + time.Now().Format("150405")
+	u := "CN=" + sam + ",CN=Users," + labBase
+	attrs := userAttrs(sam)
+	attrs["userPassword"] = []string{"lab-only-audit-value"}
+	adminAdd(t, adm, u, attrs)
+	t.Cleanup(func() { _ = adm.Del(ldap.NewDelRequest(u, nil)) })
+	g := adminGUID(t, adm, u)
+	attr, err := s.SecretAttr("userPassword")
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := MintSecretReadGrant("lab-actor", g, attr, "T-0313 lab test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Precondition: with a working sink the value is really readable by this identity, otherwise the
+	// failing-sink assertion below would be vacuous.
+	ok, err := s.ReadSecret(context.Background(), dn.GUIDRef(g), attr, grant)
+	if err != nil {
+		t.Fatalf("precondition: the lab identity must read userPassword (else this test proves nothing): %v", err)
+	}
+	ok.Destroy()
+
+	fail = true
+	sec, err := s.ReadSecret(context.Background(), dn.GUIDRef(g), attr, grant)
+	if err == nil {
+		t.Fatal("ReadSecret succeeded although the audit sink failed")
+	}
+	if CodeOf(err) != CodeProtocol || !errors.Is(err, sinkErr) {
+		t.Errorf("error should be the audit failure carrying the sink error: %v", err)
+	}
+	sec.Expose(func(b []byte) {
+		if len(b) != 0 {
+			t.Errorf("a value survived the audit failure")
+		}
+	})
+	if strings.Contains(err.Error(), "lab-only") {
+		t.Error("value in error text")
+	}
+	if events != 2 {
+		t.Errorf("audit attempts = %d, want 2", events)
+	}
+}
+
+// T-0694 AC1 on the lab: in a subtree search every entry carries the parent GUID Read reports for it,
+// and a naming-context head carries none.
+func TestLabScopedSearchParentEqualsRead(t *testing.T) {
+	adm, cfg := labAdmin(t)
+	s := labOpen(t, cfg)
+	stamp := time.Now().Format("150405")
+	ou := "OU=t0694\\," + stamp + "," + labBase
+	inner := "OU=in," + ou
+	adminAdd(t, adm, ou, map[string][]string{"objectClass": {"top", "organizationalUnit"}})
+	adminAdd(t, adm, inner, map[string][]string{"objectClass": {"top", "organizationalUnit"}})
+	users := []string{"CN=u1," + ou, "CN=u2," + inner}
+	for i, u := range users {
+		adminAdd(t, adm, u, userAttrs("t0694u"+stamp+strconv.Itoa(i)))
+	}
+	t.Cleanup(func() {
+		for _, d := range []string{users[1], users[0], inner, ou} {
+			_ = adm.Del(ldap.NewDelRequest(d, nil))
+		}
+	})
+	cls, _ := ldapfilter.ParseAttrName("objectClass", s.schema)
+	n := 0
+	_, err := s.ScopedSearch(context.Background(), ScopedRequest{
+		Roots: []dn.ObjectRef{dn.GUIDRef(adminGUID(t, adm, ou))}, Depth: ScopeSubtree, PageSize: 1, ResolveParents: true,
+		Filter: ldapfilter.Present(cls), Attributes: []string{"distinguishedName"},
+	}, func(e *Entry) error {
+		n++
+		pg, has, resolved := e.Parent()
+		if !resolved || !has {
+			t.Errorf("%s: resolved=%v has=%v", e.DN, resolved, has)
+			return nil
+		}
+		id, err := e.GUID()
+		if err != nil {
+			return err
+		}
+		re, err := s.Read(context.Background(), dn.GUIDRef(id), []string{"instanceType"}, ReadOptions{})
+		if err != nil {
+			return err
+		}
+		want, _, err := s.Parent(context.Background(), re)
+		if err != nil || want != pg {
+			t.Errorf("%s: search parent %v, Read parent %v (%v)", e.DN, pg, want, err)
+		}
+		return nil
+	})
+	if err != nil || n != 4 {
+		t.Fatalf("err=%v entries=%d", err, n)
+	}
+}

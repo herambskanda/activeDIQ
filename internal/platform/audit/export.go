@@ -5,7 +5,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
@@ -102,13 +104,15 @@ func (x *Exporter) Export(ctx context.Context, db *store.DB, id tenant.ID, actor
 
 // keyManifest lists the checkpoint keys with their windows, read from the chain's own key events.
 func keyManifest(ctx context.Context, tx store.Tx, id tenant.ID) ([]chain.KeyInfo, error) {
+	out, idx, err := purgedKeyWindows(ctx, tx, id)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := tx.Query(ctx, `SELECT seq, envelope FROM audit_event WHERE tenant_id = $1::uuid AND kind IN ($2, $3) ORDER BY seq`, id.String(), chain.KindKeyCreated, chain.KindKeyRetired)
 	if err != nil {
 		return nil, fmt.Errorf("audit: read key events: %w", err)
 	}
 	defer rows.Close()
-	var out []chain.KeyInfo
-	idx := map[string]int{}
 	for rows.Next() {
 		var seq uint64
 		var raw []byte
@@ -136,4 +140,62 @@ func keyManifest(ctx context.Context, tx store.Tx, id tenant.ID) ([]chain.KeyInf
 		}
 	}
 	return out, rows.Err()
+}
+
+// purgedKeyWindows lists the keys whose introduction was purged, from the windows the newest purge event
+// carries (retention.go). The key events still in the chain are added after them.
+func purgedKeyWindows(ctx context.Context, tx store.Tx, id tenant.ID) ([]chain.KeyInfo, map[string]int, error) {
+	idx := map[string]int{}
+	var raw []byte
+	err := tx.QueryRow(ctx, `SELECT envelope FROM audit_event WHERE tenant_id = $1::uuid AND kind = $2 ORDER BY seq DESC LIMIT 1`, id.String(), string(KindRetentionPurged)).Scan(&raw)
+	if store.IsNoRows(err) {
+		return nil, idx, nil
+	} else if err != nil {
+		return nil, nil, fmt.Errorf("audit: read purge event: %w", err)
+	}
+	env, err := chain.ParseEnvelope(raw)
+	if err != nil {
+		return nil, nil, fmt.Errorf("audit: purge event: %w", err)
+	}
+	var out []chain.KeyInfo
+	for _, d := range env.Details {
+		rest, ok := strings.CutPrefix(d.Key, keyWindowPrefix)
+		if !ok {
+			continue
+		}
+		keyID, field, ok := strings.Cut(rest, ".")
+		if !ok {
+			continue
+		}
+		i, seen := idx[keyID]
+		if !seen {
+			i = len(out)
+			idx[keyID] = i
+			out = append(out, chain.KeyInfo{KeyID: keyID})
+		}
+		switch field {
+		case "pub":
+			pub, err := hex.DecodeString(d.Value)
+			if err != nil {
+				return nil, nil, fmt.Errorf("audit: purge event key %s: %w", keyID, err)
+			}
+			out[i].PublicKey = pub
+		case "created", "retired":
+			n, err := strconv.ParseUint(d.Value, 10, 64)
+			if err != nil {
+				return nil, nil, fmt.Errorf("audit: purge event key %s: %w", keyID, err)
+			}
+			if field == "created" {
+				out[i].CreatedSeq = n
+			} else {
+				out[i].RetiredSeq = n
+			}
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].CreatedSeq < out[j].CreatedSeq })
+	idx = map[string]int{}
+	for i, k := range out {
+		idx[k.KeyID] = i
+	}
+	return out, idx, nil
 }

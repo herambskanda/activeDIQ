@@ -88,7 +88,7 @@ func newLinkEnv(t *testing.T, s *storetest.Server) *linkEnv {
 func (e *linkEnv) run(actor string, kind authority.PrincipalKind, act operation.ActionID, in connections.HybridLinkInput) (operation.Result, error) {
 	e.n++
 	raw, _ := json.Marshal(in)
-	return e.runner.RunStore(context.Background(), operation.Request{Tenant: e.tid, Action: act, Input: raw,
+	return e.runner.RunStore(context.Background(), operation.Request{Tenant: e.tid, Action: act, Input: raw, FreshStepUp: true,
 		Actor:     authority.Chain{Requester: authority.Principal{ID: authority.PrincipalID(actor), Kind: kind}},
 		Operation: step.OperationID("op-" + string(rune('a'+e.n)))})
 }

@@ -14,6 +14,23 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
 )
 
+var (
+	gpLinkID     = mustGUID("f30e3bbe-9ff0-11d1-b603-0000f80367c1")
+	gpOptionsID  = mustGUID("f30e3bbf-9ff0-11d1-b603-0000f80367c1")
+	memberID     = mustGUID("bf9679c0-0de6-11d0-a285-00aa003049e2") // also the Self-Membership right
+	unicodePwdID = mustGUID("bf9679e1-0de6-11d0-a285-00aa003049e2")
+	spnID        = mustGUID("f3a64788-5306-11d1-a9c5-0000f80367c1")
+	uacID        = mustGUID("bf967a68-0de6-11d0-a285-00aa003049e2")
+	keyCredID    = mustGUID("5b47d60f-6090-40b2-9f37-2a4de88f3063")
+	rbcdID       = mustGUID("3f78c3e5-f79a-46bd-a0b8-9d18116ddc79")
+	descID       = mustGUID("bf967950-0de6-11d0-a285-00aa003049e2")
+	resetPwdID   = mustGUID("00299570-246d-11d0-a768-00aa006e0529")
+	computerID   = mustGUID("bf967a86-0de6-11d0-a285-00aa003049e2")
+	ouClassID    = mustGUID("bf967aa5-0de6-11d0-a285-00aa003049e2")
+	gpcID        = mustGUID("f30e3bc2-9ff0-11d1-b603-0000f80367c1")
+	userClassID  = mustGUID("bf967aba-0de6-11d0-a285-00aa003049e2")
+)
+
 const (
 	dom   = "DC=lab,DC=test"
 	cfg   = "CN=Configuration," + dom
@@ -48,16 +65,51 @@ const (
 // forest builds the lab: every C row has at least one object, plus plain objects that must stay out.
 func forest() *fakeDir {
 	f := newFake()
-	f.add(dom, dsid, cls("top", "domain", "domainDNS"), "wellKnownObjects", "B:32:A361B2FFFFD211D1AA4B00C04FD7D83A:OU=Domain Controllers,"+dom,
+	f.add(dom, dsid, cls("top", "domain", "domainDNS"), "msDS-Behavior-Version", "7", "fSMORoleOwner", "CN=NTDS Settings,CN=DC1,CN=Servers,CN=Default-First-Site-Name,CN=Sites,"+cfg, "wellKnownObjects", "B:32:A361B2FFFFD211D1AA4B00C04FD7D83A:OU=Domain Controllers,"+dom,
 		"gPLink", link(gDom, "0"))
 	f.add(cfg, "", cls("top", "configuration"))
 	f.add("CN=Schema,"+cfg, "", cls("top", "dMD"))
+	// The roots of trust carry a readable descriptor with an owner (C17); the domain head's is set below.
+	rootSD := sdBytes(aceSpec{sid: dsid + "-512", mask: 0x10000000})
+	f.find(cfg).raw["nTSecurityDescriptor"] = rootSD
+	f.find("CN=Schema," + cfg).raw["nTSecurityDescriptor"] = rootSD
+	gp := f.add("CN=GP-Link,CN=Schema,"+cfg, "", cls("attributeSchema"), "lDAPDisplayName", "gPLink")
+	gp.raw["schemaIDGUID"] = gpLinkID.Bytes()
+	// TM-D27 schema objects and extended rights (GUIDs as shipped by AD).
+	for _, x := range [][2]string{{"member", memberID.String()}, {"unicodePwd", unicodePwdID.String()},
+		{"servicePrincipalName", spnID.String()}, {"userAccountControl", uacID.String()}, {"gPOptions", gpOptionsID.String()},
+		{"msDS-KeyCredentialLink", keyCredID.String()}, {"msDS-AllowedToActOnBehalfOfOtherIdentity", rbcdID.String()},
+		{"description", descID.String()}} {
+		o := f.add("CN="+x[0]+",CN=Schema,"+cfg, "", cls("attributeSchema"), "lDAPDisplayName", x[0])
+		o.raw["schemaIDGUID"] = mustGUID(x[1]).Bytes()
+	}
+	for n, id := range map[string]guid.GUID{"computer": computerID, "organizationalUnit": ouClassID, "groupPolicyContainer": gpcID, "user": userClassID} {
+		o := f.add("CN="+n+",CN=Schema,"+cfg, "", cls("classSchema"), "lDAPDisplayName", n)
+		o.raw["schemaIDGUID"] = id.Bytes()
+	}
+	f.add("CN=Extended-Rights,"+cfg, "", cont)
+	f.add("CN=User-Force-Change-Password,CN=Extended-Rights,"+cfg, "", cls("controlAccessRight"), "cn", "User-Force-Change-Password", "rightsGuid", resetPwdID.String())
+	f.add("CN=Self-Membership,CN=Extended-Rights,"+cfg, "", cls("controlAccessRight"), "cn", "Self-Membership", "rightsGuid", memberID.String())
+	f.add("CN=Windows NT,CN=Services,"+cfg, "", cont)
+	f.add("CN=Directory Service,CN=Windows NT,CN=Services,"+cfg, "", cont)
 
+	// Default foreignSecurityPrincipals for well-known SIDs, as in real AD and the Samba lab.
+	f.add("CN=ForeignSecurityPrincipals,"+dom, "", cont)
+	for _, w := range []string{"S-1-5-4", "S-1-5-9", "S-1-5-11", "S-1-5-17"} {
+		f.add("CN="+w+",CN=ForeignSecurityPrincipals,"+dom, w, cls("top", "foreignSecurityPrincipal"))
+	}
 	// C1 groups, with the nesting nasties.
 	f.add("CN=Domain Admins,CN=Users,"+dom, dsid+"-512", group, "member", "CN=alice,OU=Admins,"+dom, "member", "CN=Nested,OU=Staff,"+dom)
 	f.add("CN=Domain Controllers,CN=Users,"+dom, dsid+"-516", group)
 	f.add("CN=Administrators,CN=Builtin,"+dom, "S-1-5-32-544", group, "member", "CN=Domain Admins,CN=Users,"+dom)
 	f.add("CN=Enterprise Admins,CN=Users,"+dom, dsid+"-519", group)
+	f.add("CN=Schema Admins,CN=Users,"+dom, dsid+"-518", group)
+	f.add("CN=Read-only Domain Controllers,CN=Users,"+dom, dsid+"-521", group)
+	f.add("CN=Key Admins,CN=Users,"+dom, dsid+"-526", group)
+	f.add("CN=Enterprise Key Admins,CN=Users,"+dom, dsid+"-527", group)
+	for _, bi := range [][2]string{{"548", "Account Operators"}, {"549", "Server Operators"}, {"550", "Print Operators"}, {"551", "Backup Operators"}, {"552", "Replicator"}} {
+		f.add("CN="+bi[1]+",CN=Builtin,"+dom, "S-1-5-32-"+bi[0], group)
+	}
 	f.add("CN=Nested,OU=Staff,"+dom, dsid+"-2001", group, "member", "CN=dave\\, Dev,OU=Staff,"+dom, "member", "CN=Domain Admins,CN=Users,"+dom) // circular
 	f.add("CN=Administrator,CN=Users,"+dom, dsid+"-500", user)
 	f.add("CN=krbtgt,CN=Users,"+dom, dsid+"-502", user, "adminCount", "1")
@@ -79,7 +131,8 @@ func forest() *fakeDir {
 
 	// C3, C8
 	f.add("CN=System,"+dom, "", cont)
-	f.add("CN=AdminSDHolder,CN=System,"+dom, "", cont)
+	adh := f.add("CN=AdminSDHolder,CN=System,"+dom, "", cont)
+	adh.raw["nTSecurityDescriptor"] = rootSD
 	f.add("CN=RID Manager$,CN=System,"+dom, "", cls("top", "rIDManager"))
 	f.add("CN=Services,"+cfg, "", cont)
 	f.add("CN=Group Key Distribution Service,CN=Services,"+cfg, "", cont)
@@ -91,7 +144,7 @@ func forest() *fakeDir {
 
 	// C5, C6, C15: DC1 in the default OU, DC2 moved out; two sites, one holding DCs.
 	f.add("OU=Domain Controllers,"+dom, "", ou, "gPLink", link(gDCOU, "0"))
-	f.add("CN=DC1,OU=Domain Controllers,"+dom, dsid+"-1000", comp, "userAccountControl", "532480", "dNSHostName", "dc1.lab.test", "sAMAccountName", "DC1$")
+	f.add("CN=DC1,OU=Domain Controllers,"+dom, dsid+"-1000", comp, "userAccountControl", "532480", "dNSHostName", "dc1.lab.test", "sAMAccountName", "DC1$", "operatingSystemVersion", "10.0 (17763)")
 	rb := f.add("CN=DC2,OU=Servers,"+dom, dsid+"-1001", comp, "userAccountControl", "8192", "dNSHostName", "dc2.lab.test", "sAMAccountName", "DC2$")
 	rb.raw["msDS-AllowedToActOnBehalfOfOtherIdentity"] = sdBytes(aceSpec{sid: dsid + "-1301", mask: 0x10})
 	f.add("OU=Servers,"+dom, "", ou, "gPLink", link(gServ, "0"))
@@ -133,6 +186,14 @@ func forest() *fakeDir {
 	f.add("CN=Group Policy Creator Owners,CN=Users,"+dom, dsid+"-520", group, "sAMAccountName", "Group Policy Creator Owners")
 	// C14
 	f.add("CN=AZUREADSSOACC,OU=Servers,"+dom, dsid+"-1600", comp, "sAMAccountName", "AZUREADSSOACC$")
+	// Every object C19 reads carries a descriptor, as in AD: Domain Admins full control, owned by the
+	// built-in Administrators (a C1 owner adds nothing). Tests overwrite it per case.
+	for _, o := range f.objs {
+		if len(o.raw["nTSecurityDescriptor"]) == 0 && (o.is("group") || o.is("computer") || o.is("organizationalUnit") ||
+			o.is("groupPolicyContainer") || strings.HasPrefix(strings.ToLower(o.dn), "cn=krbtgt") || strings.HasPrefix(o.dn, "CN=Administrator,")) {
+			o.raw["nTSecurityDescriptor"] = sdBytes(aceSpec{sid: dsid + "-512", mask: gAll})
+		}
+	}
 	return f
 }
 
@@ -281,6 +342,22 @@ func TestADReadErrorFailsClosed(t *testing.T) {
 	}
 }
 
+// T-0626: a deny-read ACE makes Windows return the entry with no attributes; the refusal still fails
+// closed and now names the protected SID and the DN.
+func TestADAttributelessProtectedEntryNamesSIDAndDN(t *testing.T) {
+	f := forest()
+	f.find("CN=Backup Operators,CN=Builtin," + dom).bare = true
+	_, err := NewAD(f).Snapshot(context.Background())
+	if err == nil {
+		t.Fatal("snapshot succeeded over an unreadable protected group")
+	}
+	for _, want := range []string{"S-1-5-32-551", "CN=Backup Operators,CN=Builtin", "without objectGUID"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err, want)
+		}
+	}
+}
+
 func TestADMalformedInputsFailClosed(t *testing.T) {
 	f := forest()
 	f.find(dom).attrs["gplink"] = []string{"[LDAP://garbage"}
@@ -362,22 +439,45 @@ func TestQueryFilterEscapes(t *testing.T) {
 	}
 }
 
-func TestACEReader(t *testing.T) {
+// The schema types schemaIDGUID/attributeSecurityGUID as octet strings and rightsGuid as a string; the
+// C19 resolution queries must render against the real filter schema (fakes do not enforce kinds).
+func TestQueryAnyGUIDRendersAgainstSchema(t *testing.T) {
+	g, err := guid.Parse("ab721a55-1e2f-11d0-9819-00aa0040529b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []Query{
+		{AnyGUID: []AttrGUID{{Attr: "schemaIDGUID", Value: g}, {Attr: "attributeSecurityGUID", Value: g}}},
+		{Classes: []string{"controlAccessRight"}, Eq: []AttrEq{{Attr: "rightsGuid", Value: g.String()}}},
+	} {
+		f, err := q.filter()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ldapfilter.Render(f, ad.DefaultSchema()); err != nil {
+			t.Errorf("render %+v: %v", q, err)
+		}
+	}
+}
+
+func TestGrantsOf(t *testing.T) {
 	good := sdBytes(aceSpec{sid: dsid + "-5", mask: 0x100, objType: &getChanges})
-	aces, err := allowACEs(good)
-	if err != nil || len(aces) != 1 || !aces[0].grants(getChanges) || aces[0].grants(getChangesAll) {
+	d, aces, err := grantsOf(good)
+	if err != nil || len(aces) != 1 || !aces[0].grants(getChanges) || aces[0].grants(getChangesAll) || !d.HasOwner {
 		t.Fatalf("%+v %v", aces, err)
 	}
-	for i := 0; i < len(good); i++ { // every truncation is refused or parses to fewer ACEs, never panics
-		_, _ = allowACEs(good[:i])
-	}
-	if _, err := allowACEs(good[:len(good)-3]); err == nil {
-		t.Error("truncated ACE accepted")
+	for i := 0; i < len(good); i++ { // every truncation is refused, never panics
+		if _, _, err := grantsOf(good[:i]); err == nil {
+			t.Errorf("truncation to %d bytes accepted", i)
+		}
 	}
 	null := append([]byte(nil), good...)
 	null[16], null[17], null[18], null[19] = 0, 0, 0, 0
-	if _, err := allowACEs(null); err == nil {
+	if _, _, err := grantsOf(null); err == nil {
 		t.Error("NULL DACL accepted")
+	}
+	if _, _, err := grantsOf(sdBytes(aceSpec{sid: dsid + "-5", mask: 0x100, typ: 0x20})); err == nil {
+		t.Error("ACE of an unknown type accepted")
 	}
 }
 
@@ -481,5 +581,148 @@ func TestMembershipWalkUnrequestableDNFailsClosed(t *testing.T) {
 				t.Errorf("want error wrapping dn %s, got %v", c.kind, err)
 			}
 		})
+	}
+}
+
+// T-0397: a member value naming an object the connector cannot read (deny-read ACE: the Read returns
+// not-found) must fail the walk closed and name the listing group, never drop out of the closure.
+func TestMembershipWalkUnreadableMemberFailsClosed(t *testing.T) {
+	f := forest()
+	da := f.find("CN=Domain Admins,CN=Users," + dom)
+	da.attrs["member"] = append(da.attrs["member"], "CN=hidden,OU=Staff,"+dom) // not in the fake dir
+	r, err := classify(t, f, "CN=carol,OU=Staff,"+dom)
+	if err == nil || !r.Tier0 || !r.Unknown {
+		t.Fatalf("want Tier0+Unknown+error, got %+v %v", r, err)
+	}
+	if !strings.Contains(err.Error(), "Domain Admins") {
+		t.Errorf("error must name the listing group: %v", err)
+	}
+}
+
+func (f *fakeDir) drop(text string) {
+	for i, o := range f.objs {
+		if strings.EqualFold(o.dn, text) {
+			f.objs = append(f.objs[:i], f.objs[i+1:]...)
+			return
+		}
+	}
+	panic("no fake object " + text)
+}
+
+func TestUnreadableDCServerObjectFailsClosed(t *testing.T) {
+	f := forest()
+	f.drop("CN=DC1,CN=Servers,CN=Default-First-Site-Name,CN=Sites," + cfg)
+	r, err := classify(t, f, "CN=carol,OU=Staff,"+dom)
+	if err == nil || !r.Tier0 || !r.Unknown || !strings.Contains(err.Error(), "server object") {
+		t.Fatalf("want Tier0+Unknown+server-object error, got %+v %v", r, err)
+	}
+}
+
+func TestUnreadableLinkedGPOFailsClosed(t *testing.T) {
+	f := forest()
+	f.drop(gpoDN(gDom)) // linked at the domain head, which reaches tier0
+	r, err := classify(t, f, "CN=carol,OU=Staff,"+dom)
+	if err == nil || !r.Tier0 || !r.Unknown || !strings.Contains(err.Error(), "GPO") {
+		t.Fatalf("want Tier0+Unknown+GPO error, got %+v %v", r, err)
+	}
+}
+
+// T-0397: a protected group that must exist but cannot be read fails closed instead of dropping its
+// members from Tier 0 (a deny-read ACE on CN=Builtin or the group is enough to hide it).
+func TestHiddenProtectedGroupFailsClosed(t *testing.T) {
+	for _, g := range []string{"CN=Backup Operators,CN=Builtin," + dom, "CN=Domain Admins,CN=Users," + dom, "CN=Schema Admins,CN=Users," + dom} {
+		f := forest()
+		f.drop(g)
+		r, err := classify(t, f, "CN=carol,OU=Staff,"+dom)
+		if err == nil || !r.Tier0 || !r.Unknown || !strings.Contains(err.Error(), "protected group") {
+			t.Errorf("%s dropped: want Tier0+Unknown+protected-group error, got %+v %v", g, r, err)
+		}
+	}
+}
+
+func keyAdminsGroups() []string {
+	return []string{"CN=Key Admins,CN=Users," + dom, "CN=Enterprise Key Admins,CN=Users," + dom}
+}
+
+const dc1Comp = "CN=DC1,OU=Domain Controllers," + dom
+
+// T-0631 (TM-R25): below functional level 7 the groups exist when the PDC emulator is 2016+.
+func TestKeyAdminsHiddenWith2016PDCFailsClosed(t *testing.T) {
+	for i, g := range keyAdminsGroups() {
+		f := forest()
+		f.find(dom).attrs["msds-behavior-version"] = []string{"6"}
+		f.drop(g)
+		r, err := classify(t, f, "CN=carol,OU=Staff,"+dom)
+		want := []string{"-526", "-527"}[i]
+		if err == nil || !r.Unknown || !strings.Contains(err.Error(), "S-1-5-21-") || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: want Unknown naming %s, got %+v %v", g, want, r, err)
+		}
+	}
+}
+
+func TestKeyAdminsAbsentWith2012R2PDCSucceeds(t *testing.T) {
+	for _, g := range keyAdminsGroups() {
+		f := forest()
+		f.find(dom).attrs["msds-behavior-version"] = []string{"6"}
+		f.find(dc1Comp).attrs["operatingsystemversion"] = []string{"6.3 (9600)"}
+		f.drop(g)
+		if r, err := classify(t, f, "CN=carol,OU=Staff,"+dom); err != nil || r.Unknown {
+			t.Errorf("%s absent with 2012R2 PDC must succeed: %+v %v", g, r, err)
+		}
+	}
+}
+
+func TestKeyAdminsAbsentAtLevel2016FailsClosedRegardlessOfPDC(t *testing.T) {
+	for _, g := range keyAdminsGroups() {
+		f := forest()
+		f.find(dc1Comp).attrs["operatingsystemversion"] = []string{"6.3 (9600)"}
+		f.drop(g)
+		if r, err := classify(t, f, "CN=carol,OU=Staff,"+dom); err == nil || !r.Unknown {
+			t.Errorf("%s absent at level 7 must fail closed: %+v %v", g, r, err)
+		}
+	}
+}
+
+func TestKeyAdminsUnreadablePDCFailsClosed(t *testing.T) {
+	cuts := map[string]func(f *fakeDir){
+		"no fSMORoleOwner":      func(f *fakeDir) { delete(f.find(dom).attrs, "fsmoroleowner") },
+		"bad fSMORoleOwner":     func(f *fakeDir) { f.find(dom).attrs["fsmoroleowner"] = []string{"not a dn"} },
+		"server object missing": func(f *fakeDir) { f.drop("CN=DC1,CN=Servers,CN=Default-First-Site-Name,CN=Sites," + cfg) },
+		"no serverReference": func(f *fakeDir) {
+			delete(f.find("CN=DC1,CN=Servers,CN=Default-First-Site-Name,CN=Sites,"+cfg).attrs, "serverreference")
+		},
+		"computer missing":          func(f *fakeDir) { f.drop(dc1Comp) },
+		"no operatingSystemVersion": func(f *fakeDir) { delete(f.find(dc1Comp).attrs, "operatingsystemversion") },
+		"garbled version":           func(f *fakeDir) { f.find(dc1Comp).attrs["operatingsystemversion"] = []string{"junk"} },
+	}
+	for name, cut := range cuts {
+		f := forest()
+		f.find(dom).attrs["msds-behavior-version"] = []string{"6"}
+		f.drop(keyAdminsGroups()[0])
+		cut(f)
+		if r, err := classify(t, f, "CN=carol,OU=Staff,"+dom); err == nil || !r.Unknown {
+			t.Errorf("%s: want fail closed, got %+v %v", name, r, err)
+		}
+	}
+}
+
+func TestUnreadableFunctionalLevelFailsClosed(t *testing.T) {
+	f := forest()
+	delete(f.find(dom).attrs, "msds-behavior-version")
+	if r, err := classify(t, f, "CN=carol,OU=Staff,"+dom); err == nil || !r.Unknown {
+		t.Errorf("want fail closed, got %+v %v", r, err)
+	}
+}
+
+// In a child domain the forest-root groups are not readable by SID from a non-GC DC: not an error.
+func TestChildDomainRootGroupsMayBeAbsent(t *testing.T) {
+	f := forest()
+	f.nm.RootDomain = mustDN("DC=root,DC=test")
+	f.add("DC=root,DC=test", "S-1-5-21-9-9-9", cls("top", "domain", "domainDNS")).raw["nTSecurityDescriptor"] = f.find(cfg).raw["nTSecurityDescriptor"]
+	for _, g := range []string{"Schema Admins", "Enterprise Admins", "Enterprise Key Admins"} {
+		f.drop("CN=" + g + ",CN=Users," + dom)
+	}
+	if r, err := classify(t, f, "CN=carol,OU=Staff,"+dom); err != nil || r.Unknown {
+		t.Errorf("child domain without root groups must succeed: %+v %v", r, err)
 	}
 }

@@ -13,6 +13,7 @@ import (
 	adguid "github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 	v1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 func guidN(n byte) adguid.GUID {
@@ -22,7 +23,7 @@ func guidN(n byte) adguid.GUID {
 }
 
 func request(w *world, correlated ...*v1.Tier0Member) *v1.VerifyConnectionRequest {
-	return &v1.VerifyConnectionRequest{VerificationId: pbGuid(guidN(99)), CorrelatedTier0: correlated}
+	return &v1.VerifyConnectionRequest{Connection: &v1.ConnectionRef{ConnectionId: "conn-1"}, VerificationId: pbGuid(guidN(99)), CorrelatedTier0: correlated}
 }
 
 func (w *world) stream(t *testing.T, ep *EpochState, req *v1.VerifyConnectionRequest) ([]*v1.VerifyConnectionResponse, error) {
@@ -36,7 +37,7 @@ func (w *world) stream(t *testing.T, ep *EpochState, req *v1.VerifyConnectionReq
 	prev := snapshotHook
 	snapshotHook = func(context.Context) (*tier0.ADSet, error) { return w.set, nil }
 	defer func() { snapshotHook = prev }()
-	err := StreamAD(context.Background(), w.f, ep, req, ref, func(m *v1.VerifyConnectionResponse) error {
+	err := StreamAD(context.Background(), w.f, ep, req, ref, testDirectory(), func(m *v1.VerifyConnectionResponse) error {
 		out = append(out, m)
 		return nil
 	}, func() time.Time { return time.Unix(1_700_000_000, 0) })
@@ -66,7 +67,8 @@ func TestStreamShape(t *testing.T) {
 	if completed != 1 || findings != 1 || int(c.FindingCount) != findings || int(c.Tier0MemberCount) != members || members != 2 {
 		t.Fatalf("counts: completed=%d findings=%d members=%d %v", completed, findings, members, c)
 	}
-	if c.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_REFUSED || c.WriteGateOpenable || c.Checks[0].Check != v7 {
+	if c.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_REFUSED || c.WriteGateOpenable || len(c.Checks) != 4 || c.Checks[0].Check != v1.VerificationCheck_VERIFICATION_CHECK_V5_IDENTITY ||
+		c.Checks[0].Outcome != v1.CheckOutcome_CHECK_OUTCOME_PASS || c.Checks[1].Check != v7 {
 		t.Fatalf("%v", c)
 	}
 	if msgs[0].GetHeader().CheckListVersion != CheckListVersionAD || msgs[0].GetHeader().Identity.GetAd() == nil {
@@ -346,5 +348,92 @@ func TestStreamEndsWithoutCompletedOnLocalRecordFailure(t *testing.T) {
 		if m.GetCompleted() != nil {
 			t.Fatal("completed sent although the record could not be made durable")
 		}
+	}
+}
+
+func testDirectory() *v1.DirectoryIdentity {
+	return &v1.DirectoryIdentity{Identity: &v1.DirectoryIdentity_AdForest{AdForest: &v1.AdForestIdentity{
+		ForestRootNcGuid: pbGuid(guidN(7))}}}
+}
+
+func TestStreamCompletedCarriesDirectoryIdentity(t *testing.T) {
+	w := newWorld(t)
+	msgs, err := w.stream(t, nil, request(w))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := msgs[len(msgs)-1].GetCompleted().GetDirectoryIdentity()
+	if !proto.Equal(got, testDirectory()) {
+		t.Fatalf("completed directory identity = %v", got)
+	}
+}
+
+func TestStreamRefusesWithoutDirectoryIdentity(t *testing.T) {
+	w := newWorld(t)
+	w.setTokens()
+	ref, _ := dn.ParseObjectRef(w.id.DN)
+	sent := 0
+	err := StreamAD(context.Background(), w.f, nil, request(w), ref, nil, func(*v1.VerifyConnectionResponse) error { sent++; return nil }, nil)
+	if err == nil || sent != 0 {
+		t.Fatalf("err=%v sent=%d: a run with no bound directory must stream nothing", err, sent)
+	}
+}
+
+// T-0358 / TM-D26 rule 10: pinned_c13 on the request reaches the snapshot, so over the stream path a
+// renamed pinned group stays in the streamed tier0 set; without the pin it drops out.
+func TestStreamPinnedC13KeepsRenamedGroupInTier0Set(t *testing.T) {
+	pin := guidN(41)
+	run := func(pins ...*v1.Guid) map[string]bool {
+		w := newWorld(t)
+		w.setTokens()
+		ref, _ := dn.ParseObjectRef(w.id.DN)
+		prev := snapshotWith
+		// A stand-in for the classifier's rule: a pinned GUID is C13 whatever its name now is.
+		snapshotWith = func(_ context.Context, _ ADDirectory, pinned, _ []adguid.GUID) (*tier0.ADSet, error) {
+			s := tier0.NewADSet()
+			for _, p := range pinned {
+				s.AddC13(p)
+			}
+			return s, nil
+		}
+		defer func() { snapshotWith = prev }()
+		req := request(w)
+		req.PinnedC13 = pins
+		var members = map[string]bool{}
+		err := StreamAD(context.Background(), w.f, nil, req, ref, testDirectory(), func(m *v1.VerifyConnectionResponse) error {
+			for _, x := range m.GetTier0Set().GetMembers() {
+				g, _ := ParseGUID(x.GetObject())
+				members[g.String()] = true
+			}
+			return nil
+		}, func() time.Time { return time.Unix(1_700_000_000, 0) })
+		if err != nil {
+			t.Fatal(err)
+		}
+		return members
+	}
+	if got := run(pbGuid(pin)); !got[pin.String()] {
+		t.Errorf("pinned renamed group missing from tier0 set: %v", got)
+	}
+	if got := run(); got[pin.String()] {
+		t.Errorf("unpinned group in tier0 set: %v", got)
+	}
+}
+
+func TestMalformedPinnedC13IsInvalidArgument(t *testing.T) {
+	for name, g := range map[string]*v1.Guid{
+		"short": {Value: []byte{1, 2, 3}},
+		"nil":   nil,
+		"empty": {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newWorld(t)
+			req := request(w)
+			req.PinnedC13 = []*v1.Guid{g}
+			msgs, err := w.stream(t, nil, req)
+			if !IsInvalidArgument(err) || len(msgs) != 0 || len(w.f.reads) != 0 {
+				t.Fatalf("err=%v sent=%d reads=%d", err, len(msgs), len(w.f.reads))
+			}
+		})
 	}
 }

@@ -76,6 +76,22 @@ func checkT4(ctx context.Context, d *Database, m *catalogModel, reg *registry.Re
 		_, err = tx.Exec(ctx, insertSQL(tm, cols), args...)
 		return err
 	}
+	// session_replication_role = replica still fires ENABLE ALWAYS triggers: the insert and update
+	// guards that make the database refuse a row born in the wrong state, with a clock-relative
+	// deadline (a session) or against connections of a particular kind (a hybrid link). The isolation
+	// probes test row security, foreign keys and uniqueness, not those guards (their own tests do), and a
+	// BEFORE trigger fires ahead of the RLS check, so left on they mask it. They are switched off for
+	// the probe run on this throwaway database and restored exactly (ALWAYS) when it ends.
+	guards, err := disableAlwaysTriggers(ctx, adm, roots)
+	defer func() {
+		if rerr := restoreAlwaysTriggers(context.WithoutCancel(ctx), adm, guards); rerr != nil {
+			out("T4: could not restore the ENABLE ALWAYS triggers disabled for the probe run: %v", rerr)
+		}
+	}()
+	if err != nil {
+		return nil, 0, err
+	}
+
 	stx, err := adm.Begin(ctx)
 	if err != nil {
 		return nil, 0, err
@@ -356,6 +372,13 @@ func checkT4(ctx context.Context, d *Database, m *catalogModel, reg *registry.Re
 			}
 			probes++
 			pq := qident(parent.rel.schema, parent.rel.name)
+			// Two keys to one parent: the probe row must violate only f. The other keys are pointed at
+			// a second parent row of tenant A (same tenant, other key value), so the violation Postgres
+			// reports is f's and not whichever key it checks first.
+			sqlF, argsF, siblings, err := p.rowWithSiblingFKs(tm, f, tenantA)
+			if err != nil {
+				return nil, 0, err
+			}
 			err = adminProbe(ctx, adm, func(tx pgx.Tx) error {
 				if _, e := tx.Exec(ctx, `DELETE FROM `+q+` WHERE tenant_id = $1`, tenantA); e != nil {
 					return e
@@ -363,11 +386,16 @@ func checkT4(ctx context.Context, d *Database, m *catalogModel, reg *registry.Re
 				if _, e := tx.Exec(ctx, `DELETE FROM `+pq+` WHERE tenant_id = $1`, tenantA); e != nil {
 					return e
 				}
+				for _, sb := range siblings {
+					if _, e := tx.Exec(ctx, sb.sql, sb.args...); e != nil {
+						return e
+					}
+				}
 				// Back to origin mode so foreign keys are enforced for the insert under test.
 				if _, e := tx.Exec(ctx, `SET LOCAL session_replication_role = origin`); e != nil {
 					return e
 				}
-				_, e := tx.Exec(ctx, sqlA, argsA...)
+				_, e := tx.Exec(ctx, sqlF, argsF...)
 				var pe *pgconn.PgError
 				switch {
 				case e == nil:
@@ -481,4 +509,55 @@ func execIfGranted(ctx context.Context, tx pgx.Tx, sql string, args ...any) (int
 func deleteNotGranted(err error) bool {
 	var pe *pgconn.PgError
 	return errors.As(err, &pe) && pe.Code == "42501"
+}
+
+// execQuerier is what a pgx connection or transaction offers.
+type execQuerier interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+}
+
+// alwaysTrigger is a user trigger that fires even under session_replication_role = replica.
+type alwaysTrigger struct{ rel, name string }
+
+// disableAlwaysTriggers disables every ENABLE ALWAYS user trigger on the given tables for the rest
+// of the transaction and returns what it disabled, for restoreAlwaysTriggers.
+func disableAlwaysTriggers(ctx context.Context, tx execQuerier, roots []*relInfo) ([]alwaysTrigger, error) {
+	var out []alwaysTrigger
+	for _, r := range roots {
+		rows, err := tx.Query(ctx, `SELECT tgname FROM pg_catalog.pg_trigger
+			WHERE tgrelid = $1 AND NOT tgisinternal AND tgenabled = 'A' ORDER BY tgname`, r.oid)
+		if err != nil {
+			return nil, err
+		}
+		var names []string
+		for rows.Next() {
+			var n string
+			if err := rows.Scan(&n); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			names = append(names, n)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		for _, n := range names {
+			if _, err := tx.Exec(ctx, `ALTER TABLE `+qident(r.schema, r.name)+` DISABLE TRIGGER `+qident(n)); err != nil {
+				return nil, err
+			}
+			out = append(out, alwaysTrigger{qident(r.schema, r.name), qident(n)})
+		}
+	}
+	return out, nil
+}
+
+func restoreAlwaysTriggers(ctx context.Context, tx execQuerier, ts []alwaysTrigger) error {
+	for _, t := range ts {
+		if _, err := tx.Exec(ctx, `ALTER TABLE `+t.rel+` ENABLE ALWAYS TRIGGER `+t.name); err != nil {
+			return err
+		}
+	}
+	return nil
 }

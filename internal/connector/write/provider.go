@@ -56,23 +56,138 @@ type PropertyGuard interface {
 
 var _ PropertyGuard = (*tier0.Set)(nil)
 
+// DCBinder is what an AD provider needs for rule 5: the identity of the DC its binding uses, read
+// live on that binding. An AD provider that is not a DCBinder refuses every write.
+type DCBinder interface {
+	BoundDC(ctx context.Context) (*connectorv1.DcIdentity, error)
+}
+
+// SessionDC reads the bound DC from an *ad.Session.
+type SessionDC struct{ S *ad.Session }
+
+func (d SessionDC) BoundDC(ctx context.Context) (*connectorv1.DcIdentity, error) {
+	id, err := d.S.DCIdentity(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &connectorv1.DcIdentity{DsaGuid: toWire(id.DSAGUID), InvocationId: toWire(id.InvocationID), DnsHostname: id.DNSHostName, Site: id.Site}, nil
+}
+
+// NewADProvider is the production constructor. Dir, Bound (and, through the caller, the write ops)
+// are all built over the one sess, so the DC whose identity rule 5 checks is the DC the reads and
+// writes reach. A binder on another session would re-open the TOCTOU rule 5 closes.
+func NewADProvider(sess *ad.Session, gc *ad.GCResolver, id *connectorv1.DirectoryIdentity, pins PinStore) *ADProvider {
+	return &ADProvider{
+		Dir:   tier0.SessionDirectory{S: sess, GC: gc},
+		ID:    id,
+		Pins:  pins,
+		Bound: SessionDC{S: sess},
+	}
+}
+
+// sameSession is false when Dir and Bound are both session-backed but over different sessions.
+// Anything else (a test double on either side) is not a session mismatch.
+func (p *ADProvider) sameSession() bool {
+	var ds *ad.Session
+	switch d := p.Dir.(type) {
+	case tier0.SessionDirectory:
+		ds = d.S
+	case *tier0.SessionDirectory:
+		if d != nil {
+			ds = d.S
+		}
+	}
+	var bs *ad.Session
+	switch b := p.Bound.(type) {
+	case SessionDC:
+		bs = b.S
+	case *SessionDC:
+		if b != nil {
+			bs = b.S
+		}
+	}
+	return ds == nil || bs == nil || ds == bs
+}
+
+// OverSession is true only when the provider's directory and its bound-DC binder are both
+// session-backed and both over s. A test double on either side is false: a caller that needs the
+// reads, the classification and the DC identity to come from one DC (the Read pin) must not accept
+// anything it cannot prove.
+func (p *ADProvider) OverSession(s *ad.Session) bool {
+	if p == nil || s == nil {
+		return false
+	}
+	var ds, bs *ad.Session
+	switch d := p.Dir.(type) {
+	case tier0.SessionDirectory:
+		ds = d.S
+	case *tier0.SessionDirectory:
+		if d != nil {
+			ds = d.S
+		}
+	}
+	switch b := p.Bound.(type) {
+	case SessionDC:
+		bs = b.S
+	case *SessionDC:
+		if b != nil {
+			bs = b.S
+		}
+	}
+	return ds == s && bs == s
+}
+
 // ADProvider classifies through the AD classifier of T-0093 over an ADDirectory.
 type ADProvider struct {
 	Dir tier0.ADDirectory
 	ID  *connectorv1.DirectoryIdentity
+	// Pins is the server-side store of the C13 group GUIDs pinned at first discovery (TM-D26 rule 10).
+	// It is required: with none, every Classify fails closed, because a renamed DnsAdmins or Exchange
+	// group would otherwise stop being tier0.
+	Pins PinStore
 	// classify is the base classifier; nil means the T-0093 classifier over Dir. Tests substitute it.
-	classify func(ctx context.Context, id guid.GUID) (tier0.ADResult, error)
+	// in is the ADInput the production path builds (see classifierInput): pins and designations.
+	classify func(ctx context.Context, id guid.GUID, in tier0.ADInput) (tier0.ADResult, error)
 	// Dynamic is the Entra snapshot whose designated closure the AD plane's property writes are
 	// checked against (the synced AD user is matched by rules on the Entra side, TM-D25 7f). Nil
 	// refuses every property write.
 	Dynamic PropertyGuard
+	// Bound reports the DC the connector is bound to (rule 5). Nil refuses every write.
+	Bound DCBinder
 }
 
 var _ Provider = (*ADProvider)(nil)
 
+// PinStore persists the C13 group pins server-side, per connection. Pins only ever grow: a group
+// that was once a default-privileged group stays one whatever it is renamed to. Implementations
+// are durable (a pin held only in memory is lost on restart, which re-opens the rename hole).
+type PinStore interface {
+	// PinnedC13 returns every pinned GUID. An error is an unknown answer.
+	PinnedC13(ctx context.Context) ([]guid.GUID, error)
+	// PinC13 adds GUIDs to the pins (idempotent) and returns only once they are durable.
+	PinC13(ctx context.Context, groups []guid.GUID) error
+}
+
+// ErrNoPins is returned when the provider has no pin store; the guard counts it as tier0.
+var ErrNoPins = errors.New("write: C13 pin store not configured")
+
 func (p *ADProvider) Kind() connectorv1.ProviderKind {
 	return connectorv1.ProviderKind_PROVIDER_KIND_AD
 }
+
+// BoundDC implements DCBinder; with no Bound configured it fails closed.
+func (p *ADProvider) BoundDC(ctx context.Context) (*connectorv1.DcIdentity, error) {
+	if p.Bound == nil {
+		return nil, ErrNoBoundDC
+	}
+	if !p.sameSession() {
+		return nil, ErrNoBoundDC // binder and directory on different sessions: not the DC the writes reach
+	}
+	return p.Bound.BoundDC(ctx)
+}
+
+// ErrNoBoundDC is returned when the provider cannot say which DC it is bound to.
+var ErrNoBoundDC = errors.New("write: bound DC identity not available")
 
 func (p *ADProvider) Identity() *connectorv1.DirectoryIdentity { return p.ID }
 
@@ -88,16 +203,30 @@ func (p *ADProvider) Classify(ctx context.Context, id guid.GUID, designated []gu
 	if gpoCNInvalid(ge) {
 		return Verdict{Tier0: true, Bases: []Basis{tier0.C9}}, nil
 	}
+	// The pins ride on every Classify (TM-D26 rule 10); a store that cannot answer fails closed.
+	if p.Pins == nil {
+		return unknown, ErrNoPins
+	}
+	pins, err := p.Pins.PinnedC13(ctx)
+	if err != nil {
+		return unknown, err
+	}
 	// The correlation facts are the request's and were applied at steps 3 to 6; this is the live half.
 	base := p.classify
 	if base == nil {
-		base = func(ctx context.Context, id guid.GUID) (tier0.ADResult, error) {
-			return tier0.NewAD(p.Dir).Classify(ctx, dn.GUIDRef(id), tier0.ADInput{CorrelationKnown: true})
+		base = func(ctx context.Context, id guid.GUID, in tier0.ADInput) (tier0.ADResult, error) {
+			return tier0.NewAD(p.Dir).Classify(ctx, dn.GUIDRef(id), in)
 		}
 	}
-	r, err := base(ctx, id)
+	r, err := base(ctx, id, classifierInput(pins, designated))
 	if err != nil {
 		return unknown, err
+	}
+	// Pin what this snapshot found before answering, so a rename after this call cannot lose it.
+	if len(r.C13Groups) > 0 {
+		if err := p.Pins.PinC13(ctx, r.C13Groups); err != nil {
+			return unknown, err
+		}
 	}
 	if r.Unknown {
 		return unknown, errors.New("write: classification unknown")
@@ -141,6 +270,17 @@ func (p *ADProvider) Classify(ctx context.Context, id guid.GUID, designated []gu
 		}
 	}
 	return v, nil
+}
+
+// classifierInput is what the live classifier is given: the pinned C13 groups (TM-D26 rule 10) and the
+// customer designations, so C18 closes over them (a sIDHistory value naming a designated object makes
+// its holder tier0 even though tokenGroups does not carry the holder's own sIDHistory).
+func classifierInput(pins, designated []guid.GUID) tier0.ADInput {
+	in := tier0.ADInput{CorrelationKnown: true, PinnedC13: pins}
+	for _, d := range designated {
+		in.Designated = append(in.Designated, dn.GUIDRef(d))
+	}
+	return in
 }
 
 // gpoCNInvalid is true for a groupPolicyContainer whose cn does not parse as a GUID (CC-WRITE-20 g).

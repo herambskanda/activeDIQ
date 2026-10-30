@@ -1,0 +1,45 @@
+// activediq.addc.v1 — the addc module's contract (T-0555; agent-host-addc-contract.md §2).
+//
+// One RPC, read-only: the per-channel collection state. Everything else the server can ask of a DC
+// agent is on skenzeriq.agent.v1.Host. addc is event collection and password-policy enforcement and
+// nothing else (C7); no message here carries a password, a hash or a fail mode (C15, C16).
+syntax = "proto3";
+
+package activediq.addc.v1;
+
+option go_package = "github.com/skenzeriq/activediq/internal/proto/activediq/addc/v1;addcv1";
+
+service Addc {
+	// GetCollectionState reports, per channel, the bookmark progress and the gaps seen.
+	rpc GetCollectionState(GetCollectionStateRequest) returns (GetCollectionStateResponse);
+}
+
+message GetCollectionStateRequest {}
+
+enum Channel {
+	CHANNEL_UNSPECIFIED = 0;
+	CHANNEL_SECURITY = 1;
+	CHANNEL_DIRECTORY_SERVICE = 2;
+}
+
+enum ChannelStatus {
+	CHANNEL_STATUS_UNSPECIFIED = 0;
+	CHANNEL_STATUS_NOT_COLLECTED = 1;
+	CHANNEL_STATUS_COLLECTING = 2;
+	// CHANNEL_STATUS_UNREADABLE: opening the subscription was denied; the channel ACE is missing or was reset.
+	CHANNEL_STATUS_UNREADABLE = 3;
+	CHANNEL_STATUS_FAILED = 4;
+}
+
+message ChannelState {
+	Channel channel = 1;
+	ChannelStatus status = 2;
+	uint64 last_event_record_id = 3;
+	uint64 gaps_seen = 4;
+	uint64 events_collected = 5;
+	uint64 events_throttled = 6;
+}
+
+message GetCollectionStateResponse {
+	repeated ChannelState channels = 1;
+}

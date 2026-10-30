@@ -81,6 +81,9 @@ const (
 	ViolationForbidden     Violation = "frame_forbidden_for_role_or_state"
 	ViolationBadMethod     Violation = "method_name_invalid"
 	ViolationOversize      Violation = "frame_too_large"
+	// TM-TB6-T7: the peer sent data it had no credit for, or credit it was never owed.
+	ViolationDataOverCredit Violation = "data_exceeds_credit"
+	ViolationCreditInvalid  Violation = "credit_invalid"
 )
 
 // Reporter receives what the multiplexer must make visible outside the tunnel. The composition root

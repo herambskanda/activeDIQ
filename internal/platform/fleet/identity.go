@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"context"
 	"crypto/x509"
 	"errors"
 	"net/url"
@@ -17,10 +18,25 @@ const (
 	componentURIPrefix = "urn:activediq:component:"
 )
 
+// The closed vocabulary of component kinds. The kind is the module (TM-D24 A1, TM-TB12-T16): each
+// kind is bound to exactly one contract, so one module's certificate reaches no other module's
+// contract. There is deliberately no generic "agent" kind; a new module adds a kind here, in the
+// components.kind CHECK and in its Binding together.
+const (
+	KindConnector  = "connector"
+	KindADDC       = "addc"
+	KindFileServer = "fileserver"
+)
+
+// ValidKind reports whether k is in the closed vocabulary.
+func ValidKind(k string) bool {
+	return k == KindConnector || k == KindADDC || k == KindFileServer
+}
+
 // Identity is who a leaf certificate says its holder is.
 type Identity struct {
 	Tenant      tenant.ID
-	Kind        string // "connector" or "agent"
+	Kind        string // one of KindConnector, KindADDC, KindFileServer
 	ComponentID string // canonical lower-case UUID
 	Serial      string // lower-case hex serial of the certificate, as stored in components.cert_serial
 }
@@ -56,7 +72,7 @@ func IdentityOf(c *x509.Certificate) (Identity, error) {
 			out.Tenant, haveT = id, true
 		case strings.HasPrefix(s, componentURIPrefix) && !haveC:
 			kind, cid, ok := strings.Cut(strings.TrimPrefix(s, componentURIPrefix), ":")
-			if !ok || (kind != "connector" && kind != "agent") || !isCanonicalUUID(cid) {
+			if !ok || !ValidKind(kind) || !isCanonicalUUID(cid) {
 				return Identity{}, ErrIdentity
 			}
 			out.Kind, out.ComponentID, haveC = kind, cid, true
@@ -90,4 +106,19 @@ func isCanonicalUUID(s string) bool {
 		}
 	}
 	return true
+}
+
+type ctxKey struct{}
+
+// WithIdentity returns ctx carrying the authenticated identity of the calling component. Only the
+// fleet gateway (server side) and the Mux (which sets it for handlers) call it.
+func WithIdentity(ctx context.Context, id Identity) context.Context {
+	return context.WithValue(ctx, ctxKey{}, id)
+}
+
+// IdentityFrom returns the authenticated identity of the calling component. It exists only for
+// methods that required a client certificate; tenant and component never come from a message.
+func IdentityFrom(ctx context.Context) (Identity, bool) {
+	id, ok := ctx.Value(ctxKey{}).(Identity)
+	return id, ok
 }

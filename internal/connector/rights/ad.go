@@ -43,14 +43,21 @@ const (
 	CodeTier0GenericAll = "over.tier0_generic_all"
 	CodeTier0GenericWr  = "over.tier0_generic_write"
 	CodeTier0DeleteTree = "over.tier0_delete_tree"
-	CodeExcessOU        = "over.managed_ou_" // + kind slug
-	CodeDelegUncons     = "over.delegation_unconstrained"
-	CodeDelegConstr     = "over.delegation_constrained"
-	CodeDelegProto      = "over.delegation_protocol_transition"
-	CodeDelegRBCD       = "over.delegation_rbcd"
-	CodeMissingRead     = "missing.read_domain"
-	CodeMissingFamily   = "missing.family_right"
-	CodeUnverifiedAD    = "unverified.ad"
+	// CodeTier0C19 (TM-D27 rule 8, TM-F-RIGHTS): the identity holds a rule-2 right on, or owns, a C19
+	// object (krbtgt, a DC object, a C1 group, the DC OU, a tier0 GPO).
+	CodeTier0C19 = "over.tier0_c19_control"
+	// CodeTier0BroadPrincipal: a dangerous right on a tier0 object granted to Everyone, Authenticated
+	// Users or another broad principal. Warn, not block: it is the customer's ACL, not the
+	// connector's own delegation, and the identity's own excess is reported separately.
+	CodeTier0BroadPrincipal = "exposure.tier0_broad_principal"
+	CodeExcessOU            = "over.managed_ou_" // + kind slug
+	CodeDelegUncons         = "over.delegation_unconstrained"
+	CodeDelegConstr         = "over.delegation_constrained"
+	CodeDelegProto          = "over.delegation_protocol_transition"
+	CodeDelegRBCD           = "over.delegation_rbcd"
+	CodeMissingRead         = "missing.read_domain"
+	CodeMissingFamily       = "missing.family_right"
+	CodeUnverifiedAD        = "unverified.ad"
 )
 
 const (
@@ -59,8 +66,10 @@ const (
 	v9 = v1.VerificationCheck_VERIFICATION_CHECK_V9_EXCESS_IN_MANAGED_OUS
 )
 
-// CheckListVersionAD pins the AD check list a run executes (DM-24 `check_list_version`).
-const CheckListVersionAD = "ad-1"
+// CheckListVersionAD pins the AD check list a run executes (DM-24 `check_list_version`). It is the
+// decimal text of a positive integer: the client parses it and the verification row stores it as an
+// integer (a non-numeric version made every real run an interrupted one, T-0684).
+const CheckListVersionAD = "1"
 
 const (
 	uacTrustedForDelegation   = 0x80000
@@ -85,8 +94,15 @@ type ADInput struct {
 	EnabledFamilies []v1.RightsFamily
 	// ManagedDomains are the domain NC heads (V8) and ManagedRoots the delegation roots (V9).
 	ManagedDomains, ManagedRoots []adguid.GUID
+	// RootNC is the head of the NC the connector is bound to (the forest root NC). V8 reads it when
+	// ManagedDomains is empty, which is every first run: V5 has not yet recorded the identity, so
+	// the server has no managed domain to send. Nil with no ManagedDomains is COULD_NOT_VERIFY.
+	RootNC *adguid.GUID
 	// Designated and Correlated add to the computed tier0 set (customer designations, C16).
 	Designated, Correlated []adguid.GUID
+	// PinnedC13 are the C13 group GUIDs pinned for the connection (TM-D26 rule 10). The default
+	// snapshot needs them, or a renamed DnsAdmins would be missing from the set the check reads.
+	PinnedC13 []adguid.GUID
 	// Snapshot computes the tier0 computed set. Nil means the AD classifier over the same directory
 	// (production); tests supply a fixed set.
 	Snapshot func(ctx context.Context) (*tier0.ADSet, error)
@@ -104,6 +120,11 @@ type ADResult struct {
 	Identity          *v1.AdObservedIdentity
 	// Tier0Set is the connector's computed set plus the designated and correlated inputs, with bases.
 	Tier0Set []*v1.Tier0Member
+	// Tier0Findings are the classifier's onboarding observations (DNSADMINS_MISSING).
+	Tier0Findings []tier0.Finding
+	// C13Groups are the C13 group GUIDs this snapshot found. The caller pins them at first discovery
+	// (TM-D26 rule 10), so a rename between onboarding and the first write cannot lose them.
+	C13Groups []adguid.GUID
 }
 
 // Blocking reports whether any finding has block severity.
@@ -147,6 +168,11 @@ type adCheck struct {
 // snapshotHook replaces the tier0 classifier for tests of StreamAD, which builds its own ADInput.
 var snapshotHook func(ctx context.Context) (*tier0.ADSet, error)
 
+// snapshotWith is the production snapshot; tests replace it to see the pins and designations it is given.
+var snapshotWith = func(ctx context.Context, d ADDirectory, pinned, designated []adguid.GUID) (*tier0.ADSet, error) {
+	return tier0.NewAD(d).SnapshotWith(ctx, pinned, designated)
+}
+
 var errNoIdentity = errors.New("rights: the connector identity could not be read")
 
 // VerifyAD runs V7 (steps 1, 2, 3, 5), V8 and V9 as the connector identity.
@@ -163,10 +189,10 @@ func VerifyAD(ctx context.Context, d ADDirectory, in ADInput) (*ADResult, error)
 	}
 	id, err := d.Read(ctx, in.Identity, []string{"objectSid", "tokenGroups", "userAccountControl", attrAllowedToDelegateTo, "primaryGroupID", "memberOf"}, ad.ReadOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", errNoIdentity, err)
+		return nil, fmt.Errorf("%w: %w", errNoIdentity, err)
 	}
 	if c.idGUID, err = id.GUID(); err != nil {
-		return nil, fmt.Errorf("%w: %v", errNoIdentity, err)
+		return nil, fmt.Errorf("%w: %w", errNoIdentity, err)
 	}
 	sids, err := id.SIDs("objectSid")
 	if err != nil || len(sids) != 1 {
@@ -185,6 +211,10 @@ func VerifyAD(ctx context.Context, d ADDirectory, in ADInput) (*ADResult, error)
 			c.own[g.String()] = true
 		}
 	}
+	// tokenGroups never carries the implicit logon SIDs; a network bind's access token does.
+	for _, s := range implicitNetworkLogonSIDs {
+		c.tokens[s] = true
+	}
 
 	res := &ADResult{Identity: &v1.AdObservedIdentity{ObjectGuid: pbGuid(c.idGUID), ObjectSid: &v1.Sid{Value: c.idSID.Bytes()}}}
 
@@ -193,13 +223,17 @@ func VerifyAD(ctx context.Context, d ADDirectory, in ADInput) (*ADResult, error)
 		snap = snapshotHook
 	}
 	if snap == nil {
-		snap = tier0.NewAD(d).Snapshot
+		snap = func(ctx context.Context) (*tier0.ADSet, error) {
+			return snapshotWith(ctx, d, in.PinnedC13, in.Designated)
+		}
 	}
 	set, serr := snap(ctx)
 	if serr != nil {
 		// Without the set, steps 1-3 cannot be decided: refuse to pass (FR-11).
 		c.cannot(v7, nil, serr)
 	} else {
+		res.Tier0Findings = set.Findings()
+		res.C13Groups = set.C13Groups()
 		for _, g := range set.Members() {
 			m := &member{g: g, bases: map[tier0.Basis]bool{}}
 			for _, b := range set.Bases(g) {
@@ -214,6 +248,7 @@ func VerifyAD(ctx context.Context, d ADDirectory, in ADInput) (*ADResult, error)
 	if serr == nil {
 		c.step1(id)
 		c.step23()
+		c.c19(set)
 	}
 	c.step5(id)
 	c.v8()
@@ -280,6 +315,11 @@ func (m *member) basisList() []v1.Tier0Basis {
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
 	return out
 }
+
+// implicitNetworkLogonSIDs is the single named set of SIDs a network-logon access token holds that
+// the tokenGroups constructed attribute does not return (AD and Samba both omit them): Everyone,
+// NETWORK, Authenticated Users, This Organization. They join c.tokens only, never c.own.
+var implicitNetworkLogonSIDs = []string{"S-1-1-0", "S-1-5-2", "S-1-5-11", "S-1-5-15"}
 
 // universalSID reports whether every authenticated principal holds s (or a logon-session or
 // asserted-identity SID the access token carries without any delegation).
@@ -495,6 +535,11 @@ func (c *adCheck) step1(id *ad.Entry) {
 			continue
 		}
 		if gn == nil {
+			// A token SID the bound DC cannot resolve (a foreign domain's group) may still be
+			// privileged there; a privileged RID is never silently skipped.
+			if c.foreignPrivileged(gs) {
+				c.cannot(v7, nil, fmt.Errorf("token group %s is in another domain and ends in a privileged RID; its membership of tier0 groups cannot be resolved on this DC", gs))
+			}
 			continue
 		}
 		m := c.set[gn.g.String()]
@@ -684,7 +729,14 @@ func (c *adCheck) step2(m *member, e *ad.Entry) {
 	}
 	if n, ok, err := e.Int32(attrSDRights); err != nil {
 		c.cannot(v7, &m.g, err)
-	} else if ok {
+	} else if !ok {
+		// Absent sDRightsEffective is never read as "no rights". Samba omits it on some objects
+		// (computer objects, for a non-admin caller; seen in the T-0237 lab run), so the parsed
+		// security descriptor answers WRITE_DAC/WRITE_OWNER instead (ownerRight + step3 grants).
+		// step3 raises COULD_NOT_VERIFY when the descriptor cannot be read or parsed, so the
+		// object is never accepted on neither signal. WRITE_SACL needs a privilege and is not
+		// covered by the parsed path.
+	} else {
 		type bit struct {
 			mask int32
 			kind v1.AdRightKind
@@ -746,7 +798,22 @@ func (c *adCheck) step3(m *member, e *ad.Entry) {
 		return
 	}
 	basis := m.basisList()
-	for _, g := range d.grants(c.own, false) {
+	c.ownerRight(m, d, basis)
+	c.broad(m, d, basis)
+	// security-architect T-0237 review: broad-principal exposure is WARN. Broad trustees are
+	// excluded here so one ACE gives one finding at one severity. An owner in the token with an
+	// OWNER RIGHTS ACE is evaluated as S-1-3-4 so its mask is not invisible to the parsed path.
+	own := map[string]bool{}
+	for k := range c.own {
+		if s, err := sid.Parse(k); err == nil && c.broadPrincipal(s) {
+			continue
+		}
+		own[k] = true
+	}
+	if d.hasOwner && c.own[d.owner.String()] && !c.broadPrincipal(d.owner) {
+		own[sidOwnerRights] = true
+	}
+	for _, g := range d.grants(own, false) {
 		a := g.ace
 		var kinds []aceKind
 		var typ *adguid.GUID
@@ -797,6 +864,80 @@ func (c *adCheck) step3(m *member, e *ad.Entry) {
 				Code: k.code, ObjectTier0Basis: basis, Right: adRight(k.kind, k.typ, k.mask, name), Source: aceSource(m.g, a)}, m.g, aceQualifier(a))
 		}
 	}
+}
+
+// c19 is TM-D27 rule 8: the connector identity (by its whole token) holding any rule-2 right on, or owning, a C19 object refuses activation. The rights
+// come from the classifier's own reading of each object's live DACL and owner, so the check applies
+// the same table as the classification. A failed read already failed the snapshot closed (rule 7).
+// The match is against the whole token (universal SIDs too); the classifier does not reliably fail
+// for a broad trustee (the default ForeignSecurityPrincipal placeholders resolve), so this must refuse.
+func (c *adCheck) c19(set *tier0.ADSet) {
+	for _, r := range set.C19Rights() {
+		// A C19 right is the identity's if its trustee is in the token OR is a broad principal.
+		// tokenGroups never carries the implicit network-logon SIDs (Everyone S-1-1-0, Authenticated
+		// Users S-1-5-11, NETWORK S-1-5-2, This Organization S-1-5-15), yet every bind holds them, so
+		// the token alone would pass a right granted to them. Rule 4 allows only a refusal here.
+		if !c.tokens[r.Trustee.String()] && !c.broadPrincipal(r.Trustee) {
+			continue
+		}
+		var typ *adguid.GUID
+		if r.ObjectType != nil {
+			t := *r.ObjectType
+			typ = &t
+		}
+		kind, mask := c19Kind(r)
+		name := ""
+		if typ != nil {
+			if o, err := c.byID(*typ); err == nil && o != nil {
+				name = o.Name
+			}
+		}
+		basis := []v1.Tier0Basis{v1.Tier0Basis_TIER0_BASIS_C19_CONTROL_OF_TIER0_OBJECT}
+		if m := c.set[r.Object.String()]; m != nil {
+			basis = m.basisList()
+		}
+		q := "c19:" + r.Trustee.String()
+		if r.Owner {
+			q += ":owner"
+		} else {
+			q += fmt.Sprintf(":%08x", r.Mask)
+			if typ != nil {
+				q += ":" + typ.String()
+			}
+		}
+		c.add(&v1.RightsFinding{Check: v7, Kind: v1.FindingKind_FINDING_KIND_EXCESSIVE_RIGHT, Severity: v1.FindingSeverity_FINDING_SEVERITY_BLOCK,
+			Code: CodeTier0C19, ObjectTier0Basis: basis, Right: adRight(kind, typ, mask, name),
+			Source: &v1.RightSource{Source: &v1.RightSource_Ace{Ace: &v1.AceSource{OnObject: pbGuid(r.Object), Trustee: &v1.Sid{Value: r.Trustee.Bytes()}}}}},
+			r.Object, q)
+	}
+}
+
+// c19Kind names the strongest right of a C19 grant, for the finding.
+func c19Kind(r tier0.C19Right) (v1.AdRightKind, uint32) {
+	const genericAll, genericWrite = 0x10000000, 0x40000000
+	switch m := r.Mask; {
+	case r.Owner: // the owner holds implicit READ_CONTROL and WRITE_DAC
+		return v1.AdRightKind_AD_RIGHT_KIND_WRITE_DAC, maskWriteDAC
+	case m&genericAll != 0:
+		return v1.AdRightKind_AD_RIGHT_KIND_GENERIC_ALL, m
+	case m&genericWrite != 0:
+		return v1.AdRightKind_AD_RIGHT_KIND_GENERIC_WRITE, m
+	case m&maskWriteDAC != 0:
+		return v1.AdRightKind_AD_RIGHT_KIND_WRITE_DAC, maskWriteDAC
+	case m&maskWriteOwner != 0:
+		return v1.AdRightKind_AD_RIGHT_KIND_WRITE_OWNER, maskWriteOwner
+	case m&dsControlAccess != 0:
+		return v1.AdRightKind_AD_RIGHT_KIND_CONTROL_ACCESS, m
+	case m&dsWriteProp != 0:
+		return v1.AdRightKind_AD_RIGHT_KIND_WRITE_PROPERTY, m
+	case m&0x2 != 0: // DS_DELETE_CHILD
+		return v1.AdRightKind_AD_RIGHT_KIND_DELETE_CHILD, m
+	case m&dsCreateChild != 0:
+		return v1.AdRightKind_AD_RIGHT_KIND_CREATE_CHILD, m
+	case m&dsSelf != 0:
+		return v1.AdRightKind_AD_RIGHT_KIND_VALIDATED_WRITE, m
+	}
+	return v1.AdRightKind_AD_RIGHT_KIND_UNSPECIFIED, r.Mask
 }
 
 // ---- step 5: the identity's own delegation ---------------------------------------------------
@@ -901,12 +1042,183 @@ func (c *adCheck) finish(r *ADResult) {
 		r.Checks = append(r.Checks, cr)
 	}
 	switch {
+	case refused: // a definite BLOCK wins over an unverifiable check
+		r.Verdict = v1.VerificationVerdict_VERIFICATION_VERDICT_REFUSED
 	case cnv:
 		r.Verdict = v1.VerificationVerdict_VERIFICATION_VERDICT_COULD_NOT_VERIFY
-	case refused:
-		r.Verdict = v1.VerificationVerdict_VERIFICATION_VERDICT_REFUSED
 	default:
 		r.Verdict = v1.VerificationVerdict_VERIFICATION_VERDICT_PASS
 	}
 	r.WriteGateOpenable = r.Verdict == v1.VerificationVerdict_VERIFICATION_VERDICT_PASS
+}
+
+// privilegedRIDs are the well-known domain-relative RIDs of the groups that make a member tier0.
+var privilegedRIDs = map[string]bool{"512": true, "516": true, "518": true, "519": true, "520": true, "521": true, "526": true, "527": true}
+
+// foreignPrivileged reports whether s is a domain SID of another domain ending in a privileged RID.
+func (c *adCheck) foreignPrivileged(s sid.SID) bool {
+	t := s.String()
+	if !strings.HasPrefix(t, "S-1-5-21-") {
+		return false
+	}
+	i := strings.LastIndex(t, "-")
+	if !privilegedRIDs[t[i+1:]] {
+		return false
+	}
+	d, ok := s.DomainSID()
+	return !(ok && c.hasDom && d == c.domSID)
+}
+
+const sidOwnerRights = "S-1-3-4"
+
+// ownerRight raises WRITE_DAC from the parsed owner when the owner is in the identity's own token:
+// an owner holds WRITE_DAC implicitly unless the DACL carries an OWNER RIGHTS ACE, which replaces
+// the implicit grant with its own mask. It does not rely on sDRightsEffective.
+func (c *adCheck) ownerRight(m *member, d *descriptor, basis []v1.Tier0Basis) {
+	if !d.hasOwner || !c.own[d.owner.String()] || c.broadPrincipal(d.owner) {
+		return
+	}
+	var or []ace
+	for _, a := range d.aces {
+		if a.trustee.String() == sidOwnerRights && !a.deny && !a.inheritOnly() {
+			or = append(or, a)
+		}
+	}
+	if len(or) > 0 {
+		return // OWNER RIGHTS ACEs replace the implicit grant; step3 evaluates them as S-1-3-4
+	}
+	owner := ace{trustee: d.owner}
+	c.add(&v1.RightsFinding{Check: v7, Kind: v1.FindingKind_FINDING_KIND_EXCESSIVE_RIGHT, Severity: v1.FindingSeverity_FINDING_SEVERITY_BLOCK,
+		Code: CodeTier0WriteDACL, ObjectTier0Basis: basis, Right: adRight(v1.AdRightKind_AD_RIGHT_KIND_WRITE_DAC, nil, maskWriteDAC, ""),
+		Source: aceSource(m.g, owner)}, m.g, "owner:"+d.owner.String())
+}
+
+// broadPrincipal reports whether s is Everyone, Anonymous, Authenticated Users, Users, or this
+// domain's Domain Users / Domain Computers (TM-D18's list). Self (S-1-5-10) is the object itself.
+func (c *adCheck) broadPrincipal(s sid.SID) bool {
+	switch t := s.String(); t {
+	case "S-1-5-7", "S-1-5-32-545":
+		return true
+	case "S-1-5-10":
+		return false
+	}
+	// Every SID in an authenticated network-logon token (Everyone, Authenticated Users, NETWORK,
+	// This Organization, NTLM/SChannel authentication, asserted identity, logon session...) is
+	// dropped from the own pass by universalSID, so this pass must evaluate it.
+	if universalSID(s) {
+		return true
+	}
+	if d, ok := s.DomainSID(); ok && c.hasDom && d == c.domSID {
+		t := s.String()
+		rid := t[strings.LastIndex(t, "-")+1:]
+		return rid == "513" || rid == "515"
+	}
+	return false
+}
+
+// broad reports dangerous rights an ACE grants to a broad principal on a tier0 object. Any
+// authenticated principal, and so a stolen connector credential, can use them. Default ACEs
+// (Change Password for Everyone, read for Authenticated Users) are not in the list.
+func (c *adCheck) broad(m *member, d *descriptor, basis []v1.Tier0Basis) {
+	// A broad-principal owner holds WRITE_DAC implicitly unless an OWNER RIGHTS ACE replaces it.
+	sids := map[string]bool{}
+	if d.hasOwner && c.broadPrincipal(d.owner) {
+		hasOR := false
+		for _, a := range d.aces {
+			if a.trustee.String() == sidOwnerRights && !a.deny && !a.inheritOnly() {
+				hasOR = true
+			}
+		}
+		if hasOR {
+			// The OWNER RIGHTS ACE grants the broad owner exactly its mask, so it is evaluated as
+			// a broad trustee: WRITE_DAC / GenericAll there is exposure to every authenticated user.
+			sids[sidOwnerRights] = true
+		} else {
+			o := ace{trustee: d.owner}
+			c.add(&v1.RightsFinding{Check: v7, Kind: v1.FindingKind_FINDING_KIND_EXCESSIVE_RIGHT, Severity: v1.FindingSeverity_FINDING_SEVERITY_WARN,
+				Code: CodeTier0BroadPrincipal, ObjectTier0Basis: basis, Right: adRight(v1.AdRightKind_AD_RIGHT_KIND_WRITE_DAC, nil, maskWriteDAC, ""),
+				Source: aceSource(m.g, o)}, m.g, "broad-owner:"+d.owner.String())
+		}
+	}
+	for _, a := range d.aces {
+		if !a.deny && c.broadPrincipal(a.trustee) {
+			sids[a.trustee.String()] = true
+		}
+	}
+	if len(sids) == 0 {
+		return
+	}
+	for _, g := range d.grants(sids, false) {
+		a := g.ace
+		var typ *adguid.GUID
+		if a.hasType {
+			t := a.objType
+			typ = &t
+		}
+		type hit struct {
+			kind v1.AdRightKind
+			mask uint32
+			typ  *adguid.GUID
+		}
+		var hits []hit
+		switch {
+		case g.genericAll():
+			hits = append(hits, hit{v1.AdRightKind_AD_RIGHT_KIND_GENERIC_ALL, a.mask, nil})
+		default:
+			if g.genericWrite() {
+				hits = append(hits, hit{v1.AdRightKind_AD_RIGHT_KIND_GENERIC_WRITE, a.mask, nil})
+			}
+			if g.has(maskWriteDAC) {
+				hits = append(hits, hit{v1.AdRightKind_AD_RIGHT_KIND_WRITE_DAC, maskWriteDAC, nil})
+			}
+			if g.has(maskWriteOwner) {
+				hits = append(hits, hit{v1.AdRightKind_AD_RIGHT_KIND_WRITE_OWNER, maskWriteOwner, nil})
+			}
+			if g.has(dsDeleteTree) {
+				hits = append(hits, hit{v1.AdRightKind_AD_RIGHT_KIND_DELETE_TREE, dsDeleteTree, nil})
+			}
+			// Default-deny (security-architect T-0237 re-review): every CONTROL_ACCESS and Self
+			// right is reported, the same set the own pass reports for these SIDs on main,
+			// except the explicit benign defaults in benignBroadExtended.
+			// A typed CONTROL_ACCESS on a confidential attribute is reported once, below.
+			confAttr := false
+			if g.has(dsControlAccess) && a.hasType {
+				if o, err := c.byID(a.objType); err != nil {
+					c.cannot(v7, &m.g, err)
+				} else if o != nil && !o.Class && o.SearchFlags&searchFlagConfidential != 0 {
+					confAttr = true
+				}
+			}
+			if g.has(dsControlAccess) && !confAttr && !(a.hasType && benignBroadExtended[a.objType]) {
+				hits = append(hits, hit{v1.AdRightKind_AD_RIGHT_KIND_CONTROL_ACCESS, dsControlAccess, typ})
+			}
+			if g.has(dsSelf) {
+				hits = append(hits, hit{v1.AdRightKind_AD_RIGHT_KIND_VALIDATED_WRITE, dsSelf, typ})
+			}
+			if g.has(dsWriteProp) && !a.hasType {
+				hits = append(hits, hit{v1.AdRightKind_AD_RIGHT_KIND_WRITE_PROPERTY, dsWriteProp, nil})
+			}
+			// Reading a confidential attribute needs CONTROL_ACCESS on it (RP alone does not).
+			if confAttr {
+				hits = append(hits, hit{v1.AdRightKind_AD_RIGHT_KIND_READ_PROPERTY, dsReadProp, typ})
+			} else if g.has(dsReadProp) && a.hasType {
+				if o, err := c.byID(a.objType); err != nil {
+					c.cannot(v7, &m.g, err)
+				} else if o != nil && !o.Class && o.SearchFlags&searchFlagConfidential != 0 {
+					hits = append(hits, hit{v1.AdRightKind_AD_RIGHT_KIND_READ_PROPERTY, dsReadProp, typ})
+				}
+			}
+		}
+		for _, h := range hits {
+			name := ""
+			if h.typ != nil {
+				if o, err := c.byID(*h.typ); err == nil && o != nil {
+					name = o.Name
+				}
+			}
+			c.add(&v1.RightsFinding{Check: v7, Kind: v1.FindingKind_FINDING_KIND_EXCESSIVE_RIGHT, Severity: v1.FindingSeverity_FINDING_SEVERITY_WARN,
+				Code: CodeTier0BroadPrincipal, ObjectTier0Basis: basis, Right: adRight(h.kind, h.typ, h.mask, name), Source: aceSource(m.g, a)},
+				m.g, "broad:"+h.kind.String()+":"+aceQualifier(a))
+		}
+	}
 }

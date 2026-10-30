@@ -20,6 +20,7 @@ import (
 const (
 	AuditVerificationCompleted audit.Kind = "connection.verification.completed"
 	AuditActivated             audit.Kind = "connection.activated"
+	AuditCredentialChanged     audit.Kind = "connection.credential.changed"
 	AuditVerdictChanged        audit.Kind = "connection.rights.verdict_changed"
 )
 
@@ -38,15 +39,20 @@ type Service struct {
 	client ConnectorClient
 	sink   audit.Sink
 	now    func() time.Time
+	sched  Scheduler
 }
 
 // NewService binds the registry, the connector client and the audit sink. All three are required: a
 // service without a sink would change state with no trail.
-func NewService(reg *Registry, client ConnectorClient, sink audit.Sink) (*Service, error) {
+func NewService(reg *Registry, client ConnectorClient, sink audit.Sink, opts ...Option) (*Service, error) {
 	if reg == nil || reg.db == nil || client == nil || sink == nil {
 		return nil, fmt.Errorf("%w: service needs a registry, a connector client and an audit sink", ErrInvalid)
 	}
-	return &Service{reg: reg, client: client, sink: sink, now: time.Now}, nil
+	sv := &Service{reg: reg, client: client, sink: sink, now: time.Now}
+	for _, o := range opts {
+		o(sv)
+	}
+	return sv, nil
 }
 
 // VerifyOutcome is a recorded run. Findings are filled; the caller shows them only to an account that
@@ -77,7 +83,10 @@ func (s *Service) Activate(ctx context.Context, tid tenant.ID, id ID, actor auth
 				return err
 			}
 		}
-		return s.sink.Append(ctx, tx, s.activatedEvent(actor, c, fast.Verification.ID, audit.Success, ""))
+		if err := s.sink.Append(ctx, tx, s.activatedEvent(actor, c, fast.Verification.ID, audit.Success, "")); err != nil {
+			return err
+		}
+		return s.schedule(ctx, tx, tid)
 	})
 	if err == nil {
 		return fast, nil
@@ -147,22 +156,100 @@ func (s *Service) RunScheduled(ctx context.Context, tid tenant.ID) ([]ScheduledR
 	return out, nil
 }
 
+// StrandedGrace is how long a connection may stay verifying before its run is presumed lost. A run is
+// one connector call, bounded well below this; the margin means a slow live run is never swept.
+const StrandedGrace = 15 * time.Minute
+
+// sweeperID is the system principal a swept run is recorded under.
+const sweeperID = "system:sweeper"
+
+// SweepStranded finds connections left in verifying by a crash (no live run can outlast grace; zero
+// takes StrandedGrace) and, for each, records a failed run with the over-privilege check not_run and
+// returns it to draft (DM-10.I10). It returns the connections it recovered. A connection whose state
+// moved meanwhile (the run finished after all) is skipped; a connection that cannot be recorded is
+// reported in the error and the others are still swept.
+func (s *Service) SweepStranded(ctx context.Context, tid tenant.ID, grace time.Duration) ([]ID, error) {
+	if grace <= 0 {
+		grace = StrandedGrace
+	}
+	var cs []Connection
+	err := s.reg.with(ctx, tid, func(ctx context.Context, tx store.Tx) (e error) {
+		cs, e = s.reg.s.ListStranded(ctx, tx, s.now().Add(-grace))
+		return
+	})
+	if err != nil {
+		return nil, err
+	}
+	actor := authority.Chain{Requester: authority.Principal{ID: sweeperID, Kind: authority.System}}
+	var swept []ID
+	var errs []error
+	for _, c := range cs {
+		if err := ctx.Err(); err != nil {
+			return swept, errors.Join(append(errs, err)...)
+		}
+		// Onboarding is the run kind that ends verifying → draft without an activation attempt; the
+		// original kind is not recorded and does not matter, both end in draft on a failed run.
+		_, err := s.recordInterrupted(ctx, tid, c, KindOnboarding, newVerificationID(), s.now(), actor)
+		switch {
+		case err == nil:
+			swept = append(swept, c.ID)
+		case errors.Is(err, ErrStateConflict):
+			// Settled by its own run in the meantime: nothing to recover.
+		default:
+			errs = append(errs, fmt.Errorf("connection %s: %w", c.ID, err))
+		}
+	}
+	return swept, errors.Join(errs...)
+}
+
 // run is one verification: claim, ask the connector, apply. The connector call is outside every
 // transaction: it is a network round trip to a DC and must not hold a row lock.
 func (s *Service) run(ctx context.Context, tid tenant.ID, id ID, kind VerificationKind, actor authority.Chain) (VerifyOutcome, error) {
+	return s.runCandidate(ctx, tid, id, kind, actor, "")
+}
+
+// ChangeCredential is "Change credential" (spec FR-21, DM-10.I8): it verifies the candidate credential
+// against the connection's own directory identity and swaps it in, atomically with the recorded run,
+// only on a pass. On any other outcome the old credential stays in use and the run is kept as evidence.
+// The run is recorded and returned either way; the caller learns whether the swap happened from
+// Connection.CredentialID. Retiring the old DM-11 row is the credential port's step after a swap.
+func (s *Service) ChangeCredential(ctx context.Context, tid tenant.ID, id ID, candidate CredentialID, actor authority.Chain) (VerifyOutcome, error) {
+	if err := actor.Validate(); err != nil {
+		return VerifyOutcome{}, err
+	}
+	cand, err := ParseCredentialID(string(candidate))
+	if err != nil {
+		return VerifyOutcome{}, err
+	}
+	return s.runCandidate(ctx, tid, id, KindCredentialChange, actor, cand)
+}
+
+// runCandidate is run for a kind that may verify a credential other than the connection's current
+// one. The connection value carried through the run names the credential being verified, so the
+// connector call and the recorded row agree on it.
+func (s *Service) runCandidate(ctx context.Context, tid tenant.ID, id ID, kind VerificationKind, actor authority.Chain, cand CredentialID) (VerifyOutcome, error) {
 	var conn Connection
 	fromDraft := kind == KindActivation || kind == KindOnboarding
 	err := s.reg.with(ctx, tid, func(ctx context.Context, tx store.Tx) (e error) {
 		if fromDraft {
 			// draft → verifying is the claim: a second concurrent press fails the compare-and-set.
-			conn, e = s.reg.s.Transition(ctx, tx, id, StateDraft, StateVerifying)
-			return
+			if conn, e = s.reg.s.Transition(ctx, tx, id, StateDraft, StateVerifying); e != nil {
+				return
+			}
+			// The cadence also carries the sweep of runs stranded here, so it starts with the first claim.
+			return s.schedule(ctx, tx, tid)
 		}
 		if conn, e = s.reg.s.Get(ctx, tx, id); e != nil {
 			return
 		}
 		if conn.State != StateActive && conn.State != StateSuspended {
 			return fmt.Errorf("%w: a %s connection is not re-verified", ErrIllegalTransition, conn.State)
+		}
+		if kind == KindCredentialChange {
+			if cand == "" || cand == conn.CredentialID {
+				return fmt.Errorf("%w: a credential change names a different credential", ErrInvalid)
+			}
+			conn.CredentialID = cand
 		}
 		return nil
 	})
@@ -171,9 +258,27 @@ func (s *Service) run(ctx context.Context, tid tenant.ID, id ID, kind Verificati
 	}
 	vid := newVerificationID()
 	started := s.now()
-	res, verr := s.client.VerifyConnection(ctx, VerifyRequest{Connection: conn, Kind: kind, VerificationID: vid})
+	// TM-D26 rule 10: the run is told the connection's pins, so a renamed pinned group stays tier0.
+	// A pin store that cannot be read fails the run closed: an unknown pin set is not an empty one.
+	var pins []string
+	if conn.Kind == KindADForest {
+		if perr := s.reg.with(ctx, tid, func(ctx context.Context, tx store.Tx) (e error) {
+			pins, e = Store{}.PinnedC13(ctx, tx, conn.ID)
+			return
+		}); perr != nil {
+			return s.interrupted(ctx, tid, conn, kind, vid, started, actor, perr)
+		}
+	}
+	res, verr := s.client.VerifyConnection(ctx, VerifyRequest{Connection: conn, Kind: kind, VerificationID: vid, PinnedC13: pins})
 	if verr == nil {
 		verr = checkResult(conn.Kind, res)
+	}
+	if verr == nil && kind == KindOnboarding && conn.Kind == KindADForest && len(res.C13Groups) > 0 {
+		// First discovery: pin what the run found (TM-D26 rule 10). Add-only and idempotent. A pin that
+		// cannot be made durable interrupts the run: the next press starts again from draft.
+		verr = s.reg.with(ctx, tid, func(ctx context.Context, tx store.Tx) error {
+			return Store{}.PinC13(ctx, tx, conn.ID, res.C13Groups)
+		})
 	}
 	if verr != nil {
 		return s.interrupted(ctx, tid, conn, kind, vid, started, actor, verr)
@@ -251,7 +356,7 @@ func (s *Service) settle(ctx context.Context, tid tenant.ID, conn Connection, ki
 	var refused error
 	err := s.reg.with(ctx, tid, func(ctx context.Context, tx store.Tx) error {
 		refused, out = nil, VerifyOutcome{}
-		return s.record(ctx, tx, conn, kind, vid, started, actor, r, &out, &refused)
+		return s.record(ctx, tx, tid, conn, kind, vid, started, actor, r, &out, &refused)
 	})
 	if err != nil {
 		return VerifyOutcome{}, err
@@ -259,7 +364,7 @@ func (s *Service) settle(ctx context.Context, tid tenant.ID, conn Connection, ki
 	return out, refused
 }
 
-func (s *Service) record(ctx context.Context, tx store.Tx, conn Connection, kind VerificationKind, vid VerificationID,
+func (s *Service) record(ctx context.Context, tx store.Tx, tid tenant.ID, conn Connection, kind VerificationKind, vid VerificationID,
 	started time.Time, actor authority.Chain, r VerifyResult, out *VerifyOutcome, refused *error) error {
 	var prev *Verification
 	if conn.LastVerificationID != "" {
@@ -268,6 +373,14 @@ func (s *Service) record(ctx context.Context, tx store.Tx, conn Connection, kind
 			return err
 		}
 		prev = &p
+	}
+	var was CredentialID
+	if kind == KindCredentialChange {
+		cur, err := s.reg.s.Get(ctx, tx, conn.ID) // conn already names the candidate; the row names the one in use
+		if err != nil {
+			return err
+		}
+		was = cur.CredentialID
 	}
 	requestedBy := string(actor.Requester.ID)
 	if kind == KindScheduled {
@@ -285,6 +398,20 @@ func (s *Service) record(ctx context.Context, tx store.Tx, conn Connection, kind
 	if err := s.sink.Append(ctx, tx, s.verificationEvent(actor, conn, v)); err != nil {
 		return err
 	}
+	if kind == KindCredentialChange {
+		// The pointer moved only on a swap. Re-read the row so the caller sees the credential in use.
+		c, err := s.reg.s.Get(ctx, tx, conn.ID)
+		if err != nil {
+			return err
+		}
+		out.Connection = c
+		if c.CredentialID == v.CredentialID {
+			if err := s.sink.Append(ctx, tx, s.credentialChangedEvent(actor, c, was, v.ID)); err != nil {
+				return err
+			}
+		}
+		return nil // the previous run judged another credential: no verdict-changed event
+	}
 	if prev != nil && prev.Verdict != v.Verdict {
 		if err := s.sink.Append(ctx, tx, s.verdictChangedEvent(actor, conn, v, prev.Verdict)); err != nil {
 			return err
@@ -297,7 +424,10 @@ func (s *Service) record(ctx context.Context, tx store.Tx, conn Connection, kind
 		switch {
 		case aerr == nil:
 			out.Connection = c
-			return s.sink.Append(ctx, tx, s.activatedEvent(actor, c, v.ID, audit.Success, ""))
+			if err := s.sink.Append(ctx, tx, s.activatedEvent(actor, c, v.ID, audit.Success, "")); err != nil {
+				return err
+			}
+			return s.schedule(ctx, tx, tid)
 		case errors.As(aerr, &ae):
 			// The run is kept; the connection goes back to draft (DM-10.I10) and the refusal is audited.
 			if err := s.sink.Append(ctx, tx, s.activatedEvent(actor, conn, v.ID, audit.Denied, ae.Code)); err != nil {
@@ -320,24 +450,43 @@ func (s *Service) record(ctx context.Context, tx store.Tx, conn Connection, kind
 	return nil
 }
 
+// schedule starts the tenant's scheduled check with the activation, in its transaction.
+func (s *Service) schedule(ctx context.Context, tx store.Tx, tid tenant.ID) error {
+	if s.sched == nil {
+		return nil
+	}
+	return s.sched.ScheduleCheck(ctx, tx, tid)
+}
+
 // interrupted records a run that did not complete as failed with the over-privilege check not_run,
 // which closes the write gate until a later run answers (DM-10.I10, I11), and returns a verifying
 // connection to draft. It runs in a context that outlives the caller's cancellation, so a cancelled
 // request never strands the connection in verifying.
 func (s *Service) interrupted(ctx context.Context, tid tenant.ID, conn Connection, kind VerificationKind, vid VerificationID,
 	started time.Time, actor authority.Chain, cause error) (VerifyOutcome, error) {
-	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-	defer cancel()
-	r := VerifyResult{CheckListVersion: 1, Verdict: VerdictFailed,
-		Outcomes: map[Check]Outcome{overPrivilegeCheck(conn.Kind): OutcomeNotRun}}
-	o, err := s.settle(rctx, tid, conn, kind, vid, started, actor, r)
-	if err != nil && !errors.Is(err, ErrActivationRefused) { // an activation run's own refusal is expected here
+	o, err := s.recordInterrupted(ctx, tid, conn, kind, vid, started, actor)
+	if err != nil {
 		return VerifyOutcome{}, errors.Join(fmt.Errorf("%w: and it could not be recorded", ErrRunInterrupted), err)
 	}
 	if errors.Is(cause, ErrRunInterrupted) {
 		return o, cause
 	}
 	return o, fmt.Errorf("%w: %w", ErrRunInterrupted, cause)
+}
+
+// recordInterrupted writes the failed run and the verifying → draft step, in a context that outlives
+// the caller's cancellation. It returns only a recording failure.
+func (s *Service) recordInterrupted(ctx context.Context, tid tenant.ID, conn Connection, kind VerificationKind, vid VerificationID,
+	started time.Time, actor authority.Chain) (VerifyOutcome, error) {
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	r := VerifyResult{CheckListVersion: 1, Verdict: VerdictFailed,
+		Outcomes: map[Check]Outcome{overPrivilegeCheck(conn.Kind): OutcomeNotRun}}
+	o, err := s.settle(rctx, tid, conn, kind, vid, started, actor, r)
+	if err != nil && !errors.Is(err, ErrActivationRefused) { // an activation run's own refusal is expected here
+		return VerifyOutcome{}, err
+	}
+	return o, nil
 }
 
 func (s *Service) base(kind audit.Kind, actor authority.Chain, c Connection, o audit.Outcome, reason string) audit.Event {
@@ -353,6 +502,16 @@ func (s *Service) activatedEvent(actor authority.Chain, c Connection, vid Verifi
 	ev.Changes = []audit.Change{{Attribute: "verification_id", After: []string{string(vid)}}}
 	if o == audit.Success {
 		ev.Changes = append(ev.Changes, audit.Change{Attribute: "state", After: []string{string(StateActive)}})
+	}
+	return ev
+}
+
+// credentialChangedEvent records a swap. Only the credential's reference ID appears, never material.
+func (s *Service) credentialChangedEvent(actor authority.Chain, c Connection, was CredentialID, vid VerificationID) audit.Event {
+	ev := s.base(AuditCredentialChanged, actor, c, audit.Success, "")
+	ev.Changes = []audit.Change{
+		{Attribute: "credential_id", Before: []string{string(was)}, After: []string{string(c.CredentialID)}},
+		{Attribute: "verification_id", After: []string{string(vid)}},
 	}
 	return ev
 }

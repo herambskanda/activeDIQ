@@ -1,0 +1,11 @@
+{
+ "id": "S-M05",
+ "class": "misaddressed",
+ "cites": [
+  "SAML-10",
+  "SSO-2"
+ ],
+ "build": "issuer_other",
+ "expect": "refuse",
+ "reason": "saml.issuer"
+}

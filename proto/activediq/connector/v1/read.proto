@@ -12,6 +12,7 @@ package activediq.connector.v1;
 import "activediq/connector/v1/common.proto";
 import "activediq/connector/v1/errors.proto";
 import "activediq/connector/v1/filter.proto";
+import "activediq/connector/v1/tier0.proto";
 
 option go_package = "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1;connectorv1";
 
@@ -86,8 +87,11 @@ message ReadRequest {
   // Upper bound on values returned per multi-valued attribute across all ranges; 0 means the
   // connector's cap. Exceeding it truncates the attribute and says so in ReadCompleted.
   uint32 max_values_per_attribute = 6;
+  // Ask for the connector classifier's Tier-0 verdict (ReadHeader.tier0), computed on the DC that
+  // serves this read (T-0433). Unset: no verdict is computed and the header carries none.
+  bool include_tier0 = 7;
   // nTSecurityDescriptor and the SD-flags control come with T-0118; held for them.
-  reserved 7 to 15;
+  reserved 8 to 15;
 }
 
 // The object with every attribute that fit in one DC response. A ranged attribute carries its
@@ -95,6 +99,18 @@ message ReadRequest {
 message ReadHeader {
   DirectoryEntry entry = 1;
   Observation observed = 2;
+  // Present exactly when the request set include_tier0. Computed by the connector classifier on
+  // the DC named in `observed`; a classification that cannot be decided fails the call rather than
+  // arriving as tier0 = false (true or error).
+  Tier0Verdict tier0 = 3;
+}
+
+// The connector's own Tier-0 answer for one object (threat-model §6.4), without the server-held
+// additions (designations, cross-directory correlation), which only ever add to it.
+message Tier0Verdict {
+  bool tier0 = 1;
+  // Why, one per row of §6.4 that matched. Empty when tier0 is false.
+  repeated Tier0Basis basis = 2;
 }
 
 // A further range of one multi-valued attribute. Ranges arrive in order; `range.terminal` marks

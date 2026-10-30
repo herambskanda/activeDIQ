@@ -31,7 +31,7 @@ func TestAPIServerTimeoutsAreSet(t *testing.T) {
 }
 
 func TestBuildAPIServesApihostBehindNewAPIServer(t *testing.T) {
-	h, err := buildAPI(config.Config{APIBodyBudget: config.DefaultAPIBodyBudget})
+	h, err := buildAPI(config.Config{APIBodyBudget: config.DefaultAPIBodyBudget}, testLimiter(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,10 +52,10 @@ func TestBuildAPIServesApihostBehindNewAPIServer(t *testing.T) {
 
 func TestBuildAPIRejectsNonPositiveBodyBudget(t *testing.T) {
 	for _, n := range []int64{0, -1} {
-		if _, err := buildAPI(config.Config{APIBodyBudget: n}); err == nil {
+		if _, err := buildAPI(config.Config{APIBodyBudget: n}, testLimiter(t)); err == nil {
 			t.Errorf("budget %d must fail startup", n)
 		}
-		err := Run(context.Background(), config.Config{DatabaseDSN: "postgres://unused", APIBodyBudget: n})
+		err := Run(context.Background(), config.Config{DatabaseDSN: "postgres://unused", APIBodyBudget: n}, useKEKEnv(t))
 		if err == nil || errors.Is(err, ErrNoDatabase) {
 			t.Errorf("Run with budget %d = %v; want a build failure before the database is touched", n, err)
 		}

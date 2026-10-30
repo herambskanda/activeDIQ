@@ -1,0 +1,384 @@
+# The sign-in plane of the console and API (threat model section 7.6, rows AN-8 and AN-10, rules 1-4).
+# A first factor (AN-8 here; AN-3 and AN-9 elsewhere) ends in a pending sign-in, never a session. Only a
+# successful second factor (AN-10) creates the session. Every handler is a stub that answers 501 until
+# its build ticket lands.
+paths:
+  /auth/break-glass/password:
+    post:
+      tags: [platform.authn]
+      operationId: signInBreakGlassPassword
+      summary: Break-glass sign-in, password step (AN-8)
+      description: >-
+        The first factor of a local break-glass account (ADM-142). Success answers 204 and sets exactly one
+        cookie, the pending-sign-in cookie (__Host-adiq_pending: HttpOnly, Secure, SameSite=Strict, Path=/,
+        at most 5 minutes). The response carries no session, no token and no body. The cookie authorises
+        nothing except the second-factor operations. Every failure has one shape, 401 /problems/sign-in-failed:
+        unknown account, wrong password, non-local account, disabled account and throttled account are
+        indistinguishable by status, body, headers and timing class (an unknown account still costs one
+        password verification). A throttled account is delayed on the server, never locked (rule 3). The
+        source-IP limiter may answer 429 with Retry-After, which does not depend on the account named.
+        Refused on any hostname bound to AN-5 or AN-7, and outside the console source-CIDR allow-list, with
+        the same 401.
+      x-permission: anonymous
+      x-activediq-scope: platform
+      x-activediq-anonymous: AN-8
+      x-activediq-stability: preview
+      x-activediq-parity: [ADM-142, ADM-145]
+      x-activediq-limits:
+        class: auth
+        maxBodyBytes: 4096
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: platform/authn.yaml#/components/schemas/BreakGlassPasswordRequest
+      responses:
+        "204":
+          description: The password step passed. Only the pending-sign-in cookie is set.
+          headers:
+            Set-Cookie:
+              description: The pending-sign-in cookie, __Host-adiq_pending, and no other cookie.
+              required: true
+              schema:
+                type: string
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+        "401":
+          $ref: shared/problems.yaml#/components/responses/SignInFailed
+        "413":
+          $ref: shared/problems.yaml#/components/responses/PayloadTooLarge
+        "415":
+          $ref: shared/problems.yaml#/components/responses/UnsupportedMediaType
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+        "501":
+          $ref: shared/problems.yaml#/components/responses/NotImplemented
+  /auth/second-factor/webauthn/challenge:
+    post:
+      tags: [platform.authn]
+      operationId: createWebAuthnSignInChallenge
+      summary: Start a WebAuthn second factor for a pending sign-in (AN-10)
+      description: >-
+        Needs the pending-sign-in cookie from a first factor. Answers the WebAuthn request options for the
+        account's enrolled credentials. A missing, expired, consumed or exhausted pending sign-in gets
+        401 /problems/sign-in-failed, the same as a wrong factor.
+      x-permission: anonymous
+      x-activediq-scope: platform
+      x-activediq-anonymous: AN-10
+      x-activediq-stability: preview
+      x-activediq-parity: [ADM-142]
+      x-activediq-limits:
+        class: auth
+      x-activediq-peer-ip: true
+      security: []
+      parameters:
+        - name: __Host-adiq_pending
+          in: cookie
+          required: true
+          description: >-
+            The pending-sign-in handle set by the first factor. It is read from this cookie only; a missing
+            or repeated cookie answers the same 401 as any other sign-in failure.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The WebAuthn request options for this pending sign-in.
+          content:
+            application/json:
+              schema:
+                $ref: platform/authn.yaml#/components/schemas/WebAuthnChallenge
+        "401":
+          $ref: shared/problems.yaml#/components/responses/SignInFailed
+        "413":
+          $ref: shared/problems.yaml#/components/responses/PayloadTooLarge
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+        "501":
+          $ref: shared/problems.yaml#/components/responses/NotImplemented
+  /auth/second-factor/webauthn/verify:
+    post:
+      tags: [platform.authn]
+      operationId: verifyWebAuthnSignIn
+      summary: Verify a WebAuthn assertion and create the session (AN-10)
+      description: >-
+        Needs the pending-sign-in cookie. On success the pending sign-in is consumed, a new session is
+        created with a new ID, and the response (204, no body) sets the session cookie and clears the pending
+        cookie. Any failure is 401 /problems/sign-in-failed and counts against the pending sign-in's five attempts.
+      x-permission: anonymous
+      x-activediq-scope: platform
+      x-activediq-anonymous: AN-10
+      x-activediq-stability: preview
+      x-activediq-parity: [ADM-142]
+      x-activediq-limits:
+        class: auth
+        maxBodyBytes: 16384
+      x-activediq-peer-ip: true
+      security: []
+      parameters:
+        - name: __Host-adiq_pending
+          in: cookie
+          required: true
+          description: >-
+            The pending-sign-in handle set by the first factor. It is read from this cookie only; a missing
+            or repeated cookie answers the same 401 as any other sign-in failure.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: platform/authn.yaml#/components/schemas/WebAuthnAssertion
+      responses:
+        "204":
+          description: The second factor passed and a session exists.
+          headers:
+            Set-Cookie:
+              description: >-
+                Two lines: the new session cookie, __Host-adiq_session, and a clearing
+                __Host-adiq_pending.
+              required: true
+              schema:
+                type: array
+                items:
+                  type: string
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+        "401":
+          $ref: shared/problems.yaml#/components/responses/SignInFailed
+        "413":
+          $ref: shared/problems.yaml#/components/responses/PayloadTooLarge
+        "415":
+          $ref: shared/problems.yaml#/components/responses/UnsupportedMediaType
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+        "501":
+          $ref: shared/problems.yaml#/components/responses/NotImplemented
+  /auth/second-factor/totp/verify:
+    post:
+      tags: [platform.authn]
+      operationId: verifyTotpSignIn
+      summary: Verify a TOTP code and create the session (AN-10)
+      description: >-
+        Needs the pending-sign-in cookie. Success and failure behave as for verifyWebAuthnSignIn.
+      x-permission: anonymous
+      x-activediq-scope: platform
+      x-activediq-anonymous: AN-10
+      x-activediq-stability: preview
+      x-activediq-parity: [ADM-142]
+      x-activediq-peer-ip: true
+      x-activediq-limits:
+        class: auth
+        maxBodyBytes: 1024
+      security: []
+      parameters:
+        - name: __Host-adiq_pending
+          in: cookie
+          required: true
+          description: >-
+            The pending-sign-in handle set by the first factor. It is read from this cookie only; a missing
+            or repeated cookie answers the same 401 as any other sign-in failure.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: platform/authn.yaml#/components/schemas/TotpCodeRequest
+      responses:
+        "204":
+          description: The second factor passed and a session exists.
+          headers:
+            Set-Cookie:
+              description: >-
+                Two lines: the new session cookie, __Host-adiq_session, and a clearing
+                __Host-adiq_pending.
+              required: true
+              schema:
+                type: array
+                items:
+                  type: string
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+        "401":
+          $ref: shared/problems.yaml#/components/responses/SignInFailed
+        "413":
+          $ref: shared/problems.yaml#/components/responses/PayloadTooLarge
+        "415":
+          $ref: shared/problems.yaml#/components/responses/UnsupportedMediaType
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+        "501":
+          $ref: shared/problems.yaml#/components/responses/NotImplemented
+  /auth/logout:
+    post:
+      tags: [platform.authn]
+      operationId: signOut
+      summary: End the current console session
+      description: >-
+        Revokes the calling session on the server and clears the session cookie. It acts only on the
+        caller's own session. Needs the CSRF header like any cookie-session mutation.
+      x-permission: authenticated
+      x-activediq-stability: preview
+      x-activediq-parity: [ADM-145]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      responses:
+        "204":
+          description: The session is revoked.
+          headers:
+            Set-Cookie:
+              description: Clears the session cookie.
+              required: true
+              schema:
+                type: string
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/CsrfFailed
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+        "501":
+          $ref: shared/problems.yaml#/components/responses/NotImplemented
+  /auth/csrf:
+    get:
+      tags: [platform.authn]
+      operationId: getCsrfToken
+      summary: The CSRF value for the calling session
+      description: >-
+        Returns the value the console sends in the X-CSRF-Token header on every mutation. It is bound to the
+        session, readable only with that session cookie, and not a credential: it authorises nothing alone.
+      x-permission: authenticated
+      x-activediq-stability: preview
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: The CSRF header name and value for this session.
+          content:
+            application/json:
+              schema:
+                $ref: platform/authn.yaml#/components/schemas/CsrfValue
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+        "501":
+          $ref: shared/problems.yaml#/components/responses/NotImplemented
+components:
+  schemas:
+    BreakGlassPasswordRequest:
+      description: The local break-glass account and its password.
+      type: object
+      additionalProperties: false
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 256
+        password:
+          $ref: shared/secret.yaml#/components/schemas/SecretInput
+    TotpCodeRequest:
+      description: A TOTP code from the account's authenticator.
+      type: object
+      additionalProperties: false
+      required: [code]
+      properties:
+        code:
+          $ref: shared/secret.yaml#/components/schemas/SecretInput
+    WebAuthnAssertion:
+      description: The authenticator's assertion, each field base64url (RFC 4648 section 5) without padding.
+      type: object
+      additionalProperties: false
+      required: [credentialId, authenticatorData, clientDataJson, signature]
+      properties:
+        credentialId:
+          type: string
+          maxLength: 1024
+          pattern: ^[A-Za-z0-9_-]+$
+        authenticatorData:
+          type: string
+          maxLength: 4096
+          pattern: ^[A-Za-z0-9_-]+$
+        clientDataJson:
+          type: string
+          maxLength: 4096
+          pattern: ^[A-Za-z0-9_-]+$
+        signature:
+          type: string
+          maxLength: 4096
+          pattern: ^[A-Za-z0-9_-]+$
+        userHandle:
+          type: string
+          maxLength: 256
+          pattern: ^[A-Za-z0-9_-]+$
+    WebAuthnCredentialType:
+      description: The credential type; public-key is the only one today.
+      type: string
+      x-activediq-enum: open
+      enum: [public-key]
+    WebAuthnUserVerification:
+      description: Whether the authenticator must verify the user.
+      type: string
+      x-activediq-enum: open
+      enum: [required, preferred, discouraged]
+    WebAuthnCredentialDescriptor:
+      description: One credential the account enrolled.
+      type: object
+      required: [type, id]
+      properties:
+        type:
+          $ref: platform/authn.yaml#/components/schemas/WebAuthnCredentialType
+        id:
+          type: string
+          maxLength: 1024
+    WebAuthnChallenge:
+      description: PublicKeyCredentialRequestOptions for navigator.credentials.get, as JSON.
+      type: object
+      required: [challenge, rpId, timeoutMs, userVerification, allowCredentials]
+      properties:
+        challenge:
+          type: string
+          maxLength: 512
+        rpId:
+          type: string
+          maxLength: 253
+        timeoutMs:
+          type: integer
+          minimum: 1000
+          maximum: 300000
+        userVerification:
+          $ref: platform/authn.yaml#/components/schemas/WebAuthnUserVerification
+        allowCredentials:
+          type: array
+          maxItems: 64
+          items:
+            $ref: platform/authn.yaml#/components/schemas/WebAuthnCredentialDescriptor
+    CsrfValue:
+      description: Which header carries the CSRF value and what it is. Named value, not token, because it is not a credential.
+      type: object
+      required: [header, value]
+      properties:
+        header:
+          type: string
+          maxLength: 64
+        value:
+          type: string
+          maxLength: 256

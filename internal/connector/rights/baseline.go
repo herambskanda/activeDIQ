@@ -10,9 +10,8 @@ package rights
 // Records and the baseline hold identifiers only (CC-WRITE-13).
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -72,16 +71,14 @@ func (s FileBaselineStore) Load() (*Baseline, error) {
 		return nil, err
 	}
 	var b Baseline
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&b); err != nil {
+	if err := json.Unmarshal(raw, &b, json.RejectUnknownMembers(true)); err != nil {
 		return nil, fmt.Errorf("baseline unreadable: %w", err)
 	}
 	return &b, nil
 }
 
 func (s FileBaselineStore) Save(b *Baseline) error {
-	raw, err := json.Marshal(b)
+	raw, err := json.Marshal(b, json.Deterministic(true))
 	if err != nil {
 		return err
 	}
@@ -139,7 +136,7 @@ type RecordSink interface {
 type FileRecordSink struct{ Path string }
 
 func (s FileRecordSink) append(v any) error {
-	raw, err := json.Marshal(v)
+	raw, err := json.Marshal(v, json.Deterministic(true))
 	if err != nil {
 		return err
 	}

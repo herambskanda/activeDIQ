@@ -69,7 +69,7 @@ limit under its own rules before touching a directory.
 | `describe.proto` | `Feature`, `SupportState`, `DescribeRequest/Response`, `DescribeSchema*`, topology and health messages |
 | `read.proto` | `ScopedSearch*`, `Read*`, `ReadPerDC*` |
 | `changefeed.proto` | `ChangeFeedRequest`, `FeedCookie`, `ChangeBatch`, `ObjectChange` |
-| `tier0.proto` (v1.1) | `Tier0Basis` (C1-C18 from the TM-D26 amendment, E1-E5, designated), `Tier0Context`, `CorrelationStatement`, `CorrelatedPeer`, `CorrelationEvidence` |
+| `tier0.proto` (v1.1) | `Tier0Basis` (C1-C19 from the TM-D26/TM-D27 amendments, E1-E5, designated), `Tier0Context`, `CorrelationStatement`, `CorrelatedPeer`, `CorrelationEvidence` |
 | `write.proto` (v1.1) | `PlanRequest/Response`, `ApplyRequest/Response`, `WriteKind`, `WriteChange`, `WriteTarget`, `TargetPrecondition`, `StepKey`, `ActingPrincipal`, `WriteGateOverride`, `Tier0Evaluation` |
 | `verify.proto` (v1.1) | `VerifyConnectionRequest/Response`, `RightsFinding` and its right and source types, `RightsFamily`, `VerificationCheck`, `VerificationVerdict` |
 | `connector.proto` | the `Connector` service |
@@ -173,6 +173,29 @@ again. The fingerprint in `Describe` tells a caller when to re-fetch.
   attributes decoded by the codecs (§5.4). A multi-valued attribute beyond one range returns the
   first range with `complete = false`; **a search never follows ranges** (it would turn one page
   into N reads). Completion is `Read`'s job.
+- **Served over the tunnel (T-0683, T-0665).** `connector.Run` (`compose/connector`) loads the
+  connector's local JSON config (`ACTIVEDIQ_CONNECTOR_CONFIG`: `connection_id`, enrolment and data
+  directories, DC list, customer CA, Kerberos principal/realm/keytab; unknown keys refused, no password
+  field), loads the enrolled mTLS leaf (`dial.Load`; it must carry a `connector` component identity),
+  opens the AD session (Kerberos GSSAPI over LDAPS with channel binding, trusting only the customer CA),
+  reloads the durable baseline, then dials out with `platform/fleet/tunnelclient` and serves ONE composite
+  `ConnectorServer` (`compose/connector.TunnelBinding`) on the RoleComponent mux. `rights.Register` and
+  `write.Register` each register the whole Connector service, so the composite is registered once per
+  tunnel registrar. It serves `VerifyConnection`, `Read`, `ScopedSearch`, `Plan` and `Apply`; every
+  other method is Unimplemented until its group is mounted, and a golden-list test pins the served set.
+  The binary opens no listener (`TestNoListenerInConnectorComposition`).
+- **Connection binding (T-0665).** `VerifyConfig.ConnectionID` is the connection the config names;
+  a `VerifyConnection` for any other `connection_id` is refused `INVALID_ARGUMENT` before the directory
+  is touched. `Run` always sets it (it is optional only for in-process lab callers).
+- **Connector data directory.** `baseline.json` (reported tier-0 set; reloaded on restart so the epoch
+  continues), `records.log` (shrink / baseline-missing records), `gate-ratchet.log` (write gate
+  ratchet), `c13-pins.json` (C13 group pins). Directory 0700, files 0600, atomic replace.
+- **`parent_guid` on search entries (T-0694).** Every entry except a naming-context head carries the
+  same `parent_guid` `Read` reports. `ad.Session.ScopedSearch` runs on `SearchPages`, which holds the
+  session lock only around each page request, never while the page is processed; after each page it
+  resolves parents there (one `Read` per distinct parent DN for the whole call, cached; entries
+  withheld as duplicates or by authorisation cost no read) and sets them on the entries. A parent that
+  cannot be resolved fails the stream, never "no parent".
 
 ### 5.2 Initial inventory and the reconcile pass
 
@@ -199,6 +222,24 @@ with 50,000 members is 34 chunks, never one 4 MiB message.
   `ReadCompleted.truncated_attributes`. The connector has its own ceiling when the field is 0.
 - Constructed attributes (`tokenGroups`, `msDS-User-Account-Control-Computed`,
   `msDS-UserPasswordExpiryTimeComputed`) are readable here and only here.
+- **Pin and Tier-0 verdict (v1.3, T-0433).** With `dc.pinned_dsa_guid` set, `Read` is served by that
+  DC or fails with `UNREACHABLE_DC`: the connector compares the pin with the DSA GUID of the DC its
+  session is bound to before the read and again after it, and `ReadHeader.observed.dc` names the DC
+  that answered. `ReadRequest.include_tier0` asks for `ReadHeader.tier0` (`Tier0Verdict{tier0, basis[]}`):
+  the connector classifier's answer, run on the same session and so the same DC as the read. The
+  verdict is present exactly when asked for; a classification that cannot be decided fails the
+  whole call (`PROVIDER_FAILURE`, nothing streamed), never `tier0 = false`. The verdict is the
+  connector's computed set only: server-held designations and cross-directory correlation (§8.3)
+  only add to it. `directory/client.ConnectorReads` reads it from the header and refuses a header
+  that names another DC than the pin; the separate `Tier0Verdicts` port is gone. Implemented in
+  `internal/connector/read` (Handler, gRPC Server, `ADSource` over `ad.Session` + `write.ADProvider`; `NewADSource` refuses a provider whose
+  directory and DC binder are not over the reading session, so the pin, the read and the verdict
+  cannot come from different DCs).
+- **Parent.** `parent_guid` is empty only for a naming-context head, which the connector reads from
+  the object's `instanceType` (`IT_NC_HEAD`; also `CN=Configuration`). Any other object whose parent
+  cannot be read or decoded fails the call (`INSUFFICIENT_RIGHTS` / `PROVIDER_FAILURE`): consumers
+  take an empty parent as "top of the tree" and authorisation relies on that ancestry.
+  `nTSecurityDescriptor` is refused (`ATTRIBUTE_NOT_ALLOWED`) until T-0118.
 - `Read` of a GUID that does not exist, or was deleted, is `OBJECT_NOT_FOUND`. Show-deleted is not
   available on this contract (it belongs to a later named operation). An object the identity cannot
   read can be `INSUFFICIENT_RIGHTS` or `OBJECT_NOT_FOUND` depending on the DC; **callers must not
@@ -512,7 +553,8 @@ the request's context only; it is the residual R-T0SET-1 below.
 | C12 | X's `userAccountControl` (TRUSTED_FOR_DELEGATION, TRUSTED_TO_AUTH_FOR_DELEGATION) and `msDS-AllowedToDelegateTo`, where a value whose host is in the set's DC list or does not resolve counts as a DC service; the `msDS-AllowedToActOnBehalfOfOtherIdentity` of the DCs in the set's DC list | **live**; the DC list is **set** |
 | C14 | X's `sAMAccountName` = `AZUREADSSOACC$` | **live** |
 | C17 (TM-D26 rules 1-5, 8) | X's `objectSid`, `tokenGroups` and every `sIDHistory` SID; then, on each C17 object in the connector's set (the domain head of every domain, the Configuration head, the Schema head, `CN=AdminSDHolder,CN=System`), the **head DACL and owner** (SD-flags control, OWNER and DACL, through the typed security-descriptor primitive, T-0149, with the same effective-rights helper as the classifier). X is `tier0`, basis C17, when its token holds an allow ACE with `WRITE_DAC`, `WRITE_OWNER`, `GENERIC_ALL` or `GENERIC_WRITE` (generic and mapped bits), an all-properties or `gPLink` `WriteProperty`, or all extended rights (any one is enough); when X's token contains the owner SID of a C17 object and that owner is not a C1 principal (OWNER RIGHTS and `dSHeuristics` character 29 are ignored); or when X is a group that is a trustee of such an ACE and the walk reaches X's members. Callback allow ACEs (0x09, 0x0B) count as unconditional, deny callbacks (0x0A, 0x0C) are ignored. An ACE trustee SID that is not on the explicit ignore list and does not resolve, a callback ACE or ACE the primitive flags `Unknown`, an unreadable owner or DACL, or a C17 object that cannot be read counts as `tier0`, basis `UNKNOWN` | **live**; the list of C17 objects is **set** (C7, C3) |
-| C18 (TM-D26 rules 6-8) | X's `sIDHistory`, read live. X is `tier0`, basis C18, when a value is privileged **by RID alone**, whatever the domain prefix (500, 502, 512, 516-519, 521, 525-527 and the C1 built-in S-1-5-32 groups), or resolves through the Global Catalog to an object that is `tier0` by another basis. When X is a group, its `sIDHistory` is checked the same way, and a member or owner of such a group is `tier0` through C2. An unresolvable value with RID 1000 or more is not `tier0`. An unreadable `sIDHistory` or a failed Global Catalog lookup counts as `tier0`, basis `UNKNOWN` | **live**; the privileged-RID list is code, the designated closure is **context** |
+| C18 (TM-D26 rules 6-8) | X's `sIDHistory`, read live. X is `tier0`, basis C18, when a value is privileged **by RID alone**, whatever the domain prefix (500, 502, 512, 516-519, 521, 525-527 and the C1 built-in S-1-5-32 groups), or resolves through the Global Catalog to an object that is `tier0` by another basis (an object of another domain of the forest that the GC resolves is `tier0`: the GC cannot clear it; a customer designation counts here too). When X is a group, its `sIDHistory` is checked the same way, and a member or owner of such a group is `tier0` through C2. An unresolvable value with RID 1000 or more is not `tier0`. An unreadable `sIDHistory` or a failed Global Catalog lookup counts as `tier0`, basis `UNKNOWN` | **live**; the privileged-RID list is code, the designated closure is **context** |
+| C19 (TM-D27 rules 1-8) | On each C19 object (C1 and C13 groups, C1 accounts and every `krbtgt`, DC computer objects from the primary-group edge and `nTDSDSA`, the Domain Controllers OU and the container directly holding each DC, each GPO C9 marks), the **own DACL and owner**, read live. X is `tier0`, basis C19, when its token holds an allow ACE with a takeover right for that class (TM-D27 rule 2 table; GUIDs read from the schema and `CN=Extended-Rights` at snapshot, property sets included), when X owns the object and is not C1, or, for a group, holds the Self-Membership validated write and is not already `tier0`. Depth 1: C19 does not iterate. Trustee handling, ignore list and fail-closed as C17 | **live**; the object list is **set** (C1, C4, C5, C9, C13) |
 | C15 | When X is a site: one subtree search under X for a `server` object with a `serverReference` | **live** |
 | C16, E5 | The request's statement (§8.3), whose evidence F4 checks against X as re-read | context |
 | E1, E4 (roles) | Role assignments and eligibility schedules with `principalId` = X, directly and through its role-assignable groups | **live** |
@@ -767,7 +809,17 @@ as the connector identity and streams:
   correlated entries, each with its bases, so the server can compare it with its inventory-derived
   set; a difference is a server health finding and never shrinks the connector's set);
 - exactly one `completed` (verdict, each check's outcome, counts, `write_gate_openable`, and from
-  v1.2 `tier0_inputs_dropped`, §8.3a).
+  v1.2 `tier0_inputs_dropped`, §8.3a, and from v1.3 (T-0412) `directory_identity`).
+
+**Check list on the wire (T-0684).** `header.check_list_version` is the decimal text of a positive integer (the client parses it; the verification row stores an integer). The AD stream's `completed.checks` always carries V5 (pass: the stream starts only once the connector's own account is read) besides V7–V9; the server accepts a pass only when V5, V7 and V8 are answered.
+
+**`completed.directory_identity` (v1.3, T-0412).** The directory the run was answered against, as V5
+(AD: objectGUID of the forest root domain NC head) or EV2 (Entra: the tenant id) read it. The
+connector sets it on every run (the AD stream refuses to start without a bound directory). The
+server's client requires it unless the verdict is `FAILED` or `COULD_NOT_VERIFY`: a missing identity
+is `client.ErrIdentityMissing`, a malformed one or one of the other directory kind than the
+connection is `client.ErrIdentityMismatch`, and in both cases the run yields no result (fail-closed).
+The server transport is `client.GRPCVerifyTransport` over the connector source used for reads.
 
 **`correlated_tier0` (v1.2, TM-D23 rule 8).** The server's C16 set (AD connection) or E5 set (Entra
 connection) for the connection, in every correlation state, as `Tier0Member` entries. It is handled
@@ -777,6 +829,14 @@ correlated object are excessive like rights on any `tier0` object. Each entry's 
 on an AD connection or E5 on an Entra connection. Another basis, an empty basis or an unset
 `object` is `INVALID_ARGUMENT` before any directory call; no run starts and the gate keeps its
 previous run. On an AD-only deployment the list is empty, which is correct (C16 needs a HybridLink).
+
+**`pinned_c13` (T-0358, TM-D26 rule 10).** The C13 group GUIDs the server has pinned for the AD
+connection (`connection_c13_pins`). The connector passes them to the classifier, so a pinned group
+that was renamed stays C13 and stays in `tier0_set`. A malformed GUID is `INVALID_ARGUMENT` before
+any directory call. The server pins at first discovery: on an onboarding run it persists the groups
+whose `tier0_set` basis is C13; the pin set is add-only and a pin store that cannot be read or
+written interrupts the run. The classifier raises `DNSADMINS_UNDETERMINED` (not silence) when no
+DnsAdmins group is found and the DNS zone containers are unreadable (`InsufficientRights`).
 
 A stream without `completed` is an interrupted run: the verdict is `FAILED` with `run_interrupted`
 (DM-10.I10). The run is **read-only**. It never requests the SACL; step 3 uses the SD-flags control
@@ -807,7 +867,7 @@ has the same DM-24 shape and fingerprint. **The "refused flag"** is `verdict = R
 | TM §6.5 | 5 Delegation configured on the identity | V7, `DELEGATION_CONFIGURED`, block | the identity, or the DC whose RBCD attribute lists it | `delegation`: `UNCONSTRAINED`, `CONSTRAINED`, `PROTOCOL_TRANSITION`, `RESOURCE_BASED` | `identity_attribute`, an `IdentityAttribute` enum: `USER_ACCOUNT_CONTROL`, `MS_DS_ALLOWED_TO_DELEGATE_TO`, `MS_DS_ALLOWED_TO_ACT_ON_BEHALF_OF_OTHER_IDENTITY` | |
 | TM-D1 / §6.3 | Missing rights: R1 and R2 on each managed domain NC (V8, block); missing rights of enabled write families (V9, warn) | V8 or V9, `MISSING_RIGHT` | the domain NC head or managed OU | `ad` with the expected right | `expected_by` the family | `family` |
 | FR-11 | An answer that could not be computed (unreadable object, unreachable domain or GC, ACL not returned) | V7, `COULD_NOT_VERIFY`, block | the object not decided | unset | unset | the check's outcome is `COULD_NOT_VERIFY`, never `PASS` |
-| TM §6.6, TM-D5a | Deny-list application permission, matched on `value` on **any** resource (includes `full_access_as_app`, `Exchange.ManageAsApp`, `Sites.FullControl.All`; implementation T-0302) | EV3, `ENTRA_DENY_LIST_PERMISSION`, block | the service principal | `entra.app_permission` (`app_role_id`, `value`, `resource_app_id`) | `entra_assignment` (the appRoleAssignment id) | |
+| TM §6.6, TM-D5a | Deny-list application permission, matched on `value` on **any** resource (includes `full_access_as_app`, `Exchange.ManageAsApp`, `Sites.FullControl.All`, and the tenant-wide Graph mail, files and sites write permissions; implementation T-0302, T-0369) | EV3, `ENTRA_DENY_LIST_PERMISSION`, block | the service principal | `entra.app_permission` (`app_role_id`, `value`, `resource_app_id`) | `entra_assignment` (the appRoleAssignment id) | |
 | TM §6.6 | Any directory role, active or PIM-eligible, held directly or through a role-assignable group the service principal belongs to (membership read; `[UNVERIFIED — lab G6]` that an SP member receives the role, so the conservative reading refuses) | EV3, `ENTRA_DIRECTORY_ROLE`, block | the service principal | `entra.directory_role` (`role_definition_id`, `ACTIVE` or `ELIGIBLE`, `directory_scope_id`) | `entra_assignment` | |
 | TM §6.6 | Permission beyond the enabled rows | EV5, `EXCESSIVE_RIGHT`, warn | the service principal | `entra.app_permission` | `entra_assignment` | |
 | TM §6.6 | Permission an enabled row needs and the app lacks | EV4, `MISSING_RIGHT`; block for the read rows the connection needs (tenant, user and group read and delta, admin pre-flight), warn for write rows | the service principal | `entra.app_permission` | `expected_by` the family | `family` |
@@ -1279,3 +1339,24 @@ CC-WRITE-16 to -22 in TM-F-T0GUARD and TM-F-RIGHTS).
 - v1.1, write group and rights check: [allowedAttributesEffective](https://learn.microsoft.com/en-us/windows/win32/adschema/a-allowedattributeseffective) · [sDRightsEffective](https://learn.microsoft.com/en-us/windows/win32/adschema/a-sdrightseffective) · [Entra Connect source anchor design](https://learn.microsoft.com/en-us/entra/identity/hybrid/connect/plan-connect-design-concepts) · [Graph user resource (onPremisesImmutableId, onPremisesSecurityIdentifier, onPremisesSyncEnabled)](https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0) · [application addKey](https://learn.microsoft.com/en-us/graph/api/application-addkey?view=graph-rest-1.0) · [passwordCredential resource (hint, secretText, keyId)](https://learn.microsoft.com/en-us/graph/api/resources/passwordcredential?view=graph-rest-1.0) · [servicePrincipal resource (keyCredentials, passwordCredentials)](https://learn.microsoft.com/en-us/graph/api/resources/serviceprincipal?view=graph-rest-1.0) · [tokenGroups](https://learn.microsoft.com/en-us/windows/win32/adschema/a-tokengroups) · [memberOf is a back-link](https://learn.microsoft.com/en-us/windows/win32/adschema/a-memberof) · [RFC 4511 §4.6 Modify](https://www.rfc-editor.org/rfc/rfc4511#section-4.6). Internal: threat-model §6.2 to §6.6 and §6.8, domain-model DM-10.I8 to I11, DM-20, DM-24, DM-25, ADR-0005 rules 2, 4, 5 and 7, forest-connection spec §7 (V1 to V9, FR-10 to FR-13, FR-35).
 - v1.2 (T-0122): [Binding to well-known objects using WKGUID (wellKnownObjects, Domain Controllers)](https://learn.microsoft.com/en-us/windows/win32/ad/binding-to-well-known-objects-using-wkguid) · [gPLink](https://learn.microsoft.com/en-us/windows/win32/adschema/a-gplink) · [MS-GPOL Domain SOM Search (gPLink format and options)](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-gpol/08090b22-bc16-49f4-8e10-f27a8fb16d18) · [passwordCredential (endDateTime, startDateTime)](https://learn.microsoft.com/en-us/graph/api/resources/passwordcredential?view=graph-rest-1.0). Internal: threat-model §6.2 TM-D23 rules 7 to 11 and the `ENTRA_PASSWORD_CREDENTIAL` severity, §6.4, §16.1 TM-R14 to TM-R17; domain-model DM-23.I1, DM-26; forest-connection spec FR-25.
 - Internal: `knowledge/development/domain/ad-change-notifications.md` (T-0018), `knowledge/development/runbooks/ad-lab.md` §6, and the ad-expert consult recorded in the T-0064 notes. The Samba statements in the consult (no `MoreResults`, `;range=0-0`, skipped removed links) come from a reading of the source, not a run, and are `[UNVERIFIED lab]` until CC-FEED-04 and CC-FEED-21 run.
+
+## DACL write path (T-0743, T-0726)
+
+The AD connector has one directory write, the `nTSecurityDescriptor` DACL replace:
+`write.ApplyDACL` → `ad.Session.WriteDACL` → `write/ops.ReplaceSD`. `ApplyDACL` refuses unless the guard's
+token (a) is valid, (b) was issued for a kind whose `PropertyWrite` declared `nTSecurityDescriptor`
+(`Authorised.DeclaresProperty`; the token records the declared keys at step 4, so a token for another kind
+cannot reach it), (c) targets the object the plan was made for, and (d) is bound to the DC the session is on.
+`WriteDACL` re-reads the DACL-only SD, runs `VerifyBase` (`sd.stale_base` sends nothing), then sends one
+Modify. After a successful Modify `ApplyDACL` re-reads the DACL-only SD through `Session.ReadDACL` (same
+session, same DC) and calls `DACLWrite.VerifyAfter` (SD-R10). A mismatch is `sd.write_diverged`: the
+`DACLAuditor` receives a `DACLDiverged` record (object, DC, base, planned and actual digests, ACE count, PD bit, the planned and actual DACL kind (Null = everyone full access, distinct from an empty List = nobody), and the stored ACEs as typed fields — type, flags, mask, trustee SID, object GUIDs — bounded to 256 with a `Truncated` flag; no SDDL, no raw bytes), the error is returned and the write is **not** retried. A read-back that fails is `ErrReadBack`
+(stored state unknown, no retry). Samba proves the mechanics; Windows re-sorting and SDProp are windows-lab.
+
+## Lab fixture seam: `internal/connector/labadmin` (T-0519)
+
+Lab-test support only. It holds an administrator LDAPS session that creates and deletes throw-away
+OUs and users on the lab DC, so lab tests outside `internal/connector` need not import go-ldap
+(fitness O2, ADR-0005 rule 2). It is not a product write path. The single-write-path guard
+(`write.TestNoWriteCallOutsideTheGuard`) carries one exact-path allowance for this directory, and
+`write.TestLabAdminImportedOnlyByTests` fails if any non-`_test.go` file imports it.

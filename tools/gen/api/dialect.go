@@ -86,6 +86,7 @@ type Resp struct {
 type RespHeader struct {
 	Name     string
 	Required bool
+	List     bool // an array of strings: one header line per value
 }
 
 // Operation is one path+method of the bundle.
@@ -96,6 +97,7 @@ type Operation struct {
 	Scope                 string
 	Stability, Sunset     string
 	Anonymous             string
+	PeerIP                bool // x-activediq-peer-ip: the Input carries the TCP peer address
 	Deprecated            bool
 	Class                 string
 	MaxBody               int64
@@ -548,9 +550,24 @@ func (p *parser) parseParam(raw any, where string, m *Model) *Param {
 		if n := strings.ToLower(pm.Name); n == "dn" || n == "distinguishedname" {
 			p.fail(where, "a directory object is addressed by objectGUID, never by DN (path parameter %q)", pm.Name)
 		}
-	case "query", "header":
+	case "query":
+	case "header":
+		// Request.Header carries the full r.Header, so a header parameter named for a credential
+		// would hand a handler the raw session cookie or bearer token.
+		// x-csrf-token mirrors authnhttp.CSRFHeader: it is HMAC(session token), checked by the authenticator.
+		// forwarded and x-real-ip are client-spoofable peer addresses, like x-forwarded-*.
+		if n := strings.ToLower(pm.Name); contains([]string{"cookie", "authorization", "proxy-authorization", "x-csrf-token", "forwarded", "x-real-ip", "x-client-ip", "true-client-ip"}, n) || strings.HasPrefix(n, "x-forwarded-") {
+			p.fail(where, "the %q header belongs to the authenticator or the edge, never to a handler (header parameter %q); the peer address comes from the platform", pm.Name, pm.Name)
+		}
+	case "cookie":
+		// A cookie never produces a validation problem (the problem "in" enum has no cookie, and a
+		// precise answer would be an oracle): a missing or repeated cookie reads as empty.
+		pm.Required = true // a plain string field; an absent cookie is the empty string
+		if pm.Name == "__Host-adiq_session" {
+			p.fail(where, "the session cookie belongs to the authenticator, never to a handler (cookie parameter %q)", pm.Name)
+		}
 	default:
-		p.fail(where, "parameter location %q is not allowed (path, query, header)", pm.In)
+		p.fail(where, "parameter location %q is not allowed (path, query, header, cookie)", pm.In)
 	}
 	if pm.Name == "" {
 		p.fail(where, "a parameter has a name")
@@ -560,6 +577,9 @@ func (p *parser) parseParam(raw any, where string, m *Model) *Param {
 		ok := s.isScalar() || s.isEnum() || (s.Type == "array" && s.Items != nil && s.Items.Ref == "" && s.Items.isScalar())
 		if !ok {
 			p.fail(where, "a parameter schema is a scalar, a $ref, or an array of scalars")
+		}
+		if pm.In == "cookie" && (s.Type != "string" || s.Format != "" || s.isEnum() || s.Pattern != "" || s.MinLen != nil || s.MaxLen != nil) {
+			p.fail(where, "a cookie parameter is a plain string")
 		}
 	}
 	return pm

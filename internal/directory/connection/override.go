@@ -1,11 +1,13 @@
 package connection
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/store"
+	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
 // Tier0OverrideID identifies a DM-25 row.
@@ -119,6 +121,17 @@ func (Store) Tier0OverrideInForce(ctx context.Context, tx store.Tx, id ID) (*Tie
 	return overrideInForce(ctx, tx, c)
 }
 
+// Tier0OverrideInForce is the tenant-explicit read for the connector client (client.OverrideSource,
+// TM-R15): the override in force for the connection's current credential, or nil. A connection of
+// another tenant is not visible under tid's row-level security and reads as not found.
+func (r *Registry) Tier0OverrideInForce(ctx context.Context, tid tenant.ID, id ID) (o *Tier0Override, err error) {
+	err = r.with(ctx, tid, func(ctx context.Context, tx store.Tx) (e error) { o, e = r.s.Tier0OverrideInForce(ctx, tx, id); return })
+	if err != nil {
+		return nil, err
+	}
+	return o, nil
+}
+
 func overrideInForce(ctx context.Context, tx store.Tx, c Connection) (*Tier0Override, error) {
 	if c.RetiredAt != nil {
 		return nil, nil // ended: DM-10.I13 retired_at
@@ -153,8 +166,8 @@ func overrideInForce(ctx context.Context, tx store.Tx, c Connection) (*Tier0Over
 // stable reason. It runs no verification: a stale or missing run is the caller's cue to start one
 // (the Service does).
 //
-// Binding creation (DM-10.I3) belongs to the transaction that makes the connection active and lands
-// with DM-13.
+// The embedded connector binding (DM-13, DM-10.I3) is created in this same transaction, just before
+// the transition; the database refuses an activation with no live binding.
 func (s Store) Activate(ctx context.Context, tx store.Tx, id ID) (Connection, error) {
 	cur, stamp, err := lock(ctx, tx, id)
 	if err != nil {
@@ -183,5 +196,56 @@ func (s Store) Activate(ctx context.Context, tx store.Tx, id ID) (Connection, er
 	if ok, why := Qualifies(cur.Kind, v, ov); !ok {
 		return Connection{}, &ActivationError{Code: why}
 	}
+	if err := ensureEmbeddedBinding(ctx, tx, id); err != nil {
+		return Connection{}, err
+	}
 	return s.Transition(ctx, tx, id, cur.State, StateActive)
+}
+
+// OverrideEvidence is what the override's audit event commits to (DM-25.I7): how many fingerprints
+// the override acknowledges and their salted digest. It carries no fingerprint.
+type OverrideEvidence struct {
+	Count  int
+	Digest []byte
+}
+
+// OverrideEvidenceFor computes the evidence for acknowledging the run: the run's whole over-privilege
+// fingerprint set, digested under adq-override-digest/1 with the run's digest_salt. A run is
+// immutable, so this agrees with what AcknowledgeTier0Override stores for the same run.
+func (s Store) OverrideEvidenceFor(ctx context.Context, tx store.Tx, conn ID, vid VerificationID) (OverrideEvidence, error) {
+	if err := requireTenant(ctx, tx); err != nil {
+		return OverrideEvidence{}, err
+	}
+	cur, err := s.Get(ctx, tx, conn)
+	if err != nil {
+		return OverrideEvidence{}, err
+	}
+	v, err := getVerification(ctx, tx, conn, vid, true)
+	if err != nil {
+		return OverrideEvidence{}, err
+	}
+	var salt []byte
+	if err := tx.QueryRow(ctx, `SELECT digest_salt FROM public.connection_verifications WHERE connection_id = $1::uuid AND id = $2::uuid`,
+		string(conn), string(vid)).Scan(&salt); err != nil {
+		return OverrideEvidence{}, fmt.Errorf("connection: override evidence: %w", errOrNoRow(err))
+	}
+	fps := overPrivilegeFingerprints(cur.Kind, v)
+	if len(fps) == 0 {
+		return OverrideEvidence{}, &OverrideError{Code: ReasonNoFindings}
+	}
+	return OverrideEvidence{Count: len(fps), Digest: OverrideDigest(salt, fps)}, nil
+}
+
+// VerifyOverrideEvidence reports whether the stored override acknowledges exactly the set the plan
+// committed to. Apply calls it so the event never states a digest the row does not back.
+func (Store) VerifyOverrideEvidence(ctx context.Context, tx store.Tx, o Tier0Override, want OverrideEvidence) error {
+	var salt []byte
+	if err := tx.QueryRow(ctx, `SELECT digest_salt FROM public.connection_verifications WHERE connection_id = $1::uuid AND id = $2::uuid`,
+		string(o.ConnectionID), string(o.VerificationID)).Scan(&salt); err != nil {
+		return fmt.Errorf("connection: override evidence: %w", errOrNoRow(err))
+	}
+	if len(o.AcknowledgedFingerprints) != want.Count || !bytes.Equal(OverrideDigest(salt, o.AcknowledgedFingerprints), want.Digest) {
+		return fmt.Errorf("%w: the acknowledged set changed since the plan", ErrInvalid)
+	}
+	return nil
 }

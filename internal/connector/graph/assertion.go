@@ -7,7 +7,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/v2"
 	"time"
 )
 
@@ -36,7 +36,7 @@ func buildAssertion(c Credential, clientID, audience string, now time.Time, jti 
 		return "", newErr(CodeInvalidArgument, 0, "certificate key must be RSA", nil)
 	}
 	thumb := sha256.Sum256(c.Cert.Raw)
-	hdr, _ := json.Marshal(map[string]string{"alg": "PS256", "typ": "JWT", "x5t#S256": b64.EncodeToString(thumb[:])})
+	hdr, _ := json.Marshal(map[string]string{"alg": "PS256", "typ": "JWT", "x5t#S256": b64.EncodeToString(thumb[:])}, json.Deterministic(true))
 	claims, _ := json.Marshal(map[string]any{
 		"aud": audience, "iss": clientID, "sub": clientID, "jti": jti,
 		"nbf": now.Unix() - 30, "iat": now.Unix(), "exp": now.Add(assertionTTL).Unix(),

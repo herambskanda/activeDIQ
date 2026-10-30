@@ -28,6 +28,11 @@ type MemoryLimiterConfig struct {
 	Burst      int
 	Refill     time.Duration // time to regain one try
 	MaxSources int
+	// SweepEvery is the least time between full-table sweeps when the table is full. Zero takes
+	// min(1s, Refill). Without it, a flood of new sources against a full table would run an
+	// O(MaxSources) scan under the global mutex on every request.
+	SweepEvery time.Duration
+	OnSweep    func()           // tests only: called once per sweep
 	Now        func() time.Time // tests only
 }
 
@@ -45,6 +50,8 @@ type MemoryLimiter struct {
 	cfg MemoryLimiterConfig
 	mu  sync.Mutex
 	m   map[string]*fail
+	// lastSweep is when the table was last swept; guarded by mu.
+	lastSweep time.Time
 }
 
 // NewMemoryLimiter returns a limiter with cfg's defaults filled in.
@@ -57,6 +64,9 @@ func NewMemoryLimiter(cfg MemoryLimiterConfig) *MemoryLimiter {
 	}
 	if cfg.MaxSources <= 0 {
 		cfg.MaxSources = 100000
+	}
+	if cfg.SweepEvery <= 0 {
+		cfg.SweepEvery = min(time.Second, cfg.Refill)
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
@@ -98,7 +108,7 @@ func (l *MemoryLimiter) bucket(key string, now time.Time) *fail {
 	b, ok := l.m[key]
 	if !ok {
 		if len(l.m) >= l.cfg.MaxSources {
-			l.sweep(now)
+			l.maybeSweep(now)
 		}
 		if len(l.m) >= l.cfg.MaxSources {
 			key = overflowKey
@@ -114,6 +124,19 @@ func (l *MemoryLimiter) bucket(key string, now time.Time) *fail {
 		b.at = now
 	}
 	return b
+}
+
+// maybeSweep sweeps at most once per SweepEvery. A clock that moved backwards counts as due, so a
+// step back cannot disable sweeping until the old time is reached again. Caller holds mu.
+func (l *MemoryLimiter) maybeSweep(now time.Time) {
+	if d := now.Sub(l.lastSweep); !l.lastSweep.IsZero() && d >= 0 && d < l.cfg.SweepEvery {
+		return
+	}
+	l.lastSweep = now
+	if l.cfg.OnSweep != nil {
+		l.cfg.OnSweep()
+	}
+	l.sweep(now)
 }
 
 // sweep drops sources that have fully recovered: they carry no state.

@@ -100,6 +100,7 @@ cmd_init() {
         "$tool" -H "$sam" --relax "$SEEDDIR/$file" >"$SEEDDIR/load.log" 2>&1 || { log "load failed: $file"; tail -20 "$SEEDDIR/load.log" >&2; exit 1; }
     fi
   done < "$SEEDDIR/loadplan.txt"
+  /opt/lab/seed/schema-seed.sh "$sam"
   log "init: starting samba for protocol-level seed steps"
   samba --daemon --no-process-group
   wait_ldaps

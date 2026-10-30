@@ -3,6 +3,7 @@ package rights_test
 import (
 	"context"
 	"crypto/sha1" //nolint:gosec // certificate thumbprints are SHA-1 by definition
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -226,7 +227,24 @@ func TestDenyListMatching(t *testing.T) {
 		"Group.ReadWrite.All":                             false,
 		"User-OnPremisesSyncBehavior.ReadWrite.All":       true,
 		"OrgContact-OnPremisesSyncBehavior.ReadWrite.All": true,
-		"": false,
+		"full_access_as_app":                              true,
+		"EXCHANGE.MANAGEASAPP":                            true,
+		"sites.fullcontrol.all":                           true,
+		"Sites.Read.All":                                  false,
+		"Mail.ReadWrite":                                  true,
+		"mail.send":                                       true,
+		"Mail-Advanced.ReadWrite.All":                     true,
+		"MailboxItem.ReadWrite.All":                       true,
+		"MailboxItem.ImportExport.All":                    true,
+		"FILES.READWRITE.ALL":                             true,
+		"Sites.ReadWrite.All":                             true,
+		"Mail.Read":                                       false,
+		"Mail.ReadBasic":                                  false,
+		"Files.Read.All":                                  false,
+		"Sites.Selected":                                  false,
+		"Files.SelectedOperations.Selected":               false,
+		"Exchange.ManageAsApp.Extra":                      false,
+		"":                                                false,
 	} {
 		if got := rights.DenyListed(v); got != want {
 			t.Errorf("DenyListed(%q) = %v, want %v", v, got, want)
@@ -645,4 +663,62 @@ type failingOwners struct{ *graph.Client }
 
 func (failingOwners) ApplicationOwners(context.Context, guid.GUID) ([]graph.DirectoryObject, error) {
 	return nil, errors.New("403 forbidden")
+}
+
+// TM-D5a / CC-VER-13 extended: the three dangerous app roles block on Exchange, EXO Protection and
+// Graph; an unrelated non-Graph role stays an EV5 warn.
+func TestTMD5aDenyListOnAnyResource(t *testing.T) {
+	const (
+		exchange = "00000002-0000-0ff1-ce00-000000000000"
+		exoProt  = "00000007-0000-0ff1-ce00-000000000000"
+	)
+	cases := []struct{ res, val string }{
+		{exchange, "full_access_as_app"}, {exchange, "Exchange.ManageAsApp"}, {exoProt, "Exchange.ManageAsApp"},
+		{exoProt, "full_access_as_app"}, {rights.GraphResourceAppID, "Sites.FullControl.All"},
+		{"00000003-0000-0ff1-ce00-000000000000", "Sites.FullControl.All"},
+		{rights.GraphResourceAppID, "Mail.ReadWrite"}, {rights.GraphResourceAppID, "Mail.Send"},
+		{rights.GraphResourceAppID, "Mail-Advanced.ReadWrite.All"}, {rights.GraphResourceAppID, "MailboxItem.ReadWrite.All"},
+		{rights.GraphResourceAppID, "MailboxItem.ImportExport.All"}, {rights.GraphResourceAppID, "Files.ReadWrite.All"},
+		{rights.GraphResourceAppID, "Sites.ReadWrite.All"}, {rights.GraphResourceAppID, "mail.readwrite"},
+		{exchange, "Mail.ReadWrite"}, {exoProt, "Files.ReadWrite.All"},
+	}
+	for i, c := range cases {
+		t.Run(c.res+"/"+c.val, func(t *testing.T) {
+			r := newRig(t, baseline...)
+			tn := r.srv.T
+			sp := gid(5000 + i*10)
+			role := gid(5001 + i*10)
+			if c.res == rights.GraphResourceAppID {
+				sp = graphSP
+				g := tn.ServicePrincipals[graphSP]
+				g.AppRoles = append(g.AppRoles, graph.AppRole{ID: role, Value: c.val})
+				tn.ServicePrincipals[graphSP] = g
+			} else {
+				tn.ServicePrincipals[sp] = graph.ServicePrincipal{ID: sp, AppID: c.res, AppRoles: []graph.AppRole{{ID: role, Value: c.val}}}
+			}
+			tn.Assignments[spID] = append(tn.Assignments[spID], graph.AppRoleAssignment{ID: gid(5002 + i*10), AppRoleID: role, PrincipalID: spID, ResourceID: sp})
+			res := r.verify()
+			f := byKind(res, v1.FindingKind_FINDING_KIND_ENTRA_DENY_LIST_PERMISSION)
+			if res.Verdict != v1.VerificationVerdict_VERIFICATION_VERDICT_REFUSED || len(f) != 1 || f[0].Severity != v1.FindingSeverity_FINDING_SEVERITY_BLOCK {
+				t.Fatalf("%v %v", res.Verdict, res.Findings)
+			}
+			ap := f[0].Right.GetEntra().GetAppPermission()
+			// Network-order bytes: hex equals the dashed text without the dashes.
+			if hex.EncodeToString(ap.GetResourceAppId().GetValue()) != strings.ReplaceAll(c.res, "-", "") ||
+				hex.EncodeToString(ap.GetAppRoleId().GetValue()) != strings.ReplaceAll(role, "-", "") {
+				t.Errorf("resource_app_id=%v app_role_id=%v", ap.GetResourceAppId(), ap.GetAppRoleId())
+			}
+		})
+	}
+	// An unrelated non-Graph role is EV5 warn, not a block.
+	r := newRig(t, baseline...)
+	tn := r.srv.T
+	tn.ServicePrincipals[gid(6000)] = graph.ServicePrincipal{ID: gid(6000), AppID: exchange, AppRoles: []graph.AppRole{{ID: gid(6001), Value: "Mail.Read.Other"}}}
+	tn.Assignments[spID] = append(tn.Assignments[spID], graph.AppRoleAssignment{ID: gid(6002), AppRoleID: gid(6001), PrincipalID: spID, ResourceID: gid(6000)})
+	res := r.verify()
+	if len(byKind(res, v1.FindingKind_FINDING_KIND_ENTRA_DENY_LIST_PERMISSION)) != 0 ||
+		len(byKind(res, v1.FindingKind_FINDING_KIND_EXCESSIVE_RIGHT)) != 1 ||
+		byKind(res, v1.FindingKind_FINDING_KIND_EXCESSIVE_RIGHT)[0].Severity != v1.FindingSeverity_FINDING_SEVERITY_WARN {
+		t.Fatalf("%v %v", res.Verdict, res.Findings)
+	}
 }

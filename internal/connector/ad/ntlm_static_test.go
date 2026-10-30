@@ -12,14 +12,15 @@ import (
 )
 
 // TM-F-NTLM (directory half), static layer: the connector authenticates with a simple bind over
-// LDAPS only. It must never reference an NTLM/GSSAPI/SSPI bind (go-ldap ships NTLMBind*, and
+// LDAPS only (or SASL GSSAPI with channel binding, kerberos.go only). It must never reference an NTLM/GSSAPI/SSPI bind (go-ldap ships NTLMBind*, and
 // go-ntlmssp is an indirect dependency) and must never dial anything but the configured DCs
 // (no net/http, no SMB, no path-opening of attribute values such as homeDirectory).
 var forbiddenCalls = map[string]string{
 	"NTLMBind": "NTLM bind", "NTLMChallengeBind": "NTLM bind", "NTLMUnauthenticatedBind": "NTLM bind",
 	"NTLMBindWithHash": "NTLM bind", "UnauthenticatedBind": "anonymous bind", "ExternalBind": "SASL EXTERNAL",
-	"MD5Bind": "digest bind", "GSSAPIBind": "GSSAPI bind", "GSSAPIBindRequest": "GSSAPI bind",
-	"DigestMD5Bind": "digest bind", "DialURL": "unmanaged dial (use dial())", "Dial": "unmanaged dial",
+	"MD5Bind": "digest bind", "GSSAPIBindRequest": "GSSAPI bind (use bindGSSAPI)",
+	"GSSAPIBindRequestWithAPOptions": "GSSAPI bind (use bindGSSAPI)",
+	"DigestMD5Bind":                  "digest bind", "DialURL": "unmanaged dial (use dial())", "Dial": "unmanaged dial",
 	"Open": "file open of directory-supplied path", "ReadFile": "file read of directory-supplied path",
 	"Stat": "stat of directory-supplied path", "Get": "http fetch",
 }
@@ -49,6 +50,11 @@ func TestNTLMStaticGuard(t *testing.T) {
 			sel, ok := n.(*ast.SelectorExpr)
 			if !ok {
 				return true
+			}
+			// T-0560: the one sanctioned GSSAPI bind lives in kerberos.go (channel binding built in the
+			// same function); anywhere else it is a reject.
+			if sel.Sel.Name == "GSSAPIBind" && name != "kerberos.go" {
+				t.Errorf("%s: GSSAPIBind outside kerberos.go", fset.Position(sel.Pos()))
 			}
 			if why, bad := forbiddenCalls[sel.Sel.Name]; bad {
 				// Bind-method names are unique to go-ldap: flag them on any receiver. Generic
@@ -84,4 +90,20 @@ func parseNonTestFiles(fset *token.FileSet) (map[string]*ast.File, error) {
 		out[n] = f
 	}
 	return out, nil
+}
+
+// Every GSSAPI bind carries the channel binding of the connection's own TLS state.
+func TestGSSAPIBindBuildsChannelBinding(t *testing.T) {
+	src, err := os.ReadFile("kerberos.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := string(src)
+	i, j := strings.Index(b, "ChannelBindingFromTLS("), strings.Index(b, ".GSSAPIBind(")
+	if i < 0 || j < 0 || i > j {
+		t.Error("kerberos.go must derive the channel binding from conn.TLSConnectionState before GSSAPIBind")
+	}
+	if strings.Contains(b, "gssapi.New(krb, nil)") {
+		t.Error("GSSAPI client without a channel binding")
+	}
 }

@@ -38,6 +38,11 @@ enum Tier0Basis {
   TIER0_BASIS_C13_DEFAULT_PRIVILEGED_GROUP = 13;
   TIER0_BASIS_C14_SEAMLESS_SSO_ACCOUNT = 14;
   TIER0_BASIS_C15_DC_SITE = 15;
+  // AD, computed by the AD connector from the live DACL/owner of the roots of trust and sIDHistory (TM-D26).
+  TIER0_BASIS_C17_ROOT_OF_TRUST_CONTROL = 17;
+  TIER0_BASIS_C18_PRIVILEGED_SID_HISTORY = 18;
+  // TM-D27: control of a C1/C13 group, C1 account, DC object, DC OU or tier0 GPO (depth 1).
+  TIER0_BASIS_C19_CONTROL_OF_TIER0_OBJECT = 19;
   // AD, supplied by the server through CorrelationStatement (any correlation state).
   TIER0_BASIS_C16_CORRELATED_TO_ENTRA_TIER0 = 16;
   // Entra, computed by the Entra connector.

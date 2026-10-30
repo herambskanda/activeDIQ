@@ -1,0 +1,854 @@
+package gateway_test
+
+import (
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"errors"
+	"math/big"
+	"net"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/wrapperspb"
+
+	"github.com/skenzeriq/activediq/internal/platform/fleet"
+	"github.com/skenzeriq/activediq/internal/platform/fleet/gateway"
+	"github.com/skenzeriq/activediq/internal/platform/tenant"
+)
+
+const (
+	tunnelMethod = "/activediq.fleet.v1.Fleet/Tunnel"
+	compID       = "11111111-2222-4333-8444-555555555555"
+)
+
+type testCA struct {
+	cert *x509.Certificate
+	key  *ecdsa.PrivateKey
+}
+
+func newCA(t *testing.T, notAfter time.Time) testCA {
+	t.Helper()
+	k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(time.Now().UnixNano()), Subject: pkix.Name{CommonName: "ca"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: notAfter,
+		KeyUsage: x509.KeyUsageCertSign, BasicConstraintsValid: true, IsCA: true, MaxPathLen: 0, MaxPathLenZero: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &k.PublicKey, k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, _ := x509.ParseCertificate(der)
+	return testCA{c, k}
+}
+
+func (ca testCA) leaf(t testing.TB, tid tenant.ID, notBefore, notAfter time.Time, eku []x509.ExtKeyUsage) tls.Certificate {
+	t.Helper()
+	return ca.leafFor(t, tid, compID, notBefore, notAfter, eku)
+}
+
+func (ca testCA) leafFor(t testing.TB, tid tenant.ID, comp string, notBefore, notAfter time.Time, eku []x509.ExtKeyUsage) tls.Certificate {
+	t.Helper()
+	k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(time.Now().UnixNano()), Subject: pkix.Name{CommonName: "x"},
+		NotBefore: notBefore, NotAfter: notAfter, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: eku,
+		URIs: fleet.URIs(tid, "connector", comp),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca.cert, &k.PublicKey, ca.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: k}
+}
+
+type casByTenant map[tenant.ID][]*x509.Certificate
+
+func (m casByTenant) TenantCAs(_ context.Context, tid tenant.ID) ([]*x509.Certificate, error) {
+	return m[tid], nil
+}
+
+type failCAs struct{}
+
+func (failCAs) TenantCAs(context.Context, tenant.ID) ([]*x509.Certificate, error) {
+	return nil, errors.New("db down")
+}
+
+// fakeComps is the component lifecycle: every component is usable until it is revoked.
+type fakeComps struct {
+	mu      sync.Mutex
+	revoked map[string]bool
+	current map[string]string // component -> its current serial; absent means any serial is current
+	err     error
+	// failUsableAt makes the Usable call with that 1-based number fail (0: never). Current calls
+	// Usable first, so 2 is the gateway's own check after a superseded presentation.
+	failUsableAt, usableCalls int
+}
+
+// rotate records serial as the component's current certificate, as Rotate does in cert_serial.
+func (f *fakeComps) rotate(comp, serial string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.current == nil {
+		f.current = map[string]string{}
+	}
+	f.current[comp] = serial
+}
+
+func (f *fakeComps) Current(_ context.Context, id fleet.Identity) (bool, error) {
+	f.mu.Lock()
+	cur, pinned := f.current[id.ComponentID]
+	f.mu.Unlock()
+	ok, err := f.Usable(context.Background(), id)
+	return ok && (!pinned || cur == id.Serial), err
+}
+
+func (f *fakeComps) revoke(comp string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.revoked == nil {
+		f.revoked = map[string]bool{}
+	}
+	f.revoked[comp] = true
+}
+
+func (f *fakeComps) Usable(_ context.Context, id fleet.Identity) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.usableCalls++
+	if f.failUsableAt == f.usableCalls {
+		return false, errors.New("transient")
+	}
+	return f.err == nil && !f.revoked[id.ComponentID], f.err
+}
+
+type fakeFleet struct {
+	calls  atomic.Int32
+	lastID atomic.Value
+	hold   atomic.Bool  // stream handlers block until their context ends
+	mode   atomic.Int32 // with hold: 0 wait on ctx, 1 block in RecvMsg, 2 block in SendMsg
+	open   atomic.Int32
+	exited atomic.Int32 // handlers that have returned
+}
+
+func (f *fakeFleet) desc(name string) *grpc.ServiceDesc {
+	return &grpc.ServiceDesc{
+		ServiceName: name, HandlerType: (*any)(nil),
+		Methods: []grpc.MethodDesc{{MethodName: "Enroll", Handler: f.unary}},
+		Streams: []grpc.StreamDesc{{StreamName: "Tunnel", Handler: f.stream, ServerStreams: true, ClientStreams: true}},
+	}
+}
+
+func (f *fakeFleet) unary(_ any, ctx context.Context, dec func(any) error, ic grpc.UnaryServerInterceptor) (any, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	h := func(ctx context.Context, _ any) (any, error) {
+		f.calls.Add(1)
+		if id, ok := fleet.IdentityFrom(ctx); ok {
+			f.lastID.Store(id)
+		}
+		return &emptypb.Empty{}, nil
+	}
+	if ic == nil {
+		return h(ctx, in)
+	}
+	return ic(ctx, in, &grpc.UnaryServerInfo{FullMethod: gateway.EnrollMethod}, h)
+}
+
+func (f *fakeFleet) stream(_ any, ss grpc.ServerStream) error {
+	f.calls.Add(1)
+	if id, ok := fleet.IdentityFrom(ss.Context()); ok {
+		f.lastID.Store(id)
+	}
+	if f.hold.Load() {
+		f.open.Add(1)
+		defer f.open.Add(-1)
+		defer f.exited.Add(1)
+		switch f.mode.Load() {
+		case 1: // a tunnel server loop waiting for the component's next frame
+			for {
+				if err := ss.RecvMsg(new(emptypb.Empty)); err != nil {
+					return err
+				}
+			}
+		case 2: // server-to-component sends under flow control: the client never reads
+			chunk := wrapperspb.Bytes(make([]byte, 256<<10))
+			for {
+				if err := ss.SendMsg(chunk); err != nil {
+					return err
+				}
+			}
+		}
+		<-ss.Context().Done()
+		return ss.Context().Err()
+	}
+	return nil
+}
+
+var allMethods = map[string]gateway.AuthClass{gateway.EnrollMethod: gateway.ClassPublic, tunnelMethod: gateway.ClassClientCert}
+
+type rig struct {
+	addr  string
+	fleet *fakeFleet
+	pool  *certSet
+	srv   *grpc.Server
+	comps *fakeComps
+	gw    *gateway.Gateway
+	roots *x509.CertPool // trusts the rig's server certificate
+}
+
+func start(t testing.TB, cas gateway.TenantCAs, pool *certSet, now func() time.Time, opts ...func(*gateway.Config)) *rig {
+	t.Helper()
+	comps := &fakeComps{}
+	cfg := gateway.Config{Methods: allMethods, CAs: cas, Components: comps, Recheck: 50 * time.Millisecond, Clock: now}
+	for _, o := range opts {
+		o(&cfg)
+	}
+	g, err := gateway.NewGateway(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sk, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "srv"}, DNSNames: []string{"localhost"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	der, _ := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &sk.PublicKey, sk)
+	srvCert := tls.Certificate{Certificate: [][]byte{der}, PrivateKey: sk}
+	srvLeaf, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(srvLeaf)
+	ff := &fakeFleet{}
+	srv, err := g.NewServer(srvCert, func() *gateway.CAIndex { return pool.index() }, func(r grpc.ServiceRegistrar) {
+		r.RegisterService(ff.desc("activediq.fleet.v1.Fleet"), ff)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = srv.Serve(l) }()
+	t.Cleanup(srv.Stop)
+	return &rig{addr: l.Addr().String(), fleet: ff, pool: pool, srv: srv, comps: comps, gw: g, roots: roots}
+}
+
+func (r *rig) dial(t testing.TB, client *tls.Certificate) *grpc.ClientConn {
+	t.Helper()
+	return r.dialRoots(t, client, r.roots)
+}
+
+// dialRoots dials verifying the server certificate against roots.
+func (r *rig) dialRoots(t testing.TB, client *tls.Certificate, roots *x509.CertPool) *grpc.ClientConn {
+	t.Helper()
+	conf := &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots, ServerName: "localhost"}
+	if client != nil {
+		conf.Certificates = []tls.Certificate{*client}
+	}
+	cc, err := grpc.NewClient(r.addr, grpc.WithTransportCredentials(credentials.NewTLS(conf)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cc.Close() })
+	return cc
+}
+
+func callEnroll(cc *grpc.ClientConn) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return cc.Invoke(ctx, gateway.EnrollMethod, &emptypb.Empty{}, &emptypb.Empty{})
+}
+
+func callTunnel(cc *grpc.ClientConn) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	s, err := cc.NewStream(ctx, &grpc.StreamDesc{StreamName: "Tunnel", ClientStreams: true, ServerStreams: true}, tunnelMethod)
+	if err != nil {
+		return err
+	}
+	_ = s.CloseSend()
+	return s.RecvMsg(new(emptypb.Empty)) // io.EOF when the handler ran and returned nil
+}
+
+func code(err error) codes.Code { return status.Code(err) }
+
+func TestNoCertificateOnlyEnrollWorks(t *testing.T) {
+	ca := newCA(t, time.Now().Add(time.Hour))
+	tid := tenant.New()
+	pool := &certSet{}
+	pool.AddCert(ca.cert)
+	r := start(t, casByTenant{tid: {ca.cert}}, pool, nil)
+	cc := r.dial(t, nil)
+
+	if err := callTunnel(cc); code(err) != codes.Unauthenticated {
+		t.Fatalf("stream without certificate: %v", err)
+	}
+	if r.fleet.calls.Load() != 0 {
+		t.Fatal("handler ran for a stream without a certificate")
+	}
+	if err := callEnroll(cc); err != nil {
+		t.Fatalf("Enroll without certificate must work: %v", err)
+	}
+	if r.fleet.calls.Load() != 1 {
+		t.Fatal("Enroll handler did not run")
+	}
+}
+
+func TestValidCertificateGivesIdentityFromSAN(t *testing.T) {
+	ca := newCA(t, time.Now().Add(time.Hour))
+	tid := tenant.New()
+	pool := &certSet{}
+	pool.AddCert(ca.cert)
+	r := start(t, casByTenant{tid: {ca.cert}}, pool, nil)
+	leaf := ca.leaf(t, tid, time.Now().Add(-time.Minute), time.Now().Add(time.Hour), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+	if err := callTunnel(r.dial(t, &leaf)); err != nil && err.Error() != "EOF" {
+		t.Fatalf("valid certificate refused: %v", err)
+	}
+	id, _ := r.fleet.lastID.Load().(fleet.Identity)
+	if id.Tenant != tid || id.Kind != "connector" || id.ComponentID != compID {
+		t.Fatalf("identity from context = %+v", id)
+	}
+}
+
+func TestForeignOrExpiredCertificateRefused(t *testing.T) {
+	ca := newCA(t, time.Now().Add(time.Hour))
+	other := newCA(t, time.Now().Add(time.Hour))
+	tid := tenant.New()
+	pool := &certSet{}
+	pool.AddCert(ca.cert)
+	r := start(t, casByTenant{tid: {ca.cert}}, pool, nil)
+	eku := []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+
+	foreign := other.leaf(t, tid, time.Now().Add(-time.Minute), time.Now().Add(time.Hour), eku)
+	expired := ca.leaf(t, tid, time.Now().Add(-2*time.Hour), time.Now().Add(-time.Hour), eku)
+	for name, c := range map[string]tls.Certificate{"foreign CA": foreign, "expired": expired} {
+		// Either the handshake or the interceptor refuses; the handler must not run either way.
+		err := callTunnel(r.dial(t, &c))
+		if err == nil || err.Error() == "EOF" {
+			t.Fatalf("%s: stream accepted", name)
+		}
+	}
+	if r.fleet.calls.Load() != 0 {
+		t.Fatal("handler ran")
+	}
+}
+
+func TestCertificateOutsideValidityRefusedByInterceptor(t *testing.T) {
+	// The TLS layer would accept this chain; the interceptor's own clock check is the second wall.
+	ca := newCA(t, time.Now().Add(3*time.Hour))
+	tid := tenant.New()
+	pool := &certSet{}
+	pool.AddCert(ca.cert)
+	r := start(t, casByTenant{tid: {ca.cert}}, pool, func() time.Time { return time.Now().Add(2 * time.Hour) })
+	leaf := ca.leaf(t, tid, time.Now().Add(-time.Minute), time.Now().Add(time.Hour), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+	if err := callTunnel(r.dial(t, &leaf)); code(err) != codes.Unauthenticated {
+		t.Fatalf("expired by gateway clock: %v", err)
+	}
+}
+
+func TestTenantBoundToIssuer(t *testing.T) {
+	caA, caB := newCA(t, time.Now().Add(time.Hour)), newCA(t, time.Now().Add(time.Hour))
+	tidA, tidB := tenant.New(), tenant.New()
+	pool := &certSet{} // the listener trusts every tenant's CA
+	pool.AddCert(caA.cert)
+	pool.AddCert(caB.cert)
+	r := start(t, casByTenant{tidA: {caA.cert}, tidB: {caB.cert}}, pool, nil)
+	eku := []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+
+	// Signed by tenant A's CA, SAN names tenant B: the chain verifies, the binding must not.
+	mint := caA.leaf(t, tidB, time.Now().Add(-time.Minute), time.Now().Add(time.Hour), eku)
+	if err := callTunnel(r.dial(t, &mint)); code(err) != codes.Unauthenticated {
+		t.Fatalf("cross-tenant leaf: %v", err)
+	}
+	if r.fleet.calls.Load() != 0 {
+		t.Fatal("handler ran for a cross-tenant leaf")
+	}
+	ok := caB.leaf(t, tidB, time.Now().Add(-time.Minute), time.Now().Add(time.Hour), eku)
+	if err := callTunnel(r.dial(t, &ok)); err != nil && err.Error() != "EOF" {
+		t.Fatalf("own-tenant leaf refused: %v", err)
+	}
+}
+
+func TestNoServerAuthOnlyLeafAndCALookupFailureRefused(t *testing.T) {
+	ca := newCA(t, time.Now().Add(time.Hour))
+	tid := tenant.New()
+	pool := &certSet{}
+	pool.AddCert(ca.cert)
+	r := start(t, casByTenant{tid: {ca.cert}}, pool, nil)
+	srvOnly := ca.leaf(t, tid, time.Now().Add(-time.Minute), time.Now().Add(time.Hour), []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
+	if err := callTunnel(r.dial(t, &srvOnly)); err == nil || err.Error() == "EOF" {
+		t.Fatalf("server-auth-only leaf accepted: %v", err)
+	}
+
+	r2 := start(t, failCAs{}, pool, nil)
+	leaf := ca.leaf(t, tid, time.Now().Add(-time.Minute), time.Now().Add(time.Hour), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+	if err := callTunnel(r2.dial(t, &leaf)); code(err) != codes.Unavailable {
+		t.Fatalf("CA lookup failure must refuse: %v", err)
+	}
+}
+
+func TestStartupFailsClosed(t *testing.T) {
+	cas := casByTenant{}
+	if _, err := gateway.NewGateway(gateway.Config{Methods: map[string]gateway.AuthClass{"/activediq.fleet.v1.Fleet/Other": gateway.ClassPublic}, CAs: cas, Components: &fakeComps{}}); !errors.Is(err, gateway.ErrPublicMethod) {
+		t.Fatalf("public non-Enroll: %v", err)
+	}
+	if _, err := gateway.NewGateway(gateway.Config{Methods: map[string]gateway.AuthClass{tunnelMethod: 0}, CAs: cas, Components: &fakeComps{}}); !errors.Is(err, gateway.ErrUnclassified) {
+		t.Fatalf("zero class: %v", err)
+	}
+
+	ff := &fakeFleet{}
+	// Tunnel not classified.
+	g, _ := gateway.NewGateway(gateway.Config{Methods: map[string]gateway.AuthClass{gateway.EnrollMethod: gateway.ClassPublic}, CAs: cas, Components: &fakeComps{}})
+	if _, err := g.NewServer(tls.Certificate{Certificate: [][]byte{{1}}}, func() *gateway.CAIndex { return nil }, func(r grpc.ServiceRegistrar) { r.RegisterService(ff.desc("activediq.fleet.v1.Fleet"), ff) }); !errors.Is(err, gateway.ErrUnclassified) {
+		t.Fatalf("unclassified method: %v", err)
+	}
+	// A non-fleet service on the fleet listener.
+	g, _ = gateway.NewGateway(gateway.Config{Methods: map[string]gateway.AuthClass{gateway.EnrollMethod: gateway.ClassPublic, tunnelMethod: gateway.ClassClientCert,
+		"/activediq.console.v1.Console/Enroll": gateway.ClassClientCert, "/activediq.console.v1.Console/Tunnel": gateway.ClassClientCert}, CAs: cas, Components: &fakeComps{}})
+	if _, err := g.NewServer(tls.Certificate{Certificate: [][]byte{{1}}}, func() *gateway.CAIndex { return nil }, func(r grpc.ServiceRegistrar) { r.RegisterService(ff.desc("activediq.console.v1.Console"), ff) }); !errors.Is(err, gateway.ErrForeignMount) {
+		t.Fatalf("foreign service: %v", err)
+	}
+}
+
+func TestRoutesListOnlyFleet(t *testing.T) {
+	ca := newCA(t, time.Now().Add(time.Hour))
+	pool := &certSet{}
+	pool.AddCert(ca.cert)
+	r := start(t, casByTenant{}, pool, nil)
+	got := gateway.Routes(r.srv)
+	want := []string{gateway.EnrollMethod, tunnelMethod}
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("routes = %v", got)
+	}
+}
+
+func TestUnaryClientCertMethodRefusedWithoutPeer(t *testing.T) {
+	g, err := gateway.NewGateway(gateway.Config{Methods: map[string]gateway.AuthClass{"/activediq.fleet.v1.Fleet/Other": gateway.ClassClientCert}, CAs: casByTenant{}, Components: &fakeComps{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ran := false
+	_, err = g.Unary(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: "/activediq.fleet.v1.Fleet/Other"},
+		func(context.Context, any) (any, error) { ran = true; return nil, nil })
+	if code(err) != codes.Unauthenticated || ran {
+		t.Fatalf("err=%v ran=%v", err, ran)
+	}
+	// An unknown method is refused even though it is "public" nowhere.
+	_, err = g.Unary(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: "/x.Y/Z"},
+		func(context.Context, any) (any, error) { ran = true; return nil, nil })
+	if code(err) != codes.PermissionDenied || ran {
+		t.Fatalf("unknown method: err=%v ran=%v", err, ran)
+	}
+}
+
+// A caller-supplied Creds option must not replace the gateway's mTLS (Enroll would be served in
+// plaintext): a plaintext client cannot reach Enroll.
+func TestCallerCredsCannotReplaceTLS(t *testing.T) {
+	g, err := gateway.NewGateway(gateway.Config{Methods: allMethods, CAs: casByTenant{}, Components: &fakeComps{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sk, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "srv"}, DNSNames: []string{"localhost"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour)}
+	der, _ := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &sk.PublicKey, sk)
+	ff := &fakeFleet{}
+	srv, err := g.NewServer(tls.Certificate{Certificate: [][]byte{der}, PrivateKey: sk}, func() *gateway.CAIndex { return nil },
+		func(r grpc.ServiceRegistrar) { r.RegisterService(ff.desc("activediq.fleet.v1.Fleet"), ff) },
+		grpc.Creds(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, _ := net.Listen("tcp", "127.0.0.1:0")
+	go func() { _ = srv.Serve(l) }()
+	t.Cleanup(srv.Stop)
+	conn, err := grpc.NewClient(l.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := conn.Invoke(ctx, gateway.EnrollMethod, &emptypb.Empty{}, &emptypb.Empty{}); err == nil {
+		t.Fatal("plaintext client reached Enroll")
+	}
+	if ff.calls.Load() != 0 {
+		t.Fatal("handler ran over plaintext")
+	}
+}
+
+func openTunnel(t *testing.T, cc *grpc.ClientConn) grpc.ClientStream {
+	t.Helper()
+	s, err := cc.NewStream(context.Background(), &grpc.StreamDesc{StreamName: "Tunnel", ClientStreams: true, ServerStreams: true}, tunnelMethod)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	for end := time.Now().Add(3 * time.Second); time.Now().Before(end); time.Sleep(10 * time.Millisecond) {
+		if cond() {
+			return
+		}
+	}
+	t.Fatalf("timed out waiting for %s", what)
+}
+
+func recvErr(s grpc.ClientStream) chan error {
+	ch := make(chan error, 1)
+	go func() { ch <- s.RecvMsg(new(emptypb.Empty)) }()
+	return ch
+}
+
+// TestRevokedComponentRefusedAndStreamClosed covers T-0157 criteria 1-3: a revoked component with a
+// valid certificate is refused on every RPC, its open stream is closed (at once through
+// CloseComponent, and by the periodic re-check when the revocation happened elsewhere), and other
+// components, in the same tenant or another, are unaffected.
+func TestRevokedComponentRefusedAndStreamClosed(t *testing.T) {
+	const other = "66666666-7777-4888-8999-aaaaaaaaaaaa"
+	ca := newCA(t, time.Now().Add(time.Hour))
+	tidA := tenant.New()
+	pool := &certSet{}
+	pool.AddCert(ca.cert)
+	nb, na, eku := time.Now().Add(-time.Minute), time.Now().Add(time.Hour), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+
+	for _, via := range []string{"close", "recheck"} {
+		t.Run(via, func(t *testing.T) {
+			r := start(t, casByTenant{tidA: {ca.cert}}, pool, nil)
+			r.fleet.hold.Store(true)
+			victim := ca.leaf(t, tidA, nb, na, eku)
+			sibling := ca.leafFor(t, tidA, other, nb, na, eku)
+			vs, ss := openTunnel(t, r.dial(t, &victim)), openTunnel(t, r.dial(t, &sibling))
+			waitFor(t, "two open streams", func() bool { return r.fleet.open.Load() == 2 })
+			verr, serr := recvErr(vs), recvErr(ss)
+
+			r.comps.revoke(compID) // the Component row is revoked
+			if via == "close" {
+				if n := r.gw.CloseComponent(tidA, compID); n != 1 {
+					t.Fatalf("CloseComponent closed %d streams, want 1", n)
+				}
+			}
+			select {
+			case err := <-verr:
+				if code(err) != codes.Unauthenticated {
+					t.Fatalf("revoked stream ended with %v", err)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("revoked component's stream stayed open")
+			}
+			select {
+			case err := <-serr:
+				t.Fatalf("sibling stream ended: %v", err)
+			case <-time.After(300 * time.Millisecond):
+			}
+			if r.fleet.open.Load() < 1 {
+				t.Fatal("sibling handler is gone")
+			}
+
+			// Re-establishing and any other RPC: refused with a certificate that is still valid.
+			if err := callTunnel(r.dial(t, &victim)); code(err) != codes.Unauthenticated {
+				t.Fatalf("revoked component re-established a stream: %v", err)
+			}
+		})
+	}
+}
+
+// TestCloseComponentIsTenantScoped: the registry keys on tenant and component, so a component ID
+// that also exists in another tenant is not closed.
+func TestCloseComponentIsTenantScoped(t *testing.T) {
+	ca := newCA(t, time.Now().Add(time.Hour))
+	tidA, tidB := tenant.New(), tenant.New()
+	pool := &certSet{}
+	pool.AddCert(ca.cert)
+	r := start(t, casByTenant{tidA: {ca.cert}, tidB: {ca.cert}}, pool, nil)
+	r.fleet.hold.Store(true)
+	nb, na, eku := time.Now().Add(-time.Minute), time.Now().Add(time.Hour), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+	a, b := ca.leaf(t, tidA, nb, na, eku), ca.leaf(t, tidB, nb, na, eku)
+	sa, sb := openTunnel(t, r.dial(t, &a)), openTunnel(t, r.dial(t, &b))
+	waitFor(t, "two open streams", func() bool { return r.fleet.open.Load() == 2 })
+	ea, eb := recvErr(sa), recvErr(sb)
+	if n := r.gw.CloseComponent(tidA, compID); n != 1 {
+		t.Fatalf("closed %d", n)
+	}
+	select {
+	case <-ea:
+	case <-time.After(2 * time.Second):
+		t.Fatal("tenant A stream stayed open")
+	}
+	select {
+	case err := <-eb:
+		t.Fatalf("tenant B stream ended: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+func TestStatusLookupFailureRefused(t *testing.T) {
+	ca := newCA(t, time.Now().Add(time.Hour))
+	tid := tenant.New()
+	pool := &certSet{}
+	pool.AddCert(ca.cert)
+	r := start(t, casByTenant{tid: {ca.cert}}, pool, nil)
+	r.comps.err = errors.New("db down")
+	leaf := ca.leaf(t, tid, time.Now().Add(-time.Minute), time.Now().Add(time.Hour), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+	if err := callTunnel(r.dial(t, &leaf)); code(err) != codes.Unavailable {
+		t.Fatalf("status failure must fail closed: %v", err)
+	}
+}
+
+// TestUncooperativeHandlerIsTornDown: a handler blocked in RecvMsg (silent component) or in SendMsg
+// (client not reading) never watches our context; revocation must still end the RPC and the handler
+// goroutine, via CloseComponent and via the periodic re-check alone, leaving the sibling open.
+func TestUncooperativeHandlerIsTornDown(t *testing.T) {
+	const other = "66666666-7777-4888-8999-aaaaaaaaaaaa"
+	ca := newCA(t, time.Now().Add(time.Hour))
+	tid := tenant.New()
+	pool := &certSet{}
+	pool.AddCert(ca.cert)
+	nb, na, eku := time.Now().Add(-time.Minute), time.Now().Add(time.Hour), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+	for _, mode := range []struct {
+		name string
+		m    int32
+	}{{"recv", 1}, {"send", 2}} {
+		for _, via := range []string{"close", "recheck"} {
+			t.Run(mode.name+"/"+via, func(t *testing.T) {
+				r := start(t, casByTenant{tid: {ca.cert}}, pool, nil)
+				r.fleet.hold.Store(true)
+				r.fleet.mode.Store(mode.m)
+				victim, sib := ca.leaf(t, tid, nb, na, eku), ca.leafFor(t, tid, other, nb, na, eku)
+				vs, ss := openTunnel(t, r.dial(t, &victim)), openTunnel(t, r.dial(t, &sib))
+				waitFor(t, "two open streams", func() bool { return r.fleet.open.Load() == 2 })
+				if mode.m == 2 {
+					time.Sleep(300 * time.Millisecond) // let the send window fill so SendMsg blocks
+				}
+				r.comps.revoke(compID)
+				if via == "close" {
+					if n := r.gw.CloseComponent(tid, compID); n != 1 {
+						t.Fatalf("closed %d", n)
+					}
+				}
+				waitFor(t, "revoked handler to exit", func() bool { return r.fleet.exited.Load() == 1 && r.fleet.open.Load() == 1 })
+				if code(vs.RecvMsg(new(wrapperspb.BytesValue))) == codes.OK {
+					// recv mode has nothing to read; the call must still fail, not deliver data
+					t.Log("received a buffered frame before the close")
+				}
+				time.Sleep(300 * time.Millisecond)
+				if r.fleet.exited.Load() != 1 || r.fleet.open.Load() != 1 {
+					t.Fatalf("sibling affected: exited=%d open=%d", r.fleet.exited.Load(), r.fleet.open.Load())
+				}
+				_ = ss
+			})
+		}
+	}
+}
+
+func TestDialRejectsUntrustedServerCert(t *testing.T) {
+	r := start(t, casByTenant{}, &certSet{}, time.Now)
+	other := newCA(t, time.Now().Add(time.Hour))
+	wrong := x509.NewCertPool()
+	wrong.AddCert(other.cert)
+	if err := callEnroll(r.dialRoots(t, nil, wrong)); err == nil {
+		t.Fatal("handshake succeeded against a server cert not issued by the trusted CA")
+	}
+	if err := callEnroll(r.dial(t, nil)); err != nil {
+		t.Fatalf("handshake with the rig's own root failed: %v", err)
+	}
+}
+
+func serialOf(t *testing.T, c tls.Certificate) string {
+	t.Helper()
+	x, err := x509.ParseCertificate(c.Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := fleet.IdentityOf(x)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id.Serial
+}
+
+// TestSupersededCertificateRefusedAtEstablishment (TM-TB6-T14): after a rotation the old, unexpired
+// certificate gets Unauthenticated on a new stream, the new one passes, and a stream already open on
+// the old certificate survives the rotation.
+func TestSupersededCertificateRefusedAtEstablishment(t *testing.T) {
+	ca := newCA(t, time.Now().Add(time.Hour))
+	tidA := tenant.New()
+	pool := &certSet{}
+	pool.AddCert(ca.cert)
+	nb, na, eku := time.Now().Add(-time.Minute), time.Now().Add(time.Hour), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+	r := start(t, casByTenant{tidA: {ca.cert}}, pool, nil)
+	r.fleet.hold.Store(true)
+	oldLeaf := ca.leaf(t, tidA, nb, na, eku)
+	newLeaf := ca.leaf(t, tidA, nb, na, eku)
+	r.comps.rotate(compID, serialOf(t, oldLeaf))
+
+	open := openTunnel(t, r.dial(t, &oldLeaf))
+	waitFor(t, "stream open", func() bool { return r.fleet.open.Load() == 1 })
+	ended := recvErr(open)
+
+	r.comps.rotate(compID, serialOf(t, newLeaf)) // Rotate commits
+	if err := callTunnel(r.dial(t, &oldLeaf)); code(err) != codes.Unauthenticated {
+		t.Fatalf("superseded certificate established a stream: %v", err)
+	}
+	cc := r.dial(t, &newLeaf)
+	openTunnel(t, cc)
+	waitFor(t, "new certificate stream open", func() bool { return r.fleet.open.Load() == 2 })
+	// Several recheck periods later the stream made on the old certificate is still open.
+	select {
+	case err := <-ended:
+		t.Fatalf("rotation dropped the open stream: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+type supReport struct {
+	mu  sync.Mutex
+	ids []fleet.Identity
+}
+
+func (s *supReport) Superseded(_ context.Context, id fleet.Identity) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ids = append(s.ids, id)
+	return nil
+}
+
+func (s *supReport) got() []fleet.Identity {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]fleet.Identity(nil), s.ids...)
+}
+
+// TestSupersededCertificateIsReportedOncePerWindow (TM-TB6-T14, T-0300): a superseded, CA-verified,
+// unexpired leaf is refused Unauthenticated and reported with its serial; repeats inside the window
+// are not reported again, the next window is; the current certificate and a revoked component's old
+// one raise nothing.
+func TestSupersededCertificateIsReportedOncePerWindow(t *testing.T) {
+	ca := newCA(t, time.Now().Add(time.Hour))
+	tidA := tenant.New()
+	pool := &certSet{}
+	pool.AddCert(ca.cert)
+	nb, na, eku := time.Now().Add(-time.Minute), time.Now().Add(time.Hour), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+	rep := &supReport{}
+	var mu sync.Mutex
+	clock := time.Now()
+	now := func() time.Time { mu.Lock(); defer mu.Unlock(); return clock }
+	r := start(t, casByTenant{tidA: {ca.cert}}, pool, now, func(c *gateway.Config) {
+		c.Superseded, c.SupersededWindow = rep, time.Minute
+	})
+	oldLeaf := ca.leaf(t, tidA, nb, na, eku)
+	newLeaf := ca.leaf(t, tidA, nb, na, eku)
+	r.comps.rotate(compID, serialOf(t, newLeaf))
+
+	if err := callTunnel(r.dial(t, &newLeaf)); err != nil && code(err) == codes.Unauthenticated {
+		t.Fatalf("current certificate refused: %v", err)
+	}
+	if len(rep.got()) != 0 {
+		t.Fatal("current certificate reported")
+	}
+	for i := 0; i < 3; i++ {
+		if err := callTunnel(r.dial(t, &oldLeaf)); code(err) != codes.Unauthenticated {
+			t.Fatalf("superseded certificate: %v", err)
+		}
+	}
+	got := rep.got()
+	if len(got) != 1 || got[0].ComponentID != compID || got[0].Serial != serialOf(t, oldLeaf) {
+		t.Fatalf("reports in one window: %+v", got)
+	}
+	mu.Lock()
+	clock = clock.Add(2 * time.Minute)
+	mu.Unlock()
+	_ = callTunnel(r.dial(t, &oldLeaf))
+	if len(rep.got()) != 2 {
+		t.Fatalf("next window not reported: %d", len(rep.got()))
+	}
+	mu.Lock()
+	clock = clock.Add(2 * time.Minute)
+	mu.Unlock()
+	r.comps.revoke(compID)
+	if err := callTunnel(r.dial(t, &oldLeaf)); code(err) != codes.Unauthenticated || len(rep.got()) != 2 {
+		t.Fatalf("revoked component's old certificate reported: %v %d", err, len(rep.got()))
+	}
+}
+
+// ctxReport honours its context, as the real reporter's database calls do.
+type ctxReport struct {
+	delay time.Duration
+	ok    atomic.Int32
+}
+
+func (c *ctxReport) Superseded(ctx context.Context, _ fleet.Identity) error {
+	select {
+	case <-time.After(c.delay):
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	c.ok.Add(1)
+	return nil
+}
+
+// TestSupersededReportSurvivesHangUp (T-0300 review): a thief that presents the superseded leaf and
+// hangs up cannot cancel the report or use up the window; a transient Usable error does not either.
+func TestSupersededReportSurvivesHangUp(t *testing.T) {
+	ca := newCA(t, time.Now().Add(time.Hour))
+	tidA := tenant.New()
+	pool := &certSet{}
+	pool.AddCert(ca.cert)
+	nb, na, eku := time.Now().Add(-time.Minute), time.Now().Add(time.Hour), []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+	rep := &ctxReport{delay: 150 * time.Millisecond}
+	r := start(t, casByTenant{tidA: {ca.cert}}, pool, time.Now, func(c *gateway.Config) {
+		c.Superseded, c.SupersededWindow = rep, time.Hour
+	})
+	oldLeaf := ca.leaf(t, tidA, nb, na, eku)
+	newLeaf := ca.leaf(t, tidA, nb, na, eku)
+	r.comps.rotate(compID, serialOf(t, newLeaf))
+
+	// A transient Usable error on the first presentation: the next one is still reported.
+	r.comps.mu.Lock()
+	r.comps.failUsableAt = 2
+	r.comps.mu.Unlock()
+	if err := callTunnel(r.dial(t, &oldLeaf)); code(err) != codes.Unauthenticated {
+		t.Fatalf("superseded certificate: %v", err)
+	}
+	if rep.ok.Load() != 0 {
+		t.Fatal("reported despite Usable error")
+	}
+
+	// The thief hangs up as soon as it has dialled: the report must still complete.
+	cc := r.dial(t, &oldLeaf)
+	ctx, cancel := context.WithCancel(context.Background())
+	s, err := cc.NewStream(ctx, &grpc.StreamDesc{StreamName: "Tunnel", ClientStreams: true, ServerStreams: true}, tunnelMethod)
+	if err == nil {
+		_ = s
+	}
+	cancel()
+	waitFor(t, "report completes after the caller hung up", func() bool { return rep.ok.Load() == 1 })
+}
+
+// certSet collects CA certificates for a test rig and indexes them as the gateway does.
+type certSet struct{ cs []*x509.Certificate }
+
+func (s *certSet) AddCert(c *x509.Certificate) { s.cs = append(s.cs, c) }
+func (s *certSet) index() *gateway.CAIndex     { return gateway.NewCAIndex(s.cs) }
