@@ -211,6 +211,14 @@ domain, no RODC): RODC corroboration, cross-domain GPO links, gPLink option/orde
 (Samba covers ranged retrieval); the ad-expert review of `c8Domain`/`c8SystemClasses` is separate (T-0620).
 From a git worktree the credentials live in the main checkout: set `WIN_LAB_ENV` and `WIN_LAB_CA` to its `lab/windows/` files.
 
+## 11. Searching VM 119 through the server (T-0669)
+
+`internal/connector/read/search_lab_test.go` (`-tags lab`) runs the whole search path against a real LDAPS
+session; point it at the Windows lab with the `WIN_LAB_*` variables of section 10. It has been compiled
+and vetted but **not run against VM 119 or Samba from the T-0669 session** (neither lab was reachable).
+A booted server cannot yet search VM 119: the active-connection seed and in-process source are T-0684;
+the end-to-end Windows proof is T-0671.
+
 ### TM-D26 on the Windows lab (T-0346)
 
 `win_lab_tm26_test.go` (`TestWinLabTM26*`) plants state on the live domain head and restores it in `t.Cleanup`
@@ -319,12 +327,3 @@ lab/windows/bin/agent-verify --log knowledge/development/runbooks/windows-lab-ru
 - Reset: `qm rollback <vmid> clean` (human) if a run leaves the DC odd; the script is otherwise idempotent.
 - Not covered (needs an enrolled agent talking to a server; T-0814): killing the server connection,
   filling the data disk, and the U+0001 `Data` value reaching the server.
-
-
-## 11. Searching VM 119 through the server (T-0669)
-
-`internal/connector/read/search_lab_test.go` (`-tags lab`) runs the whole search path against a real LDAPS
-session; point it at the Windows lab with the `WIN_LAB_*` variables of section 10. It has been compiled
-and vetted but **not run against VM 119 or Samba from the T-0669 session** (neither lab was reachable).
-A booted server cannot yet search VM 119: the active-connection seed and in-process source are T-0684;
-the end-to-end Windows proof is T-0671.
