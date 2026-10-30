@@ -167,7 +167,9 @@ func TestLabDirectoryUsersSearchEndToEnd(t *testing.T) {
 		if len(body.Items) != 1 || body.Items[0]["samAccountName"] != sam {
 			t.Fatalf("items = %v, want exactly the %s user", body.Items, sam)
 		}
-		allowed := map[string]bool{"objectGuid": true, "displayName": true, "samAccountName": true, "userPrincipalName": true, "enabled": true}
+		allowed := map[string]bool{"objectGuid": true, "displayName": true, "samAccountName": true, "userPrincipalName": true, "enabled": true,
+			// Computed server-side from stored correlation (DM-20), not read from the directory (hybrid.go).
+			"hybrid": true}
 		for k := range body.Items[0] {
 			if !allowed[k] {
 				t.Errorf("response carries field %q outside the allowed set", k)
