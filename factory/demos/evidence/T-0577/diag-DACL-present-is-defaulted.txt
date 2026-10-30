@@ -1,0 +1,12 @@
+uploaded
+=== RUN   TestQADiag2
+    qa_extra_windows_test.go:129: attrs=0x10 err=<nil>
+    qa_extra_windows_test.go:131: sd=O:LAD:P(A;OICI;FA;;;LA)(A;OICI;FA;;;SY) err=<nil>
+    qa_extra_windows_test.go:134: owner=S-1-5-21-3048684280-3061665338-2348266937-500 defaulted=false err=<nil> self=S-1-5-21-3048684280-3061665338-2348266937-500 system=S-1-5-18
+    qa_extra_windows_test.go:136: ctrl=0x9004 rev=1 err=<nil>
+    qa_extra_windows_test.go:138: acl present=false err=<nil> count=2
+    qa_extra_windows_test.go:143: ace 0 type=0 mask=0x1f01ff sid=S-1-5-21-3048684280-3061665338-2348266937-500 err=<nil>
+    qa_extra_windows_test.go:143: ace 1 type=0 mask=0x1f01ff sid=S-1-5-18 err=<nil>
+--- PASS: TestQADiag2 (0.00s)
+PASS
+

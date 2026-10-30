@@ -11,9 +11,10 @@ import { FactoryError } from './errors.mjs';
 import { loadAgents } from './agents.mjs';
 import { checkLaunchPolicy } from './policy.mjs';
 import { isCodeType } from './flows.mjs';
-import { LogScanner, detectRateLimit, resultKeyword } from './runlog.mjs';
+import { LogScanner, detectConnectivityError, detectRateLimit, resultKeyword } from './runlog.mjs';
 import { claimTicket, createTicket, blockTicket, reopenTicket, setTicketLinks } from './tickets.mjs';
 import { applyAdvisoryDefaults } from './decisions.mjs';
+import { pollAdvisories } from './advisories.mjs';
 import { applyNoProgress } from './escalation.mjs';
 import { buildPrompt } from './prompt.mjs';
 import { buildWorkerArgs, launchWorker, runFiles, signalPid } from './launcher.mjs';
@@ -155,12 +156,29 @@ export class Dispatcher {
       await this.guard('repository check', async () => {
         this.shared = usesSharedCheckout(this.ctx, await repoState(this.ctx));
       });
+      await this.guard('security advisory poll', () => this.advisoryPoll());
       if (!this.stopping) await this.guard('merge', () => this.mergePass());
       if (!this.stopping) await this.guard('launch', () => this.fill());
       if (this.daemon) this.heartbeat();
     } finally {
       this.ticking = false;
     }
+  }
+
+  /**
+   * Security-disclosure intake (runbook §1): when `security_intake.enabled`, poll private advisories
+   * every `interval_hours`; a failed poll is retried after an hour and is reported on every failure
+   * kind (the guard surfaces it as an event), never swallowed as "no reports".
+   */
+  async advisoryPoll() {
+    const cfg = this.ctx.config.security_intake;
+    if (!cfg?.enabled) return;
+    const now = this.#nowMs();
+    if (this.nextAdvisoryPoll && now < this.nextAdvisoryPoll) return;
+    this.nextAdvisoryPoll = now + 3_600_000;
+    const result = await pollAdvisories(this.ctx, { repo: cfg.repo });
+    this.nextAdvisoryPoll = now + (cfg.interval_hours ?? 24) * 3_600_000;
+    if (result.created.length) this.requestTick = true;
   }
 
   /** Take over runs a previous dispatcher left running. */
@@ -290,6 +308,9 @@ export class Dispatcher {
     const sessionId = result?.session_id ?? s.session_id ?? run.session_id;
     const rateLimited = !kill && (detectRateLimit({ result, stderr }) || Boolean(signal?.session && signal.session === sessionId));
 
+    // A usage limit wins over a connectivity error; a killed run is neither.
+    const unreachable = !kill && !rateLimited && detectConnectivityError({ result, stderr });
+
     let status = 'failed';
     if (kill) status = 'killed';
     else if (result && !result.is_error && keyword !== 'failed') status = keyword === 'handoff' ? 'handoff' : 'done';
@@ -308,6 +329,7 @@ export class Dispatcher {
     this.children.delete(run.id);
     this.tails.delete(run.id);
     this.killing.delete(run.id);
+    if (!kill && !unreachable && !rateLimited) this.unreachableStreak = 0;
 
     const ticket = getEntity(ctx, 'tickets', run.ticket);
     let consequence = '';
@@ -315,6 +337,8 @@ export class Dispatcher {
       const until = new Date(this.#nowMs() + ctx.config.dispatcher.rate_limit_backoff_minutes * 60_000).toISOString();
       updateDispatcherState(ctx, { backoff_until: until });
       consequence = `; usage limit hit, backing off until ${until}`;
+    } else if (unreachable) {
+      consequence = this.applyConnectivityError(run);
     } else if (ticket && kill?.reason !== 'shutdown' && run.snapshot && !madeProgress(run.snapshot, ticket)) {
       const agent = loadAgents(ctx).get(ticket.stage_role ?? run.role) ?? null;
       consequence = `; no progress → ${applyNoProgress(ctx, ticket.id, agent, run.id).action}`;
@@ -323,6 +347,30 @@ export class Dispatcher {
       actor: 'dispatcher', kind: 'run', ticket: run.ticket, run: run.id,
       text: `${run.id} ${status}: ${run.ticket} as ${run.role} · ${s.result?.num_turns ?? 0} turns · $${(result?.total_cost_usd ?? 0).toFixed(2)} · ctx ${kTokens(s.peak_context_tokens)}${result?.result_line ? ` — ${result.result_line}` : ''}${consequence}`,
     });
+  }
+
+  /**
+   * The API could not be reached: not the ticket's fault, so no attempt, no escalation and no
+   * stage reassignment — back off and let the ticket be retried. The Nth consecutive failure
+   * (any tickets) means an outage: a longer pause and a single 'api unreachable' event.
+   * @returns {string} the consequence text for the run event
+   */
+  applyConnectivityError(run) {
+    const { ctx } = this;
+    const threshold = setting(ctx.config, 'api_unreachable_threshold');
+    this.unreachableStreak = (this.unreachableStreak ?? 0) + 1;
+    const outage = this.unreachableStreak >= threshold;
+    const minutes = setting(ctx.config, outage ? 'api_unreachable_backoff_minutes' : 'connectivity_backoff_minutes');
+    const until = new Date(this.#nowMs() + minutes * 60_000).toISOString();
+    const current = readDispatcherState(ctx).backoff_until;
+    if (!current || Date.parse(current) < Date.parse(until)) updateDispatcherState(ctx, { backoff_until: until });
+    if (this.unreachableStreak === threshold) {
+      appendEvent(ctx, {
+        actor: 'dispatcher', kind: 'dispatcher', run: run.id,
+        text: `api unreachable: ${threshold} consecutive runs failed to reach the API; dispatching paused until ${until}, no tickets blocked`,
+      });
+    }
+    return `; API unreachable (${this.unreachableStreak} in a row), no attempt counted, retrying after ${until}`;
   }
 
   // ---- merging ----------------------------------------------------------------------------

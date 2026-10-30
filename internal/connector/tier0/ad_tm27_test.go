@@ -599,3 +599,50 @@ func mustSID(t *testing.T, s string) sid.SID {
 	}
 	return v
 }
+
+// T-0819: a foreign RID>=1000 SID with a sIDHistory holder but no FSP here is resolved through the trust
+// too: after a group migration the source group's members hold the right.
+func TestForeignCustomRIDHolderNoFSPResolvesThroughTrust(t *testing.T) {
+	src := "S-1-5-21-111-222-333-1300"
+	dnOf := func(s string) string { return "CN=" + s + ",CN=ForeignSecurityPrincipals," + dom }
+	setup := func(t *testing.T) *fakeDir {
+		f := forest()
+		f.find("CN=carol,OU=Staff," + dom).history(src)
+		f.find(daDN).raw["nTSecurityDescriptor"] = sdBytes(aceSpec{sid: src, mask: wProp, objType: &memberID})
+		return f
+	}
+	for _, tc := range []string{"no-seam", "error", "unknown"} {
+		t.Run("failclosed/"+tc, func(t *testing.T) {
+			f := setup(t)
+			var r ADResult
+			var err error
+			if tc == "no-seam" {
+				r, err = classify(t, f, "CN=carol,OU=Staff,"+dom)
+			} else {
+				if tc == "error" {
+					f.trustErr = errors.New("trust unreachable")
+				}
+				r, err = classifyTrust(t, f, "CN=carol,OU=Staff,"+dom)
+			}
+			if err == nil || !r.Tier0 || !r.Unknown || !strings.Contains(err.Error(), src) {
+				t.Errorf("%+v %v", r, err)
+			}
+		})
+	}
+	t.Run("group", func(t *testing.T) {
+		f := setup(t)
+		mem := "S-1-5-21-111-222-333-1301"
+		f.add(dnOf(mem), mem, cls("top", "foreignSecurityPrincipal"))
+		f.trust = map[string]TrustedPrincipal{src: {Kind: TrustGroup, Members: []sid.SID{mustSID(t, mem)}}}
+		wantBasisTrust(t, f, dnOf(mem), C19, true)
+		wantBasisTrust(t, f, "CN=carol,OU=Staff,"+dom, C19, true)
+	})
+	t.Run("user", func(t *testing.T) {
+		f := setup(t)
+		mem := "S-1-5-21-111-222-333-1301"
+		f.add(dnOf(mem), mem, cls("top", "foreignSecurityPrincipal"))
+		f.trust = map[string]TrustedPrincipal{src: {Kind: TrustUser}}
+		wantBasisTrust(t, f, dnOf(mem), C19, false)
+		wantBasisTrust(t, f, "CN=carol,OU=Staff,"+dom, C19, true)
+	})
+}

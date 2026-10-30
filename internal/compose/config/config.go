@@ -53,8 +53,9 @@ const (
 	// (the default) leaves the attestation routes unmounted.
 	EnvAttestClientID = "ACTIVEDIQ_ATTEST_CLIENT_ID"
 	// EnvPublicURL is the https origin browsers reach this install by. The attestation's redirect URI is
-	// this origin plus the callback path, and must be registered on the app registration. Required with
-	// EnvAttestClientID.
+	// this origin plus the callback path, and must be registered on the app registration (required with
+	// EnvAttestClientID). It is also the WebAuthn relying party: the RP ID is its hostname and it is the one
+	// origin an assertion may be made for. Unset leaves WebAuthn sign-in off.
 	EnvPublicURL = "ACTIVEDIQ_PUBLIC_URL"
 	// EnvOpsAddr is the bind address of the operator (ops) listener that serves /metrics (T-0533). Unset
 	// means no ops listener and no metrics endpoint. It must differ from EnvAPIAddr: metrics list every
@@ -113,7 +114,8 @@ type Config struct {
 	// Nodes is the number of server nodes; PrincipalStore is PrincipalStorePostgres or PrincipalStoreMemory.
 	Nodes          int
 	PrincipalStore string
-	// AttestClientID and PublicURL configure the TM-D17 attestation; both empty means it is not offered.
+	// AttestClientID and PublicURL configure the TM-D17 attestation (which needs both). PublicURL alone also
+	// configures the WebAuthn relying party; empty means WebAuthn sign-in is off.
 	AttestClientID string
 	PublicURL      string
 	// OpsAddr and OpsTokenFile configure the operator metrics listener; both empty means it is off.
@@ -320,14 +322,15 @@ func requireLoopback(addr string) error {
 	return errors.New("must bind a loopback address (127.0.0.0/8, ::1 or localhost) unless a TLS directory is configured")
 }
 
-// ValidateAttestation refuses a half-configured attestation, and a public URL that is not a plain https
-// origin: the redirect URI is built from it and the authorization code returns there.
+// ValidateAttestation refuses an attestation client ID without a public URL, and a public URL that is not
+// a plain https origin: the attestation's redirect URI and the WebAuthn relying party are built from it. A
+// public URL alone is valid (WebAuthn sign-in without the attestation).
 func (c Config) ValidateAttestation() error {
-	if c.AttestClientID == "" && c.PublicURL == "" {
+	if c.PublicURL == "" {
+		if c.AttestClientID != "" {
+			return fmt.Errorf("%s requires %s", EnvAttestClientID, EnvPublicURL)
+		}
 		return nil
-	}
-	if c.AttestClientID == "" || c.PublicURL == "" {
-		return fmt.Errorf("%s and %s must be set together", EnvAttestClientID, EnvPublicURL)
 	}
 	u, err := url.Parse(c.PublicURL)
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {

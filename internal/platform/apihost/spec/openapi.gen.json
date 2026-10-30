@@ -633,6 +633,9 @@
           "enabled": {
             "type": "boolean"
           },
+          "hybrid": {
+            "$ref": "#/components/schemas/HybridClassification"
+          },
           "objectGuid": {
             "format": "uuid",
             "type": "string"
@@ -651,7 +654,8 @@
           "displayName",
           "samAccountName",
           "userPrincipalName",
-          "enabled"
+          "enabled",
+          "hybrid"
         ],
         "type": "object",
         "x-activediq-tag": "directory"
@@ -707,6 +711,40 @@
         ],
         "type": "object",
         "x-activediq-tag": "platform.health"
+      },
+      "HybridClassification": {
+        "description": "How the user stands in the cross-directory correlation (DM-20) under TM-D17, computed from the stored correlation and the Entra connection's takeover protection. not_hybrid: no correlation is recorded. candidate, matched, broken: the strongest recorded state (matched over candidate over broken). unknown: the facts could not be read; treat as no authority. Only a matched correlation can carry authority, and only while takeover protection is attested and neither side is Tier 0.",
+        "properties": {
+          "carriesAuthority": {
+            "type": "boolean"
+          },
+          "reason": {
+            "description": "Why the correlation is not matched, or why a matched one carries no authority. A stable code, never a directory value.",
+            "maxLength": 128,
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/HybridState"
+          }
+        },
+        "required": [
+          "state",
+          "carriesAuthority"
+        ],
+        "type": "object",
+        "x-activediq-tag": "directory"
+      },
+      "HybridState": {
+        "enum": [
+          "not_hybrid",
+          "candidate",
+          "matched",
+          "broken",
+          "unknown"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "directory"
       },
       "Int64String": {
         "description": "A 64-bit integer carried as a string, for values outside JavaScript's safe integer range.",
@@ -1549,6 +1587,7 @@
           "ADM-142",
           "ADM-145"
         ],
+        "x-activediq-peer-ip": true,
         "x-activediq-scope": "platform",
         "x-activediq-stability": "preview",
         "x-permission": "anonymous"
@@ -1591,6 +1630,9 @@
         "tags": [
           "platform.authn"
         ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
         "x-activediq-stability": "preview",
         "x-permission": "authenticated"
       }
@@ -1638,6 +1680,9 @@
         "tags": [
           "platform.authn"
         ],
+        "x-activediq-limits": {
+          "class": "write"
+        },
         "x-activediq-parity": [
           "ADM-145"
         ],
@@ -2108,6 +2153,9 @@
           },
           "500": {
             "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/DirectoryUnavailable"
           }
         },
         "summary": "Search users",

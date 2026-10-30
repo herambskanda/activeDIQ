@@ -231,6 +231,9 @@ epic set ID field=value … [--by ROLE]  title, goal, milestone, parity_refs=A,B
 handoff new ID --by ROLE             create factory/handoffs/<ID>/<ts>.md from the template; print path; set handoff.pending
 handoff latest ID                    print the latest handoff path for a ticket (or session id)
 event --actor A --kind K [--ticket T] "text"
+security poll [--repo O/N]           open an embargoed security-architect ticket per new private advisory
+                                     (needs the security-manager role; fails loudly otherwise; config `security_intake`;
+                                     runbook security-advisory-poll.md)
 digest                               print today's machine summary (for project-manager to narrate)
 ```
 
@@ -260,6 +263,7 @@ Deterministic loop; never calls a model itself. Every `dispatcher.tick_seconds` 
      `principal-engineer`) → then `blocked`. With the current policy every ladder tops out at `high`,
      so a stuck Sonnet stage goes straight to `principal-engineer`.
    - a usage-limit or rate-limit error → set `backoff_until` (15 min), do not count an attempt.
+   - an API connectivity error (DNS, reset, timeout) → short back-off, no attempt, no escalation; 3 in a row → longer pause + one `api unreachable` event.
 3. **Defaults**: advisory decisions past `default_at` → `status: defaulted`, answer = default.
 4. If `control.paused`, `backoff_until` in the future, or `runs_today ≥ daily_run_cap` → stop here.
 5. **Fill free slots** (`max_parallel` − running), one candidate per slot, in this order:
@@ -421,6 +425,9 @@ Git behaviour (worktrees, merge, conflict) is tested against real repositories i
 | `shutdown_grace_seconds` | 120 | on SIGTERM, running workers may finish for this long, then get SIGTERM |
 | `kill_grace_seconds` | 30 | after SIGTERM (timeout or shutdown), SIGKILL follows |
 | `launch_failure_backoff_minutes` | 5 | back-off after `claude` could not be started |
+| `connectivity_backoff_minutes` | 1 | back-off after a run failed to reach the API (no attempt counted) |
+| `api_unreachable_backoff_minutes` | 5 | dispatch pause once `api_unreachable_threshold` consecutive runs hit connectivity errors |
+| `api_unreachable_threshold` | 3 | consecutive connectivity failures (any tickets) that count as an outage |
 | `blocked_retriage_hours` | 6 | a blocked ticket is offered to triage again after this long |
 
 ### Fields and files beyond the reference above
@@ -439,6 +446,7 @@ Git behaviour (worktrees, merge, conflict) is tested against real repositories i
 - **Refused launches:** a missing agent file or a policy violation skips that candidate with one deduplicated event and leaves the ticket `ready`; a worktree failure blocks the ticket. A model other than Opus or Sonnet is always a violation.
 - **Effort overrides** (escalation) are exempt from `models.escalation_only` but must be in `models.allowed`.
 - **Rate limits** are detected from an error result or stderr (`rate limit`, `usage limit`, `overloaded`, `429`), or from a `StopFailure` signal for the run's session; the signal also backs the dispatcher off when it comes from the CEO's own session (the limit is account-wide). No attempt is counted.
+- **Connectivity errors** (`EAI_AGAIN`, `ENOTFOUND`, `ECONNRESET`, `ETIMEDOUT`, "Can't reach the API server") in an error result or stderr are an outage on our side: no attempt, no escalation, no stage reassignment; the dispatcher backs off `connectivity_backoff_minutes` and the ticket is retried. The third consecutive one (across tickets) pauses dispatching for `api_unreachable_backoff_minutes` and logs one `api unreachable` event. Any run that ends otherwise resets the streak. A usage limit takes precedence.
 - **Spawn failure** (`claude` missing) backs off `launch_failure_backoff_minutes` and counts no attempt.
 - **`factory run --once`** performs one tick and returns; workers it started keep running and are adopted by the next dispatcher.
 - **`factory feedback triage --done`** closes feedback that needs no ticket.

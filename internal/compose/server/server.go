@@ -132,7 +132,7 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	}
 	// The console authentication stack: sessions, the cookie Authenticator and the step-up check. The
 	// tenant-owner writer shares its session store (it ends a changed owner's sessions).
-	console, err := buildConsole(db, ok.Chainer, keys.NewStore(kekp).KeySource(), slog.Default())
+	console, err := buildConsole(db, ok.Chainer, keys.NewStore(kekp).KeySource(), slog.Default(), withPublicURL(cfg.PublicURL))
 	if err != nil {
 		return err
 	}
@@ -163,6 +163,16 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 		return err
 	}
 	tags = append(tags, setupTags...)
+	// directory.users.search: the connection registry for the active connection and its service-account
+	// gate, the connector source for the ScopedSearch RPC (over the tunnel the connector dialled).
+	dirTag, err := buildDirectory(db, conns, csrc)
+	if err != nil {
+		return err
+	}
+	tags = append(tags, dirTag)
+	// The sign-in plane: AN-8 for a local account, then AN-10 (TOTP, and WebAuthn when the public URL is
+	// set), which is the only way a console session is created.
+	tags = append(tags, console.Tags())
 	cat := permissionCatalogue()
 	if err := checkCatalogue(cat); err != nil {
 		return err
@@ -183,6 +193,7 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 		return err
 	}
 	firstOwner.SetTenant(tid) // the claim route can now create the first owner
+	console.SetTenant(tid)    // and the sign-in plane knows whose accounts it checks
 	// Lab builds only (T-0684): create and activate the lab connections through the real activation path.
 	if err := labSeed(ctx, conns, connKernel.Service, tid); err != nil {
 		return err

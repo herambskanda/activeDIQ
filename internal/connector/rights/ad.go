@@ -159,6 +159,7 @@ type adCheck struct {
 
 	set     map[string]*member
 	out     []Finding
+	seenFP  map[string]bool // DM-24.I4 fingerprints already in out
 	errs    map[v1.VerificationCheck]error
 	famSet  map[v1.RightsFamily]bool
 	schName map[string]*SchemaObject // by lower-case name+kind; nil = not found
@@ -377,6 +378,21 @@ func (c *adCheck) domainSid() *v1.Sid {
 func (c *adCheck) add(f *v1.RightsFinding, obj adguid.GUID, qualifier string) {
 	f.Object = pbGuid(obj)
 	f.ObjectDomainSid = c.domainSid()
+	// The fingerprint names the exposure (check, code, object, qualifier). Two ACEs that give the same
+	// trustee the same right on the same Tier-0 object (inheritance variants, say) are one exposure
+	// and one finding: the server stores one finding per fingerprint per run (DM-24.I4). MISSING
+	// findings are not collapsed here: their qualifier does not tell two rights on one object type
+	// apart (create-child and delete-child of users), which is a recipe question, not a duplicate.
+	f.Fingerprint = Fingerprint(f, qualifier)
+	if f.Kind == v1.FindingKind_FINDING_KIND_EXCESSIVE_RIGHT || f.Kind == v1.FindingKind_FINDING_KIND_TIER0_GROUP_MEMBERSHIP {
+		if c.seenFP == nil {
+			c.seenFP = map[string]bool{}
+		}
+		if c.seenFP[string(f.Fingerprint)] {
+			return
+		}
+		c.seenFP[string(f.Fingerprint)] = true
+	}
 	c.out = append(c.out, Finding{RightsFinding: f, Qualifier: qualifier})
 }
 

@@ -167,7 +167,6 @@ func TestAttestationSettings(t *testing.T) {
 	}
 	for name, m := range map[string]map[string]string{
 		"client without url": {config.EnvAttestClientID: "app"},
-		"url without client": {config.EnvPublicURL: "https://diq.example.com"},
 		"http":               {config.EnvAttestClientID: "app", config.EnvPublicURL: "http://diq.example.com"},
 		"path":               {config.EnvAttestClientID: "app", config.EnvPublicURL: "https://diq.example.com/x"},
 		"userinfo":           {config.EnvAttestClientID: "app", config.EnvPublicURL: "https://u:p@diq.example.com"},
@@ -175,6 +174,28 @@ func TestAttestationSettings(t *testing.T) {
 	} {
 		if _, err := config.Load(env(m)); err == nil {
 			t.Errorf("%s accepted", name)
+		}
+	}
+}
+
+// T-0853: the public URL is the WebAuthn relying party, so it stands alone.
+func TestPublicURLAloneIsValid(t *testing.T) {
+	c, err := config.Load(env(map[string]string{config.EnvPublicURL: "https://diq.example.com"}))
+	if err != nil || c.PublicURL != "https://diq.example.com" || c.AttestClientID != "" {
+		t.Fatalf("%+v, %v", c, err)
+	}
+}
+
+func TestAttestClientIDNeedsPublicURL(t *testing.T) {
+	if _, err := config.Load(env(map[string]string{config.EnvAttestClientID: "app"})); err == nil {
+		t.Fatal("an attestation client ID without a public URL was accepted")
+	}
+}
+
+func TestPublicURLMustBeHTTPSOrigin(t *testing.T) {
+	for _, bad := range []string{"http://diq.example.com", "https://diq.example.com/x", "https://u:p@diq.example.com", "https://diq.example.com/?a=b", "https://diq.example.com/#f", "diq.example.com", "https://"} {
+		if _, err := config.Load(env(map[string]string{config.EnvPublicURL: bad})); err == nil {
+			t.Errorf("%q accepted with no attestation client", bad)
 		}
 	}
 }

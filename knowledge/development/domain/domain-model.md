@@ -133,7 +133,7 @@ created `active`, because the `tenant-provisioning` capability is not composed t
 `suspended`: sign-in is refused, jobs are paused and connectors are refused; data is kept. The
 export window during `deleting` is `[OPEN → E5.6]`.
 
-### DM-02 TenantKey · T · owner `platform/keys`
+### DM-02 TenantKey · P (installation key) and T (tenant keys) · owner `platform/keys`
 **Definition.** A tenant's data-encryption key, wrapped by the installation KEK from the profile's
 key provider. Everything sealed (DM-11, DM-37, DM-63, DM-82, DM-85) is sealed under it.
 **Key attributes:** `version` · `wrapped_dek` · `kek_ref` (provider, key id) · `state` · `created_at`.
@@ -141,6 +141,9 @@ key provider. Everything sealed (DM-11, DM-37, DM-63, DM-82, DM-85) is sealed un
 version that sealed it. I3 The plaintext DEK exists only in memory. I4 Shredding destroys every
 version. The rotation procedure is `[OPEN → T-0007]`.
 **Lifecycle.** `active → retired` (decrypt-only) `→ shredded`.
+**Installation scope (T-0715, ADR-0008).** One further key belongs to the installation (`installation_keys`, no
+`tenant_id`): exactly one `active` version, wrapped under a distinct platform purpose and sealing with its own
+associated-data domain, so it never opens a tenant value nor a tenant key it. First consumer: the fleet server CA key.
 
 ### DM-03 Node · P · owner `platform/update` (registry of server processes)
 **Definition.** One running `server` process of the installation. Nodes are stateless, and HA is
@@ -1223,6 +1226,19 @@ DcObservation.
   Rights rows come from DM-24. DM-26 holds only the per-cycle checks (connectivity, clock, DCs).
 
 **Lifecycle.** None is stored (X5).
+
+### DM-27 InventoryServer · T · owner `directory/invhost` (safe-primitives §6.3)
+**Definition.** A server an admin registered as a host activeDIQ may connect to that is not a domain
+controller: a file server for home folders (ADM-023), a SYSVOL or report host. Discovered DCs are DM-15
+and are not stored here. Added by T-0835 to give migration 0050 (T-0584) its entity; the table was
+already built. **Replaces (ME):** none documented.
+**Key attributes:** `id` · `fqdn` (lower case, no trailing dot, unique per tenant) · `registered_by`
+(the human admin's audit reference) · `registered_at`.
+**Invariants.** I1 The only writer is `invhost.Service.Register`, which accepts a Human requester with
+no delegation chain, audits `inventory.host.registered` in the same transaction, and is idempotent.
+I2 A host name read from the directory (`homeDirectory`, `dNSHostName`, `gPCFileSysPath`) is never
+inserted by code. I3 A registration is never edited; the runtime role has no UPDATE or DELETE.
+Unregistering is a later, audited Action.
 
 ## 3. Identity and access
 

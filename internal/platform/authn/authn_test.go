@@ -143,7 +143,7 @@ func TestStubsAnswerNotImplemented(t *testing.T) {
 			t.Errorf("stub %d: %v", i, err)
 		}
 	}
-	if API(Handlers{}).Tag() == "" {
+	if (Handlers{}).Bind().Tag() == "" {
 		t.Error("API() has no tag")
 	}
 }

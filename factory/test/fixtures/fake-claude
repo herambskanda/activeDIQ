@@ -4,6 +4,7 @@
 //   reject             as advance, but `factory ticket reject`
 //   noop               claim success without touching the ticket
 //   ratelimit          fail with a usage-limit error
+//   offline            fail with an API connectivity error (FAKE_CLAUDE_ERROR overrides the text)
 //   hang               run until killed (FAKE_IGNORE_TERM=1 ignores SIGTERM)
 // FAKE_CLAUDE_COMMIT=<file> also writes and commits that file in the working directory
 // (only for FAKE_CLAUDE_COMMIT_ROLE, when set).
@@ -46,6 +47,9 @@ if (mode === 'hang') {
   setInterval(() => {}, 1000);
 } else if (mode === 'ratelimit') {
   result("You've hit your usage limit. Your limit resets at 5pm.", true);
+  process.exit(1);
+} else if (mode === 'offline') {
+  result(process.env.FAKE_CLAUDE_ERROR || "API Error: Can't reach the API server (EAI_AGAIN)", true);
   process.exit(1);
 } else if (mode === 'noop') {
   result('Looked around.\nRESULT: advanced — nothing really');

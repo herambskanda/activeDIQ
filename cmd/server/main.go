@@ -24,6 +24,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "setup" {
 		os.Exit(runSetup(os.Args[2:]))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "account" {
+		os.Exit(runAccount(os.Args[2:]))
+	}
 	cfg, err := config.Load(os.Getenv)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "server:", err)
@@ -59,6 +62,22 @@ func runSetup(args []string) int {
 		return 2
 	}
 	if err := server.SetupShow(os.Getenv, os.Stdout); err != nil {
+		fmt.Fprintln(os.Stderr, "server:", err)
+		return 1
+	}
+	return 0
+}
+
+// runAccount is `activediq-server account <command>`. Only init-local exists: it creates the first local
+// console account (password on stdin, TOTP enrolled interactively).
+func runAccount(args []string) int {
+	if len(args) == 0 || args[0] != "init-local" {
+		fmt.Fprintln(os.Stderr, "usage: activediq-server account init-local --username NAME [--display-name TEXT] [--email ADDR]   (password on the first line of stdin)")
+		return 2
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := server.LocalAccountInit(ctx, args[1:], os.Getenv, os.Stdin, os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, "server:", err)
 		return 1
 	}

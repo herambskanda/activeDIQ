@@ -6,6 +6,7 @@
 # External mode (T-0428): WIN_LAB_MODE=external targets a DC someone else provides (e.g. Proxmox VM 112) instead of
 # local libvirt. Needs WIN_LAB_DC_ADDR (IP/host), WIN_LAB_TLS_NAME (name in the DC cert), WIN_LAB_CA (root CA PEM),
 # WIN_LAB_ENV (credentials file, mode 0600). Only preflight|status|info|test-connector work; nothing calls virsh.
+# test-connector runs under bin/with-dc1-lock (one dc1 session at a time, T-0839).
 # WIN_LAB_DRYRUN=1 prints every external command instead of running it (used by the offline test).
 set -euo pipefail
 
@@ -232,11 +233,16 @@ test_connector() {
   [ -f "$ENVF" ] && [ -f "$CAF" ] || die "lab not up: run make windows-lab-up"
   mkdir -p "$LOGDIR"
   local log; log="$LOGDIR/connector-$(date -u +%Y%m%dT%H%M%SZ).log"
-  echo ">> go test -tags 'lab windowslab' ./internal/connector/ad/ against dc1 over LDAPS; log: $log"
-  ( cd "$HERE/../.." && LAB_TARGET=windows "$GO" test -count=1 -v -tags 'lab windowslab' ./internal/connector/ad/ ) 2>&1 | tee "$log"
+  echo ">> go test -tags 'lab windowslab' -run '^TestWindowsLab' ./internal/connector/ad/ against dc1 over LDAPS; log: $log"
+  ( cd "$HERE/../.." && LAB_TARGET=windows "$GO" test -count=1 -v -tags 'lab windowslab' -run '^TestWindowsLab' ./internal/connector/ad/ ) 2>&1 | tee "$log"
   return "${PIPESTATUS[0]}"
 }
 
+# Anything that talks to dc1 runs under the dc1 lock (T-0839, runbook section 10): re-exec under the wrapper.
+# The libvirt-only subcommands (up/reset/down/destroy) manage local VMs, not the shared Proxmox dc1.
+if [ "${1:-}" = test-connector ] && [ -z "${DIQ_DC1_LOCK_HELD:-}" ]; then
+  exec "$HERE/bin/with-dc1-lock" -- "$0" "$@"
+fi
 if [ "$MODE" = external ]; then
   case "${1:-}" in
     up|reset|down|destroy) die "'$1' manages local libvirt VMs; in external mode the VM is operated by a human (Proxmox). See the runbook.";;

@@ -230,7 +230,13 @@ func TestC18InsideACE(t *testing.T) { // T0-C18-ACE
 	us := u(f, "heir", 4100)
 	f.find(us).history(foreignID + "-1105")
 	setSD(f, dom, aceSpec{sid: foreignID + "-1105", mask: wDACL})
-	wantBasis(t, f, us, C17, true)
+	// T-0819: the holder stands in only once the trust says the SID is a user; with no trust lookup the
+	// SID may be a surviving source group, so the snapshot fails closed.
+	if _, err := classify(t, f, "CN=carol,OU=Staff,"+dom); err == nil || !strings.Contains(err.Error(), foreignID+"-1105") {
+		t.Errorf("holder with no trust answer: %v", err)
+	}
+	f.trust = map[string]TrustedPrincipal{foreignID + "-1105": {Kind: TrustUser}}
+	wantBasisTrust(t, f, us, C17, true)
 	// Twin: nobody holds that SID in sIDHistory, so the foreign trustee fails the snapshot naming it.
 	f = forest()
 	setSD(f, dom, aceSpec{sid: foreignID + "-1105", mask: wDACL})

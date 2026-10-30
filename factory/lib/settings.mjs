@@ -7,6 +7,9 @@ const DEFAULTS = {
   kill_grace_seconds: 30,
   launch_failure_backoff_minutes: 5,
   blocked_retriage_hours: 6,
+  connectivity_backoff_minutes: 1,
+  api_unreachable_backoff_minutes: 5,
+  api_unreachable_threshold: 3,
 };
 
 /**
