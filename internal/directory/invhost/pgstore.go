@@ -5,8 +5,13 @@ import (
 	"fmt"
 
 	"github.com/skenzeriq/activediq/internal/platform/store"
+	"github.com/skenzeriq/activediq/internal/platform/tablekind"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
+
+// DM-27 InventoryServer: rows are written once by Service.Register; the app role holds no UPDATE or DELETE
+// (migration 0050), but the table has no lifecycle state to protect, so it is a mutable tenant table, not X5.
+var _ = tablekind.Declare(tablekind.Table{Name: "public.inventory_servers", Entity: "DM-27", Kind: tablekind.Tenant})
 
 // PGStore is the Postgres Store over inventory_servers.
 type PGStore struct{}

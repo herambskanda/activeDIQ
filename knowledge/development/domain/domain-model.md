@@ -1224,6 +1224,19 @@ DcObservation.
 
 **Lifecycle.** None is stored (X5).
 
+### DM-27 InventoryServer · T · owner `directory/invhost` (safe-primitives §6.3)
+**Definition.** A server an admin registered as a host activeDIQ may connect to that is not a domain
+controller: a file server for home folders (ADM-023), a SYSVOL or report host. Discovered DCs are DM-15
+and are not stored here. Added by T-0835 to give migration 0050 (T-0584) its entity; the table was
+already built. **Replaces (ME):** none documented.
+**Key attributes:** `id` · `fqdn` (lower case, no trailing dot, unique per tenant) · `registered_by`
+(the human admin's audit reference) · `registered_at`.
+**Invariants.** I1 The only writer is `invhost.Service.Register`, which accepts a Human requester with
+no delegation chain, audits `inventory.host.registered` in the same transaction, and is idempotent.
+I2 A host name read from the directory (`homeDirectory`, `dNSHostName`, `gPCFileSysPath`) is never
+inserted by code. I3 A registration is never edited; the runtime role has no UPDATE or DELETE.
+Unregistering is a later, audited Action.
+
 ## 3. Identity and access
 
 ### DM-30 Account · T · owner `platform/authn`
